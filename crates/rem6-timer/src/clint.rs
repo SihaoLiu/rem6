@@ -135,6 +135,21 @@ impl ClintHartConfig {
     pub const fn timer_source(&self) -> InterruptSourceId {
         self.timer_source
     }
+
+    fn validate_routes(&self) -> Result<(), TimerError> {
+        self.software_interrupt.validate_route().map_err(|error| {
+            TimerError::ClintInterruptRoute {
+                hart: self.hart,
+                error,
+            }
+        })?;
+        self.timer_interrupt
+            .validate_route()
+            .map_err(|error| TimerError::ClintInterruptRoute {
+                hart: self.hart,
+                error,
+            })
+    }
 }
 
 impl MmioDevice for ClintMmioDevice {
@@ -201,20 +216,22 @@ impl ClintHartRuntime {
         self.state.lock().expect("CLINT hart state lock").mtimecmp
     }
 
-    fn replace_msip(&self, value: u32) -> u32 {
+    fn set_msip(&self, value: u32) {
         let mut state = self.state.lock().expect("CLINT hart state lock");
-        let old = state.msip;
         state.msip = value;
-        old
     }
 
-    fn replace_mtimecmp(&self, value: u64) -> ClintTimerProgram {
-        let mut state = self.state.lock().expect("CLINT hart state lock");
-        state.timer_generation += 1;
+    fn next_mtimecmp_program(&self) -> ClintTimerProgram {
+        let state = self.state.lock().expect("CLINT hart state lock");
         let was_asserted = state.timer_asserted;
-        state.mtimecmp = value;
-        state.timer_asserted = false;
-        ClintTimerProgram::new(state.timer_generation, was_asserted)
+        ClintTimerProgram::new(state.timer_generation + 1, was_asserted)
+    }
+
+    fn commit_mtimecmp_program(&self, deadline: u64, generation: u64, timer_asserted: bool) {
+        let mut state = self.state.lock().expect("CLINT hart state lock");
+        state.timer_generation = generation;
+        state.mtimecmp = deadline;
+        state.timer_asserted = timer_asserted;
     }
 
     fn mark_timer_asserted(&self, generation: u64) -> bool {
@@ -226,13 +243,14 @@ impl ClintHartRuntime {
         true
     }
 
-    fn mark_timer_asserted_if_due(&self, mtime: u64) -> bool {
+    fn mark_timer_asserted_due(&self) {
         let mut state = self.state.lock().expect("CLINT hart state lock");
-        if mtime < state.mtimecmp || state.timer_asserted {
-            return false;
-        }
         state.timer_asserted = true;
-        true
+    }
+
+    fn timer_assertion_due(&self, mtime: u64) -> bool {
+        let state = self.state.lock().expect("CLINT hart state lock");
+        mtime >= state.mtimecmp && !state.timer_asserted
     }
 }
 
@@ -650,6 +668,9 @@ impl ClintMmioDevice {
                 return Err(TimerError::DuplicateClintHart { hart });
             }
         }
+        for runtime in runtimes.values() {
+            runtime.config.validate_routes()?;
+        }
 
         Ok(Self {
             base,
@@ -740,12 +761,13 @@ impl ClintMmioDevice {
     pub fn rtc_tick(&self, context: &mut SchedulerContext<'_>) -> Result<u64, TimerError> {
         let mtime = self.increment_rtc_mtime()?;
         for (hart, runtime) in self.harts.iter() {
-            if runtime.mark_timer_asserted_if_due(mtime) {
+            if runtime.timer_assertion_due(mtime) {
                 runtime
                     .config
                     .timer_interrupt
                     .assert(context, runtime.config.timer_source)
                     .map_err(|error| TimerError::ClintRtcSignal { hart: *hart, error })?;
+                runtime.mark_timer_asserted_due();
             }
         }
         Ok(mtime)
@@ -757,12 +779,13 @@ impl ClintMmioDevice {
     ) -> Result<u64, TimerError> {
         let mtime = self.increment_rtc_mtime()?;
         for (hart, runtime) in self.harts.iter() {
-            if runtime.mark_timer_asserted_if_due(mtime) {
+            if runtime.timer_assertion_due(mtime) {
                 runtime
                     .config
                     .timer_interrupt
                     .assert_parallel(context, runtime.config.timer_source)
                     .map_err(|error| TimerError::ClintRtcSignal { hart: *hart, error })?;
+                runtime.mark_timer_asserted_due();
             }
         }
         Ok(mtime)
@@ -1085,8 +1108,7 @@ impl ClintMmioDevice {
         register_offset: u64,
     ) -> Result<(), MmioError> {
         let value = clint_u32_write_value(request, runtime.msip(), register_offset)? & 0x1;
-        let old = runtime.replace_msip(value);
-        if old == value {
+        if runtime.msip() == value {
             return Ok(());
         }
         let result = if value == 0 {
@@ -1100,10 +1122,12 @@ impl ClintMmioDevice {
                 .software_interrupt
                 .assert(context, runtime.config.software_source)
         };
-        result.map(|_| ()).map_err(|error| MmioError::DeviceError {
+        result.map_err(|error| MmioError::DeviceError {
             request: request.id(),
             message: error.to_string(),
-        })
+        })?;
+        runtime.set_msip(value);
+        Ok(())
     }
 
     fn write_msip_parallel(
@@ -1114,8 +1138,7 @@ impl ClintMmioDevice {
         register_offset: u64,
     ) -> Result<(), MmioError> {
         let value = clint_u32_write_value(request, runtime.msip(), register_offset)? & 0x1;
-        let old = runtime.replace_msip(value);
-        if old == value {
+        if runtime.msip() == value {
             return Ok(());
         }
         let result = if value == 0 {
@@ -1129,10 +1152,12 @@ impl ClintMmioDevice {
                 .software_interrupt
                 .assert_parallel(context, runtime.config.software_source)
         };
-        result.map(|_| ()).map_err(|error| MmioError::DeviceError {
+        result.map_err(|error| MmioError::DeviceError {
             request: request.id(),
             message: error.to_string(),
-        })
+        })?;
+        runtime.set_msip(value);
+        Ok(())
     }
 
     fn write_mtimecmp(
@@ -1143,19 +1168,19 @@ impl ClintMmioDevice {
         register_offset: u64,
     ) -> Result<(), MmioError> {
         let deadline = clint_u64_write_value(request, runtime.mtimecmp(), register_offset)?;
-        let program = runtime.replace_mtimecmp(deadline);
+        let program = runtime.next_mtimecmp_program();
         let current_mtime = self.current_mtime(context.now());
         if deadline <= current_mtime {
-            runtime.mark_timer_asserted(program.generation());
-            return runtime
+            runtime
                 .config
                 .timer_interrupt
                 .assert(context, runtime.config.timer_source)
-                .map(|_| ())
                 .map_err(|error| MmioError::DeviceError {
                     request: request.id(),
                     message: error.to_string(),
-                });
+                })?;
+            runtime.commit_mtimecmp_program(deadline, program.generation(), true);
+            return Ok(());
         }
 
         if program.was_asserted() {
@@ -1169,18 +1194,21 @@ impl ClintMmioDevice {
                 })?;
         }
         if self.timebase == ClintTimebase::RtcDriven {
+            runtime.commit_mtimecmp_program(deadline, program.generation(), false);
             return Ok(());
         }
         let delay = deadline - context.now();
         let runtime = runtime.clone();
         let request = request.id();
+        let timer_source = runtime.config.timer_source;
+        let event_runtime = runtime.clone();
         context
             .schedule_local_after(delay, move |context| {
-                if runtime.mark_timer_asserted(program.generation()) {
-                    runtime
+                if event_runtime.mark_timer_asserted(program.generation()) {
+                    event_runtime
                         .config
                         .timer_interrupt
-                        .assert(context, runtime.config.timer_source)
+                        .assert(context, timer_source)
                         .expect("validated CLINT timer interrupt");
                 }
             })
@@ -1188,7 +1216,9 @@ impl ClintMmioDevice {
             .map_err(|error| MmioError::DeviceError {
                 request,
                 message: error.to_string(),
-            })
+            })?;
+        runtime.commit_mtimecmp_program(deadline, program.generation(), false);
+        Ok(())
     }
 
     fn write_mtimecmp_parallel(
@@ -1199,19 +1229,19 @@ impl ClintMmioDevice {
         register_offset: u64,
     ) -> Result<(), MmioError> {
         let deadline = clint_u64_write_value(request, runtime.mtimecmp(), register_offset)?;
-        let program = runtime.replace_mtimecmp(deadline);
+        let program = runtime.next_mtimecmp_program();
         let current_mtime = self.current_mtime(context.now());
         if deadline <= current_mtime {
-            runtime.mark_timer_asserted(program.generation());
-            return runtime
+            runtime
                 .config
                 .timer_interrupt
                 .assert_parallel(context, runtime.config.timer_source)
-                .map(|_| ())
                 .map_err(|error| MmioError::DeviceError {
                     request: request.id(),
                     message: error.to_string(),
-                });
+                })?;
+            runtime.commit_mtimecmp_program(deadline, program.generation(), true);
+            return Ok(());
         }
 
         if program.was_asserted() {
@@ -1225,18 +1255,21 @@ impl ClintMmioDevice {
                 })?;
         }
         if self.timebase == ClintTimebase::RtcDriven {
+            runtime.commit_mtimecmp_program(deadline, program.generation(), false);
             return Ok(());
         }
         let delay = deadline - context.now();
         let runtime = runtime.clone();
         let request = request.id();
+        let timer_source = runtime.config.timer_source;
+        let event_runtime = runtime.clone();
         context
             .schedule_local_after(delay, move |context| {
-                if runtime.mark_timer_asserted(program.generation()) {
-                    runtime
+                if event_runtime.mark_timer_asserted(program.generation()) {
+                    event_runtime
                         .config
                         .timer_interrupt
-                        .assert_parallel(context, runtime.config.timer_source)
+                        .assert_parallel(context, timer_source)
                         .expect("validated CLINT timer interrupt");
                 }
             })
@@ -1244,6 +1277,8 @@ impl ClintMmioDevice {
             .map_err(|error| MmioError::DeviceError {
                 request,
                 message: error.to_string(),
-            })
+            })?;
+        runtime.commit_mtimecmp_program(deadline, program.generation(), false);
+        Ok(())
     }
 }

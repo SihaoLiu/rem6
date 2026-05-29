@@ -125,7 +125,14 @@ isolated bugs:
   only after the deadline event is accepted by the scheduler. Invalid timer
   interrupt wiring and deadline-delivery lookahead violations therefore return
   typed errors at the MMIO/device call site instead of persisting ghost timer
-  state or deferring the failure to a future callback.
+  state or deferring the failure to a future callback. CLINT hart construction
+  now validates both software and timer interrupt routes before runtime state
+  exists, so bad platform wiring cannot be deferred to `msip` writes,
+  `mtimecmp` callbacks, reset deassertions, or RTC pulse callbacks. CLINT
+  `msip`, immediate `mtimecmp`, and RTC-driven timer assertion paths also
+  commit register or asserted-line state only after the required interrupt
+  signal has been accepted by the scheduler, preventing remote-boundary
+  failures from leaving partially committed platform state.
   Wait-for
   edge-kind observation windows are now owned by `rem6-kernel`, so every
   subsystem can report distinct edge counts plus first and last observed ticks
@@ -1543,7 +1550,12 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   changes. Programmable timer tests also cover serial and parallel rejection of
   invalid interrupt routes before arm state is committed, plus serial and
   parallel rejection of deadline-event delivery that violates remote lookahead
-  before any timer generation is persisted.
+  before any timer generation is persisted. CLINT tests cover constructor-time
+  rejection of invalid hart interrupt routes before any MMIO, reset, or RTC
+  callback can observe partial device state. They also cover `msip`,
+  immediate `mtimecmp`, and RTC-driven timer assertion failures that reject
+  remote delivery before changing the guest-visible CLINT register or
+  asserted-line state.
 - System action tests cover CLINT checkpoint-bank capture and restore through
   host checkpoint manifests for per-hart `msip`, `mtimecmp`, timer assertion,
   and RTC-backed `mtime` state.

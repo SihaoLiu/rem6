@@ -1,12 +1,12 @@
 use std::sync::{Arc, Mutex};
 
 use rem6_interrupt::{
-    InterruptController, InterruptEvent, InterruptEventKind, InterruptLineChannel, InterruptLineId,
-    InterruptLinePort, InterruptRoute, InterruptSourceId, InterruptTargetId,
+    InterruptController, InterruptError, InterruptEvent, InterruptEventKind, InterruptLineChannel,
+    InterruptLineId, InterruptLinePort, InterruptRoute, InterruptSourceId, InterruptTargetId,
 };
-use rem6_kernel::{PartitionId, PartitionedScheduler};
+use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerError};
 use rem6_memory::{AccessSize, Address, ByteMask};
-use rem6_mmio::{MmioRequest, MmioRequestId, MmioResponse};
+use rem6_mmio::{MmioError, MmioRequest, MmioRequestId, MmioResponse};
 use rem6_timer::{
     ClintHartConfig, ClintMmioDevice, ClintResetPolicy, ClintTimebase, RiscvRtcSource, TimerError,
     CLINT_MSIP_BASE_OFFSET, CLINT_MSIP_REGISTER_BYTES, CLINT_MTIMECMP_BASE_OFFSET,
@@ -37,6 +37,264 @@ fn interrupt_port(
         InterruptLineChannel::new(route, 2).unwrap(),
         Arc::clone(controller),
     )
+}
+
+#[test]
+fn clint_mmio_rejects_invalid_timer_interrupt_route_before_construction() {
+    let cpu = PartitionId::new(0);
+    let controller = Arc::new(Mutex::new(InterruptController::new()));
+    let software_line = InterruptLineId::new(66);
+    let timer_line = InterruptLineId::new(67);
+    let target = InterruptTargetId::new(0);
+    let software_source = InterruptSourceId::new(30);
+    let timer_source = InterruptSourceId::new(31);
+    let software_port = interrupt_port(&controller, software_line, target, cpu);
+    let expected_timer_route = InterruptRoute::new(timer_line, target, cpu);
+    controller
+        .lock()
+        .unwrap()
+        .register_route(expected_timer_route)
+        .unwrap();
+    let actual_timer_route = InterruptRoute::new(timer_line, InterruptTargetId::new(1), cpu);
+    let timer_port = InterruptLinePort::new(
+        InterruptLineChannel::new(actual_timer_route, 2).unwrap(),
+        Arc::clone(&controller),
+    );
+
+    let error = ClintMmioDevice::new(
+        Address::new(0x200_0000),
+        [ClintHartConfig::new(
+            0,
+            software_port,
+            software_source,
+            timer_port,
+            timer_source,
+        )],
+    )
+    .unwrap_err();
+    assert_eq!(
+        error,
+        TimerError::ClintInterruptRoute {
+            hart: 0,
+            error: InterruptError::RouteMismatch {
+                line: timer_line,
+                expected: expected_timer_route,
+                actual: actual_timer_route,
+            },
+        }
+    );
+    assert!(controller.lock().unwrap().history().is_empty());
+}
+
+#[test]
+fn clint_mmio_msip_write_rejects_delivery_before_state_change() {
+    let cpu = PartitionId::new(0);
+    let clint_partition = PartitionId::new(1);
+    let controller = Arc::new(Mutex::new(InterruptController::new()));
+    let software_line = InterruptLineId::new(68);
+    let timer_line = InterruptLineId::new(69);
+    let target = InterruptTargetId::new(0);
+    let software_source = InterruptSourceId::new(32);
+    let timer_source = InterruptSourceId::new(33);
+    let software_port = interrupt_port(&controller, software_line, target, cpu);
+    let timer_port = interrupt_port(&controller, timer_line, target, cpu);
+    let device = ClintMmioDevice::new(
+        Address::new(0x200_0000),
+        [ClintHartConfig::new(
+            0,
+            software_port,
+            software_source,
+            timer_port,
+            timer_source,
+        )],
+    )
+    .unwrap();
+    let observed_device = device.clone();
+    let result = Arc::new(Mutex::new(None));
+    let captured = Arc::clone(&result);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 3).unwrap();
+
+    scheduler
+        .schedule_at(clint_partition, 5, move |context| {
+            let error = device
+                .respond(
+                    context,
+                    &MmioRequest::write(
+                        MmioRequestId::new(30),
+                        Address::new(0x200_0000 + CLINT_MSIP_BASE_OFFSET),
+                        le32(1),
+                        full_mask(CLINT_MSIP_REGISTER_BYTES),
+                    )
+                    .unwrap(),
+                )
+                .unwrap_err();
+            *captured.lock().unwrap() = Some(error);
+        })
+        .unwrap();
+
+    let summary = scheduler.run_until_idle();
+
+    assert_eq!(summary.executed_events(), 1);
+    assert_eq!(
+        result.lock().unwrap().as_ref().unwrap(),
+        &MmioError::DeviceError {
+            request: MmioRequestId::new(30),
+            message: InterruptError::Scheduler(
+                SchedulerError::RemoteDeliveryBeforeLookaheadBoundary {
+                    source: clint_partition,
+                    target: cpu,
+                    source_tick: 5,
+                    delivery_tick: 7,
+                    minimum_delivery_tick: 8,
+                }
+            )
+            .to_string(),
+        }
+    );
+    assert_eq!(observed_device.snapshot().harts()[0].msip(), 0);
+    assert!(controller.lock().unwrap().history().is_empty());
+}
+
+#[test]
+fn clint_mmio_mtimecmp_write_rejects_delivery_before_state_change() {
+    let cpu = PartitionId::new(0);
+    let clint_partition = PartitionId::new(1);
+    let controller = Arc::new(Mutex::new(InterruptController::new()));
+    let software_line = InterruptLineId::new(92);
+    let timer_line = InterruptLineId::new(93);
+    let target = InterruptTargetId::new(0);
+    let software_source = InterruptSourceId::new(34);
+    let timer_source = InterruptSourceId::new(35);
+    let software_port = interrupt_port(&controller, software_line, target, cpu);
+    let timer_port = interrupt_port(&controller, timer_line, target, cpu);
+    let device = ClintMmioDevice::new(
+        Address::new(0x200_0000),
+        [ClintHartConfig::new(
+            0,
+            software_port,
+            software_source,
+            timer_port,
+            timer_source,
+        )],
+    )
+    .unwrap();
+    let observed_device = device.clone();
+    let result = Arc::new(Mutex::new(None));
+    let captured = Arc::clone(&result);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 3).unwrap();
+
+    scheduler
+        .schedule_at(clint_partition, 5, move |context| {
+            let error = device
+                .respond(
+                    context,
+                    &MmioRequest::write(
+                        MmioRequestId::new(31),
+                        Address::new(0x200_0000 + CLINT_MTIMECMP_BASE_OFFSET),
+                        le64(5),
+                        full_mask(CLINT_MTIMECMP_REGISTER_BYTES),
+                    )
+                    .unwrap(),
+                )
+                .unwrap_err();
+            *captured.lock().unwrap() = Some(error);
+        })
+        .unwrap();
+
+    let summary = scheduler.run_until_idle();
+
+    assert_eq!(summary.executed_events(), 1);
+    assert_eq!(
+        result.lock().unwrap().as_ref().unwrap(),
+        &MmioError::DeviceError {
+            request: MmioRequestId::new(31),
+            message: InterruptError::Scheduler(
+                SchedulerError::RemoteDeliveryBeforeLookaheadBoundary {
+                    source: clint_partition,
+                    target: cpu,
+                    source_tick: 5,
+                    delivery_tick: 7,
+                    minimum_delivery_tick: 8,
+                }
+            )
+            .to_string(),
+        }
+    );
+    let snapshot = observed_device.snapshot();
+    assert_eq!(snapshot.harts()[0].mtimecmp(), u64::MAX);
+    assert!(!snapshot.harts()[0].timer_asserted());
+    assert!(controller.lock().unwrap().history().is_empty());
+}
+
+#[test]
+fn clint_rtc_tick_rejects_delivery_before_asserted_state_change() {
+    let cpu = PartitionId::new(0);
+    let clint_partition = PartitionId::new(1);
+    let controller = Arc::new(Mutex::new(InterruptController::new()));
+    let software_line = InterruptLineId::new(94);
+    let timer_line = InterruptLineId::new(95);
+    let target = InterruptTargetId::new(0);
+    let software_source = InterruptSourceId::new(36);
+    let timer_source = InterruptSourceId::new(37);
+    let software_port = interrupt_port(&controller, software_line, target, cpu);
+    let timer_port = interrupt_port(&controller, timer_line, target, cpu);
+    let device = ClintMmioDevice::with_timebase(
+        Address::new(0x200_0000),
+        [ClintHartConfig::new(
+            0,
+            software_port,
+            software_source,
+            timer_port,
+            timer_source,
+        )],
+        ClintTimebase::rtc_driven(),
+    )
+    .unwrap();
+    let observed_device = device.clone();
+    let result = Arc::new(Mutex::new(None));
+    let captured = Arc::clone(&result);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 3).unwrap();
+
+    scheduler
+        .schedule_at(clint_partition, 0, move |context| {
+            device
+                .respond(
+                    context,
+                    &MmioRequest::write(
+                        MmioRequestId::new(32),
+                        Address::new(0x200_0000 + CLINT_MTIMECMP_BASE_OFFSET),
+                        le64(1),
+                        full_mask(CLINT_MTIMECMP_REGISTER_BYTES),
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+            *captured.lock().unwrap() = Some(device.rtc_tick(context));
+        })
+        .unwrap();
+
+    let summary = scheduler.run_until_idle();
+
+    assert_eq!(summary.executed_events(), 1);
+    assert_eq!(
+        result.lock().unwrap().as_ref().unwrap(),
+        &Err(TimerError::ClintRtcSignal {
+            hart: 0,
+            error: InterruptError::Scheduler(
+                SchedulerError::RemoteDeliveryBeforeLookaheadBoundary {
+                    source: clint_partition,
+                    target: cpu,
+                    source_tick: 0,
+                    delivery_tick: 2,
+                    minimum_delivery_tick: 3,
+                }
+            ),
+        })
+    );
+    let snapshot = observed_device.snapshot();
+    assert_eq!(snapshot.mtime(), 1);
+    assert!(!snapshot.harts()[0].timer_asserted());
+    assert!(controller.lock().unwrap().history().is_empty());
 }
 
 #[test]

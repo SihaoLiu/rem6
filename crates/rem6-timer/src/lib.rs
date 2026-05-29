@@ -610,6 +610,10 @@ pub enum TimerError {
         expected: Vec<u32>,
         actual: Vec<u32>,
     },
+    ClintInterruptRoute {
+        hart: u32,
+        error: InterruptError,
+    },
     ClintResetSignal {
         hart: u32,
         error: InterruptError,
@@ -654,6 +658,12 @@ impl fmt::Display for TimerError {
                 formatter,
                 "CLINT snapshot hart mismatch: expected {expected:?}, got {actual:?}"
             ),
+            Self::ClintInterruptRoute { hart, error } => {
+                write!(
+                    formatter,
+                    "CLINT hart {hart} interrupt route validation failed: {error}"
+                )
+            }
             Self::ClintResetSignal { hart, error } => {
                 write!(formatter, "CLINT hart {hart} reset signal failed: {error}")
             }
@@ -692,9 +702,9 @@ impl fmt::Display for TimerError {
 impl Error for TimerError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::ClintResetSignal { error, .. } | Self::ClintRtcSignal { error, .. } => {
-                Some(error)
-            }
+            Self::ClintInterruptRoute { error, .. }
+            | Self::ClintResetSignal { error, .. }
+            | Self::ClintRtcSignal { error, .. } => Some(error),
             Self::Scheduler(error) => Some(error),
             Self::Interrupt(error) => Some(error),
             _ => None,
