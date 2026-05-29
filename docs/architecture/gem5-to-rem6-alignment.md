@@ -108,6 +108,10 @@ isolated bugs:
   against the same boundary before device work is enqueued, so guest-host
   notifications and device launches cannot bypass the kernel contract through
   a higher-level helper.
+  Transport route preflight also walks request and earliest-response hops with
+  absolute source and delivery ticks before scheduling memory traffic, so
+  invalid NoC or memory route latencies fail as typed boundary evidence rather
+  than as callback panics inside transport event delivery.
   Wait-for
   edge-kind observation windows are now owned by `rem6-kernel`, so every
   subsystem can report distinct edge counts plus first and last observed ticks

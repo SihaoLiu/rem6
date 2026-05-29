@@ -129,12 +129,6 @@ pub enum TransportError {
     UnknownRoute {
         route: MemoryRouteId,
     },
-    LatencyBelowLookahead {
-        route: MemoryRouteId,
-        latency: TransportLatency,
-        delay: Tick,
-        minimum: Tick,
-    },
     MissingFabricModel {
         route: MemoryRouteId,
     },
@@ -159,16 +153,6 @@ impl fmt::Display for TransportError {
             Self::UnknownRoute { route } => {
                 write!(formatter, "route {} is not declared", route.get())
             }
-            Self::LatencyBelowLookahead {
-                route,
-                latency,
-                delay,
-                minimum,
-            } => write!(
-                formatter,
-                "route {} {latency:?} latency {delay} is below scheduler lookahead {minimum}",
-                route.get()
-            ),
             Self::MissingFabricModel { route } => {
                 write!(formatter, "route {} needs a fabric model", route.get())
             }
@@ -817,10 +801,9 @@ impl MemoryTransport {
             .route(route_id)
             .cloned()
             .ok_or(TransportError::UnknownRoute { route: route_id })?;
-        self.validate_scheduler_route(scheduler, route_id, &route)?;
-
         let source_partition = route.source_partition();
         let start_tick = scheduler.now();
+        self.validate_scheduler_route(scheduler, route_id, &route, start_tick)?;
         let fabric = self.fabric.clone();
         scheduler
             .schedule_at(source_partition, start_tick, move |context| {
@@ -867,10 +850,9 @@ impl MemoryTransport {
             .route(route_id)
             .cloned()
             .ok_or(TransportError::UnknownRoute { route: route_id })?;
-        self.validate_scheduler_route(scheduler, route_id, &route)?;
-
         let source_partition = route.source_partition();
         let start_tick = scheduler.now();
+        self.validate_scheduler_route(scheduler, route_id, &route, start_tick)?;
         let fabric = self.fabric.clone();
         scheduler
             .schedule_parallel_at(source_partition, start_tick, move |context| {
@@ -982,7 +964,7 @@ impl MemoryTransport {
             .ok_or(TransportError::UnknownRoute {
                 route: transaction.route,
             })?;
-        self.validate_scheduler_route(scheduler, transaction.route, &route)?;
+        self.validate_scheduler_route(scheduler, transaction.route, &route, start_tick)?;
         let source_now = scheduler
             .partition_now(route.source_partition())
             .map_err(TransportError::Scheduler)?;
@@ -1485,11 +1467,13 @@ impl MemoryTransport {
         scheduler: &PartitionedScheduler,
         route_id: MemoryRouteId,
         route: &MemoryRoute,
+        start_tick: Tick,
     ) -> Result<(), TransportError> {
         let mut previous_partition = route.source_partition();
         scheduler
             .partition_now(previous_partition)
             .map_err(TransportError::Scheduler)?;
+        let mut request_tick = start_tick;
 
         for hop in route.hops() {
             if self.fabric.is_none()
@@ -1501,30 +1485,75 @@ impl MemoryTransport {
                 .partition_now(hop.partition())
                 .map_err(TransportError::Scheduler)?;
 
-            if previous_partition != hop.partition() {
-                let minimum = scheduler.min_remote_delay();
-                if hop.request_latency() < minimum {
-                    return Err(TransportError::LatencyBelowLookahead {
-                        route: route_id,
-                        latency: TransportLatency::Request,
-                        delay: hop.request_latency(),
-                        minimum,
-                    });
-                }
-                if hop.response_latency() < minimum {
-                    return Err(TransportError::LatencyBelowLookahead {
-                        route: route_id,
-                        latency: TransportLatency::Response,
-                        delay: hop.response_latency(),
-                        minimum,
-                    });
-                }
-            }
+            request_tick = validate_transport_hop_boundary(
+                previous_partition,
+                hop.partition(),
+                request_tick,
+                hop.request_latency(),
+                scheduler.min_remote_delay(),
+            )?;
             previous_partition = hop.partition();
+        }
+
+        let mut response_tick = request_tick;
+        let mut response_source = route.target_partition();
+        for (hop_index, hop) in route.hops().iter().enumerate().rev() {
+            let response_target = if hop_index == 0 {
+                route.source_partition()
+            } else {
+                route.hops()[hop_index - 1].partition()
+            };
+            response_tick = validate_transport_hop_boundary(
+                response_source,
+                response_target,
+                response_tick,
+                hop.response_latency(),
+                scheduler.min_remote_delay(),
+            )?;
+            response_source = response_target;
         }
 
         Ok(())
     }
+}
+
+fn validate_transport_hop_boundary(
+    source: PartitionId,
+    target: PartitionId,
+    source_tick: Tick,
+    delay: Tick,
+    min_remote_delay: Tick,
+) -> Result<Tick, TransportError> {
+    let delivery_tick = source_tick
+        .checked_add(delay)
+        .ok_or(TransportError::Scheduler(SchedulerError::TickOverflow {
+            now: source_tick,
+            delay,
+        }))?;
+    if source == target {
+        return Ok(delivery_tick);
+    }
+
+    let minimum_delivery_tick =
+        source_tick
+            .checked_add(min_remote_delay)
+            .ok_or(TransportError::Scheduler(SchedulerError::TickOverflow {
+                now: source_tick,
+                delay: min_remote_delay,
+            }))?;
+    if delivery_tick < minimum_delivery_tick {
+        return Err(TransportError::Scheduler(
+            SchedulerError::RemoteDeliveryBeforeLookaheadBoundary {
+                source,
+                target,
+                source_tick,
+                delivery_tick,
+                minimum_delivery_tick,
+            },
+        ));
+    }
+
+    Ok(delivery_tick)
 }
 
 fn topology_endpoint_partition(
