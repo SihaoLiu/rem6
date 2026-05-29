@@ -188,6 +188,13 @@ isolated bugs:
   represented as typed trap devices in rem6: serial and parallel accesses return
   `MmioError::UnsupportedDeviceAccess` and leave an access log with device name,
   tick, request id, operation, range, and write payload evidence.
+- Classic cache checkpointing in gem5 still treats dirty cache state as a bad
+  checkpoint for the classic cache path: `BaseCache` records the dirty condition
+  during serialization and rejects restore of that checkpoint. rem6 cache-bank
+  snapshots instead preserve dirty line state and data as ordinary typed
+  snapshot state, and expose dirty-line count plus sorted line-address audit
+  views for MSI, MESI, MOESI, and CHI banks so checkpoint validation can prove
+  what would be restored before mutating live cache state.
 - Configuration and experiment reproducibility are too script-dependent in
   gem5. Official documentation describes embedded Python configuration,
   behind-the-scenes port connection behavior, and command-line options whose
@@ -1779,7 +1786,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   ordering propagation, MSHR-to-transport QoS class export, per-cycle MSI bank
   run QoS counts by effective requestor and priority, parallel-cycle history
   counts by effective requestor and priority, and byte-snapshot restore of MSHR
-  queue configuration plus target QoS and ordering state.
+  queue configuration plus target QoS and ordering state, including bank-level
+  dirty-line count and address audit plus dirty data restore for MSI, MESI,
+  MOESI dirty-owner, and CHI dirty states.
 - Cache prefetch tests cover tagged next-line candidate generation, DCPT masked
   delta-pair matching with earliest historical replay and snapshot restore, BOP
   best-offset learning with degree candidate metadata, delayed RR training, RR

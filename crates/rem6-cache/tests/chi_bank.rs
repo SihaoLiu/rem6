@@ -6,7 +6,7 @@ use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryError, MemoryOperation,
     MemoryRequest, MemoryRequestId, MemoryResponse,
 };
-use rem6_protocol_chi::ChiEvent;
+use rem6_protocol_chi::{ChiEvent, ChiState};
 use rem6_transport::TargetOutcome;
 
 fn agent(value: u32) -> AgentId {
@@ -30,6 +30,19 @@ fn read(agent_id: AgentId, sequence: u64, address: u64) -> MemoryRequest {
         MemoryRequestId::new(agent_id, sequence),
         Address::new(address),
         size(8),
+        layout(),
+    )
+    .unwrap()
+}
+
+fn write(agent_id: AgentId, sequence: u64, address: u64, data: Vec<u8>) -> MemoryRequest {
+    let access_size = AccessSize::new(data.len() as u64).unwrap();
+    MemoryRequest::write(
+        MemoryRequestId::new(agent_id, sequence),
+        Address::new(address),
+        access_size,
+        data,
+        ByteMask::full(access_size).unwrap(),
         layout(),
     )
     .unwrap()
@@ -362,6 +375,48 @@ fn chi_cache_bank_write_queue_rejects_foreign_line_layouts() {
         Err(expected_error)
     );
     assert_eq!(bank.write_queue_allocated_count(), 0);
+}
+
+#[test]
+fn chi_cache_bank_snapshot_reports_and_restores_dirty_lines() {
+    let cache_agent = agent(40);
+    let mut bank = ChiCacheBank::new(cache_agent, layout());
+    let store = write(cache_agent, 120, 0x6004, vec![0xde, 0xad]);
+
+    let miss = bank.accept_cpu_request(store).unwrap();
+    assert_eq!(
+        miss.downstream_request().unwrap().operation(),
+        MemoryOperation::ReadUnique
+    );
+    bank.accept_fill(
+        fill(miss.downstream_request().unwrap(), 0x00),
+        ChiEvent::CompDataUniqueDirty,
+    )
+    .unwrap();
+    assert_eq!(
+        bank.state(Address::new(0x6000)),
+        Some(ChiState::UniqueDirty)
+    );
+
+    let snapshot = bank.snapshot();
+    assert_eq!(snapshot.dirty_line_count(), 1);
+    assert_eq!(snapshot.dirty_line_addresses(), vec![Address::new(0x6000)]);
+
+    bank.accept_snoop(Address::new(0x6000), ChiEvent::SnoopUnique)
+        .unwrap();
+    assert_eq!(bank.state(Address::new(0x6000)), Some(ChiState::Invalid));
+
+    bank.restore(&snapshot).unwrap();
+    assert_eq!(
+        bank.state(Address::new(0x6000)),
+        Some(ChiState::UniqueDirty)
+    );
+    let read_back = read(cache_agent, 121, 0x6004);
+    let hit = bank.accept_cpu_request(read_back).unwrap();
+    assert_eq!(
+        response_data(hit.target_outcome().unwrap()),
+        &[0xde, 0xad, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+    );
 }
 
 #[test]

@@ -7,7 +7,7 @@ use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryError, MemoryOperation,
     MemoryRequest, MemoryRequestId, MemoryResponse,
 };
-use rem6_protocol_msi::MsiState;
+use rem6_protocol_msi::{MsiEvent, MsiState};
 use rem6_transport::TargetOutcome;
 
 fn agent(value: u32) -> AgentId {
@@ -31,6 +31,19 @@ fn read(agent_id: AgentId, sequence: u64, address: u64) -> MemoryRequest {
         MemoryRequestId::new(agent_id, sequence),
         Address::new(address),
         size(8),
+        layout(),
+    )
+    .unwrap()
+}
+
+fn write(agent_id: AgentId, sequence: u64, address: u64, data: Vec<u8>) -> MemoryRequest {
+    let access_size = AccessSize::new(data.len() as u64).unwrap();
+    MemoryRequest::write(
+        MemoryRequestId::new(agent_id, sequence),
+        Address::new(address),
+        access_size,
+        data,
+        ByteMask::full(access_size).unwrap(),
         layout(),
     )
     .unwrap()
@@ -580,4 +593,40 @@ fn msi_cache_bank_snapshot_restores_all_lines_and_pending_fills() {
         &[0x22; 8]
     );
     assert_eq!(restored.state(Address::new(0x1010)), Some(MsiState::Shared));
+}
+
+#[test]
+fn msi_cache_bank_snapshot_reports_and_restores_dirty_lines() {
+    let cache_agent = agent(7);
+    let mut bank = MsiCacheBank::new(cache_agent, layout());
+    let store = write(cache_agent, 120, 0x1004, vec![0xde, 0xad]);
+
+    let miss = bank.accept_cpu_request(store.clone()).unwrap();
+    assert_eq!(miss.kind(), CacheControllerResultKind::Miss);
+    assert_eq!(
+        miss.downstream_request().unwrap().operation(),
+        MemoryOperation::ReadUnique
+    );
+    bank.accept_fill(fill(miss.downstream_request().unwrap(), 0x00))
+        .unwrap();
+    assert_eq!(bank.state(Address::new(0x1000)), Some(MsiState::Modified));
+
+    let snapshot = bank.snapshot();
+    assert_eq!(snapshot.dirty_line_count(), 1);
+    assert_eq!(snapshot.dirty_line_addresses(), vec![Address::new(0x1000)]);
+
+    bank.accept_snoop(Address::new(0x1000), MsiEvent::SnoopWrite)
+        .unwrap();
+    assert_eq!(bank.state(Address::new(0x1000)), Some(MsiState::Invalid));
+    assert_eq!(bank.cached_data(Address::new(0x1000)), None);
+
+    bank.restore(&snapshot).unwrap();
+    assert_eq!(bank.state(Address::new(0x1000)), Some(MsiState::Modified));
+    let read_back = read(cache_agent, 121, 0x1004);
+    let hit = bank.accept_cpu_request(read_back).unwrap();
+    assert_eq!(hit.kind(), CacheControllerResultKind::Hit);
+    assert_eq!(
+        response_data(hit.target_outcome().unwrap()),
+        &[0xde, 0xad, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+    );
 }

@@ -243,6 +243,21 @@ impl MsiCacheBankSnapshot {
     pub fn line_count(&self) -> usize {
         self.lines.len()
     }
+
+    pub fn dirty_line_addresses(&self) -> Vec<Address> {
+        self.lines
+            .iter()
+            .filter(|line| line.state().is_modified())
+            .map(|line| line.line().address())
+            .collect()
+    }
+
+    pub fn dirty_line_count(&self) -> usize {
+        self.lines
+            .iter()
+            .filter(|line| line.state().is_modified())
+            .count()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
