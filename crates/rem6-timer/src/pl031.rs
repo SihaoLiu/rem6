@@ -7,6 +7,8 @@ use rem6_kernel::{ParallelSchedulerContext, PartitionId, SchedulerContext, Tick}
 use rem6_memory::Address;
 use rem6_mmio::{MmioDevice, MmioError, MmioOperation, MmioRequest, MmioResponse};
 
+use crate::ArmPrimecellId;
+
 pub const PL031_DATA_OFFSET: u64 = 0x00;
 pub const PL031_MATCH_OFFSET: u64 = 0x04;
 pub const PL031_LOAD_OFFSET: u64 = 0x08;
@@ -17,6 +19,7 @@ pub const PL031_MASKED_ISR_OFFSET: u64 = 0x18;
 pub const PL031_INT_CLEAR_OFFSET: u64 = 0x1c;
 pub const PL031_REGISTER_BYTES: u64 = 4;
 pub const PL031_MMIO_SIZE_BYTES: u64 = 0x1000;
+pub const PL031_PRIMECELL_ID: ArmPrimecellId = ArmPrimecellId::new(0x0004_1031);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Pl031Snapshot {
@@ -357,6 +360,15 @@ impl Pl031RtcMmioDevice {
     ) -> Result<(MmioResponse, bool), MmioError> {
         self.validate_size(request)?;
         let offset = self.offset(request)?;
+        if let Some(value) = PL031_PRIMECELL_ID.read_u32(offset) {
+            return match request.operation() {
+                MmioOperation::Read => Ok((
+                    MmioResponse::completed(request.id(), Some(value.to_le_bytes().to_vec())),
+                    false,
+                )),
+                MmioOperation::Write => Ok((MmioResponse::completed(request.id(), None), false)),
+            };
+        }
         let mut state = self.state.lock().expect("PL031 RTC state lock");
         match request.operation() {
             MmioOperation::Read => {

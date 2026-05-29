@@ -8,9 +8,12 @@ use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{AccessSize, Address, ByteMask};
 use rem6_mmio::{MmioError, MmioRequest, MmioRequestId, MmioResponse};
 use rem6_timer::{
-    Pl031Rtc, Pl031RtcMmioDevice, PL031_CONTROL_OFFSET, PL031_DATA_OFFSET, PL031_INT_CLEAR_OFFSET,
-    PL031_INT_MASK_OFFSET, PL031_LOAD_OFFSET, PL031_MASKED_ISR_OFFSET, PL031_MATCH_OFFSET,
-    PL031_MMIO_SIZE_BYTES, PL031_RAW_ISR_OFFSET, PL031_REGISTER_BYTES,
+    Pl031Rtc, Pl031RtcMmioDevice, AMBA_CELL_ID0_OFFSET, AMBA_CELL_ID1_OFFSET, AMBA_CELL_ID2_OFFSET,
+    AMBA_CELL_ID3_OFFSET, AMBA_PERIPHERAL_ID0_OFFSET, AMBA_PERIPHERAL_ID1_OFFSET,
+    AMBA_PERIPHERAL_ID2_OFFSET, AMBA_PERIPHERAL_ID3_OFFSET, PL031_CONTROL_OFFSET,
+    PL031_DATA_OFFSET, PL031_INT_CLEAR_OFFSET, PL031_INT_MASK_OFFSET, PL031_LOAD_OFFSET,
+    PL031_MASKED_ISR_OFFSET, PL031_MATCH_OFFSET, PL031_MMIO_SIZE_BYTES, PL031_RAW_ISR_OFFSET,
+    PL031_REGISTER_BYTES,
 };
 
 fn register_size() -> AccessSize {
@@ -270,6 +273,92 @@ fn pl031_mmio_supports_parallel_access_and_typed_errors() {
         &[
             InterruptEvent::routed(12, line, target, cpu, source, InterruptEventKind::Assert),
             InterruptEvent::routed(12, line, target, cpu, source, InterruptEventKind::Deassert),
+        ]
+    );
+}
+
+#[test]
+fn pl031_mmio_exposes_gem5_primecell_id_registers() {
+    let rtc_partition = PartitionId::new(0);
+    let base = Address::new(0x1c17_0000);
+    let device = Pl031RtcMmioDevice::new(base, Pl031Rtc::new(10, 5).unwrap());
+    let responses = Arc::new(Mutex::new(Vec::new()));
+    let observed = Arc::clone(&responses);
+    let mut scheduler = PartitionedScheduler::new(1).unwrap();
+
+    scheduler
+        .schedule_at(rtc_partition, 1, move |context| {
+            for (index, offset) in [
+                AMBA_PERIPHERAL_ID0_OFFSET,
+                AMBA_PERIPHERAL_ID1_OFFSET,
+                AMBA_PERIPHERAL_ID2_OFFSET,
+                AMBA_PERIPHERAL_ID3_OFFSET,
+                AMBA_CELL_ID0_OFFSET,
+                AMBA_CELL_ID1_OFFSET,
+                AMBA_CELL_ID2_OFFSET,
+                AMBA_CELL_ID3_OFFSET,
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                responses
+                    .lock()
+                    .unwrap()
+                    .push(device.respond(context, &read_request(100 + index as u64, base, offset)));
+            }
+            device
+                .respond(
+                    context,
+                    &write_request(200, base, AMBA_PERIPHERAL_ID0_OFFSET, 0xff),
+                )
+                .unwrap();
+            responses.lock().unwrap().push(device.respond(
+                context,
+                &read_request(201, base, AMBA_PERIPHERAL_ID0_OFFSET),
+            ));
+        })
+        .unwrap();
+    scheduler.run_until_idle();
+
+    assert_eq!(
+        observed.lock().unwrap().as_slice(),
+        &[
+            Ok(MmioResponse::completed(
+                MmioRequestId::new(100),
+                Some(le32(0x31)),
+            )),
+            Ok(MmioResponse::completed(
+                MmioRequestId::new(101),
+                Some(le32(0x10)),
+            )),
+            Ok(MmioResponse::completed(
+                MmioRequestId::new(102),
+                Some(le32(0x04)),
+            )),
+            Ok(MmioResponse::completed(
+                MmioRequestId::new(103),
+                Some(le32(0x00)),
+            )),
+            Ok(MmioResponse::completed(
+                MmioRequestId::new(104),
+                Some(le32(0x0d)),
+            )),
+            Ok(MmioResponse::completed(
+                MmioRequestId::new(105),
+                Some(le32(0xf0)),
+            )),
+            Ok(MmioResponse::completed(
+                MmioRequestId::new(106),
+                Some(le32(0x05)),
+            )),
+            Ok(MmioResponse::completed(
+                MmioRequestId::new(107),
+                Some(le32(0xb1)),
+            )),
+            Ok(MmioResponse::completed(
+                MmioRequestId::new(201),
+                Some(le32(0x31)),
+            )),
         ]
     );
 }

@@ -7,6 +7,8 @@ use rem6_kernel::{ParallelSchedulerContext, PartitionId, SchedulerContext, Tick}
 use rem6_memory::Address;
 use rem6_mmio::{MmioDevice, MmioError, MmioOperation, MmioRequest, MmioResponse};
 
+use crate::ArmPrimecellId;
+
 pub const SP804_LOAD_OFFSET: u64 = 0x00;
 pub const SP804_CURRENT_OFFSET: u64 = 0x04;
 pub const SP804_CONTROL_OFFSET: u64 = 0x08;
@@ -18,6 +20,7 @@ pub const SP804_REGISTER_BYTES: u64 = 4;
 pub const SP804_TIMER_WINDOW_BYTES: u64 = 0x20;
 pub const SP804_TIMER_COUNT: usize = 2;
 pub const SP804_MMIO_SIZE_BYTES: u64 = 0x1000;
+pub const SP804_PRIMECELL_ID: ArmPrimecellId = ArmPrimecellId::new(0x0014_1804);
 
 const CONTROL_ONE_SHOT: u32 = 1 << 0;
 const CONTROL_TIMER_SIZE_32: u32 = 1 << 1;
@@ -608,7 +611,17 @@ impl Sp804DualTimerMmioDevice {
         tick: Tick,
     ) -> Result<(MmioResponse, Option<usize>), MmioError> {
         self.validate_size(request)?;
-        let (timer_index, offset) = self.decode_offset(request)?;
+        let device_offset = self.offset(request)?;
+        if let Some(value) = SP804_PRIMECELL_ID.read_u32(device_offset) {
+            return match request.operation() {
+                MmioOperation::Read => Ok((
+                    MmioResponse::completed(request.id(), Some(value.to_le_bytes().to_vec())),
+                    None,
+                )),
+                MmioOperation::Write => Ok((MmioResponse::completed(request.id(), None), None)),
+            };
+        }
+        let (timer_index, offset) = self.decode_timer_offset(request, device_offset)?;
         let mut state = self.state.lock().expect("SP804 dual timer state lock");
         match request.operation() {
             MmioOperation::Read => {
@@ -829,15 +842,22 @@ impl Sp804DualTimerMmioDevice {
         Ok(())
     }
 
-    fn decode_offset(&self, request: &MmioRequest) -> Result<(usize, u64), MmioError> {
-        let offset = request
+    fn offset(&self, request: &MmioRequest) -> Result<u64, MmioError> {
+        request
             .range()
             .start()
             .get()
             .checked_sub(self.base.get())
             .ok_or(MmioError::UnmappedAddress {
                 address: request.range().start(),
-            })?;
+            })
+    }
+
+    fn decode_timer_offset(
+        &self,
+        request: &MmioRequest,
+        offset: u64,
+    ) -> Result<(usize, u64), MmioError> {
         let timer_index = (offset / SP804_TIMER_WINDOW_BYTES) as usize;
         let timer_offset = offset % SP804_TIMER_WINDOW_BYTES;
         if timer_index >= SP804_TIMER_COUNT {

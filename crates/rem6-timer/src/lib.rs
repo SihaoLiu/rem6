@@ -9,11 +9,17 @@ use rem6_kernel::{
 use rem6_memory::{Address, ByteMask};
 use rem6_mmio::{MmioAccess, MmioDevice, MmioError, MmioOperation, MmioRequest, MmioResponse};
 
+mod amba;
 mod clint;
 mod pl031;
 mod rtc;
 mod sp804;
 
+pub use self::amba::{
+    ArmPrimecellId, AMBA_CELL_ID0_OFFSET, AMBA_CELL_ID1_OFFSET, AMBA_CELL_ID2_OFFSET,
+    AMBA_CELL_ID3_OFFSET, AMBA_PERIPHERAL_ID0_OFFSET, AMBA_PERIPHERAL_ID1_OFFSET,
+    AMBA_PERIPHERAL_ID2_OFFSET, AMBA_PERIPHERAL_ID3_OFFSET,
+};
 pub use self::clint::{
     ClintHartConfig, ClintHartSnapshot, ClintId, ClintMmioDevice, ClintResetPolicy, ClintSnapshot,
     ClintTimebase, RiscvRtcSource, CLINT_MSIP_BASE_OFFSET, CLINT_MSIP_REGISTER_BYTES,
@@ -24,7 +30,7 @@ pub use self::pl031::{
     Pl031Error, Pl031Rtc, Pl031RtcMmioDevice, Pl031RtcMmioSnapshot, Pl031Snapshot,
     Pl031SnapshotFields, PL031_CONTROL_OFFSET, PL031_DATA_OFFSET, PL031_INT_CLEAR_OFFSET,
     PL031_INT_MASK_OFFSET, PL031_LOAD_OFFSET, PL031_MASKED_ISR_OFFSET, PL031_MATCH_OFFSET,
-    PL031_MMIO_SIZE_BYTES, PL031_RAW_ISR_OFFSET, PL031_REGISTER_BYTES,
+    PL031_MMIO_SIZE_BYTES, PL031_PRIMECELL_ID, PL031_RAW_ISR_OFFSET, PL031_REGISTER_BYTES,
 };
 pub use self::rtc::{
     Mc146818Rtc, Mc146818RtcMmioDevice, Mc146818RtcMmioSnapshot, RtcDateTime, RtcEncoding,
@@ -40,8 +46,8 @@ pub use self::sp804::{
     Sp804DualTimer, Sp804DualTimerMmioDevice, Sp804DualTimerMmioSnapshot, Sp804DualTimerSnapshot,
     Sp804Error, Sp804Timer, Sp804TimerControl, Sp804TimerSnapshot, Sp804TimerSnapshotFields,
     SP804_BGLOAD_OFFSET, SP804_CONTROL_OFFSET, SP804_CURRENT_OFFSET, SP804_INT_CLEAR_OFFSET,
-    SP804_LOAD_OFFSET, SP804_MASKED_ISR_OFFSET, SP804_MMIO_SIZE_BYTES, SP804_RAW_ISR_OFFSET,
-    SP804_REGISTER_BYTES, SP804_TIMER_COUNT, SP804_TIMER_WINDOW_BYTES,
+    SP804_LOAD_OFFSET, SP804_MASKED_ISR_OFFSET, SP804_MMIO_SIZE_BYTES, SP804_PRIMECELL_ID,
+    SP804_RAW_ISR_OFFSET, SP804_REGISTER_BYTES, SP804_TIMER_COUNT, SP804_TIMER_WINDOW_BYTES,
 };
 
 pub const TIMER_MMIO_REGISTER_BYTES: u64 = 8;

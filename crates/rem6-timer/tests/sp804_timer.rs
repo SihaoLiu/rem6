@@ -8,10 +8,12 @@ use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{AccessSize, Address, ByteMask};
 use rem6_mmio::{MmioError, MmioRequest, MmioRequestId, MmioResponse};
 use rem6_timer::{
-    Sp804DualTimer, Sp804DualTimerMmioDevice, Sp804TimerControl, SP804_BGLOAD_OFFSET,
-    SP804_CONTROL_OFFSET, SP804_CURRENT_OFFSET, SP804_INT_CLEAR_OFFSET, SP804_LOAD_OFFSET,
-    SP804_MASKED_ISR_OFFSET, SP804_MMIO_SIZE_BYTES, SP804_RAW_ISR_OFFSET, SP804_REGISTER_BYTES,
-    SP804_TIMER_WINDOW_BYTES,
+    Sp804DualTimer, Sp804DualTimerMmioDevice, Sp804TimerControl, AMBA_CELL_ID0_OFFSET,
+    AMBA_CELL_ID1_OFFSET, AMBA_CELL_ID2_OFFSET, AMBA_CELL_ID3_OFFSET, AMBA_PERIPHERAL_ID0_OFFSET,
+    AMBA_PERIPHERAL_ID1_OFFSET, AMBA_PERIPHERAL_ID2_OFFSET, AMBA_PERIPHERAL_ID3_OFFSET,
+    SP804_BGLOAD_OFFSET, SP804_CONTROL_OFFSET, SP804_CURRENT_OFFSET, SP804_INT_CLEAR_OFFSET,
+    SP804_LOAD_OFFSET, SP804_MASKED_ISR_OFFSET, SP804_MMIO_SIZE_BYTES, SP804_RAW_ISR_OFFSET,
+    SP804_REGISTER_BYTES, SP804_TIMER_WINDOW_BYTES,
 };
 
 fn register_size() -> AccessSize {
@@ -353,6 +355,92 @@ fn sp804_mmio_supports_parallel_access_and_typed_errors() {
         &[
             InterruptEvent::routed(7, line0, target, cpu, source0, InterruptEventKind::Assert),
             InterruptEvent::routed(7, line0, target, cpu, source0, InterruptEventKind::Deassert),
+        ]
+    );
+}
+
+#[test]
+fn sp804_mmio_exposes_gem5_primecell_id_registers() {
+    let timer_partition = PartitionId::new(0);
+    let base = Address::new(0x1c11_0000);
+    let device = Sp804DualTimerMmioDevice::new(base, Sp804DualTimer::new(1, 1).unwrap());
+    let responses = Arc::new(Mutex::new(Vec::new()));
+    let observed = Arc::clone(&responses);
+    let mut scheduler = PartitionedScheduler::new(1).unwrap();
+
+    scheduler
+        .schedule_at(timer_partition, 1, move |context| {
+            for (index, offset) in [
+                AMBA_PERIPHERAL_ID0_OFFSET,
+                AMBA_PERIPHERAL_ID1_OFFSET,
+                AMBA_PERIPHERAL_ID2_OFFSET,
+                AMBA_PERIPHERAL_ID3_OFFSET,
+                AMBA_CELL_ID0_OFFSET,
+                AMBA_CELL_ID1_OFFSET,
+                AMBA_CELL_ID2_OFFSET,
+                AMBA_CELL_ID3_OFFSET,
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                responses
+                    .lock()
+                    .unwrap()
+                    .push(device.respond(context, &read_request(100 + index as u64, base, offset)));
+            }
+            device
+                .respond(
+                    context,
+                    &write_request(200, base, AMBA_PERIPHERAL_ID0_OFFSET, 0xff),
+                )
+                .unwrap();
+            responses.lock().unwrap().push(device.respond(
+                context,
+                &read_request(201, base, AMBA_PERIPHERAL_ID0_OFFSET),
+            ));
+        })
+        .unwrap();
+    scheduler.run_until_idle();
+
+    assert_eq!(
+        observed.lock().unwrap().as_slice(),
+        &[
+            Ok(MmioResponse::completed(
+                MmioRequestId::new(100),
+                Some(le32(0x04)),
+            )),
+            Ok(MmioResponse::completed(
+                MmioRequestId::new(101),
+                Some(le32(0x18)),
+            )),
+            Ok(MmioResponse::completed(
+                MmioRequestId::new(102),
+                Some(le32(0x14)),
+            )),
+            Ok(MmioResponse::completed(
+                MmioRequestId::new(103),
+                Some(le32(0x00)),
+            )),
+            Ok(MmioResponse::completed(
+                MmioRequestId::new(104),
+                Some(le32(0x0d)),
+            )),
+            Ok(MmioResponse::completed(
+                MmioRequestId::new(105),
+                Some(le32(0xf0)),
+            )),
+            Ok(MmioResponse::completed(
+                MmioRequestId::new(106),
+                Some(le32(0x05)),
+            )),
+            Ok(MmioResponse::completed(
+                MmioRequestId::new(107),
+                Some(le32(0xb1)),
+            )),
+            Ok(MmioResponse::completed(
+                MmioRequestId::new(201),
+                Some(le32(0x04)),
+            )),
         ]
     );
 }
