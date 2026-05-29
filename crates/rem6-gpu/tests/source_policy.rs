@@ -72,6 +72,30 @@ fn gpu_trace_contracts_live_in_focused_module() {
 }
 
 #[test]
+fn gpu_snapshot_contracts_live_in_focused_module() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let lib_rs = fs::read_to_string(crate_dir.join("src/lib.rs")).unwrap();
+    let snapshot_rs = crate_dir.join("src/snapshot.rs");
+
+    assert!(
+        snapshot_rs.exists(),
+        "GPU snapshot contracts belong in src/snapshot.rs"
+    );
+    assert!(
+        !lib_rs.contains("pub struct GpuDeviceSnapshot {"),
+        "src/lib.rs should re-export GPU device snapshots from a focused module"
+    );
+    assert!(
+        !lib_rs.contains("pub struct GpuSlotSnapshot {"),
+        "src/lib.rs should re-export GPU slot snapshots from a focused module"
+    );
+    assert!(
+        !lib_rs.contains("pub struct GpuQueuedWorkgroupSnapshot {"),
+        "src/lib.rs should re-export GPU queued workgroup snapshots from a focused module"
+    );
+}
+
+#[test]
 fn gpu_source_files_stay_within_size_limit() {
     let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut oversized = Vec::new();

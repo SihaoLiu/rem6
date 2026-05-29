@@ -1,5 +1,6 @@
 mod command;
 mod error;
+mod snapshot;
 mod topology;
 mod trace;
 
@@ -22,6 +23,7 @@ use rem6_transport::{
     MemoryRouteId, MemoryTrace, MemoryTransport, ParallelMemoryTransaction, RequestDelivery,
     ResponseDelivery, TargetOutcome,
 };
+pub use snapshot::{GpuDeviceSnapshot, GpuQueuedWorkgroupSnapshot, GpuSlotSnapshot};
 
 pub use topology::{GpuCommandPath, GpuTopologyConfig, GpuTopologyDevice};
 pub use trace::{GpuTraceEvent, GpuTraceKind, GpuWorkgroupCompletion};
@@ -228,15 +230,6 @@ impl GpuDmaIssueRecord {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct GpuDeviceSnapshot {
-    slots: Vec<GpuSlotSnapshot>,
-    trace: Vec<GpuTraceEvent>,
-    completions: Vec<GpuWorkgroupCompletion>,
-    pending_dma_writes: Vec<GpuPendingDmaWrite>,
-    dma_completions: Vec<GpuDmaCompletion>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ParallelGpuRunSummary {
     scheduler_run: RecordedConservativeRunSummary,
     trace_event_count: usize,
@@ -371,154 +364,6 @@ impl ParallelGpuRunSummary {
 
     pub const fn has_dma_activity(&self) -> bool {
         self.pending_dma_write_count != 0 || self.dma_completion_count != 0
-    }
-}
-
-impl GpuDeviceSnapshot {
-    pub fn new(
-        slots: Vec<GpuSlotSnapshot>,
-        trace: Vec<GpuTraceEvent>,
-        completions: Vec<GpuWorkgroupCompletion>,
-        pending_dma_writes: Vec<GpuPendingDmaWrite>,
-        dma_completions: Vec<GpuDmaCompletion>,
-    ) -> Self {
-        Self {
-            slots,
-            trace,
-            completions,
-            pending_dma_writes,
-            dma_completions,
-        }
-    }
-
-    pub fn slots(&self) -> &[GpuSlotSnapshot] {
-        &self.slots
-    }
-
-    pub fn slot_count(&self) -> usize {
-        self.slots.len()
-    }
-
-    pub fn has_queued_workgroups(&self) -> bool {
-        self.slots.iter().any(|slot| !slot.queued().is_empty())
-    }
-
-    pub fn trace(&self) -> &[GpuTraceEvent] {
-        &self.trace
-    }
-
-    pub fn completions(&self) -> &[GpuWorkgroupCompletion] {
-        &self.completions
-    }
-
-    pub fn pending_dma_writes(&self) -> &[GpuPendingDmaWrite] {
-        &self.pending_dma_writes
-    }
-
-    pub fn has_pending_dma_writes(&self) -> bool {
-        !self.pending_dma_writes.is_empty()
-    }
-
-    pub fn dma_completions(&self) -> &[GpuDmaCompletion] {
-        &self.dma_completions
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct GpuSlotSnapshot {
-    available_at: Tick,
-    pump_scheduled: bool,
-    queued: Vec<GpuQueuedWorkgroupSnapshot>,
-}
-
-impl GpuSlotSnapshot {
-    pub fn new(
-        available_at: Tick,
-        pump_scheduled: bool,
-        queued: Vec<GpuQueuedWorkgroupSnapshot>,
-    ) -> Self {
-        Self {
-            available_at,
-            pump_scheduled,
-            queued,
-        }
-    }
-
-    pub const fn available_at(&self) -> Tick {
-        self.available_at
-    }
-
-    pub const fn pump_scheduled(&self) -> bool {
-        self.pump_scheduled
-    }
-
-    pub fn queued(&self) -> &[GpuQueuedWorkgroupSnapshot] {
-        &self.queued
-    }
-
-    pub fn is_idle(&self) -> bool {
-        !self.pump_scheduled && self.queued.is_empty()
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct GpuQueuedWorkgroupSnapshot {
-    kernel: GpuKernelId,
-    workgroup: GpuWorkgroupId,
-    compute_unit: u32,
-    slot: u32,
-    queued_at: Tick,
-    started_at: Tick,
-    completed_at: Tick,
-}
-
-impl GpuQueuedWorkgroupSnapshot {
-    pub const fn new(
-        kernel: GpuKernelId,
-        workgroup: GpuWorkgroupId,
-        compute_unit: u32,
-        slot: u32,
-        queued_at: Tick,
-        started_at: Tick,
-        completed_at: Tick,
-    ) -> Self {
-        Self {
-            kernel,
-            workgroup,
-            compute_unit,
-            slot,
-            queued_at,
-            started_at,
-            completed_at,
-        }
-    }
-
-    pub const fn kernel(self) -> GpuKernelId {
-        self.kernel
-    }
-
-    pub const fn workgroup(self) -> GpuWorkgroupId {
-        self.workgroup
-    }
-
-    pub const fn compute_unit(self) -> u32 {
-        self.compute_unit
-    }
-
-    pub const fn slot(self) -> u32 {
-        self.slot
-    }
-
-    pub const fn queued_at(self) -> Tick {
-        self.queued_at
-    }
-
-    pub const fn started_at(self) -> Tick {
-        self.started_at
-    }
-
-    pub const fn completed_at(self) -> Tick {
-        self.completed_at
     }
 }
 
@@ -1055,14 +900,14 @@ impl GpuDeviceState {
     fn from_snapshot(snapshot: &GpuDeviceSnapshot) -> Self {
         Self {
             slots: snapshot
-                .slots
+                .slots()
                 .iter()
                 .map(GpuSlotState::from_snapshot)
                 .collect(),
-            trace: snapshot.trace.clone(),
-            completions: snapshot.completions.clone(),
-            pending_dma_writes: snapshot.pending_dma_writes.clone(),
-            dma_completions: snapshot.dma_completions.clone(),
+            trace: snapshot.trace().to_vec(),
+            completions: snapshot.completions().to_vec(),
+            pending_dma_writes: snapshot.pending_dma_writes().to_vec(),
+            dma_completions: snapshot.dma_completions().to_vec(),
             wait_log: Vec::new(),
         }
     }
@@ -1139,10 +984,10 @@ impl GpuSlotState {
 
     fn from_snapshot(snapshot: &GpuSlotSnapshot) -> Self {
         Self {
-            available_at: snapshot.available_at,
-            pump_scheduled: snapshot.pump_scheduled,
+            available_at: snapshot.available_at(),
+            pump_scheduled: snapshot.pump_scheduled(),
             queued: snapshot
-                .queued
+                .queued()
                 .iter()
                 .map(GpuQueuedWorkgroup::from_snapshot)
                 .collect(),
@@ -1176,13 +1021,13 @@ impl GpuQueuedWorkgroup {
 
     fn from_snapshot(snapshot: &GpuQueuedWorkgroupSnapshot) -> Self {
         Self {
-            kernel: snapshot.kernel,
-            workgroup: snapshot.workgroup,
-            compute_unit: snapshot.compute_unit,
-            slot: snapshot.slot,
-            queued_at: snapshot.queued_at,
-            started_at: snapshot.started_at,
-            completed_at: snapshot.completed_at,
+            kernel: snapshot.kernel(),
+            workgroup: snapshot.workgroup(),
+            compute_unit: snapshot.compute_unit(),
+            slot: snapshot.slot(),
+            queued_at: snapshot.queued_at(),
+            started_at: snapshot.started_at(),
+            completed_at: snapshot.completed_at(),
         }
     }
 }
