@@ -6,8 +6,8 @@ use rem6_checkpoint::{
 use rem6_cpu::{CpuCore, CpuFetchConfig, CpuId, CpuResetState, RiscvCore};
 use rem6_dram::{DramControllerConfig, DramGeometry, DramMemoryController, DramTiming};
 use rem6_interrupt::{
-    InterruptController, InterruptError, InterruptLineChannel, InterruptLineId, InterruptLinePort,
-    InterruptPriority, InterruptRoute, InterruptSourceId, InterruptTargetId,
+    InterruptController, InterruptError, InterruptEventKind, InterruptLineChannel, InterruptLineId,
+    InterruptLinePort, InterruptPriority, InterruptRoute, InterruptSourceId, InterruptTargetId,
 };
 use rem6_isa_riscv::Register;
 use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerError};
@@ -35,7 +35,8 @@ use rem6_timer::{
 };
 use rem6_transport::{MemoryRoute, MemoryTransport, TransportEndpointId};
 use rem6_uart::{
-    UartId, UartMmioDevice, UartTxByte, UART_MMIO_DATA_OFFSET, UART_MMIO_REGISTER_BYTES,
+    UartId, UartInterruptError, UartMmioDevice, UartSnapshot, UartTxByte, UART_MMIO_DATA_OFFSET,
+    UART_MMIO_REGISTER_BYTES,
 };
 
 fn endpoint(name: &str) -> TransportEndpointId {
@@ -795,8 +796,25 @@ fn system_action_executor_refreshes_and_restores_live_uart_checkpoint() {
     let source = GuestSourceId::new(16);
     let component = CheckpointComponentId::new("uart0").unwrap();
     let uart = UartMmioDevice::new(UartId::new(0), Address::new(0xa000));
-    uart.inject_rx([b'A', b'B']).unwrap();
-    write_uart_byte(&uart, 4, b'O');
+    let captured = UartSnapshot::new(
+        vec![UartTxByte::new(4, b'O')],
+        Vec::new(),
+        b"AB".to_vec(),
+        Vec::new(),
+        vec![UartInterruptError::new(
+            33,
+            InterruptSourceId::new(40),
+            InterruptEventKind::Assert,
+            InterruptError::Scheduler(SchedulerError::RemoteDeliveryBeforeLookaheadBoundary {
+                source: PartitionId::new(2),
+                target: PartitionId::new(3),
+                source_tick: 40,
+                delivery_tick: 44,
+                minimum_delivery_tick: 45,
+            }),
+        )],
+    );
+    uart.restore(&captured);
     let bank = UartCheckpointBank::new([UartCheckpointPort::new(component.clone(), uart.clone())])
         .unwrap();
     let mut checkpoints = CheckpointRegistry::new();
@@ -858,6 +876,10 @@ fn system_action_executor_refreshes_and_restores_live_uart_checkpoint() {
     );
     assert_eq!(uart.snapshot().tx_bytes(), &[UartTxByte::new(4, b'O')]);
     assert_eq!(uart.snapshot().rx_pending(), b"AB");
+    assert_eq!(
+        uart.snapshot().interrupt_errors(),
+        captured.interrupt_errors()
+    );
     assert_eq!(read_uart_byte(&uart, 129), b'A');
     assert_eq!(read_uart_byte(&uart, 130), b'B');
 }
@@ -886,11 +908,12 @@ fn system_action_executor_refreshes_and_restores_live_timer_checkpoint() {
         vec![TimerSignalError::new(
             3,
             21,
-            InterruptError::Scheduler(SchedulerError::RemoteDelayBelowLookahead {
+            InterruptError::Scheduler(SchedulerError::RemoteDeliveryBeforeLookaheadBoundary {
                 source: timer_partition,
                 target: target_partition,
-                delay: 1,
-                minimum: 2,
+                source_tick: 21,
+                delivery_tick: 22,
+                minimum_delivery_tick: 23,
             }),
         )],
     );

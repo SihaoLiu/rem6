@@ -97,6 +97,11 @@ isolated bugs:
   and exact remote-send contracts reject same-partition endpoints, and exact
   remote sends also reject inverted source/delivery ticks, so remote traffic
   evidence cannot be satisfied by local partition traffic or non-causal timing.
+  Kernel remote scheduling also reports absolute lookahead-boundary violations
+  with source tick, requested delivery tick, and required minimum delivery tick,
+  so a cross-partition event that would violate deterministic remote-delivery
+  slack fails as typed replayable state instead of becoming an event-queue merge
+  side effect.
   Wait-for
   edge-kind observation windows are now owned by `rem6-kernel`, so every
   subsystem can report distinct edge counts plus first and last observed ticks

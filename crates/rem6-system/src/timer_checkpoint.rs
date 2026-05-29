@@ -589,6 +589,20 @@ fn encode_scheduler_error(payload: &mut Vec<u8>, error: &SchedulerError) {
             write_u64(payload, *delay);
             write_u64(payload, *minimum);
         }
+        SchedulerError::RemoteDeliveryBeforeLookaheadBoundary {
+            source,
+            target,
+            source_tick,
+            delivery_tick,
+            minimum_delivery_tick,
+        } => {
+            write_u64(payload, 16);
+            write_u32(payload, source.index());
+            write_u32(payload, target.index());
+            write_u64(payload, *source_tick);
+            write_u64(payload, *delivery_tick);
+            write_u64(payload, *minimum_delivery_tick);
+        }
         SchedulerError::SerialEventInParallelEpoch { partition, tick } => {
             write_u64(payload, 7);
             write_u32(payload, partition.index());
@@ -671,6 +685,13 @@ fn decode_scheduler_error(
             target: PartitionId::new(cursor.read_u32("scheduler lookahead target")?),
             delay: cursor.read_u64("scheduler lookahead delay")?,
             minimum: cursor.read_u64("scheduler lookahead minimum")?,
+        }),
+        16 => Ok(SchedulerError::RemoteDeliveryBeforeLookaheadBoundary {
+            source: PartitionId::new(cursor.read_u32("scheduler boundary source")?),
+            target: PartitionId::new(cursor.read_u32("scheduler boundary target")?),
+            source_tick: cursor.read_u64("scheduler boundary source tick")?,
+            delivery_tick: cursor.read_u64("scheduler boundary delivery tick")?,
+            minimum_delivery_tick: cursor.read_u64("scheduler boundary minimum delivery tick")?,
         }),
         7 => Ok(SchedulerError::SerialEventInParallelEpoch {
             partition: PartitionId::new(cursor.read_u32("scheduler serial partition")?),

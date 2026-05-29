@@ -1,6 +1,5 @@
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
-use std::error::Error;
 use std::fmt;
 use std::mem;
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -8,8 +7,12 @@ use std::thread;
 
 use crate::{LivelockTransitionKind, Tick, WaitForNode};
 
+mod error;
+mod remote_boundary;
 mod state;
 
+pub use error::SchedulerError;
+use remote_boundary::{remote_delivery_before_lookahead_error, remote_event_delivery_key_values};
 pub use state::{
     EpochPlan, ParallelBatchUtilizationRatio, ParallelEpochBatchRecord, ParallelEpochPlan,
     ParallelEpochPlannedBatch, ParallelEpochPlannedWorkerRecord, ParallelPartitionActivity,
@@ -51,166 +54,6 @@ impl PartitionEventId {
         self.local
     }
 }
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum SchedulerError {
-    NoPartitions,
-    ZeroLookahead,
-    ZeroParallelWorkers,
-    UnknownPartition {
-        partition: PartitionId,
-        partitions: u32,
-    },
-    InThePast {
-        partition: PartitionId,
-        now: Tick,
-        requested: Tick,
-    },
-    TickOverflow {
-        now: Tick,
-        delay: Tick,
-    },
-    ZeroDelayRemoteMessage {
-        source: PartitionId,
-        target: PartitionId,
-    },
-    RemoteDelayBelowLookahead {
-        source: PartitionId,
-        target: PartitionId,
-        delay: Tick,
-        minimum: Tick,
-    },
-    SerialEventInParallelEpoch {
-        partition: PartitionId,
-        tick: Tick,
-    },
-    ParallelWorkerPanicked {
-        partition: PartitionId,
-    },
-    EpochHorizonOverflow {
-        partition: PartitionId,
-        now: Tick,
-        delay: Tick,
-    },
-    SnapshotContainsPendingEvents {
-        pending_events: usize,
-    },
-    RestoreWouldDiscardPendingEvents {
-        pending_events: usize,
-    },
-    SnapshotPartitionCountMismatch {
-        snapshot_partitions: u32,
-        scheduler_partitions: u32,
-    },
-    SnapshotLookaheadMismatch {
-        snapshot_min_remote_delay: Tick,
-        scheduler_min_remote_delay: Tick,
-    },
-    SnapshotParallelWorkerLimitMismatch {
-        snapshot_max_parallel_workers: usize,
-        scheduler_max_parallel_workers: usize,
-    },
-}
-
-impl fmt::Display for SchedulerError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::NoPartitions => write!(formatter, "scheduler requires at least one partition"),
-            Self::ZeroLookahead => write!(formatter, "scheduler lookahead must be positive"),
-            Self::ZeroParallelWorkers => {
-                write!(formatter, "scheduler parallel worker limit must be positive")
-            }
-            Self::UnknownPartition {
-                partition,
-                partitions,
-            } => write!(
-                formatter,
-                "partition {} is outside scheduler partition count {partitions}",
-                partition.index()
-            ),
-            Self::InThePast {
-                partition,
-                now,
-                requested,
-            } => write!(
-                formatter,
-                "cannot schedule partition {} at tick {requested}; current tick is {now}",
-                partition.index()
-            ),
-            Self::TickOverflow { now, delay } => {
-                write!(formatter, "tick {now} overflows when adding delay {delay}")
-            }
-            Self::ZeroDelayRemoteMessage { source, target } => write!(
-                formatter,
-                "remote message from partition {} to {} requires positive delay",
-                source.index(),
-                target.index()
-            ),
-            Self::RemoteDelayBelowLookahead {
-                source,
-                target,
-                delay,
-                minimum,
-            } => write!(
-                formatter,
-                "remote message from partition {} to {} has delay {delay}; \
-                 configured lookahead is {minimum}",
-                source.index(),
-                target.index()
-            ),
-            Self::SerialEventInParallelEpoch { partition, tick } => write!(
-                formatter,
-                "parallel epoch cannot dispatch serial event in partition {} at tick {tick}",
-                partition.index()
-            ),
-            Self::ParallelWorkerPanicked { partition } => write!(
-                formatter,
-                "parallel worker for partition {} panicked",
-                partition.index()
-            ),
-            Self::EpochHorizonOverflow {
-                partition,
-                now,
-                delay,
-            } => write!(
-                formatter,
-                "partition {} cannot compute parallel epoch horizon from tick {now} with delay {delay}",
-                partition.index()
-            ),
-            Self::SnapshotContainsPendingEvents { pending_events } => write!(
-                formatter,
-                "scheduler snapshot contains {pending_events} pending events"
-            ),
-            Self::RestoreWouldDiscardPendingEvents { pending_events } => write!(
-                formatter,
-                "scheduler restore would discard {pending_events} pending events"
-            ),
-            Self::SnapshotPartitionCountMismatch {
-                snapshot_partitions,
-                scheduler_partitions,
-            } => write!(
-                formatter,
-                "scheduler snapshot has {snapshot_partitions} partitions; scheduler has {scheduler_partitions}"
-            ),
-            Self::SnapshotLookaheadMismatch {
-                snapshot_min_remote_delay,
-                scheduler_min_remote_delay,
-            } => write!(
-                formatter,
-                "scheduler snapshot lookahead is {snapshot_min_remote_delay}; scheduler lookahead is {scheduler_min_remote_delay}"
-            ),
-            Self::SnapshotParallelWorkerLimitMismatch {
-                snapshot_max_parallel_workers,
-                scheduler_max_parallel_workers,
-            } => write!(
-                formatter,
-                "scheduler snapshot parallel worker limit is {snapshot_max_parallel_workers}; scheduler parallel worker limit is {scheduler_max_parallel_workers}"
-            ),
-        }
-    }
-}
-
-impl Error for SchedulerError {}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RunSummary {
@@ -1179,15 +1022,6 @@ impl ParallelSchedulerContext<'_> {
                 target,
             });
         }
-        if target != self.partition && delay < self.min_remote_delay {
-            return Err(SchedulerError::RemoteDelayBelowLookahead {
-                source: self.partition,
-                target,
-                delay,
-                minimum: self.min_remote_delay,
-            });
-        }
-
         if target == self.partition {
             return self.schedule_local_after(delay, callback);
         }
@@ -1199,6 +1033,15 @@ impl ParallelSchedulerContext<'_> {
                 now: self.now,
                 delay,
             })?;
+        if let Some(error) = remote_delivery_before_lookahead_error(
+            self.partition,
+            target,
+            self.now,
+            tick,
+            self.min_remote_delay,
+        )? {
+            return Err(error);
+        }
         let target_now = self.partition_nows[target.index() as usize];
         if tick < target_now {
             return Err(SchedulerError::InThePast {
@@ -1228,7 +1071,7 @@ impl ParallelSchedulerContext<'_> {
 fn remote_event_delivery_key(
     event: &RemoteScheduledEvent,
 ) -> (PartitionId, Tick, PartitionId, u64) {
-    (event.target, event.tick, event.source, event.order)
+    remote_event_delivery_key_values(event.target, event.tick, event.source, event.order)
 }
 
 fn sort_ready_partitions(mut ready_partitions: Vec<ReadyPartition>) -> Vec<ReadyPartition> {

@@ -40,3 +40,34 @@ fn parallel_context_rejects_remote_delivery_before_target_partition_clock() {
     assert_eq!(observed.lock().unwrap().as_slice(), &["rejected"]);
     assert_eq!(scheduler.next_pending_tick(memory).unwrap(), None);
 }
+
+#[test]
+fn parallel_context_reports_remote_delivery_before_lookahead_boundary() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 5).unwrap();
+    let core = PartitionId::new(0);
+    let memory = PartitionId::new(1);
+
+    scheduler
+        .schedule_parallel_at(core, 7, move |context| {
+            let error = context
+                .schedule_remote_after(memory, 4, |_| {})
+                .unwrap_err();
+            assert_eq!(
+                error,
+                SchedulerError::RemoteDeliveryBeforeLookaheadBoundary {
+                    source: core,
+                    target: memory,
+                    source_tick: 7,
+                    delivery_tick: 11,
+                    minimum_delivery_tick: 12,
+                }
+            );
+        })
+        .unwrap();
+
+    let run = scheduler.run_until_idle_parallel_recorded().unwrap();
+
+    assert_eq!(run.summary().executed_events(), 1);
+    assert_eq!(run.remote_send_count(), 0);
+    assert_eq!(scheduler.next_pending_tick(memory).unwrap(), None);
+}
