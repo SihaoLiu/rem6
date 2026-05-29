@@ -44,3 +44,25 @@ fn workload_checkpoint_summary_preserves_chunk_level_payload_evidence() {
     assert_eq!(cpu.chunk_summary("xregs"), None);
     assert_eq!(summary.component_summary("gpu0"), None);
 }
+
+#[test]
+fn workload_checkpoint_summary_canonicalizes_duplicate_chunk_names() {
+    let summary = WorkloadCheckpointComponentSummary::with_chunk_summaries(
+        "cpu0",
+        [
+            WorkloadCheckpointChunkSummary::new("regs", 4),
+            WorkloadCheckpointChunkSummary::new("pc", 2),
+            WorkloadCheckpointChunkSummary::new("regs", 8),
+        ],
+    );
+
+    assert_eq!(summary.chunk_count(), 2);
+    assert_eq!(summary.payload_bytes(), 10);
+    assert_eq!(
+        summary.chunk_summaries(),
+        &[
+            WorkloadCheckpointChunkSummary::new("pc", 2),
+            WorkloadCheckpointChunkSummary::new("regs", 8),
+        ]
+    );
+}

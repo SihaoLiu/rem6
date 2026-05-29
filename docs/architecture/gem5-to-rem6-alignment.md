@@ -834,6 +834,9 @@ Implementation evidence on 2026-05-26:
   for each component. Audit code can verify exact checkpoint chunk coverage
   from typed manifest data instead of rescanning payloads or relying on
   subsystem-specific logging.
+- Workload checkpoint component summaries canonicalize duplicate chunk names by
+  keeping the strongest payload evidence per name, so duplicate summary entries
+  cannot inflate component chunk counts or total payload coverage.
 - Workload replay results now carry checkpoint and checkpoint-restore manifest
   summaries with label, manifest tick, component count, chunk count, and total
   payload bytes, plus per-component chunk-level payload evidence, so replay

@@ -54,6 +54,20 @@ impl WorkloadCheckpointComponentSummary {
     ) -> Self {
         let mut chunk_summaries = chunk_summaries.into_iter().collect::<Vec<_>>();
         chunk_summaries.sort_by(|left, right| left.name().cmp(right.name()));
+        let mut canonical_chunk_summaries: Vec<WorkloadCheckpointChunkSummary> = Vec::new();
+        for chunk_summary in chunk_summaries {
+            match canonical_chunk_summaries.last_mut() {
+                Some(existing)
+                    if existing.name() == chunk_summary.name()
+                        && existing.payload_bytes() < chunk_summary.payload_bytes() =>
+                {
+                    *existing = chunk_summary;
+                }
+                Some(existing) if existing.name() == chunk_summary.name() => {}
+                _ => canonical_chunk_summaries.push(chunk_summary),
+            }
+        }
+        let chunk_summaries = canonical_chunk_summaries;
         let chunk_count = chunk_summaries.len();
         let payload_bytes = chunk_summaries
             .iter()
