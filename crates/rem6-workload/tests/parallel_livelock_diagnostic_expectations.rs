@@ -1200,6 +1200,49 @@ fn workload_replay_plan_rejects_weaker_full_system_progress_transition_partition
 }
 
 #[test]
+fn workload_replay_plan_rejects_duplicate_full_system_progress_transition_records() {
+    let plan = replay_plan()
+        .add_expected_clean_parallel_diagnostics(expected_clean_with_livelock_threshold(
+            WorkloadParallelDiagnosticScope::FullSystem,
+            2,
+        ))
+        .unwrap();
+    let subject = component("global-progress-loop");
+
+    let dirty_summary = WorkloadParallelExecutionSummary::default()
+        .with_full_system_progress_transitions([
+            progress_transition(
+                0,
+                subject.clone(),
+                LivelockTransitionKind::ProtocolRetry,
+                4,
+                0,
+            ),
+            progress_transition(
+                0,
+                subject.clone(),
+                LivelockTransitionKind::ProtocolRetry,
+                4,
+                0,
+            ),
+        ]);
+    let dirty_result = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(dirty_summary);
+
+    assert_eq!(
+        plan.verify_result(&dirty_result).unwrap_err(),
+        WorkloadError::InvalidParallelProgressTransitionRecordMergeSummary {
+            scope: WorkloadParallelDiagnosticScope::FullSystem,
+            partition: PartitionId::new(0),
+            subject,
+            kind: LivelockTransitionKind::ProtocolRetry,
+            tick: 4,
+            order: 0,
+        },
+    );
+}
+
+#[test]
 fn workload_replay_plan_rejects_inconsistent_livelock_transition_summary() {
     let plan = replay_plan()
         .add_expected_clean_parallel_diagnostics(expected_clean(

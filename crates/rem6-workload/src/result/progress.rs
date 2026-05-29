@@ -1063,6 +1063,9 @@ impl WorkloadParallelExecutionSummary {
         if self.full_system_progress_transitions.is_empty() {
             return Ok(());
         }
+        validate_unique_full_system_progress_transition_records(
+            self.full_system_progress_transitions.iter(),
+        )?;
 
         let scoped_transition_count = self
             .scheduler_progress_transition_count
@@ -1135,6 +1138,34 @@ impl WorkloadParallelExecutionSummary {
         }
         self.scoped_progress_transition_iter()
     }
+}
+
+fn validate_unique_full_system_progress_transition_records<'a>(
+    transitions: impl IntoIterator<Item = &'a ParallelProgressTransitionRecord>,
+) -> Result<(), WorkloadError> {
+    let mut seen = BTreeSet::new();
+    for transition in transitions {
+        let key = (
+            transition.partition(),
+            transition.subject().clone(),
+            transition.kind(),
+            transition.tick(),
+            transition.order(),
+        );
+        if !seen.insert(key) {
+            return Err(
+                WorkloadError::InvalidParallelProgressTransitionRecordMergeSummary {
+                    scope: WorkloadParallelDiagnosticScope::FullSystem,
+                    partition: transition.partition(),
+                    subject: transition.subject().clone(),
+                    kind: transition.kind(),
+                    tick: transition.tick(),
+                    order: transition.order(),
+                },
+            );
+        }
+    }
+    Ok(())
 }
 
 fn progress_transition_count_by_kind<'a>(

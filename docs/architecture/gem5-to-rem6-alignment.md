@@ -942,6 +942,11 @@ Implementation evidence on 2026-05-26:
   transition stream therefore cannot drop subsystem livelock evidence while
   exact full-system replay expectations still pass from a weaker merged record
   set.
+- Full-system progress-transition summary validation now also rejects duplicate
+  explicit global transition records before clean-diagnostic livelock
+  thresholds are applied. A replay run cannot satisfy global progress evidence
+  by repeating the same transition record and letting subject, kind, or
+  partition summaries count it as independent work.
 - Workload full-system scheduler-count reporting now accepts explicit merged
   epoch, empty-epoch, and dispatch counts. A global scheduler can report its
   aggregate progress and idle counts directly instead of forcing replay to sum
