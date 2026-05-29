@@ -3,7 +3,7 @@ use std::fmt;
 
 use crate::Tick;
 
-use super::PartitionId;
+use super::{PartitionEventId, PartitionId};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SchedulerError {
@@ -51,6 +51,9 @@ pub enum SchedulerError {
         partition: PartitionId,
         now: Tick,
         delay: Tick,
+    },
+    EventNotPending {
+        id: PartitionEventId,
     },
     SnapshotContainsPendingEvents {
         pending_events: usize,
@@ -151,6 +154,12 @@ impl fmt::Display for SchedulerError {
                 formatter,
                 "partition {} cannot compute parallel epoch horizon from tick {now} with delay {delay}",
                 partition.index()
+            ),
+            Self::EventNotPending { id } => write!(
+                formatter,
+                "event {} in partition {} is not pending",
+                id.local(),
+                id.partition().index()
             ),
             Self::SnapshotContainsPendingEvents { pending_events } => write!(
                 formatter,

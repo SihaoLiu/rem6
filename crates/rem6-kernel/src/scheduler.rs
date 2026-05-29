@@ -238,6 +238,34 @@ impl PartitionedScheduler {
         queue.schedule_parallel_at(partition, tick, Box::new(callback))
     }
 
+    pub fn cancel_event(&mut self, id: PartitionEventId) -> Result<(), SchedulerError> {
+        let partition_count = self.partition_count();
+        let queue = self
+            .partition_mut(id.partition())
+            .ok_or(SchedulerError::UnknownPartition {
+                partition: id.partition(),
+                partitions: partition_count,
+            })?;
+
+        queue.cancel_event(id)
+    }
+
+    pub fn reschedule_event(
+        &mut self,
+        id: PartitionEventId,
+        tick: Tick,
+    ) -> Result<(), SchedulerError> {
+        let partition_count = self.partition_count();
+        let queue = self
+            .partition_mut(id.partition())
+            .ok_or(SchedulerError::UnknownPartition {
+                partition: id.partition(),
+                partitions: partition_count,
+            })?;
+
+        queue.reschedule_event(id, tick)
+    }
+
     pub fn snapshot(&self) -> SchedulerSnapshot {
         SchedulerSnapshot {
             now: self.now,
@@ -1263,6 +1291,45 @@ impl PartitionQueue {
 
     fn pop_next(&mut self) -> Option<PartitionEvent> {
         self.pending.pop()
+    }
+
+    fn cancel_event(&mut self, id: PartitionEventId) -> Result<(), SchedulerError> {
+        self.remove_event(id)
+            .map(drop)
+            .ok_or(SchedulerError::EventNotPending { id })
+    }
+
+    fn reschedule_event(&mut self, id: PartitionEventId, tick: Tick) -> Result<(), SchedulerError> {
+        if !self.contains_event(id) {
+            return Err(SchedulerError::EventNotPending { id });
+        }
+        if tick < self.now {
+            return Err(SchedulerError::InThePast {
+                partition: id.partition(),
+                now: self.now,
+                requested: tick,
+            });
+        }
+
+        let mut event = self.remove_event(id).expect("pending event is present");
+        event.tick = tick;
+        self.pending.push(event);
+        Ok(())
+    }
+
+    fn contains_event(&self, id: PartitionEventId) -> bool {
+        self.pending.iter().any(|event| event.id == id)
+    }
+
+    fn remove_event(&mut self, id: PartitionEventId) -> Option<PartitionEvent> {
+        let mut events = mem::take(&mut self.pending).into_vec();
+        let Some(event_index) = events.iter().position(|event| event.id == id) else {
+            self.pending = BinaryHeap::from(events);
+            return None;
+        };
+        let event = events.swap_remove(event_index);
+        self.pending = BinaryHeap::from(events);
+        Some(event)
     }
 
     fn rollback_scheduled_events(&mut self, next_id: u64, next_order: u64) {

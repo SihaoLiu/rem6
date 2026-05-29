@@ -768,6 +768,11 @@ Implementation evidence on 2026-05-26:
   against its target scheduler slot before mutating clocks or event-order
   counters. A malformed checkpoint cannot swap per-partition scheduler state
   and later surface as a schedule-in-past failure.
+- Scheduler event control now exposes typed cancel and reschedule APIs keyed by
+  `PartitionEventId`. Missing or already-dispatched ids return
+  `EventNotPending`, rescheduling before the owning partition clock returns
+  `InThePast` without removing the event, and callbacks retain identity across
+  reschedule.
 - System checkpoint host actions stage all attached bank captures and
   execution-mode chunks in a cloned registry, then publish the registry and
   manifest only after final manifest capture succeeds. Invalid final capture

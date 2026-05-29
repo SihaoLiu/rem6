@@ -7,7 +7,7 @@ use rem6_interrupt::{
     InterruptError, InterruptEventKind, InterruptLineId, InterruptRoute, InterruptSourceId,
     InterruptTargetId,
 };
-use rem6_kernel::{PartitionId, SchedulerError};
+use rem6_kernel::{PartitionEventId, PartitionId, SchedulerError};
 use rem6_timer::{
     ProgrammableTimer, TimerArm, TimerError, TimerExpiry, TimerId, TimerSignalError, TimerSnapshot,
 };
@@ -618,6 +618,11 @@ fn encode_scheduler_error(payload: &mut Vec<u8>, error: &SchedulerError) {
             write_u64(payload, *now);
             write_u64(payload, *delay);
         }
+        SchedulerError::EventNotPending { id } => {
+            write_u64(payload, 18);
+            write_u32(payload, id.partition().index());
+            write_u64(payload, id.local());
+        }
         SchedulerError::SnapshotContainsPendingEvents { pending_events } => {
             write_u64(payload, 8);
             write_u64(payload, *pending_events as u64);
@@ -727,6 +732,12 @@ fn decode_scheduler_error(
             partition: PartitionId::new(cursor.read_u32("scheduler horizon partition")?),
             now: cursor.read_u64("scheduler horizon now")?,
             delay: cursor.read_u64("scheduler horizon delay")?,
+        }),
+        18 => Ok(SchedulerError::EventNotPending {
+            id: PartitionEventId::new(
+                PartitionId::new(cursor.read_u32("scheduler pending event partition")?),
+                cursor.read_u64("scheduler pending event local")?,
+            ),
         }),
         14 => Ok(SchedulerError::SnapshotParallelWorkerLimitMismatch {
             snapshot_max_parallel_workers: cursor
