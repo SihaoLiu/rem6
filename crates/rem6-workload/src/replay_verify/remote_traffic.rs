@@ -680,6 +680,12 @@ fn explicit_parallel_remote_flows_for_scope(
                         .accelerator_dma_scheduler_remote_flows()
                         .iter()
                         .copied(),
+                )
+                .chain(
+                    summary
+                        .raw_full_system_parallel_scheduler_remote_flows()
+                        .iter()
+                        .copied(),
                 ),
         ),
     }
@@ -727,6 +733,12 @@ fn raw_explicit_parallel_remote_flows_for_scope(
             .chain(
                 summary
                     .accelerator_dma_scheduler_remote_flows()
+                    .iter()
+                    .copied(),
+            )
+            .chain(
+                summary
+                    .raw_full_system_parallel_scheduler_remote_flows()
                     .iter()
                     .copied(),
             )

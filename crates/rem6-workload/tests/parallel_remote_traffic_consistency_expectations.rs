@@ -441,6 +441,51 @@ fn workload_replay_plan_rejects_full_system_hidden_inverted_remote_flow_evidence
 }
 
 #[test]
+fn workload_replay_plan_rejects_explicit_full_system_remote_flow_without_exact_sends() {
+    let plan = replay_plan()
+        .add_expected_parallel_remote_traffic_consistency(expected(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+        ))
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_full_system_parallel_scheduler_remote_flows([ParallelRemoteFlowRecord::new(
+            PartitionId::new(0),
+            PartitionId::new(1),
+            1,
+            11,
+            11,
+        )])
+        .with_full_system_parallel_scheduler_remote_sends([ParallelRemoteSendRecord::with_timing(
+            PartitionId::new(2),
+            PartitionId::new(3),
+            5,
+            13,
+            0,
+        )]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        traffic_mismatch(WorkloadParallelRemoteTrafficConsistencyMismatch {
+            scope: WorkloadParallelRemoteFlowScope::FullSystem,
+            source: 0,
+            target: 1,
+            flow_send_count: 1,
+            send_record_count: 0,
+            flow_first_tick: 11,
+            send_first_tick: None,
+            flow_last_tick: 11,
+            send_last_tick: None,
+            flow_minimum_delay: None,
+            send_minimum_delay: None,
+            flow_maximum_delay: None,
+            send_maximum_delay: None,
+        }),
+    );
+}
+
+#[test]
 fn workload_replay_plan_rejects_inverted_parallel_remote_flow_evidence_delay_bounds() {
     let plan = replay_plan()
         .add_expected_parallel_remote_traffic_consistency(expected(

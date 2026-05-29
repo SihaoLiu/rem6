@@ -923,6 +923,10 @@ Implementation evidence on 2026-05-26:
   zero-send global flow records before they can be dropped by derived
   remote-flow evidence, so empty full-system traffic aggregates cannot hide
   behind scoped cross-partition traffic.
+- Full-system remote-traffic consistency now includes explicit global
+  remote-flow records in its aggregate-vs-exact-send audit. A merged global
+  flow therefore cannot bypass consistency checks just because scoped
+  scheduler flows are internally matched.
 - Workload full-system exact remote-send merge validation now rejects explicit
   full-system send streams that omit scheduler, data-cache, GPU DMA, or
   accelerator DMA scoped sends. A global exact-send summary therefore cannot
