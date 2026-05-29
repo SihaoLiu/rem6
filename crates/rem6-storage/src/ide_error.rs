@@ -1,6 +1,8 @@
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 
+use rem6_pci::{PciFunctionAddress, PciInterruptPin};
+
 use crate::ide::{IdeChannelId, IdeControllerBar, IdeDeviceId};
 use crate::{IdeSnapshotError, StorageError};
 
@@ -80,6 +82,15 @@ pub enum IdeControllerError {
     GuestTransferSizeMismatch {
         expected_bytes: u64,
         actual_bytes: u64,
+    },
+    PciInterruptBindingMismatch {
+        expected_function: PciFunctionAddress,
+        actual_function: PciFunctionAddress,
+        expected_pin: PciInterruptPin,
+        actual_pin: PciInterruptPin,
+    },
+    PciEndpoint {
+        source: rem6_pci::PciError,
     },
     DmaUnsupported {
         channel: IdeChannelId,
@@ -191,6 +202,18 @@ impl Display for IdeControllerError {
                 formatter,
                 "IDE controller guest memory returned {actual_bytes} bytes but expected {expected_bytes}"
             ),
+            Self::PciInterruptBindingMismatch {
+                expected_function,
+                actual_function,
+                expected_pin,
+                actual_pin,
+            } => write!(
+                formatter,
+                "IDE PCI interrupt binding expected {expected_function:?}/{expected_pin:?}, got {actual_function:?}/{actual_pin:?}"
+            ),
+            Self::PciEndpoint { source } => {
+                write!(formatter, "IDE PCI endpoint error: {source}")
+            }
             Self::DmaUnsupported { channel } => {
                 write!(
                     formatter,
@@ -210,6 +233,7 @@ impl Display for IdeControllerError {
 impl Error for IdeControllerError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
+            Self::PciEndpoint { source } => Some(source),
             Self::Disk { source, .. } => Some(source),
             _ => None,
         }

@@ -587,8 +587,8 @@ Implementation evidence through 2026-05-29:
   ports before or after host-controller creation. This replaces gem5's
   callback-heavy IDE DMA event chain and fragile object-local
   serialize/unserialize pattern with explicit transfer plans, guest-memory
-  boundaries, register records, and decode-first checkpoint chunks. External
-  interrupt delivery and timing delay remain open.
+  boundaries, register records, and decode-first checkpoint chunks. Timing
+  delay remains open.
   `rem6-system` host checkpoint actions can attach storage image and IDE
   controller banks, stage their chunk capture with the rest of the system, and
   restore storage state only after decode-first validation has accepted every
@@ -600,7 +600,12 @@ Implementation evidence through 2026-05-29:
   and the explicit `io_shift`/control-offset dispatch policy used by the
   controller BAR paths. That keeps board identity and guest enumeration data in
   typed Rust structs instead of script-side PCI parameters with implicit
-  device-specific config state.
+  device-specific config state. IDE PCI legacy INTx ports now bind the endpoint
+  function and pin to a typed PCI interrupt route, synchronize the controller's
+  shared primary/secondary pending state into serial or parallel scheduler
+  interrupt delivery, suppress duplicate assertions when the shared line is
+  already in the requested state, and preserve delivery errors as typed
+  interrupt-port evidence.
   Storage source-policy tests keep the
   crate under the facade and hard per-source-file budgets, avoiding gem5-style
   panic paths, process-exit save callbacks, and mutable SimObject disk state.
@@ -2151,7 +2156,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   controller chunk rejection without partial restore. IDE PCI tests cover the
   PIIX4 vendor/device identity, mass-storage class and programming-interface
   bytes, status and interrupt-line config bytes, five I/O BAR shapes, active
-  BAR ranges, and dispatch-policy derivation from explicit layout parameters.
+  BAR ranges, dispatch-policy derivation from explicit layout parameters, and
+  typed legacy INTx delivery from shared controller interrupt state through the
+  parallel scheduler.
   System checkpoint action tests cover storage image and IDE controller bank
   attachment, staged capture into host manifests, and malformed storage or IDE
   restore rejection without partial live-state mutation. Topology checkpoint

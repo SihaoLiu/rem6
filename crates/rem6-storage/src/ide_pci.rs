@@ -1,10 +1,14 @@
+use std::sync::{Arc, Mutex};
+
+use rem6_interrupt::{InterruptError, InterruptSourceId};
+use rem6_kernel::{ParallelSchedulerContext, PartitionEventId, SchedulerContext};
 use rem6_memory::AccessSize;
 use rem6_pci::{
     PciBarIndex, PciBarKind, PciBarSpec, PciClassCode, PciDeviceIdentity, PciEndpointConfig,
-    PciError, PciFunctionAddress, PciInterruptPin, PciType0HeaderFields,
+    PciError, PciFunctionAddress, PciInterruptPin, PciLegacyInterruptPort, PciType0HeaderFields,
 };
 
-use crate::{IdeControllerDispatch, IdeControllerError};
+use crate::{IdeController, IdeControllerDispatch, IdeControllerError};
 
 pub const IDE_PCI_VENDOR_ID: u16 = 0x8086;
 pub const IDE_PCI_DEVICE_ID: u16 = 0x7111;
@@ -145,6 +149,22 @@ impl IdePciEndpointSpec {
         Ok(endpoint)
     }
 
+    pub fn build_legacy_interrupt_port(
+        self,
+        port: PciLegacyInterruptPort,
+        source: InterruptSourceId,
+    ) -> Result<IdePciInterruptPort, IdeControllerError> {
+        if port.function() != self.function || port.pin() != self.interrupt_pin {
+            return Err(IdeControllerError::PciInterruptBindingMismatch {
+                expected_function: self.function,
+                actual_function: port.function(),
+                expected_pin: self.interrupt_pin,
+                actual_pin: port.pin(),
+            });
+        }
+        Ok(IdePciInterruptPort::new(port, source))
+    }
+
     fn bar_specs(self) -> Result<[PciBarSpec; 5], PciError> {
         Ok([
             io_bar(self.primary_command_bar, IDE_PCI_COMMAND_BAR_BYTES)?,
@@ -162,4 +182,106 @@ fn io_bar(index: PciBarIndex, bytes: u64) -> Result<PciBarSpec, PciError> {
         PciBarKind::Io,
         AccessSize::new(bytes).map_err(PciError::Memory)?,
     )
+}
+
+#[derive(Clone, Debug)]
+pub struct IdePciInterruptPort {
+    port: PciLegacyInterruptPort,
+    source: InterruptSourceId,
+    line_asserted: Arc<Mutex<bool>>,
+}
+
+impl IdePciInterruptPort {
+    fn new(port: PciLegacyInterruptPort, source: InterruptSourceId) -> Self {
+        Self {
+            port,
+            source,
+            line_asserted: Arc::new(Mutex::new(false)),
+        }
+    }
+
+    pub const fn source(&self) -> InterruptSourceId {
+        self.source
+    }
+
+    pub const fn port(&self) -> &PciLegacyInterruptPort {
+        &self.port
+    }
+
+    pub fn line_asserted(&self) -> bool {
+        *self
+            .line_asserted
+            .lock()
+            .expect("IDE PCI interrupt line state lock")
+    }
+
+    pub fn delivery_errors(&self) -> Arc<Mutex<Vec<InterruptError>>> {
+        self.port.delivery_errors()
+    }
+
+    pub fn sync_controller(
+        &self,
+        context: &mut SchedulerContext<'_>,
+        controller: &IdeController,
+    ) -> Result<Option<PartitionEventId>, IdeControllerError> {
+        self.sync_line(context, controller.shared_interrupt_asserted())
+    }
+
+    pub fn sync_controller_parallel(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+        controller: &IdeController,
+    ) -> Result<Option<PartitionEventId>, IdeControllerError> {
+        self.sync_line_parallel(context, controller.shared_interrupt_asserted())
+    }
+
+    pub fn sync_line(
+        &self,
+        context: &mut SchedulerContext<'_>,
+        asserted: bool,
+    ) -> Result<Option<PartitionEventId>, IdeControllerError> {
+        let mut line_asserted = self
+            .line_asserted
+            .lock()
+            .expect("IDE PCI interrupt line state lock");
+        if *line_asserted == asserted {
+            return Ok(None);
+        }
+
+        let event = if asserted {
+            self.port.post(context, self.source)
+        } else {
+            self.port.clear(context, self.source)
+        }
+        .map_err(pci_error)?;
+        *line_asserted = asserted;
+        Ok(Some(event))
+    }
+
+    pub fn sync_line_parallel(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+        asserted: bool,
+    ) -> Result<Option<PartitionEventId>, IdeControllerError> {
+        let mut line_asserted = self
+            .line_asserted
+            .lock()
+            .expect("IDE PCI interrupt line state lock");
+        if *line_asserted == asserted {
+            return Ok(None);
+        }
+
+        let event = if asserted {
+            self.port.post_parallel(context, self.source)
+        } else {
+            self.port.clear_parallel(context, self.source)
+        }
+        .map_err(pci_error)?;
+        *line_asserted = asserted;
+        Ok(Some(event))
+    }
+}
+
+fn pci_error(source: PciError) -> IdeControllerError {
+    IdeControllerError::PciEndpoint { source }
 }
