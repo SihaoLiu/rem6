@@ -3,9 +3,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use rem6_checkpoint::{CheckpointComponentId, CheckpointRegistry};
 use rem6_storage::{
-    CowStorageImage, FileStorageImage, RawStorageImage, StorageError, StorageFileOperation,
-    StorageImageLayer, StorageSectorId, STORAGE_SECTOR_BYTES,
+    CowStorageImage, FileStorageImage, RawStorageImage, StorageCheckpointError, StorageError,
+    StorageFileOperation, StorageImageCheckpointBank, StorageImageCheckpointPort,
+    StorageImageCheckpointRecord, StorageImageCheckpointSnapshot, StorageImageLayer,
+    StorageSectorId, STORAGE_SECTOR_BYTES,
 };
 
 fn sector(byte: u8) -> [u8; 512] {
@@ -257,4 +260,98 @@ fn file_storage_image_rejects_bad_files_and_writes_before_mutation() {
 
     fs::remove_file(bad_size_path).unwrap();
     fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn storage_image_checkpoint_bank_captures_and_restores_raw_and_cow_images() {
+    let raw_component = CheckpointComponentId::new("storage.raw0").unwrap();
+    let cow_component = CheckpointComponentId::new("storage.cow0").unwrap();
+    let raw = RawStorageImage::from_bytes(image_bytes(&[0x11, 0x22])).unwrap();
+    let cow_child = RawStorageImage::from_bytes(image_bytes(&[0x33, 0x44])).unwrap();
+    let cow = CowStorageImage::new(Arc::new(cow_child.clone()));
+    raw.write_sector(StorageSectorId::new(1), sector(0xaa))
+        .unwrap();
+    cow.write_sector(StorageSectorId::new(0), sector(0xbb))
+        .unwrap();
+    cow.flush().unwrap();
+    let raw_snapshot = raw.snapshot();
+    let cow_snapshot = cow.snapshot();
+    let bank = StorageImageCheckpointBank::new([
+        StorageImageCheckpointPort::raw(raw_component.clone(), raw.clone()),
+        StorageImageCheckpointPort::cow(cow_component.clone(), cow.clone()),
+    ])
+    .unwrap();
+    let mut registry = CheckpointRegistry::new();
+
+    bank.register_all(&mut registry).unwrap();
+    let captured = bank.capture_all_into(&mut registry).unwrap();
+
+    assert_eq!(
+        bank.components(),
+        vec![cow_component.clone(), raw_component.clone()]
+    );
+    assert_eq!(
+        captured,
+        vec![
+            StorageImageCheckpointRecord::new(
+                cow_component.clone(),
+                StorageImageCheckpointSnapshot::Cow(cow_snapshot.clone()),
+            ),
+            StorageImageCheckpointRecord::new(
+                raw_component.clone(),
+                StorageImageCheckpointSnapshot::Raw(raw_snapshot.clone()),
+            ),
+        ]
+    );
+    assert!(registry.chunk(&raw_component, "storage-image").is_some());
+    assert!(registry.chunk(&cow_component, "storage-image").is_some());
+
+    raw.write_sector(StorageSectorId::new(1), sector(0xcc))
+        .unwrap();
+    cow.write_sector(StorageSectorId::new(0), sector(0xdd))
+        .unwrap();
+
+    let restored = bank.restore_all_from(&registry).unwrap();
+
+    assert_eq!(restored, captured);
+    assert_eq!(raw.snapshot(), raw_snapshot);
+    assert_eq!(cow.snapshot(), cow_snapshot);
+}
+
+#[test]
+fn storage_image_checkpoint_bank_rejects_bad_chunk_without_partial_restore() {
+    let first_component = CheckpointComponentId::new("storage.raw0").unwrap();
+    let second_component = CheckpointComponentId::new("storage.raw1").unwrap();
+    let first = RawStorageImage::from_bytes(image_bytes(&[0x10])).unwrap();
+    let second = RawStorageImage::from_bytes(image_bytes(&[0x20])).unwrap();
+    let bank = StorageImageCheckpointBank::new([
+        StorageImageCheckpointPort::raw(first_component.clone(), first.clone()),
+        StorageImageCheckpointPort::raw(second_component.clone(), second.clone()),
+    ])
+    .unwrap();
+    let mut registry = CheckpointRegistry::new();
+    bank.register_all(&mut registry).unwrap();
+    bank.capture_all_into(&mut registry).unwrap();
+    first
+        .write_sector(StorageSectorId::new(0), sector(0xa0))
+        .unwrap();
+    second
+        .write_sector(StorageSectorId::new(0), sector(0xb0))
+        .unwrap();
+    let first_before = first.snapshot();
+    let second_before = second.snapshot();
+    registry
+        .write_chunk(&second_component, "storage-image", vec![0xff])
+        .unwrap();
+
+    let error = bank.restore_all_from(&registry).unwrap_err();
+
+    match error {
+        StorageCheckpointError::InvalidChunk { component, .. } => {
+            assert_eq!(component, second_component);
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
+    assert_eq!(first.snapshot(), first_before);
+    assert_eq!(second.snapshot(), second_before);
 }
