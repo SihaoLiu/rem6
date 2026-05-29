@@ -32,8 +32,9 @@ use rem6_transport::{
     TransportError,
 };
 use rem6_workload::{
-    WorkloadCheckpointComponentSummary, WorkloadCheckpointManifestSummary, WorkloadError,
-    WorkloadGpuDmaCopy, WorkloadHostActionSummary, WorkloadMemoryRoute, WorkloadMemoryTarget,
+    WorkloadCheckpointChunkSummary, WorkloadCheckpointComponentSummary,
+    WorkloadCheckpointManifestSummary, WorkloadError, WorkloadGpuDmaCopy,
+    WorkloadHostActionSummary, WorkloadMemoryRoute, WorkloadMemoryTarget,
     WorkloadParallelBatchScope, WorkloadParallelBatchTimelineRecord,
     WorkloadParallelBatchWorkerCount, WorkloadParallelBatchWorkerLaneRecord, WorkloadReplayPlan,
     WorkloadResolvedResources, WorkloadResult, WorkloadRouteFabric, WorkloadRouteHop,
@@ -1153,10 +1154,11 @@ fn workload_checkpoint_summary(manifest: &CheckpointManifest) -> WorkloadCheckpo
         manifest.label(),
         manifest.tick(),
         summary.component_summaries().iter().map(|component| {
-            WorkloadCheckpointComponentSummary::new(
+            WorkloadCheckpointComponentSummary::with_chunk_summaries(
                 component.component().as_str(),
-                component.chunk_count(),
-                component.payload_bytes(),
+                component.chunk_summaries().iter().map(|chunk| {
+                    WorkloadCheckpointChunkSummary::new(chunk.name(), chunk.payload_bytes())
+                }),
             )
         }),
     )

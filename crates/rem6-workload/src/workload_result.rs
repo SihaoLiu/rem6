@@ -8,10 +8,34 @@ use crate::{
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadCheckpointChunkSummary {
+    name: String,
+    payload_bytes: usize,
+}
+
+impl WorkloadCheckpointChunkSummary {
+    pub fn new(name: impl Into<String>, payload_bytes: usize) -> Self {
+        Self {
+            name: name.into(),
+            payload_bytes,
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub const fn payload_bytes(&self) -> usize {
+        self.payload_bytes
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkloadCheckpointComponentSummary {
     component: String,
     chunk_count: usize,
     payload_bytes: usize,
+    chunk_summaries: Vec<WorkloadCheckpointChunkSummary>,
 }
 
 impl WorkloadCheckpointComponentSummary {
@@ -20,6 +44,26 @@ impl WorkloadCheckpointComponentSummary {
             component: component.into(),
             chunk_count,
             payload_bytes,
+            chunk_summaries: Vec::new(),
+        }
+    }
+
+    pub fn with_chunk_summaries(
+        component: impl Into<String>,
+        chunk_summaries: impl IntoIterator<Item = WorkloadCheckpointChunkSummary>,
+    ) -> Self {
+        let mut chunk_summaries = chunk_summaries.into_iter().collect::<Vec<_>>();
+        chunk_summaries.sort_by(|left, right| left.name().cmp(right.name()));
+        let chunk_count = chunk_summaries.len();
+        let payload_bytes = chunk_summaries
+            .iter()
+            .map(WorkloadCheckpointChunkSummary::payload_bytes)
+            .sum();
+        Self {
+            component: component.into(),
+            chunk_count,
+            payload_bytes,
+            chunk_summaries,
         }
     }
 
@@ -33,6 +77,16 @@ impl WorkloadCheckpointComponentSummary {
 
     pub const fn payload_bytes(&self) -> usize {
         self.payload_bytes
+    }
+
+    pub fn chunk_summaries(&self) -> &[WorkloadCheckpointChunkSummary] {
+        &self.chunk_summaries
+    }
+
+    pub fn chunk_summary(&self, name: &str) -> Option<&WorkloadCheckpointChunkSummary> {
+        self.chunk_summaries()
+            .iter()
+            .find(|summary| summary.name() == name)
     }
 }
 
@@ -111,6 +165,15 @@ impl WorkloadCheckpointManifestSummary {
 
     pub fn component_summaries(&self) -> &[WorkloadCheckpointComponentSummary] {
         &self.component_summaries
+    }
+
+    pub fn component_summary(
+        &self,
+        component: &str,
+    ) -> Option<&WorkloadCheckpointComponentSummary> {
+        self.component_summaries
+            .iter()
+            .find(|summary| summary.component() == component)
     }
 }
 

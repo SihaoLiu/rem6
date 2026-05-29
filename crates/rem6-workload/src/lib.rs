@@ -145,9 +145,9 @@ pub use topology::{
     WorkloadRouteLatency, WorkloadTopology,
 };
 pub use workload_result::{
-    WorkloadCheckpointComponentSummary, WorkloadCheckpointManifestSummary,
-    WorkloadExpectedCheckpointComponentSummary, WorkloadExpectedCheckpointManifestSummary,
-    WorkloadResult,
+    WorkloadCheckpointChunkSummary, WorkloadCheckpointComponentSummary,
+    WorkloadCheckpointManifestSummary, WorkloadExpectedCheckpointComponentSummary,
+    WorkloadExpectedCheckpointManifestSummary, WorkloadResult,
 };
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]

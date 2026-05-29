@@ -10,14 +10,14 @@ use rem6_system::{
     RiscvWorkloadReplay, SystemActionOutcome,
 };
 use rem6_workload::{
-    HostEventIntent, WorkloadCheckpointComponentSummary, WorkloadCheckpointManifestSummary,
-    WorkloadDataCacheProtocol, WorkloadExecutionMode, WorkloadExecutionModeSwitch,
-    WorkloadExpectedDataCacheProtocolRunCount, WorkloadExpectedDataCacheRunAttribution,
-    WorkloadGuestHostCallResponse, WorkloadHostActionSummary, WorkloadHostEvent,
-    WorkloadHostPlacement, WorkloadManifest, WorkloadMemoryRoute, WorkloadMemoryTarget,
-    WorkloadReplayPlan, WorkloadResource, WorkloadResourceId, WorkloadResourceKind,
-    WorkloadRiscvCore, WorkloadRiscvDataCache, WorkloadRouteFabric, WorkloadRouteHop,
-    WorkloadRouteId, WorkloadStatsScope, WorkloadTopology,
+    HostEventIntent, WorkloadCheckpointChunkSummary, WorkloadCheckpointComponentSummary,
+    WorkloadCheckpointManifestSummary, WorkloadDataCacheProtocol, WorkloadExecutionMode,
+    WorkloadExecutionModeSwitch, WorkloadExpectedDataCacheProtocolRunCount,
+    WorkloadExpectedDataCacheRunAttribution, WorkloadGuestHostCallResponse,
+    WorkloadHostActionSummary, WorkloadHostEvent, WorkloadHostPlacement, WorkloadManifest,
+    WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadReplayPlan, WorkloadResource,
+    WorkloadResourceId, WorkloadResourceKind, WorkloadRiscvCore, WorkloadRiscvDataCache,
+    WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId, WorkloadStatsScope, WorkloadTopology,
 };
 
 fn workload_id(value: &str) -> rem6_workload::WorkloadId {
@@ -1526,10 +1526,11 @@ fn workload_replay_records_checkpoint_manifest_summaries() {
         "after-mode-switch",
         1,
         captured.component_summaries().iter().map(|component| {
-            WorkloadCheckpointComponentSummary::new(
+            WorkloadCheckpointComponentSummary::with_chunk_summaries(
                 component.component().as_str(),
-                component.chunk_count(),
-                component.payload_bytes(),
+                component.chunk_summaries().iter().map(|chunk| {
+                    WorkloadCheckpointChunkSummary::new(chunk.name(), chunk.payload_bytes())
+                }),
             )
         }),
     );
@@ -1541,6 +1542,8 @@ fn workload_replay_records_checkpoint_manifest_summaries() {
         .component_summaries()
         .iter()
         .any(|component| component.component() == "host.execution_modes"));
+    let execution_modes = expected.component_summary("host.execution_modes").unwrap();
+    assert!(!execution_modes.chunk_summaries().is_empty());
     assert_eq!(
         outcome.result().checkpoint_manifest_summaries(),
         std::slice::from_ref(&expected)

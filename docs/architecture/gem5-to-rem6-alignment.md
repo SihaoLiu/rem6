@@ -836,8 +836,9 @@ Implementation evidence on 2026-05-26:
   subsystem-specific logging.
 - Workload replay results now carry checkpoint and checkpoint-restore manifest
   summaries with label, manifest tick, component count, chunk count, and total
-  payload bytes, so replay artifacts retain checkpoint coverage evidence
-  without rereading host action logs.
+  payload bytes, plus per-component chunk-level payload evidence, so replay
+  artifacts retain checkpoint coverage evidence without rereading host action
+  logs or payload blobs.
 - Workload manifests can now declare minimum checkpoint and checkpoint-restore
   manifest component, chunk, and payload-byte totals. Replay-plan verification
   rejects missing or under-covered checkpoint summaries, which turns
