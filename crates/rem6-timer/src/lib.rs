@@ -227,17 +227,18 @@ impl ProgrammableTimer {
         if deadline < now {
             return Err(TimerError::DeadlineInPast { now, deadline });
         }
+        self.interrupt
+            .validate_route()
+            .map_err(TimerError::Interrupt)?;
 
-        let generation = {
-            let mut state = self.state.lock().expect("timer state lock");
-            state.arm(now, deadline)
-        };
         let delay = deadline - now;
         let state = Arc::clone(&self.state);
         let interrupt = self.interrupt.clone();
         let source = self.source;
+        let mut timer_state = self.state.lock().expect("timer state lock");
+        let generation = timer_state.next_generation();
 
-        context
+        let event_id = context
             .schedule_remote_after(self.partition, delay, move |context| {
                 let should_fire = state
                     .lock()
@@ -253,7 +254,9 @@ impl ProgrammableTimer {
                     }
                 }
             })
-            .map_err(TimerError::Scheduler)
+            .map_err(TimerError::Scheduler)?;
+        timer_state.arm_generation(generation, now, deadline);
+        Ok(event_id)
     }
 
     pub fn arm_at_parallel(
@@ -265,17 +268,18 @@ impl ProgrammableTimer {
         if deadline < now {
             return Err(TimerError::DeadlineInPast { now, deadline });
         }
+        self.interrupt
+            .validate_route()
+            .map_err(TimerError::Interrupt)?;
 
-        let generation = {
-            let mut state = self.state.lock().expect("timer state lock");
-            state.arm(now, deadline)
-        };
         let delay = deadline - now;
         let state = Arc::clone(&self.state);
         let interrupt = self.interrupt.clone();
         let source = self.source;
+        let mut timer_state = self.state.lock().expect("timer state lock");
+        let generation = timer_state.next_generation();
 
-        context
+        let event_id = context
             .schedule_remote_after(self.partition, delay, move |context| {
                 let should_fire = state
                     .lock()
@@ -291,7 +295,9 @@ impl ProgrammableTimer {
                     }
                 }
             })
-            .map_err(TimerError::Scheduler)
+            .map_err(TimerError::Scheduler)?;
+        timer_state.arm_generation(generation, now, deadline);
+        Ok(event_id)
     }
 
     pub fn snapshot(&self) -> TimerSnapshot {
@@ -539,12 +545,15 @@ impl TimerState {
         }
     }
 
-    fn arm(&mut self, programmed_tick: Tick, deadline: Tick) -> u64 {
-        self.generation += 1;
+    fn next_generation(&self) -> u64 {
+        self.generation + 1
+    }
+
+    fn arm_generation(&mut self, generation: u64, programmed_tick: Tick, deadline: Tick) {
+        self.generation = generation;
         self.next_deadline = Some(deadline);
         self.arms
             .push(TimerArm::new(self.generation, programmed_tick, deadline));
-        self.generation
     }
 
     fn expire(&mut self, generation: u64, tick: Tick) -> bool {

@@ -216,6 +216,191 @@ fn programmed_timer_rejects_past_deadlines() {
 }
 
 #[test]
+fn programmed_timer_rejects_route_mismatch_before_serial_arm() {
+    let cpu = PartitionId::new(0);
+    let timer_partition = PartitionId::new(1);
+    let source = InterruptSourceId::new(11);
+    let line = InterruptLineId::new(30);
+    let route = InterruptRoute::new(line, InterruptTargetId::new(3), cpu);
+    let expected_route = InterruptRoute::new(line, InterruptTargetId::new(4), cpu);
+    let mut controller = InterruptController::new();
+    controller.register_route(expected_route).unwrap();
+    let controller = Arc::new(Mutex::new(controller));
+    let port = InterruptLinePort::new(
+        InterruptLineChannel::new(route, 2).unwrap(),
+        Arc::clone(&controller),
+    );
+    let errors = port.delivery_errors();
+    let timer = ProgrammableTimer::new(TimerId::new(10), timer_partition, source, port);
+    let observed_timer = timer.clone();
+    let result = Arc::new(Mutex::new(None));
+    let captured = Arc::clone(&result);
+    let mut scheduler = PartitionedScheduler::new(2).unwrap();
+
+    scheduler
+        .schedule_at(cpu, 4, move |context| {
+            *captured.lock().unwrap() = Some(timer.arm_at(context, 10));
+        })
+        .unwrap();
+
+    let summary = scheduler.run_until_idle();
+
+    assert_eq!(summary.executed_events(), 1);
+    assert_eq!(summary.final_tick(), 4);
+    assert_eq!(
+        result.lock().unwrap().as_ref().unwrap(),
+        &Err(TimerError::Interrupt(InterruptError::RouteMismatch {
+            line,
+            expected: expected_route,
+            actual: route,
+        }))
+    );
+    assert!(observed_timer.snapshot().arms().is_empty());
+    assert!(observed_timer.snapshot().expiries().is_empty());
+    assert!(observed_timer.snapshot().signal_errors().is_empty());
+    assert!(errors.lock().unwrap().is_empty());
+    assert!(controller.lock().unwrap().history().is_empty());
+}
+
+#[test]
+fn programmed_timer_rejects_route_mismatch_before_parallel_arm() {
+    let cpu = PartitionId::new(0);
+    let timer_partition = PartitionId::new(1);
+    let source = InterruptSourceId::new(12);
+    let line = InterruptLineId::new(31);
+    let route = InterruptRoute::new(line, InterruptTargetId::new(3), cpu);
+    let expected_route = InterruptRoute::new(line, InterruptTargetId::new(4), cpu);
+    let mut controller = InterruptController::new();
+    controller.register_route(expected_route).unwrap();
+    let controller = Arc::new(Mutex::new(controller));
+    let port = InterruptLinePort::new(
+        InterruptLineChannel::new(route, 2).unwrap(),
+        Arc::clone(&controller),
+    );
+    let errors = port.delivery_errors();
+    let timer = ProgrammableTimer::new(TimerId::new(11), timer_partition, source, port);
+    let observed_timer = timer.clone();
+    let result = Arc::new(Mutex::new(None));
+    let captured = Arc::clone(&result);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+
+    scheduler
+        .schedule_parallel_at(cpu, 4, move |context| {
+            *captured.lock().unwrap() = Some(timer.arm_at_parallel(context, 10));
+        })
+        .unwrap();
+
+    let summary = scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(summary.executed_events(), 1);
+    assert_eq!(summary.final_tick(), 4);
+    assert_eq!(
+        result.lock().unwrap().as_ref().unwrap(),
+        &Err(TimerError::Interrupt(InterruptError::RouteMismatch {
+            line,
+            expected: expected_route,
+            actual: route,
+        }))
+    );
+    assert!(observed_timer.snapshot().arms().is_empty());
+    assert!(observed_timer.snapshot().expiries().is_empty());
+    assert!(observed_timer.snapshot().signal_errors().is_empty());
+    assert!(errors.lock().unwrap().is_empty());
+    assert!(controller.lock().unwrap().history().is_empty());
+}
+
+#[test]
+fn programmed_timer_rejects_serial_deadline_delivery_before_state_change() {
+    let cpu = PartitionId::new(0);
+    let timer_partition = PartitionId::new(1);
+    let source = InterruptSourceId::new(13);
+    let route = InterruptRoute::new(InterruptLineId::new(32), InterruptTargetId::new(0), cpu);
+    let controller = Arc::new(Mutex::new(InterruptController::new()));
+    controller.lock().unwrap().register_route(route).unwrap();
+    let port = InterruptLinePort::new(
+        InterruptLineChannel::new(route, 2).unwrap(),
+        Arc::clone(&controller),
+    );
+    let timer = ProgrammableTimer::new(TimerId::new(12), timer_partition, source, port);
+    let observed_timer = timer.clone();
+    let result = Arc::new(Mutex::new(None));
+    let captured = Arc::clone(&result);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 3).unwrap();
+
+    scheduler
+        .schedule_at(cpu, 5, move |context| {
+            *captured.lock().unwrap() = Some(timer.arm_at(context, 7));
+        })
+        .unwrap();
+
+    let summary = scheduler.run_until_idle();
+
+    assert_eq!(summary.executed_events(), 1);
+    assert_eq!(summary.final_tick(), 5);
+    assert_eq!(
+        result.lock().unwrap().as_ref().unwrap(),
+        &Err(TimerError::Scheduler(
+            SchedulerError::RemoteDeliveryBeforeLookaheadBoundary {
+                source: cpu,
+                target: timer_partition,
+                source_tick: 5,
+                delivery_tick: 7,
+                minimum_delivery_tick: 8,
+            }
+        ))
+    );
+    assert!(observed_timer.snapshot().arms().is_empty());
+    assert!(observed_timer.snapshot().expiries().is_empty());
+    assert!(observed_timer.snapshot().signal_errors().is_empty());
+    assert!(controller.lock().unwrap().history().is_empty());
+}
+
+#[test]
+fn programmed_timer_rejects_parallel_deadline_delivery_before_state_change() {
+    let cpu = PartitionId::new(0);
+    let timer_partition = PartitionId::new(1);
+    let source = InterruptSourceId::new(14);
+    let route = InterruptRoute::new(InterruptLineId::new(33), InterruptTargetId::new(0), cpu);
+    let controller = Arc::new(Mutex::new(InterruptController::new()));
+    controller.lock().unwrap().register_route(route).unwrap();
+    let port = InterruptLinePort::new(
+        InterruptLineChannel::new(route, 2).unwrap(),
+        Arc::clone(&controller),
+    );
+    let timer = ProgrammableTimer::new(TimerId::new(13), timer_partition, source, port);
+    let observed_timer = timer.clone();
+    let result = Arc::new(Mutex::new(None));
+    let captured = Arc::clone(&result);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 3).unwrap();
+
+    scheduler
+        .schedule_parallel_at(cpu, 5, move |context| {
+            *captured.lock().unwrap() = Some(timer.arm_at_parallel(context, 7));
+        })
+        .unwrap();
+
+    let summary = scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(summary.executed_events(), 1);
+    assert_eq!(
+        result.lock().unwrap().as_ref().unwrap(),
+        &Err(TimerError::Scheduler(
+            SchedulerError::RemoteDeliveryBeforeLookaheadBoundary {
+                source: cpu,
+                target: timer_partition,
+                source_tick: 5,
+                delivery_tick: 7,
+                minimum_delivery_tick: 8,
+            }
+        ))
+    );
+    assert!(observed_timer.snapshot().arms().is_empty());
+    assert!(observed_timer.snapshot().expiries().is_empty());
+    assert!(observed_timer.snapshot().signal_errors().is_empty());
+    assert!(controller.lock().unwrap().history().is_empty());
+}
+
+#[test]
 fn programmed_timer_snapshot_restore_reinstates_programmed_state() {
     let cpu = PartitionId::new(0);
     let timer_partition = PartitionId::new(1);

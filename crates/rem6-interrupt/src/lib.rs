@@ -354,7 +354,7 @@ impl InterruptLinePort {
         source: InterruptSourceId,
         kind: InterruptEventKind,
     ) -> Result<PartitionEventId, InterruptError> {
-        self.validate_controller_route()?;
+        self.validate_route()?;
         let controller = Arc::clone(&self.controller);
         let delivery_errors = Arc::clone(&self.delivery_errors);
         self.channel.emit(context, source, kind, move |delivery| {
@@ -393,7 +393,7 @@ impl InterruptLinePort {
         source: InterruptSourceId,
         kind: InterruptEventKind,
     ) -> Result<PartitionEventId, InterruptError> {
-        self.validate_controller_route()?;
+        self.validate_route()?;
         let controller = Arc::clone(&self.controller);
         let delivery_errors = Arc::clone(&self.delivery_errors);
         self.channel
@@ -411,7 +411,7 @@ impl InterruptLinePort {
             })
     }
 
-    fn validate_controller_route(&self) -> Result<(), InterruptError> {
+    pub fn validate_route(&self) -> Result<(), InterruptError> {
         self.controller
             .lock()
             .expect("interrupt controller lock")

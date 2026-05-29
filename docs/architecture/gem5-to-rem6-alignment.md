@@ -120,7 +120,12 @@ isolated bugs:
   Interrupt line ports also prevalidate their controller route before serial or
   parallel signal delivery is scheduled, so static line-target mismatches fail
   at the device/interrupt boundary while delivery-time state conflicts remain
-  explicit recorded errors.
+  explicit recorded errors. Programmable timer arm paths use that route
+  preflight before committing armed state, and they commit timer generations
+  only after the deadline event is accepted by the scheduler. Invalid timer
+  interrupt wiring and deadline-delivery lookahead violations therefore return
+  typed errors at the MMIO/device call site instead of persisting ghost timer
+  state or deferring the failure to a future callback.
   Wait-for
   edge-kind observation windows are now owned by `rem6-kernel`, so every
   subsystem can report distinct edge counts plus first and last observed ticks
@@ -1535,7 +1540,10 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
   RTC-backed `mtime` state. CLINT reset tests cover `msip` clearing,
   `mtimecmp` reset policy, timer-assertion clearing, serial and parallel typed
   interrupt deassertion, and stale timer-event invalidation through generation
-  changes.
+  changes. Programmable timer tests also cover serial and parallel rejection of
+  invalid interrupt routes before arm state is committed, plus serial and
+  parallel rejection of deadline-event delivery that violates remote lookahead
+  before any timer generation is persisted.
 - System action tests cover CLINT checkpoint-bank capture and restore through
   host checkpoint manifests for per-hart `msip`, `mtimecmp`, timer assertion,
   and RTC-backed `mtime` state.
