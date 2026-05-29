@@ -507,13 +507,14 @@ Implementation evidence through 2026-05-29:
   command-processor and pipeline monoliths.
 - `rem6-accelerator` now keeps command identifiers, command kinds, wait-for
   markers, engine configuration, accelerator trace events, and accelerator
-  error reporting in focused `command`, `trace`, and `error` modules while
-  leaving the crate root centered on execution, DMA issue/completion,
-  snapshots, wait-for diagnostics, and parallel run summaries. Accelerator
-  source-policy tests keep the crate root under the facade budget, require
-  command and error contracts to stay out of the root, and enforce the hard
-  per-source-file size budget, so GPU-kernel, NPU-inference, and DMA
-  accelerator growth does not recreate gem5-style device-command monoliths.
+  engine/queued-command snapshots, and accelerator error reporting in focused
+  `command`, `trace`, `snapshot`, and `error` modules while leaving the crate
+  root centered on execution, DMA issue/completion, wait-for diagnostics, and
+  parallel run summaries. Accelerator source-policy tests keep the crate root
+  under the facade budget, require command, snapshot, and error contracts to
+  stay out of the root, and enforce the hard per-source-file size budget, so
+  GPU-kernel, NPU-inference, and DMA accelerator growth does not recreate
+  gem5-style HSA/AMDGPU device-command and queue-state monoliths.
 - `rem6-virtio` now keeps queue indexes, queue specs, notify specs, queue
   notifications, VirtIO error variants, error formatting, and device-error
   conversion helpers in focused `queue` and `error` modules while leaving the
@@ -1935,9 +1936,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   GPU source-policy tests keep command, trace, snapshot, and error contracts in
   focused modules while enforcing the facade and hard module-size budgets
   across GPU sources.
-  Accelerator source-policy tests keep command contracts and error reporting in
-  focused modules while enforcing the facade and hard module-size budgets across
-  accelerator sources.
+  Accelerator source-policy tests keep command contracts, snapshot contracts,
+  and error reporting in focused modules while enforcing the facade and hard
+  module-size budgets across accelerator sources.
   VirtIO source-policy tests keep queue contracts and error reporting in focused
   modules while enforcing the facade and hard module-size budgets across VirtIO
   sources.

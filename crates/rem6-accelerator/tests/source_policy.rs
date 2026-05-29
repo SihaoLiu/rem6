@@ -52,6 +52,26 @@ fn accelerator_command_contracts_live_in_focused_module() {
 }
 
 #[test]
+fn accelerator_snapshot_contracts_live_in_focused_module() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let lib_rs = fs::read_to_string(crate_dir.join("src/lib.rs")).unwrap();
+    let snapshot_rs = crate_dir.join("src/snapshot.rs");
+
+    assert!(
+        snapshot_rs.exists(),
+        "accelerator snapshot contracts belong in src/snapshot.rs"
+    );
+    assert!(
+        !lib_rs.contains("pub struct AcceleratorEngineSnapshot {"),
+        "src/lib.rs should re-export engine snapshots from a focused module"
+    );
+    assert!(
+        !lib_rs.contains("pub struct AcceleratorQueuedCommandSnapshot {"),
+        "src/lib.rs should re-export queued command snapshots from a focused module"
+    );
+}
+
+#[test]
 fn accelerator_source_files_stay_within_size_limit() {
     let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut oversized = Vec::new();

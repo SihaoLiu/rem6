@@ -1,5 +1,6 @@
 mod command;
 mod error;
+mod snapshot;
 mod topology;
 mod trace;
 
@@ -23,6 +24,7 @@ use rem6_transport::{
     MemoryRouteId, MemoryTrace, MemoryTransport, ParallelMemoryTransaction, RequestDelivery,
     ResponseDelivery, TargetOutcome,
 };
+pub use snapshot::{AcceleratorEngineSnapshot, AcceleratorQueuedCommandSnapshot};
 pub use topology::{
     AcceleratorCommandPath, AcceleratorCommandSubmissionConfig, AcceleratorTopologyConfig,
     AcceleratorTopologyDevice,
@@ -278,63 +280,6 @@ impl AcceleratorDmaIssueRecord {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AcceleratorEngineSnapshot {
-    lane_busy_until: Vec<Tick>,
-    queued_commands: Vec<AcceleratorQueuedCommandSnapshot>,
-    trace: Vec<AcceleratorTraceEvent>,
-    completed: Vec<AcceleratorCompletion>,
-    pending_dma_writes: Vec<AcceleratorPendingDmaWrite>,
-    dma_completions: Vec<AcceleratorDmaCompletion>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AcceleratorQueuedCommandSnapshot {
-    command: AcceleratorCommand,
-    lane: u32,
-    queued_at: Tick,
-    started_at: Tick,
-    completed_at: Tick,
-}
-
-impl AcceleratorQueuedCommandSnapshot {
-    pub const fn new(
-        command: AcceleratorCommand,
-        lane: u32,
-        queued_at: Tick,
-        started_at: Tick,
-        completed_at: Tick,
-    ) -> Self {
-        Self {
-            command,
-            lane,
-            queued_at,
-            started_at,
-            completed_at,
-        }
-    }
-
-    pub const fn command(&self) -> &AcceleratorCommand {
-        &self.command
-    }
-
-    pub const fn lane(&self) -> u32 {
-        self.lane
-    }
-
-    pub const fn queued_at(&self) -> Tick {
-        self.queued_at
-    }
-
-    pub const fn started_at(&self) -> Tick {
-        self.started_at
-    }
-
-    pub const fn completed_at(&self) -> Tick {
-        self.completed_at
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ParallelAcceleratorRunSummary {
     scheduler_run: RecordedConservativeRunSummary,
     trace_event_count: usize,
@@ -469,69 +414,6 @@ impl ParallelAcceleratorRunSummary {
 
     pub const fn has_dma_activity(&self) -> bool {
         self.pending_dma_write_count != 0 || self.dma_completion_count != 0
-    }
-}
-
-impl AcceleratorEngineSnapshot {
-    pub fn new(
-        lane_busy_until: Vec<Tick>,
-        trace: Vec<AcceleratorTraceEvent>,
-        completed: Vec<AcceleratorCompletion>,
-        pending_dma_writes: Vec<AcceleratorPendingDmaWrite>,
-        dma_completions: Vec<AcceleratorDmaCompletion>,
-    ) -> Self {
-        Self {
-            lane_busy_until,
-            queued_commands: Vec::new(),
-            trace,
-            completed,
-            pending_dma_writes,
-            dma_completions,
-        }
-    }
-
-    pub fn with_queued_commands(
-        mut self,
-        queued_commands: Vec<AcceleratorQueuedCommandSnapshot>,
-    ) -> Self {
-        self.queued_commands = queued_commands;
-        self
-    }
-
-    pub fn lane_busy_until(&self) -> &[Tick] {
-        &self.lane_busy_until
-    }
-
-    pub fn lane_count(&self) -> usize {
-        self.lane_busy_until.len()
-    }
-
-    pub fn queued_commands(&self) -> &[AcceleratorQueuedCommandSnapshot] {
-        &self.queued_commands
-    }
-
-    pub fn has_queued_commands(&self) -> bool {
-        !self.queued_commands.is_empty()
-    }
-
-    pub fn trace(&self) -> &[AcceleratorTraceEvent] {
-        &self.trace
-    }
-
-    pub fn completed(&self) -> &[AcceleratorCompletion] {
-        &self.completed
-    }
-
-    pub fn pending_dma_writes(&self) -> &[AcceleratorPendingDmaWrite] {
-        &self.pending_dma_writes
-    }
-
-    pub fn has_pending_dma_writes(&self) -> bool {
-        !self.pending_dma_writes.is_empty()
-    }
-
-    pub fn dma_completions(&self) -> &[AcceleratorDmaCompletion] {
-        &self.dma_completions
     }
 }
 
@@ -1078,16 +960,16 @@ impl AcceleratorEngineState {
 
     fn from_snapshot(snapshot: &AcceleratorEngineSnapshot) -> Self {
         Self {
-            lane_busy_until: snapshot.lane_busy_until.clone(),
+            lane_busy_until: snapshot.lane_busy_until().to_vec(),
             queued_commands: snapshot
-                .queued_commands
+                .queued_commands()
                 .iter()
                 .map(AcceleratorQueuedCommand::from_snapshot)
                 .collect(),
-            trace: snapshot.trace.clone(),
-            completed: snapshot.completed.clone(),
-            pending_dma_writes: snapshot.pending_dma_writes.clone(),
-            dma_completions: snapshot.dma_completions.clone(),
+            trace: snapshot.trace().to_vec(),
+            completed: snapshot.completed().to_vec(),
+            pending_dma_writes: snapshot.pending_dma_writes().to_vec(),
+            dma_completions: snapshot.dma_completions().to_vec(),
             wait_log: Vec::new(),
         }
     }
@@ -1166,11 +1048,11 @@ impl AcceleratorQueuedCommand {
 
     fn from_snapshot(snapshot: &AcceleratorQueuedCommandSnapshot) -> Self {
         Self {
-            command: snapshot.command.clone(),
-            lane: snapshot.lane,
-            queued_at: snapshot.queued_at,
-            started_at: snapshot.started_at,
-            completed_at: snapshot.completed_at,
+            command: snapshot.command().clone(),
+            lane: snapshot.lane(),
+            queued_at: snapshot.queued_at(),
+            started_at: snapshot.started_at(),
+            completed_at: snapshot.completed_at(),
         }
     }
 }
