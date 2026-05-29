@@ -12,6 +12,7 @@ use rem6_mmio::{MmioAccess, MmioDevice, MmioError, MmioOperation, MmioRequest, M
 mod clint;
 mod pl031;
 mod rtc;
+mod sp804;
 
 pub use self::clint::{
     ClintHartConfig, ClintHartSnapshot, ClintId, ClintMmioDevice, ClintResetPolicy, ClintSnapshot,
@@ -34,6 +35,13 @@ pub use self::rtc::{
     RTC_SECONDS_ALARM_REGISTER, RTC_SECONDS_REGISTER, RTC_STATUS_A_REGISTER, RTC_STATUS_B_REGISTER,
     RTC_STATUS_C_AF, RTC_STATUS_C_IRQF, RTC_STATUS_C_PF, RTC_STATUS_C_REGISTER, RTC_STATUS_C_UF,
     RTC_STATUS_D_REGISTER, RTC_YEARS_REGISTER,
+};
+pub use self::sp804::{
+    Sp804DualTimer, Sp804DualTimerMmioDevice, Sp804DualTimerMmioSnapshot, Sp804DualTimerSnapshot,
+    Sp804Error, Sp804Timer, Sp804TimerControl, Sp804TimerSnapshot, Sp804TimerSnapshotFields,
+    SP804_BGLOAD_OFFSET, SP804_CONTROL_OFFSET, SP804_CURRENT_OFFSET, SP804_INT_CLEAR_OFFSET,
+    SP804_LOAD_OFFSET, SP804_MASKED_ISR_OFFSET, SP804_MMIO_SIZE_BYTES, SP804_RAW_ISR_OFFSET,
+    SP804_REGISTER_BYTES, SP804_TIMER_COUNT, SP804_TIMER_WINDOW_BYTES,
 };
 
 pub const TIMER_MMIO_REGISTER_BYTES: u64 = 8;
