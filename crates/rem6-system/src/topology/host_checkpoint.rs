@@ -6,16 +6,17 @@ use crate::{
     GpuCheckpointBank, GpuCheckpointPort, InterruptControllerCheckpointBank,
     InterruptControllerCheckpointPort, MemoryStoreCheckpointBank, MemoryStoreCheckpointPort,
     PlicCheckpointBank, PlicCheckpointPort, RiscvCoreCheckpointBank, RiscvCoreCheckpointPort,
-    SchedulerCheckpointBank, SchedulerCheckpointPort, SystemError, TimerCheckpointBank,
-    TimerCheckpointPort, UartCheckpointBank, UartCheckpointPort,
+    RtcCheckpointBank, RtcCheckpointPort, SchedulerCheckpointBank, SchedulerCheckpointPort,
+    SystemError, TimerCheckpointBank, TimerCheckpointPort, UartCheckpointBank, UartCheckpointPort,
 };
 
 use super::{
     default_accelerator_checkpoint_component, default_clint_checkpoint_component,
     default_gpu_checkpoint_component, default_interrupt_checkpoint_component,
     default_plic_checkpoint_component, default_riscv_checkpoint_component,
-    default_timer_checkpoint_component, default_uart_checkpoint_component,
-    RiscvTopologyMemoryBackend, RiscvTopologySystem, RiscvTopologySystemError,
+    default_rtc_checkpoint_component, default_timer_checkpoint_component,
+    default_uart_checkpoint_component, RiscvTopologyMemoryBackend, RiscvTopologySystem,
+    RiscvTopologySystemError,
 };
 
 impl RiscvTopologySystem {
@@ -245,6 +246,21 @@ impl RiscvTopologySystem {
                 .expect("topology host controller lock")
                 .executor_mut()
                 .attach_plic_checkpoint_bank(plic_bank)
+                .map_err(SystemError::Checkpoint)
+                .map_err(RiscvTopologySystemError::System)?;
+        }
+
+        let rtc_bank = RtcCheckpointBank::new(platform.rtcs().map(|(base, device)| {
+            RtcCheckpointPort::new(default_rtc_checkpoint_component(base), device.clone())
+        }))
+        .map_err(SystemError::Checkpoint)
+        .map_err(RiscvTopologySystemError::System)?;
+        if rtc_bank.component_count() != 0 {
+            host.controller
+                .lock()
+                .expect("topology host controller lock")
+                .executor_mut()
+                .attach_rtc_checkpoint_bank(rtc_bank)
                 .map_err(SystemError::Checkpoint)
                 .map_err(RiscvTopologySystemError::System)?;
         }

@@ -8,13 +8,15 @@ use rem6_memory::{AccessSize, Address, ByteMask};
 use rem6_mmio::{MmioCompletion, MmioError, MmioRequest, MmioRequestId, MmioResponse, MmioRoute};
 use rem6_platform::{
     PlatformBuilder, PlatformClintConfig, PlatformClintHartConfig, PlatformError,
-    PlatformInterruptControllerConfig, PlatformRiscvDeviceTreeConfig, PlatformTimerConfig,
-    PlatformTopologyError, PlatformTopologyRoute, PlatformUartConfig,
+    PlatformInterruptControllerConfig, PlatformRiscvDeviceTreeConfig, PlatformRtcConfig,
+    PlatformTimerConfig, PlatformTopologyError, PlatformTopologyRoute, PlatformUartConfig,
 };
 use rem6_timer::{
-    ClintId, ClintResetPolicy, TimerArm, TimerExpiry, TimerId, CLINT_MSIP_BASE_OFFSET,
-    CLINT_MSIP_REGISTER_BYTES, CLINT_MSIP_STRIDE, CLINT_MTIMECMP_BASE_OFFSET,
-    CLINT_MTIMECMP_REGISTER_BYTES, CLINT_MTIMECMP_STRIDE, TIMER_MMIO_DEADLINE_OFFSET,
+    ClintId, ClintResetPolicy, RtcDateTime, RtcEncoding, TimerArm, TimerExpiry, TimerId,
+    CLINT_MSIP_BASE_OFFSET, CLINT_MSIP_REGISTER_BYTES, CLINT_MSIP_STRIDE,
+    CLINT_MTIMECMP_BASE_OFFSET, CLINT_MTIMECMP_REGISTER_BYTES, CLINT_MTIMECMP_STRIDE,
+    RTC_MMIO_ADDRESS_OFFSET, RTC_MMIO_DATA_OFFSET, RTC_SECONDS_REGISTER,
+    TIMER_MMIO_DEADLINE_OFFSET,
 };
 use rem6_topology::{
     ComponentId, ComponentKind, ComponentSpec, Endpoint, PortDirection, PortName, Topology,
@@ -244,6 +246,100 @@ fn platform_builder_wires_timer_uart_interrupts_and_mmio_bus() {
                 InterruptEventKind::Assert,
             ),
         ]
+    );
+}
+
+#[test]
+fn platform_builder_wires_rtc_mmio_bus_and_retains_device() {
+    let cpu = PartitionId::new(0);
+    let rtc_partition = PartitionId::new(1);
+    let base = Address::new(0x70);
+    let route = MmioRoute::new(cpu, rtc_partition, 2, 1).unwrap();
+
+    let platform = PlatformBuilder::new(2)
+        .add_rtc(PlatformRtcConfig {
+            base,
+            size: AccessSize::new(2).unwrap(),
+            route,
+            time: RtcDateTime::new(2026, 5, 29, 1, 2, 3, 6).unwrap(),
+            encoding: RtcEncoding::Bcd,
+        })
+        .build()
+        .unwrap();
+
+    assert_eq!(
+        platform
+            .rtcs()
+            .map(|(device_base, _)| device_base)
+            .collect::<Vec<_>>(),
+        vec![base]
+    );
+    let rtc = platform.rtc(base).unwrap().clone();
+    let bus = platform.mmio_bus().clone();
+    let completions = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut scheduler = PartitionedScheduler::new(platform.partition_count()).unwrap();
+
+    let completed = std::sync::Arc::clone(&completions);
+    scheduler
+        .schedule_at(cpu, 1, move |context| {
+            bus.submit(
+                context,
+                MmioRequest::write(
+                    MmioRequestId::new(40),
+                    Address::new(base.get() + RTC_MMIO_ADDRESS_OFFSET),
+                    vec![RTC_SECONDS_REGISTER],
+                    full_mask(1),
+                )
+                .unwrap(),
+                move |completion| completed.lock().unwrap().push(completion),
+            )
+            .unwrap();
+        })
+        .unwrap();
+
+    let bus = platform.mmio_bus().clone();
+    let completed = std::sync::Arc::clone(&completions);
+    scheduler
+        .schedule_at(cpu, 5, move |context| {
+            bus.submit(
+                context,
+                MmioRequest::read(
+                    MmioRequestId::new(41),
+                    Address::new(base.get() + RTC_MMIO_DATA_OFFSET),
+                    AccessSize::new(1).unwrap(),
+                )
+                .unwrap(),
+                move |completion| completed.lock().unwrap().push(completion),
+            )
+            .unwrap();
+        })
+        .unwrap();
+
+    let summary = scheduler.run_until_idle();
+
+    assert_eq!(summary.final_tick(), 8);
+    assert_eq!(
+        completions.lock().unwrap().as_slice(),
+        &[
+            MmioCompletion::new(
+                4,
+                route,
+                Ok(MmioResponse::completed(MmioRequestId::new(40), None)),
+            ),
+            MmioCompletion::new(
+                8,
+                route,
+                Ok(MmioResponse::completed(
+                    MmioRequestId::new(41),
+                    Some(vec![0x03]),
+                )),
+            ),
+        ]
+    );
+    assert_eq!(rtc.snapshot().selected_address(), RTC_SECONDS_REGISTER);
+    assert_eq!(
+        rtc.snapshot().rtc().clock_data()[usize::from(RTC_SECONDS_REGISTER)],
+        0x03
     );
 }
 

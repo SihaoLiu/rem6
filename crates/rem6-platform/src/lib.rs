@@ -12,7 +12,8 @@ use rem6_kernel::{PartitionId, Tick};
 use rem6_memory::{AccessSize, Address, AddressRange, MemoryError};
 use rem6_mmio::{MmioBus, MmioError, MmioRoute};
 use rem6_timer::{
-    ClintHartConfig, ClintId, ClintMmioDevice, ClintResetPolicy, ProgrammableTimer, TimerError,
+    ClintHartConfig, ClintId, ClintMmioDevice, ClintResetPolicy, Mc146818Rtc,
+    Mc146818RtcMmioDevice, ProgrammableTimer, RtcDateTime, RtcEncoding, RtcError, TimerError,
     TimerId, TimerMmioDevice,
 };
 use rem6_topology::{Endpoint, Topology, TopologyError};
@@ -40,6 +41,15 @@ pub struct PlatformUartConfig {
     pub interrupt_target: InterruptTargetId,
     pub interrupt_source: InterruptSourceId,
     pub interrupt_latency: Tick,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PlatformRtcConfig {
+    pub base: Address,
+    pub size: AccessSize,
+    pub route: MmioRoute,
+    pub time: RtcDateTime,
+    pub encoding: RtcEncoding,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -906,6 +916,7 @@ pub struct PlatformBuilder {
     clints: Vec<PlatformClintConfig>,
     timers: Vec<PlatformTimerConfig>,
     uarts: Vec<PlatformUartConfig>,
+    rtcs: Vec<PlatformRtcConfig>,
 }
 
 impl PlatformBuilder {
@@ -916,6 +927,7 @@ impl PlatformBuilder {
             clints: Vec::new(),
             timers: Vec::new(),
             uarts: Vec::new(),
+            rtcs: Vec::new(),
         }
     }
 
@@ -943,6 +955,11 @@ impl PlatformBuilder {
         self
     }
 
+    pub fn add_rtc(mut self, config: PlatformRtcConfig) -> Self {
+        self.rtcs.push(config);
+        self
+    }
+
     pub fn build(self) -> Result<Platform, PlatformError> {
         if self.partition_count == 0 {
             return Err(PlatformError::NoPartitions);
@@ -960,6 +977,7 @@ impl PlatformBuilder {
         let mut plics = BTreeMap::new();
         let mut timers = BTreeMap::new();
         let mut uarts = BTreeMap::new();
+        let mut rtcs = BTreeMap::new();
 
         for config in self.interrupt_controllers {
             validate_route(self.partition_count, config.route)?;
@@ -1082,6 +1100,19 @@ impl PlatformBuilder {
             uarts.insert(config.id, device);
         }
 
+        for config in self.rtcs {
+            validate_route(self.partition_count, config.route)?;
+            let rtc = Mc146818Rtc::new(config.time, config.encoding).map_err(PlatformError::Rtc)?;
+            let device = Mc146818RtcMmioDevice::new(config.base, rtc);
+            bus.insert_device(
+                region(config.base, config.size)?,
+                config.route,
+                device.clone(),
+            )
+            .map_err(PlatformError::Mmio)?;
+            rtcs.insert(config.base, device);
+        }
+
         Ok(Platform {
             partition_count: self.partition_count,
             interrupt_controller: controller,
@@ -1090,6 +1121,7 @@ impl PlatformBuilder {
             plics,
             timers,
             uarts,
+            rtcs,
             device_tree_inventory,
         })
     }
@@ -1104,6 +1136,7 @@ pub struct Platform {
     plics: BTreeMap<Address, PlicMmioDevice>,
     timers: BTreeMap<TimerId, ProgrammableTimer>,
     uarts: BTreeMap<UartId, UartMmioDevice>,
+    rtcs: BTreeMap<Address, Mc146818RtcMmioDevice>,
     device_tree_inventory: PlatformDeviceTreeInventory,
 }
 
@@ -1150,6 +1183,14 @@ impl Platform {
 
     pub fn uarts(&self) -> impl Iterator<Item = (UartId, &UartMmioDevice)> {
         self.uarts.iter().map(|(id, device)| (*id, device))
+    }
+
+    pub fn rtc(&self, base: Address) -> Option<&Mc146818RtcMmioDevice> {
+        self.rtcs.get(&base)
+    }
+
+    pub fn rtcs(&self) -> impl Iterator<Item = (Address, &Mc146818RtcMmioDevice)> {
+        self.rtcs.iter().map(|(base, device)| (*base, device))
     }
 
     pub fn riscv_device_tree(
@@ -1271,6 +1312,7 @@ pub enum PlatformError {
     Mmio(MmioError),
     Interrupt(InterruptError),
     Timer(TimerError),
+    Rtc(RtcError),
 }
 
 impl fmt::Display for PlatformError {
@@ -1300,6 +1342,7 @@ impl fmt::Display for PlatformError {
             Self::Mmio(error) => write!(formatter, "{error}"),
             Self::Interrupt(error) => write!(formatter, "{error}"),
             Self::Timer(error) => write!(formatter, "{error}"),
+            Self::Rtc(error) => write!(formatter, "{error}"),
         }
     }
 }
@@ -1311,6 +1354,7 @@ impl Error for PlatformError {
             Self::Mmio(error) => Some(error),
             Self::Interrupt(error) => Some(error),
             Self::Timer(error) => Some(error),
+            Self::Rtc(error) => Some(error),
             _ => None,
         }
     }

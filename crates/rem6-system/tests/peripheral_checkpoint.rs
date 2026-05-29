@@ -13,13 +13,15 @@ use rem6_system::{
     ClintCheckpointBank, ClintCheckpointError, ClintCheckpointPort, GuestEventId, GuestSourceId,
     HostAction, HostActionRecord, InterruptControllerCheckpointBank,
     InterruptControllerCheckpointError, InterruptControllerCheckpointPort, PlicCheckpointBank,
-    PlicCheckpointError, PlicCheckpointPort, SystemActionExecutor, SystemActionOutcome,
-    TimerCheckpointBank, TimerCheckpointError, TimerCheckpointPort, UartCheckpointBank,
-    UartCheckpointError, UartCheckpointPort,
+    PlicCheckpointError, PlicCheckpointPort, RtcCheckpointBank, RtcCheckpointError,
+    RtcCheckpointPort, SystemActionExecutor, SystemActionOutcome, TimerCheckpointBank,
+    TimerCheckpointError, TimerCheckpointPort, UartCheckpointBank, UartCheckpointError,
+    UartCheckpointPort,
 };
 use rem6_timer::{
-    ClintHartConfig, ClintHartSnapshot, ClintMmioDevice, ClintSnapshot, ProgrammableTimer,
-    TimerArm, TimerId, TimerSnapshot,
+    ClintHartConfig, ClintHartSnapshot, ClintMmioDevice, ClintSnapshot, Mc146818Rtc,
+    Mc146818RtcMmioDevice, Mc146818RtcMmioSnapshot, ProgrammableTimer, RtcDateTime, RtcEncoding,
+    RtcSnapshot, TimerArm, TimerId, TimerSnapshot, RTC_CMOS_REGISTER_COUNT,
 };
 use rem6_uart::{UartId, UartMmioDevice, UartSnapshot, UartTxByte};
 
@@ -66,6 +68,35 @@ fn plic_device(base: u64, contexts: &[PlicContextRoute]) -> PlicMmioDevice {
         Arc::new(Mutex::new(InterruptController::new())),
         Address::new(base),
         contexts.iter().copied(),
+    )
+}
+
+fn rtc_device(base: u64) -> Mc146818RtcMmioDevice {
+    Mc146818RtcMmioDevice::new(
+        Address::new(base),
+        Mc146818Rtc::new(
+            RtcDateTime::new(2026, 5, 29, 1, 2, 3, 6).unwrap(),
+            RtcEncoding::Bcd,
+        )
+        .unwrap(),
+    )
+}
+
+fn rtc_snapshot(
+    selected_address: u8,
+    cmos_index: usize,
+    cmos_value: u8,
+) -> Mc146818RtcMmioSnapshot {
+    let mut cmos = [0; RTC_CMOS_REGISTER_COUNT];
+    cmos[cmos_index] = cmos_value;
+    Mc146818RtcMmioSnapshot::new(
+        selected_address,
+        cmos,
+        RtcSnapshot::new(
+            [0x03, 0, 0x02, 0, 0x01, 0, 0x06, 0x29, 0x05, 0x26],
+            0x26,
+            0x42,
+        ),
     )
 }
 
@@ -254,6 +285,42 @@ fn plic_checkpoint_bank_rejects_invalid_bank_without_partial_restore() {
 }
 
 #[test]
+fn rtc_checkpoint_bank_rejects_invalid_bank_without_partial_restore() {
+    let valid_component = checkpoint_component("rtc_bank_a");
+    let invalid_component = checkpoint_component("rtc_bank_b");
+    let expected = rtc_snapshot(0xa0, 0x20, 0x5a);
+    let source = rtc_device(0x70);
+    source.restore(&expected).unwrap();
+    let target_valid = rtc_device(0x70);
+    let target_invalid = rtc_device(0x80);
+    let original_valid = target_valid.snapshot();
+    let original_invalid = target_invalid.snapshot();
+
+    let mut registry = CheckpointRegistry::new();
+    registry.register(valid_component.clone()).unwrap();
+    RtcCheckpointPort::new(valid_component.clone(), source)
+        .capture_into(&mut registry)
+        .unwrap();
+    registry.register(invalid_component.clone()).unwrap();
+    registry
+        .write_chunk(&invalid_component, "rtc", vec![0xbb])
+        .unwrap();
+
+    let bank = RtcCheckpointBank::new([
+        RtcCheckpointPort::new(valid_component, target_valid.clone()),
+        RtcCheckpointPort::new(invalid_component.clone(), target_invalid.clone()),
+    ])
+    .unwrap();
+    let error = bank.restore_all_from(&registry).unwrap_err();
+    assert!(matches!(
+        error,
+        RtcCheckpointError::InvalidChunk { component, .. } if component == invalid_component
+    ));
+    assert_eq!(target_valid.snapshot(), original_valid);
+    assert_eq!(target_invalid.snapshot(), original_invalid);
+}
+
+#[test]
 fn system_action_executor_checkpoints_and_restores_plic_state() {
     let component = checkpoint_component("plic0");
     let contexts = [
@@ -345,6 +412,60 @@ fn system_action_executor_checkpoints_and_restores_plic_state() {
         }
     );
     assert_eq!(live.snapshot(), expected);
+}
+
+#[test]
+fn system_action_executor_checkpoints_and_restores_rtc_state() {
+    let component = checkpoint_component("rtc.70");
+    let captured = rtc_snapshot(0xa0, 0x20, 0x5a);
+    let empty = rtc_device(0x70).snapshot();
+    let live = rtc_device(0x70);
+    live.restore(&captured).unwrap();
+    let bank =
+        RtcCheckpointBank::new([RtcCheckpointPort::new(component.clone(), live.clone())]).unwrap();
+    let mut executor = SystemActionExecutor::new(StatsRegistry::new());
+    executor.attach_rtc_checkpoint_bank(bank).unwrap();
+
+    let checkpoint = HostActionRecord::new(
+        19,
+        PartitionId::new(0),
+        PartitionId::new(1),
+        GuestEventId::new(3),
+        GuestSourceId::new(10),
+        HostAction::Checkpoint {
+            label: "rtc-ready".to_string(),
+        },
+    );
+    let manifest = match executor.apply(&checkpoint).unwrap() {
+        SystemActionOutcome::Checkpoint { manifest, .. } => manifest,
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+    assert!(manifest.states().iter().any(|state| {
+        state.component() == &component && state.chunks().iter().any(|chunk| chunk.name() == "rtc")
+    }));
+
+    live.restore(&empty).unwrap();
+
+    let restore = HostActionRecord::new(
+        25,
+        PartitionId::new(0),
+        PartitionId::new(1),
+        GuestEventId::new(4),
+        GuestSourceId::new(10),
+        HostAction::RestoreCheckpoint {
+            manifest: manifest.clone(),
+        },
+    );
+    assert_eq!(
+        executor.apply(&restore).unwrap(),
+        SystemActionOutcome::CheckpointRestored {
+            tick: 25,
+            event: GuestEventId::new(4),
+            source: GuestSourceId::new(10),
+            manifest,
+        }
+    );
+    assert_eq!(live.snapshot(), captured);
 }
 
 #[test]
