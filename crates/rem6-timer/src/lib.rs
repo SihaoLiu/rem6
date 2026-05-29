@@ -10,6 +10,7 @@ use rem6_memory::{Address, ByteMask};
 use rem6_mmio::{MmioAccess, MmioDevice, MmioError, MmioOperation, MmioRequest, MmioResponse};
 
 mod clint;
+mod cpu_local_timer;
 mod pl031;
 mod rtc;
 mod sp804;
@@ -20,6 +21,18 @@ pub use self::clint::{
     ClintTimebase, RiscvRtcSource, CLINT_MSIP_BASE_OFFSET, CLINT_MSIP_REGISTER_BYTES,
     CLINT_MSIP_STRIDE, CLINT_MTIMECMP_BASE_OFFSET, CLINT_MTIMECMP_REGISTER_BYTES,
     CLINT_MTIMECMP_STRIDE, CLINT_MTIME_OFFSET, CLINT_MTIME_REGISTER_BYTES,
+};
+pub use self::cpu_local_timer::{
+    CpuLocalTimerBank, CpuLocalTimerBankSnapshot, CpuLocalTimerControl,
+    CpuLocalTimerCounterSnapshot, CpuLocalTimerCpu, CpuLocalTimerCpuSnapshot, CpuLocalTimerError,
+    CpuLocalTimerInterruptPorts, CpuLocalTimerMmioDevice, CpuLocalTimerWriteEffect,
+    CpuLocalTimerZeroOutcome, CpuLocalWatchdogControl, CpuLocalWatchdogSnapshot,
+    CPU_LOCAL_TIMER_CONTROL_OFFSET, CPU_LOCAL_TIMER_COUNTER_OFFSET,
+    CPU_LOCAL_TIMER_INT_STATUS_OFFSET, CPU_LOCAL_TIMER_LOAD_OFFSET,
+    CPU_LOCAL_TIMER_MMIO_SIZE_BYTES, CPU_LOCAL_TIMER_REGISTER_BYTES,
+    CPU_LOCAL_WATCHDOG_CONTROL_OFFSET, CPU_LOCAL_WATCHDOG_COUNTER_OFFSET,
+    CPU_LOCAL_WATCHDOG_DISABLE_OFFSET, CPU_LOCAL_WATCHDOG_INT_STATUS_OFFSET,
+    CPU_LOCAL_WATCHDOG_LOAD_OFFSET, CPU_LOCAL_WATCHDOG_RESET_STATUS_OFFSET,
 };
 pub use self::pl031::{
     Pl031Error, Pl031Rtc, Pl031RtcMmioDevice, Pl031RtcMmioSnapshot, Pl031Snapshot,
