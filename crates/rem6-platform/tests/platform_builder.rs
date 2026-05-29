@@ -376,6 +376,7 @@ fn platform_builder_emits_typed_riscv_device_tree_for_clint_and_uart() {
             size: AccessSize::new(0x400_0000).unwrap(),
             route: MmioRoute::new(cpu0, cpu0, 1, 1).unwrap(),
             target: controller_target,
+            contexts: Vec::new(),
         })
         .add_clint(PlatformClintConfig {
             id: ClintId::new(0),
@@ -500,6 +501,7 @@ fn platform_builder_emits_binary_riscv_device_tree_blob() {
             size: AccessSize::new(0x400_0000).unwrap(),
             route: MmioRoute::new(cpu0, cpu0, 1, 1).unwrap(),
             target: controller_target,
+            contexts: Vec::new(),
         })
         .add_clint(PlatformClintConfig {
             id: ClintId::new(0),
@@ -931,6 +933,7 @@ fn platform_builder_maps_interrupt_controller_mmio() {
             size: AccessSize::new(0x210000).unwrap(),
             route: MmioRoute::new(cpu, interrupt_partition, 2, 1).unwrap(),
             target,
+            contexts: Vec::new(),
         })
         .add_timer(PlatformTimerConfig {
             id: timer_id,

@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use rem6_interrupt::{
     InterruptController, InterruptError, InterruptLineChannel, InterruptLineId, InterruptLinePort,
-    InterruptRoute, InterruptSourceId, InterruptTargetId, PlicMmioDevice,
+    InterruptRoute, InterruptSourceId, InterruptTargetId, PlicContextRoute, PlicMmioDevice,
 };
 use rem6_kernel::{PartitionId, Tick};
 use rem6_memory::{AccessSize, Address, AddressRange, MemoryError};
@@ -64,12 +64,22 @@ pub struct PlatformClintConfig {
     pub harts: Vec<PlatformClintHartConfig>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlatformInterruptControllerContextConfig {
+    pub context: u64,
+    pub hart: u32,
+    pub interrupt: u32,
+    pub target: InterruptTargetId,
+    pub target_partition: PartitionId,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PlatformInterruptControllerConfig {
     pub base: Address,
     pub size: AccessSize,
     pub route: MmioRoute,
     pub target: InterruptTargetId,
+    pub contexts: Vec<PlatformInterruptControllerContextConfig>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -597,11 +607,11 @@ impl PlatformDeviceTreeInventory {
         let mut phandles = BTreeMap::new();
         let mut next_phandle = hart_phandle_count + 1;
         for controller in &self.interrupt_controllers {
-            if let std::collections::btree_map::Entry::Vacant(entry) =
-                phandles.entry(controller.target)
-            {
-                entry.insert(next_phandle);
-                next_phandle += 1;
+            let phandle = next_phandle;
+            next_phandle += 1;
+            phandles.entry(controller.target).or_insert(phandle);
+            for context in &controller.contexts {
+                phandles.entry(context.target).or_insert(phandle);
             }
         }
         phandles
@@ -677,7 +687,11 @@ impl PlatformDeviceTreeInventory {
                 .get(&controller.target)
                 .copied()
                 .expect("validated interrupt-controller phandle");
-            soc = soc.with_child(self.interrupt_controller_node(controller, phandle));
+            soc = soc.with_child(self.interrupt_controller_node(
+                controller,
+                phandle,
+                hart_phandles,
+            )?);
         }
         for clint in &self.clints {
             soc = soc.with_child(self.clint_node(clint, hart_phandles));
@@ -697,8 +711,10 @@ impl PlatformDeviceTreeInventory {
         &self,
         controller: &PlatformInterruptControllerConfig,
         phandle: u32,
-    ) -> PlatformDeviceTreeNode {
-        PlatformDeviceTreeNode::new(device_node_name("interrupt-controller", controller.base))
+        hart_phandles: &BTreeMap<u32, u32>,
+    ) -> Result<PlatformDeviceTreeNode, PlatformError> {
+        let device = device_node_name("interrupt-controller", controller.base);
+        let mut node = PlatformDeviceTreeNode::new(device.clone())
             .with_property(PlatformDeviceTreeProperty::word_list(
                 "#interrupt-cells",
                 [1],
@@ -716,7 +732,25 @@ impl PlatformDeviceTreeInventory {
             .with_property(PlatformDeviceTreeProperty::word_list(
                 "riscv,ndev",
                 [self.max_external_interrupt_source()],
-            ))
+            ));
+        if !controller.contexts.is_empty() {
+            let mut interrupts_extended = Vec::with_capacity(controller.contexts.len() * 2);
+            for context in &controller.contexts {
+                let hart_phandle = hart_phandles.get(&context.hart).copied().ok_or(
+                    PlatformError::DeviceTreeMissingHart {
+                        device: device.clone(),
+                        hart: context.hart,
+                    },
+                )?;
+                interrupts_extended.extend([hart_phandle, context.interrupt]);
+            }
+            node = node.with_property(PlatformDeviceTreeProperty::word_list(
+                "interrupts-extended",
+                interrupts_extended,
+            ));
+        }
+
+        Ok(node)
     }
 
     fn clint_node(
@@ -926,12 +960,29 @@ impl PlatformBuilder {
 
         for config in self.interrupt_controllers {
             validate_route(self.partition_count, config.route)?;
-            let device = PlicMmioDevice::new(
-                Arc::clone(&controller),
-                config.base,
-                config.target,
-                config.route.source_partition(),
-            );
+            for context in &config.contexts {
+                validate_partition(self.partition_count, context.target_partition)?;
+            }
+            let device = if config.contexts.is_empty() {
+                PlicMmioDevice::new(
+                    Arc::clone(&controller),
+                    config.base,
+                    config.target,
+                    config.route.source_partition(),
+                )
+            } else {
+                PlicMmioDevice::with_contexts(
+                    Arc::clone(&controller),
+                    config.base,
+                    config.contexts.iter().map(|context| {
+                        PlicContextRoute::new(
+                            context.context,
+                            context.target,
+                            context.target_partition,
+                        )
+                    }),
+                )
+            };
             bus.insert_device(region(config.base, config.size)?, config.route, device)
                 .map_err(PlatformError::Mmio)?;
         }
@@ -1187,6 +1238,10 @@ pub enum PlatformError {
     DeviceTreeMissingInterruptController {
         device: String,
     },
+    DeviceTreeMissingHart {
+        device: String,
+        hart: u32,
+    },
     UnknownPartition {
         partition: PartitionId,
         partitions: u32,
@@ -1207,6 +1262,10 @@ impl fmt::Display for PlatformError {
             Self::DeviceTreeMissingInterruptController { device } => write!(
                 formatter,
                 "RISC-V device tree node {device} has no interrupt controller"
+            ),
+            Self::DeviceTreeMissingHart { device, hart } => write!(
+                formatter,
+                "RISC-V device tree node {device} references missing hart {hart}"
             ),
             Self::UnknownPartition {
                 partition,
