@@ -15,8 +15,8 @@ use crate::{
     InterruptControllerCheckpointBank, MemoryStoreCheckpointBank, MsiBankCheckpointBank,
     PciHostCheckpointBank, Pl011UartCheckpointBank, Pl031CheckpointBank, PlicCheckpointBank,
     RiscvCoreCheckpointBank, RtcCheckpointBank, SchedulerCheckpointBank, Sp804CheckpointBank,
-    Sp805CheckpointBank, StopRequest, SystemError, TimerCheckpointBank, UartCheckpointBank,
-    VirtioSplitQueueCheckpointBank,
+    Sp805CheckpointBank, StopRequest, StorageImageCheckpointBank, SystemError, TimerCheckpointBank,
+    UartCheckpointBank, VirtioSplitQueueCheckpointBank,
 };
 
 const EXECUTION_MODE_CHECKPOINT_COMPONENT: &str = "host.execution_modes";
@@ -134,6 +134,7 @@ pub struct SystemActionExecutor {
     riscv_checkpoints: Option<RiscvCoreCheckpointBank>,
     scheduler_checkpoints: Option<SchedulerCheckpointBank>,
     memory_checkpoints: Option<MemoryStoreCheckpointBank>,
+    storage_image_checkpoints: Option<StorageImageCheckpointBank>,
     dram_memory_checkpoints: Option<DramMemoryCheckpointBank>,
     interrupt_controller_checkpoints: Option<InterruptControllerCheckpointBank>,
     clint_checkpoints: Option<ClintCheckpointBank>,
@@ -169,6 +170,7 @@ impl SystemActionExecutor {
             riscv_checkpoints: None,
             scheduler_checkpoints: None,
             memory_checkpoints: None,
+            storage_image_checkpoints: None,
             dram_memory_checkpoints: None,
             interrupt_controller_checkpoints: None,
             clint_checkpoints: None,
@@ -204,6 +206,7 @@ impl SystemActionExecutor {
             riscv_checkpoints: Some(riscv_checkpoints),
             scheduler_checkpoints: None,
             memory_checkpoints: None,
+            storage_image_checkpoints: None,
             dram_memory_checkpoints: None,
             interrupt_controller_checkpoints: None,
             clint_checkpoints: None,
@@ -239,6 +242,7 @@ impl SystemActionExecutor {
             riscv_checkpoints: None,
             scheduler_checkpoints: None,
             memory_checkpoints: Some(memory_checkpoints),
+            storage_image_checkpoints: None,
             dram_memory_checkpoints: None,
             interrupt_controller_checkpoints: None,
             clint_checkpoints: None,
@@ -274,6 +278,7 @@ impl SystemActionExecutor {
             riscv_checkpoints: None,
             scheduler_checkpoints: None,
             memory_checkpoints: None,
+            storage_image_checkpoints: None,
             dram_memory_checkpoints: None,
             interrupt_controller_checkpoints: None,
             clint_checkpoints: None,
@@ -309,6 +314,7 @@ impl SystemActionExecutor {
             riscv_checkpoints: None,
             scheduler_checkpoints: None,
             memory_checkpoints: None,
+            storage_image_checkpoints: None,
             dram_memory_checkpoints: Some(dram_memory_checkpoints),
             interrupt_controller_checkpoints: None,
             clint_checkpoints: None,
@@ -344,6 +350,7 @@ impl SystemActionExecutor {
             riscv_checkpoints: None,
             scheduler_checkpoints: None,
             memory_checkpoints: None,
+            storage_image_checkpoints: None,
             dram_memory_checkpoints: None,
             interrupt_controller_checkpoints: None,
             clint_checkpoints: None,
@@ -389,6 +396,7 @@ impl SystemActionExecutor {
             riscv_checkpoints: None,
             scheduler_checkpoints: None,
             memory_checkpoints: None,
+            storage_image_checkpoints: None,
             dram_memory_checkpoints: None,
             interrupt_controller_checkpoints: None,
             clint_checkpoints: None,
@@ -425,6 +433,7 @@ impl SystemActionExecutor {
             riscv_checkpoints: Some(riscv_checkpoints),
             scheduler_checkpoints: None,
             memory_checkpoints: Some(memory_checkpoints),
+            storage_image_checkpoints: None,
             dram_memory_checkpoints: None,
             interrupt_controller_checkpoints: None,
             clint_checkpoints: None,
@@ -461,6 +470,7 @@ impl SystemActionExecutor {
             riscv_checkpoints: Some(riscv_checkpoints),
             scheduler_checkpoints: None,
             memory_checkpoints: None,
+            storage_image_checkpoints: None,
             dram_memory_checkpoints: Some(dram_memory_checkpoints),
             interrupt_controller_checkpoints: None,
             clint_checkpoints: None,
@@ -589,6 +599,15 @@ impl SystemActionExecutor {
     ) -> Result<(), CheckpointError> {
         memory_checkpoints.register_all(&mut self.checkpoints)?;
         self.memory_checkpoints = Some(memory_checkpoints);
+        Ok(())
+    }
+
+    pub fn attach_storage_image_checkpoint_bank(
+        &mut self,
+        storage_image_checkpoints: StorageImageCheckpointBank,
+    ) -> Result<(), CheckpointError> {
+        storage_image_checkpoints.register_all(&mut self.checkpoints)?;
+        self.storage_image_checkpoints = Some(storage_image_checkpoints);
         Ok(())
     }
 
@@ -791,6 +810,10 @@ impl SystemActionExecutor {
         self.memory_checkpoints.as_ref()
     }
 
+    pub const fn storage_image_checkpoint_bank(&self) -> Option<&StorageImageCheckpointBank> {
+        self.storage_image_checkpoints.as_ref()
+    }
+
     pub const fn dram_memory_checkpoint_bank(&self) -> Option<&DramMemoryCheckpointBank> {
         self.dram_memory_checkpoints.as_ref()
     }
@@ -911,6 +934,11 @@ impl SystemActionExecutor {
                 .validate_restore_from(checkpoints)
                 .map_err(SystemError::MemoryCheckpoint)?;
         }
+        if let Some(storage_image_checkpoints) = &self.storage_image_checkpoints {
+            storage_image_checkpoints
+                .validate_restore_from(checkpoints)
+                .map_err(SystemError::StorageCheckpoint)?;
+        }
         if let Some(dram_memory_checkpoints) = &self.dram_memory_checkpoints {
             dram_memory_checkpoints
                 .validate_restore_from(checkpoints)
@@ -1014,6 +1042,11 @@ impl SystemActionExecutor {
             memory_checkpoints
                 .restore_all_from(&self.checkpoints)
                 .map_err(SystemError::MemoryCheckpoint)?;
+        }
+        if let Some(storage_image_checkpoints) = &self.storage_image_checkpoints {
+            storage_image_checkpoints
+                .restore_all_from(&self.checkpoints)
+                .map_err(SystemError::StorageCheckpoint)?;
         }
         if let Some(dram_memory_checkpoints) = &self.dram_memory_checkpoints {
             dram_memory_checkpoints
@@ -1168,6 +1201,11 @@ impl SystemActionExecutor {
                     memory_checkpoints
                         .capture_all_into(&mut staged_checkpoints)
                         .map_err(SystemError::Checkpoint)?;
+                }
+                if let Some(storage_image_checkpoints) = &self.storage_image_checkpoints {
+                    storage_image_checkpoints
+                        .capture_all_into(&mut staged_checkpoints)
+                        .map_err(SystemError::StorageCheckpoint)?;
                 }
                 if let Some(dram_memory_checkpoints) = &self.dram_memory_checkpoints {
                     dram_memory_checkpoints

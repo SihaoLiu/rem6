@@ -26,6 +26,7 @@ rem6-protocol-mesi = { path = "../rem6-protocol-mesi" }
 rem6-protocol-moesi = { path = "../rem6-protocol-moesi" }
 rem6-protocol-msi = { path = "../rem6-protocol-msi" }
 rem6-stats = { path = "../rem6-stats" }
+rem6-storage = { path = "../rem6-storage" }
 rem6-timer = { path = "../rem6-timer" }
 rem6-topology = { path = "../rem6-topology" }
 rem6-transport = { path = "../rem6-transport" }

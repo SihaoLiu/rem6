@@ -9,11 +9,13 @@ use rem6_isa_riscv::Register;
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout};
 use rem6_stats::StatsRegistry;
+use rem6_storage::{CowStorageImage, RawStorageImage, StorageSectorId};
 use rem6_system::{
     GuestEventId, GuestSourceId, HostAction, HostActionRecord, MemoryStoreCheckpointBank,
     MemoryStoreCheckpointError, MemoryStoreCheckpointPort, RiscvCoreCheckpointBank,
     RiscvCoreCheckpointPort, SchedulerCheckpointBank, SchedulerCheckpointError,
-    SchedulerCheckpointPort, SystemActionExecutor, SystemActionOutcome, SystemError,
+    SchedulerCheckpointPort, StorageCheckpointError, StorageImageCheckpointBank,
+    StorageImageCheckpointPort, SystemActionExecutor, SystemActionOutcome, SystemError,
 };
 use rem6_transport::{MemoryRoute, MemoryTransport, TransportEndpointId};
 
@@ -67,6 +69,17 @@ fn line_data(base: u8) -> Vec<u8> {
     (0..64).map(|offset| base.wrapping_add(offset)).collect()
 }
 
+fn sector(byte: u8) -> [u8; 512] {
+    [byte; 512]
+}
+
+fn image_bytes(bytes: &[u8]) -> Vec<u8> {
+    bytes
+        .iter()
+        .flat_map(|byte| sector(*byte))
+        .collect::<Vec<_>>()
+}
+
 fn partitioned_memory_store() -> (
     rem6_memory::PartitionedMemoryStore,
     rem6_memory::MemoryTargetId,
@@ -85,6 +98,168 @@ fn partitioned_memory_store() -> (
         .insert_line(target, Address::new(0x1000), line_data(0x10))
         .unwrap();
     (store, target)
+}
+
+#[test]
+fn system_action_executor_checkpoints_and_restores_storage_images() {
+    let host = PartitionId::new(1);
+    let source = GuestSourceId::new(19);
+    let raw_component = CheckpointComponentId::new("storage.raw0").unwrap();
+    let cow_component = CheckpointComponentId::new("storage.cow0").unwrap();
+    let raw = RawStorageImage::from_bytes(image_bytes(&[0x11, 0x22])).unwrap();
+    raw.write_sector(StorageSectorId::new(1), sector(0xaa))
+        .unwrap();
+    let cow_child = RawStorageImage::from_bytes(image_bytes(&[0x33, 0x44])).unwrap();
+    let cow = CowStorageImage::new(Arc::new(cow_child));
+    cow.write_sector(StorageSectorId::new(0), sector(0xbb))
+        .unwrap();
+    cow.flush().unwrap();
+    let expected_raw = raw.snapshot();
+    let expected_cow = cow.snapshot();
+    let bank = StorageImageCheckpointBank::new([
+        StorageImageCheckpointPort::raw(raw_component.clone(), raw.clone()),
+        StorageImageCheckpointPort::cow(cow_component.clone(), cow.clone()),
+    ])
+    .unwrap();
+    let mut executor = SystemActionExecutor::new(StatsRegistry::new());
+    executor.attach_storage_image_checkpoint_bank(bank).unwrap();
+
+    let checkpoint = HostActionRecord::new(
+        130,
+        host,
+        host,
+        GuestEventId::new(19),
+        source,
+        HostAction::Checkpoint {
+            label: "storage-images".to_string(),
+        },
+    );
+    let manifest = match executor.apply(&checkpoint).unwrap() {
+        SystemActionOutcome::Checkpoint { manifest, .. } => manifest,
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+    assert!(manifest.states().iter().any(|state| {
+        state.component() == &raw_component
+            && state
+                .chunks()
+                .iter()
+                .any(|chunk| chunk.name() == "storage-image")
+    }));
+    assert!(manifest.states().iter().any(|state| {
+        state.component() == &cow_component
+            && state
+                .chunks()
+                .iter()
+                .any(|chunk| chunk.name() == "storage-image")
+    }));
+
+    raw.write_sector(StorageSectorId::new(1), sector(0xcc))
+        .unwrap();
+    cow.write_sector(StorageSectorId::new(0), sector(0xdd))
+        .unwrap();
+
+    let restore = HostActionRecord::new(
+        140,
+        host,
+        host,
+        GuestEventId::new(20),
+        source,
+        HostAction::RestoreCheckpoint {
+            manifest: manifest.clone(),
+        },
+    );
+
+    assert_eq!(
+        executor.apply(&restore).unwrap(),
+        SystemActionOutcome::CheckpointRestored {
+            tick: 140,
+            event: GuestEventId::new(20),
+            source,
+            manifest,
+        }
+    );
+    assert_eq!(raw.snapshot(), expected_raw);
+    assert_eq!(cow.snapshot(), expected_cow);
+}
+
+#[test]
+fn system_action_executor_rejects_storage_restore_without_partial_mutation() {
+    let host = PartitionId::new(1);
+    let source = GuestSourceId::new(20);
+    let first_component = CheckpointComponentId::new("storage.raw0").unwrap();
+    let second_component = CheckpointComponentId::new("storage.raw1").unwrap();
+    let first = RawStorageImage::from_bytes(image_bytes(&[0x10])).unwrap();
+    let second = RawStorageImage::from_bytes(image_bytes(&[0x20])).unwrap();
+    let bank = StorageImageCheckpointBank::new([
+        StorageImageCheckpointPort::raw(first_component.clone(), first.clone()),
+        StorageImageCheckpointPort::raw(second_component.clone(), second.clone()),
+    ])
+    .unwrap();
+    let mut executor = SystemActionExecutor::new(StatsRegistry::new());
+    executor.attach_storage_image_checkpoint_bank(bank).unwrap();
+    let checkpoint = HostActionRecord::new(
+        150,
+        host,
+        host,
+        GuestEventId::new(21),
+        source,
+        HostAction::Checkpoint {
+            label: "bad-storage".to_string(),
+        },
+    );
+    let manifest = match executor.apply(&checkpoint).unwrap() {
+        SystemActionOutcome::Checkpoint { manifest, .. } => manifest,
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+    let bad_manifest = CheckpointManifest::new(
+        manifest.label().to_string(),
+        manifest.tick(),
+        manifest
+            .states()
+            .iter()
+            .map(|state| {
+                if state.component() == &second_component {
+                    CheckpointState::new(
+                        second_component.clone(),
+                        vec![CheckpointChunk::new("storage-image", vec![0xff])],
+                    )
+                } else {
+                    state.clone()
+                }
+            })
+            .collect(),
+    );
+    first
+        .write_sector(StorageSectorId::new(0), sector(0xa0))
+        .unwrap();
+    second
+        .write_sector(StorageSectorId::new(0), sector(0xb0))
+        .unwrap();
+    let first_before = first.snapshot();
+    let second_before = second.snapshot();
+    let restore = HostActionRecord::new(
+        160,
+        host,
+        host,
+        GuestEventId::new(22),
+        source,
+        HostAction::RestoreCheckpoint {
+            manifest: bad_manifest,
+        },
+    );
+
+    let error = executor.apply(&restore).unwrap_err();
+
+    match error {
+        SystemError::StorageCheckpoint(StorageCheckpointError::InvalidChunk {
+            component, ..
+        }) => {
+            assert_eq!(component, second_component);
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
+    assert_eq!(first.snapshot(), first_before);
+    assert_eq!(second.snapshot(), second_before);
 }
 
 #[test]

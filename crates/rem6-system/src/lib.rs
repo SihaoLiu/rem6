@@ -102,6 +102,10 @@ pub use pl031_checkpoint::{
 pub use plic_checkpoint::{
     PlicCheckpointBank, PlicCheckpointError, PlicCheckpointPort, PlicCheckpointRecord,
 };
+pub use rem6_storage::{
+    StorageCheckpointError, StorageImageCheckpointBank, StorageImageCheckpointPort,
+    StorageImageCheckpointRecord, StorageImageCheckpointSnapshot,
+};
 pub use riscv_checkpoint::{
     RiscvCoreCheckpointBank, RiscvCoreCheckpointError, RiscvCoreCheckpointPort,
     RiscvCoreCheckpointRecord,
@@ -944,6 +948,7 @@ pub enum SystemError {
     RtcCheckpoint(RtcCheckpointError),
     SchedulerCheckpoint(SchedulerCheckpointError),
     MemoryCheckpoint(MemoryStoreCheckpointError),
+    StorageCheckpoint(StorageCheckpointError),
     DramMemoryCheckpoint(DramMemoryCheckpointError),
     InterruptControllerCheckpoint(InterruptControllerCheckpointError),
     ClintCheckpoint(ClintCheckpointError),
@@ -980,6 +985,7 @@ impl fmt::Display for SystemError {
             Self::RtcCheckpoint(error) => write!(formatter, "{error}"),
             Self::SchedulerCheckpoint(error) => write!(formatter, "{error}"),
             Self::MemoryCheckpoint(error) => write!(formatter, "{error}"),
+            Self::StorageCheckpoint(error) => write!(formatter, "{error}"),
             Self::DramMemoryCheckpoint(error) => write!(formatter, "{error}"),
             Self::InterruptControllerCheckpoint(error) => write!(formatter, "{error}"),
             Self::ClintCheckpoint(error) => write!(formatter, "{error}"),
@@ -1013,6 +1019,7 @@ impl Error for SystemError {
             Self::RtcCheckpoint(error) => Some(error),
             Self::SchedulerCheckpoint(error) => Some(error),
             Self::MemoryCheckpoint(error) => Some(error),
+            Self::StorageCheckpoint(error) => Some(error),
             Self::DramMemoryCheckpoint(error) => Some(error),
             Self::InterruptControllerCheckpoint(error) => Some(error),
             Self::ClintCheckpoint(error) => Some(error),
