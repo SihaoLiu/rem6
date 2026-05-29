@@ -8,11 +8,21 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 mod checkpoint;
+mod ide;
 mod simple_disk;
 
 pub use checkpoint::{
     StorageCheckpointError, StorageImageCheckpointBank, StorageImageCheckpointPort,
     StorageImageCheckpointRecord, StorageImageCheckpointSnapshot,
+};
+pub use ide::{
+    IdeDeviceId, IdeDisk, IdeDiskError, IDE_ALTSTAT_OFFSET, IDE_COMMAND_ATAPI_IDENTIFY_DEVICE,
+    IDE_COMMAND_IDENTIFY, IDE_COMMAND_OFFSET, IDE_COMMAND_READ, IDE_COMMAND_READ_MULTI,
+    IDE_COMMAND_READ_NATIVE_MAX, IDE_COMMAND_WRITE, IDE_COMMAND_WRITE_MULTI, IDE_CONTROL_IEN,
+    IDE_CONTROL_OFFSET, IDE_CONTROL_RST, IDE_DATA_OFFSET, IDE_DRIVE_LBA, IDE_DRIVE_OFFSET,
+    IDE_ERROR_ABORT, IDE_ERROR_OFFSET, IDE_FEATURES_OFFSET, IDE_HCYL_OFFSET, IDE_LCYL_OFFSET,
+    IDE_NSECTOR_OFFSET, IDE_SECTOR_OFFSET, IDE_STATUS_BSY, IDE_STATUS_DF, IDE_STATUS_DRDY,
+    IDE_STATUS_DRQ, IDE_STATUS_ERR, IDE_STATUS_OFFSET, IDE_STATUS_SEEK,
 };
 pub use simple_disk::{SimpleDisk, SimpleDiskError, SimpleDiskGuestMemory, SimpleDiskTransfer};
 
