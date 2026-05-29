@@ -478,6 +478,14 @@ Implementation evidence through 2026-05-29:
   the root, and enforce the hard per-source-file size budget, so cache
   controller growth does not recreate gem5-style mixed protocol controller
   monoliths.
+- `rem6-transport` now keeps endpoint ids, route ids, route hops, route
+  topology derivation, route errors, and transport QoS class state in a focused
+  `route` module while leaving the crate root centered on serial, parallel, and
+  batched delivery. Transport source-policy tests keep the crate root under the
+  facade budget, require route contracts to stay out of the root, and enforce
+  the hard per-source-file size budget, so NoC, QoS, and scheduler integration
+  growth does not recreate gem5-style event-queue and packet-routing
+  monoliths.
 - `rem6-system` workload replay now keeps data-cache line harness ownership,
   protocol-specific response routing, final-line extraction, and profiled DRAM
   line fallback in a focused `workload_replay::data_cache_backend` module.
@@ -1864,6 +1872,8 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   modules while enforcing the hard module-size budget across coherence sources.
   Cache source-policy tests keep MSI and MESI controller state in focused
   modules while enforcing the hard module-size budget across cache sources.
+  Transport source-policy tests keep route contracts in a focused module while
+  enforcing the facade and hard module-size budgets across transport sources.
   System source-policy tests keep workload replay data-cache backend state in a
   focused module while enforcing the hard module-size budget across system
   sources. Type-1 bridge tests cover typed bridge header fields, Expansion ROM
