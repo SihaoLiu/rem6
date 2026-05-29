@@ -1,7 +1,10 @@
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
+use std::fs::{File, OpenOptions};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::ops::Range;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 pub const STORAGE_SECTOR_BYTES: u64 = 512;
@@ -41,6 +44,35 @@ pub enum StorageError {
         snapshot_sectors: u64,
         image_sectors: u64,
     },
+    FileOperationFailed {
+        path: PathBuf,
+        operation: StorageFileOperation,
+        message: String,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StorageFileOperation {
+    Open,
+    Metadata,
+    Seek,
+    Read,
+    Write,
+    Flush,
+}
+
+impl Display for StorageFileOperation {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        let operation = match self {
+            Self::Open => "open",
+            Self::Metadata => "metadata",
+            Self::Seek => "seek",
+            Self::Read => "read",
+            Self::Write => "write",
+            Self::Flush => "flush",
+        };
+        formatter.write_str(operation)
+    }
 }
 
 impl Display for StorageError {
@@ -76,6 +108,16 @@ impl Display for StorageError {
             } => write!(
                 formatter,
                 "storage snapshot has {snapshot_sectors} sectors but image has {image_sectors}"
+            ),
+            Self::FileOperationFailed {
+                path,
+                operation,
+                message,
+            } => write!(
+                formatter,
+                "storage file {} failed for {}: {message}",
+                path.display(),
+                operation
             ),
         }
     }
@@ -208,6 +250,140 @@ impl StorageImageLayer for RawStorageImage {
     fn flush(&self) -> Result<(), StorageError> {
         self.flush()
     }
+}
+
+#[derive(Debug)]
+pub struct FileStorageImage {
+    path: PathBuf,
+    state: Arc<Mutex<FileStorageImageState>>,
+}
+
+impl Clone for FileStorageImage {
+    fn clone(&self) -> Self {
+        Self {
+            path: self.path.clone(),
+            state: Arc::clone(&self.state),
+        }
+    }
+}
+
+impl FileStorageImage {
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, StorageError> {
+        Self::open_with_mode(path.as_ref(), false)
+    }
+
+    pub fn open_read_only(path: impl AsRef<Path>) -> Result<Self, StorageError> {
+        Self::open_with_mode(path.as_ref(), true)
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn capacity_sectors(&self) -> u64 {
+        let state = self.state.lock().expect("file storage image lock");
+        state.capacity_sectors
+    }
+
+    pub fn flush_count(&self) -> u64 {
+        let state = self.state.lock().expect("file storage image lock");
+        state.flush_count
+    }
+
+    pub fn read_sector(&self, sector: StorageSectorId) -> Result<[u8; 512], StorageError> {
+        let mut state = self.state.lock().expect("file storage image lock");
+        validate_range(sector, 1, state.capacity_sectors)?;
+        let offset = sector_offset(sector, 1)?;
+        state
+            .file
+            .seek(SeekFrom::Start(offset))
+            .map_err(|error| file_operation_error(&self.path, StorageFileOperation::Seek, error))?;
+        let mut data = [0; 512];
+        state
+            .file
+            .read_exact(&mut data)
+            .map_err(|error| file_operation_error(&self.path, StorageFileOperation::Read, error))?;
+        Ok(data)
+    }
+
+    pub fn write_sector(
+        &self,
+        sector: StorageSectorId,
+        data: [u8; 512],
+    ) -> Result<(), StorageError> {
+        let mut state = self.state.lock().expect("file storage image lock");
+        if state.read_only {
+            return Err(StorageError::ReadOnly);
+        }
+        validate_range(sector, 1, state.capacity_sectors)?;
+        let offset = sector_offset(sector, 1)?;
+        state
+            .file
+            .seek(SeekFrom::Start(offset))
+            .map_err(|error| file_operation_error(&self.path, StorageFileOperation::Seek, error))?;
+        state
+            .file
+            .write_all(&data)
+            .map_err(|error| file_operation_error(&self.path, StorageFileOperation::Write, error))
+    }
+
+    pub fn flush(&self) -> Result<(), StorageError> {
+        let mut state = self.state.lock().expect("file storage image lock");
+        state.file.sync_all().map_err(|error| {
+            file_operation_error(&self.path, StorageFileOperation::Flush, error)
+        })?;
+        state.flush_count += 1;
+        Ok(())
+    }
+
+    fn open_with_mode(path: &Path, read_only: bool) -> Result<Self, StorageError> {
+        let path = path.to_path_buf();
+        let file = OpenOptions::new()
+            .read(true)
+            .write(!read_only)
+            .open(&path)
+            .map_err(|error| file_operation_error(&path, StorageFileOperation::Open, error))?;
+        let bytes = file
+            .metadata()
+            .map_err(|error| file_operation_error(&path, StorageFileOperation::Metadata, error))?
+            .len();
+        validate_image_bytes(bytes)?;
+        Ok(Self {
+            path,
+            state: Arc::new(Mutex::new(FileStorageImageState {
+                file,
+                capacity_sectors: bytes / STORAGE_SECTOR_BYTES,
+                read_only,
+                flush_count: 0,
+            })),
+        })
+    }
+}
+
+impl StorageImageLayer for FileStorageImage {
+    fn capacity_sectors(&self) -> u64 {
+        self.capacity_sectors()
+    }
+
+    fn read_sector(&self, sector: StorageSectorId) -> Result<[u8; 512], StorageError> {
+        self.read_sector(sector)
+    }
+
+    fn write_sector(&self, sector: StorageSectorId, data: [u8; 512]) -> Result<(), StorageError> {
+        self.write_sector(sector, data)
+    }
+
+    fn flush(&self) -> Result<(), StorageError> {
+        self.flush()
+    }
+}
+
+#[derive(Debug)]
+struct FileStorageImageState {
+    file: File,
+    capacity_sectors: u64,
+    read_only: bool,
+    flush_count: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -470,6 +646,25 @@ fn validate_image_bytes(bytes: u64) -> Result<(), StorageError> {
 
 fn validate_data_sectors(data: &[u8]) -> Result<(), StorageError> {
     validate_image_bytes(data.len() as u64)
+}
+
+fn sector_offset(sector: StorageSectorId, sectors: u64) -> Result<u64, StorageError> {
+    sector
+        .get()
+        .checked_mul(STORAGE_SECTOR_BYTES)
+        .ok_or(StorageError::RequestAddressOverflow { sector, sectors })
+}
+
+fn file_operation_error(
+    path: &Path,
+    operation: StorageFileOperation,
+    error: io::Error,
+) -> StorageError {
+    StorageError::FileOperationFailed {
+        path: path.to_path_buf(),
+        operation,
+        message: error.to_string(),
+    }
 }
 
 fn checked_capacity_bytes(sectors: u64) -> Result<usize, StorageError> {
