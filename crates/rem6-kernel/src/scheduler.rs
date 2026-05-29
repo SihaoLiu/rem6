@@ -302,6 +302,15 @@ impl PartitionedScheduler {
                 scheduler_partitions,
             });
         }
+        for (index, partition) in snapshot.partitions.iter().enumerate() {
+            let expected_partition = PartitionId::new(index as u32);
+            if partition.partition() != expected_partition {
+                return Err(SchedulerError::SnapshotPartitionIdMismatch {
+                    expected_partition,
+                    snapshot_partition: partition.partition(),
+                });
+            }
+        }
         if snapshot.min_remote_delay != self.min_remote_delay {
             return Err(SchedulerError::SnapshotLookaheadMismatch {
                 snapshot_min_remote_delay: snapshot.min_remote_delay,

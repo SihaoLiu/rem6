@@ -62,6 +62,10 @@ pub enum SchedulerError {
         snapshot_partitions: u32,
         scheduler_partitions: u32,
     },
+    SnapshotPartitionIdMismatch {
+        expected_partition: PartitionId,
+        snapshot_partition: PartitionId,
+    },
     SnapshotLookaheadMismatch {
         snapshot_min_remote_delay: Tick,
         scheduler_min_remote_delay: Tick,
@@ -162,6 +166,15 @@ impl fmt::Display for SchedulerError {
             } => write!(
                 formatter,
                 "scheduler snapshot has {snapshot_partitions} partitions; scheduler has {scheduler_partitions}"
+            ),
+            Self::SnapshotPartitionIdMismatch {
+                expected_partition,
+                snapshot_partition,
+            } => write!(
+                formatter,
+                "scheduler snapshot partition {} appears in slot {}",
+                snapshot_partition.index(),
+                expected_partition.index()
             ),
             Self::SnapshotLookaheadMismatch {
                 snapshot_min_remote_delay,

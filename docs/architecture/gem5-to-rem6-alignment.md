@@ -764,6 +764,10 @@ Implementation evidence on 2026-05-26:
   before capturing any attached checkpoint bank, so a non-quiescent scheduler
   cannot leave CPU, memory, device, or scheduler checkpoint chunks from a
   rejected full-system checkpoint attempt.
+- Scheduler quiescent restore now also verifies each partition snapshot id
+  against its target scheduler slot before mutating clocks or event-order
+  counters. A malformed checkpoint cannot swap per-partition scheduler state
+  and later surface as a schedule-in-past failure.
 - System checkpoint host actions stage all attached bank captures and
   execution-mode chunks in a cloned registry, then publish the registry and
   manifest only after final manifest capture succeeds. Invalid final capture

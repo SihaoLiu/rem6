@@ -634,6 +634,14 @@ fn encode_scheduler_error(payload: &mut Vec<u8>, error: &SchedulerError) {
             write_u32(payload, *snapshot_partitions);
             write_u32(payload, *scheduler_partitions);
         }
+        SchedulerError::SnapshotPartitionIdMismatch {
+            expected_partition,
+            snapshot_partition,
+        } => {
+            write_u64(payload, 17);
+            write_u32(payload, expected_partition.index());
+            write_u32(payload, snapshot_partition.index());
+        }
         SchedulerError::SnapshotLookaheadMismatch {
             snapshot_min_remote_delay,
             scheduler_min_remote_delay,
@@ -706,6 +714,10 @@ fn decode_scheduler_error(
         10 => Ok(SchedulerError::SnapshotPartitionCountMismatch {
             snapshot_partitions: cursor.read_u32("scheduler snapshot partition count")?,
             scheduler_partitions: cursor.read_u32("scheduler live partition count")?,
+        }),
+        17 => Ok(SchedulerError::SnapshotPartitionIdMismatch {
+            expected_partition: PartitionId::new(cursor.read_u32("scheduler expected partition")?),
+            snapshot_partition: PartitionId::new(cursor.read_u32("scheduler snapshot partition")?),
         }),
         11 => Ok(SchedulerError::SnapshotLookaheadMismatch {
             snapshot_min_remote_delay: cursor.read_u64("scheduler snapshot lookahead")?,
