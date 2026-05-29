@@ -463,14 +463,15 @@ Implementation evidence through 2026-05-29:
   to stay out of the root, and enforce the hard per-source-file size budget, so
   DDR, HBM, LPDDR, NVM, QoS, and target-backed storage growth do not collapse
   into a gem5-style memory-controller monolith.
-- `rem6-interrupt` now keeps generic interrupt error reporting in a focused
-  `error` module and leaves the crate root centered on typed line ids, routes,
-  delivery channels, controller state, snapshots, and the generic MMIO window.
-  Interrupt source-policy tests keep the crate root under the facade budget,
-  require error reporting to stay out of the root, and enforce the hard
-  per-source-file size budget, so generic controller growth does not recreate
-  gem5-style platform interrupt wiring spread across callbacks, platform
-  helpers, and device-local assertion paths.
+- `rem6-interrupt` now keeps generic interrupt error reporting, route
+  identifiers, delivery and history records, and controller snapshots in
+  focused `error`, `route`, `event`, and `snapshot` modules, leaving the crate
+  root centered on typed delivery channels, controller state machines, and the
+  generic MMIO window. Interrupt source-policy tests keep the crate root under
+  the facade budget, require those reusable contracts to stay out of the root,
+  and enforce the hard per-source-file size budget, so generic controller
+  growth does not recreate gem5-style platform interrupt wiring spread across
+  callbacks, platform helpers, and device-local assertion paths.
 - `rem6-coherence` now keeps harness error reporting, submit/result response
   records, and partitioned route/cache/memory configuration in focused modules,
   leaving the crate root centered on serial and partitioned MSI harness
@@ -1924,9 +1925,10 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   sources. DRAM source-policy tests keep public error state and target-backed
   memory-controller state in focused modules while enforcing the hard
   module-size budget across DRAM sources. Interrupt source-policy tests keep
-  generic interrupt error reporting in a focused module while enforcing the
-  facade and hard module-size budgets across interrupt sources. Coherence
-  source-policy tests keep harness errors, CPU response records, and
+  generic interrupt errors, route contracts, event records, and snapshots in
+  focused modules while enforcing the facade and hard module-size budgets
+  across interrupt sources. Coherence source-policy tests keep harness errors,
+  CPU response records, and
   partitioned configuration in focused modules while enforcing the hard
   module-size budget across coherence sources.
   Cache source-policy tests keep MSI and MESI controller state in focused

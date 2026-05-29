@@ -32,6 +32,66 @@ fn interrupt_errors_live_in_focused_module() {
 }
 
 #[test]
+fn interrupt_routes_live_in_focused_module() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let lib_rs = fs::read_to_string(crate_dir.join("src/lib.rs")).unwrap();
+    let route_rs = crate_dir.join("src/route.rs");
+
+    assert!(
+        route_rs.exists(),
+        "interrupt route identifiers and route records belong in src/route.rs"
+    );
+    assert!(
+        !lib_rs.contains("pub struct InterruptLineId("),
+        "src/lib.rs should re-export interrupt line identifiers from a focused route module"
+    );
+    assert!(
+        !lib_rs.contains("pub struct InterruptRoute {"),
+        "src/lib.rs should re-export interrupt routes from a focused route module"
+    );
+}
+
+#[test]
+fn interrupt_events_live_in_focused_module() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let lib_rs = fs::read_to_string(crate_dir.join("src/lib.rs")).unwrap();
+    let event_rs = crate_dir.join("src/event.rs");
+
+    assert!(
+        event_rs.exists(),
+        "interrupt delivery, event, pending, and claim records belong in src/event.rs"
+    );
+    assert!(
+        !lib_rs.contains("pub enum InterruptEventKind {"),
+        "src/lib.rs should re-export interrupt event kinds from a focused event module"
+    );
+    assert!(
+        !lib_rs.contains("pub struct InterruptDelivery {"),
+        "src/lib.rs should re-export interrupt deliveries from a focused event module"
+    );
+    assert!(
+        !lib_rs.contains("pub struct PendingInterrupt {"),
+        "src/lib.rs should re-export pending interrupt records from a focused event module"
+    );
+}
+
+#[test]
+fn interrupt_snapshots_live_in_focused_module() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let lib_rs = fs::read_to_string(crate_dir.join("src/lib.rs")).unwrap();
+    let snapshot_rs = crate_dir.join("src/snapshot.rs");
+
+    assert!(
+        snapshot_rs.exists(),
+        "interrupt controller snapshots belong in src/snapshot.rs"
+    );
+    assert!(
+        !lib_rs.contains("pub struct InterruptSnapshot {"),
+        "src/lib.rs should re-export interrupt snapshots from a focused snapshot module"
+    );
+}
+
+#[test]
 fn interrupt_source_files_stay_within_size_limit() {
     let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut oversized = Vec::new();
