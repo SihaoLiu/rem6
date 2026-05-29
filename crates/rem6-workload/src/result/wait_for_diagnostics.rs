@@ -1,6 +1,6 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use rem6_kernel::{Tick, WaitForEdgeKind, WaitForNode};
+use rem6_kernel::{LivelockDiagnostic, Tick, WaitForEdgeKind, WaitForNode};
 
 use crate::{WorkloadError, WorkloadParallelDiagnosticScope};
 
@@ -151,6 +151,11 @@ impl WorkloadParallelExecutionSummary {
                     self.resource_deadlock_diagnostic_count()
                         .saturating_add(self.data_cache_deadlock_diagnostic_count()),
                 )?;
+                if self.has_merged_full_system_livelock_diagnostic_count {
+                    validate_unique_full_system_livelock_diagnostic_records(
+                        &self.merged_full_system_livelock_diagnostics,
+                    )?;
+                }
                 self.validate_full_system_progress_transition_merge_summary()?;
                 validate_livelock_transition_count_summary(
                     scope,
@@ -1505,6 +1510,44 @@ fn validate_wait_for_target_node_window_merge_summary(
                     scoped_last_tick: scoped_window.last_tick(),
                 },
             );
+        }
+    }
+    Ok(())
+}
+
+fn validate_unique_full_system_livelock_diagnostic_records(
+    diagnostics: &[LivelockDiagnostic],
+) -> Result<(), WorkloadError> {
+    let mut seen = BTreeSet::new();
+    for diagnostic in diagnostics {
+        let key = (
+            diagnostic.subject().clone(),
+            diagnostic.threshold(),
+            diagnostic.transition_count(),
+            diagnostic
+                .transition_kind_counts()
+                .iter()
+                .map(|count| {
+                    (
+                        count.kind(),
+                        count.count(),
+                        count.first_transition_tick(),
+                        count.last_transition_tick(),
+                    )
+                })
+                .collect::<Vec<_>>(),
+            diagnostic.first_transition_tick(),
+            diagnostic.last_transition_tick(),
+            diagnostic.last_useful_tick(),
+        );
+        if !seen.insert(key) {
+            return Err(WorkloadError::DuplicateFullSystemLivelockDiagnosticRecord {
+                subject: diagnostic.subject().clone(),
+                threshold: diagnostic.threshold(),
+                transition_count: diagnostic.transition_count(),
+                first_transition_tick: diagnostic.first_transition_tick(),
+                last_transition_tick: diagnostic.last_transition_tick(),
+            });
         }
     }
     Ok(())

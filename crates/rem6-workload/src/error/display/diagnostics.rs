@@ -150,6 +150,16 @@ pub(super) fn format_diagnostic_error(
             "invalid {} livelock merge summary: merged evidence count {merged_evidence_count} is below scoped evidence count {scoped_evidence_count}",
             scope.as_str()
         ),
+        WorkloadError::DuplicateFullSystemLivelockDiagnosticRecord {
+            subject,
+            threshold,
+            transition_count,
+            first_transition_tick,
+            last_transition_tick,
+        } => write!(
+            formatter,
+            "duplicate full-system livelock diagnostic record for {subject}: threshold {threshold}, transitions {transition_count}, tick window {first_transition_tick} to {last_transition_tick}",
+        ),
         WorkloadError::InvalidParallelLivelockSubjectMergeSummary {
             scope,
             subject,

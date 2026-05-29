@@ -947,6 +947,10 @@ Implementation evidence on 2026-05-26:
   thresholds are applied. A replay run cannot satisfy global progress evidence
   by repeating the same transition record and letting subject, kind, or
   partition summaries count it as independent work.
+- Full-system livelock diagnostic validation now rejects duplicate explicit
+  global diagnostic records before merged diagnostic counts or transition
+  evidence are checked. A global clean-diagnostics replay cannot inflate
+  diagnostic evidence by repeating the same livelock record.
 - Workload full-system scheduler-count reporting now accepts explicit merged
   epoch, empty-epoch, and dispatch counts. A global scheduler can report its
   aggregate progress and idle counts directly instead of forcing replay to sum

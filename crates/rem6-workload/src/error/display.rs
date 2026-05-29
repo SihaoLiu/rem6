@@ -1217,6 +1217,7 @@ impl fmt::Display for WorkloadError {
             | Self::InvalidParallelLivelockDiagnosticCountSummary { .. }
             | Self::InvalidParallelLivelockTransitionCountSummary { .. }
             | Self::InvalidParallelLivelockMergeSummary { .. }
+            | Self::DuplicateFullSystemLivelockDiagnosticRecord { .. }
             | Self::InvalidParallelLivelockSubjectMergeSummary { .. }
             | Self::InvalidParallelLivelockTransitionKindMergeSummary { .. }
             | Self::InvalidParallelProgressTransitionMergeSummary { .. }

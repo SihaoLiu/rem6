@@ -1655,6 +1655,13 @@ pub enum WorkloadError {
         merged_evidence_count: u64,
         scoped_evidence_count: u64,
     },
+    DuplicateFullSystemLivelockDiagnosticRecord {
+        subject: WaitForNode,
+        threshold: u64,
+        transition_count: u64,
+        first_transition_tick: Tick,
+        last_transition_tick: Tick,
+    },
     InvalidParallelLivelockSubjectMergeSummary {
         scope: WorkloadParallelDiagnosticScope,
         subject: WaitForNode,

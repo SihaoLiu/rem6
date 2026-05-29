@@ -680,6 +680,40 @@ fn workload_replay_plan_rejects_incomplete_full_system_livelock_merge() {
 }
 
 #[test]
+fn workload_replay_plan_rejects_duplicate_full_system_livelock_diagnostic_records() {
+    let plan = replay_plan()
+        .add_expected_clean_parallel_diagnostics(expected_clean(
+            WorkloadParallelDiagnosticScope::FullSystem,
+        ))
+        .unwrap();
+    let subject = component("global-livelock-loop");
+    let diagnostic = livelock_diagnostic(
+        subject,
+        2,
+        [
+            (LivelockTransitionKind::ProtocolRetry, 4),
+            (LivelockTransitionKind::ProtocolRetry, 8),
+        ],
+    );
+
+    let dirty_summary = WorkloadParallelExecutionSummary::default()
+        .with_full_system_livelock_diagnostic_records([diagnostic.clone(), diagnostic]);
+    let dirty_result = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(dirty_summary);
+
+    assert_eq!(
+        plan.verify_result(&dirty_result).unwrap_err(),
+        WorkloadError::DuplicateFullSystemLivelockDiagnosticRecord {
+            subject: component("global-livelock-loop"),
+            threshold: 2,
+            transition_count: 2,
+            first_transition_tick: 4,
+            last_transition_tick: 8,
+        },
+    );
+}
+
+#[test]
 fn workload_replay_plan_rejects_full_system_livelock_merge_missing_scoped_subject() {
     let plan = replay_plan()
         .add_expected_clean_parallel_diagnostics(expected_clean(
