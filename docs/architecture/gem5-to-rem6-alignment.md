@@ -559,9 +559,9 @@ Implementation evidence through 2026-05-29:
   data-direction, and storage errors instead of gem5 panic paths or raw
   `SimObject` state mutation. IDE disk snapshots now preserve task-file,
   status, control, pending-interrupt, explicit PIO transfer payload and cursor
-  state, and active DMA requests, so partial reads, writes, and started DMA
-  transfers restore without relying on hidden chunk-generator or event-local
-  state.
+  state, pending timed media commands, and active DMA requests, so delayed
+  commands, partial reads, writes, and started DMA transfers restore without
+  relying on hidden chunk-generator or event-local state.
   A typed `IdeController` core now covers gem5 `src/dev/storage/ide_ctrl.*`
   channel device selection, command and control register forwarding, absent
   selected-device reads as zero without panic, shared interrupt visibility
@@ -587,8 +587,11 @@ Implementation evidence through 2026-05-29:
   ports before or after host-controller creation. This replaces gem5's
   callback-heavy IDE DMA event chain and fragile object-local
   serialize/unserialize pattern with explicit transfer plans, guest-memory
-  boundaries, register records, and decode-first checkpoint chunks. Timing
-  delay remains open.
+  boundaries, register records, and decode-first checkpoint chunks. IDE media
+  timing now uses a typed timing port: media commands enter BSY immediately,
+  retain the pending command as snapshot state, complete on the owning
+  scheduler partition after the declared delay, and only then expose DRQ,
+  transfer payloads, DMA readiness, and optional PCI INTx delivery.
   `rem6-system` host checkpoint actions can attach storage image and IDE
   controller banks, stage their chunk capture with the rest of the system, and
   restore storage state only after decode-first validation has accepted every
@@ -2158,7 +2161,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   bytes, status and interrupt-line config bytes, five I/O BAR shapes, active
   BAR ranges, dispatch-policy derivation from explicit layout parameters, and
   typed legacy INTx delivery from shared controller interrupt state through the
-  parallel scheduler.
+  parallel scheduler. IDE timing tests cover delayed media-read readiness,
+  BSY-before-DRQ state, deferred PCI INTx delivery, and completion-error
+  capture on the parallel scheduler path.
   System checkpoint action tests cover storage image and IDE controller bank
   attachment, staged capture into host manifests, and malformed storage or IDE
   restore rejection without partial live-state mutation. Topology checkpoint

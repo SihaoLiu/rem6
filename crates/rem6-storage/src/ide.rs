@@ -3,8 +3,8 @@ use std::sync::Arc;
 use crate::{
     IdeBmiSnapshot, IdeChannelSnapshot, IdeControllerError, IdeControllerGuestMemory,
     IdeControllerSnapshot, IdeDiskError, IdeDiskSnapshot, IdeDiskTransferSnapshot, IdeDmaDirection,
-    IdeDmaPlan, IdeDmaRequest, StorageError, StorageImageLayer, StorageSectorId,
-    STORAGE_SECTOR_BYTES,
+    IdeDmaPlan, IdeDmaRequest, IdePendingCommandSnapshot, StorageError, StorageImageLayer,
+    StorageSectorId, STORAGE_SECTOR_BYTES,
 };
 
 pub const IDE_DATA_OFFSET: u8 = 0;
@@ -130,6 +130,12 @@ impl IdeControllerDispatch {
 pub enum IdeBarWriteOutcome {
     Applied,
     IgnoredBusMasterDisabled,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IdeCommandIssue {
+    Completed,
+    Delayed,
 }
 
 #[derive(Clone, Debug)]
@@ -375,6 +381,27 @@ impl IdeController {
         Ok(())
     }
 
+    pub fn write_command_u8_timed(
+        &mut self,
+        channel: IdeChannelId,
+        offset: u8,
+        value: u8,
+    ) -> Result<IdeCommandIssue, IdeControllerError> {
+        let command_channel = self.channel_mut(channel);
+        if offset == IDE_DRIVE_OFFSET {
+            command_channel.select(value & IDE_DRIVE_DEVICE1 != 0);
+        }
+
+        let issue = if let Some(disk) = command_channel.selected_mut() {
+            disk.write_command_u8_timed(offset, value)
+                .map_err(|source| IdeControllerError::Disk { channel, source })?
+        } else {
+            IdeCommandIssue::Completed
+        };
+        command_channel.refresh_interrupt();
+        Ok(issue)
+    }
+
     pub fn read_control_u8(
         &mut self,
         channel: IdeChannelId,
@@ -551,6 +578,24 @@ impl IdeController {
             .complete_dma()
             .map_err(|source| IdeControllerError::Disk { channel, source })?;
         command_channel.complete_dma();
+        Ok(())
+    }
+
+    pub fn complete_timed_command(
+        &mut self,
+        channel: IdeChannelId,
+    ) -> Result<(), IdeControllerError> {
+        let command_channel = self.channel_mut(channel);
+        let selected_device = command_channel.selected_device;
+        let disk = command_channel
+            .selected_mut()
+            .ok_or(IdeControllerError::NoSelectedDevice {
+                channel,
+                device: selected_device,
+            })?;
+        disk.complete_timed_command()
+            .map_err(|source| IdeControllerError::Disk { channel, source })?;
+        command_channel.refresh_interrupt();
         Ok(())
     }
 
@@ -917,6 +962,7 @@ pub struct IdeDisk {
     control: u8,
     pending_interrupt: bool,
     transfer: Option<IdeTransfer>,
+    pending_command: Option<IdePendingCommand>,
 }
 
 impl IdeDisk {
@@ -940,6 +986,7 @@ impl IdeDisk {
             control: 0,
             pending_interrupt: false,
             transfer: None,
+            pending_command: None,
         })
     }
 
@@ -951,6 +998,7 @@ impl IdeDisk {
             control: self.control,
             pending_interrupt: self.pending_interrupt,
             transfer: self.transfer.as_ref().map(IdeTransfer::snapshot),
+            pending_command: self.pending_command.map(IdePendingCommand::snapshot),
         }
     }
 
@@ -966,6 +1014,9 @@ impl IdeDisk {
             .as_ref()
             .map(IdeTransfer::from_snapshot)
             .transpose()?;
+        self.pending_command = snapshot
+            .pending_command
+            .map(IdePendingCommand::from_snapshot);
         Ok(())
     }
 
@@ -978,6 +1029,9 @@ impl IdeDisk {
         }
         if let Some(transfer) = &snapshot.transfer {
             transfer.validate()?;
+        }
+        if let Some(pending) = snapshot.pending_command {
+            pending.validate()?;
         }
         Ok(())
     }
@@ -1038,6 +1092,20 @@ impl IdeDisk {
         }
     }
 
+    pub fn write_command_u8_timed(
+        &mut self,
+        offset: u8,
+        value: u8,
+    ) -> Result<IdeCommandIssue, IdeDiskError> {
+        match offset {
+            IDE_COMMAND_OFFSET => self.start_timed_command(value),
+            _ => {
+                self.write_command_u8(offset, value)?;
+                Ok(IdeCommandIssue::Completed)
+            }
+        }
+    }
+
     pub fn read_control_u8(&self, offset: u8) -> Result<u8, IdeDiskError> {
         match offset {
             IDE_ALTSTAT_OFFSET => Ok(self.status),
@@ -1056,11 +1124,13 @@ impl IdeDisk {
             self.status = IDE_STATUS_BSY;
             self.pending_interrupt = false;
             self.transfer = None;
+            self.pending_command = None;
         } else if was_reset {
             self.registers = IdeTaskFile::reset();
             self.status = IDE_STATUS_DRDY;
             self.pending_interrupt = false;
             self.transfer = None;
+            self.pending_command = None;
         }
         Ok(())
     }
@@ -1105,6 +1175,7 @@ impl IdeDisk {
         self.status &= !IDE_STATUS_ERR;
         self.pending_interrupt = false;
         self.transfer = None;
+        self.pending_command = None;
 
         match command {
             IDE_COMMAND_READ_NATIVE_MAX => {
@@ -1165,6 +1236,81 @@ impl IdeDisk {
             }
             _ => Err(IdeDiskError::UnsupportedCommand { command }),
         }
+    }
+
+    fn start_timed_command(&mut self, command: u8) -> Result<IdeCommandIssue, IdeDiskError> {
+        if !matches!(
+            command,
+            IDE_COMMAND_READ
+                | IDE_COMMAND_READ_MULTI
+                | IDE_COMMAND_WRITE
+                | IDE_COMMAND_WRITE_MULTI
+                | IDE_COMMAND_READ_DMA
+                | IDE_COMMAND_WRITE_DMA
+        ) {
+            self.start_command(command)?;
+            return Ok(IdeCommandIssue::Completed);
+        }
+
+        self.registers.command = command;
+        self.registers.error &= !IDE_ERROR_ABORT;
+        self.status &= !IDE_STATUS_ERR;
+        self.pending_interrupt = false;
+        self.transfer = None;
+        self.pending_command = None;
+        let (start_sector, sectors) = self.lba_transfer(command)?;
+        self.start_busy();
+        self.pending_command = Some(IdePendingCommand {
+            command,
+            start_sector,
+            sectors,
+        });
+        Ok(IdeCommandIssue::Delayed)
+    }
+
+    fn complete_timed_command(&mut self) -> Result<(), IdeDiskError> {
+        let pending = self
+            .pending_command
+            .take()
+            .ok_or(IdeDiskError::NoPendingTimedCommand {
+                device: self.device_id,
+            })?;
+        match pending.command {
+            IDE_COMMAND_READ | IDE_COMMAND_READ_MULTI => {
+                let mut payload =
+                    Vec::with_capacity(pending.sectors as usize * STORAGE_SECTOR_BYTES as usize);
+                for offset in 0..pending.sectors {
+                    payload.extend_from_slice(
+                        &self
+                            .image
+                            .read_sector(StorageSectorId::new(pending.start_sector + offset))?,
+                    );
+                }
+                self.prepare_input(payload);
+            }
+            IDE_COMMAND_WRITE | IDE_COMMAND_WRITE_MULTI => {
+                self.transfer = Some(IdeTransfer::new_output(
+                    pending.start_sector,
+                    pending.sectors,
+                )?);
+                self.status = IDE_STATUS_DRDY | IDE_STATUS_DRQ;
+            }
+            IDE_COMMAND_READ_DMA | IDE_COMMAND_WRITE_DMA => {
+                let direction = if pending.command == IDE_COMMAND_READ_DMA {
+                    IdeDmaDirection::ToGuest
+                } else {
+                    IdeDmaDirection::FromGuest
+                };
+                self.transfer = Some(IdeTransfer::new_dma(
+                    direction,
+                    pending.start_sector,
+                    pending.sectors,
+                )?);
+                self.status = IDE_STATUS_DRDY | IDE_STATUS_DRQ;
+            }
+            command => return Err(IdeDiskError::InvalidPendingTimedCommand { command }),
+        }
+        Ok(())
     }
 
     fn start_busy(&mut self) {
@@ -1421,6 +1567,27 @@ impl IdeTaskFile {
 
     pub const fn command(self) -> u8 {
         self.command
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct IdePendingCommand {
+    command: u8,
+    start_sector: u64,
+    sectors: u64,
+}
+
+impl IdePendingCommand {
+    const fn snapshot(self) -> IdePendingCommandSnapshot {
+        IdePendingCommandSnapshot::new(self.command, self.start_sector, self.sectors)
+    }
+
+    const fn from_snapshot(snapshot: IdePendingCommandSnapshot) -> Self {
+        Self {
+            command: snapshot.command(),
+            start_sector: snapshot.start_sector(),
+            sectors: snapshot.sectors(),
+        }
     }
 }
 

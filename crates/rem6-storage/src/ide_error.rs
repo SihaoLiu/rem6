@@ -1,6 +1,7 @@
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 
+use rem6_kernel::SchedulerError;
 use rem6_pci::{PciFunctionAddress, PciInterruptPin};
 
 use crate::ide::{IdeChannelId, IdeControllerBar, IdeDeviceId};
@@ -91,6 +92,10 @@ pub enum IdeControllerError {
     },
     PciEndpoint {
         source: rem6_pci::PciError,
+    },
+    ZeroTimingDelay,
+    Scheduler {
+        source: SchedulerError,
     },
     DmaUnsupported {
         channel: IdeChannelId,
@@ -214,6 +219,8 @@ impl Display for IdeControllerError {
             Self::PciEndpoint { source } => {
                 write!(formatter, "IDE PCI endpoint error: {source}")
             }
+            Self::ZeroTimingDelay => write!(formatter, "IDE timing delay must be positive"),
+            Self::Scheduler { source } => write!(formatter, "IDE scheduler error: {source}"),
             Self::DmaUnsupported { channel } => {
                 write!(
                     formatter,
@@ -234,6 +241,7 @@ impl Error for IdeControllerError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::PciEndpoint { source } => Some(source),
+            Self::Scheduler { source } => Some(source),
             Self::Disk { source, .. } => Some(source),
             _ => None,
         }
@@ -253,6 +261,10 @@ pub enum IdeDiskError {
         cursor: usize,
         payload_bytes: usize,
     },
+    InvalidPendingCommandSnapshot {
+        command: u8,
+        sectors: u64,
+    },
     InvalidCommandOffset {
         offset: u8,
     },
@@ -267,6 +279,12 @@ pub enum IdeDiskError {
         command: u8,
     },
     DmaNotReady {
+        command: u8,
+    },
+    NoPendingTimedCommand {
+        device: IdeDeviceId,
+    },
+    InvalidPendingTimedCommand {
         command: u8,
     },
     DmaDirectionMismatch {
@@ -300,6 +318,9 @@ impl From<IdeSnapshotError> for IdeDiskError {
                 cursor,
                 payload_bytes,
             },
+            IdeSnapshotError::InvalidPendingCommand { command, sectors } => {
+                Self::InvalidPendingCommandSnapshot { command, sectors }
+            }
         }
     }
 }
@@ -324,6 +345,10 @@ impl Display for IdeDiskError {
                 formatter,
                 "IDE disk transfer snapshot cursor {cursor} is invalid for {payload_bytes} payload bytes"
             ),
+            Self::InvalidPendingCommandSnapshot { command, sectors } => write!(
+                formatter,
+                "IDE disk pending command snapshot {command:#x} has invalid sector count {sectors}"
+            ),
             Self::InvalidCommandOffset { offset } => {
                 write!(formatter, "invalid IDE command register offset {offset:#x}")
             }
@@ -339,6 +364,12 @@ impl Display for IdeDiskError {
             }
             Self::DmaNotReady { command } => {
                 write!(formatter, "IDE command {command:#x} has no pending DMA transfer")
+            }
+            Self::NoPendingTimedCommand { device } => {
+                write!(formatter, "IDE {device:?} disk has no pending timed command")
+            }
+            Self::InvalidPendingTimedCommand { command } => {
+                write!(formatter, "IDE pending timed command {command:#x} is invalid")
             }
             Self::DmaDirectionMismatch { command } => write!(
                 formatter,

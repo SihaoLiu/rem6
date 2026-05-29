@@ -138,6 +138,7 @@ pub struct IdeDiskSnapshot {
     pub(crate) control: u8,
     pub(crate) pending_interrupt: bool,
     pub(crate) transfer: Option<IdeDiskTransferSnapshot>,
+    pub(crate) pending_command: Option<IdePendingCommandSnapshot>,
 }
 
 impl IdeDiskSnapshot {
@@ -148,6 +149,7 @@ impl IdeDiskSnapshot {
         control: u8,
         pending_interrupt: bool,
         transfer: Option<IdeDiskTransferSnapshot>,
+        pending_command: Option<IdePendingCommandSnapshot>,
     ) -> Self {
         Self {
             device_id,
@@ -156,6 +158,7 @@ impl IdeDiskSnapshot {
             control,
             pending_interrupt,
             transfer,
+            pending_command,
         }
     }
 
@@ -182,9 +185,53 @@ impl IdeDiskSnapshot {
     pub const fn transfer(&self) -> Option<&IdeDiskTransferSnapshot> {
         self.transfer.as_ref()
     }
+
+    pub const fn pending_command(&self) -> Option<&IdePendingCommandSnapshot> {
+        self.pending_command.as_ref()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct IdePendingCommandSnapshot {
+    pub(crate) command: u8,
+    pub(crate) start_sector: u64,
+    pub(crate) sectors: u64,
+}
+
+impl IdePendingCommandSnapshot {
+    pub const fn new(command: u8, start_sector: u64, sectors: u64) -> Self {
+        Self {
+            command,
+            start_sector,
+            sectors,
+        }
+    }
+
+    pub const fn command(self) -> u8 {
+        self.command
+    }
+
+    pub const fn start_sector(self) -> u64 {
+        self.start_sector
+    }
+
+    pub const fn sectors(self) -> u64 {
+        self.sectors
+    }
+
+    pub(crate) fn validate(self) -> Result<(), IdeSnapshotError> {
+        if self.sectors == 0 {
+            return Err(IdeSnapshotError::InvalidPendingCommand {
+                command: self.command,
+                sectors: self.sectors,
+            });
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum IdeSnapshotError {
     InvalidTransferSnapshot { cursor: usize, payload_bytes: usize },
+    InvalidPendingCommand { command: u8, sectors: u64 },
 }

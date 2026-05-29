@@ -251,6 +251,7 @@ fn ide_disk_restore_rejects_mismatched_snapshot_before_mutation() {
         before.control(),
         before.pending_interrupt(),
         before.transfer().cloned(),
+        before.pending_command().copied(),
     );
 
     assert!(matches!(

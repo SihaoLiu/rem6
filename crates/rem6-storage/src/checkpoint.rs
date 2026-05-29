@@ -9,8 +9,8 @@ use crate::{
     validate_storage_bytes, CowStorageImage, CowStorageSnapshot, FileStorageImage,
     FileStorageSnapshot, IdeBmiSnapshot, IdeChannelId, IdeChannelSnapshot, IdeController,
     IdeControllerError, IdeControllerSnapshot, IdeDeviceId, IdeDiskSnapshot,
-    IdeDiskTransferSnapshot, IdeDmaDirection, IdeTaskFile, RawStorageImage, RawStorageSnapshot,
-    StorageError, StorageSectorId, STORAGE_SECTOR_BYTES,
+    IdeDiskTransferSnapshot, IdeDmaDirection, IdePendingCommandSnapshot, IdeTaskFile,
+    RawStorageImage, RawStorageSnapshot, StorageError, StorageSectorId, STORAGE_SECTOR_BYTES,
 };
 
 const STORAGE_IMAGE_CHUNK: &str = "storage-image";
@@ -18,11 +18,13 @@ const IDE_CONTROLLER_CHUNK: &str = "ide-controller";
 const STORAGE_RAW_KIND: u8 = 1;
 const STORAGE_COW_KIND: u8 = 2;
 const STORAGE_FILE_KIND: u8 = 3;
-const IDE_CONTROLLER_VERSION: u8 = 1;
+const IDE_CONTROLLER_VERSION: u8 = 2;
 const IDE_TRANSFER_NONE: u8 = 0;
 const IDE_TRANSFER_INPUT: u8 = 1;
 const IDE_TRANSFER_OUTPUT: u8 = 2;
 const IDE_TRANSFER_DMA: u8 = 3;
+const IDE_PENDING_COMMAND_NONE: u8 = 0;
+const IDE_PENDING_COMMAND_MEDIA: u8 = 1;
 const IDE_DMA_TO_GUEST: u8 = 1;
 const IDE_DMA_FROM_GUEST: u8 = 2;
 const U32_BYTES: usize = 4;
@@ -707,6 +709,7 @@ fn encode_ide_disk(payload: &mut Vec<u8>, snapshot: &IdeDiskSnapshot) {
     payload.push(snapshot.control());
     payload.push(u8::from(snapshot.pending_interrupt()));
     encode_ide_transfer(payload, snapshot.transfer());
+    encode_ide_pending_command(payload, snapshot.pending_command());
 }
 
 fn encode_ide_transfer(payload: &mut Vec<u8>, transfer: Option<&IdeDiskTransferSnapshot>) {
@@ -743,6 +746,18 @@ fn encode_ide_transfer(payload: &mut Vec<u8>, transfer: Option<&IdeDiskTransferS
             payload.push(encode_dma_direction(*direction));
             payload.extend(start_sector.to_le_bytes());
             payload.extend(sectors.to_le_bytes());
+        }
+    }
+}
+
+fn encode_ide_pending_command(payload: &mut Vec<u8>, pending: Option<&IdePendingCommandSnapshot>) {
+    match pending {
+        None => payload.push(IDE_PENDING_COMMAND_NONE),
+        Some(pending) => {
+            payload.push(IDE_PENDING_COMMAND_MEDIA);
+            payload.push(pending.command());
+            payload.extend(pending.start_sector().to_le_bytes());
+            payload.extend(pending.sectors().to_le_bytes());
         }
     }
 }
@@ -817,6 +832,7 @@ fn decode_ide_disk(
     let control = reader.read_u8("IDE disk control")?;
     let pending_interrupt = reader.read_bool("IDE disk pending interrupt")?;
     let transfer = decode_ide_transfer(reader)?;
+    let pending_command = decode_ide_pending_command(reader)?;
     Ok(IdeDiskSnapshot::from_parts(
         device_id,
         task_file,
@@ -824,6 +840,7 @@ fn decode_ide_disk(
         control,
         pending_interrupt,
         transfer,
+        pending_command,
     ))
 }
 
@@ -866,6 +883,25 @@ fn decode_ide_transfer(
             }))
         }
         _ => Err(reader.invalid(format!("unknown IDE transfer tag {tag}"))),
+    }
+}
+
+fn decode_ide_pending_command(
+    reader: &mut StorageCheckpointReader<'_>,
+) -> Result<Option<IdePendingCommandSnapshot>, StorageCheckpointError> {
+    match reader.read_u8("IDE pending command tag")? {
+        IDE_PENDING_COMMAND_NONE => Ok(None),
+        IDE_PENDING_COMMAND_MEDIA => {
+            let command = reader.read_u8("IDE pending command")?;
+            let start_sector = reader.read_u64("IDE pending command start sector")?;
+            let sectors = reader.read_u64("IDE pending command sectors")?;
+            Ok(Some(IdePendingCommandSnapshot::new(
+                command,
+                start_sector,
+                sectors,
+            )))
+        }
+        tag => Err(reader.invalid(format!("unknown IDE pending command tag {tag}"))),
     }
 }
 
