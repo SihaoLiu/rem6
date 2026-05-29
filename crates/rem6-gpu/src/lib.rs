@@ -947,15 +947,20 @@ impl GpuDevice {
         launch: GpuKernelLaunch,
     ) -> Result<PartitionEventId, GpuError> {
         let target = self.partition();
-        scheduler
+        let source_tick = scheduler
             .partition_now(source)
             .map_err(GpuError::Scheduler)?;
         scheduler
             .partition_now(target)
             .map_err(GpuError::Scheduler)?;
-        validate_submission_latency(scheduler, source, target, submission_latency)?;
+        validate_submission_latency(
+            source,
+            target,
+            source_tick,
+            scheduler.min_remote_delay(),
+            submission_latency,
+        )?;
 
-        let source_tick = scheduler.now();
         let gpu = self.clone();
         scheduler
             .schedule_parallel_at(source, source_tick, move |context| {
@@ -1629,9 +1634,10 @@ fn response_data(response: &MemoryResponse) -> Option<Vec<u8>> {
 }
 
 fn validate_submission_latency(
-    scheduler: &PartitionedScheduler,
     source: PartitionId,
     target: PartitionId,
+    source_tick: Tick,
+    min_remote_delay: Tick,
     delay: Tick,
 ) -> Result<(), GpuError> {
     if source != target && delay == 0 {
@@ -1639,23 +1645,33 @@ fn validate_submission_latency(
             SchedulerError::ZeroDelayRemoteMessage { source, target },
         ));
     }
-    if source != target && delay < scheduler.min_remote_delay() {
-        return Err(GpuError::Scheduler(
-            SchedulerError::RemoteDelayBelowLookahead {
-                source,
-                target,
-                delay,
-                minimum: scheduler.min_remote_delay(),
-            },
-        ));
-    }
-    scheduler
-        .now()
+    let delivery_tick = source_tick
         .checked_add(delay)
         .ok_or(GpuError::TickOverflow {
-            now: scheduler.now(),
+            now: source_tick,
             delay,
         })?;
+
+    if source != target {
+        let minimum_delivery_tick =
+            source_tick
+                .checked_add(min_remote_delay)
+                .ok_or(GpuError::TickOverflow {
+                    now: source_tick,
+                    delay: min_remote_delay,
+                })?;
+        if delivery_tick < minimum_delivery_tick {
+            return Err(GpuError::Scheduler(
+                SchedulerError::RemoteDeliveryBeforeLookaheadBoundary {
+                    source,
+                    target,
+                    source_tick,
+                    delivery_tick,
+                    minimum_delivery_tick,
+                },
+            ));
+        }
+    }
 
     Ok(())
 }

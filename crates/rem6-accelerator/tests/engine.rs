@@ -664,6 +664,13 @@ fn accelerator_engine_rejects_invalid_parallel_submission_before_enqueuing() {
     let cpu_partition = PartitionId::new(0);
     let accelerator_partition = PartitionId::new(1);
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 4).unwrap();
+    scheduler
+        .schedule_parallel_at(cpu_partition, 7, |_| {})
+        .unwrap();
+    scheduler.run_until_idle_parallel().unwrap();
+    let source_tick = scheduler.partition_now(cpu_partition).unwrap();
+    let delivery_tick = source_tick.checked_add(2).unwrap();
+    let minimum_delivery_tick = source_tick.checked_add(4).unwrap();
     let engine = AcceleratorEngine::new(
         AcceleratorEngineConfig::new(AcceleratorEngineId::new(3), accelerator_partition, 1)
             .unwrap(),
@@ -678,14 +685,16 @@ fn accelerator_engine_rejects_invalid_parallel_submission_before_enqueuing() {
     assert_eq!(
         engine.submit_from_partition(&mut scheduler, cpu_partition, 2, command),
         Err(AcceleratorError::Scheduler(
-            SchedulerError::RemoteDelayBelowLookahead {
+            SchedulerError::RemoteDeliveryBeforeLookaheadBoundary {
                 source: cpu_partition,
                 target: accelerator_partition,
-                delay: 2,
-                minimum: 4,
+                source_tick,
+                delivery_tick,
+                minimum_delivery_tick,
             },
         )),
     );
+    assert_eq!(scheduler.now(), source_tick);
     assert!(scheduler.is_idle());
     assert!(engine.trace().is_empty());
 }

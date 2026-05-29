@@ -103,8 +103,11 @@ isolated bugs:
   slack fails as typed replayable state instead of becoming an event-queue merge
   side effect.
   System-level parallel trap event preflight now uses the same absolute
-  delivery-boundary error before a host event is queued, so guest-host
-  notifications cannot bypass the kernel contract through a higher-level helper.
+  delivery-boundary error before a host event is queued, and GPU plus
+  accelerator submission preflight now checks the source partition clock
+  against the same boundary before device work is enqueued, so guest-host
+  notifications and device launches cannot bypass the kernel contract through
+  a higher-level helper.
   Wait-for
   edge-kind observation windows are now owned by `rem6-kernel`, so every
   subsystem can report distinct edge counts plus first and last observed ticks

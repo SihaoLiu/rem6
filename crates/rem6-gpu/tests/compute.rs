@@ -274,6 +274,13 @@ fn gpu_launch_rejects_invalid_config_and_submission_before_enqueueing() {
 
     let cpu_partition = PartitionId::new(0);
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 3).unwrap();
+    scheduler
+        .schedule_parallel_at(cpu_partition, 7, |_| {})
+        .unwrap();
+    scheduler.run_until_idle_parallel().unwrap();
+    let source_tick = scheduler.partition_now(cpu_partition).unwrap();
+    let delivery_tick = source_tick.checked_add(2).unwrap();
+    let minimum_delivery_tick = source_tick.checked_add(3).unwrap();
     let gpu =
         GpuDevice::new(GpuComputeConfig::new(GpuDeviceId::new(5), gpu_partition, 1, 1).unwrap());
     let error = gpu
@@ -287,14 +294,15 @@ fn gpu_launch_rejects_invalid_config_and_submission_before_enqueueing() {
 
     assert_eq!(
         error,
-        GpuError::Scheduler(SchedulerError::RemoteDelayBelowLookahead {
+        GpuError::Scheduler(SchedulerError::RemoteDeliveryBeforeLookaheadBoundary {
             source: cpu_partition,
             target: gpu_partition,
-            delay: 2,
-            minimum: 3,
+            source_tick,
+            delivery_tick,
+            minimum_delivery_tick,
         }),
     );
-    assert_eq!(scheduler.now(), 0);
+    assert_eq!(scheduler.now(), source_tick);
     assert!(gpu.trace().is_empty());
     assert!(gpu.completions().is_empty());
 }
