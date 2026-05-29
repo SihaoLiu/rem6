@@ -581,17 +581,21 @@ Implementation evidence through 2026-05-29:
   shape checks before live mutation. IDE controller checkpoint banks now encode
   those snapshots as deterministic chunks, validate all controller chunks with
   clone-restore preflight, and reject malformed chunks without partial live
-  controller mutation. This replaces gem5's callback-heavy IDE DMA event chain
-  and fragile object-local serialize/unserialize pattern with explicit transfer
-  plans, guest-memory boundaries, register records, and decode-first checkpoint
-  chunks. PCI endpoint identity, external interrupt delivery, timing delay, and
-  system host checkpoint attachment remain open.
-  `rem6-system` host checkpoint actions can attach those banks, stage their
-  chunk capture with the rest of the system, and restore storage images only
-  after decode-first validation has accepted every attached bank. RISC-V
-  topology systems can now register storage image checkpoint ports before or
-  after host-controller creation, and the topology layer attaches them to the
-  host checkpoint executor automatically. Storage source-policy tests keep the
+  controller mutation. `rem6-system` host checkpoint actions now stage those
+  controller banks with the rest of the system, validate malformed IDE chunks
+  before any live restore, and let topology systems register IDE checkpoint
+  ports before or after host-controller creation. This replaces gem5's
+  callback-heavy IDE DMA event chain and fragile object-local
+  serialize/unserialize pattern with explicit transfer plans, guest-memory
+  boundaries, register records, and decode-first checkpoint chunks. PCI
+  endpoint identity, external interrupt delivery, and timing delay remain open.
+  `rem6-system` host checkpoint actions can attach storage image and IDE
+  controller banks, stage their chunk capture with the rest of the system, and
+  restore storage state only after decode-first validation has accepted every
+  attached bank. RISC-V topology systems can now register storage image and IDE
+  controller checkpoint ports before or after host-controller creation, and the
+  topology layer attaches them to the host checkpoint executor automatically.
+  Storage source-policy tests keep the
   crate under the facade and hard per-source-file budgets, avoiding gem5-style
   panic paths, process-exit save callbacks, and mutable SimObject disk state.
 - `rem6-uart` now keeps UART ids, TX/RX byte records, interrupt-delivery error
@@ -2139,11 +2143,11 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   or guest-memory mutation. IDE checkpoint tests cover active DMA snapshot
   capture/restore through deterministic controller chunks and malformed
   controller chunk rejection without partial restore.
-  System checkpoint action tests cover storage image bank attachment, staged
-  capture into host manifests, and malformed storage restore rejection without
-  partial live-image mutation. Topology checkpoint tests cover storage image
-  port registration before and after host-controller creation with automatic
-  host executor attachment.
+  System checkpoint action tests cover storage image and IDE controller bank
+  attachment, staged capture into host manifests, and malformed storage or IDE
+  restore rejection without partial live-state mutation. Topology checkpoint
+  tests cover storage image and IDE controller port registration before and
+  after host-controller creation with automatic host executor attachment.
   VirtIO split descriptor-chain tests cover block
   read, write, flush, and get-id decoding into typed requests, status
   descriptor tracking, writable data-byte accounting, loop rejection, short

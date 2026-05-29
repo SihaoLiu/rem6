@@ -11,11 +11,12 @@ use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout};
 use rem6_stats::StatsRegistry;
 use rem6_storage::{CowStorageImage, RawStorageImage, StorageSectorId};
 use rem6_system::{
-    GuestEventId, GuestSourceId, HostAction, HostActionRecord, MemoryStoreCheckpointBank,
-    MemoryStoreCheckpointError, MemoryStoreCheckpointPort, RiscvCoreCheckpointBank,
-    RiscvCoreCheckpointPort, SchedulerCheckpointBank, SchedulerCheckpointError,
-    SchedulerCheckpointPort, StorageCheckpointError, StorageImageCheckpointBank,
-    StorageImageCheckpointPort, SystemActionExecutor, SystemActionOutcome, SystemError,
+    GuestEventId, GuestSourceId, HostAction, HostActionRecord, IdeControllerCheckpointBank,
+    IdeControllerCheckpointPort, MemoryStoreCheckpointBank, MemoryStoreCheckpointError,
+    MemoryStoreCheckpointPort, RiscvCoreCheckpointBank, RiscvCoreCheckpointPort,
+    SchedulerCheckpointBank, SchedulerCheckpointError, SchedulerCheckpointPort,
+    StorageCheckpointError, StorageImageCheckpointBank, StorageImageCheckpointPort,
+    SystemActionExecutor, SystemActionOutcome, SystemError,
 };
 use rem6_transport::{MemoryRoute, MemoryTransport, TransportEndpointId};
 
@@ -78,6 +79,11 @@ fn image_bytes(bytes: &[u8]) -> Vec<u8> {
         .iter()
         .flat_map(|byte| sector(*byte))
         .collect::<Vec<_>>()
+}
+
+fn ide_disk(byte: u8, device: rem6_storage::IdeDeviceId) -> rem6_storage::IdeDisk {
+    let image = Arc::new(RawStorageImage::from_bytes(image_bytes(&[byte])).unwrap());
+    rem6_storage::IdeDisk::new(image as Arc<dyn rem6_storage::StorageImageLayer>, device).unwrap()
 }
 
 fn partitioned_memory_store() -> (
@@ -180,6 +186,204 @@ fn system_action_executor_checkpoints_and_restores_storage_images() {
     );
     assert_eq!(raw.snapshot(), expected_raw);
     assert_eq!(cow.snapshot(), expected_cow);
+}
+
+#[test]
+fn system_action_executor_checkpoints_and_restores_ide_controllers() {
+    let host = PartitionId::new(1);
+    let source = GuestSourceId::new(24);
+    let component = CheckpointComponentId::new("storage.ide0").unwrap();
+    let controller = Arc::new(Mutex::new(
+        rem6_storage::IdeController::new([
+            Some(ide_disk(0x61, rem6_storage::IdeDeviceId::Device0)),
+            None,
+            None,
+            None,
+        ])
+        .unwrap(),
+    ));
+    controller
+        .lock()
+        .unwrap()
+        .write_command_u8(
+            rem6_storage::IdeChannelId::Primary,
+            rem6_storage::IDE_DRIVE_OFFSET,
+            rem6_storage::IDE_DRIVE_LBA,
+        )
+        .unwrap();
+    let expected = controller.lock().unwrap().snapshot();
+    let bank = IdeControllerCheckpointBank::new([IdeControllerCheckpointPort::new(
+        component.clone(),
+        controller.clone(),
+    )])
+    .unwrap();
+    let mut executor = SystemActionExecutor::new(StatsRegistry::new());
+    executor
+        .attach_ide_controller_checkpoint_bank(bank)
+        .unwrap();
+
+    let checkpoint = HostActionRecord::new(
+        170,
+        host,
+        host,
+        GuestEventId::new(24),
+        source,
+        HostAction::Checkpoint {
+            label: "ide-controllers".to_string(),
+        },
+    );
+    let manifest = match executor.apply(&checkpoint).unwrap() {
+        SystemActionOutcome::Checkpoint { manifest, .. } => manifest,
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+    assert!(manifest.states().iter().any(|state| {
+        state.component() == &component
+            && state
+                .chunks()
+                .iter()
+                .any(|chunk| chunk.name() == "ide-controller")
+    }));
+
+    controller
+        .lock()
+        .unwrap()
+        .write_command_u8(
+            rem6_storage::IdeChannelId::Primary,
+            rem6_storage::IDE_DRIVE_OFFSET,
+            rem6_storage::IDE_DRIVE_DEVICE1,
+        )
+        .unwrap();
+    let restore = HostActionRecord::new(
+        180,
+        host,
+        host,
+        GuestEventId::new(25),
+        source,
+        HostAction::RestoreCheckpoint {
+            manifest: manifest.clone(),
+        },
+    );
+
+    assert_eq!(
+        executor.apply(&restore).unwrap(),
+        SystemActionOutcome::CheckpointRestored {
+            tick: 180,
+            event: GuestEventId::new(25),
+            source,
+            manifest,
+        }
+    );
+    assert_eq!(controller.lock().unwrap().snapshot(), expected);
+}
+
+#[test]
+fn system_action_executor_rejects_ide_restore_without_partial_mutation() {
+    let host = PartitionId::new(1);
+    let source = GuestSourceId::new(25);
+    let first_component = CheckpointComponentId::new("storage.ide0").unwrap();
+    let second_component = CheckpointComponentId::new("storage.ide1").unwrap();
+    let first = Arc::new(Mutex::new(
+        rem6_storage::IdeController::new([
+            Some(ide_disk(0x62, rem6_storage::IdeDeviceId::Device0)),
+            None,
+            None,
+            None,
+        ])
+        .unwrap(),
+    ));
+    let second = Arc::new(Mutex::new(
+        rem6_storage::IdeController::new([
+            Some(ide_disk(0x63, rem6_storage::IdeDeviceId::Device0)),
+            None,
+            None,
+            None,
+        ])
+        .unwrap(),
+    ));
+    let bank = IdeControllerCheckpointBank::new([
+        IdeControllerCheckpointPort::new(first_component.clone(), first.clone()),
+        IdeControllerCheckpointPort::new(second_component.clone(), second.clone()),
+    ])
+    .unwrap();
+    let mut executor = SystemActionExecutor::new(StatsRegistry::new());
+    executor
+        .attach_ide_controller_checkpoint_bank(bank)
+        .unwrap();
+    let checkpoint = HostActionRecord::new(
+        190,
+        host,
+        host,
+        GuestEventId::new(26),
+        source,
+        HostAction::Checkpoint {
+            label: "bad-ide".to_string(),
+        },
+    );
+    let manifest = match executor.apply(&checkpoint).unwrap() {
+        SystemActionOutcome::Checkpoint { manifest, .. } => manifest,
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+    let bad_manifest = CheckpointManifest::new(
+        manifest.label().to_string(),
+        manifest.tick(),
+        manifest
+            .states()
+            .iter()
+            .map(|state| {
+                if state.component() == &second_component {
+                    CheckpointState::new(
+                        second_component.clone(),
+                        vec![CheckpointChunk::new("ide-controller", vec![0xff])],
+                    )
+                } else {
+                    state.clone()
+                }
+            })
+            .collect(),
+    );
+    first
+        .lock()
+        .unwrap()
+        .write_command_u8(
+            rem6_storage::IdeChannelId::Primary,
+            rem6_storage::IDE_DRIVE_OFFSET,
+            rem6_storage::IDE_DRIVE_DEVICE1,
+        )
+        .unwrap();
+    second
+        .lock()
+        .unwrap()
+        .write_command_u8(
+            rem6_storage::IdeChannelId::Primary,
+            rem6_storage::IDE_DRIVE_OFFSET,
+            rem6_storage::IDE_DRIVE_DEVICE1,
+        )
+        .unwrap();
+    let first_before = first.lock().unwrap().snapshot();
+    let second_before = second.lock().unwrap().snapshot();
+    let restore = HostActionRecord::new(
+        200,
+        host,
+        host,
+        GuestEventId::new(27),
+        source,
+        HostAction::RestoreCheckpoint {
+            manifest: bad_manifest,
+        },
+    );
+
+    let error = executor.apply(&restore).unwrap_err();
+
+    match error {
+        SystemError::StorageCheckpoint(StorageCheckpointError::InvalidChunk {
+            component, ..
+        }) => {
+            assert_eq!(component, second_component);
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
+    assert_eq!(first.lock().unwrap().snapshot(), first_before);
+    assert_eq!(second.lock().unwrap().snapshot(), second_before);
 }
 
 #[test]

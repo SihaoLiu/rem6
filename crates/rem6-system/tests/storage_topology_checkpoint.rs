@@ -1,12 +1,14 @@
+use std::sync::{Arc, Mutex};
+
 use rem6_checkpoint::CheckpointComponentId;
 use rem6_cpu::{CpuId, CpuResetState, RiscvClusterTopologyConfig, RiscvCoreTopologyConfig};
 use rem6_kernel::{ClockDomain, PartitionId};
 use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout};
 use rem6_stats::StatsRegistry;
-use rem6_storage::{RawStorageImage, StorageSectorId};
+use rem6_storage::{IdeController, IdeDeviceId, IdeDisk, RawStorageImage, StorageSectorId};
 use rem6_system::{
-    GuestEventId, GuestSourceId, HostAction, HostActionRecord, RiscvTopologyHostConfig,
-    RiscvTopologySystem, StorageImageCheckpointPort, SystemActionOutcome,
+    GuestEventId, GuestSourceId, HostAction, HostActionRecord, IdeControllerCheckpointPort,
+    RiscvTopologyHostConfig, RiscvTopologySystem, StorageImageCheckpointPort, SystemActionOutcome,
 };
 use rem6_topology::{
     ComponentId, ComponentKind, ComponentSpec, Endpoint, PortDirection, PortName, Topology,
@@ -43,6 +45,11 @@ fn sector(byte: u8) -> [u8; 512] {
 
 fn image_bytes(bytes: &[u8]) -> Vec<u8> {
     bytes.iter().flat_map(|byte| sector(*byte)).collect()
+}
+
+fn ide_disk(byte: u8, device: IdeDeviceId) -> IdeDisk {
+    let image = Arc::new(RawStorageImage::from_bytes(image_bytes(&[byte])).unwrap());
+    IdeDisk::new(image as Arc<dyn rem6_storage::StorageImageLayer>, device).unwrap()
 }
 
 fn topology() -> Topology {
@@ -211,6 +218,122 @@ fn topology_host_controller_attaches_late_storage_image_checkpoint_port() {
             .unwrap()
             .executor()
             .storage_image_checkpoint_bank()
+            .unwrap()
+            .components(),
+        vec![component]
+    );
+}
+
+#[test]
+fn topology_host_controller_attaches_existing_ide_controller_checkpoint_port() {
+    let source = GuestSourceId::new(93);
+    let component = CheckpointComponentId::new("storage.ide0").unwrap();
+    let controller = Arc::new(Mutex::new(
+        IdeController::new([Some(ide_disk(0x45, IdeDeviceId::Device0)), None, None, None]).unwrap(),
+    ));
+    controller
+        .lock()
+        .unwrap()
+        .write_command_u8(
+            rem6_storage::IdeChannelId::Primary,
+            rem6_storage::IDE_DRIVE_OFFSET,
+            rem6_storage::IDE_DRIVE_LBA,
+        )
+        .unwrap();
+    let expected = controller.lock().unwrap().snapshot();
+    let system = base_system()
+        .with_ide_controller_checkpoint_port(IdeControllerCheckpointPort::new(
+            component.clone(),
+            controller.clone(),
+        ))
+        .unwrap()
+        .with_host_controller(host_config(source), StatsRegistry::new())
+        .unwrap();
+    let host = system.host_controller().unwrap();
+
+    assert_eq!(
+        host.lock()
+            .unwrap()
+            .executor()
+            .ide_controller_checkpoint_bank()
+            .unwrap()
+            .components(),
+        vec![component.clone()]
+    );
+
+    let checkpoint = HostActionRecord::new(
+        40,
+        PartitionId::new(1),
+        PartitionId::new(1),
+        GuestEventId::new(203),
+        source,
+        HostAction::Checkpoint {
+            label: "topology-ide".to_string(),
+        },
+    );
+    let manifest = match host
+        .lock()
+        .unwrap()
+        .executor_mut()
+        .apply(&checkpoint)
+        .unwrap()
+    {
+        SystemActionOutcome::Checkpoint { manifest, .. } => manifest,
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+    assert!(manifest
+        .states()
+        .iter()
+        .any(|state| state.component() == &component
+            && state
+                .chunks()
+                .iter()
+                .any(|chunk| chunk.name() == "ide-controller")));
+
+    controller
+        .lock()
+        .unwrap()
+        .write_command_u8(
+            rem6_storage::IdeChannelId::Primary,
+            rem6_storage::IDE_DRIVE_OFFSET,
+            rem6_storage::IDE_DRIVE_DEVICE1,
+        )
+        .unwrap();
+    let restore = HostActionRecord::new(
+        50,
+        PartitionId::new(1),
+        PartitionId::new(1),
+        GuestEventId::new(204),
+        source,
+        HostAction::RestoreCheckpoint { manifest },
+    );
+    host.lock().unwrap().executor_mut().apply(&restore).unwrap();
+
+    assert_eq!(controller.lock().unwrap().snapshot(), expected);
+}
+
+#[test]
+fn topology_host_controller_attaches_late_ide_controller_checkpoint_port() {
+    let source = GuestSourceId::new(94);
+    let component = CheckpointComponentId::new("storage.ide1").unwrap();
+    let controller = Arc::new(Mutex::new(
+        IdeController::new([Some(ide_disk(0x46, IdeDeviceId::Device0)), None, None, None]).unwrap(),
+    ));
+    let system = base_system()
+        .with_host_controller(host_config(source), StatsRegistry::new())
+        .unwrap()
+        .with_ide_controller_checkpoint_port(IdeControllerCheckpointPort::new(
+            component.clone(),
+            controller,
+        ))
+        .unwrap();
+    let host = system.host_controller().unwrap();
+
+    assert_eq!(
+        host.lock()
+            .unwrap()
+            .executor()
+            .ide_controller_checkpoint_bank()
             .unwrap()
             .components(),
         vec![component]

@@ -103,6 +103,7 @@ pub use plic_checkpoint::{
     PlicCheckpointBank, PlicCheckpointError, PlicCheckpointPort, PlicCheckpointRecord,
 };
 pub use rem6_storage::{
+    IdeControllerCheckpointBank, IdeControllerCheckpointPort, IdeControllerCheckpointRecord,
     StorageCheckpointError, StorageImageCheckpointBank, StorageImageCheckpointPort,
     StorageImageCheckpointRecord, StorageImageCheckpointSnapshot,
 };
