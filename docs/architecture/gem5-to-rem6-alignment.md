@@ -494,6 +494,15 @@ Implementation evidence through 2026-05-29:
   the hard per-source-file size budget, so NoC, QoS, and scheduler integration
   growth does not recreate gem5-style event-queue and packet-routing
   monoliths.
+- `rem6-accelerator` now keeps command identifiers, command kinds, wait-for
+  markers, engine configuration, accelerator trace events, and accelerator
+  error reporting in focused `command`, `trace`, and `error` modules while
+  leaving the crate root centered on execution, DMA issue/completion,
+  snapshots, wait-for diagnostics, and parallel run summaries. Accelerator
+  source-policy tests keep the crate root under the facade budget, require
+  command and error contracts to stay out of the root, and enforce the hard
+  per-source-file size budget, so GPU-kernel, NPU-inference, and DMA
+  accelerator growth does not recreate gem5-style device-command monoliths.
 - `rem6-system` workload replay now keeps data-cache line harness ownership,
   protocol-specific response routing, final-line extraction, and profiled DRAM
   line fallback in a focused `workload_replay::data_cache_backend` module.
@@ -1885,6 +1894,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   modules while enforcing the hard module-size budget across cache sources.
   Transport source-policy tests keep route contracts in a focused module while
   enforcing the facade and hard module-size budgets across transport sources.
+  Accelerator source-policy tests keep command contracts and error reporting in
+  focused modules while enforcing the facade and hard module-size budgets across
+  accelerator sources.
   System source-policy tests keep workload replay data-cache backend state in a
   focused module while enforcing the hard module-size budget across system
   sources. Type-1 bridge tests cover typed bridge header fields, Expansion ROM

@@ -1,310 +1,33 @@
+mod command;
+mod error;
 mod topology;
+mod trace;
 
 use std::collections::BTreeMap;
-use std::error::Error;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
+pub use command::{
+    AcceleratorCommand, AcceleratorCommandId, AcceleratorCommandKind, AcceleratorEngineConfig,
+    AcceleratorEngineId, AcceleratorWaitForMarker,
+};
+pub use error::AcceleratorError;
 use rem6_kernel::{
     ConservativeRunSummary, ParallelEpochBatchRecord, ParallelPartitionActivity,
     ParallelRunProfile, ParallelSchedulerContext, PartitionEventId, PartitionId,
     PartitionedScheduler, RecordedConservativeRunSummary, RecordedRunSummary,
     SchedulerDispatchRecord, SchedulerError, Tick, WaitForEdgeKind, WaitForGraph, WaitForNode,
 };
-use rem6_memory::{Address, ByteMask, MemoryError, MemoryRequest, MemoryRequestId, MemoryResponse};
+use rem6_memory::{Address, ByteMask, MemoryRequest, MemoryRequestId, MemoryResponse};
 use rem6_transport::{
     MemoryRouteId, MemoryTrace, MemoryTransport, ParallelMemoryTransaction, RequestDelivery,
-    ResponseDelivery, TargetOutcome, TransportError,
+    ResponseDelivery, TargetOutcome,
 };
 pub use topology::{
     AcceleratorCommandPath, AcceleratorCommandSubmissionConfig, AcceleratorTopologyConfig,
     AcceleratorTopologyDevice,
 };
-
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct AcceleratorEngineId(u32);
-
-impl AcceleratorEngineId {
-    pub const fn new(value: u32) -> Self {
-        Self(value)
-    }
-
-    pub const fn get(self) -> u32 {
-        self.0
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct AcceleratorCommandId(u64);
-
-impl AcceleratorCommandId {
-    pub const fn new(value: u64) -> Self {
-        Self(value)
-    }
-
-    pub const fn get(self) -> u64 {
-        self.0
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct AcceleratorWaitForMarker {
-    offset: usize,
-}
-
-impl AcceleratorWaitForMarker {
-    const fn new(offset: usize) -> Self {
-        Self { offset }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum AcceleratorCommandKind {
-    GpuKernel { workgroups: u32 },
-    NpuInference { tiles: u32 },
-    DmaCopy { bytes: u64 },
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AcceleratorCommand {
-    id: AcceleratorCommandId,
-    kind: AcceleratorCommandKind,
-    execution_latency: Tick,
-}
-
-impl AcceleratorCommand {
-    pub fn new(
-        id: AcceleratorCommandId,
-        kind: AcceleratorCommandKind,
-        execution_latency: Tick,
-    ) -> Result<Self, AcceleratorError> {
-        if execution_latency == 0 {
-            return Err(AcceleratorError::ZeroExecutionLatency { command: id });
-        }
-
-        Ok(Self {
-            id,
-            kind,
-            execution_latency,
-        })
-    }
-
-    pub const fn id(&self) -> AcceleratorCommandId {
-        self.id
-    }
-
-    pub const fn kind(&self) -> &AcceleratorCommandKind {
-        &self.kind
-    }
-
-    pub const fn execution_latency(&self) -> Tick {
-        self.execution_latency
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AcceleratorEngineConfig {
-    id: AcceleratorEngineId,
-    partition: PartitionId,
-    lanes: u32,
-}
-
-impl AcceleratorEngineConfig {
-    pub fn new(
-        id: AcceleratorEngineId,
-        partition: PartitionId,
-        lanes: u32,
-    ) -> Result<Self, AcceleratorError> {
-        if lanes == 0 {
-            return Err(AcceleratorError::ZeroLanes { engine: id });
-        }
-
-        Ok(Self {
-            id,
-            partition,
-            lanes,
-        })
-    }
-
-    pub const fn id(&self) -> AcceleratorEngineId {
-        self.id
-    }
-
-    pub const fn partition(&self) -> PartitionId {
-        self.partition
-    }
-
-    pub const fn lanes(&self) -> u32 {
-        self.lanes
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum AcceleratorError {
-    ZeroLanes {
-        engine: AcceleratorEngineId,
-    },
-    ZeroExecutionLatency {
-        command: AcceleratorCommandId,
-    },
-    DmaReadRequiresData {
-        command: AcceleratorCommandId,
-        request: MemoryRequestId,
-    },
-    MissingCommandSubmission {
-        engine: AcceleratorEngineId,
-    },
-    SourcePartitionMismatch {
-        endpoint: rem6_topology::Endpoint,
-        expected: PartitionId,
-        actual: PartitionId,
-    },
-    CommandTargetPartitionMismatch {
-        endpoint: rem6_topology::Endpoint,
-        expected: PartitionId,
-        actual: PartitionId,
-    },
-    TickOverflow {
-        now: Tick,
-        delay: Tick,
-    },
-    Memory(MemoryError),
-    Scheduler(SchedulerError),
-    Topology(rem6_topology::TopologyError),
-    TopologyRoute(rem6_transport::TopologyRouteError),
-    Transport(TransportError),
-}
-
-impl fmt::Display for AcceleratorError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::ZeroLanes { engine } => {
-                write!(
-                    formatter,
-                    "accelerator engine {} needs at least one lane",
-                    engine.get()
-                )
-            }
-            Self::ZeroExecutionLatency { command } => write!(
-                formatter,
-                "accelerator command {} needs positive execution latency",
-                command.get()
-            ),
-            Self::DmaReadRequiresData { command, request } => write!(
-                formatter,
-                "accelerator command {} DMA read request {} from agent {} must return data",
-                command.get(),
-                request.sequence(),
-                request.agent().get(),
-            ),
-            Self::MissingCommandSubmission { engine } => write!(
-                formatter,
-                "accelerator engine {} has no topology command submission path",
-                engine.get()
-            ),
-            Self::SourcePartitionMismatch {
-                endpoint,
-                expected,
-                actual,
-            } => write!(
-                formatter,
-                "endpoint {}.{} is on partition {} but accelerator partition is {}",
-                endpoint.component().as_str(),
-                endpoint.port().as_str(),
-                actual.index(),
-                expected.index(),
-            ),
-            Self::CommandTargetPartitionMismatch {
-                endpoint,
-                expected,
-                actual,
-            } => write!(
-                formatter,
-                "command endpoint {}.{} is on partition {} but accelerator partition is {}",
-                endpoint.component().as_str(),
-                endpoint.port().as_str(),
-                actual.index(),
-                expected.index(),
-            ),
-            Self::TickOverflow { now, delay } => {
-                write!(formatter, "tick {now} overflows when adding delay {delay}")
-            }
-            Self::Memory(error) => write!(formatter, "{error}"),
-            Self::Scheduler(error) => write!(formatter, "{error}"),
-            Self::Topology(error) => write!(formatter, "{error}"),
-            Self::TopologyRoute(error) => write!(formatter, "{error}"),
-            Self::Transport(error) => write!(formatter, "{error}"),
-        }
-    }
-}
-
-impl Error for AcceleratorError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::Memory(error) => Some(error),
-            Self::Scheduler(error) => Some(error),
-            Self::Topology(error) => Some(error),
-            Self::TopologyRoute(error) => Some(error),
-            Self::Transport(error) => Some(error),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AcceleratorTraceEvent {
-    tick: Tick,
-    kind: AcceleratorTraceKind,
-}
-
-impl AcceleratorTraceEvent {
-    pub const fn new(tick: Tick, kind: AcceleratorTraceKind) -> Self {
-        Self { tick, kind }
-    }
-
-    pub const fn tick(&self) -> Tick {
-        self.tick
-    }
-
-    pub const fn kind(&self) -> &AcceleratorTraceKind {
-        &self.kind
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum AcceleratorTraceKind {
-    Submitted {
-        command: AcceleratorCommandId,
-        source: PartitionId,
-        target: PartitionId,
-    },
-    Started {
-        command: AcceleratorCommandId,
-        lane: u32,
-        complete_at: Tick,
-    },
-    Completed {
-        command: AcceleratorCommandId,
-        lane: u32,
-    },
-    DmaReadIssued {
-        command: AcceleratorCommandId,
-        request: MemoryRequestId,
-    },
-    DmaReadCompleted {
-        command: AcceleratorCommandId,
-        request: MemoryRequestId,
-        bytes: u64,
-    },
-    DmaWriteIssued {
-        command: AcceleratorCommandId,
-        request: MemoryRequestId,
-    },
-    DmaWriteCompleted {
-        command: AcceleratorCommandId,
-        request: MemoryRequestId,
-    },
-}
+pub use trace::{AcceleratorTraceEvent, AcceleratorTraceKind};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AcceleratorCompletion {
@@ -1390,7 +1113,7 @@ impl AcceleratorEngineState {
         marker: AcceleratorWaitForMarker,
     ) -> WaitForGraph {
         let mut graph = WaitForGraph::new();
-        let Some(records) = self.wait_log.get(marker.offset..) else {
+        let Some(records) = self.wait_log.get(marker.offset()..) else {
             return graph;
         };
         for queued in records {
