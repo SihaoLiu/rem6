@@ -49,6 +49,7 @@ fn platform_builder_exposes_plic_context_routes_to_platform() {
             size: AccessSize::new(0x400_0000).unwrap(),
             route: plic_route,
             target: target0,
+            source_count: 0,
             contexts: vec![
                 PlatformInterruptControllerContextConfig {
                     context: 0,

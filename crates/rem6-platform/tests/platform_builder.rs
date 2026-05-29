@@ -376,6 +376,7 @@ fn platform_builder_emits_typed_riscv_device_tree_for_clint_and_uart() {
             size: AccessSize::new(0x400_0000).unwrap(),
             route: MmioRoute::new(cpu0, cpu0, 1, 1).unwrap(),
             target: controller_target,
+            source_count: 0,
             contexts: Vec::new(),
         })
         .add_clint(PlatformClintConfig {
@@ -488,6 +489,36 @@ fn platform_builder_emits_typed_riscv_device_tree_for_clint_and_uart() {
 }
 
 #[test]
+fn platform_builder_emits_declared_plic_source_count_without_external_devices() {
+    let cpu0 = PartitionId::new(0);
+    let controller_target = InterruptTargetId::new(0);
+
+    let platform = PlatformBuilder::new(1)
+        .add_interrupt_controller(PlatformInterruptControllerConfig {
+            base: Address::new(0x0c00_0000),
+            size: AccessSize::new(0x400_0000).unwrap(),
+            route: MmioRoute::new(cpu0, cpu0, 1, 1).unwrap(),
+            target: controller_target,
+            source_count: 96,
+            contexts: Vec::new(),
+        })
+        .build()
+        .unwrap();
+
+    let config =
+        PlatformRiscvDeviceTreeConfig::new(10_000_000, "rv64imafdc", "riscv,sv48", 0x384000)
+            .unwrap();
+    let tree = platform.riscv_device_tree(&config).unwrap();
+    let soc = tree.root().child("soc").unwrap();
+    let plic = soc.child("interrupt-controller@c000000").unwrap();
+
+    assert_eq!(
+        plic.property("riscv,ndev").unwrap().words(),
+        Some(&[96][..])
+    );
+}
+
+#[test]
 fn platform_builder_emits_binary_riscv_device_tree_blob() {
     let cpu0 = PartitionId::new(0);
     let cpu1 = PartitionId::new(1);
@@ -501,6 +532,7 @@ fn platform_builder_emits_binary_riscv_device_tree_blob() {
             size: AccessSize::new(0x400_0000).unwrap(),
             route: MmioRoute::new(cpu0, cpu0, 1, 1).unwrap(),
             target: controller_target,
+            source_count: 0,
             contexts: Vec::new(),
         })
         .add_clint(PlatformClintConfig {
@@ -933,6 +965,7 @@ fn platform_builder_maps_interrupt_controller_mmio() {
             size: AccessSize::new(0x210000).unwrap(),
             route: MmioRoute::new(cpu, interrupt_partition, 2, 1).unwrap(),
             target,
+            source_count: 0,
             contexts: Vec::new(),
         })
         .add_timer(PlatformTimerConfig {

@@ -79,6 +79,7 @@ pub struct PlatformInterruptControllerConfig {
     pub size: AccessSize,
     pub route: MmioRoute,
     pub target: InterruptTargetId,
+    pub source_count: u32,
     pub contexts: Vec<PlatformInterruptControllerContextConfig>,
 }
 
@@ -731,7 +732,7 @@ impl PlatformDeviceTreeInventory {
             .with_property(PlatformDeviceTreeProperty::word_list("phandle", [phandle]))
             .with_property(PlatformDeviceTreeProperty::word_list(
                 "riscv,ndev",
-                [self.max_external_interrupt_source()],
+                [self.max_external_interrupt_source(controller)],
             ));
         if !controller.contexts.is_empty() {
             let mut interrupts_extended = Vec::with_capacity(controller.contexts.len() * 2);
@@ -811,11 +812,12 @@ impl PlatformDeviceTreeInventory {
             ))
     }
 
-    fn max_external_interrupt_source(&self) -> u32 {
+    fn max_external_interrupt_source(&self, controller: &PlatformInterruptControllerConfig) -> u32 {
         self.timers
             .iter()
             .map(|timer| timer.interrupt_source.get())
             .chain(self.uarts.iter().map(|uart| uart.interrupt_source.get()))
+            .chain([controller.source_count])
             .max()
             .unwrap_or_default()
     }
