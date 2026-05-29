@@ -448,6 +448,13 @@ Implementation evidence through 2026-05-29:
   facade budget, require data issue to stay out of the root, and enforce the
   hard per-source-file size budget, so CPU timing breadth can grow without
   recreating gem5-style CPU monoliths.
+- `rem6-memory` now keeps `MemoryRequest`, `MemoryResponse`, response status,
+  atomic request payload validation, and atomic read-modify-write byte
+  materialization in a focused `request` module. Memory source-policy tests keep
+  the crate root under the facade budget, require request and response state to
+  stay out of the root, and enforce the hard per-source-file size budget, so
+  cache, DRAM, transport, and CPU integrations share one typed request contract
+  without regrowing a gem5-style packet utility monolith.
 - `rem6-system` workload replay now keeps data-cache line harness ownership,
   protocol-specific response routing, final-line extraction, and profiled DRAM
   line fallback in a focused `workload_replay::data_cache_backend` module.
@@ -1825,6 +1832,8 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   module-size budget across CPU sources. Platform source-policy tests keep the
   platform crate root below the facade budget, keep RISC-V device-tree code in
   a focused module, and enforce the hard module-size budget across platform
+  sources. Memory source-policy tests keep request and response state in a
+  focused module while enforcing the hard module-size budget across memory
   sources. System source-policy tests keep workload replay data-cache backend
   state in a focused module while enforcing the hard module-size budget across
   system sources. Type-1 bridge tests cover typed bridge
