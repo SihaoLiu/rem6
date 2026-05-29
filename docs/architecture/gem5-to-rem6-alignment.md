@@ -435,6 +435,12 @@ Implementation evidence through 2026-05-29:
   gem5's per-thread local-timer concept while avoiding packet-context and Python
   board-wiring drift: the CPU identity, MMIO route, interrupt target, and source
   id are checked data before the simulator can run.
+- `rem6-platform` now keeps RISC-V device-tree modeling in a focused
+  `device_tree` module and leaves the crate root as a facade over platform
+  configuration, builder, topology, and error APIs. Source-policy tests enforce
+  both the facade budget and the hard per-source-file size budget, so typed
+  platform growth cannot quietly recreate the monolithic Python/C++ wiring
+  surface that makes gem5 board descriptions hard to audit.
 - `rem6-net` has a typed distributed Ethernet link endpoint aligned with gem5
   `DistEtherLink::TxLink` and `DistEtherLink::RxLink`: local transmits encode
   endian-stable distributed data messages, preserve deterministic
@@ -1800,7 +1806,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   layout rejection, serial delivery, and masked parallel delivery recording
   into the PBA. PCI source-policy tests keep the crate root
   below the facade budget and all source files below the hard module-size
-  budget. Type-1 bridge tests cover typed bridge
+  budget. Platform source-policy tests keep the platform crate root below the
+  facade budget, keep RISC-V device-tree code in a focused module, and enforce
+  the hard module-size budget across platform sources. Type-1 bridge tests cover typed bridge
   header fields, Expansion ROM reads and writes, Expansion ROM size probing,
   interrupt line/pin bytes, bridge-control writes, common command writes with
   reserved-bit masking, common cache-line-size, latency-timer, and BIST byte
