@@ -35,6 +35,7 @@ mod host;
 mod interrupt_checkpoint;
 mod memory_checkpoint;
 mod pci_checkpoint;
+mod pl031_checkpoint;
 mod plic_checkpoint;
 mod riscv_checkpoint;
 mod riscv_run_activity;
@@ -92,6 +93,9 @@ pub use memory_checkpoint::{
 };
 pub use pci_checkpoint::{
     PciHostCheckpointBank, PciHostCheckpointError, PciHostCheckpointPort, PciHostCheckpointRecord,
+};
+pub use pl031_checkpoint::{
+    Pl031CheckpointBank, Pl031CheckpointError, Pl031CheckpointPort, Pl031CheckpointRecord,
 };
 pub use plic_checkpoint::{
     PlicCheckpointBank, PlicCheckpointError, PlicCheckpointPort, PlicCheckpointRecord,
@@ -923,6 +927,7 @@ pub enum SystemError {
     FabricCheckpoint(FabricCheckpointError),
     GpuCheckpoint(GpuCheckpointError),
     PciHostCheckpoint(PciHostCheckpointError),
+    Pl031Checkpoint(Pl031CheckpointError),
     RiscvCheckpoint(RiscvCoreCheckpointError),
     RtcCheckpoint(RtcCheckpointError),
     SchedulerCheckpoint(SchedulerCheckpointError),
@@ -955,6 +960,7 @@ impl fmt::Display for SystemError {
             Self::FabricCheckpoint(error) => write!(formatter, "{error}"),
             Self::GpuCheckpoint(error) => write!(formatter, "{error}"),
             Self::PciHostCheckpoint(error) => write!(formatter, "{error}"),
+            Self::Pl031Checkpoint(error) => write!(formatter, "{error}"),
             Self::RiscvCheckpoint(error) => write!(formatter, "{error}"),
             Self::RtcCheckpoint(error) => write!(formatter, "{error}"),
             Self::SchedulerCheckpoint(error) => write!(formatter, "{error}"),
@@ -984,6 +990,7 @@ impl Error for SystemError {
             Self::FabricCheckpoint(error) => Some(error),
             Self::GpuCheckpoint(error) => Some(error),
             Self::PciHostCheckpoint(error) => Some(error),
+            Self::Pl031Checkpoint(error) => Some(error),
             Self::RiscvCheckpoint(error) => Some(error),
             Self::RtcCheckpoint(error) => Some(error),
             Self::SchedulerCheckpoint(error) => Some(error),

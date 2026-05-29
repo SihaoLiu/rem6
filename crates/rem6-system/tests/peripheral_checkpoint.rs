@@ -12,17 +12,18 @@ use rem6_stats::StatsRegistry;
 use rem6_system::{
     ClintCheckpointBank, ClintCheckpointError, ClintCheckpointPort, GuestEventId, GuestSourceId,
     HostAction, HostActionRecord, InterruptControllerCheckpointBank,
-    InterruptControllerCheckpointError, InterruptControllerCheckpointPort, PlicCheckpointBank,
-    PlicCheckpointError, PlicCheckpointPort, RtcCheckpointBank, RtcCheckpointError,
-    RtcCheckpointPort, SystemActionExecutor, SystemActionOutcome, TimerCheckpointBank,
-    TimerCheckpointError, TimerCheckpointPort, UartCheckpointBank, UartCheckpointError,
-    UartCheckpointPort,
+    InterruptControllerCheckpointError, InterruptControllerCheckpointPort, Pl031CheckpointBank,
+    Pl031CheckpointError, Pl031CheckpointPort, PlicCheckpointBank, PlicCheckpointError,
+    PlicCheckpointPort, RtcCheckpointBank, RtcCheckpointError, RtcCheckpointPort,
+    SystemActionExecutor, SystemActionOutcome, TimerCheckpointBank, TimerCheckpointError,
+    TimerCheckpointPort, UartCheckpointBank, UartCheckpointError, UartCheckpointPort,
 };
 use rem6_timer::{
     ClintHartConfig, ClintHartSnapshot, ClintMmioDevice, ClintSnapshot, Mc146818Rtc,
-    Mc146818RtcMmioDevice, Mc146818RtcMmioSnapshot, ProgrammableTimer, RtcDateTime, RtcEncoding,
-    RtcSnapshot, TimerArm, TimerId, TimerSnapshot, RTC_CMOS_REGISTER_COUNT, RTC_STATUS_C_AF,
-    RTC_STATUS_C_IRQF, RTC_STATUS_C_UF,
+    Mc146818RtcMmioDevice, Mc146818RtcMmioSnapshot, Pl031Rtc, Pl031RtcMmioDevice,
+    ProgrammableTimer, RtcDateTime, RtcEncoding, RtcSnapshot, TimerArm, TimerId, TimerSnapshot,
+    PL031_INT_MASK_OFFSET, PL031_LOAD_OFFSET, PL031_MATCH_OFFSET, RTC_CMOS_REGISTER_COUNT,
+    RTC_STATUS_C_AF, RTC_STATUS_C_IRQF, RTC_STATUS_C_UF,
 };
 use rem6_uart::{UartId, UartMmioDevice, UartSnapshot, UartTxByte};
 
@@ -83,6 +84,22 @@ fn rtc_device(base: u64) -> Mc146818RtcMmioDevice {
     )
 }
 
+fn pl031_device(base: u64, time: u32, ticks_per_second: u64) -> Pl031RtcMmioDevice {
+    Pl031RtcMmioDevice::new(
+        Address::new(base),
+        Pl031Rtc::new(time, ticks_per_second).unwrap(),
+    )
+}
+
+fn configured_pl031_device(base: u64) -> Pl031RtcMmioDevice {
+    let mut rtc = Pl031Rtc::new(10, 5).unwrap();
+    rtc.write_register(PL031_LOAD_OFFSET, 40, 15).unwrap();
+    rtc.write_register(PL031_MATCH_OFFSET, 45, 15).unwrap();
+    rtc.write_register(PL031_INT_MASK_OFFSET, 1, 15).unwrap();
+    rtc.record_match(40).unwrap();
+    Pl031RtcMmioDevice::new(Address::new(base), rtc)
+}
+
 fn rtc_snapshot(
     selected_address: u8,
     cmos_index: usize,
@@ -109,6 +126,49 @@ fn rtc_snapshot_with_status_c(
             status_c,
         ),
     )
+}
+
+#[test]
+fn pl031_checkpoint_bank_rejects_invalid_bank_without_partial_restore() {
+    let valid_component = checkpoint_component("pl031_bank_a");
+    let invalid_component = checkpoint_component("pl031_bank_b");
+    let source = configured_pl031_device(0x1c17_0000);
+    let expected = source.snapshot();
+    let target_valid = pl031_device(0x1c17_0000, 0, 1);
+    let target_invalid = pl031_device(0x1c18_0000, 0, 1);
+    let original_valid = target_valid.snapshot();
+    let original_invalid = target_invalid.snapshot();
+
+    let mut registry = CheckpointRegistry::new();
+    registry.register(valid_component.clone()).unwrap();
+    Pl031CheckpointPort::new(valid_component.clone(), source)
+        .capture_into(&mut registry)
+        .unwrap();
+    registry.register(invalid_component.clone()).unwrap();
+    registry
+        .write_chunk(&invalid_component, "pl031", vec![0xbb])
+        .unwrap();
+
+    let bank = Pl031CheckpointBank::new([
+        Pl031CheckpointPort::new(valid_component.clone(), target_valid.clone()),
+        Pl031CheckpointPort::new(invalid_component.clone(), target_invalid.clone()),
+    ])
+    .unwrap();
+    let error = bank.restore_all_from(&registry).unwrap_err();
+    assert!(matches!(
+        error,
+        Pl031CheckpointError::InvalidChunk { component, .. } if component == invalid_component
+    ));
+    assert_eq!(target_valid.snapshot(), original_valid);
+    assert_eq!(target_invalid.snapshot(), original_invalid);
+
+    let valid_only_bank = Pl031CheckpointBank::new([Pl031CheckpointPort::new(
+        valid_component,
+        target_valid.clone(),
+    )])
+    .unwrap();
+    valid_only_bank.restore_all_from(&registry).unwrap();
+    assert_eq!(target_valid.snapshot(), expected);
 }
 
 #[test]
@@ -423,6 +483,61 @@ fn system_action_executor_checkpoints_and_restores_plic_state() {
         }
     );
     assert_eq!(live.snapshot(), expected);
+}
+
+#[test]
+fn system_action_executor_checkpoints_and_restores_pl031_state() {
+    let component = checkpoint_component("pl031.1c170000");
+    let live = configured_pl031_device(0x1c17_0000);
+    let captured = live.snapshot();
+    let empty = pl031_device(0x1c17_0000, 0, 1).snapshot();
+    let bank =
+        Pl031CheckpointBank::new([Pl031CheckpointPort::new(component.clone(), live.clone())])
+            .unwrap();
+    let mut executor = SystemActionExecutor::new(StatsRegistry::new());
+    executor.attach_pl031_checkpoint_bank(bank).unwrap();
+
+    let checkpoint = HostActionRecord::new(
+        20,
+        PartitionId::new(0),
+        PartitionId::new(1),
+        GuestEventId::new(5),
+        GuestSourceId::new(11),
+        HostAction::Checkpoint {
+            label: "pl031-ready".to_string(),
+        },
+    );
+    let manifest = match executor.apply(&checkpoint).unwrap() {
+        SystemActionOutcome::Checkpoint { manifest, .. } => manifest,
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+    assert!(manifest.states().iter().any(|state| {
+        state.component() == &component
+            && state.chunks().iter().any(|chunk| chunk.name() == "pl031")
+    }));
+
+    live.restore(&empty).unwrap();
+
+    let restore = HostActionRecord::new(
+        26,
+        PartitionId::new(0),
+        PartitionId::new(1),
+        GuestEventId::new(6),
+        GuestSourceId::new(11),
+        HostAction::RestoreCheckpoint {
+            manifest: manifest.clone(),
+        },
+    );
+    assert_eq!(
+        executor.apply(&restore).unwrap(),
+        SystemActionOutcome::CheckpointRestored {
+            tick: 26,
+            event: GuestEventId::new(6),
+            source: GuestSourceId::new(11),
+            manifest,
+        }
+    );
+    assert_eq!(live.snapshot(), captured);
 }
 
 #[test]

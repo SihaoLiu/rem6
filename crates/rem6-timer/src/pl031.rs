@@ -31,7 +31,34 @@ pub struct Pl031Snapshot {
     generation: u64,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Pl031SnapshotFields {
+    pub time_value: u32,
+    pub last_written_tick: Tick,
+    pub load_value: u32,
+    pub match_value: u32,
+    pub raw_interrupt: bool,
+    pub interrupt_mask: bool,
+    pub pending_interrupt: bool,
+    pub ticks_per_second: Tick,
+    pub generation: u64,
+}
+
 impl Pl031Snapshot {
+    pub const fn from_fields(fields: Pl031SnapshotFields) -> Self {
+        Self {
+            time_value: fields.time_value,
+            last_written_tick: fields.last_written_tick,
+            load_value: fields.load_value,
+            match_value: fields.match_value,
+            raw_interrupt: fields.raw_interrupt,
+            interrupt_mask: fields.interrupt_mask,
+            pending_interrupt: fields.pending_interrupt,
+            ticks_per_second: fields.ticks_per_second,
+            generation: fields.generation,
+        }
+    }
+
     pub const fn time_value(&self) -> u32 {
         self.time_value
     }
