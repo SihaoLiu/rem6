@@ -13,6 +13,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "rem6-amba"
+version = "0.1.0"
+
+[[package]]
 name = "rem6-boot"
 version = "0.1.0"
 dependencies = [
@@ -258,6 +262,7 @@ dependencies = [
 name = "rem6-timer"
 version = "0.1.0"
 dependencies = [
+ "rem6-amba",
  "rem6-interrupt",
  "rem6-kernel",
  "rem6-memory",
@@ -286,6 +291,7 @@ dependencies = [
 name = "rem6-uart"
 version = "0.1.0"
 dependencies = [
+ "rem6-amba",
  "rem6-interrupt",
  "rem6-kernel",
  "rem6-memory",

@@ -9,17 +9,11 @@ use rem6_kernel::{
 use rem6_memory::{Address, ByteMask};
 use rem6_mmio::{MmioAccess, MmioDevice, MmioError, MmioOperation, MmioRequest, MmioResponse};
 
-mod amba;
 mod clint;
 mod pl031;
 mod rtc;
 mod sp804;
 
-pub use self::amba::{
-    ArmPrimecellId, AMBA_CELL_ID0_OFFSET, AMBA_CELL_ID1_OFFSET, AMBA_CELL_ID2_OFFSET,
-    AMBA_CELL_ID3_OFFSET, AMBA_PERIPHERAL_ID0_OFFSET, AMBA_PERIPHERAL_ID1_OFFSET,
-    AMBA_PERIPHERAL_ID2_OFFSET, AMBA_PERIPHERAL_ID3_OFFSET,
-};
 pub use self::clint::{
     ClintHartConfig, ClintHartSnapshot, ClintId, ClintMmioDevice, ClintResetPolicy, ClintSnapshot,
     ClintTimebase, RiscvRtcSource, CLINT_MSIP_BASE_OFFSET, CLINT_MSIP_REGISTER_BYTES,
@@ -48,6 +42,11 @@ pub use self::sp804::{
     SP804_BGLOAD_OFFSET, SP804_CONTROL_OFFSET, SP804_CURRENT_OFFSET, SP804_INT_CLEAR_OFFSET,
     SP804_LOAD_OFFSET, SP804_MASKED_ISR_OFFSET, SP804_MMIO_SIZE_BYTES, SP804_PRIMECELL_ID,
     SP804_RAW_ISR_OFFSET, SP804_REGISTER_BYTES, SP804_TIMER_COUNT, SP804_TIMER_WINDOW_BYTES,
+};
+pub use rem6_amba::{
+    ArmPrimecellId, AMBA_CELL_ID0_OFFSET, AMBA_CELL_ID1_OFFSET, AMBA_CELL_ID2_OFFSET,
+    AMBA_CELL_ID3_OFFSET, AMBA_PERIPHERAL_ID0_OFFSET, AMBA_PERIPHERAL_ID1_OFFSET,
+    AMBA_PERIPHERAL_ID2_OFFSET, AMBA_PERIPHERAL_ID3_OFFSET,
 };
 
 pub const TIMER_MMIO_REGISTER_BYTES: u64 = 8;
