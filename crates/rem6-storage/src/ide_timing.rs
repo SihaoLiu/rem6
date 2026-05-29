@@ -3,8 +3,9 @@ use std::sync::{Arc, Mutex};
 use rem6_kernel::{ParallelSchedulerContext, PartitionEventId, SchedulerContext, Tick};
 
 use crate::{
-    IdeChannelId, IdeCommandIssue, IdeController, IdeControllerError, IdeDataReadIssue,
-    IdeDataWriteIssue, IdePciInterruptPort,
+    IdeChannelId, IdeCommandIssue, IdeController, IdeControllerError, IdeControllerGuestMemory,
+    IdeDataReadIssue, IdeDataWriteIssue, IdeDeviceId, IdeDiskError, IdeDiskTransferSnapshot,
+    IdePciInterruptPort, IDE_BMI_COMMAND_START,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -168,6 +169,62 @@ impl IdeControllerTimingPort {
             .expect("IDE controller timing lock")
             .write_data_u16_timed(channel, value)?;
         self.schedule_write_if_delayed_parallel(context, channel, issue)
+    }
+
+    pub fn execute_dma<G>(
+        &self,
+        context: &mut SchedulerContext<'_>,
+        channel: IdeChannelId,
+        guest: Arc<Mutex<G>>,
+    ) -> Result<Option<PartitionEventId>, IdeControllerError>
+    where
+        G: IdeControllerGuestMemory + Send + 'static,
+    {
+        let delay = dma_delay_ticks(&self.controller, channel, self.delay_ticks)?;
+        let controller = Arc::clone(&self.controller);
+        let interrupt_port = self.interrupt_port.clone();
+        let completion_errors = Arc::clone(&self.completion_errors);
+        context
+            .schedule_local_after(delay, move |context| {
+                complete_dma(
+                    &controller,
+                    interrupt_port.as_ref(),
+                    &guest,
+                    &completion_errors,
+                    channel,
+                    context,
+                );
+            })
+            .map(Some)
+            .map_err(scheduler_error)
+    }
+
+    pub fn execute_dma_parallel<G>(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+        channel: IdeChannelId,
+        guest: Arc<Mutex<G>>,
+    ) -> Result<Option<PartitionEventId>, IdeControllerError>
+    where
+        G: IdeControllerGuestMemory + Send + 'static,
+    {
+        let delay = dma_delay_ticks(&self.controller, channel, self.delay_ticks)?;
+        let controller = Arc::clone(&self.controller);
+        let interrupt_port = self.interrupt_port.clone();
+        let completion_errors = Arc::clone(&self.completion_errors);
+        context
+            .schedule_local_after(delay, move |context| {
+                complete_dma_parallel(
+                    &controller,
+                    interrupt_port.as_ref(),
+                    &guest,
+                    &completion_errors,
+                    channel,
+                    context,
+                );
+            })
+            .map(Some)
+            .map_err(scheduler_error)
     }
 
     fn schedule_if_delayed(
@@ -513,6 +570,107 @@ fn complete_timed_data_write_parallel(
                 .push(error);
         }
     }
+}
+
+fn complete_dma<G>(
+    controller: &Arc<Mutex<IdeController>>,
+    interrupt_port: Option<&IdePciInterruptPort>,
+    guest: &Arc<Mutex<G>>,
+    completion_errors: &Arc<Mutex<Vec<IdeControllerError>>>,
+    channel: IdeChannelId,
+    context: &mut SchedulerContext<'_>,
+) where
+    G: IdeControllerGuestMemory,
+{
+    let mut controller = controller.lock().expect("IDE controller timing lock");
+    {
+        let mut guest = guest.lock().expect("IDE DMA guest memory lock");
+        if let Err(error) = controller.execute_dma(channel, &mut *guest) {
+            completion_errors
+                .lock()
+                .expect("IDE timing completion error lock")
+                .push(error);
+            return;
+        }
+    }
+    if let Some(interrupt_port) = interrupt_port {
+        if let Err(error) = interrupt_port.sync_controller(context, &controller) {
+            completion_errors
+                .lock()
+                .expect("IDE timing completion error lock")
+                .push(error);
+        }
+    }
+}
+
+fn complete_dma_parallel<G>(
+    controller: &Arc<Mutex<IdeController>>,
+    interrupt_port: Option<&IdePciInterruptPort>,
+    guest: &Arc<Mutex<G>>,
+    completion_errors: &Arc<Mutex<Vec<IdeControllerError>>>,
+    channel: IdeChannelId,
+    context: &mut ParallelSchedulerContext<'_>,
+) where
+    G: IdeControllerGuestMemory,
+{
+    let mut controller = controller.lock().expect("IDE controller timing lock");
+    {
+        let mut guest = guest.lock().expect("IDE DMA guest memory lock");
+        if let Err(error) = controller.execute_dma(channel, &mut *guest) {
+            completion_errors
+                .lock()
+                .expect("IDE timing completion error lock")
+                .push(error);
+            return;
+        }
+    }
+    if let Some(interrupt_port) = interrupt_port {
+        if let Err(error) = interrupt_port.sync_controller_parallel(context, &controller) {
+            completion_errors
+                .lock()
+                .expect("IDE timing completion error lock")
+                .push(error);
+        }
+    }
+}
+
+fn dma_delay_ticks(
+    controller: &Arc<Mutex<IdeController>>,
+    channel: IdeChannelId,
+    base_delay: Tick,
+) -> Result<Tick, IdeControllerError> {
+    let controller = controller.lock().expect("IDE controller timing lock");
+    let snapshot = controller.snapshot();
+    let channel_snapshot = snapshot.channel(channel);
+    if channel_snapshot.bmi().command() & IDE_BMI_COMMAND_START == 0 {
+        return Err(IdeControllerError::DmaNotActive { channel });
+    }
+    let disk = match channel_snapshot.selected_device() {
+        IdeDeviceId::Device0 => channel_snapshot.device0(),
+        IdeDeviceId::Device1 => channel_snapshot.device1(),
+    }
+    .ok_or(IdeControllerError::NoSelectedDevice {
+        channel,
+        device: channel_snapshot.selected_device(),
+    })?;
+    let sectors = match disk.transfer() {
+        Some(IdeDiskTransferSnapshot::Dma { sectors, .. }) => *sectors,
+        _ => {
+            return Err(IdeControllerError::Disk {
+                channel,
+                source: IdeDiskError::DmaNotReady {
+                    command: disk.task_file().command(),
+                },
+            });
+        }
+    };
+    base_delay
+        .checked_add(sectors)
+        .ok_or(rem6_kernel::SchedulerError::TickOverflow {
+            now: base_delay,
+            delay: sectors,
+        })
+        .map_err(scheduler_error)
 }
 
 fn scheduler_error(source: rem6_kernel::SchedulerError) -> IdeControllerError {
