@@ -166,7 +166,7 @@ fn platform_with_plic(topology: &Topology, base: Address) -> Platform {
             route: rem6_mmio::MmioRoute::new(PartitionId::new(0), PartitionId::new(3), 2, 2)
                 .unwrap(),
             target: InterruptTargetId::new(0),
-            source_count: 0,
+            source_count: 41,
             contexts: vec![PlatformInterruptControllerContextConfig {
                 context: 0,
                 hart: 0,

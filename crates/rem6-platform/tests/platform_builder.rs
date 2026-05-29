@@ -513,6 +513,13 @@ fn platform_builder_emits_declared_plic_source_count_without_external_devices() 
     let plic = soc.child("interrupt-controller@c000000").unwrap();
 
     assert_eq!(
+        platform
+            .plic(Address::new(0x0c00_0000))
+            .unwrap()
+            .source_count(),
+        Some(96)
+    );
+    assert_eq!(
         plic.property("riscv,ndev").unwrap().words(),
         Some(&[96][..])
     );

@@ -966,15 +966,17 @@ impl PlatformBuilder {
             for context in &config.contexts {
                 validate_partition(self.partition_count, context.target_partition)?;
             }
+            let source_count = device_tree_inventory.max_external_interrupt_source(&config);
             let device = if config.contexts.is_empty() {
-                PlicMmioDevice::new(
+                PlicMmioDevice::with_source_count(
                     Arc::clone(&controller),
                     config.base,
                     config.target,
                     config.route.source_partition(),
+                    source_count,
                 )
             } else {
-                PlicMmioDevice::with_contexts(
+                PlicMmioDevice::with_contexts_and_source_count(
                     Arc::clone(&controller),
                     config.base,
                     config.contexts.iter().map(|context| {
@@ -984,6 +986,7 @@ impl PlatformBuilder {
                             context.target_partition,
                         )
                     }),
+                    source_count,
                 )
             };
             bus.insert_device(

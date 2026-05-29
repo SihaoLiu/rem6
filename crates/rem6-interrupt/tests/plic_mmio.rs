@@ -340,6 +340,132 @@ fn plic_snapshot_restores_context_enable_and_threshold_state() {
 }
 
 #[test]
+fn plic_source_count_bounds_pending_enable_and_claim_visibility() {
+    let cpu = PartitionId::new(0);
+    let target = InterruptTargetId::new(0);
+    let base = Address::new(0x0c75_0000);
+    let valid_line = InterruptLineId::new(4);
+    let hidden_line = InterruptLineId::new(5);
+    let valid_source = InterruptSourceId::new(54);
+    let hidden_source = InterruptSourceId::new(55);
+    let controller = Arc::new(Mutex::new(InterruptController::new()));
+    {
+        let mut controller = controller.lock().unwrap();
+        controller
+            .register_route(InterruptRoute::new(valid_line, target, cpu))
+            .unwrap();
+        controller
+            .register_route(InterruptRoute::new(hidden_line, target, cpu))
+            .unwrap();
+        controller
+            .set_priority(valid_line, rem6_interrupt::InterruptPriority::new(4))
+            .unwrap();
+        controller
+            .set_priority(hidden_line, rem6_interrupt::InterruptPriority::new(9))
+            .unwrap();
+        controller.assert(valid_line, valid_source, 0).unwrap();
+        controller.assert(hidden_line, hidden_source, 0).unwrap();
+    }
+    let device = PlicMmioDevice::with_source_count(Arc::clone(&controller), base, target, cpu, 4);
+    let snapshot_source = device.clone();
+    let mut scheduler = PartitionedScheduler::new(1).unwrap();
+
+    scheduler
+        .schedule_at(cpu, 1, move |context| {
+            let pending = device
+                .respond(context, &read(71, base, PLIC_MMIO_PENDING_BASE_OFFSET))
+                .unwrap();
+            assert_eq!(pending.data(), Some(&le32(1 << valid_line.get())[..]));
+
+            device
+                .respond(
+                    context,
+                    &write(
+                        72,
+                        base,
+                        PLIC_MMIO_ENABLE_BASE_OFFSET,
+                        (1 << valid_line.get()) | (1 << hidden_line.get()),
+                    ),
+                )
+                .unwrap();
+            let enable = device
+                .respond(context, &read(73, base, PLIC_MMIO_ENABLE_BASE_OFFSET))
+                .unwrap();
+            assert_eq!(enable.data(), Some(&le32(1 << valid_line.get())[..]));
+
+            let claim = device
+                .respond(
+                    context,
+                    &read(
+                        74,
+                        base,
+                        PLIC_MMIO_CONTEXT_BASE_OFFSET + PLIC_MMIO_CLAIM_COMPLETE_OFFSET,
+                    ),
+                )
+                .unwrap();
+            assert_eq!(claim.data(), Some(&le32(valid_line.get() as u32)[..]));
+
+            assert_eq!(
+                device
+                    .respond(
+                        context,
+                        &write(75, base, hidden_line.get() * PLIC_MMIO_PRIORITY_STRIDE, 7,),
+                    )
+                    .unwrap_err(),
+                MmioError::UnmappedAddress {
+                    address: Address::new(
+                        base.get() + hidden_line.get() * PLIC_MMIO_PRIORITY_STRIDE,
+                    ),
+                },
+            );
+            assert_eq!(
+                device
+                    .respond(
+                        context,
+                        &read(
+                            76,
+                            base,
+                            PLIC_MMIO_PENDING_BASE_OFFSET + PLIC_MMIO_REGISTER_BYTES,
+                        ),
+                    )
+                    .unwrap_err(),
+                MmioError::UnmappedAddress {
+                    address: Address::new(
+                        base.get() + PLIC_MMIO_PENDING_BASE_OFFSET + PLIC_MMIO_REGISTER_BYTES,
+                    ),
+                },
+            );
+        })
+        .unwrap();
+    scheduler.run_until_idle();
+
+    assert_eq!(
+        snapshot_source.snapshot(),
+        PlicSnapshot::new(
+            base,
+            vec![PlicContextSnapshot::new(
+                0,
+                target,
+                cpu,
+                vec![valid_line],
+                rem6_interrupt::InterruptPriority::ZERO,
+            )],
+        )
+    );
+    assert_eq!(
+        controller.lock().unwrap().claimed(),
+        vec![InterruptClaim::new(
+            valid_line,
+            target,
+            cpu,
+            valid_source,
+            0,
+            1
+        )]
+    );
+}
+
+#[test]
 fn plic_mmio_requires_enable_and_threshold_before_claim() {
     let cpu = PartitionId::new(0);
     let plic_partition = PartitionId::new(1);

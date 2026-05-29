@@ -159,7 +159,7 @@ impl PlicMmioState {
             .unwrap_or(InterruptPriority::ZERO)
     }
 
-    fn read_enable_word(&self, key: PlicContextKey, word: u64) -> u32 {
+    fn read_enable_word(&self, key: PlicContextKey, word: u64, mask: u32) -> u32 {
         let Some(lines) = self.enabled.get(&key) else {
             return 0;
         };
@@ -167,10 +167,12 @@ impl PlicMmioState {
             .iter()
             .filter(|line| line.get() / 32 == word)
             .fold(0u32, |bits, line| bits | (1u32 << (line.get() % 32)))
+            & mask
     }
 
-    fn write_enable_word(&mut self, key: PlicContextKey, word: u64, value: u32) {
+    fn write_enable_word(&mut self, key: PlicContextKey, word: u64, value: u32, mask: u32) {
         let lines = self.enabled.entry(key).or_default();
+        let value = value & mask;
         lines.retain(|line| line.get() / 32 != word);
         for bit in 0..32 {
             if value & (1u32 << bit) != 0 {
@@ -186,6 +188,7 @@ pub struct PlicMmioDevice {
     base: Address,
     target: InterruptTargetId,
     target_partition: PartitionId,
+    source_count: Option<u64>,
     contexts: Arc<BTreeMap<u64, PlicContextKey>>,
     state: Arc<Mutex<PlicMmioState>>,
 }
@@ -197,10 +200,26 @@ impl PlicMmioDevice {
         target: InterruptTargetId,
         target_partition: PartitionId,
     ) -> Self {
-        Self::with_contexts(
+        Self::with_contexts_inner(
             controller,
             base,
             [PlicContextRoute::new(0, target, target_partition)],
+            None,
+        )
+    }
+
+    pub fn with_source_count(
+        controller: Arc<Mutex<InterruptController>>,
+        base: Address,
+        target: InterruptTargetId,
+        target_partition: PartitionId,
+        source_count: u32,
+    ) -> Self {
+        Self::with_contexts_inner(
+            controller,
+            base,
+            [PlicContextRoute::new(0, target, target_partition)],
+            Some(u64::from(source_count)),
         )
     }
 
@@ -208,6 +227,24 @@ impl PlicMmioDevice {
         controller: Arc<Mutex<InterruptController>>,
         base: Address,
         contexts: impl IntoIterator<Item = PlicContextRoute>,
+    ) -> Self {
+        Self::with_contexts_inner(controller, base, contexts, None)
+    }
+
+    pub fn with_contexts_and_source_count(
+        controller: Arc<Mutex<InterruptController>>,
+        base: Address,
+        contexts: impl IntoIterator<Item = PlicContextRoute>,
+        source_count: u32,
+    ) -> Self {
+        Self::with_contexts_inner(controller, base, contexts, Some(u64::from(source_count)))
+    }
+
+    fn with_contexts_inner(
+        controller: Arc<Mutex<InterruptController>>,
+        base: Address,
+        contexts: impl IntoIterator<Item = PlicContextRoute>,
+        source_count: Option<u64>,
     ) -> Self {
         let routes = contexts.into_iter().collect::<Vec<_>>();
         let primary = routes.first().copied().unwrap_or(PlicContextRoute::new(
@@ -220,6 +257,7 @@ impl PlicMmioDevice {
             base,
             target: primary.target(),
             target_partition: primary.target_partition(),
+            source_count,
             contexts: Arc::new(
                 routes
                     .into_iter()
@@ -244,6 +282,10 @@ impl PlicMmioDevice {
 
     pub const fn target_partition(&self) -> PartitionId {
         self.target_partition
+    }
+
+    pub const fn source_count(&self) -> Option<u64> {
+        self.source_count
     }
 
     pub fn snapshot(&self) -> PlicSnapshot {
@@ -285,6 +327,16 @@ impl PlicMmioDevice {
         }
         if actual != expected {
             return Err(PlicError::SnapshotContextMismatch { expected, actual });
+        }
+        for context in snapshot.contexts() {
+            for line in context.enabled() {
+                if !self.source_in_range(*line) {
+                    return Err(PlicError::SnapshotSourceOutOfRange {
+                        line: *line,
+                        source_count: self.source_count,
+                    });
+                }
+            }
         }
 
         Ok(())
@@ -418,6 +470,11 @@ impl PlicMmioDevice {
         request: &MmioRequest,
         line: InterruptLineId,
     ) -> Result<MmioResponse, MmioError> {
+        if !self.source_in_range(line) {
+            return Err(MmioError::UnmappedAddress {
+                address: request.range().start(),
+            });
+        }
         match request.operation() {
             MmioOperation::Read => {
                 let priority = self
@@ -450,6 +507,11 @@ impl PlicMmioDevice {
     }
 
     fn respond_pending(&self, request: &MmioRequest, word: u64) -> Result<MmioResponse, MmioError> {
+        if !self.source_word_in_range(word) {
+            return Err(MmioError::UnmappedAddress {
+                address: request.range().start(),
+            });
+        }
         match request.operation() {
             MmioOperation::Read => {
                 let bits = self
@@ -458,6 +520,7 @@ impl PlicMmioDevice {
                     .expect("interrupt controller lock")
                     .pending()
                     .into_iter()
+                    .filter(|pending| self.source_in_range(pending.line()))
                     .filter(|pending| pending.line().get() / 32 == word)
                     .fold(0u32, |bits, pending| {
                         bits | (1u32 << (pending.line().get() % 32))
@@ -478,13 +541,19 @@ impl PlicMmioDevice {
         key: PlicContextKey,
         word: u64,
     ) -> Result<MmioResponse, MmioError> {
+        if !self.source_word_in_range(word) {
+            return Err(MmioError::UnmappedAddress {
+                address: request.range().start(),
+            });
+        }
+        let mask = self.source_word_mask(word);
         match request.operation() {
             MmioOperation::Read => {
                 let bits = self
                     .state
                     .lock()
                     .expect("plic state lock")
-                    .read_enable_word(key, word);
+                    .read_enable_word(key, word, mask);
                 Ok(MmioResponse::completed(request.id(), Some(le32(bits))))
             }
             MmioOperation::Write => {
@@ -492,7 +561,7 @@ impl PlicMmioDevice {
                 self.state
                     .lock()
                     .expect("plic state lock")
-                    .write_enable_word(key, word, value);
+                    .write_enable_word(key, word, value, mask);
                 Ok(MmioResponse::completed(request.id(), None))
             }
         }
@@ -537,7 +606,9 @@ impl PlicMmioDevice {
                     .lock()
                     .expect("interrupt controller lock")
                     .claim_filtered(key.0, key.1, tick, |pending, priority| {
-                        state.enabled(key, pending.line()) && priority > state.threshold(key)
+                        self.source_in_range(pending.line())
+                            && state.enabled(key, pending.line())
+                            && priority > state.threshold(key)
                     })
                     .map(|claim| u32::try_from(claim.line().get()))
                     .transpose()
@@ -550,6 +621,12 @@ impl PlicMmioDevice {
             }
             MmioOperation::Write => {
                 let line = InterruptLineId::new(u64::from(self.u32_from_write(request)?));
+                if !self.source_in_range(line) {
+                    return Err(MmioError::DeviceError {
+                        request: request.id(),
+                        message: self.source_out_of_range_message(line),
+                    });
+                }
                 self.controller
                     .lock()
                     .expect("interrupt controller lock")
@@ -586,6 +663,46 @@ impl PlicMmioDevice {
             }
         }
         Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn source_in_range(&self, line: InterruptLineId) -> bool {
+        self.source_count
+            .map(|source_count| line.get() <= source_count)
+            .unwrap_or(true)
+    }
+
+    fn source_word_in_range(&self, word: u64) -> bool {
+        self.source_count
+            .map(|source_count| word <= source_count / 32)
+            .unwrap_or(true)
+    }
+
+    fn source_word_mask(&self, word: u64) -> u32 {
+        let Some(source_count) = self.source_count else {
+            return u32::MAX;
+        };
+        if word < source_count / 32 {
+            return u32::MAX;
+        }
+        if word > source_count / 32 {
+            return 0;
+        }
+        let valid_bits = (source_count % 32) + 1;
+        if valid_bits == 32 {
+            u32::MAX
+        } else {
+            (1u32 << valid_bits) - 1
+        }
+    }
+
+    fn source_out_of_range_message(&self, line: InterruptLineId) -> String {
+        match self.source_count {
+            Some(source_count) => format!(
+                "PLIC source {} exceeds declared source count {source_count}",
+                line.get()
+            ),
+            None => format!("PLIC source {} is out of range", line.get()),
+        }
     }
 }
 
@@ -642,6 +759,10 @@ pub enum PlicError {
     DuplicateSnapshotContext {
         context: u64,
     },
+    SnapshotSourceOutOfRange {
+        line: InterruptLineId,
+        source_count: Option<u64>,
+    },
 }
 
 impl fmt::Display for PlicError {
@@ -665,6 +786,18 @@ impl fmt::Display for PlicError {
                     "PLIC snapshot contains duplicate context {context}"
                 )
             }
+            Self::SnapshotSourceOutOfRange { line, source_count } => match source_count {
+                Some(source_count) => write!(
+                    formatter,
+                    "PLIC snapshot source {} exceeds declared source count {source_count}",
+                    line.get()
+                ),
+                None => write!(
+                    formatter,
+                    "PLIC snapshot source {} is out of range",
+                    line.get()
+                ),
+            },
         }
     }
 }
