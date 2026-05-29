@@ -613,28 +613,7 @@ impl IdeController {
         channel: IdeChannelId,
         guest: &mut impl IdeControllerGuestMemory,
     ) -> Result<(), IdeControllerError> {
-        let command_channel = self.channel(channel);
-        let request = command_channel
-            .selected()
-            .ok_or(IdeControllerError::NoSelectedDevice {
-                channel,
-                device: command_channel.selected_device,
-            })?
-            .dma_request()
-            .map_err(|source| IdeControllerError::Disk { channel, source })?;
-        if command_channel.bmi.command & IDE_BMI_COMMAND_START == 0 {
-            return Err(IdeControllerError::DmaNotActive { channel });
-        }
-        let expected_bytes = request
-            .bytes()
-            .ok_or(IdeControllerError::DmaByteCountOverflow { channel })?;
-        let plan = IdeDmaPlan::decode(
-            channel,
-            guest,
-            command_channel.bmi.prd_table,
-            expected_bytes,
-        )?;
-        plan.validate_access(request.direction(), guest)?;
+        let (request, plan) = self.dma_request_and_plan(channel, guest)?;
 
         let payload = match request.direction() {
             IdeDmaDirection::ToGuest => self
@@ -665,7 +644,42 @@ impl IdeController {
         command_channel.complete_dma();
         Ok(())
     }
-
+    pub fn validate_dma(
+        &self,
+        channel: IdeChannelId,
+        guest: &mut impl IdeControllerGuestMemory,
+    ) -> Result<(), IdeControllerError> {
+        self.dma_request_and_plan(channel, guest).map(|_| ())
+    }
+    fn dma_request_and_plan(
+        &self,
+        channel: IdeChannelId,
+        guest: &mut impl IdeControllerGuestMemory,
+    ) -> Result<(IdeDmaRequest, IdeDmaPlan), IdeControllerError> {
+        let command_channel = self.channel(channel);
+        let request = command_channel
+            .selected()
+            .ok_or(IdeControllerError::NoSelectedDevice {
+                channel,
+                device: command_channel.selected_device,
+            })?
+            .dma_request()
+            .map_err(|source| IdeControllerError::Disk { channel, source })?;
+        if command_channel.bmi.command & IDE_BMI_COMMAND_START == 0 {
+            return Err(IdeControllerError::DmaNotActive { channel });
+        }
+        let expected_bytes = request
+            .bytes()
+            .ok_or(IdeControllerError::DmaByteCountOverflow { channel })?;
+        let plan = IdeDmaPlan::decode(
+            channel,
+            guest,
+            command_channel.bmi.prd_table,
+            expected_bytes,
+        )?;
+        plan.validate_access(request.direction(), guest)?;
+        Ok((request, plan))
+    }
     pub fn complete_timed_command(
         &mut self,
         channel: IdeChannelId,

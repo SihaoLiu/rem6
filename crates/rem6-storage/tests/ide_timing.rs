@@ -15,9 +15,9 @@ use rem6_storage::{
     IDE_BMI_COMMAND_RW, IDE_BMI_COMMAND_START, IDE_BMI_PRD_TABLE_OFFSET, IDE_BMI_STATUS_ACTIVE,
     IDE_BMI_STATUS_DMA_CAP0, IDE_BMI_STATUS_DMA_CAP1, IDE_BMI_STATUS_INTERRUPT,
     IDE_BMI_STATUS_OFFSET, IDE_COMMAND_READ, IDE_COMMAND_READ_DMA, IDE_COMMAND_WRITE,
-    IDE_CONTROL_IEN, IDE_CONTROL_OFFSET, IDE_DRIVE_LBA, IDE_DRIVE_OFFSET, IDE_HCYL_OFFSET,
-    IDE_LCYL_OFFSET, IDE_NSECTOR_OFFSET, IDE_PCI_DEVICE_ID, IDE_SECTOR_OFFSET, IDE_STATUS_BSY,
-    IDE_STATUS_DRDY, IDE_STATUS_DRQ, IDE_STATUS_OFFSET,
+    IDE_COMMAND_WRITE_DMA, IDE_CONTROL_IEN, IDE_CONTROL_OFFSET, IDE_DRIVE_LBA, IDE_DRIVE_OFFSET,
+    IDE_HCYL_OFFSET, IDE_LCYL_OFFSET, IDE_NSECTOR_OFFSET, IDE_PCI_DEVICE_ID, IDE_SECTOR_OFFSET,
+    IDE_STATUS_BSY, IDE_STATUS_DRDY, IDE_STATUS_DRQ, IDE_STATUS_OFFSET,
 };
 
 fn function() -> PciFunctionAddress {
@@ -27,6 +27,14 @@ fn function() -> PciFunctionAddress {
 fn disk(byte: u8, device_id: IdeDeviceId) -> IdeDisk {
     let image = Arc::new(RawStorageImage::from_bytes(vec![byte; 512]).unwrap());
     IdeDisk::new(image as Arc<dyn StorageImageLayer>, device_id).unwrap()
+}
+
+fn disk_with_image(byte: u8, device_id: IdeDeviceId) -> (IdeDisk, Arc<RawStorageImage>) {
+    let image = Arc::new(RawStorageImage::from_bytes(sector(byte).to_vec()).unwrap());
+    (
+        IdeDisk::new(image.clone() as Arc<dyn StorageImageLayer>, device_id).unwrap(),
+        image,
+    )
 }
 
 fn two_sector_disk(first: u8, second: u8, device_id: IdeDeviceId) -> IdeDisk {
@@ -546,6 +554,84 @@ fn ide_timing_port_syncs_dma_read_interrupt_delivery_in_parallel() {
     assert!(ide_port.line_asserted());
     assert!(timing.completion_errors().lock().unwrap().is_empty());
     assert!(ide_port.delivery_errors().lock().unwrap().is_empty());
+}
+
+#[test]
+fn ide_timing_port_rejects_write_dma_prd_before_scheduling_in_parallel() {
+    let pci = PartitionId::new(1);
+    let (primary0, image) = disk_with_image(0x00, IdeDeviceId::Device0);
+    let controller = Arc::new(Mutex::new(
+        IdeController::new([Some(primary0), None, None, None]).unwrap(),
+    ));
+    let guest = Arc::new(Mutex::new(GuestMemory::filled(4096, 0xee)));
+    {
+        let mut guest = guest.lock().unwrap();
+        guest.write_seed(0x200, &sector(0xa5));
+        write_prd(&mut guest, 0x80, 0x200, 256, true);
+    }
+    let timing = IdeControllerTimingPort::new(Arc::clone(&controller), 4).unwrap();
+
+    let issue_timing = timing.clone();
+    let issue_controller = Arc::clone(&controller);
+    let dma_timing = timing.clone();
+    let dma_controller = Arc::clone(&controller);
+    let dma_guest = Arc::clone(&guest);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    scheduler
+        .schedule_parallel_at(pci, 5, move |context| {
+            let mut controller = issue_controller.lock().unwrap();
+            controller
+                .write_bmi_u32(IdeChannelId::Primary, IDE_BMI_PRD_TABLE_OFFSET, 0x80)
+                .unwrap();
+            issue_lba_read_registers(&mut controller);
+            drop(controller);
+            assert!(issue_timing
+                .write_command_u8_parallel(
+                    context,
+                    IdeChannelId::Primary,
+                    IDE_STATUS_OFFSET,
+                    IDE_COMMAND_WRITE_DMA,
+                )
+                .unwrap()
+                .is_some());
+        })
+        .unwrap();
+    scheduler
+        .schedule_parallel_at(pci, 10, move |context| {
+            dma_controller
+                .lock()
+                .unwrap()
+                .write_bmi_u8(
+                    IdeChannelId::Primary,
+                    IDE_BMI_COMMAND_OFFSET,
+                    IDE_BMI_COMMAND_START,
+                )
+                .unwrap();
+            assert!(matches!(
+                dma_timing.execute_dma_parallel(
+                    context,
+                    IdeChannelId::Primary,
+                    Arc::clone(&dma_guest),
+                ),
+                Err(IdeControllerError::InvalidPrdByteCount {
+                    channel: IdeChannelId::Primary,
+                    bytes: 256,
+                })
+            ));
+        })
+        .unwrap();
+
+    scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(
+        image.read(StorageSectorId::new(0), 1).unwrap(),
+        sector(0x00).to_vec()
+    );
+    assert_eq!(
+        &guest.lock().unwrap().bytes()[0x200..0x400],
+        sector(0xa5).as_slice()
+    );
+    assert!(timing.completion_errors().lock().unwrap().is_empty());
 }
 
 #[test]

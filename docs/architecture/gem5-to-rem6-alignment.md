@@ -602,11 +602,13 @@ Implementation evidence through 2026-05-29:
   without exposing the next DRQ early. This replaces gem5's immediate
   `updateState(ACT_DATA_READY)` paths around its "scheduled event" TODOs with
   an explicit partition-local event and typed completion-error capture. Timed
-  READ DMA execution now also runs behind the same partition-local timing port:
-  the DMA start request leaves BMI active and guest memory unchanged until the
-  declared disk delay plus sector-count delay has elapsed, then executes the
-  PRD-described transfer and records any completion error in typed storage
-  state instead of gem5's callback-owned wait events.
+  DMA execution now also runs behind the same partition-local timing port:
+  the DMA start request leaves BMI active while guest memory or disk contents
+  remain unchanged until the declared disk delay plus sector-count delay has
+  elapsed. The port validates the DMA request, PRD table, and guest access
+  before scheduling the event, then executes the PRD-described transfer and
+  records any completion error in typed storage state instead of gem5's
+  callback-owned wait events.
   `rem6-system` host checkpoint actions can attach storage image and IDE
   controller banks, stage their chunk capture with the rest of the system, and
   restore storage state only after decode-first validation has accepted every
@@ -2182,8 +2184,8 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   inter-sector delay is pending, multi-sector PIO write inter-sector delay
   with sector-granular storage commit, data-write rejection while the
   inter-sector delay is pending, delayed READ DMA guest-memory mutation after
-  disk plus sector latency, and completion-error capture on the parallel
-  scheduler path.
+  disk plus sector latency, WRITE DMA PRD rejection before event scheduling,
+  and completion-error capture on the parallel scheduler path.
   System checkpoint action tests cover storage image and IDE controller bank
   attachment, staged capture into host manifests, and malformed storage or IDE
   restore rejection without partial live-state mutation. Topology checkpoint

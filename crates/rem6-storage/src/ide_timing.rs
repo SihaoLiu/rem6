@@ -181,6 +181,7 @@ impl IdeControllerTimingPort {
         G: IdeControllerGuestMemory + Send + 'static,
     {
         let delay = dma_delay_ticks(&self.controller, channel, self.delay_ticks)?;
+        validate_dma(&self.controller, channel, &guest)?;
         let controller = Arc::clone(&self.controller);
         let interrupt_port = self.interrupt_port.clone();
         let completion_errors = Arc::clone(&self.completion_errors);
@@ -209,6 +210,7 @@ impl IdeControllerTimingPort {
         G: IdeControllerGuestMemory + Send + 'static,
     {
         let delay = dma_delay_ticks(&self.controller, channel, self.delay_ticks)?;
+        validate_dma(&self.controller, channel, &guest)?;
         let controller = Arc::clone(&self.controller);
         let interrupt_port = self.interrupt_port.clone();
         let completion_errors = Arc::clone(&self.completion_errors);
@@ -632,6 +634,19 @@ fn complete_dma_parallel<G>(
                 .push(error);
         }
     }
+}
+
+fn validate_dma<G>(
+    controller: &Arc<Mutex<IdeController>>,
+    channel: IdeChannelId,
+    guest: &Arc<Mutex<G>>,
+) -> Result<(), IdeControllerError>
+where
+    G: IdeControllerGuestMemory,
+{
+    let controller = controller.lock().expect("IDE controller timing lock");
+    let mut guest = guest.lock().expect("IDE DMA guest memory lock");
+    controller.validate_dma(channel, &mut *guest)
 }
 
 fn dma_delay_ticks(
