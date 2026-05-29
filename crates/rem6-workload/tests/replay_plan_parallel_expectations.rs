@@ -281,6 +281,45 @@ fn workload_replay_plan_uses_explicit_full_system_remote_flows() {
 }
 
 #[test]
+fn workload_replay_plan_rejects_zero_explicit_full_system_remote_flow() {
+    let plan = replay_plan()
+        .add_expected_parallel_remote_flow(expected(
+            WorkloadParallelRemoteFlowScope::FullSystem,
+            0,
+            1,
+            2,
+        ))
+        .unwrap();
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_parallel_scheduler_remote_flows([ParallelRemoteFlowRecord::new(
+            PartitionId::new(0),
+            PartitionId::new(1),
+            2,
+            7,
+            13,
+        )])
+        .with_full_system_parallel_scheduler_remote_flows([ParallelRemoteFlowRecord::new(
+            PartitionId::new(0),
+            PartitionId::new(1),
+            0,
+            7,
+            13,
+        )]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::UnexpectedParallelRemoteFlow {
+            scope: WorkloadParallelRemoteFlowScope::FullSystem,
+            source: 0,
+            target: 1,
+            actual_send_count: 0,
+        },
+    );
+}
+
+#[test]
 fn workload_replay_plan_rejects_weaker_full_system_remote_flow_count() {
     let plan = replay_plan()
         .add_expected_parallel_remote_flow(expected(

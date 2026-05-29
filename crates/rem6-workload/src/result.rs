@@ -236,6 +236,7 @@ pub struct WorkloadParallelExecutionSummary {
         Vec<(PartitionId, ParallelPartitionActivity)>,
     full_system_parallel_scheduler_partition_activities:
         Vec<(PartitionId, ParallelPartitionActivity)>,
+    raw_full_system_parallel_scheduler_remote_flows: Vec<ParallelRemoteFlowRecord>,
     full_system_parallel_scheduler_remote_flows: Vec<ParallelRemoteFlowRecord>,
     full_system_parallel_scheduler_remote_sends: Vec<ParallelRemoteSendRecord>,
     full_system_parallel_scheduler_initial_frontiers: Vec<PartitionFrontier>,

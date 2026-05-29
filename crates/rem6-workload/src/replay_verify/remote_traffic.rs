@@ -467,6 +467,14 @@ fn validate_raw_full_system_remote_flow_evidence(
     summary: &WorkloadParallelExecutionSummary,
 ) -> Result<(), WorkloadError> {
     for flow in summary.raw_full_system_parallel_scheduler_remote_flows() {
+        if flow.send_count() == 0 {
+            return Err(WorkloadError::UnexpectedParallelRemoteFlow {
+                scope: WorkloadParallelRemoteFlowScope::FullSystem,
+                source: flow.source().index(),
+                target: flow.target().index(),
+                actual_send_count: 0,
+            });
+        }
         validate_remote_traffic_flow_evidence(WorkloadParallelRemoteFlowScope::FullSystem, *flow)?;
     }
     Ok(())

@@ -918,6 +918,11 @@ Implementation evidence on 2026-05-26:
   derived lower-bound evidence. The detailed mismatch payload is boxed behind a
   constructor, preserving typed diagnostics without making every workload
   replay `Result` carry the largest remote-flow error inline.
+- Explicit recorded full-system remote-flow records now also retain raw replay
+  evidence separately from the filtered reporting view. Replay rejects
+  zero-send global flow records before they can be dropped by derived
+  remote-flow evidence, so empty full-system traffic aggregates cannot hide
+  behind scoped cross-partition traffic.
 - Workload full-system exact remote-send merge validation now rejects explicit
   full-system send streams that omit scheduler, data-cache, GPU DMA, or
   accelerator DMA scoped sends. A global exact-send summary therefore cannot

@@ -54,7 +54,12 @@ impl WorkloadParallelExecutionSummary {
         mut self,
         flows: impl IntoIterator<Item = ParallelRemoteFlowRecord>,
     ) -> Self {
-        self.full_system_parallel_scheduler_remote_flows = collect_parallel_remote_flows(flows);
+        self.raw_full_system_parallel_scheduler_remote_flows = flows.into_iter().collect();
+        self.full_system_parallel_scheduler_remote_flows = collect_parallel_remote_flows(
+            self.raw_full_system_parallel_scheduler_remote_flows
+                .iter()
+                .copied(),
+        );
         self
     }
 
@@ -413,7 +418,7 @@ impl WorkloadParallelExecutionSummary {
     pub(crate) fn raw_full_system_parallel_scheduler_remote_flows(
         &self,
     ) -> &[ParallelRemoteFlowRecord] {
-        &self.full_system_parallel_scheduler_remote_flows
+        &self.raw_full_system_parallel_scheduler_remote_flows
     }
 
     pub(crate) fn scoped_full_system_parallel_scheduler_remote_sends(
