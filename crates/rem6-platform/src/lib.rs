@@ -50,6 +50,16 @@ pub struct PlatformRtcConfig {
     pub route: MmioRoute,
     pub time: RtcDateTime,
     pub encoding: RtcEncoding,
+    pub periodic_interrupt: Option<PlatformRtcPeriodicInterruptConfig>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PlatformRtcPeriodicInterruptConfig {
+    pub line: InterruptLineId,
+    pub target: InterruptTargetId,
+    pub source: InterruptSourceId,
+    pub latency: Tick,
+    pub interval: Tick,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1103,7 +1113,26 @@ impl PlatformBuilder {
         for config in self.rtcs {
             validate_route(self.partition_count, config.route)?;
             let rtc = Mc146818Rtc::new(config.time, config.encoding).map_err(PlatformError::Rtc)?;
-            let device = Mc146818RtcMmioDevice::new(config.base, rtc);
+            let device = if let Some(interrupt) = config.periodic_interrupt {
+                let port = register_interrupt(
+                    &controller,
+                    config.route.source_partition(),
+                    interrupt.line,
+                    interrupt.target,
+                    interrupt.latency,
+                )?;
+                Mc146818RtcMmioDevice::with_periodic_interrupt(
+                    config.base,
+                    rtc,
+                    config.route.target_partition(),
+                    interrupt.source,
+                    port,
+                    interrupt.interval,
+                )
+                .map_err(PlatformError::Rtc)?
+            } else {
+                Mc146818RtcMmioDevice::new(config.base, rtc)
+            };
             bus.insert_device(
                 region(config.base, config.size)?,
                 config.route,

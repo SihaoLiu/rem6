@@ -2,7 +2,10 @@ use std::error::Error;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
-use rem6_kernel::{ParallelSchedulerContext, SchedulerContext};
+use rem6_interrupt::{InterruptError, InterruptEventKind, InterruptLinePort, InterruptSourceId};
+use rem6_kernel::{
+    ParallelSchedulerContext, PartitionEventId, PartitionId, SchedulerContext, SchedulerError, Tick,
+};
 use rem6_memory::{Address, ByteMask};
 use rem6_mmio::{MmioDevice, MmioError, MmioOperation, MmioRequest, MmioResponse};
 
@@ -294,6 +297,10 @@ impl Mc146818Rtc {
         self.set_time(next)
     }
 
+    fn periodic_interrupt_enabled(&self) -> bool {
+        self.status_b & STATUS_B_PIE != 0
+    }
+
     pub fn date_time(&self) -> Result<RtcDateTime, RtcError> {
         decode_time(&self.clock_data, rtc_encoding(self.status_b))
     }
@@ -385,6 +392,9 @@ pub enum RtcError {
     ReadOnlyRegister { register: u8 },
     UnknownRegister { register: u8 },
     DividerDisabled,
+    ZeroInterruptInterval,
+    Interrupt(InterruptError),
+    Scheduler(SchedulerError),
 }
 
 impl fmt::Display for RtcError {
@@ -412,11 +422,75 @@ impl fmt::Display for RtcError {
                 write!(formatter, "unknown RTC register {register:#04x}")
             }
             Self::DividerDisabled => write!(formatter, "RTC divider is disabled"),
+            Self::ZeroInterruptInterval => {
+                write!(formatter, "RTC interrupt interval must be positive")
+            }
+            Self::Interrupt(error) => write!(formatter, "RTC interrupt error: {error}"),
+            Self::Scheduler(error) => write!(formatter, "RTC scheduler error: {error}"),
         }
     }
 }
 
-impl Error for RtcError {}
+impl Error for RtcError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Interrupt(error) => Some(error),
+            Self::Scheduler(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RtcInterruptError {
+    tick: Tick,
+    source: InterruptSourceId,
+    kind: RtcInterruptErrorKind,
+}
+
+impl RtcInterruptError {
+    pub const fn new(
+        tick: Tick,
+        source: InterruptSourceId,
+        kind: InterruptEventKind,
+        error: InterruptError,
+    ) -> Self {
+        Self {
+            tick,
+            source,
+            kind: RtcInterruptErrorKind::Delivery { kind, error },
+        }
+    }
+
+    pub const fn scheduler(tick: Tick, error: SchedulerError) -> Self {
+        Self {
+            tick,
+            source: InterruptSourceId::new(0),
+            kind: RtcInterruptErrorKind::Scheduler(error),
+        }
+    }
+
+    pub const fn tick(&self) -> Tick {
+        self.tick
+    }
+
+    pub const fn source(&self) -> InterruptSourceId {
+        self.source
+    }
+
+    pub const fn kind(&self) -> &RtcInterruptErrorKind {
+        &self.kind
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RtcInterruptErrorKind {
+    Delivery {
+        kind: InterruptEventKind,
+        error: InterruptError,
+    },
+    Scheduler(SchedulerError),
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Mc146818RtcMmioSnapshot {
@@ -454,6 +528,7 @@ impl Mc146818RtcMmioSnapshot {
 #[derive(Clone, Debug)]
 pub struct Mc146818RtcMmioDevice {
     base: Address,
+    interrupt: Option<RtcPeriodicInterrupt>,
     state: Arc<Mutex<Mc146818RtcMmioState>>,
 }
 
@@ -461,8 +536,33 @@ impl Mc146818RtcMmioDevice {
     pub fn new(base: Address, rtc: Mc146818Rtc) -> Self {
         Self {
             base,
+            interrupt: None,
             state: Arc::new(Mutex::new(Mc146818RtcMmioState::new(rtc))),
         }
+    }
+
+    pub fn with_periodic_interrupt(
+        base: Address,
+        rtc: Mc146818Rtc,
+        partition: PartitionId,
+        source: InterruptSourceId,
+        port: InterruptLinePort,
+        interval: Tick,
+    ) -> Result<Self, RtcError> {
+        if interval == 0 {
+            return Err(RtcError::ZeroInterruptInterval);
+        }
+        port.validate_route().map_err(RtcError::Interrupt)?;
+        Ok(Self {
+            base,
+            interrupt: Some(RtcPeriodicInterrupt {
+                partition,
+                source,
+                port,
+                interval,
+            }),
+            state: Arc::new(Mutex::new(Mc146818RtcMmioState::new(rtc))),
+        })
     }
 
     pub const fn base(&self) -> Address {
@@ -473,6 +573,68 @@ impl Mc146818RtcMmioDevice {
         self.state.lock().expect("RTC MMIO state lock").snapshot()
     }
 
+    pub fn interrupt_errors(&self) -> Vec<RtcInterruptError> {
+        self.state
+            .lock()
+            .expect("RTC MMIO state lock")
+            .interrupt_errors
+            .clone()
+    }
+
+    pub fn start_periodic_interrupts(
+        &self,
+        context: &mut SchedulerContext<'_>,
+    ) -> Result<Option<PartitionEventId>, RtcError> {
+        let Some(interrupt) = &self.interrupt else {
+            return Ok(None);
+        };
+        interrupt
+            .port
+            .validate_route()
+            .map_err(RtcError::Interrupt)?;
+        let generation = {
+            let mut state = self.state.lock().expect("RTC MMIO state lock");
+            if !state.rtc.periodic_interrupt_enabled() {
+                return Ok(None);
+            }
+            state.start_periodic(context.now(), interrupt.interval)?
+        };
+        let rtc = self.clone();
+        context
+            .schedule_remote_after(interrupt.partition, interrupt.interval, move |context| {
+                rtc.fire_periodic_interrupt(context, generation);
+            })
+            .map(Some)
+            .map_err(RtcError::Scheduler)
+    }
+
+    pub fn start_periodic_interrupts_parallel(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+    ) -> Result<Option<PartitionEventId>, RtcError> {
+        let Some(interrupt) = &self.interrupt else {
+            return Ok(None);
+        };
+        interrupt
+            .port
+            .validate_route()
+            .map_err(RtcError::Interrupt)?;
+        let generation = {
+            let mut state = self.state.lock().expect("RTC MMIO state lock");
+            if !state.rtc.periodic_interrupt_enabled() {
+                return Ok(None);
+            }
+            state.start_periodic(context.now(), interrupt.interval)?
+        };
+        let rtc = self.clone();
+        context
+            .schedule_remote_after(interrupt.partition, interrupt.interval, move |context| {
+                rtc.fire_periodic_interrupt_parallel(context, generation);
+            })
+            .map(Some)
+            .map_err(RtcError::Scheduler)
+    }
+
     pub fn restore(&self, snapshot: &Mc146818RtcMmioSnapshot) -> Result<(), RtcError> {
         let mut state = self.state.lock().expect("RTC MMIO state lock");
         let mut rtc = state.rtc.clone();
@@ -480,6 +642,9 @@ impl Mc146818RtcMmioDevice {
         state.selected_address = snapshot.selected_address();
         state.cmos_data = *snapshot.cmos_data();
         state.rtc = rtc;
+        if !state.rtc.periodic_interrupt_enabled() {
+            state.cancel_periodic();
+        }
         Ok(())
     }
 
@@ -538,6 +703,108 @@ impl Mc146818RtcMmioDevice {
         }
     }
 
+    fn fire_periodic_interrupt(&self, context: &mut SchedulerContext<'_>, generation: u64) {
+        let Some(interrupt) = self.periodic_fire_interrupt(generation, context.now()) else {
+            return;
+        };
+        if let Err(error) = interrupt.port.assert(context, interrupt.source) {
+            self.record_interrupt_error(
+                context.now(),
+                interrupt.source,
+                InterruptEventKind::Assert,
+                error,
+            );
+        }
+        if let Err(error) = interrupt.port.deassert(context, interrupt.source) {
+            self.record_interrupt_error(
+                context.now(),
+                interrupt.source,
+                InterruptEventKind::Deassert,
+                error,
+            );
+        }
+        let rtc = self.clone();
+        if let Err(error) =
+            context.schedule_remote_after(interrupt.partition, interrupt.interval, move |context| {
+                rtc.fire_periodic_interrupt(context, generation);
+            })
+        {
+            self.record_scheduler_error(context.now(), error);
+        }
+    }
+
+    fn fire_periodic_interrupt_parallel(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+        generation: u64,
+    ) {
+        let Some(interrupt) = self.periodic_fire_interrupt(generation, context.now()) else {
+            return;
+        };
+        if let Err(error) = interrupt.port.assert_parallel(context, interrupt.source) {
+            self.record_interrupt_error(
+                context.now(),
+                interrupt.source,
+                InterruptEventKind::Assert,
+                error,
+            );
+        }
+        if let Err(error) = interrupt.port.deassert_parallel(context, interrupt.source) {
+            self.record_interrupt_error(
+                context.now(),
+                interrupt.source,
+                InterruptEventKind::Deassert,
+                error,
+            );
+        }
+        let rtc = self.clone();
+        if let Err(error) =
+            context.schedule_remote_after(interrupt.partition, interrupt.interval, move |context| {
+                rtc.fire_periodic_interrupt_parallel(context, generation);
+            })
+        {
+            self.record_scheduler_error(context.now(), error);
+        }
+    }
+
+    fn periodic_fire_interrupt(&self, generation: u64, now: Tick) -> Option<RtcPeriodicInterrupt> {
+        let interrupt = self.interrupt.clone()?;
+        let mut state = self.state.lock().expect("RTC MMIO state lock");
+        if !state.periodic_fire_is_current(generation) {
+            return None;
+        }
+        if !state.rtc.periodic_interrupt_enabled() {
+            state.cancel_periodic();
+            return None;
+        }
+        if state.mark_periodic_fire(now, interrupt.interval).is_err() {
+            return None;
+        }
+        Some(interrupt)
+    }
+
+    fn record_interrupt_error(
+        &self,
+        tick: Tick,
+        source: InterruptSourceId,
+        kind: InterruptEventKind,
+        error: InterruptError,
+    ) {
+        self.state
+            .lock()
+            .expect("RTC MMIO state lock")
+            .interrupt_errors
+            .push(RtcInterruptError::new(tick, source, kind, error));
+    }
+
+    fn record_scheduler_error(&self, tick: Tick, error: SchedulerError) {
+        self.state
+            .lock()
+            .expect("RTC MMIO state lock")
+            .interrupt_errors
+            .push(RtcInterruptError::scheduler(tick, error));
+    }
+
     fn validate_size(&self, request: &MmioRequest) -> Result<(), MmioError> {
         if request.size().bytes() != RTC_MMIO_REGISTER_BYTES {
             return Err(MmioError::AccessSizeMismatch {
@@ -579,19 +846,33 @@ impl MmioDevice for Mc146818RtcMmioDevice {
     }
 }
 
+#[derive(Clone, Debug)]
+struct RtcPeriodicInterrupt {
+    partition: PartitionId,
+    source: InterruptSourceId,
+    port: InterruptLinePort,
+    interval: Tick,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Mc146818RtcMmioState {
     selected_address: u8,
     cmos_data: [u8; RTC_CMOS_REGISTER_COUNT],
     rtc: Mc146818Rtc,
+    periodic_generation: u64,
+    next_periodic_tick: Option<Tick>,
+    interrupt_errors: Vec<RtcInterruptError>,
 }
 
 impl Mc146818RtcMmioState {
-    const fn new(rtc: Mc146818Rtc) -> Self {
+    fn new(rtc: Mc146818Rtc) -> Self {
         Self {
             selected_address: 0,
             cmos_data: [0; RTC_CMOS_REGISTER_COUNT],
             rtc,
+            periodic_generation: 0,
+            next_periodic_tick: None,
+            interrupt_errors: Vec::new(),
         }
     }
 
@@ -614,10 +895,45 @@ impl Mc146818RtcMmioState {
     fn write_data(&mut self, value: u8) -> Result<(), RtcError> {
         let register = self.selected_register();
         if is_rtc_register(register) {
-            return self.rtc.write_register(register, value);
+            self.rtc.write_register(register, value)?;
+            if register == RTC_STATUS_B_REGISTER && !self.rtc.periodic_interrupt_enabled() {
+                self.cancel_periodic();
+            }
+            return Ok(());
         }
         self.cmos_data[usize::from(register)] = value;
         Ok(())
+    }
+
+    fn start_periodic(&mut self, now: Tick, interval: Tick) -> Result<u64, RtcError> {
+        let next_tick =
+            now.checked_add(interval)
+                .ok_or(RtcError::Scheduler(SchedulerError::TickOverflow {
+                    now,
+                    delay: interval,
+                }))?;
+        self.periodic_generation = self.periodic_generation.wrapping_add(1);
+        self.next_periodic_tick = Some(next_tick);
+        Ok(self.periodic_generation)
+    }
+
+    fn periodic_fire_is_current(&self, generation: u64) -> bool {
+        self.periodic_generation == generation && self.next_periodic_tick.is_some()
+    }
+
+    fn mark_periodic_fire(&mut self, now: Tick, interval: Tick) -> Result<(), RtcError> {
+        self.next_periodic_tick = Some(now.checked_add(interval).ok_or(RtcError::Scheduler(
+            SchedulerError::TickOverflow {
+                now,
+                delay: interval,
+            },
+        ))?);
+        Ok(())
+    }
+
+    fn cancel_periodic(&mut self) {
+        self.periodic_generation = self.periodic_generation.wrapping_add(1);
+        self.next_periodic_tick = None;
     }
 }
 

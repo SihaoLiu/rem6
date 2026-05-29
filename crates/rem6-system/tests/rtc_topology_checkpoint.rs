@@ -148,6 +148,7 @@ fn platform_with_rtc(topology: &Topology, base: Address) -> Platform {
             route,
             time: RtcDateTime::new(2026, 5, 29, 1, 2, 3, 6).unwrap(),
             encoding: RtcEncoding::Bcd,
+            periodic_interrupt: None,
         })
         .build()
         .unwrap()

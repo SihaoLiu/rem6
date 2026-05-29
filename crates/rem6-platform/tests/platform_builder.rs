@@ -9,7 +9,8 @@ use rem6_mmio::{MmioCompletion, MmioError, MmioRequest, MmioRequestId, MmioRespo
 use rem6_platform::{
     PlatformBuilder, PlatformClintConfig, PlatformClintHartConfig, PlatformError,
     PlatformInterruptControllerConfig, PlatformRiscvDeviceTreeConfig, PlatformRtcConfig,
-    PlatformTimerConfig, PlatformTopologyError, PlatformTopologyRoute, PlatformUartConfig,
+    PlatformRtcPeriodicInterruptConfig, PlatformTimerConfig, PlatformTopologyError,
+    PlatformTopologyRoute, PlatformUartConfig,
 };
 use rem6_timer::{
     ClintId, ClintResetPolicy, RtcDateTime, RtcEncoding, TimerArm, TimerExpiry, TimerId,
@@ -263,6 +264,7 @@ fn platform_builder_wires_rtc_mmio_bus_and_retains_device() {
             route,
             time: RtcDateTime::new(2026, 5, 29, 1, 2, 3, 6).unwrap(),
             encoding: RtcEncoding::Bcd,
+            periodic_interrupt: None,
         })
         .build()
         .unwrap();
@@ -340,6 +342,70 @@ fn platform_builder_wires_rtc_mmio_bus_and_retains_device() {
     assert_eq!(
         rtc.snapshot().rtc().clock_data()[usize::from(RTC_SECONDS_REGISTER)],
         0x03
+    );
+}
+
+#[test]
+fn platform_builder_wires_rtc_periodic_interrupt_route() {
+    let cpu = PartitionId::new(0);
+    let rtc_partition = PartitionId::new(1);
+    let base = Address::new(0x70);
+    let line = InterruptLineId::new(43);
+    let source = InterruptSourceId::new(63);
+
+    let platform = PlatformBuilder::new(2)
+        .add_rtc(PlatformRtcConfig {
+            base,
+            size: AccessSize::new(2).unwrap(),
+            route: MmioRoute::new(cpu, rtc_partition, 2, 1).unwrap(),
+            time: RtcDateTime::new(2026, 5, 29, 1, 2, 3, 6).unwrap(),
+            encoding: RtcEncoding::Bcd,
+            periodic_interrupt: Some(PlatformRtcPeriodicInterruptConfig {
+                line,
+                target: InterruptTargetId::new(0),
+                source,
+                latency: 2,
+                interval: 4,
+            }),
+        })
+        .build()
+        .unwrap();
+    let rtc = platform.rtc(base).unwrap().clone();
+    let controller = platform.interrupt_controller();
+    let mut scheduler = PartitionedScheduler::new(platform.partition_count()).unwrap();
+
+    scheduler
+        .schedule_at(cpu, 1, move |context| {
+            rtc.start_periodic_interrupts(context).unwrap();
+        })
+        .unwrap();
+    for _ in 0..8 {
+        scheduler.run_next_epoch();
+        if controller.lock().unwrap().history().len() >= 2 {
+            break;
+        }
+    }
+
+    assert_eq!(
+        controller.lock().unwrap().history(),
+        &[
+            InterruptEvent::routed(
+                7,
+                line,
+                InterruptTargetId::new(0),
+                cpu,
+                source,
+                InterruptEventKind::Assert,
+            ),
+            InterruptEvent::routed(
+                7,
+                line,
+                InterruptTargetId::new(0),
+                cpu,
+                source,
+                InterruptEventKind::Deassert,
+            ),
+        ]
     );
 }
 
