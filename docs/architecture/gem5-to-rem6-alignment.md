@@ -540,6 +540,14 @@ Implementation evidence through 2026-05-29:
   root, preserving the manifest-driven full-system replay path without letting
   cache protocol wiring, DRAM backing, and workload orchestration collapse into
   one gem5-style integration file.
+- `rem6-net` now keeps network error variants, formatting, and trait
+  implementation in a focused `error` module while leaving the crate root
+  centered on packet payloads, link timing, full-duplex delivery, and FIFO
+  state. Network source-policy tests keep the crate root under the facade
+  budget, require error reporting to stay out of the root, and enforce the hard
+  per-source-file size budget, so broader Ethernet, distributed-link, switch,
+  tap, and NIC-device work does not recreate gem5-style mixed packet,
+  interface, event, and error-path monoliths.
 - `rem6-net` has a typed distributed Ethernet link endpoint aligned with gem5
   `DistEtherLink::TxLink` and `DistEtherLink::RxLink`: local transmits encode
   endian-stable distributed data messages, preserve deterministic
@@ -1936,6 +1944,8 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   UART source-policy tests keep event, snapshot, and error contracts in focused
   modules while enforcing the facade and hard module-size budgets across UART
   sources.
+  Network source-policy tests keep error reporting in a focused module while
+  enforcing the facade and hard module-size budgets across network sources.
   System source-policy tests keep workload replay data-cache backend state in a
   focused module while enforcing the hard module-size budget across system
   sources. Type-1 bridge tests cover typed bridge header fields, Expansion ROM
