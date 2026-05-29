@@ -441,6 +441,13 @@ Implementation evidence through 2026-05-29:
   both the facade budget and the hard per-source-file size budget, so typed
   platform growth cannot quietly recreate the monolithic Python/C++ wiring
   surface that makes gem5 board descriptions hard to audit.
+- `rem6-cpu` now keeps RISC-V data issue, MMIO data issue, conditional-store
+  failure recording, data completion, and request materialization in a focused
+  `riscv_data_issue` module while preserving the existing core, cluster, and
+  translated-data APIs. CPU source-policy tests keep the crate root under the
+  facade budget, require data issue to stay out of the root, and enforce the
+  hard per-source-file size budget, so CPU timing breadth can grow without
+  recreating gem5-style CPU monoliths.
 - `rem6-net` has a typed distributed Ethernet link endpoint aligned with gem5
   `DistEtherLink::TxLink` and `DistEtherLink::RxLink`: local transmits encode
   endian-stable distributed data messages, preserve deterministic
@@ -1806,9 +1813,12 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   layout rejection, serial delivery, and masked parallel delivery recording
   into the PBA. PCI source-policy tests keep the crate root
   below the facade budget and all source files below the hard module-size
-  budget. Platform source-policy tests keep the platform crate root below the
-  facade budget, keep RISC-V device-tree code in a focused module, and enforce
-  the hard module-size budget across platform sources. Type-1 bridge tests cover typed bridge
+  budget. CPU source-policy tests keep the CPU crate root below the facade
+  budget, keep RISC-V data issue in a focused module, and enforce the hard
+  module-size budget across CPU sources. Platform source-policy tests keep the
+  platform crate root below the facade budget, keep RISC-V device-tree code in
+  a focused module, and enforce the hard module-size budget across platform
+  sources. Type-1 bridge tests cover typed bridge
   header fields, Expansion ROM reads and writes, Expansion ROM size probing,
   interrupt line/pin bytes, bridge-control writes, common command writes with
   reserved-bit masking, common cache-line-size, latency-timer, and BIST byte

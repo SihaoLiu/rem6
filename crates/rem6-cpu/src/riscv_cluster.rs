@@ -16,11 +16,9 @@ use rem6_transport::{
 use crate::riscv_cluster_run::{
     RiscvClusterDriveEvent, RiscvClusterRun, RiscvClusterStopReason, RiscvClusterTurn,
 };
+use crate::riscv_data_issue::{OutstandingDataAccess, PreparedDataParallelAccess};
 use crate::riscv_reservation::RiscvReservationTracker;
-use crate::{
-    CpuId, OutstandingDataAccess, OutstandingFetch, PreparedDataParallelAccess, RiscvCore,
-    RiscvCoreDriveAction, RiscvCpuError,
-};
+use crate::{CpuId, OutstandingFetch, RiscvCore, RiscvCoreDriveAction, RiscvCpuError};
 
 enum PreparedParallelAction {
     Ready(RiscvClusterDriveEvent),

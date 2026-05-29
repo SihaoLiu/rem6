@@ -11,13 +11,15 @@ use rem6_transport::{
     TransportError,
 };
 
-use crate::{
-    access_width, memory_width_size, mmio_request, riscv_data_access, store_bytes, CpuDataConfig,
-    CpuTranslationFrontend, CpuTranslationOutcome, CpuTranslationRequest, RiscvCore,
-    RiscvCoreDriveAction, RiscvCoreState, RiscvCpuError, RiscvDataAccessTarget,
+use crate::riscv_data_issue::{
+    access_width, memory_width_size, mmio_request, store_bytes, OutstandingDataAccess,
+    PreparedDataParallelAccess,
 };
-
-use super::{OutstandingDataAccess, PreparedDataParallelAccess};
+use crate::{
+    riscv_data_access, CpuDataConfig, CpuTranslationFrontend, CpuTranslationOutcome,
+    CpuTranslationRequest, RiscvCore, RiscvCoreDriveAction, RiscvCoreState, RiscvCpuError,
+    RiscvDataAccessTarget,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PendingDataTranslation {
