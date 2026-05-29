@@ -326,11 +326,12 @@ fn mmio_channel_rejects_invalid_latency_and_records_response_errors() {
     assert_eq!(
         errors.lock().unwrap().as_slice(),
         &[MmioError::Scheduler(
-            SchedulerError::RemoteDelayBelowLookahead {
+            SchedulerError::RemoteDeliveryBeforeLookaheadBoundary {
                 source: device,
                 target: cpu,
-                delay: 2,
-                minimum: 3,
+                source_tick: 7,
+                delivery_tick: 9,
+                minimum_delivery_tick: 10,
             }
         )]
     );

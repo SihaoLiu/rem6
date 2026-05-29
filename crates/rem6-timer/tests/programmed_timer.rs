@@ -339,11 +339,12 @@ fn programmed_timer_records_interrupt_signal_errors() {
         &[TimerSignalError::new(
             1,
             4,
-            InterruptError::Scheduler(SchedulerError::RemoteDelayBelowLookahead {
+            InterruptError::Scheduler(SchedulerError::RemoteDeliveryBeforeLookaheadBoundary {
                 source: timer_partition,
                 target: cpu,
-                delay: 2,
-                minimum: 3,
+                source_tick: 4,
+                delivery_tick: 6,
+                minimum_delivery_tick: 7,
             }),
         )]
     );

@@ -229,11 +229,12 @@ fn scheduler_rejects_remote_messages_below_configured_lookahead() {
                 .unwrap_err();
             assert_eq!(
                 error,
-                SchedulerError::RemoteDelayBelowLookahead {
+                SchedulerError::RemoteDeliveryBeforeLookaheadBoundary {
                     source: core,
                     target: memory,
-                    delay: 4,
-                    minimum: 5
+                    source_tick: 1,
+                    delivery_tick: 5,
+                    minimum_delivery_tick: 6
                 }
             );
         })

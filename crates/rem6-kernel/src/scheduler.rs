@@ -911,16 +911,26 @@ impl SchedulerContext<'_> {
                 target,
             });
         }
-        if target != self.partition && delay < self.scheduler.min_remote_delay {
-            return Err(SchedulerError::RemoteDelayBelowLookahead {
-                source: self.partition,
-                target,
+        let tick = self
+            .now
+            .checked_add(delay)
+            .ok_or(SchedulerError::TickOverflow {
+                now: self.now,
                 delay,
-                minimum: self.scheduler.min_remote_delay,
-            });
+            })?;
+        if target != self.partition {
+            if let Some(error) = remote_delivery_before_lookahead_error(
+                self.partition,
+                target,
+                self.now,
+                tick,
+                self.scheduler.min_remote_delay,
+            )? {
+                return Err(error);
+            }
         }
 
-        self.schedule_at_partition_after(target, delay, callback)
+        self.scheduler.schedule_at(target, tick, callback)
     }
 
     fn schedule_at_partition_after<F>(

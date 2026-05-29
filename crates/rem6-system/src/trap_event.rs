@@ -440,46 +440,12 @@ impl RiscvTrapEventPort {
             .partition_now(host)
             .map_err(SystemError::Scheduler)?;
 
-        if host != source && latency < scheduler.min_remote_delay() {
-            return Err(SystemError::Scheduler(
-                SchedulerError::RemoteDelayBelowLookahead {
-                    source,
-                    target: host,
-                    delay: latency,
-                    minimum: scheduler.min_remote_delay(),
-                },
-            ));
-        }
-
-        source_tick
-            .checked_add(latency)
-            .ok_or(SystemError::Scheduler(SchedulerError::TickOverflow {
-                now: source_tick,
-                delay: latency,
-            }))?;
-        Ok(())
-    }
-
-    fn validate_parallel_scheduled_emit(
-        &self,
-        scheduler: &PartitionedScheduler,
-        source: PartitionId,
-        source_tick: Tick,
-    ) -> Result<(), SystemError> {
-        let channel = self.host.channel();
-        let host = channel.host_partition();
-        let latency = channel.host_latency();
-        scheduler
-            .partition_now(host)
-            .map_err(SystemError::Scheduler)?;
-
         let delivery_tick = source_tick
             .checked_add(latency)
             .ok_or(SystemError::Scheduler(SchedulerError::TickOverflow {
                 now: source_tick,
                 delay: latency,
             }))?;
-
         if host != source {
             let minimum_delivery_tick = source_tick
                 .checked_add(scheduler.min_remote_delay())
@@ -499,8 +465,16 @@ impl RiscvTrapEventPort {
                 ));
             }
         }
-
         Ok(())
+    }
+
+    fn validate_parallel_scheduled_emit(
+        &self,
+        scheduler: &PartitionedScheduler,
+        source: PartitionId,
+        source_tick: Tick,
+    ) -> Result<(), SystemError> {
+        self.validate_scheduled_emit(scheduler, source, source_tick)
     }
 }
 

@@ -944,6 +944,51 @@ fn riscv_trap_event_port_schedules_pending_core_trap_on_parallel_scheduler() {
 }
 
 #[test]
+fn riscv_trap_event_port_reports_serial_trap_lookahead_boundary() {
+    let guest = PartitionId::new(0);
+    let host = PartitionId::new(2);
+    let source = GuestSourceId::new(25);
+    let (mut scheduler, transport, fetch_route) = cpu_route();
+    let core = riscv_core(fetch_route, 0x8000);
+    let store = loaded_store(0x8000, 0x0000_0073);
+
+    assert!(matches!(
+        drive_one_action(&core, Arc::clone(&store), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+    let action = drive_one_action(&core, store, &mut scheduler, &transport).unwrap();
+    assert!(matches!(
+        action,
+        RiscvCoreDriveAction::InstructionExecuted(_)
+    ));
+    assert!(core.has_pending_trap());
+
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        StatsRegistry::new(),
+    )));
+    let host_port = SystemHostEventPort::with_controller(host, 1, Arc::clone(&controller)).unwrap();
+    let trap_port = RiscvTrapEventPort::new(host_port, source);
+    let source_tick = scheduler.partition_now(guest).unwrap();
+
+    assert_eq!(
+        trap_port
+            .schedule_pending_core_trap(&mut scheduler, GuestEventId::new(65), &core)
+            .unwrap_err(),
+        SystemError::Scheduler(SchedulerError::RemoteDeliveryBeforeLookaheadBoundary {
+            source: guest,
+            target: host,
+            source_tick,
+            delivery_tick: source_tick + 1,
+            minimum_delivery_tick: source_tick + 2,
+        })
+    );
+    assert_eq!(scheduler.next_pending_tick(guest).unwrap(), None);
+    assert!(controller.lock().unwrap().run().deliveries().is_empty());
+}
+
+#[test]
 fn riscv_trap_event_port_reports_parallel_trap_lookahead_boundary() {
     let guest = PartitionId::new(0);
     let host = PartitionId::new(2);

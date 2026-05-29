@@ -98,12 +98,12 @@ isolated bugs:
   remote sends also reject inverted source/delivery ticks, so remote traffic
   evidence cannot be satisfied by local partition traffic or non-causal timing.
   Kernel remote scheduling also reports absolute lookahead-boundary violations
-  with source tick, requested delivery tick, and required minimum delivery tick,
-  so a cross-partition event that would violate deterministic remote-delivery
-  slack fails as typed replayable state instead of becoming an event-queue merge
-  side effect.
-  System-level parallel trap event preflight now uses the same absolute
-  delivery-boundary error before a host event is queued, and GPU plus
+  with source tick, requested delivery tick, and required minimum delivery tick
+  from both serial and parallel scheduler contexts, so a cross-partition event
+  that would violate deterministic remote-delivery slack fails as typed
+  replayable state instead of becoming an event-queue merge side effect.
+  System-level serial and parallel trap event preflight now uses the same
+  absolute delivery-boundary error before a host event is queued, and GPU plus
   accelerator submission preflight now checks the source partition clock
   against the same boundary before device work is enqueued, so guest-host
   notifications and device launches cannot bypass the kernel contract through
