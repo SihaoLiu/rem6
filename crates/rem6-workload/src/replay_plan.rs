@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use rem6_boot::BootImage;
 use rem6_kernel::Tick;
 
@@ -702,12 +704,12 @@ impl WorkloadReplayPlan {
     }
 
     fn verify_checkpoint_labels(&self, result: &WorkloadResult) -> Result<(), WorkloadError> {
+        let planned_counts = label_counts(&self.planned_checkpoint_labels);
+        let actual_counts = label_counts(result.checkpoint_labels());
         for label in result.checkpoint_labels() {
-            if !self
-                .planned_checkpoint_labels
-                .iter()
-                .any(|planned| planned == label)
-            {
+            let planned_count = planned_counts.get(label.as_str()).copied().unwrap_or(0);
+            let actual_count = actual_counts.get(label.as_str()).copied().unwrap_or(0);
+            if actual_count > planned_count {
                 return Err(WorkloadError::UnexpectedCheckpointLabel {
                     label: label.clone(),
                 });
@@ -715,11 +717,9 @@ impl WorkloadReplayPlan {
         }
 
         for label in &self.planned_checkpoint_labels {
-            if !result
-                .checkpoint_labels()
-                .iter()
-                .any(|actual| actual == label)
-            {
+            let planned_count = planned_counts.get(label.as_str()).copied().unwrap_or(0);
+            let actual_count = actual_counts.get(label.as_str()).copied().unwrap_or(0);
+            if actual_count < planned_count {
                 return Err(WorkloadError::MissingCheckpointLabel {
                     label: label.clone(),
                 });
@@ -733,12 +733,12 @@ impl WorkloadReplayPlan {
         &self,
         result: &WorkloadResult,
     ) -> Result<(), WorkloadError> {
+        let planned_counts = label_counts(&self.planned_checkpoint_restore_labels);
+        let actual_counts = label_counts(result.restored_checkpoint_labels());
         for label in result.restored_checkpoint_labels() {
-            if !self
-                .planned_checkpoint_restore_labels
-                .iter()
-                .any(|planned| planned == label)
-            {
+            let planned_count = planned_counts.get(label.as_str()).copied().unwrap_or(0);
+            let actual_count = actual_counts.get(label.as_str()).copied().unwrap_or(0);
+            if actual_count > planned_count {
                 return Err(WorkloadError::UnexpectedCheckpointRestoreLabel {
                     label: label.clone(),
                 });
@@ -746,11 +746,9 @@ impl WorkloadReplayPlan {
         }
 
         for label in &self.planned_checkpoint_restore_labels {
-            if !result
-                .restored_checkpoint_labels()
-                .iter()
-                .any(|actual| actual == label)
-            {
+            let planned_count = planned_counts.get(label.as_str()).copied().unwrap_or(0);
+            let actual_count = actual_counts.get(label.as_str()).copied().unwrap_or(0);
+            if actual_count < planned_count {
                 return Err(WorkloadError::MissingCheckpointRestoreLabel {
                     label: label.clone(),
                 });
@@ -1238,4 +1236,12 @@ fn checkpoint_chunk_payload_below_minimum<'a>(
         (actual_payload_bytes < chunk.minimum_payload_bytes())
             .then_some((chunk, actual_payload_bytes))
     })
+}
+
+fn label_counts(labels: &[String]) -> BTreeMap<&str, usize> {
+    let mut counts = BTreeMap::new();
+    for label in labels {
+        *counts.entry(label.as_str()).or_insert(0) += 1;
+    }
+    counts
 }
