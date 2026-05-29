@@ -494,6 +494,17 @@ Implementation evidence through 2026-05-29:
   the hard per-source-file size budget, so NoC, QoS, and scheduler integration
   growth does not recreate gem5-style event-queue and packet-routing
   monoliths.
+- `rem6-gpu` now keeps GPU device/kernel/workgroup/DMA ids, wait-for markers,
+  compute configuration, kernel launches, trace events, workgroup completion
+  records, and GPU error reporting in focused `command`, `trace`, and `error`
+  modules while leaving the crate root centered on execution, DMA
+  issue/completion, snapshots, wait-for diagnostics, and parallel run
+  summaries. GPU source-policy tests keep the crate root under the facade
+  budget, require those command, trace, and error contracts to stay out of the
+  root, and enforce the hard per-source-file size budget, so future
+  `src/gpu-compute` parity work can grow queues, compute-unit scheduling, and
+  DMA paths without recreating gem5-style command-processor and pipeline
+  monoliths.
 - `rem6-accelerator` now keeps command identifiers, command kinds, wait-for
   markers, engine configuration, accelerator trace events, and accelerator
   error reporting in focused `command`, `trace`, and `error` modules while
@@ -1894,6 +1905,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   modules while enforcing the hard module-size budget across cache sources.
   Transport source-policy tests keep route contracts in a focused module while
   enforcing the facade and hard module-size budgets across transport sources.
+  GPU source-policy tests keep command, trace, and error contracts in focused
+  modules while enforcing the facade and hard module-size budgets across GPU
+  sources.
   Accelerator source-policy tests keep command contracts and error reporting in
   focused modules while enforcing the facade and hard module-size budgets across
   accelerator sources.
