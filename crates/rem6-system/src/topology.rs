@@ -300,6 +300,11 @@ fn default_clint_checkpoint_component(clint: ClintId) -> CheckpointComponentId {
         .expect("formatted CLINT checkpoint component is nonempty")
 }
 
+fn default_plic_checkpoint_component(base: Address) -> CheckpointComponentId {
+    CheckpointComponentId::new(format!("plic.{:x}", base.get()))
+        .expect("formatted PLIC checkpoint component is nonempty")
+}
+
 fn default_uart_checkpoint_component(uart: UartId) -> CheckpointComponentId {
     CheckpointComponentId::new(format!("uart{}", uart.get()))
         .expect("formatted UART checkpoint component is nonempty")

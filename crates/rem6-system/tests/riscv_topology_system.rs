@@ -4,7 +4,10 @@ use rem6_boot::BootImage;
 use rem6_checkpoint::CheckpointComponentId;
 use rem6_cpu::{CpuId, CpuResetState, RiscvClusterTopologyConfig, RiscvCoreTopologyConfig};
 use rem6_dram::{DramGeometry, DramMemoryTechnology, DramTiming, ExternalMemoryProfile};
-use rem6_interrupt::{InterruptLineId, InterruptPriority, InterruptSourceId, InterruptTargetId};
+use rem6_interrupt::{
+    InterruptLineId, InterruptPriority, InterruptSourceId, InterruptTargetId, PlicContextSnapshot,
+    PlicSnapshot,
+};
 use rem6_kernel::{ClockDomain, PartitionId, PartitionedScheduler, SchedulerError};
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
@@ -12,8 +15,9 @@ use rem6_memory::{
 };
 use rem6_mmio::{MmioRequest, MmioRequestId};
 use rem6_platform::{
-    Platform, PlatformBuilder, PlatformClintConfig, PlatformClintHartConfig, PlatformTimerConfig,
-    PlatformTopologyRoute, PlatformUartConfig,
+    Platform, PlatformBuilder, PlatformClintConfig, PlatformClintHartConfig,
+    PlatformInterruptControllerConfig, PlatformInterruptControllerContextConfig,
+    PlatformTimerConfig, PlatformTopologyRoute, PlatformUartConfig,
 };
 use rem6_stats::StatsRegistry;
 use rem6_system::{
@@ -148,6 +152,26 @@ fn platform_with_clint(topology: &Topology, clint_id: ClintId) -> Platform {
                 timer_interrupt_line: rem6_interrupt::InterruptLineId::new(43),
                 timer_interrupt_source: rem6_interrupt::InterruptSourceId::new(53),
                 interrupt_latency: 2,
+            }],
+        })
+        .build()
+        .unwrap()
+}
+
+fn platform_with_plic(topology: &Topology, base: Address) -> Platform {
+    PlatformBuilder::from_topology(topology)
+        .add_interrupt_controller(PlatformInterruptControllerConfig {
+            base,
+            size: AccessSize::new(0x400_0000).unwrap(),
+            route: rem6_mmio::MmioRoute::new(PartitionId::new(0), PartitionId::new(3), 2, 2)
+                .unwrap(),
+            target: InterruptTargetId::new(0),
+            contexts: vec![PlatformInterruptControllerContextConfig {
+                context: 0,
+                hart: 0,
+                interrupt: 0xB,
+                target: InterruptTargetId::new(0),
+                target_partition: PartitionId::new(0),
             }],
         })
         .build()
@@ -1380,6 +1404,125 @@ fn topology_host_controller_checkpoints_attached_interrupt_controller() {
         }
     );
     assert_eq!(controller.lock().unwrap().snapshot(29), captured);
+}
+
+#[test]
+fn topology_host_controller_checkpoints_attached_plic() {
+    let topology = topology_with_timer();
+    let plic_base = Address::new(0x0c00_0000);
+    let platform = platform_with_plic(&topology, plic_base);
+    let source = GuestSourceId::new(49);
+    let system = RiscvTopologySystem::with_min_remote_delay(
+        topology,
+        RiscvClusterTopologyConfig::new([
+            core_config(0, 0, 7, 0x8000),
+            core_config(1, 1, 8, 0x9000),
+        ]),
+        2,
+    )
+    .unwrap()
+    .with_platform(platform)
+    .unwrap()
+    .with_host_controller(
+        RiscvTopologyHostConfig::new(PartitionId::new(4), 2, source),
+        StatsRegistry::new(),
+    )
+    .unwrap();
+    let host = system.host_controller().unwrap();
+    let component = CheckpointComponentId::new("plic.c000000").unwrap();
+    let target = InterruptTargetId::new(0);
+    let target_partition = PartitionId::new(0);
+    let line = InterruptLineId::new(41);
+    let captured = PlicSnapshot::new(
+        plic_base,
+        vec![PlicContextSnapshot::new(
+            0,
+            target,
+            target_partition,
+            vec![line],
+            InterruptPriority::new(5),
+        )],
+    );
+    let empty = PlicSnapshot::new(
+        plic_base,
+        vec![PlicContextSnapshot::new(
+            0,
+            target,
+            target_partition,
+            Vec::new(),
+            InterruptPriority::ZERO,
+        )],
+    );
+    let plic = system.platform().unwrap().plic(plic_base).unwrap().clone();
+    plic.restore(&captured).unwrap();
+    assert!(host
+        .lock()
+        .unwrap()
+        .executor()
+        .plic_checkpoint_bank()
+        .is_some());
+
+    let checkpoint = HostActionRecord::new(
+        31,
+        PartitionId::new(4),
+        PartitionId::new(4),
+        GuestEventId::new(196),
+        source,
+        HostAction::Checkpoint {
+            label: "attached-plic".to_string(),
+        },
+    );
+    let manifest = match host
+        .lock()
+        .unwrap()
+        .executor_mut()
+        .apply(&checkpoint)
+        .unwrap()
+    {
+        SystemActionOutcome::Checkpoint { manifest, .. } => manifest,
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+
+    assert!(manifest
+        .states()
+        .iter()
+        .any(|state| state.component() == &component));
+    assert!(
+        host.lock()
+            .unwrap()
+            .executor()
+            .checkpoints()
+            .chunk(&component, "plic")
+            .unwrap()
+            .len()
+            >= 52
+    );
+
+    plic.restore(&empty).unwrap();
+    assert_ne!(plic.snapshot(), captured);
+
+    let restore = HostActionRecord::new(
+        45,
+        PartitionId::new(4),
+        PartitionId::new(4),
+        GuestEventId::new(197),
+        source,
+        HostAction::RestoreCheckpoint {
+            manifest: manifest.clone(),
+        },
+    );
+    let restored = host.lock().unwrap().executor_mut().apply(&restore).unwrap();
+
+    assert_eq!(
+        restored,
+        SystemActionOutcome::CheckpointRestored {
+            tick: 45,
+            event: GuestEventId::new(197),
+            source,
+            manifest,
+        }
+    );
+    assert_eq!(plic.snapshot(), captured);
 }
 
 #[test]

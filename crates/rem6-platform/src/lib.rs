@@ -955,6 +955,7 @@ impl PlatformBuilder {
         let controller = Arc::new(Mutex::new(InterruptController::new()));
         let mut bus = MmioBus::new();
         let mut clints = BTreeMap::new();
+        let mut plics = BTreeMap::new();
         let mut timers = BTreeMap::new();
         let mut uarts = BTreeMap::new();
 
@@ -983,8 +984,13 @@ impl PlatformBuilder {
                     }),
                 )
             };
-            bus.insert_device(region(config.base, config.size)?, config.route, device)
-                .map_err(PlatformError::Mmio)?;
+            bus.insert_device(
+                region(config.base, config.size)?,
+                config.route,
+                device.clone(),
+            )
+            .map_err(PlatformError::Mmio)?;
+            plics.insert(config.base, device);
         }
 
         for config in self.timers {
@@ -1076,6 +1082,7 @@ impl PlatformBuilder {
             interrupt_controller: controller,
             mmio_bus: bus,
             clints,
+            plics,
             timers,
             uarts,
             device_tree_inventory,
@@ -1089,6 +1096,7 @@ pub struct Platform {
     interrupt_controller: Arc<Mutex<InterruptController>>,
     mmio_bus: MmioBus,
     clints: BTreeMap<ClintId, ClintMmioDevice>,
+    plics: BTreeMap<Address, PlicMmioDevice>,
     timers: BTreeMap<TimerId, ProgrammableTimer>,
     uarts: BTreeMap<UartId, UartMmioDevice>,
     device_tree_inventory: PlatformDeviceTreeInventory,
@@ -1113,6 +1121,14 @@ impl Platform {
 
     pub fn clints(&self) -> impl Iterator<Item = (ClintId, &ClintMmioDevice)> {
         self.clints.iter().map(|(id, device)| (*id, device))
+    }
+
+    pub fn plic(&self, base: Address) -> Option<&PlicMmioDevice> {
+        self.plics.get(&base)
+    }
+
+    pub fn plics(&self) -> impl Iterator<Item = (Address, &PlicMmioDevice)> {
+        self.plics.iter().map(|(base, device)| (*base, device))
     }
 
     pub fn timer(&self, id: TimerId) -> Option<&ProgrammableTimer> {

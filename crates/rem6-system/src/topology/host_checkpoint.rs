@@ -5,17 +5,17 @@ use crate::{
     DramMemoryCheckpointBank, DramMemoryCheckpointPort, FabricCheckpointBank, FabricCheckpointPort,
     GpuCheckpointBank, GpuCheckpointPort, InterruptControllerCheckpointBank,
     InterruptControllerCheckpointPort, MemoryStoreCheckpointBank, MemoryStoreCheckpointPort,
-    RiscvCoreCheckpointBank, RiscvCoreCheckpointPort, SchedulerCheckpointBank,
-    SchedulerCheckpointPort, SystemError, TimerCheckpointBank, TimerCheckpointPort,
-    UartCheckpointBank, UartCheckpointPort,
+    PlicCheckpointBank, PlicCheckpointPort, RiscvCoreCheckpointBank, RiscvCoreCheckpointPort,
+    SchedulerCheckpointBank, SchedulerCheckpointPort, SystemError, TimerCheckpointBank,
+    TimerCheckpointPort, UartCheckpointBank, UartCheckpointPort,
 };
 
 use super::{
     default_accelerator_checkpoint_component, default_clint_checkpoint_component,
     default_gpu_checkpoint_component, default_interrupt_checkpoint_component,
-    default_riscv_checkpoint_component, default_timer_checkpoint_component,
-    default_uart_checkpoint_component, RiscvTopologyMemoryBackend, RiscvTopologySystem,
-    RiscvTopologySystemError,
+    default_plic_checkpoint_component, default_riscv_checkpoint_component,
+    default_timer_checkpoint_component, default_uart_checkpoint_component,
+    RiscvTopologyMemoryBackend, RiscvTopologySystem, RiscvTopologySystemError,
 };
 
 impl RiscvTopologySystem {
@@ -230,6 +230,21 @@ impl RiscvTopologySystem {
                 .expect("topology host controller lock")
                 .executor_mut()
                 .attach_clint_checkpoint_bank(clint_bank)
+                .map_err(SystemError::Checkpoint)
+                .map_err(RiscvTopologySystemError::System)?;
+        }
+
+        let plic_bank = PlicCheckpointBank::new(platform.plics().map(|(base, device)| {
+            PlicCheckpointPort::new(default_plic_checkpoint_component(base), device.clone())
+        }))
+        .map_err(SystemError::Checkpoint)
+        .map_err(RiscvTopologySystemError::System)?;
+        if plic_bank.component_count() != 0 {
+            host.controller
+                .lock()
+                .expect("topology host controller lock")
+                .executor_mut()
+                .attach_plic_checkpoint_bank(plic_bank)
                 .map_err(SystemError::Checkpoint)
                 .map_err(RiscvTopologySystemError::System)?;
         }
