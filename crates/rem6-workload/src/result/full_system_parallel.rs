@@ -592,7 +592,7 @@ impl WorkloadParallelExecutionSummary {
     pub(crate) fn raw_full_system_parallel_scheduler_partition_activities(
         &self,
     ) -> &[(PartitionId, ParallelPartitionActivity)] {
-        &self.full_system_parallel_scheduler_partition_activities
+        &self.raw_full_system_parallel_scheduler_partition_activities
     }
 
     pub(crate) fn full_system_parallel_scheduler_partition_activity_lower_bound(

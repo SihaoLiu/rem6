@@ -901,6 +901,11 @@ Implementation evidence on 2026-05-26:
   lower-bound evidence for the same partition. Worker, dispatch, remote-send,
   remote-receive, and pending-event counts therefore cannot be hidden by
   lower-bound aggregation after a weak global activity summary is reported.
+- Explicit recorded full-system per-partition activity records also retain raw
+  replay evidence separately from the normalized reporting view. Replay audits
+  each global partition activity record before duplicate same-partition
+  activity can be merged, so contradictory weak records cannot combine into a
+  passing full-system summary.
 - Workload full-system remote-traffic reporting now accepts explicit merged
   full-system remote flow and send records. A global scheduler can report
   cross-partition communication directly while same-route scoped flow evidence
