@@ -111,6 +111,22 @@ impl IdeTransfer {
             && !self.is_complete()
     }
 
+    pub(crate) fn completed_sector_data(&self) -> Option<(u64, [u8; 512])> {
+        if self.cursor == 0 || !self.cursor.is_multiple_of(STORAGE_SECTOR_BYTES as usize) {
+            return None;
+        }
+        let sector_index = self.cursor / STORAGE_SECTOR_BYTES as usize - 1;
+        let payload_offset = sector_index * STORAGE_SECTOR_BYTES as usize;
+        if payload_offset + STORAGE_SECTOR_BYTES as usize > self.payload.len() {
+            return None;
+        }
+        let mut sector = [0_u8; STORAGE_SECTOR_BYTES as usize];
+        sector.copy_from_slice(
+            &self.payload[payload_offset..payload_offset + STORAGE_SECTOR_BYTES as usize],
+        );
+        Some((self.start_sector + sector_index as u64, sector))
+    }
+
     pub(crate) fn snapshot(&self) -> IdeDiskTransferSnapshot {
         match self.direction {
             IdeTransferDirection::Input => IdeDiskTransferSnapshot::Input {

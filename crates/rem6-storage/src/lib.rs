@@ -14,6 +14,7 @@ mod ide_error;
 mod ide_identify;
 mod ide_pci;
 mod ide_snapshot;
+mod ide_task_file;
 mod ide_timing;
 mod ide_transfer;
 mod simple_disk;
@@ -24,20 +25,20 @@ pub use checkpoint::{
     StorageImageCheckpointRecord, StorageImageCheckpointSnapshot,
 };
 pub(crate) use ide::IdeDataReadIssue;
+pub(crate) use ide::IdeDataWriteIssue;
 pub use ide::{
     IdeBarWriteOutcome, IdeChannelId, IdeCommandIssue, IdeController, IdeControllerBar,
-    IdeControllerDispatch, IdeDeviceId, IdeDisk, IdeTaskFile, IDE_ALTSTAT_OFFSET,
-    IDE_BMI_CHANNEL_BYTES, IDE_BMI_COMMAND_OFFSET, IDE_BMI_COMMAND_RW, IDE_BMI_COMMAND_START,
-    IDE_BMI_PRD_TABLE_OFFSET, IDE_BMI_STATUS_ACTIVE, IDE_BMI_STATUS_DMA_CAP0,
-    IDE_BMI_STATUS_DMA_CAP1, IDE_BMI_STATUS_DMA_ERROR, IDE_BMI_STATUS_INTERRUPT,
-    IDE_BMI_STATUS_OFFSET, IDE_COMMAND_ATAPI_IDENTIFY_DEVICE, IDE_COMMAND_IDENTIFY,
-    IDE_COMMAND_OFFSET, IDE_COMMAND_READ, IDE_COMMAND_READ_DMA, IDE_COMMAND_READ_MULTI,
-    IDE_COMMAND_READ_NATIVE_MAX, IDE_COMMAND_WRITE, IDE_COMMAND_WRITE_DMA, IDE_COMMAND_WRITE_MULTI,
-    IDE_CONTROL_IEN, IDE_CONTROL_OFFSET, IDE_CONTROL_RST, IDE_DATA_OFFSET, IDE_DRIVE_DEVICE1,
-    IDE_DRIVE_LBA, IDE_DRIVE_OFFSET, IDE_ERROR_ABORT, IDE_ERROR_OFFSET, IDE_FEATURES_OFFSET,
-    IDE_HCYL_OFFSET, IDE_LCYL_OFFSET, IDE_NSECTOR_OFFSET, IDE_SECTOR_OFFSET, IDE_STATUS_BSY,
-    IDE_STATUS_DF, IDE_STATUS_DRDY, IDE_STATUS_DRQ, IDE_STATUS_ERR, IDE_STATUS_OFFSET,
-    IDE_STATUS_SEEK,
+    IdeControllerDispatch, IdeDeviceId, IdeDisk, IDE_ALTSTAT_OFFSET, IDE_BMI_CHANNEL_BYTES,
+    IDE_BMI_COMMAND_OFFSET, IDE_BMI_COMMAND_RW, IDE_BMI_COMMAND_START, IDE_BMI_PRD_TABLE_OFFSET,
+    IDE_BMI_STATUS_ACTIVE, IDE_BMI_STATUS_DMA_CAP0, IDE_BMI_STATUS_DMA_CAP1,
+    IDE_BMI_STATUS_DMA_ERROR, IDE_BMI_STATUS_INTERRUPT, IDE_BMI_STATUS_OFFSET,
+    IDE_COMMAND_ATAPI_IDENTIFY_DEVICE, IDE_COMMAND_IDENTIFY, IDE_COMMAND_OFFSET, IDE_COMMAND_READ,
+    IDE_COMMAND_READ_DMA, IDE_COMMAND_READ_MULTI, IDE_COMMAND_READ_NATIVE_MAX, IDE_COMMAND_WRITE,
+    IDE_COMMAND_WRITE_DMA, IDE_COMMAND_WRITE_MULTI, IDE_CONTROL_IEN, IDE_CONTROL_OFFSET,
+    IDE_CONTROL_RST, IDE_DATA_OFFSET, IDE_DRIVE_DEVICE1, IDE_DRIVE_LBA, IDE_DRIVE_OFFSET,
+    IDE_ERROR_ABORT, IDE_ERROR_OFFSET, IDE_FEATURES_OFFSET, IDE_HCYL_OFFSET, IDE_LCYL_OFFSET,
+    IDE_NSECTOR_OFFSET, IDE_SECTOR_OFFSET, IDE_STATUS_BSY, IDE_STATUS_DF, IDE_STATUS_DRDY,
+    IDE_STATUS_DRQ, IDE_STATUS_ERR, IDE_STATUS_OFFSET, IDE_STATUS_SEEK,
 };
 pub use ide_dma::{IdeControllerGuestMemory, IdeDmaDirection};
 pub(crate) use ide_dma::{IdeDmaPlan, IdeDmaRequest};
@@ -54,7 +55,8 @@ pub use ide_snapshot::{
     IdeBmiSnapshot, IdeChannelSnapshot, IdeControllerSnapshot, IdeDiskSnapshot,
     IdeDiskTransferSnapshot, IdePendingCommandSnapshot,
 };
-pub use ide_timing::{IdeControllerTimingPort, IdeTimedDataRead};
+pub use ide_task_file::IdeTaskFile;
+pub use ide_timing::{IdeControllerTimingPort, IdeTimedDataRead, IdeTimedDataWrite};
 pub(crate) use ide_transfer::{IdePendingCommand, IdeTransfer, IdeTransferDirection};
 pub use simple_disk::{SimpleDisk, SimpleDiskError, SimpleDiskGuestMemory, SimpleDiskTransfer};
 

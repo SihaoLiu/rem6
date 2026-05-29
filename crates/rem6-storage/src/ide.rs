@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::{
     ide_identify_payload, IdeBmiSnapshot, IdeChannelSnapshot, IdeControllerError,
     IdeControllerGuestMemory, IdeControllerSnapshot, IdeDiskError, IdeDiskSnapshot,
-    IdeDmaDirection, IdeDmaPlan, IdeDmaRequest, IdePendingCommand, IdeTransfer,
+    IdeDmaDirection, IdeDmaPlan, IdeDmaRequest, IdePendingCommand, IdeTaskFile, IdeTransfer,
     IdeTransferDirection, StorageError, StorageImageLayer, StorageSectorId, STORAGE_SECTOR_BYTES,
 };
 
@@ -156,6 +156,27 @@ impl IdeDataReadIssue {
 
     pub(crate) const fn word(self) -> u16 {
         self.word
+    }
+
+    pub(crate) const fn sector_delay(self) -> bool {
+        self.sector_delay
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct IdeDataWriteIssue {
+    sector_delay: bool,
+}
+
+impl IdeDataWriteIssue {
+    const fn ready() -> Self {
+        Self {
+            sector_delay: false,
+        }
+    }
+
+    const fn delayed() -> Self {
+        Self { sector_delay: true }
     }
 
     pub(crate) const fn sector_delay(self) -> bool {
@@ -512,6 +533,26 @@ impl IdeController {
         Ok(())
     }
 
+    pub(crate) fn write_data_u16_timed(
+        &mut self,
+        channel: IdeChannelId,
+        value: u16,
+    ) -> Result<IdeDataWriteIssue, IdeControllerError> {
+        let command_channel = self.channel_mut(channel);
+        let selected_device = command_channel.selected_device;
+        let disk = command_channel
+            .selected_mut()
+            .ok_or(IdeControllerError::NoSelectedDevice {
+                channel,
+                device: selected_device,
+            })?;
+        let issue = disk
+            .write_data_u16_timed(value)
+            .map_err(|source| IdeControllerError::Disk { channel, source })?;
+        command_channel.refresh_interrupt();
+        Ok(issue)
+    }
+
     pub fn read_bmi_u8(&self, channel: IdeChannelId, offset: u8) -> Result<u8, IdeControllerError> {
         self.channel(channel).bmi.read_u8(channel, offset)
     }
@@ -656,6 +697,24 @@ impl IdeController {
                 device: selected_device,
             })?;
         disk.complete_timed_data_read()
+            .map_err(|source| IdeControllerError::Disk { channel, source })?;
+        command_channel.refresh_interrupt();
+        Ok(())
+    }
+
+    pub(crate) fn complete_timed_data_write(
+        &mut self,
+        channel: IdeChannelId,
+    ) -> Result<(), IdeControllerError> {
+        let command_channel = self.channel_mut(channel);
+        let selected_device = command_channel.selected_device;
+        let disk = command_channel
+            .selected_mut()
+            .ok_or(IdeControllerError::NoSelectedDevice {
+                channel,
+                device: selected_device,
+            })?;
+        disk.complete_timed_data_write()
             .map_err(|source| IdeControllerError::Disk { channel, source })?;
         command_channel.refresh_interrupt();
         Ok(())
@@ -1242,6 +1301,9 @@ impl IdeDisk {
     }
 
     pub fn write_data_u16(&mut self, value: u16) -> Result<(), IdeDiskError> {
+        if self.status & IDE_STATUS_DRQ == 0 {
+            return Err(IdeDiskError::DataWriteNotReady);
+        }
         let transfer = self
             .transfer
             .as_mut()
@@ -1258,6 +1320,44 @@ impl IdeDisk {
         Ok(())
     }
 
+    fn write_data_u16_timed(&mut self, value: u16) -> Result<IdeDataWriteIssue, IdeDiskError> {
+        if self.status & IDE_STATUS_DRQ == 0 {
+            return Err(IdeDiskError::DataWriteNotReady);
+        }
+        let write = {
+            let transfer = self
+                .transfer
+                .as_mut()
+                .ok_or(IdeDiskError::DataWriteNotReady)?;
+            if transfer.direction != IdeTransferDirection::Output {
+                return Err(IdeDiskError::DataWriteNotReady);
+            }
+            transfer.write_word(value)?;
+            let needs_sector_commit = transfer.is_complete() || transfer.sector_boundary();
+            let sector = if needs_sector_commit {
+                transfer.completed_sector_data()
+            } else {
+                None
+            };
+            (sector, transfer.is_complete(), transfer.sector_boundary())
+        };
+
+        if let Some((sector, data)) = write.0 {
+            self.image
+                .write_sector(StorageSectorId::new(sector), data)?;
+        }
+        if write.1 {
+            self.complete_data_transfer();
+            return Ok(IdeDataWriteIssue::ready());
+        }
+        if write.2 {
+            self.status = IDE_STATUS_DRDY | IDE_STATUS_BSY;
+            self.pending_interrupt = false;
+            return Ok(IdeDataWriteIssue::delayed());
+        }
+        Ok(IdeDataWriteIssue::ready())
+    }
+
     fn complete_timed_data_read(&mut self) -> Result<(), IdeDiskError> {
         let transfer = self
             .transfer
@@ -1265,6 +1365,19 @@ impl IdeDisk {
             .ok_or(IdeDiskError::DataReadNotReady)?;
         if transfer.direction != IdeTransferDirection::Input {
             return Err(IdeDiskError::DataReadNotReady);
+        }
+        self.status = IDE_STATUS_DRDY | IDE_STATUS_DRQ;
+        self.pending_interrupt = !self.interrupts_disabled();
+        Ok(())
+    }
+
+    fn complete_timed_data_write(&mut self) -> Result<(), IdeDiskError> {
+        let transfer = self
+            .transfer
+            .as_ref()
+            .ok_or(IdeDiskError::DataWriteNotReady)?;
+        if transfer.direction != IdeTransferDirection::Output {
+            return Err(IdeDiskError::DataWriteNotReady);
         }
         self.status = IDE_STATUS_DRDY | IDE_STATUS_DRQ;
         self.pending_interrupt = !self.interrupts_disabled();
@@ -1569,85 +1682,5 @@ impl IdeDisk {
 
     const fn interrupts_disabled(&self) -> bool {
         self.control & IDE_CONTROL_IEN != 0
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct IdeTaskFile {
-    error: u8,
-    sector_count: u8,
-    sector_number: u8,
-    cylinder_low: u8,
-    cylinder_high: u8,
-    drive: u8,
-    command: u8,
-}
-
-impl IdeTaskFile {
-    const fn reset() -> Self {
-        Self {
-            error: 0x01,
-            sector_count: 0,
-            sector_number: 0,
-            cylinder_low: 0,
-            cylinder_high: 0,
-            drive: 0,
-            command: 0,
-        }
-    }
-
-    pub(crate) const fn from_registers(
-        error: u8,
-        sector_count: u8,
-        sector_number: u8,
-        cylinder_low: u8,
-        cylinder_high: u8,
-        drive: u8,
-        command: u8,
-    ) -> Self {
-        Self {
-            error,
-            sector_count,
-            sector_number,
-            cylinder_low,
-            cylinder_high,
-            drive,
-            command,
-        }
-    }
-
-    fn lba_base(self) -> u64 {
-        (u64::from(self.drive & 0x0f) << 24)
-            | (u64::from(self.cylinder_high) << 16)
-            | (u64::from(self.cylinder_low) << 8)
-            | u64::from(self.sector_number)
-    }
-
-    pub const fn error(self) -> u8 {
-        self.error
-    }
-
-    pub const fn sector_count(self) -> u8 {
-        self.sector_count
-    }
-
-    pub const fn sector_number(self) -> u8 {
-        self.sector_number
-    }
-
-    pub const fn cylinder_low(self) -> u8 {
-        self.cylinder_low
-    }
-
-    pub const fn cylinder_high(self) -> u8 {
-        self.cylinder_high
-    }
-
-    pub const fn drive(self) -> u8 {
-        self.drive
-    }
-
-    pub const fn command(self) -> u8 {
-        self.command
     }
 }

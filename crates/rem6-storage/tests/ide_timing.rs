@@ -10,10 +10,10 @@ use rem6_pci::{
 };
 use rem6_storage::{
     IdeChannelId, IdeController, IdeControllerError, IdeControllerTimingPort, IdeDeviceId, IdeDisk,
-    IdeDiskError, IdePciEndpointSpec, RawStorageImage, StorageImageLayer, IDE_COMMAND_READ,
-    IDE_CONTROL_IEN, IDE_CONTROL_OFFSET, IDE_DRIVE_LBA, IDE_DRIVE_OFFSET, IDE_HCYL_OFFSET,
-    IDE_LCYL_OFFSET, IDE_NSECTOR_OFFSET, IDE_PCI_DEVICE_ID, IDE_SECTOR_OFFSET, IDE_STATUS_BSY,
-    IDE_STATUS_DRDY, IDE_STATUS_DRQ, IDE_STATUS_OFFSET,
+    IdeDiskError, IdePciEndpointSpec, RawStorageImage, StorageImageLayer, StorageSectorId,
+    IDE_COMMAND_READ, IDE_COMMAND_WRITE, IDE_CONTROL_IEN, IDE_CONTROL_OFFSET, IDE_DRIVE_LBA,
+    IDE_DRIVE_OFFSET, IDE_HCYL_OFFSET, IDE_LCYL_OFFSET, IDE_NSECTOR_OFFSET, IDE_PCI_DEVICE_ID,
+    IDE_SECTOR_OFFSET, IDE_STATUS_BSY, IDE_STATUS_DRDY, IDE_STATUS_DRQ, IDE_STATUS_OFFSET,
 };
 
 fn function() -> PciFunctionAddress {
@@ -30,6 +30,12 @@ fn two_sector_disk(first: u8, second: u8, device_id: IdeDeviceId) -> IdeDisk {
     bytes.extend(vec![second; 512]);
     let image = Arc::new(RawStorageImage::from_bytes(bytes).unwrap());
     IdeDisk::new(image as Arc<dyn StorageImageLayer>, device_id).unwrap()
+}
+
+fn two_sector_image(first: u8, second: u8) -> Arc<RawStorageImage> {
+    let mut bytes = vec![first; 512];
+    bytes.extend(vec![second; 512]);
+    Arc::new(RawStorageImage::from_bytes(bytes).unwrap())
 }
 
 fn legacy_interrupt_port(
@@ -85,6 +91,16 @@ fn assert_data_read_not_ready(error: IdeControllerError) {
         error,
         IdeControllerError::Disk {
             source: IdeDiskError::DataReadNotReady,
+            ..
+        }
+    ));
+}
+
+fn assert_data_write_not_ready(error: IdeControllerError) {
+    assert!(matches!(
+        error,
+        IdeControllerError::Disk {
+            source: IdeDiskError::DataWriteNotReady,
             ..
         }
     ));
@@ -284,6 +300,128 @@ fn ide_timing_port_delays_next_pio_read_sector_in_parallel() {
             .unwrap()
             .read_data_u16(IdeChannelId::Primary),
         Ok(0x2222)
+    );
+    assert!(timing.completion_errors().lock().unwrap().is_empty());
+}
+
+#[test]
+fn ide_timing_port_delays_next_pio_write_sector_in_parallel() {
+    let pci = PartitionId::new(1);
+    let image = two_sector_image(0x00, 0x00);
+    let controller = Arc::new(Mutex::new(
+        IdeController::new([
+            Some(
+                IdeDisk::new(
+                    image.clone() as Arc<dyn StorageImageLayer>,
+                    IdeDeviceId::Device0,
+                )
+                .unwrap(),
+            ),
+            None,
+            None,
+            None,
+        ])
+        .unwrap(),
+    ));
+    {
+        let mut controller = controller.lock().unwrap();
+        issue_lba_read_registers_with_sectors(&mut controller, 2);
+        controller
+            .write_control_u8(IdeChannelId::Primary, IDE_CONTROL_OFFSET, IDE_CONTROL_IEN)
+            .unwrap();
+    }
+    let timing = IdeControllerTimingPort::new(Arc::clone(&controller), 3).unwrap();
+    let issue_timing = timing.clone();
+    let write_first_timing = timing.clone();
+    let write_second_timing = timing.clone();
+    let issue_controller = Arc::clone(&controller);
+    let observe_controller = Arc::clone(&controller);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    scheduler
+        .schedule_parallel_at(pci, 5, move |context| {
+            assert!(issue_timing
+                .write_command_u8_parallel(
+                    context,
+                    IdeChannelId::Primary,
+                    IDE_STATUS_OFFSET,
+                    IDE_COMMAND_WRITE,
+                )
+                .unwrap()
+                .is_some());
+            assert_eq!(
+                issue_controller
+                    .lock()
+                    .unwrap()
+                    .read_control_u8(IdeChannelId::Primary, rem6_storage::IDE_ALTSTAT_OFFSET),
+                Ok(IDE_STATUS_DRDY | IDE_STATUS_BSY)
+            );
+        })
+        .unwrap();
+    scheduler
+        .schedule_parallel_at(pci, 9, move |context| {
+            for word in 0..256 {
+                let write = write_first_timing
+                    .write_data_u16_parallel(context, IdeChannelId::Primary, 0x1111)
+                    .unwrap();
+                if word == 255 {
+                    assert!(write.completion_event().is_some());
+                } else {
+                    assert!(write.completion_event().is_none());
+                }
+            }
+            assert_eq!(
+                write_first_timing
+                    .controller()
+                    .lock()
+                    .unwrap()
+                    .read_control_u8(IdeChannelId::Primary, rem6_storage::IDE_ALTSTAT_OFFSET),
+                Ok(IDE_STATUS_DRDY | IDE_STATUS_BSY)
+            );
+            assert_data_write_not_ready(
+                write_first_timing
+                    .write_data_u16_parallel(context, IdeChannelId::Primary, 0x2222)
+                    .unwrap_err(),
+            );
+        })
+        .unwrap();
+    scheduler
+        .schedule_parallel_at(pci, 10, move |_| {
+            assert_eq!(
+                observe_controller
+                    .lock()
+                    .unwrap()
+                    .read_control_u8(IdeChannelId::Primary, rem6_storage::IDE_ALTSTAT_OFFSET),
+                Ok(IDE_STATUS_DRDY | IDE_STATUS_BSY)
+            );
+        })
+        .unwrap();
+    scheduler
+        .schedule_parallel_at(pci, 13, move |context| {
+            for word in 0..256 {
+                let write = write_second_timing
+                    .write_data_u16_parallel(context, IdeChannelId::Primary, 0x2222)
+                    .unwrap();
+                assert!(write.completion_event().is_none(), "{word}");
+            }
+        })
+        .unwrap();
+
+    scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(
+        controller
+            .lock()
+            .unwrap()
+            .read_control_u8(IdeChannelId::Primary, rem6_storage::IDE_ALTSTAT_OFFSET),
+        Ok(IDE_STATUS_DRDY | rem6_storage::IDE_STATUS_SEEK)
+    );
+    assert_eq!(
+        image.read_sector(StorageSectorId::new(0)).unwrap(),
+        [0x11; 512]
+    );
+    assert_eq!(
+        image.read_sector(StorageSectorId::new(1)).unwrap(),
+        [0x22; 512]
     );
     assert!(timing.completion_errors().lock().unwrap().is_empty());
 }
