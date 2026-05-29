@@ -1,8 +1,10 @@
 use rem6_timer::{
-    Mc146818Rtc, RtcDateTime, RtcEncoding, RtcError, RTC_DAY_OF_MONTH_REGISTER,
-    RTC_DAY_OF_WEEK_REGISTER, RTC_HOURS_REGISTER, RTC_MINUTES_REGISTER, RTC_MONTH_REGISTER,
+    Mc146818Rtc, RtcDateTime, RtcEncoding, RtcError, RtcInterruptFlags, RTC_DAY_OF_MONTH_REGISTER,
+    RTC_DAY_OF_WEEK_REGISTER, RTC_HOURS_ALARM_REGISTER, RTC_HOURS_REGISTER,
+    RTC_MINUTES_ALARM_REGISTER, RTC_MINUTES_REGISTER, RTC_MONTH_REGISTER,
     RTC_SECONDS_ALARM_REGISTER, RTC_SECONDS_REGISTER, RTC_STATUS_A_REGISTER, RTC_STATUS_B_REGISTER,
-    RTC_STATUS_C_REGISTER, RTC_STATUS_D_REGISTER, RTC_YEARS_REGISTER,
+    RTC_STATUS_C_AF, RTC_STATUS_C_IRQF, RTC_STATUS_C_REGISTER, RTC_STATUS_C_UF,
+    RTC_STATUS_D_REGISTER, RTC_YEARS_REGISTER,
 };
 
 #[test]
@@ -61,6 +63,54 @@ fn mc146818_rtc_tick_rolls_over_leap_day_and_honors_set_bit() {
 
     assert_eq!(rtc.read_register(RTC_SECONDS_REGISTER).unwrap(), 0x00);
     assert_eq!(rtc.read_register(RTC_DAY_OF_MONTH_REGISTER).unwrap(), 0x01);
+}
+
+#[test]
+fn mc146818_rtc_tick_records_update_and_alarm_flags() {
+    let time = RtcDateTime::new(2026, 5, 29, 1, 2, 3, 6).unwrap();
+    let mut rtc = Mc146818Rtc::new(time, RtcEncoding::Bcd).unwrap();
+    let status_b = rtc.read_register(RTC_STATUS_B_REGISTER).unwrap();
+    rtc.write_register(RTC_STATUS_B_REGISTER, status_b | 0x30)
+        .unwrap();
+    rtc.write_register(RTC_SECONDS_ALARM_REGISTER, 0x04)
+        .unwrap();
+    rtc.write_register(RTC_MINUTES_ALARM_REGISTER, 0x02)
+        .unwrap();
+    rtc.write_register(RTC_HOURS_ALARM_REGISTER, 0x01).unwrap();
+
+    let flags = rtc.tick_second().unwrap();
+
+    assert_eq!(flags, RtcInterruptFlags::new(true, true, false));
+    assert_eq!(
+        rtc.read_register_clearing(RTC_STATUS_C_REGISTER).unwrap(),
+        RTC_STATUS_C_IRQF | RTC_STATUS_C_AF | RTC_STATUS_C_UF
+    );
+    assert_eq!(
+        rtc.read_register_clearing(RTC_STATUS_C_REGISTER).unwrap(),
+        0
+    );
+}
+
+#[test]
+fn mc146818_rtc_alarm_registers_support_wildcards() {
+    let time = RtcDateTime::new(2026, 5, 29, 1, 2, 58, 6).unwrap();
+    let mut rtc = Mc146818Rtc::new(time, RtcEncoding::Bcd).unwrap();
+    let status_b = rtc.read_register(RTC_STATUS_B_REGISTER).unwrap();
+    rtc.write_register(RTC_STATUS_B_REGISTER, status_b | 0x20)
+        .unwrap();
+    rtc.write_register(RTC_SECONDS_ALARM_REGISTER, 0xc0)
+        .unwrap();
+    rtc.write_register(RTC_MINUTES_ALARM_REGISTER, 0xc0)
+        .unwrap();
+    rtc.write_register(RTC_HOURS_ALARM_REGISTER, 0xc0).unwrap();
+
+    let flags = rtc.tick_second().unwrap();
+
+    assert_eq!(flags, RtcInterruptFlags::new(false, true, false));
+    assert_eq!(
+        rtc.read_register_clearing(RTC_STATUS_C_REGISTER).unwrap(),
+        RTC_STATUS_C_IRQF | RTC_STATUS_C_AF
+    );
 }
 
 #[test]

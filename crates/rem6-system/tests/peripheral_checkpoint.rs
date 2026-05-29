@@ -21,7 +21,8 @@ use rem6_system::{
 use rem6_timer::{
     ClintHartConfig, ClintHartSnapshot, ClintMmioDevice, ClintSnapshot, Mc146818Rtc,
     Mc146818RtcMmioDevice, Mc146818RtcMmioSnapshot, ProgrammableTimer, RtcDateTime, RtcEncoding,
-    RtcSnapshot, TimerArm, TimerId, TimerSnapshot, RTC_CMOS_REGISTER_COUNT,
+    RtcSnapshot, TimerArm, TimerId, TimerSnapshot, RTC_CMOS_REGISTER_COUNT, RTC_STATUS_C_AF,
+    RTC_STATUS_C_IRQF, RTC_STATUS_C_UF,
 };
 use rem6_uart::{UartId, UartMmioDevice, UartSnapshot, UartTxByte};
 
@@ -87,15 +88,25 @@ fn rtc_snapshot(
     cmos_index: usize,
     cmos_value: u8,
 ) -> Mc146818RtcMmioSnapshot {
+    rtc_snapshot_with_status_c(selected_address, cmos_index, cmos_value, 0)
+}
+
+fn rtc_snapshot_with_status_c(
+    selected_address: u8,
+    cmos_index: usize,
+    cmos_value: u8,
+    status_c: u8,
+) -> Mc146818RtcMmioSnapshot {
     let mut cmos = [0; RTC_CMOS_REGISTER_COUNT];
     cmos[cmos_index] = cmos_value;
     Mc146818RtcMmioSnapshot::new(
         selected_address,
         cmos,
-        RtcSnapshot::new(
+        RtcSnapshot::with_status_c(
             [0x03, 0, 0x02, 0, 0x01, 0, 0x06, 0x29, 0x05, 0x26],
             0x26,
             0x42,
+            status_c,
         ),
     )
 }
@@ -417,7 +428,12 @@ fn system_action_executor_checkpoints_and_restores_plic_state() {
 #[test]
 fn system_action_executor_checkpoints_and_restores_rtc_state() {
     let component = checkpoint_component("rtc.70");
-    let captured = rtc_snapshot(0xa0, 0x20, 0x5a);
+    let captured = rtc_snapshot_with_status_c(
+        0xa0,
+        0x20,
+        0x5a,
+        RTC_STATUS_C_IRQF | RTC_STATUS_C_AF | RTC_STATUS_C_UF,
+    );
     let empty = rtc_device(0x70).snapshot();
     let live = rtc_device(0x70);
     live.restore(&captured).unwrap();

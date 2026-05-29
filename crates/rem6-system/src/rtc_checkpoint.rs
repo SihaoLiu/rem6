@@ -258,6 +258,7 @@ fn encode_rtc(snapshot: &Mc146818RtcMmioSnapshot) -> Vec<u8> {
     payload.extend_from_slice(snapshot.rtc().clock_data());
     write_u8(&mut payload, snapshot.rtc().status_a());
     write_u8(&mut payload, snapshot.rtc().status_b());
+    write_u8(&mut payload, snapshot.rtc().status_c());
     payload
 }
 
@@ -273,12 +274,13 @@ fn decode_rtc(
     clock_data.copy_from_slice(cursor.read_bytes("clock_data", RTC_CLOCK_REGISTER_COUNT)?);
     let status_a = cursor.read_u8("status_a")?;
     let status_b = cursor.read_u8("status_b")?;
+    let status_c = cursor.read_u8("status_c")?;
     cursor.finish()?;
 
     Ok(Mc146818RtcMmioSnapshot::new(
         selected_address,
         cmos_data,
-        RtcSnapshot::new(clock_data, status_a, status_b),
+        RtcSnapshot::with_status_c(clock_data, status_a, status_b, status_c),
     ))
 }
 

@@ -9,9 +9,10 @@ use rem6_memory::{AccessSize, Address, ByteMask};
 use rem6_mmio::{MmioError, MmioRequest, MmioRequestId, MmioResponse};
 use rem6_timer::{
     Mc146818Rtc, Mc146818RtcMmioDevice, RtcDateTime, RtcEncoding, RtcError,
-    RTC_DAY_OF_WEEK_REGISTER, RTC_MINUTES_ALARM_REGISTER, RTC_MMIO_ADDRESS_OFFSET,
-    RTC_MMIO_DATA_OFFSET, RTC_MMIO_REGISTER_BYTES, RTC_SECONDS_REGISTER, RTC_STATUS_B_REGISTER,
-    RTC_STATUS_C_REGISTER,
+    RTC_DAY_OF_WEEK_REGISTER, RTC_HOURS_ALARM_REGISTER, RTC_MINUTES_ALARM_REGISTER,
+    RTC_MMIO_ADDRESS_OFFSET, RTC_MMIO_DATA_OFFSET, RTC_MMIO_REGISTER_BYTES,
+    RTC_SECONDS_ALARM_REGISTER, RTC_SECONDS_REGISTER, RTC_STATUS_B_REGISTER, RTC_STATUS_C_IRQF,
+    RTC_STATUS_C_PF, RTC_STATUS_C_REGISTER,
 };
 
 fn byte_size() -> AccessSize {
@@ -277,6 +278,218 @@ fn mc146818_rtc_periodic_interrupt_pulses_line_on_parallel_scheduler() {
         &[
             InterruptEvent::routed(7, line, target, cpu, source, InterruptEventKind::Assert),
             InterruptEvent::routed(7, line, target, cpu, source, InterruptEventKind::Deassert),
+        ]
+    );
+}
+
+#[test]
+fn mc146818_rtc_periodic_interrupt_sets_and_clears_status_c() {
+    let cpu = PartitionId::new(0);
+    let rtc_partition = PartitionId::new(1);
+    let base = Address::new(0x70);
+    let line = InterruptLineId::new(46);
+    let target = InterruptTargetId::new(0);
+    let source = InterruptSourceId::new(66);
+    let controller = Arc::new(Mutex::new(InterruptController::new()));
+    let port = interrupt_port(&controller, line, target, cpu, 2);
+    let device = Mc146818RtcMmioDevice::with_periodic_interrupt(
+        base,
+        Mc146818Rtc::new(
+            RtcDateTime::new(2026, 5, 29, 1, 2, 3, 6).unwrap(),
+            RtcEncoding::Bcd,
+        )
+        .unwrap(),
+        rtc_partition,
+        source,
+        port,
+        4,
+    )
+    .unwrap();
+    let rtc = device.clone();
+    let mut scheduler = PartitionedScheduler::new(2).unwrap();
+    let responses = Arc::new(Mutex::new(Vec::new()));
+
+    scheduler
+        .schedule_at(cpu, 1, move |context| {
+            device.start_periodic_interrupts(context).unwrap();
+        })
+        .unwrap();
+    for _ in 0..12 {
+        scheduler.run_next_epoch();
+        if controller.lock().unwrap().history().len() >= 2 {
+            break;
+        }
+    }
+
+    let observed = Arc::clone(&responses);
+    scheduler
+        .schedule_at(cpu, 8, move |context| {
+            let address_port = Address::new(base.get() + RTC_MMIO_ADDRESS_OFFSET);
+            let data_port = Address::new(base.get() + RTC_MMIO_DATA_OFFSET);
+            rtc.respond(
+                context,
+                &byte_write(41, address_port, RTC_STATUS_C_REGISTER),
+            )
+            .unwrap();
+            observed
+                .lock()
+                .unwrap()
+                .push(rtc.respond(context, &byte_read(42, data_port)).unwrap());
+            observed
+                .lock()
+                .unwrap()
+                .push(rtc.respond(context, &byte_read(43, data_port)).unwrap());
+        })
+        .unwrap();
+    scheduler.run_next_epoch();
+
+    assert_eq!(
+        responses.lock().unwrap().as_slice(),
+        &[
+            MmioResponse::completed(
+                MmioRequestId::new(42),
+                Some(vec![RTC_STATUS_C_IRQF | RTC_STATUS_C_PF])
+            ),
+            MmioResponse::completed(MmioRequestId::new(43), Some(vec![0])),
+        ]
+    );
+}
+
+#[test]
+fn mc146818_rtc_tick_second_delivers_update_and_alarm_interrupt() {
+    let cpu = PartitionId::new(0);
+    let rtc_partition = PartitionId::new(1);
+    let base = Address::new(0x70);
+    let line = InterruptLineId::new(47);
+    let target = InterruptTargetId::new(0);
+    let source = InterruptSourceId::new(67);
+    let controller = Arc::new(Mutex::new(InterruptController::new()));
+    let port = interrupt_port(&controller, line, target, cpu, 2);
+    let device = Mc146818RtcMmioDevice::with_periodic_interrupt(
+        base,
+        Mc146818Rtc::new(
+            RtcDateTime::new(2026, 5, 29, 1, 2, 3, 6).unwrap(),
+            RtcEncoding::Bcd,
+        )
+        .unwrap(),
+        rtc_partition,
+        source,
+        port,
+        4,
+    )
+    .unwrap();
+    let mut scheduler = PartitionedScheduler::new(2).unwrap();
+
+    scheduler
+        .schedule_at(rtc_partition, 2, move |context| {
+            let address_port = Address::new(base.get() + RTC_MMIO_ADDRESS_OFFSET);
+            let data_port = Address::new(base.get() + RTC_MMIO_DATA_OFFSET);
+            device
+                .respond(
+                    context,
+                    &byte_write(51, address_port, RTC_STATUS_B_REGISTER),
+                )
+                .unwrap();
+            device
+                .respond(context, &byte_write(52, data_port, 0x72))
+                .unwrap();
+            device
+                .respond(
+                    context,
+                    &byte_write(53, address_port, RTC_SECONDS_ALARM_REGISTER),
+                )
+                .unwrap();
+            device
+                .respond(context, &byte_write(54, data_port, 0x04))
+                .unwrap();
+            device
+                .respond(
+                    context,
+                    &byte_write(55, address_port, RTC_MINUTES_ALARM_REGISTER),
+                )
+                .unwrap();
+            device
+                .respond(context, &byte_write(56, data_port, 0x02))
+                .unwrap();
+            device
+                .respond(
+                    context,
+                    &byte_write(57, address_port, RTC_HOURS_ALARM_REGISTER),
+                )
+                .unwrap();
+            device
+                .respond(context, &byte_write(58, data_port, 0x01))
+                .unwrap();
+
+            let flags = device.tick_second(context).unwrap();
+            assert!(flags.update());
+            assert!(flags.alarm());
+        })
+        .unwrap();
+
+    scheduler.run_until_idle();
+
+    assert_eq!(
+        controller.lock().unwrap().history(),
+        &[
+            InterruptEvent::routed(4, line, target, cpu, source, InterruptEventKind::Assert),
+            InterruptEvent::routed(4, line, target, cpu, source, InterruptEventKind::Deassert),
+        ]
+    );
+}
+
+#[test]
+fn mc146818_rtc_parallel_tick_second_delivers_update_interrupt() {
+    let cpu = PartitionId::new(0);
+    let rtc_partition = PartitionId::new(1);
+    let base = Address::new(0x70);
+    let line = InterruptLineId::new(48);
+    let target = InterruptTargetId::new(0);
+    let source = InterruptSourceId::new(68);
+    let controller = Arc::new(Mutex::new(InterruptController::new()));
+    let port = interrupt_port(&controller, line, target, cpu, 2);
+    let device = Mc146818RtcMmioDevice::with_periodic_interrupt(
+        base,
+        Mc146818Rtc::new(
+            RtcDateTime::new(2026, 5, 29, 1, 2, 3, 6).unwrap(),
+            RtcEncoding::Bcd,
+        )
+        .unwrap(),
+        rtc_partition,
+        source,
+        port,
+        4,
+    )
+    .unwrap();
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+
+    scheduler
+        .schedule_parallel_at(rtc_partition, 2, move |context| {
+            let address_port = Address::new(base.get() + RTC_MMIO_ADDRESS_OFFSET);
+            let data_port = Address::new(base.get() + RTC_MMIO_DATA_OFFSET);
+            device
+                .respond_parallel(
+                    context,
+                    &byte_write(61, address_port, RTC_STATUS_B_REGISTER),
+                )
+                .unwrap();
+            device
+                .respond_parallel(context, &byte_write(62, data_port, 0x52))
+                .unwrap();
+
+            let flags = device.tick_second_parallel(context).unwrap();
+            assert!(flags.update());
+            assert!(!flags.alarm());
+        })
+        .unwrap();
+
+    scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(
+        controller.lock().unwrap().history(),
+        &[
+            InterruptEvent::routed(4, line, target, cpu, source, InterruptEventKind::Assert),
+            InterruptEvent::routed(4, line, target, cpu, source, InterruptEventKind::Deassert),
         ]
     );
 }

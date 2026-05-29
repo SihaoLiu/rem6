@@ -23,6 +23,10 @@ pub const RTC_STATUS_A_REGISTER: u8 = 0x0a;
 pub const RTC_STATUS_B_REGISTER: u8 = 0x0b;
 pub const RTC_STATUS_C_REGISTER: u8 = 0x0c;
 pub const RTC_STATUS_D_REGISTER: u8 = 0x0d;
+pub const RTC_STATUS_C_IRQF: u8 = 0x80;
+pub const RTC_STATUS_C_PF: u8 = 0x40;
+pub const RTC_STATUS_C_AF: u8 = 0x20;
+pub const RTC_STATUS_C_UF: u8 = 0x10;
 pub const RTC_MMIO_REGISTER_BYTES: u64 = 1;
 pub const RTC_MMIO_ADDRESS_OFFSET: u64 = 0x00;
 pub const RTC_MMIO_DATA_OFFSET: u64 = 0x01;
@@ -46,6 +50,8 @@ const STATUS_B_UIE: u8 = 0x10;
 const STATUS_B_DM: u8 = 0x04;
 const STATUS_B_24H: u8 = 0x02;
 const STATUS_B_DSE: u8 = 0x01;
+const STATUS_C_SUPPORTED_MASK: u8 =
+    RTC_STATUS_C_IRQF | RTC_STATUS_C_PF | RTC_STATUS_C_AF | RTC_STATUS_C_UF;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RtcEncoding {
@@ -208,6 +214,7 @@ pub struct RtcSnapshot {
     clock_data: [u8; RTC_CLOCK_REGISTER_COUNT],
     status_a: u8,
     status_b: u8,
+    status_c: u8,
 }
 
 impl RtcSnapshot {
@@ -220,6 +227,21 @@ impl RtcSnapshot {
             clock_data,
             status_a,
             status_b,
+            status_c: 0,
+        }
+    }
+
+    pub const fn with_status_c(
+        clock_data: [u8; RTC_CLOCK_REGISTER_COUNT],
+        status_a: u8,
+        status_b: u8,
+        status_c: u8,
+    ) -> Self {
+        Self {
+            clock_data,
+            status_a,
+            status_b,
+            status_c,
         }
     }
 
@@ -234,6 +256,68 @@ impl RtcSnapshot {
     pub const fn status_b(&self) -> u8 {
         self.status_b
     }
+
+    pub const fn status_c(&self) -> u8 {
+        self.status_c
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RtcInterruptFlags {
+    update: bool,
+    alarm: bool,
+    periodic: bool,
+}
+
+impl RtcInterruptFlags {
+    pub const fn new(update: bool, alarm: bool, periodic: bool) -> Self {
+        Self {
+            update,
+            alarm,
+            periodic,
+        }
+    }
+
+    pub const fn empty() -> Self {
+        Self::new(false, false, false)
+    }
+
+    pub const fn update(&self) -> bool {
+        self.update
+    }
+
+    pub const fn alarm(&self) -> bool {
+        self.alarm
+    }
+
+    pub const fn periodic(&self) -> bool {
+        self.periodic
+    }
+
+    const fn alarm_or_update(&self) -> bool {
+        self.update || self.alarm
+    }
+
+    const fn is_empty(&self) -> bool {
+        !self.update && !self.alarm && !self.periodic
+    }
+
+    const fn status_c_bits(&self) -> u8 {
+        let mut bits = 0;
+        if self.update {
+            bits |= RTC_STATUS_C_UF;
+        }
+        if self.alarm {
+            bits |= RTC_STATUS_C_AF;
+        }
+        if self.periodic {
+            bits |= RTC_STATUS_C_PF;
+        }
+        if bits != 0 {
+            bits |= RTC_STATUS_C_IRQF;
+        }
+        bits
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -241,6 +325,7 @@ pub struct Mc146818Rtc {
     clock_data: [u8; RTC_CLOCK_REGISTER_COUNT],
     status_a: u8,
     status_b: u8,
+    status_c: u8,
 }
 
 impl Mc146818Rtc {
@@ -249,6 +334,7 @@ impl Mc146818Rtc {
             clock_data: [0; RTC_CLOCK_REGISTER_COUNT],
             status_a: STATUS_A_DEFAULT,
             status_b: STATUS_B_PIE | STATUS_B_24H | status_b_encoding_bit(encoding),
+            status_c: 0,
         };
         rtc.set_time(time)?;
         Ok(rtc)
@@ -259,9 +345,19 @@ impl Mc146818Rtc {
             RTC_SECONDS_REGISTER..=RTC_YEARS_REGISTER => Ok(self.clock_data[usize::from(register)]),
             RTC_STATUS_A_REGISTER => Ok(self.status_a & !STATUS_A_UIP),
             RTC_STATUS_B_REGISTER => Ok(self.status_b),
-            RTC_STATUS_C_REGISTER | RTC_STATUS_D_REGISTER => Ok(0),
+            RTC_STATUS_C_REGISTER => Ok(self.status_c),
+            RTC_STATUS_D_REGISTER => Ok(0),
             _ => Err(RtcError::UnknownRegister { register }),
         }
+    }
+
+    pub fn read_register_clearing(&mut self, register: u8) -> Result<u8, RtcError> {
+        if register == RTC_STATUS_C_REGISTER {
+            let value = self.status_c;
+            self.status_c = 0;
+            return Ok(value);
+        }
+        self.read_register(register)
     }
 
     pub fn write_register(&mut self, register: u8, value: u8) -> Result<(), RtcError> {
@@ -286,19 +382,36 @@ impl Mc146818Rtc {
         }
     }
 
-    pub fn tick_second(&mut self) -> Result<(), RtcError> {
+    pub fn tick_second(&mut self) -> Result<RtcInterruptFlags, RtcError> {
         if status_a_divider_disabled(self.status_a) {
             return Err(RtcError::DividerDisabled);
         }
         if self.status_b & STATUS_B_SET != 0 {
-            return Ok(());
+            return Ok(RtcInterruptFlags::empty());
         }
         let next = self.date_time()?.advance_one_second()?;
-        self.set_time(next)
+        self.set_time(next)?;
+        let flags = RtcInterruptFlags::new(
+            self.status_b & STATUS_B_UIE != 0,
+            self.status_b & STATUS_B_AIE != 0 && self.alarm_matches(),
+            false,
+        );
+        self.raise_status_c(flags);
+        Ok(flags)
     }
 
     fn periodic_interrupt_enabled(&self) -> bool {
         self.status_b & STATUS_B_PIE != 0
+    }
+
+    fn alarm_or_update_interrupt_enabled(&self) -> bool {
+        self.status_b & (STATUS_B_AIE | STATUS_B_UIE) != 0
+    }
+
+    fn record_periodic_interrupt(&mut self) -> RtcInterruptFlags {
+        let flags = RtcInterruptFlags::new(false, false, self.periodic_interrupt_enabled());
+        self.raise_status_c(flags);
+        flags
     }
 
     pub fn date_time(&self) -> Result<RtcDateTime, RtcError> {
@@ -306,16 +419,18 @@ impl Mc146818Rtc {
     }
 
     pub fn snapshot(&self) -> RtcSnapshot {
-        RtcSnapshot::new(self.clock_data, self.status_a, self.status_b)
+        RtcSnapshot::with_status_c(self.clock_data, self.status_a, self.status_b, self.status_c)
     }
 
     pub fn restore(&mut self, snapshot: &RtcSnapshot) -> Result<(), RtcError> {
         validate_status_a(snapshot.status_a)?;
         validate_status_b(snapshot.status_b)?;
+        validate_status_c(snapshot.status_c)?;
         decode_time(&snapshot.clock_data, rtc_encoding(snapshot.status_b))?;
         self.clock_data = snapshot.clock_data;
         self.status_a = snapshot.status_a;
         self.status_b = snapshot.status_b;
+        self.status_c = snapshot.status_c;
         Ok(())
     }
 
@@ -381,6 +496,26 @@ impl Mc146818Rtc {
         };
         Ok(())
     }
+
+    fn raise_status_c(&mut self, flags: RtcInterruptFlags) {
+        if flags.is_empty() {
+            return;
+        }
+        self.status_c |= flags.status_c_bits();
+    }
+
+    fn alarm_matches(&self) -> bool {
+        alarm_field_matches(
+            self.clock_data[usize::from(RTC_SECONDS_ALARM_REGISTER)],
+            self.clock_data[usize::from(RTC_SECONDS_REGISTER)],
+        ) && alarm_field_matches(
+            self.clock_data[usize::from(RTC_MINUTES_ALARM_REGISTER)],
+            self.clock_data[usize::from(RTC_MINUTES_REGISTER)],
+        ) && alarm_field_matches(
+            self.clock_data[usize::from(RTC_HOURS_ALARM_REGISTER)],
+            self.clock_data[usize::from(RTC_HOURS_REGISTER)],
+        )
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -389,6 +524,7 @@ pub enum RtcError {
     InvalidBcd { register: u8, value: u8 },
     UnsupportedStatusA { register: u8, value: u8 },
     UnsupportedStatusB { register: u8, value: u8 },
+    UnsupportedStatusC { register: u8, value: u8 },
     ReadOnlyRegister { register: u8 },
     UnknownRegister { register: u8 },
     DividerDisabled,
@@ -414,6 +550,10 @@ impl fmt::Display for RtcError {
             Self::UnsupportedStatusB { register, value } => write!(
                 formatter,
                 "unsupported RTC status B value {value:#04x} for register {register:#04x}"
+            ),
+            Self::UnsupportedStatusC { register, value } => write!(
+                formatter,
+                "unsupported RTC status C value {value:#04x} for register {register:#04x}"
             ),
             Self::ReadOnlyRegister { register } => {
                 write!(formatter, "RTC register {register:#04x} is read-only")
@@ -635,6 +775,50 @@ impl Mc146818RtcMmioDevice {
             .map_err(RtcError::Scheduler)
     }
 
+    pub fn tick_second(
+        &self,
+        context: &mut SchedulerContext<'_>,
+    ) -> Result<RtcInterruptFlags, RtcError> {
+        if self.alarm_or_update_interrupt_enabled() {
+            if let Some(interrupt) = &self.interrupt {
+                interrupt
+                    .port
+                    .validate_route()
+                    .map_err(RtcError::Interrupt)?;
+            }
+        }
+        let flags = self
+            .state
+            .lock()
+            .expect("RTC MMIO state lock")
+            .rtc
+            .tick_second()?;
+        self.emit_alarm_or_update_interrupt(context, flags)?;
+        Ok(flags)
+    }
+
+    pub fn tick_second_parallel(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+    ) -> Result<RtcInterruptFlags, RtcError> {
+        if self.alarm_or_update_interrupt_enabled() {
+            if let Some(interrupt) = &self.interrupt {
+                interrupt
+                    .port
+                    .validate_route()
+                    .map_err(RtcError::Interrupt)?;
+            }
+        }
+        let flags = self
+            .state
+            .lock()
+            .expect("RTC MMIO state lock")
+            .rtc
+            .tick_second()?;
+        self.emit_alarm_or_update_interrupt_parallel(context, flags)?;
+        Ok(flags)
+    }
+
     pub fn restore(&self, snapshot: &Mc146818RtcMmioSnapshot) -> Result<(), RtcError> {
         let mut state = self.state.lock().expect("RTC MMIO state lock");
         let mut rtc = state.rtc.clone();
@@ -777,6 +961,7 @@ impl Mc146818RtcMmioDevice {
             state.cancel_periodic();
             return None;
         }
+        state.rtc.record_periodic_interrupt();
         if state.mark_periodic_fire(now, interrupt.interval).is_err() {
             return None;
         }
@@ -803,6 +988,58 @@ impl Mc146818RtcMmioDevice {
             .expect("RTC MMIO state lock")
             .interrupt_errors
             .push(RtcInterruptError::scheduler(tick, error));
+    }
+
+    fn alarm_or_update_interrupt_enabled(&self) -> bool {
+        self.state
+            .lock()
+            .expect("RTC MMIO state lock")
+            .rtc
+            .alarm_or_update_interrupt_enabled()
+    }
+
+    fn emit_alarm_or_update_interrupt(
+        &self,
+        context: &mut SchedulerContext<'_>,
+        flags: RtcInterruptFlags,
+    ) -> Result<(), RtcError> {
+        if !flags.alarm_or_update() {
+            return Ok(());
+        }
+        let Some(interrupt) = &self.interrupt else {
+            return Ok(());
+        };
+        interrupt
+            .port
+            .assert(context, interrupt.source)
+            .map_err(RtcError::Interrupt)?;
+        interrupt
+            .port
+            .deassert(context, interrupt.source)
+            .map_err(RtcError::Interrupt)?;
+        Ok(())
+    }
+
+    fn emit_alarm_or_update_interrupt_parallel(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+        flags: RtcInterruptFlags,
+    ) -> Result<(), RtcError> {
+        if !flags.alarm_or_update() {
+            return Ok(());
+        }
+        let Some(interrupt) = &self.interrupt else {
+            return Ok(());
+        };
+        interrupt
+            .port
+            .assert_parallel(context, interrupt.source)
+            .map_err(RtcError::Interrupt)?;
+        interrupt
+            .port
+            .deassert_parallel(context, interrupt.source)
+            .map_err(RtcError::Interrupt)?;
+        Ok(())
     }
 
     fn validate_size(&self, request: &MmioRequest) -> Result<(), MmioError> {
@@ -884,10 +1121,10 @@ impl Mc146818RtcMmioState {
         self.selected_address & RTC_CMOS_REGISTER_MASK
     }
 
-    fn read_data(&self) -> Result<u8, RtcError> {
+    fn read_data(&mut self) -> Result<u8, RtcError> {
         let register = self.selected_register();
         if is_rtc_register(register) {
-            return self.rtc.read_register(register);
+            return self.rtc.read_register_clearing(register);
         }
         Ok(self.cmos_data[usize::from(register)])
     }
@@ -987,13 +1224,27 @@ fn validate_status_a(value: u8) -> Result<(), RtcError> {
 }
 
 fn validate_status_b(value: u8) -> Result<(), RtcError> {
-    if value & (STATUS_B_AIE | STATUS_B_UIE | STATUS_B_DSE) != 0 || value & STATUS_B_24H == 0 {
+    if value & STATUS_B_DSE != 0 || value & STATUS_B_24H == 0 {
         return Err(RtcError::UnsupportedStatusB {
             register: RTC_STATUS_B_REGISTER,
             value,
         });
     }
     Ok(())
+}
+
+fn validate_status_c(value: u8) -> Result<(), RtcError> {
+    if value & !STATUS_C_SUPPORTED_MASK != 0 {
+        return Err(RtcError::UnsupportedStatusC {
+            register: RTC_STATUS_C_REGISTER,
+            value,
+        });
+    }
+    Ok(())
+}
+
+const fn alarm_field_matches(alarm: u8, current: u8) -> bool {
+    alarm & 0xc0 == 0xc0 || alarm == current
 }
 
 const fn rtc_encoding(status_b: u8) -> RtcEncoding {
