@@ -1,7 +1,9 @@
 use rem6_cache::ChiCacheControllerResultKind;
 use rem6_coherence::{
-    ChiCpuResponseRecord, ChiDirectoryLineHarness, LineBackingStore, PartitionedCacheAgentConfig,
-    PartitionedChiDirectoryLineHarness, PartitionedRouteHopConfig, SubmitKind,
+    ChiCpuResponseRecord, ChiDirectoryLineHarness, ChiDirectoryLineHarnessSnapshot,
+    ChiHarnessError, HarnessError, LineBackingStore, PartitionedCacheAgentConfig,
+    PartitionedChiDirectoryLineHarness, PartitionedChiDirectoryLineHarnessSnapshot,
+    PartitionedRouteHopConfig, SubmitKind,
 };
 use rem6_directory::{ChiDirectoryDataSource, ChiDirectoryLineState, ChiDirectorySnoop};
 use rem6_kernel::PartitionId;
@@ -327,6 +329,38 @@ fn chi_harness_snapshot_restore_reinstates_serial_state() {
 }
 
 #[test]
+fn chi_harness_restore_rejects_backing_line_mismatch_without_mutation() {
+    let mut source = harness();
+    source
+        .submit_cpu_request(agent(1), write(1, 0, 0x6002, vec![0xaa]))
+        .unwrap();
+    let snapshot = source.snapshot();
+    let bad_snapshot = ChiDirectoryLineHarnessSnapshot::new(
+        snapshot.line(),
+        snapshot.directory().clone(),
+        snapshot.caches().clone(),
+        LineBackingStore::new(layout(), Address::new(0x7000), line_data()).unwrap(),
+        snapshot.cpu_responses().to_vec(),
+        snapshot.directory_decisions().to_vec(),
+    );
+
+    let mut restored = harness();
+    restored
+        .submit_cpu_request(agent(2), write(2, 9, 0x6004, vec![0xdd]))
+        .unwrap();
+    let before = restored.snapshot();
+
+    assert_eq!(
+        restored.restore(&bad_snapshot).unwrap_err(),
+        ChiHarnessError::Backing(HarnessError::WrongLine {
+            expected: Address::new(0x6000),
+            actual: Address::new(0x7000),
+        })
+    );
+    assert_eq!(restored.snapshot(), before);
+}
+
+#[test]
 fn partitioned_chi_harness_waits_for_owner_snoop_before_peer_fill() {
     let mut harness = partitioned_harness();
 
@@ -416,6 +450,39 @@ fn partitioned_chi_harness_quiescent_snapshot_restores_state() {
             Some(vec![0, 1, 0xaa, 0xbb]),
         ))
     );
+}
+
+#[test]
+fn partitioned_chi_harness_quiescent_restore_rejects_backing_line_mismatch_without_mutation() {
+    let mut source = partitioned_harness();
+    source
+        .submit_cpu_request_parallel(agent(1), write(1, 0, 0x6002, vec![0xaa]))
+        .unwrap();
+    source.run_until_idle_parallel().unwrap();
+    let snapshot = source.quiescent_snapshot().unwrap();
+    let bad_snapshot = PartitionedChiDirectoryLineHarnessSnapshot::new(
+        snapshot.line(),
+        snapshot.scheduler().clone(),
+        snapshot.directory().clone(),
+        snapshot.caches().clone(),
+        LineBackingStore::new(layout(), Address::new(0x7000), line_data()).unwrap(),
+        snapshot.dram_memory().cloned(),
+        snapshot.trace(),
+        snapshot.cpu_responses(),
+        snapshot.directory_decisions(),
+    );
+
+    let mut restored = partitioned_harness();
+    let before = restored.quiescent_snapshot().unwrap();
+
+    assert_eq!(
+        restored.restore_quiescent(&bad_snapshot).unwrap_err(),
+        ChiHarnessError::Backing(HarnessError::WrongLine {
+            expected: Address::new(0x6000),
+            actual: Address::new(0x7000),
+        })
+    );
+    assert_eq!(restored.quiescent_snapshot().unwrap(), before);
 }
 
 #[test]

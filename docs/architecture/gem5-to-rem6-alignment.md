@@ -1761,6 +1761,12 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   data-cache runs and attributed plus unattributed runs, equality between
   attributed runs and summed protocol-count runs, and a minimum recorded
   data-cache protocol run count for each selected protocol.
+- Coherence harness restore paths now prevalidate snapshot backing-line
+  identity for serial MSI/MESI/MOESI/CHI and partitioned MSI/MESI/MOESI/CHI
+  before scheduler, directory, cache, or backing-store mutation. Malformed
+  snapshots return typed wrong-line errors and preserve the previous live
+  snapshot, replacing gem5 Ruby-style restore failures that can surface later
+  as schedule-in-past or partially restored state.
 - GPU and accelerator paths route command and DMA work through typed topology,
   transport, scheduler activity, summaries, and checkpoint banks, including
   DMA write-request ordering inherited from copy read requests and

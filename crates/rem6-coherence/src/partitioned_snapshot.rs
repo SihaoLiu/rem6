@@ -227,6 +227,14 @@ impl PartitionedDirectoryLineHarness {
                 actual: snapshot.line().address(),
             });
         }
+        if let Some(backing) = snapshot.backing() {
+            if backing.line_address() != self.line.address() {
+                return Err(HarnessError::WrongLine {
+                    expected: self.line.address(),
+                    actual: backing.line_address(),
+                });
+            }
+        }
         for agent in self.caches.keys() {
             if !snapshot.caches().contains_key(agent) {
                 return Err(HarnessError::UnknownCache { agent: *agent });
