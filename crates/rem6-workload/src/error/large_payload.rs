@@ -20,6 +20,13 @@ pub struct WorkloadCheckpointSummaryTimingError {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadCheckpointSummaryTickMismatchError {
+    pub(crate) label: String,
+    pub(crate) summary_tick: Tick,
+    pub(crate) expected_ticks: Vec<Tick>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkloadParallelRemoteFlowMergeSummaryError {
     pub(crate) scope: WorkloadParallelRemoteFlowScope,
     pub(crate) source: u32,
@@ -153,6 +160,23 @@ impl WorkloadError {
                 label: label.into(),
                 summary_tick,
                 final_tick,
+            },
+        ))
+    }
+
+    pub fn checkpoint_manifest_summary_tick_mismatch(
+        label: impl Into<String>,
+        summary_tick: Tick,
+        expected_ticks: impl IntoIterator<Item = Tick>,
+    ) -> Self {
+        let mut expected_ticks = expected_ticks.into_iter().collect::<Vec<_>>();
+        expected_ticks.sort_unstable();
+        expected_ticks.dedup();
+        Self::CheckpointManifestSummaryTickMismatch(Box::new(
+            WorkloadCheckpointSummaryTickMismatchError {
+                label: label.into(),
+                summary_tick,
+                expected_ticks,
             },
         ))
     }

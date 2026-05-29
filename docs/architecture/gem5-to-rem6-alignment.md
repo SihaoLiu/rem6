@@ -847,6 +847,9 @@ Implementation evidence on 2026-05-26:
 - Workload checkpoint and checkpoint-restore manifest summaries reject summary
   ticks after the replay final tick, keeping checkpoint coverage evidence
   causally inside the recorded run rather than accepting late artifacts.
+- Workload checkpoint manifest summaries also require their summary tick to
+  match a planned checkpoint host event with the same label, so capture
+  coverage evidence cannot drift away from the actual rollback point.
 - Workload replay results now carry checkpoint and checkpoint-restore manifest
   summaries with label, manifest tick, component count, chunk count, and total
   payload bytes, plus per-component chunk-level payload evidence, so replay

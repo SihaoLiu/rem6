@@ -9,7 +9,7 @@ use crate::host_event::{
 };
 use crate::{parallel_expectation, replay_verify};
 use crate::{
-    CheckpointLineage, WorkloadBootImage, WorkloadCheckpointComponentSummary,
+    CheckpointLineage, HostEventIntent, WorkloadBootImage, WorkloadCheckpointComponentSummary,
     WorkloadCheckpointManifestSummary, WorkloadError, WorkloadExecutionModeSwitch,
     WorkloadExpectedCheckpointComponentSummary, WorkloadExpectedCheckpointManifestSummary,
     WorkloadExpectedCleanParallelDiagnostics, WorkloadExpectedDataCacheProtocolRunCount,
@@ -770,6 +770,14 @@ impl WorkloadReplayPlan {
                     result.final_tick(),
                 ));
             }
+            let expected_ticks = planned_checkpoint_ticks(&self.host_events, actual.label());
+            if !expected_ticks.iter().any(|tick| *tick == actual.tick()) {
+                return Err(WorkloadError::checkpoint_manifest_summary_tick_mismatch(
+                    actual.label(),
+                    actual.tick(),
+                    expected_ticks,
+                ));
+            }
         }
 
         for expected in &self.expected_checkpoint_manifest_summaries {
@@ -1266,4 +1274,16 @@ fn label_counts(labels: &[String]) -> BTreeMap<&str, usize> {
         *counts.entry(label.as_str()).or_insert(0) += 1;
     }
     counts
+}
+
+fn planned_checkpoint_ticks(events: &[WorkloadHostEvent], label: &str) -> Vec<Tick> {
+    events
+        .iter()
+        .filter_map(|event| match event.intent() {
+            HostEventIntent::Checkpoint {
+                label: planned_label,
+            } if planned_label == label => Some(event.tick()),
+            _ => None,
+        })
+        .collect()
 }
