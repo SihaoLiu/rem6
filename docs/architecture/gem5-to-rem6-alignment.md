@@ -597,6 +597,11 @@ Implementation evidence on 2026-05-26:
   strongest edge count and widest tick range instead of double-counting scoped
   records, and weaker merged windows are rejected before replay applies exact
   node-window expectations.
+- Explicit full-system wait-for window validation now preserves raw global
+  kind, blocked-node, and target-node records before merged query summaries are
+  built. Replay rejects duplicate global window records before clean diagnostic
+  checks, so a parallel full-system run cannot inflate typed wait-for evidence
+  by replaying the same global window twice.
 - Workload clean parallel diagnostic replay now applies declared livelock
   transition thresholds to raw scoped progress-free transition records. A
   result with no materialized livelock diagnostic record is still rejected when

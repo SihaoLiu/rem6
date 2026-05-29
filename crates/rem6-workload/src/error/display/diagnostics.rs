@@ -114,6 +114,33 @@ pub(super) fn format_diagnostic_error(
             "invalid {} wait-for target node {node} window merge summary: merged window {merged_edge_count} edges from tick {merged_first_tick} to {merged_last_tick} is weaker than scoped window {scoped_edge_count} edges from tick {scoped_first_tick} to {scoped_last_tick}",
             scope.as_str()
         ),
+        WorkloadError::DuplicateFullSystemWaitForEdgeKindWindowRecord {
+            kind,
+            edge_count,
+            first_tick,
+            last_tick,
+        } => write!(
+            formatter,
+            "duplicate full-system wait-for edge kind {kind:?} window record: {edge_count} edges from tick {first_tick} to {last_tick}",
+        ),
+        WorkloadError::DuplicateFullSystemWaitForBlockedNodeWindowRecord {
+            node,
+            edge_count,
+            first_tick,
+            last_tick,
+        } => write!(
+            formatter,
+            "duplicate full-system wait-for blocked node {node} window record: {edge_count} edges from tick {first_tick} to {last_tick}",
+        ),
+        WorkloadError::DuplicateFullSystemWaitForTargetNodeWindowRecord {
+            node,
+            edge_count,
+            first_tick,
+            last_tick,
+        } => write!(
+            formatter,
+            "duplicate full-system wait-for target node {node} window record: {edge_count} edges from tick {first_tick} to {last_tick}",
+        ),
         WorkloadError::InvalidParallelDeadlockMergeSummary {
             scope,
             merged_diagnostic_count,

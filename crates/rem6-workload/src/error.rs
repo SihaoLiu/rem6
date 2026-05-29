@@ -1635,6 +1635,24 @@ pub enum WorkloadError {
         merged_last_tick: Tick,
         scoped_last_tick: Tick,
     },
+    DuplicateFullSystemWaitForEdgeKindWindowRecord {
+        kind: WaitForEdgeKind,
+        edge_count: usize,
+        first_tick: Tick,
+        last_tick: Tick,
+    },
+    DuplicateFullSystemWaitForBlockedNodeWindowRecord {
+        node: WaitForNode,
+        edge_count: usize,
+        first_tick: Tick,
+        last_tick: Tick,
+    },
+    DuplicateFullSystemWaitForTargetNodeWindowRecord {
+        node: WaitForNode,
+        edge_count: usize,
+        first_tick: Tick,
+        last_tick: Tick,
+    },
     InvalidParallelDeadlockMergeSummary {
         scope: WorkloadParallelDiagnosticScope,
         merged_diagnostic_count: usize,

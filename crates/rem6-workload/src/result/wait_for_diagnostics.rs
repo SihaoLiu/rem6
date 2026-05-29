@@ -125,11 +125,17 @@ impl WorkloadParallelExecutionSummary {
                     &self.full_system_wait_for_edge_kind_counts,
                     &scoped_wait_for_counts,
                 )?;
+                validate_unique_full_system_wait_for_edge_kind_windows(
+                    &self.raw_full_system_wait_for_edge_kind_windows,
+                )?;
                 let scoped_wait_for_windows = self.scoped_full_system_wait_for_edge_kind_windows();
                 validate_wait_for_edge_kind_window_merge_summary(
                     scope,
                     &self.full_system_wait_for_edge_kind_windows,
                     &scoped_wait_for_windows,
+                )?;
+                validate_unique_full_system_wait_for_blocked_node_windows(
+                    &self.raw_full_system_wait_for_blocked_node_windows,
                 )?;
                 let scoped_blocked_node_windows =
                     self.scoped_full_system_wait_for_blocked_node_windows();
@@ -137,6 +143,9 @@ impl WorkloadParallelExecutionSummary {
                     scope,
                     &self.full_system_wait_for_blocked_node_windows,
                     &scoped_blocked_node_windows,
+                )?;
+                validate_unique_full_system_wait_for_target_node_windows(
+                    &self.raw_full_system_wait_for_target_node_windows,
                 )?;
                 let scoped_target_node_windows =
                     self.scoped_full_system_wait_for_target_node_windows();
@@ -419,7 +428,12 @@ impl WorkloadParallelExecutionSummary {
         mut self,
         windows: impl IntoIterator<Item = WorkloadWaitForEdgeKindWindow>,
     ) -> Self {
-        self.full_system_wait_for_edge_kind_windows = collect_wait_for_edge_kind_windows(windows);
+        self.raw_full_system_wait_for_edge_kind_windows = windows.into_iter().collect();
+        self.full_system_wait_for_edge_kind_windows = collect_wait_for_edge_kind_windows(
+            self.raw_full_system_wait_for_edge_kind_windows
+                .iter()
+                .copied(),
+        );
         merge_wait_for_edge_kind_counts_from_windows(
             &mut self.full_system_wait_for_edge_kind_counts,
             &self.full_system_wait_for_edge_kind_windows,
@@ -431,8 +445,12 @@ impl WorkloadParallelExecutionSummary {
         mut self,
         windows: impl IntoIterator<Item = WorkloadWaitForBlockedNodeWindow>,
     ) -> Self {
-        self.full_system_wait_for_blocked_node_windows =
-            collect_wait_for_blocked_node_windows(windows);
+        self.raw_full_system_wait_for_blocked_node_windows = windows.into_iter().collect();
+        self.full_system_wait_for_blocked_node_windows = collect_wait_for_blocked_node_windows(
+            self.raw_full_system_wait_for_blocked_node_windows
+                .iter()
+                .cloned(),
+        );
         self
     }
 
@@ -440,8 +458,12 @@ impl WorkloadParallelExecutionSummary {
         mut self,
         windows: impl IntoIterator<Item = WorkloadWaitForTargetNodeWindow>,
     ) -> Self {
-        self.full_system_wait_for_target_node_windows =
-            collect_wait_for_target_node_windows(windows);
+        self.raw_full_system_wait_for_target_node_windows = windows.into_iter().collect();
+        self.full_system_wait_for_target_node_windows = collect_wait_for_target_node_windows(
+            self.raw_full_system_wait_for_target_node_windows
+                .iter()
+                .cloned(),
+        );
         self
     }
 
@@ -1548,6 +1570,63 @@ fn validate_unique_full_system_livelock_diagnostic_records(
                 first_transition_tick: diagnostic.first_transition_tick(),
                 last_transition_tick: diagnostic.last_transition_tick(),
             });
+        }
+    }
+    Ok(())
+}
+
+fn validate_unique_full_system_wait_for_edge_kind_windows(
+    windows: &[WorkloadWaitForEdgeKindWindow],
+) -> Result<(), WorkloadError> {
+    let mut seen = BTreeSet::new();
+    for window in windows {
+        if !window.is_empty() && !seen.insert(*window) {
+            return Err(
+                WorkloadError::DuplicateFullSystemWaitForEdgeKindWindowRecord {
+                    kind: window.kind(),
+                    edge_count: window.edge_count(),
+                    first_tick: window.first_tick(),
+                    last_tick: window.last_tick(),
+                },
+            );
+        }
+    }
+    Ok(())
+}
+
+fn validate_unique_full_system_wait_for_blocked_node_windows(
+    windows: &[WorkloadWaitForBlockedNodeWindow],
+) -> Result<(), WorkloadError> {
+    let mut seen = BTreeSet::new();
+    for window in windows {
+        if !window.is_empty() && !seen.insert(window.clone()) {
+            return Err(
+                WorkloadError::DuplicateFullSystemWaitForBlockedNodeWindowRecord {
+                    node: window.node().clone(),
+                    edge_count: window.edge_count(),
+                    first_tick: window.first_tick(),
+                    last_tick: window.last_tick(),
+                },
+            );
+        }
+    }
+    Ok(())
+}
+
+fn validate_unique_full_system_wait_for_target_node_windows(
+    windows: &[WorkloadWaitForTargetNodeWindow],
+) -> Result<(), WorkloadError> {
+    let mut seen = BTreeSet::new();
+    for window in windows {
+        if !window.is_empty() && !seen.insert(window.clone()) {
+            return Err(
+                WorkloadError::DuplicateFullSystemWaitForTargetNodeWindowRecord {
+                    node: window.node().clone(),
+                    edge_count: window.edge_count(),
+                    first_tick: window.first_tick(),
+                    last_tick: window.last_tick(),
+                },
+            );
         }
     }
     Ok(())

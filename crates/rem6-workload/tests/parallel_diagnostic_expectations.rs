@@ -805,6 +805,44 @@ fn workload_replay_plan_uses_explicit_full_system_wait_for_edge_kind_windows() {
 }
 
 #[test]
+fn workload_replay_plan_rejects_duplicate_explicit_full_system_wait_for_edge_kind_windows() {
+    let manifest = rem6_workload::WorkloadManifest::builder(
+        id("duplicate-full-system-wait-kind-window-diagnostics"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_expected_parallel_wait_for_edge_kind_window(expected_wait_kind_window(
+        WorkloadParallelDiagnosticScope::FullSystem,
+        WaitForEdgeKind::Barrier,
+        4,
+        4,
+        12,
+    ))
+    .unwrap()
+    .build()
+    .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let duplicate = WorkloadWaitForEdgeKindWindow::new(WaitForEdgeKind::Barrier, 2, 4, 12);
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_full_system_wait_for_edge_kind_windows([duplicate, duplicate]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::DuplicateFullSystemWaitForEdgeKindWindowRecord {
+            kind: WaitForEdgeKind::Barrier,
+            edge_count: 2,
+            first_tick: 4,
+            last_tick: 12,
+        },
+    );
+}
+
+#[test]
 fn workload_replay_plan_rejects_weaker_explicit_full_system_wait_for_edge_kind_windows() {
     let manifest = rem6_workload::WorkloadManifest::builder(
         id("weak-full-system-wait-kind-window-diagnostics"),
@@ -911,6 +949,45 @@ fn workload_replay_plan_uses_explicit_full_system_wait_for_blocked_node_windows(
 }
 
 #[test]
+fn workload_replay_plan_rejects_duplicate_explicit_full_system_wait_for_blocked_node_windows() {
+    let blocked = wait_resource("fabric.queue.0");
+    let manifest = rem6_workload::WorkloadManifest::builder(
+        id("duplicate-full-system-wait-blocked-window-diagnostics"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_expected_parallel_wait_for_blocked_node_window(expected_wait_blocked_window(
+        WorkloadParallelDiagnosticScope::FullSystem,
+        blocked.clone(),
+        4,
+        4,
+        12,
+    ))
+    .unwrap()
+    .build()
+    .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let duplicate = WorkloadWaitForBlockedNodeWindow::new(blocked, 2, 4, 12);
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_full_system_wait_for_blocked_node_windows([duplicate.clone(), duplicate]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::DuplicateFullSystemWaitForBlockedNodeWindowRecord {
+            node: wait_resource("fabric.queue.0"),
+            edge_count: 2,
+            first_tick: 4,
+            last_tick: 12,
+        },
+    );
+}
+
+#[test]
 fn workload_replay_plan_rejects_weaker_explicit_full_system_wait_for_blocked_node_windows() {
     let blocked = wait_resource("fabric.queue.0");
     let manifest = rem6_workload::WorkloadManifest::builder(
@@ -1013,6 +1090,45 @@ fn workload_replay_plan_uses_explicit_full_system_wait_for_target_node_windows()
     let result =
         WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
     plan.verify_result(&result).unwrap();
+}
+
+#[test]
+fn workload_replay_plan_rejects_duplicate_explicit_full_system_wait_for_target_node_windows() {
+    let target = wait_resource("dram.bank.0");
+    let manifest = rem6_workload::WorkloadManifest::builder(
+        id("duplicate-full-system-wait-target-window-diagnostics"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_expected_parallel_wait_for_target_node_window(expected_wait_target_window(
+        WorkloadParallelDiagnosticScope::FullSystem,
+        target.clone(),
+        4,
+        4,
+        12,
+    ))
+    .unwrap()
+    .build()
+    .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let duplicate = WorkloadWaitForTargetNodeWindow::new(target, 2, 4, 12);
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_full_system_wait_for_target_node_windows([duplicate.clone(), duplicate]);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::DuplicateFullSystemWaitForTargetNodeWindowRecord {
+            node: wait_resource("dram.bank.0"),
+            edge_count: 2,
+            first_tick: 4,
+            last_tick: 12,
+        },
+    );
 }
 
 #[test]
