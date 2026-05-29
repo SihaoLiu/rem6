@@ -1,5 +1,10 @@
 use std::error::Error;
 use std::fmt;
+use std::sync::{Arc, Mutex};
+
+use rem6_kernel::{ParallelSchedulerContext, SchedulerContext};
+use rem6_memory::{Address, ByteMask};
+use rem6_mmio::{MmioDevice, MmioError, MmioOperation, MmioRequest, MmioResponse};
 
 pub const RTC_SECONDS_REGISTER: u8 = 0x00;
 pub const RTC_SECONDS_ALARM_REGISTER: u8 = 0x01;
@@ -15,8 +20,13 @@ pub const RTC_STATUS_A_REGISTER: u8 = 0x0a;
 pub const RTC_STATUS_B_REGISTER: u8 = 0x0b;
 pub const RTC_STATUS_C_REGISTER: u8 = 0x0c;
 pub const RTC_STATUS_D_REGISTER: u8 = 0x0d;
+pub const RTC_MMIO_REGISTER_BYTES: u64 = 1;
+pub const RTC_MMIO_ADDRESS_OFFSET: u64 = 0x00;
+pub const RTC_MMIO_DATA_OFFSET: u64 = 0x01;
+pub const RTC_CMOS_REGISTER_COUNT: usize = 128;
 
 const RTC_CLOCK_REGISTER_COUNT: usize = 10;
+const RTC_CMOS_REGISTER_MASK: u8 = 0x7f;
 const STATUS_A_DEFAULT: u8 = 0x26;
 const STATUS_A_UIP: u8 = 0x80;
 const STATUS_A_DV_MASK: u8 = 0x70;
@@ -407,6 +417,242 @@ impl fmt::Display for RtcError {
 }
 
 impl Error for RtcError {}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Mc146818RtcMmioSnapshot {
+    selected_address: u8,
+    cmos_data: [u8; RTC_CMOS_REGISTER_COUNT],
+    rtc: RtcSnapshot,
+}
+
+impl Mc146818RtcMmioSnapshot {
+    pub const fn new(
+        selected_address: u8,
+        cmos_data: [u8; RTC_CMOS_REGISTER_COUNT],
+        rtc: RtcSnapshot,
+    ) -> Self {
+        Self {
+            selected_address,
+            cmos_data,
+            rtc,
+        }
+    }
+
+    pub const fn selected_address(&self) -> u8 {
+        self.selected_address
+    }
+
+    pub const fn cmos_data(&self) -> &[u8; RTC_CMOS_REGISTER_COUNT] {
+        &self.cmos_data
+    }
+
+    pub const fn rtc(&self) -> &RtcSnapshot {
+        &self.rtc
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Mc146818RtcMmioDevice {
+    base: Address,
+    state: Arc<Mutex<Mc146818RtcMmioState>>,
+}
+
+impl Mc146818RtcMmioDevice {
+    pub fn new(base: Address, rtc: Mc146818Rtc) -> Self {
+        Self {
+            base,
+            state: Arc::new(Mutex::new(Mc146818RtcMmioState::new(rtc))),
+        }
+    }
+
+    pub const fn base(&self) -> Address {
+        self.base
+    }
+
+    pub fn snapshot(&self) -> Mc146818RtcMmioSnapshot {
+        self.state.lock().expect("RTC MMIO state lock").snapshot()
+    }
+
+    pub fn restore(&self, snapshot: &Mc146818RtcMmioSnapshot) -> Result<(), RtcError> {
+        let mut state = self.state.lock().expect("RTC MMIO state lock");
+        let mut rtc = state.rtc.clone();
+        rtc.restore(snapshot.rtc())?;
+        state.selected_address = snapshot.selected_address();
+        state.cmos_data = *snapshot.cmos_data();
+        state.rtc = rtc;
+        Ok(())
+    }
+
+    pub fn respond(
+        &self,
+        _context: &mut SchedulerContext<'_>,
+        request: &MmioRequest,
+    ) -> Result<MmioResponse, MmioError> {
+        self.respond_request(request)
+    }
+
+    pub fn respond_parallel(
+        &self,
+        _context: &mut ParallelSchedulerContext<'_>,
+        request: &MmioRequest,
+    ) -> Result<MmioResponse, MmioError> {
+        self.respond_request(request)
+    }
+
+    fn respond_request(&self, request: &MmioRequest) -> Result<MmioResponse, MmioError> {
+        self.validate_size(request)?;
+        let offset = self.offset(request)?;
+        let mut state = self.state.lock().expect("RTC MMIO state lock");
+        match (offset, request.operation()) {
+            (RTC_MMIO_ADDRESS_OFFSET, MmioOperation::Read) => Ok(MmioResponse::completed(
+                request.id(),
+                Some(vec![state.selected_address]),
+            )),
+            (RTC_MMIO_ADDRESS_OFFSET, MmioOperation::Write) => {
+                if let Some(value) = rtc_mmio_write_byte(request)? {
+                    state.selected_address = value;
+                }
+                Ok(MmioResponse::completed(request.id(), None))
+            }
+            (RTC_MMIO_DATA_OFFSET, MmioOperation::Read) => {
+                let value = state.read_data().map_err(|error| MmioError::DeviceError {
+                    request: request.id(),
+                    message: error.to_string(),
+                })?;
+                Ok(MmioResponse::completed(request.id(), Some(vec![value])))
+            }
+            (RTC_MMIO_DATA_OFFSET, MmioOperation::Write) => {
+                if let Some(value) = rtc_mmio_write_byte(request)? {
+                    state
+                        .write_data(value)
+                        .map_err(|error| MmioError::DeviceError {
+                            request: request.id(),
+                            message: error.to_string(),
+                        })?;
+                }
+                Ok(MmioResponse::completed(request.id(), None))
+            }
+            _ => Err(MmioError::UnmappedAddress {
+                address: request.range().start(),
+            }),
+        }
+    }
+
+    fn validate_size(&self, request: &MmioRequest) -> Result<(), MmioError> {
+        if request.size().bytes() != RTC_MMIO_REGISTER_BYTES {
+            return Err(MmioError::AccessSizeMismatch {
+                request: request.id(),
+                expected: RTC_MMIO_REGISTER_BYTES,
+                actual: request.size().bytes(),
+            });
+        }
+        Ok(())
+    }
+
+    fn offset(&self, request: &MmioRequest) -> Result<u64, MmioError> {
+        request
+            .range()
+            .start()
+            .get()
+            .checked_sub(self.base.get())
+            .ok_or(MmioError::UnmappedAddress {
+                address: request.range().start(),
+            })
+    }
+}
+
+impl MmioDevice for Mc146818RtcMmioDevice {
+    fn respond(
+        &self,
+        context: &mut SchedulerContext<'_>,
+        request: &MmioRequest,
+    ) -> Result<MmioResponse, MmioError> {
+        Mc146818RtcMmioDevice::respond(self, context, request)
+    }
+
+    fn respond_parallel(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+        request: &MmioRequest,
+    ) -> Result<MmioResponse, MmioError> {
+        Mc146818RtcMmioDevice::respond_parallel(self, context, request)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Mc146818RtcMmioState {
+    selected_address: u8,
+    cmos_data: [u8; RTC_CMOS_REGISTER_COUNT],
+    rtc: Mc146818Rtc,
+}
+
+impl Mc146818RtcMmioState {
+    const fn new(rtc: Mc146818Rtc) -> Self {
+        Self {
+            selected_address: 0,
+            cmos_data: [0; RTC_CMOS_REGISTER_COUNT],
+            rtc,
+        }
+    }
+
+    fn snapshot(&self) -> Mc146818RtcMmioSnapshot {
+        Mc146818RtcMmioSnapshot::new(self.selected_address, self.cmos_data, self.rtc.snapshot())
+    }
+
+    fn selected_register(&self) -> u8 {
+        self.selected_address & RTC_CMOS_REGISTER_MASK
+    }
+
+    fn read_data(&self) -> Result<u8, RtcError> {
+        let register = self.selected_register();
+        if is_rtc_register(register) {
+            return self.rtc.read_register(register);
+        }
+        Ok(self.cmos_data[usize::from(register)])
+    }
+
+    fn write_data(&mut self, value: u8) -> Result<(), RtcError> {
+        let register = self.selected_register();
+        if is_rtc_register(register) {
+            return self.rtc.write_register(register, value);
+        }
+        self.cmos_data[usize::from(register)] = value;
+        Ok(())
+    }
+}
+
+fn rtc_mmio_write_byte(request: &MmioRequest) -> Result<Option<u8>, MmioError> {
+    let data = request.data().ok_or(MmioError::MissingWriteData {
+        request: request.id(),
+    })?;
+    if data.len() as u64 != RTC_MMIO_REGISTER_BYTES {
+        return Err(MmioError::PayloadSizeMismatch {
+            request: request.id(),
+            expected: RTC_MMIO_REGISTER_BYTES,
+            actual: data.len() as u64,
+        });
+    }
+    let mask = request.byte_mask().ok_or(MmioError::MissingByteMask {
+        request: request.id(),
+    })?;
+    validate_rtc_mmio_mask(request, mask)?;
+    Ok(mask.bits()[0].then_some(data[0]))
+}
+
+fn validate_rtc_mmio_mask(request: &MmioRequest, mask: &ByteMask) -> Result<(), MmioError> {
+    if mask.len() != RTC_MMIO_REGISTER_BYTES {
+        return Err(MmioError::ByteMaskSizeMismatch {
+            request: request.id(),
+            expected: RTC_MMIO_REGISTER_BYTES,
+            actual: mask.len(),
+        });
+    }
+    Ok(())
+}
+
+const fn is_rtc_register(register: u8) -> bool {
+    register <= RTC_STATUS_D_REGISTER
+}
 
 fn validate_status_a(value: u8) -> Result<(), RtcError> {
     let divider = value & STATUS_A_DV_MASK;
