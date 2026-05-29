@@ -448,6 +448,13 @@ Implementation evidence through 2026-05-29:
   facade budget, require data issue to stay out of the root, and enforce the
   hard per-source-file size budget, so CPU timing breadth can grow without
   recreating gem5-style CPU monoliths.
+- `rem6-system` workload replay now keeps data-cache line harness ownership,
+  protocol-specific response routing, final-line extraction, and profiled DRAM
+  line fallback in a focused `workload_replay::data_cache_backend` module.
+  System source-policy tests require that backend to stay out of the replay
+  root, preserving the manifest-driven full-system replay path without letting
+  cache protocol wiring, DRAM backing, and workload orchestration collapse into
+  one gem5-style integration file.
 - `rem6-net` has a typed distributed Ethernet link endpoint aligned with gem5
   `DistEtherLink::TxLink` and `DistEtherLink::RxLink`: local transmits encode
   endian-stable distributed data messages, preserve deterministic
@@ -1818,7 +1825,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   module-size budget across CPU sources. Platform source-policy tests keep the
   platform crate root below the facade budget, keep RISC-V device-tree code in
   a focused module, and enforce the hard module-size budget across platform
-  sources. Type-1 bridge tests cover typed bridge
+  sources. System source-policy tests keep workload replay data-cache backend
+  state in a focused module while enforcing the hard module-size budget across
+  system sources. Type-1 bridge tests cover typed bridge
   header fields, Expansion ROM reads and writes, Expansion ROM size probing,
   interrupt line/pin bytes, bridge-control writes, common command writes with
   reserved-bit masking, common cache-line-size, latency-timer, and BIST byte

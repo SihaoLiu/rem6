@@ -39,6 +39,26 @@ fn system_source_files_stay_within_size_limit() {
     );
 }
 
+#[test]
+fn workload_replay_data_cache_backend_lives_in_focused_module() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let replay_rs = fs::read_to_string(crate_dir.join("src/workload_replay.rs")).unwrap();
+    let backend_rs = crate_dir.join("src/workload_replay/data_cache_backend.rs");
+
+    assert!(
+        backend_rs.exists(),
+        "workload replay data-cache backend belongs in src/workload_replay/data_cache_backend.rs"
+    );
+    assert!(
+        !replay_rs.contains("struct WorkloadDataCacheBackend"),
+        "src/workload_replay.rs should delegate data-cache replay backend state to a focused module"
+    );
+    assert!(
+        !replay_rs.contains("struct WorkloadDataCacheLineBackend"),
+        "src/workload_replay.rs should delegate data-cache line backend state to a focused module"
+    );
+}
+
 fn rust_source_files(root: &Path) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     collect_rust_source_files(root, &mut paths);

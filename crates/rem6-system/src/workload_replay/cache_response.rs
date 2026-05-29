@@ -13,9 +13,8 @@ use rem6_memory::{AgentId, MemoryRequest, MemoryRequestId, MemoryResponse, Respo
 use rem6_transport::{RequestDelivery, TargetBatchOutcome, TargetOutcome, TransportEndpointId};
 use rem6_workload::{WorkloadMemoryRoute, WorkloadRouteId, WorkloadTopology};
 
-use super::{
-    memory_response, RiscvWorkloadReplayError, WorkloadDataCacheBackend, WorkloadMemoryBackend,
-};
+use super::data_cache_backend::WorkloadDataCacheBackend;
+use super::{memory_response, RiscvWorkloadReplayError, WorkloadMemoryBackend};
 use crate::{RiscvDataCacheProtocol, RiscvDataCacheRunRecord};
 
 pub(super) fn data_cache_agents(
