@@ -102,6 +102,9 @@ isolated bugs:
   so a cross-partition event that would violate deterministic remote-delivery
   slack fails as typed replayable state instead of becoming an event-queue merge
   side effect.
+  System-level parallel trap event preflight now uses the same absolute
+  delivery-boundary error before a host event is queued, so guest-host
+  notifications cannot bypass the kernel contract through a higher-level helper.
   Wait-for
   edge-kind observation windows are now owned by `rem6-kernel`, so every
   subsystem can report distinct edge counts plus first and last observed ticks
@@ -1235,7 +1238,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 | SimObject and Python configuration in `src/sim` and `src/python` | `rem6-platform`, `rem6-workload` | partial | rem6 should keep ease of composition through typed builders and manifests rather than dynamic object graphs. |
 | checkpoint support in `src/sim` | `rem6-checkpoint`, `rem6-system` checkpoint banks | partial | Protocol-neutral checkpoint records exist for several subsystems. Scheduler checkpoint capture rejects non-quiescent state with typed quiescence reports for pending-event counts, tick windows, and serial/parallel pending-event kind counts by component and partition, scheduler checkpoint banks preflight quiescence before writing any scheduler chunks, system checkpoint host actions run scheduler quiescence preflight before capturing any attached bank, full-system checkpoint capture stages registry writes until final manifest capture succeeds, execution-mode restore pre-registers internal host checkpoint components only in staged registries, manifest restore clears chunks for registered components absent from the manifest so stale component state cannot satisfy attached-bank validation, checkpoint manifests expose typed component, chunk, and payload-byte summaries for audit, workload replay results preserve those manifest totals and per-component counts for checkpoint and restore outcomes, and workload manifests can require minimum checkpoint coverage totals and named-component coverage during replay verification. More devices and broader pending-state restore coverage remain open. |
 | statistics, probes, and power hooks | `rem6-stats`, `rem6-power`, run summaries | partial | Counters, stats snapshots, typed stats dump records, schema-and-reset-scope-checked stats delta records, typed probe registries with checked component, point, and listener identifiers, probe listener state, probe event snapshots with historical listener refs plus cursor-preserving and time-monotonic restore validation, typed power states/domains, power residency snapshots, typed state-weighted dynamic/static power models, typed expression-based dynamic/static power models, typed stat-snapshot metric binding, power metric binding from core stats deltas, typed RC thermal domains, and typed multi-domain thermal-network solving with resistor and capacitor edges exist. Broader power-controller and external-analysis adapter breadth remains open. |
-| guest-host events and pseudo instructions | `rem6-system`, `rem6-workload` | partial | ROI, stats, checkpoint, checkpoint restore, stop, execution mode actions, custom guest-host calls, and manifest-declared guest-host response payloads are typed. Broader guest ABI support remains open. |
+| guest-host events and pseudo instructions | `rem6-system`, `rem6-workload` | partial | ROI, stats, checkpoint, checkpoint restore, stop, execution mode actions, custom guest-host calls, manifest-declared guest-host response payloads, focused system/trap event port modules, and absolute parallel trap delivery-boundary preflight are typed. Broader guest ABI support remains open. |
 
 ### External Integration and Tooling
 
