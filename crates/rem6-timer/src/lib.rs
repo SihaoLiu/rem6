@@ -10,6 +10,7 @@ use rem6_memory::{Address, ByteMask};
 use rem6_mmio::{MmioAccess, MmioDevice, MmioError, MmioOperation, MmioRequest, MmioResponse};
 
 mod clint;
+mod pl031;
 mod rtc;
 
 pub use self::clint::{
@@ -17,6 +18,12 @@ pub use self::clint::{
     ClintTimebase, RiscvRtcSource, CLINT_MSIP_BASE_OFFSET, CLINT_MSIP_REGISTER_BYTES,
     CLINT_MSIP_STRIDE, CLINT_MTIMECMP_BASE_OFFSET, CLINT_MTIMECMP_REGISTER_BYTES,
     CLINT_MTIMECMP_STRIDE, CLINT_MTIME_OFFSET, CLINT_MTIME_REGISTER_BYTES,
+};
+pub use self::pl031::{
+    Pl031Error, Pl031Rtc, Pl031RtcMmioDevice, Pl031RtcMmioSnapshot, Pl031Snapshot,
+    PL031_CONTROL_OFFSET, PL031_DATA_OFFSET, PL031_INT_CLEAR_OFFSET, PL031_INT_MASK_OFFSET,
+    PL031_LOAD_OFFSET, PL031_MASKED_ISR_OFFSET, PL031_MATCH_OFFSET, PL031_MMIO_SIZE_BYTES,
+    PL031_RAW_ISR_OFFSET, PL031_REGISTER_BYTES,
 };
 pub use self::rtc::{
     Mc146818Rtc, Mc146818RtcMmioDevice, Mc146818RtcMmioSnapshot, RtcDateTime, RtcEncoding,
