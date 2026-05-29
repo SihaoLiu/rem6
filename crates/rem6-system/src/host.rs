@@ -13,8 +13,9 @@ use crate::{
     ExecutionModeTarget, FabricCheckpointBank, GpuCheckpointBank, GuestEventDelivery, GuestEventId,
     GuestHostCallResponse, GuestSourceId, HostAction, HostActionRecord, HostEventPolicy,
     InterruptControllerCheckpointBank, MemoryStoreCheckpointBank, MsiBankCheckpointBank,
-    PciHostCheckpointBank, RiscvCoreCheckpointBank, SchedulerCheckpointBank, StopRequest,
-    SystemError, TimerCheckpointBank, UartCheckpointBank, VirtioSplitQueueCheckpointBank,
+    PciHostCheckpointBank, PlicCheckpointBank, RiscvCoreCheckpointBank, SchedulerCheckpointBank,
+    StopRequest, SystemError, TimerCheckpointBank, UartCheckpointBank,
+    VirtioSplitQueueCheckpointBank,
 };
 
 const EXECUTION_MODE_CHECKPOINT_COMPONENT: &str = "host.execution_modes";
@@ -137,6 +138,7 @@ pub struct SystemActionExecutor {
     clint_checkpoints: Option<ClintCheckpointBank>,
     timer_checkpoints: Option<TimerCheckpointBank>,
     uart_checkpoints: Option<UartCheckpointBank>,
+    plic_checkpoints: Option<PlicCheckpointBank>,
     pci_host_checkpoints: Option<PciHostCheckpointBank>,
     virtio_split_queue_checkpoints: Option<VirtioSplitQueueCheckpointBank>,
     execution_modes: BTreeMap<ExecutionModeTarget, ExecutionMode>,
@@ -166,6 +168,7 @@ impl SystemActionExecutor {
             clint_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: None,
+            plic_checkpoints: None,
             pci_host_checkpoints: None,
             virtio_split_queue_checkpoints: None,
             execution_modes: BTreeMap::new(),
@@ -195,6 +198,7 @@ impl SystemActionExecutor {
             clint_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: None,
+            plic_checkpoints: None,
             pci_host_checkpoints: None,
             virtio_split_queue_checkpoints: None,
             execution_modes: BTreeMap::new(),
@@ -224,6 +228,7 @@ impl SystemActionExecutor {
             clint_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: None,
+            plic_checkpoints: None,
             pci_host_checkpoints: None,
             virtio_split_queue_checkpoints: None,
             execution_modes: BTreeMap::new(),
@@ -253,6 +258,7 @@ impl SystemActionExecutor {
             clint_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: None,
+            plic_checkpoints: None,
             pci_host_checkpoints: None,
             virtio_split_queue_checkpoints: None,
             execution_modes: BTreeMap::new(),
@@ -282,6 +288,7 @@ impl SystemActionExecutor {
             clint_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: None,
+            plic_checkpoints: None,
             pci_host_checkpoints: None,
             virtio_split_queue_checkpoints: None,
             execution_modes: BTreeMap::new(),
@@ -311,6 +318,7 @@ impl SystemActionExecutor {
             clint_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: Some(uart_checkpoints),
+            plic_checkpoints: None,
             pci_host_checkpoints: None,
             virtio_split_queue_checkpoints: None,
             execution_modes: BTreeMap::new(),
@@ -340,6 +348,7 @@ impl SystemActionExecutor {
             clint_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: None,
+            plic_checkpoints: None,
             pci_host_checkpoints: Some(pci_host_checkpoints),
             virtio_split_queue_checkpoints: None,
             execution_modes: BTreeMap::new(),
@@ -370,6 +379,7 @@ impl SystemActionExecutor {
             clint_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: None,
+            plic_checkpoints: None,
             pci_host_checkpoints: None,
             virtio_split_queue_checkpoints: None,
             execution_modes: BTreeMap::new(),
@@ -400,6 +410,7 @@ impl SystemActionExecutor {
             clint_checkpoints: None,
             timer_checkpoints: None,
             uart_checkpoints: None,
+            plic_checkpoints: None,
             pci_host_checkpoints: None,
             virtio_split_queue_checkpoints: None,
             execution_modes: BTreeMap::new(),
@@ -610,6 +621,15 @@ impl SystemActionExecutor {
         Ok(())
     }
 
+    pub fn attach_plic_checkpoint_bank(
+        &mut self,
+        plic_checkpoints: PlicCheckpointBank,
+    ) -> Result<(), CheckpointError> {
+        plic_checkpoints.register_all(&mut self.checkpoints)?;
+        self.plic_checkpoints = Some(plic_checkpoints);
+        Ok(())
+    }
+
     pub fn attach_timer_checkpoint_bank(
         &mut self,
         timer_checkpoints: TimerCheckpointBank,
@@ -685,6 +705,10 @@ impl SystemActionExecutor {
 
     pub const fn uart_checkpoint_bank(&self) -> Option<&UartCheckpointBank> {
         self.uart_checkpoints.as_ref()
+    }
+
+    pub const fn plic_checkpoint_bank(&self) -> Option<&PlicCheckpointBank> {
+        self.plic_checkpoints.as_ref()
     }
 
     pub const fn pci_host_checkpoint_bank(&self) -> Option<&PciHostCheckpointBank> {
@@ -786,6 +810,11 @@ impl SystemActionExecutor {
                 .validate_restore_from(checkpoints)
                 .map_err(SystemError::UartCheckpoint)?;
         }
+        if let Some(plic_checkpoints) = &self.plic_checkpoints {
+            plic_checkpoints
+                .validate_restore_from(checkpoints)
+                .map_err(SystemError::PlicCheckpoint)?;
+        }
         if let Some(pci_host_checkpoints) = &self.pci_host_checkpoints {
             pci_host_checkpoints
                 .validate_restore_from(checkpoints)
@@ -859,6 +888,11 @@ impl SystemActionExecutor {
             uart_checkpoints
                 .restore_all_from(&self.checkpoints)
                 .map_err(SystemError::UartCheckpoint)?;
+        }
+        if let Some(plic_checkpoints) = &self.plic_checkpoints {
+            plic_checkpoints
+                .restore_all_from(&self.checkpoints)
+                .map_err(SystemError::PlicCheckpoint)?;
         }
         if let Some(pci_host_checkpoints) = &self.pci_host_checkpoints {
             pci_host_checkpoints
@@ -983,6 +1017,11 @@ impl SystemActionExecutor {
                 }
                 if let Some(uart_checkpoints) = &self.uart_checkpoints {
                     uart_checkpoints
+                        .capture_all_into(&mut staged_checkpoints)
+                        .map_err(SystemError::Checkpoint)?;
+                }
+                if let Some(plic_checkpoints) = &self.plic_checkpoints {
+                    plic_checkpoints
                         .capture_all_into(&mut staged_checkpoints)
                         .map_err(SystemError::Checkpoint)?;
                 }

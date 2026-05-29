@@ -3,9 +3,10 @@ use std::sync::{Arc, Mutex};
 use rem6_interrupt::{
     InterruptClaim, InterruptController, InterruptError, InterruptEvent, InterruptEventKind,
     InterruptLineId, InterruptRoute, InterruptSourceId, InterruptTargetId, PlicContextRoute,
-    PlicMmioDevice, PLIC_MMIO_CLAIM_COMPLETE_OFFSET, PLIC_MMIO_CONTEXT_BASE_OFFSET,
-    PLIC_MMIO_CONTEXT_STRIDE, PLIC_MMIO_ENABLE_BASE_OFFSET, PLIC_MMIO_ENABLE_CONTEXT_STRIDE,
-    PLIC_MMIO_PENDING_BASE_OFFSET, PLIC_MMIO_PRIORITY_STRIDE, PLIC_MMIO_REGISTER_BYTES,
+    PlicContextSnapshot, PlicMmioDevice, PlicSnapshot, PLIC_MMIO_CLAIM_COMPLETE_OFFSET,
+    PLIC_MMIO_CONTEXT_BASE_OFFSET, PLIC_MMIO_CONTEXT_STRIDE, PLIC_MMIO_ENABLE_BASE_OFFSET,
+    PLIC_MMIO_ENABLE_CONTEXT_STRIDE, PLIC_MMIO_PENDING_BASE_OFFSET, PLIC_MMIO_PRIORITY_STRIDE,
+    PLIC_MMIO_REGISTER_BYTES,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{AccessSize, Address, AddressRange, ByteMask};
@@ -207,6 +208,133 @@ fn plic_mmio_routes_enable_threshold_and_claim_by_context() {
         vec![
             InterruptClaim::new(line0, target0, cpu0, source0, 0, 3),
             InterruptClaim::new(line1, target1, cpu1, source1, 0, 3),
+        ]
+    );
+}
+
+#[test]
+fn plic_snapshot_restores_context_enable_and_threshold_state() {
+    let cpu0 = PartitionId::new(0);
+    let cpu1 = PartitionId::new(1);
+    let target0 = InterruptTargetId::new(0);
+    let target1 = InterruptTargetId::new(1);
+    let base = Address::new(0x0c70_0000);
+    let line0 = InterruptLineId::new(2);
+    let line1 = InterruptLineId::new(35);
+    let source0 = InterruptSourceId::new(52);
+    let source1 = InterruptSourceId::new(53);
+    let contexts = [
+        PlicContextRoute::new(0, target0, cpu0),
+        PlicContextRoute::new(1, target1, cpu1),
+    ];
+    let source = PlicMmioDevice::with_contexts(
+        Arc::new(Mutex::new(InterruptController::new())),
+        base,
+        contexts,
+    );
+    let mut source_scheduler = PartitionedScheduler::new(2).unwrap();
+
+    let source_program = source.clone();
+    source_scheduler
+        .schedule_at(cpu0, 1, move |context| {
+            let context1_enable = PLIC_MMIO_ENABLE_BASE_OFFSET + PLIC_MMIO_ENABLE_CONTEXT_STRIDE;
+            let context1_base = PLIC_MMIO_CONTEXT_BASE_OFFSET + PLIC_MMIO_CONTEXT_STRIDE;
+            for request in [
+                write(61, base, PLIC_MMIO_ENABLE_BASE_OFFSET, 1 << line0.get()),
+                write(62, base, PLIC_MMIO_CONTEXT_BASE_OFFSET, 4),
+                write(
+                    63,
+                    base,
+                    context1_enable + (line1.get() / 32) * PLIC_MMIO_REGISTER_BYTES,
+                    1 << (line1.get() % 32),
+                ),
+                write(64, base, context1_base, 6),
+            ] {
+                source_program.respond(context, &request).unwrap();
+            }
+        })
+        .unwrap();
+    source_scheduler.run_until_idle();
+
+    let snapshot = source.snapshot();
+
+    assert_eq!(
+        snapshot,
+        PlicSnapshot::new(
+            base,
+            vec![
+                PlicContextSnapshot::new(
+                    0,
+                    target0,
+                    cpu0,
+                    vec![line0],
+                    rem6_interrupt::InterruptPriority::new(4),
+                ),
+                PlicContextSnapshot::new(
+                    1,
+                    target1,
+                    cpu1,
+                    vec![line1],
+                    rem6_interrupt::InterruptPriority::new(6),
+                ),
+            ],
+        )
+    );
+
+    let restored_controller = Arc::new(Mutex::new(InterruptController::new()));
+    {
+        let mut controller = restored_controller.lock().unwrap();
+        controller
+            .register_route(InterruptRoute::new(line0, target0, cpu0))
+            .unwrap();
+        controller
+            .register_route(InterruptRoute::new(line1, target1, cpu1))
+            .unwrap();
+        controller
+            .set_priority(line0, rem6_interrupt::InterruptPriority::new(5))
+            .unwrap();
+        controller
+            .set_priority(line1, rem6_interrupt::InterruptPriority::new(7))
+            .unwrap();
+        controller.assert(line0, source0, 0).unwrap();
+        controller.assert(line1, source1, 0).unwrap();
+    }
+    let restored = PlicMmioDevice::with_contexts(Arc::clone(&restored_controller), base, contexts);
+    restored.restore(&snapshot).unwrap();
+    let mut restored_scheduler = PartitionedScheduler::new(2).unwrap();
+    let restored_device = restored.clone();
+
+    restored_scheduler
+        .schedule_at(cpu0, 2, move |context| {
+            let context1_base = PLIC_MMIO_CONTEXT_BASE_OFFSET + PLIC_MMIO_CONTEXT_STRIDE;
+            let context0_claim = restored_device
+                .respond(
+                    context,
+                    &read(
+                        65,
+                        base,
+                        PLIC_MMIO_CONTEXT_BASE_OFFSET + PLIC_MMIO_CLAIM_COMPLETE_OFFSET,
+                    ),
+                )
+                .unwrap();
+            let context1_claim = restored_device
+                .respond(
+                    context,
+                    &read(66, base, context1_base + PLIC_MMIO_CLAIM_COMPLETE_OFFSET),
+                )
+                .unwrap();
+
+            assert_eq!(context0_claim.data(), Some(&le32(line0.get() as u32)[..]));
+            assert_eq!(context1_claim.data(), Some(&le32(line1.get() as u32)[..]));
+        })
+        .unwrap();
+    restored_scheduler.run_until_idle();
+
+    assert_eq!(
+        restored_controller.lock().unwrap().claimed(),
+        vec![
+            InterruptClaim::new(line0, target0, cpu0, source0, 0, 2),
+            InterruptClaim::new(line1, target1, cpu1, source1, 0, 2),
         ]
     );
 }

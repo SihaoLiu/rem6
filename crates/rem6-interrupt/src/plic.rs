@@ -1,4 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::error::Error;
+use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use rem6_kernel::{ParallelSchedulerContext, PartitionId, SchedulerContext, Tick};
@@ -19,7 +21,7 @@ pub const PLIC_MMIO_CLAIM_COMPLETE_OFFSET: u64 = 4;
 
 type PlicContextKey = (InterruptTargetId, PartitionId);
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct PlicContextRoute {
     context: u64,
     target: InterruptTargetId,
@@ -53,6 +55,87 @@ impl PlicContextRoute {
 
     const fn key(self) -> PlicContextKey {
         (self.target, self.target_partition)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlicContextSnapshot {
+    context: u64,
+    target: InterruptTargetId,
+    target_partition: PartitionId,
+    enabled: Vec<InterruptLineId>,
+    threshold: InterruptPriority,
+}
+
+impl PlicContextSnapshot {
+    pub fn new(
+        context: u64,
+        target: InterruptTargetId,
+        target_partition: PartitionId,
+        mut enabled: Vec<InterruptLineId>,
+        threshold: InterruptPriority,
+    ) -> Self {
+        enabled.sort();
+        enabled.dedup();
+        Self {
+            context,
+            target,
+            target_partition,
+            enabled,
+            threshold,
+        }
+    }
+
+    pub const fn context(&self) -> u64 {
+        self.context
+    }
+
+    pub const fn target(&self) -> InterruptTargetId {
+        self.target
+    }
+
+    pub const fn target_partition(&self) -> PartitionId {
+        self.target_partition
+    }
+
+    pub fn enabled(&self) -> &[InterruptLineId] {
+        &self.enabled
+    }
+
+    pub const fn threshold(&self) -> InterruptPriority {
+        self.threshold
+    }
+
+    const fn route(&self) -> PlicContextRoute {
+        PlicContextRoute::new(self.context, self.target, self.target_partition)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlicSnapshot {
+    base: Address,
+    contexts: Vec<PlicContextSnapshot>,
+}
+
+impl PlicSnapshot {
+    pub fn new(base: Address, mut contexts: Vec<PlicContextSnapshot>) -> Self {
+        contexts.sort_by_key(|context| context.context());
+        Self { base, contexts }
+    }
+
+    pub const fn base(&self) -> Address {
+        self.base
+    }
+
+    pub fn contexts(&self) -> &[PlicContextSnapshot] {
+        &self.contexts
+    }
+
+    fn routes(&self) -> Vec<PlicContextRoute> {
+        self.contexts
+            .iter()
+            .map(PlicContextSnapshot::route)
+            .collect()
     }
 }
 
@@ -161,6 +244,77 @@ impl PlicMmioDevice {
 
     pub const fn target_partition(&self) -> PartitionId {
         self.target_partition
+    }
+
+    pub fn snapshot(&self) -> PlicSnapshot {
+        let state = self.state.lock().expect("plic state lock");
+        let contexts = self
+            .context_routes()
+            .into_iter()
+            .map(|route| {
+                let key = route.key();
+                let enabled = state
+                    .enabled
+                    .get(&key)
+                    .map(|lines| lines.iter().copied().collect())
+                    .unwrap_or_default();
+                PlicContextSnapshot::new(
+                    route.context(),
+                    route.target(),
+                    route.target_partition(),
+                    enabled,
+                    state.threshold(key),
+                )
+            })
+            .collect();
+        PlicSnapshot::new(self.base, contexts)
+    }
+
+    pub fn validate_snapshot(&self, snapshot: &PlicSnapshot) -> Result<(), PlicError> {
+        if snapshot.base() != self.base {
+            return Err(PlicError::SnapshotBaseMismatch {
+                expected: self.base,
+                actual: snapshot.base(),
+            });
+        }
+
+        let expected = self.context_routes();
+        let actual = snapshot.routes();
+        if let Some(context) = duplicate_context(&actual) {
+            return Err(PlicError::DuplicateSnapshotContext { context });
+        }
+        if actual != expected {
+            return Err(PlicError::SnapshotContextMismatch { expected, actual });
+        }
+
+        Ok(())
+    }
+
+    pub fn restore(&self, snapshot: &PlicSnapshot) -> Result<(), PlicError> {
+        self.validate_snapshot(snapshot)?;
+        let mut state = PlicMmioState::default();
+        for context in snapshot.contexts() {
+            let key = (context.target(), context.target_partition());
+            if !context.enabled().is_empty() {
+                state
+                    .enabled
+                    .insert(key, context.enabled().iter().copied().collect());
+            }
+            if context.threshold() != InterruptPriority::ZERO {
+                state.thresholds.insert(key, context.threshold());
+            }
+        }
+        *self.state.lock().expect("plic state lock") = state;
+        Ok(())
+    }
+
+    fn context_routes(&self) -> Vec<PlicContextRoute> {
+        self.contexts
+            .iter()
+            .map(|(context, (target, target_partition))| {
+                PlicContextRoute::new(*context, *target, *target_partition)
+            })
+            .collect()
     }
 
     pub fn respond(
@@ -467,3 +621,52 @@ fn validate_plic_mmio_mask(request: &MmioRequest, mask: &ByteMask) -> Result<(),
     }
     Ok(())
 }
+
+fn duplicate_context(routes: &[PlicContextRoute]) -> Option<u64> {
+    let mut seen = BTreeSet::new();
+    routes
+        .iter()
+        .find_map(|route| (!seen.insert(route.context())).then_some(route.context()))
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PlicError {
+    SnapshotBaseMismatch {
+        expected: Address,
+        actual: Address,
+    },
+    SnapshotContextMismatch {
+        expected: Vec<PlicContextRoute>,
+        actual: Vec<PlicContextRoute>,
+    },
+    DuplicateSnapshotContext {
+        context: u64,
+    },
+}
+
+impl fmt::Display for PlicError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::SnapshotBaseMismatch { expected, actual } => write!(
+                formatter,
+                "PLIC snapshot base mismatch: expected {}, actual {}",
+                expected.get(),
+                actual.get()
+            ),
+            Self::SnapshotContextMismatch { .. } => {
+                write!(
+                    formatter,
+                    "PLIC snapshot context routes do not match device"
+                )
+            }
+            Self::DuplicateSnapshotContext { context } => {
+                write!(
+                    formatter,
+                    "PLIC snapshot contains duplicate context {context}"
+                )
+            }
+        }
+    }
+}
+
+impl Error for PlicError {}

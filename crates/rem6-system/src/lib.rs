@@ -35,6 +35,7 @@ mod host;
 mod interrupt_checkpoint;
 mod memory_checkpoint;
 mod pci_checkpoint;
+mod plic_checkpoint;
 mod riscv_checkpoint;
 mod riscv_run_activity;
 mod riscv_run_translation;
@@ -90,6 +91,9 @@ pub use memory_checkpoint::{
 };
 pub use pci_checkpoint::{
     PciHostCheckpointBank, PciHostCheckpointError, PciHostCheckpointPort, PciHostCheckpointRecord,
+};
+pub use plic_checkpoint::{
+    PlicCheckpointBank, PlicCheckpointError, PlicCheckpointPort, PlicCheckpointRecord,
 };
 pub use riscv_checkpoint::{
     RiscvCoreCheckpointBank, RiscvCoreCheckpointError, RiscvCoreCheckpointPort,
@@ -923,6 +927,7 @@ pub enum SystemError {
     ClintCheckpoint(ClintCheckpointError),
     TimerCheckpoint(TimerCheckpointError),
     UartCheckpoint(UartCheckpointError),
+    PlicCheckpoint(PlicCheckpointError),
     VirtioCheckpoint(VirtioSplitQueueCheckpointError),
 }
 
@@ -953,6 +958,7 @@ impl fmt::Display for SystemError {
             Self::ClintCheckpoint(error) => write!(formatter, "{error}"),
             Self::TimerCheckpoint(error) => write!(formatter, "{error}"),
             Self::UartCheckpoint(error) => write!(formatter, "{error}"),
+            Self::PlicCheckpoint(error) => write!(formatter, "{error}"),
             Self::VirtioCheckpoint(error) => write!(formatter, "{error}"),
         }
     }
@@ -980,6 +986,7 @@ impl Error for SystemError {
             Self::ClintCheckpoint(error) => Some(error),
             Self::TimerCheckpoint(error) => Some(error),
             Self::UartCheckpoint(error) => Some(error),
+            Self::PlicCheckpoint(error) => Some(error),
             Self::VirtioCheckpoint(error) => Some(error),
             Self::ZeroHostLatency => None,
         }

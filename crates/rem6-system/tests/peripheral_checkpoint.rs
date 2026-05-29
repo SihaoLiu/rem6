@@ -4,14 +4,18 @@ use rem6_checkpoint::{CheckpointComponentId, CheckpointRegistry};
 use rem6_interrupt::{
     InterruptController, InterruptLineChannel, InterruptLineId, InterruptLinePort,
     InterruptPriority, InterruptRoute, InterruptSourceId, InterruptTargetId, PendingInterrupt,
+    PlicContextRoute, PlicContextSnapshot, PlicMmioDevice, PlicSnapshot,
 };
 use rem6_kernel::PartitionId;
 use rem6_memory::Address;
+use rem6_stats::StatsRegistry;
 use rem6_system::{
-    ClintCheckpointBank, ClintCheckpointError, ClintCheckpointPort,
-    InterruptControllerCheckpointBank, InterruptControllerCheckpointError,
-    InterruptControllerCheckpointPort, TimerCheckpointBank, TimerCheckpointError,
-    TimerCheckpointPort, UartCheckpointBank, UartCheckpointError, UartCheckpointPort,
+    ClintCheckpointBank, ClintCheckpointError, ClintCheckpointPort, GuestEventId, GuestSourceId,
+    HostAction, HostActionRecord, InterruptControllerCheckpointBank,
+    InterruptControllerCheckpointError, InterruptControllerCheckpointPort, PlicCheckpointBank,
+    PlicCheckpointError, PlicCheckpointPort, SystemActionExecutor, SystemActionOutcome,
+    TimerCheckpointBank, TimerCheckpointError, TimerCheckpointPort, UartCheckpointBank,
+    UartCheckpointError, UartCheckpointPort,
 };
 use rem6_timer::{
     ClintHartConfig, ClintHartSnapshot, ClintMmioDevice, ClintSnapshot, ProgrammableTimer,
@@ -54,6 +58,14 @@ fn timer(id: u64, partition: u32, source: u32) -> ProgrammableTimer {
         PartitionId::new(partition),
         InterruptSourceId::new(source),
         interrupt_port(100 + id, 0, 0),
+    )
+}
+
+fn plic_device(base: u64, contexts: &[PlicContextRoute]) -> PlicMmioDevice {
+    PlicMmioDevice::with_contexts(
+        Arc::new(Mutex::new(InterruptController::new())),
+        Address::new(base),
+        contexts.iter().copied(),
     )
 }
 
@@ -181,6 +193,158 @@ fn timer_checkpoint_bank_rejects_invalid_bank_without_partial_restore() {
     ));
     assert_eq!(target_valid.snapshot(), original_valid);
     assert_eq!(target_invalid.snapshot(), original_invalid);
+}
+
+#[test]
+fn plic_checkpoint_bank_rejects_invalid_bank_without_partial_restore() {
+    let valid_component = checkpoint_component("plic_bank_a");
+    let invalid_component = checkpoint_component("plic_bank_b");
+    let contexts = [
+        PlicContextRoute::new(0, InterruptTargetId::new(0), PartitionId::new(0)),
+        PlicContextRoute::new(1, InterruptTargetId::new(1), PartitionId::new(1)),
+    ];
+    let expected = PlicSnapshot::new(
+        Address::new(0x0c00_0000),
+        vec![
+            PlicContextSnapshot::new(
+                0,
+                InterruptTargetId::new(0),
+                PartitionId::new(0),
+                vec![InterruptLineId::new(2)],
+                InterruptPriority::new(4),
+            ),
+            PlicContextSnapshot::new(
+                1,
+                InterruptTargetId::new(1),
+                PartitionId::new(1),
+                vec![InterruptLineId::new(35)],
+                InterruptPriority::new(6),
+            ),
+        ],
+    );
+    let source = plic_device(0x0c00_0000, &contexts);
+    source.restore(&expected).unwrap();
+    let target_valid = plic_device(0x0c00_0000, &contexts);
+    let target_invalid = plic_device(0x0c10_0000, &contexts);
+    let original_valid = target_valid.snapshot();
+    let original_invalid = target_invalid.snapshot();
+
+    let mut registry = CheckpointRegistry::new();
+    registry.register(valid_component.clone()).unwrap();
+    PlicCheckpointPort::new(valid_component.clone(), source)
+        .capture_into(&mut registry)
+        .unwrap();
+    registry.register(invalid_component.clone()).unwrap();
+    registry
+        .write_chunk(&invalid_component, "plic", vec![0xaa])
+        .unwrap();
+
+    let bank = PlicCheckpointBank::new([
+        PlicCheckpointPort::new(valid_component, target_valid.clone()),
+        PlicCheckpointPort::new(invalid_component.clone(), target_invalid.clone()),
+    ])
+    .unwrap();
+    let error = bank.restore_all_from(&registry).unwrap_err();
+    assert!(matches!(
+        error,
+        PlicCheckpointError::InvalidChunk { component, .. } if component == invalid_component
+    ));
+    assert_eq!(target_valid.snapshot(), original_valid);
+    assert_eq!(target_invalid.snapshot(), original_invalid);
+}
+
+#[test]
+fn system_action_executor_checkpoints_and_restores_plic_state() {
+    let component = checkpoint_component("plic0");
+    let contexts = [
+        PlicContextRoute::new(0, InterruptTargetId::new(0), PartitionId::new(0)),
+        PlicContextRoute::new(1, InterruptTargetId::new(1), PartitionId::new(1)),
+    ];
+    let expected = PlicSnapshot::new(
+        Address::new(0x0c00_0000),
+        vec![
+            PlicContextSnapshot::new(
+                0,
+                InterruptTargetId::new(0),
+                PartitionId::new(0),
+                vec![InterruptLineId::new(2)],
+                InterruptPriority::new(4),
+            ),
+            PlicContextSnapshot::new(
+                1,
+                InterruptTargetId::new(1),
+                PartitionId::new(1),
+                vec![InterruptLineId::new(35)],
+                InterruptPriority::new(6),
+            ),
+        ],
+    );
+    let empty = PlicSnapshot::new(
+        Address::new(0x0c00_0000),
+        vec![
+            PlicContextSnapshot::new(
+                0,
+                InterruptTargetId::new(0),
+                PartitionId::new(0),
+                Vec::new(),
+                InterruptPriority::ZERO,
+            ),
+            PlicContextSnapshot::new(
+                1,
+                InterruptTargetId::new(1),
+                PartitionId::new(1),
+                Vec::new(),
+                InterruptPriority::ZERO,
+            ),
+        ],
+    );
+    let live = plic_device(0x0c00_0000, &contexts);
+    live.restore(&expected).unwrap();
+    let bank = PlicCheckpointBank::new([PlicCheckpointPort::new(component.clone(), live.clone())])
+        .unwrap();
+    let mut executor = SystemActionExecutor::new(StatsRegistry::new());
+    executor.attach_plic_checkpoint_bank(bank).unwrap();
+
+    let checkpoint = HostActionRecord::new(
+        18,
+        PartitionId::new(0),
+        PartitionId::new(1),
+        GuestEventId::new(1),
+        GuestSourceId::new(9),
+        HostAction::Checkpoint {
+            label: "plic-ready".to_string(),
+        },
+    );
+    let manifest = match executor.apply(&checkpoint).unwrap() {
+        SystemActionOutcome::Checkpoint { manifest, .. } => manifest,
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+    assert!(manifest.states().iter().any(|state| {
+        state.component() == &component && state.chunks().iter().any(|chunk| chunk.name() == "plic")
+    }));
+
+    live.restore(&empty).unwrap();
+
+    let restore = HostActionRecord::new(
+        24,
+        PartitionId::new(0),
+        PartitionId::new(1),
+        GuestEventId::new(2),
+        GuestSourceId::new(9),
+        HostAction::RestoreCheckpoint {
+            manifest: manifest.clone(),
+        },
+    );
+    assert_eq!(
+        executor.apply(&restore).unwrap(),
+        SystemActionOutcome::CheckpointRestored {
+            tick: 24,
+            event: GuestEventId::new(2),
+            source: GuestSourceId::new(9),
+            manifest,
+        }
+    );
+    assert_eq!(live.snapshot(), expected);
 }
 
 #[test]
