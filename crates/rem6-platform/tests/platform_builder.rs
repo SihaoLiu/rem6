@@ -10,8 +10,9 @@ use rem6_platform::{
     PlatformBuilder, PlatformClintConfig, PlatformClintHartConfig, PlatformError,
     PlatformInterruptControllerConfig, PlatformPl031RtcConfig, PlatformPl031RtcInterruptConfig,
     PlatformRiscvDeviceTreeConfig, PlatformRtcConfig, PlatformRtcPeriodicInterruptConfig,
-    PlatformSp804TimerConfig, PlatformSp804TimerInterruptConfig, PlatformTimerConfig,
-    PlatformTopologyError, PlatformTopologyRoute, PlatformUartConfig,
+    PlatformSp804TimerConfig, PlatformSp804TimerInterruptConfig, PlatformSp805WatchdogConfig,
+    PlatformSp805WatchdogInterruptConfig, PlatformTimerConfig, PlatformTopologyError,
+    PlatformTopologyRoute, PlatformUartConfig,
 };
 use rem6_timer::{
     ClintId, ClintResetPolicy, RtcDateTime, RtcEncoding, Sp804TimerControl, TimerArm, TimerExpiry,
@@ -19,7 +20,8 @@ use rem6_timer::{
     CLINT_MTIMECMP_BASE_OFFSET, CLINT_MTIMECMP_REGISTER_BYTES, CLINT_MTIMECMP_STRIDE,
     PL031_DATA_OFFSET, PL031_INT_MASK_OFFSET, PL031_MATCH_OFFSET, PL031_REGISTER_BYTES,
     RTC_MMIO_ADDRESS_OFFSET, RTC_MMIO_DATA_OFFSET, RTC_SECONDS_REGISTER, SP804_CONTROL_OFFSET,
-    SP804_LOAD_OFFSET, SP804_REGISTER_BYTES, TIMER_MMIO_DEADLINE_OFFSET,
+    SP804_LOAD_OFFSET, SP804_REGISTER_BYTES, SP805_CONTROL_OFFSET, SP805_LOAD_OFFSET,
+    SP805_REGISTER_BYTES, TIMER_MMIO_DEADLINE_OFFSET,
 };
 use rem6_topology::{
     ComponentId, ComponentKind, ComponentSpec, Endpoint, PortDirection, PortName, Topology,
@@ -672,6 +674,133 @@ fn platform_builder_wires_sp804_mmio_interrupts_and_retains_device() {
     );
     assert!(timer.snapshot().timer(0).unwrap().raw_interrupt());
     assert!(!timer.snapshot().timer(1).unwrap().raw_interrupt());
+}
+
+#[test]
+fn platform_builder_wires_sp805_mmio_interrupt_and_retains_device() {
+    let cpu = PartitionId::new(0);
+    let watchdog_partition = PartitionId::new(1);
+    let base = Address::new(0x1c0f_0000);
+    let line = InterruptLineId::new(47);
+    let source = InterruptSourceId::new(67);
+    let route = MmioRoute::new(cpu, watchdog_partition, 2, 1).unwrap();
+
+    let platform = PlatformBuilder::new(2)
+        .add_sp805_watchdog(PlatformSp805WatchdogConfig {
+            base,
+            size: AccessSize::new(0x1000).unwrap(),
+            route,
+            clock_tick: 1,
+            interrupt: Some(PlatformSp805WatchdogInterruptConfig {
+                line,
+                target: InterruptTargetId::new(0),
+                source,
+                latency: 2,
+            }),
+        })
+        .build()
+        .unwrap();
+
+    assert_eq!(
+        platform
+            .sp805_watchdogs()
+            .map(|(device_base, _)| device_base)
+            .collect::<Vec<_>>(),
+        vec![base]
+    );
+    let watchdog = platform.sp805_watchdog(base).unwrap().clone();
+    let bus = platform.mmio_bus().clone();
+    let stop_bus = bus.clone();
+    let controller = platform.interrupt_controller();
+    let completions = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut scheduler = PartitionedScheduler::new(platform.partition_count()).unwrap();
+
+    let completed = std::sync::Arc::clone(&completions);
+    scheduler
+        .schedule_at(cpu, 1, move |context| {
+            let load_completed = std::sync::Arc::clone(&completed);
+            bus.submit(
+                context,
+                MmioRequest::write(
+                    MmioRequestId::new(80),
+                    Address::new(base.get() + SP805_LOAD_OFFSET),
+                    le32(3),
+                    full_mask(SP805_REGISTER_BYTES),
+                )
+                .unwrap(),
+                move |completion| load_completed.lock().unwrap().push(completion),
+            )
+            .unwrap();
+
+            bus.submit(
+                context,
+                MmioRequest::write(
+                    MmioRequestId::new(81),
+                    Address::new(base.get() + SP805_CONTROL_OFFSET),
+                    le32(1),
+                    full_mask(SP805_REGISTER_BYTES),
+                )
+                .unwrap(),
+                move |completion| completed.lock().unwrap().push(completion),
+            )
+            .unwrap();
+        })
+        .unwrap();
+    let completed = std::sync::Arc::clone(&completions);
+    scheduler
+        .schedule_at(cpu, 8, move |context| {
+            stop_bus
+                .submit(
+                    context,
+                    MmioRequest::write(
+                        MmioRequestId::new(82),
+                        Address::new(base.get() + SP805_CONTROL_OFFSET),
+                        le32(0),
+                        full_mask(SP805_REGISTER_BYTES),
+                    )
+                    .unwrap(),
+                    move |completion| completed.lock().unwrap().push(completion),
+                )
+                .unwrap();
+        })
+        .unwrap();
+
+    let summary = scheduler.run_until_idle();
+
+    assert_eq!(summary.final_tick(), 12);
+    assert_eq!(
+        completions.lock().unwrap().as_slice(),
+        &[
+            MmioCompletion::new(
+                4,
+                route,
+                Ok(MmioResponse::completed(MmioRequestId::new(80), None)),
+            ),
+            MmioCompletion::new(
+                4,
+                route,
+                Ok(MmioResponse::completed(MmioRequestId::new(81), None)),
+            ),
+            MmioCompletion::new(
+                11,
+                route,
+                Ok(MmioResponse::completed(MmioRequestId::new(82), None)),
+            ),
+        ]
+    );
+    assert_eq!(
+        controller.lock().unwrap().history(),
+        &[InterruptEvent::routed(
+            8,
+            line,
+            InterruptTargetId::new(0),
+            cpu,
+            source,
+            InterruptEventKind::Assert,
+        )]
+    );
+    assert!(watchdog.snapshot().watchdog().raw_interrupt());
+    assert!(!watchdog.snapshot().watchdog().enabled());
 }
 
 #[test]

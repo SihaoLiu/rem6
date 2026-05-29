@@ -16,18 +16,19 @@ use rem6_system::{
     Pl011UartCheckpointError, Pl011UartCheckpointPort, Pl031CheckpointBank, Pl031CheckpointError,
     Pl031CheckpointPort, PlicCheckpointBank, PlicCheckpointError, PlicCheckpointPort,
     RtcCheckpointBank, RtcCheckpointError, RtcCheckpointPort, Sp804CheckpointBank,
-    Sp804CheckpointError, Sp804CheckpointPort, SystemActionExecutor, SystemActionOutcome,
-    TimerCheckpointBank, TimerCheckpointError, TimerCheckpointPort, UartCheckpointBank,
-    UartCheckpointError, UartCheckpointPort,
+    Sp804CheckpointError, Sp804CheckpointPort, Sp805CheckpointBank, Sp805CheckpointPort,
+    SystemActionExecutor, SystemActionOutcome, TimerCheckpointBank, TimerCheckpointError,
+    TimerCheckpointPort, UartCheckpointBank, UartCheckpointError, UartCheckpointPort,
 };
 use rem6_timer::{
     ClintHartConfig, ClintHartSnapshot, ClintMmioDevice, ClintSnapshot, Mc146818Rtc,
     Mc146818RtcMmioDevice, Mc146818RtcMmioSnapshot, Pl031Rtc, Pl031RtcMmioDevice,
     ProgrammableTimer, RtcDateTime, RtcEncoding, RtcSnapshot, Sp804DualTimer,
-    Sp804DualTimerMmioDevice, Sp804TimerControl, TimerArm, TimerId, TimerSnapshot,
-    PL031_INT_MASK_OFFSET, PL031_LOAD_OFFSET, PL031_MATCH_OFFSET, RTC_CMOS_REGISTER_COUNT,
-    RTC_STATUS_C_AF, RTC_STATUS_C_IRQF, RTC_STATUS_C_UF, SP804_BGLOAD_OFFSET, SP804_CONTROL_OFFSET,
-    SP804_LOAD_OFFSET,
+    Sp804DualTimerMmioDevice, Sp804TimerControl, Sp805Watchdog, Sp805WatchdogMmioDevice, TimerArm,
+    TimerId, TimerSnapshot, PL031_INT_MASK_OFFSET, PL031_LOAD_OFFSET, PL031_MATCH_OFFSET,
+    RTC_CMOS_REGISTER_COUNT, RTC_STATUS_C_AF, RTC_STATUS_C_IRQF, RTC_STATUS_C_UF,
+    SP804_BGLOAD_OFFSET, SP804_CONTROL_OFFSET, SP804_LOAD_OFFSET, SP805_CONTROL_OFFSET,
+    SP805_LOAD_OFFSET,
 };
 use rem6_uart::{
     Pl011UartMmioDevice, Pl011UartSnapshot, Pl011UartSnapshotFields, UartId, UartMmioDevice,
@@ -150,6 +151,29 @@ fn configured_sp804_device(base: u64) -> Sp804DualTimerMmioDevice {
         .unwrap();
 
     Sp804DualTimerMmioDevice::new(Address::new(base), timers)
+}
+
+fn sp805_device(base: u64) -> Sp805WatchdogMmioDevice {
+    Sp805WatchdogMmioDevice::new(Address::new(base), Sp805Watchdog::new(1).unwrap())
+}
+
+fn configured_sp805_device(base: u64) -> Sp805WatchdogMmioDevice {
+    let mut watchdog = Sp805Watchdog::new(1).unwrap();
+    watchdog.write_register(SP805_LOAD_OFFSET, 3, 10).unwrap();
+    watchdog
+        .write_register(SP805_CONTROL_OFFSET, 0x3, 10)
+        .unwrap();
+    let first_generation = watchdog.snapshot().generation();
+    watchdog
+        .record_timeout(13, first_generation)
+        .unwrap()
+        .unwrap();
+    let second_generation = watchdog.snapshot().generation();
+    watchdog
+        .record_timeout(16, second_generation)
+        .unwrap()
+        .unwrap();
+    Sp805WatchdogMmioDevice::new(Address::new(base), watchdog)
 }
 
 fn rtc_snapshot(
@@ -745,6 +769,61 @@ fn system_action_executor_checkpoints_and_restores_sp804_state() {
             tick: 27,
             event: GuestEventId::new(8),
             source: GuestSourceId::new(12),
+            manifest,
+        }
+    );
+    assert_eq!(live.snapshot(), captured);
+}
+
+#[test]
+fn system_action_executor_checkpoints_and_restores_sp805_state() {
+    let component = checkpoint_component("sp805.1c0f0000");
+    let live = configured_sp805_device(0x1c0f_0000);
+    let captured = live.snapshot();
+    let empty = sp805_device(0x1c0f_0000).snapshot();
+    let bank =
+        Sp805CheckpointBank::new([Sp805CheckpointPort::new(component.clone(), live.clone())])
+            .unwrap();
+    let mut executor = SystemActionExecutor::new(StatsRegistry::new());
+    executor.attach_sp805_checkpoint_bank(bank).unwrap();
+
+    let checkpoint = HostActionRecord::new(
+        22,
+        PartitionId::new(0),
+        PartitionId::new(1),
+        GuestEventId::new(9),
+        GuestSourceId::new(13),
+        HostAction::Checkpoint {
+            label: "sp805-ready".to_string(),
+        },
+    );
+    let manifest = match executor.apply(&checkpoint).unwrap() {
+        SystemActionOutcome::Checkpoint { manifest, .. } => manifest,
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+    assert!(manifest.states().iter().any(|state| {
+        state.component() == &component
+            && state.chunks().iter().any(|chunk| chunk.name() == "sp805")
+    }));
+
+    live.restore(&empty).unwrap();
+
+    let restore = HostActionRecord::new(
+        28,
+        PartitionId::new(0),
+        PartitionId::new(1),
+        GuestEventId::new(10),
+        GuestSourceId::new(13),
+        HostAction::RestoreCheckpoint {
+            manifest: manifest.clone(),
+        },
+    );
+    assert_eq!(
+        executor.apply(&restore).unwrap(),
+        SystemActionOutcome::CheckpointRestored {
+            tick: 28,
+            event: GuestEventId::new(10),
+            source: GuestSourceId::new(13),
             manifest,
         }
     );

@@ -4,7 +4,8 @@ use rem6_kernel::PartitionId;
 use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout};
 use rem6_platform::{
     Platform, PlatformBuilder, PlatformPl011UartConfig, PlatformPl031RtcConfig, PlatformRtcConfig,
-    PlatformSp804TimerConfig, PlatformSp804TimerInterruptConfig, PlatformTopologyRoute,
+    PlatformSp804TimerConfig, PlatformSp804TimerInterruptConfig, PlatformSp805WatchdogConfig,
+    PlatformSp805WatchdogInterruptConfig, PlatformTopologyRoute,
 };
 use rem6_stats::StatsRegistry;
 use rem6_system::{
@@ -14,8 +15,9 @@ use rem6_system::{
 use rem6_timer::{
     Mc146818RtcMmioSnapshot, Pl031RtcMmioSnapshot, Pl031Snapshot, Pl031SnapshotFields, RtcDateTime,
     RtcEncoding, RtcSnapshot, Sp804DualTimer, Sp804DualTimerMmioDevice, Sp804DualTimerMmioSnapshot,
-    Sp804TimerControl, RTC_CMOS_REGISTER_COUNT, SP804_BGLOAD_OFFSET, SP804_CONTROL_OFFSET,
-    SP804_LOAD_OFFSET,
+    Sp804TimerControl, Sp805Watchdog, Sp805WatchdogMmioDevice, Sp805WatchdogMmioSnapshot,
+    RTC_CMOS_REGISTER_COUNT, SP804_BGLOAD_OFFSET, SP804_CONTROL_OFFSET, SP804_LOAD_OFFSET,
+    SP805_CONTROL_OFFSET, SP805_LOAD_OFFSET,
 };
 use rem6_topology::{
     ComponentId, ComponentKind, ComponentSpec, Endpoint, PortDirection, PortName, Topology,
@@ -210,6 +212,27 @@ fn platform_with_sp804(topology: &Topology, base: Address) -> Platform {
         .unwrap()
 }
 
+fn platform_with_sp805(topology: &Topology, base: Address) -> Platform {
+    let route = PlatformTopologyRoute::new(endpoint("cpu0", "mmio"), endpoint("rtc0", "mmio"))
+        .resolve(topology)
+        .unwrap();
+    PlatformBuilder::from_topology(topology)
+        .add_sp805_watchdog(PlatformSp805WatchdogConfig {
+            base,
+            size: AccessSize::new(0x1000).unwrap(),
+            route,
+            clock_tick: 1,
+            interrupt: Some(PlatformSp805WatchdogInterruptConfig {
+                line: rem6_interrupt::InterruptLineId::new(59),
+                target: rem6_interrupt::InterruptTargetId::new(0),
+                source: rem6_interrupt::InterruptSourceId::new(79),
+                latency: 2,
+            }),
+        })
+        .build()
+        .unwrap()
+}
+
 fn platform_with_pl011(topology: &Topology, base: Address) -> Platform {
     let route = PlatformTopologyRoute::new(endpoint("cpu0", "mmio"), endpoint("rtc0", "mmio"))
         .resolve(topology)
@@ -305,6 +328,25 @@ fn pl031_snapshot(
 
 fn sp804_snapshot(base: Address) -> Sp804DualTimerMmioSnapshot {
     configured_sp804_device(base).snapshot()
+}
+
+fn sp805_snapshot(base: Address) -> Sp805WatchdogMmioSnapshot {
+    let mut watchdog = Sp805Watchdog::new(1).unwrap();
+    watchdog.write_register(SP805_LOAD_OFFSET, 4, 10).unwrap();
+    watchdog
+        .write_register(SP805_CONTROL_OFFSET, 0x3, 10)
+        .unwrap();
+    let first_generation = watchdog.snapshot().generation();
+    watchdog
+        .record_timeout(14, first_generation)
+        .unwrap()
+        .unwrap();
+    let second_generation = watchdog.snapshot().generation();
+    watchdog
+        .record_timeout(18, second_generation)
+        .unwrap()
+        .unwrap();
+    Sp805WatchdogMmioDevice::new(base, watchdog).snapshot()
 }
 
 fn pl011_snapshot() -> Pl011UartSnapshot {
@@ -621,6 +663,107 @@ fn topology_host_controller_checkpoints_attached_sp804() {
         }
     );
     assert_eq!(timer.snapshot(), captured);
+}
+
+#[test]
+fn topology_host_controller_checkpoints_attached_sp805() {
+    let topology = topology_with_rtc();
+    let watchdog_base = Address::new(0x1c0f_0000);
+    let platform = platform_with_sp805(&topology, watchdog_base);
+    let source = GuestSourceId::new(56);
+    let system = RiscvTopologySystem::with_min_remote_delay(
+        topology,
+        RiscvClusterTopologyConfig::new([
+            core_config(0, 0, 7, 0x8000),
+            core_config(1, 1, 8, 0x9000),
+        ]),
+        2,
+    )
+    .unwrap()
+    .with_platform(platform)
+    .unwrap()
+    .with_host_controller(
+        RiscvTopologyHostConfig::new(PartitionId::new(4), 2, source),
+        StatsRegistry::new(),
+    )
+    .unwrap();
+    let host = system.host_controller().unwrap();
+    let component = CheckpointComponentId::new("sp805.1c0f0000").unwrap();
+    let captured = sp805_snapshot(watchdog_base);
+    let empty =
+        Sp805WatchdogMmioDevice::new(watchdog_base, Sp805Watchdog::new(1).unwrap()).snapshot();
+    let watchdog = system
+        .platform()
+        .unwrap()
+        .sp805_watchdog(watchdog_base)
+        .unwrap()
+        .clone();
+    watchdog.restore(&captured).unwrap();
+    assert!(host
+        .lock()
+        .unwrap()
+        .executor()
+        .sp805_checkpoint_bank()
+        .is_some());
+
+    let checkpoint = HostActionRecord::new(
+        35,
+        PartitionId::new(4),
+        PartitionId::new(4),
+        GuestEventId::new(206),
+        source,
+        HostAction::Checkpoint {
+            label: "attached-sp805".to_string(),
+        },
+    );
+    let manifest = match host
+        .lock()
+        .unwrap()
+        .executor_mut()
+        .apply(&checkpoint)
+        .unwrap()
+    {
+        SystemActionOutcome::Checkpoint { manifest, .. } => manifest,
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+
+    assert!(manifest
+        .states()
+        .iter()
+        .any(|state| state.component() == &component));
+    assert!(host
+        .lock()
+        .unwrap()
+        .executor()
+        .checkpoints()
+        .chunk(&component, "sp805")
+        .is_some());
+
+    watchdog.restore(&empty).unwrap();
+    assert_ne!(watchdog.snapshot(), captured);
+
+    let restore = HostActionRecord::new(
+        49,
+        PartitionId::new(4),
+        PartitionId::new(4),
+        GuestEventId::new(207),
+        source,
+        HostAction::RestoreCheckpoint {
+            manifest: manifest.clone(),
+        },
+    );
+    let restored = host.lock().unwrap().executor_mut().apply(&restore).unwrap();
+
+    assert_eq!(
+        restored,
+        SystemActionOutcome::CheckpointRestored {
+            tick: 49,
+            event: GuestEventId::new(207),
+            source,
+            manifest,
+        }
+    );
+    assert_eq!(watchdog.snapshot(), captured);
 }
 
 #[test]

@@ -15,7 +15,7 @@ use rem6_timer::{
     ClintHartConfig, ClintId, ClintMmioDevice, ClintResetPolicy, Mc146818Rtc,
     Mc146818RtcMmioDevice, Pl031Error, Pl031Rtc, Pl031RtcMmioDevice, ProgrammableTimer,
     RtcDateTime, RtcEncoding, RtcError, Sp804DualTimer, Sp804DualTimerMmioDevice, Sp804Error,
-    TimerError, TimerId, TimerMmioDevice,
+    Sp805Error, Sp805Watchdog, Sp805WatchdogMmioDevice, TimerError, TimerId, TimerMmioDevice,
 };
 use rem6_topology::{Endpoint, Topology, TopologyError};
 use rem6_uart::{Pl011UartMmioDevice, UartId, UartMmioDevice};
@@ -110,6 +110,23 @@ pub struct PlatformSp804TimerConfig {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PlatformSp804TimerInterruptConfig {
+    pub line: InterruptLineId,
+    pub target: InterruptTargetId,
+    pub source: InterruptSourceId,
+    pub latency: Tick,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PlatformSp805WatchdogConfig {
+    pub base: Address,
+    pub size: AccessSize,
+    pub route: MmioRoute,
+    pub clock_tick: Tick,
+    pub interrupt: Option<PlatformSp805WatchdogInterruptConfig>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PlatformSp805WatchdogInterruptConfig {
     pub line: InterruptLineId,
     pub target: InterruptTargetId,
     pub source: InterruptSourceId,
@@ -999,6 +1016,7 @@ pub struct PlatformBuilder {
     rtcs: Vec<PlatformRtcConfig>,
     pl031_rtcs: Vec<PlatformPl031RtcConfig>,
     sp804_timers: Vec<PlatformSp804TimerConfig>,
+    sp805_watchdogs: Vec<PlatformSp805WatchdogConfig>,
 }
 
 impl PlatformBuilder {
@@ -1013,6 +1031,7 @@ impl PlatformBuilder {
             rtcs: Vec::new(),
             pl031_rtcs: Vec::new(),
             sp804_timers: Vec::new(),
+            sp805_watchdogs: Vec::new(),
         }
     }
 
@@ -1060,6 +1079,11 @@ impl PlatformBuilder {
         self
     }
 
+    pub fn add_sp805_watchdog(mut self, config: PlatformSp805WatchdogConfig) -> Self {
+        self.sp805_watchdogs.push(config);
+        self
+    }
+
     pub fn build(self) -> Result<Platform, PlatformError> {
         if self.partition_count == 0 {
             return Err(PlatformError::NoPartitions);
@@ -1083,6 +1107,7 @@ impl PlatformBuilder {
         let mut rtcs = BTreeMap::new();
         let mut pl031_rtcs = BTreeMap::new();
         let mut sp804_timers = BTreeMap::new();
+        let mut sp805_watchdogs = BTreeMap::new();
 
         for config in self.interrupt_controllers {
             validate_route(self.partition_count, config.route)?;
@@ -1331,6 +1356,37 @@ impl PlatformBuilder {
             sp804_timers.insert(config.base, device);
         }
 
+        for config in self.sp805_watchdogs {
+            validate_route(self.partition_count, config.route)?;
+            let watchdog = Sp805Watchdog::new(config.clock_tick).map_err(PlatformError::Sp805)?;
+            let device = if let Some(interrupt) = config.interrupt {
+                let port = register_interrupt(
+                    &controller,
+                    config.route.source_partition(),
+                    interrupt.line,
+                    interrupt.target,
+                    interrupt.latency,
+                )?;
+                Sp805WatchdogMmioDevice::with_interrupt(
+                    config.base,
+                    watchdog,
+                    config.route.target_partition(),
+                    interrupt.source,
+                    port,
+                )
+                .map_err(PlatformError::Sp805)?
+            } else {
+                Sp805WatchdogMmioDevice::new(config.base, watchdog)
+            };
+            bus.insert_device(
+                region(config.base, config.size)?,
+                config.route,
+                device.clone(),
+            )
+            .map_err(PlatformError::Mmio)?;
+            sp805_watchdogs.insert(config.base, device);
+        }
+
         Ok(Platform {
             partition_count: self.partition_count,
             interrupt_controller: controller,
@@ -1343,6 +1399,7 @@ impl PlatformBuilder {
             rtcs,
             pl031_rtcs,
             sp804_timers,
+            sp805_watchdogs,
             device_tree_inventory,
         })
     }
@@ -1361,6 +1418,7 @@ pub struct Platform {
     rtcs: BTreeMap<Address, Mc146818RtcMmioDevice>,
     pl031_rtcs: BTreeMap<Address, Pl031RtcMmioDevice>,
     sp804_timers: BTreeMap<Address, Sp804DualTimerMmioDevice>,
+    sp805_watchdogs: BTreeMap<Address, Sp805WatchdogMmioDevice>,
     device_tree_inventory: PlatformDeviceTreeInventory,
 }
 
@@ -1441,6 +1499,16 @@ impl Platform {
 
     pub fn sp804_timers(&self) -> impl Iterator<Item = (Address, &Sp804DualTimerMmioDevice)> {
         self.sp804_timers
+            .iter()
+            .map(|(base, device)| (*base, device))
+    }
+
+    pub fn sp805_watchdog(&self, base: Address) -> Option<&Sp805WatchdogMmioDevice> {
+        self.sp805_watchdogs.get(&base)
+    }
+
+    pub fn sp805_watchdogs(&self) -> impl Iterator<Item = (Address, &Sp805WatchdogMmioDevice)> {
+        self.sp805_watchdogs
             .iter()
             .map(|(base, device)| (*base, device))
     }
@@ -1567,6 +1635,7 @@ pub enum PlatformError {
     Rtc(RtcError),
     Pl031(Pl031Error),
     Sp804(Sp804Error),
+    Sp805(Sp805Error),
 }
 
 impl fmt::Display for PlatformError {
@@ -1599,6 +1668,7 @@ impl fmt::Display for PlatformError {
             Self::Rtc(error) => write!(formatter, "{error}"),
             Self::Pl031(error) => write!(formatter, "{error}"),
             Self::Sp804(error) => write!(formatter, "{error}"),
+            Self::Sp805(error) => write!(formatter, "{error}"),
         }
     }
 }
@@ -1613,6 +1683,7 @@ impl Error for PlatformError {
             Self::Rtc(error) => Some(error),
             Self::Pl031(error) => Some(error),
             Self::Sp804(error) => Some(error),
+            Self::Sp805(error) => Some(error),
             _ => None,
         }
     }

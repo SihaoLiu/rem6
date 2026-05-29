@@ -449,6 +449,21 @@ pub struct Sp805WatchdogMmioDevice {
     state: Arc<Mutex<Sp805Watchdog>>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Sp805WatchdogMmioSnapshot {
+    watchdog: Sp805WatchdogSnapshot,
+}
+
+impl Sp805WatchdogMmioSnapshot {
+    pub const fn new(watchdog: Sp805WatchdogSnapshot) -> Self {
+        Self { watchdog }
+    }
+
+    pub const fn watchdog(&self) -> &Sp805WatchdogSnapshot {
+        &self.watchdog
+    }
+}
+
 impl Sp805WatchdogMmioDevice {
     pub fn new(base: Address, watchdog: Sp805Watchdog) -> Self {
         Self {
@@ -481,18 +496,20 @@ impl Sp805WatchdogMmioDevice {
         SP805_MMIO_SIZE_BYTES
     }
 
-    pub fn snapshot(&self) -> Sp805WatchdogSnapshot {
-        self.state
-            .lock()
-            .expect("SP805 watchdog state lock")
-            .snapshot()
+    pub fn snapshot(&self) -> Sp805WatchdogMmioSnapshot {
+        Sp805WatchdogMmioSnapshot::new(
+            self.state
+                .lock()
+                .expect("SP805 watchdog state lock")
+                .snapshot(),
+        )
     }
 
-    pub fn restore(&self, snapshot: &Sp805WatchdogSnapshot) -> Result<(), Sp805Error> {
+    pub fn restore(&self, snapshot: &Sp805WatchdogMmioSnapshot) -> Result<(), Sp805Error> {
         self.state
             .lock()
             .expect("SP805 watchdog state lock")
-            .restore(snapshot)
+            .restore(snapshot.watchdog())
     }
 
     pub fn respond(

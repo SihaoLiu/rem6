@@ -320,6 +320,11 @@ fn default_sp804_checkpoint_component(base: Address) -> CheckpointComponentId {
         .expect("formatted SP804 checkpoint component is nonempty")
 }
 
+fn default_sp805_checkpoint_component(base: Address) -> CheckpointComponentId {
+    CheckpointComponentId::new(format!("sp805.{:x}", base.get()))
+        .expect("formatted SP805 checkpoint component is nonempty")
+}
+
 fn default_pl011_uart_checkpoint_component(base: Address) -> CheckpointComponentId {
     CheckpointComponentId::new(format!("pl011.{:x}", base.get()))
         .expect("formatted PL011 checkpoint component is nonempty")
