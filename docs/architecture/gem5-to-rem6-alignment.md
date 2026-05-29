@@ -830,6 +830,10 @@ Implementation evidence on 2026-05-26:
   count, total payload bytes, and per-component chunk and byte counts. This
   gives checkpoint artifacts machine-checkable coverage evidence without
   relying on logs or ad hoc manifest scans.
+- Checkpoint manifest summaries now retain sorted chunk-level payload evidence
+  for each component. Audit code can verify exact checkpoint chunk coverage
+  from typed manifest data instead of rescanning payloads or relying on
+  subsystem-specific logging.
 - Workload replay results now carry checkpoint and checkpoint-restore manifest
   summaries with label, manifest tick, component count, chunk count, and total
   payload bytes, so replay artifacts retain checkpoint coverage evidence

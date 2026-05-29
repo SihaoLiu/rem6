@@ -65,22 +65,60 @@ impl CheckpointState {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CheckpointChunkSummary {
+    name: String,
+    payload_bytes: usize,
+}
+
+impl CheckpointChunkSummary {
+    pub fn new(name: impl Into<String>, payload_bytes: usize) -> Self {
+        Self {
+            name: name.into(),
+            payload_bytes,
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub const fn payload_bytes(&self) -> usize {
+        self.payload_bytes
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CheckpointComponentSummary {
     component: CheckpointComponentId,
     chunk_count: usize,
     payload_bytes: usize,
+    chunk_summaries: Vec<CheckpointChunkSummary>,
 }
 
 impl CheckpointComponentSummary {
-    pub const fn new(
-        component: CheckpointComponentId,
-        chunk_count: usize,
-        payload_bytes: usize,
-    ) -> Self {
+    pub fn new(component: CheckpointComponentId, chunk_count: usize, payload_bytes: usize) -> Self {
         Self {
             component,
             chunk_count,
             payload_bytes,
+            chunk_summaries: Vec::new(),
+        }
+    }
+
+    pub fn with_chunk_summaries(
+        component: CheckpointComponentId,
+        chunk_summaries: Vec<CheckpointChunkSummary>,
+    ) -> Self {
+        let chunk_count = chunk_summaries.len();
+        let payload_bytes = chunk_summaries
+            .iter()
+            .map(CheckpointChunkSummary::payload_bytes)
+            .sum();
+        Self {
+            component,
+            chunk_count,
+            payload_bytes,
+            chunk_summaries,
         }
     }
 
@@ -94,6 +132,16 @@ impl CheckpointComponentSummary {
 
     pub const fn payload_bytes(&self) -> usize {
         self.payload_bytes
+    }
+
+    pub fn chunk_summaries(&self) -> &[CheckpointChunkSummary] {
+        &self.chunk_summaries
+    }
+
+    pub fn chunk_summary(&self, name: &str) -> Option<&CheckpointChunkSummary> {
+        self.chunk_summaries
+            .iter()
+            .find(|summary| summary.name() == name)
     }
 }
 
@@ -123,6 +171,15 @@ impl CheckpointManifestSummary {
 
     pub fn component_summaries(&self) -> &[CheckpointComponentSummary] {
         &self.component_summaries
+    }
+
+    pub fn component_summary(
+        &self,
+        component: &CheckpointComponentId,
+    ) -> Option<&CheckpointComponentSummary> {
+        self.component_summaries
+            .iter()
+            .find(|summary| summary.component() == component)
     }
 
     pub fn component_count(&self) -> usize {
@@ -171,14 +228,20 @@ impl CheckpointManifest {
             self.states
                 .iter()
                 .map(|state| {
-                    CheckpointComponentSummary::new(
+                    let mut chunk_summaries = state
+                        .chunks()
+                        .iter()
+                        .map(|chunk| {
+                            CheckpointChunkSummary::new(
+                                chunk.name().to_string(),
+                                chunk.payload().len(),
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    chunk_summaries.sort_by(|left, right| left.name().cmp(right.name()));
+                    CheckpointComponentSummary::with_chunk_summaries(
                         state.component().clone(),
-                        state.chunks().len(),
-                        state
-                            .chunks()
-                            .iter()
-                            .map(|chunk| chunk.payload().len())
-                            .sum(),
+                        chunk_summaries,
                     )
                 })
                 .collect(),

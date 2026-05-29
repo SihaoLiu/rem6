@@ -1,6 +1,6 @@
 use rem6_checkpoint::{
-    CheckpointChunk, CheckpointComponentId, CheckpointComponentSummary, CheckpointError,
-    CheckpointManifest, CheckpointRegistry, CheckpointState,
+    CheckpointChunk, CheckpointChunkSummary, CheckpointComponentId, CheckpointComponentSummary,
+    CheckpointError, CheckpointManifest, CheckpointRegistry, CheckpointState,
 };
 
 #[test]
@@ -71,9 +71,66 @@ fn checkpoint_manifest_reports_component_chunk_and_payload_totals() {
     assert_eq!(
         summary.component_summaries(),
         &[
-            CheckpointComponentSummary::new(cpu, 2, 5),
-            CheckpointComponentSummary::new(memory, 1, 4),
+            CheckpointComponentSummary::with_chunk_summaries(
+                cpu,
+                vec![
+                    CheckpointChunkSummary::new("pc", 2),
+                    CheckpointChunkSummary::new("regs", 3),
+                ],
+            ),
+            CheckpointComponentSummary::with_chunk_summaries(
+                memory,
+                vec![CheckpointChunkSummary::new("lines", 4)],
+            ),
         ]
+    );
+}
+
+#[test]
+fn checkpoint_manifest_summary_preserves_chunk_level_payload_evidence() {
+    let cpu = CheckpointComponentId::new("cpu0").unwrap();
+    let memory = CheckpointComponentId::new("memory0").unwrap();
+    let manifest = CheckpointManifest::new(
+        "audit",
+        55,
+        vec![
+            CheckpointState::new(
+                cpu.clone(),
+                vec![
+                    CheckpointChunk::new("regs", vec![0x01, 0x02, 0x03]),
+                    CheckpointChunk::new("pc", vec![0x10, 0x00]),
+                ],
+            ),
+            CheckpointState::new(
+                memory.clone(),
+                vec![CheckpointChunk::new("lines", vec![0xaa, 0xbb, 0xcc, 0xdd])],
+            ),
+        ],
+    );
+
+    let summary = manifest.summary();
+    let cpu_summary = summary.component_summary(&cpu).unwrap();
+    let memory_summary = summary.component_summary(&memory).unwrap();
+
+    assert_eq!(
+        cpu_summary.chunk_summaries(),
+        &[
+            CheckpointChunkSummary::new("pc", 2),
+            CheckpointChunkSummary::new("regs", 3),
+        ]
+    );
+    assert_eq!(
+        cpu_summary.chunk_summary("regs"),
+        Some(&CheckpointChunkSummary::new("regs", 3))
+    );
+    assert_eq!(cpu_summary.chunk_summary("xregs"), None);
+    assert_eq!(
+        memory_summary.chunk_summaries(),
+        &[CheckpointChunkSummary::new("lines", 4)]
+    );
+    assert_eq!(
+        summary.component_summary(&CheckpointComponentId::new("gpu0").unwrap()),
+        None
     );
 }
 
