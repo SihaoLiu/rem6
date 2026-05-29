@@ -310,6 +310,11 @@ fn default_rtc_checkpoint_component(base: Address) -> CheckpointComponentId {
         .expect("formatted RTC checkpoint component is nonempty")
 }
 
+fn default_pl031_checkpoint_component(base: Address) -> CheckpointComponentId {
+    CheckpointComponentId::new(format!("pl031.{:x}", base.get()))
+        .expect("formatted PL031 checkpoint component is nonempty")
+}
+
 fn default_uart_checkpoint_component(uart: UartId) -> CheckpointComponentId {
     CheckpointComponentId::new(format!("uart{}", uart.get()))
         .expect("formatted UART checkpoint component is nonempty")

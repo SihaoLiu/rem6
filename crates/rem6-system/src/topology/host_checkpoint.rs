@@ -5,18 +5,19 @@ use crate::{
     DramMemoryCheckpointBank, DramMemoryCheckpointPort, FabricCheckpointBank, FabricCheckpointPort,
     GpuCheckpointBank, GpuCheckpointPort, InterruptControllerCheckpointBank,
     InterruptControllerCheckpointPort, MemoryStoreCheckpointBank, MemoryStoreCheckpointPort,
-    PlicCheckpointBank, PlicCheckpointPort, RiscvCoreCheckpointBank, RiscvCoreCheckpointPort,
-    RtcCheckpointBank, RtcCheckpointPort, SchedulerCheckpointBank, SchedulerCheckpointPort,
-    SystemError, TimerCheckpointBank, TimerCheckpointPort, UartCheckpointBank, UartCheckpointPort,
+    Pl031CheckpointBank, Pl031CheckpointPort, PlicCheckpointBank, PlicCheckpointPort,
+    RiscvCoreCheckpointBank, RiscvCoreCheckpointPort, RtcCheckpointBank, RtcCheckpointPort,
+    SchedulerCheckpointBank, SchedulerCheckpointPort, SystemError, TimerCheckpointBank,
+    TimerCheckpointPort, UartCheckpointBank, UartCheckpointPort,
 };
 
 use super::{
     default_accelerator_checkpoint_component, default_clint_checkpoint_component,
     default_gpu_checkpoint_component, default_interrupt_checkpoint_component,
-    default_plic_checkpoint_component, default_riscv_checkpoint_component,
-    default_rtc_checkpoint_component, default_timer_checkpoint_component,
-    default_uart_checkpoint_component, RiscvTopologyMemoryBackend, RiscvTopologySystem,
-    RiscvTopologySystemError,
+    default_pl031_checkpoint_component, default_plic_checkpoint_component,
+    default_riscv_checkpoint_component, default_rtc_checkpoint_component,
+    default_timer_checkpoint_component, default_uart_checkpoint_component,
+    RiscvTopologyMemoryBackend, RiscvTopologySystem, RiscvTopologySystemError,
 };
 
 impl RiscvTopologySystem {
@@ -261,6 +262,21 @@ impl RiscvTopologySystem {
                 .expect("topology host controller lock")
                 .executor_mut()
                 .attach_rtc_checkpoint_bank(rtc_bank)
+                .map_err(SystemError::Checkpoint)
+                .map_err(RiscvTopologySystemError::System)?;
+        }
+
+        let pl031_bank = Pl031CheckpointBank::new(platform.pl031_rtcs().map(|(base, device)| {
+            Pl031CheckpointPort::new(default_pl031_checkpoint_component(base), device.clone())
+        }))
+        .map_err(SystemError::Checkpoint)
+        .map_err(RiscvTopologySystemError::System)?;
+        if pl031_bank.component_count() != 0 {
+            host.controller
+                .lock()
+                .expect("topology host controller lock")
+                .executor_mut()
+                .attach_pl031_checkpoint_bank(pl031_bank)
                 .map_err(SystemError::Checkpoint)
                 .map_err(RiscvTopologySystemError::System)?;
         }

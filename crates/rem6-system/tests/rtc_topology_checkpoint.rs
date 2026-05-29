@@ -2,14 +2,17 @@ use rem6_checkpoint::CheckpointComponentId;
 use rem6_cpu::{CpuId, CpuResetState, RiscvClusterTopologyConfig, RiscvCoreTopologyConfig};
 use rem6_kernel::PartitionId;
 use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout};
-use rem6_platform::{Platform, PlatformBuilder, PlatformRtcConfig, PlatformTopologyRoute};
+use rem6_platform::{
+    Platform, PlatformBuilder, PlatformPl031RtcConfig, PlatformRtcConfig, PlatformTopologyRoute,
+};
 use rem6_stats::StatsRegistry;
 use rem6_system::{
     GuestEventId, GuestSourceId, HostAction, HostActionRecord, RiscvTopologyHostConfig,
     RiscvTopologySystem, SystemActionOutcome,
 };
 use rem6_timer::{
-    Mc146818RtcMmioSnapshot, RtcDateTime, RtcEncoding, RtcSnapshot, RTC_CMOS_REGISTER_COUNT,
+    Mc146818RtcMmioSnapshot, Pl031RtcMmioSnapshot, Pl031Snapshot, Pl031SnapshotFields, RtcDateTime,
+    RtcEncoding, RtcSnapshot, RTC_CMOS_REGISTER_COUNT,
 };
 use rem6_topology::{
     ComponentId, ComponentKind, ComponentSpec, Endpoint, PortDirection, PortName, Topology,
@@ -154,6 +157,23 @@ fn platform_with_rtc(topology: &Topology, base: Address) -> Platform {
         .unwrap()
 }
 
+fn platform_with_pl031(topology: &Topology, base: Address) -> Platform {
+    let route = PlatformTopologyRoute::new(endpoint("cpu0", "mmio"), endpoint("rtc0", "mmio"))
+        .resolve(topology)
+        .unwrap();
+    PlatformBuilder::from_topology(topology)
+        .add_pl031_rtc(PlatformPl031RtcConfig {
+            base,
+            size: AccessSize::new(0x1000).unwrap(),
+            route,
+            initial_time: 10,
+            ticks_per_second: 5,
+            interrupt: None,
+        })
+        .build()
+        .unwrap()
+}
+
 fn rtc_snapshot(
     selected_address: u8,
     cmos_index: usize,
@@ -170,6 +190,24 @@ fn rtc_snapshot(
             0x42,
         ),
     )
+}
+
+fn pl031_snapshot(
+    time_value: u32,
+    last_written_tick: u64,
+    match_value: u32,
+) -> Pl031RtcMmioSnapshot {
+    Pl031RtcMmioSnapshot::new(Pl031Snapshot::from_fields(Pl031SnapshotFields {
+        time_value,
+        last_written_tick,
+        load_value: time_value,
+        match_value,
+        raw_interrupt: true,
+        interrupt_mask: true,
+        pending_interrupt: true,
+        ticks_per_second: 5,
+        generation: 3,
+    }))
 }
 
 #[test]
@@ -263,6 +301,106 @@ fn topology_host_controller_checkpoints_attached_rtc() {
         SystemActionOutcome::CheckpointRestored {
             tick: 45,
             event: GuestEventId::new(199),
+            source,
+            manifest,
+        }
+    );
+    assert_eq!(rtc.snapshot(), captured);
+}
+
+#[test]
+fn topology_host_controller_checkpoints_attached_pl031() {
+    let topology = topology_with_rtc();
+    let rtc_base = Address::new(0x1c17_0000);
+    let platform = platform_with_pl031(&topology, rtc_base);
+    let source = GuestSourceId::new(53);
+    let system = RiscvTopologySystem::with_min_remote_delay(
+        topology,
+        RiscvClusterTopologyConfig::new([
+            core_config(0, 0, 7, 0x8000),
+            core_config(1, 1, 8, 0x9000),
+        ]),
+        2,
+    )
+    .unwrap()
+    .with_platform(platform)
+    .unwrap()
+    .with_host_controller(
+        RiscvTopologyHostConfig::new(PartitionId::new(4), 2, source),
+        StatsRegistry::new(),
+    )
+    .unwrap();
+    let host = system.host_controller().unwrap();
+    let component = CheckpointComponentId::new("pl031.1c170000").unwrap();
+    let captured = pl031_snapshot(40, 15, 45);
+    let empty = pl031_snapshot(0, 0, 0);
+    let rtc = system
+        .platform()
+        .unwrap()
+        .pl031_rtc(rtc_base)
+        .unwrap()
+        .clone();
+    rtc.restore(&captured).unwrap();
+    assert!(host
+        .lock()
+        .unwrap()
+        .executor()
+        .pl031_checkpoint_bank()
+        .is_some());
+
+    let checkpoint = HostActionRecord::new(
+        32,
+        PartitionId::new(4),
+        PartitionId::new(4),
+        GuestEventId::new(200),
+        source,
+        HostAction::Checkpoint {
+            label: "attached-pl031".to_string(),
+        },
+    );
+    let manifest = match host
+        .lock()
+        .unwrap()
+        .executor_mut()
+        .apply(&checkpoint)
+        .unwrap()
+    {
+        SystemActionOutcome::Checkpoint { manifest, .. } => manifest,
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+
+    assert!(manifest
+        .states()
+        .iter()
+        .any(|state| state.component() == &component));
+    assert!(host
+        .lock()
+        .unwrap()
+        .executor()
+        .checkpoints()
+        .chunk(&component, "pl031")
+        .is_some());
+
+    rtc.restore(&empty).unwrap();
+    assert_ne!(rtc.snapshot(), captured);
+
+    let restore = HostActionRecord::new(
+        46,
+        PartitionId::new(4),
+        PartitionId::new(4),
+        GuestEventId::new(201),
+        source,
+        HostAction::RestoreCheckpoint {
+            manifest: manifest.clone(),
+        },
+    );
+    let restored = host.lock().unwrap().executor_mut().apply(&restore).unwrap();
+
+    assert_eq!(
+        restored,
+        SystemActionOutcome::CheckpointRestored {
+            tick: 46,
+            event: GuestEventId::new(201),
             source,
             manifest,
         }

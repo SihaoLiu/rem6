@@ -13,8 +13,8 @@ use rem6_memory::{AccessSize, Address, AddressRange, MemoryError};
 use rem6_mmio::{MmioBus, MmioError, MmioRoute};
 use rem6_timer::{
     ClintHartConfig, ClintId, ClintMmioDevice, ClintResetPolicy, Mc146818Rtc,
-    Mc146818RtcMmioDevice, ProgrammableTimer, RtcDateTime, RtcEncoding, RtcError, TimerError,
-    TimerId, TimerMmioDevice,
+    Mc146818RtcMmioDevice, Pl031Error, Pl031Rtc, Pl031RtcMmioDevice, ProgrammableTimer,
+    RtcDateTime, RtcEncoding, RtcError, TimerError, TimerId, TimerMmioDevice,
 };
 use rem6_topology::{Endpoint, Topology, TopologyError};
 use rem6_uart::{UartId, UartMmioDevice};
@@ -60,6 +60,24 @@ pub struct PlatformRtcPeriodicInterruptConfig {
     pub source: InterruptSourceId,
     pub latency: Tick,
     pub interval: Tick,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PlatformPl031RtcConfig {
+    pub base: Address,
+    pub size: AccessSize,
+    pub route: MmioRoute,
+    pub initial_time: u32,
+    pub ticks_per_second: Tick,
+    pub interrupt: Option<PlatformPl031RtcInterruptConfig>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PlatformPl031RtcInterruptConfig {
+    pub line: InterruptLineId,
+    pub target: InterruptTargetId,
+    pub source: InterruptSourceId,
+    pub latency: Tick,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -547,6 +565,8 @@ struct PlatformDeviceTreeInventory {
     clints: Vec<PlatformClintConfig>,
     timers: Vec<PlatformTimerConfig>,
     uarts: Vec<PlatformUartConfig>,
+    rtcs: Vec<PlatformRtcConfig>,
+    pl031_rtcs: Vec<PlatformPl031RtcConfig>,
 }
 
 impl PlatformDeviceTreeInventory {
@@ -555,12 +575,16 @@ impl PlatformDeviceTreeInventory {
         clints: Vec<PlatformClintConfig>,
         timers: Vec<PlatformTimerConfig>,
         uarts: Vec<PlatformUartConfig>,
+        rtcs: Vec<PlatformRtcConfig>,
+        pl031_rtcs: Vec<PlatformPl031RtcConfig>,
     ) -> Self {
         Self {
             interrupt_controllers,
             clints,
             timers,
             uarts,
+            rtcs,
+            pl031_rtcs,
         }
     }
 
@@ -837,6 +861,15 @@ impl PlatformDeviceTreeInventory {
             .iter()
             .map(|timer| timer.interrupt_source.get())
             .chain(self.uarts.iter().map(|uart| uart.interrupt_source.get()))
+            .chain(self.rtcs.iter().filter_map(|rtc| {
+                rtc.periodic_interrupt
+                    .map(|interrupt| interrupt.source.get())
+            }))
+            .chain(
+                self.pl031_rtcs
+                    .iter()
+                    .filter_map(|rtc| rtc.interrupt.map(|interrupt| interrupt.source.get())),
+            )
             .chain([controller.source_count])
             .max()
             .unwrap_or_default()
@@ -927,6 +960,7 @@ pub struct PlatformBuilder {
     timers: Vec<PlatformTimerConfig>,
     uarts: Vec<PlatformUartConfig>,
     rtcs: Vec<PlatformRtcConfig>,
+    pl031_rtcs: Vec<PlatformPl031RtcConfig>,
 }
 
 impl PlatformBuilder {
@@ -938,6 +972,7 @@ impl PlatformBuilder {
             timers: Vec::new(),
             uarts: Vec::new(),
             rtcs: Vec::new(),
+            pl031_rtcs: Vec::new(),
         }
     }
 
@@ -970,6 +1005,11 @@ impl PlatformBuilder {
         self
     }
 
+    pub fn add_pl031_rtc(mut self, config: PlatformPl031RtcConfig) -> Self {
+        self.pl031_rtcs.push(config);
+        self
+    }
+
     pub fn build(self) -> Result<Platform, PlatformError> {
         if self.partition_count == 0 {
             return Err(PlatformError::NoPartitions);
@@ -980,6 +1020,8 @@ impl PlatformBuilder {
             self.clints.clone(),
             self.timers.clone(),
             self.uarts.clone(),
+            self.rtcs.clone(),
+            self.pl031_rtcs.clone(),
         );
         let controller = Arc::new(Mutex::new(InterruptController::new()));
         let mut bus = MmioBus::new();
@@ -988,6 +1030,7 @@ impl PlatformBuilder {
         let mut timers = BTreeMap::new();
         let mut uarts = BTreeMap::new();
         let mut rtcs = BTreeMap::new();
+        let mut pl031_rtcs = BTreeMap::new();
 
         for config in self.interrupt_controllers {
             validate_route(self.partition_count, config.route)?;
@@ -1142,6 +1185,38 @@ impl PlatformBuilder {
             rtcs.insert(config.base, device);
         }
 
+        for config in self.pl031_rtcs {
+            validate_route(self.partition_count, config.route)?;
+            let rtc = Pl031Rtc::new(config.initial_time, config.ticks_per_second)
+                .map_err(PlatformError::Pl031)?;
+            let device = if let Some(interrupt) = config.interrupt {
+                let port = register_interrupt(
+                    &controller,
+                    config.route.source_partition(),
+                    interrupt.line,
+                    interrupt.target,
+                    interrupt.latency,
+                )?;
+                Pl031RtcMmioDevice::with_interrupt(
+                    config.base,
+                    rtc,
+                    config.route.target_partition(),
+                    interrupt.source,
+                    port,
+                )
+                .map_err(PlatformError::Pl031)?
+            } else {
+                Pl031RtcMmioDevice::new(config.base, rtc)
+            };
+            bus.insert_device(
+                region(config.base, config.size)?,
+                config.route,
+                device.clone(),
+            )
+            .map_err(PlatformError::Mmio)?;
+            pl031_rtcs.insert(config.base, device);
+        }
+
         Ok(Platform {
             partition_count: self.partition_count,
             interrupt_controller: controller,
@@ -1151,6 +1226,7 @@ impl PlatformBuilder {
             timers,
             uarts,
             rtcs,
+            pl031_rtcs,
             device_tree_inventory,
         })
     }
@@ -1166,6 +1242,7 @@ pub struct Platform {
     timers: BTreeMap<TimerId, ProgrammableTimer>,
     uarts: BTreeMap<UartId, UartMmioDevice>,
     rtcs: BTreeMap<Address, Mc146818RtcMmioDevice>,
+    pl031_rtcs: BTreeMap<Address, Pl031RtcMmioDevice>,
     device_tree_inventory: PlatformDeviceTreeInventory,
 }
 
@@ -1220,6 +1297,14 @@ impl Platform {
 
     pub fn rtcs(&self) -> impl Iterator<Item = (Address, &Mc146818RtcMmioDevice)> {
         self.rtcs.iter().map(|(base, device)| (*base, device))
+    }
+
+    pub fn pl031_rtc(&self, base: Address) -> Option<&Pl031RtcMmioDevice> {
+        self.pl031_rtcs.get(&base)
+    }
+
+    pub fn pl031_rtcs(&self) -> impl Iterator<Item = (Address, &Pl031RtcMmioDevice)> {
+        self.pl031_rtcs.iter().map(|(base, device)| (*base, device))
     }
 
     pub fn riscv_device_tree(
@@ -1342,6 +1427,7 @@ pub enum PlatformError {
     Interrupt(InterruptError),
     Timer(TimerError),
     Rtc(RtcError),
+    Pl031(Pl031Error),
 }
 
 impl fmt::Display for PlatformError {
@@ -1372,6 +1458,7 @@ impl fmt::Display for PlatformError {
             Self::Interrupt(error) => write!(formatter, "{error}"),
             Self::Timer(error) => write!(formatter, "{error}"),
             Self::Rtc(error) => write!(formatter, "{error}"),
+            Self::Pl031(error) => write!(formatter, "{error}"),
         }
     }
 }
@@ -1384,6 +1471,7 @@ impl Error for PlatformError {
             Self::Interrupt(error) => Some(error),
             Self::Timer(error) => Some(error),
             Self::Rtc(error) => Some(error),
+            Self::Pl031(error) => Some(error),
             _ => None,
         }
     }

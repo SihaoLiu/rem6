@@ -8,14 +8,15 @@ use rem6_memory::{AccessSize, Address, ByteMask};
 use rem6_mmio::{MmioCompletion, MmioError, MmioRequest, MmioRequestId, MmioResponse, MmioRoute};
 use rem6_platform::{
     PlatformBuilder, PlatformClintConfig, PlatformClintHartConfig, PlatformError,
-    PlatformInterruptControllerConfig, PlatformRiscvDeviceTreeConfig, PlatformRtcConfig,
-    PlatformRtcPeriodicInterruptConfig, PlatformTimerConfig, PlatformTopologyError,
-    PlatformTopologyRoute, PlatformUartConfig,
+    PlatformInterruptControllerConfig, PlatformPl031RtcConfig, PlatformPl031RtcInterruptConfig,
+    PlatformRiscvDeviceTreeConfig, PlatformRtcConfig, PlatformRtcPeriodicInterruptConfig,
+    PlatformTimerConfig, PlatformTopologyError, PlatformTopologyRoute, PlatformUartConfig,
 };
 use rem6_timer::{
     ClintId, ClintResetPolicy, RtcDateTime, RtcEncoding, TimerArm, TimerExpiry, TimerId,
     CLINT_MSIP_BASE_OFFSET, CLINT_MSIP_REGISTER_BYTES, CLINT_MSIP_STRIDE,
     CLINT_MTIMECMP_BASE_OFFSET, CLINT_MTIMECMP_REGISTER_BYTES, CLINT_MTIMECMP_STRIDE,
+    PL031_DATA_OFFSET, PL031_INT_MASK_OFFSET, PL031_MATCH_OFFSET, PL031_REGISTER_BYTES,
     RTC_MMIO_ADDRESS_OFFSET, RTC_MMIO_DATA_OFFSET, RTC_SECONDS_REGISTER,
     TIMER_MMIO_DEADLINE_OFFSET,
 };
@@ -407,6 +408,141 @@ fn platform_builder_wires_rtc_periodic_interrupt_route() {
             ),
         ]
     );
+}
+
+#[test]
+fn platform_builder_wires_pl031_mmio_interrupt_and_retains_device() {
+    let cpu = PartitionId::new(0);
+    let rtc_partition = PartitionId::new(1);
+    let base = Address::new(0x1c17_0000);
+    let line = InterruptLineId::new(44);
+    let source = InterruptSourceId::new(64);
+    let route = MmioRoute::new(cpu, rtc_partition, 2, 1).unwrap();
+
+    let platform = PlatformBuilder::new(2)
+        .add_pl031_rtc(PlatformPl031RtcConfig {
+            base,
+            size: AccessSize::new(0x1000).unwrap(),
+            route,
+            initial_time: 10,
+            ticks_per_second: 5,
+            interrupt: Some(PlatformPl031RtcInterruptConfig {
+                line,
+                target: InterruptTargetId::new(0),
+                source,
+                latency: 2,
+            }),
+        })
+        .build()
+        .unwrap();
+
+    assert_eq!(
+        platform
+            .pl031_rtcs()
+            .map(|(device_base, _)| device_base)
+            .collect::<Vec<_>>(),
+        vec![base]
+    );
+    let rtc = platform.pl031_rtc(base).unwrap().clone();
+    let bus = platform.mmio_bus().clone();
+    let controller = platform.interrupt_controller();
+    let completions = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut scheduler = PartitionedScheduler::new(platform.partition_count()).unwrap();
+
+    let completed = std::sync::Arc::clone(&completions);
+    scheduler
+        .schedule_at(cpu, 1, move |context| {
+            let match_completed = std::sync::Arc::clone(&completed);
+            bus.submit(
+                context,
+                MmioRequest::write(
+                    MmioRequestId::new(60),
+                    Address::new(base.get() + PL031_MATCH_OFFSET),
+                    le32(12),
+                    full_mask(PL031_REGISTER_BYTES),
+                )
+                .unwrap(),
+                move |completion| match_completed.lock().unwrap().push(completion),
+            )
+            .unwrap();
+
+            let mask_completed = std::sync::Arc::clone(&completed);
+            bus.submit(
+                context,
+                MmioRequest::write(
+                    MmioRequestId::new(61),
+                    Address::new(base.get() + PL031_INT_MASK_OFFSET),
+                    le32(1),
+                    full_mask(PL031_REGISTER_BYTES),
+                )
+                .unwrap(),
+                move |completion| mask_completed.lock().unwrap().push(completion),
+            )
+            .unwrap();
+
+            bus.submit(
+                context,
+                MmioRequest::read(
+                    MmioRequestId::new(62),
+                    Address::new(base.get() + PL031_DATA_OFFSET),
+                    AccessSize::new(PL031_REGISTER_BYTES).unwrap(),
+                )
+                .unwrap(),
+                move |completion| completed.lock().unwrap().push(completion),
+            )
+            .unwrap();
+        })
+        .unwrap();
+
+    let summary = scheduler.run_until_idle();
+
+    assert_eq!(summary.final_tick(), 15);
+    assert_eq!(
+        completions.lock().unwrap().as_slice(),
+        &[
+            MmioCompletion::new(
+                4,
+                route,
+                Ok(MmioResponse::completed(MmioRequestId::new(60), None)),
+            ),
+            MmioCompletion::new(
+                4,
+                route,
+                Ok(MmioResponse::completed(MmioRequestId::new(61), None)),
+            ),
+            MmioCompletion::new(
+                4,
+                route,
+                Ok(MmioResponse::completed(
+                    MmioRequestId::new(62),
+                    Some(le32(10)),
+                )),
+            ),
+        ]
+    );
+    assert_eq!(
+        controller.lock().unwrap().history(),
+        &[
+            InterruptEvent::routed(
+                15,
+                line,
+                InterruptTargetId::new(0),
+                cpu,
+                source,
+                InterruptEventKind::Assert,
+            ),
+            InterruptEvent::routed(
+                15,
+                line,
+                InterruptTargetId::new(0),
+                cpu,
+                source,
+                InterruptEventKind::Deassert,
+            ),
+        ]
+    );
+    assert!(rtc.snapshot().rtc().raw_interrupt());
+    assert!(rtc.snapshot().rtc().pending_interrupt());
 }
 
 #[test]
