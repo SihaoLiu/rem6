@@ -846,6 +846,11 @@ Implementation evidence on 2026-05-26:
 - Workload checkpoint summaries now preserve per-component chunk and
   payload-byte counts in replay results, and workload manifests can require
   minimum coverage for named checkpoint components during capture or restore.
+- Workload manifests can now require exact checkpoint chunk names for named
+  components during capture or restore. These requirements are normalized into
+  the workload identity and verified against replay result chunk summaries, so
+  a checkpoint can prove that state such as registers, pages, or device queues
+  was captured instead of only proving aggregate byte counts.
 - Workload resources now carry optional typed acquisition provenance, including
   acquisition kind, acquisition locator, tool, and revision. The manifest
   identity hashes this provenance, so artifact acquisition state cannot drift

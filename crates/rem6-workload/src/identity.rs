@@ -712,6 +712,10 @@ fn hash_expected_checkpoint_component_summary(
     hash_str(hash, expected.component());
     hash_u64(hash, expected.minimum_chunk_count() as u64);
     hash_u64(hash, expected.minimum_payload_bytes() as u64);
+    hash_u64(hash, expected.required_chunk_names().len() as u64);
+    for chunk in expected.required_chunk_names() {
+        hash_str(hash, chunk);
+    }
 }
 
 fn hash_resource_acquisition(

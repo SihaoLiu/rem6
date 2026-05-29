@@ -227,6 +227,7 @@ pub struct WorkloadExpectedCheckpointComponentSummary {
     component: String,
     minimum_chunk_count: usize,
     minimum_payload_bytes: usize,
+    required_chunk_names: Vec<String>,
 }
 
 impl WorkloadExpectedCheckpointComponentSummary {
@@ -241,7 +242,18 @@ impl WorkloadExpectedCheckpointComponentSummary {
             component: component.into(),
             minimum_chunk_count,
             minimum_payload_bytes,
+            required_chunk_names: Vec::new(),
         }
+    }
+
+    pub fn with_required_chunks(
+        mut self,
+        chunk_names: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.required_chunk_names = chunk_names.into_iter().map(Into::into).collect::<Vec<_>>();
+        self.required_chunk_names.sort();
+        self.required_chunk_names.dedup();
+        self
     }
 
     pub fn label(&self) -> &str {
@@ -258,6 +270,10 @@ impl WorkloadExpectedCheckpointComponentSummary {
 
     pub const fn minimum_payload_bytes(&self) -> usize {
         self.minimum_payload_bytes
+    }
+
+    pub fn required_chunk_names(&self) -> &[String] {
+        &self.required_chunk_names
     }
 
     pub(crate) fn sort_key(&self) -> (&str, &str) {

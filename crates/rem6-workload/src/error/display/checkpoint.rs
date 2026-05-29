@@ -41,6 +41,22 @@ pub(super) fn format_checkpoint_error(
             formatter,
             "checkpoint restore component summary for {label}:{component} was not recorded"
         ),
+        WorkloadError::MissingCheckpointComponentChunkSummary {
+            label,
+            component,
+            chunk,
+        } => write!(
+            formatter,
+            "checkpoint component summary for {label}:{component} did not record chunk {chunk}"
+        ),
+        WorkloadError::MissingCheckpointRestoreComponentChunkSummary {
+            label,
+            component,
+            chunk,
+        } => write!(
+            formatter,
+            "checkpoint restore component summary for {label}:{component} did not record chunk {chunk}"
+        ),
         WorkloadError::CheckpointManifestSummaryBelowMinimum {
             label,
             minimum_component_count,

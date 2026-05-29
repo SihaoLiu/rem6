@@ -516,6 +516,16 @@ pub enum WorkloadError {
         label: String,
         component: String,
     },
+    MissingCheckpointComponentChunkSummary {
+        label: String,
+        component: String,
+        chunk: String,
+    },
+    MissingCheckpointRestoreComponentChunkSummary {
+        label: String,
+        component: String,
+        chunk: String,
+    },
     CheckpointManifestSummaryBelowMinimum {
         label: String,
         minimum_component_count: usize,

@@ -874,6 +874,13 @@ impl WorkloadReplayPlan {
                     }
                 },
             )?;
+            if let Some(chunk) = missing_required_checkpoint_chunk(expected, actual) {
+                return Err(WorkloadError::MissingCheckpointComponentChunkSummary {
+                    label: expected.label().to_string(),
+                    component: expected.component().to_string(),
+                    chunk: chunk.to_string(),
+                });
+            }
         }
 
         Ok(())
@@ -917,6 +924,15 @@ impl WorkloadReplayPlan {
                     }
                 },
             )?;
+            if let Some(chunk) = missing_required_checkpoint_chunk(expected, actual) {
+                return Err(
+                    WorkloadError::MissingCheckpointRestoreComponentChunkSummary {
+                        label: expected.label().to_string(),
+                        component: expected.component().to_string(),
+                        chunk: chunk.to_string(),
+                    },
+                );
+            }
         }
 
         Ok(())
@@ -1168,4 +1184,15 @@ fn verify_checkpoint_component_minimum(
         expected.minimum_payload_bytes(),
         actual.payload_bytes(),
     ))
+}
+
+fn missing_required_checkpoint_chunk<'a>(
+    expected: &'a WorkloadExpectedCheckpointComponentSummary,
+    actual: &WorkloadCheckpointComponentSummary,
+) -> Option<&'a str> {
+    expected
+        .required_chunk_names()
+        .iter()
+        .map(String::as_str)
+        .find(|chunk| actual.chunk_summary(chunk).is_none())
 }
