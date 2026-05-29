@@ -14,8 +14,8 @@ use crate::{
     GuestHostCallResponse, GuestSourceId, HostAction, HostActionRecord, HostEventPolicy,
     InterruptControllerCheckpointBank, MemoryStoreCheckpointBank, MsiBankCheckpointBank,
     PciHostCheckpointBank, Pl031CheckpointBank, PlicCheckpointBank, RiscvCoreCheckpointBank,
-    RtcCheckpointBank, SchedulerCheckpointBank, StopRequest, SystemError, TimerCheckpointBank,
-    UartCheckpointBank, VirtioSplitQueueCheckpointBank,
+    RtcCheckpointBank, SchedulerCheckpointBank, Sp804CheckpointBank, StopRequest, SystemError,
+    TimerCheckpointBank, UartCheckpointBank, VirtioSplitQueueCheckpointBank,
 };
 
 const EXECUTION_MODE_CHECKPOINT_COMPONENT: &str = "host.execution_modes";
@@ -140,6 +140,7 @@ pub struct SystemActionExecutor {
     uart_checkpoints: Option<UartCheckpointBank>,
     plic_checkpoints: Option<PlicCheckpointBank>,
     pl031_checkpoints: Option<Pl031CheckpointBank>,
+    sp804_checkpoints: Option<Sp804CheckpointBank>,
     rtc_checkpoints: Option<RtcCheckpointBank>,
     pci_host_checkpoints: Option<PciHostCheckpointBank>,
     virtio_split_queue_checkpoints: Option<VirtioSplitQueueCheckpointBank>,
@@ -172,6 +173,7 @@ impl SystemActionExecutor {
             uart_checkpoints: None,
             plic_checkpoints: None,
             pl031_checkpoints: None,
+            sp804_checkpoints: None,
             rtc_checkpoints: None,
             pci_host_checkpoints: None,
             virtio_split_queue_checkpoints: None,
@@ -204,6 +206,7 @@ impl SystemActionExecutor {
             uart_checkpoints: None,
             plic_checkpoints: None,
             pl031_checkpoints: None,
+            sp804_checkpoints: None,
             rtc_checkpoints: None,
             pci_host_checkpoints: None,
             virtio_split_queue_checkpoints: None,
@@ -236,6 +239,7 @@ impl SystemActionExecutor {
             uart_checkpoints: None,
             plic_checkpoints: None,
             pl031_checkpoints: None,
+            sp804_checkpoints: None,
             rtc_checkpoints: None,
             pci_host_checkpoints: None,
             virtio_split_queue_checkpoints: None,
@@ -268,6 +272,7 @@ impl SystemActionExecutor {
             uart_checkpoints: None,
             plic_checkpoints: None,
             pl031_checkpoints: None,
+            sp804_checkpoints: None,
             rtc_checkpoints: None,
             pci_host_checkpoints: None,
             virtio_split_queue_checkpoints: None,
@@ -300,6 +305,7 @@ impl SystemActionExecutor {
             uart_checkpoints: None,
             plic_checkpoints: None,
             pl031_checkpoints: None,
+            sp804_checkpoints: None,
             rtc_checkpoints: None,
             pci_host_checkpoints: None,
             virtio_split_queue_checkpoints: None,
@@ -332,6 +338,7 @@ impl SystemActionExecutor {
             uart_checkpoints: Some(uart_checkpoints),
             plic_checkpoints: None,
             pl031_checkpoints: None,
+            sp804_checkpoints: None,
             rtc_checkpoints: None,
             pci_host_checkpoints: None,
             virtio_split_queue_checkpoints: None,
@@ -364,6 +371,7 @@ impl SystemActionExecutor {
             uart_checkpoints: None,
             plic_checkpoints: None,
             pl031_checkpoints: None,
+            sp804_checkpoints: None,
             rtc_checkpoints: None,
             pci_host_checkpoints: Some(pci_host_checkpoints),
             virtio_split_queue_checkpoints: None,
@@ -397,6 +405,7 @@ impl SystemActionExecutor {
             uart_checkpoints: None,
             plic_checkpoints: None,
             pl031_checkpoints: None,
+            sp804_checkpoints: None,
             rtc_checkpoints: None,
             pci_host_checkpoints: None,
             virtio_split_queue_checkpoints: None,
@@ -430,6 +439,7 @@ impl SystemActionExecutor {
             uart_checkpoints: None,
             plic_checkpoints: None,
             pl031_checkpoints: None,
+            sp804_checkpoints: None,
             rtc_checkpoints: None,
             pci_host_checkpoints: None,
             virtio_split_queue_checkpoints: None,
@@ -659,6 +669,15 @@ impl SystemActionExecutor {
         Ok(())
     }
 
+    pub fn attach_sp804_checkpoint_bank(
+        &mut self,
+        sp804_checkpoints: Sp804CheckpointBank,
+    ) -> Result<(), CheckpointError> {
+        sp804_checkpoints.register_all(&mut self.checkpoints)?;
+        self.sp804_checkpoints = Some(sp804_checkpoints);
+        Ok(())
+    }
+
     pub fn attach_rtc_checkpoint_bank(
         &mut self,
         rtc_checkpoints: RtcCheckpointBank,
@@ -751,6 +770,10 @@ impl SystemActionExecutor {
 
     pub const fn pl031_checkpoint_bank(&self) -> Option<&Pl031CheckpointBank> {
         self.pl031_checkpoints.as_ref()
+    }
+
+    pub const fn sp804_checkpoint_bank(&self) -> Option<&Sp804CheckpointBank> {
+        self.sp804_checkpoints.as_ref()
     }
 
     pub const fn rtc_checkpoint_bank(&self) -> Option<&RtcCheckpointBank> {
@@ -866,6 +889,11 @@ impl SystemActionExecutor {
                 .validate_restore_from(checkpoints)
                 .map_err(SystemError::Pl031Checkpoint)?;
         }
+        if let Some(sp804_checkpoints) = &self.sp804_checkpoints {
+            sp804_checkpoints
+                .validate_restore_from(checkpoints)
+                .map_err(SystemError::Sp804Checkpoint)?;
+        }
         if let Some(rtc_checkpoints) = &self.rtc_checkpoints {
             rtc_checkpoints
                 .validate_restore_from(checkpoints)
@@ -954,6 +982,11 @@ impl SystemActionExecutor {
             pl031_checkpoints
                 .restore_all_from(&self.checkpoints)
                 .map_err(SystemError::Pl031Checkpoint)?;
+        }
+        if let Some(sp804_checkpoints) = &self.sp804_checkpoints {
+            sp804_checkpoints
+                .restore_all_from(&self.checkpoints)
+                .map_err(SystemError::Sp804Checkpoint)?;
         }
         if let Some(rtc_checkpoints) = &self.rtc_checkpoints {
             rtc_checkpoints
@@ -1093,6 +1126,11 @@ impl SystemActionExecutor {
                 }
                 if let Some(pl031_checkpoints) = &self.pl031_checkpoints {
                     pl031_checkpoints
+                        .capture_all_into(&mut staged_checkpoints)
+                        .map_err(SystemError::Checkpoint)?;
+                }
+                if let Some(sp804_checkpoints) = &self.sp804_checkpoints {
+                    sp804_checkpoints
                         .capture_all_into(&mut staged_checkpoints)
                         .map_err(SystemError::Checkpoint)?;
                 }

@@ -15,15 +15,18 @@ use rem6_system::{
     InterruptControllerCheckpointError, InterruptControllerCheckpointPort, Pl031CheckpointBank,
     Pl031CheckpointError, Pl031CheckpointPort, PlicCheckpointBank, PlicCheckpointError,
     PlicCheckpointPort, RtcCheckpointBank, RtcCheckpointError, RtcCheckpointPort,
-    SystemActionExecutor, SystemActionOutcome, TimerCheckpointBank, TimerCheckpointError,
-    TimerCheckpointPort, UartCheckpointBank, UartCheckpointError, UartCheckpointPort,
+    Sp804CheckpointBank, Sp804CheckpointError, Sp804CheckpointPort, SystemActionExecutor,
+    SystemActionOutcome, TimerCheckpointBank, TimerCheckpointError, TimerCheckpointPort,
+    UartCheckpointBank, UartCheckpointError, UartCheckpointPort,
 };
 use rem6_timer::{
     ClintHartConfig, ClintHartSnapshot, ClintMmioDevice, ClintSnapshot, Mc146818Rtc,
     Mc146818RtcMmioDevice, Mc146818RtcMmioSnapshot, Pl031Rtc, Pl031RtcMmioDevice,
-    ProgrammableTimer, RtcDateTime, RtcEncoding, RtcSnapshot, TimerArm, TimerId, TimerSnapshot,
+    ProgrammableTimer, RtcDateTime, RtcEncoding, RtcSnapshot, Sp804DualTimer,
+    Sp804DualTimerMmioDevice, Sp804TimerControl, TimerArm, TimerId, TimerSnapshot,
     PL031_INT_MASK_OFFSET, PL031_LOAD_OFFSET, PL031_MATCH_OFFSET, RTC_CMOS_REGISTER_COUNT,
-    RTC_STATUS_C_AF, RTC_STATUS_C_IRQF, RTC_STATUS_C_UF,
+    RTC_STATUS_C_AF, RTC_STATUS_C_IRQF, RTC_STATUS_C_UF, SP804_BGLOAD_OFFSET, SP804_CONTROL_OFFSET,
+    SP804_LOAD_OFFSET,
 };
 use rem6_uart::{UartId, UartMmioDevice, UartSnapshot, UartTxByte};
 
@@ -100,6 +103,51 @@ fn configured_pl031_device(base: u64) -> Pl031RtcMmioDevice {
     Pl031RtcMmioDevice::new(Address::new(base), rtc)
 }
 
+fn sp804_device(base: u64) -> Sp804DualTimerMmioDevice {
+    Sp804DualTimerMmioDevice::new(Address::new(base), Sp804DualTimer::new(1, 1).unwrap())
+}
+
+fn configured_sp804_device(base: u64) -> Sp804DualTimerMmioDevice {
+    let mut timers = Sp804DualTimer::new(2, 4).unwrap();
+    let timer0_control = Sp804TimerControl::default()
+        .with_interrupt_enabled(true)
+        .with_enabled(true)
+        .with_one_shot(true);
+    timers
+        .timer_mut(0)
+        .unwrap()
+        .write_register(SP804_LOAD_OFFSET, 3, 10)
+        .unwrap();
+    timers
+        .timer_mut(0)
+        .unwrap()
+        .write_register(SP804_CONTROL_OFFSET, timer0_control.bits(), 10)
+        .unwrap();
+    timers.timer_mut(0).unwrap().record_zero(16).unwrap();
+
+    let timer1_control = Sp804TimerControl::default()
+        .with_interrupt_enabled(true)
+        .with_periodic(true)
+        .with_enabled(true);
+    timers
+        .timer_mut(1)
+        .unwrap()
+        .write_register(SP804_LOAD_OFFSET, 5, 20)
+        .unwrap();
+    timers
+        .timer_mut(1)
+        .unwrap()
+        .write_register(SP804_BGLOAD_OFFSET, 2, 20)
+        .unwrap();
+    timers
+        .timer_mut(1)
+        .unwrap()
+        .write_register(SP804_CONTROL_OFFSET, timer1_control.bits(), 20)
+        .unwrap();
+
+    Sp804DualTimerMmioDevice::new(Address::new(base), timers)
+}
+
 fn rtc_snapshot(
     selected_address: u8,
     cmos_index: usize,
@@ -163,6 +211,49 @@ fn pl031_checkpoint_bank_rejects_invalid_bank_without_partial_restore() {
     assert_eq!(target_invalid.snapshot(), original_invalid);
 
     let valid_only_bank = Pl031CheckpointBank::new([Pl031CheckpointPort::new(
+        valid_component,
+        target_valid.clone(),
+    )])
+    .unwrap();
+    valid_only_bank.restore_all_from(&registry).unwrap();
+    assert_eq!(target_valid.snapshot(), expected);
+}
+
+#[test]
+fn sp804_checkpoint_bank_rejects_invalid_bank_without_partial_restore() {
+    let valid_component = checkpoint_component("sp804_bank_a");
+    let invalid_component = checkpoint_component("sp804_bank_b");
+    let source = configured_sp804_device(0x1c11_0000);
+    let expected = source.snapshot();
+    let target_valid = sp804_device(0x1c11_0000);
+    let target_invalid = sp804_device(0x1c12_0000);
+    let original_valid = target_valid.snapshot();
+    let original_invalid = target_invalid.snapshot();
+
+    let mut registry = CheckpointRegistry::new();
+    registry.register(valid_component.clone()).unwrap();
+    Sp804CheckpointPort::new(valid_component.clone(), source)
+        .capture_into(&mut registry)
+        .unwrap();
+    registry.register(invalid_component.clone()).unwrap();
+    registry
+        .write_chunk(&invalid_component, "sp804", vec![0xbb])
+        .unwrap();
+
+    let bank = Sp804CheckpointBank::new([
+        Sp804CheckpointPort::new(valid_component.clone(), target_valid.clone()),
+        Sp804CheckpointPort::new(invalid_component.clone(), target_invalid.clone()),
+    ])
+    .unwrap();
+    let error = bank.restore_all_from(&registry).unwrap_err();
+    assert!(matches!(
+        error,
+        Sp804CheckpointError::InvalidChunk { component, .. } if component == invalid_component
+    ));
+    assert_eq!(target_valid.snapshot(), original_valid);
+    assert_eq!(target_invalid.snapshot(), original_invalid);
+
+    let valid_only_bank = Sp804CheckpointBank::new([Sp804CheckpointPort::new(
         valid_component,
         target_valid.clone(),
     )])
@@ -534,6 +625,61 @@ fn system_action_executor_checkpoints_and_restores_pl031_state() {
             tick: 26,
             event: GuestEventId::new(6),
             source: GuestSourceId::new(11),
+            manifest,
+        }
+    );
+    assert_eq!(live.snapshot(), captured);
+}
+
+#[test]
+fn system_action_executor_checkpoints_and_restores_sp804_state() {
+    let component = checkpoint_component("sp804.1c110000");
+    let live = configured_sp804_device(0x1c11_0000);
+    let captured = live.snapshot();
+    let empty = sp804_device(0x1c11_0000).snapshot();
+    let bank =
+        Sp804CheckpointBank::new([Sp804CheckpointPort::new(component.clone(), live.clone())])
+            .unwrap();
+    let mut executor = SystemActionExecutor::new(StatsRegistry::new());
+    executor.attach_sp804_checkpoint_bank(bank).unwrap();
+
+    let checkpoint = HostActionRecord::new(
+        21,
+        PartitionId::new(0),
+        PartitionId::new(1),
+        GuestEventId::new(7),
+        GuestSourceId::new(12),
+        HostAction::Checkpoint {
+            label: "sp804-ready".to_string(),
+        },
+    );
+    let manifest = match executor.apply(&checkpoint).unwrap() {
+        SystemActionOutcome::Checkpoint { manifest, .. } => manifest,
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+    assert!(manifest.states().iter().any(|state| {
+        state.component() == &component
+            && state.chunks().iter().any(|chunk| chunk.name() == "sp804")
+    }));
+
+    live.restore(&empty).unwrap();
+
+    let restore = HostActionRecord::new(
+        27,
+        PartitionId::new(0),
+        PartitionId::new(1),
+        GuestEventId::new(8),
+        GuestSourceId::new(12),
+        HostAction::RestoreCheckpoint {
+            manifest: manifest.clone(),
+        },
+    );
+    assert_eq!(
+        executor.apply(&restore).unwrap(),
+        SystemActionOutcome::CheckpointRestored {
+            tick: 27,
+            event: GuestEventId::new(8),
+            source: GuestSourceId::new(12),
             manifest,
         }
     );

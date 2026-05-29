@@ -10,15 +10,16 @@ use rem6_platform::{
     PlatformBuilder, PlatformClintConfig, PlatformClintHartConfig, PlatformError,
     PlatformInterruptControllerConfig, PlatformPl031RtcConfig, PlatformPl031RtcInterruptConfig,
     PlatformRiscvDeviceTreeConfig, PlatformRtcConfig, PlatformRtcPeriodicInterruptConfig,
-    PlatformTimerConfig, PlatformTopologyError, PlatformTopologyRoute, PlatformUartConfig,
+    PlatformSp804TimerConfig, PlatformSp804TimerInterruptConfig, PlatformTimerConfig,
+    PlatformTopologyError, PlatformTopologyRoute, PlatformUartConfig,
 };
 use rem6_timer::{
-    ClintId, ClintResetPolicy, RtcDateTime, RtcEncoding, TimerArm, TimerExpiry, TimerId,
-    CLINT_MSIP_BASE_OFFSET, CLINT_MSIP_REGISTER_BYTES, CLINT_MSIP_STRIDE,
+    ClintId, ClintResetPolicy, RtcDateTime, RtcEncoding, Sp804TimerControl, TimerArm, TimerExpiry,
+    TimerId, CLINT_MSIP_BASE_OFFSET, CLINT_MSIP_REGISTER_BYTES, CLINT_MSIP_STRIDE,
     CLINT_MTIMECMP_BASE_OFFSET, CLINT_MTIMECMP_REGISTER_BYTES, CLINT_MTIMECMP_STRIDE,
     PL031_DATA_OFFSET, PL031_INT_MASK_OFFSET, PL031_MATCH_OFFSET, PL031_REGISTER_BYTES,
-    RTC_MMIO_ADDRESS_OFFSET, RTC_MMIO_DATA_OFFSET, RTC_SECONDS_REGISTER,
-    TIMER_MMIO_DEADLINE_OFFSET,
+    RTC_MMIO_ADDRESS_OFFSET, RTC_MMIO_DATA_OFFSET, RTC_SECONDS_REGISTER, SP804_CONTROL_OFFSET,
+    SP804_LOAD_OFFSET, SP804_REGISTER_BYTES, TIMER_MMIO_DEADLINE_OFFSET,
 };
 use rem6_topology::{
     ComponentId, ComponentKind, ComponentSpec, Endpoint, PortDirection, PortName, Topology,
@@ -543,6 +544,134 @@ fn platform_builder_wires_pl031_mmio_interrupt_and_retains_device() {
     );
     assert!(rtc.snapshot().rtc().raw_interrupt());
     assert!(rtc.snapshot().rtc().pending_interrupt());
+}
+
+#[test]
+fn platform_builder_wires_sp804_mmio_interrupts_and_retains_device() {
+    let cpu = PartitionId::new(0);
+    let timer_partition = PartitionId::new(1);
+    let base = Address::new(0x1c11_0000);
+    let line0 = InterruptLineId::new(45);
+    let line1 = InterruptLineId::new(46);
+    let source0 = InterruptSourceId::new(65);
+    let source1 = InterruptSourceId::new(66);
+    let route = MmioRoute::new(cpu, timer_partition, 2, 1).unwrap();
+
+    let platform = PlatformBuilder::new(2)
+        .add_sp804_timer(PlatformSp804TimerConfig {
+            base,
+            size: AccessSize::new(0x1000).unwrap(),
+            route,
+            clock0: 1,
+            clock1: 1,
+            interrupts: Some([
+                PlatformSp804TimerInterruptConfig {
+                    line: line0,
+                    target: InterruptTargetId::new(0),
+                    source: source0,
+                    latency: 2,
+                },
+                PlatformSp804TimerInterruptConfig {
+                    line: line1,
+                    target: InterruptTargetId::new(0),
+                    source: source1,
+                    latency: 2,
+                },
+            ]),
+        })
+        .build()
+        .unwrap();
+
+    assert_eq!(
+        platform
+            .sp804_timers()
+            .map(|(device_base, _)| device_base)
+            .collect::<Vec<_>>(),
+        vec![base]
+    );
+    let timer = platform.sp804_timer(base).unwrap().clone();
+    let bus = platform.mmio_bus().clone();
+    let controller = platform.interrupt_controller();
+    let completions = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut scheduler = PartitionedScheduler::new(platform.partition_count()).unwrap();
+
+    let completed = std::sync::Arc::clone(&completions);
+    scheduler
+        .schedule_at(cpu, 1, move |context| {
+            let load_completed = std::sync::Arc::clone(&completed);
+            bus.submit(
+                context,
+                MmioRequest::write(
+                    MmioRequestId::new(70),
+                    Address::new(base.get() + SP804_LOAD_OFFSET),
+                    le32(3),
+                    full_mask(SP804_REGISTER_BYTES),
+                )
+                .unwrap(),
+                move |completion| load_completed.lock().unwrap().push(completion),
+            )
+            .unwrap();
+
+            let control = Sp804TimerControl::default()
+                .with_interrupt_enabled(true)
+                .with_enabled(true)
+                .with_one_shot(true);
+            bus.submit(
+                context,
+                MmioRequest::write(
+                    MmioRequestId::new(71),
+                    Address::new(base.get() + SP804_CONTROL_OFFSET),
+                    le32(control.bits()),
+                    full_mask(SP804_REGISTER_BYTES),
+                )
+                .unwrap(),
+                move |completion| completed.lock().unwrap().push(completion),
+            )
+            .unwrap();
+        })
+        .unwrap();
+
+    let summary = scheduler.run_until_idle();
+
+    assert_eq!(summary.final_tick(), 8);
+    assert_eq!(
+        completions.lock().unwrap().as_slice(),
+        &[
+            MmioCompletion::new(
+                4,
+                route,
+                Ok(MmioResponse::completed(MmioRequestId::new(70), None)),
+            ),
+            MmioCompletion::new(
+                4,
+                route,
+                Ok(MmioResponse::completed(MmioRequestId::new(71), None)),
+            ),
+        ]
+    );
+    assert_eq!(
+        controller.lock().unwrap().history(),
+        &[
+            InterruptEvent::routed(
+                8,
+                line0,
+                InterruptTargetId::new(0),
+                cpu,
+                source0,
+                InterruptEventKind::Assert,
+            ),
+            InterruptEvent::routed(
+                8,
+                line0,
+                InterruptTargetId::new(0),
+                cpu,
+                source0,
+                InterruptEventKind::Deassert,
+            ),
+        ]
+    );
+    assert!(timer.snapshot().timer(0).unwrap().raw_interrupt());
+    assert!(!timer.snapshot().timer(1).unwrap().raw_interrupt());
 }
 
 #[test]

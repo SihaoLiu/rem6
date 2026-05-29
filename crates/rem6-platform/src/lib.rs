@@ -14,7 +14,8 @@ use rem6_mmio::{MmioBus, MmioError, MmioRoute};
 use rem6_timer::{
     ClintHartConfig, ClintId, ClintMmioDevice, ClintResetPolicy, Mc146818Rtc,
     Mc146818RtcMmioDevice, Pl031Error, Pl031Rtc, Pl031RtcMmioDevice, ProgrammableTimer,
-    RtcDateTime, RtcEncoding, RtcError, TimerError, TimerId, TimerMmioDevice,
+    RtcDateTime, RtcEncoding, RtcError, Sp804DualTimer, Sp804DualTimerMmioDevice, Sp804Error,
+    TimerError, TimerId, TimerMmioDevice,
 };
 use rem6_topology::{Endpoint, Topology, TopologyError};
 use rem6_uart::{UartId, UartMmioDevice};
@@ -74,6 +75,24 @@ pub struct PlatformPl031RtcConfig {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PlatformPl031RtcInterruptConfig {
+    pub line: InterruptLineId,
+    pub target: InterruptTargetId,
+    pub source: InterruptSourceId,
+    pub latency: Tick,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PlatformSp804TimerConfig {
+    pub base: Address,
+    pub size: AccessSize,
+    pub route: MmioRoute,
+    pub clock0: Tick,
+    pub clock1: Tick,
+    pub interrupts: Option<[PlatformSp804TimerInterruptConfig; 2]>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PlatformSp804TimerInterruptConfig {
     pub line: InterruptLineId,
     pub target: InterruptTargetId,
     pub source: InterruptSourceId,
@@ -961,6 +980,7 @@ pub struct PlatformBuilder {
     uarts: Vec<PlatformUartConfig>,
     rtcs: Vec<PlatformRtcConfig>,
     pl031_rtcs: Vec<PlatformPl031RtcConfig>,
+    sp804_timers: Vec<PlatformSp804TimerConfig>,
 }
 
 impl PlatformBuilder {
@@ -973,6 +993,7 @@ impl PlatformBuilder {
             uarts: Vec::new(),
             rtcs: Vec::new(),
             pl031_rtcs: Vec::new(),
+            sp804_timers: Vec::new(),
         }
     }
 
@@ -1010,6 +1031,11 @@ impl PlatformBuilder {
         self
     }
 
+    pub fn add_sp804_timer(mut self, config: PlatformSp804TimerConfig) -> Self {
+        self.sp804_timers.push(config);
+        self
+    }
+
     pub fn build(self) -> Result<Platform, PlatformError> {
         if self.partition_count == 0 {
             return Err(PlatformError::NoPartitions);
@@ -1031,6 +1057,7 @@ impl PlatformBuilder {
         let mut uarts = BTreeMap::new();
         let mut rtcs = BTreeMap::new();
         let mut pl031_rtcs = BTreeMap::new();
+        let mut sp804_timers = BTreeMap::new();
 
         for config in self.interrupt_controllers {
             validate_route(self.partition_count, config.route)?;
@@ -1217,6 +1244,45 @@ impl PlatformBuilder {
             pl031_rtcs.insert(config.base, device);
         }
 
+        for config in self.sp804_timers {
+            validate_route(self.partition_count, config.route)?;
+            let timers =
+                Sp804DualTimer::new(config.clock0, config.clock1).map_err(PlatformError::Sp804)?;
+            let device = if let Some(interrupts) = config.interrupts {
+                let [interrupt0, interrupt1] = interrupts;
+                let port0 = register_interrupt(
+                    &controller,
+                    config.route.source_partition(),
+                    interrupt0.line,
+                    interrupt0.target,
+                    interrupt0.latency,
+                )?;
+                let port1 = register_interrupt(
+                    &controller,
+                    config.route.source_partition(),
+                    interrupt1.line,
+                    interrupt1.target,
+                    interrupt1.latency,
+                )?;
+                Sp804DualTimerMmioDevice::with_interrupts(
+                    config.base,
+                    timers,
+                    config.route.target_partition(),
+                    [(interrupt0.source, port0), (interrupt1.source, port1)],
+                )
+                .map_err(PlatformError::Sp804)?
+            } else {
+                Sp804DualTimerMmioDevice::new(config.base, timers)
+            };
+            bus.insert_device(
+                region(config.base, config.size)?,
+                config.route,
+                device.clone(),
+            )
+            .map_err(PlatformError::Mmio)?;
+            sp804_timers.insert(config.base, device);
+        }
+
         Ok(Platform {
             partition_count: self.partition_count,
             interrupt_controller: controller,
@@ -1227,6 +1293,7 @@ impl PlatformBuilder {
             uarts,
             rtcs,
             pl031_rtcs,
+            sp804_timers,
             device_tree_inventory,
         })
     }
@@ -1243,6 +1310,7 @@ pub struct Platform {
     uarts: BTreeMap<UartId, UartMmioDevice>,
     rtcs: BTreeMap<Address, Mc146818RtcMmioDevice>,
     pl031_rtcs: BTreeMap<Address, Pl031RtcMmioDevice>,
+    sp804_timers: BTreeMap<Address, Sp804DualTimerMmioDevice>,
     device_tree_inventory: PlatformDeviceTreeInventory,
 }
 
@@ -1305,6 +1373,16 @@ impl Platform {
 
     pub fn pl031_rtcs(&self) -> impl Iterator<Item = (Address, &Pl031RtcMmioDevice)> {
         self.pl031_rtcs.iter().map(|(base, device)| (*base, device))
+    }
+
+    pub fn sp804_timer(&self, base: Address) -> Option<&Sp804DualTimerMmioDevice> {
+        self.sp804_timers.get(&base)
+    }
+
+    pub fn sp804_timers(&self) -> impl Iterator<Item = (Address, &Sp804DualTimerMmioDevice)> {
+        self.sp804_timers
+            .iter()
+            .map(|(base, device)| (*base, device))
     }
 
     pub fn riscv_device_tree(
@@ -1428,6 +1506,7 @@ pub enum PlatformError {
     Timer(TimerError),
     Rtc(RtcError),
     Pl031(Pl031Error),
+    Sp804(Sp804Error),
 }
 
 impl fmt::Display for PlatformError {
@@ -1459,6 +1538,7 @@ impl fmt::Display for PlatformError {
             Self::Timer(error) => write!(formatter, "{error}"),
             Self::Rtc(error) => write!(formatter, "{error}"),
             Self::Pl031(error) => write!(formatter, "{error}"),
+            Self::Sp804(error) => write!(formatter, "{error}"),
         }
     }
 }
@@ -1472,6 +1552,7 @@ impl Error for PlatformError {
             Self::Timer(error) => Some(error),
             Self::Rtc(error) => Some(error),
             Self::Pl031(error) => Some(error),
+            Self::Sp804(error) => Some(error),
             _ => None,
         }
     }

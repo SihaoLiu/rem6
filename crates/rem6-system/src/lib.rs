@@ -42,6 +42,7 @@ mod riscv_run_activity;
 mod riscv_run_translation;
 mod rtc_checkpoint;
 mod scheduler_checkpoint;
+mod sp804_checkpoint;
 mod system_run_parallel_batch;
 mod system_run_planned_lanes;
 mod system_run_progress;
@@ -111,6 +112,9 @@ pub use rtc_checkpoint::{
 pub use scheduler_checkpoint::{
     SchedulerCheckpointBank, SchedulerCheckpointError, SchedulerCheckpointPendingPartition,
     SchedulerCheckpointPort, SchedulerCheckpointQuiescenceReport, SchedulerCheckpointRecord,
+};
+pub use sp804_checkpoint::{
+    Sp804CheckpointBank, Sp804CheckpointError, Sp804CheckpointPort, Sp804CheckpointRecord,
 };
 pub use system_run_parallel_batch::{
     RiscvSystemParallelBatchScope, RiscvSystemParallelBatchTimelineRecord,
@@ -928,6 +932,7 @@ pub enum SystemError {
     GpuCheckpoint(GpuCheckpointError),
     PciHostCheckpoint(PciHostCheckpointError),
     Pl031Checkpoint(Pl031CheckpointError),
+    Sp804Checkpoint(Sp804CheckpointError),
     RiscvCheckpoint(RiscvCoreCheckpointError),
     RtcCheckpoint(RtcCheckpointError),
     SchedulerCheckpoint(SchedulerCheckpointError),
@@ -961,6 +966,7 @@ impl fmt::Display for SystemError {
             Self::GpuCheckpoint(error) => write!(formatter, "{error}"),
             Self::PciHostCheckpoint(error) => write!(formatter, "{error}"),
             Self::Pl031Checkpoint(error) => write!(formatter, "{error}"),
+            Self::Sp804Checkpoint(error) => write!(formatter, "{error}"),
             Self::RiscvCheckpoint(error) => write!(formatter, "{error}"),
             Self::RtcCheckpoint(error) => write!(formatter, "{error}"),
             Self::SchedulerCheckpoint(error) => write!(formatter, "{error}"),
@@ -991,6 +997,7 @@ impl Error for SystemError {
             Self::GpuCheckpoint(error) => Some(error),
             Self::PciHostCheckpoint(error) => Some(error),
             Self::Pl031Checkpoint(error) => Some(error),
+            Self::Sp804Checkpoint(error) => Some(error),
             Self::RiscvCheckpoint(error) => Some(error),
             Self::RtcCheckpoint(error) => Some(error),
             Self::SchedulerCheckpoint(error) => Some(error),

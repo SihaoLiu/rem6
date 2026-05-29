@@ -7,8 +7,8 @@ use crate::{
     InterruptControllerCheckpointPort, MemoryStoreCheckpointBank, MemoryStoreCheckpointPort,
     Pl031CheckpointBank, Pl031CheckpointPort, PlicCheckpointBank, PlicCheckpointPort,
     RiscvCoreCheckpointBank, RiscvCoreCheckpointPort, RtcCheckpointBank, RtcCheckpointPort,
-    SchedulerCheckpointBank, SchedulerCheckpointPort, SystemError, TimerCheckpointBank,
-    TimerCheckpointPort, UartCheckpointBank, UartCheckpointPort,
+    SchedulerCheckpointBank, SchedulerCheckpointPort, Sp804CheckpointBank, Sp804CheckpointPort,
+    SystemError, TimerCheckpointBank, TimerCheckpointPort, UartCheckpointBank, UartCheckpointPort,
 };
 
 use super::{
@@ -16,8 +16,9 @@ use super::{
     default_gpu_checkpoint_component, default_interrupt_checkpoint_component,
     default_pl031_checkpoint_component, default_plic_checkpoint_component,
     default_riscv_checkpoint_component, default_rtc_checkpoint_component,
-    default_timer_checkpoint_component, default_uart_checkpoint_component,
-    RiscvTopologyMemoryBackend, RiscvTopologySystem, RiscvTopologySystemError,
+    default_sp804_checkpoint_component, default_timer_checkpoint_component,
+    default_uart_checkpoint_component, RiscvTopologyMemoryBackend, RiscvTopologySystem,
+    RiscvTopologySystemError,
 };
 
 impl RiscvTopologySystem {
@@ -277,6 +278,21 @@ impl RiscvTopologySystem {
                 .expect("topology host controller lock")
                 .executor_mut()
                 .attach_pl031_checkpoint_bank(pl031_bank)
+                .map_err(SystemError::Checkpoint)
+                .map_err(RiscvTopologySystemError::System)?;
+        }
+
+        let sp804_bank = Sp804CheckpointBank::new(platform.sp804_timers().map(|(base, device)| {
+            Sp804CheckpointPort::new(default_sp804_checkpoint_component(base), device.clone())
+        }))
+        .map_err(SystemError::Checkpoint)
+        .map_err(RiscvTopologySystemError::System)?;
+        if sp804_bank.component_count() != 0 {
+            host.controller
+                .lock()
+                .expect("topology host controller lock")
+                .executor_mut()
+                .attach_sp804_checkpoint_bank(sp804_bank)
                 .map_err(SystemError::Checkpoint)
                 .map_err(RiscvTopologySystemError::System)?;
         }

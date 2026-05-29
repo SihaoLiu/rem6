@@ -3,7 +3,8 @@ use rem6_cpu::{CpuId, CpuResetState, RiscvClusterTopologyConfig, RiscvCoreTopolo
 use rem6_kernel::PartitionId;
 use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout};
 use rem6_platform::{
-    Platform, PlatformBuilder, PlatformPl031RtcConfig, PlatformRtcConfig, PlatformTopologyRoute,
+    Platform, PlatformBuilder, PlatformPl031RtcConfig, PlatformRtcConfig, PlatformSp804TimerConfig,
+    PlatformSp804TimerInterruptConfig, PlatformTopologyRoute,
 };
 use rem6_stats::StatsRegistry;
 use rem6_system::{
@@ -12,7 +13,9 @@ use rem6_system::{
 };
 use rem6_timer::{
     Mc146818RtcMmioSnapshot, Pl031RtcMmioSnapshot, Pl031Snapshot, Pl031SnapshotFields, RtcDateTime,
-    RtcEncoding, RtcSnapshot, RTC_CMOS_REGISTER_COUNT,
+    RtcEncoding, RtcSnapshot, Sp804DualTimer, Sp804DualTimerMmioDevice, Sp804DualTimerMmioSnapshot,
+    Sp804TimerControl, RTC_CMOS_REGISTER_COUNT, SP804_BGLOAD_OFFSET, SP804_CONTROL_OFFSET,
+    SP804_LOAD_OFFSET,
 };
 use rem6_topology::{
     ComponentId, ComponentKind, ComponentSpec, Endpoint, PortDirection, PortName, Topology,
@@ -174,6 +177,77 @@ fn platform_with_pl031(topology: &Topology, base: Address) -> Platform {
         .unwrap()
 }
 
+fn platform_with_sp804(topology: &Topology, base: Address) -> Platform {
+    let route = PlatformTopologyRoute::new(endpoint("cpu0", "mmio"), endpoint("rtc0", "mmio"))
+        .resolve(topology)
+        .unwrap();
+    PlatformBuilder::from_topology(topology)
+        .add_sp804_timer(PlatformSp804TimerConfig {
+            base,
+            size: AccessSize::new(0x1000).unwrap(),
+            route,
+            clock0: 2,
+            clock1: 4,
+            interrupts: Some([
+                PlatformSp804TimerInterruptConfig {
+                    line: rem6_interrupt::InterruptLineId::new(57),
+                    target: rem6_interrupt::InterruptTargetId::new(0),
+                    source: rem6_interrupt::InterruptSourceId::new(77),
+                    latency: 2,
+                },
+                PlatformSp804TimerInterruptConfig {
+                    line: rem6_interrupt::InterruptLineId::new(58),
+                    target: rem6_interrupt::InterruptTargetId::new(0),
+                    source: rem6_interrupt::InterruptSourceId::new(78),
+                    latency: 2,
+                },
+            ]),
+        })
+        .build()
+        .unwrap()
+}
+
+fn configured_sp804_device(base: Address) -> Sp804DualTimerMmioDevice {
+    let mut timers = Sp804DualTimer::new(2, 4).unwrap();
+    let timer0_control = Sp804TimerControl::default()
+        .with_interrupt_enabled(true)
+        .with_enabled(true)
+        .with_one_shot(true);
+    timers
+        .timer_mut(0)
+        .unwrap()
+        .write_register(SP804_LOAD_OFFSET, 3, 10)
+        .unwrap();
+    timers
+        .timer_mut(0)
+        .unwrap()
+        .write_register(SP804_CONTROL_OFFSET, timer0_control.bits(), 10)
+        .unwrap();
+    timers.timer_mut(0).unwrap().record_zero(16).unwrap();
+
+    let timer1_control = Sp804TimerControl::default()
+        .with_interrupt_enabled(true)
+        .with_periodic(true)
+        .with_enabled(true);
+    timers
+        .timer_mut(1)
+        .unwrap()
+        .write_register(SP804_LOAD_OFFSET, 5, 20)
+        .unwrap();
+    timers
+        .timer_mut(1)
+        .unwrap()
+        .write_register(SP804_BGLOAD_OFFSET, 2, 20)
+        .unwrap();
+    timers
+        .timer_mut(1)
+        .unwrap()
+        .write_register(SP804_CONTROL_OFFSET, timer1_control.bits(), 20)
+        .unwrap();
+
+    Sp804DualTimerMmioDevice::new(base, timers)
+}
+
 fn rtc_snapshot(
     selected_address: u8,
     cmos_index: usize,
@@ -208,6 +282,10 @@ fn pl031_snapshot(
         ticks_per_second: 5,
         generation: 3,
     }))
+}
+
+fn sp804_snapshot(base: Address) -> Sp804DualTimerMmioSnapshot {
+    configured_sp804_device(base).snapshot()
 }
 
 #[test]
@@ -406,4 +484,105 @@ fn topology_host_controller_checkpoints_attached_pl031() {
         }
     );
     assert_eq!(rtc.snapshot(), captured);
+}
+
+#[test]
+fn topology_host_controller_checkpoints_attached_sp804() {
+    let topology = topology_with_rtc();
+    let timer_base = Address::new(0x1c11_0000);
+    let platform = platform_with_sp804(&topology, timer_base);
+    let source = GuestSourceId::new(54);
+    let system = RiscvTopologySystem::with_min_remote_delay(
+        topology,
+        RiscvClusterTopologyConfig::new([
+            core_config(0, 0, 7, 0x8000),
+            core_config(1, 1, 8, 0x9000),
+        ]),
+        2,
+    )
+    .unwrap()
+    .with_platform(platform)
+    .unwrap()
+    .with_host_controller(
+        RiscvTopologyHostConfig::new(PartitionId::new(4), 2, source),
+        StatsRegistry::new(),
+    )
+    .unwrap();
+    let host = system.host_controller().unwrap();
+    let component = CheckpointComponentId::new("sp804.1c110000").unwrap();
+    let captured = sp804_snapshot(timer_base);
+    let empty =
+        Sp804DualTimerMmioDevice::new(timer_base, Sp804DualTimer::new(2, 4).unwrap()).snapshot();
+    let timer = system
+        .platform()
+        .unwrap()
+        .sp804_timer(timer_base)
+        .unwrap()
+        .clone();
+    timer.restore(&captured).unwrap();
+    assert!(host
+        .lock()
+        .unwrap()
+        .executor()
+        .sp804_checkpoint_bank()
+        .is_some());
+
+    let checkpoint = HostActionRecord::new(
+        33,
+        PartitionId::new(4),
+        PartitionId::new(4),
+        GuestEventId::new(202),
+        source,
+        HostAction::Checkpoint {
+            label: "attached-sp804".to_string(),
+        },
+    );
+    let manifest = match host
+        .lock()
+        .unwrap()
+        .executor_mut()
+        .apply(&checkpoint)
+        .unwrap()
+    {
+        SystemActionOutcome::Checkpoint { manifest, .. } => manifest,
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+
+    assert!(manifest
+        .states()
+        .iter()
+        .any(|state| state.component() == &component));
+    assert!(host
+        .lock()
+        .unwrap()
+        .executor()
+        .checkpoints()
+        .chunk(&component, "sp804")
+        .is_some());
+
+    timer.restore(&empty).unwrap();
+    assert_ne!(timer.snapshot(), captured);
+
+    let restore = HostActionRecord::new(
+        47,
+        PartitionId::new(4),
+        PartitionId::new(4),
+        GuestEventId::new(203),
+        source,
+        HostAction::RestoreCheckpoint {
+            manifest: manifest.clone(),
+        },
+    );
+    let restored = host.lock().unwrap().executor_mut().apply(&restore).unwrap();
+
+    assert_eq!(
+        restored,
+        SystemActionOutcome::CheckpointRestored {
+            tick: 47,
+            event: GuestEventId::new(203),
+            source,
+            manifest,
+        }
+    );
+    assert_eq!(timer.snapshot(), captured);
 }
