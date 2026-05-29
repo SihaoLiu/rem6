@@ -2,8 +2,9 @@ use std::sync::{Arc, Mutex};
 
 use rem6_interrupt::{
     InterruptClaim, InterruptController, InterruptError, InterruptEvent, InterruptEventKind,
-    InterruptLineId, InterruptRoute, InterruptSourceId, InterruptTargetId, PlicMmioDevice,
-    PLIC_MMIO_CLAIM_COMPLETE_OFFSET, PLIC_MMIO_CONTEXT_BASE_OFFSET, PLIC_MMIO_ENABLE_BASE_OFFSET,
+    InterruptLineId, InterruptRoute, InterruptSourceId, InterruptTargetId, PlicContextRoute,
+    PlicMmioDevice, PLIC_MMIO_CLAIM_COMPLETE_OFFSET, PLIC_MMIO_CONTEXT_BASE_OFFSET,
+    PLIC_MMIO_CONTEXT_STRIDE, PLIC_MMIO_ENABLE_BASE_OFFSET, PLIC_MMIO_ENABLE_CONTEXT_STRIDE,
     PLIC_MMIO_PENDING_BASE_OFFSET, PLIC_MMIO_PRIORITY_STRIDE, PLIC_MMIO_REGISTER_BYTES,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
@@ -57,6 +58,157 @@ fn plic_bus(
     )
     .unwrap();
     (bus, route)
+}
+
+fn plic_bus_with_contexts(
+    controller: Arc<Mutex<InterruptController>>,
+    base: Address,
+    contexts: impl IntoIterator<Item = PlicContextRoute>,
+    cpu: PartitionId,
+    plic_partition: PartitionId,
+    response_latency: u64,
+) -> (MmioBus, MmioRoute) {
+    let route = MmioRoute::new(cpu, plic_partition, 2, response_latency).unwrap();
+    let mut bus = MmioBus::new();
+    bus.insert_device(
+        AddressRange::new(base, AccessSize::new(0x220000).unwrap()).unwrap(),
+        route,
+        PlicMmioDevice::with_contexts(controller, base, contexts),
+    )
+    .unwrap();
+    (bus, route)
+}
+
+#[test]
+fn plic_mmio_routes_enable_threshold_and_claim_by_context() {
+    let cpu0 = PartitionId::new(0);
+    let cpu1 = PartitionId::new(1);
+    let plic_partition = PartitionId::new(2);
+    let target0 = InterruptTargetId::new(0);
+    let target1 = InterruptTargetId::new(1);
+    let base = Address::new(0x0c60_0000);
+    let line0 = InterruptLineId::new(3);
+    let line1 = InterruptLineId::new(4);
+    let source0 = InterruptSourceId::new(33);
+    let source1 = InterruptSourceId::new(44);
+    let controller = Arc::new(Mutex::new(InterruptController::new()));
+    {
+        let mut controller = controller.lock().unwrap();
+        controller
+            .register_route(InterruptRoute::new(line0, target0, cpu0))
+            .unwrap();
+        controller
+            .register_route(InterruptRoute::new(line1, target1, cpu1))
+            .unwrap();
+        controller.assert(line0, source0, 0).unwrap();
+        controller.assert(line1, source1, 0).unwrap();
+    }
+    let (bus, route) = plic_bus_with_contexts(
+        Arc::clone(&controller),
+        base,
+        [
+            PlicContextRoute::new(0, target0, cpu0),
+            PlicContextRoute::new(1, target1, cpu1),
+        ],
+        cpu0,
+        plic_partition,
+        1,
+    );
+    let completions = Arc::new(Mutex::new(Vec::new()));
+    let mut scheduler = PartitionedScheduler::new(3).unwrap();
+
+    let completed = Arc::clone(&completions);
+    scheduler
+        .schedule_at(cpu0, 1, move |context| {
+            let context1_enable = PLIC_MMIO_ENABLE_BASE_OFFSET + PLIC_MMIO_ENABLE_CONTEXT_STRIDE;
+            let context1_base = PLIC_MMIO_CONTEXT_BASE_OFFSET + PLIC_MMIO_CONTEXT_STRIDE;
+            for request in [
+                write(41, base, line0.get() * PLIC_MMIO_PRIORITY_STRIDE, 6),
+                write(42, base, line1.get() * PLIC_MMIO_PRIORITY_STRIDE, 7),
+                write(43, base, PLIC_MMIO_ENABLE_BASE_OFFSET, 1 << line0.get()),
+                write(44, base, PLIC_MMIO_CONTEXT_BASE_OFFSET, 5),
+                write(45, base, context1_enable, 1 << line1.get()),
+                write(46, base, context1_base, 6),
+                read(
+                    47,
+                    base,
+                    PLIC_MMIO_CONTEXT_BASE_OFFSET + PLIC_MMIO_CLAIM_COMPLETE_OFFSET,
+                ),
+                read(48, base, context1_base + PLIC_MMIO_CLAIM_COMPLETE_OFFSET),
+            ] {
+                let sink = Arc::clone(&completed);
+                bus.submit(context, request, move |completion| {
+                    sink.lock().unwrap().push(completion);
+                })
+                .unwrap();
+            }
+        })
+        .unwrap();
+
+    let summary = scheduler.run_until_idle();
+
+    assert_eq!(summary.final_tick(), 4);
+    assert_eq!(
+        completions.lock().unwrap().as_slice(),
+        &[
+            MmioCompletion::new(
+                4,
+                route,
+                Ok(MmioResponse::completed(MmioRequestId::new(41), None)),
+            ),
+            MmioCompletion::new(
+                4,
+                route,
+                Ok(MmioResponse::completed(MmioRequestId::new(42), None)),
+            ),
+            MmioCompletion::new(
+                4,
+                route,
+                Ok(MmioResponse::completed(MmioRequestId::new(43), None)),
+            ),
+            MmioCompletion::new(
+                4,
+                route,
+                Ok(MmioResponse::completed(MmioRequestId::new(44), None)),
+            ),
+            MmioCompletion::new(
+                4,
+                route,
+                Ok(MmioResponse::completed(MmioRequestId::new(45), None)),
+            ),
+            MmioCompletion::new(
+                4,
+                route,
+                Ok(MmioResponse::completed(MmioRequestId::new(46), None)),
+            ),
+            MmioCompletion::new(
+                4,
+                route,
+                Ok(MmioResponse::completed(
+                    MmioRequestId::new(47),
+                    Some(le32(line0.get() as u32)),
+                )),
+            ),
+            MmioCompletion::new(
+                4,
+                route,
+                Ok(MmioResponse::completed(
+                    MmioRequestId::new(48),
+                    Some(le32(line1.get() as u32)),
+                )),
+            ),
+        ]
+    );
+
+    let controller = controller.lock().unwrap();
+    assert!(controller.pending().is_empty());
+    assert_eq!(
+        controller.claimed(),
+        vec![
+            InterruptClaim::new(line0, target0, cpu0, source0, 0, 3),
+            InterruptClaim::new(line1, target1, cpu1, source1, 0, 3),
+        ]
+    );
 }
 
 #[test]
