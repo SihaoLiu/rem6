@@ -1,6 +1,7 @@
 use rem6_interrupt::{
     InterruptError, InterruptEvent, InterruptEventKind, InterruptLineId, InterruptSourceId,
-    InterruptTargetId, INTERRUPT_MMIO_CLAIM_COMPLETE_OFFSET, INTERRUPT_MMIO_PENDING_OFFSET,
+    InterruptTargetId, PLIC_MMIO_CLAIM_COMPLETE_OFFSET, PLIC_MMIO_CONTEXT_BASE_OFFSET,
+    PLIC_MMIO_ENABLE_BASE_OFFSET, PLIC_MMIO_PENDING_BASE_OFFSET, PLIC_MMIO_REGISTER_BYTES,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{AccessSize, Address, ByteMask};
@@ -922,11 +923,12 @@ fn platform_builder_maps_interrupt_controller_mmio() {
     let timer_id = TimerId::new(9);
     let timer_line = InterruptLineId::new(80);
     let timer_source = InterruptSourceId::new(90);
+    let plic_base = Address::new(0x0c00_0000);
 
     let platform = PlatformBuilder::new(3)
         .add_interrupt_controller(PlatformInterruptControllerConfig {
-            base: Address::new(0x4000),
-            size: AccessSize::new(0x100).unwrap(),
+            base: plic_base,
+            size: AccessSize::new(0x210000).unwrap(),
             route: MmioRoute::new(cpu, interrupt_partition, 2, 1).unwrap(),
             target,
         })
@@ -975,13 +977,19 @@ fn platform_builder_maps_interrupt_controller_mmio() {
     scheduler
         .schedule_at(cpu, 10, move |context| {
             let first_completed = std::sync::Arc::clone(&completed);
+            let pending_word = timer_line.get() / 32;
+            let pending_bit = 1u32 << (timer_line.get() % 32);
             interrupt_bus
                 .submit(
                     context,
                     MmioRequest::read(
                         MmioRequestId::new(11),
-                        Address::new(0x4000 + INTERRUPT_MMIO_PENDING_OFFSET),
-                        AccessSize::new(8).unwrap(),
+                        Address::new(
+                            plic_base.get()
+                                + PLIC_MMIO_PENDING_BASE_OFFSET
+                                + pending_word * PLIC_MMIO_REGISTER_BYTES,
+                        ),
+                        AccessSize::new(PLIC_MMIO_REGISTER_BYTES).unwrap(),
                     )
                     .unwrap(),
                     move |completion| first_completed.lock().unwrap().push(completion),
@@ -992,13 +1000,36 @@ fn platform_builder_maps_interrupt_controller_mmio() {
             interrupt_bus
                 .submit(
                     context,
-                    MmioRequest::read(
+                    MmioRequest::write(
                         MmioRequestId::new(12),
-                        Address::new(0x4000 + INTERRUPT_MMIO_CLAIM_COMPLETE_OFFSET),
-                        AccessSize::new(8).unwrap(),
+                        Address::new(
+                            plic_base.get()
+                                + PLIC_MMIO_ENABLE_BASE_OFFSET
+                                + pending_word * PLIC_MMIO_REGISTER_BYTES,
+                        ),
+                        le32(pending_bit),
+                        full_mask(PLIC_MMIO_REGISTER_BYTES),
                     )
                     .unwrap(),
                     move |completion| second_completed.lock().unwrap().push(completion),
+                )
+                .unwrap();
+
+            let third_completed = std::sync::Arc::clone(&completed);
+            interrupt_bus
+                .submit(
+                    context,
+                    MmioRequest::read(
+                        MmioRequestId::new(13),
+                        Address::new(
+                            plic_base.get()
+                                + PLIC_MMIO_CONTEXT_BASE_OFFSET
+                                + PLIC_MMIO_CLAIM_COMPLETE_OFFSET,
+                        ),
+                        AccessSize::new(PLIC_MMIO_REGISTER_BYTES).unwrap(),
+                    )
+                    .unwrap(),
+                    move |completion| third_completed.lock().unwrap().push(completion),
                 )
                 .unwrap();
 
@@ -1006,10 +1037,14 @@ fn platform_builder_maps_interrupt_controller_mmio() {
                 .submit(
                     context,
                     MmioRequest::write(
-                        MmioRequestId::new(13),
-                        Address::new(0x4000 + INTERRUPT_MMIO_CLAIM_COMPLETE_OFFSET),
-                        le64(timer_line.get()),
-                        full_mask(8),
+                        MmioRequestId::new(14),
+                        Address::new(
+                            plic_base.get()
+                                + PLIC_MMIO_CONTEXT_BASE_OFFSET
+                                + PLIC_MMIO_CLAIM_COMPLETE_OFFSET,
+                        ),
+                        le32(timer_line.get() as u32),
+                        full_mask(PLIC_MMIO_REGISTER_BYTES),
                     )
                     .unwrap(),
                     move |completion| completed.lock().unwrap().push(completion),
@@ -1020,7 +1055,7 @@ fn platform_builder_maps_interrupt_controller_mmio() {
 
     let summary = scheduler.run_until_idle();
 
-    assert_eq!(summary.executed_events(), 12);
+    assert_eq!(summary.executed_events(), 14);
     assert_eq!(summary.final_tick(), 13);
     assert_eq!(timer.snapshot().expiries(), &[TimerExpiry::new(1, 7)]);
     assert_eq!(
@@ -1036,21 +1071,26 @@ fn platform_builder_maps_interrupt_controller_mmio() {
                 MmioRoute::new(cpu, interrupt_partition, 2, 1).unwrap(),
                 Ok(MmioResponse::completed(
                     MmioRequestId::new(11),
-                    Some(le64(timer_line.get())),
+                    Some(le32(1u32 << (timer_line.get() % 32))),
                 )),
+            ),
+            MmioCompletion::new(
+                13,
+                MmioRoute::new(cpu, interrupt_partition, 2, 1).unwrap(),
+                Ok(MmioResponse::completed(MmioRequestId::new(12), None)),
             ),
             MmioCompletion::new(
                 13,
                 MmioRoute::new(cpu, interrupt_partition, 2, 1).unwrap(),
                 Ok(MmioResponse::completed(
-                    MmioRequestId::new(12),
-                    Some(le64(timer_line.get())),
+                    MmioRequestId::new(13),
+                    Some(le32(timer_line.get() as u32)),
                 )),
             ),
             MmioCompletion::new(
                 13,
                 MmioRoute::new(cpu, interrupt_partition, 2, 1).unwrap(),
-                Ok(MmioResponse::completed(MmioRequestId::new(13), None)),
+                Ok(MmioResponse::completed(MmioRequestId::new(14), None)),
             ),
         ]
     );

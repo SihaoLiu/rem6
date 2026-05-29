@@ -5,8 +5,8 @@ use std::fmt::Write as _;
 use std::sync::{Arc, Mutex};
 
 use rem6_interrupt::{
-    InterruptController, InterruptControllerMmioDevice, InterruptError, InterruptLineChannel,
-    InterruptLineId, InterruptLinePort, InterruptRoute, InterruptSourceId, InterruptTargetId,
+    InterruptController, InterruptError, InterruptLineChannel, InterruptLineId, InterruptLinePort,
+    InterruptRoute, InterruptSourceId, InterruptTargetId, PlicMmioDevice,
 };
 use rem6_kernel::{PartitionId, Tick};
 use rem6_memory::{AccessSize, Address, AddressRange, MemoryError};
@@ -926,7 +926,7 @@ impl PlatformBuilder {
 
         for config in self.interrupt_controllers {
             validate_route(self.partition_count, config.route)?;
-            let device = InterruptControllerMmioDevice::new(
+            let device = PlicMmioDevice::new(
                 Arc::clone(&controller),
                 config.base,
                 config.target,
