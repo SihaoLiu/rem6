@@ -762,6 +762,7 @@ impl WorkloadReplayPlan {
         &self,
         result: &WorkloadResult,
     ) -> Result<(), WorkloadError> {
+        let mut remaining_planned_ticks = planned_checkpoint_ticks_by_label(&self.host_events);
         for actual in result.checkpoint_manifest_summaries() {
             if actual.tick() > result.final_tick() {
                 return Err(WorkloadError::checkpoint_manifest_summary_after_final_tick(
@@ -770,14 +771,20 @@ impl WorkloadReplayPlan {
                     result.final_tick(),
                 ));
             }
-            let expected_ticks = planned_checkpoint_ticks(&self.host_events, actual.label());
-            if !expected_ticks.iter().any(|tick| *tick == actual.tick()) {
+            let remaining_ticks = remaining_planned_ticks
+                .entry(actual.label().to_string())
+                .or_default();
+            let Some(position) = remaining_ticks
+                .iter()
+                .position(|tick| *tick == actual.tick())
+            else {
                 return Err(WorkloadError::checkpoint_manifest_summary_tick_mismatch(
                     actual.label(),
                     actual.tick(),
-                    expected_ticks,
+                    remaining_ticks.iter().copied(),
                 ));
-            }
+            };
+            remaining_ticks.remove(position);
         }
 
         for expected in &self.expected_checkpoint_manifest_summaries {
@@ -1276,14 +1283,15 @@ fn label_counts(labels: &[String]) -> BTreeMap<&str, usize> {
     counts
 }
 
-fn planned_checkpoint_ticks(events: &[WorkloadHostEvent], label: &str) -> Vec<Tick> {
-    events
-        .iter()
-        .filter_map(|event| match event.intent() {
-            HostEventIntent::Checkpoint {
-                label: planned_label,
-            } if planned_label == label => Some(event.tick()),
-            _ => None,
-        })
-        .collect()
+fn planned_checkpoint_ticks_by_label(events: &[WorkloadHostEvent]) -> BTreeMap<String, Vec<Tick>> {
+    let mut ticks_by_label = BTreeMap::new();
+    for event in events {
+        if let HostEventIntent::Checkpoint { label } = event.intent() {
+            ticks_by_label
+                .entry(label.clone())
+                .or_insert_with(Vec::new)
+                .push(event.tick());
+        }
+    }
+    ticks_by_label
 }

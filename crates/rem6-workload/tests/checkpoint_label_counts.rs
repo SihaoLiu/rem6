@@ -173,6 +173,49 @@ fn checkpoint_manifest_summary_tick_must_match_planned_checkpoint_tick() {
 }
 
 #[test]
+fn checkpoint_manifest_summary_ticks_cover_repeated_checkpoint_labels() {
+    let manifest = WorkloadManifest::builder(id("checkpoint-summary-repeated-ticks"), boot_image())
+        .add_host_event(WorkloadHostEvent::new(
+            20,
+            HostEventIntent::Checkpoint {
+                label: "warm".to_string(),
+            },
+        ))
+        .add_host_event(WorkloadHostEvent::new(
+            40,
+            HostEventIntent::Checkpoint {
+                label: "warm".to_string(),
+            },
+        ))
+        .build()
+        .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let duplicate_tick = WorkloadResult::new(plan.manifest_identity(), 40)
+        .with_checkpoint_manifest_summary(WorkloadCheckpointManifestSummary::new(
+            "warm", 20, 1, 1, 8,
+        ))
+        .with_checkpoint_manifest_summary(WorkloadCheckpointManifestSummary::new(
+            "warm", 20, 1, 1, 8,
+        ));
+
+    let error = plan.verify_result(&duplicate_tick).unwrap_err();
+    assert_eq!(
+        error,
+        WorkloadError::checkpoint_manifest_summary_tick_mismatch("warm", 20, [40])
+    );
+
+    let matched = WorkloadResult::new(plan.manifest_identity(), 40)
+        .with_checkpoint_manifest_summary(WorkloadCheckpointManifestSummary::new(
+            "warm", 20, 1, 1, 8,
+        ))
+        .with_checkpoint_manifest_summary(WorkloadCheckpointManifestSummary::new(
+            "warm", 40, 1, 1, 8,
+        ));
+    plan.verify_result(&matched).unwrap();
+}
+
+#[test]
 fn checkpoint_restore_manifest_summary_tick_must_not_exceed_final_tick() {
     let manifest = WorkloadManifest::builder(id("checkpoint-restore-summary-tick"), boot_image())
         .add_host_event(WorkloadHostEvent::new(
