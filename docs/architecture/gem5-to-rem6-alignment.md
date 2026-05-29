@@ -113,7 +113,8 @@ isolated bugs:
   invalid NoC or memory route latencies fail as typed boundary evidence rather
   than as callback panics inside transport event delivery.
   CPU MMIO data issue applies the same request and earliest-response
-  preflight before dispatching a parallel worker, so invalid device response
+  preflight before dispatching a parallel worker, including translated data
+  accesses after virtual-to-physical resolution, so invalid device response
   timing remains a typed CPU/MMIO scheduler error and cannot disappear into a
   worker callback or delayed response-error side channel.
   Wait-for

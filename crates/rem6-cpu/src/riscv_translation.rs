@@ -12,7 +12,7 @@ use rem6_transport::{
 };
 
 use crate::{
-    access_width, memory_width_size, mmio_request, store_bytes, CpuDataConfig,
+    access_width, memory_width_size, mmio_request, riscv_data_access, store_bytes, CpuDataConfig,
     CpuTranslationFrontend, CpuTranslationOutcome, CpuTranslationRequest, RiscvCore,
     RiscvCoreDriveAction, RiscvCoreState, RiscvCpuError, RiscvDataAccessTarget,
 };
@@ -225,7 +225,7 @@ impl RiscvCore {
         page_map: &TranslationPageMap,
     ) -> Result<Option<PartitionEventId>, RiscvCpuError> {
         let Some(issue) =
-            self.prepare_next_translated_mmio_data_access(scheduler.now(), bus, page_map)?
+            self.prepare_next_translated_mmio_data_access(scheduler, bus, page_map)?
         else {
             return Ok(None);
         };
@@ -307,15 +307,16 @@ impl RiscvCore {
 
     fn prepare_next_translated_mmio_data_access(
         &self,
-        tick: Tick,
+        scheduler: &PartitionedScheduler,
         bus: &MmioBus,
         page_map: &TranslationPageMap,
     ) -> Result<Option<OutstandingDataAccess>, RiscvCpuError> {
+        let tick = scheduler.now();
         self.complete_ready_data_translations_with_page_map(tick, page_map)?;
-        let mut issue = self.prepare_ready_translated_mmio_data_access(tick, bus)?;
+        let mut issue = self.prepare_ready_translated_mmio_data_access(scheduler, bus)?;
         if issue.is_none() && self.enqueue_next_data_translation(tick)? {
             self.complete_ready_data_translations_with_page_map(tick, page_map)?;
-            issue = self.prepare_ready_translated_mmio_data_access(tick, bus)?;
+            issue = self.prepare_ready_translated_mmio_data_access(scheduler, bus)?;
         }
 
         Ok(issue)
@@ -426,9 +427,10 @@ impl RiscvCore {
 
     fn prepare_ready_translated_mmio_data_access(
         &self,
-        tick: Tick,
+        scheduler: &PartitionedScheduler,
         bus: &MmioBus,
     ) -> Result<Option<OutstandingDataAccess>, RiscvCpuError> {
+        let tick = scheduler.now();
         let translated = {
             let state = self.state.lock().expect("riscv core lock");
             let Some(fetch_request) = ready_translated_fetch_request(&state) else {
@@ -458,6 +460,13 @@ impl RiscvCore {
                 actual: route.source_partition(),
             });
         }
+        riscv_data_access::validate_parallel_mmio_route(
+            route,
+            tick,
+            scheduler.min_remote_delay(),
+            scheduler.partition_count(),
+        )
+        .map_err(|error| RiscvCpuError::Mmio(MmioError::Scheduler(error)))?;
 
         {
             let mut state = self.state.lock().expect("riscv core lock");
