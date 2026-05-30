@@ -1,7 +1,7 @@
 use rem6_memory::Address;
 use rem6_proto::{
-    DependencyRecord, DependencyRecordKind, DependencyTrace, DependencyTraceHeader, ProtoError,
-    TraceSourceId,
+    DependencyMemoryCompletionPolicy, DependencyRecord, DependencyRecordKind, DependencyTrace,
+    DependencyTraceHeader, ProtoError, TraceSourceId,
 };
 
 fn header(window_size: u32) -> DependencyTraceHeader {
@@ -78,6 +78,56 @@ fn dependency_trace_accepts_typed_o3_dependency_records() {
         .build()
         .unwrap();
     assert_eq!(trace.identity(), same_trace.identity());
+}
+
+#[test]
+fn dependency_trace_models_prefetch_as_nonblocking_memory_record() {
+    let trace = DependencyTrace::builder(header(16))
+        .add_record(
+            DependencyRecord::new(20, DependencyRecordKind::Compute)
+                .unwrap()
+                .with_compute_delay(2)
+                .with_pc(0x2000),
+        )
+        .add_record(
+            DependencyRecord::new(21, DependencyRecordKind::Prefetch)
+                .unwrap()
+                .with_physical_address(Address::new(0x9000))
+                .with_virtual_address(Address::new(0xffff_9000))
+                .with_asid(4)
+                .with_size(64)
+                .unwrap()
+                .with_flags(0x20)
+                .with_order_dependency(20)
+                .unwrap()
+                .with_pc(0x2004),
+        )
+        .add_record(
+            DependencyRecord::new(22, DependencyRecordKind::Compute)
+                .unwrap()
+                .with_order_dependency(21)
+                .unwrap()
+                .with_compute_delay(1)
+                .with_pc(0x2008),
+        )
+        .build()
+        .unwrap();
+
+    let prefetch = &trace.records()[1];
+    assert_eq!(prefetch.kind(), DependencyRecordKind::Prefetch);
+    assert_eq!(
+        prefetch.memory_completion_policy(),
+        DependencyMemoryCompletionPolicy::RetireAfterIssue
+    );
+    assert!(!prefetch.requires_memory_response_for_retirement());
+    assert_eq!(prefetch.size(), Some(64));
+    assert_eq!(prefetch.order_dependencies(), &[20]);
+
+    assert_eq!(
+        trace.records()[0].memory_completion_policy(),
+        DependencyMemoryCompletionPolicy::NotMemory
+    );
+    assert!(load_record(30).requires_memory_response_for_retirement());
 }
 
 #[test]

@@ -309,13 +309,21 @@ pub enum DependencyRecordKind {
     Invalid,
     Load,
     Store,
+    Prefetch,
     Compute,
 }
 
 impl DependencyRecordKind {
     const fn uses_memory(self) -> bool {
-        matches!(self, Self::Load | Self::Store)
+        matches!(self, Self::Load | Self::Store | Self::Prefetch)
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum DependencyMemoryCompletionPolicy {
+    NotMemory,
+    WaitForResponse,
+    RetireAfterIssue,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -473,6 +481,25 @@ impl DependencyRecord {
 
     pub const fn asid(&self) -> Option<u32> {
         self.asid
+    }
+
+    pub const fn memory_completion_policy(&self) -> DependencyMemoryCompletionPolicy {
+        match self.kind {
+            DependencyRecordKind::Invalid | DependencyRecordKind::Compute => {
+                DependencyMemoryCompletionPolicy::NotMemory
+            }
+            DependencyRecordKind::Load | DependencyRecordKind::Store => {
+                DependencyMemoryCompletionPolicy::WaitForResponse
+            }
+            DependencyRecordKind::Prefetch => DependencyMemoryCompletionPolicy::RetireAfterIssue,
+        }
+    }
+
+    pub const fn requires_memory_response_for_retirement(&self) -> bool {
+        matches!(
+            self.memory_completion_policy(),
+            DependencyMemoryCompletionPolicy::WaitForResponse
+        )
     }
 
     fn validate_for_trace(&self) -> Result<(), ProtoError> {
@@ -1106,6 +1133,7 @@ fn hash_dependency_record_kind(hash: &mut u64, kind: DependencyRecordKind) {
         DependencyRecordKind::Invalid => hash_str(hash, "invalid"),
         DependencyRecordKind::Load => hash_str(hash, "load"),
         DependencyRecordKind::Store => hash_str(hash, "store"),
+        DependencyRecordKind::Prefetch => hash_str(hash, "prefetch"),
         DependencyRecordKind::Compute => hash_str(hash, "compute"),
     }
 }
