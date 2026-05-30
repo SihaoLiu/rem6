@@ -558,6 +558,15 @@ isolated bugs:
   ignored REX prefixes are separate records; a legacy prefix after REX records
   the REX as ignored, and contiguous REX prefixes keep only the last one before
   opcode decode.
+  Public gem5 issue #2912 reports x86 `STI` and `CLI` computing IOPL from the
+  wrong RFLAGS bits, letting a user-mode `cli` escape the expected #GP fault
+  when carry plus the reserved bit make the low two RFLAGS bits look like
+  IOPL=3. The local reference has `RFLAGS.iopl` at bits 13:12, but the
+  generated microcode shifts into a temporary and then masks the original
+  RFLAGS value. rem6-isa-x86 therefore gives RFLAGS, CPL, CR4.PVI, and
+  interrupt-flag operations typed decision records: protected-mode `STI` and
+  `CLI` compare CPL only against bits 13:12, report general-protection faults
+  explicitly, and keep PVI/VIF behavior separate from IF mutation.
   Public gem5 issue #3190 reports O3 block-to-unblock transitions that wait
   until a downstream skid buffer is empty, causing a bubble after the backwards
   unblock signal propagates. rem6-cpu therefore exposes an `O3UnblockPolicy`
@@ -674,6 +683,9 @@ Research anchors refreshed through 2026-05-30:
 - Public gem5 issue anchor refreshed on 2026-05-30: open x86 REX prefix
   placement bug where a REX byte before a later legacy prefix can remain active
   instead of being ignored before opcode decode.
+- Public gem5 issue anchor refreshed on 2026-05-30: open x86 STI/CLI IOPL
+  bug where protected-mode interrupt-flag microcode can read low RFLAGS bits
+  instead of the architectural IOPL field at bits 13:12.
 - Public gem5 issue anchor refreshed on 2026-05-30: open O3 inter-stage
   unblock bug where empty-only skid-buffer unblocks introduce a delay bubble.
 - Public gem5 issue anchor refreshed on 2026-05-30: open CHI replacement-policy
@@ -1891,7 +1903,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 | gem5 source anchor | rem6 owner | Coverage | Notes |
 | --- | --- | --- | --- |
 | `src/arch/riscv` | `rem6-isa-riscv`, `rem6-cpu` | partial | RV64I decode and execution exist, with RV64A `LR.W`/`LR.D` and `SC.W`/`SC.D` paths that record a typed load-reservation address and size only after the read completes, submit matching store-conditionals as atomic memory requests, write architectural success or failure codes into `rd`, clear reservations on both outcomes, record local conditional failures without mutating memory, use cluster-level data-event tracking to invalidate peer reservations after completed overlapping writes, and let system data-cache response paths apply MSI, MESI, MOESI, and CHI invalidating snoops to matching core reservations before the requesting CPU response is delivered. All non-LR/SC RV64A word and doubleword AMOs now decode and execute as typed atomic memory accesses whose responses write the old memory value to `rd`, with word-width old values sign-extended to XLEN and word-width stores updating only four bytes. `MemoryRequest` carries an explicit atomic operation so the memory store and MSI, MESI, MOESI, and CHI cache-controller hit paths compute read-modify-write bytes only after capturing the old response bytes. `FENCE` and `FENCE.I` now decode as typed barrier instructions; execution records preserve fence predecessor/successor sets or instruction-cache barrier identity while advancing in-order without issuing a memory request. RV64A aq/rl flags now map to typed memory-ordering metadata on ISA memory accesses and CPU data-access records: release records a read/write fence before the access, acquire records a read/write fence after the access, and acquire-release records both. Machine `mcycle` and `minstret` counter writes are typed and observable through their user read aliases, while user counter aliases reject writes and snapshot restore round-trips both counters. Generic `MemoryRequest`s now carry typed before/after read-write ordering metadata, and RISC-V data issue maps aq/rl metadata into the requests submitted through serial or parallel transport. rem6-cpu has an initial typed CPU translation frontend that queues virtual fetch/load/store/atomic translation misses, can attach the typed rem6-memory TLB for immediate ASID-scoped hits, fills that TLB only when queued misses complete through the page resolver, preserves CPU memory request identity separately from translation request identity, materializes mapped physical `MemoryRequest`s, records typed translation faults, snapshots pending translation metadata plus optional TLB state, and can consume the typed rem6-memory page resolver for mapped or faulted completions without gem5-style `RequestPtr` mutation or delayed callback state hidden inside packets. rem6-memory also has a typed translation TLB with bounded capacity, ASID-keyed entries, deterministic LRU, permission rechecks on hits, hit/miss/fault/insert/eviction counters, explicit all-address-space and scoped invalidation, and snapshot restore. The page resolver can emit explicit cross-page translation segments with first-failed-segment faults, and rem6-cpu can turn queued CPU translations into per-segment translated records with sliced store payloads and masks. Segmented completion can also fill ASID-scoped TLB page entries for each mapped segment so later single-page accesses hit without re-running the page resolver. A simple RISC-V data issue path can now own an optional data translation frontend, translate a load or store effective address through the page resolver and TLB before transport submission, keep the original ISA memory access in the data event, and record the physical request address explicitly. The translated RISC-V driver path polls typed translation readiness without issuing the next fetch early; the core, cluster, system run driver, and topology-built core paths can submit translated data requests through the parallel memory transport; and the MMIO-aware system path can route translated physical data addresses to either platform MMIO or memory without using the virtual address for device selection. The plain data issue path rejects a configured translation frontend when no page map is supplied. This replaces gem5's hidden split translation callback state with typed data that future RISC-V timing paths can schedule or replay deterministically. Privileged ISA, concrete page tables, fuller CPU pipeline TLB wiring, walker memory accesses, cache and memory enforcement of AQ/RL timing barriers, vectors, and richer traps are alignment targets. |
-| `src/arch/x86` | `rem6-isa-x86` | partial | Initial x86 support has a typed prefix scan for long-mode and protected-mode instruction bytes. It keeps legacy prefixes, active REX, opcode map, opcode byte, and ignored REX prefixes as explicit records, covering the REX placement rule before fuller decode, execution, segmentation, paging, and system-register behavior land. |
+| `src/arch/x86` | `rem6-isa-x86` | partial | Initial x86 support has a typed prefix scan for long-mode and protected-mode instruction bytes. It keeps legacy prefixes, active REX, opcode map, opcode byte, and ignored REX prefixes as explicit records, covering the REX placement rule. It also has typed RFLAGS, CPL, CR4.PVI, and protected-mode `STI`/`CLI` decision records that extract IOPL from bits 13:12 and emit explicit general-protection errors or IF/VIF mutations. Fuller decode, execution, segmentation, paging, and system-register behavior remain open. |
 | `src/arch/arm`, `src/arch/power`, `src/arch/sparc`, `src/arch/mips` | future ISA crates | planned | rem6 should add each ISA as a crate with isolated decode, architectural state, and tests. A shared rem6-memory contract already exposes global/non-global TLB entry scope and non-global ASID flushes for future Arm TLBI handling. |
 | `src/arch/amdgpu` | `rem6-gpu`, future GPU ISA crate | planned | Current GPU model is command-level. ISA-level GPU execution remains open. |
 | `src/arch/generic`, `src/arch/null`, `src/arch/isa_parser` | shared ISA traits and build tooling | planned | rem6 should prefer Rust traits and generated tables only when generated artifacts are checked and reviewable. |
@@ -2041,6 +2053,10 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   REX immediately before a one-byte opcode or `0x0f` escape to stay active,
   requiring contiguous REX prefixes to keep only the last candidate, and
   requiring non-64-bit mode to treat REX-shaped bytes as opcodes.
+- x86 interrupt-flag tests cover public gem5 issue #2912 by requiring
+  user-mode `CLI` with architectural IOPL zero to fault even when carry and the
+  reserved RFLAGS bit are set, while allowing IOPL=3 IF mutation and
+  modeling CR4.PVI-mediated VIF set/clear plus VIP-triggered #GP behavior.
 - CHI protocol reservation tests cover the RISC-V three-level CHI LR/SC race
   from public gem5 issue #2688 by requiring overlapping store-conditionals on
   one line to serialize through a line-global reservation table, and by
