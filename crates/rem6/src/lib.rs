@@ -24,8 +24,8 @@ use rem6_system::{
     SystemHostEventPort,
 };
 use rem6_transport::{
-    MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome,
-    TransportEndpointId,
+    MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTraceEvent, MemoryTraceKind, MemoryTransport,
+    RequestDelivery, TargetOutcome, TransportEndpointId,
 };
 
 const DEFAULT_CACHE_LINE_BYTES: u64 = 16;
@@ -330,6 +330,8 @@ pub struct Rem6ExecutionSummary {
     parallel_scheduler_batch_idle_worker_ticks: u64,
     parallel_scheduler_worker_slots: Vec<Rem6ParallelWorkerSlotSummary>,
     parallel_scheduler_partitions: Vec<Rem6ParallelPartitionSummary>,
+    fetch_transport: Rem6MemoryTransportSummary,
+    data_transport: Rem6MemoryTransportSummary,
     cores: Vec<Rem6CoreSummary>,
     memory_dumps: Vec<Rem6MemoryDump>,
 }
@@ -383,6 +385,25 @@ pub struct Rem6ParallelPartitionSummary {
     remote_sends: u64,
     remote_receives: u64,
     max_pending_events: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Rem6MemoryTransportSummary {
+    requests: u64,
+    request_arrivals: u64,
+    responses: u64,
+    response_arrivals: u64,
+    round_trip_ticks: u64,
+    max_round_trip_ticks: u64,
+}
+
+struct ExecutionSummaryInputs<'a> {
+    core_count: u32,
+    store: &'a Arc<Mutex<PartitionedMemoryStore>>,
+    line_layout: CacheLineLayout,
+    config: &'a Rem6RunConfig,
+    fetch_trace: &'a MemoryTrace,
+    data_trace: &'a MemoryTrace,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -885,6 +906,8 @@ fn run_stats_json(
                 partition.max_pending_events,
             )?;
         }
+        emit_transport_stats(&mut stats, "sim.memory.fetch", &execution.fetch_transport)?;
+        emit_transport_stats(&mut stats, "sim.memory.data", &execution.data_transport)?;
         for core in &execution.cores {
             increment_stat(
                 &mut stats,
@@ -967,6 +990,55 @@ fn increment_stat(
         .register_counter_with_reset_policy(path, unit, reset_policy)
         .map_err(stats_error)?;
     stats.increment(stat, value).map_err(stats_error)
+}
+
+fn emit_transport_stats(
+    stats: &mut StatsRegistry,
+    prefix: &str,
+    summary: &Rem6MemoryTransportSummary,
+) -> Result<(), Rem6CliError> {
+    increment_stat(
+        stats,
+        &format!("{prefix}.requests"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.requests,
+    )?;
+    increment_stat(
+        stats,
+        &format!("{prefix}.request_arrivals"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.request_arrivals,
+    )?;
+    increment_stat(
+        stats,
+        &format!("{prefix}.responses"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.responses,
+    )?;
+    increment_stat(
+        stats,
+        &format!("{prefix}.response_arrivals"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.response_arrivals,
+    )?;
+    increment_stat(
+        stats,
+        &format!("{prefix}.round_trip_ticks"),
+        "Tick",
+        StatResetPolicy::Monotonic,
+        summary.round_trip_ticks,
+    )?;
+    increment_stat(
+        stats,
+        &format!("{prefix}.max_round_trip_ticks"),
+        "Tick",
+        StatResetPolicy::Monotonic,
+        summary.max_round_trip_ticks,
+    )
 }
 
 fn execute_riscv(
@@ -1064,13 +1136,15 @@ fn execute_riscv(
         GuestSourceId::new(1),
     );
     let driver = RiscvSystemRunDriver::new(trap_port);
+    let fetch_trace = MemoryTrace::new();
+    let data_trace = MemoryTrace::new();
     let run = driver
         .drive_until_host_stop_parallel(
             &cluster,
             &mut scheduler,
             &transport,
-            MemoryTrace::new(),
-            MemoryTrace::new(),
+            fetch_trace.clone(),
+            data_trace.clone(),
             |_cpu| {
                 let store = Arc::clone(&store);
                 move |delivery, _context| memory_response(&store, &delivery)
@@ -1084,7 +1158,16 @@ fn execute_riscv(
         )
         .map_err(execute_error)?;
 
-    execution_summary(&cluster, &run, core_count, &store, line_layout, config)
+    let summary_inputs = ExecutionSummaryInputs {
+        core_count,
+        store: &store,
+        line_layout,
+        config,
+        fetch_trace: &fetch_trace,
+        data_trace: &data_trace,
+    };
+
+    execution_summary(&cluster, &run, summary_inputs)
 }
 
 fn add_memory_route(
@@ -1126,10 +1209,7 @@ fn memory_response(
 fn execution_summary(
     cluster: &RiscvCluster,
     run: &RiscvSystemRun,
-    core_count: u32,
-    store: &Arc<Mutex<PartitionedMemoryStore>>,
-    line_layout: CacheLineLayout,
-    config: &Rem6RunConfig,
+    inputs: ExecutionSummaryInputs<'_>,
 ) -> Result<Rem6ExecutionSummary, Rem6CliError> {
     let RiscvSystemRunStopReason::HostStop(stop) = run.stop_reason() else {
         return Err(Rem6CliError::Execute {
@@ -1151,7 +1231,7 @@ fn execution_summary(
     let mut data_load_bytes = 0;
     let mut data_store_bytes = 0;
     let mut data_atomic_bytes = 0;
-    for cpu_index in 0..core_count {
+    for cpu_index in 0..inputs.core_count {
         let cpu = CpuId::new(cpu_index);
         let core = cluster.core(cpu).map_err(execute_error)?;
         let data = core_data_access_counts(&core);
@@ -1209,8 +1289,14 @@ fn execution_summary(
             .parallel_scheduler_batch_idle_worker_ticks(),
         parallel_scheduler_worker_slots: parallel_worker_slot_summaries(run),
         parallel_scheduler_partitions: parallel_partition_summaries(run),
+        fetch_transport: memory_transport_summary(inputs.fetch_trace),
+        data_transport: memory_transport_summary(inputs.data_trace),
         cores,
-        memory_dumps: read_memory_dumps(store, line_layout, config.memory_dumps())?,
+        memory_dumps: read_memory_dumps(
+            inputs.store,
+            inputs.line_layout,
+            inputs.config.memory_dumps(),
+        )?,
     })
 }
 
@@ -1239,6 +1325,54 @@ fn parallel_partition_summaries(run: &RiscvSystemRun) -> Vec<Rem6ParallelPartiti
             max_pending_events: activity.max_pending_events() as u64,
         })
         .collect()
+}
+
+fn memory_transport_summary(trace: &MemoryTrace) -> Rem6MemoryTransportSummary {
+    let events = trace.snapshot();
+    let mut request_sources: BTreeMap<(MemoryRouteId, MemoryRequestId), (u64, String)> =
+        BTreeMap::new();
+    let mut summary = Rem6MemoryTransportSummary {
+        requests: 0,
+        request_arrivals: 0,
+        responses: 0,
+        response_arrivals: 0,
+        round_trip_ticks: 0,
+        max_round_trip_ticks: 0,
+    };
+
+    for event in &events {
+        match event.kind() {
+            MemoryTraceKind::RequestSent => {
+                summary.requests += 1;
+                request_sources.insert(
+                    trace_key(event),
+                    (event.tick(), event.endpoint().as_str().to_string()),
+                );
+            }
+            MemoryTraceKind::RequestArrived => {
+                summary.request_arrivals += 1;
+            }
+            MemoryTraceKind::ResponseArrived => {
+                summary.response_arrivals += 1;
+                let Some((sent_tick, endpoint)) = request_sources.get(&trace_key(event)) else {
+                    continue;
+                };
+                if event.endpoint().as_str() != endpoint {
+                    continue;
+                }
+                summary.responses += 1;
+                let latency = event.tick().saturating_sub(*sent_tick);
+                summary.round_trip_ticks = summary.round_trip_ticks.saturating_add(latency);
+                summary.max_round_trip_ticks = summary.max_round_trip_ticks.max(latency);
+            }
+        }
+    }
+
+    summary
+}
+
+fn trace_key(event: &MemoryTraceEvent) -> (MemoryRouteId, MemoryRequestId) {
+    (event.route(), event.request_id())
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

@@ -110,6 +110,57 @@ fn assert_stat(stdout: &str, path: &str, unit: &str, value: u64, reset_policy: &
     );
 }
 
+fn assert_transport_stats(
+    stdout: &str,
+    prefix: &str,
+    requests: u64,
+    round_trip_ticks: u64,
+    max_round_trip_ticks: u64,
+) {
+    assert_stat(
+        stdout,
+        &format!("{prefix}.requests"),
+        "Count",
+        requests,
+        "monotonic",
+    );
+    assert_stat(
+        stdout,
+        &format!("{prefix}.request_arrivals"),
+        "Count",
+        requests,
+        "monotonic",
+    );
+    assert_stat(
+        stdout,
+        &format!("{prefix}.responses"),
+        "Count",
+        requests,
+        "monotonic",
+    );
+    assert_stat(
+        stdout,
+        &format!("{prefix}.response_arrivals"),
+        "Count",
+        requests,
+        "monotonic",
+    );
+    assert_stat(
+        stdout,
+        &format!("{prefix}.round_trip_ticks"),
+        "Tick",
+        round_trip_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        stdout,
+        &format!("{prefix}.max_round_trip_ticks"),
+        "Tick",
+        max_round_trip_ticks,
+        "monotonic",
+    );
+}
+
 #[test]
 fn rem6_run_loads_riscv_elf_and_emits_json_stats_artifact() {
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
@@ -350,6 +401,8 @@ fn rem6_run_executes_riscv_elf_load_store_and_emits_data_stats() {
     assert!(stdout.contains("\"path\":\"sim.cpu0.data.stores\""));
     assert_stat(&stdout, "sim.cpu0.data.load_bytes", "Byte", 8, "monotonic");
     assert_stat(&stdout, "sim.cpu0.data.store_bytes", "Byte", 8, "monotonic");
+    assert_transport_stats(&stdout, "sim.memory.fetch", 6, 12, 2);
+    assert_transport_stats(&stdout, "sim.memory.data", 2, 4, 2);
 }
 
 #[test]
@@ -405,6 +458,8 @@ fn rem6_run_executes_riscv_atomic_memory_op_and_emits_atomic_byte_stats() {
         8,
         "monotonic",
     );
+    assert_transport_stats(&stdout, "sim.memory.fetch", 5, 10, 2);
+    assert_transport_stats(&stdout, "sim.memory.data", 1, 2, 2);
 }
 
 #[test]
