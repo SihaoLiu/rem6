@@ -289,6 +289,7 @@ fn host_checkpoint_rejects_scheduler_worker_limit_mismatch_on_restore() {
 #[test]
 fn host_checkpoint_rejects_scheduler_global_tick_before_partition_clock_without_partial_restore() {
     let component = CheckpointComponentId::new("scheduler0").unwrap();
+    let core = PartitionId::new(0);
     let memory = PartitionId::new(1);
     let source_scheduler = Arc::new(Mutex::new(
         PartitionedScheduler::with_parallel_worker_limit(2, 5, 1).unwrap(),
@@ -329,6 +330,60 @@ fn host_checkpoint_rejects_scheduler_global_tick_before_partition_clock_without_
             component,
             error: SchedulerError::SnapshotGlobalTickBeforePartitionClock {
                 snapshot_now: 4,
+                partition: core,
+                partition_now: 8,
+            },
+        }
+    );
+    assert_eq!(target_scheduler.lock().unwrap().snapshot(), before);
+}
+
+#[test]
+fn host_checkpoint_rejects_scheduler_partition_clock_before_global_tick_without_partial_restore() {
+    let component = CheckpointComponentId::new("scheduler0").unwrap();
+    let core = PartitionId::new(0);
+    let memory = PartitionId::new(1);
+    let source_scheduler = Arc::new(Mutex::new(
+        PartitionedScheduler::with_parallel_worker_limit(2, 5, 1).unwrap(),
+    ));
+    {
+        let mut scheduler = source_scheduler.lock().unwrap();
+        scheduler.schedule_at(core, 12, |_| {}).unwrap();
+        scheduler.run_until_idle();
+    }
+    let source_port =
+        SchedulerCheckpointPort::new(component.clone(), Arc::clone(&source_scheduler));
+    let mut registry = CheckpointRegistry::new();
+    registry.register(component.clone()).unwrap();
+    source_port.capture_into(&mut registry).unwrap();
+    let mut payload = registry.chunk(&component, "scheduler").unwrap().to_vec();
+    let scheduler_header_bytes = 8 + 8 + 8 + 8 + 8;
+    let partition_record_bytes = 4 + 8 + 8 + 8 + 8 + 8 + 8;
+    let second_partition_now_offset = scheduler_header_bytes + partition_record_bytes + 4;
+    payload[second_partition_now_offset..second_partition_now_offset + 8]
+        .copy_from_slice(&8u64.to_le_bytes());
+    registry
+        .write_chunk(&component, "scheduler", payload)
+        .unwrap();
+
+    let target_scheduler = Arc::new(Mutex::new(
+        PartitionedScheduler::with_parallel_worker_limit(2, 5, 1).unwrap(),
+    ));
+    {
+        let mut scheduler = target_scheduler.lock().unwrap();
+        scheduler.schedule_parallel_at(memory, 20, |_| {}).unwrap();
+        scheduler.run_until_idle_parallel().unwrap();
+    }
+    let before = target_scheduler.lock().unwrap().snapshot();
+    let target_port =
+        SchedulerCheckpointPort::new(component.clone(), Arc::clone(&target_scheduler));
+
+    assert_eq!(
+        target_port.restore_from(&registry).unwrap_err(),
+        SchedulerCheckpointError::Scheduler {
+            component,
+            error: SchedulerError::SnapshotPartitionClockBeforeGlobalTick {
+                snapshot_now: 12,
                 partition: memory,
                 partition_now: 8,
             },

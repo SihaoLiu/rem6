@@ -843,6 +843,16 @@ fn encode_scheduler_error(payload: &mut Vec<u8>, error: &SchedulerError) {
             write_u32(payload, partition.index());
             write_u64(payload, *partition_now);
         }
+        SchedulerError::SnapshotPartitionClockBeforeGlobalTick {
+            snapshot_now,
+            partition,
+            partition_now,
+        } => {
+            write_u64(payload, 20);
+            write_u64(payload, *snapshot_now);
+            write_u32(payload, partition.index());
+            write_u64(payload, *partition_now);
+        }
         SchedulerError::SnapshotLookaheadMismatch {
             snapshot_min_remote_delay,
             scheduler_min_remote_delay,
@@ -921,6 +931,11 @@ fn decode_scheduler_error(
             snapshot_partition: PartitionId::new(cursor.read_u32("scheduler snapshot partition")?),
         }),
         19 => Ok(SchedulerError::SnapshotGlobalTickBeforePartitionClock {
+            snapshot_now: cursor.read_u64("scheduler snapshot now")?,
+            partition: PartitionId::new(cursor.read_u32("scheduler clock partition")?),
+            partition_now: cursor.read_u64("scheduler partition now")?,
+        }),
+        20 => Ok(SchedulerError::SnapshotPartitionClockBeforeGlobalTick {
             snapshot_now: cursor.read_u64("scheduler snapshot now")?,
             partition: PartitionId::new(cursor.read_u32("scheduler clock partition")?),
             partition_now: cursor.read_u64("scheduler partition now")?,

@@ -773,10 +773,15 @@ Implementation evidence on 2026-05-26:
   rejected full-system checkpoint attempt.
 - Scheduler quiescent restore now also verifies each partition snapshot id
   against its target scheduler slot before mutating clocks or event-order
-  counters, and rejects snapshots whose global tick is earlier than any
-  partition clock. A malformed checkpoint cannot swap per-partition scheduler
-  state or restore a scheduler-wide clock that later lets callbacks discover a
+  counters, rejects snapshots whose global tick is earlier than any partition
+  clock, and rejects snapshots whose partition clock is earlier than the global
+  tick. A malformed checkpoint cannot swap per-partition scheduler state or
+  restore a scheduler-wide clock that later lets callbacks discover a
   schedule-in-past failure after partial state has already changed.
+- The serial scheduler drain now advances idle partition clocks to the final
+  tick before returning, so the debug serial view cannot leave a stale
+  partition frontier that later accepts a parallel event in scheduler-global
+  past time.
 - Scheduler event control now exposes typed cancel and reschedule APIs keyed by
   `PartitionEventId`. Missing or already-dispatched ids return
   `EventNotPending`, rescheduling before the owning partition clock returns
@@ -1674,14 +1679,16 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   conservative parallel epochs, worker limits, wait-for graphs, and scheduler
   snapshots, including prevalidated scheduler checkpoint-bank restore so
   truncated chunks cannot partially mutate live scheduler frontiers, and
-  malformed global ticks that precede partition clocks are rejected before
-  restore mutates the target scheduler. Wait-for graph tests cover checkpoint
-  barrier nodes, barrier wait edges, repeated observations, resource-scoped
-  barrier release, kernel-owned edge-kind observation windows, kernel-owned
-  blocked-node observation windows, and kernel-owned target-node observation
-  windows. Full-system tests preserve the barrier edge kind in wait-for
-  summaries and expose target-node windows across merged resource and
-  full-system wait-for graphs. Workload-result tests now
+  malformed global ticks that precede partition clocks or partition clocks
+  that precede the global tick are rejected before restore mutates the target
+  scheduler. Serial drain tests require idle partition clocks to advance to the
+  final tick before any later parallel scheduling can occur. Wait-for graph
+  tests cover checkpoint barrier nodes, barrier wait edges, repeated
+  observations, resource-scoped barrier release, kernel-owned edge-kind
+  observation windows, kernel-owned blocked-node observation windows, and
+  kernel-owned target-node observation windows. Full-system tests preserve the
+  barrier edge kind in wait-for summaries and expose target-node windows across
+  merged resource and full-system wait-for graphs. Workload-result tests now
   preserve scoped blocked-node and target-node wait-for tick windows, and
   workload replay summary tests carry fabric/data-cache blocked-node and
   target-node windows into merged full-system artifacts. Workload manifest tests
