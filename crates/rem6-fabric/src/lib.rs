@@ -2,7 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
-use rem6_kernel::{Tick, WaitForEdgeKind, WaitForGraph, WaitForNode};
+use rem6_kernel::{
+    ClockDomain, ClockError, Cycles, Tick, WaitForEdgeKind, WaitForGraph, WaitForNode,
+};
 
 mod activity;
 mod qos;
@@ -67,6 +69,16 @@ pub enum FabricError {
     ZeroLinkLatency,
     ZeroLinkBandwidth,
     ZeroCreditDepth,
+    ZeroSerialLinkLanes,
+    ZeroSerialLinkLaneSpeed,
+    SerialLinkBandwidthOverflow {
+        lanes: u64,
+        lane_speed_bits_per_cycle: u64,
+    },
+    SerialLinkPacketBitOverflow {
+        bytes: u64,
+    },
+    Clock(ClockError),
     DuplicatePacketInBatch {
         packet: FabricPacketId,
     },
@@ -87,6 +99,24 @@ impl fmt::Display for FabricError {
             Self::ZeroLinkLatency => write!(formatter, "fabric link latency must be positive"),
             Self::ZeroLinkBandwidth => write!(formatter, "fabric link bandwidth must be positive"),
             Self::ZeroCreditDepth => write!(formatter, "fabric credit depth must be positive"),
+            Self::ZeroSerialLinkLanes => {
+                write!(formatter, "fabric serial link lane count must be positive")
+            }
+            Self::ZeroSerialLinkLaneSpeed => {
+                write!(formatter, "fabric serial link lane speed must be positive")
+            }
+            Self::SerialLinkBandwidthOverflow {
+                lanes,
+                lane_speed_bits_per_cycle,
+            } => write!(
+                formatter,
+                "fabric serial link bandwidth overflows for {lanes} lanes at {lane_speed_bits_per_cycle} bits per cycle"
+            ),
+            Self::SerialLinkPacketBitOverflow { bytes } => write!(
+                formatter,
+                "fabric serial link packet bit count overflows for {bytes} bytes"
+            ),
+            Self::Clock(error) => write!(formatter, "{error}"),
             Self::DuplicatePacketInBatch { packet } => {
                 write!(formatter, "packet {} appears more than once", packet.get())
             }
@@ -106,6 +136,12 @@ impl fmt::Display for FabricError {
 }
 
 impl Error for FabricError {}
+
+impl From<ClockError> for FabricError {
+    fn from(error: ClockError) -> Self {
+        Self::Clock(error)
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FabricPacket {
@@ -144,11 +180,87 @@ impl FabricPacket {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FabricSerialLinkTiming {
+    clock: ClockDomain,
+    latency_cycles: Cycles,
+    lanes: u64,
+    lane_speed_bits_per_cycle: u64,
+    bits_per_cycle: u64,
+}
+
+impl FabricSerialLinkTiming {
+    pub fn new(
+        clock: ClockDomain,
+        latency_cycles: Cycles,
+        lanes: u64,
+        lane_speed_bits_per_cycle: u64,
+    ) -> Result<Self, FabricError> {
+        if lanes == 0 {
+            return Err(FabricError::ZeroSerialLinkLanes);
+        }
+        if lane_speed_bits_per_cycle == 0 {
+            return Err(FabricError::ZeroSerialLinkLaneSpeed);
+        }
+        let bits_per_cycle = lanes.checked_mul(lane_speed_bits_per_cycle).ok_or(
+            FabricError::SerialLinkBandwidthOverflow {
+                lanes,
+                lane_speed_bits_per_cycle,
+            },
+        )?;
+
+        Ok(Self {
+            clock,
+            latency_cycles,
+            lanes,
+            lane_speed_bits_per_cycle,
+            bits_per_cycle,
+        })
+    }
+
+    pub const fn clock(self) -> ClockDomain {
+        self.clock
+    }
+
+    pub const fn latency_cycles(self) -> Cycles {
+        self.latency_cycles
+    }
+
+    pub const fn lanes(self) -> u64 {
+        self.lanes
+    }
+
+    pub const fn lane_speed_bits_per_cycle(self) -> u64 {
+        self.lane_speed_bits_per_cycle
+    }
+
+    pub const fn bits_per_cycle(self) -> u64 {
+        self.bits_per_cycle
+    }
+
+    pub fn latency_ticks(self) -> Result<Tick, FabricError> {
+        self.clock
+            .cycles_to_ticks(self.latency_cycles)
+            .map_err(FabricError::from)
+    }
+
+    pub fn serialization_ticks(self, bytes: u64) -> Result<Tick, FabricError> {
+        let bits = bytes
+            .checked_mul(8)
+            .ok_or(FabricError::SerialLinkPacketBitOverflow { bytes })?;
+        let cycles = ceil_div(bits, self.bits_per_cycle);
+        self.clock
+            .cycles_to_ticks(Cycles::new(cycles))
+            .map_err(FabricError::from)
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FabricPathHop {
     link: FabricLinkId,
     latency: Tick,
     bandwidth_bytes_per_tick: u64,
+    serial_link: Option<FabricSerialLinkTiming>,
     credit_depth: Option<u32>,
     virtual_network: Option<VirtualNetworkId>,
 }
@@ -170,6 +282,26 @@ impl FabricPathHop {
             link,
             latency,
             bandwidth_bytes_per_tick,
+            serial_link: None,
+            credit_depth: None,
+            virtual_network: None,
+        })
+    }
+
+    pub fn serial_link(
+        link: FabricLinkId,
+        clock: ClockDomain,
+        latency_cycles: Cycles,
+        lanes: u64,
+        lane_speed_bits_per_cycle: u64,
+    ) -> Result<Self, FabricError> {
+        let serial_link =
+            FabricSerialLinkTiming::new(clock, latency_cycles, lanes, lane_speed_bits_per_cycle)?;
+        Ok(Self {
+            link,
+            latency: serial_link.latency_ticks()?,
+            bandwidth_bytes_per_tick: 1,
+            serial_link: Some(serial_link),
             credit_depth: None,
             virtual_network: None,
         })
@@ -201,12 +333,24 @@ impl FabricPathHop {
         self.bandwidth_bytes_per_tick
     }
 
+    pub const fn serial_link_timing(&self) -> Option<FabricSerialLinkTiming> {
+        self.serial_link
+    }
+
     pub const fn credit_depth(&self) -> Option<u32> {
         self.credit_depth
     }
 
     pub const fn virtual_network(&self) -> Option<VirtualNetworkId> {
         self.virtual_network
+    }
+
+    fn serialization_ticks(&self, bytes: u64) -> Result<Tick, FabricError> {
+        if let Some(serial_link) = self.serial_link {
+            return serial_link.serialization_ticks(bytes);
+        }
+
+        Ok(serialization_ticks(bytes, self.bandwidth_bytes_per_tick()))
     }
 }
 
@@ -907,8 +1051,7 @@ impl FabricModel {
             let ready_tick = arrival_tick;
             let virtual_network = hop.virtual_network().unwrap_or(packet.virtual_network());
             let lane = FabricLaneKey::new(hop.link().clone(), virtual_network);
-            let serialization_ticks =
-                serialization_ticks(packet.bytes(), hop.bandwidth_bytes_per_tick());
+            let serialization_ticks = hop.serialization_ticks(packet.bytes())?;
             let reservation = self.lanes.entry(lane).or_default().reserve(
                 ready_tick,
                 serialization_ticks,
@@ -984,7 +1127,11 @@ fn collect_hop_activities(records: &[FabricLaneActivityRecord]) -> Vec<FabricHop
 }
 
 fn serialization_ticks(bytes: u64, bandwidth_bytes_per_tick: u64) -> Tick {
-    ((bytes - 1) / bandwidth_bytes_per_tick) + 1
+    ceil_div(bytes, bandwidth_bytes_per_tick)
+}
+
+fn ceil_div(numerator: u64, denominator: u64) -> u64 {
+    ((numerator - 1) / denominator) + 1
 }
 
 fn fabric_packet_node(packet: FabricPacketId) -> WaitForNode {

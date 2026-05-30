@@ -2,7 +2,7 @@ use rem6_fabric::{
     FabricError, FabricLaneActivity, FabricLinkActivity, FabricLinkId, FabricModel, FabricPacket,
     FabricPacketId, FabricPath, FabricPathHop, FabricVirtualNetworkActivity, VirtualNetworkId,
 };
-use rem6_kernel::{WaitForEdgeKind, WaitForNode};
+use rem6_kernel::{ClockDomain, Cycles, WaitForEdgeKind, WaitForNode};
 
 fn packet(id: u64, bytes: u64, virtual_network: u16) -> FabricPacket {
     FabricPacket::new(
@@ -72,6 +72,33 @@ fn fabric_serializes_packets_on_shared_link_deterministically() {
         .unwrap();
     assert_eq!(later.arrival_tick(), 8);
     assert_eq!(later.hops()[0].start_tick(), 4);
+}
+
+#[test]
+fn fabric_serial_link_timing_uses_declared_clock_domain() {
+    let mut fabric = FabricModel::new();
+    let fast_clock = ClockDomain::new(1).unwrap();
+    let slow_clock = ClockDomain::new(4).unwrap();
+    let fast_route =
+        path([
+            FabricPathHop::serial_link(link("serial_fast"), fast_clock, Cycles::new(3), 4, 8)
+                .unwrap(),
+        ]);
+    let slow_route =
+        path([
+            FabricPathHop::serial_link(link("serial_slow"), slow_clock, Cycles::new(3), 4, 8)
+                .unwrap(),
+        ]);
+
+    let fast = fabric.transmit(7, packet(20, 64, 0), fast_route).unwrap();
+    let slow = fabric.transmit(7, packet(21, 64, 0), slow_route).unwrap();
+
+    assert_eq!(fast.hops()[0].serialization_ticks(), 16);
+    assert_eq!(fast.hops()[0].depart_tick(), 23);
+    assert_eq!(fast.arrival_tick(), 26);
+    assert_eq!(slow.hops()[0].serialization_ticks(), 64);
+    assert_eq!(slow.hops()[0].depart_tick(), 71);
+    assert_eq!(slow.arrival_tick(), 83);
 }
 
 #[test]
@@ -622,6 +649,28 @@ fn fabric_rejects_invalid_packets_paths_and_batches() {
             .with_credit_depth(0)
             .err(),
         Some(FabricError::ZeroCreditDepth)
+    );
+    assert_eq!(
+        FabricPathHop::serial_link(
+            link("serial_x0"),
+            ClockDomain::new(1).unwrap(),
+            Cycles::new(1),
+            0,
+            8,
+        )
+        .err(),
+        Some(FabricError::ZeroSerialLinkLanes)
+    );
+    assert_eq!(
+        FabricPathHop::serial_link(
+            link("serial_x0"),
+            ClockDomain::new(1).unwrap(),
+            Cycles::new(1),
+            4,
+            0,
+        )
+        .err(),
+        Some(FabricError::ZeroSerialLinkLaneSpeed)
     );
     assert_eq!(FabricPath::new([]).err(), Some(FabricError::EmptyPath));
 
