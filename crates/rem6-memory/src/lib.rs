@@ -17,8 +17,9 @@ pub use translation::{
     TranslationSegmentedResolution,
 };
 pub use translation_tlb::{
-    TranslationAddressSpaceId, TranslationTlb, TranslationTlbConfig, TranslationTlbEntrySnapshot,
-    TranslationTlbLookup, TranslationTlbLookupKind, TranslationTlbSnapshot, TranslationTlbStats,
+    TranslationAddressSpaceId, TranslationTlb, TranslationTlbConfig, TranslationTlbEntryScope,
+    TranslationTlbEntrySnapshot, TranslationTlbLookup, TranslationTlbLookupKind,
+    TranslationTlbSnapshot, TranslationTlbStats,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]

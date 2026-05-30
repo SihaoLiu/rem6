@@ -48,6 +48,12 @@ pub enum TranslationTlbLookupKind {
     Miss,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum TranslationTlbEntryScope {
+    Global,
+    NonGlobal,
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct TranslationTlbStats {
     hits: u64,
@@ -116,6 +122,7 @@ pub struct TranslationTlbEntrySnapshot {
     physical_page: Address,
     page_size: TranslationPageSize,
     permissions: TranslationPagePermissions,
+    scope: TranslationTlbEntryScope,
     last_used: u64,
 }
 
@@ -151,8 +158,14 @@ impl TranslationTlbEntrySnapshot {
             physical_page,
             page_size,
             permissions,
+            scope: TranslationTlbEntryScope::NonGlobal,
             last_used,
         }
+    }
+
+    pub const fn with_scope(mut self, scope: TranslationTlbEntryScope) -> Self {
+        self.scope = scope;
+        self
     }
 
     pub const fn address_space(&self) -> TranslationAddressSpaceId {
@@ -173,6 +186,10 @@ impl TranslationTlbEntrySnapshot {
 
     pub const fn permissions(&self) -> TranslationPagePermissions {
         self.permissions
+    }
+
+    pub const fn scope(&self) -> TranslationTlbEntryScope {
+        self.scope
     }
 
     pub const fn last_used(&self) -> u64 {
@@ -255,6 +272,7 @@ struct TranslationTlbEntry {
     physical_page: Address,
     page_size: TranslationPageSize,
     permissions: TranslationPagePermissions,
+    scope: TranslationTlbEntryScope,
     last_used: u64,
 }
 
@@ -265,6 +283,7 @@ impl TranslationTlbEntry {
         physical_page: Address,
         page_size: TranslationPageSize,
         permissions: TranslationPagePermissions,
+        scope: TranslationTlbEntryScope,
         last_used: u64,
     ) -> Self {
         Self {
@@ -273,6 +292,7 @@ impl TranslationTlbEntry {
             physical_page,
             page_size,
             permissions,
+            scope,
             last_used,
         }
     }
@@ -299,6 +319,7 @@ impl TranslationTlbEntry {
             snapshot.physical_page(),
             snapshot.page_size(),
             snapshot.permissions(),
+            snapshot.scope(),
             snapshot.last_used(),
         ))
     }
@@ -312,6 +333,7 @@ impl TranslationTlbEntry {
             self.permissions,
             self.last_used,
         )
+        .with_scope(self.scope)
     }
 
     fn contains_range(&self, range: AddressRange) -> Result<bool, TranslationError> {
@@ -450,6 +472,17 @@ impl TranslationTlb {
         let before = self.entries.len();
         self.entries
             .retain(|key, _| key.address_space != address_space);
+        before - self.entries.len()
+    }
+
+    pub fn flush_non_global_address_space(
+        &mut self,
+        address_space: TranslationAddressSpaceId,
+    ) -> usize {
+        let before = self.entries.len();
+        self.entries.retain(|key, entry| {
+            key.address_space != address_space || entry.scope == TranslationTlbEntryScope::Global
+        });
         before - self.entries.len()
     }
 
@@ -667,6 +700,7 @@ impl TranslationTlb {
                 physical_page,
                 page_size,
                 mapping.permissions(),
+                TranslationTlbEntryScope::NonGlobal,
                 last_used,
             );
             self.stats.record_insert();
@@ -685,6 +719,7 @@ impl TranslationTlb {
                 physical_page,
                 page_size,
                 mapping.permissions(),
+                TranslationTlbEntryScope::NonGlobal,
                 last_used,
             ),
         );
