@@ -1,7 +1,7 @@
 use rem6_isa_riscv::{
-    AtomicMemoryOp, Immediate, MemoryAccessKind, MemoryWidth, Register, RiscvError,
-    RiscvExecutionRecord, RiscvFenceSet, RiscvHartState, RiscvInstruction, RiscvMemoryOrdering,
-    RiscvTrap, RiscvTrapKind,
+    AtomicMemoryOp, Immediate, MemoryAccessKind, MemoryWidth, Register, RiscvCounterBank,
+    RiscvCounterCsr, RiscvCounterSnapshot, RiscvCsrError, RiscvError, RiscvExecutionRecord,
+    RiscvFenceSet, RiscvHartState, RiscvInstruction, RiscvMemoryOrdering, RiscvTrap, RiscvTrapKind,
 };
 
 fn r_type(funct7: u32, rs2: u8, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
@@ -74,6 +74,85 @@ fn j_type(imm: i32, rd: u8) -> u32 {
 
 fn reg(index: u8) -> Register {
     Register::new(index).unwrap()
+}
+
+#[test]
+fn counter_csrs_preserve_machine_writes_and_user_read_aliases() {
+    let mut counters = RiscvCounterBank::new();
+
+    counters
+        .write_machine(RiscvCounterCsr::Cycle, 0x1234_5678_9abc_def0)
+        .unwrap();
+    counters
+        .write_machine(RiscvCounterCsr::Instret, 0x0102_0304_0506_0708)
+        .unwrap();
+
+    assert_eq!(
+        counters.read_machine(RiscvCounterCsr::Cycle),
+        0x1234_5678_9abc_def0
+    );
+    assert_eq!(
+        counters.read_user(RiscvCounterCsr::Cycle),
+        0x1234_5678_9abc_def0
+    );
+    assert_eq!(
+        counters.read_machine(RiscvCounterCsr::Instret),
+        0x0102_0304_0506_0708
+    );
+    assert_eq!(
+        counters.read_user(RiscvCounterCsr::Instret),
+        0x0102_0304_0506_0708
+    );
+
+    counters.add_cycles(0x10);
+    counters.retire_instructions(3);
+    assert_eq!(
+        counters.read_machine(RiscvCounterCsr::Cycle),
+        0x1234_5678_9abc_df00
+    );
+    assert_eq!(
+        counters.read_machine(RiscvCounterCsr::Instret),
+        0x0102_0304_0506_070b
+    );
+}
+
+#[test]
+fn counter_csrs_reject_user_writes_and_restore_snapshots() {
+    let mut counters = RiscvCounterBank::new();
+    assert_eq!(
+        counters.write_user(RiscvCounterCsr::Cycle, 7).unwrap_err(),
+        RiscvCsrError::ReadOnlyCounterAlias {
+            csr: RiscvCounterCsr::Cycle,
+        }
+    );
+    assert_eq!(
+        RiscvCounterCsr::from_user_address(0xc00).unwrap(),
+        RiscvCounterCsr::Cycle
+    );
+    assert_eq!(
+        RiscvCounterCsr::from_machine_address(0xb02).unwrap(),
+        RiscvCounterCsr::Instret
+    );
+    assert_eq!(
+        RiscvCounterCsr::from_machine_address(0xc00).unwrap_err(),
+        RiscvCsrError::UnknownCounterCsr { address: 0xc00 }
+    );
+
+    counters
+        .write_machine(RiscvCounterCsr::Cycle, u64::MAX)
+        .unwrap();
+    counters.add_cycles(2);
+    counters
+        .write_machine(RiscvCounterCsr::Instret, 0xfeed)
+        .unwrap();
+    let snapshot = counters.snapshot();
+    assert_eq!(snapshot, RiscvCounterSnapshot::new(1, 0xfeed));
+
+    let mut restored = RiscvCounterBank::new();
+    restored.restore(&snapshot);
+    assert_eq!(restored.snapshot(), snapshot);
+    assert_eq!(restored.read_user(RiscvCounterCsr::Cycle), 1);
+    assert_eq!(restored.read_user(RiscvCounterCsr::Instret), 0xfeed);
 }
 
 #[test]

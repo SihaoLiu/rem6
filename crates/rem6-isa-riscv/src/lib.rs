@@ -213,6 +213,129 @@ pub enum RiscvTrapKind {
     Breakpoint,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum RiscvCounterCsr {
+    Cycle,
+    Instret,
+}
+
+impl RiscvCounterCsr {
+    pub const fn user_address(self) -> u16 {
+        match self {
+            Self::Cycle => 0xc00,
+            Self::Instret => 0xc02,
+        }
+    }
+
+    pub const fn machine_address(self) -> u16 {
+        match self {
+            Self::Cycle => 0xb00,
+            Self::Instret => 0xb02,
+        }
+    }
+
+    pub const fn from_user_address(address: u16) -> Result<Self, RiscvCsrError> {
+        match address {
+            0xc00 => Ok(Self::Cycle),
+            0xc02 => Ok(Self::Instret),
+            _ => Err(RiscvCsrError::UnknownCounterCsr { address }),
+        }
+    }
+
+    pub const fn from_machine_address(address: u16) -> Result<Self, RiscvCsrError> {
+        match address {
+            0xb00 => Ok(Self::Cycle),
+            0xb02 => Ok(Self::Instret),
+            _ => Err(RiscvCsrError::UnknownCounterCsr { address }),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiscvCounterSnapshot {
+    cycle: u64,
+    instret: u64,
+}
+
+impl RiscvCounterSnapshot {
+    pub const fn new(cycle: u64, instret: u64) -> Self {
+        Self { cycle, instret }
+    }
+
+    pub const fn cycle(&self) -> u64 {
+        self.cycle
+    }
+
+    pub const fn instret(&self) -> u64 {
+        self.instret
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiscvCounterBank {
+    cycle: u64,
+    instret: u64,
+}
+
+impl RiscvCounterBank {
+    pub const fn new() -> Self {
+        Self {
+            cycle: 0,
+            instret: 0,
+        }
+    }
+
+    pub const fn read_user(&self, csr: RiscvCounterCsr) -> u64 {
+        self.read(csr)
+    }
+
+    pub const fn read_machine(&self, csr: RiscvCounterCsr) -> u64 {
+        self.read(csr)
+    }
+
+    pub fn write_user(&mut self, csr: RiscvCounterCsr, _value: u64) -> Result<(), RiscvCsrError> {
+        Err(RiscvCsrError::ReadOnlyCounterAlias { csr })
+    }
+
+    pub fn write_machine(&mut self, csr: RiscvCounterCsr, value: u64) -> Result<(), RiscvCsrError> {
+        match csr {
+            RiscvCounterCsr::Cycle => self.cycle = value,
+            RiscvCounterCsr::Instret => self.instret = value,
+        }
+        Ok(())
+    }
+
+    pub fn add_cycles(&mut self, cycles: u64) {
+        self.cycle = self.cycle.wrapping_add(cycles);
+    }
+
+    pub fn retire_instructions(&mut self, instructions: u64) {
+        self.instret = self.instret.wrapping_add(instructions);
+    }
+
+    pub const fn snapshot(&self) -> RiscvCounterSnapshot {
+        RiscvCounterSnapshot::new(self.cycle, self.instret)
+    }
+
+    pub fn restore(&mut self, snapshot: &RiscvCounterSnapshot) {
+        self.cycle = snapshot.cycle;
+        self.instret = snapshot.instret;
+    }
+
+    const fn read(&self, csr: RiscvCounterCsr) -> u64 {
+        match csr {
+            RiscvCounterCsr::Cycle => self.cycle,
+            RiscvCounterCsr::Instret => self.instret,
+        }
+    }
+}
+
+impl Default for RiscvCounterBank {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RiscvTrap {
     kind: RiscvTrapKind,
@@ -947,3 +1070,29 @@ impl fmt::Display for RiscvError {
 }
 
 impl Error for RiscvError {}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RiscvCsrError {
+    UnknownCounterCsr { address: u16 },
+    ReadOnlyCounterAlias { csr: RiscvCounterCsr },
+}
+
+impl fmt::Display for RiscvCsrError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnknownCounterCsr { address } => {
+                write!(
+                    formatter,
+                    "RISC-V counter CSR {address:#05x} is not supported"
+                )
+            }
+            Self::ReadOnlyCounterAlias { csr } => write!(
+                formatter,
+                "RISC-V user counter CSR {:#05x} is read-only",
+                csr.user_address()
+            ),
+        }
+    }
+}
+
+impl Error for RiscvCsrError {}
