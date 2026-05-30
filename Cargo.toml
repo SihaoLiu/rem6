@@ -2,6 +2,7 @@
 members = [
     "crates/rem6-accelerator",
     "crates/rem6-amba",
+    "crates/rem6",
     "crates/rem6-boot",
     "crates/rem6-cache",
     "crates/rem6-checkpoint",
