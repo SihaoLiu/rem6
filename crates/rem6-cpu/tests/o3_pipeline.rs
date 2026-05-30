@@ -1,5 +1,6 @@
 use rem6_cpu::{
-    O3PipelineError, O3PipelineStage, O3UnblockDecisionReason, O3UnblockPolicy,
+    O3DistributedIssueScheduler, O3IssueOpClass, O3IssueQueueCapacity, O3IssueQueueId,
+    O3PipelineError, O3PipelineStage, O3ReadyInstruction, O3UnblockDecisionReason, O3UnblockPolicy,
     O3WritebackTransferPolicy,
 };
 
@@ -109,6 +110,55 @@ fn o3_writeback_transfer_policy_rejects_unrepresentable_windows() {
             source: O3PipelineStage::Iew,
             writeback_width: usize::MAX,
             future_cycles: 1,
+        }
+    );
+}
+
+#[test]
+fn o3_distributed_issue_scheduler_skips_blocked_queue_without_starving_peer_queue() {
+    let queue_a = O3IssueQueueId::new(0);
+    let queue_b = O3IssueQueueId::new(1);
+    let scheduler = O3DistributedIssueScheduler::new(
+        2,
+        [
+            O3IssueQueueCapacity::new(queue_a, O3IssueOpClass::IntAlu, 1).unwrap(),
+            O3IssueQueueCapacity::new(queue_b, O3IssueOpClass::IntAlu, 1).unwrap(),
+        ],
+    )
+    .unwrap();
+
+    let plan = scheduler.plan([
+        O3ReadyInstruction::new(10, queue_a, O3IssueOpClass::IntAlu),
+        O3ReadyInstruction::new(11, queue_a, O3IssueOpClass::IntAlu),
+        O3ReadyInstruction::new(12, queue_b, O3IssueOpClass::IntAlu),
+        O3ReadyInstruction::new(13, queue_b, O3IssueOpClass::IntAlu),
+    ]);
+
+    assert_eq!(plan.issued_sequences().collect::<Vec<_>>(), vec![10, 12]);
+    assert_eq!(plan.issued()[0].queue(), queue_a);
+    assert_eq!(plan.issued()[1].queue(), queue_b);
+    assert_eq!(plan.blocked()[0].sequence(), 11);
+    assert_eq!(plan.blocked()[0].queue(), queue_a);
+}
+
+#[test]
+fn o3_distributed_issue_scheduler_validates_width_and_queue_capacity() {
+    assert_eq!(
+        O3DistributedIssueScheduler::new(
+            0,
+            [
+                O3IssueQueueCapacity::new(O3IssueQueueId::new(0), O3IssueOpClass::IntAlu, 1,)
+                    .unwrap()
+            ],
+        )
+        .unwrap_err(),
+        O3PipelineError::ZeroIssueWidth
+    );
+    assert_eq!(
+        O3IssueQueueCapacity::new(O3IssueQueueId::new(0), O3IssueOpClass::IntAlu, 0).unwrap_err(),
+        O3PipelineError::ZeroIssueQueueCapacity {
+            queue: O3IssueQueueId::new(0),
+            op_class: O3IssueOpClass::IntAlu,
         }
     );
 }

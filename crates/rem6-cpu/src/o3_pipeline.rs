@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
@@ -22,6 +23,202 @@ impl fmt::Display for O3PipelineStage {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct O3IssueQueueId(u32);
+
+impl O3IssueQueueId {
+    pub const fn new(value: u32) -> Self {
+        Self(value)
+    }
+
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum O3IssueOpClass {
+    IntAlu,
+    IntMult,
+    Float,
+    Memory,
+    Branch,
+    System,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct O3IssueQueueCapacity {
+    queue: O3IssueQueueId,
+    op_class: O3IssueOpClass,
+    slots: usize,
+}
+
+impl O3IssueQueueCapacity {
+    pub fn new(
+        queue: O3IssueQueueId,
+        op_class: O3IssueOpClass,
+        slots: usize,
+    ) -> Result<Self, O3PipelineError> {
+        if slots == 0 {
+            return Err(O3PipelineError::ZeroIssueQueueCapacity { queue, op_class });
+        }
+        Ok(Self {
+            queue,
+            op_class,
+            slots,
+        })
+    }
+
+    pub const fn queue(self) -> O3IssueQueueId {
+        self.queue
+    }
+
+    pub const fn op_class(self) -> O3IssueOpClass {
+        self.op_class
+    }
+
+    pub const fn slots(self) -> usize {
+        self.slots
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct O3ReadyInstruction {
+    sequence: u64,
+    queue: O3IssueQueueId,
+    op_class: O3IssueOpClass,
+}
+
+impl O3ReadyInstruction {
+    pub const fn new(sequence: u64, queue: O3IssueQueueId, op_class: O3IssueOpClass) -> Self {
+        Self {
+            sequence,
+            queue,
+            op_class,
+        }
+    }
+
+    pub const fn sequence(self) -> u64 {
+        self.sequence
+    }
+
+    pub const fn queue(self) -> O3IssueQueueId {
+        self.queue
+    }
+
+    pub const fn op_class(self) -> O3IssueOpClass {
+        self.op_class
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct O3DistributedIssuePlan {
+    issue_width: usize,
+    issued: Vec<O3ReadyInstruction>,
+    blocked: Vec<O3ReadyInstruction>,
+}
+
+impl O3DistributedIssuePlan {
+    pub const fn issue_width(&self) -> usize {
+        self.issue_width
+    }
+
+    pub fn issued(&self) -> &[O3ReadyInstruction] {
+        &self.issued
+    }
+
+    pub fn blocked(&self) -> &[O3ReadyInstruction] {
+        &self.blocked
+    }
+
+    pub fn issued_sequences(&self) -> impl Iterator<Item = u64> + '_ {
+        self.issued.iter().map(|instruction| instruction.sequence())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct O3DistributedIssueScheduler {
+    issue_width: usize,
+    capacities: BTreeMap<(O3IssueQueueId, O3IssueOpClass), usize>,
+}
+
+impl O3DistributedIssueScheduler {
+    pub fn new<I>(issue_width: usize, capacities: I) -> Result<Self, O3PipelineError>
+    where
+        I: IntoIterator<Item = O3IssueQueueCapacity>,
+    {
+        if issue_width == 0 {
+            return Err(O3PipelineError::ZeroIssueWidth);
+        }
+
+        Ok(Self {
+            issue_width,
+            capacities: capacities
+                .into_iter()
+                .map(|capacity| ((capacity.queue(), capacity.op_class()), capacity.slots()))
+                .collect(),
+        })
+    }
+
+    pub const fn issue_width(&self) -> usize {
+        self.issue_width
+    }
+
+    pub fn queue_capacity(&self, queue: O3IssueQueueId, op_class: O3IssueOpClass) -> usize {
+        self.capacities
+            .get(&(queue, op_class))
+            .copied()
+            .unwrap_or_default()
+    }
+
+    pub fn plan<I>(&self, ready: I) -> O3DistributedIssuePlan
+    where
+        I: IntoIterator<Item = O3ReadyInstruction>,
+    {
+        let mut remaining_capacity = self.capacities.clone();
+        let mut pending = ready.into_iter().collect::<Vec<_>>();
+        pending.sort_by_key(|instruction| instruction.sequence());
+
+        let mut issued = Vec::new();
+        while issued.len() < self.issue_width {
+            let Some(index) = pending
+                .iter()
+                .position(|instruction| issue_slots(&remaining_capacity, instruction) != 0)
+            else {
+                break;
+            };
+            let instruction = pending.remove(index);
+            if let Some(slots) =
+                remaining_capacity.get_mut(&(instruction.queue(), instruction.op_class()))
+            {
+                *slots -= 1;
+            }
+            issued.push(instruction);
+        }
+
+        let blocked = pending
+            .into_iter()
+            .filter(|instruction| issue_slots(&remaining_capacity, instruction) == 0)
+            .collect();
+
+        O3DistributedIssuePlan {
+            issue_width: self.issue_width,
+            issued,
+            blocked,
+        }
+    }
+}
+
+fn issue_slots(
+    capacities: &BTreeMap<(O3IssueQueueId, O3IssueOpClass), usize>,
+    instruction: &O3ReadyInstruction,
+) -> usize {
+    capacities
+        .get(&(instruction.queue(), instruction.op_class()))
+        .copied()
+        .unwrap_or_default()
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum O3PipelineError {
     ZeroDownstreamWidth {
@@ -29,6 +226,11 @@ pub enum O3PipelineError {
     },
     ZeroWritebackWidth {
         source: O3PipelineStage,
+    },
+    ZeroIssueWidth,
+    ZeroIssueQueueCapacity {
+        queue: O3IssueQueueId,
+        op_class: O3IssueOpClass,
     },
     EarlyThresholdOverflow {
         downstream: O3PipelineStage,
@@ -51,6 +253,12 @@ impl fmt::Display for O3PipelineError {
             Self::ZeroWritebackWidth { source } => {
                 write!(formatter, "O3 {source} writeback width must be positive")
             }
+            Self::ZeroIssueWidth => write!(formatter, "O3 issue width must be positive"),
+            Self::ZeroIssueQueueCapacity { queue, op_class } => write!(
+                formatter,
+                "O3 issue queue {} capacity for {op_class:?} must be positive",
+                queue.get()
+            ),
             Self::EarlyThresholdOverflow {
                 downstream,
                 backward_signal_delay_cycles,
