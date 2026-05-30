@@ -107,6 +107,7 @@ pub struct Rem6RunConfig {
     binary: PathBuf,
     max_tick: u64,
     min_remote_delay: u64,
+    memory_route_delay: u64,
     max_instructions: Option<u64>,
     stats_format: StatsFormat,
     execute: bool,
@@ -135,6 +136,7 @@ impl Rem6RunConfig {
         let mut binary = None;
         let mut max_tick = None;
         let mut min_remote_delay = 1u64;
+        let mut memory_route_delay = None;
         let mut max_instructions = None;
         let mut stats_format = StatsFormat::Json;
         let mut execute = false;
@@ -167,6 +169,18 @@ impl Rem6RunConfig {
                             .ok_or_else(|| Rem6CliError::InvalidMinRemoteDelay {
                                 value: value.clone(),
                             })?;
+                }
+                "--memory-route-delay" => {
+                    let value = required_value(&flag, args.next())?;
+                    memory_route_delay = Some(
+                        value
+                            .parse()
+                            .ok()
+                            .filter(|delay| *delay > 0)
+                            .ok_or_else(|| Rem6CliError::InvalidMemoryRouteDelay {
+                                value: value.clone(),
+                            })?,
+                    );
                 }
                 "--max-instructions" => {
                     let value = required_value(&flag, args.next())?;
@@ -229,12 +243,20 @@ impl Rem6RunConfig {
                 });
             }
         }
+        let memory_route_delay = memory_route_delay.unwrap_or(min_remote_delay);
+        if memory_route_delay < min_remote_delay {
+            return Err(Rem6CliError::MemoryRouteDelayBelowMinRemoteDelay {
+                memory_route_delay,
+                min_remote_delay,
+            });
+        }
 
         Ok(Self {
             isa: isa.ok_or(Rem6CliError::MissingRequiredFlag { flag: "--isa" })?,
             binary: binary.ok_or(Rem6CliError::MissingRequiredFlag { flag: "--binary" })?,
             max_tick: max_tick.ok_or(Rem6CliError::MissingRequiredFlag { flag: "--max-tick" })?,
             min_remote_delay,
+            memory_route_delay,
             max_instructions,
             stats_format,
             execute,
@@ -260,6 +282,10 @@ impl Rem6RunConfig {
 
     pub const fn min_remote_delay(&self) -> u64 {
         self.min_remote_delay
+    }
+
+    pub const fn memory_route_delay(&self) -> u64 {
+        self.memory_route_delay
     }
 
     pub const fn max_instructions(&self) -> Option<u64> {
@@ -499,6 +525,13 @@ pub enum Rem6CliError {
     InvalidMinRemoteDelay {
         value: String,
     },
+    InvalidMemoryRouteDelay {
+        value: String,
+    },
+    MemoryRouteDelayBelowMinRemoteDelay {
+        memory_route_delay: u64,
+        min_remote_delay: u64,
+    },
     InvalidMaxInstructions {
         value: String,
     },
@@ -568,6 +601,16 @@ impl fmt::Display for Rem6CliError {
             Self::InvalidMinRemoteDelay { value } => {
                 write!(formatter, "invalid min remote delay {value}")
             }
+            Self::InvalidMemoryRouteDelay { value } => {
+                write!(formatter, "invalid memory route delay {value}")
+            }
+            Self::MemoryRouteDelayBelowMinRemoteDelay {
+                memory_route_delay,
+                min_remote_delay,
+            } => write!(
+                formatter,
+                "memory route delay {memory_route_delay} is below min remote delay {min_remote_delay}"
+            ),
             Self::InvalidMaxInstructions { value } => {
                 write!(formatter, "invalid max instructions {value}")
             }
@@ -785,6 +828,13 @@ fn run_stats_output(inputs: Rem6StatsInputs<'_>) -> Result<Rem6StatsOutput, Rem6
         "Tick",
         StatResetPolicy::Constant,
         inputs.config.min_remote_delay(),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.memory.route_delay",
+        "Tick",
+        StatResetPolicy::Constant,
+        inputs.config.memory_route_delay(),
     )?;
     if let Some(max_instructions) = inputs.config.max_instructions() {
         increment_stat(
@@ -1168,14 +1218,14 @@ fn execute_riscv(
             format!("cpu{cpu_index}.ifetch"),
             cpu_partition,
             memory_partition,
-            config.min_remote_delay(),
+            config.memory_route_delay(),
         )?;
         let data_route = add_memory_route(
             &mut transport,
             format!("cpu{cpu_index}.dmem"),
             cpu_partition,
             memory_partition,
-            config.min_remote_delay(),
+            config.memory_route_delay(),
         )?;
         let core = RiscvCore::with_data(
             CpuCore::new(

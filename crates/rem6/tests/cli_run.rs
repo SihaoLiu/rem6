@@ -878,6 +878,72 @@ fn rem6_run_accepts_scheduler_min_remote_delay_runtime_option() {
 }
 
 #[test]
+fn rem6_run_accepts_memory_route_delay_runtime_option() {
+    let mut program = riscv64_program(&[
+        u_type(0, 2, 0x17),          // auipc x2, 0
+        i_type(16, 2, 0x0, 2, 0x13), // addi x2, x2, data offset
+        i_type(0, 2, 0x3, 5, 0x03),  // ld x5, 0(x2)
+        0x0000_0073,                 // ecall
+    ]);
+    program.extend_from_slice(&7u64.to_le_bytes());
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("memory-route-delay", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "80",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "1",
+            "--min-remote-delay",
+            "2",
+            "--memory-route-delay",
+            "5",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"memory_route_delay\":5"));
+    assert!(stdout.contains("\"min_remote_delay\":2"));
+    assert!(stdout.contains("\"executed_ticks\":52"));
+    assert!(stdout.contains("\"final_tick\":52"));
+    assert!(stdout.contains("\"x5\":\"0x7\""));
+    assert_stat(&stdout, "sim.memory.route_delay", "Tick", 5, "constant");
+    assert_stat(&stdout, "sim.final_tick", "Tick", 52, "monotonic");
+    assert_transport_stats(&stdout, "sim.memory.fetch", 4, 40, 10);
+    assert_transport_stats(
+        &stdout,
+        "sim.memory.fetch.route0.source.cpu0.ifetch",
+        4,
+        40,
+        10,
+    );
+    assert_transport_stats(&stdout, "sim.memory.data", 1, 10, 10);
+    assert_transport_stats(
+        &stdout,
+        "sim.memory.data.route1.source.cpu0.dmem",
+        1,
+        10,
+        10,
+    );
+}
+
+#[test]
 fn rem6_run_rejects_instruction_limit_without_execution() {
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
     let path = temp_binary("instruction-limit-without-execute", &elf);
@@ -961,6 +1027,66 @@ fn rem6_run_rejects_zero_scheduler_min_remote_delay() {
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains("invalid min remote delay 0"));
+}
+
+#[test]
+fn rem6_run_rejects_zero_memory_route_delay() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("zero-memory-route-delay", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-route-delay",
+            "0",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("invalid memory route delay 0"));
+}
+
+#[test]
+fn rem6_run_rejects_memory_route_delay_below_scheduler_lookahead() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("short-memory-route-delay", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--min-remote-delay",
+            "4",
+            "--memory-route-delay",
+            "2",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("memory route delay 2 is below min remote delay 4"));
 }
 
 #[test]
