@@ -33,6 +33,7 @@ mod guest_event;
 mod guest_fd;
 mod heterogeneous_checkpoint;
 mod host;
+mod host_assist;
 mod interrupt_checkpoint;
 mod memory_checkpoint;
 mod pci_checkpoint;
@@ -86,6 +87,12 @@ pub use heterogeneous_checkpoint::{
 pub use host::{
     ExecutionModeCheckpointError, SystemActionExecutor, SystemActionOutcome, SystemHostController,
     SystemRunController,
+};
+pub use host_assist::{
+    HostAssistedArchitecture, HostAssistedMemoryMode, HostAssistedPendingService,
+    HostAssistedRegisterId, HostAssistedRegisterSpace, HostAssistedSimulationMode,
+    HostAssistedStateComponent, HostAssistedSwitchAction, HostAssistedSwitchError,
+    HostAssistedSwitchPlan, HostAssistedSwitchPlanner, HostAssistedSwitchRequest,
 };
 pub use interrupt_checkpoint::{
     InterruptControllerCheckpointBank, InterruptControllerCheckpointError,

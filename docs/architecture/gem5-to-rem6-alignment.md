@@ -556,6 +556,21 @@ isolated bugs:
   events in replay-clock order and live events in scheduler order, so subsystem
   warmup events cannot be mistaken for live scheduler events after checkpoint
   restore.
+  Public gem5 issue #910 reports x86 full-system KVM-to-O3 switching that can
+  segfault or jump unexpectedly after `m5_switch_cpu_addr`, with local logs
+  showing large unsupported-MSR skip sets, x86 special-register warnings, and a
+  post-switch O3 `mwait` path dereferencing incomplete request state. The local
+  reference requires KVM CPUs to be drained and idle before `switchOut` or
+  `takeOverFrom`, then performs architecture-specific register and MSR transfer
+  through KVM ioctl paths that panic on failed set/get operations while
+  unsupported MSRs are only warned and skipped. rem6-system therefore exposes a
+  typed host-assisted switch admission plan before native execution support
+  lands: a host-assisted target must declare complete architecture state,
+  no pending MMIO/PIO/hypercall/halt/mwait service, matching memory mode, and
+  no unsupported host registers before a detailed or timing target can take
+  over. The resulting plan lists quiesce, pending-service validation,
+  deterministic state capture, target install, and resume actions rather than
+  relying on hidden host vCPU state.
 
 Research anchors refreshed through 2026-05-30:
 
@@ -643,6 +658,10 @@ Research anchors refreshed through 2026-05-30:
 - Public gem5 issue anchor refreshed on 2026-05-30: open Ruby checkpoint
   restore bug where warmup scheduling can try to insert an event before the
   live event queue's current tick.
+- Public gem5 issue anchor refreshed on 2026-05-30: open x86 KVM-to-O3
+  full-system switch bug where skipped host registers, special-register
+  mismatches, and pending wait-state transfer can crash or misdirect execution
+  after `m5_switch_cpu_addr`.
 
 Implementation evidence through 2026-05-30:
 
@@ -1861,7 +1880,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 | `src/cpu/o3` | future out-of-order CPU crate plus `rem6-cpu` and `rem6-proto` contracts | planned | Needs rename, issue, reorder, load/store queue, speculation, squash, and executable typed traces. The trace contract already distinguishes prefetch records from response-blocking loads with retire-after-issue completion policy. The CPU contract already models delay-compensated inter-stage unblock decisions so decode, rename, and IEW do not have to wait for empty skid buffers before signalling upstream stages. It also models destination-register dependency release by architectural visibility, so commit-visible misc-register writes wake dependents only after commit updates architectural state while memory-dependence completion remains a writeback-only action. Distributed issue scheduling is keyed by physical issue queue plus OpClass, so a busy FU in one queue cannot hide ready same-OpClass work in another queue. IEW writeback-transfer contracts now admit ready completions only inside the declared future window and surface extra completions as deferred work, so a future O3 implementation does not inherit gem5's `instToCommit` TimeBuffer assertion path. |
 | `src/cpu/pred` | `rem6-cpu` branch predictor modules | partial | A local two-bit predictor, GShare predictor, BiMode predictor, Tournament predictor, loop predictor, TAGE base predictor, LTAGE predictor, TAGE-SC-L wrapper, standalone multiperspective perceptron predictor, 8KB statistical corrector, branch target buffer, indirect target predictor, and return-address stack have independent typed prediction, lookup, update, target, replacement, speculative history, commit, repair, and snapshot state. GShare keeps gem5's PC xor GHR indexing while replacing opaque history pointers with typed records, per-CPU GHR snapshots, stale-history update rejection, masked squash repair, and restore validation. BiMode keeps gem5's PC-indexed choice table and PC xor GHR direction tables while exposing selected-array training, choice-counter policy, and stale-history update rejection as typed records. Tournament keeps gem5's shared local history table, per-CPU global history, global-history-indexed choice table, disagreement-only choice training, stale-history update rejection, and squash repair while exposing each record as typed state. The loop predictor keeps gem5's set/way indexing, tag matching, confidence threshold, use counter, and optional speculative iteration state while replacing random allocation with deterministic per-set cursors for replayable parallel runs. TAGE base keeps gem5's bimodal table, tagged-table provider selection, folded-history index and tag hashing, alt-on-new counter, useful-bit reset, repairable speculative history, stale-history update rejection, and deterministic allocation records. LTAGE composes TAGE and loop prediction with explicit final provider records, prevalidated loop-before-TAGE conditional training, combined repair, matching thread and instruction-shift validation, and nested snapshot restore. TAGE-SC-L composes LTAGE with the statistical corrector in gem5 order: TAGE and loop predict before SC override, and SC trains before loop and TAGE updates after nested stale-history prevalidation, with explicit repair and nested snapshot records. The standalone multiperspective perceptron keeps gem5's 8KB feature profile shape, transfer tables, filter behavior, low-confidence best-table path, adaptive training threshold, and local/global/path/IMLI/recency histories while making all table and history state typed and per CPU. The 8KB statistical corrector keeps gem5's bias tables, global/backward/local/IMLI GEHL sums, confidence chooser, threshold training, and repairable histories while making histories per CPU for parallel replay instead of hidden shared global state. The indirect target predictor replaces opaque history pointers and random target replacement with typed records, per-CPU history, deterministic LRU, and restore validation. A typed branch-target safety profile binds RISC-V O3 full-system return prediction to at least one return-target stabilizer, either RAS or indirect target hashing, before a full-system run can be constructed. The branch target buffer rejects gem5 issue #3188-sized default configurations before allocation, while explicit limit overrides keep larger experiments reviewable. The specialized 8KB/64KB TAGE-SC-L table geometry, 64KB statistical corrector extensions, and MPP_TAGE integration remain open. |
 | `src/cpu/checker` | `rem6-cpu` verification harness | planned | Checker behavior should compare architectural commits without hidden simulator state. |
-| `src/cpu/kvm` | host-controlled execution modes | partial | rem6 models execution modes and statistics scope; host-assisted native execution is not present yet. |
+| `src/cpu/kvm` | host-controlled execution modes | partial | rem6 models execution modes and statistics scope, and host-assisted switch admission now requires complete architecture state, matching memory mode, no unsupported host registers, and no pending host service before a detailed or timing target can take over. Native host-assisted execution is not present yet. |
 | `src/cpu/testers`, `src/cpu/trace`, `src/cpu/probes` | tests, trace, stats crates | partial | Traffic generation, trace replay, and probes should feed typed events and summaries. |
 
 ### Memory, Cache, Coherence, and NoC
@@ -1983,6 +2002,12 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   configuration from public gem5 issue #2211 by rejecting simultaneous RAS
   disablement and disabled indirect target path hashing while allowing either
   mechanism to protect return targets.
+- System host-assisted switch admission tests cover public gem5 issue #910 by
+  rejecting KVM-shaped detailed takeover when x86 host state is incomplete,
+  host MSRs or special registers are unsupported, memory modes differ, or a
+  pending `mwait` service still needs a materialized request. They also require
+  a successful takeover plan to expose ordered quiesce, validation, state
+  capture, target-install, and resume actions.
 - CHI protocol reservation tests cover the RISC-V three-level CHI LR/SC race
   from public gem5 issue #2688 by requiring overlapping store-conditionals on
   one line to serialize through a line-global reservation table, and by
