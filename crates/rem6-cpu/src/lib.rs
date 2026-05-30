@@ -29,6 +29,7 @@ mod indirect_target_predictor;
 mod loop_predictor;
 mod ltage_predictor;
 mod multiperspective_perceptron;
+mod o3_pipeline;
 mod parallel_flow;
 mod riscv_activity;
 mod riscv_cluster;
@@ -89,6 +90,9 @@ pub use multiperspective_perceptron::{
     MultiperspectivePerceptronHistory, MultiperspectivePerceptronPrediction,
     MultiperspectivePerceptronSnapshot, MultiperspectivePerceptronThreadSnapshot,
     MultiperspectivePerceptronTrainingUpdate,
+};
+pub use o3_pipeline::{
+    O3PipelineError, O3PipelineStage, O3UnblockDecision, O3UnblockDecisionReason, O3UnblockPolicy,
 };
 pub use riscv_activity::RiscvCoreDriveActivity;
 pub use riscv_cluster::{RiscvCluster, RiscvClusterError};
