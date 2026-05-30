@@ -402,6 +402,16 @@ isolated bugs:
   nanoseconds through `ClockDomain::ticks_to_cycles_ceil` before scheduling
   ticks, so non-1GHz links cannot silently reuse a 1GHz serialization
   assumption.
+  Public gem5 issue #2493 reports a DRAM `MemCtrl` state where the write queue
+  remains nonempty while QoS turnaround selection repeatedly chooses the other
+  direction and no request drains. The local reference keeps read and write
+  queues plus a turnaround-selected bus state as separate mutable counters.
+  rem6-dram instead orders a same-arrival QoS batch from typed request records:
+  current-direction preference can have an explicit same-direction burst limit,
+  but that limit only forces a switch when an opposite-direction request is
+  actually eligible. A write-only batch therefore keeps draining writes, while
+  mixed batches can bound read/write starvation without selecting an empty
+  direction.
 - Power equations should not depend on late string lookup into global
   statistics. gem5's MathExprPowerModel accepts equations that reference stat
   names plus automatic variables. rem6 keeps the equation idea, but binds
@@ -575,6 +585,9 @@ Research anchors refreshed through 2026-05-30:
   is allocated instead.
 - Public gem5 issue anchor refreshed on 2026-05-30: open SerialLink latency
   bug when system clock frequency is not 1GHz.
+- Public gem5 issue anchor refreshed on 2026-05-30: open DRAM `MemCtrl`
+  write-queue drain bug where QoS turnaround can repeatedly select a direction
+  that does not drain the nonempty queue.
 - Public gem5 issue anchor refreshed on 2026-05-30: open ThermalModel
   intermediate-node initialization bug that can drive nodes to 0K.
 - Public gem5 issue anchor refreshed on 2026-05-30: open SimpleBTB oversized
@@ -1811,7 +1824,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 | `configs/example` | 81 | `rem6-workload`, `rem6-system` tests | partial | Preserve easy examples, but every example should be reconstructable from a manifest and tested where practical. |
 | `configs/ruby` | 17 | `rem6-coherence`, protocol crates, `rem6-system` | partial | Keep multi-protocol examples while avoiding a separate Ruby-like engine. |
 | `configs/topologies` | 10 | `rem6-topology`, `rem6-fabric`, `rem6-transport` | partial | Topology definitions should be protocol-neutral and reusable across CPU, GPU, DMA, and accelerator traffic. |
-| `configs/dram`, `configs/nvm` | 5 | `rem6-dram`, `rem6-memory` | partial | External DDR, HBM, LPDDR, and NVM profiles have typed topology, geometry, bank-group geometry, timing, burst spacing, same-bank-group burst spacing, command-window bandwidth limits, parallel port counts, topology-unit counts, scheduler bank counts, topology bank counts, bank-group capacity summaries, manifest identity, checkpoint encoding, restore-time profile validation, and activity metadata. Runtime activity profiles carry profiled-target counts and profile-derived port, topology-unit, bank, and bank-group capacity denominators separately from active counts. DRAM same-arrival QoS timing batches respect same-agent memory-ordering barriers before priority or turnaround selection. Workload resource summaries preserve the strongest explicit DRAM target, port, or bank active-resource lower bound. NVM media timing can model separate read-media, write-media, send latency, pending-read buffers, and pending-write queue depth. Profile breadth and fuller media behavior remain open. |
+| `configs/dram`, `configs/nvm` | 5 | `rem6-dram`, `rem6-memory` | partial | External DDR, HBM, LPDDR, and NVM profiles have typed topology, geometry, bank-group geometry, timing, burst spacing, same-bank-group burst spacing, command-window bandwidth limits, parallel port counts, topology-unit counts, scheduler bank counts, topology bank counts, bank-group capacity summaries, manifest identity, checkpoint encoding, restore-time profile validation, and activity metadata. Runtime activity profiles carry profiled-target counts and profile-derived port, topology-unit, bank, and bank-group capacity denominators separately from active counts. DRAM same-arrival QoS timing batches respect same-agent memory-ordering barriers before priority or turnaround selection, and current-direction turnaround can enforce a bounded same-direction burst while refusing to switch to an empty or ordering-blocked direction. Workload resource summaries preserve the strongest explicit DRAM target, port, or bank active-resource lower bound. NVM media timing can model separate read-media, write-media, send latency, pending-read buffers, and pending-write queue depth. Profile breadth and fuller media behavior remain open. |
 | `configs/network` | 2 | `rem6-fabric`, `rem6-transport` | partial | Network configuration must map to NoC lanes, virtual networks, credits, wait-for diagnostics, per-transfer hop activity, per-link activity, per-lane activity, per-virtual-network activity, queue-delay budgets across those scopes, per-virtual-network lane fanout, contention budgets, required-link coverage, and activity-window coverage across those activity scopes. Serial-link timing is bound to an explicit `ClockDomain`, latency cycles, lane count, and either bits-per-cycle or bits-per-nanosecond lane bit-rate before tick conversion. Same-scope link and virtual-network activity-window merges preserve unique resource coverage when lane identities are known. |
 | `configs/boot`, `configs/dist`, `configs/splash2`, `configs/learning_gem5`, `configs/deprecated` | 27 | `rem6-boot`, `rem6-workload`, tests | partial | Boot and benchmark examples should become manifest resources, not external scripts. Linux boot handoff manifests now make device-tree and initrd resources explicit, require matching resource definitions, validate resource kind, validate resolved payload digest and initrd size, include bootargs plus DTB/initrd placement in manifest identity, bind resolved payload sets to that manifest identity, and let replay install resolved DTB/initrd bytes without a script side effect. Deprecated examples are audit input only. |
 
@@ -2118,11 +2131,13 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   tests cover shared read/write barrier matching and same-agent request ordering
   edges. DRAM tests cover same-agent acquire/release ordering barriers that
   constrain same-arrival QoS timing-batch eligibility, QoS-driven same-arrival
-  request ordering before bank and bus timing are computed, plus typed read/write direction
-  preference among same-priority timing candidates, explicit same-requestor
-  priority escalation inside timing batches, per-priority/per-requestor QoS
-  access and byte accounting in DRAM activity profiles, gem5-like burst
-  spacing across same-direction commands on a shared port, gem5-like
+  request ordering before bank and bus timing are computed, typed read/write
+  direction preference among same-priority timing candidates, burst-limited
+  current-direction turnaround that switches only to an eligible waiting
+  opposite direction, explicit same-requestor priority escalation inside timing
+  batches, per-priority/per-requestor QoS access and byte accounting in DRAM
+  activity profiles, gem5-like burst spacing across same-direction commands on
+  a shared port, gem5-like
   same-bank-group burst spacing for bank-group memories, and gem5-like
   command-window bandwidth limits across row and data commands, plus
   target-local unique active port and bank coverage when DRAM activity windows

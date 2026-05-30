@@ -37,6 +37,7 @@ pub enum DramError {
     ZeroNvmMediaTiming {
         field: NvmMediaTimingField,
     },
+    ZeroQosDirectionBurst,
     NvmMediaTimingOnVolatileProfile {
         technology: DramMemoryTechnology,
     },
@@ -114,6 +115,9 @@ impl fmt::Display for DramError {
             Self::ZeroNvmMediaTiming { field } => {
                 write!(formatter, "NVM media timing field {field:?} must be nonzero")
             }
+            Self::ZeroQosDirectionBurst => {
+                write!(formatter, "DRAM QoS direction burst limit must be nonzero")
+            }
             Self::NvmMediaTimingOnVolatileProfile { technology } => write!(
                 formatter,
                 "NVM media timing cannot be attached to {technology:?} memory profiles"
@@ -168,6 +172,7 @@ impl Error for DramError {
             | Self::ZeroSameBankGroupBurstSpacing
             | Self::ZeroProfileTopology { .. }
             | Self::ZeroNvmMediaTiming { .. }
+            | Self::ZeroQosDirectionBurst
             | Self::NvmMediaTimingOnVolatileProfile { .. }
             | Self::LineSizeMismatch { .. }
             | Self::RequestCrossesRow { .. }

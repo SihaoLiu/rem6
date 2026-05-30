@@ -17,6 +17,7 @@ pub enum DramQosTurnaroundPolicy {
 pub struct DramQosSchedulingPolicy {
     turnaround: DramQosTurnaroundPolicy,
     priority_escalation: bool,
+    max_same_direction_burst: Option<usize>,
 }
 
 impl DramQosSchedulingPolicy {
@@ -24,6 +25,7 @@ impl DramQosSchedulingPolicy {
         Self {
             turnaround: DramQosTurnaroundPolicy::RequestOrder,
             priority_escalation: false,
+            max_same_direction_burst: None,
         }
     }
 
@@ -37,12 +39,24 @@ impl DramQosSchedulingPolicy {
         self
     }
 
+    pub fn with_max_same_direction_burst(mut self, max_burst: usize) -> Result<Self, DramError> {
+        if max_burst == 0 {
+            return Err(DramError::ZeroQosDirectionBurst);
+        }
+        self.max_same_direction_burst = Some(max_burst);
+        Ok(self)
+    }
+
     pub const fn turnaround(self) -> DramQosTurnaroundPolicy {
         self.turnaround
     }
 
     pub const fn priority_escalation(self) -> bool {
         self.priority_escalation
+    }
+
+    pub const fn max_same_direction_burst(self) -> Option<usize> {
+        self.max_same_direction_burst
     }
 }
 
@@ -222,9 +236,12 @@ where
         DramQosTurnaroundPolicy::RequestOrder => {
             order_requests(requests, arbiter).map_err(|source| DramError::Qos { source })?
         }
-        DramQosTurnaroundPolicy::PreferCurrentDirection => {
-            order_requests_with_current_direction(controller, requests, arbiter)?
-        }
+        DramQosTurnaroundPolicy::PreferCurrentDirection => order_requests_with_current_direction(
+            controller,
+            requests,
+            arbiter,
+            policy.max_same_direction_burst(),
+        )?,
     };
     ordered
         .into_iter()
@@ -257,21 +274,65 @@ fn order_requests_with_current_direction<'a>(
     controller: &DramController,
     requests: Vec<DramQosRequest<'a>>,
     arbiter: &mut QosQueueArbiter,
+    max_same_direction_burst: Option<usize>,
 ) -> Result<Vec<DramQosRequest<'a>>, DramError> {
     let mut pending = requests;
     let mut ordered = Vec::with_capacity(pending.len());
+    let mut port_directions = controller
+        .ports
+        .iter()
+        .map(ProjectedDramPortDirection::from_port)
+        .collect::<Vec<_>>();
     while !pending.is_empty() {
-        let candidates = current_direction_candidates(controller, &pending)?;
+        let candidates = current_direction_candidates(
+            controller,
+            &pending,
+            &port_directions,
+            max_same_direction_burst,
+        )?;
         let grant_index = grant_index_for_candidates(&pending, &candidates, arbiter)
             .map_err(|source| DramError::Qos { source })?;
+        let (parallel_port, kind) =
+            projected_request_port_and_kind(controller, &pending[grant_index])?;
+        port_directions[parallel_port].record(kind);
         ordered.push(pending.remove(grant_index));
     }
     Ok(ordered)
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ProjectedDramPortDirection {
+    last_access_kind: Option<DramAccessKind>,
+    same_direction_burst: usize,
+}
+
+impl ProjectedDramPortDirection {
+    fn from_port(port: &crate::DramPortState) -> Self {
+        Self {
+            last_access_kind: port.last_access_kind(),
+            same_direction_burst: 0,
+        }
+    }
+
+    fn record(&mut self, kind: DramAccessKind) {
+        if self.last_access_kind == Some(kind) {
+            self.same_direction_burst += 1;
+        } else {
+            self.last_access_kind = Some(kind);
+            self.same_direction_burst = 1;
+        }
+    }
+
+    fn can_continue_current_direction(self, max_same_direction_burst: Option<usize>) -> bool {
+        max_same_direction_burst.is_none_or(|limit| self.same_direction_burst < limit)
+    }
+}
+
 fn current_direction_candidates<'a>(
     controller: &DramController,
     pending: &[DramQosRequest<'a>],
+    port_directions: &[ProjectedDramPortDirection],
+    max_same_direction_burst: Option<usize>,
 ) -> Result<Vec<usize>, DramError> {
     let eligible = ordering_eligible_candidates(pending);
     let highest_priority = eligible
@@ -281,27 +342,47 @@ fn current_direction_candidates<'a>(
         .expect("candidate selection is called only with pending requests");
     let mut highest = Vec::new();
     let mut matching_direction = Vec::new();
+    let mut switch_direction = Vec::new();
+    let mut current_direction_is_capped = false;
     for index in eligible {
         let request = &pending[index];
         if request.priority() != highest_priority {
             continue;
         }
         highest.push(index);
-        let kind = DramAccessKind::from_operation(request.request())?;
-        let decoded = controller
-            .geometry
-            .decode_request(controller.parallel_port_count(), request.request())?;
-        let port = &controller.ports[decoded.parallel_port as usize];
-        if port.last_access_kind() == Some(kind) {
-            matching_direction.push(index);
+        let (parallel_port, kind) = projected_request_port_and_kind(controller, request)?;
+        let direction = port_directions[parallel_port];
+        match direction.last_access_kind {
+            Some(last_kind) if last_kind == kind => {
+                if direction.can_continue_current_direction(max_same_direction_burst) {
+                    matching_direction.push(index);
+                } else {
+                    current_direction_is_capped = true;
+                }
+            }
+            Some(_) => switch_direction.push(index),
+            None => {}
         }
     }
 
-    if matching_direction.is_empty() {
-        Ok(highest)
-    } else {
+    if !matching_direction.is_empty() {
         Ok(matching_direction)
+    } else if current_direction_is_capped && !switch_direction.is_empty() {
+        Ok(switch_direction)
+    } else {
+        Ok(highest)
     }
+}
+
+fn projected_request_port_and_kind(
+    controller: &DramController,
+    request: &DramQosRequest<'_>,
+) -> Result<(usize, DramAccessKind), DramError> {
+    let kind = DramAccessKind::from_operation(request.request())?;
+    let decoded = controller
+        .geometry
+        .decode_request(controller.parallel_port_count(), request.request())?;
+    Ok((decoded.parallel_port as usize, kind))
 }
 
 fn ordering_eligible_candidates<'a>(pending: &[DramQosRequest<'a>]) -> Vec<usize> {

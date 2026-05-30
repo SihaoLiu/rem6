@@ -111,6 +111,73 @@ fn dram_controller_qos_batch_can_prefer_current_bus_direction() {
 }
 
 #[test]
+fn dram_controller_qos_turnaround_burst_limit_switches_only_to_waiting_direction() {
+    let mut controller = DramController::new(geometry(), timing());
+    controller.schedule(0, &write(0x0000, 30)).unwrap();
+    let mut arbiter = QosQueueArbiter::new(QosQueuePolicyKind::Fifo);
+    let write_a = write_from(3, 0x0040, 31);
+    let write_b = write_from(4, 0x0080, 32);
+    let write_c = write_from(5, 0x00c0, 33);
+    let read_waiting = read_from(6, 0x0100, 8, 34);
+    let policy = DramQosSchedulingPolicy::new()
+        .with_turnaround(DramQosTurnaroundPolicy::PreferCurrentDirection)
+        .with_max_same_direction_burst(2)
+        .unwrap();
+
+    let accesses = controller
+        .schedule_qos_batch_with_policy(
+            8,
+            [
+                DramQosRequest::new(&write_a, QosPriority::new(0), 0),
+                DramQosRequest::new(&write_b, QosPriority::new(0), 1),
+                DramQosRequest::new(&write_c, QosPriority::new(0), 2),
+                DramQosRequest::new(&read_waiting, QosPriority::new(0), 3),
+            ],
+            &mut arbiter,
+            policy,
+        )
+        .unwrap();
+
+    assert_eq!(
+        accesses
+            .iter()
+            .map(|access| access.request())
+            .collect::<Vec<_>>(),
+        vec![write_a.id(), write_b.id(), read_waiting.id(), write_c.id()]
+    );
+
+    let mut write_only_controller = DramController::new(geometry(), timing());
+    write_only_controller
+        .schedule(0, &write(0x0000, 40))
+        .unwrap();
+    let mut write_only_arbiter = QosQueueArbiter::new(QosQueuePolicyKind::Fifo);
+    let only_a = write_from(3, 0x0040, 41);
+    let only_b = write_from(4, 0x0080, 42);
+    let only_c = write_from(5, 0x00c0, 43);
+
+    let write_only_accesses = write_only_controller
+        .schedule_qos_batch_with_policy(
+            8,
+            [
+                DramQosRequest::new(&only_a, QosPriority::new(0), 0),
+                DramQosRequest::new(&only_b, QosPriority::new(0), 1),
+                DramQosRequest::new(&only_c, QosPriority::new(0), 2),
+            ],
+            &mut write_only_arbiter,
+            policy,
+        )
+        .unwrap();
+
+    assert_eq!(
+        write_only_accesses
+            .iter()
+            .map(|access| access.request())
+            .collect::<Vec<_>>(),
+        vec![only_a.id(), only_b.id(), only_c.id()]
+    );
+}
+
+#[test]
 fn dram_controller_qos_batch_can_escalate_requestor_priority() {
     let mut controller = DramController::new(geometry(), timing());
     let mut arbiter = QosQueueArbiter::new(QosQueuePolicyKind::Fifo);
@@ -455,6 +522,12 @@ fn dram_controller_rejects_invalid_geometry_and_line_mismatch() {
             row_size: 96,
             line_size: 64,
         }
+    );
+    assert_eq!(
+        DramQosSchedulingPolicy::new()
+            .with_max_same_direction_burst(0)
+            .unwrap_err(),
+        DramError::ZeroQosDirectionBurst
     );
 
     let mut controller = DramController::new(geometry(), timing());
