@@ -4,7 +4,8 @@ use std::sync::{Arc, Mutex};
 
 use rem6_boot::BootImage;
 use rem6_isa_riscv::{
-    MemoryAccessKind, Register, RiscvExecutionRecord, RiscvHartState, RiscvInstruction, RiscvTrap,
+    MemoryAccessKind, Register, RiscvExecutionRecord, RiscvHartState, RiscvInstruction,
+    RiscvPmpConfig, RiscvPmpError, RiscvPmpSnapshot, RiscvPmpTable, RiscvTrap,
 };
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionId, PartitionedScheduler,
@@ -177,6 +178,8 @@ pub struct CpuResetState {
     agent: AgentId,
     entry: Address,
 }
+
+pub const DEFAULT_RISCV_PMP_ENTRIES: usize = 16;
 
 impl CpuResetState {
     pub const fn new(cpu: CpuId, partition: PartitionId, agent: AgentId, entry: Address) -> Self {
@@ -870,6 +873,55 @@ impl RiscvCore {
             .read(register)
     }
 
+    pub fn pmp_entry_count(&self) -> usize {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .pmp
+            .entries()
+            .len()
+    }
+
+    pub fn pmp_snapshot(&self) -> RiscvPmpSnapshot {
+        self.state.lock().expect("riscv core lock").pmp.snapshot()
+    }
+
+    pub fn restore_pmp_snapshot(&self, snapshot: &RiscvPmpSnapshot) -> Result<(), RiscvPmpError> {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .pmp
+            .restore(snapshot)
+    }
+
+    pub fn write_pmp_config(
+        &self,
+        index: usize,
+        config: RiscvPmpConfig,
+    ) -> Result<(), RiscvPmpError> {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .pmp
+            .write_config(index, config)
+    }
+
+    pub fn write_pmp_config_bits(&self, index: usize, bits: u8) -> Result<(), RiscvPmpError> {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .pmp
+            .write_config_bits(index, bits)
+    }
+
+    pub fn write_pmp_addr(&self, index: usize, raw_addr: u64) -> Result<(), RiscvPmpError> {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .pmp
+            .write_addr(index, raw_addr)
+    }
+
     pub fn pending_trap(&self) -> Option<RiscvTrap> {
         self.state.lock().expect("riscv core lock").pending_trap
     }
@@ -1153,6 +1205,7 @@ struct RiscvCoreState {
     sc_progress: RiscvStoreConditionalProgress,
     events: Vec<RiscvCpuExecutionEvent>,
     data_events: Vec<RiscvDataAccessEvent>,
+    pmp: RiscvPmpTable,
 }
 
 impl RiscvCoreState {
@@ -1171,6 +1224,8 @@ impl RiscvCoreState {
             sc_progress: RiscvStoreConditionalProgress::default(),
             events: Vec::new(),
             data_events: Vec::new(),
+            pmp: RiscvPmpTable::new(DEFAULT_RISCV_PMP_ENTRIES)
+                .expect("default RISC-V PMP entry count is valid"),
         }
     }
 }

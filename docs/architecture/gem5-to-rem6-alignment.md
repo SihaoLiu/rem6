@@ -816,8 +816,10 @@ Research anchors refreshed through 2026-05-30:
 - Public gem5 issue anchor refreshed on 2026-05-30: RISC-V checkpoint restore
   has needed explicit PMP table serialization, with issue #3001 tied to a
   `v25.1.0.1` hotfix. rem6 keeps PMP entries as typed raw-address/config/range
-  records with snapshot and decode-first restore before wiring PMP into
-  full-system checkpoint banks.
+  records with snapshot and decode-first restore. RISC-V cores now own a
+  16-entry PMP table by default, and core checkpoint ports encode an explicit
+  `pmp` chunk with entry-count and range prevalidation before mutating live
+  state.
 - Public gem5 issue anchor refreshed on 2026-05-30: open three-level CHI
   LR/SC race where contending RISC-V mutex paths can violate lock ownership
   under Ruby CHI.
@@ -2339,9 +2341,10 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   mutate live memory state. Fabric, coherence, and RISC-V checkpoint-bank tests
   cover decode-first multi-bank and multi-core restore so malformed chunks
   cannot partially rewind another live NoC lane frontier, cache bank,
-  architectural PC, or integer register file. Heterogeneous checkpoint-bank
-  tests cover decode-first accelerator and GPU restore so a malformed later
-  device chunk cannot partially restore an earlier live device. Peripheral
+  architectural PC, integer register file, or PMP snapshot chunk.
+  Heterogeneous checkpoint-bank tests cover decode-first accelerator and GPU
+  restore so a malformed later device chunk cannot partially restore an earlier
+  live device. Peripheral
   checkpoint-bank tests cover CLINT, UART, PL011, PLIC, RTC, interrupt-controller, and
   timer decode-first restore so malformed later device chunks cannot partially
   restore earlier live platform devices. System action tests cover staged

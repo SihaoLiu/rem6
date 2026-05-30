@@ -1,6 +1,6 @@
 use rem6_checkpoint::{CheckpointComponentId, CheckpointRegistry};
 use rem6_cpu::{CpuCore, CpuFetchConfig, CpuId, CpuResetState, RiscvCore};
-use rem6_isa_riscv::Register;
+use rem6_isa_riscv::{Register, RiscvPmpAddressMode, RiscvPmpConfig};
 use rem6_kernel::PartitionId;
 use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout};
 use rem6_system::{RiscvCoreCheckpointBank, RiscvCoreCheckpointPort, RiscvCoreCheckpointRecord};
@@ -16,6 +16,12 @@ fn layout() -> CacheLineLayout {
 
 fn reg(index: u8) -> Register {
     Register::new(index).unwrap()
+}
+
+fn tor_config() -> RiscvPmpConfig {
+    RiscvPmpConfig::new(RiscvPmpAddressMode::Tor)
+        .with_read(true)
+        .with_execute(true)
 }
 
 fn riscv_core() -> RiscvCore {
@@ -63,6 +69,7 @@ fn riscv_core_checkpoint_captures_and_restores_pc_and_integer_registers() {
     let mut registry = CheckpointRegistry::new();
 
     port.register(&mut registry).unwrap();
+    let expected_pmp = core.pmp_snapshot();
     let captured = port.capture_into(&mut registry).unwrap();
 
     assert_eq!(
@@ -76,6 +83,7 @@ fn riscv_core_checkpoint_captures_and_restores_pc_and_integer_registers() {
                     (register, core.read_register(register))
                 })
                 .collect(),
+            expected_pmp,
         )
     );
     assert_eq!(
@@ -98,6 +106,38 @@ fn riscv_core_checkpoint_captures_and_restores_pc_and_integer_registers() {
     assert_eq!(core.read_register(reg(0)), 0);
     assert_eq!(core.read_register(reg(1)), 0x1122_3344_5566_7788);
     assert_eq!(core.read_register(reg(5)), 0x55aa);
+}
+
+#[test]
+fn riscv_core_checkpoint_captures_and_restores_pmp_entries() {
+    let core = riscv_core();
+    let component = CheckpointComponentId::new("cpu0").unwrap();
+    let port = RiscvCoreCheckpointPort::new(component.clone(), core.clone());
+    let mut registry = CheckpointRegistry::new();
+    let config = tor_config();
+    let raw_addr = 0x2000_u64 >> 2;
+
+    core.write_pmp_addr(0, raw_addr).unwrap();
+    core.write_pmp_config(0, config).unwrap();
+    let expected_pmp = core.pmp_snapshot();
+
+    port.register(&mut registry).unwrap();
+    let captured = port.capture_into(&mut registry).unwrap();
+
+    assert_eq!(captured.pmp_snapshot(), &expected_pmp);
+    let pmp = registry.chunk(&component, "pmp").unwrap();
+    assert_eq!(pmp.len(), 2 + core.pmp_entry_count() * 9);
+    assert_eq!(&pmp[0..2], &(core.pmp_entry_count() as u16).to_le_bytes());
+    assert_eq!(&pmp[2..10], &raw_addr.to_le_bytes());
+    assert_eq!(pmp[10], config.bits());
+
+    core.write_pmp_config(0, RiscvPmpConfig::default()).unwrap();
+    core.write_pmp_addr(0, 0).unwrap();
+
+    let restored = port.restore_from(&registry).unwrap();
+
+    assert_eq!(restored.pmp_snapshot(), &expected_pmp);
+    assert_eq!(core.pmp_snapshot(), expected_pmp);
 }
 
 #[test]
@@ -205,4 +245,54 @@ fn riscv_core_checkpoint_bank_rejects_truncated_payload_without_partial_restore(
     assert_eq!(core0.read_register(reg(1)), 0xa111);
     assert_eq!(core1.pc(), Address::new(0xb000));
     assert_eq!(core1.read_register(reg(2)), 0xb222);
+}
+
+#[test]
+fn riscv_core_checkpoint_bank_rejects_mismatched_pmp_count_without_partial_restore() {
+    let core0 = riscv_core_with(CpuId::new(0), PartitionId::new(0), AgentId::new(7), 0x8000);
+    let core1 = riscv_core_with(CpuId::new(1), PartitionId::new(1), AgentId::new(8), 0x9000);
+    let component0 = CheckpointComponentId::new("cpu0").unwrap();
+    let component1 = CheckpointComponentId::new("cpu1").unwrap();
+    let bank = RiscvCoreCheckpointBank::new([
+        RiscvCoreCheckpointPort::new(component0.clone(), core0.clone()),
+        RiscvCoreCheckpointPort::new(component1.clone(), core1.clone()),
+    ])
+    .unwrap();
+    let mut registry = CheckpointRegistry::new();
+
+    core0.write_pmp_addr(0, 0x2000 >> 2).unwrap();
+    core0.write_pmp_config(0, tor_config()).unwrap();
+    core1.write_pmp_addr(0, 0x3000 >> 2).unwrap();
+    core1.write_pmp_config(0, tor_config()).unwrap();
+    bank.register_all(&mut registry).unwrap();
+    bank.capture_all_into(&mut registry).unwrap();
+
+    let mut mismatched_pmp = 15_u16.to_le_bytes().to_vec();
+    mismatched_pmp.resize(2 + 15 * 9, 0);
+    registry
+        .write_chunk(&component1, "pmp", mismatched_pmp)
+        .unwrap();
+    core0
+        .write_pmp_config(0, RiscvPmpConfig::default())
+        .unwrap();
+    core0.write_pmp_addr(0, 0).unwrap();
+    core1
+        .write_pmp_config(0, RiscvPmpConfig::default())
+        .unwrap();
+    core1.write_pmp_addr(0, 0).unwrap();
+    let core0_before = core0.pmp_snapshot();
+    let core1_before = core1.pmp_snapshot();
+
+    let error = bank.restore_all_from(&registry).unwrap_err();
+
+    assert_eq!(
+        error,
+        rem6_system::RiscvCoreCheckpointError::InvalidPmpEntryCount {
+            component: component1,
+            expected: 16,
+            actual: 15,
+        }
+    );
+    assert_eq!(core0.pmp_snapshot(), core0_before);
+    assert_eq!(core1.pmp_snapshot(), core1_before);
 }

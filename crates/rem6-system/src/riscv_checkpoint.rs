@@ -4,20 +4,26 @@ use std::fmt;
 
 use rem6_checkpoint::{CheckpointComponentId, CheckpointError, CheckpointRegistry};
 use rem6_cpu::RiscvCore;
-use rem6_isa_riscv::Register;
+use rem6_isa_riscv::{
+    Register, RiscvPmpConfig, RiscvPmpError, RiscvPmpSnapshot, RiscvPmpSnapshotEntry, RiscvPmpTable,
+};
 use rem6_memory::Address;
 
 const PC_CHUNK: &str = "pc";
 const XREGS_CHUNK: &str = "xregs";
+const PMP_CHUNK: &str = "pmp";
 const U64_BYTES: usize = 8;
 const XREG_COUNT: usize = 32;
 const XREG_BYTES: usize = XREG_COUNT * U64_BYTES;
+const PMP_HEADER_BYTES: usize = 2;
+const PMP_ENTRY_BYTES: usize = U64_BYTES + 1;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RiscvCoreCheckpointRecord {
     component: CheckpointComponentId,
     pc: Address,
     registers: Vec<(Register, u64)>,
+    pmp_snapshot: RiscvPmpSnapshot,
 }
 
 impl RiscvCoreCheckpointRecord {
@@ -25,11 +31,13 @@ impl RiscvCoreCheckpointRecord {
         component: CheckpointComponentId,
         pc: Address,
         registers: Vec<(Register, u64)>,
+        pmp_snapshot: RiscvPmpSnapshot,
     ) -> Self {
         Self {
             component,
             pc,
             registers,
+            pmp_snapshot,
         }
     }
 
@@ -43,6 +51,10 @@ impl RiscvCoreCheckpointRecord {
 
     pub fn registers(&self) -> &[(Register, u64)] {
         &self.registers
+    }
+
+    pub fn pmp_snapshot(&self) -> &RiscvPmpSnapshot {
+        &self.pmp_snapshot
     }
 
     pub fn register(&self, register: Register) -> Option<u64> {
@@ -90,6 +102,11 @@ impl RiscvCoreCheckpointPort {
             XREGS_CHUNK,
             encode_registers(record.registers()),
         )?;
+        registry.write_chunk(
+            &self.component,
+            PMP_CHUNK,
+            encode_pmp_snapshot(record.pmp_snapshot()),
+        )?;
         Ok(record)
     }
 
@@ -98,7 +115,7 @@ impl RiscvCoreCheckpointPort {
         registry: &CheckpointRegistry,
     ) -> Result<RiscvCoreCheckpointRecord, RiscvCoreCheckpointError> {
         let record = self.decode_from(registry)?;
-        self.restore_record(&record);
+        self.restore_record(&record)?;
         Ok(record)
     }
 
@@ -124,19 +141,40 @@ impl RiscvCoreCheckpointPort {
                     name: XREGS_CHUNK.to_string(),
                 })?,
         )?;
+        let pmp_snapshot = decode_pmp_snapshot(
+            &self.component,
+            registry.chunk(&self.component, PMP_CHUNK).ok_or_else(|| {
+                RiscvCoreCheckpointError::MissingChunk {
+                    component: self.component.clone(),
+                    name: PMP_CHUNK.to_string(),
+                }
+            })?,
+            self.core.pmp_entry_count(),
+        )?;
 
         Ok(RiscvCoreCheckpointRecord::new(
             self.component.clone(),
             pc,
             registers,
+            pmp_snapshot,
         ))
     }
 
-    fn restore_record(&self, record: &RiscvCoreCheckpointRecord) {
+    fn restore_record(
+        &self,
+        record: &RiscvCoreCheckpointRecord,
+    ) -> Result<(), RiscvCoreCheckpointError> {
+        self.core
+            .restore_pmp_snapshot(record.pmp_snapshot())
+            .map_err(|error| RiscvCoreCheckpointError::InvalidPmpSnapshot {
+                component: self.component.clone(),
+                error,
+            })?;
         self.core.redirect_pc(record.pc());
         for (register, value) in record.registers() {
             self.core.write_register(*register, *value);
         }
+        Ok(())
     }
 
     fn capture_record(&self) -> RiscvCoreCheckpointRecord {
@@ -144,6 +182,7 @@ impl RiscvCoreCheckpointPort {
             self.component.clone(),
             self.core.pc(),
             all_register_values(&self.core),
+            self.core.pmp_snapshot(),
         )
     }
 }
@@ -209,7 +248,7 @@ impl RiscvCoreCheckpointBank {
 
         let mut restored = Vec::new();
         for (port, record) in decoded {
-            port.restore_record(&record);
+            port.restore_record(&record)?;
             restored.push(record);
         }
         Ok(restored)
@@ -238,6 +277,15 @@ pub enum RiscvCoreCheckpointError {
         expected: usize,
         actual: usize,
     },
+    InvalidPmpEntryCount {
+        component: CheckpointComponentId,
+        expected: usize,
+        actual: usize,
+    },
+    InvalidPmpSnapshot {
+        component: CheckpointComponentId,
+        error: RiscvPmpError,
+    },
 }
 
 impl fmt::Display for RiscvCoreCheckpointError {
@@ -257,6 +305,20 @@ impl fmt::Display for RiscvCoreCheckpointError {
                 formatter,
                 "RISC-V core checkpoint component {} chunk {name} has {actual} bytes; \
                  expected {expected}",
+                component.as_str()
+            ),
+            Self::InvalidPmpEntryCount {
+                component,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "RISC-V core checkpoint component {} has {actual} PMP entries; expected {expected}",
+                component.as_str()
+            ),
+            Self::InvalidPmpSnapshot { component, error } => write!(
+                formatter,
+                "RISC-V core checkpoint component {} has invalid PMP snapshot: {error}",
                 component.as_str()
             ),
         }
@@ -279,6 +341,18 @@ fn encode_registers(registers: &[(Register, u64)]) -> Vec<u8> {
     for (register, value) in registers {
         let offset = usize::from(register.index()) * U64_BYTES;
         payload[offset..offset + U64_BYTES].copy_from_slice(&value.to_le_bytes());
+    }
+    payload
+}
+
+fn encode_pmp_snapshot(snapshot: &RiscvPmpSnapshot) -> Vec<u8> {
+    let entry_count = snapshot.entries().len();
+    debug_assert!(u16::try_from(entry_count).is_ok());
+    let mut payload = Vec::with_capacity(PMP_HEADER_BYTES + entry_count * PMP_ENTRY_BYTES);
+    payload.extend_from_slice(&(entry_count as u16).to_le_bytes());
+    for entry in snapshot.entries() {
+        payload.extend_from_slice(&entry.raw_addr().to_le_bytes());
+        payload.push(entry.config().bits());
     }
     payload
 }
@@ -322,4 +396,78 @@ fn decode_registers(
             (register, value)
         })
         .collect())
+}
+
+fn decode_pmp_snapshot(
+    component: &CheckpointComponentId,
+    payload: &[u8],
+    expected_entries: usize,
+) -> Result<RiscvPmpSnapshot, RiscvCoreCheckpointError> {
+    if payload.len() < PMP_HEADER_BYTES {
+        return Err(RiscvCoreCheckpointError::InvalidChunkSize {
+            component: component.clone(),
+            name: PMP_CHUNK.to_string(),
+            expected: PMP_HEADER_BYTES,
+            actual: payload.len(),
+        });
+    }
+
+    let actual_entries = usize::from(u16::from_le_bytes(
+        payload[0..PMP_HEADER_BYTES]
+            .try_into()
+            .expect("pmp header size checked"),
+    ));
+    if actual_entries != expected_entries {
+        return Err(RiscvCoreCheckpointError::InvalidPmpEntryCount {
+            component: component.clone(),
+            expected: expected_entries,
+            actual: actual_entries,
+        });
+    }
+
+    let expected_bytes = PMP_HEADER_BYTES + actual_entries * PMP_ENTRY_BYTES;
+    if payload.len() != expected_bytes {
+        return Err(RiscvCoreCheckpointError::InvalidChunkSize {
+            component: component.clone(),
+            name: PMP_CHUNK.to_string(),
+            expected: expected_bytes,
+            actual: payload.len(),
+        });
+    }
+
+    let mut entries = Vec::with_capacity(actual_entries);
+    for bytes in payload[PMP_HEADER_BYTES..].chunks_exact(PMP_ENTRY_BYTES) {
+        let raw_addr = u64::from_le_bytes(
+            bytes[0..U64_BYTES]
+                .try_into()
+                .expect("pmp raw address size checked"),
+        );
+        let config = RiscvPmpConfig::from_bits(bytes[U64_BYTES]).map_err(|error| {
+            RiscvCoreCheckpointError::InvalidPmpSnapshot {
+                component: component.clone(),
+                error,
+            }
+        })?;
+        entries.push(RiscvPmpSnapshotEntry::new(raw_addr, config));
+    }
+
+    let snapshot = RiscvPmpSnapshot::new(entries).map_err(|error| {
+        RiscvCoreCheckpointError::InvalidPmpSnapshot {
+            component: component.clone(),
+            error,
+        }
+    })?;
+    let mut verifier = RiscvPmpTable::new(expected_entries).map_err(|error| {
+        RiscvCoreCheckpointError::InvalidPmpSnapshot {
+            component: component.clone(),
+            error,
+        }
+    })?;
+    verifier
+        .restore(&snapshot)
+        .map_err(|error| RiscvCoreCheckpointError::InvalidPmpSnapshot {
+            component: component.clone(),
+            error,
+        })?;
+    Ok(snapshot)
 }
