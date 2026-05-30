@@ -569,6 +569,9 @@ pub enum RiscvInstruction {
         mode: u8,
     },
     FenceI,
+    ReadMachineHartId {
+        rd: Register,
+    },
     Ecall,
     Ebreak,
 }
@@ -623,6 +626,13 @@ fn decode_system(raw: u32) -> Result<RiscvInstruction, RiscvError> {
     match raw {
         0x0000_0073 => Ok(RiscvInstruction::Ecall),
         0x0010_0073 => Ok(RiscvInstruction::Ebreak),
+        _ => decode_csr(raw),
+    }
+}
+
+fn decode_csr(raw: u32) -> Result<RiscvInstruction, RiscvError> {
+    match (funct3(raw), csr(raw), rs1(raw).index()) {
+        (0x2, 0xf14, 0) => Ok(RiscvInstruction::ReadMachineHartId { rd: rd(raw) }),
         _ => Err(RiscvError::UnknownEncoding { raw }),
     }
 }
@@ -863,14 +873,20 @@ impl RiscvExecutionRecord {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RiscvHartState {
     pc: u64,
+    hart_id: u64,
     vector_config: RiscvVectorConfig,
     registers: [u64; 32],
 }
 
 impl RiscvHartState {
     pub const fn new(pc: u64) -> Self {
+        Self::with_hart_id(pc, 0)
+    }
+
+    pub const fn with_hart_id(pc: u64, hart_id: u64) -> Self {
         Self {
             pc,
+            hart_id,
             vector_config: RiscvVectorConfig::invalid(),
             registers: [0; 32],
         }
@@ -878,6 +894,10 @@ impl RiscvHartState {
 
     pub const fn pc(&self) -> u64 {
         self.pc
+    }
+
+    pub const fn hart_id(&self) -> u64 {
+        self.hart_id
     }
 
     pub fn set_pc(&mut self, pc: u64) {
@@ -1051,6 +1071,9 @@ impl RiscvHartState {
                 });
             }
             RiscvInstruction::Fence { .. } | RiscvInstruction::FenceI => {}
+            RiscvInstruction::ReadMachineHartId { rd } => {
+                write_register(self, &mut register_writes, rd, self.hart_id);
+            }
             RiscvInstruction::Ecall => {
                 next_pc = pc;
                 self.pc = next_pc;
@@ -1140,6 +1163,10 @@ fn funct7(raw: u32) -> u32 {
 
 fn funct5(raw: u32) -> u32 {
     (raw >> 27) & 0x1f
+}
+
+fn csr(raw: u32) -> u16 {
+    ((raw >> 20) & 0x0fff) as u16
 }
 
 fn aq(raw: u32) -> bool {

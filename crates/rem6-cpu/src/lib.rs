@@ -798,9 +798,10 @@ pub struct RiscvCore {
 impl RiscvCore {
     pub fn new(core: CpuCore) -> Self {
         let pc = core.pc().get();
+        let hart_id = u64::from(core.id().get());
         Self {
             core,
-            state: Arc::new(Mutex::new(RiscvCoreState::new(pc))),
+            state: Arc::new(Mutex::new(RiscvCoreState::new(pc, hart_id))),
         }
     }
 
@@ -1194,9 +1195,9 @@ struct RiscvCoreState {
 }
 
 impl RiscvCoreState {
-    fn new(pc: u64) -> Self {
+    fn new(pc: u64, hart_id: u64) -> Self {
         Self {
-            hart: RiscvHartState::new(pc),
+            hart: RiscvHartState::with_hart_id(pc, hart_id),
             data: None,
             data_translation: None,
             executed_fetches: BTreeSet::new(),

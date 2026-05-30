@@ -28,6 +28,10 @@ fn fence_type(mode: u32, predecessor: u32, successor: u32, funct3: u32) -> u32 {
     (mode << 28) | (predecessor << 24) | (successor << 20) | (funct3 << 12) | 0x0f
 }
 
+fn csr_read_type(csr: u32, rd: u8) -> u32 {
+    (csr << 20) | (0x2 << 12) | (u32::from(rd) << 7) | 0x73
+}
+
 fn i_type(imm: i32, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
     (((imm as u32) & 0x0fff) << 20)
         | (u32::from(rs1) << 15)
@@ -153,6 +157,22 @@ fn counter_csrs_reject_user_writes_and_restore_snapshots() {
     assert_eq!(restored.snapshot(), snapshot);
     assert_eq!(restored.read_user(RiscvCounterCsr::Cycle), 1);
     assert_eq!(restored.read_user(RiscvCounterCsr::Instret), 0xfeed);
+}
+
+#[test]
+fn hart_reads_machine_hart_id_csr() {
+    let instruction = RiscvInstruction::decode(csr_read_type(0xf14, 5)).unwrap();
+    assert_eq!(
+        instruction,
+        RiscvInstruction::ReadMachineHartId { rd: reg(5) }
+    );
+
+    let mut hart = RiscvHartState::with_hart_id(0x2000, 7);
+    let record = hart.execute(instruction).unwrap();
+
+    assert_eq!(hart.hart_id(), 7);
+    assert_eq!(hart.read(reg(5)), 7);
+    assert_eq!(record.next_pc(), 0x2004);
 }
 
 #[test]
