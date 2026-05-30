@@ -7,6 +7,8 @@ const WEAK_NOT_TAKEN: u8 = 1;
 const TAKEN_THRESHOLD: u8 = 2;
 const STRONGLY_TAKEN: u8 = 3;
 const DEFAULT_HISTORY_BITS: u8 = 64;
+const DEFAULT_MAX_BRANCH_TARGET_BUFFER_ENTRIES: usize = 4096;
+const DEFAULT_MAX_BRANCH_TARGET_BUFFER_ASSOCIATIVITY: usize = 8;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BranchPredictorError {
@@ -546,6 +548,14 @@ impl BranchPredictorSnapshot {
 pub enum BranchTargetBufferError {
     ZeroEntries,
     ZeroAssociativity,
+    EntriesExceedLimit {
+        entries: usize,
+        max_entries: usize,
+    },
+    AssociativityExceedsLimit {
+        associativity: usize,
+        max_associativity: usize,
+    },
     AssociativityExceedsEntries {
         entries: usize,
         associativity: usize,
@@ -572,6 +582,20 @@ impl fmt::Display for BranchTargetBufferError {
             Self::ZeroAssociativity => write!(
                 formatter,
                 "branch target buffer associativity must be non-zero"
+            ),
+            Self::EntriesExceedLimit {
+                entries,
+                max_entries,
+            } => write!(
+                formatter,
+                "branch target buffer entries {entries} exceed limit {max_entries}"
+            ),
+            Self::AssociativityExceedsLimit {
+                associativity,
+                max_associativity,
+            } => write!(
+                formatter,
+                "branch target buffer associativity {associativity} exceeds limit {max_associativity}"
             ),
             Self::AssociativityExceedsEntries {
                 entries,
@@ -615,11 +639,37 @@ pub struct BranchTargetBufferConfig {
 
 impl BranchTargetBufferConfig {
     pub fn new(entries: usize, associativity: usize) -> Result<Self, BranchTargetBufferError> {
+        Self::with_limits(
+            entries,
+            associativity,
+            DEFAULT_MAX_BRANCH_TARGET_BUFFER_ENTRIES,
+            DEFAULT_MAX_BRANCH_TARGET_BUFFER_ASSOCIATIVITY,
+        )
+    }
+
+    pub fn with_limits(
+        entries: usize,
+        associativity: usize,
+        max_entries: usize,
+        max_associativity: usize,
+    ) -> Result<Self, BranchTargetBufferError> {
         if entries == 0 {
             return Err(BranchTargetBufferError::ZeroEntries);
         }
         if associativity == 0 {
             return Err(BranchTargetBufferError::ZeroAssociativity);
+        }
+        if entries > max_entries {
+            return Err(BranchTargetBufferError::EntriesExceedLimit {
+                entries,
+                max_entries,
+            });
+        }
+        if associativity > max_associativity {
+            return Err(BranchTargetBufferError::AssociativityExceedsLimit {
+                associativity,
+                max_associativity,
+            });
         }
         if associativity > entries {
             return Err(BranchTargetBufferError::AssociativityExceedsEntries {

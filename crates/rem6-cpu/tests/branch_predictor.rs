@@ -141,6 +141,29 @@ fn config_rejects_empty_table() {
 }
 
 #[test]
+fn btb_config_rejects_gem5_issue_3188_oversized_shapes() {
+    assert_eq!(
+        BranchTargetBufferConfig::new(8192, 8),
+        Err(BranchTargetBufferError::EntriesExceedLimit {
+            entries: 8192,
+            max_entries: 4096,
+        })
+    );
+    assert_eq!(
+        BranchTargetBufferConfig::new(4096, 16),
+        Err(BranchTargetBufferError::AssociativityExceedsLimit {
+            associativity: 16,
+            max_associativity: 8,
+        })
+    );
+
+    let explicit = BranchTargetBufferConfig::with_limits(8192, 8, 8192, 8).unwrap();
+    assert_eq!(explicit.entries(), 8192);
+    assert_eq!(explicit.associativity(), 8);
+    assert_eq!(explicit.sets(), 1024);
+}
+
+#[test]
 fn speculative_prediction_records_history_and_unwinds_false_path() {
     let mut predictor = predictor(8);
     let taken_pc = Address::new(0x1000);
