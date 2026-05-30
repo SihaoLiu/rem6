@@ -4,15 +4,13 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use rem6_boot::{
-    BootElfArchitecture, BootElfClass, BootElfEndian, BootElfOperatingSystem, BootImage,
-};
+use rem6_boot::{BootElfArchitecture, BootImage};
 use rem6_cpu::{
     CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, RiscvCluster, RiscvCore,
     RiscvCoreDriveAction, RiscvDataAccessEventKind,
 };
 use rem6_isa_riscv::Register;
-use rem6_kernel::{PartitionId, PartitionedScheduler};
+use rem6_kernel::{PartitionFrontier, PartitionId, PartitionedScheduler, ReadyPartition};
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryOperation, MemoryRequest, MemoryRequestId,
     MemoryTargetId, PartitionedMemoryStore,
@@ -29,6 +27,12 @@ use rem6_transport::{
 };
 
 mod artifact_json;
+mod formatting;
+mod parallel_stats;
+#[cfg(test)]
+mod transport_summary_tests;
+
+use formatting::{elf_architecture_name, json_escape};
 
 const DEFAULT_CACHE_LINE_BYTES: u64 = 16;
 const CLI_MEMORY_TARGET: MemoryTargetId = MemoryTargetId::new(0);
@@ -315,6 +319,9 @@ pub struct Rem6ExecutionSummary {
     parallel_scheduler_worker_slots: Vec<Rem6ParallelWorkerSlotSummary>,
     parallel_scheduler_worker_lanes: Vec<Rem6ParallelWorkerLaneSummary>,
     parallel_scheduler_partitions: Vec<Rem6ParallelPartitionSummary>,
+    parallel_scheduler_frontiers: Vec<Rem6ParallelFrontierSummary>,
+    parallel_scheduler_final_frontiers: Vec<Rem6ParallelFrontierSummary>,
+    parallel_scheduler_ready_partitions: Vec<Rem6ParallelReadyPartitionSummary>,
     fetch_transport: Rem6MemoryTransportSummary,
     data_transport: Rem6MemoryTransportSummary,
     cores: Vec<Rem6CoreSummary>,
@@ -343,6 +350,21 @@ pub struct Rem6ParallelPartitionSummary {
     remote_sends: u64,
     remote_receives: u64,
     max_pending_events: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Rem6ParallelFrontierSummary {
+    partition: u32,
+    now: u64,
+    safe_until: u64,
+    next_tick: Option<u64>,
+    pending_events: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Rem6ParallelReadyPartitionSummary {
+    partition: u32,
+    next_tick: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -750,156 +772,7 @@ fn run_stats_json(
             StatResetPolicy::Monotonic,
             execution.data_atomic_bytes,
         )?;
-        increment_stat(
-            &mut stats,
-            "sim.parallel.scheduler.epochs",
-            "Count",
-            StatResetPolicy::Monotonic,
-            execution.parallel_scheduler_epochs,
-        )?;
-        increment_stat(
-            &mut stats,
-            "sim.parallel.scheduler.max_workers",
-            "Count",
-            StatResetPolicy::Monotonic,
-            execution.parallel_scheduler_max_workers,
-        )?;
-        increment_stat(
-            &mut stats,
-            "sim.parallel.scheduler.dispatches",
-            "Count",
-            StatResetPolicy::Monotonic,
-            execution.parallel_scheduler_dispatches,
-        )?;
-        increment_stat(
-            &mut stats,
-            "sim.parallel.scheduler.batches",
-            "Count",
-            StatResetPolicy::Monotonic,
-            execution.parallel_scheduler_batches,
-        )?;
-        increment_stat(
-            &mut stats,
-            "sim.parallel.scheduler.total_workers",
-            "Count",
-            StatResetPolicy::Monotonic,
-            execution.parallel_scheduler_total_workers,
-        )?;
-        increment_stat(
-            &mut stats,
-            "sim.parallel.scheduler.active_partitions",
-            "Count",
-            StatResetPolicy::Monotonic,
-            execution.parallel_scheduler_active_partitions,
-        )?;
-        increment_stat(
-            &mut stats,
-            "sim.parallel.scheduler.remote_sends",
-            "Count",
-            StatResetPolicy::Monotonic,
-            execution.parallel_scheduler_remote_sends,
-        )?;
-        increment_stat(
-            &mut stats,
-            "sim.parallel.scheduler.batch.worker_ticks",
-            "Tick",
-            StatResetPolicy::Monotonic,
-            execution.parallel_scheduler_batch_worker_ticks,
-        )?;
-        increment_stat(
-            &mut stats,
-            "sim.parallel.scheduler.batch.worker_capacity_ticks",
-            "Tick",
-            StatResetPolicy::Monotonic,
-            execution.parallel_scheduler_batch_worker_capacity_ticks,
-        )?;
-        increment_stat(
-            &mut stats,
-            "sim.parallel.scheduler.batch.idle_worker_ticks",
-            "Tick",
-            StatResetPolicy::Monotonic,
-            execution.parallel_scheduler_batch_idle_worker_ticks,
-        )?;
-        for slot in &execution.parallel_scheduler_worker_slots {
-            increment_stat(
-                &mut stats,
-                &format!("sim.parallel.scheduler.worker{}.active_ticks", slot.slot),
-                "Tick",
-                StatResetPolicy::Monotonic,
-                slot.active_ticks,
-            )?;
-            increment_stat(
-                &mut stats,
-                &format!("sim.parallel.scheduler.worker{}.idle_ticks", slot.slot),
-                "Tick",
-                StatResetPolicy::Monotonic,
-                slot.idle_ticks,
-            )?;
-        }
-        for lane in &execution.parallel_scheduler_worker_lanes {
-            increment_stat(
-                &mut stats,
-                &format!(
-                    "sim.parallel.scheduler.worker{}.partition{}.active_ticks",
-                    lane.lane, lane.partition
-                ),
-                "Tick",
-                StatResetPolicy::Monotonic,
-                lane.active_ticks,
-            )?;
-        }
-        for partition in &execution.parallel_scheduler_partitions {
-            increment_stat(
-                &mut stats,
-                &format!(
-                    "sim.parallel.partition{}.scheduler.workers",
-                    partition.partition
-                ),
-                "Count",
-                StatResetPolicy::Monotonic,
-                partition.workers,
-            )?;
-            increment_stat(
-                &mut stats,
-                &format!(
-                    "sim.parallel.partition{}.scheduler.dispatches",
-                    partition.partition
-                ),
-                "Count",
-                StatResetPolicy::Monotonic,
-                partition.dispatches,
-            )?;
-            increment_stat(
-                &mut stats,
-                &format!(
-                    "sim.parallel.partition{}.scheduler.remote_sends",
-                    partition.partition
-                ),
-                "Count",
-                StatResetPolicy::Monotonic,
-                partition.remote_sends,
-            )?;
-            increment_stat(
-                &mut stats,
-                &format!(
-                    "sim.parallel.partition{}.scheduler.remote_receives",
-                    partition.partition
-                ),
-                "Count",
-                StatResetPolicy::Monotonic,
-                partition.remote_receives,
-            )?;
-            increment_stat(
-                &mut stats,
-                &format!(
-                    "sim.parallel.partition{}.scheduler.max_pending_events",
-                    partition.partition
-                ),
-                "Count",
-                StatResetPolicy::Monotonic,
-                partition.max_pending_events,
-            )?;
-        }
+        parallel_stats::emit_scheduler_stats(&mut stats, execution)?;
         emit_transport_stats(&mut stats, "sim.memory.fetch", &execution.fetch_transport)?;
         emit_transport_stats(&mut stats, "sim.memory.data", &execution.data_transport)?;
         for core in &execution.cores {
@@ -1334,6 +1207,15 @@ fn execution_summary(
         parallel_scheduler_worker_slots: parallel_worker_slot_summaries(run),
         parallel_scheduler_worker_lanes: parallel_worker_lane_summaries(run),
         parallel_scheduler_partitions: parallel_partition_summaries(run),
+        parallel_scheduler_frontiers: parallel_frontier_summaries(
+            run.parallel_scheduler_frontiers(),
+        ),
+        parallel_scheduler_final_frontiers: parallel_frontier_summaries(
+            run.parallel_scheduler_final_frontiers(),
+        ),
+        parallel_scheduler_ready_partitions: parallel_ready_partition_summaries(
+            run.parallel_scheduler_ready_partitions(),
+        ),
         fetch_transport: memory_transport_summary(inputs.fetch_trace),
         data_transport: memory_transport_summary(inputs.data_trace),
         cores,
@@ -1387,6 +1269,33 @@ fn parallel_partition_summaries(run: &RiscvSystemRun) -> Vec<Rem6ParallelPartiti
             remote_sends: activity.remote_send_count() as u64,
             remote_receives: activity.remote_receive_count() as u64,
             max_pending_events: activity.max_pending_events() as u64,
+        })
+        .collect()
+}
+
+fn parallel_frontier_summaries(
+    frontiers: Vec<PartitionFrontier>,
+) -> Vec<Rem6ParallelFrontierSummary> {
+    frontiers
+        .into_iter()
+        .map(|frontier| Rem6ParallelFrontierSummary {
+            partition: frontier.partition().index(),
+            now: frontier.now(),
+            safe_until: frontier.safe_until(),
+            next_tick: frontier.next_tick(),
+            pending_events: frontier.pending_events() as u64,
+        })
+        .collect()
+}
+
+fn parallel_ready_partition_summaries(
+    ready_partitions: Vec<ReadyPartition>,
+) -> Vec<Rem6ParallelReadyPartitionSummary> {
+    ready_partitions
+        .into_iter()
+        .map(|ready| Rem6ParallelReadyPartitionSummary {
+            partition: ready.partition.index(),
+            next_tick: ready.next_tick,
         })
         .collect()
 }
@@ -1584,14 +1493,6 @@ fn parse_number(value: &str) -> Option<u64> {
     }
 }
 
-fn bytes_to_hex(bytes: &[u8]) -> String {
-    bytes
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<Vec<_>>()
-        .join("")
-}
-
 fn required_value(flag: &str, value: Option<String>) -> Result<String, Rem6CliError> {
     value.ok_or_else(|| Rem6CliError::MissingFlagValue {
         flag: flag.to_string(),
@@ -1601,134 +1502,5 @@ fn required_value(flag: &str, value: Option<String>) -> Result<String, Rem6CliEr
 fn stats_error(error: rem6_stats::StatsError) -> Rem6CliError {
     Rem6CliError::Stats {
         error: error.to_string(),
-    }
-}
-
-fn elf_class_name(class: BootElfClass) -> &'static str {
-    match class {
-        BootElfClass::Class32 => "ELF32",
-        BootElfClass::Class64 => "ELF64",
-    }
-}
-
-fn elf_endian_name(endian: BootElfEndian) -> &'static str {
-    match endian {
-        BootElfEndian::Little => "little",
-        BootElfEndian::Big => "big",
-    }
-}
-
-fn elf_architecture_name(architecture: BootElfArchitecture) -> &'static str {
-    match architecture {
-        BootElfArchitecture::Sparc32 => "sparc32",
-        BootElfArchitecture::Sparc64 => "sparc64",
-        BootElfArchitecture::Mips => "mips",
-        BootElfArchitecture::I386 => "i386",
-        BootElfArchitecture::X8664 => "x86_64",
-        BootElfArchitecture::Arm => "arm",
-        BootElfArchitecture::Thumb => "thumb",
-        BootElfArchitecture::Arm64 => "arm64",
-        BootElfArchitecture::Riscv32 => "riscv32",
-        BootElfArchitecture::Riscv64 => "riscv64",
-        BootElfArchitecture::Power => "power",
-        BootElfArchitecture::Power64 => "power64",
-        BootElfArchitecture::Unknown { .. } => "unknown",
-    }
-}
-
-fn elf_os_name(os: BootElfOperatingSystem) -> String {
-    match os {
-        BootElfOperatingSystem::Linux => "linux".to_string(),
-        BootElfOperatingSystem::Solaris => "solaris".to_string(),
-        BootElfOperatingSystem::Tru64 => "tru64".to_string(),
-        BootElfOperatingSystem::LinuxArmOabi => "linux-arm-oabi".to_string(),
-        BootElfOperatingSystem::LinuxPower64AbiV1 => "linux-power64-abi-v1".to_string(),
-        BootElfOperatingSystem::LinuxPower64AbiV2 => "linux-power64-abi-v2".to_string(),
-        BootElfOperatingSystem::FreeBsd => "freebsd".to_string(),
-        BootElfOperatingSystem::Unknown { os_abi } => format!("unknown:{os_abi}"),
-    }
-}
-
-fn json_escape(value: &str) -> String {
-    let mut escaped = String::new();
-    for character in value.chars() {
-        match character {
-            '"' => escaped.push_str("\\\""),
-            '\\' => escaped.push_str("\\\\"),
-            '\n' => escaped.push_str("\\n"),
-            '\r' => escaped.push_str("\\r"),
-            '\t' => escaped.push_str("\\t"),
-            c if c.is_control() => escaped.push_str(&format!("\\u{:04x}", c as u32)),
-            c => escaped.push(c),
-        }
-    }
-    escaped
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn endpoint(value: &str) -> TransportEndpointId {
-        TransportEndpointId::new(value).unwrap()
-    }
-
-    #[test]
-    fn memory_transport_summary_counts_intermediate_route_response_arrivals() {
-        let route = MemoryRouteId::new(7);
-        let request = MemoryRequestId::new(AgentId::new(3), 11);
-        let trace = MemoryTrace::from_events(vec![
-            MemoryTraceEvent::request(
-                0,
-                route,
-                endpoint("cpu0.ifetch"),
-                MemoryTraceKind::RequestSent,
-                request,
-            ),
-            MemoryTraceEvent::request(
-                2,
-                route,
-                endpoint("noc.router0"),
-                MemoryTraceKind::RequestArrived,
-                request,
-            ),
-            MemoryTraceEvent::request(
-                7,
-                route,
-                endpoint("memory.port0"),
-                MemoryTraceKind::RequestArrived,
-                request,
-            ),
-            MemoryTraceEvent::response(
-                14,
-                route,
-                endpoint("noc.router0"),
-                request,
-                rem6_memory::ResponseStatus::Completed,
-            ),
-            MemoryTraceEvent::response(
-                17,
-                route,
-                endpoint("cpu0.ifetch"),
-                request,
-                rem6_memory::ResponseStatus::Completed,
-            ),
-        ]);
-
-        let summary = memory_transport_summary(&trace);
-
-        assert_eq!(summary.counters.requests, 1);
-        assert_eq!(summary.counters.request_arrivals, 2);
-        assert_eq!(summary.counters.response_arrivals, 2);
-        assert_eq!(summary.counters.responses, 1);
-        assert_eq!(summary.counters.round_trip_ticks, 17);
-        assert_eq!(summary.routes.len(), 1);
-        let route = &summary.routes[0];
-        assert_eq!(route.source, "cpu0.ifetch");
-        assert_eq!(route.counters.requests, 1);
-        assert_eq!(route.counters.request_arrivals, 2);
-        assert_eq!(route.counters.response_arrivals, 2);
-        assert_eq!(route.counters.responses, 1);
-        assert_eq!(route.counters.round_trip_ticks, 17);
     }
 }

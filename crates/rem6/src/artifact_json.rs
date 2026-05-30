@@ -1,8 +1,10 @@
-use super::{
+use super::formatting::{
     bytes_to_hex, elf_architecture_name, elf_class_name, elf_endian_name, elf_os_name, json_escape,
+};
+use super::{
     Rem6CoreSummary, Rem6ExecutionSummary, Rem6MemoryDump, Rem6MemoryTransportCounters,
-    Rem6MemoryTransportRouteSummary, Rem6MemoryTransportSummary, Rem6ParallelPartitionSummary,
-    Rem6RunArtifact,
+    Rem6MemoryTransportRouteSummary, Rem6MemoryTransportSummary, Rem6ParallelFrontierSummary,
+    Rem6ParallelPartitionSummary, Rem6ParallelReadyPartitionSummary, Rem6RunArtifact,
 };
 
 impl Rem6RunArtifact {
@@ -96,8 +98,26 @@ impl Rem6ExecutionSummary {
             .map(Rem6ParallelPartitionSummary::to_json)
             .collect::<Vec<_>>()
             .join(",");
+        let frontiers = self
+            .parallel_scheduler_frontiers
+            .iter()
+            .map(Rem6ParallelFrontierSummary::to_json)
+            .collect::<Vec<_>>()
+            .join(",");
+        let final_frontiers = self
+            .parallel_scheduler_final_frontiers
+            .iter()
+            .map(Rem6ParallelFrontierSummary::to_json)
+            .collect::<Vec<_>>()
+            .join(",");
+        let ready_partitions = self
+            .parallel_scheduler_ready_partitions
+            .iter()
+            .map(Rem6ParallelReadyPartitionSummary::to_json)
+            .collect::<Vec<_>>()
+            .join(",");
         format!(
-            "{{\"scheduler\":{{\"worker_limit\":{},\"epochs\":{},\"dispatches\":{},\"batches\":{},\"max_workers\":{},\"total_workers\":{},\"active_partitions\":{},\"remote_sends\":{},\"batch_worker_ticks\":{},\"batch_worker_capacity_ticks\":{},\"batch_idle_worker_ticks\":{},\"worker_slots\":[{}],\"worker_lanes\":[{}],\"partitions\":[{}]}}}}",
+            "{{\"scheduler\":{{\"worker_limit\":{},\"epochs\":{},\"dispatches\":{},\"batches\":{},\"max_workers\":{},\"total_workers\":{},\"active_partitions\":{},\"remote_sends\":{},\"batch_worker_ticks\":{},\"batch_worker_capacity_ticks\":{},\"batch_idle_worker_ticks\":{},\"worker_slots\":[{}],\"worker_lanes\":[{}],\"partitions\":[{}],\"frontiers\":[{}],\"final_frontiers\":[{}],\"ready_partitions\":[{}]}}}}",
             worker_limit,
             self.parallel_scheduler_epochs,
             self.parallel_scheduler_dispatches,
@@ -112,6 +132,9 @@ impl Rem6ExecutionSummary {
             slots,
             lanes,
             partitions,
+            frontiers,
+            final_frontiers,
+            ready_partitions,
         )
     }
 
@@ -146,7 +169,7 @@ impl Rem6ExecutionSummary {
 
 fn empty_parallel_json(worker_limit: usize) -> String {
     format!(
-        "{{\"scheduler\":{{\"worker_limit\":{},\"epochs\":0,\"dispatches\":0,\"batches\":0,\"max_workers\":0,\"total_workers\":0,\"active_partitions\":0,\"remote_sends\":0,\"batch_worker_ticks\":0,\"batch_worker_capacity_ticks\":0,\"batch_idle_worker_ticks\":0,\"worker_slots\":[],\"worker_lanes\":[],\"partitions\":[]}}}}",
+        "{{\"scheduler\":{{\"worker_limit\":{},\"epochs\":0,\"dispatches\":0,\"batches\":0,\"max_workers\":0,\"total_workers\":0,\"active_partitions\":0,\"remote_sends\":0,\"batch_worker_ticks\":0,\"batch_worker_capacity_ticks\":0,\"batch_idle_worker_ticks\":0,\"worker_slots\":[],\"worker_lanes\":[],\"partitions\":[],\"frontiers\":[],\"final_frontiers\":[],\"ready_partitions\":[]}}}}",
         worker_limit
     )
 }
@@ -181,6 +204,34 @@ impl Rem6ParallelPartitionSummary {
             self.max_pending_events,
         )
     }
+}
+
+impl Rem6ParallelFrontierSummary {
+    fn to_json(&self) -> String {
+        format!(
+            "{{\"partition\":{},\"now\":{},\"safe_until\":{},\"next_tick\":{},\"pending_events\":{}}}",
+            self.partition,
+            self.now,
+            self.safe_until,
+            optional_tick_json(self.next_tick),
+            self.pending_events,
+        )
+    }
+}
+
+impl Rem6ParallelReadyPartitionSummary {
+    fn to_json(&self) -> String {
+        format!(
+            "{{\"partition\":{},\"next_tick\":{}}}",
+            self.partition, self.next_tick
+        )
+    }
+}
+
+fn optional_tick_json(value: Option<u64>) -> String {
+    value
+        .map(|tick| tick.to_string())
+        .unwrap_or_else(|| "null".to_string())
 }
 
 impl Rem6CoreSummary {
