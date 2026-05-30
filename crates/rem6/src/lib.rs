@@ -545,12 +545,24 @@ where
             path: path.to_path_buf(),
             error: error.to_string(),
         })?;
-        return Ok(format!(
-            "{{\"schema\":\"rem6.cli.output.v1\",\"format\":\"json\",\"artifact\":\"{}\"}}\n",
-            json_escape(&path.display().to_string())
-        ));
+        return Ok(output_envelope_json(path, artifact.config.stats_output()));
     }
     Ok(output)
+}
+
+fn output_envelope_json(artifact: &Path, stats_artifact: Option<&Path>) -> String {
+    let artifact = json_escape(&artifact.display().to_string());
+    match stats_artifact {
+        Some(stats_artifact) => format!(
+            "{{\"schema\":\"rem6.cli.output.v1\",\"format\":\"json\",\"artifact\":\"{}\",\"stats_artifact\":\"{}\"}}\n",
+            artifact,
+            json_escape(&stats_artifact.display().to_string())
+        ),
+        None => format!(
+            "{{\"schema\":\"rem6.cli.output.v1\",\"format\":\"json\",\"artifact\":\"{}\"}}\n",
+            artifact
+        ),
+    }
 }
 
 pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError> {
