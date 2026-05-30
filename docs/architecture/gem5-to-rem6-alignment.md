@@ -74,6 +74,10 @@ isolated bugs:
   pending-event count, and duration-weighted lane tick summaries, so recorded
   parallel runs can prove which host lane executed each partition instead of
   inferring that binding from worker vector order or an external profiler.
+  `RiscvSystemRun` now carries those recorded lane bindings across CPU
+  scheduler, data-cache scheduler, and merged full-system scopes with lane tick
+  and lane-partition tick queries, so system-level artifacts can audit actual
+  host-lane occupancy without reopening kernel-private batch records.
   The CLI can also write the full JSON run artifact to a requested path and
   write the hierarchical stats array to its own requested path while returning
   a small machine-readable output envelope on stdout, so scripted runs can keep

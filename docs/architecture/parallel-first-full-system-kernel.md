@@ -475,7 +475,10 @@ any callback executes, then compare it with the recorded worker occupancy after
 callbacks and remote wakeups run. Executed batch records also carry actual
 worker-lane identities and duration-weighted lane ticks, so post-dispatch
 evidence names the lane that owned each partition instead of depending on
-record ordering or external profiling. Higher layers do not need to
+record ordering or external profiling. System-run summaries preserve the same
+actual lane records for CPU-scheduler, data-cache scheduler, and merged
+full-system scopes, including lane-partition tick queries. Higher layers do not
+need to
 rediscover the same time window from worker records, rebuild planned occupancy
 from timeline records, or recompute planned worker capacity from
 scheduler-private worker limits.

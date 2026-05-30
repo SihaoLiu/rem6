@@ -53,6 +53,7 @@ mod system_run_progress;
 mod system_run_qos;
 mod system_run_remote_flow;
 mod system_run_sc_progress;
+mod system_run_worker_lanes;
 mod timer_checkpoint;
 mod topology;
 mod trap_event;
@@ -147,6 +148,7 @@ pub use system_run_parallel_batch::{
     RiscvSystemParallelBatchScope, RiscvSystemParallelBatchTimelineRecord,
 };
 pub use system_run_planned_lanes::RiscvSystemParallelBatchWorkerLaneRecord;
+pub use system_run_worker_lanes::RiscvSystemParallelWorkerLaneRecord;
 pub use timer_checkpoint::{
     TimerCheckpointBank, TimerCheckpointError, TimerCheckpointPort, TimerCheckpointRecord,
 };

@@ -2,8 +2,8 @@ use rem6_coherence::{ParallelCoherenceRunSummary, ParallelCoherenceWaitForGraphs
 use rem6_cpu::RiscvClusterTurn;
 use rem6_kernel::{ParallelBatchUtilizationRatio, PartitionId, PartitionedScheduler, WaitForGraph};
 use rem6_system::{
-    RiscvSystemParallelBatchScope, RiscvSystemParallelBatchWorkerLaneRecord, RiscvSystemRun,
-    RiscvSystemRunStopReason,
+    RiscvSystemParallelBatchScope, RiscvSystemParallelBatchWorkerLaneRecord,
+    RiscvSystemParallelWorkerLaneRecord, RiscvSystemRun, RiscvSystemRunStopReason,
 };
 
 fn empty_wait_for_graphs() -> ParallelCoherenceWaitForGraphs {
@@ -447,6 +447,99 @@ fn system_run_summarizes_parallel_batch_worker_and_partition_sets() {
         run.full_system_parallel_scheduler_batch_utilization_ratio()
             .unwrap(),
         ParallelBatchUtilizationRatio::new(20, 24).unwrap(),
+    );
+}
+
+#[test]
+fn system_run_preserves_recorded_parallel_worker_lane_assignments() {
+    let cpu0 = PartitionId::new(0);
+    let cpu1 = PartitionId::new(1);
+    let cache = PartitionId::new(2);
+    let run = RiscvSystemRun::new(
+        vec![cpu_scheduler_turn(3, 2, &[cpu0, cpu1, cache])],
+        Vec::new(),
+        RiscvSystemRunStopReason::Idle { tick: 8 },
+    )
+    .with_data_cache_runs(vec![data_cache_run(3, 2, &[cpu1, cache])]);
+
+    assert_eq!(
+        run.parallel_scheduler_worker_lanes(),
+        vec![
+            RiscvSystemParallelWorkerLaneRecord::new(
+                RiscvSystemParallelBatchScope::Scheduler,
+                0,
+                cpu0,
+                0,
+                4,
+                Some(0),
+                1,
+            ),
+            RiscvSystemParallelWorkerLaneRecord::new(
+                RiscvSystemParallelBatchScope::Scheduler,
+                0,
+                cache,
+                0,
+                4,
+                Some(0),
+                1,
+            ),
+            RiscvSystemParallelWorkerLaneRecord::new(
+                RiscvSystemParallelBatchScope::Scheduler,
+                1,
+                cpu1,
+                0,
+                4,
+                Some(0),
+                1,
+            ),
+        ],
+    );
+    assert_eq!(
+        run.data_cache_parallel_scheduler_worker_lanes(),
+        vec![
+            RiscvSystemParallelWorkerLaneRecord::new(
+                RiscvSystemParallelBatchScope::DataCacheScheduler,
+                0,
+                cpu1,
+                0,
+                4,
+                Some(0),
+                1,
+            ),
+            RiscvSystemParallelWorkerLaneRecord::new(
+                RiscvSystemParallelBatchScope::DataCacheScheduler,
+                1,
+                cache,
+                0,
+                4,
+                Some(0),
+                1,
+            ),
+        ],
+    );
+    assert_eq!(
+        run.parallel_scheduler_worker_lane_tick_summaries(),
+        vec![(0, 8), (1, 4)],
+    );
+    assert_eq!(
+        run.data_cache_parallel_scheduler_worker_lane_tick_summaries(),
+        vec![(0, 4), (1, 4)],
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_worker_lane_tick_summaries(),
+        vec![(0, 12), (1, 8)],
+    );
+    assert_eq!(
+        run.parallel_scheduler_worker_lane_partition_ticks(0, cache),
+        4,
+    );
+    assert_eq!(
+        run.data_cache_parallel_scheduler_worker_lane_partition_ticks(1, cache),
+        4,
+    );
+    assert_eq!(
+        run.full_system_parallel_scheduler_worker_lane_partition_ticks(0, cpu1),
+        4,
     );
 }
 
