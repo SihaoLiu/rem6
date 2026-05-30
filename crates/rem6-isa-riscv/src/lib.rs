@@ -9,8 +9,8 @@ pub use control_flow::{
     RiscvVectorConfig, RiscvVectorConfigUpdate,
 };
 pub use vector::{
-    RiscvVectorCompressPlan, RiscvVectorCompressResult, RiscvVectorElements, RiscvVectorError,
-    RiscvVectorTailPolicy,
+    RiscvInstructionFlags, RiscvVectorCompressPlan, RiscvVectorCompressResult, RiscvVectorElements,
+    RiscvVectorError, RiscvVectorMicroOp, RiscvVectorMicroOpExpansion, RiscvVectorTailPolicy,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
