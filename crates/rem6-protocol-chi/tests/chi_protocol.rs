@@ -1,6 +1,7 @@
 use rem6_memory::{Address, AgentId};
 use rem6_protocol_chi::{
-    ChiAction, ChiCacheLine, ChiError, ChiEvent, ChiLineId, ChiState, ChiTraceEntry,
+    ChiAction, ChiCacheLine, ChiError, ChiEvent, ChiLineId, ChiReservationInvalidation,
+    ChiReservationInvalidationReason, ChiReservationTable, ChiState, ChiTraceEntry,
     DirectoryLineSnapshot,
 };
 
@@ -202,4 +203,71 @@ fn chi_directory_snapshot_rejects_multiple_unique_or_unique_with_sharers() {
             owners: vec![agent(0), agent(1)],
         }
     );
+}
+
+#[test]
+fn chi_reservations_serialize_store_conditionals_for_gem5_issue_2688() {
+    let mut reservations = ChiReservationTable::default();
+    let address = Address::new(0x6008);
+    let size = rem6_memory::AccessSize::new(8).unwrap();
+
+    reservations.reserve(agent(0), line(), address, size);
+    reservations.reserve(agent(1), line(), address, size);
+
+    let first = reservations.store_conditional(agent(0), line(), address, size);
+    assert!(first.succeeded());
+    assert_eq!(
+        first.invalidations(),
+        &[ChiReservationInvalidation::new(
+            agent(1),
+            line(),
+            address,
+            size,
+            ChiReservationInvalidationReason::StoreConditionalSuccess,
+        )]
+    );
+    assert!(!reservations.is_reserved(agent(0), line()));
+    assert!(!reservations.is_reserved(agent(1), line()));
+
+    let second = reservations.store_conditional(agent(1), line(), address, size);
+    assert!(!second.succeeded());
+    assert!(second.invalidations().is_empty());
+}
+
+#[test]
+fn chi_reservations_clear_on_coherence_invalidations() {
+    let mut reservations = ChiReservationTable::default();
+    let address = Address::new(0x6008);
+    let size = rem6_memory::AccessSize::new(4).unwrap();
+
+    reservations.reserve(agent(1), line(), address, size);
+    assert_eq!(
+        reservations.invalidate_overlapping(
+            line(),
+            address,
+            size,
+            ChiReservationInvalidationReason::RemoteAtomic
+        ),
+        vec![ChiReservationInvalidation::new(
+            agent(1),
+            line(),
+            address,
+            size,
+            ChiReservationInvalidationReason::RemoteAtomic,
+        )]
+    );
+    assert!(!reservations.is_reserved(agent(1), line()));
+
+    reservations.reserve(agent(1), line(), address, size);
+    assert_eq!(
+        reservations.discard(agent(1), line(), ChiReservationInvalidationReason::Eviction),
+        Some(ChiReservationInvalidation::new(
+            agent(1),
+            line(),
+            address,
+            size,
+            ChiReservationInvalidationReason::Eviction,
+        ))
+    );
+    assert!(!reservations.is_reserved(agent(1), line()));
 }

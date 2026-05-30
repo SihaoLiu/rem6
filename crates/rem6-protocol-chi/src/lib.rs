@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
@@ -274,6 +275,292 @@ impl ChiTraceEntry {
 
     pub const fn after(self) -> ChiState {
         self.after
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ChiReservationInvalidationReason {
+    RemoteWrite,
+    RemoteAtomic,
+    SnoopInvalidation,
+    Eviction,
+    StoreConditionalSuccess,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ChiReservation {
+    agent: AgentId,
+    line: ChiLineId,
+    address: Address,
+    size: rem6_memory::AccessSize,
+}
+
+impl ChiReservation {
+    pub const fn new(
+        agent: AgentId,
+        line: ChiLineId,
+        address: Address,
+        size: rem6_memory::AccessSize,
+    ) -> Self {
+        Self {
+            agent,
+            line,
+            address,
+            size,
+        }
+    }
+
+    pub const fn agent(self) -> AgentId {
+        self.agent
+    }
+
+    pub const fn line(self) -> ChiLineId {
+        self.line
+    }
+
+    pub const fn address(self) -> Address {
+        self.address
+    }
+
+    pub const fn size(self) -> rem6_memory::AccessSize {
+        self.size
+    }
+
+    pub fn overlaps(self, address: Address, size: rem6_memory::AccessSize) -> bool {
+        let reservation_start = self.address.get();
+        let reservation_end = reservation_start.saturating_add(self.size.bytes());
+        let access_start = address.get();
+        let access_end = access_start.saturating_add(size.bytes());
+        reservation_start < access_end && access_start < reservation_end
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ChiReservationInvalidation {
+    agent: AgentId,
+    line: ChiLineId,
+    address: Address,
+    size: rem6_memory::AccessSize,
+    reason: ChiReservationInvalidationReason,
+}
+
+impl ChiReservationInvalidation {
+    pub const fn new(
+        agent: AgentId,
+        line: ChiLineId,
+        address: Address,
+        size: rem6_memory::AccessSize,
+        reason: ChiReservationInvalidationReason,
+    ) -> Self {
+        Self {
+            agent,
+            line,
+            address,
+            size,
+            reason,
+        }
+    }
+
+    pub const fn agent(self) -> AgentId {
+        self.agent
+    }
+
+    pub const fn line(self) -> ChiLineId {
+        self.line
+    }
+
+    pub const fn address(self) -> Address {
+        self.address
+    }
+
+    pub const fn size(self) -> rem6_memory::AccessSize {
+        self.size
+    }
+
+    pub const fn reason(self) -> ChiReservationInvalidationReason {
+        self.reason
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChiStoreConditionalOutcome {
+    agent: AgentId,
+    line: ChiLineId,
+    address: Address,
+    size: rem6_memory::AccessSize,
+    succeeded: bool,
+    invalidations: Vec<ChiReservationInvalidation>,
+}
+
+impl ChiStoreConditionalOutcome {
+    fn new(
+        agent: AgentId,
+        line: ChiLineId,
+        address: Address,
+        size: rem6_memory::AccessSize,
+        succeeded: bool,
+        invalidations: Vec<ChiReservationInvalidation>,
+    ) -> Self {
+        Self {
+            agent,
+            line,
+            address,
+            size,
+            succeeded,
+            invalidations,
+        }
+    }
+
+    pub const fn agent(&self) -> AgentId {
+        self.agent
+    }
+
+    pub const fn line(&self) -> ChiLineId {
+        self.line
+    }
+
+    pub const fn address(&self) -> Address {
+        self.address
+    }
+
+    pub const fn size(&self) -> rem6_memory::AccessSize {
+        self.size
+    }
+
+    pub const fn succeeded(&self) -> bool {
+        self.succeeded
+    }
+
+    pub fn invalidations(&self) -> &[ChiReservationInvalidation] {
+        &self.invalidations
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ChiReservationTable {
+    reservations: BTreeMap<ChiLineId, BTreeMap<AgentId, ChiReservation>>,
+}
+
+impl ChiReservationTable {
+    pub fn reserve(
+        &mut self,
+        agent: AgentId,
+        line: ChiLineId,
+        address: Address,
+        size: rem6_memory::AccessSize,
+    ) -> ChiReservation {
+        let reservation = ChiReservation::new(agent, line, address, size);
+        self.reservations
+            .entry(line)
+            .or_default()
+            .insert(agent, reservation);
+        reservation
+    }
+
+    pub fn is_reserved(&self, agent: AgentId, line: ChiLineId) -> bool {
+        self.reservation(agent, line).is_some()
+    }
+
+    pub fn reservation(&self, agent: AgentId, line: ChiLineId) -> Option<ChiReservation> {
+        self.reservations
+            .get(&line)
+            .and_then(|line_reservations| line_reservations.get(&agent))
+            .copied()
+    }
+
+    pub fn store_conditional(
+        &mut self,
+        agent: AgentId,
+        line: ChiLineId,
+        address: Address,
+        size: rem6_memory::AccessSize,
+    ) -> ChiStoreConditionalOutcome {
+        let succeeded = self
+            .reservation(agent, line)
+            .is_some_and(|reservation| reservation.overlaps(address, size));
+        self.remove_agent_reservation(agent, line);
+
+        let invalidations = if succeeded {
+            self.invalidate_overlapping(
+                line,
+                address,
+                size,
+                ChiReservationInvalidationReason::StoreConditionalSuccess,
+            )
+        } else {
+            Vec::new()
+        };
+
+        ChiStoreConditionalOutcome::new(agent, line, address, size, succeeded, invalidations)
+    }
+
+    pub fn invalidate_overlapping(
+        &mut self,
+        line: ChiLineId,
+        address: Address,
+        size: rem6_memory::AccessSize,
+        reason: ChiReservationInvalidationReason,
+    ) -> Vec<ChiReservationInvalidation> {
+        let Some(line_reservations) = self.reservations.get_mut(&line) else {
+            return Vec::new();
+        };
+
+        let invalidated_agents = line_reservations
+            .iter()
+            .filter_map(|(agent, reservation)| {
+                reservation.overlaps(address, size).then_some(*agent)
+            })
+            .collect::<Vec<_>>();
+        let invalidations = invalidated_agents
+            .iter()
+            .filter_map(|agent| line_reservations.remove(agent))
+            .map(|reservation| {
+                ChiReservationInvalidation::new(
+                    reservation.agent(),
+                    reservation.line(),
+                    reservation.address(),
+                    reservation.size(),
+                    reason,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        if line_reservations.is_empty() {
+            self.reservations.remove(&line);
+        }
+
+        invalidations
+    }
+
+    pub fn discard(
+        &mut self,
+        agent: AgentId,
+        line: ChiLineId,
+        reason: ChiReservationInvalidationReason,
+    ) -> Option<ChiReservationInvalidation> {
+        self.remove_agent_reservation(agent, line)
+            .map(|reservation| {
+                ChiReservationInvalidation::new(
+                    reservation.agent(),
+                    reservation.line(),
+                    reservation.address(),
+                    reservation.size(),
+                    reason,
+                )
+            })
+    }
+
+    fn remove_agent_reservation(
+        &mut self,
+        agent: AgentId,
+        line: ChiLineId,
+    ) -> Option<ChiReservation> {
+        let line_reservations = self.reservations.get_mut(&line)?;
+        let reservation = line_reservations.remove(&agent);
+        if line_reservations.is_empty() {
+            self.reservations.remove(&line);
+        }
+        reservation
     }
 }
 
