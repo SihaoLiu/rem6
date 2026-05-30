@@ -400,6 +400,32 @@ fn system_action_executor_rejects_out_of_order_stats_reset_actions() {
             vec![StatSample::new(insts, "cpu0.committed_insts", "count", 3)],
         )
     );
+
+    let dump = HostActionRecord::new(
+        12,
+        guest,
+        host,
+        GuestEventId::new(3),
+        source,
+        HostAction::DumpStats,
+    );
+    executor.apply(&dump).unwrap();
+    let reset_before_dump = HostActionRecord::new(
+        11,
+        guest,
+        host,
+        GuestEventId::new(4),
+        source,
+        HostAction::ResetStats,
+    );
+    assert_eq!(
+        executor.apply(&reset_before_dump).unwrap_err(),
+        SystemError::Stats(StatsError::HistoryTickBeforeLastRecord {
+            tick: 11,
+            last_history_tick: 12,
+        })
+    );
+    assert_eq!(executor.stats().epoch(), 1);
 }
 
 #[test]

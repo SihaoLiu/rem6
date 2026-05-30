@@ -278,6 +278,21 @@ impl StatsRegistry {
         })
     }
 
+    fn ensure_history_tick_not_before_last(&self, tick: Tick) -> Result<(), StatsError> {
+        let Some(last_record) = self.history_records.last() else {
+            return Ok(());
+        };
+        let last_history_tick = last_record.tick();
+        if tick < last_history_tick {
+            return Err(StatsError::HistoryTickBeforeLastRecord {
+                tick,
+                last_history_tick,
+            });
+        }
+
+        Ok(())
+    }
+
     pub fn increment(&mut self, stat: StatId, value: u64) -> Result<(), StatsError> {
         let counter = self
             .counters
@@ -345,6 +360,7 @@ impl StatsRegistry {
 
     pub fn try_dump(&mut self, tick: Tick) -> Result<StatDumpRecord, StatsError> {
         let snapshot = self.try_snapshot(tick)?;
+        self.ensure_history_tick_not_before_last(tick)?;
         let id = StatDumpId::new(self.next_dump_id);
         self.next_dump_id = self
             .next_dump_id
@@ -381,6 +397,7 @@ impl StatsRegistry {
                 reset_tick: self.reset_tick,
             });
         }
+        self.ensure_history_tick_not_before_last(tick)?;
 
         let id = StatResetId::new(self.next_reset_id);
         self.next_reset_id = self

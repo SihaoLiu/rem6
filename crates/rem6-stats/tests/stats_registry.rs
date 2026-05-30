@@ -978,6 +978,67 @@ fn stats_registry_rejects_dump_before_reset_without_recording_history() {
 }
 
 #[test]
+fn stats_registry_rejects_history_ticks_before_last_record_without_mutation() {
+    let mut stats = StatsRegistry::new();
+    let cycles = stats.register_counter("cpu0.cycles", "cycles").unwrap();
+
+    stats.increment(cycles, 10).unwrap();
+    let first_dump = stats.dump(100);
+    stats.increment(cycles, 1).unwrap();
+
+    assert_eq!(
+        stats.try_dump(90).unwrap_err(),
+        StatsError::HistoryTickBeforeLastRecord {
+            tick: 90,
+            last_history_tick: 100,
+        },
+    );
+    assert_eq!(stats.dump_records(), std::slice::from_ref(&first_dump));
+    assert_eq!(
+        stats.history_records(),
+        [StatHistoryRecord::Dump(first_dump.clone())].as_slice(),
+    );
+
+    assert_eq!(
+        stats.try_reset(90).unwrap_err(),
+        StatsError::HistoryTickBeforeLastRecord {
+            tick: 90,
+            last_history_tick: 100,
+        },
+    );
+    assert_eq!(stats.epoch(), 0);
+    assert_eq!(stats.reset_tick(), 0);
+    assert_eq!(stats.reset_records(), &[]);
+
+    let reset = stats.reset(100);
+    assert_eq!(reset.id(), StatResetId::new(0));
+    stats.increment(cycles, 3).unwrap();
+    assert_eq!(stats.epoch(), 1);
+    assert_eq!(stats.reset_tick(), 100);
+    assert_eq!(
+        stats.snapshot(101),
+        StatSnapshot::new(
+            101,
+            1,
+            100,
+            vec![StatSample::new(cycles, "cpu0.cycles", "cycles", 3)]
+        )
+    );
+
+    let second_dump = stats.dump(101);
+    assert_eq!(second_dump.id(), StatDumpId::new(1));
+    assert_eq!(
+        stats.history_records(),
+        [
+            StatHistoryRecord::Dump(first_dump),
+            StatHistoryRecord::Reset(reset),
+            StatHistoryRecord::Dump(second_dump),
+        ]
+        .as_slice(),
+    );
+}
+
+#[test]
 fn probe_registry_records_typed_events_and_listener_state() {
     let mut probes = ProbeRegistry::new();
     let committed = probes.register_point("cpu0", "commit").unwrap();

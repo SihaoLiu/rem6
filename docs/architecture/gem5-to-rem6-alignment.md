@@ -302,16 +302,18 @@ isolated bugs:
   before the previous reset tick is rejected without changing the active epoch
   or counter values, successful reset records are retained in typed
   registry-owned history with stable reset ids, and dump/reset events are also
-  kept in one typed interleaved history. Workload replay carries that typed
-  reset/dump history into workload results, so replay artifacts preserve both
-  the final snapshot and the ordered stats-control record stream. Manifests can
-  require minimum reset/dump counts, exact first/last stats-history ticks, and
-  exact reset/dump event sequences with stable ids, epochs, and dump reset
-  windows, so stats-control behavior becomes replay-verifiable workload
-  identity rather than a log-only side effect. Once a registry has emitted any
-  dump or reset history record, counter and group registration is locked so the
-  history stream cannot silently mix multiple schemas without a typed schema
-  event. Counter paths are structured
+  kept in one typed interleaved history. That interleaved history is globally
+  monotonic: a dump or reset earlier than the previous history record is
+  rejected before ids, epochs, counters, or record vectors change. Workload
+  replay carries that typed reset/dump history into workload results, so replay
+  artifacts preserve both the final snapshot and the ordered stats-control
+  record stream. Manifests can require minimum reset/dump counts, exact
+  first/last stats-history ticks, and exact reset/dump event sequences with
+  stable ids, epochs, and dump reset windows, so stats-control behavior becomes
+  replay-verifiable workload identity rather than a log-only side effect. Once
+  a registry has emitted any dump or reset history record, counter and group
+  registration is locked so the history stream cannot silently mix multiple
+  schemas without a typed schema event. Counter paths are structured
   scope/name identities with a checked dot-separated spelling before
   registration, registry-owned stat groups preserve reusable hierarchy ids,
   and snapshots carry a group catalog so exported samples and deltas can

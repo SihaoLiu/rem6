@@ -50,6 +50,10 @@ pub enum StatsError {
         tick: Tick,
         reset_tick: Tick,
     },
+    HistoryTickBeforeLastRecord {
+        tick: Tick,
+        last_history_tick: Tick,
+    },
     SnapshotDeltaTimeWentBack {
         previous_tick: Tick,
         current_tick: Tick,
@@ -195,6 +199,13 @@ impl fmt::Display for StatsError {
             Self::ResetBeforeLastReset { tick, reset_tick } => write!(
                 formatter,
                 "cannot reset stats at tick {tick}; last reset was at tick {reset_tick}"
+            ),
+            Self::HistoryTickBeforeLastRecord {
+                tick,
+                last_history_tick,
+            } => write!(
+                formatter,
+                "cannot record stats history at tick {tick}; previous stats history record was at tick {last_history_tick}"
             ),
             Self::SnapshotDeltaTimeWentBack {
                 previous_tick,
