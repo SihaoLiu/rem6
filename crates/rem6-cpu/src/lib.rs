@@ -5,7 +5,8 @@ use std::sync::{Arc, Mutex};
 use rem6_boot::BootImage;
 use rem6_isa_riscv::{
     MemoryAccessKind, Register, RiscvExecutionRecord, RiscvHartState, RiscvInstruction,
-    RiscvPmpConfig, RiscvPmpError, RiscvPmpSnapshot, RiscvPmpTable, RiscvTrap,
+    RiscvPmaError, RiscvPmaRange, RiscvPmaTable, RiscvPmpConfig, RiscvPmpError, RiscvPmpSnapshot,
+    RiscvPmpTable, RiscvTrap,
 };
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionId, PartitionedScheduler,
@@ -874,6 +875,23 @@ impl RiscvCore {
             .read(register)
     }
 
+    pub fn add_pma_misaligned_range(&self, range: RiscvPmaRange) -> Result<(), RiscvPmaError> {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .pma
+            .add_misaligned_range(range)
+    }
+
+    pub fn pma_misaligned_ranges(&self) -> Vec<RiscvPmaRange> {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .pma
+            .misaligned_ranges()
+            .to_vec()
+    }
+
     pub fn pmp_entry_count(&self) -> usize {
         self.state
             .lock()
@@ -1154,6 +1172,7 @@ struct RiscvCoreState {
     sc_progress: RiscvStoreConditionalProgress,
     events: Vec<RiscvCpuExecutionEvent>,
     data_events: Vec<RiscvDataAccessEvent>,
+    pma: RiscvPmaTable,
     pmp: RiscvPmpTable,
 }
 
@@ -1173,6 +1192,7 @@ impl RiscvCoreState {
             sc_progress: RiscvStoreConditionalProgress::default(),
             events: Vec::new(),
             data_events: Vec::new(),
+            pma: RiscvPmaTable::new(),
             pmp: RiscvPmpTable::new(DEFAULT_RISCV_PMP_ENTRIES)
                 .expect("default RISC-V PMP entry count is valid"),
         }

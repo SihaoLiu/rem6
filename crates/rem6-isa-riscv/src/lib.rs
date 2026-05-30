@@ -2,6 +2,7 @@ use std::error::Error;
 use std::fmt;
 
 mod control_flow;
+mod pma;
 mod pmp;
 mod vector;
 
@@ -9,6 +10,7 @@ pub use control_flow::{
     RiscvBranchPredictionTarget, RiscvControlFlowSnapshot, RiscvControlFlowUpdate,
     RiscvVectorConfig, RiscvVectorConfigUpdate,
 };
+pub use pma::{RiscvPmaAccessKind, RiscvPmaError, RiscvPmaRange, RiscvPmaTable};
 pub use pmp::{
     RiscvPmpAccessKind, RiscvPmpAddressMode, RiscvPmpConfig, RiscvPmpEntry, RiscvPmpError,
     RiscvPmpRange, RiscvPmpSnapshot, RiscvPmpSnapshotEntry, RiscvPmpTable, RiscvPrivilegeMode,

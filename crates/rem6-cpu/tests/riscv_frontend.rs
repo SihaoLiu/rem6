@@ -8,8 +8,8 @@ use rem6_cpu::{
 };
 use rem6_isa_riscv::{
     MemoryAccessKind, MemoryWidth, Register, RiscvFenceSet, RiscvInstruction, RiscvMemoryOrdering,
-    RiscvPmpAccessKind, RiscvPmpAddressMode, RiscvPmpConfig, RiscvPmpError, RiscvPrivilegeMode,
-    RiscvTrap, RiscvTrapKind,
+    RiscvPmaAccessKind, RiscvPmaError, RiscvPmaRange, RiscvPmpAccessKind, RiscvPmpAddressMode,
+    RiscvPmpConfig, RiscvPmpError, RiscvPrivilegeMode, RiscvTrap, RiscvTrapKind,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{
@@ -806,6 +806,126 @@ fn riscv_core_pmp_rejects_locked_translated_data_load_by_physical_address() {
     assert!(core.data_access_events().is_empty());
     assert!(core.has_pending_data_access());
     assert_eq!(core.read_register(reg(5)), 0);
+}
+
+#[test]
+fn riscv_core_pma_rejects_misaligned_physical_data_load_before_memory_issue() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(2), 0x9001);
+    let store = loaded_store_with_data(
+        0x8000,
+        i_type(0, 2, 0x3, 5, 0x03),
+        0x9001,
+        vec![0xef, 0xcd, 0xab, 0x89, 0x67, 0x45, 0x23, 0x01],
+    );
+
+    fetch_one(&core, store, &mut scheduler, &transport, MemoryTrace::new());
+    let execution = core.execute_next_completed_fetch().unwrap().unwrap();
+    let error = core
+        .issue_next_data_access(
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            |_delivery, _context| panic!("PMA-denied data load must not issue to memory"),
+        )
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        RiscvCpuError::DataPmaAccess {
+            fetch,
+            error: RiscvPmaError::MisalignedDataAccess {
+                address: 0x9001,
+                size: 8,
+                kind: RiscvPmaAccessKind::Read,
+            },
+        } if fetch == execution.fetch().request_id()
+    ));
+    assert!(core.data_access_events().is_empty());
+    assert!(core.has_unissued_data_access());
+    assert_eq!(core.read_register(reg(5)), 0);
+}
+
+#[test]
+fn riscv_core_pma_rejects_misaligned_translated_data_load_by_physical_address() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = translated_data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(2), 0x4001);
+    let page_map = single_page_map(0x4000, 0x9000);
+    let store = loaded_store_with_data(
+        0x8000,
+        i_type(0, 2, 0x3, 5, 0x03),
+        0x9001,
+        vec![0xef, 0xcd, 0xab, 0x89, 0x67, 0x45, 0x23, 0x01],
+    );
+
+    fetch_one(&core, store, &mut scheduler, &transport, MemoryTrace::new());
+    let execution = core.execute_next_completed_fetch().unwrap().unwrap();
+    let error = core
+        .issue_next_translated_data_access(
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            &page_map,
+            |_delivery, _context| {
+                panic!("PMA-denied translated data load must not issue to memory")
+            },
+        )
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        RiscvCpuError::DataPmaAccess {
+            fetch,
+            error: RiscvPmaError::MisalignedDataAccess {
+                address: 0x9001,
+                size: 8,
+                kind: RiscvPmaAccessKind::Read,
+            },
+        } if fetch == execution.fetch().request_id()
+    ));
+    assert!(core.data_access_events().is_empty());
+    assert!(core.has_pending_data_access());
+    assert_eq!(core.read_register(reg(5)), 0);
+}
+
+#[test]
+fn riscv_core_pma_allows_misaligned_physical_data_load_inside_supported_region() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(2), 0x9001);
+    core.add_pma_misaligned_range(RiscvPmaRange::new(0x9000, 0x9100).unwrap())
+        .unwrap();
+    let store = loaded_store_with_data(
+        0x8000,
+        i_type(0, 2, 0x3, 5, 0x03),
+        0x9001,
+        vec![0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11],
+    );
+
+    fetch_one(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+    );
+    core.execute_next_completed_fetch().unwrap().unwrap();
+
+    issue_one_data_access(&core, store, &mut scheduler, &transport, MemoryTrace::new());
+
+    assert_eq!(core.read_register(reg(5)), 0x1122_3344_5566_7788);
+    assert_eq!(
+        core.data_access_events()
+            .iter()
+            .map(|event| event.kind())
+            .collect::<Vec<_>>(),
+        vec![
+            RiscvDataAccessEventKind::Issued,
+            RiscvDataAccessEventKind::Completed,
+        ]
+    );
 }
 
 #[test]

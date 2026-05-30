@@ -1,5 +1,6 @@
 use rem6_isa_riscv::{
-    AtomicMemoryOp, MemoryAccessKind, MemoryWidth, RiscvPmpAccessKind, RiscvPrivilegeMode,
+    AtomicMemoryOp, MemoryAccessKind, MemoryWidth, RiscvPmaAccessKind, RiscvPmpAccessKind,
+    RiscvPrivilegeMode,
 };
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionId, PartitionedScheduler, Tick,
@@ -211,6 +212,7 @@ impl RiscvCore {
         let size = memory_width_size(access_width(&access))?;
         let address = Address::new(access_address(&access));
         self.check_pmp_data_access(fetch_request, &access, size, address)?;
+        self.check_pma_data_access(fetch_request, &access, size, address)?;
         let line_layout = data
             .line_layout_for_access(address, size)
             .map_err(RiscvCpuError::Memory)?;
@@ -255,6 +257,7 @@ impl RiscvCore {
         let size = memory_width_size(access_width(&access))?;
         let address = Address::new(access_address(&access));
         self.check_pmp_data_access(fetch_request, &access, size, address)?;
+        self.check_pma_data_access(fetch_request, &access, size, address)?;
         let request_id = MemoryRequestId::new(self.core.agent(), self.core.next_sequence());
         let request = mmio_request(request_id, &access, size, address)?;
         let route = match bus.route_for(self.core.partition(), &request) {
@@ -308,6 +311,22 @@ impl RiscvCore {
                 RiscvPrivilegeMode::Machine,
             )
             .map_err(|error| RiscvCpuError::DataPmpAccess { fetch, error })
+    }
+
+    pub(crate) fn check_pma_data_access(
+        &self,
+        fetch: MemoryRequestId,
+        access: &MemoryAccessKind,
+        size: AccessSize,
+        address: Address,
+    ) -> Result<(), RiscvCpuError> {
+        let kind = pma_access_kind(access);
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .pma
+            .check_data_alignment(address.get(), size.bytes(), kind)
+            .map_err(|error| RiscvCpuError::DataPmaAccess { fetch, error })
     }
 
     pub(crate) fn record_data_issue(&self, issue: OutstandingDataAccess) {
@@ -641,6 +660,17 @@ fn pmp_access_kind(access: &MemoryAccessKind) -> RiscvPmpAccessKind {
         MemoryAccessKind::Store { .. }
         | MemoryAccessKind::StoreConditional { .. }
         | MemoryAccessKind::AtomicMemory { .. } => RiscvPmpAccessKind::Write,
+    }
+}
+
+fn pma_access_kind(access: &MemoryAccessKind) -> RiscvPmaAccessKind {
+    match access {
+        MemoryAccessKind::Load { .. } | MemoryAccessKind::LoadReserved { .. } => {
+            RiscvPmaAccessKind::Read
+        }
+        MemoryAccessKind::Store { .. }
+        | MemoryAccessKind::StoreConditional { .. }
+        | MemoryAccessKind::AtomicMemory { .. } => RiscvPmaAccessKind::Write,
     }
 }
 

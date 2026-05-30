@@ -823,6 +823,15 @@ Research anchors refreshed through 2026-05-30:
   instruction fetches, plain data, translated data, or MMIO data requests are
   submitted, matching gem5's TLB/PMP placement while keeping denials as typed
   CPU errors.
+- RISC-V PMA anchor refreshed on 2026-05-30: gem5's local `PMAChecker` keeps
+  uncacheable ranges and misaligned-load/store support ranges beside the TLB
+  path, then applies PMA after PMP rather than letting memory targets discover
+  an illegal request late. rem6 now owns a typed `RiscvPmaTable` with explicit
+  misaligned-support ranges. RISC-V plain data, translated data, and MMIO data
+  issue check PMA alignment after PMP and before request submission, and
+  denials remain `RiscvCpuError::DataPmaAccess` instead of callback panics or
+  post-dispatch memory errors. Uncacheable request tagging remains an alignment
+  target for the memory request contract.
 - Public gem5 issue anchor refreshed on 2026-05-30: open three-level CHI
   LR/SC race where contending RISC-V mutex paths can violate lock ownership
   under Ruby CHI.
@@ -2328,7 +2337,11 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   table denial for S/U modes, snapshot round trips, and entry-count mismatch
   restore rejection without partial live mutation. RISC-V frontend tests cover
   locked PMP rejection for instruction fetch, physical data load, and
-  translated data load before any memory request is issued. RISC-V vector-config prediction tests cover branch-prediction targets
+  translated data load before any memory request is issued. RISC-V PMA tests
+  cover default misaligned data rejection, explicit misaligned-support ranges,
+  aligned-access bypass, and CPU frontend rejection of physical and translated
+  misaligned data loads before memory issue, plus successful issue when the
+  physical range explicitly supports misalignment. RISC-V vector-config prediction tests cover branch-prediction targets
   that drop copied dynamic `vl`/`vtype` state while preserving the current hart
   vector configuration, and explicit vector-configuration updates that mutate
   `vl`/`vtype` only through the typed update path.

@@ -457,6 +457,12 @@ impl RiscvCore {
             translated.size,
             translated.physical_address,
         )?;
+        self.check_pma_data_access(
+            translated.fetch_request,
+            &translated.access,
+            translated.size,
+            translated.physical_address,
+        )?;
         let request = mmio_request(
             translated.request_id,
             &translated.access,
@@ -539,6 +545,12 @@ impl RiscvCore {
         }
 
         self.check_pmp_data_access(
+            translated.fetch_request,
+            &translated.access,
+            translated.size,
+            translated.physical_address,
+        )?;
+        self.check_pma_data_access(
             translated.fetch_request,
             &translated.access,
             translated.size,
