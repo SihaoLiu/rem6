@@ -805,6 +805,17 @@ impl RiscvCore {
         core
     }
 
+    pub fn with_data_and_store_conditional_progress_config(
+        core: CpuCore,
+        data: CpuDataConfig,
+        sc_progress_config: RiscvStoreConditionalProgressConfig,
+    ) -> Self {
+        let core = Self::with_data(core, data);
+        core.state.lock().expect("riscv core lock").sc_progress =
+            RiscvStoreConditionalProgress::new(sc_progress_config);
+        core
+    }
+
     pub fn inner(&self) -> CpuCore {
         self.core.clone()
     }

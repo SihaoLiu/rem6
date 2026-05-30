@@ -18,7 +18,10 @@ use crate::riscv_cluster_run::{
 };
 use crate::riscv_data_issue::{OutstandingDataAccess, PreparedDataParallelAccess};
 use crate::riscv_reservation::RiscvReservationTracker;
-use crate::{CpuId, OutstandingFetch, RiscvCore, RiscvCoreDriveAction, RiscvCpuError};
+use crate::{
+    CpuId, OutstandingFetch, RiscvCore, RiscvCoreDriveAction, RiscvCpuError,
+    RiscvStoreConditionalFailureDiagnostic,
+};
 
 enum PreparedParallelAction {
     Ready(RiscvClusterDriveEvent),
@@ -133,6 +136,27 @@ impl RiscvCluster {
             .find(|core| core.agent() == agent)
             .and_then(|core| core.invalidate_load_reservation_if_overlaps(address, size))
             .is_some()
+    }
+
+    pub fn store_conditional_failure_diagnostics(
+        &self,
+    ) -> Vec<RiscvStoreConditionalFailureDiagnostic> {
+        self.cores
+            .values()
+            .flat_map(RiscvCore::store_conditional_failure_diagnostics)
+            .collect()
+    }
+
+    fn run_result(
+        &self,
+        turns: Vec<RiscvClusterTurn>,
+        stop_reason: RiscvClusterStopReason,
+    ) -> RiscvClusterRun {
+        RiscvClusterRun::with_store_conditional_failure_diagnostics(
+            turns,
+            stop_reason,
+            self.store_conditional_failure_diagnostics(),
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1036,17 +1060,11 @@ impl RiscvCluster {
             )?;
             if let Some(tick) = turn.idle_tick() {
                 turns.push(turn);
-                return Ok(RiscvClusterRun::new(
-                    turns,
-                    RiscvClusterStopReason::Idle { tick },
-                ));
+                return Ok(self.run_result(turns, RiscvClusterStopReason::Idle { tick }));
             }
             if stop(&turn) {
                 turns.push(turn);
-                return Ok(RiscvClusterRun::new(
-                    turns,
-                    RiscvClusterStopReason::StopCondition,
-                ));
+                return Ok(self.run_result(turns, RiscvClusterStopReason::StopCondition));
             }
             turns.push(turn);
         }
@@ -1092,17 +1110,11 @@ impl RiscvCluster {
             )?;
             if let Some(tick) = turn.idle_tick() {
                 turns.push(turn);
-                return Ok(RiscvClusterRun::new(
-                    turns,
-                    RiscvClusterStopReason::Idle { tick },
-                ));
+                return Ok(self.run_result(turns, RiscvClusterStopReason::Idle { tick }));
             }
             if stop(&turn) {
                 turns.push(turn);
-                return Ok(RiscvClusterRun::new(
-                    turns,
-                    RiscvClusterStopReason::StopCondition,
-                ));
+                return Ok(self.run_result(turns, RiscvClusterStopReason::StopCondition));
             }
             turns.push(turn);
         }

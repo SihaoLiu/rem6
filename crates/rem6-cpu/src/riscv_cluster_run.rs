@@ -10,7 +10,7 @@ use rem6_kernel::{
 
 use crate::parallel_flow::merge_parallel_remote_flow_records;
 use crate::riscv_activity::{drive_action_partition, RiscvCoreDriveActivity};
-use crate::{CpuId, RiscvCoreDriveAction};
+use crate::{CpuId, RiscvCoreDriveAction, RiscvStoreConditionalFailureDiagnostic};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RiscvClusterDriveEvent {
@@ -559,11 +559,30 @@ impl RiscvClusterSchedulerEpoch {
 pub struct RiscvClusterRun {
     turns: Vec<RiscvClusterTurn>,
     stop_reason: RiscvClusterStopReason,
+    store_conditional_failure_diagnostics: Vec<RiscvStoreConditionalFailureDiagnostic>,
 }
 
 impl RiscvClusterRun {
     pub const fn new(turns: Vec<RiscvClusterTurn>, stop_reason: RiscvClusterStopReason) -> Self {
-        Self { turns, stop_reason }
+        Self {
+            turns,
+            stop_reason,
+            store_conditional_failure_diagnostics: Vec::new(),
+        }
+    }
+
+    pub fn with_store_conditional_failure_diagnostics(
+        turns: Vec<RiscvClusterTurn>,
+        stop_reason: RiscvClusterStopReason,
+        diagnostics: impl IntoIterator<Item = RiscvStoreConditionalFailureDiagnostic>,
+    ) -> Self {
+        Self {
+            turns,
+            stop_reason,
+            store_conditional_failure_diagnostics: collect_store_conditional_failure_diagnostics(
+                diagnostics,
+            ),
+        }
     }
 
     pub fn turns(&self) -> &[RiscvClusterTurn] {
@@ -628,6 +647,23 @@ impl RiscvClusterRun {
 
     pub const fn stop_reason(&self) -> RiscvClusterStopReason {
         self.stop_reason
+    }
+
+    pub fn store_conditional_failure_diagnostics(
+        &self,
+    ) -> &[RiscvStoreConditionalFailureDiagnostic] {
+        &self.store_conditional_failure_diagnostics
+    }
+
+    pub fn store_conditional_failure_diagnostic_count(&self) -> usize {
+        self.store_conditional_failure_diagnostics.len()
+    }
+
+    pub fn store_conditional_failure_diagnostic_count_for_cpu(&self, cpu: CpuId) -> usize {
+        self.store_conditional_failure_diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.cpu() == cpu)
+            .count()
     }
 
     pub fn scheduler_summaries(&self) -> Vec<RunSummary> {
@@ -955,6 +991,27 @@ impl RiscvClusterRun {
             RiscvClusterStopReason::StopCondition => None,
         }
     }
+}
+
+fn collect_store_conditional_failure_diagnostics<I>(
+    diagnostics: I,
+) -> Vec<RiscvStoreConditionalFailureDiagnostic>
+where
+    I: IntoIterator<Item = RiscvStoreConditionalFailureDiagnostic>,
+{
+    let mut diagnostics = diagnostics.into_iter().collect::<Vec<_>>();
+    diagnostics.sort_by_key(|diagnostic| {
+        (
+            diagnostic.first_failure_tick(),
+            diagnostic.last_failure_tick(),
+            diagnostic.cpu(),
+            diagnostic.address(),
+            diagnostic.size(),
+            diagnostic.failure_count(),
+            diagnostic.diagnostic_threshold(),
+        )
+    });
+    diagnostics
 }
 
 fn merge_parallel_partition_activity_maps(
