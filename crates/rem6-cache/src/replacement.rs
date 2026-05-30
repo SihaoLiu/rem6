@@ -1,6 +1,10 @@
 use std::error::Error;
 use std::fmt;
 
+use rem6_memory::Address;
+
+use crate::replacement_directory::CacheReplacementDirectoryConfig;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CacheReplacementPolicyKind {
     Lru,
@@ -109,6 +113,7 @@ impl CacheReplacementPolicyConfig {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CacheReplacementPolicyError {
     ZeroWays,
+    ZeroSets,
     RrpvBitsOutOfRange {
         bits: u8,
     },
@@ -127,10 +132,38 @@ pub enum CacheReplacementPolicyError {
         way: usize,
         ways: usize,
     },
+    UnknownSet {
+        set: usize,
+        sets: usize,
+    },
+    UnknownResidentLine {
+        line: Address,
+    },
     NoCandidates,
     SnapshotConfigMismatch {
         expected: Box<CacheReplacementPolicyConfig>,
         actual: Box<CacheReplacementPolicyConfig>,
+    },
+    SnapshotDirectoryConfigMismatch {
+        expected: Box<CacheReplacementDirectoryConfig>,
+        actual: Box<CacheReplacementDirectoryConfig>,
+    },
+    SnapshotDirectorySetCountMismatch {
+        sets: usize,
+        expected_sets: usize,
+    },
+    SnapshotDirectoryWayCountMismatch {
+        set: usize,
+        ways: usize,
+        expected_ways: usize,
+    },
+    SnapshotDuplicateLine {
+        line: Address,
+    },
+    SnapshotLineSetMismatch {
+        line: Address,
+        set: usize,
+        expected_set: usize,
     },
 }
 
@@ -138,6 +171,7 @@ impl fmt::Display for CacheReplacementPolicyError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::ZeroWays => write!(formatter, "cache replacement policy has no ways"),
+            Self::ZeroSets => write!(formatter, "cache replacement directory has no sets"),
             Self::RrpvBitsOutOfRange { bits } => write!(
                 formatter,
                 "cache replacement policy RRPV width {bits} is outside 1..=7"
@@ -165,10 +199,52 @@ impl fmt::Display for CacheReplacementPolicyError {
                 formatter,
                 "cache replacement policy way {way} is outside {ways} ways"
             ),
+            Self::UnknownSet { set, sets } => write!(
+                formatter,
+                "cache replacement directory set {set} is outside {sets} sets"
+            ),
+            Self::UnknownResidentLine { line } => write!(
+                formatter,
+                "cache replacement directory has no resident line {:#x}",
+                line.get()
+            ),
             Self::NoCandidates => write!(formatter, "cache replacement policy has no candidates"),
             Self::SnapshotConfigMismatch { expected, actual } => write!(
                 formatter,
                 "cache replacement snapshot config {actual:?} does not match policy config {expected:?}"
+            ),
+            Self::SnapshotDirectoryConfigMismatch { expected, actual } => write!(
+                formatter,
+                "cache replacement directory snapshot config {actual:?} does not match directory config {expected:?}"
+            ),
+            Self::SnapshotDirectorySetCountMismatch {
+                sets,
+                expected_sets,
+            } => write!(
+                formatter,
+                "cache replacement directory snapshot has {sets} sets instead of {expected_sets}"
+            ),
+            Self::SnapshotDirectoryWayCountMismatch {
+                set,
+                ways,
+                expected_ways,
+            } => write!(
+                formatter,
+                "cache replacement directory snapshot set {set} has {ways} ways instead of {expected_ways}"
+            ),
+            Self::SnapshotDuplicateLine { line } => write!(
+                formatter,
+                "cache replacement directory snapshot repeats line {:#x}",
+                line.get()
+            ),
+            Self::SnapshotLineSetMismatch {
+                line,
+                set,
+                expected_set,
+            } => write!(
+                formatter,
+                "cache replacement directory snapshot line {:#x} is in set {set} instead of {expected_set}",
+                line.get()
             ),
         }
     }

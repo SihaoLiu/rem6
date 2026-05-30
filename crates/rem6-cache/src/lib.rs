@@ -23,6 +23,7 @@ mod prefetch_sms;
 mod prefetch_stems;
 mod prefetch_throttle;
 mod replacement;
+mod replacement_directory;
 mod write_queue;
 
 pub use bank::{MsiCacheBank, MsiCacheBankError, MsiCacheBankSnapshot};
@@ -135,6 +136,10 @@ pub use replacement::{
     CacheReplacementPolicyConfig, CacheReplacementPolicyError, CacheReplacementPolicyKind,
     ReplacementDecision, ReplacementEntry, ReplacementSet, ReplacementSetSnapshot,
     ReplacementUpdate,
+};
+pub use replacement_directory::{
+    CacheReplacementDirectory, CacheReplacementDirectoryConfig, CacheReplacementDirectorySnapshot,
+    ReplacementDirectoryInstall, ReplacementDirectorySetSnapshot,
 };
 pub use write_queue::{
     CacheCleanReplacementPolicy, CacheReplacementVictim, CacheReplacementVictimState,

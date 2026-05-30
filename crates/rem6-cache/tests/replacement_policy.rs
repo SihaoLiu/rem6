@@ -1,7 +1,12 @@
 use rem6_cache::{
-    CacheReplacementPolicyConfig, CacheReplacementPolicyError, CacheReplacementPolicyKind,
-    ReplacementSet,
+    CacheReplacementDirectory, CacheReplacementDirectoryConfig, CacheReplacementPolicyConfig,
+    CacheReplacementPolicyError, CacheReplacementPolicyKind, ReplacementSet,
 };
+use rem6_memory::{Address, CacheLineLayout};
+
+fn line_layout() -> CacheLineLayout {
+    CacheLineLayout::new(16).unwrap()
+}
 
 #[test]
 fn replacement_set_lru_fifo_mru_and_lfu_follow_gem5_victim_rules() {
@@ -379,5 +384,105 @@ fn replacement_set_rejects_bad_configs_candidates_and_snapshots() {
                 CacheReplacementPolicyConfig::new(CacheReplacementPolicyKind::Fifo, 2).unwrap()
             ),
         })
+    );
+}
+
+#[test]
+fn replacement_directory_tracks_set_way_ownership_and_lru_victims() {
+    let config =
+        CacheReplacementDirectoryConfig::new(CacheReplacementPolicyKind::Lru, line_layout(), 2, 2)
+            .unwrap();
+    let mut directory = CacheReplacementDirectory::new(config);
+
+    let first = directory.install(Address::new(0x0000)).unwrap();
+    assert_eq!(first.set(), 0);
+    assert_eq!(first.way(), 0);
+    assert_eq!(first.evicted_line(), None);
+    assert_eq!(directory.way_for(Address::new(0x0000)), Some((0, 0)));
+
+    let second = directory.install(Address::new(0x0020)).unwrap();
+    assert_eq!(second.set(), 0);
+    assert_eq!(second.way(), 1);
+    assert_eq!(
+        directory.set_lines(0).unwrap(),
+        vec![Some(Address::new(0x0000)), Some(Address::new(0x0020)),]
+    );
+
+    directory.touch(Address::new(0x0000)).unwrap();
+    let third = directory.install(Address::new(0x0040)).unwrap();
+    assert_eq!(third.set(), 0);
+    assert_eq!(third.way(), 1);
+    assert_eq!(third.evicted_line(), Some(Address::new(0x0020)));
+    assert_eq!(directory.way_for(Address::new(0x0020)), None);
+    assert_eq!(directory.way_for(Address::new(0x0040)), Some((0, 1)));
+    assert_eq!(
+        directory.resident_lines(),
+        vec![Address::new(0x0000), Address::new(0x0040)]
+    );
+
+    let other_set = directory.install(Address::new(0x0010)).unwrap();
+    assert_eq!(other_set.set(), 1);
+    assert_eq!(other_set.way(), 0);
+    assert_eq!(
+        directory.set_lines(1).unwrap(),
+        vec![Some(Address::new(0x0010)), None]
+    );
+}
+
+#[test]
+fn replacement_directory_snapshot_restore_preserves_policy_state() {
+    let config = CacheReplacementDirectoryConfig::new(
+        CacheReplacementPolicyKind::TreePlru,
+        line_layout(),
+        1,
+        4,
+    )
+    .unwrap();
+    let mut directory = CacheReplacementDirectory::new(config.clone());
+
+    for line in [0x0000, 0x0010, 0x0020, 0x0030] {
+        directory.install(Address::new(line)).unwrap();
+    }
+    directory.touch(Address::new(0x0000)).unwrap();
+    let snapshot = directory.snapshot();
+
+    let expected_evict = directory
+        .install(Address::new(0x0040))
+        .unwrap()
+        .evicted_line();
+    assert!(expected_evict.is_some());
+
+    directory.restore(&snapshot).unwrap();
+    let restored_evict = directory.install(Address::new(0x0040)).unwrap();
+    assert_eq!(restored_evict.evicted_line(), expected_evict);
+
+    let mut incompatible = CacheReplacementDirectory::new(
+        CacheReplacementDirectoryConfig::new(
+            CacheReplacementPolicyKind::TreePlru,
+            line_layout(),
+            2,
+            4,
+        )
+        .unwrap(),
+    );
+    assert_eq!(
+        incompatible.restore(&snapshot),
+        Err(
+            CacheReplacementPolicyError::SnapshotDirectoryConfigMismatch {
+                expected: Box::new(incompatible.config().clone()),
+                actual: Box::new(config),
+            }
+        )
+    );
+
+    assert_eq!(
+        directory.touch(Address::new(0x0080)),
+        Err(CacheReplacementPolicyError::UnknownResidentLine {
+            line: Address::new(0x0080)
+        })
+    );
+    assert_eq!(
+        directory.set_lines(2),
+        Err(CacheReplacementPolicyError::UnknownSet { set: 2, sets: 1 })
     );
 }
