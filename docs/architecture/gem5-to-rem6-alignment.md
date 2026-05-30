@@ -467,6 +467,17 @@ isolated bugs:
   indexes: multi-distance indirect prefetches consume those lookahead values by
   degree, and a missing lookahead source cannot inflate the candidate list with
   duplicate current-index addresses.
+  Public gem5 issue #621 reports a classic-cache MSHR deferred-target hazard:
+  after a read fills a line, gem5 can move a deferred write and deferred
+  `CleanSharedReq` into the active target list, satisfy every target locally,
+  clear dirty state, and deallocate the MSHR without sending the clean
+  downstream. rem6 therefore gives each MSHR target a typed post-fill action.
+  Demand reads, writes, upgrades, atomics, and prefetches remain local
+  fill-service targets, while writeback, clean-evict, and invalidation
+  maintenance requests are exported as explicit post-fill downstream requests
+  from cache-bank fill results. That keeps maintenance traffic observable to
+  NoC, directory, and memory scheduling instead of hiding it behind a local
+  cache-block side effect.
   Public gem5 issue #3096 reports `IEW::instToCommit` overflowing an
   `IEWStruct` TimeBuffer future window when many LSQ completions become ready on
   the same tick. The local reference increments `wbCycle` after each `wbWidth`
@@ -563,6 +574,9 @@ Research anchors refreshed through 2026-05-30:
 - Public gem5 issue anchor refreshed on 2026-05-30: open Indirect Memory
   Prefetcher bug where distance greater than one repeats the same indirect
   address instead of using future index values.
+- Public gem5 issue anchor refreshed on 2026-05-30: open classic-cache MSHR
+  deferred clean bug where a read fill can locally consume and drop a deferred
+  clean request instead of forwarding it downstream after the deferred write.
 - Public gem5 issue anchor refreshed on 2026-05-30: open O3 TimeBuffer
   assertion bug where same-tick LSQ completions can overflow
   `IEW::instToCommit` future slots.
@@ -2017,9 +2031,13 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   ordering propagation, MSHR-to-transport QoS class export, per-cycle MSI bank
   run QoS counts by effective requestor and priority, parallel-cycle history
   counts by effective requestor and priority, and byte-snapshot restore of MSHR
-  queue configuration plus target QoS and ordering state, including bank-level
-  dirty-line count and address audit plus dirty data restore for MSI, MESI,
-  MOESI dirty-owner, and CHI dirty states.
+  queue configuration plus target QoS and ordering state. They also cover the
+  public gem5 issue #621 hazard by requiring MSHR completion to split local
+  fill-service targets from writeback or clean downstream requests, and by
+  requiring MSI bank fill results to expose deferred writeback traffic instead
+  of returning it as a local no-response target. The same cache-bank coverage
+  includes bank-level dirty-line count and address audit plus dirty data restore
+  for MSI, MESI, MOESI dirty-owner, and CHI dirty states.
 - Cache prefetch tests cover tagged next-line candidate generation, DCPT masked
   delta-pair matching with earliest historical replay and snapshot restore, BOP
   best-offset learning with degree candidate metadata, delayed RR training, RR

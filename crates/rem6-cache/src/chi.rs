@@ -137,6 +137,7 @@ pub struct ChiCacheControllerResult {
     state: ChiState,
     transition: Option<ChiTransition>,
     downstream_request: Option<MemoryRequest>,
+    post_fill_downstream_requests: Vec<MemoryRequest>,
     target_outcome: Option<TargetOutcome>,
     target_outcomes: Vec<TargetOutcome>,
 }
@@ -154,9 +155,18 @@ impl ChiCacheControllerResult {
             state,
             transition,
             downstream_request,
+            post_fill_downstream_requests: Vec::new(),
             target_outcomes: target_outcome.iter().cloned().collect(),
             target_outcome,
         }
+    }
+
+    pub(crate) fn with_post_fill_downstream_requests(
+        mut self,
+        requests: Vec<MemoryRequest>,
+    ) -> Self {
+        self.post_fill_downstream_requests = requests;
+        self
     }
 
     pub(crate) fn with_target_outcomes(mut self, target_outcomes: Vec<TargetOutcome>) -> Self {
@@ -179,6 +189,10 @@ impl ChiCacheControllerResult {
 
     pub fn downstream_request(&self) -> Option<&MemoryRequest> {
         self.downstream_request.as_ref()
+    }
+
+    pub fn post_fill_downstream_requests(&self) -> &[MemoryRequest] {
+        &self.post_fill_downstream_requests
     }
 
     pub fn target_outcome(&self) -> Option<&TargetOutcome> {

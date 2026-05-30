@@ -45,7 +45,7 @@ pub use moesi_bank::{MoesiCacheBank, MoesiCacheBankError, MoesiCacheBankSnapshot
 pub use mshr::{
     MshrCompletion, MshrEntry, MshrHandle, MshrQosClass, MshrQosProfile, MshrQueue,
     MshrQueueConfig, MshrQueueError, MshrQueueSnapshot, MshrQueueUpdate, MshrTarget,
-    MshrTargetSource,
+    MshrTargetPostFillAction, MshrTargetSource,
 };
 pub use msi::{
     CacheControllerError, CacheControllerResult, CacheControllerResultKind, MsiCacheController,

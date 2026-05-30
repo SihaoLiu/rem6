@@ -1,7 +1,10 @@
-use rem6_cache::{MshrQosClass, MshrQueue, MshrQueueConfig, MshrQueueError, MshrTargetSource};
+use rem6_cache::{
+    MshrQosClass, MshrQueue, MshrQueueConfig, MshrQueueError, MshrTargetPostFillAction,
+    MshrTargetSource,
+};
 use rem6_memory::{
-    AccessSize, Address, AgentId, CacheLineLayout, MemoryAccessOrdering, MemoryBarrierSet,
-    MemoryRequest, MemoryRequestId,
+    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryAccessOrdering,
+    MemoryBarrierSet, MemoryOperation, MemoryRequest, MemoryRequestId,
 };
 
 fn layout() -> CacheLineLayout {
@@ -20,6 +23,29 @@ fn request(sequence: u64, address: u64) -> MemoryRequest {
 
 fn ordered_request(sequence: u64, address: u64, ordering: MemoryAccessOrdering) -> MemoryRequest {
     request(sequence, address).with_ordering(ordering)
+}
+
+fn write_request(sequence: u64, address: u64, data: Vec<u8>) -> MemoryRequest {
+    let access_size = AccessSize::new(data.len() as u64).unwrap();
+    MemoryRequest::write(
+        MemoryRequestId::new(AgentId::new(7), sequence),
+        Address::new(address),
+        access_size,
+        data,
+        ByteMask::full(access_size).unwrap(),
+        layout(),
+    )
+    .unwrap()
+}
+
+fn clean_writeback(sequence: u64, line: u64, value: u8) -> MemoryRequest {
+    MemoryRequest::writeback_clean(
+        MemoryRequestId::new(AgentId::new(7), sequence),
+        Address::new(line),
+        vec![value; layout().bytes() as usize],
+        layout(),
+    )
+    .unwrap()
 }
 
 #[test]
@@ -89,6 +115,51 @@ fn mshr_queue_allocates_merges_limits_targets_and_reuses_entries() {
         .allocate_or_merge(request(3, 0x2000), 8, MshrTargetSource::Demand, true)
         .unwrap();
     assert_eq!(reused.handle().index(), 1);
+}
+
+#[test]
+fn mshr_completion_splits_post_fill_clean_targets_from_local_targets() {
+    let mut queue = MshrQueue::new(MshrQueueConfig::new(1, 3, 0).unwrap());
+    let read = request(20, 0x1000);
+    let write = write_request(21, 0x1018, vec![0xaa; 8]);
+    let clean = clean_writeback(22, 0x1000, 0xbb);
+
+    let allocated = queue
+        .allocate_or_merge(read.clone(), 3, MshrTargetSource::Demand, true)
+        .unwrap();
+    queue
+        .allocate_or_merge(write.clone(), 4, MshrTargetSource::Demand, true)
+        .unwrap();
+    queue
+        .allocate_or_merge(clean.clone(), 5, MshrTargetSource::Demand, false)
+        .unwrap();
+
+    let completion = queue.complete(allocated.handle()).unwrap();
+
+    assert_eq!(
+        completion
+            .targets()
+            .iter()
+            .map(|target| target.request().id().sequence())
+            .collect::<Vec<_>>(),
+        vec![20, 21, 22]
+    );
+    assert_eq!(
+        completion
+            .local_targets()
+            .map(|target| target.request().id().sequence())
+            .collect::<Vec<_>>(),
+        vec![20, 21]
+    );
+    assert_eq!(
+        completion.targets()[2].post_fill_action(),
+        MshrTargetPostFillAction::ForwardDownstream
+    );
+
+    let downstream = completion.post_fill_downstream_requests();
+    assert_eq!(downstream, vec![clean]);
+    assert_eq!(downstream[0].operation(), MemoryOperation::WritebackClean);
+    assert_eq!(downstream[0].data().unwrap(), &[0xbb; 64]);
 }
 
 #[test]

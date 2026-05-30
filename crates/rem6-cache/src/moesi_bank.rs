@@ -628,8 +628,11 @@ impl MoesiCacheBank {
         };
 
         if let Some(completion) = completion {
+            let post_fill_downstream_requests = completion.post_fill_downstream_requests();
             let outcomes = self.target_outcomes_for_completion(&completion)?;
-            return Ok(result.with_target_outcomes(outcomes));
+            return Ok(result
+                .with_target_outcomes(outcomes)
+                .with_post_fill_downstream_requests(post_fill_downstream_requests));
         }
 
         Ok(result)
@@ -814,8 +817,7 @@ impl MoesiCacheBank {
         completion: &MshrCompletion,
     ) -> Result<Vec<TargetOutcome>, MoesiCacheBankError> {
         completion
-            .targets()
-            .iter()
+            .local_targets()
             .map(|target| self.complete_mshr_target(target.request()))
             .collect()
     }

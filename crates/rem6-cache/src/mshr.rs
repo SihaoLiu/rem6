@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
-use rem6_memory::{Address, MemoryRequest};
+use rem6_memory::{Address, MemoryOperation, MemoryRequest};
 use rem6_transport::TransportQosClass;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -23,6 +23,12 @@ pub enum MshrTargetSource {
     Demand,
     Snoop,
     Prefetch,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MshrTargetPostFillAction {
+    SatisfyLocally,
+    ForwardDownstream,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -258,6 +264,16 @@ impl MshrTarget {
 
     pub const fn qos(&self) -> Option<MshrQosClass> {
         self.qos
+    }
+
+    pub const fn post_fill_action(&self) -> MshrTargetPostFillAction {
+        match self.request.operation() {
+            MemoryOperation::WritebackClean
+            | MemoryOperation::WritebackDirty
+            | MemoryOperation::CleanEvict
+            | MemoryOperation::Invalidate => MshrTargetPostFillAction::ForwardDownstream,
+            _ => MshrTargetPostFillAction::SatisfyLocally,
+        }
     }
 }
 
@@ -598,6 +614,22 @@ impl MshrCompletion {
 
     pub fn targets(&self) -> &[MshrTarget] {
         &self.targets
+    }
+
+    pub fn local_targets(&self) -> impl Iterator<Item = &MshrTarget> {
+        self.targets
+            .iter()
+            .filter(|target| target.post_fill_action() == MshrTargetPostFillAction::SatisfyLocally)
+    }
+
+    pub fn post_fill_downstream_requests(&self) -> Vec<MemoryRequest> {
+        self.targets
+            .iter()
+            .filter(|target| {
+                target.post_fill_action() == MshrTargetPostFillAction::ForwardDownstream
+            })
+            .map(|target| target.request().clone())
+            .collect()
     }
 }
 

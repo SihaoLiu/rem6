@@ -1,7 +1,8 @@
 use rem6_cache::{
     CacheControllerError, CacheControllerResultKind, CacheWriteQueueConfig,
-    CacheWriteQueueEntryKind, CacheWriteQueueError, MshrQosClass, MshrQueueConfig, MshrQueueError,
-    MsiCacheBank, MsiCacheBankError,
+    CacheWriteQueueEntryKind, CacheWriteQueueError, MshrEntry, MshrQosClass, MshrQueueConfig,
+    MshrQueueError, MshrQueueSnapshot, MshrTarget, MshrTargetSource, MsiCacheBank,
+    MsiCacheBankError, MsiCacheBankSnapshot,
 };
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryError, MemoryOperation,
@@ -241,6 +242,74 @@ fn msi_cache_bank_mshr_coalesces_same_line_read_misses() {
     assert_eq!(bank.pending_fill_count(), 0);
     assert_eq!(bank.mshr_allocated_count(), 0);
     assert_eq!(bank.state(Address::new(0x1000)), Some(MsiState::Shared));
+}
+
+#[test]
+fn msi_cache_bank_exposes_post_fill_writeback_targets_downstream() {
+    let cache_agent = agent(7);
+    let config = MshrQueueConfig::new(2, 3, 0).unwrap();
+    let mut bank = MsiCacheBank::new_with_mshr(cache_agent, layout(), config.clone());
+
+    let first = read(cache_agent, 120, 0x1004);
+    let first_miss = bank.accept_cpu_request(first.clone()).unwrap();
+    let first_downstream = first_miss.downstream_request().unwrap().clone();
+
+    let snapshot = bank.snapshot();
+    let current_mshr = snapshot.mshr().unwrap();
+    let current_entry = &current_mshr.entries()[0];
+    let clean = clean_writeback(cache_agent, 121, 0x1000, 0xcc);
+    let mut targets = current_entry.targets().to_vec();
+    targets.push(MshrTarget::from_parts(
+        clean.clone(),
+        1,
+        1,
+        MshrTargetSource::Demand,
+        false,
+        None,
+    ));
+    let mshr_snapshot = MshrQueueSnapshot::new(
+        config.clone(),
+        vec![MshrEntry::from_parts(
+            current_entry.handle(),
+            current_entry.line(),
+            current_entry.ready_tick(),
+            current_entry.order(),
+            current_entry.in_service(),
+            current_entry.pending_modified(),
+            targets,
+        )],
+        current_mshr.next_handle(),
+        current_mshr.next_order(),
+    );
+    let restored_snapshot = MsiCacheBankSnapshot::new_with_mshr(
+        snapshot.agent(),
+        snapshot.layout(),
+        snapshot.next_sequence(),
+        snapshot.lines().to_vec(),
+        mshr_snapshot,
+    );
+    let mut restored = MsiCacheBank::new_with_mshr(cache_agent, layout(), config);
+    restored.restore(&restored_snapshot).unwrap();
+
+    let fill_result = restored.accept_fill(fill(&first_downstream, 0x44)).unwrap();
+
+    assert_eq!(fill_result.kind(), CacheControllerResultKind::Fill);
+    assert_eq!(
+        fill_result
+            .target_outcomes()
+            .iter()
+            .map(response_id)
+            .collect::<Vec<_>>(),
+        vec![first.id()]
+    );
+    assert_eq!(fill_result.post_fill_downstream_requests(), &[clean]);
+    assert_eq!(
+        fill_result.post_fill_downstream_requests()[0]
+            .data()
+            .unwrap(),
+        &[0xcc; 16]
+    );
+    assert_eq!(restored.mshr_allocated_count(), 0);
 }
 
 #[test]
