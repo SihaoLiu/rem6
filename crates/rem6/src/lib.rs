@@ -325,6 +325,7 @@ pub struct Rem6ExecutionSummary {
     parallel_scheduler_batch_worker_ticks: u64,
     parallel_scheduler_batch_worker_capacity_ticks: u64,
     parallel_scheduler_batch_idle_worker_ticks: u64,
+    parallel_scheduler_partitions: Vec<Rem6ParallelPartitionSummary>,
     cores: Vec<Rem6CoreSummary>,
     memory_dumps: Vec<Rem6MemoryDump>,
 }
@@ -361,6 +362,16 @@ impl Rem6ExecutionSummary {
             .join(",");
         format!("[{dumps}]")
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Rem6ParallelPartitionSummary {
+    partition: u32,
+    workers: u64,
+    dispatches: u64,
+    remote_sends: u64,
+    remote_receives: u64,
+    max_pending_events: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -768,6 +779,58 @@ fn run_stats_json(
             StatResetPolicy::Monotonic,
             execution.parallel_scheduler_batch_idle_worker_ticks,
         )?;
+        for partition in &execution.parallel_scheduler_partitions {
+            increment_stat(
+                &mut stats,
+                &format!(
+                    "sim.parallel.partition{}.scheduler.workers",
+                    partition.partition
+                ),
+                "Count",
+                StatResetPolicy::Monotonic,
+                partition.workers,
+            )?;
+            increment_stat(
+                &mut stats,
+                &format!(
+                    "sim.parallel.partition{}.scheduler.dispatches",
+                    partition.partition
+                ),
+                "Count",
+                StatResetPolicy::Monotonic,
+                partition.dispatches,
+            )?;
+            increment_stat(
+                &mut stats,
+                &format!(
+                    "sim.parallel.partition{}.scheduler.remote_sends",
+                    partition.partition
+                ),
+                "Count",
+                StatResetPolicy::Monotonic,
+                partition.remote_sends,
+            )?;
+            increment_stat(
+                &mut stats,
+                &format!(
+                    "sim.parallel.partition{}.scheduler.remote_receives",
+                    partition.partition
+                ),
+                "Count",
+                StatResetPolicy::Monotonic,
+                partition.remote_receives,
+            )?;
+            increment_stat(
+                &mut stats,
+                &format!(
+                    "sim.parallel.partition{}.scheduler.max_pending_events",
+                    partition.partition
+                ),
+                "Count",
+                StatResetPolicy::Monotonic,
+                partition.max_pending_events,
+            )?;
+        }
         for core in &execution.cores {
             increment_stat(
                 &mut stats,
@@ -1057,9 +1120,24 @@ fn execution_summary(
             .parallel_scheduler_batch_worker_capacity_ticks(),
         parallel_scheduler_batch_idle_worker_ticks: run
             .parallel_scheduler_batch_idle_worker_ticks(),
+        parallel_scheduler_partitions: parallel_partition_summaries(run),
         cores,
         memory_dumps: read_memory_dumps(store, line_layout, config.memory_dumps())?,
     })
+}
+
+fn parallel_partition_summaries(run: &RiscvSystemRun) -> Vec<Rem6ParallelPartitionSummary> {
+    run.parallel_scheduler_partition_activities()
+        .into_iter()
+        .map(|(partition, activity)| Rem6ParallelPartitionSummary {
+            partition: partition.index(),
+            workers: activity.worker_count() as u64,
+            dispatches: activity.dispatch_count() as u64,
+            remote_sends: activity.remote_send_count() as u64,
+            remote_receives: activity.remote_receive_count() as u64,
+            max_pending_events: activity.max_pending_events() as u64,
+        })
+        .collect()
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
