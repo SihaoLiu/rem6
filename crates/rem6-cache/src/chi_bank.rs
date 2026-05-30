@@ -10,11 +10,13 @@ use rem6_protocol_chi::{ChiEvent, ChiLineId, ChiState};
 use rem6_transport::TargetOutcome;
 
 use crate::{
-    CacheWriteQueue, CacheWriteQueueConfig, CacheWriteQueueError, CacheWriteQueueHandle,
-    CacheWriteQueueIssue, CacheWriteQueueSnapshot, CacheWriteQueueUpdate, ChiCacheController,
-    ChiCacheControllerError, ChiCacheControllerResult, ChiCacheControllerResultKind,
-    ChiCacheControllerSnapshot, MshrCompletion, MshrHandle, MshrQosClass, MshrQosProfile,
-    MshrQueue, MshrQueueConfig, MshrQueueError, MshrQueueSnapshot, MshrTargetSource,
+    CacheReplacementDirectory, CacheReplacementDirectoryConfig, CacheReplacementDirectorySnapshot,
+    CacheReplacementPolicyError, CacheWriteQueue, CacheWriteQueueConfig, CacheWriteQueueError,
+    CacheWriteQueueHandle, CacheWriteQueueIssue, CacheWriteQueueSnapshot, CacheWriteQueueUpdate,
+    ChiCacheController, ChiCacheControllerError, ChiCacheControllerResult,
+    ChiCacheControllerResultKind, ChiCacheControllerSnapshot, MshrCompletion, MshrHandle,
+    MshrQosClass, MshrQosProfile, MshrQueue, MshrQueueConfig, MshrQueueError, MshrQueueSnapshot,
+    MshrTargetSource,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -22,11 +24,19 @@ pub enum ChiCacheBankError {
     Controller(ChiCacheControllerError),
     Mshr(MshrQueueError),
     WriteQueue(CacheWriteQueueError),
+    Replacement(CacheReplacementPolicyError),
+    ReplacementDirectoryLayoutMismatch {
+        expected: CacheLineLayout,
+        actual: CacheLineLayout,
+    },
     WrongAgent {
         expected: AgentId,
         actual: AgentId,
     },
     WriteQueueDisabled,
+    DirtyReplacementRequiresWriteQueue {
+        line: Address,
+    },
     UnknownPendingFill {
         response: MemoryRequestId,
     },
@@ -47,6 +57,10 @@ pub enum ChiCacheBankError {
         snapshot_has_write_queue: bool,
         bank_has_write_queue: bool,
     },
+    SnapshotReplacementDirectoryModeMismatch {
+        snapshot_has_replacement_directory: bool,
+        bank_has_replacement_directory: bool,
+    },
     DuplicateSnapshotLine {
         line: Address,
     },
@@ -61,6 +75,13 @@ impl fmt::Display for ChiCacheBankError {
             Self::Controller(error) => write!(formatter, "{error}"),
             Self::Mshr(error) => write!(formatter, "{error}"),
             Self::WriteQueue(error) => write!(formatter, "{error}"),
+            Self::Replacement(error) => write!(formatter, "{error}"),
+            Self::ReplacementDirectoryLayoutMismatch { expected, actual } => write!(
+                formatter,
+                "CHI cache bank replacement directory line size {} cannot attach to bank line size {}",
+                actual.bytes(),
+                expected.bytes()
+            ),
             Self::WrongAgent { expected, actual } => write!(
                 formatter,
                 "CHI cache bank for agent {} cannot accept request from agent {}",
@@ -68,6 +89,11 @@ impl fmt::Display for ChiCacheBankError {
                 actual.get()
             ),
             Self::WriteQueueDisabled => write!(formatter, "CHI cache bank has no write queue"),
+            Self::DirtyReplacementRequiresWriteQueue { line } => write!(
+                formatter,
+                "CHI cache bank cannot evict dirty line {:#x} without replacement writeback support",
+                line.get()
+            ),
             Self::UnknownPendingFill { response } => write!(
                 formatter,
                 "CHI cache bank has no pending fill for response {} from agent {}",
@@ -106,6 +132,13 @@ impl fmt::Display for ChiCacheBankError {
                 formatter,
                 "CHI cache bank snapshot write queue mode {snapshot_has_write_queue} cannot restore bank write queue mode {bank_has_write_queue}"
             ),
+            Self::SnapshotReplacementDirectoryModeMismatch {
+                snapshot_has_replacement_directory,
+                bank_has_replacement_directory,
+            } => write!(
+                formatter,
+                "CHI cache bank snapshot replacement directory mode {snapshot_has_replacement_directory} cannot restore bank replacement directory mode {bank_has_replacement_directory}"
+            ),
             Self::DuplicateSnapshotLine { line } => {
                 write!(formatter, "CHI cache bank snapshot repeats line {:#x}", line.get())
             }
@@ -125,13 +158,17 @@ impl Error for ChiCacheBankError {
             Self::Controller(error) => Some(error),
             Self::Mshr(error) => Some(error),
             Self::WriteQueue(error) => Some(error),
-            Self::WrongAgent { .. }
+            Self::Replacement(error) => Some(error),
+            Self::ReplacementDirectoryLayoutMismatch { .. }
+            | Self::WrongAgent { .. }
             | Self::WriteQueueDisabled
+            | Self::DirtyReplacementRequiresWriteQueue { .. }
             | Self::UnknownPendingFill { .. }
             | Self::UnknownSnoopLine { .. }
             | Self::SnapshotIdentityMismatch { .. }
             | Self::SnapshotMshrModeMismatch { .. }
             | Self::SnapshotWriteQueueModeMismatch { .. }
+            | Self::SnapshotReplacementDirectoryModeMismatch { .. }
             | Self::DuplicateSnapshotLine { .. }
             | Self::DuplicateSnapshotPendingFill { .. } => None,
         }
@@ -156,6 +193,12 @@ impl From<CacheWriteQueueError> for ChiCacheBankError {
     }
 }
 
+impl From<CacheReplacementPolicyError> for ChiCacheBankError {
+    fn from(error: CacheReplacementPolicyError) -> Self {
+        Self::Replacement(error)
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ChiCacheBankSnapshot {
     agent: AgentId,
@@ -164,6 +207,7 @@ pub struct ChiCacheBankSnapshot {
     lines: Vec<ChiCacheControllerSnapshot>,
     mshr: Option<MshrQueueSnapshot>,
     write_queue: Option<CacheWriteQueueSnapshot>,
+    replacement_directory: Option<CacheReplacementDirectorySnapshot>,
 }
 
 impl ChiCacheBankSnapshot {
@@ -180,6 +224,7 @@ impl ChiCacheBankSnapshot {
             lines,
             mshr: None,
             write_queue: None,
+            replacement_directory: None,
         }
     }
 
@@ -197,11 +242,20 @@ impl ChiCacheBankSnapshot {
             lines,
             mshr: Some(mshr),
             write_queue: None,
+            replacement_directory: None,
         }
     }
 
     pub fn with_write_queue(mut self, write_queue: CacheWriteQueueSnapshot) -> Self {
         self.write_queue = Some(write_queue);
+        self
+    }
+
+    pub fn with_replacement_directory(
+        mut self,
+        replacement_directory: CacheReplacementDirectorySnapshot,
+    ) -> Self {
+        self.replacement_directory = Some(replacement_directory);
         self
     }
 
@@ -227,6 +281,10 @@ impl ChiCacheBankSnapshot {
 
     pub fn write_queue(&self) -> Option<&CacheWriteQueueSnapshot> {
         self.write_queue.as_ref()
+    }
+
+    pub fn replacement_directory(&self) -> Option<&CacheReplacementDirectorySnapshot> {
+        self.replacement_directory.as_ref()
     }
 
     pub fn mshr_qos_profile(&self) -> Option<MshrQosProfile> {
@@ -275,6 +333,7 @@ pub struct ChiCacheBank {
     pending_fills: BTreeMap<MemoryRequestId, PendingBankFill>,
     mshr: Option<MshrQueue>,
     write_queue: Option<CacheWriteQueue>,
+    replacement_directory: Option<CacheReplacementDirectory>,
 }
 
 impl ChiCacheBank {
@@ -287,6 +346,7 @@ impl ChiCacheBank {
             pending_fills: BTreeMap::new(),
             mshr: None,
             write_queue: None,
+            replacement_directory: None,
         }
     }
 
@@ -303,6 +363,7 @@ impl ChiCacheBank {
             pending_fills: BTreeMap::new(),
             mshr: Some(MshrQueue::new(mshr_config)),
             write_queue: None,
+            replacement_directory: None,
         }
     }
 
@@ -319,6 +380,7 @@ impl ChiCacheBank {
             pending_fills: BTreeMap::new(),
             mshr: None,
             write_queue: Some(CacheWriteQueue::new(write_queue_config)),
+            replacement_directory: None,
         }
     }
 
@@ -336,7 +398,31 @@ impl ChiCacheBank {
             pending_fills: BTreeMap::new(),
             mshr: Some(MshrQueue::new(mshr_config)),
             write_queue: Some(CacheWriteQueue::new(write_queue_config)),
+            replacement_directory: None,
         }
+    }
+
+    pub fn new_with_replacement_directory(
+        agent: AgentId,
+        layout: CacheLineLayout,
+        replacement_config: CacheReplacementDirectoryConfig,
+    ) -> Result<Self, ChiCacheBankError> {
+        if replacement_config.line_layout() != layout {
+            return Err(ChiCacheBankError::ReplacementDirectoryLayoutMismatch {
+                expected: layout,
+                actual: replacement_config.line_layout(),
+            });
+        }
+        Ok(Self {
+            agent,
+            layout,
+            next_sequence: 0,
+            lines: BTreeMap::new(),
+            pending_fills: BTreeMap::new(),
+            mshr: None,
+            write_queue: None,
+            replacement_directory: Some(CacheReplacementDirectory::new(replacement_config)),
+        })
     }
 
     pub const fn agent(&self) -> AgentId {
@@ -361,6 +447,12 @@ impl ChiCacheBank {
 
     pub fn line_addresses(&self) -> Vec<Address> {
         self.lines.keys().copied().collect()
+    }
+
+    pub fn replacement_way_for(&self, address: Address) -> Option<(usize, usize)> {
+        self.replacement_directory
+            .as_ref()
+            .and_then(|directory| directory.way_for(address))
     }
 
     pub fn pending_fill_line(&self, response: MemoryRequestId) -> Option<Address> {
@@ -439,8 +531,14 @@ impl ChiCacheBank {
             ),
             None => ChiCacheBankSnapshot::new(self.agent, self.layout, self.next_sequence, lines),
         };
-        match &self.write_queue {
+        let snapshot = match &self.write_queue {
             Some(write_queue) => snapshot.with_write_queue(write_queue.snapshot()),
+            None => snapshot,
+        };
+        match &self.replacement_directory {
+            Some(replacement_directory) => {
+                snapshot.with_replacement_directory(replacement_directory.snapshot())
+            }
             None => snapshot,
         }
     }
@@ -487,6 +585,34 @@ impl ChiCacheBank {
             }
         };
 
+        let restored_replacement_directory = match (
+            &self.replacement_directory,
+            snapshot.replacement_directory(),
+        ) {
+            (Some(directory), Some(snapshot_directory)) => {
+                let mut restored = CacheReplacementDirectory::new(directory.config().clone());
+                restored.restore(snapshot_directory)?;
+                Some(restored)
+            }
+            (Some(_), None) => {
+                return Err(
+                    ChiCacheBankError::SnapshotReplacementDirectoryModeMismatch {
+                        snapshot_has_replacement_directory: false,
+                        bank_has_replacement_directory: true,
+                    },
+                );
+            }
+            (None, None) => None,
+            (None, Some(_)) => {
+                return Err(
+                    ChiCacheBankError::SnapshotReplacementDirectoryModeMismatch {
+                        snapshot_has_replacement_directory: true,
+                        bank_has_replacement_directory: false,
+                    },
+                );
+            }
+        };
+
         let mut lines = BTreeMap::new();
         let mut pending_fills = BTreeMap::new();
         for line_snapshot in snapshot.lines() {
@@ -514,6 +640,7 @@ impl ChiCacheBank {
         self.pending_fills = pending_fills;
         self.mshr = restored_mshr;
         self.write_queue = restored_write_queue;
+        self.replacement_directory = restored_replacement_directory;
         Ok(())
     }
 
@@ -588,6 +715,8 @@ impl ChiCacheBank {
             };
             self.pending_fills
                 .insert(downstream.id(), PendingBankFill { line, mshr });
+        } else if result.kind() == ChiCacheControllerResultKind::Hit {
+            self.touch_replacement_line(line)?;
         }
         Ok(result)
     }
@@ -605,11 +734,32 @@ impl ChiCacheBank {
                 .ok_or(ChiCacheBankError::UnknownPendingFill {
                     response: response_id,
                 })?;
+        let controller_snapshot = self
+            .lines
+            .get(&pending.line)
+            .expect("pending fill references an existing CHI cache line")
+            .snapshot();
+        let replacement_snapshot = self
+            .replacement_directory
+            .as_ref()
+            .map(CacheReplacementDirectory::snapshot);
         let controller = self
             .lines
             .get_mut(&pending.line)
             .expect("pending fill references an existing CHI cache line");
         let result = controller.accept_fill(response, event)?;
+        if let Err(error) = self.install_replacement_line(pending.line) {
+            self.lines
+                .get_mut(&pending.line)
+                .expect("pending fill references an existing CHI cache line")
+                .restore(&controller_snapshot)?;
+            if let (Some(directory), Some(snapshot)) =
+                (&mut self.replacement_directory, &replacement_snapshot)
+            {
+                directory.restore(snapshot)?;
+            }
+            return Err(error);
+        }
         self.pending_fills.remove(&response_id);
 
         let completion = match pending.mshr {
@@ -778,6 +928,39 @@ impl ChiCacheBank {
         self.write_queue
             .as_mut()
             .ok_or(ChiCacheBankError::WriteQueueDisabled)
+    }
+
+    fn touch_replacement_line(&mut self, line: Address) -> Result<(), ChiCacheBankError> {
+        if let Some(directory) = &mut self.replacement_directory {
+            directory.touch(line)?;
+        }
+        Ok(())
+    }
+
+    fn install_replacement_line(&mut self, line: Address) -> Result<(), ChiCacheBankError> {
+        let Some(directory) = &mut self.replacement_directory else {
+            return Ok(());
+        };
+        let install = directory.install(line)?;
+        let Some(evicted_line) = install.evicted_line() else {
+            return Ok(());
+        };
+        if evicted_line == self.layout.line_address(line) {
+            return Ok(());
+        }
+        if self
+            .lines
+            .get(&evicted_line)
+            .is_some_and(|controller| controller.state().is_dirty())
+        {
+            return Err(ChiCacheBankError::DirtyReplacementRequiresWriteQueue {
+                line: evicted_line,
+            });
+        }
+        self.lines.remove(&evicted_line);
+        self.pending_fills
+            .retain(|_, pending| pending.line != evicted_line);
+        Ok(())
     }
 
     fn can_merge_pending_read_miss(&self, line: Address, request: &MemoryRequest) -> bool {

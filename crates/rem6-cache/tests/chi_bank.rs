@@ -1,6 +1,7 @@
 use rem6_cache::{
-    CacheWriteQueueConfig, CacheWriteQueueEntryKind, CacheWriteQueueError, ChiCacheBank,
-    ChiCacheBankError, ChiCacheControllerError, MshrQosClass, MshrQueueConfig,
+    CacheReplacementDirectoryConfig, CacheReplacementPolicyKind, CacheWriteQueueConfig,
+    CacheWriteQueueEntryKind, CacheWriteQueueError, ChiCacheBank, ChiCacheBankError,
+    ChiCacheControllerError, MshrQosClass, MshrQueueConfig,
 };
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryError, MemoryOperation,
@@ -124,6 +125,21 @@ fn response_id(outcome: &TargetOutcome) -> MemoryRequestId {
     }
 }
 
+fn lru_replacement_config(sets: usize, ways: usize) -> CacheReplacementDirectoryConfig {
+    CacheReplacementDirectoryConfig::new(CacheReplacementPolicyKind::Lru, layout(), sets, ways)
+        .unwrap()
+}
+
+fn fill_read_line(bank: &mut ChiCacheBank, cache_agent: AgentId, sequence: u64, address: u64) {
+    let request = read(cache_agent, sequence, address);
+    let miss = bank.accept_cpu_request(request).unwrap();
+    bank.accept_fill(
+        fill(miss.downstream_request().unwrap(), sequence as u8),
+        ChiEvent::CompDataSharedClean,
+    )
+    .unwrap();
+}
+
 #[test]
 fn chi_cache_bank_mshr_coalesces_same_line_read_misses() {
     let cache_agent = agent(40);
@@ -164,6 +180,105 @@ fn chi_cache_bank_mshr_coalesces_same_line_read_misses() {
     assert_eq!(response_data(&fill_result.target_outcomes()[1]), &[0x77; 8]);
     assert_eq!(bank.pending_fill_count(), 0);
     assert_eq!(bank.mshr_allocated_count(), 0);
+}
+
+#[test]
+fn chi_cache_bank_replacement_directory_evicts_clean_lru_lines() {
+    let cache_agent = agent(40);
+    let config = lru_replacement_config(1, 2);
+    let mut bank =
+        ChiCacheBank::new_with_replacement_directory(cache_agent, layout(), config.clone())
+            .unwrap();
+
+    fill_read_line(&mut bank, cache_agent, 500, 0x1004);
+    fill_read_line(&mut bank, cache_agent, 501, 0x1014);
+    assert_eq!(
+        bank.line_addresses(),
+        vec![Address::new(0x1000), Address::new(0x1010)]
+    );
+    assert_eq!(bank.replacement_way_for(Address::new(0x1000)), Some((0, 0)));
+    assert_eq!(bank.replacement_way_for(Address::new(0x1010)), Some((0, 1)));
+
+    let hit = bank
+        .accept_cpu_request(read(cache_agent, 502, 0x1004))
+        .unwrap();
+    assert_eq!(response_data(hit.target_outcome().unwrap()), &[244; 8]);
+    let snapshot = bank.snapshot();
+
+    fill_read_line(&mut bank, cache_agent, 503, 0x1024);
+    assert_eq!(bank.state(Address::new(0x1010)), None);
+    assert_eq!(
+        bank.line_addresses(),
+        vec![Address::new(0x1000), Address::new(0x1020)]
+    );
+    assert_eq!(bank.replacement_way_for(Address::new(0x1010)), None);
+    assert_eq!(bank.replacement_way_for(Address::new(0x1020)), Some((0, 1)));
+
+    bank.restore(&snapshot).unwrap();
+    fill_read_line(&mut bank, cache_agent, 504, 0x1024);
+    assert_eq!(
+        bank.line_addresses(),
+        vec![Address::new(0x1000), Address::new(0x1020)]
+    );
+    assert_eq!(bank.replacement_way_for(Address::new(0x1020)), Some((0, 1)));
+
+    let mut incompatible =
+        ChiCacheBank::new_with_replacement_directory(cache_agent, layout(), config).unwrap();
+    assert_eq!(
+        incompatible.restore(&ChiCacheBank::new(cache_agent, layout()).snapshot()),
+        Err(
+            ChiCacheBankError::SnapshotReplacementDirectoryModeMismatch {
+                snapshot_has_replacement_directory: false,
+                bank_has_replacement_directory: true,
+            }
+        )
+    );
+}
+
+#[test]
+fn chi_cache_bank_replacement_directory_rejects_dirty_eviction_without_write_queue() {
+    let cache_agent = agent(40);
+    let mut bank = ChiCacheBank::new_with_replacement_directory(
+        cache_agent,
+        layout(),
+        lru_replacement_config(1, 1),
+    )
+    .unwrap();
+
+    let store = write(cache_agent, 520, 0x2004, vec![0xde, 0xad]);
+    let store_miss = bank.accept_cpu_request(store).unwrap();
+    bank.accept_fill(
+        fill(store_miss.downstream_request().unwrap(), 0x00),
+        ChiEvent::CompDataUniqueDirty,
+    )
+    .unwrap();
+    assert_eq!(
+        bank.state(Address::new(0x2000)),
+        Some(ChiState::UniqueDirty)
+    );
+
+    let read_miss = bank
+        .accept_cpu_request(read(cache_agent, 521, 0x2014))
+        .unwrap();
+    assert_eq!(
+        bank.accept_fill(
+            fill(read_miss.downstream_request().unwrap(), 0x11),
+            ChiEvent::CompDataSharedClean,
+        ),
+        Err(ChiCacheBankError::DirtyReplacementRequiresWriteQueue {
+            line: Address::new(0x2000)
+        })
+    );
+    assert_eq!(
+        bank.state(Address::new(0x2000)),
+        Some(ChiState::UniqueDirty)
+    );
+    assert_eq!(bank.pending_fill_count(), 1);
+    assert_eq!(
+        bank.state(Address::new(0x2010)),
+        Some(ChiState::InvalidToSharedClean)
+    );
+    assert_eq!(bank.replacement_way_for(Address::new(0x2000)), Some((0, 0)));
 }
 
 #[test]

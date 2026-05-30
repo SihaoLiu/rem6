@@ -203,7 +203,10 @@ isolated bugs:
   set state and set/way residency in protocol-neutral typed structures: the
   protocol controller can ask for a victim or touch a resident line, but the
   policy state, line ownership, snapshot restore, and validation are not hidden
-  in generated protocol code or callback side effects.
+  in generated protocol code or callback side effects. CHI cache banks now use
+  that boundary for clean-line capacity eviction, preserve replacement state in
+  bank snapshots, and reject dirty capacity victims with typed state instead of
+  silently dropping ownership before writeback integration exists.
 - Configuration and experiment reproducibility are too script-dependent in
   gem5. Official documentation describes embedded Python configuration,
   behind-the-scenes port connection behavior, and command-line options whose
@@ -530,8 +533,11 @@ Implementation evidence through 2026-05-30:
   controller growth does not recreate gem5-style mixed protocol controller
   monoliths. The same crate now also exposes a protocol-neutral replacement
   directory for set/way line ownership, victim replacement, hit touch, resident
-  lookup, and snapshot restore validation, giving future protocol banks one
-  typed replacement boundary instead of Ruby/CHI-specific callback state.
+  lookup, and snapshot restore validation. CHI cache banks now attach that
+  directory for clean-line capacity eviction, deterministic snapshot replay,
+  and typed dirty-victim rejection before writeback integration, giving
+  protocol banks one typed replacement boundary instead of Ruby/CHI-specific
+  callback state.
 - `rem6-transport` now keeps endpoint ids, route ids, route hops, route
   topology derivation, route errors, and transport QoS class state in a focused
   `route` module while leaving the crate root centered on serial, parallel, and
