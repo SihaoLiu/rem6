@@ -36,9 +36,7 @@ impl Rem6RunArtifact {
             .execution
             .as_ref()
             .map(Rem6ExecutionSummary::to_transport_json)
-            .unwrap_or_else(|| {
-                "{\"fetch\":{\"requests\":0,\"request_arrivals\":0,\"responses\":0,\"response_arrivals\":0,\"round_trip_ticks\":0,\"max_round_trip_ticks\":0,\"routes\":[]},\"data\":{\"requests\":0,\"request_arrivals\":0,\"responses\":0,\"response_arrivals\":0,\"round_trip_ticks\":0,\"max_round_trip_ticks\":0,\"routes\":[]}}".to_string()
-            });
+            .unwrap_or_else(empty_transport_json);
         format!(
             "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"entry\":\"0x{:x}\",\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"transport\":{},\"stats\":{}}}\n",
             self.schema,
@@ -86,13 +84,13 @@ impl Rem6ExecutionSummary {
         let slots = self
             .parallel_scheduler_worker_slots
             .iter()
-            .map(Rem6ParallelWorkerSlotSummaryJson::to_json)
+            .map(super::Rem6ParallelWorkerSlotSummary::to_json)
             .collect::<Vec<_>>()
             .join(",");
         let lanes = self
             .parallel_scheduler_worker_lanes
             .iter()
-            .map(Rem6ParallelWorkerLaneSummaryJson::to_json)
+            .map(super::Rem6ParallelWorkerLaneSummary::to_json)
             .collect::<Vec<_>>()
             .join(",");
         let partitions = self
@@ -149,11 +147,7 @@ impl Rem6ExecutionSummary {
     }
 }
 
-trait Rem6ParallelWorkerSlotSummaryJson {
-    fn to_json(&self) -> String;
-}
-
-impl Rem6ParallelWorkerSlotSummaryJson for super::Rem6ParallelWorkerSlotSummary {
+impl super::Rem6ParallelWorkerSlotSummary {
     fn to_json(&self) -> String {
         format!(
             "{{\"slot\":{},\"active_ticks\":{},\"idle_ticks\":{}}}",
@@ -162,11 +156,7 @@ impl Rem6ParallelWorkerSlotSummaryJson for super::Rem6ParallelWorkerSlotSummary 
     }
 }
 
-trait Rem6ParallelWorkerLaneSummaryJson {
-    fn to_json(&self) -> String;
-}
-
-impl Rem6ParallelWorkerLaneSummaryJson for super::Rem6ParallelWorkerLaneSummary {
+impl super::Rem6ParallelWorkerLaneSummary {
     fn to_json(&self) -> String {
         format!(
             "{{\"lane\":{},\"partition\":{},\"active_ticks\":{}}}",
@@ -222,6 +212,18 @@ impl Rem6MemoryDump {
             bytes_to_hex(&self.data),
         )
     }
+}
+
+fn empty_transport_json() -> String {
+    format!(
+        "{{\"fetch\":{},\"data\":{}}}",
+        empty_transport_scope_json(),
+        empty_transport_scope_json()
+    )
+}
+
+fn empty_transport_scope_json() -> String {
+    "{\"requests\":0,\"request_arrivals\":0,\"responses\":0,\"response_arrivals\":0,\"round_trip_ticks\":0,\"max_round_trip_ticks\":0,\"routes\":[]}".to_string()
 }
 
 impl Rem6MemoryTransportSummary {
