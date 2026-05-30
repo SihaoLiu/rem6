@@ -347,6 +347,77 @@ fn msi_cache_bank_uncacheable_write_enters_write_queue_without_mshr() {
 }
 
 #[test]
+fn msi_cache_bank_uncacheable_write_response_uses_inflight_record_after_restore() {
+    let cache_agent = agent(7);
+    let mut bank = MsiCacheBank::new_with_mshr_and_write_queue(
+        cache_agent,
+        layout(),
+        MshrQueueConfig::new(2, 2, 0).unwrap(),
+        CacheWriteQueueConfig::new(2, 0).unwrap(),
+    );
+    let request = uncacheable_write(
+        cache_agent,
+        135,
+        0x2064,
+        vec![0xde, 0xad, 0xbe, 0xef],
+        vec![true, false, true, true],
+    );
+
+    bank.accept_cpu_request(request.clone()).unwrap();
+    let issued = bank.issue_write_queue(0).unwrap().unwrap();
+
+    assert_eq!(issued.kind(), CacheWriteQueueEntryKind::UncacheableWrite);
+    assert_eq!(bank.inflight_uncacheable_write_count(), 1);
+
+    let snapshot = bank.snapshot();
+    assert_eq!(snapshot.inflight_uncacheable_write_count(), 1);
+
+    let mut restored = MsiCacheBank::new_with_mshr_and_write_queue(
+        cache_agent,
+        layout(),
+        MshrQueueConfig::new(2, 2, 0).unwrap(),
+        CacheWriteQueueConfig::new(2, 0).unwrap(),
+    );
+    restored.restore(&snapshot).unwrap();
+    assert_eq!(restored.inflight_uncacheable_write_count(), 1);
+
+    let malformed_source = MemoryRequest::read_shared(
+        request.id(),
+        request.range().start(),
+        request.range().size(),
+        layout(),
+    )
+    .unwrap();
+    let malformed_response = MemoryResponse::completed(
+        &malformed_source,
+        Some(vec![0; request.range().size().bytes() as usize]),
+    )
+    .unwrap();
+    assert!(restored
+        .accept_uncacheable_write_response(malformed_response)
+        .is_err());
+    assert_eq!(restored.inflight_uncacheable_write_count(), 1);
+
+    let outcome = restored
+        .accept_uncacheable_write_response(
+            MemoryResponse::completed(issued.request(), None).unwrap(),
+        )
+        .unwrap();
+
+    assert_eq!(response_id(&outcome), request.id());
+    match outcome {
+        TargetOutcome::Respond(response) => assert!(response.data().is_none()),
+        other => panic!("expected immediate response, got {other:?}"),
+    }
+    assert_eq!(restored.inflight_uncacheable_write_count(), 0);
+    assert!(matches!(
+        restored.accept_uncacheable_write_response(MemoryResponse::retry(issued.request())),
+        Err(MsiCacheBankError::UnknownUncacheableWriteResponse { response })
+            if response == request.id()
+    ));
+}
+
+#[test]
 fn msi_cache_bank_exposes_post_fill_writeback_targets_downstream() {
     let cache_agent = agent(7);
     let config = MshrQueueConfig::new(2, 3, 0).unwrap();

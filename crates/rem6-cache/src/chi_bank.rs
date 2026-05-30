@@ -11,9 +11,9 @@ use rem6_transport::TargetOutcome;
 
 use crate::{
     CacheReplacementDirectory, CacheReplacementDirectoryConfig, CacheReplacementDirectorySnapshot,
-    CacheReplacementPolicyError, CacheWriteQueue, CacheWriteQueueConfig, CacheWriteQueueError,
-    CacheWriteQueueHandle, CacheWriteQueueIssue, CacheWriteQueueSnapshot, CacheWriteQueueUpdate,
-    ChiCacheController, ChiCacheControllerError, ChiCacheControllerResult,
+    CacheReplacementPolicyError, CacheWriteQueue, CacheWriteQueueConfig, CacheWriteQueueEntryKind,
+    CacheWriteQueueError, CacheWriteQueueHandle, CacheWriteQueueIssue, CacheWriteQueueSnapshot,
+    CacheWriteQueueUpdate, ChiCacheController, ChiCacheControllerError, ChiCacheControllerResult,
     ChiCacheControllerResultKind, ChiCacheControllerSnapshot, MshrCompletion, MshrHandle,
     MshrQosClass, MshrQosProfile, MshrQueue, MshrQueueConfig, MshrQueueError, MshrQueueSnapshot,
     MshrTargetSource,
@@ -43,6 +43,9 @@ pub enum ChiCacheBankError {
     UnknownPendingFill {
         response: MemoryRequestId,
     },
+    UnknownUncacheableWriteResponse {
+        response: MemoryRequestId,
+    },
     UnknownSnoopLine {
         line: Address,
     },
@@ -68,6 +71,9 @@ pub enum ChiCacheBankError {
         line: Address,
     },
     DuplicateSnapshotPendingFill {
+        response: MemoryRequestId,
+    },
+    DuplicateSnapshotUncacheableWrite {
         response: MemoryRequestId,
     },
 }
@@ -105,6 +111,12 @@ impl fmt::Display for ChiCacheBankError {
             Self::UnknownPendingFill { response } => write!(
                 formatter,
                 "CHI cache bank has no pending fill for response {} from agent {}",
+                response.sequence(),
+                response.agent().get()
+            ),
+            Self::UnknownUncacheableWriteResponse { response } => write!(
+                formatter,
+                "CHI cache bank has no in-flight uncacheable write for response {} from agent {}",
                 response.sequence(),
                 response.agent().get()
             ),
@@ -156,6 +168,12 @@ impl fmt::Display for ChiCacheBankError {
                 response.sequence(),
                 response.agent().get()
             ),
+            Self::DuplicateSnapshotUncacheableWrite { response } => write!(
+                formatter,
+                "CHI cache bank snapshot repeats in-flight uncacheable write {} from agent {}",
+                response.sequence(),
+                response.agent().get()
+            ),
         }
     }
 }
@@ -173,13 +191,15 @@ impl Error for ChiCacheBankError {
             | Self::UncacheableBypassRequiresCleanLine { .. }
             | Self::DirtyReplacementRequiresWriteQueue { .. }
             | Self::UnknownPendingFill { .. }
+            | Self::UnknownUncacheableWriteResponse { .. }
             | Self::UnknownSnoopLine { .. }
             | Self::SnapshotIdentityMismatch { .. }
             | Self::SnapshotMshrModeMismatch { .. }
             | Self::SnapshotWriteQueueModeMismatch { .. }
             | Self::SnapshotReplacementDirectoryModeMismatch { .. }
             | Self::DuplicateSnapshotLine { .. }
-            | Self::DuplicateSnapshotPendingFill { .. } => None,
+            | Self::DuplicateSnapshotPendingFill { .. }
+            | Self::DuplicateSnapshotUncacheableWrite { .. } => None,
         }
     }
 }
@@ -217,6 +237,7 @@ pub struct ChiCacheBankSnapshot {
     mshr: Option<MshrQueueSnapshot>,
     write_queue: Option<CacheWriteQueueSnapshot>,
     replacement_directory: Option<CacheReplacementDirectorySnapshot>,
+    inflight_uncacheable_writes: Vec<MemoryRequest>,
 }
 
 impl ChiCacheBankSnapshot {
@@ -234,6 +255,7 @@ impl ChiCacheBankSnapshot {
             mshr: None,
             write_queue: None,
             replacement_directory: None,
+            inflight_uncacheable_writes: Vec::new(),
         }
     }
 
@@ -252,6 +274,7 @@ impl ChiCacheBankSnapshot {
             mshr: Some(mshr),
             write_queue: None,
             replacement_directory: None,
+            inflight_uncacheable_writes: Vec::new(),
         }
     }
 
@@ -265,6 +288,11 @@ impl ChiCacheBankSnapshot {
         replacement_directory: CacheReplacementDirectorySnapshot,
     ) -> Self {
         self.replacement_directory = Some(replacement_directory);
+        self
+    }
+
+    pub fn with_inflight_uncacheable_writes(mut self, writes: Vec<MemoryRequest>) -> Self {
+        self.inflight_uncacheable_writes = writes;
         self
     }
 
@@ -294,6 +322,14 @@ impl ChiCacheBankSnapshot {
 
     pub fn replacement_directory(&self) -> Option<&CacheReplacementDirectorySnapshot> {
         self.replacement_directory.as_ref()
+    }
+
+    pub fn inflight_uncacheable_writes(&self) -> &[MemoryRequest] {
+        &self.inflight_uncacheable_writes
+    }
+
+    pub fn inflight_uncacheable_write_count(&self) -> usize {
+        self.inflight_uncacheable_writes.len()
     }
 
     pub fn mshr_qos_profile(&self) -> Option<MshrQosProfile> {
@@ -345,6 +381,7 @@ pub struct ChiCacheBank {
     next_sequence: u64,
     lines: BTreeMap<Address, ChiCacheController>,
     pending_fills: BTreeMap<MemoryRequestId, PendingBankFill>,
+    inflight_uncacheable_writes: BTreeMap<MemoryRequestId, MemoryRequest>,
     mshr: Option<MshrQueue>,
     write_queue: Option<CacheWriteQueue>,
     replacement_directory: Option<CacheReplacementDirectory>,
@@ -358,6 +395,7 @@ impl ChiCacheBank {
             next_sequence: 0,
             lines: BTreeMap::new(),
             pending_fills: BTreeMap::new(),
+            inflight_uncacheable_writes: BTreeMap::new(),
             mshr: None,
             write_queue: None,
             replacement_directory: None,
@@ -375,6 +413,7 @@ impl ChiCacheBank {
             next_sequence: 0,
             lines: BTreeMap::new(),
             pending_fills: BTreeMap::new(),
+            inflight_uncacheable_writes: BTreeMap::new(),
             mshr: Some(MshrQueue::new(mshr_config)),
             write_queue: None,
             replacement_directory: None,
@@ -392,6 +431,7 @@ impl ChiCacheBank {
             next_sequence: 0,
             lines: BTreeMap::new(),
             pending_fills: BTreeMap::new(),
+            inflight_uncacheable_writes: BTreeMap::new(),
             mshr: None,
             write_queue: Some(CacheWriteQueue::new(write_queue_config)),
             replacement_directory: None,
@@ -410,6 +450,7 @@ impl ChiCacheBank {
             next_sequence: 0,
             lines: BTreeMap::new(),
             pending_fills: BTreeMap::new(),
+            inflight_uncacheable_writes: BTreeMap::new(),
             mshr: Some(MshrQueue::new(mshr_config)),
             write_queue: Some(CacheWriteQueue::new(write_queue_config)),
             replacement_directory: None,
@@ -433,6 +474,7 @@ impl ChiCacheBank {
             next_sequence: 0,
             lines: BTreeMap::new(),
             pending_fills: BTreeMap::new(),
+            inflight_uncacheable_writes: BTreeMap::new(),
             mshr: None,
             write_queue: None,
             replacement_directory: Some(CacheReplacementDirectory::new(replacement_config)),
@@ -457,6 +499,10 @@ impl ChiCacheBank {
 
     pub fn pending_fill_count(&self) -> usize {
         self.pending_fills.len()
+    }
+
+    pub fn inflight_uncacheable_write_count(&self) -> usize {
+        self.inflight_uncacheable_writes.len()
     }
 
     pub fn line_addresses(&self) -> Vec<Address> {
@@ -552,12 +598,15 @@ impl ChiCacheBank {
             Some(write_queue) => snapshot.with_write_queue(write_queue.snapshot()),
             None => snapshot,
         };
-        match &self.replacement_directory {
+        let snapshot = match &self.replacement_directory {
             Some(replacement_directory) => {
                 snapshot.with_replacement_directory(replacement_directory.snapshot())
             }
             None => snapshot,
-        }
+        };
+        snapshot.with_inflight_uncacheable_writes(
+            self.inflight_uncacheable_writes.values().cloned().collect(),
+        )
     }
 
     pub fn restore(&mut self, snapshot: &ChiCacheBankSnapshot) -> Result<(), ChiCacheBankError> {
@@ -632,6 +681,17 @@ impl ChiCacheBank {
 
         let mut lines = BTreeMap::new();
         let mut pending_fills = BTreeMap::new();
+        let mut inflight_uncacheable_writes = BTreeMap::new();
+        for request in snapshot.inflight_uncacheable_writes() {
+            if inflight_uncacheable_writes
+                .insert(request.id(), request.clone())
+                .is_some()
+            {
+                return Err(ChiCacheBankError::DuplicateSnapshotUncacheableWrite {
+                    response: request.id(),
+                });
+            }
+        }
         for line_snapshot in snapshot.lines() {
             let line = line_snapshot.line().address();
             let mut controller = ChiCacheController::new(self.agent, self.layout, line);
@@ -655,6 +715,7 @@ impl ChiCacheBank {
         self.next_sequence = snapshot.next_sequence();
         self.lines = lines;
         self.pending_fills = pending_fills;
+        self.inflight_uncacheable_writes = inflight_uncacheable_writes;
         self.mshr = restored_mshr;
         self.write_queue = restored_write_queue;
         self.replacement_directory = restored_replacement_directory;
@@ -889,7 +950,31 @@ impl ChiCacheBank {
         &mut self,
         tick: u64,
     ) -> Result<Option<CacheWriteQueueIssue>, ChiCacheBankError> {
-        self.write_queue_mut()?.issue_next(tick).map_err(Into::into)
+        let issue = self.write_queue_mut()?.issue_next(tick)?;
+        if let Some(issue) = &issue {
+            if issue.kind() == CacheWriteQueueEntryKind::UncacheableWrite {
+                self.inflight_uncacheable_writes
+                    .insert(issue.request().id(), issue.request().clone());
+            }
+        }
+        Ok(issue)
+    }
+
+    pub fn accept_uncacheable_write_response(
+        &mut self,
+        response: MemoryResponse,
+    ) -> Result<TargetOutcome, ChiCacheBankError> {
+        let response_id = response.request_id();
+        let original = self.inflight_uncacheable_writes.get(&response_id).ok_or(
+            ChiCacheBankError::UnknownUncacheableWriteResponse {
+                response: response_id,
+            },
+        )?;
+        let outcome = crate::downstream::uncacheable_write_response_outcome(original, response)
+            .map_err(ChiCacheControllerError::Memory)
+            .map_err(ChiCacheBankError::from)?;
+        self.inflight_uncacheable_writes.remove(&response_id);
+        Ok(outcome)
     }
 
     pub fn write_queue_find_match(

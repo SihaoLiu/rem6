@@ -25,3 +25,16 @@ pub(crate) fn uncacheable_fill_outcome(
     };
     Ok(TargetOutcome::Respond(response))
 }
+
+pub(crate) fn uncacheable_write_response_outcome(
+    original: &MemoryRequest,
+    response: MemoryResponse,
+) -> Result<TargetOutcome, MemoryError> {
+    let response = match response.status() {
+        ResponseStatus::Completed => {
+            MemoryResponse::completed(original, response.data().map(<[u8]>::to_vec))?
+        }
+        ResponseStatus::Retry => MemoryResponse::retry(original),
+    };
+    Ok(TargetOutcome::Respond(response))
+}

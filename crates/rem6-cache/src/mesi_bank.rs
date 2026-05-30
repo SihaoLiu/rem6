@@ -10,11 +10,12 @@ use rem6_protocol_mesi::{MesiEvent, MesiLineId, MesiState};
 use rem6_transport::TargetOutcome;
 
 use crate::{
-    CacheWriteQueue, CacheWriteQueueConfig, CacheWriteQueueError, CacheWriteQueueHandle,
-    CacheWriteQueueIssue, CacheWriteQueueSnapshot, CacheWriteQueueUpdate, MesiCacheController,
-    MesiCacheControllerError, MesiCacheControllerResult, MesiCacheControllerResultKind,
-    MesiCacheControllerSnapshot, MshrCompletion, MshrHandle, MshrQosClass, MshrQosProfile,
-    MshrQueue, MshrQueueConfig, MshrQueueError, MshrQueueSnapshot, MshrTargetSource,
+    CacheWriteQueue, CacheWriteQueueConfig, CacheWriteQueueEntryKind, CacheWriteQueueError,
+    CacheWriteQueueHandle, CacheWriteQueueIssue, CacheWriteQueueSnapshot, CacheWriteQueueUpdate,
+    MesiCacheController, MesiCacheControllerError, MesiCacheControllerResult,
+    MesiCacheControllerResultKind, MesiCacheControllerSnapshot, MshrCompletion, MshrHandle,
+    MshrQosClass, MshrQosProfile, MshrQueue, MshrQueueConfig, MshrQueueError, MshrQueueSnapshot,
+    MshrTargetSource,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -31,6 +32,9 @@ pub enum MesiCacheBankError {
         line: Address,
     },
     UnknownPendingFill {
+        response: MemoryRequestId,
+    },
+    UnknownUncacheableWriteResponse {
         response: MemoryRequestId,
     },
     UnknownSnoopLine {
@@ -56,6 +60,9 @@ pub enum MesiCacheBankError {
     DuplicateSnapshotPendingFill {
         response: MemoryRequestId,
     },
+    DuplicateSnapshotUncacheableWrite {
+        response: MemoryRequestId,
+    },
 }
 
 impl fmt::Display for MesiCacheBankError {
@@ -79,6 +86,12 @@ impl fmt::Display for MesiCacheBankError {
             Self::UnknownPendingFill { response } => write!(
                 formatter,
                 "MESI cache bank has no pending fill for response {} from agent {}",
+                response.sequence(),
+                response.agent().get()
+            ),
+            Self::UnknownUncacheableWriteResponse { response } => write!(
+                formatter,
+                "MESI cache bank has no in-flight uncacheable write for response {} from agent {}",
                 response.sequence(),
                 response.agent().get()
             ),
@@ -123,6 +136,12 @@ impl fmt::Display for MesiCacheBankError {
                 response.sequence(),
                 response.agent().get()
             ),
+            Self::DuplicateSnapshotUncacheableWrite { response } => write!(
+                formatter,
+                "MESI cache bank snapshot repeats in-flight uncacheable write {} from agent {}",
+                response.sequence(),
+                response.agent().get()
+            ),
         }
     }
 }
@@ -137,12 +156,14 @@ impl Error for MesiCacheBankError {
             | Self::WriteQueueDisabled
             | Self::UncacheableBypassRequiresCleanLine { .. }
             | Self::UnknownPendingFill { .. }
+            | Self::UnknownUncacheableWriteResponse { .. }
             | Self::UnknownSnoopLine { .. }
             | Self::SnapshotIdentityMismatch { .. }
             | Self::SnapshotMshrModeMismatch { .. }
             | Self::SnapshotWriteQueueModeMismatch { .. }
             | Self::DuplicateSnapshotLine { .. }
-            | Self::DuplicateSnapshotPendingFill { .. } => None,
+            | Self::DuplicateSnapshotPendingFill { .. }
+            | Self::DuplicateSnapshotUncacheableWrite { .. } => None,
         }
     }
 }
@@ -173,6 +194,7 @@ pub struct MesiCacheBankSnapshot {
     lines: Vec<MesiCacheControllerSnapshot>,
     mshr: Option<MshrQueueSnapshot>,
     write_queue: Option<CacheWriteQueueSnapshot>,
+    inflight_uncacheable_writes: Vec<MemoryRequest>,
 }
 
 impl MesiCacheBankSnapshot {
@@ -189,6 +211,7 @@ impl MesiCacheBankSnapshot {
             lines,
             mshr: None,
             write_queue: None,
+            inflight_uncacheable_writes: Vec::new(),
         }
     }
 
@@ -206,11 +229,17 @@ impl MesiCacheBankSnapshot {
             lines,
             mshr: Some(mshr),
             write_queue: None,
+            inflight_uncacheable_writes: Vec::new(),
         }
     }
 
     pub fn with_write_queue(mut self, write_queue: CacheWriteQueueSnapshot) -> Self {
         self.write_queue = Some(write_queue);
+        self
+    }
+
+    pub fn with_inflight_uncacheable_writes(mut self, writes: Vec<MemoryRequest>) -> Self {
+        self.inflight_uncacheable_writes = writes;
         self
     }
 
@@ -236,6 +265,14 @@ impl MesiCacheBankSnapshot {
 
     pub fn write_queue(&self) -> Option<&CacheWriteQueueSnapshot> {
         self.write_queue.as_ref()
+    }
+
+    pub fn inflight_uncacheable_writes(&self) -> &[MemoryRequest] {
+        &self.inflight_uncacheable_writes
+    }
+
+    pub fn inflight_uncacheable_write_count(&self) -> usize {
+        self.inflight_uncacheable_writes.len()
     }
 
     pub fn mshr_qos_profile(&self) -> Option<MshrQosProfile> {
@@ -287,6 +324,7 @@ pub struct MesiCacheBank {
     next_sequence: u64,
     lines: BTreeMap<Address, MesiCacheController>,
     pending_fills: BTreeMap<MemoryRequestId, PendingBankFill>,
+    inflight_uncacheable_writes: BTreeMap<MemoryRequestId, MemoryRequest>,
     mshr: Option<MshrQueue>,
     write_queue: Option<CacheWriteQueue>,
 }
@@ -299,6 +337,7 @@ impl MesiCacheBank {
             next_sequence: 0,
             lines: BTreeMap::new(),
             pending_fills: BTreeMap::new(),
+            inflight_uncacheable_writes: BTreeMap::new(),
             mshr: None,
             write_queue: None,
         }
@@ -315,6 +354,7 @@ impl MesiCacheBank {
             next_sequence: 0,
             lines: BTreeMap::new(),
             pending_fills: BTreeMap::new(),
+            inflight_uncacheable_writes: BTreeMap::new(),
             mshr: Some(MshrQueue::new(mshr_config)),
             write_queue: None,
         }
@@ -331,6 +371,7 @@ impl MesiCacheBank {
             next_sequence: 0,
             lines: BTreeMap::new(),
             pending_fills: BTreeMap::new(),
+            inflight_uncacheable_writes: BTreeMap::new(),
             mshr: None,
             write_queue: Some(CacheWriteQueue::new(write_queue_config)),
         }
@@ -348,6 +389,7 @@ impl MesiCacheBank {
             next_sequence: 0,
             lines: BTreeMap::new(),
             pending_fills: BTreeMap::new(),
+            inflight_uncacheable_writes: BTreeMap::new(),
             mshr: Some(MshrQueue::new(mshr_config)),
             write_queue: Some(CacheWriteQueue::new(write_queue_config)),
         }
@@ -371,6 +413,10 @@ impl MesiCacheBank {
 
     pub fn pending_fill_count(&self) -> usize {
         self.pending_fills.len()
+    }
+
+    pub fn inflight_uncacheable_write_count(&self) -> usize {
+        self.inflight_uncacheable_writes.len()
     }
 
     pub fn line_addresses(&self) -> Vec<Address> {
@@ -456,10 +502,13 @@ impl MesiCacheBank {
             ),
             None => MesiCacheBankSnapshot::new(self.agent, self.layout, self.next_sequence, lines),
         };
-        match &self.write_queue {
+        let snapshot = match &self.write_queue {
             Some(write_queue) => snapshot.with_write_queue(write_queue.snapshot()),
             None => snapshot,
-        }
+        };
+        snapshot.with_inflight_uncacheable_writes(
+            self.inflight_uncacheable_writes.values().cloned().collect(),
+        )
     }
 
     pub fn restore(&mut self, snapshot: &MesiCacheBankSnapshot) -> Result<(), MesiCacheBankError> {
@@ -506,6 +555,17 @@ impl MesiCacheBank {
 
         let mut lines = BTreeMap::new();
         let mut pending_fills = BTreeMap::new();
+        let mut inflight_uncacheable_writes = BTreeMap::new();
+        for request in snapshot.inflight_uncacheable_writes() {
+            if inflight_uncacheable_writes
+                .insert(request.id(), request.clone())
+                .is_some()
+            {
+                return Err(MesiCacheBankError::DuplicateSnapshotUncacheableWrite {
+                    response: request.id(),
+                });
+            }
+        }
         for line_snapshot in snapshot.lines() {
             let line = line_snapshot.line().address();
             let mut controller = MesiCacheController::new(self.agent, self.layout, line);
@@ -529,6 +589,7 @@ impl MesiCacheBank {
         self.next_sequence = snapshot.next_sequence();
         self.lines = lines;
         self.pending_fills = pending_fills;
+        self.inflight_uncacheable_writes = inflight_uncacheable_writes;
         self.mshr = restored_mshr;
         self.write_queue = restored_write_queue;
         Ok(())
@@ -739,7 +800,31 @@ impl MesiCacheBank {
         &mut self,
         tick: u64,
     ) -> Result<Option<CacheWriteQueueIssue>, MesiCacheBankError> {
-        self.write_queue_mut()?.issue_next(tick).map_err(Into::into)
+        let issue = self.write_queue_mut()?.issue_next(tick)?;
+        if let Some(issue) = &issue {
+            if issue.kind() == CacheWriteQueueEntryKind::UncacheableWrite {
+                self.inflight_uncacheable_writes
+                    .insert(issue.request().id(), issue.request().clone());
+            }
+        }
+        Ok(issue)
+    }
+
+    pub fn accept_uncacheable_write_response(
+        &mut self,
+        response: MemoryResponse,
+    ) -> Result<TargetOutcome, MesiCacheBankError> {
+        let response_id = response.request_id();
+        let original = self.inflight_uncacheable_writes.get(&response_id).ok_or(
+            MesiCacheBankError::UnknownUncacheableWriteResponse {
+                response: response_id,
+            },
+        )?;
+        let outcome = crate::downstream::uncacheable_write_response_outcome(original, response)
+            .map_err(MesiCacheControllerError::Memory)
+            .map_err(MesiCacheBankError::from)?;
+        self.inflight_uncacheable_writes.remove(&response_id);
+        Ok(outcome)
     }
 
     pub fn write_queue_find_match(
