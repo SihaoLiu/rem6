@@ -41,6 +41,10 @@ fn riscv64_elf(entry: u64, physical: u64, payload: &[u8]) -> Vec<u8> {
     bytes
 }
 
+fn riscv64_program(words: &[u32]) -> Vec<u8> {
+    words.iter().flat_map(|word| word.to_le_bytes()).collect()
+}
+
 fn temp_binary(name: &str, bytes: &[u8]) -> std::path::PathBuf {
     let path = std::env::temp_dir().join(format!("rem6-{name}-{}.elf", std::process::id()));
     fs::write(&path, bytes).unwrap();
@@ -108,4 +112,53 @@ fn rem6_run_rejects_isa_mismatch_before_emitting_stats() {
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains("requested ISA x86 does not match ELF architecture riscv64"));
+}
+
+#[test]
+fn rem6_run_executes_riscv_elf_on_parallel_cores_and_emits_core_stats() {
+    let program = riscv64_program(&[
+        0x0070_0293, // addi x5, x0, 7
+        0x0000_0073, // ecall
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("parallel-exec", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "2",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"cores\":2"));
+    assert!(stdout.contains("\"stop_code\":0"));
+    assert!(stdout.contains("\"trap\":\"environment_call\""));
+    assert!(stdout.contains("\"cpu\":0"));
+    assert!(stdout.contains("\"cpu\":1"));
+    assert!(stdout.contains("\"pc\":\"0x80000004\""));
+    assert!(stdout.contains("\"x5\":\"0x7\""));
+    assert!(stdout.contains("\"path\":\"sim.instructions.committed\""));
+    assert!(stdout.contains("\"path\":\"sim.cpu0.instructions.committed\""));
+    assert!(stdout.contains("\"path\":\"sim.cpu1.instructions.committed\""));
+    assert!(stdout.contains("\"path\":\"sim.parallel.scheduler.max_workers\""));
+    assert!(stdout.contains("\"value\":4"));
+    assert!(stdout.contains("\"value\":2"));
 }

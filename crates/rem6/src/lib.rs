@@ -1,11 +1,31 @@
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use rem6_boot::{
     BootElfArchitecture, BootElfClass, BootElfEndian, BootElfOperatingSystem, BootImage,
 };
+use rem6_cpu::{
+    CpuCore, CpuFetchConfig, CpuId, CpuResetState, RiscvCluster, RiscvCore, RiscvCoreDriveAction,
+};
+use rem6_isa_riscv::Register;
+use rem6_kernel::{PartitionId, PartitionedScheduler};
+use rem6_memory::{AccessSize, AgentId, CacheLineLayout, MemoryTargetId, PartitionedMemoryStore};
 use rem6_stats::{StatResetPolicy, StatsRegistry};
+use rem6_system::{
+    GuestEventId, GuestSourceId, GuestTrapKind, HostEventPolicy, RiscvSystemRun,
+    RiscvSystemRunDriver, RiscvSystemRunStopReason, RiscvTrapEventPort, SystemHostController,
+    SystemHostEventPort,
+};
+use rem6_transport::{
+    MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome,
+    TransportEndpointId,
+};
+
+const DEFAULT_CACHE_LINE_BYTES: u64 = 16;
+const CLI_MEMORY_TARGET: MemoryTargetId = MemoryTargetId::new(0);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RequestedIsa {
@@ -67,6 +87,8 @@ pub struct Rem6RunConfig {
     binary: PathBuf,
     max_tick: u64,
     stats_format: StatsFormat,
+    execute: bool,
+    cores: usize,
 }
 
 impl Rem6RunConfig {
@@ -87,6 +109,8 @@ impl Rem6RunConfig {
         let mut binary = None;
         let mut max_tick = None;
         let mut stats_format = StatsFormat::Json;
+        let mut execute = false;
+        let mut cores = 1usize;
         while let Some(flag) = args.next() {
             match flag.as_str() {
                 "--isa" => {
@@ -104,6 +128,19 @@ impl Rem6RunConfig {
                 "--stats-format" => {
                     stats_format = StatsFormat::parse(&required_value(&flag, args.next())?)?;
                 }
+                "--execute" => {
+                    execute = true;
+                }
+                "--cores" => {
+                    let value = required_value(&flag, args.next())?;
+                    cores = value
+                        .parse()
+                        .ok()
+                        .filter(|cores| *cores > 0)
+                        .ok_or_else(|| Rem6CliError::InvalidCoreCount {
+                            value: value.clone(),
+                        })?;
+                }
                 _ => return Err(Rem6CliError::UnknownFlag { flag }),
             }
         }
@@ -113,6 +150,8 @@ impl Rem6RunConfig {
             binary: binary.ok_or(Rem6CliError::MissingRequiredFlag { flag: "--binary" })?,
             max_tick: max_tick.ok_or(Rem6CliError::MissingRequiredFlag { flag: "--max-tick" })?,
             stats_format,
+            execute,
+            cores,
         })
     }
 
@@ -131,6 +170,14 @@ impl Rem6RunConfig {
     pub const fn stats_format(&self) -> StatsFormat {
         self.stats_format
     }
+
+    pub const fn execute(&self) -> bool {
+        self.execute
+    }
+
+    pub const fn cores(&self) -> usize {
+        self.cores
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -141,13 +188,26 @@ pub struct Rem6RunArtifact {
     entry: u64,
     metadata: rem6_boot::BootElfMetadata,
     load_segments: u64,
+    execution: Option<Rem6ExecutionSummary>,
     stats_json: String,
 }
 
 impl Rem6RunArtifact {
     pub fn to_json(&self) -> String {
+        let simulation = match &self.execution {
+            Some(execution) => execution.to_simulation_json(self.config.max_tick()),
+            None => format!(
+                "{{\"status\":\"loaded\",\"max_tick\":{},\"executed_ticks\":0,\"cores\":{}}}",
+                self.config.max_tick(),
+                self.config.cores(),
+            ),
+        };
+        let cores = match &self.execution {
+            Some(execution) => execution.to_cores_json(),
+            None => "[]".to_string(),
+        };
         format!(
-            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"entry\":\"0x{:x}\",\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{}}},\"simulation\":{{\"status\":\"loaded\",\"max_tick\":{},\"executed_ticks\":0}},\"stats\":{}}}\n",
+            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"entry\":\"0x{:x}\",\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{}}},\"simulation\":{},\"cores\":{},\"stats\":{}}}\n",
             self.schema,
             self.config.isa().as_str(),
             json_escape(&self.config.binary().display().to_string()),
@@ -158,7 +218,8 @@ impl Rem6RunArtifact {
             elf_os_name(self.metadata.operating_system()),
             self.metadata.machine(),
             self.metadata.flags(),
-            self.config.max_tick(),
+            simulation,
+            cores,
             self.stats_json,
         )
     }
@@ -169,6 +230,64 @@ impl Rem6RunArtifact {
 
     pub const fn load_segments(&self) -> u64 {
         self.load_segments
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Rem6ExecutionSummary {
+    final_tick: u64,
+    stop_code: i32,
+    trap: &'static str,
+    committed_instructions: u64,
+    parallel_scheduler_epochs: u64,
+    parallel_scheduler_max_workers: u64,
+    cores: Vec<Rem6CoreSummary>,
+}
+
+impl Rem6ExecutionSummary {
+    fn to_simulation_json(&self, max_tick: u64) -> String {
+        format!(
+            "{{\"status\":\"executed_until_trap\",\"max_tick\":{},\"executed_ticks\":{},\"final_tick\":{},\"cores\":{},\"stop_code\":{},\"trap\":\"{}\"}}",
+            max_tick,
+            self.final_tick,
+            self.final_tick,
+            self.cores.len(),
+            self.stop_code,
+            self.trap,
+        )
+    }
+
+    fn to_cores_json(&self) -> String {
+        let cores = self
+            .cores
+            .iter()
+            .map(Rem6CoreSummary::to_json)
+            .collect::<Vec<_>>()
+            .join(",");
+        format!("[{cores}]")
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Rem6CoreSummary {
+    cpu: u32,
+    pc: u64,
+    committed_instructions: u64,
+    registers: Vec<(u8, u64)>,
+}
+
+impl Rem6CoreSummary {
+    fn to_json(&self) -> String {
+        let registers = self
+            .registers
+            .iter()
+            .map(|(register, value)| format!("\"x{}\":\"0x{:x}\"", register, value))
+            .collect::<Vec<_>>()
+            .join(",");
+        format!(
+            "{{\"cpu\":{},\"pc\":\"0x{:x}\",\"committed_instructions\":{},\"registers\":{{{}}}}}",
+            self.cpu, self.pc, self.committed_instructions, registers
+        )
     }
 }
 
@@ -196,6 +315,9 @@ pub enum Rem6CliError {
     InvalidMaxTick {
         value: String,
     },
+    InvalidCoreCount {
+        value: String,
+    },
     ReadBinary {
         path: PathBuf,
         error: String,
@@ -210,6 +332,12 @@ pub enum Rem6CliError {
     IsaMismatch {
         requested: RequestedIsa,
         architecture: BootElfArchitecture,
+    },
+    UnsupportedExecutionIsa {
+        isa: RequestedIsa,
+    },
+    Execute {
+        error: String,
     },
     Stats {
         error: String,
@@ -235,6 +363,7 @@ impl fmt::Display for Rem6CliError {
                 write!(formatter, "unsupported stats format {format}")
             }
             Self::InvalidMaxTick { value } => write!(formatter, "invalid max tick {value}"),
+            Self::InvalidCoreCount { value } => write!(formatter, "invalid core count {value}"),
             Self::ReadBinary { path, error } => {
                 write!(formatter, "failed to read {}: {error}", path.display())
             }
@@ -257,6 +386,14 @@ impl fmt::Display for Rem6CliError {
                 requested.as_str(),
                 elf_architecture_name(*architecture)
             ),
+            Self::UnsupportedExecutionIsa { isa } => {
+                write!(
+                    formatter,
+                    "execution is not implemented for ISA {}",
+                    isa.as_str()
+                )
+            }
+            Self::Execute { error } => write!(formatter, "failed to execute run: {error}"),
             Self::Stats { error } => write!(formatter, "failed to build run stats: {error}"),
         }
     }
@@ -297,10 +434,20 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
         });
     }
 
+    let execution = if config.execute() {
+        Some(match config.isa() {
+            RequestedIsa::Riscv => execute_riscv(&image, &config)?,
+            isa => return Err(Rem6CliError::UnsupportedExecutionIsa { isa }),
+        })
+    } else {
+        None
+    };
     let stats_json = run_stats_json(
         bytes.len() as u64,
         image.segments().len() as u64,
         config.max_tick(),
+        config.cores() as u64,
+        execution.as_ref(),
     )?;
     Ok(Rem6RunArtifact {
         schema: "rem6.cli.run.v1",
@@ -309,6 +456,7 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
         load_segments: image.segments().len() as u64,
         metadata,
         config,
+        execution,
         stats_json,
     })
 }
@@ -317,31 +465,85 @@ fn run_stats_json(
     binary_bytes: u64,
     load_segments: u64,
     max_tick: u64,
+    cores: u64,
+    execution: Option<&Rem6ExecutionSummary>,
 ) -> Result<String, Rem6CliError> {
     let mut stats = StatsRegistry::new();
-    let binary_bytes_stat = stats
-        .register_counter_with_reset_policy("sim.binary.bytes", "Byte", StatResetPolicy::Constant)
-        .map_err(stats_error)?;
-    let load_segments_stat = stats
-        .register_counter_with_reset_policy(
-            "sim.elf.load_segments",
+    increment_stat(
+        &mut stats,
+        "sim.binary.bytes",
+        "Byte",
+        StatResetPolicy::Constant,
+        binary_bytes,
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.elf.load_segments",
+        "Count",
+        StatResetPolicy::Constant,
+        load_segments,
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.max_tick",
+        "Tick",
+        StatResetPolicy::Constant,
+        max_tick,
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.cores",
+        "Count",
+        StatResetPolicy::Constant,
+        cores,
+    )?;
+
+    if let Some(execution) = execution {
+        increment_stat(
+            &mut stats,
+            "sim.instructions.committed",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.committed_instructions,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.final_tick",
+            "Tick",
+            StatResetPolicy::Monotonic,
+            execution.final_tick,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.stop_code",
             "Count",
             StatResetPolicy::Constant,
-        )
-        .map_err(stats_error)?;
-    let max_tick_stat = stats
-        .register_counter_with_reset_policy("sim.max_tick", "Tick", StatResetPolicy::Constant)
-        .map_err(stats_error)?;
-
-    stats
-        .increment(binary_bytes_stat, binary_bytes)
-        .map_err(stats_error)?;
-    stats
-        .increment(load_segments_stat, load_segments)
-        .map_err(stats_error)?;
-    stats
-        .increment(max_tick_stat, max_tick)
-        .map_err(stats_error)?;
+            execution.stop_code as u64,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.parallel.scheduler.epochs",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.parallel_scheduler_epochs,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.parallel.scheduler.max_workers",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.parallel_scheduler_max_workers,
+        )?;
+        for core in &execution.cores {
+            increment_stat(
+                &mut stats,
+                &format!("sim.cpu{}.instructions.committed", core.cpu),
+                "Count",
+                StatResetPolicy::Monotonic,
+                core.committed_instructions,
+            )?;
+        }
+    }
 
     let snapshot = stats.snapshot(0);
     let samples = snapshot
@@ -359,6 +561,229 @@ fn run_stats_json(
         .collect::<Vec<_>>()
         .join(",");
     Ok(format!("[{samples}]"))
+}
+
+fn increment_stat(
+    stats: &mut StatsRegistry,
+    path: &str,
+    unit: &str,
+    reset_policy: StatResetPolicy,
+    value: u64,
+) -> Result<(), Rem6CliError> {
+    let stat = stats
+        .register_counter_with_reset_policy(path, unit, reset_policy)
+        .map_err(stats_error)?;
+    stats.increment(stat, value).map_err(stats_error)
+}
+
+fn execute_riscv(
+    image: &BootImage,
+    config: &Rem6RunConfig,
+) -> Result<Rem6ExecutionSummary, Rem6CliError> {
+    let core_count = u32::try_from(config.cores()).map_err(|_| Rem6CliError::InvalidCoreCount {
+        value: config.cores().to_string(),
+    })?;
+    let partition_count =
+        core_count
+            .checked_add(2)
+            .ok_or_else(|| Rem6CliError::InvalidCoreCount {
+                value: config.cores().to_string(),
+            })?;
+    let max_turns =
+        usize::try_from(config.max_tick()).map_err(|_| Rem6CliError::InvalidMaxTick {
+            value: config.max_tick().to_string(),
+        })?;
+    let memory_partition = PartitionId::new(core_count);
+    let host_partition = PartitionId::new(core_count + 1);
+    let line_layout = CacheLineLayout::new(DEFAULT_CACHE_LINE_BYTES).map_err(execute_error)?;
+    let mut store = PartitionedMemoryStore::new();
+    store
+        .add_partition(CLI_MEMORY_TARGET, line_layout)
+        .map_err(execute_error)?;
+    for segment in image.segments() {
+        store
+            .map_region(
+                CLI_MEMORY_TARGET,
+                segment.range().start(),
+                segment.range().size(),
+            )
+            .map_err(execute_error)?;
+    }
+    image
+        .load_into_partitioned_store(&mut store, CLI_MEMORY_TARGET)
+        .map_err(execute_error)?;
+    let store = Arc::new(Mutex::new(store));
+
+    let mut scheduler =
+        PartitionedScheduler::with_min_remote_delay(partition_count, 1).map_err(execute_error)?;
+    let mut transport = MemoryTransport::new();
+    let mut cores = Vec::new();
+    for cpu_index in 0..core_count {
+        let cpu_partition = PartitionId::new(cpu_index);
+        let route = add_fetch_route(&mut transport, cpu_index, cpu_partition, memory_partition)?;
+        let core = RiscvCore::new(
+            CpuCore::new(
+                CpuResetState::new(
+                    CpuId::new(cpu_index),
+                    cpu_partition,
+                    AgentId::new(cpu_index),
+                    image.entry(),
+                ),
+                CpuFetchConfig::new(
+                    transport_endpoint(format!("cpu{cpu_index}.ifetch"))?,
+                    route,
+                    line_layout,
+                    AccessSize::new(4).map_err(execute_error)?,
+                ),
+            )
+            .map_err(execute_error)?,
+        );
+        cores.push(core);
+    }
+    let cluster = RiscvCluster::new(cores).map_err(execute_error)?;
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        StatsRegistry::new(),
+    )));
+    let trap_port = RiscvTrapEventPort::new(
+        SystemHostEventPort::with_controller(host_partition, 1, Arc::clone(&controller))
+            .map_err(execute_error)?,
+        GuestSourceId::new(1),
+    );
+    let driver = RiscvSystemRunDriver::new(trap_port);
+    let run = driver
+        .drive_until_host_stop_parallel(
+            &cluster,
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_cpu| {
+                let store = Arc::clone(&store);
+                move |delivery, _context| memory_response(&store, &delivery)
+            },
+            |_cpu| {
+                let store = Arc::clone(&store);
+                move |delivery, _context| memory_response(&store, &delivery)
+            },
+            max_turns,
+            |cpu| GuestEventId::new(u64::from(cpu.get())),
+        )
+        .map_err(execute_error)?;
+
+    execution_summary(&cluster, &run, core_count)
+}
+
+fn add_fetch_route(
+    transport: &mut MemoryTransport,
+    cpu_index: u32,
+    cpu_partition: PartitionId,
+    memory_partition: PartitionId,
+) -> Result<MemoryRouteId, Rem6CliError> {
+    transport
+        .add_route(
+            MemoryRoute::new(
+                transport_endpoint(format!("cpu{cpu_index}.ifetch"))?,
+                cpu_partition,
+                transport_endpoint("memory".to_string())?,
+                memory_partition,
+                1,
+                1,
+            )
+            .map_err(execute_error)?,
+        )
+        .map_err(execute_error)
+}
+
+fn memory_response(
+    store: &Arc<Mutex<PartitionedMemoryStore>>,
+    delivery: &RequestDelivery,
+) -> TargetOutcome {
+    let outcome = store
+        .lock()
+        .expect("CLI memory store lock")
+        .respond(delivery.request())
+        .expect("CLI memory response");
+    match outcome.response().cloned() {
+        Some(response) => TargetOutcome::Respond(response),
+        None => TargetOutcome::NoResponse,
+    }
+}
+
+fn execution_summary(
+    cluster: &RiscvCluster,
+    run: &RiscvSystemRun,
+    core_count: u32,
+) -> Result<Rem6ExecutionSummary, Rem6CliError> {
+    let RiscvSystemRunStopReason::HostStop(stop) = run.stop_reason() else {
+        return Err(Rem6CliError::Execute {
+            error: "RISC-V execution stopped without a host trap".to_string(),
+        });
+    };
+    let scheduled_trap = run
+        .scheduled_traps()
+        .first()
+        .ok_or_else(|| Rem6CliError::Execute {
+            error: "RISC-V execution reached host stop without a scheduled trap".to_string(),
+        })?;
+    let committed_by_cpu = committed_instructions_by_cpu(run);
+    let committed_instructions = committed_by_cpu.values().sum();
+    let mut cores = Vec::new();
+    for cpu_index in 0..core_count {
+        let cpu = CpuId::new(cpu_index);
+        let core = cluster.core(cpu).map_err(execute_error)?;
+        let mut registers = Vec::new();
+        for register_index in 1..32 {
+            let register = Register::new(register_index).map_err(execute_error)?;
+            let value = core.read_register(register);
+            if value != 0 {
+                registers.push((register_index, value));
+            }
+        }
+        cores.push(Rem6CoreSummary {
+            cpu: cpu_index,
+            pc: core.pc().get(),
+            committed_instructions: committed_by_cpu.get(&cpu).copied().unwrap_or(0),
+            registers,
+        });
+    }
+
+    Ok(Rem6ExecutionSummary {
+        final_tick: stop.tick(),
+        stop_code: stop.code(),
+        trap: guest_trap_name(scheduled_trap.trap().kind()),
+        committed_instructions,
+        parallel_scheduler_epochs: run.parallel_scheduler_epochs().len() as u64,
+        parallel_scheduler_max_workers: run.max_parallel_scheduler_workers() as u64,
+        cores,
+    })
+}
+
+fn committed_instructions_by_cpu(run: &RiscvSystemRun) -> BTreeMap<CpuId, u64> {
+    let mut committed = BTreeMap::new();
+    for event in run.turns().iter().flat_map(|turn| turn.core_events()) {
+        if matches!(event.action(), RiscvCoreDriveAction::InstructionExecuted(_)) {
+            *committed.entry(event.cpu()).or_insert(0) += 1;
+        }
+    }
+    committed
+}
+
+fn guest_trap_name(kind: GuestTrapKind) -> &'static str {
+    match kind {
+        GuestTrapKind::EnvironmentCall => "environment_call",
+        GuestTrapKind::Breakpoint => "breakpoint",
+    }
+}
+
+fn transport_endpoint(value: String) -> Result<TransportEndpointId, Rem6CliError> {
+    TransportEndpointId::new(value).map_err(execute_error)
+}
+
+fn execute_error(error: impl fmt::Display) -> Rem6CliError {
+    Rem6CliError::Execute {
+        error: error.to_string(),
+    }
 }
 
 fn required_value(flag: &str, value: Option<String>) -> Result<String, Rem6CliError> {
