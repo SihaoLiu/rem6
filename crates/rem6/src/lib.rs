@@ -97,6 +97,7 @@ pub struct Rem6RunConfig {
     parallel_workers: usize,
     memory_dumps: Vec<MemoryDumpRequest>,
     output: Option<PathBuf>,
+    stats_output: Option<PathBuf>,
 }
 
 impl Rem6RunConfig {
@@ -122,6 +123,7 @@ impl Rem6RunConfig {
         let mut parallel_workers = None;
         let mut memory_dumps = Vec::new();
         let mut output = None;
+        let mut stats_output = None;
         while let Some(flag) = args.next() {
             match flag.as_str() {
                 "--isa" => {
@@ -171,6 +173,9 @@ impl Rem6RunConfig {
                 "--output" => {
                     output = Some(PathBuf::from(required_value(&flag, args.next())?));
                 }
+                "--stats-output" => {
+                    stats_output = Some(PathBuf::from(required_value(&flag, args.next())?));
+                }
                 _ => return Err(Rem6CliError::UnknownFlag { flag }),
             }
         }
@@ -185,6 +190,7 @@ impl Rem6RunConfig {
             parallel_workers: parallel_workers.unwrap_or(cores),
             memory_dumps,
             output,
+            stats_output,
         })
     }
 
@@ -222,6 +228,10 @@ impl Rem6RunConfig {
 
     pub fn output(&self) -> Option<&Path> {
         self.output.as_deref()
+    }
+
+    pub fn stats_output(&self) -> Option<&Path> {
+        self.stats_output.as_deref()
     }
 }
 
@@ -627,6 +637,14 @@ where
     let output = match artifact.config.stats_format() {
         StatsFormat::Json => artifact.to_json(),
     };
+    if let Some(path) = artifact.config.stats_output() {
+        std::fs::write(path, format!("{}\n", artifact.stats_json)).map_err(|error| {
+            Rem6CliError::WriteOutput {
+                path: path.to_path_buf(),
+                error: error.to_string(),
+            }
+        })?;
+    }
     if let Some(path) = artifact.config.output() {
         std::fs::write(path, output).map_err(|error| Rem6CliError::WriteOutput {
             path: path.to_path_buf(),
