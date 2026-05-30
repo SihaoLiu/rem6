@@ -287,6 +287,20 @@ fn rem6_run_executes_riscv_elf_on_parallel_cores_and_emits_core_stats() {
     assert!(stdout.contains("\"path\":\"sim.parallel.partition1.scheduler.workers\""));
     assert!(stdout.contains("\"path\":\"sim.parallel.partition2.scheduler.remote_receives\""));
     assert!(stdout.contains("\"path\":\"sim.parallel.partition3.scheduler.remote_receives\""));
+    assert_transport_stats(
+        &stdout,
+        "sim.memory.fetch.route0.source.cpu0.ifetch",
+        2,
+        4,
+        2,
+    );
+    assert_transport_stats(
+        &stdout,
+        "sim.memory.fetch.route2.source.cpu1.ifetch",
+        2,
+        4,
+        2,
+    );
     assert!(stdout.contains("\"value\":4"));
     assert!(stdout.contains("\"value\":2"));
 }
@@ -517,6 +531,8 @@ fn rem6_run_exposes_distinct_riscv_hart_ids_to_parallel_cores() {
     assert!(stdout.contains("\"hex\":\"00000000000000000100000000000000\""));
     assert!(stdout.contains("\"path\":\"sim.cpu0.data.stores\""));
     assert!(stdout.contains("\"path\":\"sim.cpu1.data.stores\""));
+    assert_transport_stats(&stdout, "sim.memory.data.route1.source.cpu0.dmem", 1, 2, 2);
+    assert_transport_stats(&stdout, "sim.memory.data.route3.source.cpu1.dmem", 1, 2, 2);
 }
 
 #[test]

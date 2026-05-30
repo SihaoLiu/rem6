@@ -389,6 +389,19 @@ pub struct Rem6ParallelPartitionSummary {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Rem6MemoryTransportSummary {
+    counters: Rem6MemoryTransportCounters,
+    routes: Vec<Rem6MemoryTransportRouteSummary>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Rem6MemoryTransportRouteSummary {
+    route: MemoryRouteId,
+    source: String,
+    counters: Rem6MemoryTransportCounters,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct Rem6MemoryTransportCounters {
     requests: u64,
     request_arrivals: u64,
     responses: u64,
@@ -997,48 +1010,98 @@ fn emit_transport_stats(
     prefix: &str,
     summary: &Rem6MemoryTransportSummary,
 ) -> Result<(), Rem6CliError> {
+    emit_transport_counters(stats, prefix, &summary.counters)?;
+    for route in &summary.routes {
+        let route_prefix = format!(
+            "{prefix}.route{}.source.{}",
+            route.route.get(),
+            endpoint_stat_path(&route.source)
+        );
+        emit_transport_counters(stats, &route_prefix, &route.counters)?;
+    }
+    Ok(())
+}
+
+fn emit_transport_counters(
+    stats: &mut StatsRegistry,
+    prefix: &str,
+    counters: &Rem6MemoryTransportCounters,
+) -> Result<(), Rem6CliError> {
     increment_stat(
         stats,
         &format!("{prefix}.requests"),
         "Count",
         StatResetPolicy::Monotonic,
-        summary.requests,
+        counters.requests,
     )?;
     increment_stat(
         stats,
         &format!("{prefix}.request_arrivals"),
         "Count",
         StatResetPolicy::Monotonic,
-        summary.request_arrivals,
+        counters.request_arrivals,
     )?;
     increment_stat(
         stats,
         &format!("{prefix}.responses"),
         "Count",
         StatResetPolicy::Monotonic,
-        summary.responses,
+        counters.responses,
     )?;
     increment_stat(
         stats,
         &format!("{prefix}.response_arrivals"),
         "Count",
         StatResetPolicy::Monotonic,
-        summary.response_arrivals,
+        counters.response_arrivals,
     )?;
     increment_stat(
         stats,
         &format!("{prefix}.round_trip_ticks"),
         "Tick",
         StatResetPolicy::Monotonic,
-        summary.round_trip_ticks,
+        counters.round_trip_ticks,
     )?;
     increment_stat(
         stats,
         &format!("{prefix}.max_round_trip_ticks"),
         "Tick",
         StatResetPolicy::Monotonic,
-        summary.max_round_trip_ticks,
+        counters.max_round_trip_ticks,
     )
+}
+
+fn endpoint_stat_path(endpoint: &str) -> String {
+    endpoint
+        .split('.')
+        .map(stat_path_segment)
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
+fn stat_path_segment(segment: &str) -> String {
+    let mut output = String::new();
+    for (index, character) in segment.chars().enumerate() {
+        if index == 0 {
+            if character.is_ascii_alphabetic() || character == '_' {
+                output.push(character);
+            } else {
+                output.push('_');
+                if character.is_ascii_alphanumeric() {
+                    output.push(character);
+                }
+            }
+        } else if character.is_ascii_alphanumeric() || character == '_' {
+            output.push(character);
+        } else {
+            output.push('_');
+        }
+    }
+    if output.is_empty() {
+        "_".to_string()
+    } else {
+        output
+    }
 }
 
 fn execute_riscv(
@@ -1331,44 +1394,72 @@ fn memory_transport_summary(trace: &MemoryTrace) -> Rem6MemoryTransportSummary {
     let events = trace.snapshot();
     let mut request_sources: BTreeMap<(MemoryRouteId, MemoryRequestId), (u64, String)> =
         BTreeMap::new();
+    let mut routes: BTreeMap<(MemoryRouteId, String), Rem6MemoryTransportRouteSummary> =
+        BTreeMap::new();
     let mut summary = Rem6MemoryTransportSummary {
-        requests: 0,
-        request_arrivals: 0,
-        responses: 0,
-        response_arrivals: 0,
-        round_trip_ticks: 0,
-        max_round_trip_ticks: 0,
+        counters: Rem6MemoryTransportCounters::default(),
+        routes: Vec::new(),
     };
 
     for event in &events {
         match event.kind() {
             MemoryTraceKind::RequestSent => {
-                summary.requests += 1;
-                request_sources.insert(
-                    trace_key(event),
-                    (event.tick(), event.endpoint().as_str().to_string()),
-                );
+                summary.counters.requests += 1;
+                let source = event.endpoint().as_str().to_string();
+                route_summary(&mut routes, event.route(), &source)
+                    .counters
+                    .requests += 1;
+                request_sources.insert(trace_key(event), (event.tick(), source));
             }
             MemoryTraceKind::RequestArrived => {
-                summary.request_arrivals += 1;
+                summary.counters.request_arrivals += 1;
+                if let Some((_, source)) = request_sources.get(&trace_key(event)) {
+                    route_summary(&mut routes, event.route(), source)
+                        .counters
+                        .request_arrivals += 1;
+                }
             }
             MemoryTraceKind::ResponseArrived => {
-                summary.response_arrivals += 1;
-                let Some((sent_tick, endpoint)) = request_sources.get(&trace_key(event)) else {
+                summary.counters.response_arrivals += 1;
+                let Some((sent_tick, source)) = request_sources.get(&trace_key(event)) else {
                     continue;
                 };
-                if event.endpoint().as_str() != endpoint {
+                if event.endpoint().as_str() != source {
                     continue;
                 }
-                summary.responses += 1;
                 let latency = event.tick().saturating_sub(*sent_tick);
-                summary.round_trip_ticks = summary.round_trip_ticks.saturating_add(latency);
-                summary.max_round_trip_ticks = summary.max_round_trip_ticks.max(latency);
+                summary.counters.responses += 1;
+                summary.counters.round_trip_ticks =
+                    summary.counters.round_trip_ticks.saturating_add(latency);
+                summary.counters.max_round_trip_ticks =
+                    summary.counters.max_round_trip_ticks.max(latency);
+                let route = route_summary(&mut routes, event.route(), source);
+                route.counters.response_arrivals += 1;
+                route.counters.responses += 1;
+                route.counters.round_trip_ticks =
+                    route.counters.round_trip_ticks.saturating_add(latency);
+                route.counters.max_round_trip_ticks =
+                    route.counters.max_round_trip_ticks.max(latency);
             }
         }
     }
 
+    summary.routes = routes.into_values().collect();
     summary
+}
+
+fn route_summary<'a>(
+    routes: &'a mut BTreeMap<(MemoryRouteId, String), Rem6MemoryTransportRouteSummary>,
+    route: MemoryRouteId,
+    source: &str,
+) -> &'a mut Rem6MemoryTransportRouteSummary {
+    routes
+        .entry((route, source.to_string()))
+        .or_insert_with(|| Rem6MemoryTransportRouteSummary {
+            route,
+            source: source.to_string(),
+            counters: Rem6MemoryTransportCounters::default(),
+        })
 }
 
 fn trace_key(event: &MemoryTraceEvent) -> (MemoryRouteId, MemoryRequestId) {
