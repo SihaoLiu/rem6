@@ -25,6 +25,10 @@ fn ordered_request(sequence: u64, address: u64, ordering: MemoryAccessOrdering) 
     request(sequence, address).with_ordering(ordering)
 }
 
+fn uncacheable_request(sequence: u64, address: u64) -> MemoryRequest {
+    request(sequence, address).with_uncacheable_strict_order()
+}
+
 fn write_request(sequence: u64, address: u64, data: Vec<u8>) -> MemoryRequest {
     let access_size = AccessSize::new(data.len() as u64).unwrap();
     MemoryRequest::write(
@@ -115,6 +119,50 @@ fn mshr_queue_allocates_merges_limits_targets_and_reuses_entries() {
         .allocate_or_merge(request(3, 0x2000), 8, MshrTargetSource::Demand, true)
         .unwrap();
     assert_eq!(reused.handle().index(), 1);
+}
+
+#[test]
+fn mshr_queue_keeps_uncacheable_strict_requests_out_of_line_merging() {
+    let mut queue = MshrQueue::new(MshrQueueConfig::new(4, 3, 0).unwrap());
+
+    let normal = queue
+        .allocate_or_merge(request(10, 0x1000), 5, MshrTargetSource::Demand, true)
+        .unwrap();
+    assert!(normal.allocated_new_entry());
+
+    let uncached = queue
+        .allocate_or_merge(
+            uncacheable_request(11, 0x1018),
+            6,
+            MshrTargetSource::Demand,
+            true,
+        )
+        .unwrap();
+    assert!(uncached.allocated_new_entry());
+    assert_ne!(uncached.handle(), normal.handle());
+    assert_eq!(queue.allocated_count(), 2);
+    assert_eq!(queue.entry(normal.handle()).unwrap().target_count(), 1);
+    assert_eq!(queue.entry(uncached.handle()).unwrap().target_count(), 1);
+
+    let merged_normal = queue
+        .allocate_or_merge(request(12, 0x1008), 7, MshrTargetSource::Demand, true)
+        .unwrap();
+    assert!(!merged_normal.allocated_new_entry());
+    assert_eq!(merged_normal.handle(), normal.handle());
+    assert_eq!(queue.entry(normal.handle()).unwrap().target_count(), 2);
+
+    let second_uncached = queue
+        .allocate_or_merge(
+            uncacheable_request(13, 0x100c),
+            8,
+            MshrTargetSource::Demand,
+            true,
+        )
+        .unwrap();
+    assert!(second_uncached.allocated_new_entry());
+    assert_ne!(second_uncached.handle(), normal.handle());
+    assert_ne!(second_uncached.handle(), uncached.handle());
+    assert_eq!(queue.allocated_count(), 3);
 }
 
 #[test]

@@ -85,3 +85,34 @@ fn cache_downstream_write_misses_preserve_source_ordering() {
     let miss = chi.accept_cpu_request(request.clone()).unwrap();
     assert_eq!(miss.downstream_request().unwrap().ordering(), ordering);
 }
+
+#[test]
+fn cache_downstream_misses_preserve_uncacheable_strict_order_flags() {
+    let mut msi = MsiCacheController::new(AgentId::new(10), layout(), Address::new(0x9000));
+    let request = read(1, 9, 0x9008).with_uncacheable_strict_order();
+    let miss = msi.accept_cpu_request(request.clone()).unwrap();
+    let downstream = miss.downstream_request().unwrap();
+    assert!(downstream.is_uncacheable());
+    assert!(downstream.is_strict_ordered());
+
+    let mut mesi = MesiCacheController::new(AgentId::new(20), layout(), Address::new(0xa000));
+    let request = read(2, 10, 0xa008).with_uncacheable_strict_order();
+    let miss = mesi.accept_cpu_request(request.clone()).unwrap();
+    let downstream = miss.downstream_request().unwrap();
+    assert!(downstream.is_uncacheable());
+    assert!(downstream.is_strict_ordered());
+
+    let mut moesi = MoesiCacheController::new(AgentId::new(30), layout(), Address::new(0xb000));
+    let request = read(3, 11, 0xb008).with_uncacheable_strict_order();
+    let miss = moesi.accept_cpu_request(request.clone()).unwrap();
+    let downstream = miss.downstream_request().unwrap();
+    assert!(downstream.is_uncacheable());
+    assert!(downstream.is_strict_ordered());
+
+    let mut chi = ChiCacheController::new(AgentId::new(40), layout(), Address::new(0xc000));
+    let request = read(4, 12, 0xc008).with_uncacheable_strict_order();
+    let miss = chi.accept_cpu_request(request.clone()).unwrap();
+    let downstream = miss.downstream_request().unwrap();
+    assert!(downstream.is_uncacheable());
+    assert!(downstream.is_strict_ordered());
+}

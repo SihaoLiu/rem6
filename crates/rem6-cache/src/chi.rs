@@ -554,7 +554,9 @@ impl ChiCacheController {
             }
             _ => unreachable!("only CPU requests create downstream requests"),
         }?;
-        Ok(crate::downstream::with_source_ordering(downstream, request))
+        Ok(crate::downstream::with_source_attributes(
+            downstream, request,
+        ))
     }
 
     fn complete_cpu_request(

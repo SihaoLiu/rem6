@@ -550,7 +550,7 @@ impl MsiCacheController {
             }
             _ => unreachable!("only CPU requests create downstream requests"),
         }?;
-        Ok(downstream::with_source_ordering(downstream, request))
+        Ok(downstream::with_source_attributes(downstream, request))
     }
 
     fn complete_cpu_request(

@@ -393,6 +393,15 @@ impl MshrEntry {
     pub fn target_count(&self) -> usize {
         self.targets.len()
     }
+
+    pub fn can_merge_request(&self, request: &MemoryRequest) -> bool {
+        self.line == request.line_address()
+            && !request.is_uncacheable()
+            && !request.is_strict_ordered()
+            && self.targets.iter().all(|target| {
+                !target.request().is_uncacheable() && !target.request().is_strict_ordered()
+            })
+    }
 }
 
 impl MshrQosProfile {
@@ -788,7 +797,11 @@ impl MshrQueue {
         qos: Option<MshrQosClass>,
     ) -> Result<MshrQueueUpdate, MshrQueueError> {
         let line = request.line_address();
-        if let Some(index) = self.entries.iter().position(|entry| entry.line == line) {
+        if let Some(index) = self
+            .entries
+            .iter()
+            .position(|entry| entry.can_merge_request(&request))
+        {
             let allocated_count = self.entries.len();
             let entry = &mut self.entries[index];
             if entry.target_count() >= self.config.targets_per_mshr {
