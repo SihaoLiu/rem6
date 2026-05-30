@@ -56,9 +56,10 @@ pub use branch_predictor::{
     BranchPredictorSnapshot, BranchSpeculation, BranchSpeculationId, BranchSpeculationRepair,
     BranchTargetBuffer, BranchTargetBufferConfig, BranchTargetBufferError,
     BranchTargetBufferSnapshot, BranchTargetEntry, BranchTargetKind, BranchTargetLookup,
-    BranchTargetUpdate, BranchUpdate, ReturnAddressStack, ReturnAddressStackConfig,
-    ReturnAddressStackError, ReturnAddressStackOperation, ReturnAddressStackOperationId,
-    ReturnAddressStackOperationKind, ReturnAddressStackRepair, ReturnAddressStackSnapshot,
+    BranchTargetSafetyConfig, BranchTargetSafetyProfile, BranchTargetUpdate, BranchUpdate,
+    ReturnAddressStack, ReturnAddressStackConfig, ReturnAddressStackError,
+    ReturnAddressStackOperation, ReturnAddressStackOperationId, ReturnAddressStackOperationKind,
+    ReturnAddressStackRepair, ReturnAddressStackSnapshot,
 };
 pub use data_config::CpuDataConfig;
 pub use error::{CpuClusterError, CpuError, RiscvCpuError};

@@ -16,6 +16,11 @@ pub enum BranchPredictorError {
     HistoryBitsOutOfRange {
         bits: u8,
     },
+    ReturnTargetProtectionDisabled {
+        profile: BranchTargetSafetyProfile,
+        return_address_stack_enabled: bool,
+        indirect_targets_hashed: bool,
+    },
     SnapshotTableEntriesMismatch {
         expected: usize,
         actual: usize,
@@ -41,6 +46,14 @@ impl fmt::Display for BranchPredictorError {
                 formatter,
                 "branch predictor history length {bits} is outside 1..=64"
             ),
+            Self::ReturnTargetProtectionDisabled {
+                profile,
+                return_address_stack_enabled,
+                indirect_targets_hashed,
+            } => write!(
+                formatter,
+                "{profile} branch target safety requires RAS or indirect target hashing, got ras={return_address_stack_enabled} indirect_hash_targets={indirect_targets_hashed}"
+            ),
             Self::SnapshotTableEntriesMismatch { expected, actual } => write!(
                 formatter,
                 "branch predictor snapshot has {actual} entries but predictor has {expected}"
@@ -65,6 +78,63 @@ impl fmt::Display for BranchPredictorError {
 }
 
 impl Error for BranchPredictorError {}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum BranchTargetSafetyProfile {
+    RiscvO3FullSystem,
+}
+
+impl fmt::Display for BranchTargetSafetyProfile {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::RiscvO3FullSystem => write!(formatter, "RISC-V O3 full-system"),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BranchTargetSafetyConfig {
+    profile: BranchTargetSafetyProfile,
+    return_address_stack_enabled: bool,
+    indirect_targets_hashed: bool,
+}
+
+impl BranchTargetSafetyConfig {
+    pub fn riscv_o3_full_system(
+        return_address_stack_enabled: bool,
+        indirect_targets_hashed: bool,
+    ) -> Result<Self, BranchPredictorError> {
+        let config = Self {
+            profile: BranchTargetSafetyProfile::RiscvO3FullSystem,
+            return_address_stack_enabled,
+            indirect_targets_hashed,
+        };
+        if !config.return_target_protected() {
+            return Err(BranchPredictorError::ReturnTargetProtectionDisabled {
+                profile: config.profile,
+                return_address_stack_enabled,
+                indirect_targets_hashed,
+            });
+        }
+        Ok(config)
+    }
+
+    pub const fn profile(self) -> BranchTargetSafetyProfile {
+        self.profile
+    }
+
+    pub const fn return_address_stack_enabled(self) -> bool {
+        self.return_address_stack_enabled
+    }
+
+    pub const fn indirect_targets_hashed(self) -> bool {
+        self.indirect_targets_hashed
+    }
+
+    pub const fn return_target_protected(self) -> bool {
+        self.return_address_stack_enabled || self.indirect_targets_hashed
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BranchPredictorConfig {

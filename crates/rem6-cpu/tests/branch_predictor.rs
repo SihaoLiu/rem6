@@ -1,8 +1,9 @@
 use rem6_cpu::{
     BranchPredictor, BranchPredictorConfig, BranchPredictorError, BranchSpeculationId,
     BranchTargetBuffer, BranchTargetBufferConfig, BranchTargetBufferError, BranchTargetKind,
-    ReturnAddressStack, ReturnAddressStackConfig, ReturnAddressStackError,
-    ReturnAddressStackOperationId, ReturnAddressStackOperationKind,
+    BranchTargetSafetyConfig, BranchTargetSafetyProfile, ReturnAddressStack,
+    ReturnAddressStackConfig, ReturnAddressStackError, ReturnAddressStackOperationId,
+    ReturnAddressStackOperationKind,
 };
 use rem6_memory::Address;
 
@@ -161,6 +162,33 @@ fn btb_config_rejects_gem5_issue_3188_oversized_shapes() {
     assert_eq!(explicit.entries(), 8192);
     assert_eq!(explicit.associativity(), 8);
     assert_eq!(explicit.sets(), 1024);
+}
+
+#[test]
+fn branch_target_safety_rejects_gem5_issue_2211_riscv_o3_config() {
+    assert_eq!(
+        BranchTargetSafetyConfig::riscv_o3_full_system(false, false).unwrap_err(),
+        BranchPredictorError::ReturnTargetProtectionDisabled {
+            profile: BranchTargetSafetyProfile::RiscvO3FullSystem,
+            return_address_stack_enabled: false,
+            indirect_targets_hashed: false,
+        }
+    );
+
+    let protected_by_ras = BranchTargetSafetyConfig::riscv_o3_full_system(true, false).unwrap();
+    assert_eq!(
+        protected_by_ras.profile(),
+        BranchTargetSafetyProfile::RiscvO3FullSystem
+    );
+    assert!(protected_by_ras.return_address_stack_enabled());
+    assert!(!protected_by_ras.indirect_targets_hashed());
+    assert!(protected_by_ras.return_target_protected());
+
+    let protected_by_indirect_path =
+        BranchTargetSafetyConfig::riscv_o3_full_system(false, true).unwrap();
+    assert!(!protected_by_indirect_path.return_address_stack_enabled());
+    assert!(protected_by_indirect_path.indirect_targets_hashed());
+    assert!(protected_by_indirect_path.return_target_protected());
 }
 
 #[test]
