@@ -6,7 +6,7 @@ use rem6_checkpoint::CheckpointError;
 use rem6_coherence::ParallelCoherenceRunSummary;
 use rem6_cpu::{
     CpuId, RiscvCluster, RiscvClusterError, RiscvClusterSchedulerEpoch, RiscvClusterTurn,
-    RiscvCoreDriveAction,
+    RiscvCoreDriveAction, RiscvStoreConditionalFailureDiagnostic,
 };
 use rem6_dram::{DramMemoryActivityProfile, DramTargetActivity};
 use rem6_fabric::{
@@ -52,6 +52,7 @@ mod system_run_planned_lanes;
 mod system_run_progress;
 mod system_run_qos;
 mod system_run_remote_flow;
+mod system_run_sc_progress;
 mod timer_checkpoint;
 mod topology;
 mod trap_event;
@@ -194,6 +195,7 @@ pub struct RiscvSystemRun {
     pub(crate) dram_wait_for: WaitForGraph,
     pub(crate) data_cache_runs: Vec<ParallelCoherenceRunSummary>,
     pub(crate) data_cache_run_protocols: Vec<Option<RiscvDataCacheProtocol>>,
+    pub(crate) store_conditional_failure_diagnostics: Vec<RiscvStoreConditionalFailureDiagnostic>,
 }
 
 impl RiscvSystemRun {
@@ -213,6 +215,7 @@ impl RiscvSystemRun {
             dram_wait_for: WaitForGraph::new(),
             data_cache_runs: Vec::new(),
             data_cache_run_protocols: Vec::new(),
+            store_conditional_failure_diagnostics: Vec::new(),
         }
     }
 
@@ -564,6 +567,19 @@ impl RiscvSystemRunDriver {
         self.instruction_stats.as_ref()
     }
 
+    pub(crate) fn run_result(
+        &self,
+        cluster: &RiscvCluster,
+        turns: Vec<RiscvClusterTurn>,
+        scheduled_traps: Vec<ScheduledRiscvTrap>,
+        stop_reason: RiscvSystemRunStopReason,
+    ) -> RiscvSystemRun {
+        RiscvSystemRun::new(turns, scheduled_traps, stop_reason)
+            .with_store_conditional_failure_diagnostics(
+                cluster.store_conditional_failure_diagnostics(),
+            )
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn drive_until_host_stop<F, D, FR, DR, E>(
         &self,
@@ -588,7 +604,8 @@ impl RiscvSystemRunDriver {
         let mut scheduled_traps = Vec::new();
 
         if let Some(stop) = self.host_stop_request() {
-            return Ok(RiscvSystemRun::new(
+            return Ok(self.run_result(
+                cluster,
                 turns,
                 scheduled_traps,
                 RiscvSystemRunStopReason::HostStop(stop),
@@ -618,7 +635,8 @@ impl RiscvSystemRunDriver {
 
             if let Some(stop) = self.host_stop_request() {
                 turns.push(turn);
-                return Ok(RiscvSystemRun::new(
+                return Ok(self.run_result(
+                    cluster,
                     turns,
                     scheduled_traps,
                     RiscvSystemRunStopReason::HostStop(stop),
@@ -626,7 +644,8 @@ impl RiscvSystemRunDriver {
             }
             if let Some(tick) = turn.idle_tick() {
                 turns.push(turn);
-                return Ok(RiscvSystemRun::new(
+                return Ok(self.run_result(
+                    cluster,
                     turns,
                     scheduled_traps,
                     RiscvSystemRunStopReason::Idle { tick },
@@ -672,7 +691,8 @@ impl RiscvSystemRunDriver {
         let mut scheduled_traps = Vec::new();
 
         if let Some(stop) = self.host_stop_request() {
-            return Ok(RiscvSystemRun::new(
+            return Ok(self.run_result(
+                cluster,
                 turns,
                 scheduled_traps,
                 RiscvSystemRunStopReason::HostStop(stop),
@@ -702,7 +722,8 @@ impl RiscvSystemRunDriver {
 
             if let Some(stop) = self.host_stop_request() {
                 turns.push(turn);
-                return Ok(RiscvSystemRun::new(
+                return Ok(self.run_result(
+                    cluster,
                     turns,
                     scheduled_traps,
                     RiscvSystemRunStopReason::HostStop(stop),
@@ -710,7 +731,8 @@ impl RiscvSystemRunDriver {
             }
             if let Some(tick) = turn.idle_tick() {
                 turns.push(turn);
-                return Ok(RiscvSystemRun::new(
+                return Ok(self.run_result(
+                    cluster,
                     turns,
                     scheduled_traps,
                     RiscvSystemRunStopReason::Idle { tick },
@@ -757,7 +779,8 @@ impl RiscvSystemRunDriver {
         let mut scheduled_traps = Vec::new();
 
         if let Some(stop) = self.host_stop_request() {
-            return Ok(RiscvSystemRun::new(
+            return Ok(self.run_result(
+                cluster,
                 turns,
                 scheduled_traps,
                 RiscvSystemRunStopReason::HostStop(stop),
@@ -788,7 +811,8 @@ impl RiscvSystemRunDriver {
 
             if let Some(stop) = self.host_stop_request() {
                 turns.push(turn);
-                return Ok(RiscvSystemRun::new(
+                return Ok(self.run_result(
+                    cluster,
                     turns,
                     scheduled_traps,
                     RiscvSystemRunStopReason::HostStop(stop),
@@ -796,7 +820,8 @@ impl RiscvSystemRunDriver {
             }
             if let Some(tick) = turn.idle_tick() {
                 turns.push(turn);
-                return Ok(RiscvSystemRun::new(
+                return Ok(self.run_result(
+                    cluster,
                     turns,
                     scheduled_traps,
                     RiscvSystemRunStopReason::Idle { tick },

@@ -39,7 +39,8 @@ impl RiscvSystemRunDriver {
         let mut scheduled_traps = Vec::new();
 
         if let Some(stop) = self.host_stop_request() {
-            return Ok(RiscvSystemRun::new(
+            return Ok(self.run_result(
+                cluster,
                 turns,
                 scheduled_traps,
                 RiscvSystemRunStopReason::HostStop(stop),
@@ -70,7 +71,8 @@ impl RiscvSystemRunDriver {
 
             if let Some(stop) = self.host_stop_request() {
                 turns.push(turn);
-                return Ok(RiscvSystemRun::new(
+                return Ok(self.run_result(
+                    cluster,
                     turns,
                     scheduled_traps,
                     RiscvSystemRunStopReason::HostStop(stop),
@@ -78,7 +80,8 @@ impl RiscvSystemRunDriver {
             }
             if let Some(tick) = turn.idle_tick() {
                 turns.push(turn);
-                return Ok(RiscvSystemRun::new(
+                return Ok(self.run_result(
+                    cluster,
                     turns,
                     scheduled_traps,
                     RiscvSystemRunStopReason::Idle { tick },
@@ -126,7 +129,8 @@ impl RiscvSystemRunDriver {
         let mut scheduled_traps = Vec::new();
 
         if let Some(stop) = self.host_stop_request() {
-            return Ok(RiscvSystemRun::new(
+            return Ok(self.run_result(
+                cluster,
                 turns,
                 scheduled_traps,
                 RiscvSystemRunStopReason::HostStop(stop),
@@ -158,7 +162,8 @@ impl RiscvSystemRunDriver {
 
             if let Some(stop) = self.host_stop_request() {
                 turns.push(turn);
-                return Ok(RiscvSystemRun::new(
+                return Ok(self.run_result(
+                    cluster,
                     turns,
                     scheduled_traps,
                     RiscvSystemRunStopReason::HostStop(stop),
@@ -166,7 +171,8 @@ impl RiscvSystemRunDriver {
             }
             if let Some(tick) = turn.idle_tick() {
                 turns.push(turn);
-                return Ok(RiscvSystemRun::new(
+                return Ok(self.run_result(
+                    cluster,
                     turns,
                     scheduled_traps,
                     RiscvSystemRunStopReason::Idle { tick },
