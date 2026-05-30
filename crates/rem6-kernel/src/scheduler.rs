@@ -16,10 +16,10 @@ use remote_boundary::{remote_delivery_before_lookahead_error, remote_event_deliv
 pub use state::{
     EpochPlan, ParallelBatchUtilizationRatio, ParallelEpochBatchRecord, ParallelEpochPlan,
     ParallelEpochPlannedBatch, ParallelEpochPlannedWorkerRecord, ParallelPartitionActivity,
-    ParallelProgressTransitionRecord, ParallelRemoteFlowRecord, ParallelRemoteSendRecord,
-    ParallelRunProfile, ParallelWorkerRecord, PartitionFrontier, PartitionSnapshot,
-    PendingEventSnapshot, ReadyPartition, RecordedConservativeRunSummary, RecordedRunSummary,
-    ScheduledEventKind, SchedulerDispatchRecord, SchedulerSnapshot,
+    ParallelProgressTransitionRecord, ParallelRemoteDeliveryWindow, ParallelRemoteFlowRecord,
+    ParallelRemoteSendRecord, ParallelRunProfile, ParallelWorkerRecord, PartitionFrontier,
+    PartitionSnapshot, PendingEventSnapshot, ReadyPartition, RecordedConservativeRunSummary,
+    RecordedRunSummary, ScheduledEventKind, SchedulerDispatchRecord, SchedulerSnapshot,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]

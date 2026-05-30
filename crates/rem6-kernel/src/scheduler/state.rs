@@ -8,6 +8,7 @@ use crate::{
 
 mod batch_evidence;
 mod planned_batch;
+mod remote_window;
 
 use self::batch_evidence::{
     batch_count_at_or_above, batch_count_for_partition_set, batch_count_for_worker_count,
@@ -19,10 +20,12 @@ use self::batch_evidence::{
     normalize_partition_set,
 };
 use self::planned_batch::collect_parallel_epoch_planned_batches;
+use self::remote_window::collect_parallel_remote_delivery_windows;
 
 pub use self::planned_batch::{
     ParallelBatchUtilizationRatio, ParallelEpochPlannedBatch, ParallelEpochPlannedWorkerRecord,
 };
+pub use self::remote_window::ParallelRemoteDeliveryWindow;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EpochPlan {
@@ -48,6 +51,7 @@ pub struct ParallelEpochPlan {
     serial_blockers: Vec<SchedulerDispatchRecord>,
     parallel_worker_limit: usize,
     parallel_batches: Vec<ParallelEpochPlannedBatch>,
+    remote_delivery_windows: Vec<ParallelRemoteDeliveryWindow>,
 }
 
 impl ParallelEpochPlan {
@@ -64,6 +68,8 @@ impl ParallelEpochPlan {
             &ready_partitions,
             parallel_worker_limit,
         );
+        let remote_delivery_windows =
+            collect_parallel_remote_delivery_windows(horizon, &ready_partitions, &frontiers);
         Self {
             horizon,
             ready_partitions,
@@ -71,6 +77,7 @@ impl ParallelEpochPlan {
             serial_blockers,
             parallel_worker_limit,
             parallel_batches,
+            remote_delivery_windows,
         }
     }
 

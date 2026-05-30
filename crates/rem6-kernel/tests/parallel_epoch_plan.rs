@@ -1,6 +1,6 @@
 use rem6_kernel::{
-    ParallelBatchUtilizationRatio, ParallelEpochPlannedWorkerRecord, PartitionId,
-    PartitionedScheduler, ReadyPartition,
+    ParallelBatchUtilizationRatio, ParallelEpochPlannedWorkerRecord, ParallelRemoteDeliveryWindow,
+    PartitionId, PartitionedScheduler, ReadyPartition,
 };
 
 #[test]
@@ -181,6 +181,50 @@ fn scheduler_parallel_plan_exposes_stable_host_worker_lane_assignments() {
         run.planned_batch_lane_tick_summaries(),
         vec![(0, 7), (1, 4)]
     );
+}
+
+#[test]
+fn scheduler_parallel_plan_exposes_remote_delivery_windows_before_dispatch() {
+    let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(3, 5, 2).unwrap();
+    let core0 = PartitionId::new(0);
+    let core1 = PartitionId::new(1);
+    let memory = PartitionId::new(2);
+
+    scheduler.schedule_parallel_at(core0, 0, |_| {}).unwrap();
+    scheduler.schedule_parallel_at(core1, 3, |_| {}).unwrap();
+
+    let plan = scheduler.plan_next_parallel_epoch().unwrap().unwrap();
+
+    assert_eq!(plan.horizon(), 5);
+    assert_eq!(
+        plan.remote_delivery_windows(),
+        &[
+            ParallelRemoteDeliveryWindow::new(core0, core1, 0, 0, Some(5), 5),
+            ParallelRemoteDeliveryWindow::new(core0, memory, 0, 0, Some(5), 5),
+            ParallelRemoteDeliveryWindow::new(core1, core0, 3, 0, Some(8), 5),
+            ParallelRemoteDeliveryWindow::new(core1, memory, 3, 0, Some(8), 5),
+        ]
+    );
+
+    let core0_to_memory = plan.remote_delivery_window(core0, memory).unwrap();
+    assert_eq!(core0_to_memory.first_accepted_delivery_tick(), Some(5));
+    assert!(core0_to_memory.can_deliver_in_epoch());
+
+    let core1_to_memory = plan.remote_delivery_window(core1, memory).unwrap();
+    assert_eq!(core1_to_memory.minimum_delivery_tick(), Some(8));
+    assert_eq!(core1_to_memory.first_accepted_delivery_tick(), Some(8));
+    assert!(!core1_to_memory.can_deliver_in_epoch());
+    assert_eq!(
+        plan.remote_delivery_windows_for_source(core0),
+        vec![
+            ParallelRemoteDeliveryWindow::new(core0, core1, 0, 0, Some(5), 5),
+            ParallelRemoteDeliveryWindow::new(core0, memory, 0, 0, Some(5), 5),
+        ],
+    );
+
+    assert_eq!(scheduler.now(), 0);
+    assert_eq!(scheduler.next_pending_tick(core0).unwrap(), Some(0));
+    assert_eq!(scheduler.next_pending_tick(core1).unwrap(), Some(3));
 }
 
 #[test]
