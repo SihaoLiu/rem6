@@ -102,6 +102,40 @@ fn thermal_network_capacitor_reference_edges_add_thermal_inertia() {
 }
 
 #[test]
+fn thermal_network_junction_nodes_require_explicit_initial_temperature() {
+    let cpu_domain = ThermalDomainId::new(1);
+    let cpu = ThermalNodeId::new(10);
+    let spreader = ThermalNodeId::new(20);
+    let air = ThermalNodeId::new(99);
+    let mut network = ThermalNetwork::new(1.0).unwrap();
+    network.add_domain(cpu, cpu_domain, 25.0, 10.0).unwrap();
+    network.add_junction(spreader, 25.0, 5.0).unwrap();
+    network.add_reference(air, 25.0).unwrap();
+    network.add_resistor(cpu, spreader, 1.0).unwrap();
+    network.add_resistor(spreader, air, 1.0).unwrap();
+
+    network
+        .advance(10, vec![(cpu_domain, PowerEstimate::new(10.0, 0.0))])
+        .unwrap();
+
+    assert_close(
+        network.temperature_for_domain(cpu_domain).unwrap(),
+        25.9210526,
+    );
+    assert_close(network.temperature_for_node(spreader).unwrap(), 25.1315789);
+    let snapshot = network.snapshot();
+    assert_eq!(snapshot.nodes()[1].node(), spreader);
+    assert_eq!(snapshot.nodes()[1].domain(), None);
+    assert_close(snapshot.nodes()[1].temperature_c(), 25.1315789);
+    assert_eq!(snapshot.nodes()[1].capacitance_j_per_c(), Some(5.0));
+
+    let mut restored = ThermalNetwork::new(1.0).unwrap();
+    restored.restore(&snapshot).unwrap();
+    assert_eq!(restored.snapshot(), snapshot);
+    assert_close(restored.temperature_for_node(spreader).unwrap(), 25.1315789);
+}
+
+#[test]
 fn thermal_network_rejects_invalid_topology_and_runtime_state() {
     let cpu_domain = ThermalDomainId::new(1);
     let cpu = ThermalNodeId::new(10);
@@ -117,6 +151,37 @@ fn thermal_network_rejects_invalid_topology_and_runtime_state() {
     assert_eq!(
         ThermalNetwork::new(0.0).unwrap_err(),
         ThermalError::InvalidThermalStep,
+    );
+    let mut passive_only = ThermalNetwork::new(1.0).unwrap();
+    passive_only
+        .add_junction(ThermalNodeId::new(20), 25.0, 1.0)
+        .unwrap();
+    assert_eq!(
+        passive_only.advance(1, Vec::new()).unwrap_err(),
+        ThermalError::NoThermalDomains,
+    );
+    assert_eq!(
+        network
+            .add_junction(ThermalNodeId::new(12), -273.15, 1.0)
+            .unwrap_err(),
+        ThermalError::InvalidTemperature,
+    );
+    assert_eq!(
+        network
+            .add_reference(ThermalNodeId::new(13), -274.0)
+            .unwrap_err(),
+        ThermalError::InvalidTemperature,
+    );
+    assert_eq!(
+        network
+            .add_domain(
+                ThermalNodeId::new(14),
+                ThermalDomainId::new(14),
+                -274.0,
+                1.0
+            )
+            .unwrap_err(),
+        ThermalError::InvalidTemperature,
     );
     assert_eq!(
         network

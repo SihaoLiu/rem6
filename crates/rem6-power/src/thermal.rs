@@ -330,6 +330,27 @@ impl ThermalNetwork {
         Ok(())
     }
 
+    pub fn add_junction(
+        &mut self,
+        node: ThermalNodeId,
+        initial_temperature_c: f64,
+        capacitance_j_per_c: f64,
+    ) -> Result<(), ThermalError> {
+        if self.nodes.contains_key(&node) {
+            return Err(ThermalError::DuplicateThermalNode { node });
+        }
+        validate_temperature(initial_temperature_c)?;
+        validate_positive(capacitance_j_per_c, ThermalError::InvalidThermalCapacitance)?;
+        self.nodes.insert(
+            node,
+            ThermalNetworkNode::Junction {
+                temperature_c: initial_temperature_c,
+                capacitance_j_per_c,
+            },
+        );
+        Ok(())
+    }
+
     pub fn add_resistor(
         &mut self,
         left: ThermalNodeId,
@@ -368,6 +389,13 @@ impl ThermalNetwork {
             .ok_or(ThermalError::UnknownThermalDomain { domain })
     }
 
+    pub fn temperature_for_node(&self, node: ThermalNodeId) -> Result<f64, ThermalError> {
+        self.nodes
+            .get(&node)
+            .map(ThermalNetworkNode::temperature_c)
+            .ok_or(ThermalError::UnknownThermalNode { node })
+    }
+
     pub fn advance(
         &mut self,
         tick: Tick,
@@ -379,7 +407,10 @@ impl ThermalNetwork {
                 last_tick: self.last_tick,
             });
         }
-        let entries = self.domain_entries();
+        if self.domains.is_empty() {
+            return Err(ThermalError::NoThermalDomains);
+        }
+        let entries = self.solve_entries();
         if entries.is_empty() {
             return Err(ThermalError::NoThermalDomains);
         }
@@ -396,7 +427,10 @@ impl ThermalNetwork {
             let c_over_step = entry.capacitance_j_per_c / self.step_seconds;
             matrix[index][index] += c_over_step;
             rhs[index] += c_over_step * entry.temperature_c
-                + power_map.get(&entry.domain).copied().unwrap_or_default();
+                + entry
+                    .domain
+                    .and_then(|domain| power_map.get(&domain).copied())
+                    .unwrap_or_default();
         }
         for resistor in &self.resistors {
             self.apply_resistor(resistor, &index_by_node, &mut matrix, &mut rhs)?;
@@ -409,21 +443,20 @@ impl ThermalNetwork {
         let mut updates = Vec::new();
         for (entry, temperature_c) in entries.iter().zip(temperatures) {
             validate_temperature(temperature_c)?;
-            let total_power_watts = power_map.get(&entry.domain).copied().unwrap_or_default();
-            if let Some(ThermalNetworkNode::Domain {
-                temperature_c: current,
-                ..
-            }) = self.nodes.get_mut(&entry.node)
-            {
-                *current = temperature_c;
+            let Some(node) = self.nodes.get_mut(&entry.node) else {
+                return Err(ThermalError::UnknownThermalNode { node: entry.node });
+            };
+            node.set_temperature_c(temperature_c);
+            if let Some(domain) = entry.domain {
+                let total_power_watts = power_map.get(&domain).copied().unwrap_or_default();
+                updates.push(ThermalUpdate::new(
+                    tick,
+                    domain,
+                    entry.temperature_c,
+                    temperature_c,
+                    total_power_watts,
+                ));
             }
-            updates.push(ThermalUpdate::new(
-                tick,
-                entry.domain,
-                entry.temperature_c,
-                temperature_c,
-                total_power_watts,
-            ));
         }
         self.last_tick = tick;
         self.updates.extend(updates.iter().copied());
@@ -448,6 +481,15 @@ impl ThermalNetwork {
                 ThermalNetworkNode::Reference { temperature_c } => {
                     ThermalNetworkNodeSnapshot::new(*node, None, *temperature_c, None)
                 }
+                ThermalNetworkNode::Junction {
+                    temperature_c,
+                    capacitance_j_per_c,
+                } => ThermalNetworkNodeSnapshot::new(
+                    *node,
+                    None,
+                    *temperature_c,
+                    Some(*capacitance_j_per_c),
+                ),
             })
             .collect();
         ThermalNetworkSnapshot::new(
@@ -484,10 +526,13 @@ impl ThermalNetwork {
                     temperature_c: node_snapshot.temperature_c(),
                     capacitance_j_per_c,
                 }
-            } else {
-                if node_snapshot.capacitance_j_per_c().is_some() {
-                    return Err(ThermalError::InvalidThermalCapacitance);
+            } else if let Some(capacitance_j_per_c) = node_snapshot.capacitance_j_per_c() {
+                validate_positive(capacitance_j_per_c, ThermalError::InvalidThermalCapacitance)?;
+                ThermalNetworkNode::Junction {
+                    temperature_c: node_snapshot.temperature_c(),
+                    capacitance_j_per_c,
                 }
+            } else {
                 ThermalNetworkNode::Reference {
                     temperature_c: node_snapshot.temperature_c(),
                 }
@@ -569,7 +614,7 @@ impl ThermalNetwork {
         Ok(map)
     }
 
-    fn domain_entries(&self) -> Vec<ThermalDomainEntry> {
+    fn solve_entries(&self) -> Vec<ThermalSolveEntry> {
         self.nodes
             .iter()
             .filter_map(|(node, record)| match record {
@@ -577,9 +622,18 @@ impl ThermalNetwork {
                     domain,
                     temperature_c,
                     capacitance_j_per_c,
-                } => Some(ThermalDomainEntry {
+                } => Some(ThermalSolveEntry {
                     node: *node,
-                    domain: *domain,
+                    domain: Some(*domain),
+                    temperature_c: *temperature_c,
+                    capacitance_j_per_c: *capacitance_j_per_c,
+                }),
+                ThermalNetworkNode::Junction {
+                    temperature_c,
+                    capacitance_j_per_c,
+                } => Some(ThermalSolveEntry {
+                    node: *node,
+                    domain: None,
                     temperature_c: *temperature_c,
                     capacitance_j_per_c: *capacitance_j_per_c,
                 }),
@@ -901,9 +955,9 @@ impl ThermalRcModel {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct ThermalDomainEntry {
+struct ThermalSolveEntry {
     node: ThermalNodeId,
-    domain: ThermalDomainId,
+    domain: Option<ThermalDomainId>,
     temperature_c: f64,
     capacitance_j_per_c: f64,
 }
@@ -915,6 +969,10 @@ enum ThermalNetworkNode {
         temperature_c: f64,
         capacitance_j_per_c: f64,
     },
+    Junction {
+        temperature_c: f64,
+        capacitance_j_per_c: f64,
+    },
     Reference {
         temperature_c: f64,
     },
@@ -923,23 +981,34 @@ enum ThermalNetworkNode {
 impl ThermalNetworkNode {
     fn temperature_c(&self) -> f64 {
         match self {
-            Self::Domain { temperature_c, .. } | Self::Reference { temperature_c } => {
-                *temperature_c
+            Self::Domain { temperature_c, .. }
+            | Self::Junction { temperature_c, .. }
+            | Self::Reference { temperature_c } => *temperature_c,
+        }
+    }
+
+    fn set_temperature_c(&mut self, next_temperature_c: f64) {
+        match self {
+            Self::Domain { temperature_c, .. } | Self::Junction { temperature_c, .. } => {
+                *temperature_c = next_temperature_c;
             }
+            Self::Reference { .. } => {}
         }
     }
 
     fn domain_temperature_c(&self) -> Option<f64> {
         match self {
             Self::Domain { temperature_c, .. } => Some(*temperature_c),
-            Self::Reference { .. } => None,
+            Self::Junction { .. } | Self::Reference { .. } => None,
         }
     }
 
     fn reference_temperature_c(&self) -> Result<f64, ThermalError> {
         match self {
             Self::Reference { temperature_c } => Ok(*temperature_c),
-            Self::Domain { .. } => Err(ThermalError::SingularThermalNetwork),
+            Self::Domain { .. } | Self::Junction { .. } => {
+                Err(ThermalError::SingularThermalNetwork)
+            }
         }
     }
 }
@@ -1041,8 +1110,10 @@ impl std::fmt::Display for ThermalError {
 
 impl std::error::Error for ThermalError {}
 
+const ABSOLUTE_ZERO_C: f64 = -273.15;
+
 fn validate_temperature(value: f64) -> Result<(), ThermalError> {
-    if !value.is_finite() {
+    if !value.is_finite() || value <= ABSOLUTE_ZERO_C {
         return Err(ThermalError::InvalidTemperature);
     }
     Ok(())
