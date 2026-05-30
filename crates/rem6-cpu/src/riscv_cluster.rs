@@ -4,7 +4,7 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use rem6_kernel::{
-    ParallelSchedulerContext, PartitionedScheduler, SchedulerContext, SchedulerError,
+    ParallelSchedulerContext, PartitionedScheduler, SchedulerContext, SchedulerError, Tick,
 };
 use rem6_memory::{AccessSize, Address, AgentId, TranslationPageMap};
 use rem6_mmio::MmioBus;
@@ -998,6 +998,54 @@ impl RiscvCluster {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub fn drive_turn_parallel_until_tick<F, D, FR, DR>(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        transport: &MemoryTransport,
+        fetch_trace: MemoryTrace,
+        data_trace: MemoryTrace,
+        fetch_responder: F,
+        data_responder: D,
+        tick_limit: Tick,
+    ) -> Result<Option<RiscvClusterTurn>, RiscvClusterError>
+    where
+        F: FnMut(CpuId) -> FR,
+        D: FnMut(CpuId) -> DR,
+        FR: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+        DR: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+    {
+        if scheduler.now() >= tick_limit {
+            return Ok(None);
+        }
+
+        let core_events = self.drive_ready_cores_parallel(
+            scheduler,
+            transport,
+            fetch_trace,
+            data_trace,
+            fetch_responder,
+            data_responder,
+        )?;
+        if !core_events.is_empty() {
+            return Ok(Some(RiscvClusterTurn::core(core_events)));
+        }
+
+        if scheduler.is_idle() {
+            return Ok(Some(RiscvClusterTurn::idle(scheduler.now())));
+        }
+
+        let Some(turn) = drive_parallel_scheduler_turn_until_tick(scheduler, tick_limit)? else {
+            return Ok(None);
+        };
+        self.reconcile_reservation_invalidations();
+        Ok(Some(turn))
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn drive_turn_parallel_with_instruction_budget<F, D, FR, DR>(
         &self,
         scheduler: &mut PartitionedScheduler,
@@ -1038,6 +1086,56 @@ impl RiscvCluster {
         let turn = drive_parallel_scheduler_turn(scheduler)?;
         self.reconcile_reservation_invalidations();
         Ok(turn)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn drive_turn_parallel_with_instruction_budget_until_tick<F, D, FR, DR>(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        transport: &MemoryTransport,
+        fetch_trace: MemoryTrace,
+        data_trace: MemoryTrace,
+        fetch_responder: F,
+        data_responder: D,
+        instruction_budget: u64,
+        tick_limit: Tick,
+    ) -> Result<Option<RiscvClusterTurn>, RiscvClusterError>
+    where
+        F: FnMut(CpuId) -> FR,
+        D: FnMut(CpuId) -> DR,
+        FR: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+        DR: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+    {
+        if scheduler.now() >= tick_limit {
+            return Ok(None);
+        }
+
+        let core_events = self.drive_ready_cores_parallel_with_instruction_budget(
+            scheduler,
+            transport,
+            fetch_trace,
+            data_trace,
+            fetch_responder,
+            data_responder,
+            instruction_budget,
+        )?;
+        if !core_events.is_empty() {
+            return Ok(Some(RiscvClusterTurn::core(core_events)));
+        }
+
+        if scheduler.is_idle() {
+            return Ok(Some(RiscvClusterTurn::idle(scheduler.now())));
+        }
+
+        let Some(turn) = drive_parallel_scheduler_turn_until_tick(scheduler, tick_limit)? else {
+            return Ok(None);
+        };
+        self.reconcile_reservation_invalidations();
+        Ok(Some(turn))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1281,6 +1379,19 @@ fn drive_parallel_scheduler_turn(
         .run_next_epoch_parallel_recorded()
         .map_err(RiscvClusterError::Scheduler)?;
     Ok(RiscvClusterTurn::parallel_scheduler(plan, recorded))
+}
+
+fn drive_parallel_scheduler_turn_until_tick(
+    scheduler: &mut PartitionedScheduler,
+    tick_limit: Tick,
+) -> Result<Option<RiscvClusterTurn>, RiscvClusterError> {
+    let Some((plan, recorded)) = scheduler
+        .run_next_epoch_parallel_recorded_until(tick_limit)
+        .map_err(RiscvClusterError::Scheduler)?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(RiscvClusterTurn::parallel_scheduler(plan, recorded)))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

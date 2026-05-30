@@ -74,7 +74,9 @@ impl Rem6ExecutionSummary {
     fn to_simulation_json(&self, max_tick: u64, max_instructions: Option<u64>) -> String {
         let instruction_limit = match self.stop {
             Rem6ExecutionStop::InstructionLimit { instruction_limit } => Some(instruction_limit),
-            Rem6ExecutionStop::HostTrap { .. } => max_instructions,
+            Rem6ExecutionStop::HostTrap { .. } | Rem6ExecutionStop::TickLimit { .. } => {
+                max_instructions
+            }
         };
         let common = format!(
             "\"max_tick\":{},\"instruction_limit\":{},\"executed_ticks\":{},\"final_tick\":{},\"cores\":{},\"committed_instructions\":{}",
@@ -89,6 +91,10 @@ impl Rem6ExecutionSummary {
             Rem6ExecutionStop::HostTrap { stop_code, trap } => format!(
                 "{{\"status\":\"executed_until_trap\",\"stop_reason\":\"host_trap\",{},\"stop_code\":{},\"trap\":\"{}\"}}",
                 common, stop_code, trap
+            ),
+            Rem6ExecutionStop::TickLimit { tick_limit } => format!(
+                "{{\"status\":\"stopped_at_tick_limit\",\"stop_reason\":\"tick_limit\",{},\"tick_limit\":{}}}",
+                common, tick_limit
             ),
             Rem6ExecutionStop::InstructionLimit { .. } => format!(
                 "{{\"status\":\"stopped_at_instruction_limit\",\"stop_reason\":\"instruction_limit\",{}}}",

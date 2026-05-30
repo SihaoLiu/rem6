@@ -359,6 +359,7 @@ pub struct Rem6ExecutionSummary {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Rem6ExecutionStop {
     HostTrap { stop_code: i32, trap: &'static str },
+    TickLimit { tick_limit: u64 },
     InstructionLimit { instruction_limit: u64 },
 }
 
@@ -814,6 +815,15 @@ fn run_stats_output(
                     stop_code as u64,
                 )?;
             }
+            Rem6ExecutionStop::TickLimit { .. } => {
+                increment_stat(
+                    &mut stats,
+                    "sim.stop.tick_limit",
+                    "Count",
+                    StatResetPolicy::Constant,
+                    1,
+                )?;
+            }
             Rem6ExecutionStop::InstructionLimit { .. } => {
                 increment_stat(
                     &mut stats,
@@ -1094,10 +1104,7 @@ fn execute_riscv(
             .ok_or_else(|| Rem6CliError::InvalidCoreCount {
                 value: config.cores().to_string(),
             })?;
-    let max_turns =
-        usize::try_from(config.max_tick()).map_err(|_| Rem6CliError::InvalidMaxTick {
-            value: config.max_tick().to_string(),
-        })?;
+    let tick_limit = config.max_tick();
     let memory_partition = PartitionId::new(core_count);
     let host_partition = PartitionId::new(core_count + 1);
     let line_layout = CacheLineLayout::new(DEFAULT_CACHE_LINE_BYTES).map_err(execute_error)?;
@@ -1194,13 +1201,13 @@ fn execute_riscv(
                     let store = Arc::clone(&store);
                     move |delivery, _context| memory_response(&store, &delivery)
                 },
-                max_turns,
+                tick_limit,
                 max_instructions,
                 |cpu| GuestEventId::new(u64::from(cpu.get())),
             )
             .map_err(execute_error)?,
         None => driver
-            .drive_until_host_stop_parallel(
+            .drive_until_host_stop_or_tick_limit_parallel(
                 &cluster,
                 &mut scheduler,
                 &transport,
@@ -1214,7 +1221,7 @@ fn execute_riscv(
                     let store = Arc::clone(&store);
                     move |delivery, _context| memory_response(&store, &delivery)
                 },
-                max_turns,
+                tick_limit,
                 |cpu| GuestEventId::new(u64::from(cpu.get())),
             )
             .map_err(execute_error)?,
@@ -1296,6 +1303,9 @@ fn execution_summary(
             Rem6ExecutionStop::InstructionLimit {
                 instruction_limit: limit,
             }
+        }
+        RiscvSystemRunStopReason::TickLimit { limit, .. } => {
+            Rem6ExecutionStop::TickLimit { tick_limit: limit }
         }
         RiscvSystemRunStopReason::Idle { .. } => {
             return Err(Rem6CliError::Execute {
