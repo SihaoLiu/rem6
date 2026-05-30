@@ -315,6 +315,9 @@ pub struct Rem6ExecutionSummary {
     data_loads: u64,
     data_stores: u64,
     data_atomics: u64,
+    data_load_bytes: u64,
+    data_store_bytes: u64,
+    data_atomic_bytes: u64,
     parallel_scheduler_epochs: u64,
     parallel_scheduler_dispatches: u64,
     parallel_scheduler_batches: u64,
@@ -390,6 +393,9 @@ pub struct Rem6CoreSummary {
     data_loads: u64,
     data_stores: u64,
     data_atomics: u64,
+    data_load_bytes: u64,
+    data_store_bytes: u64,
+    data_atomic_bytes: u64,
     registers: Vec<(u8, u64)>,
 }
 
@@ -402,13 +408,16 @@ impl Rem6CoreSummary {
             .collect::<Vec<_>>()
             .join(",");
         format!(
-            "{{\"cpu\":{},\"pc\":\"0x{:x}\",\"committed_instructions\":{},\"data_loads\":{},\"data_stores\":{},\"data_atomics\":{},\"registers\":{{{}}}}}",
+            "{{\"cpu\":{},\"pc\":\"0x{:x}\",\"committed_instructions\":{},\"data_loads\":{},\"data_stores\":{},\"data_atomics\":{},\"data_load_bytes\":{},\"data_store_bytes\":{},\"data_atomic_bytes\":{},\"registers\":{{{}}}}}",
             self.cpu,
             self.pc,
             self.committed_instructions,
             self.data_loads,
             self.data_stores,
             self.data_atomics,
+            self.data_load_bytes,
+            self.data_store_bytes,
+            self.data_atomic_bytes,
             registers
         )
     }
@@ -719,6 +728,27 @@ fn run_stats_json(
         )?;
         increment_stat(
             &mut stats,
+            "sim.data.load_bytes",
+            "Byte",
+            StatResetPolicy::Monotonic,
+            execution.data_load_bytes,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.data.store_bytes",
+            "Byte",
+            StatResetPolicy::Monotonic,
+            execution.data_store_bytes,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.data.atomic_bytes",
+            "Byte",
+            StatResetPolicy::Monotonic,
+            execution.data_atomic_bytes,
+        )?;
+        increment_stat(
+            &mut stats,
             "sim.parallel.scheduler.epochs",
             "Count",
             StatResetPolicy::Monotonic,
@@ -883,6 +913,27 @@ fn run_stats_json(
                 "Count",
                 StatResetPolicy::Monotonic,
                 core.data_atomics,
+            )?;
+            increment_stat(
+                &mut stats,
+                &format!("sim.cpu{}.data.load_bytes", core.cpu),
+                "Byte",
+                StatResetPolicy::Monotonic,
+                core.data_load_bytes,
+            )?;
+            increment_stat(
+                &mut stats,
+                &format!("sim.cpu{}.data.store_bytes", core.cpu),
+                "Byte",
+                StatResetPolicy::Monotonic,
+                core.data_store_bytes,
+            )?;
+            increment_stat(
+                &mut stats,
+                &format!("sim.cpu{}.data.atomic_bytes", core.cpu),
+                "Byte",
+                StatResetPolicy::Monotonic,
+                core.data_atomic_bytes,
             )?;
         }
     }
@@ -1097,6 +1148,9 @@ fn execution_summary(
     let mut data_loads = 0;
     let mut data_stores = 0;
     let mut data_atomics = 0;
+    let mut data_load_bytes = 0;
+    let mut data_store_bytes = 0;
+    let mut data_atomic_bytes = 0;
     for cpu_index in 0..core_count {
         let cpu = CpuId::new(cpu_index);
         let core = cluster.core(cpu).map_err(execute_error)?;
@@ -1104,6 +1158,9 @@ fn execution_summary(
         data_loads += data.loads;
         data_stores += data.stores;
         data_atomics += data.atomics;
+        data_load_bytes += data.load_bytes;
+        data_store_bytes += data.store_bytes;
+        data_atomic_bytes += data.atomic_bytes;
         let mut registers = Vec::new();
         for register_index in 1..32 {
             let register = Register::new(register_index).map_err(execute_error)?;
@@ -1119,6 +1176,9 @@ fn execution_summary(
             data_loads: data.loads,
             data_stores: data.stores,
             data_atomics: data.atomics,
+            data_load_bytes: data.load_bytes,
+            data_store_bytes: data.store_bytes,
+            data_atomic_bytes: data.atomic_bytes,
             registers,
         });
     }
@@ -1131,6 +1191,9 @@ fn execution_summary(
         data_loads,
         data_stores,
         data_atomics,
+        data_load_bytes,
+        data_store_bytes,
+        data_atomic_bytes,
         parallel_scheduler_epochs: run.parallel_scheduler_epochs().len() as u64,
         parallel_scheduler_dispatches: run.parallel_scheduler_dispatches().len() as u64,
         parallel_scheduler_batches: run.parallel_scheduler_batches().len() as u64,
@@ -1183,6 +1246,9 @@ struct DataAccessCounts {
     loads: u64,
     stores: u64,
     atomics: u64,
+    load_bytes: u64,
+    store_bytes: u64,
+    atomic_bytes: u64,
 }
 
 fn core_data_access_counts(core: &RiscvCore) -> DataAccessCounts {
@@ -1191,10 +1257,20 @@ fn core_data_access_counts(core: &RiscvCore) -> DataAccessCounts {
         if event.kind() != RiscvDataAccessEventKind::Completed {
             continue;
         }
+        let bytes = event.size().bytes();
         match event.operation() {
-            MemoryOperation::ReadShared | MemoryOperation::ReadUnique => counts.loads += 1,
-            MemoryOperation::Write => counts.stores += 1,
-            MemoryOperation::Atomic => counts.atomics += 1,
+            MemoryOperation::ReadShared | MemoryOperation::ReadUnique => {
+                counts.loads += 1;
+                counts.load_bytes += bytes;
+            }
+            MemoryOperation::Write => {
+                counts.stores += 1;
+                counts.store_bytes += bytes;
+            }
+            MemoryOperation::Atomic => {
+                counts.atomics += 1;
+                counts.atomic_bytes += bytes;
+            }
             _ => {}
         }
     }

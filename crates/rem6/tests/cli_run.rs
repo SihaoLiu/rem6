@@ -79,6 +79,17 @@ fn b_type(imm: i32, rs2: u8, rs1: u8, funct3: u32) -> u32 {
         | 0x63
 }
 
+fn atomic_type(funct5: u32, aq: bool, rl: bool, rs2: u8, rs1: u8, funct3: u32, rd: u8) -> u32 {
+    (funct5 << 27)
+        | (u32::from(aq) << 26)
+        | (u32::from(rl) << 25)
+        | (u32::from(rs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (funct3 << 12)
+        | (u32::from(rd) << 7)
+        | 0x2f
+}
+
 fn csr_read(csr: u32, rd: u8) -> u32 {
     (csr << 20) | (0x2 << 12) | (u32::from(rd) << 7) | 0x73
 }
@@ -332,9 +343,68 @@ fn rem6_run_executes_riscv_elf_load_store_and_emits_data_stats() {
     assert!(stdout.contains("\"hex\":\"8977665544332211\""));
     assert!(stdout.contains("\"path\":\"sim.data.loads\""));
     assert!(stdout.contains("\"path\":\"sim.data.stores\""));
+    assert_stat(&stdout, "sim.data.load_bytes", "Byte", 8, "monotonic");
+    assert_stat(&stdout, "sim.data.store_bytes", "Byte", 8, "monotonic");
     assert!(stdout.contains("\"path\":\"sim.memory.dumps\""));
     assert!(stdout.contains("\"path\":\"sim.cpu0.data.loads\""));
     assert!(stdout.contains("\"path\":\"sim.cpu0.data.stores\""));
+    assert_stat(&stdout, "sim.cpu0.data.load_bytes", "Byte", 8, "monotonic");
+    assert_stat(&stdout, "sim.cpu0.data.store_bytes", "Byte", 8, "monotonic");
+}
+
+#[test]
+fn rem6_run_executes_riscv_atomic_memory_op_and_emits_atomic_byte_stats() {
+    let mut program = riscv64_program(&[
+        u_type(0, 2, 0x17),                            // auipc x2, 0
+        i_type(24, 2, 0x0, 2, 0x13),                   // addi x2, x2, data offset
+        i_type(5, 0, 0x0, 6, 0x13),                    // addi x6, x0, 5
+        atomic_type(0x00, false, false, 6, 2, 0x3, 7), // amoadd.d x7, x6, (x2)
+        0x0000_0073,                                   // ecall
+        0x0000_0013,                                   // padding before data
+    ]);
+    program.extend_from_slice(&9u64.to_le_bytes());
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("atomic-exec", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "100",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "1",
+            "--dump-memory",
+            "0x80000018:8",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"x7\":\"0x9\""));
+    assert!(stdout.contains("\"data_atomics\":1"));
+    assert!(stdout.contains("\"address\":\"0x80000018\""));
+    assert!(stdout.contains("\"hex\":\"0e00000000000000\""));
+    assert_stat(&stdout, "sim.data.atomic_bytes", "Byte", 8, "monotonic");
+    assert_stat(
+        &stdout,
+        "sim.cpu0.data.atomic_bytes",
+        "Byte",
+        8,
+        "monotonic",
+    );
 }
 
 #[test]
