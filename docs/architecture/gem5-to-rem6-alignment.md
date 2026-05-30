@@ -214,6 +214,18 @@ isolated bugs:
   that boundary for clean-line capacity eviction, preserve replacement state in
   bank snapshots, and reject dirty capacity victims with typed state instead of
   silently dropping ownership before writeback integration exists.
+- `AddrRange` is a central gem5 memory primitive, but public issue #2855
+  identifies two full-system limits that have leaked into many call sites:
+  non-power-of-two memory or CHI SNF channel counts need modulo interleaving,
+  and x86-style physical holes need sparse ranges whose backing-store offsets
+  are packed after excluded intervals. gem5's design discussion also notes that
+  `AddrRangeMap::contains` can be hot under Ruby. rem6 keeps the simple
+  `AddressRange` as a small interval and moves optional mapping behavior into
+  typed `AddressMapRegion` records. The decoder stores sparse holes, modulo
+  interleave granularity, stripe count, match index, and packed local offsets as
+  data that snapshots can validate, so a full-system memory map can express
+  three, six, or twelve channels and I/O holes without forcing every consumer to
+  reinterpret raw start/end pairs.
 - Ruby functional reads in gem5 are scattered across controller access
   permission probes, controller buffers, network buffers, and backing-store
   fallback, with the selected line data written through a mutable `Packet`.
@@ -801,6 +813,9 @@ Research anchors refreshed through 2026-05-30:
 - Public gem5 issue anchor refreshed on 2026-05-30: open CHI replacement-policy
   bug where a Python-selected `RubyCache` policy can reach replacement state
   without required access metadata.
+- Public gem5 issue anchor refreshed on 2026-05-30: open `AddrRange`
+  refactor request for sparse physical ranges and non-power-of-two modulo
+  interleaving: <https://github.com/gem5/gem5/issues/2855>.
 - Public gem5 issue anchor refreshed on 2026-05-30: open Ruby checkpoint
   restore bug where warmup scheduling can try to insert an event before the
   live event queue's current tick.
@@ -826,6 +841,12 @@ Implementation evidence through 2026-05-30:
   destination fd, replace an existing destination without allocating another
   fd, clear close-on-exec only on newly duplicated descriptors, and preserve
   same-fd no-op behavior after source validation.
+- `rem6-memory` has typed sparse and modulo-interleaved address map regions for
+  future full-system memory maps. Tests cover the gem5 issue #2855 shape by
+  routing one base physical range across three modulo stripes, rejecting
+  ambiguous interleave policies, excluding sparse I/O holes, packing offsets
+  after holes, rejecting requests that cross holes or stripe ownership, and
+  preserving interleaved mapping policy through partitioned-store snapshots.
 - `rem6-timer` has an initial typed ARM Cortex-A9 CPU local timer/watchdog
   model aligned with gem5 `src/dev/arm/timer_cpulocal`: each declared CPU owns
   a local timer and watchdog register bank, MMIO dispatch selects the CPU from

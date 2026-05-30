@@ -10,8 +10,9 @@ use rem6_dram::{
     DramPortState, DramTiming, ExternalMemoryProfile, ExternalMemoryTopology, NvmMediaTiming,
 };
 use rem6_memory::{
-    AccessSize, Address, CacheLineLayout, MemoryError, MemoryLineSnapshot, MemoryPartitionSnapshot,
-    MemoryTargetId, PartitionedMemorySnapshot, PartitionedMemoryStore,
+    AccessSize, Address, AddressInterleave, AddressMapRegion, AddressRange, CacheLineLayout,
+    MemoryError, MemoryLineSnapshot, MemoryPartitionSnapshot, MemoryTargetId,
+    PartitionedMemorySnapshot, PartitionedMemoryStore,
 };
 
 const DRAM_CHUNK: &str = "dram";
@@ -545,10 +546,23 @@ fn encode_store(snapshot: &PartitionedMemorySnapshot) -> Vec<u8> {
     }
 
     write_u64(&mut payload, snapshot.regions().len() as u64);
-    for (target, range) in snapshot.regions() {
+    for (target, region) in snapshot.regions() {
         write_u32(&mut payload, target.get());
-        write_u64(&mut payload, range.start().get());
-        write_u64(&mut payload, range.size().bytes());
+        write_u64(&mut payload, region.start().get());
+        write_u64(&mut payload, region.size().bytes());
+        write_u64(&mut payload, region.holes().len() as u64);
+        for hole in region.holes() {
+            write_u64(&mut payload, hole.start().get());
+            write_u64(&mut payload, hole.size().bytes());
+        }
+        if let Some(interleave) = region.interleave() {
+            write_u64(&mut payload, 1);
+            write_u64(&mut payload, interleave.granularity().bytes());
+            write_u32(&mut payload, interleave.stripes());
+            write_u32(&mut payload, interleave.match_index());
+        } else {
+            write_u64(&mut payload, 0);
+        }
     }
     payload
 }
@@ -769,13 +783,59 @@ fn decode_store(
                 error,
             }
         })?;
-        let range = rem6_memory::AddressRange::new(start, size).map_err(|error| {
-            MemoryStoreCheckpointError::Memory {
+        let base =
+            AddressRange::new(start, size).map_err(|error| MemoryStoreCheckpointError::Memory {
                 component: component.clone(),
                 error,
-            }
-        })?;
-        regions.push((target, range));
+            })?;
+        let hole_count = cursor.read_count("region sparse hole count")?;
+        let mut holes = Vec::with_capacity(hole_count);
+        for _ in 0..hole_count {
+            let start = Address::new(cursor.read_u64("region sparse hole start")?);
+            let size =
+                AccessSize::new(cursor.read_u64("region sparse hole size")?).map_err(|error| {
+                    MemoryStoreCheckpointError::Memory {
+                        component: component.clone(),
+                        error,
+                    }
+                })?;
+            holes.push(AddressRange::new(start, size).map_err(|error| {
+                MemoryStoreCheckpointError::Memory {
+                    component: component.clone(),
+                    error,
+                }
+            })?);
+        }
+        let mut region = AddressMapRegion::new(base)
+            .with_holes(holes)
+            .map_err(|error| MemoryStoreCheckpointError::Memory {
+                component: component.clone(),
+                error,
+            })?;
+        let has_interleave = cursor.read_u64("region interleave flag")?;
+        if has_interleave != 0 {
+            let granularity = AccessSize::new(cursor.read_u64("region interleave granularity")?)
+                .map_err(|error| MemoryStoreCheckpointError::Memory {
+                    component: component.clone(),
+                    error,
+                })?;
+            let interleave = AddressInterleave::modulo(
+                granularity,
+                cursor.read_u32("region interleave stripes")?,
+                cursor.read_u32("region interleave match")?,
+            )
+            .map_err(|error| MemoryStoreCheckpointError::Memory {
+                component: component.clone(),
+                error,
+            })?;
+            region = region.with_interleave(interleave).map_err(|error| {
+                MemoryStoreCheckpointError::Memory {
+                    component: component.clone(),
+                    error,
+                }
+            })?;
+        }
+        regions.push((target, region));
     }
     cursor.finish()?;
     Ok(PartitionedMemorySnapshot::new(partitions, regions))

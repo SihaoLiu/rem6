@@ -2,11 +2,13 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
+mod address_map;
 mod ordering;
 mod request;
 mod translation;
 mod translation_tlb;
 
+pub use address_map::{AddressDecode, AddressDecoder, AddressInterleave, AddressMapRegion};
 pub use request::{MemoryRequest, MemoryResponse, ResponseStatus};
 pub use translation::{
     TranslationAccessKind, TranslationCompletion, TranslationError, TranslationFault,
@@ -322,6 +324,19 @@ pub enum MemoryError {
         existing: AddressRange,
         requested: AddressRange,
     },
+    SparseHoleOutsideRange {
+        base: AddressRange,
+        hole: AddressRange,
+    },
+    OverlappingSparseHole {
+        existing: AddressRange,
+        requested: AddressRange,
+    },
+    ZeroInterleaveStripes,
+    InterleaveMatchOutOfRange {
+        stripes: u32,
+        match_index: u32,
+    },
     RequestCrossesAddressRegion {
         request: MemoryRequestId,
         range: AddressRange,
@@ -463,6 +478,35 @@ impl fmt::Display for MemoryError {
                 requested.end().get(),
                 existing.start().get(),
                 existing.end().get()
+            ),
+            Self::SparseHoleOutsideRange { base, hole } => write!(
+                formatter,
+                "sparse address hole {:#x}..{:#x} is outside base region {:#x}..{:#x}",
+                hole.start().get(),
+                hole.end().get(),
+                base.start().get(),
+                base.end().get()
+            ),
+            Self::OverlappingSparseHole {
+                existing,
+                requested,
+            } => write!(
+                formatter,
+                "sparse address hole {:#x}..{:#x} overlaps existing hole {:#x}..{:#x}",
+                requested.start().get(),
+                requested.end().get(),
+                existing.start().get(),
+                existing.end().get()
+            ),
+            Self::ZeroInterleaveStripes => {
+                write!(formatter, "address interleave stripe count must be nonzero")
+            }
+            Self::InterleaveMatchOutOfRange {
+                stripes,
+                match_index,
+            } => write!(
+                formatter,
+                "address interleave match index {match_index} is outside {stripes} stripes"
             ),
             Self::RequestCrossesAddressRegion { request, range } => write!(
                 formatter,
@@ -831,78 +875,6 @@ impl AddressRange {
     }
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct AddressDecoder {
-    regions: Vec<(MemoryTargetId, AddressRange)>,
-}
-
-impl AddressDecoder {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn insert(
-        &mut self,
-        target: MemoryTargetId,
-        start: Address,
-        size: AccessSize,
-    ) -> Result<(), MemoryError> {
-        let requested = AddressRange::new(start, size)?;
-        if let Some((_, existing)) = self
-            .regions
-            .iter()
-            .find(|(_, existing)| existing.overlaps(requested))
-        {
-            return Err(MemoryError::OverlappingAddressRegion {
-                existing: *existing,
-                requested,
-            });
-        }
-
-        self.regions.push((target, requested));
-        self.regions
-            .sort_by_key(|(_, range)| (range.start(), range.end()));
-        Ok(())
-    }
-
-    pub fn decode(&self, address: Address) -> Result<MemoryTargetId, MemoryError> {
-        self.regions
-            .iter()
-            .find_map(|(target, range)| range.contains(address).then_some(*target))
-            .ok_or(MemoryError::UnmappedAddress { address })
-    }
-
-    pub fn decode_request(&self, request: &MemoryRequest) -> Result<MemoryTargetId, MemoryError> {
-        let range = request.range();
-        let Some((target, region)) = self
-            .regions
-            .iter()
-            .find(|(_, region)| region.contains(range.start()))
-        else {
-            return Err(MemoryError::UnmappedAddress {
-                address: range.start(),
-            });
-        };
-
-        if !region.contains_range(range) {
-            return Err(MemoryError::RequestCrossesAddressRegion {
-                request: request.id(),
-                range,
-            });
-        }
-
-        Ok(*target)
-    }
-
-    pub fn region_count(&self) -> usize {
-        self.regions.len()
-    }
-
-    pub fn regions(&self) -> &[(MemoryTargetId, AddressRange)] {
-        &self.regions
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PartitionedMemoryOutcome {
     target: MemoryTargetId,
@@ -957,6 +929,15 @@ impl PartitionedMemoryStore {
         self.decoder.insert(target, start, size)
     }
 
+    pub fn map_region_with_policy(
+        &mut self,
+        target: MemoryTargetId,
+        region: AddressMapRegion,
+    ) -> Result<(), MemoryError> {
+        self.require_partition(target)?;
+        self.decoder.insert_region(target, region)
+    }
+
     pub fn insert_line(
         &mut self,
         target: MemoryTargetId,
@@ -996,7 +977,7 @@ impl PartitionedMemoryStore {
             store.add_partition(partition.target(), partition.store().layout())?;
         }
         for (target, range) in snapshot.regions() {
-            store.map_region(*target, range.start(), range.size())?;
+            store.map_region_with_policy(*target, range.clone())?;
         }
         for partition in snapshot.partitions() {
             for line in partition.store().lines() {
@@ -1033,12 +1014,16 @@ impl PartitionedMemoryStore {
         self.decoder.region_count()
     }
 
-    pub fn regions(&self) -> &[(MemoryTargetId, AddressRange)] {
+    pub fn regions(&self) -> &[(MemoryTargetId, AddressMapRegion)] {
         self.decoder.regions()
     }
 
     pub fn decode_request(&self, request: &MemoryRequest) -> Result<MemoryTargetId, MemoryError> {
         self.decoder.decode_request(request)
+    }
+
+    pub fn decode_detail(&self, address: Address) -> Result<AddressDecode, MemoryError> {
+        self.decoder.decode_detail(address)
     }
 
     fn require_partition(&self, target: MemoryTargetId) -> Result<(), MemoryError> {
@@ -1129,13 +1114,13 @@ impl MemoryPartitionSnapshot {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PartitionedMemorySnapshot {
     partitions: Vec<MemoryPartitionSnapshot>,
-    regions: Vec<(MemoryTargetId, AddressRange)>,
+    regions: Vec<(MemoryTargetId, AddressMapRegion)>,
 }
 
 impl PartitionedMemorySnapshot {
     pub fn new(
         partitions: Vec<MemoryPartitionSnapshot>,
-        regions: Vec<(MemoryTargetId, AddressRange)>,
+        regions: Vec<(MemoryTargetId, AddressMapRegion)>,
     ) -> Self {
         Self {
             partitions,
@@ -1147,7 +1132,7 @@ impl PartitionedMemorySnapshot {
         &self.partitions
     }
 
-    pub fn regions(&self) -> &[(MemoryTargetId, AddressRange)] {
+    pub fn regions(&self) -> &[(MemoryTargetId, AddressMapRegion)] {
         &self.regions
     }
 }

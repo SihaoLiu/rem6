@@ -279,7 +279,11 @@ fn partitioned_target_at(
     store
         .regions()
         .iter()
-        .find_map(|(target, region)| region.contains(address).then_some((*target, *region)))
+        .find_map(|(target, region)| {
+            region
+                .contains(address)
+                .then_some((*target, region.base_range()))
+        })
         .ok_or(BootError::Memory(MemoryError::UnmappedAddress { address }))
 }
 

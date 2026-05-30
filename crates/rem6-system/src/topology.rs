@@ -853,7 +853,7 @@ impl RiscvTopologySystem {
             let layout = memory
                 .partition_layout(*target)
                 .map_err(RiscvTopologySystemError::Memory)?;
-            self.attach_line_layout_range_to_cores(*range, layout);
+            self.attach_line_layout_range_to_cores(range.base_range(), layout);
         }
         Ok(())
     }

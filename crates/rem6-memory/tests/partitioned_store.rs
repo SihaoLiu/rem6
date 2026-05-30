@@ -1,6 +1,7 @@
 use rem6_memory::{
-    AccessSize, Address, AddressRange, AgentId, ByteMask, CacheLineLayout, MemoryError,
-    MemoryRequest, MemoryRequestId, MemoryTargetId, PartitionedMemoryStore, ResponseStatus,
+    AccessSize, Address, AddressInterleave, AddressMapRegion, AddressRange, AgentId, ByteMask,
+    CacheLineLayout, MemoryError, MemoryRequest, MemoryRequestId, MemoryTargetId,
+    PartitionedMemoryStore, ResponseStatus,
 };
 
 fn layout() -> CacheLineLayout {
@@ -138,7 +139,10 @@ fn partitioned_store_snapshots_and_restores_regions_partitions_and_lines() {
 
     assert_eq!(
         snapshot.regions(),
-        &[(low, range(0x0000, 0x4000)), (high, range(0x8000, 0x4000))]
+        &[
+            (low, AddressMapRegion::new(range(0x0000, 0x4000))),
+            (high, AddressMapRegion::new(range(0x8000, 0x4000))),
+        ]
     );
     assert_eq!(
         snapshot
@@ -229,8 +233,8 @@ fn partitioned_store_allows_disjoint_regions_for_one_target() {
     assert_eq!(
         store.regions(),
         &[
-            (target, range(0x1000, 0x1000)),
-            (target, range(0x8000, 0x1000))
+            (target, AddressMapRegion::new(range(0x1000, 0x1000))),
+            (target, AddressMapRegion::new(range(0x8000, 0x1000))),
         ]
     );
     assert_eq!(store.respond(&read(0x1001, 2, 5)).unwrap().target(), target);
@@ -357,4 +361,64 @@ fn partitioned_store_rejects_unmapped_cross_region_and_layout_mismatch() {
             actual,
         }
     );
+}
+
+#[test]
+fn partitioned_store_restores_modulo_interleaved_regions() {
+    let channel_zero = MemoryTargetId::new(1);
+    let channel_one = MemoryTargetId::new(2);
+    let channel_two = MemoryTargetId::new(3);
+    let base = AddressRange::new(Address::new(0), AccessSize::new(0x300).unwrap()).unwrap();
+    let mut store = PartitionedMemoryStore::new();
+    for target in [channel_zero, channel_one, channel_two] {
+        store.add_partition(target, layout()).unwrap();
+    }
+    for (target, match_index) in [(channel_zero, 0), (channel_one, 1), (channel_two, 2)] {
+        store
+            .map_region_with_policy(
+                target,
+                AddressMapRegion::new(base)
+                    .with_interleave(
+                        AddressInterleave::modulo(AccessSize::new(64).unwrap(), 3, match_index)
+                            .unwrap(),
+                    )
+                    .unwrap(),
+            )
+            .unwrap();
+    }
+    store
+        .insert_line(channel_one, Address::new(0x0040), line_data(0x40))
+        .unwrap();
+
+    let snapshot = store.snapshot();
+    let decoded = store.decode_detail(Address::new(0x0044)).unwrap();
+    assert_eq!(decoded.target(), channel_one);
+    assert_eq!(decoded.offset(), 4);
+
+    let mut restored = PartitionedMemoryStore::from_snapshot(&snapshot).unwrap();
+    assert_eq!(
+        restored
+            .respond(&read(0x0044, 4, 21))
+            .unwrap()
+            .response()
+            .unwrap()
+            .data()
+            .unwrap(),
+        &[0x44, 0x45, 0x46, 0x47]
+    );
+    assert_eq!(
+        restored
+            .decode_detail(Address::new(0x00c0))
+            .unwrap()
+            .target(),
+        channel_zero
+    );
+    assert_eq!(
+        restored
+            .decode_detail(Address::new(0x0100))
+            .unwrap()
+            .target(),
+        channel_one
+    );
+    assert!(restored.regions()[0].1.is_interleaved());
 }
