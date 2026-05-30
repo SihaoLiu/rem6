@@ -106,6 +106,7 @@ pub struct Rem6RunConfig {
     isa: RequestedIsa,
     binary: PathBuf,
     max_tick: u64,
+    max_instructions: Option<u64>,
     stats_format: StatsFormat,
     execute: bool,
     cores: usize,
@@ -132,6 +133,7 @@ impl Rem6RunConfig {
         let mut isa = None;
         let mut binary = None;
         let mut max_tick = None;
+        let mut max_instructions = None;
         let mut stats_format = StatsFormat::Json;
         let mut execute = false;
         let mut cores = 1usize;
@@ -152,6 +154,18 @@ impl Rem6RunConfig {
                     max_tick = Some(value.parse().map_err(|_| Rem6CliError::InvalidMaxTick {
                         value: value.clone(),
                     })?);
+                }
+                "--max-instructions" => {
+                    let value = required_value(&flag, args.next())?;
+                    max_instructions = Some(
+                        value
+                            .parse()
+                            .ok()
+                            .filter(|instructions| *instructions > 0)
+                            .ok_or_else(|| Rem6CliError::InvalidMaxInstructions {
+                                value: value.clone(),
+                            })?,
+                    );
                 }
                 "--stats-format" => {
                     stats_format = StatsFormat::parse(&required_value(&flag, args.next())?)?;
@@ -207,6 +221,7 @@ impl Rem6RunConfig {
             isa: isa.ok_or(Rem6CliError::MissingRequiredFlag { flag: "--isa" })?,
             binary: binary.ok_or(Rem6CliError::MissingRequiredFlag { flag: "--binary" })?,
             max_tick: max_tick.ok_or(Rem6CliError::MissingRequiredFlag { flag: "--max-tick" })?,
+            max_instructions,
             stats_format,
             execute,
             cores,
@@ -227,6 +242,10 @@ impl Rem6RunConfig {
 
     pub const fn max_tick(&self) -> u64 {
         self.max_tick
+    }
+
+    pub const fn max_instructions(&self) -> Option<u64> {
+        self.max_instructions
     }
 
     pub const fn stats_format(&self) -> StatsFormat {
@@ -307,8 +326,7 @@ pub struct Rem6RunArtifact {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Rem6ExecutionSummary {
     final_tick: u64,
-    stop_code: i32,
-    trap: &'static str,
+    stop: Rem6ExecutionStop,
     committed_instructions: u64,
     data_loads: u64,
     data_stores: u64,
@@ -336,6 +354,12 @@ pub struct Rem6ExecutionSummary {
     data_transport: Rem6MemoryTransportSummary,
     cores: Vec<Rem6CoreSummary>,
     memory_dumps: Vec<Rem6MemoryDump>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Rem6ExecutionStop {
+    HostTrap { stop_code: i32, trap: &'static str },
+    InstructionLimit { instruction_limit: u64 },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -453,6 +477,9 @@ pub enum Rem6CliError {
     InvalidMaxTick {
         value: String,
     },
+    InvalidMaxInstructions {
+        value: String,
+    },
     InvalidCoreCount {
         value: String,
     },
@@ -462,6 +489,7 @@ pub enum Rem6CliError {
     InvalidMemoryDump {
         value: String,
     },
+    InstructionLimitRequiresExecution,
     MemoryDumpRequiresExecution,
     ReadBinary {
         path: PathBuf,
@@ -515,12 +543,18 @@ impl fmt::Display for Rem6CliError {
                 write!(formatter, "unsupported stats format {format}")
             }
             Self::InvalidMaxTick { value } => write!(formatter, "invalid max tick {value}"),
+            Self::InvalidMaxInstructions { value } => {
+                write!(formatter, "invalid max instructions {value}")
+            }
             Self::InvalidCoreCount { value } => write!(formatter, "invalid core count {value}"),
             Self::InvalidParallelWorkerCount { value } => {
                 write!(formatter, "invalid parallel worker count {value}")
             }
             Self::InvalidMemoryDump { value } => {
                 write!(formatter, "invalid memory dump request {value}")
+            }
+            Self::InstructionLimitRequiresExecution => {
+                write!(formatter, "--max-instructions requires --execute")
             }
             Self::MemoryDumpRequiresExecution => {
                 write!(formatter, "--dump-memory requires --execute")
@@ -648,8 +682,13 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
         });
     }
 
-    if !config.execute() && !config.memory_dumps().is_empty() {
-        return Err(Rem6CliError::MemoryDumpRequiresExecution);
+    if !config.execute() {
+        if config.max_instructions().is_some() {
+            return Err(Rem6CliError::InstructionLimitRequiresExecution);
+        }
+        if !config.memory_dumps().is_empty() {
+            return Err(Rem6CliError::MemoryDumpRequiresExecution);
+        }
     }
 
     let execution = if config.execute() {
@@ -664,6 +703,7 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
         bytes.len() as u64,
         image.segments().len() as u64,
         config.max_tick(),
+        config.max_instructions(),
         config.cores() as u64,
         config.parallel_workers() as u64,
         execution.as_ref(),
@@ -691,6 +731,7 @@ fn run_stats_output(
     binary_bytes: u64,
     load_segments: u64,
     max_tick: u64,
+    max_instructions: Option<u64>,
     cores: u64,
     parallel_workers: u64,
     execution: Option<&Rem6ExecutionSummary>,
@@ -717,6 +758,15 @@ fn run_stats_output(
         StatResetPolicy::Constant,
         max_tick,
     )?;
+    if let Some(max_instructions) = max_instructions {
+        increment_stat(
+            &mut stats,
+            "sim.instructions.limit",
+            "Count",
+            StatResetPolicy::Constant,
+            max_instructions,
+        )?;
+    }
     increment_stat(
         &mut stats,
         "sim.cores",
@@ -747,13 +797,33 @@ fn run_stats_output(
             StatResetPolicy::Monotonic,
             execution.final_tick,
         )?;
-        increment_stat(
-            &mut stats,
-            "sim.stop_code",
-            "Count",
-            StatResetPolicy::Constant,
-            execution.stop_code as u64,
-        )?;
+        match execution.stop {
+            Rem6ExecutionStop::HostTrap { stop_code, .. } => {
+                increment_stat(
+                    &mut stats,
+                    "sim.stop.host_trap",
+                    "Count",
+                    StatResetPolicy::Constant,
+                    1,
+                )?;
+                increment_stat(
+                    &mut stats,
+                    "sim.stop_code",
+                    "Count",
+                    StatResetPolicy::Constant,
+                    stop_code as u64,
+                )?;
+            }
+            Rem6ExecutionStop::InstructionLimit { .. } => {
+                increment_stat(
+                    &mut stats,
+                    "sim.stop.instruction_limit",
+                    "Count",
+                    StatResetPolicy::Constant,
+                    1,
+                )?;
+            }
+        }
         increment_stat(
             &mut stats,
             "sim.memory.dumps",
@@ -1108,25 +1178,47 @@ fn execute_riscv(
     let driver = RiscvSystemRunDriver::new(trap_port);
     let fetch_trace = MemoryTrace::new();
     let data_trace = MemoryTrace::new();
-    let run = driver
-        .drive_until_host_stop_parallel(
-            &cluster,
-            &mut scheduler,
-            &transport,
-            fetch_trace.clone(),
-            data_trace.clone(),
-            |_cpu| {
-                let store = Arc::clone(&store);
-                move |delivery, _context| memory_response(&store, &delivery)
-            },
-            |_cpu| {
-                let store = Arc::clone(&store);
-                move |delivery, _context| memory_response(&store, &delivery)
-            },
-            max_turns,
-            |cpu| GuestEventId::new(u64::from(cpu.get())),
-        )
-        .map_err(execute_error)?;
+    let run = match config.max_instructions() {
+        Some(max_instructions) => driver
+            .drive_until_host_stop_or_instruction_limit_parallel(
+                &cluster,
+                &mut scheduler,
+                &transport,
+                fetch_trace.clone(),
+                data_trace.clone(),
+                |_cpu| {
+                    let store = Arc::clone(&store);
+                    move |delivery, _context| memory_response(&store, &delivery)
+                },
+                |_cpu| {
+                    let store = Arc::clone(&store);
+                    move |delivery, _context| memory_response(&store, &delivery)
+                },
+                max_turns,
+                max_instructions,
+                |cpu| GuestEventId::new(u64::from(cpu.get())),
+            )
+            .map_err(execute_error)?,
+        None => driver
+            .drive_until_host_stop_parallel(
+                &cluster,
+                &mut scheduler,
+                &transport,
+                fetch_trace.clone(),
+                data_trace.clone(),
+                |_cpu| {
+                    let store = Arc::clone(&store);
+                    move |delivery, _context| memory_response(&store, &delivery)
+                },
+                |_cpu| {
+                    let store = Arc::clone(&store);
+                    move |delivery, _context| memory_response(&store, &delivery)
+                },
+                max_turns,
+                |cpu| GuestEventId::new(u64::from(cpu.get())),
+            )
+            .map_err(execute_error)?,
+    };
 
     let summary_inputs = ExecutionSummaryInputs {
         core_count,
@@ -1181,19 +1273,36 @@ fn execution_summary(
     run: &RiscvSystemRun,
     inputs: ExecutionSummaryInputs<'_>,
 ) -> Result<Rem6ExecutionSummary, Rem6CliError> {
-    let RiscvSystemRunStopReason::HostStop(stop) = run.stop_reason() else {
-        return Err(Rem6CliError::Execute {
-            error: "RISC-V execution stopped without a host trap".to_string(),
-        });
-    };
-    let scheduled_trap = run
-        .scheduled_traps()
-        .first()
-        .ok_or_else(|| Rem6CliError::Execute {
-            error: "RISC-V execution reached host stop without a scheduled trap".to_string(),
-        })?;
     let committed_by_cpu = committed_instructions_by_cpu(run);
     let committed_instructions = committed_by_cpu.values().sum();
+    let final_tick = run.final_tick().ok_or_else(|| Rem6CliError::Execute {
+        error: "RISC-V execution stopped without a final tick".to_string(),
+    })?;
+    let stop = match run.stop_reason() {
+        RiscvSystemRunStopReason::HostStop(stop) => {
+            let scheduled_trap =
+                run.scheduled_traps()
+                    .first()
+                    .ok_or_else(|| Rem6CliError::Execute {
+                        error: "RISC-V execution reached host stop without a scheduled trap"
+                            .to_string(),
+                    })?;
+            Rem6ExecutionStop::HostTrap {
+                stop_code: stop.code(),
+                trap: guest_trap_name(scheduled_trap.trap().kind()),
+            }
+        }
+        RiscvSystemRunStopReason::InstructionLimit { limit, .. } => {
+            Rem6ExecutionStop::InstructionLimit {
+                instruction_limit: limit,
+            }
+        }
+        RiscvSystemRunStopReason::Idle { .. } => {
+            return Err(Rem6CliError::Execute {
+                error: "RISC-V execution stopped without a host trap".to_string(),
+            });
+        }
+    };
     let mut cores = Vec::new();
     let mut data_loads = 0;
     let mut data_stores = 0;
@@ -1234,9 +1343,8 @@ fn execution_summary(
     }
 
     Ok(Rem6ExecutionSummary {
-        final_tick: stop.tick(),
-        stop_code: stop.code(),
-        trap: guest_trap_name(scheduled_trap.trap().kind()),
+        final_tick,
+        stop,
         committed_instructions,
         data_loads,
         data_stores,

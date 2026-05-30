@@ -87,6 +87,7 @@ use crate::{
 const DEFAULT_MAX_TURNS: usize = 64;
 const WORKLOAD_STOP_REASON_HOST: &str = "host-stop";
 const WORKLOAD_STOP_REASON_IDLE: &str = "idle";
+const WORKLOAD_STOP_REASON_INSTRUCTION_LIMIT: &str = "instruction-limit";
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct WorkloadGpuDmaActivity {
@@ -990,6 +991,9 @@ impl RiscvWorkloadReplay {
             }
             RiscvSystemRunStopReason::Idle { .. } => {
                 result.with_stop_reason(WORKLOAD_STOP_REASON_IDLE)
+            }
+            RiscvSystemRunStopReason::InstructionLimit { .. } => {
+                result.with_stop_reason(WORKLOAD_STOP_REASON_INSTRUCTION_LIMIT)
             }
         };
 

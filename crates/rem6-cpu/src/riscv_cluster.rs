@@ -390,6 +390,120 @@ impl RiscvCluster {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub fn drive_ready_cores_parallel_with_instruction_budget<F, D, FR, DR>(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        transport: &MemoryTransport,
+        fetch_trace: MemoryTrace,
+        data_trace: MemoryTrace,
+        mut fetch_responder: F,
+        mut data_responder: D,
+        instruction_budget: u64,
+    ) -> Result<Vec<RiscvClusterDriveEvent>, RiscvClusterError>
+    where
+        F: FnMut(CpuId) -> FR,
+        D: FnMut(CpuId) -> DR,
+        FR: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+        DR: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+    {
+        if instruction_budget == 0 {
+            return Ok(Vec::new());
+        }
+
+        self.reconcile_reservation_invalidations();
+        let mut prepared_actions = Vec::new();
+        let mut transaction_cpus = Vec::new();
+        let mut transactions = Vec::new();
+        let mut committed_instructions = 0u64;
+        for (cpu, core) in &self.cores {
+            if core.has_pending_fetch() || core.has_pending_data_access() || core.has_pending_trap()
+            {
+                continue;
+            }
+
+            if let Some(event) = core
+                .execute_next_completed_fetch()
+                .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?
+            {
+                if committed_instructions >= instruction_budget {
+                    break;
+                }
+                prepared_actions.push(PreparedParallelAction::Ready(RiscvClusterDriveEvent::new(
+                    *cpu,
+                    RiscvCoreDriveAction::InstructionExecuted(Box::new(event)),
+                )));
+                committed_instructions += 1;
+                if committed_instructions >= instruction_budget {
+                    break;
+                }
+                continue;
+            }
+
+            if let Some(prepared) = core
+                .prepare_data_parallel_access(
+                    scheduler.now(),
+                    transport,
+                    data_trace.clone(),
+                    data_responder(*cpu),
+                )
+                .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?
+            {
+                match prepared {
+                    PreparedDataParallelAccess::Transaction { issue, transaction } => {
+                        let transaction_index = transactions.len();
+                        transaction_cpus.push(*cpu);
+                        transactions.push(transaction);
+                        prepared_actions.push(PreparedParallelAction::Data {
+                            cpu: *cpu,
+                            core: core.clone(),
+                            issue,
+                            transaction_index,
+                        });
+                    }
+                    PreparedDataParallelAccess::ConditionalFailed { issue } => {
+                        prepared_actions.push(PreparedParallelAction::LocalDataFailure {
+                            cpu: *cpu,
+                            core: core.clone(),
+                            issue,
+                        });
+                    }
+                }
+                continue;
+            }
+
+            let (issue, transaction) = core
+                .prepare_fetch_parallel_transaction(
+                    scheduler.now(),
+                    transport,
+                    fetch_trace.clone(),
+                    fetch_responder(*cpu),
+                )
+                .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?;
+            let transaction_index = transactions.len();
+            transaction_cpus.push(*cpu);
+            transactions.push(transaction);
+            prepared_actions.push(PreparedParallelAction::Fetch {
+                cpu: *cpu,
+                core: core.clone(),
+                issue,
+                transaction_index,
+            });
+        }
+
+        self.finish_prepared_parallel_actions(
+            scheduler,
+            transport,
+            prepared_actions,
+            transaction_cpus,
+            transactions,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn drive_ready_cores_parallel_with_data_translation<F, D, FR, DR>(
         &self,
         scheduler: &mut PartitionedScheduler,
@@ -869,6 +983,49 @@ impl RiscvCluster {
             data_trace,
             fetch_responder,
             data_responder,
+        )?;
+        if !core_events.is_empty() {
+            return Ok(RiscvClusterTurn::core(core_events));
+        }
+
+        if scheduler.is_idle() {
+            return Ok(RiscvClusterTurn::idle(scheduler.now()));
+        }
+
+        let turn = drive_parallel_scheduler_turn(scheduler)?;
+        self.reconcile_reservation_invalidations();
+        Ok(turn)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn drive_turn_parallel_with_instruction_budget<F, D, FR, DR>(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        transport: &MemoryTransport,
+        fetch_trace: MemoryTrace,
+        data_trace: MemoryTrace,
+        fetch_responder: F,
+        data_responder: D,
+        instruction_budget: u64,
+    ) -> Result<RiscvClusterTurn, RiscvClusterError>
+    where
+        F: FnMut(CpuId) -> FR,
+        D: FnMut(CpuId) -> DR,
+        FR: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+        DR: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+    {
+        let core_events = self.drive_ready_cores_parallel_with_instruction_budget(
+            scheduler,
+            transport,
+            fetch_trace,
+            data_trace,
+            fetch_responder,
+            data_responder,
+            instruction_budget,
         )?;
         if !core_events.is_empty() {
             return Ok(RiscvClusterTurn::core(core_events));

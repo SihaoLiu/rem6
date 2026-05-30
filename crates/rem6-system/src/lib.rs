@@ -182,7 +182,14 @@ pub use workload_replay::{
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RiscvSystemRunStopReason {
     HostStop(StopRequest),
-    Idle { tick: Tick },
+    Idle {
+        tick: Tick,
+    },
+    InstructionLimit {
+        tick: Tick,
+        limit: u64,
+        committed: u64,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -318,7 +325,8 @@ impl RiscvSystemRun {
     pub const fn host_stop(&self) -> Option<StopRequest> {
         match self.stop_reason {
             RiscvSystemRunStopReason::HostStop(stop) => Some(stop),
-            RiscvSystemRunStopReason::Idle { .. } => None,
+            RiscvSystemRunStopReason::Idle { .. }
+            | RiscvSystemRunStopReason::InstructionLimit { .. } => None,
         }
     }
 
@@ -326,6 +334,7 @@ impl RiscvSystemRun {
         match self.stop_reason {
             RiscvSystemRunStopReason::HostStop(stop) => Some(stop.tick()),
             RiscvSystemRunStopReason::Idle { tick } => Some(tick),
+            RiscvSystemRunStopReason::InstructionLimit { tick, .. } => Some(tick),
         }
     }
 
@@ -753,6 +762,113 @@ impl RiscvSystemRunDriver {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub fn drive_until_host_stop_or_instruction_limit_parallel<F, D, FR, DR, E>(
+        &self,
+        cluster: &RiscvCluster,
+        scheduler: &mut PartitionedScheduler,
+        transport: &MemoryTransport,
+        fetch_trace: MemoryTrace,
+        data_trace: MemoryTrace,
+        mut fetch_responder: F,
+        mut data_responder: D,
+        max_turns: usize,
+        max_instructions: u64,
+        mut event_for: E,
+    ) -> Result<RiscvSystemRun, SystemError>
+    where
+        F: FnMut(CpuId) -> FR,
+        D: FnMut(CpuId) -> DR,
+        FR: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+        DR: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+        E: FnMut(CpuId) -> GuestEventId,
+    {
+        let mut turns = Vec::new();
+        let mut scheduled_traps = Vec::new();
+        let mut committed_instructions = 0u64;
+
+        if let Some(stop) = self.host_stop_request() {
+            return Ok(self.run_result(
+                cluster,
+                turns,
+                scheduled_traps,
+                RiscvSystemRunStopReason::HostStop(stop),
+            ));
+        }
+
+        for _ in 0..max_turns {
+            let remaining_instructions = max_instructions.saturating_sub(committed_instructions);
+            let turn = cluster
+                .drive_turn_parallel_with_instruction_budget(
+                    scheduler,
+                    transport,
+                    fetch_trace.clone(),
+                    data_trace.clone(),
+                    &mut fetch_responder,
+                    &mut data_responder,
+                    remaining_instructions,
+                )
+                .map_err(SystemError::RiscvCluster)?;
+            self.record_instruction_stats(&turn)?;
+            committed_instructions =
+                committed_instructions.saturating_add(committed_instruction_count(&turn));
+            let trap_cores = trap_event::pending_trap_cores_from_turn(cluster, &turn)?;
+            if !trap_cores.is_empty() {
+                scheduled_traps.extend(self.trap_port.schedule_pending_core_traps_parallel(
+                    scheduler,
+                    trap_cores,
+                    &mut event_for,
+                )?);
+            }
+
+            if let Some(stop) = self.host_stop_request() {
+                turns.push(turn);
+                return Ok(self.run_result(
+                    cluster,
+                    turns,
+                    scheduled_traps,
+                    RiscvSystemRunStopReason::HostStop(stop),
+                ));
+            }
+            if committed_instructions >= max_instructions {
+                let tick = last_committed_instruction_tick(&turn).unwrap_or(0);
+                turns.push(turn);
+                return Ok(self.run_result(
+                    cluster,
+                    turns,
+                    scheduled_traps,
+                    RiscvSystemRunStopReason::InstructionLimit {
+                        tick,
+                        limit: max_instructions,
+                        committed: committed_instructions,
+                    },
+                ));
+            }
+            if let Some(tick) = turn.idle_tick() {
+                turns.push(turn);
+                return Ok(self.run_result(
+                    cluster,
+                    turns,
+                    scheduled_traps,
+                    RiscvSystemRunStopReason::Idle { tick },
+                ));
+            }
+
+            turns.push(turn);
+        }
+
+        Err(SystemError::RiscvCluster(
+            RiscvClusterError::TurnLimitExceeded {
+                limit: max_turns,
+                completed: turns.len(),
+            },
+        ))
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn drive_until_host_stop_parallel_with_mmio<F, D, FR, DR, E>(
         &self,
         cluster: &RiscvCluster,
@@ -874,6 +990,24 @@ impl RiscvSystemRunDriver {
         }
         Ok(())
     }
+}
+
+fn committed_instruction_count(turn: &RiscvClusterTurn) -> u64 {
+    turn.core_events()
+        .iter()
+        .filter(|event| matches!(event.action(), RiscvCoreDriveAction::InstructionExecuted(_)))
+        .count() as u64
+}
+
+fn last_committed_instruction_tick(turn: &RiscvClusterTurn) -> Option<Tick> {
+    turn.core_events()
+        .iter()
+        .filter_map(|event| match event.action() {
+            RiscvCoreDriveAction::InstructionExecuted(execution) => Some(execution.fetch().tick()),
+            RiscvCoreDriveAction::FetchIssued { .. }
+            | RiscvCoreDriveAction::DataAccessIssued { .. } => None,
+        })
+        .max()
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

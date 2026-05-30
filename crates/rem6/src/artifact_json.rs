@@ -2,18 +2,22 @@ use super::formatting::{
     bytes_to_hex, elf_architecture_name, elf_class_name, elf_endian_name, elf_os_name, json_escape,
 };
 use super::{
-    Rem6CoreSummary, Rem6ExecutionSummary, Rem6MemoryDump, Rem6MemoryTransportCounters,
-    Rem6MemoryTransportRouteSummary, Rem6MemoryTransportSummary, Rem6ParallelFrontierSummary,
-    Rem6ParallelPartitionSummary, Rem6ParallelReadyPartitionSummary, Rem6RunArtifact,
+    Rem6CoreSummary, Rem6ExecutionStop, Rem6ExecutionSummary, Rem6MemoryDump,
+    Rem6MemoryTransportCounters, Rem6MemoryTransportRouteSummary, Rem6MemoryTransportSummary,
+    Rem6ParallelFrontierSummary, Rem6ParallelPartitionSummary, Rem6ParallelReadyPartitionSummary,
+    Rem6RunArtifact,
 };
 
 impl Rem6RunArtifact {
     pub fn to_json(&self) -> String {
         let simulation = match &self.execution {
-            Some(execution) => execution.to_simulation_json(self.config.max_tick()),
+            Some(execution) => {
+                execution.to_simulation_json(self.config.max_tick(), self.config.max_instructions())
+            }
             None => format!(
-                "{{\"status\":\"loaded\",\"max_tick\":{},\"executed_ticks\":0,\"cores\":{}}}",
+                "{{\"status\":\"loaded\",\"max_tick\":{},\"instruction_limit\":{},\"executed_ticks\":0,\"cores\":{}}}",
                 self.config.max_tick(),
+                optional_count_json(self.config.max_instructions()),
                 self.config.cores(),
             ),
         };
@@ -67,16 +71,30 @@ impl Rem6RunArtifact {
 }
 
 impl Rem6ExecutionSummary {
-    fn to_simulation_json(&self, max_tick: u64) -> String {
-        format!(
-            "{{\"status\":\"executed_until_trap\",\"max_tick\":{},\"executed_ticks\":{},\"final_tick\":{},\"cores\":{},\"stop_code\":{},\"trap\":\"{}\"}}",
+    fn to_simulation_json(&self, max_tick: u64, max_instructions: Option<u64>) -> String {
+        let instruction_limit = match self.stop {
+            Rem6ExecutionStop::InstructionLimit { instruction_limit } => Some(instruction_limit),
+            Rem6ExecutionStop::HostTrap { .. } => max_instructions,
+        };
+        let common = format!(
+            "\"max_tick\":{},\"instruction_limit\":{},\"executed_ticks\":{},\"final_tick\":{},\"cores\":{},\"committed_instructions\":{}",
             max_tick,
+            optional_count_json(instruction_limit),
             self.final_tick,
             self.final_tick,
             self.cores.len(),
-            self.stop_code,
-            self.trap,
-        )
+            self.committed_instructions,
+        );
+        match self.stop {
+            Rem6ExecutionStop::HostTrap { stop_code, trap } => format!(
+                "{{\"status\":\"executed_until_trap\",\"stop_reason\":\"host_trap\",{},\"stop_code\":{},\"trap\":\"{}\"}}",
+                common, stop_code, trap
+            ),
+            Rem6ExecutionStop::InstructionLimit { .. } => format!(
+                "{{\"status\":\"stopped_at_instruction_limit\",\"stop_reason\":\"instruction_limit\",{}}}",
+                common
+            ),
+        }
     }
 
     fn to_parallel_json(&self, worker_limit: usize) -> String {
@@ -231,6 +249,12 @@ impl Rem6ParallelReadyPartitionSummary {
 fn optional_tick_json(value: Option<u64>) -> String {
     value
         .map(|tick| tick.to_string())
+        .unwrap_or_else(|| "null".to_string())
+}
+
+fn optional_count_json(value: Option<u64>) -> String {
+    value
+        .map(|count| count.to_string())
         .unwrap_or_else(|| "null".to_string())
 }
 
