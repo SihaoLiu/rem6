@@ -14,11 +14,16 @@ use rem6_kernel::{
 use rem6_memory::{MemoryRequest, MemoryRequestId, MemoryResponse};
 use rem6_topology::{Endpoint, Topology};
 
+mod message_buffer;
 mod ordering;
 mod parallel_qos;
 mod route;
 mod trace;
 
+pub use message_buffer::{
+    TransportMessageAdmission, TransportMessageBuffer, TransportMessageBufferConfig,
+    TransportMessageBufferError, TransportMessageBufferSnapshot, TransportQueuedMessage,
+};
 use route::StoredRoute;
 pub use route::{
     MemoryRoute, MemoryRouteHop, MemoryRouteId, TopologyRouteError, TransportEndpointId,

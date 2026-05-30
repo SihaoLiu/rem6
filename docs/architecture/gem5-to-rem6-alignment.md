@@ -226,6 +226,18 @@ isolated bugs:
   data that snapshots can validate, so a full-system memory map can express
   three, six, or twelve channels and I/O holes without forcing every consumer to
   reinterpret raw start/end pairs.
+- Public issue #2816 reports that a full-system `MESI_Three_Level` plus O3 CPU
+  run can hit Ruby `MessageBuffer`'s strict-FIFO panic when a newly computed
+  arrival tick is earlier than the last recorded arrival tick. The upstream
+  response treats this as a likely protocol bug that is hard to reproduce and
+  not safely ignorable. rem6 moves that boundary into a typed transport message
+  buffer: strict FIFO admission computes the arrival tick before mutation,
+  rejects arrival regressions and disallowed zero-latency sends as typed errors,
+  preserves the previous queue state on rejection, records explicit bypass
+  intent, orders ready messages by arrival plus stable sequence, and preserves
+  the FIFO guard through snapshots. Protocol controllers therefore get a
+  replayable admission contract instead of discovering ordering drift through a
+  late simulator panic.
 - Ruby functional reads in gem5 are scattered across controller access
   permission probes, controller buffers, network buffers, and backing-store
   fallback, with the selected line data written through a mutable `Packet`.
@@ -944,12 +956,14 @@ Implementation evidence through 2026-05-30:
   callback state.
 - `rem6-transport` now keeps endpoint ids, route ids, route hops, route
   topology derivation, route errors, and transport QoS class state in a focused
-  `route` module while leaving the crate root centered on serial, parallel, and
-  batched delivery. Transport source-policy tests keep the crate root under the
-  facade budget, require route contracts to stay out of the root, and enforce
-  the hard per-source-file size budget, so NoC, QoS, and scheduler integration
-  growth does not recreate gem5-style event-queue and packet-routing
-  monoliths.
+  `route` module, and strict-FIFO message admission, bypass metadata, ready
+  ordering, and snapshot state in a focused `message_buffer` module while
+  leaving the crate root centered on serial, parallel, and batched delivery.
+  Transport source-policy tests keep the crate root under the facade budget,
+  require route and message-buffer contracts to stay out of the root, and
+  enforce the hard per-source-file size budget, so NoC, QoS, Ruby-style
+  message buffers, and scheduler integration growth does not recreate
+  gem5-style event-queue and packet-routing monoliths.
 - `rem6-gpu` now keeps GPU device/kernel/workgroup/DMA ids, wait-for markers,
   compute configuration, kernel launches, trace events, workgroup completion
   records, GPU device/slot/queued-workgroup snapshots, and GPU error reporting
@@ -2660,8 +2674,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   module-size budget across coherence sources.
   Cache source-policy tests keep MSI and MESI controller state in focused
   modules while enforcing the hard module-size budget across cache sources.
-  Transport source-policy tests keep route contracts in a focused module while
-  enforcing the facade and hard module-size budgets across transport sources.
+  Transport source-policy tests keep route and message-buffer contracts in
+  focused modules while enforcing the facade and hard module-size budgets
+  across transport sources.
   GPU source-policy tests keep command, trace, snapshot, and error contracts in
   focused modules while enforcing the facade and hard module-size budgets
   across GPU sources.

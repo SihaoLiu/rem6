@@ -40,6 +40,26 @@ fn route_contracts_live_in_focused_module() {
 }
 
 #[test]
+fn message_buffer_contracts_live_in_focused_module() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let lib_rs = fs::read_to_string(crate_dir.join("src/lib.rs")).unwrap();
+    let message_buffer_rs = crate_dir.join("src/message_buffer.rs");
+
+    assert!(
+        message_buffer_rs.exists(),
+        "transport message buffer contracts belong in src/message_buffer.rs"
+    );
+    assert!(
+        !lib_rs.contains("pub struct TransportMessageBuffer<"),
+        "src/lib.rs should re-export transport message buffers from a focused module"
+    );
+    assert!(
+        !lib_rs.contains("pub enum TransportMessageBufferError {"),
+        "src/lib.rs should re-export transport message buffer errors from a focused module"
+    );
+}
+
+#[test]
 fn transport_source_files_stay_within_size_limit() {
     let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut oversized = Vec::new();
