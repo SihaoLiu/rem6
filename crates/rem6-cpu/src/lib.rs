@@ -38,6 +38,7 @@ mod riscv_cluster_run;
 mod riscv_data_access;
 mod riscv_data_issue;
 mod riscv_reservation;
+mod riscv_sc_progress;
 mod riscv_translation;
 mod statistical_corrector;
 mod tage_predictor;
@@ -116,6 +117,12 @@ pub use riscv_cluster_run::{
 pub use riscv_data_access::{
     RiscvDataAccessEvent, RiscvDataAccessEventKind, RiscvDataAccessRecord, RiscvDataAccessTarget,
     RiscvLoadReservation,
+};
+pub use riscv_sc_progress::{
+    RiscvStoreConditionalFailureDiagnostic, RiscvStoreConditionalFailureStreak,
+    RiscvStoreConditionalProgress, RiscvStoreConditionalProgressConfig,
+    RiscvStoreConditionalProgressError, RiscvStoreConditionalProgressSnapshot,
+    DEFAULT_RISCV_SC_DIAGNOSTIC_THRESHOLD,
 };
 pub use statistical_corrector::{
     StatisticalCorrector, StatisticalCorrectorBranchKind, StatisticalCorrectorConfig,
@@ -924,6 +931,34 @@ impl RiscvCore {
         self.state.lock().expect("riscv core lock").reservation
     }
 
+    pub fn store_conditional_progress_snapshot(&self) -> RiscvStoreConditionalProgressSnapshot {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .sc_progress
+            .snapshot()
+    }
+
+    pub fn store_conditional_failure_streak(&self) -> Option<RiscvStoreConditionalFailureStreak> {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .sc_progress
+            .streak(self.id())
+            .copied()
+    }
+
+    pub fn store_conditional_failure_diagnostics(
+        &self,
+    ) -> Vec<RiscvStoreConditionalFailureDiagnostic> {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .sc_progress
+            .diagnostics()
+            .to_vec()
+    }
+
     pub(crate) fn invalidate_load_reservation_if_overlaps(
         &self,
         address: Address,
@@ -1104,6 +1139,7 @@ struct RiscvCoreState {
     outstanding_data: BTreeMap<MemoryRequestId, riscv_data_issue::IssuedDataAccess>,
     pending_trap: Option<RiscvTrap>,
     reservation: Option<RiscvLoadReservation>,
+    sc_progress: RiscvStoreConditionalProgress,
     events: Vec<RiscvCpuExecutionEvent>,
     data_events: Vec<RiscvDataAccessEvent>,
 }
@@ -1121,6 +1157,7 @@ impl RiscvCoreState {
             outstanding_data: BTreeMap::new(),
             pending_trap: None,
             reservation: None,
+            sc_progress: RiscvStoreConditionalProgress::default(),
             events: Vec::new(),
             data_events: Vec::new(),
         }

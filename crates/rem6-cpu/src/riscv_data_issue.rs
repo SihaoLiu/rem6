@@ -13,7 +13,7 @@ use rem6_transport::{
 };
 
 use crate::{
-    riscv_data_access, RiscvCore, RiscvCoreState, RiscvCpuError, RiscvDataAccessEvent,
+    riscv_data_access, CpuId, RiscvCore, RiscvCoreState, RiscvCpuError, RiscvDataAccessEvent,
     RiscvDataAccessRecord, RiscvDataAccessTarget, RiscvLoadReservation,
 };
 
@@ -349,6 +349,9 @@ impl RiscvCore {
         state.hart.write(*rd, 1);
         state.reservation = None;
         state
+            .sc_progress
+            .record_failure(self.id(), tick, access.physical_address, access.size);
+        state
             .data_events
             .push(RiscvDataAccessEvent::conditional_failed(
                 access.record(tick),
@@ -367,7 +370,13 @@ impl RiscvCore {
         match delivery.response().status() {
             ResponseStatus::Completed => {
                 let data = delivery.response().data().map(ToOwned::to_owned);
-                record_load_completion(&mut state, &access, data.as_deref(), "load response data");
+                record_load_completion(
+                    &mut state,
+                    self.id(),
+                    &access,
+                    data.as_deref(),
+                    "load response data",
+                );
                 state.data_events.push(RiscvDataAccessEvent::completed(
                     access.record(delivery.tick()),
                     data,
@@ -396,6 +405,7 @@ impl RiscvCore {
                 let data = response.data().map(ToOwned::to_owned);
                 record_load_completion(
                     &mut state,
+                    self.id(),
                     &access,
                     data.as_deref(),
                     "MMIO load response data",
@@ -553,6 +563,7 @@ pub(crate) enum PreparedDataParallelAccess {
 
 fn record_load_completion(
     state: &mut RiscvCoreState,
+    cpu: CpuId,
     access: &IssuedDataAccess,
     data: Option<&[u8]>,
     missing_data: &'static str,
@@ -576,6 +587,7 @@ fn record_load_completion(
         MemoryAccessKind::StoreConditional { rd, .. } => {
             state.hart.write(*rd, 0);
             state.reservation = None;
+            state.sc_progress.record_success(cpu);
         }
         MemoryAccessKind::AtomicMemory { rd, width, .. } => {
             let signed = *width == MemoryWidth::Word;
