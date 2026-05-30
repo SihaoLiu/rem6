@@ -8,6 +8,162 @@ pub enum O3RegisterClass {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct O3PhysicalRegisterId(u32);
+
+impl O3PhysicalRegisterId {
+    pub const fn new(value: u32) -> Self {
+        Self(value)
+    }
+
+    pub const fn invalid() -> Self {
+        Self(u32::MAX)
+    }
+
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+
+    pub const fn is_invalid(self) -> bool {
+        self.0 == u32::MAX
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum O3SourceRegister {
+    Invalid,
+    Mapped {
+        register_class: O3RegisterClass,
+        physical: O3PhysicalRegisterId,
+        scoreboard_ready: bool,
+    },
+}
+
+impl O3SourceRegister {
+    pub const fn invalid() -> Self {
+        Self::Invalid
+    }
+
+    pub const fn mapped(
+        register_class: O3RegisterClass,
+        physical: O3PhysicalRegisterId,
+        scoreboard_ready: bool,
+    ) -> Self {
+        Self::Mapped {
+            register_class,
+            physical,
+            scoreboard_ready,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum O3SourceRenameReason {
+    InvalidRegisterClassReady,
+    ScoreboardReady,
+    ScoreboardNotReady,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct O3SourceRenameDecision {
+    source_index: usize,
+    register_class: Option<O3RegisterClass>,
+    physical: O3PhysicalRegisterId,
+    consult_scoreboard: bool,
+    mark_ready: bool,
+    reason: O3SourceRenameReason,
+}
+
+impl O3SourceRenameDecision {
+    pub const fn source_index(&self) -> usize {
+        self.source_index
+    }
+
+    pub const fn register_class(&self) -> Option<O3RegisterClass> {
+        self.register_class
+    }
+
+    pub const fn physical(&self) -> O3PhysicalRegisterId {
+        self.physical
+    }
+
+    pub const fn consults_scoreboard(&self) -> bool {
+        self.consult_scoreboard
+    }
+
+    pub const fn mark_ready(&self) -> bool {
+        self.mark_ready
+    }
+
+    pub const fn reason(&self) -> O3SourceRenameReason {
+        self.reason
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct O3SourceRenamePlan {
+    decisions: Vec<O3SourceRenameDecision>,
+}
+
+impl O3SourceRenamePlan {
+    pub fn for_sources<I>(sources: I) -> Self
+    where
+        I: IntoIterator<Item = O3SourceRegister>,
+    {
+        let decisions = sources
+            .into_iter()
+            .enumerate()
+            .map(|(source_index, source)| match source {
+                O3SourceRegister::Invalid => O3SourceRenameDecision {
+                    source_index,
+                    register_class: None,
+                    physical: O3PhysicalRegisterId::invalid(),
+                    consult_scoreboard: false,
+                    mark_ready: true,
+                    reason: O3SourceRenameReason::InvalidRegisterClassReady,
+                },
+                O3SourceRegister::Mapped {
+                    register_class,
+                    physical,
+                    scoreboard_ready,
+                } => O3SourceRenameDecision {
+                    source_index,
+                    register_class: Some(register_class),
+                    physical,
+                    consult_scoreboard: true,
+                    mark_ready: scoreboard_ready,
+                    reason: if scoreboard_ready {
+                        O3SourceRenameReason::ScoreboardReady
+                    } else {
+                        O3SourceRenameReason::ScoreboardNotReady
+                    },
+                },
+            })
+            .collect();
+
+        Self { decisions }
+    }
+
+    pub fn decisions(&self) -> &[O3SourceRenameDecision] {
+        &self.decisions
+    }
+
+    pub fn scoreboard_lookup_count(&self) -> usize {
+        self.decisions
+            .iter()
+            .filter(|decision| decision.consult_scoreboard)
+            .count()
+    }
+
+    pub fn has_ready_source(&self) -> bool {
+        self.decisions.iter().any(|decision| decision.mark_ready)
+    }
+
+    pub fn has_blocked_source(&self) -> bool {
+        self.decisions.iter().any(|decision| !decision.mark_ready)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum O3DestinationVisibility {
     Writeback,
     Commit,

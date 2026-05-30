@@ -96,7 +96,8 @@ pub use multiperspective_perceptron::{
 pub use o3_dependency::{
     O3DependencyProducerKind, O3DependencyReleasePlan, O3DependencyReleaseReason,
     O3DependencyReleaseStage, O3DestinationRegister, O3DestinationRelease, O3DestinationVisibility,
-    O3RegisterClass,
+    O3PhysicalRegisterId, O3RegisterClass, O3SourceRegister, O3SourceRenameDecision,
+    O3SourceRenamePlan, O3SourceRenameReason,
 };
 pub use o3_pipeline::{
     O3DistributedIssuePlan, O3DistributedIssueScheduler, O3IssueOpClass, O3IssueQueueCapacity,
