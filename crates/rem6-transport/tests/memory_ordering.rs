@@ -236,6 +236,91 @@ fn direct_qos_batch_preserves_same_agent_acquire_ordering() {
 }
 
 #[test]
+fn direct_qos_batch_preserves_same_agent_strict_uncacheable_ordering() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(3, 2).unwrap();
+    let deliveries = Arc::new(Mutex::new(Vec::new()));
+    let responder_log = Arc::clone(&deliveries);
+    let mut transport = MemoryTransport::with_qos_policy(
+        QosQueueArbiter::new(QosQueuePolicyKind::Fifo),
+        QosFixedPriorityPolicy::new(2, QosPriority::new(1)).unwrap(),
+    )
+    .with_direct_target_batch_responder(move |batch, _context| {
+        responder_log.lock().unwrap().push(
+            batch
+                .iter()
+                .map(|delivery| delivery.request().id())
+                .collect::<Vec<_>>(),
+        );
+        Some(
+            batch
+                .iter()
+                .map(|delivery| {
+                    TargetBatchOutcome::new(delivery.request().id(), TargetOutcome::NoResponse)
+                })
+                .collect(),
+        )
+    });
+
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("core0.dmem"),
+                PartitionId::new(0),
+                endpoint("memory0"),
+                PartitionId::new(1),
+                4,
+                2,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let prior = request(5, 0x5000);
+    let strict = request(6, 0x6000).with_uncacheable_strict_order();
+    let later = request(7, 0x7000);
+    let trace = MemoryTrace::new();
+
+    transport
+        .submit_parallel_batch(
+            &mut scheduler,
+            [
+                ParallelMemoryTransaction::new(
+                    route,
+                    prior.clone(),
+                    trace.clone(),
+                    |_, _| panic!("batch responder should handle the request"),
+                    |_| panic!("request-only transfer must not deliver a response"),
+                )
+                .with_qos_priority(QosPriority::new(1)),
+                ParallelMemoryTransaction::new(
+                    route,
+                    strict.clone(),
+                    trace.clone(),
+                    |_, _| panic!("batch responder should handle the request"),
+                    |_| panic!("request-only transfer must not deliver a response"),
+                )
+                .with_qos_priority(QosPriority::new(2)),
+                ParallelMemoryTransaction::new(
+                    route,
+                    later.clone(),
+                    trace,
+                    |_, _| panic!("batch responder should handle the request"),
+                    |_| panic!("request-only transfer must not deliver a response"),
+                )
+                .with_qos_priority(QosPriority::new(0)),
+            ],
+        )
+        .unwrap();
+
+    let summary = scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(summary.executed_events(), 1);
+    assert_eq!(
+        *deliveries.lock().unwrap(),
+        vec![vec![prior.id(), strict.id(), later.id()]]
+    );
+}
+
+#[test]
 fn shared_fabric_qos_batch_preserves_same_agent_release_ordering() {
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
     let mut transport = MemoryTransport::with_fabric_qos(
@@ -338,5 +423,64 @@ fn shared_fabric_qos_batch_preserves_same_agent_acquire_ordering() {
             .map(|(_, request)| *request)
             .collect::<Vec<_>>(),
         vec![acquire.id(), later.id()]
+    );
+}
+
+#[test]
+fn shared_fabric_qos_batch_preserves_same_agent_strict_uncacheable_ordering() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let mut transport = MemoryTransport::with_fabric_qos(
+        FabricModel::new(),
+        QosQueueArbiter::new(QosQueuePolicyKind::Fifo),
+    );
+    let route = fabric_ordering_route(&mut transport, "mesh_order_strict_uncacheable");
+    let prior = request(15, 0x1500);
+    let strict = request(16, 0x1600).with_uncacheable_strict_order();
+    let later = request(17, 0x1700);
+    let deliveries = Arc::new(Mutex::new(Vec::new()));
+    let trace = MemoryTrace::new();
+
+    transport
+        .submit_parallel_batch(
+            &mut scheduler,
+            [
+                ParallelMemoryTransaction::new(
+                    route,
+                    prior.clone(),
+                    trace.clone(),
+                    record_no_response(Arc::clone(&deliveries)),
+                    |_| panic!("request-only transfer must not deliver a response"),
+                )
+                .with_qos_priority(QosPriority::new(1)),
+                ParallelMemoryTransaction::new(
+                    route,
+                    strict.clone(),
+                    trace.clone(),
+                    record_no_response(Arc::clone(&deliveries)),
+                    |_| panic!("request-only transfer must not deliver a response"),
+                )
+                .with_qos_priority(QosPriority::new(2)),
+                ParallelMemoryTransaction::new(
+                    route,
+                    later.clone(),
+                    trace,
+                    record_no_response(Arc::clone(&deliveries)),
+                    |_| panic!("request-only transfer must not deliver a response"),
+                )
+                .with_qos_priority(QosPriority::new(0)),
+            ],
+        )
+        .unwrap();
+
+    scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(
+        deliveries
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(_, request)| *request)
+            .collect::<Vec<_>>(),
+        vec![prior.id(), strict.id(), later.id()]
     );
 }

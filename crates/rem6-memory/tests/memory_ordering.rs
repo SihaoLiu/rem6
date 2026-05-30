@@ -58,3 +58,16 @@ fn requests_report_same_agent_ordering_edges() {
     assert!(!foreign.orders_before(&release));
     assert!(!release.orders_before(&foreign));
 }
+
+#[test]
+fn strict_order_requests_serialize_same_agent_neighbors() {
+    let prior = request(7, 10);
+    let strict = request(7, 11).with_uncacheable_strict_order();
+    let later = request(7, 12);
+    let foreign = request(9, 13);
+
+    assert!(prior.orders_before(&strict));
+    assert!(strict.orders_before(&later));
+    assert!(!foreign.orders_before(&strict));
+    assert!(!strict.orders_before(&foreign));
+}

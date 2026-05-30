@@ -38,10 +38,12 @@ impl MemoryOperation {
 impl MemoryRequest {
     pub fn orders_before(&self, later: &Self) -> bool {
         self.id().agent() == later.id().agent()
-            && (later
-                .ordering()
-                .before()
-                .is_some_and(|barrier| barrier.matches_operation(self.operation()))
+            && (self.is_strict_ordered()
+                || later.is_strict_ordered()
+                || later
+                    .ordering()
+                    .before()
+                    .is_some_and(|barrier| barrier.matches_operation(self.operation()))
                 || self
                     .ordering()
                     .after()
