@@ -325,6 +325,7 @@ pub struct Rem6ExecutionSummary {
     parallel_scheduler_batch_worker_ticks: u64,
     parallel_scheduler_batch_worker_capacity_ticks: u64,
     parallel_scheduler_batch_idle_worker_ticks: u64,
+    parallel_scheduler_worker_slots: Vec<Rem6ParallelWorkerSlotSummary>,
     parallel_scheduler_partitions: Vec<Rem6ParallelPartitionSummary>,
     cores: Vec<Rem6CoreSummary>,
     memory_dumps: Vec<Rem6MemoryDump>,
@@ -362,6 +363,13 @@ impl Rem6ExecutionSummary {
             .join(",");
         format!("[{dumps}]")
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Rem6ParallelWorkerSlotSummary {
+    slot: usize,
+    active_ticks: u64,
+    idle_ticks: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -779,6 +787,22 @@ fn run_stats_json(
             StatResetPolicy::Monotonic,
             execution.parallel_scheduler_batch_idle_worker_ticks,
         )?;
+        for slot in &execution.parallel_scheduler_worker_slots {
+            increment_stat(
+                &mut stats,
+                &format!("sim.parallel.scheduler.worker{}.active_ticks", slot.slot),
+                "Tick",
+                StatResetPolicy::Monotonic,
+                slot.active_ticks,
+            )?;
+            increment_stat(
+                &mut stats,
+                &format!("sim.parallel.scheduler.worker{}.idle_ticks", slot.slot),
+                "Tick",
+                StatResetPolicy::Monotonic,
+                slot.idle_ticks,
+            )?;
+        }
         for partition in &execution.parallel_scheduler_partitions {
             increment_stat(
                 &mut stats,
@@ -1120,10 +1144,24 @@ fn execution_summary(
             .parallel_scheduler_batch_worker_capacity_ticks(),
         parallel_scheduler_batch_idle_worker_ticks: run
             .parallel_scheduler_batch_idle_worker_ticks(),
+        parallel_scheduler_worker_slots: parallel_worker_slot_summaries(run),
         parallel_scheduler_partitions: parallel_partition_summaries(run),
         cores,
         memory_dumps: read_memory_dumps(store, line_layout, config.memory_dumps())?,
     })
+}
+
+fn parallel_worker_slot_summaries(run: &RiscvSystemRun) -> Vec<Rem6ParallelWorkerSlotSummary> {
+    run.parallel_scheduler_batch_worker_slot_tick_summaries()
+        .into_iter()
+        .map(
+            |(slot, active_ticks, idle_ticks)| Rem6ParallelWorkerSlotSummary {
+                slot,
+                active_ticks,
+                idle_ticks,
+            },
+        )
+        .collect()
 }
 
 fn parallel_partition_summaries(run: &RiscvSystemRun) -> Vec<Rem6ParallelPartitionSummary> {
