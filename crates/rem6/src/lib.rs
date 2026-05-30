@@ -297,7 +297,15 @@ pub struct Rem6ExecutionSummary {
     data_stores: u64,
     data_atomics: u64,
     parallel_scheduler_epochs: u64,
+    parallel_scheduler_dispatches: u64,
+    parallel_scheduler_batches: u64,
     parallel_scheduler_max_workers: u64,
+    parallel_scheduler_total_workers: u64,
+    parallel_scheduler_active_partitions: u64,
+    parallel_scheduler_remote_sends: u64,
+    parallel_scheduler_batch_worker_ticks: u64,
+    parallel_scheduler_batch_worker_capacity_ticks: u64,
+    parallel_scheduler_batch_idle_worker_ticks: u64,
     cores: Vec<Rem6CoreSummary>,
     memory_dumps: Vec<Rem6MemoryDump>,
 }
@@ -670,6 +678,62 @@ fn run_stats_json(
             StatResetPolicy::Monotonic,
             execution.parallel_scheduler_max_workers,
         )?;
+        increment_stat(
+            &mut stats,
+            "sim.parallel.scheduler.dispatches",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.parallel_scheduler_dispatches,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.parallel.scheduler.batches",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.parallel_scheduler_batches,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.parallel.scheduler.total_workers",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.parallel_scheduler_total_workers,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.parallel.scheduler.active_partitions",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.parallel_scheduler_active_partitions,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.parallel.scheduler.remote_sends",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.parallel_scheduler_remote_sends,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.parallel.scheduler.batch.worker_ticks",
+            "Tick",
+            StatResetPolicy::Monotonic,
+            execution.parallel_scheduler_batch_worker_ticks,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.parallel.scheduler.batch.worker_capacity_ticks",
+            "Tick",
+            StatResetPolicy::Monotonic,
+            execution.parallel_scheduler_batch_worker_capacity_ticks,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.parallel.scheduler.batch.idle_worker_ticks",
+            "Tick",
+            StatResetPolicy::Monotonic,
+            execution.parallel_scheduler_batch_idle_worker_ticks,
+        )?;
         for core in &execution.cores {
             increment_stat(
                 &mut stats,
@@ -943,7 +1007,18 @@ fn execution_summary(
         data_stores,
         data_atomics,
         parallel_scheduler_epochs: run.parallel_scheduler_epochs().len() as u64,
+        parallel_scheduler_dispatches: run.parallel_scheduler_dispatches().len() as u64,
+        parallel_scheduler_batches: run.parallel_scheduler_batches().len() as u64,
         parallel_scheduler_max_workers: run.max_parallel_scheduler_workers() as u64,
+        parallel_scheduler_total_workers: run.parallel_scheduler_workers().len() as u64,
+        parallel_scheduler_active_partitions: run.active_parallel_scheduler_partition_count()
+            as u64,
+        parallel_scheduler_remote_sends: run.parallel_scheduler_total_remote_send_count() as u64,
+        parallel_scheduler_batch_worker_ticks: run.parallel_scheduler_batch_worker_ticks(),
+        parallel_scheduler_batch_worker_capacity_ticks: run
+            .parallel_scheduler_batch_worker_capacity_ticks(),
+        parallel_scheduler_batch_idle_worker_ticks: run
+            .parallel_scheduler_batch_idle_worker_ticks(),
         cores,
         memory_dumps: read_memory_dumps(store, line_layout, config.memory_dumps())?,
     })

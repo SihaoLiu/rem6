@@ -197,6 +197,14 @@ fn rem6_run_executes_riscv_elf_on_parallel_cores_and_emits_core_stats() {
     assert!(stdout.contains("\"path\":\"sim.cpu0.instructions.committed\""));
     assert!(stdout.contains("\"path\":\"sim.cpu1.instructions.committed\""));
     assert!(stdout.contains("\"path\":\"sim.parallel.scheduler.max_workers\""));
+    assert!(stdout.contains("\"path\":\"sim.parallel.scheduler.dispatches\""));
+    assert!(stdout.contains("\"path\":\"sim.parallel.scheduler.batches\""));
+    assert!(stdout.contains("\"path\":\"sim.parallel.scheduler.total_workers\""));
+    assert!(stdout.contains("\"path\":\"sim.parallel.scheduler.active_partitions\""));
+    assert!(stdout.contains("\"path\":\"sim.parallel.scheduler.remote_sends\""));
+    assert!(stdout.contains("\"path\":\"sim.parallel.scheduler.batch.worker_ticks\""));
+    assert!(stdout.contains("\"path\":\"sim.parallel.scheduler.batch.worker_capacity_ticks\""));
+    assert!(stdout.contains("\"path\":\"sim.parallel.scheduler.batch.idle_worker_ticks\""));
     assert!(stdout.contains("\"value\":4"));
     assert!(stdout.contains("\"value\":2"));
 }
