@@ -139,7 +139,7 @@ pub use replacement::{
 };
 pub use replacement_directory::{
     CacheReplacementDirectory, CacheReplacementDirectoryConfig, CacheReplacementDirectorySnapshot,
-    ReplacementDirectoryInstall, ReplacementDirectorySetSnapshot,
+    ReplacementDirectoryInstall, ReplacementDirectoryMove, ReplacementDirectorySetSnapshot,
 };
 pub use write_queue::{
     CacheCleanReplacementPolicy, CacheReplacementVictim, CacheReplacementVictimState,

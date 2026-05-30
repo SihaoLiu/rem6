@@ -139,6 +139,15 @@ pub enum CacheReplacementPolicyError {
     UnknownResidentLine {
         line: Address,
     },
+    LineSetMismatch {
+        line: Address,
+        set: usize,
+        expected_set: usize,
+    },
+    OccupiedDestinationWay {
+        set: usize,
+        way: usize,
+    },
     NoCandidates,
     SnapshotConfigMismatch {
         expected: Box<CacheReplacementPolicyConfig>,
@@ -207,6 +216,19 @@ impl fmt::Display for CacheReplacementPolicyError {
                 formatter,
                 "cache replacement directory has no resident line {:#x}",
                 line.get()
+            ),
+            Self::LineSetMismatch {
+                line,
+                set,
+                expected_set,
+            } => write!(
+                formatter,
+                "cache replacement directory line {:#x} cannot move to set {set} instead of {expected_set}",
+                line.get()
+            ),
+            Self::OccupiedDestinationWay { set, way } => write!(
+                formatter,
+                "cache replacement directory destination set {set} way {way} is occupied"
             ),
             Self::NoCandidates => write!(formatter, "cache replacement policy has no candidates"),
             Self::SnapshotConfigMismatch { expected, actual } => write!(
@@ -535,6 +557,27 @@ impl ReplacementSet {
             after: self.entries[way].clone(),
             update_count: self.reset_count,
         })
+    }
+
+    pub(crate) fn relocate_way(
+        &mut self,
+        source_way: usize,
+        destination_way: usize,
+    ) -> Result<(), CacheReplacementPolicyError> {
+        self.check_way(source_way)?;
+        self.check_way(destination_way)?;
+        if source_way == destination_way {
+            return Ok(());
+        }
+
+        let mut moved = self.entries[source_way].clone();
+        moved.way = destination_way;
+        self.entries[source_way] = ReplacementEntry::new(source_way, self.config.kind());
+        self.entries[destination_way] = moved;
+        if self.config.kind() == CacheReplacementPolicyKind::TreePlru {
+            self.set_tree_points_to_leaf(source_way);
+        }
+        Ok(())
     }
 
     pub fn victim<I>(

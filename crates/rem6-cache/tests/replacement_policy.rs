@@ -430,6 +430,97 @@ fn replacement_directory_tracks_set_way_ownership_and_lru_victims() {
 }
 
 #[test]
+fn replacement_directory_moves_resident_line_without_reinterpreting_tag() {
+    let line = Address::new(0x1234_5678_9abc_def0);
+    let canonical_line = line_layout().line_address(line);
+    let mut directory = CacheReplacementDirectory::new(
+        CacheReplacementDirectoryConfig::new(CacheReplacementPolicyKind::Lru, line_layout(), 1, 2)
+            .unwrap(),
+    );
+    let install = directory.install(line).unwrap();
+    assert_eq!(install.set(), 0);
+    assert_eq!(install.way(), 0);
+
+    let relocation = directory.move_resident_line(line, 0, 1).unwrap();
+
+    assert_eq!(relocation.line(), canonical_line);
+    assert_eq!(relocation.source_set(), 0);
+    assert_eq!(relocation.source_way(), 0);
+    assert_eq!(relocation.destination_set(), 0);
+    assert_eq!(relocation.destination_way(), 1);
+    assert_eq!(directory.way_for(line), Some((0, 1)));
+    assert_eq!(directory.resident_lines(), vec![canonical_line]);
+    assert_eq!(
+        directory.set_lines(0).unwrap(),
+        vec![None, Some(canonical_line)]
+    );
+    assert_eq!(
+        directory.snapshot().sets()[0].lines(),
+        &[None, Some(canonical_line)]
+    );
+}
+
+#[test]
+fn replacement_directory_rejects_tag_shaped_or_wrong_set_moves() {
+    let line = Address::new(0x1000);
+    let mut directory = CacheReplacementDirectory::new(
+        CacheReplacementDirectoryConfig::new(CacheReplacementPolicyKind::Lru, line_layout(), 4, 2)
+            .unwrap(),
+    );
+    directory.install(line).unwrap();
+    let tag_shaped_value = Address::new(line.get() / line_layout().bytes());
+
+    assert_eq!(
+        directory
+            .move_resident_line(tag_shaped_value, 0, 1)
+            .unwrap_err(),
+        CacheReplacementPolicyError::UnknownResidentLine {
+            line: line_layout().line_address(tag_shaped_value)
+        }
+    );
+    assert_eq!(
+        directory.move_resident_line(line, 1, 1).unwrap_err(),
+        CacheReplacementPolicyError::LineSetMismatch {
+            line: line_layout().line_address(line),
+            set: 1,
+            expected_set: 0,
+        }
+    );
+    assert_eq!(
+        directory.move_resident_line(line, 0, 0).unwrap_err(),
+        CacheReplacementPolicyError::OccupiedDestinationWay { set: 0, way: 0 }
+    );
+}
+
+#[test]
+fn replacement_directory_moves_ship_line_without_requiring_new_signature() {
+    let line = Address::new(0x2000);
+    let mut directory = CacheReplacementDirectory::new(
+        CacheReplacementDirectoryConfig::new(
+            CacheReplacementPolicyKind::Ship {
+                rrpv_bits: 2,
+                hit_priority: true,
+                shct_entries: 8,
+                insertion_threshold_percent: 50,
+            },
+            line_layout(),
+            1,
+            2,
+        )
+        .unwrap(),
+    );
+    directory.install_with_signature(line, 3).unwrap();
+    directory.touch_with_signature(line, 3).unwrap();
+
+    let relocation = directory.move_resident_line(line, 0, 1).unwrap();
+
+    assert_eq!(relocation.line(), line_layout().line_address(line));
+    assert_eq!(relocation.source_way(), 0);
+    assert_eq!(relocation.destination_way(), 1);
+    assert_eq!(directory.way_for(line), Some((0, 1)));
+}
+
+#[test]
 fn replacement_directory_snapshot_restore_preserves_policy_state() {
     let config = CacheReplacementDirectoryConfig::new(
         CacheReplacementPolicyKind::TreePlru,

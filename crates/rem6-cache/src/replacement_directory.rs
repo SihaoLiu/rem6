@@ -142,6 +142,50 @@ impl CacheReplacementDirectory {
         self.touch_inner(line, Some(signature))
     }
 
+    pub fn move_resident_line(
+        &mut self,
+        line: Address,
+        destination_set: usize,
+        destination_way: usize,
+    ) -> Result<ReplacementDirectoryMove, CacheReplacementPolicyError> {
+        let line = self.config.line_address(line);
+        self.check_set(destination_set)?;
+        self.check_way(destination_way)?;
+
+        let expected_set = self.config.set_index(line);
+        if destination_set != expected_set {
+            return Err(CacheReplacementPolicyError::LineSetMismatch {
+                line,
+                set: destination_set,
+                expected_set,
+            });
+        }
+
+        let (source_set, source_way) = self
+            .way_for(line)
+            .ok_or(CacheReplacementPolicyError::UnknownResidentLine { line })?;
+        let directory_set = &mut self.sets[source_set];
+        if directory_set.lines[destination_way].is_some() {
+            return Err(CacheReplacementPolicyError::OccupiedDestinationWay {
+                set: destination_set,
+                way: destination_way,
+            });
+        }
+
+        directory_set
+            .replacement
+            .relocate_way(source_way, destination_way)?;
+        directory_set.lines[source_way] = None;
+        directory_set.lines[destination_way] = Some(line);
+        Ok(ReplacementDirectoryMove {
+            line,
+            source_set,
+            source_way,
+            destination_set,
+            destination_way,
+        })
+    }
+
     pub fn snapshot(&self) -> CacheReplacementDirectorySnapshot {
         CacheReplacementDirectorySnapshot {
             config: self.config.clone(),
@@ -287,6 +331,16 @@ impl CacheReplacementDirectory {
         }
         Ok(())
     }
+
+    fn check_way(&self, way: usize) -> Result<(), CacheReplacementPolicyError> {
+        if way >= self.config.ways() {
+            return Err(CacheReplacementPolicyError::UnknownWay {
+                way,
+                ways: self.config.ways(),
+            });
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -344,6 +398,37 @@ impl ReplacementDirectoryInstall {
 
     pub const fn update(&self) -> &ReplacementUpdate {
         &self.update
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReplacementDirectoryMove {
+    line: Address,
+    source_set: usize,
+    source_way: usize,
+    destination_set: usize,
+    destination_way: usize,
+}
+
+impl ReplacementDirectoryMove {
+    pub const fn line(&self) -> Address {
+        self.line
+    }
+
+    pub const fn source_set(&self) -> usize {
+        self.source_set
+    }
+
+    pub const fn source_way(&self) -> usize {
+        self.source_way
+    }
+
+    pub const fn destination_set(&self) -> usize {
+        self.destination_set
+    }
+
+    pub const fn destination_way(&self) -> usize {
+        self.destination_way
     }
 }
 
