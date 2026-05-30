@@ -133,9 +133,7 @@ impl RiscvCore {
             return Ok(None);
         }
 
-        let event = self
-            .issue_next_fetch(scheduler, transport, fetch_trace, fetch_responder)
-            .map_err(RiscvCpuError::Cpu)?;
+        let event = self.issue_next_fetch(scheduler, transport, fetch_trace, fetch_responder)?;
         Ok(Some(RiscvCoreDriveAction::FetchIssued { event }))
     }
 

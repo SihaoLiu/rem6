@@ -38,6 +38,7 @@ mod riscv_cluster;
 mod riscv_cluster_run;
 mod riscv_data_access;
 mod riscv_data_issue;
+mod riscv_fetch;
 mod riscv_reservation;
 mod riscv_sc_progress;
 mod riscv_translation;
@@ -386,7 +387,7 @@ impl CpuCore {
         Ok((issue, transaction))
     }
 
-    fn prepare_fetch(
+    pub(crate) fn prepare_fetch(
         &self,
         tick: Tick,
         transport: &MemoryTransport,
@@ -438,7 +439,7 @@ impl CpuCore {
         })
     }
 
-    fn record_issue(&self, issue: OutstandingFetch) {
+    pub(crate) fn record_issue(&self, issue: OutstandingFetch) {
         let mut state = self.state.lock().expect("cpu core lock");
         state.next_sequence += 1;
         state
@@ -455,7 +456,7 @@ impl CpuCore {
         )));
     }
 
-    fn record_response(&self, delivery: ResponseDelivery) {
+    pub(crate) fn record_response(&self, delivery: ResponseDelivery) {
         let mut state = self.state.lock().expect("cpu core lock");
         let Some(fetch) = state.outstanding.remove(&delivery.response().request_id()) else {
             return;
@@ -601,15 +602,15 @@ impl CpuCoreState {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct OutstandingFetch {
-    tick: Tick,
-    partition: PartitionId,
-    route: MemoryRouteId,
-    endpoint: TransportEndpointId,
-    request_id: MemoryRequestId,
-    pc: Address,
-    size: AccessSize,
-    line_layout: CacheLineLayout,
+pub(crate) struct OutstandingFetch {
+    pub(crate) tick: Tick,
+    pub(crate) partition: PartitionId,
+    pub(crate) route: MemoryRouteId,
+    pub(crate) endpoint: TransportEndpointId,
+    pub(crate) request_id: MemoryRequestId,
+    pub(crate) pc: Address,
+    pub(crate) size: AccessSize,
+    pub(crate) line_layout: CacheLineLayout,
 }
 
 impl OutstandingFetch {
@@ -1036,56 +1037,6 @@ impl RiscvCore {
         Some(reservation)
     }
 
-    pub fn issue_next_fetch<F>(
-        &self,
-        scheduler: &mut PartitionedScheduler,
-        transport: &MemoryTransport,
-        trace: MemoryTrace,
-        responder: F,
-    ) -> Result<PartitionEventId, CpuError>
-    where
-        F: FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static,
-    {
-        self.core
-            .issue_next_fetch(scheduler, transport, trace, responder)
-    }
-
-    pub fn issue_next_fetch_parallel<F>(
-        &self,
-        scheduler: &mut PartitionedScheduler,
-        transport: &MemoryTransport,
-        trace: MemoryTrace,
-        responder: F,
-    ) -> Result<PartitionEventId, CpuError>
-    where
-        F: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
-            + Send
-            + 'static,
-    {
-        self.core
-            .issue_next_fetch_parallel(scheduler, transport, trace, responder)
-    }
-
-    fn prepare_fetch_parallel_transaction<F>(
-        &self,
-        tick: Tick,
-        transport: &MemoryTransport,
-        trace: MemoryTrace,
-        responder: F,
-    ) -> Result<(OutstandingFetch, ParallelMemoryTransaction), CpuError>
-    where
-        F: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
-            + Send
-            + 'static,
-    {
-        self.core
-            .prepare_fetch_parallel_transaction(tick, transport, trace, responder)
-    }
-
-    fn record_prepared_fetch_issue(&self, issue: OutstandingFetch) {
-        self.core.record_issue(issue);
-    }
-
     #[allow(clippy::too_many_arguments)]
     pub fn drive_next_action<F, D>(
         &self,
@@ -1119,9 +1070,7 @@ impl RiscvCore {
             return Ok(Some(RiscvCoreDriveAction::DataAccessIssued { event }));
         }
 
-        let event = self
-            .issue_next_fetch(scheduler, transport, fetch_trace, fetch_responder)
-            .map_err(RiscvCpuError::Cpu)?;
+        let event = self.issue_next_fetch(scheduler, transport, fetch_trace, fetch_responder)?;
         Ok(Some(RiscvCoreDriveAction::FetchIssued { event }))
     }
 

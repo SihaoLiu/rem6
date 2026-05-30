@@ -268,10 +268,7 @@ impl RiscvCluster {
                     fetch_trace.clone(),
                     fetch_responder(*cpu),
                 )
-                .map_err(|error| RiscvClusterError::Core {
-                    cpu: *cpu,
-                    error: RiscvCpuError::Cpu(error),
-                })?;
+                .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?;
             let transaction_index = transactions.len();
             transaction_cpus.push(*cpu);
             transactions.push(transaction);
@@ -371,10 +368,7 @@ impl RiscvCluster {
                     fetch_trace.clone(),
                     fetch_responder(*cpu),
                 )
-                .map_err(|error| RiscvClusterError::Core {
-                    cpu: *cpu,
-                    error: RiscvCpuError::Cpu(error),
-                })?;
+                .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?;
             let transaction_index = transactions.len();
             transaction_cpus.push(*cpu);
             transactions.push(transaction);
@@ -482,10 +476,7 @@ impl RiscvCluster {
                     fetch_trace.clone(),
                     fetch_responder(*cpu),
                 )
-                .map_err(|error| RiscvClusterError::Core {
-                    cpu: *cpu,
-                    error: RiscvCpuError::Cpu(error),
-                })?;
+                .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?;
             let transaction_index = transactions.len();
             transaction_cpus.push(*cpu);
             transactions.push(transaction);
@@ -607,10 +598,7 @@ impl RiscvCluster {
                     fetch_trace.clone(),
                     fetch_responder(*cpu),
                 )
-                .map_err(|error| RiscvClusterError::Core {
-                    cpu: *cpu,
-                    error: RiscvCpuError::Cpu(error),
-                })?;
+                .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?;
             let transaction_index = transactions.len();
             transaction_cpus.push(*cpu);
             transactions.push(transaction);
@@ -775,10 +763,7 @@ impl RiscvCluster {
                     fetch_trace.clone(),
                     fetch_responder(*cpu),
                 )
-                .map_err(|error| RiscvClusterError::Core {
-                    cpu: *cpu,
-                    error: RiscvCpuError::Cpu(error),
-                })?;
+                .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?;
             actions.push(RiscvClusterDriveEvent::new(
                 *cpu,
                 RiscvCoreDriveAction::FetchIssued { event },

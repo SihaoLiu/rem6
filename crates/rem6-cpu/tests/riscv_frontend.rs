@@ -57,6 +57,13 @@ fn locked_tor_without_permissions() -> RiscvPmpConfig {
     RiscvPmpConfig::new(RiscvPmpAddressMode::Tor).with_locked(true)
 }
 
+fn tor_with_all_permissions() -> RiscvPmpConfig {
+    RiscvPmpConfig::new(RiscvPmpAddressMode::Tor)
+        .with_read(true)
+        .with_write(true)
+        .with_execute(true)
+}
+
 fn j_type(imm: i32, rd: u8) -> u32 {
     let imm = imm as u32;
     (((imm >> 20) & 0x1) << 31)
@@ -708,8 +715,11 @@ fn riscv_core_pmp_rejects_locked_physical_data_load_before_memory_issue() {
     let (mut scheduler, transport, fetch_route, data_route) = data_routes();
     let core = data_core(fetch_route, data_route, 0x8000);
     core.write_register(reg(2), 0x9000);
-    core.write_pmp_addr(0, 0xa000 >> 2).unwrap();
-    core.write_pmp_config(0, locked_tor_without_permissions())
+    core.write_pmp_addr(0, 0x8800 >> 2).unwrap();
+    core.write_pmp_config(0, tor_with_all_permissions())
+        .unwrap();
+    core.write_pmp_addr(1, 0xa000 >> 2).unwrap();
+    core.write_pmp_config(1, locked_tor_without_permissions())
         .unwrap();
     let store = loaded_store_with_data(
         0x8000,
@@ -738,7 +748,7 @@ fn riscv_core_pmp_rejects_locked_physical_data_load_before_memory_issue() {
                 size: 8,
                 kind: RiscvPmpAccessKind::Read,
                 privilege: RiscvPrivilegeMode::Machine,
-                matched_entry: Some(0),
+                matched_entry: Some(1),
             },
         } if fetch == execution.fetch().request_id()
     ));
@@ -752,8 +762,11 @@ fn riscv_core_pmp_rejects_locked_translated_data_load_by_physical_address() {
     let (mut scheduler, transport, fetch_route, data_route) = data_routes();
     let core = translated_data_core(fetch_route, data_route, 0x8000);
     core.write_register(reg(2), 0x4000);
-    core.write_pmp_addr(0, 0xa000 >> 2).unwrap();
-    core.write_pmp_config(0, locked_tor_without_permissions())
+    core.write_pmp_addr(0, 0x8800 >> 2).unwrap();
+    core.write_pmp_config(0, tor_with_all_permissions())
+        .unwrap();
+    core.write_pmp_addr(1, 0xa000 >> 2).unwrap();
+    core.write_pmp_config(1, locked_tor_without_permissions())
         .unwrap();
     let page_map = single_page_map(0x4000, 0x9000);
     let store = loaded_store_with_data(
@@ -786,7 +799,7 @@ fn riscv_core_pmp_rejects_locked_translated_data_load_by_physical_address() {
                 size: 8,
                 kind: RiscvPmpAccessKind::Read,
                 privilege: RiscvPrivilegeMode::Machine,
-                matched_entry: Some(0),
+                matched_entry: Some(1),
             },
         } if fetch == execution.fetch().request_id()
     ));
@@ -867,6 +880,41 @@ fn riscv_core_executes_completed_fetch_and_updates_registers() {
     assert_eq!(core.pc(), Address::new(0x8004));
     assert_eq!(core.inner().pc(), Address::new(0x8004));
     assert_eq!(core.execution_events(), vec![event]);
+}
+
+#[test]
+fn riscv_core_pmp_rejects_locked_instruction_fetch_before_memory_issue() {
+    let (mut scheduler, transport, fetch_route, _data_route) = data_routes();
+    let core = RiscvCore::new(core(fetch_route, 0x8000));
+    core.write_pmp_addr(0, 0x9000 >> 2).unwrap();
+    core.write_pmp_config(0, locked_tor_without_permissions())
+        .unwrap();
+
+    let error = core
+        .issue_next_fetch(
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            |_delivery, _context| panic!("PMP-denied fetch must not issue to memory"),
+        )
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        RiscvCpuError::FetchPmpAccess {
+            pc,
+            error: RiscvPmpError::AccessDenied {
+                address: 0x8000,
+                size: 4,
+                kind: RiscvPmpAccessKind::Execute,
+                privilege: RiscvPrivilegeMode::Machine,
+                matched_entry: Some(0),
+            },
+        } if pc == Address::new(0x8000)
+    ));
+    assert!(scheduler.is_idle());
+    assert_eq!(core.pc(), Address::new(0x8000));
+    assert!(core.inner().fetch_events().is_empty());
 }
 
 #[test]
