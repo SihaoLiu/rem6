@@ -1,6 +1,7 @@
 use rem6_power::{
     PowerEstimate, PowerExpressionInputs, ThermalDomainId, ThermalError, ThermalNetwork,
-    ThermalNetworkSnapshot, ThermalNodeId,
+    ThermalNetworkNodeInitialization, ThermalNetworkNodeKind, ThermalNetworkSnapshot,
+    ThermalNodeId,
 };
 
 fn assert_close(actual: f64, expected: f64) {
@@ -133,6 +134,116 @@ fn thermal_network_junction_nodes_require_explicit_initial_temperature() {
     restored.restore(&snapshot).unwrap();
     assert_eq!(restored.snapshot(), snapshot);
     assert_close(restored.temperature_for_node(spreader).unwrap(), 25.1315789);
+}
+
+#[test]
+fn thermal_network_records_initial_node_evidence() {
+    let cpu_domain = ThermalDomainId::new(1);
+    let cpu = ThermalNodeId::new(10);
+    let spreader = ThermalNodeId::new(20);
+    let air = ThermalNodeId::new(99);
+    let mut network = ThermalNetwork::new(1.0).unwrap();
+    network.add_domain(cpu, cpu_domain, 31.0, 10.0).unwrap();
+    network.add_junction(spreader, 30.0, 5.0).unwrap();
+    network.add_reference(air, 28.0).unwrap();
+    network.add_resistor(cpu, spreader, 1.0).unwrap();
+    network.add_resistor(spreader, air, 1.0).unwrap();
+
+    network
+        .advance(10, vec![(cpu_domain, PowerEstimate::new(10.0, 0.0))])
+        .unwrap();
+
+    let records = network.initial_nodes();
+    assert_eq!(records.len(), 3);
+    assert_eq!(records[0].kind(), ThermalNetworkNodeKind::Domain);
+    assert_eq!(records[0].node(), cpu);
+    assert_eq!(records[0].domain(), Some(cpu_domain));
+    assert_close(records[0].initial_temperature_c(), 31.0);
+    assert_eq!(records[0].capacitance_j_per_c(), Some(10.0));
+    assert_eq!(records[1].kind(), ThermalNetworkNodeKind::Junction);
+    assert_eq!(records[1].node(), spreader);
+    assert_eq!(records[1].domain(), None);
+    assert_close(records[1].initial_temperature_c(), 30.0);
+    assert_eq!(records[1].capacitance_j_per_c(), Some(5.0));
+    assert_eq!(records[2].kind(), ThermalNetworkNodeKind::Reference);
+    assert_eq!(records[2].node(), air);
+    assert_eq!(records[2].domain(), None);
+    assert_close(records[2].initial_temperature_c(), 28.0);
+    assert_eq!(records[2].capacitance_j_per_c(), None);
+
+    assert_ne!(
+        network.temperature_for_node(spreader).unwrap(),
+        records[1].initial_temperature_c()
+    );
+
+    let snapshot = network.snapshot();
+    assert_eq!(snapshot.initial_nodes(), records);
+    let mut restored = ThermalNetwork::new(1.0).unwrap();
+    restored.restore(&snapshot).unwrap();
+    assert_eq!(restored.initial_nodes(), records);
+}
+
+#[test]
+fn thermal_network_restore_rejects_mismatched_initial_node_evidence() {
+    let cpu_domain = ThermalDomainId::new(1);
+    let cpu = ThermalNodeId::new(10);
+    let spreader = ThermalNodeId::new(20);
+    let mut network = ThermalNetwork::new(1.0).unwrap();
+    network.add_domain(cpu, cpu_domain, 25.0, 10.0).unwrap();
+    network.add_junction(spreader, 25.0, 5.0).unwrap();
+    let snapshot = network.snapshot();
+    let mut initial_nodes = snapshot.initial_nodes().to_vec();
+    initial_nodes[1] = ThermalNetworkNodeInitialization::new(
+        spreader,
+        ThermalNetworkNodeKind::Reference,
+        None,
+        25.0,
+        None,
+    );
+
+    let mismatched = ThermalNetworkSnapshot::with_initial_nodes(
+        snapshot.step_seconds(),
+        snapshot.last_tick(),
+        snapshot.nodes().to_vec(),
+        initial_nodes,
+        snapshot.resistors().to_vec(),
+        snapshot.capacitors().to_vec(),
+        snapshot.updates().to_vec(),
+    );
+
+    let mut restored = ThermalNetwork::new(1.0).unwrap();
+    assert_eq!(
+        restored.restore(&mismatched).unwrap_err(),
+        ThermalError::ThermalNodeInitializationMismatch { node: spreader },
+    );
+}
+
+#[test]
+fn thermal_network_restore_rejects_partial_initial_node_evidence() {
+    let cpu_domain = ThermalDomainId::new(1);
+    let cpu = ThermalNodeId::new(10);
+    let spreader = ThermalNodeId::new(20);
+    let mut network = ThermalNetwork::new(1.0).unwrap();
+    network.add_domain(cpu, cpu_domain, 25.0, 10.0).unwrap();
+    network.add_junction(spreader, 25.0, 5.0).unwrap();
+    let snapshot = network.snapshot();
+    let partial_initial_nodes = vec![snapshot.initial_nodes()[0].clone()];
+
+    let partial = ThermalNetworkSnapshot::with_initial_nodes(
+        snapshot.step_seconds(),
+        snapshot.last_tick(),
+        snapshot.nodes().to_vec(),
+        partial_initial_nodes,
+        snapshot.resistors().to_vec(),
+        snapshot.capacitors().to_vec(),
+        snapshot.updates().to_vec(),
+    );
+
+    let mut restored = ThermalNetwork::new(1.0).unwrap();
+    assert_eq!(
+        restored.restore(&partial).unwrap_err(),
+        ThermalError::MissingThermalNodeInitialization { node: spreader },
+    );
 }
 
 #[test]

@@ -158,6 +158,60 @@ impl ThermalCapacitor {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum ThermalNetworkNodeKind {
+    Domain,
+    Junction,
+    Reference,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ThermalNetworkNodeInitialization {
+    node: ThermalNodeId,
+    kind: ThermalNetworkNodeKind,
+    domain: Option<ThermalDomainId>,
+    initial_temperature_c: f64,
+    capacitance_j_per_c: Option<f64>,
+}
+
+impl ThermalNetworkNodeInitialization {
+    pub const fn new(
+        node: ThermalNodeId,
+        kind: ThermalNetworkNodeKind,
+        domain: Option<ThermalDomainId>,
+        initial_temperature_c: f64,
+        capacitance_j_per_c: Option<f64>,
+    ) -> Self {
+        Self {
+            node,
+            kind,
+            domain,
+            initial_temperature_c,
+            capacitance_j_per_c,
+        }
+    }
+
+    pub const fn node(&self) -> ThermalNodeId {
+        self.node
+    }
+
+    pub const fn kind(&self) -> ThermalNetworkNodeKind {
+        self.kind
+    }
+
+    pub const fn domain(&self) -> Option<ThermalDomainId> {
+        self.domain
+    }
+
+    pub const fn initial_temperature_c(&self) -> f64 {
+        self.initial_temperature_c
+    }
+
+    pub const fn capacitance_j_per_c(&self) -> Option<f64> {
+        self.capacitance_j_per_c
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct ThermalNetworkNodeSnapshot {
     node: ThermalNodeId,
@@ -203,6 +257,7 @@ pub struct ThermalNetworkSnapshot {
     step_seconds: f64,
     last_tick: Tick,
     nodes: Vec<ThermalNetworkNodeSnapshot>,
+    initial_nodes: Vec<ThermalNetworkNodeInitialization>,
     resistors: Vec<ThermalResistor>,
     capacitors: Vec<ThermalCapacitor>,
     updates: Vec<ThermalUpdate>,
@@ -221,6 +276,27 @@ impl ThermalNetworkSnapshot {
             step_seconds,
             last_tick,
             nodes,
+            initial_nodes: Vec::new(),
+            resistors,
+            capacitors,
+            updates,
+        }
+    }
+
+    pub const fn with_initial_nodes(
+        step_seconds: f64,
+        last_tick: Tick,
+        nodes: Vec<ThermalNetworkNodeSnapshot>,
+        initial_nodes: Vec<ThermalNetworkNodeInitialization>,
+        resistors: Vec<ThermalResistor>,
+        capacitors: Vec<ThermalCapacitor>,
+        updates: Vec<ThermalUpdate>,
+    ) -> Self {
+        Self {
+            step_seconds,
+            last_tick,
+            nodes,
+            initial_nodes,
             resistors,
             capacitors,
             updates,
@@ -237,6 +313,10 @@ impl ThermalNetworkSnapshot {
 
     pub fn nodes(&self) -> &[ThermalNetworkNodeSnapshot] {
         &self.nodes
+    }
+
+    pub fn initial_nodes(&self) -> &[ThermalNetworkNodeInitialization] {
+        &self.initial_nodes
     }
 
     pub fn resistors(&self) -> &[ThermalResistor] {
@@ -257,6 +337,7 @@ pub struct ThermalNetwork {
     step_seconds: f64,
     last_tick: Tick,
     nodes: BTreeMap<ThermalNodeId, ThermalNetworkNode>,
+    initial_nodes: BTreeMap<ThermalNodeId, ThermalNetworkNodeInitialization>,
     domains: BTreeMap<ThermalDomainId, ThermalNodeId>,
     resistors: Vec<ThermalResistor>,
     capacitors: Vec<ThermalCapacitor>,
@@ -270,6 +351,7 @@ impl ThermalNetwork {
             step_seconds,
             last_tick: 0,
             nodes: BTreeMap::new(),
+            initial_nodes: BTreeMap::new(),
             domains: BTreeMap::new(),
             resistors: Vec::new(),
             capacitors: Vec::new(),
@@ -287,6 +369,10 @@ impl ThermalNetwork {
 
     pub fn updates(&self) -> &[ThermalUpdate] {
         &self.updates
+    }
+
+    pub fn initial_nodes(&self) -> Vec<ThermalNetworkNodeInitialization> {
+        self.initial_nodes.values().cloned().collect()
     }
 
     pub fn add_domain(
@@ -312,6 +398,16 @@ impl ThermalNetwork {
                 capacitance_j_per_c,
             },
         );
+        self.initial_nodes.insert(
+            node,
+            ThermalNetworkNodeInitialization::new(
+                node,
+                ThermalNetworkNodeKind::Domain,
+                Some(domain),
+                initial_temperature_c,
+                Some(capacitance_j_per_c),
+            ),
+        );
         self.domains.insert(domain, node);
         Ok(())
     }
@@ -327,6 +423,16 @@ impl ThermalNetwork {
         validate_temperature(temperature_c)?;
         self.nodes
             .insert(node, ThermalNetworkNode::Reference { temperature_c });
+        self.initial_nodes.insert(
+            node,
+            ThermalNetworkNodeInitialization::new(
+                node,
+                ThermalNetworkNodeKind::Reference,
+                None,
+                temperature_c,
+                None,
+            ),
+        );
         Ok(())
     }
 
@@ -347,6 +453,16 @@ impl ThermalNetwork {
                 temperature_c: initial_temperature_c,
                 capacitance_j_per_c,
             },
+        );
+        self.initial_nodes.insert(
+            node,
+            ThermalNetworkNodeInitialization::new(
+                node,
+                ThermalNetworkNodeKind::Junction,
+                None,
+                initial_temperature_c,
+                Some(capacitance_j_per_c),
+            ),
         );
         Ok(())
     }
@@ -492,10 +608,11 @@ impl ThermalNetwork {
                 ),
             })
             .collect();
-        ThermalNetworkSnapshot::new(
+        ThermalNetworkSnapshot::with_initial_nodes(
             self.step_seconds,
             self.last_tick,
             nodes,
+            self.initial_nodes(),
             self.resistors.clone(),
             self.capacitors.clone(),
             self.updates.clone(),
@@ -505,6 +622,7 @@ impl ThermalNetwork {
     pub fn restore(&mut self, snapshot: &ThermalNetworkSnapshot) -> Result<(), ThermalError> {
         validate_positive(snapshot.step_seconds(), ThermalError::InvalidThermalStep)?;
         let mut nodes = BTreeMap::new();
+        let mut initial_nodes = BTreeMap::new();
         let mut domains = BTreeMap::new();
         for node_snapshot in snapshot.nodes() {
             if nodes.contains_key(&node_snapshot.node()) {
@@ -538,6 +656,26 @@ impl ThermalNetwork {
                 }
             };
             nodes.insert(node_snapshot.node(), record);
+        }
+        for initial in snapshot.initial_nodes() {
+            validate_node_initialization(initial, &nodes, &domains)?;
+            if initial_nodes
+                .insert(initial.node(), initial.clone())
+                .is_some()
+            {
+                return Err(ThermalError::DuplicateThermalNode {
+                    node: initial.node(),
+                });
+            }
+        }
+        if initial_nodes.is_empty() {
+            initial_nodes = derive_initial_nodes(&nodes);
+        } else {
+            for node in nodes.keys() {
+                if !initial_nodes.contains_key(node) {
+                    return Err(ThermalError::MissingThermalNodeInitialization { node: *node });
+                }
+            }
         }
         if domains.is_empty() {
             return Err(ThermalError::NoThermalDomains);
@@ -580,6 +718,7 @@ impl ThermalNetwork {
         self.step_seconds = snapshot.step_seconds();
         self.last_tick = snapshot.last_tick();
         self.nodes = nodes;
+        self.initial_nodes = initial_nodes;
         self.domains = domains;
         self.resistors = snapshot.resistors().to_vec();
         self.capacitors = snapshot.capacitors().to_vec();
@@ -1048,6 +1187,12 @@ pub enum ThermalError {
         expected: ThermalDomainId,
         actual: ThermalDomainId,
     },
+    ThermalNodeInitializationMismatch {
+        node: ThermalNodeId,
+    },
+    MissingThermalNodeInitialization {
+        node: ThermalNodeId,
+    },
 }
 
 impl std::fmt::Display for ThermalError {
@@ -1104,6 +1249,16 @@ impl std::fmt::Display for ThermalError {
                 actual.get(),
                 expected.get()
             ),
+            Self::ThermalNodeInitializationMismatch { node } => write!(
+                formatter,
+                "thermal node {} initialization does not match restored node",
+                node.get()
+            ),
+            Self::MissingThermalNodeInitialization { node } => write!(
+                formatter,
+                "thermal node {} is missing initialization evidence",
+                node.get()
+            ),
         }
     }
 }
@@ -1117,6 +1272,95 @@ fn validate_temperature(value: f64) -> Result<(), ThermalError> {
         return Err(ThermalError::InvalidTemperature);
     }
     Ok(())
+}
+
+fn validate_node_initialization(
+    initial: &ThermalNetworkNodeInitialization,
+    nodes: &BTreeMap<ThermalNodeId, ThermalNetworkNode>,
+    domains: &BTreeMap<ThermalDomainId, ThermalNodeId>,
+) -> Result<(), ThermalError> {
+    validate_temperature(initial.initial_temperature_c())?;
+    if let Some(capacitance_j_per_c) = initial.capacitance_j_per_c() {
+        validate_positive(capacitance_j_per_c, ThermalError::InvalidThermalCapacitance)?;
+    }
+    match nodes.get(&initial.node()) {
+        Some(ThermalNetworkNode::Domain {
+            domain,
+            capacitance_j_per_c,
+            ..
+        }) if initial.kind() == ThermalNetworkNodeKind::Domain
+            && initial.domain() == Some(*domain)
+            && initial.capacitance_j_per_c() == Some(*capacitance_j_per_c)
+            && domains.get(domain).copied() == Some(initial.node()) =>
+        {
+            Ok(())
+        }
+        Some(ThermalNetworkNode::Junction {
+            capacitance_j_per_c,
+            ..
+        }) if initial.kind() == ThermalNetworkNodeKind::Junction
+            && initial.domain().is_none()
+            && initial.capacitance_j_per_c() == Some(*capacitance_j_per_c) =>
+        {
+            Ok(())
+        }
+        Some(ThermalNetworkNode::Reference { .. })
+            if initial.kind() == ThermalNetworkNodeKind::Reference
+                && initial.domain().is_none()
+                && initial.capacitance_j_per_c().is_none() =>
+        {
+            Ok(())
+        }
+        Some(_) => Err(ThermalError::ThermalNodeInitializationMismatch {
+            node: initial.node(),
+        }),
+        None => Err(ThermalError::UnknownThermalNode {
+            node: initial.node(),
+        }),
+    }
+}
+
+fn derive_initial_nodes(
+    nodes: &BTreeMap<ThermalNodeId, ThermalNetworkNode>,
+) -> BTreeMap<ThermalNodeId, ThermalNetworkNodeInitialization> {
+    nodes
+        .iter()
+        .map(|(node, record)| {
+            let initial = match record {
+                ThermalNetworkNode::Domain {
+                    domain,
+                    temperature_c,
+                    capacitance_j_per_c,
+                } => ThermalNetworkNodeInitialization::new(
+                    *node,
+                    ThermalNetworkNodeKind::Domain,
+                    Some(*domain),
+                    *temperature_c,
+                    Some(*capacitance_j_per_c),
+                ),
+                ThermalNetworkNode::Junction {
+                    temperature_c,
+                    capacitance_j_per_c,
+                } => ThermalNetworkNodeInitialization::new(
+                    *node,
+                    ThermalNetworkNodeKind::Junction,
+                    None,
+                    *temperature_c,
+                    Some(*capacitance_j_per_c),
+                ),
+                ThermalNetworkNode::Reference { temperature_c } => {
+                    ThermalNetworkNodeInitialization::new(
+                        *node,
+                        ThermalNetworkNodeKind::Reference,
+                        None,
+                        *temperature_c,
+                        None,
+                    )
+                }
+            };
+            (*node, initial)
+        })
+        .collect()
 }
 
 fn validate_positive(value: f64, error: ThermalError) -> Result<(), ThermalError> {
