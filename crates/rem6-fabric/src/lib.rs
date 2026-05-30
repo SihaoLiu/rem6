@@ -71,12 +71,21 @@ pub enum FabricError {
     ZeroCreditDepth,
     ZeroSerialLinkLanes,
     ZeroSerialLinkLaneSpeed,
+    ZeroSerialLinkTicksPerNanosecond,
     SerialLinkBandwidthOverflow {
         lanes: u64,
         lane_speed_bits_per_cycle: u64,
     },
+    SerialLinkNanosecondBandwidthOverflow {
+        lanes: u64,
+        lane_speed_bits_per_nanosecond: u64,
+    },
     SerialLinkPacketBitOverflow {
         bytes: u64,
+    },
+    SerialLinkNanosecondTickOverflow {
+        nanoseconds: u64,
+        ticks_per_nanosecond: u64,
     },
     Clock(ClockError),
     DuplicatePacketInBatch {
@@ -105,6 +114,10 @@ impl fmt::Display for FabricError {
             Self::ZeroSerialLinkLaneSpeed => {
                 write!(formatter, "fabric serial link lane speed must be positive")
             }
+            Self::ZeroSerialLinkTicksPerNanosecond => write!(
+                formatter,
+                "fabric serial link nanosecond timebase must be positive"
+            ),
             Self::SerialLinkBandwidthOverflow {
                 lanes,
                 lane_speed_bits_per_cycle,
@@ -112,9 +125,23 @@ impl fmt::Display for FabricError {
                 formatter,
                 "fabric serial link bandwidth overflows for {lanes} lanes at {lane_speed_bits_per_cycle} bits per cycle"
             ),
+            Self::SerialLinkNanosecondBandwidthOverflow {
+                lanes,
+                lane_speed_bits_per_nanosecond,
+            } => write!(
+                formatter,
+                "fabric serial link bandwidth overflows for {lanes} lanes at {lane_speed_bits_per_nanosecond} bits per nanosecond"
+            ),
             Self::SerialLinkPacketBitOverflow { bytes } => write!(
                 formatter,
                 "fabric serial link packet bit count overflows for {bytes} bytes"
+            ),
+            Self::SerialLinkNanosecondTickOverflow {
+                nanoseconds,
+                ticks_per_nanosecond,
+            } => write!(
+                formatter,
+                "fabric serial link {nanoseconds} nanoseconds overflows at {ticks_per_nanosecond} ticks per nanosecond"
             ),
             Self::Clock(error) => write!(formatter, "{error}"),
             Self::DuplicatePacketInBatch { packet } => {
@@ -181,12 +208,118 @@ impl FabricPacket {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FabricSerialLinkRate {
+    BitsPerCycle {
+        lane_speed_bits_per_cycle: u64,
+        bits_per_cycle: u64,
+    },
+    BitsPerNanosecond {
+        lane_speed_bits_per_nanosecond: u64,
+        ticks_per_nanosecond: u64,
+        bits_per_nanosecond: u64,
+    },
+}
+
+impl FabricSerialLinkRate {
+    fn from_bits_per_cycle(
+        lanes: u64,
+        lane_speed_bits_per_cycle: u64,
+    ) -> Result<Self, FabricError> {
+        if lane_speed_bits_per_cycle == 0 {
+            return Err(FabricError::ZeroSerialLinkLaneSpeed);
+        }
+        let bits_per_cycle = lanes.checked_mul(lane_speed_bits_per_cycle).ok_or(
+            FabricError::SerialLinkBandwidthOverflow {
+                lanes,
+                lane_speed_bits_per_cycle,
+            },
+        )?;
+
+        Ok(Self::BitsPerCycle {
+            lane_speed_bits_per_cycle,
+            bits_per_cycle,
+        })
+    }
+
+    fn from_bits_per_nanosecond(
+        lanes: u64,
+        lane_speed_bits_per_nanosecond: u64,
+        ticks_per_nanosecond: u64,
+    ) -> Result<Self, FabricError> {
+        if lane_speed_bits_per_nanosecond == 0 {
+            return Err(FabricError::ZeroSerialLinkLaneSpeed);
+        }
+        if ticks_per_nanosecond == 0 {
+            return Err(FabricError::ZeroSerialLinkTicksPerNanosecond);
+        }
+        let bits_per_nanosecond = lanes.checked_mul(lane_speed_bits_per_nanosecond).ok_or(
+            FabricError::SerialLinkNanosecondBandwidthOverflow {
+                lanes,
+                lane_speed_bits_per_nanosecond,
+            },
+        )?;
+
+        Ok(Self::BitsPerNanosecond {
+            lane_speed_bits_per_nanosecond,
+            ticks_per_nanosecond,
+            bits_per_nanosecond,
+        })
+    }
+
+    pub const fn lane_speed_bits_per_cycle(self) -> Option<u64> {
+        match self {
+            Self::BitsPerCycle {
+                lane_speed_bits_per_cycle,
+                ..
+            } => Some(lane_speed_bits_per_cycle),
+            Self::BitsPerNanosecond { .. } => None,
+        }
+    }
+
+    pub const fn bits_per_cycle(self) -> Option<u64> {
+        match self {
+            Self::BitsPerCycle { bits_per_cycle, .. } => Some(bits_per_cycle),
+            Self::BitsPerNanosecond { .. } => None,
+        }
+    }
+
+    pub const fn lane_speed_bits_per_nanosecond(self) -> Option<u64> {
+        match self {
+            Self::BitsPerCycle { .. } => None,
+            Self::BitsPerNanosecond {
+                lane_speed_bits_per_nanosecond,
+                ..
+            } => Some(lane_speed_bits_per_nanosecond),
+        }
+    }
+
+    pub const fn ticks_per_nanosecond(self) -> Option<u64> {
+        match self {
+            Self::BitsPerCycle { .. } => None,
+            Self::BitsPerNanosecond {
+                ticks_per_nanosecond,
+                ..
+            } => Some(ticks_per_nanosecond),
+        }
+    }
+
+    pub const fn bits_per_nanosecond(self) -> Option<u64> {
+        match self {
+            Self::BitsPerCycle { .. } => None,
+            Self::BitsPerNanosecond {
+                bits_per_nanosecond,
+                ..
+            } => Some(bits_per_nanosecond),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FabricSerialLinkTiming {
     clock: ClockDomain,
     latency_cycles: Cycles,
     lanes: u64,
-    lane_speed_bits_per_cycle: u64,
-    bits_per_cycle: u64,
+    rate: FabricSerialLinkRate,
 }
 
 impl FabricSerialLinkTiming {
@@ -199,22 +332,37 @@ impl FabricSerialLinkTiming {
         if lanes == 0 {
             return Err(FabricError::ZeroSerialLinkLanes);
         }
-        if lane_speed_bits_per_cycle == 0 {
-            return Err(FabricError::ZeroSerialLinkLaneSpeed);
+        let rate = FabricSerialLinkRate::from_bits_per_cycle(lanes, lane_speed_bits_per_cycle)?;
+
+        Ok(Self {
+            clock,
+            latency_cycles,
+            lanes,
+            rate,
+        })
+    }
+
+    pub fn with_lane_speed_bits_per_nanosecond(
+        clock: ClockDomain,
+        latency_cycles: Cycles,
+        lanes: u64,
+        lane_speed_bits_per_nanosecond: u64,
+        ticks_per_nanosecond: u64,
+    ) -> Result<Self, FabricError> {
+        if lanes == 0 {
+            return Err(FabricError::ZeroSerialLinkLanes);
         }
-        let bits_per_cycle = lanes.checked_mul(lane_speed_bits_per_cycle).ok_or(
-            FabricError::SerialLinkBandwidthOverflow {
-                lanes,
-                lane_speed_bits_per_cycle,
-            },
+        let rate = FabricSerialLinkRate::from_bits_per_nanosecond(
+            lanes,
+            lane_speed_bits_per_nanosecond,
+            ticks_per_nanosecond,
         )?;
 
         Ok(Self {
             clock,
             latency_cycles,
             lanes,
-            lane_speed_bits_per_cycle,
-            bits_per_cycle,
+            rate,
         })
     }
 
@@ -230,12 +378,28 @@ impl FabricSerialLinkTiming {
         self.lanes
     }
 
-    pub const fn lane_speed_bits_per_cycle(self) -> u64 {
-        self.lane_speed_bits_per_cycle
+    pub const fn rate(self) -> FabricSerialLinkRate {
+        self.rate
     }
 
-    pub const fn bits_per_cycle(self) -> u64 {
-        self.bits_per_cycle
+    pub const fn lane_speed_bits_per_cycle(self) -> Option<u64> {
+        self.rate.lane_speed_bits_per_cycle()
+    }
+
+    pub const fn bits_per_cycle(self) -> Option<u64> {
+        self.rate.bits_per_cycle()
+    }
+
+    pub const fn lane_speed_bits_per_nanosecond(self) -> Option<u64> {
+        self.rate.lane_speed_bits_per_nanosecond()
+    }
+
+    pub const fn ticks_per_nanosecond(self) -> Option<u64> {
+        self.rate.ticks_per_nanosecond()
+    }
+
+    pub const fn bits_per_nanosecond(self) -> Option<u64> {
+        self.rate.bits_per_nanosecond()
     }
 
     pub fn latency_ticks(self) -> Result<Tick, FabricError> {
@@ -248,10 +412,29 @@ impl FabricSerialLinkTiming {
         let bits = bytes
             .checked_mul(8)
             .ok_or(FabricError::SerialLinkPacketBitOverflow { bytes })?;
-        let cycles = ceil_div(bits, self.bits_per_cycle);
-        self.clock
-            .cycles_to_ticks(Cycles::new(cycles))
-            .map_err(FabricError::from)
+        match self.rate {
+            FabricSerialLinkRate::BitsPerCycle { bits_per_cycle, .. } => self
+                .clock
+                .cycles_to_ticks(Cycles::new(ceil_div(bits, bits_per_cycle)))
+                .map_err(FabricError::from),
+            FabricSerialLinkRate::BitsPerNanosecond {
+                bits_per_nanosecond,
+                ticks_per_nanosecond,
+                ..
+            } => {
+                let nanoseconds = ceil_div(bits, bits_per_nanosecond);
+                let ticks = nanoseconds.checked_mul(ticks_per_nanosecond).ok_or(
+                    FabricError::SerialLinkNanosecondTickOverflow {
+                        nanoseconds,
+                        ticks_per_nanosecond,
+                    },
+                )?;
+                let cycles = self.clock.ticks_to_cycles_ceil(ticks);
+                self.clock
+                    .cycles_to_ticks(cycles)
+                    .map_err(FabricError::from)
+            }
+        }
     }
 }
 
@@ -297,6 +480,31 @@ impl FabricPathHop {
     ) -> Result<Self, FabricError> {
         let serial_link =
             FabricSerialLinkTiming::new(clock, latency_cycles, lanes, lane_speed_bits_per_cycle)?;
+        Ok(Self {
+            link,
+            latency: serial_link.latency_ticks()?,
+            bandwidth_bytes_per_tick: 1,
+            serial_link: Some(serial_link),
+            credit_depth: None,
+            virtual_network: None,
+        })
+    }
+
+    pub fn serial_link_bits_per_nanosecond(
+        link: FabricLinkId,
+        clock: ClockDomain,
+        latency_cycles: Cycles,
+        lanes: u64,
+        lane_speed_bits_per_nanosecond: u64,
+        ticks_per_nanosecond: u64,
+    ) -> Result<Self, FabricError> {
+        let serial_link = FabricSerialLinkTiming::with_lane_speed_bits_per_nanosecond(
+            clock,
+            latency_cycles,
+            lanes,
+            lane_speed_bits_per_nanosecond,
+            ticks_per_nanosecond,
+        )?;
         Ok(Self {
             link,
             latency: serial_link.latency_ticks()?,

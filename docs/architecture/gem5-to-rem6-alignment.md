@@ -396,8 +396,12 @@ isolated bugs:
   Recent gem5 issue #3092 reports incorrect `SerialLink` latency when the
   system clock is not 1GHz. rem6 fabric serial-link hops therefore bind fixed
   latency and serialization bandwidth to an explicit `ClockDomain` and typed
-  lane bit-rate before converting to ticks, so non-1GHz links cannot silently
-  reuse a 1GHz serialization assumption.
+  lane bit-rate before converting to ticks. Serial-link bandwidth can be
+  declared either as bits per link cycle or as gem5-style bits per nanosecond
+  with an explicit ticks-per-nanosecond timebase; the latter path converts
+  nanoseconds through `ClockDomain::ticks_to_cycles_ceil` before scheduling
+  ticks, so non-1GHz links cannot silently reuse a 1GHz serialization
+  assumption.
 - Power equations should not depend on late string lookup into global
   statistics. gem5's MathExprPowerModel accepts equations that reference stat
   names plus automatic variables. rem6 keeps the equation idea, but binds
@@ -1778,7 +1782,7 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 | `configs/ruby` | 17 | `rem6-coherence`, protocol crates, `rem6-system` | partial | Keep multi-protocol examples while avoiding a separate Ruby-like engine. |
 | `configs/topologies` | 10 | `rem6-topology`, `rem6-fabric`, `rem6-transport` | partial | Topology definitions should be protocol-neutral and reusable across CPU, GPU, DMA, and accelerator traffic. |
 | `configs/dram`, `configs/nvm` | 5 | `rem6-dram`, `rem6-memory` | partial | External DDR, HBM, LPDDR, and NVM profiles have typed topology, geometry, bank-group geometry, timing, burst spacing, same-bank-group burst spacing, command-window bandwidth limits, parallel port counts, topology-unit counts, scheduler bank counts, topology bank counts, bank-group capacity summaries, manifest identity, checkpoint encoding, restore-time profile validation, and activity metadata. Runtime activity profiles carry profiled-target counts and profile-derived port, topology-unit, bank, and bank-group capacity denominators separately from active counts. DRAM same-arrival QoS timing batches respect same-agent memory-ordering barriers before priority or turnaround selection. Workload resource summaries preserve the strongest explicit DRAM target, port, or bank active-resource lower bound. NVM media timing can model separate read-media, write-media, send latency, pending-read buffers, and pending-write queue depth. Profile breadth and fuller media behavior remain open. |
-| `configs/network` | 2 | `rem6-fabric`, `rem6-transport` | partial | Network configuration must map to NoC lanes, virtual networks, credits, wait-for diagnostics, per-transfer hop activity, per-link activity, per-lane activity, per-virtual-network activity, queue-delay budgets across those scopes, per-virtual-network lane fanout, contention budgets, required-link coverage, and activity-window coverage across those activity scopes. Serial-link timing is bound to an explicit `ClockDomain`, latency cycles, lane count, and lane bit-rate before tick conversion. Same-scope link and virtual-network activity-window merges preserve unique resource coverage when lane identities are known. |
+| `configs/network` | 2 | `rem6-fabric`, `rem6-transport` | partial | Network configuration must map to NoC lanes, virtual networks, credits, wait-for diagnostics, per-transfer hop activity, per-link activity, per-lane activity, per-virtual-network activity, queue-delay budgets across those scopes, per-virtual-network lane fanout, contention budgets, required-link coverage, and activity-window coverage across those activity scopes. Serial-link timing is bound to an explicit `ClockDomain`, latency cycles, lane count, and either bits-per-cycle or bits-per-nanosecond lane bit-rate before tick conversion. Same-scope link and virtual-network activity-window merges preserve unique resource coverage when lane identities are known. |
 | `configs/boot`, `configs/dist`, `configs/splash2`, `configs/learning_gem5`, `configs/deprecated` | 27 | `rem6-boot`, `rem6-workload`, tests | partial | Boot and benchmark examples should become manifest resources, not external scripts. Linux boot handoff manifests now make device-tree and initrd resources explicit, require matching resource definitions, validate resource kind, validate resolved payload digest and initrd size, include bootargs plus DTB/initrd placement in manifest identity, bind resolved payload sets to that manifest identity, and let replay install resolved DTB/initrd bytes without a script side effect. Deprecated examples are audit input only. |
 
 ## Detailed Module Map
@@ -2069,9 +2073,12 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
 - Fabric QoS tests cover explicit fixed-priority requestor mapping,
   highest-priority queue selection, FIFO/LIFO same-priority ordering, LRG
   requestor rotation, non-mutating empty polls, snapshot replay, and
-  QoS-driven fabric batch reservation order on a shared link. Transport tests
-  cover QoS-driven first-hop fabric reservation before parallel batch events
-  are scheduled, explicit QoS requestor override for shared-fabric LRG
+  QoS-driven fabric batch reservation order on a shared link. Fabric timing
+  tests cover public gem5 issue #3092 by requiring bits-per-nanosecond
+  serial-link bandwidth to convert through the declared clock domain instead
+  of treating nanoseconds as cycles. Transport tests cover QoS-driven
+  first-hop fabric reservation before parallel batch events are scheduled,
+  explicit QoS requestor override for shared-fabric LRG
   arbitration, direct target batch priority assignment from an explicit
   QoS requestor, and same-agent acquire/release ordering barriers that constrain
   direct QoS batch and shared-fabric first-hop reservation eligibility. Memory

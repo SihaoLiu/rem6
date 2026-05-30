@@ -102,6 +102,41 @@ fn fabric_serial_link_timing_uses_declared_clock_domain() {
 }
 
 #[test]
+fn fabric_serial_link_bits_per_nanosecond_converts_through_clock_domain() {
+    let mut fabric = FabricModel::new();
+    let fast_clock = ClockDomain::new(1).unwrap();
+    let slow_clock = ClockDomain::new(4).unwrap();
+    let fast_route = path([FabricPathHop::serial_link_bits_per_nanosecond(
+        link("serial_ns_fast"),
+        fast_clock,
+        Cycles::new(3),
+        4,
+        8,
+        1,
+    )
+    .unwrap()]);
+    let slow_route = path([FabricPathHop::serial_link_bits_per_nanosecond(
+        link("serial_ns_slow"),
+        slow_clock,
+        Cycles::new(3),
+        4,
+        8,
+        1,
+    )
+    .unwrap()]);
+
+    let fast = fabric.transmit(7, packet(22, 64, 0), fast_route).unwrap();
+    let slow = fabric.transmit(7, packet(23, 64, 0), slow_route).unwrap();
+
+    assert_eq!(fast.hops()[0].serialization_ticks(), 16);
+    assert_eq!(fast.hops()[0].depart_tick(), 23);
+    assert_eq!(fast.arrival_tick(), 26);
+    assert_eq!(slow.hops()[0].serialization_ticks(), 16);
+    assert_eq!(slow.hops()[0].depart_tick(), 23);
+    assert_eq!(slow.arrival_tick(), 35);
+}
+
+#[test]
 fn fabric_link_activity_merge_window_preserves_unique_virtual_network_coverage() {
     let first_lanes = [
         lane_activity("mesh_merge_link", 1, 2, 32, 4, 0, 0, 0, 5),
