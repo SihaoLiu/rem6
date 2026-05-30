@@ -17,10 +17,7 @@ impl Rem6RunArtifact {
         };
         let parallel = match &self.execution {
             Some(execution) => execution.to_parallel_json(self.config.parallel_workers()),
-            None => format!(
-                "{{\"scheduler\":{{\"worker_limit\":{},\"worker_slots\":[],\"worker_lanes\":[],\"partitions\":[]}}}}",
-                self.config.parallel_workers(),
-            ),
+            None => empty_parallel_json(self.config.parallel_workers()),
         };
         let cores = self
             .execution
@@ -145,6 +142,13 @@ impl Rem6ExecutionSummary {
             self.data_transport.to_json()
         )
     }
+}
+
+fn empty_parallel_json(worker_limit: usize) -> String {
+    format!(
+        "{{\"scheduler\":{{\"worker_limit\":{},\"epochs\":0,\"dispatches\":0,\"batches\":0,\"max_workers\":0,\"total_workers\":0,\"active_partitions\":0,\"remote_sends\":0,\"batch_worker_ticks\":0,\"batch_worker_capacity_ticks\":0,\"batch_idle_worker_ticks\":0,\"worker_slots\":[],\"worker_lanes\":[],\"partitions\":[]}}}}",
+        worker_limit
+    )
 }
 
 impl super::Rem6ParallelWorkerSlotSummary {

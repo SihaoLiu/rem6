@@ -182,6 +182,14 @@ impl Rem6RunConfig {
             }
         }
 
+        if let (Some(output), Some(stats_output)) = (&output, &stats_output) {
+            if output == stats_output {
+                return Err(Rem6CliError::ConflictingOutputPaths {
+                    path: output.to_path_buf(),
+                });
+            }
+        }
+
         Ok(Self {
             isa: isa.ok_or(Rem6CliError::MissingRequiredFlag { flag: "--isa" })?,
             binary: binary.ok_or(Rem6CliError::MissingRequiredFlag { flag: "--binary" })?,
@@ -447,6 +455,9 @@ pub enum Rem6CliError {
     Stats {
         error: String,
     },
+    ConflictingOutputPaths {
+        path: PathBuf,
+    },
     WriteOutput {
         path: PathBuf,
         error: String,
@@ -513,6 +524,11 @@ impl fmt::Display for Rem6CliError {
             }
             Self::Execute { error } => write!(formatter, "failed to execute run: {error}"),
             Self::Stats { error } => write!(formatter, "failed to build run stats: {error}"),
+            Self::ConflictingOutputPaths { path } => write!(
+                formatter,
+                "--output and --stats-output must use different paths: {}",
+                path.display()
+            ),
             Self::WriteOutput { path, error } => {
                 write!(formatter, "failed to write {}: {error}", path.display())
             }
@@ -1409,6 +1425,8 @@ fn memory_transport_summary(trace: &MemoryTrace) -> Rem6MemoryTransportSummary {
                 let Some((sent_tick, source)) = request_sources.get(&trace_key(event)) else {
                     continue;
                 };
+                let route = route_summary(&mut routes, event.route(), source);
+                route.counters.response_arrivals += 1;
                 if event.endpoint().as_str() != source {
                     continue;
                 }
@@ -1418,8 +1436,6 @@ fn memory_transport_summary(trace: &MemoryTrace) -> Rem6MemoryTransportSummary {
                     summary.counters.round_trip_ticks.saturating_add(latency);
                 summary.counters.max_round_trip_ticks =
                     summary.counters.max_round_trip_ticks.max(latency);
-                let route = route_summary(&mut routes, event.route(), source);
-                route.counters.response_arrivals += 1;
                 route.counters.responses += 1;
                 route.counters.round_trip_ticks =
                     route.counters.round_trip_ticks.saturating_add(latency);
@@ -1647,4 +1663,72 @@ fn json_escape(value: &str) -> String {
         }
     }
     escaped
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn endpoint(value: &str) -> TransportEndpointId {
+        TransportEndpointId::new(value).unwrap()
+    }
+
+    #[test]
+    fn memory_transport_summary_counts_intermediate_route_response_arrivals() {
+        let route = MemoryRouteId::new(7);
+        let request = MemoryRequestId::new(AgentId::new(3), 11);
+        let trace = MemoryTrace::from_events(vec![
+            MemoryTraceEvent::request(
+                0,
+                route,
+                endpoint("cpu0.ifetch"),
+                MemoryTraceKind::RequestSent,
+                request,
+            ),
+            MemoryTraceEvent::request(
+                2,
+                route,
+                endpoint("noc.router0"),
+                MemoryTraceKind::RequestArrived,
+                request,
+            ),
+            MemoryTraceEvent::request(
+                7,
+                route,
+                endpoint("memory.port0"),
+                MemoryTraceKind::RequestArrived,
+                request,
+            ),
+            MemoryTraceEvent::response(
+                14,
+                route,
+                endpoint("noc.router0"),
+                request,
+                rem6_memory::ResponseStatus::Completed,
+            ),
+            MemoryTraceEvent::response(
+                17,
+                route,
+                endpoint("cpu0.ifetch"),
+                request,
+                rem6_memory::ResponseStatus::Completed,
+            ),
+        ]);
+
+        let summary = memory_transport_summary(&trace);
+
+        assert_eq!(summary.counters.requests, 1);
+        assert_eq!(summary.counters.request_arrivals, 2);
+        assert_eq!(summary.counters.response_arrivals, 2);
+        assert_eq!(summary.counters.responses, 1);
+        assert_eq!(summary.counters.round_trip_ticks, 17);
+        assert_eq!(summary.routes.len(), 1);
+        let route = &summary.routes[0];
+        assert_eq!(route.source, "cpu0.ifetch");
+        assert_eq!(route.counters.requests, 1);
+        assert_eq!(route.counters.request_arrivals, 2);
+        assert_eq!(route.counters.response_arrivals, 2);
+        assert_eq!(route.counters.responses, 1);
+        assert_eq!(route.counters.round_trip_ticks, 17);
+    }
 }

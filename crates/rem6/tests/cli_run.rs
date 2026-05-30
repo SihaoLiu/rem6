@@ -198,6 +198,12 @@ fn rem6_run_loads_riscv_elf_and_emits_json_stats_artifact() {
     assert!(stdout.contains("\"architecture\":\"riscv64\""));
     assert!(stdout.contains("\"entry\":\"0x80000000\""));
     assert!(stdout.contains("\"status\":\"loaded\""));
+    assert!(stdout.contains("\"parallel\":{\"scheduler\":{"));
+    assert!(stdout.contains("\"epochs\":0"));
+    assert!(stdout.contains("\"dispatches\":0"));
+    assert!(stdout.contains("\"batches\":0"));
+    assert!(stdout.contains("\"max_workers\":0"));
+    assert!(stdout.contains("\"batch_worker_ticks\":0"));
     assert!(stdout.contains("\"path\":\"sim.binary.bytes\""));
     assert!(stdout.contains("\"path\":\"sim.elf.load_segments\""));
     assert!(stdout.contains("\"path\":\"sim.max_tick\""));
@@ -330,6 +336,38 @@ fn rem6_run_reports_both_artifact_paths_when_output_and_stats_output_are_request
     assert!(fs::read_to_string(&stats_path)
         .unwrap()
         .contains("\"path\":\"sim.binary.bytes\""));
+}
+
+#[test]
+fn rem6_run_rejects_overlapping_artifact_and_stats_output_paths() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("overlap-output", &elf);
+    let output_path = temp_output("overlap-output");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+            "--output",
+            output_path.to_str().unwrap(),
+            "--stats-output",
+            output_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("--output and --stats-output must use different paths"));
+    assert!(!output_path.exists());
 }
 
 #[test]
