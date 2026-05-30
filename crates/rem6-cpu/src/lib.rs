@@ -99,6 +99,7 @@ pub use o3_dependency::{
 };
 pub use o3_pipeline::{
     O3PipelineError, O3PipelineStage, O3UnblockDecision, O3UnblockDecisionReason, O3UnblockPolicy,
+    O3WritebackAdmission, O3WritebackTransferPlan, O3WritebackTransferPolicy,
 };
 pub use riscv_activity::RiscvCoreDriveActivity;
 pub use riscv_cluster::{RiscvCluster, RiscvClusterError};

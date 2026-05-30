@@ -1,4 +1,7 @@
-use rem6_cpu::{O3PipelineError, O3PipelineStage, O3UnblockDecisionReason, O3UnblockPolicy};
+use rem6_cpu::{
+    O3PipelineError, O3PipelineStage, O3UnblockDecisionReason, O3UnblockPolicy,
+    O3WritebackTransferPolicy,
+};
 
 #[test]
 fn o3_unblock_policy_signals_before_skid_buffer_is_empty() {
@@ -45,4 +48,67 @@ fn o3_unblock_policy_validates_zero_width_and_zero_delay_boundaries() {
     assert!(!zero_delay.decision(1).should_signal_unblock());
     assert!(zero_delay.decision(0).should_signal_unblock());
     assert!(zero_delay.empty_only_would_signal(0));
+}
+
+#[test]
+fn o3_writeback_transfer_policy_defers_overfull_same_tick_completions() {
+    let policy = O3WritebackTransferPolicy::new(O3PipelineStage::Iew, 4, 2).unwrap();
+
+    assert_eq!(policy.source(), O3PipelineStage::Iew);
+    assert_eq!(policy.writeback_width(), 4);
+    assert_eq!(policy.future_cycles(), 2);
+    assert_eq!(policy.capacity_entries(), 12);
+
+    let plan = policy.plan_ready_count(14);
+    assert_eq!(plan.ready_count(), 14);
+    assert_eq!(plan.admitted_count(), 12);
+    assert_eq!(plan.deferred_count(), 2);
+    assert!(plan.has_deferred());
+
+    let first = plan.admissions().first().unwrap();
+    assert_eq!(first.ready_index(), 0);
+    assert_eq!(first.cycle_offset(), 0);
+    assert_eq!(first.slot(), 0);
+
+    let last = plan.admissions().last().unwrap();
+    assert_eq!(last.ready_index(), 11);
+    assert_eq!(last.cycle_offset(), 2);
+    assert_eq!(last.slot(), 3);
+    assert!(plan
+        .admissions()
+        .iter()
+        .all(|admission| admission.cycle_offset() <= policy.future_cycles()));
+}
+
+#[test]
+fn o3_writeback_transfer_policy_keeps_exact_fit_completions_in_window() {
+    let policy = O3WritebackTransferPolicy::new(O3PipelineStage::Iew, 3, 1).unwrap();
+
+    let plan = policy.plan_ready_count(6);
+    assert_eq!(plan.ready_count(), 6);
+    assert_eq!(plan.admitted_count(), 6);
+    assert_eq!(plan.deferred_count(), 0);
+    assert!(!plan.has_deferred());
+    assert_eq!(plan.admissions()[3].ready_index(), 3);
+    assert_eq!(plan.admissions()[3].cycle_offset(), 1);
+    assert_eq!(plan.admissions()[3].slot(), 0);
+}
+
+#[test]
+fn o3_writeback_transfer_policy_rejects_unrepresentable_windows() {
+    assert_eq!(
+        O3WritebackTransferPolicy::new(O3PipelineStage::Iew, 0, 1).unwrap_err(),
+        O3PipelineError::ZeroWritebackWidth {
+            source: O3PipelineStage::Iew,
+        }
+    );
+
+    assert_eq!(
+        O3WritebackTransferPolicy::new(O3PipelineStage::Iew, usize::MAX, 1).unwrap_err(),
+        O3PipelineError::WritebackWindowOverflow {
+            source: O3PipelineStage::Iew,
+            writeback_width: usize::MAX,
+            future_cycles: 1,
+        }
+    );
 }
