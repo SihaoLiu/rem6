@@ -291,6 +291,92 @@ fn rem6_run_writes_stats_array_to_requested_stats_output_path() {
 }
 
 #[test]
+fn rem6_run_emits_text_stats_when_requested() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("text-stats", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "text",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("---------- Begin Simulation Statistics ----------"));
+    assert!(stdout.contains("sim.binary.bytes"));
+    assert!(stdout.contains("sim.max_tick"));
+    assert!(stdout.contains("unit=Byte"));
+    assert!(stdout.contains("reset_policy=constant"));
+    assert!(stdout.contains("---------- End Simulation Statistics   ----------"));
+    assert!(!stdout.contains("\"schema\":\"rem6.cli.run.v1\""));
+    assert!(!stdout.contains("\"path\":\"sim.binary.bytes\""));
+}
+
+#[test]
+fn rem6_run_writes_text_stats_to_requested_output_paths() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("text-output", &elf);
+    let artifact_path = temp_output("text-output-artifact");
+    let stats_path = temp_output("text-output-stats");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "text",
+            "--output",
+            artifact_path.to_str().unwrap(),
+            "--stats-output",
+            stats_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(
+        stdout,
+        format!(
+            "{{\"schema\":\"rem6.cli.output.v1\",\"format\":\"text\",\"artifact\":\"{}\",\"stats_artifact\":\"{}\"}}\n",
+            artifact_path.display(),
+            stats_path.display()
+        )
+    );
+    let artifact = fs::read_to_string(&artifact_path).unwrap();
+    assert!(artifact.contains("---------- Begin Simulation Statistics ----------"));
+    assert!(artifact.contains("sim.binary.bytes"));
+    assert!(!artifact.contains("\"schema\":\"rem6.cli.run.v1\""));
+    let stats = fs::read_to_string(&stats_path).unwrap();
+    assert!(stats.contains("---------- Begin Simulation Statistics ----------"));
+    assert!(stats.contains("sim.max_tick"));
+    assert!(!stats.starts_with('['));
+}
+
+#[test]
 fn rem6_run_reports_both_artifact_paths_when_output_and_stats_output_are_requested() {
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
     let path = temp_binary("dual-output", &elf);

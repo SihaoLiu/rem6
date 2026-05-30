@@ -15,7 +15,7 @@ use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryOperation, MemoryRequest, MemoryRequestId,
     MemoryTargetId, PartitionedMemoryStore,
 };
-use rem6_stats::{StatResetPolicy, StatsRegistry};
+use rem6_stats::{StatResetPolicy, StatSnapshot, StatsRegistry};
 use rem6_system::{
     GuestEventId, GuestSourceId, GuestTrapKind, HostEventPolicy, RiscvSystemRun,
     RiscvSystemRunDriver, RiscvSystemRunStopReason, RiscvTrapEventPort, SystemHostController,
@@ -79,15 +79,24 @@ impl RequestedIsa {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StatsFormat {
     Json,
+    Text,
 }
 
 impl StatsFormat {
     pub fn parse(value: &str) -> Result<Self, Rem6CliError> {
         match value {
             "json" => Ok(Self::Json),
+            "text" => Ok(Self::Text),
             _ => Err(Rem6CliError::UnsupportedStatsFormat {
                 format: value.to_string(),
             }),
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Json => "json",
+            Self::Text => "text",
         }
     }
 }
@@ -292,6 +301,7 @@ pub struct Rem6RunArtifact {
     load_segments: u64,
     execution: Option<Rem6ExecutionSummary>,
     stats_json: String,
+    stats_text: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -567,15 +577,19 @@ where
 {
     let config = Rem6RunConfig::parse_args(args)?;
     let artifact = run_config(config)?;
-    let output = match artifact.config.stats_format() {
+    let stats_format = artifact.config.stats_format();
+    let output = match stats_format {
         StatsFormat::Json => artifact.to_json(),
+        StatsFormat::Text => artifact.stats_text.clone(),
     };
     if let Some(path) = artifact.config.stats_output() {
-        std::fs::write(path, format!("{}\n", artifact.stats_json)).map_err(|error| {
-            Rem6CliError::WriteOutput {
-                path: path.to_path_buf(),
-                error: error.to_string(),
-            }
+        let stats_output = match stats_format {
+            StatsFormat::Json => format!("{}\n", artifact.stats_json),
+            StatsFormat::Text => artifact.stats_text.clone(),
+        };
+        std::fs::write(path, stats_output).map_err(|error| Rem6CliError::WriteOutput {
+            path: path.to_path_buf(),
+            error: error.to_string(),
         })?;
     }
     if let Some(path) = artifact.config.output() {
@@ -583,21 +597,31 @@ where
             path: path.to_path_buf(),
             error: error.to_string(),
         })?;
-        return Ok(output_envelope_json(path, artifact.config.stats_output()));
+        return Ok(output_envelope_json(
+            path,
+            artifact.config.stats_output(),
+            stats_format,
+        ));
     }
     Ok(output)
 }
 
-fn output_envelope_json(artifact: &Path, stats_artifact: Option<&Path>) -> String {
+fn output_envelope_json(
+    artifact: &Path,
+    stats_artifact: Option<&Path>,
+    format: StatsFormat,
+) -> String {
     let artifact = json_escape(&artifact.display().to_string());
     match stats_artifact {
         Some(stats_artifact) => format!(
-            "{{\"schema\":\"rem6.cli.output.v1\",\"format\":\"json\",\"artifact\":\"{}\",\"stats_artifact\":\"{}\"}}\n",
+            "{{\"schema\":\"rem6.cli.output.v1\",\"format\":\"{}\",\"artifact\":\"{}\",\"stats_artifact\":\"{}\"}}\n",
+            format.as_str(),
             artifact,
             json_escape(&stats_artifact.display().to_string())
         ),
         None => format!(
-            "{{\"schema\":\"rem6.cli.output.v1\",\"format\":\"json\",\"artifact\":\"{}\"}}\n",
+            "{{\"schema\":\"rem6.cli.output.v1\",\"format\":\"{}\",\"artifact\":\"{}\"}}\n",
+            format.as_str(),
             artifact
         ),
     }
@@ -636,7 +660,7 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
     } else {
         None
     };
-    let stats_json = run_stats_json(
+    let stats = run_stats_output(
         bytes.len() as u64,
         image.segments().len() as u64,
         config.max_tick(),
@@ -652,18 +676,25 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
         metadata,
         config,
         execution,
-        stats_json,
+        stats_json: stats.json,
+        stats_text: stats.text,
     })
 }
 
-fn run_stats_json(
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Rem6StatsOutput {
+    json: String,
+    text: String,
+}
+
+fn run_stats_output(
     binary_bytes: u64,
     load_segments: u64,
     max_tick: u64,
     cores: u64,
     parallel_workers: u64,
     execution: Option<&Rem6ExecutionSummary>,
-) -> Result<String, Rem6CliError> {
+) -> Result<Rem6StatsOutput, Rem6CliError> {
     let mut stats = StatsRegistry::new();
     increment_stat(
         &mut stats,
@@ -829,6 +860,13 @@ fn run_stats_json(
     }
 
     let snapshot = stats.snapshot(0);
+    Ok(Rem6StatsOutput {
+        json: stats_snapshot_json(&snapshot),
+        text: stats_snapshot_text(&snapshot),
+    })
+}
+
+fn stats_snapshot_json(snapshot: &StatSnapshot) -> String {
     let samples = snapshot
         .samples()
         .iter()
@@ -843,7 +881,22 @@ fn run_stats_json(
         })
         .collect::<Vec<_>>()
         .join(",");
-    Ok(format!("[{samples}]"))
+    format!("[{samples}]")
+}
+
+fn stats_snapshot_text(snapshot: &StatSnapshot) -> String {
+    let mut output = "\n---------- Begin Simulation Statistics ----------\n".to_string();
+    for sample in snapshot.samples() {
+        output.push_str(&format!(
+            "{:<64} {:>20} # unit={} reset_policy={}\n",
+            sample.path(),
+            sample.value(),
+            sample.unit(),
+            sample.reset_policy()
+        ));
+    }
+    output.push_str("\n---------- End Simulation Statistics   ----------\n");
+    output
 }
 
 fn increment_stat(
