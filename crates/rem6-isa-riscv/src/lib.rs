@@ -572,6 +572,10 @@ pub enum RiscvInstruction {
     ReadMachineHartId {
         rd: Register,
     },
+    ReadCounterCsr {
+        rd: Register,
+        csr: RiscvCounterCsr,
+    },
     Ecall,
     Ebreak,
 }
@@ -631,10 +635,20 @@ fn decode_system(raw: u32) -> Result<RiscvInstruction, RiscvError> {
 }
 
 fn decode_csr(raw: u32) -> Result<RiscvInstruction, RiscvError> {
-    match (funct3(raw), csr(raw), rs1(raw).index()) {
+    let csr = csr(raw);
+    match (funct3(raw), csr, rs1(raw).index()) {
         (0x2, 0xf14, 0) => Ok(RiscvInstruction::ReadMachineHartId { rd: rd(raw) }),
+        (0x2, csr, 0) => counter_csr(csr)
+            .map(|csr| RiscvInstruction::ReadCounterCsr { rd: rd(raw), csr })
+            .ok_or(RiscvError::UnknownEncoding { raw }),
         _ => Err(RiscvError::UnknownEncoding { raw }),
     }
+}
+
+fn counter_csr(address: u16) -> Option<RiscvCounterCsr> {
+    RiscvCounterCsr::from_user_address(address)
+        .or_else(|_| RiscvCounterCsr::from_machine_address(address))
+        .ok()
 }
 
 fn decode_op_imm(raw: u32) -> Result<RiscvInstruction, RiscvError> {
@@ -874,6 +888,7 @@ impl RiscvExecutionRecord {
 pub struct RiscvHartState {
     pc: u64,
     hart_id: u64,
+    counters: RiscvCounterBank,
     vector_config: RiscvVectorConfig,
     registers: [u64; 32],
 }
@@ -887,6 +902,7 @@ impl RiscvHartState {
         Self {
             pc,
             hart_id,
+            counters: RiscvCounterBank::new(),
             vector_config: RiscvVectorConfig::invalid(),
             registers: [0; 32],
         }
@@ -898,6 +914,10 @@ impl RiscvHartState {
 
     pub const fn hart_id(&self) -> u64 {
         self.hart_id
+    }
+
+    pub const fn counter_snapshot(&self) -> RiscvCounterSnapshot {
+        self.counters.snapshot()
     }
 
     pub fn set_pc(&mut self, pc: u64) {
@@ -1074,6 +1094,10 @@ impl RiscvHartState {
             RiscvInstruction::ReadMachineHartId { rd } => {
                 write_register(self, &mut register_writes, rd, self.hart_id);
             }
+            RiscvInstruction::ReadCounterCsr { rd, csr } => {
+                let value = self.counters.read_machine(csr);
+                write_register(self, &mut register_writes, rd, value);
+            }
             RiscvInstruction::Ecall => {
                 next_pc = pc;
                 self.pc = next_pc;
@@ -1097,6 +1121,8 @@ impl RiscvHartState {
         }
 
         self.pc = next_pc;
+        self.counters.add_cycles(1);
+        self.counters.retire_instructions(1);
         Ok(RiscvExecutionRecord::new(
             instruction,
             pc,

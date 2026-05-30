@@ -176,6 +176,39 @@ fn hart_reads_machine_hart_id_csr() {
 }
 
 #[test]
+fn hart_reads_cycle_and_instret_counter_csrs() {
+    let addi = RiscvInstruction::decode(i_type(9, 0, 0x0, 7, 0x13)).unwrap();
+    let cycle = RiscvInstruction::decode(csr_read_type(0xc00, 5)).unwrap();
+    let instret = RiscvInstruction::decode(csr_read_type(0xc02, 6)).unwrap();
+    assert_eq!(
+        cycle,
+        RiscvInstruction::ReadCounterCsr {
+            rd: reg(5),
+            csr: RiscvCounterCsr::Cycle,
+        }
+    );
+    assert_eq!(
+        instret,
+        RiscvInstruction::ReadCounterCsr {
+            rd: reg(6),
+            csr: RiscvCounterCsr::Instret,
+        }
+    );
+
+    let mut hart = RiscvHartState::new(0x2400);
+    assert_eq!(hart.counter_snapshot(), RiscvCounterSnapshot::new(0, 0));
+    hart.execute(addi).unwrap();
+    assert_eq!(hart.counter_snapshot(), RiscvCounterSnapshot::new(1, 1));
+
+    hart.execute(cycle).unwrap();
+    hart.execute(instret).unwrap();
+
+    assert_eq!(hart.read(reg(5)), 1);
+    assert_eq!(hart.read(reg(6)), 2);
+    assert_eq!(hart.counter_snapshot(), RiscvCounterSnapshot::new(3, 3));
+}
+
+#[test]
 fn decoder_extracts_rv64i_fields_and_immediates() {
     assert_eq!(
         RiscvInstruction::decode(i_type(-1, 0, 0x0, 5, 0x13)).unwrap(),
