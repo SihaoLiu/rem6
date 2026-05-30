@@ -45,6 +45,28 @@ fn riscv64_program(words: &[u32]) -> Vec<u8> {
     words.iter().flat_map(|word| word.to_le_bytes()).collect()
 }
 
+fn u_type(imm: i32, rd: u8, opcode: u32) -> u32 {
+    ((imm as u32) & 0xffff_f000) | (u32::from(rd) << 7) | opcode
+}
+
+fn i_type(imm: i32, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
+    (((imm as u32) & 0x0fff) << 20)
+        | (u32::from(rs1) << 15)
+        | (funct3 << 12)
+        | (u32::from(rd) << 7)
+        | opcode
+}
+
+fn s_type(imm: i32, rs2: u8, rs1: u8, funct3: u32) -> u32 {
+    let imm = imm as u32;
+    (((imm >> 5) & 0x7f) << 25)
+        | (u32::from(rs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (funct3 << 12)
+        | ((imm & 0x1f) << 7)
+        | 0x23
+}
+
 fn temp_binary(name: &str, bytes: &[u8]) -> std::path::PathBuf {
     let path = std::env::temp_dir().join(format!("rem6-{name}-{}.elf", std::process::id()));
     fs::write(&path, bytes).unwrap();
@@ -161,4 +183,60 @@ fn rem6_run_executes_riscv_elf_on_parallel_cores_and_emits_core_stats() {
     assert!(stdout.contains("\"path\":\"sim.parallel.scheduler.max_workers\""));
     assert!(stdout.contains("\"value\":4"));
     assert!(stdout.contains("\"value\":2"));
+}
+
+#[test]
+fn rem6_run_executes_riscv_elf_load_store_and_emits_data_stats() {
+    let mut program = riscv64_program(&[
+        u_type(0, 2, 0x17),          // auipc x2, 0
+        i_type(24, 2, 0x0, 2, 0x13), // addi x2, x2, data offset
+        i_type(0, 2, 0x3, 5, 0x03),  // ld x5, 0(x2)
+        i_type(1, 5, 0x0, 6, 0x13),  // addi x6, x5, 1
+        s_type(8, 6, 2, 0x3),        // sd x6, 8(x2)
+        0x0000_0073,                 // ecall
+    ]);
+    program.extend_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
+    program.extend_from_slice(&0u64.to_le_bytes());
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("data-exec", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "80",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "1",
+            "--dump-memory",
+            "0x80000020:8",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"x5\":\"0x1122334455667788\""));
+    assert!(stdout.contains("\"x6\":\"0x1122334455667789\""));
+    assert!(stdout.contains("\"data_loads\":1"));
+    assert!(stdout.contains("\"data_stores\":1"));
+    assert!(stdout.contains("\"address\":\"0x80000020\""));
+    assert!(stdout.contains("\"bytes\":8"));
+    assert!(stdout.contains("\"hex\":\"8977665544332211\""));
+    assert!(stdout.contains("\"path\":\"sim.data.loads\""));
+    assert!(stdout.contains("\"path\":\"sim.data.stores\""));
+    assert!(stdout.contains("\"path\":\"sim.memory.dumps\""));
+    assert!(stdout.contains("\"path\":\"sim.cpu0.data.loads\""));
+    assert!(stdout.contains("\"path\":\"sim.cpu0.data.stores\""));
 }

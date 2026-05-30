@@ -8,11 +8,15 @@ use rem6_boot::{
     BootElfArchitecture, BootElfClass, BootElfEndian, BootElfOperatingSystem, BootImage,
 };
 use rem6_cpu::{
-    CpuCore, CpuFetchConfig, CpuId, CpuResetState, RiscvCluster, RiscvCore, RiscvCoreDriveAction,
+    CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, RiscvCluster, RiscvCore,
+    RiscvCoreDriveAction, RiscvDataAccessEventKind,
 };
 use rem6_isa_riscv::Register;
 use rem6_kernel::{PartitionId, PartitionedScheduler};
-use rem6_memory::{AccessSize, AgentId, CacheLineLayout, MemoryTargetId, PartitionedMemoryStore};
+use rem6_memory::{
+    AccessSize, Address, AgentId, CacheLineLayout, MemoryOperation, MemoryRequest, MemoryRequestId,
+    MemoryTargetId, PartitionedMemoryStore,
+};
 use rem6_stats::{StatResetPolicy, StatsRegistry};
 use rem6_system::{
     GuestEventId, GuestSourceId, GuestTrapKind, HostEventPolicy, RiscvSystemRun,
@@ -26,6 +30,7 @@ use rem6_transport::{
 
 const DEFAULT_CACHE_LINE_BYTES: u64 = 16;
 const CLI_MEMORY_TARGET: MemoryTargetId = MemoryTargetId::new(0);
+const CLI_MEMORY_DUMP_AGENT: AgentId = AgentId::new(u32::MAX);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RequestedIsa {
@@ -89,6 +94,7 @@ pub struct Rem6RunConfig {
     stats_format: StatsFormat,
     execute: bool,
     cores: usize,
+    memory_dumps: Vec<MemoryDumpRequest>,
 }
 
 impl Rem6RunConfig {
@@ -111,6 +117,7 @@ impl Rem6RunConfig {
         let mut stats_format = StatsFormat::Json;
         let mut execute = false;
         let mut cores = 1usize;
+        let mut memory_dumps = Vec::new();
         while let Some(flag) = args.next() {
             match flag.as_str() {
                 "--isa" => {
@@ -141,6 +148,10 @@ impl Rem6RunConfig {
                             value: value.clone(),
                         })?;
                 }
+                "--dump-memory" => {
+                    let value = required_value(&flag, args.next())?;
+                    memory_dumps.push(MemoryDumpRequest::parse(&value)?);
+                }
                 _ => return Err(Rem6CliError::UnknownFlag { flag }),
             }
         }
@@ -152,6 +163,7 @@ impl Rem6RunConfig {
             stats_format,
             execute,
             cores,
+            memory_dumps,
         })
     }
 
@@ -177,6 +189,43 @@ impl Rem6RunConfig {
 
     pub const fn cores(&self) -> usize {
         self.cores
+    }
+
+    pub fn memory_dumps(&self) -> &[MemoryDumpRequest] {
+        &self.memory_dumps
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MemoryDumpRequest {
+    address: u64,
+    bytes: u64,
+}
+
+impl MemoryDumpRequest {
+    pub fn parse(value: &str) -> Result<Self, Rem6CliError> {
+        let Some((address, bytes)) = value.split_once(':') else {
+            return Err(Rem6CliError::InvalidMemoryDump {
+                value: value.to_string(),
+            });
+        };
+        let address = parse_number(address).ok_or_else(|| Rem6CliError::InvalidMemoryDump {
+            value: value.to_string(),
+        })?;
+        let bytes = parse_number(bytes)
+            .filter(|bytes| *bytes > 0)
+            .ok_or_else(|| Rem6CliError::InvalidMemoryDump {
+                value: value.to_string(),
+            })?;
+        Ok(Self { address, bytes })
+    }
+
+    pub const fn address(self) -> u64 {
+        self.address
+    }
+
+    pub const fn bytes(self) -> u64 {
+        self.bytes
     }
 }
 
@@ -206,8 +255,12 @@ impl Rem6RunArtifact {
             Some(execution) => execution.to_cores_json(),
             None => "[]".to_string(),
         };
+        let memory = match &self.execution {
+            Some(execution) => execution.to_memory_json(),
+            None => "[]".to_string(),
+        };
         format!(
-            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"entry\":\"0x{:x}\",\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{}}},\"simulation\":{},\"cores\":{},\"stats\":{}}}\n",
+            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"entry\":\"0x{:x}\",\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{}}},\"simulation\":{},\"cores\":{},\"memory\":{},\"stats\":{}}}\n",
             self.schema,
             self.config.isa().as_str(),
             json_escape(&self.config.binary().display().to_string()),
@@ -220,6 +273,7 @@ impl Rem6RunArtifact {
             self.metadata.flags(),
             simulation,
             cores,
+            memory,
             self.stats_json,
         )
     }
@@ -239,9 +293,13 @@ pub struct Rem6ExecutionSummary {
     stop_code: i32,
     trap: &'static str,
     committed_instructions: u64,
+    data_loads: u64,
+    data_stores: u64,
+    data_atomics: u64,
     parallel_scheduler_epochs: u64,
     parallel_scheduler_max_workers: u64,
     cores: Vec<Rem6CoreSummary>,
+    memory_dumps: Vec<Rem6MemoryDump>,
 }
 
 impl Rem6ExecutionSummary {
@@ -266,6 +324,16 @@ impl Rem6ExecutionSummary {
             .join(",");
         format!("[{cores}]")
     }
+
+    fn to_memory_json(&self) -> String {
+        let dumps = self
+            .memory_dumps
+            .iter()
+            .map(Rem6MemoryDump::to_json)
+            .collect::<Vec<_>>()
+            .join(",");
+        format!("[{dumps}]")
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -273,6 +341,9 @@ pub struct Rem6CoreSummary {
     cpu: u32,
     pc: u64,
     committed_instructions: u64,
+    data_loads: u64,
+    data_stores: u64,
+    data_atomics: u64,
     registers: Vec<(u8, u64)>,
 }
 
@@ -285,8 +356,31 @@ impl Rem6CoreSummary {
             .collect::<Vec<_>>()
             .join(",");
         format!(
-            "{{\"cpu\":{},\"pc\":\"0x{:x}\",\"committed_instructions\":{},\"registers\":{{{}}}}}",
-            self.cpu, self.pc, self.committed_instructions, registers
+            "{{\"cpu\":{},\"pc\":\"0x{:x}\",\"committed_instructions\":{},\"data_loads\":{},\"data_stores\":{},\"data_atomics\":{},\"registers\":{{{}}}}}",
+            self.cpu,
+            self.pc,
+            self.committed_instructions,
+            self.data_loads,
+            self.data_stores,
+            self.data_atomics,
+            registers
+        )
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Rem6MemoryDump {
+    address: u64,
+    data: Vec<u8>,
+}
+
+impl Rem6MemoryDump {
+    fn to_json(&self) -> String {
+        format!(
+            "{{\"address\":\"0x{:x}\",\"bytes\":{},\"hex\":\"{}\"}}",
+            self.address,
+            self.data.len(),
+            bytes_to_hex(&self.data),
         )
     }
 }
@@ -318,6 +412,10 @@ pub enum Rem6CliError {
     InvalidCoreCount {
         value: String,
     },
+    InvalidMemoryDump {
+        value: String,
+    },
+    MemoryDumpRequiresExecution,
     ReadBinary {
         path: PathBuf,
         error: String,
@@ -364,6 +462,12 @@ impl fmt::Display for Rem6CliError {
             }
             Self::InvalidMaxTick { value } => write!(formatter, "invalid max tick {value}"),
             Self::InvalidCoreCount { value } => write!(formatter, "invalid core count {value}"),
+            Self::InvalidMemoryDump { value } => {
+                write!(formatter, "invalid memory dump request {value}")
+            }
+            Self::MemoryDumpRequiresExecution => {
+                write!(formatter, "--dump-memory requires --execute")
+            }
             Self::ReadBinary { path, error } => {
                 write!(formatter, "failed to read {}: {error}", path.display())
             }
@@ -432,6 +536,10 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
             requested: config.isa(),
             architecture: metadata.architecture(),
         });
+    }
+
+    if !config.execute() && !config.memory_dumps().is_empty() {
+        return Err(Rem6CliError::MemoryDumpRequiresExecution);
     }
 
     let execution = if config.execute() {
@@ -522,6 +630,34 @@ fn run_stats_json(
         )?;
         increment_stat(
             &mut stats,
+            "sim.memory.dumps",
+            "Count",
+            StatResetPolicy::Constant,
+            execution.memory_dumps.len() as u64,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.data.loads",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.data_loads,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.data.stores",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.data_stores,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.data.atomics",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.data_atomics,
+        )?;
+        increment_stat(
+            &mut stats,
             "sim.parallel.scheduler.epochs",
             "Count",
             StatResetPolicy::Monotonic,
@@ -541,6 +677,27 @@ fn run_stats_json(
                 "Count",
                 StatResetPolicy::Monotonic,
                 core.committed_instructions,
+            )?;
+            increment_stat(
+                &mut stats,
+                &format!("sim.cpu{}.data.loads", core.cpu),
+                "Count",
+                StatResetPolicy::Monotonic,
+                core.data_loads,
+            )?;
+            increment_stat(
+                &mut stats,
+                &format!("sim.cpu{}.data.stores", core.cpu),
+                "Count",
+                StatResetPolicy::Monotonic,
+                core.data_stores,
+            )?;
+            increment_stat(
+                &mut stats,
+                &format!("sim.cpu{}.data.atomics", core.cpu),
+                "Count",
+                StatResetPolicy::Monotonic,
+                core.data_atomics,
             )?;
         }
     }
@@ -620,8 +777,19 @@ fn execute_riscv(
     let mut cores = Vec::new();
     for cpu_index in 0..core_count {
         let cpu_partition = PartitionId::new(cpu_index);
-        let route = add_fetch_route(&mut transport, cpu_index, cpu_partition, memory_partition)?;
-        let core = RiscvCore::new(
+        let fetch_route = add_memory_route(
+            &mut transport,
+            format!("cpu{cpu_index}.ifetch"),
+            cpu_partition,
+            memory_partition,
+        )?;
+        let data_route = add_memory_route(
+            &mut transport,
+            format!("cpu{cpu_index}.dmem"),
+            cpu_partition,
+            memory_partition,
+        )?;
+        let core = RiscvCore::with_data(
             CpuCore::new(
                 CpuResetState::new(
                     CpuId::new(cpu_index),
@@ -631,12 +799,17 @@ fn execute_riscv(
                 ),
                 CpuFetchConfig::new(
                     transport_endpoint(format!("cpu{cpu_index}.ifetch"))?,
-                    route,
+                    fetch_route,
                     line_layout,
                     AccessSize::new(4).map_err(execute_error)?,
                 ),
             )
             .map_err(execute_error)?,
+            CpuDataConfig::new(
+                transport_endpoint(format!("cpu{cpu_index}.dmem"))?,
+                data_route,
+                line_layout,
+            ),
         );
         cores.push(core);
     }
@@ -671,19 +844,19 @@ fn execute_riscv(
         )
         .map_err(execute_error)?;
 
-    execution_summary(&cluster, &run, core_count)
+    execution_summary(&cluster, &run, core_count, &store, line_layout, config)
 }
 
-fn add_fetch_route(
+fn add_memory_route(
     transport: &mut MemoryTransport,
-    cpu_index: u32,
+    source: String,
     cpu_partition: PartitionId,
     memory_partition: PartitionId,
 ) -> Result<MemoryRouteId, Rem6CliError> {
     transport
         .add_route(
             MemoryRoute::new(
-                transport_endpoint(format!("cpu{cpu_index}.ifetch"))?,
+                transport_endpoint(source)?,
                 cpu_partition,
                 transport_endpoint("memory".to_string())?,
                 memory_partition,
@@ -714,6 +887,9 @@ fn execution_summary(
     cluster: &RiscvCluster,
     run: &RiscvSystemRun,
     core_count: u32,
+    store: &Arc<Mutex<PartitionedMemoryStore>>,
+    line_layout: CacheLineLayout,
+    config: &Rem6RunConfig,
 ) -> Result<Rem6ExecutionSummary, Rem6CliError> {
     let RiscvSystemRunStopReason::HostStop(stop) = run.stop_reason() else {
         return Err(Rem6CliError::Execute {
@@ -729,9 +905,16 @@ fn execution_summary(
     let committed_by_cpu = committed_instructions_by_cpu(run);
     let committed_instructions = committed_by_cpu.values().sum();
     let mut cores = Vec::new();
+    let mut data_loads = 0;
+    let mut data_stores = 0;
+    let mut data_atomics = 0;
     for cpu_index in 0..core_count {
         let cpu = CpuId::new(cpu_index);
         let core = cluster.core(cpu).map_err(execute_error)?;
+        let data = core_data_access_counts(&core);
+        data_loads += data.loads;
+        data_stores += data.stores;
+        data_atomics += data.atomics;
         let mut registers = Vec::new();
         for register_index in 1..32 {
             let register = Register::new(register_index).map_err(execute_error)?;
@@ -744,6 +927,9 @@ fn execution_summary(
             cpu: cpu_index,
             pc: core.pc().get(),
             committed_instructions: committed_by_cpu.get(&cpu).copied().unwrap_or(0),
+            data_loads: data.loads,
+            data_stores: data.stores,
+            data_atomics: data.atomics,
             registers,
         });
     }
@@ -753,9 +939,79 @@ fn execution_summary(
         stop_code: stop.code(),
         trap: guest_trap_name(scheduled_trap.trap().kind()),
         committed_instructions,
+        data_loads,
+        data_stores,
+        data_atomics,
         parallel_scheduler_epochs: run.parallel_scheduler_epochs().len() as u64,
         parallel_scheduler_max_workers: run.max_parallel_scheduler_workers() as u64,
         cores,
+        memory_dumps: read_memory_dumps(store, line_layout, config.memory_dumps())?,
+    })
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct DataAccessCounts {
+    loads: u64,
+    stores: u64,
+    atomics: u64,
+}
+
+fn core_data_access_counts(core: &RiscvCore) -> DataAccessCounts {
+    let mut counts = DataAccessCounts::default();
+    for event in core.data_access_events() {
+        if event.kind() != RiscvDataAccessEventKind::Completed {
+            continue;
+        }
+        match event.operation() {
+            MemoryOperation::ReadShared | MemoryOperation::ReadUnique => counts.loads += 1,
+            MemoryOperation::Write => counts.stores += 1,
+            MemoryOperation::Atomic => counts.atomics += 1,
+            _ => {}
+        }
+    }
+    counts
+}
+
+fn read_memory_dumps(
+    store: &Arc<Mutex<PartitionedMemoryStore>>,
+    line_layout: CacheLineLayout,
+    requests: &[MemoryDumpRequest],
+) -> Result<Vec<Rem6MemoryDump>, Rem6CliError> {
+    requests
+        .iter()
+        .enumerate()
+        .map(|(index, request)| read_memory_dump(store, line_layout, index as u64, *request))
+        .collect()
+}
+
+fn read_memory_dump(
+    store: &Arc<Mutex<PartitionedMemoryStore>>,
+    line_layout: CacheLineLayout,
+    sequence: u64,
+    dump: MemoryDumpRequest,
+) -> Result<Rem6MemoryDump, Rem6CliError> {
+    let request = MemoryRequest::read_shared(
+        MemoryRequestId::new(CLI_MEMORY_DUMP_AGENT, sequence),
+        Address::new(dump.address()),
+        AccessSize::new(dump.bytes()).map_err(execute_error)?,
+        line_layout,
+    )
+    .map_err(execute_error)?;
+    let outcome = store
+        .lock()
+        .expect("CLI memory store lock")
+        .respond(&request)
+        .map_err(execute_error)?;
+    let data = outcome
+        .response()
+        .and_then(|response| response.data())
+        .ok_or_else(|| Rem6CliError::Execute {
+            error: format!("memory dump at 0x{:x} returned no data", dump.address()),
+        })?
+        .to_vec();
+    Ok(Rem6MemoryDump {
+        address: dump.address(),
+        data,
     })
 }
 
@@ -784,6 +1040,25 @@ fn execute_error(error: impl fmt::Display) -> Rem6CliError {
     Rem6CliError::Execute {
         error: error.to_string(),
     }
+}
+
+fn parse_number(value: &str) -> Option<u64> {
+    if let Some(hex) = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+    {
+        u64::from_str_radix(hex, 16).ok()
+    } else {
+        value.parse().ok()
+    }
+}
+
+fn bytes_to_hex(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<Vec<_>>()
+        .join("")
 }
 
 fn required_value(flag: &str, value: Option<String>) -> Result<String, Rem6CliError> {
