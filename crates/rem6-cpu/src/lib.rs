@@ -29,6 +29,7 @@ mod indirect_target_predictor;
 mod loop_predictor;
 mod ltage_predictor;
 mod multiperspective_perceptron;
+mod o3_dependency;
 mod o3_pipeline;
 mod parallel_flow;
 mod riscv_activity;
@@ -90,6 +91,11 @@ pub use multiperspective_perceptron::{
     MultiperspectivePerceptronHistory, MultiperspectivePerceptronPrediction,
     MultiperspectivePerceptronSnapshot, MultiperspectivePerceptronThreadSnapshot,
     MultiperspectivePerceptronTrainingUpdate,
+};
+pub use o3_dependency::{
+    O3DependencyProducerKind, O3DependencyReleasePlan, O3DependencyReleaseReason,
+    O3DependencyReleaseStage, O3DestinationRegister, O3DestinationRelease, O3DestinationVisibility,
+    O3RegisterClass,
 };
 pub use o3_pipeline::{
     O3PipelineError, O3PipelineStage, O3UnblockDecision, O3UnblockDecisionReason, O3UnblockPolicy,
