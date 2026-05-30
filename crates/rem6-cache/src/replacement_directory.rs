@@ -142,6 +142,21 @@ impl CacheReplacementDirectory {
         self.touch_inner(line, Some(signature))
     }
 
+    pub fn remove_resident_line(
+        &mut self,
+        line: Address,
+    ) -> Result<Option<ReplacementUpdate>, CacheReplacementPolicyError> {
+        let line = self.config.line_address(line);
+        let Some((set, way)) = self.way_for(line) else {
+            return Ok(None);
+        };
+
+        let directory_set = &mut self.sets[set];
+        let update = directory_set.replacement.invalidate(way)?;
+        directory_set.lines[way] = None;
+        Ok(Some(update))
+    }
+
     pub fn move_resident_line(
         &mut self,
         line: Address,

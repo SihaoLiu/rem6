@@ -37,6 +37,10 @@ fn read(agent_id: AgentId, sequence: u64, address: u64) -> MemoryRequest {
     .unwrap()
 }
 
+fn uncacheable_read(agent_id: AgentId, sequence: u64, address: u64) -> MemoryRequest {
+    read(agent_id, sequence, address).with_uncacheable_strict_order()
+}
+
 fn write(agent_id: AgentId, sequence: u64, address: u64, data: Vec<u8>) -> MemoryRequest {
     let access_size = AccessSize::new(data.len() as u64).unwrap();
     MemoryRequest::write(
@@ -242,6 +246,65 @@ fn msi_cache_bank_mshr_coalesces_same_line_read_misses() {
     assert_eq!(bank.pending_fill_count(), 0);
     assert_eq!(bank.mshr_allocated_count(), 0);
     assert_eq!(bank.state(Address::new(0x1000)), Some(MsiState::Shared));
+}
+
+#[test]
+fn msi_cache_bank_uncacheable_read_bypasses_clean_resident_line() {
+    let cache_agent = agent(7);
+    let mut bank = MsiCacheBank::new(cache_agent, layout());
+
+    let cached = read(cache_agent, 130, 0x1804);
+    let cached_miss = bank.accept_cpu_request(cached.clone()).unwrap();
+    let cached_downstream = cached_miss.downstream_request().unwrap().clone();
+    bank.accept_fill(fill(&cached_downstream, 0x11)).unwrap();
+    assert_eq!(bank.state(Address::new(0x1800)), Some(MsiState::Shared));
+
+    let uncached = uncacheable_read(cache_agent, 131, 0x1808);
+    let uncached_miss = bank.accept_cpu_request(uncached.clone()).unwrap();
+    let uncached_downstream = uncached_miss.downstream_request().unwrap();
+
+    assert_eq!(uncached_miss.kind(), CacheControllerResultKind::Miss);
+    assert_eq!(uncached_downstream.id(), uncached.id());
+    assert_eq!(uncached_downstream.range(), uncached.range());
+    assert!(uncached_downstream.is_uncacheable());
+    assert!(uncached_downstream.is_strict_ordered());
+    assert_eq!(bank.state(Address::new(0x1800)), None);
+
+    let uncached_fill = bank
+        .accept_fill(MemoryResponse::completed(uncached_downstream, Some(vec![0x99; 8])).unwrap())
+        .unwrap();
+    assert_eq!(
+        response_data(uncached_fill.target_outcome().unwrap()),
+        &[0x99; 8]
+    );
+    assert_eq!(bank.state(Address::new(0x1800)), None);
+
+    let normal_again = bank.accept_cpu_request(cached).unwrap();
+    assert_eq!(normal_again.kind(), CacheControllerResultKind::Miss);
+}
+
+#[test]
+fn msi_cache_bank_uncacheable_read_preserves_dirty_resident_line() {
+    let cache_agent = agent(7);
+    let mut bank = MsiCacheBank::new(cache_agent, layout());
+    let store = write(cache_agent, 132, 0x1c04, vec![0xde, 0xad]);
+
+    let miss = bank.accept_cpu_request(store).unwrap();
+    assert_eq!(
+        miss.downstream_request().unwrap().operation(),
+        MemoryOperation::ReadUnique
+    );
+    bank.accept_fill(fill(miss.downstream_request().unwrap(), 0x00))
+        .unwrap();
+    assert_eq!(bank.state(Address::new(0x1c00)), Some(MsiState::Modified));
+
+    let result = bank.accept_cpu_request(uncacheable_read(cache_agent, 133, 0x1c08));
+    assert!(result.is_err());
+    assert_eq!(bank.state(Address::new(0x1c00)), Some(MsiState::Modified));
+    assert_eq!(
+        bank.snapshot().dirty_line_addresses(),
+        vec![Address::new(0x1c00)]
+    );
 }
 
 #[test]

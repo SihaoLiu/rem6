@@ -1,7 +1,7 @@
 use rem6_cache::{
     CacheReplacementDirectoryConfig, CacheReplacementPolicyKind, CacheWriteQueueConfig,
     CacheWriteQueueEntryKind, CacheWriteQueueError, ChiCacheBank, ChiCacheBankError,
-    ChiCacheControllerError, MshrQosClass, MshrQueueConfig,
+    ChiCacheControllerError, ChiCacheControllerResultKind, MshrQosClass, MshrQueueConfig,
 };
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryError, MemoryOperation,
@@ -34,6 +34,10 @@ fn read(agent_id: AgentId, sequence: u64, address: u64) -> MemoryRequest {
         layout(),
     )
     .unwrap()
+}
+
+fn uncacheable_read(agent_id: AgentId, sequence: u64, address: u64) -> MemoryRequest {
+    read(agent_id, sequence, address).with_uncacheable_strict_order()
 }
 
 fn write(agent_id: AgentId, sequence: u64, address: u64, data: Vec<u8>) -> MemoryRequest {
@@ -232,6 +236,94 @@ fn chi_cache_bank_replacement_directory_evicts_clean_lru_lines() {
                 bank_has_replacement_directory: true,
             }
         )
+    );
+}
+
+#[test]
+fn chi_cache_bank_uncacheable_read_bypasses_clean_resident_line() {
+    let cache_agent = agent(40);
+    let mut bank = ChiCacheBank::new_with_replacement_directory(
+        cache_agent,
+        layout(),
+        lru_replacement_config(1, 2),
+    )
+    .unwrap();
+
+    fill_read_line(&mut bank, cache_agent, 530, 0x3004);
+    assert_eq!(
+        bank.state(Address::new(0x3000)),
+        Some(ChiState::SharedClean)
+    );
+    assert_eq!(bank.replacement_way_for(Address::new(0x3000)), Some((0, 0)));
+
+    let uncached = uncacheable_read(cache_agent, 531, 0x3008);
+    let uncached_miss = bank.accept_cpu_request(uncached.clone()).unwrap();
+    let uncached_downstream = uncached_miss.downstream_request().unwrap();
+
+    assert_eq!(uncached_miss.kind(), ChiCacheControllerResultKind::Miss);
+    assert_eq!(uncached_downstream.id(), uncached.id());
+    assert_eq!(uncached_downstream.range(), uncached.range());
+    assert!(uncached_downstream.is_uncacheable());
+    assert!(uncached_downstream.is_strict_ordered());
+    assert_eq!(bank.state(Address::new(0x3000)), None);
+    assert_eq!(bank.replacement_way_for(Address::new(0x3000)), None);
+
+    let uncached_fill = bank
+        .accept_fill(
+            MemoryResponse::completed(uncached_downstream, Some(vec![0x88; 8])).unwrap(),
+            ChiEvent::CompDataSharedClean,
+        )
+        .unwrap();
+    assert_eq!(
+        response_data(uncached_fill.target_outcome().unwrap()),
+        &[0x88; 8]
+    );
+    assert_eq!(bank.state(Address::new(0x3000)), None);
+    assert_eq!(bank.replacement_way_for(Address::new(0x3000)), None);
+
+    let normal_again = bank
+        .accept_cpu_request(read(cache_agent, 532, 0x3004))
+        .unwrap();
+    assert_eq!(normal_again.kind(), ChiCacheControllerResultKind::Miss);
+}
+
+#[test]
+fn chi_cache_bank_uncacheable_read_preserves_dirty_resident_line() {
+    let cache_agent = agent(40);
+    let mut bank = ChiCacheBank::new_with_replacement_directory(
+        cache_agent,
+        layout(),
+        lru_replacement_config(1, 2),
+    )
+    .unwrap();
+    let store = write(cache_agent, 533, 0x3404, vec![0xde, 0xad]);
+
+    let miss = bank.accept_cpu_request(store).unwrap();
+    assert_eq!(
+        miss.downstream_request().unwrap().operation(),
+        MemoryOperation::ReadUnique
+    );
+    bank.accept_fill(
+        fill(miss.downstream_request().unwrap(), 0x00),
+        ChiEvent::CompDataUniqueDirty,
+    )
+    .unwrap();
+    assert_eq!(
+        bank.state(Address::new(0x3400)),
+        Some(ChiState::UniqueDirty)
+    );
+    assert_eq!(bank.replacement_way_for(Address::new(0x3400)), Some((0, 0)));
+
+    let result = bank.accept_cpu_request(uncacheable_read(cache_agent, 534, 0x3408));
+    assert!(result.is_err());
+    assert_eq!(
+        bank.state(Address::new(0x3400)),
+        Some(ChiState::UniqueDirty)
+    );
+    assert_eq!(bank.replacement_way_for(Address::new(0x3400)), Some((0, 0)));
+    assert_eq!(
+        bank.snapshot().dirty_line_addresses(),
+        vec![Address::new(0x3400)]
     );
 }
 

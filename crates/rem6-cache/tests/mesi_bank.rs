@@ -35,6 +35,10 @@ fn read(agent_id: AgentId, sequence: u64, address: u64) -> MemoryRequest {
     .unwrap()
 }
 
+fn uncacheable_read(agent_id: AgentId, sequence: u64, address: u64) -> MemoryRequest {
+    read(agent_id, sequence, address).with_uncacheable_strict_order()
+}
+
 fn write(agent_id: AgentId, sequence: u64, address: u64, data: Vec<u8>) -> MemoryRequest {
     let access_size = AccessSize::new(data.len() as u64).unwrap();
     MemoryRequest::write(
@@ -410,5 +414,32 @@ fn mesi_cache_bank_snapshot_reports_and_restores_dirty_lines() {
     assert_eq!(
         response_data(hit.target_outcome().unwrap()),
         &[0xde, 0xad, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+    );
+}
+
+#[test]
+fn mesi_cache_bank_uncacheable_read_preserves_dirty_resident_line() {
+    let cache_agent = agent(20);
+    let mut bank = MesiCacheBank::new(cache_agent, layout());
+    let store = write(cache_agent, 122, 0x2404, vec![0xde, 0xad]);
+
+    let miss = bank.accept_cpu_request(store).unwrap();
+    assert_eq!(
+        miss.downstream_request().unwrap().operation(),
+        MemoryOperation::ReadUnique
+    );
+    bank.accept_fill(
+        fill(miss.downstream_request().unwrap(), 0x00),
+        MesiEvent::DataModified,
+    )
+    .unwrap();
+    assert_eq!(bank.state(Address::new(0x2400)), Some(MesiState::Modified));
+
+    let result = bank.accept_cpu_request(uncacheable_read(cache_agent, 123, 0x2408));
+    assert!(result.is_err());
+    assert_eq!(bank.state(Address::new(0x2400)), Some(MesiState::Modified));
+    assert_eq!(
+        bank.snapshot().dirty_line_addresses(),
+        vec![Address::new(0x2400)]
     );
 }

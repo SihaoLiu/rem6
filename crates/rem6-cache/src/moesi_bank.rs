@@ -27,6 +27,9 @@ pub enum MoesiCacheBankError {
         actual: AgentId,
     },
     WriteQueueDisabled,
+    UncacheableBypassRequiresCleanLine {
+        line: Address,
+    },
     UnknownPendingFill {
         response: MemoryRequestId,
     },
@@ -68,6 +71,11 @@ impl fmt::Display for MoesiCacheBankError {
                 actual.get()
             ),
             Self::WriteQueueDisabled => write!(formatter, "MOESI cache bank has no write queue"),
+            Self::UncacheableBypassRequiresCleanLine { line } => write!(
+                formatter,
+                "MOESI cache bank cannot bypass uncacheable request over non-clean resident line {:#x}",
+                line.get()
+            ),
             Self::UnknownPendingFill { response } => write!(
                 formatter,
                 "MOESI cache bank has no pending fill for response {} from agent {}",
@@ -127,6 +135,7 @@ impl Error for MoesiCacheBankError {
             Self::WriteQueue(error) => Some(error),
             Self::WrongAgent { .. }
             | Self::WriteQueueDisabled
+            | Self::UncacheableBypassRequiresCleanLine { .. }
             | Self::UnknownPendingFill { .. }
             | Self::UnknownSnoopLine { .. }
             | Self::SnapshotIdentityMismatch { .. }
@@ -260,10 +269,15 @@ impl MoesiCacheBankSnapshot {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct PendingBankFill {
-    line: Address,
-    mshr: Option<MshrHandle>,
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum PendingBankFill {
+    Line {
+        line: Address,
+        mshr: Option<MshrHandle>,
+    },
+    Uncacheable {
+        original: MemoryRequest,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -366,7 +380,10 @@ impl MoesiCacheBank {
     pub fn pending_fill_line(&self, response: MemoryRequestId) -> Option<Address> {
         self.pending_fills
             .get(&response)
-            .map(|pending| pending.line)
+            .and_then(|pending| match pending {
+                PendingBankFill::Line { line, .. } => Some(*line),
+                PendingBankFill::Uncacheable { .. } => None,
+            })
     }
 
     pub fn mshr_allocated_count(&self) -> usize {
@@ -505,7 +522,7 @@ impl MoesiCacheBank {
                     .as_ref()
                     .and_then(|mshr| mshr.find_line(line))
                     .map(|entry| entry.handle());
-                let pending = PendingBankFill { line, mshr };
+                let pending = PendingBankFill::Line { line, mshr };
                 if pending_fills.insert(response, pending).is_some() {
                     return Err(MoesiCacheBankError::DuplicateSnapshotPendingFill { response });
                 }
@@ -542,6 +559,10 @@ impl MoesiCacheBank {
     ) -> Result<MoesiCacheControllerResult, MoesiCacheBankError> {
         self.validate_request_agent(&request)?;
         let line = request.line_address();
+        if request.is_uncacheable() {
+            return self.accept_uncacheable_request(request);
+        }
+
         if self.can_merge_pending_read_miss(line, &request) {
             let state = self
                 .lines
@@ -590,7 +611,7 @@ impl MoesiCacheBank {
                 None => None,
             };
             self.pending_fills
-                .insert(downstream.id(), PendingBankFill { line, mshr });
+                .insert(downstream.id(), PendingBankFill::Line { line, mshr });
         }
         Ok(result)
     }
@@ -601,19 +622,34 @@ impl MoesiCacheBank {
         event: MoesiEvent,
     ) -> Result<MoesiCacheControllerResult, MoesiCacheBankError> {
         let response_id = response.request_id();
-        let pending = *self.pending_fills.get(&response_id).ok_or(
+        let pending = self.pending_fills.get(&response_id).cloned().ok_or(
             MoesiCacheBankError::UnknownPendingFill {
                 response: response_id,
             },
         )?;
+        let (line, mshr) = match pending {
+            PendingBankFill::Line { line, mshr } => (line, mshr),
+            PendingBankFill::Uncacheable { original } => {
+                let outcome = crate::downstream::uncacheable_fill_outcome(&original, response)
+                    .map_err(MoesiCacheControllerError::Memory)?;
+                self.pending_fills.remove(&response_id);
+                return Ok(MoesiCacheControllerResult::new(
+                    MoesiCacheControllerResultKind::Fill,
+                    MoesiState::Invalid,
+                    None,
+                    None,
+                    Some(outcome),
+                ));
+            }
+        };
         let controller = self
             .lines
-            .get_mut(&pending.line)
+            .get_mut(&line)
             .expect("pending fill references an existing MOESI cache line");
         let result = controller.accept_fill(response, event)?;
         self.pending_fills.remove(&response_id);
 
-        let completion = match pending.mshr {
+        let completion = match mshr {
             Some(handle) => {
                 let mshr =
                     self.mshr
@@ -770,6 +806,37 @@ impl MoesiCacheBank {
         }
 
         Ok(())
+    }
+
+    fn accept_uncacheable_request(
+        &mut self,
+        request: MemoryRequest,
+    ) -> Result<MoesiCacheControllerResult, MoesiCacheBankError> {
+        let line = request.line_address();
+        if !self.can_bypass_uncacheable_resident_line(line) {
+            return Err(MoesiCacheBankError::UncacheableBypassRequiresCleanLine { line });
+        }
+        self.lines.remove(&line);
+        self.pending_fills.insert(
+            request.id(),
+            PendingBankFill::Uncacheable {
+                original: request.clone(),
+            },
+        );
+        Ok(MoesiCacheControllerResult::new(
+            MoesiCacheControllerResultKind::Miss,
+            MoesiState::Invalid,
+            None,
+            Some(request),
+            None,
+        ))
+    }
+
+    fn can_bypass_uncacheable_resident_line(&self, line: Address) -> bool {
+        matches!(
+            self.lines.get(&line).map(MoesiCacheController::state),
+            None | Some(MoesiState::Invalid | MoesiState::Shared | MoesiState::Exclusive)
+        )
     }
 
     fn write_queue_ref(&self) -> Result<&CacheWriteQueue, MoesiCacheBankError> {

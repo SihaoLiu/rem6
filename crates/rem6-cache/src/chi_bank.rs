@@ -34,6 +34,9 @@ pub enum ChiCacheBankError {
         actual: AgentId,
     },
     WriteQueueDisabled,
+    UncacheableBypassRequiresCleanLine {
+        line: Address,
+    },
     DirtyReplacementRequiresWriteQueue {
         line: Address,
     },
@@ -89,6 +92,11 @@ impl fmt::Display for ChiCacheBankError {
                 actual.get()
             ),
             Self::WriteQueueDisabled => write!(formatter, "CHI cache bank has no write queue"),
+            Self::UncacheableBypassRequiresCleanLine { line } => write!(
+                formatter,
+                "CHI cache bank cannot bypass uncacheable request over non-clean resident line {:#x}",
+                line.get()
+            ),
             Self::DirtyReplacementRequiresWriteQueue { line } => write!(
                 formatter,
                 "CHI cache bank cannot evict dirty line {:#x} without replacement writeback support",
@@ -162,6 +170,7 @@ impl Error for ChiCacheBankError {
             Self::ReplacementDirectoryLayoutMismatch { .. }
             | Self::WrongAgent { .. }
             | Self::WriteQueueDisabled
+            | Self::UncacheableBypassRequiresCleanLine { .. }
             | Self::DirtyReplacementRequiresWriteQueue { .. }
             | Self::UnknownPendingFill { .. }
             | Self::UnknownSnoopLine { .. }
@@ -318,10 +327,15 @@ impl ChiCacheBankSnapshot {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct PendingBankFill {
-    line: Address,
-    mshr: Option<MshrHandle>,
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum PendingBankFill {
+    Line {
+        line: Address,
+        mshr: Option<MshrHandle>,
+    },
+    Uncacheable {
+        original: MemoryRequest,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -458,7 +472,10 @@ impl ChiCacheBank {
     pub fn pending_fill_line(&self, response: MemoryRequestId) -> Option<Address> {
         self.pending_fills
             .get(&response)
-            .map(|pending| pending.line)
+            .and_then(|pending| match pending {
+                PendingBankFill::Line { line, .. } => Some(*line),
+                PendingBankFill::Uncacheable { .. } => None,
+            })
     }
 
     pub fn mshr_allocated_count(&self) -> usize {
@@ -628,7 +645,7 @@ impl ChiCacheBank {
                     .as_ref()
                     .and_then(|mshr| mshr.find_line(line))
                     .map(|entry| entry.handle());
-                let pending = PendingBankFill { line, mshr };
+                let pending = PendingBankFill::Line { line, mshr };
                 if pending_fills.insert(response, pending).is_some() {
                     return Err(ChiCacheBankError::DuplicateSnapshotPendingFill { response });
                 }
@@ -666,6 +683,10 @@ impl ChiCacheBank {
     ) -> Result<ChiCacheControllerResult, ChiCacheBankError> {
         self.validate_request_agent(&request)?;
         let line = request.line_address();
+        if request.is_uncacheable() {
+            return self.accept_uncacheable_request(request);
+        }
+
         if self.can_merge_pending_read_miss(line, &request) {
             let state = self
                 .lines
@@ -714,7 +735,7 @@ impl ChiCacheBank {
                 None => None,
             };
             self.pending_fills
-                .insert(downstream.id(), PendingBankFill { line, mshr });
+                .insert(downstream.id(), PendingBankFill::Line { line, mshr });
         } else if result.kind() == ChiCacheControllerResultKind::Hit {
             self.touch_replacement_line(line)?;
         }
@@ -727,16 +748,29 @@ impl ChiCacheBank {
         event: ChiEvent,
     ) -> Result<ChiCacheControllerResult, ChiCacheBankError> {
         let response_id = response.request_id();
-        let pending =
-            *self
-                .pending_fills
-                .get(&response_id)
-                .ok_or(ChiCacheBankError::UnknownPendingFill {
-                    response: response_id,
-                })?;
+        let pending = self.pending_fills.get(&response_id).cloned().ok_or(
+            ChiCacheBankError::UnknownPendingFill {
+                response: response_id,
+            },
+        )?;
+        let (line, mshr) = match pending {
+            PendingBankFill::Line { line, mshr } => (line, mshr),
+            PendingBankFill::Uncacheable { original } => {
+                let outcome = crate::downstream::uncacheable_fill_outcome(&original, response)
+                    .map_err(ChiCacheControllerError::Memory)?;
+                self.pending_fills.remove(&response_id);
+                return Ok(ChiCacheControllerResult::new(
+                    ChiCacheControllerResultKind::Fill,
+                    ChiState::Invalid,
+                    None,
+                    None,
+                    Some(outcome),
+                ));
+            }
+        };
         let controller_snapshot = self
             .lines
-            .get(&pending.line)
+            .get(&line)
             .expect("pending fill references an existing CHI cache line")
             .snapshot();
         let replacement_snapshot = self
@@ -745,12 +779,12 @@ impl ChiCacheBank {
             .map(CacheReplacementDirectory::snapshot);
         let controller = self
             .lines
-            .get_mut(&pending.line)
+            .get_mut(&line)
             .expect("pending fill references an existing CHI cache line");
         let result = controller.accept_fill(response, event)?;
-        if let Err(error) = self.install_replacement_line(pending.line) {
+        if let Err(error) = self.install_replacement_line(line) {
             self.lines
-                .get_mut(&pending.line)
+                .get_mut(&line)
                 .expect("pending fill references an existing CHI cache line")
                 .restore(&controller_snapshot)?;
             if let (Some(directory), Some(snapshot)) =
@@ -762,7 +796,7 @@ impl ChiCacheBank {
         }
         self.pending_fills.remove(&response_id);
 
-        let completion = match pending.mshr {
+        let completion = match mshr {
             Some(handle) => {
                 let mshr =
                     self.mshr
@@ -921,6 +955,40 @@ impl ChiCacheBank {
         Ok(())
     }
 
+    fn accept_uncacheable_request(
+        &mut self,
+        request: MemoryRequest,
+    ) -> Result<ChiCacheControllerResult, ChiCacheBankError> {
+        let line = request.line_address();
+        if !self.can_bypass_uncacheable_resident_line(line) {
+            return Err(ChiCacheBankError::UncacheableBypassRequiresCleanLine { line });
+        }
+        self.lines.remove(&line);
+        if let Some(directory) = &mut self.replacement_directory {
+            directory.remove_resident_line(line)?;
+        }
+        self.pending_fills.insert(
+            request.id(),
+            PendingBankFill::Uncacheable {
+                original: request.clone(),
+            },
+        );
+        Ok(ChiCacheControllerResult::new(
+            ChiCacheControllerResultKind::Miss,
+            ChiState::Invalid,
+            None,
+            Some(request),
+            None,
+        ))
+    }
+
+    fn can_bypass_uncacheable_resident_line(&self, line: Address) -> bool {
+        matches!(
+            self.lines.get(&line).map(ChiCacheController::state),
+            None | Some(ChiState::Invalid | ChiState::SharedClean | ChiState::UniqueClean)
+        )
+    }
+
     fn write_queue_ref(&self) -> Result<&CacheWriteQueue, ChiCacheBankError> {
         self.write_queue
             .as_ref()
@@ -961,8 +1029,12 @@ impl ChiCacheBank {
             });
         }
         self.lines.remove(&evicted_line);
-        self.pending_fills
-            .retain(|_, pending| pending.line != evicted_line);
+        self.pending_fills.retain(|_, pending| {
+            !matches!(
+                pending,
+                PendingBankFill::Line { line, .. } if *line == evicted_line
+            )
+        });
         Ok(())
     }
 
