@@ -126,6 +126,10 @@ name = "rem6-isa-riscv"
 version = "0.1.0"
 
 [[package]]
+name = "rem6-isa-x86"
+version = "0.1.0"
+
+[[package]]
 name = "rem6-kernel"
 version = "0.1.0"
 

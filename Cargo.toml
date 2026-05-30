@@ -13,6 +13,7 @@ members = [
     "crates/rem6-gpu",
     "crates/rem6-interrupt",
     "crates/rem6-isa-riscv",
+    "crates/rem6-isa-x86",
     "crates/rem6-kernel",
     "crates/rem6-memory",
     "crates/rem6-mmio",
