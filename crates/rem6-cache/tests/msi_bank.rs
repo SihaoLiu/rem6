@@ -109,6 +109,7 @@ fn uncacheable_write(
         layout(),
     )
     .unwrap()
+    .with_uncacheable_strict_order()
 }
 
 fn fill(request: &MemoryRequest, byte: u8) -> MemoryResponse {
@@ -305,6 +306,44 @@ fn msi_cache_bank_uncacheable_read_preserves_dirty_resident_line() {
         bank.snapshot().dirty_line_addresses(),
         vec![Address::new(0x1c00)]
     );
+}
+
+#[test]
+fn msi_cache_bank_uncacheable_write_enters_write_queue_without_mshr() {
+    let cache_agent = agent(7);
+    let mut bank = MsiCacheBank::new_with_mshr_and_write_queue(
+        cache_agent,
+        layout(),
+        MshrQueueConfig::new(2, 2, 0).unwrap(),
+        CacheWriteQueueConfig::new(2, 0).unwrap(),
+    );
+    let request = uncacheable_write(
+        cache_agent,
+        134,
+        0x2024,
+        vec![0xde, 0xad, 0xbe, 0xef],
+        vec![true, false, true, true],
+    );
+
+    let result = bank.accept_cpu_request(request.clone()).unwrap();
+
+    assert_eq!(result.kind(), CacheControllerResultKind::Miss);
+    assert!(result.downstream_request().is_none());
+    assert!(result.target_outcome().is_none());
+    assert_eq!(bank.mshr_allocated_count(), 0);
+    assert_eq!(bank.pending_fill_count(), 0);
+    assert_eq!(bank.write_queue_allocated_count(), 1);
+    assert_eq!(bank.write_queue_next_ready_tick(), Some(0));
+    assert_eq!(bank.state(Address::new(0x2020)), None);
+
+    let issued = bank.issue_write_queue(0).unwrap().unwrap();
+    assert_eq!(issued.kind(), CacheWriteQueueEntryKind::UncacheableWrite);
+    assert_eq!(issued.request().id(), request.id());
+    assert_eq!(issued.request().range(), request.range());
+    assert_eq!(issued.request().data(), request.data());
+    assert_eq!(issued.request().byte_mask(), request.byte_mask());
+    assert!(issued.request().is_uncacheable());
+    assert!(issued.request().is_strict_ordered());
 }
 
 #[test]

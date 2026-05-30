@@ -684,6 +684,9 @@ impl ChiCacheBank {
         self.validate_request_agent(&request)?;
         let line = request.line_address();
         if request.is_uncacheable() {
+            if request.operation() == MemoryOperation::Write {
+                return self.accept_uncacheable_write_request(request);
+            }
             return self.accept_uncacheable_request(request);
         }
 
@@ -978,6 +981,30 @@ impl ChiCacheBank {
             ChiState::Invalid,
             None,
             Some(request),
+            None,
+        ))
+    }
+
+    fn accept_uncacheable_write_request(
+        &mut self,
+        request: MemoryRequest,
+    ) -> Result<ChiCacheControllerResult, ChiCacheBankError> {
+        let line = request.line_address();
+        if !self.can_bypass_uncacheable_resident_line(line) {
+            return Err(ChiCacheBankError::UncacheableBypassRequiresCleanLine { line });
+        }
+        self.validate_write_queue_request(&request)?;
+        self.write_queue_mut()?
+            .enqueue_uncacheable_write(request, false, 0)?;
+        self.lines.remove(&line);
+        if let Some(directory) = &mut self.replacement_directory {
+            directory.remove_resident_line(line)?;
+        }
+        Ok(ChiCacheControllerResult::new(
+            ChiCacheControllerResultKind::Miss,
+            ChiState::Invalid,
+            None,
+            None,
             None,
         ))
     }

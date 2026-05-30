@@ -557,6 +557,9 @@ impl MesiCacheBank {
         self.validate_request_agent(&request)?;
         let line = request.line_address();
         if request.is_uncacheable() {
+            if request.operation() == MemoryOperation::Write {
+                return self.accept_uncacheable_write_request(request);
+            }
             return self.accept_uncacheable_request(request);
         }
 
@@ -825,6 +828,27 @@ impl MesiCacheBank {
             MesiState::Invalid,
             None,
             Some(request),
+            None,
+        ))
+    }
+
+    fn accept_uncacheable_write_request(
+        &mut self,
+        request: MemoryRequest,
+    ) -> Result<MesiCacheControllerResult, MesiCacheBankError> {
+        let line = request.line_address();
+        if !self.can_bypass_uncacheable_resident_line(line) {
+            return Err(MesiCacheBankError::UncacheableBypassRequiresCleanLine { line });
+        }
+        self.validate_write_queue_request(&request)?;
+        self.write_queue_mut()?
+            .enqueue_uncacheable_write(request, false, 0)?;
+        self.lines.remove(&line);
+        Ok(MesiCacheControllerResult::new(
+            MesiCacheControllerResultKind::Miss,
+            MesiState::Invalid,
+            None,
+            None,
             None,
         ))
     }
