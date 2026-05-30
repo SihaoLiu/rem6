@@ -1,6 +1,7 @@
 mod clock;
 mod event;
 mod progress;
+mod restore_schedule;
 mod scheduler;
 mod wait_for;
 
@@ -9,6 +10,10 @@ pub use event::{ClockScheduleError, EventId, EventQueue, ScheduleError};
 pub use progress::{
     LivelockDiagnostic, LivelockTransitionKind, LivelockTransitionKindCount, ProgressMonitor,
     ProgressMonitorError, ProgressMonitorSnapshot, ProgressWindowSnapshot,
+};
+pub use restore_schedule::{
+    CheckpointRestoreEventPlan, CheckpointRestoreLiveEvent, CheckpointRestoreScheduleError,
+    CheckpointRestoreWarmupEvent, CheckpointRestoreWarmupSummary, RestoreReplayEventKind,
 };
 pub use scheduler::{
     ConservativeRunSummary, EpochPlan, ParallelBatchUtilizationRatio, ParallelEpochBatchRecord,
