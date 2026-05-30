@@ -338,6 +338,13 @@ impl PartitionedScheduler {
                     snapshot_partition: partition.partition(),
                 });
             }
+            if partition.now() > snapshot.now {
+                return Err(SchedulerError::SnapshotGlobalTickBeforePartitionClock {
+                    snapshot_now: snapshot.now,
+                    partition: partition.partition(),
+                    partition_now: partition.now(),
+                });
+            }
         }
         if snapshot.min_remote_delay != self.min_remote_delay {
             return Err(SchedulerError::SnapshotLookaheadMismatch {

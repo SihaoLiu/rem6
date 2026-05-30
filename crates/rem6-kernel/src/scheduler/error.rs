@@ -69,6 +69,11 @@ pub enum SchedulerError {
         expected_partition: PartitionId,
         snapshot_partition: PartitionId,
     },
+    SnapshotGlobalTickBeforePartitionClock {
+        snapshot_now: Tick,
+        partition: PartitionId,
+        partition_now: Tick,
+    },
     SnapshotLookaheadMismatch {
         snapshot_min_remote_delay: Tick,
         scheduler_min_remote_delay: Tick,
@@ -184,6 +189,15 @@ impl fmt::Display for SchedulerError {
                 "scheduler snapshot partition {} appears in slot {}",
                 snapshot_partition.index(),
                 expected_partition.index()
+            ),
+            Self::SnapshotGlobalTickBeforePartitionClock {
+                snapshot_now,
+                partition,
+                partition_now,
+            } => write!(
+                formatter,
+                "scheduler snapshot tick {snapshot_now} is before partition {} clock {partition_now}",
+                partition.index()
             ),
             Self::SnapshotLookaheadMismatch {
                 snapshot_min_remote_delay,

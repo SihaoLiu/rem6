@@ -287,6 +287,57 @@ fn host_checkpoint_rejects_scheduler_worker_limit_mismatch_on_restore() {
 }
 
 #[test]
+fn host_checkpoint_rejects_scheduler_global_tick_before_partition_clock_without_partial_restore() {
+    let component = CheckpointComponentId::new("scheduler0").unwrap();
+    let memory = PartitionId::new(1);
+    let source_scheduler = Arc::new(Mutex::new(
+        PartitionedScheduler::with_parallel_worker_limit(2, 5, 1).unwrap(),
+    ));
+    {
+        let mut scheduler = source_scheduler.lock().unwrap();
+        scheduler.schedule_at(memory, 8, |_| {}).unwrap();
+        scheduler.run_until_idle();
+    }
+    let source_port =
+        SchedulerCheckpointPort::new(component.clone(), Arc::clone(&source_scheduler));
+    let mut registry = CheckpointRegistry::new();
+    registry.register(component.clone()).unwrap();
+    source_port.capture_into(&mut registry).unwrap();
+    let mut payload = registry.chunk(&component, "scheduler").unwrap().to_vec();
+    payload[8..16].copy_from_slice(&4u64.to_le_bytes());
+    registry
+        .write_chunk(&component, "scheduler", payload)
+        .unwrap();
+
+    let target_scheduler = Arc::new(Mutex::new(
+        PartitionedScheduler::with_parallel_worker_limit(2, 5, 1).unwrap(),
+    ));
+    {
+        let mut scheduler = target_scheduler.lock().unwrap();
+        scheduler
+            .schedule_parallel_at(PartitionId::new(0), 12, |_| {})
+            .unwrap();
+        scheduler.run_until_idle_parallel().unwrap();
+    }
+    let before = target_scheduler.lock().unwrap().snapshot();
+    let target_port =
+        SchedulerCheckpointPort::new(component.clone(), Arc::clone(&target_scheduler));
+
+    assert_eq!(
+        target_port.restore_from(&registry).unwrap_err(),
+        SchedulerCheckpointError::Scheduler {
+            component,
+            error: SchedulerError::SnapshotGlobalTickBeforePartitionClock {
+                snapshot_now: 4,
+                partition: memory,
+                partition_now: 8,
+            },
+        }
+    );
+    assert_eq!(target_scheduler.lock().unwrap().snapshot(), before);
+}
+
+#[test]
 fn host_checkpoint_rejects_scheduler_with_pending_events() {
     let host = PartitionId::new(1);
     let source = GuestSourceId::new(23);
