@@ -1,6 +1,13 @@
 use std::error::Error;
 use std::fmt;
 
+mod control_flow;
+
+pub use control_flow::{
+    RiscvBranchPredictionTarget, RiscvControlFlowSnapshot, RiscvControlFlowUpdate,
+    RiscvVectorConfig, RiscvVectorConfigUpdate,
+};
+
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct Register(u8);
 
@@ -842,6 +849,7 @@ impl RiscvExecutionRecord {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RiscvHartState {
     pc: u64,
+    vector_config: RiscvVectorConfig,
     registers: [u64; 32],
 }
 
@@ -849,6 +857,7 @@ impl RiscvHartState {
     pub const fn new(pc: u64) -> Self {
         Self {
             pc,
+            vector_config: RiscvVectorConfig::invalid(),
             registers: [0; 32],
         }
     }
@@ -859,6 +868,30 @@ impl RiscvHartState {
 
     pub fn set_pc(&mut self, pc: u64) {
         self.pc = pc;
+    }
+
+    pub const fn vector_config(&self) -> RiscvVectorConfig {
+        self.vector_config
+    }
+
+    pub fn set_vector_config(&mut self, vector_config: RiscvVectorConfig) {
+        self.vector_config = vector_config;
+    }
+
+    pub const fn control_flow_snapshot(&self) -> RiscvControlFlowSnapshot {
+        RiscvControlFlowSnapshot::new(self.pc, self.vector_config)
+    }
+
+    pub fn apply_control_flow_update(&mut self, update: RiscvControlFlowUpdate) {
+        match update {
+            RiscvControlFlowUpdate::BranchPrediction(target) => {
+                self.pc = target.pc();
+            }
+            RiscvControlFlowUpdate::VectorConfig(update) => {
+                self.pc = update.pc();
+                self.vector_config = update.vector_config();
+            }
+        }
     }
 
     pub fn read(&self, register: Register) -> u64 {
