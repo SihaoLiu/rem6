@@ -124,6 +124,175 @@ impl RiscvVectorMicroOp {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RiscvVectorFixedRoundingMode {
+    RoundNearestUp,
+    RoundNearestEven,
+    RoundDown,
+    RoundToOdd,
+}
+
+impl RiscvVectorFixedRoundingMode {
+    pub const fn from_vxrm_bits(bits: u8) -> Self {
+        match bits & 0b11 {
+            0 => Self::RoundNearestUp,
+            1 => Self::RoundNearestEven,
+            2 => Self::RoundDown,
+            _ => Self::RoundToOdd,
+        }
+    }
+
+    pub const fn vxrm_bits(self) -> u8 {
+        match self {
+            Self::RoundNearestUp => 0,
+            Self::RoundNearestEven => 1,
+            Self::RoundDown => 2,
+            Self::RoundToOdd => 3,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RiscvVectorFixedPointState {
+    rounding_mode: RiscvVectorFixedRoundingMode,
+    vxsat: bool,
+}
+
+impl RiscvVectorFixedPointState {
+    pub const fn new(rounding_mode: RiscvVectorFixedRoundingMode) -> Self {
+        Self {
+            rounding_mode,
+            vxsat: false,
+        }
+    }
+
+    pub const fn rounding_mode(self) -> RiscvVectorFixedRoundingMode {
+        self.rounding_mode
+    }
+
+    pub const fn vxsat(self) -> bool {
+        self.vxsat
+    }
+
+    pub const fn vxrm_bits(self) -> u8 {
+        self.rounding_mode.vxrm_bits()
+    }
+
+    pub const fn vcsr_bits(self) -> u8 {
+        (self.vxrm_bits() << 1) | self.vxsat as u8
+    }
+
+    pub fn write_vxrm_bits(&mut self, bits: u8) {
+        self.rounding_mode = RiscvVectorFixedRoundingMode::from_vxrm_bits(bits);
+    }
+
+    pub fn write_vxsat_bit(&mut self, vxsat: bool) {
+        self.vxsat = vxsat;
+    }
+
+    pub fn write_vcsr_bits(&mut self, bits: u8) {
+        self.vxsat = bits & 0b1 != 0;
+        self.write_vxrm_bits((bits >> 1) & 0b11);
+    }
+
+    pub fn apply_narrow_clip_result(&mut self, result: RiscvVectorNarrowClipResult) {
+        self.vxsat |= result.saturated;
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RiscvVectorNarrowClipPlan {
+    width: MemoryWidth,
+    signed: bool,
+}
+
+impl RiscvVectorNarrowClipPlan {
+    pub const fn unsigned(width: MemoryWidth) -> Self {
+        Self {
+            width,
+            signed: false,
+        }
+    }
+
+    pub const fn signed(width: MemoryWidth) -> Self {
+        Self {
+            width,
+            signed: true,
+        }
+    }
+
+    pub const fn width(self) -> MemoryWidth {
+        self.width
+    }
+
+    pub const fn is_signed(self) -> bool {
+        self.signed
+    }
+
+    pub fn execute_unsigned(
+        self,
+        value: u128,
+        shift: u32,
+        rounding_mode: RiscvVectorFixedRoundingMode,
+    ) -> Result<RiscvVectorNarrowClipResult, RiscvVectorError> {
+        if self.signed {
+            return Err(RiscvVectorError::NarrowClipSignednessMismatch {
+                expected_signed: true,
+                actual_signed: false,
+            });
+        }
+        validate_fixed_point_shift(shift)?;
+
+        let rounded = round_unsigned(value, shift, rounding_mode)?;
+        let shifted = rounded >> shift;
+        let max = unsigned_max(self.width);
+        let saturated = shifted > max;
+        let value = if saturated { max } else { shifted } as i128;
+
+        Ok(RiscvVectorNarrowClipResult { value, saturated })
+    }
+
+    pub fn execute_signed(
+        self,
+        value: i128,
+        shift: u32,
+        rounding_mode: RiscvVectorFixedRoundingMode,
+    ) -> Result<RiscvVectorNarrowClipResult, RiscvVectorError> {
+        if !self.signed {
+            return Err(RiscvVectorError::NarrowClipSignednessMismatch {
+                expected_signed: false,
+                actual_signed: true,
+            });
+        }
+        validate_fixed_point_shift(shift)?;
+
+        let rounded = round_signed(value, shift, rounding_mode)?;
+        let shifted = rounded >> shift;
+        let min = signed_min(self.width);
+        let max = signed_max(self.width);
+        let saturated = shifted < min || shifted > max;
+        let value = shifted.clamp(min, max);
+
+        Ok(RiscvVectorNarrowClipResult { value, saturated })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RiscvVectorNarrowClipResult {
+    value: i128,
+    saturated: bool,
+}
+
+impl RiscvVectorNarrowClipResult {
+    pub const fn value(self) -> i128 {
+        self.value
+    }
+
+    pub const fn saturated(self) -> bool {
+        self.saturated
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RiscvVectorElements {
     width: MemoryWidth,
@@ -286,6 +455,120 @@ const fn element_mask(width: MemoryWidth) -> u64 {
     }
 }
 
+const fn element_bits(width: MemoryWidth) -> u32 {
+    match width {
+        MemoryWidth::Byte => 8,
+        MemoryWidth::Halfword => 16,
+        MemoryWidth::Word => 32,
+        MemoryWidth::Doubleword => 64,
+    }
+}
+
+const fn unsigned_max(width: MemoryWidth) -> u128 {
+    match width {
+        MemoryWidth::Byte => u8::MAX as u128,
+        MemoryWidth::Halfword => u16::MAX as u128,
+        MemoryWidth::Word => u32::MAX as u128,
+        MemoryWidth::Doubleword => u64::MAX as u128,
+    }
+}
+
+fn signed_min(width: MemoryWidth) -> i128 {
+    -(1_i128 << (element_bits(width) - 1))
+}
+
+fn signed_max(width: MemoryWidth) -> i128 {
+    (1_i128 << (element_bits(width) - 1)) - 1
+}
+
+fn validate_fixed_point_shift(shift: u32) -> Result<(), RiscvVectorError> {
+    if shift >= 128 {
+        return Err(RiscvVectorError::InvalidFixedPointShift { shift });
+    }
+    Ok(())
+}
+
+fn round_unsigned(
+    value: u128,
+    shift: u32,
+    rounding_mode: RiscvVectorFixedRoundingMode,
+) -> Result<u128, RiscvVectorError> {
+    if shift == 0 {
+        return Ok(value);
+    }
+
+    let lsb = 1_u128 << shift;
+    let lsb_half = lsb >> 1;
+    match rounding_mode {
+        RiscvVectorFixedRoundingMode::RoundNearestUp => value
+            .checked_add(lsb_half)
+            .ok_or(RiscvVectorError::FixedPointRoundingOverflow),
+        RiscvVectorFixedRoundingMode::RoundNearestEven => {
+            let round =
+                (value & lsb_half) != 0 && ((value & (lsb_half - 1)) != 0 || (value & lsb) != 0);
+            if round {
+                value
+                    .checked_add(lsb)
+                    .ok_or(RiscvVectorError::FixedPointRoundingOverflow)
+            } else {
+                Ok(value)
+            }
+        }
+        RiscvVectorFixedRoundingMode::RoundDown => Ok(value),
+        RiscvVectorFixedRoundingMode::RoundToOdd => {
+            if value & (lsb - 1) != 0 {
+                Ok(value | lsb)
+            } else {
+                Ok(value)
+            }
+        }
+    }
+}
+
+fn round_signed(
+    value: i128,
+    shift: u32,
+    rounding_mode: RiscvVectorFixedRoundingMode,
+) -> Result<i128, RiscvVectorError> {
+    if shift == 0 {
+        return Ok(value);
+    }
+
+    let value_bits = value as u128;
+    let lsb = 1_u128 << shift;
+    let lsb_half = lsb >> 1;
+    match rounding_mode {
+        RiscvVectorFixedRoundingMode::RoundNearestUp => {
+            let increment = i128::try_from(lsb_half)
+                .map_err(|_| RiscvVectorError::FixedPointRoundingOverflow)?;
+            value
+                .checked_add(increment)
+                .ok_or(RiscvVectorError::FixedPointRoundingOverflow)
+        }
+        RiscvVectorFixedRoundingMode::RoundNearestEven => {
+            let round = (value_bits & lsb_half) != 0
+                && ((value_bits & (lsb_half - 1)) != 0 || (value_bits & lsb) != 0);
+            if round {
+                let increment = i128::try_from(lsb)
+                    .map_err(|_| RiscvVectorError::FixedPointRoundingOverflow)?;
+                value
+                    .checked_add(increment)
+                    .ok_or(RiscvVectorError::FixedPointRoundingOverflow)
+            } else {
+                Ok(value)
+            }
+        }
+        RiscvVectorFixedRoundingMode::RoundDown => Ok(value),
+        RiscvVectorFixedRoundingMode::RoundToOdd => {
+            if value_bits & (lsb - 1) != 0 {
+                Ok((value_bits | lsb) as i128)
+            } else {
+                Ok(value)
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RiscvVectorError {
     ElementExceedsWidth {
@@ -309,6 +592,14 @@ pub enum RiscvVectorError {
         mask: usize,
     },
     EmptyMicroOpExpansion,
+    InvalidFixedPointShift {
+        shift: u32,
+    },
+    FixedPointRoundingOverflow,
+    NarrowClipSignednessMismatch {
+        expected_signed: bool,
+        actual_signed: bool,
+    },
 }
 
 impl fmt::Display for RiscvVectorError {
@@ -352,6 +643,24 @@ impl fmt::Display for RiscvVectorError {
             }
             Self::EmptyMicroOpExpansion => {
                 write!(formatter, "RISC-V vector micro-op expansion is empty")
+            }
+            Self::InvalidFixedPointShift { shift } => {
+                write!(
+                    formatter,
+                    "RISC-V vector fixed-point shift {shift} exceeds 127 bits"
+                )
+            }
+            Self::FixedPointRoundingOverflow => {
+                write!(formatter, "RISC-V vector fixed-point rounding overflowed")
+            }
+            Self::NarrowClipSignednessMismatch {
+                expected_signed,
+                actual_signed,
+            } => {
+                write!(
+                    formatter,
+                    "RISC-V vector narrow clip signedness mismatch: expected signed {expected_signed}, got signed {actual_signed}"
+                )
             }
         }
     }

@@ -10,7 +10,9 @@ pub use control_flow::{
 };
 pub use vector::{
     RiscvInstructionFlags, RiscvVectorCompressPlan, RiscvVectorCompressResult, RiscvVectorElements,
-    RiscvVectorError, RiscvVectorMicroOp, RiscvVectorMicroOpExpansion, RiscvVectorTailPolicy,
+    RiscvVectorError, RiscvVectorFixedPointState, RiscvVectorFixedRoundingMode, RiscvVectorMicroOp,
+    RiscvVectorMicroOpExpansion, RiscvVectorNarrowClipPlan, RiscvVectorNarrowClipResult,
+    RiscvVectorTailPolicy,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]

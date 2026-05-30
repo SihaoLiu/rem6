@@ -476,6 +476,16 @@ isolated bugs:
   record exists. Every generated micro-op therefore carries serialize-after,
   non-speculative, delayed-commit, and future execution constraints through one
   explicit contract.
+  Public gem5 issue #2677 reports RISC-V vector fixed-point instructions using
+  default rounding in places that should read `vxrm`, plus missing `vxsat`
+  updates at narrowing saturation sites. The local reference has integer vector
+  decode bodies that call rounding with `0` where a typed `vxrm` value belongs,
+  leaves `vxsat` clipping sites marked as unfinished, and commits saturation
+  through a separate serialized `VxsatMicroInst`. rem6-isa-riscv instead models
+  `vxrm`, `vxsat`, and the `vcsr` alias as typed fixed-point vector state,
+  models all four fixed-point rounding modes as an enum, and returns saturation
+  evidence from narrow-clip execution so each operation can merge `vxsat`
+  directly into architectural state.
   Public gem5 issue #2688 reports a RISC-V full-system mutex failure in a
   three-level CHI hierarchy when LR/SC pairs race with contending atomic writes.
   The local reference keeps the LL/SC monitor in Ruby `Sequencer` methods over a
@@ -713,6 +723,9 @@ Research anchors refreshed through 2026-05-30:
 - Public gem5 issue anchor refreshed on 2026-05-30: open RISC-V vector
   micro-operation flag propagation bug where macro-instruction scheduling flags
   are not visible on generated vector micro-ops.
+- Public gem5 issue anchor refreshed on 2026-05-30: open RISC-V vector
+  fixed-point rounding and saturation bug where `vxrm` can be replaced by a
+  default mode and narrowing saturation can miss `vxsat`.
 - RISC-V privileged ISA anchor refreshed on 2026-05-30: `mcycle` and
   `minstret` are 64-bit machine counters, with RV32 exposing high-half CSR
   aliases rather than independent counters.
@@ -2197,6 +2210,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   tail-agnostic handling. RISC-V vector micro-op tests cover macro flag
   propagation for serialize-after and non-speculative constraints, merging with
   delayed-commit micro-op-local flags, and first/last micro-op identity.
+  RISC-V vector fixed-point tests cover `vcsr` alias masking for `vxrm` and
+  `vxsat`, all four fixed-point rounding modes in narrow-clip execution, and
+  direct saturation evidence merging without an extra CSR micro-op.
   Memory and cache-controller tests cover atomic responses that capture old
   bytes before masked writes, and memory checkpoint-bank tests cover prevalidated
   multi-store and DRAM memory restore so truncated payloads cannot partially
