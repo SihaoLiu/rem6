@@ -96,6 +96,7 @@ pub struct Rem6RunConfig {
     cores: usize,
     parallel_workers: usize,
     memory_dumps: Vec<MemoryDumpRequest>,
+    output: Option<PathBuf>,
 }
 
 impl Rem6RunConfig {
@@ -120,6 +121,7 @@ impl Rem6RunConfig {
         let mut cores = 1usize;
         let mut parallel_workers = None;
         let mut memory_dumps = Vec::new();
+        let mut output = None;
         while let Some(flag) = args.next() {
             match flag.as_str() {
                 "--isa" => {
@@ -166,6 +168,9 @@ impl Rem6RunConfig {
                     let value = required_value(&flag, args.next())?;
                     memory_dumps.push(MemoryDumpRequest::parse(&value)?);
                 }
+                "--output" => {
+                    output = Some(PathBuf::from(required_value(&flag, args.next())?));
+                }
                 _ => return Err(Rem6CliError::UnknownFlag { flag }),
             }
         }
@@ -179,6 +184,7 @@ impl Rem6RunConfig {
             cores,
             parallel_workers: parallel_workers.unwrap_or(cores),
             memory_dumps,
+            output,
         })
     }
 
@@ -212,6 +218,10 @@ impl Rem6RunConfig {
 
     pub fn memory_dumps(&self) -> &[MemoryDumpRequest] {
         &self.memory_dumps
+    }
+
+    pub fn output(&self) -> Option<&Path> {
+        self.output.as_deref()
     }
 }
 
@@ -532,6 +542,10 @@ pub enum Rem6CliError {
     Stats {
         error: String,
     },
+    WriteOutput {
+        path: PathBuf,
+        error: String,
+    },
 }
 
 impl fmt::Display for Rem6CliError {
@@ -594,6 +608,9 @@ impl fmt::Display for Rem6CliError {
             }
             Self::Execute { error } => write!(formatter, "failed to execute run: {error}"),
             Self::Stats { error } => write!(formatter, "failed to build run stats: {error}"),
+            Self::WriteOutput { path, error } => {
+                write!(formatter, "failed to write {}: {error}", path.display())
+            }
         }
     }
 }
@@ -607,9 +624,20 @@ where
 {
     let config = Rem6RunConfig::parse_args(args)?;
     let artifact = run_config(config)?;
-    match artifact.config.stats_format() {
-        StatsFormat::Json => Ok(artifact.to_json()),
+    let output = match artifact.config.stats_format() {
+        StatsFormat::Json => artifact.to_json(),
+    };
+    if let Some(path) = artifact.config.output() {
+        std::fs::write(path, output).map_err(|error| Rem6CliError::WriteOutput {
+            path: path.to_path_buf(),
+            error: error.to_string(),
+        })?;
+        return Ok(format!(
+            "{{\"schema\":\"rem6.cli.output.v1\",\"format\":\"json\",\"artifact\":\"{}\"}}\n",
+            json_escape(&path.display().to_string())
+        ));
     }
+    Ok(output)
 }
 
 pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError> {

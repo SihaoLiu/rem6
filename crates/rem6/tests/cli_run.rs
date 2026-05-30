@@ -100,6 +100,12 @@ fn temp_binary(name: &str, bytes: &[u8]) -> std::path::PathBuf {
     path
 }
 
+fn temp_output(name: &str) -> std::path::PathBuf {
+    let path = std::env::temp_dir().join(format!("rem6-{name}-{}.json", std::process::id()));
+    let _ = fs::remove_file(&path);
+    path
+}
+
 fn assert_stat(stdout: &str, path: &str, unit: &str, value: u64, reset_policy: &str) {
     let expected = format!(
         "{{\"path\":\"{path}\",\"unit\":\"{unit}\",\"value\":{value},\"reset_policy\":\"{reset_policy}\"}}"
@@ -196,6 +202,48 @@ fn rem6_run_loads_riscv_elf_and_emits_json_stats_artifact() {
     assert!(stdout.contains("\"path\":\"sim.elf.load_segments\""));
     assert!(stdout.contains("\"path\":\"sim.max_tick\""));
     assert!(stdout.contains("\"reset_policy\":\"constant\""));
+}
+
+#[test]
+fn rem6_run_writes_json_artifact_to_requested_output_path() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("output-sink", &elf);
+    let artifact_path = temp_output("output-sink");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+            "--output",
+            artifact_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(
+        stdout,
+        format!(
+            "{{\"schema\":\"rem6.cli.output.v1\",\"format\":\"json\",\"artifact\":\"{}\"}}\n",
+            artifact_path.display()
+        )
+    );
+    let artifact = fs::read_to_string(&artifact_path).unwrap();
+    assert!(artifact.contains("\"schema\":\"rem6.cli.run.v1\""));
+    assert!(artifact.contains("\"status\":\"loaded\""));
+    assert!(artifact.contains("\"path\":\"sim.binary.bytes\""));
 }
 
 #[test]
