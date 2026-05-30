@@ -199,3 +199,43 @@ fn chi_directory_snapshot_restore_round_trips_sorted_lines() {
     assert_eq!(directory.line_addresses(), vec![Address::new(0x6200)]);
     assert_eq!(directory.line_state(line_at(0x6200)), upper);
 }
+
+#[test]
+fn chi_directory_evict_hazard_restore_retains_requester_for_gem5_issue_3013() {
+    let mut directory = ChiDirectory::new();
+    let before = ChiDirectoryLineState::new(line()).with_sharer(agent(1), ChiState::SharedClean);
+    directory.restore_line_state(&before).unwrap();
+
+    let hazard = directory.begin_evict_hazard(line(), agent(1)).unwrap();
+    directory
+        .restore_line_state(&ChiDirectoryLineState::new(line()))
+        .unwrap();
+
+    let restored = directory.restore_evict_hazard(&hazard).unwrap();
+
+    assert_eq!(restored.acknowledgement_target(), agent(1));
+    assert!(restored.request_became_stale());
+    assert_eq!(restored.retained_state(), &before);
+    assert_eq!(
+        restored.current_state(),
+        &ChiDirectoryLineState::new(line())
+    );
+}
+
+#[test]
+fn chi_directory_evict_hazard_rejects_unknown_requester() {
+    let mut directory = ChiDirectory::new();
+    directory
+        .restore_line_state(
+            &ChiDirectoryLineState::new(line()).with_sharer(agent(1), ChiState::SharedClean),
+        )
+        .unwrap();
+
+    assert_eq!(
+        directory.begin_evict_hazard(line(), agent(2)).unwrap_err(),
+        ChiDirectoryError::EvictFromNonHolder {
+            line: line(),
+            requester: agent(2),
+        }
+    );
+}

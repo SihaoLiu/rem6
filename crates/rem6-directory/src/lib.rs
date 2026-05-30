@@ -13,7 +13,8 @@ mod moesi;
 
 pub use chi::{
     ChiDirectory, ChiDirectoryDataSource, ChiDirectoryDecision, ChiDirectoryError,
-    ChiDirectoryGrant, ChiDirectoryLineState, ChiDirectorySnoop,
+    ChiDirectoryGrant, ChiDirectoryLineState, ChiDirectorySnoop, ChiEvictHazard,
+    ChiEvictHazardRestore,
 };
 pub use moesi::{
     MoesiDirectory, MoesiDirectoryDataSource, MoesiDirectoryDecision, MoesiDirectoryError,

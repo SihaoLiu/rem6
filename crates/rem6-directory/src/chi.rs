@@ -202,6 +202,86 @@ impl ChiDirectoryDecision {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChiEvictHazard {
+    line: ChiLineId,
+    requester: AgentId,
+    retained_state: ChiDirectoryLineState,
+}
+
+impl ChiEvictHazard {
+    fn new(line: ChiLineId, requester: AgentId, retained_state: ChiDirectoryLineState) -> Self {
+        Self {
+            line,
+            requester,
+            retained_state,
+        }
+    }
+
+    pub const fn line(&self) -> ChiLineId {
+        self.line
+    }
+
+    pub const fn requester(&self) -> AgentId {
+        self.requester
+    }
+
+    pub const fn retained_state(&self) -> &ChiDirectoryLineState {
+        &self.retained_state
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChiEvictHazardRestore {
+    line: ChiLineId,
+    requester: AgentId,
+    retained_state: ChiDirectoryLineState,
+    current_state: ChiDirectoryLineState,
+    request_became_stale: bool,
+}
+
+impl ChiEvictHazardRestore {
+    fn new(
+        line: ChiLineId,
+        requester: AgentId,
+        retained_state: ChiDirectoryLineState,
+        current_state: ChiDirectoryLineState,
+        request_became_stale: bool,
+    ) -> Self {
+        Self {
+            line,
+            requester,
+            retained_state,
+            current_state,
+            request_became_stale,
+        }
+    }
+
+    pub const fn line(&self) -> ChiLineId {
+        self.line
+    }
+
+    pub const fn requester(&self) -> AgentId {
+        self.requester
+    }
+
+    pub const fn acknowledgement_target(&self) -> AgentId {
+        self.requester
+    }
+
+    pub const fn retained_state(&self) -> &ChiDirectoryLineState {
+        &self.retained_state
+    }
+
+    pub const fn current_state(&self) -> &ChiDirectoryLineState {
+        &self.current_state
+    }
+
+    pub const fn request_became_stale(&self) -> bool {
+        self.request_became_stale
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ChiDirectoryError {
     UpgradeRequesterNotSharer {
         line: ChiLineId,
@@ -365,6 +445,12 @@ impl ChiStoredLine {
             .map(|(owner, _)| owner)
             .or_else(|| self.first_dirty_sharer_except(None))
     }
+
+    fn contains_holder(&self, requester: AgentId) -> bool {
+        self.unique_owner
+            .is_some_and(|(owner, _)| owner == requester)
+            || self.sharers.contains_key(&requester)
+    }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -469,6 +555,39 @@ impl ChiDirectory {
 
         Ok(ChiDirectoryDecision::new(
             line, request_id, before, after, snoops, grant,
+        ))
+    }
+
+    pub fn begin_evict_hazard(
+        &self,
+        line: ChiLineId,
+        requester: AgentId,
+    ) -> Result<ChiEvictHazard, ChiDirectoryError> {
+        let retained_line = self.lines.get(&line).cloned().unwrap_or_default();
+        if !retained_line.contains_holder(requester) {
+            return Err(ChiDirectoryError::EvictFromNonHolder { line, requester });
+        }
+
+        Ok(ChiEvictHazard::new(
+            line,
+            requester,
+            retained_line.snapshot(line),
+        ))
+    }
+
+    pub fn restore_evict_hazard(
+        &self,
+        hazard: &ChiEvictHazard,
+    ) -> Result<ChiEvictHazardRestore, ChiDirectoryError> {
+        let current_line = self.lines.get(&hazard.line()).cloned().unwrap_or_default();
+        let request_became_stale = !current_line.contains_holder(hazard.requester());
+
+        Ok(ChiEvictHazardRestore::new(
+            hazard.line(),
+            hazard.requester(),
+            hazard.retained_state().clone(),
+            current_line.snapshot(hazard.line()),
+            request_became_stale,
         ))
     }
 
