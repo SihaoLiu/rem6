@@ -819,7 +819,9 @@ Research anchors refreshed through 2026-05-30:
   records with snapshot and decode-first restore. RISC-V cores now own a
   16-entry PMP table by default, and core checkpoint ports encode an explicit
   `pmp` chunk with entry-count and range prevalidation before mutating live
-  state.
+  state. RISC-V data issue also consults the core PMP table before plain,
+  translated, or MMIO data requests are submitted, matching gem5's TLB/PMP
+  placement while keeping denials as typed CPU errors.
 - Public gem5 issue anchor refreshed on 2026-05-30: open three-level CHI
   LR/SC race where contending RISC-V mutex paths can violate lock ownership
   under Ruby CHI.
@@ -2323,7 +2325,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   matching-entry priority, locked-entry write rejection, locked TOR lower-bound
   protection, configuration-before-address materialization, default inactive
   table denial for S/U modes, snapshot round trips, and entry-count mismatch
-  restore rejection without partial live mutation. RISC-V vector-config prediction tests cover branch-prediction targets
+  restore rejection without partial live mutation. RISC-V frontend tests cover
+  locked PMP rejection for both physical and translated data loads before any
+  memory request is issued. RISC-V vector-config prediction tests cover branch-prediction targets
   that drop copied dynamic `vl`/`vtype` state while preserving the current hart
   vector configuration, and explicit vector-configuration updates that mutate
   `vl`/`vtype` only through the typed update path.

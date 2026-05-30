@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::fmt;
 
-use rem6_isa_riscv::RiscvError;
+use rem6_isa_riscv::{RiscvError, RiscvPmpError};
 use rem6_kernel::{PartitionId, SchedulerError};
 use rem6_memory::{AccessSize, Address, AgentId, MemoryError, MemoryRequestId, TranslationFault};
 use rem6_mmio::MmioError;
@@ -195,6 +195,10 @@ pub enum RiscvCpuError {
         fetch: MemoryRequestId,
         fault: TranslationFault,
     },
+    DataPmpAccess {
+        fetch: MemoryRequestId,
+        error: RiscvPmpError,
+    },
     Cpu(CpuError),
     Isa(RiscvError),
     Memory(MemoryError),
@@ -298,6 +302,12 @@ impl fmt::Display for RiscvCpuError {
                 fetch.agent().get(),
                 fault.virtual_address().get()
             ),
+            Self::DataPmpAccess { fetch, error } => write!(
+                formatter,
+                "data PMP check for fetch response {} from agent {} failed: {error}",
+                fetch.sequence(),
+                fetch.agent().get()
+            ),
             Self::Cpu(error) => write!(formatter, "{error}"),
             Self::Isa(error) => write!(formatter, "{error}"),
             Self::Memory(error) => write!(formatter, "{error}"),
@@ -313,6 +323,7 @@ impl Error for RiscvCpuError {
         match self {
             Self::Cpu(error) => Some(error),
             Self::DataTranslation(error) => Some(error),
+            Self::DataPmpAccess { error, .. } => Some(error),
             Self::Isa(error) => Some(error),
             Self::Memory(error) => Some(error),
             Self::Mmio(error) => Some(error),

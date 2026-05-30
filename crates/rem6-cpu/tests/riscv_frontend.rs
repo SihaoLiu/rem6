@@ -8,6 +8,7 @@ use rem6_cpu::{
 };
 use rem6_isa_riscv::{
     MemoryAccessKind, MemoryWidth, Register, RiscvFenceSet, RiscvInstruction, RiscvMemoryOrdering,
+    RiscvPmpAccessKind, RiscvPmpAddressMode, RiscvPmpConfig, RiscvPmpError, RiscvPrivilegeMode,
     RiscvTrap, RiscvTrapKind,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
@@ -50,6 +51,10 @@ fn atomic_type(funct5: u32, aq: bool, rl: bool, rs2: u8, rs1: u8, funct3: u32, r
 
 fn fence_type(mode: u32, predecessor: u32, successor: u32, funct3: u32) -> u32 {
     (mode << 28) | (predecessor << 24) | (successor << 20) | (funct3 << 12) | 0x0f
+}
+
+fn locked_tor_without_permissions() -> RiscvPmpConfig {
+    RiscvPmpConfig::new(RiscvPmpAddressMode::Tor).with_locked(true)
 }
 
 fn j_type(imm: i32, rd: u8) -> u32 {
@@ -696,6 +701,98 @@ fn riscv_core_plain_data_issue_rejects_configured_translation_frontend() {
         RiscvCpuError::DataTranslationPageMapRequired { fetch }
             if fetch == execution.fetch().request_id()
     ));
+}
+
+#[test]
+fn riscv_core_pmp_rejects_locked_physical_data_load_before_memory_issue() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(2), 0x9000);
+    core.write_pmp_addr(0, 0xa000 >> 2).unwrap();
+    core.write_pmp_config(0, locked_tor_without_permissions())
+        .unwrap();
+    let store = loaded_store_with_data(
+        0x8000,
+        i_type(8, 2, 0x3, 5, 0x03),
+        0x9008,
+        vec![0xef, 0xcd, 0xab, 0x89, 0x67, 0x45, 0x23, 0x01],
+    );
+
+    fetch_one(&core, store, &mut scheduler, &transport, MemoryTrace::new());
+    let execution = core.execute_next_completed_fetch().unwrap().unwrap();
+    let error = core
+        .issue_next_data_access(
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            |_delivery, _context| panic!("PMP-denied data load must not issue to memory"),
+        )
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        RiscvCpuError::DataPmpAccess {
+            fetch,
+            error: RiscvPmpError::AccessDenied {
+                address: 0x9008,
+                size: 8,
+                kind: RiscvPmpAccessKind::Read,
+                privilege: RiscvPrivilegeMode::Machine,
+                matched_entry: Some(0),
+            },
+        } if fetch == execution.fetch().request_id()
+    ));
+    assert!(core.data_access_events().is_empty());
+    assert!(core.has_unissued_data_access());
+    assert_eq!(core.read_register(reg(5)), 0);
+}
+
+#[test]
+fn riscv_core_pmp_rejects_locked_translated_data_load_by_physical_address() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = translated_data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(2), 0x4000);
+    core.write_pmp_addr(0, 0xa000 >> 2).unwrap();
+    core.write_pmp_config(0, locked_tor_without_permissions())
+        .unwrap();
+    let page_map = single_page_map(0x4000, 0x9000);
+    let store = loaded_store_with_data(
+        0x8000,
+        i_type(8, 2, 0x3, 5, 0x03),
+        0x9008,
+        vec![0xef, 0xcd, 0xab, 0x89, 0x67, 0x45, 0x23, 0x01],
+    );
+
+    fetch_one(&core, store, &mut scheduler, &transport, MemoryTrace::new());
+    let execution = core.execute_next_completed_fetch().unwrap().unwrap();
+    let error = core
+        .issue_next_translated_data_access(
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            &page_map,
+            |_delivery, _context| {
+                panic!("PMP-denied translated data load must not issue to memory")
+            },
+        )
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        RiscvCpuError::DataPmpAccess {
+            fetch,
+            error: RiscvPmpError::AccessDenied {
+                address: 0x9008,
+                size: 8,
+                kind: RiscvPmpAccessKind::Read,
+                privilege: RiscvPrivilegeMode::Machine,
+                matched_entry: Some(0),
+            },
+        } if fetch == execution.fetch().request_id()
+    ));
+    assert!(core.data_access_events().is_empty());
+    assert!(core.has_pending_data_access());
+    assert_eq!(core.read_register(reg(5)), 0);
 }
 
 #[test]

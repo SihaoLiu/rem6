@@ -1,4 +1,6 @@
-use rem6_isa_riscv::{AtomicMemoryOp, MemoryAccessKind, MemoryWidth};
+use rem6_isa_riscv::{
+    AtomicMemoryOp, MemoryAccessKind, MemoryWidth, RiscvPmpAccessKind, RiscvPrivilegeMode,
+};
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionId, PartitionedScheduler, Tick,
 };
@@ -208,6 +210,7 @@ impl RiscvCore {
 
         let size = memory_width_size(access_width(&access))?;
         let address = Address::new(access_address(&access));
+        self.check_pmp_data_access(fetch_request, &access, size, address)?;
         let line_layout = data
             .line_layout_for_access(address, size)
             .map_err(RiscvCpuError::Memory)?;
@@ -251,6 +254,7 @@ impl RiscvCore {
         };
         let size = memory_width_size(access_width(&access))?;
         let address = Address::new(access_address(&access));
+        self.check_pmp_data_access(fetch_request, &access, size, address)?;
         let request_id = MemoryRequestId::new(self.core.agent(), self.core.next_sequence());
         let request = mmio_request(request_id, &access, size, address)?;
         let route = match bus.route_for(self.core.partition(), &request) {
@@ -283,6 +287,27 @@ impl RiscvCore {
             physical_address: address,
             line_layout: None,
         }))
+    }
+
+    pub(crate) fn check_pmp_data_access(
+        &self,
+        fetch: MemoryRequestId,
+        access: &MemoryAccessKind,
+        size: AccessSize,
+        physical_address: Address,
+    ) -> Result<(), RiscvCpuError> {
+        let kind = pmp_access_kind(access);
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .pmp
+            .check_access(
+                physical_address.get(),
+                size.bytes(),
+                kind,
+                RiscvPrivilegeMode::Machine,
+            )
+            .map_err(|error| RiscvCpuError::DataPmpAccess { fetch, error })
     }
 
     pub(crate) fn record_data_issue(&self, issue: OutstandingDataAccess) {
@@ -605,6 +630,17 @@ pub(crate) fn access_width(access: &MemoryAccessKind) -> MemoryWidth {
         | MemoryAccessKind::StoreConditional { width, .. }
         | MemoryAccessKind::AtomicMemory { width, .. }
         | MemoryAccessKind::Store { width, .. } => *width,
+    }
+}
+
+fn pmp_access_kind(access: &MemoryAccessKind) -> RiscvPmpAccessKind {
+    match access {
+        MemoryAccessKind::Load { .. } | MemoryAccessKind::LoadReserved { .. } => {
+            RiscvPmpAccessKind::Read
+        }
+        MemoryAccessKind::Store { .. }
+        | MemoryAccessKind::StoreConditional { .. }
+        | MemoryAccessKind::AtomicMemory { .. } => RiscvPmpAccessKind::Write,
     }
 }
 

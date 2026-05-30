@@ -413,18 +413,26 @@ impl RiscvCore {
         transport: &MemoryTransport,
     ) -> Result<Option<OutstandingDataAccess>, RiscvCpuError> {
         let translated = {
-            let mut state = self.state.lock().expect("riscv core lock");
+            let state = self.state.lock().expect("riscv core lock");
             let Some(fetch_request) = ready_translated_fetch_request(&state) else {
                 return Ok(None);
             };
             state
                 .ready_translated_data
-                .remove(&fetch_request)
+                .get(&fetch_request)
                 .expect("selected ready data translation exists")
+                .clone()
         };
 
-        self.prepare_translated_data_access(tick, transport, translated)
-            .map(Some)
+        let issue = self.prepare_translated_data_access(tick, transport, translated)?;
+        {
+            let mut state = self.state.lock().expect("riscv core lock");
+            state
+                .ready_translated_data
+                .remove(&issue.fetch_request)
+                .expect("selected ready data translation exists");
+        }
+        Ok(Some(issue))
     }
 
     fn prepare_ready_translated_mmio_data_access(
@@ -445,6 +453,12 @@ impl RiscvCore {
                 .clone()
         };
 
+        self.check_pmp_data_access(
+            translated.fetch_request,
+            &translated.access,
+            translated.size,
+            translated.physical_address,
+        )?;
         let request = mmio_request(
             translated.request_id,
             &translated.access,
@@ -526,6 +540,12 @@ impl RiscvCore {
             });
         }
 
+        self.check_pmp_data_access(
+            translated.fetch_request,
+            &translated.access,
+            translated.size,
+            translated.physical_address,
+        )?;
         let line_layout = data
             .line_layout_for_access(translated.physical_address, translated.size)
             .map_err(RiscvCpuError::Memory)?;
