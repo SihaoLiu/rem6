@@ -31,6 +31,7 @@ mod fabric_checkpoint;
 mod fabric_wait_run;
 mod guest_event;
 mod guest_fd;
+mod guest_futex;
 mod heterogeneous_checkpoint;
 mod host;
 mod host_assist;
@@ -79,6 +80,12 @@ pub use guest_event::{
     HostAction, HostActionRecord, HostEventPolicy, StopRequest,
 };
 pub use guest_fd::{GuestFd, GuestFdEntry, GuestFdError, GuestFdTable, GuestFileDescriptionId};
+pub use guest_futex::{
+    GuestFutexAddress, GuestFutexError, GuestFutexKey, GuestFutexRequeueOutcome,
+    GuestFutexRequeueRecord, GuestFutexTable, GuestFutexWaitOutcome, GuestFutexWaitRequest,
+    GuestFutexWaiter, GuestFutexWakeOutcome, GuestFutexWakeRecord, GuestThreadGroupId,
+    GuestThreadId,
+};
 pub use heterogeneous_checkpoint::{
     AcceleratorCheckpointBank, AcceleratorCheckpointError, AcceleratorCheckpointPort,
     AcceleratorCheckpointRecord, GpuCheckpointBank, GpuCheckpointError, GpuCheckpointPort,

@@ -517,6 +517,19 @@ isolated bugs:
   seven-bit signal with an optional core-dump bit, stopped children encode
   `(signal << 8) | 0x7f`, continued children encode `0xffff`, and invalid guest
   signals are typed errors.
+  Public gem5 issue #1320 reports RISC-V GAP benchmark hangs with timing and
+  minor multicore CPUs where the final barrier reaches a `futex` wait with only
+  one core still awake, while atomic multicore reaches the same barrier with
+  all cores completing the synchronization. The local reference routes RISC-V
+  syscall number 98 to the shared `futexFunc`, and `FutexMap` stores
+  `ThreadContext*` waiters plus a side `waitingTcs` set that is mutated by
+  suspend, wake, and requeue callbacks. rem6-system therefore keeps guest
+  futex state as a typed `GuestFutexTable`: wait operations compare expected
+  and observed values before queueing, waiters carry guest thread id,
+  thread-group id, partition, enqueue tick, and bitset, wake and requeue
+  operations emit deterministic FIFO records, duplicate waiters and empty
+  wait bitsets are typed errors, and the waiting index is explicitly cleared
+  or moved as wake and requeue records are produced.
   Public gem5 issue #2750 reports sim-se `dup2` allocating the next available
   guest file descriptor like `dup` instead of occupying the requested
   destination descriptor. The local reference clones the source host-backed fd,
@@ -705,6 +718,9 @@ Research anchors refreshed through 2026-05-30:
 - Public gem5 issue anchor refreshed on 2026-05-30: open sim-se `wait4`
   status bug where abnormal child exits can lose the terminating-signal status
   expected by libc `wait`.
+- Public gem5 issue anchor refreshed on 2026-05-30: open RISC-V GAP timing and
+  minor multicore hang where final futex-barrier synchronization reaches only
+  one awake core instead of all participating cores.
 - Public gem5 issue anchor refreshed on 2026-05-30: open sim-se `dup2`
   bug where the requested destination fd is ignored and the next available fd
   is allocated instead.
@@ -800,6 +816,11 @@ Implementation evidence through 2026-05-30:
   core-dump bit, stopped children, continued children, and invalid signal
   rejection, so guest ABI status values cannot collapse every child result into
   a successful exit before being copied to guest memory. It also has a typed
+  guest futex table for future syscall emulation handoff. Tests cover public
+  gem5 issue #1320 by requiring multicore barrier waiters to remain visible
+  until a wake, mismatch waits to return would-block without mutation, zero
+  wait bitsets and duplicate waiters to fail without mutation, and requeue to
+  preserve FIFO order while updating the waiting index. It also has a typed
   guest fd table for future syscall emulation handoff. Tests cover public gem5
   issue #2750 by requiring `dup2` to return and install the requested
   destination fd, replace an existing destination without allocating another
