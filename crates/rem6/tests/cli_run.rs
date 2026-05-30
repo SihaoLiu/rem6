@@ -353,6 +353,10 @@ fn rem6_run_executes_riscv_elf_on_parallel_cores_and_emits_core_stats() {
     assert!(stdout.contains("\"worker_lanes\":[{\"lane\":0,\"partition\":0"));
     assert!(stdout.contains("{\"lane\":1,\"partition\":1"));
     assert!(stdout.contains("\"partitions\":[{\"partition\":0"));
+    assert!(stdout.contains("\"transport\":{\"fetch\":{\"requests\":4"));
+    assert!(stdout.contains("\"route\":0,\"source\":\"cpu0.ifetch\",\"requests\":2"));
+    assert!(stdout.contains("\"route\":2,\"source\":\"cpu1.ifetch\",\"requests\":2"));
+    assert!(stdout.contains("\"data\":{\"requests\":0"));
     assert!(stdout.contains("\"cpu\":0"));
     assert!(stdout.contains("\"cpu\":1"));
     assert!(stdout.contains("\"pc\":\"0x80000004\""));

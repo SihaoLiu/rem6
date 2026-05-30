@@ -1,6 +1,7 @@
 use super::{
     bytes_to_hex, elf_architecture_name, elf_class_name, elf_endian_name, elf_os_name, json_escape,
-    Rem6CoreSummary, Rem6ExecutionSummary, Rem6MemoryDump, Rem6ParallelPartitionSummary,
+    Rem6CoreSummary, Rem6ExecutionSummary, Rem6MemoryDump, Rem6MemoryTransportCounters,
+    Rem6MemoryTransportRouteSummary, Rem6MemoryTransportSummary, Rem6ParallelPartitionSummary,
     Rem6RunArtifact,
 };
 
@@ -31,8 +32,15 @@ impl Rem6RunArtifact {
             .as_ref()
             .map(Rem6ExecutionSummary::to_memory_json)
             .unwrap_or_else(|| "[]".to_string());
+        let transport = self
+            .execution
+            .as_ref()
+            .map(Rem6ExecutionSummary::to_transport_json)
+            .unwrap_or_else(|| {
+                "{\"fetch\":{\"requests\":0,\"request_arrivals\":0,\"responses\":0,\"response_arrivals\":0,\"round_trip_ticks\":0,\"max_round_trip_ticks\":0,\"routes\":[]},\"data\":{\"requests\":0,\"request_arrivals\":0,\"responses\":0,\"response_arrivals\":0,\"round_trip_ticks\":0,\"max_round_trip_ticks\":0,\"routes\":[]}}".to_string()
+            });
         format!(
-            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"entry\":\"0x{:x}\",\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"stats\":{}}}\n",
+            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"entry\":\"0x{:x}\",\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"transport\":{},\"stats\":{}}}\n",
             self.schema,
             self.config.isa().as_str(),
             json_escape(&self.config.binary().display().to_string()),
@@ -47,6 +55,7 @@ impl Rem6RunArtifact {
             parallel,
             cores,
             memory,
+            transport,
             self.stats_json,
         )
     }
@@ -130,6 +139,14 @@ impl Rem6ExecutionSummary {
             .join(",");
         format!("[{dumps}]")
     }
+
+    fn to_transport_json(&self) -> String {
+        format!(
+            "{{\"fetch\":{},\"data\":{}}}",
+            self.fetch_transport.to_json(),
+            self.data_transport.to_json()
+        )
+    }
 }
 
 trait Rem6ParallelWorkerSlotSummaryJson {
@@ -203,6 +220,47 @@ impl Rem6MemoryDump {
             self.address,
             self.data.len(),
             bytes_to_hex(&self.data),
+        )
+    }
+}
+
+impl Rem6MemoryTransportSummary {
+    fn to_json(&self) -> String {
+        let routes = self
+            .routes
+            .iter()
+            .map(Rem6MemoryTransportRouteSummary::to_json)
+            .collect::<Vec<_>>()
+            .join(",");
+        format!(
+            "{{{},\"routes\":[{}]}}",
+            self.counters.json_fields(),
+            routes
+        )
+    }
+}
+
+impl Rem6MemoryTransportRouteSummary {
+    fn to_json(&self) -> String {
+        format!(
+            "{{\"route\":{},\"source\":\"{}\",{}}}",
+            self.route.get(),
+            json_escape(&self.source),
+            self.counters.json_fields()
+        )
+    }
+}
+
+impl Rem6MemoryTransportCounters {
+    fn json_fields(&self) -> String {
+        format!(
+            "\"requests\":{},\"request_arrivals\":{},\"responses\":{},\"response_arrivals\":{},\"round_trip_ticks\":{},\"max_round_trip_ticks\":{}",
+            self.requests,
+            self.request_arrivals,
+            self.responses,
+            self.response_arrivals,
+            self.round_trip_ticks,
+            self.max_round_trip_ticks,
         )
     }
 }
