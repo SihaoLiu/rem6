@@ -425,8 +425,10 @@ isolated bugs:
   tests before broad parity claims. Public gem5 issue #3098 reports RISC-V
   `mcycle` and `minstret` writes being ignored. rem6 therefore keeps cycle and
   retired-instruction CSRs in a typed counter bank where machine aliases are
-  writable, user aliases are read-only, increments wrap explicitly, and
-  snapshot restore preserves both counters before full privileged CSR decoding
+  writable, user aliases are read-only, increments wrap explicitly, and RV32
+  `mcycleh`/`minstreth` plus `cycleh`/`instreth` aliases project the high word
+  of the same 64-bit counter instead of becoming separate pseudo-registers.
+  Snapshot restore preserves both counters before full privileged CSR decoding
   is widened.
   Public gem5 issue #2688 reports a RISC-V full-system mutex failure in a
   three-level CHI hierarchy when LR/SC pairs race with contending atomic writes.
@@ -578,6 +580,9 @@ Research anchors refreshed through 2026-05-30:
   in host allocation instead of producing a typed configuration error.
 - Public gem5 issue anchor refreshed on 2026-05-30: open RISC-V
   `mcycle` and `minstret` writes ignored bug.
+- RISC-V privileged ISA anchor refreshed on 2026-05-30: `mcycle` and
+  `minstret` are 64-bit machine counters, with RV32 exposing high-half CSR
+  aliases rather than independent counters.
 - Public gem5 issue anchor refreshed on 2026-05-30: open three-level CHI
   LR/SC race where contending RISC-V mutex paths can violate lock ownership
   under Ruby CHI.
@@ -1982,7 +1987,10 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   aq/rl ordering propagation into parallel transport atomic requests. RISC-V
   ISA tests cover typed `mcycle` and `minstret` machine writes, user read
   aliases, user write rejection, wrapping increments, CSR address decoding, and
-  counter snapshot restore. Memory and
+  counter snapshot restore. Dedicated CSR counter tests cover RV32 low/high
+  word address decoding, high-half user read aliases, machine low/high word
+  writes that preserve the other half, and read-only errors for user high-half
+  writes. Memory and
   cache-controller tests cover atomic responses that capture old bytes before
   masked writes, and memory checkpoint-bank tests cover prevalidated
   multi-store and DRAM memory restore so truncated payloads cannot partially
