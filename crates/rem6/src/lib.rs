@@ -39,6 +39,8 @@ use stats_output::{run_stats_output, Rem6StatsInputs};
 const DEFAULT_CACHE_LINE_BYTES: u64 = 16;
 const CLI_MEMORY_TARGET: MemoryTargetId = MemoryTargetId::new(0);
 const CLI_MEMORY_DUMP_AGENT: AgentId = AgentId::new(u32::MAX);
+const RISCV_BOOT_A0_REGISTER: u8 = 10;
+const RISCV_BOOT_A1_REGISTER: u8 = 11;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RequestedIsa {
@@ -112,6 +114,8 @@ pub struct Rem6RunConfig {
     memory_route_delay: u64,
     host_event_delay: u64,
     start_address: Option<u64>,
+    riscv_boot_a0: u64,
+    riscv_boot_a1: u64,
     max_instructions: Option<u64>,
     stats_format: StatsFormat,
     execute: bool,
@@ -143,6 +147,8 @@ impl Rem6RunConfig {
         let mut memory_route_delay = None;
         let mut host_event_delay = None;
         let mut start_address = None;
+        let mut riscv_boot_a0 = 0u64;
+        let mut riscv_boot_a1 = 0u64;
         let mut max_instructions = None;
         let mut stats_format = StatsFormat::Json;
         let mut execute = false;
@@ -196,6 +202,20 @@ impl Rem6RunConfig {
                             value: value.clone(),
                         }
                     })?);
+                }
+                "--riscv-boot-a0" => {
+                    let value = required_value(&flag, args.next())?;
+                    riscv_boot_a0 =
+                        parse_number(&value).ok_or_else(|| Rem6CliError::InvalidRiscvBootA0 {
+                            value: value.clone(),
+                        })?;
+                }
+                "--riscv-boot-a1" => {
+                    let value = required_value(&flag, args.next())?;
+                    riscv_boot_a1 =
+                        parse_number(&value).ok_or_else(|| Rem6CliError::InvalidRiscvBootA1 {
+                            value: value.clone(),
+                        })?;
                 }
                 "--max-instructions" => {
                     let value = required_value(&flag, args.next())?;
@@ -281,6 +301,8 @@ impl Rem6RunConfig {
             memory_route_delay,
             host_event_delay,
             start_address,
+            riscv_boot_a0,
+            riscv_boot_a1,
             max_instructions,
             stats_format,
             execute,
@@ -318,6 +340,14 @@ impl Rem6RunConfig {
 
     pub const fn start_address(&self) -> Option<u64> {
         self.start_address
+    }
+
+    pub const fn riscv_boot_a0(&self) -> u64 {
+        self.riscv_boot_a0
+    }
+
+    pub const fn riscv_boot_a1(&self) -> u64 {
+        self.riscv_boot_a1
     }
 
     pub const fn max_instructions(&self) -> Option<u64> {
@@ -567,6 +597,12 @@ pub enum Rem6CliError {
     InvalidStartAddress {
         value: String,
     },
+    InvalidRiscvBootA0 {
+        value: String,
+    },
+    InvalidRiscvBootA1 {
+        value: String,
+    },
     MemoryRouteDelayBelowMinRemoteDelay {
         memory_route_delay: u64,
         min_remote_delay: u64,
@@ -652,6 +688,12 @@ impl fmt::Display for Rem6CliError {
             }
             Self::InvalidStartAddress { value } => {
                 write!(formatter, "invalid start address {value}")
+            }
+            Self::InvalidRiscvBootA0 { value } => {
+                write!(formatter, "invalid RISC-V boot a0 {value}")
+            }
+            Self::InvalidRiscvBootA1 { value } => {
+                write!(formatter, "invalid RISC-V boot a1 {value}")
             }
             Self::MemoryRouteDelayBelowMinRemoteDelay {
                 memory_route_delay,
@@ -928,6 +970,14 @@ fn execute_riscv(
                 data_route,
                 line_layout,
             ),
+        );
+        core.write_register(
+            Register::new(RISCV_BOOT_A0_REGISTER).map_err(execute_error)?,
+            config.riscv_boot_a0(),
+        );
+        core.write_register(
+            Register::new(RISCV_BOOT_A1_REGISTER).map_err(execute_error)?,
+            config.riscv_boot_a1(),
         );
         cores.push(core);
     }

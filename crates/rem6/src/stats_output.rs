@@ -3,7 +3,7 @@ use rem6_stats::{StatResetPolicy, StatSnapshot, StatsRegistry};
 use super::formatting::json_escape;
 use super::{
     parallel_stats, stats_error, Rem6CliError, Rem6ExecutionStop, Rem6ExecutionSummary,
-    Rem6MemoryTransportCounters, Rem6MemoryTransportSummary, Rem6RunConfig,
+    Rem6MemoryTransportCounters, Rem6MemoryTransportSummary, Rem6RunConfig, RequestedIsa,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -52,6 +52,22 @@ pub(super) fn run_stats_output(
         StatResetPolicy::Constant,
         inputs.start_address,
     )?;
+    if inputs.config.isa() == RequestedIsa::Riscv {
+        increment_stat(
+            &mut stats,
+            "sim.riscv.boot.a0",
+            "Value",
+            StatResetPolicy::Constant,
+            inputs.config.riscv_boot_a0(),
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.riscv.boot.a1",
+            "Value",
+            StatResetPolicy::Constant,
+            inputs.config.riscv_boot_a1(),
+        )?;
+    }
     increment_stat(
         &mut stats,
         "sim.parallel.scheduler.min_remote_delay",

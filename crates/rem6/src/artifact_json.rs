@@ -5,7 +5,7 @@ use super::{
     Rem6CoreSummary, Rem6ExecutionStop, Rem6ExecutionSummary, Rem6MemoryDump,
     Rem6MemoryTransportCounters, Rem6MemoryTransportRouteSummary, Rem6MemoryTransportSummary,
     Rem6ParallelFrontierSummary, Rem6ParallelPartitionSummary, Rem6ParallelReadyPartitionSummary,
-    Rem6RunArtifact,
+    Rem6RunArtifact, RequestedIsa,
 };
 
 impl Rem6RunArtifact {
@@ -53,13 +53,23 @@ impl Rem6RunArtifact {
             .as_ref()
             .map(Rem6ExecutionSummary::to_transport_json)
             .unwrap_or_else(empty_transport_json);
+        let riscv_boot = if self.config.isa() == RequestedIsa::Riscv {
+            format!(
+                ",\"riscv_boot\":{{\"a0\":\"0x{:x}\",\"a1\":\"0x{:x}\"}}",
+                self.config.riscv_boot_a0(),
+                self.config.riscv_boot_a1()
+            )
+        } else {
+            String::new()
+        };
         format!(
-            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\",\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"transport\":{},\"stats\":{}}}\n",
+            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"transport\":{},\"stats\":{}}}\n",
             self.schema,
             self.config.isa().as_str(),
             json_escape(&self.config.binary().display().to_string()),
             self.entry,
             self.start_address,
+            riscv_boot,
             elf_class_name(self.metadata.class()),
             elf_endian_name(self.metadata.endian()),
             elf_architecture_name(self.metadata.architecture()),

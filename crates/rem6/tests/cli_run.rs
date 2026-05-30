@@ -41,6 +41,12 @@ fn riscv64_elf(entry: u64, physical: u64, payload: &[u8]) -> Vec<u8> {
     bytes
 }
 
+fn x86_64_elf(entry: u64, physical: u64, payload: &[u8]) -> Vec<u8> {
+    let mut bytes = riscv64_elf(entry, physical, payload);
+    write_u16(&mut bytes, 18, 62);
+    bytes
+}
+
 fn riscv64_program(words: &[u32]) -> Vec<u8> {
     words.iter().flat_map(|word| word.to_le_bytes()).collect()
 }
@@ -198,6 +204,7 @@ fn rem6_run_loads_riscv_elf_and_emits_json_stats_artifact() {
     assert!(stdout.contains("\"architecture\":\"riscv64\""));
     assert!(stdout.contains("\"entry\":\"0x80000000\""));
     assert!(stdout.contains("\"start_address\":\"0x80000000\""));
+    assert!(stdout.contains("\"riscv_boot\":{\"a0\":\"0x0\",\"a1\":\"0x0\"}"));
     assert!(stdout.contains("\"status\":\"loaded\""));
     assert!(stdout.contains("\"host_event_delay\":1"));
     assert!(stdout.contains("\"parallel\":{\"scheduler\":{"));
@@ -216,8 +223,44 @@ fn rem6_run_loads_riscv_elf_and_emits_json_stats_artifact() {
         0x8000_0000,
         "constant",
     );
+    assert_stat(&stdout, "sim.riscv.boot.a0", "Value", 0, "constant");
+    assert_stat(&stdout, "sim.riscv.boot.a1", "Value", 0, "constant");
     assert_stat(&stdout, "sim.host.event_delay", "Tick", 1, "constant");
     assert!(stdout.contains("\"reset_policy\":\"constant\""));
+}
+
+#[test]
+fn rem6_run_loads_x86_elf_without_riscv_boot_artifact_fields() {
+    let elf = x86_64_elf(0x1000_0000, 0x1000_0000, &[0x90]);
+    let path = temp_binary("x86-run", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "x86",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"isa\":\"x86\""));
+    assert!(stdout.contains("\"architecture\":\"x86_64\""));
+    assert!(stdout.contains("\"status\":\"loaded\""));
+    assert!(!stdout.contains("\"riscv_boot\""));
+    assert!(!stdout.contains("sim.riscv.boot.a0"));
+    assert!(!stdout.contains("sim.riscv.boot.a1"));
 }
 
 #[test]
@@ -256,6 +299,48 @@ fn rem6_run_loads_riscv_elf_with_explicit_start_address() {
         "sim.start_address",
         "Address",
         0x8000_0008,
+        "constant",
+    );
+}
+
+#[test]
+fn rem6_run_loads_riscv_elf_with_explicit_boot_registers() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("loaded-riscv-boot-registers", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+            "--riscv-boot-a0",
+            "7",
+            "--riscv-boot-a1",
+            "0X80002000",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"loaded\""));
+    assert!(stdout.contains("\"riscv_boot\":{\"a0\":\"0x7\",\"a1\":\"0x80002000\"}"));
+    assert_stat(&stdout, "sim.riscv.boot.a0", "Value", 7, "constant");
+    assert_stat(
+        &stdout,
+        "sim.riscv.boot.a1",
+        "Value",
+        0x8000_2000,
         "constant",
     );
 }
@@ -1114,6 +1199,56 @@ fn rem6_run_accepts_start_address_runtime_option() {
 }
 
 #[test]
+fn rem6_run_accepts_riscv_boot_register_runtime_options() {
+    let program = riscv64_program(&[0x0000_0073]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("riscv-boot-registers", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "1",
+            "--riscv-boot-a0",
+            "0x123",
+            "--riscv-boot-a1",
+            "0X80001000",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"riscv_boot\":{\"a0\":\"0x123\",\"a1\":\"0x80001000\"}"));
+    assert!(stdout.contains("\"executed_ticks\":3"));
+    assert!(stdout.contains("\"final_tick\":3"));
+    assert!(stdout.contains("\"x10\":\"0x123\""));
+    assert!(stdout.contains("\"x11\":\"0x80001000\""));
+    assert_stat(&stdout, "sim.riscv.boot.a0", "Value", 0x123, "constant");
+    assert_stat(
+        &stdout,
+        "sim.riscv.boot.a1",
+        "Value",
+        0x8000_1000,
+        "constant",
+    );
+}
+
+#[test]
 fn rem6_run_rejects_instruction_limit_without_execution() {
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
     let path = temp_binary("instruction-limit-without-execute", &elf);
@@ -1284,6 +1419,64 @@ fn rem6_run_rejects_invalid_start_address() {
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains("invalid start address not-an-address"));
+}
+
+#[test]
+fn rem6_run_rejects_invalid_riscv_boot_a0() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("invalid-riscv-boot-a0", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-boot-a0",
+            "not-a-value",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("invalid RISC-V boot a0 not-a-value"));
+}
+
+#[test]
+fn rem6_run_rejects_invalid_riscv_boot_a1() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("invalid-riscv-boot-a1", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-boot-a1",
+            "not-a-value",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("invalid RISC-V boot a1 not-a-value"));
 }
 
 #[test]
