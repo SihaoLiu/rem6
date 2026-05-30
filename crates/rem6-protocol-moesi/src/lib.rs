@@ -3,6 +3,14 @@ use std::fmt;
 
 use rem6_memory::{Address, AgentId};
 
+mod transition_resource;
+
+pub use transition_resource::{
+    MoesiProtocolEventId, MoesiProtocolResourceId, MoesiProtocolStateId, MoesiResourceEffect,
+    MoesiTransitionResourceContract, MoesiTransitionResourceError, MoesiTransitionResourceReport,
+    MoesiTransitionResourceRule,
+};
+
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct MoesiLineId(Address);
 
