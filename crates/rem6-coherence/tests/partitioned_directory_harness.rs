@@ -763,6 +763,43 @@ fn partitioned_directory_harness_quiescent_restore_rejects_backing_line_mismatch
 }
 
 #[test]
+fn partitioned_directory_harness_quiescent_restore_rejects_directory_line_mismatch_without_mutation(
+) {
+    let mut source = harness();
+    source
+        .submit_cpu_request(agent(1), write(1, 0, 0x1002, vec![0xaa]))
+        .unwrap();
+    source.run_until_idle();
+    let snapshot = source.quiescent_snapshot().unwrap();
+    let bad_snapshot = PartitionedDirectoryLineHarnessSnapshot::new(
+        snapshot.line(),
+        snapshot.scheduler().clone(),
+        DirectoryLineState::new(MsiLineId::new(Address::new(0x2000))),
+        snapshot.caches().clone(),
+        snapshot.backing().cloned(),
+        snapshot.dram_memory().cloned(),
+        snapshot.fabric_lanes().map(<[_]>::to_vec),
+        snapshot.trace(),
+        snapshot.cpu_responses(),
+        snapshot.directory_decisions(),
+        snapshot.dram_accesses(),
+        snapshot.parallel_runs().to_vec(),
+    );
+
+    let mut restored = harness();
+    let before = restored.quiescent_snapshot().unwrap();
+
+    assert_eq!(
+        restored.restore_quiescent(&bad_snapshot).unwrap_err(),
+        HarnessError::WrongLine {
+            expected: Address::new(0x1000),
+            actual: Address::new(0x2000),
+        }
+    );
+    assert_eq!(restored.quiescent_snapshot().unwrap(), before);
+}
+
+#[test]
 fn partitioned_directory_harness_quiescent_snapshot_rejects_pending_events() {
     let mut harness = harness();
     harness

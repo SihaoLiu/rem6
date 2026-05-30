@@ -457,6 +457,38 @@ fn moesi_harness_restore_rejects_backing_line_mismatch_without_mutation() {
 }
 
 #[test]
+fn moesi_harness_restore_rejects_directory_line_mismatch_without_mutation() {
+    let mut source = harness();
+    source
+        .submit_cpu_request(agent(1), write(1, 0, 0x5002, vec![0xaa]))
+        .unwrap();
+    let snapshot = source.snapshot();
+    let bad_snapshot = MoesiDirectoryLineHarnessSnapshot::new(
+        snapshot.line(),
+        MoesiDirectoryLineState::new(MoesiLineId::new(Address::new(0x6000))),
+        snapshot.caches().clone(),
+        snapshot.backing().clone(),
+        snapshot.cpu_responses().to_vec(),
+        snapshot.directory_decisions().to_vec(),
+    );
+
+    let mut restored = harness();
+    restored
+        .submit_cpu_request(agent(2), write(2, 9, 0x5004, vec![0xdd]))
+        .unwrap();
+    let before = restored.snapshot();
+
+    assert_eq!(
+        restored.restore(&bad_snapshot).unwrap_err(),
+        MoesiHarnessError::Backing(HarnessError::WrongLine {
+            expected: Address::new(0x5000),
+            actual: Address::new(0x6000),
+        })
+    );
+    assert_eq!(restored.snapshot(), before);
+}
+
+#[test]
 fn partitioned_moesi_harness_quiescent_snapshot_restores_owned_state() {
     let mut source = partitioned_harness();
     source
@@ -741,6 +773,42 @@ fn partitioned_moesi_harness_quiescent_restore_rejects_backing_line_mismatch_wit
         snapshot.directory().clone(),
         snapshot.caches().clone(),
         LineBackingStore::new(layout(), Address::new(0x6000), line_data()).unwrap(),
+        snapshot.dram_memory().cloned(),
+        snapshot.fabric_lanes().map(<[_]>::to_vec),
+        snapshot.trace(),
+        snapshot.cpu_responses(),
+        snapshot.directory_decisions(),
+        snapshot.dram_accesses(),
+        snapshot.parallel_runs().to_vec(),
+    );
+
+    let mut restored = partitioned_harness();
+    let before = restored.quiescent_snapshot().unwrap();
+
+    assert_eq!(
+        restored.restore_quiescent(&bad_snapshot).unwrap_err(),
+        MoesiHarnessError::Backing(HarnessError::WrongLine {
+            expected: Address::new(0x5000),
+            actual: Address::new(0x6000),
+        })
+    );
+    assert_eq!(restored.quiescent_snapshot().unwrap(), before);
+}
+
+#[test]
+fn partitioned_moesi_harness_quiescent_restore_rejects_directory_line_mismatch_without_mutation() {
+    let mut source = partitioned_harness();
+    source
+        .submit_cpu_request_parallel(agent(1), write(1, 0, 0x5002, vec![0xaa]))
+        .unwrap();
+    source.run_until_idle_parallel().unwrap();
+    let snapshot = source.quiescent_snapshot().unwrap();
+    let bad_snapshot = PartitionedMoesiDirectoryLineHarnessSnapshot::new(
+        snapshot.line(),
+        snapshot.scheduler().clone(),
+        MoesiDirectoryLineState::new(MoesiLineId::new(Address::new(0x6000))),
+        snapshot.caches().clone(),
+        snapshot.backing().clone(),
         snapshot.dram_memory().cloned(),
         snapshot.fabric_lanes().map(<[_]>::to_vec),
         snapshot.trace(),

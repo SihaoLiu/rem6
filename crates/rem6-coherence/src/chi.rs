@@ -650,6 +650,12 @@ impl ChiDirectoryLineHarness {
                 actual: snapshot.backing().line_address(),
             }));
         }
+        if snapshot.directory().line() != self.line {
+            return Err(ChiHarnessError::Backing(HarnessError::WrongLine {
+                expected: self.line.address(),
+                actual: snapshot.directory().line().address(),
+            }));
+        }
         for agent in self.caches.keys() {
             if !snapshot.caches().contains_key(agent) {
                 return Err(ChiHarnessError::UnknownCache { agent: *agent });
@@ -1209,6 +1215,12 @@ impl PartitionedChiDirectoryLineHarness {
             return Err(ChiHarnessError::Backing(HarnessError::WrongLine {
                 expected: self.line.address(),
                 actual: snapshot.backing().line_address(),
+            }));
+        }
+        if snapshot.directory().line() != self.line {
+            return Err(ChiHarnessError::Backing(HarnessError::WrongLine {
+                expected: self.line.address(),
+                actual: snapshot.directory().line().address(),
             }));
         }
         for agent in self.caches.keys() {

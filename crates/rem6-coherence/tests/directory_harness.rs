@@ -340,6 +340,38 @@ fn directory_harness_restore_rejects_backing_line_mismatch_without_mutation() {
 }
 
 #[test]
+fn directory_harness_restore_rejects_directory_line_mismatch_without_mutation() {
+    let mut source = harness();
+    source
+        .submit_cpu_request(agent(1), write(1, 0, 0x1002, vec![0xaa]))
+        .unwrap();
+    let snapshot = source.snapshot();
+    let bad_snapshot = DirectoryLineHarnessSnapshot::new(
+        snapshot.line(),
+        DirectoryLineState::new(MsiLineId::new(Address::new(0x2000))),
+        snapshot.caches().clone(),
+        snapshot.backing().clone(),
+        snapshot.cpu_responses().to_vec(),
+        snapshot.directory_decisions().to_vec(),
+    );
+
+    let mut restored = harness();
+    restored
+        .submit_cpu_request(agent(2), write(2, 9, 0x1004, vec![0xdd]))
+        .unwrap();
+    let before = restored.snapshot();
+
+    assert_eq!(
+        restored.restore(&bad_snapshot).unwrap_err(),
+        HarnessError::WrongLine {
+            expected: Address::new(0x1000),
+            actual: Address::new(0x2000),
+        }
+    );
+    assert_eq!(restored.snapshot(), before);
+}
+
+#[test]
 fn directory_harness_rejects_unknown_cache_agent() {
     let mut harness = harness();
 

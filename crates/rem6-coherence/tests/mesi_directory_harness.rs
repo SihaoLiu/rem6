@@ -712,6 +712,38 @@ fn mesi_harness_restore_rejects_backing_line_mismatch_without_mutation() {
 }
 
 #[test]
+fn mesi_harness_restore_rejects_directory_line_mismatch_without_mutation() {
+    let mut source = harness();
+    source
+        .submit_cpu_request(agent(1), write(1, 0, 0x3002, vec![0xaa]))
+        .unwrap();
+    let snapshot = source.snapshot();
+    let bad_snapshot = MesiDirectoryLineHarnessSnapshot::new(
+        snapshot.line(),
+        MesiDirectoryLineState::new(MesiLineId::new(Address::new(0x4000))),
+        snapshot.caches().clone(),
+        snapshot.backing().clone(),
+        snapshot.cpu_responses().to_vec(),
+        snapshot.directory_decisions().to_vec(),
+    );
+
+    let mut restored = harness();
+    restored
+        .submit_cpu_request(agent(2), write(2, 9, 0x3004, vec![0xdd]))
+        .unwrap();
+    let before = restored.snapshot();
+
+    assert_eq!(
+        restored.restore(&bad_snapshot).unwrap_err(),
+        MesiHarnessError::Backing(HarnessError::WrongLine {
+            expected: Address::new(0x3000),
+            actual: Address::new(0x4000),
+        })
+    );
+    assert_eq!(restored.snapshot(), before);
+}
+
+#[test]
 fn partitioned_mesi_harness_quiescent_snapshot_restores_state() {
     let mut source = partitioned_harness_with_memory();
     source
@@ -1024,6 +1056,41 @@ fn partitioned_mesi_harness_quiescent_restore_rejects_backing_line_mismatch_with
         snapshot.directory().clone(),
         snapshot.caches().clone(),
         LineBackingStore::new(layout(), Address::new(0x4000), line_data()).unwrap(),
+        snapshot.dram_memory().cloned(),
+        snapshot.trace(),
+        snapshot.cpu_responses(),
+        snapshot.directory_decisions(),
+        snapshot.dram_accesses(),
+        snapshot.parallel_runs().to_vec(),
+    );
+
+    let mut restored = partitioned_harness();
+    let before = restored.quiescent_snapshot().unwrap();
+
+    assert_eq!(
+        restored.restore_quiescent(&bad_snapshot).unwrap_err(),
+        MesiHarnessError::Backing(HarnessError::WrongLine {
+            expected: Address::new(0x3000),
+            actual: Address::new(0x4000),
+        })
+    );
+    assert_eq!(restored.quiescent_snapshot().unwrap(), before);
+}
+
+#[test]
+fn partitioned_mesi_harness_quiescent_restore_rejects_directory_line_mismatch_without_mutation() {
+    let mut source = partitioned_harness();
+    source
+        .submit_cpu_request_parallel(agent(1), write(1, 0, 0x3002, vec![0xaa]))
+        .unwrap();
+    source.run_until_idle_parallel().unwrap();
+    let snapshot = source.quiescent_snapshot().unwrap();
+    let bad_snapshot = PartitionedMesiDirectoryLineHarnessSnapshot::new(
+        snapshot.line(),
+        snapshot.scheduler().clone(),
+        MesiDirectoryLineState::new(MesiLineId::new(Address::new(0x4000))),
+        snapshot.caches().clone(),
+        snapshot.backing().clone(),
         snapshot.dram_memory().cloned(),
         snapshot.trace(),
         snapshot.cpu_responses(),

@@ -113,6 +113,12 @@ impl DirectoryLineHarness {
                 actual: snapshot.backing().line_address(),
             });
         }
+        if snapshot.directory().line() != self.line {
+            return Err(HarnessError::WrongLine {
+                expected: self.line.address(),
+                actual: snapshot.directory().line().address(),
+            });
+        }
         for agent in self.caches.keys() {
             if !snapshot.caches().contains_key(agent) {
                 return Err(HarnessError::UnknownCache { agent: *agent });
