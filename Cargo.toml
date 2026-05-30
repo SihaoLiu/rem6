@@ -7,6 +7,7 @@ members = [
     "crates/rem6-checkpoint",
     "crates/rem6-coherence",
     "crates/rem6-cpu",
+    "crates/rem6-debug",
     "crates/rem6-directory",
     "crates/rem6-dram",
     "crates/rem6-fabric",

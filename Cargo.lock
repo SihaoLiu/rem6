@@ -76,6 +76,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "rem6-debug"
+version = "0.1.0"
+
+[[package]]
 name = "rem6-directory"
 version = "0.1.0"
 dependencies = [
