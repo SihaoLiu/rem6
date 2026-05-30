@@ -89,6 +89,16 @@ fn temp_binary(name: &str, bytes: &[u8]) -> std::path::PathBuf {
     path
 }
 
+fn assert_stat(stdout: &str, path: &str, unit: &str, value: u64, reset_policy: &str) {
+    let expected = format!(
+        "{{\"path\":\"{path}\",\"unit\":\"{unit}\",\"value\":{value},\"reset_policy\":\"{reset_policy}\"}}"
+    );
+    assert!(
+        stdout.contains(&expected),
+        "missing stat {expected} in {stdout}"
+    );
+}
+
 #[test]
 fn rem6_run_loads_riscv_elf_and_emits_json_stats_artifact() {
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
@@ -207,6 +217,58 @@ fn rem6_run_executes_riscv_elf_on_parallel_cores_and_emits_core_stats() {
     assert!(stdout.contains("\"path\":\"sim.parallel.scheduler.batch.idle_worker_ticks\""));
     assert!(stdout.contains("\"value\":4"));
     assert!(stdout.contains("\"value\":2"));
+}
+
+#[test]
+fn rem6_run_respects_explicit_parallel_worker_limit() {
+    let program = riscv64_program(&[
+        0x0070_0293, // addi x5, x0, 7
+        0x0000_0073, // ecall
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("parallel-worker-limit", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "2",
+            "--parallel-workers",
+            "1",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert_stat(
+        &stdout,
+        "sim.parallel.scheduler.worker_limit",
+        "Count",
+        1,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.parallel.scheduler.max_workers",
+        "Count",
+        1,
+        "monotonic",
+    );
 }
 
 #[test]

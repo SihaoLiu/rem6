@@ -94,6 +94,7 @@ pub struct Rem6RunConfig {
     stats_format: StatsFormat,
     execute: bool,
     cores: usize,
+    parallel_workers: usize,
     memory_dumps: Vec<MemoryDumpRequest>,
 }
 
@@ -117,6 +118,7 @@ impl Rem6RunConfig {
         let mut stats_format = StatsFormat::Json;
         let mut execute = false;
         let mut cores = 1usize;
+        let mut parallel_workers = None;
         let mut memory_dumps = Vec::new();
         while let Some(flag) = args.next() {
             match flag.as_str() {
@@ -148,6 +150,18 @@ impl Rem6RunConfig {
                             value: value.clone(),
                         })?;
                 }
+                "--parallel-workers" => {
+                    let value = required_value(&flag, args.next())?;
+                    parallel_workers = Some(
+                        value
+                            .parse()
+                            .ok()
+                            .filter(|workers| *workers > 0)
+                            .ok_or_else(|| Rem6CliError::InvalidParallelWorkerCount {
+                                value: value.clone(),
+                            })?,
+                    );
+                }
                 "--dump-memory" => {
                     let value = required_value(&flag, args.next())?;
                     memory_dumps.push(MemoryDumpRequest::parse(&value)?);
@@ -163,6 +177,7 @@ impl Rem6RunConfig {
             stats_format,
             execute,
             cores,
+            parallel_workers: parallel_workers.unwrap_or(cores),
             memory_dumps,
         })
     }
@@ -189,6 +204,10 @@ impl Rem6RunConfig {
 
     pub const fn cores(&self) -> usize {
         self.cores
+    }
+
+    pub const fn parallel_workers(&self) -> usize {
+        self.parallel_workers
     }
 
     pub fn memory_dumps(&self) -> &[MemoryDumpRequest] {
@@ -420,6 +439,9 @@ pub enum Rem6CliError {
     InvalidCoreCount {
         value: String,
     },
+    InvalidParallelWorkerCount {
+        value: String,
+    },
     InvalidMemoryDump {
         value: String,
     },
@@ -470,6 +492,9 @@ impl fmt::Display for Rem6CliError {
             }
             Self::InvalidMaxTick { value } => write!(formatter, "invalid max tick {value}"),
             Self::InvalidCoreCount { value } => write!(formatter, "invalid core count {value}"),
+            Self::InvalidParallelWorkerCount { value } => {
+                write!(formatter, "invalid parallel worker count {value}")
+            }
             Self::InvalidMemoryDump { value } => {
                 write!(formatter, "invalid memory dump request {value}")
             }
@@ -563,6 +588,7 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
         image.segments().len() as u64,
         config.max_tick(),
         config.cores() as u64,
+        config.parallel_workers() as u64,
         execution.as_ref(),
     )?;
     Ok(Rem6RunArtifact {
@@ -582,6 +608,7 @@ fn run_stats_json(
     load_segments: u64,
     max_tick: u64,
     cores: u64,
+    parallel_workers: u64,
     execution: Option<&Rem6ExecutionSummary>,
 ) -> Result<String, Rem6CliError> {
     let mut stats = StatsRegistry::new();
@@ -612,6 +639,13 @@ fn run_stats_json(
         "Count",
         StatResetPolicy::Constant,
         cores,
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.parallel.scheduler.worker_limit",
+        "Count",
+        StatResetPolicy::Constant,
+        parallel_workers,
     )?;
 
     if let Some(execution) = execution {
@@ -835,8 +869,12 @@ fn execute_riscv(
         .map_err(execute_error)?;
     let store = Arc::new(Mutex::new(store));
 
-    let mut scheduler =
-        PartitionedScheduler::with_min_remote_delay(partition_count, 1).map_err(execute_error)?;
+    let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(
+        partition_count,
+        1,
+        config.parallel_workers(),
+    )
+    .map_err(execute_error)?;
     let mut transport = MemoryTransport::new();
     let mut cores = Vec::new();
     for cpu_index in 0..core_count {
