@@ -15,6 +15,7 @@ pub(super) struct Rem6StatsOutput {
 pub(super) struct Rem6StatsInputs<'a> {
     pub(super) binary_bytes: u64,
     pub(super) load_segments: u64,
+    pub(super) start_address: u64,
     pub(super) config: &'a Rem6RunConfig,
     pub(super) execution: Option<&'a Rem6ExecutionSummary>,
 }
@@ -43,6 +44,13 @@ pub(super) fn run_stats_output(
         "Tick",
         StatResetPolicy::Constant,
         inputs.config.max_tick(),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.start_address",
+        "Address",
+        StatResetPolicy::Constant,
+        inputs.start_address,
     )?;
     increment_stat(
         &mut stats,

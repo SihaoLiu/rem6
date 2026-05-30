@@ -111,6 +111,7 @@ pub struct Rem6RunConfig {
     min_remote_delay: u64,
     memory_route_delay: u64,
     host_event_delay: u64,
+    start_address: Option<u64>,
     max_instructions: Option<u64>,
     stats_format: StatsFormat,
     execute: bool,
@@ -141,6 +142,7 @@ impl Rem6RunConfig {
         let mut min_remote_delay = 1u64;
         let mut memory_route_delay = None;
         let mut host_event_delay = None;
+        let mut start_address = None;
         let mut max_instructions = None;
         let mut stats_format = StatsFormat::Json;
         let mut execute = false;
@@ -183,6 +185,14 @@ impl Rem6RunConfig {
                     let value = required_value(&flag, args.next())?;
                     host_event_delay = Some(parse_positive_u64(&value).ok_or_else(|| {
                         Rem6CliError::InvalidHostEventDelay {
+                            value: value.clone(),
+                        }
+                    })?);
+                }
+                "--start-address" => {
+                    let value = required_value(&flag, args.next())?;
+                    start_address = Some(parse_number(&value).ok_or_else(|| {
+                        Rem6CliError::InvalidStartAddress {
                             value: value.clone(),
                         }
                     })?);
@@ -270,6 +280,7 @@ impl Rem6RunConfig {
             min_remote_delay,
             memory_route_delay,
             host_event_delay,
+            start_address,
             max_instructions,
             stats_format,
             execute,
@@ -303,6 +314,10 @@ impl Rem6RunConfig {
 
     pub const fn host_event_delay(&self) -> u64 {
         self.host_event_delay
+    }
+
+    pub const fn start_address(&self) -> Option<u64> {
+        self.start_address
     }
 
     pub const fn max_instructions(&self) -> Option<u64> {
@@ -377,6 +392,7 @@ pub struct Rem6RunArtifact {
     config: Rem6RunConfig,
     binary_bytes: u64,
     entry: u64,
+    start_address: u64,
     metadata: rem6_boot::BootElfMetadata,
     load_segments: u64,
     execution: Option<Rem6ExecutionSummary>,
@@ -548,6 +564,9 @@ pub enum Rem6CliError {
     InvalidHostEventDelay {
         value: String,
     },
+    InvalidStartAddress {
+        value: String,
+    },
     MemoryRouteDelayBelowMinRemoteDelay {
         memory_route_delay: u64,
         min_remote_delay: u64,
@@ -630,6 +649,9 @@ impl fmt::Display for Rem6CliError {
             }
             Self::InvalidHostEventDelay { value } => {
                 write!(formatter, "invalid host event delay {value}")
+            }
+            Self::InvalidStartAddress { value } => {
+                write!(formatter, "invalid start address {value}")
             }
             Self::MemoryRouteDelayBelowMinRemoteDelay {
                 memory_route_delay,
@@ -793,9 +815,12 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
         }
     }
 
+    let start_address = config
+        .start_address()
+        .unwrap_or_else(|| image.entry().get());
     let execution = if config.execute() {
         Some(match config.isa() {
-            RequestedIsa::Riscv => execute_riscv(&image, &config)?,
+            RequestedIsa::Riscv => execute_riscv(&image, &config, Address::new(start_address))?,
             isa => return Err(Rem6CliError::UnsupportedExecutionIsa { isa }),
         })
     } else {
@@ -804,6 +829,7 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
     let stats = run_stats_output(Rem6StatsInputs {
         binary_bytes: bytes.len() as u64,
         load_segments: image.segments().len() as u64,
+        start_address,
         config: &config,
         execution: execution.as_ref(),
     })?;
@@ -811,6 +837,7 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
         schema: "rem6.cli.run.v1",
         binary_bytes: bytes.len() as u64,
         entry: image.entry().get(),
+        start_address,
         load_segments: image.segments().len() as u64,
         metadata,
         config,
@@ -823,6 +850,7 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
 fn execute_riscv(
     image: &BootImage,
     config: &Rem6RunConfig,
+    start_address: Address,
 ) -> Result<Rem6ExecutionSummary, Rem6CliError> {
     let core_count = u32::try_from(config.cores()).map_err(|_| Rem6CliError::InvalidCoreCount {
         value: config.cores().to_string(),
@@ -885,7 +913,7 @@ fn execute_riscv(
                     CpuId::new(cpu_index),
                     cpu_partition,
                     AgentId::new(cpu_index),
-                    image.entry(),
+                    start_address,
                 ),
                 CpuFetchConfig::new(
                     transport_endpoint(format!("cpu{cpu_index}.ifetch"))?,

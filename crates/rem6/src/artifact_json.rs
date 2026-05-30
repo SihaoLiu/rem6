@@ -54,11 +54,12 @@ impl Rem6RunArtifact {
             .map(Rem6ExecutionSummary::to_transport_json)
             .unwrap_or_else(empty_transport_json);
         format!(
-            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"entry\":\"0x{:x}\",\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"transport\":{},\"stats\":{}}}\n",
+            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\",\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"transport\":{},\"stats\":{}}}\n",
             self.schema,
             self.config.isa().as_str(),
             json_escape(&self.config.binary().display().to_string()),
             self.entry,
+            self.start_address,
             elf_class_name(self.metadata.class()),
             elf_endian_name(self.metadata.endian()),
             elf_architecture_name(self.metadata.architecture()),
