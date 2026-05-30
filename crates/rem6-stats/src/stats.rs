@@ -4,6 +4,7 @@ use std::fmt;
 use rem6_kernel::Tick;
 
 use crate::error::StatsError;
+use crate::reset::{StatResetPolicy, StatsResetRecord};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct StatId(u64);
@@ -331,6 +332,7 @@ pub struct StatSample {
     group: Option<StatGroupId>,
     path: StatPath,
     unit: StatUnit,
+    reset_policy: StatResetPolicy,
     description: Option<StatDescription>,
     value: u64,
 }
@@ -357,6 +359,7 @@ impl StatSample {
             group: None,
             path: stat_path,
             unit: stat_unit,
+            reset_policy: StatResetPolicy::Resettable,
             description: None,
             value,
         })
@@ -364,6 +367,16 @@ impl StatSample {
 
     pub const fn from_parts(id: StatId, path: StatPath, unit: StatUnit, value: u64) -> Self {
         Self::from_registered_parts(id, None, path, unit, value)
+    }
+
+    pub const fn from_parts_with_reset_policy(
+        id: StatId,
+        path: StatPath,
+        unit: StatUnit,
+        reset_policy: StatResetPolicy,
+        value: u64,
+    ) -> Self {
+        Self::from_registered_parts_with_reset_policy(id, None, path, unit, reset_policy, value)
     }
 
     pub const fn from_parts_with_description(
@@ -386,6 +399,25 @@ impl StatSample {
         Self::from_registered_parts_with_description(id, group, path, unit, None, value)
     }
 
+    pub const fn from_registered_parts_with_reset_policy(
+        id: StatId,
+        group: Option<StatGroupId>,
+        path: StatPath,
+        unit: StatUnit,
+        reset_policy: StatResetPolicy,
+        value: u64,
+    ) -> Self {
+        Self::from_registered_parts_with_reset_policy_and_description(
+            id,
+            group,
+            path,
+            unit,
+            reset_policy,
+            None,
+            value,
+        )
+    }
+
     pub const fn from_registered_parts_with_description(
         id: StatId,
         group: Option<StatGroupId>,
@@ -394,11 +426,32 @@ impl StatSample {
         description: Option<StatDescription>,
         value: u64,
     ) -> Self {
+        Self::from_registered_parts_with_reset_policy_and_description(
+            id,
+            group,
+            path,
+            unit,
+            StatResetPolicy::Resettable,
+            description,
+            value,
+        )
+    }
+
+    pub const fn from_registered_parts_with_reset_policy_and_description(
+        id: StatId,
+        group: Option<StatGroupId>,
+        path: StatPath,
+        unit: StatUnit,
+        reset_policy: StatResetPolicy,
+        description: Option<StatDescription>,
+        value: u64,
+    ) -> Self {
         Self {
             id,
             group,
             path,
             unit,
+            reset_policy,
             description,
             value,
         }
@@ -436,6 +489,10 @@ impl StatSample {
         &self.unit
     }
 
+    pub const fn reset_policy(&self) -> StatResetPolicy {
+        self.reset_policy
+    }
+
     pub fn description(&self) -> Option<&str> {
         self.description.as_ref().map(StatDescription::as_str)
     }
@@ -455,6 +512,7 @@ pub struct StatDeltaSample {
     group: Option<StatGroupId>,
     path: StatPath,
     unit: StatUnit,
+    reset_policy: StatResetPolicy,
     description: Option<StatDescription>,
     previous_value: u64,
     current_value: u64,
@@ -490,6 +548,7 @@ impl StatDeltaSample {
             group: None,
             path: stat_path,
             unit: stat_unit,
+            reset_policy: StatResetPolicy::Resettable,
             description: None,
             previous_value,
             current_value,
@@ -504,6 +563,25 @@ impl StatDeltaSample {
         current_value: u64,
     ) -> Self {
         Self::from_registered_parts(id, None, path, unit, previous_value, current_value)
+    }
+
+    pub const fn from_parts_with_reset_policy(
+        id: StatId,
+        path: StatPath,
+        unit: StatUnit,
+        reset_policy: StatResetPolicy,
+        previous_value: u64,
+        current_value: u64,
+    ) -> Self {
+        Self::from_registered_parts_with_reset_policy(
+            id,
+            None,
+            path,
+            unit,
+            reset_policy,
+            previous_value,
+            current_value,
+        )
     }
 
     pub const fn from_parts_with_description(
@@ -544,6 +622,27 @@ impl StatDeltaSample {
         )
     }
 
+    pub const fn from_registered_parts_with_reset_policy(
+        id: StatId,
+        group: Option<StatGroupId>,
+        path: StatPath,
+        unit: StatUnit,
+        reset_policy: StatResetPolicy,
+        previous_value: u64,
+        current_value: u64,
+    ) -> Self {
+        Self {
+            id,
+            group,
+            path,
+            unit,
+            reset_policy,
+            description: None,
+            previous_value,
+            current_value,
+        }
+    }
+
     pub const fn from_registered_parts_with_description(
         id: StatId,
         group: Option<StatGroupId>,
@@ -558,6 +657,7 @@ impl StatDeltaSample {
             group,
             path,
             unit,
+            reset_policy: StatResetPolicy::Resettable,
             description,
             previous_value,
             current_value,
@@ -594,6 +694,10 @@ impl StatDeltaSample {
 
     pub const fn stat_unit(&self) -> &StatUnit {
         &self.unit
+    }
+
+    pub const fn reset_policy(&self) -> StatResetPolicy {
+        self.reset_policy
     }
 
     pub fn description(&self) -> Option<&str> {
@@ -817,6 +921,13 @@ impl StatSnapshot {
                     current_description: current_sample.stat_description().cloned(),
                 });
             }
+            if current_sample.reset_policy() != previous_sample.reset_policy() {
+                return Err(StatsError::SnapshotDeltaResetPolicyMismatch {
+                    stat: previous_sample.id(),
+                    previous_policy: previous_sample.reset_policy(),
+                    current_policy: current_sample.reset_policy(),
+                });
+            }
             if current_sample.value() < previous_sample.value() {
                 return Err(StatsError::SnapshotDeltaValueWentBack {
                     stat: previous_sample.id(),
@@ -824,15 +935,16 @@ impl StatSnapshot {
                     current: current_sample.value(),
                 });
             }
-            deltas.push(StatDeltaSample::from_registered_parts_with_description(
-                previous_sample.id(),
-                previous_sample.group(),
-                previous_sample.stat_path().clone(),
-                previous_sample.stat_unit().clone(),
-                previous_sample.stat_description().cloned(),
-                previous_sample.value(),
-                current_sample.value(),
-            ));
+            deltas.push(StatDeltaSample {
+                id: previous_sample.id(),
+                group: previous_sample.group(),
+                path: previous_sample.stat_path().clone(),
+                unit: previous_sample.stat_unit().clone(),
+                reset_policy: previous_sample.reset_policy(),
+                description: previous_sample.stat_description().cloned(),
+                previous_value: previous_sample.value(),
+                current_value: current_sample.value(),
+            });
         }
 
         Ok(StatSnapshotDelta::with_groups(
@@ -904,50 +1016,6 @@ impl StatHistoryRecord {
             Self::Dump(record) => record.reset_tick(),
             Self::Reset(record) => record.tick(),
         }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct StatsResetRecord {
-    id: StatResetId,
-    tick: Tick,
-    epoch: u64,
-    previous_values: Vec<(StatId, u64)>,
-}
-
-impl StatsResetRecord {
-    pub const fn new(tick: Tick, epoch: u64, previous_values: Vec<(StatId, u64)>) -> Self {
-        Self::with_id(StatResetId::new(0), tick, epoch, previous_values)
-    }
-
-    pub const fn with_id(
-        id: StatResetId,
-        tick: Tick,
-        epoch: u64,
-        previous_values: Vec<(StatId, u64)>,
-    ) -> Self {
-        Self {
-            id,
-            tick,
-            epoch,
-            previous_values,
-        }
-    }
-
-    pub const fn id(&self) -> StatResetId {
-        self.id
-    }
-
-    pub const fn tick(&self) -> Tick {
-        self.tick
-    }
-
-    pub const fn epoch(&self) -> u64 {
-        self.epoch
-    }
-
-    pub fn previous_values(&self) -> &[(StatId, u64)] {
-        &self.previous_values
     }
 }
 

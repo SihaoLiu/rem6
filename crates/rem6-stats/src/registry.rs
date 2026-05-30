@@ -3,10 +3,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use rem6_kernel::Tick;
 
 use crate::error::StatsError;
+use crate::reset::{StatResetPolicy, StatResetSample, StatsResetRecord};
 use crate::stats::{
     StatDescription, StatDumpId, StatDumpRecord, StatGroupDescriptor, StatGroupId,
     StatHistoryRecord, StatId, StatPath, StatResetId, StatSample, StatScope, StatSnapshot,
-    StatUnit, StatsResetRecord,
+    StatUnit,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -79,7 +80,35 @@ impl StatsRegistry {
         path: impl Into<String>,
         unit: StatUnit,
     ) -> Result<StatId, StatsError> {
-        self.register_counter_with_optional_description(path, unit, None)
+        self.register_counter_with_optional_description(
+            path,
+            unit,
+            StatResetPolicy::Resettable,
+            None,
+        )
+    }
+
+    pub fn register_counter_with_reset_policy(
+        &mut self,
+        path: impl Into<String>,
+        unit: impl Into<String>,
+        reset_policy: StatResetPolicy,
+    ) -> Result<StatId, StatsError> {
+        let unit = unit.into();
+        let unit = match StatUnit::parse(unit.clone()) {
+            Ok(unit) => unit,
+            Err(reason) => return Err(StatsError::InvalidUnit { unit, reason }),
+        };
+        self.register_counter_with_unit_and_reset_policy(path, unit, reset_policy)
+    }
+
+    pub fn register_counter_with_unit_and_reset_policy(
+        &mut self,
+        path: impl Into<String>,
+        unit: StatUnit,
+        reset_policy: StatResetPolicy,
+    ) -> Result<StatId, StatsError> {
+        self.register_counter_with_optional_description(path, unit, reset_policy, None)
     }
 
     pub fn register_counter_with_unit_and_description(
@@ -89,13 +118,19 @@ impl StatsRegistry {
         description: impl Into<String>,
     ) -> Result<StatId, StatsError> {
         let description = parse_stat_description(description)?;
-        self.register_counter_with_optional_description(path, unit, Some(description))
+        self.register_counter_with_optional_description(
+            path,
+            unit,
+            StatResetPolicy::Resettable,
+            Some(description),
+        )
     }
 
     fn register_counter_with_optional_description(
         &mut self,
         path: impl Into<String>,
         unit: StatUnit,
+        reset_policy: StatResetPolicy,
         description: Option<StatDescription>,
     ) -> Result<StatId, StatsError> {
         let path = path.into();
@@ -104,7 +139,7 @@ impl StatsRegistry {
         }
         let stat_path = StatPath::parse(path.clone())
             .map_err(|reason| StatsError::InvalidPath { path, reason })?;
-        self.register_counter_path(None, stat_path, unit, description)
+        self.register_counter_path(None, stat_path, unit, reset_policy, description)
     }
 
     pub fn register_scoped_counter<I, S>(
@@ -140,7 +175,7 @@ impl StatsRegistry {
         let path = segments.join(".");
         let stat_path = StatPath::from_segments(segments)
             .map_err(|reason| StatsError::InvalidPath { path, reason })?;
-        self.register_counter_path(None, stat_path, unit, None)
+        self.register_counter_path(None, stat_path, unit, StatResetPolicy::Resettable, None)
     }
 
     pub fn register_group<I, S>(&mut self, scope: I) -> Result<StatGroupId, StatsError>
@@ -204,7 +239,38 @@ impl StatsRegistry {
         name: impl Into<String>,
         unit: StatUnit,
     ) -> Result<StatId, StatsError> {
-        self.register_group_counter_with_optional_description(group, name, unit, None)
+        self.register_group_counter_with_optional_description(
+            group,
+            name,
+            unit,
+            StatResetPolicy::Resettable,
+            None,
+        )
+    }
+
+    pub fn register_group_counter_with_reset_policy(
+        &mut self,
+        group: StatGroupId,
+        name: impl Into<String>,
+        unit: impl Into<String>,
+        reset_policy: StatResetPolicy,
+    ) -> Result<StatId, StatsError> {
+        let unit = unit.into();
+        let unit = match StatUnit::parse(unit.clone()) {
+            Ok(unit) => unit,
+            Err(reason) => return Err(StatsError::InvalidUnit { unit, reason }),
+        };
+        self.register_group_counter_with_unit_and_reset_policy(group, name, unit, reset_policy)
+    }
+
+    pub fn register_group_counter_with_unit_and_reset_policy(
+        &mut self,
+        group: StatGroupId,
+        name: impl Into<String>,
+        unit: StatUnit,
+        reset_policy: StatResetPolicy,
+    ) -> Result<StatId, StatsError> {
+        self.register_group_counter_with_optional_description(group, name, unit, reset_policy, None)
     }
 
     pub fn register_group_counter_with_unit_and_description(
@@ -215,7 +281,13 @@ impl StatsRegistry {
         description: impl Into<String>,
     ) -> Result<StatId, StatsError> {
         let description = parse_stat_description(description)?;
-        self.register_group_counter_with_optional_description(group, name, unit, Some(description))
+        self.register_group_counter_with_optional_description(
+            group,
+            name,
+            unit,
+            StatResetPolicy::Resettable,
+            Some(description),
+        )
     }
 
     fn register_group_counter_with_optional_description(
@@ -223,6 +295,7 @@ impl StatsRegistry {
         group: StatGroupId,
         name: impl Into<String>,
         unit: StatUnit,
+        reset_policy: StatResetPolicy,
         description: Option<StatDescription>,
     ) -> Result<StatId, StatsError> {
         self.ensure_schema_open()?;
@@ -235,7 +308,7 @@ impl StatsRegistry {
         let path = segments.join(".");
         let stat_path = StatPath::from_segments(segments)
             .map_err(|reason| StatsError::InvalidPath { path, reason })?;
-        self.register_counter_path(Some(group), stat_path, unit, description)
+        self.register_counter_path(Some(group), stat_path, unit, reset_policy, description)
     }
 
     fn register_counter_path(
@@ -243,6 +316,7 @@ impl StatsRegistry {
         group: Option<StatGroupId>,
         path: StatPath,
         unit: StatUnit,
+        reset_policy: StatResetPolicy,
         description: Option<StatDescription>,
     ) -> Result<StatId, StatsError> {
         self.ensure_schema_open()?;
@@ -261,6 +335,7 @@ impl StatsRegistry {
                 group,
                 path,
                 unit,
+                reset_policy,
                 description,
             },
         );
@@ -329,11 +404,12 @@ impl StatsRegistry {
             .descriptors
             .iter()
             .map(|(id, descriptor)| {
-                StatSample::from_registered_parts_with_description(
+                StatSample::from_registered_parts_with_reset_policy_and_description(
                     *id,
                     descriptor.group,
                     descriptor.path.clone(),
                     descriptor.unit.clone(),
+                    descriptor.reset_policy,
                     descriptor.description.clone(),
                     self.counters.get(id).copied().unwrap_or_default(),
                 )
@@ -407,12 +483,24 @@ impl StatsRegistry {
 
         self.epoch += 1;
         self.reset_tick = tick;
-        let mut previous_values = Vec::new();
+        let mut reset_samples = Vec::new();
         for (id, counter) in &mut self.counters {
-            previous_values.push((*id, *counter));
-            *counter = 0;
+            let reset_policy = self
+                .descriptors
+                .get(id)
+                .map(|descriptor| descriptor.reset_policy)
+                .unwrap_or(StatResetPolicy::Resettable);
+            let previous_value = *counter;
+            let reset_value = reset_policy.value_after_reset(previous_value);
+            reset_samples.push(StatResetSample::new(
+                *id,
+                reset_policy,
+                previous_value,
+                reset_value,
+            ));
+            *counter = reset_value;
         }
-        let record = StatsResetRecord::with_id(id, tick, self.epoch, previous_values);
+        let record = StatsResetRecord::with_reset_samples(id, tick, self.epoch, reset_samples);
         self.reset_records.push(record.clone());
         self.history_records
             .push(StatHistoryRecord::Reset(record.clone()));
@@ -431,6 +519,7 @@ struct StatDescriptor {
     group: Option<StatGroupId>,
     path: StatPath,
     unit: StatUnit,
+    reset_policy: StatResetPolicy,
     description: Option<StatDescription>,
 }
 

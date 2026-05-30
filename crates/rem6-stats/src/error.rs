@@ -4,6 +4,7 @@ use std::fmt;
 use rem6_kernel::Tick;
 
 use crate::probes::{ProbeListenerId, ProbePointId};
+use crate::reset::StatResetPolicy;
 use crate::stats::{
     StatDescription, StatDescriptionError, StatGroupDescriptor, StatGroupId, StatId, StatPathError,
     StatUnitError,
@@ -85,6 +86,11 @@ pub enum StatsError {
         stat: StatId,
         previous_description: Option<StatDescription>,
         current_description: Option<StatDescription>,
+    },
+    SnapshotDeltaResetPolicyMismatch {
+        stat: StatId,
+        previous_policy: StatResetPolicy,
+        current_policy: StatResetPolicy,
     },
     SnapshotDeltaValueWentBack {
         stat: StatId,
@@ -253,6 +259,15 @@ impl fmt::Display for StatsError {
             Self::SnapshotDeltaDescriptionMismatch { stat, .. } => write!(
                 formatter,
                 "stat snapshot delta description for stat {} changed",
+                stat.get()
+            ),
+            Self::SnapshotDeltaResetPolicyMismatch {
+                stat,
+                previous_policy,
+                current_policy,
+            } => write!(
+                formatter,
+                "stat snapshot delta reset policy for stat {} changed from {previous_policy} to {current_policy}",
                 stat.get()
             ),
             Self::SnapshotDeltaValueWentBack {

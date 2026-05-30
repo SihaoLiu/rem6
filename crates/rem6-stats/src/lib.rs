@@ -1,6 +1,7 @@
 mod error;
 mod probes;
 mod registry;
+mod reset;
 mod stats;
 
 pub use error::StatsError;
@@ -9,9 +10,10 @@ pub use probes::{
     ProbeSnapshot,
 };
 pub use registry::StatsRegistry;
+pub use reset::{StatResetPolicy, StatResetSample, StatsResetRecord};
 pub use stats::{
     StatDeltaSample, StatDescription, StatDescriptionError, StatDumpId, StatDumpRecord,
     StatGroupDescriptor, StatGroupId, StatHistoryRecord, StatId, StatPath, StatPathError,
     StatResetId, StatSample, StatScope, StatSnapshot, StatSnapshotDelta, StatUnit, StatUnitError,
-    StatUnitKind, StatsResetRecord,
+    StatUnitKind,
 };

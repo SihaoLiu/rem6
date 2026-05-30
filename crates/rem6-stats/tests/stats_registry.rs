@@ -3,8 +3,9 @@ use rem6_stats::{
     ProbeEvent, ProbeListenerId, ProbeListenerRef, ProbePayload, ProbePointId, ProbeRegistry,
     ProbeSnapshot, StatDeltaSample, StatDescription, StatDescriptionError, StatDumpId,
     StatDumpRecord, StatGroupDescriptor, StatGroupId, StatHistoryRecord, StatId, StatPath,
-    StatPathError, StatResetId, StatSample, StatScope, StatSnapshot, StatSnapshotDelta, StatUnit,
-    StatUnitError, StatsError, StatsRegistry, StatsResetRecord,
+    StatPathError, StatResetId, StatResetPolicy, StatResetSample, StatSample, StatScope,
+    StatSnapshot, StatSnapshotDelta, StatUnit, StatUnitError, StatsError, StatsRegistry,
+    StatsResetRecord,
 };
 
 #[test]
@@ -720,6 +721,45 @@ fn stats_snapshot_delta_rejects_description_drift() {
 }
 
 #[test]
+fn stats_snapshot_delta_rejects_reset_policy_drift() {
+    let stat = StatId::new(7);
+    let path = StatPath::new(["cpu0"], "cycles").unwrap();
+    let previous = StatSnapshot::new(
+        10,
+        0,
+        0,
+        vec![StatSample::from_parts_with_reset_policy(
+            stat,
+            path.clone(),
+            StatUnit::cycle(),
+            StatResetPolicy::Resettable,
+            12,
+        )],
+    );
+    let current = StatSnapshot::new(
+        20,
+        0,
+        0,
+        vec![StatSample::from_parts_with_reset_policy(
+            stat,
+            path,
+            StatUnit::cycle(),
+            StatResetPolicy::Monotonic,
+            15,
+        )],
+    );
+
+    assert_eq!(
+        current.delta_since(&previous).unwrap_err(),
+        StatsError::SnapshotDeltaResetPolicyMismatch {
+            stat,
+            previous_policy: StatResetPolicy::Resettable,
+            current_policy: StatResetPolicy::Monotonic,
+        },
+    );
+}
+
+#[test]
 fn stats_snapshot_delta_rejects_group_catalog_drift() {
     let stat = StatId::new(0);
     let group = StatGroupId::new(0);
@@ -859,6 +899,89 @@ fn stats_registry_records_typed_reset_history() {
         stats.reset_records(),
         [first_reset, second_reset].as_slice()
     );
+}
+
+#[test]
+fn stats_reset_preserves_declared_constant_and_monotonic_counters_with_typed_audit() {
+    let mut stats = StatsRegistry::new();
+    let cpu0 = stats.register_group(["system", "cpu0"]).unwrap();
+    let committed = stats
+        .register_group_counter_with_reset_policy(
+            cpu0,
+            "committed_insts",
+            "Count",
+            StatResetPolicy::Resettable,
+        )
+        .unwrap();
+    let thread_contexts = stats
+        .register_group_counter_with_reset_policy(
+            cpu0,
+            "thread_contexts",
+            "Count",
+            StatResetPolicy::Constant,
+        )
+        .unwrap();
+    let elapsed_ticks = stats
+        .register_counter_with_reset_policy(
+            "system.elapsed_ticks",
+            "Tick",
+            StatResetPolicy::Monotonic,
+        )
+        .unwrap();
+
+    stats.increment(committed, 21).unwrap();
+    stats.increment(thread_contexts, 4).unwrap();
+    stats.increment(elapsed_ticks, 1000).unwrap();
+
+    let reset = stats.reset(100);
+
+    assert_eq!(
+        reset.reset_samples(),
+        [
+            StatResetSample::new(committed, StatResetPolicy::Resettable, 21, 0),
+            StatResetSample::new(thread_contexts, StatResetPolicy::Constant, 4, 4),
+            StatResetSample::new(elapsed_ticks, StatResetPolicy::Monotonic, 1000, 1000),
+        ]
+        .as_slice(),
+    );
+    assert_eq!(
+        reset.previous_values(),
+        [(committed, 21), (thread_contexts, 4), (elapsed_ticks, 1000)].as_slice(),
+    );
+
+    let after_reset = stats.snapshot(101);
+    assert_eq!(
+        after_reset.samples()[0].reset_policy(),
+        StatResetPolicy::Resettable
+    );
+    assert_eq!(after_reset.samples()[0].value(), 0);
+    assert_eq!(
+        after_reset.samples()[1].reset_policy(),
+        StatResetPolicy::Constant
+    );
+    assert_eq!(after_reset.samples()[1].value(), 4);
+    assert_eq!(
+        after_reset.samples()[2].reset_policy(),
+        StatResetPolicy::Monotonic
+    );
+    assert_eq!(after_reset.samples()[2].value(), 1000);
+
+    stats.increment(committed, 3).unwrap();
+    stats.increment(elapsed_ticks, 50).unwrap();
+    let later = stats.snapshot(120);
+    let delta = later.delta_since(&after_reset).unwrap();
+    assert_eq!(
+        delta.samples()[0].reset_policy(),
+        StatResetPolicy::Resettable
+    );
+    assert_eq!(delta.samples()[0].delta_value(), 3);
+    assert_eq!(delta.samples()[1].reset_policy(), StatResetPolicy::Constant);
+    assert_eq!(delta.samples()[1].delta_value(), 0);
+    assert_eq!(
+        delta.samples()[2].reset_policy(),
+        StatResetPolicy::Monotonic
+    );
+    assert_eq!(delta.samples()[2].delta_value(), 50);
 }
 
 #[test]
