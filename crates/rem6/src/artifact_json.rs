@@ -16,13 +16,15 @@ impl Rem6RunArtifact {
                     self.config.max_tick(),
                     self.config.max_instructions(),
                     self.config.memory_route_delay(),
+                    self.config.host_event_delay(),
                 )
             }
             None => format!(
-                "{{\"status\":\"loaded\",\"max_tick\":{},\"instruction_limit\":{},\"memory_route_delay\":{},\"executed_ticks\":0,\"cores\":{}}}",
+                "{{\"status\":\"loaded\",\"max_tick\":{},\"instruction_limit\":{},\"memory_route_delay\":{},\"host_event_delay\":{},\"executed_ticks\":0,\"cores\":{}}}",
                 self.config.max_tick(),
                 optional_count_json(self.config.max_instructions()),
                 self.config.memory_route_delay(),
+                self.config.host_event_delay(),
                 self.config.cores(),
             ),
         };
@@ -87,6 +89,7 @@ impl Rem6ExecutionSummary {
         max_tick: u64,
         max_instructions: Option<u64>,
         memory_route_delay: u64,
+        host_event_delay: u64,
     ) -> String {
         let instruction_limit = match self.stop {
             Rem6ExecutionStop::InstructionLimit { instruction_limit } => Some(instruction_limit),
@@ -95,10 +98,11 @@ impl Rem6ExecutionSummary {
             }
         };
         let common = format!(
-            "\"max_tick\":{},\"instruction_limit\":{},\"memory_route_delay\":{},\"executed_ticks\":{},\"final_tick\":{},\"cores\":{},\"committed_instructions\":{}",
+            "\"max_tick\":{},\"instruction_limit\":{},\"memory_route_delay\":{},\"host_event_delay\":{},\"executed_ticks\":{},\"final_tick\":{},\"cores\":{},\"committed_instructions\":{}",
             max_tick,
             optional_count_json(instruction_limit),
             memory_route_delay,
+            host_event_delay,
             self.final_tick,
             self.final_tick,
             self.cores.len(),

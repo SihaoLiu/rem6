@@ -15,7 +15,7 @@ use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryOperation, MemoryRequest, MemoryRequestId,
     MemoryTargetId, PartitionedMemoryStore,
 };
-use rem6_stats::{StatResetPolicy, StatSnapshot, StatsRegistry};
+use rem6_stats::StatsRegistry;
 use rem6_system::{
     GuestEventId, GuestSourceId, GuestTrapKind, HostEventPolicy, RiscvSystemRun,
     RiscvSystemRunDriver, RiscvSystemRunStopReason, RiscvTrapEventPort, SystemHostController,
@@ -29,10 +29,12 @@ use rem6_transport::{
 mod artifact_json;
 mod formatting;
 mod parallel_stats;
+mod stats_output;
 #[cfg(test)]
 mod transport_summary_tests;
 
 use formatting::{elf_architecture_name, json_escape};
+use stats_output::{run_stats_output, Rem6StatsInputs};
 
 const DEFAULT_CACHE_LINE_BYTES: u64 = 16;
 const CLI_MEMORY_TARGET: MemoryTargetId = MemoryTargetId::new(0);
@@ -108,6 +110,7 @@ pub struct Rem6RunConfig {
     max_tick: u64,
     min_remote_delay: u64,
     memory_route_delay: u64,
+    host_event_delay: u64,
     max_instructions: Option<u64>,
     stats_format: StatsFormat,
     execute: bool,
@@ -137,6 +140,7 @@ impl Rem6RunConfig {
         let mut max_tick = None;
         let mut min_remote_delay = 1u64;
         let mut memory_route_delay = None;
+        let mut host_event_delay = None;
         let mut max_instructions = None;
         let mut stats_format = StatsFormat::Json;
         let mut execute = false;
@@ -161,26 +165,27 @@ impl Rem6RunConfig {
                 }
                 "--min-remote-delay" => {
                     let value = required_value(&flag, args.next())?;
-                    min_remote_delay =
-                        value
-                            .parse()
-                            .ok()
-                            .filter(|delay| *delay > 0)
-                            .ok_or_else(|| Rem6CliError::InvalidMinRemoteDelay {
-                                value: value.clone(),
-                            })?;
+                    min_remote_delay = parse_positive_u64(&value).ok_or_else(|| {
+                        Rem6CliError::InvalidMinRemoteDelay {
+                            value: value.clone(),
+                        }
+                    })?;
                 }
                 "--memory-route-delay" => {
                     let value = required_value(&flag, args.next())?;
-                    memory_route_delay = Some(
-                        value
-                            .parse()
-                            .ok()
-                            .filter(|delay| *delay > 0)
-                            .ok_or_else(|| Rem6CliError::InvalidMemoryRouteDelay {
-                                value: value.clone(),
-                            })?,
-                    );
+                    memory_route_delay = Some(parse_positive_u64(&value).ok_or_else(|| {
+                        Rem6CliError::InvalidMemoryRouteDelay {
+                            value: value.clone(),
+                        }
+                    })?);
+                }
+                "--host-event-delay" => {
+                    let value = required_value(&flag, args.next())?;
+                    host_event_delay = Some(parse_positive_u64(&value).ok_or_else(|| {
+                        Rem6CliError::InvalidHostEventDelay {
+                            value: value.clone(),
+                        }
+                    })?);
                 }
                 "--max-instructions" => {
                     let value = required_value(&flag, args.next())?;
@@ -244,9 +249,16 @@ impl Rem6RunConfig {
             }
         }
         let memory_route_delay = memory_route_delay.unwrap_or(min_remote_delay);
+        let host_event_delay = host_event_delay.unwrap_or(min_remote_delay);
         if memory_route_delay < min_remote_delay {
             return Err(Rem6CliError::MemoryRouteDelayBelowMinRemoteDelay {
                 memory_route_delay,
+                min_remote_delay,
+            });
+        }
+        if host_event_delay < min_remote_delay {
+            return Err(Rem6CliError::HostEventDelayBelowMinRemoteDelay {
+                host_event_delay,
                 min_remote_delay,
             });
         }
@@ -257,6 +269,7 @@ impl Rem6RunConfig {
             max_tick: max_tick.ok_or(Rem6CliError::MissingRequiredFlag { flag: "--max-tick" })?,
             min_remote_delay,
             memory_route_delay,
+            host_event_delay,
             max_instructions,
             stats_format,
             execute,
@@ -286,6 +299,10 @@ impl Rem6RunConfig {
 
     pub const fn memory_route_delay(&self) -> u64 {
         self.memory_route_delay
+    }
+
+    pub const fn host_event_delay(&self) -> u64 {
+        self.host_event_delay
     }
 
     pub const fn max_instructions(&self) -> Option<u64> {
@@ -528,8 +545,15 @@ pub enum Rem6CliError {
     InvalidMemoryRouteDelay {
         value: String,
     },
+    InvalidHostEventDelay {
+        value: String,
+    },
     MemoryRouteDelayBelowMinRemoteDelay {
         memory_route_delay: u64,
+        min_remote_delay: u64,
+    },
+    HostEventDelayBelowMinRemoteDelay {
+        host_event_delay: u64,
         min_remote_delay: u64,
     },
     InvalidMaxInstructions {
@@ -604,12 +628,22 @@ impl fmt::Display for Rem6CliError {
             Self::InvalidMemoryRouteDelay { value } => {
                 write!(formatter, "invalid memory route delay {value}")
             }
+            Self::InvalidHostEventDelay { value } => {
+                write!(formatter, "invalid host event delay {value}")
+            }
             Self::MemoryRouteDelayBelowMinRemoteDelay {
                 memory_route_delay,
                 min_remote_delay,
             } => write!(
                 formatter,
                 "memory route delay {memory_route_delay} is below min remote delay {min_remote_delay}"
+            ),
+            Self::HostEventDelayBelowMinRemoteDelay {
+                host_event_delay,
+                min_remote_delay,
+            } => write!(
+                formatter,
+                "host event delay {host_event_delay} is below min remote delay {min_remote_delay}"
             ),
             Self::InvalidMaxInstructions { value } => {
                 write!(formatter, "invalid max instructions {value}")
@@ -786,388 +820,6 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
     })
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct Rem6StatsOutput {
-    json: String,
-    text: String,
-}
-
-struct Rem6StatsInputs<'a> {
-    binary_bytes: u64,
-    load_segments: u64,
-    config: &'a Rem6RunConfig,
-    execution: Option<&'a Rem6ExecutionSummary>,
-}
-
-fn run_stats_output(inputs: Rem6StatsInputs<'_>) -> Result<Rem6StatsOutput, Rem6CliError> {
-    let mut stats = StatsRegistry::new();
-    increment_stat(
-        &mut stats,
-        "sim.binary.bytes",
-        "Byte",
-        StatResetPolicy::Constant,
-        inputs.binary_bytes,
-    )?;
-    increment_stat(
-        &mut stats,
-        "sim.elf.load_segments",
-        "Count",
-        StatResetPolicy::Constant,
-        inputs.load_segments,
-    )?;
-    increment_stat(
-        &mut stats,
-        "sim.max_tick",
-        "Tick",
-        StatResetPolicy::Constant,
-        inputs.config.max_tick(),
-    )?;
-    increment_stat(
-        &mut stats,
-        "sim.parallel.scheduler.min_remote_delay",
-        "Tick",
-        StatResetPolicy::Constant,
-        inputs.config.min_remote_delay(),
-    )?;
-    increment_stat(
-        &mut stats,
-        "sim.memory.route_delay",
-        "Tick",
-        StatResetPolicy::Constant,
-        inputs.config.memory_route_delay(),
-    )?;
-    if let Some(max_instructions) = inputs.config.max_instructions() {
-        increment_stat(
-            &mut stats,
-            "sim.instructions.limit",
-            "Count",
-            StatResetPolicy::Constant,
-            max_instructions,
-        )?;
-    }
-    increment_stat(
-        &mut stats,
-        "sim.cores",
-        "Count",
-        StatResetPolicy::Constant,
-        inputs.config.cores() as u64,
-    )?;
-    increment_stat(
-        &mut stats,
-        "sim.parallel.scheduler.worker_limit",
-        "Count",
-        StatResetPolicy::Constant,
-        inputs.config.parallel_workers() as u64,
-    )?;
-
-    if let Some(execution) = inputs.execution {
-        increment_stat(
-            &mut stats,
-            "sim.instructions.committed",
-            "Count",
-            StatResetPolicy::Monotonic,
-            execution.committed_instructions,
-        )?;
-        increment_stat(
-            &mut stats,
-            "sim.final_tick",
-            "Tick",
-            StatResetPolicy::Monotonic,
-            execution.final_tick,
-        )?;
-        match execution.stop {
-            Rem6ExecutionStop::HostTrap { stop_code, .. } => {
-                increment_stat(
-                    &mut stats,
-                    "sim.stop.host_trap",
-                    "Count",
-                    StatResetPolicy::Constant,
-                    1,
-                )?;
-                increment_stat(
-                    &mut stats,
-                    "sim.stop_code",
-                    "Count",
-                    StatResetPolicy::Constant,
-                    stop_code as u64,
-                )?;
-            }
-            Rem6ExecutionStop::TickLimit { .. } => {
-                increment_stat(
-                    &mut stats,
-                    "sim.stop.tick_limit",
-                    "Count",
-                    StatResetPolicy::Constant,
-                    1,
-                )?;
-            }
-            Rem6ExecutionStop::InstructionLimit { .. } => {
-                increment_stat(
-                    &mut stats,
-                    "sim.stop.instruction_limit",
-                    "Count",
-                    StatResetPolicy::Constant,
-                    1,
-                )?;
-            }
-        }
-        increment_stat(
-            &mut stats,
-            "sim.memory.dumps",
-            "Count",
-            StatResetPolicy::Constant,
-            execution.memory_dumps.len() as u64,
-        )?;
-        increment_stat(
-            &mut stats,
-            "sim.data.loads",
-            "Count",
-            StatResetPolicy::Monotonic,
-            execution.data_loads,
-        )?;
-        increment_stat(
-            &mut stats,
-            "sim.data.stores",
-            "Count",
-            StatResetPolicy::Monotonic,
-            execution.data_stores,
-        )?;
-        increment_stat(
-            &mut stats,
-            "sim.data.atomics",
-            "Count",
-            StatResetPolicy::Monotonic,
-            execution.data_atomics,
-        )?;
-        increment_stat(
-            &mut stats,
-            "sim.data.load_bytes",
-            "Byte",
-            StatResetPolicy::Monotonic,
-            execution.data_load_bytes,
-        )?;
-        increment_stat(
-            &mut stats,
-            "sim.data.store_bytes",
-            "Byte",
-            StatResetPolicy::Monotonic,
-            execution.data_store_bytes,
-        )?;
-        increment_stat(
-            &mut stats,
-            "sim.data.atomic_bytes",
-            "Byte",
-            StatResetPolicy::Monotonic,
-            execution.data_atomic_bytes,
-        )?;
-        parallel_stats::emit_scheduler_stats(&mut stats, execution)?;
-        emit_transport_stats(&mut stats, "sim.memory.fetch", &execution.fetch_transport)?;
-        emit_transport_stats(&mut stats, "sim.memory.data", &execution.data_transport)?;
-        for core in &execution.cores {
-            increment_stat(
-                &mut stats,
-                &format!("sim.cpu{}.instructions.committed", core.cpu),
-                "Count",
-                StatResetPolicy::Monotonic,
-                core.committed_instructions,
-            )?;
-            increment_stat(
-                &mut stats,
-                &format!("sim.cpu{}.data.loads", core.cpu),
-                "Count",
-                StatResetPolicy::Monotonic,
-                core.data_loads,
-            )?;
-            increment_stat(
-                &mut stats,
-                &format!("sim.cpu{}.data.stores", core.cpu),
-                "Count",
-                StatResetPolicy::Monotonic,
-                core.data_stores,
-            )?;
-            increment_stat(
-                &mut stats,
-                &format!("sim.cpu{}.data.atomics", core.cpu),
-                "Count",
-                StatResetPolicy::Monotonic,
-                core.data_atomics,
-            )?;
-            increment_stat(
-                &mut stats,
-                &format!("sim.cpu{}.data.load_bytes", core.cpu),
-                "Byte",
-                StatResetPolicy::Monotonic,
-                core.data_load_bytes,
-            )?;
-            increment_stat(
-                &mut stats,
-                &format!("sim.cpu{}.data.store_bytes", core.cpu),
-                "Byte",
-                StatResetPolicy::Monotonic,
-                core.data_store_bytes,
-            )?;
-            increment_stat(
-                &mut stats,
-                &format!("sim.cpu{}.data.atomic_bytes", core.cpu),
-                "Byte",
-                StatResetPolicy::Monotonic,
-                core.data_atomic_bytes,
-            )?;
-        }
-    }
-
-    let snapshot = stats.snapshot(0);
-    Ok(Rem6StatsOutput {
-        json: stats_snapshot_json(&snapshot),
-        text: stats_snapshot_text(&snapshot),
-    })
-}
-
-fn stats_snapshot_json(snapshot: &StatSnapshot) -> String {
-    let samples = snapshot
-        .samples()
-        .iter()
-        .map(|sample| {
-            format!(
-                "{{\"path\":\"{}\",\"unit\":\"{}\",\"value\":{},\"reset_policy\":\"{}\"}}",
-                json_escape(sample.path()),
-                json_escape(sample.unit()),
-                sample.value(),
-                sample.reset_policy()
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(",");
-    format!("[{samples}]")
-}
-
-fn stats_snapshot_text(snapshot: &StatSnapshot) -> String {
-    let mut output = "\n---------- Begin Simulation Statistics ----------\n".to_string();
-    for sample in snapshot.samples() {
-        output.push_str(&format!(
-            "{:<64} {:>20} # unit={} reset_policy={}\n",
-            sample.path(),
-            sample.value(),
-            sample.unit(),
-            sample.reset_policy()
-        ));
-    }
-    output.push_str("\n---------- End Simulation Statistics   ----------\n");
-    output
-}
-
-fn increment_stat(
-    stats: &mut StatsRegistry,
-    path: &str,
-    unit: &str,
-    reset_policy: StatResetPolicy,
-    value: u64,
-) -> Result<(), Rem6CliError> {
-    let stat = stats
-        .register_counter_with_reset_policy(path, unit, reset_policy)
-        .map_err(stats_error)?;
-    stats.increment(stat, value).map_err(stats_error)
-}
-
-fn emit_transport_stats(
-    stats: &mut StatsRegistry,
-    prefix: &str,
-    summary: &Rem6MemoryTransportSummary,
-) -> Result<(), Rem6CliError> {
-    emit_transport_counters(stats, prefix, &summary.counters)?;
-    for route in &summary.routes {
-        let route_prefix = format!(
-            "{prefix}.route{}.source.{}",
-            route.route.get(),
-            endpoint_stat_path(&route.source)
-        );
-        emit_transport_counters(stats, &route_prefix, &route.counters)?;
-    }
-    Ok(())
-}
-
-fn emit_transport_counters(
-    stats: &mut StatsRegistry,
-    prefix: &str,
-    counters: &Rem6MemoryTransportCounters,
-) -> Result<(), Rem6CliError> {
-    increment_stat(
-        stats,
-        &format!("{prefix}.requests"),
-        "Count",
-        StatResetPolicy::Monotonic,
-        counters.requests,
-    )?;
-    increment_stat(
-        stats,
-        &format!("{prefix}.request_arrivals"),
-        "Count",
-        StatResetPolicy::Monotonic,
-        counters.request_arrivals,
-    )?;
-    increment_stat(
-        stats,
-        &format!("{prefix}.responses"),
-        "Count",
-        StatResetPolicy::Monotonic,
-        counters.responses,
-    )?;
-    increment_stat(
-        stats,
-        &format!("{prefix}.response_arrivals"),
-        "Count",
-        StatResetPolicy::Monotonic,
-        counters.response_arrivals,
-    )?;
-    increment_stat(
-        stats,
-        &format!("{prefix}.round_trip_ticks"),
-        "Tick",
-        StatResetPolicy::Monotonic,
-        counters.round_trip_ticks,
-    )?;
-    increment_stat(
-        stats,
-        &format!("{prefix}.max_round_trip_ticks"),
-        "Tick",
-        StatResetPolicy::Monotonic,
-        counters.max_round_trip_ticks,
-    )
-}
-
-fn endpoint_stat_path(endpoint: &str) -> String {
-    endpoint
-        .split('.')
-        .map(stat_path_segment)
-        .collect::<Vec<_>>()
-        .join(".")
-}
-
-fn stat_path_segment(segment: &str) -> String {
-    let mut output = String::new();
-    for (index, character) in segment.chars().enumerate() {
-        if index == 0 {
-            if character.is_ascii_alphabetic() || character == '_' {
-                output.push(character);
-            } else {
-                output.push('_');
-                if character.is_ascii_alphanumeric() {
-                    output.push(character);
-                }
-            }
-        } else if character.is_ascii_alphanumeric() || character == '_' {
-            output.push(character);
-        } else {
-            output.push('_');
-        }
-    }
-    if output.is_empty() {
-        "_".to_string()
-    } else {
-        output
-    }
-}
-
 fn execute_riscv(
     image: &BootImage,
     config: &Rem6RunConfig,
@@ -1259,7 +911,7 @@ fn execute_riscv(
     let trap_port = RiscvTrapEventPort::new(
         SystemHostEventPort::with_controller(
             host_partition,
-            config.min_remote_delay(),
+            config.host_event_delay(),
             Arc::clone(&controller),
         )
         .map_err(execute_error)?,
@@ -1746,6 +1398,10 @@ fn parse_number(value: &str) -> Option<u64> {
     } else {
         value.parse().ok()
     }
+}
+
+fn parse_positive_u64(value: &str) -> Option<u64> {
+    value.parse().ok().filter(|value| *value > 0)
 }
 
 fn required_value(flag: &str, value: Option<String>) -> Result<String, Rem6CliError> {

@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use rem6_stats::{StatResetPolicy, StatsRegistry};
 
 use super::{
-    increment_stat, Rem6CliError, Rem6ExecutionSummary, Rem6ParallelFrontierSummary,
+    stats_output::increment_stat, Rem6CliError, Rem6ExecutionSummary, Rem6ParallelFrontierSummary,
     Rem6ParallelReadyPartitionSummary,
 };
 
