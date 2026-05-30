@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
@@ -82,6 +82,59 @@ impl O3IssueQueueCapacity {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct O3DependencyScopeId(u64);
+
+impl O3DependencyScopeId {
+    const VECTOR_REDUCTION_PARTIAL_KIND: u64 = 1;
+    const VECTOR_REDUCTION_RESULT_KIND: u64 = 2;
+    const VECTOR_REDUCTION_KIND_SHIFT: u32 = 62;
+    const VECTOR_REDUCTION_INDEX_BITS: u32 = 20;
+    const VECTOR_REDUCTION_INDEX_MASK: u64 = (1 << Self::VECTOR_REDUCTION_INDEX_BITS) - 1;
+    const VECTOR_REDUCTION_GROUP_MASK: u64 =
+        (1 << (Self::VECTOR_REDUCTION_KIND_SHIFT - Self::VECTOR_REDUCTION_INDEX_BITS)) - 1;
+
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+
+    fn vector_reduction_partial(
+        group: O3VectorReductionGroupId,
+        index: u32,
+    ) -> Result<Self, O3PipelineError> {
+        Self::vector_reduction_scope(Self::VECTOR_REDUCTION_PARTIAL_KIND, group, index)
+    }
+
+    fn vector_reduction_result(group: O3VectorReductionGroupId) -> Result<Self, O3PipelineError> {
+        Self::vector_reduction_scope(Self::VECTOR_REDUCTION_RESULT_KIND, group, 0)
+    }
+
+    fn vector_reduction_scope(
+        kind: u64,
+        group: O3VectorReductionGroupId,
+        index: u32,
+    ) -> Result<Self, O3PipelineError> {
+        if group.get() > Self::VECTOR_REDUCTION_GROUP_MASK
+            || u64::from(index) > Self::VECTOR_REDUCTION_INDEX_MASK
+        {
+            return Err(O3PipelineError::DependencyScopeEncodingOverflow {
+                group: group.get(),
+                index,
+            });
+        }
+
+        Ok(Self(
+            (kind << Self::VECTOR_REDUCTION_KIND_SHIFT)
+                | (group.get() << Self::VECTOR_REDUCTION_INDEX_BITS)
+                | u64::from(index),
+        ))
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct O3ReadyInstruction {
     sequence: u64,
@@ -112,6 +165,63 @@ impl O3ReadyInstruction {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct O3ScopedReadyInstruction {
+    instruction: O3ReadyInstruction,
+    waits_on: Vec<O3DependencyScopeId>,
+    produces: Vec<O3DependencyScopeId>,
+}
+
+impl O3ScopedReadyInstruction {
+    pub fn new(sequence: u64, queue: O3IssueQueueId, op_class: O3IssueOpClass) -> Self {
+        Self {
+            instruction: O3ReadyInstruction::new(sequence, queue, op_class),
+            waits_on: Vec::new(),
+            produces: Vec::new(),
+        }
+    }
+
+    pub fn with_waits_on<I>(mut self, scopes: I) -> Self
+    where
+        I: IntoIterator<Item = O3DependencyScopeId>,
+    {
+        self.waits_on = canonical_scopes(scopes);
+        self
+    }
+
+    pub fn with_produces<I>(mut self, scopes: I) -> Self
+    where
+        I: IntoIterator<Item = O3DependencyScopeId>,
+    {
+        self.produces = canonical_scopes(scopes);
+        self
+    }
+
+    pub const fn sequence(&self) -> u64 {
+        self.instruction.sequence()
+    }
+
+    pub const fn queue(&self) -> O3IssueQueueId {
+        self.instruction.queue()
+    }
+
+    pub const fn op_class(&self) -> O3IssueOpClass {
+        self.instruction.op_class()
+    }
+
+    pub fn waits_on(&self) -> &[O3DependencyScopeId] {
+        &self.waits_on
+    }
+
+    pub fn produces(&self) -> &[O3DependencyScopeId] {
+        &self.produces
+    }
+
+    pub const fn ready_instruction(&self) -> O3ReadyInstruction {
+        self.instruction
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct O3DistributedIssuePlan {
     issue_width: usize,
     issued: Vec<O3ReadyInstruction>,
@@ -129,6 +239,36 @@ impl O3DistributedIssuePlan {
 
     pub fn blocked(&self) -> &[O3ReadyInstruction] {
         &self.blocked
+    }
+
+    pub fn issued_sequences(&self) -> impl Iterator<Item = u64> + '_ {
+        self.issued.iter().map(|instruction| instruction.sequence())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct O3ScopedIssuePlan {
+    issue_width: usize,
+    issued: Vec<O3ScopedReadyInstruction>,
+    resource_blocked: Vec<O3ScopedReadyInstruction>,
+    dependency_blocked: Vec<O3ScopedReadyInstruction>,
+}
+
+impl O3ScopedIssuePlan {
+    pub const fn issue_width(&self) -> usize {
+        self.issue_width
+    }
+
+    pub fn issued(&self) -> &[O3ScopedReadyInstruction] {
+        &self.issued
+    }
+
+    pub fn resource_blocked(&self) -> &[O3ScopedReadyInstruction] {
+        &self.resource_blocked
+    }
+
+    pub fn dependency_blocked(&self) -> &[O3ScopedReadyInstruction] {
+        &self.dependency_blocked
     }
 
     pub fn issued_sequences(&self) -> impl Iterator<Item = u64> + '_ {
@@ -209,6 +349,248 @@ impl O3DistributedIssueScheduler {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct O3ScopedIssueScheduler {
+    issue_width: usize,
+    capacities: BTreeMap<(O3IssueQueueId, O3IssueOpClass), usize>,
+}
+
+impl O3ScopedIssueScheduler {
+    pub fn new<I>(issue_width: usize, capacities: I) -> Result<Self, O3PipelineError>
+    where
+        I: IntoIterator<Item = O3IssueQueueCapacity>,
+    {
+        if issue_width == 0 {
+            return Err(O3PipelineError::ZeroIssueWidth);
+        }
+
+        Ok(Self {
+            issue_width,
+            capacities: capacities
+                .into_iter()
+                .map(|capacity| ((capacity.queue(), capacity.op_class()), capacity.slots()))
+                .collect(),
+        })
+    }
+
+    pub const fn issue_width(&self) -> usize {
+        self.issue_width
+    }
+
+    pub fn plan<R, I>(&self, resolved_scopes: R, ready: I) -> O3ScopedIssuePlan
+    where
+        R: IntoIterator<Item = O3DependencyScopeId>,
+        I: IntoIterator<Item = O3ScopedReadyInstruction>,
+    {
+        self.try_plan(resolved_scopes, ready)
+            .expect("scoped issue plan must not contain duplicate dependency producers")
+    }
+
+    pub fn try_plan<R, I>(
+        &self,
+        resolved_scopes: R,
+        ready: I,
+    ) -> Result<O3ScopedIssuePlan, O3PipelineError>
+    where
+        R: IntoIterator<Item = O3DependencyScopeId>,
+        I: IntoIterator<Item = O3ScopedReadyInstruction>,
+    {
+        let resolved_scopes = resolved_scopes.into_iter().collect::<BTreeSet<_>>();
+        let mut pending = ready.into_iter().collect::<Vec<_>>();
+        pending.sort_by_key(|instruction| instruction.sequence());
+        validate_unique_dependency_producers(&pending)?;
+
+        let mut remaining_capacity = self.capacities.clone();
+        let mut issued = Vec::new();
+        while issued.len() < self.issue_width {
+            let Some(index) = pending.iter().position(|instruction| {
+                dependency_ready(&resolved_scopes, instruction)
+                    && scoped_issue_slots(&remaining_capacity, instruction) != 0
+            }) else {
+                break;
+            };
+
+            let instruction = pending.remove(index);
+            if let Some(slots) =
+                remaining_capacity.get_mut(&(instruction.queue(), instruction.op_class()))
+            {
+                *slots -= 1;
+            }
+            issued.push(instruction);
+        }
+
+        let mut resource_blocked = Vec::new();
+        let mut dependency_blocked = Vec::new();
+        for instruction in pending {
+            if dependency_ready(&resolved_scopes, &instruction) {
+                resource_blocked.push(instruction);
+            } else {
+                dependency_blocked.push(instruction);
+            }
+        }
+
+        Ok(O3ScopedIssuePlan {
+            issue_width: self.issue_width,
+            issued,
+            resource_blocked,
+            dependency_blocked,
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct O3VectorReductionGroupId(u64);
+
+impl O3VectorReductionGroupId {
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum O3VectorReductionOrdering {
+    Ordered,
+    Unordered,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct O3VectorReductionMicroOp {
+    sequence: u64,
+    waits_on: Vec<O3DependencyScopeId>,
+    produces: Vec<O3DependencyScopeId>,
+    requires_serialize_after: bool,
+}
+
+impl O3VectorReductionMicroOp {
+    pub const fn sequence(&self) -> u64 {
+        self.sequence
+    }
+
+    pub fn waits_on(&self) -> &[O3DependencyScopeId] {
+        &self.waits_on
+    }
+
+    pub fn produces(&self) -> &[O3DependencyScopeId] {
+        &self.produces
+    }
+
+    pub const fn requires_serialize_after(&self) -> bool {
+        self.requires_serialize_after
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct O3VectorReductionDependencyPlan {
+    group: O3VectorReductionGroupId,
+    ordering: O3VectorReductionOrdering,
+    partial_count: usize,
+    architectural_result_scope: O3DependencyScopeId,
+    micro_ops: Vec<O3VectorReductionMicroOp>,
+}
+
+impl O3VectorReductionDependencyPlan {
+    pub fn new(
+        group: O3VectorReductionGroupId,
+        first_sequence: u64,
+        partial_count: usize,
+        ordering: O3VectorReductionOrdering,
+    ) -> Result<Self, O3PipelineError> {
+        if partial_count == 0 {
+            return Err(O3PipelineError::ZeroVectorReductionMicroOps { group });
+        }
+
+        let architectural_result_scope = O3DependencyScopeId::vector_reduction_result(group)?;
+        let mut partial_scopes = Vec::with_capacity(partial_count);
+        for index in 0..partial_count {
+            let index = u32::try_from(index).map_err(|_| {
+                O3PipelineError::DependencyScopeEncodingOverflow {
+                    group: group.get(),
+                    index: u32::MAX,
+                }
+            })?;
+            partial_scopes.push(O3DependencyScopeId::vector_reduction_partial(group, index)?);
+        }
+
+        let mut micro_ops = Vec::with_capacity(partial_count + 1);
+        for index in 0..partial_count {
+            let sequence = first_sequence.checked_add(index as u64).ok_or(
+                O3PipelineError::VectorReductionSequenceOverflow {
+                    first_sequence,
+                    micro_ops: partial_count + 1,
+                },
+            )?;
+            let waits_on = match ordering {
+                O3VectorReductionOrdering::Unordered => Vec::new(),
+                O3VectorReductionOrdering::Ordered if index == 0 => Vec::new(),
+                O3VectorReductionOrdering::Ordered => vec![partial_scopes[index - 1]],
+            };
+            micro_ops.push(O3VectorReductionMicroOp {
+                sequence,
+                waits_on,
+                produces: vec![partial_scopes[index]],
+                requires_serialize_after: false,
+            });
+        }
+
+        let publish_sequence = first_sequence.checked_add(partial_count as u64).ok_or(
+            O3PipelineError::VectorReductionSequenceOverflow {
+                first_sequence,
+                micro_ops: partial_count + 1,
+            },
+        )?;
+        let publish_waits = match ordering {
+            O3VectorReductionOrdering::Unordered => partial_scopes,
+            O3VectorReductionOrdering::Ordered => {
+                vec![*partial_scopes
+                    .last()
+                    .expect("vector reduction partial scopes are nonempty")]
+            }
+        };
+        micro_ops.push(O3VectorReductionMicroOp {
+            sequence: publish_sequence,
+            waits_on: publish_waits,
+            produces: vec![architectural_result_scope],
+            requires_serialize_after: false,
+        });
+
+        Ok(Self {
+            group,
+            ordering,
+            partial_count,
+            architectural_result_scope,
+            micro_ops,
+        })
+    }
+
+    pub const fn group(&self) -> O3VectorReductionGroupId {
+        self.group
+    }
+
+    pub const fn ordering(&self) -> O3VectorReductionOrdering {
+        self.ordering
+    }
+
+    pub fn micro_ops(&self) -> &[O3VectorReductionMicroOp] {
+        &self.micro_ops
+    }
+
+    pub fn partial_micro_ops(&self) -> &[O3VectorReductionMicroOp] {
+        &self.micro_ops[..self.partial_count]
+    }
+
+    pub fn publish_micro_op(&self) -> &O3VectorReductionMicroOp {
+        &self.micro_ops[self.partial_count]
+    }
+
+    pub const fn architectural_result_scope(&self) -> O3DependencyScopeId {
+        self.architectural_result_scope
+    }
+}
+
 fn issue_slots(
     capacities: &BTreeMap<(O3IssueQueueId, O3IssueOpClass), usize>,
     instruction: &O3ReadyInstruction,
@@ -217,6 +599,51 @@ fn issue_slots(
         .get(&(instruction.queue(), instruction.op_class()))
         .copied()
         .unwrap_or_default()
+}
+
+fn scoped_issue_slots(
+    capacities: &BTreeMap<(O3IssueQueueId, O3IssueOpClass), usize>,
+    instruction: &O3ScopedReadyInstruction,
+) -> usize {
+    capacities
+        .get(&(instruction.queue(), instruction.op_class()))
+        .copied()
+        .unwrap_or_default()
+}
+
+fn dependency_ready(
+    resolved_scopes: &BTreeSet<O3DependencyScopeId>,
+    instruction: &O3ScopedReadyInstruction,
+) -> bool {
+    instruction
+        .waits_on()
+        .iter()
+        .all(|scope| resolved_scopes.contains(scope))
+}
+
+fn validate_unique_dependency_producers(
+    ready: &[O3ScopedReadyInstruction],
+) -> Result<(), O3PipelineError> {
+    let mut producers = BTreeMap::new();
+    for instruction in ready {
+        for scope in instruction.produces() {
+            if producers.insert(*scope, instruction.sequence()).is_some() {
+                return Err(O3PipelineError::DuplicateDependencyProducer { scope: *scope });
+            }
+        }
+    }
+    Ok(())
+}
+
+fn canonical_scopes<I>(scopes: I) -> Vec<O3DependencyScopeId>
+where
+    I: IntoIterator<Item = O3DependencyScopeId>,
+{
+    scopes
+        .into_iter()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -241,6 +668,20 @@ pub enum O3PipelineError {
         source: O3PipelineStage,
         writeback_width: usize,
         future_cycles: u64,
+    },
+    DuplicateDependencyProducer {
+        scope: O3DependencyScopeId,
+    },
+    DependencyScopeEncodingOverflow {
+        group: u64,
+        index: u32,
+    },
+    ZeroVectorReductionMicroOps {
+        group: O3VectorReductionGroupId,
+    },
+    VectorReductionSequenceOverflow {
+        first_sequence: u64,
+        micro_ops: usize,
     },
 }
 
@@ -274,6 +715,27 @@ impl fmt::Display for O3PipelineError {
             } => write!(
                 formatter,
                 "O3 {source} writeback window overflows for width {writeback_width} and future {future_cycles}"
+            ),
+            Self::DuplicateDependencyProducer { scope } => write!(
+                formatter,
+                "O3 dependency scope {} has more than one producer",
+                scope.get()
+            ),
+            Self::DependencyScopeEncodingOverflow { group, index } => write!(
+                formatter,
+                "O3 dependency scope cannot encode vector reduction group {group} index {index}"
+            ),
+            Self::ZeroVectorReductionMicroOps { group } => write!(
+                formatter,
+                "O3 vector reduction group {} must have at least one micro-op",
+                group.get()
+            ),
+            Self::VectorReductionSequenceOverflow {
+                first_sequence,
+                micro_ops,
+            } => write!(
+                formatter,
+                "O3 vector reduction sequence overflows from first sequence {first_sequence} across {micro_ops} micro-ops"
             ),
         }
     }

@@ -579,6 +579,15 @@ isolated bugs:
   op_class)`: once one queue's IntAlu capacity is exhausted, younger ready
   IntAlu work in another queue can still issue in the same cycle if that
   queue has available capacity.
+  Public gem5 issue #2953 reports RISC-V unordered vector reductions losing O3
+  throughput because correctness is protected by putting `IsSerializeAfter` on
+  the first unordered reduction micro-op. In the local O3 rename path,
+  serialize-after marks the next instruction serialize-before, and
+  serialize-before waits for an empty ROB. rem6-cpu instead exposes scoped O3
+  dependency records: unordered reduction partial micro-ops produce
+  reduction-local scopes, the publish micro-op waits for those scopes and
+  produces the architectural result scope, and unrelated younger work remains
+  issueable without a whole-pipeline serialization barrier.
   Public gem5 issue #2211 reports RISC-V O3 full-system failure when both the
   return-address stack is disabled and `SimpleIndirectPredictor` stops hashing
   path-history targets through `indirectHashTargets = False`. The local
@@ -753,6 +762,9 @@ Research anchors refreshed through 2026-05-30:
 - Public gem5 issue anchor refreshed on 2026-05-30: open O3 distributed issue
   queue underutilization bug where a busy queue can block same-OpClass ready
   work in a different issue queue.
+- Public gem5 issue anchor refreshed on 2026-05-30: open RISC-V unordered
+  vector reduction over-serialization issue where a serialize-after first
+  micro-op can force unrelated younger work behind a ROB-empty barrier.
 - Public gem5 issue anchor refreshed on 2026-05-30: open RISC-V O3
   branch-predictor configuration bug where disabling both RAS and indirect
   target hashing can lead to an invalid early full-system memory address.
@@ -2128,7 +2140,11 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   issue queue to block only its own `(queue, OpClass)` capacity while a peer
   issue queue with the same OpClass and remaining capacity can still issue
   younger ready work in the same cycle. They also cover zero issue width and
-  zero queue-capacity rejection.
+  zero queue-capacity rejection. O3 scoped dependency tests cover public gem5
+  issue #2953 by requiring unordered RISC-V vector reduction partial
+  micro-ops, publish micro-ops, and unrelated younger work to be represented by
+  reduction-local dependency scopes instead of serialize-after barriers; they
+  also cover ordered reduction chains and duplicate producer rejection.
 - CPU branch-target safety tests cover the RISC-V O3 full-system predictor
   configuration from public gem5 issue #2211 by rejecting simultaneous RAS
   disablement and disabled indirect target path hashing while allowing either

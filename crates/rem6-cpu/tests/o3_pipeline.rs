@@ -1,6 +1,8 @@
 use rem6_cpu::{
-    O3DistributedIssueScheduler, O3IssueOpClass, O3IssueQueueCapacity, O3IssueQueueId,
-    O3PipelineError, O3PipelineStage, O3ReadyInstruction, O3UnblockDecisionReason, O3UnblockPolicy,
+    O3DependencyScopeId, O3DistributedIssueScheduler, O3IssueOpClass, O3IssueQueueCapacity,
+    O3IssueQueueId, O3PipelineError, O3PipelineStage, O3ReadyInstruction, O3ScopedIssueScheduler,
+    O3ScopedReadyInstruction, O3UnblockDecisionReason, O3UnblockPolicy,
+    O3VectorReductionDependencyPlan, O3VectorReductionGroupId, O3VectorReductionOrdering,
     O3WritebackTransferPolicy,
 };
 
@@ -160,5 +162,102 @@ fn o3_distributed_issue_scheduler_validates_width_and_queue_capacity() {
             queue: O3IssueQueueId::new(0),
             op_class: O3IssueOpClass::IntAlu,
         }
+    );
+}
+
+#[test]
+fn o3_unordered_vector_reduction_uses_scoped_dependencies_without_serializing() {
+    let group = O3VectorReductionGroupId::new(7);
+    let reduction =
+        O3VectorReductionDependencyPlan::new(group, 100, 3, O3VectorReductionOrdering::Unordered)
+            .unwrap();
+
+    assert_eq!(reduction.micro_ops().len(), 4);
+    assert!(reduction
+        .micro_ops()
+        .iter()
+        .all(|micro_op| !micro_op.requires_serialize_after()));
+    assert!(reduction
+        .partial_micro_ops()
+        .iter()
+        .all(|micro_op| micro_op.waits_on().is_empty()));
+
+    let publish = reduction.publish_micro_op();
+    assert_eq!(publish.sequence(), 103);
+    assert_eq!(publish.waits_on().len(), 3);
+    assert_eq!(
+        publish.produces(),
+        &[reduction.architectural_result_scope()]
+    );
+
+    let scheduler = O3ScopedIssueScheduler::new(
+        2,
+        [O3IssueQueueCapacity::new(O3IssueQueueId::new(0), O3IssueOpClass::IntAlu, 2).unwrap()],
+    )
+    .unwrap();
+    let plan = scheduler.plan(
+        [],
+        [
+            O3ScopedReadyInstruction::new(
+                publish.sequence(),
+                O3IssueQueueId::new(0),
+                O3IssueOpClass::IntAlu,
+            )
+            .with_waits_on(publish.waits_on().iter().copied()),
+            O3ScopedReadyInstruction::new(104, O3IssueQueueId::new(0), O3IssueOpClass::IntAlu),
+        ],
+    );
+
+    assert_eq!(plan.issued_sequences().collect::<Vec<_>>(), vec![104]);
+    assert_eq!(plan.dependency_blocked()[0].sequence(), publish.sequence());
+}
+
+#[test]
+fn o3_ordered_vector_reduction_chains_only_reduction_local_scopes() {
+    let reduction = O3VectorReductionDependencyPlan::new(
+        O3VectorReductionGroupId::new(9),
+        200,
+        3,
+        O3VectorReductionOrdering::Ordered,
+    )
+    .unwrap();
+    let partials = reduction.partial_micro_ops();
+
+    assert!(partials[0].waits_on().is_empty());
+    assert_eq!(partials[1].waits_on(), partials[0].produces());
+    assert_eq!(partials[2].waits_on(), partials[1].produces());
+    assert_eq!(
+        reduction.publish_micro_op().waits_on(),
+        partials[2].produces()
+    );
+    assert!(reduction
+        .micro_ops()
+        .iter()
+        .all(|micro_op| !micro_op.requires_serialize_after()));
+}
+
+#[test]
+fn o3_scoped_issue_scheduler_rejects_duplicate_producers() {
+    let queue = O3IssueQueueId::new(0);
+    let scheduler = O3ScopedIssueScheduler::new(
+        2,
+        [O3IssueQueueCapacity::new(queue, O3IssueOpClass::IntAlu, 2).unwrap()],
+    )
+    .unwrap();
+    let scope = O3DependencyScopeId::new(1);
+
+    assert_eq!(
+        scheduler
+            .try_plan(
+                [],
+                [
+                    O3ScopedReadyInstruction::new(10, queue, O3IssueOpClass::IntAlu)
+                        .with_produces([scope]),
+                    O3ScopedReadyInstruction::new(11, queue, O3IssueOpClass::IntAlu)
+                        .with_produces([scope]),
+                ],
+            )
+            .unwrap_err(),
+        O3PipelineError::DuplicateDependencyProducer { scope }
     );
 }
