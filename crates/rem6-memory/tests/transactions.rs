@@ -79,6 +79,27 @@ fn request_default_ordering_is_empty_and_builder_preserves_edges() {
 }
 
 #[test]
+fn request_uncacheable_builder_sets_strict_order_independently_of_barriers() {
+    let request = MemoryRequest::read_shared(
+        request_id(16),
+        Address::new(0x2100),
+        AccessSize::new(4).unwrap(),
+        line_layout(),
+    )
+    .unwrap();
+
+    assert!(!request.is_uncacheable());
+    assert!(!request.is_strict_ordered());
+    assert_eq!(request.ordering(), MemoryAccessOrdering::none());
+
+    let marked = request.with_uncacheable_strict_order();
+
+    assert!(marked.is_uncacheable());
+    assert!(marked.is_strict_ordered());
+    assert_eq!(marked.ordering(), MemoryAccessOrdering::none());
+}
+
+#[test]
 fn request_rejects_invalid_sizes_and_address_overflow() {
     assert_eq!(AccessSize::new(0).unwrap_err(), MemoryError::ZeroAccessSize);
 

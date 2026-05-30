@@ -28,6 +28,7 @@ impl RiscvCore {
             issue.line_layout,
         )
         .map_err(RiscvCpuError::Memory)?;
+        let request = self.apply_pma_fetch_request_attributes(issue.pc, issue.size, request)?;
 
         let core = self.inner();
         let event = transport
@@ -90,6 +91,7 @@ impl RiscvCore {
             issue.line_layout,
         )
         .map_err(RiscvCpuError::Memory)?;
+        let request = self.apply_pma_fetch_request_attributes(issue.pc, issue.size, request)?;
 
         let core = self.inner();
         let transaction = ParallelMemoryTransaction::new(
@@ -131,5 +133,25 @@ impl RiscvCore {
                 RiscvPrivilegeMode::Machine,
             )
             .map_err(|error| RiscvCpuError::FetchPmpAccess { pc, error })
+    }
+
+    fn apply_pma_fetch_request_attributes(
+        &self,
+        pc: Address,
+        size: AccessSize,
+        request: MemoryRequest,
+    ) -> Result<MemoryRequest, RiscvCpuError> {
+        let is_uncacheable = self
+            .state
+            .lock()
+            .expect("riscv core lock")
+            .pma
+            .is_uncacheable(pc.get(), size.bytes())
+            .map_err(|error| RiscvCpuError::FetchPmaAccess { pc, error })?;
+        if is_uncacheable {
+            Ok(request.with_uncacheable_strict_order())
+        } else {
+            Ok(request)
+        }
     }
 }

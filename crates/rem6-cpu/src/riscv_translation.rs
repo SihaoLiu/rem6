@@ -158,7 +158,12 @@ impl RiscvCore {
                 .schedule_store_conditional_failure(scheduler, issue)
                 .map(Some);
         }
-        let request = issue.memory_request()?;
+        let request = self.apply_pma_data_request_attributes(
+            issue.fetch_request,
+            issue.physical_address,
+            issue.size,
+            issue.memory_request()?,
+        )?;
 
         let core = self.clone();
         let event = transport
@@ -273,7 +278,12 @@ impl RiscvCore {
                 issue,
             }));
         }
-        let request = issue.memory_request()?;
+        let request = self.apply_pma_data_request_attributes(
+            issue.fetch_request,
+            issue.physical_address,
+            issue.size,
+            issue.memory_request()?,
+        )?;
         let core = self.clone();
         let transaction = ParallelMemoryTransaction::new(
             issue.memory_route(),

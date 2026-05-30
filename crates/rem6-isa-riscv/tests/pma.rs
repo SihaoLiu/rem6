@@ -43,3 +43,18 @@ fn pma_keeps_aligned_data_access_independent_of_regions() {
         Ok(())
     );
 }
+
+#[test]
+fn pma_marks_accesses_uncacheable_only_inside_declared_ranges() {
+    let mut pma = RiscvPmaTable::new();
+    pma.add_uncacheable_range(RiscvPmaRange::new(0x2000, 0x2100).unwrap())
+        .unwrap();
+
+    assert_eq!(pma.is_uncacheable(0x2008, 8), Ok(true));
+    assert_eq!(pma.is_uncacheable(0x20fc, 8), Ok(false));
+    assert_eq!(pma.is_uncacheable(0x2100, 4), Ok(false));
+    assert_eq!(
+        pma.uncacheable_ranges(),
+        &[RiscvPmaRange::new(0x2000, 0x2100).unwrap()]
+    );
+}

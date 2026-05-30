@@ -827,11 +827,15 @@ Research anchors refreshed through 2026-05-30:
   uncacheable ranges and misaligned-load/store support ranges beside the TLB
   path, then applies PMA after PMP rather than letting memory targets discover
   an illegal request late. rem6 now owns a typed `RiscvPmaTable` with explicit
-  misaligned-support ranges. RISC-V plain data, translated data, and MMIO data
-  issue check PMA alignment after PMP and before request submission, and
-  denials remain `RiscvCpuError::DataPmaAccess` instead of callback panics or
-  post-dispatch memory errors. Uncacheable request tagging remains an alignment
-  target for the memory request contract.
+  misaligned-support and uncacheable ranges. RISC-V plain data, translated
+  data, and MMIO data issue check PMA alignment after PMP and before request
+  submission, and denials remain `RiscvCpuError::DataPmaAccess` instead of
+  callback panics or post-dispatch memory errors. RISC-V fetch and data memory
+  requests that hit an uncacheable PMA range carry explicit
+  uncacheable-plus-strict-order flags in `MemoryRequest`, so the cache,
+  transport, and memory layers can observe device-like ordering through a
+  typed request contract instead of relying on hidden request flags. Broader
+  cache and NoC policy consumption of those flags remains an alignment target.
 - Public gem5 issue anchor refreshed on 2026-05-30: open three-level CHI
   LR/SC race where contending RISC-V mutex paths can violate lock ownership
   under Ruby CHI.
@@ -2341,7 +2345,11 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   cover default misaligned data rejection, explicit misaligned-support ranges,
   aligned-access bypass, and CPU frontend rejection of physical and translated
   misaligned data loads before memory issue, plus successful issue when the
-  physical range explicitly supports misalignment. RISC-V vector-config prediction tests cover branch-prediction targets
+  physical range explicitly supports misalignment. Memory request tests cover
+  typed uncacheable-plus-strict-order flags independent of barrier ordering.
+  RISC-V PMA and frontend tests cover uncacheable range matching plus fetch and
+  data request delivery with strict-order flags set before transport response.
+  RISC-V vector-config prediction tests cover branch-prediction targets
   that drop copied dynamic `vl`/`vtype` state while preserving the current hart
   vector configuration, and explicit vector-configuration updates that mutate
   `vl`/`vtype` only through the typed update path.

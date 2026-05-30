@@ -41,6 +41,7 @@ impl RiscvPmaRange {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RiscvPmaTable {
     misaligned_ranges: Vec<RiscvPmaRange>,
+    uncacheable_ranges: Vec<RiscvPmaRange>,
 }
 
 impl RiscvPmaTable {
@@ -54,8 +55,28 @@ impl RiscvPmaTable {
         Ok(())
     }
 
+    pub fn add_uncacheable_range(&mut self, range: RiscvPmaRange) -> Result<(), RiscvPmaError> {
+        self.uncacheable_ranges.push(range);
+        self.uncacheable_ranges.sort_by_key(|range| range.start());
+        Ok(())
+    }
+
     pub fn misaligned_ranges(&self) -> &[RiscvPmaRange] {
         &self.misaligned_ranges
+    }
+
+    pub fn uncacheable_ranges(&self) -> &[RiscvPmaRange] {
+        &self.uncacheable_ranges
+    }
+
+    pub fn is_uncacheable(&self, address: u64, size: u64) -> Result<bool, RiscvPmaError> {
+        validate_access_extent(address, size)?;
+        for range in self.uncacheable_ranges.iter().copied() {
+            if range.contains_access(address, size)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     pub fn check_data_alignment(
@@ -64,12 +85,7 @@ impl RiscvPmaTable {
         size: u64,
         kind: RiscvPmaAccessKind,
     ) -> Result<(), RiscvPmaError> {
-        if size == 0 {
-            return Err(RiscvPmaError::ZeroAccessSize { address });
-        }
-        address
-            .checked_add(size)
-            .ok_or(RiscvPmaError::AddressOverflow { address, size })?;
+        validate_access_extent(address, size)?;
 
         if address.is_multiple_of(size) {
             return Ok(());
@@ -135,3 +151,13 @@ impl fmt::Display for RiscvPmaError {
 }
 
 impl Error for RiscvPmaError {}
+
+fn validate_access_extent(address: u64, size: u64) -> Result<(), RiscvPmaError> {
+    if size == 0 {
+        return Err(RiscvPmaError::ZeroAccessSize { address });
+    }
+    address
+        .checked_add(size)
+        .ok_or(RiscvPmaError::AddressOverflow { address, size })?;
+    Ok(())
+}

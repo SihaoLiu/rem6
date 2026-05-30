@@ -929,6 +929,81 @@ fn riscv_core_pma_allows_misaligned_physical_data_load_inside_supported_region()
 }
 
 #[test]
+fn riscv_core_pma_marks_uncacheable_data_load_requests_strict_order() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(2), 0x9000);
+    core.add_pma_uncacheable_range(RiscvPmaRange::new(0x9000, 0x9100).unwrap())
+        .unwrap();
+    let store = loaded_store_with_data(
+        0x8000,
+        i_type(8, 2, 0x3, 5, 0x03),
+        0x9008,
+        vec![0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11],
+    );
+    let data_store = store.clone();
+
+    fetch_one(&core, store, &mut scheduler, &transport, MemoryTrace::new());
+    core.execute_next_completed_fetch().unwrap().unwrap();
+    core.issue_next_data_access(
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+        move |delivery, _context| {
+            assert!(delivery.request().is_uncacheable());
+            assert!(delivery.request().is_strict_ordered());
+            let response = data_store
+                .lock()
+                .unwrap()
+                .respond(delivery.request())
+                .unwrap()
+                .response()
+                .cloned()
+                .unwrap();
+            TargetOutcome::Respond(response)
+        },
+    )
+    .unwrap()
+    .unwrap();
+    scheduler.run_until_idle_conservative();
+
+    assert_eq!(core.read_register(reg(5)), 0x1122_3344_5566_7788);
+}
+
+#[test]
+fn riscv_core_pma_marks_uncacheable_instruction_fetch_requests_strict_order() {
+    let (mut scheduler, transport, fetch_route, _data_route) = data_routes();
+    let core = RiscvCore::new(core(fetch_route, 0x8000));
+    core.add_pma_uncacheable_range(RiscvPmaRange::new(0x8000, 0x9000).unwrap())
+        .unwrap();
+    let store = loaded_store(0x8000, i_type(5, 0, 0x0, 1, 0x13));
+
+    core.issue_next_fetch(
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+        move |delivery, _context| {
+            assert!(delivery.request().is_uncacheable());
+            assert!(delivery.request().is_strict_ordered());
+            let response = store
+                .lock()
+                .unwrap()
+                .respond(delivery.request())
+                .unwrap()
+                .response()
+                .cloned()
+                .unwrap();
+            TargetOutcome::Respond(response)
+        },
+    )
+    .unwrap();
+    scheduler.run_until_idle_conservative();
+
+    let event = core.execute_next_completed_fetch().unwrap().unwrap();
+    assert_eq!(event.fetch_pc(), Address::new(0x8000));
+}
+
+#[test]
 fn riscv_core_records_system_trap_and_stops_issuing_fetches() {
     let (mut scheduler, transport, fetch_route, data_route) = data_routes();
     let core = data_core(fetch_route, data_route, 0x8000);

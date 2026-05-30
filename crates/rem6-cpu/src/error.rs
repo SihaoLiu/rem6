@@ -199,6 +199,10 @@ pub enum RiscvCpuError {
         pc: Address,
         error: RiscvPmpError,
     },
+    FetchPmaAccess {
+        pc: Address,
+        error: RiscvPmaError,
+    },
     DataPmpAccess {
         fetch: MemoryRequestId,
         error: RiscvPmpError,
@@ -315,6 +319,11 @@ impl fmt::Display for RiscvCpuError {
                 "instruction fetch PMP check at {:#x} failed: {error}",
                 pc.get()
             ),
+            Self::FetchPmaAccess { pc, error } => write!(
+                formatter,
+                "instruction fetch PMA check at {:#x} failed: {error}",
+                pc.get()
+            ),
             Self::DataPmpAccess { fetch, error } => write!(
                 formatter,
                 "data PMP check for fetch response {} from agent {} failed: {error}",
@@ -343,6 +352,7 @@ impl Error for RiscvCpuError {
             Self::Cpu(error) => Some(error),
             Self::DataTranslation(error) => Some(error),
             Self::FetchPmpAccess { error, .. } => Some(error),
+            Self::FetchPmaAccess { error, .. } => Some(error),
             Self::DataPmpAccess { error, .. } => Some(error),
             Self::DataPmaAccess { error, .. } => Some(error),
             Self::Isa(error) => Some(error),

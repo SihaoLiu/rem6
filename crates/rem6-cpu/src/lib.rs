@@ -892,6 +892,23 @@ impl RiscvCore {
             .to_vec()
     }
 
+    pub fn add_pma_uncacheable_range(&self, range: RiscvPmaRange) -> Result<(), RiscvPmaError> {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .pma
+            .add_uncacheable_range(range)
+    }
+
+    pub fn pma_uncacheable_ranges(&self) -> Vec<RiscvPmaRange> {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .pma
+            .uncacheable_ranges()
+            .to_vec()
+    }
+
     pub fn pmp_entry_count(&self) -> usize {
         self.state
             .lock()

@@ -41,7 +41,12 @@ impl RiscvCore {
                 .schedule_store_conditional_failure(scheduler, issue)
                 .map(Some);
         }
-        let request = issue.memory_request()?;
+        let request = self.apply_pma_data_request_attributes(
+            issue.fetch_request,
+            issue.physical_address,
+            issue.size,
+            issue.memory_request()?,
+        )?;
 
         let core = self.clone();
         let event = transport
@@ -115,7 +120,12 @@ impl RiscvCore {
                 issue,
             }));
         }
-        let request = issue.memory_request()?;
+        let request = self.apply_pma_data_request_attributes(
+            issue.fetch_request,
+            issue.physical_address,
+            issue.size,
+            issue.memory_request()?,
+        )?;
         let core = self.clone();
         let transaction = ParallelMemoryTransaction::new(
             issue.memory_route(),
@@ -327,6 +337,27 @@ impl RiscvCore {
             .pma
             .check_data_alignment(address.get(), size.bytes(), kind)
             .map_err(|error| RiscvCpuError::DataPmaAccess { fetch, error })
+    }
+
+    pub(crate) fn apply_pma_data_request_attributes(
+        &self,
+        fetch: MemoryRequestId,
+        address: Address,
+        size: AccessSize,
+        request: MemoryRequest,
+    ) -> Result<MemoryRequest, RiscvCpuError> {
+        let is_uncacheable = self
+            .state
+            .lock()
+            .expect("riscv core lock")
+            .pma
+            .is_uncacheable(address.get(), size.bytes())
+            .map_err(|error| RiscvCpuError::DataPmaAccess { fetch, error })?;
+        if is_uncacheable {
+            Ok(request.with_uncacheable_strict_order())
+        } else {
+            Ok(request)
+        }
     }
 
     pub(crate) fn record_data_issue(&self, issue: OutstandingDataAccess) {

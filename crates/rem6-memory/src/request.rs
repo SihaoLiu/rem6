@@ -10,6 +10,8 @@ pub struct MemoryRequest {
     range: AddressRange,
     line_layout: CacheLineLayout,
     ordering: MemoryAccessOrdering,
+    uncacheable: bool,
+    strict_order: bool,
     data: Option<Vec<u8>>,
     byte_mask: Option<ByteMask>,
     atomic_op: Option<MemoryAtomicOp>,
@@ -274,6 +276,8 @@ impl MemoryRequest {
             range,
             line_layout,
             ordering: MemoryAccessOrdering::none(),
+            uncacheable: false,
+            strict_order: false,
             data: payload.data,
             byte_mask: payload.byte_mask,
             atomic_op: payload.atomic_op,
@@ -351,6 +355,20 @@ impl MemoryRequest {
 
     pub fn with_ordering(mut self, ordering: MemoryAccessOrdering) -> Self {
         self.ordering = ordering;
+        self
+    }
+
+    pub const fn is_uncacheable(&self) -> bool {
+        self.uncacheable
+    }
+
+    pub const fn is_strict_ordered(&self) -> bool {
+        self.strict_order
+    }
+
+    pub fn with_uncacheable_strict_order(mut self) -> Self {
+        self.uncacheable = true;
+        self.strict_order = true;
         self
     }
 
