@@ -28,6 +28,8 @@ use rem6_transport::{
     RequestDelivery, TargetOutcome, TransportEndpointId,
 };
 
+mod artifact_json;
+
 const DEFAULT_CACHE_LINE_BYTES: u64 = 16;
 const CLI_MEMORY_TARGET: MemoryTargetId = MemoryTargetId::new(0);
 const CLI_MEMORY_DUMP_AGENT: AgentId = AgentId::new(u32::MAX);
@@ -280,52 +282,6 @@ pub struct Rem6RunArtifact {
     stats_json: String,
 }
 
-impl Rem6RunArtifact {
-    pub fn to_json(&self) -> String {
-        let simulation = match &self.execution {
-            Some(execution) => execution.to_simulation_json(self.config.max_tick()),
-            None => format!(
-                "{{\"status\":\"loaded\",\"max_tick\":{},\"executed_ticks\":0,\"cores\":{}}}",
-                self.config.max_tick(),
-                self.config.cores(),
-            ),
-        };
-        let cores = match &self.execution {
-            Some(execution) => execution.to_cores_json(),
-            None => "[]".to_string(),
-        };
-        let memory = match &self.execution {
-            Some(execution) => execution.to_memory_json(),
-            None => "[]".to_string(),
-        };
-        format!(
-            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"entry\":\"0x{:x}\",\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{}}},\"simulation\":{},\"cores\":{},\"memory\":{},\"stats\":{}}}\n",
-            self.schema,
-            self.config.isa().as_str(),
-            json_escape(&self.config.binary().display().to_string()),
-            self.entry,
-            elf_class_name(self.metadata.class()),
-            elf_endian_name(self.metadata.endian()),
-            elf_architecture_name(self.metadata.architecture()),
-            elf_os_name(self.metadata.operating_system()),
-            self.metadata.machine(),
-            self.metadata.flags(),
-            simulation,
-            cores,
-            memory,
-            self.stats_json,
-        )
-    }
-
-    pub const fn binary_bytes(&self) -> u64 {
-        self.binary_bytes
-    }
-
-    pub const fn load_segments(&self) -> u64 {
-        self.load_segments
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Rem6ExecutionSummary {
     final_tick: u64,
@@ -355,40 +311,6 @@ pub struct Rem6ExecutionSummary {
     data_transport: Rem6MemoryTransportSummary,
     cores: Vec<Rem6CoreSummary>,
     memory_dumps: Vec<Rem6MemoryDump>,
-}
-
-impl Rem6ExecutionSummary {
-    fn to_simulation_json(&self, max_tick: u64) -> String {
-        format!(
-            "{{\"status\":\"executed_until_trap\",\"max_tick\":{},\"executed_ticks\":{},\"final_tick\":{},\"cores\":{},\"stop_code\":{},\"trap\":\"{}\"}}",
-            max_tick,
-            self.final_tick,
-            self.final_tick,
-            self.cores.len(),
-            self.stop_code,
-            self.trap,
-        )
-    }
-
-    fn to_cores_json(&self) -> String {
-        let cores = self
-            .cores
-            .iter()
-            .map(Rem6CoreSummary::to_json)
-            .collect::<Vec<_>>()
-            .join(",");
-        format!("[{cores}]")
-    }
-
-    fn to_memory_json(&self) -> String {
-        let dumps = self
-            .memory_dumps
-            .iter()
-            .map(Rem6MemoryDump::to_json)
-            .collect::<Vec<_>>()
-            .join(",");
-        format!("[{dumps}]")
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -461,45 +383,10 @@ pub struct Rem6CoreSummary {
     registers: Vec<(u8, u64)>,
 }
 
-impl Rem6CoreSummary {
-    fn to_json(&self) -> String {
-        let registers = self
-            .registers
-            .iter()
-            .map(|(register, value)| format!("\"x{}\":\"0x{:x}\"", register, value))
-            .collect::<Vec<_>>()
-            .join(",");
-        format!(
-            "{{\"cpu\":{},\"pc\":\"0x{:x}\",\"committed_instructions\":{},\"data_loads\":{},\"data_stores\":{},\"data_atomics\":{},\"data_load_bytes\":{},\"data_store_bytes\":{},\"data_atomic_bytes\":{},\"registers\":{{{}}}}}",
-            self.cpu,
-            self.pc,
-            self.committed_instructions,
-            self.data_loads,
-            self.data_stores,
-            self.data_atomics,
-            self.data_load_bytes,
-            self.data_store_bytes,
-            self.data_atomic_bytes,
-            registers
-        )
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Rem6MemoryDump {
     address: u64,
     data: Vec<u8>,
-}
-
-impl Rem6MemoryDump {
-    fn to_json(&self) -> String {
-        format!(
-            "{{\"address\":\"0x{:x}\",\"bytes\":{},\"hex\":\"{}\"}}",
-            self.address,
-            self.data.len(),
-            bytes_to_hex(&self.data),
-        )
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

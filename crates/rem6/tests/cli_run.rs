@@ -347,6 +347,12 @@ fn rem6_run_executes_riscv_elf_on_parallel_cores_and_emits_core_stats() {
     assert!(stdout.contains("\"cores\":2"));
     assert!(stdout.contains("\"stop_code\":0"));
     assert!(stdout.contains("\"trap\":\"environment_call\""));
+    assert!(stdout.contains("\"parallel\":{\"scheduler\":{"));
+    assert!(stdout.contains("\"worker_limit\":2"));
+    assert!(stdout.contains("\"worker_slots\":[{\"slot\":0"));
+    assert!(stdout.contains("\"worker_lanes\":[{\"lane\":0,\"partition\":0"));
+    assert!(stdout.contains("{\"lane\":1,\"partition\":1"));
+    assert!(stdout.contains("\"partitions\":[{\"partition\":0"));
     assert!(stdout.contains("\"cpu\":0"));
     assert!(stdout.contains("\"cpu\":1"));
     assert!(stdout.contains("\"pc\":\"0x80000004\""));
