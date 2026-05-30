@@ -532,8 +532,10 @@ isolated bugs:
   tick. gem5's Ruby warmup path temporarily resets global time and relies on
   restore ordering. rem6-kernel instead exposes a checkpoint restore event plan
   with an isolated warmup replay clock and a live-event lower bound at the
-  restored tick, so subsystem warmup events cannot be mistaken for live
-  scheduler events after checkpoint restore.
+  restored tick. The plan preserves capture order for audit but exports warmup
+  events in replay-clock order and live events in scheduler order, so subsystem
+  warmup events cannot be mistaken for live scheduler events after checkpoint
+  restore.
 
 Research anchors refreshed through 2026-05-30:
 
@@ -999,6 +1001,12 @@ Implementation evidence on 2026-05-26:
   tick. A malformed checkpoint cannot swap per-partition scheduler state or
   restore a scheduler-wide clock that later lets callbacks discover a
   schedule-in-past failure after partial state has already changed.
+- Checkpoint restore event plans now retain original warmup and live-event
+  capture order for audit, while exposing warmup events sorted by replay clock
+  and live events sorted by scheduler tick, partition, and restore order. This
+  keeps Ruby-style warmup replay deterministic without letting a restore-time
+  event captured before a later live scheduler event force schedule-in-past
+  insertion.
 - The serial scheduler drain now advances idle partition clocks to the final
   tick before returning, so the debug serial view cannot leave a stale
   partition frontier that later accepts a parallel event in scheduler-global

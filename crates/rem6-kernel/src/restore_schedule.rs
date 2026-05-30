@@ -188,8 +188,20 @@ impl CheckpointRestoreEventPlan {
         &self.warmup_events
     }
 
+    pub fn warmup_events_for_replay(&self) -> Vec<CheckpointRestoreWarmupEvent> {
+        let mut events = self.warmup_events.clone();
+        events.sort_by_key(|event| (event.replay_now, event.scheduled_tick, event.restore_order));
+        events
+    }
+
     pub fn live_events(&self) -> &[CheckpointRestoreLiveEvent] {
         &self.live_events
+    }
+
+    pub fn live_events_for_scheduler(&self) -> Vec<CheckpointRestoreLiveEvent> {
+        let mut events = self.live_events.clone();
+        events.sort_by_key(|event| (event.scheduled_tick, event.partition, event.restore_order));
+        events
     }
 
     pub fn record_warmup_event(
