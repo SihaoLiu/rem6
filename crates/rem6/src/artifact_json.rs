@@ -22,8 +22,14 @@ impl Rem6RunArtifact {
             ),
         };
         let parallel = match &self.execution {
-            Some(execution) => execution.to_parallel_json(self.config.parallel_workers()),
-            None => empty_parallel_json(self.config.parallel_workers()),
+            Some(execution) => execution.to_parallel_json(
+                self.config.parallel_workers(),
+                self.config.min_remote_delay(),
+            ),
+            None => empty_parallel_json(
+                self.config.parallel_workers(),
+                self.config.min_remote_delay(),
+            ),
         };
         let cores = self
             .execution
@@ -103,7 +109,7 @@ impl Rem6ExecutionSummary {
         }
     }
 
-    fn to_parallel_json(&self, worker_limit: usize) -> String {
+    fn to_parallel_json(&self, worker_limit: usize, min_remote_delay: u64) -> String {
         let slots = self
             .parallel_scheduler_worker_slots
             .iter()
@@ -141,8 +147,9 @@ impl Rem6ExecutionSummary {
             .collect::<Vec<_>>()
             .join(",");
         format!(
-            "{{\"scheduler\":{{\"worker_limit\":{},\"epochs\":{},\"dispatches\":{},\"batches\":{},\"max_workers\":{},\"total_workers\":{},\"active_partitions\":{},\"remote_sends\":{},\"batch_worker_ticks\":{},\"batch_worker_capacity_ticks\":{},\"batch_idle_worker_ticks\":{},\"worker_slots\":[{}],\"worker_lanes\":[{}],\"partitions\":[{}],\"frontiers\":[{}],\"final_frontiers\":[{}],\"ready_partitions\":[{}]}}}}",
+            "{{\"scheduler\":{{\"worker_limit\":{},\"min_remote_delay\":{},\"epochs\":{},\"dispatches\":{},\"batches\":{},\"max_workers\":{},\"total_workers\":{},\"active_partitions\":{},\"remote_sends\":{},\"batch_worker_ticks\":{},\"batch_worker_capacity_ticks\":{},\"batch_idle_worker_ticks\":{},\"worker_slots\":[{}],\"worker_lanes\":[{}],\"partitions\":[{}],\"frontiers\":[{}],\"final_frontiers\":[{}],\"ready_partitions\":[{}]}}}}",
             worker_limit,
+            min_remote_delay,
             self.parallel_scheduler_epochs,
             self.parallel_scheduler_dispatches,
             self.parallel_scheduler_batches,
@@ -191,10 +198,10 @@ impl Rem6ExecutionSummary {
     }
 }
 
-fn empty_parallel_json(worker_limit: usize) -> String {
+fn empty_parallel_json(worker_limit: usize, min_remote_delay: u64) -> String {
     format!(
-        "{{\"scheduler\":{{\"worker_limit\":{},\"epochs\":0,\"dispatches\":0,\"batches\":0,\"max_workers\":0,\"total_workers\":0,\"active_partitions\":0,\"remote_sends\":0,\"batch_worker_ticks\":0,\"batch_worker_capacity_ticks\":0,\"batch_idle_worker_ticks\":0,\"worker_slots\":[],\"worker_lanes\":[],\"partitions\":[],\"frontiers\":[],\"final_frontiers\":[],\"ready_partitions\":[]}}}}",
-        worker_limit
+        "{{\"scheduler\":{{\"worker_limit\":{},\"min_remote_delay\":{},\"epochs\":0,\"dispatches\":0,\"batches\":0,\"max_workers\":0,\"total_workers\":0,\"active_partitions\":0,\"remote_sends\":0,\"batch_worker_ticks\":0,\"batch_worker_capacity_ticks\":0,\"batch_idle_worker_ticks\":0,\"worker_slots\":[],\"worker_lanes\":[],\"partitions\":[],\"frontiers\":[],\"final_frontiers\":[],\"ready_partitions\":[]}}}}",
+        worker_limit, min_remote_delay
     )
 }
 

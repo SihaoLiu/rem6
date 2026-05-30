@@ -106,6 +106,7 @@ pub struct Rem6RunConfig {
     isa: RequestedIsa,
     binary: PathBuf,
     max_tick: u64,
+    min_remote_delay: u64,
     max_instructions: Option<u64>,
     stats_format: StatsFormat,
     execute: bool,
@@ -133,6 +134,7 @@ impl Rem6RunConfig {
         let mut isa = None;
         let mut binary = None;
         let mut max_tick = None;
+        let mut min_remote_delay = 1u64;
         let mut max_instructions = None;
         let mut stats_format = StatsFormat::Json;
         let mut execute = false;
@@ -154,6 +156,17 @@ impl Rem6RunConfig {
                     max_tick = Some(value.parse().map_err(|_| Rem6CliError::InvalidMaxTick {
                         value: value.clone(),
                     })?);
+                }
+                "--min-remote-delay" => {
+                    let value = required_value(&flag, args.next())?;
+                    min_remote_delay =
+                        value
+                            .parse()
+                            .ok()
+                            .filter(|delay| *delay > 0)
+                            .ok_or_else(|| Rem6CliError::InvalidMinRemoteDelay {
+                                value: value.clone(),
+                            })?;
                 }
                 "--max-instructions" => {
                     let value = required_value(&flag, args.next())?;
@@ -221,6 +234,7 @@ impl Rem6RunConfig {
             isa: isa.ok_or(Rem6CliError::MissingRequiredFlag { flag: "--isa" })?,
             binary: binary.ok_or(Rem6CliError::MissingRequiredFlag { flag: "--binary" })?,
             max_tick: max_tick.ok_or(Rem6CliError::MissingRequiredFlag { flag: "--max-tick" })?,
+            min_remote_delay,
             max_instructions,
             stats_format,
             execute,
@@ -242,6 +256,10 @@ impl Rem6RunConfig {
 
     pub const fn max_tick(&self) -> u64 {
         self.max_tick
+    }
+
+    pub const fn min_remote_delay(&self) -> u64 {
+        self.min_remote_delay
     }
 
     pub const fn max_instructions(&self) -> Option<u64> {
@@ -478,6 +496,9 @@ pub enum Rem6CliError {
     InvalidMaxTick {
         value: String,
     },
+    InvalidMinRemoteDelay {
+        value: String,
+    },
     InvalidMaxInstructions {
         value: String,
     },
@@ -544,6 +565,9 @@ impl fmt::Display for Rem6CliError {
                 write!(formatter, "unsupported stats format {format}")
             }
             Self::InvalidMaxTick { value } => write!(formatter, "invalid max tick {value}"),
+            Self::InvalidMinRemoteDelay { value } => {
+                write!(formatter, "invalid min remote delay {value}")
+            }
             Self::InvalidMaxInstructions { value } => {
                 write!(formatter, "invalid max instructions {value}")
             }
@@ -700,15 +724,12 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
     } else {
         None
     };
-    let stats = run_stats_output(
-        bytes.len() as u64,
-        image.segments().len() as u64,
-        config.max_tick(),
-        config.max_instructions(),
-        config.cores() as u64,
-        config.parallel_workers() as u64,
-        execution.as_ref(),
-    )?;
+    let stats = run_stats_output(Rem6StatsInputs {
+        binary_bytes: bytes.len() as u64,
+        load_segments: image.segments().len() as u64,
+        config: &config,
+        execution: execution.as_ref(),
+    })?;
     Ok(Rem6RunArtifact {
         schema: "rem6.cli.run.v1",
         binary_bytes: bytes.len() as u64,
@@ -728,38 +749,44 @@ struct Rem6StatsOutput {
     text: String,
 }
 
-fn run_stats_output(
+struct Rem6StatsInputs<'a> {
     binary_bytes: u64,
     load_segments: u64,
-    max_tick: u64,
-    max_instructions: Option<u64>,
-    cores: u64,
-    parallel_workers: u64,
-    execution: Option<&Rem6ExecutionSummary>,
-) -> Result<Rem6StatsOutput, Rem6CliError> {
+    config: &'a Rem6RunConfig,
+    execution: Option<&'a Rem6ExecutionSummary>,
+}
+
+fn run_stats_output(inputs: Rem6StatsInputs<'_>) -> Result<Rem6StatsOutput, Rem6CliError> {
     let mut stats = StatsRegistry::new();
     increment_stat(
         &mut stats,
         "sim.binary.bytes",
         "Byte",
         StatResetPolicy::Constant,
-        binary_bytes,
+        inputs.binary_bytes,
     )?;
     increment_stat(
         &mut stats,
         "sim.elf.load_segments",
         "Count",
         StatResetPolicy::Constant,
-        load_segments,
+        inputs.load_segments,
     )?;
     increment_stat(
         &mut stats,
         "sim.max_tick",
         "Tick",
         StatResetPolicy::Constant,
-        max_tick,
+        inputs.config.max_tick(),
     )?;
-    if let Some(max_instructions) = max_instructions {
+    increment_stat(
+        &mut stats,
+        "sim.parallel.scheduler.min_remote_delay",
+        "Tick",
+        StatResetPolicy::Constant,
+        inputs.config.min_remote_delay(),
+    )?;
+    if let Some(max_instructions) = inputs.config.max_instructions() {
         increment_stat(
             &mut stats,
             "sim.instructions.limit",
@@ -773,17 +800,17 @@ fn run_stats_output(
         "sim.cores",
         "Count",
         StatResetPolicy::Constant,
-        cores,
+        inputs.config.cores() as u64,
     )?;
     increment_stat(
         &mut stats,
         "sim.parallel.scheduler.worker_limit",
         "Count",
         StatResetPolicy::Constant,
-        parallel_workers,
+        inputs.config.parallel_workers() as u64,
     )?;
 
-    if let Some(execution) = execution {
+    if let Some(execution) = inputs.execution {
         increment_stat(
             &mut stats,
             "sim.instructions.committed",
@@ -1128,7 +1155,7 @@ fn execute_riscv(
 
     let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(
         partition_count,
-        1,
+        config.min_remote_delay(),
         config.parallel_workers(),
     )
     .map_err(execute_error)?;
@@ -1141,12 +1168,14 @@ fn execute_riscv(
             format!("cpu{cpu_index}.ifetch"),
             cpu_partition,
             memory_partition,
+            config.min_remote_delay(),
         )?;
         let data_route = add_memory_route(
             &mut transport,
             format!("cpu{cpu_index}.dmem"),
             cpu_partition,
             memory_partition,
+            config.min_remote_delay(),
         )?;
         let core = RiscvCore::with_data(
             CpuCore::new(
@@ -1178,8 +1207,12 @@ fn execute_riscv(
         StatsRegistry::new(),
     )));
     let trap_port = RiscvTrapEventPort::new(
-        SystemHostEventPort::with_controller(host_partition, 1, Arc::clone(&controller))
-            .map_err(execute_error)?,
+        SystemHostEventPort::with_controller(
+            host_partition,
+            config.min_remote_delay(),
+            Arc::clone(&controller),
+        )
+        .map_err(execute_error)?,
         GuestSourceId::new(1),
     );
     let driver = RiscvSystemRunDriver::new(trap_port);
@@ -1244,6 +1277,7 @@ fn add_memory_route(
     source: String,
     cpu_partition: PartitionId,
     memory_partition: PartitionId,
+    route_delay: u64,
 ) -> Result<MemoryRouteId, Rem6CliError> {
     transport
         .add_route(
@@ -1252,8 +1286,8 @@ fn add_memory_route(
                 cpu_partition,
                 transport_endpoint("memory".to_string())?,
                 memory_partition,
-                1,
-                1,
+                route_delay,
+                route_delay,
             )
             .map_err(execute_error)?,
         )
