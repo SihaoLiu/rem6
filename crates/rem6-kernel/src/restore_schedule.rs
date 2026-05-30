@@ -31,6 +31,11 @@ pub enum CheckpointRestoreScheduleError {
         restored_tick: Tick,
         final_tick: Tick,
     },
+    WarmupAlreadyFinished {
+        final_tick: Tick,
+        source: String,
+        requested_tick: Tick,
+    },
 }
 
 impl fmt::Display for CheckpointRestoreScheduleError {
@@ -68,6 +73,14 @@ impl fmt::Display for CheckpointRestoreScheduleError {
             } => write!(
                 formatter,
                 "checkpoint restore warmup finished at tick {final_tick}, after restored tick {restored_tick}"
+            ),
+            Self::WarmupAlreadyFinished {
+                final_tick,
+                source,
+                requested_tick,
+            } => write!(
+                formatter,
+                "checkpoint restore warmup already finished at tick {final_tick}; {source} requested warmup tick {requested_tick}"
             ),
         }
     }
@@ -166,6 +179,7 @@ impl CheckpointRestoreWarmupSummary {
 pub struct CheckpointRestoreEventPlan {
     restored_tick: Tick,
     next_restore_order: u64,
+    warmup_final_tick: Option<Tick>,
     warmup_events: Vec<CheckpointRestoreWarmupEvent>,
     live_events: Vec<CheckpointRestoreLiveEvent>,
 }
@@ -175,6 +189,7 @@ impl CheckpointRestoreEventPlan {
         Self {
             restored_tick,
             next_restore_order: 0,
+            warmup_final_tick: None,
             warmup_events: Vec::new(),
             live_events: Vec::new(),
         }
@@ -188,6 +203,14 @@ impl CheckpointRestoreEventPlan {
         &self.warmup_events
     }
 
+    pub const fn warmup_final_tick(&self) -> Option<Tick> {
+        self.warmup_final_tick
+    }
+
+    pub const fn warmup_event_count(&self) -> usize {
+        self.warmup_events.len()
+    }
+
     pub fn warmup_events_for_replay(&self) -> Vec<CheckpointRestoreWarmupEvent> {
         let mut events = self.warmup_events.clone();
         events.sort_by_key(|event| (event.replay_now, event.scheduled_tick, event.restore_order));
@@ -196,6 +219,10 @@ impl CheckpointRestoreEventPlan {
 
     pub fn live_events(&self) -> &[CheckpointRestoreLiveEvent] {
         &self.live_events
+    }
+
+    pub const fn live_event_count(&self) -> usize {
+        self.live_events.len()
     }
 
     pub fn live_events_for_scheduler(&self) -> Vec<CheckpointRestoreLiveEvent> {
@@ -214,6 +241,13 @@ impl CheckpointRestoreEventPlan {
         let source = source.into();
         if source.is_empty() {
             return Err(CheckpointRestoreScheduleError::EmptyWarmupEventSource);
+        }
+        if let Some(final_tick) = self.warmup_final_tick {
+            return Err(CheckpointRestoreScheduleError::WarmupAlreadyFinished {
+                final_tick,
+                source,
+                requested_tick: scheduled_tick,
+            });
         }
         if scheduled_tick < replay_now {
             return Err(
@@ -275,9 +309,16 @@ impl CheckpointRestoreEventPlan {
     }
 
     pub fn finish_warmup(
-        &self,
+        &mut self,
         final_tick: Tick,
     ) -> Result<CheckpointRestoreWarmupSummary, CheckpointRestoreScheduleError> {
+        if let Some(existing_final_tick) = self.warmup_final_tick {
+            return Err(CheckpointRestoreScheduleError::WarmupAlreadyFinished {
+                final_tick: existing_final_tick,
+                source: "finish".to_string(),
+                requested_tick: final_tick,
+            });
+        }
         if final_tick > self.restored_tick {
             return Err(
                 CheckpointRestoreScheduleError::WarmupFinishedAfterRestoredTick {
@@ -287,6 +328,7 @@ impl CheckpointRestoreEventPlan {
             );
         }
 
+        self.warmup_final_tick = Some(final_tick);
         Ok(CheckpointRestoreWarmupSummary {
             restored_tick: self.restored_tick,
             warmup_final_tick: final_tick,

@@ -170,3 +170,40 @@ fn checkpoint_restore_plan_validates_warmup_source_and_finish_boundary() {
     assert!(plan.warmup_events().is_empty());
     assert!(plan.live_events().is_empty());
 }
+
+#[test]
+fn checkpoint_restore_plan_seals_warmup_before_live_handoff() {
+    let mut plan = CheckpointRestoreEventPlan::new(120);
+    let core = PartitionId::new(0);
+    plan.record_warmup_event("ruby", 0, 0, RestoreReplayEventKind::GlobalExit)
+        .unwrap();
+
+    let summary = plan.finish_warmup(80).unwrap();
+
+    assert_eq!(summary.warmup_final_tick(), 80);
+    assert_eq!(plan.warmup_final_tick(), Some(80));
+    assert_eq!(plan.warmup_event_count(), 1);
+    assert_eq!(
+        plan.record_warmup_event("ruby-late", 80, 80, RestoreReplayEventKind::SubsystemWake)
+            .unwrap_err(),
+        CheckpointRestoreScheduleError::WarmupAlreadyFinished {
+            final_tick: 80,
+            source: "ruby-late".to_string(),
+            requested_tick: 80,
+        },
+    );
+    assert_eq!(plan.warmup_event_count(), 1);
+    let live = plan
+        .stage_live_event(core, 120, ScheduledEventKind::Parallel)
+        .unwrap();
+    assert_eq!(live.partition(), core);
+    assert_eq!(plan.live_event_count(), 1);
+    assert_eq!(
+        plan.finish_warmup(80).unwrap_err(),
+        CheckpointRestoreScheduleError::WarmupAlreadyFinished {
+            final_tick: 80,
+            source: "finish".to_string(),
+            requested_tick: 80,
+        },
+    );
+}
