@@ -181,6 +181,35 @@ where
         .fold(0, Tick::saturating_add)
 }
 
+pub(super) fn collect_batch_worker_lane_tick_summaries<'a, I>(batches: I) -> Vec<(usize, Tick)>
+where
+    I: IntoIterator<Item = &'a ParallelEpochBatchRecord>,
+{
+    let mut summaries = BTreeMap::<usize, Tick>::new();
+    for batch in batches {
+        for worker in batch.workers() {
+            let ticks = worker.duration_ticks();
+            if ticks != 0 {
+                let summary_ticks = summaries.entry(worker.lane()).or_default();
+                *summary_ticks = summary_ticks.saturating_add(ticks);
+            }
+        }
+    }
+    summaries.into_iter().collect()
+}
+
+pub(super) fn batch_worker_ticks_for_lane<'a, I>(batches: I, lane: usize) -> Tick
+where
+    I: IntoIterator<Item = &'a ParallelEpochBatchRecord>,
+{
+    batches
+        .into_iter()
+        .flat_map(ParallelEpochBatchRecord::workers)
+        .filter(|worker| worker.lane() == lane)
+        .map(|worker| worker.duration_ticks())
+        .fold(0, Tick::saturating_add)
+}
+
 pub(super) fn batch_worker_capacity_ticks<'a, I>(batches: I, worker_capacity: usize) -> Tick
 where
     I: IntoIterator<Item = &'a ParallelEpochBatchRecord>,

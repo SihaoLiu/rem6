@@ -69,6 +69,11 @@ isolated bugs:
   records with lane, partition, start tick, horizon, and duration, so the
   simulator can audit which host worker would own each ready partition before
   callbacks run instead of proving multicore use only from aggregate occupancy.
+  Executed kernel batches now retain the matching actual worker-lane identity
+  with lane, partition, partition-clock start, safe-until tick, next event tick,
+  pending-event count, and duration-weighted lane tick summaries, so recorded
+  parallel runs can prove which host lane executed each partition instead of
+  inferring that binding from worker vector order or an external profiler.
   The CLI can also write the full JSON run artifact to a requested path and
   write the hierarchical stats array to its own requested path while returning
   a small machine-readable output envelope on stdout, so scripted runs can keep

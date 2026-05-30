@@ -744,7 +744,7 @@ impl PartitionedScheduler {
         let mut partition_queues = Vec::with_capacity(ready_partitions.len());
         let mut workers = Vec::with_capacity(ready_partitions.len());
 
-        for partition in ready_partitions {
+        for (lane, partition) in ready_partitions.into_iter().enumerate() {
             let index = partition.index() as usize;
             let queue = mem::replace(&mut self.partitions[index], PartitionQueue::new());
             let safe_until = queue.now.checked_add(min_remote_delay).ok_or(
@@ -755,6 +755,7 @@ impl PartitionedScheduler {
                 },
             )?;
             workers.push(ParallelWorkerRecord::new(
+                lane,
                 partition,
                 queue.now,
                 safe_until,

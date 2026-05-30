@@ -1,4 +1,6 @@
-use rem6_kernel::{ParallelBatchUtilizationRatio, PartitionId, PartitionedScheduler};
+use rem6_kernel::{
+    ParallelBatchUtilizationRatio, ParallelWorkerRecord, PartitionId, PartitionedScheduler,
+};
 
 #[test]
 fn unbounded_worker_limit_reports_observed_batch_capacity() {
@@ -36,6 +38,59 @@ fn unbounded_worker_limit_reports_observed_batch_capacity() {
         run.batch_utilization_ratio().unwrap(),
         ParallelBatchUtilizationRatio::new(3, 3).unwrap()
     );
+}
+
+#[test]
+fn recorded_parallel_batches_expose_actual_worker_lane_assignments() {
+    let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(4, 6, 2).unwrap();
+    let core0 = PartitionId::new(0);
+    let core1 = PartitionId::new(1);
+    let core2 = PartitionId::new(2);
+
+    scheduler.schedule_parallel_at(core0, 0, |_| {}).unwrap();
+    scheduler.schedule_parallel_at(core1, 2, |_| {}).unwrap();
+    scheduler.schedule_parallel_at(core2, 5, |_| {}).unwrap();
+
+    let run = scheduler.run_until_idle_parallel_recorded().unwrap();
+    let epoch = &run.epochs()[0];
+    let batches = epoch.batches();
+
+    assert_eq!(
+        batches[0].workers(),
+        &[
+            ParallelWorkerRecord::new(0, core0, 0, 6, Some(0), 1),
+            ParallelWorkerRecord::new(1, core1, 0, 6, Some(2), 1),
+        ],
+    );
+    assert_eq!(
+        batches[1].workers(),
+        &[ParallelWorkerRecord::new(0, core2, 0, 6, Some(5), 1)],
+    );
+    assert_eq!(batches[0].worker_for_lane(0).unwrap().partition(), core0);
+    assert_eq!(batches[0].worker_for_lane(1).unwrap().partition(), core1);
+    assert_eq!(batches[1].worker_for_lane(0).unwrap().partition(), core2);
+    assert_eq!(batches[1].worker_for_lane(1), None);
+    assert_eq!(batches[0].worker_for_partition(core1).unwrap().lane(), 1);
+    assert_eq!(batches[0].worker_ticks_for_lane(0), 6);
+    assert_eq!(batches[0].worker_ticks_for_lane(1), 6);
+    assert_eq!(
+        batches[0].worker_lane_tick_summaries(),
+        vec![(0, 6), (1, 6)]
+    );
+    assert_eq!(batches[1].worker_ticks_for_lane(0), 6);
+    assert_eq!(batches[1].worker_lane_tick_summaries(), vec![(0, 6)]);
+    assert_eq!(
+        epoch.batch_worker_lane_tick_summaries(),
+        vec![(0, 12), (1, 6)],
+    );
+    assert_eq!(epoch.batch_worker_ticks_for_lane(0), 12);
+    assert_eq!(epoch.batch_worker_ticks_for_lane(1), 6);
+    assert_eq!(
+        run.batch_worker_lane_tick_summaries(),
+        vec![(0, 12), (1, 6)]
+    );
+    assert_eq!(run.batch_worker_ticks_for_lane(0), 12);
+    assert_eq!(run.batch_worker_ticks_for_lane(1), 6);
 }
 
 #[test]

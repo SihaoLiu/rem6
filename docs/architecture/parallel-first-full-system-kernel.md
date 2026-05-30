@@ -472,7 +472,10 @@ worker-capacity ticks, idle-worker ticks, utilization ratios, and
 per-worker-slot active and idle tick summaries as typed pre-dispatch and
 post-dispatch evidence. A runtime can audit planned load distribution before
 any callback executes, then compare it with the recorded worker occupancy after
-callbacks and remote wakeups run. Higher layers do not need to
+callbacks and remote wakeups run. Executed batch records also carry actual
+worker-lane identities and duration-weighted lane ticks, so post-dispatch
+evidence names the lane that owned each partition instead of depending on
+record ordering or external profiling. Higher layers do not need to
 rediscover the same time window from worker records, rebuild planned occupancy
 from timeline records, or recompute planned worker capacity from
 scheduler-private worker limits.

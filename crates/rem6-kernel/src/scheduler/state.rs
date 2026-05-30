@@ -9,14 +9,16 @@ use crate::{
 mod batch_evidence;
 mod planned_batch;
 mod remote_window;
+mod worker;
 
 use self::batch_evidence::{
     batch_count_at_or_above, batch_count_for_partition_set, batch_count_for_worker_count,
     batch_idle_worker_ticks, batch_ticks_at_or_above, batch_ticks_for_worker_count,
     batch_worker_capacity_ticks, batch_worker_slot_tick_summaries, batch_worker_ticks,
-    batch_worker_ticks_at_or_above, collect_batch_partition_set_summaries,
-    collect_batch_partition_streak_summaries, collect_batch_worker_count_summaries,
-    collect_batch_worker_count_tick_summaries, max_consecutive_batch_count_for_partition_set,
+    batch_worker_ticks_at_or_above, batch_worker_ticks_for_lane,
+    collect_batch_partition_set_summaries, collect_batch_partition_streak_summaries,
+    collect_batch_worker_count_summaries, collect_batch_worker_count_tick_summaries,
+    collect_batch_worker_lane_tick_summaries, max_consecutive_batch_count_for_partition_set,
     normalize_partition_set,
 };
 use self::planned_batch::collect_parallel_epoch_planned_batches;
@@ -26,6 +28,7 @@ pub use self::planned_batch::{
     ParallelBatchUtilizationRatio, ParallelEpochPlannedBatch, ParallelEpochPlannedWorkerRecord,
 };
 pub use self::remote_window::ParallelRemoteDeliveryWindow;
+pub use self::worker::ParallelWorkerRecord;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EpochPlan {
@@ -170,6 +173,20 @@ impl ParallelEpochBatchRecord {
             .collect()
     }
 
+    pub fn worker_for_lane(&self, lane: usize) -> Option<ParallelWorkerRecord> {
+        self.workers
+            .iter()
+            .copied()
+            .find(|worker| worker.lane() == lane)
+    }
+
+    pub fn worker_for_partition(&self, partition: PartitionId) -> Option<ParallelWorkerRecord> {
+        self.workers
+            .iter()
+            .copied()
+            .find(|worker| worker.partition() == partition)
+    }
+
     pub fn partition_set(&self) -> Vec<PartitionId> {
         normalize_partition_set(self.worker_partitions())
     }
@@ -269,6 +286,14 @@ impl ParallelEpochBatchRecord {
             .saturating_mul(self.worker_count() as Tick)
     }
 
+    pub fn worker_lane_tick_summaries(&self) -> Vec<(usize, Tick)> {
+        collect_batch_worker_lane_tick_summaries([self])
+    }
+
+    pub fn worker_ticks_for_lane(&self, lane: usize) -> Tick {
+        batch_worker_ticks_for_lane([self], lane)
+    }
+
     pub fn worker_capacity_ticks(&self, worker_capacity: usize) -> Tick {
         self.duration_ticks()
             .saturating_mul(worker_capacity.max(self.worker_count()) as Tick)
@@ -316,53 +341,6 @@ impl ParallelEpochBatchRecord {
 
     pub fn partition_activities(&self) -> BTreeMap<PartitionId, ParallelPartitionActivity> {
         collect_parallel_partition_activity([self])
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct ParallelWorkerRecord {
-    partition: PartitionId,
-    start_tick: Tick,
-    safe_until: Tick,
-    next_tick: Option<Tick>,
-    pending_events: usize,
-}
-
-impl ParallelWorkerRecord {
-    pub const fn new(
-        partition: PartitionId,
-        start_tick: Tick,
-        safe_until: Tick,
-        next_tick: Option<Tick>,
-        pending_events: usize,
-    ) -> Self {
-        Self {
-            partition,
-            start_tick,
-            safe_until,
-            next_tick,
-            pending_events,
-        }
-    }
-
-    pub const fn partition(self) -> PartitionId {
-        self.partition
-    }
-
-    pub const fn start_tick(self) -> Tick {
-        self.start_tick
-    }
-
-    pub const fn safe_until(self) -> Tick {
-        self.safe_until
-    }
-
-    pub const fn next_tick(self) -> Option<Tick> {
-        self.next_tick
-    }
-
-    pub const fn pending_events(self) -> usize {
-        self.pending_events
     }
 }
 
@@ -1182,6 +1160,14 @@ impl RecordedRunSummary {
         batch_worker_ticks_at_or_above(&self.batches, minimum_worker_count)
     }
 
+    pub fn batch_worker_lane_tick_summaries(&self) -> Vec<(usize, Tick)> {
+        collect_batch_worker_lane_tick_summaries(&self.batches)
+    }
+
+    pub fn batch_worker_ticks_for_lane(&self, lane: usize) -> Tick {
+        batch_worker_ticks_for_lane(&self.batches, lane)
+    }
+
     pub fn batch_worker_capacity_ticks(&self) -> Tick {
         batch_worker_capacity_ticks(&self.batches, self.planned_parallel_worker_limit)
     }
@@ -1575,6 +1561,19 @@ impl RecordedConservativeRunSummary {
         batch_worker_ticks_at_or_above(
             self.epochs.iter().flat_map(|epoch| epoch.batches().iter()),
             minimum_worker_count,
+        )
+    }
+
+    pub fn batch_worker_lane_tick_summaries(&self) -> Vec<(usize, Tick)> {
+        collect_batch_worker_lane_tick_summaries(
+            self.epochs.iter().flat_map(|epoch| epoch.batches().iter()),
+        )
+    }
+
+    pub fn batch_worker_ticks_for_lane(&self, lane: usize) -> Tick {
+        batch_worker_ticks_for_lane(
+            self.epochs.iter().flat_map(|epoch| epoch.batches().iter()),
+            lane,
         )
     }
 
