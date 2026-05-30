@@ -424,6 +424,16 @@ isolated bugs:
   writable, user aliases are read-only, increments wrap explicitly, and
   snapshot restore preserves both counters before full privileged CSR decoding
   is widened.
+  Public gem5 issue #2754 reports sim-se `wait4` returning incorrect status
+  for abnormal child exits. The local reference implements `wait4Func` in
+  `src/sim/syscall_emul.hh` by consuming a `SIGCHLD` signal and writing a fixed
+  exited status, while x86 and RISC-V syscall tables route guest `wait4` to that
+  shared helper. rem6-system therefore keeps guest wait results as typed
+  `GuestWaitStatus` values before lowering to POSIX wait-status integers:
+  normal exit encodes `code << 8`, signal termination preserves the low
+  seven-bit signal with an optional core-dump bit, stopped children encode
+  `(signal << 8) | 0x7f`, continued children encode `0xffff`, and invalid guest
+  signals are typed errors.
   Public gem5 issue #3132 reports O3 data prefetches tying up LQ/ROB retirement
   resources until memory responses arrive. rem6 therefore records O3 prefetches
   as typed dependency-trace memory records with an explicit retire-after-issue
@@ -482,6 +492,9 @@ Research anchors refreshed through 2026-05-30:
   test debt, open syscall-emulation `wait4` status behavior, a closed RISC-V
   vector tracing crash, open CHI LR/SC behavior, and Ruby checkpoint restore
   schedule-in-past failures.
+- Public gem5 issue anchor refreshed on 2026-05-30: open sim-se `wait4`
+  status bug where abnormal child exits can lose the terminating-signal status
+  expected by libc `wait`.
 - Public gem5 issue anchor refreshed on 2026-05-30: open SerialLink latency
   bug when system clock frequency is not 1GHz.
 - Public gem5 issue anchor refreshed on 2026-05-30: open ThermalModel
@@ -508,6 +521,11 @@ Research anchors refreshed through 2026-05-30:
 
 Implementation evidence through 2026-05-30:
 
+- `rem6-system` has typed guest wait-status encoding for future syscall
+  emulation handoff. Tests cover normal exits, signal termination, the
+  core-dump bit, stopped children, continued children, and invalid signal
+  rejection, so guest ABI status values cannot collapse every child result into
+  a successful exit before being copied to guest memory.
 - `rem6-timer` has an initial typed ARM Cortex-A9 CPU local timer/watchdog
   model aligned with gem5 `src/dev/arm/timer_cpulocal`: each declared CPU owns
   a local timer and watchdog register bank, MMIO dispatch selects the CPU from

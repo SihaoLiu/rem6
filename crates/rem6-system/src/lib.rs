@@ -54,6 +54,7 @@ mod topology;
 mod trap_event;
 mod uart_checkpoint;
 mod virtio_checkpoint;
+mod wait_status;
 mod workload_replay;
 mod workload_replay_heterogeneous;
 mod workload_replay_host;
@@ -154,6 +155,7 @@ pub use virtio_checkpoint::{
     VirtioSplitQueueCheckpointBank, VirtioSplitQueueCheckpointError,
     VirtioSplitQueueCheckpointPort, VirtioSplitQueueCheckpointRecord,
 };
+pub use wait_status::{GuestSignal, GuestWaitStatus, GuestWaitStatusError};
 pub use workload_replay::{
     RiscvWorkloadReplay, RiscvWorkloadReplayError, RiscvWorkloadReplayOutcome,
 };
