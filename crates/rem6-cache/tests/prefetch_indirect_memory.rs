@@ -26,6 +26,18 @@ fn imp_index_access(agent: u32, pc: u64, address: u64, index: i64) -> IndirectMe
         .unwrap()
 }
 
+fn imp_index_access_with_lookahead(
+    agent: u32,
+    pc: u64,
+    address: u64,
+    index: i64,
+    lookahead: [i64; 3],
+) -> IndirectMemoryPrefetchAccess {
+    imp_access(agent, pc, address, false, false)
+        .with_read_index_lookahead(8, index, lookahead)
+        .unwrap()
+}
+
 #[test]
 fn indirect_memory_prefetcher_detects_indirect_pattern_and_restores_state() {
     let config = IndirectMemoryPrefetcherConfig::new(4, 2, 2, vec![2], 4, 2, 1, 100, 2).unwrap();
@@ -79,7 +91,13 @@ fn indirect_memory_prefetcher_detects_indirect_pattern_and_restores_state() {
     assert_eq!(restored.snapshot(), snapshot);
 
     let candidates = restored
-        .observe(imp_index_access(8, 0xaaa, 0x1400, 7))
+        .observe(imp_index_access_with_lookahead(
+            8,
+            0xaaa,
+            0x1400,
+            7,
+            [8, 9, 10],
+        ))
         .unwrap()
         .to_vec();
     assert_eq!(
@@ -88,9 +106,9 @@ fn indirect_memory_prefetcher_detects_indirect_pattern_and_restores_state() {
             .map(|candidate| candidate.address())
             .collect::<Vec<_>>(),
         vec![
-            Address::new(0x801c),
-            Address::new(0x801c),
-            Address::new(0x801c)
+            Address::new(0x8020),
+            Address::new(0x8024),
+            Address::new(0x8028)
         ]
     );
     assert!(candidates
@@ -100,11 +118,52 @@ fn indirect_memory_prefetcher_detects_indirect_pattern_and_restores_state() {
     assert_eq!(candidates[0].context(), AgentId::new(8));
     assert_eq!(candidates[0].pc(), 0xaaa);
     assert_eq!(candidates[0].base_address(), Address::new(0x8000));
-    assert_eq!(candidates[0].index(), 7);
+    assert_eq!(candidates[0].index(), 8);
     assert_eq!(candidates[0].shift(), 2);
     assert_eq!(candidates[0].indirect_counter(), 3);
+    assert_eq!(candidates[2].index(), 10);
     assert_eq!(candidates[2].degree_index(), 3);
     assert_eq!(restored.last_candidates(), candidates.as_slice());
+}
+
+#[test]
+fn indirect_memory_prefetcher_without_lookahead_does_not_duplicate_current_index() {
+    let config = IndirectMemoryPrefetcherConfig::new(4, 2, 2, vec![2], 4, 2, 1, 100, 2).unwrap();
+    let mut prefetcher = IndirectMemoryPrefetcher::new(config);
+
+    prefetcher
+        .observe(imp_access(8, 0xaaa, 0x1000, false, false))
+        .unwrap();
+    prefetcher
+        .observe(imp_index_access(8, 0xaaa, 0x1100, 4))
+        .unwrap();
+    prefetcher
+        .observe(imp_access(8, 0xbbb, 0x8010, false, true))
+        .unwrap();
+    prefetcher
+        .observe(imp_index_access(8, 0xaaa, 0x1200, 5))
+        .unwrap();
+    prefetcher
+        .observe(imp_access(8, 0xbbb, 0x8014, false, true))
+        .unwrap();
+    prefetcher
+        .observe(imp_index_access(8, 0xaaa, 0x1300, 6))
+        .unwrap();
+    for _ in 0..3 {
+        prefetcher
+            .observe(imp_access(8, 0xbbb, 0x8018, false, false))
+            .unwrap();
+    }
+
+    let candidates = prefetcher
+        .observe(imp_index_access(8, 0xaaa, 0x1400, 7))
+        .unwrap()
+        .to_vec();
+
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].address(), Address::new(0x801c));
+    assert_eq!(candidates[0].index(), 7);
+    assert_eq!(candidates[0].degree_index(), 1);
 }
 
 #[test]

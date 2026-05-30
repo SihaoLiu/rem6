@@ -324,7 +324,7 @@ impl fmt::Display for IndirectMemoryPrefetcherError {
 
 impl Error for IndirectMemoryPrefetcherError {}
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IndirectMemoryPrefetchAccess {
     context: AgentId,
     pc: u64,
@@ -334,6 +334,7 @@ pub struct IndirectMemoryPrefetchAccess {
     is_write: bool,
     size: u8,
     index_value: Option<i64>,
+    index_lookahead: Vec<i64>,
 }
 
 impl IndirectMemoryPrefetchAccess {
@@ -353,6 +354,7 @@ impl IndirectMemoryPrefetchAccess {
             is_write: false,
             size: 8,
             index_value: None,
+            index_lookahead: Vec::new(),
         }
     }
 
@@ -366,6 +368,26 @@ impl IndirectMemoryPrefetchAccess {
         }
         self.size = size;
         self.index_value = Some(value);
+        self.index_lookahead.clear();
+        self.is_write = false;
+        Ok(self)
+    }
+
+    pub fn with_read_index_lookahead<I>(
+        mut self,
+        size: u8,
+        value: i64,
+        lookahead: I,
+    ) -> Result<Self, IndirectMemoryPrefetcherError>
+    where
+        I: IntoIterator<Item = i64>,
+    {
+        if !matches!(size, 1 | 2 | 4 | 8) {
+            return Err(IndirectMemoryPrefetcherError::InvalidIndexReadSize { size });
+        }
+        self.size = size;
+        self.index_value = Some(value);
+        self.index_lookahead = lookahead.into_iter().collect();
         self.is_write = false;
         Ok(self)
     }
@@ -376,6 +398,7 @@ impl IndirectMemoryPrefetchAccess {
         }
         self.size = size;
         self.index_value = None;
+        self.index_lookahead.clear();
         self.is_write = true;
         Ok(self)
     }
@@ -410,6 +433,10 @@ impl IndirectMemoryPrefetchAccess {
 
     pub const fn index_value(&self) -> Option<i64> {
         self.index_value
+    }
+
+    pub fn index_lookahead(&self) -> &[i64] {
+        &self.index_lookahead
     }
 
     fn readable_index(&self) -> Option<i64> {
@@ -853,7 +880,7 @@ impl IndirectMemoryPrefetcher {
             return Ok(&self.last_candidates);
         }
 
-        self.update_stream_state(access, key, previous_address)?;
+        self.update_stream_state(&access, key, previous_address)?;
         if let Some(index) = access.readable_index() {
             if self
                 .prefetch_table
@@ -861,7 +888,7 @@ impl IndirectMemoryPrefetcher {
                 .expect("prefetch entry exists")
                 .enabled
             {
-                self.update_enabled_index(access, key, index);
+                self.update_enabled_index(&access, key, index);
             } else {
                 self.allocate_or_update_pattern_entry(key, index);
             }
@@ -1162,7 +1189,7 @@ impl IndirectMemoryPrefetcher {
 
     fn update_stream_state(
         &mut self,
-        access: IndirectMemoryPrefetchAccess,
+        access: &IndirectMemoryPrefetchAccess,
         key: PrefetchTableKey,
         previous_address: Address,
     ) -> Result<(), IndirectMemoryPrefetcherError> {
@@ -1207,7 +1234,7 @@ impl IndirectMemoryPrefetcher {
 
     fn update_enabled_index(
         &mut self,
-        access: IndirectMemoryPrefetchAccess,
+        access: &IndirectMemoryPrefetchAccess,
         key: PrefetchTableKey,
         index: i64,
     ) {
@@ -1230,8 +1257,10 @@ impl IndirectMemoryPrefetcher {
             return;
         }
         let distance = self.prefetch_distance(entry.indirect_counter);
-        for degree in 1..distance {
-            let Some(address) = indirect_address(entry.base_address, entry.index, entry.shift)
+        for (degree, candidate_index) in
+            indirect_candidate_indexes(entry.index, access.index_lookahead(), distance)
+        {
+            let Some(address) = indirect_address(entry.base_address, candidate_index, entry.shift)
             else {
                 continue;
             };
@@ -1243,7 +1272,7 @@ impl IndirectMemoryPrefetcher {
                 secure: access.secure(),
                 kind: IndirectMemoryPrefetchKind::Indirect,
                 base_address: entry.base_address,
-                index: entry.index,
+                index: candidate_index,
                 shift: entry.shift,
                 stream_delta: 0,
                 indirect_counter: entry.indirect_counter,
@@ -1437,6 +1466,23 @@ fn indirect_address(base_address: Address, index: i64, shift: i32) -> Option<Add
     let shifted = shift_index(index, shift)?;
     let address = base_address.get() as i128 + shifted;
     u64::try_from(address).ok().map(Address::new)
+}
+
+fn indirect_candidate_indexes(
+    current_index: i64,
+    lookahead: &[i64],
+    distance: u32,
+) -> Vec<(u32, i64)> {
+    let max_degree = distance.saturating_sub(1);
+    if max_degree == 0 {
+        return Vec::new();
+    }
+    if lookahead.is_empty() {
+        return vec![(1, current_index)];
+    }
+    (1..=max_degree)
+        .zip(lookahead.iter().copied())
+        .collect::<Vec<_>>()
 }
 
 fn stream_address(
