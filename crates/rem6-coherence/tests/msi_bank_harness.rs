@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use rem6_cache::{CacheControllerResultKind, MshrQosClass, MshrQueueConfig, MsiCacheBank};
 use rem6_coherence::{
     CpuResponseRecord, HarnessError, MsiBankDirectoryHarness, MsiBankDirectoryHarnessSnapshot,
-    SubmitKind,
+    MsiFunctionalReadSource, SubmitKind,
 };
 use rem6_directory::{DirectoryDataSource, DirectoryLineState};
 use rem6_fabric::{QosFixedPriorityPolicy, QosPriority, QosQueueArbiter, QosQueuePolicyKind};
@@ -153,6 +153,65 @@ fn msi_bank_harness_snapshot_exposes_stable_indexes() {
         Some(second_line.as_slice())
     );
     assert_eq!(snapshot.backing_line(Address::new(0x2000)), None);
+}
+
+#[test]
+fn msi_bank_harness_functional_read_prefers_modified_cache_data() {
+    let mut harness = MsiBankDirectoryHarness::new(layout(), [agent(1), agent(2)]).unwrap();
+    harness
+        .insert_backing_line(Address::new(0x1000), line_data(0x11))
+        .unwrap();
+
+    harness
+        .submit_cpu_request(agent(1), write(1, 40, 0x1004, vec![0xde, 0xad]))
+        .unwrap();
+
+    let audit = harness.functional_read_line(Address::new(0x1008)).unwrap();
+    let mut expected = line_data(0x11);
+    expected[4] = 0xde;
+    expected[5] = 0xad;
+    assert_eq!(audit.line_address(), Address::new(0x1000));
+    assert_eq!(
+        audit.selected_source(),
+        Some(MsiFunctionalReadSource::ModifiedCache(agent(1)))
+    );
+    assert_eq!(audit.data(), Some(expected.as_slice()));
+    assert_eq!(audit.read_write_count(), 1);
+    assert_eq!(audit.read_only_count(), 0);
+    assert_eq!(audit.busy_count(), 0);
+    assert_eq!(audit.backing_store_count(), 1);
+    assert_eq!(audit.invalid_count(), 1);
+}
+
+#[test]
+fn msi_bank_harness_functional_read_reports_transient_cache_without_data() {
+    let mut harness = MsiBankDirectoryHarness::new_with_mshr(
+        layout(),
+        [agent(1)],
+        MshrQueueConfig::new(1, 1, 0).unwrap(),
+    )
+    .unwrap();
+
+    let plan = harness
+        .plan_parallel_cycle(0, [(agent(1), read(1, 50, 0x2004))])
+        .unwrap();
+    let run = harness
+        .submit_parallel_cycle_plan_for_transport_misses(plan)
+        .unwrap();
+    assert_eq!(run.downstream_requests().len(), 1);
+
+    let audit = harness.functional_read_line(Address::new(0x2008)).unwrap();
+    assert_eq!(audit.line_address(), Address::new(0x2000));
+    assert_eq!(
+        audit.selected_source(),
+        Some(MsiFunctionalReadSource::BusyOrInTransit)
+    );
+    assert_eq!(audit.data(), None);
+    assert_eq!(audit.read_write_count(), 0);
+    assert_eq!(audit.read_only_count(), 0);
+    assert_eq!(audit.busy_count(), 1);
+    assert_eq!(audit.backing_store_count(), 0);
+    assert_eq!(audit.invalid_count(), 0);
 }
 
 #[test]

@@ -44,7 +44,8 @@ pub use backing::LineBackingStore;
 pub use bank::{
     MsiBankBackingLineSnapshot, MsiBankCycleAccepted, MsiBankCycleEntry, MsiBankCycleHistory,
     MsiBankCyclePlan, MsiBankCycleRun, MsiBankDirectoryHarness, MsiBankDirectoryHarnessSnapshot,
-    MsiBankDownstreamTransportRequest, MsiBankTransportCycleRun,
+    MsiBankDownstreamTransportRequest, MsiBankTransportCycleRun, MsiFunctionalReadAudit,
+    MsiFunctionalReadSource,
 };
 pub use chi::{
     ChiCpuResponseRecord, ChiDirectoryDecisionRecord, ChiDirectoryLineHarness,

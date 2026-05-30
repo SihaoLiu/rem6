@@ -32,6 +32,79 @@ pub struct MsiBankDirectoryHarness {
     parallel_cycle_runs: Vec<MsiBankCycleRun>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MsiFunctionalReadSource {
+    ModifiedCache(AgentId),
+    SharedCache(AgentId),
+    BackingMemory,
+    BusyOrInTransit,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MsiFunctionalReadAudit {
+    line_address: Address,
+    read_only_count: usize,
+    read_write_count: usize,
+    busy_count: usize,
+    maybe_stale_count: usize,
+    backing_store_count: usize,
+    invalid_count: usize,
+    selected_source: Option<MsiFunctionalReadSource>,
+    data: Option<Vec<u8>>,
+}
+
+impl MsiFunctionalReadAudit {
+    fn new(line_address: Address) -> Self {
+        Self {
+            line_address,
+            read_only_count: 0,
+            read_write_count: 0,
+            busy_count: 0,
+            maybe_stale_count: 0,
+            backing_store_count: 0,
+            invalid_count: 0,
+            selected_source: None,
+            data: None,
+        }
+    }
+
+    pub const fn line_address(&self) -> Address {
+        self.line_address
+    }
+
+    pub const fn read_only_count(&self) -> usize {
+        self.read_only_count
+    }
+
+    pub const fn read_write_count(&self) -> usize {
+        self.read_write_count
+    }
+
+    pub const fn busy_count(&self) -> usize {
+        self.busy_count
+    }
+
+    pub const fn maybe_stale_count(&self) -> usize {
+        self.maybe_stale_count
+    }
+
+    pub const fn backing_store_count(&self) -> usize {
+        self.backing_store_count
+    }
+
+    pub const fn invalid_count(&self) -> usize {
+        self.invalid_count
+    }
+
+    pub const fn selected_source(&self) -> Option<MsiFunctionalReadSource> {
+        self.selected_source
+    }
+
+    pub fn data(&self) -> Option<&[u8]> {
+        self.data.as_deref()
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MsiBankBackingLineSnapshot {
     line_address: Address,
@@ -1282,6 +1355,75 @@ impl MsiBankDirectoryHarness {
         self.backing
             .get(&self.layout.line_address(address))
             .map(Vec::as_slice)
+    }
+
+    pub fn functional_read_line(
+        &self,
+        address: Address,
+    ) -> Result<MsiFunctionalReadAudit, HarnessError> {
+        let line_address = self.layout.line_address(address);
+        let mut audit = MsiFunctionalReadAudit::new(line_address);
+        let mut modified_source = None;
+        let mut shared_source = None;
+
+        for (agent, cache) in &self.caches {
+            match cache.state(line_address) {
+                Some(MsiState::Modified) => {
+                    audit.read_write_count += 1;
+                    if modified_source.is_none() {
+                        let data = cache.cached_data(line_address).ok_or(
+                            HarnessError::GrantDataUnavailable {
+                                agent: *agent,
+                                line: MsiLineId::new(line_address),
+                            },
+                        )?;
+                        modified_source = Some((*agent, data.to_vec()));
+                    }
+                }
+                Some(MsiState::Shared) => {
+                    audit.read_only_count += 1;
+                    if shared_source.is_none() {
+                        let data = cache.cached_data(line_address).ok_or(
+                            HarnessError::GrantDataUnavailable {
+                                agent: *agent,
+                                line: MsiLineId::new(line_address),
+                            },
+                        )?;
+                        shared_source = Some((*agent, data.to_vec()));
+                    }
+                }
+                Some(
+                    MsiState::InvalidToShared
+                    | MsiState::InvalidToModified
+                    | MsiState::SharedToModified,
+                ) => {
+                    audit.busy_count += 1;
+                }
+                Some(MsiState::Invalid) | None => {
+                    audit.invalid_count += 1;
+                }
+            }
+        }
+
+        let backing_data = self.backing.get(&line_address).cloned();
+        if backing_data.is_some() {
+            audit.backing_store_count = 1;
+        }
+
+        if let Some((agent, data)) = modified_source {
+            audit.selected_source = Some(MsiFunctionalReadSource::ModifiedCache(agent));
+            audit.data = Some(data);
+        } else if let Some((agent, data)) = shared_source {
+            audit.selected_source = Some(MsiFunctionalReadSource::SharedCache(agent));
+            audit.data = Some(data);
+        } else if let Some(data) = backing_data {
+            audit.selected_source = Some(MsiFunctionalReadSource::BackingMemory);
+            audit.data = Some(data);
+        } else if audit.busy_count + audit.maybe_stale_count > 0 {
+            audit.selected_source = Some(MsiFunctionalReadSource::BusyOrInTransit);
+        }
+
+        Ok(audit)
     }
 
     pub fn cpu_responses(&self) -> Vec<CpuResponseRecord> {

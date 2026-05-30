@@ -207,6 +207,13 @@ isolated bugs:
   that boundary for clean-line capacity eviction, preserve replacement state in
   bank snapshots, and reject dirty capacity victims with typed state instead of
   silently dropping ownership before writeback integration exists.
+- Ruby functional reads in gem5 are scattered across controller access
+  permission probes, controller buffers, network buffers, and backing-store
+  fallback, with the selected line data written through a mutable `Packet`.
+  rem6 is moving that behavior into typed coherence audit records: the MSI
+  bank harness now reports read-only, read-write, busy, maybe-stale, backing,
+  and invalid counts, selects modified cache data before shared or backing
+  data, and reports busy or in-transit lines without fabricating a line.
 - Configuration and experiment reproducibility are too script-dependent in
   gem5. Official documentation describes embedded Python configuration,
   behind-the-scenes port connection behavior, and command-line options whose
@@ -524,7 +531,10 @@ Implementation evidence through 2026-05-30:
   budget, require those API surfaces to stay out of the root, and enforce the
   hard per-source-file size budget, so MSI, MESI, MOESI, CHI, topology, QoS,
   and DRAM-backed coherence growth cannot recreate a gem5 Ruby-style harness
-  monolith.
+  monolith. The MSI bank harness now exposes functional-read audit records with
+  explicit access-permission counts, selected source identity, and optional line
+  data, so Ruby-style inspection paths are typed diagnostics instead of mutable
+  packet side effects.
 - `rem6-cache` now keeps MSI and MESI controller state, snapshots, errors,
   pending-miss records, CPU-event decoding, and response materialization in
   focused `msi` and `mesi` modules. Cache source-policy tests keep the crate
