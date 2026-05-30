@@ -2,10 +2,15 @@ use std::error::Error;
 use std::fmt;
 
 mod control_flow;
+mod vector;
 
 pub use control_flow::{
     RiscvBranchPredictionTarget, RiscvControlFlowSnapshot, RiscvControlFlowUpdate,
     RiscvVectorConfig, RiscvVectorConfigUpdate,
+};
+pub use vector::{
+    RiscvVectorCompressPlan, RiscvVectorCompressResult, RiscvVectorElements, RiscvVectorError,
+    RiscvVectorTailPolicy,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
