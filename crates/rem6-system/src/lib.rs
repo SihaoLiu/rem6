@@ -30,6 +30,7 @@ mod data_cache_run;
 mod fabric_checkpoint;
 mod fabric_wait_run;
 mod guest_event;
+mod guest_fd;
 mod heterogeneous_checkpoint;
 mod host;
 mod interrupt_checkpoint;
@@ -76,6 +77,7 @@ pub use guest_event::{
     GuestEventId, GuestEventKind, GuestHostCallResponse, GuestSourceId, GuestTrap, GuestTrapKind,
     HostAction, HostActionRecord, HostEventPolicy, StopRequest,
 };
+pub use guest_fd::{GuestFd, GuestFdEntry, GuestFdError, GuestFdTable, GuestFileDescriptionId};
 pub use heterogeneous_checkpoint::{
     AcceleratorCheckpointBank, AcceleratorCheckpointError, AcceleratorCheckpointPort,
     AcceleratorCheckpointRecord, GpuCheckpointBank, GpuCheckpointError, GpuCheckpointPort,

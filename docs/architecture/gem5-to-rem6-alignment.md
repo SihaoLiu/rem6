@@ -459,6 +459,15 @@ isolated bugs:
   seven-bit signal with an optional core-dump bit, stopped children encode
   `(signal << 8) | 0x7f`, continued children encode `0xffff`, and invalid guest
   signals are typed errors.
+  Public gem5 issue #2750 reports sim-se `dup2` allocating the next available
+  guest file descriptor like `dup` instead of occupying the requested
+  destination descriptor. The local reference clones the source host-backed fd,
+  calls host `dup2`, closes any existing target guest entry, and then calls
+  `allocFD`, which loses the explicit `newfd` request. rem6-system therefore
+  keeps guest fd allocation as a typed `GuestFdTable`: `dup` allocates the
+  lowest free guest fd, while `dup2` first validates the source, returns the
+  same fd as a no-op for `oldfd == newfd`, and otherwise replaces exactly the
+  requested destination fd with a duplicated guest file-description mapping.
   Public gem5 issue #3132 reports O3 data prefetches tying up LQ/ROB retirement
   resources until memory responses arrive. rem6 therefore records O3 prefetches
   as typed dependency-trace memory records with an explicit retire-after-issue
@@ -557,6 +566,9 @@ Research anchors refreshed through 2026-05-30:
 - Public gem5 issue anchor refreshed on 2026-05-30: open sim-se `wait4`
   status bug where abnormal child exits can lose the terminating-signal status
   expected by libc `wait`.
+- Public gem5 issue anchor refreshed on 2026-05-30: open sim-se `dup2`
+  bug where the requested destination fd is ignored and the next available fd
+  is allocated instead.
 - Public gem5 issue anchor refreshed on 2026-05-30: open SerialLink latency
   bug when system clock frequency is not 1GHz.
 - Public gem5 issue anchor refreshed on 2026-05-30: open ThermalModel
@@ -605,7 +617,12 @@ Implementation evidence through 2026-05-30:
   emulation handoff. Tests cover normal exits, signal termination, the
   core-dump bit, stopped children, continued children, and invalid signal
   rejection, so guest ABI status values cannot collapse every child result into
-  a successful exit before being copied to guest memory.
+  a successful exit before being copied to guest memory. It also has a typed
+  guest fd table for future syscall emulation handoff. Tests cover public gem5
+  issue #2750 by requiring `dup2` to return and install the requested
+  destination fd, replace an existing destination without allocating another
+  fd, clear close-on-exec only on newly duplicated descriptors, and preserve
+  same-fd no-op behavior after source validation.
 - `rem6-timer` has an initial typed ARM Cortex-A9 CPU local timer/watchdog
   model aligned with gem5 `src/dev/arm/timer_cpulocal`: each declared CPU owns
   a local timer and watchdog register bank, MMIO dispatch selects the CPU from
