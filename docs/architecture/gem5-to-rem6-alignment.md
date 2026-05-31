@@ -1260,13 +1260,15 @@ Implementation evidence through 2026-05-31:
   I/O-unit data, `Treaddir` returns stable `.`/`..` plus sorted file dirents
   with resumable byte offsets and count-bounded whole-entry replies, `Tread`
   returns counted byte ranges, `Twrite` mutates and extends byte ranges,
-  `Tunlinkat` removes named root files and invalidates fids pointing at the
-  removed node, `Tremove` removes file fids plus their namespace entries, and
-  `Tclunk` drops fid state. Missing names, stale fids, and deleted-fid access
-  return `Rlerror` errno payloads instead of panicking or depending on an
-  external proxy. This keeps the useful gem5 VirtIO framing model while
-  avoiding gem5's 9P proxy state-loss warning path and external 9P server
-  dependency for deterministic tests.
+  `Trenameat` renames root files while preserving the moved file qid and open
+  fid access, replacing same-directory target files with explicit target-fid
+  invalidation, `Tunlinkat` removes named root files and invalidates fids
+  pointing at the removed node, `Tremove` removes file fids plus their namespace
+  entries, and `Tclunk` drops fid state. Missing names, stale fids, and
+  deleted-fid access return `Rlerror` errno payloads instead of panicking or
+  depending on an external proxy. This keeps the useful gem5 VirtIO framing
+  model while avoiding gem5's 9P proxy state-loss warning path and external 9P
+  server dependency for deterministic tests.
   VirtIO RNG now exposes gem5's device id 4 and zero-length config
   surface, uses an explicit deterministic entropy source for reproducible
   tests and deterministic replay, decodes writable split descriptor chains into typed
@@ -3216,11 +3218,14 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   file and root-directory qid plus I/O-unit replies, `Treaddir` sorted root
   dirents, resumable offsets, count-bounded replies, and directory-only error
   handling, counted `Tread` ranges, `Twrite` counted replies plus overwrite
-  mutation, `Tunlinkat` root-file removal with post-delete directory and walk
-  checks, `Tremove` fid-backed file removal with deleted-fid read rejection,
-  `Tclunk` fid removal, and stale metadata, directory, create, write, remove,
-  unlink, and read `Rlerror` handling, modern PCI version-1 feature exposure for
-  9P, block, console, and RNG, legacy RNG device id and zero-config behavior,
+  mutation, `Trenameat` root-file renames with preserved moved qids, open-fid
+  access, replacement-target fid invalidation, post-rename directory entries,
+  and old-name walk rejection, `Tunlinkat` root-file removal with post-delete
+  directory and walk checks, `Tremove` fid-backed file removal with deleted-fid
+  read rejection, `Tclunk` fid removal, and stale metadata, directory, create,
+  write, remove, unlink, and read `Rlerror` handling, modern PCI version-1
+  feature exposure for 9P, block, console, and RNG, legacy RNG device id and
+  zero-config behavior,
   reproducible entropy generation, writable split descriptor-chain decoding,
   RNG used-ring writeback, guest-memory scatter writes, ISR queue interrupts,
   readable/empty RNG descriptor rejection, RNG common-config queue exposure,

@@ -28,6 +28,8 @@ pub const VIRTIO_9P_TGETATTR: u8 = 24;
 pub const VIRTIO_9P_RGETATTR: u8 = 25;
 pub const VIRTIO_9P_TREADDIR: u8 = 40;
 pub const VIRTIO_9P_RREADDIR: u8 = 41;
+pub const VIRTIO_9P_TRENAMEAT: u8 = 74;
+pub const VIRTIO_9P_RRENAMEAT: u8 = 75;
 pub const VIRTIO_9P_TUNLINKAT: u8 = 76;
 pub const VIRTIO_9P_RUNLINKAT: u8 = 77;
 pub const VIRTIO_9P_TWALK: u8 = 110;
@@ -249,6 +251,10 @@ impl Virtio9pDevice {
                 Ok(payload) => (VIRTIO_9P_RREADDIR, payload),
                 Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
             },
+            VIRTIO_9P_TRENAMEAT => match self.handle_renameat(&request)? {
+                Ok(()) => (VIRTIO_9P_RRENAMEAT, Vec::new()),
+                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
+            },
             VIRTIO_9P_TUNLINKAT => match self.handle_unlinkat(&request)? {
                 Ok(()) => (VIRTIO_9P_RUNLINKAT, Vec::new()),
                 Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
@@ -439,6 +445,36 @@ impl Virtio9pDevice {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
         Ok(Ok(payload))
+    }
+
+    fn handle_renameat(&self, request: &Virtio9pRequest) -> Result<Result<(), u32>, VirtioError> {
+        let rename = parse_renameat_request(request)?;
+        {
+            let fids = self.fids.lock().expect("virtio 9p fid lock");
+            let Some(old_dirfid) = fids.get(&rename.olddirfid).copied() else {
+                return Ok(Err(VIRTIO_9P_EBADF));
+            };
+            let Some(new_dirfid) = fids.get(&rename.newdirfid).copied() else {
+                return Ok(Err(VIRTIO_9P_EBADF));
+            };
+            if old_dirfid.node() != Virtio9pNodeId::Root
+                || new_dirfid.node() != Virtio9pNodeId::Root
+            {
+                return Ok(Err(VIRTIO_9P_EBADF));
+            }
+        }
+        let Some(rename) = self
+            .namespace
+            .lock()
+            .expect("virtio 9p namespace lock")
+            .rename_root_file(&rename.oldname, &rename.newname)?
+        else {
+            return Ok(Err(VIRTIO_9P_ENOENT));
+        };
+        if let Some(replaced) = rename.replaced {
+            self.remove_fids_for_node(replaced);
+        }
+        Ok(Ok(()))
     }
 
     fn handle_unlinkat(&self, request: &Virtio9pRequest) -> Result<Result<(), u32>, VirtioError> {
@@ -699,6 +735,31 @@ fn parse_readdir_request(request: &Virtio9pRequest) -> Result<Virtio9pReaddirReq
     let count = reader.read_u32()?;
     reader.finish()?;
     Ok(Virtio9pReaddirRequest { fid, offset, count })
+}
+
+fn parse_renameat_request(
+    request: &Virtio9pRequest,
+) -> Result<Virtio9pRenameatRequest, VirtioError> {
+    let mut reader = Virtio9pPayloadReader::new(request.message_type(), request.payload());
+    let olddirfid = reader.read_u32()?;
+    let oldname = string_from_9p(
+        request.message_type(),
+        reader.read_string()?,
+        request.payload(),
+    )?;
+    let newdirfid = reader.read_u32()?;
+    let newname = string_from_9p(
+        request.message_type(),
+        reader.read_string()?,
+        request.payload(),
+    )?;
+    reader.finish()?;
+    Ok(Virtio9pRenameatRequest {
+        olddirfid,
+        oldname,
+        newdirfid,
+        newname,
+    })
 }
 
 fn parse_unlinkat_request(
@@ -981,6 +1042,29 @@ impl Virtio9pNamespace {
         self.files.remove(&name).is_some()
     }
 
+    fn rename_root_file(
+        &mut self,
+        oldname: &str,
+        newname: &str,
+    ) -> Result<Option<Virtio9pRenameOutcome>, VirtioError> {
+        validate_file_name(VIRTIO_9P_TRENAMEAT, oldname)?;
+        validate_file_name(VIRTIO_9P_TRENAMEAT, newname)?;
+        if oldname == newname {
+            return Ok(self
+                .files
+                .get(oldname)
+                .map(|_| Virtio9pRenameOutcome { replaced: None }));
+        }
+        let Some(file) = self.files.remove(oldname) else {
+            return Ok(None);
+        };
+        let replaced = self
+            .files
+            .insert(newname.to_string(), file)
+            .map(|node| Virtio9pNodeId::File(node.qid_path));
+        Ok(Some(Virtio9pRenameOutcome { replaced }))
+    }
+
     fn walk(&self, node: Virtio9pNodeId, name: &str) -> Option<Virtio9pNodeId> {
         match node {
             Virtio9pNodeId::Root => self
@@ -1128,6 +1212,11 @@ struct Virtio9pFileNode {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Virtio9pRenameOutcome {
+    replaced: Option<Virtio9pNodeId>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Virtio9pNodeMetadata {
     qid: Virtio9pQid,
     mode: u32,
@@ -1193,6 +1282,14 @@ struct Virtio9pReaddirRequest {
     fid: u32,
     offset: u64,
     count: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Virtio9pRenameatRequest {
+    olddirfid: u32,
+    oldname: String,
+    newdirfid: u32,
+    newname: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
