@@ -215,12 +215,16 @@ impl<'a> VirtioGuestMemory<'a> {
         Ok(data)
     }
 
-    fn read_u16(&mut self, address: Address) -> Result<u16, VirtioError> {
+    pub(crate) fn read_u16(&mut self, address: Address) -> Result<u16, VirtioError> {
         let bytes = self.read_exact(address, 2)?;
         Ok(u16::from_le_bytes(bytes.as_slice().try_into().unwrap()))
     }
 
-    fn write_exact(&mut self, address: Address, bytes: &[u8]) -> Result<(), VirtioError> {
+    pub(crate) fn write_exact(
+        &mut self,
+        address: Address,
+        bytes: &[u8],
+    ) -> Result<(), VirtioError> {
         let mut cursor = address;
         let mut remaining = bytes;
         while !remaining.is_empty() {
@@ -242,7 +246,7 @@ impl<'a> VirtioGuestMemory<'a> {
         Ok(())
     }
 
-    fn write_u16(&mut self, address: Address, value: u16) -> Result<(), VirtioError> {
+    pub(crate) fn write_u16(&mut self, address: Address, value: u16) -> Result<(), VirtioError> {
         self.write_exact(address, &value.to_le_bytes())
     }
 
@@ -415,15 +419,11 @@ impl VirtioSplitQueue {
         guest: &mut VirtioGuestMemory<'_>,
         queue: VirtioQueueIndex,
     ) -> Result<Option<VirtioBlockDecodedRequest>, VirtioError> {
-        let available_index = guest.read_u16(add_address(self.available_ring, 2)?)?;
-        if available_index == self.last_available_index {
+        let Some(chain) = self.consume_available_chain(guest)? else {
             return Ok(None);
-        }
-        let slot = self.last_available_index % self.queue_size;
-        let head = guest.read_u16(add_address(self.available_ring, 4 + u64::from(slot) * 2)?)?;
-        let chain = self.load_descriptor_chain(guest, head)?;
+        };
         let decoded = chain.decode_block_request(queue)?;
-        self.last_available_index = self.last_available_index.wrapping_add(1);
+        self.advance_available_index();
         Ok(Some(decoded))
     }
 
@@ -432,6 +432,18 @@ impl VirtioSplitQueue {
         guest: &mut VirtioGuestMemory<'_>,
         queue: VirtioQueueIndex,
     ) -> Result<Option<VirtioRngDecodedRequest>, VirtioError> {
+        let Some(chain) = self.consume_available_chain(guest)? else {
+            return Ok(None);
+        };
+        let decoded = chain.decode_rng_request(queue)?;
+        self.advance_available_index();
+        Ok(Some(decoded))
+    }
+
+    pub(crate) fn consume_available_chain(
+        &mut self,
+        guest: &mut VirtioGuestMemory<'_>,
+    ) -> Result<Option<VirtioSplitDescriptorChain>, VirtioError> {
         let available_index = guest.read_u16(add_address(self.available_ring, 2)?)?;
         if available_index == self.last_available_index {
             return Ok(None);
@@ -439,9 +451,11 @@ impl VirtioSplitQueue {
         let slot = self.last_available_index % self.queue_size;
         let head = guest.read_u16(add_address(self.available_ring, 4 + u64::from(slot) * 2)?)?;
         let chain = self.load_descriptor_chain(guest, head)?;
-        let decoded = chain.decode_rng_request(queue)?;
+        Ok(Some(chain))
+    }
+
+    pub(crate) fn advance_available_index(&mut self) {
         self.last_available_index = self.last_available_index.wrapping_add(1);
-        Ok(Some(decoded))
     }
 
     pub fn complete_block_request(
@@ -1685,7 +1699,7 @@ impl VirtioSplitUsedRing {
     }
 }
 
-fn add_address(address: Address, offset: u64) -> Result<Address, VirtioError> {
+pub(crate) fn add_address(address: Address, offset: u64) -> Result<Address, VirtioError> {
     address
         .get()
         .checked_add(offset)

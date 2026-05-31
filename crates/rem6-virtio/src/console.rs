@@ -5,8 +5,8 @@ use rem6_kernel::Tick;
 use rem6_memory::Address;
 
 use crate::{
-    VirtioError, VirtioQueueIndex, VirtioSplitDescriptorChain, VirtioSplitUsedElement,
-    VirtioSplitUsedRing,
+    block_queue::add_address, VirtioError, VirtioGuestMemory, VirtioPciIsrDevice, VirtioQueueIndex,
+    VirtioSplitDescriptorChain, VirtioSplitQueue, VirtioSplitUsedElement, VirtioSplitUsedRing,
 };
 
 pub const VIRTIO_CONSOLE_DEVICE_ID: u16 = 3;
@@ -489,6 +489,132 @@ impl VirtioSplitDescriptorChain {
             data,
         );
         Ok(VirtioConsoleDecodedTransmit { request })
+    }
+}
+
+impl VirtioSplitQueue {
+    pub fn consume_available_console_receive(
+        &mut self,
+        guest: &mut VirtioGuestMemory<'_>,
+        queue: VirtioQueueIndex,
+    ) -> Result<Option<VirtioConsoleDecodedReceive>, VirtioError> {
+        let Some(chain) = self.consume_available_chain(guest)? else {
+            return Ok(None);
+        };
+        let decoded = chain.decode_console_receive_request(queue)?;
+        self.advance_available_index();
+        Ok(Some(decoded))
+    }
+
+    pub fn consume_available_console_transmit(
+        &mut self,
+        guest: &mut VirtioGuestMemory<'_>,
+        queue: VirtioQueueIndex,
+    ) -> Result<Option<VirtioConsoleDecodedTransmit>, VirtioError> {
+        let Some(chain) = self.consume_available_chain(guest)? else {
+            return Ok(None);
+        };
+        let decoded = chain.decode_console_transmit_request(queue)?;
+        self.advance_available_index();
+        Ok(Some(decoded))
+    }
+
+    pub fn complete_console_receive(
+        &self,
+        guest: &mut VirtioGuestMemory<'_>,
+        decoded: &VirtioConsoleDecodedReceive,
+        completion: &VirtioConsoleCompletion,
+    ) -> Result<VirtioConsoleQueueCompletionWrite, VirtioError> {
+        let used_index = guest.read_u16(add_address(self.used_ring(), 2)?)?;
+        let mut used_ring = VirtioSplitUsedRing::new(self.queue_size(), used_index)?;
+        let writeback = used_ring.complete_console_receive(decoded, completion)?;
+        self.write_console_completion(guest, &writeback)?;
+        Ok(writeback)
+    }
+
+    pub fn complete_console_transmit(
+        &self,
+        guest: &mut VirtioGuestMemory<'_>,
+        decoded: &VirtioConsoleDecodedTransmit,
+        completion: &VirtioConsoleCompletion,
+    ) -> Result<VirtioConsoleQueueCompletionWrite, VirtioError> {
+        let used_index = guest.read_u16(add_address(self.used_ring(), 2)?)?;
+        let mut used_ring = VirtioSplitUsedRing::new(self.queue_size(), used_index)?;
+        let writeback = used_ring.complete_console_transmit(decoded, completion)?;
+        self.write_console_completion(guest, &writeback)?;
+        Ok(writeback)
+    }
+
+    pub fn complete_console_receive_and_raise_isr(
+        &self,
+        guest: &mut VirtioGuestMemory<'_>,
+        decoded: &VirtioConsoleDecodedReceive,
+        completion: &VirtioConsoleCompletion,
+        isr: &VirtioPciIsrDevice,
+    ) -> Result<VirtioConsoleQueueCompletionWrite, VirtioError> {
+        let writeback = self.complete_console_receive(guest, decoded, completion)?;
+        if self.console_completion_interrupt_enabled(guest, writeback.used_index())? {
+            isr.raise_queue_interrupt(completion.tick());
+        }
+        Ok(writeback)
+    }
+
+    pub fn complete_console_transmit_and_raise_isr(
+        &self,
+        guest: &mut VirtioGuestMemory<'_>,
+        decoded: &VirtioConsoleDecodedTransmit,
+        completion: &VirtioConsoleCompletion,
+        isr: &VirtioPciIsrDevice,
+    ) -> Result<VirtioConsoleQueueCompletionWrite, VirtioError> {
+        let writeback = self.complete_console_transmit(guest, decoded, completion)?;
+        if self.console_completion_interrupt_enabled(guest, writeback.used_index())? {
+            isr.raise_queue_interrupt(completion.tick());
+        }
+        Ok(writeback)
+    }
+
+    fn write_console_completion(
+        &self,
+        guest: &mut VirtioGuestMemory<'_>,
+        writeback: &VirtioConsoleQueueCompletionWrite,
+    ) -> Result<(), VirtioError> {
+        for write in writeback.data_writes() {
+            let address =
+                write
+                    .address()
+                    .ok_or_else(|| VirtioError::PciTransportRuntimeConfig {
+                        message: format!(
+                            "VirtIO console descriptor {} has no guest address for writeback",
+                            write.descriptor()
+                        ),
+                    })?;
+            guest.write_exact(
+                add_address(address, u64::from(write.offset()))?,
+                write.bytes(),
+            )?;
+        }
+        guest.write_exact(
+            add_address(self.used_ring(), 4 + u64::from(writeback.used_slot()) * 8)?,
+            &writeback.used_element().to_le_bytes(),
+        )?;
+        guest.write_u16(add_address(self.used_ring(), 2)?, writeback.used_index())
+    }
+
+    fn console_completion_interrupt_enabled(
+        &self,
+        guest: &mut VirtioGuestMemory<'_>,
+        used_index: u16,
+    ) -> Result<bool, VirtioError> {
+        if self.event_index_enabled() {
+            let used_event = guest.read_u16(add_address(
+                self.available_ring(),
+                4 + u64::from(self.queue_size()) * 2,
+            )?)?;
+            let previous_used_index = used_index.wrapping_sub(1);
+            return Ok(previous_used_index == used_event);
+        }
+        let flags = guest.read_u16(self.available_ring())?;
+        Ok(flags & crate::VIRTIO_SPLIT_AVAIL_F_NO_INTERRUPT == 0)
     }
 }
 
