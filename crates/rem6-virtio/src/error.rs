@@ -201,6 +201,10 @@ pub enum VirtioError {
     InvalidVirtio9pWritableDescriptor {
         index: u16,
     },
+    InvalidVirtio9pPayload {
+        message_type: u8,
+        bytes: usize,
+    },
     Virtio9pPayloadLengthOverflow,
     ZeroPciCapabilityRegion {
         cfg_type: u8,
@@ -606,6 +610,13 @@ impl fmt::Display for VirtioError {
             Self::InvalidVirtio9pWritableDescriptor { index } => write!(
                 formatter,
                 "VirtIO 9p descriptor {index} must be writable for reply data"
+            ),
+            Self::InvalidVirtio9pPayload {
+                message_type,
+                bytes,
+            } => write!(
+                formatter,
+                "VirtIO 9p message type {message_type} has malformed {bytes}-byte payload"
             ),
             Self::Virtio9pPayloadLengthOverflow => {
                 write!(formatter, "VirtIO 9p payload length overflows")
