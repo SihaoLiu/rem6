@@ -1,4 +1,8 @@
-use crate::{IdeChannelId, IdeDeviceId, IdeDmaDirection, IdeTaskFile};
+use crate::{
+    IdeChannelId, IdeControllerError, IdeDeviceId, IdeDmaDirection, IdeTaskFile,
+    IDE_BMI_COMMAND_RW, IDE_BMI_COMMAND_START, IDE_BMI_STATUS_ACTIVE, IDE_BMI_STATUS_DMA_CAP0,
+    IDE_BMI_STATUS_DMA_CAP1, IDE_BMI_STATUS_DMA_ERROR, IDE_BMI_STATUS_INTERRUPT,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct IdeBmiSnapshot {
@@ -18,6 +22,41 @@ impl IdeBmiSnapshot {
 
     pub const fn prd_table(self) -> u32 {
         self.prd_table
+    }
+
+    pub(crate) fn validate(self, channel: IdeChannelId) -> Result<(), IdeControllerError> {
+        let allowed_command = IDE_BMI_COMMAND_START | IDE_BMI_COMMAND_RW;
+        if self.command & !allowed_command != 0 {
+            return Err(IdeControllerError::InvalidBmiSnapshot {
+                channel,
+                field: "command",
+                value: u32::from(self.command),
+            });
+        }
+
+        let required_status = IDE_BMI_STATUS_DMA_CAP0 | IDE_BMI_STATUS_DMA_CAP1;
+        let allowed_status = IDE_BMI_STATUS_ACTIVE
+            | IDE_BMI_STATUS_DMA_ERROR
+            | IDE_BMI_STATUS_INTERRUPT
+            | IDE_BMI_STATUS_DMA_CAP0
+            | IDE_BMI_STATUS_DMA_CAP1;
+        if self.status & !allowed_status != 0 || self.status & required_status != required_status {
+            return Err(IdeControllerError::InvalidBmiSnapshot {
+                channel,
+                field: "status",
+                value: u32::from(self.status),
+            });
+        }
+
+        if self.prd_table & 0x3 != 0 {
+            return Err(IdeControllerError::InvalidBmiSnapshot {
+                channel,
+                field: "prd_table",
+                value: self.prd_table,
+            });
+        }
+
+        Ok(())
     }
 }
 

@@ -249,3 +249,67 @@ fn ide_controller_checkpoint_bank_rejects_bad_chunk_without_partial_restore() {
     assert_eq!(first.lock().unwrap().snapshot(), first_before);
     assert_eq!(second.lock().unwrap().snapshot(), second_before);
 }
+
+#[test]
+fn ide_controller_checkpoint_bank_rejects_repaired_bmi_snapshot_without_partial_restore() {
+    let component = CheckpointComponentId::new("storage.ide0").unwrap();
+    let controller = Arc::new(Mutex::new(
+        IdeController::new([Some(disk(0x4d, IdeDeviceId::Device0)), None, None, None]).unwrap(),
+    ));
+    {
+        let mut locked = controller.lock().unwrap();
+        locked
+            .write_bmi_u32(
+                rem6_storage::IdeChannelId::Primary,
+                IDE_BMI_PRD_TABLE_OFFSET,
+                0x80,
+            )
+            .unwrap();
+        issue_read_dma(&mut locked);
+        locked
+            .write_bmi_u8(
+                rem6_storage::IdeChannelId::Primary,
+                IDE_BMI_COMMAND_OFFSET,
+                IDE_BMI_COMMAND_START | IDE_BMI_COMMAND_RW,
+            )
+            .unwrap();
+    }
+    let bank = IdeControllerCheckpointBank::new([IdeControllerCheckpointPort::new(
+        component.clone(),
+        controller.clone(),
+    )])
+    .unwrap();
+    let mut registry = CheckpointRegistry::new();
+    bank.register_all(&mut registry).unwrap();
+    bank.capture_all_into(&mut registry).unwrap();
+    let mut payload = registry
+        .chunk(&component, "ide-controller")
+        .unwrap()
+        .to_vec();
+    payload[6] |= 0x1;
+    registry
+        .write_chunk(&component, "ide-controller", payload)
+        .unwrap();
+
+    controller
+        .lock()
+        .unwrap()
+        .write_bmi_u8(
+            rem6_storage::IdeChannelId::Primary,
+            IDE_BMI_COMMAND_OFFSET,
+            0,
+        )
+        .unwrap();
+    let before = controller.lock().unwrap().snapshot();
+
+    let error = bank.restore_all_from(&registry).unwrap_err();
+
+    match error {
+        StorageCheckpointError::Ide {
+            component: rejected,
+            ..
+        } => assert_eq!(rejected, component),
+        other => panic!("unexpected error: {other:?}"),
+    }
+    assert_eq!(controller.lock().unwrap().snapshot(), before);
+}

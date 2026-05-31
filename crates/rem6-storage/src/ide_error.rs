@@ -49,6 +49,11 @@ pub enum IdeControllerError {
         offset: u8,
         width: u8,
     },
+    InvalidBmiSnapshot {
+        channel: IdeChannelId,
+        field: &'static str,
+        value: u32,
+    },
     DmaNotActive {
         channel: IdeChannelId,
     },
@@ -159,6 +164,14 @@ impl Display for IdeControllerError {
             } => write!(
                 formatter,
                 "invalid IDE controller {channel:?} BMI offset {offset:#x} for {width}-byte access"
+            ),
+            Self::InvalidBmiSnapshot {
+                channel,
+                field,
+                value,
+            } => write!(
+                formatter,
+                "invalid IDE controller {channel:?} BMI snapshot {field} value {value:#x}"
             ),
             Self::DmaNotActive { channel } => {
                 write!(formatter, "IDE controller {channel:?} channel DMA is not active")

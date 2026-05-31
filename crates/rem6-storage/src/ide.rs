@@ -55,17 +55,15 @@ pub const IDE_BMI_STATUS_DMA_CAP0: u8 = 0x40;
 pub const IDE_BMI_CHANNEL_BYTES: u8 = 8;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
 pub enum IdeDeviceId {
-    Device0,
-    Device1,
+    Device0 = 0,
+    Device1 = 1,
 }
 
 impl IdeDeviceId {
     pub const fn as_u8(self) -> u8 {
-        match self {
-            Self::Device0 => 0,
-            Self::Device1 => 1,
-        }
+        self as u8
     }
 }
 
@@ -887,6 +885,7 @@ impl IdeChannel {
         if snapshot.id != self.id {
             return Err(IdeControllerError::SnapshotChannelMismatch { channel: self.id });
         }
+        snapshot.bmi().validate(self.id)?;
         validate_channel_device_snapshot(
             self.id,
             IdeDeviceId::Device0,
@@ -1009,9 +1008,9 @@ impl IdeBmiRegisters {
     }
 
     fn restore(&mut self, snapshot: IdeBmiSnapshot) {
-        self.command = snapshot.command;
-        self.status = snapshot.status | IDE_BMI_STATUS_DMA_CAP0 | IDE_BMI_STATUS_DMA_CAP1;
-        self.prd_table = snapshot.prd_table & !0x3;
+        self.command = snapshot.command();
+        self.status = snapshot.status();
+        self.prd_table = snapshot.prd_table();
     }
 }
 
