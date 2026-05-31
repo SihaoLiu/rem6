@@ -399,7 +399,6 @@ impl TranslationTlb {
 
         let mut keys = BTreeSet::new();
         let mut entries = BTreeMap::new();
-        let mut minimum_next_lru = 0;
         for snapshot_entry in snapshot.entries() {
             let key = TranslationTlbKey::new(
                 snapshot_entry.address_space(),
@@ -411,19 +410,20 @@ impl TranslationTlb {
                 });
             }
             let entry = TranslationTlbEntry::from_snapshot(snapshot_entry)?;
-            minimum_next_lru = minimum_next_lru.max(
-                snapshot_entry
-                    .last_used()
-                    .checked_add(1)
-                    .ok_or(TranslationError::TlbOrderOverflow)?,
-            );
+            if snapshot_entry.last_used() >= snapshot.next_lru() {
+                return Err(TranslationError::SnapshotNextLruTooSmall {
+                    next_lru: snapshot.next_lru(),
+                    virtual_page: snapshot_entry.virtual_page(),
+                    last_used: snapshot_entry.last_used(),
+                });
+            }
             entries.insert(key, entry);
         }
 
         Ok(Self {
             config: snapshot.config(),
             entries,
-            next_lru: snapshot.next_lru().max(minimum_next_lru),
+            next_lru: snapshot.next_lru(),
             stats: snapshot.stats(),
         })
     }

@@ -574,6 +574,11 @@ pub enum TranslationError {
     DuplicateTlbEntry {
         virtual_page: Address,
     },
+    SnapshotNextLruTooSmall {
+        next_lru: u64,
+        virtual_page: Address,
+        last_used: u64,
+    },
     TlbOrderOverflow,
     ZeroPageSize,
     NonPowerOfTwoPageSize {
@@ -662,6 +667,15 @@ impl fmt::Display for TranslationError {
             Self::DuplicateTlbEntry { virtual_page } => write!(
                 formatter,
                 "translation TLB entry for virtual page {:#x} is duplicated",
+                virtual_page.get()
+            ),
+            Self::SnapshotNextLruTooSmall {
+                next_lru,
+                virtual_page,
+                last_used,
+            } => write!(
+                formatter,
+                "translation TLB snapshot next LRU {next_lru} is not after virtual page {:#x} last-used {last_used}",
                 virtual_page.get()
             ),
             Self::TlbOrderOverflow => {

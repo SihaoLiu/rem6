@@ -184,6 +184,34 @@ fn translation_tlb_caches_page_entries_uses_lru_and_restores_snapshot() {
 }
 
 #[test]
+fn translation_tlb_restore_rejects_non_monotonic_next_lru() {
+    let page_size = TranslationPageSize::new(4096).unwrap();
+    let entry = TranslationTlbEntrySnapshot::new(
+        Address::new(0xffff_0000_b000_0000),
+        Address::new(0x0000_0000_b000_0000),
+        page_size,
+        TranslationPagePermissions::read_write(),
+        7,
+    );
+    let snapshot = TranslationTlbSnapshot::new(
+        TranslationTlbConfig::new(2).unwrap(),
+        vec![entry.clone()],
+        entry.last_used(),
+        TranslationTlbStats::new(0, 0, 0, 1, 0),
+    );
+    let mut tlb = TranslationTlb::new(TranslationTlbConfig::new(2).unwrap());
+
+    assert_eq!(
+        tlb.restore(&snapshot),
+        Err(TranslationError::SnapshotNextLruTooSmall {
+            next_lru: entry.last_used(),
+            virtual_page: entry.virtual_page(),
+            last_used: entry.last_used(),
+        })
+    );
+}
+
+#[test]
 fn translation_tlb_rechecks_permissions_faults_without_polluting_cache() {
     assert_eq!(
         TranslationTlbConfig::new(0).unwrap_err(),

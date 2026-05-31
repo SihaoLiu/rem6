@@ -2444,7 +2444,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   capture, target-install, and resume actions.
 - Memory translation TLB tests cover public gem5 issue #3010 by preserving
   global same-ASID entries during non-global ASID flush, removing same-ASID
-  non-global entries, preserving other ASIDs, and snapshotting entry scope.
+  non-global entries, preserving other ASIDs, snapshotting entry scope, and
+  rejecting nonmonotonic restore LRU counters so malformed checkpoints cannot
+  reuse an existing stable replacement value.
 - Memory translation queue tests cover pending-request ready ordering, snapshot
   restore, duplicate rejection, and nonmonotonic restore order-counter rejection
   so a malformed checkpoint cannot reuse an existing stable ordering value.
