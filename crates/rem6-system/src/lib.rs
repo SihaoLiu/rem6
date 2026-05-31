@@ -185,8 +185,10 @@ pub use virtio_checkpoint::{
     VirtioPciDeviceConfigCheckpointBank, VirtioPciDeviceConfigCheckpointError,
     VirtioPciDeviceConfigCheckpointPort, VirtioPciDeviceConfigCheckpointRecord,
     VirtioPciIsrCheckpointBank, VirtioPciIsrCheckpointError, VirtioPciIsrCheckpointPort,
-    VirtioPciIsrCheckpointRecord, VirtioSplitQueueCheckpointBank, VirtioSplitQueueCheckpointError,
-    VirtioSplitQueueCheckpointPort, VirtioSplitQueueCheckpointRecord,
+    VirtioPciIsrCheckpointRecord, VirtioPciNotifyCheckpointBank, VirtioPciNotifyCheckpointError,
+    VirtioPciNotifyCheckpointPort, VirtioPciNotifyCheckpointRecord, VirtioSplitQueueCheckpointBank,
+    VirtioSplitQueueCheckpointError, VirtioSplitQueueCheckpointPort,
+    VirtioSplitQueueCheckpointRecord,
 };
 pub use wait_status::{GuestSignal, GuestWaitStatus, GuestWaitStatusError};
 pub use workload_replay::{
@@ -1035,6 +1037,7 @@ pub enum SystemError {
     PlicCheckpoint(PlicCheckpointError),
     VirtioPciDeviceConfigCheckpoint(VirtioPciDeviceConfigCheckpointError),
     VirtioPciIsrCheckpoint(VirtioPciIsrCheckpointError),
+    VirtioPciNotifyCheckpoint(VirtioPciNotifyCheckpointError),
     VirtioCheckpoint(VirtioSplitQueueCheckpointError),
 }
 
@@ -1076,6 +1079,7 @@ impl fmt::Display for SystemError {
             Self::PlicCheckpoint(error) => write!(formatter, "{error}"),
             Self::VirtioPciDeviceConfigCheckpoint(error) => write!(formatter, "{error}"),
             Self::VirtioPciIsrCheckpoint(error) => write!(formatter, "{error}"),
+            Self::VirtioPciNotifyCheckpoint(error) => write!(formatter, "{error}"),
             Self::VirtioCheckpoint(error) => write!(formatter, "{error}"),
         }
     }
@@ -1114,6 +1118,7 @@ impl Error for SystemError {
             Self::PlicCheckpoint(error) => Some(error),
             Self::VirtioPciDeviceConfigCheckpoint(error) => Some(error),
             Self::VirtioPciIsrCheckpoint(error) => Some(error),
+            Self::VirtioPciNotifyCheckpoint(error) => Some(error),
             Self::VirtioCheckpoint(error) => Some(error),
             Self::ZeroHostLatency => None,
         }

@@ -1237,9 +1237,10 @@ Implementation evidence through 2026-05-30:
   VirtIO PCI device-config snapshots now expose stable byte payloads for config
   bytes, writable masks, and access history. VirtIO PCI ISR snapshots now expose
   stable byte payloads for interrupt status and event history. `rem6-system`
-  now consumes device-config and ISR payloads through VirtIO PCI checkpoint
-  ports and banks that stage malformed-payload rejection before full-system
-  restore mutates live config bytes or interrupt status.
+  now consumes notify, device-config, and ISR payloads through VirtIO PCI
+  checkpoint ports and banks that stage malformed-payload rejection before
+  full-system restore mutates live notification history, config bytes, or
+  interrupt status.
 - `rem6-storage` now owns gem5 `DiskImage`, `RawDiskImage`, and `CowDiskImage`
   level 512-byte sector contracts in a dedicated crate. Raw images validate
   sector-multiple capacity, read-only writes, range checks, flush accounting,
@@ -3130,8 +3131,11 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   rejection, unavailable-queue write rejection, notify-MMIO address derivation
   from queue notify offsets and notify-off multipliers, serial and parallel
   typed queue notification recording, notify snapshot restore, stable notify
-  snapshot payload encoding with malformed-payload rejection, invalid multiplier
-  rejection, write-only notify behavior, and mismatched notify write rejection.
+  snapshot payload encoding with malformed-payload rejection, rem6-system
+  checkpoint-bank capture/restore through full-system host actions, malformed
+  checkpoint payload rejection without live notification or registry mutation,
+  invalid multiplier rejection, write-only notify behavior, and mismatched notify
+  write rejection.
   VirtIO PCI capability tests cover standard vendor-specific
   capability byte layout, cfg_type values, BAR/id/offset/length encoding,
   cap_len, cap_next, notify_off_multiplier extension bytes, zero-length
