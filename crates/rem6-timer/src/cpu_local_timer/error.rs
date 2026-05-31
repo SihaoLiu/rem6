@@ -12,6 +12,7 @@ pub enum CpuLocalTimerError {
     InvalidClockTick { clock_tick: Tick },
     InvalidCpuCount { cpu_count: usize },
     CpuPartitionCountMismatch { cpus: usize, partitions: usize },
+    CpuSnapshotCountMismatch { cpus: usize, snapshots: usize },
     DuplicateCpuPartition { partition: PartitionId },
     UnknownCpu { index: usize },
     UnknownCpuPartition { partition: PartitionId },
@@ -21,6 +22,7 @@ pub enum CpuLocalTimerError {
     TimeWentBack { tick: Tick, last_updated_tick: Tick },
     DeadlineOverflow,
     GenerationOverflow,
+    InvalidPendingInterrupt,
     Interrupt(InterruptError),
     Scheduler(rem6_kernel::SchedulerError),
 }
@@ -43,6 +45,10 @@ impl fmt::Display for CpuLocalTimerError {
             Self::CpuPartitionCountMismatch { cpus, partitions } => write!(
                 formatter,
                 "CPU local timer has {cpus} CPUs but {partitions} partition mappings"
+            ),
+            Self::CpuSnapshotCountMismatch { cpus, snapshots } => write!(
+                formatter,
+                "CPU local timer has {cpus} CPUs but snapshot has {snapshots} CPUs"
             ),
             Self::DuplicateCpuPartition { partition } => write!(
                 formatter,
@@ -78,6 +84,9 @@ impl fmt::Display for CpuLocalTimerError {
             ),
             Self::DeadlineOverflow => write!(formatter, "CPU local timer deadline overflowed"),
             Self::GenerationOverflow => write!(formatter, "CPU local timer generation overflowed"),
+            Self::InvalidPendingInterrupt => {
+                write!(formatter, "CPU local timer pending interrupt state is invalid")
+            }
             Self::Interrupt(error) => write!(formatter, "{error}"),
             Self::Scheduler(error) => write!(formatter, "{error}"),
         }

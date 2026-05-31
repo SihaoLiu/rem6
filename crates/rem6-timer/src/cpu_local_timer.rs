@@ -7,9 +7,14 @@ use rem6_memory::Address;
 use rem6_mmio::{MmioDevice, MmioError, MmioOperation, MmioRequest, MmioResponse};
 
 mod error;
+mod snapshot;
 
 use error::mmio_error;
 pub use error::CpuLocalTimerError;
+pub use snapshot::{
+    CpuLocalTimerBankSnapshot, CpuLocalTimerCounterSnapshot, CpuLocalTimerCounterSnapshotFields,
+    CpuLocalTimerCpuSnapshot, CpuLocalWatchdogSnapshot, CpuLocalWatchdogSnapshotFields,
+};
 
 pub const CPU_LOCAL_TIMER_LOAD_OFFSET: u64 = 0x00;
 pub const CPU_LOCAL_TIMER_COUNTER_OFFSET: u64 = 0x04;
@@ -196,82 +201,6 @@ impl CpuLocalWatchdogControl {
         clock_tick
             .checked_shl(4 * prescalar)
             .ok_or(CpuLocalTimerError::DeadlineOverflow)
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CpuLocalTimerCounterSnapshot {
-    load_value: u32,
-    base_value: u32,
-    last_updated_tick: Tick,
-    control: CpuLocalTimerControl,
-    raw_interrupt: bool,
-    pending_interrupt: bool,
-    clock_tick: Tick,
-    generation: u64,
-}
-
-impl CpuLocalTimerCounterSnapshot {
-    pub const fn raw_interrupt(&self) -> bool {
-        self.raw_interrupt
-    }
-
-    pub const fn generation(&self) -> u64 {
-        self.generation
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CpuLocalWatchdogSnapshot {
-    load_value: u32,
-    base_value: u32,
-    last_updated_tick: Tick,
-    control: CpuLocalWatchdogControl,
-    raw_interrupt: bool,
-    pending_interrupt: bool,
-    raw_reset: bool,
-    disable_register: u32,
-    clock_tick: Tick,
-    generation: u64,
-    reset_assertions: Vec<Tick>,
-}
-
-impl CpuLocalWatchdogSnapshot {
-    pub const fn generation(&self) -> u64 {
-        self.generation
-    }
-
-    pub fn reset_assertions(&self) -> &[Tick] {
-        &self.reset_assertions
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CpuLocalTimerCpuSnapshot {
-    timer: CpuLocalTimerCounterSnapshot,
-    watchdog: CpuLocalWatchdogSnapshot,
-}
-
-impl CpuLocalTimerCpuSnapshot {
-    pub const fn timer(&self) -> &CpuLocalTimerCounterSnapshot {
-        &self.timer
-    }
-
-    pub const fn watchdog(&self) -> &CpuLocalWatchdogSnapshot {
-        &self.watchdog
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CpuLocalTimerBankSnapshot {
-    cpus: Vec<CpuLocalTimerCpuSnapshot>,
-}
-
-impl CpuLocalTimerBankSnapshot {
-    pub fn cpu(&self, index: usize) -> Result<&CpuLocalTimerCpuSnapshot, CpuLocalTimerError> {
-        self.cpus
-            .get(index)
-            .ok_or(CpuLocalTimerError::UnknownCpu { index })
     }
 }
 
@@ -615,6 +544,37 @@ impl LocalTimerCounter {
         }
     }
 
+    fn validate_snapshot(
+        snapshot: &CpuLocalTimerCounterSnapshot,
+    ) -> Result<(), CpuLocalTimerError> {
+        if snapshot.clock_tick == 0 {
+            return Err(CpuLocalTimerError::InvalidClockTick {
+                clock_tick: snapshot.clock_tick,
+            });
+        }
+        if snapshot.pending_interrupt && !snapshot.raw_interrupt {
+            return Err(CpuLocalTimerError::InvalidPendingInterrupt);
+        }
+        snapshot.control.ticks_per_decrement(snapshot.clock_tick)?;
+        Ok(())
+    }
+
+    fn restore(
+        &mut self,
+        snapshot: &CpuLocalTimerCounterSnapshot,
+    ) -> Result<(), CpuLocalTimerError> {
+        Self::validate_snapshot(snapshot)?;
+        self.load_value = snapshot.load_value;
+        self.base_value = snapshot.base_value;
+        self.last_updated_tick = snapshot.last_updated_tick;
+        self.control = snapshot.control;
+        self.raw_interrupt = snapshot.raw_interrupt;
+        self.pending_interrupt = snapshot.pending_interrupt;
+        self.clock_tick = snapshot.clock_tick;
+        self.generation = snapshot.generation;
+        Ok(())
+    }
+
     fn bump_generation(&mut self) -> Result<(), CpuLocalTimerError> {
         self.generation = self
             .generation
@@ -856,6 +816,35 @@ impl LocalWatchdogCounter {
         }
     }
 
+    fn validate_snapshot(snapshot: &CpuLocalWatchdogSnapshot) -> Result<(), CpuLocalTimerError> {
+        if snapshot.clock_tick == 0 {
+            return Err(CpuLocalTimerError::InvalidClockTick {
+                clock_tick: snapshot.clock_tick,
+            });
+        }
+        if snapshot.pending_interrupt && !snapshot.raw_interrupt {
+            return Err(CpuLocalTimerError::InvalidPendingInterrupt);
+        }
+        snapshot.control.ticks_per_decrement(snapshot.clock_tick)?;
+        Ok(())
+    }
+
+    fn restore(&mut self, snapshot: &CpuLocalWatchdogSnapshot) -> Result<(), CpuLocalTimerError> {
+        Self::validate_snapshot(snapshot)?;
+        self.load_value = snapshot.load_value;
+        self.base_value = snapshot.base_value;
+        self.last_updated_tick = snapshot.last_updated_tick;
+        self.control = snapshot.control;
+        self.raw_interrupt = snapshot.raw_interrupt;
+        self.pending_interrupt = snapshot.pending_interrupt;
+        self.raw_reset = snapshot.raw_reset;
+        self.disable_register = snapshot.disable_register;
+        self.clock_tick = snapshot.clock_tick;
+        self.generation = snapshot.generation;
+        self.reset_assertions = snapshot.reset_assertions.clone();
+        Ok(())
+    }
+
     fn bump_generation(&mut self) -> Result<(), CpuLocalTimerError> {
         self.generation = self
             .generation
@@ -902,6 +891,35 @@ impl CpuLocalTimerBank {
         CpuLocalTimerBankSnapshot {
             cpus: self.cpus.iter().map(CpuLocalTimerCpu::snapshot).collect(),
         }
+    }
+
+    pub fn validate_snapshot(
+        &self,
+        snapshot: &CpuLocalTimerBankSnapshot,
+    ) -> Result<(), CpuLocalTimerError> {
+        if snapshot.cpus.len() != self.cpus.len() {
+            return Err(CpuLocalTimerError::CpuSnapshotCountMismatch {
+                cpus: self.cpus.len(),
+                snapshots: snapshot.cpus.len(),
+            });
+        }
+        for snapshot in &snapshot.cpus {
+            LocalTimerCounter::validate_snapshot(snapshot.timer())?;
+            LocalWatchdogCounter::validate_snapshot(snapshot.watchdog())?;
+        }
+        Ok(())
+    }
+
+    pub fn restore(
+        &mut self,
+        snapshot: &CpuLocalTimerBankSnapshot,
+    ) -> Result<(), CpuLocalTimerError> {
+        self.validate_snapshot(snapshot)?;
+        for (cpu, snapshot) in self.cpus.iter_mut().zip(&snapshot.cpus) {
+            cpu.timer.restore(snapshot.timer())?;
+            cpu.watchdog.restore(snapshot.watchdog())?;
+        }
+        Ok(())
     }
 }
 
@@ -1016,6 +1034,23 @@ impl CpuLocalTimerMmioDevice {
             .lock()
             .expect("CPU local timer state lock")
             .snapshot()
+    }
+
+    pub fn restore(&self, snapshot: &CpuLocalTimerBankSnapshot) -> Result<(), CpuLocalTimerError> {
+        self.state
+            .lock()
+            .expect("CPU local timer state lock")
+            .restore(snapshot)
+    }
+
+    pub fn validate_snapshot(
+        &self,
+        snapshot: &CpuLocalTimerBankSnapshot,
+    ) -> Result<(), CpuLocalTimerError> {
+        self.state
+            .lock()
+            .expect("CPU local timer state lock")
+            .validate_snapshot(snapshot)
     }
 
     pub fn respond(

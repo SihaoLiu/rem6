@@ -24,9 +24,10 @@ pub use self::clint::{
 };
 pub use self::cpu_local_timer::{
     CpuLocalTimerBank, CpuLocalTimerBankSnapshot, CpuLocalTimerControl,
-    CpuLocalTimerCounterSnapshot, CpuLocalTimerCpu, CpuLocalTimerCpuSnapshot, CpuLocalTimerError,
-    CpuLocalTimerInterruptPorts, CpuLocalTimerMmioDevice, CpuLocalTimerWriteEffect,
-    CpuLocalTimerZeroOutcome, CpuLocalWatchdogControl, CpuLocalWatchdogSnapshot,
+    CpuLocalTimerCounterSnapshot, CpuLocalTimerCounterSnapshotFields, CpuLocalTimerCpu,
+    CpuLocalTimerCpuSnapshot, CpuLocalTimerError, CpuLocalTimerInterruptPorts,
+    CpuLocalTimerMmioDevice, CpuLocalTimerWriteEffect, CpuLocalTimerZeroOutcome,
+    CpuLocalWatchdogControl, CpuLocalWatchdogSnapshot, CpuLocalWatchdogSnapshotFields,
     CPU_LOCAL_TIMER_CONTROL_OFFSET, CPU_LOCAL_TIMER_COUNTER_OFFSET,
     CPU_LOCAL_TIMER_INT_STATUS_OFFSET, CPU_LOCAL_TIMER_LOAD_OFFSET,
     CPU_LOCAL_TIMER_MMIO_SIZE_BYTES, CPU_LOCAL_TIMER_REGISTER_BYTES,

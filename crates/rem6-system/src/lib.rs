@@ -26,6 +26,7 @@ use rem6_transport::{MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcom
 
 mod clint_checkpoint;
 mod coherence_checkpoint;
+mod cpu_local_timer_checkpoint;
 mod data_cache_run;
 mod fabric_checkpoint;
 mod fabric_wait_run;
@@ -70,6 +71,10 @@ pub use clint_checkpoint::{
 };
 pub use coherence_checkpoint::{
     MsiBankCheckpointBank, MsiBankCheckpointError, MsiBankCheckpointPort, MsiBankCheckpointRecord,
+};
+pub use cpu_local_timer_checkpoint::{
+    CpuLocalTimerCheckpointBank, CpuLocalTimerCheckpointError, CpuLocalTimerCheckpointPort,
+    CpuLocalTimerCheckpointRecord,
 };
 pub use data_cache_run::{
     RiscvDataCacheProtocol, RiscvDataCacheRunHistoryRecord, RiscvDataCacheRunRecord,
