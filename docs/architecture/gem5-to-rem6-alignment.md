@@ -1235,11 +1235,10 @@ Implementation evidence through 2026-05-30:
   gem5-style mixed device, queue, and transport monoliths. VirtIO PCI
   device-config snapshots now expose stable byte payloads for config bytes,
   writable masks, and access history. VirtIO PCI ISR snapshots now expose
-  stable byte payloads for interrupt status and event history, with malformed
-  payload rejection before checkpoint banks consume those records. `rem6-system`
-  now consumes those payloads through VirtIO PCI ISR checkpoint ports and banks
-  that stage malformed-payload rejection before full-system restore mutates live
-  interrupt status.
+  stable byte payloads for interrupt status and event history. `rem6-system`
+  now consumes those payloads through VirtIO PCI device-config and ISR
+  checkpoint ports and banks that stage malformed-payload rejection before
+  full-system restore mutates live config bytes or interrupt status.
 - `rem6-storage` now owns gem5 `DiskImage`, `RawDiskImage`, and `CowDiskImage`
   level 512-byte sector contracts in a dedicated crate. Raw images validate
   sector-multiple capacity, read-only writes, range checks, flush accounting,
@@ -3230,8 +3229,10 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   rejection, width errors, and boundary errors. VirtIO PCI device-config tests
   cover typed mutable and read-only byte masks, serial and parallel config reads
   and writes, byte-mask writes, snapshot restore, stable snapshot payload
-  encoding with malformed-payload rejection, access trace recording, invalid
-  layout rejection, read-only byte rejection, and boundary errors.
+  encoding with malformed-payload rejection, rem6-system checkpoint-bank
+  capture/restore through full-system host actions, malformed checkpoint payload
+  rejection without live config or registry mutation, access trace recording,
+  invalid layout rejection, read-only byte rejection, and boundary errors.
   VirtIO PCI shared-memory tests cover cap64 offset and length splitting,
   vendor-specific capability byte layout, cap-next chaining, config-image
   export, entry lookup by region id and capability offset, unique region ids,

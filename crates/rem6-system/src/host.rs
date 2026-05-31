@@ -18,8 +18,8 @@ use crate::{
     Pl011UartCheckpointBank, Pl031CheckpointBank, PlicCheckpointBank, RiscvCoreCheckpointBank,
     RtcCheckpointBank, SchedulerCheckpointBank, Sp804CheckpointBank, Sp805CheckpointBank,
     StopRequest, StorageImageCheckpointBank, StorageImageCheckpointPort, SystemError,
-    TimerCheckpointBank, UartCheckpointBank, VirtioPciIsrCheckpointBank,
-    VirtioSplitQueueCheckpointBank,
+    TimerCheckpointBank, UartCheckpointBank, VirtioPciDeviceConfigCheckpointBank,
+    VirtioPciIsrCheckpointBank, VirtioSplitQueueCheckpointBank,
 };
 
 const EXECUTION_MODE_CHECKPOINT_COMPONENT: &str = "host.execution_modes";
@@ -155,6 +155,7 @@ pub struct SystemActionExecutor {
     pci_legacy_interrupt_router_checkpoints: Option<PciLegacyInterruptRouterCheckpointBank>,
     virtio_split_queue_checkpoints: Option<VirtioSplitQueueCheckpointBank>,
     virtio_pci_isr_checkpoints: Option<VirtioPciIsrCheckpointBank>,
+    virtio_pci_device_config_checkpoints: Option<VirtioPciDeviceConfigCheckpointBank>,
     execution_modes: BTreeMap<ExecutionModeTarget, ExecutionMode>,
     guest_host_call_responses: BTreeMap<u64, GuestHostCallResponse>,
     execution_mode_checkpoint_registered: bool,
@@ -195,6 +196,7 @@ impl SystemActionExecutor {
             pci_legacy_interrupt_router_checkpoints: None,
             virtio_split_queue_checkpoints: None,
             virtio_pci_isr_checkpoints: None,
+            virtio_pci_device_config_checkpoints: None,
             execution_modes: BTreeMap::new(),
             guest_host_call_responses: BTreeMap::new(),
             execution_mode_checkpoint_registered: false,
@@ -650,6 +652,15 @@ impl SystemActionExecutor {
         Ok(())
     }
 
+    pub fn attach_virtio_pci_device_config_checkpoint_bank(
+        &mut self,
+        virtio_pci_device_config_checkpoints: VirtioPciDeviceConfigCheckpointBank,
+    ) -> Result<(), CheckpointError> {
+        virtio_pci_device_config_checkpoints.register_all(&mut self.checkpoints)?;
+        self.virtio_pci_device_config_checkpoints = Some(virtio_pci_device_config_checkpoints);
+        Ok(())
+    }
+
     pub const fn riscv_checkpoint_bank(&self) -> Option<&RiscvCoreCheckpointBank> {
         self.riscv_checkpoints.as_ref()
     }
@@ -754,6 +765,12 @@ impl SystemActionExecutor {
 
     pub const fn virtio_pci_isr_checkpoint_bank(&self) -> Option<&VirtioPciIsrCheckpointBank> {
         self.virtio_pci_isr_checkpoints.as_ref()
+    }
+
+    pub const fn virtio_pci_device_config_checkpoint_bank(
+        &self,
+    ) -> Option<&VirtioPciDeviceConfigCheckpointBank> {
+        self.virtio_pci_device_config_checkpoints.as_ref()
     }
 
     fn restore_checkpoint_manifest(
@@ -912,6 +929,13 @@ impl SystemActionExecutor {
                 .validate_restore_from(checkpoints)
                 .map_err(SystemError::VirtioPciIsrCheckpoint)?;
         }
+        if let Some(virtio_pci_device_config_checkpoints) =
+            &self.virtio_pci_device_config_checkpoints
+        {
+            virtio_pci_device_config_checkpoints
+                .validate_restore_from(checkpoints)
+                .map_err(SystemError::VirtioPciDeviceConfigCheckpoint)?;
+        }
         Ok(())
     }
 
@@ -1042,6 +1066,13 @@ impl SystemActionExecutor {
             virtio_pci_isr_checkpoints
                 .restore_all_from(&self.checkpoints)
                 .map_err(SystemError::VirtioPciIsrCheckpoint)?;
+        }
+        if let Some(virtio_pci_device_config_checkpoints) =
+            &self.virtio_pci_device_config_checkpoints
+        {
+            virtio_pci_device_config_checkpoints
+                .restore_all_from(&self.checkpoints)
+                .map_err(SystemError::VirtioPciDeviceConfigCheckpoint)?;
         }
         Ok(())
     }
@@ -1225,6 +1256,13 @@ impl SystemActionExecutor {
                     virtio_pci_isr_checkpoints
                         .capture_all_into(&mut staged_checkpoints)
                         .map_err(SystemError::VirtioPciIsrCheckpoint)?;
+                }
+                if let Some(virtio_pci_device_config_checkpoints) =
+                    &self.virtio_pci_device_config_checkpoints
+                {
+                    virtio_pci_device_config_checkpoints
+                        .capture_all_into(&mut staged_checkpoints)
+                        .map_err(SystemError::VirtioPciDeviceConfigCheckpoint)?;
                 }
                 let execution_mode_registered =
                     self.capture_execution_modes_into(&mut staged_checkpoints)?;
