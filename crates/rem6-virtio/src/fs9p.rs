@@ -31,12 +31,16 @@ pub const VIRTIO_9P_TGETATTR: u8 = 24;
 pub const VIRTIO_9P_RGETATTR: u8 = 25;
 pub const VIRTIO_9P_TREADDIR: u8 = 40;
 pub const VIRTIO_9P_RREADDIR: u8 = 41;
+pub const VIRTIO_9P_TFSYNC: u8 = 50;
+pub const VIRTIO_9P_RFSYNC: u8 = 51;
 pub const VIRTIO_9P_TMKDIR: u8 = 72;
 pub const VIRTIO_9P_RMKDIR: u8 = 73;
 pub const VIRTIO_9P_TRENAMEAT: u8 = 74;
 pub const VIRTIO_9P_RRENAMEAT: u8 = 75;
 pub const VIRTIO_9P_TUNLINKAT: u8 = 76;
 pub const VIRTIO_9P_RUNLINKAT: u8 = 77;
+pub const VIRTIO_9P_TFLUSH: u8 = 108;
+pub const VIRTIO_9P_RFLUSH: u8 = 109;
 pub const VIRTIO_9P_TWALK: u8 = 110;
 pub const VIRTIO_9P_RWALK: u8 = 111;
 pub const VIRTIO_9P_TLOPEN: u8 = 12;
@@ -254,6 +258,10 @@ impl Virtio9pDevice {
                 Ok(payload) => (VIRTIO_9P_RREADDIR, payload),
                 Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
             },
+            VIRTIO_9P_TFSYNC => match self.handle_fsync(&request)? {
+                Ok(()) => (VIRTIO_9P_RFSYNC, Vec::new()),
+                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
+            },
             VIRTIO_9P_TMKDIR => match self.handle_mkdir(&request)? {
                 Ok(payload) => (VIRTIO_9P_RMKDIR, payload),
                 Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
@@ -282,6 +290,10 @@ impl Virtio9pDevice {
                 Ok(()) => (VIRTIO_9P_RREMOVE, Vec::new()),
                 Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
             },
+            VIRTIO_9P_TFLUSH => {
+                parse_flush_request(&request)?;
+                (VIRTIO_9P_RFLUSH, Vec::new())
+            }
             _ => (VIRTIO_9P_RLERROR, VIRTIO_9P_ENOTSUP.to_le_bytes().to_vec()),
         };
         let completion = Virtio9pCompletion::new(
@@ -453,6 +465,20 @@ impl Virtio9pDevice {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
         Ok(Ok(payload))
+    }
+
+    fn handle_fsync(&self, request: &Virtio9pRequest) -> Result<Result<(), u32>, VirtioError> {
+        let fsync = parse_fsync_request(request)?;
+        if self
+            .fids
+            .lock()
+            .expect("virtio 9p fid lock")
+            .contains_key(&fsync.fid)
+        {
+            Ok(Ok(()))
+        } else {
+            Ok(Err(VIRTIO_9P_EBADF))
+        }
     }
 
     fn handle_mkdir(&self, request: &Virtio9pRequest) -> Result<Result<Vec<u8>, u32>, VirtioError> {
@@ -774,6 +800,14 @@ fn parse_readdir_request(request: &Virtio9pRequest) -> Result<Virtio9pReaddirReq
     Ok(Virtio9pReaddirRequest { fid, offset, count })
 }
 
+fn parse_fsync_request(request: &Virtio9pRequest) -> Result<Virtio9pFsyncRequest, VirtioError> {
+    let mut reader = Virtio9pPayloadReader::new(request.message_type(), request.payload());
+    let fid = reader.read_u32()?;
+    let _datasync = reader.read_u32()?;
+    reader.finish()?;
+    Ok(Virtio9pFsyncRequest { fid })
+}
+
 fn parse_renameat_request(
     request: &Virtio9pRequest,
 ) -> Result<Virtio9pRenameatRequest, VirtioError> {
@@ -845,6 +879,13 @@ fn parse_remove_request(request: &Virtio9pRequest) -> Result<u32, VirtioError> {
     let fid = reader.read_u32()?;
     reader.finish()?;
     Ok(fid)
+}
+
+fn parse_flush_request(request: &Virtio9pRequest) -> Result<u16, VirtioError> {
+    let mut reader = Virtio9pPayloadReader::new(request.message_type(), request.payload());
+    let oldtag = reader.read_u16()?;
+    reader.finish()?;
+    Ok(oldtag)
 }
 
 fn version_payload(msize: u32, version: &[u8]) -> Vec<u8> {
@@ -969,6 +1010,11 @@ struct Virtio9pReaddirRequest {
     fid: u32,
     offset: u64,
     count: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Virtio9pFsyncRequest {
+    fid: u32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

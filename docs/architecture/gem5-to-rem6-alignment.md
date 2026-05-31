@@ -1266,10 +1266,12 @@ Implementation evidence through 2026-05-31:
   same-directory target files with explicit target-fid invalidation, `Tunlinkat`
   removes named root or child-directory files and invalidates fids pointing at
   the removed node, `Tremove` removes file fids plus their namespace entries,
-  and `Tclunk` drops fid state. The 9P device entry point delegates namespace
-  tree state, qid encoding, readdir payload assembly, and fid-open state to a
-  focused namespace module, so protocol dispatch stays separate from mutable
-  filesystem state. Missing names, duplicate directory names, stale
+  `Tclunk` drops fid state, `Tflush` acknowledges old tags without mutating
+  synchronous fid or namespace state, and `Tfsync` validates fids before
+  acknowledging writeback intent. The 9P device entry point delegates
+  namespace tree state, qid encoding, readdir payload assembly, and fid-open
+  state to a focused namespace module, so protocol dispatch stays separate
+  from mutable filesystem state. Missing names, duplicate directory names, stale
   fids, and deleted-fid access return `Rlerror` errno payloads instead of
   panicking or depending on an external proxy. This keeps the useful gem5 VirtIO
   framing model while avoiding gem5's 9P proxy state-loss warning path and
@@ -3230,10 +3232,11 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   directory entries, and old-name walk rejection, `Tunlinkat` root and
   child-directory file removal with post-delete directory and walk checks,
   `Tremove` fid-backed file removal with deleted-fid read rejection, `Tclunk`
-  fid removal, and stale metadata, directory, create, write, remove, unlink,
-  and read `Rlerror` handling, source-policy coverage for keeping 9P protocol
-  dispatch below the focused-device line budget, modern PCI version-1 feature
-  exposure for 9P,
+  fid removal, `Tflush` no-op acknowledgement without fid mutation, `Tfsync`
+  acknowledgement for existing fids, and stale metadata, directory, create,
+  fsync, write, remove, unlink, and read `Rlerror` handling, source-policy
+  coverage for keeping 9P protocol dispatch below the focused-device line
+  budget, modern PCI version-1 feature exposure for 9P,
   block, console, and RNG, legacy RNG device id and zero-config behavior,
   reproducible entropy generation, writable split descriptor-chain decoding,
   RNG used-ring writeback, guest-memory scatter writes, ISR queue interrupts,
