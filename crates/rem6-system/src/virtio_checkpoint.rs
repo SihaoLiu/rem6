@@ -5,8 +5,12 @@ use std::sync::{Arc, Mutex};
 
 use rem6_checkpoint::{CheckpointComponentId, CheckpointError, CheckpointRegistry};
 use rem6_memory::Address;
-use rem6_virtio::{VirtioError, VirtioSplitQueue, VirtioSplitQueueSnapshot};
+use rem6_virtio::{
+    VirtioError, VirtioPciIsrDevice, VirtioPciIsrSnapshot, VirtioSplitQueue,
+    VirtioSplitQueueSnapshot,
+};
 
+const VIRTIO_PCI_ISR_CHUNK: &str = "pci-isr";
 const VIRTIO_SPLIT_QUEUE_CHUNK: &str = "split-queue";
 const U16_BYTES: usize = 2;
 const U64_BYTES: usize = 8;
@@ -279,6 +283,227 @@ impl Error for VirtioSplitQueueCheckpointError {
         match self {
             Self::Checkpoint(error) => Some(error),
             Self::Virtio { error, .. } => Some(error),
+            Self::MissingChunk { .. } | Self::InvalidChunk { .. } => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VirtioPciIsrCheckpointRecord {
+    component: CheckpointComponentId,
+    snapshot: VirtioPciIsrSnapshot,
+}
+
+impl VirtioPciIsrCheckpointRecord {
+    pub fn new(component: CheckpointComponentId, snapshot: VirtioPciIsrSnapshot) -> Self {
+        Self {
+            component,
+            snapshot,
+        }
+    }
+
+    pub fn component(&self) -> &CheckpointComponentId {
+        &self.component
+    }
+
+    pub fn snapshot(&self) -> &VirtioPciIsrSnapshot {
+        &self.snapshot
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct VirtioPciIsrCheckpointPort {
+    component: CheckpointComponentId,
+    isr: VirtioPciIsrDevice,
+}
+
+impl VirtioPciIsrCheckpointPort {
+    pub fn new(component: CheckpointComponentId, isr: VirtioPciIsrDevice) -> Self {
+        Self { component, isr }
+    }
+
+    pub fn component(&self) -> &CheckpointComponentId {
+        &self.component
+    }
+
+    pub fn isr(&self) -> VirtioPciIsrDevice {
+        self.isr.clone()
+    }
+
+    pub fn register(&self, registry: &mut CheckpointRegistry) -> Result<(), CheckpointError> {
+        registry.register(self.component.clone())
+    }
+
+    pub fn capture_into(
+        &self,
+        registry: &mut CheckpointRegistry,
+    ) -> Result<VirtioPciIsrCheckpointRecord, VirtioPciIsrCheckpointError> {
+        let snapshot = self.isr.snapshot();
+        registry
+            .write_chunk(&self.component, VIRTIO_PCI_ISR_CHUNK, snapshot.to_bytes())
+            .map_err(VirtioPciIsrCheckpointError::Checkpoint)?;
+        Ok(VirtioPciIsrCheckpointRecord::new(
+            self.component.clone(),
+            snapshot,
+        ))
+    }
+
+    pub fn restore_from(
+        &self,
+        registry: &CheckpointRegistry,
+    ) -> Result<VirtioPciIsrCheckpointRecord, VirtioPciIsrCheckpointError> {
+        let record = self.decode_from(registry)?;
+        self.restore_record(&record);
+        Ok(record)
+    }
+
+    fn decode_from(
+        &self,
+        registry: &CheckpointRegistry,
+    ) -> Result<VirtioPciIsrCheckpointRecord, VirtioPciIsrCheckpointError> {
+        let payload = registry
+            .chunk(&self.component, VIRTIO_PCI_ISR_CHUNK)
+            .ok_or_else(|| VirtioPciIsrCheckpointError::MissingChunk {
+                component: self.component.clone(),
+                name: VIRTIO_PCI_ISR_CHUNK.to_string(),
+            })?;
+        let snapshot = VirtioPciIsrSnapshot::from_bytes(payload).map_err(|error| {
+            VirtioPciIsrCheckpointError::InvalidChunk {
+                component: self.component.clone(),
+                reason: error.to_string(),
+            }
+        })?;
+        Ok(VirtioPciIsrCheckpointRecord::new(
+            self.component.clone(),
+            snapshot,
+        ))
+    }
+
+    fn restore_record(&self, record: &VirtioPciIsrCheckpointRecord) {
+        self.isr.restore(record.snapshot());
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct VirtioPciIsrCheckpointBank {
+    ports: BTreeMap<CheckpointComponentId, VirtioPciIsrCheckpointPort>,
+}
+
+impl VirtioPciIsrCheckpointBank {
+    pub fn new<I>(ports: I) -> Result<Self, CheckpointError>
+    where
+        I: IntoIterator<Item = VirtioPciIsrCheckpointPort>,
+    {
+        let mut by_component = BTreeMap::new();
+        for port in ports {
+            let component = port.component().clone();
+            if by_component.contains_key(&component) {
+                return Err(CheckpointError::DuplicateComponent { component });
+            }
+            by_component.insert(component, port);
+        }
+        Ok(Self {
+            ports: by_component,
+        })
+    }
+
+    pub fn component_count(&self) -> usize {
+        self.ports.len()
+    }
+
+    pub fn components(&self) -> Vec<CheckpointComponentId> {
+        self.ports.keys().cloned().collect()
+    }
+
+    pub fn register_all(&self, registry: &mut CheckpointRegistry) -> Result<(), CheckpointError> {
+        for port in self.ports.values() {
+            port.register(registry)?;
+        }
+        Ok(())
+    }
+
+    pub fn capture_all_into(
+        &self,
+        registry: &mut CheckpointRegistry,
+    ) -> Result<Vec<VirtioPciIsrCheckpointRecord>, VirtioPciIsrCheckpointError> {
+        self.ports
+            .values()
+            .map(|port| port.capture_into(registry))
+            .collect()
+    }
+
+    pub fn restore_all_from(
+        &self,
+        registry: &CheckpointRegistry,
+    ) -> Result<Vec<VirtioPciIsrCheckpointRecord>, VirtioPciIsrCheckpointError> {
+        let records = self
+            .ports
+            .values()
+            .map(|port| port.decode_from(registry))
+            .collect::<Result<Vec<_>, _>>()?;
+        for (port, record) in self.ports.values().zip(&records) {
+            port.restore_record(record);
+        }
+        Ok(records)
+    }
+
+    pub fn validate_restore_from(
+        &self,
+        registry: &CheckpointRegistry,
+    ) -> Result<(), VirtioPciIsrCheckpointError> {
+        for port in self.ports.values() {
+            port.decode_from(registry)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum VirtioPciIsrCheckpointError {
+    MissingChunk {
+        component: CheckpointComponentId,
+        name: String,
+    },
+    InvalidChunk {
+        component: CheckpointComponentId,
+        reason: String,
+    },
+    Checkpoint(CheckpointError),
+}
+
+impl VirtioPciIsrCheckpointError {
+    pub fn component(&self) -> Option<&CheckpointComponentId> {
+        match self {
+            Self::MissingChunk { component, .. } | Self::InvalidChunk { component, .. } => {
+                Some(component)
+            }
+            Self::Checkpoint(_) => None,
+        }
+    }
+}
+
+impl fmt::Display for VirtioPciIsrCheckpointError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingChunk { component, name } => write!(
+                formatter,
+                "VirtIO PCI ISR checkpoint component {} is missing chunk {name}",
+                component.as_str()
+            ),
+            Self::InvalidChunk { component, reason } => write!(
+                formatter,
+                "VirtIO PCI ISR checkpoint component {} has invalid chunk: {reason}",
+                component.as_str()
+            ),
+            Self::Checkpoint(error) => write!(formatter, "{error}"),
+        }
+    }
+}
+
+impl Error for VirtioPciIsrCheckpointError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Checkpoint(error) => Some(error),
             Self::MissingChunk { .. } | Self::InvalidChunk { .. } => None,
         }
     }

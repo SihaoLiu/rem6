@@ -182,7 +182,8 @@ pub use uart_checkpoint::{
     UartCheckpointRecord,
 };
 pub use virtio_checkpoint::{
-    VirtioSplitQueueCheckpointBank, VirtioSplitQueueCheckpointError,
+    VirtioPciIsrCheckpointBank, VirtioPciIsrCheckpointError, VirtioPciIsrCheckpointPort,
+    VirtioPciIsrCheckpointRecord, VirtioSplitQueueCheckpointBank, VirtioSplitQueueCheckpointError,
     VirtioSplitQueueCheckpointPort, VirtioSplitQueueCheckpointRecord,
 };
 pub use wait_status::{GuestSignal, GuestWaitStatus, GuestWaitStatusError};
@@ -1030,6 +1031,7 @@ pub enum SystemError {
     UartCheckpoint(UartCheckpointError),
     Pl011UartCheckpoint(Pl011UartCheckpointError),
     PlicCheckpoint(PlicCheckpointError),
+    VirtioPciIsrCheckpoint(VirtioPciIsrCheckpointError),
     VirtioCheckpoint(VirtioSplitQueueCheckpointError),
 }
 
@@ -1069,6 +1071,7 @@ impl fmt::Display for SystemError {
             Self::UartCheckpoint(error) => write!(formatter, "{error}"),
             Self::Pl011UartCheckpoint(error) => write!(formatter, "{error}"),
             Self::PlicCheckpoint(error) => write!(formatter, "{error}"),
+            Self::VirtioPciIsrCheckpoint(error) => write!(formatter, "{error}"),
             Self::VirtioCheckpoint(error) => write!(formatter, "{error}"),
         }
     }
@@ -1105,6 +1108,7 @@ impl Error for SystemError {
             Self::UartCheckpoint(error) => Some(error),
             Self::Pl011UartCheckpoint(error) => Some(error),
             Self::PlicCheckpoint(error) => Some(error),
+            Self::VirtioPciIsrCheckpoint(error) => Some(error),
             Self::VirtioCheckpoint(error) => Some(error),
             Self::ZeroHostLatency => None,
         }
