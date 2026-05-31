@@ -14,6 +14,7 @@ mod device_config;
 mod error;
 mod exports;
 mod isr;
+mod mmio_transport;
 mod pci_capability;
 mod queue;
 mod shared_memory;

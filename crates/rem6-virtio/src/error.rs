@@ -50,6 +50,17 @@ pub enum VirtioError {
         address: Address,
         value: u16,
     },
+    UnsupportedFeatureBits {
+        page: u32,
+        requested: u32,
+        supported: u32,
+    },
+    UnsupportedMmioPageSize {
+        size: u32,
+    },
+    UnsupportedMmioQueueAlign {
+        align: u32,
+    },
     InvalidNotifySnapshot,
     InvalidCommonConfigSnapshot,
     EmptyDeviceConfig,
@@ -330,6 +341,20 @@ impl fmt::Display for VirtioError {
                 "VirtIO notify value {value} does not match any queue at address {:#x}",
                 address.get()
             ),
+            Self::UnsupportedFeatureBits {
+                page,
+                requested,
+                supported,
+            } => write!(
+                formatter,
+                "VirtIO driver requested unsupported feature bits on page {page}: requested {requested:#x}, supported {supported:#x}"
+            ),
+            Self::UnsupportedMmioPageSize { size } => {
+                write!(formatter, "VirtIO MMIO page size {size} is unsupported")
+            }
+            Self::UnsupportedMmioQueueAlign { align } => {
+                write!(formatter, "VirtIO MMIO queue align {align} is unsupported")
+            }
             Self::InvalidNotifySnapshot => {
                 write!(formatter, "VirtIO PCI notify snapshot payload is invalid")
             }
