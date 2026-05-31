@@ -2,8 +2,8 @@ use rem6_virtio::{
     Virtio9pConfig, Virtio9pDevice, VIRTIO_9P_EBADF, VIRTIO_9P_LOCK_BLOCKED,
     VIRTIO_9P_LOCK_SUCCESS, VIRTIO_9P_LOCK_TYPE_RDLCK, VIRTIO_9P_LOCK_TYPE_UNLCK,
     VIRTIO_9P_LOCK_TYPE_WRLCK, VIRTIO_9P_NOFID, VIRTIO_9P_RGETLOCK, VIRTIO_9P_RLERROR,
-    VIRTIO_9P_RLOCK, VIRTIO_9P_RLOPEN, VIRTIO_9P_RWALK, VIRTIO_9P_TATTACH, VIRTIO_9P_TGETLOCK,
-    VIRTIO_9P_TLOCK, VIRTIO_9P_TLOPEN, VIRTIO_9P_TWALK,
+    VIRTIO_9P_RLOCK, VIRTIO_9P_RLOPEN, VIRTIO_9P_RWALK, VIRTIO_9P_TATTACH, VIRTIO_9P_TCLUNK,
+    VIRTIO_9P_TGETLOCK, VIRTIO_9P_TLOCK, VIRTIO_9P_TLOPEN, VIRTIO_9P_TWALK,
 };
 
 mod support;
@@ -112,6 +112,43 @@ fn virtio_9p_device_unlocks_matching_byte_ranges() {
         device.execute_at(21, unlock).unwrap().payload(),
         [VIRTIO_9P_LOCK_SUCCESS]
     );
+
+    let reader = decoded_request(
+        VIRTIO_9P_TLOCK,
+        8,
+        p9_lock_payload(3, VIRTIO_9P_LOCK_TYPE_RDLCK, 0, 5, 3, 77, b"client-b"),
+    );
+    assert_eq!(
+        device.execute_at(22, reader).unwrap().payload(),
+        [VIRTIO_9P_LOCK_SUCCESS]
+    );
+}
+
+#[test]
+fn virtio_9p_device_releases_byte_range_locks_when_fid_is_clunked() {
+    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap())
+        .with_file("alpha.txt", b"alpha".to_vec())
+        .unwrap();
+    let attach = decoded_request(
+        VIRTIO_9P_TATTACH,
+        1,
+        p9_attach_payload(1, VIRTIO_9P_NOFID, b"root", b"", 0),
+    );
+    device.execute_at(10, attach).unwrap();
+    open_file_fid(&device, 2, 2, b"alpha.txt");
+    open_file_fid(&device, 4, 3, b"alpha.txt");
+
+    let writer = decoded_request(
+        VIRTIO_9P_TLOCK,
+        6,
+        p9_lock_payload(2, VIRTIO_9P_LOCK_TYPE_WRLCK, 0, 0, 10, 42, b"client-a"),
+    );
+    assert_eq!(
+        device.execute_at(20, writer).unwrap().payload(),
+        [VIRTIO_9P_LOCK_SUCCESS]
+    );
+    let clunk = decoded_request(VIRTIO_9P_TCLUNK, 7, p9_clunk_payload(2));
+    device.execute_at(21, clunk).unwrap();
 
     let reader = decoded_request(
         VIRTIO_9P_TLOCK,

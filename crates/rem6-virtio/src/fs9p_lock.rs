@@ -19,7 +19,8 @@ impl Virtio9pLockTable {
             return VIRTIO_9P_LOCK_BLOCKED;
         }
         self.unlock(node, request);
-        self.locks.push(Virtio9pHeldLock::new(node, request));
+        self.locks
+            .push(Virtio9pHeldLock::new(node, request.fid, request));
         VIRTIO_9P_LOCK_SUCCESS
     }
 
@@ -56,6 +57,10 @@ impl Virtio9pLockTable {
         self.locks.retain(|lock| lock.node != node);
     }
 
+    pub(crate) fn remove_fid(&mut self, fid: u32) {
+        self.locks.retain(|lock| lock.fid != fid);
+    }
+
     fn unlock(&mut self, node: Virtio9pNodeId, request: &Virtio9pLockRequest) {
         self.locks.retain(|lock| {
             lock.node != node
@@ -82,6 +87,7 @@ impl Virtio9pLockTable {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Virtio9pHeldLock {
     node: Virtio9pNodeId,
+    fid: u32,
     lock_type: u8,
     flags: u32,
     start: u64,
@@ -91,9 +97,10 @@ struct Virtio9pHeldLock {
 }
 
 impl Virtio9pHeldLock {
-    fn new(node: Virtio9pNodeId, request: &Virtio9pLockRequest) -> Self {
+    fn new(node: Virtio9pNodeId, fid: u32, request: &Virtio9pLockRequest) -> Self {
         Self {
             node,
+            fid,
             lock_type: request.lock_type,
             flags: request.flags,
             start: request.start,

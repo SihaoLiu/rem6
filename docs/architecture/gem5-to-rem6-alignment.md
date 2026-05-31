@@ -1294,9 +1294,10 @@ Implementation evidence through 2026-05-31:
   only when no linked directory entry remains, removes empty directories only
   when `AT_REMOVEDIR` is present, and rejects non-empty directory removal with
   `ENOTEMPTY`, `Tremove` removes file fids plus their namespace
-  entries, `Tclunk` drops ordinary fid state and commits pending xattr-write
-  fids, `Tflush` acknowledges old tags without mutating synchronous fid or
-  namespace state, `Tfsync` validates fids before acknowledging writeback
+  entries, `Tclunk` drops ordinary fid state, releases byte-range locks owned by
+  the clunked fid, and commits pending xattr-write fids, `Tflush` acknowledges
+  old tags without mutating synchronous fid or namespace state, `Tfsync`
+  validates fids before acknowledging writeback
   intent, `Tlock` accepts advisory lock requests on open file fids, records
   byte-range read and write locks per namespace node and client owner, reports
   blocked status for incompatible overlapping locks, `Tgetlock` returns the
@@ -3309,7 +3310,7 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   `XATTR_CREATE`/`XATTR_REPLACE` flag handling, `Txattrwalk` named xattr reads,
   xattr-list read fids, occupied-newfid rejection, missing-xattr `ENODATA`,
   invalid-flag `EINVAL`, and stale-fid errors,
-  `Tclunk` fid removal, `Tflush` no-op acknowledgement without fid mutation,
+  `Tclunk` fid removal and lock release, `Tflush` no-op acknowledgement without fid mutation,
   `Tfsync` acknowledgement for existing fids, and stale metadata, directory,
   create, fsync, write, remove, unlink, and read `Rlerror` handling,
   source-policy coverage for keeping 9P typed payload parsing and wire constants

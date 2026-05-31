@@ -1062,6 +1062,10 @@ impl Virtio9pDevice {
         let Some(removed) = removed else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
+        self.locks
+            .lock()
+            .expect("virtio 9p lock table")
+            .remove_fid(fid);
         if let Some((node, name, data, policy)) = removed.into_xattr_commit() {
             if let Err(errno) = self
                 .namespace
