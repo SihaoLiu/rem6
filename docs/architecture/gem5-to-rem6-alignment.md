@@ -2664,11 +2664,12 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   restore, IMP indirect-pattern detection, IPD base matching, stream fallback,
   typed key LRU capacity, future-index lookahead, duplicate-current-index
   suppression without lookahead, snapshot restore, cache write queue ready ordering,
-  reserve handling, functional-read satisfaction, snapshot restore, and
-  replacement-triggered dirty writeback, clean evict, clean writeback, invalid
-  victim suppression, and victim-way validation, plus MSI/MESI/MOESI/CHI bank
-  write queue attachment, ready issue, conflict lookup, uncacheable-match
-  filtering, functional-read delegation, and bank snapshot restore,
+  reserve handling, functional-read satisfaction, snapshot restore with
+  monotonic order-counter validation, and replacement-triggered dirty
+  writeback, clean evict, clean writeback, invalid victim suppression, and
+  victim-way validation, plus MSI/MESI/MOESI/CHI bank write queue attachment,
+  ready issue, conflict lookup, uncacheable-match filtering, functional-read
+  delegation, and bank snapshot restore,
   AMPM cross-hot-zone access-map
   matching, AMPM useful-prefetch accounting, AMPM epoch degree increase and
   decrease with snapshot restore, page-boundary candidate dropping, multi-source

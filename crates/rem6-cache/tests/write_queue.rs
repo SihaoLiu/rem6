@@ -1,7 +1,7 @@
 use rem6_cache::{
     CacheCleanReplacementPolicy, CacheReplacementPolicyConfig, CacheReplacementPolicyKind,
     CacheReplacementVictim, CacheWriteQueue, CacheWriteQueueConfig, CacheWriteQueueEntryKind,
-    CacheWriteQueueError, ReplacementSet,
+    CacheWriteQueueError, CacheWriteQueueSnapshot, ReplacementSet,
 };
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryOperation, MemoryRequest,
@@ -128,6 +128,41 @@ fn cache_write_queue_orders_ready_entries_applies_reserve_and_restores_state() {
     );
     assert_eq!(queue.allocated_count(), 2);
     assert!(!queue.is_reserve_full());
+}
+
+#[test]
+fn cache_write_queue_restore_rejects_non_monotonic_next_order() {
+    let config = CacheWriteQueueConfig::new(2, 0).unwrap();
+    let mut queue = CacheWriteQueue::new(config.clone());
+
+    queue
+        .enqueue_writeback(dirty_writeback(0, 0x1000, 0xaa), false, 10)
+        .unwrap();
+    let later = queue
+        .enqueue_writeback(clean_writeback(1, 0x2000, 0xbb), false, 20)
+        .unwrap();
+    let snapshot = queue.snapshot();
+    let later_order = snapshot
+        .entries()
+        .iter()
+        .find(|entry| entry.handle() == later.handle())
+        .unwrap()
+        .order();
+    let corrupt = CacheWriteQueueSnapshot::new(
+        config,
+        snapshot.entries().to_vec(),
+        snapshot.next_handle(),
+        later_order,
+    );
+
+    assert_eq!(
+        queue.restore(&corrupt),
+        Err(CacheWriteQueueError::SnapshotNextOrderTooSmall {
+            next_order: later_order,
+            handle: later.handle(),
+            order: later_order,
+        })
+    );
 }
 
 #[test]

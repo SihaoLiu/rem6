@@ -114,6 +114,11 @@ pub enum CacheWriteQueueError {
         next_handle: u64,
         handle: CacheWriteQueueHandle,
     },
+    SnapshotNextOrderTooSmall {
+        next_order: u64,
+        handle: CacheWriteQueueHandle,
+        order: u64,
+    },
     ReplacementVictimWayMismatch {
         decision_way: usize,
         victim_way: usize,
@@ -177,6 +182,14 @@ impl fmt::Display for CacheWriteQueueError {
             } => write!(
                 formatter,
                 "cache write queue snapshot next handle {next_handle} is not after {handle:?}"
+            ),
+            Self::SnapshotNextOrderTooSmall {
+                next_order,
+                handle,
+                order,
+            } => write!(
+                formatter,
+                "cache write queue snapshot next order {next_order} is not after {handle:?} order {order}"
             ),
             Self::ReplacementVictimWayMismatch {
                 decision_way,
@@ -895,6 +908,13 @@ impl CacheWriteQueue {
                 return Err(CacheWriteQueueError::SnapshotNextHandleTooSmall {
                     next_handle: snapshot.next_handle(),
                     handle: entry.handle(),
+                });
+            }
+            if entry.order() >= snapshot.next_order() {
+                return Err(CacheWriteQueueError::SnapshotNextOrderTooSmall {
+                    next_order: snapshot.next_order(),
+                    handle: entry.handle(),
+                    order: entry.order(),
                 });
             }
             if entry_kind(entry.request().operation(), entry.uncacheable()).is_none() {
