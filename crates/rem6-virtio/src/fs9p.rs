@@ -6,6 +6,7 @@ use rem6_memory::ByteMask;
 
 use crate::fs9p_namespace::{
     getattr_payload, qid_payload, Virtio9pFidState, Virtio9pNamespace, Virtio9pNodeId,
+    Virtio9pTimestamp,
 };
 use crate::fs9p_protocol::{
     parse_attach_request, parse_clunk_request, parse_flush_request, parse_fsync_request,
@@ -88,6 +89,10 @@ pub const VIRTIO_9P_SETATTR_MODE: u32 = 0x0000_0001;
 pub const VIRTIO_9P_SETATTR_UID: u32 = 0x0000_0002;
 pub const VIRTIO_9P_SETATTR_GID: u32 = 0x0000_0004;
 pub const VIRTIO_9P_SETATTR_SIZE: u32 = 0x0000_0008;
+pub const VIRTIO_9P_SETATTR_ATIME: u32 = 0x0000_0010;
+pub const VIRTIO_9P_SETATTR_MTIME: u32 = 0x0000_0020;
+pub const VIRTIO_9P_SETATTR_ATIME_SET: u32 = 0x0000_0080;
+pub const VIRTIO_9P_SETATTR_MTIME_SET: u32 = 0x0000_0100;
 pub const VIRTIO_9P_STATFS_TYPE: u32 = 0x0102_1997;
 pub const VIRTIO_9P_STATFS_BLOCK_SIZE: u32 = 4096;
 pub const VIRTIO_9P_NAME_MAX: u32 = 255;
@@ -562,7 +567,11 @@ impl Virtio9pDevice {
         let supported = VIRTIO_9P_SETATTR_MODE
             | VIRTIO_9P_SETATTR_UID
             | VIRTIO_9P_SETATTR_GID
-            | VIRTIO_9P_SETATTR_SIZE;
+            | VIRTIO_9P_SETATTR_SIZE
+            | VIRTIO_9P_SETATTR_ATIME
+            | VIRTIO_9P_SETATTR_MTIME
+            | VIRTIO_9P_SETATTR_ATIME_SET
+            | VIRTIO_9P_SETATTR_MTIME_SET;
         if setattr.valid & !supported != 0 {
             return Ok(Err(VIRTIO_9P_ENOTSUP));
         }
@@ -578,6 +587,14 @@ impl Virtio9pDevice {
                 (setattr.valid & VIRTIO_9P_SETATTR_MODE != 0).then_some(setattr.mode),
                 (setattr.valid & VIRTIO_9P_SETATTR_UID != 0).then_some(setattr.uid),
                 (setattr.valid & VIRTIO_9P_SETATTR_GID != 0).then_some(setattr.gid),
+                (setattr.valid & VIRTIO_9P_SETATTR_ATIME != 0).then_some(Virtio9pTimestamp::new(
+                    setattr.atime_sec,
+                    setattr.atime_nsec,
+                )),
+                (setattr.valid & VIRTIO_9P_SETATTR_MTIME != 0).then_some(Virtio9pTimestamp::new(
+                    setattr.mtime_sec,
+                    setattr.mtime_nsec,
+                )),
             )
             .is_some()
         {

@@ -58,7 +58,11 @@ pub(crate) fn getattr_payload(metadata: Virtio9pNodeMetadata, request_mask: u64)
     payload.extend(metadata.size.to_le_bytes());
     payload.extend(u64::from(VIRTIO_9P_STATFS_BLOCK_SIZE).to_le_bytes());
     payload.extend(metadata.blocks.to_le_bytes());
-    for _ in 0..10 {
+    payload.extend(metadata.atime_sec.to_le_bytes());
+    payload.extend(metadata.atime_nsec.to_le_bytes());
+    payload.extend(metadata.mtime_sec.to_le_bytes());
+    payload.extend(metadata.mtime_nsec.to_le_bytes());
+    for _ in 0..6 {
         payload.extend(0_u64.to_le_bytes());
     }
     payload
@@ -345,6 +349,10 @@ impl Virtio9pNamespace {
                 mode: self.root_attrs.mode,
                 uid: self.root_attrs.uid,
                 gid: self.root_attrs.gid,
+                atime_sec: self.root_attrs.atime_sec,
+                atime_nsec: self.root_attrs.atime_nsec,
+                mtime_sec: self.root_attrs.mtime_sec,
+                mtime_nsec: self.root_attrs.mtime_nsec,
                 nlink: 2 + self.entries.len() as u64,
                 rdev: 0,
                 size: 0,
@@ -358,6 +366,10 @@ impl Virtio9pNamespace {
                     mode: file.attrs.mode,
                     uid: file.attrs.uid,
                     gid: file.attrs.gid,
+                    atime_sec: file.attrs.atime_sec,
+                    atime_nsec: file.attrs.atime_nsec,
+                    mtime_sec: file.attrs.mtime_sec,
+                    mtime_nsec: file.attrs.mtime_nsec,
                     nlink: 1,
                     rdev: 0,
                     size,
@@ -371,6 +383,10 @@ impl Virtio9pNamespace {
                     mode: directory.attrs.mode,
                     uid: directory.attrs.uid,
                     gid: directory.attrs.gid,
+                    atime_sec: directory.attrs.atime_sec,
+                    atime_nsec: directory.attrs.atime_nsec,
+                    mtime_sec: directory.attrs.mtime_sec,
+                    mtime_nsec: directory.attrs.mtime_nsec,
                     nlink: 2 + directory.entries.len() as u64,
                     rdev: 0,
                     size: 0,
@@ -385,6 +401,10 @@ impl Virtio9pNamespace {
                     mode: symlink.attrs.mode,
                     uid: symlink.attrs.uid,
                     gid: symlink.attrs.gid,
+                    atime_sec: symlink.attrs.atime_sec,
+                    atime_nsec: symlink.attrs.atime_nsec,
+                    mtime_sec: symlink.attrs.mtime_sec,
+                    mtime_nsec: symlink.attrs.mtime_nsec,
                     nlink: 1,
                     rdev: 0,
                     size,
@@ -398,6 +418,10 @@ impl Virtio9pNamespace {
                     mode: special.attrs.mode,
                     uid: special.attrs.uid,
                     gid: special.attrs.gid,
+                    atime_sec: special.attrs.atime_sec,
+                    atime_nsec: special.attrs.atime_nsec,
+                    mtime_sec: special.attrs.mtime_sec,
+                    mtime_nsec: special.attrs.mtime_nsec,
                     nlink: 1,
                     rdev: special.rdev,
                     size: 0,
@@ -532,6 +556,8 @@ impl Virtio9pNamespace {
         mode: Option<u32>,
         uid: Option<u32>,
         gid: Option<u32>,
+        atime: Option<Virtio9pTimestamp>,
+        mtime: Option<Virtio9pTimestamp>,
     ) -> Option<()> {
         let attrs = self.node_attrs_mut(node)?;
         if let Some(mode) = mode {
@@ -542,6 +568,14 @@ impl Virtio9pNamespace {
         }
         if let Some(gid) = gid {
             attrs.gid = gid;
+        }
+        if let Some(atime) = atime {
+            attrs.atime_sec = atime.seconds;
+            attrs.atime_nsec = atime.nanoseconds;
+        }
+        if let Some(mtime) = mtime {
+            attrs.mtime_sec = mtime.seconds;
+            attrs.mtime_nsec = mtime.nanoseconds;
         }
         Some(())
     }
@@ -866,6 +900,10 @@ struct Virtio9pNodeAttrs {
     mode: u32,
     uid: u32,
     gid: u32,
+    atime_sec: u64,
+    atime_nsec: u64,
+    mtime_sec: u64,
+    mtime_nsec: u64,
 }
 
 impl Virtio9pNodeAttrs {
@@ -874,6 +912,25 @@ impl Virtio9pNodeAttrs {
             mode,
             uid: 0,
             gid: 0,
+            atime_sec: 0,
+            atime_nsec: 0,
+            mtime_sec: 0,
+            mtime_nsec: 0,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct Virtio9pTimestamp {
+    seconds: u64,
+    nanoseconds: u64,
+}
+
+impl Virtio9pTimestamp {
+    pub(crate) const fn new(seconds: u64, nanoseconds: u64) -> Self {
+        Self {
+            seconds,
+            nanoseconds,
         }
     }
 }
@@ -889,6 +946,10 @@ pub(crate) struct Virtio9pNodeMetadata {
     mode: u32,
     uid: u32,
     gid: u32,
+    atime_sec: u64,
+    atime_nsec: u64,
+    mtime_sec: u64,
+    mtime_nsec: u64,
     nlink: u64,
     rdev: u64,
     size: u64,

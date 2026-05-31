@@ -169,10 +169,10 @@ pub(crate) fn parse_setattr_request(
     let uid = reader.read_u32()?;
     let gid = reader.read_u32()?;
     let size = reader.read_u64()?;
-    let _atime_sec = reader.read_u64()?;
-    let _atime_nsec = reader.read_u64()?;
-    let _mtime_sec = reader.read_u64()?;
-    let _mtime_nsec = reader.read_u64()?;
+    let atime_sec = reader.read_u64()?;
+    let atime_nsec = reader.read_u64()?;
+    let mtime_sec = reader.read_u64()?;
+    let mtime_nsec = reader.read_u64()?;
     reader.finish()?;
     Ok(Virtio9pSetattrRequest {
         fid,
@@ -181,6 +181,10 @@ pub(crate) fn parse_setattr_request(
         uid,
         gid,
         size,
+        atime_sec,
+        atime_nsec,
+        mtime_sec,
+        mtime_nsec,
     })
 }
 
@@ -436,6 +440,10 @@ pub(crate) struct Virtio9pSetattrRequest {
     pub(crate) uid: u32,
     pub(crate) gid: u32,
     pub(crate) size: u64,
+    pub(crate) atime_sec: u64,
+    pub(crate) atime_nsec: u64,
+    pub(crate) mtime_sec: u64,
+    pub(crate) mtime_nsec: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

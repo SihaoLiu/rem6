@@ -1264,9 +1264,9 @@ Implementation evidence through 2026-05-31:
   creates deterministic symlink qids, `Treadlink` returns counted symlink
   targets, `Tmknod` creates deterministic special-node qids for character and
   block device metadata with stable Linux device-number encoding, `Tsetattr`
-  handles mode, uid, gid, and size-valid metadata paths, truncates or extends
-  file data for size updates, and exposes the new metadata through `Tgetattr`,
-  `Tread` returns counted byte ranges,
+  handles mode, uid, gid, explicit atime/mtime, and size-valid metadata paths,
+  truncates or extends file data for size updates, and exposes the new metadata
+  through `Tgetattr`, `Tread` returns counted byte ranges,
   `Twrite` mutates and extends byte ranges, `Trenameat` renames root files
   while preserving the moved file qid and open fid access, replacing
   same-directory target files with explicit target-fid invalidation,
@@ -1283,8 +1283,8 @@ Implementation evidence through 2026-05-31:
   fids, and deleted-fid access return `Rlerror` errno payloads instead of
   panicking or depending on an external proxy. This keeps the useful gem5 VirtIO
   framing model while avoiding gem5's 9P proxy state-loss warning path and
-  external 9P server dependency for deterministic tests. Remaining `Tsetattr`
-  timestamp fields are rejected as unsupported namespace metadata breadth
+  external 9P server dependency for deterministic tests. Unsupported `Tsetattr`
+  ctime-style mask bits are rejected as unsupported namespace metadata breadth
   rather than silently reported as modeled behavior.
   VirtIO RNG now exposes gem5's device id 4 and zero-length config
   surface, uses an explicit deterministic entropy source for reproducible
@@ -3246,9 +3246,10 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   exposure, `Treadlink` target replies, non-symlink and stale readlink
   rejection, `Tmknod` character-device creation, walk, dirent dtype, metadata
   mode, `rdev`, read rejection, stale-parent rejection, duplicate-name
-  rejection, file-parent rejection, `Tsetattr` mode, uid, gid, size-valid file
-  shrink, zero-filled growth, and metadata visibility, stale setattr rejection,
-  directory size-mutation rejection, unsupported timestamp-field rejection,
+  rejection, file-parent rejection, `Tsetattr` mode, uid, gid, explicit
+  atime/mtime, size-valid file shrink, zero-filled growth, and metadata
+  visibility, stale setattr rejection, directory size-mutation rejection,
+  unsupported ctime-mask rejection,
   `Tclunk` fid removal, `Tflush` no-op acknowledgement without fid mutation,
   `Tfsync` acknowledgement for existing fids, and stale metadata, directory,
   create, fsync, write, remove, unlink, and read `Rlerror` handling,

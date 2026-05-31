@@ -9,13 +9,17 @@ use rem6_virtio::{
     VIRTIO_9P_RMKNOD, VIRTIO_9P_RREAD, VIRTIO_9P_RREADDIR, VIRTIO_9P_RREADLINK, VIRTIO_9P_RREMOVE,
     VIRTIO_9P_RRENAMEAT, VIRTIO_9P_RSETATTR, VIRTIO_9P_RSTATFS, VIRTIO_9P_RSYMLINK,
     VIRTIO_9P_RUNLINKAT, VIRTIO_9P_RVERSION, VIRTIO_9P_RWALK, VIRTIO_9P_RWRITE,
-    VIRTIO_9P_SETATTR_GID, VIRTIO_9P_SETATTR_MODE, VIRTIO_9P_SETATTR_SIZE, VIRTIO_9P_SETATTR_UID,
-    VIRTIO_9P_STATFS_BLOCK_SIZE, VIRTIO_9P_STATFS_TYPE, VIRTIO_9P_TATTACH, VIRTIO_9P_TCLUNK,
-    VIRTIO_9P_TFLUSH, VIRTIO_9P_TFSYNC, VIRTIO_9P_TGETATTR, VIRTIO_9P_TLCREATE, VIRTIO_9P_TLOPEN,
-    VIRTIO_9P_TMKDIR, VIRTIO_9P_TMKNOD, VIRTIO_9P_TREAD, VIRTIO_9P_TREADDIR, VIRTIO_9P_TREADLINK,
-    VIRTIO_9P_TREMOVE, VIRTIO_9P_TRENAMEAT, VIRTIO_9P_TSETATTR, VIRTIO_9P_TSTATFS,
-    VIRTIO_9P_TSYMLINK, VIRTIO_9P_TUNLINKAT, VIRTIO_9P_TVERSION, VIRTIO_9P_TWALK, VIRTIO_9P_TWRITE,
+    VIRTIO_9P_SETATTR_ATIME, VIRTIO_9P_SETATTR_ATIME_SET, VIRTIO_9P_SETATTR_GID,
+    VIRTIO_9P_SETATTR_MODE, VIRTIO_9P_SETATTR_MTIME, VIRTIO_9P_SETATTR_MTIME_SET,
+    VIRTIO_9P_SETATTR_SIZE, VIRTIO_9P_SETATTR_UID, VIRTIO_9P_STATFS_BLOCK_SIZE,
+    VIRTIO_9P_STATFS_TYPE, VIRTIO_9P_TATTACH, VIRTIO_9P_TCLUNK, VIRTIO_9P_TFLUSH, VIRTIO_9P_TFSYNC,
+    VIRTIO_9P_TGETATTR, VIRTIO_9P_TLCREATE, VIRTIO_9P_TLOPEN, VIRTIO_9P_TMKDIR, VIRTIO_9P_TMKNOD,
+    VIRTIO_9P_TREAD, VIRTIO_9P_TREADDIR, VIRTIO_9P_TREADLINK, VIRTIO_9P_TREMOVE,
+    VIRTIO_9P_TRENAMEAT, VIRTIO_9P_TSETATTR, VIRTIO_9P_TSTATFS, VIRTIO_9P_TSYMLINK,
+    VIRTIO_9P_TUNLINKAT, VIRTIO_9P_TVERSION, VIRTIO_9P_TWALK, VIRTIO_9P_TWRITE,
 };
+
+const P9_SETATTR_CTIME: u32 = 0x0000_0040;
 
 fn queue(index: u16) -> VirtioQueueIndex {
     VirtioQueueIndex::new(index).unwrap()
@@ -96,7 +100,14 @@ fn p9_getattr_payload(fid: u32, request_mask: u64) -> Vec<u8> {
 }
 
 fn p9_setattr_payload(fid: u32, valid: u32, size: u64) -> Vec<u8> {
-    p9_setattr_metadata_payload(fid, valid, 0, 0, 0, size)
+    p9_setattr_full_payload(
+        fid,
+        valid,
+        P9SetattrPayload {
+            size,
+            ..P9SetattrPayload::default()
+        },
+    )
 }
 
 fn p9_setattr_metadata_payload(
@@ -107,17 +118,43 @@ fn p9_setattr_metadata_payload(
     gid: u32,
     size: u64,
 ) -> Vec<u8> {
+    p9_setattr_full_payload(
+        fid,
+        valid,
+        P9SetattrPayload {
+            mode,
+            uid,
+            gid,
+            size,
+            ..P9SetattrPayload::default()
+        },
+    )
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct P9SetattrPayload {
+    mode: u32,
+    uid: u32,
+    gid: u32,
+    size: u64,
+    atime_sec: u64,
+    atime_nsec: u64,
+    mtime_sec: u64,
+    mtime_nsec: u64,
+}
+
+fn p9_setattr_full_payload(fid: u32, valid: u32, fields: P9SetattrPayload) -> Vec<u8> {
     let mut payload = Vec::new();
     payload.extend(fid.to_le_bytes());
     payload.extend(valid.to_le_bytes());
-    payload.extend(mode.to_le_bytes());
-    payload.extend(uid.to_le_bytes());
-    payload.extend(gid.to_le_bytes());
-    payload.extend(size.to_le_bytes());
-    payload.extend(0_u64.to_le_bytes());
-    payload.extend(0_u64.to_le_bytes());
-    payload.extend(0_u64.to_le_bytes());
-    payload.extend(0_u64.to_le_bytes());
+    payload.extend(fields.mode.to_le_bytes());
+    payload.extend(fields.uid.to_le_bytes());
+    payload.extend(fields.gid.to_le_bytes());
+    payload.extend(fields.size.to_le_bytes());
+    payload.extend(fields.atime_sec.to_le_bytes());
+    payload.extend(fields.atime_nsec.to_le_bytes());
+    payload.extend(fields.mtime_sec.to_le_bytes());
+    payload.extend(fields.mtime_nsec.to_le_bytes());
     payload
 }
 
@@ -918,6 +955,56 @@ fn virtio_9p_device_setattr_updates_mode_uid_and_gid_metadata() {
 }
 
 #[test]
+fn virtio_9p_device_setattr_updates_explicit_timestamps() {
+    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap())
+        .with_file("alpha.txt", b"abcdef".to_vec())
+        .unwrap();
+    let attach = decoded_request(
+        VIRTIO_9P_TATTACH,
+        1,
+        p9_attach_payload(1, VIRTIO_9P_NOFID, b"root", b"", 0),
+    );
+    device.execute_at(10, attach).unwrap();
+    let walk = decoded_request(VIRTIO_9P_TWALK, 2, p9_walk_payload(1, 2, &[b"alpha.txt"]));
+    device.execute_at(11, walk).unwrap();
+
+    let valid = VIRTIO_9P_SETATTR_ATIME
+        | VIRTIO_9P_SETATTR_ATIME_SET
+        | VIRTIO_9P_SETATTR_MTIME
+        | VIRTIO_9P_SETATTR_MTIME_SET;
+    let setattr = decoded_request(
+        VIRTIO_9P_TSETATTR,
+        3,
+        p9_setattr_full_payload(
+            2,
+            valid,
+            P9SetattrPayload {
+                atime_sec: 11,
+                atime_nsec: 22,
+                mtime_sec: 33,
+                mtime_nsec: 44,
+                ..P9SetattrPayload::default()
+            },
+        ),
+    );
+    let setattr_completion = device.execute_at(12, setattr).unwrap();
+    assert_eq!(setattr_completion.message_type(), VIRTIO_9P_RSETATTR);
+    assert!(setattr_completion.payload().is_empty());
+
+    let getattr = decoded_request(
+        VIRTIO_9P_TGETATTR,
+        4,
+        p9_getattr_payload(2, VIRTIO_9P_GETATTR_BASIC),
+    );
+    let getattr_completion = device.execute_at(13, getattr).unwrap();
+    assert_eq!(getattr_completion.message_type(), VIRTIO_9P_RGETATTR);
+    assert_eq!(read_u64(getattr_completion.payload(), 73), 11);
+    assert_eq!(read_u64(getattr_completion.payload(), 81), 22);
+    assert_eq!(read_u64(getattr_completion.payload(), 89), 33);
+    assert_eq!(read_u64(getattr_completion.payload(), 97), 44);
+}
+
+#[test]
 fn virtio_9p_device_rejects_unsupported_setattr_fields() {
     let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap())
         .with_file("alpha.txt", b"abcdef".to_vec())
@@ -931,7 +1018,11 @@ fn virtio_9p_device_rejects_unsupported_setattr_fields() {
     let walk = decoded_request(VIRTIO_9P_TWALK, 2, p9_walk_payload(1, 2, &[b"alpha.txt"]));
     device.execute_at(11, walk).unwrap();
 
-    let setattr = decoded_request(VIRTIO_9P_TSETATTR, 3, p9_setattr_payload(2, 0x0000_0010, 0));
+    let setattr = decoded_request(
+        VIRTIO_9P_TSETATTR,
+        3,
+        p9_setattr_payload(2, P9_SETATTR_CTIME, 0),
+    );
     let completion = device.execute_at(12, setattr).unwrap();
     assert_eq!(completion.message_type(), VIRTIO_9P_RLERROR);
     assert_eq!(completion.payload(), VIRTIO_9P_ENOTSUP.to_le_bytes());
