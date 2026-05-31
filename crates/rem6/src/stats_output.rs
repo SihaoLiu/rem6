@@ -3,7 +3,8 @@ use rem6_stats::{StatResetPolicy, StatSnapshot, StatsRegistry};
 use super::formatting::json_escape;
 use super::{
     parallel_stats, stats_error, Rem6CliError, Rem6ExecutionStop, Rem6ExecutionSummary,
-    Rem6MemoryTransportCounters, Rem6MemoryTransportSummary, Rem6RunConfig, RequestedIsa,
+    Rem6LoadBlobSummary, Rem6MemoryTransportCounters, Rem6MemoryTransportSummary, Rem6RunConfig,
+    RequestedIsa,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -15,6 +16,7 @@ pub(super) struct Rem6StatsOutput {
 pub(super) struct Rem6StatsInputs<'a> {
     pub(super) binary_bytes: u64,
     pub(super) load_segments: u64,
+    pub(super) load_blobs: &'a [Rem6LoadBlobSummary],
     pub(super) start_address: u64,
     pub(super) config: &'a Rem6RunConfig,
     pub(super) execution: Option<&'a Rem6ExecutionSummary>,
@@ -38,6 +40,40 @@ pub(super) fn run_stats_output(
         StatResetPolicy::Constant,
         inputs.load_segments,
     )?;
+    increment_stat(
+        &mut stats,
+        "sim.load_blobs",
+        "Count",
+        StatResetPolicy::Constant,
+        inputs.load_blobs.len() as u64,
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.load_blob_bytes",
+        "Byte",
+        StatResetPolicy::Constant,
+        inputs
+            .load_blobs
+            .iter()
+            .map(Rem6LoadBlobSummary::bytes)
+            .sum(),
+    )?;
+    for (index, blob) in inputs.load_blobs.iter().enumerate() {
+        increment_stat(
+            &mut stats,
+            &format!("sim.load_blob{index}.address"),
+            "Address",
+            StatResetPolicy::Constant,
+            blob.address(),
+        )?;
+        increment_stat(
+            &mut stats,
+            &format!("sim.load_blob{index}.bytes"),
+            "Byte",
+            StatResetPolicy::Constant,
+            blob.bytes(),
+        )?;
+    }
     increment_stat(
         &mut stats,
         "sim.max_tick",

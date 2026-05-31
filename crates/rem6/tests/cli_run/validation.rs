@@ -234,6 +234,156 @@ fn rem6_run_rejects_invalid_riscv_boot_a1() {
 }
 
 #[test]
+fn rem6_run_rejects_invalid_load_blob() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("invalid-load-blob", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+            "--load-blob",
+            "not-a-blob",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("invalid load blob not-a-blob"));
+}
+
+#[test]
+fn rem6_run_rejects_missing_load_blob_file() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("missing-load-blob", &elf);
+    let blob_path = temp_output("missing-load-blob");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+            "--load-blob",
+            &format!("0x80001000:{}", blob_path.display()),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains(&format!(
+        "failed to read load blob {}:",
+        blob_path.display()
+    )));
+}
+
+#[test]
+fn rem6_run_rejects_empty_load_blob_file() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("empty-load-blob", &elf);
+    let blob_path = temp_binary("empty-load-blob-data", &[]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+            "--load-blob",
+            &format!("0x80001000:{}", blob_path.display()),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains(&format!("load blob {} is empty", blob_path.display())));
+}
+
+#[test]
+fn rem6_run_rejects_load_blob_overlapping_elf_segment() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("overlapping-load-blob", &elf);
+    let blob_path = temp_binary("overlapping-load-blob-data", &[0xaa, 0xbb]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+            "--load-blob",
+            &format!("0x80000000:{}", blob_path.display()),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("overlaps existing region"));
+}
+
+#[test]
+fn rem6_run_rejects_overlapping_load_blobs() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("overlapping-load-blobs", &elf);
+    let first_blob_path = temp_binary("overlapping-load-blobs-first", &[0xaa, 0xbb]);
+    let second_blob_path = temp_binary("overlapping-load-blobs-second", &[0xcc, 0xdd]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+            "--load-blob",
+            &format!("0x80001000:{}", first_blob_path.display()),
+            "--load-blob",
+            &format!("0x80001001:{}", second_blob_path.display()),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("overlaps existing region"));
+}
+
+#[test]
 fn rem6_run_rejects_memory_route_delay_below_scheduler_lookahead() {
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
     let path = temp_binary("short-memory-route-delay", &elf);

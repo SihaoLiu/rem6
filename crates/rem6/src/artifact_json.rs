@@ -2,7 +2,7 @@ use super::formatting::{
     bytes_to_hex, elf_architecture_name, elf_class_name, elf_endian_name, elf_os_name, json_escape,
 };
 use super::{
-    Rem6CoreSummary, Rem6ExecutionStop, Rem6ExecutionSummary, Rem6MemoryDump,
+    Rem6CoreSummary, Rem6ExecutionStop, Rem6ExecutionSummary, Rem6LoadBlobSummary, Rem6MemoryDump,
     Rem6MemoryTransportCounters, Rem6MemoryTransportRouteSummary, Rem6MemoryTransportSummary,
     Rem6ParallelFrontierSummary, Rem6ParallelPartitionSummary, Rem6ParallelReadyPartitionSummary,
     Rem6RunArtifact, RequestedIsa,
@@ -53,6 +53,12 @@ impl Rem6RunArtifact {
             .as_ref()
             .map(Rem6ExecutionSummary::to_transport_json)
             .unwrap_or_else(empty_transport_json);
+        let load_blobs = self
+            .load_blobs
+            .iter()
+            .map(Rem6LoadBlobSummary::to_json)
+            .collect::<Vec<_>>()
+            .join(",");
         let riscv_boot = if self.config.isa() == RequestedIsa::Riscv {
             format!(
                 ",\"riscv_boot\":{{\"a0\":\"0x{:x}\",\"a1\":\"0x{:x}\"}}",
@@ -63,13 +69,14 @@ impl Rem6RunArtifact {
             String::new()
         };
         format!(
-            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"transport\":{},\"stats\":{}}}\n",
+            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"load_blobs\":[{}],\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"transport\":{},\"stats\":{}}}\n",
             self.schema,
             self.config.isa().as_str(),
             json_escape(&self.config.binary().display().to_string()),
             self.entry,
             self.start_address,
             riscv_boot,
+            load_blobs,
             elf_class_name(self.metadata.class()),
             elf_endian_name(self.metadata.endian()),
             elf_architecture_name(self.metadata.architecture()),
@@ -91,6 +98,17 @@ impl Rem6RunArtifact {
 
     pub const fn load_segments(&self) -> u64 {
         self.load_segments
+    }
+}
+
+impl Rem6LoadBlobSummary {
+    fn to_json(&self) -> String {
+        format!(
+            "{{\"address\":\"0x{:x}\",\"bytes\":{},\"path\":\"{}\"}}",
+            self.address(),
+            self.bytes(),
+            json_escape(&self.path().display().to_string())
+        )
     }
 }
 

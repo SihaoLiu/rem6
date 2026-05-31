@@ -12,8 +12,8 @@ use rem6_cpu::{
 use rem6_isa_riscv::Register;
 use rem6_kernel::{PartitionFrontier, PartitionId, PartitionedScheduler, ReadyPartition};
 use rem6_memory::{
-    AccessSize, Address, AgentId, CacheLineLayout, MemoryOperation, MemoryRequest, MemoryRequestId,
-    MemoryTargetId, PartitionedMemoryStore,
+    AccessSize, Address, AddressRange, AgentId, CacheLineLayout, MemoryError, MemoryOperation,
+    MemoryRequest, MemoryRequestId, MemoryTargetId, PartitionedMemoryStore,
 };
 use rem6_stats::StatsRegistry;
 use rem6_system::{
@@ -122,6 +122,7 @@ pub struct Rem6RunConfig {
     cores: usize,
     parallel_workers: usize,
     memory_dumps: Vec<MemoryDumpRequest>,
+    load_blobs: Vec<LoadBlobRequest>,
     output: Option<PathBuf>,
     stats_output: Option<PathBuf>,
 }
@@ -155,6 +156,7 @@ impl Rem6RunConfig {
         let mut cores = 1usize;
         let mut parallel_workers = None;
         let mut memory_dumps = Vec::new();
+        let mut load_blobs = Vec::new();
         let mut output = None;
         let mut stats_output = None;
         while let Some(flag) = args.next() {
@@ -261,6 +263,10 @@ impl Rem6RunConfig {
                     let value = required_value(&flag, args.next())?;
                     memory_dumps.push(MemoryDumpRequest::parse(&value)?);
                 }
+                "--load-blob" => {
+                    let value = required_value(&flag, args.next())?;
+                    load_blobs.push(LoadBlobRequest::parse(&value)?);
+                }
                 "--output" => {
                     output = Some(PathBuf::from(required_value(&flag, args.next())?));
                 }
@@ -309,6 +315,7 @@ impl Rem6RunConfig {
             cores,
             parallel_workers: parallel_workers.unwrap_or(cores),
             memory_dumps,
+            load_blobs,
             output,
             stats_output,
         })
@@ -374,6 +381,10 @@ impl Rem6RunConfig {
         &self.memory_dumps
     }
 
+    pub fn load_blobs(&self) -> &[LoadBlobRequest] {
+        &self.load_blobs
+    }
+
     pub fn output(&self) -> Option<&Path> {
         self.output.as_deref()
     }
@@ -417,6 +428,42 @@ impl MemoryDumpRequest {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LoadBlobRequest {
+    address: u64,
+    path: PathBuf,
+}
+
+impl LoadBlobRequest {
+    pub fn parse(value: &str) -> Result<Self, Rem6CliError> {
+        let Some((address, path)) = value.split_once(':') else {
+            return Err(Rem6CliError::InvalidLoadBlob {
+                value: value.to_string(),
+            });
+        };
+        let address = parse_number(address).ok_or_else(|| Rem6CliError::InvalidLoadBlob {
+            value: value.to_string(),
+        })?;
+        if path.is_empty() {
+            return Err(Rem6CliError::InvalidLoadBlob {
+                value: value.to_string(),
+            });
+        }
+        Ok(Self {
+            address,
+            path: PathBuf::from(path),
+        })
+    }
+
+    pub const fn address(&self) -> u64 {
+        self.address
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Rem6RunArtifact {
     schema: &'static str,
     config: Rem6RunConfig,
@@ -425,9 +472,45 @@ pub struct Rem6RunArtifact {
     start_address: u64,
     metadata: rem6_boot::BootElfMetadata,
     load_segments: u64,
+    load_blobs: Vec<Rem6LoadBlobSummary>,
     execution: Option<Rem6ExecutionSummary>,
     stats_json: String,
     stats_text: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Rem6LoadBlobSummary {
+    address: u64,
+    path: PathBuf,
+    bytes: u64,
+}
+
+impl Rem6LoadBlobSummary {
+    fn new(address: u64, path: PathBuf, bytes: u64) -> Self {
+        Self {
+            address,
+            path,
+            bytes,
+        }
+    }
+
+    pub const fn address(&self) -> u64 {
+        self.address
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub const fn bytes(&self) -> u64 {
+        self.bytes
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct LoadedBlob {
+    summary: Rem6LoadBlobSummary,
+    data: Vec<u8>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -623,9 +706,19 @@ pub enum Rem6CliError {
     InvalidMemoryDump {
         value: String,
     },
+    InvalidLoadBlob {
+        value: String,
+    },
+    EmptyLoadBlob {
+        path: PathBuf,
+    },
     InstructionLimitRequiresExecution,
     MemoryDumpRequiresExecution,
     ReadBinary {
+        path: PathBuf,
+        error: String,
+    },
+    ReadLoadBlob {
         path: PathBuf,
         error: String,
     },
@@ -719,6 +812,12 @@ impl fmt::Display for Rem6CliError {
             Self::InvalidMemoryDump { value } => {
                 write!(formatter, "invalid memory dump request {value}")
             }
+            Self::InvalidLoadBlob { value } => {
+                write!(formatter, "invalid load blob {value}")
+            }
+            Self::EmptyLoadBlob { path } => {
+                write!(formatter, "load blob {} is empty", path.display())
+            }
             Self::InstructionLimitRequiresExecution => {
                 write!(formatter, "--max-instructions requires --execute")
             }
@@ -727,6 +826,13 @@ impl fmt::Display for Rem6CliError {
             }
             Self::ReadBinary { path, error } => {
                 write!(formatter, "failed to read {}: {error}", path.display())
+            }
+            Self::ReadLoadBlob { path, error } => {
+                write!(
+                    formatter,
+                    "failed to read load blob {}: {error}",
+                    path.display()
+                )
             }
             Self::LoadBinary { path, error } => {
                 write!(
@@ -857,12 +963,28 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
         }
     }
 
+    let load_blobs = read_load_blobs(config.load_blobs())?;
+    let load_blob_summaries = load_blobs
+        .iter()
+        .map(|blob| blob.summary.clone())
+        .collect::<Vec<_>>();
+    let line_layout = CacheLineLayout::new(DEFAULT_CACHE_LINE_BYTES).map_err(execute_error)?;
+    if !config.execute() {
+        build_cli_memory_store(&image, &load_blobs, line_layout)?;
+    }
+
     let start_address = config
         .start_address()
         .unwrap_or_else(|| image.entry().get());
     let execution = if config.execute() {
         Some(match config.isa() {
-            RequestedIsa::Riscv => execute_riscv(&image, &config, Address::new(start_address))?,
+            RequestedIsa::Riscv => execute_riscv(
+                &image,
+                &config,
+                &load_blobs,
+                line_layout,
+                Address::new(start_address),
+            )?,
             isa => return Err(Rem6CliError::UnsupportedExecutionIsa { isa }),
         })
     } else {
@@ -871,6 +993,7 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
     let stats = run_stats_output(Rem6StatsInputs {
         binary_bytes: bytes.len() as u64,
         load_segments: image.segments().len() as u64,
+        load_blobs: &load_blob_summaries,
         start_address,
         config: &config,
         execution: execution.as_ref(),
@@ -882,6 +1005,7 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
         start_address,
         load_segments: image.segments().len() as u64,
         metadata,
+        load_blobs: load_blob_summaries,
         config,
         execution,
         stats_json: stats.json,
@@ -892,6 +1016,8 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
 fn execute_riscv(
     image: &BootImage,
     config: &Rem6RunConfig,
+    load_blobs: &[LoadedBlob],
+    line_layout: CacheLineLayout,
     start_address: Address,
 ) -> Result<Rem6ExecutionSummary, Rem6CliError> {
     let core_count = u32::try_from(config.cores()).map_err(|_| Rem6CliError::InvalidCoreCount {
@@ -906,23 +1032,7 @@ fn execute_riscv(
     let tick_limit = config.max_tick();
     let memory_partition = PartitionId::new(core_count);
     let host_partition = PartitionId::new(core_count + 1);
-    let line_layout = CacheLineLayout::new(DEFAULT_CACHE_LINE_BYTES).map_err(execute_error)?;
-    let mut store = PartitionedMemoryStore::new();
-    store
-        .add_partition(CLI_MEMORY_TARGET, line_layout)
-        .map_err(execute_error)?;
-    for segment in image.segments() {
-        store
-            .map_region(
-                CLI_MEMORY_TARGET,
-                segment.range().start(),
-                segment.range().size(),
-            )
-            .map_err(execute_error)?;
-    }
-    image
-        .load_into_partitioned_store(&mut store, CLI_MEMORY_TARGET)
-        .map_err(execute_error)?;
+    let store = build_cli_memory_store(image, load_blobs, line_layout)?;
     let store = Arc::new(Mutex::new(store));
 
     let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(
@@ -1438,6 +1548,125 @@ fn read_memory_dump(
         address: dump.address(),
         data,
     })
+}
+
+fn read_load_blobs(requests: &[LoadBlobRequest]) -> Result<Vec<LoadedBlob>, Rem6CliError> {
+    requests
+        .iter()
+        .map(|request| {
+            let data =
+                std::fs::read(request.path()).map_err(|error| Rem6CliError::ReadLoadBlob {
+                    path: request.path().to_path_buf(),
+                    error: error.to_string(),
+                })?;
+            if data.is_empty() {
+                return Err(Rem6CliError::EmptyLoadBlob {
+                    path: request.path().to_path_buf(),
+                });
+            }
+            let summary = Rem6LoadBlobSummary::new(
+                request.address(),
+                request.path().to_path_buf(),
+                data.len() as u64,
+            );
+            Ok(LoadedBlob { summary, data })
+        })
+        .collect()
+}
+
+fn build_cli_memory_store(
+    image: &BootImage,
+    load_blobs: &[LoadedBlob],
+    line_layout: CacheLineLayout,
+) -> Result<PartitionedMemoryStore, Rem6CliError> {
+    let mut store = PartitionedMemoryStore::new();
+    store
+        .add_partition(CLI_MEMORY_TARGET, line_layout)
+        .map_err(execute_error)?;
+    for region in cli_memory_regions(image, load_blobs)? {
+        store
+            .map_region(CLI_MEMORY_TARGET, region.start(), region.size())
+            .map_err(execute_error)?;
+    }
+    image
+        .load_into_partitioned_store(&mut store, CLI_MEMORY_TARGET)
+        .map_err(execute_error)?;
+    for blob in load_blobs {
+        load_blob_into_store(&mut store, line_layout, blob)?;
+    }
+    Ok(store)
+}
+
+fn cli_memory_regions(
+    image: &BootImage,
+    load_blobs: &[LoadedBlob],
+) -> Result<Vec<AddressRange>, Rem6CliError> {
+    let mut ranges = Vec::with_capacity(image.segments().len() + load_blobs.len());
+    ranges.extend(image.segments().iter().map(|segment| segment.range()));
+    for blob in load_blobs {
+        ranges.push(
+            AddressRange::new(
+                Address::new(blob.summary.address()),
+                AccessSize::new(blob.summary.bytes()).map_err(execute_error)?,
+            )
+            .map_err(execute_error)?,
+        );
+    }
+    ranges.sort_by_key(|range| (range.start(), range.end()));
+
+    let mut merged: Vec<AddressRange> = Vec::new();
+    for range in ranges {
+        if let Some(last) = merged.last_mut() {
+            if range.start().get() < last.end().get() {
+                return Err(execute_error(MemoryError::OverlappingAddressRegion {
+                    existing: *last,
+                    requested: range,
+                }));
+            }
+            if range.start().get() == last.end().get() {
+                let bytes = range.end().get() - last.start().get();
+                *last =
+                    AddressRange::new(last.start(), AccessSize::new(bytes).map_err(execute_error)?)
+                        .map_err(execute_error)?;
+                continue;
+            }
+        }
+        merged.push(range);
+    }
+
+    Ok(merged)
+}
+
+fn load_blob_into_store(
+    store: &mut PartitionedMemoryStore,
+    line_layout: CacheLineLayout,
+    blob: &LoadedBlob,
+) -> Result<(), Rem6CliError> {
+    let mut cursor = blob.summary.address();
+    let mut data_offset = 0usize;
+    while data_offset < blob.data.len() {
+        let address = Address::new(cursor);
+        let line = line_layout.line_address(address);
+        let line_offset = line_layout.line_offset(address);
+        let available_in_line = line_layout.bytes() - line_offset;
+        let remaining = (blob.data.len() - data_offset) as u64;
+        let bytes = available_in_line.min(remaining);
+        let next_data_offset = data_offset + bytes as usize;
+
+        let mut line_data = store
+            .line_data(CLI_MEMORY_TARGET, line)
+            .unwrap_or_else(|_| vec![0; line_layout.bytes() as usize]);
+        let start = line_offset as usize;
+        line_data[start..start + bytes as usize]
+            .copy_from_slice(&blob.data[data_offset..next_data_offset]);
+        store
+            .insert_line(CLI_MEMORY_TARGET, line, line_data)
+            .map_err(execute_error)?;
+
+        cursor += bytes;
+        data_offset = next_data_offset;
+    }
+    Ok(())
 }
 
 fn committed_instructions_by_cpu(run: &RiscvSystemRun) -> BTreeMap<CpuId, u64> {

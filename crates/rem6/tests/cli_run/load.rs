@@ -176,6 +176,52 @@ fn rem6_run_loads_riscv_elf_with_explicit_boot_registers() {
 }
 
 #[test]
+fn rem6_run_loads_riscv_elf_with_explicit_blob() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("loaded-blob", &elf);
+    let blob_path = temp_binary("loaded-blob-data", &[0xde, 0xad, 0xbe, 0xef]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+            "--load-blob",
+            &format!("0X80001000:{}", blob_path.display()),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"loaded\""));
+    assert!(stdout.contains(&format!(
+        "\"load_blobs\":[{{\"address\":\"0x80001000\",\"bytes\":4,\"path\":\"{}\"}}]",
+        blob_path.display()
+    )));
+    assert_stat(&stdout, "sim.load_blobs", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.load_blob_bytes", "Byte", 4, "constant");
+    assert_stat(
+        &stdout,
+        "sim.load_blob0.address",
+        "Address",
+        0x8000_1000,
+        "constant",
+    );
+    assert_stat(&stdout, "sim.load_blob0.bytes", "Byte", 4, "constant");
+}
+
+#[test]
 fn rem6_run_writes_json_artifact_to_requested_output_path() {
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
     let path = temp_binary("output-sink", &elf);
