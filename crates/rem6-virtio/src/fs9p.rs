@@ -84,6 +84,7 @@ pub const VIRTIO_9P_NOFID: u32 = u32::MAX;
 pub const VIRTIO_9P_EBADF: u32 = 9;
 pub const VIRTIO_9P_EEXIST: u32 = 17;
 pub const VIRTIO_9P_ENOENT: u32 = 2;
+pub const VIRTIO_9P_ENOTEMPTY: u32 = 39;
 pub const VIRTIO_9P_ENOTSUP: u32 = 95;
 pub const VIRTIO_9P_QTFILE: u8 = 0;
 pub const VIRTIO_9P_QTSYMLINK: u8 = 0x02;
@@ -106,6 +107,7 @@ pub const VIRTIO_9P_LOCK_SUCCESS: u8 = 0;
 pub const VIRTIO_9P_LOCK_TYPE_RDLCK: u8 = 0;
 pub const VIRTIO_9P_LOCK_TYPE_WRLCK: u8 = 1;
 pub const VIRTIO_9P_LOCK_TYPE_UNLCK: u8 = 2;
+pub const VIRTIO_9P_AT_REMOVEDIR: u32 = 0x200;
 pub const VIRTIO_9P_STATFS_TYPE: u32 = 0x0102_1997;
 pub const VIRTIO_9P_STATFS_BLOCK_SIZE: u32 = 4096;
 pub const VIRTIO_9P_NAME_MAX: u32 = 255;
@@ -810,8 +812,11 @@ impl Virtio9pDevice {
             .namespace
             .lock()
             .expect("virtio 9p namespace lock")
-            .remove_file_by_name(fid.node(), &unlink.name)?
-        {
+            .unlink_by_name(
+                fid.node(),
+                &unlink.name,
+                unlink.flags & VIRTIO_9P_AT_REMOVEDIR != 0,
+            )? {
             Ok(node) => node,
             Err(errno) => return Ok(Err(errno)),
         };

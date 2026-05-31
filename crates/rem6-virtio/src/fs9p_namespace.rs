@@ -3,11 +3,11 @@ use std::collections::BTreeMap;
 use crate::{
     fs9p::{
         VIRTIO_9P_DTBLK, VIRTIO_9P_DTCHR, VIRTIO_9P_DTDIR, VIRTIO_9P_DTREG, VIRTIO_9P_DTSYMLINK,
-        VIRTIO_9P_EBADF, VIRTIO_9P_EEXIST, VIRTIO_9P_ENOENT, VIRTIO_9P_GETATTR_BASIC,
-        VIRTIO_9P_NAME_MAX, VIRTIO_9P_QTDIR, VIRTIO_9P_QTFILE, VIRTIO_9P_QTSYMLINK,
-        VIRTIO_9P_STATFS_BLOCK_SIZE, VIRTIO_9P_STATFS_TYPE, VIRTIO_9P_TLCREATE, VIRTIO_9P_TLINK,
-        VIRTIO_9P_TMKDIR, VIRTIO_9P_TMKNOD, VIRTIO_9P_TRENAME, VIRTIO_9P_TRENAMEAT,
-        VIRTIO_9P_TSYMLINK, VIRTIO_9P_TUNLINKAT, VIRTIO_9P_TWALK,
+        VIRTIO_9P_EBADF, VIRTIO_9P_EEXIST, VIRTIO_9P_ENOENT, VIRTIO_9P_ENOTEMPTY,
+        VIRTIO_9P_GETATTR_BASIC, VIRTIO_9P_NAME_MAX, VIRTIO_9P_QTDIR, VIRTIO_9P_QTFILE,
+        VIRTIO_9P_QTSYMLINK, VIRTIO_9P_STATFS_BLOCK_SIZE, VIRTIO_9P_STATFS_TYPE,
+        VIRTIO_9P_TLCREATE, VIRTIO_9P_TLINK, VIRTIO_9P_TMKDIR, VIRTIO_9P_TMKNOD, VIRTIO_9P_TRENAME,
+        VIRTIO_9P_TRENAMEAT, VIRTIO_9P_TSYMLINK, VIRTIO_9P_TUNLINKAT, VIRTIO_9P_TWALK,
     },
     VirtioError,
 };
@@ -267,29 +267,36 @@ impl Virtio9pNamespace {
         Ok(Ok(()))
     }
 
-    pub(crate) fn remove_file_by_name(
+    pub(crate) fn unlink_by_name(
         &mut self,
         parent: Virtio9pNodeId,
         name: &str,
+        remove_dir: bool,
     ) -> Result<Result<Virtio9pNodeId, u32>, VirtioError> {
         validate_file_name(VIRTIO_9P_TUNLINKAT, name)?;
         let Some(entries) = self.directory_entries_mut(parent) else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
-        match entries.get(name).map(Virtio9pNode::id) {
-            Some(
-                node @ (Virtio9pNodeId::File(_)
-                | Virtio9pNodeId::Symlink(_)
-                | Virtio9pNodeId::Special(_)),
-            ) => {
-                entries.remove(name);
-                Ok(Ok(node))
+        let Some(node) = entries.get(name) else {
+            return Ok(Err(VIRTIO_9P_ENOENT));
+        };
+        let removed = match node {
+            Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_)
+                if !remove_dir =>
+            {
+                node.id()
             }
-            Some(Virtio9pNodeId::Directory(_)) | Some(Virtio9pNodeId::Root) => {
-                Ok(Err(VIRTIO_9P_EBADF))
+            Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_) => {
+                return Ok(Err(VIRTIO_9P_EBADF));
             }
-            None => Ok(Err(VIRTIO_9P_ENOENT)),
-        }
+            Virtio9pNode::Directory(directory) if remove_dir && directory.entries.is_empty() => {
+                Virtio9pNodeId::Directory(directory.qid_path)
+            }
+            Virtio9pNode::Directory(_) if remove_dir => return Ok(Err(VIRTIO_9P_ENOTEMPTY)),
+            Virtio9pNode::Directory(_) => return Ok(Err(VIRTIO_9P_EBADF)),
+        };
+        entries.remove(name);
+        Ok(Ok(removed))
     }
 
     pub(crate) fn remove_file_by_node(&mut self, node: Virtio9pNodeId) -> bool {

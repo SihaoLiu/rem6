@@ -294,9 +294,13 @@ pub(crate) fn parse_unlinkat_request(
         reader.read_string()?,
         request.payload(),
     )?;
-    let _flags = reader.read_u32()?;
+    let flags = reader.read_u32()?;
     reader.finish()?;
-    Ok(Virtio9pUnlinkatRequest { dirfid, name })
+    Ok(Virtio9pUnlinkatRequest {
+        dirfid,
+        name,
+        flags,
+    })
 }
 
 pub(crate) fn parse_read_request(
@@ -592,6 +596,7 @@ pub(crate) struct Virtio9pRenameatRequest {
 pub(crate) struct Virtio9pUnlinkatRequest {
     pub(crate) dirfid: u32,
     pub(crate) name: String,
+    pub(crate) flags: u32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

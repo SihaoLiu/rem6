@@ -1,23 +1,24 @@
 use rem6_virtio::{
-    Virtio9pConfig, Virtio9pDevice, VirtioError, VIRTIO_9P_DEFAULT_MSIZE, VIRTIO_9P_DTCHR,
-    VIRTIO_9P_DTDIR, VIRTIO_9P_DTREG, VIRTIO_9P_DTSYMLINK, VIRTIO_9P_EBADF, VIRTIO_9P_EEXIST,
-    VIRTIO_9P_ENOENT, VIRTIO_9P_ENOTSUP, VIRTIO_9P_GETATTR_BASIC, VIRTIO_9P_LOCK_SUCCESS,
-    VIRTIO_9P_LOCK_TYPE_UNLCK, VIRTIO_9P_LOCK_TYPE_WRLCK, VIRTIO_9P_NAME_MAX, VIRTIO_9P_NOFID,
-    VIRTIO_9P_PROTOCOL_VERSION, VIRTIO_9P_QTDIR, VIRTIO_9P_QTFILE, VIRTIO_9P_QTSYMLINK,
-    VIRTIO_9P_RATTACH, VIRTIO_9P_RCLUNK, VIRTIO_9P_RFLUSH, VIRTIO_9P_RFSYNC, VIRTIO_9P_RGETATTR,
-    VIRTIO_9P_RGETLOCK, VIRTIO_9P_RLCREATE, VIRTIO_9P_RLERROR, VIRTIO_9P_RLINK, VIRTIO_9P_RLOCK,
-    VIRTIO_9P_RLOPEN, VIRTIO_9P_RMKDIR, VIRTIO_9P_RMKNOD, VIRTIO_9P_RREAD, VIRTIO_9P_RREADDIR,
-    VIRTIO_9P_RREADLINK, VIRTIO_9P_RREMOVE, VIRTIO_9P_RRENAME, VIRTIO_9P_RRENAMEAT,
-    VIRTIO_9P_RSETATTR, VIRTIO_9P_RSTATFS, VIRTIO_9P_RSYMLINK, VIRTIO_9P_RUNLINKAT,
-    VIRTIO_9P_RVERSION, VIRTIO_9P_RWALK, VIRTIO_9P_RWRITE, VIRTIO_9P_SETATTR_ATIME,
-    VIRTIO_9P_SETATTR_ATIME_SET, VIRTIO_9P_SETATTR_GID, VIRTIO_9P_SETATTR_MODE,
-    VIRTIO_9P_SETATTR_MTIME, VIRTIO_9P_SETATTR_MTIME_SET, VIRTIO_9P_SETATTR_SIZE,
-    VIRTIO_9P_SETATTR_UID, VIRTIO_9P_STATFS_BLOCK_SIZE, VIRTIO_9P_STATFS_TYPE, VIRTIO_9P_TATTACH,
-    VIRTIO_9P_TCLUNK, VIRTIO_9P_TFLUSH, VIRTIO_9P_TFSYNC, VIRTIO_9P_TGETATTR, VIRTIO_9P_TGETLOCK,
-    VIRTIO_9P_TLCREATE, VIRTIO_9P_TLINK, VIRTIO_9P_TLOCK, VIRTIO_9P_TLOPEN, VIRTIO_9P_TMKDIR,
-    VIRTIO_9P_TMKNOD, VIRTIO_9P_TREAD, VIRTIO_9P_TREADDIR, VIRTIO_9P_TREADLINK, VIRTIO_9P_TREMOVE,
-    VIRTIO_9P_TRENAME, VIRTIO_9P_TRENAMEAT, VIRTIO_9P_TSETATTR, VIRTIO_9P_TSTATFS,
-    VIRTIO_9P_TSYMLINK, VIRTIO_9P_TUNLINKAT, VIRTIO_9P_TVERSION, VIRTIO_9P_TWALK, VIRTIO_9P_TWRITE,
+    Virtio9pConfig, Virtio9pDevice, VirtioError, VIRTIO_9P_AT_REMOVEDIR, VIRTIO_9P_DEFAULT_MSIZE,
+    VIRTIO_9P_DTCHR, VIRTIO_9P_DTDIR, VIRTIO_9P_DTREG, VIRTIO_9P_DTSYMLINK, VIRTIO_9P_EBADF,
+    VIRTIO_9P_EEXIST, VIRTIO_9P_ENOENT, VIRTIO_9P_ENOTEMPTY, VIRTIO_9P_ENOTSUP,
+    VIRTIO_9P_GETATTR_BASIC, VIRTIO_9P_LOCK_SUCCESS, VIRTIO_9P_LOCK_TYPE_UNLCK,
+    VIRTIO_9P_LOCK_TYPE_WRLCK, VIRTIO_9P_NAME_MAX, VIRTIO_9P_NOFID, VIRTIO_9P_PROTOCOL_VERSION,
+    VIRTIO_9P_QTDIR, VIRTIO_9P_QTFILE, VIRTIO_9P_QTSYMLINK, VIRTIO_9P_RATTACH, VIRTIO_9P_RCLUNK,
+    VIRTIO_9P_RFLUSH, VIRTIO_9P_RFSYNC, VIRTIO_9P_RGETATTR, VIRTIO_9P_RGETLOCK, VIRTIO_9P_RLCREATE,
+    VIRTIO_9P_RLERROR, VIRTIO_9P_RLINK, VIRTIO_9P_RLOCK, VIRTIO_9P_RLOPEN, VIRTIO_9P_RMKDIR,
+    VIRTIO_9P_RMKNOD, VIRTIO_9P_RREAD, VIRTIO_9P_RREADDIR, VIRTIO_9P_RREADLINK, VIRTIO_9P_RREMOVE,
+    VIRTIO_9P_RRENAME, VIRTIO_9P_RRENAMEAT, VIRTIO_9P_RSETATTR, VIRTIO_9P_RSTATFS,
+    VIRTIO_9P_RSYMLINK, VIRTIO_9P_RUNLINKAT, VIRTIO_9P_RVERSION, VIRTIO_9P_RWALK, VIRTIO_9P_RWRITE,
+    VIRTIO_9P_SETATTR_ATIME, VIRTIO_9P_SETATTR_ATIME_SET, VIRTIO_9P_SETATTR_GID,
+    VIRTIO_9P_SETATTR_MODE, VIRTIO_9P_SETATTR_MTIME, VIRTIO_9P_SETATTR_MTIME_SET,
+    VIRTIO_9P_SETATTR_SIZE, VIRTIO_9P_SETATTR_UID, VIRTIO_9P_STATFS_BLOCK_SIZE,
+    VIRTIO_9P_STATFS_TYPE, VIRTIO_9P_TATTACH, VIRTIO_9P_TCLUNK, VIRTIO_9P_TFLUSH, VIRTIO_9P_TFSYNC,
+    VIRTIO_9P_TGETATTR, VIRTIO_9P_TGETLOCK, VIRTIO_9P_TLCREATE, VIRTIO_9P_TLINK, VIRTIO_9P_TLOCK,
+    VIRTIO_9P_TLOPEN, VIRTIO_9P_TMKDIR, VIRTIO_9P_TMKNOD, VIRTIO_9P_TREAD, VIRTIO_9P_TREADDIR,
+    VIRTIO_9P_TREADLINK, VIRTIO_9P_TREMOVE, VIRTIO_9P_TRENAME, VIRTIO_9P_TRENAMEAT,
+    VIRTIO_9P_TSETATTR, VIRTIO_9P_TSTATFS, VIRTIO_9P_TSYMLINK, VIRTIO_9P_TUNLINKAT,
+    VIRTIO_9P_TVERSION, VIRTIO_9P_TWALK, VIRTIO_9P_TWRITE,
 };
 
 mod support;
@@ -943,6 +944,79 @@ fn virtio_9p_device_rejects_remove_and_unlinkat_on_missing_targets() {
     let stale_completion = device.execute_at(13, unlink_stale).unwrap();
     assert_eq!(stale_completion.message_type(), VIRTIO_9P_RLERROR);
     assert_eq!(stale_completion.payload(), VIRTIO_9P_EBADF.to_le_bytes());
+}
+
+#[test]
+fn virtio_9p_device_unlinkat_removes_empty_directories_with_remove_dir_flag() {
+    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap());
+    let attach = decoded_request(
+        VIRTIO_9P_TATTACH,
+        1,
+        p9_attach_payload(1, VIRTIO_9P_NOFID, b"root", b"", 0),
+    );
+    device.execute_at(10, attach).unwrap();
+    let mkdir = decoded_request(
+        VIRTIO_9P_TMKDIR,
+        2,
+        p9_mkdir_payload(1, b"empty", 0o040755, 0),
+    );
+    let mkdir_completion = device.execute_at(11, mkdir).unwrap();
+    assert_eq!(mkdir_completion.message_type(), VIRTIO_9P_RMKDIR);
+
+    let unlink = decoded_request(
+        VIRTIO_9P_TUNLINKAT,
+        3,
+        p9_unlinkat_payload(1, b"empty", VIRTIO_9P_AT_REMOVEDIR),
+    );
+    let unlink_completion = device.execute_at(12, unlink).unwrap();
+    assert_eq!(unlink_completion.message_type(), VIRTIO_9P_RUNLINKAT);
+    assert!(unlink_completion.payload().is_empty());
+
+    let walk_removed = decoded_request(VIRTIO_9P_TWALK, 4, p9_walk_payload(1, 2, &[b"empty"]));
+    let removed_completion = device.execute_at(13, walk_removed).unwrap();
+    assert_eq!(removed_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(removed_completion.payload(), VIRTIO_9P_ENOENT.to_le_bytes());
+}
+
+#[test]
+fn virtio_9p_device_rejects_unlinkat_remove_dir_for_non_empty_directories() {
+    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap());
+    let attach = decoded_request(
+        VIRTIO_9P_TATTACH,
+        1,
+        p9_attach_payload(1, VIRTIO_9P_NOFID, b"root", b"", 0),
+    );
+    device.execute_at(10, attach).unwrap();
+    let mkdir = decoded_request(
+        VIRTIO_9P_TMKDIR,
+        2,
+        p9_mkdir_payload(1, b"parent", 0o040755, 0),
+    );
+    device.execute_at(11, mkdir).unwrap();
+    let walk_parent = decoded_request(VIRTIO_9P_TWALK, 3, p9_walk_payload(1, 2, &[b"parent"]));
+    device.execute_at(12, walk_parent).unwrap();
+    let create_child = decoded_request(
+        VIRTIO_9P_TLCREATE,
+        4,
+        p9_lcreate_payload(2, b"child.txt", 0, 0o100644, 0),
+    );
+    device.execute_at(13, create_child).unwrap();
+
+    let unlink = decoded_request(
+        VIRTIO_9P_TUNLINKAT,
+        5,
+        p9_unlinkat_payload(1, b"parent", VIRTIO_9P_AT_REMOVEDIR),
+    );
+    let unlink_completion = device.execute_at(14, unlink).unwrap();
+    assert_eq!(unlink_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(
+        unlink_completion.payload(),
+        VIRTIO_9P_ENOTEMPTY.to_le_bytes()
+    );
+
+    let walk_parent = decoded_request(VIRTIO_9P_TWALK, 6, p9_walk_payload(1, 3, &[b"parent"]));
+    let walk_completion = device.execute_at(15, walk_parent).unwrap();
+    assert_eq!(walk_completion.message_type(), VIRTIO_9P_RWALK);
 }
 
 #[test]
