@@ -8,6 +8,7 @@ use crate::{
         VIRTIO_9P_QTSYMLINK, VIRTIO_9P_STATFS_BLOCK_SIZE, VIRTIO_9P_STATFS_TYPE,
         VIRTIO_9P_TLCREATE, VIRTIO_9P_TLINK, VIRTIO_9P_TMKDIR, VIRTIO_9P_TMKNOD, VIRTIO_9P_TRENAME,
         VIRTIO_9P_TRENAMEAT, VIRTIO_9P_TSYMLINK, VIRTIO_9P_TUNLINKAT, VIRTIO_9P_TWALK,
+        VIRTIO_9P_TXATTRCREATE,
     },
     VirtioError,
 };
@@ -99,6 +100,7 @@ pub(crate) struct Virtio9pNamespace {
     entries: BTreeMap<String, Virtio9pNode>,
     next_path: u64,
     root_attrs: Virtio9pNodeAttrs,
+    root_xattrs: BTreeMap<String, Vec<u8>>,
 }
 
 impl Virtio9pNamespace {
@@ -107,6 +109,7 @@ impl Virtio9pNamespace {
             entries: BTreeMap::new(),
             next_path: 2,
             root_attrs: Virtio9pNodeAttrs::new(0o040755),
+            root_xattrs: BTreeMap::new(),
         }
     }
 
@@ -123,6 +126,7 @@ impl Virtio9pNamespace {
                 qid_path: path,
                 data,
                 attrs: Virtio9pNodeAttrs::new(0o100644),
+                xattrs: BTreeMap::new(),
             }),
         );
         Ok(())
@@ -150,6 +154,7 @@ impl Virtio9pNamespace {
                 qid_path: path,
                 data: Vec::new(),
                 attrs: Virtio9pNodeAttrs::new(0o100644),
+                xattrs: BTreeMap::new(),
             }),
         );
         Ok(Ok(Virtio9pNodeId::File(path)))
@@ -177,6 +182,7 @@ impl Virtio9pNamespace {
                 qid_path: path,
                 entries: BTreeMap::new(),
                 attrs: Virtio9pNodeAttrs::new(0o040755),
+                xattrs: BTreeMap::new(),
             }),
         );
         Ok(Ok(Virtio9pNodeId::Directory(path)))
@@ -205,6 +211,7 @@ impl Virtio9pNamespace {
                 qid_path: path,
                 target,
                 attrs: Virtio9pNodeAttrs::new(0o120777),
+                xattrs: BTreeMap::new(),
             }),
         );
         Ok(Ok(Virtio9pNodeId::Symlink(path)))
@@ -236,6 +243,7 @@ impl Virtio9pNamespace {
                 rdev: linux_device_number(major, minor),
                 dtype: special_dtype(mode),
                 attrs: Virtio9pNodeAttrs::new(mode),
+                xattrs: BTreeMap::new(),
             }),
         );
         Ok(Ok(Virtio9pNodeId::Special(path)))
@@ -669,6 +677,40 @@ impl Virtio9pNamespace {
         u32::try_from(data.len()).ok()
     }
 
+    pub(crate) fn xattr_list(&self, node: Virtio9pNodeId) -> Option<Vec<u8>> {
+        let xattrs = self.node_xattrs(node)?;
+        let mut data = Vec::new();
+        for name in xattrs.keys() {
+            data.extend(name.as_bytes());
+            data.push(0);
+        }
+        Some(data)
+    }
+
+    pub(crate) fn read_xattr(&self, node: Virtio9pNodeId, name: &str) -> Option<&[u8]> {
+        self.node_xattrs(node)?
+            .get(name)
+            .map(std::vec::Vec::as_slice)
+    }
+
+    pub(crate) fn write_xattr(
+        &mut self,
+        node: Virtio9pNodeId,
+        name: String,
+        data: Vec<u8>,
+    ) -> Option<()> {
+        validate_file_name(VIRTIO_9P_TXATTRCREATE, &name).ok()?;
+        if let Virtio9pNodeId::File(path) = node {
+            find_file(&self.entries, path)?;
+            for_each_file_mut(&mut self.entries, path, &mut |file| {
+                file.xattrs.insert(name.clone(), data.clone());
+            });
+            return Some(());
+        }
+        self.node_xattrs_mut(node)?.insert(name, data);
+        Some(())
+    }
+
     pub(crate) fn resize_file(&mut self, node: Virtio9pNodeId, size: u64) -> Option<()> {
         let Virtio9pNodeId::File(path) = node else {
             return None;
@@ -775,6 +817,40 @@ impl Virtio9pNamespace {
             }
             Virtio9pNodeId::Special(path) => {
                 find_special_mut(&mut self.entries, path).map(|special| &mut special.attrs)
+            }
+        }
+    }
+
+    fn node_xattrs(&self, node: Virtio9pNodeId) -> Option<&BTreeMap<String, Vec<u8>>> {
+        match node {
+            Virtio9pNodeId::Root => Some(&self.root_xattrs),
+            Virtio9pNodeId::File(path) => find_file(&self.entries, path).map(|file| &file.xattrs),
+            Virtio9pNodeId::Directory(path) => {
+                find_directory(&self.entries, path).map(|directory| &directory.xattrs)
+            }
+            Virtio9pNodeId::Symlink(path) => {
+                find_symlink(&self.entries, path).map(|symlink| &symlink.xattrs)
+            }
+            Virtio9pNodeId::Special(path) => {
+                find_special(&self.entries, path).map(|special| &special.xattrs)
+            }
+        }
+    }
+
+    fn node_xattrs_mut(&mut self, node: Virtio9pNodeId) -> Option<&mut BTreeMap<String, Vec<u8>>> {
+        match node {
+            Virtio9pNodeId::Root => Some(&mut self.root_xattrs),
+            Virtio9pNodeId::File(path) => {
+                find_file_mut(&mut self.entries, path).map(|file| &mut file.xattrs)
+            }
+            Virtio9pNodeId::Directory(path) => {
+                find_directory_mut(&mut self.entries, path).map(|directory| &mut directory.xattrs)
+            }
+            Virtio9pNodeId::Symlink(path) => {
+                find_symlink_mut(&mut self.entries, path).map(|symlink| &mut symlink.xattrs)
+            }
+            Virtio9pNodeId::Special(path) => {
+                find_special_mut(&mut self.entries, path).map(|special| &mut special.xattrs)
             }
         }
     }
@@ -1091,6 +1167,7 @@ struct Virtio9pFileNode {
     qid_path: u64,
     data: Vec<u8>,
     attrs: Virtio9pNodeAttrs,
+    xattrs: BTreeMap<String, Vec<u8>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1098,6 +1175,7 @@ struct Virtio9pDirectoryNode {
     qid_path: u64,
     entries: BTreeMap<String, Virtio9pNode>,
     attrs: Virtio9pNodeAttrs,
+    xattrs: BTreeMap<String, Vec<u8>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1105,6 +1183,7 @@ struct Virtio9pSymlinkNode {
     qid_path: u64,
     target: String,
     attrs: Virtio9pNodeAttrs,
+    xattrs: BTreeMap<String, Vec<u8>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1113,6 +1192,7 @@ struct Virtio9pSpecialNode {
     rdev: u64,
     dtype: u8,
     attrs: Virtio9pNodeAttrs,
+    xattrs: BTreeMap<String, Vec<u8>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1215,8 +1295,19 @@ pub(crate) struct Virtio9pNodeMetadata {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum Virtio9pFidState {
-    Node { node: Virtio9pNodeId, open: bool },
-    Xattr { data: Vec<u8> },
+    Node {
+        node: Virtio9pNodeId,
+        open: bool,
+    },
+    XattrRead {
+        data: Vec<u8>,
+    },
+    XattrWrite {
+        node: Virtio9pNodeId,
+        name: String,
+        attr_size: usize,
+        data: Vec<u8>,
+    },
 }
 
 impl Virtio9pFidState {
@@ -1224,14 +1315,23 @@ impl Virtio9pFidState {
         Self::Node { node, open: false }
     }
 
-    pub(crate) fn xattr(data: Vec<u8>) -> Self {
-        Self::Xattr { data }
+    pub(crate) fn xattr_read(data: Vec<u8>) -> Self {
+        Self::XattrRead { data }
+    }
+
+    pub(crate) fn xattr_write(node: Virtio9pNodeId, name: String, attr_size: u64) -> Option<Self> {
+        Some(Self::XattrWrite {
+            node,
+            name,
+            attr_size: usize::try_from(attr_size).ok()?,
+            data: Vec::new(),
+        })
     }
 
     pub(crate) const fn node(&self) -> Option<Virtio9pNodeId> {
         match self {
             Self::Node { node, .. } => Some(*node),
-            Self::Xattr { .. } => None,
+            Self::XattrRead { .. } | Self::XattrWrite { .. } => None,
         }
     }
 
@@ -1241,7 +1341,7 @@ impl Virtio9pFidState {
                 *open = true;
                 Some(())
             }
-            Self::Xattr { .. } => None,
+            Self::XattrRead { .. } | Self::XattrWrite { .. } => None,
         }
     }
 
@@ -1252,14 +1352,48 @@ impl Virtio9pFidState {
     pub(crate) const fn is_open(&self) -> bool {
         match self {
             Self::Node { open, .. } => *open,
-            Self::Xattr { .. } => false,
+            Self::XattrRead { .. } | Self::XattrWrite { .. } => false,
         }
     }
 
     pub(crate) fn xattr_data(&self) -> Option<&[u8]> {
         match self {
             Self::Node { .. } => None,
-            Self::Xattr { data } => Some(data),
+            Self::XattrRead { data } => Some(data),
+            Self::XattrWrite { .. } => None,
         }
+    }
+
+    pub(crate) fn write_xattr_data(&mut self, offset: u64, bytes: &[u8]) -> Option<u32> {
+        let Self::XattrWrite {
+            attr_size, data, ..
+        } = self
+        else {
+            return None;
+        };
+        let start = usize::try_from(offset).ok()?;
+        let end = start.checked_add(bytes.len())?;
+        if end > *attr_size {
+            return None;
+        }
+        if data.len() < end {
+            data.resize(end, 0);
+        }
+        data[start..end].copy_from_slice(bytes);
+        u32::try_from(bytes.len()).ok()
+    }
+
+    pub(crate) fn into_xattr_commit(self) -> Option<(Virtio9pNodeId, String, Vec<u8>)> {
+        let Self::XattrWrite {
+            node,
+            name,
+            attr_size,
+            mut data,
+        } = self
+        else {
+            return None;
+        };
+        data.resize(attr_size, 0);
+        Some((node, name, data))
     }
 }

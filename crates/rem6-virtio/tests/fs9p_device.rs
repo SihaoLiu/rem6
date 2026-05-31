@@ -365,7 +365,7 @@ fn virtio_9p_device_lists_empty_xattrs_with_readable_xattr_fids() {
 }
 
 #[test]
-fn virtio_9p_device_reports_missing_xattrs_and_rejects_xattr_writes() {
+fn virtio_9p_device_reports_missing_xattrs_and_rejects_stale_xattr_create() {
     let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap())
         .with_file("alpha.txt", b"alpha".to_vec())
         .unwrap();
@@ -398,21 +398,12 @@ fn virtio_9p_device_reports_missing_xattrs_and_rejects_xattr_writes() {
         VIRTIO_9P_EBADF.to_le_bytes()
     );
 
-    let create = decoded_request(
-        VIRTIO_9P_TXATTRCREATE,
-        5,
-        p9_xattrcreate_payload(2, b"user.created", 4, 0),
-    );
-    let create_completion = device.execute_at(14, create).unwrap();
-    assert_eq!(create_completion.message_type(), VIRTIO_9P_RLERROR);
-    assert_eq!(create_completion.payload(), VIRTIO_9P_ENOTSUP.to_le_bytes());
-
     let stale = decoded_request(
         VIRTIO_9P_TXATTRCREATE,
-        6,
+        5,
         p9_xattrcreate_payload(9, b"user.created", 4, 0),
     );
-    let stale_completion = device.execute_at(15, stale).unwrap();
+    let stale_completion = device.execute_at(14, stale).unwrap();
     assert_eq!(stale_completion.message_type(), VIRTIO_9P_RLERROR);
     assert_eq!(stale_completion.payload(), VIRTIO_9P_EBADF.to_le_bytes());
 }

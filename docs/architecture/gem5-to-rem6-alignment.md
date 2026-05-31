@@ -1291,14 +1291,16 @@ Implementation evidence through 2026-05-31:
   only when no linked directory entry remains, removes empty directories only
   when `AT_REMOVEDIR` is present, and rejects non-empty directory removal with
   `ENOTEMPTY`, `Tremove` removes file fids plus their namespace
-  entries, `Tclunk` drops fid state, `Tflush` acknowledges old tags without
-  mutating synchronous fid or namespace state, `Tfsync` validates fids
-  before acknowledging writeback intent, `Tlock` accepts advisory lock requests
-  on open file fids, `Tgetlock` reports no in-memory lock conflict with a
-  deterministic unlock payload, `Txattrwalk` exposes an empty xattr-list fid
-  that can be read as zero bytes, rejects occupied destination fids, named
-  missing xattrs return `ENODATA`, and `Txattrcreate` validates target fids
-  before returning `ENOTSUP`. The 9P
+  entries, `Tclunk` drops ordinary fid state and commits pending xattr-write
+  fids, `Tflush` acknowledges old tags without mutating synchronous fid or
+  namespace state, `Tfsync` validates fids before acknowledging writeback
+  intent, `Tlock` accepts advisory lock requests on open file fids,
+  `Tgetlock` reports no in-memory lock conflict with a
+  deterministic unlock payload, `Txattrcreate` converts a target fid into an
+  xattr-write fid with bounded byte writes, `Tclunk` persists the value in the
+  deterministic namespace, and `Txattrwalk` returns either a named xattr read
+  fid or a sorted NUL-delimited xattr-name list while rejecting occupied
+  destination fids and returning `ENODATA` for missing names. The 9P
   device entry point delegates
   typed request payload parsing, protocol string payload construction, and
   per-message request structs plus wire constants to a focused protocol module.
@@ -3292,9 +3294,10 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   atime/mtime, size-valid file shrink, zero-filled growth, and metadata
   visibility, stale setattr rejection, directory size-mutation rejection,
   unsupported ctime-mask rejection, advisory `Tlock` success for open file fids,
-  `Tgetlock` unlock-payload reporting, `Txattrwalk` empty-list read fids,
-  occupied-newfid rejection, missing-xattr `ENODATA`, `Txattrcreate`
-  unsupported-write and stale-fid errors,
+  `Tgetlock` unlock-payload reporting, `Txattrcreate` value writes and
+  commit-on-clunk persistence, `Txattrwalk` named xattr reads, xattr-list read
+  fids, occupied-newfid rejection, missing-xattr `ENODATA`, and stale-fid
+  errors,
   `Tclunk` fid removal, `Tflush` no-op acknowledgement without fid mutation,
   `Tfsync` acknowledgement for existing fids, and stale metadata, directory,
   create, fsync, write, remove, unlink, and read `Rlerror` handling,
