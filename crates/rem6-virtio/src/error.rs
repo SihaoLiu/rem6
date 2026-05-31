@@ -58,6 +58,7 @@ pub enum VirtioError {
     ReadOnlyDeviceConfigWrite {
         offset: u64,
     },
+    InvalidDeviceConfigSnapshot,
     InvalidBlockCapacity,
     InvalidBlockSizeMax {
         size_max: u32,
@@ -336,6 +337,12 @@ impl fmt::Display for VirtioError {
             ),
             Self::ReadOnlyDeviceConfigWrite { offset } => {
                 write!(formatter, "VirtIO device config byte {offset} is read-only")
+            }
+            Self::InvalidDeviceConfigSnapshot => {
+                write!(
+                    formatter,
+                    "VirtIO PCI device config snapshot payload is invalid"
+                )
             }
             Self::InvalidBlockCapacity => {
                 write!(formatter, "VirtIO block capacity must be nonzero")

@@ -6,7 +6,8 @@ use rem6_mmio::{
     MmioBus, MmioCompletion, MmioError, MmioRequest, MmioRequestId, MmioResponse, MmioRoute,
 };
 use rem6_virtio::{
-    VirtioPciDeviceConfigAccess, VirtioPciDeviceConfigDevice, VirtioPciDeviceConfigSpec,
+    VirtioError, VirtioPciDeviceConfigAccess, VirtioPciDeviceConfigDevice,
+    VirtioPciDeviceConfigSnapshot, VirtioPciDeviceConfigSpec,
 };
 
 fn config_read(id: u64, address: u64, size: u64) -> MmioRequest {
@@ -220,4 +221,166 @@ fn virtio_pci_device_config_rejects_invalid_layouts_and_bad_writes() {
     );
     assert_eq!(config.bytes(), vec![0x10, 0x20]);
     assert!(config.accesses().is_empty());
+}
+
+#[test]
+fn virtio_pci_device_config_snapshot_bytes_round_trip_and_restore() {
+    let config = VirtioPciDeviceConfigDevice::new(
+        VirtioPciDeviceConfigSpec::new(
+            vec![0x11, 0x22, 0x33, 0x44],
+            ByteMask::from_bits(vec![false, true, true, false]).unwrap(),
+        )
+        .unwrap(),
+    );
+    assert_eq!(
+        config.read_local(Address::new(0), AccessSize::new(4).unwrap()),
+        Ok(vec![0x11, 0x22, 0x33, 0x44])
+    );
+    config
+        .write_local(
+            Address::new(1),
+            vec![0xaa, 0xbb],
+            ByteMask::from_bits(vec![true, false]).unwrap(),
+        )
+        .unwrap();
+    let snapshot = config.snapshot();
+    let payload = snapshot.to_bytes();
+
+    assert_eq!(&payload[0..8], b"VIODCFG1");
+    assert_eq!(u16::from_le_bytes(payload[8..10].try_into().unwrap()), 1);
+    assert_eq!(u64::from_le_bytes(payload[10..18].try_into().unwrap()), 4);
+    assert_eq!(&payload[18..22], &[0x11, 0xaa, 0x33, 0x44]);
+    assert_eq!(u64::from_le_bytes(payload[22..30].try_into().unwrap()), 4);
+    assert_eq!(&payload[30..34], &[0, 1, 1, 0]);
+    assert_eq!(u64::from_le_bytes(payload[34..42].try_into().unwrap()), 2);
+
+    let decoded = VirtioPciDeviceConfigSnapshot::from_bytes(&payload).unwrap();
+
+    assert_eq!(decoded, snapshot);
+    assert_eq!(decoded.bytes(), &[0x11, 0xaa, 0x33, 0x44]);
+    assert_eq!(
+        decoded.accesses(),
+        vec![
+            VirtioPciDeviceConfigAccess::read(0, Address::new(0), vec![0x11, 0x22, 0x33, 0x44]),
+            VirtioPciDeviceConfigAccess::write(
+                0,
+                Address::new(1),
+                vec![0xaa, 0xbb],
+                ByteMask::from_bits(vec![true, false]).unwrap(),
+                vec![0x22, 0x33],
+                vec![0xaa, 0x33],
+            ),
+        ]
+    );
+
+    let restored = VirtioPciDeviceConfigDevice::new(
+        VirtioPciDeviceConfigSpec::new(vec![0], ByteMask::from_bits(vec![true]).unwrap()).unwrap(),
+    );
+    restored.restore(&decoded);
+    assert_eq!(restored.snapshot(), snapshot);
+}
+
+#[test]
+fn virtio_pci_device_config_snapshot_bytes_reject_malformed_payloads() {
+    let config = VirtioPciDeviceConfigDevice::new(
+        VirtioPciDeviceConfigSpec::new(
+            vec![0x11, 0x22, 0x33, 0x44],
+            ByteMask::from_bits(vec![false, true, true, false]).unwrap(),
+        )
+        .unwrap(),
+    );
+    assert_eq!(
+        config.read_local(Address::new(0), AccessSize::new(4).unwrap()),
+        Ok(vec![0x11, 0x22, 0x33, 0x44])
+    );
+    config
+        .write_local(
+            Address::new(1),
+            vec![0xaa, 0xbb],
+            ByteMask::from_bits(vec![true, false]).unwrap(),
+        )
+        .unwrap();
+    let payload = config.snapshot().to_bytes();
+
+    assert_eq!(
+        VirtioPciDeviceConfigSnapshot::from_bytes(&payload[..payload.len() - 1]),
+        Err(VirtioError::InvalidDeviceConfigSnapshot)
+    );
+
+    let mut invalid_magic = payload.clone();
+    invalid_magic[0] ^= 0xff;
+    assert_eq!(
+        VirtioPciDeviceConfigSnapshot::from_bytes(&invalid_magic),
+        Err(VirtioError::InvalidDeviceConfigSnapshot)
+    );
+
+    let mut invalid_version = payload.clone();
+    invalid_version[8..10].copy_from_slice(&2_u16.to_le_bytes());
+    assert_eq!(
+        VirtioPciDeviceConfigSnapshot::from_bytes(&invalid_version),
+        Err(VirtioError::InvalidDeviceConfigSnapshot)
+    );
+
+    let mut empty_bytes = payload.clone();
+    empty_bytes[10..18].copy_from_slice(&0_u64.to_le_bytes());
+    assert_eq!(
+        VirtioPciDeviceConfigSnapshot::from_bytes(&empty_bytes),
+        Err(VirtioError::InvalidDeviceConfigSnapshot)
+    );
+
+    let mut mask_len_mismatch = payload.clone();
+    mask_len_mismatch[22..30].copy_from_slice(&3_u64.to_le_bytes());
+    assert_eq!(
+        VirtioPciDeviceConfigSnapshot::from_bytes(&mask_len_mismatch),
+        Err(VirtioError::InvalidDeviceConfigSnapshot)
+    );
+
+    let mut invalid_mask_bit = payload.clone();
+    invalid_mask_bit[30] = 2;
+    assert_eq!(
+        VirtioPciDeviceConfigSnapshot::from_bytes(&invalid_mask_bit),
+        Err(VirtioError::InvalidDeviceConfigSnapshot)
+    );
+
+    let mut invalid_access_count = payload.clone();
+    invalid_access_count[34..42].copy_from_slice(&u64::MAX.to_le_bytes());
+    assert_eq!(
+        VirtioPciDeviceConfigSnapshot::from_bytes(&invalid_access_count),
+        Err(VirtioError::InvalidDeviceConfigSnapshot)
+    );
+
+    let mut invalid_access_kind = payload.clone();
+    invalid_access_kind[42] = 9;
+    assert_eq!(
+        VirtioPciDeviceConfigSnapshot::from_bytes(&invalid_access_kind),
+        Err(VirtioError::InvalidDeviceConfigSnapshot)
+    );
+
+    let mut invalid_read_range = payload.clone();
+    invalid_read_range[51..59].copy_from_slice(&1_u64.to_le_bytes());
+    assert_eq!(
+        VirtioPciDeviceConfigSnapshot::from_bytes(&invalid_read_range),
+        Err(VirtioError::InvalidDeviceConfigSnapshot)
+    );
+
+    let mut invalid_write_range = payload.clone();
+    invalid_write_range[80..88].copy_from_slice(&3_u64.to_le_bytes());
+    assert_eq!(
+        VirtioPciDeviceConfigSnapshot::from_bytes(&invalid_write_range),
+        Err(VirtioError::InvalidDeviceConfigSnapshot)
+    );
+
+    let mut invalid_write_mask_len = payload.clone();
+    invalid_write_mask_len[98..106].copy_from_slice(&1_u64.to_le_bytes());
+    assert_eq!(
+        VirtioPciDeviceConfigSnapshot::from_bytes(&invalid_write_mask_len),
+        Err(VirtioError::InvalidDeviceConfigSnapshot)
+    );
+
+    let mut trailing = payload.clone();
+    trailing.push(0);
+    assert_eq!(
+        VirtioPciDeviceConfigSnapshot::from_bytes(&trailing),
+        Err(VirtioError::InvalidDeviceConfigSnapshot)
+    );
 }
