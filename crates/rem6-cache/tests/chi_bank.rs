@@ -681,6 +681,64 @@ fn chi_cache_bank_restore_rejects_uncacheable_read_with_missing_blocking_writeba
 }
 
 #[test]
+fn chi_cache_bank_restore_rejects_malformed_pending_uncacheable_request() {
+    let cache_agent = agent(40);
+
+    let cacheable = read(cache_agent, 554, 0x3918);
+    let cacheable_id = cacheable.id();
+    let snapshot = ChiCacheBank::new(cache_agent, layout())
+        .snapshot()
+        .with_pending_uncacheable_reads(vec![ChiPendingUncacheableReadSnapshot::new(
+            cacheable, None,
+        )]);
+    let mut restored = ChiCacheBank::new(cache_agent, layout());
+    assert!(matches!(
+        restored.restore(&snapshot),
+        Err(ChiCacheBankError::SnapshotPendingUncacheableRequestMismatch {
+            response,
+            operation: MemoryOperation::ReadShared,
+            uncacheable: false,
+        }) if response == cacheable_id
+    ));
+
+    let uncached_no_response =
+        clean_evict(cache_agent, 555, 0x3920).with_uncacheable_strict_order();
+    let uncached_no_response_id = uncached_no_response.id();
+    let snapshot = ChiCacheBank::new(cache_agent, layout())
+        .snapshot()
+        .with_pending_uncacheable_reads(vec![ChiPendingUncacheableReadSnapshot::new(
+            uncached_no_response,
+            None,
+        )]);
+    assert!(matches!(
+        restored.restore(&snapshot),
+        Err(ChiCacheBankError::SnapshotPendingUncacheableRequestMismatch {
+            response,
+            operation: MemoryOperation::CleanEvict,
+            uncacheable: true,
+        }) if response == uncached_no_response_id
+    ));
+
+    let uncached_write =
+        uncacheable_write(cache_agent, 556, 0x3930, vec![0xde, 0xad], vec![true, true]);
+    let uncached_write_id = uncached_write.id();
+    let snapshot = ChiCacheBank::new(cache_agent, layout())
+        .snapshot()
+        .with_pending_uncacheable_reads(vec![ChiPendingUncacheableReadSnapshot::new(
+            uncached_write,
+            None,
+        )]);
+    assert!(matches!(
+        restored.restore(&snapshot),
+        Err(ChiCacheBankError::SnapshotPendingUncacheableRequestMismatch {
+            response,
+            operation: MemoryOperation::Write,
+            uncacheable: true,
+        }) if response == uncached_write_id
+    ));
+}
+
+#[test]
 fn chi_cache_bank_uncacheable_write_enters_write_queue_without_mshr() {
     let cache_agent = agent(40);
     let mut bank = ChiCacheBank::new_with_mshr_and_write_queue(

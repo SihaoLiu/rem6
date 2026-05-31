@@ -60,6 +60,11 @@ pub enum MesiCacheBankError {
         snapshot_has_write_queue: bool,
         bank_has_write_queue: bool,
     },
+    SnapshotPendingUncacheableRequestMismatch {
+        response: MemoryRequestId,
+        operation: MemoryOperation,
+        uncacheable: bool,
+    },
     SnapshotPendingUncacheableReadWritebackMismatch {
         response: MemoryRequestId,
         handle: CacheWriteQueueHandle,
@@ -147,6 +152,18 @@ impl fmt::Display for MesiCacheBankError {
                 formatter,
                 "MESI cache bank snapshot write queue mode {snapshot_has_write_queue} cannot restore bank write queue mode {bank_has_write_queue}"
             ),
+            Self::SnapshotPendingUncacheableRequestMismatch {
+                response,
+                operation,
+                uncacheable,
+            } => write!(
+                formatter,
+                "MESI cache bank snapshot pending uncacheable request {} from agent {} has operation {:?} and uncacheable flag {}",
+                response.sequence(),
+                response.agent().get(),
+                operation,
+                uncacheable
+            ),
             Self::SnapshotPendingUncacheableReadWritebackMismatch { response, handle } => write!(
                 formatter,
                 "MESI cache bank snapshot pending uncacheable read {} from agent {} references invalid blocking writeback {:?}",
@@ -190,6 +207,7 @@ impl Error for MesiCacheBankError {
             | Self::SnapshotIdentityMismatch { .. }
             | Self::SnapshotMshrModeMismatch { .. }
             | Self::SnapshotWriteQueueModeMismatch { .. }
+            | Self::SnapshotPendingUncacheableRequestMismatch { .. }
             | Self::SnapshotPendingUncacheableReadWritebackMismatch { .. }
             | Self::DuplicateSnapshotLine { .. }
             | Self::DuplicateSnapshotPendingFill { .. }
@@ -706,6 +724,18 @@ impl MesiCacheBank {
         blocked_by: Option<CacheWriteQueueHandle>,
         restored_write_queue: Option<&CacheWriteQueue>,
     ) -> Result<(), MesiCacheBankError> {
+        if !request.is_uncacheable()
+            || !request.requires_response()
+            || request.operation() == MemoryOperation::Write
+        {
+            return Err(
+                MesiCacheBankError::SnapshotPendingUncacheableRequestMismatch {
+                    response: request.id(),
+                    operation: request.operation(),
+                    uncacheable: request.is_uncacheable(),
+                },
+            );
+        }
         let Some(handle) = blocked_by else {
             return Ok(());
         };

@@ -971,8 +971,10 @@ Research anchors refreshed through 2026-05-30:
   so restore keeps the same post-issue downstream-read ordering after the
   dirty writeback is issued without confusing already-issued clean bypass
   reads on the same line. Restore rejects pending uncacheable reads whose
-  blocking handle no longer names a same-line dirty writeback. Banks without a
-  typed write queue still reject that path before mutating the dirty line. gem5
+  blocking handle no longer names a same-line dirty writeback, and also
+  rejects malformed pending entries that are cacheable, do not require a
+  response, or belong on the write queue. Banks without a typed write queue
+  still reject that path before mutating the dirty line. gem5
   also routes uncacheable writes through
   `BaseCache::allocateWriteBuffer` instead of an MSHR; rem6 cache banks with a
   typed write queue now do the same for MSI/MESI/MOESI/CHI by enqueuing the
@@ -2617,7 +2619,8 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   those pending uncacheable reads to survive restore and remain attached to the
   later dirty-writeback issue record, while already-issued clean pending reads
   on the same line remain independent. Malformed snapshot tests also reject
-  pending uncacheable reads whose blocking writeback handle is missing. The
+  cacheable pending entries, uncacheable writes, and pending uncacheable reads
+  whose blocking writeback handle is missing. The
   bank-level same-line conflict tests also keep any in-flight uncacheable
   atomic request as a typed reservation until its downstream response returns,
   so follow-up cacheable or uncacheable requests on that line fail with a

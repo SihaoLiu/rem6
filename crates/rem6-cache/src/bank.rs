@@ -59,6 +59,11 @@ pub enum MsiCacheBankError {
         snapshot_has_write_queue: bool,
         bank_has_write_queue: bool,
     },
+    SnapshotPendingUncacheableRequestMismatch {
+        response: MemoryRequestId,
+        operation: MemoryOperation,
+        uncacheable: bool,
+    },
     SnapshotPendingUncacheableReadWritebackMismatch {
         response: MemoryRequestId,
         handle: CacheWriteQueueHandle,
@@ -146,6 +151,18 @@ impl fmt::Display for MsiCacheBankError {
                 formatter,
                 "MSI cache bank snapshot write queue mode {snapshot_has_write_queue} cannot restore bank write queue mode {bank_has_write_queue}"
             ),
+            Self::SnapshotPendingUncacheableRequestMismatch {
+                response,
+                operation,
+                uncacheable,
+            } => write!(
+                formatter,
+                "MSI cache bank snapshot pending uncacheable request {} from agent {} has operation {:?} and uncacheable flag {}",
+                response.sequence(),
+                response.agent().get(),
+                operation,
+                uncacheable
+            ),
             Self::SnapshotPendingUncacheableReadWritebackMismatch { response, handle } => write!(
                 formatter,
                 "MSI cache bank snapshot pending uncacheable read {} from agent {} references invalid blocking writeback {:?}",
@@ -189,6 +206,7 @@ impl Error for MsiCacheBankError {
             | Self::SnapshotIdentityMismatch { .. }
             | Self::SnapshotMshrModeMismatch { .. }
             | Self::SnapshotWriteQueueModeMismatch { .. }
+            | Self::SnapshotPendingUncacheableRequestMismatch { .. }
             | Self::SnapshotPendingUncacheableReadWritebackMismatch { .. }
             | Self::DuplicateSnapshotLine { .. }
             | Self::DuplicateSnapshotPendingFill { .. }
@@ -705,6 +723,18 @@ impl MsiCacheBank {
         blocked_by: Option<CacheWriteQueueHandle>,
         restored_write_queue: Option<&CacheWriteQueue>,
     ) -> Result<(), MsiCacheBankError> {
+        if !request.is_uncacheable()
+            || !request.requires_response()
+            || request.operation() == MemoryOperation::Write
+        {
+            return Err(
+                MsiCacheBankError::SnapshotPendingUncacheableRequestMismatch {
+                    response: request.id(),
+                    operation: request.operation(),
+                    uncacheable: request.is_uncacheable(),
+                },
+            );
+        }
         let Some(handle) = blocked_by else {
             return Ok(());
         };

@@ -73,6 +73,11 @@ pub enum ChiCacheBankError {
         snapshot_has_replacement_directory: bool,
         bank_has_replacement_directory: bool,
     },
+    SnapshotPendingUncacheableRequestMismatch {
+        response: MemoryRequestId,
+        operation: MemoryOperation,
+        uncacheable: bool,
+    },
     SnapshotPendingUncacheableReadWritebackMismatch {
         response: MemoryRequestId,
         handle: CacheWriteQueueHandle,
@@ -179,6 +184,18 @@ impl fmt::Display for ChiCacheBankError {
                 formatter,
                 "CHI cache bank snapshot replacement directory mode {snapshot_has_replacement_directory} cannot restore bank replacement directory mode {bank_has_replacement_directory}"
             ),
+            Self::SnapshotPendingUncacheableRequestMismatch {
+                response,
+                operation,
+                uncacheable,
+            } => write!(
+                formatter,
+                "CHI cache bank snapshot pending uncacheable request {} from agent {} has operation {:?} and uncacheable flag {}",
+                response.sequence(),
+                response.agent().get(),
+                operation,
+                uncacheable
+            ),
             Self::SnapshotPendingUncacheableReadWritebackMismatch { response, handle } => write!(
                 formatter,
                 "CHI cache bank snapshot pending uncacheable read {} from agent {} references invalid blocking writeback {:?}",
@@ -226,6 +243,7 @@ impl Error for ChiCacheBankError {
             | Self::SnapshotMshrModeMismatch { .. }
             | Self::SnapshotWriteQueueModeMismatch { .. }
             | Self::SnapshotReplacementDirectoryModeMismatch { .. }
+            | Self::SnapshotPendingUncacheableRequestMismatch { .. }
             | Self::SnapshotPendingUncacheableReadWritebackMismatch { .. }
             | Self::DuplicateSnapshotLine { .. }
             | Self::DuplicateSnapshotPendingFill { .. }
@@ -833,6 +851,18 @@ impl ChiCacheBank {
         blocked_by: Option<CacheWriteQueueHandle>,
         restored_write_queue: Option<&CacheWriteQueue>,
     ) -> Result<(), ChiCacheBankError> {
+        if !request.is_uncacheable()
+            || !request.requires_response()
+            || request.operation() == MemoryOperation::Write
+        {
+            return Err(
+                ChiCacheBankError::SnapshotPendingUncacheableRequestMismatch {
+                    response: request.id(),
+                    operation: request.operation(),
+                    uncacheable: request.is_uncacheable(),
+                },
+            );
+        }
         let Some(handle) = blocked_by else {
             return Ok(());
         };
