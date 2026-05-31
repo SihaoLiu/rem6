@@ -111,6 +111,26 @@ fn virtio_source_files_stay_within_size_limit() {
     );
 }
 
+#[test]
+fn virtio_9p_device_tests_delegate_protocol_helpers() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let device_test = fs::read_to_string(crate_dir.join("tests/fs9p_device.rs")).unwrap();
+    let support = crate_dir.join("tests/support/fs9p.rs");
+
+    assert!(
+        support.exists(),
+        "9P integration test protocol helpers belong in tests/support/fs9p.rs"
+    );
+    assert!(
+        !device_test.contains("\nfn p9_"),
+        "tests/fs9p_device.rs should use shared 9P protocol helper constructors from tests/support/fs9p.rs"
+    );
+    assert!(
+        !device_test.contains("\nfn decoded_request"),
+        "tests/fs9p_device.rs should use the shared request decoder from tests/support/fs9p.rs"
+    );
+}
+
 fn rust_source_files(root: &Path) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     collect_rust_source_files(root, &mut paths);
