@@ -991,7 +991,12 @@ Research anchors refreshed through 2026-05-30:
   uncached read. When the uncacheable queue entry is issued, those
   banks retain a typed in-flight uncacheable-write record across
   snapshot/restore and match the later memory write response back into a CPU
-  response without touching the fill path. This keeps gem5's useful
+  response without touching the fill path. Restore rejects malformed
+  in-flight write entries that are cacheable, are not writes, or do not require
+  a response, and applies the same agent and line-layout checks as live
+  write-queue enqueue paths, so malformed checkpoint data cannot reroute reads,
+  evictions, or foreign-bank writes through the write-response path. This keeps
+  gem5's useful
   `handleUncacheableWriteResp` timing shape while replacing Packet
   sender-state identity with an auditable request-id map. rem6 transport now
   treats same-agent strict-order requests as full ordering edges for direct QoS
@@ -2633,12 +2638,13 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   to observe dirty writeback data overlaid with later uncacheable-write bytes
   when present, and same-line writes plus later uncacheable reads to stop at a
   typed write-queue conflict while those entries are pending. The same
-  protocols now cover queued
-  uncacheable write response
-  matching after snapshot restore:
-  issuing the write queue creates one in-flight typed write record, a memory
-  write response becomes the original CPU response, and repeated responses are
-  rejected as unknown.
+  protocols now cover queued uncacheable write response matching after
+  snapshot restore: issuing the write queue creates one in-flight typed write
+  record, a memory write response becomes the original CPU response, repeated
+  responses are rejected as unknown, and malformed in-flight write snapshot
+  entries are rejected before restore mutates the bank, including cacheable
+  writes, uncacheable atomics, no-response evictions, foreign-agent writes, and
+  wrong-layout writes.
 - Cache prefetch tests cover tagged next-line candidate generation, DCPT masked
   delta-pair matching with earliest historical replay and snapshot restore, BOP
   best-offset learning with degree candidate metadata, delayed RR training, RR

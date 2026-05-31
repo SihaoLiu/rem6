@@ -980,3 +980,101 @@ fn mesi_cache_bank_uncacheable_write_response_uses_inflight_record_after_restore
             if response == request.id()
     ));
 }
+
+#[test]
+fn mesi_cache_bank_restore_rejects_malformed_inflight_uncacheable_write() {
+    let cache_agent = agent(20);
+    let mut restored = MesiCacheBank::new(cache_agent, layout());
+
+    let cacheable_write = write(cache_agent, 144, 0x2940, vec![0xde, 0xad]);
+    let cacheable_write_id = cacheable_write.id();
+    let snapshot = MesiCacheBank::new(cache_agent, layout())
+        .snapshot()
+        .with_inflight_uncacheable_writes(vec![cacheable_write]);
+    assert!(matches!(
+        restored.restore(&snapshot),
+        Err(MesiCacheBankError::SnapshotInflightUncacheableWriteMismatch {
+            response,
+            operation: MemoryOperation::Write,
+            uncacheable: false,
+        }) if response == cacheable_write_id
+    ));
+
+    let uncached_read = uncacheable_read(cache_agent, 145, 0x2950);
+    let uncached_read_id = uncached_read.id();
+    let snapshot = MesiCacheBank::new(cache_agent, layout())
+        .snapshot()
+        .with_inflight_uncacheable_writes(vec![uncached_read]);
+    assert!(matches!(
+        restored.restore(&snapshot),
+        Err(MesiCacheBankError::SnapshotInflightUncacheableWriteMismatch {
+            response,
+            operation: MemoryOperation::ReadShared,
+            uncacheable: true,
+        }) if response == uncached_read_id
+    ));
+
+    let uncached_atomic = uncacheable_atomic(cache_agent, 146, 0x2960, vec![0x11, 0x22]);
+    let uncached_atomic_id = uncached_atomic.id();
+    let snapshot = MesiCacheBank::new(cache_agent, layout())
+        .snapshot()
+        .with_inflight_uncacheable_writes(vec![uncached_atomic]);
+    assert!(matches!(
+        restored.restore(&snapshot),
+        Err(MesiCacheBankError::SnapshotInflightUncacheableWriteMismatch {
+            response,
+            operation: MemoryOperation::Atomic,
+            uncacheable: true,
+        }) if response == uncached_atomic_id
+    ));
+
+    let uncached_no_response =
+        clean_evict(cache_agent, 147, 0x2970).with_uncacheable_strict_order();
+    let uncached_no_response_id = uncached_no_response.id();
+    let snapshot = MesiCacheBank::new(cache_agent, layout())
+        .snapshot()
+        .with_inflight_uncacheable_writes(vec![uncached_no_response]);
+    assert!(matches!(
+        restored.restore(&snapshot),
+        Err(MesiCacheBankError::SnapshotInflightUncacheableWriteMismatch {
+            response,
+            operation: MemoryOperation::CleanEvict,
+            uncacheable: true,
+        }) if response == uncached_no_response_id
+    ));
+
+    let foreign_agent_write =
+        uncacheable_write(agent(21), 148, 0x2980, vec![0xde, 0xad], vec![true, true]);
+    let snapshot = MesiCacheBank::new(cache_agent, layout())
+        .snapshot()
+        .with_inflight_uncacheable_writes(vec![foreign_agent_write]);
+    assert_eq!(
+        restored.restore(&snapshot),
+        Err(MesiCacheBankError::WrongAgent {
+            expected: cache_agent,
+            actual: agent(21),
+        })
+    );
+
+    let wrong_layout_write = MemoryRequest::write(
+        MemoryRequestId::new(cache_agent, 149),
+        Address::new(0x2990),
+        AccessSize::new(2).unwrap(),
+        vec![0xde, 0xad],
+        ByteMask::full(AccessSize::new(2).unwrap()).unwrap(),
+        wide_layout(),
+    )
+    .unwrap()
+    .with_uncacheable_strict_order();
+    let expected_error = MesiCacheBankError::Controller(MesiCacheControllerError::Memory(
+        MemoryError::LineLayoutMismatch {
+            request: wrong_layout_write.id(),
+            expected: layout(),
+            actual: wide_layout(),
+        },
+    ));
+    let snapshot = MesiCacheBank::new(cache_agent, layout())
+        .snapshot()
+        .with_inflight_uncacheable_writes(vec![wrong_layout_write]);
+    assert_eq!(restored.restore(&snapshot), Err(expected_error));
+}

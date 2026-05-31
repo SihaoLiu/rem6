@@ -75,6 +75,11 @@ pub enum MesiCacheBankError {
     DuplicateSnapshotPendingFill {
         response: MemoryRequestId,
     },
+    SnapshotInflightUncacheableWriteMismatch {
+        response: MemoryRequestId,
+        operation: MemoryOperation,
+        uncacheable: bool,
+    },
     DuplicateSnapshotUncacheableWrite {
         response: MemoryRequestId,
     },
@@ -180,6 +185,18 @@ impl fmt::Display for MesiCacheBankError {
                 response.sequence(),
                 response.agent().get()
             ),
+            Self::SnapshotInflightUncacheableWriteMismatch {
+                response,
+                operation,
+                uncacheable,
+            } => write!(
+                formatter,
+                "MESI cache bank snapshot in-flight uncacheable write {} from agent {} has operation {:?} and uncacheable flag {}",
+                response.sequence(),
+                response.agent().get(),
+                operation,
+                uncacheable
+            ),
             Self::DuplicateSnapshotUncacheableWrite { response } => write!(
                 formatter,
                 "MESI cache bank snapshot repeats in-flight uncacheable write {} from agent {}",
@@ -211,6 +228,7 @@ impl Error for MesiCacheBankError {
             | Self::SnapshotPendingUncacheableReadWritebackMismatch { .. }
             | Self::DuplicateSnapshotLine { .. }
             | Self::DuplicateSnapshotPendingFill { .. }
+            | Self::SnapshotInflightUncacheableWriteMismatch { .. }
             | Self::DuplicateSnapshotUncacheableWrite { .. } => None,
         }
     }
@@ -664,6 +682,19 @@ impl MesiCacheBank {
         let mut pending_fills = BTreeMap::new();
         let mut inflight_uncacheable_writes = BTreeMap::new();
         for request in snapshot.inflight_uncacheable_writes() {
+            if !request.is_uncacheable()
+                || !request.requires_response()
+                || request.operation() != MemoryOperation::Write
+            {
+                return Err(
+                    MesiCacheBankError::SnapshotInflightUncacheableWriteMismatch {
+                        response: request.id(),
+                        operation: request.operation(),
+                        uncacheable: request.is_uncacheable(),
+                    },
+                );
+            }
+            self.validate_write_queue_request(request)?;
             if inflight_uncacheable_writes
                 .insert(request.id(), request.clone())
                 .is_some()
