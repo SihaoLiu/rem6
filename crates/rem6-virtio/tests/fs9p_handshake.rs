@@ -1,7 +1,8 @@
 use rem6_virtio::{
     Virtio9pConfig, Virtio9pDevice, VirtioError, VIRTIO_9P_DEFAULT_MSIZE, VIRTIO_9P_NOFID,
-    VIRTIO_9P_PROTOCOL_VERSION, VIRTIO_9P_RLOPEN, VIRTIO_9P_RVERSION, VIRTIO_9P_TATTACH,
-    VIRTIO_9P_TLOPEN, VIRTIO_9P_TVERSION, VIRTIO_9P_TWALK,
+    VIRTIO_9P_PROTOCOL_VERSION, VIRTIO_9P_RLOPEN, VIRTIO_9P_RREAD, VIRTIO_9P_RREADDIR,
+    VIRTIO_9P_RVERSION, VIRTIO_9P_TATTACH, VIRTIO_9P_TLOPEN, VIRTIO_9P_TREAD, VIRTIO_9P_TREADDIR,
+    VIRTIO_9P_TVERSION, VIRTIO_9P_TWALK,
 };
 
 mod support;
@@ -56,6 +57,69 @@ fn virtio_9p_device_applies_negotiated_msize_to_io_unit_replies() {
 
     assert_eq!(open_completion.message_type(), VIRTIO_9P_RLOPEN);
     assert_eq!(open_completion.payload()[13..17], 4096_u32.to_le_bytes());
+}
+
+#[test]
+fn virtio_9p_device_limits_read_replies_to_negotiated_msize() {
+    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap())
+        .with_file("blob.txt", b"abcdefghijklmnopqrstuvwxyz0123456789".to_vec())
+        .unwrap();
+    let version = decoded_request(
+        VIRTIO_9P_TVERSION,
+        1,
+        p9_version_payload(32, VIRTIO_9P_PROTOCOL_VERSION),
+    );
+    device.execute_at(10, version).unwrap();
+    let attach = decoded_request(
+        VIRTIO_9P_TATTACH,
+        2,
+        p9_attach_payload(1, VIRTIO_9P_NOFID, b"root", b"", 0),
+    );
+    device.execute_at(11, attach).unwrap();
+    let walk = decoded_request(VIRTIO_9P_TWALK, 3, p9_walk_payload(1, 2, &[b"blob.txt"]));
+    device.execute_at(12, walk).unwrap();
+    let open = decoded_request(VIRTIO_9P_TLOPEN, 4, p9_lopen_payload(2, 0));
+    device.execute_at(13, open).unwrap();
+
+    let read = decoded_request(VIRTIO_9P_TREAD, 5, p9_read_payload(2, 0, 128));
+    let read_completion = device.execute_at(14, read).unwrap();
+
+    assert_eq!(read_completion.message_type(), VIRTIO_9P_RREAD);
+    assert_eq!(
+        read_counted_data(read_completion.payload()),
+        b"abcdefghijklmnopqrstu"
+    );
+    assert!(7 + read_completion.payload().len() <= 32);
+}
+
+#[test]
+fn virtio_9p_device_limits_readdir_replies_to_negotiated_msize() {
+    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap())
+        .with_file("alpha.txt", b"alpha".to_vec())
+        .unwrap();
+    let version = decoded_request(
+        VIRTIO_9P_TVERSION,
+        1,
+        p9_version_payload(64, VIRTIO_9P_PROTOCOL_VERSION),
+    );
+    device.execute_at(10, version).unwrap();
+    let attach = decoded_request(
+        VIRTIO_9P_TATTACH,
+        2,
+        p9_attach_payload(1, VIRTIO_9P_NOFID, b"root", b"", 0),
+    );
+    device.execute_at(11, attach).unwrap();
+    let open = decoded_request(VIRTIO_9P_TLOPEN, 3, p9_lopen_payload(1, 0));
+    device.execute_at(12, open).unwrap();
+
+    let readdir = decoded_request(VIRTIO_9P_TREADDIR, 4, p9_readdir_payload(1, 0, 512));
+    let readdir_completion = device.execute_at(13, readdir).unwrap();
+    let entries = read_dir_entries(readdir_completion.payload());
+    let names: Vec<_> = entries.iter().map(|entry| entry.name.as_str()).collect();
+
+    assert_eq!(readdir_completion.message_type(), VIRTIO_9P_RREADDIR);
+    assert_eq!(names, [".", ".."]);
+    assert!(7 + readdir_completion.payload().len() <= 64);
 }
 
 #[test]

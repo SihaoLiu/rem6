@@ -132,6 +132,8 @@ pub const VIRTIO_9P_CONFIG_TAG_LENGTH_OFFSET: u64 = 0;
 pub const VIRTIO_9P_CONFIG_TAG_OFFSET: u64 = 2;
 
 const VIRTIO_9P_CONFIG_LENGTH_BYTES: usize = 2;
+const VIRTIO_9P_HEADER_BYTES: u32 = 7;
+const VIRTIO_9P_COUNT_PREFIX_BYTES: u32 = 4;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Virtio9pConfig {
@@ -470,6 +472,13 @@ impl Virtio9pDevice {
             .negotiated_msize
             .lock()
             .expect("virtio 9p negotiated msize lock")
+    }
+
+    fn counted_data_limit(&self, requested: u32) -> u32 {
+        requested.min(
+            self.negotiated_msize()
+                .saturating_sub(VIRTIO_9P_HEADER_BYTES + VIRTIO_9P_COUNT_PREFIX_BYTES),
+        )
     }
 
     fn handle_statfs(
@@ -860,7 +869,8 @@ impl Virtio9pDevice {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
         let namespace = self.namespace.lock().expect("virtio 9p namespace lock");
-        let Some(payload) = namespace.readdir_payload(node, readdir.offset, readdir.count) else {
+        let count = self.counted_data_limit(readdir.count);
+        let Some(payload) = namespace.readdir_payload(node, readdir.offset, count) else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
         Ok(Ok(payload))
@@ -1060,7 +1070,7 @@ impl Virtio9pDevice {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
         if let Some(data) = fid.xattr_data() {
-            let data = read_data_slice(data, read.offset, read.count)
+            let data = read_data_slice(data, read.offset, self.counted_data_limit(read.count))
                 .ok_or(VirtioError::Virtio9pPayloadLengthOverflow)?;
             let mut payload = Vec::new();
             payload.extend((data.len() as u32).to_le_bytes());
@@ -1074,7 +1084,9 @@ impl Virtio9pDevice {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
         let namespace = self.namespace.lock().expect("virtio 9p namespace lock");
-        let Some(data) = namespace.read_file(node, read.offset, read.count) else {
+        let Some(data) =
+            namespace.read_file(node, read.offset, self.counted_data_limit(read.count))
+        else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
         let mut payload = Vec::new();
