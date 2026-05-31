@@ -51,6 +51,7 @@ pub enum VirtioError {
         value: u16,
     },
     InvalidNotifySnapshot,
+    InvalidCommonConfigSnapshot,
     EmptyDeviceConfig,
     DeviceConfigWritableMaskSizeMismatch {
         bytes: u64,
@@ -331,6 +332,12 @@ impl fmt::Display for VirtioError {
             ),
             Self::InvalidNotifySnapshot => {
                 write!(formatter, "VirtIO PCI notify snapshot payload is invalid")
+            }
+            Self::InvalidCommonConfigSnapshot => {
+                write!(
+                    formatter,
+                    "VirtIO PCI common config snapshot payload is invalid"
+                )
             }
             Self::EmptyDeviceConfig => {
                 write!(formatter, "VirtIO device config must contain at least one byte")

@@ -1233,7 +1233,9 @@ Implementation evidence through 2026-05-30:
   enforce the hard per-source-file size budget, so block, queue, PCI transport,
   shared-memory, and future network/console/rng VirtIO work does not recreate
   gem5-style mixed device, queue, and transport monoliths. VirtIO PCI
-  notify snapshots now expose stable byte payloads for notification history.
+  common-config snapshots now expose stable byte payloads for feature maps,
+  selected registers, queue state, and admin-queue fields. VirtIO PCI notify
+  snapshots now expose stable byte payloads for notification history.
   VirtIO PCI device-config snapshots now expose stable byte payloads for config
   bytes, writable masks, and access history. VirtIO PCI ISR snapshots now expose
   stable byte payloads for interrupt status and event history. `rem6-system`
@@ -3127,7 +3129,8 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
 - VirtIO tests cover modern PCI common-config feature-page selection,
   driver-feature writes, queue selection, queue sizing, queue notification
   offsets, queue descriptor/driver/device addresses, queue enable, device-status
-  reset, snapshot restore, read-only register rejection, invalid queue-size
+  reset, snapshot restore, stable common-config snapshot payload encoding with
+  malformed-payload rejection, read-only register rejection, invalid queue-size
   rejection, unavailable-queue write rejection, notify-MMIO address derivation
   from queue notify offsets and notify-off multipliers, serial and parallel
   typed queue notification recording, notify snapshot restore, stable notify
