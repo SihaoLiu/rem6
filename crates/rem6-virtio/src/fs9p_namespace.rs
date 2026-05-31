@@ -5,9 +5,9 @@ use crate::{
         VIRTIO_9P_DTBLK, VIRTIO_9P_DTCHR, VIRTIO_9P_DTDIR, VIRTIO_9P_DTREG, VIRTIO_9P_DTSYMLINK,
         VIRTIO_9P_EBADF, VIRTIO_9P_EEXIST, VIRTIO_9P_ENOENT, VIRTIO_9P_GETATTR_BASIC,
         VIRTIO_9P_NAME_MAX, VIRTIO_9P_QTDIR, VIRTIO_9P_QTFILE, VIRTIO_9P_QTSYMLINK,
-        VIRTIO_9P_STATFS_BLOCK_SIZE, VIRTIO_9P_STATFS_TYPE, VIRTIO_9P_TLCREATE, VIRTIO_9P_TMKDIR,
-        VIRTIO_9P_TMKNOD, VIRTIO_9P_TRENAME, VIRTIO_9P_TRENAMEAT, VIRTIO_9P_TSYMLINK,
-        VIRTIO_9P_TUNLINKAT, VIRTIO_9P_TWALK,
+        VIRTIO_9P_STATFS_BLOCK_SIZE, VIRTIO_9P_STATFS_TYPE, VIRTIO_9P_TLCREATE, VIRTIO_9P_TLINK,
+        VIRTIO_9P_TMKDIR, VIRTIO_9P_TMKNOD, VIRTIO_9P_TRENAME, VIRTIO_9P_TRENAMEAT,
+        VIRTIO_9P_TSYMLINK, VIRTIO_9P_TUNLINKAT, VIRTIO_9P_TWALK,
     },
     VirtioError,
 };
@@ -241,6 +241,32 @@ impl Virtio9pNamespace {
         Ok(Ok(Virtio9pNodeId::Special(path)))
     }
 
+    pub(crate) fn link_file(
+        &mut self,
+        parent: Virtio9pNodeId,
+        old_node: Virtio9pNodeId,
+        newname: String,
+    ) -> Result<Result<(), u32>, VirtioError> {
+        validate_file_name(VIRTIO_9P_TLINK, &newname)?;
+        let Virtio9pNodeId::File(path) = old_node else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        let Some(file) = find_file(&self.entries, path).cloned() else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        let Some(entries) = self.directory_entries(parent) else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        if entries.contains_key(&newname) {
+            return Ok(Err(VIRTIO_9P_EEXIST));
+        }
+        let entries = self
+            .directory_entries_mut(parent)
+            .expect("prevalidated 9p directory parent");
+        entries.insert(newname, Virtio9pNode::File(file));
+        Ok(Ok(()))
+    }
+
     pub(crate) fn remove_file_by_name(
         &mut self,
         parent: Virtio9pNodeId,
@@ -416,7 +442,7 @@ impl Virtio9pNamespace {
                     atime_nsec: file.attrs.atime_nsec,
                     mtime_sec: file.attrs.mtime_sec,
                     mtime_nsec: file.attrs.mtime_nsec,
-                    nlink: 1,
+                    nlink: count_file_links(&self.entries, path),
                     rdev: 0,
                     size,
                     blocks: size.div_ceil(512),
@@ -576,13 +602,15 @@ impl Virtio9pNamespace {
         let Virtio9pNodeId::File(path) = node else {
             return None;
         };
-        let file = find_file_mut(&mut self.entries, path)?;
+        find_file(&self.entries, path)?;
         let start = usize::try_from(offset).ok()?;
         let end = start.checked_add(data.len())?;
-        if file.data.len() < end {
-            file.data.resize(end, 0);
-        }
-        file.data[start..end].copy_from_slice(data);
+        for_each_file_mut(&mut self.entries, path, &mut |file| {
+            if file.data.len() < end {
+                file.data.resize(end, 0);
+            }
+            file.data[start..end].copy_from_slice(data);
+        });
         u32::try_from(data.len()).ok()
     }
 
@@ -590,9 +618,11 @@ impl Virtio9pNamespace {
         let Virtio9pNodeId::File(path) = node else {
             return None;
         };
-        let file = find_file_mut(&mut self.entries, path)?;
+        find_file(&self.entries, path)?;
         let size = usize::try_from(size).ok()?;
-        file.data.resize(size, 0);
+        for_each_file_mut(&mut self.entries, path, &mut |file| {
+            file.data.resize(size, 0);
+        });
         Some(())
     }
 
@@ -605,6 +635,29 @@ impl Virtio9pNamespace {
         atime: Option<Virtio9pTimestamp>,
         mtime: Option<Virtio9pTimestamp>,
     ) -> Option<()> {
+        if let Virtio9pNodeId::File(path) = node {
+            find_file(&self.entries, path)?;
+            for_each_file_mut(&mut self.entries, path, &mut |file| {
+                if let Some(mode) = mode {
+                    file.attrs.mode = mode;
+                }
+                if let Some(uid) = uid {
+                    file.attrs.uid = uid;
+                }
+                if let Some(gid) = gid {
+                    file.attrs.gid = gid;
+                }
+                if let Some(atime) = atime {
+                    file.attrs.atime_sec = atime.seconds;
+                    file.attrs.atime_nsec = atime.nanoseconds;
+                }
+                if let Some(mtime) = mtime {
+                    file.attrs.mtime_sec = mtime.seconds;
+                    file.attrs.mtime_nsec = mtime.nanoseconds;
+                }
+            });
+            return Some(());
+        }
         let attrs = self.node_attrs_mut(node)?;
         if let Some(mode) = mode {
             attrs.mode = mode;
@@ -689,6 +742,33 @@ fn count_nodes(entries: &BTreeMap<String, Virtio9pNode>) -> u64 {
             Virtio9pNode::Directory(directory) => 1 + count_nodes(&directory.entries),
         })
         .sum()
+}
+
+fn count_file_links(entries: &BTreeMap<String, Virtio9pNode>, path: u64) -> u64 {
+    entries
+        .values()
+        .map(|node| match node {
+            Virtio9pNode::File(file) if file.qid_path == path => 1,
+            Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_) => 0,
+            Virtio9pNode::Directory(directory) => count_file_links(&directory.entries, path),
+        })
+        .sum()
+}
+
+fn for_each_file_mut(
+    entries: &mut BTreeMap<String, Virtio9pNode>,
+    path: u64,
+    update: &mut impl FnMut(&mut Virtio9pFileNode),
+) {
+    for node in entries.values_mut() {
+        match node {
+            Virtio9pNode::File(file) if file.qid_path == path => update(file),
+            Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_) => {}
+            Virtio9pNode::Directory(directory) => {
+                for_each_file_mut(&mut directory.entries, path, update);
+            }
+        }
+    }
 }
 
 fn find_file(entries: &BTreeMap<String, Virtio9pNode>, path: u64) -> Option<&Virtio9pFileNode> {

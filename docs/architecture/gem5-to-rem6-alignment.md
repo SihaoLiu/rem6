@@ -1267,13 +1267,16 @@ Implementation evidence through 2026-05-31:
   handles mode, uid, gid, explicit atime/mtime, and size-valid metadata paths,
   truncates or extends file data for size updates, and exposes the new metadata
   through `Tgetattr`, `Tread` returns counted byte ranges,
-  `Twrite` mutates and extends byte ranges, `Trename` moves non-directory
+  `Twrite` mutates and extends byte ranges, `Tlink` creates hard links with
+  shared qid identity, shared file contents, updated link counts, and unlink
+  behavior that keeps surviving linked fids live, `Trename` moves non-directory
   fid-backed nodes into target directories while preserving moved qids and open
   fid access, `Trenameat` renames root files
   while preserving the moved file qid and open fid access, replacing
   same-directory target files with explicit target-fid invalidation,
   `Tunlinkat` removes named root or child-directory files and invalidates fids
-  pointing at the removed node, `Tremove` removes file fids plus their namespace
+  only when no linked directory entry remains, `Tremove` removes file fids plus
+  their namespace
   entries, `Tclunk` drops fid state, `Tflush` acknowledges old tags without
   mutating synchronous fid or namespace state, and `Tfsync` validates fids
   before acknowledging writeback intent. The 9P device entry point delegates
@@ -3239,7 +3242,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   `Tlopen` file and directory qid plus I/O-unit replies, `Treaddir` sorted
   root and child-directory dirents, resumable offsets, count-bounded replies,
   and directory-only error handling, counted `Tread` ranges, `Twrite` counted
-  replies plus overwrite mutation, `Trename` fid-backed cross-directory file
+  replies plus overwrite mutation, `Tlink` hard-link qid reuse, shared write
+  visibility, link-count metadata, and surviving-fid reads after one name is
+  unlinked, `Trename` fid-backed cross-directory file
   moves with preserved open-fid access and qid identity, `Trenameat` root-file
   renames with preserved moved qids, open-fid access, replacement-target fid
   invalidation, post-rename directory entries, and old-name walk rejection,

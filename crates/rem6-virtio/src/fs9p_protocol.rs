@@ -149,6 +149,25 @@ pub(crate) fn parse_mkdir_request(
     Ok(Virtio9pMkdirRequest { dfid, name })
 }
 
+pub(crate) fn parse_link_request(
+    request: &Virtio9pRequest,
+) -> Result<Virtio9pLinkRequest, VirtioError> {
+    let mut reader = Virtio9pPayloadReader::new(request.message_type(), request.payload());
+    let dfid = reader.read_u32()?;
+    let oldfid = reader.read_u32()?;
+    let newname = string_from_9p(
+        request.message_type(),
+        reader.read_string()?,
+        request.payload(),
+    )?;
+    reader.finish()?;
+    Ok(Virtio9pLinkRequest {
+        dfid,
+        oldfid,
+        newname,
+    })
+}
+
 pub(crate) fn parse_getattr_request(
     request: &Virtio9pRequest,
 ) -> Result<Virtio9pGetattrRequest, VirtioError> {
@@ -443,6 +462,13 @@ pub(crate) struct Virtio9pMknodRequest {
 pub(crate) struct Virtio9pMkdirRequest {
     pub(crate) dfid: u32,
     pub(crate) name: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Virtio9pLinkRequest {
+    pub(crate) dfid: u32,
+    pub(crate) oldfid: u32,
+    pub(crate) newname: String,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

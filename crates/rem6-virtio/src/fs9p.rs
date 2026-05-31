@@ -10,11 +10,12 @@ use crate::fs9p_namespace::{
 };
 use crate::fs9p_protocol::{
     parse_attach_request, parse_clunk_request, parse_flush_request, parse_fsync_request,
-    parse_getattr_request, parse_lcreate_request, parse_lopen_request, parse_mkdir_request,
-    parse_mknod_request, parse_read_request, parse_readdir_request, parse_readlink_request,
-    parse_remove_request, parse_rename_request, parse_renameat_request, parse_setattr_request,
-    parse_statfs_request, parse_symlink_request, parse_unlinkat_request, parse_version_request,
-    parse_walk_request, parse_write_request, string_payload, version_payload,
+    parse_getattr_request, parse_lcreate_request, parse_link_request, parse_lopen_request,
+    parse_mkdir_request, parse_mknod_request, parse_read_request, parse_readdir_request,
+    parse_readlink_request, parse_remove_request, parse_rename_request, parse_renameat_request,
+    parse_setattr_request, parse_statfs_request, parse_symlink_request, parse_unlinkat_request,
+    parse_version_request, parse_walk_request, parse_write_request, string_payload,
+    version_payload,
 };
 use crate::{
     modern_feature_pages, Virtio9pCompletion, Virtio9pRequest, VirtioError,
@@ -52,6 +53,8 @@ pub const VIRTIO_9P_TREADDIR: u8 = 40;
 pub const VIRTIO_9P_RREADDIR: u8 = 41;
 pub const VIRTIO_9P_TFSYNC: u8 = 50;
 pub const VIRTIO_9P_RFSYNC: u8 = 51;
+pub const VIRTIO_9P_TLINK: u8 = 70;
+pub const VIRTIO_9P_RLINK: u8 = 71;
 pub const VIRTIO_9P_TMKDIR: u8 = 72;
 pub const VIRTIO_9P_RMKDIR: u8 = 73;
 pub const VIRTIO_9P_TRENAMEAT: u8 = 74;
@@ -307,6 +310,10 @@ impl Virtio9pDevice {
             },
             VIRTIO_9P_TFSYNC => match self.handle_fsync(&request)? {
                 Ok(()) => (VIRTIO_9P_RFSYNC, Vec::new()),
+                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
+            },
+            VIRTIO_9P_TLINK => match self.handle_link(&request)? {
+                Ok(()) => (VIRTIO_9P_RLINK, Vec::new()),
                 Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
             },
             VIRTIO_9P_TMKDIR => match self.handle_mkdir(&request)? {
@@ -666,6 +673,22 @@ impl Virtio9pDevice {
         }
     }
 
+    fn handle_link(&self, request: &Virtio9pRequest) -> Result<Result<(), u32>, VirtioError> {
+        let link = parse_link_request(request)?;
+        let fids = self.fids.lock().expect("virtio 9p fid lock");
+        let Some(parent) = fids.get(&link.dfid).copied() else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        let Some(oldfid) = fids.get(&link.oldfid).copied() else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        drop(fids);
+        self.namespace
+            .lock()
+            .expect("virtio 9p namespace lock")
+            .link_file(parent.node(), oldfid.node(), link.newname)
+    }
+
     fn handle_renameat(&self, request: &Virtio9pRequest) -> Result<Result<(), u32>, VirtioError> {
         let rename = parse_renameat_request(request)?;
         let fids = self.fids.lock().expect("virtio 9p fid lock");
@@ -690,7 +713,9 @@ impl Virtio9pDevice {
             Err(errno) => return Ok(Err(errno)),
         };
         if let Some(replaced) = rename.replaced {
-            self.remove_fids_for_node(replaced);
+            if self.node_is_removed(replaced) {
+                self.remove_fids_for_node(replaced);
+            }
         }
         Ok(Ok(()))
     }
@@ -715,7 +740,9 @@ impl Virtio9pDevice {
             Err(errno) => return Ok(Err(errno)),
         };
         if let Some(replaced) = rename.replaced {
-            self.remove_fids_for_node(replaced);
+            if self.node_is_removed(replaced) {
+                self.remove_fids_for_node(replaced);
+            }
         }
         Ok(Ok(()))
     }
@@ -740,7 +767,9 @@ impl Virtio9pDevice {
             Ok(node) => node,
             Err(errno) => return Ok(Err(errno)),
         };
-        self.remove_fids_for_node(node);
+        if self.node_is_removed(node) {
+            self.remove_fids_for_node(node);
+        }
         Ok(Ok(()))
     }
 
@@ -825,11 +854,25 @@ impl Virtio9pDevice {
             .expect("virtio 9p namespace lock")
             .remove_file_by_node(node)
         {
-            self.remove_fids_for_node(node);
+            self.fids
+                .lock()
+                .expect("virtio 9p fid lock")
+                .remove(&remove_fid);
+            if self.node_is_removed(node) {
+                self.remove_fids_for_node(node);
+            }
             Ok(Ok(()))
         } else {
             Ok(Err(VIRTIO_9P_EBADF))
         }
+    }
+
+    fn node_is_removed(&self, node: Virtio9pNodeId) -> bool {
+        self.namespace
+            .lock()
+            .expect("virtio 9p namespace lock")
+            .metadata(node)
+            .is_none()
     }
 
     fn remove_fids_for_node(&self, node: Virtio9pNodeId) {
