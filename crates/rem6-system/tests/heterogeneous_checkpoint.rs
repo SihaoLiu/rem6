@@ -6,8 +6,8 @@ use rem6_accelerator::{
 use rem6_checkpoint::{CheckpointComponentId, CheckpointRegistry};
 use rem6_cpu::{CpuId, CpuResetState, RiscvClusterTopologyConfig, RiscvCoreTopologyConfig};
 use rem6_gpu::{
-    GpuComputeConfig, GpuDevice, GpuDeviceId, GpuDeviceSnapshot, GpuKernelId, GpuKernelLaunch,
-    GpuSlotSnapshot, GpuTopologyConfig,
+    GpuComputeConfig, GpuDevice, GpuDeviceId, GpuDeviceSnapshot, GpuError, GpuKernelId,
+    GpuKernelLaunch, GpuSlotSnapshot, GpuTopologyConfig,
 };
 use rem6_kernel::{ClockDomain, PartitionId, PartitionedScheduler};
 use rem6_memory::{
@@ -331,7 +331,7 @@ fn gpu_checkpoint_bank_rejects_invalid_bank_without_partial_restore() {
     let source = GpuDevice::new(
         GpuComputeConfig::new(GpuDeviceId::new(40), PartitionId::new(2), 2, 1).unwrap(),
     );
-    source.restore(&expected_snapshot);
+    source.restore(&expected_snapshot).unwrap();
 
     let target_valid = GpuDevice::new(
         GpuComputeConfig::new(GpuDeviceId::new(41), PartitionId::new(2), 2, 1).unwrap(),
@@ -361,6 +361,59 @@ fn gpu_checkpoint_bank_rejects_invalid_bank_without_partial_restore() {
     assert!(matches!(
         err,
         GpuCheckpointError::InvalidChunk { component, .. } if component == invalid_component
+    ));
+    assert_eq!(target_valid.snapshot(), original_valid);
+    assert_eq!(target_invalid.snapshot(), original_invalid);
+}
+
+#[test]
+fn gpu_checkpoint_bank_rejects_slot_mismatch_without_partial_restore() {
+    let valid_component = CheckpointComponentId::new("gpu_shape_a").unwrap();
+    let invalid_component = CheckpointComponentId::new("gpu_shape_b").unwrap();
+    let source_valid = GpuDevice::new(
+        GpuComputeConfig::new(GpuDeviceId::new(43), PartitionId::new(2), 2, 1).unwrap(),
+    );
+    let source_invalid = GpuDevice::new(
+        GpuComputeConfig::new(GpuDeviceId::new(44), PartitionId::new(2), 1, 1).unwrap(),
+    );
+    let target_valid = GpuDevice::new(
+        GpuComputeConfig::new(GpuDeviceId::new(45), PartitionId::new(2), 2, 1).unwrap(),
+    );
+    let target_invalid = GpuDevice::new(
+        GpuComputeConfig::new(GpuDeviceId::new(46), PartitionId::new(2), 2, 1).unwrap(),
+    );
+    let original_valid = target_valid.snapshot();
+    let original_invalid = target_invalid.snapshot();
+
+    let mut registry = CheckpointRegistry::new();
+    registry.register(valid_component.clone()).unwrap();
+    GpuCheckpointPort::new(valid_component, source_valid)
+        .capture_into(&mut registry)
+        .unwrap();
+    registry.register(invalid_component.clone()).unwrap();
+    GpuCheckpointPort::new(invalid_component.clone(), source_invalid)
+        .capture_into(&mut registry)
+        .unwrap();
+
+    let bank = GpuCheckpointBank::new([
+        GpuCheckpointPort::new(
+            CheckpointComponentId::new("gpu_shape_a").unwrap(),
+            target_valid.clone(),
+        ),
+        GpuCheckpointPort::new(invalid_component.clone(), target_invalid.clone()),
+    ])
+    .unwrap();
+    assert!(matches!(
+        bank.restore_all_from(&registry).unwrap_err(),
+        GpuCheckpointError::Restore {
+            component,
+            source,
+        } if component == invalid_component
+            && *source == GpuError::SnapshotSlotCountMismatch {
+                device: GpuDeviceId::new(46),
+                expected: 2,
+                actual: 1,
+            }
     ));
     assert_eq!(target_valid.snapshot(), original_valid);
     assert_eq!(target_invalid.snapshot(), original_invalid);

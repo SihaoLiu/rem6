@@ -26,6 +26,11 @@ pub enum GpuError {
         transfer: GpuDmaId,
         request: MemoryRequestId,
     },
+    SnapshotSlotCountMismatch {
+        device: GpuDeviceId,
+        expected: usize,
+        actual: usize,
+    },
     CommandTargetPartitionMismatch {
         endpoint: Endpoint,
         expected: PartitionId,
@@ -78,6 +83,15 @@ impl fmt::Display for GpuError {
                 transfer.get(),
                 request.sequence(),
                 request.agent().get(),
+            ),
+            Self::SnapshotSlotCountMismatch {
+                device,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "GPU device {} snapshot has {actual} slots but expected {expected}",
+                device.get()
             ),
             Self::CommandTargetPartitionMismatch {
                 endpoint,

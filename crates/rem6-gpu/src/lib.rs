@@ -490,8 +490,24 @@ impl GpuDevice {
             .wait_for_graph_since(self.id(), marker)
     }
 
-    pub fn restore(&self, snapshot: &GpuDeviceSnapshot) {
+    pub fn validate_snapshot(&self, snapshot: &GpuDeviceSnapshot) -> Result<(), GpuError> {
+        let expected = self.config.slot_count();
+        let actual = snapshot.slot_count();
+        if actual != expected {
+            return Err(GpuError::SnapshotSlotCountMismatch {
+                device: self.id(),
+                expected,
+                actual,
+            });
+        }
+
+        Ok(())
+    }
+
+    pub fn restore(&self, snapshot: &GpuDeviceSnapshot) -> Result<(), GpuError> {
+        self.validate_snapshot(snapshot)?;
         *self.state.lock().expect("GPU state lock") = GpuDeviceState::from_snapshot(snapshot);
+        Ok(())
     }
 
     pub fn run_until_idle_parallel_recorded(

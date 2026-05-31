@@ -374,7 +374,7 @@ fn gpu_device_restores_snapshot_state_and_slot_reservations() {
     mutation_scheduler.run_until_idle_parallel().unwrap();
     assert_ne!(gpu.snapshot(), snapshot);
 
-    gpu.restore(&snapshot);
+    gpu.restore(&snapshot).unwrap();
     assert_eq!(gpu.snapshot(), snapshot);
 
     let mut restored_scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
@@ -396,6 +396,26 @@ fn gpu_device_restores_snapshot_state_and_slot_reservations() {
             GpuWorkgroupCompletion::new(GpuKernelId::new(32), GpuWorkgroupId::new(0), 1, 0, 6, 11,),
         ],
     );
+}
+
+#[test]
+fn gpu_device_restore_rejects_mismatched_slot_count() {
+    let gpu = GpuDevice::new(
+        GpuComputeConfig::new(GpuDeviceId::new(7), PartitionId::new(0), 2, 1).unwrap(),
+    );
+    let before_restore = gpu.snapshot();
+    let bad_snapshot =
+        GpuDeviceSnapshot::new(Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+
+    assert_eq!(
+        gpu.restore(&bad_snapshot),
+        Err(GpuError::SnapshotSlotCountMismatch {
+            device: GpuDeviceId::new(7),
+            expected: 2,
+            actual: 0,
+        })
+    );
+    assert_eq!(gpu.snapshot(), before_restore);
 }
 
 #[test]
@@ -573,7 +593,7 @@ fn gpu_dma_write_preserves_read_request_ordering() {
     )
     .unwrap();
     gpu.restore(&GpuDeviceSnapshot::new(
-        Vec::new(),
+        vec![GpuSlotSnapshot::new(0, false, Vec::new())],
         Vec::new(),
         Vec::new(),
         vec![GpuPendingDmaWrite::new(
@@ -582,7 +602,8 @@ fn gpu_dma_write_preserves_read_request_ordering() {
             4,
         )],
         Vec::new(),
-    ));
+    ))
+    .unwrap();
     let observed = Arc::new(Mutex::new(None));
     let write_observed = Arc::clone(&observed);
 
