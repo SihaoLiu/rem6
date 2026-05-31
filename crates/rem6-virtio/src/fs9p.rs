@@ -9,15 +9,15 @@ use crate::fs9p_namespace::{
     Virtio9pTimestamp,
 };
 use crate::fs9p_protocol::{
-    lock_payload, parse_attach_request, parse_clunk_request, parse_create_request,
-    parse_flush_request, parse_fsync_request, parse_getattr_request, parse_getlock_request,
-    parse_lcreate_request, parse_link_request, parse_lock_request, parse_lopen_request,
-    parse_mkdir_request, parse_mknod_request, parse_open_request, parse_read_request,
-    parse_readdir_request, parse_readlink_request, parse_remove_request, parse_rename_request,
-    parse_renameat_request, parse_setattr_request, parse_stat_request, parse_statfs_request,
-    parse_symlink_request, parse_unlinkat_request, parse_version_request, parse_walk_request,
-    parse_write_request, parse_xattrcreate_request, parse_xattrwalk_request, string_payload,
-    version_payload,
+    lock_payload, parse_attach_request, parse_auth_request, parse_clunk_request,
+    parse_create_request, parse_flush_request, parse_fsync_request, parse_getattr_request,
+    parse_getlock_request, parse_lcreate_request, parse_link_request, parse_lock_request,
+    parse_lopen_request, parse_mkdir_request, parse_mknod_request, parse_open_request,
+    parse_read_request, parse_readdir_request, parse_readlink_request, parse_remove_request,
+    parse_rename_request, parse_renameat_request, parse_setattr_request, parse_stat_request,
+    parse_statfs_request, parse_symlink_request, parse_unlinkat_request, parse_version_request,
+    parse_walk_request, parse_write_request, parse_wstat_request, parse_xattrcreate_request,
+    parse_xattrwalk_request, string_payload, version_payload,
 };
 use crate::{
     modern_feature_pages, Virtio9pCompletion, Virtio9pRequest, VirtioError,
@@ -35,6 +35,8 @@ pub const VIRTIO_9P_TSTATFS: u8 = 8;
 pub const VIRTIO_9P_RSTATFS: u8 = 9;
 pub const VIRTIO_9P_TVERSION: u8 = 100;
 pub const VIRTIO_9P_RVERSION: u8 = 101;
+pub const VIRTIO_9P_TAUTH: u8 = 102;
+pub const VIRTIO_9P_RAUTH: u8 = 103;
 pub const VIRTIO_9P_TATTACH: u8 = 104;
 pub const VIRTIO_9P_RATTACH: u8 = 105;
 pub const VIRTIO_9P_TLCREATE: u8 = 14;
@@ -91,6 +93,8 @@ pub const VIRTIO_9P_TREMOVE: u8 = 122;
 pub const VIRTIO_9P_RREMOVE: u8 = 123;
 pub const VIRTIO_9P_TSTAT: u8 = 124;
 pub const VIRTIO_9P_RSTAT: u8 = 125;
+pub const VIRTIO_9P_TWSTAT: u8 = 126;
+pub const VIRTIO_9P_RWSTAT: u8 = 127;
 pub const VIRTIO_9P_RLERROR: u8 = 7;
 pub const VIRTIO_9P_NOFID: u32 = u32::MAX;
 pub const VIRTIO_9P_EBADF: u32 = 9;
@@ -278,6 +282,10 @@ impl Virtio9pDevice {
                     version_payload(VIRTIO_9P_DEFAULT_MSIZE, response_version),
                 )
             }
+            VIRTIO_9P_TAUTH => {
+                parse_auth_request(&request)?;
+                (VIRTIO_9P_RLERROR, VIRTIO_9P_ENOTSUP.to_le_bytes().to_vec())
+            }
             VIRTIO_9P_TATTACH => {
                 let attached = parse_attach_request(&request)?;
                 let root_qid = self
@@ -337,6 +345,10 @@ impl Virtio9pDevice {
             },
             VIRTIO_9P_TSTAT => match self.handle_stat(&request)? {
                 Ok(payload) => (VIRTIO_9P_RSTAT, payload),
+                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
+            },
+            VIRTIO_9P_TWSTAT => match self.handle_wstat(&request)? {
+                Ok(()) => (VIRTIO_9P_RWSTAT, Vec::new()),
                 Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
             },
             VIRTIO_9P_TXATTRWALK => match self.handle_xattrwalk(&request)? {
@@ -723,6 +735,23 @@ impl Virtio9pDevice {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
         Ok(Ok(payload))
+    }
+
+    fn handle_wstat(&self, request: &Virtio9pRequest) -> Result<Result<(), u32>, VirtioError> {
+        let fid = parse_wstat_request(request)?;
+        let Some(node) = self.fid_node(fid) else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        if self
+            .namespace
+            .lock()
+            .expect("virtio 9p namespace lock")
+            .metadata(node)
+            .is_none()
+        {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        }
+        Ok(Err(VIRTIO_9P_ENOTSUP))
     }
 
     fn handle_xattrwalk(

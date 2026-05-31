@@ -29,6 +29,23 @@ pub(crate) fn parse_attach_request(
     Ok(Virtio9pAttachedFid::new(fid, afid, uname, aname, n_uname))
 }
 
+pub(crate) fn parse_auth_request(request: &Virtio9pRequest) -> Result<(), VirtioError> {
+    let mut reader = Virtio9pPayloadReader::new(request.message_type(), request.payload());
+    let _afid = reader.read_u32()?;
+    let _uname = string_from_9p(
+        request.message_type(),
+        reader.read_string()?,
+        request.payload(),
+    )?;
+    let _aname = string_from_9p(
+        request.message_type(),
+        reader.read_string()?,
+        request.payload(),
+    )?;
+    let _n_uname = reader.read_u32()?;
+    reader.finish()
+}
+
 pub(crate) fn parse_statfs_request(request: &Virtio9pRequest) -> Result<u32, VirtioError> {
     let mut reader = Virtio9pPayloadReader::new(request.message_type(), request.payload());
     let fid = reader.read_u32()?;
@@ -236,6 +253,15 @@ pub(crate) fn parse_setattr_request(
 pub(crate) fn parse_stat_request(request: &Virtio9pRequest) -> Result<u32, VirtioError> {
     let mut reader = Virtio9pPayloadReader::new(request.message_type(), request.payload());
     let fid = reader.read_u32()?;
+    reader.finish()?;
+    Ok(fid)
+}
+
+pub(crate) fn parse_wstat_request(request: &Virtio9pRequest) -> Result<u32, VirtioError> {
+    let mut reader = Virtio9pPayloadReader::new(request.message_type(), request.payload());
+    let fid = reader.read_u32()?;
+    let stat_len = reader.read_u16()?;
+    let _stat = reader.read_counted_bytes(u32::from(stat_len))?;
     reader.finish()?;
     Ok(fid)
 }

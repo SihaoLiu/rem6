@@ -63,6 +63,15 @@ pub(crate) fn p9_attach_payload(
     payload
 }
 
+pub(crate) fn p9_auth_payload(afid: u32, uname: &[u8], aname: &[u8], n_uname: u32) -> Vec<u8> {
+    let mut payload = Vec::new();
+    payload.extend(afid.to_le_bytes());
+    payload.extend(p9_string(uname));
+    payload.extend(p9_string(aname));
+    payload.extend(n_uname.to_le_bytes());
+    payload
+}
+
 pub(crate) fn p9_walk_payload(fid: u32, newfid: u32, names: &[&[u8]]) -> Vec<u8> {
     let mut payload = Vec::new();
     payload.extend(fid.to_le_bytes());
@@ -169,6 +178,13 @@ pub(crate) fn p9_statfs_payload(fid: u32) -> Vec<u8> {
 
 pub(crate) fn p9_legacy_stat_payload(fid: u32) -> Vec<u8> {
     fid.to_le_bytes().to_vec()
+}
+
+pub(crate) fn p9_legacy_wstat_payload(fid: u32, stat: &[u8]) -> Vec<u8> {
+    let mut payload = Vec::new();
+    payload.extend(fid.to_le_bytes());
+    payload.extend(stat);
+    payload
 }
 
 pub(crate) fn p9_symlink_payload(dfid: u32, name: &[u8], target: &[u8], gid: u32) -> Vec<u8> {
