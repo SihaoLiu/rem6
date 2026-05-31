@@ -203,38 +203,9 @@ impl SystemActionExecutor {
         checkpoints: CheckpointRegistry,
         riscv_checkpoints: RiscvCoreCheckpointBank,
     ) -> Self {
-        Self {
-            stats,
-            checkpoints,
-            captured_manifests: BTreeMap::new(),
-            accelerator_checkpoints: None,
-            msi_bank_checkpoints: None,
-            fabric_checkpoints: None,
-            gpu_checkpoints: None,
-            riscv_checkpoints: Some(riscv_checkpoints),
-            scheduler_checkpoints: None,
-            memory_checkpoints: None,
-            storage_image_checkpoints: None,
-            ide_controller_checkpoints: None,
-            dram_memory_checkpoints: None,
-            interrupt_controller_checkpoints: None,
-            clint_checkpoints: None,
-            timer_checkpoints: None,
-            uart_checkpoints: None,
-            pl011_uart_checkpoints: None,
-            plic_checkpoints: None,
-            pl031_checkpoints: None,
-            sp804_checkpoints: None,
-            sp805_checkpoints: None,
-            cpu_local_timer_checkpoints: None,
-            rtc_checkpoints: None,
-            pci_host_checkpoints: None,
-            pci_legacy_interrupt_router_checkpoints: None,
-            virtio_split_queue_checkpoints: None,
-            execution_modes: BTreeMap::new(),
-            guest_host_call_responses: BTreeMap::new(),
-            execution_mode_checkpoint_registered: false,
-        }
+        let mut executor = Self::with_checkpoint(stats, checkpoints);
+        executor.riscv_checkpoints = Some(riscv_checkpoints);
+        executor
     }
 
     pub fn with_memory_checkpoint_bank(
@@ -242,38 +213,9 @@ impl SystemActionExecutor {
         checkpoints: CheckpointRegistry,
         memory_checkpoints: MemoryStoreCheckpointBank,
     ) -> Self {
-        Self {
-            stats,
-            checkpoints,
-            captured_manifests: BTreeMap::new(),
-            accelerator_checkpoints: None,
-            msi_bank_checkpoints: None,
-            fabric_checkpoints: None,
-            gpu_checkpoints: None,
-            riscv_checkpoints: None,
-            scheduler_checkpoints: None,
-            memory_checkpoints: Some(memory_checkpoints),
-            storage_image_checkpoints: None,
-            ide_controller_checkpoints: None,
-            dram_memory_checkpoints: None,
-            interrupt_controller_checkpoints: None,
-            clint_checkpoints: None,
-            timer_checkpoints: None,
-            uart_checkpoints: None,
-            pl011_uart_checkpoints: None,
-            plic_checkpoints: None,
-            pl031_checkpoints: None,
-            sp804_checkpoints: None,
-            sp805_checkpoints: None,
-            cpu_local_timer_checkpoints: None,
-            rtc_checkpoints: None,
-            pci_host_checkpoints: None,
-            pci_legacy_interrupt_router_checkpoints: None,
-            virtio_split_queue_checkpoints: None,
-            execution_modes: BTreeMap::new(),
-            guest_host_call_responses: BTreeMap::new(),
-            execution_mode_checkpoint_registered: false,
-        }
+        let mut executor = Self::with_checkpoint(stats, checkpoints);
+        executor.memory_checkpoints = Some(memory_checkpoints);
+        executor
     }
 
     pub fn with_msi_bank_checkpoint_bank(
@@ -281,38 +223,9 @@ impl SystemActionExecutor {
         checkpoints: CheckpointRegistry,
         msi_bank_checkpoints: MsiBankCheckpointBank,
     ) -> Self {
-        Self {
-            stats,
-            checkpoints,
-            captured_manifests: BTreeMap::new(),
-            accelerator_checkpoints: None,
-            msi_bank_checkpoints: Some(msi_bank_checkpoints),
-            fabric_checkpoints: None,
-            gpu_checkpoints: None,
-            riscv_checkpoints: None,
-            scheduler_checkpoints: None,
-            memory_checkpoints: None,
-            storage_image_checkpoints: None,
-            ide_controller_checkpoints: None,
-            dram_memory_checkpoints: None,
-            interrupt_controller_checkpoints: None,
-            clint_checkpoints: None,
-            timer_checkpoints: None,
-            uart_checkpoints: None,
-            pl011_uart_checkpoints: None,
-            plic_checkpoints: None,
-            pl031_checkpoints: None,
-            sp804_checkpoints: None,
-            sp805_checkpoints: None,
-            cpu_local_timer_checkpoints: None,
-            rtc_checkpoints: None,
-            pci_host_checkpoints: None,
-            pci_legacy_interrupt_router_checkpoints: None,
-            virtio_split_queue_checkpoints: None,
-            execution_modes: BTreeMap::new(),
-            guest_host_call_responses: BTreeMap::new(),
-            execution_mode_checkpoint_registered: false,
-        }
+        let mut executor = Self::with_checkpoint(stats, checkpoints);
+        executor.msi_bank_checkpoints = Some(msi_bank_checkpoints);
+        executor
     }
 
     pub fn with_dram_memory_checkpoint_bank(
@@ -320,38 +233,9 @@ impl SystemActionExecutor {
         checkpoints: CheckpointRegistry,
         dram_memory_checkpoints: DramMemoryCheckpointBank,
     ) -> Self {
-        Self {
-            stats,
-            checkpoints,
-            captured_manifests: BTreeMap::new(),
-            accelerator_checkpoints: None,
-            msi_bank_checkpoints: None,
-            fabric_checkpoints: None,
-            gpu_checkpoints: None,
-            riscv_checkpoints: None,
-            scheduler_checkpoints: None,
-            memory_checkpoints: None,
-            storage_image_checkpoints: None,
-            ide_controller_checkpoints: None,
-            dram_memory_checkpoints: Some(dram_memory_checkpoints),
-            interrupt_controller_checkpoints: None,
-            clint_checkpoints: None,
-            timer_checkpoints: None,
-            uart_checkpoints: None,
-            pl011_uart_checkpoints: None,
-            plic_checkpoints: None,
-            pl031_checkpoints: None,
-            sp804_checkpoints: None,
-            sp805_checkpoints: None,
-            cpu_local_timer_checkpoints: None,
-            rtc_checkpoints: None,
-            pci_host_checkpoints: None,
-            pci_legacy_interrupt_router_checkpoints: None,
-            virtio_split_queue_checkpoints: None,
-            execution_modes: BTreeMap::new(),
-            guest_host_call_responses: BTreeMap::new(),
-            execution_mode_checkpoint_registered: false,
-        }
+        let mut executor = Self::with_checkpoint(stats, checkpoints);
+        executor.dram_memory_checkpoints = Some(dram_memory_checkpoints);
+        executor
     }
 
     pub fn with_uart_checkpoint_bank(
@@ -359,38 +243,9 @@ impl SystemActionExecutor {
         checkpoints: CheckpointRegistry,
         uart_checkpoints: UartCheckpointBank,
     ) -> Self {
-        Self {
-            stats,
-            checkpoints,
-            captured_manifests: BTreeMap::new(),
-            accelerator_checkpoints: None,
-            msi_bank_checkpoints: None,
-            fabric_checkpoints: None,
-            gpu_checkpoints: None,
-            riscv_checkpoints: None,
-            scheduler_checkpoints: None,
-            memory_checkpoints: None,
-            storage_image_checkpoints: None,
-            ide_controller_checkpoints: None,
-            dram_memory_checkpoints: None,
-            interrupt_controller_checkpoints: None,
-            clint_checkpoints: None,
-            timer_checkpoints: None,
-            uart_checkpoints: Some(uart_checkpoints),
-            pl011_uart_checkpoints: None,
-            plic_checkpoints: None,
-            pl031_checkpoints: None,
-            sp804_checkpoints: None,
-            sp805_checkpoints: None,
-            cpu_local_timer_checkpoints: None,
-            rtc_checkpoints: None,
-            pci_host_checkpoints: None,
-            pci_legacy_interrupt_router_checkpoints: None,
-            virtio_split_queue_checkpoints: None,
-            execution_modes: BTreeMap::new(),
-            guest_host_call_responses: BTreeMap::new(),
-            execution_mode_checkpoint_registered: false,
-        }
+        let mut executor = Self::with_checkpoint(stats, checkpoints);
+        executor.uart_checkpoints = Some(uart_checkpoints);
+        executor
     }
 
     pub fn with_pl011_uart_checkpoint_bank(
@@ -408,38 +263,9 @@ impl SystemActionExecutor {
         checkpoints: CheckpointRegistry,
         pci_host_checkpoints: PciHostCheckpointBank,
     ) -> Self {
-        Self {
-            stats,
-            checkpoints,
-            captured_manifests: BTreeMap::new(),
-            accelerator_checkpoints: None,
-            msi_bank_checkpoints: None,
-            fabric_checkpoints: None,
-            gpu_checkpoints: None,
-            riscv_checkpoints: None,
-            scheduler_checkpoints: None,
-            memory_checkpoints: None,
-            storage_image_checkpoints: None,
-            ide_controller_checkpoints: None,
-            dram_memory_checkpoints: None,
-            interrupt_controller_checkpoints: None,
-            clint_checkpoints: None,
-            timer_checkpoints: None,
-            uart_checkpoints: None,
-            pl011_uart_checkpoints: None,
-            plic_checkpoints: None,
-            pl031_checkpoints: None,
-            sp804_checkpoints: None,
-            sp805_checkpoints: None,
-            cpu_local_timer_checkpoints: None,
-            rtc_checkpoints: None,
-            pci_host_checkpoints: Some(pci_host_checkpoints),
-            pci_legacy_interrupt_router_checkpoints: None,
-            virtio_split_queue_checkpoints: None,
-            execution_modes: BTreeMap::new(),
-            guest_host_call_responses: BTreeMap::new(),
-            execution_mode_checkpoint_registered: false,
-        }
+        let mut executor = Self::with_checkpoint(stats, checkpoints);
+        executor.pci_host_checkpoints = Some(pci_host_checkpoints);
+        executor
     }
 
     pub fn with_checkpoint_banks(
@@ -448,38 +274,10 @@ impl SystemActionExecutor {
         riscv_checkpoints: RiscvCoreCheckpointBank,
         memory_checkpoints: MemoryStoreCheckpointBank,
     ) -> Self {
-        Self {
-            stats,
-            checkpoints,
-            captured_manifests: BTreeMap::new(),
-            accelerator_checkpoints: None,
-            msi_bank_checkpoints: None,
-            fabric_checkpoints: None,
-            gpu_checkpoints: None,
-            riscv_checkpoints: Some(riscv_checkpoints),
-            scheduler_checkpoints: None,
-            memory_checkpoints: Some(memory_checkpoints),
-            storage_image_checkpoints: None,
-            ide_controller_checkpoints: None,
-            dram_memory_checkpoints: None,
-            interrupt_controller_checkpoints: None,
-            clint_checkpoints: None,
-            timer_checkpoints: None,
-            uart_checkpoints: None,
-            pl011_uart_checkpoints: None,
-            plic_checkpoints: None,
-            pl031_checkpoints: None,
-            sp804_checkpoints: None,
-            sp805_checkpoints: None,
-            cpu_local_timer_checkpoints: None,
-            rtc_checkpoints: None,
-            pci_host_checkpoints: None,
-            pci_legacy_interrupt_router_checkpoints: None,
-            virtio_split_queue_checkpoints: None,
-            execution_modes: BTreeMap::new(),
-            guest_host_call_responses: BTreeMap::new(),
-            execution_mode_checkpoint_registered: false,
-        }
+        let mut executor = Self::with_checkpoint(stats, checkpoints);
+        executor.riscv_checkpoints = Some(riscv_checkpoints);
+        executor.memory_checkpoints = Some(memory_checkpoints);
+        executor
     }
 
     pub fn with_riscv_and_dram_checkpoint_banks(
@@ -488,38 +286,10 @@ impl SystemActionExecutor {
         riscv_checkpoints: RiscvCoreCheckpointBank,
         dram_memory_checkpoints: DramMemoryCheckpointBank,
     ) -> Self {
-        Self {
-            stats,
-            checkpoints,
-            captured_manifests: BTreeMap::new(),
-            accelerator_checkpoints: None,
-            msi_bank_checkpoints: None,
-            fabric_checkpoints: None,
-            gpu_checkpoints: None,
-            riscv_checkpoints: Some(riscv_checkpoints),
-            scheduler_checkpoints: None,
-            memory_checkpoints: None,
-            storage_image_checkpoints: None,
-            ide_controller_checkpoints: None,
-            dram_memory_checkpoints: Some(dram_memory_checkpoints),
-            interrupt_controller_checkpoints: None,
-            clint_checkpoints: None,
-            timer_checkpoints: None,
-            uart_checkpoints: None,
-            pl011_uart_checkpoints: None,
-            plic_checkpoints: None,
-            pl031_checkpoints: None,
-            sp804_checkpoints: None,
-            sp805_checkpoints: None,
-            cpu_local_timer_checkpoints: None,
-            rtc_checkpoints: None,
-            pci_host_checkpoints: None,
-            pci_legacy_interrupt_router_checkpoints: None,
-            virtio_split_queue_checkpoints: None,
-            execution_modes: BTreeMap::new(),
-            guest_host_call_responses: BTreeMap::new(),
-            execution_mode_checkpoint_registered: false,
-        }
+        let mut executor = Self::with_checkpoint(stats, checkpoints);
+        executor.riscv_checkpoints = Some(riscv_checkpoints);
+        executor.dram_memory_checkpoints = Some(dram_memory_checkpoints);
+        executor
     }
 
     pub const fn stats(&self) -> &StatsRegistry {
