@@ -3089,7 +3089,10 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   bridge's two-slot BAR shape, and host snapshots aggregate bridge and
   endpoint BAR payload maps in function order. Bridge or endpoint function-set
   mismatches, malformed BAR payloads, and BAR byte mismatches are rejected
-  before restore applies broader bridge or endpoint configuration bytes.
+  before restore applies broader bridge or endpoint configuration bytes. Host
+  snapshots also aggregate endpoint raw, PM, PCIe, MSI, and MSI-X capability
+  payload maps in function order, with key-set validation and capability
+  byte validation delegated to each endpoint snapshot.
   Raw capability state now has a stable byte codec for vendor capability audit,
   preserving the canonical capability bytes while rejecting nonzero
   next-pointer bytes because the endpoint capability registry owns chain

@@ -32,7 +32,8 @@ pub use capability::PciRawCapabilitySpec;
 pub use error::PciError;
 pub use host::{
     PciConfigAperture, PciDecodedConfigAddress, PciHostBridge, PciHostBridgeSnapshot,
-    PciHostBridgeTopologySnapshot,
+    PciHostBridgeTopologySnapshot, PciHostOptionalCapabilityPayloadMap,
+    PciHostRawCapabilityPayloadMap,
 };
 pub use interrupt::{
     PciLegacyInterruptMapper, PciLegacyInterruptPath, PciLegacyInterruptPolicy,

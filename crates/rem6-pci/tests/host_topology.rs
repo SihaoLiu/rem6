@@ -4,7 +4,10 @@ use rem6_memory::{AccessSize, Address};
 use rem6_pci::{
     PciBarIndex, PciBarKind, PciBarSpec, PciBridgeBusRange, PciBridgeConfig, PciClassCode,
     PciConfigAperture, PciConfigOffset, PciDeviceIdentity, PciEndpointConfig, PciError,
+    PciExpressCapabilitySpec, PciExpressDeviceCapabilitySpec, PciExpressLinkCapabilitySpec,
     PciFunctionAddress, PciHostAddressBases, PciHostBridge, PciHostBridgeTopologySnapshot,
+    PciMsiCapabilitySpec, PciMsixCapabilitySpec, PciPowerManagementCapabilitySpec,
+    PciRawCapabilitySpec,
 };
 
 fn bridge(function: PciFunctionAddress, secondary: u8) -> PciBridgeConfig {
@@ -35,6 +38,57 @@ fn endpoint(function: PciFunctionAddress) -> PciEndpointConfig {
         )
         .unwrap();
     endpoint
+}
+
+fn endpoint_with_capabilities(function: PciFunctionAddress) -> PciEndpointConfig {
+    let mut endpoint = endpoint(function);
+    endpoint.install_pm_capability(pm(0x44)).unwrap();
+    endpoint.install_msi_capability(msi(0x50)).unwrap();
+    endpoint
+        .install_raw_capability(raw_capability(0x70))
+        .unwrap();
+    endpoint.install_msix_capability(msix(0x90)).unwrap();
+    endpoint.install_pcie_capability(pcie(0xa0)).unwrap();
+    endpoint
+}
+
+fn pm(offset: u16) -> PciPowerManagementCapabilitySpec {
+    PciPowerManagementCapabilitySpec::new(PciConfigOffset::new(offset).unwrap(), 0x0003, 0x0001)
+        .unwrap()
+}
+
+fn msi(offset: u16) -> PciMsiCapabilitySpec {
+    PciMsiCapabilitySpec::new(PciConfigOffset::new(offset).unwrap(), 4, true, true).unwrap()
+}
+
+fn msix(offset: u16) -> PciMsixCapabilitySpec {
+    PciMsixCapabilitySpec::new(
+        PciConfigOffset::new(offset).unwrap(),
+        4,
+        PciBarIndex::new(2).unwrap(),
+        Address::new(0x100),
+        PciBarIndex::new(2).unwrap(),
+        Address::new(0x180),
+    )
+    .unwrap()
+}
+
+fn pcie(offset: u16) -> PciExpressCapabilitySpec {
+    PciExpressCapabilitySpec::new(
+        PciConfigOffset::new(offset).unwrap(),
+        0x0002,
+        PciExpressDeviceCapabilitySpec::new(0x0000_1234, 0x0011, 0x0022),
+        PciExpressLinkCapabilitySpec::new(0x0100_0001, 0x0003, 0x2001),
+    )
+    .unwrap()
+}
+
+fn raw_capability(offset: u16) -> PciRawCapabilitySpec {
+    PciRawCapabilitySpec::new(
+        PciConfigOffset::new(offset).unwrap(),
+        [0x09, 0xff, 0x10, 0x08, 0xaa, 0xbb, 0xcc, 0xdd],
+    )
+    .unwrap()
 }
 
 #[test]
@@ -268,5 +322,141 @@ fn pci_host_bridge_snapshot_exposes_config_space_payloads_for_checkpoint_audit()
         Err(PciError::SnapshotBarMismatch {
             index: PciBarIndex::new(0).unwrap(),
         })
+    );
+}
+
+#[test]
+fn pci_host_bridge_snapshot_exposes_endpoint_capability_payloads_for_checkpoint_audit() {
+    let aperture = PciConfigAperture::ecam(Address::new(0x3000_0000), 4).unwrap();
+    let bases = PciHostAddressBases::new(
+        Address::new(0x1000_0000),
+        Address::new(0x8000_0000),
+        Address::new(0xa000_0000),
+    );
+    let endpoint0 = PciFunctionAddress::new(1, 2, 0).unwrap();
+    let endpoint1 = PciFunctionAddress::new(3, 4, 0).unwrap();
+    let mut host = PciHostBridge::with_address_bases(aperture, bases);
+
+    host.register_endpoint(endpoint(endpoint1)).unwrap();
+    host.register_endpoint(endpoint_with_capabilities(endpoint0))
+        .unwrap();
+
+    let snapshot = host.snapshot();
+    let raw_payloads = snapshot.endpoint_raw_capability_payloads();
+    let pm_payloads = snapshot.endpoint_power_management_payloads();
+    let pcie_payloads = snapshot.endpoint_pcie_payloads();
+    let msi_payloads = snapshot.endpoint_msi_payloads();
+    let msix_payloads = snapshot.endpoint_msix_payloads();
+
+    assert_eq!(
+        raw_payloads.keys().copied().collect::<Vec<_>>(),
+        vec![endpoint0, endpoint1]
+    );
+    assert_eq!(
+        pm_payloads.keys().copied().collect::<Vec<_>>(),
+        vec![endpoint0, endpoint1]
+    );
+    assert_eq!(
+        pcie_payloads.keys().copied().collect::<Vec<_>>(),
+        vec![endpoint0, endpoint1]
+    );
+    assert_eq!(
+        msi_payloads.keys().copied().collect::<Vec<_>>(),
+        vec![endpoint0, endpoint1]
+    );
+    assert_eq!(
+        msix_payloads.keys().copied().collect::<Vec<_>>(),
+        vec![endpoint0, endpoint1]
+    );
+
+    let endpoint0_snapshot = snapshot.endpoints().get(&endpoint0).unwrap();
+    assert_eq!(
+        raw_payloads.get(&endpoint0).unwrap(),
+        &endpoint0_snapshot.raw_capability_payloads()
+    );
+    assert_eq!(
+        pm_payloads.get(&endpoint0).unwrap(),
+        &endpoint0_snapshot.power_management_payload()
+    );
+    assert_eq!(
+        pcie_payloads.get(&endpoint0).unwrap(),
+        &endpoint0_snapshot.pcie_payload()
+    );
+    assert_eq!(
+        msi_payloads.get(&endpoint0).unwrap(),
+        &endpoint0_snapshot.msi_payload()
+    );
+    assert_eq!(
+        msix_payloads.get(&endpoint0).unwrap(),
+        &endpoint0_snapshot.msix_payload()
+    );
+    assert!(raw_payloads.get(&endpoint1).unwrap().is_empty());
+    assert_eq!(pm_payloads.get(&endpoint1).unwrap(), &None);
+    assert_eq!(pcie_payloads.get(&endpoint1).unwrap(), &None);
+    assert_eq!(msi_payloads.get(&endpoint1).unwrap(), &None);
+    assert_eq!(msix_payloads.get(&endpoint1).unwrap(), &None);
+
+    assert_eq!(
+        snapshot.validate_endpoint_raw_capability_payloads(&raw_payloads),
+        Ok(())
+    );
+    assert_eq!(
+        snapshot.validate_endpoint_power_management_payloads(&pm_payloads),
+        Ok(())
+    );
+    assert_eq!(
+        snapshot.validate_endpoint_pcie_payloads(&pcie_payloads),
+        Ok(())
+    );
+    assert_eq!(
+        snapshot.validate_endpoint_msi_payloads(&msi_payloads),
+        Ok(())
+    );
+    assert_eq!(
+        snapshot.validate_endpoint_msix_payloads(&msix_payloads),
+        Ok(())
+    );
+
+    let missing_endpoint: BTreeMap<_, _> = raw_payloads
+        .iter()
+        .filter(|(function, _)| **function != endpoint1)
+        .map(|(function, payload)| (*function, payload.clone()))
+        .collect();
+    assert_eq!(
+        snapshot.validate_endpoint_raw_capability_payloads(&missing_endpoint),
+        Err(PciError::SnapshotHostBridgeMismatch)
+    );
+
+    let mut malformed_raw = raw_payloads.clone();
+    malformed_raw.get_mut(&endpoint0).unwrap()[0].pop();
+    assert_eq!(
+        snapshot.validate_endpoint_raw_capability_payloads(&malformed_raw),
+        Err(PciError::InvalidRawCapabilitySnapshot)
+    );
+
+    let mut missing_pm = pm_payloads.clone();
+    *missing_pm.get_mut(&endpoint0).unwrap() = None;
+    assert_eq!(
+        snapshot.validate_endpoint_power_management_payloads(&missing_pm),
+        Err(PciError::SnapshotPowerManagementCapabilityMismatch)
+    );
+
+    let mut unexpected_msi = msi_payloads.clone();
+    *unexpected_msi.get_mut(&endpoint1).unwrap() = msi_payloads.get(&endpoint0).unwrap().clone();
+    assert_eq!(
+        snapshot.validate_endpoint_msi_payloads(&unexpected_msi),
+        Err(PciError::SnapshotMsiCapabilityMismatch)
+    );
+
+    let mut malformed_msix = msix_payloads.clone();
+    malformed_msix
+        .get_mut(&endpoint0)
+        .unwrap()
+        .as_mut()
+        .unwrap()
+        .pop();
+    assert_eq!(
+        snapshot.validate_endpoint_msix_payloads(&malformed_msix),
+        Err(PciError::InvalidMsixCapabilitySnapshot)
     );
 }

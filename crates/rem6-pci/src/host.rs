@@ -16,6 +16,9 @@ const U16_BYTES: usize = 2;
 const U32_BYTES: usize = 4;
 const U64_BYTES: usize = 8;
 
+pub type PciHostOptionalCapabilityPayloadMap = BTreeMap<PciFunctionAddress, Option<Vec<u8>>>;
+pub type PciHostRawCapabilityPayloadMap = BTreeMap<PciFunctionAddress, Vec<Vec<u8>>>;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PciConfigAperture {
     base: Address,
@@ -320,6 +323,41 @@ impl PciHostBridgeSnapshot {
             .collect()
     }
 
+    pub fn endpoint_raw_capability_payloads(&self) -> PciHostRawCapabilityPayloadMap {
+        self.endpoints
+            .iter()
+            .map(|(function, snapshot)| (*function, snapshot.raw_capability_payloads()))
+            .collect()
+    }
+
+    pub fn endpoint_power_management_payloads(&self) -> PciHostOptionalCapabilityPayloadMap {
+        self.endpoints
+            .iter()
+            .map(|(function, snapshot)| (*function, snapshot.power_management_payload()))
+            .collect()
+    }
+
+    pub fn endpoint_pcie_payloads(&self) -> PciHostOptionalCapabilityPayloadMap {
+        self.endpoints
+            .iter()
+            .map(|(function, snapshot)| (*function, snapshot.pcie_payload()))
+            .collect()
+    }
+
+    pub fn endpoint_msi_payloads(&self) -> PciHostOptionalCapabilityPayloadMap {
+        self.endpoints
+            .iter()
+            .map(|(function, snapshot)| (*function, snapshot.msi_payload()))
+            .collect()
+    }
+
+    pub fn endpoint_msix_payloads(&self) -> PciHostOptionalCapabilityPayloadMap {
+        self.endpoints
+            .iter()
+            .map(|(function, snapshot)| (*function, snapshot.msix_payload()))
+            .collect()
+    }
+
     pub fn validate_bridge_config_space_payloads(
         &self,
         payloads: &BTreeMap<PciFunctionAddress, Vec<u8>>,
@@ -380,6 +418,102 @@ impl PciHostBridgeSnapshot {
                 .get(function)
                 .expect("validated PCI endpoint BAR key");
             snapshot.validate_bar_payloads(payload)?;
+        }
+        Ok(())
+    }
+
+    pub fn validate_endpoint_raw_capability_payloads(
+        &self,
+        payloads: &PciHostRawCapabilityPayloadMap,
+    ) -> Result<(), PciError> {
+        if self.endpoints.keys().ne(payloads.keys()) {
+            return Err(PciError::SnapshotHostBridgeMismatch);
+        }
+        for (function, snapshot) in &self.endpoints {
+            let payload = payloads
+                .get(function)
+                .expect("validated PCI endpoint raw capability key");
+            snapshot.validate_raw_capability_payloads(payload)?;
+        }
+        Ok(())
+    }
+
+    pub fn validate_endpoint_power_management_payloads(
+        &self,
+        payloads: &PciHostOptionalCapabilityPayloadMap,
+    ) -> Result<(), PciError> {
+        if self.endpoints.keys().ne(payloads.keys()) {
+            return Err(PciError::SnapshotHostBridgeMismatch);
+        }
+        for (function, snapshot) in &self.endpoints {
+            let payload = payloads
+                .get(function)
+                .expect("validated PCI endpoint PM capability key");
+            match payload {
+                Some(payload) => snapshot.validate_power_management_payload(payload)?,
+                None if snapshot.power_management_payload().is_none() => {}
+                None => return Err(PciError::SnapshotPowerManagementCapabilityMismatch),
+            }
+        }
+        Ok(())
+    }
+
+    pub fn validate_endpoint_pcie_payloads(
+        &self,
+        payloads: &PciHostOptionalCapabilityPayloadMap,
+    ) -> Result<(), PciError> {
+        if self.endpoints.keys().ne(payloads.keys()) {
+            return Err(PciError::SnapshotHostBridgeMismatch);
+        }
+        for (function, snapshot) in &self.endpoints {
+            let payload = payloads
+                .get(function)
+                .expect("validated PCI endpoint PCIe capability key");
+            match payload {
+                Some(payload) => snapshot.validate_pcie_payload(payload)?,
+                None if snapshot.pcie_payload().is_none() => {}
+                None => return Err(PciError::SnapshotPciExpressCapabilityMismatch),
+            }
+        }
+        Ok(())
+    }
+
+    pub fn validate_endpoint_msi_payloads(
+        &self,
+        payloads: &PciHostOptionalCapabilityPayloadMap,
+    ) -> Result<(), PciError> {
+        if self.endpoints.keys().ne(payloads.keys()) {
+            return Err(PciError::SnapshotHostBridgeMismatch);
+        }
+        for (function, snapshot) in &self.endpoints {
+            let payload = payloads
+                .get(function)
+                .expect("validated PCI endpoint MSI capability key");
+            match payload {
+                Some(payload) => snapshot.validate_msi_payload(payload)?,
+                None if snapshot.msi_payload().is_none() => {}
+                None => return Err(PciError::SnapshotMsiCapabilityMismatch),
+            }
+        }
+        Ok(())
+    }
+
+    pub fn validate_endpoint_msix_payloads(
+        &self,
+        payloads: &PciHostOptionalCapabilityPayloadMap,
+    ) -> Result<(), PciError> {
+        if self.endpoints.keys().ne(payloads.keys()) {
+            return Err(PciError::SnapshotHostBridgeMismatch);
+        }
+        for (function, snapshot) in &self.endpoints {
+            let payload = payloads
+                .get(function)
+                .expect("validated PCI endpoint MSI-X capability key");
+            match payload {
+                Some(payload) => snapshot.validate_msix_payload(payload)?,
+                None if snapshot.msix_payload().is_none() => {}
+                None => return Err(PciError::SnapshotMsixCapabilityMismatch),
+            }
         }
         Ok(())
     }
