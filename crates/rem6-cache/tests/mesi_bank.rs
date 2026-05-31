@@ -41,6 +41,25 @@ fn uncacheable_read(agent_id: AgentId, sequence: u64, address: u64) -> MemoryReq
     read(agent_id, sequence, address).with_uncacheable_strict_order()
 }
 
+fn uncacheable_atomic(
+    agent_id: AgentId,
+    sequence: u64,
+    address: u64,
+    data: Vec<u8>,
+) -> MemoryRequest {
+    let access_size = AccessSize::new(data.len() as u64).unwrap();
+    MemoryRequest::atomic(
+        MemoryRequestId::new(agent_id, sequence),
+        Address::new(address),
+        access_size,
+        data,
+        ByteMask::full(access_size).unwrap(),
+        layout(),
+    )
+    .unwrap()
+    .with_uncacheable_strict_order()
+}
+
 fn write(agent_id: AgentId, sequence: u64, address: u64, data: Vec<u8>) -> MemoryRequest {
     let access_size = AccessSize::new(data.len() as u64).unwrap();
     MemoryRequest::write(
@@ -444,6 +463,91 @@ fn mesi_cache_bank_uncacheable_read_preserves_dirty_resident_line() {
     assert_eq!(
         bank.snapshot().dirty_line_addresses(),
         vec![Address::new(0x2400)]
+    );
+}
+
+#[test]
+fn mesi_cache_bank_uncacheable_atomic_blocks_same_line_until_response() {
+    let cache_agent = agent(20);
+    let mut bank = MesiCacheBank::new(cache_agent, layout());
+
+    let atomic = uncacheable_atomic(cache_agent, 124, 0x2a08, vec![0x33, 0x44]);
+    let atomic_miss = bank.accept_cpu_request(atomic.clone()).unwrap();
+    let downstream = atomic_miss.downstream_request().unwrap().clone();
+
+    assert_eq!(atomic_miss.kind(), MesiCacheControllerResultKind::Miss);
+    assert_eq!(downstream.id(), atomic.id());
+    assert_eq!(downstream.operation(), MemoryOperation::Atomic);
+    assert!(downstream.is_uncacheable());
+    assert_eq!(bank.pending_fill_count(), 1);
+
+    let write_error = bank
+        .accept_cpu_request(write(cache_agent, 125, 0x2a04, vec![0x55]))
+        .expect_err("pending uncacheable atomic must block same-line writes");
+    assert_eq!(
+        write_error.to_string(),
+        "MESI cache bank has pending uncacheable request for line 0x2a00"
+    );
+
+    let atomic_error = bank
+        .accept_cpu_request(uncacheable_atomic(
+            cache_agent,
+            126,
+            0x2a08,
+            vec![0x66, 0x77],
+        ))
+        .expect_err("pending uncacheable atomic must block same-line atomics");
+    assert_eq!(
+        atomic_error.to_string(),
+        "MESI cache bank has pending uncacheable request for line 0x2a00"
+    );
+
+    let atomic_fill = bank
+        .accept_fill(
+            MemoryResponse::completed(&downstream, Some(vec![0xaa, 0xbb])).unwrap(),
+            MesiEvent::DataShared,
+        )
+        .unwrap();
+    assert_eq!(
+        response_data(atomic_fill.target_outcome().unwrap()),
+        &[0xaa, 0xbb]
+    );
+    assert_eq!(bank.pending_fill_count(), 0);
+
+    let later_write = bank
+        .accept_cpu_request(write(cache_agent, 127, 0x2a04, vec![0x88]))
+        .unwrap();
+    assert_eq!(later_write.kind(), MesiCacheControllerResultKind::Miss);
+}
+
+#[test]
+fn mesi_cache_bank_dirty_uncacheable_atomic_blocks_same_line_reads_until_writeback() {
+    let cache_agent = agent(20);
+    let mut bank = MesiCacheBank::new_with_write_queue(
+        cache_agent,
+        layout(),
+        CacheWriteQueueConfig::new(1, 0).unwrap(),
+    );
+
+    let store = write(cache_agent, 128, 0x2b04, vec![0xde, 0xad]);
+    let store_miss = bank.accept_cpu_request(store).unwrap();
+    bank.accept_fill(
+        fill(store_miss.downstream_request().unwrap(), 0x11),
+        MesiEvent::DataModified,
+    )
+    .unwrap();
+
+    let atomic = uncacheable_atomic(cache_agent, 129, 0x2b08, vec![0x33, 0x44]);
+    let atomic_miss = bank.accept_cpu_request(atomic).unwrap();
+    assert!(atomic_miss.downstream_request().is_none());
+    assert_eq!(bank.write_queue_allocated_count(), 1);
+
+    let read_error = bank
+        .accept_cpu_request(read(cache_agent, 130, 0x2b04))
+        .expect_err("dirty pending atomic must block same-line reads");
+    assert_eq!(
+        read_error.to_string(),
+        "MESI cache bank has pending uncacheable request for line 0x2b00"
     );
 }
 

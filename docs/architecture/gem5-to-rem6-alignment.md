@@ -2617,7 +2617,12 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   those pending uncacheable reads to survive restore and remain attached to the
   later dirty-writeback issue record, while already-issued clean pending reads
   on the same line remain independent. Malformed snapshot tests also reject
-  pending uncacheable reads whose blocking writeback handle is missing.
+  pending uncacheable reads whose blocking writeback handle is missing. The
+  bank-level same-line conflict tests also keep any in-flight uncacheable
+  atomic request as a typed reservation until its downstream response returns,
+  so follow-up cacheable or uncacheable requests on that line fail with a
+  pending-uncacheable conflict instead of being reordered ahead of the
+  outstanding atomic request.
   Dirty-resident
   uncacheable-write tests require a full-line dirty writeback queue entry
   before the uncacheable write queue entry for MSI, MESI, MOESI, and CHI, then

@@ -31,6 +31,9 @@ pub enum MesiCacheBankError {
     WriteQueueConflict {
         line: Address,
     },
+    PendingUncacheableConflict {
+        line: Address,
+    },
     UncacheableBypassRequiresCleanLine {
         line: Address,
     },
@@ -88,6 +91,11 @@ impl fmt::Display for MesiCacheBankError {
             Self::WriteQueueConflict { line } => write!(
                 formatter,
                 "MESI cache bank has pending write-queue work for line {:#x}",
+                line.get()
+            ),
+            Self::PendingUncacheableConflict { line } => write!(
+                formatter,
+                "MESI cache bank has pending uncacheable request for line {:#x}",
                 line.get()
             ),
             Self::UncacheableBypassRequiresCleanLine { line } => write!(
@@ -174,6 +182,7 @@ impl Error for MesiCacheBankError {
             Self::WrongAgent { .. }
             | Self::WriteQueueDisabled
             | Self::WriteQueueConflict { .. }
+            | Self::PendingUncacheableConflict { .. }
             | Self::UncacheableBypassRequiresCleanLine { .. }
             | Self::UnknownPendingFill { .. }
             | Self::UnknownUncacheableWriteResponse { .. }
@@ -740,17 +749,20 @@ impl MesiCacheBank {
     ) -> Result<MesiCacheControllerResult, MesiCacheBankError> {
         self.validate_request_agent(&request)?;
         let line = request.line_address();
+        if self.pending_atomic_conflict(line) {
+            return Err(MesiCacheBankError::PendingUncacheableConflict { line });
+        }
         if !request.is_uncacheable() {
             if let Some(result) = self.accept_write_queue_conflict(&request)? {
                 return Ok(result);
             }
         }
         if request.is_uncacheable() {
-            if request.operation() == MemoryOperation::Write {
-                return self.accept_uncacheable_write_request(request);
-            }
             if self.write_queue_pending_conflict(line, false).is_some() {
                 return Err(MesiCacheBankError::WriteQueueConflict { line });
+            }
+            if request.operation() == MemoryOperation::Write {
+                return self.accept_uncacheable_write_request(request);
             }
             return self.accept_uncacheable_request(request);
         }
@@ -1088,6 +1100,15 @@ impl MesiCacheBank {
             }
         }
         Err(MesiCacheBankError::WriteQueueConflict { line })
+    }
+
+    fn pending_atomic_conflict(&self, line: Address) -> bool {
+        self.pending_fills.values().any(|pending| match pending {
+            PendingBankFill::Uncacheable { original, .. } => {
+                original.line_address() == line && original.operation() == MemoryOperation::Atomic
+            }
+            PendingBankFill::Line { .. } => false,
+        })
     }
 
     fn accept_uncacheable_request(
