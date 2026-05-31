@@ -1,7 +1,7 @@
 use rem6_accelerator::{
     AcceleratorCommand, AcceleratorCommandId, AcceleratorCommandKind, AcceleratorDmaCopy,
     AcceleratorEngine, AcceleratorEngineConfig, AcceleratorEngineId, AcceleratorEngineSnapshot,
-    AcceleratorPendingDmaWrite, AcceleratorTopologyConfig,
+    AcceleratorError, AcceleratorPendingDmaWrite, AcceleratorTopologyConfig,
 };
 use rem6_checkpoint::{CheckpointComponentId, CheckpointRegistry};
 use rem6_cpu::{CpuId, CpuResetState, RiscvClusterTopologyConfig, RiscvCoreTopologyConfig};
@@ -247,7 +247,7 @@ fn heterogeneous_checkpoint_preserves_dma_read_request_ordering() {
     let source = AcceleratorEngine::new(
         AcceleratorEngineConfig::new(AcceleratorEngineId::new(21), PartitionId::new(1), 1).unwrap(),
     );
-    source.restore(&snapshot);
+    source.restore(&snapshot).unwrap();
     let component = CheckpointComponentId::new("accelerator21").unwrap();
     let mut registry = CheckpointRegistry::new();
     let source_port = AcceleratorCheckpointPort::new(component.clone(), source);
@@ -279,7 +279,7 @@ fn accelerator_checkpoint_bank_rejects_invalid_bank_without_partial_restore() {
     let source = AcceleratorEngine::new(
         AcceleratorEngineConfig::new(AcceleratorEngineId::new(30), PartitionId::new(1), 1).unwrap(),
     );
-    source.restore(&expected_snapshot);
+    source.restore(&expected_snapshot).unwrap();
 
     let target_valid = AcceleratorEngine::new(
         AcceleratorEngineConfig::new(AcceleratorEngineId::new(31), PartitionId::new(1), 1).unwrap(),
@@ -309,6 +309,68 @@ fn accelerator_checkpoint_bank_rejects_invalid_bank_without_partial_restore() {
     assert!(matches!(
         err,
         AcceleratorCheckpointError::InvalidChunk { component, .. } if component == invalid_component
+    ));
+    assert_eq!(target_valid.snapshot(), original_valid);
+    assert_eq!(target_invalid.snapshot(), original_invalid);
+}
+
+#[test]
+fn accelerator_checkpoint_bank_rejects_lane_mismatch_without_partial_restore() {
+    let valid_component = CheckpointComponentId::new("accelerator_shape_a").unwrap();
+    let invalid_component = CheckpointComponentId::new("accelerator_shape_b").unwrap();
+    let source_valid = AcceleratorEngine::new(
+        AcceleratorEngineConfig::new(AcceleratorEngineId::new(33), PartitionId::new(1), 2).unwrap(),
+    );
+    let valid_source_snapshot = AcceleratorEngineSnapshot::new(
+        vec![17, 23],
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    );
+    source_valid.restore(&valid_source_snapshot).unwrap();
+    let source_invalid = AcceleratorEngine::new(
+        AcceleratorEngineConfig::new(AcceleratorEngineId::new(34), PartitionId::new(1), 1).unwrap(),
+    );
+    let target_valid = AcceleratorEngine::new(
+        AcceleratorEngineConfig::new(AcceleratorEngineId::new(35), PartitionId::new(1), 2).unwrap(),
+    );
+    let target_invalid = AcceleratorEngine::new(
+        AcceleratorEngineConfig::new(AcceleratorEngineId::new(36), PartitionId::new(1), 2).unwrap(),
+    );
+    let original_valid = target_valid.snapshot();
+    let original_invalid = target_invalid.snapshot();
+    assert_ne!(valid_source_snapshot, original_valid);
+
+    let mut registry = CheckpointRegistry::new();
+    registry.register(valid_component.clone()).unwrap();
+    AcceleratorCheckpointPort::new(valid_component.clone(), source_valid)
+        .capture_into(&mut registry)
+        .unwrap();
+    registry.register(invalid_component.clone()).unwrap();
+    AcceleratorCheckpointPort::new(invalid_component.clone(), source_invalid)
+        .capture_into(&mut registry)
+        .unwrap();
+
+    let bank = AcceleratorCheckpointBank::new([
+        AcceleratorCheckpointPort::new(
+            CheckpointComponentId::new("accelerator_shape_a").unwrap(),
+            target_valid.clone(),
+        ),
+        AcceleratorCheckpointPort::new(invalid_component.clone(), target_invalid.clone()),
+    ])
+    .unwrap();
+    assert!(matches!(
+        bank.restore_all_from(&registry).unwrap_err(),
+        AcceleratorCheckpointError::Restore {
+            component,
+            source,
+        } if component == invalid_component
+            && *source == AcceleratorError::SnapshotLaneCountMismatch {
+                engine: AcceleratorEngineId::new(36),
+                expected: 2,
+                actual: 1,
+            }
     ));
     assert_eq!(target_valid.snapshot(), original_valid);
     assert_eq!(target_invalid.snapshot(), original_invalid);

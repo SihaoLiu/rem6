@@ -227,7 +227,7 @@ fn accelerator_wait_for_graph_tracks_queued_commands_until_lane_starts() {
         AcceleratorEngineConfig::new(AcceleratorEngineId::new(14), accelerator_partition, 1)
             .unwrap(),
     );
-    restored.restore(&snapshot);
+    restored.restore(&snapshot).unwrap();
     assert!(restored.wait_for_graph().snapshot().contains_edge(
         &queued_command,
         &lane,
@@ -508,17 +508,19 @@ fn accelerator_dma_write_preserves_read_request_ordering() {
         Address::new(0x2004),
     )
     .unwrap();
-    engine.restore(&AcceleratorEngineSnapshot::new(
-        vec![0],
-        Vec::new(),
-        Vec::new(),
-        vec![AcceleratorPendingDmaWrite::new(
-            copy,
-            vec![0x10, 0x20, 0x30, 0x40],
-            4,
-        )],
-        Vec::new(),
-    ));
+    engine
+        .restore(&AcceleratorEngineSnapshot::new(
+            vec![0],
+            Vec::new(),
+            Vec::new(),
+            vec![AcceleratorPendingDmaWrite::new(
+                copy,
+                vec![0x10, 0x20, 0x30, 0x40],
+                4,
+            )],
+            Vec::new(),
+        ))
+        .unwrap();
     let observed = Arc::new(Mutex::new(None));
     let write_observed = Arc::clone(&observed);
 
@@ -619,7 +621,7 @@ fn accelerator_engine_restores_snapshot_state_and_lane_reservations() {
     mutation_scheduler.run_until_idle_parallel().unwrap();
     assert_ne!(engine.snapshot(), snapshot);
 
-    engine.restore(&snapshot);
+    engine.restore(&snapshot).unwrap();
     assert_eq!(engine.snapshot(), snapshot);
 
     let mut restored_scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
@@ -657,6 +659,26 @@ fn accelerator_engine_restores_snapshot_state_and_lane_reservations() {
             ),
         ],
     );
+}
+
+#[test]
+fn accelerator_engine_restore_rejects_mismatched_lane_count() {
+    let engine = AcceleratorEngine::new(
+        AcceleratorEngineConfig::new(AcceleratorEngineId::new(13), PartitionId::new(1), 2).unwrap(),
+    );
+    let before_restore = engine.snapshot();
+    let bad_snapshot =
+        AcceleratorEngineSnapshot::new(Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+
+    assert_eq!(
+        engine.restore(&bad_snapshot),
+        Err(AcceleratorError::SnapshotLaneCountMismatch {
+            engine: AcceleratorEngineId::new(13),
+            expected: 2,
+            actual: 0,
+        })
+    );
+    assert_eq!(engine.snapshot(), before_restore);
 }
 
 #[test]

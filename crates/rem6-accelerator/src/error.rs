@@ -20,6 +20,11 @@ pub enum AcceleratorError {
         command: AcceleratorCommandId,
         request: MemoryRequestId,
     },
+    SnapshotLaneCountMismatch {
+        engine: AcceleratorEngineId,
+        expected: usize,
+        actual: usize,
+    },
     MissingCommandSubmission {
         engine: AcceleratorEngineId,
     },
@@ -65,6 +70,15 @@ impl fmt::Display for AcceleratorError {
                 command.get(),
                 request.sequence(),
                 request.agent().get(),
+            ),
+            Self::SnapshotLaneCountMismatch {
+                engine,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "accelerator engine {} snapshot has {actual} lanes but expected {expected}",
+                engine.get()
             ),
             Self::MissingCommandSubmission { engine } => write!(
                 formatter,

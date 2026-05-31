@@ -5,8 +5,8 @@ use std::fmt;
 use rem6_accelerator::{
     AcceleratorCommand, AcceleratorCommandId, AcceleratorCommandKind, AcceleratorCompletion,
     AcceleratorDmaCompletion, AcceleratorDmaCopy, AcceleratorEngine, AcceleratorEngineSnapshot,
-    AcceleratorPendingDmaWrite, AcceleratorQueuedCommandSnapshot, AcceleratorTraceEvent,
-    AcceleratorTraceKind,
+    AcceleratorError, AcceleratorPendingDmaWrite, AcceleratorQueuedCommandSnapshot,
+    AcceleratorTraceEvent, AcceleratorTraceKind,
 };
 use rem6_checkpoint::{CheckpointComponentId, CheckpointError, CheckpointRegistry};
 use rem6_gpu::{
@@ -91,8 +91,32 @@ impl AcceleratorCheckpointPort {
         registry: &CheckpointRegistry,
     ) -> Result<AcceleratorCheckpointRecord, AcceleratorCheckpointError> {
         let record = self.decode_from(registry)?;
-        self.engine.restore(record.snapshot());
+        self.restore_record(&record)?;
         Ok(record)
+    }
+
+    fn validate_record(
+        &self,
+        record: &AcceleratorCheckpointRecord,
+    ) -> Result<(), AcceleratorCheckpointError> {
+        self.engine
+            .validate_snapshot(record.snapshot())
+            .map_err(|source| AcceleratorCheckpointError::Restore {
+                component: self.component.clone(),
+                source: Box::new(source),
+            })
+    }
+
+    fn restore_record(
+        &self,
+        record: &AcceleratorCheckpointRecord,
+    ) -> Result<(), AcceleratorCheckpointError> {
+        self.engine.restore(record.snapshot()).map_err(|source| {
+            AcceleratorCheckpointError::Restore {
+                component: self.component.clone(),
+                source: Box::new(source),
+            }
+        })
     }
 
     fn decode_from(
@@ -161,14 +185,16 @@ impl AcceleratorCheckpointBank {
         &self,
         registry: &CheckpointRegistry,
     ) -> Result<Vec<AcceleratorCheckpointRecord>, AcceleratorCheckpointError> {
-        self.validate_restore_from(registry)?;
         let records = self
             .ports
             .values()
             .map(|port| port.decode_from(registry))
             .collect::<Result<Vec<_>, _>>()?;
         for (port, record) in self.ports.values().zip(&records) {
-            port.engine.restore(record.snapshot());
+            port.validate_record(record)?;
+        }
+        for (port, record) in self.ports.values().zip(&records) {
+            port.restore_record(record)?;
         }
         Ok(records)
     }
@@ -178,7 +204,8 @@ impl AcceleratorCheckpointBank {
         registry: &CheckpointRegistry,
     ) -> Result<(), AcceleratorCheckpointError> {
         for port in self.ports.values() {
-            port.decode_from(registry)?;
+            let record = port.decode_from(registry)?;
+            port.validate_record(&record)?;
         }
         Ok(())
     }
@@ -193,6 +220,10 @@ pub enum AcceleratorCheckpointError {
     InvalidChunk {
         component: CheckpointComponentId,
         reason: String,
+    },
+    Restore {
+        component: CheckpointComponentId,
+        source: Box<AcceleratorError>,
     },
 }
 
@@ -209,11 +240,23 @@ impl fmt::Display for AcceleratorCheckpointError {
                 "accelerator checkpoint component {} has invalid chunk: {reason}",
                 component.as_str()
             ),
+            Self::Restore { component, source } => write!(
+                formatter,
+                "accelerator checkpoint component {} rejected restore: {source}",
+                component.as_str()
+            ),
         }
     }
 }
 
-impl Error for AcceleratorCheckpointError {}
+impl Error for AcceleratorCheckpointError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Restore { source, .. } => Some(source.as_ref()),
+            _ => None,
+        }
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GpuCheckpointRecord {

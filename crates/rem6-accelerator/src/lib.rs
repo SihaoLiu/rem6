@@ -546,9 +546,28 @@ impl AcceleratorEngine {
             .wait_for_graph_since(self.id(), marker)
     }
 
-    pub fn restore(&self, snapshot: &AcceleratorEngineSnapshot) {
+    pub fn validate_snapshot(
+        &self,
+        snapshot: &AcceleratorEngineSnapshot,
+    ) -> Result<(), AcceleratorError> {
+        let expected = self.config.lanes() as usize;
+        let actual = snapshot.lane_count();
+        if actual != expected {
+            return Err(AcceleratorError::SnapshotLaneCountMismatch {
+                engine: self.id(),
+                expected,
+                actual,
+            });
+        }
+
+        Ok(())
+    }
+
+    pub fn restore(&self, snapshot: &AcceleratorEngineSnapshot) -> Result<(), AcceleratorError> {
+        self.validate_snapshot(snapshot)?;
         *self.state.lock().expect("accelerator state lock") =
             AcceleratorEngineState::from_snapshot(snapshot);
+        Ok(())
     }
 
     pub fn run_until_idle_parallel_recorded(
