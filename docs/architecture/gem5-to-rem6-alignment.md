@@ -2764,7 +2764,10 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   limit when execution is not enabled or the count is zero. A tick-limit CLI
   test runs a non-trapping branch loop and requires the configured `--max-tick`
   budget to stop with a `tick_limit` artifact and stats stop reason instead of
-  a CLI error.
+  a CLI error. CLI source-policy tests now keep the binary crate root under the
+  facade budget while `config.rs` owns argument parsing and `guest_memory.rs`
+  owns ELF plus external-blob store construction, so standalone simulator
+  growth does not accumulate in one gem5-style launch file.
 - UART/MMIO tests cover transmitted byte logging, RX FIFO status, snapshot
   restore, serial and parallel RX interrupt assertion, serial interrupt
   deassertion after the final byte is read, and rejection of serial or parallel
@@ -2913,16 +2916,18 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   vector and function masks, table plus pending-bit snapshot restore, stable
   payload encoding for endpoint checkpoint audit, invalid and overlapping
   layout rejection, serial delivery, and masked parallel delivery recording
-  into the PBA. PCI source-policy tests keep the crate root
-  below the facade budget and all source files below the hard module-size
-  budget. CPU source-policy tests keep the CPU crate root below the facade
-  budget, keep RISC-V data issue in a focused module, and enforce the hard
-  module-size budget across CPU sources. Platform source-policy tests keep the
-  platform crate root below the facade budget, keep RISC-V device-tree code in
-  a focused module, and enforce the hard module-size budget across platform
-  sources. Memory source-policy tests keep request and response state in a
-  focused module while enforcing the hard module-size budget across memory
-  sources. DRAM source-policy tests keep public error state and target-backed
+  into the PBA. CLI source-policy tests keep standalone run configuration and
+  guest-memory loading in focused modules while enforcing the facade and hard
+  module-size budgets across the binary crate. PCI source-policy tests keep the
+  crate root below the facade budget and all source files below the hard
+  module-size budget. CPU source-policy tests keep the CPU crate root below
+  the facade budget, keep RISC-V data issue in a focused module, and enforce
+  the hard module-size budget across CPU sources. Platform source-policy tests
+  keep the platform crate root below the facade budget, keep RISC-V
+  device-tree code in a focused module, and enforce the hard module-size budget
+  across platform sources. Memory source-policy tests keep request and response
+  state in a focused module while enforcing the hard module-size budget across
+  memory sources. DRAM source-policy tests keep public error state and target-backed
   memory-controller state in focused modules while enforcing the hard
   module-size budget across DRAM sources. Interrupt source-policy tests keep
   generic interrupt errors, route contracts, event records, and snapshots in
