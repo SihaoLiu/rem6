@@ -1256,7 +1256,9 @@ Implementation evidence through 2026-05-31:
   new fid state, `Tlcreate` creates named root files and retargets the directory
   fid to the opened file, `Tgetattr` reports deterministic root and file
   metadata, `Tstatfs` reports deterministic namespace capacity metadata,
-  `Tlopen` marks file fids open and reports qid plus I/O-unit data, `Tread`
+  `Tlopen` marks file and root-directory fids open and reports qid plus
+  I/O-unit data, `Treaddir` returns stable `.`/`..` plus sorted file dirents
+  with resumable byte offsets and count-bounded whole-entry replies, `Tread`
   returns counted byte ranges, `Twrite` mutates and extends byte ranges, and
   `Tclunk` drops fid state. Missing names and stale fids return `Rlerror` errno
   payloads instead of panicking or depending on an external proxy. This keeps the
@@ -3208,9 +3210,11 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   `Twalk` qid-vector replies, missing-name `Rlerror` handling, `Tlcreate`
   file creation and opened-fid retargeting, `Tgetattr` root and file metadata
   replies, `Tstatfs` deterministic filesystem-capacity replies, `Tlopen`
-  file-qid and I/O-unit replies, counted `Tread` ranges, `Twrite` counted
-  replies plus overwrite mutation, `Tclunk` fid removal, and stale metadata,
-  create, write, and read `Rlerror` handling, modern PCI version-1 feature exposure for
+  file and root-directory qid plus I/O-unit replies, `Treaddir` sorted root
+  dirents, resumable offsets, count-bounded replies, and directory-only error
+  handling, counted `Tread` ranges, `Twrite` counted replies plus overwrite
+  mutation, `Tclunk` fid removal, and stale metadata, directory, create, write,
+  and read `Rlerror` handling, modern PCI version-1 feature exposure for
   9P, block, console, and RNG, legacy RNG device id and zero-config behavior,
   reproducible entropy generation, writable split descriptor-chain decoding,
   RNG used-ring writeback, guest-memory scatter writes, ISR queue interrupts,
