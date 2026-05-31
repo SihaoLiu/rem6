@@ -14,9 +14,10 @@ use crate::fs9p_protocol::{
     parse_lcreate_request, parse_link_request, parse_lock_request, parse_lopen_request,
     parse_mkdir_request, parse_mknod_request, parse_open_request, parse_read_request,
     parse_readdir_request, parse_readlink_request, parse_remove_request, parse_rename_request,
-    parse_renameat_request, parse_setattr_request, parse_statfs_request, parse_symlink_request,
-    parse_unlinkat_request, parse_version_request, parse_walk_request, parse_write_request,
-    parse_xattrcreate_request, parse_xattrwalk_request, string_payload, version_payload,
+    parse_renameat_request, parse_setattr_request, parse_stat_request, parse_statfs_request,
+    parse_symlink_request, parse_unlinkat_request, parse_version_request, parse_walk_request,
+    parse_write_request, parse_xattrcreate_request, parse_xattrwalk_request, string_payload,
+    version_payload,
 };
 use crate::{
     modern_feature_pages, Virtio9pCompletion, Virtio9pRequest, VirtioError,
@@ -88,6 +89,8 @@ pub const VIRTIO_9P_TCLUNK: u8 = 120;
 pub const VIRTIO_9P_RCLUNK: u8 = 121;
 pub const VIRTIO_9P_TREMOVE: u8 = 122;
 pub const VIRTIO_9P_RREMOVE: u8 = 123;
+pub const VIRTIO_9P_TSTAT: u8 = 124;
+pub const VIRTIO_9P_RSTAT: u8 = 125;
 pub const VIRTIO_9P_RLERROR: u8 = 7;
 pub const VIRTIO_9P_NOFID: u32 = u32::MAX;
 pub const VIRTIO_9P_EBADF: u32 = 9;
@@ -330,6 +333,10 @@ impl Virtio9pDevice {
             },
             VIRTIO_9P_TSETATTR => match self.handle_setattr(&request)? {
                 Ok(()) => (VIRTIO_9P_RSETATTR, Vec::new()),
+                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
+            },
+            VIRTIO_9P_TSTAT => match self.handle_stat(&request)? {
+                Ok(payload) => (VIRTIO_9P_RSTAT, payload),
                 Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
             },
             VIRTIO_9P_TXATTRWALK => match self.handle_xattrwalk(&request)? {
@@ -704,6 +711,18 @@ impl Virtio9pDevice {
             return Ok(Ok(()));
         }
         Ok(Err(VIRTIO_9P_EBADF))
+    }
+
+    fn handle_stat(&self, request: &Virtio9pRequest) -> Result<Result<Vec<u8>, u32>, VirtioError> {
+        let fid = parse_stat_request(request)?;
+        let Some(node) = self.fid_node(fid) else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        let namespace = self.namespace.lock().expect("virtio 9p namespace lock");
+        let Some(payload) = namespace.legacy_stat_payload(node) else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        Ok(Ok(payload))
     }
 
     fn handle_xattrwalk(

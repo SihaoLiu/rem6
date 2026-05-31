@@ -1257,10 +1257,11 @@ Implementation evidence through 2026-05-31:
   and rejects duplicate names with errno payloads, `Tlcreate` creates named root
   or child-directory files and retargets the directory fid to the opened file,
   `Tgetattr` reports deterministic root, directory, and file metadata,
-  `Tstatfs` reports deterministic namespace capacity metadata, `Tlopen` and
-  legacy `Topen` mark file and directory fids open and report qid plus
-  I/O-unit data, legacy `Tcreate` shares the same checked namespace creation
-  path as `Tlcreate`, `Treaddir`
+  `Tstatfs` reports deterministic namespace capacity metadata, legacy `Tstat`
+  emits deterministic 9P2000 stat metadata for existing fids and rejects stale
+  fids with errno payloads, `Tlopen` and legacy `Topen` mark file and
+  directory fids open and report qid plus I/O-unit data, legacy `Tcreate`
+  shares the same checked namespace creation path as `Tlcreate`, `Treaddir`
   returns stable `.`/`..` plus sorted file, symlink, or directory dirents with
   resumable byte offsets and count-bounded whole-entry replies, `Tsymlink`
   creates deterministic symlink qids, `Treadlink` returns counted symlink
@@ -3248,8 +3249,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   and directory walk/listing behavior, `Tlcreate` root and child-directory file
   creation plus opened-fid retargeting, `Tgetattr` root, directory, and file
   metadata replies, `Tstatfs` deterministic filesystem-capacity replies,
-  `Tlopen` and legacy `Topen` file and directory qid plus I/O-unit replies,
-  legacy `Tcreate` checked file creation plus opened-fid retargeting, `Treaddir` sorted
+  legacy `Tstat` file stat payloads, stale-fid errno replies, and malformed
+  payload rejection, `Tlopen` and legacy `Topen` file and directory qid plus
+  I/O-unit replies, legacy `Tcreate` checked file creation plus opened-fid retargeting, `Treaddir` sorted
   root and child-directory dirents, resumable offsets, count-bounded replies,
   and directory-only error handling, counted `Tread` ranges, `Twrite` counted
   replies plus overwrite mutation, `Tlink` hard-link qid reuse, shared write

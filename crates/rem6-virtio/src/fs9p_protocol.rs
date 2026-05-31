@@ -233,6 +233,13 @@ pub(crate) fn parse_setattr_request(
     })
 }
 
+pub(crate) fn parse_stat_request(request: &Virtio9pRequest) -> Result<u32, VirtioError> {
+    let mut reader = Virtio9pPayloadReader::new(request.message_type(), request.payload());
+    let fid = reader.read_u32()?;
+    reader.finish()?;
+    Ok(fid)
+}
+
 pub(crate) fn parse_xattrwalk_request(
     request: &Virtio9pRequest,
 ) -> Result<Virtio9pXattrwalkRequest, VirtioError> {

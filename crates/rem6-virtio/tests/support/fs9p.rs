@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use rem6_virtio::{
     Virtio9pRequest, VirtioQueueIndex, VirtioSplitDescriptor, VirtioSplitDescriptorChain,
 };
@@ -162,6 +164,10 @@ pub(crate) fn p9_setattr_full_payload(fid: u32, valid: u32, fields: P9SetattrPay
 }
 
 pub(crate) fn p9_statfs_payload(fid: u32) -> Vec<u8> {
+    fid.to_le_bytes().to_vec()
+}
+
+pub(crate) fn p9_legacy_stat_payload(fid: u32) -> Vec<u8> {
     fid.to_le_bytes().to_vec()
 }
 

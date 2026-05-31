@@ -525,6 +525,39 @@ impl Virtio9pNamespace {
         payload
     }
 
+    pub(crate) fn legacy_stat_payload(&self, node: Virtio9pNodeId) -> Option<Vec<u8>> {
+        let metadata = self.metadata(node)?;
+        let name = match node {
+            Virtio9pNodeId::Root => "",
+            Virtio9pNodeId::File(_)
+            | Virtio9pNodeId::Directory(_)
+            | Virtio9pNodeId::Symlink(_)
+            | Virtio9pNodeId::Special(_) => find_node_name(&self.entries, node)?,
+        };
+        let atime = u32::try_from(metadata.atime_sec).ok()?;
+        let mtime = u32::try_from(metadata.mtime_sec).ok()?;
+        let uid = metadata.uid.to_string();
+        let gid = metadata.gid.to_string();
+
+        let mut stat = Vec::new();
+        stat.extend(0_u16.to_le_bytes());
+        stat.extend(0_u32.to_le_bytes());
+        stat.extend(metadata.qid.to_le_bytes());
+        stat.extend(metadata.mode.to_le_bytes());
+        stat.extend(atime.to_le_bytes());
+        stat.extend(mtime.to_le_bytes());
+        stat.extend(metadata.size.to_le_bytes());
+        append_legacy_string(&mut stat, name.as_bytes())?;
+        append_legacy_string(&mut stat, uid.as_bytes())?;
+        append_legacy_string(&mut stat, gid.as_bytes())?;
+        append_legacy_string(&mut stat, b"")?;
+
+        let mut payload = Vec::with_capacity(2 + stat.len());
+        payload.extend(u16::try_from(stat.len()).ok()?.to_le_bytes());
+        payload.extend(stat);
+        Some(payload)
+    }
+
     pub(crate) fn readdir_payload(
         &self,
         node: Virtio9pNodeId,
@@ -760,6 +793,26 @@ fn count_file_links(entries: &BTreeMap<String, Virtio9pNode>, path: u64) -> u64 
             Virtio9pNode::Directory(directory) => count_file_links(&directory.entries, path),
         })
         .sum()
+}
+
+fn append_legacy_string(payload: &mut Vec<u8>, data: &[u8]) -> Option<()> {
+    payload.extend(u16::try_from(data.len()).ok()?.to_le_bytes());
+    payload.extend(data);
+    Some(())
+}
+
+fn find_node_name(entries: &BTreeMap<String, Virtio9pNode>, id: Virtio9pNodeId) -> Option<&str> {
+    for (name, node) in entries {
+        if node.id() == id {
+            return Some(name);
+        }
+        if let Virtio9pNode::Directory(directory) = node {
+            if let Some(name) = find_node_name(&directory.entries, id) {
+                return Some(name);
+            }
+        }
+    }
+    None
 }
 
 fn for_each_file_mut(
