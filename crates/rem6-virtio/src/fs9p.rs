@@ -27,6 +27,10 @@ pub const VIRTIO_9P_TATTACH: u8 = 104;
 pub const VIRTIO_9P_RATTACH: u8 = 105;
 pub const VIRTIO_9P_TLCREATE: u8 = 14;
 pub const VIRTIO_9P_RLCREATE: u8 = 15;
+pub const VIRTIO_9P_TSYMLINK: u8 = 16;
+pub const VIRTIO_9P_RSYMLINK: u8 = 17;
+pub const VIRTIO_9P_TREADLINK: u8 = 22;
+pub const VIRTIO_9P_RREADLINK: u8 = 23;
 pub const VIRTIO_9P_TGETATTR: u8 = 24;
 pub const VIRTIO_9P_RGETATTR: u8 = 25;
 pub const VIRTIO_9P_TREADDIR: u8 = 40;
@@ -60,9 +64,11 @@ pub const VIRTIO_9P_EEXIST: u32 = 17;
 pub const VIRTIO_9P_ENOENT: u32 = 2;
 pub const VIRTIO_9P_ENOTSUP: u32 = 95;
 pub const VIRTIO_9P_QTFILE: u8 = 0;
+pub const VIRTIO_9P_QTSYMLINK: u8 = 0x02;
 pub const VIRTIO_9P_QTDIR: u8 = 0x80;
 pub const VIRTIO_9P_DTDIR: u8 = 4;
 pub const VIRTIO_9P_DTREG: u8 = 8;
+pub const VIRTIO_9P_DTSYMLINK: u8 = 10;
 pub const VIRTIO_9P_GETATTR_BASIC: u64 = 0x0000_07ff;
 pub const VIRTIO_9P_STATFS_TYPE: u32 = 0x0102_1997;
 pub const VIRTIO_9P_STATFS_BLOCK_SIZE: u32 = 4096;
@@ -250,6 +256,14 @@ impl Virtio9pDevice {
                 Ok(payload) => (VIRTIO_9P_RLCREATE, payload),
                 Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
             },
+            VIRTIO_9P_TSYMLINK => match self.handle_symlink(&request)? {
+                Ok(payload) => (VIRTIO_9P_RSYMLINK, payload),
+                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
+            },
+            VIRTIO_9P_TREADLINK => match self.handle_readlink(&request)? {
+                Ok(payload) => (VIRTIO_9P_RREADLINK, payload),
+                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
+            },
             VIRTIO_9P_TGETATTR => match self.handle_getattr(&request)? {
                 Ok(payload) => (VIRTIO_9P_RGETATTR, payload),
                 Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
@@ -419,6 +433,48 @@ impl Virtio9pDevice {
         let mut payload = namespace.qid(node).to_le_bytes().to_vec();
         payload.extend(VIRTIO_9P_DEFAULT_MSIZE.to_le_bytes());
         Ok(Ok(payload))
+    }
+
+    fn handle_symlink(
+        &self,
+        request: &Virtio9pRequest,
+    ) -> Result<Result<Vec<u8>, u32>, VirtioError> {
+        let symlink = parse_symlink_request(request)?;
+        let Some(parent) = self
+            .fids
+            .lock()
+            .expect("virtio 9p fid lock")
+            .get(&symlink.dfid)
+            .copied()
+        else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        let mut namespace = self.namespace.lock().expect("virtio 9p namespace lock");
+        match namespace.create_symlink(parent.node(), symlink.name, symlink.target)? {
+            Ok(node) => Ok(Ok(qid_payload(namespace.qid(node)))),
+            Err(errno) => Ok(Err(errno)),
+        }
+    }
+
+    fn handle_readlink(
+        &self,
+        request: &Virtio9pRequest,
+    ) -> Result<Result<Vec<u8>, u32>, VirtioError> {
+        let fid = parse_readlink_request(request)?;
+        let Some(fid) = self
+            .fids
+            .lock()
+            .expect("virtio 9p fid lock")
+            .get(&fid)
+            .copied()
+        else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        let namespace = self.namespace.lock().expect("virtio 9p namespace lock");
+        let Some(target) = namespace.readlink(fid.node()) else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        Ok(Ok(string_payload(target.as_bytes())))
     }
 
     fn handle_getattr(
@@ -769,6 +825,31 @@ fn parse_lcreate_request(request: &Virtio9pRequest) -> Result<Virtio9pCreateRequ
     Ok(Virtio9pCreateRequest { fid, name })
 }
 
+fn parse_symlink_request(request: &Virtio9pRequest) -> Result<Virtio9pSymlinkRequest, VirtioError> {
+    let mut reader = Virtio9pPayloadReader::new(request.message_type(), request.payload());
+    let dfid = reader.read_u32()?;
+    let name = string_from_9p(
+        request.message_type(),
+        reader.read_string()?,
+        request.payload(),
+    )?;
+    let target = string_from_9p(
+        request.message_type(),
+        reader.read_string()?,
+        request.payload(),
+    )?;
+    let _gid = reader.read_u32()?;
+    reader.finish()?;
+    Ok(Virtio9pSymlinkRequest { dfid, name, target })
+}
+
+fn parse_readlink_request(request: &Virtio9pRequest) -> Result<u32, VirtioError> {
+    let mut reader = Virtio9pPayloadReader::new(request.message_type(), request.payload());
+    let fid = reader.read_u32()?;
+    reader.finish()?;
+    Ok(fid)
+}
+
 fn parse_mkdir_request(request: &Virtio9pRequest) -> Result<Virtio9pMkdirRequest, VirtioError> {
     let mut reader = Virtio9pPayloadReader::new(request.message_type(), request.payload());
     let dfid = reader.read_u32()?;
@@ -891,8 +972,14 @@ fn parse_flush_request(request: &Virtio9pRequest) -> Result<u16, VirtioError> {
 fn version_payload(msize: u32, version: &[u8]) -> Vec<u8> {
     let mut payload = Vec::new();
     payload.extend(msize.to_le_bytes());
-    payload.extend((version.len() as u16).to_le_bytes());
-    payload.extend_from_slice(version);
+    payload.extend(string_payload(version));
+    payload
+}
+
+fn string_payload(data: &[u8]) -> Vec<u8> {
+    let mut payload = Vec::with_capacity(2 + data.len());
+    payload.extend((data.len() as u16).to_le_bytes());
+    payload.extend_from_slice(data);
     payload
 }
 
@@ -991,6 +1078,13 @@ struct Virtio9pOpenRequest {
 struct Virtio9pCreateRequest {
     fid: u32,
     name: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Virtio9pSymlinkRequest {
+    dfid: u32,
+    name: String,
+    target: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
