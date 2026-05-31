@@ -31,6 +31,44 @@ fn virtio_9p_device_negotiates_version_and_records_completion() {
 }
 
 #[test]
+fn virtio_9p_device_clamps_too_small_msize_to_valid_version_envelope() {
+    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap())
+        .with_file("tiny.txt", b"tiny payload".to_vec())
+        .unwrap();
+    let min_version_msize = 7_u32 + p9_version_payload(0, VIRTIO_9P_PROTOCOL_VERSION).len() as u32;
+    let version = decoded_request(
+        VIRTIO_9P_TVERSION,
+        1,
+        p9_version_payload(8, VIRTIO_9P_PROTOCOL_VERSION),
+    );
+
+    let version_completion = device.execute_at(10, version).unwrap();
+
+    assert_eq!(version_completion.message_type(), VIRTIO_9P_RVERSION);
+    assert_eq!(
+        version_completion.payload()[0..4],
+        min_version_msize.to_le_bytes()
+    );
+    assert!(7 + version_completion.payload().len() as u32 <= min_version_msize);
+
+    let attach = decoded_request(
+        VIRTIO_9P_TATTACH,
+        2,
+        p9_attach_payload(1, VIRTIO_9P_NOFID, b"root", b"", 0),
+    );
+    device.execute_at(11, attach).unwrap();
+    let walk = decoded_request(VIRTIO_9P_TWALK, 3, p9_walk_payload(1, 2, &[b"tiny.txt"]));
+    device.execute_at(12, walk).unwrap();
+    let open = decoded_request(VIRTIO_9P_TLOPEN, 4, p9_lopen_payload(2, 0));
+    device.execute_at(13, open).unwrap();
+    let read = decoded_request(VIRTIO_9P_TREAD, 5, p9_read_payload(2, 0, 64));
+    let read_completion = device.execute_at(14, read).unwrap();
+
+    assert_eq!(read_completion.message_type(), VIRTIO_9P_RREAD);
+    assert!(7 + read_completion.payload().len() as u32 <= min_version_msize);
+}
+
+#[test]
 fn virtio_9p_device_applies_negotiated_msize_to_io_unit_replies() {
     let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap())
         .with_file("small.txt", b"bounded".to_vec())

@@ -141,7 +141,7 @@ impl Virtio9pNamespace {
         let Some(entries) = self.directory_entries(parent) else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
-        if matches!(entries.get(&name), Some(Virtio9pNode::Directory(_))) {
+        if entries.contains_key(&name) {
             return Ok(Err(VIRTIO_9P_EEXIST));
         }
         let path = self.allocate_path()?;

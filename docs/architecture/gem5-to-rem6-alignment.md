@@ -1248,9 +1248,10 @@ Implementation evidence through 2026-05-31:
   leaves the available cursor unchanged when descriptor decoding fails. The 9P
   device execution path now handles the protocol handshake messages needed
   before filesystem traffic: `Tversion` replies with bounded `Rversion`
-  negotiation data, clamps client `msize` to the device limit, carries the
-  negotiated value into later I/O-unit replies, and keeps counted `Rread` and
-  `Rreaddir` data replies inside the negotiated message budget. A parsed
+  negotiation data, clamps client `msize` to the device limit, floors undersized
+  requests to a valid `Rversion` envelope, carries the negotiated value into
+  later I/O-unit replies, and keeps counted `Rread` and `Rreaddir` data replies
+  inside the negotiated message budget. A parsed
   `Tversion` also resets live fid and attach state while retaining completion
   history for diagnostics, `Tauth` parses authentication requests before returning an
   explicit no-auth-backend errno, `Tattach` records the attached fid plus user
@@ -1261,8 +1262,9 @@ Implementation evidence through 2026-05-31:
   directories into new fid state, rejects occupied destination fids, rejects
   non-empty same-fid rebinding, and preserves empty same-fid walk replies,
   `Tmkdir` creates deterministic directory qids and rejects duplicate names with
-  errno payloads, `Tlcreate` creates named root or child-directory files and
-  retargets the directory fid to the opened file,
+  errno payloads, `Tlcreate` creates named root or child-directory files,
+  rejects occupied names without replacing existing nodes, and retargets the
+  directory fid to the opened file,
   `Tgetattr` reports deterministic root, directory, and file metadata,
   `Tstatfs` reports deterministic namespace capacity metadata, legacy `Tstat`
   emits deterministic 9P2000 stat metadata for existing fids and rejects stale
@@ -1271,7 +1273,8 @@ Implementation evidence through 2026-05-31:
   same-parent name updates while preserving open fid access, and rejects stale fids
   before mutation, `Tlopen` and legacy
   `Topen` mark file and directory fids open and report qid plus I/O-unit data,
-  legacy `Tcreate` shares the same checked namespace creation path as `Tlcreate`, `Treaddir`
+  legacy `Tcreate` shares the same checked namespace creation path as
+  `Tlcreate`, including duplicate-file rejection, `Treaddir`
   returns stable `.`/`..` plus sorted file, symlink, or directory dirents with
   resumable byte offsets and count-bounded whole-entry replies, `Tsymlink`
   creates deterministic symlink qids, `Treadlink` returns counted symlink
@@ -3254,8 +3257,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   readable reply descriptor rejection, guest-memory available-ring consumption,
   guest-memory response scatter writes, used-ring writeback, ISR queue
   interrupts, decode-error cursor preservation, `Tversion` to `Rversion`
-  negotiation, client `msize` clamping, negotiated I/O-unit propagation,
-  negotiated `Rread` and `Rreaddir` data-budget enforcement, `Tversion` fid and
+  negotiation, client `msize` clamping plus valid-envelope flooring,
+  negotiated I/O-unit propagation, negotiated `Rread` and `Rreaddir`
+  data-budget enforcement, `Tversion` fid and
   attach-state reset, `Tattach` to
   root-qid response generation, attached-fid metadata
   recording, unsupported-request `Rlerror` replies, and malformed 9P payload
@@ -3265,7 +3269,8 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   rejection, same-fid non-empty walk rejection, empty same-fid walk replies,
   `Tmkdir` directory creation, duplicate-name errno replies, directory qid preservation,
   and directory walk/listing behavior, `Tlcreate` root and child-directory file
-  creation plus opened-fid retargeting, `Tgetattr` root, directory, and file
+  creation, duplicate-file rejection without clobbering, plus opened-fid
+  retargeting, `Tgetattr` root, directory, and file
   metadata replies, `Tstatfs` deterministic filesystem-capacity replies,
   legacy `Tstat` file stat payloads, stale-fid errno replies, and malformed
   payload rejection, legacy `Twstat` mode, uid, gid, mtime, atime, length, and
@@ -3273,7 +3278,8 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   survival after rename, old-name rejection, new-name walk qid preservation,
   stale-fid errno replies, and malformed
   stat-blob rejection, `Tlopen` and legacy `Topen` file and directory qid plus
-  I/O-unit replies, legacy `Tcreate` checked file creation plus opened-fid retargeting, `Treaddir` sorted
+  I/O-unit replies, legacy `Tcreate` checked file creation, duplicate-file
+  rejection without clobbering, plus opened-fid retargeting, `Treaddir` sorted
   root and child-directory dirents, resumable offsets, count-bounded replies,
   and directory-only error handling, counted `Tread` ranges, `Twrite` counted
   replies plus overwrite mutation, `Tlink` hard-link qid reuse, shared write

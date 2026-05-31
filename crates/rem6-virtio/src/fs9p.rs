@@ -168,13 +168,13 @@ impl Virtio9pDevice {
             },
             VIRTIO_9P_TVERSION => {
                 let version = parse_version_request(&request)?;
-                let response_msize = version.msize.min(VIRTIO_9P_DEFAULT_MSIZE);
-                self.reset_session(response_msize);
                 let response_version = if version.version == VIRTIO_9P_PROTOCOL_VERSION {
                     VIRTIO_9P_PROTOCOL_VERSION
                 } else {
                     b"unknown"
                 };
+                let response_msize = version_response_msize(version.msize, response_version)?;
+                self.reset_session(response_msize);
                 (
                     VIRTIO_9P_RVERSION,
                     version_payload(response_msize, response_version),
@@ -725,17 +725,11 @@ impl Virtio9pDevice {
         let Some(node) = node else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
-        if self
-            .namespace
-            .lock()
-            .expect("virtio 9p namespace lock")
-            .metadata(node)
-            .is_none()
-        {
-            return Ok(Err(VIRTIO_9P_EBADF));
-        }
         let data = {
             let namespace = self.namespace.lock().expect("virtio 9p namespace lock");
+            if namespace.metadata(node).is_none() {
+                return Ok(Err(VIRTIO_9P_EBADF));
+            }
             if xattrwalk.name.is_empty() {
                 namespace.xattr_list(node)
             } else {
@@ -1013,10 +1007,7 @@ impl Virtio9pDevice {
         if let Some(data) = fid.xattr_data() {
             let data = read_data_slice(data, read.offset, self.counted_data_limit(read.count))
                 .ok_or(VirtioError::Virtio9pPayloadLengthOverflow)?;
-            let mut payload = Vec::new();
-            payload.extend((data.len() as u32).to_le_bytes());
-            payload.extend(data);
-            return Ok(Ok(payload));
+            return Ok(Ok(counted_data_payload(data)));
         }
         if !fid.is_open() {
             return Ok(Err(VIRTIO_9P_EBADF));
@@ -1030,10 +1021,7 @@ impl Virtio9pDevice {
         else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
-        let mut payload = Vec::new();
-        payload.extend((data.len() as u32).to_le_bytes());
-        payload.extend(data);
-        Ok(Ok(payload))
+        Ok(Ok(counted_data_payload(data)))
     }
 
     fn handle_write(&self, request: &Virtio9pRequest) -> Result<Result<Vec<u8>, u32>, VirtioError> {
@@ -1172,6 +1160,24 @@ fn read_data_slice(data: &[u8], offset: u64, count: u32) -> Option<Vec<u8>> {
     let count = usize::try_from(count).ok()?;
     let end = start.saturating_add(count).min(data.len());
     Some(data[start..end].to_vec())
+}
+
+fn counted_data_payload(data: Vec<u8>) -> Vec<u8> {
+    let mut payload = Vec::new();
+    payload.extend((data.len() as u32).to_le_bytes());
+    payload.extend(data);
+    payload
+}
+
+fn version_response_msize(requested: u32, version: &[u8]) -> Result<u32, VirtioError> {
+    let version_bytes =
+        u32::try_from(version.len()).map_err(|_| VirtioError::Virtio9pPayloadLengthOverflow)?;
+    let minimum = VIRTIO_9P_HEADER_BYTES
+        .checked_add(4)
+        .and_then(|bytes| bytes.checked_add(2))
+        .and_then(|bytes| bytes.checked_add(version_bytes))
+        .ok_or(VirtioError::Virtio9pPayloadLengthOverflow)?;
+    Ok(requested.min(VIRTIO_9P_DEFAULT_MSIZE).max(minimum))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
