@@ -120,6 +120,16 @@ fn corrupt_manifest_chunk(
     )
 }
 
+fn malformed_bar_payload_with_slot_count(slot_count: u32) -> Vec<u8> {
+    let mut payload = Vec::new();
+    payload.extend_from_slice(b"R6PHBAR1");
+    payload.extend_from_slice(&1u16.to_le_bytes());
+    payload.extend_from_slice(&1u32.to_le_bytes());
+    payload.extend_from_slice(&[0, 1, 0]);
+    payload.extend_from_slice(&slot_count.to_le_bytes());
+    payload
+}
+
 #[test]
 fn pci_host_checkpoint_captures_and_validates_topology_payload() {
     let live = Arc::new(Mutex::new(host_with_endpoint()));
@@ -134,6 +144,8 @@ fn pci_host_checkpoint_captures_and_validates_topology_payload() {
     let topology = snapshot.topology_snapshot();
     let bridge_config_space = snapshot.bridge_config_space_payloads();
     let endpoint_config_space = snapshot.endpoint_config_space_payloads();
+    let bridge_bars = snapshot.bridge_bar_payloads();
+    let endpoint_bars = snapshot.endpoint_bar_payloads();
     let component = CheckpointComponentId::new("pci.host0").unwrap();
     let port = PciHostCheckpointPort::new(component.clone(), Arc::clone(&live));
     let mut registry = CheckpointRegistry::new();
@@ -147,7 +159,9 @@ fn pci_host_checkpoint_captures_and_validates_topology_payload() {
             component.clone(),
             topology.clone(),
             bridge_config_space.clone(),
-            endpoint_config_space.clone()
+            endpoint_config_space.clone(),
+            bridge_bars.clone(),
+            endpoint_bars.clone()
         )
     );
     assert_eq!(
@@ -158,6 +172,8 @@ fn pci_host_checkpoint_captures_and_validates_topology_payload() {
         captured.endpoint_config_space_payloads(),
         &endpoint_config_space
     );
+    assert_eq!(captured.bridge_bar_payloads(), &bridge_bars);
+    assert_eq!(captured.endpoint_bar_payloads(), &endpoint_bars);
     assert_eq!(
         PciHostBridgeTopologySnapshot::from_bytes(
             registry.chunk(&component, "host-topology").unwrap()
@@ -171,6 +187,8 @@ fn pci_host_checkpoint_captures_and_validates_topology_payload() {
     assert!(registry
         .chunk(&component, "host-endpoint-config-space")
         .is_some());
+    assert!(registry.chunk(&component, "host-bridge-bars").is_some());
+    assert!(registry.chunk(&component, "host-endpoint-bars").is_some());
     assert_eq!(port.restore_from(&registry).unwrap(), captured);
     assert_eq!(live.lock().unwrap().topology_snapshot(), topology);
 }
@@ -194,6 +212,51 @@ fn pci_host_checkpoint_accepts_legacy_topology_only_payloads() {
     assert_eq!(restored.topology(), &topology);
     assert!(restored.bridge_config_space_payloads().is_empty());
     assert!(restored.endpoint_config_space_payloads().is_empty());
+    assert!(!restored.has_bar_payloads());
+    assert!(restored.bridge_bar_payloads().is_empty());
+    assert!(restored.endpoint_bar_payloads().is_empty());
+}
+
+#[test]
+fn pci_host_checkpoint_accepts_config_only_payloads() {
+    let live = Arc::new(Mutex::new(host_with_endpoint()));
+    let component = CheckpointComponentId::new("pci.host0").unwrap();
+    let port = PciHostCheckpointPort::new(component.clone(), Arc::clone(&live));
+    let mut captured = CheckpointRegistry::new();
+
+    port.register(&mut captured).unwrap();
+    let record = port.capture_into(&mut captured).unwrap();
+
+    let mut config_only = CheckpointRegistry::new();
+    port.register(&mut config_only).unwrap();
+    for chunk_name in [
+        "host-topology",
+        "host-bridge-config-space",
+        "host-endpoint-config-space",
+    ] {
+        config_only
+            .write_chunk(
+                &component,
+                chunk_name,
+                captured.chunk(&component, chunk_name).unwrap().to_vec(),
+            )
+            .unwrap();
+    }
+
+    let restored = port.restore_from(&config_only).unwrap();
+
+    assert!(restored.has_config_space_payloads());
+    assert_eq!(
+        restored.bridge_config_space_payloads(),
+        record.bridge_config_space_payloads()
+    );
+    assert_eq!(
+        restored.endpoint_config_space_payloads(),
+        record.endpoint_config_space_payloads()
+    );
+    assert!(!restored.has_bar_payloads());
+    assert!(restored.bridge_bar_payloads().is_empty());
+    assert!(restored.endpoint_bar_payloads().is_empty());
 }
 
 #[test]
@@ -239,6 +302,116 @@ fn pci_host_checkpoint_rejects_partially_missing_config_space_payloads() {
 }
 
 #[test]
+fn pci_host_checkpoint_rejects_partially_missing_bar_payloads() {
+    let live = Arc::new(Mutex::new(host_with_endpoint()));
+    let component = CheckpointComponentId::new("pci.host0").unwrap();
+    let port = PciHostCheckpointPort::new(component.clone(), Arc::clone(&live));
+    let mut captured = CheckpointRegistry::new();
+
+    port.register(&mut captured).unwrap();
+    port.capture_into(&mut captured).unwrap();
+
+    let mut partial = CheckpointRegistry::new();
+    port.register(&mut partial).unwrap();
+    for chunk_name in [
+        "host-topology",
+        "host-bridge-config-space",
+        "host-endpoint-config-space",
+        "host-endpoint-bars",
+    ] {
+        partial
+            .write_chunk(
+                &component,
+                chunk_name,
+                captured.chunk(&component, chunk_name).unwrap().to_vec(),
+            )
+            .unwrap();
+    }
+
+    assert_eq!(
+        port.restore_from(&partial).unwrap_err(),
+        PciHostCheckpointError::MissingChunk {
+            component,
+            name: "host-bridge-bars".to_string(),
+        }
+    );
+}
+
+#[test]
+fn pci_host_checkpoint_rejects_bar_payloads_without_config_space_payloads() {
+    let live = Arc::new(Mutex::new(host_with_endpoint()));
+    let component = CheckpointComponentId::new("pci.host0").unwrap();
+    let port = PciHostCheckpointPort::new(component.clone(), Arc::clone(&live));
+    let mut captured = CheckpointRegistry::new();
+
+    port.register(&mut captured).unwrap();
+    port.capture_into(&mut captured).unwrap();
+
+    let mut bar_only = CheckpointRegistry::new();
+    port.register(&mut bar_only).unwrap();
+    for chunk_name in ["host-topology", "host-bridge-bars", "host-endpoint-bars"] {
+        bar_only
+            .write_chunk(
+                &component,
+                chunk_name,
+                captured.chunk(&component, chunk_name).unwrap().to_vec(),
+            )
+            .unwrap();
+    }
+
+    assert_eq!(
+        port.restore_from(&bar_only).unwrap_err(),
+        PciHostCheckpointError::MissingChunk {
+            component,
+            name: "host-bridge-config-space".to_string(),
+        }
+    );
+}
+
+#[test]
+fn pci_host_checkpoint_rejects_bar_payloads_with_impossible_slot_count() {
+    let live = Arc::new(Mutex::new(host_with_endpoint()));
+    let component = CheckpointComponentId::new("pci.host0").unwrap();
+    let port = PciHostCheckpointPort::new(component.clone(), Arc::clone(&live));
+    let mut captured = CheckpointRegistry::new();
+
+    port.register(&mut captured).unwrap();
+    port.capture_into(&mut captured).unwrap();
+
+    let mut malformed = CheckpointRegistry::new();
+    port.register(&mut malformed).unwrap();
+    for chunk_name in [
+        "host-topology",
+        "host-bridge-config-space",
+        "host-endpoint-config-space",
+        "host-bridge-bars",
+    ] {
+        malformed
+            .write_chunk(
+                &component,
+                chunk_name,
+                captured.chunk(&component, chunk_name).unwrap().to_vec(),
+            )
+            .unwrap();
+    }
+    malformed
+        .write_chunk(
+            &component,
+            "host-endpoint-bars",
+            malformed_bar_payload_with_slot_count(u32::MAX),
+        )
+        .unwrap();
+
+    assert_eq!(
+        port.restore_from(&malformed).unwrap_err(),
+        PciHostCheckpointError::InvalidChunk {
+            component,
+            reason: PciError::InvalidBarSnapshot.to_string(),
+        }
+    );
+}
+
+#[test]
 fn pci_host_checkpoint_bank_decodes_records_for_manifest_audit() {
     let first = Arc::new(Mutex::new(host_with_endpoint()));
     let second = Arc::new(Mutex::new(host_with_other_endpoint()));
@@ -263,13 +436,17 @@ fn pci_host_checkpoint_bank_decodes_records_for_manifest_audit() {
                 first_component,
                 first_snapshot.topology_snapshot(),
                 first_snapshot.bridge_config_space_payloads(),
-                first_snapshot.endpoint_config_space_payloads()
+                first_snapshot.endpoint_config_space_payloads(),
+                first_snapshot.bridge_bar_payloads(),
+                first_snapshot.endpoint_bar_payloads()
             ),
             PciHostCheckpointRecord::new(
                 second_component,
                 second_snapshot.topology_snapshot(),
                 second_snapshot.bridge_config_space_payloads(),
-                second_snapshot.endpoint_config_space_payloads()
+                second_snapshot.endpoint_config_space_payloads(),
+                second_snapshot.bridge_bar_payloads(),
+                second_snapshot.endpoint_bar_payloads()
             ),
         ]
     );
@@ -305,7 +482,9 @@ fn system_action_executor_checkpoints_and_prevalidates_pci_host_topology() {
     assert!(manifest.states().iter().any(|state| {
         state.component() == &component
             && [
+                "host-bridge-bars",
                 "host-bridge-config-space",
+                "host-endpoint-bars",
                 "host-endpoint-config-space",
                 "host-topology",
             ]
@@ -387,7 +566,9 @@ fn system_action_executor_constructs_with_pci_host_checkpoint_bank() {
     assert!(manifest.states().iter().any(|state| {
         state.component() == &component
             && [
+                "host-bridge-bars",
                 "host-bridge-config-space",
+                "host-endpoint-bars",
                 "host-endpoint-config-space",
                 "host-topology",
             ]
@@ -395,6 +576,66 @@ fn system_action_executor_constructs_with_pci_host_checkpoint_bank() {
             .all(|name| state.chunks().iter().any(|chunk| chunk.name() == name))
     }));
     assert!(executor.pci_host_checkpoint_bank().is_some());
+}
+
+#[test]
+fn system_action_executor_rejects_pci_host_bar_payload_malformed() {
+    let live = Arc::new(Mutex::new(host_with_endpoint()));
+    let component = CheckpointComponentId::new("pci.host0").unwrap();
+    let bank = PciHostCheckpointBank::new([PciHostCheckpointPort::new(
+        component.clone(),
+        Arc::clone(&live),
+    )])
+    .unwrap();
+    let mut executor = SystemActionExecutor::new(StatsRegistry::new());
+    executor.attach_pci_host_checkpoint_bank(bank).unwrap();
+
+    let checkpoint = HostActionRecord::new(
+        53,
+        PartitionId::new(0),
+        PartitionId::new(1),
+        GuestEventId::new(10),
+        GuestSourceId::new(9),
+        HostAction::Checkpoint {
+            label: "pci-bars".to_string(),
+        },
+    );
+    let manifest = match executor.apply(&checkpoint).unwrap() {
+        SystemActionOutcome::Checkpoint { manifest, .. } => manifest,
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+    let original_payload = executor
+        .checkpoints()
+        .chunk(&component, "host-endpoint-bars")
+        .unwrap()
+        .to_vec();
+    let corrupted = corrupt_manifest_chunk(&manifest, &component, "host-endpoint-bars");
+
+    let restore = HostActionRecord::new(
+        59,
+        PartitionId::new(0),
+        PartitionId::new(1),
+        GuestEventId::new(11),
+        GuestSourceId::new(9),
+        HostAction::RestoreCheckpoint {
+            manifest: corrupted,
+        },
+    );
+
+    assert_eq!(
+        executor.apply(&restore).unwrap_err(),
+        SystemError::PciHostCheckpoint(PciHostCheckpointError::InvalidChunk {
+            component: component.clone(),
+            reason: PciError::InvalidBarSnapshot.to_string(),
+        })
+    );
+    assert_eq!(
+        executor
+            .checkpoints()
+            .chunk(&component, "host-endpoint-bars")
+            .unwrap(),
+        original_payload
+    );
 }
 
 #[test]

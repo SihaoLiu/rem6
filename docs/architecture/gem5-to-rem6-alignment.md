@@ -3067,17 +3067,19 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   byte-exact config-space payloads for checkpoint audit, and host snapshots
   aggregate those payloads in function-sorted bridge and endpoint maps.
   `rem6-system` now exposes a PCI host checkpoint bank that captures the
-  topology payload plus bridge and endpoint config-space payload maps into
-  host checkpoint manifests, decodes manifest payloads back into typed audit
-  records in deterministic component order, and prevalidates restore attempts
-  against the live host topology and config-space bytes when those config
-  chunks are present. Topology-only legacy PCI host manifests still restore
-  through topology validation, while partially missing config chunks,
-  malformed payload maps, truncated function payloads, function-set
-  mismatches, and live-snapshot byte mismatches are rejected before broader
-  PCI config restore mutates device state. `SystemActionExecutor` can be
-  constructed directly with an attached PCI host checkpoint bank. rem6 still
-  does not pretend that PCI host checkpoint validation alone restores full
+  topology payload plus bridge and endpoint config-space and BAR payload maps
+  into host checkpoint manifests, decodes manifest payloads back into typed
+  audit records in deterministic component order, and prevalidates restore
+  attempts against the live host topology, config-space bytes, and BAR payloads
+  when the corresponding chunk families are present. Topology-only legacy PCI
+  host manifests still restore through topology validation, and config-only
+  manifests still restore through topology plus config-space validation. BAR
+  chunks without config-space chunks, partially missing config or BAR chunk
+  pairs, malformed payload maps, truncated function payloads, function-set
+  mismatches, and live-snapshot byte mismatches are rejected before broader PCI
+  config restore mutates device state. `SystemActionExecutor`
+  can be constructed directly with an attached PCI host checkpoint bank. rem6
+  still does not pretend that PCI host checkpoint validation alone restores full
   PCI configuration state.
   BAR state now has a stable byte codec for endpoint checkpoint audit,
   preserving endpoint shape, raw lower and upper register state, size-probe

@@ -7,12 +7,20 @@ use rem6_checkpoint::{CheckpointComponentId, CheckpointError, CheckpointRegistry
 use rem6_pci::{PciError, PciFunctionAddress, PciHostBridge, PciHostBridgeTopologySnapshot};
 
 const PCI_HOST_BRIDGE_CONFIG_CHUNK: &str = "host-bridge-config-space";
+const PCI_HOST_BRIDGE_BAR_CHUNK: &str = "host-bridge-bars";
 const PCI_HOST_ENDPOINT_CONFIG_CHUNK: &str = "host-endpoint-config-space";
+const PCI_HOST_ENDPOINT_BAR_CHUNK: &str = "host-endpoint-bars";
 const PCI_HOST_TOPOLOGY_CHUNK: &str = "host-topology";
 const PCI_HOST_CONFIG_SPACE_MAP_MAGIC: &[u8; 8] = b"R6PHCFG1";
+const PCI_HOST_BAR_MAP_MAGIC: &[u8; 8] = b"R6PHBAR1";
 const PCI_HOST_CONFIG_SPACE_MAP_VERSION: u16 = 1;
+const PCI_HOST_BAR_MAP_VERSION: u16 = 1;
+const PCI_BAR_SLOT_ABSENT: u8 = 0;
+const PCI_BAR_SLOT_PRESENT: u8 = 1;
 const U16_BYTES: usize = 2;
 const U32_BYTES: usize = 4;
+
+pub type PciHostBarPayloadMap = BTreeMap<PciFunctionAddress, Vec<Option<Vec<u8>>>>;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PciHostCheckpointRecord {
@@ -20,11 +28,34 @@ pub struct PciHostCheckpointRecord {
     topology: PciHostBridgeTopologySnapshot,
     bridge_config_space_payloads: BTreeMap<PciFunctionAddress, Vec<u8>>,
     endpoint_config_space_payloads: BTreeMap<PciFunctionAddress, Vec<u8>>,
+    bridge_bar_payloads: PciHostBarPayloadMap,
+    endpoint_bar_payloads: PciHostBarPayloadMap,
     config_space_payloads_present: bool,
+    bar_payloads_present: bool,
 }
 
 impl PciHostCheckpointRecord {
     pub fn new(
+        component: CheckpointComponentId,
+        topology: PciHostBridgeTopologySnapshot,
+        bridge_config_space_payloads: BTreeMap<PciFunctionAddress, Vec<u8>>,
+        endpoint_config_space_payloads: BTreeMap<PciFunctionAddress, Vec<u8>>,
+        bridge_bar_payloads: PciHostBarPayloadMap,
+        endpoint_bar_payloads: PciHostBarPayloadMap,
+    ) -> Self {
+        Self {
+            component,
+            topology,
+            bridge_config_space_payloads,
+            endpoint_config_space_payloads,
+            bridge_bar_payloads,
+            endpoint_bar_payloads,
+            config_space_payloads_present: true,
+            bar_payloads_present: true,
+        }
+    }
+
+    fn config_only(
         component: CheckpointComponentId,
         topology: PciHostBridgeTopologySnapshot,
         bridge_config_space_payloads: BTreeMap<PciFunctionAddress, Vec<u8>>,
@@ -35,7 +66,10 @@ impl PciHostCheckpointRecord {
             topology,
             bridge_config_space_payloads,
             endpoint_config_space_payloads,
+            bridge_bar_payloads: BTreeMap::new(),
+            endpoint_bar_payloads: BTreeMap::new(),
             config_space_payloads_present: true,
+            bar_payloads_present: false,
         }
     }
 
@@ -48,7 +82,10 @@ impl PciHostCheckpointRecord {
             topology,
             bridge_config_space_payloads: BTreeMap::new(),
             endpoint_config_space_payloads: BTreeMap::new(),
+            bridge_bar_payloads: BTreeMap::new(),
+            endpoint_bar_payloads: BTreeMap::new(),
             config_space_payloads_present: false,
+            bar_payloads_present: false,
         }
     }
 
@@ -68,8 +105,20 @@ impl PciHostCheckpointRecord {
         &self.endpoint_config_space_payloads
     }
 
+    pub fn bridge_bar_payloads(&self) -> &PciHostBarPayloadMap {
+        &self.bridge_bar_payloads
+    }
+
+    pub fn endpoint_bar_payloads(&self) -> &PciHostBarPayloadMap {
+        &self.endpoint_bar_payloads
+    }
+
     pub const fn has_config_space_payloads(&self) -> bool {
         self.config_space_payloads_present
+    }
+
+    pub const fn has_bar_payloads(&self) -> bool {
+        self.bar_payloads_present
     }
 }
 
@@ -108,6 +157,8 @@ impl PciHostCheckpointPort {
         let topology = snapshot.topology_snapshot();
         let bridge_config_space_payloads = snapshot.bridge_config_space_payloads();
         let endpoint_config_space_payloads = snapshot.endpoint_config_space_payloads();
+        let bridge_bar_payloads = snapshot.bridge_bar_payloads();
+        let endpoint_bar_payloads = snapshot.endpoint_bar_payloads();
         registry
             .write_chunk(
                 &self.component,
@@ -125,8 +176,22 @@ impl PciHostCheckpointPort {
         registry
             .write_chunk(
                 &self.component,
+                PCI_HOST_BRIDGE_BAR_CHUNK,
+                encode_bar_payloads(&bridge_bar_payloads),
+            )
+            .map_err(PciHostCheckpointError::Checkpoint)?;
+        registry
+            .write_chunk(
+                &self.component,
                 PCI_HOST_ENDPOINT_CONFIG_CHUNK,
                 encode_config_space_payloads(&endpoint_config_space_payloads),
+            )
+            .map_err(PciHostCheckpointError::Checkpoint)?;
+        registry
+            .write_chunk(
+                &self.component,
+                PCI_HOST_ENDPOINT_BAR_CHUNK,
+                encode_bar_payloads(&endpoint_bar_payloads),
             )
             .map_err(PciHostCheckpointError::Checkpoint)?;
         Ok(PciHostCheckpointRecord::new(
@@ -134,6 +199,8 @@ impl PciHostCheckpointPort {
             topology,
             bridge_config_space_payloads,
             endpoint_config_space_payloads,
+            bridge_bar_payloads,
+            endpoint_bar_payloads,
         ))
     }
 
@@ -166,26 +233,72 @@ impl PciHostCheckpointPort {
             self.decode_optional_config_space_payloads(registry, PCI_HOST_BRIDGE_CONFIG_CHUNK)?;
         let endpoint_config_space_payloads =
             self.decode_optional_config_space_payloads(registry, PCI_HOST_ENDPOINT_CONFIG_CHUNK)?;
-        match (bridge_config_space_payloads, endpoint_config_space_payloads) {
-            (Some(bridge_config_space_payloads), Some(endpoint_config_space_payloads)) => {
-                Ok(PciHostCheckpointRecord::new(
-                    self.component.clone(),
-                    topology,
+        let (bridge_config_space_payloads, endpoint_config_space_payloads, has_config_space) =
+            match (bridge_config_space_payloads, endpoint_config_space_payloads) {
+                (Some(bridge_config_space_payloads), Some(endpoint_config_space_payloads)) => (
                     bridge_config_space_payloads,
                     endpoint_config_space_payloads,
-                ))
-            }
-            (None, None) => Ok(PciHostCheckpointRecord::topology_only(
+                    true,
+                ),
+                (None, None) => (BTreeMap::new(), BTreeMap::new(), false),
+                (None, Some(_)) => {
+                    return Err(PciHostCheckpointError::MissingChunk {
+                        component: self.component.clone(),
+                        name: PCI_HOST_BRIDGE_CONFIG_CHUNK.to_string(),
+                    });
+                }
+                (Some(_), None) => {
+                    return Err(PciHostCheckpointError::MissingChunk {
+                        component: self.component.clone(),
+                        name: PCI_HOST_ENDPOINT_CONFIG_CHUNK.to_string(),
+                    });
+                }
+            };
+        let bridge_bar_payloads =
+            self.decode_optional_bar_payloads(registry, PCI_HOST_BRIDGE_BAR_CHUNK)?;
+        let endpoint_bar_payloads =
+            self.decode_optional_bar_payloads(registry, PCI_HOST_ENDPOINT_BAR_CHUNK)?;
+        let (bridge_bar_payloads, endpoint_bar_payloads, has_bars) =
+            match (bridge_bar_payloads, endpoint_bar_payloads) {
+                (Some(bridge_bar_payloads), Some(endpoint_bar_payloads)) => {
+                    (bridge_bar_payloads, endpoint_bar_payloads, true)
+                }
+                (None, None) => (BTreeMap::new(), BTreeMap::new(), false),
+                (None, Some(_)) => {
+                    return Err(PciHostCheckpointError::MissingChunk {
+                        component: self.component.clone(),
+                        name: PCI_HOST_BRIDGE_BAR_CHUNK.to_string(),
+                    });
+                }
+                (Some(_), None) => {
+                    return Err(PciHostCheckpointError::MissingChunk {
+                        component: self.component.clone(),
+                        name: PCI_HOST_ENDPOINT_BAR_CHUNK.to_string(),
+                    });
+                }
+            };
+        match (has_config_space, has_bars) {
+            (true, true) => Ok(PciHostCheckpointRecord::new(
+                self.component.clone(),
+                topology,
+                bridge_config_space_payloads,
+                endpoint_config_space_payloads,
+                bridge_bar_payloads,
+                endpoint_bar_payloads,
+            )),
+            (true, false) => Ok(PciHostCheckpointRecord::config_only(
+                self.component.clone(),
+                topology,
+                bridge_config_space_payloads,
+                endpoint_config_space_payloads,
+            )),
+            (false, false) => Ok(PciHostCheckpointRecord::topology_only(
                 self.component.clone(),
                 topology,
             )),
-            (None, Some(_)) => Err(PciHostCheckpointError::MissingChunk {
+            (false, true) => Err(PciHostCheckpointError::MissingChunk {
                 component: self.component.clone(),
                 name: PCI_HOST_BRIDGE_CONFIG_CHUNK.to_string(),
-            }),
-            (Some(_), None) => Err(PciHostCheckpointError::MissingChunk {
-                component: self.component.clone(),
-                name: PCI_HOST_ENDPOINT_CONFIG_CHUNK.to_string(),
             }),
         }
     }
@@ -199,6 +312,22 @@ impl PciHostCheckpointPort {
             return Ok(None);
         };
         decode_config_space_payloads(payload)
+            .map_err(|error| PciHostCheckpointError::InvalidChunk {
+                component: self.component.clone(),
+                reason: error.to_string(),
+            })
+            .map(Some)
+    }
+
+    fn decode_optional_bar_payloads(
+        &self,
+        registry: &CheckpointRegistry,
+        name: &str,
+    ) -> Result<Option<PciHostBarPayloadMap>, PciHostCheckpointError> {
+        let Some(payload) = registry.chunk(&self.component, name) else {
+            return Ok(None);
+        };
+        decode_bar_payloads(payload)
             .map_err(|error| PciHostCheckpointError::InvalidChunk {
                 component: self.component.clone(),
                 reason: error.to_string(),
@@ -230,6 +359,20 @@ impl PciHostCheckpointPort {
                 })?;
             snapshot
                 .validate_endpoint_config_space_payloads(record.endpoint_config_space_payloads())
+                .map_err(|error| PciHostCheckpointError::Pci {
+                    component: self.component.clone(),
+                    error,
+                })?;
+        }
+        if record.has_bar_payloads() {
+            snapshot
+                .validate_bridge_bar_payloads(record.bridge_bar_payloads())
+                .map_err(|error| PciHostCheckpointError::Pci {
+                    component: self.component.clone(),
+                    error,
+                })?;
+            snapshot
+                .validate_endpoint_bar_payloads(record.endpoint_bar_payloads())
                 .map_err(|error| PciHostCheckpointError::Pci {
                     component: self.component.clone(),
                     error,
@@ -343,6 +486,30 @@ fn encode_config_space_payloads(payloads: &BTreeMap<PciFunctionAddress, Vec<u8>>
     payload
 }
 
+fn encode_bar_payloads(payloads: &PciHostBarPayloadMap) -> Vec<u8> {
+    let mut payload = Vec::new();
+    payload.extend_from_slice(PCI_HOST_BAR_MAP_MAGIC);
+    payload.extend_from_slice(&PCI_HOST_BAR_MAP_VERSION.to_le_bytes());
+    payload.extend_from_slice(&(payloads.len() as u32).to_le_bytes());
+    for (function, bars) in payloads {
+        payload.push(function.bus());
+        payload.push(function.device());
+        payload.push(function.function());
+        payload.extend_from_slice(&(bars.len() as u32).to_le_bytes());
+        for bar in bars {
+            match bar {
+                Some(bar) => {
+                    payload.push(PCI_BAR_SLOT_PRESENT);
+                    payload.extend_from_slice(&(bar.len() as u32).to_le_bytes());
+                    payload.extend_from_slice(bar);
+                }
+                None => payload.push(PCI_BAR_SLOT_ABSENT),
+            }
+        }
+    }
+    payload
+}
+
 fn decode_config_space_payloads(
     payload: &[u8],
 ) -> Result<BTreeMap<PciFunctionAddress, Vec<u8>>, PciError> {
@@ -371,6 +538,49 @@ fn decode_config_space_payloads(
     }
     if cursor != payload.len() {
         return Err(PciError::InvalidConfigSpaceSnapshot);
+    }
+    Ok(payloads)
+}
+
+fn decode_bar_payloads(payload: &[u8]) -> Result<PciHostBarPayloadMap, PciError> {
+    let mut cursor = 0;
+    if read_bar_exact(payload, &mut cursor, PCI_HOST_BAR_MAP_MAGIC.len())? != PCI_HOST_BAR_MAP_MAGIC
+    {
+        return Err(PciError::InvalidBarSnapshot);
+    }
+    if read_bar_u16(payload, &mut cursor)? != PCI_HOST_BAR_MAP_VERSION {
+        return Err(PciError::InvalidBarSnapshot);
+    }
+    let count = read_bar_u32(payload, &mut cursor)? as usize;
+    let mut payloads = BTreeMap::new();
+    for _ in 0..count {
+        let function = PciFunctionAddress::new(
+            read_bar_u8(payload, &mut cursor)?,
+            read_bar_u8(payload, &mut cursor)?,
+            read_bar_u8(payload, &mut cursor)?,
+        )?;
+        let slot_count = read_bar_u32(payload, &mut cursor)? as usize;
+        if slot_count > payload.len().saturating_sub(cursor) {
+            return Err(PciError::InvalidBarSnapshot);
+        }
+        let mut bars = Vec::with_capacity(slot_count);
+        for _ in 0..slot_count {
+            match read_bar_u8(payload, &mut cursor)? {
+                PCI_BAR_SLOT_ABSENT => bars.push(None),
+                PCI_BAR_SLOT_PRESENT => {
+                    let bar_len = read_bar_u32(payload, &mut cursor)? as usize;
+                    let bar = read_bar_exact(payload, &mut cursor, bar_len)?.to_vec();
+                    bars.push(Some(bar));
+                }
+                _ => return Err(PciError::InvalidBarSnapshot),
+            }
+        }
+        if payloads.insert(function, bars).is_some() {
+            return Err(PciError::InvalidBarSnapshot);
+        }
+    }
+    if cursor != payload.len() {
+        return Err(PciError::InvalidBarSnapshot);
     }
     Ok(payloads)
 }
@@ -404,6 +614,37 @@ fn read_exact<'a>(
     let bytes = payload
         .get(*cursor..end)
         .ok_or(PciError::InvalidConfigSpaceSnapshot)?;
+    *cursor = end;
+    Ok(bytes)
+}
+
+fn read_bar_u8(payload: &[u8], cursor: &mut usize) -> Result<u8, PciError> {
+    let byte = *payload.get(*cursor).ok_or(PciError::InvalidBarSnapshot)?;
+    *cursor += 1;
+    Ok(byte)
+}
+
+fn read_bar_u16(payload: &[u8], cursor: &mut usize) -> Result<u16, PciError> {
+    let bytes = read_bar_exact(payload, cursor, U16_BYTES)?;
+    Ok(u16::from_le_bytes(bytes.try_into().unwrap()))
+}
+
+fn read_bar_u32(payload: &[u8], cursor: &mut usize) -> Result<u32, PciError> {
+    let bytes = read_bar_exact(payload, cursor, U32_BYTES)?;
+    Ok(u32::from_le_bytes(bytes.try_into().unwrap()))
+}
+
+fn read_bar_exact<'a>(
+    payload: &'a [u8],
+    cursor: &mut usize,
+    length: usize,
+) -> Result<&'a [u8], PciError> {
+    let end = cursor
+        .checked_add(length)
+        .ok_or(PciError::InvalidBarSnapshot)?;
+    let bytes = payload
+        .get(*cursor..end)
+        .ok_or(PciError::InvalidBarSnapshot)?;
     *cursor = end;
     Ok(bytes)
 }
