@@ -249,6 +249,7 @@ pub enum VirtioError {
     PciEndpointConfig {
         message: String,
     },
+    InvalidPciIsrSnapshot,
 }
 
 impl VirtioError {
@@ -615,6 +616,9 @@ impl fmt::Display for VirtioError {
                     formatter,
                     "VirtIO PCI endpoint configuration failed: {message}"
                 )
+            }
+            Self::InvalidPciIsrSnapshot => {
+                write!(formatter, "VirtIO PCI ISR snapshot payload is invalid")
             }
         }
     }

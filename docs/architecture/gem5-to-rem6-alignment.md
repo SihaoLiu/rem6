@@ -1232,7 +1232,10 @@ Implementation evidence through 2026-05-30:
   budget, require queue and error contracts to stay out of the root, and
   enforce the hard per-source-file size budget, so block, queue, PCI transport,
   shared-memory, and future network/console/rng VirtIO work does not recreate
-  gem5-style mixed device, queue, and transport monoliths.
+  gem5-style mixed device, queue, and transport monoliths. VirtIO PCI ISR
+  snapshots now expose stable byte payloads for interrupt status and event
+  history, with malformed payload rejection before checkpoint banks consume
+  those records.
 - `rem6-storage` now owns gem5 `DiskImage`, `RawDiskImage`, and `CowDiskImage`
   level 512-byte sector contracts in a dedicated crate. Raw images validate
   sector-multiple capacity, read-only writes, range checks, flush accounting,

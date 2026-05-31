@@ -6,12 +6,18 @@ use rem6_mmio::{
     MmioAccess, MmioDevice, MmioError, MmioOperation, MmioRequest, MmioRequestId, MmioResponse,
 };
 
+use crate::VirtioError;
+
 pub const VIRTIO_PCI_ISR_STATUS_SIZE: u64 = 1;
 
 const VIRTIO_PCI_ISR_QUEUE_INTERRUPT: u8 = 0x01;
 const VIRTIO_PCI_ISR_CONFIGURATION_CHANGE: u8 = 0x02;
 const VIRTIO_PCI_ISR_KNOWN_BITS: u8 =
     VIRTIO_PCI_ISR_QUEUE_INTERRUPT | VIRTIO_PCI_ISR_CONFIGURATION_CHANGE;
+const VIRTIO_PCI_ISR_SNAPSHOT_MAGIC: &[u8; 8] = b"VIOISR01";
+const VIRTIO_PCI_ISR_SNAPSHOT_VERSION: u16 = 1;
+const VIRTIO_PCI_ISR_EVENT_BYTES: usize = 11;
+const U64_BYTES: usize = 8;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct VirtioPciIsrStatus(u8);
@@ -352,6 +358,12 @@ pub struct VirtioPciIsrSnapshot {
 }
 
 impl VirtioPciIsrSnapshot {
+    pub fn new(status: VirtioPciIsrStatus, events: Vec<VirtioPciIsrEvent>) -> Self {
+        Self {
+            state: VirtioPciIsrState { status, events },
+        }
+    }
+
     pub const fn status(&self) -> VirtioPciIsrStatus {
         self.state.status
     }
@@ -359,10 +371,147 @@ impl VirtioPciIsrSnapshot {
     pub fn events(&self) -> &[VirtioPciIsrEvent] {
         &self.state.events
     }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(VIRTIO_PCI_ISR_SNAPSHOT_MAGIC);
+        payload.extend_from_slice(&VIRTIO_PCI_ISR_SNAPSHOT_VERSION.to_le_bytes());
+        payload.push(self.status().bits());
+        payload.extend_from_slice(&(self.events().len() as u64).to_le_bytes());
+        for event in self.events() {
+            payload.push(isr_event_kind_code(event.kind()));
+            payload.push(event.status_before().bits());
+            payload.push(event.status_after().bits());
+            payload.extend_from_slice(&event.tick().to_le_bytes());
+        }
+        payload
+    }
+
+    pub fn from_bytes(payload: &[u8]) -> Result<Self, VirtioError> {
+        let mut cursor = VirtioPciIsrSnapshotCursor::new(payload);
+        cursor.read_magic()?;
+        let version = cursor.read_u16()?;
+        if version != VIRTIO_PCI_ISR_SNAPSHOT_VERSION {
+            return Err(VirtioError::InvalidPciIsrSnapshot);
+        }
+        let status = decode_isr_status(cursor.read_u8()?)?;
+        let event_count =
+            usize::try_from(cursor.read_u64()?).map_err(|_| VirtioError::InvalidPciIsrSnapshot)?;
+        let event_bytes = event_count
+            .checked_mul(VIRTIO_PCI_ISR_EVENT_BYTES)
+            .ok_or(VirtioError::InvalidPciIsrSnapshot)?;
+        if cursor.remaining() != event_bytes {
+            return Err(VirtioError::InvalidPciIsrSnapshot);
+        }
+        let mut events = Vec::with_capacity(event_count);
+        for _ in 0..event_count {
+            let kind = isr_event_kind_from_code(cursor.read_u8()?)?;
+            let status_before = decode_isr_status(cursor.read_u8()?)?;
+            let status_after = decode_isr_status(cursor.read_u8()?)?;
+            let tick = cursor.read_u64()?;
+            events.push(VirtioPciIsrEvent::new(
+                tick,
+                kind,
+                status_before,
+                status_after,
+            ));
+        }
+        cursor.finish()?;
+        Ok(Self::new(status, events))
+    }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct VirtioPciIsrState {
     status: VirtioPciIsrStatus,
     events: Vec<VirtioPciIsrEvent>,
+}
+
+fn isr_event_kind_code(kind: VirtioPciIsrEventKind) -> u8 {
+    match kind {
+        VirtioPciIsrEventKind::QueueInterrupt => 0,
+        VirtioPciIsrEventKind::ConfigurationChangeInterrupt => 1,
+        VirtioPciIsrEventKind::DriverReadClear => 2,
+    }
+}
+
+fn isr_event_kind_from_code(code: u8) -> Result<VirtioPciIsrEventKind, VirtioError> {
+    match code {
+        0 => Ok(VirtioPciIsrEventKind::QueueInterrupt),
+        1 => Ok(VirtioPciIsrEventKind::ConfigurationChangeInterrupt),
+        2 => Ok(VirtioPciIsrEventKind::DriverReadClear),
+        _ => Err(VirtioError::InvalidPciIsrSnapshot),
+    }
+}
+
+fn decode_isr_status(value: u8) -> Result<VirtioPciIsrStatus, VirtioError> {
+    let status = VirtioPciIsrStatus::from_bits_truncate(value);
+    if status.bits() == value {
+        Ok(status)
+    } else {
+        Err(VirtioError::InvalidPciIsrSnapshot)
+    }
+}
+
+struct VirtioPciIsrSnapshotCursor<'a> {
+    payload: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> VirtioPciIsrSnapshotCursor<'a> {
+    fn new(payload: &'a [u8]) -> Self {
+        Self { payload, offset: 0 }
+    }
+
+    fn read_magic(&mut self) -> Result<(), VirtioError> {
+        let magic = self.read_exact(VIRTIO_PCI_ISR_SNAPSHOT_MAGIC.len())?;
+        if magic == VIRTIO_PCI_ISR_SNAPSHOT_MAGIC {
+            Ok(())
+        } else {
+            Err(VirtioError::InvalidPciIsrSnapshot)
+        }
+    }
+
+    fn read_u8(&mut self) -> Result<u8, VirtioError> {
+        Ok(self.read_exact(1)?[0])
+    }
+
+    fn read_u16(&mut self) -> Result<u16, VirtioError> {
+        let bytes = self.read_exact(2)?;
+        Ok(u16::from_le_bytes(
+            bytes.try_into().expect("snapshot u16 width is fixed"),
+        ))
+    }
+
+    fn read_u64(&mut self) -> Result<u64, VirtioError> {
+        let bytes = self.read_exact(U64_BYTES)?;
+        Ok(u64::from_le_bytes(
+            bytes.try_into().expect("snapshot u64 width is fixed"),
+        ))
+    }
+
+    fn read_exact(&mut self, len: usize) -> Result<&'a [u8], VirtioError> {
+        let end = self
+            .offset
+            .checked_add(len)
+            .ok_or(VirtioError::InvalidPciIsrSnapshot)?;
+        let bytes = self
+            .payload
+            .get(self.offset..end)
+            .ok_or(VirtioError::InvalidPciIsrSnapshot)?;
+        self.offset = end;
+        Ok(bytes)
+    }
+
+    fn finish(&self) -> Result<(), VirtioError> {
+        if self.offset == self.payload.len() {
+            Ok(())
+        } else {
+            Err(VirtioError::InvalidPciIsrSnapshot)
+        }
+    }
+
+    fn remaining(&self) -> usize {
+        self.payload.len() - self.offset
+    }
 }
