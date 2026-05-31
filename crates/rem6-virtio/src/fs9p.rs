@@ -16,12 +16,16 @@ pub const VIRTIO_9P_REQUEST_QUEUE_INDEX: u16 = 0;
 pub const VIRTIO_9P_DEFAULT_QUEUE_SIZE: u16 = 32;
 pub const VIRTIO_9P_DEFAULT_MSIZE: u32 = 8192;
 pub const VIRTIO_9P_PROTOCOL_VERSION: &[u8] = b"9P2000.L";
+pub const VIRTIO_9P_TSTATFS: u8 = 8;
+pub const VIRTIO_9P_RSTATFS: u8 = 9;
 pub const VIRTIO_9P_TVERSION: u8 = 100;
 pub const VIRTIO_9P_RVERSION: u8 = 101;
 pub const VIRTIO_9P_TATTACH: u8 = 104;
 pub const VIRTIO_9P_RATTACH: u8 = 105;
 pub const VIRTIO_9P_TLCREATE: u8 = 14;
 pub const VIRTIO_9P_RLCREATE: u8 = 15;
+pub const VIRTIO_9P_TGETATTR: u8 = 24;
+pub const VIRTIO_9P_RGETATTR: u8 = 25;
 pub const VIRTIO_9P_TWALK: u8 = 110;
 pub const VIRTIO_9P_RWALK: u8 = 111;
 pub const VIRTIO_9P_TLOPEN: u8 = 12;
@@ -39,11 +43,17 @@ pub const VIRTIO_9P_ENOENT: u32 = 2;
 pub const VIRTIO_9P_ENOTSUP: u32 = 95;
 pub const VIRTIO_9P_QTFILE: u8 = 0;
 pub const VIRTIO_9P_QTDIR: u8 = 0x80;
+pub const VIRTIO_9P_GETATTR_BASIC: u64 = 0x0000_07ff;
+pub const VIRTIO_9P_STATFS_TYPE: u32 = 0x0102_1997;
+pub const VIRTIO_9P_STATFS_BLOCK_SIZE: u32 = 4096;
+pub const VIRTIO_9P_NAME_MAX: u32 = 255;
 pub const VIRTIO_9P_CONFIG_TAG_LENGTH_OFFSET: u64 = 0;
 pub const VIRTIO_9P_CONFIG_TAG_OFFSET: u64 = 2;
 
 const VIRTIO_9P_CONFIG_LENGTH_BYTES: usize = 2;
 const VIRTIO_9P_QID_BYTES: usize = 13;
+const VIRTIO_9P_STATFS_BLOCKS: u64 = 1024;
+const VIRTIO_9P_STATFS_FSID: u64 = 0x7265_6d36;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Virtio9pConfig {
@@ -178,6 +188,10 @@ impl Virtio9pDevice {
         request: Virtio9pRequest,
     ) -> Result<Virtio9pCompletion, VirtioError> {
         let (message_type, payload) = match request.message_type() {
+            VIRTIO_9P_TSTATFS => match self.handle_statfs(&request)? {
+                Ok(payload) => (VIRTIO_9P_RSTATFS, payload),
+                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
+            },
             VIRTIO_9P_TVERSION => {
                 let version = parse_version_request(&request)?;
                 let response_version = if version == VIRTIO_9P_PROTOCOL_VERSION {
@@ -217,6 +231,10 @@ impl Virtio9pDevice {
             },
             VIRTIO_9P_TLCREATE => match self.handle_lcreate(&request)? {
                 Ok(payload) => (VIRTIO_9P_RLCREATE, payload),
+                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
+            },
+            VIRTIO_9P_TGETATTR => match self.handle_getattr(&request)? {
+                Ok(payload) => (VIRTIO_9P_RGETATTR, payload),
                 Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
             },
             VIRTIO_9P_TREAD => match self.handle_read(&request)? {
@@ -264,6 +282,26 @@ impl Virtio9pDevice {
 
     pub fn fid_count(&self) -> usize {
         self.fids.lock().expect("virtio 9p fid lock").len()
+    }
+
+    fn handle_statfs(
+        &self,
+        request: &Virtio9pRequest,
+    ) -> Result<Result<Vec<u8>, u32>, VirtioError> {
+        let fid = parse_statfs_request(request)?;
+        if !self
+            .fids
+            .lock()
+            .expect("virtio 9p fid lock")
+            .contains_key(&fid)
+        {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        }
+        Ok(Ok(self
+            .namespace
+            .lock()
+            .expect("virtio 9p namespace lock")
+            .statfs_payload()))
     }
 
     fn handle_walk(&self, request: &Virtio9pRequest) -> Result<Result<Vec<u8>, u32>, VirtioError> {
@@ -335,6 +373,27 @@ impl Virtio9pDevice {
         let mut payload = namespace.qid(node).to_le_bytes().to_vec();
         payload.extend(VIRTIO_9P_DEFAULT_MSIZE.to_le_bytes());
         Ok(Ok(payload))
+    }
+
+    fn handle_getattr(
+        &self,
+        request: &Virtio9pRequest,
+    ) -> Result<Result<Vec<u8>, u32>, VirtioError> {
+        let getattr = parse_getattr_request(request)?;
+        let Some(fid) = self
+            .fids
+            .lock()
+            .expect("virtio 9p fid lock")
+            .get(&getattr.fid)
+            .copied()
+        else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        let namespace = self.namespace.lock().expect("virtio 9p namespace lock");
+        let Some(metadata) = namespace.metadata(fid.node()) else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        Ok(Ok(getattr_payload(metadata, getattr.request_mask)))
     }
 
     fn handle_read(&self, request: &Virtio9pRequest) -> Result<Result<Vec<u8>, u32>, VirtioError> {
@@ -472,6 +531,13 @@ fn parse_attach_request(request: &Virtio9pRequest) -> Result<Virtio9pAttachedFid
     Ok(Virtio9pAttachedFid::new(fid, afid, uname, aname, n_uname))
 }
 
+fn parse_statfs_request(request: &Virtio9pRequest) -> Result<u32, VirtioError> {
+    let mut reader = Virtio9pPayloadReader::new(request.message_type(), request.payload());
+    let fid = reader.read_u32()?;
+    reader.finish()?;
+    Ok(fid)
+}
+
 fn parse_walk_request(request: &Virtio9pRequest) -> Result<Virtio9pWalkRequest, VirtioError> {
     let mut reader = Virtio9pPayloadReader::new(request.message_type(), request.payload());
     let fid = reader.read_u32()?;
@@ -510,6 +576,14 @@ fn parse_lcreate_request(request: &Virtio9pRequest) -> Result<Virtio9pCreateRequ
     let _gid = reader.read_u32()?;
     reader.finish()?;
     Ok(Virtio9pCreateRequest { fid, name })
+}
+
+fn parse_getattr_request(request: &Virtio9pRequest) -> Result<Virtio9pGetattrRequest, VirtioError> {
+    let mut reader = Virtio9pPayloadReader::new(request.message_type(), request.payload());
+    let fid = reader.read_u32()?;
+    let request_mask = reader.read_u64()?;
+    reader.finish()?;
+    Ok(Virtio9pGetattrRequest { fid, request_mask })
 }
 
 fn parse_read_request(request: &Virtio9pRequest) -> Result<Virtio9pReadRequest, VirtioError> {
@@ -655,6 +729,24 @@ fn qid_payload(qid: Virtio9pQid) -> Vec<u8> {
     qid.to_le_bytes().to_vec()
 }
 
+fn getattr_payload(metadata: Virtio9pNodeMetadata, request_mask: u64) -> Vec<u8> {
+    let mut payload = Vec::with_capacity(153);
+    payload.extend((request_mask & VIRTIO_9P_GETATTR_BASIC).to_le_bytes());
+    payload.extend(metadata.qid.to_le_bytes());
+    payload.extend(metadata.mode.to_le_bytes());
+    payload.extend(0_u32.to_le_bytes());
+    payload.extend(0_u32.to_le_bytes());
+    payload.extend(metadata.nlink.to_le_bytes());
+    payload.extend(0_u64.to_le_bytes());
+    payload.extend(metadata.size.to_le_bytes());
+    payload.extend(u64::from(VIRTIO_9P_STATFS_BLOCK_SIZE).to_le_bytes());
+    payload.extend(metadata.blocks.to_le_bytes());
+    for _ in 0..10 {
+        payload.extend(0_u64.to_le_bytes());
+    }
+    payload
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Virtio9pNodeId {
     Root,
@@ -730,6 +822,44 @@ impl Virtio9pNamespace {
         }
     }
 
+    fn metadata(&self, node: Virtio9pNodeId) -> Option<Virtio9pNodeMetadata> {
+        match node {
+            Virtio9pNodeId::Root => Some(Virtio9pNodeMetadata {
+                qid: self.root_qid(),
+                mode: 0o040755,
+                nlink: 2 + self.files.len() as u64,
+                size: 0,
+                blocks: 0,
+            }),
+            Virtio9pNodeId::File(path) => {
+                let file = self.files.values().find(|file| file.qid_path == path)?;
+                let size = file.data.len() as u64;
+                Some(Virtio9pNodeMetadata {
+                    qid: Virtio9pQid::new(VIRTIO_9P_QTFILE, path),
+                    mode: 0o100644,
+                    nlink: 1,
+                    size,
+                    blocks: size.div_ceil(512),
+                })
+            }
+        }
+    }
+
+    fn statfs_payload(&self) -> Vec<u8> {
+        let files = 1 + self.files.len() as u64;
+        let mut payload = Vec::with_capacity(60);
+        payload.extend(VIRTIO_9P_STATFS_TYPE.to_le_bytes());
+        payload.extend(VIRTIO_9P_STATFS_BLOCK_SIZE.to_le_bytes());
+        payload.extend(VIRTIO_9P_STATFS_BLOCKS.to_le_bytes());
+        payload.extend(VIRTIO_9P_STATFS_BLOCKS.to_le_bytes());
+        payload.extend(VIRTIO_9P_STATFS_BLOCKS.to_le_bytes());
+        payload.extend(files.to_le_bytes());
+        payload.extend(VIRTIO_9P_STATFS_BLOCKS.saturating_sub(files).to_le_bytes());
+        payload.extend(VIRTIO_9P_STATFS_FSID.to_le_bytes());
+        payload.extend(VIRTIO_9P_NAME_MAX.to_le_bytes());
+        payload
+    }
+
     const fn is_file(&self, node: Virtio9pNodeId) -> bool {
         matches!(node, Virtio9pNodeId::File(_))
     }
@@ -780,6 +910,15 @@ struct Virtio9pFileNode {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Virtio9pNodeMetadata {
+    qid: Virtio9pQid,
+    mode: u32,
+    nlink: u64,
+    size: u64,
+    blocks: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Virtio9pFidState {
     node: Virtio9pNodeId,
     open: bool,
@@ -823,6 +962,12 @@ struct Virtio9pOpenRequest {
 struct Virtio9pCreateRequest {
     fid: u32,
     name: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Virtio9pGetattrRequest {
+    fid: u32,
+    request_mask: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

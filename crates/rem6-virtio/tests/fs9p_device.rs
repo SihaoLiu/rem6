@@ -1,11 +1,13 @@
 use rem6_virtio::{
     Virtio9pConfig, Virtio9pDevice, Virtio9pRequest, VirtioError, VirtioQueueIndex,
     VirtioSplitDescriptor, VirtioSplitDescriptorChain, VIRTIO_9P_DEFAULT_MSIZE, VIRTIO_9P_EBADF,
-    VIRTIO_9P_ENOENT, VIRTIO_9P_ENOTSUP, VIRTIO_9P_NOFID, VIRTIO_9P_PROTOCOL_VERSION,
-    VIRTIO_9P_QTDIR, VIRTIO_9P_QTFILE, VIRTIO_9P_RATTACH, VIRTIO_9P_RCLUNK, VIRTIO_9P_RLCREATE,
-    VIRTIO_9P_RLERROR, VIRTIO_9P_RLOPEN, VIRTIO_9P_RREAD, VIRTIO_9P_RVERSION, VIRTIO_9P_RWALK,
-    VIRTIO_9P_RWRITE, VIRTIO_9P_TATTACH, VIRTIO_9P_TCLUNK, VIRTIO_9P_TLCREATE, VIRTIO_9P_TLOPEN,
-    VIRTIO_9P_TREAD, VIRTIO_9P_TVERSION, VIRTIO_9P_TWALK, VIRTIO_9P_TWRITE,
+    VIRTIO_9P_ENOENT, VIRTIO_9P_ENOTSUP, VIRTIO_9P_GETATTR_BASIC, VIRTIO_9P_NAME_MAX,
+    VIRTIO_9P_NOFID, VIRTIO_9P_PROTOCOL_VERSION, VIRTIO_9P_QTDIR, VIRTIO_9P_QTFILE,
+    VIRTIO_9P_RATTACH, VIRTIO_9P_RCLUNK, VIRTIO_9P_RGETATTR, VIRTIO_9P_RLCREATE, VIRTIO_9P_RLERROR,
+    VIRTIO_9P_RLOPEN, VIRTIO_9P_RREAD, VIRTIO_9P_RSTATFS, VIRTIO_9P_RVERSION, VIRTIO_9P_RWALK,
+    VIRTIO_9P_RWRITE, VIRTIO_9P_STATFS_BLOCK_SIZE, VIRTIO_9P_STATFS_TYPE, VIRTIO_9P_TATTACH,
+    VIRTIO_9P_TCLUNK, VIRTIO_9P_TGETATTR, VIRTIO_9P_TLCREATE, VIRTIO_9P_TLOPEN, VIRTIO_9P_TREAD,
+    VIRTIO_9P_TSTATFS, VIRTIO_9P_TVERSION, VIRTIO_9P_TWALK, VIRTIO_9P_TWRITE,
 };
 
 fn queue(index: u16) -> VirtioQueueIndex {
@@ -79,6 +81,17 @@ fn p9_lopen_payload(fid: u32, flags: u32) -> Vec<u8> {
     payload
 }
 
+fn p9_getattr_payload(fid: u32, request_mask: u64) -> Vec<u8> {
+    let mut payload = Vec::new();
+    payload.extend(fid.to_le_bytes());
+    payload.extend(request_mask.to_le_bytes());
+    payload
+}
+
+fn p9_statfs_payload(fid: u32) -> Vec<u8> {
+    fid.to_le_bytes().to_vec()
+}
+
 fn p9_lcreate_payload(fid: u32, name: &[u8], flags: u32, mode: u32, gid: u32) -> Vec<u8> {
     let mut payload = Vec::new();
     payload.extend(fid.to_le_bytes());
@@ -120,6 +133,14 @@ fn read_qid(payload: &[u8], offset: usize) -> (u8, u32, u64) {
 fn read_counted_data(payload: &[u8]) -> &[u8] {
     let count = u32::from_le_bytes(payload[0..4].try_into().unwrap()) as usize;
     &payload[4..4 + count]
+}
+
+fn read_u32(payload: &[u8], offset: usize) -> u32 {
+    u32::from_le_bytes(payload[offset..offset + 4].try_into().unwrap())
+}
+
+fn read_u64(payload: &[u8], offset: usize) -> u64 {
+    u64::from_le_bytes(payload[offset..offset + 8].try_into().unwrap())
 }
 
 #[test]
@@ -235,6 +256,118 @@ fn virtio_9p_device_reports_lerror_for_missing_walk_targets() {
     assert_eq!(completion.message_type(), VIRTIO_9P_RLERROR);
     assert_eq!(completion.payload(), VIRTIO_9P_ENOENT.to_le_bytes());
     assert_eq!(device.fid_count(), 1);
+}
+
+#[test]
+fn virtio_9p_device_reports_getattr_for_root_and_files() {
+    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap())
+        .with_file("hello.txt", b"hello rem6".to_vec())
+        .unwrap();
+    let attach = decoded_request(
+        VIRTIO_9P_TATTACH,
+        1,
+        p9_attach_payload(1, VIRTIO_9P_NOFID, b"root", b"", 0),
+    );
+    device.execute_at(10, attach).unwrap();
+
+    let getattr_root = decoded_request(
+        VIRTIO_9P_TGETATTR,
+        2,
+        p9_getattr_payload(1, VIRTIO_9P_GETATTR_BASIC),
+    );
+    let root_completion = device.execute_at(11, getattr_root).unwrap();
+    assert_eq!(root_completion.message_type(), VIRTIO_9P_RGETATTR);
+    assert_eq!(root_completion.payload().len(), 153);
+    assert_eq!(
+        read_u64(root_completion.payload(), 0),
+        VIRTIO_9P_GETATTR_BASIC
+    );
+    let (root_qtype, root_version, root_path) = read_qid(root_completion.payload(), 8);
+    assert_eq!(root_qtype, VIRTIO_9P_QTDIR);
+    assert_eq!(root_version, 0);
+    assert_eq!(root_path, 1);
+    assert_eq!(read_u32(root_completion.payload(), 21), 0o040755);
+    assert_eq!(read_u32(root_completion.payload(), 25), 0);
+    assert_eq!(read_u32(root_completion.payload(), 29), 0);
+    assert_eq!(read_u64(root_completion.payload(), 33), 3);
+    assert_eq!(read_u64(root_completion.payload(), 49), 0);
+    assert_eq!(
+        read_u64(root_completion.payload(), 57),
+        u64::from(VIRTIO_9P_STATFS_BLOCK_SIZE)
+    );
+    assert_eq!(read_u64(root_completion.payload(), 65), 0);
+
+    let walk = decoded_request(VIRTIO_9P_TWALK, 3, p9_walk_payload(1, 2, &[b"hello.txt"]));
+    let walk_completion = device.execute_at(12, walk).unwrap();
+    let (_, _, file_path) = read_qid(walk_completion.payload(), 2);
+
+    let getattr_file = decoded_request(
+        VIRTIO_9P_TGETATTR,
+        4,
+        p9_getattr_payload(2, VIRTIO_9P_GETATTR_BASIC),
+    );
+    let file_completion = device.execute_at(13, getattr_file).unwrap();
+    assert_eq!(file_completion.message_type(), VIRTIO_9P_RGETATTR);
+    assert_eq!(
+        read_u64(file_completion.payload(), 0),
+        VIRTIO_9P_GETATTR_BASIC
+    );
+    let (file_qtype, file_version, getattr_file_path) = read_qid(file_completion.payload(), 8);
+    assert_eq!(file_qtype, VIRTIO_9P_QTFILE);
+    assert_eq!(file_version, 0);
+    assert_eq!(getattr_file_path, file_path);
+    assert_eq!(read_u32(file_completion.payload(), 21), 0o100644);
+    assert_eq!(read_u64(file_completion.payload(), 33), 1);
+    assert_eq!(read_u64(file_completion.payload(), 49), 10);
+    assert_eq!(read_u64(file_completion.payload(), 65), 1);
+}
+
+#[test]
+fn virtio_9p_device_reports_statfs_for_attached_namespace() {
+    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap())
+        .with_file("hello.txt", b"hello".to_vec())
+        .unwrap()
+        .with_file("note.txt", b"note".to_vec())
+        .unwrap();
+    let attach = decoded_request(
+        VIRTIO_9P_TATTACH,
+        1,
+        p9_attach_payload(1, VIRTIO_9P_NOFID, b"root", b"", 0),
+    );
+    device.execute_at(10, attach).unwrap();
+
+    let statfs = decoded_request(VIRTIO_9P_TSTATFS, 2, p9_statfs_payload(1));
+    let completion = device.execute_at(11, statfs).unwrap();
+
+    assert_eq!(completion.message_type(), VIRTIO_9P_RSTATFS);
+    assert_eq!(completion.payload().len(), 60);
+    assert_eq!(read_u32(completion.payload(), 0), VIRTIO_9P_STATFS_TYPE);
+    assert_eq!(
+        read_u32(completion.payload(), 4),
+        VIRTIO_9P_STATFS_BLOCK_SIZE
+    );
+    assert_ne!(read_u64(completion.payload(), 8), 0);
+    assert_eq!(read_u64(completion.payload(), 32), 3);
+    assert_eq!(read_u32(completion.payload(), 56), VIRTIO_9P_NAME_MAX);
+}
+
+#[test]
+fn virtio_9p_device_rejects_metadata_queries_on_stale_fids() {
+    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap());
+
+    let getattr = decoded_request(
+        VIRTIO_9P_TGETATTR,
+        1,
+        p9_getattr_payload(7, VIRTIO_9P_GETATTR_BASIC),
+    );
+    let getattr_completion = device.execute_at(10, getattr).unwrap();
+    assert_eq!(getattr_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(getattr_completion.payload(), VIRTIO_9P_EBADF.to_le_bytes());
+
+    let statfs = decoded_request(VIRTIO_9P_TSTATFS, 2, p9_statfs_payload(7));
+    let statfs_completion = device.execute_at(11, statfs).unwrap();
+    assert_eq!(statfs_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(statfs_completion.payload(), VIRTIO_9P_EBADF.to_le_bytes());
 }
 
 #[test]
