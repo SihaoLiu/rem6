@@ -5,9 +5,9 @@ use std::sync::{Arc, Mutex};
 
 use rem6_checkpoint::{CheckpointComponentId, CheckpointError, CheckpointRegistry};
 use rem6_interrupt::{
-    InterruptClaim, InterruptController, InterruptEvent, InterruptEventKind, InterruptLineId,
-    InterruptPriority, InterruptRoute, InterruptSnapshot, InterruptSourceId, InterruptTargetId,
-    PendingInterrupt,
+    InterruptClaim, InterruptController, InterruptError, InterruptEvent, InterruptEventKind,
+    InterruptLineId, InterruptPriority, InterruptRoute, InterruptSnapshot, InterruptSourceId,
+    InterruptTargetId, PendingInterrupt,
 };
 use rem6_kernel::PartitionId;
 
@@ -93,11 +93,34 @@ impl InterruptControllerCheckpointPort {
         registry: &CheckpointRegistry,
     ) -> Result<InterruptControllerCheckpointRecord, InterruptControllerCheckpointError> {
         let record = self.decode_from(registry)?;
+        self.restore_record(&record)?;
+        Ok(record)
+    }
+
+    fn validate_record(
+        &self,
+        record: &InterruptControllerCheckpointRecord,
+    ) -> Result<(), InterruptControllerCheckpointError> {
+        InterruptController::validate_snapshot(record.snapshot()).map_err(|source| {
+            InterruptControllerCheckpointError::Restore {
+                component: self.component.clone(),
+                source: Box::new(source),
+            }
+        })
+    }
+
+    fn restore_record(
+        &self,
+        record: &InterruptControllerCheckpointRecord,
+    ) -> Result<(), InterruptControllerCheckpointError> {
         self.controller
             .lock()
             .expect("interrupt controller lock")
-            .restore(record.snapshot());
-        Ok(record)
+            .restore(record.snapshot())
+            .map_err(|source| InterruptControllerCheckpointError::Restore {
+                component: self.component.clone(),
+                source: Box::new(source),
+            })
     }
 
     fn decode_from(
@@ -172,17 +195,16 @@ impl InterruptControllerCheckpointBank {
         &self,
         registry: &CheckpointRegistry,
     ) -> Result<Vec<InterruptControllerCheckpointRecord>, InterruptControllerCheckpointError> {
-        self.validate_restore_from(registry)?;
         let records = self
             .ports
             .values()
             .map(|port| port.decode_from(registry))
             .collect::<Result<Vec<_>, _>>()?;
         for (port, record) in self.ports.values().zip(&records) {
-            port.controller
-                .lock()
-                .expect("interrupt controller lock")
-                .restore(record.snapshot());
+            port.validate_record(record)?;
+        }
+        for (port, record) in self.ports.values().zip(&records) {
+            port.restore_record(record)?;
         }
         Ok(records)
     }
@@ -192,7 +214,8 @@ impl InterruptControllerCheckpointBank {
         registry: &CheckpointRegistry,
     ) -> Result<(), InterruptControllerCheckpointError> {
         for port in self.ports.values() {
-            port.decode_from(registry)?;
+            let record = port.decode_from(registry)?;
+            port.validate_record(&record)?;
         }
         Ok(())
     }
@@ -208,14 +231,18 @@ pub enum InterruptControllerCheckpointError {
         component: CheckpointComponentId,
         reason: String,
     },
+    Restore {
+        component: CheckpointComponentId,
+        source: Box<InterruptError>,
+    },
 }
 
 impl InterruptControllerCheckpointError {
     pub fn component(&self) -> &CheckpointComponentId {
         match self {
-            Self::MissingChunk { component, .. } | Self::InvalidChunk { component, .. } => {
-                component
-            }
+            Self::MissingChunk { component, .. }
+            | Self::InvalidChunk { component, .. }
+            | Self::Restore { component, .. } => component,
         }
     }
 }
@@ -233,11 +260,23 @@ impl fmt::Display for InterruptControllerCheckpointError {
                 "interrupt checkpoint component {} has invalid chunk: {reason}",
                 component.as_str()
             ),
+            Self::Restore { component, source } => write!(
+                formatter,
+                "interrupt checkpoint component {} rejected restore: {source}",
+                component.as_str()
+            ),
         }
     }
 }
 
-impl Error for InterruptControllerCheckpointError {}
+impl Error for InterruptControllerCheckpointError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Restore { source, .. } => Some(source.as_ref()),
+            _ => None,
+        }
+    }
+}
 
 fn encode_interrupt(snapshot: &InterruptSnapshot) -> Vec<u8> {
     let mut payload = Vec::new();

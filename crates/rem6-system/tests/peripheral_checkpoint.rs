@@ -909,7 +909,11 @@ fn interrupt_checkpoint_bank_rejects_invalid_bank_without_partial_restore() {
         Vec::new(),
     );
     let source_controller = Arc::new(Mutex::new(InterruptController::new()));
-    source_controller.lock().unwrap().restore(&expected);
+    source_controller
+        .lock()
+        .unwrap()
+        .restore(&expected)
+        .unwrap();
     let target_valid = Arc::new(Mutex::new(InterruptController::new()));
     let target_invalid = Arc::new(Mutex::new(InterruptController::new()));
     let original_valid = target_valid.lock().unwrap().snapshot(0);
@@ -941,4 +945,191 @@ fn interrupt_checkpoint_bank_rejects_invalid_bank_without_partial_restore() {
     ));
     assert_eq!(target_valid.lock().unwrap().snapshot(0), original_valid);
     assert_eq!(target_invalid.lock().unwrap().snapshot(0), original_invalid);
+}
+
+#[test]
+fn interrupt_checkpoint_bank_rejects_duplicate_route_without_partial_restore() {
+    let valid_component = checkpoint_component("interrupt_shape_a");
+    let invalid_component = checkpoint_component("interrupt_shape_b");
+    let target = InterruptTargetId::new(0);
+    let partition = PartitionId::new(0);
+    let valid_line = InterruptLineId::new(8);
+    let invalid_line = InterruptLineId::new(9);
+    let valid_route = InterruptRoute::new(valid_line, target, partition);
+    let invalid_route = InterruptRoute::new(invalid_line, target, partition);
+    let valid_snapshot = rem6_interrupt::InterruptSnapshot::new(
+        20,
+        vec![valid_route],
+        vec![(valid_line, InterruptPriority::new(6))],
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    );
+    let source_valid = Arc::new(Mutex::new(InterruptController::new()));
+    source_valid
+        .lock()
+        .unwrap()
+        .restore(&valid_snapshot)
+        .unwrap();
+    let target_valid = Arc::new(Mutex::new(InterruptController::new()));
+    let target_invalid = Arc::new(Mutex::new(InterruptController::new()));
+    let original_valid = target_valid.lock().unwrap().snapshot(0);
+    let original_invalid = target_invalid.lock().unwrap().snapshot(0);
+    assert_ne!(valid_snapshot, original_valid);
+
+    let mut registry = CheckpointRegistry::new();
+    registry.register(valid_component.clone()).unwrap();
+    InterruptControllerCheckpointPort::new(valid_component.clone(), source_valid)
+        .capture_into(&mut registry, 20)
+        .unwrap();
+    registry.register(invalid_component.clone()).unwrap();
+    registry
+        .write_chunk(
+            &invalid_component,
+            "interrupt",
+            duplicate_route_interrupt_payload(21, invalid_route, InterruptPriority::new(5)),
+        )
+        .unwrap();
+
+    let bank = InterruptControllerCheckpointBank::new([
+        InterruptControllerCheckpointPort::new(valid_component, Arc::clone(&target_valid)),
+        InterruptControllerCheckpointPort::new(invalid_component, Arc::clone(&target_invalid)),
+    ])
+    .unwrap();
+    assert!(bank.restore_all_from(&registry).is_err());
+    assert_eq!(target_valid.lock().unwrap().snapshot(0), original_valid);
+    assert_eq!(target_invalid.lock().unwrap().snapshot(0), original_invalid);
+}
+
+#[test]
+fn interrupt_checkpoint_bank_rejects_pending_route_mismatch_without_partial_restore() {
+    let valid_component = checkpoint_component("interrupt_pending_a");
+    let invalid_component = checkpoint_component("interrupt_pending_b");
+    let target = InterruptTargetId::new(0);
+    let partition = PartitionId::new(0);
+    let invalid_target = InterruptTargetId::new(1);
+    let invalid_partition = PartitionId::new(1);
+    let valid_line = InterruptLineId::new(10);
+    let invalid_line = InterruptLineId::new(11);
+    let valid_route = InterruptRoute::new(valid_line, target, partition);
+    let invalid_route = InterruptRoute::new(invalid_line, target, partition);
+    let valid_snapshot = rem6_interrupt::InterruptSnapshot::new(
+        22,
+        vec![valid_route],
+        vec![(valid_line, InterruptPriority::new(6))],
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    );
+    let source_valid = Arc::new(Mutex::new(InterruptController::new()));
+    source_valid
+        .lock()
+        .unwrap()
+        .restore(&valid_snapshot)
+        .unwrap();
+    let target_valid = Arc::new(Mutex::new(InterruptController::new()));
+    let target_invalid = Arc::new(Mutex::new(InterruptController::new()));
+    let original_valid = target_valid.lock().unwrap().snapshot(0);
+    let original_invalid = target_invalid.lock().unwrap().snapshot(0);
+    assert_ne!(valid_snapshot, original_valid);
+
+    let mut registry = CheckpointRegistry::new();
+    registry.register(valid_component.clone()).unwrap();
+    InterruptControllerCheckpointPort::new(valid_component.clone(), source_valid)
+        .capture_into(&mut registry, 22)
+        .unwrap();
+    registry.register(invalid_component.clone()).unwrap();
+    registry
+        .write_chunk(
+            &invalid_component,
+            "interrupt",
+            pending_route_mismatch_interrupt_payload(
+                23,
+                invalid_route,
+                invalid_target,
+                invalid_partition,
+            ),
+        )
+        .unwrap();
+
+    let bank = InterruptControllerCheckpointBank::new([
+        InterruptControllerCheckpointPort::new(valid_component, Arc::clone(&target_valid)),
+        InterruptControllerCheckpointPort::new(
+            invalid_component.clone(),
+            Arc::clone(&target_invalid),
+        ),
+    ])
+    .unwrap();
+    let error = bank.restore_all_from(&registry).unwrap_err();
+    assert!(matches!(
+        error,
+        InterruptControllerCheckpointError::Restore {
+            component,
+            source,
+        } if component == invalid_component
+            && *source == rem6_interrupt::InterruptError::RouteMismatch {
+                line: invalid_line,
+                expected: invalid_route,
+                actual: InterruptRoute::new(invalid_line, invalid_target, invalid_partition),
+            }
+    ));
+    assert_eq!(target_valid.lock().unwrap().snapshot(0), original_valid);
+    assert_eq!(target_invalid.lock().unwrap().snapshot(0), original_invalid);
+}
+
+fn duplicate_route_interrupt_payload(
+    tick: u64,
+    route: InterruptRoute,
+    priority: InterruptPriority,
+) -> Vec<u8> {
+    let mut payload = Vec::new();
+    write_u64(&mut payload, tick);
+    write_u64(&mut payload, 2);
+    write_interrupt_route(&mut payload, route);
+    write_interrupt_route(&mut payload, route);
+    write_u64(&mut payload, 1);
+    write_u64(&mut payload, route.line().get());
+    write_u32(&mut payload, priority.get());
+    write_u64(&mut payload, 0);
+    write_u64(&mut payload, 0);
+    write_u64(&mut payload, 0);
+    payload
+}
+
+fn pending_route_mismatch_interrupt_payload(
+    tick: u64,
+    route: InterruptRoute,
+    pending_target: InterruptTargetId,
+    pending_partition: PartitionId,
+) -> Vec<u8> {
+    let mut payload = Vec::new();
+    write_u64(&mut payload, tick);
+    write_u64(&mut payload, 1);
+    write_interrupt_route(&mut payload, route);
+    write_u64(&mut payload, 1);
+    write_u64(&mut payload, route.line().get());
+    write_u32(&mut payload, InterruptPriority::new(5).get());
+    write_u64(&mut payload, 1);
+    write_u64(&mut payload, route.line().get());
+    write_u32(&mut payload, pending_target.get());
+    write_u32(&mut payload, pending_partition.index());
+    write_u32(&mut payload, InterruptSourceId::new(55).get());
+    write_u64(&mut payload, 12);
+    write_u64(&mut payload, 0);
+    write_u64(&mut payload, 0);
+    payload
+}
+
+fn write_interrupt_route(payload: &mut Vec<u8>, route: InterruptRoute) {
+    write_u64(payload, route.line().get());
+    write_u32(payload, route.target().get());
+    write_u32(payload, route.target_partition().index());
+}
+
+fn write_u32(payload: &mut Vec<u8>, value: u32) {
+    payload.extend_from_slice(&value.to_le_bytes());
+}
+
+fn write_u64(payload: &mut Vec<u8>, value: u64) {
+    payload.extend_from_slice(&value.to_le_bytes());
 }

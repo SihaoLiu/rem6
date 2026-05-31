@@ -13,6 +13,19 @@ pub enum InterruptError {
     DuplicateLine {
         line: InterruptLineId,
     },
+    DuplicateSnapshotPriority {
+        line: InterruptLineId,
+    },
+    DuplicateSnapshotPending {
+        line: InterruptLineId,
+    },
+    DuplicateSnapshotClaim {
+        target: InterruptTargetId,
+        target_partition: PartitionId,
+    },
+    MissingSnapshotPriority {
+        line: InterruptLineId,
+    },
     UnknownLine {
         line: InterruptLineId,
     },
@@ -59,6 +72,36 @@ impl fmt::Display for InterruptError {
                 write!(
                     formatter,
                     "interrupt line {} is already registered",
+                    line.get()
+                )
+            }
+            Self::DuplicateSnapshotPriority { line } => {
+                write!(
+                    formatter,
+                    "interrupt snapshot has duplicate priority for line {}",
+                    line.get()
+                )
+            }
+            Self::DuplicateSnapshotPending { line } => {
+                write!(
+                    formatter,
+                    "interrupt snapshot has duplicate pending line {}",
+                    line.get()
+                )
+            }
+            Self::DuplicateSnapshotClaim {
+                target,
+                target_partition,
+            } => write!(
+                formatter,
+                "interrupt snapshot has duplicate claim for target {} partition {}",
+                target.get(),
+                target_partition.index()
+            ),
+            Self::MissingSnapshotPriority { line } => {
+                write!(
+                    formatter,
+                    "interrupt snapshot is missing priority for line {}",
                     line.get()
                 )
             }

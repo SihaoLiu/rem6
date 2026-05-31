@@ -1,5 +1,5 @@
 use std::cmp::Reverse;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 use rem6_kernel::{
@@ -554,7 +554,90 @@ impl InterruptController {
         )
     }
 
-    pub fn restore(&mut self, snapshot: &InterruptSnapshot) {
+    pub fn validate_snapshot(snapshot: &InterruptSnapshot) -> Result<(), InterruptError> {
+        let mut routes = BTreeSet::new();
+        for route in snapshot.routes() {
+            if !routes.insert(route.line()) {
+                return Err(InterruptError::DuplicateLine { line: route.line() });
+            }
+        }
+
+        let mut priorities = BTreeSet::new();
+        for (line, _) in snapshot.priorities() {
+            if !routes.contains(line) {
+                return Err(InterruptError::UnknownLine { line: *line });
+            }
+            if !priorities.insert(*line) {
+                return Err(InterruptError::DuplicateSnapshotPriority { line: *line });
+            }
+        }
+        for line in &routes {
+            if !priorities.contains(line) {
+                return Err(InterruptError::MissingSnapshotPriority { line: *line });
+            }
+        }
+
+        let mut pending_lines = BTreeSet::new();
+        for pending in snapshot.pending() {
+            let route = snapshot_route(snapshot, pending.line())?;
+            let pending_route =
+                InterruptRoute::new(pending.line(), pending.target(), pending.target_partition());
+            if route != pending_route {
+                return Err(InterruptError::RouteMismatch {
+                    line: pending.line(),
+                    expected: route,
+                    actual: pending_route,
+                });
+            }
+            if !pending_lines.insert(pending.line()) {
+                return Err(InterruptError::DuplicateSnapshotPending {
+                    line: pending.line(),
+                });
+            }
+        }
+
+        let mut claims = BTreeSet::new();
+        for claim in snapshot.claimed() {
+            let route = snapshot_route(snapshot, claim.line())?;
+            let claim_route =
+                InterruptRoute::new(claim.line(), claim.target(), claim.target_partition());
+            if route != claim_route {
+                return Err(InterruptError::RouteMismatch {
+                    line: claim.line(),
+                    expected: route,
+                    actual: claim_route,
+                });
+            }
+            if pending_lines.contains(&claim.line()) {
+                return Err(InterruptError::DuplicateSnapshotPending { line: claim.line() });
+            }
+            let key = (claim.target(), claim.target_partition());
+            if !claims.insert(key) {
+                return Err(InterruptError::DuplicateSnapshotClaim {
+                    target: claim.target(),
+                    target_partition: claim.target_partition(),
+                });
+            }
+        }
+
+        for event in snapshot.history() {
+            let route = snapshot_route(snapshot, event.line())?;
+            let event_route =
+                InterruptRoute::new(event.line(), event.target(), event.target_partition());
+            if route != event_route {
+                return Err(InterruptError::RouteMismatch {
+                    line: event.line(),
+                    expected: route,
+                    actual: event_route,
+                });
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn restore(&mut self, snapshot: &InterruptSnapshot) -> Result<(), InterruptError> {
+        Self::validate_snapshot(snapshot)?;
         self.routes = snapshot
             .routes()
             .iter()
@@ -574,6 +657,7 @@ impl InterruptController {
             .map(|claim| ((claim.target(), claim.target_partition()), claim))
             .collect();
         self.history = snapshot.history().to_vec();
+        Ok(())
     }
 
     fn route_for(&self, line: InterruptLineId) -> Result<InterruptRoute, InterruptError> {
@@ -601,6 +685,18 @@ impl InterruptController {
         }
         Ok(())
     }
+}
+
+fn snapshot_route(
+    snapshot: &InterruptSnapshot,
+    line: InterruptLineId,
+) -> Result<InterruptRoute, InterruptError> {
+    snapshot
+        .routes()
+        .iter()
+        .find(|route| route.line() == line)
+        .copied()
+        .ok_or(InterruptError::UnknownLine { line })
 }
 
 #[derive(Clone, Debug)]

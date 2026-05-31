@@ -345,7 +345,7 @@ fn interrupt_controller_snapshot_restore_reinstates_routed_controller_state() {
         .assert(extra_line, InterruptSourceId::new(43), 16)
         .unwrap();
 
-    controller.restore(&captured);
+    controller.restore(&captured).unwrap();
 
     assert_eq!(controller.snapshot(14), captured);
     assert_eq!(
@@ -363,6 +363,218 @@ fn interrupt_controller_snapshot_restore_reinstates_routed_controller_state() {
     assert_eq!(controller.claim(target, cpu, 20), Some(claimed));
     controller.complete(target, cpu, claimed_line, 21).unwrap();
     assert_eq!(controller.claim(target, cpu, 22), None);
+}
+
+#[test]
+fn interrupt_controller_restore_rejects_duplicate_snapshot_routes() {
+    let line = InterruptLineId::new(19);
+    let route = InterruptRoute::new(line, InterruptTargetId::new(0), PartitionId::new(3));
+    let mut controller = InterruptController::new();
+    controller.register_route(route).unwrap();
+    let before_restore = controller.snapshot(17);
+    let bad_snapshot = rem6_interrupt::InterruptSnapshot::new(
+        18,
+        vec![route, route],
+        vec![(line, InterruptPriority::new(7))],
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    );
+
+    assert_eq!(
+        controller.restore(&bad_snapshot),
+        Err(InterruptError::DuplicateLine { line })
+    );
+    assert_eq!(controller.snapshot(17), before_restore);
+}
+
+#[test]
+fn interrupt_controller_restore_rejects_snapshot_route_without_priority() {
+    let line = InterruptLineId::new(20);
+    let route = InterruptRoute::new(line, InterruptTargetId::new(0), PartitionId::new(3));
+    let mut controller = InterruptController::new();
+    controller.register_route(route).unwrap();
+    let before_restore = controller.snapshot(18);
+    let bad_snapshot = rem6_interrupt::InterruptSnapshot::new(
+        19,
+        vec![route],
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    );
+
+    assert_eq!(
+        controller.restore(&bad_snapshot),
+        Err(InterruptError::MissingSnapshotPriority { line })
+    );
+    assert_eq!(controller.snapshot(18), before_restore);
+}
+
+#[test]
+fn interrupt_controller_restore_rejects_snapshot_pending_route_mismatch() {
+    let line = InterruptLineId::new(21);
+    let expected_route = InterruptRoute::new(line, InterruptTargetId::new(0), PartitionId::new(3));
+    let actual_route = InterruptRoute::new(line, InterruptTargetId::new(1), PartitionId::new(4));
+    let mut controller = InterruptController::new();
+    controller.register_route(expected_route).unwrap();
+    let before_restore = controller.snapshot(19);
+    let bad_snapshot = rem6_interrupt::InterruptSnapshot::new(
+        20,
+        vec![expected_route],
+        vec![(line, InterruptPriority::new(7))],
+        vec![PendingInterrupt::routed(
+            line,
+            actual_route.target(),
+            actual_route.target_partition(),
+            InterruptSourceId::new(50),
+            11,
+        )],
+        Vec::new(),
+        Vec::new(),
+    );
+
+    assert_eq!(
+        controller.restore(&bad_snapshot),
+        Err(InterruptError::RouteMismatch {
+            line,
+            expected: expected_route,
+            actual: actual_route,
+        })
+    );
+    assert_eq!(controller.snapshot(19), before_restore);
+}
+
+#[test]
+fn interrupt_controller_restore_rejects_snapshot_claimed_route_mismatch() {
+    let line = InterruptLineId::new(22);
+    let expected_route = InterruptRoute::new(line, InterruptTargetId::new(0), PartitionId::new(3));
+    let actual_route = InterruptRoute::new(line, InterruptTargetId::new(1), PartitionId::new(4));
+    let mut controller = InterruptController::new();
+    controller.register_route(expected_route).unwrap();
+    let before_restore = controller.snapshot(21);
+    let bad_snapshot = rem6_interrupt::InterruptSnapshot::new(
+        22,
+        vec![expected_route],
+        vec![(line, InterruptPriority::new(7))],
+        Vec::new(),
+        vec![InterruptClaim::new(
+            line,
+            actual_route.target(),
+            actual_route.target_partition(),
+            InterruptSourceId::new(51),
+            12,
+            13,
+        )],
+        Vec::new(),
+    );
+
+    assert_eq!(
+        controller.restore(&bad_snapshot),
+        Err(InterruptError::RouteMismatch {
+            line,
+            expected: expected_route,
+            actual: actual_route,
+        })
+    );
+    assert_eq!(controller.snapshot(21), before_restore);
+}
+
+#[test]
+fn interrupt_controller_restore_rejects_snapshot_pending_claim_overlap() {
+    let line = InterruptLineId::new(23);
+    let target = InterruptTargetId::new(0);
+    let partition = PartitionId::new(3);
+    let source = InterruptSourceId::new(52);
+    let route = InterruptRoute::new(line, target, partition);
+    let mut controller = InterruptController::new();
+    controller.register_route(route).unwrap();
+    let before_restore = controller.snapshot(22);
+    let bad_snapshot = rem6_interrupt::InterruptSnapshot::new(
+        23,
+        vec![route],
+        vec![(line, InterruptPriority::new(7))],
+        vec![PendingInterrupt::routed(
+            line, target, partition, source, 12,
+        )],
+        vec![InterruptClaim::new(line, target, partition, source, 12, 13)],
+        Vec::new(),
+    );
+
+    assert_eq!(
+        controller.restore(&bad_snapshot),
+        Err(InterruptError::DuplicateSnapshotPending { line })
+    );
+    assert_eq!(controller.snapshot(22), before_restore);
+}
+
+#[test]
+fn interrupt_controller_restore_rejects_snapshot_history_unknown_line() {
+    let route = InterruptRoute::new(
+        InterruptLineId::new(24),
+        InterruptTargetId::new(0),
+        PartitionId::new(3),
+    );
+    let unknown_line = InterruptLineId::new(25);
+    let mut controller = InterruptController::new();
+    controller.register_route(route).unwrap();
+    let before_restore = controller.snapshot(24);
+    let bad_snapshot = rem6_interrupt::InterruptSnapshot::new(
+        25,
+        vec![route],
+        vec![(route.line(), InterruptPriority::new(7))],
+        Vec::new(),
+        Vec::new(),
+        vec![InterruptEvent::routed(
+            20,
+            unknown_line,
+            route.target(),
+            route.target_partition(),
+            InterruptSourceId::new(53),
+            InterruptEventKind::Assert,
+        )],
+    );
+
+    assert_eq!(
+        controller.restore(&bad_snapshot),
+        Err(InterruptError::UnknownLine { line: unknown_line })
+    );
+    assert_eq!(controller.snapshot(24), before_restore);
+}
+
+#[test]
+fn interrupt_controller_restore_rejects_snapshot_history_route_mismatch() {
+    let line = InterruptLineId::new(26);
+    let expected_route = InterruptRoute::new(line, InterruptTargetId::new(0), PartitionId::new(3));
+    let actual_route = InterruptRoute::new(line, InterruptTargetId::new(1), PartitionId::new(4));
+    let mut controller = InterruptController::new();
+    controller.register_route(expected_route).unwrap();
+    let before_restore = controller.snapshot(25);
+    let bad_snapshot = rem6_interrupt::InterruptSnapshot::new(
+        26,
+        vec![expected_route],
+        vec![(line, InterruptPriority::new(7))],
+        Vec::new(),
+        Vec::new(),
+        vec![InterruptEvent::routed(
+            21,
+            line,
+            actual_route.target(),
+            actual_route.target_partition(),
+            InterruptSourceId::new(54),
+            InterruptEventKind::Deassert,
+        )],
+    );
+
+    assert_eq!(
+        controller.restore(&bad_snapshot),
+        Err(InterruptError::RouteMismatch {
+            line,
+            expected: expected_route,
+            actual: actual_route,
+        })
+    );
+    assert_eq!(controller.snapshot(25), before_restore);
 }
 
 #[test]

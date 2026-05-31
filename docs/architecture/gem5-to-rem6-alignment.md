@@ -1152,11 +1152,15 @@ Implementation evidence through 2026-05-30:
   before callbacks and remote outboxes execute.
 - `rem6-interrupt` now keeps generic interrupt error reporting, route
   identifiers, delivery and history records, and controller snapshots in
-  focused `error`, `route`, `event`, and `snapshot` modules, leaving the crate
-  root centered on typed delivery channels, controller state machines, and the
-  generic MMIO window. Interrupt source-policy tests keep the crate root under
-  the facade budget, require those reusable contracts to stay out of the root,
-  and enforce the hard per-source-file size budget, so generic controller
+  focused `error`, `route`, `event`, and `snapshot` modules. Snapshot restore
+  rejects missing priorities, duplicate line, priority, pending, and
+  claimed-target records, references to unknown lines, pending/claimed overlap,
+  and pending, claimed, or history route mismatches before controller state
+  mutates, leaving the crate root centered on typed delivery channels,
+  controller state machines, and the generic MMIO window. Interrupt
+  source-policy tests keep the crate root under the facade budget, require those
+  reusable contracts to stay out of the root, and enforce the hard
+  per-source-file size budget, so generic controller
   growth does not recreate gem5-style platform interrupt wiring spread across
   callbacks, platform helpers, and device-local assertion paths.
 - `rem6-coherence` now keeps harness error reporting, submit/result response

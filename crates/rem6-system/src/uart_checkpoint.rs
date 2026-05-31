@@ -594,6 +594,26 @@ fn encode_interrupt_error(payload: &mut Vec<u8>, error: &InterruptError) {
             write_u64(payload, 1);
             write_u64(payload, line.get());
         }
+        InterruptError::DuplicateSnapshotPriority { line } => {
+            write_u64(payload, 11);
+            write_u64(payload, line.get());
+        }
+        InterruptError::DuplicateSnapshotPending { line } => {
+            write_u64(payload, 12);
+            write_u64(payload, line.get());
+        }
+        InterruptError::DuplicateSnapshotClaim {
+            target,
+            target_partition,
+        } => {
+            write_u64(payload, 13);
+            write_u32(payload, target.get());
+            write_u32(payload, target_partition.index());
+        }
+        InterruptError::MissingSnapshotPriority { line } => {
+            write_u64(payload, 14);
+            write_u64(payload, line.get());
+        }
         InterruptError::UnknownLine { line } => {
             write_u64(payload, 2);
             write_u64(payload, line.get());
@@ -706,6 +726,21 @@ fn decode_interrupt_error(
             kind: decode_interrupt_kind(cursor, "interrupt non-signal kind")?,
         }),
         10 => Ok(InterruptError::Scheduler(decode_scheduler_error(cursor)?)),
+        11 => Ok(InterruptError::DuplicateSnapshotPriority {
+            line: InterruptLineId::new(cursor.read_u64("interrupt duplicate priority line")?),
+        }),
+        12 => Ok(InterruptError::DuplicateSnapshotPending {
+            line: InterruptLineId::new(cursor.read_u64("interrupt duplicate pending line")?),
+        }),
+        13 => Ok(InterruptError::DuplicateSnapshotClaim {
+            target: InterruptTargetId::new(cursor.read_u32("interrupt duplicate claim target")?),
+            target_partition: PartitionId::new(
+                cursor.read_u32("interrupt duplicate claim target partition")?,
+            ),
+        }),
+        14 => Ok(InterruptError::MissingSnapshotPriority {
+            line: InterruptLineId::new(cursor.read_u64("interrupt missing priority line")?),
+        }),
         value => Err(cursor.invalid(format!("interrupt error has invalid kind {value}"))),
     }
 }
