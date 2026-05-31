@@ -16,6 +16,7 @@ mod error;
 mod exports;
 mod fs9p;
 mod fs9p_namespace;
+mod fs9p_protocol;
 mod fs9p_queue;
 mod isr;
 mod mmio_transport;

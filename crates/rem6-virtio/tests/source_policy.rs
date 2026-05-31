@@ -68,6 +68,26 @@ fn virtio_9p_device_source_remains_focused() {
 }
 
 #[test]
+fn virtio_9p_protocol_parsing_lives_in_focused_module() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let device_rs = fs::read_to_string(crate_dir.join("src/fs9p.rs")).unwrap();
+    let protocol_rs = crate_dir.join("src/fs9p_protocol.rs");
+
+    assert!(
+        protocol_rs.exists(),
+        "9P payload parsing belongs in src/fs9p_protocol.rs"
+    );
+    assert!(
+        !device_rs.contains("struct Virtio9pPayloadReader"),
+        "src/fs9p.rs should delegate 9P payload reading to src/fs9p_protocol.rs"
+    );
+    assert!(
+        !device_rs.contains("fn parse_"),
+        "src/fs9p.rs should delegate typed 9P request parsing to src/fs9p_protocol.rs"
+    );
+}
+
+#[test]
 fn virtio_source_files_stay_within_size_limit() {
     let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut oversized = Vec::new();

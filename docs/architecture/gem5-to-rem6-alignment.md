@@ -1273,8 +1273,9 @@ Implementation evidence through 2026-05-31:
   pointing at the removed node, `Tremove` removes file fids plus their namespace
   entries, `Tclunk` drops fid state, `Tflush` acknowledges old tags without
   mutating synchronous fid or namespace state, and `Tfsync` validates fids
-  before acknowledging writeback intent. The 9P
-  device entry point delegates
+  before acknowledging writeback intent. The 9P device entry point delegates
+  typed request payload parsing, protocol string payload construction, and
+  per-message request structs to a focused protocol module. It also delegates
   namespace tree state, qid encoding, readdir payload assembly, and fid-open
   state to a focused namespace module, so protocol dispatch stays separate
   from mutable filesystem state. Missing names, duplicate directory names, stale
@@ -3250,8 +3251,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   `Tclunk` fid removal, `Tflush` no-op acknowledgement without fid mutation,
   `Tfsync` acknowledgement for existing fids, and stale metadata, directory,
   create, fsync, write, remove, unlink, and read `Rlerror` handling,
-  source-policy coverage for keeping 9P protocol dispatch below the
-  focused-device line budget, modern PCI version-1 feature exposure for 9P,
+  source-policy coverage for keeping 9P typed payload parsing out of device
+  dispatch and keeping protocol dispatch below the focused-device line budget,
+  modern PCI version-1 feature exposure for 9P,
   block, console, and RNG, legacy RNG device id and zero-config behavior,
   reproducible entropy generation, writable split descriptor-chain decoding,
   RNG used-ring writeback, guest-memory scatter writes, ISR queue interrupts,
