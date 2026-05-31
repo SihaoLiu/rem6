@@ -8,7 +8,10 @@ use rem6_memory::{AccessSize, Address};
 use rem6_pci::{
     PciBarIndex, PciBarKind, PciBarSpec, PciBridgeBusRange, PciBridgeConfig, PciClassCode,
     PciConfigAperture, PciConfigOffset, PciDeviceIdentity, PciEndpointConfig, PciError,
+    PciExpressCapabilitySpec, PciExpressDeviceCapabilitySpec, PciExpressLinkCapabilitySpec,
     PciFunctionAddress, PciHostAddressBases, PciHostBridge, PciHostBridgeTopologySnapshot,
+    PciMsiCapabilitySpec, PciMsixCapabilitySpec, PciPowerManagementCapabilitySpec,
+    PciRawCapabilitySpec,
 };
 use rem6_stats::StatsRegistry;
 use rem6_system::{
@@ -47,6 +50,57 @@ fn endpoint(function: PciFunctionAddress) -> PciEndpointConfig {
     endpoint
 }
 
+fn endpoint_with_capabilities(function: PciFunctionAddress) -> PciEndpointConfig {
+    let mut endpoint = endpoint(function);
+    endpoint.install_pm_capability(pm(0x44)).unwrap();
+    endpoint.install_msi_capability(msi(0x50)).unwrap();
+    endpoint
+        .install_raw_capability(raw_capability(0x70))
+        .unwrap();
+    endpoint.install_msix_capability(msix(0x90)).unwrap();
+    endpoint.install_pcie_capability(pcie(0xa0)).unwrap();
+    endpoint
+}
+
+fn pm(offset: u16) -> PciPowerManagementCapabilitySpec {
+    PciPowerManagementCapabilitySpec::new(PciConfigOffset::new(offset).unwrap(), 0x0003, 0x0001)
+        .unwrap()
+}
+
+fn msi(offset: u16) -> PciMsiCapabilitySpec {
+    PciMsiCapabilitySpec::new(PciConfigOffset::new(offset).unwrap(), 4, true, true).unwrap()
+}
+
+fn msix(offset: u16) -> PciMsixCapabilitySpec {
+    PciMsixCapabilitySpec::new(
+        PciConfigOffset::new(offset).unwrap(),
+        4,
+        PciBarIndex::new(2).unwrap(),
+        Address::new(0x100),
+        PciBarIndex::new(2).unwrap(),
+        Address::new(0x180),
+    )
+    .unwrap()
+}
+
+fn pcie(offset: u16) -> PciExpressCapabilitySpec {
+    PciExpressCapabilitySpec::new(
+        PciConfigOffset::new(offset).unwrap(),
+        0x0002,
+        PciExpressDeviceCapabilitySpec::new(0x0000_1234, 0x0011, 0x0022),
+        PciExpressLinkCapabilitySpec::new(0x0100_0001, 0x0003, 0x2001),
+    )
+    .unwrap()
+}
+
+fn raw_capability(offset: u16) -> PciRawCapabilitySpec {
+    PciRawCapabilitySpec::new(
+        PciConfigOffset::new(offset).unwrap(),
+        [0x09, 0xff, 0x10, 0x08, 0xaa, 0xbb, 0xcc, 0xdd],
+    )
+    .unwrap()
+}
+
 fn host_with_endpoint() -> PciHostBridge {
     let aperture = PciConfigAperture::ecam(Address::new(0x3000_0000), 2).unwrap();
     let bases = PciHostAddressBases::new(
@@ -59,6 +113,22 @@ fn host_with_endpoint() -> PciHostBridge {
     let mut host = PciHostBridge::with_address_bases(aperture, bases);
     host.register_bridge(bridge(bridge_function, 1)).unwrap();
     host.register_endpoint(endpoint(endpoint_function)).unwrap();
+    host
+}
+
+fn host_with_capability_endpoint() -> PciHostBridge {
+    let aperture = PciConfigAperture::ecam(Address::new(0x3000_0000), 2).unwrap();
+    let bases = PciHostAddressBases::new(
+        Address::new(0x1000_0000),
+        Address::new(0x8000_0000),
+        Address::new(0xa000_0000),
+    );
+    let bridge_function = PciFunctionAddress::new(0, 1, 0).unwrap();
+    let endpoint_function = PciFunctionAddress::new(1, 2, 0).unwrap();
+    let mut host = PciHostBridge::with_address_bases(aperture, bases);
+    host.register_bridge(bridge(bridge_function, 1)).unwrap();
+    host.register_endpoint(endpoint_with_capabilities(endpoint_function))
+        .unwrap();
     host
 }
 
@@ -146,6 +216,11 @@ fn pci_host_checkpoint_captures_and_validates_topology_payload() {
     let endpoint_config_space = snapshot.endpoint_config_space_payloads();
     let bridge_bars = snapshot.bridge_bar_payloads();
     let endpoint_bars = snapshot.endpoint_bar_payloads();
+    let endpoint_raw_capabilities = snapshot.endpoint_raw_capability_payloads();
+    let endpoint_power_management = snapshot.endpoint_power_management_payloads();
+    let endpoint_pcie = snapshot.endpoint_pcie_payloads();
+    let endpoint_msi = snapshot.endpoint_msi_payloads();
+    let endpoint_msix = snapshot.endpoint_msix_payloads();
     let component = CheckpointComponentId::new("pci.host0").unwrap();
     let port = PciHostCheckpointPort::new(component.clone(), Arc::clone(&live));
     let mut registry = CheckpointRegistry::new();
@@ -163,6 +238,13 @@ fn pci_host_checkpoint_captures_and_validates_topology_payload() {
             bridge_bars.clone(),
             endpoint_bars.clone()
         )
+        .with_endpoint_capability_payloads(
+            endpoint_raw_capabilities.clone(),
+            endpoint_power_management.clone(),
+            endpoint_pcie.clone(),
+            endpoint_msi.clone(),
+            endpoint_msix.clone()
+        )
     );
     assert_eq!(
         captured.bridge_config_space_payloads(),
@@ -174,6 +256,17 @@ fn pci_host_checkpoint_captures_and_validates_topology_payload() {
     );
     assert_eq!(captured.bridge_bar_payloads(), &bridge_bars);
     assert_eq!(captured.endpoint_bar_payloads(), &endpoint_bars);
+    assert_eq!(
+        captured.endpoint_raw_capability_payloads(),
+        &endpoint_raw_capabilities
+    );
+    assert_eq!(
+        captured.endpoint_power_management_payloads(),
+        &endpoint_power_management
+    );
+    assert_eq!(captured.endpoint_pcie_payloads(), &endpoint_pcie);
+    assert_eq!(captured.endpoint_msi_payloads(), &endpoint_msi);
+    assert_eq!(captured.endpoint_msix_payloads(), &endpoint_msix);
     assert_eq!(
         PciHostBridgeTopologySnapshot::from_bytes(
             registry.chunk(&component, "host-topology").unwrap()
@@ -189,8 +282,80 @@ fn pci_host_checkpoint_captures_and_validates_topology_payload() {
         .is_some());
     assert!(registry.chunk(&component, "host-bridge-bars").is_some());
     assert!(registry.chunk(&component, "host-endpoint-bars").is_some());
+    assert!(registry
+        .chunk(&component, "host-endpoint-raw-capabilities")
+        .is_some());
+    assert!(registry
+        .chunk(&component, "host-endpoint-power-management")
+        .is_some());
+    assert!(registry.chunk(&component, "host-endpoint-pcie").is_some());
+    assert!(registry.chunk(&component, "host-endpoint-msi").is_some());
+    assert!(registry.chunk(&component, "host-endpoint-msix").is_some());
     assert_eq!(port.restore_from(&registry).unwrap(), captured);
     assert_eq!(live.lock().unwrap().topology_snapshot(), topology);
+}
+
+#[test]
+fn pci_host_checkpoint_captures_and_validates_endpoint_capability_payloads() {
+    let live = Arc::new(Mutex::new(host_with_capability_endpoint()));
+    let snapshot = live.lock().unwrap().snapshot();
+    let topology = snapshot.topology_snapshot();
+    let bridge_config_space = snapshot.bridge_config_space_payloads();
+    let endpoint_config_space = snapshot.endpoint_config_space_payloads();
+    let bridge_bars = snapshot.bridge_bar_payloads();
+    let endpoint_bars = snapshot.endpoint_bar_payloads();
+    let endpoint_raw_capabilities = snapshot.endpoint_raw_capability_payloads();
+    let endpoint_power_management = snapshot.endpoint_power_management_payloads();
+    let endpoint_pcie = snapshot.endpoint_pcie_payloads();
+    let endpoint_msi = snapshot.endpoint_msi_payloads();
+    let endpoint_msix = snapshot.endpoint_msix_payloads();
+    let component = CheckpointComponentId::new("pci.host0").unwrap();
+    let port = PciHostCheckpointPort::new(component.clone(), Arc::clone(&live));
+    let mut registry = CheckpointRegistry::new();
+
+    port.register(&mut registry).unwrap();
+    let captured = port.capture_into(&mut registry).unwrap();
+
+    assert_eq!(
+        captured,
+        PciHostCheckpointRecord::new(
+            component.clone(),
+            topology,
+            bridge_config_space,
+            endpoint_config_space,
+            bridge_bars,
+            endpoint_bars
+        )
+        .with_endpoint_capability_payloads(
+            endpoint_raw_capabilities.clone(),
+            endpoint_power_management.clone(),
+            endpoint_pcie.clone(),
+            endpoint_msi.clone(),
+            endpoint_msix.clone()
+        )
+    );
+    assert!(captured.has_capability_payloads());
+    assert_eq!(
+        captured.endpoint_raw_capability_payloads(),
+        &endpoint_raw_capabilities
+    );
+    assert_eq!(
+        captured.endpoint_power_management_payloads(),
+        &endpoint_power_management
+    );
+    assert_eq!(captured.endpoint_pcie_payloads(), &endpoint_pcie);
+    assert_eq!(captured.endpoint_msi_payloads(), &endpoint_msi);
+    assert_eq!(captured.endpoint_msix_payloads(), &endpoint_msix);
+    for chunk_name in [
+        "host-endpoint-raw-capabilities",
+        "host-endpoint-power-management",
+        "host-endpoint-pcie",
+        "host-endpoint-msi",
+        "host-endpoint-msix",
+    ] {
+        assert!(registry.chunk(&component, chunk_name).is_some());
+    }
+    assert_eq!(port.restore_from(&registry).unwrap(), captured);
 }
 
 #[test]
@@ -215,6 +380,46 @@ fn pci_host_checkpoint_accepts_legacy_topology_only_payloads() {
     assert!(!restored.has_bar_payloads());
     assert!(restored.bridge_bar_payloads().is_empty());
     assert!(restored.endpoint_bar_payloads().is_empty());
+}
+
+#[test]
+fn pci_host_checkpoint_accepts_config_and_bar_payloads_without_capability_payloads() {
+    let live = Arc::new(Mutex::new(host_with_capability_endpoint()));
+    let component = CheckpointComponentId::new("pci.host0").unwrap();
+    let port = PciHostCheckpointPort::new(component.clone(), Arc::clone(&live));
+    let mut captured = CheckpointRegistry::new();
+
+    port.register(&mut captured).unwrap();
+    port.capture_into(&mut captured).unwrap();
+
+    let mut without_capabilities = CheckpointRegistry::new();
+    port.register(&mut without_capabilities).unwrap();
+    for chunk_name in [
+        "host-topology",
+        "host-bridge-config-space",
+        "host-endpoint-config-space",
+        "host-bridge-bars",
+        "host-endpoint-bars",
+    ] {
+        without_capabilities
+            .write_chunk(
+                &component,
+                chunk_name,
+                captured.chunk(&component, chunk_name).unwrap().to_vec(),
+            )
+            .unwrap();
+    }
+
+    let restored = port.restore_from(&without_capabilities).unwrap();
+
+    assert!(restored.has_config_space_payloads());
+    assert!(restored.has_bar_payloads());
+    assert!(!restored.has_capability_payloads());
+    assert!(restored.endpoint_raw_capability_payloads().is_empty());
+    assert!(restored.endpoint_power_management_payloads().is_empty());
+    assert!(restored.endpoint_pcie_payloads().is_empty());
+    assert!(restored.endpoint_msi_payloads().is_empty());
+    assert!(restored.endpoint_msix_payloads().is_empty());
 }
 
 #[test]
@@ -257,6 +462,80 @@ fn pci_host_checkpoint_accepts_config_only_payloads() {
     assert!(!restored.has_bar_payloads());
     assert!(restored.bridge_bar_payloads().is_empty());
     assert!(restored.endpoint_bar_payloads().is_empty());
+}
+
+#[test]
+fn pci_host_checkpoint_rejects_partially_missing_endpoint_capability_payloads() {
+    let live = Arc::new(Mutex::new(host_with_capability_endpoint()));
+    let component = CheckpointComponentId::new("pci.host0").unwrap();
+    let port = PciHostCheckpointPort::new(component.clone(), Arc::clone(&live));
+    let mut captured = CheckpointRegistry::new();
+
+    port.register(&mut captured).unwrap();
+    port.capture_into(&mut captured).unwrap();
+
+    let mut partial = CheckpointRegistry::new();
+    port.register(&mut partial).unwrap();
+    for chunk_name in [
+        "host-topology",
+        "host-bridge-config-space",
+        "host-endpoint-config-space",
+        "host-bridge-bars",
+        "host-endpoint-bars",
+        "host-endpoint-raw-capabilities",
+        "host-endpoint-pcie",
+        "host-endpoint-msi",
+        "host-endpoint-msix",
+    ] {
+        partial
+            .write_chunk(
+                &component,
+                chunk_name,
+                captured.chunk(&component, chunk_name).unwrap().to_vec(),
+            )
+            .unwrap();
+    }
+
+    assert_eq!(
+        port.restore_from(&partial).unwrap_err(),
+        PciHostCheckpointError::MissingChunk {
+            component,
+            name: "host-endpoint-power-management".to_string(),
+        }
+    );
+}
+
+#[test]
+fn pci_host_checkpoint_rejects_endpoint_capability_payload_with_invalid_function_as_chunk_error() {
+    let live = Arc::new(Mutex::new(host_with_capability_endpoint()));
+    let component = CheckpointComponentId::new("pci.host0").unwrap();
+    let port = PciHostCheckpointPort::new(component.clone(), Arc::clone(&live));
+    let mut captured = CheckpointRegistry::new();
+
+    port.register(&mut captured).unwrap();
+    port.capture_into(&mut captured).unwrap();
+
+    let mut malformed = captured.clone();
+    let mut raw_capabilities = malformed
+        .chunk(&component, "host-endpoint-raw-capabilities")
+        .unwrap()
+        .to_vec();
+    raw_capabilities[15] = 32;
+    malformed
+        .write_chunk(
+            &component,
+            "host-endpoint-raw-capabilities",
+            raw_capabilities,
+        )
+        .unwrap();
+
+    assert_eq!(
+        port.restore_from(&malformed).unwrap_err(),
+        PciHostCheckpointError::InvalidChunk {
+            component,
+            reason: PciError::InvalidRawCapabilitySnapshot.to_string(),
+        }
+    );
 }
 
 #[test]
@@ -439,6 +718,13 @@ fn pci_host_checkpoint_bank_decodes_records_for_manifest_audit() {
                 first_snapshot.endpoint_config_space_payloads(),
                 first_snapshot.bridge_bar_payloads(),
                 first_snapshot.endpoint_bar_payloads()
+            )
+            .with_endpoint_capability_payloads(
+                first_snapshot.endpoint_raw_capability_payloads(),
+                first_snapshot.endpoint_power_management_payloads(),
+                first_snapshot.endpoint_pcie_payloads(),
+                first_snapshot.endpoint_msi_payloads(),
+                first_snapshot.endpoint_msix_payloads()
             ),
             PciHostCheckpointRecord::new(
                 second_component,
@@ -447,6 +733,13 @@ fn pci_host_checkpoint_bank_decodes_records_for_manifest_audit() {
                 second_snapshot.endpoint_config_space_payloads(),
                 second_snapshot.bridge_bar_payloads(),
                 second_snapshot.endpoint_bar_payloads()
+            )
+            .with_endpoint_capability_payloads(
+                second_snapshot.endpoint_raw_capability_payloads(),
+                second_snapshot.endpoint_power_management_payloads(),
+                second_snapshot.endpoint_pcie_payloads(),
+                second_snapshot.endpoint_msi_payloads(),
+                second_snapshot.endpoint_msix_payloads()
             ),
         ]
     );
@@ -633,6 +926,66 @@ fn system_action_executor_rejects_pci_host_bar_payload_malformed() {
         executor
             .checkpoints()
             .chunk(&component, "host-endpoint-bars")
+            .unwrap(),
+        original_payload
+    );
+}
+
+#[test]
+fn system_action_executor_rejects_pci_host_endpoint_capability_payload_mismatch() {
+    let live = Arc::new(Mutex::new(host_with_capability_endpoint()));
+    let component = CheckpointComponentId::new("pci.host0").unwrap();
+    let bank = PciHostCheckpointBank::new([PciHostCheckpointPort::new(
+        component.clone(),
+        Arc::clone(&live),
+    )])
+    .unwrap();
+    let mut executor = SystemActionExecutor::new(StatsRegistry::new());
+    executor.attach_pci_host_checkpoint_bank(bank).unwrap();
+
+    let checkpoint = HostActionRecord::new(
+        61,
+        PartitionId::new(0),
+        PartitionId::new(1),
+        GuestEventId::new(12),
+        GuestSourceId::new(9),
+        HostAction::Checkpoint {
+            label: "pci-capability".to_string(),
+        },
+    );
+    let manifest = match executor.apply(&checkpoint).unwrap() {
+        SystemActionOutcome::Checkpoint { manifest, .. } => manifest,
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+    let original_payload = executor
+        .checkpoints()
+        .chunk(&component, "host-endpoint-msi")
+        .unwrap()
+        .to_vec();
+    let corrupted = corrupt_manifest_chunk(&manifest, &component, "host-endpoint-msi");
+
+    let restore = HostActionRecord::new(
+        67,
+        PartitionId::new(0),
+        PartitionId::new(1),
+        GuestEventId::new(13),
+        GuestSourceId::new(9),
+        HostAction::RestoreCheckpoint {
+            manifest: corrupted,
+        },
+    );
+
+    assert_eq!(
+        executor.apply(&restore).unwrap_err(),
+        SystemError::PciHostCheckpoint(PciHostCheckpointError::Pci {
+            component: component.clone(),
+            error: PciError::SnapshotMsiCapabilityMismatch,
+        })
+    );
+    assert_eq!(
+        executor
+            .checkpoints()
+            .chunk(&component, "host-endpoint-msi")
             .unwrap(),
         original_payload
     );

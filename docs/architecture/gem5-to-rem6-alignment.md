@@ -3074,10 +3074,13 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   when the corresponding chunk families are present. Topology-only legacy PCI
   host manifests still restore through topology validation, and config-only
   manifests still restore through topology plus config-space validation. BAR
-  chunks without config-space chunks, partially missing config or BAR chunk
-  pairs, malformed payload maps, truncated function payloads, function-set
-  mismatches, and live-snapshot byte mismatches are rejected before broader PCI
-  config restore mutates device state. `SystemActionExecutor`
+  chunks without config-space chunks, complete config-and-BAR manifests without
+  endpoint capability chunks, and fully populated endpoint capability chunk
+  families are handled as distinct manifest generations. Partially missing
+  config, BAR, or endpoint capability chunks, malformed payload maps,
+  truncated function payloads, function-set mismatches, and live-snapshot byte
+  mismatches are rejected before broader PCI config restore mutates device
+  state. `SystemActionExecutor`
   can be constructed directly with an attached PCI host checkpoint bank. rem6
   still does not pretend that PCI host checkpoint validation alone restores full
   PCI configuration state.
