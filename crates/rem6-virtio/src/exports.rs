@@ -40,7 +40,8 @@ pub use crate::console::{
     VirtioConsoleDecodedTransmit, VirtioConsoleDescriptorWrite, VirtioConsoleDevice,
     VirtioConsoleQueueCompletionWrite, VirtioConsoleReceiveRequest, VirtioConsoleRequestId,
     VirtioConsoleTransferKind, VirtioConsoleTransmitRequest, VIRTIO_CONSOLE_CONFIG_SIZE,
-    VIRTIO_CONSOLE_DEVICE_ID, VIRTIO_CONSOLE_F_SIZE,
+    VIRTIO_CONSOLE_DEFAULT_QUEUE_SIZE, VIRTIO_CONSOLE_DEVICE_ID, VIRTIO_CONSOLE_F_SIZE,
+    VIRTIO_CONSOLE_RECEIVE_QUEUE_INDEX, VIRTIO_CONSOLE_TRANSMIT_QUEUE_INDEX,
 };
 pub use crate::device_config::{
     VirtioPciDeviceConfigAccess, VirtioPciDeviceConfigDevice, VirtioPciDeviceConfigSnapshot,

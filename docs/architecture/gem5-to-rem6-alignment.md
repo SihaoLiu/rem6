@@ -1248,7 +1248,12 @@ Implementation evidence through 2026-05-31:
   receive and transmit requests directly from typed guest memory, scatter
   receive bytes back to guest buffers, write used elements and indices, and
   raise typed ISR queue interrupts after completion writeback while leaving the
-  available cursor unchanged when descriptor decoding fails. VirtIO MMIO transport now
+  available cursor unchanged when descriptor decoding fails. Console device
+  assembly now builds the read-only PCI device-config bytes, exposes common-config
+  feature and queue state for the receive and transmit queues, creates typed
+  notify devices for both queue offsets, and attaches those config, common,
+  notify, and ISR devices to the modern PCI BAR runtime used by other VirtIO
+  devices. VirtIO MMIO transport now
   exposes gem5-visible magic, version,
   device/vendor id, feature-page selection, queue selection, queue size, queue
   PFN, interrupt status/ack, device-status, and device-config windows as typed
@@ -3160,7 +3165,10 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   used-ring writeback, typed guest-memory available-ring consumption for
   receive and transmit queues, guest-memory receive scatter writes,
   guest-memory transmit input reads, queue-interrupt ISR status after console
-  completion writeback, and console descriptor direction rejection, legacy MMIO
+  completion writeback, console descriptor direction rejection, read-only console
+  PCI device-config bytes, common-config feature and queue exposure, queue
+  notify layout, modern PCI endpoint and capability assembly, config MMIO reads,
+  and notify MMIO writes through the BAR runtime, legacy MMIO
   magic/version/device/vendor id registers,
   feature-page selection, driver feature validation, queue selection, queue
   sizing, PFN-derived split-ring address layout, device-config window

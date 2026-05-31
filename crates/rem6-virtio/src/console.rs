@@ -2,16 +2,21 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use rem6_kernel::Tick;
-use rem6_memory::Address;
+use rem6_memory::{Address, ByteMask};
 
 use crate::{
-    block_queue::add_address, VirtioError, VirtioGuestMemory, VirtioPciIsrDevice, VirtioQueueIndex,
+    block_queue::add_address, VirtioError, VirtioGuestMemory, VirtioPciCommonConfigDevice,
+    VirtioPciDeviceConfigDevice, VirtioPciDeviceConfigSpec, VirtioPciIsrDevice,
+    VirtioPciNotifyDevice, VirtioQueueIndex, VirtioQueueNotifySpec, VirtioQueueSpec,
     VirtioSplitDescriptorChain, VirtioSplitQueue, VirtioSplitUsedElement, VirtioSplitUsedRing,
 };
 
 pub const VIRTIO_CONSOLE_DEVICE_ID: u16 = 3;
 pub const VIRTIO_CONSOLE_F_SIZE: u32 = 1;
 pub const VIRTIO_CONSOLE_CONFIG_SIZE: u64 = 4;
+pub const VIRTIO_CONSOLE_RECEIVE_QUEUE_INDEX: u16 = 0;
+pub const VIRTIO_CONSOLE_TRANSMIT_QUEUE_INDEX: u16 = 1;
+pub const VIRTIO_CONSOLE_DEFAULT_QUEUE_SIZE: u16 = 16;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct VirtioConsoleConfig {
@@ -43,6 +48,19 @@ impl VirtioConsoleConfig {
         let cols = self.cols.to_le_bytes();
         let rows = self.rows.to_le_bytes();
         [cols[0], cols[1], rows[0], rows[1]]
+    }
+
+    pub fn device_config_spec(self) -> Result<VirtioPciDeviceConfigSpec, VirtioError> {
+        VirtioPciDeviceConfigSpec::new(
+            self.to_le_bytes().to_vec(),
+            ByteMask::from_bits(vec![false; VIRTIO_CONSOLE_CONFIG_SIZE as usize])
+                .expect("nonempty console config write mask"),
+        )
+    }
+
+    pub fn build_device_config(self) -> Result<VirtioPciDeviceConfigDevice, VirtioError> {
+        self.device_config_spec()
+            .map(VirtioPciDeviceConfigDevice::new)
     }
 }
 
@@ -209,6 +227,47 @@ impl VirtioConsoleDevice {
 
     pub fn feature_pages(&self) -> Vec<(u32, u32)> {
         vec![(0, VIRTIO_CONSOLE_F_SIZE)]
+    }
+
+    pub fn queue_specs(&self) -> [VirtioQueueSpec; 2] {
+        [
+            VirtioQueueSpec::available(VIRTIO_CONSOLE_DEFAULT_QUEUE_SIZE, 0),
+            VirtioQueueSpec::available(VIRTIO_CONSOLE_DEFAULT_QUEUE_SIZE, 1),
+        ]
+    }
+
+    pub fn notify_specs(&self) -> [VirtioQueueNotifySpec; 2] {
+        [
+            VirtioQueueNotifySpec::new(
+                VirtioQueueIndex::new(VIRTIO_CONSOLE_RECEIVE_QUEUE_INDEX)
+                    .expect("console receive queue index"),
+                0,
+            ),
+            VirtioQueueNotifySpec::new(
+                VirtioQueueIndex::new(VIRTIO_CONSOLE_TRANSMIT_QUEUE_INDEX)
+                    .expect("console transmit queue index"),
+                1,
+            ),
+        ]
+    }
+
+    pub fn device_config_spec(&self) -> Result<VirtioPciDeviceConfigSpec, VirtioError> {
+        self.config.device_config_spec()
+    }
+
+    pub fn build_device_config(&self) -> Result<VirtioPciDeviceConfigDevice, VirtioError> {
+        self.config.build_device_config()
+    }
+
+    pub fn build_common_config(&self) -> Result<VirtioPciCommonConfigDevice, VirtioError> {
+        VirtioPciCommonConfigDevice::new(self.feature_pages(), self.queue_specs())
+    }
+
+    pub fn build_notify_device(
+        &self,
+        notify_off_multiplier: u32,
+    ) -> Result<VirtioPciNotifyDevice, VirtioError> {
+        VirtioPciNotifyDevice::new(notify_off_multiplier, self.notify_specs())
     }
 
     pub const fn config_size(&self) -> u64 {
