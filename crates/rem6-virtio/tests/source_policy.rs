@@ -88,6 +88,30 @@ fn virtio_9p_protocol_parsing_lives_in_focused_module() {
 }
 
 #[test]
+fn virtio_9p_protocol_constants_live_in_focused_module() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let device_rs = fs::read_to_string(crate_dir.join("src/fs9p.rs")).unwrap();
+    let protocol_rs = fs::read_to_string(crate_dir.join("src/fs9p_protocol.rs")).unwrap();
+
+    for symbol in [
+        "VIRTIO_9P_TVERSION",
+        "VIRTIO_9P_RLERROR",
+        "VIRTIO_9P_EBADF",
+        "VIRTIO_9P_QTDIR",
+        "VIRTIO_9P_SETATTR_MODE",
+    ] {
+        assert!(
+            !device_rs.contains(&format!("pub const {symbol}:")),
+            "9P wire constant {symbol} belongs in src/fs9p_protocol.rs"
+        );
+        assert!(
+            protocol_rs.contains(&format!("pub const {symbol}:")),
+            "src/fs9p_protocol.rs should define 9P wire constant {symbol}"
+        );
+    }
+}
+
+#[test]
 fn virtio_source_files_stay_within_size_limit() {
     let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut oversized = Vec::new();

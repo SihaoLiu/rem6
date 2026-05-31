@@ -8,17 +8,7 @@ use crate::fs9p_namespace::{
     getattr_payload, qid_payload, Virtio9pFidState, Virtio9pNamespace, Virtio9pNodeId,
     Virtio9pTimestamp,
 };
-use crate::fs9p_protocol::{
-    lock_payload, parse_attach_request, parse_auth_request, parse_clunk_request,
-    parse_create_request, parse_flush_request, parse_fsync_request, parse_getattr_request,
-    parse_getlock_request, parse_lcreate_request, parse_link_request, parse_lock_request,
-    parse_lopen_request, parse_mkdir_request, parse_mknod_request, parse_open_request,
-    parse_read_request, parse_readdir_request, parse_readlink_request, parse_remove_request,
-    parse_rename_request, parse_renameat_request, parse_setattr_request, parse_stat_request,
-    parse_statfs_request, parse_symlink_request, parse_unlinkat_request, parse_version_request,
-    parse_walk_request, parse_write_request, parse_wstat_request, parse_xattrcreate_request,
-    parse_xattrwalk_request, string_payload, version_payload,
-};
+use crate::fs9p_protocol::*;
 use crate::{
     modern_feature_pages, Virtio9pCompletion, Virtio9pRequest, VirtioError,
     VirtioPciCommonConfigDevice, VirtioPciDeviceConfigDevice, VirtioPciDeviceConfigSpec,
@@ -30,104 +20,6 @@ pub const VIRTIO_9P_F_MOUNT_TAG: u32 = 1;
 pub const VIRTIO_9P_REQUEST_QUEUE_INDEX: u16 = 0;
 pub const VIRTIO_9P_DEFAULT_QUEUE_SIZE: u16 = 32;
 pub const VIRTIO_9P_DEFAULT_MSIZE: u32 = 8192;
-pub const VIRTIO_9P_PROTOCOL_VERSION: &[u8] = b"9P2000.L";
-pub const VIRTIO_9P_TSTATFS: u8 = 8;
-pub const VIRTIO_9P_RSTATFS: u8 = 9;
-pub const VIRTIO_9P_TVERSION: u8 = 100;
-pub const VIRTIO_9P_RVERSION: u8 = 101;
-pub const VIRTIO_9P_TAUTH: u8 = 102;
-pub const VIRTIO_9P_RAUTH: u8 = 103;
-pub const VIRTIO_9P_TATTACH: u8 = 104;
-pub const VIRTIO_9P_RATTACH: u8 = 105;
-pub const VIRTIO_9P_TLCREATE: u8 = 14;
-pub const VIRTIO_9P_RLCREATE: u8 = 15;
-pub const VIRTIO_9P_TSYMLINK: u8 = 16;
-pub const VIRTIO_9P_RSYMLINK: u8 = 17;
-pub const VIRTIO_9P_TMKNOD: u8 = 18;
-pub const VIRTIO_9P_RMKNOD: u8 = 19;
-pub const VIRTIO_9P_TRENAME: u8 = 20;
-pub const VIRTIO_9P_RRENAME: u8 = 21;
-pub const VIRTIO_9P_TREADLINK: u8 = 22;
-pub const VIRTIO_9P_RREADLINK: u8 = 23;
-pub const VIRTIO_9P_TGETATTR: u8 = 24;
-pub const VIRTIO_9P_RGETATTR: u8 = 25;
-pub const VIRTIO_9P_TSETATTR: u8 = 26;
-pub const VIRTIO_9P_RSETATTR: u8 = 27;
-pub const VIRTIO_9P_TXATTRWALK: u8 = 30;
-pub const VIRTIO_9P_RXATTRWALK: u8 = 31;
-pub const VIRTIO_9P_TXATTRCREATE: u8 = 32;
-pub const VIRTIO_9P_RXATTRCREATE: u8 = 33;
-pub const VIRTIO_9P_TREADDIR: u8 = 40;
-pub const VIRTIO_9P_RREADDIR: u8 = 41;
-pub const VIRTIO_9P_TFSYNC: u8 = 50;
-pub const VIRTIO_9P_RFSYNC: u8 = 51;
-pub const VIRTIO_9P_TLOCK: u8 = 52;
-pub const VIRTIO_9P_RLOCK: u8 = 53;
-pub const VIRTIO_9P_TGETLOCK: u8 = 54;
-pub const VIRTIO_9P_RGETLOCK: u8 = 55;
-pub const VIRTIO_9P_TLINK: u8 = 70;
-pub const VIRTIO_9P_RLINK: u8 = 71;
-pub const VIRTIO_9P_TMKDIR: u8 = 72;
-pub const VIRTIO_9P_RMKDIR: u8 = 73;
-pub const VIRTIO_9P_TRENAMEAT: u8 = 74;
-pub const VIRTIO_9P_RRENAMEAT: u8 = 75;
-pub const VIRTIO_9P_TUNLINKAT: u8 = 76;
-pub const VIRTIO_9P_RUNLINKAT: u8 = 77;
-pub const VIRTIO_9P_TFLUSH: u8 = 108;
-pub const VIRTIO_9P_RFLUSH: u8 = 109;
-pub const VIRTIO_9P_TWALK: u8 = 110;
-pub const VIRTIO_9P_RWALK: u8 = 111;
-pub const VIRTIO_9P_TOPEN: u8 = 112;
-pub const VIRTIO_9P_ROPEN: u8 = 113;
-pub const VIRTIO_9P_TCREATE: u8 = 114;
-pub const VIRTIO_9P_RCREATE: u8 = 115;
-pub const VIRTIO_9P_TLOPEN: u8 = 12;
-pub const VIRTIO_9P_RLOPEN: u8 = 13;
-pub const VIRTIO_9P_TREAD: u8 = 116;
-pub const VIRTIO_9P_RREAD: u8 = 117;
-pub const VIRTIO_9P_TWRITE: u8 = 118;
-pub const VIRTIO_9P_RWRITE: u8 = 119;
-pub const VIRTIO_9P_TCLUNK: u8 = 120;
-pub const VIRTIO_9P_RCLUNK: u8 = 121;
-pub const VIRTIO_9P_TREMOVE: u8 = 122;
-pub const VIRTIO_9P_RREMOVE: u8 = 123;
-pub const VIRTIO_9P_TSTAT: u8 = 124;
-pub const VIRTIO_9P_RSTAT: u8 = 125;
-pub const VIRTIO_9P_TWSTAT: u8 = 126;
-pub const VIRTIO_9P_RWSTAT: u8 = 127;
-pub const VIRTIO_9P_RLERROR: u8 = 7;
-pub const VIRTIO_9P_NOFID: u32 = u32::MAX;
-pub const VIRTIO_9P_EBADF: u32 = 9;
-pub const VIRTIO_9P_EEXIST: u32 = 17;
-pub const VIRTIO_9P_ENOENT: u32 = 2;
-pub const VIRTIO_9P_ENODATA: u32 = 61;
-pub const VIRTIO_9P_ENOTEMPTY: u32 = 39;
-pub const VIRTIO_9P_ENOTSUP: u32 = 95;
-pub const VIRTIO_9P_QTFILE: u8 = 0;
-pub const VIRTIO_9P_QTSYMLINK: u8 = 0x02;
-pub const VIRTIO_9P_QTDIR: u8 = 0x80;
-pub const VIRTIO_9P_DTCHR: u8 = 2;
-pub const VIRTIO_9P_DTDIR: u8 = 4;
-pub const VIRTIO_9P_DTBLK: u8 = 6;
-pub const VIRTIO_9P_DTREG: u8 = 8;
-pub const VIRTIO_9P_DTSYMLINK: u8 = 10;
-pub const VIRTIO_9P_GETATTR_BASIC: u64 = 0x0000_07ff;
-pub const VIRTIO_9P_SETATTR_MODE: u32 = 0x0000_0001;
-pub const VIRTIO_9P_SETATTR_UID: u32 = 0x0000_0002;
-pub const VIRTIO_9P_SETATTR_GID: u32 = 0x0000_0004;
-pub const VIRTIO_9P_SETATTR_SIZE: u32 = 0x0000_0008;
-pub const VIRTIO_9P_SETATTR_ATIME: u32 = 0x0000_0010;
-pub const VIRTIO_9P_SETATTR_MTIME: u32 = 0x0000_0020;
-pub const VIRTIO_9P_SETATTR_ATIME_SET: u32 = 0x0000_0080;
-pub const VIRTIO_9P_SETATTR_MTIME_SET: u32 = 0x0000_0100;
-pub const VIRTIO_9P_LOCK_SUCCESS: u8 = 0;
-pub const VIRTIO_9P_LOCK_TYPE_RDLCK: u8 = 0;
-pub const VIRTIO_9P_LOCK_TYPE_WRLCK: u8 = 1;
-pub const VIRTIO_9P_LOCK_TYPE_UNLCK: u8 = 2;
-pub const VIRTIO_9P_AT_REMOVEDIR: u32 = 0x200;
-pub const VIRTIO_9P_STATFS_TYPE: u32 = 0x0102_1997;
-pub const VIRTIO_9P_STATFS_BLOCK_SIZE: u32 = 4096;
-pub const VIRTIO_9P_NAME_MAX: u32 = 255;
 pub const VIRTIO_9P_CONFIG_TAG_LENGTH_OFFSET: u64 = 0;
 pub const VIRTIO_9P_CONFIG_TAG_OFFSET: u64 = 2;
 
