@@ -816,6 +816,44 @@ fn mesi_cache_bank_restore_rejects_malformed_pending_uncacheable_request() {
             uncacheable: true,
         }) if response == uncached_write_id
     ));
+
+    let foreign_agent_read = uncacheable_read(agent(21), 144, 0x2940);
+    let snapshot = MesiCacheBank::new(cache_agent, layout())
+        .snapshot()
+        .with_pending_uncacheable_reads(vec![MesiPendingUncacheableReadSnapshot::new(
+            foreign_agent_read,
+            None,
+        )]);
+    assert_eq!(
+        restored.restore(&snapshot),
+        Err(MesiCacheBankError::WrongAgent {
+            expected: cache_agent,
+            actual: agent(21),
+        })
+    );
+
+    let wrong_layout_read = MemoryRequest::read_shared(
+        MemoryRequestId::new(cache_agent, 145),
+        Address::new(0x2950),
+        AccessSize::new(8).unwrap(),
+        wide_layout(),
+    )
+    .unwrap()
+    .with_uncacheable_strict_order();
+    let expected_error = MesiCacheBankError::Controller(MesiCacheControllerError::Memory(
+        MemoryError::LineLayoutMismatch {
+            request: wrong_layout_read.id(),
+            expected: layout(),
+            actual: wide_layout(),
+        },
+    ));
+    let snapshot = MesiCacheBank::new(cache_agent, layout())
+        .snapshot()
+        .with_pending_uncacheable_reads(vec![MesiPendingUncacheableReadSnapshot::new(
+            wrong_layout_read,
+            None,
+        )]);
+    assert_eq!(restored.restore(&snapshot), Err(expected_error));
 }
 
 #[test]

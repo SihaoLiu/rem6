@@ -894,6 +894,7 @@ impl ChiCacheBank {
                 },
             );
         }
+        self.validate_write_queue_request(request)?;
         let Some(handle) = blocked_by else {
             return Ok(());
         };

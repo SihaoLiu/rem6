@@ -736,6 +736,44 @@ fn chi_cache_bank_restore_rejects_malformed_pending_uncacheable_request() {
             uncacheable: true,
         }) if response == uncached_write_id
     ));
+
+    let foreign_agent_read = uncacheable_read(agent(41), 557, 0x3940);
+    let snapshot = ChiCacheBank::new(cache_agent, layout())
+        .snapshot()
+        .with_pending_uncacheable_reads(vec![ChiPendingUncacheableReadSnapshot::new(
+            foreign_agent_read,
+            None,
+        )]);
+    assert_eq!(
+        restored.restore(&snapshot),
+        Err(ChiCacheBankError::WrongAgent {
+            expected: cache_agent,
+            actual: agent(41),
+        })
+    );
+
+    let wrong_layout_read = MemoryRequest::read_shared(
+        MemoryRequestId::new(cache_agent, 558),
+        Address::new(0x3950),
+        AccessSize::new(8).unwrap(),
+        wide_layout(),
+    )
+    .unwrap()
+    .with_uncacheable_strict_order();
+    let expected_error = ChiCacheBankError::Controller(ChiCacheControllerError::Memory(
+        MemoryError::LineLayoutMismatch {
+            request: wrong_layout_read.id(),
+            expected: layout(),
+            actual: wide_layout(),
+        },
+    ));
+    let snapshot = ChiCacheBank::new(cache_agent, layout())
+        .snapshot()
+        .with_pending_uncacheable_reads(vec![ChiPendingUncacheableReadSnapshot::new(
+            wrong_layout_read,
+            None,
+        )]);
+    assert_eq!(restored.restore(&snapshot), Err(expected_error));
 }
 
 #[test]
