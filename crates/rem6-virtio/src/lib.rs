@@ -55,6 +55,11 @@ pub const VIRTIO_STATUS_DEVICE_NEEDS_RESET: u8 = 0x40;
 pub const VIRTIO_STATUS_FAILED: u8 = 0x80;
 
 const VIRTIO_MSI_NO_VECTOR: u16 = 0xffff;
+const VIRTIO_NOTIFY_SNAPSHOT_MAGIC: &[u8; 8] = b"VIONOTI1";
+const VIRTIO_NOTIFY_SNAPSHOT_VERSION: u16 = 1;
+const VIRTIO_NOTIFY_SNAPSHOT_ENTRY_BYTES: usize = 20;
+const U16_BYTES: usize = 2;
+const U64_BYTES: usize = 8;
 
 #[derive(Clone, Debug)]
 pub struct VirtioPciNotifyDevice {
@@ -321,6 +326,102 @@ pub struct VirtioPciNotifySnapshot {
 impl VirtioPciNotifySnapshot {
     pub fn notifications(&self) -> &[VirtioQueueNotification] {
         &self.notifications
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(VIRTIO_NOTIFY_SNAPSHOT_MAGIC);
+        payload.extend_from_slice(&VIRTIO_NOTIFY_SNAPSHOT_VERSION.to_le_bytes());
+        payload.extend_from_slice(&(self.notifications.len() as u64).to_le_bytes());
+        for notification in &self.notifications {
+            payload.extend_from_slice(&notification.tick().to_le_bytes());
+            payload.extend_from_slice(&notification.queue().get().to_le_bytes());
+            payload.extend_from_slice(&notification.value().to_le_bytes());
+            payload.extend_from_slice(&notification.address().get().to_le_bytes());
+        }
+        payload
+    }
+
+    pub fn from_bytes(payload: &[u8]) -> Result<Self, VirtioError> {
+        let mut cursor = VirtioPciNotifySnapshotCursor::new(payload);
+        cursor.read_magic()?;
+        if cursor.read_u16()? != VIRTIO_NOTIFY_SNAPSHOT_VERSION {
+            return Err(VirtioError::InvalidNotifySnapshot);
+        }
+        let count =
+            usize::try_from(cursor.read_u64()?).map_err(|_| VirtioError::InvalidNotifySnapshot)?;
+        if count > cursor.remaining() / VIRTIO_NOTIFY_SNAPSHOT_ENTRY_BYTES {
+            return Err(VirtioError::InvalidNotifySnapshot);
+        }
+        let mut notifications = Vec::with_capacity(count);
+        for _ in 0..count {
+            let tick = cursor.read_u64()?;
+            let queue = VirtioQueueIndex::new(cursor.read_u16()?)
+                .ok_or(VirtioError::InvalidNotifySnapshot)?;
+            let value = cursor.read_u16()?;
+            let address = Address::new(cursor.read_u64()?);
+            notifications.push(VirtioQueueNotification::new(tick, queue, value, address));
+        }
+        cursor.finish()?;
+        Ok(Self { notifications })
+    }
+}
+
+struct VirtioPciNotifySnapshotCursor<'a> {
+    payload: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> VirtioPciNotifySnapshotCursor<'a> {
+    fn new(payload: &'a [u8]) -> Self {
+        Self { payload, offset: 0 }
+    }
+
+    fn read_magic(&mut self) -> Result<(), VirtioError> {
+        if self.read_exact(VIRTIO_NOTIFY_SNAPSHOT_MAGIC.len())? == VIRTIO_NOTIFY_SNAPSHOT_MAGIC {
+            Ok(())
+        } else {
+            Err(VirtioError::InvalidNotifySnapshot)
+        }
+    }
+
+    fn read_u16(&mut self) -> Result<u16, VirtioError> {
+        let bytes = self.read_exact(U16_BYTES)?;
+        Ok(u16::from_le_bytes(
+            bytes.try_into().expect("snapshot u16 width is fixed"),
+        ))
+    }
+
+    fn read_u64(&mut self) -> Result<u64, VirtioError> {
+        let bytes = self.read_exact(U64_BYTES)?;
+        Ok(u64::from_le_bytes(
+            bytes.try_into().expect("snapshot u64 width is fixed"),
+        ))
+    }
+
+    fn read_exact(&mut self, len: usize) -> Result<&'a [u8], VirtioError> {
+        let end = self
+            .offset
+            .checked_add(len)
+            .ok_or(VirtioError::InvalidNotifySnapshot)?;
+        let bytes = self
+            .payload
+            .get(self.offset..end)
+            .ok_or(VirtioError::InvalidNotifySnapshot)?;
+        self.offset = end;
+        Ok(bytes)
+    }
+
+    fn finish(&self) -> Result<(), VirtioError> {
+        if self.offset == self.payload.len() {
+            Ok(())
+        } else {
+            Err(VirtioError::InvalidNotifySnapshot)
+        }
+    }
+
+    fn remaining(&self) -> usize {
+        self.payload.len() - self.offset
     }
 }
 

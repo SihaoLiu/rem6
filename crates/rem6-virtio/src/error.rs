@@ -50,6 +50,7 @@ pub enum VirtioError {
         address: Address,
         value: u16,
     },
+    InvalidNotifySnapshot,
     EmptyDeviceConfig,
     DeviceConfigWritableMaskSizeMismatch {
         bytes: u64,
@@ -328,6 +329,9 @@ impl fmt::Display for VirtioError {
                 "VirtIO notify value {value} does not match any queue at address {:#x}",
                 address.get()
             ),
+            Self::InvalidNotifySnapshot => {
+                write!(formatter, "VirtIO PCI notify snapshot payload is invalid")
+            }
             Self::EmptyDeviceConfig => {
                 write!(formatter, "VirtIO device config must contain at least one byte")
             }
