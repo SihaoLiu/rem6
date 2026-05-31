@@ -207,9 +207,13 @@ fn rtc_snapshot_with_status_c(
 fn pl011_snapshot() -> Pl011UartSnapshot {
     Pl011UartSnapshot::from_fields(Pl011UartSnapshotFields {
         tx_bytes: vec![UartTxByte::new(9, b'P')],
-        rx_injected: vec![UartRxByte::new(10, b'L')],
-        rx_pending: b"11".to_vec(),
-        rx_consumed: vec![UartRxByte::new(11, b'Q')],
+        rx_injected: vec![
+            UartRxByte::new(10, b'L'),
+            UartRxByte::new(10, b'M'),
+            UartRxByte::new(10, b'N'),
+        ],
+        rx_pending: b"MN".to_vec(),
+        rx_consumed: vec![UartRxByte::new(11, b'L')],
         interrupt_errors: Vec::new(),
         control: 0x301,
         integer_baud_divisor: 7,
@@ -219,6 +223,31 @@ fn pl011_snapshot() -> Pl011UartSnapshot {
         interrupt_mask: 0x50,
         raw_interrupt: 0x50,
     })
+}
+
+#[derive(Clone, Copy)]
+enum RxLedgerFault {
+    InjectedCount,
+    ConsumedPrefix,
+    PendingSuffix,
+}
+
+type UartRxRecords = &'static [(u64, u8)];
+
+impl RxLedgerFault {
+    const ALL: [Self; 3] = [
+        Self::InjectedCount,
+        Self::ConsumedPrefix,
+        Self::PendingSuffix,
+    ];
+
+    const fn suffix(self) -> &'static str {
+        match self {
+            Self::InjectedCount => "count",
+            Self::ConsumedPrefix => "consumed",
+            Self::PendingSuffix => "pending",
+        }
+    }
 }
 
 #[test]
@@ -353,7 +382,7 @@ fn uart_checkpoint_bank_rejects_invalid_bank_without_partial_restore() {
     let invalid_component = checkpoint_component("uart_bank_b");
     let expected = UartSnapshot::new(
         vec![UartTxByte::new(9, b'O')],
-        Vec::new(),
+        vec![UartRxByte::new(10, b'A'), UartRxByte::new(10, b'B')],
         b"AB".to_vec(),
         Vec::new(),
         Vec::new(),
@@ -475,6 +504,93 @@ fn timer_checkpoint_bank_rejects_invalid_bank_without_partial_restore() {
     ));
     assert_eq!(target_valid.snapshot(), original_valid);
     assert_eq!(target_invalid.snapshot(), original_invalid);
+}
+
+#[test]
+fn uart_checkpoint_bank_rejects_rx_ledger_mismatch_without_partial_restore() {
+    for fault in RxLedgerFault::ALL {
+        let valid_component = checkpoint_component(&format!("uart_rx_valid_{}", fault.suffix()));
+        let invalid_component =
+            checkpoint_component(&format!("uart_rx_invalid_{}", fault.suffix()));
+        let source = UartMmioDevice::new(UartId::new(0), Address::new(0x1000));
+        source.restore(&UartSnapshot::new(
+            vec![UartTxByte::new(9, b'O')],
+            vec![
+                UartRxByte::new(10, b'A'),
+                UartRxByte::new(10, b'B'),
+                UartRxByte::new(10, b'C'),
+            ],
+            b"BC".to_vec(),
+            vec![UartRxByte::new(11, b'A')],
+            Vec::new(),
+        ));
+        let target_valid = UartMmioDevice::new(UartId::new(0), Address::new(0x1000));
+        let target_invalid = UartMmioDevice::new(UartId::new(1), Address::new(0x2000));
+        let original_valid = target_valid.snapshot();
+        let original_invalid = target_invalid.snapshot();
+
+        let mut registry = CheckpointRegistry::new();
+        registry.register(valid_component.clone()).unwrap();
+        UartCheckpointPort::new(valid_component.clone(), source)
+            .capture_into(&mut registry)
+            .unwrap();
+        registry.register(invalid_component.clone()).unwrap();
+        let payload = mismatched_uart_rx_payload(fault);
+        registry
+            .write_chunk(&invalid_component, "uart", payload)
+            .unwrap();
+
+        let bank = UartCheckpointBank::new([
+            UartCheckpointPort::new(valid_component, target_valid.clone()),
+            UartCheckpointPort::new(invalid_component.clone(), target_invalid.clone()),
+        ])
+        .unwrap();
+        let error = bank.restore_all_from(&registry).unwrap_err();
+        assert!(matches!(error, UartCheckpointError::InvalidChunk { .. }));
+        assert_eq!(error.component(), &invalid_component);
+        assert_eq!(target_valid.snapshot(), original_valid);
+        assert_eq!(target_invalid.snapshot(), original_invalid);
+    }
+}
+
+#[test]
+fn pl011_uart_checkpoint_bank_rejects_rx_ledger_mismatch_without_partial_restore() {
+    for fault in RxLedgerFault::ALL {
+        let valid_component = checkpoint_component(&format!("pl011_rx_valid_{}", fault.suffix()));
+        let invalid_component =
+            checkpoint_component(&format!("pl011_rx_invalid_{}", fault.suffix()));
+        let source = Pl011UartMmioDevice::new(UartId::new(0), Address::new(0x1c09_0000));
+        source.restore(&pl011_snapshot());
+        let target_valid = Pl011UartMmioDevice::new(UartId::new(0), Address::new(0x1c09_0000));
+        let target_invalid = Pl011UartMmioDevice::new(UartId::new(1), Address::new(0x1c0a_0000));
+        let original_valid = target_valid.snapshot();
+        let original_invalid = target_invalid.snapshot();
+
+        let mut registry = CheckpointRegistry::new();
+        registry.register(valid_component.clone()).unwrap();
+        Pl011UartCheckpointPort::new(valid_component.clone(), source)
+            .capture_into(&mut registry)
+            .unwrap();
+        registry.register(invalid_component.clone()).unwrap();
+        let payload = mismatched_pl011_rx_payload(fault);
+        registry
+            .write_chunk(&invalid_component, "pl011", payload)
+            .unwrap();
+
+        let bank = Pl011UartCheckpointBank::new([
+            Pl011UartCheckpointPort::new(valid_component, target_valid.clone()),
+            Pl011UartCheckpointPort::new(invalid_component.clone(), target_invalid.clone()),
+        ])
+        .unwrap();
+        let error = bank.restore_all_from(&registry).unwrap_err();
+        assert!(matches!(
+            error,
+            Pl011UartCheckpointError::InvalidChunk { .. }
+        ));
+        assert_eq!(error.component(), &invalid_component);
+        assert_eq!(target_valid.snapshot(), original_valid);
+        assert_eq!(target_invalid.snapshot(), original_invalid);
+    }
 }
 
 #[test]
@@ -1124,6 +1240,57 @@ fn write_interrupt_route(payload: &mut Vec<u8>, route: InterruptRoute) {
     write_u64(payload, route.line().get());
     write_u32(payload, route.target().get());
     write_u32(payload, route.target_partition().index());
+}
+
+fn mismatched_uart_rx_payload(fault: RxLedgerFault) -> Vec<u8> {
+    let mut payload = Vec::new();
+    write_uart_byte_records(&mut payload, &[(9, b'O')]);
+    write_mismatched_rx_ledger(&mut payload, fault);
+    payload
+}
+
+fn mismatched_pl011_rx_payload(fault: RxLedgerFault) -> Vec<u8> {
+    let mut payload = Vec::new();
+    write_uart_byte_records(&mut payload, &[(9, b'P')]);
+    write_mismatched_rx_ledger(&mut payload, fault);
+    for value in [0x301, 7, 4, 0x70, 0x24, 0x50, 0x50] {
+        write_u16(&mut payload, value);
+    }
+    payload
+}
+
+fn write_mismatched_rx_ledger(payload: &mut Vec<u8>, fault: RxLedgerFault) {
+    type RxCase = (UartRxRecords, &'static [u8], UartRxRecords);
+    let (injected, pending, consumed): RxCase = match fault {
+        RxLedgerFault::InjectedCount => (
+            &[(10, b'A'), (10, b'B'), (10, b'C'), (10, b'D')],
+            b"BC",
+            &[(11, b'A')],
+        ),
+        RxLedgerFault::ConsumedPrefix => {
+            (&[(10, b'A'), (10, b'B'), (10, b'C')], b"BC", &[(11, b'B')])
+        }
+        RxLedgerFault::PendingSuffix => {
+            (&[(10, b'A'), (10, b'B'), (10, b'C')], b"CC", &[(11, b'A')])
+        }
+    };
+    write_uart_byte_records(payload, injected);
+    write_u64(payload, pending.len() as u64);
+    payload.extend_from_slice(pending);
+    write_uart_byte_records(payload, consumed);
+    write_u64(payload, 0);
+}
+
+fn write_uart_byte_records(payload: &mut Vec<u8>, records: &[(u64, u8)]) {
+    write_u64(payload, records.len() as u64);
+    for (tick, byte) in records {
+        write_u64(payload, *tick);
+        payload.push(*byte);
+    }
+}
+
+fn write_u16(payload: &mut Vec<u8>, value: u16) {
+    write_u32(payload, u32::from(value));
 }
 
 fn write_u32(payload: &mut Vec<u8>, value: u32) {

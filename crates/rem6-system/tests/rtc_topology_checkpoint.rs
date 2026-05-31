@@ -352,9 +352,9 @@ fn sp805_snapshot(base: Address) -> Sp805WatchdogMmioSnapshot {
 fn pl011_snapshot() -> Pl011UartSnapshot {
     Pl011UartSnapshot::from_fields(Pl011UartSnapshotFields {
         tx_bytes: vec![UartTxByte::new(12, b'Z')],
-        rx_injected: vec![UartRxByte::new(13, b'A')],
-        rx_pending: vec![b'A'],
-        rx_consumed: vec![UartRxByte::new(14, b'B')],
+        rx_injected: vec![UartRxByte::new(13, b'A'), UartRxByte::new(13, b'B')],
+        rx_pending: vec![b'B'],
+        rx_consumed: vec![UartRxByte::new(14, b'A')],
         interrupt_errors: Vec::new(),
         control: 0x301,
         integer_baud_divisor: 3,

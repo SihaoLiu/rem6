@@ -471,6 +471,7 @@ fn decode_uart(
         interrupt_errors.push(decode_uart_interrupt_error(&mut cursor)?);
     }
     cursor.finish()?;
+    validate_rx_ledger(component, "UART", &rx_injected, &rx_pending, &rx_consumed)?;
     Ok(UartSnapshot::new(
         tx_bytes,
         rx_injected,
@@ -505,6 +506,7 @@ fn decode_pl011_uart(
     let interrupt_mask = read_u16(&mut cursor, "PL011 interrupt mask")?;
     let raw_interrupt = read_u16(&mut cursor, "PL011 raw interrupt")?;
     cursor.finish()?;
+    validate_rx_ledger(component, "PL011", &rx_injected, &rx_pending, &rx_consumed)?;
     Ok(Pl011UartSnapshot::from_fields(Pl011UartSnapshotFields {
         tx_bytes,
         rx_injected,
@@ -519,6 +521,62 @@ fn decode_pl011_uart(
         interrupt_mask,
         raw_interrupt,
     }))
+}
+
+fn validate_rx_ledger(
+    component: &CheckpointComponentId,
+    device: &str,
+    rx_injected: &[UartRxByte],
+    rx_pending: &[u8],
+    rx_consumed: &[UartRxByte],
+) -> Result<(), UartCheckpointError> {
+    let expected_count = rx_consumed
+        .len()
+        .checked_add(rx_pending.len())
+        .ok_or_else(|| UartCheckpointError::InvalidChunk {
+            component: component.clone(),
+            reason: format!("{device} RX ledger byte count overflows"),
+        })?;
+    if rx_injected.len() != expected_count {
+        return Err(UartCheckpointError::InvalidChunk {
+            component: component.clone(),
+            reason: format!(
+                "{device} RX ledger has {} injected bytes, but {} consumed plus {} pending bytes",
+                rx_injected.len(),
+                rx_consumed.len(),
+                rx_pending.len()
+            ),
+        });
+    }
+
+    for (index, consumed) in rx_consumed.iter().enumerate() {
+        let injected = rx_injected[index];
+        if consumed.byte() != injected.byte() {
+            return Err(UartCheckpointError::InvalidChunk {
+                component: component.clone(),
+                reason: format!(
+                    "{device} RX consumed byte {index} is {}, expected {} from injection history",
+                    consumed.byte(),
+                    injected.byte()
+                ),
+            });
+        }
+    }
+    for (index, pending) in rx_pending.iter().enumerate() {
+        let injected = rx_injected[rx_consumed.len() + index];
+        if *pending != injected.byte() {
+            return Err(UartCheckpointError::InvalidChunk {
+                component: component.clone(),
+                reason: format!(
+                    "{device} RX pending byte {index} is {}, expected {} from injection history",
+                    pending,
+                    injected.byte()
+                ),
+            });
+        }
+    }
+
+    Ok(())
 }
 
 fn read_tx_bytes(cursor: &mut PayloadCursor<'_>) -> Result<Vec<UartTxByte>, UartCheckpointError> {

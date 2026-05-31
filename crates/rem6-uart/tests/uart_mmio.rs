@@ -467,6 +467,21 @@ fn uart_parallel_mmio_bus_records_transmitted_bytes_and_status() {
 }
 
 #[test]
+fn uart_direct_rx_injection_records_snapshot_history() {
+    let base = Address::new(0x6f00);
+    let uart = UartMmioDevice::new(UartId::new(7), base);
+
+    uart.inject_rx([b'A', b'B']).unwrap();
+
+    assert_eq!(
+        uart.snapshot().rx_injected(),
+        &[UartRxByte::new(0, b'A'), UartRxByte::new(0, b'B')]
+    );
+    assert_eq!(uart.snapshot().rx_pending(), b"AB");
+    assert!(uart.snapshot().rx_consumed().is_empty());
+}
+
+#[test]
 fn uart_mmio_bus_reads_injected_rx_bytes_in_order() {
     let cpu = PartitionId::new(0);
     let uart_partition = PartitionId::new(1);

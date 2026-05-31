@@ -35,8 +35,8 @@ use rem6_timer::{
 };
 use rem6_transport::{MemoryRoute, MemoryTransport, TransportEndpointId};
 use rem6_uart::{
-    UartId, UartInterruptError, UartMmioDevice, UartSnapshot, UartTxByte, UART_MMIO_DATA_OFFSET,
-    UART_MMIO_REGISTER_BYTES,
+    UartId, UartInterruptError, UartMmioDevice, UartRxByte, UartSnapshot, UartTxByte,
+    UART_MMIO_DATA_OFFSET, UART_MMIO_REGISTER_BYTES,
 };
 
 fn endpoint(name: &str) -> TransportEndpointId {
@@ -827,7 +827,7 @@ fn system_action_executor_refreshes_and_restores_live_uart_checkpoint() {
     let uart = UartMmioDevice::new(UartId::new(0), Address::new(0xa000));
     let captured = UartSnapshot::new(
         vec![UartTxByte::new(4, b'O')],
-        Vec::new(),
+        vec![UartRxByte::new(120, b'A'), UartRxByte::new(120, b'B')],
         b"AB".to_vec(),
         Vec::new(),
         vec![UartInterruptError::new(

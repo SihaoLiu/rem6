@@ -108,8 +108,13 @@ impl UartMmioDevice {
     where
         I: IntoIterator<Item = u8>,
     {
+        let bytes = bytes.into_iter().collect::<Vec<_>>();
+        if bytes.is_empty() {
+            return Ok(());
+        }
+
         let mut state = self.state.lock().expect("uart state lock");
-        state.rx_pending.extend(bytes);
+        state.inject_rx(0, bytes);
         Ok(())
     }
 
