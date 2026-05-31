@@ -30,6 +30,7 @@ pub use crate::block_queue::{
     VirtioBlockDecodedRequest, VirtioBlockDescriptorWrite, VirtioBlockInterruptCompletion,
     VirtioBlockIntxCompletionTarget, VirtioBlockMsiCompletionTarget,
     VirtioBlockMsixCompletionTarget, VirtioBlockQueueCompletionWrite, VirtioGuestMemory,
+    VirtioRngDecodedRequest, VirtioRngDescriptorWrite, VirtioRngQueueCompletionWrite,
     VirtioSplitDescriptor, VirtioSplitDescriptorChain, VirtioSplitQueue, VirtioSplitQueueSnapshot,
     VirtioSplitUsedElement, VirtioSplitUsedRing, VIRTIO_SPLIT_AVAIL_F_NO_INTERRUPT,
     VIRTIO_SPLIT_DESC_F_INDIRECT, VIRTIO_SPLIT_DESC_F_NEXT, VIRTIO_SPLIT_DESC_F_WRITE,
@@ -58,6 +59,10 @@ pub use crate::mmio_transport::{
 pub use crate::pci_capability::{
     VirtioPciBarIndex, VirtioPciCapabilityEntry, VirtioPciCapabilityKind,
     VirtioPciCapabilityOffset, VirtioPciNotifyCapabilityEntry,
+};
+pub use crate::rng::{
+    VirtioRngByteSource, VirtioRngCompletion, VirtioRngDevice, VirtioRngRequest,
+    VirtioRngRequestId, VIRTIO_RNG_DEVICE_ID,
 };
 pub use crate::shared_memory::{
     VirtioPciSharedMemoryCap64Fields, VirtioPciSharedMemoryCapabilities,

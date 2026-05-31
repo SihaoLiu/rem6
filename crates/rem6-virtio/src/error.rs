@@ -169,6 +169,12 @@ pub enum VirtioError {
         max_segments: u32,
         sector_alignment: u32,
     },
+    EmptyRngEntropySource,
+    MissingVirtioRngWritableDescriptor,
+    InvalidVirtioRngReadableDescriptor {
+        index: u16,
+    },
+    VirtioRngPayloadLengthOverflow,
     ZeroPciCapabilityRegion {
         cfg_type: u8,
     },
@@ -521,6 +527,21 @@ impl fmt::Display for VirtioError {
                 formatter,
                 "VirtIO block secure erase limits are invalid: max_sectors {max_sectors}, max_segments {max_segments}, sector_alignment {sector_alignment}"
             ),
+            Self::EmptyRngEntropySource => {
+                write!(formatter, "VirtIO rng entropy source must not be empty")
+            }
+            Self::MissingVirtioRngWritableDescriptor => {
+                write!(formatter, "VirtIO rng request needs at least one writable descriptor")
+            }
+            Self::InvalidVirtioRngReadableDescriptor { index } => {
+                write!(
+                    formatter,
+                    "VirtIO rng descriptor {index} must be writable"
+                )
+            }
+            Self::VirtioRngPayloadLengthOverflow => {
+                write!(formatter, "VirtIO rng request payload length overflows")
+            }
             Self::ZeroPciCapabilityRegion { cfg_type } => {
                 write!(formatter, "VirtIO PCI capability type {cfg_type} has zero length")
             }

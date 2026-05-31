@@ -17,6 +17,7 @@ mod isr;
 mod mmio_transport;
 mod pci_capability;
 mod queue;
+mod rng;
 mod shared_memory;
 mod transport;
 

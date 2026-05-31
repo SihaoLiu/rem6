@@ -10,8 +10,9 @@ use rem6_pci::{PciEndpointConfig, PciLegacyInterruptPort, PciMsiPort, PciMsixPor
 
 use crate::{
     VirtioBlockCompletion, VirtioBlockRequest, VirtioBlockRequestId, VirtioBlockRequestKind,
-    VirtioError, VirtioPciIsrDevice, VirtioQueueIndex, VIRTIO_BLOCK_T_FLUSH, VIRTIO_BLOCK_T_GET_ID,
-    VIRTIO_BLOCK_T_IN, VIRTIO_BLOCK_T_OUT,
+    VirtioError, VirtioPciIsrDevice, VirtioQueueIndex, VirtioRngCompletion, VirtioRngRequest,
+    VirtioRngRequestId, VIRTIO_BLOCK_T_FLUSH, VIRTIO_BLOCK_T_GET_ID, VIRTIO_BLOCK_T_IN,
+    VIRTIO_BLOCK_T_OUT,
 };
 
 pub const VIRTIO_SPLIT_DESC_F_NEXT: u16 = 1;
@@ -426,6 +427,23 @@ impl VirtioSplitQueue {
         Ok(Some(decoded))
     }
 
+    pub fn consume_available_rng(
+        &mut self,
+        guest: &mut VirtioGuestMemory<'_>,
+        queue: VirtioQueueIndex,
+    ) -> Result<Option<VirtioRngDecodedRequest>, VirtioError> {
+        let available_index = guest.read_u16(add_address(self.available_ring, 2)?)?;
+        if available_index == self.last_available_index {
+            return Ok(None);
+        }
+        let slot = self.last_available_index % self.queue_size;
+        let head = guest.read_u16(add_address(self.available_ring, 4 + u64::from(slot) * 2)?)?;
+        let chain = self.load_descriptor_chain(guest, head)?;
+        let decoded = chain.decode_rng_request(queue)?;
+        self.last_available_index = self.last_available_index.wrapping_add(1);
+        Ok(Some(decoded))
+    }
+
     pub fn complete_block_request(
         &self,
         guest: &mut VirtioGuestMemory<'_>,
@@ -444,6 +462,40 @@ impl VirtioSplitQueue {
             &writeback.used_element().to_le_bytes(),
         )?;
         guest.write_u16(add_address(self.used_ring, 2)?, writeback.used_index())?;
+        Ok(writeback)
+    }
+
+    pub fn complete_rng_request(
+        &self,
+        guest: &mut VirtioGuestMemory<'_>,
+        decoded: &VirtioRngDecodedRequest,
+        completion: &VirtioRngCompletion,
+    ) -> Result<VirtioRngQueueCompletionWrite, VirtioError> {
+        let used_index = guest.read_u16(add_address(self.used_ring, 2)?)?;
+        let mut used_ring = VirtioSplitUsedRing::new(self.queue_size, used_index)?;
+        let writeback = used_ring.complete_rng_request(decoded, completion)?;
+        for write in writeback.data_writes() {
+            self.write_rng_descriptor(guest, write)?;
+        }
+        guest.write_exact(
+            add_address(self.used_ring, 4 + u64::from(writeback.used_slot()) * 8)?,
+            &writeback.used_element().to_le_bytes(),
+        )?;
+        guest.write_u16(add_address(self.used_ring, 2)?, writeback.used_index())?;
+        Ok(writeback)
+    }
+
+    pub fn complete_rng_request_and_raise_isr(
+        &self,
+        guest: &mut VirtioGuestMemory<'_>,
+        decoded: &VirtioRngDecodedRequest,
+        completion: &VirtioRngCompletion,
+        isr: &VirtioPciIsrDevice,
+    ) -> Result<VirtioRngQueueCompletionWrite, VirtioError> {
+        let writeback = self.complete_rng_request(guest, decoded, completion)?;
+        if self.completion_interrupt_enabled(guest, writeback.used_index())? {
+            isr.raise_queue_interrupt(completion.tick());
+        }
         Ok(writeback)
     }
 
@@ -611,7 +663,7 @@ impl VirtioSplitQueue {
         isr: &VirtioPciIsrDevice,
     ) -> Result<(VirtioBlockQueueCompletionWrite, bool), VirtioError> {
         let writeback = self.complete_block_request(guest, decoded, completion)?;
-        let should_deliver = self.completion_interrupt_enabled(guest, &writeback)?;
+        let should_deliver = self.completion_interrupt_enabled(guest, writeback.used_index())?;
         if should_deliver {
             isr.raise_queue_interrupt(completion.tick());
         }
@@ -621,14 +673,14 @@ impl VirtioSplitQueue {
     fn completion_interrupt_enabled(
         &self,
         guest: &mut VirtioGuestMemory<'_>,
-        writeback: &VirtioBlockQueueCompletionWrite,
+        used_index: u16,
     ) -> Result<bool, VirtioError> {
         if self.event_index {
             let used_event = guest.read_u16(add_address(
                 self.available_ring,
                 4 + u64::from(self.queue_size) * 2,
             )?)?;
-            let previous_used_index = writeback.used_index().wrapping_sub(1);
+            let previous_used_index = used_index.wrapping_sub(1);
             return Ok(previous_used_index == used_event);
         }
         let flags = guest.read_u16(self.available_ring)?;
@@ -645,6 +697,25 @@ impl VirtioSplitQueue {
             .ok_or_else(|| VirtioError::PciTransportRuntimeConfig {
                 message: format!(
                     "VirtIO split descriptor {} has no guest address for writeback",
+                    write.descriptor()
+                ),
+            })?;
+        guest.write_exact(
+            add_address(address, u64::from(write.offset()))?,
+            write.bytes(),
+        )
+    }
+
+    fn write_rng_descriptor(
+        &self,
+        guest: &mut VirtioGuestMemory<'_>,
+        write: &VirtioRngDescriptorWrite,
+    ) -> Result<(), VirtioError> {
+        let address = write
+            .address()
+            .ok_or_else(|| VirtioError::PciTransportRuntimeConfig {
+                message: format!(
+                    "VirtIO rng descriptor {} has no guest address for writeback",
                     write.descriptor()
                 ),
             })?;
@@ -1029,6 +1100,45 @@ impl VirtioSplitDescriptorChain {
         })
     }
 
+    pub fn decode_rng_request(
+        &self,
+        queue: VirtioQueueIndex,
+    ) -> Result<VirtioRngDecodedRequest, VirtioError> {
+        let mut writable_descriptors = Vec::new();
+        let mut writable_data_bytes = 0_u64;
+        for descriptor in &self.descriptors {
+            if !descriptor.is_writable() {
+                return Err(VirtioError::InvalidVirtioRngReadableDescriptor {
+                    index: descriptor.index(),
+                });
+            }
+            writable_data_bytes = writable_data_bytes
+                .checked_add(u64::from(descriptor.length()))
+                .ok_or(VirtioError::VirtioRngPayloadLengthOverflow)?;
+            writable_descriptors.push(VirtioRngWritableDescriptor {
+                index: descriptor.index(),
+                address: descriptor.address(),
+                length: descriptor.length(),
+            });
+        }
+        if writable_data_bytes == 0 {
+            return Err(VirtioError::MissingVirtioRngWritableDescriptor);
+        }
+        let used_length = u32::try_from(writable_data_bytes)
+            .map_err(|_| VirtioError::VirtioRngPayloadLengthOverflow)?;
+        let request = VirtioRngRequest::new(
+            VirtioRngRequestId::new(u64::from(self.head)),
+            queue,
+            writable_data_bytes,
+        )?;
+        Ok(VirtioRngDecodedRequest {
+            request,
+            writable_descriptors,
+            writable_data_bytes,
+            used_length,
+        })
+    }
+
     fn block_header(&self) -> Result<(u32, u64), VirtioError> {
         let Some(first) = self.descriptors.first() else {
             return Err(VirtioError::ShortVirtioBlockHeader { bytes: 0 });
@@ -1232,6 +1342,57 @@ impl VirtioBlockDecodedRequest {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VirtioRngDecodedRequest {
+    request: VirtioRngRequest,
+    writable_descriptors: Vec<VirtioRngWritableDescriptor>,
+    writable_data_bytes: u64,
+    used_length: u32,
+}
+
+impl VirtioRngDecodedRequest {
+    pub const fn request(&self) -> &VirtioRngRequest {
+        &self.request
+    }
+
+    pub const fn writable_data_bytes(&self) -> u64 {
+        self.writable_data_bytes
+    }
+
+    pub const fn used_length(&self) -> u32 {
+        self.used_length
+    }
+
+    pub fn into_request(self) -> VirtioRngRequest {
+        self.request
+    }
+
+    fn data_writes(&self, data: &[u8]) -> Result<Vec<VirtioRngDescriptorWrite>, VirtioError> {
+        if data.len() as u64 > self.writable_data_bytes {
+            return Err(VirtioError::VirtioRngPayloadLengthOverflow);
+        }
+        let mut cursor = data;
+        let mut writes = Vec::new();
+        for target in &self.writable_descriptors {
+            if cursor.is_empty() {
+                break;
+            }
+            let bytes = cursor.len().min(target.length() as usize);
+            writes.push(VirtioRngDescriptorWrite {
+                descriptor: target.index(),
+                address: target.address(),
+                offset: 0,
+                bytes: cursor[..bytes].to_vec(),
+            });
+            cursor = &cursor[bytes..];
+        }
+        if !cursor.is_empty() {
+            return Err(VirtioError::VirtioRngPayloadLengthOverflow);
+        }
+        Ok(writes)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct VirtioBlockWritableDescriptor {
     index: u16,
@@ -1240,6 +1401,27 @@ struct VirtioBlockWritableDescriptor {
 }
 
 impl VirtioBlockWritableDescriptor {
+    const fn index(self) -> u16 {
+        self.index
+    }
+
+    const fn address(self) -> Option<Address> {
+        self.address
+    }
+
+    const fn length(self) -> u32 {
+        self.length
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct VirtioRngWritableDescriptor {
+    index: u16,
+    address: Option<Address>,
+    length: u32,
+}
+
+impl VirtioRngWritableDescriptor {
     const fn index(self) -> u16 {
         self.index
     }
@@ -1262,6 +1444,32 @@ pub struct VirtioBlockDescriptorWrite {
 }
 
 impl VirtioBlockDescriptorWrite {
+    pub const fn descriptor(&self) -> u16 {
+        self.descriptor
+    }
+
+    pub const fn address(&self) -> Option<Address> {
+        self.address
+    }
+
+    pub const fn offset(&self) -> u32 {
+        self.offset
+    }
+
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VirtioRngDescriptorWrite {
+    descriptor: u16,
+    address: Option<Address>,
+    offset: u32,
+    bytes: Vec<u8>,
+}
+
+impl VirtioRngDescriptorWrite {
     pub const fn descriptor(&self) -> u16 {
         self.descriptor
     }
@@ -1321,6 +1529,32 @@ impl VirtioBlockQueueCompletionWrite {
 
     pub const fn status_write(&self) -> &VirtioBlockDescriptorWrite {
         &self.status_write
+    }
+
+    pub const fn used_slot(&self) -> u16 {
+        self.used_slot
+    }
+
+    pub const fn used_index(&self) -> u16 {
+        self.used_index
+    }
+
+    pub const fn used_element(&self) -> VirtioSplitUsedElement {
+        self.used_element
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VirtioRngQueueCompletionWrite {
+    data_writes: Vec<VirtioRngDescriptorWrite>,
+    used_slot: u16,
+    used_index: u16,
+    used_element: VirtioSplitUsedElement,
+}
+
+impl VirtioRngQueueCompletionWrite {
+    pub fn data_writes(&self) -> &[VirtioRngDescriptorWrite] {
+        &self.data_writes
     }
 
     pub const fn used_slot(&self) -> u16 {
@@ -1406,6 +1640,36 @@ impl VirtioSplitUsedRing {
         Ok(VirtioBlockQueueCompletionWrite {
             data_writes,
             status_write,
+            used_slot,
+            used_index,
+            used_element,
+        })
+    }
+
+    pub fn complete_rng_request(
+        &mut self,
+        decoded: &VirtioRngDecodedRequest,
+        completion: &VirtioRngCompletion,
+    ) -> Result<VirtioRngQueueCompletionWrite, VirtioError> {
+        if completion.request() != decoded.request().id()
+            || completion.queue() != decoded.request().queue()
+        {
+            return Err(VirtioError::PciTransportRuntimeConfig {
+                message: "VirtIO rng completion does not match decoded descriptor chain".into(),
+            });
+        }
+        let data_writes = decoded.data_writes(completion.bytes())?;
+        let used_slot = self.index % self.queue_size;
+        let used_index = self.index.wrapping_add(1);
+        let used_element = VirtioSplitUsedElement::new(
+            u32::try_from(decoded.request().id().get())
+                .map_err(|_| VirtioError::VirtioRngPayloadLengthOverflow)?,
+            decoded.used_length(),
+        );
+        self.entries[used_slot as usize] = Some(used_element);
+        self.index = used_index;
+        Ok(VirtioRngQueueCompletionWrite {
+            data_writes,
             used_slot,
             used_index,
             used_element,
