@@ -347,6 +347,57 @@ fn msi_cache_bank_uncacheable_write_enters_write_queue_without_mshr() {
 }
 
 #[test]
+fn msi_cache_bank_uncacheable_write_queues_dirty_writeback_first() {
+    let cache_agent = agent(7);
+    let mut bank = MsiCacheBank::new_with_mshr_and_write_queue(
+        cache_agent,
+        layout(),
+        MshrQueueConfig::new(2, 2, 0).unwrap(),
+        CacheWriteQueueConfig::new(3, 0).unwrap(),
+    );
+    let store = write(cache_agent, 135, 0x2044, vec![0xde, 0xad]);
+    let miss = bank.accept_cpu_request(store).unwrap();
+    let downstream = miss.downstream_request().unwrap().clone();
+    bank.accept_fill(fill(&downstream, 0x00)).unwrap();
+    assert_eq!(bank.state(Address::new(0x2040)), Some(MsiState::Modified));
+
+    let uncached = uncacheable_write(cache_agent, 136, 0x2048, vec![0xca, 0xfe], vec![true, true]);
+    let result = bank.accept_cpu_request(uncached.clone()).unwrap();
+
+    assert_eq!(result.kind(), CacheControllerResultKind::Miss);
+    assert!(result.downstream_request().is_none());
+    assert_eq!(bank.state(Address::new(0x2040)), None);
+    assert_eq!(bank.write_queue_allocated_count(), 2);
+
+    let forwarded = bank
+        .accept_cpu_request(read(cache_agent, 137, 0x2044))
+        .unwrap();
+    assert_eq!(forwarded.kind(), CacheControllerResultKind::Hit);
+    assert!(forwarded.downstream_request().is_none());
+    assert_eq!(
+        response_data(forwarded.target_outcome().unwrap()),
+        &[0xde, 0xad, 0x00, 0x00, 0xca, 0xfe, 0x00, 0x00]
+    );
+    assert!(bank
+        .accept_cpu_request(write(cache_agent, 138, 0x2044, vec![0x55]))
+        .is_err());
+
+    let writeback = bank.issue_write_queue(0).unwrap().unwrap();
+    assert_eq!(writeback.kind(), CacheWriteQueueEntryKind::WritebackDirty);
+    assert_eq!(writeback.request().line_address(), Address::new(0x2040));
+    assert_eq!(&writeback.request().data().unwrap()[4..6], &[0xde, 0xad]);
+
+    let issued_uncached = bank.issue_write_queue(0).unwrap().unwrap();
+    assert_eq!(
+        issued_uncached.kind(),
+        CacheWriteQueueEntryKind::UncacheableWrite
+    );
+    assert_eq!(issued_uncached.request().id(), uncached.id());
+    assert!(issued_uncached.request().is_uncacheable());
+    assert!(issued_uncached.request().is_strict_ordered());
+}
+
+#[test]
 fn msi_cache_bank_uncacheable_write_response_uses_inflight_record_after_restore() {
     let cache_agent = agent(7);
     let mut bank = MsiCacheBank::new_with_mshr_and_write_queue(

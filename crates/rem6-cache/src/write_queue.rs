@@ -369,20 +369,6 @@ impl CacheWriteQueueEntry {
             .expect("entry operation was validated before allocation")
     }
 
-    fn can_functionally_satisfy(&self, range: AddressRange, secure: bool) -> Option<Vec<u8>> {
-        if self.secure != secure {
-            return None;
-        }
-
-        match self.kind() {
-            CacheWriteQueueEntryKind::WritebackClean | CacheWriteQueueEntryKind::WritebackDirty => {
-                self.read_from_writeback(range)
-            }
-            CacheWriteQueueEntryKind::CleanEvict => None,
-            CacheWriteQueueEntryKind::UncacheableWrite => self.read_from_uncacheable(range),
-        }
-    }
-
     fn read_from_writeback(&self, range: AddressRange) -> Option<Vec<u8>> {
         let line_layout = self.request.line_layout();
         let line_range = AddressRange::new(
@@ -411,6 +397,33 @@ impl CacheWriteQueueEntry {
             return None;
         }
         self.request.data()?.get(offset..end).map(Vec::from)
+    }
+
+    fn overlay_uncacheable(&self, range: AddressRange, data: &mut [u8]) {
+        if !self.request.range().overlaps(range) {
+            return;
+        }
+        let Some(mask) = self.request.byte_mask() else {
+            return;
+        };
+        let Some(payload) = self.request.data() else {
+            return;
+        };
+
+        let start = self.request.range().start().get().max(range.start().get());
+        let end = self.request.range().end().get().min(range.end().get());
+        for address in start..end {
+            let request_offset = (address - self.request.range().start().get()) as usize;
+            if !mask.bits().get(request_offset).copied().unwrap_or(false) {
+                continue;
+            }
+            let read_offset = (address - range.start().get()) as usize;
+            if let (Some(target), Some(source)) =
+                (data.get_mut(read_offset), payload.get(request_offset))
+            {
+                *target = *source;
+            }
+        }
     }
 }
 
@@ -801,10 +814,26 @@ impl CacheWriteQueue {
         secure: bool,
     ) -> Result<Option<Vec<u8>>, CacheWriteQueueError> {
         let range = AddressRange::new(address, size)?;
-        Ok(self
-            .entries
-            .iter()
-            .find_map(|entry| entry.can_functionally_satisfy(range, secure)))
+        let mut data = None;
+        for entry in self.entries.iter().filter(|entry| entry.secure() == secure) {
+            match entry.kind() {
+                CacheWriteQueueEntryKind::WritebackClean
+                | CacheWriteQueueEntryKind::WritebackDirty => {
+                    if let Some(writeback) = entry.read_from_writeback(range) {
+                        data = Some(writeback);
+                    }
+                }
+                CacheWriteQueueEntryKind::UncacheableWrite => {
+                    if let Some(data) = &mut data {
+                        entry.overlay_uncacheable(range, data);
+                    } else if let Some(uncacheable) = entry.read_from_uncacheable(range) {
+                        data = Some(uncacheable);
+                    }
+                }
+                CacheWriteQueueEntryKind::CleanEvict => {}
+            }
+        }
+        Ok(data)
     }
 
     pub fn snapshot(&self) -> CacheWriteQueueSnapshot {

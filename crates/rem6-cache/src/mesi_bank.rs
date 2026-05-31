@@ -28,6 +28,9 @@ pub enum MesiCacheBankError {
         actual: AgentId,
     },
     WriteQueueDisabled,
+    WriteQueueConflict {
+        line: Address,
+    },
     UncacheableBypassRequiresCleanLine {
         line: Address,
     },
@@ -78,6 +81,11 @@ impl fmt::Display for MesiCacheBankError {
                 actual.get()
             ),
             Self::WriteQueueDisabled => write!(formatter, "MESI cache bank has no write queue"),
+            Self::WriteQueueConflict { line } => write!(
+                formatter,
+                "MESI cache bank has pending write-queue work for line {:#x}",
+                line.get()
+            ),
             Self::UncacheableBypassRequiresCleanLine { line } => write!(
                 formatter,
                 "MESI cache bank cannot bypass uncacheable request over non-clean resident line {:#x}",
@@ -154,6 +162,7 @@ impl Error for MesiCacheBankError {
             Self::WriteQueue(error) => Some(error),
             Self::WrongAgent { .. }
             | Self::WriteQueueDisabled
+            | Self::WriteQueueConflict { .. }
             | Self::UncacheableBypassRequiresCleanLine { .. }
             | Self::UnknownPendingFill { .. }
             | Self::UnknownUncacheableWriteResponse { .. }
@@ -617,6 +626,11 @@ impl MesiCacheBank {
     ) -> Result<MesiCacheControllerResult, MesiCacheBankError> {
         self.validate_request_agent(&request)?;
         let line = request.line_address();
+        if !request.is_uncacheable() {
+            if let Some(result) = self.accept_write_queue_conflict(&request)? {
+                return Ok(result);
+            }
+        }
         if request.is_uncacheable() {
             if request.operation() == MemoryOperation::Write {
                 return self.accept_uncacheable_write_request(request);
@@ -893,6 +907,38 @@ impl MesiCacheBank {
         Ok(())
     }
 
+    fn accept_write_queue_conflict(
+        &self,
+        request: &MemoryRequest,
+    ) -> Result<Option<MesiCacheControllerResult>, MesiCacheBankError> {
+        let line = request.line_address();
+        if self.write_queue_pending_conflict(line, false).is_none() {
+            return Ok(None);
+        }
+        if request.returns_data() && !request.carries_data() {
+            if let Some(data) = self.write_queue_ref()?.satisfy_read(
+                request.range().start(),
+                request.size(),
+                false,
+            )? {
+                let state = self
+                    .lines
+                    .get(&line)
+                    .map_or(MesiState::Invalid, MesiCacheController::state);
+                let response = MemoryResponse::completed(request, Some(data))
+                    .map_err(MesiCacheControllerError::Memory)?;
+                return Ok(Some(MesiCacheControllerResult::new(
+                    MesiCacheControllerResultKind::Hit,
+                    state,
+                    None,
+                    None,
+                    Some(TargetOutcome::Respond(response)),
+                )));
+            }
+        }
+        Err(MesiCacheBankError::WriteQueueConflict { line })
+    }
+
     fn accept_uncacheable_request(
         &mut self,
         request: MemoryRequest,
@@ -922,6 +968,23 @@ impl MesiCacheBank {
         request: MemoryRequest,
     ) -> Result<MesiCacheControllerResult, MesiCacheBankError> {
         let line = request.line_address();
+        if let Some(writeback) = self.dirty_resident_writeback_request(line)? {
+            self.validate_write_queue_request(&request)?;
+            self.require_write_queue_entries(2)?;
+            self.write_queue_mut()?
+                .enqueue_writeback(writeback, false, 0)?;
+            self.next_sequence += 1;
+            self.write_queue_mut()?
+                .enqueue_uncacheable_write(request, false, 0)?;
+            self.lines.remove(&line);
+            return Ok(MesiCacheControllerResult::new(
+                MesiCacheControllerResultKind::Miss,
+                MesiState::Invalid,
+                None,
+                None,
+                None,
+            ));
+        }
         if !self.can_bypass_uncacheable_resident_line(line) {
             return Err(MesiCacheBankError::UncacheableBypassRequiresCleanLine { line });
         }
@@ -943,6 +1006,44 @@ impl MesiCacheBank {
             self.lines.get(&line).map(MesiCacheController::state),
             None | Some(MesiState::Invalid | MesiState::Shared | MesiState::Exclusive)
         )
+    }
+
+    fn dirty_resident_writeback_request(
+        &self,
+        line: Address,
+    ) -> Result<Option<MemoryRequest>, MesiCacheBankError> {
+        let Some(controller) = self.lines.get(&line) else {
+            return Ok(None);
+        };
+        if !controller.state().is_dirty() {
+            return Ok(None);
+        }
+        let data = controller
+            .cached_data()
+            .ok_or(MesiCacheControllerError::LineDataUnavailable {
+                line: MesiLineId::new(line),
+            })?
+            .to_vec();
+        let request = MemoryRequest::writeback_dirty(
+            MemoryRequestId::new(self.agent, self.next_sequence),
+            line,
+            data,
+            self.layout,
+        )
+        .map_err(MesiCacheControllerError::Memory)?;
+        Ok(Some(request))
+    }
+
+    fn require_write_queue_entries(&self, entries: usize) -> Result<(), MesiCacheBankError> {
+        let queue = self.write_queue_ref()?;
+        if queue.allocated_count() + entries > queue.config().entries() {
+            return Err(CacheWriteQueueError::EntrySlotsFull {
+                entries: queue.config().entries(),
+                reserve: queue.config().reserve(),
+            }
+            .into());
+        }
+        Ok(())
     }
 
     fn write_queue_ref(&self) -> Result<&CacheWriteQueue, MesiCacheBankError> {

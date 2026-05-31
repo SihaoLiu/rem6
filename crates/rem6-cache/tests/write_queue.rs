@@ -156,6 +156,19 @@ fn cache_write_queue_matches_conflicts_and_satisfies_functional_reads() {
             .unwrap(),
         Some(vec![16, 17, 18, 19])
     );
+    queue
+        .enqueue_uncacheable_write(
+            uncacheable_write(3, 0x1012, vec![0xde, 0xad], vec![true, true]),
+            false,
+            13,
+        )
+        .unwrap();
+    assert_eq!(
+        queue
+            .satisfy_read(Address::new(0x1010), AccessSize::new(4).unwrap(), false)
+            .unwrap(),
+        Some(vec![16, 17, 0xde, 0xad])
+    );
     assert_eq!(
         queue
             .satisfy_read(Address::new(0x1010), AccessSize::new(4).unwrap(), true)
