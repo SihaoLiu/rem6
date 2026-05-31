@@ -2,9 +2,14 @@ use std::sync::{Arc, Mutex};
 
 use rem6_kernel::{ParallelSchedulerContext, SchedulerContext, Tick};
 
-use crate::{VirtioError, VirtioQueueIndex};
+use crate::{
+    VirtioError, VirtioPciCommonConfigDevice, VirtioPciNotifyDevice, VirtioQueueIndex,
+    VirtioQueueNotifySpec, VirtioQueueSpec,
+};
 
 pub const VIRTIO_RNG_DEVICE_ID: u16 = 4;
+pub const VIRTIO_RNG_REQUEST_QUEUE_INDEX: u16 = 0;
+pub const VIRTIO_RNG_DEFAULT_QUEUE_SIZE: u16 = 16;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VirtioRngByteSource {
@@ -129,6 +134,28 @@ impl VirtioRngDevice {
 
     pub fn feature_pages(&self) -> Vec<(u32, u32)> {
         Vec::new()
+    }
+
+    pub fn queue_specs(&self) -> [VirtioQueueSpec; 1] {
+        [VirtioQueueSpec::available(VIRTIO_RNG_DEFAULT_QUEUE_SIZE, 0)]
+    }
+
+    pub fn notify_specs(&self) -> [VirtioQueueNotifySpec; 1] {
+        [VirtioQueueNotifySpec::new(
+            VirtioQueueIndex::new(VIRTIO_RNG_REQUEST_QUEUE_INDEX).expect("rng request queue index"),
+            0,
+        )]
+    }
+
+    pub fn build_common_config(&self) -> Result<VirtioPciCommonConfigDevice, VirtioError> {
+        VirtioPciCommonConfigDevice::new(self.feature_pages(), self.queue_specs())
+    }
+
+    pub fn build_notify_device(
+        &self,
+        notify_off_multiplier: u32,
+    ) -> Result<VirtioPciNotifyDevice, VirtioError> {
+        VirtioPciNotifyDevice::new(notify_off_multiplier, self.notify_specs())
     }
 
     pub const fn config_size(&self) -> u64 {

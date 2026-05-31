@@ -70,7 +70,8 @@ pub use crate::pci_capability::{
 };
 pub use crate::rng::{
     VirtioRngByteSource, VirtioRngCompletion, VirtioRngDevice, VirtioRngRequest,
-    VirtioRngRequestId, VIRTIO_RNG_DEVICE_ID,
+    VirtioRngRequestId, VIRTIO_RNG_DEFAULT_QUEUE_SIZE, VIRTIO_RNG_DEVICE_ID,
+    VIRTIO_RNG_REQUEST_QUEUE_INDEX,
 };
 pub use crate::shared_memory::{
     VirtioPciSharedMemoryCap64Fields, VirtioPciSharedMemoryCapabilities,
