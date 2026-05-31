@@ -182,13 +182,14 @@ pub use uart_checkpoint::{
     UartCheckpointRecord,
 };
 pub use virtio_checkpoint::{
-    VirtioPciDeviceConfigCheckpointBank, VirtioPciDeviceConfigCheckpointError,
-    VirtioPciDeviceConfigCheckpointPort, VirtioPciDeviceConfigCheckpointRecord,
-    VirtioPciIsrCheckpointBank, VirtioPciIsrCheckpointError, VirtioPciIsrCheckpointPort,
-    VirtioPciIsrCheckpointRecord, VirtioPciNotifyCheckpointBank, VirtioPciNotifyCheckpointError,
-    VirtioPciNotifyCheckpointPort, VirtioPciNotifyCheckpointRecord, VirtioSplitQueueCheckpointBank,
-    VirtioSplitQueueCheckpointError, VirtioSplitQueueCheckpointPort,
-    VirtioSplitQueueCheckpointRecord,
+    VirtioPciCommonCheckpointBank, VirtioPciCommonCheckpointError, VirtioPciCommonCheckpointPort,
+    VirtioPciCommonCheckpointRecord, VirtioPciDeviceConfigCheckpointBank,
+    VirtioPciDeviceConfigCheckpointError, VirtioPciDeviceConfigCheckpointPort,
+    VirtioPciDeviceConfigCheckpointRecord, VirtioPciIsrCheckpointBank, VirtioPciIsrCheckpointError,
+    VirtioPciIsrCheckpointPort, VirtioPciIsrCheckpointRecord, VirtioPciNotifyCheckpointBank,
+    VirtioPciNotifyCheckpointError, VirtioPciNotifyCheckpointPort, VirtioPciNotifyCheckpointRecord,
+    VirtioSplitQueueCheckpointBank, VirtioSplitQueueCheckpointError,
+    VirtioSplitQueueCheckpointPort, VirtioSplitQueueCheckpointRecord,
 };
 pub use wait_status::{GuestSignal, GuestWaitStatus, GuestWaitStatusError};
 pub use workload_replay::{
@@ -1035,6 +1036,7 @@ pub enum SystemError {
     UartCheckpoint(UartCheckpointError),
     Pl011UartCheckpoint(Pl011UartCheckpointError),
     PlicCheckpoint(PlicCheckpointError),
+    VirtioPciCommonCheckpoint(VirtioPciCommonCheckpointError),
     VirtioPciDeviceConfigCheckpoint(VirtioPciDeviceConfigCheckpointError),
     VirtioPciIsrCheckpoint(VirtioPciIsrCheckpointError),
     VirtioPciNotifyCheckpoint(VirtioPciNotifyCheckpointError),
@@ -1077,6 +1079,7 @@ impl fmt::Display for SystemError {
             Self::UartCheckpoint(error) => write!(formatter, "{error}"),
             Self::Pl011UartCheckpoint(error) => write!(formatter, "{error}"),
             Self::PlicCheckpoint(error) => write!(formatter, "{error}"),
+            Self::VirtioPciCommonCheckpoint(error) => write!(formatter, "{error}"),
             Self::VirtioPciDeviceConfigCheckpoint(error) => write!(formatter, "{error}"),
             Self::VirtioPciIsrCheckpoint(error) => write!(formatter, "{error}"),
             Self::VirtioPciNotifyCheckpoint(error) => write!(formatter, "{error}"),
@@ -1116,6 +1119,7 @@ impl Error for SystemError {
             Self::UartCheckpoint(error) => Some(error),
             Self::Pl011UartCheckpoint(error) => Some(error),
             Self::PlicCheckpoint(error) => Some(error),
+            Self::VirtioPciCommonCheckpoint(error) => Some(error),
             Self::VirtioPciDeviceConfigCheckpoint(error) => Some(error),
             Self::VirtioPciIsrCheckpoint(error) => Some(error),
             Self::VirtioPciNotifyCheckpoint(error) => Some(error),
