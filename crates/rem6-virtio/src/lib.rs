@@ -10,6 +10,7 @@ use rem6_mmio::{
 mod block;
 mod block_queue;
 mod common_config_snapshot;
+mod console;
 mod device_config;
 mod error;
 mod exports;

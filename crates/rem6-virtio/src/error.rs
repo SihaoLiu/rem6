@@ -169,6 +169,18 @@ pub enum VirtioError {
         max_segments: u32,
         sector_alignment: u32,
     },
+    InvalidConsoleSize {
+        cols: u16,
+        rows: u16,
+    },
+    MissingVirtioConsoleReceiveDescriptor,
+    InvalidVirtioConsoleReceiveDescriptor {
+        index: u16,
+    },
+    InvalidVirtioConsoleTransmitDescriptor {
+        index: u16,
+    },
+    VirtioConsolePayloadLengthOverflow,
     EmptyRngEntropySource,
     MissingVirtioRngWritableDescriptor,
     InvalidVirtioRngReadableDescriptor {
@@ -527,6 +539,25 @@ impl fmt::Display for VirtioError {
                 formatter,
                 "VirtIO block secure erase limits are invalid: max_sectors {max_sectors}, max_segments {max_segments}, sector_alignment {sector_alignment}"
             ),
+            Self::InvalidConsoleSize { cols, rows } => write!(
+                formatter,
+                "VirtIO console size is invalid: cols {cols}, rows {rows}"
+            ),
+            Self::MissingVirtioConsoleReceiveDescriptor => write!(
+                formatter,
+                "VirtIO console receive request needs at least one writable descriptor"
+            ),
+            Self::InvalidVirtioConsoleReceiveDescriptor { index } => write!(
+                formatter,
+                "VirtIO console receive descriptor {index} must be writable"
+            ),
+            Self::InvalidVirtioConsoleTransmitDescriptor { index } => write!(
+                formatter,
+                "VirtIO console transmit descriptor {index} must be readable"
+            ),
+            Self::VirtioConsolePayloadLengthOverflow => {
+                write!(formatter, "VirtIO console payload length overflows")
+            }
             Self::EmptyRngEntropySource => {
                 write!(formatter, "VirtIO rng entropy source must not be empty")
             }

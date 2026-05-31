@@ -1606,6 +1606,14 @@ impl VirtioSplitUsedRing {
             .and_then(Option::as_ref)
     }
 
+    pub(crate) fn set_entry(&mut self, slot: u16, element: VirtioSplitUsedElement) {
+        self.entries[usize::from(slot % self.queue_size)] = Some(element);
+    }
+
+    pub(crate) fn set_index(&mut self, index: u16) {
+        self.index = index;
+    }
+
     pub fn complete_block_request(
         &mut self,
         decoded: &VirtioBlockDecodedRequest,

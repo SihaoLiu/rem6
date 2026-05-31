@@ -35,6 +35,13 @@ pub use crate::block_queue::{
     VirtioSplitUsedElement, VirtioSplitUsedRing, VIRTIO_SPLIT_AVAIL_F_NO_INTERRUPT,
     VIRTIO_SPLIT_DESC_F_INDIRECT, VIRTIO_SPLIT_DESC_F_NEXT, VIRTIO_SPLIT_DESC_F_WRITE,
 };
+pub use crate::console::{
+    VirtioConsoleCompletion, VirtioConsoleConfig, VirtioConsoleDecodedReceive,
+    VirtioConsoleDecodedTransmit, VirtioConsoleDescriptorWrite, VirtioConsoleDevice,
+    VirtioConsoleQueueCompletionWrite, VirtioConsoleReceiveRequest, VirtioConsoleRequestId,
+    VirtioConsoleTransferKind, VirtioConsoleTransmitRequest, VIRTIO_CONSOLE_CONFIG_SIZE,
+    VIRTIO_CONSOLE_DEVICE_ID, VIRTIO_CONSOLE_F_SIZE,
+};
 pub use crate::device_config::{
     VirtioPciDeviceConfigAccess, VirtioPciDeviceConfigDevice, VirtioPciDeviceConfigSnapshot,
     VirtioPciDeviceConfigSpec,
