@@ -2961,7 +2961,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   idempotent interrupt-controller route registration, endpoint identity
   preservation after root-line mapping, serial and parallel endpoint post/clear
   delivery through rem6-interrupt, and observable delivery errors when a
-  parallel clear targets a mismatched source. PCI config and host tests cover
+  parallel clear targets a mismatched source. System checkpoint tests cover PCI
+  legacy INTx router checkpoint banks with staged malformed-payload rejection
+  before live router or registry mutation. PCI config and host tests cover
   64-bit memory BAR lower
   and upper config dwords, upper-slot reservation, invalid BAR pairing, one
   active logical range per 64-bit BAR pair, and host memory-space mapping of

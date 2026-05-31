@@ -14,11 +14,11 @@ use crate::{
     GpuCheckpointBank, GuestEventDelivery, GuestEventId, GuestHostCallResponse, GuestSourceId,
     HostAction, HostActionRecord, HostEventPolicy, IdeControllerCheckpointBank,
     IdeControllerCheckpointPort, InterruptControllerCheckpointBank, MemoryStoreCheckpointBank,
-    MsiBankCheckpointBank, PciHostCheckpointBank, Pl011UartCheckpointBank, Pl031CheckpointBank,
-    PlicCheckpointBank, RiscvCoreCheckpointBank, RtcCheckpointBank, SchedulerCheckpointBank,
-    Sp804CheckpointBank, Sp805CheckpointBank, StopRequest, StorageImageCheckpointBank,
-    StorageImageCheckpointPort, SystemError, TimerCheckpointBank, UartCheckpointBank,
-    VirtioSplitQueueCheckpointBank,
+    MsiBankCheckpointBank, PciHostCheckpointBank, PciLegacyInterruptRouterCheckpointBank,
+    Pl011UartCheckpointBank, Pl031CheckpointBank, PlicCheckpointBank, RiscvCoreCheckpointBank,
+    RtcCheckpointBank, SchedulerCheckpointBank, Sp804CheckpointBank, Sp805CheckpointBank,
+    StopRequest, StorageImageCheckpointBank, StorageImageCheckpointPort, SystemError,
+    TimerCheckpointBank, UartCheckpointBank, VirtioSplitQueueCheckpointBank,
 };
 
 const EXECUTION_MODE_CHECKPOINT_COMPONENT: &str = "host.execution_modes";
@@ -151,6 +151,7 @@ pub struct SystemActionExecutor {
     cpu_local_timer_checkpoints: Option<CpuLocalTimerCheckpointBank>,
     rtc_checkpoints: Option<RtcCheckpointBank>,
     pci_host_checkpoints: Option<PciHostCheckpointBank>,
+    pci_legacy_interrupt_router_checkpoints: Option<PciLegacyInterruptRouterCheckpointBank>,
     virtio_split_queue_checkpoints: Option<VirtioSplitQueueCheckpointBank>,
     execution_modes: BTreeMap<ExecutionModeTarget, ExecutionMode>,
     guest_host_call_responses: BTreeMap<u64, GuestHostCallResponse>,
@@ -189,6 +190,7 @@ impl SystemActionExecutor {
             cpu_local_timer_checkpoints: None,
             rtc_checkpoints: None,
             pci_host_checkpoints: None,
+            pci_legacy_interrupt_router_checkpoints: None,
             virtio_split_queue_checkpoints: None,
             execution_modes: BTreeMap::new(),
             guest_host_call_responses: BTreeMap::new(),
@@ -227,6 +229,7 @@ impl SystemActionExecutor {
             cpu_local_timer_checkpoints: None,
             rtc_checkpoints: None,
             pci_host_checkpoints: None,
+            pci_legacy_interrupt_router_checkpoints: None,
             virtio_split_queue_checkpoints: None,
             execution_modes: BTreeMap::new(),
             guest_host_call_responses: BTreeMap::new(),
@@ -265,6 +268,7 @@ impl SystemActionExecutor {
             cpu_local_timer_checkpoints: None,
             rtc_checkpoints: None,
             pci_host_checkpoints: None,
+            pci_legacy_interrupt_router_checkpoints: None,
             virtio_split_queue_checkpoints: None,
             execution_modes: BTreeMap::new(),
             guest_host_call_responses: BTreeMap::new(),
@@ -303,6 +307,7 @@ impl SystemActionExecutor {
             cpu_local_timer_checkpoints: None,
             rtc_checkpoints: None,
             pci_host_checkpoints: None,
+            pci_legacy_interrupt_router_checkpoints: None,
             virtio_split_queue_checkpoints: None,
             execution_modes: BTreeMap::new(),
             guest_host_call_responses: BTreeMap::new(),
@@ -341,6 +346,7 @@ impl SystemActionExecutor {
             cpu_local_timer_checkpoints: None,
             rtc_checkpoints: None,
             pci_host_checkpoints: None,
+            pci_legacy_interrupt_router_checkpoints: None,
             virtio_split_queue_checkpoints: None,
             execution_modes: BTreeMap::new(),
             guest_host_call_responses: BTreeMap::new(),
@@ -379,6 +385,7 @@ impl SystemActionExecutor {
             cpu_local_timer_checkpoints: None,
             rtc_checkpoints: None,
             pci_host_checkpoints: None,
+            pci_legacy_interrupt_router_checkpoints: None,
             virtio_split_queue_checkpoints: None,
             execution_modes: BTreeMap::new(),
             guest_host_call_responses: BTreeMap::new(),
@@ -427,6 +434,7 @@ impl SystemActionExecutor {
             cpu_local_timer_checkpoints: None,
             rtc_checkpoints: None,
             pci_host_checkpoints: Some(pci_host_checkpoints),
+            pci_legacy_interrupt_router_checkpoints: None,
             virtio_split_queue_checkpoints: None,
             execution_modes: BTreeMap::new(),
             guest_host_call_responses: BTreeMap::new(),
@@ -466,6 +474,7 @@ impl SystemActionExecutor {
             cpu_local_timer_checkpoints: None,
             rtc_checkpoints: None,
             pci_host_checkpoints: None,
+            pci_legacy_interrupt_router_checkpoints: None,
             virtio_split_queue_checkpoints: None,
             execution_modes: BTreeMap::new(),
             guest_host_call_responses: BTreeMap::new(),
@@ -505,6 +514,7 @@ impl SystemActionExecutor {
             cpu_local_timer_checkpoints: None,
             rtc_checkpoints: None,
             pci_host_checkpoints: None,
+            pci_legacy_interrupt_router_checkpoints: None,
             virtio_split_queue_checkpoints: None,
             execution_modes: BTreeMap::new(),
             guest_host_call_responses: BTreeMap::new(),
@@ -839,6 +849,16 @@ impl SystemActionExecutor {
         Ok(())
     }
 
+    pub fn attach_pci_legacy_interrupt_router_checkpoint_bank(
+        &mut self,
+        pci_legacy_interrupt_router_checkpoints: PciLegacyInterruptRouterCheckpointBank,
+    ) -> Result<(), CheckpointError> {
+        pci_legacy_interrupt_router_checkpoints.register_all(&mut self.checkpoints)?;
+        self.pci_legacy_interrupt_router_checkpoints =
+            Some(pci_legacy_interrupt_router_checkpoints);
+        Ok(())
+    }
+
     pub fn attach_virtio_split_queue_checkpoint_bank(
         &mut self,
         virtio_split_queue_checkpoints: VirtioSplitQueueCheckpointBank,
@@ -936,6 +956,12 @@ impl SystemActionExecutor {
 
     pub const fn pci_host_checkpoint_bank(&self) -> Option<&PciHostCheckpointBank> {
         self.pci_host_checkpoints.as_ref()
+    }
+
+    pub const fn pci_legacy_interrupt_router_checkpoint_bank(
+        &self,
+    ) -> Option<&PciLegacyInterruptRouterCheckpointBank> {
+        self.pci_legacy_interrupt_router_checkpoints.as_ref()
     }
 
     pub const fn virtio_split_queue_checkpoint_bank(
@@ -1083,6 +1109,13 @@ impl SystemActionExecutor {
                 .validate_restore_from(checkpoints)
                 .map_err(SystemError::PciHostCheckpoint)?;
         }
+        if let Some(pci_legacy_interrupt_router_checkpoints) =
+            &self.pci_legacy_interrupt_router_checkpoints
+        {
+            pci_legacy_interrupt_router_checkpoints
+                .validate_restore_from(checkpoints)
+                .map_err(SystemError::PciLegacyInterruptRouterCheckpoint)?;
+        }
         if let Some(virtio_split_queue_checkpoints) = &self.virtio_split_queue_checkpoints {
             virtio_split_queue_checkpoints
                 .validate_restore_from(checkpoints)
@@ -1201,6 +1234,13 @@ impl SystemActionExecutor {
             pci_host_checkpoints
                 .restore_all_from(&self.checkpoints)
                 .map_err(SystemError::PciHostCheckpoint)?;
+        }
+        if let Some(pci_legacy_interrupt_router_checkpoints) =
+            &self.pci_legacy_interrupt_router_checkpoints
+        {
+            pci_legacy_interrupt_router_checkpoints
+                .restore_all_from(&self.checkpoints)
+                .map_err(SystemError::PciLegacyInterruptRouterCheckpoint)?;
         }
         if let Some(virtio_split_queue_checkpoints) = &self.virtio_split_queue_checkpoints {
             virtio_split_queue_checkpoints
@@ -1372,6 +1412,13 @@ impl SystemActionExecutor {
                     pci_host_checkpoints
                         .capture_all_into(&mut staged_checkpoints)
                         .map_err(SystemError::PciHostCheckpoint)?;
+                }
+                if let Some(pci_legacy_interrupt_router_checkpoints) =
+                    &self.pci_legacy_interrupt_router_checkpoints
+                {
+                    pci_legacy_interrupt_router_checkpoints
+                        .capture_all_into(&mut staged_checkpoints)
+                        .map_err(SystemError::Checkpoint)?;
                 }
                 if let Some(virtio_split_queue_checkpoints) = &self.virtio_split_queue_checkpoints {
                     virtio_split_queue_checkpoints

@@ -39,6 +39,7 @@ mod host_assist;
 mod interrupt_checkpoint;
 mod memory_checkpoint;
 mod pci_checkpoint;
+mod pci_interrupt_checkpoint;
 mod pl031_checkpoint;
 mod plic_checkpoint;
 mod riscv_checkpoint;
@@ -120,6 +121,10 @@ pub use memory_checkpoint::{
 };
 pub use pci_checkpoint::{
     PciHostCheckpointBank, PciHostCheckpointError, PciHostCheckpointPort, PciHostCheckpointRecord,
+};
+pub use pci_interrupt_checkpoint::{
+    PciLegacyInterruptRouterCheckpointBank, PciLegacyInterruptRouterCheckpointError,
+    PciLegacyInterruptRouterCheckpointPort, PciLegacyInterruptRouterCheckpointRecord,
 };
 pub use pl031_checkpoint::{
     Pl031CheckpointBank, Pl031CheckpointError, Pl031CheckpointPort, Pl031CheckpointRecord,
@@ -1009,6 +1014,7 @@ pub enum SystemError {
     FabricCheckpoint(FabricCheckpointError),
     GpuCheckpoint(GpuCheckpointError),
     PciHostCheckpoint(PciHostCheckpointError),
+    PciLegacyInterruptRouterCheckpoint(PciLegacyInterruptRouterCheckpointError),
     Pl031Checkpoint(Pl031CheckpointError),
     Sp804Checkpoint(Sp804CheckpointError),
     Sp805Checkpoint(Sp805CheckpointError),
@@ -1047,6 +1053,7 @@ impl fmt::Display for SystemError {
             Self::FabricCheckpoint(error) => write!(formatter, "{error}"),
             Self::GpuCheckpoint(error) => write!(formatter, "{error}"),
             Self::PciHostCheckpoint(error) => write!(formatter, "{error}"),
+            Self::PciLegacyInterruptRouterCheckpoint(error) => write!(formatter, "{error}"),
             Self::Pl031Checkpoint(error) => write!(formatter, "{error}"),
             Self::Sp804Checkpoint(error) => write!(formatter, "{error}"),
             Self::Sp805Checkpoint(error) => write!(formatter, "{error}"),
@@ -1082,6 +1089,7 @@ impl Error for SystemError {
             Self::FabricCheckpoint(error) => Some(error),
             Self::GpuCheckpoint(error) => Some(error),
             Self::PciHostCheckpoint(error) => Some(error),
+            Self::PciLegacyInterruptRouterCheckpoint(error) => Some(error),
             Self::Pl031Checkpoint(error) => Some(error),
             Self::Sp804Checkpoint(error) => Some(error),
             Self::Sp805Checkpoint(error) => Some(error),
