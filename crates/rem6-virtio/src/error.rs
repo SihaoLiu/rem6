@@ -190,6 +190,18 @@ pub enum VirtioError {
     Virtio9pMountTagTooLong {
         bytes: usize,
     },
+    ShortVirtio9pHeader {
+        bytes: u64,
+    },
+    InvalidVirtio9pMessageLength {
+        declared: u32,
+        actual: u32,
+    },
+    MissingVirtio9pWritableDescriptor,
+    InvalidVirtio9pWritableDescriptor {
+        index: u16,
+    },
+    Virtio9pPayloadLengthOverflow,
     ZeroPciCapabilityRegion {
         cfg_type: u8,
     },
@@ -580,6 +592,24 @@ impl fmt::Display for VirtioError {
                 formatter,
                 "VirtIO 9p mount tag has {bytes} bytes and cannot fit in a 16-bit length"
             ),
+            Self::ShortVirtio9pHeader { bytes } => {
+                write!(formatter, "VirtIO 9p header has only {bytes} bytes")
+            }
+            Self::InvalidVirtio9pMessageLength { declared, actual } => write!(
+                formatter,
+                "VirtIO 9p message declared {declared} bytes but descriptor chain carried {actual} bytes"
+            ),
+            Self::MissingVirtio9pWritableDescriptor => write!(
+                formatter,
+                "VirtIO 9p request needs at least one writable reply descriptor"
+            ),
+            Self::InvalidVirtio9pWritableDescriptor { index } => write!(
+                formatter,
+                "VirtIO 9p descriptor {index} must be writable for reply data"
+            ),
+            Self::Virtio9pPayloadLengthOverflow => {
+                write!(formatter, "VirtIO 9p payload length overflows")
+            }
             Self::ZeroPciCapabilityRegion { cfg_type } => {
                 write!(formatter, "VirtIO PCI capability type {cfg_type} has zero length")
             }

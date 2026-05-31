@@ -52,6 +52,10 @@ pub use crate::fs9p::{
     VIRTIO_9P_CONFIG_TAG_OFFSET, VIRTIO_9P_DEFAULT_QUEUE_SIZE, VIRTIO_9P_DEVICE_ID,
     VIRTIO_9P_F_MOUNT_TAG, VIRTIO_9P_REQUEST_QUEUE_INDEX,
 };
+pub use crate::fs9p_queue::{
+    Virtio9pCompletion, Virtio9pDecodedRequest, Virtio9pDescriptorWrite,
+    Virtio9pQueueCompletionWrite, Virtio9pRequest, Virtio9pRequestId, VIRTIO_9P_HEADER_BYTES,
+};
 pub use crate::isr::{
     VirtioPciIsrDevice, VirtioPciIsrEvent, VirtioPciIsrEventKind, VirtioPciIsrSnapshot,
     VirtioPciIsrStatus, VIRTIO_PCI_ISR_STATUS_SIZE,

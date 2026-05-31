@@ -182,7 +182,11 @@ impl<'a> VirtioGuestMemory<'a> {
         }
     }
 
-    fn read_exact(&mut self, address: Address, bytes: u64) -> Result<Vec<u8>, VirtioError> {
+    pub(crate) fn read_exact(
+        &mut self,
+        address: Address,
+        bytes: u64,
+    ) -> Result<Vec<u8>, VirtioError> {
         let mut data = Vec::new();
         let mut cursor = address;
         let mut remaining = bytes;
@@ -684,7 +688,7 @@ impl VirtioSplitQueue {
         Ok((writeback, should_deliver))
     }
 
-    fn completion_interrupt_enabled(
+    pub(crate) fn completion_interrupt_enabled(
         &self,
         guest: &mut VirtioGuestMemory<'_>,
         used_index: u16,
