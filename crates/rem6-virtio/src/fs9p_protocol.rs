@@ -65,6 +65,16 @@ pub(crate) fn parse_lopen_request(
     Ok(Virtio9pOpenRequest { fid })
 }
 
+pub(crate) fn parse_open_request(
+    request: &Virtio9pRequest,
+) -> Result<Virtio9pOpenRequest, VirtioError> {
+    let mut reader = Virtio9pPayloadReader::new(request.message_type(), request.payload());
+    let fid = reader.read_u32()?;
+    let _mode = reader.read_u8()?;
+    reader.finish()?;
+    Ok(Virtio9pOpenRequest { fid })
+}
+
 pub(crate) fn parse_lcreate_request(
     request: &Virtio9pRequest,
 ) -> Result<Virtio9pCreateRequest, VirtioError> {
