@@ -6,11 +6,15 @@ use rem6_memory::ByteMask;
 use rem6_storage::{StorageError, StorageImageLayer, StorageSectorId};
 
 use crate::{
-    VirtioError, VirtioPciDeviceConfigDevice, VirtioPciDeviceConfigSpec, VirtioQueueIndex,
+    VirtioError, VirtioPciCommonConfigDevice, VirtioPciDeviceConfigDevice,
+    VirtioPciDeviceConfigSpec, VirtioPciNotifyDevice, VirtioQueueIndex, VirtioQueueNotifySpec,
+    VirtioQueueSpec,
 };
 
 pub const VIRTIO_BLOCK_DEVICE_ID: u16 = 2;
 pub const VIRTIO_BLOCK_SECTOR_SIZE: u64 = 512;
+pub const VIRTIO_BLOCK_REQUEST_QUEUE_INDEX: u16 = 0;
+pub const VIRTIO_BLOCK_DEFAULT_QUEUE_SIZE: u16 = 128;
 
 pub const VIRTIO_BLOCK_F_SIZE_MAX: u64 = 1 << 1;
 pub const VIRTIO_BLOCK_F_SEG_MAX: u64 = 1 << 2;
@@ -440,6 +444,30 @@ impl VirtioBlockConfigSpec {
         pages
     }
 
+    pub fn queue_count(&self) -> Result<u16, VirtioError> {
+        self.validate()?;
+        Ok(self.queues.unwrap_or(1))
+    }
+
+    pub fn queue_specs(&self) -> Result<Vec<VirtioQueueSpec>, VirtioError> {
+        let queue_count = self.queue_count()?;
+        Ok((0..queue_count)
+            .map(|index| VirtioQueueSpec::available(VIRTIO_BLOCK_DEFAULT_QUEUE_SIZE, index))
+            .collect())
+    }
+
+    pub fn notify_specs(&self) -> Result<Vec<VirtioQueueNotifySpec>, VirtioError> {
+        let queue_count = self.queue_count()?;
+        Ok((0..queue_count)
+            .map(|index| {
+                VirtioQueueNotifySpec::new(
+                    VirtioQueueIndex::new(index).expect("block queue index"),
+                    index,
+                )
+            })
+            .collect())
+    }
+
     pub fn device_config_spec(&self) -> Result<VirtioPciDeviceConfigSpec, VirtioError> {
         self.validate()?;
         let mut bytes = vec![0; VIRTIO_BLOCK_CONFIG_SIZE as usize];
@@ -550,6 +578,17 @@ impl VirtioBlockConfigSpec {
     pub fn build_device_config(&self) -> Result<VirtioPciDeviceConfigDevice, VirtioError> {
         self.device_config_spec()
             .map(VirtioPciDeviceConfigDevice::new)
+    }
+
+    pub fn build_common_config(&self) -> Result<VirtioPciCommonConfigDevice, VirtioError> {
+        VirtioPciCommonConfigDevice::new(self.feature_pages(), self.queue_specs()?)
+    }
+
+    pub fn build_notify_device(
+        &self,
+        notify_off_multiplier: u32,
+    ) -> Result<VirtioPciNotifyDevice, VirtioError> {
+        VirtioPciNotifyDevice::new(notify_off_multiplier, self.notify_specs()?)
     }
 
     fn validate(&self) -> Result<(), VirtioError> {
@@ -960,6 +999,46 @@ impl VirtioBlockDevice {
             .expect("virtio block device lock")
             .device_id = id;
         Ok(self)
+    }
+
+    pub fn config_spec(&self) -> VirtioBlockConfigSpec {
+        self.state
+            .lock()
+            .expect("virtio block device lock")
+            .config
+            .clone()
+    }
+
+    pub fn feature_pages(&self) -> Vec<(u32, u32)> {
+        self.config_spec().feature_pages()
+    }
+
+    pub fn queue_count(&self) -> Result<u16, VirtioError> {
+        self.config_spec().queue_count()
+    }
+
+    pub fn queue_specs(&self) -> Result<Vec<VirtioQueueSpec>, VirtioError> {
+        self.config_spec().queue_specs()
+    }
+
+    pub fn notify_specs(&self) -> Result<Vec<VirtioQueueNotifySpec>, VirtioError> {
+        self.config_spec().notify_specs()
+    }
+
+    pub fn build_device_config(&self) -> Result<VirtioPciDeviceConfigDevice, VirtioError> {
+        self.config_spec().build_device_config()
+    }
+
+    pub fn build_common_config(&self) -> Result<VirtioPciCommonConfigDevice, VirtioError> {
+        self.config_spec().build_common_config()
+    }
+
+    pub fn build_notify_device(
+        &self,
+        notify_off_multiplier: u32,
+    ) -> Result<VirtioPciNotifyDevice, VirtioError> {
+        self.config_spec()
+            .build_notify_device(notify_off_multiplier)
     }
 
     pub fn execute(

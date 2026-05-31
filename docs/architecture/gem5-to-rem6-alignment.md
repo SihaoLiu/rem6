@@ -1284,10 +1284,14 @@ Implementation evidence through 2026-05-31:
   exit callbacks. `rem6-virtio` can now execute block requests directly against
   those storage layers, so VirtIO, IDE, simple-disk, and future storage
   controllers can share one typed image substrate instead of each embedding a
-  private sector backend. Storage checkpoint banks now encode raw, file-backed,
-  and COW image snapshots as deterministic chunks, prevalidate every chunk
-  before restoring any image, and reject malformed payloads without partial
-  mutation.
+  private sector backend. VirtIO block assembly now preserves gem5's single
+  128-entry request queue default, exposes optional multiqueue common-config
+  and notify layouts from the typed block configuration, builds PCI
+  device-config, common, notify, and ISR devices from the block device, and
+  attaches them through the same modern PCI BAR runtime used by other VirtIO
+  devices. Storage checkpoint banks now encode raw, file-backed, and COW image
+  snapshots as deterministic chunks, prevalidate every chunk before restoring
+  any image, and reject malformed payloads without partial mutation.
   The storage crate also owns a typed `SimpleDisk` copy primitive aligned with
   gem5 `src/dev/storage/simple_disk.*`: reads stage complete 512-byte-sector
   payloads before writing guest memory, writes stage complete guest payloads
@@ -3206,7 +3210,11 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   cover modern feature bits, little-endian device-specific configuration
   layout, writeback mutability, read-only field rejection, and shape
   validation for capacity, block size, multiqueue, geometry, topology,
-  discard, write-zeroes, and secure-erase limits. VirtIO block device tests
+  discard, write-zeroes, and secure-erase limits. VirtIO block transport tests
+  cover gem5's 128-entry request-queue default, block device-config capacity
+  reads, optional multiqueue common-config and notify offsets, modern PCI
+  endpoint and capability assembly, config MMIO reads, and notify MMIO writes
+  through the BAR runtime. VirtIO block device tests
   cover serial and parallel decoded request execution, typed in-memory sector
   and rem6-storage image backend reads and writes, flush accounting, get-id
   payload padding, queue and request completion traces, unsupported request
