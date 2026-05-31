@@ -228,6 +228,18 @@ pub(crate) fn parse_fsync_request(
     Ok(Virtio9pFsyncRequest { fid })
 }
 
+pub(crate) fn parse_lock_request(
+    request: &Virtio9pRequest,
+) -> Result<Virtio9pLockRequest, VirtioError> {
+    parse_lock_payload(request)
+}
+
+pub(crate) fn parse_getlock_request(
+    request: &Virtio9pRequest,
+) -> Result<Virtio9pLockRequest, VirtioError> {
+    parse_lock_payload(request)
+}
+
 pub(crate) fn parse_rename_request(
     request: &Virtio9pRequest,
 ) -> Result<Virtio9pRenameRequest, VirtioError> {
@@ -345,6 +357,49 @@ pub(crate) fn string_payload(data: &[u8]) -> Vec<u8> {
     payload
 }
 
+pub(crate) fn lock_payload(
+    lock_type: u8,
+    flags: u32,
+    start: u64,
+    length: u64,
+    proc_id: u32,
+    client_id: &str,
+) -> Vec<u8> {
+    let mut payload = Vec::new();
+    payload.push(lock_type);
+    payload.extend(flags.to_le_bytes());
+    payload.extend(start.to_le_bytes());
+    payload.extend(length.to_le_bytes());
+    payload.extend(proc_id.to_le_bytes());
+    payload.extend(string_payload(client_id.as_bytes()));
+    payload
+}
+
+fn parse_lock_payload(request: &Virtio9pRequest) -> Result<Virtio9pLockRequest, VirtioError> {
+    let mut reader = Virtio9pPayloadReader::new(request.message_type(), request.payload());
+    let fid = reader.read_u32()?;
+    let lock_type = reader.read_u8()?;
+    let flags = reader.read_u32()?;
+    let start = reader.read_u64()?;
+    let length = reader.read_u64()?;
+    let proc_id = reader.read_u32()?;
+    let client_id = string_from_9p(
+        request.message_type(),
+        reader.read_string()?,
+        request.payload(),
+    )?;
+    reader.finish()?;
+    Ok(Virtio9pLockRequest {
+        fid,
+        lock_type,
+        flags,
+        start,
+        length,
+        proc_id,
+        client_id,
+    })
+}
+
 fn string_from_9p(
     message_type: u8,
     bytes: Vec<u8>,
@@ -374,6 +429,10 @@ impl<'a> Virtio9pPayloadReader<'a> {
     fn read_u16(&mut self) -> Result<u16, VirtioError> {
         let bytes = self.read_exact(2)?;
         Ok(u16::from_le_bytes(bytes.try_into().unwrap()))
+    }
+
+    fn read_u8(&mut self) -> Result<u8, VirtioError> {
+        Ok(self.read_exact(1)?[0])
     }
 
     fn read_u32(&mut self) -> Result<u32, VirtioError> {
@@ -501,6 +560,17 @@ pub(crate) struct Virtio9pReaddirRequest {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct Virtio9pFsyncRequest {
     pub(crate) fid: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Virtio9pLockRequest {
+    pub(crate) fid: u32,
+    pub(crate) lock_type: u8,
+    pub(crate) flags: u32,
+    pub(crate) start: u64,
+    pub(crate) length: u64,
+    pub(crate) proc_id: u32,
+    pub(crate) client_id: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -9,13 +9,13 @@ use crate::fs9p_namespace::{
     Virtio9pTimestamp,
 };
 use crate::fs9p_protocol::{
-    parse_attach_request, parse_clunk_request, parse_flush_request, parse_fsync_request,
-    parse_getattr_request, parse_lcreate_request, parse_link_request, parse_lopen_request,
-    parse_mkdir_request, parse_mknod_request, parse_read_request, parse_readdir_request,
-    parse_readlink_request, parse_remove_request, parse_rename_request, parse_renameat_request,
-    parse_setattr_request, parse_statfs_request, parse_symlink_request, parse_unlinkat_request,
-    parse_version_request, parse_walk_request, parse_write_request, string_payload,
-    version_payload,
+    lock_payload, parse_attach_request, parse_clunk_request, parse_flush_request,
+    parse_fsync_request, parse_getattr_request, parse_getlock_request, parse_lcreate_request,
+    parse_link_request, parse_lock_request, parse_lopen_request, parse_mkdir_request,
+    parse_mknod_request, parse_read_request, parse_readdir_request, parse_readlink_request,
+    parse_remove_request, parse_rename_request, parse_renameat_request, parse_setattr_request,
+    parse_statfs_request, parse_symlink_request, parse_unlinkat_request, parse_version_request,
+    parse_walk_request, parse_write_request, string_payload, version_payload,
 };
 use crate::{
     modern_feature_pages, Virtio9pCompletion, Virtio9pRequest, VirtioError,
@@ -53,6 +53,10 @@ pub const VIRTIO_9P_TREADDIR: u8 = 40;
 pub const VIRTIO_9P_RREADDIR: u8 = 41;
 pub const VIRTIO_9P_TFSYNC: u8 = 50;
 pub const VIRTIO_9P_RFSYNC: u8 = 51;
+pub const VIRTIO_9P_TLOCK: u8 = 52;
+pub const VIRTIO_9P_RLOCK: u8 = 53;
+pub const VIRTIO_9P_TGETLOCK: u8 = 54;
+pub const VIRTIO_9P_RGETLOCK: u8 = 55;
 pub const VIRTIO_9P_TLINK: u8 = 70;
 pub const VIRTIO_9P_RLINK: u8 = 71;
 pub const VIRTIO_9P_TMKDIR: u8 = 72;
@@ -98,6 +102,10 @@ pub const VIRTIO_9P_SETATTR_ATIME: u32 = 0x0000_0010;
 pub const VIRTIO_9P_SETATTR_MTIME: u32 = 0x0000_0020;
 pub const VIRTIO_9P_SETATTR_ATIME_SET: u32 = 0x0000_0080;
 pub const VIRTIO_9P_SETATTR_MTIME_SET: u32 = 0x0000_0100;
+pub const VIRTIO_9P_LOCK_SUCCESS: u8 = 0;
+pub const VIRTIO_9P_LOCK_TYPE_RDLCK: u8 = 0;
+pub const VIRTIO_9P_LOCK_TYPE_WRLCK: u8 = 1;
+pub const VIRTIO_9P_LOCK_TYPE_UNLCK: u8 = 2;
 pub const VIRTIO_9P_STATFS_TYPE: u32 = 0x0102_1997;
 pub const VIRTIO_9P_STATFS_BLOCK_SIZE: u32 = 4096;
 pub const VIRTIO_9P_NAME_MAX: u32 = 255;
@@ -310,6 +318,14 @@ impl Virtio9pDevice {
             },
             VIRTIO_9P_TFSYNC => match self.handle_fsync(&request)? {
                 Ok(()) => (VIRTIO_9P_RFSYNC, Vec::new()),
+                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
+            },
+            VIRTIO_9P_TLOCK => match self.handle_lock(&request)? {
+                Ok(status) => (VIRTIO_9P_RLOCK, vec![status]),
+                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
+            },
+            VIRTIO_9P_TGETLOCK => match self.handle_getlock(&request)? {
+                Ok(payload) => (VIRTIO_9P_RGETLOCK, payload),
                 Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
             },
             VIRTIO_9P_TLINK => match self.handle_link(&request)? {
@@ -655,6 +671,38 @@ impl Virtio9pDevice {
         }
     }
 
+    fn handle_lock(&self, request: &Virtio9pRequest) -> Result<Result<u8, u32>, VirtioError> {
+        let lock = parse_lock_request(request)?;
+        if !valid_lock_type(lock.lock_type) {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        }
+        if self.lockable_fid(lock.fid).is_none() {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        }
+        Ok(Ok(VIRTIO_9P_LOCK_SUCCESS))
+    }
+
+    fn handle_getlock(
+        &self,
+        request: &Virtio9pRequest,
+    ) -> Result<Result<Vec<u8>, u32>, VirtioError> {
+        let lock = parse_getlock_request(request)?;
+        if !valid_lock_type(lock.lock_type) {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        }
+        if self.lockable_fid(lock.fid).is_none() {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        }
+        Ok(Ok(lock_payload(
+            VIRTIO_9P_LOCK_TYPE_UNLCK,
+            lock.flags,
+            lock.start,
+            lock.length,
+            lock.proc_id,
+            &lock.client_id,
+        )))
+    }
+
     fn handle_mkdir(&self, request: &Virtio9pRequest) -> Result<Result<Vec<u8>, u32>, VirtioError> {
         let mkdir = parse_mkdir_request(request)?;
         let Some(parent) = self
@@ -881,12 +929,36 @@ impl Virtio9pDevice {
             .expect("virtio 9p fid lock")
             .retain(|_, fid| fid.node() != node);
     }
+
+    fn lockable_fid(&self, fid: u32) -> Option<Virtio9pFidState> {
+        let fid = self
+            .fids
+            .lock()
+            .expect("virtio 9p fid lock")
+            .get(&fid)
+            .copied()?;
+        if !fid.is_open() {
+            return None;
+        }
+        self.namespace
+            .lock()
+            .expect("virtio 9p namespace lock")
+            .read_file(fid.node(), 0, 0)?;
+        Some(fid)
+    }
 }
 
 impl Default for Virtio9pDevice {
     fn default() -> Self {
         Self::new(Virtio9pConfig::default())
     }
+}
+
+const fn valid_lock_type(lock_type: u8) -> bool {
+    matches!(
+        lock_type,
+        VIRTIO_9P_LOCK_TYPE_RDLCK | VIRTIO_9P_LOCK_TYPE_WRLCK | VIRTIO_9P_LOCK_TYPE_UNLCK
+    )
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

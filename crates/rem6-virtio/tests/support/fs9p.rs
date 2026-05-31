@@ -169,6 +169,26 @@ pub(crate) fn p9_fsync_payload(fid: u32, datasync: u32) -> Vec<u8> {
     payload
 }
 
+pub(crate) fn p9_lock_payload(
+    fid: u32,
+    lock_type: u8,
+    flags: u32,
+    start: u64,
+    length: u64,
+    proc_id: u32,
+    client_id: &[u8],
+) -> Vec<u8> {
+    let mut payload = Vec::new();
+    payload.extend(fid.to_le_bytes());
+    payload.push(lock_type);
+    payload.extend(flags.to_le_bytes());
+    payload.extend(start.to_le_bytes());
+    payload.extend(length.to_le_bytes());
+    payload.extend(proc_id.to_le_bytes());
+    payload.extend(p9_string(client_id));
+    payload
+}
+
 pub(crate) fn p9_flush_payload(oldtag: u16) -> Vec<u8> {
     oldtag.to_le_bytes().to_vec()
 }
@@ -305,6 +325,13 @@ pub(crate) fn read_u32(payload: &[u8], offset: usize) -> u32 {
 
 pub(crate) fn read_u64(payload: &[u8], offset: usize) -> u64 {
     u64::from_le_bytes(payload[offset..offset + 8].try_into().unwrap())
+}
+
+pub(crate) fn read_string(payload: &[u8], offset: usize) -> &[u8] {
+    let count = usize::from(u16::from_le_bytes(
+        payload[offset..offset + 2].try_into().unwrap(),
+    ));
+    &payload[offset + 2..offset + 2 + count]
 }
 
 #[derive(Debug, Eq, PartialEq)]
