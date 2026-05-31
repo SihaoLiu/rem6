@@ -1,8 +1,8 @@
 use rem6_virtio::{
-    Virtio9pConfig, Virtio9pDevice, VIRTIO_9P_EBADF, VIRTIO_9P_ENOTSUP, VIRTIO_9P_NOFID,
-    VIRTIO_9P_QTFILE, VIRTIO_9P_RLERROR, VIRTIO_9P_ROPEN, VIRTIO_9P_RREAD, VIRTIO_9P_RSTAT,
-    VIRTIO_9P_RWSTAT, VIRTIO_9P_TATTACH, VIRTIO_9P_TAUTH, VIRTIO_9P_TOPEN, VIRTIO_9P_TREAD,
-    VIRTIO_9P_TSTAT, VIRTIO_9P_TWALK, VIRTIO_9P_TWSTAT,
+    Virtio9pConfig, Virtio9pDevice, VIRTIO_9P_EBADF, VIRTIO_9P_ENOENT, VIRTIO_9P_ENOTSUP,
+    VIRTIO_9P_NOFID, VIRTIO_9P_QTFILE, VIRTIO_9P_RLERROR, VIRTIO_9P_ROPEN, VIRTIO_9P_RREAD,
+    VIRTIO_9P_RSTAT, VIRTIO_9P_RWALK, VIRTIO_9P_RWSTAT, VIRTIO_9P_TATTACH, VIRTIO_9P_TAUTH,
+    VIRTIO_9P_TOPEN, VIRTIO_9P_TREAD, VIRTIO_9P_TSTAT, VIRTIO_9P_TWALK, VIRTIO_9P_TWSTAT,
 };
 
 mod support;
@@ -137,6 +137,57 @@ fn virtio_9p_device_applies_legacy_wstat_metadata_updates() {
     let read_completion = device.execute_at(15, read).unwrap();
     assert_eq!(read_completion.message_type(), VIRTIO_9P_RREAD);
     assert_eq!(read_counted_data(read_completion.payload()), b"abc");
+}
+
+#[test]
+fn virtio_9p_device_renames_files_with_legacy_wstat() {
+    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap())
+        .with_file("old.txt", b"rename".to_vec())
+        .unwrap();
+    let attach = decoded_request(
+        VIRTIO_9P_TATTACH,
+        1,
+        p9_attach_payload(1, VIRTIO_9P_NOFID, b"root", b"", 0),
+    );
+    device.execute_at(10, attach).unwrap();
+    let walk_old = decoded_request(VIRTIO_9P_TWALK, 2, p9_walk_payload(1, 2, &[b"old.txt"]));
+    let walk_completion = device.execute_at(11, walk_old).unwrap();
+    let (_, _, old_path) = read_qid(walk_completion.payload(), 2);
+    let open = decoded_request(VIRTIO_9P_TOPEN, 3, p9_open_payload(2, 0));
+    assert_eq!(
+        device.execute_at(12, open).unwrap().message_type(),
+        VIRTIO_9P_ROPEN
+    );
+
+    let rename = decoded_request(
+        VIRTIO_9P_TWSTAT,
+        4,
+        p9_legacy_wstat_rename_payload(2, b"new.txt"),
+    );
+    let rename_completion = device.execute_at(13, rename).unwrap();
+
+    assert_eq!(rename_completion.message_type(), VIRTIO_9P_RWSTAT);
+    assert!(rename_completion.payload().is_empty());
+    let read_open = decoded_request(VIRTIO_9P_TREAD, 5, p9_read_payload(2, 0, 16));
+    let read_completion = device.execute_at(14, read_open).unwrap();
+    assert_eq!(read_completion.message_type(), VIRTIO_9P_RREAD);
+    assert_eq!(read_counted_data(read_completion.payload()), b"rename");
+
+    let old_walk = decoded_request(VIRTIO_9P_TWALK, 6, p9_walk_payload(1, 3, &[b"old.txt"]));
+    let old_completion = device.execute_at(15, old_walk).unwrap();
+    assert_eq!(old_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(old_completion.payload(), VIRTIO_9P_ENOENT.to_le_bytes());
+
+    let new_walk = decoded_request(VIRTIO_9P_TWALK, 7, p9_walk_payload(1, 4, &[b"new.txt"]));
+    let new_completion = device.execute_at(16, new_walk).unwrap();
+    assert_eq!(new_completion.message_type(), VIRTIO_9P_RWALK);
+    let (_, _, new_path) = read_qid(new_completion.payload(), 2);
+    assert_eq!(new_path, old_path);
+
+    let restat = decoded_request(VIRTIO_9P_TSTAT, 8, p9_legacy_stat_payload(2));
+    let stat_payload = device.execute_at(17, restat).unwrap().payload().to_vec();
+    let (name, _) = read_string_with_next(&stat_payload, 41);
+    assert_eq!(name, b"new.txt");
 }
 
 #[test]

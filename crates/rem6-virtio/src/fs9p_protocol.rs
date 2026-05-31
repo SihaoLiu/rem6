@@ -716,6 +716,17 @@ pub(crate) struct Virtio9pWstatRequest {
     pub(crate) length: Option<u64>,
 }
 
+impl Virtio9pWstatRequest {
+    pub(crate) const fn has_metadata_update(&self) -> bool {
+        self.mode.is_some()
+            || self.uid.is_some()
+            || self.gid.is_some()
+            || self.atime_sec.is_some()
+            || self.mtime_sec.is_some()
+            || self.length.is_some()
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Virtio9pXattrwalkRequest {
     pub(crate) fid: u32,

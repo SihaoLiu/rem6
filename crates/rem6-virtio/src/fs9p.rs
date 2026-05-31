@@ -742,10 +742,16 @@ impl Virtio9pDevice {
         let Some(node) = self.fid_node(wstat.fid) else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
-        if wstat.name.is_some() {
-            return Ok(Err(VIRTIO_9P_ENOTSUP));
-        }
         let mut namespace = self.namespace.lock().expect("virtio 9p namespace lock");
+        if let Some(name) = wstat.name.as_deref() {
+            if wstat.has_metadata_update() {
+                return Ok(Err(VIRTIO_9P_ENOTSUP));
+            }
+            return match namespace.rename_node_in_parent(node, name)? {
+                Ok(()) => Ok(Ok(())),
+                Err(errno) => Ok(Err(errno)),
+            };
+        }
         if wstat
             .length
             .is_some_and(|size| namespace.resize_file(node, size).is_none())

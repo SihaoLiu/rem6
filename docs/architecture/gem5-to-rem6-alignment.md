@@ -1261,8 +1261,9 @@ Implementation evidence through 2026-05-31:
   `Tstatfs` reports deterministic namespace capacity metadata, legacy `Tstat`
   emits deterministic 9P2000 stat metadata for existing fids and rejects stale
   fids with errno payloads, legacy `Twstat` parses stat write requests, applies
-  supported mode, uid, gid, mtime, atime, and length updates, rejects stale fids
-  before mutation, and keeps unsupported renames explicit, `Tlopen` and legacy
+  supported mode, uid, gid, mtime, atime, and length updates, supports
+  same-parent name updates while preserving open fid access, and rejects stale fids
+  before mutation, `Tlopen` and legacy
   `Topen` mark file and directory fids open and report qid plus I/O-unit data,
   legacy `Tcreate` shares the same checked namespace creation path as `Tlcreate`, `Treaddir`
   returns stable `.`/`..` plus sorted file, symlink, or directory dirents with
@@ -3254,8 +3255,10 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   creation plus opened-fid retargeting, `Tgetattr` root, directory, and file
   metadata replies, `Tstatfs` deterministic filesystem-capacity replies,
   legacy `Tstat` file stat payloads, stale-fid errno replies, and malformed
-  payload rejection, legacy `Twstat` mode, uid, gid, mtime, and length updates,
-  file shrink visibility through reads, stale-fid errno replies, and malformed
+  payload rejection, legacy `Twstat` mode, uid, gid, mtime, atime, length, and
+  same-parent name updates, file shrink visibility through reads, open-fid read
+  survival after rename, old-name rejection, new-name walk qid preservation,
+  stale-fid errno replies, and malformed
   stat-blob rejection, `Tlopen` and legacy `Topen` file and directory qid plus
   I/O-unit replies, legacy `Tcreate` checked file creation plus opened-fid retargeting, `Treaddir` sorted
   root and child-directory dirents, resumable offsets, count-bounded replies,

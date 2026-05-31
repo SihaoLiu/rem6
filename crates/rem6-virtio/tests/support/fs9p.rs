@@ -213,6 +213,25 @@ pub(crate) fn p9_legacy_wstat_metadata_payload(
     p9_legacy_wstat_payload(fid, &payload)
 }
 
+pub(crate) fn p9_legacy_wstat_rename_payload(fid: u32, name: &[u8]) -> Vec<u8> {
+    let mut stat = Vec::new();
+    stat.extend(u16::MAX.to_le_bytes());
+    stat.extend(u32::MAX.to_le_bytes());
+    stat.extend([u8::MAX; 13]);
+    stat.extend(u32::MAX.to_le_bytes());
+    stat.extend(u32::MAX.to_le_bytes());
+    stat.extend(u32::MAX.to_le_bytes());
+    stat.extend(u64::MAX.to_le_bytes());
+    stat.extend(p9_string(name));
+    stat.extend(p9_string(b""));
+    stat.extend(p9_string(b""));
+    stat.extend(p9_string(b""));
+    let mut payload = Vec::new();
+    payload.extend((stat.len() as u16).to_le_bytes());
+    payload.extend(stat);
+    p9_legacy_wstat_payload(fid, &payload)
+}
+
 pub(crate) fn p9_symlink_payload(dfid: u32, name: &[u8], target: &[u8], gid: u32) -> Vec<u8> {
     let mut payload = Vec::new();
     payload.extend(dfid.to_le_bytes());

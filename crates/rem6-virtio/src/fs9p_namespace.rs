@@ -405,6 +405,21 @@ impl Virtio9pNamespace {
         Ok(Ok(Virtio9pRenameOutcome { replaced }))
     }
 
+    pub(crate) fn rename_node_in_parent(
+        &mut self,
+        node: Virtio9pNodeId,
+        newname: &str,
+    ) -> Result<Result<(), u32>, VirtioError> {
+        validate_file_name(VIRTIO_9P_TRENAME, newname)?;
+        if matches!(node, Virtio9pNodeId::Root) {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        }
+        Ok(
+            rename_node_in_parent_entries(&mut self.entries, node, newname)
+                .unwrap_or(Err(VIRTIO_9P_EBADF)),
+        )
+    }
+
     pub(crate) fn walk(&self, node: Virtio9pNodeId, name: &str) -> Option<Virtio9pNodeId> {
         self.directory_entries(node)?
             .get(name)
@@ -813,6 +828,39 @@ fn find_node_name(entries: &BTreeMap<String, Virtio9pNode>, id: Virtio9pNodeId) 
         }
     }
     None
+}
+
+fn rename_node_in_parent_entries(
+    entries: &mut BTreeMap<String, Virtio9pNode>,
+    id: Virtio9pNodeId,
+    newname: &str,
+) -> Option<Result<(), u32>> {
+    if let Some(oldname) = entries.iter().find_map(|(name, node)| {
+        if node.id() == id {
+            Some(name.clone())
+        } else {
+            None
+        }
+    }) {
+        if oldname == newname {
+            return Some(Ok(()));
+        }
+        if entries.contains_key(newname) {
+            return Some(Err(VIRTIO_9P_EEXIST));
+        }
+        let node = entries
+            .remove(&oldname)
+            .expect("prevalidated 9p rename node");
+        entries.insert(newname.to_string(), node);
+        return Some(Ok(()));
+    }
+
+    entries.values_mut().find_map(|node| match node {
+        Virtio9pNode::Directory(directory) => {
+            rename_node_in_parent_entries(&mut directory.entries, id, newname)
+        }
+        Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_) => None,
+    })
 }
 
 fn for_each_file_mut(
