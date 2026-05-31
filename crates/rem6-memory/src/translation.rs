@@ -391,7 +391,6 @@ impl TranslationQueue {
 
         let mut ids = BTreeSet::new();
         let mut entries = BTreeMap::new();
-        let mut minimum_next_order = 0;
         for entry in snapshot.entries() {
             let request = entry.request().clone();
             if !ids.insert(request.id()) {
@@ -399,7 +398,13 @@ impl TranslationQueue {
                     request: request.id(),
                 });
             }
-            minimum_next_order = minimum_next_order.max(entry.order().saturating_add(1));
+            if entry.order() >= snapshot.next_order() {
+                return Err(TranslationError::SnapshotNextOrderTooSmall {
+                    next_order: snapshot.next_order(),
+                    request: request.id(),
+                    order: entry.order(),
+                });
+            }
             entries.insert(
                 request.id(),
                 TranslationQueueEntry {
@@ -414,7 +419,7 @@ impl TranslationQueue {
         Ok(Self {
             config: snapshot.config(),
             entries,
-            next_order: snapshot.next_order().max(minimum_next_order),
+            next_order: snapshot.next_order(),
         })
     }
 
@@ -556,6 +561,11 @@ pub enum TranslationError {
         issue_tick: u64,
         latency: u64,
     },
+    SnapshotNextOrderTooSmall {
+        next_order: u64,
+        request: TranslationRequestId,
+        order: u64,
+    },
     QueueOrderOverflow,
     ZeroTlbCapacity,
     TlbCapacityExceeded {
@@ -625,6 +635,16 @@ impl fmt::Display for TranslationError {
             } => write!(
                 formatter,
                 "translation request issued at tick {issue_tick} overflows latency {latency}"
+            ),
+            Self::SnapshotNextOrderTooSmall {
+                next_order,
+                request,
+                order,
+            } => write!(
+                formatter,
+                "translation queue snapshot next order {next_order} is not after request {} from agent {} order {order}",
+                request.sequence(),
+                request.agent().get()
             ),
             Self::QueueOrderOverflow => {
                 write!(

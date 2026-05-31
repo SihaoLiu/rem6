@@ -2445,6 +2445,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
 - Memory translation TLB tests cover public gem5 issue #3010 by preserving
   global same-ASID entries during non-global ASID flush, removing same-ASID
   non-global entries, preserving other ASIDs, and snapshotting entry scope.
+- Memory translation queue tests cover pending-request ready ordering, snapshot
+  restore, duplicate rejection, and nonmonotonic restore order-counter rejection
+  so a malformed checkpoint cannot reuse an existing stable ordering value.
 - x86 ISA prefix scan tests cover public gem5 issue #2962 by requiring a REX
   prefix before a later legacy prefix to be recorded as ignored, requiring a
   REX immediately before a one-byte opcode or `0x0f` escape to stay active,

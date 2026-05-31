@@ -1,6 +1,7 @@
 use rem6_memory::{
     AccessSize, Address, AgentId, TranslationAccessKind, TranslationError, TranslationQueue,
-    TranslationQueueConfig, TranslationRequest, TranslationRequestId, TranslationResolution,
+    TranslationQueueConfig, TranslationQueueSnapshot, TranslationRequest, TranslationRequestId,
+    TranslationResolution,
 };
 
 fn request_id(sequence: u64) -> TranslationRequestId {
@@ -58,6 +59,34 @@ fn translation_queue_orders_ready_requests_and_restores_snapshot() {
         Some(Address::new(0x5000))
     );
     assert_eq!(restored.pending_count(), 0);
+}
+
+#[test]
+fn translation_queue_restore_rejects_non_monotonic_next_order() {
+    let config = TranslationQueueConfig::new(4, 3).unwrap();
+    let mut queue = TranslationQueue::new(config);
+    let first = request(10, 0x4000, TranslationAccessKind::Load);
+    let second = request(11, 0x8000, TranslationAccessKind::InstructionFetch);
+
+    queue.enqueue(7, first).unwrap();
+    queue.enqueue(5, second.clone()).unwrap();
+    let snapshot = queue.snapshot();
+    let second_order = snapshot
+        .entries()
+        .iter()
+        .find(|entry| entry.request().id() == second.id())
+        .unwrap()
+        .order();
+    let corrupt = TranslationQueueSnapshot::new(config, snapshot.entries().to_vec(), second_order);
+
+    assert_eq!(
+        queue.restore(&corrupt),
+        Err(TranslationError::SnapshotNextOrderTooSmall {
+            next_order: second_order,
+            request: second.id(),
+            order: second_order,
+        })
+    );
 }
 
 #[test]
