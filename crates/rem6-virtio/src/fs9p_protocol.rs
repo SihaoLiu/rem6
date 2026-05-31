@@ -1,11 +1,13 @@
 use crate::{fs9p::Virtio9pAttachedFid, fs9p_queue::Virtio9pRequest, VirtioError};
 
-pub(crate) fn parse_version_request(request: &Virtio9pRequest) -> Result<Vec<u8>, VirtioError> {
+pub(crate) fn parse_version_request(
+    request: &Virtio9pRequest,
+) -> Result<Virtio9pVersionRequest, VirtioError> {
     let mut reader = Virtio9pPayloadReader::new(request.message_type(), request.payload());
-    let _msize = reader.read_u32()?;
+    let msize = reader.read_u32()?;
     let version = reader.read_string()?;
     reader.finish()?;
-    Ok(version)
+    Ok(Virtio9pVersionRequest { msize, version })
 }
 
 pub(crate) fn parse_attach_request(
@@ -635,6 +637,12 @@ impl<'a> Virtio9pPayloadReader<'a> {
             })
         }
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Virtio9pVersionRequest {
+    pub(crate) msize: u32,
+    pub(crate) version: Vec<u8>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

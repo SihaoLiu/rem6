@@ -1248,7 +1248,9 @@ Implementation evidence through 2026-05-31:
   leaves the available cursor unchanged when descriptor decoding fails. The 9P
   device execution path now handles the protocol handshake messages needed
   before filesystem traffic: `Tversion` replies with bounded `Rversion`
-  negotiation data, `Tauth` parses authentication requests before returning an
+  negotiation data, clamps client `msize` to the device limit, carries the
+  negotiated value into later I/O-unit replies, `Tauth` parses authentication
+  requests before returning an
   explicit no-auth-backend errno, `Tattach` records the attached fid plus user
   metadata and returns a deterministic root qid, unsupported requests return typed
   `Rlerror` payloads, and malformed protocol payloads fail as typed errors
@@ -3245,7 +3247,8 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   readable reply descriptor rejection, guest-memory available-ring consumption,
   guest-memory response scatter writes, used-ring writeback, ISR queue
   interrupts, decode-error cursor preservation, `Tversion` to `Rversion`
-  negotiation, `Tattach` to root-qid response generation, attached-fid metadata
+  negotiation, client `msize` clamping, negotiated I/O-unit propagation,
+  `Tattach` to root-qid response generation, attached-fid metadata
   recording, unsupported-request `Rlerror` replies, and malformed 9P payload
   rejection without completion mutation, explicit `Tauth` no-auth-backend
   rejection with malformed auth parsing errors, in-memory namespace file installation,

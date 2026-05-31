@@ -193,6 +193,7 @@ pub struct Virtio9pDevice {
     attached_fids: Arc<Mutex<Vec<Virtio9pAttachedFid>>>,
     namespace: Arc<Mutex<Virtio9pNamespace>>,
     fids: Arc<Mutex<BTreeMap<u32, Virtio9pFidState>>>,
+    negotiated_msize: Arc<Mutex<u32>>,
 }
 
 impl Virtio9pDevice {
@@ -203,6 +204,7 @@ impl Virtio9pDevice {
             attached_fids: Arc::new(Mutex::new(Vec::new())),
             namespace: Arc::new(Mutex::new(Virtio9pNamespace::new())),
             fids: Arc::new(Mutex::new(BTreeMap::new())),
+            negotiated_msize: Arc::new(Mutex::new(VIRTIO_9P_DEFAULT_MSIZE)),
         }
     }
 
@@ -272,14 +274,19 @@ impl Virtio9pDevice {
             },
             VIRTIO_9P_TVERSION => {
                 let version = parse_version_request(&request)?;
-                let response_version = if version == VIRTIO_9P_PROTOCOL_VERSION {
+                let response_msize = version.msize.min(VIRTIO_9P_DEFAULT_MSIZE);
+                let response_version = if version.version == VIRTIO_9P_PROTOCOL_VERSION {
+                    *self
+                        .negotiated_msize
+                        .lock()
+                        .expect("virtio 9p negotiated msize lock") = response_msize;
                     VIRTIO_9P_PROTOCOL_VERSION
                 } else {
                     b"unknown"
                 };
                 (
                     VIRTIO_9P_RVERSION,
-                    version_payload(VIRTIO_9P_DEFAULT_MSIZE, response_version),
+                    version_payload(response_msize, response_version),
                 )
             }
             VIRTIO_9P_TAUTH => {
@@ -458,6 +465,13 @@ impl Virtio9pDevice {
             .and_then(Virtio9pFidState::node)
     }
 
+    fn negotiated_msize(&self) -> u32 {
+        *self
+            .negotiated_msize
+            .lock()
+            .expect("virtio 9p negotiated msize lock")
+    }
+
     fn handle_statfs(
         &self,
         request: &Virtio9pRequest,
@@ -536,7 +550,7 @@ impl Virtio9pDevice {
             return Ok(Err(VIRTIO_9P_EBADF));
         }
         let mut payload = namespace.qid(node).to_le_bytes().to_vec();
-        payload.extend(VIRTIO_9P_DEFAULT_MSIZE.to_le_bytes());
+        payload.extend(self.negotiated_msize().to_le_bytes());
         Ok(Ok(payload))
     }
 
@@ -575,7 +589,7 @@ impl Virtio9pDevice {
         };
         *fid = Virtio9pFidState::opened(node);
         let mut payload = namespace.qid(node).to_le_bytes().to_vec();
-        payload.extend(VIRTIO_9P_DEFAULT_MSIZE.to_le_bytes());
+        payload.extend(self.negotiated_msize().to_le_bytes());
         Ok(Ok(payload))
     }
 
