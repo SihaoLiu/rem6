@@ -2951,8 +2951,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   checkpoint-bank attachment for platform CLINT devices.
 - PCI tests cover typed legacy INTx line mapping, invalid interrupt-pin and
   zero-line rejection, bridge path swizzling across upstream functions,
-  explicit root routing-table entries with fallback policies, deterministic
-  routing-table ordering, snapshot/restore of platform routing tables, typed
+  explicit root routing-table entries with fallback policies, stable byte
+  codecs for routing-table and router snapshots, deterministic routing-table
+  ordering, snapshot/restore of platform routing tables, typed
   endpoint config accessors for legacy interrupt line/pin fields, router
   construction of endpoint-facing ports from endpoint config or bridge-swizzled
   paths, host-bridge derivation of nested bridge paths from type-1 bus ranges,

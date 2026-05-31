@@ -161,6 +161,8 @@ pub enum PciError {
         pin: PciInterruptPin,
     },
     SnapshotLegacyInterruptRouterMismatch,
+    InvalidLegacyInterruptRoutingTableSnapshot,
+    InvalidLegacyInterruptRouterSnapshot,
     SnapshotHostBridgeMismatch,
     InvalidHostBridgeTopologySnapshot,
     SnapshotConfigSpaceMismatch,
@@ -533,6 +535,12 @@ impl fmt::Display for PciError {
                     f,
                     "PCI legacy interrupt router snapshot does not match this router"
                 )
+            }
+            Self::InvalidLegacyInterruptRoutingTableSnapshot => {
+                write!(f, "PCI legacy interrupt routing-table snapshot is invalid")
+            }
+            Self::InvalidLegacyInterruptRouterSnapshot => {
+                write!(f, "PCI legacy interrupt router snapshot is invalid")
             }
             Self::SnapshotHostBridgeMismatch => {
                 write!(f, "PCI host bridge snapshot does not match this host")

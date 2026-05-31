@@ -10,6 +10,16 @@ use rem6_kernel::{
 
 use crate::{PciEndpointConfig, PciError, PciFunctionAddress, PciHostBridge, PciInterruptPin};
 
+const PCI_LEGACY_INTERRUPT_ROUTING_TABLE_MAGIC: &[u8; 8] = b"R6PIRTB1";
+const PCI_LEGACY_INTERRUPT_ROUTER_MAGIC: &[u8; 8] = b"R6PIRTR1";
+const PCI_LEGACY_INTERRUPT_SNAPSHOT_VERSION: u16 = 1;
+const PCI_LEGACY_INTERRUPT_POLICY_DEVICE_MODULO: u8 = 0;
+const PCI_LEGACY_INTERRUPT_POLICY_PIN_MODULO: u8 = 1;
+const PCI_LEGACY_INTERRUPT_POLICY_DEVICE_PIN_MODULO: u8 = 2;
+const U16_BYTES: usize = 2;
+const U32_BYTES: usize = 4;
+const U64_BYTES: usize = 8;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PciLegacyInterruptPolicy {
     DeviceModulo,
@@ -170,6 +180,30 @@ impl PciLegacyInterruptRoutingTableSnapshot {
 
     pub fn entries(&self) -> &[PciLegacyInterruptRoutingEntry] {
         &self.entries
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(PCI_LEGACY_INTERRUPT_ROUTING_TABLE_MAGIC);
+        write_u16(&mut payload, PCI_LEGACY_INTERRUPT_SNAPSHOT_VERSION);
+        write_u64(&mut payload, self.fallback.base_line().get());
+        write_u32(&mut payload, self.fallback.line_count());
+        payload.push(policy_tag(self.fallback.policy()));
+        write_u32(&mut payload, self.entries.len() as u32);
+        for entry in &self.entries {
+            let function = entry.function();
+            payload.push(function.bus());
+            payload.push(function.device());
+            payload.push(function.function());
+            payload.push(legacy_pin_index_unchecked(entry.pin()) as u8);
+            write_u64(&mut payload, entry.line().get());
+        }
+        payload
+    }
+
+    pub fn from_bytes(payload: &[u8]) -> Result<Self, PciError> {
+        decode_routing_table_snapshot(payload)
+            .ok_or(PciError::InvalidLegacyInterruptRoutingTableSnapshot)
     }
 }
 
@@ -351,6 +385,23 @@ impl PciLegacyInterruptRouterSnapshot {
 
     pub const fn routing_table(&self) -> &PciLegacyInterruptRoutingTableSnapshot {
         &self.routing_table
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let routing_table = self.routing_table.to_bytes();
+        let mut payload = Vec::new();
+        payload.extend_from_slice(PCI_LEGACY_INTERRUPT_ROUTER_MAGIC);
+        write_u16(&mut payload, PCI_LEGACY_INTERRUPT_SNAPSHOT_VERSION);
+        write_u32(&mut payload, self.target.get());
+        write_u32(&mut payload, self.target_partition.index());
+        write_u64(&mut payload, self.signal_latency);
+        write_u32(&mut payload, routing_table.len() as u32);
+        payload.extend_from_slice(&routing_table);
+        payload
+    }
+
+    pub fn from_bytes(payload: &[u8]) -> Result<Self, PciError> {
+        decode_router_snapshot(payload).ok_or(PciError::InvalidLegacyInterruptRouterSnapshot)
     }
 }
 
@@ -800,4 +851,137 @@ fn pin_from_legacy_index(index: u64) -> PciInterruptPin {
         4 => PciInterruptPin::IntD,
         _ => unreachable!("legacy INTx pin index is modulo 1..=4"),
     }
+}
+
+fn policy_tag(policy: PciLegacyInterruptPolicy) -> u8 {
+    match policy {
+        PciLegacyInterruptPolicy::DeviceModulo => PCI_LEGACY_INTERRUPT_POLICY_DEVICE_MODULO,
+        PciLegacyInterruptPolicy::PinModulo => PCI_LEGACY_INTERRUPT_POLICY_PIN_MODULO,
+        PciLegacyInterruptPolicy::DevicePinModulo => PCI_LEGACY_INTERRUPT_POLICY_DEVICE_PIN_MODULO,
+    }
+}
+
+fn policy_from_tag(tag: u8) -> Option<PciLegacyInterruptPolicy> {
+    match tag {
+        PCI_LEGACY_INTERRUPT_POLICY_DEVICE_MODULO => Some(PciLegacyInterruptPolicy::DeviceModulo),
+        PCI_LEGACY_INTERRUPT_POLICY_PIN_MODULO => Some(PciLegacyInterruptPolicy::PinModulo),
+        PCI_LEGACY_INTERRUPT_POLICY_DEVICE_PIN_MODULO => {
+            Some(PciLegacyInterruptPolicy::DevicePinModulo)
+        }
+        _ => None,
+    }
+}
+
+fn pin_from_snapshot_tag(tag: u8) -> Option<PciInterruptPin> {
+    match tag {
+        1 => Some(PciInterruptPin::IntA),
+        2 => Some(PciInterruptPin::IntB),
+        3 => Some(PciInterruptPin::IntC),
+        4 => Some(PciInterruptPin::IntD),
+        _ => None,
+    }
+}
+
+fn decode_routing_table_snapshot(payload: &[u8]) -> Option<PciLegacyInterruptRoutingTableSnapshot> {
+    let mut cursor = 0;
+    if read_exact(
+        payload,
+        &mut cursor,
+        PCI_LEGACY_INTERRUPT_ROUTING_TABLE_MAGIC.len(),
+    )? != PCI_LEGACY_INTERRUPT_ROUTING_TABLE_MAGIC
+    {
+        return None;
+    }
+    if read_u16(payload, &mut cursor)? != PCI_LEGACY_INTERRUPT_SNAPSHOT_VERSION {
+        return None;
+    }
+    let fallback = PciLegacyInterruptMapper::new(
+        InterruptLineId::new(read_u64(payload, &mut cursor)?),
+        read_u32(payload, &mut cursor)?,
+        policy_from_tag(read_u8(payload, &mut cursor)?)?,
+    )
+    .ok()?;
+    let entry_count = read_u32(payload, &mut cursor)?;
+    let mut entries = Vec::new();
+    for _ in 0..entry_count {
+        let function = PciFunctionAddress::new(
+            read_u8(payload, &mut cursor)?,
+            read_u8(payload, &mut cursor)?,
+            read_u8(payload, &mut cursor)?,
+        )
+        .ok()?;
+        let pin = pin_from_snapshot_tag(read_u8(payload, &mut cursor)?)?;
+        let line = InterruptLineId::new(read_u64(payload, &mut cursor)?);
+        entries.push(PciLegacyInterruptRoutingEntry::new(function, pin, line).ok()?);
+    }
+    if cursor != payload.len() {
+        return None;
+    }
+    PciLegacyInterruptRoutingTableSnapshot::new(fallback, entries).ok()
+}
+
+fn decode_router_snapshot(payload: &[u8]) -> Option<PciLegacyInterruptRouterSnapshot> {
+    let mut cursor = 0;
+    if read_exact(
+        payload,
+        &mut cursor,
+        PCI_LEGACY_INTERRUPT_ROUTER_MAGIC.len(),
+    )? != PCI_LEGACY_INTERRUPT_ROUTER_MAGIC
+    {
+        return None;
+    }
+    if read_u16(payload, &mut cursor)? != PCI_LEGACY_INTERRUPT_SNAPSHOT_VERSION {
+        return None;
+    }
+    let target = InterruptTargetId::new(read_u32(payload, &mut cursor)?);
+    let target_partition = PartitionId::new(read_u32(payload, &mut cursor)?);
+    let signal_latency = read_u64(payload, &mut cursor)?;
+    let routing_table_len = read_u32(payload, &mut cursor)? as usize;
+    let routing_table_payload = read_exact(payload, &mut cursor, routing_table_len)?;
+    if cursor != payload.len() {
+        return None;
+    }
+    let routing_table = decode_routing_table_snapshot(routing_table_payload)?;
+    PciLegacyInterruptRouterSnapshot::new(target, target_partition, signal_latency, routing_table)
+        .ok()
+}
+
+fn write_u16(payload: &mut Vec<u8>, value: u16) {
+    payload.extend_from_slice(&value.to_le_bytes());
+}
+
+fn write_u32(payload: &mut Vec<u8>, value: u32) {
+    payload.extend_from_slice(&value.to_le_bytes());
+}
+
+fn write_u64(payload: &mut Vec<u8>, value: u64) {
+    payload.extend_from_slice(&value.to_le_bytes());
+}
+
+fn read_u8(payload: &[u8], cursor: &mut usize) -> Option<u8> {
+    let byte = *payload.get(*cursor)?;
+    *cursor += 1;
+    Some(byte)
+}
+
+fn read_u16(payload: &[u8], cursor: &mut usize) -> Option<u16> {
+    let bytes = read_exact(payload, cursor, U16_BYTES)?;
+    Some(u16::from_le_bytes(bytes.try_into().unwrap()))
+}
+
+fn read_u32(payload: &[u8], cursor: &mut usize) -> Option<u32> {
+    let bytes = read_exact(payload, cursor, U32_BYTES)?;
+    Some(u32::from_le_bytes(bytes.try_into().unwrap()))
+}
+
+fn read_u64(payload: &[u8], cursor: &mut usize) -> Option<u64> {
+    let bytes = read_exact(payload, cursor, U64_BYTES)?;
+    Some(u64::from_le_bytes(bytes.try_into().unwrap()))
+}
+
+fn read_exact<'a>(payload: &'a [u8], cursor: &mut usize, length: usize) -> Option<&'a [u8]> {
+    let end = cursor.checked_add(length)?;
+    let bytes = payload.get(*cursor..end)?;
+    *cursor = end;
+    Some(bytes)
 }

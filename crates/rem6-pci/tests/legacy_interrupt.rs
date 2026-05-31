@@ -8,8 +8,9 @@ use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_pci::{
     PciClassCode, PciDeviceIdentity, PciEndpointConfig, PciError, PciFunctionAddress,
     PciInterruptPin, PciLegacyInterruptMapper, PciLegacyInterruptPath, PciLegacyInterruptPolicy,
-    PciLegacyInterruptPort, PciLegacyInterruptRouter, PciLegacyInterruptRoutingEntry,
-    PciLegacyInterruptRoutingTable, PciLegacyInterruptRoutingTableSnapshot,
+    PciLegacyInterruptPort, PciLegacyInterruptRouter, PciLegacyInterruptRouterSnapshot,
+    PciLegacyInterruptRoutingEntry, PciLegacyInterruptRoutingTable,
+    PciLegacyInterruptRoutingTableSnapshot,
 };
 
 fn function(device: u8) -> PciFunctionAddress {
@@ -246,6 +247,38 @@ fn pci_legacy_interrupt_routing_table_snapshots_sorted_entries() {
 }
 
 #[test]
+fn pci_legacy_interrupt_routing_table_snapshot_codec_round_trips_sorted_entries() {
+    let root0 = PciFunctionAddress::new(0, 0, 0).unwrap();
+    let root_a = PciFunctionAddress::new(0, 1, 0).unwrap();
+    let root_b = PciFunctionAddress::new(0, 2, 0).unwrap();
+    let fallback = mapper(PciLegacyInterruptPolicy::DevicePinModulo);
+    let entry0 =
+        PciLegacyInterruptRoutingEntry::new(root0, PciInterruptPin::IntA, InterruptLineId::new(40))
+            .unwrap();
+    let entry_b = PciLegacyInterruptRoutingEntry::new(
+        root_b,
+        PciInterruptPin::IntD,
+        InterruptLineId::new(55),
+    )
+    .unwrap();
+    let entry_a = PciLegacyInterruptRoutingEntry::new(
+        root_a,
+        PciInterruptPin::IntB,
+        InterruptLineId::new(44),
+    )
+    .unwrap();
+    let snapshot =
+        PciLegacyInterruptRoutingTableSnapshot::new(fallback, vec![entry_b, entry0, entry_a])
+            .unwrap();
+
+    let decoded = PciLegacyInterruptRoutingTableSnapshot::from_bytes(&snapshot.to_bytes()).unwrap();
+
+    assert_eq!(decoded, snapshot);
+    assert_eq!(decoded.fallback(), fallback);
+    assert_eq!(decoded.entries(), &[entry0, entry_a, entry_b]);
+}
+
+#[test]
 fn pci_legacy_interrupt_router_builds_ports_from_snapshot_routes() {
     let cpu = PartitionId::new(0);
     let pci = PartitionId::new(1);
@@ -350,6 +383,94 @@ fn pci_legacy_interrupt_router_builds_ports_from_snapshot_routes() {
             source,
             InterruptEventKind::Assert,
         )]
+    );
+}
+
+#[test]
+fn pci_legacy_interrupt_router_snapshot_codec_round_trips_routes() {
+    let cpu = PartitionId::new(0);
+    let root_bridge = PciFunctionAddress::new(0, 1, 0).unwrap();
+    let explicit_entry = PciLegacyInterruptRoutingEntry::new(
+        root_bridge,
+        PciInterruptPin::IntC,
+        InterruptLineId::new(48),
+    )
+    .unwrap();
+    let table = PciLegacyInterruptRoutingTable::new(mapper(PciLegacyInterruptPolicy::DeviceModulo))
+        .with_entry(explicit_entry)
+        .unwrap();
+    let controller = Arc::new(Mutex::new(InterruptController::new()));
+    let router = PciLegacyInterruptRouter::new(
+        table,
+        InterruptTargetId::new(7),
+        cpu,
+        2,
+        Arc::clone(&controller),
+    )
+    .unwrap();
+    let snapshot = router.snapshot();
+
+    let decoded = PciLegacyInterruptRouterSnapshot::from_bytes(&snapshot.to_bytes()).unwrap();
+
+    assert_eq!(decoded, snapshot);
+    assert_eq!(decoded.target(), InterruptTargetId::new(7));
+    assert_eq!(decoded.target_partition(), cpu);
+    assert_eq!(decoded.signal_latency(), 2);
+    assert_eq!(decoded.routing_table().entries(), &[explicit_entry]);
+}
+
+#[test]
+fn pci_legacy_interrupt_snapshot_codecs_reject_malformed_payloads() {
+    let root_bridge = PciFunctionAddress::new(0, 1, 0).unwrap();
+    let entry = PciLegacyInterruptRoutingEntry::new(
+        root_bridge,
+        PciInterruptPin::IntC,
+        InterruptLineId::new(48),
+    )
+    .unwrap();
+    let table = PciLegacyInterruptRoutingTable::new(mapper(PciLegacyInterruptPolicy::DeviceModulo))
+        .with_entry(entry)
+        .unwrap();
+    let table_snapshot = table.snapshot();
+    let mut table_payload = table_snapshot.to_bytes();
+    table_payload[22] = 9;
+    let mut invalid_pin_payload = table_snapshot.to_bytes();
+    invalid_pin_payload[30] = 0;
+
+    assert_eq!(
+        PciLegacyInterruptRoutingTableSnapshot::from_bytes(&table_payload),
+        Err(PciError::InvalidLegacyInterruptRoutingTableSnapshot)
+    );
+    assert_eq!(
+        PciLegacyInterruptRoutingTableSnapshot::from_bytes(&invalid_pin_payload),
+        Err(PciError::InvalidLegacyInterruptRoutingTableSnapshot)
+    );
+    assert_eq!(
+        PciLegacyInterruptRoutingTableSnapshot::from_bytes(
+            &table_snapshot.to_bytes()[..table_snapshot.to_bytes().len() - 1]
+        ),
+        Err(PciError::InvalidLegacyInterruptRoutingTableSnapshot)
+    );
+
+    let router_snapshot = PciLegacyInterruptRouterSnapshot::new(
+        InterruptTargetId::new(7),
+        PartitionId::new(0),
+        2,
+        table_snapshot,
+    )
+    .unwrap();
+    let mut router_payload = router_snapshot.to_bytes();
+    router_payload[18..26].copy_from_slice(&0_u64.to_le_bytes());
+
+    assert_eq!(
+        PciLegacyInterruptRouterSnapshot::from_bytes(&router_payload),
+        Err(PciError::InvalidLegacyInterruptRouterSnapshot)
+    );
+    assert_eq!(
+        PciLegacyInterruptRouterSnapshot::from_bytes(
+            &router_snapshot.to_bytes()[..router_snapshot.to_bytes().len() - 1]
+        ),
+        Err(PciError::InvalidLegacyInterruptRouterSnapshot)
     );
 }
 
