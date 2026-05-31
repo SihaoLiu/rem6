@@ -1,6 +1,7 @@
 use rem6_power::{
-    PowerComponentId, PowerDomain, PowerDomainConfig, PowerDomainSnapshot, PowerError, PowerModel,
-    PowerModelMode, PowerModelSnapshot, PowerResidency, PowerStateKind, PowerStatePower,
+    PowerComponentId, PowerComponentRole, PowerComponentSnapshot, PowerDomain, PowerDomainConfig,
+    PowerDomainSnapshot, PowerError, PowerModel, PowerModelMode, PowerModelSnapshot,
+    PowerResidency, PowerStateKind, PowerStatePower,
 };
 
 #[test]
@@ -151,6 +152,43 @@ fn power_domain_rejects_invalid_configs_and_transitions() {
                 .unwrap(),
         }
     );
+
+    let duplicate_id = PowerComponentId::new(7);
+    let duplicate_snapshot = PowerDomainSnapshot::new(
+        PowerDomainConfig::new("cluster0", vec![PowerStateKind::On], PowerStateKind::On).unwrap(),
+        vec![
+            PowerComponentSnapshot::new(
+                duplicate_id,
+                "cpu0".to_string(),
+                PowerComponentRole::Leader,
+                vec![PowerStateKind::On],
+                PowerStateKind::On,
+            ),
+            PowerComponentSnapshot::new(
+                duplicate_id,
+                "cpu1".to_string(),
+                PowerComponentRole::Leader,
+                vec![PowerStateKind::On],
+                PowerStateKind::On,
+            ),
+        ],
+        PowerStateKind::On,
+        PowerStateKind::On,
+        0,
+        0,
+        0,
+        0,
+        0,
+        Vec::new(),
+    );
+    let before_duplicate_restore = domain.snapshot();
+    assert_eq!(
+        domain.restore(&duplicate_snapshot),
+        Err(PowerError::DuplicateComponentId {
+            component: duplicate_id,
+        })
+    );
+    assert_eq!(domain.snapshot(), before_duplicate_restore);
 }
 
 #[test]

@@ -3233,9 +3233,10 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   with per-worker assignment, record, frame-byte, and payload-byte totals.
 - Power tests cover typed power state domains, leader/follower matching,
   residency accounting, transition counters, invalid transition rejection, and
-  snapshot restore. Power-model tests cover residency-weighted dynamic/static
-  watt aggregation, static/dynamic-only modes, temperature updates, missing
-  state-model rejection, and snapshot restore. Power-expression tests cover
+  snapshot restore, including duplicate component-id rejection. Power-model
+  tests cover residency-weighted dynamic/static watt aggregation,
+  static/dynamic-only modes, temperature updates, missing state-model rejection,
+  and snapshot restore. Power-expression tests cover
   typed metric inputs, automatic temperature/voltage/clock-period variables,
   expression arithmetic, residency-weighted dynamic/static aggregation, missing
   metric rejection, invalid expression-result rejection, duplicate state-model

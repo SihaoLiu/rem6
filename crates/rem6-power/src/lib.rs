@@ -685,15 +685,22 @@ impl PowerDomain {
                 });
             }
             next_component = next_component.max(component.id().get().saturating_add(1));
-            components.insert(
-                component.id(),
-                PowerComponent {
-                    name: component.name().to_string(),
-                    role: component.role(),
-                    possible_states: component.possible_states().iter().copied().collect(),
-                    state: component.state(),
-                },
-            );
+            if components
+                .insert(
+                    component.id(),
+                    PowerComponent {
+                        name: component.name().to_string(),
+                        role: component.role(),
+                        possible_states: component.possible_states().iter().copied().collect(),
+                        state: component.state(),
+                    },
+                )
+                .is_some()
+            {
+                return Err(PowerError::DuplicateComponentId {
+                    component: component.id(),
+                });
+            }
         }
 
         self.components = components;
@@ -838,6 +845,9 @@ pub enum PowerError {
     DuplicateComponentName {
         name: String,
     },
+    DuplicateComponentId {
+        component: PowerComponentId,
+    },
     UnknownComponent {
         component: PowerComponentId,
     },
@@ -947,6 +957,9 @@ impl fmt::Display for PowerError {
             }
             Self::DuplicateComponentName { name } => {
                 write!(formatter, "power component name already exists: {name}")
+            }
+            Self::DuplicateComponentId { component } => {
+                write!(formatter, "power component id {} is duplicated", component.get())
             }
             Self::UnknownComponent { component } => {
                 write!(formatter, "unknown power component id {}", component.get())
