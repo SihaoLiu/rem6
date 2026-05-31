@@ -9,14 +9,14 @@ use crate::fs9p_namespace::{
     Virtio9pTimestamp,
 };
 use crate::fs9p_protocol::{
-    lock_payload, parse_attach_request, parse_clunk_request, parse_flush_request,
-    parse_fsync_request, parse_getattr_request, parse_getlock_request, parse_lcreate_request,
-    parse_link_request, parse_lock_request, parse_lopen_request, parse_mkdir_request,
-    parse_mknod_request, parse_open_request, parse_read_request, parse_readdir_request,
-    parse_readlink_request, parse_remove_request, parse_rename_request, parse_renameat_request,
-    parse_setattr_request, parse_statfs_request, parse_symlink_request, parse_unlinkat_request,
-    parse_version_request, parse_walk_request, parse_write_request, parse_xattrcreate_request,
-    parse_xattrwalk_request, string_payload, version_payload,
+    lock_payload, parse_attach_request, parse_clunk_request, parse_create_request,
+    parse_flush_request, parse_fsync_request, parse_getattr_request, parse_getlock_request,
+    parse_lcreate_request, parse_link_request, parse_lock_request, parse_lopen_request,
+    parse_mkdir_request, parse_mknod_request, parse_open_request, parse_read_request,
+    parse_readdir_request, parse_readlink_request, parse_remove_request, parse_rename_request,
+    parse_renameat_request, parse_setattr_request, parse_statfs_request, parse_symlink_request,
+    parse_unlinkat_request, parse_version_request, parse_walk_request, parse_write_request,
+    parse_xattrcreate_request, parse_xattrwalk_request, string_payload, version_payload,
 };
 use crate::{
     modern_feature_pages, Virtio9pCompletion, Virtio9pRequest, VirtioError,
@@ -76,6 +76,8 @@ pub const VIRTIO_9P_TWALK: u8 = 110;
 pub const VIRTIO_9P_RWALK: u8 = 111;
 pub const VIRTIO_9P_TOPEN: u8 = 112;
 pub const VIRTIO_9P_ROPEN: u8 = 113;
+pub const VIRTIO_9P_TCREATE: u8 = 114;
+pub const VIRTIO_9P_RCREATE: u8 = 115;
 pub const VIRTIO_9P_TLOPEN: u8 = 12;
 pub const VIRTIO_9P_RLOPEN: u8 = 13;
 pub const VIRTIO_9P_TREAD: u8 = 116;
@@ -306,6 +308,10 @@ impl Virtio9pDevice {
                 Ok(payload) => (VIRTIO_9P_RLCREATE, payload),
                 Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
             },
+            VIRTIO_9P_TCREATE => match self.handle_create(&request)? {
+                Ok(payload) => (VIRTIO_9P_RCREATE, payload),
+                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
+            },
             VIRTIO_9P_TSYMLINK => match self.handle_symlink(&request)? {
                 Ok(payload) => (VIRTIO_9P_RSYMLINK, payload),
                 Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
@@ -520,15 +526,31 @@ impl Virtio9pDevice {
         request: &Virtio9pRequest,
     ) -> Result<Result<Vec<u8>, u32>, VirtioError> {
         let create = parse_lcreate_request(request)?;
+        self.create_fid_payload(create.fid, create.name)
+    }
+
+    fn handle_create(
+        &self,
+        request: &Virtio9pRequest,
+    ) -> Result<Result<Vec<u8>, u32>, VirtioError> {
+        let create = parse_create_request(request)?;
+        self.create_fid_payload(create.fid, create.name)
+    }
+
+    fn create_fid_payload(
+        &self,
+        fid: u32,
+        name: String,
+    ) -> Result<Result<Vec<u8>, u32>, VirtioError> {
         let mut fids = self.fids.lock().expect("virtio 9p fid lock");
-        let Some(fid) = fids.get_mut(&create.fid) else {
+        let Some(fid) = fids.get_mut(&fid) else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
         let Some(parent) = fid.node() else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
         let mut namespace = self.namespace.lock().expect("virtio 9p namespace lock");
-        let node = match namespace.create_file(parent, create.name)? {
+        let node = match namespace.create_file(parent, name)? {
             Ok(node) => node,
             Err(errno) => return Ok(Err(errno)),
         };

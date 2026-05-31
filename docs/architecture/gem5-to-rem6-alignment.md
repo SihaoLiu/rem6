@@ -1257,8 +1257,10 @@ Implementation evidence through 2026-05-31:
   and rejects duplicate names with errno payloads, `Tlcreate` creates named root
   or child-directory files and retargets the directory fid to the opened file,
   `Tgetattr` reports deterministic root, directory, and file metadata,
-  `Tstatfs` reports deterministic namespace capacity metadata, `Tlopen` marks
-  file and directory fids open and reports qid plus I/O-unit data, `Treaddir`
+  `Tstatfs` reports deterministic namespace capacity metadata, `Tlopen` and
+  legacy `Topen` mark file and directory fids open and report qid plus
+  I/O-unit data, legacy `Tcreate` shares the same checked namespace creation
+  path as `Tlcreate`, `Treaddir`
   returns stable `.`/`..` plus sorted file, symlink, or directory dirents with
   resumable byte offsets and count-bounded whole-entry replies, `Tsymlink`
   creates deterministic symlink qids, `Treadlink` returns counted symlink
@@ -1275,11 +1277,17 @@ Implementation evidence through 2026-05-31:
   while preserving the moved file qid and open fid access, replacing
   same-directory target files with explicit target-fid invalidation,
   `Tunlinkat` removes named root or child-directory files and invalidates fids
-  only when no linked directory entry remains, `Tremove` removes file fids plus
-  their namespace
+  only when no linked directory entry remains, removes empty directories only
+  when `AT_REMOVEDIR` is present, and rejects non-empty directory removal with
+  `ENOTEMPTY`, `Tremove` removes file fids plus their namespace
   entries, `Tclunk` drops fid state, `Tflush` acknowledges old tags without
-  mutating synchronous fid or namespace state, and `Tfsync` validates fids
-  before acknowledging writeback intent. The 9P device entry point delegates
+  mutating synchronous fid or namespace state, `Tfsync` validates fids
+  before acknowledging writeback intent, `Tlock` accepts advisory lock requests
+  on open file fids, `Tgetlock` reports no in-memory lock conflict with a
+  deterministic unlock payload, `Txattrwalk` exposes an empty xattr-list fid
+  that can be read as zero bytes, named missing xattrs return `ENODATA`, and
+  `Txattrcreate` validates target fids before returning `ENOTSUP`. The 9P
+  device entry point delegates
   typed request payload parsing, protocol string payload construction, and
   per-message request structs to a focused protocol module. It also delegates
   namespace tree state, qid encoding, readdir payload assembly, and fid-open
@@ -1287,8 +1295,9 @@ Implementation evidence through 2026-05-31:
   from mutable filesystem state. Missing names, duplicate directory names, stale
   fids, and deleted-fid access return `Rlerror` errno payloads instead of
   panicking or depending on an external proxy. This keeps the useful gem5 VirtIO
-  framing model while avoiding gem5's 9P proxy state-loss warning path and
-  external 9P server dependency for deterministic tests. Unsupported `Tsetattr`
+  framing model while avoiding gem5's broad 9P proxy boundary, state-loss
+  warning path, and external 9P server dependency for deterministic tests.
+  Unsupported `Tsetattr`
   ctime-style mask bits are rejected as unsupported namespace metadata breadth
   rather than silently reported as modeled behavior.
   VirtIO RNG now exposes gem5's device id 4 and zero-length config
@@ -3239,7 +3248,8 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   and directory walk/listing behavior, `Tlcreate` root and child-directory file
   creation plus opened-fid retargeting, `Tgetattr` root, directory, and file
   metadata replies, `Tstatfs` deterministic filesystem-capacity replies,
-  `Tlopen` file and directory qid plus I/O-unit replies, `Treaddir` sorted
+  `Tlopen` and legacy `Topen` file and directory qid plus I/O-unit replies,
+  legacy `Tcreate` checked file creation plus opened-fid retargeting, `Treaddir` sorted
   root and child-directory dirents, resumable offsets, count-bounded replies,
   and directory-only error handling, counted `Tread` ranges, `Twrite` counted
   replies plus overwrite mutation, `Tlink` hard-link qid reuse, shared write
@@ -3250,7 +3260,8 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   invalidation, post-rename directory entries, and old-name walk rejection,
   `Tunlinkat` root and
   child-directory file removal with post-delete directory and walk checks,
-  `Tremove` fid-backed file removal with deleted-fid read rejection,
+  `Tunlinkat` empty-directory removal through `AT_REMOVEDIR` plus non-empty
+  directory `ENOTEMPTY` rejection, `Tremove` fid-backed file removal with deleted-fid read rejection,
   `Tsymlink` creation with symlink qids, symlink walk and sorted dirent
   exposure, `Treadlink` target replies, non-symlink and stale readlink
   rejection, `Tmknod` character-device creation, walk, dirent dtype, metadata
@@ -3258,7 +3269,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   rejection, file-parent rejection, `Tsetattr` mode, uid, gid, explicit
   atime/mtime, size-valid file shrink, zero-filled growth, and metadata
   visibility, stale setattr rejection, directory size-mutation rejection,
-  unsupported ctime-mask rejection,
+  unsupported ctime-mask rejection, advisory `Tlock` success for open file fids,
+  `Tgetlock` unlock-payload reporting, `Txattrwalk` empty-list read fids,
+  missing-xattr `ENODATA`, `Txattrcreate` unsupported-write and stale-fid errors,
   `Tclunk` fid removal, `Tflush` no-op acknowledgement without fid mutation,
   `Tfsync` acknowledgement for existing fids, and stale metadata, directory,
   create, fsync, write, remove, unlink, and read `Rlerror` handling,

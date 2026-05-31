@@ -86,6 +86,15 @@ pub(crate) fn p9_open_payload(fid: u32, mode: u8) -> Vec<u8> {
     payload
 }
 
+pub(crate) fn p9_create_payload(fid: u32, name: &[u8], perm: u32, mode: u8) -> Vec<u8> {
+    let mut payload = Vec::new();
+    payload.extend(fid.to_le_bytes());
+    payload.extend(p9_string(name));
+    payload.extend(perm.to_le_bytes());
+    payload.push(mode);
+    payload
+}
+
 pub(crate) fn p9_getattr_payload(fid: u32, request_mask: u64) -> Vec<u8> {
     let mut payload = Vec::new();
     payload.extend(fid.to_le_bytes());

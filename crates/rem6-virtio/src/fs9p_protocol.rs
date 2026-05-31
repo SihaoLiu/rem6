@@ -92,6 +92,22 @@ pub(crate) fn parse_lcreate_request(
     Ok(Virtio9pCreateRequest { fid, name })
 }
 
+pub(crate) fn parse_create_request(
+    request: &Virtio9pRequest,
+) -> Result<Virtio9pCreateRequest, VirtioError> {
+    let mut reader = Virtio9pPayloadReader::new(request.message_type(), request.payload());
+    let fid = reader.read_u32()?;
+    let name = string_from_9p(
+        request.message_type(),
+        reader.read_string()?,
+        request.payload(),
+    )?;
+    let _perm = reader.read_u32()?;
+    let _mode = reader.read_u8()?;
+    reader.finish()?;
+    Ok(Virtio9pCreateRequest { fid, name })
+}
+
 pub(crate) fn parse_symlink_request(
     request: &Virtio9pRequest,
 ) -> Result<Virtio9pSymlinkRequest, VirtioError> {

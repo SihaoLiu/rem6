@@ -5,21 +5,22 @@ use rem6_virtio::{
     VIRTIO_9P_GETATTR_BASIC, VIRTIO_9P_LOCK_SUCCESS, VIRTIO_9P_LOCK_TYPE_UNLCK,
     VIRTIO_9P_LOCK_TYPE_WRLCK, VIRTIO_9P_NAME_MAX, VIRTIO_9P_NOFID, VIRTIO_9P_PROTOCOL_VERSION,
     VIRTIO_9P_QTDIR, VIRTIO_9P_QTFILE, VIRTIO_9P_QTSYMLINK, VIRTIO_9P_RATTACH, VIRTIO_9P_RCLUNK,
-    VIRTIO_9P_RFLUSH, VIRTIO_9P_RFSYNC, VIRTIO_9P_RGETATTR, VIRTIO_9P_RGETLOCK, VIRTIO_9P_RLCREATE,
-    VIRTIO_9P_RLERROR, VIRTIO_9P_RLINK, VIRTIO_9P_RLOCK, VIRTIO_9P_RLOPEN, VIRTIO_9P_RMKDIR,
-    VIRTIO_9P_RMKNOD, VIRTIO_9P_ROPEN, VIRTIO_9P_RREAD, VIRTIO_9P_RREADDIR, VIRTIO_9P_RREADLINK,
-    VIRTIO_9P_RREMOVE, VIRTIO_9P_RRENAME, VIRTIO_9P_RRENAMEAT, VIRTIO_9P_RSETATTR,
-    VIRTIO_9P_RSTATFS, VIRTIO_9P_RSYMLINK, VIRTIO_9P_RUNLINKAT, VIRTIO_9P_RVERSION,
-    VIRTIO_9P_RWALK, VIRTIO_9P_RWRITE, VIRTIO_9P_RXATTRWALK, VIRTIO_9P_SETATTR_ATIME,
-    VIRTIO_9P_SETATTR_ATIME_SET, VIRTIO_9P_SETATTR_GID, VIRTIO_9P_SETATTR_MODE,
-    VIRTIO_9P_SETATTR_MTIME, VIRTIO_9P_SETATTR_MTIME_SET, VIRTIO_9P_SETATTR_SIZE,
-    VIRTIO_9P_SETATTR_UID, VIRTIO_9P_STATFS_BLOCK_SIZE, VIRTIO_9P_STATFS_TYPE, VIRTIO_9P_TATTACH,
-    VIRTIO_9P_TCLUNK, VIRTIO_9P_TFLUSH, VIRTIO_9P_TFSYNC, VIRTIO_9P_TGETATTR, VIRTIO_9P_TGETLOCK,
-    VIRTIO_9P_TLCREATE, VIRTIO_9P_TLINK, VIRTIO_9P_TLOCK, VIRTIO_9P_TLOPEN, VIRTIO_9P_TMKDIR,
-    VIRTIO_9P_TMKNOD, VIRTIO_9P_TOPEN, VIRTIO_9P_TREAD, VIRTIO_9P_TREADDIR, VIRTIO_9P_TREADLINK,
-    VIRTIO_9P_TREMOVE, VIRTIO_9P_TRENAME, VIRTIO_9P_TRENAMEAT, VIRTIO_9P_TSETATTR,
-    VIRTIO_9P_TSTATFS, VIRTIO_9P_TSYMLINK, VIRTIO_9P_TUNLINKAT, VIRTIO_9P_TVERSION,
-    VIRTIO_9P_TWALK, VIRTIO_9P_TWRITE, VIRTIO_9P_TXATTRCREATE, VIRTIO_9P_TXATTRWALK,
+    VIRTIO_9P_RCREATE, VIRTIO_9P_RFLUSH, VIRTIO_9P_RFSYNC, VIRTIO_9P_RGETATTR, VIRTIO_9P_RGETLOCK,
+    VIRTIO_9P_RLCREATE, VIRTIO_9P_RLERROR, VIRTIO_9P_RLINK, VIRTIO_9P_RLOCK, VIRTIO_9P_RLOPEN,
+    VIRTIO_9P_RMKDIR, VIRTIO_9P_RMKNOD, VIRTIO_9P_ROPEN, VIRTIO_9P_RREAD, VIRTIO_9P_RREADDIR,
+    VIRTIO_9P_RREADLINK, VIRTIO_9P_RREMOVE, VIRTIO_9P_RRENAME, VIRTIO_9P_RRENAMEAT,
+    VIRTIO_9P_RSETATTR, VIRTIO_9P_RSTATFS, VIRTIO_9P_RSYMLINK, VIRTIO_9P_RUNLINKAT,
+    VIRTIO_9P_RVERSION, VIRTIO_9P_RWALK, VIRTIO_9P_RWRITE, VIRTIO_9P_RXATTRWALK,
+    VIRTIO_9P_SETATTR_ATIME, VIRTIO_9P_SETATTR_ATIME_SET, VIRTIO_9P_SETATTR_GID,
+    VIRTIO_9P_SETATTR_MODE, VIRTIO_9P_SETATTR_MTIME, VIRTIO_9P_SETATTR_MTIME_SET,
+    VIRTIO_9P_SETATTR_SIZE, VIRTIO_9P_SETATTR_UID, VIRTIO_9P_STATFS_BLOCK_SIZE,
+    VIRTIO_9P_STATFS_TYPE, VIRTIO_9P_TATTACH, VIRTIO_9P_TCLUNK, VIRTIO_9P_TCREATE,
+    VIRTIO_9P_TFLUSH, VIRTIO_9P_TFSYNC, VIRTIO_9P_TGETATTR, VIRTIO_9P_TGETLOCK, VIRTIO_9P_TLCREATE,
+    VIRTIO_9P_TLINK, VIRTIO_9P_TLOCK, VIRTIO_9P_TLOPEN, VIRTIO_9P_TMKDIR, VIRTIO_9P_TMKNOD,
+    VIRTIO_9P_TOPEN, VIRTIO_9P_TREAD, VIRTIO_9P_TREADDIR, VIRTIO_9P_TREADLINK, VIRTIO_9P_TREMOVE,
+    VIRTIO_9P_TRENAME, VIRTIO_9P_TRENAMEAT, VIRTIO_9P_TSETATTR, VIRTIO_9P_TSTATFS,
+    VIRTIO_9P_TSYMLINK, VIRTIO_9P_TUNLINKAT, VIRTIO_9P_TVERSION, VIRTIO_9P_TWALK, VIRTIO_9P_TWRITE,
+    VIRTIO_9P_TXATTRCREATE, VIRTIO_9P_TXATTRWALK,
 };
 
 mod support;
@@ -164,6 +165,58 @@ fn virtio_9p_device_rejects_legacy_open_on_stale_fids() {
     let open = decoded_request(VIRTIO_9P_TOPEN, 1, p9_open_payload(7, 0));
 
     let completion = device.execute_at(10, open).unwrap();
+
+    assert_eq!(completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(completion.payload(), VIRTIO_9P_EBADF.to_le_bytes());
+}
+
+#[test]
+fn virtio_9p_device_supports_legacy_create_for_attached_directories() {
+    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap());
+    let attach = decoded_request(
+        VIRTIO_9P_TATTACH,
+        1,
+        p9_attach_payload(1, VIRTIO_9P_NOFID, b"root", b"", 0),
+    );
+    device.execute_at(10, attach).unwrap();
+
+    let create = decoded_request(
+        VIRTIO_9P_TCREATE,
+        2,
+        p9_create_payload(1, b"legacy-new.txt", 0o100644, 0),
+    );
+    let create_completion = device.execute_at(11, create).unwrap();
+    assert_eq!(create_completion.message_type(), VIRTIO_9P_RCREATE);
+    let (create_qtype, create_version, create_path) = read_qid(create_completion.payload(), 0);
+    assert_eq!(create_qtype, VIRTIO_9P_QTFILE);
+    assert_eq!(create_version, 0);
+    assert_ne!(create_path, 1);
+    assert_eq!(
+        create_completion.payload()[13..17],
+        VIRTIO_9P_DEFAULT_MSIZE.to_le_bytes()
+    );
+
+    let write = decoded_request(VIRTIO_9P_TWRITE, 3, p9_write_payload(1, 0, b"created"));
+    let write_completion = device.execute_at(12, write).unwrap();
+    assert_eq!(write_completion.message_type(), VIRTIO_9P_RWRITE);
+    assert_eq!(write_completion.payload(), 7_u32.to_le_bytes());
+
+    let read = decoded_request(VIRTIO_9P_TREAD, 4, p9_read_payload(1, 0, 16));
+    let read_completion = device.execute_at(13, read).unwrap();
+    assert_eq!(read_completion.message_type(), VIRTIO_9P_RREAD);
+    assert_eq!(read_counted_data(read_completion.payload()), b"created");
+}
+
+#[test]
+fn virtio_9p_device_rejects_legacy_create_on_stale_fids() {
+    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap());
+    let create = decoded_request(
+        VIRTIO_9P_TCREATE,
+        1,
+        p9_create_payload(7, b"legacy-new.txt", 0o100644, 0),
+    );
+
+    let completion = device.execute_at(10, create).unwrap();
 
     assert_eq!(completion.message_type(), VIRTIO_9P_RLERROR);
     assert_eq!(completion.payload(), VIRTIO_9P_EBADF.to_le_bytes());
