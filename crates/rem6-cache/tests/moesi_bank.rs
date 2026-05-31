@@ -1,7 +1,7 @@
 use rem6_cache::{
-    CacheWriteQueueConfig, CacheWriteQueueEntryKind, CacheWriteQueueError, MoesiCacheBank,
-    MoesiCacheBankError, MoesiCacheControllerError, MoesiCacheControllerResultKind, MshrQosClass,
-    MshrQueueConfig,
+    CacheWriteQueueConfig, CacheWriteQueueEntryKind, CacheWriteQueueError, CacheWriteQueueHandle,
+    MoesiCacheBank, MoesiCacheBankError, MoesiCacheControllerError, MoesiCacheControllerResultKind,
+    MoesiPendingUncacheableReadSnapshot, MshrQosClass, MshrQueueConfig,
 };
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryError, MemoryOperation,
@@ -550,6 +550,147 @@ fn moesi_cache_bank_uncacheable_read_handles_owned_dirty_line() {
         writeback.post_issue_downstream_request().unwrap().id(),
         uncached.id()
     );
+}
+
+#[test]
+fn moesi_cache_bank_snapshot_restores_pending_uncacheable_read_after_dirty_writeback() {
+    let cache_agent = agent(30);
+    let mut bank = MoesiCacheBank::new_with_write_queue(
+        cache_agent,
+        layout(),
+        CacheWriteQueueConfig::new(1, 0).unwrap(),
+    );
+    let store = write(cache_agent, 135, 0x4704, vec![0xde, 0xad]);
+    let miss = bank.accept_cpu_request(store).unwrap();
+    bank.accept_fill(
+        fill(miss.downstream_request().unwrap(), 0x00),
+        MoesiEvent::DataModified,
+    )
+    .unwrap();
+
+    let uncached = uncacheable_read(cache_agent, 136, 0x4708);
+    let result = bank.accept_cpu_request(uncached.clone()).unwrap();
+    assert!(result.downstream_request().is_none());
+    let snapshot = bank.snapshot();
+
+    let mut restored = MoesiCacheBank::new_with_write_queue(
+        cache_agent,
+        layout(),
+        CacheWriteQueueConfig::new(1, 0).unwrap(),
+    );
+    restored.restore(&snapshot).unwrap();
+    let writeback = restored.issue_write_queue(0).unwrap().unwrap();
+    let downstream = writeback.post_issue_downstream_request().unwrap().clone();
+    assert_eq!(downstream.id(), uncached.id());
+
+    let uncached_fill = restored
+        .accept_fill(
+            MemoryResponse::completed(&downstream, Some(vec![0x77; 8])).unwrap(),
+            MoesiEvent::DataShared,
+        )
+        .unwrap();
+    assert_eq!(
+        response_data(uncached_fill.target_outcome().unwrap()),
+        &[0x77; 8]
+    );
+    assert_eq!(restored.state(Address::new(0x4700)), None);
+}
+
+#[test]
+fn moesi_cache_bank_snapshot_keeps_clean_pending_read_from_dirty_writeback_read() {
+    let cache_agent = agent(30);
+    let mut bank = MoesiCacheBank::new_with_write_queue(
+        cache_agent,
+        layout(),
+        CacheWriteQueueConfig::new(1, 0).unwrap(),
+    );
+    let cached = read(cache_agent, 137, 0x4804);
+    let cached_miss = bank.accept_cpu_request(cached).unwrap();
+    bank.accept_fill(
+        fill(cached_miss.downstream_request().unwrap(), 0x11),
+        MoesiEvent::DataShared,
+    )
+    .unwrap();
+
+    let clean_uncached = uncacheable_read(cache_agent, 138, 0x4808);
+    let clean_result = bank.accept_cpu_request(clean_uncached.clone()).unwrap();
+    assert_eq!(
+        clean_result.downstream_request().unwrap().id(),
+        clean_uncached.id()
+    );
+
+    let store = write(cache_agent, 139, 0x4804, vec![0xde, 0xad]);
+    let store_miss = bank.accept_cpu_request(store).unwrap();
+    bank.accept_fill(
+        fill(store_miss.downstream_request().unwrap(), 0x22),
+        MoesiEvent::DataModified,
+    )
+    .unwrap();
+
+    let dirty_uncached = uncacheable_read(cache_agent, 140, 0x480c);
+    let dirty_result = bank.accept_cpu_request(dirty_uncached.clone()).unwrap();
+    assert!(dirty_result.downstream_request().is_none());
+
+    let snapshot = bank.snapshot();
+    let mut restored = MoesiCacheBank::new_with_write_queue(
+        cache_agent,
+        layout(),
+        CacheWriteQueueConfig::new(1, 0).unwrap(),
+    );
+    restored.restore(&snapshot).unwrap();
+    let writeback = restored.issue_write_queue(0).unwrap().unwrap();
+    assert_eq!(
+        writeback.post_issue_downstream_request().unwrap().id(),
+        dirty_uncached.id()
+    );
+
+    let clean_fill = restored
+        .accept_fill(
+            MemoryResponse::completed(&clean_uncached, Some(vec![0x33; 8])).unwrap(),
+            MoesiEvent::DataShared,
+        )
+        .unwrap();
+    assert_eq!(
+        response_data(clean_fill.target_outcome().unwrap()),
+        &[0x33; 8]
+    );
+}
+
+#[test]
+fn moesi_cache_bank_restore_rejects_uncacheable_read_with_missing_blocking_writeback() {
+    let cache_agent = agent(30);
+    let mut bank = MoesiCacheBank::new_with_write_queue(
+        cache_agent,
+        layout(),
+        CacheWriteQueueConfig::new(1, 0).unwrap(),
+    );
+    let store = write(cache_agent, 141, 0x4904, vec![0xde, 0xad]);
+    let miss = bank.accept_cpu_request(store).unwrap();
+    bank.accept_fill(
+        fill(miss.downstream_request().unwrap(), 0x00),
+        MoesiEvent::DataModified,
+    )
+    .unwrap();
+
+    let uncached = uncacheable_read(cache_agent, 142, 0x4908);
+    bank.accept_cpu_request(uncached.clone()).unwrap();
+    let missing = CacheWriteQueueHandle::new(99);
+    let snapshot = bank.snapshot().with_pending_uncacheable_reads(vec![
+        MoesiPendingUncacheableReadSnapshot::new(uncached.clone(), Some(missing)),
+    ]);
+
+    let mut restored = MoesiCacheBank::new_with_write_queue(
+        cache_agent,
+        layout(),
+        CacheWriteQueueConfig::new(1, 0).unwrap(),
+    );
+    assert!(matches!(
+        restored.restore(&snapshot),
+        Err(MoesiCacheBankError::SnapshotPendingUncacheableReadWritebackMismatch {
+            response,
+            handle,
+        }) if response == uncached.id() && handle == missing
+    ));
 }
 
 #[test]

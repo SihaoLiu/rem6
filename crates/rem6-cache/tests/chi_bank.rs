@@ -1,7 +1,8 @@
 use rem6_cache::{
     CacheReplacementDirectoryConfig, CacheReplacementPolicyKind, CacheWriteQueueConfig,
-    CacheWriteQueueEntryKind, CacheWriteQueueError, ChiCacheBank, ChiCacheBankError,
-    ChiCacheControllerError, ChiCacheControllerResultKind, MshrQosClass, MshrQueueConfig,
+    CacheWriteQueueEntryKind, CacheWriteQueueError, CacheWriteQueueHandle, ChiCacheBank,
+    ChiCacheBankError, ChiCacheControllerError, ChiCacheControllerResultKind,
+    ChiPendingUncacheableReadSnapshot, MshrQosClass, MshrQueueConfig,
 };
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryError, MemoryOperation,
@@ -432,6 +433,147 @@ fn chi_cache_bank_uncacheable_read_handles_shared_dirty_line() {
         writeback.post_issue_downstream_request().unwrap().id(),
         uncached.id()
     );
+}
+
+#[test]
+fn chi_cache_bank_snapshot_restores_pending_uncacheable_read_after_dirty_writeback() {
+    let cache_agent = agent(40);
+    let mut bank = ChiCacheBank::new_with_write_queue(
+        cache_agent,
+        layout(),
+        CacheWriteQueueConfig::new(1, 0).unwrap(),
+    );
+    let store = write(cache_agent, 546, 0x3704, vec![0xde, 0xad]);
+    let miss = bank.accept_cpu_request(store).unwrap();
+    bank.accept_fill(
+        fill(miss.downstream_request().unwrap(), 0x00),
+        ChiEvent::CompDataUniqueDirty,
+    )
+    .unwrap();
+
+    let uncached = uncacheable_read(cache_agent, 547, 0x3708);
+    let result = bank.accept_cpu_request(uncached.clone()).unwrap();
+    assert!(result.downstream_request().is_none());
+    let snapshot = bank.snapshot();
+
+    let mut restored = ChiCacheBank::new_with_write_queue(
+        cache_agent,
+        layout(),
+        CacheWriteQueueConfig::new(1, 0).unwrap(),
+    );
+    restored.restore(&snapshot).unwrap();
+    let writeback = restored.issue_write_queue(0).unwrap().unwrap();
+    let downstream = writeback.post_issue_downstream_request().unwrap().clone();
+    assert_eq!(downstream.id(), uncached.id());
+
+    let uncached_fill = restored
+        .accept_fill(
+            MemoryResponse::completed(&downstream, Some(vec![0x77; 8])).unwrap(),
+            ChiEvent::CompDataSharedClean,
+        )
+        .unwrap();
+    assert_eq!(
+        response_data(uncached_fill.target_outcome().unwrap()),
+        &[0x77; 8]
+    );
+    assert_eq!(restored.state(Address::new(0x3700)), None);
+}
+
+#[test]
+fn chi_cache_bank_snapshot_keeps_clean_pending_read_from_dirty_writeback_read() {
+    let cache_agent = agent(40);
+    let mut bank = ChiCacheBank::new_with_write_queue(
+        cache_agent,
+        layout(),
+        CacheWriteQueueConfig::new(1, 0).unwrap(),
+    );
+    let cached = read(cache_agent, 548, 0x3804);
+    let cached_miss = bank.accept_cpu_request(cached).unwrap();
+    bank.accept_fill(
+        fill(cached_miss.downstream_request().unwrap(), 0x11),
+        ChiEvent::CompDataSharedClean,
+    )
+    .unwrap();
+
+    let clean_uncached = uncacheable_read(cache_agent, 549, 0x3808);
+    let clean_result = bank.accept_cpu_request(clean_uncached.clone()).unwrap();
+    assert_eq!(
+        clean_result.downstream_request().unwrap().id(),
+        clean_uncached.id()
+    );
+
+    let store = write(cache_agent, 550, 0x3804, vec![0xde, 0xad]);
+    let store_miss = bank.accept_cpu_request(store).unwrap();
+    bank.accept_fill(
+        fill(store_miss.downstream_request().unwrap(), 0x22),
+        ChiEvent::CompDataUniqueDirty,
+    )
+    .unwrap();
+
+    let dirty_uncached = uncacheable_read(cache_agent, 551, 0x380c);
+    let dirty_result = bank.accept_cpu_request(dirty_uncached.clone()).unwrap();
+    assert!(dirty_result.downstream_request().is_none());
+
+    let snapshot = bank.snapshot();
+    let mut restored = ChiCacheBank::new_with_write_queue(
+        cache_agent,
+        layout(),
+        CacheWriteQueueConfig::new(1, 0).unwrap(),
+    );
+    restored.restore(&snapshot).unwrap();
+    let writeback = restored.issue_write_queue(0).unwrap().unwrap();
+    assert_eq!(
+        writeback.post_issue_downstream_request().unwrap().id(),
+        dirty_uncached.id()
+    );
+
+    let clean_fill = restored
+        .accept_fill(
+            MemoryResponse::completed(&clean_uncached, Some(vec![0x33; 8])).unwrap(),
+            ChiEvent::CompDataSharedClean,
+        )
+        .unwrap();
+    assert_eq!(
+        response_data(clean_fill.target_outcome().unwrap()),
+        &[0x33; 8]
+    );
+}
+
+#[test]
+fn chi_cache_bank_restore_rejects_uncacheable_read_with_missing_blocking_writeback() {
+    let cache_agent = agent(40);
+    let mut bank = ChiCacheBank::new_with_write_queue(
+        cache_agent,
+        layout(),
+        CacheWriteQueueConfig::new(1, 0).unwrap(),
+    );
+    let store = write(cache_agent, 552, 0x3904, vec![0xde, 0xad]);
+    let miss = bank.accept_cpu_request(store).unwrap();
+    bank.accept_fill(
+        fill(miss.downstream_request().unwrap(), 0x00),
+        ChiEvent::CompDataUniqueDirty,
+    )
+    .unwrap();
+
+    let uncached = uncacheable_read(cache_agent, 553, 0x3908);
+    bank.accept_cpu_request(uncached.clone()).unwrap();
+    let missing = CacheWriteQueueHandle::new(99);
+    let snapshot = bank.snapshot().with_pending_uncacheable_reads(vec![
+        ChiPendingUncacheableReadSnapshot::new(uncached.clone(), Some(missing)),
+    ]);
+
+    let mut restored = ChiCacheBank::new_with_write_queue(
+        cache_agent,
+        layout(),
+        CacheWriteQueueConfig::new(1, 0).unwrap(),
+    );
+    assert!(matches!(
+        restored.restore(&snapshot),
+        Err(ChiCacheBankError::SnapshotPendingUncacheableReadWritebackMismatch {
+            response,
+            handle,
+        }) if response == uncached.id() && handle == missing
+    ));
 }
 
 #[test]

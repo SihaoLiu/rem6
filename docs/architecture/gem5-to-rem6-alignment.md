@@ -966,7 +966,12 @@ Research anchors refreshed through 2026-05-30:
   pending-fill state, and expose that read only as a post-issue downstream
   request on the writeback issue record. That gives callers one typed ordering
   point: send the dirty writeback first, then the original uncacheable read,
-  and still complete the read through the no-install fill path. Banks without a
+  and still complete the read through the no-install fill path. Bank snapshots
+  retain those pending uncacheable reads with their blocking writeback handle,
+  so restore keeps the same post-issue downstream-read ordering after the
+  dirty writeback is issued without confusing already-issued clean bypass
+  reads on the same line. Restore rejects pending uncacheable reads whose
+  blocking handle no longer names a same-line dirty writeback. Banks without a
   typed write queue still reject that path before mutating the dirty line. gem5
   also routes uncacheable writes through
   `BaseCache::allocateWriteBuffer` instead of an MSHR; rem6 cache banks with a
@@ -2608,7 +2613,12 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   which point the writeback issue record exposes the read as an ordered
   post-issue downstream request for MSI, MESI, MOESI, and CHI. They also cover
   MOESI Owned and CHI SharedDirty resident lines, clearing the resident line
-  and preserving the no-install fill behavior. Dirty-resident
+  and preserving the no-install fill behavior. Snapshot/restore tests require
+  those pending uncacheable reads to survive restore and remain attached to the
+  later dirty-writeback issue record, while already-issued clean pending reads
+  on the same line remain independent. Malformed snapshot tests also reject
+  pending uncacheable reads whose blocking writeback handle is missing.
+  Dirty-resident
   uncacheable-write tests require a full-line dirty writeback queue entry
   before the uncacheable write queue entry for MSI, MESI, MOESI, and CHI, then
   clearing the resident line. These tests also require same-line cacheable reads

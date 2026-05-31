@@ -26,22 +26,31 @@ mod replacement;
 mod replacement_directory;
 mod write_queue;
 
-pub use bank::{MsiCacheBank, MsiCacheBankError, MsiCacheBankSnapshot};
+pub use bank::{
+    MsiCacheBank, MsiCacheBankError, MsiCacheBankSnapshot, MsiPendingUncacheableReadSnapshot,
+};
 pub use chi::{
     ChiCacheController, ChiCacheControllerError, ChiCacheControllerResult,
     ChiCacheControllerResultKind, ChiCacheControllerSnapshot, ChiPendingMissSnapshot,
 };
-pub use chi_bank::{ChiCacheBank, ChiCacheBankError, ChiCacheBankSnapshot};
+pub use chi_bank::{
+    ChiCacheBank, ChiCacheBankError, ChiCacheBankSnapshot, ChiPendingUncacheableReadSnapshot,
+};
 pub use mesi::{
     MesiCacheController, MesiCacheControllerError, MesiCacheControllerResult,
     MesiCacheControllerResultKind, MesiCacheControllerSnapshot, MesiPendingMissSnapshot,
 };
-pub use mesi_bank::{MesiCacheBank, MesiCacheBankError, MesiCacheBankSnapshot};
+pub use mesi_bank::{
+    MesiCacheBank, MesiCacheBankError, MesiCacheBankSnapshot, MesiPendingUncacheableReadSnapshot,
+};
 pub use moesi::{
     MoesiCacheController, MoesiCacheControllerError, MoesiCacheControllerResult,
     MoesiCacheControllerResultKind, MoesiCacheControllerSnapshot, MoesiPendingMissSnapshot,
 };
-pub use moesi_bank::{MoesiCacheBank, MoesiCacheBankError, MoesiCacheBankSnapshot};
+pub use moesi_bank::{
+    MoesiCacheBank, MoesiCacheBankError, MoesiCacheBankSnapshot,
+    MoesiPendingUncacheableReadSnapshot,
+};
 pub use mshr::{
     MshrCompletion, MshrEntry, MshrHandle, MshrQosClass, MshrQosProfile, MshrQueue,
     MshrQueueConfig, MshrQueueError, MshrQueueSnapshot, MshrQueueUpdate, MshrTarget,

@@ -57,6 +57,10 @@ pub enum MesiCacheBankError {
         snapshot_has_write_queue: bool,
         bank_has_write_queue: bool,
     },
+    SnapshotPendingUncacheableReadWritebackMismatch {
+        response: MemoryRequestId,
+        handle: CacheWriteQueueHandle,
+    },
     DuplicateSnapshotLine {
         line: Address,
     },
@@ -135,6 +139,13 @@ impl fmt::Display for MesiCacheBankError {
                 formatter,
                 "MESI cache bank snapshot write queue mode {snapshot_has_write_queue} cannot restore bank write queue mode {bank_has_write_queue}"
             ),
+            Self::SnapshotPendingUncacheableReadWritebackMismatch { response, handle } => write!(
+                formatter,
+                "MESI cache bank snapshot pending uncacheable read {} from agent {} references invalid blocking writeback {:?}",
+                response.sequence(),
+                response.agent().get(),
+                handle
+            ),
             Self::DuplicateSnapshotLine { line } => {
                 write!(formatter, "MESI cache bank snapshot repeats line {:#x}", line.get())
             }
@@ -170,6 +181,7 @@ impl Error for MesiCacheBankError {
             | Self::SnapshotIdentityMismatch { .. }
             | Self::SnapshotMshrModeMismatch { .. }
             | Self::SnapshotWriteQueueModeMismatch { .. }
+            | Self::SnapshotPendingUncacheableReadWritebackMismatch { .. }
             | Self::DuplicateSnapshotLine { .. }
             | Self::DuplicateSnapshotPendingFill { .. }
             | Self::DuplicateSnapshotUncacheableWrite { .. } => None,
@@ -196,6 +208,29 @@ impl From<CacheWriteQueueError> for MesiCacheBankError {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MesiPendingUncacheableReadSnapshot {
+    request: MemoryRequest,
+    blocked_by: Option<CacheWriteQueueHandle>,
+}
+
+impl MesiPendingUncacheableReadSnapshot {
+    pub fn new(request: MemoryRequest, blocked_by: Option<CacheWriteQueueHandle>) -> Self {
+        Self {
+            request,
+            blocked_by,
+        }
+    }
+
+    pub const fn request(&self) -> &MemoryRequest {
+        &self.request
+    }
+
+    pub const fn blocked_by(&self) -> Option<CacheWriteQueueHandle> {
+        self.blocked_by
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MesiCacheBankSnapshot {
     agent: AgentId,
     layout: CacheLineLayout,
@@ -204,6 +239,7 @@ pub struct MesiCacheBankSnapshot {
     mshr: Option<MshrQueueSnapshot>,
     write_queue: Option<CacheWriteQueueSnapshot>,
     inflight_uncacheable_writes: Vec<MemoryRequest>,
+    pending_uncacheable_reads: Vec<MesiPendingUncacheableReadSnapshot>,
 }
 
 impl MesiCacheBankSnapshot {
@@ -221,6 +257,7 @@ impl MesiCacheBankSnapshot {
             mshr: None,
             write_queue: None,
             inflight_uncacheable_writes: Vec::new(),
+            pending_uncacheable_reads: Vec::new(),
         }
     }
 
@@ -239,6 +276,7 @@ impl MesiCacheBankSnapshot {
             mshr: Some(mshr),
             write_queue: None,
             inflight_uncacheable_writes: Vec::new(),
+            pending_uncacheable_reads: Vec::new(),
         }
     }
 
@@ -249,6 +287,14 @@ impl MesiCacheBankSnapshot {
 
     pub fn with_inflight_uncacheable_writes(mut self, writes: Vec<MemoryRequest>) -> Self {
         self.inflight_uncacheable_writes = writes;
+        self
+    }
+
+    pub fn with_pending_uncacheable_reads(
+        mut self,
+        reads: Vec<MesiPendingUncacheableReadSnapshot>,
+    ) -> Self {
+        self.pending_uncacheable_reads = reads;
         self
     }
 
@@ -282,6 +328,14 @@ impl MesiCacheBankSnapshot {
 
     pub fn inflight_uncacheable_write_count(&self) -> usize {
         self.inflight_uncacheable_writes.len()
+    }
+
+    pub fn pending_uncacheable_reads(&self) -> &[MesiPendingUncacheableReadSnapshot] {
+        &self.pending_uncacheable_reads
+    }
+
+    pub fn pending_uncacheable_read_count(&self) -> usize {
+        self.pending_uncacheable_reads.len()
     }
 
     pub fn mshr_qos_profile(&self) -> Option<MshrQosProfile> {
@@ -323,6 +377,7 @@ enum PendingBankFill {
     },
     Uncacheable {
         original: MemoryRequest,
+        blocked_by: Option<CacheWriteQueueHandle>,
     },
 }
 
@@ -515,9 +570,25 @@ impl MesiCacheBank {
             Some(write_queue) => snapshot.with_write_queue(write_queue.snapshot()),
             None => snapshot,
         };
-        snapshot.with_inflight_uncacheable_writes(
-            self.inflight_uncacheable_writes.values().cloned().collect(),
-        )
+        let pending_uncacheable_reads = self
+            .pending_fills
+            .values()
+            .filter_map(|pending| match pending {
+                PendingBankFill::Line { .. } => None,
+                PendingBankFill::Uncacheable {
+                    original,
+                    blocked_by,
+                } => Some(MesiPendingUncacheableReadSnapshot::new(
+                    original.clone(),
+                    *blocked_by,
+                )),
+            })
+            .collect();
+        snapshot
+            .with_inflight_uncacheable_writes(
+                self.inflight_uncacheable_writes.values().cloned().collect(),
+            )
+            .with_pending_uncacheable_reads(pending_uncacheable_reads)
     }
 
     pub fn restore(&mut self, snapshot: &MesiCacheBankSnapshot) -> Result<(), MesiCacheBankError> {
@@ -575,6 +646,22 @@ impl MesiCacheBank {
                 });
             }
         }
+        for pending_read in snapshot.pending_uncacheable_reads() {
+            let request = pending_read.request();
+            self.validate_pending_uncacheable_read_snapshot(
+                request,
+                pending_read.blocked_by(),
+                restored_write_queue.as_ref(),
+            )?;
+            let response = request.id();
+            let pending = PendingBankFill::Uncacheable {
+                original: request.clone(),
+                blocked_by: pending_read.blocked_by(),
+            };
+            if pending_fills.insert(response, pending).is_some() {
+                return Err(MesiCacheBankError::DuplicateSnapshotPendingFill { response });
+            }
+        }
         for line_snapshot in snapshot.lines() {
             let line = line_snapshot.line().address();
             let mut controller = MesiCacheController::new(self.agent, self.layout, line);
@@ -602,6 +689,33 @@ impl MesiCacheBank {
         self.mshr = restored_mshr;
         self.write_queue = restored_write_queue;
         Ok(())
+    }
+
+    fn validate_pending_uncacheable_read_snapshot(
+        &self,
+        request: &MemoryRequest,
+        blocked_by: Option<CacheWriteQueueHandle>,
+        restored_write_queue: Option<&CacheWriteQueue>,
+    ) -> Result<(), MesiCacheBankError> {
+        let Some(handle) = blocked_by else {
+            return Ok(());
+        };
+        let valid = restored_write_queue
+            .and_then(|write_queue| write_queue.entry(handle).ok())
+            .is_some_and(|entry| {
+                entry.kind() == CacheWriteQueueEntryKind::WritebackDirty
+                    && entry.request().line_address() == request.line_address()
+            });
+        if valid {
+            Ok(())
+        } else {
+            Err(
+                MesiCacheBankError::SnapshotPendingUncacheableReadWritebackMismatch {
+                    response: request.id(),
+                    handle,
+                },
+            )
+        }
     }
 
     pub fn accept_cpu_request(
@@ -707,7 +821,7 @@ impl MesiCacheBank {
         )?;
         let (line, mshr) = match pending {
             PendingBankFill::Line { line, mshr } => (line, mshr),
-            PendingBankFill::Uncacheable { original } => {
+            PendingBankFill::Uncacheable { original, .. } => {
                 let outcome = crate::downstream::uncacheable_fill_outcome(&original, response)
                     .map_err(MesiCacheControllerError::Memory)?;
                 self.pending_fills.remove(&response_id);
@@ -829,22 +943,31 @@ impl MesiCacheBank {
     }
 
     fn attach_post_issue_uncacheable_read(
-        &self,
+        &mut self,
         issue: CacheWriteQueueIssue,
     ) -> CacheWriteQueueIssue {
         if issue.kind() != CacheWriteQueueEntryKind::WritebackDirty {
             return issue;
         }
+        let handle = issue.handle();
         let read = self
             .pending_fills
-            .values()
+            .values_mut()
             .find_map(|pending| match pending {
-                PendingBankFill::Uncacheable { original }
-                    if original.line_address() == issue.request().line_address() =>
-                {
-                    Some(original.clone())
+                PendingBankFill::Uncacheable {
+                    original,
+                    blocked_by,
+                } => {
+                    if *blocked_by == Some(handle)
+                        && original.line_address() == issue.request().line_address()
+                    {
+                        *blocked_by = None;
+                        Some(original.clone())
+                    } else {
+                        None
+                    }
                 }
-                PendingBankFill::Uncacheable { .. } | PendingBankFill::Line { .. } => None,
+                PendingBankFill::Line { .. } => None,
             });
         match read {
             Some(request) => issue.with_post_issue_downstream_request(request),
@@ -972,11 +1095,14 @@ impl MesiCacheBank {
         request: MemoryRequest,
     ) -> Result<MesiCacheControllerResult, MesiCacheBankError> {
         let line = request.line_address();
-        if self.enqueue_dirty_resident_writeback_and_remove(&request, line, 1)? {
+        if let Some(writeback) =
+            self.enqueue_dirty_resident_writeback_and_remove(&request, line, 1)?
+        {
             self.pending_fills.insert(
                 request.id(),
                 PendingBankFill::Uncacheable {
                     original: request.clone(),
+                    blocked_by: Some(writeback),
                 },
             );
             return Ok(MesiCacheControllerResult::new(
@@ -995,6 +1121,7 @@ impl MesiCacheBank {
             request.id(),
             PendingBankFill::Uncacheable {
                 original: request.clone(),
+                blocked_by: None,
             },
         );
         Ok(MesiCacheControllerResult::new(
@@ -1011,7 +1138,10 @@ impl MesiCacheBank {
         request: MemoryRequest,
     ) -> Result<MesiCacheControllerResult, MesiCacheBankError> {
         let line = request.line_address();
-        if self.enqueue_dirty_resident_writeback_and_remove(&request, line, 2)? {
+        if self
+            .enqueue_dirty_resident_writeback_and_remove(&request, line, 2)?
+            .is_some()
+        {
             self.write_queue_mut()?
                 .enqueue_uncacheable_write(request, false, 0)?;
             return Ok(MesiCacheControllerResult::new(
@@ -1050,17 +1180,18 @@ impl MesiCacheBank {
         request: &MemoryRequest,
         line: Address,
         required_entries: usize,
-    ) -> Result<bool, MesiCacheBankError> {
+    ) -> Result<Option<CacheWriteQueueHandle>, MesiCacheBankError> {
         let Some(writeback) = self.dirty_resident_writeback_request(line)? else {
-            return Ok(false);
+            return Ok(None);
         };
         self.validate_write_queue_request(request)?;
         self.require_write_queue_entries(required_entries)?;
-        self.write_queue_mut()?
+        let update = self
+            .write_queue_mut()?
             .enqueue_writeback(writeback, false, 0)?;
         self.next_sequence += 1;
         self.lines.remove(&line);
-        Ok(true)
+        Ok(Some(update.handle()))
     }
 
     fn dirty_resident_writeback_request(
