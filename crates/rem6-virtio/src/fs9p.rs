@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use rem6_kernel::Tick;
 use rem6_memory::ByteMask;
 
+use crate::fs9p_lock::Virtio9pLockTable;
 use crate::fs9p_namespace::{
     getattr_payload, qid_payload, Virtio9pFidState, Virtio9pNamespace, Virtio9pNodeId,
     Virtio9pTimestamp, Virtio9pXattrWritePolicy,
@@ -88,6 +89,7 @@ pub struct Virtio9pDevice {
     namespace: Arc<Mutex<Virtio9pNamespace>>,
     fids: Arc<Mutex<BTreeMap<u32, Virtio9pFidState>>>,
     negotiated_msize: Arc<Mutex<u32>>,
+    locks: Arc<Mutex<Virtio9pLockTable>>,
 }
 
 impl Virtio9pDevice {
@@ -99,6 +101,7 @@ impl Virtio9pDevice {
             namespace: Arc::new(Mutex::new(Virtio9pNamespace::new())),
             fids: Arc::new(Mutex::new(BTreeMap::new())),
             negotiated_msize: Arc::new(Mutex::new(VIRTIO_9P_DEFAULT_MSIZE)),
+            locks: Arc::new(Mutex::new(Virtio9pLockTable::default())),
         }
     }
 
@@ -358,6 +361,7 @@ impl Virtio9pDevice {
             .lock()
             .expect("virtio 9p attached fid lock")
             .clear();
+        self.locks.lock().expect("virtio 9p lock table").clear();
     }
 
     fn fid_node(&self, fid: u32) -> Option<Virtio9pNodeId> {
@@ -826,10 +830,15 @@ impl Virtio9pDevice {
         if !valid_lock_type(lock.lock_type) {
             return Ok(Err(VIRTIO_9P_EBADF));
         }
-        if self.lockable_fid(lock.fid).is_none() {
+        let Some(node) = self.lockable_node(lock.fid) else {
             return Ok(Err(VIRTIO_9P_EBADF));
-        }
-        Ok(Ok(VIRTIO_9P_LOCK_SUCCESS))
+        };
+        let status = self
+            .locks
+            .lock()
+            .expect("virtio 9p lock table")
+            .apply(node, &lock);
+        Ok(Ok(status))
     }
 
     fn handle_getlock(
@@ -840,17 +849,14 @@ impl Virtio9pDevice {
         if !valid_lock_type(lock.lock_type) {
             return Ok(Err(VIRTIO_9P_EBADF));
         }
-        if self.lockable_fid(lock.fid).is_none() {
+        let Some(node) = self.lockable_node(lock.fid) else {
             return Ok(Err(VIRTIO_9P_EBADF));
-        }
-        Ok(Ok(lock_payload(
-            VIRTIO_9P_LOCK_TYPE_UNLCK,
-            lock.flags,
-            lock.start,
-            lock.length,
-            lock.proc_id,
-            &lock.client_id,
-        )))
+        };
+        Ok(Ok(self
+            .locks
+            .lock()
+            .expect("virtio 9p lock table")
+            .conflict_payload(node, &lock)))
     }
 
     fn handle_mkdir(&self, request: &Virtio9pRequest) -> Result<Result<Vec<u8>, u32>, VirtioError> {
@@ -1118,9 +1124,13 @@ impl Virtio9pDevice {
             .lock()
             .expect("virtio 9p fid lock")
             .retain(|_, fid| fid.node() != Some(node));
+        self.locks
+            .lock()
+            .expect("virtio 9p lock table")
+            .remove_node(node);
     }
 
-    fn lockable_fid(&self, fid: u32) -> Option<Virtio9pFidState> {
+    fn lockable_node(&self, fid: u32) -> Option<Virtio9pNodeId> {
         let fid = self
             .fids
             .lock()
@@ -1135,7 +1145,7 @@ impl Virtio9pDevice {
             .lock()
             .expect("virtio 9p namespace lock")
             .read_file(node, 0, 0)?;
-        Some(fid)
+        Some(node)
     }
 }
 
