@@ -257,13 +257,55 @@ pub(crate) fn parse_stat_request(request: &Virtio9pRequest) -> Result<u32, Virti
     Ok(fid)
 }
 
-pub(crate) fn parse_wstat_request(request: &Virtio9pRequest) -> Result<u32, VirtioError> {
+pub(crate) fn parse_wstat_request(
+    request: &Virtio9pRequest,
+) -> Result<Virtio9pWstatRequest, VirtioError> {
     let mut reader = Virtio9pPayloadReader::new(request.message_type(), request.payload());
     let fid = reader.read_u32()?;
     let stat_len = reader.read_u16()?;
-    let _stat = reader.read_counted_bytes(u32::from(stat_len))?;
+    let stat = reader.read_counted_bytes(u32::from(stat_len))?;
     reader.finish()?;
-    Ok(fid)
+
+    let mut stat_reader = Virtio9pPayloadReader::new(request.message_type(), &stat);
+    let _file_type = stat_reader.read_u16()?;
+    let _dev = stat_reader.read_u32()?;
+    let _qid = stat_reader.read_exact(13)?;
+    let mode = stat_reader.read_u32()?;
+    let atime_sec = stat_reader.read_u32()?;
+    let mtime_sec = stat_reader.read_u32()?;
+    let length = stat_reader.read_u64()?;
+    let name = string_from_9p(
+        request.message_type(),
+        stat_reader.read_string()?,
+        request.payload(),
+    )?;
+    let uid = string_from_9p(
+        request.message_type(),
+        stat_reader.read_string()?,
+        request.payload(),
+    )?;
+    let gid = string_from_9p(
+        request.message_type(),
+        stat_reader.read_string()?,
+        request.payload(),
+    )?;
+    let _muid = string_from_9p(
+        request.message_type(),
+        stat_reader.read_string()?,
+        request.payload(),
+    )?;
+    stat_reader.finish()?;
+
+    Ok(Virtio9pWstatRequest {
+        fid,
+        name: nonempty_string(name),
+        mode: (mode != u32::MAX).then_some(mode),
+        uid: parse_optional_u32_string(request, uid)?,
+        gid: parse_optional_u32_string(request, gid)?,
+        atime_sec: (atime_sec != u32::MAX).then_some(atime_sec),
+        mtime_sec: (mtime_sec != u32::MAX).then_some(mtime_sec),
+        length: (length != u64::MAX).then_some(length),
+    })
 }
 
 pub(crate) fn parse_xattrwalk_request(
@@ -503,6 +545,26 @@ fn string_from_9p(
     })
 }
 
+fn nonempty_string(value: String) -> Option<String> {
+    (!value.is_empty()).then_some(value)
+}
+
+fn parse_optional_u32_string(
+    request: &Virtio9pRequest,
+    value: String,
+) -> Result<Option<u32>, VirtioError> {
+    if value.is_empty() {
+        return Ok(None);
+    }
+    value
+        .parse::<u32>()
+        .map(Some)
+        .map_err(|_| VirtioError::InvalidVirtio9pPayload {
+            message_type: request.message_type(),
+            bytes: request.payload().len(),
+        })
+}
+
 struct Virtio9pPayloadReader<'a> {
     message_type: u8,
     payload: &'a [u8],
@@ -640,6 +702,18 @@ pub(crate) struct Virtio9pSetattrRequest {
     pub(crate) atime_nsec: u64,
     pub(crate) mtime_sec: u64,
     pub(crate) mtime_nsec: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Virtio9pWstatRequest {
+    pub(crate) fid: u32,
+    pub(crate) name: Option<String>,
+    pub(crate) mode: Option<u32>,
+    pub(crate) uid: Option<u32>,
+    pub(crate) gid: Option<u32>,
+    pub(crate) atime_sec: Option<u32>,
+    pub(crate) mtime_sec: Option<u32>,
+    pub(crate) length: Option<u64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

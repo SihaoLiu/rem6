@@ -1,6 +1,7 @@
 use rem6_virtio::{
     Virtio9pConfig, Virtio9pDevice, VIRTIO_9P_EBADF, VIRTIO_9P_ENOTSUP, VIRTIO_9P_NOFID,
-    VIRTIO_9P_QTFILE, VIRTIO_9P_RLERROR, VIRTIO_9P_RSTAT, VIRTIO_9P_TATTACH, VIRTIO_9P_TAUTH,
+    VIRTIO_9P_QTFILE, VIRTIO_9P_RLERROR, VIRTIO_9P_ROPEN, VIRTIO_9P_RREAD, VIRTIO_9P_RSTAT,
+    VIRTIO_9P_RWSTAT, VIRTIO_9P_TATTACH, VIRTIO_9P_TAUTH, VIRTIO_9P_TOPEN, VIRTIO_9P_TREAD,
     VIRTIO_9P_TSTAT, VIRTIO_9P_TWALK, VIRTIO_9P_TWSTAT,
 };
 
@@ -93,9 +94,9 @@ fn virtio_9p_device_rejects_malformed_auth_payloads() {
 }
 
 #[test]
-fn virtio_9p_device_rejects_legacy_wstat_after_validating_fids() {
+fn virtio_9p_device_applies_legacy_wstat_metadata_updates() {
     let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap())
-        .with_file("wstat.txt", b"original".to_vec())
+        .with_file("wstat.txt", b"abcdef".to_vec())
         .unwrap();
     let attach = decoded_request(
         VIRTIO_9P_TATTACH,
@@ -105,28 +106,47 @@ fn virtio_9p_device_rejects_legacy_wstat_after_validating_fids() {
     device.execute_at(10, attach).unwrap();
     let walk = decoded_request(VIRTIO_9P_TWALK, 2, p9_walk_payload(1, 2, &[b"wstat.txt"]));
     device.execute_at(11, walk).unwrap();
-    let stat = decoded_request(VIRTIO_9P_TSTAT, 3, p9_legacy_stat_payload(2));
-    let stat_payload = device.execute_at(12, stat).unwrap().payload().to_vec();
+    let open = decoded_request(VIRTIO_9P_TOPEN, 3, p9_open_payload(2, 0));
+    assert_eq!(
+        device.execute_at(12, open).unwrap().message_type(),
+        VIRTIO_9P_ROPEN
+    );
 
     let wstat = decoded_request(
         VIRTIO_9P_TWSTAT,
         4,
-        p9_legacy_wstat_payload(2, &stat_payload),
+        p9_legacy_wstat_metadata_payload(2, 0o100600, b"7", b"8", 123, 3),
     );
     let completion = device.execute_at(13, wstat).unwrap();
 
-    assert_eq!(completion.message_type(), VIRTIO_9P_RLERROR);
-    assert_eq!(completion.payload(), VIRTIO_9P_ENOTSUP.to_le_bytes());
+    assert_eq!(completion.message_type(), VIRTIO_9P_RWSTAT);
+    assert!(completion.payload().is_empty());
     let restat = decoded_request(VIRTIO_9P_TSTAT, 5, p9_legacy_stat_payload(2));
     let restat_payload = device.execute_at(14, restat).unwrap().payload().to_vec();
-    assert_eq!(restat_payload, stat_payload);
+    assert_eq!(read_u32(&restat_payload, 21), 0o100600);
+    assert_eq!(read_u32(&restat_payload, 29), 123);
+    assert_eq!(read_u64(&restat_payload, 33), 3);
+    let (name, next) = read_string_with_next(&restat_payload, 41);
+    let (uid, next) = read_string_with_next(&restat_payload, next);
+    let (gid, _) = read_string_with_next(&restat_payload, next);
+    assert_eq!(name, b"wstat.txt");
+    assert_eq!(uid, b"7");
+    assert_eq!(gid, b"8");
+
+    let read = decoded_request(VIRTIO_9P_TREAD, 6, p9_read_payload(2, 0, 16));
+    let read_completion = device.execute_at(15, read).unwrap();
+    assert_eq!(read_completion.message_type(), VIRTIO_9P_RREAD);
+    assert_eq!(read_counted_data(read_completion.payload()), b"abc");
 }
 
 #[test]
 fn virtio_9p_device_rejects_legacy_wstat_on_stale_fids() {
     let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap());
-    let stat = [0_u8, 0];
-    let wstat = decoded_request(VIRTIO_9P_TWSTAT, 1, p9_legacy_wstat_payload(7, &stat));
+    let wstat = decoded_request(
+        VIRTIO_9P_TWSTAT,
+        1,
+        p9_legacy_wstat_metadata_payload(7, u32::MAX, b"", b"", u32::MAX, u64::MAX),
+    );
 
     let completion = device.execute_at(10, wstat).unwrap();
 

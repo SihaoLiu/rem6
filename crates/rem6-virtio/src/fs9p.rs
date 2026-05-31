@@ -738,20 +738,38 @@ impl Virtio9pDevice {
     }
 
     fn handle_wstat(&self, request: &Virtio9pRequest) -> Result<Result<(), u32>, VirtioError> {
-        let fid = parse_wstat_request(request)?;
-        let Some(node) = self.fid_node(fid) else {
+        let wstat = parse_wstat_request(request)?;
+        let Some(node) = self.fid_node(wstat.fid) else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
-        if self
-            .namespace
-            .lock()
-            .expect("virtio 9p namespace lock")
-            .metadata(node)
-            .is_none()
+        if wstat.name.is_some() {
+            return Ok(Err(VIRTIO_9P_ENOTSUP));
+        }
+        let mut namespace = self.namespace.lock().expect("virtio 9p namespace lock");
+        if wstat
+            .length
+            .is_some_and(|size| namespace.resize_file(node, size).is_none())
         {
             return Ok(Err(VIRTIO_9P_EBADF));
         }
-        Ok(Err(VIRTIO_9P_ENOTSUP))
+        if namespace
+            .set_metadata_fields(
+                node,
+                wstat.mode,
+                wstat.uid,
+                wstat.gid,
+                wstat
+                    .atime_sec
+                    .map(|seconds| Virtio9pTimestamp::new(u64::from(seconds), 0)),
+                wstat
+                    .mtime_sec
+                    .map(|seconds| Virtio9pTimestamp::new(u64::from(seconds), 0)),
+            )
+            .is_some()
+        {
+            return Ok(Ok(()));
+        }
+        Ok(Err(VIRTIO_9P_EBADF))
     }
 
     fn handle_xattrwalk(
