@@ -3,9 +3,10 @@ use rem6_cpu::{CpuId, CpuResetState, RiscvClusterTopologyConfig, RiscvCoreTopolo
 use rem6_kernel::PartitionId;
 use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout};
 use rem6_platform::{
-    Platform, PlatformBuilder, PlatformPl011UartConfig, PlatformPl031RtcConfig, PlatformRtcConfig,
-    PlatformSp804TimerConfig, PlatformSp804TimerInterruptConfig, PlatformSp805WatchdogConfig,
-    PlatformSp805WatchdogInterruptConfig, PlatformTopologyRoute,
+    Platform, PlatformBuilder, PlatformCpuLocalTimerConfig, PlatformCpuLocalTimerCpuConfig,
+    PlatformCpuLocalTimerInterruptConfig, PlatformPl011UartConfig, PlatformPl031RtcConfig,
+    PlatformRtcConfig, PlatformSp804TimerConfig, PlatformSp804TimerInterruptConfig,
+    PlatformSp805WatchdogConfig, PlatformSp805WatchdogInterruptConfig, PlatformTopologyRoute,
 };
 use rem6_stats::StatsRegistry;
 use rem6_system::{
@@ -13,9 +14,11 @@ use rem6_system::{
     RiscvTopologySystem, SystemActionOutcome,
 };
 use rem6_timer::{
+    CpuLocalTimerBank, CpuLocalTimerBankSnapshot, CpuLocalTimerControl, CpuLocalTimerMmioDevice,
     Mc146818RtcMmioSnapshot, Pl031RtcMmioSnapshot, Pl031Snapshot, Pl031SnapshotFields, RtcDateTime,
     RtcEncoding, RtcSnapshot, Sp804DualTimer, Sp804DualTimerMmioDevice, Sp804DualTimerMmioSnapshot,
     Sp804TimerControl, Sp805Watchdog, Sp805WatchdogMmioDevice, Sp805WatchdogMmioSnapshot,
+    CPU_LOCAL_TIMER_CONTROL_OFFSET, CPU_LOCAL_TIMER_LOAD_OFFSET, CPU_LOCAL_TIMER_MMIO_SIZE_BYTES,
     RTC_CMOS_REGISTER_COUNT, SP804_BGLOAD_OFFSET, SP804_CONTROL_OFFSET, SP804_LOAD_OFFSET,
     SP805_CONTROL_OFFSET, SP805_LOAD_OFFSET,
 };
@@ -233,6 +236,36 @@ fn platform_with_sp805(topology: &Topology, base: Address) -> Platform {
         .unwrap()
 }
 
+fn platform_with_cpu_local_timer(topology: &Topology, base: Address) -> Platform {
+    let route = PlatformTopologyRoute::new(endpoint("cpu0", "mmio"), endpoint("rtc0", "mmio"))
+        .resolve(topology)
+        .unwrap();
+    PlatformBuilder::from_topology(topology)
+        .add_cpu_local_timer(PlatformCpuLocalTimerConfig {
+            base,
+            size: AccessSize::new(CPU_LOCAL_TIMER_MMIO_SIZE_BYTES).unwrap(),
+            routes: vec![route],
+            clock_tick: 2,
+            cpus: vec![PlatformCpuLocalTimerCpuConfig {
+                partition: PartitionId::new(0),
+                timer: PlatformCpuLocalTimerInterruptConfig {
+                    line: rem6_interrupt::InterruptLineId::new(60),
+                    target: rem6_interrupt::InterruptTargetId::new(0),
+                    source: rem6_interrupt::InterruptSourceId::new(80),
+                    latency: 2,
+                },
+                watchdog: PlatformCpuLocalTimerInterruptConfig {
+                    line: rem6_interrupt::InterruptLineId::new(61),
+                    target: rem6_interrupt::InterruptTargetId::new(0),
+                    source: rem6_interrupt::InterruptSourceId::new(81),
+                    latency: 2,
+                },
+            }],
+        })
+        .build()
+        .unwrap()
+}
+
 fn platform_with_pl011(topology: &Topology, base: Address) -> Platform {
     let route = PlatformTopologyRoute::new(endpoint("cpu0", "mmio"), endpoint("rtc0", "mmio"))
         .resolve(topology)
@@ -347,6 +380,31 @@ fn sp805_snapshot(base: Address) -> Sp805WatchdogMmioSnapshot {
         .unwrap()
         .unwrap();
     Sp805WatchdogMmioDevice::new(base, watchdog).snapshot()
+}
+
+fn cpu_local_timer_snapshot(base: Address) -> CpuLocalTimerBankSnapshot {
+    let mut bank = CpuLocalTimerBank::new(1, 2).unwrap();
+    let timer_control = CpuLocalTimerControl::new(0)
+        .with_interrupt_enabled(true)
+        .with_auto_reload(true)
+        .with_enabled(true);
+    bank.cpu_mut(0)
+        .unwrap()
+        .write_register(CPU_LOCAL_TIMER_LOAD_OFFSET, 3, 10)
+        .unwrap();
+    bank.cpu_mut(0)
+        .unwrap()
+        .write_register(CPU_LOCAL_TIMER_CONTROL_OFFSET, timer_control.bits(), 10)
+        .unwrap();
+    let timer_generation = bank.cpu(0).unwrap().snapshot().timer().generation();
+    bank.cpu_mut(0)
+        .unwrap()
+        .record_timer_zero(16, timer_generation)
+        .unwrap()
+        .unwrap();
+    CpuLocalTimerMmioDevice::new(base, bank, vec![PartitionId::new(0)])
+        .unwrap()
+        .snapshot()
 }
 
 fn pl011_snapshot() -> Pl011UartSnapshot {
@@ -764,6 +822,106 @@ fn topology_host_controller_checkpoints_attached_sp805() {
         }
     );
     assert_eq!(watchdog.snapshot(), captured);
+}
+
+#[test]
+fn topology_host_controller_checkpoints_attached_cpu_local_timer() {
+    let topology = topology_with_rtc();
+    let timer_base = Address::new(0x1c06_0000);
+    let platform = platform_with_cpu_local_timer(&topology, timer_base);
+    let source = GuestSourceId::new(57);
+    let system = RiscvTopologySystem::with_min_remote_delay(
+        topology,
+        RiscvClusterTopologyConfig::new([
+            core_config(0, 0, 7, 0x8000),
+            core_config(1, 1, 8, 0x9000),
+        ]),
+        2,
+    )
+    .unwrap()
+    .with_platform(platform)
+    .unwrap()
+    .with_host_controller(
+        RiscvTopologyHostConfig::new(PartitionId::new(4), 2, source),
+        StatsRegistry::new(),
+    )
+    .unwrap();
+    let host = system.host_controller().unwrap();
+    let component = CheckpointComponentId::new("cpu_local_timer.1c060000").unwrap();
+    let captured = cpu_local_timer_snapshot(timer_base);
+    let empty = CpuLocalTimerMmioDevice::new(
+        timer_base,
+        CpuLocalTimerBank::new(1, 2).unwrap(),
+        vec![PartitionId::new(0)],
+    )
+    .unwrap()
+    .snapshot();
+    let timer = system
+        .platform()
+        .unwrap()
+        .cpu_local_timer(timer_base)
+        .unwrap()
+        .clone();
+    timer.restore(&captured).unwrap();
+
+    let checkpoint = HostActionRecord::new(
+        37,
+        PartitionId::new(4),
+        PartitionId::new(4),
+        GuestEventId::new(208),
+        source,
+        HostAction::Checkpoint {
+            label: "attached-cpu-local-timer".to_string(),
+        },
+    );
+    let manifest = match host
+        .lock()
+        .unwrap()
+        .executor_mut()
+        .apply(&checkpoint)
+        .unwrap()
+    {
+        SystemActionOutcome::Checkpoint { manifest, .. } => manifest,
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+
+    assert!(manifest
+        .states()
+        .iter()
+        .any(|state| state.component() == &component));
+    assert!(host
+        .lock()
+        .unwrap()
+        .executor()
+        .checkpoints()
+        .chunk(&component, "cpu-local-timer")
+        .is_some());
+
+    timer.restore(&empty).unwrap();
+    assert_ne!(timer.snapshot(), captured);
+
+    let restore = HostActionRecord::new(
+        51,
+        PartitionId::new(4),
+        PartitionId::new(4),
+        GuestEventId::new(209),
+        source,
+        HostAction::RestoreCheckpoint {
+            manifest: manifest.clone(),
+        },
+    );
+    let restored = host.lock().unwrap().executor_mut().apply(&restore).unwrap();
+
+    assert_eq!(
+        restored,
+        SystemActionOutcome::CheckpointRestored {
+            tick: 51,
+            event: GuestEventId::new(209),
+            source,
+            manifest,
+        }
+    );
+    assert_eq!(timer.snapshot(), captured);
 }
 
 #[test]

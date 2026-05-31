@@ -1004,6 +1004,7 @@ pub enum SystemError {
     MissingCheckpointManifest { label: String },
     ExecutionModeCheckpoint(ExecutionModeCheckpointError),
     AcceleratorCheckpoint(AcceleratorCheckpointError),
+    CpuLocalTimerCheckpoint(CpuLocalTimerCheckpointError),
     MsiBankCheckpoint(MsiBankCheckpointError),
     FabricCheckpoint(FabricCheckpointError),
     GpuCheckpoint(GpuCheckpointError),
@@ -1041,6 +1042,7 @@ impl fmt::Display for SystemError {
             }
             Self::ExecutionModeCheckpoint(error) => write!(formatter, "{error}"),
             Self::AcceleratorCheckpoint(error) => write!(formatter, "{error}"),
+            Self::CpuLocalTimerCheckpoint(error) => write!(formatter, "{error}"),
             Self::MsiBankCheckpoint(error) => write!(formatter, "{error}"),
             Self::FabricCheckpoint(error) => write!(formatter, "{error}"),
             Self::GpuCheckpoint(error) => write!(formatter, "{error}"),
@@ -1075,6 +1077,7 @@ impl Error for SystemError {
             Self::MissingCheckpointManifest { .. } => None,
             Self::ExecutionModeCheckpoint(error) => Some(error),
             Self::AcceleratorCheckpoint(error) => Some(error),
+            Self::CpuLocalTimerCheckpoint(error) => Some(error),
             Self::MsiBankCheckpoint(error) => Some(error),
             Self::FabricCheckpoint(error) => Some(error),
             Self::GpuCheckpoint(error) => Some(error),

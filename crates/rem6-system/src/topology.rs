@@ -328,6 +328,11 @@ fn default_sp805_checkpoint_component(base: Address) -> CheckpointComponentId {
         .expect("formatted SP805 checkpoint component is nonempty")
 }
 
+fn default_cpu_local_timer_checkpoint_component(base: Address) -> CheckpointComponentId {
+    CheckpointComponentId::new(format!("cpu_local_timer.{:x}", base.get()))
+        .expect("formatted CPU local timer checkpoint component is nonempty")
+}
+
 fn default_pl011_uart_checkpoint_component(base: Address) -> CheckpointComponentId {
     CheckpointComponentId::new(format!("pl011.{:x}", base.get()))
         .expect("formatted PL011 checkpoint component is nonempty")

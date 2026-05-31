@@ -2,25 +2,26 @@ use std::sync::Arc;
 
 use crate::{
     AcceleratorCheckpointBank, AcceleratorCheckpointPort, ClintCheckpointBank, ClintCheckpointPort,
-    DramMemoryCheckpointBank, DramMemoryCheckpointPort, FabricCheckpointBank, FabricCheckpointPort,
-    GpuCheckpointBank, GpuCheckpointPort, InterruptControllerCheckpointBank,
-    InterruptControllerCheckpointPort, MemoryStoreCheckpointBank, MemoryStoreCheckpointPort,
-    Pl011UartCheckpointBank, Pl011UartCheckpointPort, Pl031CheckpointBank, Pl031CheckpointPort,
-    PlicCheckpointBank, PlicCheckpointPort, RiscvCoreCheckpointBank, RiscvCoreCheckpointPort,
-    RtcCheckpointBank, RtcCheckpointPort, SchedulerCheckpointBank, SchedulerCheckpointPort,
-    Sp804CheckpointBank, Sp804CheckpointPort, Sp805CheckpointBank, Sp805CheckpointPort,
-    SystemError, TimerCheckpointBank, TimerCheckpointPort, UartCheckpointBank, UartCheckpointPort,
+    CpuLocalTimerCheckpointBank, CpuLocalTimerCheckpointPort, DramMemoryCheckpointBank,
+    DramMemoryCheckpointPort, FabricCheckpointBank, FabricCheckpointPort, GpuCheckpointBank,
+    GpuCheckpointPort, InterruptControllerCheckpointBank, InterruptControllerCheckpointPort,
+    MemoryStoreCheckpointBank, MemoryStoreCheckpointPort, Pl011UartCheckpointBank,
+    Pl011UartCheckpointPort, Pl031CheckpointBank, Pl031CheckpointPort, PlicCheckpointBank,
+    PlicCheckpointPort, RiscvCoreCheckpointBank, RiscvCoreCheckpointPort, RtcCheckpointBank,
+    RtcCheckpointPort, SchedulerCheckpointBank, SchedulerCheckpointPort, Sp804CheckpointBank,
+    Sp804CheckpointPort, Sp805CheckpointBank, Sp805CheckpointPort, SystemError,
+    TimerCheckpointBank, TimerCheckpointPort, UartCheckpointBank, UartCheckpointPort,
 };
 
 use super::{
     default_accelerator_checkpoint_component, default_clint_checkpoint_component,
-    default_gpu_checkpoint_component, default_interrupt_checkpoint_component,
-    default_pl011_uart_checkpoint_component, default_pl031_checkpoint_component,
-    default_plic_checkpoint_component, default_riscv_checkpoint_component,
-    default_rtc_checkpoint_component, default_sp804_checkpoint_component,
-    default_sp805_checkpoint_component, default_timer_checkpoint_component,
-    default_uart_checkpoint_component, RiscvTopologyMemoryBackend, RiscvTopologySystem,
-    RiscvTopologySystemError,
+    default_cpu_local_timer_checkpoint_component, default_gpu_checkpoint_component,
+    default_interrupt_checkpoint_component, default_pl011_uart_checkpoint_component,
+    default_pl031_checkpoint_component, default_plic_checkpoint_component,
+    default_riscv_checkpoint_component, default_rtc_checkpoint_component,
+    default_sp804_checkpoint_component, default_sp805_checkpoint_component,
+    default_timer_checkpoint_component, default_uart_checkpoint_component,
+    RiscvTopologyMemoryBackend, RiscvTopologySystem, RiscvTopologySystemError,
 };
 
 impl RiscvTopologySystem {
@@ -311,6 +312,25 @@ impl RiscvTopologySystem {
                 .expect("topology host controller lock")
                 .executor_mut()
                 .attach_sp805_checkpoint_bank(sp805_bank)
+                .map_err(SystemError::Checkpoint)
+                .map_err(RiscvTopologySystemError::System)?;
+        }
+
+        let cpu_local_timer_bank =
+            CpuLocalTimerCheckpointBank::new(platform.cpu_local_timers().map(|(base, device)| {
+                CpuLocalTimerCheckpointPort::new(
+                    default_cpu_local_timer_checkpoint_component(base),
+                    device.clone(),
+                )
+            }))
+            .map_err(SystemError::Checkpoint)
+            .map_err(RiscvTopologySystemError::System)?;
+        if cpu_local_timer_bank.component_count() != 0 {
+            host.controller
+                .lock()
+                .expect("topology host controller lock")
+                .executor_mut()
+                .attach_cpu_local_timer_checkpoint_bank(cpu_local_timer_bank)
                 .map_err(SystemError::Checkpoint)
                 .map_err(RiscvTopologySystemError::System)?;
         }

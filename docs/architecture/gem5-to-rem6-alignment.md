@@ -1105,7 +1105,10 @@ Implementation evidence through 2026-05-30:
   direct zero-delay event scheduling shape. `rem6-system` also has a dedicated
   CPU local timer checkpoint bank that preserves each CPU's timer and watchdog
   snapshot through decode-first restore validation without partially mutating
-  target devices.
+  target devices. Platform-owned CPU local timers are now attached to topology
+  host checkpoints automatically, so full-system checkpoint capture preserves
+  CPU-local timer/watchdog state without script-side object discovery or
+  object-local serialization hooks.
 - `rem6-platform` can now declare ARM CPU local timer MMIO regions with explicit
   CPU partition records, timer interrupt routes, and watchdog interrupt routes.
   The builder validates each CPU partition, constructs the typed timer bank,
@@ -2913,7 +2916,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   attachment with retained device lookup, per-CPU MMIO route coverage
   validation, source-partition-local bus views, and per-CPU timer/watchdog
   interrupt routes, plus checkpoint bank decode-first restore without partial
-  mutation and CPU-count validation. SP805 tests cover watchdog countdown, zero-load minimum-clock
+  mutation, CPU-count validation, host checkpoint-action capture/restore
+  through manifests, and automatic topology host checkpoint attachment. SP805
+  tests cover watchdog countdown, zero-load minimum-clock
   scheduling, lock behavior, raw and masked interrupt state, reset-assertion
   records, serial interrupt assert and clear delivery, parallel MMIO response
   paths, PrimeCell ID reads, typed width errors, typed unknown-register errors,

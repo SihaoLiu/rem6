@@ -9,15 +9,16 @@ use rem6_kernel::Tick;
 use rem6_stats::{StatDumpRecord, StatsRegistry, StatsResetRecord};
 
 use crate::{
-    AcceleratorCheckpointBank, ClintCheckpointBank, DramMemoryCheckpointBank, ExecutionMode,
-    ExecutionModeTarget, FabricCheckpointBank, GpuCheckpointBank, GuestEventDelivery, GuestEventId,
-    GuestHostCallResponse, GuestSourceId, HostAction, HostActionRecord, HostEventPolicy,
-    IdeControllerCheckpointBank, IdeControllerCheckpointPort, InterruptControllerCheckpointBank,
-    MemoryStoreCheckpointBank, MsiBankCheckpointBank, PciHostCheckpointBank,
-    Pl011UartCheckpointBank, Pl031CheckpointBank, PlicCheckpointBank, RiscvCoreCheckpointBank,
-    RtcCheckpointBank, SchedulerCheckpointBank, Sp804CheckpointBank, Sp805CheckpointBank,
-    StopRequest, StorageImageCheckpointBank, StorageImageCheckpointPort, SystemError,
-    TimerCheckpointBank, UartCheckpointBank, VirtioSplitQueueCheckpointBank,
+    AcceleratorCheckpointBank, ClintCheckpointBank, CpuLocalTimerCheckpointBank,
+    DramMemoryCheckpointBank, ExecutionMode, ExecutionModeTarget, FabricCheckpointBank,
+    GpuCheckpointBank, GuestEventDelivery, GuestEventId, GuestHostCallResponse, GuestSourceId,
+    HostAction, HostActionRecord, HostEventPolicy, IdeControllerCheckpointBank,
+    IdeControllerCheckpointPort, InterruptControllerCheckpointBank, MemoryStoreCheckpointBank,
+    MsiBankCheckpointBank, PciHostCheckpointBank, Pl011UartCheckpointBank, Pl031CheckpointBank,
+    PlicCheckpointBank, RiscvCoreCheckpointBank, RtcCheckpointBank, SchedulerCheckpointBank,
+    Sp804CheckpointBank, Sp805CheckpointBank, StopRequest, StorageImageCheckpointBank,
+    StorageImageCheckpointPort, SystemError, TimerCheckpointBank, UartCheckpointBank,
+    VirtioSplitQueueCheckpointBank,
 };
 
 const EXECUTION_MODE_CHECKPOINT_COMPONENT: &str = "host.execution_modes";
@@ -147,6 +148,7 @@ pub struct SystemActionExecutor {
     pl031_checkpoints: Option<Pl031CheckpointBank>,
     sp804_checkpoints: Option<Sp804CheckpointBank>,
     sp805_checkpoints: Option<Sp805CheckpointBank>,
+    cpu_local_timer_checkpoints: Option<CpuLocalTimerCheckpointBank>,
     rtc_checkpoints: Option<RtcCheckpointBank>,
     pci_host_checkpoints: Option<PciHostCheckpointBank>,
     virtio_split_queue_checkpoints: Option<VirtioSplitQueueCheckpointBank>,
@@ -184,6 +186,7 @@ impl SystemActionExecutor {
             pl031_checkpoints: None,
             sp804_checkpoints: None,
             sp805_checkpoints: None,
+            cpu_local_timer_checkpoints: None,
             rtc_checkpoints: None,
             pci_host_checkpoints: None,
             virtio_split_queue_checkpoints: None,
@@ -221,6 +224,7 @@ impl SystemActionExecutor {
             pl031_checkpoints: None,
             sp804_checkpoints: None,
             sp805_checkpoints: None,
+            cpu_local_timer_checkpoints: None,
             rtc_checkpoints: None,
             pci_host_checkpoints: None,
             virtio_split_queue_checkpoints: None,
@@ -258,6 +262,7 @@ impl SystemActionExecutor {
             pl031_checkpoints: None,
             sp804_checkpoints: None,
             sp805_checkpoints: None,
+            cpu_local_timer_checkpoints: None,
             rtc_checkpoints: None,
             pci_host_checkpoints: None,
             virtio_split_queue_checkpoints: None,
@@ -295,6 +300,7 @@ impl SystemActionExecutor {
             pl031_checkpoints: None,
             sp804_checkpoints: None,
             sp805_checkpoints: None,
+            cpu_local_timer_checkpoints: None,
             rtc_checkpoints: None,
             pci_host_checkpoints: None,
             virtio_split_queue_checkpoints: None,
@@ -332,6 +338,7 @@ impl SystemActionExecutor {
             pl031_checkpoints: None,
             sp804_checkpoints: None,
             sp805_checkpoints: None,
+            cpu_local_timer_checkpoints: None,
             rtc_checkpoints: None,
             pci_host_checkpoints: None,
             virtio_split_queue_checkpoints: None,
@@ -369,6 +376,7 @@ impl SystemActionExecutor {
             pl031_checkpoints: None,
             sp804_checkpoints: None,
             sp805_checkpoints: None,
+            cpu_local_timer_checkpoints: None,
             rtc_checkpoints: None,
             pci_host_checkpoints: None,
             virtio_split_queue_checkpoints: None,
@@ -416,6 +424,7 @@ impl SystemActionExecutor {
             pl031_checkpoints: None,
             sp804_checkpoints: None,
             sp805_checkpoints: None,
+            cpu_local_timer_checkpoints: None,
             rtc_checkpoints: None,
             pci_host_checkpoints: Some(pci_host_checkpoints),
             virtio_split_queue_checkpoints: None,
@@ -454,6 +463,7 @@ impl SystemActionExecutor {
             pl031_checkpoints: None,
             sp804_checkpoints: None,
             sp805_checkpoints: None,
+            cpu_local_timer_checkpoints: None,
             rtc_checkpoints: None,
             pci_host_checkpoints: None,
             virtio_split_queue_checkpoints: None,
@@ -492,6 +502,7 @@ impl SystemActionExecutor {
             pl031_checkpoints: None,
             sp804_checkpoints: None,
             sp805_checkpoints: None,
+            cpu_local_timer_checkpoints: None,
             rtc_checkpoints: None,
             pci_host_checkpoints: None,
             virtio_split_queue_checkpoints: None,
@@ -792,6 +803,15 @@ impl SystemActionExecutor {
         Ok(())
     }
 
+    pub fn attach_cpu_local_timer_checkpoint_bank(
+        &mut self,
+        cpu_local_timer_checkpoints: CpuLocalTimerCheckpointBank,
+    ) -> Result<(), CheckpointError> {
+        cpu_local_timer_checkpoints.register_all(&mut self.checkpoints)?;
+        self.cpu_local_timer_checkpoints = Some(cpu_local_timer_checkpoints);
+        Ok(())
+    }
+
     pub fn attach_rtc_checkpoint_bank(
         &mut self,
         rtc_checkpoints: RtcCheckpointBank,
@@ -904,6 +924,10 @@ impl SystemActionExecutor {
 
     pub const fn sp805_checkpoint_bank(&self) -> Option<&Sp805CheckpointBank> {
         self.sp805_checkpoints.as_ref()
+    }
+
+    pub const fn cpu_local_timer_checkpoint_bank(&self) -> Option<&CpuLocalTimerCheckpointBank> {
+        self.cpu_local_timer_checkpoints.as_ref()
     }
 
     pub const fn rtc_checkpoint_bank(&self) -> Option<&RtcCheckpointBank> {
@@ -1044,6 +1068,11 @@ impl SystemActionExecutor {
                 .validate_restore_from(checkpoints)
                 .map_err(SystemError::Sp805Checkpoint)?;
         }
+        if let Some(cpu_local_timer_checkpoints) = &self.cpu_local_timer_checkpoints {
+            cpu_local_timer_checkpoints
+                .validate_restore_from(checkpoints)
+                .map_err(SystemError::CpuLocalTimerCheckpoint)?;
+        }
         if let Some(rtc_checkpoints) = &self.rtc_checkpoints {
             rtc_checkpoints
                 .validate_restore_from(checkpoints)
@@ -1157,6 +1186,11 @@ impl SystemActionExecutor {
             sp805_checkpoints
                 .restore_all_from(&self.checkpoints)
                 .map_err(SystemError::Sp805Checkpoint)?;
+        }
+        if let Some(cpu_local_timer_checkpoints) = &self.cpu_local_timer_checkpoints {
+            cpu_local_timer_checkpoints
+                .restore_all_from(&self.checkpoints)
+                .map_err(SystemError::CpuLocalTimerCheckpoint)?;
         }
         if let Some(rtc_checkpoints) = &self.rtc_checkpoints {
             rtc_checkpoints
@@ -1321,6 +1355,11 @@ impl SystemActionExecutor {
                 }
                 if let Some(sp805_checkpoints) = &self.sp805_checkpoints {
                     sp805_checkpoints
+                        .capture_all_into(&mut staged_checkpoints)
+                        .map_err(SystemError::Checkpoint)?;
+                }
+                if let Some(cpu_local_timer_checkpoints) = &self.cpu_local_timer_checkpoints {
+                    cpu_local_timer_checkpoints
                         .capture_all_into(&mut staged_checkpoints)
                         .map_err(SystemError::Checkpoint)?;
                 }
