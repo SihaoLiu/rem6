@@ -165,16 +165,23 @@ pub(crate) fn parse_setattr_request(
     let mut reader = Virtio9pPayloadReader::new(request.message_type(), request.payload());
     let fid = reader.read_u32()?;
     let valid = reader.read_u32()?;
-    let _mode = reader.read_u32()?;
-    let _uid = reader.read_u32()?;
-    let _gid = reader.read_u32()?;
+    let mode = reader.read_u32()?;
+    let uid = reader.read_u32()?;
+    let gid = reader.read_u32()?;
     let size = reader.read_u64()?;
     let _atime_sec = reader.read_u64()?;
     let _atime_nsec = reader.read_u64()?;
     let _mtime_sec = reader.read_u64()?;
     let _mtime_nsec = reader.read_u64()?;
     reader.finish()?;
-    Ok(Virtio9pSetattrRequest { fid, valid, size })
+    Ok(Virtio9pSetattrRequest {
+        fid,
+        valid,
+        mode,
+        uid,
+        gid,
+        size,
+    })
 }
 
 pub(crate) fn parse_readdir_request(
@@ -425,6 +432,9 @@ pub(crate) struct Virtio9pGetattrRequest {
 pub(crate) struct Virtio9pSetattrRequest {
     pub(crate) fid: u32,
     pub(crate) valid: u32,
+    pub(crate) mode: u32,
+    pub(crate) uid: u32,
+    pub(crate) gid: u32,
     pub(crate) size: u64,
 }
 

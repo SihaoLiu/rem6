@@ -85,6 +85,8 @@ pub const VIRTIO_9P_DTREG: u8 = 8;
 pub const VIRTIO_9P_DTSYMLINK: u8 = 10;
 pub const VIRTIO_9P_GETATTR_BASIC: u64 = 0x0000_07ff;
 pub const VIRTIO_9P_SETATTR_MODE: u32 = 0x0000_0001;
+pub const VIRTIO_9P_SETATTR_UID: u32 = 0x0000_0002;
+pub const VIRTIO_9P_SETATTR_GID: u32 = 0x0000_0004;
 pub const VIRTIO_9P_SETATTR_SIZE: u32 = 0x0000_0008;
 pub const VIRTIO_9P_STATFS_TYPE: u32 = 0x0102_1997;
 pub const VIRTIO_9P_STATFS_BLOCK_SIZE: u32 = 4096;
@@ -557,23 +559,31 @@ impl Virtio9pDevice {
         else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
-        if setattr.valid & !VIRTIO_9P_SETATTR_SIZE != 0 {
+        let supported = VIRTIO_9P_SETATTR_MODE
+            | VIRTIO_9P_SETATTR_UID
+            | VIRTIO_9P_SETATTR_GID
+            | VIRTIO_9P_SETATTR_SIZE;
+        if setattr.valid & !supported != 0 {
             return Ok(Err(VIRTIO_9P_ENOTSUP));
         }
-        if setattr.valid & VIRTIO_9P_SETATTR_SIZE == 0 {
-            let namespace = self.namespace.lock().expect("virtio 9p namespace lock");
-            return if namespace.metadata(fid.node()).is_some() {
-                Ok(Ok(()))
-            } else {
-                Ok(Err(VIRTIO_9P_EBADF))
-            };
-        }
         let mut namespace = self.namespace.lock().expect("virtio 9p namespace lock");
-        if namespace.resize_file(fid.node(), setattr.size).is_some() {
-            Ok(Ok(()))
-        } else {
-            Ok(Err(VIRTIO_9P_EBADF))
+        if setattr.valid & VIRTIO_9P_SETATTR_SIZE != 0
+            && namespace.resize_file(fid.node(), setattr.size).is_none()
+        {
+            return Ok(Err(VIRTIO_9P_EBADF));
         }
+        if namespace
+            .set_metadata_fields(
+                fid.node(),
+                (setattr.valid & VIRTIO_9P_SETATTR_MODE != 0).then_some(setattr.mode),
+                (setattr.valid & VIRTIO_9P_SETATTR_UID != 0).then_some(setattr.uid),
+                (setattr.valid & VIRTIO_9P_SETATTR_GID != 0).then_some(setattr.gid),
+            )
+            .is_some()
+        {
+            return Ok(Ok(()));
+        }
+        Ok(Err(VIRTIO_9P_EBADF))
     }
 
     fn handle_readdir(

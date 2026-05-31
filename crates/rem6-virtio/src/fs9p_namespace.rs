@@ -51,8 +51,8 @@ pub(crate) fn getattr_payload(metadata: Virtio9pNodeMetadata, request_mask: u64)
     payload.extend((request_mask & VIRTIO_9P_GETATTR_BASIC).to_le_bytes());
     payload.extend(metadata.qid.to_le_bytes());
     payload.extend(metadata.mode.to_le_bytes());
-    payload.extend(0_u32.to_le_bytes());
-    payload.extend(0_u32.to_le_bytes());
+    payload.extend(metadata.uid.to_le_bytes());
+    payload.extend(metadata.gid.to_le_bytes());
     payload.extend(metadata.nlink.to_le_bytes());
     payload.extend(metadata.rdev.to_le_bytes());
     payload.extend(metadata.size.to_le_bytes());
@@ -94,6 +94,7 @@ pub(crate) enum Virtio9pNodeId {
 pub(crate) struct Virtio9pNamespace {
     entries: BTreeMap<String, Virtio9pNode>,
     next_path: u64,
+    root_attrs: Virtio9pNodeAttrs,
 }
 
 impl Virtio9pNamespace {
@@ -101,6 +102,7 @@ impl Virtio9pNamespace {
         Self {
             entries: BTreeMap::new(),
             next_path: 2,
+            root_attrs: Virtio9pNodeAttrs::new(0o040755),
         }
     }
 
@@ -116,6 +118,7 @@ impl Virtio9pNamespace {
             Virtio9pNode::File(Virtio9pFileNode {
                 qid_path: path,
                 data,
+                attrs: Virtio9pNodeAttrs::new(0o100644),
             }),
         );
         Ok(())
@@ -142,6 +145,7 @@ impl Virtio9pNamespace {
             Virtio9pNode::File(Virtio9pFileNode {
                 qid_path: path,
                 data: Vec::new(),
+                attrs: Virtio9pNodeAttrs::new(0o100644),
             }),
         );
         Ok(Ok(Virtio9pNodeId::File(path)))
@@ -168,6 +172,7 @@ impl Virtio9pNamespace {
             Virtio9pNode::Directory(Virtio9pDirectoryNode {
                 qid_path: path,
                 entries: BTreeMap::new(),
+                attrs: Virtio9pNodeAttrs::new(0o040755),
             }),
         );
         Ok(Ok(Virtio9pNodeId::Directory(path)))
@@ -195,6 +200,7 @@ impl Virtio9pNamespace {
             Virtio9pNode::Symlink(Virtio9pSymlinkNode {
                 qid_path: path,
                 target,
+                attrs: Virtio9pNodeAttrs::new(0o120777),
             }),
         );
         Ok(Ok(Virtio9pNodeId::Symlink(path)))
@@ -223,9 +229,9 @@ impl Virtio9pNamespace {
             name,
             Virtio9pNode::Special(Virtio9pSpecialNode {
                 qid_path: path,
-                mode,
                 rdev: linux_device_number(major, minor),
                 dtype: special_dtype(mode),
+                attrs: Virtio9pNodeAttrs::new(mode),
             }),
         );
         Ok(Ok(Virtio9pNodeId::Special(path)))
@@ -336,7 +342,9 @@ impl Virtio9pNamespace {
         match node {
             Virtio9pNodeId::Root => Some(Virtio9pNodeMetadata {
                 qid: self.root_qid(),
-                mode: 0o040755,
+                mode: self.root_attrs.mode,
+                uid: self.root_attrs.uid,
+                gid: self.root_attrs.gid,
                 nlink: 2 + self.entries.len() as u64,
                 rdev: 0,
                 size: 0,
@@ -347,7 +355,9 @@ impl Virtio9pNamespace {
                 let size = file.data.len() as u64;
                 Some(Virtio9pNodeMetadata {
                     qid: Virtio9pQid::new(VIRTIO_9P_QTFILE, path),
-                    mode: 0o100644,
+                    mode: file.attrs.mode,
+                    uid: file.attrs.uid,
+                    gid: file.attrs.gid,
                     nlink: 1,
                     rdev: 0,
                     size,
@@ -355,11 +365,13 @@ impl Virtio9pNamespace {
                 })
             }
             Virtio9pNodeId::Directory(path) => {
-                let entries = self.directory_entries(node)?;
+                let directory = find_directory(&self.entries, path)?;
                 Some(Virtio9pNodeMetadata {
                     qid: Virtio9pQid::new(VIRTIO_9P_QTDIR, path),
-                    mode: 0o040755,
-                    nlink: 2 + entries.len() as u64,
+                    mode: directory.attrs.mode,
+                    uid: directory.attrs.uid,
+                    gid: directory.attrs.gid,
+                    nlink: 2 + directory.entries.len() as u64,
                     rdev: 0,
                     size: 0,
                     blocks: 0,
@@ -370,7 +382,9 @@ impl Virtio9pNamespace {
                 let size = symlink.target.len() as u64;
                 Some(Virtio9pNodeMetadata {
                     qid: Virtio9pQid::new(VIRTIO_9P_QTSYMLINK, path),
-                    mode: 0o120777,
+                    mode: symlink.attrs.mode,
+                    uid: symlink.attrs.uid,
+                    gid: symlink.attrs.gid,
                     nlink: 1,
                     rdev: 0,
                     size,
@@ -381,7 +395,9 @@ impl Virtio9pNamespace {
                 let special = find_special(&self.entries, path)?;
                 Some(Virtio9pNodeMetadata {
                     qid: Virtio9pQid::new(VIRTIO_9P_QTFILE, path),
-                    mode: special.mode,
+                    mode: special.attrs.mode,
+                    uid: special.attrs.uid,
+                    gid: special.attrs.gid,
                     nlink: 1,
                     rdev: special.rdev,
                     size: 0,
@@ -510,6 +526,26 @@ impl Virtio9pNamespace {
         Some(())
     }
 
+    pub(crate) fn set_metadata_fields(
+        &mut self,
+        node: Virtio9pNodeId,
+        mode: Option<u32>,
+        uid: Option<u32>,
+        gid: Option<u32>,
+    ) -> Option<()> {
+        let attrs = self.node_attrs_mut(node)?;
+        if let Some(mode) = mode {
+            attrs.mode = mode;
+        }
+        if let Some(uid) = uid {
+            attrs.uid = uid;
+        }
+        if let Some(gid) = gid {
+            attrs.gid = gid;
+        }
+        Some(())
+    }
+
     fn directory_entries(&self, node: Virtio9pNodeId) -> Option<&BTreeMap<String, Virtio9pNode>> {
         match node {
             Virtio9pNodeId::Root => Some(&self.entries),
@@ -533,6 +569,24 @@ impl Virtio9pNamespace {
             }
             Virtio9pNodeId::File(_) | Virtio9pNodeId::Symlink(_) | Virtio9pNodeId::Special(_) => {
                 None
+            }
+        }
+    }
+
+    fn node_attrs_mut(&mut self, node: Virtio9pNodeId) -> Option<&mut Virtio9pNodeAttrs> {
+        match node {
+            Virtio9pNodeId::Root => Some(&mut self.root_attrs),
+            Virtio9pNodeId::File(path) => {
+                find_file_mut(&mut self.entries, path).map(|file| &mut file.attrs)
+            }
+            Virtio9pNodeId::Directory(path) => {
+                find_directory_mut(&mut self.entries, path).map(|directory| &mut directory.attrs)
+            }
+            Virtio9pNodeId::Symlink(path) => {
+                find_symlink_mut(&mut self.entries, path).map(|symlink| &mut symlink.attrs)
+            }
+            Virtio9pNodeId::Special(path) => {
+                find_special_mut(&mut self.entries, path).map(|special| &mut special.attrs)
             }
         }
     }
@@ -608,6 +662,24 @@ fn find_symlink(
     None
 }
 
+fn find_symlink_mut(
+    entries: &mut BTreeMap<String, Virtio9pNode>,
+    path: u64,
+) -> Option<&mut Virtio9pSymlinkNode> {
+    for node in entries.values_mut() {
+        match node {
+            Virtio9pNode::Symlink(symlink) if symlink.qid_path == path => return Some(symlink),
+            Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_) => {}
+            Virtio9pNode::Directory(directory) => {
+                if let Some(symlink) = find_symlink_mut(&mut directory.entries, path) {
+                    return Some(symlink);
+                }
+            }
+        }
+    }
+    None
+}
+
 fn find_special(
     entries: &BTreeMap<String, Virtio9pNode>,
     path: u64,
@@ -618,6 +690,24 @@ fn find_special(
             Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_) => {}
             Virtio9pNode::Directory(directory) => {
                 if let Some(special) = find_special(&directory.entries, path) {
+                    return Some(special);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn find_special_mut(
+    entries: &mut BTreeMap<String, Virtio9pNode>,
+    path: u64,
+) -> Option<&mut Virtio9pSpecialNode> {
+    for node in entries.values_mut() {
+        match node {
+            Virtio9pNode::Special(special) if special.qid_path == path => return Some(special),
+            Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_) => {}
+            Virtio9pNode::Directory(directory) => {
+                if let Some(special) = find_special_mut(&mut directory.entries, path) {
                     return Some(special);
                 }
             }
@@ -709,26 +799,29 @@ const fn special_dtype(mode: u32) -> u8 {
 struct Virtio9pFileNode {
     qid_path: u64,
     data: Vec<u8>,
+    attrs: Virtio9pNodeAttrs,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Virtio9pDirectoryNode {
     qid_path: u64,
     entries: BTreeMap<String, Virtio9pNode>,
+    attrs: Virtio9pNodeAttrs,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Virtio9pSymlinkNode {
     qid_path: u64,
     target: String,
+    attrs: Virtio9pNodeAttrs,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Virtio9pSpecialNode {
     qid_path: u64,
-    mode: u32,
     rdev: u64,
     dtype: u8,
+    attrs: Virtio9pNodeAttrs,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -769,6 +862,23 @@ impl Virtio9pNode {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Virtio9pNodeAttrs {
+    mode: u32,
+    uid: u32,
+    gid: u32,
+}
+
+impl Virtio9pNodeAttrs {
+    const fn new(mode: u32) -> Self {
+        Self {
+            mode,
+            uid: 0,
+            gid: 0,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct Virtio9pRenameOutcome {
     pub(crate) replaced: Option<Virtio9pNodeId>,
 }
@@ -777,6 +887,8 @@ pub(crate) struct Virtio9pRenameOutcome {
 pub(crate) struct Virtio9pNodeMetadata {
     qid: Virtio9pQid,
     mode: u32,
+    uid: u32,
+    gid: u32,
     nlink: u64,
     rdev: u64,
     size: u64,
