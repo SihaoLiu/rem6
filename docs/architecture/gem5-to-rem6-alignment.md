@@ -1262,14 +1262,16 @@ Implementation evidence through 2026-05-31:
   returns stable `.`/`..` plus sorted file, symlink, or directory dirents with
   resumable byte offsets and count-bounded whole-entry replies, `Tsymlink`
   creates deterministic symlink qids, `Treadlink` returns counted symlink
-  targets, `Tread` returns counted byte ranges, `Twrite` mutates and extends
-  byte ranges, `Trenameat` renames root files while preserving the moved file
-  qid and open fid access, replacing same-directory target files with explicit
-  target-fid invalidation, `Tunlinkat` removes named root or child-directory
-  files and invalidates fids pointing at the removed node, `Tremove` removes
-  file fids plus their namespace entries, `Tclunk` drops fid state, `Tflush`
-  acknowledges old tags without mutating synchronous fid or namespace state,
-  and `Tfsync` validates fids before acknowledging writeback intent. The 9P
+  targets, `Tsetattr` handles the size-valid path by truncating or extending
+  file data and exposing the new size through `Tgetattr`, `Tread` returns
+  counted byte ranges, `Twrite` mutates and extends byte ranges, `Trenameat`
+  renames root files while preserving the moved file qid and open fid access,
+  replacing same-directory target files with explicit target-fid invalidation,
+  `Tunlinkat` removes named root or child-directory files and invalidates fids
+  pointing at the removed node, `Tremove` removes file fids plus their namespace
+  entries, `Tclunk` drops fid state, `Tflush` acknowledges old tags without
+  mutating synchronous fid or namespace state, and `Tfsync` validates fids
+  before acknowledging writeback intent. The 9P
   device entry point delegates
   namespace tree state, qid encoding, readdir payload assembly, and fid-open
   state to a focused namespace module, so protocol dispatch stays separate
@@ -1277,7 +1279,9 @@ Implementation evidence through 2026-05-31:
   fids, and deleted-fid access return `Rlerror` errno payloads instead of
   panicking or depending on an external proxy. This keeps the useful gem5 VirtIO
   framing model while avoiding gem5's 9P proxy state-loss warning path and
-  external 9P server dependency for deterministic tests.
+  external 9P server dependency for deterministic tests. Remaining `Tsetattr`
+  mode, uid, gid, and timestamp fields are rejected as unsupported namespace
+  metadata breadth rather than silently reported as modeled behavior.
   VirtIO RNG now exposes gem5's device id 4 and zero-length config
   surface, uses an explicit deterministic entropy source for reproducible
   tests and deterministic replay, decodes writable split descriptor chains into typed
@@ -3236,11 +3240,14 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   `Tremove` fid-backed file removal with deleted-fid read rejection,
   `Tsymlink` creation with symlink qids, symlink walk and sorted dirent
   exposure, `Treadlink` target replies, non-symlink and stale readlink
-  rejection, `Tclunk` fid removal, `Tflush` no-op acknowledgement without fid
-  mutation, `Tfsync` acknowledgement for existing fids, and stale metadata,
-  directory, create, fsync, write, remove, unlink, and read `Rlerror`
-  handling, source-policy coverage for keeping 9P protocol dispatch below the
-  focused-device line budget, modern PCI version-1 feature exposure for 9P,
+  rejection, `Tsetattr` size-valid file shrink and zero-filled growth with
+  metadata visibility, stale setattr rejection, directory size-mutation
+  rejection, unsupported setattr field rejection, `Tclunk` fid removal,
+  `Tflush` no-op acknowledgement without fid mutation, `Tfsync`
+  acknowledgement for existing fids, and stale metadata, directory, create,
+  fsync, write, remove, unlink, and read `Rlerror` handling, source-policy
+  coverage for keeping 9P protocol dispatch below the focused-device line
+  budget, modern PCI version-1 feature exposure for 9P,
   block, console, and RNG, legacy RNG device id and zero-config behavior,
   reproducible entropy generation, writable split descriptor-chain decoding,
   RNG used-ring writeback, guest-memory scatter writes, ISR queue interrupts,

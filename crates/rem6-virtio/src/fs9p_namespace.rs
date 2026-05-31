@@ -442,6 +442,16 @@ impl Virtio9pNamespace {
         u32::try_from(data.len()).ok()
     }
 
+    pub(crate) fn resize_file(&mut self, node: Virtio9pNodeId, size: u64) -> Option<()> {
+        let Virtio9pNodeId::File(path) = node else {
+            return None;
+        };
+        let file = find_file_mut(&mut self.entries, path)?;
+        let size = usize::try_from(size).ok()?;
+        file.data.resize(size, 0);
+        Some(())
+    }
+
     fn directory_entries(&self, node: Virtio9pNodeId) -> Option<&BTreeMap<String, Virtio9pNode>> {
         match node {
             Virtio9pNodeId::Root => Some(&self.entries),

@@ -33,6 +33,8 @@ pub const VIRTIO_9P_TREADLINK: u8 = 22;
 pub const VIRTIO_9P_RREADLINK: u8 = 23;
 pub const VIRTIO_9P_TGETATTR: u8 = 24;
 pub const VIRTIO_9P_RGETATTR: u8 = 25;
+pub const VIRTIO_9P_TSETATTR: u8 = 26;
+pub const VIRTIO_9P_RSETATTR: u8 = 27;
 pub const VIRTIO_9P_TREADDIR: u8 = 40;
 pub const VIRTIO_9P_RREADDIR: u8 = 41;
 pub const VIRTIO_9P_TFSYNC: u8 = 50;
@@ -70,6 +72,8 @@ pub const VIRTIO_9P_DTDIR: u8 = 4;
 pub const VIRTIO_9P_DTREG: u8 = 8;
 pub const VIRTIO_9P_DTSYMLINK: u8 = 10;
 pub const VIRTIO_9P_GETATTR_BASIC: u64 = 0x0000_07ff;
+pub const VIRTIO_9P_SETATTR_MODE: u32 = 0x0000_0001;
+pub const VIRTIO_9P_SETATTR_SIZE: u32 = 0x0000_0008;
 pub const VIRTIO_9P_STATFS_TYPE: u32 = 0x0102_1997;
 pub const VIRTIO_9P_STATFS_BLOCK_SIZE: u32 = 4096;
 pub const VIRTIO_9P_NAME_MAX: u32 = 255;
@@ -266,6 +270,10 @@ impl Virtio9pDevice {
             },
             VIRTIO_9P_TGETATTR => match self.handle_getattr(&request)? {
                 Ok(payload) => (VIRTIO_9P_RGETATTR, payload),
+                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
+            },
+            VIRTIO_9P_TSETATTR => match self.handle_setattr(&request)? {
+                Ok(()) => (VIRTIO_9P_RSETATTR, Vec::new()),
                 Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
             },
             VIRTIO_9P_TREADDIR => match self.handle_readdir(&request)? {
@@ -496,6 +504,36 @@ impl Virtio9pDevice {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
         Ok(Ok(getattr_payload(metadata, getattr.request_mask)))
+    }
+
+    fn handle_setattr(&self, request: &Virtio9pRequest) -> Result<Result<(), u32>, VirtioError> {
+        let setattr = parse_setattr_request(request)?;
+        let Some(fid) = self
+            .fids
+            .lock()
+            .expect("virtio 9p fid lock")
+            .get(&setattr.fid)
+            .copied()
+        else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        if setattr.valid & !VIRTIO_9P_SETATTR_SIZE != 0 {
+            return Ok(Err(VIRTIO_9P_ENOTSUP));
+        }
+        if setattr.valid & VIRTIO_9P_SETATTR_SIZE == 0 {
+            let namespace = self.namespace.lock().expect("virtio 9p namespace lock");
+            return if namespace.metadata(fid.node()).is_some() {
+                Ok(Ok(()))
+            } else {
+                Ok(Err(VIRTIO_9P_EBADF))
+            };
+        }
+        let mut namespace = self.namespace.lock().expect("virtio 9p namespace lock");
+        if namespace.resize_file(fid.node(), setattr.size).is_some() {
+            Ok(Ok(()))
+        } else {
+            Ok(Err(VIRTIO_9P_EBADF))
+        }
     }
 
     fn handle_readdir(
@@ -872,6 +910,22 @@ fn parse_getattr_request(request: &Virtio9pRequest) -> Result<Virtio9pGetattrReq
     Ok(Virtio9pGetattrRequest { fid, request_mask })
 }
 
+fn parse_setattr_request(request: &Virtio9pRequest) -> Result<Virtio9pSetattrRequest, VirtioError> {
+    let mut reader = Virtio9pPayloadReader::new(request.message_type(), request.payload());
+    let fid = reader.read_u32()?;
+    let valid = reader.read_u32()?;
+    let _mode = reader.read_u32()?;
+    let _uid = reader.read_u32()?;
+    let _gid = reader.read_u32()?;
+    let size = reader.read_u64()?;
+    let _atime_sec = reader.read_u64()?;
+    let _atime_nsec = reader.read_u64()?;
+    let _mtime_sec = reader.read_u64()?;
+    let _mtime_nsec = reader.read_u64()?;
+    reader.finish()?;
+    Ok(Virtio9pSetattrRequest { fid, valid, size })
+}
+
 fn parse_readdir_request(request: &Virtio9pRequest) -> Result<Virtio9pReaddirRequest, VirtioError> {
     let mut reader = Virtio9pPayloadReader::new(request.message_type(), request.payload());
     let fid = reader.read_u32()?;
@@ -1097,6 +1151,13 @@ struct Virtio9pMkdirRequest {
 struct Virtio9pGetattrRequest {
     fid: u32,
     request_mask: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Virtio9pSetattrRequest {
+    fid: u32,
+    valid: u32,
+    size: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
