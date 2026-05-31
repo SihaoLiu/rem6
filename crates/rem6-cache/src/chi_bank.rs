@@ -762,6 +762,9 @@ impl ChiCacheBank {
             if request.operation() == MemoryOperation::Write {
                 return self.accept_uncacheable_write_request(request);
             }
+            if self.write_queue_pending_conflict(line, false).is_some() {
+                return Err(ChiCacheBankError::WriteQueueConflict { line });
+            }
             return self.accept_uncacheable_request(request);
         }
 
@@ -965,6 +968,7 @@ impl ChiCacheBank {
         tick: u64,
     ) -> Result<Option<CacheWriteQueueIssue>, ChiCacheBankError> {
         let issue = self.write_queue_mut()?.issue_next(tick)?;
+        let issue = issue.map(|issue| self.attach_post_issue_uncacheable_read(issue));
         if let Some(issue) = &issue {
             if issue.kind() == CacheWriteQueueEntryKind::UncacheableWrite {
                 self.inflight_uncacheable_writes
@@ -972,6 +976,30 @@ impl ChiCacheBank {
             }
         }
         Ok(issue)
+    }
+
+    fn attach_post_issue_uncacheable_read(
+        &self,
+        issue: CacheWriteQueueIssue,
+    ) -> CacheWriteQueueIssue {
+        if issue.kind() != CacheWriteQueueEntryKind::WritebackDirty {
+            return issue;
+        }
+        let read = self
+            .pending_fills
+            .values()
+            .find_map(|pending| match pending {
+                PendingBankFill::Uncacheable { original }
+                    if original.line_address() == issue.request().line_address() =>
+                {
+                    Some(original.clone())
+                }
+                PendingBankFill::Uncacheable { .. } | PendingBankFill::Line { .. } => None,
+            });
+        match read {
+            Some(request) => issue.with_post_issue_downstream_request(request),
+            None => issue,
+        }
     }
 
     pub fn accept_uncacheable_write_response(
@@ -1094,6 +1122,21 @@ impl ChiCacheBank {
         request: MemoryRequest,
     ) -> Result<ChiCacheControllerResult, ChiCacheBankError> {
         let line = request.line_address();
+        if self.enqueue_dirty_resident_writeback_and_remove(&request, line, 1)? {
+            self.pending_fills.insert(
+                request.id(),
+                PendingBankFill::Uncacheable {
+                    original: request.clone(),
+                },
+            );
+            return Ok(ChiCacheControllerResult::new(
+                ChiCacheControllerResultKind::Miss,
+                ChiState::Invalid,
+                None,
+                None,
+                None,
+            ));
+        }
         if !self.can_bypass_uncacheable_resident_line(line) {
             return Err(ChiCacheBankError::UncacheableBypassRequiresCleanLine { line });
         }
@@ -1118,15 +1161,9 @@ impl ChiCacheBank {
         request: MemoryRequest,
     ) -> Result<ChiCacheControllerResult, ChiCacheBankError> {
         let line = request.line_address();
-        if let Some(writeback) = self.dirty_resident_writeback_request(line)? {
-            self.validate_write_queue_request(&request)?;
-            self.require_write_queue_entries(2)?;
-            self.write_queue_mut()?
-                .enqueue_writeback(writeback, false, 0)?;
-            self.next_sequence += 1;
+        if self.enqueue_dirty_resident_writeback_and_remove(&request, line, 2)? {
             self.write_queue_mut()?
                 .enqueue_uncacheable_write(request, false, 0)?;
-            self.remove_resident_line(line)?;
             return Ok(Self::uncacheable_write_result());
         }
         if !self.can_bypass_uncacheable_resident_line(line) {
@@ -1162,6 +1199,24 @@ impl ChiCacheBank {
             directory.remove_resident_line(line)?;
         }
         Ok(())
+    }
+
+    fn enqueue_dirty_resident_writeback_and_remove(
+        &mut self,
+        request: &MemoryRequest,
+        line: Address,
+        required_entries: usize,
+    ) -> Result<bool, ChiCacheBankError> {
+        let Some(writeback) = self.dirty_resident_writeback_request(line)? else {
+            return Ok(false);
+        };
+        self.validate_write_queue_request(request)?;
+        self.require_write_queue_entries(required_entries)?;
+        self.write_queue_mut()?
+            .enqueue_writeback(writeback, false, 0)?;
+        self.next_sequence += 1;
+        self.remove_resident_line(line)?;
+        Ok(true)
     }
 
     fn dirty_resident_writeback_request(

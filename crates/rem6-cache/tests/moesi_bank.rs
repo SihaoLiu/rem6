@@ -451,6 +451,108 @@ fn moesi_cache_bank_uncacheable_read_preserves_dirty_resident_line() {
 }
 
 #[test]
+fn moesi_cache_bank_uncacheable_read_queues_dirty_writeback_before_forwarding() {
+    let cache_agent = agent(30);
+    let mut bank = MoesiCacheBank::new_with_write_queue(
+        cache_agent,
+        layout(),
+        CacheWriteQueueConfig::new(1, 0).unwrap(),
+    );
+    let store = write(cache_agent, 128, 0x4504, vec![0xde, 0xad]);
+    let miss = bank.accept_cpu_request(store).unwrap();
+    bank.accept_fill(
+        fill(miss.downstream_request().unwrap(), 0x00),
+        MoesiEvent::DataModified,
+    )
+    .unwrap();
+    assert_eq!(bank.state(Address::new(0x4500)), Some(MoesiState::Modified));
+
+    let uncached = uncacheable_read(cache_agent, 129, 0x4508);
+    let result = bank.accept_cpu_request(uncached.clone()).unwrap();
+
+    assert_eq!(result.kind(), MoesiCacheControllerResultKind::Miss);
+    assert!(result.downstream_request().is_none());
+    assert_eq!(bank.state(Address::new(0x4500)), None);
+    assert_eq!(bank.write_queue_allocated_count(), 1);
+
+    let forwarded = bank
+        .accept_cpu_request(read(cache_agent, 130, 0x4504))
+        .unwrap();
+    assert_eq!(forwarded.kind(), MoesiCacheControllerResultKind::Hit);
+    assert!(forwarded.downstream_request().is_none());
+    assert_eq!(
+        response_data(forwarded.target_outcome().unwrap()),
+        &[0xde, 0xad, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+    );
+    assert!(matches!(
+        bank.accept_cpu_request(write(cache_agent, 131, 0x4504, vec![0x55])),
+        Err(MoesiCacheBankError::WriteQueueConflict { line })
+            if line == Address::new(0x4500)
+    ));
+    assert!(matches!(
+        bank.accept_cpu_request(uncacheable_read(cache_agent, 132, 0x4508)),
+        Err(MoesiCacheBankError::WriteQueueConflict { line })
+            if line == Address::new(0x4500)
+    ));
+
+    let writeback = bank.issue_write_queue(0).unwrap().unwrap();
+    assert_eq!(writeback.kind(), CacheWriteQueueEntryKind::WritebackDirty);
+    assert_eq!(writeback.request().line_address(), Address::new(0x4500));
+    assert_eq!(&writeback.request().data().unwrap()[4..6], &[0xde, 0xad]);
+    let downstream = writeback.post_issue_downstream_request().unwrap().clone();
+    assert_eq!(downstream.id(), uncached.id());
+    assert_eq!(downstream.range(), uncached.range());
+    assert!(downstream.is_uncacheable());
+    assert!(downstream.is_strict_ordered());
+
+    let uncached_fill = bank
+        .accept_fill(
+            MemoryResponse::completed(&downstream, Some(vec![0x99; 8])).unwrap(),
+            MoesiEvent::DataShared,
+        )
+        .unwrap();
+    assert_eq!(
+        response_data(uncached_fill.target_outcome().unwrap()),
+        &[0x99; 8]
+    );
+    assert_eq!(bank.state(Address::new(0x4500)), None);
+}
+
+#[test]
+fn moesi_cache_bank_uncacheable_read_handles_owned_dirty_line() {
+    let cache_agent = agent(30);
+    let mut bank = MoesiCacheBank::new_with_write_queue(
+        cache_agent,
+        layout(),
+        CacheWriteQueueConfig::new(1, 0).unwrap(),
+    );
+    let store = write(cache_agent, 133, 0x4604, vec![0xde, 0xad]);
+    let miss = bank.accept_cpu_request(store).unwrap();
+    bank.accept_fill(
+        fill(miss.downstream_request().unwrap(), 0x00),
+        MoesiEvent::DataModified,
+    )
+    .unwrap();
+    bank.accept_snoop(Address::new(0x4600), MoesiEvent::SnoopRead)
+        .unwrap();
+    assert_eq!(bank.state(Address::new(0x4600)), Some(MoesiState::Owned));
+
+    let uncached = uncacheable_read(cache_agent, 134, 0x4608);
+    let result = bank.accept_cpu_request(uncached.clone()).unwrap();
+    assert_eq!(result.kind(), MoesiCacheControllerResultKind::Miss);
+    assert!(result.downstream_request().is_none());
+    assert_eq!(bank.state(Address::new(0x4600)), None);
+
+    let writeback = bank.issue_write_queue(0).unwrap().unwrap();
+    assert_eq!(writeback.kind(), CacheWriteQueueEntryKind::WritebackDirty);
+    assert_eq!(&writeback.request().data().unwrap()[4..6], &[0xde, 0xad]);
+    assert_eq!(
+        writeback.post_issue_downstream_request().unwrap().id(),
+        uncached.id()
+    );
+}
+
+#[test]
 fn moesi_cache_bank_uncacheable_write_enters_write_queue_without_mshr() {
     let cache_agent = agent(30);
     let mut bank = MoesiCacheBank::new_with_mshr_and_write_queue(
@@ -521,9 +623,11 @@ fn moesi_cache_bank_uncacheable_write_queues_dirty_writeback_first() {
         response_data(forwarded.target_outcome().unwrap()),
         &[0xde, 0xad, 0x00, 0x00, 0xca, 0xfe, 0x00, 0x00]
     );
-    assert!(bank
-        .accept_cpu_request(write(cache_agent, 127, 0x4444, vec![0x55]))
-        .is_err());
+    assert!(matches!(
+        bank.accept_cpu_request(write(cache_agent, 127, 0x4444, vec![0x55])),
+        Err(MoesiCacheBankError::WriteQueueConflict { line })
+            if line == Address::new(0x4440)
+    ));
 
     let writeback = bank.issue_write_queue(0).unwrap().unwrap();
     assert_eq!(writeback.kind(), CacheWriteQueueEntryKind::WritebackDirty);

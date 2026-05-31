@@ -466,6 +466,7 @@ impl CacheWriteQueueUpdate {
 pub struct CacheWriteQueueIssue {
     handle: CacheWriteQueueHandle,
     request: MemoryRequest,
+    post_issue_downstream_request: Option<MemoryRequest>,
     secure: bool,
     ready_tick: u64,
     order: u64,
@@ -481,7 +482,13 @@ impl CacheWriteQueueIssue {
             order: entry.order(),
             kind: entry.kind(),
             request: entry.request,
+            post_issue_downstream_request: None,
         }
+    }
+
+    pub(crate) fn with_post_issue_downstream_request(mut self, request: MemoryRequest) -> Self {
+        self.post_issue_downstream_request = Some(request);
+        self
     }
 
     pub const fn handle(&self) -> CacheWriteQueueHandle {
@@ -490,6 +497,10 @@ impl CacheWriteQueueIssue {
 
     pub const fn request(&self) -> &MemoryRequest {
         &self.request
+    }
+
+    pub fn post_issue_downstream_request(&self) -> Option<&MemoryRequest> {
+        self.post_issue_downstream_request.as_ref()
     }
 
     pub const fn secure(&self) -> bool {
