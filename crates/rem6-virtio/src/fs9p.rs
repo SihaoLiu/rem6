@@ -28,6 +28,8 @@ pub const VIRTIO_9P_TGETATTR: u8 = 24;
 pub const VIRTIO_9P_RGETATTR: u8 = 25;
 pub const VIRTIO_9P_TREADDIR: u8 = 40;
 pub const VIRTIO_9P_RREADDIR: u8 = 41;
+pub const VIRTIO_9P_TMKDIR: u8 = 72;
+pub const VIRTIO_9P_RMKDIR: u8 = 73;
 pub const VIRTIO_9P_TRENAMEAT: u8 = 74;
 pub const VIRTIO_9P_RRENAMEAT: u8 = 75;
 pub const VIRTIO_9P_TUNLINKAT: u8 = 76;
@@ -47,6 +49,7 @@ pub const VIRTIO_9P_RREMOVE: u8 = 123;
 pub const VIRTIO_9P_RLERROR: u8 = 7;
 pub const VIRTIO_9P_NOFID: u32 = u32::MAX;
 pub const VIRTIO_9P_EBADF: u32 = 9;
+pub const VIRTIO_9P_EEXIST: u32 = 17;
 pub const VIRTIO_9P_ENOENT: u32 = 2;
 pub const VIRTIO_9P_ENOTSUP: u32 = 95;
 pub const VIRTIO_9P_QTFILE: u8 = 0;
@@ -251,6 +254,10 @@ impl Virtio9pDevice {
                 Ok(payload) => (VIRTIO_9P_RREADDIR, payload),
                 Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
             },
+            VIRTIO_9P_TMKDIR => match self.handle_mkdir(&request)? {
+                Ok(payload) => (VIRTIO_9P_RMKDIR, payload),
+                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
+            },
             VIRTIO_9P_TRENAMEAT => match self.handle_renameat(&request)? {
                 Ok(()) => (VIRTIO_9P_RRENAMEAT, Vec::new()),
                 Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
@@ -390,11 +397,12 @@ impl Virtio9pDevice {
         let Some(fid) = fids.get_mut(&create.fid) else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
-        if fid.node() != Virtio9pNodeId::Root {
-            return Ok(Err(VIRTIO_9P_EBADF));
-        }
+        let parent = fid.node();
         let mut namespace = self.namespace.lock().expect("virtio 9p namespace lock");
-        let node = namespace.create_file(create.name)?;
+        let node = match namespace.create_file(parent, create.name)? {
+            Ok(node) => node,
+            Err(errno) => return Ok(Err(errno)),
+        };
         *fid = Virtio9pFidState::opened(node);
         let mut payload = namespace.qid(node).to_le_bytes().to_vec();
         payload.extend(VIRTIO_9P_DEFAULT_MSIZE.to_le_bytes());
@@ -447,29 +455,46 @@ impl Virtio9pDevice {
         Ok(Ok(payload))
     }
 
+    fn handle_mkdir(&self, request: &Virtio9pRequest) -> Result<Result<Vec<u8>, u32>, VirtioError> {
+        let mkdir = parse_mkdir_request(request)?;
+        let Some(parent) = self
+            .fids
+            .lock()
+            .expect("virtio 9p fid lock")
+            .get(&mkdir.dfid)
+            .copied()
+        else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        let mut namespace = self.namespace.lock().expect("virtio 9p namespace lock");
+        match namespace.mkdir(parent.node(), mkdir.name)? {
+            Ok(node) => Ok(Ok(qid_payload(namespace.qid(node)))),
+            Err(errno) => Ok(Err(errno)),
+        }
+    }
+
     fn handle_renameat(&self, request: &Virtio9pRequest) -> Result<Result<(), u32>, VirtioError> {
         let rename = parse_renameat_request(request)?;
-        {
-            let fids = self.fids.lock().expect("virtio 9p fid lock");
-            let Some(old_dirfid) = fids.get(&rename.olddirfid).copied() else {
-                return Ok(Err(VIRTIO_9P_EBADF));
-            };
-            let Some(new_dirfid) = fids.get(&rename.newdirfid).copied() else {
-                return Ok(Err(VIRTIO_9P_EBADF));
-            };
-            if old_dirfid.node() != Virtio9pNodeId::Root
-                || new_dirfid.node() != Virtio9pNodeId::Root
-            {
-                return Ok(Err(VIRTIO_9P_EBADF));
-            }
-        }
-        let Some(rename) = self
+        let fids = self.fids.lock().expect("virtio 9p fid lock");
+        let Some(old_dirfid) = fids.get(&rename.olddirfid).copied() else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        let Some(new_dirfid) = fids.get(&rename.newdirfid).copied() else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        drop(fids);
+        let rename = match self
             .namespace
             .lock()
             .expect("virtio 9p namespace lock")
-            .rename_root_file(&rename.oldname, &rename.newname)?
-        else {
-            return Ok(Err(VIRTIO_9P_ENOENT));
+            .rename_file(
+                old_dirfid.node(),
+                &rename.oldname,
+                new_dirfid.node(),
+                &rename.newname,
+            )? {
+            Ok(rename) => rename,
+            Err(errno) => return Ok(Err(errno)),
         };
         if let Some(replaced) = rename.replaced {
             self.remove_fids_for_node(replaced);
@@ -488,16 +513,14 @@ impl Virtio9pDevice {
         else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
-        if fid.node() != Virtio9pNodeId::Root {
-            return Ok(Err(VIRTIO_9P_EBADF));
-        }
-        let Some(node) = self
+        let node = match self
             .namespace
             .lock()
             .expect("virtio 9p namespace lock")
-            .remove_file_by_name(&unlink.name)?
-        else {
-            return Ok(Err(VIRTIO_9P_ENOENT));
+            .remove_file_by_name(fid.node(), &unlink.name)?
+        {
+            Ok(node) => node,
+            Err(errno) => return Ok(Err(errno)),
         };
         self.remove_fids_for_node(node);
         Ok(Ok(()))
@@ -718,6 +741,20 @@ fn parse_lcreate_request(request: &Virtio9pRequest) -> Result<Virtio9pCreateRequ
     let _gid = reader.read_u32()?;
     reader.finish()?;
     Ok(Virtio9pCreateRequest { fid, name })
+}
+
+fn parse_mkdir_request(request: &Virtio9pRequest) -> Result<Virtio9pMkdirRequest, VirtioError> {
+    let mut reader = Virtio9pPayloadReader::new(request.message_type(), request.payload());
+    let dfid = reader.read_u32()?;
+    let name = string_from_9p(
+        request.message_type(),
+        reader.read_string()?,
+        request.payload(),
+    )?;
+    let _mode = reader.read_u32()?;
+    let _gid = reader.read_u32()?;
+    reader.finish()?;
+    Ok(Virtio9pMkdirRequest { dfid, name })
 }
 
 fn parse_getattr_request(request: &Virtio9pRequest) -> Result<Virtio9pGetattrRequest, VirtioError> {
@@ -966,18 +1003,19 @@ fn readdir_entry_bytes(qid: Virtio9pQid, next_offset: u64, dtype: u8, name: &str
 enum Virtio9pNodeId {
     Root,
     File(u64),
+    Directory(u64),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Virtio9pNamespace {
-    files: BTreeMap<String, Virtio9pFileNode>,
+    entries: BTreeMap<String, Virtio9pNode>,
     next_path: u64,
 }
 
 impl Virtio9pNamespace {
     fn new() -> Self {
         Self {
-            files: BTreeMap::new(),
+            entries: BTreeMap::new(),
             next_path: 2,
         }
     }
@@ -988,97 +1026,146 @@ impl Virtio9pNamespace {
 
     fn insert_file(&mut self, name: String, data: Vec<u8>) -> Result<(), VirtioError> {
         validate_file_name(VIRTIO_9P_TWALK, &name)?;
-        let path = self.next_path;
-        self.next_path = self
-            .next_path
-            .checked_add(1)
-            .ok_or(VirtioError::Virtio9pPayloadLengthOverflow)?;
-        self.files.insert(
+        let path = self.allocate_path()?;
+        self.entries.insert(
             name,
-            Virtio9pFileNode {
+            Virtio9pNode::File(Virtio9pFileNode {
                 qid_path: path,
                 data,
-            },
+            }),
         );
         Ok(())
     }
 
-    fn create_file(&mut self, name: String) -> Result<Virtio9pNodeId, VirtioError> {
+    fn create_file(
+        &mut self,
+        parent: Virtio9pNodeId,
+        name: String,
+    ) -> Result<Result<Virtio9pNodeId, u32>, VirtioError> {
         validate_file_name(VIRTIO_9P_TLCREATE, &name)?;
-        let path = self.next_path;
-        self.next_path = self
-            .next_path
-            .checked_add(1)
-            .ok_or(VirtioError::Virtio9pPayloadLengthOverflow)?;
-        self.files.insert(
+        let Some(entries) = self.directory_entries(parent) else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        if matches!(entries.get(&name), Some(Virtio9pNode::Directory(_))) {
+            return Ok(Err(VIRTIO_9P_EEXIST));
+        }
+        let path = self.allocate_path()?;
+        let entries = self
+            .directory_entries_mut(parent)
+            .expect("prevalidated 9p directory parent");
+        entries.insert(
             name,
-            Virtio9pFileNode {
+            Virtio9pNode::File(Virtio9pFileNode {
                 qid_path: path,
                 data: Vec::new(),
-            },
+            }),
         );
-        Ok(Virtio9pNodeId::File(path))
+        Ok(Ok(Virtio9pNodeId::File(path)))
     }
 
-    fn remove_file_by_name(&mut self, name: &str) -> Result<Option<Virtio9pNodeId>, VirtioError> {
+    fn mkdir(
+        &mut self,
+        parent: Virtio9pNodeId,
+        name: String,
+    ) -> Result<Result<Virtio9pNodeId, u32>, VirtioError> {
+        validate_file_name(VIRTIO_9P_TMKDIR, &name)?;
+        let Some(entries) = self.directory_entries(parent) else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        if entries.contains_key(&name) {
+            return Ok(Err(VIRTIO_9P_EEXIST));
+        }
+        let path = self.allocate_path()?;
+        let entries = self
+            .directory_entries_mut(parent)
+            .expect("prevalidated 9p directory parent");
+        entries.insert(
+            name,
+            Virtio9pNode::Directory(Virtio9pDirectoryNode {
+                qid_path: path,
+                entries: BTreeMap::new(),
+            }),
+        );
+        Ok(Ok(Virtio9pNodeId::Directory(path)))
+    }
+
+    fn remove_file_by_name(
+        &mut self,
+        parent: Virtio9pNodeId,
+        name: &str,
+    ) -> Result<Result<Virtio9pNodeId, u32>, VirtioError> {
         validate_file_name(VIRTIO_9P_TUNLINKAT, name)?;
-        Ok(self
-            .files
-            .remove(name)
-            .map(|file| Virtio9pNodeId::File(file.qid_path)))
+        let Some(entries) = self.directory_entries_mut(parent) else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        match entries.get(name) {
+            Some(Virtio9pNode::File(_)) => {
+                let Some(Virtio9pNode::File(file)) = entries.remove(name) else {
+                    unreachable!("prevalidated 9p file entry")
+                };
+                Ok(Ok(Virtio9pNodeId::File(file.qid_path)))
+            }
+            Some(Virtio9pNode::Directory(_)) => Ok(Err(VIRTIO_9P_EBADF)),
+            None => Ok(Err(VIRTIO_9P_ENOENT)),
+        }
     }
 
     fn remove_file_by_node(&mut self, node: Virtio9pNodeId) -> bool {
         let Virtio9pNodeId::File(path) = node else {
             return false;
         };
-        let Some(name) = self
-            .files
-            .iter()
-            .find_map(|(name, file)| (file.qid_path == path).then(|| name.clone()))
-        else {
-            return false;
-        };
-        self.files.remove(&name).is_some()
+        remove_file_by_path(&mut self.entries, path)
     }
 
-    fn rename_root_file(
+    fn rename_file(
         &mut self,
+        old_parent: Virtio9pNodeId,
         oldname: &str,
+        new_parent: Virtio9pNodeId,
         newname: &str,
-    ) -> Result<Option<Virtio9pRenameOutcome>, VirtioError> {
+    ) -> Result<Result<Virtio9pRenameOutcome, u32>, VirtioError> {
         validate_file_name(VIRTIO_9P_TRENAMEAT, oldname)?;
         validate_file_name(VIRTIO_9P_TRENAMEAT, newname)?;
-        if oldname == newname {
-            return Ok(self
-                .files
-                .get(oldname)
-                .map(|_| Virtio9pRenameOutcome { replaced: None }));
+        if old_parent != new_parent {
+            return Ok(Err(VIRTIO_9P_EBADF));
         }
-        let Some(file) = self.files.remove(oldname) else {
-            return Ok(None);
+        let Some(entries) = self.directory_entries_mut(old_parent) else {
+            return Ok(Err(VIRTIO_9P_EBADF));
         };
-        let replaced = self
-            .files
-            .insert(newname.to_string(), file)
-            .map(|node| Virtio9pNodeId::File(node.qid_path));
-        Ok(Some(Virtio9pRenameOutcome { replaced }))
+        if oldname == newname {
+            return match entries.get(oldname) {
+                Some(Virtio9pNode::File(_)) => Ok(Ok(Virtio9pRenameOutcome { replaced: None })),
+                Some(Virtio9pNode::Directory(_)) => Ok(Err(VIRTIO_9P_EBADF)),
+                None => Ok(Err(VIRTIO_9P_ENOENT)),
+            };
+        }
+        match entries.get(newname) {
+            Some(Virtio9pNode::Directory(_)) => return Ok(Err(VIRTIO_9P_EEXIST)),
+            Some(Virtio9pNode::File(_)) | None => {}
+        }
+        let Some(Virtio9pNode::File(file)) = entries.remove(oldname) else {
+            return Ok(Err(VIRTIO_9P_ENOENT));
+        };
+        let replaced = entries
+            .insert(newname.to_string(), Virtio9pNode::File(file))
+            .and_then(|node| match node {
+                Virtio9pNode::File(file) => Some(Virtio9pNodeId::File(file.qid_path)),
+                Virtio9pNode::Directory(_) => None,
+            });
+        Ok(Ok(Virtio9pRenameOutcome { replaced }))
     }
 
     fn walk(&self, node: Virtio9pNodeId, name: &str) -> Option<Virtio9pNodeId> {
-        match node {
-            Virtio9pNodeId::Root => self
-                .files
-                .get(name)
-                .map(|file| Virtio9pNodeId::File(file.qid_path)),
-            Virtio9pNodeId::File(_) => None,
-        }
+        self.directory_entries(node)?
+            .get(name)
+            .map(Virtio9pNode::id)
     }
 
     fn qid(&self, node: Virtio9pNodeId) -> Virtio9pQid {
         match node {
             Virtio9pNodeId::Root => self.root_qid(),
             Virtio9pNodeId::File(path) => Virtio9pQid::new(VIRTIO_9P_QTFILE, path),
+            Virtio9pNodeId::Directory(path) => Virtio9pQid::new(VIRTIO_9P_QTDIR, path),
         }
     }
 
@@ -1087,12 +1174,12 @@ impl Virtio9pNamespace {
             Virtio9pNodeId::Root => Some(Virtio9pNodeMetadata {
                 qid: self.root_qid(),
                 mode: 0o040755,
-                nlink: 2 + self.files.len() as u64,
+                nlink: 2 + self.entries.len() as u64,
                 size: 0,
                 blocks: 0,
             }),
             Virtio9pNodeId::File(path) => {
-                let file = self.files.values().find(|file| file.qid_path == path)?;
+                let file = find_file(&self.entries, path)?;
                 let size = file.data.len() as u64;
                 Some(Virtio9pNodeMetadata {
                     qid: Virtio9pQid::new(VIRTIO_9P_QTFILE, path),
@@ -1102,11 +1189,21 @@ impl Virtio9pNamespace {
                     blocks: size.div_ceil(512),
                 })
             }
+            Virtio9pNodeId::Directory(path) => {
+                let entries = self.directory_entries(node)?;
+                Some(Virtio9pNodeMetadata {
+                    qid: Virtio9pQid::new(VIRTIO_9P_QTDIR, path),
+                    mode: 0o040755,
+                    nlink: 2 + entries.len() as u64,
+                    size: 0,
+                    blocks: 0,
+                })
+            }
         }
     }
 
     fn statfs_payload(&self) -> Vec<u8> {
-        let files = 1 + self.files.len() as u64;
+        let files = 1 + count_nodes(&self.entries);
         let mut payload = Vec::with_capacity(60);
         payload.extend(VIRTIO_9P_STATFS_TYPE.to_le_bytes());
         payload.extend(VIRTIO_9P_STATFS_BLOCK_SIZE.to_le_bytes());
@@ -1121,16 +1218,14 @@ impl Virtio9pNamespace {
     }
 
     fn readdir_payload(&self, node: Virtio9pNodeId, offset: u64, count: u32) -> Option<Vec<u8>> {
-        if node != Virtio9pNodeId::Root {
-            return None;
-        }
+        let children = self.directory_entries(node)?;
         let start = usize::try_from(offset).ok()?;
         let budget = usize::try_from(count).ok()?;
-        let mut entries = Vec::with_capacity(2 + self.files.len());
+        let mut entries = Vec::with_capacity(2 + children.len());
         let mut next_offset = 0_u64;
 
         for (qid, dtype, name) in [
-            (self.root_qid(), VIRTIO_9P_DTDIR, "."),
+            (self.qid(node), VIRTIO_9P_DTDIR, "."),
             (self.root_qid(), VIRTIO_9P_DTDIR, ".."),
         ] {
             let entry_len = 24 + name.len();
@@ -1138,13 +1233,13 @@ impl Virtio9pNamespace {
             entries.push(readdir_entry_bytes(qid, next_offset, dtype, name));
         }
 
-        for (name, file) in &self.files {
+        for (name, child) in children {
             let entry_len = 24 + name.len();
             next_offset = next_offset.checked_add(entry_len as u64)?;
             entries.push(readdir_entry_bytes(
-                Virtio9pQid::new(VIRTIO_9P_QTFILE, file.qid_path),
+                child.qid(),
                 next_offset,
-                VIRTIO_9P_DTREG,
+                child.dtype(),
                 name,
             ));
         }
@@ -1170,7 +1265,7 @@ impl Virtio9pNamespace {
         let Virtio9pNodeId::File(path) = node else {
             return None;
         };
-        let file = self.files.values().find(|file| file.qid_path == path)?;
+        let file = find_file(&self.entries, path)?;
         let start = usize::try_from(offset).ok()?;
         if start >= file.data.len() {
             return Some(Vec::new());
@@ -1184,7 +1279,7 @@ impl Virtio9pNamespace {
         let Virtio9pNodeId::File(path) = node else {
             return None;
         };
-        let file = self.files.values_mut().find(|file| file.qid_path == path)?;
+        let file = find_file_mut(&mut self.entries, path)?;
         let start = usize::try_from(offset).ok()?;
         let end = start.checked_add(data.len())?;
         if file.data.len() < end {
@@ -1193,6 +1288,130 @@ impl Virtio9pNamespace {
         file.data[start..end].copy_from_slice(data);
         u32::try_from(data.len()).ok()
     }
+
+    fn directory_entries(&self, node: Virtio9pNodeId) -> Option<&BTreeMap<String, Virtio9pNode>> {
+        match node {
+            Virtio9pNodeId::Root => Some(&self.entries),
+            Virtio9pNodeId::Directory(path) => {
+                find_directory(&self.entries, path).map(|directory| &directory.entries)
+            }
+            Virtio9pNodeId::File(_) => None,
+        }
+    }
+
+    fn directory_entries_mut(
+        &mut self,
+        node: Virtio9pNodeId,
+    ) -> Option<&mut BTreeMap<String, Virtio9pNode>> {
+        match node {
+            Virtio9pNodeId::Root => Some(&mut self.entries),
+            Virtio9pNodeId::Directory(path) => {
+                find_directory_mut(&mut self.entries, path).map(|directory| &mut directory.entries)
+            }
+            Virtio9pNodeId::File(_) => None,
+        }
+    }
+
+    fn allocate_path(&mut self) -> Result<u64, VirtioError> {
+        let path = self.next_path;
+        self.next_path = self
+            .next_path
+            .checked_add(1)
+            .ok_or(VirtioError::Virtio9pPayloadLengthOverflow)?;
+        Ok(path)
+    }
+}
+
+fn count_nodes(entries: &BTreeMap<String, Virtio9pNode>) -> u64 {
+    entries
+        .values()
+        .map(|node| match node {
+            Virtio9pNode::File(_) => 1,
+            Virtio9pNode::Directory(directory) => 1 + count_nodes(&directory.entries),
+        })
+        .sum()
+}
+
+fn find_file(entries: &BTreeMap<String, Virtio9pNode>, path: u64) -> Option<&Virtio9pFileNode> {
+    for node in entries.values() {
+        match node {
+            Virtio9pNode::File(file) if file.qid_path == path => return Some(file),
+            Virtio9pNode::File(_) => {}
+            Virtio9pNode::Directory(directory) => {
+                if let Some(file) = find_file(&directory.entries, path) {
+                    return Some(file);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn find_file_mut(
+    entries: &mut BTreeMap<String, Virtio9pNode>,
+    path: u64,
+) -> Option<&mut Virtio9pFileNode> {
+    for node in entries.values_mut() {
+        match node {
+            Virtio9pNode::File(file) if file.qid_path == path => return Some(file),
+            Virtio9pNode::File(_) => {}
+            Virtio9pNode::Directory(directory) => {
+                if let Some(file) = find_file_mut(&mut directory.entries, path) {
+                    return Some(file);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn find_directory(
+    entries: &BTreeMap<String, Virtio9pNode>,
+    path: u64,
+) -> Option<&Virtio9pDirectoryNode> {
+    for node in entries.values() {
+        let Virtio9pNode::Directory(directory) = node else {
+            continue;
+        };
+        if directory.qid_path == path {
+            return Some(directory);
+        }
+        if let Some(directory) = find_directory(&directory.entries, path) {
+            return Some(directory);
+        }
+    }
+    None
+}
+
+fn find_directory_mut(
+    entries: &mut BTreeMap<String, Virtio9pNode>,
+    path: u64,
+) -> Option<&mut Virtio9pDirectoryNode> {
+    for node in entries.values_mut() {
+        let Virtio9pNode::Directory(directory) = node else {
+            continue;
+        };
+        if directory.qid_path == path {
+            return Some(directory);
+        }
+        if let Some(directory) = find_directory_mut(&mut directory.entries, path) {
+            return Some(directory);
+        }
+    }
+    None
+}
+
+fn remove_file_by_path(entries: &mut BTreeMap<String, Virtio9pNode>, path: u64) -> bool {
+    if let Some(name) = entries.iter().find_map(|(name, node)| match node {
+        Virtio9pNode::File(file) if file.qid_path == path => Some(name.clone()),
+        Virtio9pNode::File(_) | Virtio9pNode::Directory(_) => None,
+    }) {
+        return entries.remove(&name).is_some();
+    }
+    entries.values_mut().any(|node| match node {
+        Virtio9pNode::Directory(directory) => remove_file_by_path(&mut directory.entries, path),
+        Virtio9pNode::File(_) => false,
+    })
 }
 
 fn validate_file_name(message_type: u8, name: &str) -> Result<(), VirtioError> {
@@ -1209,6 +1428,41 @@ fn validate_file_name(message_type: u8, name: &str) -> Result<(), VirtioError> {
 struct Virtio9pFileNode {
     qid_path: u64,
     data: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Virtio9pDirectoryNode {
+    qid_path: u64,
+    entries: BTreeMap<String, Virtio9pNode>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum Virtio9pNode {
+    File(Virtio9pFileNode),
+    Directory(Virtio9pDirectoryNode),
+}
+
+impl Virtio9pNode {
+    const fn id(&self) -> Virtio9pNodeId {
+        match self {
+            Self::File(file) => Virtio9pNodeId::File(file.qid_path),
+            Self::Directory(directory) => Virtio9pNodeId::Directory(directory.qid_path),
+        }
+    }
+
+    const fn qid(&self) -> Virtio9pQid {
+        match self {
+            Self::File(file) => Virtio9pQid::new(VIRTIO_9P_QTFILE, file.qid_path),
+            Self::Directory(directory) => Virtio9pQid::new(VIRTIO_9P_QTDIR, directory.qid_path),
+        }
+    }
+
+    const fn dtype(&self) -> u8 {
+        match self {
+            Self::File(_) => VIRTIO_9P_DTREG,
+            Self::Directory(_) => VIRTIO_9P_DTDIR,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1268,6 +1522,12 @@ struct Virtio9pOpenRequest {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Virtio9pCreateRequest {
     fid: u32,
+    name: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Virtio9pMkdirRequest {
+    dfid: u32,
     name: String,
 }
 
