@@ -1,8 +1,8 @@
 use rem6_virtio::{
-    Virtio9pConfig, Virtio9pDevice, VirtioError, VIRTIO_9P_DEFAULT_MSIZE, VIRTIO_9P_NOFID,
-    VIRTIO_9P_PROTOCOL_VERSION, VIRTIO_9P_RLOPEN, VIRTIO_9P_RREAD, VIRTIO_9P_RREADDIR,
-    VIRTIO_9P_RVERSION, VIRTIO_9P_TATTACH, VIRTIO_9P_TLOPEN, VIRTIO_9P_TREAD, VIRTIO_9P_TREADDIR,
-    VIRTIO_9P_TVERSION, VIRTIO_9P_TWALK,
+    Virtio9pConfig, Virtio9pDevice, VirtioError, VIRTIO_9P_DEFAULT_MSIZE, VIRTIO_9P_EBADF,
+    VIRTIO_9P_NOFID, VIRTIO_9P_PROTOCOL_VERSION, VIRTIO_9P_RLERROR, VIRTIO_9P_RLOPEN,
+    VIRTIO_9P_RREAD, VIRTIO_9P_RREADDIR, VIRTIO_9P_RVERSION, VIRTIO_9P_TATTACH, VIRTIO_9P_TLOPEN,
+    VIRTIO_9P_TREAD, VIRTIO_9P_TREADDIR, VIRTIO_9P_TVERSION, VIRTIO_9P_TWALK,
 };
 
 mod support;
@@ -57,6 +57,57 @@ fn virtio_9p_device_applies_negotiated_msize_to_io_unit_replies() {
 
     assert_eq!(open_completion.message_type(), VIRTIO_9P_RLOPEN);
     assert_eq!(open_completion.payload()[13..17], 4096_u32.to_le_bytes());
+}
+
+#[test]
+fn virtio_9p_device_resets_session_state_on_version_negotiation() {
+    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap())
+        .with_file("reset.txt", b"resettable".to_vec())
+        .unwrap();
+    let version = decoded_request(
+        VIRTIO_9P_TVERSION,
+        1,
+        p9_version_payload(4096, VIRTIO_9P_PROTOCOL_VERSION),
+    );
+    device.execute_at(10, version).unwrap();
+    let attach = decoded_request(
+        VIRTIO_9P_TATTACH,
+        2,
+        p9_attach_payload(1, VIRTIO_9P_NOFID, b"root", b"", 0),
+    );
+    device.execute_at(11, attach).unwrap();
+    let walk = decoded_request(VIRTIO_9P_TWALK, 3, p9_walk_payload(1, 2, &[b"reset.txt"]));
+    device.execute_at(12, walk).unwrap();
+    let open = decoded_request(VIRTIO_9P_TLOPEN, 4, p9_lopen_payload(2, 0));
+    device.execute_at(13, open).unwrap();
+    assert_eq!(device.fid_count(), 2);
+    assert_eq!(device.attached_fids().len(), 1);
+
+    let renegotiate = decoded_request(
+        VIRTIO_9P_TVERSION,
+        5,
+        p9_version_payload(128, VIRTIO_9P_PROTOCOL_VERSION),
+    );
+    let version_completion = device.execute_at(14, renegotiate).unwrap();
+    assert_eq!(version_completion.message_type(), VIRTIO_9P_RVERSION);
+    assert_eq!(version_completion.payload()[0..4], 128_u32.to_le_bytes());
+    assert_eq!(device.fid_count(), 0);
+    assert!(device.attached_fids().is_empty());
+
+    let stale_read = decoded_request(VIRTIO_9P_TREAD, 6, p9_read_payload(2, 0, 8));
+    let stale_completion = device.execute_at(15, stale_read).unwrap();
+    assert_eq!(stale_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(stale_completion.payload(), VIRTIO_9P_EBADF.to_le_bytes());
+
+    let reattach = decoded_request(
+        VIRTIO_9P_TATTACH,
+        7,
+        p9_attach_payload(3, VIRTIO_9P_NOFID, b"root", b"", 0),
+    );
+    device.execute_at(16, reattach).unwrap();
+    let open_root = decoded_request(VIRTIO_9P_TLOPEN, 8, p9_lopen_payload(3, 0));
+    let open_completion = device.execute_at(17, open_root).unwrap();
+    assert_eq!(open_completion.payload()[13..17], 128_u32.to_le_bytes());
 }
 
 #[test]

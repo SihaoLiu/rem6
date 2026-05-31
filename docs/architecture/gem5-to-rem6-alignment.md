@@ -1250,8 +1250,9 @@ Implementation evidence through 2026-05-31:
   before filesystem traffic: `Tversion` replies with bounded `Rversion`
   negotiation data, clamps client `msize` to the device limit, carries the
   negotiated value into later I/O-unit replies, and keeps counted `Rread` and
-  `Rreaddir` data replies inside the negotiated message budget, `Tauth` parses
-  authentication requests before returning an
+  `Rreaddir` data replies inside the negotiated message budget. A parsed
+  `Tversion` also resets live fid and attach state while retaining completion
+  history for diagnostics, `Tauth` parses authentication requests before returning an
   explicit no-auth-backend errno, `Tattach` records the attached fid plus user
   metadata and returns a deterministic root qid, unsupported requests return typed
   `Rlerror` payloads, and malformed protocol payloads fail as typed errors
@@ -3249,7 +3250,8 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   guest-memory response scatter writes, used-ring writeback, ISR queue
   interrupts, decode-error cursor preservation, `Tversion` to `Rversion`
   negotiation, client `msize` clamping, negotiated I/O-unit propagation,
-  negotiated `Rread` and `Rreaddir` data-budget enforcement, `Tattach` to
+  negotiated `Rread` and `Rreaddir` data-budget enforcement, `Tversion` fid and
+  attach-state reset, `Tattach` to
   root-qid response generation, attached-fid metadata
   recording, unsupported-request `Rlerror` replies, and malformed 9P payload
   rejection without completion mutation, explicit `Tauth` no-auth-backend

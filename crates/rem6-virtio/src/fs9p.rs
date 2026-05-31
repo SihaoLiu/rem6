@@ -277,11 +277,8 @@ impl Virtio9pDevice {
             VIRTIO_9P_TVERSION => {
                 let version = parse_version_request(&request)?;
                 let response_msize = version.msize.min(VIRTIO_9P_DEFAULT_MSIZE);
+                self.reset_session(response_msize);
                 let response_version = if version.version == VIRTIO_9P_PROTOCOL_VERSION {
-                    *self
-                        .negotiated_msize
-                        .lock()
-                        .expect("virtio 9p negotiated msize lock") = response_msize;
                     VIRTIO_9P_PROTOCOL_VERSION
                 } else {
                     b"unknown"
@@ -457,6 +454,18 @@ impl Virtio9pDevice {
 
     pub fn fid_count(&self) -> usize {
         self.fids.lock().expect("virtio 9p fid lock").len()
+    }
+
+    fn reset_session(&self, negotiated_msize: u32) {
+        *self
+            .negotiated_msize
+            .lock()
+            .expect("virtio 9p negotiated msize lock") = negotiated_msize;
+        self.fids.lock().expect("virtio 9p fid lock").clear();
+        self.attached_fids
+            .lock()
+            .expect("virtio 9p attached fid lock")
+            .clear();
     }
 
     fn fid_node(&self, fid: u32) -> Option<Virtio9pNodeId> {
