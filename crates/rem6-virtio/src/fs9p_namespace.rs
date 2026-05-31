@@ -6,8 +6,8 @@ use crate::{
         VIRTIO_9P_EBADF, VIRTIO_9P_EEXIST, VIRTIO_9P_ENOENT, VIRTIO_9P_GETATTR_BASIC,
         VIRTIO_9P_NAME_MAX, VIRTIO_9P_QTDIR, VIRTIO_9P_QTFILE, VIRTIO_9P_QTSYMLINK,
         VIRTIO_9P_STATFS_BLOCK_SIZE, VIRTIO_9P_STATFS_TYPE, VIRTIO_9P_TLCREATE, VIRTIO_9P_TMKDIR,
-        VIRTIO_9P_TMKNOD, VIRTIO_9P_TRENAMEAT, VIRTIO_9P_TSYMLINK, VIRTIO_9P_TUNLINKAT,
-        VIRTIO_9P_TWALK,
+        VIRTIO_9P_TMKNOD, VIRTIO_9P_TRENAME, VIRTIO_9P_TRENAMEAT, VIRTIO_9P_TSYMLINK,
+        VIRTIO_9P_TUNLINKAT, VIRTIO_9P_TWALK,
     },
     VirtioError,
 };
@@ -313,6 +313,52 @@ impl Virtio9pNamespace {
         let replaced =
             entries
                 .insert(newname.to_string(), node)
+                .and_then(|replaced| match replaced {
+                    Virtio9pNode::File(file) => Some(Virtio9pNodeId::File(file.qid_path)),
+                    Virtio9pNode::Symlink(symlink) => {
+                        Some(Virtio9pNodeId::Symlink(symlink.qid_path))
+                    }
+                    Virtio9pNode::Special(special) => {
+                        Some(Virtio9pNodeId::Special(special.qid_path))
+                    }
+                    Virtio9pNode::Directory(_) => None,
+                });
+        Ok(Ok(Virtio9pRenameOutcome { replaced }))
+    }
+
+    pub(crate) fn rename_node(
+        &mut self,
+        node: Virtio9pNodeId,
+        new_parent: Virtio9pNodeId,
+        newname: &str,
+    ) -> Result<Result<Virtio9pRenameOutcome, u32>, VirtioError> {
+        validate_file_name(VIRTIO_9P_TRENAME, newname)?;
+        if !matches!(
+            node,
+            Virtio9pNodeId::File(_) | Virtio9pNodeId::Symlink(_) | Virtio9pNodeId::Special(_)
+        ) {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        }
+        let Some(entries) = self.directory_entries(new_parent) else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        match entries.get(newname) {
+            Some(existing) if existing.id() == node => {
+                return Ok(Ok(Virtio9pRenameOutcome { replaced: None }));
+            }
+            Some(Virtio9pNode::Directory(_)) => return Ok(Err(VIRTIO_9P_EEXIST)),
+            Some(Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_))
+            | None => {}
+        }
+        let Some(moved) = take_file_node_by_id(&mut self.entries, node) else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        let entries = self
+            .directory_entries_mut(new_parent)
+            .expect("prevalidated 9p directory parent");
+        let replaced =
+            entries
+                .insert(newname.to_string(), moved)
                 .and_then(|replaced| match replaced {
                     Virtio9pNode::File(file) => Some(Virtio9pNodeId::File(file.qid_path)),
                     Virtio9pNode::Symlink(symlink) => {
@@ -801,6 +847,29 @@ fn remove_file_by_path(entries: &mut BTreeMap<String, Virtio9pNode>, path: u64) 
     entries.values_mut().any(|node| match node {
         Virtio9pNode::Directory(directory) => remove_file_by_path(&mut directory.entries, path),
         Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_) => false,
+    })
+}
+
+fn take_file_node_by_id(
+    entries: &mut BTreeMap<String, Virtio9pNode>,
+    id: Virtio9pNodeId,
+) -> Option<Virtio9pNode> {
+    if let Some(name) = entries.iter().find_map(|(name, node)| match node {
+        Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_)
+            if node.id() == id =>
+        {
+            Some(name.clone())
+        }
+        Virtio9pNode::File(_)
+        | Virtio9pNode::Symlink(_)
+        | Virtio9pNode::Special(_)
+        | Virtio9pNode::Directory(_) => None,
+    }) {
+        return entries.remove(&name);
+    }
+    entries.values_mut().find_map(|node| match node {
+        Virtio9pNode::Directory(directory) => take_file_node_by_id(&mut directory.entries, id),
+        Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_) => None,
     })
 }
 

@@ -12,9 +12,9 @@ use crate::fs9p_protocol::{
     parse_attach_request, parse_clunk_request, parse_flush_request, parse_fsync_request,
     parse_getattr_request, parse_lcreate_request, parse_lopen_request, parse_mkdir_request,
     parse_mknod_request, parse_read_request, parse_readdir_request, parse_readlink_request,
-    parse_remove_request, parse_renameat_request, parse_setattr_request, parse_statfs_request,
-    parse_symlink_request, parse_unlinkat_request, parse_version_request, parse_walk_request,
-    parse_write_request, string_payload, version_payload,
+    parse_remove_request, parse_rename_request, parse_renameat_request, parse_setattr_request,
+    parse_statfs_request, parse_symlink_request, parse_unlinkat_request, parse_version_request,
+    parse_walk_request, parse_write_request, string_payload, version_payload,
 };
 use crate::{
     modern_feature_pages, Virtio9pCompletion, Virtio9pRequest, VirtioError,
@@ -40,6 +40,8 @@ pub const VIRTIO_9P_TSYMLINK: u8 = 16;
 pub const VIRTIO_9P_RSYMLINK: u8 = 17;
 pub const VIRTIO_9P_TMKNOD: u8 = 18;
 pub const VIRTIO_9P_RMKNOD: u8 = 19;
+pub const VIRTIO_9P_TRENAME: u8 = 20;
+pub const VIRTIO_9P_RRENAME: u8 = 21;
 pub const VIRTIO_9P_TREADLINK: u8 = 22;
 pub const VIRTIO_9P_RREADLINK: u8 = 23;
 pub const VIRTIO_9P_TGETATTR: u8 = 24;
@@ -309,6 +311,10 @@ impl Virtio9pDevice {
             },
             VIRTIO_9P_TMKDIR => match self.handle_mkdir(&request)? {
                 Ok(payload) => (VIRTIO_9P_RMKDIR, payload),
+                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
+            },
+            VIRTIO_9P_TRENAME => match self.handle_rename(&request)? {
+                Ok(()) => (VIRTIO_9P_RRENAME, Vec::new()),
                 Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
             },
             VIRTIO_9P_TRENAMEAT => match self.handle_renameat(&request)? {
@@ -680,6 +686,31 @@ impl Virtio9pDevice {
                 new_dirfid.node(),
                 &rename.newname,
             )? {
+            Ok(rename) => rename,
+            Err(errno) => return Ok(Err(errno)),
+        };
+        if let Some(replaced) = rename.replaced {
+            self.remove_fids_for_node(replaced);
+        }
+        Ok(Ok(()))
+    }
+
+    fn handle_rename(&self, request: &Virtio9pRequest) -> Result<Result<(), u32>, VirtioError> {
+        let rename = parse_rename_request(request)?;
+        let fids = self.fids.lock().expect("virtio 9p fid lock");
+        let Some(fid) = fids.get(&rename.fid).copied() else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        let Some(new_dirfid) = fids.get(&rename.newdirfid).copied() else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        drop(fids);
+        let rename = match self
+            .namespace
+            .lock()
+            .expect("virtio 9p namespace lock")
+            .rename_node(fid.node(), new_dirfid.node(), &rename.name)?
+        {
             Ok(rename) => rename,
             Err(errno) => return Ok(Err(errno)),
         };

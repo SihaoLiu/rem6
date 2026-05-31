@@ -209,6 +209,25 @@ pub(crate) fn parse_fsync_request(
     Ok(Virtio9pFsyncRequest { fid })
 }
 
+pub(crate) fn parse_rename_request(
+    request: &Virtio9pRequest,
+) -> Result<Virtio9pRenameRequest, VirtioError> {
+    let mut reader = Virtio9pPayloadReader::new(request.message_type(), request.payload());
+    let fid = reader.read_u32()?;
+    let newdirfid = reader.read_u32()?;
+    let name = string_from_9p(
+        request.message_type(),
+        reader.read_string()?,
+        request.payload(),
+    )?;
+    reader.finish()?;
+    Ok(Virtio9pRenameRequest {
+        fid,
+        newdirfid,
+        name,
+    })
+}
+
 pub(crate) fn parse_renameat_request(
     request: &Virtio9pRequest,
 ) -> Result<Virtio9pRenameatRequest, VirtioError> {
@@ -456,6 +475,13 @@ pub(crate) struct Virtio9pReaddirRequest {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct Virtio9pFsyncRequest {
     pub(crate) fid: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Virtio9pRenameRequest {
+    pub(crate) fid: u32,
+    pub(crate) newdirfid: u32,
+    pub(crate) name: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

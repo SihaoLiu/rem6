@@ -1267,7 +1267,9 @@ Implementation evidence through 2026-05-31:
   handles mode, uid, gid, explicit atime/mtime, and size-valid metadata paths,
   truncates or extends file data for size updates, and exposes the new metadata
   through `Tgetattr`, `Tread` returns counted byte ranges,
-  `Twrite` mutates and extends byte ranges, `Trenameat` renames root files
+  `Twrite` mutates and extends byte ranges, `Trename` moves non-directory
+  fid-backed nodes into target directories while preserving moved qids and open
+  fid access, `Trenameat` renames root files
   while preserving the moved file qid and open fid access, replacing
   same-directory target files with explicit target-fid invalidation,
   `Tunlinkat` removes named root or child-directory files and invalidates fids
@@ -3237,9 +3239,11 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   `Tlopen` file and directory qid plus I/O-unit replies, `Treaddir` sorted
   root and child-directory dirents, resumable offsets, count-bounded replies,
   and directory-only error handling, counted `Tread` ranges, `Twrite` counted
-  replies plus overwrite mutation, `Trenameat` root-file renames with preserved
-  moved qids, open-fid access, replacement-target fid invalidation, post-rename
-  directory entries, and old-name walk rejection, `Tunlinkat` root and
+  replies plus overwrite mutation, `Trename` fid-backed cross-directory file
+  moves with preserved open-fid access and qid identity, `Trenameat` root-file
+  renames with preserved moved qids, open-fid access, replacement-target fid
+  invalidation, post-rename directory entries, and old-name walk rejection,
+  `Tunlinkat` root and
   child-directory file removal with post-delete directory and walk checks,
   `Tremove` fid-backed file removal with deleted-fid read rejection,
   `Tsymlink` creation with symlink qids, symlink walk and sorted dirent
