@@ -2978,7 +2978,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   writes with empty masks, command-halfword byte enables, and non-contiguous
   byte enables that update latency-timer and BIST without widening into
   read-only header bytes, while preserving invalid-width errors for original
-  config accesses wider than the typed PCI config model accepts.
+  config accesses wider than the typed PCI config model accepts. Endpoint and
+  type-1 bridge snapshot tests also cover byte-exact config-space checkpoint
+  audit payloads with mismatch and truncated-payload rejection.
   Capability-list tests cover ordered PM plus PCIe plus MSI chaining, MSI plus
   MSI-X chaining, next-pointer preservation across capability control writes,
   raw read-only vendor-specific capability installation, raw capability
@@ -3065,9 +3067,11 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   prevalidates restore attempts against the live host topology. The bank also
   decodes manifest payloads back into typed audit records in deterministic
   component order, and `SystemActionExecutor` can be constructed directly with
-  an attached PCI host checkpoint bank. Full PCI configuration checkpoint bytes
-  remain dependent on per-capability and BAR state codecs; rem6 does not
-  pretend that topology-only payloads restore full PCI configuration state.
+  an attached PCI host checkpoint bank. Endpoint and type-1 bridge snapshots
+  now also expose byte-exact config-space payloads for checkpoint audit,
+  rejecting truncated payloads and live-snapshot byte mismatches before broader
+  PCI config restore mutates device state. rem6 still does not pretend that
+  topology-only payloads restore full PCI configuration state.
   BAR state now has a stable byte codec for endpoint checkpoint audit,
   preserving endpoint shape, raw lower and upper register state, size-probe
   masks, and 64-bit upper-slot ownership while rejecting malformed or

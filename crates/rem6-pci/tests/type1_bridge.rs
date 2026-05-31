@@ -697,6 +697,63 @@ fn pci_type1_bridge_snapshot_exposes_bar_payloads_for_checkpoint_audit() {
 }
 
 #[test]
+fn pci_type1_bridge_snapshot_exposes_config_space_payload_for_checkpoint_audit() {
+    let function = PciFunctionAddress::new(0, 1, 0).unwrap();
+    let mut bridge = bridge_config(function);
+    bridge
+        .install_bar(
+            PciBarSpec::new(
+                PciBarIndex::new(0).unwrap(),
+                PciBarKind::Memory32 {
+                    prefetchable: false,
+                },
+                AccessSize::new(0x1000).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    bridge
+        .write_config(
+            PciConfigOffset::new(0x04).unwrap(),
+            &0x0006_u16.to_le_bytes(),
+        )
+        .unwrap();
+    bridge
+        .write_config(
+            PciConfigOffset::new(0x10).unwrap(),
+            &0x0040_1234_u32.to_le_bytes(),
+        )
+        .unwrap();
+    bridge
+        .write_config(
+            PciConfigOffset::new(0x18).unwrap(),
+            &0x0002_0100_u32.to_le_bytes(),
+        )
+        .unwrap();
+    let snapshot = bridge.snapshot();
+
+    let payload = snapshot.config_space_payload();
+
+    assert_eq!(payload.len(), 256);
+    assert_eq!(&payload[0x00..0x04], &[0x11, 0x10, 0x26, 0x00]);
+    assert_eq!(&payload[0x04..0x06], &0x0006_u16.to_le_bytes());
+    assert_eq!(&payload[0x10..0x14], &0x0040_1000_u32.to_le_bytes());
+    assert_eq!(&payload[0x18..0x1b], &[0x00, 0x01, 0x02]);
+    assert_eq!(snapshot.validate_config_space_payload(&payload), Ok(()));
+
+    let mut different_window = payload.clone();
+    different_window[0x19] = 0x03;
+    assert_eq!(
+        snapshot.validate_config_space_payload(&different_window),
+        Err(PciError::SnapshotConfigSpaceMismatch)
+    );
+    assert_eq!(
+        snapshot.validate_config_space_payload(&payload[..255]),
+        Err(PciError::InvalidConfigSpaceSnapshot)
+    );
+}
+
+#[test]
 fn pci_host_bridge_snapshot_restore_preserves_topology_config_and_intx_state() {
     let aperture = PciConfigAperture::ecam(Address::new(0x3000_0000), 3).unwrap();
     let bases = PciHostAddressBases::new(

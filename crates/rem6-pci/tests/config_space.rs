@@ -770,3 +770,49 @@ fn pci_endpoint_snapshot_exposes_bar_payloads_for_checkpoint_audit() {
         Err(PciError::InvalidBarSnapshot)
     );
 }
+
+#[test]
+fn pci_endpoint_snapshot_exposes_config_space_payload_for_checkpoint_audit() {
+    let mut endpoint = network_endpoint();
+    endpoint
+        .install_bar(
+            PciBarSpec::new(
+                PciBarIndex::new(0).unwrap(),
+                PciBarKind::Memory32 {
+                    prefetchable: false,
+                },
+                AccessSize::new(0x1000).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    endpoint
+        .write_config(
+            PciConfigOffset::new(0x04).unwrap(),
+            &0x0006_u16.to_le_bytes(),
+        )
+        .unwrap();
+    endpoint
+        .write_u32(PciConfigOffset::new(0x10).unwrap(), 0x9000_1234)
+        .unwrap();
+    let snapshot = endpoint.snapshot();
+
+    let payload = snapshot.config_space_payload();
+
+    assert_eq!(payload.len(), 256);
+    assert_eq!(&payload[0x00..0x04], &[0x34, 0x12, 0xcd, 0xab]);
+    assert_eq!(&payload[0x04..0x06], &0x0006_u16.to_le_bytes());
+    assert_eq!(&payload[0x10..0x14], &0x9000_1000_u32.to_le_bytes());
+    assert_eq!(snapshot.validate_config_space_payload(&payload), Ok(()));
+
+    let mut different_command = payload.clone();
+    different_command[0x04] ^= 0x2;
+    assert_eq!(
+        snapshot.validate_config_space_payload(&different_command),
+        Err(PciError::SnapshotConfigSpaceMismatch)
+    );
+    assert_eq!(
+        snapshot.validate_config_space_payload(&payload[..255]),
+        Err(PciError::InvalidConfigSpaceSnapshot)
+    );
+}

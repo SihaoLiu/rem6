@@ -16,7 +16,10 @@ mod pm;
 
 use bar::{bar_index_for_offset, PciBarState};
 use capability::PciEndpointCapabilityList;
-use common::{write_common_command, write_common_status, write_u16_at, write_u32_at};
+use common::{
+    config_space_payload, validate_config_space_payload, write_common_command, write_common_status,
+    write_u16_at, write_u32_at,
+};
 
 pub use bar::{
     PciBarIndex, PciBarKind, PciBarRange, PciBarSpec, PciHostAddressBases, PciHostAddressSpace,
@@ -778,6 +781,14 @@ impl PciEndpointConfigSnapshot {
 
     pub const fn class(&self) -> PciClassCode {
         self.class
+    }
+
+    pub fn config_space_payload(&self) -> Vec<u8> {
+        config_space_payload(&self.config)
+    }
+
+    pub fn validate_config_space_payload(&self, payload: &[u8]) -> Result<(), PciError> {
+        validate_config_space_payload(&self.config, payload)
     }
 
     pub fn raw_capability_payloads(&self) -> Vec<Vec<u8>> {

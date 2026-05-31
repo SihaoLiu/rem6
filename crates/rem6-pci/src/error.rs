@@ -163,6 +163,8 @@ pub enum PciError {
     SnapshotLegacyInterruptRouterMismatch,
     SnapshotHostBridgeMismatch,
     InvalidHostBridgeTopologySnapshot,
+    SnapshotConfigSpaceMismatch,
+    InvalidConfigSpaceSnapshot,
     ReadOnlyConfigWrite {
         offset: PciConfigOffset,
         size: AccessSize,
@@ -537,6 +539,12 @@ impl fmt::Display for PciError {
             }
             Self::InvalidHostBridgeTopologySnapshot => {
                 write!(f, "PCI host bridge topology snapshot is invalid")
+            }
+            Self::SnapshotConfigSpaceMismatch => {
+                write!(f, "PCI config-space snapshot does not match this function")
+            }
+            Self::InvalidConfigSpaceSnapshot => {
+                write!(f, "PCI config-space snapshot is invalid")
             }
             Self::InvalidPowerManagementCapabilitySnapshot => {
                 write!(f, "PCI power-management capability snapshot is invalid")

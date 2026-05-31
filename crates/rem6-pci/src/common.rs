@@ -1,4 +1,4 @@
-use crate::{PCI_CONFIG_SPACE_SIZE, PCI_STATUS_OFFSET};
+use crate::{PciError, PCI_CONFIG_SPACE_SIZE, PCI_STATUS_OFFSET};
 
 const PCI_COMMAND_WRITABLE_MASK: u16 = 0x03ff;
 
@@ -30,4 +30,21 @@ pub(crate) fn write_u16_at(config: &mut [u8; PCI_CONFIG_SPACE_SIZE], offset: usi
 
 pub(crate) fn write_u32_at(config: &mut [u8; PCI_CONFIG_SPACE_SIZE], offset: usize, value: u32) {
     config[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+}
+
+pub(crate) fn config_space_payload(config: &[u8; PCI_CONFIG_SPACE_SIZE]) -> Vec<u8> {
+    config.to_vec()
+}
+
+pub(crate) fn validate_config_space_payload(
+    config: &[u8; PCI_CONFIG_SPACE_SIZE],
+    payload: &[u8],
+) -> Result<(), PciError> {
+    if payload.len() != PCI_CONFIG_SPACE_SIZE {
+        return Err(PciError::InvalidConfigSpaceSnapshot);
+    }
+    if payload != config.as_slice() {
+        return Err(PciError::SnapshotConfigSpaceMismatch);
+    }
+    Ok(())
 }

@@ -1,10 +1,11 @@
 use rem6_memory::{AccessSize, Address, AddressRange};
 
 use crate::{
-    write_common_command, write_common_status, write_u16_at, write_u32_at, PciBarIndex, PciBarKind,
-    PciBarRange, PciBarSpec, PciBarState, PciClassCode, PciConfigOffset, PciDeviceIdentity,
-    PciError, PciFunctionAddress, PciHostAddressSpace, PciInterruptPin, PCI_COMMAND_IO_SPACE,
-    PCI_COMMAND_MEMORY_SPACE, PCI_CONFIG_SPACE_SIZE, PCI_STATUS_OFFSET, PCI_TYPE1_HEADER_TYPE,
+    config_space_payload, validate_config_space_payload, write_common_command, write_common_status,
+    write_u16_at, write_u32_at, PciBarIndex, PciBarKind, PciBarRange, PciBarSpec, PciBarState,
+    PciClassCode, PciConfigOffset, PciDeviceIdentity, PciError, PciFunctionAddress,
+    PciHostAddressSpace, PciInterruptPin, PCI_COMMAND_IO_SPACE, PCI_COMMAND_MEMORY_SPACE,
+    PCI_CONFIG_SPACE_SIZE, PCI_STATUS_OFFSET, PCI_TYPE1_HEADER_TYPE,
 };
 
 const PCI_VENDOR_ID_OFFSET: usize = 0x00;
@@ -545,6 +546,14 @@ impl PciBridgeConfigSnapshot {
 
     pub const fn class(&self) -> PciClassCode {
         self.class
+    }
+
+    pub fn config_space_payload(&self) -> Vec<u8> {
+        config_space_payload(&self.config)
+    }
+
+    pub fn validate_config_space_payload(&self, payload: &[u8]) -> Result<(), PciError> {
+        validate_config_space_payload(&self.config, payload)
     }
 
     pub fn bar_payloads(&self) -> Vec<Option<Vec<u8>>> {
