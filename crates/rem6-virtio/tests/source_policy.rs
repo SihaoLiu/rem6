@@ -2,6 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const MAX_FACADE_LINES: usize = 1300;
+const MAX_FOCUSED_DEVICE_LINES: usize = 1300;
 const MAX_SOURCE_LINES: usize = 1800;
 
 #[test]
@@ -52,6 +53,17 @@ fn virtio_queue_contracts_live_in_focused_module() {
     assert!(
         !lib_rs.contains("pub struct VirtioQueueNotification {"),
         "src/lib.rs should re-export queue notifications from a focused module"
+    );
+}
+
+#[test]
+fn virtio_9p_device_source_remains_focused() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/fs9p.rs");
+    let lines = line_count(&path);
+
+    assert!(
+        lines <= MAX_FOCUSED_DEVICE_LINES,
+        "src/fs9p.rs should delegate 9P parsing and namespace internals to focused modules, but it has {lines} lines"
     );
 }
 
