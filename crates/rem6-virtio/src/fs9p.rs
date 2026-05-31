@@ -507,14 +507,19 @@ impl Virtio9pDevice {
 
     fn handle_walk(&self, request: &Virtio9pRequest) -> Result<Result<Vec<u8>, u32>, VirtioError> {
         let walk = parse_walk_request(request)?;
-        let Some(start) = self
-            .fids
-            .lock()
-            .expect("virtio 9p fid lock")
-            .get(&walk.fid)
-            .cloned()
-        else {
-            return Ok(Err(VIRTIO_9P_EBADF));
+        let start = {
+            let fids = self.fids.lock().expect("virtio 9p fid lock");
+            let Some(start) = fids.get(&walk.fid).cloned() else {
+                return Ok(Err(VIRTIO_9P_EBADF));
+            };
+            if walk.fid == walk.newfid {
+                if !walk.names.is_empty() {
+                    return Ok(Err(VIRTIO_9P_EBADF));
+                }
+            } else if fids.contains_key(&walk.newfid) {
+                return Ok(Err(VIRTIO_9P_EBADF));
+            }
+            start
         };
         let Some(mut node) = start.node() else {
             return Ok(Err(VIRTIO_9P_EBADF));
@@ -530,10 +535,13 @@ impl Virtio9pDevice {
         }
         drop(namespace);
 
-        self.fids
-            .lock()
-            .expect("virtio 9p fid lock")
-            .insert(walk.newfid, Virtio9pFidState::new(node));
+        if walk.fid != walk.newfid {
+            let mut fids = self.fids.lock().expect("virtio 9p fid lock");
+            if fids.contains_key(&walk.newfid) {
+                return Ok(Err(VIRTIO_9P_EBADF));
+            }
+            fids.insert(walk.newfid, Virtio9pFidState::new(node));
+        }
         let mut payload = Vec::new();
         payload.extend((qids.len() as u16).to_le_bytes());
         for qid in qids {

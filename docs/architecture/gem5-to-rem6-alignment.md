@@ -1258,9 +1258,11 @@ Implementation evidence through 2026-05-31:
   `Rlerror` payloads, and malformed protocol payloads fail as typed errors
   before completion state mutates. A typed in-memory 9P namespace now covers the
   first filesystem operations after attach: `Twalk` resolves named files and
-  directories into new fid state, `Tmkdir` creates deterministic directory qids
-  and rejects duplicate names with errno payloads, `Tlcreate` creates named root
-  or child-directory files and retargets the directory fid to the opened file,
+  directories into new fid state, rejects occupied destination fids, rejects
+  non-empty same-fid rebinding, and preserves empty same-fid walk replies,
+  `Tmkdir` creates deterministic directory qids and rejects duplicate names with
+  errno payloads, `Tlcreate` creates named root or child-directory files and
+  retargets the directory fid to the opened file,
   `Tgetattr` reports deterministic root, directory, and file metadata,
   `Tstatfs` reports deterministic namespace capacity metadata, legacy `Tstat`
   emits deterministic 9P2000 stat metadata for existing fids and rejects stale
@@ -3256,8 +3258,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   recording, unsupported-request `Rlerror` replies, and malformed 9P payload
   rejection without completion mutation, explicit `Tauth` no-auth-backend
   rejection with malformed auth parsing errors, in-memory namespace file installation,
-  `Twalk` qid-vector replies, missing-name `Rlerror` handling, `Tmkdir`
-  directory creation, duplicate-name errno replies, directory qid preservation,
+  `Twalk` qid-vector replies, missing-name `Rlerror` handling, occupied-newfid
+  rejection, same-fid non-empty walk rejection, empty same-fid walk replies,
+  `Tmkdir` directory creation, duplicate-name errno replies, directory qid preservation,
   and directory walk/listing behavior, `Tlcreate` root and child-directory file
   creation plus opened-fid retargeting, `Tgetattr` root, directory, and file
   metadata replies, `Tstatfs` deterministic filesystem-capacity replies,
