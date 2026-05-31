@@ -2,11 +2,12 @@ use std::collections::BTreeMap;
 
 use crate::{
     fs9p::{
-        VIRTIO_9P_DTDIR, VIRTIO_9P_DTREG, VIRTIO_9P_DTSYMLINK, VIRTIO_9P_EBADF, VIRTIO_9P_EEXIST,
-        VIRTIO_9P_ENOENT, VIRTIO_9P_GETATTR_BASIC, VIRTIO_9P_NAME_MAX, VIRTIO_9P_QTDIR,
-        VIRTIO_9P_QTFILE, VIRTIO_9P_QTSYMLINK, VIRTIO_9P_STATFS_BLOCK_SIZE, VIRTIO_9P_STATFS_TYPE,
-        VIRTIO_9P_TLCREATE, VIRTIO_9P_TMKDIR, VIRTIO_9P_TRENAMEAT, VIRTIO_9P_TSYMLINK,
-        VIRTIO_9P_TUNLINKAT, VIRTIO_9P_TWALK,
+        VIRTIO_9P_DTBLK, VIRTIO_9P_DTCHR, VIRTIO_9P_DTDIR, VIRTIO_9P_DTREG, VIRTIO_9P_DTSYMLINK,
+        VIRTIO_9P_EBADF, VIRTIO_9P_EEXIST, VIRTIO_9P_ENOENT, VIRTIO_9P_GETATTR_BASIC,
+        VIRTIO_9P_NAME_MAX, VIRTIO_9P_QTDIR, VIRTIO_9P_QTFILE, VIRTIO_9P_QTSYMLINK,
+        VIRTIO_9P_STATFS_BLOCK_SIZE, VIRTIO_9P_STATFS_TYPE, VIRTIO_9P_TLCREATE, VIRTIO_9P_TMKDIR,
+        VIRTIO_9P_TMKNOD, VIRTIO_9P_TRENAMEAT, VIRTIO_9P_TSYMLINK, VIRTIO_9P_TUNLINKAT,
+        VIRTIO_9P_TWALK,
     },
     VirtioError,
 };
@@ -53,7 +54,7 @@ pub(crate) fn getattr_payload(metadata: Virtio9pNodeMetadata, request_mask: u64)
     payload.extend(0_u32.to_le_bytes());
     payload.extend(0_u32.to_le_bytes());
     payload.extend(metadata.nlink.to_le_bytes());
-    payload.extend(0_u64.to_le_bytes());
+    payload.extend(metadata.rdev.to_le_bytes());
     payload.extend(metadata.size.to_le_bytes());
     payload.extend(u64::from(VIRTIO_9P_STATFS_BLOCK_SIZE).to_le_bytes());
     payload.extend(metadata.blocks.to_le_bytes());
@@ -86,6 +87,7 @@ pub(crate) enum Virtio9pNodeId {
     File(u64),
     Directory(u64),
     Symlink(u64),
+    Special(u64),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -198,6 +200,37 @@ impl Virtio9pNamespace {
         Ok(Ok(Virtio9pNodeId::Symlink(path)))
     }
 
+    pub(crate) fn create_special(
+        &mut self,
+        parent: Virtio9pNodeId,
+        name: String,
+        mode: u32,
+        major: u32,
+        minor: u32,
+    ) -> Result<Result<Virtio9pNodeId, u32>, VirtioError> {
+        validate_file_name(VIRTIO_9P_TMKNOD, &name)?;
+        let Some(entries) = self.directory_entries(parent) else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        if entries.contains_key(&name) {
+            return Ok(Err(VIRTIO_9P_EEXIST));
+        }
+        let path = self.allocate_path()?;
+        let entries = self
+            .directory_entries_mut(parent)
+            .expect("prevalidated 9p directory parent");
+        entries.insert(
+            name,
+            Virtio9pNode::Special(Virtio9pSpecialNode {
+                qid_path: path,
+                mode,
+                rdev: linux_device_number(major, minor),
+                dtype: special_dtype(mode),
+            }),
+        );
+        Ok(Ok(Virtio9pNodeId::Special(path)))
+    }
+
     pub(crate) fn remove_file_by_name(
         &mut self,
         parent: Virtio9pNodeId,
@@ -208,7 +241,11 @@ impl Virtio9pNamespace {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
         match entries.get(name).map(Virtio9pNode::id) {
-            Some(node @ (Virtio9pNodeId::File(_) | Virtio9pNodeId::Symlink(_))) => {
+            Some(
+                node @ (Virtio9pNodeId::File(_)
+                | Virtio9pNodeId::Symlink(_)
+                | Virtio9pNodeId::Special(_)),
+            ) => {
                 entries.remove(name);
                 Ok(Ok(node))
             }
@@ -221,9 +258,9 @@ impl Virtio9pNamespace {
 
     pub(crate) fn remove_file_by_node(&mut self, node: Virtio9pNodeId) -> bool {
         match node {
-            Virtio9pNodeId::File(path) | Virtio9pNodeId::Symlink(path) => {
-                remove_file_by_path(&mut self.entries, path)
-            }
+            Virtio9pNodeId::File(path)
+            | Virtio9pNodeId::Symlink(path)
+            | Virtio9pNodeId::Special(path) => remove_file_by_path(&mut self.entries, path),
             Virtio9pNodeId::Root | Virtio9pNodeId::Directory(_) => false,
         }
     }
@@ -245,19 +282,21 @@ impl Virtio9pNamespace {
         };
         if oldname == newname {
             return match entries.get(oldname) {
-                Some(Virtio9pNode::File(_) | Virtio9pNode::Symlink(_)) => {
-                    Ok(Ok(Virtio9pRenameOutcome { replaced: None }))
-                }
+                Some(
+                    Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_),
+                ) => Ok(Ok(Virtio9pRenameOutcome { replaced: None })),
                 Some(Virtio9pNode::Directory(_)) => Ok(Err(VIRTIO_9P_EBADF)),
                 None => Ok(Err(VIRTIO_9P_ENOENT)),
             };
         }
         match entries.get(newname) {
             Some(Virtio9pNode::Directory(_)) => return Ok(Err(VIRTIO_9P_EEXIST)),
-            Some(Virtio9pNode::File(_) | Virtio9pNode::Symlink(_)) | None => {}
+            Some(Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_))
+            | None => {}
         }
-        let Some(node @ (Virtio9pNode::File(_) | Virtio9pNode::Symlink(_))) =
-            entries.remove(oldname)
+        let Some(
+            node @ (Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_)),
+        ) = entries.remove(oldname)
         else {
             return Ok(Err(VIRTIO_9P_ENOENT));
         };
@@ -268,6 +307,9 @@ impl Virtio9pNamespace {
                     Virtio9pNode::File(file) => Some(Virtio9pNodeId::File(file.qid_path)),
                     Virtio9pNode::Symlink(symlink) => {
                         Some(Virtio9pNodeId::Symlink(symlink.qid_path))
+                    }
+                    Virtio9pNode::Special(special) => {
+                        Some(Virtio9pNodeId::Special(special.qid_path))
                     }
                     Virtio9pNode::Directory(_) => None,
                 });
@@ -286,6 +328,7 @@ impl Virtio9pNamespace {
             Virtio9pNodeId::File(path) => Virtio9pQid::new(VIRTIO_9P_QTFILE, path),
             Virtio9pNodeId::Directory(path) => Virtio9pQid::new(VIRTIO_9P_QTDIR, path),
             Virtio9pNodeId::Symlink(path) => Virtio9pQid::new(VIRTIO_9P_QTSYMLINK, path),
+            Virtio9pNodeId::Special(path) => Virtio9pQid::new(VIRTIO_9P_QTFILE, path),
         }
     }
 
@@ -295,6 +338,7 @@ impl Virtio9pNamespace {
                 qid: self.root_qid(),
                 mode: 0o040755,
                 nlink: 2 + self.entries.len() as u64,
+                rdev: 0,
                 size: 0,
                 blocks: 0,
             }),
@@ -305,6 +349,7 @@ impl Virtio9pNamespace {
                     qid: Virtio9pQid::new(VIRTIO_9P_QTFILE, path),
                     mode: 0o100644,
                     nlink: 1,
+                    rdev: 0,
                     size,
                     blocks: size.div_ceil(512),
                 })
@@ -315,6 +360,7 @@ impl Virtio9pNamespace {
                     qid: Virtio9pQid::new(VIRTIO_9P_QTDIR, path),
                     mode: 0o040755,
                     nlink: 2 + entries.len() as u64,
+                    rdev: 0,
                     size: 0,
                     blocks: 0,
                 })
@@ -326,8 +372,20 @@ impl Virtio9pNamespace {
                     qid: Virtio9pQid::new(VIRTIO_9P_QTSYMLINK, path),
                     mode: 0o120777,
                     nlink: 1,
+                    rdev: 0,
                     size,
                     blocks: size.div_ceil(512),
+                })
+            }
+            Virtio9pNodeId::Special(path) => {
+                let special = find_special(&self.entries, path)?;
+                Some(Virtio9pNodeMetadata {
+                    qid: Virtio9pQid::new(VIRTIO_9P_QTFILE, path),
+                    mode: special.mode,
+                    nlink: 1,
+                    rdev: special.rdev,
+                    size: 0,
+                    blocks: 0,
                 })
             }
         }
@@ -458,7 +516,9 @@ impl Virtio9pNamespace {
             Virtio9pNodeId::Directory(path) => {
                 find_directory(&self.entries, path).map(|directory| &directory.entries)
             }
-            Virtio9pNodeId::File(_) | Virtio9pNodeId::Symlink(_) => None,
+            Virtio9pNodeId::File(_) | Virtio9pNodeId::Symlink(_) | Virtio9pNodeId::Special(_) => {
+                None
+            }
         }
     }
 
@@ -471,7 +531,9 @@ impl Virtio9pNamespace {
             Virtio9pNodeId::Directory(path) => {
                 find_directory_mut(&mut self.entries, path).map(|directory| &mut directory.entries)
             }
-            Virtio9pNodeId::File(_) | Virtio9pNodeId::Symlink(_) => None,
+            Virtio9pNodeId::File(_) | Virtio9pNodeId::Symlink(_) | Virtio9pNodeId::Special(_) => {
+                None
+            }
         }
     }
 
@@ -489,7 +551,7 @@ fn count_nodes(entries: &BTreeMap<String, Virtio9pNode>) -> u64 {
     entries
         .values()
         .map(|node| match node {
-            Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) => 1,
+            Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_) => 1,
             Virtio9pNode::Directory(directory) => 1 + count_nodes(&directory.entries),
         })
         .sum()
@@ -499,7 +561,7 @@ fn find_file(entries: &BTreeMap<String, Virtio9pNode>, path: u64) -> Option<&Vir
     for node in entries.values() {
         match node {
             Virtio9pNode::File(file) if file.qid_path == path => return Some(file),
-            Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) => {}
+            Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_) => {}
             Virtio9pNode::Directory(directory) => {
                 if let Some(file) = find_file(&directory.entries, path) {
                     return Some(file);
@@ -517,7 +579,7 @@ fn find_file_mut(
     for node in entries.values_mut() {
         match node {
             Virtio9pNode::File(file) if file.qid_path == path => return Some(file),
-            Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) => {}
+            Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_) => {}
             Virtio9pNode::Directory(directory) => {
                 if let Some(file) = find_file_mut(&mut directory.entries, path) {
                     return Some(file);
@@ -535,10 +597,28 @@ fn find_symlink(
     for node in entries.values() {
         match node {
             Virtio9pNode::Symlink(symlink) if symlink.qid_path == path => return Some(symlink),
-            Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) => {}
+            Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_) => {}
             Virtio9pNode::Directory(directory) => {
                 if let Some(symlink) = find_symlink(&directory.entries, path) {
                     return Some(symlink);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn find_special(
+    entries: &BTreeMap<String, Virtio9pNode>,
+    path: u64,
+) -> Option<&Virtio9pSpecialNode> {
+    for node in entries.values() {
+        match node {
+            Virtio9pNode::Special(special) if special.qid_path == path => return Some(special),
+            Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_) => {}
+            Virtio9pNode::Directory(directory) => {
+                if let Some(special) = find_special(&directory.entries, path) {
+                    return Some(special);
                 }
             }
         }
@@ -586,13 +666,17 @@ fn remove_file_by_path(entries: &mut BTreeMap<String, Virtio9pNode>, path: u64) 
     if let Some(name) = entries.iter().find_map(|(name, node)| match node {
         Virtio9pNode::File(file) if file.qid_path == path => Some(name.clone()),
         Virtio9pNode::Symlink(symlink) if symlink.qid_path == path => Some(name.clone()),
-        Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Directory(_) => None,
+        Virtio9pNode::Special(special) if special.qid_path == path => Some(name.clone()),
+        Virtio9pNode::File(_)
+        | Virtio9pNode::Symlink(_)
+        | Virtio9pNode::Special(_)
+        | Virtio9pNode::Directory(_) => None,
     }) {
         return entries.remove(&name).is_some();
     }
     entries.values_mut().any(|node| match node {
         Virtio9pNode::Directory(directory) => remove_file_by_path(&mut directory.entries, path),
-        Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) => false,
+        Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_) => false,
     })
 }
 
@@ -604,6 +688,21 @@ fn validate_file_name(message_type: u8, name: &str) -> Result<(), VirtioError> {
         });
     }
     Ok(())
+}
+
+const fn linux_device_number(major: u32, minor: u32) -> u64 {
+    ((major as u64 & 0x0000_0fff) << 8)
+        | (minor as u64 & 0x0000_00ff)
+        | ((minor as u64 & 0xffff_ff00) << 12)
+        | ((major as u64 & 0xffff_f000) << 32)
+}
+
+const fn special_dtype(mode: u32) -> u8 {
+    match mode & 0o170000 {
+        0o020000 => VIRTIO_9P_DTCHR,
+        0o060000 => VIRTIO_9P_DTBLK,
+        _ => VIRTIO_9P_DTREG,
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -625,10 +724,19 @@ struct Virtio9pSymlinkNode {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+struct Virtio9pSpecialNode {
+    qid_path: u64,
+    mode: u32,
+    rdev: u64,
+    dtype: u8,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 enum Virtio9pNode {
     File(Virtio9pFileNode),
     Directory(Virtio9pDirectoryNode),
     Symlink(Virtio9pSymlinkNode),
+    Special(Virtio9pSpecialNode),
 }
 
 impl Virtio9pNode {
@@ -637,6 +745,7 @@ impl Virtio9pNode {
             Self::File(file) => Virtio9pNodeId::File(file.qid_path),
             Self::Directory(directory) => Virtio9pNodeId::Directory(directory.qid_path),
             Self::Symlink(symlink) => Virtio9pNodeId::Symlink(symlink.qid_path),
+            Self::Special(special) => Virtio9pNodeId::Special(special.qid_path),
         }
     }
 
@@ -645,6 +754,7 @@ impl Virtio9pNode {
             Self::File(file) => Virtio9pQid::new(VIRTIO_9P_QTFILE, file.qid_path),
             Self::Directory(directory) => Virtio9pQid::new(VIRTIO_9P_QTDIR, directory.qid_path),
             Self::Symlink(symlink) => Virtio9pQid::new(VIRTIO_9P_QTSYMLINK, symlink.qid_path),
+            Self::Special(special) => Virtio9pQid::new(VIRTIO_9P_QTFILE, special.qid_path),
         }
     }
 
@@ -653,6 +763,7 @@ impl Virtio9pNode {
             Self::File(_) => VIRTIO_9P_DTREG,
             Self::Directory(_) => VIRTIO_9P_DTDIR,
             Self::Symlink(_) => VIRTIO_9P_DTSYMLINK,
+            Self::Special(special) => special.dtype,
         }
     }
 }
@@ -667,6 +778,7 @@ pub(crate) struct Virtio9pNodeMetadata {
     qid: Virtio9pQid,
     mode: u32,
     nlink: u64,
+    rdev: u64,
     size: u64,
     blocks: u64,
 }

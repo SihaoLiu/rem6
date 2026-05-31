@@ -29,6 +29,8 @@ pub const VIRTIO_9P_TLCREATE: u8 = 14;
 pub const VIRTIO_9P_RLCREATE: u8 = 15;
 pub const VIRTIO_9P_TSYMLINK: u8 = 16;
 pub const VIRTIO_9P_RSYMLINK: u8 = 17;
+pub const VIRTIO_9P_TMKNOD: u8 = 18;
+pub const VIRTIO_9P_RMKNOD: u8 = 19;
 pub const VIRTIO_9P_TREADLINK: u8 = 22;
 pub const VIRTIO_9P_RREADLINK: u8 = 23;
 pub const VIRTIO_9P_TGETATTR: u8 = 24;
@@ -68,7 +70,9 @@ pub const VIRTIO_9P_ENOTSUP: u32 = 95;
 pub const VIRTIO_9P_QTFILE: u8 = 0;
 pub const VIRTIO_9P_QTSYMLINK: u8 = 0x02;
 pub const VIRTIO_9P_QTDIR: u8 = 0x80;
+pub const VIRTIO_9P_DTCHR: u8 = 2;
 pub const VIRTIO_9P_DTDIR: u8 = 4;
+pub const VIRTIO_9P_DTBLK: u8 = 6;
 pub const VIRTIO_9P_DTREG: u8 = 8;
 pub const VIRTIO_9P_DTSYMLINK: u8 = 10;
 pub const VIRTIO_9P_GETATTR_BASIC: u64 = 0x0000_07ff;
@@ -262,6 +266,10 @@ impl Virtio9pDevice {
             },
             VIRTIO_9P_TSYMLINK => match self.handle_symlink(&request)? {
                 Ok(payload) => (VIRTIO_9P_RSYMLINK, payload),
+                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
+            },
+            VIRTIO_9P_TMKNOD => match self.handle_mknod(&request)? {
+                Ok(payload) => (VIRTIO_9P_RMKNOD, payload),
                 Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
             },
             VIRTIO_9P_TREADLINK => match self.handle_readlink(&request)? {
@@ -459,6 +467,30 @@ impl Virtio9pDevice {
         };
         let mut namespace = self.namespace.lock().expect("virtio 9p namespace lock");
         match namespace.create_symlink(parent.node(), symlink.name, symlink.target)? {
+            Ok(node) => Ok(Ok(qid_payload(namespace.qid(node)))),
+            Err(errno) => Ok(Err(errno)),
+        }
+    }
+
+    fn handle_mknod(&self, request: &Virtio9pRequest) -> Result<Result<Vec<u8>, u32>, VirtioError> {
+        let mknod = parse_mknod_request(request)?;
+        let Some(parent) = self
+            .fids
+            .lock()
+            .expect("virtio 9p fid lock")
+            .get(&mknod.dfid)
+            .copied()
+        else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        let mut namespace = self.namespace.lock().expect("virtio 9p namespace lock");
+        match namespace.create_special(
+            parent.node(),
+            mknod.name,
+            mknod.mode,
+            mknod.major,
+            mknod.minor,
+        )? {
             Ok(node) => Ok(Ok(qid_payload(namespace.qid(node)))),
             Err(errno) => Ok(Err(errno)),
         }
@@ -881,6 +913,28 @@ fn parse_symlink_request(request: &Virtio9pRequest) -> Result<Virtio9pSymlinkReq
     Ok(Virtio9pSymlinkRequest { dfid, name, target })
 }
 
+fn parse_mknod_request(request: &Virtio9pRequest) -> Result<Virtio9pMknodRequest, VirtioError> {
+    let mut reader = Virtio9pPayloadReader::new(request.message_type(), request.payload());
+    let dfid = reader.read_u32()?;
+    let name = string_from_9p(
+        request.message_type(),
+        reader.read_string()?,
+        request.payload(),
+    )?;
+    let mode = reader.read_u32()?;
+    let major = reader.read_u32()?;
+    let minor = reader.read_u32()?;
+    let _gid = reader.read_u32()?;
+    reader.finish()?;
+    Ok(Virtio9pMknodRequest {
+        dfid,
+        name,
+        mode,
+        major,
+        minor,
+    })
+}
+
 fn parse_readlink_request(request: &Virtio9pRequest) -> Result<u32, VirtioError> {
     let mut reader = Virtio9pPayloadReader::new(request.message_type(), request.payload());
     let fid = reader.read_u32()?;
@@ -1139,6 +1193,15 @@ struct Virtio9pSymlinkRequest {
     dfid: u32,
     name: String,
     target: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Virtio9pMknodRequest {
+    dfid: u32,
+    name: String,
+    mode: u32,
+    major: u32,
+    minor: u32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
