@@ -20,12 +20,16 @@ pub const VIRTIO_9P_TVERSION: u8 = 100;
 pub const VIRTIO_9P_RVERSION: u8 = 101;
 pub const VIRTIO_9P_TATTACH: u8 = 104;
 pub const VIRTIO_9P_RATTACH: u8 = 105;
+pub const VIRTIO_9P_TLCREATE: u8 = 14;
+pub const VIRTIO_9P_RLCREATE: u8 = 15;
 pub const VIRTIO_9P_TWALK: u8 = 110;
 pub const VIRTIO_9P_RWALK: u8 = 111;
 pub const VIRTIO_9P_TLOPEN: u8 = 12;
 pub const VIRTIO_9P_RLOPEN: u8 = 13;
 pub const VIRTIO_9P_TREAD: u8 = 116;
 pub const VIRTIO_9P_RREAD: u8 = 117;
+pub const VIRTIO_9P_TWRITE: u8 = 118;
+pub const VIRTIO_9P_RWRITE: u8 = 119;
 pub const VIRTIO_9P_TCLUNK: u8 = 120;
 pub const VIRTIO_9P_RCLUNK: u8 = 121;
 pub const VIRTIO_9P_RLERROR: u8 = 7;
@@ -211,8 +215,16 @@ impl Virtio9pDevice {
                 Ok(payload) => (VIRTIO_9P_RLOPEN, payload),
                 Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
             },
+            VIRTIO_9P_TLCREATE => match self.handle_lcreate(&request)? {
+                Ok(payload) => (VIRTIO_9P_RLCREATE, payload),
+                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
+            },
             VIRTIO_9P_TREAD => match self.handle_read(&request)? {
                 Ok(payload) => (VIRTIO_9P_RREAD, payload),
+                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
+            },
+            VIRTIO_9P_TWRITE => match self.handle_write(&request)? {
+                Ok(payload) => (VIRTIO_9P_RWRITE, payload),
                 Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
             },
             VIRTIO_9P_TCLUNK => match self.handle_clunk(&request)? {
@@ -305,6 +317,26 @@ impl Virtio9pDevice {
         Ok(Ok(payload))
     }
 
+    fn handle_lcreate(
+        &self,
+        request: &Virtio9pRequest,
+    ) -> Result<Result<Vec<u8>, u32>, VirtioError> {
+        let create = parse_lcreate_request(request)?;
+        let mut fids = self.fids.lock().expect("virtio 9p fid lock");
+        let Some(fid) = fids.get_mut(&create.fid) else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        if fid.node() != Virtio9pNodeId::Root {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        }
+        let mut namespace = self.namespace.lock().expect("virtio 9p namespace lock");
+        let node = namespace.create_file(create.name)?;
+        *fid = Virtio9pFidState::opened(node);
+        let mut payload = namespace.qid(node).to_le_bytes().to_vec();
+        payload.extend(VIRTIO_9P_DEFAULT_MSIZE.to_le_bytes());
+        Ok(Ok(payload))
+    }
+
     fn handle_read(&self, request: &Virtio9pRequest) -> Result<Result<Vec<u8>, u32>, VirtioError> {
         let read = parse_read_request(request)?;
         let Some(fid) = self
@@ -327,6 +359,27 @@ impl Virtio9pDevice {
         payload.extend((data.len() as u32).to_le_bytes());
         payload.extend(data);
         Ok(Ok(payload))
+    }
+
+    fn handle_write(&self, request: &Virtio9pRequest) -> Result<Result<Vec<u8>, u32>, VirtioError> {
+        let write = parse_write_request(request)?;
+        let Some(fid) = self
+            .fids
+            .lock()
+            .expect("virtio 9p fid lock")
+            .get(&write.fid)
+            .copied()
+        else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        if !fid.is_open() {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        }
+        let mut namespace = self.namespace.lock().expect("virtio 9p namespace lock");
+        let Some(bytes) = namespace.write_file(fid.node(), write.offset, &write.data) else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        Ok(Ok(bytes.to_le_bytes().to_vec()))
     }
 
     fn handle_clunk(&self, request: &Virtio9pRequest) -> Result<Result<(), u32>, VirtioError> {
@@ -444,6 +497,21 @@ fn parse_lopen_request(request: &Virtio9pRequest) -> Result<Virtio9pOpenRequest,
     Ok(Virtio9pOpenRequest { fid })
 }
 
+fn parse_lcreate_request(request: &Virtio9pRequest) -> Result<Virtio9pCreateRequest, VirtioError> {
+    let mut reader = Virtio9pPayloadReader::new(request.message_type(), request.payload());
+    let fid = reader.read_u32()?;
+    let name = string_from_9p(
+        request.message_type(),
+        reader.read_string()?,
+        request.payload(),
+    )?;
+    let _flags = reader.read_u32()?;
+    let _mode = reader.read_u32()?;
+    let _gid = reader.read_u32()?;
+    reader.finish()?;
+    Ok(Virtio9pCreateRequest { fid, name })
+}
+
 fn parse_read_request(request: &Virtio9pRequest) -> Result<Virtio9pReadRequest, VirtioError> {
     let mut reader = Virtio9pPayloadReader::new(request.message_type(), request.payload());
     let fid = reader.read_u32()?;
@@ -451,6 +519,16 @@ fn parse_read_request(request: &Virtio9pRequest) -> Result<Virtio9pReadRequest, 
     let count = reader.read_u32()?;
     reader.finish()?;
     Ok(Virtio9pReadRequest { fid, offset, count })
+}
+
+fn parse_write_request(request: &Virtio9pRequest) -> Result<Virtio9pWriteRequest, VirtioError> {
+    let mut reader = Virtio9pPayloadReader::new(request.message_type(), request.payload());
+    let fid = reader.read_u32()?;
+    let offset = reader.read_u64()?;
+    let count = reader.read_u32()?;
+    let data = reader.read_counted_bytes(count)?;
+    reader.finish()?;
+    Ok(Virtio9pWriteRequest { fid, offset, data })
 }
 
 fn parse_clunk_request(request: &Virtio9pRequest) -> Result<u32, VirtioError> {
@@ -511,6 +589,11 @@ impl<'a> Virtio9pPayloadReader<'a> {
 
     fn read_string(&mut self) -> Result<Vec<u8>, VirtioError> {
         let len = usize::from(self.read_u16()?);
+        Ok(self.read_exact(len)?.to_vec())
+    }
+
+    fn read_counted_bytes(&mut self, count: u32) -> Result<Vec<u8>, VirtioError> {
+        let len = usize::try_from(count).map_err(|_| VirtioError::Virtio9pPayloadLengthOverflow)?;
         Ok(self.read_exact(len)?.to_vec())
     }
 
@@ -597,12 +680,7 @@ impl Virtio9pNamespace {
     }
 
     fn insert_file(&mut self, name: String, data: Vec<u8>) -> Result<(), VirtioError> {
-        if name.is_empty() || name.contains('/') {
-            return Err(VirtioError::InvalidVirtio9pPayload {
-                message_type: VIRTIO_9P_TWALK,
-                bytes: name.len(),
-            });
-        }
+        validate_file_name(VIRTIO_9P_TWALK, &name)?;
         let path = self.next_path;
         self.next_path = self
             .next_path
@@ -616,6 +694,23 @@ impl Virtio9pNamespace {
             },
         );
         Ok(())
+    }
+
+    fn create_file(&mut self, name: String) -> Result<Virtio9pNodeId, VirtioError> {
+        validate_file_name(VIRTIO_9P_TLCREATE, &name)?;
+        let path = self.next_path;
+        self.next_path = self
+            .next_path
+            .checked_add(1)
+            .ok_or(VirtioError::Virtio9pPayloadLengthOverflow)?;
+        self.files.insert(
+            name,
+            Virtio9pFileNode {
+                qid_path: path,
+                data: Vec::new(),
+            },
+        );
+        Ok(Virtio9pNodeId::File(path))
     }
 
     fn walk(&self, node: Virtio9pNodeId, name: &str) -> Option<Virtio9pNodeId> {
@@ -652,6 +747,30 @@ impl Virtio9pNamespace {
         let end = start.saturating_add(count).min(file.data.len());
         Some(file.data[start..end].to_vec())
     }
+
+    fn write_file(&mut self, node: Virtio9pNodeId, offset: u64, data: &[u8]) -> Option<u32> {
+        let Virtio9pNodeId::File(path) = node else {
+            return None;
+        };
+        let file = self.files.values_mut().find(|file| file.qid_path == path)?;
+        let start = usize::try_from(offset).ok()?;
+        let end = start.checked_add(data.len())?;
+        if file.data.len() < end {
+            file.data.resize(end, 0);
+        }
+        file.data[start..end].copy_from_slice(data);
+        u32::try_from(data.len()).ok()
+    }
+}
+
+fn validate_file_name(message_type: u8, name: &str) -> Result<(), VirtioError> {
+    if name.is_empty() || name.contains('/') {
+        return Err(VirtioError::InvalidVirtio9pPayload {
+            message_type,
+            bytes: name.len(),
+        });
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -679,6 +798,10 @@ impl Virtio9pFidState {
         self.open = true;
     }
 
+    const fn opened(node: Virtio9pNodeId) -> Self {
+        Self { node, open: true }
+    }
+
     const fn is_open(self) -> bool {
         self.open
     }
@@ -696,9 +819,22 @@ struct Virtio9pOpenRequest {
     fid: u32,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Virtio9pCreateRequest {
+    fid: u32,
+    name: String,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Virtio9pReadRequest {
     fid: u32,
     offset: u64,
     count: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Virtio9pWriteRequest {
+    fid: u32,
+    offset: u64,
+    data: Vec<u8>,
 }

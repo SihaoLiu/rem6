@@ -2,9 +2,10 @@ use rem6_virtio::{
     Virtio9pConfig, Virtio9pDevice, Virtio9pRequest, VirtioError, VirtioQueueIndex,
     VirtioSplitDescriptor, VirtioSplitDescriptorChain, VIRTIO_9P_DEFAULT_MSIZE, VIRTIO_9P_EBADF,
     VIRTIO_9P_ENOENT, VIRTIO_9P_ENOTSUP, VIRTIO_9P_NOFID, VIRTIO_9P_PROTOCOL_VERSION,
-    VIRTIO_9P_QTDIR, VIRTIO_9P_QTFILE, VIRTIO_9P_RATTACH, VIRTIO_9P_RCLUNK, VIRTIO_9P_RLERROR,
-    VIRTIO_9P_RLOPEN, VIRTIO_9P_RREAD, VIRTIO_9P_RVERSION, VIRTIO_9P_RWALK, VIRTIO_9P_TATTACH,
-    VIRTIO_9P_TCLUNK, VIRTIO_9P_TLOPEN, VIRTIO_9P_TREAD, VIRTIO_9P_TVERSION, VIRTIO_9P_TWALK,
+    VIRTIO_9P_QTDIR, VIRTIO_9P_QTFILE, VIRTIO_9P_RATTACH, VIRTIO_9P_RCLUNK, VIRTIO_9P_RLCREATE,
+    VIRTIO_9P_RLERROR, VIRTIO_9P_RLOPEN, VIRTIO_9P_RREAD, VIRTIO_9P_RVERSION, VIRTIO_9P_RWALK,
+    VIRTIO_9P_RWRITE, VIRTIO_9P_TATTACH, VIRTIO_9P_TCLUNK, VIRTIO_9P_TLCREATE, VIRTIO_9P_TLOPEN,
+    VIRTIO_9P_TREAD, VIRTIO_9P_TVERSION, VIRTIO_9P_TWALK, VIRTIO_9P_TWRITE,
 };
 
 fn queue(index: u16) -> VirtioQueueIndex {
@@ -78,11 +79,30 @@ fn p9_lopen_payload(fid: u32, flags: u32) -> Vec<u8> {
     payload
 }
 
+fn p9_lcreate_payload(fid: u32, name: &[u8], flags: u32, mode: u32, gid: u32) -> Vec<u8> {
+    let mut payload = Vec::new();
+    payload.extend(fid.to_le_bytes());
+    payload.extend(p9_string(name));
+    payload.extend(flags.to_le_bytes());
+    payload.extend(mode.to_le_bytes());
+    payload.extend(gid.to_le_bytes());
+    payload
+}
+
 fn p9_read_payload(fid: u32, offset: u64, count: u32) -> Vec<u8> {
     let mut payload = Vec::new();
     payload.extend(fid.to_le_bytes());
     payload.extend(offset.to_le_bytes());
     payload.extend(count.to_le_bytes());
+    payload
+}
+
+fn p9_write_payload(fid: u32, offset: u64, data: &[u8]) -> Vec<u8> {
+    let mut payload = Vec::new();
+    payload.extend(fid.to_le_bytes());
+    payload.extend(offset.to_le_bytes());
+    payload.extend((data.len() as u32).to_le_bytes());
+    payload.extend(data);
     payload
 }
 
@@ -215,6 +235,79 @@ fn virtio_9p_device_reports_lerror_for_missing_walk_targets() {
     assert_eq!(completion.message_type(), VIRTIO_9P_RLERROR);
     assert_eq!(completion.payload(), VIRTIO_9P_ENOENT.to_le_bytes());
     assert_eq!(device.fid_count(), 1);
+}
+
+#[test]
+fn virtio_9p_device_creates_writes_and_reads_in_memory_files() {
+    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap());
+    let attach = decoded_request(
+        VIRTIO_9P_TATTACH,
+        1,
+        p9_attach_payload(1, VIRTIO_9P_NOFID, b"root", b"", 0),
+    );
+    device.execute_at(10, attach).unwrap();
+
+    let create = decoded_request(
+        VIRTIO_9P_TLCREATE,
+        2,
+        p9_lcreate_payload(1, b"note.txt", 0, 0o100644, 0),
+    );
+    let create_completion = device.execute_at(11, create).unwrap();
+    assert_eq!(create_completion.message_type(), VIRTIO_9P_RLCREATE);
+    let (created_qtype, created_version, created_path) = read_qid(create_completion.payload(), 0);
+    assert_eq!(created_qtype, VIRTIO_9P_QTFILE);
+    assert_eq!(created_version, 0);
+    assert_ne!(created_path, 1);
+    assert_eq!(
+        create_completion.payload()[13..17],
+        VIRTIO_9P_DEFAULT_MSIZE.to_le_bytes()
+    );
+
+    let write = decoded_request(VIRTIO_9P_TWRITE, 3, p9_write_payload(1, 0, b"hello"));
+    let write_completion = device.execute_at(12, write).unwrap();
+    assert_eq!(write_completion.message_type(), VIRTIO_9P_RWRITE);
+    assert_eq!(write_completion.payload(), 5_u32.to_le_bytes());
+
+    let overwrite = decoded_request(VIRTIO_9P_TWRITE, 4, p9_write_payload(1, 2, b"rem6"));
+    let overwrite_completion = device.execute_at(13, overwrite).unwrap();
+    assert_eq!(overwrite_completion.message_type(), VIRTIO_9P_RWRITE);
+    assert_eq!(overwrite_completion.payload(), 4_u32.to_le_bytes());
+
+    let read = decoded_request(VIRTIO_9P_TREAD, 5, p9_read_payload(1, 0, 16));
+    let read_completion = device.execute_at(14, read).unwrap();
+    assert_eq!(read_completion.message_type(), VIRTIO_9P_RREAD);
+    assert_eq!(read_counted_data(read_completion.payload()), b"herem6");
+
+    let attach_root = decoded_request(
+        VIRTIO_9P_TATTACH,
+        6,
+        p9_attach_payload(10, VIRTIO_9P_NOFID, b"root", b"", 0),
+    );
+    device.execute_at(15, attach_root).unwrap();
+
+    let walk = decoded_request(VIRTIO_9P_TWALK, 7, p9_walk_payload(10, 2, &[b"note.txt"]));
+    let walk_completion = device.execute_at(16, walk).unwrap();
+    assert_eq!(walk_completion.message_type(), VIRTIO_9P_RWALK);
+    let (_, _, walked_path) = read_qid(walk_completion.payload(), 2);
+    assert_eq!(walked_path, created_path);
+}
+
+#[test]
+fn virtio_9p_device_rejects_create_and_write_on_stale_fids() {
+    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap());
+    let create = decoded_request(
+        VIRTIO_9P_TLCREATE,
+        1,
+        p9_lcreate_payload(7, b"note.txt", 0, 0o100644, 0),
+    );
+    let create_completion = device.execute_at(10, create).unwrap();
+    assert_eq!(create_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(create_completion.payload(), VIRTIO_9P_EBADF.to_le_bytes());
+
+    let write = decoded_request(VIRTIO_9P_TWRITE, 2, p9_write_payload(7, 0, b"data"));
+    let write_completion = device.execute_at(11, write).unwrap();
+    assert_eq!(write_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(write_completion.payload(), VIRTIO_9P_EBADF.to_le_bytes());
 }
 
 #[test]
