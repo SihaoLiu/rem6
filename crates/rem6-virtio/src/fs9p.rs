@@ -823,7 +823,14 @@ impl Virtio9pDevice {
         request: &Virtio9pRequest,
     ) -> Result<Result<Vec<u8>, u32>, VirtioError> {
         let xattrwalk = parse_xattrwalk_request(request)?;
-        let Some(node) = self.fid_node(xattrwalk.fid) else {
+        let node = {
+            let fids = self.fids.lock().expect("virtio 9p fid lock");
+            if fids.contains_key(&xattrwalk.newfid) {
+                return Ok(Err(VIRTIO_9P_EBADF));
+            }
+            fids.get(&xattrwalk.fid).and_then(Virtio9pFidState::node)
+        };
+        let Some(node) = node else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
         if self
@@ -838,10 +845,11 @@ impl Virtio9pDevice {
         if !xattrwalk.name.is_empty() {
             return Ok(Err(VIRTIO_9P_ENODATA));
         }
-        self.fids
-            .lock()
-            .expect("virtio 9p fid lock")
-            .insert(xattrwalk.newfid, Virtio9pFidState::xattr(Vec::new()));
+        let mut fids = self.fids.lock().expect("virtio 9p fid lock");
+        if fids.contains_key(&xattrwalk.newfid) {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        }
+        fids.insert(xattrwalk.newfid, Virtio9pFidState::xattr(Vec::new()));
         Ok(Ok(0_u64.to_le_bytes().to_vec()))
     }
 

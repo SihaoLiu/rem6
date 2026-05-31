@@ -1296,8 +1296,9 @@ Implementation evidence through 2026-05-31:
   before acknowledging writeback intent, `Tlock` accepts advisory lock requests
   on open file fids, `Tgetlock` reports no in-memory lock conflict with a
   deterministic unlock payload, `Txattrwalk` exposes an empty xattr-list fid
-  that can be read as zero bytes, named missing xattrs return `ENODATA`, and
-  `Txattrcreate` validates target fids before returning `ENOTSUP`. The 9P
+  that can be read as zero bytes, rejects occupied destination fids, named
+  missing xattrs return `ENODATA`, and `Txattrcreate` validates target fids
+  before returning `ENOTSUP`. The 9P
   device entry point delegates
   typed request payload parsing, protocol string payload construction, and
   per-message request structs to a focused protocol module. It also delegates
@@ -3292,7 +3293,8 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   visibility, stale setattr rejection, directory size-mutation rejection,
   unsupported ctime-mask rejection, advisory `Tlock` success for open file fids,
   `Tgetlock` unlock-payload reporting, `Txattrwalk` empty-list read fids,
-  missing-xattr `ENODATA`, `Txattrcreate` unsupported-write and stale-fid errors,
+  occupied-newfid rejection, missing-xattr `ENODATA`, `Txattrcreate`
+  unsupported-write and stale-fid errors,
   `Tclunk` fid removal, `Tflush` no-op acknowledgement without fid mutation,
   `Tfsync` acknowledgement for existing fids, and stale metadata, directory,
   create, fsync, write, remove, unlink, and read `Rlerror` handling,
