@@ -28,6 +28,8 @@ pub const VIRTIO_9P_TGETATTR: u8 = 24;
 pub const VIRTIO_9P_RGETATTR: u8 = 25;
 pub const VIRTIO_9P_TREADDIR: u8 = 40;
 pub const VIRTIO_9P_RREADDIR: u8 = 41;
+pub const VIRTIO_9P_TUNLINKAT: u8 = 76;
+pub const VIRTIO_9P_RUNLINKAT: u8 = 77;
 pub const VIRTIO_9P_TWALK: u8 = 110;
 pub const VIRTIO_9P_RWALK: u8 = 111;
 pub const VIRTIO_9P_TLOPEN: u8 = 12;
@@ -38,6 +40,8 @@ pub const VIRTIO_9P_TWRITE: u8 = 118;
 pub const VIRTIO_9P_RWRITE: u8 = 119;
 pub const VIRTIO_9P_TCLUNK: u8 = 120;
 pub const VIRTIO_9P_RCLUNK: u8 = 121;
+pub const VIRTIO_9P_TREMOVE: u8 = 122;
+pub const VIRTIO_9P_RREMOVE: u8 = 123;
 pub const VIRTIO_9P_RLERROR: u8 = 7;
 pub const VIRTIO_9P_NOFID: u32 = u32::MAX;
 pub const VIRTIO_9P_EBADF: u32 = 9;
@@ -245,6 +249,10 @@ impl Virtio9pDevice {
                 Ok(payload) => (VIRTIO_9P_RREADDIR, payload),
                 Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
             },
+            VIRTIO_9P_TUNLINKAT => match self.handle_unlinkat(&request)? {
+                Ok(()) => (VIRTIO_9P_RUNLINKAT, Vec::new()),
+                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
+            },
             VIRTIO_9P_TREAD => match self.handle_read(&request)? {
                 Ok(payload) => (VIRTIO_9P_RREAD, payload),
                 Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
@@ -255,6 +263,10 @@ impl Virtio9pDevice {
             },
             VIRTIO_9P_TCLUNK => match self.handle_clunk(&request)? {
                 Ok(()) => (VIRTIO_9P_RCLUNK, Vec::new()),
+                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
+            },
+            VIRTIO_9P_TREMOVE => match self.handle_remove(&request)? {
+                Ok(()) => (VIRTIO_9P_RREMOVE, Vec::new()),
                 Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
             },
             _ => (VIRTIO_9P_RLERROR, VIRTIO_9P_ENOTSUP.to_le_bytes().to_vec()),
@@ -429,6 +441,32 @@ impl Virtio9pDevice {
         Ok(Ok(payload))
     }
 
+    fn handle_unlinkat(&self, request: &Virtio9pRequest) -> Result<Result<(), u32>, VirtioError> {
+        let unlink = parse_unlinkat_request(request)?;
+        let Some(fid) = self
+            .fids
+            .lock()
+            .expect("virtio 9p fid lock")
+            .get(&unlink.dirfid)
+            .copied()
+        else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        if fid.node() != Virtio9pNodeId::Root {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        }
+        let Some(node) = self
+            .namespace
+            .lock()
+            .expect("virtio 9p namespace lock")
+            .remove_file_by_name(&unlink.name)?
+        else {
+            return Ok(Err(VIRTIO_9P_ENOENT));
+        };
+        self.remove_fids_for_node(node);
+        Ok(Ok(()))
+    }
+
     fn handle_read(&self, request: &Virtio9pRequest) -> Result<Result<Vec<u8>, u32>, VirtioError> {
         let read = parse_read_request(request)?;
         let Some(fid) = self
@@ -487,6 +525,41 @@ impl Virtio9pDevice {
         } else {
             Ok(Err(VIRTIO_9P_EBADF))
         }
+    }
+
+    fn handle_remove(&self, request: &Virtio9pRequest) -> Result<Result<(), u32>, VirtioError> {
+        let remove_fid = parse_remove_request(request)?;
+        let Some(fid) = self
+            .fids
+            .lock()
+            .expect("virtio 9p fid lock")
+            .get(&remove_fid)
+            .copied()
+        else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        let node = fid.node();
+        if node == Virtio9pNodeId::Root {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        }
+        if self
+            .namespace
+            .lock()
+            .expect("virtio 9p namespace lock")
+            .remove_file_by_node(node)
+        {
+            self.remove_fids_for_node(node);
+            Ok(Ok(()))
+        } else {
+            Ok(Err(VIRTIO_9P_EBADF))
+        }
+    }
+
+    fn remove_fids_for_node(&self, node: Virtio9pNodeId) {
+        self.fids
+            .lock()
+            .expect("virtio 9p fid lock")
+            .retain(|_, fid| fid.node() != node);
     }
 }
 
@@ -628,6 +701,21 @@ fn parse_readdir_request(request: &Virtio9pRequest) -> Result<Virtio9pReaddirReq
     Ok(Virtio9pReaddirRequest { fid, offset, count })
 }
 
+fn parse_unlinkat_request(
+    request: &Virtio9pRequest,
+) -> Result<Virtio9pUnlinkatRequest, VirtioError> {
+    let mut reader = Virtio9pPayloadReader::new(request.message_type(), request.payload());
+    let dirfid = reader.read_u32()?;
+    let name = string_from_9p(
+        request.message_type(),
+        reader.read_string()?,
+        request.payload(),
+    )?;
+    let _flags = reader.read_u32()?;
+    reader.finish()?;
+    Ok(Virtio9pUnlinkatRequest { dirfid, name })
+}
+
 fn parse_read_request(request: &Virtio9pRequest) -> Result<Virtio9pReadRequest, VirtioError> {
     let mut reader = Virtio9pPayloadReader::new(request.message_type(), request.payload());
     let fid = reader.read_u32()?;
@@ -648,6 +736,13 @@ fn parse_write_request(request: &Virtio9pRequest) -> Result<Virtio9pWriteRequest
 }
 
 fn parse_clunk_request(request: &Virtio9pRequest) -> Result<u32, VirtioError> {
+    let mut reader = Virtio9pPayloadReader::new(request.message_type(), request.payload());
+    let fid = reader.read_u32()?;
+    reader.finish()?;
+    Ok(fid)
+}
+
+fn parse_remove_request(request: &Virtio9pRequest) -> Result<u32, VirtioError> {
     let mut reader = Virtio9pPayloadReader::new(request.message_type(), request.payload());
     let fid = reader.read_u32()?;
     reader.finish()?;
@@ -864,6 +959,28 @@ impl Virtio9pNamespace {
         Ok(Virtio9pNodeId::File(path))
     }
 
+    fn remove_file_by_name(&mut self, name: &str) -> Result<Option<Virtio9pNodeId>, VirtioError> {
+        validate_file_name(VIRTIO_9P_TUNLINKAT, name)?;
+        Ok(self
+            .files
+            .remove(name)
+            .map(|file| Virtio9pNodeId::File(file.qid_path)))
+    }
+
+    fn remove_file_by_node(&mut self, node: Virtio9pNodeId) -> bool {
+        let Virtio9pNodeId::File(path) = node else {
+            return false;
+        };
+        let Some(name) = self
+            .files
+            .iter()
+            .find_map(|(name, file)| (file.qid_path == path).then(|| name.clone()))
+        else {
+            return false;
+        };
+        self.files.remove(&name).is_some()
+    }
+
     fn walk(&self, node: Virtio9pNodeId, name: &str) -> Option<Virtio9pNodeId> {
         match node {
             Virtio9pNodeId::Root => self
@@ -1076,6 +1193,12 @@ struct Virtio9pReaddirRequest {
     fid: u32,
     offset: u64,
     count: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Virtio9pUnlinkatRequest {
+    dirfid: u32,
+    name: String,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
