@@ -1,20 +1,20 @@
 use std::sync::{Arc, Mutex};
 
 use rem6_kernel::{PartitionId, PartitionedScheduler};
-use rem6_memory::{AccessSize, Address, ByteMask};
+use rem6_memory::{AccessSize, Address, AddressRange, ByteMask};
 use rem6_mmio::{MmioBus, MmioCompletion, MmioRequest, MmioRequestId, MmioResponse, MmioRoute};
 use rem6_pci::{
     PciBarKind, PciClassCode, PciConfigOffset, PciDeviceIdentity, PciEndpointConfig,
     PciFunctionAddress,
 };
 use rem6_virtio::{
-    VirtioPciBarIndex, VirtioPciCapabilityKind, VirtioPciCapabilityOffset,
-    VirtioPciModernTransportDevices, VirtioPciModernTransportSpec, VirtioPciNotifyRegion,
-    VirtioPciTransportBarSpec, VirtioPciTransportEndpointSpec, VirtioPciTransportRegion,
-    VirtioQueueIndex, VirtioRngByteSource, VirtioRngDevice, VIRTIO_F_VERSION_1_PAGE_BITS,
+    Virtio9pConfig, Virtio9pDevice, VirtioPciBarIndex, VirtioPciCapabilityKind,
+    VirtioPciCapabilityOffset, VirtioPciModernTransportDevices, VirtioPciModernTransportSpec,
+    VirtioPciNotifyRegion, VirtioPciTransportBarSpec, VirtioPciTransportEndpointSpec,
+    VirtioPciTransportRegion, VirtioQueueIndex, VIRTIO_9P_DEFAULT_QUEUE_SIZE, VIRTIO_9P_DEVICE_ID,
+    VIRTIO_9P_F_MOUNT_TAG, VIRTIO_9P_REQUEST_QUEUE_INDEX, VIRTIO_F_VERSION_1_PAGE_BITS,
     VIRTIO_PCI_DEVICE_FEATURE_OFFSET, VIRTIO_PCI_ISR_STATUS_SIZE, VIRTIO_PCI_NUM_QUEUES_OFFSET,
     VIRTIO_PCI_QUEUE_NOTIFY_OFF_OFFSET, VIRTIO_PCI_QUEUE_SIZE_OFFSET,
-    VIRTIO_RNG_DEFAULT_QUEUE_SIZE, VIRTIO_RNG_DEVICE_ID, VIRTIO_RNG_REQUEST_QUEUE_INDEX,
 };
 
 fn bar(index: u8) -> VirtioPciBarIndex {
@@ -37,14 +37,14 @@ fn region(index: u8, offset: u64, length: u32) -> VirtioPciTransportRegion {
 
 fn endpoint_spec() -> VirtioPciTransportEndpointSpec {
     VirtioPciTransportEndpointSpec::new(
-        PciFunctionAddress::new(0, 15, 0).unwrap(),
-        PciDeviceIdentity::new(0x1af4, 0x1044),
+        PciFunctionAddress::new(0, 16, 0).unwrap(),
+        PciDeviceIdentity::new(0x1af4, 0x1049),
         PciClassCode::new(0xff, 0x00, 0x00, 0x00),
     )
 }
 
-fn rng_device() -> VirtioRngDevice {
-    VirtioRngDevice::new(VirtioRngByteSource::repeating(vec![0x11, 0x22]).unwrap())
+fn fs9p_device() -> Virtio9pDevice {
+    Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap())
 }
 
 fn read_u16(device: &rem6_virtio::VirtioPciCommonConfigDevice, offset: u64) -> u16 {
@@ -114,14 +114,40 @@ fn completed_data(completions: &[MmioCompletion], request: MmioRequestId) -> Vec
 }
 
 #[test]
-fn virtio_rng_builds_zero_config_request_queue_transport_devices() {
-    let device = rng_device();
+fn virtio_9p_builds_mount_tag_config_and_queue_devices() {
+    let device = fs9p_device();
+    let config_spec = device.device_config_spec().unwrap();
 
-    assert_eq!(device.config_size(), 0);
+    assert_eq!(device.config_size(), 11);
+    assert_eq!(device.config_bytes(), b"\x09\x00rem6share");
+    assert_eq!(config_spec.bytes(), b"\x09\x00rem6share");
+    assert_eq!(config_spec.writable().bits(), &[false; 11]);
+
+    let device_config = device.build_device_config().unwrap();
+    assert_eq!(
+        device_config.range(),
+        AddressRange::new(Address::new(0), AccessSize::new(11).unwrap()).unwrap()
+    );
+    assert_eq!(
+        device_config
+            .read_local(Address::new(2), AccessSize::new(9).unwrap())
+            .unwrap(),
+        b"rem6share"
+    );
+    assert!(device_config
+        .write_local(
+            Address::new(2),
+            b"host".to_vec(),
+            ByteMask::from_bits(vec![true; 4]).unwrap(),
+        )
+        .is_err());
 
     let common = device.build_common_config().unwrap();
     assert_eq!(read_u16(&common, VIRTIO_PCI_NUM_QUEUES_OFFSET), 1);
-    assert_eq!(read_u32(&common, VIRTIO_PCI_DEVICE_FEATURE_OFFSET), 0);
+    assert_eq!(
+        read_u32(&common, VIRTIO_PCI_DEVICE_FEATURE_OFFSET),
+        VIRTIO_9P_F_MOUNT_TAG
+    );
     common
         .write_local(
             Address::new(rem6_virtio::VIRTIO_PCI_DEVICE_FEATURE_SELECT_OFFSET),
@@ -142,7 +168,7 @@ fn virtio_rng_builds_zero_config_request_queue_transport_devices() {
         .unwrap();
     assert_eq!(
         read_u16(&common, VIRTIO_PCI_QUEUE_SIZE_OFFSET),
-        VIRTIO_RNG_DEFAULT_QUEUE_SIZE
+        VIRTIO_9P_DEFAULT_QUEUE_SIZE
     );
     assert_eq!(read_u16(&common, VIRTIO_PCI_QUEUE_NOTIFY_OFF_OFFSET), 0);
 
@@ -150,26 +176,34 @@ fn virtio_rng_builds_zero_config_request_queue_transport_devices() {
     notify
         .write_local(
             Address::new(0),
-            VIRTIO_RNG_REQUEST_QUEUE_INDEX.to_le_bytes().to_vec(),
+            VIRTIO_9P_REQUEST_QUEUE_INDEX.to_le_bytes().to_vec(),
             ByteMask::from_bits(vec![true, true]).unwrap(),
-            101,
+            122,
         )
         .unwrap();
     assert_eq!(notify.notifications().len(), 1);
     assert_eq!(
         notify.notifications()[0].queue(),
-        VirtioQueueIndex::new(VIRTIO_RNG_REQUEST_QUEUE_INDEX).unwrap()
+        VirtioQueueIndex::new(VIRTIO_9P_REQUEST_QUEUE_INDEX).unwrap()
     );
     assert_eq!(notify.notifications()[0].address(), Address::new(0));
-    assert_eq!(notify.notifications()[0].tick(), 101);
+    assert_eq!(notify.notifications()[0].tick(), 122);
 }
 
 #[test]
-fn virtio_rng_attaches_to_modern_pci_transport_without_device_config() {
-    let device = rng_device();
+fn virtio_9p_rejects_mount_tags_that_do_not_fit_the_config_length() {
+    let tag = vec![0_u8; usize::from(u16::MAX) + 1];
+
+    assert!(Virtio9pConfig::new(tag).is_err());
+}
+
+#[test]
+fn virtio_9p_attaches_to_modern_pci_transport_runtime() {
+    let device = fs9p_device();
     let common = device.build_common_config().unwrap();
     let notify = device.build_notify_device(4).unwrap();
     let isr = rem6_virtio::VirtioPciIsrDevice::new();
+    let device_config = device.build_device_config().unwrap();
     let transport = VirtioPciModernTransportSpec::new(
         endpoint_spec(),
         VirtioPciCapabilityOffset::new(0x70).unwrap(),
@@ -177,11 +211,12 @@ fn virtio_rng_attaches_to_modern_pci_transport_without_device_config() {
         region(0, 0x000, 0x40),
         VirtioPciNotifyRegion::new(region(0, 0x100, 0x100), 4).unwrap(),
         region(0, 0x200, VIRTIO_PCI_ISR_STATUS_SIZE as u32),
-    );
+    )
+    .with_device_config(region(0, 0x300, device.config_size() as u32));
 
     let endpoint = transport.build_endpoint().unwrap();
     assert_eq!(endpoint.identity().vendor_id(), 0x1af4);
-    assert_eq!(endpoint.identity().device_id(), 0x1044);
+    assert_eq!(endpoint.identity().device_id(), 0x1049);
     assert_eq!(
         endpoint
             .read_config(
@@ -192,16 +227,17 @@ fn virtio_rng_attaches_to_modern_pci_transport_without_device_config() {
         vec![0x70]
     );
     let cfg_types = capability_cfg_types(&endpoint);
-    assert_eq!(cfg_types.len(), 3);
-    assert!(!cfg_types.contains(&VirtioPciCapabilityKind::DeviceConfig.cfg_type()));
+    assert_eq!(cfg_types.len(), 4);
+    assert!(cfg_types.contains(&VirtioPciCapabilityKind::DeviceConfig.cfg_type()));
 
     let runtime = transport
         .build_bar_runtime(
             bar(0),
-            VirtioPciModernTransportDevices::new(common, notify.clone(), isr),
+            VirtioPciModernTransportDevices::new(common, notify.clone(), isr)
+                .with_device_config(device_config),
         )
         .unwrap();
-    assert_eq!(runtime.device_count(), 3);
+    assert_eq!(runtime.device_count(), 4);
 
     let cpu = PartitionId::new(0);
     let pci = PartitionId::new(1);
@@ -212,20 +248,20 @@ fn virtio_rng_attaches_to_modern_pci_transport_without_device_config() {
     let completions = Arc::new(Mutex::new(Vec::new()));
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 1).unwrap();
 
-    let common_bus = Arc::clone(&bus);
-    let common_completed = Arc::clone(&completions);
+    let config_bus = Arc::clone(&bus);
+    let config_completed = Arc::clone(&completions);
     scheduler
         .schedule_parallel_at(cpu, 5, move |context| {
-            common_bus
+            config_bus
                 .submit_parallel(
                     context,
                     MmioRequest::read(
                         MmioRequestId::new(1),
-                        Address::new(VIRTIO_PCI_NUM_QUEUES_OFFSET),
-                        AccessSize::new(2).unwrap(),
+                        Address::new(0x300),
+                        AccessSize::new(11).unwrap(),
                     )
                     .unwrap(),
-                    move |completion| common_completed.lock().unwrap().push(completion),
+                    move |completion| config_completed.lock().unwrap().push(completion),
                 )
                 .unwrap();
         })
@@ -241,7 +277,7 @@ fn virtio_rng_attaches_to_modern_pci_transport_without_device_config() {
                     MmioRequest::write(
                         MmioRequestId::new(2),
                         Address::new(0x100),
-                        VIRTIO_RNG_REQUEST_QUEUE_INDEX.to_le_bytes().to_vec(),
+                        VIRTIO_9P_REQUEST_QUEUE_INDEX.to_le_bytes().to_vec(),
                         ByteMask::from_bits(vec![true, true]).unwrap(),
                     )
                     .unwrap(),
@@ -256,7 +292,7 @@ fn virtio_rng_attaches_to_modern_pci_transport_without_device_config() {
     let completions = completions.lock().unwrap();
     assert_eq!(
         completed_data(&completions, MmioRequestId::new(1)),
-        1_u16.to_le_bytes()
+        b"\x09\x00rem6share"
     );
     assert!(response_for(&completions, MmioRequestId::new(2))
         .as_ref()
@@ -268,11 +304,11 @@ fn virtio_rng_attaches_to_modern_pci_transport_without_device_config() {
     assert_eq!(notify.notifications().len(), 1);
     assert_eq!(
         notify.notifications()[0].queue(),
-        VirtioQueueIndex::new(VIRTIO_RNG_REQUEST_QUEUE_INDEX).unwrap()
+        VirtioQueueIndex::new(VIRTIO_9P_REQUEST_QUEUE_INDEX).unwrap()
     );
 }
 
 #[test]
-fn virtio_rng_reports_gem5_device_id_for_transport_identity() {
-    assert_eq!(VIRTIO_RNG_DEVICE_ID, 4);
+fn virtio_9p_reports_gem5_device_id_for_transport_identity() {
+    assert_eq!(VIRTIO_9P_DEVICE_ID, 9);
 }

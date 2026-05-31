@@ -3,8 +3,8 @@ use std::sync::{Arc, Mutex};
 use rem6_kernel::{ParallelSchedulerContext, SchedulerContext, Tick};
 
 use crate::{
-    VirtioError, VirtioPciCommonConfigDevice, VirtioPciNotifyDevice, VirtioQueueIndex,
-    VirtioQueueNotifySpec, VirtioQueueSpec,
+    modern_feature_pages, VirtioError, VirtioPciCommonConfigDevice, VirtioPciNotifyDevice,
+    VirtioQueueIndex, VirtioQueueNotifySpec, VirtioQueueSpec,
 };
 
 pub const VIRTIO_RNG_DEVICE_ID: u16 = 4;
@@ -133,7 +133,7 @@ impl VirtioRngDevice {
     }
 
     pub fn feature_pages(&self) -> Vec<(u32, u32)> {
-        Vec::new()
+        modern_feature_pages([])
     }
 
     pub fn queue_specs(&self) -> [VirtioQueueSpec; 1] {

@@ -9,9 +9,9 @@ use rem6_virtio::{
     VirtioPciModernTransportDevices, VirtioPciModernTransportSpec, VirtioPciNotifyRegion,
     VirtioPciTransportBarSpec, VirtioPciTransportEndpointSpec, VirtioPciTransportRegion,
     VirtioQueueIndex, VIRTIO_CONSOLE_CONFIG_SIZE, VIRTIO_CONSOLE_DEVICE_ID, VIRTIO_CONSOLE_F_SIZE,
-    VIRTIO_PCI_DEVICE_FEATURE_OFFSET, VIRTIO_PCI_ISR_STATUS_SIZE, VIRTIO_PCI_NUM_QUEUES_OFFSET,
-    VIRTIO_PCI_QUEUE_NOTIFY_OFF_OFFSET, VIRTIO_PCI_QUEUE_SELECT_OFFSET,
-    VIRTIO_PCI_QUEUE_SIZE_OFFSET,
+    VIRTIO_F_VERSION_1_PAGE_BITS, VIRTIO_PCI_DEVICE_FEATURE_OFFSET, VIRTIO_PCI_ISR_STATUS_SIZE,
+    VIRTIO_PCI_NUM_QUEUES_OFFSET, VIRTIO_PCI_QUEUE_NOTIFY_OFF_OFFSET,
+    VIRTIO_PCI_QUEUE_SELECT_OFFSET, VIRTIO_PCI_QUEUE_SIZE_OFFSET,
 };
 
 fn bar(index: u8) -> VirtioPciBarIndex {
@@ -119,6 +119,24 @@ fn virtio_console_builds_read_only_device_config_and_queue_devices() {
         read_u32(&common, VIRTIO_PCI_DEVICE_FEATURE_OFFSET),
         VIRTIO_CONSOLE_F_SIZE
     );
+    common
+        .write_local(
+            Address::new(rem6_virtio::VIRTIO_PCI_DEVICE_FEATURE_SELECT_OFFSET),
+            1_u32.to_le_bytes().to_vec(),
+            ByteMask::from_bits(vec![true; 4]).unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        read_u32(&common, VIRTIO_PCI_DEVICE_FEATURE_OFFSET),
+        VIRTIO_F_VERSION_1_PAGE_BITS
+    );
+    common
+        .write_local(
+            Address::new(rem6_virtio::VIRTIO_PCI_DEVICE_FEATURE_SELECT_OFFSET),
+            0_u32.to_le_bytes().to_vec(),
+            ByteMask::from_bits(vec![true; 4]).unwrap(),
+        )
+        .unwrap();
     assert_eq!(read_u16(&common, VIRTIO_PCI_QUEUE_SIZE_OFFSET), 16);
     assert_eq!(read_u16(&common, VIRTIO_PCI_QUEUE_NOTIFY_OFF_OFFSET), 0);
     common

@@ -6,7 +6,8 @@ use rem6_virtio::{
     VirtioGuestMemory, VirtioPciIsrDevice, VirtioPciIsrEventKind, VirtioQueueIndex,
     VirtioRngByteSource, VirtioRngDevice, VirtioRngRequest, VirtioRngRequestId,
     VirtioSplitDescriptor, VirtioSplitDescriptorChain, VirtioSplitQueue, VirtioSplitUsedElement,
-    VirtioSplitUsedRing, VIRTIO_RNG_DEVICE_ID, VIRTIO_SPLIT_DESC_F_NEXT, VIRTIO_SPLIT_DESC_F_WRITE,
+    VirtioSplitUsedRing, VIRTIO_F_VERSION_1_PAGE_BITS, VIRTIO_RNG_DEVICE_ID,
+    VIRTIO_SPLIT_DESC_F_NEXT, VIRTIO_SPLIT_DESC_F_WRITE,
 };
 
 fn queue(index: u16) -> VirtioQueueIndex {
@@ -101,7 +102,10 @@ fn virtio_rng_device_reports_gem5_device_id_and_reproducible_entropy() {
     let device =
         VirtioRngDevice::new(VirtioRngByteSource::repeating(vec![0x10, 0x20, 0x30]).unwrap());
 
-    assert!(device.feature_pages().is_empty());
+    assert_eq!(
+        device.feature_pages(),
+        vec![(1, VIRTIO_F_VERSION_1_PAGE_BITS)]
+    );
     assert_eq!(device.config_size(), 0);
 
     let request = VirtioRngRequest::new(VirtioRngRequestId::new(7), queue(0), 5).unwrap();

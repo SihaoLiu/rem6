@@ -124,7 +124,7 @@ fn virtio_pci_common_config_tracks_feature_pages_and_selected_queue_state() {
     write_u32(&device, VIRTIO_PCI_DEVICE_FEATURE_SELECT_OFFSET, 1).unwrap();
     assert_eq!(
         read_u32(&device, VIRTIO_PCI_DEVICE_FEATURE_OFFSET),
-        0x0000_0002
+        0x0000_0003
     );
     write_u32(&device, VIRTIO_PCI_DRIVER_FEATURE_SELECT_OFFSET, 1).unwrap();
     write_u32(&device, VIRTIO_PCI_DRIVER_FEATURE_OFFSET, 0x0000_0002).unwrap();
@@ -215,7 +215,7 @@ fn virtio_pci_common_config_snapshot_bytes_round_trip_and_restore() {
     assert_eq!(u32::from_le_bytes(payload[26..30].try_into().unwrap()), 1);
     assert_eq!(
         u32::from_le_bytes(payload[30..34].try_into().unwrap()),
-        0x0000_0002
+        0x0000_0003
     );
     assert_eq!(u64::from_le_bytes(payload[34..42].try_into().unwrap()), 1);
     assert_eq!(u32::from_le_bytes(payload[42..46].try_into().unwrap()), 1);

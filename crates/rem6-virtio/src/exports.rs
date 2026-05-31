@@ -47,6 +47,11 @@ pub use crate::device_config::{
     VirtioPciDeviceConfigAccess, VirtioPciDeviceConfigDevice, VirtioPciDeviceConfigSnapshot,
     VirtioPciDeviceConfigSpec,
 };
+pub use crate::fs9p::{
+    Virtio9pConfig, Virtio9pDevice, VIRTIO_9P_CONFIG_TAG_LENGTH_OFFSET,
+    VIRTIO_9P_CONFIG_TAG_OFFSET, VIRTIO_9P_DEFAULT_QUEUE_SIZE, VIRTIO_9P_DEVICE_ID,
+    VIRTIO_9P_F_MOUNT_TAG, VIRTIO_9P_REQUEST_QUEUE_INDEX,
+};
 pub use crate::isr::{
     VirtioPciIsrDevice, VirtioPciIsrEvent, VirtioPciIsrEventKind, VirtioPciIsrSnapshot,
     VirtioPciIsrStatus, VIRTIO_PCI_ISR_STATUS_SIZE,

@@ -187,6 +187,9 @@ pub enum VirtioError {
         index: u16,
     },
     VirtioRngPayloadLengthOverflow,
+    Virtio9pMountTagTooLong {
+        bytes: usize,
+    },
     ZeroPciCapabilityRegion {
         cfg_type: u8,
     },
@@ -573,6 +576,10 @@ impl fmt::Display for VirtioError {
             Self::VirtioRngPayloadLengthOverflow => {
                 write!(formatter, "VirtIO rng request payload length overflows")
             }
+            Self::Virtio9pMountTagTooLong { bytes } => write!(
+                formatter,
+                "VirtIO 9p mount tag has {bytes} bytes and cannot fit in a 16-bit length"
+            ),
             Self::ZeroPciCapabilityRegion { cfg_type } => {
                 write!(formatter, "VirtIO PCI capability type {cfg_type} has zero length")
             }

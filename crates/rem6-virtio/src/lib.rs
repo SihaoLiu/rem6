@@ -14,6 +14,7 @@ mod console;
 mod device_config;
 mod error;
 mod exports;
+mod fs9p;
 mod isr;
 mod mmio_transport;
 mod pci_capability;
@@ -58,12 +59,27 @@ pub const VIRTIO_STATUS_DRIVER_OK: u8 = 0x04;
 pub const VIRTIO_STATUS_DEVICE_NEEDS_RESET: u8 = 0x40;
 pub const VIRTIO_STATUS_FAILED: u8 = 0x80;
 
+pub const VIRTIO_F_VERSION_1: u64 = 1 << 32;
+pub const VIRTIO_F_VERSION_1_PAGE: u32 = 1;
+pub const VIRTIO_F_VERSION_1_PAGE_BITS: u32 = 1;
+
 const VIRTIO_MSI_NO_VECTOR: u16 = 0xffff;
 const VIRTIO_NOTIFY_SNAPSHOT_MAGIC: &[u8; 8] = b"VIONOTI1";
 const VIRTIO_NOTIFY_SNAPSHOT_VERSION: u16 = 1;
 const VIRTIO_NOTIFY_SNAPSHOT_ENTRY_BYTES: usize = 20;
 const U16_BYTES: usize = 2;
 const U64_BYTES: usize = 8;
+
+pub(crate) fn modern_feature_pages(
+    device_features: impl IntoIterator<Item = (u32, u32)>,
+) -> Vec<(u32, u32)> {
+    let mut features = device_features.into_iter().collect::<BTreeMap<_, _>>();
+    *features.entry(VIRTIO_F_VERSION_1_PAGE).or_default() |= VIRTIO_F_VERSION_1_PAGE_BITS;
+    features
+        .into_iter()
+        .filter(|(_, bits)| *bits != 0)
+        .collect()
+}
 
 #[derive(Clone, Debug)]
 pub struct VirtioPciNotifyDevice {
@@ -708,6 +724,8 @@ impl VirtioPciCommonState {
         device_features: impl IntoIterator<Item = (u32, u32)>,
         queues: impl IntoIterator<Item = VirtioQueueSpec>,
     ) -> Result<Self, VirtioError> {
+        let device_features = modern_feature_pages(device_features).into_iter().collect();
+
         let queues = queues
             .into_iter()
             .enumerate()
@@ -720,7 +738,7 @@ impl VirtioPciCommonState {
         }
 
         Ok(Self {
-            device_features: device_features.into_iter().collect(),
+            device_features,
             driver_features: BTreeMap::new(),
             device_feature_select: 0,
             driver_feature_select: 0,

@@ -5,10 +5,11 @@ use rem6_kernel::Tick;
 use rem6_memory::{Address, ByteMask};
 
 use crate::{
-    block_queue::add_address, VirtioError, VirtioGuestMemory, VirtioPciCommonConfigDevice,
-    VirtioPciDeviceConfigDevice, VirtioPciDeviceConfigSpec, VirtioPciIsrDevice,
-    VirtioPciNotifyDevice, VirtioQueueIndex, VirtioQueueNotifySpec, VirtioQueueSpec,
-    VirtioSplitDescriptorChain, VirtioSplitQueue, VirtioSplitUsedElement, VirtioSplitUsedRing,
+    block_queue::add_address, modern_feature_pages, VirtioError, VirtioGuestMemory,
+    VirtioPciCommonConfigDevice, VirtioPciDeviceConfigDevice, VirtioPciDeviceConfigSpec,
+    VirtioPciIsrDevice, VirtioPciNotifyDevice, VirtioQueueIndex, VirtioQueueNotifySpec,
+    VirtioQueueSpec, VirtioSplitDescriptorChain, VirtioSplitQueue, VirtioSplitUsedElement,
+    VirtioSplitUsedRing,
 };
 
 pub const VIRTIO_CONSOLE_DEVICE_ID: u16 = 3;
@@ -226,7 +227,7 @@ impl VirtioConsoleDevice {
     }
 
     pub fn feature_pages(&self) -> Vec<(u32, u32)> {
-        vec![(0, VIRTIO_CONSOLE_F_SIZE)]
+        modern_feature_pages([(0, VIRTIO_CONSOLE_F_SIZE)])
     }
 
     pub fn queue_specs(&self) -> [VirtioQueueSpec; 2] {

@@ -6,8 +6,8 @@ use rem6_virtio::{
     VirtioConsoleConfig, VirtioConsoleDevice, VirtioError, VirtioGuestMemory, VirtioPciIsrDevice,
     VirtioPciIsrEventKind, VirtioQueueIndex, VirtioSplitDescriptor, VirtioSplitDescriptorChain,
     VirtioSplitQueue, VirtioSplitUsedElement, VirtioSplitUsedRing, VIRTIO_CONSOLE_CONFIG_SIZE,
-    VIRTIO_CONSOLE_DEVICE_ID, VIRTIO_CONSOLE_F_SIZE, VIRTIO_SPLIT_DESC_F_NEXT,
-    VIRTIO_SPLIT_DESC_F_WRITE,
+    VIRTIO_CONSOLE_DEVICE_ID, VIRTIO_CONSOLE_F_SIZE, VIRTIO_F_VERSION_1_PAGE_BITS,
+    VIRTIO_SPLIT_DESC_F_NEXT, VIRTIO_SPLIT_DESC_F_WRITE,
 };
 
 fn queue(index: u16) -> VirtioQueueIndex {
@@ -103,7 +103,13 @@ fn virtio_console_reports_gem5_identity_size_feature_and_default_config() {
     assert_eq!(VIRTIO_CONSOLE_DEVICE_ID, 3);
     assert_eq!(VIRTIO_CONSOLE_CONFIG_SIZE, 4);
     assert_eq!(VIRTIO_CONSOLE_F_SIZE, 1);
-    assert_eq!(device.feature_pages(), vec![(0, VIRTIO_CONSOLE_F_SIZE)]);
+    assert_eq!(
+        device.feature_pages(),
+        vec![
+            (0, VIRTIO_CONSOLE_F_SIZE),
+            (1, VIRTIO_F_VERSION_1_PAGE_BITS)
+        ]
+    );
     assert_eq!(device.config_size(), VIRTIO_CONSOLE_CONFIG_SIZE);
     assert_eq!(device.config(), VirtioConsoleConfig::new(80, 24).unwrap());
     assert_eq!(device.config_bytes(), [80, 0, 24, 0]);

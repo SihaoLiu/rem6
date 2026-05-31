@@ -11,9 +11,10 @@ use rem6_virtio::{
     VirtioPciTransportRegion, VirtioQueueIndex, VIRTIO_BLOCK_CONFIG_CAPACITY_OFFSET,
     VIRTIO_BLOCK_CONFIG_NUM_QUEUES_OFFSET, VIRTIO_BLOCK_CONFIG_SIZE,
     VIRTIO_BLOCK_DEFAULT_QUEUE_SIZE, VIRTIO_BLOCK_DEVICE_ID, VIRTIO_BLOCK_F_MQ,
-    VIRTIO_BLOCK_REQUEST_QUEUE_INDEX, VIRTIO_PCI_DEVICE_FEATURE_OFFSET, VIRTIO_PCI_ISR_STATUS_SIZE,
-    VIRTIO_PCI_NUM_QUEUES_OFFSET, VIRTIO_PCI_QUEUE_NOTIFY_OFF_OFFSET,
-    VIRTIO_PCI_QUEUE_SELECT_OFFSET, VIRTIO_PCI_QUEUE_SIZE_OFFSET,
+    VIRTIO_BLOCK_REQUEST_QUEUE_INDEX, VIRTIO_F_VERSION_1_PAGE_BITS,
+    VIRTIO_PCI_DEVICE_FEATURE_OFFSET, VIRTIO_PCI_ISR_STATUS_SIZE, VIRTIO_PCI_NUM_QUEUES_OFFSET,
+    VIRTIO_PCI_QUEUE_NOTIFY_OFF_OFFSET, VIRTIO_PCI_QUEUE_SELECT_OFFSET,
+    VIRTIO_PCI_QUEUE_SIZE_OFFSET,
 };
 
 fn bar(index: u8) -> VirtioPciBarIndex {
@@ -112,6 +113,24 @@ fn virtio_block_builds_gem5_default_request_queue_transport_devices() {
     let common = device.build_common_config().unwrap();
     assert_eq!(read_u16(&common, VIRTIO_PCI_NUM_QUEUES_OFFSET), 1);
     assert_eq!(read_u32(&common, VIRTIO_PCI_DEVICE_FEATURE_OFFSET), 0);
+    common
+        .write_local(
+            Address::new(rem6_virtio::VIRTIO_PCI_DEVICE_FEATURE_SELECT_OFFSET),
+            1_u32.to_le_bytes().to_vec(),
+            ByteMask::from_bits(vec![true; 4]).unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        read_u32(&common, VIRTIO_PCI_DEVICE_FEATURE_OFFSET),
+        VIRTIO_F_VERSION_1_PAGE_BITS
+    );
+    common
+        .write_local(
+            Address::new(rem6_virtio::VIRTIO_PCI_DEVICE_FEATURE_SELECT_OFFSET),
+            0_u32.to_le_bytes().to_vec(),
+            ByteMask::from_bits(vec![true; 4]).unwrap(),
+        )
+        .unwrap();
     assert_eq!(
         read_u16(&common, VIRTIO_PCI_QUEUE_SIZE_OFFSET),
         VIRTIO_BLOCK_DEFAULT_QUEUE_SIZE
@@ -157,6 +176,24 @@ fn virtio_block_multiqueue_config_exposes_queue_and_notify_layout() {
         read_u32(&common, VIRTIO_PCI_DEVICE_FEATURE_OFFSET),
         VIRTIO_BLOCK_F_MQ as u32
     );
+    common
+        .write_local(
+            Address::new(rem6_virtio::VIRTIO_PCI_DEVICE_FEATURE_SELECT_OFFSET),
+            1_u32.to_le_bytes().to_vec(),
+            ByteMask::from_bits(vec![true; 4]).unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        read_u32(&common, VIRTIO_PCI_DEVICE_FEATURE_OFFSET),
+        VIRTIO_F_VERSION_1_PAGE_BITS
+    );
+    common
+        .write_local(
+            Address::new(rem6_virtio::VIRTIO_PCI_DEVICE_FEATURE_SELECT_OFFSET),
+            0_u32.to_le_bytes().to_vec(),
+            ByteMask::from_bits(vec![true; 4]).unwrap(),
+        )
+        .unwrap();
     common
         .write_local(
             Address::new(VIRTIO_PCI_QUEUE_SELECT_OFFSET),

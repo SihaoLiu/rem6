@@ -6,7 +6,7 @@ use rem6_memory::ByteMask;
 use rem6_storage::{StorageError, StorageImageLayer, StorageSectorId};
 
 use crate::{
-    VirtioError, VirtioPciCommonConfigDevice, VirtioPciDeviceConfigDevice,
+    modern_feature_pages, VirtioError, VirtioPciCommonConfigDevice, VirtioPciDeviceConfigDevice,
     VirtioPciDeviceConfigSpec, VirtioPciNotifyDevice, VirtioQueueIndex, VirtioQueueNotifySpec,
     VirtioQueueSpec,
 };
@@ -392,7 +392,7 @@ impl VirtioBlockConfigSpec {
     }
 
     pub fn feature_bits(&self) -> u64 {
-        let mut features = 0_u64;
+        let mut features = crate::VIRTIO_F_VERSION_1;
         if self.size_max.is_some() {
             features |= VIRTIO_BLOCK_F_SIZE_MAX;
         }
@@ -441,7 +441,7 @@ impl VirtioBlockConfigSpec {
                 pages.push((page as u32, bits));
             }
         }
-        pages
+        modern_feature_pages(pages)
     }
 
     pub fn queue_count(&self) -> Result<u16, VirtioError> {

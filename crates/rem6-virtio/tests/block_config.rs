@@ -64,7 +64,8 @@ fn virtio_block_config_exports_typed_modern_layout_and_features() {
         .with_write_zeroes(VirtioBlockWriteZeroesLimits::new(4096, 3, true).unwrap())
         .with_secure_erase(VirtioBlockSecureEraseLimits::new(8192, 2, 16).unwrap());
 
-    let expected_features = VIRTIO_BLOCK_F_SIZE_MAX
+    let expected_features = rem6_virtio::VIRTIO_F_VERSION_1
+        | VIRTIO_BLOCK_F_SIZE_MAX
         | VIRTIO_BLOCK_F_SEG_MAX
         | VIRTIO_BLOCK_F_GEOMETRY
         | VIRTIO_BLOCK_F_RO
@@ -79,7 +80,10 @@ fn virtio_block_config_exports_typed_modern_layout_and_features() {
     assert_eq!(spec.feature_bits(), expected_features);
     assert_eq!(
         spec.feature_pages(),
-        vec![(0, (expected_features & u64::from(u32::MAX)) as u32)]
+        vec![
+            (0, (expected_features & u64::from(u32::MAX)) as u32),
+            (1, (expected_features >> 32) as u32)
+        ]
     );
 
     let config = spec.device_config_spec().unwrap();
