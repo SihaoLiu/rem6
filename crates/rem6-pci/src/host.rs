@@ -292,6 +292,52 @@ impl PciHostBridgeSnapshot {
         &self.endpoints
     }
 
+    pub fn bridge_config_space_payloads(&self) -> BTreeMap<PciFunctionAddress, Vec<u8>> {
+        self.bridges
+            .iter()
+            .map(|(function, snapshot)| (*function, snapshot.config_space_payload()))
+            .collect()
+    }
+
+    pub fn endpoint_config_space_payloads(&self) -> BTreeMap<PciFunctionAddress, Vec<u8>> {
+        self.endpoints
+            .iter()
+            .map(|(function, snapshot)| (*function, snapshot.config_space_payload()))
+            .collect()
+    }
+
+    pub fn validate_bridge_config_space_payloads(
+        &self,
+        payloads: &BTreeMap<PciFunctionAddress, Vec<u8>>,
+    ) -> Result<(), PciError> {
+        if self.bridges.keys().ne(payloads.keys()) {
+            return Err(PciError::SnapshotHostBridgeMismatch);
+        }
+        for (function, snapshot) in &self.bridges {
+            let payload = payloads
+                .get(function)
+                .expect("validated PCI bridge payload key");
+            snapshot.validate_config_space_payload(payload)?;
+        }
+        Ok(())
+    }
+
+    pub fn validate_endpoint_config_space_payloads(
+        &self,
+        payloads: &BTreeMap<PciFunctionAddress, Vec<u8>>,
+    ) -> Result<(), PciError> {
+        if self.endpoints.keys().ne(payloads.keys()) {
+            return Err(PciError::SnapshotHostBridgeMismatch);
+        }
+        for (function, snapshot) in &self.endpoints {
+            let payload = payloads
+                .get(function)
+                .expect("validated PCI endpoint payload key");
+            snapshot.validate_config_space_payload(payload)?;
+        }
+        Ok(())
+    }
+
     pub fn topology_snapshot(&self) -> PciHostBridgeTopologySnapshot {
         PciHostBridgeTopologySnapshot {
             aperture: self.aperture,
