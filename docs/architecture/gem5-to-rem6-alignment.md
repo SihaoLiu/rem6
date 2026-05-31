@@ -3084,8 +3084,10 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   masks, and 64-bit upper-slot ownership while rejecting malformed or
   ambiguous payloads before broader PCI config restore mutates device state.
   Type-1 bridge snapshots expose the same BAR payload audit API with the
-  bridge's two-slot BAR shape, so bridge BAR mismatches are rejected before
-  restore applies broader bridge configuration bytes.
+  bridge's two-slot BAR shape, and host snapshots aggregate bridge and
+  endpoint BAR payload maps in function order. Bridge or endpoint function-set
+  mismatches, malformed BAR payloads, and BAR byte mismatches are rejected
+  before restore applies broader bridge or endpoint configuration bytes.
   Raw capability state now has a stable byte codec for vendor capability audit,
   preserving the canonical capability bytes while rejecting nonzero
   next-pointer bytes because the endpoint capability registry owns chain

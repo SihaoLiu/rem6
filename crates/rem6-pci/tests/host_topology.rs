@@ -161,6 +161,8 @@ fn pci_host_bridge_snapshot_exposes_config_space_payloads_for_checkpoint_audit()
 
     let bridge_payloads = snapshot.bridge_config_space_payloads();
     let endpoint_payloads = snapshot.endpoint_config_space_payloads();
+    let bridge_bar_payloads = snapshot.bridge_bar_payloads();
+    let endpoint_bar_payloads = snapshot.endpoint_bar_payloads();
 
     assert_eq!(
         bridge_payloads.keys().copied().collect::<Vec<_>>(),
@@ -169,6 +171,22 @@ fn pci_host_bridge_snapshot_exposes_config_space_payloads_for_checkpoint_audit()
     assert_eq!(
         endpoint_payloads.keys().copied().collect::<Vec<_>>(),
         vec![endpoint0, endpoint1]
+    );
+    assert_eq!(
+        bridge_bar_payloads.keys().copied().collect::<Vec<_>>(),
+        vec![bridge1, bridge0]
+    );
+    assert_eq!(
+        endpoint_bar_payloads.keys().copied().collect::<Vec<_>>(),
+        vec![endpoint0, endpoint1]
+    );
+    assert_eq!(
+        bridge_bar_payloads.get(&bridge0).unwrap(),
+        &snapshot.bridges().get(&bridge0).unwrap().bar_payloads()
+    );
+    assert_eq!(
+        endpoint_bar_payloads.get(&endpoint1).unwrap(),
+        &snapshot.endpoints().get(&endpoint1).unwrap().bar_payloads()
     );
     assert_eq!(
         &bridge_payloads.get(&bridge0).unwrap()[0x10..0x14],
@@ -190,6 +208,14 @@ fn pci_host_bridge_snapshot_exposes_config_space_payloads_for_checkpoint_audit()
         snapshot.validate_endpoint_config_space_payloads(&endpoint_payloads),
         Ok(())
     );
+    assert_eq!(
+        snapshot.validate_bridge_bar_payloads(&bridge_bar_payloads),
+        Ok(())
+    );
+    assert_eq!(
+        snapshot.validate_endpoint_bar_payloads(&endpoint_bar_payloads),
+        Ok(())
+    );
 
     let missing_bridge: BTreeMap<_, _> = bridge_payloads
         .iter()
@@ -201,6 +227,16 @@ fn pci_host_bridge_snapshot_exposes_config_space_payloads_for_checkpoint_audit()
         Err(PciError::SnapshotHostBridgeMismatch)
     );
 
+    let missing_bridge_bar: BTreeMap<_, _> = bridge_bar_payloads
+        .iter()
+        .filter(|(function, _)| **function != bridge1)
+        .map(|(function, payload)| (*function, payload.clone()))
+        .collect();
+    assert_eq!(
+        snapshot.validate_bridge_bar_payloads(&missing_bridge_bar),
+        Err(PciError::SnapshotHostBridgeMismatch)
+    );
+
     let mut truncated_endpoint = endpoint_payloads.clone();
     truncated_endpoint.get_mut(&endpoint1).unwrap().pop();
     assert_eq!(
@@ -208,10 +244,29 @@ fn pci_host_bridge_snapshot_exposes_config_space_payloads_for_checkpoint_audit()
         Err(PciError::InvalidConfigSpaceSnapshot)
     );
 
+    let mut truncated_endpoint_bar = endpoint_bar_payloads.clone();
+    truncated_endpoint_bar.get_mut(&endpoint1).unwrap()[0]
+        .as_mut()
+        .unwrap()
+        .pop();
+    assert_eq!(
+        snapshot.validate_endpoint_bar_payloads(&truncated_endpoint_bar),
+        Err(PciError::InvalidBarSnapshot)
+    );
+
     let mut mismatched_endpoint = endpoint_payloads;
     mismatched_endpoint.get_mut(&endpoint1).unwrap()[0x04] = 0;
     assert_eq!(
         snapshot.validate_endpoint_config_space_payloads(&mismatched_endpoint),
         Err(PciError::SnapshotConfigSpaceMismatch)
+    );
+
+    let mut mismatched_bridge_bar = bridge_bar_payloads;
+    mismatched_bridge_bar.get_mut(&bridge0).unwrap()[0] = None;
+    assert_eq!(
+        snapshot.validate_bridge_bar_payloads(&mismatched_bridge_bar),
+        Err(PciError::SnapshotBarMismatch {
+            index: PciBarIndex::new(0).unwrap(),
+        })
     );
 }
