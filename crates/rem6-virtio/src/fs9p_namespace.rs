@@ -3,9 +3,9 @@ use std::collections::BTreeMap;
 use crate::{
     fs9p_protocol::{
         VIRTIO_9P_DTBLK, VIRTIO_9P_DTCHR, VIRTIO_9P_DTDIR, VIRTIO_9P_DTREG, VIRTIO_9P_DTSYMLINK,
-        VIRTIO_9P_EBADF, VIRTIO_9P_EEXIST, VIRTIO_9P_ENOENT, VIRTIO_9P_ENOTEMPTY,
-        VIRTIO_9P_GETATTR_BASIC, VIRTIO_9P_NAME_MAX, VIRTIO_9P_QTDIR, VIRTIO_9P_QTFILE,
-        VIRTIO_9P_QTSYMLINK, VIRTIO_9P_STATFS_BLOCK_SIZE, VIRTIO_9P_STATFS_TYPE,
+        VIRTIO_9P_EBADF, VIRTIO_9P_EEXIST, VIRTIO_9P_ENODATA, VIRTIO_9P_ENOENT,
+        VIRTIO_9P_ENOTEMPTY, VIRTIO_9P_GETATTR_BASIC, VIRTIO_9P_NAME_MAX, VIRTIO_9P_QTDIR,
+        VIRTIO_9P_QTFILE, VIRTIO_9P_QTSYMLINK, VIRTIO_9P_STATFS_BLOCK_SIZE, VIRTIO_9P_STATFS_TYPE,
         VIRTIO_9P_TLCREATE, VIRTIO_9P_TLINK, VIRTIO_9P_TMKDIR, VIRTIO_9P_TMKNOD, VIRTIO_9P_TRENAME,
         VIRTIO_9P_TRENAMEAT, VIRTIO_9P_TSYMLINK, VIRTIO_9P_TUNLINKAT, VIRTIO_9P_TWALK,
         VIRTIO_9P_TXATTRCREATE,
@@ -693,22 +693,43 @@ impl Virtio9pNamespace {
             .map(std::vec::Vec::as_slice)
     }
 
+    pub(crate) fn prepare_xattr_write(
+        &self,
+        node: Virtio9pNodeId,
+        name: &str,
+        policy: Virtio9pXattrWritePolicy,
+    ) -> Result<(), u32> {
+        validate_file_name(VIRTIO_9P_TXATTRCREATE, name).map_err(|_| VIRTIO_9P_EBADF)?;
+        let exists = self
+            .node_xattrs(node)
+            .ok_or(VIRTIO_9P_EBADF)?
+            .contains_key(name);
+        policy.validate_exists(exists)
+    }
+
     pub(crate) fn write_xattr(
         &mut self,
         node: Virtio9pNodeId,
         name: String,
         data: Vec<u8>,
-    ) -> Option<()> {
-        validate_file_name(VIRTIO_9P_TXATTRCREATE, &name).ok()?;
+        policy: Virtio9pXattrWritePolicy,
+    ) -> Result<(), u32> {
+        validate_file_name(VIRTIO_9P_TXATTRCREATE, &name).map_err(|_| VIRTIO_9P_EBADF)?;
         if let Virtio9pNodeId::File(path) = node {
-            find_file(&self.entries, path)?;
+            let exists = find_file(&self.entries, path)
+                .ok_or(VIRTIO_9P_EBADF)?
+                .xattrs
+                .contains_key(&name);
+            policy.validate_exists(exists)?;
             for_each_file_mut(&mut self.entries, path, &mut |file| {
                 file.xattrs.insert(name.clone(), data.clone());
             });
-            return Some(());
+            return Ok(());
         }
-        self.node_xattrs_mut(node)?.insert(name, data);
-        Some(())
+        let xattrs = self.node_xattrs_mut(node).ok_or(VIRTIO_9P_EBADF)?;
+        policy.validate_exists(xattrs.contains_key(&name))?;
+        xattrs.insert(name, data);
+        Ok(())
     }
 
     pub(crate) fn resize_file(&mut self, node: Virtio9pNodeId, size: u64) -> Option<()> {
@@ -1293,6 +1314,23 @@ pub(crate) struct Virtio9pNodeMetadata {
     blocks: u64,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Virtio9pXattrWritePolicy {
+    Any,
+    Create,
+    Replace,
+}
+
+impl Virtio9pXattrWritePolicy {
+    pub(crate) const fn validate_exists(self, exists: bool) -> Result<(), u32> {
+        match (self, exists) {
+            (Self::Create, true) => Err(VIRTIO_9P_EEXIST),
+            (Self::Replace, false) => Err(VIRTIO_9P_ENODATA),
+            (Self::Any, _) | (Self::Create, false) | (Self::Replace, true) => Ok(()),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum Virtio9pFidState {
     Node {
@@ -1307,6 +1345,7 @@ pub(crate) enum Virtio9pFidState {
         name: String,
         attr_size: usize,
         data: Vec<u8>,
+        policy: Virtio9pXattrWritePolicy,
     },
 }
 
@@ -1319,12 +1358,18 @@ impl Virtio9pFidState {
         Self::XattrRead { data }
     }
 
-    pub(crate) fn xattr_write(node: Virtio9pNodeId, name: String, attr_size: u64) -> Option<Self> {
+    pub(crate) fn xattr_write(
+        node: Virtio9pNodeId,
+        name: String,
+        attr_size: u64,
+        policy: Virtio9pXattrWritePolicy,
+    ) -> Option<Self> {
         Some(Self::XattrWrite {
             node,
             name,
             attr_size: usize::try_from(attr_size).ok()?,
             data: Vec::new(),
+            policy,
         })
     }
 
@@ -1383,17 +1428,20 @@ impl Virtio9pFidState {
         u32::try_from(bytes.len()).ok()
     }
 
-    pub(crate) fn into_xattr_commit(self) -> Option<(Virtio9pNodeId, String, Vec<u8>)> {
+    pub(crate) fn into_xattr_commit(
+        self,
+    ) -> Option<(Virtio9pNodeId, String, Vec<u8>, Virtio9pXattrWritePolicy)> {
         let Self::XattrWrite {
             node,
             name,
             attr_size,
             mut data,
+            policy,
         } = self
         else {
             return None;
         };
         data.resize(attr_size, 0);
-        Some((node, name, data))
+        Some((node, name, data, policy))
     }
 }

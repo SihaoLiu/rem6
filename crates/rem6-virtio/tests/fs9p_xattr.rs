@@ -1,9 +1,10 @@
 use rem6_virtio::{
-    Virtio9pConfig, Virtio9pDevice, VIRTIO_9P_EBADF, VIRTIO_9P_NOFID, VIRTIO_9P_RCLUNK,
-    VIRTIO_9P_RLERROR, VIRTIO_9P_RLOPEN, VIRTIO_9P_RREAD, VIRTIO_9P_RWALK, VIRTIO_9P_RWRITE,
-    VIRTIO_9P_RXATTRCREATE, VIRTIO_9P_RXATTRWALK, VIRTIO_9P_TATTACH, VIRTIO_9P_TCLUNK,
-    VIRTIO_9P_TLOPEN, VIRTIO_9P_TREAD, VIRTIO_9P_TWALK, VIRTIO_9P_TWRITE, VIRTIO_9P_TXATTRCREATE,
-    VIRTIO_9P_TXATTRWALK,
+    Virtio9pConfig, Virtio9pDevice, VIRTIO_9P_EBADF, VIRTIO_9P_EEXIST, VIRTIO_9P_EINVAL,
+    VIRTIO_9P_ENODATA, VIRTIO_9P_NOFID, VIRTIO_9P_RCLUNK, VIRTIO_9P_RLERROR, VIRTIO_9P_RLOPEN,
+    VIRTIO_9P_RREAD, VIRTIO_9P_RWALK, VIRTIO_9P_RWRITE, VIRTIO_9P_RXATTRCREATE,
+    VIRTIO_9P_RXATTRWALK, VIRTIO_9P_TATTACH, VIRTIO_9P_TCLUNK, VIRTIO_9P_TLOPEN, VIRTIO_9P_TREAD,
+    VIRTIO_9P_TWALK, VIRTIO_9P_TWRITE, VIRTIO_9P_TXATTRCREATE, VIRTIO_9P_TXATTRWALK,
+    VIRTIO_9P_XATTR_CREATE, VIRTIO_9P_XATTR_REPLACE,
 };
 
 mod support;
@@ -173,4 +174,153 @@ fn virtio_9p_device_persists_created_xattrs_in_namespace() {
         read_counted_data(list_read_completion.payload()),
         b"user.color\0"
     );
+}
+
+#[test]
+fn virtio_9p_device_honors_xattr_create_and_replace_flags() {
+    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap())
+        .with_file("alpha.txt", b"alpha".to_vec())
+        .unwrap();
+    let attach = decoded_request(
+        VIRTIO_9P_TATTACH,
+        1,
+        p9_attach_payload(1, VIRTIO_9P_NOFID, b"root", b"", 0),
+    );
+    device.execute_at(10, attach).unwrap();
+    let walk = decoded_request(VIRTIO_9P_TWALK, 2, p9_walk_payload(1, 2, &[b"alpha.txt"]));
+    assert_eq!(
+        device.execute_at(11, walk).unwrap().message_type(),
+        VIRTIO_9P_RWALK
+    );
+
+    let create = decoded_request(
+        VIRTIO_9P_TXATTRCREATE,
+        3,
+        p9_xattrcreate_payload(2, b"user.color", 4, VIRTIO_9P_XATTR_CREATE),
+    );
+    assert_eq!(
+        device.execute_at(12, create).unwrap().message_type(),
+        VIRTIO_9P_RXATTRCREATE
+    );
+    let write = decoded_request(VIRTIO_9P_TWRITE, 4, p9_write_payload(2, 0, b"blue"));
+    assert_eq!(
+        device.execute_at(13, write).unwrap().message_type(),
+        VIRTIO_9P_RWRITE
+    );
+    let clunk = decoded_request(VIRTIO_9P_TCLUNK, 5, p9_clunk_payload(2));
+    assert_eq!(
+        device.execute_at(14, clunk).unwrap().message_type(),
+        VIRTIO_9P_RCLUNK
+    );
+
+    let walk_again = decoded_request(VIRTIO_9P_TWALK, 6, p9_walk_payload(1, 3, &[b"alpha.txt"]));
+    assert_eq!(
+        device.execute_at(15, walk_again).unwrap().message_type(),
+        VIRTIO_9P_RWALK
+    );
+    let duplicate = decoded_request(
+        VIRTIO_9P_TXATTRCREATE,
+        7,
+        p9_xattrcreate_payload(3, b"user.color", 5, VIRTIO_9P_XATTR_CREATE),
+    );
+    let duplicate_completion = device.execute_at(16, duplicate).unwrap();
+    assert_eq!(duplicate_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(
+        duplicate_completion.payload(),
+        VIRTIO_9P_EEXIST.to_le_bytes()
+    );
+
+    let missing_replace = decoded_request(
+        VIRTIO_9P_TXATTRCREATE,
+        8,
+        p9_xattrcreate_payload(3, b"user.missing", 3, VIRTIO_9P_XATTR_REPLACE),
+    );
+    let missing_replace_completion = device.execute_at(17, missing_replace).unwrap();
+    assert_eq!(missing_replace_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(
+        missing_replace_completion.payload(),
+        VIRTIO_9P_ENODATA.to_le_bytes()
+    );
+
+    let replace = decoded_request(
+        VIRTIO_9P_TXATTRCREATE,
+        9,
+        p9_xattrcreate_payload(3, b"user.color", 5, VIRTIO_9P_XATTR_REPLACE),
+    );
+    assert_eq!(
+        device.execute_at(18, replace).unwrap().message_type(),
+        VIRTIO_9P_RXATTRCREATE
+    );
+    let replace_write = decoded_request(VIRTIO_9P_TWRITE, 10, p9_write_payload(3, 0, b"green"));
+    assert_eq!(
+        device.execute_at(19, replace_write).unwrap().message_type(),
+        VIRTIO_9P_RWRITE
+    );
+    let replace_clunk = decoded_request(VIRTIO_9P_TCLUNK, 11, p9_clunk_payload(3));
+    assert_eq!(
+        device.execute_at(20, replace_clunk).unwrap().message_type(),
+        VIRTIO_9P_RCLUNK
+    );
+
+    let walk_for_read =
+        decoded_request(VIRTIO_9P_TWALK, 12, p9_walk_payload(1, 4, &[b"alpha.txt"]));
+    assert_eq!(
+        device.execute_at(21, walk_for_read).unwrap().message_type(),
+        VIRTIO_9P_RWALK
+    );
+    let xattrwalk = decoded_request(
+        VIRTIO_9P_TXATTRWALK,
+        13,
+        p9_xattrwalk_payload(4, 5, b"user.color"),
+    );
+    assert_eq!(
+        device.execute_at(22, xattrwalk).unwrap().message_type(),
+        VIRTIO_9P_RXATTRWALK
+    );
+    let read = decoded_request(VIRTIO_9P_TREAD, 14, p9_read_payload(5, 0, 16));
+    let read_completion = device.execute_at(23, read).unwrap();
+    assert_eq!(read_completion.message_type(), VIRTIO_9P_RREAD);
+    assert_eq!(read_counted_data(read_completion.payload()), b"green");
+}
+
+#[test]
+fn virtio_9p_device_rejects_invalid_xattrcreate_flags_without_rebinding_fid() {
+    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap())
+        .with_file("alpha.txt", b"alpha".to_vec())
+        .unwrap();
+    let attach = decoded_request(
+        VIRTIO_9P_TATTACH,
+        1,
+        p9_attach_payload(1, VIRTIO_9P_NOFID, b"root", b"", 0),
+    );
+    device.execute_at(10, attach).unwrap();
+    let walk = decoded_request(VIRTIO_9P_TWALK, 2, p9_walk_payload(1, 2, &[b"alpha.txt"]));
+    assert_eq!(
+        device.execute_at(11, walk).unwrap().message_type(),
+        VIRTIO_9P_RWALK
+    );
+    let open = decoded_request(VIRTIO_9P_TLOPEN, 3, p9_lopen_payload(2, 0));
+    assert_eq!(
+        device.execute_at(12, open).unwrap().message_type(),
+        VIRTIO_9P_RLOPEN
+    );
+
+    let invalid = decoded_request(
+        VIRTIO_9P_TXATTRCREATE,
+        4,
+        p9_xattrcreate_payload(
+            2,
+            b"user.color",
+            4,
+            VIRTIO_9P_XATTR_CREATE | VIRTIO_9P_XATTR_REPLACE,
+        ),
+    );
+    let invalid_completion = device.execute_at(13, invalid).unwrap();
+    assert_eq!(invalid_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(invalid_completion.payload(), VIRTIO_9P_EINVAL.to_le_bytes());
+
+    let read = decoded_request(VIRTIO_9P_TREAD, 5, p9_read_payload(2, 0, 16));
+    let read_completion = device.execute_at(14, read).unwrap();
+    assert_eq!(read_completion.message_type(), VIRTIO_9P_RREAD);
+    assert_eq!(read_counted_data(read_completion.payload()), b"alpha");
 }

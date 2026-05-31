@@ -6,7 +6,7 @@ use rem6_memory::ByteMask;
 
 use crate::fs9p_namespace::{
     getattr_payload, qid_payload, Virtio9pFidState, Virtio9pNamespace, Virtio9pNodeId,
-    Virtio9pTimestamp,
+    Virtio9pTimestamp, Virtio9pXattrWritePolicy,
 };
 use crate::fs9p_protocol::*;
 use crate::{
@@ -756,23 +756,24 @@ impl Virtio9pDevice {
         request: &Virtio9pRequest,
     ) -> Result<Result<(), u32>, VirtioError> {
         let xattrcreate = parse_xattrcreate_request(request)?;
-        if xattrcreate.flags != 0 {
-            return Ok(Err(VIRTIO_9P_ENOTSUP));
-        }
+        let policy = match xattr_write_policy(xattrcreate.flags) {
+            Ok(policy) => policy,
+            Err(errno) => return Ok(Err(errno)),
+        };
         let Some(node) = self.fid_node(xattrcreate.fid) else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
-        if self
-            .namespace
-            .lock()
-            .expect("virtio 9p namespace lock")
-            .metadata(node)
-            .is_none()
         {
-            return Ok(Err(VIRTIO_9P_EBADF));
+            let namespace = self.namespace.lock().expect("virtio 9p namespace lock");
+            if namespace.metadata(node).is_none() {
+                return Ok(Err(VIRTIO_9P_EBADF));
+            }
+            if let Err(errno) = namespace.prepare_xattr_write(node, &xattrcreate.name, policy) {
+                return Ok(Err(errno));
+            }
         }
         let Some(fid) =
-            Virtio9pFidState::xattr_write(node, xattrcreate.name, xattrcreate.attr_size)
+            Virtio9pFidState::xattr_write(node, xattrcreate.name, xattrcreate.attr_size, policy)
         else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
@@ -1055,15 +1056,14 @@ impl Virtio9pDevice {
         let Some(removed) = removed else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
-        if let Some((node, name, data)) = removed.into_xattr_commit() {
-            if self
+        if let Some((node, name, data, policy)) = removed.into_xattr_commit() {
+            if let Err(errno) = self
                 .namespace
                 .lock()
                 .expect("virtio 9p namespace lock")
-                .write_xattr(node, name, data)
-                .is_none()
+                .write_xattr(node, name, data, policy)
             {
-                return Ok(Err(VIRTIO_9P_EBADF));
+                return Ok(Err(errno));
             }
         }
         Ok(Ok(()))
@@ -1150,6 +1150,15 @@ const fn valid_lock_type(lock_type: u8) -> bool {
         lock_type,
         VIRTIO_9P_LOCK_TYPE_RDLCK | VIRTIO_9P_LOCK_TYPE_WRLCK | VIRTIO_9P_LOCK_TYPE_UNLCK
     )
+}
+
+const fn xattr_write_policy(flags: u32) -> Result<Virtio9pXattrWritePolicy, u32> {
+    match flags {
+        0 => Ok(Virtio9pXattrWritePolicy::Any),
+        VIRTIO_9P_XATTR_CREATE => Ok(Virtio9pXattrWritePolicy::Create),
+        VIRTIO_9P_XATTR_REPLACE => Ok(Virtio9pXattrWritePolicy::Replace),
+        _ => Err(VIRTIO_9P_EINVAL),
+    }
 }
 
 fn read_data_slice(data: &[u8], offset: u64, count: u32) -> Option<Vec<u8>> {
