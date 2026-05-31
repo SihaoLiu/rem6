@@ -189,6 +189,23 @@ pub(crate) fn p9_lock_payload(
     payload
 }
 
+pub(crate) fn p9_xattrwalk_payload(fid: u32, newfid: u32, name: &[u8]) -> Vec<u8> {
+    let mut payload = Vec::new();
+    payload.extend(fid.to_le_bytes());
+    payload.extend(newfid.to_le_bytes());
+    payload.extend(p9_string(name));
+    payload
+}
+
+pub(crate) fn p9_xattrcreate_payload(fid: u32, name: &[u8], attr_size: u64, flags: u32) -> Vec<u8> {
+    let mut payload = Vec::new();
+    payload.extend(fid.to_le_bytes());
+    payload.extend(p9_string(name));
+    payload.extend(attr_size.to_le_bytes());
+    payload.extend(flags.to_le_bytes());
+    payload
+}
+
 pub(crate) fn p9_flush_payload(oldtag: u16) -> Vec<u8> {
     oldtag.to_le_bytes().to_vec()
 }

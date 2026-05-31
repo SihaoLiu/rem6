@@ -15,7 +15,8 @@ use crate::fs9p_protocol::{
     parse_mknod_request, parse_read_request, parse_readdir_request, parse_readlink_request,
     parse_remove_request, parse_rename_request, parse_renameat_request, parse_setattr_request,
     parse_statfs_request, parse_symlink_request, parse_unlinkat_request, parse_version_request,
-    parse_walk_request, parse_write_request, string_payload, version_payload,
+    parse_walk_request, parse_write_request, parse_xattrcreate_request, parse_xattrwalk_request,
+    string_payload, version_payload,
 };
 use crate::{
     modern_feature_pages, Virtio9pCompletion, Virtio9pRequest, VirtioError,
@@ -49,6 +50,10 @@ pub const VIRTIO_9P_TGETATTR: u8 = 24;
 pub const VIRTIO_9P_RGETATTR: u8 = 25;
 pub const VIRTIO_9P_TSETATTR: u8 = 26;
 pub const VIRTIO_9P_RSETATTR: u8 = 27;
+pub const VIRTIO_9P_TXATTRWALK: u8 = 30;
+pub const VIRTIO_9P_RXATTRWALK: u8 = 31;
+pub const VIRTIO_9P_TXATTRCREATE: u8 = 32;
+pub const VIRTIO_9P_RXATTRCREATE: u8 = 33;
 pub const VIRTIO_9P_TREADDIR: u8 = 40;
 pub const VIRTIO_9P_RREADDIR: u8 = 41;
 pub const VIRTIO_9P_TFSYNC: u8 = 50;
@@ -84,6 +89,7 @@ pub const VIRTIO_9P_NOFID: u32 = u32::MAX;
 pub const VIRTIO_9P_EBADF: u32 = 9;
 pub const VIRTIO_9P_EEXIST: u32 = 17;
 pub const VIRTIO_9P_ENOENT: u32 = 2;
+pub const VIRTIO_9P_ENODATA: u32 = 61;
 pub const VIRTIO_9P_ENOTEMPTY: u32 = 39;
 pub const VIRTIO_9P_ENOTSUP: u32 = 95;
 pub const VIRTIO_9P_QTFILE: u8 = 0;
@@ -314,6 +320,14 @@ impl Virtio9pDevice {
                 Ok(()) => (VIRTIO_9P_RSETATTR, Vec::new()),
                 Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
             },
+            VIRTIO_9P_TXATTRWALK => match self.handle_xattrwalk(&request)? {
+                Ok(payload) => (VIRTIO_9P_RXATTRWALK, payload),
+                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
+            },
+            VIRTIO_9P_TXATTRCREATE => match self.handle_xattrcreate(&request)? {
+                Ok(()) => (VIRTIO_9P_RXATTRCREATE, Vec::new()),
+                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
+            },
             VIRTIO_9P_TREADDIR => match self.handle_readdir(&request)? {
                 Ok(payload) => (VIRTIO_9P_RREADDIR, payload),
                 Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
@@ -405,17 +419,20 @@ impl Virtio9pDevice {
         self.fids.lock().expect("virtio 9p fid lock").len()
     }
 
+    fn fid_node(&self, fid: u32) -> Option<Virtio9pNodeId> {
+        self.fids
+            .lock()
+            .expect("virtio 9p fid lock")
+            .get(&fid)
+            .and_then(Virtio9pFidState::node)
+    }
+
     fn handle_statfs(
         &self,
         request: &Virtio9pRequest,
     ) -> Result<Result<Vec<u8>, u32>, VirtioError> {
         let fid = parse_statfs_request(request)?;
-        if !self
-            .fids
-            .lock()
-            .expect("virtio 9p fid lock")
-            .contains_key(&fid)
-        {
+        if self.fid_node(fid).is_none() {
             return Ok(Err(VIRTIO_9P_EBADF));
         }
         Ok(Ok(self
@@ -432,12 +449,14 @@ impl Virtio9pDevice {
             .lock()
             .expect("virtio 9p fid lock")
             .get(&walk.fid)
-            .copied()
+            .cloned()
         else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
+        let Some(mut node) = start.node() else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
         let namespace = self.namespace.lock().expect("virtio 9p namespace lock");
-        let mut node = start.node();
         let mut qids = Vec::new();
         for name in &walk.names {
             let Some(next) = namespace.walk(node, name) else {
@@ -466,12 +485,17 @@ impl Virtio9pDevice {
         let Some(fid) = fids.get_mut(&open.fid) else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
+        let Some(node) = fid.node() else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
         let namespace = self.namespace.lock().expect("virtio 9p namespace lock");
-        if namespace.metadata(fid.node()).is_none() {
+        if namespace.metadata(node).is_none() {
             return Ok(Err(VIRTIO_9P_EBADF));
         }
-        fid.open();
-        let mut payload = namespace.qid(fid.node()).to_le_bytes().to_vec();
+        if fid.open().is_none() {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        }
+        let mut payload = namespace.qid(node).to_le_bytes().to_vec();
         payload.extend(VIRTIO_9P_DEFAULT_MSIZE.to_le_bytes());
         Ok(Ok(payload))
     }
@@ -485,7 +509,9 @@ impl Virtio9pDevice {
         let Some(fid) = fids.get_mut(&create.fid) else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
-        let parent = fid.node();
+        let Some(parent) = fid.node() else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
         let mut namespace = self.namespace.lock().expect("virtio 9p namespace lock");
         let node = match namespace.create_file(parent, create.name)? {
             Ok(node) => node,
@@ -507,12 +533,15 @@ impl Virtio9pDevice {
             .lock()
             .expect("virtio 9p fid lock")
             .get(&symlink.dfid)
-            .copied()
+            .cloned()
         else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
+        let Some(parent) = parent.node() else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
         let mut namespace = self.namespace.lock().expect("virtio 9p namespace lock");
-        match namespace.create_symlink(parent.node(), symlink.name, symlink.target)? {
+        match namespace.create_symlink(parent, symlink.name, symlink.target)? {
             Ok(node) => Ok(Ok(qid_payload(namespace.qid(node)))),
             Err(errno) => Ok(Err(errno)),
         }
@@ -525,18 +554,15 @@ impl Virtio9pDevice {
             .lock()
             .expect("virtio 9p fid lock")
             .get(&mknod.dfid)
-            .copied()
+            .cloned()
         else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
+        let Some(parent) = parent.node() else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
         let mut namespace = self.namespace.lock().expect("virtio 9p namespace lock");
-        match namespace.create_special(
-            parent.node(),
-            mknod.name,
-            mknod.mode,
-            mknod.major,
-            mknod.minor,
-        )? {
+        match namespace.create_special(parent, mknod.name, mknod.mode, mknod.major, mknod.minor)? {
             Ok(node) => Ok(Ok(qid_payload(namespace.qid(node)))),
             Err(errno) => Ok(Err(errno)),
         }
@@ -552,12 +578,15 @@ impl Virtio9pDevice {
             .lock()
             .expect("virtio 9p fid lock")
             .get(&fid)
-            .copied()
+            .cloned()
         else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
+        let Some(node) = fid.node() else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
         let namespace = self.namespace.lock().expect("virtio 9p namespace lock");
-        let Some(target) = namespace.readlink(fid.node()) else {
+        let Some(target) = namespace.readlink(node) else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
         Ok(Ok(string_payload(target.as_bytes())))
@@ -573,12 +602,15 @@ impl Virtio9pDevice {
             .lock()
             .expect("virtio 9p fid lock")
             .get(&getattr.fid)
-            .copied()
+            .cloned()
         else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
+        let Some(node) = fid.node() else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
         let namespace = self.namespace.lock().expect("virtio 9p namespace lock");
-        let Some(metadata) = namespace.metadata(fid.node()) else {
+        let Some(metadata) = namespace.metadata(node) else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
         Ok(Ok(getattr_payload(metadata, getattr.request_mask)))
@@ -591,8 +623,11 @@ impl Virtio9pDevice {
             .lock()
             .expect("virtio 9p fid lock")
             .get(&setattr.fid)
-            .copied()
+            .cloned()
         else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        let Some(node) = fid.node() else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
         let supported = VIRTIO_9P_SETATTR_MODE
@@ -608,13 +643,13 @@ impl Virtio9pDevice {
         }
         let mut namespace = self.namespace.lock().expect("virtio 9p namespace lock");
         if setattr.valid & VIRTIO_9P_SETATTR_SIZE != 0
-            && namespace.resize_file(fid.node(), setattr.size).is_none()
+            && namespace.resize_file(node, setattr.size).is_none()
         {
             return Ok(Err(VIRTIO_9P_EBADF));
         }
         if namespace
             .set_metadata_fields(
-                fid.node(),
+                node,
                 (setattr.valid & VIRTIO_9P_SETATTR_MODE != 0).then_some(setattr.mode),
                 (setattr.valid & VIRTIO_9P_SETATTR_UID != 0).then_some(setattr.uid),
                 (setattr.valid & VIRTIO_9P_SETATTR_GID != 0).then_some(setattr.gid),
@@ -634,6 +669,53 @@ impl Virtio9pDevice {
         Ok(Err(VIRTIO_9P_EBADF))
     }
 
+    fn handle_xattrwalk(
+        &self,
+        request: &Virtio9pRequest,
+    ) -> Result<Result<Vec<u8>, u32>, VirtioError> {
+        let xattrwalk = parse_xattrwalk_request(request)?;
+        let Some(node) = self.fid_node(xattrwalk.fid) else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        if self
+            .namespace
+            .lock()
+            .expect("virtio 9p namespace lock")
+            .metadata(node)
+            .is_none()
+        {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        }
+        if !xattrwalk.name.is_empty() {
+            return Ok(Err(VIRTIO_9P_ENODATA));
+        }
+        self.fids
+            .lock()
+            .expect("virtio 9p fid lock")
+            .insert(xattrwalk.newfid, Virtio9pFidState::xattr(Vec::new()));
+        Ok(Ok(0_u64.to_le_bytes().to_vec()))
+    }
+
+    fn handle_xattrcreate(
+        &self,
+        request: &Virtio9pRequest,
+    ) -> Result<Result<(), u32>, VirtioError> {
+        let fid = parse_xattrcreate_request(request)?;
+        let Some(node) = self.fid_node(fid) else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        if self
+            .namespace
+            .lock()
+            .expect("virtio 9p namespace lock")
+            .metadata(node)
+            .is_none()
+        {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        }
+        Ok(Err(VIRTIO_9P_ENOTSUP))
+    }
+
     fn handle_readdir(
         &self,
         request: &Virtio9pRequest,
@@ -644,16 +726,18 @@ impl Virtio9pDevice {
             .lock()
             .expect("virtio 9p fid lock")
             .get(&readdir.fid)
-            .copied()
+            .cloned()
         else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
         if !fid.is_open() {
             return Ok(Err(VIRTIO_9P_EBADF));
         }
+        let Some(node) = fid.node() else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
         let namespace = self.namespace.lock().expect("virtio 9p namespace lock");
-        let Some(payload) = namespace.readdir_payload(fid.node(), readdir.offset, readdir.count)
-        else {
+        let Some(payload) = namespace.readdir_payload(node, readdir.offset, readdir.count) else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
         Ok(Ok(payload))
@@ -661,12 +745,7 @@ impl Virtio9pDevice {
 
     fn handle_fsync(&self, request: &Virtio9pRequest) -> Result<Result<(), u32>, VirtioError> {
         let fsync = parse_fsync_request(request)?;
-        if self
-            .fids
-            .lock()
-            .expect("virtio 9p fid lock")
-            .contains_key(&fsync.fid)
-        {
+        if self.fid_node(fsync.fid).is_some() {
             Ok(Ok(()))
         } else {
             Ok(Err(VIRTIO_9P_EBADF))
@@ -712,12 +791,15 @@ impl Virtio9pDevice {
             .lock()
             .expect("virtio 9p fid lock")
             .get(&mkdir.dfid)
-            .copied()
+            .cloned()
         else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
+        let Some(parent) = parent.node() else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
         let mut namespace = self.namespace.lock().expect("virtio 9p namespace lock");
-        match namespace.mkdir(parent.node(), mkdir.name)? {
+        match namespace.mkdir(parent, mkdir.name)? {
             Ok(node) => Ok(Ok(qid_payload(namespace.qid(node)))),
             Err(errno) => Ok(Err(errno)),
         }
@@ -726,26 +808,38 @@ impl Virtio9pDevice {
     fn handle_link(&self, request: &Virtio9pRequest) -> Result<Result<(), u32>, VirtioError> {
         let link = parse_link_request(request)?;
         let fids = self.fids.lock().expect("virtio 9p fid lock");
-        let Some(parent) = fids.get(&link.dfid).copied() else {
+        let Some(parent) = fids.get(&link.dfid).cloned() else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
-        let Some(oldfid) = fids.get(&link.oldfid).copied() else {
+        let Some(oldfid) = fids.get(&link.oldfid).cloned() else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        let Some(parent) = parent.node() else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        let Some(old_node) = oldfid.node() else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
         drop(fids);
         self.namespace
             .lock()
             .expect("virtio 9p namespace lock")
-            .link_file(parent.node(), oldfid.node(), link.newname)
+            .link_file(parent, old_node, link.newname)
     }
 
     fn handle_renameat(&self, request: &Virtio9pRequest) -> Result<Result<(), u32>, VirtioError> {
         let rename = parse_renameat_request(request)?;
         let fids = self.fids.lock().expect("virtio 9p fid lock");
-        let Some(old_dirfid) = fids.get(&rename.olddirfid).copied() else {
+        let Some(old_dirfid) = fids.get(&rename.olddirfid).cloned() else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
-        let Some(new_dirfid) = fids.get(&rename.newdirfid).copied() else {
+        let Some(new_dirfid) = fids.get(&rename.newdirfid).cloned() else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        let Some(old_dir) = old_dirfid.node() else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        let Some(new_dir) = new_dirfid.node() else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
         drop(fids);
@@ -753,12 +847,8 @@ impl Virtio9pDevice {
             .namespace
             .lock()
             .expect("virtio 9p namespace lock")
-            .rename_file(
-                old_dirfid.node(),
-                &rename.oldname,
-                new_dirfid.node(),
-                &rename.newname,
-            )? {
+            .rename_file(old_dir, &rename.oldname, new_dir, &rename.newname)?
+        {
             Ok(rename) => rename,
             Err(errno) => return Ok(Err(errno)),
         };
@@ -773,10 +863,16 @@ impl Virtio9pDevice {
     fn handle_rename(&self, request: &Virtio9pRequest) -> Result<Result<(), u32>, VirtioError> {
         let rename = parse_rename_request(request)?;
         let fids = self.fids.lock().expect("virtio 9p fid lock");
-        let Some(fid) = fids.get(&rename.fid).copied() else {
+        let Some(fid) = fids.get(&rename.fid).cloned() else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
-        let Some(new_dirfid) = fids.get(&rename.newdirfid).copied() else {
+        let Some(new_dirfid) = fids.get(&rename.newdirfid).cloned() else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        let Some(node) = fid.node() else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        let Some(new_dir) = new_dirfid.node() else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
         drop(fids);
@@ -784,7 +880,7 @@ impl Virtio9pDevice {
             .namespace
             .lock()
             .expect("virtio 9p namespace lock")
-            .rename_node(fid.node(), new_dirfid.node(), &rename.name)?
+            .rename_node(node, new_dir, &rename.name)?
         {
             Ok(rename) => rename,
             Err(errno) => return Ok(Err(errno)),
@@ -804,8 +900,11 @@ impl Virtio9pDevice {
             .lock()
             .expect("virtio 9p fid lock")
             .get(&unlink.dirfid)
-            .copied()
+            .cloned()
         else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        let Some(dir_node) = fid.node() else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
         let node = match self
@@ -813,7 +912,7 @@ impl Virtio9pDevice {
             .lock()
             .expect("virtio 9p namespace lock")
             .unlink_by_name(
-                fid.node(),
+                dir_node,
                 &unlink.name,
                 unlink.flags & VIRTIO_9P_AT_REMOVEDIR != 0,
             )? {
@@ -833,15 +932,26 @@ impl Virtio9pDevice {
             .lock()
             .expect("virtio 9p fid lock")
             .get(&read.fid)
-            .copied()
+            .cloned()
         else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
+        if let Some(data) = fid.xattr_data() {
+            let data = read_data_slice(data, read.offset, read.count)
+                .ok_or(VirtioError::Virtio9pPayloadLengthOverflow)?;
+            let mut payload = Vec::new();
+            payload.extend((data.len() as u32).to_le_bytes());
+            payload.extend(data);
+            return Ok(Ok(payload));
+        }
         if !fid.is_open() {
             return Ok(Err(VIRTIO_9P_EBADF));
         }
+        let Some(node) = fid.node() else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
         let namespace = self.namespace.lock().expect("virtio 9p namespace lock");
-        let Some(data) = namespace.read_file(fid.node(), read.offset, read.count) else {
+        let Some(data) = namespace.read_file(node, read.offset, read.count) else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
         let mut payload = Vec::new();
@@ -857,15 +967,18 @@ impl Virtio9pDevice {
             .lock()
             .expect("virtio 9p fid lock")
             .get(&write.fid)
-            .copied()
+            .cloned()
         else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
         if !fid.is_open() {
             return Ok(Err(VIRTIO_9P_EBADF));
         }
+        let Some(node) = fid.node() else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
         let mut namespace = self.namespace.lock().expect("virtio 9p namespace lock");
-        let Some(bytes) = namespace.write_file(fid.node(), write.offset, &write.data) else {
+        let Some(bytes) = namespace.write_file(node, write.offset, &write.data) else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
         Ok(Ok(bytes.to_le_bytes().to_vec()))
@@ -893,11 +1006,13 @@ impl Virtio9pDevice {
             .lock()
             .expect("virtio 9p fid lock")
             .get(&remove_fid)
-            .copied()
+            .cloned()
         else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
-        let node = fid.node();
+        let Some(node) = fid.node() else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
         if node == Virtio9pNodeId::Root {
             return Ok(Err(VIRTIO_9P_EBADF));
         }
@@ -932,7 +1047,7 @@ impl Virtio9pDevice {
         self.fids
             .lock()
             .expect("virtio 9p fid lock")
-            .retain(|_, fid| fid.node() != node);
+            .retain(|_, fid| fid.node() != Some(node));
     }
 
     fn lockable_fid(&self, fid: u32) -> Option<Virtio9pFidState> {
@@ -941,14 +1056,15 @@ impl Virtio9pDevice {
             .lock()
             .expect("virtio 9p fid lock")
             .get(&fid)
-            .copied()?;
+            .cloned()?;
         if !fid.is_open() {
             return None;
         }
+        let node = fid.node()?;
         self.namespace
             .lock()
             .expect("virtio 9p namespace lock")
-            .read_file(fid.node(), 0, 0)?;
+            .read_file(node, 0, 0)?;
         Some(fid)
     }
 }
@@ -964,6 +1080,16 @@ const fn valid_lock_type(lock_type: u8) -> bool {
         lock_type,
         VIRTIO_9P_LOCK_TYPE_RDLCK | VIRTIO_9P_LOCK_TYPE_WRLCK | VIRTIO_9P_LOCK_TYPE_UNLCK
     )
+}
+
+fn read_data_slice(data: &[u8], offset: u64, count: u32) -> Option<Vec<u8>> {
+    let start = usize::try_from(offset).ok()?;
+    if start >= data.len() {
+        return Some(Vec::new());
+    }
+    let count = usize::try_from(count).ok()?;
+    let end = start.saturating_add(count).min(data.len());
+    Some(data[start..end].to_vec())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

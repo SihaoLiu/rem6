@@ -1112,30 +1112,53 @@ pub(crate) struct Virtio9pNodeMetadata {
     blocks: u64,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct Virtio9pFidState {
-    node: Virtio9pNodeId,
-    open: bool,
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum Virtio9pFidState {
+    Node { node: Virtio9pNodeId, open: bool },
+    Xattr { data: Vec<u8> },
 }
 
 impl Virtio9pFidState {
     pub(crate) const fn new(node: Virtio9pNodeId) -> Self {
-        Self { node, open: false }
+        Self::Node { node, open: false }
     }
 
-    pub(crate) const fn node(self) -> Virtio9pNodeId {
-        self.node
+    pub(crate) fn xattr(data: Vec<u8>) -> Self {
+        Self::Xattr { data }
     }
 
-    pub(crate) fn open(&mut self) {
-        self.open = true;
+    pub(crate) const fn node(&self) -> Option<Virtio9pNodeId> {
+        match self {
+            Self::Node { node, .. } => Some(*node),
+            Self::Xattr { .. } => None,
+        }
+    }
+
+    pub(crate) fn open(&mut self) -> Option<()> {
+        match self {
+            Self::Node { open, .. } => {
+                *open = true;
+                Some(())
+            }
+            Self::Xattr { .. } => None,
+        }
     }
 
     pub(crate) const fn opened(node: Virtio9pNodeId) -> Self {
-        Self { node, open: true }
+        Self::Node { node, open: true }
     }
 
-    pub(crate) const fn is_open(self) -> bool {
-        self.open
+    pub(crate) const fn is_open(&self) -> bool {
+        match self {
+            Self::Node { open, .. } => *open,
+            Self::Xattr { .. } => false,
+        }
+    }
+
+    pub(crate) fn xattr_data(&self) -> Option<&[u8]> {
+        match self {
+            Self::Node { .. } => None,
+            Self::Xattr { data } => Some(data),
+        }
     }
 }

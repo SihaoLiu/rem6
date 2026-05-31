@@ -207,6 +207,35 @@ pub(crate) fn parse_setattr_request(
     })
 }
 
+pub(crate) fn parse_xattrwalk_request(
+    request: &Virtio9pRequest,
+) -> Result<Virtio9pXattrwalkRequest, VirtioError> {
+    let mut reader = Virtio9pPayloadReader::new(request.message_type(), request.payload());
+    let fid = reader.read_u32()?;
+    let newfid = reader.read_u32()?;
+    let name = string_from_9p(
+        request.message_type(),
+        reader.read_string()?,
+        request.payload(),
+    )?;
+    reader.finish()?;
+    Ok(Virtio9pXattrwalkRequest { fid, newfid, name })
+}
+
+pub(crate) fn parse_xattrcreate_request(request: &Virtio9pRequest) -> Result<u32, VirtioError> {
+    let mut reader = Virtio9pPayloadReader::new(request.message_type(), request.payload());
+    let fid = reader.read_u32()?;
+    let _name = string_from_9p(
+        request.message_type(),
+        reader.read_string()?,
+        request.payload(),
+    )?;
+    let _attr_size = reader.read_u64()?;
+    let _flags = reader.read_u32()?;
+    reader.finish()?;
+    Ok(fid)
+}
+
 pub(crate) fn parse_readdir_request(
     request: &Virtio9pRequest,
 ) -> Result<Virtio9pReaddirRequest, VirtioError> {
@@ -552,6 +581,13 @@ pub(crate) struct Virtio9pSetattrRequest {
     pub(crate) atime_nsec: u64,
     pub(crate) mtime_sec: u64,
     pub(crate) mtime_nsec: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Virtio9pXattrwalkRequest {
+    pub(crate) fid: u32,
+    pub(crate) newfid: u32,
+    pub(crate) name: String,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
