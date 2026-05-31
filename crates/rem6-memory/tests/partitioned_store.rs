@@ -1,6 +1,7 @@
 use rem6_memory::{
     AccessSize, Address, AddressInterleave, AddressMapRegion, AddressRange, AgentId, ByteMask,
-    CacheLineLayout, MemoryError, MemoryRequest, MemoryRequestId, MemoryTargetId,
+    CacheLineLayout, LineMemorySnapshot, MemoryError, MemoryLineSnapshot, MemoryPartitionSnapshot,
+    MemoryRequest, MemoryRequestId, MemoryTargetId, PartitionedMemorySnapshot,
     PartitionedMemoryStore, ResponseStatus,
 };
 
@@ -266,6 +267,38 @@ fn partitioned_store_reports_missing_lines_after_decode() {
             line: Address::new(0x4040)
         }
     );
+}
+
+#[test]
+fn partitioned_store_restore_rejects_duplicate_line_snapshots() {
+    let target = MemoryTargetId::new(41);
+    let duplicate_line = Address::new(0x1000);
+    let snapshot = PartitionedMemorySnapshot::new(
+        vec![MemoryPartitionSnapshot::new(
+            target,
+            LineMemorySnapshot::new(
+                layout(),
+                vec![
+                    MemoryLineSnapshot::new(duplicate_line, line_data(0x10)),
+                    MemoryLineSnapshot::new(duplicate_line, line_data(0x20)),
+                ],
+            ),
+        )],
+        Vec::new(),
+    );
+    let expected_error = MemoryError::DuplicateMemoryLine {
+        line: duplicate_line,
+    };
+
+    assert_eq!(
+        PartitionedMemoryStore::from_snapshot(&snapshot),
+        Err(expected_error.clone())
+    );
+
+    let (mut store, _, _) = mapped_store();
+    let before_restore = store.snapshot();
+    assert_eq!(store.restore(&snapshot), Err(expected_error));
+    assert_eq!(store.snapshot(), before_restore);
 }
 
 #[test]

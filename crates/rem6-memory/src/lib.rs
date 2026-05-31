@@ -317,6 +317,9 @@ pub enum MemoryError {
     UnmappedLine {
         line: Address,
     },
+    DuplicateMemoryLine {
+        line: Address,
+    },
     UnmappedAddress {
         address: Address,
     },
@@ -465,6 +468,9 @@ impl fmt::Display for MemoryError {
             Self::UnmappedLine { line } => {
                 write!(formatter, "line {:#x} is not mapped", line.get())
             }
+            Self::DuplicateMemoryLine { line } => {
+                write!(formatter, "line {:#x} appears more than once", line.get())
+            }
             Self::UnmappedAddress { address } => {
                 write!(formatter, "address {:#x} is not mapped", address.get())
             }
@@ -592,6 +598,9 @@ impl LineMemoryStore {
     pub fn from_snapshot(snapshot: &LineMemorySnapshot) -> Result<Self, MemoryError> {
         let mut store = Self::new(snapshot.layout());
         for line in snapshot.lines() {
+            if store.lines.contains_key(&line.line()) {
+                return Err(MemoryError::DuplicateMemoryLine { line: line.line() });
+            }
             store.insert_line(line.line(), line.data().to_vec())?;
         }
         Ok(store)
@@ -974,15 +983,16 @@ impl PartitionedMemoryStore {
     pub fn from_snapshot(snapshot: &PartitionedMemorySnapshot) -> Result<Self, MemoryError> {
         let mut store = Self::new();
         for partition in snapshot.partitions() {
-            store.add_partition(partition.target(), partition.store().layout())?;
+            if store.partitions.contains_key(&partition.target()) {
+                return Err(MemoryError::DuplicateMemoryTarget {
+                    target: partition.target(),
+                });
+            }
+            let partition_store = LineMemoryStore::from_snapshot(partition.store())?;
+            store.partitions.insert(partition.target(), partition_store);
         }
         for (target, range) in snapshot.regions() {
             store.map_region_with_policy(*target, range.clone())?;
-        }
-        for partition in snapshot.partitions() {
-            for line in partition.store().lines() {
-                store.insert_line(partition.target(), line.line(), line.data().to_vec())?;
-            }
         }
         Ok(store)
     }

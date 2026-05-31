@@ -1,6 +1,7 @@
 use rem6_memory::{
-    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, LineMemoryStore, MemoryAtomicOp,
-    MemoryError, MemoryRequest, MemoryRequestId, ResponseStatus,
+    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, LineMemorySnapshot, LineMemoryStore,
+    MemoryAtomicOp, MemoryError, MemoryLineSnapshot, MemoryRequest, MemoryRequestId,
+    ResponseStatus,
 };
 
 fn layout() -> CacheLineLayout {
@@ -306,6 +307,34 @@ fn line_store_validates_inserted_line_shape() {
             actual: 32,
         }
     );
+}
+
+#[test]
+fn line_store_restore_rejects_duplicate_line_snapshots() {
+    let duplicate_line = Address::new(0x1000);
+    let snapshot = LineMemorySnapshot::new(
+        layout(),
+        vec![
+            MemoryLineSnapshot::new(duplicate_line, line_data(0x10)),
+            MemoryLineSnapshot::new(duplicate_line, line_data(0x20)),
+        ],
+    );
+
+    let expected_error = MemoryError::DuplicateMemoryLine {
+        line: duplicate_line,
+    };
+    assert_eq!(
+        LineMemoryStore::from_snapshot(&snapshot),
+        Err(expected_error.clone())
+    );
+
+    let mut store = LineMemoryStore::new(layout());
+    store
+        .insert_line(Address::new(0x2000), line_data(0x80))
+        .unwrap();
+    let before_restore = store.snapshot();
+    assert_eq!(store.restore(&snapshot), Err(expected_error));
+    assert_eq!(store.snapshot(), before_restore);
 }
 
 #[test]

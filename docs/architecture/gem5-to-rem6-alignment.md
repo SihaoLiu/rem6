@@ -2442,6 +2442,10 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   pending `mwait` service still needs a materialized request. They also require
   a successful takeover plan to expose ordered quiesce, validation, state
   capture, target-install, and resume actions.
+- Memory line-store tests cover independent line reads, masked writes, AMO
+  read-modify-write responses, writeback replacement, request shape rejection,
+  duplicate line-snapshot restore rejection, and partitioned-memory restore
+  propagation of line-snapshot validation.
 - Memory translation TLB tests cover public gem5 issue #3010 by preserving
   global same-ASID entries during non-global ASID flush, removing same-ASID
   non-global entries, preserving other ASIDs, snapshotting entry scope, and
