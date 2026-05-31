@@ -19,8 +19,9 @@ use crate::{
     RtcCheckpointBank, SchedulerCheckpointBank, Sp804CheckpointBank, Sp805CheckpointBank,
     StopRequest, StorageImageCheckpointBank, StorageImageCheckpointPort, SystemError,
     TimerCheckpointBank, UartCheckpointBank, VirtioPciCommonCheckpointBank,
-    VirtioPciDeviceConfigCheckpointBank, VirtioPciIsrCheckpointBank, VirtioPciNotifyCheckpointBank,
-    VirtioSplitQueueCheckpointBank,
+    VirtioPciCommonCheckpointPort, VirtioPciDeviceConfigCheckpointBank,
+    VirtioPciDeviceConfigCheckpointPort, VirtioPciIsrCheckpointBank, VirtioPciIsrCheckpointPort,
+    VirtioPciNotifyCheckpointBank, VirtioPciNotifyCheckpointPort, VirtioSplitQueueCheckpointBank,
 };
 
 const EXECUTION_MODE_CHECKPOINT_COMPONENT: &str = "host.execution_modes";
@@ -682,6 +683,61 @@ impl SystemActionExecutor {
         virtio_pci_device_config_checkpoints.register_all(&mut self.checkpoints)?;
         self.virtio_pci_device_config_checkpoints = Some(virtio_pci_device_config_checkpoints);
         Ok(())
+    }
+
+    pub fn attach_virtio_pci_common_checkpoint_port(
+        &mut self,
+        port: VirtioPciCommonCheckpointPort,
+    ) -> Result<(), CheckpointError> {
+        port.register(&mut self.checkpoints)?;
+        if let Some(virtio_pci_common_checkpoints) = &mut self.virtio_pci_common_checkpoints {
+            virtio_pci_common_checkpoints.insert_port(port)
+        } else {
+            self.virtio_pci_common_checkpoints = Some(VirtioPciCommonCheckpointBank::new([port])?);
+            Ok(())
+        }
+    }
+
+    pub fn attach_virtio_pci_notify_checkpoint_port(
+        &mut self,
+        port: VirtioPciNotifyCheckpointPort,
+    ) -> Result<(), CheckpointError> {
+        port.register(&mut self.checkpoints)?;
+        if let Some(virtio_pci_notify_checkpoints) = &mut self.virtio_pci_notify_checkpoints {
+            virtio_pci_notify_checkpoints.insert_port(port)
+        } else {
+            self.virtio_pci_notify_checkpoints = Some(VirtioPciNotifyCheckpointBank::new([port])?);
+            Ok(())
+        }
+    }
+
+    pub fn attach_virtio_pci_isr_checkpoint_port(
+        &mut self,
+        port: VirtioPciIsrCheckpointPort,
+    ) -> Result<(), CheckpointError> {
+        port.register(&mut self.checkpoints)?;
+        if let Some(virtio_pci_isr_checkpoints) = &mut self.virtio_pci_isr_checkpoints {
+            virtio_pci_isr_checkpoints.insert_port(port)
+        } else {
+            self.virtio_pci_isr_checkpoints = Some(VirtioPciIsrCheckpointBank::new([port])?);
+            Ok(())
+        }
+    }
+
+    pub fn attach_virtio_pci_device_config_checkpoint_port(
+        &mut self,
+        port: VirtioPciDeviceConfigCheckpointPort,
+    ) -> Result<(), CheckpointError> {
+        port.register(&mut self.checkpoints)?;
+        if let Some(virtio_pci_device_config_checkpoints) =
+            &mut self.virtio_pci_device_config_checkpoints
+        {
+            virtio_pci_device_config_checkpoints.insert_port(port)
+        } else {
+            self.virtio_pci_device_config_checkpoints =
+                Some(VirtioPciDeviceConfigCheckpointBank::new([port])?);
+            Ok(())
+        }
     }
 
     pub const fn riscv_checkpoint_bank(&self) -> Option<&RiscvCoreCheckpointBank> {

@@ -5,6 +5,7 @@ mod dma_run;
 mod heterogeneous_run;
 mod host_checkpoint;
 mod storage_checkpoint;
+mod virtio_checkpoint;
 
 pub use dma_run::{
     RiscvTopologyDmaCopy, RiscvTopologyDmaDeviceActivity, RiscvTopologyDmaRunSummary,
@@ -83,6 +84,14 @@ pub struct RiscvTopologySystem {
     memory: Option<RiscvTopologyMemoryBackend>,
     storage_checkpoint_ports: BTreeMap<CheckpointComponentId, crate::StorageImageCheckpointPort>,
     ide_checkpoint_ports: BTreeMap<CheckpointComponentId, crate::IdeControllerCheckpointPort>,
+    virtio_pci_common_checkpoint_ports:
+        BTreeMap<CheckpointComponentId, crate::VirtioPciCommonCheckpointPort>,
+    virtio_pci_notify_checkpoint_ports:
+        BTreeMap<CheckpointComponentId, crate::VirtioPciNotifyCheckpointPort>,
+    virtio_pci_isr_checkpoint_ports:
+        BTreeMap<CheckpointComponentId, crate::VirtioPciIsrCheckpointPort>,
+    virtio_pci_device_config_checkpoint_ports:
+        BTreeMap<CheckpointComponentId, crate::VirtioPciDeviceConfigCheckpointPort>,
     msi_data_cache: Option<RiscvTopologyMsiDataCache>,
     mesi_data_cache: Option<RiscvTopologyMesiDataCache>,
     moesi_data_cache: Option<RiscvTopologyMoesiDataCache>,
@@ -695,6 +704,10 @@ impl RiscvTopologySystem {
             memory: None,
             storage_checkpoint_ports: BTreeMap::new(),
             ide_checkpoint_ports: BTreeMap::new(),
+            virtio_pci_common_checkpoint_ports: BTreeMap::new(),
+            virtio_pci_notify_checkpoint_ports: BTreeMap::new(),
+            virtio_pci_isr_checkpoint_ports: BTreeMap::new(),
+            virtio_pci_device_config_checkpoint_ports: BTreeMap::new(),
             msi_data_cache: None,
             mesi_data_cache: None,
             moesi_data_cache: None,
@@ -781,6 +794,7 @@ impl RiscvTopologySystem {
         self.attach_heterogeneous_checkpoint_to_host()?;
         self.attach_memory_checkpoint_to_host()?;
         self.attach_storage_checkpoint_to_host()?;
+        self.attach_virtio_pci_checkpoint_to_host()?;
         self.attach_platform_checkpoint_to_host()?;
         Ok(self)
     }

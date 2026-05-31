@@ -419,6 +419,15 @@ impl VirtioPciIsrCheckpointBank {
         self.ports.keys().cloned().collect()
     }
 
+    pub fn insert_port(&mut self, port: VirtioPciIsrCheckpointPort) -> Result<(), CheckpointError> {
+        let component = port.component().clone();
+        if self.ports.contains_key(&component) {
+            return Err(CheckpointError::DuplicateComponent { component });
+        }
+        self.ports.insert(component, port);
+        Ok(())
+    }
+
     pub fn register_all(&self, registry: &mut CheckpointRegistry) -> Result<(), CheckpointError> {
         for port in self.ports.values() {
             port.register(registry)?;
@@ -642,6 +651,18 @@ impl VirtioPciCommonCheckpointBank {
 
     pub fn components(&self) -> Vec<CheckpointComponentId> {
         self.ports.keys().cloned().collect()
+    }
+
+    pub fn insert_port(
+        &mut self,
+        port: VirtioPciCommonCheckpointPort,
+    ) -> Result<(), CheckpointError> {
+        let component = port.component().clone();
+        if self.ports.contains_key(&component) {
+            return Err(CheckpointError::DuplicateComponent { component });
+        }
+        self.ports.insert(component, port);
+        Ok(())
     }
 
     pub fn register_all(&self, registry: &mut CheckpointRegistry) -> Result<(), CheckpointError> {
@@ -869,6 +890,18 @@ impl VirtioPciNotifyCheckpointBank {
         self.ports.keys().cloned().collect()
     }
 
+    pub fn insert_port(
+        &mut self,
+        port: VirtioPciNotifyCheckpointPort,
+    ) -> Result<(), CheckpointError> {
+        let component = port.component().clone();
+        if self.ports.contains_key(&component) {
+            return Err(CheckpointError::DuplicateComponent { component });
+        }
+        self.ports.insert(component, port);
+        Ok(())
+    }
+
     pub fn register_all(&self, registry: &mut CheckpointRegistry) -> Result<(), CheckpointError> {
         for port in self.ports.values() {
             port.register(registry)?;
@@ -1092,6 +1125,18 @@ impl VirtioPciDeviceConfigCheckpointBank {
 
     pub fn components(&self) -> Vec<CheckpointComponentId> {
         self.ports.keys().cloned().collect()
+    }
+
+    pub fn insert_port(
+        &mut self,
+        port: VirtioPciDeviceConfigCheckpointPort,
+    ) -> Result<(), CheckpointError> {
+        let component = port.component().clone();
+        if self.ports.contains_key(&component) {
+            return Err(CheckpointError::DuplicateComponent { component });
+        }
+        self.ports.insert(component, port);
+        Ok(())
     }
 
     pub fn register_all(&self, registry: &mut CheckpointRegistry) -> Result<(), CheckpointError> {
