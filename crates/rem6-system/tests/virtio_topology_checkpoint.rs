@@ -1,12 +1,15 @@
-use rem6_checkpoint::CheckpointComponentId;
+use std::sync::{Arc, Mutex};
+
+use rem6_checkpoint::{CheckpointComponentId, CheckpointError};
 use rem6_cpu::{CpuId, CpuResetState, RiscvClusterTopologyConfig, RiscvCoreTopologyConfig};
 use rem6_kernel::{ClockDomain, PartitionId};
 use rem6_memory::{AccessSize, Address, AgentId, ByteMask, CacheLineLayout};
 use rem6_stats::StatsRegistry;
 use rem6_system::{
     GuestEventId, GuestSourceId, HostAction, HostActionRecord, RiscvTopologyHostConfig,
-    RiscvTopologySystem, SystemActionOutcome, VirtioPciCommonCheckpointPort,
-    VirtioPciDeviceConfigCheckpointPort, VirtioPciIsrCheckpointPort, VirtioPciNotifyCheckpointPort,
+    RiscvTopologySystem, RiscvTopologySystemError, SystemActionOutcome, SystemError,
+    VirtioPciCommonCheckpointPort, VirtioPciDeviceConfigCheckpointPort, VirtioPciIsrCheckpointPort,
+    VirtioPciNotifyCheckpointPort, VirtioSplitQueueCheckpointPort,
 };
 use rem6_topology::{
     ComponentId, ComponentKind, ComponentSpec, Endpoint, PortDirection, PortName, Topology,
@@ -15,8 +18,8 @@ use rem6_topology::{
 use rem6_virtio::{
     VirtioPciCommonConfigDevice, VirtioPciDeviceConfigDevice, VirtioPciDeviceConfigSpec,
     VirtioPciIsrDevice, VirtioPciNotifyDevice, VirtioQueueIndex, VirtioQueueNotifySpec,
-    VirtioQueueSpec, VIRTIO_PCI_DEVICE_STATUS_OFFSET, VIRTIO_PCI_QUEUE_SELECT_OFFSET,
-    VIRTIO_PCI_QUEUE_SIZE_OFFSET, VIRTIO_STATUS_ACKNOWLEDGE,
+    VirtioQueueSpec, VirtioSplitQueue, VIRTIO_PCI_DEVICE_STATUS_OFFSET,
+    VIRTIO_PCI_QUEUE_SELECT_OFFSET, VIRTIO_PCI_QUEUE_SIZE_OFFSET, VIRTIO_STATUS_ACKNOWLEDGE,
 };
 
 fn component(name: &str) -> ComponentId {
@@ -141,6 +144,18 @@ fn device_config() -> VirtioPciDeviceConfigDevice {
     )
 }
 
+fn split_queue(last_available_index: u16, event_index: bool) -> VirtioSplitQueue {
+    VirtioSplitQueue::new(
+        8,
+        Address::new(0x1000),
+        Address::new(0x2000),
+        Address::new(0x3000),
+        last_available_index,
+    )
+    .unwrap()
+    .with_event_index(event_index)
+}
+
 fn write_common_u8(device: &VirtioPciCommonConfigDevice, offset: u64, value: u8) {
     device
         .write_local(
@@ -185,6 +200,75 @@ fn mutate_config(config: &VirtioPciDeviceConfigDevice, address: u64, value: u8) 
 fn clear_isr(isr: &VirtioPciIsrDevice) {
     isr.read_local(Address::new(0), AccessSize::new(1).unwrap())
         .unwrap();
+}
+
+#[test]
+fn topology_host_controller_attaches_existing_virtio_split_queue_checkpoint_port() {
+    let source = GuestSourceId::new(100);
+    let component = CheckpointComponentId::new("virtio.block0.queue0").unwrap();
+    let queue = Arc::new(Mutex::new(split_queue(5, true)));
+    let expected = queue.lock().unwrap().snapshot();
+    let system = base_system()
+        .with_virtio_split_queue_checkpoint_port(VirtioSplitQueueCheckpointPort::new(
+            component.clone(),
+            Arc::clone(&queue),
+        ))
+        .unwrap()
+        .with_host_controller(host_config(source), StatsRegistry::new())
+        .unwrap();
+    let host = system.host_controller().unwrap();
+
+    assert_eq!(
+        host.lock()
+            .unwrap()
+            .executor()
+            .virtio_split_queue_checkpoint_bank()
+            .unwrap()
+            .components(),
+        vec![component.clone()]
+    );
+
+    let checkpoint = HostActionRecord::new(
+        18,
+        PartitionId::new(1),
+        PartitionId::new(1),
+        GuestEventId::new(300),
+        source,
+        HostAction::Checkpoint {
+            label: "topology-virtio-queue".to_string(),
+        },
+    );
+    let manifest = match host
+        .lock()
+        .unwrap()
+        .executor_mut()
+        .apply(&checkpoint)
+        .unwrap()
+    {
+        SystemActionOutcome::Checkpoint { manifest, .. } => manifest,
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+    assert!(manifest.states().iter().any(|state| {
+        state.component() == &component
+            && state
+                .chunks()
+                .iter()
+                .any(|chunk| chunk.name() == "split-queue")
+    }));
+
+    *queue.lock().unwrap() = split_queue(0, false);
+
+    let restore = HostActionRecord::new(
+        28,
+        PartitionId::new(1),
+        PartitionId::new(1),
+        GuestEventId::new(303),
+        source,
+        HostAction::RestoreCheckpoint { manifest },
+    );
+    host.lock().unwrap().executor_mut().apply(&restore).unwrap();
+
+    assert_eq!(queue.lock().unwrap().snapshot(), expected);
 }
 
 #[test]
@@ -342,6 +426,59 @@ fn topology_host_controller_attaches_existing_virtio_pci_checkpoint_ports() {
     assert_eq!(notify.snapshot(), expected_notify);
     assert_eq!(isr.snapshot(), expected_isr);
     assert_eq!(config.snapshot(), expected_config);
+}
+
+#[test]
+fn topology_host_controller_attaches_late_virtio_split_queue_checkpoint_port() {
+    let source = GuestSourceId::new(99);
+    let component = CheckpointComponentId::new("virtio.net0.queue0").unwrap();
+    let queue = Arc::new(Mutex::new(split_queue(0, false)));
+    let system = base_system()
+        .with_host_controller(host_config(source), StatsRegistry::new())
+        .unwrap()
+        .with_virtio_split_queue_checkpoint_port(VirtioSplitQueueCheckpointPort::new(
+            component.clone(),
+            queue,
+        ))
+        .unwrap();
+    let host = system.host_controller().unwrap();
+
+    assert_eq!(
+        host.lock()
+            .unwrap()
+            .executor()
+            .virtio_split_queue_checkpoint_bank()
+            .unwrap()
+            .components(),
+        vec![component]
+    );
+}
+
+#[test]
+fn topology_rejects_duplicate_virtio_split_queue_checkpoint_component() {
+    let component = CheckpointComponentId::new("virtio.block1.queue0").unwrap();
+    let first_queue = Arc::new(Mutex::new(split_queue(0, false)));
+    let second_queue = Arc::new(Mutex::new(split_queue(1, true)));
+    let error = match base_system()
+        .with_virtio_split_queue_checkpoint_port(VirtioSplitQueueCheckpointPort::new(
+            component.clone(),
+            first_queue,
+        ))
+        .unwrap()
+        .with_virtio_split_queue_checkpoint_port(VirtioSplitQueueCheckpointPort::new(
+            component.clone(),
+            second_queue,
+        )) {
+        Ok(_) => panic!("duplicate VirtIO split queue checkpoint component succeeded"),
+        Err(error) => error,
+    };
+
+    assert!(matches!(
+        error,
+        RiscvTopologySystemError::System(SystemError::Checkpoint(
+            CheckpointError::DuplicateComponent { component: duplicate }
+        )) if duplicate == component
+    ));
 }
 
 #[test]

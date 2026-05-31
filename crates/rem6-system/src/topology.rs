@@ -84,6 +84,8 @@ pub struct RiscvTopologySystem {
     memory: Option<RiscvTopologyMemoryBackend>,
     storage_checkpoint_ports: BTreeMap<CheckpointComponentId, crate::StorageImageCheckpointPort>,
     ide_checkpoint_ports: BTreeMap<CheckpointComponentId, crate::IdeControllerCheckpointPort>,
+    virtio_split_queue_checkpoint_ports:
+        BTreeMap<CheckpointComponentId, crate::VirtioSplitQueueCheckpointPort>,
     virtio_pci_common_checkpoint_ports:
         BTreeMap<CheckpointComponentId, crate::VirtioPciCommonCheckpointPort>,
     virtio_pci_notify_checkpoint_ports:
@@ -704,6 +706,7 @@ impl RiscvTopologySystem {
             memory: None,
             storage_checkpoint_ports: BTreeMap::new(),
             ide_checkpoint_ports: BTreeMap::new(),
+            virtio_split_queue_checkpoint_ports: BTreeMap::new(),
             virtio_pci_common_checkpoint_ports: BTreeMap::new(),
             virtio_pci_notify_checkpoint_ports: BTreeMap::new(),
             virtio_pci_isr_checkpoint_ports: BTreeMap::new(),

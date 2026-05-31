@@ -22,6 +22,7 @@ use crate::{
     VirtioPciCommonCheckpointPort, VirtioPciDeviceConfigCheckpointBank,
     VirtioPciDeviceConfigCheckpointPort, VirtioPciIsrCheckpointBank, VirtioPciIsrCheckpointPort,
     VirtioPciNotifyCheckpointBank, VirtioPciNotifyCheckpointPort, VirtioSplitQueueCheckpointBank,
+    VirtioSplitQueueCheckpointPort,
 };
 
 const EXECUTION_MODE_CHECKPOINT_COMPONENT: &str = "host.execution_modes";
@@ -647,6 +648,20 @@ impl SystemActionExecutor {
         virtio_split_queue_checkpoints.register_all(&mut self.checkpoints)?;
         self.virtio_split_queue_checkpoints = Some(virtio_split_queue_checkpoints);
         Ok(())
+    }
+
+    pub fn attach_virtio_split_queue_checkpoint_port(
+        &mut self,
+        port: VirtioSplitQueueCheckpointPort,
+    ) -> Result<(), CheckpointError> {
+        port.register(&mut self.checkpoints)?;
+        if let Some(virtio_split_queue_checkpoints) = &mut self.virtio_split_queue_checkpoints {
+            virtio_split_queue_checkpoints.insert_port(port)
+        } else {
+            self.virtio_split_queue_checkpoints =
+                Some(VirtioSplitQueueCheckpointBank::new([port])?);
+            Ok(())
+        }
     }
 
     pub fn attach_virtio_pci_isr_checkpoint_bank(
