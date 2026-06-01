@@ -3155,8 +3155,10 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   snapshot restore, no-route match status latching, serial and parallel MMIO
   access, serial and parallel match interrupt pulses, typed unknown-register
   errors, avoidance of default wrap-distance idle drains after load writes,
-  checkpoint bank decode-first restore without partial mutation, and host
-  checkpoint-action capture/restore through manifests. Platform and topology
+  checkpoint bank decode-first restore without partial mutation, stable PL031
+  checkpoint chunk bytes, invalid-bool, truncated, and trailing chunk rejection
+  without partial restore, and host checkpoint-action capture/restore through
+  manifests. Platform and topology
   tests cover PL031 MMIO bus attachment, interrupt routing, retained device
   lookup, and automatic topology host checkpoint attachment. SP804 tests cover
   dual-timer core countdown, one-shot interrupt latching and clearing,
