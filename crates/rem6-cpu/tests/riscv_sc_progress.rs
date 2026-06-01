@@ -8,8 +8,16 @@ use rem6_memory::{AccessSize, Address};
 
 const SC_CHECKPOINT_VERSION_OFFSET: usize = 4;
 const SC_CHECKPOINT_STREAK_COUNT_OFFSET: usize = 13;
+const SC_CHECKPOINT_DIAGNOSTIC_COUNT_OFFSET: usize = 17;
 const SC_CHECKPOINT_FIRST_STREAK_OFFSET: usize = 21;
 const SC_CHECKPOINT_STREAK_RECORD_BYTES: usize = 44;
+const SC_CHECKPOINT_DIAGNOSTIC_RECORD_BYTES: usize = 52;
+const SC_CHECKPOINT_STREAK_SIZE_OFFSET: usize = SC_CHECKPOINT_FIRST_STREAK_OFFSET + 4 + 8;
+const SC_CHECKPOINT_FIRST_DIAGNOSTIC_OFFSET: usize =
+    SC_CHECKPOINT_FIRST_STREAK_OFFSET + SC_CHECKPOINT_STREAK_RECORD_BYTES;
+const SC_CHECKPOINT_DIAGNOSTIC_SIZE_OFFSET: usize = SC_CHECKPOINT_FIRST_DIAGNOSTIC_OFFSET + 4 + 8;
+const SC_CHECKPOINT_DIAGNOSTIC_THRESHOLD_OFFSET: usize =
+    SC_CHECKPOINT_FIRST_DIAGNOSTIC_OFFSET + SC_CHECKPOINT_STREAK_RECORD_BYTES;
 const SINGLE_STREAK_CHECKPOINT_BYTES: &[u8] = &[
     b'R', b'S', b'C', b'P', 1, 3, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0xb0,
     0, 0, 0, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0x3c, 0, 0, 0, 0, 0, 0, 0, 0x3c, 0, 0, 0, 0, 0, 0, 0,
@@ -169,6 +177,109 @@ fn riscv_sc_progress_checkpoint_payload_rejects_unsupported_version() {
 }
 
 #[test]
+fn riscv_sc_progress_checkpoint_payload_rejects_malformed_headers() {
+    assert_eq!(
+        RiscvStoreConditionalProgressCheckpointPayload::decode(b"bad").unwrap_err(),
+        RiscvStoreConditionalProgressError::InvalidCheckpointPayloadSize {
+            expected: 21,
+            actual: 3,
+        }
+    );
+
+    let mut invalid_magic_payload = SINGLE_STREAK_CHECKPOINT_BYTES.to_vec();
+    invalid_magic_payload[0] = b'X';
+    assert_eq!(
+        RiscvStoreConditionalProgressCheckpointPayload::decode(&invalid_magic_payload).unwrap_err(),
+        RiscvStoreConditionalProgressError::InvalidCheckpointMagic
+    );
+
+    let mut zero_threshold_payload = SINGLE_STREAK_CHECKPOINT_BYTES.to_vec();
+    zero_threshold_payload[5..13].copy_from_slice(&0_u64.to_le_bytes());
+    assert_eq!(
+        RiscvStoreConditionalProgressCheckpointPayload::decode(&zero_threshold_payload)
+            .unwrap_err(),
+        RiscvStoreConditionalProgressError::ZeroDiagnosticThreshold
+    );
+
+    let mut missing_streak_payload = SINGLE_STREAK_CHECKPOINT_BYTES.to_vec();
+    missing_streak_payload
+        [SC_CHECKPOINT_STREAK_COUNT_OFFSET..SC_CHECKPOINT_STREAK_COUNT_OFFSET + 4]
+        .copy_from_slice(&2_u32.to_le_bytes());
+    assert_eq!(
+        RiscvStoreConditionalProgressCheckpointPayload::decode(&missing_streak_payload)
+            .unwrap_err(),
+        RiscvStoreConditionalProgressError::InvalidCheckpointPayloadSize {
+            expected: 21 + 2 * SC_CHECKPOINT_STREAK_RECORD_BYTES,
+            actual: SINGLE_STREAK_CHECKPOINT_BYTES.len(),
+        }
+    );
+
+    let mut missing_diagnostic_payload = SINGLE_STREAK_CHECKPOINT_BYTES.to_vec();
+    missing_diagnostic_payload
+        [SC_CHECKPOINT_DIAGNOSTIC_COUNT_OFFSET..SC_CHECKPOINT_DIAGNOSTIC_COUNT_OFFSET + 4]
+        .copy_from_slice(&1_u32.to_le_bytes());
+    assert_eq!(
+        RiscvStoreConditionalProgressCheckpointPayload::decode(&missing_diagnostic_payload)
+            .unwrap_err(),
+        RiscvStoreConditionalProgressError::InvalidCheckpointPayloadSize {
+            expected: 21
+                + SC_CHECKPOINT_STREAK_RECORD_BYTES
+                + SC_CHECKPOINT_DIAGNOSTIC_RECORD_BYTES,
+            actual: SINGLE_STREAK_CHECKPOINT_BYTES.len(),
+        }
+    );
+
+    let mut trailing_payload = SINGLE_STREAK_CHECKPOINT_BYTES.to_vec();
+    trailing_payload.push(0);
+    assert_eq!(
+        RiscvStoreConditionalProgressCheckpointPayload::decode(&trailing_payload).unwrap_err(),
+        RiscvStoreConditionalProgressError::InvalidCheckpointPayloadSize {
+            expected: SINGLE_STREAK_CHECKPOINT_BYTES.len(),
+            actual: SINGLE_STREAK_CHECKPOINT_BYTES.len() + 1,
+        }
+    );
+}
+
+#[test]
+fn riscv_sc_progress_checkpoint_payload_rejects_invalid_record_sizes() {
+    let mut invalid_streak_size_payload = SINGLE_STREAK_CHECKPOINT_BYTES.to_vec();
+    invalid_streak_size_payload
+        [SC_CHECKPOINT_STREAK_SIZE_OFFSET..SC_CHECKPOINT_STREAK_SIZE_OFFSET + 8]
+        .copy_from_slice(&0_u64.to_le_bytes());
+    assert_eq!(
+        RiscvStoreConditionalProgressCheckpointPayload::decode(&invalid_streak_size_payload)
+            .unwrap_err(),
+        RiscvStoreConditionalProgressError::InvalidCheckpointAccessSize { bytes: 0 }
+    );
+
+    let mut invalid_diagnostic_size_payload = single_diagnostic_checkpoint_bytes();
+    invalid_diagnostic_size_payload
+        [SC_CHECKPOINT_DIAGNOSTIC_SIZE_OFFSET..SC_CHECKPOINT_DIAGNOSTIC_SIZE_OFFSET + 8]
+        .copy_from_slice(&0_u64.to_le_bytes());
+    assert_eq!(
+        RiscvStoreConditionalProgressCheckpointPayload::decode(&invalid_diagnostic_size_payload)
+            .unwrap_err(),
+        RiscvStoreConditionalProgressError::InvalidCheckpointAccessSize { bytes: 0 }
+    );
+}
+
+#[test]
+fn riscv_sc_progress_checkpoint_payload_rejects_diagnostic_threshold_mismatch() {
+    let mut payload = single_diagnostic_checkpoint_bytes();
+    payload
+        [SC_CHECKPOINT_DIAGNOSTIC_THRESHOLD_OFFSET..SC_CHECKPOINT_DIAGNOSTIC_THRESHOLD_OFFSET + 8]
+        .copy_from_slice(&3_u64.to_le_bytes());
+
+    assert_eq!(
+        RiscvStoreConditionalProgressCheckpointPayload::decode(&payload).unwrap_err(),
+        RiscvStoreConditionalProgressError::DiagnosticThresholdMismatch {
+            expected: 2,
+            actual: 3,
+        }
+    );
+}
+
+#[test]
 fn riscv_sc_progress_checkpoint_payload_rejects_duplicate_streak_cpu() {
     let config = RiscvStoreConditionalProgressConfig::new(3).unwrap();
     let mut progress = RiscvStoreConditionalProgress::new(config);
@@ -207,4 +318,18 @@ fn duplicate_first_sc_checkpoint_streak(mut payload: Vec<u8>) -> Vec<u8> {
         first_streak,
     );
     payload
+}
+
+fn single_diagnostic_checkpoint_bytes() -> Vec<u8> {
+    let config = RiscvStoreConditionalProgressConfig::new(2).unwrap();
+    let mut progress = RiscvStoreConditionalProgress::new(config);
+    failure_ticks(
+        &mut progress,
+        CpuId::new(0),
+        Address::new(0xa000),
+        &[50, 51],
+    );
+    RiscvStoreConditionalProgressCheckpointPayload::from_snapshot(progress.snapshot())
+        .unwrap()
+        .encode()
 }

@@ -405,6 +405,19 @@ impl RiscvStoreConditionalProgressCheckpointPayload {
 fn validate_snapshot(
     snapshot: &RiscvStoreConditionalProgressSnapshot,
 ) -> Result<(), RiscvStoreConditionalProgressError> {
+    let expected_threshold = snapshot.config().diagnostic_threshold();
+    for diagnostic in snapshot.diagnostics() {
+        let actual_threshold = diagnostic.diagnostic_threshold();
+        if actual_threshold != expected_threshold {
+            return Err(
+                RiscvStoreConditionalProgressError::DiagnosticThresholdMismatch {
+                    expected: expected_threshold,
+                    actual: actual_threshold,
+                },
+            );
+        }
+    }
+
     let mut progress = RiscvStoreConditionalProgress::new(snapshot.config());
     progress.restore(snapshot)
 }
@@ -537,6 +550,10 @@ pub enum RiscvStoreConditionalProgressError {
     DuplicateSnapshotStreak {
         cpu: CpuId,
     },
+    DiagnosticThresholdMismatch {
+        expected: u64,
+        actual: u64,
+    },
     InvalidCheckpointPayloadSize {
         expected: usize,
         actual: usize,
@@ -572,6 +589,10 @@ impl fmt::Display for RiscvStoreConditionalProgressError {
                 formatter,
                 "RISC-V store-conditional snapshot contains duplicate streak for CPU {}",
                 cpu.get()
+            ),
+            Self::DiagnosticThresholdMismatch { expected, actual } => write!(
+                formatter,
+                "RISC-V store-conditional diagnostic threshold mismatch: expected {expected}, got {actual}"
             ),
             Self::InvalidCheckpointPayloadSize { expected, actual } => write!(
                 formatter,
