@@ -478,6 +478,104 @@ fn address_decoder_checkpoint_payload_rejects_extra_region_record() {
 }
 
 #[test]
+fn address_decoder_checkpoint_payload_rejects_region_record_reserved_field() {
+    let mut decoder = AddressDecoder::new();
+    decoder
+        .insert(
+            MemoryTargetId::new(3),
+            Address::new(0x1000),
+            AccessSize::new(0x2000).unwrap(),
+        )
+        .unwrap();
+    let mut payload = AddressDecoderCheckpointPayload::from_snapshot(decoder.snapshot())
+        .unwrap()
+        .encode();
+    payload[DECODER_CHECKPOINT_FIRST_REGION_RESERVED_OFFSET
+        ..DECODER_CHECKPOINT_FIRST_REGION_RESERVED_OFFSET + 4]
+        .copy_from_slice(&1_u32.to_le_bytes());
+
+    assert_eq!(
+        AddressDecoderCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::InvalidDecoderCheckpointReserved { value: 1 }
+    );
+}
+
+#[test]
+fn address_decoder_checkpoint_payload_rejects_invalid_region_interleave_flag() {
+    let mut decoder = AddressDecoder::new();
+    decoder
+        .insert(
+            MemoryTargetId::new(3),
+            Address::new(0x1000),
+            AccessSize::new(0x2000).unwrap(),
+        )
+        .unwrap();
+    let mut payload = AddressDecoderCheckpointPayload::from_snapshot(decoder.snapshot())
+        .unwrap()
+        .encode();
+    payload[DECODER_CHECKPOINT_FIRST_REGION_INTERLEAVE_OFFSET
+        ..DECODER_CHECKPOINT_FIRST_REGION_INTERLEAVE_OFFSET + 4]
+        .copy_from_slice(&2_u32.to_le_bytes());
+
+    assert_eq!(
+        AddressDecoderCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::InvalidDecoderCheckpointInterleaveFlag { value: 2 }
+    );
+}
+
+#[test]
+fn address_decoder_checkpoint_payload_rejects_missing_interleave_record() {
+    let mut decoder = AddressDecoder::new();
+    decoder
+        .insert(
+            MemoryTargetId::new(3),
+            Address::new(0x1000),
+            AccessSize::new(0x2000).unwrap(),
+        )
+        .unwrap();
+    let mut payload = AddressDecoderCheckpointPayload::from_snapshot(decoder.snapshot())
+        .unwrap()
+        .encode();
+    payload[DECODER_CHECKPOINT_FIRST_REGION_INTERLEAVE_OFFSET
+        ..DECODER_CHECKPOINT_FIRST_REGION_INTERLEAVE_OFFSET + 4]
+        .copy_from_slice(&1_u32.to_le_bytes());
+
+    assert_eq!(
+        AddressDecoderCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::InvalidDecoderCheckpointPayloadSize {
+            expected: DECODER_CHECKPOINT_HEADER_SIZE + DECODER_CHECKPOINT_REGION_RECORD_SIZE + 8,
+            actual: DECODER_CHECKPOINT_HEADER_SIZE + DECODER_CHECKPOINT_REGION_RECORD_SIZE
+        }
+    );
+}
+
+#[test]
+fn address_decoder_checkpoint_payload_rejects_missing_hole_record() {
+    let mut decoder = AddressDecoder::new();
+    decoder
+        .insert(
+            MemoryTargetId::new(3),
+            Address::new(0x1000),
+            AccessSize::new(0x2000).unwrap(),
+        )
+        .unwrap();
+    let mut payload = AddressDecoderCheckpointPayload::from_snapshot(decoder.snapshot())
+        .unwrap()
+        .encode();
+    payload[DECODER_CHECKPOINT_FIRST_REGION_HOLE_COUNT_OFFSET
+        ..DECODER_CHECKPOINT_FIRST_REGION_HOLE_COUNT_OFFSET + 4]
+        .copy_from_slice(&1_u32.to_le_bytes());
+
+    assert_eq!(
+        AddressDecoderCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::InvalidDecoderCheckpointPayloadSize {
+            expected: DECODER_CHECKPOINT_HEADER_SIZE + DECODER_CHECKPOINT_REGION_RECORD_SIZE + 8,
+            actual: DECODER_CHECKPOINT_HEADER_SIZE + DECODER_CHECKPOINT_REGION_RECORD_SIZE
+        }
+    );
+}
+
+#[test]
 fn address_decoder_checkpoint_payload_rejects_overlapping_region_records() {
     let mut decoder = AddressDecoder::new();
     decoder
@@ -509,6 +607,13 @@ const DECODER_CHECKPOINT_VERSION_OFFSET: usize = 4;
 const DECODER_CHECKPOINT_COUNT_OFFSET: usize = 8;
 const DECODER_CHECKPOINT_RESERVED_OFFSET: usize = 12;
 const DECODER_CHECKPOINT_RESERVED2_OFFSET: usize = 16;
+const DECODER_CHECKPOINT_FIRST_REGION_OFFSET: usize = DECODER_CHECKPOINT_HEADER_SIZE;
+const DECODER_CHECKPOINT_FIRST_REGION_INTERLEAVE_OFFSET: usize =
+    DECODER_CHECKPOINT_FIRST_REGION_OFFSET + 4;
+const DECODER_CHECKPOINT_FIRST_REGION_HOLE_COUNT_OFFSET: usize =
+    DECODER_CHECKPOINT_FIRST_REGION_OFFSET + 24;
+const DECODER_CHECKPOINT_FIRST_REGION_RESERVED_OFFSET: usize =
+    DECODER_CHECKPOINT_FIRST_REGION_OFFSET + 28;
 
 fn duplicate_first_decoder_checkpoint_region(mut payload: Vec<u8>) -> Vec<u8> {
     let region_count_offset = 8;
