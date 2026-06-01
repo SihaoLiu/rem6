@@ -1266,9 +1266,11 @@ Implementation evidence through 2026-05-31:
   destination fids, rejects overlong element vectors before state mutation,
   rejects non-empty same-fid rebinding, and preserves empty same-fid walk replies,
   `Tmkdir` creates deterministic directory qids and rejects duplicate names with
-  errno payloads, `Tlcreate` creates named root or child-directory files,
-  rejects occupied names without replacing existing nodes, rejects already-open
-  fids before namespace mutation, and retargets the directory fid to the opened file,
+  errno payloads, namespace mutations reject empty names, path separators, and
+  names longer than the advertised `statfs` `namelen` before state mutation,
+  `Tlcreate` creates named root or child-directory files, rejects occupied names
+  without replacing existing nodes, rejects already-open fids before namespace
+  mutation, and retargets the directory fid to the opened file,
   `Tgetattr` reports deterministic root, directory, and file metadata,
   `Tstatfs` reports deterministic namespace capacity metadata, legacy `Tstat`
   emits deterministic 9P2000 stat metadata for existing fids and rejects stale
@@ -3305,8 +3307,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   legacy `Topen` truncate and append mode handling, legacy `Tcreate` and `Tlcreate`
   opened-fid access-mode and append-mode propagation, create-on-open-fid rejection
   without namespace mutation, legacy `Tcreate` checked
-  file creation, duplicate-file rejection without clobbering, plus created-fid
-  retargeting, `Treaddir` sorted
+  file creation, duplicate-file rejection without clobbering, statfs-namelen
+  create-name rejection before completion mutation, plus created-fid retargeting,
+  `Treaddir` sorted
   root and child-directory dirents, resumable offsets, count-bounded replies,
   and directory-only error handling, counted `Tread` ranges, `Twrite` counted
   replies plus overwrite mutation, `Tlink` hard-link qid reuse, shared write

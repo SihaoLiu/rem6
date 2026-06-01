@@ -1,11 +1,11 @@
 use rem6_virtio::{
-    Virtio9pConfig, Virtio9pDevice, VIRTIO_9P_DEFAULT_MSIZE, VIRTIO_9P_EBADF, VIRTIO_9P_EEXIST,
-    VIRTIO_9P_LOPEN_APPEND, VIRTIO_9P_NOFID, VIRTIO_9P_OPEN_APPEND, VIRTIO_9P_OPEN_EXECUTE_ONLY,
-    VIRTIO_9P_OPEN_READ_ONLY, VIRTIO_9P_OPEN_READ_WRITE, VIRTIO_9P_OPEN_WRITE_ONLY,
-    VIRTIO_9P_QTFILE, VIRTIO_9P_RCREATE, VIRTIO_9P_RLCREATE, VIRTIO_9P_RLERROR, VIRTIO_9P_RLOPEN,
-    VIRTIO_9P_RREAD, VIRTIO_9P_RREADDIR, VIRTIO_9P_RWALK, VIRTIO_9P_RWRITE, VIRTIO_9P_TATTACH,
-    VIRTIO_9P_TCREATE, VIRTIO_9P_TLCREATE, VIRTIO_9P_TLOPEN, VIRTIO_9P_TREAD, VIRTIO_9P_TREADDIR,
-    VIRTIO_9P_TWALK, VIRTIO_9P_TWRITE,
+    Virtio9pConfig, Virtio9pDevice, VirtioError, VIRTIO_9P_DEFAULT_MSIZE, VIRTIO_9P_EBADF,
+    VIRTIO_9P_EEXIST, VIRTIO_9P_LOPEN_APPEND, VIRTIO_9P_NAME_MAX, VIRTIO_9P_NOFID,
+    VIRTIO_9P_OPEN_APPEND, VIRTIO_9P_OPEN_EXECUTE_ONLY, VIRTIO_9P_OPEN_READ_ONLY,
+    VIRTIO_9P_OPEN_READ_WRITE, VIRTIO_9P_OPEN_WRITE_ONLY, VIRTIO_9P_QTFILE, VIRTIO_9P_RCREATE,
+    VIRTIO_9P_RLCREATE, VIRTIO_9P_RLERROR, VIRTIO_9P_RLOPEN, VIRTIO_9P_RREAD, VIRTIO_9P_RREADDIR,
+    VIRTIO_9P_RWALK, VIRTIO_9P_RWRITE, VIRTIO_9P_TATTACH, VIRTIO_9P_TCREATE, VIRTIO_9P_TLCREATE,
+    VIRTIO_9P_TLOPEN, VIRTIO_9P_TREAD, VIRTIO_9P_TREADDIR, VIRTIO_9P_TWALK, VIRTIO_9P_TWRITE,
 };
 
 mod support;
@@ -447,4 +447,32 @@ fn virtio_9p_device_rejects_create_and_write_on_stale_fids() {
     let write_completion = device.execute_at(11, write).unwrap();
     assert_eq!(write_completion.message_type(), VIRTIO_9P_RLERROR);
     assert_eq!(write_completion.payload(), VIRTIO_9P_EBADF.to_le_bytes());
+}
+
+#[test]
+fn virtio_9p_device_rejects_create_names_longer_than_statfs_limit() {
+    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap());
+    let attach = decoded_request(
+        VIRTIO_9P_TATTACH,
+        1,
+        p9_attach_payload(1, VIRTIO_9P_NOFID, b"root", b"", 0),
+    );
+    device.execute_at(10, attach).unwrap();
+
+    let oversized_name = vec![b'a'; VIRTIO_9P_NAME_MAX as usize + 1];
+    let create = decoded_request(
+        VIRTIO_9P_TLCREATE,
+        2,
+        p9_lcreate_payload(1, &oversized_name, 0, 0o100644, 0),
+    );
+
+    assert!(matches!(
+        device.execute_at(11, create),
+        Err(VirtioError::InvalidVirtio9pPayload {
+            message_type: VIRTIO_9P_TLCREATE,
+            bytes
+        }) if bytes == oversized_name.len()
+    ));
+    assert_eq!(device.fid_count(), 1);
+    assert_eq!(device.completions().len(), 1);
 }
