@@ -366,6 +366,49 @@ fn memory_response_checkpoint_payload_round_trips_completed_data_and_retry() {
 }
 
 #[test]
+fn memory_response_checkpoint_payload_round_trips_completed_without_data() {
+    let write = MemoryRequest::write(
+        request_id(35),
+        Address::new(0x7b00),
+        AccessSize::new(2).unwrap(),
+        vec![0x11, 0x22],
+        ByteMask::full(AccessSize::new(2).unwrap()).unwrap(),
+        line_layout(),
+    )
+    .unwrap();
+    let completed = MemoryResponse::completed(&write, None).unwrap();
+    let payload = MemoryResponseCheckpointPayload::from_response(&completed);
+    let decoded = MemoryResponseCheckpointPayload::decode(payload.encode().as_slice()).unwrap();
+    let restored = MemoryResponse::from_snapshot(decoded.snapshot()).unwrap();
+
+    assert_eq!(decoded.snapshot(), &completed.snapshot());
+    assert_eq!(restored, completed);
+    assert_eq!(restored.request_id(), request_id(35));
+    assert_eq!(restored.status(), ResponseStatus::Completed);
+    assert!(restored.data().is_none());
+}
+
+#[test]
+fn memory_response_checkpoint_payload_uses_stable_completed_data_bytes() {
+    let read = MemoryRequest::read_shared(
+        request_id(36),
+        Address::new(0x7c00),
+        AccessSize::new(2).unwrap(),
+        line_layout(),
+    )
+    .unwrap();
+    let completed = MemoryResponse::completed(&read, Some(vec![0xaa, 0xbb])).unwrap();
+
+    assert_eq!(
+        MemoryResponseCheckpointPayload::from_response(&completed).encode(),
+        vec![
+            b'M', b'R', b'E', b'S', 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0, 36,
+            0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0xaa, 0xbb,
+        ]
+    );
+}
+
+#[test]
 fn memory_response_checkpoint_payload_rejects_invalid_status_code() {
     let response = MemoryResponse::retry(
         &MemoryRequest::read_shared(
