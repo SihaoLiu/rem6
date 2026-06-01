@@ -515,6 +515,24 @@ fn virtio_9p_device_tests_delegate_metadata_cases() {
 }
 
 #[test]
+fn virtio_9p_device_tests_delegate_hard_link_cases() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let device_test = fs::read_to_string(crate_dir.join("tests/fs9p_device.rs")).unwrap();
+    let namespace_test = crate_dir.join("tests/fs9p_namespace_mutation.rs");
+
+    assert!(
+        namespace_test.exists(),
+        "9P hard-link tests belong in tests/fs9p_namespace_mutation.rs"
+    );
+    for symbol in ["VIRTIO_9P_TLINK", "VIRTIO_9P_RLINK", "p9_link_payload"] {
+        assert!(
+            !device_test.contains(symbol),
+            "tests/fs9p_device.rs should delegate 9P hard-link behavior to tests/fs9p_namespace_mutation.rs; found {symbol}"
+        );
+    }
+}
+
+#[test]
 fn virtio_9p_device_tests_delegate_xattr_cases() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let device_test = fs::read_to_string(crate_dir.join("tests/fs9p_device.rs")).unwrap();
