@@ -558,6 +558,52 @@ fn memory_response_checkpoint_payload_rejects_short_payload() {
 }
 
 #[test]
+fn memory_response_checkpoint_payload_rejects_declared_data_larger_than_payload() {
+    let read = MemoryRequest::read_shared(
+        request_id(42),
+        Address::new(0x8200),
+        AccessSize::new(2).unwrap(),
+        line_layout(),
+    )
+    .unwrap();
+    let response = MemoryResponse::completed(&read, Some(vec![0x10, 0x20])).unwrap();
+    let mut payload = MemoryResponseCheckpointPayload::from_response(&response).encode();
+    payload[RESPONSE_CHECKPOINT_DATA_LENGTH_OFFSET..RESPONSE_CHECKPOINT_DATA_LENGTH_OFFSET + 8]
+        .copy_from_slice(&3u64.to_le_bytes());
+
+    assert_eq!(
+        MemoryResponseCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::InvalidResponseCheckpointPayloadSize {
+            expected: RESPONSE_CHECKPOINT_HEADER_SIZE + 3,
+            actual: RESPONSE_CHECKPOINT_HEADER_SIZE + 2
+        }
+    );
+}
+
+#[test]
+fn memory_response_checkpoint_payload_rejects_declared_data_smaller_than_payload() {
+    let read = MemoryRequest::read_shared(
+        request_id(43),
+        Address::new(0x8300),
+        AccessSize::new(2).unwrap(),
+        line_layout(),
+    )
+    .unwrap();
+    let response = MemoryResponse::completed(&read, Some(vec![0x10, 0x20])).unwrap();
+    let mut payload = MemoryResponseCheckpointPayload::from_response(&response).encode();
+    payload[RESPONSE_CHECKPOINT_DATA_LENGTH_OFFSET..RESPONSE_CHECKPOINT_DATA_LENGTH_OFFSET + 8]
+        .copy_from_slice(&1u64.to_le_bytes());
+
+    assert_eq!(
+        MemoryResponseCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::InvalidResponseCheckpointPayloadSize {
+            expected: RESPONSE_CHECKPOINT_HEADER_SIZE + 1,
+            actual: RESPONSE_CHECKPOINT_HEADER_SIZE + 2
+        }
+    );
+}
+
+#[test]
 fn memory_response_checkpoint_payload_rejects_absent_data_with_nonzero_length() {
     let response = MemoryResponse::retry(
         &MemoryRequest::read_shared(
