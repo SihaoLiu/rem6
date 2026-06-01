@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 const MAX_FACADE_LINES: usize = 1300;
 const MAX_FOCUSED_DEVICE_LINES: usize = 1300;
+const MAX_FOCUSED_TEST_LINES: usize = 1800;
 const MAX_SOURCE_LINES: usize = 1800;
 
 #[test]
@@ -368,6 +369,17 @@ fn virtio_9p_device_tests_delegate_protocol_helpers() {
     assert!(
         !device_test.contains("\nfn decoded_request"),
         "tests/fs9p_device.rs should use the shared request decoder from tests/support/fs9p.rs"
+    );
+}
+
+#[test]
+fn virtio_9p_device_test_file_stays_focused() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fs9p_device.rs");
+    let lines = line_count(&path);
+
+    assert!(
+        lines <= MAX_FOCUSED_TEST_LINES,
+        "tests/fs9p_device.rs should delegate focused 9P behavior groups to separate test files, but it has {lines} lines"
     );
 }
 
