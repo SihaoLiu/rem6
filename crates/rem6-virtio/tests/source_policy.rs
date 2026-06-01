@@ -418,6 +418,30 @@ fn virtio_9p_device_tests_delegate_node_creation_cases() {
 }
 
 #[test]
+fn virtio_9p_device_tests_delegate_open_mode_cases() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let device_test = fs::read_to_string(crate_dir.join("tests/fs9p_device.rs")).unwrap();
+    let open_flags_test = crate_dir.join("tests/fs9p_open_flags.rs");
+
+    assert!(
+        open_flags_test.exists(),
+        "9P open-mode tests belong in tests/fs9p_open_flags.rs"
+    );
+    for symbol in [
+        "VIRTIO_9P_TOPEN",
+        "VIRTIO_9P_ROPEN",
+        "VIRTIO_9P_OPEN_READ_ONLY",
+        "VIRTIO_9P_OPEN_WRITE_ONLY",
+        "p9_open_payload",
+    ] {
+        assert!(
+            !device_test.contains(symbol),
+            "tests/fs9p_device.rs should delegate 9P open-mode behavior to tests/fs9p_open_flags.rs; found {symbol}"
+        );
+    }
+}
+
+#[test]
 fn virtio_9p_device_tests_delegate_xattr_cases() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let device_test = fs::read_to_string(crate_dir.join("tests/fs9p_device.rs")).unwrap();
