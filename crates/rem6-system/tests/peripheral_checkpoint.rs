@@ -87,6 +87,18 @@ fn plic_device(base: u64, contexts: &[PlicContextRoute]) -> PlicMmioDevice {
     )
 }
 
+const PLIC_CHUNK: &str = "plic";
+const PLIC_U64_BYTES: usize = 8;
+const PLIC_U32_BYTES: usize = 4;
+const PLIC_CONTEXT_RECORD_BYTES_WITH_ONE_ENABLED_LINE: usize =
+    PLIC_U64_BYTES + PLIC_U32_BYTES * 3 + PLIC_U64_BYTES * 2;
+const PLIC_CONTEXT1_OFFSET: usize =
+    PLIC_U64_BYTES * 2 + PLIC_CONTEXT_RECORD_BYTES_WITH_ONE_ENABLED_LINE;
+const PLIC_CONTEXT_ENABLED_LINE_RELATIVE_OFFSET: usize =
+    PLIC_U64_BYTES + PLIC_U32_BYTES * 3 + PLIC_U64_BYTES;
+const PLIC_CONTEXT1_ENABLED_LINE_OFFSET: usize =
+    PLIC_CONTEXT1_OFFSET + PLIC_CONTEXT_ENABLED_LINE_RELATIVE_OFFSET;
+
 fn rtc_device(base: u64) -> Mc146818RtcMmioDevice {
     Mc146818RtcMmioDevice::new(
         Address::new(base),
@@ -1240,14 +1252,141 @@ fn pl011_uart_checkpoint_bank_rejects_rx_ledger_mismatch_without_partial_restore
 }
 
 #[test]
+fn plic_checkpoint_port_captures_stable_snapshot_bytes() {
+    let component = checkpoint_component("plic_payload_stable");
+    let contexts = stable_plic_contexts();
+    let expected = stable_plic_snapshot();
+    let source = plic_device(0x0c00_0000, &contexts);
+    source.restore(&expected).unwrap();
+    let target = plic_device(0x0c00_0000, &contexts);
+    let mut registry = CheckpointRegistry::new();
+    let port = PlicCheckpointPort::new(component.clone(), source);
+
+    port.register(&mut registry).unwrap();
+    let captured = port.capture_into(&mut registry).unwrap();
+
+    assert_eq!(captured.snapshot(), &expected);
+    assert_eq!(
+        registry.chunk(&component, PLIC_CHUNK).unwrap(),
+        stable_plic_checkpoint_bytes()
+    );
+    PlicCheckpointPort::new(component, target.clone())
+        .restore_from(&registry)
+        .unwrap();
+    assert_eq!(target.snapshot(), expected);
+}
+
+#[test]
+fn plic_checkpoint_port_rejects_truncated_enabled_line_without_partial_restore() {
+    let component = checkpoint_component("plic_payload_truncated_enabled");
+    let contexts = stable_plic_contexts();
+    let target = plic_device(0x0c00_0000, &contexts);
+    let original = target.snapshot();
+    let mut payload = stable_plic_checkpoint_bytes();
+    payload.truncate(PLIC_CONTEXT1_ENABLED_LINE_OFFSET + 4);
+    let mut registry = CheckpointRegistry::new();
+    registry.register(component.clone()).unwrap();
+    registry
+        .write_chunk(&component, PLIC_CHUNK, payload)
+        .unwrap();
+
+    let error = PlicCheckpointPort::new(component.clone(), target.clone())
+        .restore_from(&registry)
+        .unwrap_err();
+
+    match error {
+        PlicCheckpointError::InvalidChunk {
+            component: actual,
+            reason,
+        } => {
+            assert_eq!(actual, component);
+            assert_eq!(
+                reason,
+                "PLIC enabled line expected 8 bytes at offset 80, payload has 84 bytes"
+            );
+        }
+        other => panic!("unexpected PLIC checkpoint error: {other}"),
+    }
+    assert_eq!(target.snapshot(), original);
+}
+
+#[test]
+fn plic_checkpoint_port_rejects_trailing_payload_bytes_without_partial_restore() {
+    let component = checkpoint_component("plic_payload_trailing");
+    let contexts = stable_plic_contexts();
+    let target = plic_device(0x0c00_0000, &contexts);
+    let original = target.snapshot();
+    let mut payload = stable_plic_checkpoint_bytes();
+    payload.push(0xdd);
+    let mut registry = CheckpointRegistry::new();
+    registry.register(component.clone()).unwrap();
+    registry
+        .write_chunk(&component, PLIC_CHUNK, payload)
+        .unwrap();
+
+    let error = PlicCheckpointPort::new(component.clone(), target.clone())
+        .restore_from(&registry)
+        .unwrap_err();
+
+    match error {
+        PlicCheckpointError::InvalidChunk {
+            component: actual,
+            reason,
+        } => {
+            assert_eq!(actual, component);
+            assert_eq!(reason, "trailing 1 bytes after PLIC checkpoint payload");
+        }
+        other => panic!("unexpected PLIC checkpoint error: {other}"),
+    }
+    assert_eq!(target.snapshot(), original);
+}
+
+#[test]
 fn plic_checkpoint_bank_rejects_invalid_bank_without_partial_restore() {
     let valid_component = checkpoint_component("plic_bank_a");
     let invalid_component = checkpoint_component("plic_bank_b");
-    let contexts = [
+    let contexts = stable_plic_contexts();
+    let expected = stable_plic_snapshot();
+    let source = plic_device(0x0c00_0000, &contexts);
+    source.restore(&expected).unwrap();
+    let target_valid = plic_device(0x0c00_0000, &contexts);
+    let target_invalid = plic_device(0x0c10_0000, &contexts);
+    let original_valid = target_valid.snapshot();
+    let original_invalid = target_invalid.snapshot();
+
+    let mut registry = CheckpointRegistry::new();
+    registry.register(valid_component.clone()).unwrap();
+    PlicCheckpointPort::new(valid_component.clone(), source)
+        .capture_into(&mut registry)
+        .unwrap();
+    registry.register(invalid_component.clone()).unwrap();
+    registry
+        .write_chunk(&invalid_component, PLIC_CHUNK, vec![0xaa])
+        .unwrap();
+
+    let bank = PlicCheckpointBank::new([
+        PlicCheckpointPort::new(valid_component, target_valid.clone()),
+        PlicCheckpointPort::new(invalid_component.clone(), target_invalid.clone()),
+    ])
+    .unwrap();
+    let error = bank.restore_all_from(&registry).unwrap_err();
+    assert!(matches!(
+        error,
+        PlicCheckpointError::InvalidChunk { component, .. } if component == invalid_component
+    ));
+    assert_eq!(target_valid.snapshot(), original_valid);
+    assert_eq!(target_invalid.snapshot(), original_invalid);
+}
+
+fn stable_plic_contexts() -> [PlicContextRoute; 2] {
+    [
         PlicContextRoute::new(0, InterruptTargetId::new(0), PartitionId::new(0)),
         PlicContextRoute::new(1, InterruptTargetId::new(1), PartitionId::new(1)),
-    ];
-    let expected = PlicSnapshot::new(
+    ]
+}
+
+fn stable_plic_snapshot() -> PlicSnapshot {
+    PlicSnapshot::new(
         Address::new(0x0c00_0000),
         vec![
             PlicContextSnapshot::new(
@@ -1265,36 +1404,26 @@ fn plic_checkpoint_bank_rejects_invalid_bank_without_partial_restore() {
                 InterruptPriority::new(6),
             ),
         ],
-    );
-    let source = plic_device(0x0c00_0000, &contexts);
-    source.restore(&expected).unwrap();
-    let target_valid = plic_device(0x0c00_0000, &contexts);
-    let target_invalid = plic_device(0x0c10_0000, &contexts);
-    let original_valid = target_valid.snapshot();
-    let original_invalid = target_invalid.snapshot();
+    )
+}
 
-    let mut registry = CheckpointRegistry::new();
-    registry.register(valid_component.clone()).unwrap();
-    PlicCheckpointPort::new(valid_component.clone(), source)
-        .capture_into(&mut registry)
-        .unwrap();
-    registry.register(invalid_component.clone()).unwrap();
-    registry
-        .write_chunk(&invalid_component, "plic", vec![0xaa])
-        .unwrap();
-
-    let bank = PlicCheckpointBank::new([
-        PlicCheckpointPort::new(valid_component, target_valid.clone()),
-        PlicCheckpointPort::new(invalid_component.clone(), target_invalid.clone()),
-    ])
-    .unwrap();
-    let error = bank.restore_all_from(&registry).unwrap_err();
-    assert!(matches!(
-        error,
-        PlicCheckpointError::InvalidChunk { component, .. } if component == invalid_component
-    ));
-    assert_eq!(target_valid.snapshot(), original_valid);
-    assert_eq!(target_invalid.snapshot(), original_invalid);
+fn stable_plic_checkpoint_bytes() -> Vec<u8> {
+    let mut payload = Vec::new();
+    write_u64(&mut payload, 0x0c00_0000);
+    write_u64(&mut payload, 2);
+    write_u64(&mut payload, 0);
+    write_u32(&mut payload, 0);
+    write_u32(&mut payload, 0);
+    write_u32(&mut payload, 4);
+    write_u64(&mut payload, 1);
+    write_u64(&mut payload, 2);
+    write_u64(&mut payload, 1);
+    write_u32(&mut payload, 1);
+    write_u32(&mut payload, 1);
+    write_u32(&mut payload, 6);
+    write_u64(&mut payload, 1);
+    write_u64(&mut payload, 35);
+    payload
 }
 
 #[test]

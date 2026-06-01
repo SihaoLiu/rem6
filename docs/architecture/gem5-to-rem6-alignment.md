@@ -3208,7 +3208,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   advertised by the RISC-V device tree. Platform tests also cover typed PLIC
   context records driving both gem5-style `interrupts-extended` DTB metadata and
   context-specific MMIO claim routing for a second hart target. PLIC tests now
-  cover context-local snapshot and restore of enable and threshold state, while
+  cover context-local snapshot and restore of enable and threshold state, stable
+  two-context checkpoint chunk bytes, truncated enabled-line records, trailing
+  payload bytes, and no-partial-restore rejection for malformed chunks, while
   system checkpoint tests cover PLIC bank decode-first restore and host
   checkpoint-action round trips through manifests. System topology tests also
   cover automatic host checkpoint attachment for platform-owned PLIC devices.
