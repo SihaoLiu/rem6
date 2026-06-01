@@ -383,6 +383,9 @@ impl Virtio9pDevice {
         let Some(mut node) = start.node() else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
+        let Some(mut path) = start.path().cloned() else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
         for name in &walk.names {
             validate_file_name(VIRTIO_9P_TWALK, name)?;
         }
@@ -395,6 +398,7 @@ impl Virtio9pDevice {
                 break;
             };
             node = next;
+            path.walk_component(name);
             qids.push(namespace.qid(node));
         }
         if !completed {
@@ -410,7 +414,7 @@ impl Virtio9pDevice {
             if fids.contains_key(&walk.newfid) {
                 return Ok(Err(VIRTIO_9P_EBADF));
             }
-            fids.insert(walk.newfid, Virtio9pFidState::new(node));
+            fids.insert(walk.newfid, Virtio9pFidState::new_at(node, path));
         }
         Ok(Ok(walk_payload(&qids)))
     }
@@ -507,15 +511,18 @@ impl Virtio9pDevice {
         let Some(parent) = fid.node() else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
+        let Some(parent_path) = fid.path().cloned() else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
         if fid.is_open() {
             return Ok(Err(VIRTIO_9P_EBADF));
         }
         let mut namespace = self.namespace.lock().expect("virtio 9p namespace lock");
-        let node = match namespace.create_file(parent, name)? {
+        let node = match namespace.create_file(parent, name.clone())? {
             Ok(node) => node,
             Err(errno) => return Ok(Err(errno)),
         };
-        *fid = Virtio9pFidState::opened(node, mode, append);
+        *fid = Virtio9pFidState::opened_at(node, parent_path.child(name), mode, append);
         let mut payload = namespace.qid(node).to_le_bytes().to_vec();
         payload.extend(self.negotiated_msize().to_le_bytes());
         Ok(Ok(payload))
@@ -1111,7 +1118,7 @@ impl Virtio9pDevice {
             Err(VIRTIO_9P_EBADF)
         } else {
             let mut namespace = self.namespace.lock().expect("virtio 9p namespace lock");
-            namespace.remove_node_by_id(node)
+            namespace.remove_node_by_fid_path(node, fid.path())
         };
         self.fids
             .lock()

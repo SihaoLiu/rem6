@@ -2057,6 +2057,48 @@ fn virtio_9p_device_preserves_linked_file_identity() {
 }
 
 #[test]
+fn virtio_9p_device_remove_deletes_walked_hardlink_entry() {
+    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap())
+        .with_file("alpha.txt", b"alpha".to_vec())
+        .unwrap();
+    let attach = decoded_request(
+        VIRTIO_9P_TATTACH,
+        1,
+        p9_attach_payload(1, VIRTIO_9P_NOFID, b"root", b"", 0),
+    );
+    device.execute_at(10, attach).unwrap();
+
+    let walk_alpha = decoded_request(VIRTIO_9P_TWALK, 2, p9_walk_payload(1, 2, &[b"alpha.txt"]));
+    let alpha_completion = device.execute_at(11, walk_alpha).unwrap();
+    let (_, _, alpha_path) = read_qid(alpha_completion.payload(), 2);
+    let link = decoded_request(VIRTIO_9P_TLINK, 3, p9_link_payload(1, 2, b"beta.txt"));
+    let link_completion = device.execute_at(12, link).unwrap();
+    assert_eq!(link_completion.message_type(), VIRTIO_9P_RLINK);
+
+    let walk_beta = decoded_request(VIRTIO_9P_TWALK, 4, p9_walk_payload(1, 3, &[b"beta.txt"]));
+    let beta_completion = device.execute_at(13, walk_beta).unwrap();
+    assert_eq!(read_qid(beta_completion.payload(), 2).2, alpha_path);
+
+    let remove_beta = decoded_request(VIRTIO_9P_TREMOVE, 5, p9_remove_payload(3));
+    let remove_completion = device.execute_at(14, remove_beta).unwrap();
+    assert_eq!(remove_completion.message_type(), VIRTIO_9P_RREMOVE);
+    assert!(remove_completion.payload().is_empty());
+
+    let beta_walk = decoded_request(VIRTIO_9P_TWALK, 6, p9_walk_payload(1, 4, &[b"beta.txt"]));
+    let beta_walk_completion = device.execute_at(15, beta_walk).unwrap();
+    assert_eq!(beta_walk_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(
+        beta_walk_completion.payload(),
+        VIRTIO_9P_ENOENT.to_le_bytes()
+    );
+
+    let alpha_walk = decoded_request(VIRTIO_9P_TWALK, 7, p9_walk_payload(1, 5, &[b"alpha.txt"]));
+    let alpha_walk_completion = device.execute_at(16, alpha_walk).unwrap();
+    assert_eq!(alpha_walk_completion.message_type(), VIRTIO_9P_RWALK);
+    assert_eq!(read_qid(alpha_walk_completion.payload(), 2).2, alpha_path);
+}
+
+#[test]
 fn virtio_9p_device_returns_lerror_for_unsupported_messages() {
     let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap());
     let request = decoded_request(200, 31, Vec::new());

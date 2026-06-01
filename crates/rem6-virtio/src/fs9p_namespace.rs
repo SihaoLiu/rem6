@@ -338,6 +338,19 @@ impl Virtio9pNamespace {
         }
     }
 
+    pub(crate) fn remove_node_by_fid_path(
+        &mut self,
+        node: Virtio9pNodeId,
+        fid_path: Option<&Virtio9pFidPath>,
+    ) -> Result<(), u32> {
+        if let Some(fid_path) = fid_path {
+            if let Some(result) = remove_node_at_fid_path(&mut self.entries, fid_path, node) {
+                return result;
+            }
+        }
+        self.remove_node_by_id(node)
+    }
+
     pub(crate) fn rename_file(
         &mut self,
         old_parent: Virtio9pNodeId,
@@ -1205,6 +1218,43 @@ fn remove_file_by_path(entries: &mut BTreeMap<String, Virtio9pNode>, path: u64) 
     })
 }
 
+fn remove_node_at_fid_path(
+    entries: &mut BTreeMap<String, Virtio9pNode>,
+    fid_path: &Virtio9pFidPath,
+    expected: Virtio9pNodeId,
+) -> Option<Result<(), u32>> {
+    remove_node_at_components(entries, fid_path.components(), expected)
+}
+
+fn remove_node_at_components(
+    entries: &mut BTreeMap<String, Virtio9pNode>,
+    components: &[String],
+    expected: Virtio9pNodeId,
+) -> Option<Result<(), u32>> {
+    let (name, remaining) = components.split_first()?;
+    if remaining.is_empty() {
+        let node = entries.get(name)?;
+        if node.id() != expected {
+            return None;
+        }
+        return Some(match node {
+            Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_) => {
+                entries.remove(name);
+                Ok(())
+            }
+            Virtio9pNode::Directory(directory) if directory.entries.is_empty() => {
+                entries.remove(name);
+                Ok(())
+            }
+            Virtio9pNode::Directory(_) => Err(VIRTIO_9P_ENOTEMPTY),
+        });
+    }
+    let Virtio9pNode::Directory(directory) = entries.get_mut(name)? else {
+        return None;
+    };
+    remove_node_at_components(&mut directory.entries, remaining, expected)
+}
+
 fn remove_empty_directory_by_path(
     entries: &mut BTreeMap<String, Virtio9pNode>,
     path: u64,
@@ -1495,9 +1545,43 @@ impl Virtio9pOpenMode {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Virtio9pFidPath {
+    components: Vec<String>,
+}
+
+impl Virtio9pFidPath {
+    pub(crate) fn root() -> Self {
+        Self {
+            components: Vec::new(),
+        }
+    }
+
+    pub(crate) fn child(&self, name: impl Into<String>) -> Self {
+        let mut components = self.components.clone();
+        components.push(name.into());
+        Self { components }
+    }
+
+    pub(crate) fn walk_component(&mut self, name: &str) {
+        match name {
+            "." => {}
+            ".." => {
+                self.components.pop();
+            }
+            _ => self.components.push(name.to_string()),
+        }
+    }
+
+    fn components(&self) -> &[String] {
+        &self.components
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum Virtio9pFidState {
     Node {
         node: Virtio9pNodeId,
+        path: Virtio9pFidPath,
         open: Option<Virtio9pOpenMode>,
         append: bool,
     },
@@ -1514,9 +1598,14 @@ pub(crate) enum Virtio9pFidState {
 }
 
 impl Virtio9pFidState {
-    pub(crate) const fn new(node: Virtio9pNodeId) -> Self {
+    pub(crate) fn new(node: Virtio9pNodeId) -> Self {
+        Self::new_at(node, Virtio9pFidPath::root())
+    }
+
+    pub(crate) fn new_at(node: Virtio9pNodeId, path: Virtio9pFidPath) -> Self {
         Self::Node {
             node,
+            path,
             open: None,
             append: false,
         }
@@ -1548,6 +1637,13 @@ impl Virtio9pFidState {
         }
     }
 
+    pub(crate) const fn path(&self) -> Option<&Virtio9pFidPath> {
+        match self {
+            Self::Node { path, .. } => Some(path),
+            Self::XattrRead { .. } | Self::XattrWrite { .. } => None,
+        }
+    }
+
     pub(crate) fn open(&mut self, mode: Virtio9pOpenMode, append: bool) -> Option<()> {
         match self {
             Self::Node {
@@ -1563,9 +1659,15 @@ impl Virtio9pFidState {
         }
     }
 
-    pub(crate) const fn opened(node: Virtio9pNodeId, mode: Virtio9pOpenMode, append: bool) -> Self {
+    pub(crate) fn opened_at(
+        node: Virtio9pNodeId,
+        path: Virtio9pFidPath,
+        mode: Virtio9pOpenMode,
+        append: bool,
+    ) -> Self {
         Self::Node {
             node,
+            path,
             open: Some(mode),
             append,
         }
