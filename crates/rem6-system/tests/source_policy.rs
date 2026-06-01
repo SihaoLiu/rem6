@@ -70,10 +70,27 @@ fn workload_replay_summary_tests_live_in_focused_module() {
         tests_rs.exists(),
         "workload replay summary tests belong in src/workload_replay/summary/parallel_execution_summary_tests.rs"
     );
-    assert!(
-        !summary_rs.contains("mod tests {"),
-        "src/workload_replay/summary.rs should delegate large summary tests to a focused module"
-    );
+    for anchor in [
+        "fn livelock_transition_threshold_uses_lowest_declared_clean_threshold",
+        "fn parallel_execution_summary_copies_dram_qos_activity",
+        "fn parallel_execution_summary_copies_dma_scheduler_empty_epochs",
+        "fn parallel_execution_summary_copies_dma_scheduler_frontiers",
+        "fn parallel_execution_summary_copies_dma_scheduler_remote_traffic",
+        "fn parallel_execution_summary_copies_scheduler_remote_flows",
+        "fn parallel_execution_summary_copies_full_system_batch_partition_streaks",
+        "fn parallel_execution_summary_copies_scoped_batch_timeline",
+        "fn parallel_execution_summary_copies_scheduler_progress_transitions",
+        "fn parallel_execution_summary_uses_livelock_transition_threshold",
+        "fn parallel_execution_summary_preserves_livelock_diagnostic_records",
+        "fn parallel_execution_summary_preserves_cross_subsystem_deadlocks",
+        "fn parallel_execution_summary_preserves_compute_and_dma_wait_for_edge_kinds",
+        "fn parallel_execution_summary_copies_data_cache_scheduler_frontiers",
+    ] {
+        assert!(
+            !summary_rs.contains(anchor),
+            "src/workload_replay/summary.rs should delegate {anchor} to a focused test module"
+        );
+    }
 }
 
 #[test]
@@ -86,14 +103,17 @@ fn topology_boot_handoff_types_live_in_focused_module() {
         boot_handoff_rs.exists(),
         "RISC-V boot handoff types belong in src/topology/boot_handoff.rs"
     );
-    assert!(
-        !topology_rs.contains("struct RiscvLinuxBootHandoffConfig"),
-        "src/topology.rs should delegate boot handoff data types to a focused module"
-    );
-    assert!(
-        !topology_rs.contains("struct RiscvLinuxInitrdImage"),
-        "src/topology.rs should delegate initrd image validation to a focused module"
-    );
+    for anchor in [
+        "struct RiscvDtbHandoffReport",
+        "struct RiscvLinuxInitrdImage",
+        "struct RiscvLinuxBootHandoffConfig",
+        "struct RiscvLinuxBootHandoffReport",
+    ] {
+        assert!(
+            !topology_rs.contains(anchor),
+            "src/topology.rs should delegate {anchor} to a focused module"
+        );
+    }
 }
 
 #[test]
@@ -110,10 +130,19 @@ fn host_execution_mode_checkpoint_lives_in_focused_module() {
         !host_rs.contains("enum ExecutionModeCheckpointError"),
         "src/host.rs should delegate execution-mode checkpoint errors to a focused module"
     );
-    assert!(
-        !host_rs.contains("fn decode_execution_modes"),
-        "src/host.rs should delegate execution-mode checkpoint decoding to a focused module"
-    );
+    for anchor in [
+        "fn execution_mode_checkpoint_component",
+        "fn manifest_has_execution_mode_checkpoint",
+        "fn encode_execution_modes",
+        "fn decode_execution_modes",
+        "fn read_u64",
+        "fn execution_mode_from_code",
+    ] {
+        assert!(
+            !host_rs.contains(anchor),
+            "src/host.rs should delegate {anchor} to a focused module"
+        );
+    }
 }
 
 fn rust_source_files(root: &Path) -> Vec<PathBuf> {
