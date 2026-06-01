@@ -72,8 +72,14 @@ impl Virtio9pDevice {
             .namespace
             .lock()
             .expect("virtio 9p namespace lock")
-            .rename_file(old_dir, &rename.oldname, new_dir, &rename.newname)?
-        {
+            .rename_file(
+                old_dir,
+                &old_dir_path,
+                &rename.oldname,
+                new_dir,
+                &new_dir_path,
+                &rename.newname,
+            )? {
             Ok(rename) => rename,
             Err(errno) => return Ok(Err(errno)),
         };
@@ -105,7 +111,7 @@ impl Virtio9pDevice {
             .namespace
             .lock()
             .expect("virtio 9p namespace lock")
-            .rename_node(node, &old_path, new_dir, &rename.name)?
+            .rename_node(node, &old_path, new_dir, &new_dir_path, &rename.name)?
         {
             Ok(rename) => rename,
             Err(errno) => return Ok(Err(errno)),

@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::fs9p_protocol::{VIRTIO_9P_EEXIST, VIRTIO_9P_ENOTEMPTY};
+use crate::fs9p_protocol::{VIRTIO_9P_EEXIST, VIRTIO_9P_EINVAL, VIRTIO_9P_ENOTEMPTY};
 
 use super::{Virtio9pFidPath, Virtio9pNode, Virtio9pNodeId, Virtio9pRenameOutcome};
 
@@ -19,6 +19,43 @@ pub(super) fn rename_node_at_fid_path(
     newname: &str,
 ) -> Option<Result<Virtio9pRenameOutcome, u32>> {
     rename_node_at_components(entries, fid_path.components(), expected, newname)
+}
+
+pub(super) fn move_directory_at_fid_path(
+    entries: &mut BTreeMap<String, Virtio9pNode>,
+    old_path: &Virtio9pFidPath,
+    expected: Virtio9pNodeId,
+    new_parent_path: &Virtio9pFidPath,
+    newname: &str,
+) -> Option<Result<Virtio9pRenameOutcome, u32>> {
+    let old_components = old_path.components();
+    let (_oldname, old_parent_components) = old_components.split_last()?;
+    let new_parent_components = new_parent_path.components();
+    if new_parent_components.starts_with(old_components) {
+        return Some(Err(VIRTIO_9P_EINVAL));
+    }
+    if old_parent_components == new_parent_components {
+        return rename_node_at_components(entries, old_components, expected, newname);
+    }
+    let source = node_at_components(entries, old_components)?;
+    if source.id() != expected || !matches!(source, Virtio9pNode::Directory(_)) {
+        return None;
+    }
+    {
+        let target_entries = directory_entries_at_components(entries, new_parent_components)?;
+        if let Err(errno) = validate_directory_move_target(target_entries, expected, newname) {
+            return Some(Err(errno));
+        }
+    }
+    let moved = take_node_at_components(entries, old_components, expected)?;
+    let target_entries = directory_entries_mut_at_components(entries, new_parent_components)?;
+    let replaced = target_entries
+        .insert(newname.to_string(), moved)
+        .map(|node| node.id());
+    Some(Ok(Virtio9pRenameOutcome {
+        moved: true,
+        replaced,
+    }))
 }
 
 pub(super) fn remove_node_at_fid_path(
@@ -75,6 +112,63 @@ fn node_exists_at_components(
         return false;
     };
     node_exists_at_components(&directory.entries, remaining, expected)
+}
+
+fn node_at_components<'a>(
+    entries: &'a BTreeMap<String, Virtio9pNode>,
+    components: &[String],
+) -> Option<&'a Virtio9pNode> {
+    let (name, remaining) = components.split_first()?;
+    let node = entries.get(name)?;
+    if remaining.is_empty() {
+        return Some(node);
+    }
+    let Virtio9pNode::Directory(directory) = node else {
+        return None;
+    };
+    node_at_components(&directory.entries, remaining)
+}
+
+fn directory_entries_at_components<'a>(
+    entries: &'a BTreeMap<String, Virtio9pNode>,
+    components: &[String],
+) -> Option<&'a BTreeMap<String, Virtio9pNode>> {
+    let Some((name, remaining)) = components.split_first() else {
+        return Some(entries);
+    };
+    let Virtio9pNode::Directory(directory) = entries.get(name)? else {
+        return None;
+    };
+    directory_entries_at_components(&directory.entries, remaining)
+}
+
+fn directory_entries_mut_at_components<'a>(
+    entries: &'a mut BTreeMap<String, Virtio9pNode>,
+    components: &[String],
+) -> Option<&'a mut BTreeMap<String, Virtio9pNode>> {
+    let Some((name, remaining)) = components.split_first() else {
+        return Some(entries);
+    };
+    let Virtio9pNode::Directory(directory) = entries.get_mut(name)? else {
+        return None;
+    };
+    directory_entries_mut_at_components(&mut directory.entries, remaining)
+}
+
+fn validate_directory_move_target(
+    entries: &BTreeMap<String, Virtio9pNode>,
+    expected: Virtio9pNodeId,
+    newname: &str,
+) -> Result<(), u32> {
+    match entries.get(newname) {
+        Some(existing) if existing.id() == expected => Ok(()),
+        Some(Virtio9pNode::Directory(directory)) if directory.entries.is_empty() => Ok(()),
+        Some(Virtio9pNode::Directory(_)) => Err(VIRTIO_9P_ENOTEMPTY),
+        Some(Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_)) => {
+            Err(VIRTIO_9P_EEXIST)
+        }
+        None => Ok(()),
+    }
 }
 
 pub(super) fn rename_node_in_entries(
@@ -176,4 +270,23 @@ fn take_file_node_at_components(
         return None;
     };
     take_file_node_at_components(&mut directory.entries, remaining, expected)
+}
+
+fn take_node_at_components(
+    entries: &mut BTreeMap<String, Virtio9pNode>,
+    components: &[String],
+    expected: Virtio9pNodeId,
+) -> Option<Virtio9pNode> {
+    let (name, remaining) = components.split_first()?;
+    if remaining.is_empty() {
+        let node = entries.get(name)?;
+        if node.id() != expected {
+            return None;
+        }
+        return entries.remove(name);
+    }
+    let Virtio9pNode::Directory(directory) = entries.get_mut(name)? else {
+        return None;
+    };
+    take_node_at_components(&mut directory.entries, remaining, expected)
 }
