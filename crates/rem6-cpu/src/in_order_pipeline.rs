@@ -275,6 +275,32 @@ pub struct InOrderPipelineState {
     in_flight: Vec<InOrderPipelineInstruction>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InOrderPipelineCycleRecord {
+    cycle: u64,
+    before: InOrderPipelineSnapshot,
+    plan: InOrderPipelinePlan,
+    after: InOrderPipelineSnapshot,
+}
+
+impl InOrderPipelineCycleRecord {
+    pub const fn cycle(&self) -> u64 {
+        self.cycle
+    }
+
+    pub const fn before(&self) -> &InOrderPipelineSnapshot {
+        &self.before
+    }
+
+    pub const fn plan(&self) -> &InOrderPipelinePlan {
+        &self.plan
+    }
+
+    pub const fn after(&self) -> &InOrderPipelineSnapshot {
+        &self.after
+    }
+}
+
 impl InOrderPipelineState {
     pub const fn new(config: InOrderPipelineConfig) -> Self {
         Self {
@@ -318,6 +344,33 @@ impl InOrderPipelineState {
     pub fn advance_cycle(&mut self) -> InOrderPipelinePlan {
         self.try_advance_cycle()
             .expect("in-order pipeline cycle advance failed")
+    }
+
+    pub fn advance_cycle_recorded(&mut self) -> InOrderPipelineCycleRecord {
+        self.try_advance_cycle_recorded()
+            .expect("in-order pipeline recorded cycle advance failed")
+    }
+
+    pub fn try_advance_cycle_recorded(
+        &mut self,
+    ) -> Result<InOrderPipelineCycleRecord, InOrderPipelineError> {
+        self.try_advance_cycle_recorded_with_redirect(None)
+    }
+
+    pub fn try_advance_cycle_recorded_with_redirect(
+        &mut self,
+        redirect: Option<InOrderBranchRedirect>,
+    ) -> Result<InOrderPipelineCycleRecord, InOrderPipelineError> {
+        let before = self.snapshot();
+        let plan = self.advance_cycle_with_redirect(redirect)?;
+        let after = self.snapshot();
+
+        Ok(InOrderPipelineCycleRecord {
+            cycle: before.cycle(),
+            before,
+            plan,
+            after,
+        })
     }
 
     pub fn try_advance_cycle(&mut self) -> Result<InOrderPipelinePlan, InOrderPipelineError> {

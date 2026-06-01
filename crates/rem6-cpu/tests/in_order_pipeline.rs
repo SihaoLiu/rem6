@@ -294,6 +294,46 @@ fn in_order_pipeline_restore_rejects_duplicate_in_flight_sequences() {
 }
 
 #[test]
+fn in_order_pipeline_recorded_cycle_preserves_before_plan_and_after_snapshots() {
+    let mut state = InOrderPipelineState::new(config_with_decode_width(1));
+    state
+        .replace_in_flight([
+            instruction(9, InOrderPipelineStage::Commit),
+            instruction(10, InOrderPipelineStage::Decode),
+        ])
+        .unwrap();
+
+    let record = state.advance_cycle_recorded();
+
+    assert_eq!(record.cycle(), 0);
+    assert_eq!(record.before().cycle(), 0);
+    assert_eq!(
+        record
+            .before()
+            .in_flight()
+            .iter()
+            .map(|instruction| instruction.sequence())
+            .collect::<Vec<_>>(),
+        vec![9, 10]
+    );
+    assert_eq!(
+        record.plan().advanced_sequences().collect::<Vec<_>>(),
+        vec![9, 10]
+    );
+    assert_eq!(record.after().cycle(), 1);
+    assert_eq!(
+        record
+            .after()
+            .in_flight()
+            .iter()
+            .map(|instruction| (instruction.sequence(), instruction.stage()))
+            .collect::<Vec<_>>(),
+        vec![(10, InOrderPipelineStage::Execute)]
+    );
+    assert_eq!(state.snapshot(), *record.after());
+}
+
+#[test]
 fn in_order_pipeline_config_rejects_zero_missing_and_duplicate_widths() {
     assert_eq!(
         InOrderPipelineStageWidth::new(InOrderPipelineStage::Execute, 0).unwrap_err(),

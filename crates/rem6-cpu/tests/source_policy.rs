@@ -67,6 +67,10 @@ fn in_order_pipeline_lives_in_focused_module() {
         "src/in_order_pipeline.rs should own in-order pipeline state"
     );
     assert!(
+        in_order_src.contains("pub struct InOrderPipelineCycleRecord"),
+        "src/in_order_pipeline.rs should own in-order cycle records"
+    );
+    assert!(
         !lib_rs.contains("pub struct InOrderPipelineScheduler"),
         "src/lib.rs should re-export the in-order scheduler from a focused module"
     );
