@@ -1,9 +1,8 @@
 use rem6_virtio::{
-    Virtio9pConfig, Virtio9pDevice, VirtioError, VIRTIO_9P_DEFAULT_MSIZE, VIRTIO_9P_EBADF,
-    VIRTIO_9P_ENOENT, VIRTIO_9P_ENOTSUP, VIRTIO_9P_NOFID, VIRTIO_9P_QTDIR, VIRTIO_9P_QTFILE,
-    VIRTIO_9P_RATTACH, VIRTIO_9P_RCLUNK, VIRTIO_9P_RLERROR, VIRTIO_9P_RLOPEN, VIRTIO_9P_RREAD,
-    VIRTIO_9P_RWALK, VIRTIO_9P_TATTACH, VIRTIO_9P_TCLUNK, VIRTIO_9P_TLOPEN, VIRTIO_9P_TREAD,
-    VIRTIO_9P_TWALK,
+    Virtio9pConfig, Virtio9pDevice, VIRTIO_9P_DEFAULT_MSIZE, VIRTIO_9P_EBADF, VIRTIO_9P_ENOENT,
+    VIRTIO_9P_ENOTSUP, VIRTIO_9P_NOFID, VIRTIO_9P_QTDIR, VIRTIO_9P_QTFILE, VIRTIO_9P_RATTACH,
+    VIRTIO_9P_RCLUNK, VIRTIO_9P_RLERROR, VIRTIO_9P_RLOPEN, VIRTIO_9P_RREAD, VIRTIO_9P_RWALK,
+    VIRTIO_9P_TATTACH, VIRTIO_9P_TCLUNK, VIRTIO_9P_TLOPEN, VIRTIO_9P_TREAD, VIRTIO_9P_TWALK,
 };
 
 mod support;
@@ -151,18 +150,4 @@ fn virtio_9p_device_returns_lerror_for_unsupported_messages() {
     assert_eq!(completion.tag(), 31);
     assert_eq!(completion.payload(), VIRTIO_9P_ENOTSUP.to_le_bytes());
     assert_eq!(device.completions(), vec![completion]);
-}
-
-#[test]
-fn virtio_9p_device_rejects_malformed_attach_payloads_as_typed_errors() {
-    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap());
-    let malformed_attach = decoded_request(VIRTIO_9P_TATTACH, 2, vec![0; 9]);
-
-    assert!(matches!(
-        device.execute_at(78, malformed_attach),
-        Err(VirtioError::InvalidVirtio9pPayload {
-            message_type: VIRTIO_9P_TATTACH,
-            bytes: 9
-        })
-    ));
 }

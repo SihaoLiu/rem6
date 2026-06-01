@@ -48,6 +48,20 @@ fn virtio_9p_device_rejects_attach_with_unsupported_auth_fids() {
 }
 
 #[test]
+fn virtio_9p_device_rejects_malformed_attach_payloads_as_typed_errors() {
+    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap());
+    let malformed_attach = decoded_request(VIRTIO_9P_TATTACH, 2, vec![0; 9]);
+
+    assert!(matches!(
+        device.execute_at(78, malformed_attach),
+        Err(VirtioError::InvalidVirtio9pPayload {
+            message_type: VIRTIO_9P_TATTACH,
+            bytes: 9
+        })
+    ));
+}
+
+#[test]
 fn virtio_9p_device_clamps_too_small_msize_to_valid_version_envelope() {
     let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap())
         .with_file("tiny.txt", b"tiny payload".to_vec())

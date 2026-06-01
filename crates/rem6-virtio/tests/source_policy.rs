@@ -533,6 +533,24 @@ fn virtio_9p_device_tests_delegate_hard_link_cases() {
 }
 
 #[test]
+fn virtio_9p_device_tests_delegate_malformed_attach_cases() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let device_test = fs::read_to_string(crate_dir.join("tests/fs9p_device.rs")).unwrap();
+    let handshake_test = crate_dir.join("tests/fs9p_handshake.rs");
+
+    assert!(
+        handshake_test.exists(),
+        "9P attach handshake tests belong in tests/fs9p_handshake.rs"
+    );
+    for symbol in ["VirtioError::InvalidVirtio9pPayload", "malformed_attach"] {
+        assert!(
+            !device_test.contains(symbol),
+            "tests/fs9p_device.rs should delegate malformed attach behavior to tests/fs9p_handshake.rs; found {symbol}"
+        );
+    }
+}
+
+#[test]
 fn virtio_9p_device_tests_delegate_xattr_cases() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let device_test = fs::read_to_string(crate_dir.join("tests/fs9p_device.rs")).unwrap();
