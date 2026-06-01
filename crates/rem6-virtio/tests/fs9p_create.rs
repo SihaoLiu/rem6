@@ -3,8 +3,9 @@ use rem6_virtio::{
     VIRTIO_9P_LOPEN_APPEND, VIRTIO_9P_NOFID, VIRTIO_9P_OPEN_APPEND, VIRTIO_9P_OPEN_EXECUTE_ONLY,
     VIRTIO_9P_OPEN_READ_ONLY, VIRTIO_9P_OPEN_READ_WRITE, VIRTIO_9P_OPEN_WRITE_ONLY,
     VIRTIO_9P_QTFILE, VIRTIO_9P_RCREATE, VIRTIO_9P_RLCREATE, VIRTIO_9P_RLERROR, VIRTIO_9P_RLOPEN,
-    VIRTIO_9P_RREAD, VIRTIO_9P_RWALK, VIRTIO_9P_RWRITE, VIRTIO_9P_TATTACH, VIRTIO_9P_TCREATE,
-    VIRTIO_9P_TLCREATE, VIRTIO_9P_TLOPEN, VIRTIO_9P_TREAD, VIRTIO_9P_TWALK, VIRTIO_9P_TWRITE,
+    VIRTIO_9P_RREAD, VIRTIO_9P_RREADDIR, VIRTIO_9P_RWALK, VIRTIO_9P_RWRITE, VIRTIO_9P_TATTACH,
+    VIRTIO_9P_TCREATE, VIRTIO_9P_TLCREATE, VIRTIO_9P_TLOPEN, VIRTIO_9P_TREAD, VIRTIO_9P_TREADDIR,
+    VIRTIO_9P_TWALK, VIRTIO_9P_TWRITE,
 };
 
 mod support;
@@ -98,6 +99,41 @@ fn virtio_9p_device_rejects_legacy_create_on_stale_fids() {
 
     assert_eq!(completion.message_type(), VIRTIO_9P_RLERROR);
     assert_eq!(completion.payload(), VIRTIO_9P_EBADF.to_le_bytes());
+}
+
+#[test]
+fn virtio_9p_device_rejects_create_on_open_fids_without_retargeting() {
+    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap());
+    let attach = decoded_request(
+        VIRTIO_9P_TATTACH,
+        1,
+        p9_attach_payload(1, VIRTIO_9P_NOFID, b"root", b"", 0),
+    );
+    device.execute_at(10, attach).unwrap();
+    let open_root = decoded_request(VIRTIO_9P_TLOPEN, 2, p9_lopen_payload(1, 0));
+    device.execute_at(11, open_root).unwrap();
+
+    let create = decoded_request(
+        VIRTIO_9P_TLCREATE,
+        3,
+        p9_lcreate_payload(
+            1,
+            b"unexpected.txt",
+            u32::from(VIRTIO_9P_OPEN_READ_WRITE),
+            0o100644,
+            0,
+        ),
+    );
+    let create_completion = device.execute_at(12, create).unwrap();
+    assert_eq!(create_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(create_completion.payload(), VIRTIO_9P_EBADF.to_le_bytes());
+
+    let readdir = decoded_request(VIRTIO_9P_TREADDIR, 4, p9_readdir_payload(1, 0, 512));
+    let readdir_completion = device.execute_at(13, readdir).unwrap();
+    assert_eq!(readdir_completion.message_type(), VIRTIO_9P_RREADDIR);
+    let entries = read_dir_entries(readdir_completion.payload());
+    let names: Vec<_> = entries.iter().map(|entry| entry.name.as_str()).collect();
+    assert_eq!(names, [".", ".."]);
 }
 
 #[test]
