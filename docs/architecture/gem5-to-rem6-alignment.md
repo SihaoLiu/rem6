@@ -1310,11 +1310,12 @@ Implementation evidence through 2026-05-31:
   only when no linked directory entry remains, removes empty directories only
   when `AT_REMOVEDIR` is present, and rejects non-empty directory removal with
   `ENOTEMPTY`, `Tremove` removes the walked hard-link directory entry for file
-  fids, including after that hard-link entry is renamed, removes empty-directory
-  fids plus their namespace entries, rejects root and non-empty-directory
-  removals while clunking valid remove fids, and releases byte-range locks
-  owned by the removed fid even when a surviving hard link keeps the namespace
-  node live, `Tclunk`
+  fids, including after that hard-link entry is renamed, rejects already-unlinked
+  walked hard-link entries without deleting surviving names for the same qid,
+  removes empty-directory fids plus their namespace entries, rejects root and
+  non-empty-directory removals while clunking valid remove fids, and releases
+  byte-range locks owned by the removed fid even when a surviving hard link
+  keeps the namespace node live, `Tclunk`
   drops ordinary fid state, releases byte-range locks owned by the clunked fid,
   and commits pending xattr-write fids, `Tflush` acknowledges old tags without
   mutating synchronous fid or namespace state, `Tfsync` validates fids before
@@ -3335,9 +3336,11 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   child-directory file removal with post-delete directory and walk checks,
   `Tunlinkat` empty-directory removal through `AT_REMOVEDIR` plus non-empty
   directory `ENOTEMPTY` rejection, `Tremove` fid-backed file removal using the
-  walked hard-link entry after normal walk or rename, empty-directory removal
-  with stale-fid rejection, root rejection with fid clunking, and non-empty
-  directory `ENOTEMPTY` rejection that clunks the remove fid,
+  walked hard-link entry after normal walk or rename, already-unlinked walked
+  hard-link entry rejection without deleting surviving names for the same qid,
+  empty-directory removal with stale-fid rejection, root rejection with fid
+  clunking, and non-empty directory `ENOTEMPTY` rejection that clunks the remove
+  fid,
   `Tsymlink` creation with symlink qids, symlink walk and sorted dirent
   exposure, `Treadlink` target replies, non-symlink and stale readlink
   rejection, `Tmknod` character-device creation, walk, dirent dtype, metadata

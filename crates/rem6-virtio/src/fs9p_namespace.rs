@@ -351,9 +351,8 @@ impl Virtio9pNamespace {
         fid_path: Option<&Virtio9pFidPath>,
     ) -> Result<(), u32> {
         if let Some(fid_path) = fid_path {
-            if let Some(result) = remove_node_at_fid_path(&mut self.entries, fid_path, node) {
-                return result;
-            }
+            return remove_node_at_fid_path(&mut self.entries, fid_path, node)
+                .unwrap_or(Err(VIRTIO_9P_EBADF));
         }
         self.remove_node_by_id(node)
     }
