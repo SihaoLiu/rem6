@@ -238,6 +238,189 @@ fn page_translation_map_checkpoint_payload_round_trips_snapshot() {
 }
 
 #[test]
+fn page_translation_map_checkpoint_payload_uses_stable_single_mapping_bytes() {
+    let page_size = TranslationPageSize::new(4096).unwrap();
+    let mut map = TranslationPageMap::new(page_size);
+    map.map(
+        Address::new(0x4000),
+        Address::new(0x8000),
+        2,
+        TranslationPagePermissions::read_execute(),
+    )
+    .unwrap();
+    let snapshot = map.snapshot();
+    let payload = TranslationPageMapCheckpointPayload::from_snapshot(snapshot.clone()).unwrap();
+    let mut stable_payload = vec![
+        b'M', b'T', b'P', b'M', 1, 0, 0, 0, 0, 0x10, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0,
+    ];
+    stable_payload.extend_from_slice(&0x4000_u64.to_le_bytes());
+    stable_payload.extend_from_slice(&0x8000_u64.to_le_bytes());
+    stable_payload.extend_from_slice(&2_u64.to_le_bytes());
+    stable_payload.extend_from_slice(&5_u32.to_le_bytes());
+    stable_payload.extend_from_slice(&0_u32.to_le_bytes());
+
+    let decoded = TranslationPageMapCheckpointPayload::decode(&stable_payload).unwrap();
+    let restored = TranslationPageMap::from_snapshot(decoded.snapshot()).unwrap();
+
+    assert_eq!(payload.encode(), stable_payload);
+    assert_eq!(decoded.snapshot(), &snapshot);
+    assert_eq!(
+        restored.translate(&request(
+            8,
+            0x4008,
+            4,
+            TranslationAccessKind::InstructionFetch
+        )),
+        TranslationResolution::mapped(Address::new(0x8008))
+    );
+}
+
+#[test]
+fn page_translation_map_checkpoint_payload_rejects_invalid_magic() {
+    let page_size = TranslationPageSize::new(4096).unwrap();
+    let mut map = TranslationPageMap::new(page_size);
+    map.map(
+        Address::new(0x1000),
+        Address::new(0x8000),
+        1,
+        TranslationPagePermissions::read_write(),
+    )
+    .unwrap();
+    let mut payload = TranslationPageMapCheckpointPayload::from_snapshot(map.snapshot())
+        .unwrap()
+        .encode();
+    payload[0] = b'X';
+
+    assert_eq!(
+        TranslationPageMapCheckpointPayload::decode(&payload).unwrap_err(),
+        TranslationError::InvalidPageMapCheckpointMagic
+    );
+}
+
+#[test]
+fn page_translation_map_checkpoint_payload_rejects_unsupported_version() {
+    let page_size = TranslationPageSize::new(4096).unwrap();
+    let mut map = TranslationPageMap::new(page_size);
+    map.map(
+        Address::new(0x1000),
+        Address::new(0x8000),
+        1,
+        TranslationPagePermissions::read_write(),
+    )
+    .unwrap();
+    let mut payload = TranslationPageMapCheckpointPayload::from_snapshot(map.snapshot())
+        .unwrap()
+        .encode();
+    payload[PAGE_MAP_CHECKPOINT_VERSION_OFFSET..PAGE_MAP_CHECKPOINT_VERSION_OFFSET + 4]
+        .copy_from_slice(&2_u32.to_le_bytes());
+
+    assert_eq!(
+        TranslationPageMapCheckpointPayload::decode(&payload).unwrap_err(),
+        TranslationError::UnsupportedPageMapCheckpointVersion { version: 2 }
+    );
+}
+
+#[test]
+fn page_translation_map_checkpoint_payload_rejects_reserved_field() {
+    let page_size = TranslationPageSize::new(4096).unwrap();
+    let mut map = TranslationPageMap::new(page_size);
+    map.map(
+        Address::new(0x1000),
+        Address::new(0x8000),
+        1,
+        TranslationPagePermissions::read_write(),
+    )
+    .unwrap();
+    let mut payload = TranslationPageMapCheckpointPayload::from_snapshot(map.snapshot())
+        .unwrap()
+        .encode();
+    payload[PAGE_MAP_CHECKPOINT_RESERVED_OFFSET..PAGE_MAP_CHECKPOINT_RESERVED_OFFSET + 4]
+        .copy_from_slice(&1_u32.to_le_bytes());
+
+    assert_eq!(
+        TranslationPageMapCheckpointPayload::decode(&payload).unwrap_err(),
+        TranslationError::InvalidPageMapCheckpointReserved { value: 1 }
+    );
+}
+
+#[test]
+fn page_translation_map_checkpoint_payload_rejects_short_payload() {
+    let page_size = TranslationPageSize::new(4096).unwrap();
+    let mut map = TranslationPageMap::new(page_size);
+    map.map(
+        Address::new(0x1000),
+        Address::new(0x8000),
+        1,
+        TranslationPagePermissions::read_write(),
+    )
+    .unwrap();
+    let mut payload = TranslationPageMapCheckpointPayload::from_snapshot(map.snapshot())
+        .unwrap()
+        .encode();
+    payload.truncate(PAGE_MAP_CHECKPOINT_HEADER_SIZE - 1);
+
+    assert_eq!(
+        TranslationPageMapCheckpointPayload::decode(&payload).unwrap_err(),
+        TranslationError::InvalidPageMapCheckpointPayloadSize {
+            expected: PAGE_MAP_CHECKPOINT_HEADER_SIZE,
+            actual: PAGE_MAP_CHECKPOINT_HEADER_SIZE - 1
+        }
+    );
+}
+
+#[test]
+fn page_translation_map_checkpoint_payload_rejects_declared_mapping_count_mismatch() {
+    let page_size = TranslationPageSize::new(4096).unwrap();
+    let mut map = TranslationPageMap::new(page_size);
+    map.map(
+        Address::new(0x1000),
+        Address::new(0x8000),
+        1,
+        TranslationPagePermissions::read_write(),
+    )
+    .unwrap();
+    let mut payload = TranslationPageMapCheckpointPayload::from_snapshot(map.snapshot())
+        .unwrap()
+        .encode();
+    payload[PAGE_MAP_CHECKPOINT_COUNT_OFFSET..PAGE_MAP_CHECKPOINT_COUNT_OFFSET + 4]
+        .copy_from_slice(&2_u32.to_le_bytes());
+
+    assert_eq!(
+        TranslationPageMapCheckpointPayload::decode(&payload).unwrap_err(),
+        TranslationError::InvalidPageMapCheckpointPayloadSize {
+            expected: PAGE_MAP_CHECKPOINT_HEADER_SIZE + PAGE_MAP_CHECKPOINT_ENTRY_SIZE * 2,
+            actual: PAGE_MAP_CHECKPOINT_HEADER_SIZE + PAGE_MAP_CHECKPOINT_ENTRY_SIZE
+        }
+    );
+}
+
+#[test]
+fn page_translation_map_checkpoint_payload_rejects_extra_mapping_record() {
+    let page_size = TranslationPageSize::new(4096).unwrap();
+    let mut map = TranslationPageMap::new(page_size);
+    map.map(
+        Address::new(0x1000),
+        Address::new(0x8000),
+        1,
+        TranslationPagePermissions::read_write(),
+    )
+    .unwrap();
+    let mut payload = TranslationPageMapCheckpointPayload::from_snapshot(map.snapshot())
+        .unwrap()
+        .encode();
+    payload[PAGE_MAP_CHECKPOINT_COUNT_OFFSET..PAGE_MAP_CHECKPOINT_COUNT_OFFSET + 4]
+        .copy_from_slice(&0_u32.to_le_bytes());
+
+    assert_eq!(
+        TranslationPageMapCheckpointPayload::decode(&payload).unwrap_err(),
+        TranslationError::InvalidPageMapCheckpointPayloadSize {
+            expected: PAGE_MAP_CHECKPOINT_HEADER_SIZE,
+            actual: PAGE_MAP_CHECKPOINT_HEADER_SIZE + PAGE_MAP_CHECKPOINT_ENTRY_SIZE
+        }
+    );
+}
+
+#[test]
 fn page_translation_map_checkpoint_payload_rejects_overlapping_mapping_records() {
     let page_size = TranslationPageSize::new(4096).unwrap();
     let mut map = TranslationPageMap::new(page_size);
@@ -286,6 +469,12 @@ fn page_translation_map_checkpoint_payload_rejects_invalid_permission_bits() {
         TranslationError::InvalidPageMapCheckpointPermissions { code: 8 }
     );
 }
+
+const PAGE_MAP_CHECKPOINT_HEADER_SIZE: usize = 24;
+const PAGE_MAP_CHECKPOINT_ENTRY_SIZE: usize = 32;
+const PAGE_MAP_CHECKPOINT_VERSION_OFFSET: usize = 4;
+const PAGE_MAP_CHECKPOINT_COUNT_OFFSET: usize = 16;
+const PAGE_MAP_CHECKPOINT_RESERVED_OFFSET: usize = 20;
 
 #[test]
 fn page_translation_map_splits_cross_page_translation_into_explicit_segments() {
