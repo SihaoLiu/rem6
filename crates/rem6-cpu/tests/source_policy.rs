@@ -36,6 +36,31 @@ fn riscv_data_issue_lives_in_focused_module() {
 }
 
 #[test]
+fn in_order_pipeline_lives_in_focused_module() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let lib_rs = fs::read_to_string(crate_dir.join("src/lib.rs")).unwrap();
+    let in_order_rs = crate_dir.join("src/in_order_pipeline.rs");
+    let in_order_src = fs::read_to_string(&in_order_rs).unwrap();
+
+    assert!(
+        in_order_rs.exists(),
+        "in-order pipeline policy code belongs in src/in_order_pipeline.rs"
+    );
+    assert!(
+        in_order_src.contains("pub enum InOrderPipelineStage"),
+        "src/in_order_pipeline.rs should own the in-order stage model"
+    );
+    assert!(
+        in_order_src.contains("pub struct InOrderPipelineScheduler"),
+        "src/in_order_pipeline.rs should own the in-order scheduler"
+    );
+    assert!(
+        !lib_rs.contains("pub struct InOrderPipelineScheduler"),
+        "src/lib.rs should re-export the in-order scheduler from a focused module"
+    );
+}
+
+#[test]
 fn cpu_source_files_stay_within_size_limit() {
     let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut oversized = Vec::new();

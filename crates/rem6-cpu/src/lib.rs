@@ -27,6 +27,7 @@ mod data_config;
 mod error;
 mod fetch_config;
 mod gshare_predictor;
+mod in_order_pipeline;
 mod indirect_target_predictor;
 mod loop_predictor;
 mod ltage_predictor;
@@ -72,6 +73,11 @@ pub use gshare_predictor::{
     GShareBranchPredictor, GShareBranchPredictorConfig, GShareBranchPredictorError,
     GShareBranchPredictorSnapshot, GShareHistory, GShareHistoryUpdate, GSharePrediction,
     GShareSquash, GShareThreadSnapshot, GShareTrainingUpdate,
+};
+pub use in_order_pipeline::{
+    InOrderPipelineAdvance, InOrderPipelineConfig, InOrderPipelineError,
+    InOrderPipelineInstruction, InOrderPipelinePlan, InOrderPipelineScheduler,
+    InOrderPipelineStage, InOrderPipelineStageWidth,
 };
 pub use indirect_target_predictor::{
     IndirectTargetCommit, IndirectTargetEntry, IndirectTargetHistory, IndirectTargetPathEntry,
