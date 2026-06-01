@@ -199,6 +199,44 @@ fn virtio_9p_io_lifecycle_handlers_live_in_focused_module() {
 }
 
 #[test]
+fn virtio_9p_path_metadata_handlers_live_in_focused_module() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let device_rs = fs::read_to_string(crate_dir.join("src/fs9p.rs")).unwrap();
+    let ops_rs = crate_dir.join("src/fs9p/ops.rs");
+
+    assert!(
+        ops_rs.exists(),
+        "9P path and metadata handlers belong in src/fs9p/ops.rs"
+    );
+    let ops_rs = fs::read_to_string(ops_rs).unwrap();
+    for symbol in [
+        "fn handle_attach(",
+        "fn handle_statfs(",
+        "fn handle_walk(",
+        "fn handle_lopen(",
+        "fn handle_open(",
+        "fn handle_lcreate(",
+        "fn handle_create(",
+        "fn handle_symlink(",
+        "fn handle_mknod(",
+        "fn handle_readlink(",
+        "fn handle_getattr(",
+        "fn handle_setattr(",
+        "fn handle_stat(",
+        "fn handle_wstat(",
+    ] {
+        assert!(
+            !device_rs.contains(symbol),
+            "{symbol} should live outside src/fs9p.rs"
+        );
+        assert!(
+            ops_rs.contains(symbol),
+            "{symbol} should live in src/fs9p/ops.rs"
+        );
+    }
+}
+
+#[test]
 fn virtio_source_files_stay_within_size_limit() {
     let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut oversized = Vec::new();
