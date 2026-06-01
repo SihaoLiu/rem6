@@ -418,6 +418,27 @@ fn memory_response_checkpoint_payload_rejects_absent_data_with_nonzero_length() 
 }
 
 #[test]
+fn memory_response_checkpoint_payload_rejects_present_data_with_zero_length() {
+    let read = MemoryRequest::read_shared(
+        request_id(33),
+        Address::new(0x7a00),
+        AccessSize::new(4).unwrap(),
+        line_layout(),
+    )
+    .unwrap();
+    let response = MemoryResponse::completed(&read, Some(vec![0x10, 0x20, 0x30, 0x40])).unwrap();
+    let mut payload = MemoryResponseCheckpointPayload::from_response(&response).encode();
+    payload[RESPONSE_CHECKPOINT_DATA_LENGTH_OFFSET..RESPONSE_CHECKPOINT_DATA_LENGTH_OFFSET + 8]
+        .copy_from_slice(&0u64.to_le_bytes());
+    payload.truncate(RESPONSE_CHECKPOINT_DATA_LENGTH_OFFSET + 8);
+
+    assert_eq!(
+        MemoryResponseCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::InvalidResponseCheckpointDataLength { length: 0 }
+    );
+}
+
+#[test]
 fn memory_request_checkpoint_payload_round_trips_atomic_ordering_and_flags() {
     let size = AccessSize::new(8).unwrap();
     let mask =

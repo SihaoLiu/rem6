@@ -2775,7 +2775,7 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   for atomic metadata, byte masks, uncacheable-plus-strict flags, explicit
   ordering-edge presence, completed-response data, and retry responses, plus
   invalid request operation-code rejection, invalid response status-code
-  rejection, reserved flag rejection, absent-data length rejection, and
+  rejection, reserved flag rejection, invalid response data-length rejection, and
   malformed mask-bit rejection.
   RISC-V vector-config prediction tests cover branch-prediction targets
   that drop copied dynamic `vl`/`vtype` state while preserving the current hart

@@ -127,6 +127,9 @@ fn read_optional_data(
         }
         return Ok(None);
     }
+    if data_len == 0 {
+        return Err(MemoryError::InvalidResponseCheckpointDataLength { length: data_len });
+    }
 
     Ok(Some(read_exact(payload, offset, data_len_usize)?.to_vec()))
 }
