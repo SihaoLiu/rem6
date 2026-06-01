@@ -325,8 +325,14 @@ impl InOrderPipelineCheckpointPayload {
         }
         let config = InOrderPipelineConfig::new(widths)?;
         let instruction_count = read_u32(payload, &mut offset) as usize;
+        let instruction_bytes = instruction_count
+            .checked_mul(CHECKPOINT_INSTRUCTION_BYTES)
+            .ok_or(InOrderPipelineError::InvalidCheckpointPayloadSize {
+                expected: usize::MAX,
+                actual: payload.len(),
+            })?;
         let expected = CHECKPOINT_HEADER_BYTES
-            .checked_add(instruction_count.saturating_mul(CHECKPOINT_INSTRUCTION_BYTES))
+            .checked_add(instruction_bytes)
             .ok_or(InOrderPipelineError::InvalidCheckpointPayloadSize {
                 expected: usize::MAX,
                 actual: payload.len(),
