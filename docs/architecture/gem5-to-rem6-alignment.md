@@ -3351,15 +3351,17 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   replies plus overwrite mutation, `Tlink` hard-link qid reuse, shared write
   visibility, link-count metadata, and surviving-fid reads after one name is
   unlinked, `Trename` fid-backed cross-directory file
-  moves with preserved open-fid access and qid identity plus same-parent
-  directory rename with descendant fid path updates, empty-directory target
-  replacement, and non-empty target rejection, `Trenameat`
+  moves with preserved open-fid access and qid identity plus directory rename
+  across same and different parents with descendant fid path updates,
+  empty-directory target replacement, non-empty target rejection, and
+  descendant-target rejection, `Trenameat`
   same-directory renames, cross-directory file moves including same-name moves,
   preserved moved qids, open-fid access, same-file hardlink target no-ops,
   stale fid-backed rename source rejection, replacement-target fid
-  invalidation, same-parent directory rename plus descendant fid path updates,
-  empty-directory target replacement, non-empty target rejection, post-rename
-  directory entries, and old-name walk rejection,
+  invalidation, directory rename across same and different parents with
+  descendant fid path updates, empty-directory target replacement, non-empty
+  target rejection, descendant-target rejection, post-rename directory entries,
+  and old-name walk rejection,
   `Tunlinkat` root and
   child-directory file removal with post-delete directory and walk checks,
   `Tunlinkat` empty-directory removal through `AT_REMOVEDIR` plus non-empty
