@@ -1278,8 +1278,8 @@ Implementation evidence through 2026-05-31:
   emits deterministic 9P2000 stat metadata for existing fids and rejects stale
   fids with errno payloads, legacy `Twstat` parses stat write requests, applies
   supported mode, uid, gid, mtime, atime, and length updates, supports
-  same-parent name updates while preserving open fid access, and rejects stale fids
-  before mutation, `Tlopen` and legacy
+  same-parent name updates while preserving open fid access and walked hard-link
+  fid path identity, and rejects stale fids before mutation, `Tlopen` and legacy
   `Topen` mark file and directory fids open, report qid plus I/O-unit data,
   and enforce read-only, write-only, read-write, and execute-only access bits,
   reject attempts to reopen already-open fids before access-mode mutation,
@@ -3305,8 +3305,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   metadata replies, `Tstatfs` deterministic filesystem-capacity replies,
   legacy `Tstat` file stat payloads, stale-fid errno replies, and malformed
   payload rejection, legacy `Twstat` mode, uid, gid, mtime, atime, length, and
-  same-parent name updates, file shrink visibility through reads, open-fid read
-  survival after rename, old-name rejection, new-name walk qid preservation,
+  same-parent name updates including walked hard-link fid path selection, file
+  shrink visibility through reads, open-fid read survival after rename,
+  old-name rejection, new-name walk qid preservation,
   stale-fid errno replies, and malformed
   stat-blob rejection, `Tlopen` and legacy `Topen` file and directory qid plus
   I/O-unit replies, access-mode checks for read-only, write-only, read-write,

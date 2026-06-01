@@ -16,7 +16,10 @@ use crate::{
 
 mod path_entry;
 
-use path_entry::take_file_node_at_fid_path;
+use path_entry::{
+    remove_node_at_fid_path, rename_node_at_fid_path, rename_node_in_parent_entries,
+    take_file_node_at_fid_path,
+};
 
 const VIRTIO_9P_QID_BYTES: usize = 13;
 const VIRTIO_9P_STATFS_BLOCKS: u64 = 1024;
@@ -481,8 +484,9 @@ impl Virtio9pNamespace {
     pub(crate) fn rename_node_in_parent(
         &mut self,
         node: Virtio9pNodeId,
+        old_path: &Virtio9pFidPath,
         newname: &str,
-    ) -> Result<Result<(), u32>, VirtioError> {
+    ) -> Result<Result<bool, u32>, VirtioError> {
         if let Some(errno) = validate_mutation_name(VIRTIO_9P_TRENAME, newname)? {
             return Ok(Err(errno));
         }
@@ -490,7 +494,8 @@ impl Virtio9pNamespace {
             return Ok(Err(VIRTIO_9P_EBADF));
         }
         Ok(
-            rename_node_in_parent_entries(&mut self.entries, node, newname)
+            rename_node_at_fid_path(&mut self.entries, old_path, node, newname)
+                .or_else(|| rename_node_in_parent_entries(&mut self.entries, node, newname))
                 .unwrap_or(Err(VIRTIO_9P_EBADF)),
         )
     }
@@ -1032,39 +1037,6 @@ fn find_parent_directory(
     None
 }
 
-fn rename_node_in_parent_entries(
-    entries: &mut BTreeMap<String, Virtio9pNode>,
-    id: Virtio9pNodeId,
-    newname: &str,
-) -> Option<Result<(), u32>> {
-    if let Some(oldname) = entries.iter().find_map(|(name, node)| {
-        if node.id() == id {
-            Some(name.clone())
-        } else {
-            None
-        }
-    }) {
-        if oldname == newname {
-            return Some(Ok(()));
-        }
-        if entries.contains_key(newname) {
-            return Some(Err(VIRTIO_9P_EEXIST));
-        }
-        let node = entries
-            .remove(&oldname)
-            .expect("prevalidated 9p rename node");
-        entries.insert(newname.to_string(), node);
-        return Some(Ok(()));
-    }
-
-    entries.values_mut().find_map(|node| match node {
-        Virtio9pNode::Directory(directory) => {
-            rename_node_in_parent_entries(&mut directory.entries, id, newname)
-        }
-        Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_) => None,
-    })
-}
-
 fn for_each_file_mut(
     entries: &mut BTreeMap<String, Virtio9pNode>,
     path: u64,
@@ -1238,43 +1210,6 @@ fn remove_file_by_path(entries: &mut BTreeMap<String, Virtio9pNode>, path: u64) 
         Virtio9pNode::Directory(directory) => remove_file_by_path(&mut directory.entries, path),
         Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_) => false,
     })
-}
-
-fn remove_node_at_fid_path(
-    entries: &mut BTreeMap<String, Virtio9pNode>,
-    fid_path: &Virtio9pFidPath,
-    expected: Virtio9pNodeId,
-) -> Option<Result<(), u32>> {
-    remove_node_at_components(entries, fid_path.components(), expected)
-}
-
-fn remove_node_at_components(
-    entries: &mut BTreeMap<String, Virtio9pNode>,
-    components: &[String],
-    expected: Virtio9pNodeId,
-) -> Option<Result<(), u32>> {
-    let (name, remaining) = components.split_first()?;
-    if remaining.is_empty() {
-        let node = entries.get(name)?;
-        if node.id() != expected {
-            return None;
-        }
-        return Some(match node {
-            Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_) => {
-                entries.remove(name);
-                Ok(())
-            }
-            Virtio9pNode::Directory(directory) if directory.entries.is_empty() => {
-                entries.remove(name);
-                Ok(())
-            }
-            Virtio9pNode::Directory(_) => Err(VIRTIO_9P_ENOTEMPTY),
-        });
-    }
-    let Virtio9pNode::Directory(directory) = entries.get_mut(name)? else {
-        return None;
-    };
-    remove_node_at_components(&mut directory.entries, remaining, expected)
 }
 
 fn remove_empty_directory_by_path(
@@ -1583,6 +1518,13 @@ impl Virtio9pFidPath {
         let mut components = self.components.clone();
         components.push(name.into());
         Self { components }
+    }
+
+    pub(crate) fn sibling(&self, name: impl Into<String>) -> Option<Self> {
+        let mut components = self.components.clone();
+        components.pop()?;
+        components.push(name.into());
+        Some(Self { components })
     }
 
     pub(crate) fn walk_component(&mut self, name: &str) {

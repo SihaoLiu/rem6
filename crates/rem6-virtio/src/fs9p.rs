@@ -691,7 +691,16 @@ impl Virtio9pDevice {
 
     fn handle_wstat(&self, request: &Virtio9pRequest) -> Result<Result<(), u32>, VirtioError> {
         let wstat = parse_wstat_request(request)?;
-        let Some(node) = self.fid_node(wstat.fid) else {
+        let Some(fid) = self
+            .fids
+            .lock()
+            .expect("virtio 9p fid lock")
+            .get(&wstat.fid)
+            .cloned()
+        else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        let Some(node) = fid.node() else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
         let mut namespace = self.namespace.lock().expect("virtio 9p namespace lock");
@@ -699,8 +708,20 @@ impl Virtio9pDevice {
             if wstat.has_metadata_update() {
                 return Ok(Err(VIRTIO_9P_ENOTSUP));
             }
-            return match namespace.rename_node_in_parent(node, name)? {
-                Ok(()) => Ok(Ok(())),
+            let Some(old_path) = fid.path().cloned() else {
+                return Ok(Err(VIRTIO_9P_EBADF));
+            };
+            let Some(new_path) = old_path.sibling(name.to_string()) else {
+                return Ok(Err(VIRTIO_9P_EBADF));
+            };
+            return match namespace.rename_node_in_parent(node, &old_path, name)? {
+                Ok(moved) => {
+                    drop(namespace);
+                    if moved {
+                        self.move_fid_paths(&old_path, &new_path);
+                    }
+                    Ok(Ok(()))
+                }
                 Err(errno) => Ok(Err(errno)),
             };
         }
