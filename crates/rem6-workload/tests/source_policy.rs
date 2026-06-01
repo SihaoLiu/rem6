@@ -108,6 +108,26 @@ fn batch_timeline_worker_tick_helpers_live_in_focused_module() {
 }
 
 #[test]
+fn progress_livelock_helpers_live_in_focused_module() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let progress_rs = fs::read_to_string(crate_dir.join("src/result/progress.rs")).unwrap();
+    let livelock_rs = crate_dir.join("src/result/progress/livelock_diagnostics.rs");
+
+    assert!(
+        livelock_rs.exists(),
+        "progress livelock helpers belong in src/result/progress/livelock_diagnostics.rs"
+    );
+    assert!(
+        !progress_rs.contains("fn collect_livelock_diagnostic_subjects"),
+        "src/result/progress.rs should delegate livelock subject summaries"
+    );
+    assert!(
+        !progress_rs.contains("fn collect_livelock_diagnostic_transition_kind_window_summaries"),
+        "src/result/progress.rs should delegate livelock transition-kind window summaries"
+    );
+}
+
+#[test]
 fn workload_source_files_stay_within_size_limit() {
     let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut oversized = Vec::new();
