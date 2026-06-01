@@ -9,10 +9,11 @@ use crate::CpuId;
 
 pub const DEFAULT_RISCV_SC_DIAGNOSTIC_THRESHOLD: u64 = 10_000;
 const SC_CHECKPOINT_MAGIC: [u8; 4] = *b"RSCP";
+const SC_CHECKPOINT_VERSION: u8 = 1;
 const U32_BYTES: usize = 4;
 const U64_BYTES: usize = 8;
 const SC_CHECKPOINT_HEADER_BYTES: usize =
-    SC_CHECKPOINT_MAGIC.len() + U64_BYTES + U32_BYTES + U32_BYTES;
+    SC_CHECKPOINT_MAGIC.len() + 1 + U64_BYTES + U32_BYTES + U32_BYTES;
 const SC_CHECKPOINT_STREAK_BYTES: usize = U32_BYTES + U64_BYTES * 5;
 const SC_CHECKPOINT_DIAGNOSTIC_BYTES: usize = SC_CHECKPOINT_STREAK_BYTES + U64_BYTES;
 const SC_CHECKPOINT_U32_MAX: usize = u32::MAX as usize;
@@ -326,6 +327,14 @@ impl RiscvStoreConditionalProgressCheckpointPayload {
         }
 
         let mut offset = SC_CHECKPOINT_MAGIC.len();
+        let version = payload[offset];
+        offset += 1;
+        if version != SC_CHECKPOINT_VERSION {
+            return Err(
+                RiscvStoreConditionalProgressError::UnsupportedCheckpointVersion { version },
+            );
+        }
+
         let diagnostic_threshold = read_u64(payload, &mut offset);
         let config = RiscvStoreConditionalProgressConfig::new(diagnostic_threshold)?;
         let streak_count = read_u32(payload, &mut offset) as usize;
@@ -371,6 +380,7 @@ impl RiscvStoreConditionalProgressCheckpointPayload {
             self.snapshot.diagnostics().len(),
         )?);
         payload.extend_from_slice(&SC_CHECKPOINT_MAGIC);
+        payload.push(SC_CHECKPOINT_VERSION);
         payload.extend_from_slice(&self.snapshot.config().diagnostic_threshold().to_le_bytes());
         payload.extend_from_slice(&streak_count.to_le_bytes());
         payload.extend_from_slice(&diagnostic_count.to_le_bytes());
@@ -532,6 +542,9 @@ pub enum RiscvStoreConditionalProgressError {
         actual: usize,
     },
     InvalidCheckpointMagic,
+    UnsupportedCheckpointVersion {
+        version: u8,
+    },
     InvalidCheckpointAccessSize {
         bytes: u64,
     },
@@ -567,6 +580,10 @@ impl fmt::Display for RiscvStoreConditionalProgressError {
             Self::InvalidCheckpointMagic => write!(
                 formatter,
                 "RISC-V store-conditional checkpoint payload has invalid magic"
+            ),
+            Self::UnsupportedCheckpointVersion { version } => write!(
+                formatter,
+                "RISC-V store-conditional checkpoint payload version {version} is not supported"
             ),
             Self::InvalidCheckpointAccessSize { bytes } => write!(
                 formatter,
