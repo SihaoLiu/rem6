@@ -495,15 +495,24 @@ impl VirtioSplitQueue {
         let used_index = guest.read_u16(add_address(self.used_ring, 2)?)?;
         let mut used_ring = VirtioSplitUsedRing::new(self.queue_size, used_index)?;
         let writeback = used_ring.complete_block_request(decoded, completion)?;
+        let used_element_address =
+            add_address(self.used_ring, 4 + u64::from(writeback.used_slot()) * 8)?;
+        let used_index_address = add_address(self.used_ring, 2)?;
+        for write in writeback.data_writes() {
+            self.validate_descriptor_write(guest, write)?;
+        }
+        self.validate_descriptor_write(guest, writeback.status_write())?;
+        guest.validate_write_exact(used_element_address, 8)?;
+        guest.validate_write_exact(used_index_address, 2)?;
         for write in writeback.data_writes() {
             self.write_descriptor(guest, write)?;
         }
         self.write_descriptor(guest, writeback.status_write())?;
         guest.write_exact(
-            add_address(self.used_ring, 4 + u64::from(writeback.used_slot()) * 8)?,
+            used_element_address,
             &writeback.used_element().to_le_bytes(),
         )?;
-        guest.write_u16(add_address(self.used_ring, 2)?, writeback.used_index())?;
+        guest.write_u16(used_index_address, writeback.used_index())?;
         Ok(writeback)
     }
 
@@ -734,18 +743,17 @@ impl VirtioSplitQueue {
         guest: &mut VirtioGuestMemory<'_>,
         write: &VirtioBlockDescriptorWrite,
     ) -> Result<(), VirtioError> {
-        let address = write
-            .address()
-            .ok_or_else(|| VirtioError::PciTransportRuntimeConfig {
-                message: format!(
-                    "VirtIO split descriptor {} has no guest address for writeback",
-                    write.descriptor()
-                ),
-            })?;
-        guest.write_exact(
-            add_address(address, u64::from(write.offset()))?,
-            write.bytes(),
-        )
+        let address = block_descriptor_write_target(write)?;
+        guest.write_exact(address, write.bytes())
+    }
+
+    fn validate_descriptor_write(
+        &self,
+        guest: &mut VirtioGuestMemory<'_>,
+        write: &VirtioBlockDescriptorWrite,
+    ) -> Result<(), VirtioError> {
+        let address = block_descriptor_write_target(write)?;
+        guest.validate_write_exact(address, write.bytes().len() as u64)
     }
 
     fn write_rng_descriptor(
@@ -916,6 +924,20 @@ impl VirtioSplitQueue {
             next,
         })
     }
+}
+
+fn block_descriptor_write_target(
+    write: &VirtioBlockDescriptorWrite,
+) -> Result<Address, VirtioError> {
+    let address = write
+        .address()
+        .ok_or_else(|| VirtioError::PciTransportRuntimeConfig {
+            message: format!(
+                "VirtIO split descriptor {} has no guest address for writeback",
+                write.descriptor()
+            ),
+        })?;
+    add_address(address, u64::from(write.offset()))
 }
 
 const VIRTIO_SPLIT_DESCRIPTOR_SIZE: u64 = 16;

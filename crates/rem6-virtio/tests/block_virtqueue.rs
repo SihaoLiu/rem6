@@ -401,6 +401,45 @@ fn virtio_split_queue_writes_block_completion_to_guest_memory() {
 }
 
 #[test]
+fn virtio_split_queue_rejects_block_writeback_before_guest_state_mutates() {
+    let mut store = guest_store();
+    write_guest_read_queue(&mut store, 0, 1);
+    write_guest(
+        &mut store,
+        0x1020,
+        &descriptor(0x2500, 1, VIRTIO_SPLIT_DESC_F_WRITE, 0),
+        7,
+    );
+
+    let backend = VirtioBlockMemoryBackend::from_bytes(sector(0x81)).unwrap();
+    let device = VirtioBlockDevice::new(VirtioBlockConfigSpec::new(1), backend).unwrap();
+    let mut split_queue = VirtioSplitQueue::new(
+        4,
+        Address::new(0x1000),
+        Address::new(0x1100),
+        Address::new(0x1800),
+        0,
+    )
+    .unwrap();
+    {
+        let mut guest = VirtioGuestMemory::new(&mut store, layout(), AgentId::new(9));
+        let decoded = split_queue
+            .consume_available_block(&mut guest, queue(2))
+            .unwrap()
+            .unwrap();
+        let completion = device.execute_at(56, decoded.request().clone()).unwrap();
+
+        assert!(split_queue
+            .complete_block_request(&mut guest, &decoded, &completion)
+            .is_err());
+    }
+
+    assert_eq!(read_guest(&mut store, 0x1300, 512, 100), vec![0; 512]);
+    assert_eq!(read_guest(&mut store, 0x1804, 8, 200), vec![0; 8]);
+    assert_eq!(read_guest(&mut store, 0x1802, 2, 300), vec![0; 2]);
+}
+
+#[test]
 fn virtio_split_queue_suppresses_isr_when_available_ring_requests_no_interrupt() {
     let mut store = guest_store();
     write_guest_read_queue(&mut store, 0, 1);
