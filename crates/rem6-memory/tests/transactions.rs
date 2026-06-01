@@ -452,6 +452,47 @@ fn memory_response_checkpoint_payload_rejects_invalid_status_code() {
 }
 
 #[test]
+fn memory_response_checkpoint_payload_rejects_invalid_magic() {
+    let response = MemoryResponse::retry(
+        &MemoryRequest::read_shared(
+            request_id(38),
+            Address::new(0x7e00),
+            AccessSize::new(4).unwrap(),
+            line_layout(),
+        )
+        .unwrap(),
+    );
+    let mut payload = MemoryResponseCheckpointPayload::from_response(&response).encode();
+    payload[0] = b'X';
+
+    assert_eq!(
+        MemoryResponseCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::InvalidResponseCheckpointMagic
+    );
+}
+
+#[test]
+fn memory_response_checkpoint_payload_rejects_unsupported_version() {
+    let response = MemoryResponse::retry(
+        &MemoryRequest::read_shared(
+            request_id(39),
+            Address::new(0x7f00),
+            AccessSize::new(4).unwrap(),
+            line_layout(),
+        )
+        .unwrap(),
+    );
+    let mut payload = MemoryResponseCheckpointPayload::from_response(&response).encode();
+    payload[RESPONSE_CHECKPOINT_VERSION_OFFSET..RESPONSE_CHECKPOINT_VERSION_OFFSET + 4]
+        .copy_from_slice(&2u32.to_le_bytes());
+
+    assert_eq!(
+        MemoryResponseCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::UnsupportedResponseCheckpointVersion { version: 2 }
+    );
+}
+
+#[test]
 fn memory_response_checkpoint_payload_rejects_reserved_flag_bits() {
     let response = MemoryResponse::retry(
         &MemoryRequest::read_shared(
@@ -469,6 +510,50 @@ fn memory_response_checkpoint_payload_rejects_reserved_flag_bits() {
     assert_eq!(
         MemoryResponseCheckpointPayload::decode(&payload).unwrap_err(),
         MemoryError::InvalidResponseCheckpointFlags { flags: 0x8000_0000 }
+    );
+}
+
+#[test]
+fn memory_response_checkpoint_payload_rejects_reserved_field() {
+    let response = MemoryResponse::retry(
+        &MemoryRequest::read_shared(
+            request_id(40),
+            Address::new(0x8000),
+            AccessSize::new(4).unwrap(),
+            line_layout(),
+        )
+        .unwrap(),
+    );
+    let mut payload = MemoryResponseCheckpointPayload::from_response(&response).encode();
+    payload[RESPONSE_CHECKPOINT_RESERVED_OFFSET..RESPONSE_CHECKPOINT_RESERVED_OFFSET + 4]
+        .copy_from_slice(&1u32.to_le_bytes());
+
+    assert_eq!(
+        MemoryResponseCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::InvalidResponseCheckpointReserved { value: 1 }
+    );
+}
+
+#[test]
+fn memory_response_checkpoint_payload_rejects_short_payload() {
+    let response = MemoryResponse::retry(
+        &MemoryRequest::read_shared(
+            request_id(41),
+            Address::new(0x8100),
+            AccessSize::new(4).unwrap(),
+            line_layout(),
+        )
+        .unwrap(),
+    );
+    let mut payload = MemoryResponseCheckpointPayload::from_response(&response).encode();
+    payload.truncate(RESPONSE_CHECKPOINT_HEADER_SIZE - 1);
+
+    assert_eq!(
+        MemoryResponseCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::InvalidResponseCheckpointPayloadSize {
+            expected: RESPONSE_CHECKPOINT_HEADER_SIZE,
+            actual: RESPONSE_CHECKPOINT_HEADER_SIZE - 1
+        }
     );
 }
 
@@ -661,6 +746,9 @@ fn memory_request_checkpoint_payload_rejects_invalid_mask_byte() {
 const REQUEST_CHECKPOINT_OPERATION_OFFSET: usize = 8;
 const REQUEST_CHECKPOINT_FLAGS_OFFSET: usize = 12;
 const REQUEST_CHECKPOINT_BEFORE_READ_FLAG: u32 = 1 << 5;
+const RESPONSE_CHECKPOINT_HEADER_SIZE: usize = 40;
+const RESPONSE_CHECKPOINT_VERSION_OFFSET: usize = 4;
 const RESPONSE_CHECKPOINT_STATUS_OFFSET: usize = 8;
 const RESPONSE_CHECKPOINT_FLAGS_OFFSET: usize = 12;
+const RESPONSE_CHECKPOINT_RESERVED_OFFSET: usize = 20;
 const RESPONSE_CHECKPOINT_DATA_LENGTH_OFFSET: usize = 32;
