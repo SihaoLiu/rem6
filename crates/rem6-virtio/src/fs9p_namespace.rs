@@ -375,24 +375,20 @@ impl Virtio9pNamespace {
         };
         if old_parent == new_parent && oldname == newname {
             return match old_entries.get(oldname) {
-                Some(
-                    Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_),
-                ) => Ok(Ok(Virtio9pRenameOutcome {
+                Some(_) => Ok(Ok(Virtio9pRenameOutcome {
                     moved: false,
                     replaced: None,
                 })),
-                Some(Virtio9pNode::Directory(_)) => Ok(Err(VIRTIO_9P_EBADF)),
                 None => Ok(Err(VIRTIO_9P_ENOENT)),
             };
         }
-        let old_id = match old_entries.get(oldname) {
-            Some(
-                node
-                @ (Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_)),
-            ) => node.id(),
-            Some(Virtio9pNode::Directory(_)) => return Ok(Err(VIRTIO_9P_EBADF)),
+        let (old_id, old_is_directory) = match old_entries.get(oldname) {
+            Some(node) => (node.id(), matches!(node, Virtio9pNode::Directory(_))),
             None => return Ok(Err(VIRTIO_9P_ENOENT)),
         };
+        if old_is_directory && old_parent != new_parent {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        }
         let Some(new_entries) = self.directory_entries(new_parent) else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
@@ -404,6 +400,11 @@ impl Virtio9pNamespace {
                 }));
             }
             Some(Virtio9pNode::Directory(_)) => return Ok(Err(VIRTIO_9P_EEXIST)),
+            Some(Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_))
+                if old_is_directory =>
+            {
+                return Ok(Err(VIRTIO_9P_EEXIST));
+            }
             Some(Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_))
             | None => {}
         }
@@ -1596,8 +1597,10 @@ impl Virtio9pFidState {
 
     pub(crate) fn move_path(&mut self, old_path: &Virtio9pFidPath, new_path: &Virtio9pFidPath) {
         if let Self::Node { path, .. } = self {
-            if path == old_path {
-                *path = new_path.clone();
+            if path.components.starts_with(&old_path.components) {
+                let mut components = new_path.components.clone();
+                components.extend_from_slice(&path.components[old_path.components.len()..]);
+                *path = Virtio9pFidPath { components };
             }
         }
     }

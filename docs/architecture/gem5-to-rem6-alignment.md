@@ -1318,7 +1318,8 @@ Implementation evidence through 2026-06-01:
   non-directory nodes across directory fids while preserving the moved file qid,
   open fid access, and moved hard-link fid path identity, treating target hard
   links to the same file as no-ops and replacing other target files with
-  explicit target-fid invalidation,
+  explicit target-fid invalidation, and renames same-parent directories while
+  updating descendant fid path identity,
   `Tunlinkat` removes named root or child-directory files and invalidates fids
   only when no linked directory entry remains, removes empty directories only
   when `AT_REMOVEDIR` is present, and rejects non-empty directory removal with
@@ -3351,7 +3352,8 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   same-directory renames, cross-directory file moves including same-name moves,
   preserved moved qids, open-fid access, same-file hardlink target no-ops,
   stale fid-backed rename source rejection, replacement-target fid
-  invalidation, post-rename directory entries, and old-name walk rejection,
+  invalidation, same-parent directory rename plus descendant fid path updates,
+  post-rename directory entries, and old-name walk rejection,
   `Tunlinkat` root and
   child-directory file removal with post-delete directory and walk checks,
   `Tunlinkat` empty-directory removal through `AT_REMOVEDIR` plus non-empty
