@@ -837,6 +837,102 @@ fn memory_request_checkpoint_payload_rejects_short_payload() {
 }
 
 #[test]
+fn memory_request_checkpoint_payload_rejects_declared_data_larger_than_payload() {
+    let request = MemoryRequest::write(
+        request_id(50),
+        Address::new(0x8a00),
+        AccessSize::new(2).unwrap(),
+        vec![0xaa, 0xbb],
+        ByteMask::from_bits(vec![true, false]).unwrap(),
+        line_layout(),
+    )
+    .unwrap();
+    let mut payload = MemoryRequestCheckpointPayload::from_request(&request).encode();
+    payload[REQUEST_CHECKPOINT_DATA_LENGTH_OFFSET..REQUEST_CHECKPOINT_DATA_LENGTH_OFFSET + 8]
+        .copy_from_slice(&3u64.to_le_bytes());
+
+    assert_eq!(
+        MemoryRequestCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::InvalidRequestCheckpointPayloadSize {
+            expected: REQUEST_CHECKPOINT_HEADER_SIZE + 3 + 2,
+            actual: REQUEST_CHECKPOINT_HEADER_SIZE + 2 + 2
+        }
+    );
+}
+
+#[test]
+fn memory_request_checkpoint_payload_rejects_declared_data_smaller_than_payload() {
+    let request = MemoryRequest::write(
+        request_id(51),
+        Address::new(0x8b00),
+        AccessSize::new(2).unwrap(),
+        vec![0xaa, 0xbb],
+        ByteMask::from_bits(vec![true, false]).unwrap(),
+        line_layout(),
+    )
+    .unwrap();
+    let mut payload = MemoryRequestCheckpointPayload::from_request(&request).encode();
+    payload[REQUEST_CHECKPOINT_DATA_LENGTH_OFFSET..REQUEST_CHECKPOINT_DATA_LENGTH_OFFSET + 8]
+        .copy_from_slice(&1u64.to_le_bytes());
+
+    assert_eq!(
+        MemoryRequestCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::InvalidRequestCheckpointPayloadSize {
+            expected: REQUEST_CHECKPOINT_HEADER_SIZE + 1 + 2,
+            actual: REQUEST_CHECKPOINT_HEADER_SIZE + 2 + 2
+        }
+    );
+}
+
+#[test]
+fn memory_request_checkpoint_payload_rejects_declared_mask_larger_than_payload() {
+    let request = MemoryRequest::write(
+        request_id(52),
+        Address::new(0x8c00),
+        AccessSize::new(2).unwrap(),
+        vec![0xaa, 0xbb],
+        ByteMask::from_bits(vec![true, false]).unwrap(),
+        line_layout(),
+    )
+    .unwrap();
+    let mut payload = MemoryRequestCheckpointPayload::from_request(&request).encode();
+    payload[REQUEST_CHECKPOINT_MASK_LENGTH_OFFSET..REQUEST_CHECKPOINT_MASK_LENGTH_OFFSET + 8]
+        .copy_from_slice(&3u64.to_le_bytes());
+
+    assert_eq!(
+        MemoryRequestCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::InvalidRequestCheckpointPayloadSize {
+            expected: REQUEST_CHECKPOINT_HEADER_SIZE + 2 + 3,
+            actual: REQUEST_CHECKPOINT_HEADER_SIZE + 2 + 2
+        }
+    );
+}
+
+#[test]
+fn memory_request_checkpoint_payload_rejects_declared_mask_smaller_than_payload() {
+    let request = MemoryRequest::write(
+        request_id(53),
+        Address::new(0x8d00),
+        AccessSize::new(2).unwrap(),
+        vec![0xaa, 0xbb],
+        ByteMask::from_bits(vec![true, false]).unwrap(),
+        line_layout(),
+    )
+    .unwrap();
+    let mut payload = MemoryRequestCheckpointPayload::from_request(&request).encode();
+    payload[REQUEST_CHECKPOINT_MASK_LENGTH_OFFSET..REQUEST_CHECKPOINT_MASK_LENGTH_OFFSET + 8]
+        .copy_from_slice(&1u64.to_le_bytes());
+
+    assert_eq!(
+        MemoryRequestCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::InvalidRequestCheckpointPayloadSize {
+            expected: REQUEST_CHECKPOINT_HEADER_SIZE + 2 + 1,
+            actual: REQUEST_CHECKPOINT_HEADER_SIZE + 2 + 2
+        }
+    );
+}
+
+#[test]
 fn memory_request_checkpoint_payload_rejects_ordering_bits_without_edge_presence() {
     let request = MemoryRequest::read_shared(
         request_id(25),
@@ -912,6 +1008,8 @@ const REQUEST_CHECKPOINT_VERSION_OFFSET: usize = 4;
 const REQUEST_CHECKPOINT_OPERATION_OFFSET: usize = 8;
 const REQUEST_CHECKPOINT_FLAGS_OFFSET: usize = 12;
 const REQUEST_CHECKPOINT_PRIMARY_RESERVED_OFFSET: usize = 20;
+const REQUEST_CHECKPOINT_DATA_LENGTH_OFFSET: usize = 56;
+const REQUEST_CHECKPOINT_MASK_LENGTH_OFFSET: usize = 64;
 const REQUEST_CHECKPOINT_SECONDARY_RESERVED_OFFSET: usize = 76;
 const REQUEST_CHECKPOINT_BEFORE_READ_FLAG: u32 = 1 << 5;
 const RESPONSE_CHECKPOINT_HEADER_SIZE: usize = 40;
