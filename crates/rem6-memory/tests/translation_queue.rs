@@ -1,7 +1,7 @@
 use rem6_memory::{
     AccessSize, Address, AgentId, TranslationAccessKind, TranslationError, TranslationQueue,
-    TranslationQueueConfig, TranslationQueueSnapshot, TranslationRequest, TranslationRequestId,
-    TranslationResolution,
+    TranslationQueueCheckpointPayload, TranslationQueueConfig, TranslationQueueSnapshot,
+    TranslationRequest, TranslationRequestId, TranslationResolution,
 };
 
 fn request_id(sequence: u64) -> TranslationRequestId {
@@ -90,6 +90,46 @@ fn translation_queue_restore_rejects_non_monotonic_next_order() {
 }
 
 #[test]
+fn translation_queue_checkpoint_payload_round_trips_snapshot() {
+    let config = TranslationQueueConfig::new(4, 3).unwrap();
+    let mut queue = TranslationQueue::new(config);
+    let first = request(12, 0x4000, TranslationAccessKind::Load);
+    let second = request(13, 0x8000, TranslationAccessKind::InstructionFetch);
+    queue.enqueue(7, first.clone()).unwrap();
+    queue.enqueue(5, second.clone()).unwrap();
+    let snapshot = queue.snapshot();
+    let payload = TranslationQueueCheckpointPayload::from_snapshot(snapshot.clone()).unwrap();
+
+    let decoded = TranslationQueueCheckpointPayload::decode(payload.encode().as_slice()).unwrap();
+    let restored = TranslationQueue::from_snapshot(decoded.snapshot()).unwrap();
+
+    assert_eq!(decoded.snapshot(), &snapshot);
+    assert_eq!(
+        restored.pending_request_ids(),
+        vec![second.id(), first.id()]
+    );
+}
+
+#[test]
+fn translation_queue_checkpoint_payload_rejects_duplicate_request_ids() {
+    let config = TranslationQueueConfig::new(4, 3).unwrap();
+    let mut queue = TranslationQueue::new(config);
+    let first = request(14, 0x5000, TranslationAccessKind::Store);
+    queue.enqueue(9, first.clone()).unwrap();
+    let payload = TranslationQueueCheckpointPayload::from_snapshot(queue.snapshot())
+        .unwrap()
+        .encode();
+    let duplicate_payload = duplicate_first_queue_checkpoint_entry(payload);
+
+    assert_eq!(
+        TranslationQueueCheckpointPayload::decode(&duplicate_payload).unwrap_err(),
+        TranslationError::DuplicateRequest {
+            request: first.id(),
+        }
+    );
+}
+
+#[test]
 fn translation_queue_rejects_invalid_capacity_duplicates_overflow_and_unknown_completion() {
     assert_eq!(
         TranslationQueueConfig::new(0, 1).unwrap_err(),
@@ -139,4 +179,14 @@ fn translation_queue_rejects_invalid_capacity_duplicates_overflow_and_unknown_co
             request: request_id(99),
         }
     );
+}
+
+fn duplicate_first_queue_checkpoint_entry(mut payload: Vec<u8>) -> Vec<u8> {
+    let count_offset = 32;
+    payload[count_offset..count_offset + 4].copy_from_slice(&2_u32.to_le_bytes());
+    let first_entry_offset = 40;
+    let entry_record_bytes = 64;
+    let first_entry = payload[first_entry_offset..first_entry_offset + entry_record_bytes].to_vec();
+    payload.splice(first_entry_offset..first_entry_offset, first_entry);
+    payload
 }

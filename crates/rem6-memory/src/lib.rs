@@ -13,10 +13,10 @@ pub use request::{MemoryRequest, MemoryResponse, ResponseStatus};
 pub use translation::{
     TranslationAccessKind, TranslationCompletion, TranslationError, TranslationFault,
     TranslationFaultKind, TranslationPageMap, TranslationPageMapSnapshot, TranslationPageMapping,
-    TranslationPagePermissions, TranslationPageSize, TranslationQueue, TranslationQueueConfig,
-    TranslationQueueEntrySnapshot, TranslationQueueSnapshot, TranslationRequest,
-    TranslationRequestId, TranslationResolution, TranslationSegment,
-    TranslationSegmentedResolution,
+    TranslationPagePermissions, TranslationPageSize, TranslationQueue,
+    TranslationQueueCheckpointPayload, TranslationQueueConfig, TranslationQueueEntrySnapshot,
+    TranslationQueueSnapshot, TranslationRequest, TranslationRequestId, TranslationResolution,
+    TranslationSegment, TranslationSegmentedResolution,
 };
 pub use translation_tlb::{
     TranslationAddressSpaceId, TranslationTlb, TranslationTlbCheckpointPayload,

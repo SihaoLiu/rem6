@@ -4,6 +4,16 @@ use std::fmt;
 
 use crate::{AccessSize, Address, AddressRange, AgentId};
 
+const QUEUE_CHECKPOINT_MAGIC: [u8; 4] = *b"MTLQ";
+const QUEUE_CHECKPOINT_VERSION: u32 = 1;
+const U32_BYTES: usize = 4;
+const U64_BYTES: usize = 8;
+const QUEUE_CHECKPOINT_HEADER_BYTES: usize =
+    QUEUE_CHECKPOINT_MAGIC.len() + U32_BYTES + U64_BYTES * 3 + U32_BYTES + U32_BYTES;
+const QUEUE_CHECKPOINT_ENTRY_BYTES: usize = U32_BYTES * 4 + U64_BYTES * 6;
+const QUEUE_CHECKPOINT_U32_MAX: usize = u32::MAX as usize;
+const QUEUE_CHECKPOINT_U64_MAX: usize = u64::MAX as usize;
+
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct TranslationRequestId {
     agent: AgentId,
@@ -348,6 +358,223 @@ impl TranslationQueueSnapshot {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TranslationQueueCheckpointPayload {
+    snapshot: TranslationQueueSnapshot,
+}
+
+impl TranslationQueueCheckpointPayload {
+    pub fn from_queue(queue: &TranslationQueue) -> Self {
+        Self {
+            snapshot: queue.snapshot(),
+        }
+    }
+
+    pub fn from_snapshot(snapshot: TranslationQueueSnapshot) -> Result<Self, TranslationError> {
+        TranslationQueue::from_snapshot(&snapshot)?;
+        Ok(Self { snapshot })
+    }
+
+    pub fn decode(payload: &[u8]) -> Result<Self, TranslationError> {
+        if payload.len() < QUEUE_CHECKPOINT_HEADER_BYTES {
+            return Err(TranslationError::InvalidQueueCheckpointPayloadSize {
+                expected: QUEUE_CHECKPOINT_HEADER_BYTES,
+                actual: payload.len(),
+            });
+        }
+        if payload[0..QUEUE_CHECKPOINT_MAGIC.len()] != QUEUE_CHECKPOINT_MAGIC {
+            return Err(TranslationError::InvalidQueueCheckpointMagic);
+        }
+
+        let mut offset = QUEUE_CHECKPOINT_MAGIC.len();
+        let version = read_queue_checkpoint_u32(payload, &mut offset);
+        if version != QUEUE_CHECKPOINT_VERSION {
+            return Err(TranslationError::UnsupportedQueueCheckpointVersion { version });
+        }
+
+        let capacity =
+            decode_queue_checkpoint_usize(read_queue_checkpoint_u64(payload, &mut offset))?;
+        let latency = read_queue_checkpoint_u64(payload, &mut offset);
+        let next_order = read_queue_checkpoint_u64(payload, &mut offset);
+        let entry_count = read_queue_checkpoint_u32(payload, &mut offset) as usize;
+        let reserved = read_queue_checkpoint_u32(payload, &mut offset);
+        if reserved != 0 {
+            return Err(TranslationError::InvalidQueueCheckpointReserved { value: reserved });
+        }
+        let expected = queue_checkpoint_payload_size(entry_count)?;
+        if payload.len() != expected {
+            return Err(TranslationError::InvalidQueueCheckpointPayloadSize {
+                expected,
+                actual: payload.len(),
+            });
+        }
+
+        let config = TranslationQueueConfig::new(capacity, latency)?;
+        let mut entries = Vec::with_capacity(entry_count);
+        for _ in 0..entry_count {
+            entries.push(read_queue_checkpoint_entry(payload, &mut offset)?);
+        }
+
+        Self::from_snapshot(TranslationQueueSnapshot::new(config, entries, next_order))
+    }
+
+    pub fn encode(&self) -> Vec<u8> {
+        self.try_encode()
+            .expect("translation queue checkpoint values fit the checkpoint encoding")
+    }
+
+    pub fn try_encode(&self) -> Result<Vec<u8>, TranslationError> {
+        let capacity = encode_queue_checkpoint_u64("capacity", self.snapshot.config().capacity())?;
+        let entry_count =
+            encode_queue_checkpoint_u32("entry count", self.snapshot.entries().len())?;
+        let mut payload = Vec::with_capacity(queue_checkpoint_payload_size(
+            self.snapshot.entries().len(),
+        )?);
+        payload.extend_from_slice(&QUEUE_CHECKPOINT_MAGIC);
+        payload.extend_from_slice(&QUEUE_CHECKPOINT_VERSION.to_le_bytes());
+        payload.extend_from_slice(&capacity.to_le_bytes());
+        payload.extend_from_slice(&self.snapshot.config().latency().to_le_bytes());
+        payload.extend_from_slice(&self.snapshot.next_order().to_le_bytes());
+        payload.extend_from_slice(&entry_count.to_le_bytes());
+        payload.extend_from_slice(&0_u32.to_le_bytes());
+        for entry in self.snapshot.entries() {
+            write_queue_checkpoint_entry(&mut payload, entry);
+        }
+        Ok(payload)
+    }
+
+    pub const fn snapshot(&self) -> &TranslationQueueSnapshot {
+        &self.snapshot
+    }
+
+    pub fn into_snapshot(self) -> TranslationQueueSnapshot {
+        self.snapshot
+    }
+}
+
+fn write_queue_checkpoint_entry(payload: &mut Vec<u8>, entry: &TranslationQueueEntrySnapshot) {
+    payload.extend_from_slice(&entry.request().id().agent().get().to_le_bytes());
+    payload
+        .extend_from_slice(&encode_queue_checkpoint_access(entry.request().access()).to_le_bytes());
+    payload.extend_from_slice(&0_u32.to_le_bytes());
+    payload.extend_from_slice(&0_u32.to_le_bytes());
+    payload.extend_from_slice(&entry.request().id().sequence().to_le_bytes());
+    payload.extend_from_slice(&entry.request().virtual_address().get().to_le_bytes());
+    payload.extend_from_slice(&entry.request().size().bytes().to_le_bytes());
+    payload.extend_from_slice(&entry.issue_tick().to_le_bytes());
+    payload.extend_from_slice(&entry.ready_tick().to_le_bytes());
+    payload.extend_from_slice(&entry.order().to_le_bytes());
+}
+
+fn read_queue_checkpoint_entry(
+    payload: &[u8],
+    offset: &mut usize,
+) -> Result<TranslationQueueEntrySnapshot, TranslationError> {
+    let agent = AgentId::new(read_queue_checkpoint_u32(payload, offset));
+    let access = decode_queue_checkpoint_access(read_queue_checkpoint_u32(payload, offset))?;
+    let reserved = read_queue_checkpoint_u32(payload, offset);
+    let reserved2 = read_queue_checkpoint_u32(payload, offset);
+    if reserved != 0 {
+        return Err(TranslationError::InvalidQueueCheckpointReserved { value: reserved });
+    }
+    if reserved2 != 0 {
+        return Err(TranslationError::InvalidQueueCheckpointReserved { value: reserved2 });
+    }
+
+    let sequence = read_queue_checkpoint_u64(payload, offset);
+    let virtual_address = Address::new(read_queue_checkpoint_u64(payload, offset));
+    let size = queue_checkpoint_access_size(read_queue_checkpoint_u64(payload, offset))?;
+    let issue_tick = read_queue_checkpoint_u64(payload, offset);
+    let ready_tick = read_queue_checkpoint_u64(payload, offset);
+    let order = read_queue_checkpoint_u64(payload, offset);
+    let request = TranslationRequest::new(
+        TranslationRequestId::new(agent, sequence),
+        virtual_address,
+        size,
+        access,
+    )?;
+
+    Ok(TranslationQueueEntrySnapshot::new(
+        request, issue_tick, ready_tick, order,
+    ))
+}
+
+fn encode_queue_checkpoint_access(access: TranslationAccessKind) -> u32 {
+    match access {
+        TranslationAccessKind::InstructionFetch => 0,
+        TranslationAccessKind::Load => 1,
+        TranslationAccessKind::Store => 2,
+        TranslationAccessKind::Atomic => 3,
+        TranslationAccessKind::Prefetch => 4,
+    }
+}
+
+fn decode_queue_checkpoint_access(code: u32) -> Result<TranslationAccessKind, TranslationError> {
+    match code {
+        0 => Ok(TranslationAccessKind::InstructionFetch),
+        1 => Ok(TranslationAccessKind::Load),
+        2 => Ok(TranslationAccessKind::Store),
+        3 => Ok(TranslationAccessKind::Atomic),
+        4 => Ok(TranslationAccessKind::Prefetch),
+        _ => Err(TranslationError::InvalidQueueCheckpointAccessKind { code }),
+    }
+}
+
+fn queue_checkpoint_access_size(bytes: u64) -> Result<AccessSize, TranslationError> {
+    AccessSize::new(bytes).map_err(|_| TranslationError::InvalidQueueCheckpointAccessSize { bytes })
+}
+
+fn decode_queue_checkpoint_usize(value: u64) -> Result<usize, TranslationError> {
+    usize::try_from(value).map_err(|_| TranslationError::InvalidQueueCheckpointUsize { value })
+}
+
+fn queue_checkpoint_payload_size(entry_count: usize) -> Result<usize, TranslationError> {
+    let entry_bytes = entry_count
+        .checked_mul(QUEUE_CHECKPOINT_ENTRY_BYTES)
+        .ok_or(TranslationError::InvalidQueueCheckpointPayloadSize {
+            expected: usize::MAX,
+            actual: 0,
+        })?;
+    QUEUE_CHECKPOINT_HEADER_BYTES
+        .checked_add(entry_bytes)
+        .ok_or(TranslationError::InvalidQueueCheckpointPayloadSize {
+            expected: usize::MAX,
+            actual: 0,
+        })
+}
+
+fn encode_queue_checkpoint_u32(field: &'static str, value: usize) -> Result<u32, TranslationError> {
+    u32::try_from(value).map_err(|_| TranslationError::QueueCheckpointValueTooLarge {
+        field,
+        value,
+        maximum: QUEUE_CHECKPOINT_U32_MAX,
+    })
+}
+
+fn encode_queue_checkpoint_u64(field: &'static str, value: usize) -> Result<u64, TranslationError> {
+    u64::try_from(value).map_err(|_| TranslationError::QueueCheckpointValueTooLarge {
+        field,
+        value,
+        maximum: QUEUE_CHECKPOINT_U64_MAX,
+    })
+}
+
+fn read_queue_checkpoint_u32(payload: &[u8], offset: &mut usize) -> u32 {
+    let bytes = payload[*offset..*offset + U32_BYTES]
+        .try_into()
+        .expect("checkpoint u32 slice width is fixed");
+    *offset += U32_BYTES;
+    u32::from_le_bytes(bytes)
+}
+
+fn read_queue_checkpoint_u64(payload: &[u8], offset: &mut usize) -> u64 {
+    let bytes = payload[*offset..*offset + U64_BYTES]
+        .try_into()
+        .expect("checkpoint u64 slice width is fixed");
+    *offset += U64_BYTES;
+    u64::from_le_bytes(bytes)
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct TranslationQueueEntry {
     request: TranslationRequest,
     issue_tick: u64,
@@ -567,6 +794,31 @@ pub enum TranslationError {
         order: u64,
     },
     QueueOrderOverflow,
+    InvalidQueueCheckpointPayloadSize {
+        expected: usize,
+        actual: usize,
+    },
+    InvalidQueueCheckpointMagic,
+    UnsupportedQueueCheckpointVersion {
+        version: u32,
+    },
+    InvalidQueueCheckpointReserved {
+        value: u32,
+    },
+    InvalidQueueCheckpointAccessKind {
+        code: u32,
+    },
+    InvalidQueueCheckpointAccessSize {
+        bytes: u64,
+    },
+    InvalidQueueCheckpointUsize {
+        value: u64,
+    },
+    QueueCheckpointValueTooLarge {
+        field: &'static str,
+        value: usize,
+        maximum: usize,
+    },
     ZeroTlbCapacity,
     TlbCapacityExceeded {
         capacity: usize,
@@ -685,6 +937,41 @@ impl fmt::Display for TranslationError {
                     "translation queue stable order counter overflowed"
                 )
             }
+            Self::InvalidQueueCheckpointPayloadSize { expected, actual } => write!(
+                formatter,
+                "translation queue checkpoint payload has {actual} bytes; expected {expected}"
+            ),
+            Self::InvalidQueueCheckpointMagic => {
+                write!(formatter, "translation queue checkpoint payload has invalid magic")
+            }
+            Self::UnsupportedQueueCheckpointVersion { version } => write!(
+                formatter,
+                "translation queue checkpoint payload version {version} is not supported"
+            ),
+            Self::InvalidQueueCheckpointReserved { value } => write!(
+                formatter,
+                "translation queue checkpoint reserved field has nonzero value {value}"
+            ),
+            Self::InvalidQueueCheckpointAccessKind { code } => write!(
+                formatter,
+                "translation queue checkpoint payload has invalid access kind {code}"
+            ),
+            Self::InvalidQueueCheckpointAccessSize { bytes } => write!(
+                formatter,
+                "translation queue checkpoint payload has invalid access size {bytes}"
+            ),
+            Self::InvalidQueueCheckpointUsize { value } => write!(
+                formatter,
+                "translation queue checkpoint usize value {value} cannot fit this target"
+            ),
+            Self::QueueCheckpointValueTooLarge {
+                field,
+                value,
+                maximum,
+            } => write!(
+                formatter,
+                "translation queue checkpoint {field} value {value} exceeds maximum {maximum}"
+            ),
             Self::ZeroTlbCapacity => write!(formatter, "translation TLB capacity must be nonzero"),
             Self::TlbCapacityExceeded { capacity } => {
                 write!(

@@ -2677,8 +2677,10 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   binary round trips and duplicate-entry rejection through snapshot decode
   validation.
 - Memory translation queue tests cover pending-request ready ordering, snapshot
-  restore, duplicate rejection, and nonmonotonic restore order-counter rejection
-  so a malformed checkpoint cannot reuse an existing stable ordering value.
+  restore, duplicate rejection, nonmonotonic restore order-counter rejection,
+  checkpoint payload binary round trips, and duplicate-request payload rejection
+  through snapshot decode validation, so a malformed checkpoint cannot reuse an
+  existing stable ordering value or duplicate pending request identity.
 - x86 ISA prefix scan tests cover public gem5 issue #2962 by requiring a REX
   prefix before a later legacy prefix to be recorded as ignored, requiring a
   REX immediately before a one-byte opcode or `0x0f` escape to stay active,
