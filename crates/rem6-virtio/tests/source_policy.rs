@@ -546,10 +546,26 @@ fn virtio_9p_device_tests_delegate_attach_handshake_cases() {
         handshake_test.exists(),
         "9P attach handshake tests belong in tests/fs9p_handshake.rs"
     );
-    for symbol in ["VIRTIO_9P_RATTACH", "VIRTIO_9P_QTDIR", "attached_fids()"] {
+    let handshake_source = fs::read_to_string(&handshake_test).unwrap();
+    for symbol in [
+        "virtio_9p_device_accepts_attach_and_returns_root_qid",
+        "virtio_9p_device_rejects_attach_on_occupied_fid_without_replacing_it",
+        "VIRTIO_9P_RATTACH",
+        "VIRTIO_9P_QTDIR",
+        "attached_fids()",
+    ] {
         assert!(
             !device_test.contains(symbol),
             "tests/fs9p_device.rs should delegate attach handshake behavior to tests/fs9p_handshake.rs; found {symbol}"
+        );
+    }
+    for symbol in [
+        "fn virtio_9p_device_accepts_attach_and_returns_root_qid(",
+        "fn virtio_9p_device_rejects_attach_on_occupied_fid_without_replacing_it(",
+    ] {
+        assert!(
+            handshake_source.contains(symbol),
+            "tests/fs9p_handshake.rs should own attach handshake case {symbol}"
         );
     }
 }
@@ -564,6 +580,7 @@ fn virtio_9p_device_tests_delegate_walk_error_cases() {
         walk_test.exists(),
         "9P walk tests belong in tests/fs9p_walk.rs"
     );
+    let walk_source = fs::read_to_string(&walk_test).unwrap();
     for symbol in [
         "virtio_9p_device_reports_lerror_for_missing_walk_targets",
         "b\"missing\"",
@@ -573,6 +590,10 @@ fn virtio_9p_device_tests_delegate_walk_error_cases() {
             "tests/fs9p_device.rs should delegate walk error behavior to tests/fs9p_walk.rs; found {symbol}"
         );
     }
+    assert!(
+        walk_source.contains("fn virtio_9p_device_reports_lerror_for_missing_walk_targets("),
+        "tests/fs9p_walk.rs should own missing walk target behavior"
+    );
 }
 
 #[test]
@@ -585,12 +606,21 @@ fn virtio_9p_device_tests_delegate_protocol_error_cases() {
         protocol_error_test.exists(),
         "9P protocol error tests belong in tests/fs9p_protocol_errors.rs"
     );
-    for symbol in ["VIRTIO_9P_ENOTSUP", "decoded_request(200"] {
+    let protocol_error_source = fs::read_to_string(&protocol_error_test).unwrap();
+    for symbol in [
+        "virtio_9p_device_returns_lerror_for_unsupported_messages",
+        "VIRTIO_9P_ENOTSUP",
+    ] {
         assert!(
             !device_test.contains(symbol),
             "tests/fs9p_device.rs should delegate protocol error behavior to tests/fs9p_protocol_errors.rs; found {symbol}"
         );
     }
+    assert!(
+        protocol_error_source
+            .contains("fn virtio_9p_device_returns_lerror_for_unsupported_messages("),
+        "tests/fs9p_protocol_errors.rs should own unsupported message behavior"
+    );
 }
 
 #[test]
