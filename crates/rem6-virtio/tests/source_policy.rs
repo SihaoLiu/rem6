@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 const MAX_FACADE_LINES: usize = 1300;
 const MAX_FOCUSED_DEVICE_LINES: usize = 1300;
-const MAX_FOCUSED_TEST_LINES: usize = 1800;
+const MAX_FOCUSED_TEST_LINES: usize = 1300;
 const MAX_SOURCE_LINES: usize = 1800;
 
 #[test]
