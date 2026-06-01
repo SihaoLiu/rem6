@@ -2676,7 +2676,10 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   address-decoder checkpoint payload round trips for sparse and
   modulo-interleaved regions plus overlapping-region decode rejection, and
   partitioned-memory checkpoint payload round trips for partitions, lines,
-  ordinary regions, and modulo-interleaved regions.
+  ordinary regions, and modulo-interleaved regions, plus stable partition
+  checkpoint golden bytes, invalid partition checkpoint magic, version,
+  reserved-field, interleave-flag, payload-size, and nested line-payload
+  rejection.
 - Memory translation page-map tests cover offsets, permissions, cross-page
   segment splits, snapshot restore, checkpoint payload binary round trips, and
   overlapping mapping-record plus invalid-permission rejection through snapshot
