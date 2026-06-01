@@ -1314,15 +1314,17 @@ Implementation evidence through 2026-06-01:
   shared qid identity, shared file contents, updated link counts, and unlink
   behavior that keeps surviving linked fids live, `Trename` moves non-directory
   fid-backed nodes into target directories while preserving moved qids, open
-  fid access, and walked-fid path identity, and renames same-parent directory
-  fids while updating descendant fid path identity, permits empty-directory
-  target replacement, and rejects non-empty directory targets, `Trenameat`
+  fid access, and walked-fid path identity, and renames directory fids across
+  same and different parents while updating descendant fid path identity,
+  permits empty-directory target replacement, rejects non-empty directory
+  targets, and rejects descendant targets, `Trenameat`
   renames and moves non-directory nodes across directory fids while preserving
   the moved file qid, open fid access, and moved hard-link fid path identity,
   treating target hard links to the same file as no-ops and replacing other
-  target files with explicit target-fid invalidation, and renames same-parent
-  directories while updating descendant fid path identity, permitting
-  empty-directory target replacement, and rejecting non-empty directory targets,
+  target files with explicit target-fid invalidation, and renames directories
+  across same and different parents while updating descendant fid path identity,
+  permitting empty-directory target replacement, rejecting non-empty directory
+  targets, and rejecting descendant targets,
   `Tunlinkat` removes named root or child-directory files and invalidates fids
   only when no linked directory entry remains, removes empty directories only
   when `AT_REMOVEDIR` is present, and rejects non-empty directory removal with
