@@ -5,6 +5,14 @@ use rem6_cpu::{
     InOrderPipelineStageWidth, InOrderPipelineState,
 };
 
+const IN_ORDER_CHECKPOINT_INSTRUCTION_COUNT_OFFSET: usize = 33;
+const IN_ORDER_CHECKPOINT_FIRST_INSTRUCTION_OFFSET: usize = 37;
+const IN_ORDER_CHECKPOINT_INSTRUCTION_RECORD_BYTES: usize = 9;
+const SINGLE_IN_ORDER_CHECKPOINT_BYTES: &[u8] = &[
+    b'R', b'I', b'O', b'P', 1, 4, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0,
+    0, 1, 0, 0, 0, 1, 0, 0, 0, 0x5b, 0, 0, 0, 0, 0, 0, 0, 3,
+];
+
 fn instruction(sequence: u64, stage: InOrderPipelineStage) -> InOrderPipelineInstruction {
     InOrderPipelineInstruction::new(sequence, stage)
 }
@@ -552,6 +560,25 @@ fn in_order_pipeline_checkpoint_payload_round_trips_state() {
 }
 
 #[test]
+fn in_order_pipeline_checkpoint_payload_has_stable_single_instruction_bytes() {
+    let snapshot = InOrderPipelineSnapshot::with_cycle(
+        config_with_decode_width(1),
+        4,
+        [instruction(91, InOrderPipelineStage::Execute)],
+    );
+    let payload = InOrderPipelineCheckpointPayload::from_snapshot(snapshot.clone())
+        .unwrap()
+        .encode();
+
+    assert_eq!(payload, SINGLE_IN_ORDER_CHECKPOINT_BYTES);
+    let decoded = InOrderPipelineCheckpointPayload::decode(SINGLE_IN_ORDER_CHECKPOINT_BYTES)
+        .unwrap()
+        .into_snapshot();
+
+    assert_eq!(decoded, snapshot);
+}
+
+#[test]
 fn in_order_pipeline_checkpoint_payload_rejects_duplicate_sequences() {
     let snapshot = InOrderPipelineSnapshot::with_cycle(
         config_with_decode_width(1),
@@ -565,6 +592,55 @@ fn in_order_pipeline_checkpoint_payload_rejects_duplicate_sequences() {
     assert_eq!(
         InOrderPipelineCheckpointPayload::from_snapshot(snapshot).unwrap_err(),
         InOrderPipelineError::DuplicateInFlightInstruction { sequence: 90 }
+    );
+}
+
+#[test]
+fn in_order_pipeline_checkpoint_payload_rejects_count_size_mismatches() {
+    let mut missing_instruction_payload = SINGLE_IN_ORDER_CHECKPOINT_BYTES.to_vec();
+    missing_instruction_payload[IN_ORDER_CHECKPOINT_INSTRUCTION_COUNT_OFFSET
+        ..IN_ORDER_CHECKPOINT_INSTRUCTION_COUNT_OFFSET + 4]
+        .copy_from_slice(&2_u32.to_le_bytes());
+    assert_eq!(
+        InOrderPipelineCheckpointPayload::decode(&missing_instruction_payload).unwrap_err(),
+        InOrderPipelineError::InvalidCheckpointPayloadSize {
+            expected: 37 + 2 * IN_ORDER_CHECKPOINT_INSTRUCTION_RECORD_BYTES,
+            actual: SINGLE_IN_ORDER_CHECKPOINT_BYTES.len(),
+        }
+    );
+
+    let mut trailing_payload = SINGLE_IN_ORDER_CHECKPOINT_BYTES.to_vec();
+    trailing_payload.push(0);
+    assert_eq!(
+        InOrderPipelineCheckpointPayload::decode(&trailing_payload).unwrap_err(),
+        InOrderPipelineError::InvalidCheckpointPayloadSize {
+            expected: SINGLE_IN_ORDER_CHECKPOINT_BYTES.len(),
+            actual: SINGLE_IN_ORDER_CHECKPOINT_BYTES.len() + 1,
+        }
+    );
+}
+
+#[test]
+fn in_order_pipeline_checkpoint_payload_rejects_duplicate_sequences_from_decode() {
+    let snapshot = InOrderPipelineSnapshot::with_cycle(
+        config_with_decode_width(1),
+        4,
+        [
+            instruction(91, InOrderPipelineStage::Execute),
+            instruction(92, InOrderPipelineStage::Commit),
+        ],
+    );
+    let mut payload = InOrderPipelineCheckpointPayload::from_snapshot(snapshot)
+        .unwrap()
+        .encode();
+    let second_sequence_offset =
+        IN_ORDER_CHECKPOINT_FIRST_INSTRUCTION_OFFSET + IN_ORDER_CHECKPOINT_INSTRUCTION_RECORD_BYTES;
+    payload[second_sequence_offset..second_sequence_offset + 8]
+        .copy_from_slice(&91_u64.to_le_bytes());
+
+    assert_eq!(
+        InOrderPipelineCheckpointPayload::decode(&payload).unwrap_err(),
+        InOrderPipelineError::DuplicateInFlightInstruction { sequence: 91 }
     );
 }
 
