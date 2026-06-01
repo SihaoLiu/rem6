@@ -99,6 +99,8 @@ const PLIC_CONTEXT_ENABLED_LINE_RELATIVE_OFFSET: usize =
 const PLIC_CONTEXT1_ENABLED_LINE_OFFSET: usize =
     PLIC_CONTEXT1_OFFSET + PLIC_CONTEXT_ENABLED_LINE_RELATIVE_OFFSET;
 
+const UART_CHUNK: &str = "uart";
+const PL011_CHUNK: &str = "pl011";
 const INTERRUPT_CHUNK: &str = "interrupt";
 
 fn rtc_device(base: u64) -> Mc146818RtcMmioDevice {
@@ -1235,7 +1237,7 @@ fn uart_checkpoint_bank_rejects_rx_ledger_mismatch_without_partial_restore() {
         registry.register(invalid_component.clone()).unwrap();
         let payload = mismatched_uart_rx_payload(fault);
         registry
-            .write_chunk(&invalid_component, "uart", payload)
+            .write_chunk(&invalid_component, UART_CHUNK, payload)
             .unwrap();
 
         let bank = UartCheckpointBank::new([
@@ -1249,6 +1251,39 @@ fn uart_checkpoint_bank_rejects_rx_ledger_mismatch_without_partial_restore() {
         assert_eq!(target_valid.snapshot(), original_valid);
         assert_eq!(target_invalid.snapshot(), original_invalid);
     }
+}
+
+#[test]
+fn uart_checkpoint_port_rejects_impossible_tx_count_without_partial_restore() {
+    let component = checkpoint_component("uart_payload_tx_count");
+    let target = UartMmioDevice::new(UartId::new(0), Address::new(0x1000));
+    let original = target.snapshot();
+    let mut payload = Vec::new();
+    write_u64(&mut payload, u64::MAX);
+    let mut registry = CheckpointRegistry::new();
+    registry.register(component.clone()).unwrap();
+    registry
+        .write_chunk(&component, UART_CHUNK, payload)
+        .unwrap();
+
+    let error = UartCheckpointPort::new(component.clone(), target.clone())
+        .restore_from(&registry)
+        .unwrap_err();
+
+    match error {
+        UartCheckpointError::InvalidChunk {
+            component: actual,
+            reason,
+        } => {
+            assert_eq!(actual, component);
+            assert_eq!(
+                reason,
+                "UART TX byte count 18446744073709551615 exceeds remaining payload capacity 0 records"
+            );
+        }
+        other => panic!("unexpected UART checkpoint error: {other}"),
+    }
+    assert_eq!(target.snapshot(), original);
 }
 
 #[test]
@@ -1272,7 +1307,7 @@ fn pl011_uart_checkpoint_bank_rejects_rx_ledger_mismatch_without_partial_restore
         registry.register(invalid_component.clone()).unwrap();
         let payload = mismatched_pl011_rx_payload(fault);
         registry
-            .write_chunk(&invalid_component, "pl011", payload)
+            .write_chunk(&invalid_component, PL011_CHUNK, payload)
             .unwrap();
 
         let bank = Pl011UartCheckpointBank::new([
@@ -1289,6 +1324,43 @@ fn pl011_uart_checkpoint_bank_rejects_rx_ledger_mismatch_without_partial_restore
         assert_eq!(target_valid.snapshot(), original_valid);
         assert_eq!(target_invalid.snapshot(), original_invalid);
     }
+}
+
+#[test]
+fn pl011_uart_checkpoint_port_rejects_impossible_error_count_without_partial_restore() {
+    let component = checkpoint_component("pl011_payload_error_count");
+    let target = Pl011UartMmioDevice::new(UartId::new(0), Address::new(0x1c09_0000));
+    let original = target.snapshot();
+    let mut payload = Vec::new();
+    write_u64(&mut payload, 0);
+    write_u64(&mut payload, 0);
+    write_u64(&mut payload, 0);
+    write_u64(&mut payload, 0);
+    write_u64(&mut payload, u64::MAX);
+    let mut registry = CheckpointRegistry::new();
+    registry.register(component.clone()).unwrap();
+    registry
+        .write_chunk(&component, PL011_CHUNK, payload)
+        .unwrap();
+
+    let error = Pl011UartCheckpointPort::new(component.clone(), target.clone())
+        .restore_from(&registry)
+        .unwrap_err();
+
+    match error {
+        Pl011UartCheckpointError::InvalidChunk {
+            component: actual,
+            reason,
+        } => {
+            assert_eq!(actual, component);
+            assert_eq!(
+                reason,
+                "PL011 interrupt error count 18446744073709551615 exceeds remaining payload capacity 0 records"
+            );
+        }
+        other => panic!("unexpected PL011 checkpoint error: {other}"),
+    }
+    assert_eq!(target.snapshot(), original);
 }
 
 #[test]

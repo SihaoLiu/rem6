@@ -18,6 +18,8 @@ const PL011_UART_CHUNK: &str = "pl011";
 const U8_BYTES: usize = 1;
 const U32_BYTES: usize = 4;
 const U64_BYTES: usize = 8;
+const UART_BYTE_RECORD_BYTES: usize = U64_BYTES + U8_BYTES;
+const UART_INTERRUPT_ERROR_MIN_RECORD_BYTES: usize = U64_BYTES + U32_BYTES + U64_BYTES;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UartCheckpointRecord {
@@ -465,7 +467,10 @@ fn decode_uart(
         .read_bytes("UART pending RX bytes", pending_len)?
         .to_vec();
     let rx_consumed = read_rx_bytes(&mut cursor)?;
-    let error_count = cursor.read_count("UART interrupt error count")?;
+    let error_count = cursor.read_bounded_count(
+        "UART interrupt error count",
+        UART_INTERRUPT_ERROR_MIN_RECORD_BYTES,
+    )?;
     let mut interrupt_errors = Vec::with_capacity(error_count);
     for _ in 0..error_count {
         interrupt_errors.push(decode_uart_interrupt_error(&mut cursor)?);
@@ -493,7 +498,10 @@ fn decode_pl011_uart(
         .read_bytes("PL011 pending RX bytes", pending_len)?
         .to_vec();
     let rx_consumed = read_rx_bytes(&mut cursor)?;
-    let error_count = cursor.read_count("PL011 interrupt error count")?;
+    let error_count = cursor.read_bounded_count(
+        "PL011 interrupt error count",
+        UART_INTERRUPT_ERROR_MIN_RECORD_BYTES,
+    )?;
     let mut interrupt_errors = Vec::with_capacity(error_count);
     for _ in 0..error_count {
         interrupt_errors.push(decode_uart_interrupt_error(&mut cursor)?);
@@ -580,7 +588,7 @@ fn validate_rx_ledger(
 }
 
 fn read_tx_bytes(cursor: &mut PayloadCursor<'_>) -> Result<Vec<UartTxByte>, UartCheckpointError> {
-    let count = cursor.read_count("UART TX byte count")?;
+    let count = cursor.read_bounded_count("UART TX byte count", UART_BYTE_RECORD_BYTES)?;
     let mut bytes = Vec::with_capacity(count);
     for _ in 0..count {
         bytes.push(UartTxByte::new(
@@ -592,7 +600,7 @@ fn read_tx_bytes(cursor: &mut PayloadCursor<'_>) -> Result<Vec<UartTxByte>, Uart
 }
 
 fn read_rx_bytes(cursor: &mut PayloadCursor<'_>) -> Result<Vec<UartRxByte>, UartCheckpointError> {
-    let count = cursor.read_count("UART RX byte count")?;
+    let count = cursor.read_bounded_count("UART RX byte count", UART_BYTE_RECORD_BYTES)?;
     let mut bytes = Vec::with_capacity(count);
     for _ in 0..count {
         bytes.push(UartRxByte::new(
@@ -1100,6 +1108,24 @@ impl<'a> PayloadCursor<'a> {
         self.read_u64(name)?
             .try_into()
             .map_err(|_| self.invalid(format!("{name} does not fit host usize")))
+    }
+
+    fn read_bounded_count(
+        &mut self,
+        name: &str,
+        min_record_bytes: usize,
+    ) -> Result<usize, UartCheckpointError> {
+        let value = self.read_u64(name)?;
+        let count = usize::try_from(value)
+            .map_err(|_| self.invalid(format!("{name} does not fit host usize")))?;
+        let remaining = self.payload.len().saturating_sub(self.offset);
+        let max_records = remaining / min_record_bytes;
+        if count > max_records {
+            return Err(self.invalid(format!(
+                "{name} {value} exceeds remaining payload capacity {max_records} records"
+            )));
+        }
+        Ok(count)
     }
 
     fn read_u8(&mut self, name: &str) -> Result<u8, UartCheckpointError> {
