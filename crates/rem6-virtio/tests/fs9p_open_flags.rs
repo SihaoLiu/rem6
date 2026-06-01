@@ -3,8 +3,9 @@ use rem6_virtio::{
     VIRTIO_9P_LOPEN_TRUNCATE, VIRTIO_9P_NOFID, VIRTIO_9P_OPEN_APPEND, VIRTIO_9P_OPEN_EXECUTE_ONLY,
     VIRTIO_9P_OPEN_READ_ONLY, VIRTIO_9P_OPEN_READ_WRITE, VIRTIO_9P_OPEN_REMOVE_ON_CLOSE,
     VIRTIO_9P_OPEN_TRUNCATE, VIRTIO_9P_OPEN_WRITE_ONLY, VIRTIO_9P_RCLUNK, VIRTIO_9P_RLERROR,
-    VIRTIO_9P_RLOPEN, VIRTIO_9P_ROPEN, VIRTIO_9P_RREAD, VIRTIO_9P_RREADDIR, VIRTIO_9P_RWRITE,
-    VIRTIO_9P_TATTACH, VIRTIO_9P_TCLUNK, VIRTIO_9P_TLOPEN, VIRTIO_9P_TOPEN, VIRTIO_9P_TREAD,
+    VIRTIO_9P_RLINK, VIRTIO_9P_RLOPEN, VIRTIO_9P_RMKDIR, VIRTIO_9P_ROPEN, VIRTIO_9P_RREAD,
+    VIRTIO_9P_RREADDIR, VIRTIO_9P_RWALK, VIRTIO_9P_RWRITE, VIRTIO_9P_TATTACH, VIRTIO_9P_TCLUNK,
+    VIRTIO_9P_TLINK, VIRTIO_9P_TLOPEN, VIRTIO_9P_TMKDIR, VIRTIO_9P_TOPEN, VIRTIO_9P_TREAD,
     VIRTIO_9P_TREADDIR, VIRTIO_9P_TWALK, VIRTIO_9P_TWRITE,
 };
 
@@ -23,6 +24,14 @@ fn attached_device_with_file(name: &str, data: &[u8]) -> Virtio9pDevice {
     );
     device.execute_at(10, attach).unwrap();
     device
+}
+
+fn open_payload(message_type: u8, fid: u32, mode: u32) -> Vec<u8> {
+    match message_type {
+        VIRTIO_9P_TLOPEN => p9_lopen_payload(fid, mode),
+        VIRTIO_9P_TOPEN => p9_open_payload(fid, u8::try_from(mode).unwrap()),
+        _ => unreachable!("unsupported open message type"),
+    }
 }
 
 #[test]
@@ -124,49 +133,115 @@ fn virtio_9p_lopen_execute_only_denies_file_reads_and_writes() {
 }
 
 #[test]
-fn virtio_9p_open_rejects_write_only_directories_without_opening_fids() {
-    for (message_type, reply_type, write_only_payload, read_only_payload) in [
-        (
-            VIRTIO_9P_TLOPEN,
-            VIRTIO_9P_RLOPEN,
-            p9_lopen_payload(1, u32::from(VIRTIO_9P_OPEN_WRITE_ONLY)),
-            p9_lopen_payload(1, u32::from(VIRTIO_9P_OPEN_READ_ONLY)),
-        ),
-        (
-            VIRTIO_9P_TOPEN,
-            VIRTIO_9P_ROPEN,
-            p9_open_payload(1, VIRTIO_9P_OPEN_WRITE_ONLY),
-            p9_open_payload(1, VIRTIO_9P_OPEN_READ_ONLY),
-        ),
+fn virtio_9p_open_rejects_write_mode_directories_without_opening_fids() {
+    for (message_type, reply_type) in [
+        (VIRTIO_9P_TLOPEN, VIRTIO_9P_RLOPEN),
+        (VIRTIO_9P_TOPEN, VIRTIO_9P_ROPEN),
     ] {
-        let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap())
-            .with_file("alpha.txt", b"alpha".to_vec())
-            .unwrap();
-        let attach = decoded_request(
-            VIRTIO_9P_TATTACH,
-            1,
-            p9_attach_payload(1, VIRTIO_9P_NOFID, b"root", b"", 0),
-        );
-        device.execute_at(10, attach).unwrap();
+        for rejected_mode in [
+            u32::from(VIRTIO_9P_OPEN_WRITE_ONLY),
+            u32::from(VIRTIO_9P_OPEN_READ_WRITE),
+        ] {
+            for use_child_directory in [false, true] {
+                let device = attached_device_with_file("alpha.txt", b"alpha");
+                let directory_fid = if use_child_directory {
+                    let mkdir = decoded_request(
+                        VIRTIO_9P_TMKDIR,
+                        2,
+                        p9_mkdir_payload(1, b"tmp", 0o040755, 0),
+                    );
+                    let mkdir_completion = device.execute_at(11, mkdir).unwrap();
+                    assert_eq!(mkdir_completion.message_type(), VIRTIO_9P_RMKDIR);
 
-        let write_only = decoded_request(message_type, 2, write_only_payload);
-        let write_only_completion = device.execute_at(11, write_only).unwrap();
-        assert_eq!(write_only_completion.message_type(), VIRTIO_9P_RLERROR);
-        assert_eq!(
-            write_only_completion.payload(),
-            VIRTIO_9P_EBADF.to_le_bytes()
-        );
+                    let walk_tmp =
+                        decoded_request(VIRTIO_9P_TWALK, 3, p9_walk_payload(1, 2, &[b"tmp"]));
+                    device.execute_at(12, walk_tmp).unwrap();
+                    2
+                } else {
+                    1
+                };
 
-        let read_only = decoded_request(message_type, 3, read_only_payload);
-        let read_only_completion = device.execute_at(12, read_only).unwrap();
-        assert_eq!(read_only_completion.message_type(), reply_type);
+                let rejected = decoded_request(
+                    message_type,
+                    4,
+                    open_payload(message_type, directory_fid, rejected_mode),
+                );
+                let rejected_completion = device.execute_at(13, rejected).unwrap();
+                assert_eq!(rejected_completion.message_type(), VIRTIO_9P_RLERROR);
+                assert_eq!(rejected_completion.payload(), VIRTIO_9P_EBADF.to_le_bytes());
 
-        let readdir = decoded_request(VIRTIO_9P_TREADDIR, 4, p9_readdir_payload(1, 0, 512));
-        let readdir_completion = device.execute_at(13, readdir).unwrap();
-        assert_eq!(readdir_completion.message_type(), VIRTIO_9P_RREADDIR);
-        let entries = read_dir_entries(readdir_completion.payload());
-        assert!(entries.iter().any(|entry| entry.name == "alpha.txt"));
+                let read_only = decoded_request(
+                    message_type,
+                    5,
+                    open_payload(
+                        message_type,
+                        directory_fid,
+                        u32::from(VIRTIO_9P_OPEN_READ_ONLY),
+                    ),
+                );
+                let read_only_completion = device.execute_at(14, read_only).unwrap();
+                assert_eq!(read_only_completion.message_type(), reply_type);
+
+                let readdir = decoded_request(
+                    VIRTIO_9P_TREADDIR,
+                    6,
+                    p9_readdir_payload(directory_fid, 0, 512),
+                );
+                let readdir_completion = device.execute_at(15, readdir).unwrap();
+                assert_eq!(readdir_completion.message_type(), VIRTIO_9P_RREADDIR);
+                let entries = read_dir_entries(readdir_completion.payload());
+                let expected_name = if use_child_directory {
+                    "."
+                } else {
+                    "alpha.txt"
+                };
+                assert!(entries.iter().any(|entry| entry.name == expected_name));
+            }
+        }
     }
+}
+
+#[test]
+fn virtio_9p_legacy_open_rejects_remove_on_close_write_mode_directory_without_mutating_fid() {
+    let device = attached_device_with_file("alpha.txt", b"alpha");
+    let mkdir = decoded_request(
+        VIRTIO_9P_TMKDIR,
+        2,
+        p9_mkdir_payload(1, b"tmp", 0o040755, 0),
+    );
+    let mkdir_completion = device.execute_at(11, mkdir).unwrap();
+    assert_eq!(mkdir_completion.message_type(), VIRTIO_9P_RMKDIR);
+
+    let walk_tmp = decoded_request(VIRTIO_9P_TWALK, 3, p9_walk_payload(1, 2, &[b"tmp"]));
+    device.execute_at(12, walk_tmp).unwrap();
+
+    let rejected = decoded_request(
+        VIRTIO_9P_TOPEN,
+        4,
+        p9_open_payload(
+            2,
+            VIRTIO_9P_OPEN_READ_WRITE | VIRTIO_9P_OPEN_REMOVE_ON_CLOSE,
+        ),
+    );
+    let rejected_completion = device.execute_at(13, rejected).unwrap();
+    assert_eq!(rejected_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(rejected_completion.payload(), VIRTIO_9P_EBADF.to_le_bytes());
+
+    let read_only = decoded_request(
+        VIRTIO_9P_TOPEN,
+        5,
+        p9_open_payload(2, VIRTIO_9P_OPEN_READ_ONLY),
+    );
+    let read_only_completion = device.execute_at(14, read_only).unwrap();
+    assert_eq!(read_only_completion.message_type(), VIRTIO_9P_ROPEN);
+
+    let clunk = decoded_request(VIRTIO_9P_TCLUNK, 6, p9_clunk_payload(2));
+    let clunk_completion = device.execute_at(15, clunk).unwrap();
+    assert_eq!(clunk_completion.message_type(), VIRTIO_9P_RCLUNK);
+
+    let walk_surviving = decoded_request(VIRTIO_9P_TWALK, 7, p9_walk_payload(1, 3, &[b"tmp"]));
+    let surviving_completion = device.execute_at(16, walk_surviving).unwrap();
+    assert_eq!(surviving_completion.message_type(), VIRTIO_9P_RWALK);
 }
 
 #[test]
@@ -356,6 +431,55 @@ fn virtio_9p_legacy_open_remove_on_close_unlinks_clunked_file() {
     let removed_completion = device.execute_at(14, walk_removed).unwrap();
     assert_eq!(removed_completion.message_type(), VIRTIO_9P_RLERROR);
     assert_eq!(removed_completion.payload(), VIRTIO_9P_ENOENT.to_le_bytes());
+}
+
+#[test]
+fn virtio_9p_legacy_open_remove_on_close_removes_only_clunked_hardlink_path() {
+    let device = attached_device_with_file("alpha.txt", b"alpha");
+    let walk_alpha = decoded_request(VIRTIO_9P_TWALK, 2, p9_walk_payload(1, 2, &[b"alpha.txt"]));
+    let alpha_completion = device.execute_at(11, walk_alpha).unwrap();
+    let (_, _, alpha_path) = read_qid(alpha_completion.payload(), 2);
+
+    let link = decoded_request(VIRTIO_9P_TLINK, 3, p9_link_payload(1, 2, b"beta.txt"));
+    let link_completion = device.execute_at(12, link).unwrap();
+    assert_eq!(link_completion.message_type(), VIRTIO_9P_RLINK);
+
+    let walk_beta = decoded_request(VIRTIO_9P_TWALK, 4, p9_walk_payload(1, 3, &[b"beta.txt"]));
+    let beta_completion = device.execute_at(13, walk_beta).unwrap();
+    assert_eq!(read_qid(beta_completion.payload(), 2).2, alpha_path);
+
+    let open_beta = decoded_request(
+        VIRTIO_9P_TOPEN,
+        5,
+        p9_open_payload(
+            3,
+            VIRTIO_9P_OPEN_READ_WRITE | VIRTIO_9P_OPEN_REMOVE_ON_CLOSE,
+        ),
+    );
+    let open_beta_completion = device.execute_at(14, open_beta).unwrap();
+    assert_eq!(open_beta_completion.message_type(), VIRTIO_9P_ROPEN);
+
+    let clunk_beta = decoded_request(VIRTIO_9P_TCLUNK, 6, p9_clunk_payload(3));
+    let clunk_completion = device.execute_at(15, clunk_beta).unwrap();
+    assert_eq!(clunk_completion.message_type(), VIRTIO_9P_RCLUNK);
+
+    let walk_removed = decoded_request(VIRTIO_9P_TWALK, 7, p9_walk_payload(1, 4, &[b"beta.txt"]));
+    let removed_completion = device.execute_at(16, walk_removed).unwrap();
+    assert_eq!(removed_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(removed_completion.payload(), VIRTIO_9P_ENOENT.to_le_bytes());
+
+    let open_alpha = decoded_request(
+        VIRTIO_9P_TOPEN,
+        8,
+        p9_open_payload(2, VIRTIO_9P_OPEN_READ_ONLY),
+    );
+    let open_alpha_completion = device.execute_at(17, open_alpha).unwrap();
+    assert_eq!(open_alpha_completion.message_type(), VIRTIO_9P_ROPEN);
+
+    let read_alpha = decoded_request(VIRTIO_9P_TREAD, 9, p9_read_payload(2, 0, 16));
+    let read_alpha_completion = device.execute_at(18, read_alpha).unwrap();
+    assert_eq!(read_alpha_completion.message_type(), VIRTIO_9P_RREAD);
+    assert_eq!(read_counted_data(read_alpha_completion.payload()), b"alpha");
 }
 
 #[test]

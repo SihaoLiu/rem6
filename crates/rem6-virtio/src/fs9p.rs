@@ -335,6 +335,24 @@ impl Virtio9pDevice {
             .remove_node(node);
     }
 
+    fn remove_node_for_fid_path(
+        &self,
+        node: Virtio9pNodeId,
+        fid_path: Option<&Virtio9pFidPath>,
+    ) -> Result<(), u32> {
+        if node == Virtio9pNodeId::Root {
+            return Err(VIRTIO_9P_EBADF);
+        }
+        self.namespace
+            .lock()
+            .expect("virtio 9p namespace lock")
+            .remove_node_by_fid_path(node, fid_path)?;
+        if self.node_is_removed(node) {
+            self.remove_fids_for_node(node);
+        }
+        Ok(())
+    }
+
     fn move_fid_paths(&self, old_path: &Virtio9pFidPath, new_path: &Virtio9pFidPath) {
         for fid in self.fids.lock().expect("virtio 9p fid lock").values_mut() {
             fid.move_path(old_path, new_path);

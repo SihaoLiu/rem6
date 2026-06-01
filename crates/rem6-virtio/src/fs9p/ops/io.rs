@@ -1,5 +1,4 @@
 use crate::fs9p_device_helpers::{counted_data_payload, read_data_slice};
-use crate::fs9p_namespace::Virtio9pNodeId;
 use crate::fs9p_protocol::*;
 use crate::{Virtio9pRequest, VirtioError};
 
@@ -93,21 +92,7 @@ impl Virtio9pDevice {
             let Some(node) = removed.node() else {
                 return Ok(Err(VIRTIO_9P_EBADF));
             };
-            let remove_result = if node == Virtio9pNodeId::Root {
-                Err(VIRTIO_9P_EBADF)
-            } else {
-                let mut namespace = self.namespace.lock().expect("virtio 9p namespace lock");
-                namespace.remove_node_by_fid_path(node, removed.path())
-            };
-            return match remove_result {
-                Ok(_) => {
-                    if self.node_is_removed(node) {
-                        self.remove_fids_for_node(node);
-                    }
-                    Ok(Ok(()))
-                }
-                Err(error) => Ok(Err(error)),
-            };
+            return Ok(self.remove_node_for_fid_path(node, removed.path()));
         }
         if let Some((node, name, data, policy)) = removed.into_xattr_commit() {
             if let Err(errno) = self
@@ -142,21 +127,7 @@ impl Virtio9pDevice {
         let Some(node) = fid.node() else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
-        let remove_result = if node == Virtio9pNodeId::Root {
-            Err(VIRTIO_9P_EBADF)
-        } else {
-            let mut namespace = self.namespace.lock().expect("virtio 9p namespace lock");
-            namespace.remove_node_by_fid_path(node, fid.path())
-        };
-        match remove_result {
-            Ok(_) => {
-                if self.node_is_removed(node) {
-                    self.remove_fids_for_node(node);
-                }
-                Ok(Ok(()))
-            }
-            Err(error) => Ok(Err(error)),
-        }
+        Ok(self.remove_node_for_fid_path(node, fid.path()))
     }
 
     pub(in crate::fs9p) fn handle_readdir(

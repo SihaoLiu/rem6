@@ -1292,7 +1292,8 @@ Implementation evidence through 2026-06-01:
   fid path identity, treats same-file hard-link target names as no-ops, rejects
   stale hard-link rename fids before mutation, and rejects stale fids before
   mutation, `Tlopen` and legacy
-  `Topen` mark file and directory fids open, report qid plus I/O-unit data,
+  `Topen` mark file and allowed-mode directory fids open, report qid plus
+  I/O-unit data,
   and enforce read-only, write-only, read-write, and execute-only access bits,
   reject write-mode directory opens before changing fid state,
   reject attempts to reopen already-open fids before access-mode mutation,
@@ -3329,12 +3330,13 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   same-file hard-link target no-ops, old-name rejection, new-name walk qid
   preservation,
   stale-fid errno replies, and malformed
-  stat-blob rejection, `Tlopen` and legacy `Topen` file and directory qid plus
+  stat-blob rejection, `Tlopen` and legacy `Topen` file and allowed-mode directory qid plus
   I/O-unit replies, access-mode checks for read-only, write-only, read-write,
-  and execute-only opened fids, write-mode directory-open rejection without
-  changing fid state, reopen rejection before access-mode mutation, `Tlopen`
+  and execute-only opened fids, root and child-directory write-mode open
+  rejection without changing fid state, reopen rejection before access-mode mutation, `Tlopen`
   truncate and append flag handling,
-  legacy `Topen` truncate, remove-on-close, and append mode handling, legacy
+  legacy `Topen` truncate, remove-on-close, hard-link remove-on-close, and
+  append mode handling, legacy
   `Tcreate` and `Tlcreate` opened-fid access-mode and append-mode propagation,
   legacy `Tcreate` remove-on-close handling, create-on-open-fid rejection without
   namespace mutation, legacy `Tcreate` checked file creation, duplicate-file
