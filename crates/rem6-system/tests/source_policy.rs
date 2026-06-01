@@ -59,6 +59,23 @@ fn workload_replay_data_cache_backend_lives_in_focused_module() {
     );
 }
 
+#[test]
+fn workload_replay_summary_tests_live_in_focused_module() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let summary_rs = fs::read_to_string(crate_dir.join("src/workload_replay/summary.rs")).unwrap();
+    let tests_rs =
+        crate_dir.join("src/workload_replay/summary/parallel_execution_summary_tests.rs");
+
+    assert!(
+        tests_rs.exists(),
+        "workload replay summary tests belong in src/workload_replay/summary/parallel_execution_summary_tests.rs"
+    );
+    assert!(
+        !summary_rs.contains("mod tests {"),
+        "src/workload_replay/summary.rs should delegate large summary tests to a focused module"
+    );
+}
+
 fn rust_source_files(root: &Path) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     collect_rust_source_files(root, &mut paths);
