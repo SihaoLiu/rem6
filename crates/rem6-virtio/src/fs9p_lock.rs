@@ -62,12 +62,19 @@ impl Virtio9pLockTable {
     }
 
     fn unlock(&mut self, node: Virtio9pNodeId, request: &Virtio9pLockRequest) {
-        self.locks.retain(|lock| {
-            lock.node != node
-                || lock.proc_id != request.proc_id
-                || lock.client_id != request.client_id
-                || !ranges_overlap(lock.start, lock.length, request.start, request.length)
-        });
+        let mut remaining = Vec::with_capacity(self.locks.len());
+        for lock in self.locks.drain(..) {
+            if lock.node == node
+                && lock.proc_id == request.proc_id
+                && lock.client_id == request.client_id
+                && ranges_overlap(lock.start, lock.length, request.start, request.length)
+            {
+                lock.push_unlocked_ranges(request.start, request.length, &mut remaining);
+            } else {
+                remaining.push(lock);
+            }
+        }
+        self.locks = remaining;
     }
 
     fn conflict(
@@ -109,6 +116,44 @@ impl Virtio9pHeldLock {
             client_id: request.client_id.clone(),
         }
     }
+
+    fn push_unlocked_ranges(&self, unlock_start: u64, unlock_length: u64, output: &mut Vec<Self>) {
+        let held_end = lock_end(self.start, self.length);
+        if self.start < unlock_start {
+            push_lock_range(self, self.start, Some(unlock_start), output);
+        }
+        let Some(unlock_end) = lock_end(unlock_start, unlock_length) else {
+            return;
+        };
+        let has_right_range = match held_end {
+            Some(end) => unlock_end < end,
+            None => true,
+        };
+        if has_right_range {
+            push_lock_range(self, unlock_end.max(self.start), held_end, output);
+        }
+    }
+}
+
+fn push_lock_range(
+    template: &Virtio9pHeldLock,
+    start: u64,
+    end: Option<u64>,
+    output: &mut Vec<Virtio9pHeldLock>,
+) {
+    let Some(length) = lock_length(start, end) else {
+        return;
+    };
+    output.push(Virtio9pHeldLock {
+        node: template.node,
+        fid: template.fid,
+        lock_type: template.lock_type,
+        flags: template.flags,
+        start,
+        length,
+        proc_id: template.proc_id,
+        client_id: template.client_id.clone(),
+    });
 }
 
 const fn lock_types_conflict(left: u8, right: u8) -> bool {
@@ -125,4 +170,12 @@ fn ranges_overlap(left_start: u64, left_length: u64, right_start: u64, right_len
 
 fn lock_end(start: u64, length: u64) -> Option<u64> {
     (length != 0).then(|| start.saturating_add(length))
+}
+
+fn lock_length(start: u64, end: Option<u64>) -> Option<u64> {
+    match end {
+        Some(end) if start < end => Some(end - start),
+        Some(_) => None,
+        None => Some(0),
+    }
 }

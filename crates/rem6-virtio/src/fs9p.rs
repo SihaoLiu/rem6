@@ -1106,6 +1106,10 @@ impl Virtio9pDevice {
                 .lock()
                 .expect("virtio 9p fid lock")
                 .remove(&remove_fid);
+            self.locks
+                .lock()
+                .expect("virtio 9p lock table")
+                .remove_fid(remove_fid);
             if self.node_is_removed(node) {
                 self.remove_fids_for_node(node);
             }

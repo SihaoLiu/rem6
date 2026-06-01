@@ -1294,20 +1294,23 @@ Implementation evidence through 2026-05-31:
   only when no linked directory entry remains, removes empty directories only
   when `AT_REMOVEDIR` is present, and rejects non-empty directory removal with
   `ENOTEMPTY`, `Tremove` removes file fids plus their namespace
-  entries, `Tclunk` drops ordinary fid state, releases byte-range locks owned by
-  the clunked fid, and commits pending xattr-write fids, `Tflush` acknowledges
-  old tags without mutating synchronous fid or namespace state, `Tfsync`
-  validates fids before acknowledging writeback
+  entries and releases byte-range locks owned by the removed fid even when a
+  surviving hard link keeps the namespace node live, `Tclunk` drops ordinary fid
+  state, releases byte-range locks owned by the clunked fid, and commits pending
+  xattr-write fids, `Tflush` acknowledges old tags without mutating synchronous
+  fid or namespace state, `Tfsync` validates fids before acknowledging writeback
   intent, `Tlock` accepts advisory lock requests on open file fids, records
   byte-range read and write locks per namespace node and client owner, reports
-  blocked status for incompatible overlapping locks, `Tgetlock` returns the
-  first conflicting lock or a deterministic unlock payload when no conflict
-  exists, `Txattrcreate` converts a target fid into an xattr-write fid with
-  bounded byte writes, honors `XATTR_CREATE` and `XATTR_REPLACE` semantics,
-  rejects invalid flag combinations with `EINVAL`, `Tclunk` persists the value
-  in the deterministic namespace, and `Txattrwalk` returns either a named xattr
-  read fid or a sorted NUL-delimited xattr-name list while rejecting occupied
-  destination fids and returning `ENODATA` for missing names. The 9P
+  blocked status for incompatible overlapping locks, preserves unreleased
+  byte ranges when an unlock request covers only the middle of an existing
+  lock, `Tgetlock` returns the first conflicting lock or a deterministic unlock
+  payload when no conflict exists, `Txattrcreate` converts a target fid into an
+  xattr-write fid with bounded byte writes, honors `XATTR_CREATE` and
+  `XATTR_REPLACE` semantics, rejects invalid flag combinations with `EINVAL`,
+  `Tclunk` persists the value in the deterministic namespace, and `Txattrwalk`
+  returns either a named xattr read fid or a sorted NUL-delimited xattr-name
+  list while rejecting occupied destination fids and returning `ENODATA` for
+  missing names. The 9P
   device entry point delegates
   typed request payload parsing, protocol string payload construction, and
   per-message request structs plus wire constants to a focused protocol module.
@@ -3304,15 +3307,16 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   atime/mtime, size-valid file shrink, zero-filled growth, and metadata
   visibility, stale setattr rejection, directory size-mutation rejection,
   unsupported ctime-mask rejection, advisory `Tlock` success for open file fids,
-  blocked status for overlapping incompatible byte-range locks, explicit unlock
-  requests, `Tgetlock` conflict payloads and no-conflict unlock-payload
-  reporting, `Txattrcreate` value writes and commit-on-clunk persistence with
+  blocked status for overlapping incompatible byte-range locks, full and
+  partial unlock requests, `Tgetlock` conflict payloads and no-conflict
+  unlock-payload reporting, `Txattrcreate` value writes and commit-on-clunk persistence with
   `XATTR_CREATE`/`XATTR_REPLACE` flag handling, `Txattrwalk` named xattr reads,
   xattr-list read fids, occupied-newfid rejection, missing-xattr `ENODATA`,
   invalid-flag `EINVAL`, and stale-fid errors,
-  `Tclunk` fid removal and lock release, `Tflush` no-op acknowledgement without fid mutation,
-  `Tfsync` acknowledgement for existing fids, and stale metadata, directory,
-  create, fsync, write, remove, unlink, and read `Rlerror` handling,
+  `Tclunk` fid removal and lock release, `Tremove` lock release while linked
+  namespace entries survive, `Tflush` no-op acknowledgement without fid
+  mutation, `Tfsync` acknowledgement for existing fids, and stale metadata,
+  directory, create, fsync, write, remove, unlink, and read `Rlerror` handling,
   source-policy coverage for keeping 9P typed payload parsing and wire constants
   out of device dispatch and keeping protocol dispatch below the
   focused-device line budget,
