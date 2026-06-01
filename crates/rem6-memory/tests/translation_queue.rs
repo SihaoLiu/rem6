@@ -259,6 +259,72 @@ fn translation_queue_checkpoint_payload_rejects_extra_entry_record() {
 }
 
 #[test]
+fn translation_queue_checkpoint_payload_rejects_entry_reserved_fields() {
+    let config = TranslationQueueConfig::new(4, 3).unwrap();
+    let mut queue = TranslationQueue::new(config);
+    queue
+        .enqueue(9, request(15, 0x5000, TranslationAccessKind::Store))
+        .unwrap();
+    for offset in [
+        QUEUE_CHECKPOINT_FIRST_ENTRY_RESERVED_OFFSET,
+        QUEUE_CHECKPOINT_FIRST_ENTRY_RESERVED2_OFFSET,
+    ] {
+        let mut payload = TranslationQueueCheckpointPayload::from_snapshot(queue.snapshot())
+            .unwrap()
+            .encode();
+        payload[offset..offset + 4].copy_from_slice(&1_u32.to_le_bytes());
+
+        assert_eq!(
+            TranslationQueueCheckpointPayload::decode(&payload).unwrap_err(),
+            TranslationError::InvalidQueueCheckpointReserved { value: 1 }
+        );
+    }
+}
+
+#[test]
+fn translation_queue_checkpoint_payload_rejects_zero_access_size() {
+    let config = TranslationQueueConfig::new(4, 3).unwrap();
+    let mut queue = TranslationQueue::new(config);
+    queue
+        .enqueue(9, request(15, 0x5000, TranslationAccessKind::Store))
+        .unwrap();
+    let mut payload = TranslationQueueCheckpointPayload::from_snapshot(queue.snapshot())
+        .unwrap()
+        .encode();
+    payload[QUEUE_CHECKPOINT_FIRST_ENTRY_SIZE_OFFSET..QUEUE_CHECKPOINT_FIRST_ENTRY_SIZE_OFFSET + 8]
+        .copy_from_slice(&0_u64.to_le_bytes());
+
+    assert_eq!(
+        TranslationQueueCheckpointPayload::decode(&payload).unwrap_err(),
+        TranslationError::InvalidQueueCheckpointAccessSize { bytes: 0 }
+    );
+}
+
+#[test]
+fn translation_queue_checkpoint_payload_rejects_forged_ready_tick() {
+    let config = TranslationQueueConfig::new(4, 3).unwrap();
+    let mut queue = TranslationQueue::new(config);
+    let store = request(15, 0x5000, TranslationAccessKind::Store);
+    queue.enqueue(9, store.clone()).unwrap();
+    let mut payload = TranslationQueueCheckpointPayload::from_snapshot(queue.snapshot())
+        .unwrap()
+        .encode();
+    payload[QUEUE_CHECKPOINT_FIRST_ENTRY_READY_TICK_OFFSET
+        ..QUEUE_CHECKPOINT_FIRST_ENTRY_READY_TICK_OFFSET + 8]
+        .copy_from_slice(&11_u64.to_le_bytes());
+
+    assert_eq!(
+        TranslationQueueCheckpointPayload::decode(&payload).unwrap_err(),
+        TranslationError::SnapshotReadyTickMismatch {
+            request: store.id(),
+            issue_tick: 9,
+            latency: 3,
+            ready_tick: 11,
+        }
+    );
+}
+
+#[test]
 fn translation_queue_checkpoint_payload_rejects_duplicate_request_ids() {
     let config = TranslationQueueConfig::new(4, 3).unwrap();
     let mut queue = TranslationQueue::new(config);
@@ -287,8 +353,9 @@ fn translation_queue_checkpoint_payload_rejects_invalid_access_code() {
     let mut payload = TranslationQueueCheckpointPayload::from_snapshot(queue.snapshot())
         .unwrap()
         .encode();
-    let access_offset = 44;
-    payload[access_offset..access_offset + 4].copy_from_slice(&99_u32.to_le_bytes());
+    payload[QUEUE_CHECKPOINT_FIRST_ENTRY_ACCESS_OFFSET
+        ..QUEUE_CHECKPOINT_FIRST_ENTRY_ACCESS_OFFSET + 4]
+        .copy_from_slice(&99_u32.to_le_bytes());
 
     assert_eq!(
         TranslationQueueCheckpointPayload::decode(&payload).unwrap_err(),
@@ -371,6 +438,14 @@ const QUEUE_CHECKPOINT_ENTRY_SIZE: usize = 64;
 const QUEUE_CHECKPOINT_VERSION_OFFSET: usize = 4;
 const QUEUE_CHECKPOINT_COUNT_OFFSET: usize = 32;
 const QUEUE_CHECKPOINT_RESERVED_OFFSET: usize = 36;
+const QUEUE_CHECKPOINT_FIRST_ENTRY_OFFSET: usize = QUEUE_CHECKPOINT_HEADER_SIZE;
+const QUEUE_CHECKPOINT_FIRST_ENTRY_ACCESS_OFFSET: usize = QUEUE_CHECKPOINT_FIRST_ENTRY_OFFSET + 4;
+const QUEUE_CHECKPOINT_FIRST_ENTRY_RESERVED_OFFSET: usize = QUEUE_CHECKPOINT_FIRST_ENTRY_OFFSET + 8;
+const QUEUE_CHECKPOINT_FIRST_ENTRY_RESERVED2_OFFSET: usize =
+    QUEUE_CHECKPOINT_FIRST_ENTRY_OFFSET + 12;
+const QUEUE_CHECKPOINT_FIRST_ENTRY_SIZE_OFFSET: usize = QUEUE_CHECKPOINT_FIRST_ENTRY_OFFSET + 32;
+const QUEUE_CHECKPOINT_FIRST_ENTRY_READY_TICK_OFFSET: usize =
+    QUEUE_CHECKPOINT_FIRST_ENTRY_OFFSET + 48;
 
 fn duplicate_first_queue_checkpoint_entry(mut payload: Vec<u8>) -> Vec<u8> {
     let count_offset = 32;
