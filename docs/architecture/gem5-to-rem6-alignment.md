@@ -1271,7 +1271,8 @@ Implementation evidence through 2026-05-31:
   directories into new fid state, handles `.` and `..` directory components
   with root-clamped parent traversal, returns partial qid vectors without
   binding the destination fid when later components miss, rejects occupied
-  destination fids, rejects overlong element vectors and path elements longer
+  destination fids, rejects opened non-directory source fids without binding
+  the destination fid, rejects overlong element vectors and path elements longer
   than the advertised `statfs` `namelen` before state mutation, rejects
   non-empty same-fid rebinding, and preserves empty same-fid walk replies,
   `Tmkdir` creates deterministic directory qids and rejects duplicate names with
@@ -3308,7 +3309,8 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   rejection with malformed auth parsing errors, in-memory namespace file installation,
   `Twalk` qid-vector replies, missing-name `Rlerror` handling, partial qid
   replies without destination-fid binding, occupied-newfid rejection, `.` and
-  `..` directory component traversal, maximum element-count acceptance plus
+  `..` directory component traversal, opened non-directory source-fid rejection
+  without destination-fid binding, maximum element-count acceptance plus
   over-limit vector rejection and statfs-namelen element rejection before
   completion mutation, same-fid non-empty walk rejection, empty same-fid walk replies,
   `Tmkdir` directory creation, duplicate-name errno replies, directory qid preservation,

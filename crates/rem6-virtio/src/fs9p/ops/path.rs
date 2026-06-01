@@ -68,6 +68,9 @@ impl Virtio9pDevice {
         let Some(mut node) = start.node() else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
+        if start.is_open() && !matches!(node, Virtio9pNodeId::Root | Virtio9pNodeId::Directory(_)) {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        }
         let Some(mut path) = start.path().cloned() else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };

@@ -89,6 +89,40 @@ fn virtio_9p_device_allows_empty_walk_to_same_fid_without_extra_fid() {
 }
 
 #[test]
+fn virtio_9p_device_rejects_walk_from_open_file_fids_without_binding_newfid() {
+    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap())
+        .with_file("alpha.txt", b"alpha".to_vec())
+        .unwrap();
+    let attach = decoded_request(
+        VIRTIO_9P_TATTACH,
+        1,
+        p9_attach_payload(1, VIRTIO_9P_NOFID, b"root", b"", 0),
+    );
+    device.execute_at(10, attach).unwrap();
+
+    let walk_alpha = decoded_request(VIRTIO_9P_TWALK, 2, p9_walk_payload(1, 2, &[b"alpha.txt"]));
+    let walk_completion = device.execute_at(11, walk_alpha).unwrap();
+    assert_eq!(walk_completion.message_type(), VIRTIO_9P_RWALK);
+    let open_alpha = decoded_request(VIRTIO_9P_TLOPEN, 3, p9_lopen_payload(2, 0));
+    let open_completion = device.execute_at(12, open_alpha).unwrap();
+    assert_eq!(open_completion.message_type(), VIRTIO_9P_RLOPEN);
+
+    let open_walk = decoded_request(VIRTIO_9P_TWALK, 4, p9_walk_payload(2, 3, &[]));
+    let open_walk_completion = device.execute_at(13, open_walk).unwrap();
+    assert_eq!(open_walk_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(
+        open_walk_completion.payload(),
+        VIRTIO_9P_EBADF.to_le_bytes()
+    );
+    assert_eq!(device.fid_count(), 2);
+
+    let open_newfid = decoded_request(VIRTIO_9P_TLOPEN, 5, p9_lopen_payload(3, 0));
+    let newfid_completion = device.execute_at(14, open_newfid).unwrap();
+    assert_eq!(newfid_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(newfid_completion.payload(), VIRTIO_9P_EBADF.to_le_bytes());
+}
+
+#[test]
 fn virtio_9p_device_walks_dot_and_dotdot_directory_components() {
     let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap());
     let attach = decoded_request(
