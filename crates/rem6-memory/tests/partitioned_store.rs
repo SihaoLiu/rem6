@@ -367,6 +367,122 @@ fn partitioned_store_checkpoint_payload_rejects_extra_partition_record() {
 }
 
 #[test]
+fn partitioned_store_checkpoint_payload_rejects_partition_record_reserved_field() {
+    let target = MemoryTargetId::new(11);
+    let mut store = PartitionedMemoryStore::new();
+    store.add_partition(target, layout()).unwrap();
+    store
+        .insert_line(target, Address::new(0x1000), line_data(0x10))
+        .unwrap();
+    let mut payload = PartitionedMemoryCheckpointPayload::from_snapshot(store.snapshot())
+        .unwrap()
+        .encode();
+    payload[PARTITION_CHECKPOINT_FIRST_RECORD_RESERVED_OFFSET
+        ..PARTITION_CHECKPOINT_FIRST_RECORD_RESERVED_OFFSET + 4]
+        .copy_from_slice(&1_u32.to_le_bytes());
+
+    assert_eq!(
+        PartitionedMemoryCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::InvalidPartitionCheckpointReserved { value: 1 }
+    );
+}
+
+#[test]
+fn partitioned_store_checkpoint_payload_rejects_truncated_line_payload_record() {
+    let target = MemoryTargetId::new(11);
+    let mut store = PartitionedMemoryStore::new();
+    store.add_partition(target, layout()).unwrap();
+    store
+        .insert_line(target, Address::new(0x1000), line_data(0x10))
+        .unwrap();
+    let mut payload = PartitionedMemoryCheckpointPayload::from_snapshot(store.snapshot())
+        .unwrap()
+        .encode();
+    payload[PARTITION_CHECKPOINT_FIRST_LINE_PAYLOAD_SIZE_OFFSET
+        ..PARTITION_CHECKPOINT_FIRST_LINE_PAYLOAD_SIZE_OFFSET + 8]
+        .copy_from_slice(&97_u64.to_le_bytes());
+
+    assert_eq!(
+        PartitionedMemoryCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::InvalidPartitionCheckpointPayloadSize {
+            expected: PARTITION_CHECKPOINT_HEADER_SIZE
+                + PARTITION_CHECKPOINT_RECORD_HEADER_SIZE
+                + 97,
+            actual: PARTITION_CHECKPOINT_HEADER_SIZE + PARTITION_CHECKPOINT_RECORD_HEADER_SIZE + 96
+        }
+    );
+}
+
+#[test]
+fn partitioned_store_checkpoint_payload_rejects_nested_line_payload_magic() {
+    let target = MemoryTargetId::new(11);
+    let mut store = PartitionedMemoryStore::new();
+    store.add_partition(target, layout()).unwrap();
+    store
+        .insert_line(target, Address::new(0x1000), line_data(0x10))
+        .unwrap();
+    let mut payload = PartitionedMemoryCheckpointPayload::from_snapshot(store.snapshot())
+        .unwrap()
+        .encode();
+    payload[PARTITION_CHECKPOINT_FIRST_LINE_PAYLOAD_OFFSET] = b'X';
+
+    assert_eq!(
+        PartitionedMemoryCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::InvalidLineCheckpointMagic
+    );
+}
+
+#[test]
+fn partitioned_store_checkpoint_payload_rejects_invalid_region_interleave_flag() {
+    let target = MemoryTargetId::new(11);
+    let mut store = PartitionedMemoryStore::new();
+    store.add_partition(target, layout()).unwrap();
+    store
+        .map_region(
+            target,
+            Address::new(0x1000),
+            AccessSize::new(0x1000).unwrap(),
+        )
+        .unwrap();
+    let mut payload = PartitionedMemoryCheckpointPayload::from_snapshot(store.snapshot())
+        .unwrap()
+        .encode();
+    payload[PARTITION_CHECKPOINT_SINGLE_EMPTY_REGION_INTERLEAVE_OFFSET
+        ..PARTITION_CHECKPOINT_SINGLE_EMPTY_REGION_INTERLEAVE_OFFSET + 4]
+        .copy_from_slice(&2_u32.to_le_bytes());
+
+    assert_eq!(
+        PartitionedMemoryCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::InvalidPartitionCheckpointInterleaveFlag { value: 2 }
+    );
+}
+
+#[test]
+fn partitioned_store_checkpoint_payload_rejects_region_record_reserved_field() {
+    let target = MemoryTargetId::new(11);
+    let mut store = PartitionedMemoryStore::new();
+    store.add_partition(target, layout()).unwrap();
+    store
+        .map_region(
+            target,
+            Address::new(0x1000),
+            AccessSize::new(0x1000).unwrap(),
+        )
+        .unwrap();
+    let mut payload = PartitionedMemoryCheckpointPayload::from_snapshot(store.snapshot())
+        .unwrap()
+        .encode();
+    payload[PARTITION_CHECKPOINT_SINGLE_EMPTY_REGION_RESERVED_OFFSET
+        ..PARTITION_CHECKPOINT_SINGLE_EMPTY_REGION_RESERVED_OFFSET + 4]
+        .copy_from_slice(&1_u32.to_le_bytes());
+
+    assert_eq!(
+        PartitionedMemoryCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::InvalidPartitionCheckpointReserved { value: 1 }
+    );
+}
+
+#[test]
 fn partitioned_store_checkpoint_payload_rejects_duplicate_partition_records() {
     let target = MemoryTargetId::new(11);
     let mut store = PartitionedMemoryStore::new();
@@ -680,6 +796,20 @@ const PARTITION_CHECKPOINT_VERSION_OFFSET: usize = 4;
 const PARTITION_CHECKPOINT_COUNT_OFFSET: usize = 8;
 const PARTITION_CHECKPOINT_RESERVED_OFFSET: usize = 16;
 const PARTITION_CHECKPOINT_RESERVED2_OFFSET: usize = 20;
+const PARTITION_CHECKPOINT_FIRST_RECORD_OFFSET: usize = PARTITION_CHECKPOINT_HEADER_SIZE;
+const PARTITION_CHECKPOINT_FIRST_RECORD_RESERVED_OFFSET: usize =
+    PARTITION_CHECKPOINT_FIRST_RECORD_OFFSET + 4;
+const PARTITION_CHECKPOINT_FIRST_LINE_PAYLOAD_SIZE_OFFSET: usize =
+    PARTITION_CHECKPOINT_FIRST_RECORD_OFFSET + 8;
+const PARTITION_CHECKPOINT_FIRST_LINE_PAYLOAD_OFFSET: usize =
+    PARTITION_CHECKPOINT_FIRST_RECORD_OFFSET + PARTITION_CHECKPOINT_RECORD_HEADER_SIZE;
+const PARTITION_CHECKPOINT_EMPTY_LINE_PAYLOAD_SIZE: usize = 24;
+const PARTITION_CHECKPOINT_SINGLE_EMPTY_REGION_OFFSET: usize =
+    PARTITION_CHECKPOINT_FIRST_LINE_PAYLOAD_OFFSET + PARTITION_CHECKPOINT_EMPTY_LINE_PAYLOAD_SIZE;
+const PARTITION_CHECKPOINT_SINGLE_EMPTY_REGION_INTERLEAVE_OFFSET: usize =
+    PARTITION_CHECKPOINT_SINGLE_EMPTY_REGION_OFFSET + 4;
+const PARTITION_CHECKPOINT_SINGLE_EMPTY_REGION_RESERVED_OFFSET: usize =
+    PARTITION_CHECKPOINT_SINGLE_EMPTY_REGION_OFFSET + 28;
 
 fn duplicate_first_partition_checkpoint_record(mut payload: Vec<u8>) -> Vec<u8> {
     let partition_count_offset = 8;
