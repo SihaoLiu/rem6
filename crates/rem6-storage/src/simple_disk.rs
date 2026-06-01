@@ -151,6 +151,9 @@ impl SimpleDiskTransfer {
     }
 
     fn bytes_usize(self) -> Result<usize, SimpleDiskError> {
+        if self.bytes > isize::MAX as u64 {
+            return Err(SimpleDiskError::TransferTooLarge { bytes: self.bytes });
+        }
         usize::try_from(self.bytes)
             .map_err(|_| SimpleDiskError::TransferTooLarge { bytes: self.bytes })
     }

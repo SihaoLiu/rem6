@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use rem6_storage::{
     RawStorageImage, SimpleDisk, SimpleDiskError, SimpleDiskGuestMemory, SimpleDiskTransfer,
-    StorageError, StorageImageLayer, StorageSectorId,
+    StorageError, StorageImageLayer, StorageSectorId, STORAGE_SECTOR_BYTES,
 };
 
 fn sector(byte: u8) -> [u8; 512] {
@@ -68,6 +68,27 @@ impl GuestMemory {
     }
 }
 
+#[derive(Debug)]
+struct HugeStorageImage;
+
+impl StorageImageLayer for HugeStorageImage {
+    fn capacity_sectors(&self) -> u64 {
+        u64::MAX
+    }
+
+    fn read_sector(&self, _sector: StorageSectorId) -> Result<[u8; 512], StorageError> {
+        Ok(sector(0))
+    }
+
+    fn write_sector(&self, _sector: StorageSectorId, _data: [u8; 512]) -> Result<(), StorageError> {
+        Ok(())
+    }
+
+    fn flush(&self) -> Result<(), StorageError> {
+        Ok(())
+    }
+}
+
 #[test]
 fn simple_disk_reads_sectors_into_guest_memory() {
     let image = Arc::new(RawStorageImage::from_bytes(image_bytes(&[0x10, 0x20, 0x30])).unwrap());
@@ -111,6 +132,19 @@ fn simple_disk_writes_guest_memory_to_sectors() {
         [sector(0xaa), sector(0xbb), sector(0x33)].concat()
     );
     assert_eq!(image.flush_count(), 1);
+}
+
+#[test]
+fn simple_disk_rejects_transfer_above_vec_capacity_before_allocation() {
+    let image = Arc::new(HugeStorageImage);
+    let disk = SimpleDisk::new(image.clone() as Arc<dyn StorageImageLayer>);
+    let mut guest = GuestMemory::filled(1, 0);
+    let bytes = (isize::MAX as u64 / STORAGE_SECTOR_BYTES + 1) * STORAGE_SECTOR_BYTES;
+
+    assert!(matches!(
+        disk.read_to_guest(&mut guest, 0, StorageSectorId::new(0), bytes),
+        Err(SimpleDiskError::TransferTooLarge { bytes: actual }) if actual == bytes
+    ));
 }
 
 #[test]
