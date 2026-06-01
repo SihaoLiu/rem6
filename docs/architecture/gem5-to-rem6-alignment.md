@@ -2693,8 +2693,10 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   rejecting nonmonotonic restore LRU counters and same-ASID overlapping restore
   entries so malformed checkpoints cannot reuse an existing stable replacement
   value or create ambiguous lookup ranges. They also cover checkpoint payload
-  binary round trips, duplicate-entry rejection, and address-space overflow
-  rejection through snapshot decode validation.
+  binary round trips, stable checkpoint golden bytes, invalid TLB checkpoint
+  magic, version, reserved-field, payload-size, scope, permissions, page-size,
+  address-space overflow, duplicate-entry, and next-LRU rejection through
+  snapshot decode validation.
 - Memory translation queue tests cover pending-request ready ordering, snapshot
   restore, duplicate rejection, nonmonotonic restore order-counter rejection,
   forged-ready-tick rejection, checkpoint payload binary round trips,
