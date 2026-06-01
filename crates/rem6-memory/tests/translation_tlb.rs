@@ -530,26 +530,90 @@ fn translation_tlb_checkpoint_payload_rejects_overlapping_same_asid_entries() {
 }
 
 #[test]
-fn translation_tlb_checkpoint_payload_rejects_address_space_overflow() {
-    let page_size = TranslationPageSize::new(4096).unwrap();
-    let entry = TranslationTlbEntrySnapshot::new(
-        Address::new(0xffff_0000_f000_0000),
-        Address::new(0x0000_0000_f000_0000),
-        page_size,
-        TranslationPagePermissions::read_write(),
-        1,
-    );
-    let snapshot = TranslationTlbSnapshot::new(
-        TranslationTlbConfig::new(4).unwrap(),
-        vec![entry],
-        2,
-        TranslationTlbStats::new(0, 0, 0, 1, 0),
-    );
-    let mut payload = TranslationTlbCheckpointPayload::from_snapshot(snapshot)
+fn translation_tlb_checkpoint_payload_rejects_entry_reserved_field() {
+    let mut payload = TranslationTlbCheckpointPayload::from_snapshot(single_entry_tlb_snapshot())
         .unwrap()
         .encode();
-    let address_space_offset = 72;
-    payload[address_space_offset..address_space_offset + 4]
+    payload[TLB_CHECKPOINT_FIRST_ENTRY_RESERVED_OFFSET
+        ..TLB_CHECKPOINT_FIRST_ENTRY_RESERVED_OFFSET + 4]
+        .copy_from_slice(&1_u32.to_le_bytes());
+
+    assert_eq!(
+        TranslationTlbCheckpointPayload::decode(&payload).unwrap_err(),
+        TranslationError::InvalidTlbCheckpointReserved { value: 1 }
+    );
+}
+
+#[test]
+fn translation_tlb_checkpoint_payload_rejects_invalid_scope_code() {
+    let mut payload = TranslationTlbCheckpointPayload::from_snapshot(single_entry_tlb_snapshot())
+        .unwrap()
+        .encode();
+    payload[TLB_CHECKPOINT_FIRST_ENTRY_SCOPE_OFFSET..TLB_CHECKPOINT_FIRST_ENTRY_SCOPE_OFFSET + 4]
+        .copy_from_slice(&2_u32.to_le_bytes());
+
+    assert_eq!(
+        TranslationTlbCheckpointPayload::decode(&payload).unwrap_err(),
+        TranslationError::InvalidTlbCheckpointScope { code: 2 }
+    );
+}
+
+#[test]
+fn translation_tlb_checkpoint_payload_rejects_invalid_permission_bits() {
+    let mut payload = TranslationTlbCheckpointPayload::from_snapshot(single_entry_tlb_snapshot())
+        .unwrap()
+        .encode();
+    payload[TLB_CHECKPOINT_FIRST_ENTRY_PERMISSIONS_OFFSET
+        ..TLB_CHECKPOINT_FIRST_ENTRY_PERMISSIONS_OFFSET + 4]
+        .copy_from_slice(&8_u32.to_le_bytes());
+
+    assert_eq!(
+        TranslationTlbCheckpointPayload::decode(&payload).unwrap_err(),
+        TranslationError::InvalidTlbCheckpointPermissions { code: 8 }
+    );
+}
+
+#[test]
+fn translation_tlb_checkpoint_payload_rejects_zero_page_size() {
+    let mut payload = TranslationTlbCheckpointPayload::from_snapshot(single_entry_tlb_snapshot())
+        .unwrap()
+        .encode();
+    payload[TLB_CHECKPOINT_FIRST_ENTRY_PAGE_SIZE_OFFSET
+        ..TLB_CHECKPOINT_FIRST_ENTRY_PAGE_SIZE_OFFSET + 8]
+        .copy_from_slice(&0_u64.to_le_bytes());
+
+    assert_eq!(
+        TranslationTlbCheckpointPayload::decode(&payload).unwrap_err(),
+        TranslationError::ZeroPageSize
+    );
+}
+
+#[test]
+fn translation_tlb_checkpoint_payload_rejects_last_used_after_next_lru() {
+    let mut payload = TranslationTlbCheckpointPayload::from_snapshot(single_entry_tlb_snapshot())
+        .unwrap()
+        .encode();
+    payload[TLB_CHECKPOINT_FIRST_ENTRY_LAST_USED_OFFSET
+        ..TLB_CHECKPOINT_FIRST_ENTRY_LAST_USED_OFFSET + 8]
+        .copy_from_slice(&2_u64.to_le_bytes());
+
+    assert_eq!(
+        TranslationTlbCheckpointPayload::decode(&payload).unwrap_err(),
+        TranslationError::SnapshotNextLruTooSmall {
+            next_lru: 2,
+            virtual_page: Address::new(0xffff_0000_f000_0000),
+            last_used: 2,
+        }
+    );
+}
+
+#[test]
+fn translation_tlb_checkpoint_payload_rejects_address_space_overflow() {
+    let mut payload = TranslationTlbCheckpointPayload::from_snapshot(single_entry_tlb_snapshot())
+        .unwrap()
+        .encode();
+    payload[TLB_CHECKPOINT_FIRST_ENTRY_ADDRESS_SPACE_OFFSET
+        ..TLB_CHECKPOINT_FIRST_ENTRY_ADDRESS_SPACE_OFFSET + 4]
         .copy_from_slice(&65_536_u32.to_le_bytes());
 
     assert_eq!(
@@ -631,6 +695,30 @@ const TLB_CHECKPOINT_ENTRY_SIZE: usize = 48;
 const TLB_CHECKPOINT_VERSION_OFFSET: usize = 4;
 const TLB_CHECKPOINT_RESERVED_OFFSET: usize = 64;
 const TLB_CHECKPOINT_COUNT_OFFSET: usize = 68;
+const TLB_CHECKPOINT_FIRST_ENTRY_OFFSET: usize = TLB_CHECKPOINT_HEADER_SIZE;
+const TLB_CHECKPOINT_FIRST_ENTRY_ADDRESS_SPACE_OFFSET: usize = TLB_CHECKPOINT_FIRST_ENTRY_OFFSET;
+const TLB_CHECKPOINT_FIRST_ENTRY_SCOPE_OFFSET: usize = TLB_CHECKPOINT_FIRST_ENTRY_OFFSET + 4;
+const TLB_CHECKPOINT_FIRST_ENTRY_PERMISSIONS_OFFSET: usize = TLB_CHECKPOINT_FIRST_ENTRY_OFFSET + 8;
+const TLB_CHECKPOINT_FIRST_ENTRY_RESERVED_OFFSET: usize = TLB_CHECKPOINT_FIRST_ENTRY_OFFSET + 12;
+const TLB_CHECKPOINT_FIRST_ENTRY_PAGE_SIZE_OFFSET: usize = TLB_CHECKPOINT_FIRST_ENTRY_OFFSET + 32;
+const TLB_CHECKPOINT_FIRST_ENTRY_LAST_USED_OFFSET: usize = TLB_CHECKPOINT_FIRST_ENTRY_OFFSET + 40;
+
+fn single_entry_tlb_snapshot() -> TranslationTlbSnapshot {
+    let page_size = TranslationPageSize::new(4096).unwrap();
+    let entry = TranslationTlbEntrySnapshot::new(
+        Address::new(0xffff_0000_f000_0000),
+        Address::new(0x0000_0000_f000_0000),
+        page_size,
+        TranslationPagePermissions::read_write(),
+        1,
+    );
+    TranslationTlbSnapshot::new(
+        TranslationTlbConfig::new(4).unwrap(),
+        vec![entry],
+        2,
+        TranslationTlbStats::new(0, 0, 0, 1, 0),
+    )
+}
 
 fn duplicate_first_tlb_checkpoint_entry(mut payload: Vec<u8>) -> Vec<u8> {
     let count_offset = 68;
