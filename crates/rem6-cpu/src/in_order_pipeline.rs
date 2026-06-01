@@ -283,6 +283,52 @@ pub struct InOrderPipelineCycleRecord {
     after: InOrderPipelineSnapshot,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InOrderPipelineCycleSummary {
+    cycle: u64,
+    advanced_count: usize,
+    retired_count: usize,
+    flushed_count: usize,
+    resource_blocked_count: usize,
+    ordering_blocked_count: usize,
+    state_changed: bool,
+    redirect_target_pc: Option<u64>,
+}
+
+impl InOrderPipelineCycleSummary {
+    pub const fn cycle(self) -> u64 {
+        self.cycle
+    }
+
+    pub const fn advanced_count(self) -> usize {
+        self.advanced_count
+    }
+
+    pub const fn retired_count(self) -> usize {
+        self.retired_count
+    }
+
+    pub const fn flushed_count(self) -> usize {
+        self.flushed_count
+    }
+
+    pub const fn resource_blocked_count(self) -> usize {
+        self.resource_blocked_count
+    }
+
+    pub const fn ordering_blocked_count(self) -> usize {
+        self.ordering_blocked_count
+    }
+
+    pub const fn state_changed(self) -> bool {
+        self.state_changed
+    }
+
+    pub const fn redirect_target_pc(self) -> Option<u64> {
+        self.redirect_target_pc
+    }
+}
+
 impl InOrderPipelineCycleRecord {
     pub const fn cycle(&self) -> u64 {
         self.cycle
@@ -298,6 +344,26 @@ impl InOrderPipelineCycleRecord {
 
     pub const fn after(&self) -> &InOrderPipelineSnapshot {
         &self.after
+    }
+
+    pub fn summary(&self) -> InOrderPipelineCycleSummary {
+        let retired_count = self
+            .plan
+            .advanced()
+            .iter()
+            .filter(|advance| advance.retires())
+            .count();
+
+        InOrderPipelineCycleSummary {
+            cycle: self.cycle,
+            advanced_count: self.plan.advanced().len(),
+            retired_count,
+            flushed_count: self.plan.flushed().len(),
+            resource_blocked_count: self.plan.resource_blocked().len(),
+            ordering_blocked_count: self.plan.ordering_blocked().len(),
+            state_changed: self.before.in_flight() != self.after.in_flight(),
+            redirect_target_pc: self.plan.redirect().map(|redirect| redirect.target_pc()),
+        }
     }
 }
 

@@ -334,6 +334,58 @@ fn in_order_pipeline_recorded_cycle_preserves_before_plan_and_after_snapshots() 
 }
 
 #[test]
+fn in_order_pipeline_cycle_summary_counts_recorded_work() {
+    let mut state = InOrderPipelineState::new(config_with_decode_width(1));
+    state
+        .replace_in_flight([
+            instruction(9, InOrderPipelineStage::Commit),
+            instruction(10, InOrderPipelineStage::Decode),
+            instruction(11, InOrderPipelineStage::Decode),
+            instruction(12, InOrderPipelineStage::Execute),
+        ])
+        .unwrap();
+
+    let summary = state.advance_cycle_recorded().summary();
+
+    assert_eq!(summary.cycle(), 0);
+    assert_eq!(summary.advanced_count(), 2);
+    assert_eq!(summary.retired_count(), 1);
+    assert_eq!(summary.flushed_count(), 0);
+    assert_eq!(summary.resource_blocked_count(), 1);
+    assert_eq!(summary.ordering_blocked_count(), 1);
+    assert!(summary.state_changed());
+    assert_eq!(summary.redirect_target_pc(), None);
+}
+
+#[test]
+fn in_order_pipeline_cycle_summary_records_redirect_target() {
+    let mut state = InOrderPipelineState::new(config_with_decode_width(1));
+    state
+        .replace_in_flight([
+            instruction(29, InOrderPipelineStage::Commit),
+            instruction(30, InOrderPipelineStage::Execute),
+            instruction(31, InOrderPipelineStage::Decode),
+            instruction(32, InOrderPipelineStage::Fetch2),
+        ])
+        .unwrap();
+    let redirect = InOrderBranchRedirect::new(30, InOrderPipelineStage::Execute, 0x2000);
+
+    let summary = state
+        .try_advance_cycle_recorded_with_redirect(Some(redirect))
+        .unwrap()
+        .summary();
+
+    assert_eq!(summary.cycle(), 0);
+    assert_eq!(summary.advanced_count(), 2);
+    assert_eq!(summary.retired_count(), 1);
+    assert_eq!(summary.flushed_count(), 2);
+    assert_eq!(summary.resource_blocked_count(), 0);
+    assert_eq!(summary.ordering_blocked_count(), 0);
+    assert!(summary.state_changed());
+    assert_eq!(summary.redirect_target_pc(), Some(0x2000));
+}
+
+#[test]
 fn in_order_pipeline_config_rejects_zero_missing_and_duplicate_widths() {
     assert_eq!(
         InOrderPipelineStageWidth::new(InOrderPipelineStage::Execute, 0).unwrap_err(),
