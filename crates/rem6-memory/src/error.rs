@@ -113,6 +113,25 @@ pub enum MemoryError {
         value: usize,
         maximum: usize,
     },
+    InvalidDecoderCheckpointPayloadSize {
+        expected: usize,
+        actual: usize,
+    },
+    InvalidDecoderCheckpointMagic,
+    UnsupportedDecoderCheckpointVersion {
+        version: u32,
+    },
+    InvalidDecoderCheckpointReserved {
+        value: u32,
+    },
+    InvalidDecoderCheckpointInterleaveFlag {
+        value: u32,
+    },
+    DecoderCheckpointValueTooLarge {
+        field: &'static str,
+        value: usize,
+        maximum: usize,
+    },
     UnmappedAddress {
         address: Address,
     },
@@ -328,6 +347,34 @@ impl fmt::Display for MemoryError {
             } => write!(
                 formatter,
                 "partitioned-memory checkpoint {field} value {value} exceeds maximum {maximum}"
+            ),
+            Self::InvalidDecoderCheckpointPayloadSize { expected, actual } => write!(
+                formatter,
+                "address-decoder checkpoint payload has {actual} bytes; expected {expected}"
+            ),
+            Self::InvalidDecoderCheckpointMagic => write!(
+                formatter,
+                "address-decoder checkpoint payload has invalid magic"
+            ),
+            Self::UnsupportedDecoderCheckpointVersion { version } => write!(
+                formatter,
+                "address-decoder checkpoint payload version {version} is not supported"
+            ),
+            Self::InvalidDecoderCheckpointReserved { value } => write!(
+                formatter,
+                "address-decoder checkpoint reserved field has nonzero value {value}"
+            ),
+            Self::InvalidDecoderCheckpointInterleaveFlag { value } => write!(
+                formatter,
+                "address-decoder checkpoint interleave flag {value} is invalid"
+            ),
+            Self::DecoderCheckpointValueTooLarge {
+                field,
+                value,
+                maximum,
+            } => write!(
+                formatter,
+                "address-decoder checkpoint {field} value {value} exceeds maximum {maximum}"
             ),
             Self::UnmappedAddress { address } => {
                 write!(formatter, "address {:#x} is not mapped", address.get())

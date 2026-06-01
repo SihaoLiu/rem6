@@ -1,6 +1,7 @@
 use rem6_memory::{
-    AccessSize, Address, AddressDecoder, AddressInterleave, AddressMapRegion, AddressRange,
-    AgentId, CacheLineLayout, MemoryError, MemoryRequest, MemoryRequestId, MemoryTargetId,
+    AccessSize, Address, AddressDecoder, AddressDecoderCheckpointPayload, AddressInterleave,
+    AddressMapRegion, AddressRange, AgentId, CacheLineLayout, MemoryError, MemoryRequest,
+    MemoryRequestId, MemoryTargetId,
 };
 
 fn layout() -> CacheLineLayout {
@@ -240,4 +241,102 @@ fn address_decoder_rejects_ambiguous_mapped_region_overlap() {
             .unwrap_err(),
         MemoryError::OverlappingAddressRegion { .. }
     ));
+}
+
+#[test]
+fn address_decoder_checkpoint_payload_round_trips_sparse_and_interleaved_regions() {
+    let sparse_target = MemoryTargetId::new(8);
+    let sparse_base =
+        AddressRange::new(Address::new(0x0000), AccessSize::new(0x500).unwrap()).unwrap();
+    let sparse_hole =
+        AddressRange::new(Address::new(0x0300), AccessSize::new(0x100).unwrap()).unwrap();
+    let interleaved_base =
+        AddressRange::new(Address::new(0x1000), AccessSize::new(0x300).unwrap()).unwrap();
+    let mut decoder = AddressDecoder::new();
+    decoder
+        .insert_region(
+            sparse_target,
+            AddressMapRegion::new(sparse_base)
+                .with_holes(vec![sparse_hole])
+                .unwrap(),
+        )
+        .unwrap();
+    for channel in 0..3 {
+        decoder
+            .insert_region(
+                MemoryTargetId::new(20 + channel),
+                AddressMapRegion::new(interleaved_base)
+                    .with_interleave(
+                        AddressInterleave::modulo(AccessSize::new(64).unwrap(), 3, channel)
+                            .unwrap(),
+                    )
+                    .unwrap(),
+            )
+            .unwrap();
+    }
+    let snapshot = decoder.snapshot();
+    let payload = AddressDecoderCheckpointPayload::from_snapshot(snapshot.clone()).unwrap();
+
+    let decoded = AddressDecoderCheckpointPayload::decode(payload.encode().as_slice()).unwrap();
+    let restored = AddressDecoder::from_snapshot(decoded.snapshot()).unwrap();
+
+    assert_eq!(decoded.snapshot(), &snapshot);
+    assert_eq!(
+        restored
+            .decode_detail(Address::new(0x0400))
+            .unwrap()
+            .offset(),
+        0x0300
+    );
+    assert_eq!(
+        restored
+            .decode_detail(Address::new(0x10c0))
+            .unwrap()
+            .target(),
+        MemoryTargetId::new(20)
+    );
+    assert_eq!(
+        restored
+            .decode_detail(Address::new(0x1100))
+            .unwrap()
+            .target(),
+        MemoryTargetId::new(21)
+    );
+}
+
+#[test]
+fn address_decoder_checkpoint_payload_rejects_overlapping_region_records() {
+    let mut decoder = AddressDecoder::new();
+    decoder
+        .insert(
+            MemoryTargetId::new(1),
+            Address::new(0x1000),
+            AccessSize::new(0x1000).unwrap(),
+        )
+        .unwrap();
+    let payload = AddressDecoderCheckpointPayload::from_snapshot(decoder.snapshot())
+        .unwrap()
+        .encode();
+    let duplicate_payload = duplicate_first_decoder_checkpoint_region(payload);
+
+    assert_eq!(
+        AddressDecoderCheckpointPayload::decode(&duplicate_payload).unwrap_err(),
+        MemoryError::OverlappingAddressRegion {
+            existing: AddressRange::new(Address::new(0x1000), AccessSize::new(0x1000).unwrap())
+                .unwrap(),
+            requested: AddressRange::new(Address::new(0x1000), AccessSize::new(0x1000).unwrap())
+                .unwrap(),
+        }
+    );
+}
+
+fn duplicate_first_decoder_checkpoint_region(mut payload: Vec<u8>) -> Vec<u8> {
+    let region_count_offset = 8;
+    payload[region_count_offset..region_count_offset + 4].copy_from_slice(&2_u32.to_le_bytes());
+    let first_region_offset = 20;
+    let region_record_bytes = 32;
+    let first_region =
+        payload[first_region_offset..first_region_offset + region_record_bytes].to_vec();
+    payload.splice(first_region_offset..first_region_offset, first_region);
+    payload
 }

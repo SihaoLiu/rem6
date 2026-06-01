@@ -236,9 +236,37 @@ pub struct AddressDecoder {
     regions: Vec<(MemoryTargetId, AddressMapRegion)>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AddressDecoderSnapshot {
+    regions: Vec<(MemoryTargetId, AddressMapRegion)>,
+}
+
+impl AddressDecoderSnapshot {
+    pub fn new(regions: Vec<(MemoryTargetId, AddressMapRegion)>) -> Self {
+        Self { regions }
+    }
+
+    pub fn regions(&self) -> &[(MemoryTargetId, AddressMapRegion)] {
+        &self.regions
+    }
+}
+
 impl AddressDecoder {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn from_snapshot(snapshot: &AddressDecoderSnapshot) -> Result<Self, MemoryError> {
+        let mut decoder = Self::new();
+        for (target, region) in snapshot.regions() {
+            decoder.insert_region(*target, region.clone())?;
+        }
+        Ok(decoder)
+    }
+
+    pub fn restore(&mut self, snapshot: &AddressDecoderSnapshot) -> Result<(), MemoryError> {
+        *self = Self::from_snapshot(snapshot)?;
+        Ok(())
     }
 
     pub fn insert(
@@ -352,5 +380,9 @@ impl AddressDecoder {
 
     pub fn regions(&self) -> &[(MemoryTargetId, AddressMapRegion)] {
         &self.regions
+    }
+
+    pub fn snapshot(&self) -> AddressDecoderSnapshot {
+        AddressDecoderSnapshot::new(self.regions.clone())
     }
 }

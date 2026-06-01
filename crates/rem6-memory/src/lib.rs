@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+mod address_checkpoint;
 mod address_map;
 mod error;
 mod line_checkpoint;
@@ -9,7 +10,10 @@ mod request;
 mod translation;
 mod translation_tlb;
 
-pub use address_map::{AddressDecode, AddressDecoder, AddressInterleave, AddressMapRegion};
+pub use address_checkpoint::AddressDecoderCheckpointPayload;
+pub use address_map::{
+    AddressDecode, AddressDecoder, AddressDecoderSnapshot, AddressInterleave, AddressMapRegion,
+};
 pub use error::MemoryError;
 pub use line_checkpoint::LineMemoryCheckpointPayload;
 pub use partition_checkpoint::PartitionedMemoryCheckpointPayload;
