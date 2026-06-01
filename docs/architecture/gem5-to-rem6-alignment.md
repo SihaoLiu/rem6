@@ -3212,7 +3212,7 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   validation, and direct range-crossing rejection without simulator-wide panic.
 - System action tests cover CLINT checkpoint-bank capture and restore through
   host checkpoint manifests for per-hart `msip`, `mtimecmp`, timer assertion,
-  RTC-backed `mtime` state, and malformed checkpoint chunks.
+  and RTC-backed `mtime` state.
 - Platform and topology tests cover declared CLINT hart interrupt routes, CLINT
   MMIO bus routing, declared CLINT reset policy plumbing, and automatic host
   checkpoint-bank attachment for platform CLINT devices.
