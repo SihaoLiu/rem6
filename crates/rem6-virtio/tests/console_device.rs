@@ -285,6 +285,47 @@ fn virtio_split_queue_completes_console_receive_to_guest_memory_and_raises_isr()
 }
 
 #[test]
+fn virtio_split_queue_rejects_console_writeback_before_guest_state_mutates() {
+    let mut store = guest_store();
+    write_guest(
+        &mut store,
+        0x1010,
+        &descriptor(0x1300, 3, VIRTIO_SPLIT_DESC_F_WRITE, 0),
+        1,
+    );
+    write_guest(&mut store, 0x1102, &1_u16.to_le_bytes(), 2);
+    write_guest(&mut store, 0x1104, &1_u16.to_le_bytes(), 3);
+    write_guest(&mut store, 0x1ffa, &0_u16.to_le_bytes(), 4);
+
+    let device = VirtioConsoleDevice::new();
+    device.push_host_input(b"xyz".to_vec());
+    let mut split_queue = VirtioSplitQueue::new(
+        4,
+        Address::new(0x1000),
+        Address::new(0x1100),
+        Address::new(0x1ff8),
+        0,
+    )
+    .unwrap();
+    {
+        let mut guest = VirtioGuestMemory::new(&mut store, layout(), AgentId::new(12));
+        let decoded = split_queue
+            .consume_available_console_receive(&mut guest, queue(0))
+            .unwrap()
+            .unwrap();
+        let completion = device.receive_at(89, decoded.request().clone()).unwrap();
+
+        assert!(split_queue
+            .complete_console_receive(&mut guest, &decoded, &completion)
+            .is_err());
+    }
+
+    assert_eq!(read_guest(&mut store, 0x1300, 3, 100), vec![0; 3]);
+    assert_eq!(read_guest(&mut store, 0x1ffc, 4, 200), vec![0; 4]);
+    assert_eq!(read_guest(&mut store, 0x1ffa, 2, 300), vec![0; 2]);
+}
+
+#[test]
 fn virtio_split_queue_completes_console_transmit_from_guest_memory_and_raises_isr() {
     let mut store = guest_store();
     write_guest(&mut store, 0x1400, b"he", 1);

@@ -552,6 +552,20 @@ impl VirtioSplitDescriptorChain {
     }
 }
 
+fn console_descriptor_write_target(
+    write: &VirtioConsoleDescriptorWrite,
+) -> Result<Address, VirtioError> {
+    let address = write
+        .address()
+        .ok_or_else(|| VirtioError::PciTransportRuntimeConfig {
+            message: format!(
+                "VirtIO console descriptor {} has no guest address for writeback",
+                write.descriptor()
+            ),
+        })?;
+    add_address(address, u64::from(write.offset()))
+}
+
 impl VirtioSplitQueue {
     pub fn consume_available_console_receive(
         &mut self,
@@ -638,26 +652,25 @@ impl VirtioSplitQueue {
         guest: &mut VirtioGuestMemory<'_>,
         writeback: &VirtioConsoleQueueCompletionWrite,
     ) -> Result<(), VirtioError> {
+        let (used_element_address, used_index_address) =
+            self.used_writeback_addresses(writeback.used_slot())?;
+        let mut data_targets = Vec::new();
         for write in writeback.data_writes() {
-            let address =
-                write
-                    .address()
-                    .ok_or_else(|| VirtioError::PciTransportRuntimeConfig {
-                        message: format!(
-                            "VirtIO console descriptor {} has no guest address for writeback",
-                            write.descriptor()
-                        ),
-                    })?;
-            guest.write_exact(
-                add_address(address, u64::from(write.offset()))?,
-                write.bytes(),
-            )?;
+            let target = console_descriptor_write_target(write)?;
+            guest.validate_write_exact(target, write.bytes().len() as u64)?;
+            data_targets.push((target, write.bytes()));
+        }
+        guest.validate_write_exact(used_element_address, 8)?;
+        guest.validate_write_exact(used_index_address, 2)?;
+
+        for (address, bytes) in data_targets {
+            guest.write_exact(address, bytes)?;
         }
         guest.write_exact(
-            add_address(self.used_ring(), 4 + u64::from(writeback.used_slot()) * 8)?,
+            used_element_address,
             &writeback.used_element().to_le_bytes(),
         )?;
-        guest.write_u16(add_address(self.used_ring(), 2)?, writeback.used_index())
+        guest.write_u16(used_index_address, writeback.used_index())
     }
 
     fn console_completion_interrupt_enabled(
