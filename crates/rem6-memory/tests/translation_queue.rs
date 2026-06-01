@@ -111,6 +111,154 @@ fn translation_queue_checkpoint_payload_round_trips_snapshot() {
 }
 
 #[test]
+fn translation_queue_checkpoint_payload_uses_stable_single_entry_bytes() {
+    let config = TranslationQueueConfig::new(4, 3).unwrap();
+    let mut queue = TranslationQueue::new(config);
+    let pending = request(12, 0x4000, TranslationAccessKind::Load);
+    queue.enqueue(9, pending.clone()).unwrap();
+    let snapshot = queue.snapshot();
+    let payload = TranslationQueueCheckpointPayload::from_snapshot(snapshot.clone()).unwrap();
+    let mut stable_payload = vec![
+        b'M', b'T', b'L', b'Q', 1, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 1, 0,
+        0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 11, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    ];
+    stable_payload.extend_from_slice(&12_u64.to_le_bytes());
+    stable_payload.extend_from_slice(&0x4000_u64.to_le_bytes());
+    stable_payload.extend_from_slice(&8_u64.to_le_bytes());
+    stable_payload.extend_from_slice(&9_u64.to_le_bytes());
+    stable_payload.extend_from_slice(&12_u64.to_le_bytes());
+    stable_payload.extend_from_slice(&0_u64.to_le_bytes());
+
+    let decoded = TranslationQueueCheckpointPayload::decode(&stable_payload).unwrap();
+    let restored = TranslationQueue::from_snapshot(decoded.snapshot()).unwrap();
+
+    assert_eq!(payload.encode(), stable_payload);
+    assert_eq!(decoded.snapshot(), &snapshot);
+    assert_eq!(restored.pending_request_ids(), vec![pending.id()]);
+}
+
+#[test]
+fn translation_queue_checkpoint_payload_rejects_invalid_magic() {
+    let config = TranslationQueueConfig::new(4, 3).unwrap();
+    let mut queue = TranslationQueue::new(config);
+    queue
+        .enqueue(9, request(15, 0x5000, TranslationAccessKind::Store))
+        .unwrap();
+    let mut payload = TranslationQueueCheckpointPayload::from_snapshot(queue.snapshot())
+        .unwrap()
+        .encode();
+    payload[0] = b'X';
+
+    assert_eq!(
+        TranslationQueueCheckpointPayload::decode(&payload).unwrap_err(),
+        TranslationError::InvalidQueueCheckpointMagic
+    );
+}
+
+#[test]
+fn translation_queue_checkpoint_payload_rejects_unsupported_version() {
+    let config = TranslationQueueConfig::new(4, 3).unwrap();
+    let mut queue = TranslationQueue::new(config);
+    queue
+        .enqueue(9, request(15, 0x5000, TranslationAccessKind::Store))
+        .unwrap();
+    let mut payload = TranslationQueueCheckpointPayload::from_snapshot(queue.snapshot())
+        .unwrap()
+        .encode();
+    payload[QUEUE_CHECKPOINT_VERSION_OFFSET..QUEUE_CHECKPOINT_VERSION_OFFSET + 4]
+        .copy_from_slice(&2_u32.to_le_bytes());
+
+    assert_eq!(
+        TranslationQueueCheckpointPayload::decode(&payload).unwrap_err(),
+        TranslationError::UnsupportedQueueCheckpointVersion { version: 2 }
+    );
+}
+
+#[test]
+fn translation_queue_checkpoint_payload_rejects_reserved_field() {
+    let config = TranslationQueueConfig::new(4, 3).unwrap();
+    let mut queue = TranslationQueue::new(config);
+    queue
+        .enqueue(9, request(15, 0x5000, TranslationAccessKind::Store))
+        .unwrap();
+    let mut payload = TranslationQueueCheckpointPayload::from_snapshot(queue.snapshot())
+        .unwrap()
+        .encode();
+    payload[QUEUE_CHECKPOINT_RESERVED_OFFSET..QUEUE_CHECKPOINT_RESERVED_OFFSET + 4]
+        .copy_from_slice(&1_u32.to_le_bytes());
+
+    assert_eq!(
+        TranslationQueueCheckpointPayload::decode(&payload).unwrap_err(),
+        TranslationError::InvalidQueueCheckpointReserved { value: 1 }
+    );
+}
+
+#[test]
+fn translation_queue_checkpoint_payload_rejects_short_payload() {
+    let config = TranslationQueueConfig::new(4, 3).unwrap();
+    let mut queue = TranslationQueue::new(config);
+    queue
+        .enqueue(9, request(15, 0x5000, TranslationAccessKind::Store))
+        .unwrap();
+    let mut payload = TranslationQueueCheckpointPayload::from_snapshot(queue.snapshot())
+        .unwrap()
+        .encode();
+    payload.truncate(QUEUE_CHECKPOINT_HEADER_SIZE - 1);
+
+    assert_eq!(
+        TranslationQueueCheckpointPayload::decode(&payload).unwrap_err(),
+        TranslationError::InvalidQueueCheckpointPayloadSize {
+            expected: QUEUE_CHECKPOINT_HEADER_SIZE,
+            actual: QUEUE_CHECKPOINT_HEADER_SIZE - 1
+        }
+    );
+}
+
+#[test]
+fn translation_queue_checkpoint_payload_rejects_declared_entry_count_mismatch() {
+    let config = TranslationQueueConfig::new(4, 3).unwrap();
+    let mut queue = TranslationQueue::new(config);
+    queue
+        .enqueue(9, request(15, 0x5000, TranslationAccessKind::Store))
+        .unwrap();
+    let mut payload = TranslationQueueCheckpointPayload::from_snapshot(queue.snapshot())
+        .unwrap()
+        .encode();
+    payload[QUEUE_CHECKPOINT_COUNT_OFFSET..QUEUE_CHECKPOINT_COUNT_OFFSET + 4]
+        .copy_from_slice(&2_u32.to_le_bytes());
+
+    assert_eq!(
+        TranslationQueueCheckpointPayload::decode(&payload).unwrap_err(),
+        TranslationError::InvalidQueueCheckpointPayloadSize {
+            expected: QUEUE_CHECKPOINT_HEADER_SIZE + QUEUE_CHECKPOINT_ENTRY_SIZE * 2,
+            actual: QUEUE_CHECKPOINT_HEADER_SIZE + QUEUE_CHECKPOINT_ENTRY_SIZE
+        }
+    );
+}
+
+#[test]
+fn translation_queue_checkpoint_payload_rejects_extra_entry_record() {
+    let config = TranslationQueueConfig::new(4, 3).unwrap();
+    let mut queue = TranslationQueue::new(config);
+    queue
+        .enqueue(9, request(15, 0x5000, TranslationAccessKind::Store))
+        .unwrap();
+    let mut payload = TranslationQueueCheckpointPayload::from_snapshot(queue.snapshot())
+        .unwrap()
+        .encode();
+    payload[QUEUE_CHECKPOINT_COUNT_OFFSET..QUEUE_CHECKPOINT_COUNT_OFFSET + 4]
+        .copy_from_slice(&0_u32.to_le_bytes());
+
+    assert_eq!(
+        TranslationQueueCheckpointPayload::decode(&payload).unwrap_err(),
+        TranslationError::InvalidQueueCheckpointPayloadSize {
+            expected: QUEUE_CHECKPOINT_HEADER_SIZE,
+            actual: QUEUE_CHECKPOINT_HEADER_SIZE + QUEUE_CHECKPOINT_ENTRY_SIZE
+        }
+    );
+}
+
+#[test]
 fn translation_queue_checkpoint_payload_rejects_duplicate_request_ids() {
     let config = TranslationQueueConfig::new(4, 3).unwrap();
     let mut queue = TranslationQueue::new(config);
@@ -217,6 +365,12 @@ fn translation_queue_rejects_invalid_capacity_duplicates_overflow_and_unknown_co
         }
     );
 }
+
+const QUEUE_CHECKPOINT_HEADER_SIZE: usize = 40;
+const QUEUE_CHECKPOINT_ENTRY_SIZE: usize = 64;
+const QUEUE_CHECKPOINT_VERSION_OFFSET: usize = 4;
+const QUEUE_CHECKPOINT_COUNT_OFFSET: usize = 32;
+const QUEUE_CHECKPOINT_RESERVED_OFFSET: usize = 36;
 
 fn duplicate_first_queue_checkpoint_entry(mut payload: Vec<u8>) -> Vec<u8> {
     let count_offset = 32;
