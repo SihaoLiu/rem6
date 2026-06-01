@@ -239,6 +239,10 @@ pub enum MemoryError {
     UnexpectedResponseData {
         request: MemoryRequestId,
     },
+    InvalidResponseDataLength {
+        request: MemoryRequestId,
+        length: usize,
+    },
     ResponseNotExpected {
         request: MemoryRequestId,
     },
@@ -618,6 +622,12 @@ impl fmt::Display for MemoryError {
             Self::UnexpectedResponseData { request } => write!(
                 formatter,
                 "response to request {} from agent {} must not carry payload data",
+                request.sequence(),
+                request.agent().get()
+            ),
+            Self::InvalidResponseDataLength { request, length } => write!(
+                formatter,
+                "response to request {} from agent {} has invalid payload length {length}",
                 request.sequence(),
                 request.agent().get()
             ),

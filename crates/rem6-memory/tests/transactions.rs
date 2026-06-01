@@ -2,7 +2,7 @@ use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, CoherenceIntent, MemoryAccessOrdering,
     MemoryAtomicOp, MemoryBarrierSet, MemoryError, MemoryOperation, MemoryRequest,
     MemoryRequestCheckpointPayload, MemoryRequestId, MemoryResponse,
-    MemoryResponseCheckpointPayload, ResponseStatus,
+    MemoryResponseCheckpointPayload, MemoryResponseSnapshot, ResponseStatus,
 };
 
 fn line_layout() -> CacheLineLayout {
@@ -318,6 +318,18 @@ fn responses_validate_request_data_contracts() {
     let retry = MemoryResponse::retry(&read);
     assert_eq!(retry.status(), ResponseStatus::Retry);
     assert!(retry.data().is_none());
+}
+
+#[test]
+fn response_snapshot_rejects_empty_data_payload() {
+    assert_eq!(
+        MemoryResponseSnapshot::new(request_id(34), ResponseStatus::Completed, Some(Vec::new()))
+            .unwrap_err(),
+        MemoryError::InvalidResponseDataLength {
+            request: request_id(34),
+            length: 0
+        }
+    );
 }
 
 #[test]

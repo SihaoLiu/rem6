@@ -727,6 +727,12 @@ impl MemoryResponseSnapshot {
                 request: request_id,
             });
         }
+        if data.as_ref().is_some_and(Vec::is_empty) {
+            return Err(MemoryError::InvalidResponseDataLength {
+                request: request_id,
+                length: 0,
+            });
+        }
 
         Ok(Self {
             request_id,
