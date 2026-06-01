@@ -18,6 +18,9 @@ impl Virtio9pDevice {
             .lock()
             .expect("virtio 9p namespace lock")
             .root_qid();
+        if attached.afid() != VIRTIO_9P_NOFID {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        }
         let mut fids = self.fids.lock().expect("virtio 9p fid lock");
         if fids.contains_key(&attached.fid()) {
             return Ok(Err(VIRTIO_9P_EBADF));

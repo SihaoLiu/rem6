@@ -31,6 +31,23 @@ fn virtio_9p_device_negotiates_version_and_records_completion() {
 }
 
 #[test]
+fn virtio_9p_device_rejects_attach_with_unsupported_auth_fids() {
+    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap());
+    let attach = decoded_request(
+        VIRTIO_9P_TATTACH,
+        1,
+        p9_attach_payload(1, 7, b"root", b"", 0),
+    );
+
+    let completion = device.execute_at(10, attach).unwrap();
+
+    assert_eq!(completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(completion.payload(), VIRTIO_9P_EBADF.to_le_bytes());
+    assert_eq!(device.fid_count(), 0);
+    assert!(device.attached_fids().is_empty());
+}
+
+#[test]
 fn virtio_9p_device_clamps_too_small_msize_to_valid_version_envelope() {
     let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap())
         .with_file("tiny.txt", b"tiny payload".to_vec())
