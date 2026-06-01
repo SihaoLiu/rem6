@@ -463,6 +463,7 @@ impl Virtio9pDevice {
             create.fid,
             create.name,
             Virtio9pOpenMode::from_bits(create.mode),
+            create.append,
         )
     }
 
@@ -475,6 +476,7 @@ impl Virtio9pDevice {
             create.fid,
             create.name,
             Virtio9pOpenMode::from_bits(create.mode),
+            create.append,
         )
     }
 
@@ -483,6 +485,7 @@ impl Virtio9pDevice {
         fid: u32,
         name: String,
         mode: Virtio9pOpenMode,
+        append: bool,
     ) -> Result<Result<Vec<u8>, u32>, VirtioError> {
         let mut fids = self.fids.lock().expect("virtio 9p fid lock");
         let Some(fid) = fids.get_mut(&fid) else {
@@ -496,7 +499,7 @@ impl Virtio9pDevice {
             Ok(node) => node,
             Err(errno) => return Ok(Err(errno)),
         };
-        *fid = Virtio9pFidState::opened(node, mode, false);
+        *fid = Virtio9pFidState::opened(node, mode, append);
         let mut payload = namespace.qid(node).to_le_bytes().to_vec();
         payload.extend(self.negotiated_msize().to_le_bytes());
         Ok(Ok(payload))

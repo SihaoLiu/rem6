@@ -1,10 +1,10 @@
 use rem6_virtio::{
     Virtio9pConfig, Virtio9pDevice, VIRTIO_9P_DEFAULT_MSIZE, VIRTIO_9P_EBADF, VIRTIO_9P_EEXIST,
-    VIRTIO_9P_NOFID, VIRTIO_9P_OPEN_READ_ONLY, VIRTIO_9P_OPEN_READ_WRITE,
-    VIRTIO_9P_OPEN_WRITE_ONLY, VIRTIO_9P_QTFILE, VIRTIO_9P_RCREATE, VIRTIO_9P_RLCREATE,
-    VIRTIO_9P_RLERROR, VIRTIO_9P_RLOPEN, VIRTIO_9P_RREAD, VIRTIO_9P_RWALK, VIRTIO_9P_RWRITE,
-    VIRTIO_9P_TATTACH, VIRTIO_9P_TCREATE, VIRTIO_9P_TLCREATE, VIRTIO_9P_TLOPEN, VIRTIO_9P_TREAD,
-    VIRTIO_9P_TWALK, VIRTIO_9P_TWRITE,
+    VIRTIO_9P_LOPEN_APPEND, VIRTIO_9P_NOFID, VIRTIO_9P_OPEN_APPEND, VIRTIO_9P_OPEN_READ_ONLY,
+    VIRTIO_9P_OPEN_READ_WRITE, VIRTIO_9P_OPEN_WRITE_ONLY, VIRTIO_9P_QTFILE, VIRTIO_9P_RCREATE,
+    VIRTIO_9P_RLCREATE, VIRTIO_9P_RLERROR, VIRTIO_9P_RLOPEN, VIRTIO_9P_RREAD, VIRTIO_9P_RWALK,
+    VIRTIO_9P_RWRITE, VIRTIO_9P_TATTACH, VIRTIO_9P_TCREATE, VIRTIO_9P_TLCREATE, VIRTIO_9P_TLOPEN,
+    VIRTIO_9P_TREAD, VIRTIO_9P_TWALK, VIRTIO_9P_TWRITE,
 };
 
 mod support;
@@ -224,6 +224,93 @@ fn virtio_9p_device_enforces_create_access_modes() {
     let allowed_write_completion = device.execute_at(17, allowed_write).unwrap();
     assert_eq!(allowed_write_completion.message_type(), VIRTIO_9P_RWRITE);
     assert_eq!(allowed_write_completion.payload(), 3_u32.to_le_bytes());
+}
+
+#[test]
+fn virtio_9p_device_lcreate_append_keeps_created_fid_in_append_mode() {
+    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap());
+    let attach = decoded_request(
+        VIRTIO_9P_TATTACH,
+        1,
+        p9_attach_payload(1, VIRTIO_9P_NOFID, b"root", b"", 0),
+    );
+    device.execute_at(10, attach).unwrap();
+
+    let create = decoded_request(
+        VIRTIO_9P_TLCREATE,
+        2,
+        p9_lcreate_payload(
+            1,
+            b"append-lcreate.txt",
+            u32::from(VIRTIO_9P_OPEN_READ_WRITE) | VIRTIO_9P_LOPEN_APPEND,
+            0o100644,
+            0,
+        ),
+    );
+    assert_eq!(
+        device.execute_at(11, create).unwrap().message_type(),
+        VIRTIO_9P_RLCREATE
+    );
+
+    let head = decoded_request(VIRTIO_9P_TWRITE, 3, p9_write_payload(1, 0, b"head"));
+    assert_eq!(
+        device.execute_at(12, head).unwrap().payload(),
+        4_u32.to_le_bytes()
+    );
+
+    let tail = decoded_request(VIRTIO_9P_TWRITE, 4, p9_write_payload(1, 0, b"tail"));
+    assert_eq!(
+        device.execute_at(13, tail).unwrap().payload(),
+        4_u32.to_le_bytes()
+    );
+
+    let read = decoded_request(VIRTIO_9P_TREAD, 5, p9_read_payload(1, 0, 16));
+    let read_completion = device.execute_at(14, read).unwrap();
+    assert_eq!(read_completion.message_type(), VIRTIO_9P_RREAD);
+    assert_eq!(read_counted_data(read_completion.payload()), b"headtail");
+}
+
+#[test]
+fn virtio_9p_device_legacy_create_append_keeps_created_fid_in_append_mode() {
+    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap());
+    let attach = decoded_request(
+        VIRTIO_9P_TATTACH,
+        1,
+        p9_attach_payload(1, VIRTIO_9P_NOFID, b"root", b"", 0),
+    );
+    device.execute_at(10, attach).unwrap();
+
+    let create = decoded_request(
+        VIRTIO_9P_TCREATE,
+        2,
+        p9_create_payload(
+            1,
+            b"append-legacy-create.txt",
+            0o100644,
+            VIRTIO_9P_OPEN_READ_WRITE | VIRTIO_9P_OPEN_APPEND,
+        ),
+    );
+    assert_eq!(
+        device.execute_at(11, create).unwrap().message_type(),
+        VIRTIO_9P_RCREATE
+    );
+
+    let head = decoded_request(VIRTIO_9P_TWRITE, 3, p9_write_payload(1, 0, b"head"));
+    assert_eq!(
+        device.execute_at(12, head).unwrap().payload(),
+        4_u32.to_le_bytes()
+    );
+
+    let tail = decoded_request(VIRTIO_9P_TWRITE, 4, p9_write_payload(1, 0, b"tail"));
+    assert_eq!(
+        device.execute_at(13, tail).unwrap().payload(),
+        4_u32.to_le_bytes()
+    );
+
+    let read = decoded_request(VIRTIO_9P_TREAD, 5, p9_read_payload(1, 0, 16));
+    let read_completion = device.execute_at(14, read).unwrap();
+    assert_eq!(read_completion.message_type(), VIRTIO_9P_RREAD);
+    assert_eq!(read_counted_data(read_completion.payload()), b"headtail");
 }
 
 #[test]
