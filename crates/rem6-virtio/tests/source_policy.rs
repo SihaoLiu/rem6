@@ -576,6 +576,24 @@ fn virtio_9p_device_tests_delegate_walk_error_cases() {
 }
 
 #[test]
+fn virtio_9p_device_tests_delegate_protocol_error_cases() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let device_test = fs::read_to_string(crate_dir.join("tests/fs9p_device.rs")).unwrap();
+    let protocol_error_test = crate_dir.join("tests/fs9p_protocol_errors.rs");
+
+    assert!(
+        protocol_error_test.exists(),
+        "9P protocol error tests belong in tests/fs9p_protocol_errors.rs"
+    );
+    for symbol in ["VIRTIO_9P_ENOTSUP", "decoded_request(200"] {
+        assert!(
+            !device_test.contains(symbol),
+            "tests/fs9p_device.rs should delegate protocol error behavior to tests/fs9p_protocol_errors.rs; found {symbol}"
+        );
+    }
+}
+
+#[test]
 fn virtio_9p_device_tests_delegate_malformed_attach_cases() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let device_test = fs::read_to_string(crate_dir.join("tests/fs9p_device.rs")).unwrap();
