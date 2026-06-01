@@ -295,6 +295,114 @@ pub struct InOrderPipelineCycleSummary {
     redirect_target_pc: Option<u64>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InOrderPipelineRunSummary {
+    cycle_count: usize,
+    first_cycle: Option<u64>,
+    last_cycle: Option<u64>,
+    advanced_count: usize,
+    retired_count: usize,
+    flushed_count: usize,
+    resource_blocked_count: usize,
+    ordering_blocked_count: usize,
+    redirect_count: usize,
+    state_changed_cycle_count: usize,
+}
+
+impl InOrderPipelineRunSummary {
+    pub fn from_cycle_records<I>(records: I) -> Self
+    where
+        I: IntoIterator<Item = InOrderPipelineCycleRecord>,
+    {
+        Self::from_cycle_summaries(records.into_iter().map(|record| record.summary()))
+    }
+
+    pub fn from_cycle_summaries<I>(summaries: I) -> Self
+    where
+        I: IntoIterator<Item = InOrderPipelineCycleSummary>,
+    {
+        let mut summary = Self {
+            cycle_count: 0,
+            first_cycle: None,
+            last_cycle: None,
+            advanced_count: 0,
+            retired_count: 0,
+            flushed_count: 0,
+            resource_blocked_count: 0,
+            ordering_blocked_count: 0,
+            redirect_count: 0,
+            state_changed_cycle_count: 0,
+        };
+
+        for cycle in summaries {
+            summary.cycle_count += 1;
+            summary.first_cycle = Some(
+                summary
+                    .first_cycle
+                    .map_or(cycle.cycle(), |first| first.min(cycle.cycle())),
+            );
+            summary.last_cycle = Some(
+                summary
+                    .last_cycle
+                    .map_or(cycle.cycle(), |last| last.max(cycle.cycle())),
+            );
+            summary.advanced_count += cycle.advanced_count();
+            summary.retired_count += cycle.retired_count();
+            summary.flushed_count += cycle.flushed_count();
+            summary.resource_blocked_count += cycle.resource_blocked_count();
+            summary.ordering_blocked_count += cycle.ordering_blocked_count();
+            if cycle.redirect_target_pc().is_some() {
+                summary.redirect_count += 1;
+            }
+            if cycle.state_changed() {
+                summary.state_changed_cycle_count += 1;
+            }
+        }
+
+        summary
+    }
+
+    pub const fn cycle_count(self) -> usize {
+        self.cycle_count
+    }
+
+    pub const fn first_cycle(self) -> Option<u64> {
+        self.first_cycle
+    }
+
+    pub const fn last_cycle(self) -> Option<u64> {
+        self.last_cycle
+    }
+
+    pub const fn advanced_count(self) -> usize {
+        self.advanced_count
+    }
+
+    pub const fn retired_count(self) -> usize {
+        self.retired_count
+    }
+
+    pub const fn flushed_count(self) -> usize {
+        self.flushed_count
+    }
+
+    pub const fn resource_blocked_count(self) -> usize {
+        self.resource_blocked_count
+    }
+
+    pub const fn ordering_blocked_count(self) -> usize {
+        self.ordering_blocked_count
+    }
+
+    pub const fn redirect_count(self) -> usize {
+        self.redirect_count
+    }
+
+    pub const fn state_changed_cycle_count(self) -> usize {
+        self.state_changed_cycle_count
+    }
+}
+
 impl InOrderPipelineCycleSummary {
     pub const fn cycle(self) -> u64 {
         self.cycle

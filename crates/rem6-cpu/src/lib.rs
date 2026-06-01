@@ -77,8 +77,9 @@ pub use gshare_predictor::{
 pub use in_order_pipeline::{
     InOrderBranchRedirect, InOrderPipelineAdvance, InOrderPipelineConfig,
     InOrderPipelineCycleRecord, InOrderPipelineCycleSummary, InOrderPipelineError,
-    InOrderPipelineInstruction, InOrderPipelinePlan, InOrderPipelineScheduler,
-    InOrderPipelineSnapshot, InOrderPipelineStage, InOrderPipelineStageWidth, InOrderPipelineState,
+    InOrderPipelineInstruction, InOrderPipelinePlan, InOrderPipelineRunSummary,
+    InOrderPipelineScheduler, InOrderPipelineSnapshot, InOrderPipelineStage,
+    InOrderPipelineStageWidth, InOrderPipelineState,
 };
 pub use indirect_target_predictor::{
     IndirectTargetCommit, IndirectTargetEntry, IndirectTargetHistory, IndirectTargetPathEntry,

@@ -1,7 +1,7 @@
 use rem6_cpu::{
     InOrderBranchRedirect, InOrderPipelineConfig, InOrderPipelineError, InOrderPipelineInstruction,
-    InOrderPipelineScheduler, InOrderPipelineSnapshot, InOrderPipelineStage,
-    InOrderPipelineStageWidth, InOrderPipelineState,
+    InOrderPipelineRunSummary, InOrderPipelineScheduler, InOrderPipelineSnapshot,
+    InOrderPipelineStage, InOrderPipelineStageWidth, InOrderPipelineState,
 };
 
 fn instruction(sequence: u64, stage: InOrderPipelineStage) -> InOrderPipelineInstruction {
@@ -383,6 +383,45 @@ fn in_order_pipeline_cycle_summary_records_redirect_target() {
     assert_eq!(summary.ordering_blocked_count(), 0);
     assert!(summary.state_changed());
     assert_eq!(summary.redirect_target_pc(), Some(0x2000));
+}
+
+#[test]
+fn in_order_pipeline_run_summary_aggregates_cycle_records() {
+    let mut state = InOrderPipelineState::new(config_with_decode_width(1));
+    state
+        .replace_in_flight([
+            instruction(9, InOrderPipelineStage::Commit),
+            instruction(10, InOrderPipelineStage::Decode),
+            instruction(11, InOrderPipelineStage::Decode),
+        ])
+        .unwrap();
+
+    let first = state.advance_cycle_recorded();
+    let second = state.advance_cycle_recorded();
+
+    let summary = InOrderPipelineRunSummary::from_cycle_records([first, second]);
+
+    assert_eq!(summary.cycle_count(), 2);
+    assert_eq!(summary.first_cycle(), Some(0));
+    assert_eq!(summary.last_cycle(), Some(1));
+    assert_eq!(summary.advanced_count(), 4);
+    assert_eq!(summary.retired_count(), 1);
+    assert_eq!(summary.flushed_count(), 0);
+    assert_eq!(summary.resource_blocked_count(), 1);
+    assert_eq!(summary.ordering_blocked_count(), 0);
+    assert_eq!(summary.redirect_count(), 0);
+    assert_eq!(summary.state_changed_cycle_count(), 2);
+}
+
+#[test]
+fn in_order_pipeline_empty_run_summary_has_no_cycle_window() {
+    let summary = InOrderPipelineRunSummary::from_cycle_summaries([]);
+
+    assert_eq!(summary.cycle_count(), 0);
+    assert_eq!(summary.first_cycle(), None);
+    assert_eq!(summary.last_cycle(), None);
+    assert_eq!(summary.advanced_count(), 0);
+    assert_eq!(summary.state_changed_cycle_count(), 0);
 }
 
 #[test]
