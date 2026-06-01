@@ -805,7 +805,10 @@ isolated bugs:
   carries explicit `TranslationTlbEntryScope` on every TLB entry and exposes
   `flush_non_global_address_space` for Arm-shaped ASID TLBI, while
   `flush_address_space` remains the force-clear operation for callers that
-  intentionally need all entries for an ASID removed.
+  intentionally need all entries for an ASID removed. Translation TLB
+  checkpoint payloads preserve scoped entries, replacement order, and counters
+  through decode-first snapshot validation instead of restoring untyped entries
+  directly into live TLB state.
   Public gem5 issue #2962 reports x86-64 REX prefixes in invalid positions
   extending the destination register even though only a REX prefix immediately
   before the opcode or `0x0f` escape should apply. The local reference records
@@ -2670,7 +2673,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   global same-ASID entries during non-global ASID flush, removing same-ASID
   non-global entries, preserving other ASIDs, snapshotting entry scope, and
   rejecting nonmonotonic restore LRU counters so malformed checkpoints cannot
-  reuse an existing stable replacement value.
+  reuse an existing stable replacement value. They also cover checkpoint payload
+  binary round trips and duplicate-entry rejection through snapshot decode
+  validation.
 - Memory translation queue tests cover pending-request ready ordering, snapshot
   restore, duplicate rejection, and nonmonotonic restore order-counter rejection
   so a malformed checkpoint cannot reuse an existing stable ordering value.

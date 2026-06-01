@@ -2,9 +2,10 @@ use rem6_memory::{
     AccessSize, Address, AgentId, TranslationAccessKind, TranslationAddressSpaceId,
     TranslationError, TranslationFault, TranslationFaultKind, TranslationPageMap,
     TranslationPagePermissions, TranslationPageSize, TranslationRequest, TranslationRequestId,
-    TranslationResolution, TranslationSegmentedResolution, TranslationTlb, TranslationTlbConfig,
-    TranslationTlbEntryScope, TranslationTlbEntrySnapshot, TranslationTlbLookupKind,
-    TranslationTlbSnapshot, TranslationTlbStats,
+    TranslationResolution, TranslationSegmentedResolution, TranslationTlb,
+    TranslationTlbCheckpointPayload, TranslationTlbConfig, TranslationTlbEntryScope,
+    TranslationTlbEntrySnapshot, TranslationTlbLookupKind, TranslationTlbSnapshot,
+    TranslationTlbStats,
 };
 
 fn request_id(sequence: u64) -> TranslationRequestId {
@@ -212,6 +213,70 @@ fn translation_tlb_restore_rejects_non_monotonic_next_lru() {
 }
 
 #[test]
+fn translation_tlb_checkpoint_payload_round_trips_snapshot() {
+    let page_size = TranslationPageSize::new(4096).unwrap();
+    let snapshot = TranslationTlbSnapshot::new(
+        TranslationTlbConfig::new(4).unwrap(),
+        vec![
+            TranslationTlbEntrySnapshot::new(
+                Address::new(0xffff_0000_d000_0000),
+                Address::new(0x0000_0000_d000_0000),
+                page_size,
+                TranslationPagePermissions::read_write(),
+                3,
+            )
+            .with_scope(TranslationTlbEntryScope::Global),
+            TranslationTlbEntrySnapshot::new_in_address_space(
+                TranslationAddressSpaceId::new(7),
+                Address::new(0xffff_0000_c000_0000),
+                Address::new(0x0000_0000_c000_0000),
+                page_size,
+                TranslationPagePermissions::read_execute(),
+                2,
+            ),
+        ],
+        4,
+        TranslationTlbStats::new(5, 6, 7, 8, 9),
+    );
+    let payload = TranslationTlbCheckpointPayload::from_snapshot(snapshot.clone()).unwrap();
+
+    let decoded = TranslationTlbCheckpointPayload::decode(payload.encode().as_slice()).unwrap();
+    let restored = TranslationTlb::from_snapshot(decoded.snapshot()).unwrap();
+
+    assert_eq!(decoded.snapshot(), &snapshot);
+    assert_eq!(restored.snapshot(), snapshot);
+}
+
+#[test]
+fn translation_tlb_checkpoint_payload_rejects_duplicate_entries() {
+    let page_size = TranslationPageSize::new(4096).unwrap();
+    let entry = TranslationTlbEntrySnapshot::new(
+        Address::new(0xffff_0000_e000_0000),
+        Address::new(0x0000_0000_e000_0000),
+        page_size,
+        TranslationPagePermissions::read_write(),
+        1,
+    );
+    let snapshot = TranslationTlbSnapshot::new(
+        TranslationTlbConfig::new(4).unwrap(),
+        vec![entry],
+        2,
+        TranslationTlbStats::new(0, 0, 0, 1, 0),
+    );
+    let payload = TranslationTlbCheckpointPayload::from_snapshot(snapshot)
+        .unwrap()
+        .encode();
+    let duplicate_payload = duplicate_first_tlb_checkpoint_entry(payload);
+
+    assert_eq!(
+        TranslationTlbCheckpointPayload::decode(&duplicate_payload).unwrap_err(),
+        TranslationError::DuplicateTlbEntry {
+            virtual_page: Address::new(0xffff_0000_e000_0000),
+        }
+    );
+}
+
+#[test]
 fn translation_tlb_rechecks_permissions_faults_without_polluting_cache() {
     assert_eq!(
         TranslationTlbConfig::new(0).unwrap_err(),
@@ -277,6 +342,16 @@ fn translation_tlb_rechecks_permissions_faults_without_polluting_cache() {
     assert_eq!(tlb.entry_count(), 1);
     assert!(!tlb.contains_virtual_page(unmapped_base));
     assert_eq!(tlb.stats(), TranslationTlbStats::new(1, 2, 2, 1, 0));
+}
+
+fn duplicate_first_tlb_checkpoint_entry(mut payload: Vec<u8>) -> Vec<u8> {
+    let count_offset = 68;
+    payload[count_offset..count_offset + 4].copy_from_slice(&2_u32.to_le_bytes());
+    let first_entry_offset = 72;
+    let entry_record_bytes = 48;
+    let first_entry = payload[first_entry_offset..first_entry_offset + entry_record_bytes].to_vec();
+    payload.splice(first_entry_offset..first_entry_offset, first_entry);
+    payload
 }
 
 #[test]

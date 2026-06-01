@@ -6,6 +6,21 @@ use crate::{
     TranslationRequest, TranslationResolution, TranslationSegmentedResolution,
 };
 
+const TLB_CHECKPOINT_MAGIC: [u8; 4] = *b"MTLB";
+const TLB_CHECKPOINT_VERSION: u32 = 1;
+const U32_BYTES: usize = 4;
+const U64_BYTES: usize = 8;
+const TLB_CHECKPOINT_HEADER_BYTES: usize = TLB_CHECKPOINT_MAGIC.len()
+    + U32_BYTES
+    + U64_BYTES
+    + U64_BYTES
+    + U64_BYTES * 5
+    + U32_BYTES
+    + U32_BYTES;
+const TLB_CHECKPOINT_ENTRY_BYTES: usize = U32_BYTES * 4 + U64_BYTES * 4;
+const TLB_CHECKPOINT_U32_MAX: usize = u32::MAX as usize;
+const TLB_CHECKPOINT_U64_MAX: usize = u64::MAX as usize;
+
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct TranslationAddressSpaceId(u16);
 
@@ -235,6 +250,241 @@ impl TranslationTlbSnapshot {
     pub const fn stats(&self) -> TranslationTlbStats {
         self.stats
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TranslationTlbCheckpointPayload {
+    snapshot: TranslationTlbSnapshot,
+}
+
+impl TranslationTlbCheckpointPayload {
+    pub fn from_tlb(tlb: &TranslationTlb) -> Self {
+        Self {
+            snapshot: tlb.snapshot(),
+        }
+    }
+
+    pub fn from_snapshot(snapshot: TranslationTlbSnapshot) -> Result<Self, TranslationError> {
+        TranslationTlb::from_snapshot(&snapshot)?;
+        Ok(Self { snapshot })
+    }
+
+    pub fn decode(payload: &[u8]) -> Result<Self, TranslationError> {
+        if payload.len() < TLB_CHECKPOINT_HEADER_BYTES {
+            return Err(TranslationError::InvalidTlbCheckpointPayloadSize {
+                expected: TLB_CHECKPOINT_HEADER_BYTES,
+                actual: payload.len(),
+            });
+        }
+        if payload[0..TLB_CHECKPOINT_MAGIC.len()] != TLB_CHECKPOINT_MAGIC {
+            return Err(TranslationError::InvalidTlbCheckpointMagic);
+        }
+
+        let mut offset = TLB_CHECKPOINT_MAGIC.len();
+        let version = read_u32(payload, &mut offset);
+        if version != TLB_CHECKPOINT_VERSION {
+            return Err(TranslationError::UnsupportedTlbCheckpointVersion { version });
+        }
+
+        let capacity = decode_checkpoint_usize(read_u64(payload, &mut offset))?;
+        let config = TranslationTlbConfig::new(capacity)?;
+        let next_lru = read_u64(payload, &mut offset);
+        let stats = TranslationTlbStats::new(
+            read_u64(payload, &mut offset),
+            read_u64(payload, &mut offset),
+            read_u64(payload, &mut offset),
+            read_u64(payload, &mut offset),
+            read_u64(payload, &mut offset),
+        );
+        let reserved = read_u32(payload, &mut offset);
+        if reserved != 0 {
+            return Err(TranslationError::InvalidTlbCheckpointReserved { value: reserved });
+        }
+        let entry_count = read_u32(payload, &mut offset) as usize;
+        let expected = tlb_checkpoint_payload_size(entry_count)?;
+        if payload.len() != expected {
+            return Err(TranslationError::InvalidTlbCheckpointPayloadSize {
+                expected,
+                actual: payload.len(),
+            });
+        }
+
+        let mut entries = Vec::with_capacity(entry_count);
+        for _ in 0..entry_count {
+            entries.push(read_checkpoint_entry(payload, &mut offset)?);
+        }
+
+        Self::from_snapshot(TranslationTlbSnapshot::new(
+            config, entries, next_lru, stats,
+        ))
+    }
+
+    pub fn encode(&self) -> Vec<u8> {
+        self.try_encode()
+            .expect("translation TLB checkpoint values fit the checkpoint encoding")
+    }
+
+    pub fn try_encode(&self) -> Result<Vec<u8>, TranslationError> {
+        let entry_count = encode_checkpoint_u32("entry count", self.snapshot.entries().len())?;
+        let capacity = encode_checkpoint_u64("capacity", self.snapshot.config().capacity())?;
+        let mut payload =
+            Vec::with_capacity(tlb_checkpoint_payload_size(self.snapshot.entries().len())?);
+        payload.extend_from_slice(&TLB_CHECKPOINT_MAGIC);
+        payload.extend_from_slice(&TLB_CHECKPOINT_VERSION.to_le_bytes());
+        payload.extend_from_slice(&capacity.to_le_bytes());
+        payload.extend_from_slice(&self.snapshot.next_lru().to_le_bytes());
+        payload.extend_from_slice(&self.snapshot.stats().hits().to_le_bytes());
+        payload.extend_from_slice(&self.snapshot.stats().misses().to_le_bytes());
+        payload.extend_from_slice(&self.snapshot.stats().faults().to_le_bytes());
+        payload.extend_from_slice(&self.snapshot.stats().inserts().to_le_bytes());
+        payload.extend_from_slice(&self.snapshot.stats().evictions().to_le_bytes());
+        payload.extend_from_slice(&0_u32.to_le_bytes());
+        payload.extend_from_slice(&entry_count.to_le_bytes());
+        for entry in self.snapshot.entries() {
+            write_checkpoint_entry(&mut payload, entry);
+        }
+        Ok(payload)
+    }
+
+    pub const fn snapshot(&self) -> &TranslationTlbSnapshot {
+        &self.snapshot
+    }
+
+    pub fn into_snapshot(self) -> TranslationTlbSnapshot {
+        self.snapshot
+    }
+}
+
+fn write_checkpoint_entry(payload: &mut Vec<u8>, entry: &TranslationTlbEntrySnapshot) {
+    payload.extend_from_slice(&u32::from(entry.address_space().get()).to_le_bytes());
+    payload.extend_from_slice(&encode_checkpoint_scope(entry.scope()).to_le_bytes());
+    payload.extend_from_slice(&encode_checkpoint_permissions(entry.permissions()).to_le_bytes());
+    payload.extend_from_slice(&0_u32.to_le_bytes());
+    payload.extend_from_slice(&entry.virtual_page().get().to_le_bytes());
+    payload.extend_from_slice(&entry.physical_page().get().to_le_bytes());
+    payload.extend_from_slice(&entry.page_size().bytes().to_le_bytes());
+    payload.extend_from_slice(&entry.last_used().to_le_bytes());
+}
+
+fn read_checkpoint_entry(
+    payload: &[u8],
+    offset: &mut usize,
+) -> Result<TranslationTlbEntrySnapshot, TranslationError> {
+    let address_space = decode_checkpoint_address_space(read_u32(payload, offset))?;
+    let scope = decode_checkpoint_scope(read_u32(payload, offset))?;
+    let permissions = decode_checkpoint_permissions(read_u32(payload, offset))?;
+    let reserved = read_u32(payload, offset);
+    if reserved != 0 {
+        return Err(TranslationError::InvalidTlbCheckpointReserved { value: reserved });
+    }
+    let virtual_page = Address::new(read_u64(payload, offset));
+    let physical_page = Address::new(read_u64(payload, offset));
+    let page_size = TranslationPageSize::new(read_u64(payload, offset))?;
+    let last_used = read_u64(payload, offset);
+
+    Ok(TranslationTlbEntrySnapshot::new_in_address_space(
+        address_space,
+        virtual_page,
+        physical_page,
+        page_size,
+        permissions,
+        last_used,
+    )
+    .with_scope(scope))
+}
+
+fn encode_checkpoint_scope(scope: TranslationTlbEntryScope) -> u32 {
+    match scope {
+        TranslationTlbEntryScope::NonGlobal => 0,
+        TranslationTlbEntryScope::Global => 1,
+    }
+}
+
+fn decode_checkpoint_scope(code: u32) -> Result<TranslationTlbEntryScope, TranslationError> {
+    match code {
+        0 => Ok(TranslationTlbEntryScope::NonGlobal),
+        1 => Ok(TranslationTlbEntryScope::Global),
+        _ => Err(TranslationError::InvalidTlbCheckpointScope { code }),
+    }
+}
+
+fn encode_checkpoint_permissions(permissions: TranslationPagePermissions) -> u32 {
+    u32::from(permissions.read())
+        | (u32::from(permissions.write()) << 1)
+        | (u32::from(permissions.execute()) << 2)
+}
+
+fn decode_checkpoint_permissions(
+    code: u32,
+) -> Result<TranslationPagePermissions, TranslationError> {
+    if code & !0b111 != 0 {
+        return Err(TranslationError::InvalidTlbCheckpointPermissions { code });
+    }
+
+    Ok(TranslationPagePermissions::new(
+        code & 0b001 != 0,
+        code & 0b010 != 0,
+        code & 0b100 != 0,
+    ))
+}
+
+fn decode_checkpoint_address_space(
+    code: u32,
+) -> Result<TranslationAddressSpaceId, TranslationError> {
+    let value = u16::try_from(code)
+        .map_err(|_| TranslationError::InvalidTlbCheckpointAddressSpace { value: code })?;
+    Ok(TranslationAddressSpaceId::new(value))
+}
+
+fn decode_checkpoint_usize(value: u64) -> Result<usize, TranslationError> {
+    usize::try_from(value).map_err(|_| TranslationError::InvalidTlbCheckpointUsize { value })
+}
+
+fn tlb_checkpoint_payload_size(entry_count: usize) -> Result<usize, TranslationError> {
+    let entry_bytes = entry_count.checked_mul(TLB_CHECKPOINT_ENTRY_BYTES).ok_or(
+        TranslationError::InvalidTlbCheckpointPayloadSize {
+            expected: usize::MAX,
+            actual: 0,
+        },
+    )?;
+    TLB_CHECKPOINT_HEADER_BYTES.checked_add(entry_bytes).ok_or(
+        TranslationError::InvalidTlbCheckpointPayloadSize {
+            expected: usize::MAX,
+            actual: 0,
+        },
+    )
+}
+
+fn encode_checkpoint_u32(field: &'static str, value: usize) -> Result<u32, TranslationError> {
+    u32::try_from(value).map_err(|_| TranslationError::TlbCheckpointValueTooLarge {
+        field,
+        value,
+        maximum: TLB_CHECKPOINT_U32_MAX,
+    })
+}
+
+fn encode_checkpoint_u64(field: &'static str, value: usize) -> Result<u64, TranslationError> {
+    u64::try_from(value).map_err(|_| TranslationError::TlbCheckpointValueTooLarge {
+        field,
+        value,
+        maximum: TLB_CHECKPOINT_U64_MAX,
+    })
+}
+
+fn read_u32(payload: &[u8], offset: &mut usize) -> u32 {
+    let bytes = payload[*offset..*offset + U32_BYTES]
+        .try_into()
+        .expect("checkpoint u32 slice width is fixed");
+    *offset += U32_BYTES;
+    u32::from_le_bytes(bytes)
+}
+
+fn read_u64(payload: &[u8], offset: &mut usize) -> u64 {
+    let bytes = payload[*offset..*offset + U64_BYTES]
+        .try_into()
+        .expect("checkpoint u64 slice width is fixed");
+    *offset += U64_BYTES;
+    u64::from_le_bytes(bytes)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

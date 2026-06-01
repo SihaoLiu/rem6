@@ -580,6 +580,34 @@ pub enum TranslationError {
         last_used: u64,
     },
     TlbOrderOverflow,
+    InvalidTlbCheckpointPayloadSize {
+        expected: usize,
+        actual: usize,
+    },
+    InvalidTlbCheckpointMagic,
+    UnsupportedTlbCheckpointVersion {
+        version: u32,
+    },
+    InvalidTlbCheckpointReserved {
+        value: u32,
+    },
+    InvalidTlbCheckpointScope {
+        code: u32,
+    },
+    InvalidTlbCheckpointPermissions {
+        code: u32,
+    },
+    InvalidTlbCheckpointAddressSpace {
+        value: u32,
+    },
+    InvalidTlbCheckpointUsize {
+        value: u64,
+    },
+    TlbCheckpointValueTooLarge {
+        field: &'static str,
+        value: usize,
+        maximum: usize,
+    },
     ZeroPageSize,
     NonPowerOfTwoPageSize {
         bytes: u64,
@@ -681,6 +709,45 @@ impl fmt::Display for TranslationError {
             Self::TlbOrderOverflow => {
                 write!(formatter, "translation TLB stable order counter overflowed")
             }
+            Self::InvalidTlbCheckpointPayloadSize { expected, actual } => write!(
+                formatter,
+                "translation TLB checkpoint payload has {actual} bytes; expected {expected}"
+            ),
+            Self::InvalidTlbCheckpointMagic => {
+                write!(formatter, "translation TLB checkpoint payload has invalid magic")
+            }
+            Self::UnsupportedTlbCheckpointVersion { version } => write!(
+                formatter,
+                "translation TLB checkpoint payload version {version} is not supported"
+            ),
+            Self::InvalidTlbCheckpointReserved { value } => write!(
+                formatter,
+                "translation TLB checkpoint reserved field has nonzero value {value}"
+            ),
+            Self::InvalidTlbCheckpointScope { code } => write!(
+                formatter,
+                "translation TLB checkpoint payload has invalid scope code {code}"
+            ),
+            Self::InvalidTlbCheckpointPermissions { code } => write!(
+                formatter,
+                "translation TLB checkpoint payload has invalid permission bits {code:#x}"
+            ),
+            Self::InvalidTlbCheckpointAddressSpace { value } => write!(
+                formatter,
+                "translation TLB checkpoint address-space value {value} exceeds u16 range"
+            ),
+            Self::InvalidTlbCheckpointUsize { value } => write!(
+                formatter,
+                "translation TLB checkpoint usize value {value} cannot fit this target"
+            ),
+            Self::TlbCheckpointValueTooLarge {
+                field,
+                value,
+                maximum,
+            } => write!(
+                formatter,
+                "translation TLB checkpoint {field} value {value} exceeds maximum {maximum}"
+            ),
             Self::ZeroPageSize => write!(formatter, "translation page size must be nonzero"),
             Self::NonPowerOfTwoPageSize { bytes } => {
                 write!(
