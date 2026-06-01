@@ -10,10 +10,14 @@ use rem6_memory::{
     MemoryTargetId, PartitionedMemorySnapshot, PartitionedMemoryStore,
 };
 use rem6_system::{
-    DramMemoryCheckpointBank, DramMemoryCheckpointPort, DramMemoryCheckpointRecord,
-    MemoryStoreCheckpointBank, MemoryStoreCheckpointError, MemoryStoreCheckpointPort,
-    MemoryStoreCheckpointRecord,
+    DramMemoryCheckpointBank, DramMemoryCheckpointError, DramMemoryCheckpointPort,
+    DramMemoryCheckpointRecord, MemoryStoreCheckpointBank, MemoryStoreCheckpointError,
+    MemoryStoreCheckpointPort, MemoryStoreCheckpointRecord,
 };
+
+const TEST_U64_BYTES: usize = 8;
+const TEST_DRAM_TARGET_MIN_RECORD_BYTES: usize = 200;
+const TEST_DRAM_BANK_STATE_MIN_RECORD_BYTES: usize = TEST_U64_BYTES * 2;
 
 fn layout() -> CacheLineLayout {
     CacheLineLayout::new(64).unwrap()
@@ -93,6 +97,60 @@ fn memory_store() -> (PartitionedMemoryStore, MemoryTargetId, MemoryTargetId) {
         .insert_line(high, Address::new(0x8000), line_data(0x80))
         .unwrap();
     (store, low, high)
+}
+
+fn empty_store_checkpoint_payload() -> Vec<u8> {
+    let mut payload = Vec::new();
+    write_test_u64(&mut payload, 0);
+    write_test_u64(&mut payload, 0);
+    payload
+}
+
+fn write_dram_store_header(payload: &mut Vec<u8>) {
+    let store = empty_store_checkpoint_payload();
+    write_test_u64(payload, store.len() as u64);
+    payload.extend_from_slice(&store);
+}
+
+fn write_minimal_dram_target_prefix_with_bank_count(payload: &mut Vec<u8>, bank_count: u32) {
+    write_test_u32(payload, 30);
+    write_test_u32(payload, bank_count);
+    write_test_u64(payload, 256);
+    write_test_u64(payload, 64);
+    write_test_u64(payload, 0);
+    write_test_u64(payload, 3);
+    write_test_u64(payload, 5);
+    write_test_u64(payload, 7);
+    write_test_u64(payload, 2);
+    write_test_u64(payload, 4);
+    write_test_u64(payload, 2);
+    write_test_u64(payload, 0);
+    write_test_u64(payload, 0);
+    write_test_u64(payload, 0);
+}
+
+fn write_minimal_dram_target_prefix(payload: &mut Vec<u8>) {
+    write_minimal_dram_target_prefix_with_bank_count(payload, 1);
+}
+
+fn write_dram_payload_until_nvm_pending_counts_with_target_start(payload: &mut Vec<u8>) -> usize {
+    write_dram_store_header(payload);
+    write_test_u64(payload, 1);
+    let target_start = payload.len();
+    write_minimal_dram_target_prefix(payload);
+    write_test_u64(payload, 0);
+    target_start
+}
+
+fn pad_minimal_dram_target_payload(payload: &mut Vec<u8>, target_start: usize) -> usize {
+    let target_bytes = payload.len() - target_start;
+    let padding = TEST_DRAM_TARGET_MIN_RECORD_BYTES.saturating_sub(target_bytes);
+    payload.resize(payload.len() + padding, 0);
+    padding
+}
+
+fn dram_controller_for_malformed_restore() -> Arc<Mutex<DramMemoryController>> {
+    Arc::new(Mutex::new(dram_memory_controller().0))
 }
 
 fn dram_memory_controller() -> (DramMemoryController, MemoryTargetId, MemoryTargetId) {
@@ -361,6 +419,191 @@ fn memory_store_checkpoint_bank_rejects_truncated_payload_without_partial_restor
     assert_eq!(error.component(), &component1);
     assert_eq!(store0.lock().unwrap().snapshot(), before0);
     assert_eq!(store1.lock().unwrap().snapshot(), before1);
+}
+
+#[test]
+fn dram_memory_checkpoint_rejects_impossible_target_count_without_mutating_controller() {
+    let controller = dram_controller_for_malformed_restore();
+    let before = controller.lock().unwrap().snapshot();
+    let component = CheckpointComponentId::new("dram_target_count").unwrap();
+    let port = DramMemoryCheckpointPort::new(component.clone(), Arc::clone(&controller));
+    let mut payload = Vec::new();
+    write_dram_store_header(&mut payload);
+    write_test_u64(&mut payload, u64::MAX);
+    let mut registry = CheckpointRegistry::new();
+    registry.register(component.clone()).unwrap();
+    registry.write_chunk(&component, "dram", payload).unwrap();
+
+    let error = port.restore_from(&registry).unwrap_err();
+
+    assert_eq!(
+        error,
+        DramMemoryCheckpointError::InvalidChunk {
+            component,
+            reason:
+                "DRAM target count 18446744073709551615 exceeds remaining payload capacity 0 records"
+                    .to_string(),
+        }
+    );
+    assert_eq!(controller.lock().unwrap().snapshot(), before);
+}
+
+#[test]
+fn dram_memory_checkpoint_rejects_impossible_pending_read_count_without_mutating_controller() {
+    let controller = dram_controller_for_malformed_restore();
+    let before = controller.lock().unwrap().snapshot();
+    let component = CheckpointComponentId::new("dram_pending_read_count").unwrap();
+    let port = DramMemoryCheckpointPort::new(component.clone(), Arc::clone(&controller));
+    let mut payload = Vec::new();
+    let target_start = write_dram_payload_until_nvm_pending_counts_with_target_start(&mut payload);
+    write_test_u64(&mut payload, u64::MAX);
+    let capacity = pad_minimal_dram_target_payload(&mut payload, target_start) / TEST_U64_BYTES;
+    let mut registry = CheckpointRegistry::new();
+    registry.register(component.clone()).unwrap();
+    registry.write_chunk(&component, "dram", payload).unwrap();
+
+    let error = port.restore_from(&registry).unwrap_err();
+
+    assert_eq!(
+        error,
+        DramMemoryCheckpointError::InvalidChunk {
+            component,
+            reason: format!(
+                "DRAM NVM pending read completion count 18446744073709551615 exceeds remaining payload capacity {capacity} records"
+            ),
+        }
+    );
+    assert_eq!(controller.lock().unwrap().snapshot(), before);
+}
+
+#[test]
+fn dram_memory_checkpoint_rejects_impossible_pending_write_count_without_mutating_controller() {
+    let controller = dram_controller_for_malformed_restore();
+    let before = controller.lock().unwrap().snapshot();
+    let component = CheckpointComponentId::new("dram_pending_write_count").unwrap();
+    let port = DramMemoryCheckpointPort::new(component.clone(), Arc::clone(&controller));
+    let mut payload = Vec::new();
+    let target_start = write_dram_payload_until_nvm_pending_counts_with_target_start(&mut payload);
+    write_test_u64(&mut payload, 0);
+    write_test_u64(&mut payload, u64::MAX);
+    let capacity = pad_minimal_dram_target_payload(&mut payload, target_start) / TEST_U64_BYTES;
+    let mut registry = CheckpointRegistry::new();
+    registry.register(component.clone()).unwrap();
+    registry.write_chunk(&component, "dram", payload).unwrap();
+
+    let error = port.restore_from(&registry).unwrap_err();
+
+    assert_eq!(
+        error,
+        DramMemoryCheckpointError::InvalidChunk {
+            component,
+            reason: format!(
+                "DRAM NVM pending write completion count 18446744073709551615 exceeds remaining payload capacity {capacity} records"
+            ),
+        }
+    );
+    assert_eq!(controller.lock().unwrap().snapshot(), before);
+}
+
+#[test]
+fn dram_memory_checkpoint_rejects_impossible_bank_state_count_without_mutating_controller() {
+    let controller = dram_controller_for_malformed_restore();
+    let before = controller.lock().unwrap().snapshot();
+    let component = CheckpointComponentId::new("dram_bank_state_count").unwrap();
+    let port = DramMemoryCheckpointPort::new(component.clone(), Arc::clone(&controller));
+    let mut payload = Vec::new();
+    let target_start = write_dram_payload_until_nvm_pending_counts_with_target_start(&mut payload);
+    write_test_u64(&mut payload, 0);
+    write_test_u64(&mut payload, 0);
+    write_test_u64(&mut payload, u64::MAX);
+    write_test_u64(&mut payload, u64::MAX);
+    let capacity = pad_minimal_dram_target_payload(&mut payload, target_start)
+        / TEST_DRAM_BANK_STATE_MIN_RECORD_BYTES;
+    let mut registry = CheckpointRegistry::new();
+    registry.register(component.clone()).unwrap();
+    registry.write_chunk(&component, "dram", payload).unwrap();
+
+    let error = port.restore_from(&registry).unwrap_err();
+
+    assert_eq!(
+        error,
+        DramMemoryCheckpointError::InvalidChunk {
+            component,
+            reason: format!(
+                "DRAM bank state count 18446744073709551615 exceeds remaining payload capacity {capacity} records"
+            ),
+        }
+    );
+    assert_eq!(controller.lock().unwrap().snapshot(), before);
+}
+
+#[test]
+fn dram_memory_checkpoint_rejects_bank_state_count_overflow_without_mutating_controller() {
+    let controller = dram_controller_for_malformed_restore();
+    let before = controller.lock().unwrap().snapshot();
+    let component = CheckpointComponentId::new("dram_bank_state_overflow").unwrap();
+    let port = DramMemoryCheckpointPort::new(component.clone(), Arc::clone(&controller));
+    let mut payload = Vec::new();
+    write_dram_store_header(&mut payload);
+    write_test_u64(&mut payload, 1);
+    let target_start = payload.len();
+    write_minimal_dram_target_prefix_with_bank_count(&mut payload, 4);
+    write_test_u64(&mut payload, 0);
+    write_test_u64(&mut payload, 0);
+    write_test_u64(&mut payload, 0);
+    write_test_u64(&mut payload, usize::MAX as u64);
+    write_test_u64(&mut payload, 0);
+    pad_minimal_dram_target_payload(&mut payload, target_start);
+    let mut registry = CheckpointRegistry::new();
+    registry.register(component.clone()).unwrap();
+    registry.write_chunk(&component, "dram", payload).unwrap();
+
+    let error = port.restore_from(&registry).unwrap_err();
+
+    assert_eq!(
+        error,
+        DramMemoryCheckpointError::InvalidChunk {
+            component,
+            reason: "DRAM target 30 bank state count overflows host usize".to_string(),
+        }
+    );
+    assert_eq!(controller.lock().unwrap().snapshot(), before);
+}
+
+#[test]
+fn dram_memory_checkpoint_rejects_impossible_command_window_count_without_mutating_controller() {
+    let controller = dram_controller_for_malformed_restore();
+    let before = controller.lock().unwrap().snapshot();
+    let component = CheckpointComponentId::new("dram_command_window_count").unwrap();
+    let port = DramMemoryCheckpointPort::new(component.clone(), Arc::clone(&controller));
+    let mut payload = Vec::new();
+    let target_start = write_dram_payload_until_nvm_pending_counts_with_target_start(&mut payload);
+    write_test_u64(&mut payload, 0);
+    write_test_u64(&mut payload, 0);
+    write_test_u64(&mut payload, 1);
+    write_test_u64(&mut payload, 1);
+    write_test_u64(&mut payload, 0);
+    write_test_u64(&mut payload, 0);
+    write_test_u64(&mut payload, 0);
+    write_test_u64(&mut payload, 0);
+    write_test_u64(&mut payload, u64::MAX);
+    let capacity = pad_minimal_dram_target_payload(&mut payload, target_start) / TEST_U64_BYTES;
+    let mut registry = CheckpointRegistry::new();
+    registry.register(component.clone()).unwrap();
+    registry.write_chunk(&component, "dram", payload).unwrap();
+
+    let error = port.restore_from(&registry).unwrap_err();
+
+    assert_eq!(
+        error,
+        DramMemoryCheckpointError::InvalidChunk {
+            component,
+            reason: format!(
+                "DRAM port command window start count 18446744073709551615 exceeds remaining payload capacity {capacity} records"
+            ),
+        }
+    );
+    assert_eq!(controller.lock().unwrap().snapshot(), before);
 }
 
 #[test]

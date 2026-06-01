@@ -23,6 +23,8 @@ const STORE_PARTITION_MIN_RECORD_BYTES: usize = U32_BYTES + U64_BYTES * 2;
 const STORE_LINE_MIN_RECORD_BYTES: usize = U64_BYTES * 2;
 const STORE_REGION_MIN_RECORD_BYTES: usize = U32_BYTES + U64_BYTES * 4;
 const STORE_HOLE_RECORD_BYTES: usize = U64_BYTES * 2;
+const DRAM_TARGET_MIN_RECORD_BYTES: usize = U32_BYTES * 2 + U64_BYTES * 24;
+const DRAM_BANK_STATE_MIN_RECORD_BYTES: usize = U64_BYTES * 2;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MemoryStoreCheckpointRecord {
@@ -856,7 +858,8 @@ fn decode_dram_memory(
     let store_payload = cursor.read_bytes("store payload", store_len)?;
     let store = decode_store(component, store_payload)
         .map_err(|error| map_store_decode_error(component, error))?;
-    let target_count = cursor.read_count("DRAM target count")?;
+    let target_count =
+        cursor.read_bounded_count("DRAM target count", DRAM_TARGET_MIN_RECORD_BYTES)?;
     let mut targets = Vec::with_capacity(target_count);
 
     for _ in 0..target_count {
@@ -931,8 +934,16 @@ fn decode_dram_memory(
                 target.get()
             )));
         }
-        let encoded_bank_count = cursor.read_count("DRAM bank state count")?;
-        let expected_bank_count = geometry.bank_count() as usize * port_count;
+        let encoded_bank_count =
+            cursor.read_bounded_count("DRAM bank state count", DRAM_BANK_STATE_MIN_RECORD_BYTES)?;
+        let expected_bank_count = (geometry.bank_count() as usize)
+            .checked_mul(port_count)
+            .ok_or_else(|| {
+                cursor.invalid(format!(
+                    "DRAM target {} bank state count overflows host usize",
+                    target.get()
+                ))
+            })?;
         if encoded_bank_count != expected_bank_count {
             return Err(cursor.invalid(format!(
                 "DRAM target {} has {} bank states, expected {}",
@@ -962,7 +973,8 @@ fn decode_dram_memory(
         for port in 0..port_count {
             let bus_available_cycle = cursor.read_u64("DRAM port bus available cycle")?;
             let last_access_kind = read_access_kind(&mut cursor, target, format!("port {port}"))?;
-            let command_window_count = cursor.read_count("DRAM port command window start count")?;
+            let command_window_count =
+                cursor.read_bounded_count("DRAM port command window start count", U64_BYTES)?;
             let mut command_window_starts = Vec::with_capacity(command_window_count);
             for _ in 0..command_window_count {
                 command_window_starts.push(cursor.read_u64("DRAM port command window start")?);
@@ -1067,13 +1079,15 @@ fn read_nvm_media_state(
     target: MemoryTargetId,
 ) -> Result<NvmMediaCheckpointState, DramMemoryCheckpointError> {
     let nvm_media_timing = read_nvm_media_timing(cursor, target)?;
-    let pending_read_count = cursor.read_count("DRAM NVM pending read completion count")?;
+    let pending_read_count =
+        cursor.read_bounded_count("DRAM NVM pending read completion count", U64_BYTES)?;
     let mut pending_read_completions = Vec::with_capacity(pending_read_count);
     for _ in 0..pending_read_count {
         pending_read_completions.push(cursor.read_u64("DRAM NVM pending read completion")?);
     }
     pending_read_completions.sort_unstable();
-    let pending_count = cursor.read_count("DRAM NVM pending write completion count")?;
+    let pending_count =
+        cursor.read_bounded_count("DRAM NVM pending write completion count", U64_BYTES)?;
     let mut pending_write_completions = Vec::with_capacity(pending_count);
     for _ in 0..pending_count {
         pending_write_completions.push(cursor.read_u64("DRAM NVM pending write completion")?);
@@ -1316,6 +1330,25 @@ impl<'a> DramPayloadCursor<'a> {
         self.read_u64(name)?
             .try_into()
             .map_err(|_| self.invalid(format!("{name} does not fit host usize")))
+    }
+
+    fn read_bounded_count(
+        &mut self,
+        name: &str,
+        record_bytes: usize,
+    ) -> Result<usize, DramMemoryCheckpointError> {
+        let count = self.read_count(name)?;
+        let capacity = self.remaining() / record_bytes;
+        if count > capacity {
+            return Err(self.invalid(format!(
+                "{name} {count} exceeds remaining payload capacity {capacity} records"
+            )));
+        }
+        Ok(count)
+    }
+
+    fn remaining(&self) -> usize {
+        self.payload.len().saturating_sub(self.offset)
     }
 
     fn read_u32(&mut self, name: &str) -> Result<u32, DramMemoryCheckpointError> {
