@@ -5,7 +5,7 @@ use rem6_kernel::Tick;
 use rem6_memory::{Address, ByteMask};
 
 use crate::{
-    block_queue::add_address, modern_feature_pages, VirtioError, VirtioGuestMemory,
+    guest_memory::add_address, modern_feature_pages, VirtioError, VirtioGuestMemory,
     VirtioPciCommonConfigDevice, VirtioPciDeviceConfigDevice, VirtioPciDeviceConfigSpec,
     VirtioPciIsrDevice, VirtioPciNotifyDevice, VirtioQueueIndex, VirtioQueueNotifySpec,
     VirtioQueueSpec, VirtioSplitDescriptorChain, VirtioSplitQueue, VirtioSplitUsedElement,

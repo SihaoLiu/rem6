@@ -3,7 +3,7 @@ use rem6_memory::{
     PartitionedMemoryStore,
 };
 
-use crate::{block_queue::add_address, VirtioError};
+use crate::VirtioError;
 
 pub struct VirtioGuestMemory<'a> {
     store: &'a mut PartitionedMemoryStore,
@@ -104,9 +104,24 @@ impl<'a> VirtioGuestMemory<'a> {
         while remaining > 0 {
             let line_remaining = self.line_layout.bytes() - self.line_layout.line_offset(cursor);
             let chunk = remaining.min(line_remaining);
-            self.store
+            let target = self
+                .store
                 .validate_access_range(cursor, AccessSize::new(chunk).map_err(virtio_memory_error)?)
                 .map_err(virtio_memory_error)?;
+            let actual_layout = self
+                .store
+                .partition_layout(target)
+                .map_err(virtio_memory_error)?;
+            if actual_layout != self.line_layout {
+                return Err(VirtioError::PciTransportRuntimeConfig {
+                    message: format!(
+                        "VirtIO guest memory access failed: target {} uses {}-byte lines but VirtIO guest memory uses {}-byte lines",
+                        target.get(),
+                        actual_layout.bytes(),
+                        self.line_layout.bytes()
+                    ),
+                });
+            }
             cursor = add_address(cursor, chunk)?;
             remaining -= chunk;
         }
@@ -128,4 +143,17 @@ fn virtio_memory_error(error: rem6_memory::MemoryError) -> VirtioError {
     VirtioError::PciTransportRuntimeConfig {
         message: format!("VirtIO guest memory access failed: {error}"),
     }
+}
+
+pub(crate) fn add_address(address: Address, offset: u64) -> Result<Address, VirtioError> {
+    address
+        .get()
+        .checked_add(offset)
+        .map(Address::new)
+        .ok_or_else(|| VirtioError::PciTransportRuntimeConfig {
+            message: format!(
+                "VirtIO guest memory address {:#x} overflows with offset {offset}",
+                address.get()
+            ),
+        })
 }

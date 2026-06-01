@@ -1,8 +1,9 @@
 use rem6_memory::Address;
 
 use crate::{
-    block_queue::add_address, VirtioError, VirtioGuestMemory, VirtioPciIsrDevice, VirtioQueueIndex,
-    VirtioSplitDescriptorChain, VirtioSplitQueue, VirtioSplitUsedElement, VirtioSplitUsedRing,
+    guest_memory::add_address, VirtioError, VirtioGuestMemory, VirtioPciIsrDevice,
+    VirtioQueueIndex, VirtioSplitDescriptorChain, VirtioSplitQueue, VirtioSplitUsedElement,
+    VirtioSplitUsedRing,
 };
 
 pub const VIRTIO_9P_HEADER_BYTES: usize = 7;

@@ -6,10 +6,11 @@ use rem6_memory::Address;
 use rem6_pci::{PciEndpointConfig, PciLegacyInterruptPort, PciMsiPort, PciMsixPort};
 
 use crate::{
-    guest_memory::VirtioGuestMemory, VirtioBlockCompletion, VirtioBlockRequest,
-    VirtioBlockRequestId, VirtioBlockRequestKind, VirtioError, VirtioPciIsrDevice,
-    VirtioQueueIndex, VirtioRngCompletion, VirtioRngRequest, VirtioRngRequestId,
-    VIRTIO_BLOCK_T_FLUSH, VIRTIO_BLOCK_T_GET_ID, VIRTIO_BLOCK_T_IN, VIRTIO_BLOCK_T_OUT,
+    guest_memory::{add_address, VirtioGuestMemory},
+    VirtioBlockCompletion, VirtioBlockRequest, VirtioBlockRequestId, VirtioBlockRequestKind,
+    VirtioError, VirtioPciIsrDevice, VirtioQueueIndex, VirtioRngCompletion, VirtioRngRequest,
+    VirtioRngRequestId, VIRTIO_BLOCK_T_FLUSH, VIRTIO_BLOCK_T_GET_ID, VIRTIO_BLOCK_T_IN,
+    VIRTIO_BLOCK_T_OUT,
 };
 
 pub const VIRTIO_SPLIT_DESC_F_NEXT: u16 = 1;
@@ -1645,19 +1646,6 @@ impl VirtioSplitUsedRing {
             used_element,
         })
     }
-}
-
-pub(crate) fn add_address(address: Address, offset: u64) -> Result<Address, VirtioError> {
-    address
-        .get()
-        .checked_add(offset)
-        .map(Address::new)
-        .ok_or_else(|| VirtioError::PciTransportRuntimeConfig {
-            message: format!(
-                "VirtIO guest memory address {:#x} overflows with offset {offset}",
-                address.get()
-            ),
-        })
 }
 
 fn virtio_pci_error(error: rem6_pci::PciError) -> VirtioError {

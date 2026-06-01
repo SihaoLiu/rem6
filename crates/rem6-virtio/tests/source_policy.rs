@@ -362,9 +362,14 @@ fn virtio_guest_memory_lives_in_focused_module() {
         guest_memory.exists(),
         "VirtIO guest-memory adapter belongs in src/guest_memory.rs"
     );
+    let guest_memory = fs::read_to_string(guest_memory).unwrap();
     assert!(
         !block_queue.contains("pub struct VirtioGuestMemory"),
         "src/block_queue.rs should keep split queue logic separate from guest-memory access helpers"
+    );
+    assert!(
+        !guest_memory.contains("block_queue::add_address"),
+        "src/guest_memory.rs should not depend on split queue internals"
     );
 }
 
