@@ -75,7 +75,7 @@ pub use gshare_predictor::{
     GShareSquash, GShareThreadSnapshot, GShareTrainingUpdate,
 };
 pub use in_order_pipeline::{
-    InOrderPipelineAdvance, InOrderPipelineConfig, InOrderPipelineError,
+    InOrderBranchRedirect, InOrderPipelineAdvance, InOrderPipelineConfig, InOrderPipelineError,
     InOrderPipelineInstruction, InOrderPipelinePlan, InOrderPipelineScheduler,
     InOrderPipelineStage, InOrderPipelineStageWidth,
 };

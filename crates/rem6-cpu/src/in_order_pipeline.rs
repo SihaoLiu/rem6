@@ -121,6 +121,35 @@ impl InOrderPipelineInstruction {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InOrderBranchRedirect {
+    sequence: u64,
+    resolved_stage: InOrderPipelineStage,
+    target_pc: u64,
+}
+
+impl InOrderBranchRedirect {
+    pub const fn new(sequence: u64, resolved_stage: InOrderPipelineStage, target_pc: u64) -> Self {
+        Self {
+            sequence,
+            resolved_stage,
+            target_pc,
+        }
+    }
+
+    pub const fn sequence(self) -> u64 {
+        self.sequence
+    }
+
+    pub const fn resolved_stage(self) -> InOrderPipelineStage {
+        self.resolved_stage
+    }
+
+    pub const fn target_pc(self) -> u64 {
+        self.target_pc
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct InOrderPipelineAdvance {
     instruction: InOrderPipelineInstruction,
     destination_stage: Option<InOrderPipelineStage>,
@@ -156,6 +185,8 @@ pub struct InOrderPipelinePlan {
     advanced: Vec<InOrderPipelineAdvance>,
     resource_blocked: Vec<InOrderPipelineInstruction>,
     ordering_blocked: Vec<InOrderPipelineInstruction>,
+    flushed: Vec<InOrderPipelineInstruction>,
+    redirect: Option<InOrderBranchRedirect>,
 }
 
 impl InOrderPipelinePlan {
@@ -171,8 +202,22 @@ impl InOrderPipelinePlan {
         &self.ordering_blocked
     }
 
+    pub fn flushed(&self) -> &[InOrderPipelineInstruction] {
+        &self.flushed
+    }
+
+    pub fn redirect(&self) -> Option<&InOrderBranchRedirect> {
+        self.redirect.as_ref()
+    }
+
     pub fn advanced_sequences(&self) -> impl Iterator<Item = u64> + '_ {
         self.advanced.iter().map(|advance| advance.sequence())
+    }
+
+    pub fn flushed_sequences(&self) -> impl Iterator<Item = u64> + '_ {
+        self.flushed
+            .iter()
+            .map(|instruction| instruction.sequence())
     }
 
     pub fn has_blocked_work(&self) -> bool {
@@ -198,6 +243,17 @@ impl InOrderPipelineScheduler {
     where
         I: IntoIterator<Item = InOrderPipelineInstruction>,
     {
+        self.plan_with_redirect(instructions, None)
+    }
+
+    pub fn plan_with_redirect<I>(
+        &self,
+        instructions: I,
+        redirect: Option<InOrderBranchRedirect>,
+    ) -> InOrderPipelinePlan
+    where
+        I: IntoIterator<Item = InOrderPipelineInstruction>,
+    {
         let mut ready = instructions.into_iter().collect::<Vec<_>>();
         ready.sort_by_key(|instruction| instruction.sequence());
 
@@ -205,9 +261,15 @@ impl InOrderPipelineScheduler {
         let mut advanced = Vec::new();
         let mut resource_blocked = Vec::new();
         let mut ordering_blocked = Vec::new();
+        let mut flushed = Vec::new();
         let mut older_blocked = false;
 
         for instruction in ready {
+            if redirect.is_some_and(|redirect| instruction.sequence() > redirect.sequence()) {
+                flushed.push(instruction);
+                continue;
+            }
+
             if older_blocked {
                 ordering_blocked.push(instruction);
                 continue;
@@ -228,6 +290,8 @@ impl InOrderPipelineScheduler {
             advanced,
             resource_blocked,
             ordering_blocked,
+            flushed,
+            redirect,
         }
     }
 }

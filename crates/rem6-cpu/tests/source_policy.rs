@@ -55,6 +55,10 @@ fn in_order_pipeline_lives_in_focused_module() {
         "src/in_order_pipeline.rs should own the in-order scheduler"
     );
     assert!(
+        in_order_src.contains("pub struct InOrderBranchRedirect"),
+        "src/in_order_pipeline.rs should own in-order branch redirect evidence"
+    );
+    assert!(
         !lib_rs.contains("pub struct InOrderPipelineScheduler"),
         "src/lib.rs should re-export the in-order scheduler from a focused module"
     );

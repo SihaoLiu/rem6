@@ -1,5 +1,5 @@
 use rem6_cpu::{
-    InOrderPipelineConfig, InOrderPipelineError, InOrderPipelineInstruction,
+    InOrderBranchRedirect, InOrderPipelineConfig, InOrderPipelineError, InOrderPipelineInstruction,
     InOrderPipelineScheduler, InOrderPipelineStage, InOrderPipelineStageWidth,
 };
 
@@ -72,6 +72,31 @@ fn in_order_pipeline_commit_width_marks_retirements_in_program_order() {
         .all(|advance| advance.destination_stage().is_none()));
     assert_eq!(plan.resource_blocked()[0].sequence(), 22);
     assert!(plan.ordering_blocked().is_empty());
+}
+
+#[test]
+fn in_order_pipeline_branch_redirect_flushes_younger_pipeline_work() {
+    let scheduler = scheduler_with_decode_width(1);
+    let redirect = InOrderBranchRedirect::new(30, InOrderPipelineStage::Execute, 0x2000);
+
+    let plan = scheduler.plan_with_redirect(
+        [
+            instruction(29, InOrderPipelineStage::Commit),
+            instruction(30, InOrderPipelineStage::Execute),
+            instruction(31, InOrderPipelineStage::Decode),
+            instruction(32, InOrderPipelineStage::Fetch2),
+        ],
+        Some(redirect),
+    );
+
+    assert_eq!(plan.redirect(), Some(&redirect));
+    assert_eq!(plan.advanced_sequences().collect::<Vec<_>>(), vec![29, 30]);
+    assert_eq!(plan.flushed_sequences().collect::<Vec<_>>(), vec![31, 32]);
+    assert!(plan
+        .flushed()
+        .iter()
+        .all(|instruction| instruction.sequence() > redirect.sequence()));
+    assert!(!plan.has_blocked_work());
 }
 
 #[test]
