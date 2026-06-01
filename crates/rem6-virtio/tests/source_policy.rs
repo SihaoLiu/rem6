@@ -399,6 +399,30 @@ fn virtio_9p_device_tests_delegate_xattr_cases() {
     );
 }
 
+#[test]
+fn virtio_9p_device_tests_delegate_lock_cases() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let device_test = fs::read_to_string(crate_dir.join("tests/fs9p_device.rs")).unwrap();
+    let lock_test = crate_dir.join("tests/fs9p_lock.rs");
+
+    assert!(
+        lock_test.exists(),
+        "9P lock tests belong in tests/fs9p_lock.rs"
+    );
+    for symbol in [
+        "VIRTIO_9P_TLOCK",
+        "VIRTIO_9P_TGETLOCK",
+        "VIRTIO_9P_RLOCK",
+        "VIRTIO_9P_RGETLOCK",
+        "p9_lock_payload",
+    ] {
+        assert!(
+            !device_test.contains(symbol),
+            "tests/fs9p_device.rs should delegate 9P lock behavior to tests/fs9p_lock.rs"
+        );
+    }
+}
+
 fn rust_source_files(root: &Path) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     collect_rust_source_files(root, &mut paths);

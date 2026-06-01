@@ -1,18 +1,16 @@
 use rem6_virtio::{
     Virtio9pConfig, Virtio9pDevice, VirtioError, VIRTIO_9P_DEFAULT_MSIZE, VIRTIO_9P_DTDIR,
     VIRTIO_9P_DTREG, VIRTIO_9P_EBADF, VIRTIO_9P_ENOENT, VIRTIO_9P_ENOTSUP, VIRTIO_9P_GETATTR_BASIC,
-    VIRTIO_9P_LOCK_SUCCESS, VIRTIO_9P_LOCK_TYPE_UNLCK, VIRTIO_9P_LOCK_TYPE_WRLCK,
     VIRTIO_9P_NAME_MAX, VIRTIO_9P_NOFID, VIRTIO_9P_OPEN_READ_ONLY, VIRTIO_9P_OPEN_READ_WRITE,
     VIRTIO_9P_OPEN_WRITE_ONLY, VIRTIO_9P_QTDIR, VIRTIO_9P_QTFILE, VIRTIO_9P_RATTACH,
-    VIRTIO_9P_RCLUNK, VIRTIO_9P_RFLUSH, VIRTIO_9P_RFSYNC, VIRTIO_9P_RGETATTR, VIRTIO_9P_RGETLOCK,
-    VIRTIO_9P_RLERROR, VIRTIO_9P_RLINK, VIRTIO_9P_RLOCK, VIRTIO_9P_RLOPEN, VIRTIO_9P_ROPEN,
-    VIRTIO_9P_RREAD, VIRTIO_9P_RREADDIR, VIRTIO_9P_RSETATTR, VIRTIO_9P_RSTATFS,
-    VIRTIO_9P_RUNLINKAT, VIRTIO_9P_RWALK, VIRTIO_9P_RWRITE, VIRTIO_9P_SETATTR_ATIME,
-    VIRTIO_9P_SETATTR_ATIME_SET, VIRTIO_9P_SETATTR_GID, VIRTIO_9P_SETATTR_MODE,
-    VIRTIO_9P_SETATTR_MTIME, VIRTIO_9P_SETATTR_MTIME_SET, VIRTIO_9P_SETATTR_SIZE,
-    VIRTIO_9P_SETATTR_UID, VIRTIO_9P_STATFS_BLOCK_SIZE, VIRTIO_9P_STATFS_TYPE, VIRTIO_9P_TATTACH,
-    VIRTIO_9P_TCLUNK, VIRTIO_9P_TFLUSH, VIRTIO_9P_TFSYNC, VIRTIO_9P_TGETATTR, VIRTIO_9P_TGETLOCK,
-    VIRTIO_9P_TLINK, VIRTIO_9P_TLOCK, VIRTIO_9P_TLOPEN, VIRTIO_9P_TOPEN, VIRTIO_9P_TREAD,
+    VIRTIO_9P_RCLUNK, VIRTIO_9P_RFLUSH, VIRTIO_9P_RFSYNC, VIRTIO_9P_RGETATTR, VIRTIO_9P_RLERROR,
+    VIRTIO_9P_RLINK, VIRTIO_9P_RLOPEN, VIRTIO_9P_ROPEN, VIRTIO_9P_RREAD, VIRTIO_9P_RREADDIR,
+    VIRTIO_9P_RSETATTR, VIRTIO_9P_RSTATFS, VIRTIO_9P_RUNLINKAT, VIRTIO_9P_RWALK, VIRTIO_9P_RWRITE,
+    VIRTIO_9P_SETATTR_ATIME, VIRTIO_9P_SETATTR_ATIME_SET, VIRTIO_9P_SETATTR_GID,
+    VIRTIO_9P_SETATTR_MODE, VIRTIO_9P_SETATTR_MTIME, VIRTIO_9P_SETATTR_MTIME_SET,
+    VIRTIO_9P_SETATTR_SIZE, VIRTIO_9P_SETATTR_UID, VIRTIO_9P_STATFS_BLOCK_SIZE,
+    VIRTIO_9P_STATFS_TYPE, VIRTIO_9P_TATTACH, VIRTIO_9P_TCLUNK, VIRTIO_9P_TFLUSH, VIRTIO_9P_TFSYNC,
+    VIRTIO_9P_TGETATTR, VIRTIO_9P_TLINK, VIRTIO_9P_TLOPEN, VIRTIO_9P_TOPEN, VIRTIO_9P_TREAD,
     VIRTIO_9P_TREADDIR, VIRTIO_9P_TSETATTR, VIRTIO_9P_TSTATFS, VIRTIO_9P_TUNLINKAT,
     VIRTIO_9P_TWALK, VIRTIO_9P_TWRITE,
 };
@@ -331,81 +329,6 @@ fn virtio_9p_device_fsync_acknowledges_existing_fids_only() {
     assert!(fsync_completion.payload().is_empty());
 }
 
-#[test]
-fn virtio_9p_device_accepts_advisory_locks_on_open_files() {
-    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap())
-        .with_file("alpha.txt", b"alpha".to_vec())
-        .unwrap();
-    let attach = decoded_request(
-        VIRTIO_9P_TATTACH,
-        1,
-        p9_attach_payload(1, VIRTIO_9P_NOFID, b"root", b"", 0),
-    );
-    device.execute_at(10, attach).unwrap();
-    let walk = decoded_request(VIRTIO_9P_TWALK, 2, p9_walk_payload(1, 2, &[b"alpha.txt"]));
-    device.execute_at(11, walk).unwrap();
-    let open = decoded_request(VIRTIO_9P_TLOPEN, 3, p9_lopen_payload(2, 0));
-    device.execute_at(12, open).unwrap();
-
-    let lock = decoded_request(
-        VIRTIO_9P_TLOCK,
-        4,
-        p9_lock_payload(2, VIRTIO_9P_LOCK_TYPE_WRLCK, 0, 0, 5, 42, b"client-a"),
-    );
-    let lock_completion = device.execute_at(13, lock).unwrap();
-    assert_eq!(lock_completion.message_type(), VIRTIO_9P_RLOCK);
-    assert_eq!(lock_completion.payload(), [VIRTIO_9P_LOCK_SUCCESS]);
-
-    let stale = decoded_request(
-        VIRTIO_9P_TLOCK,
-        5,
-        p9_lock_payload(7, VIRTIO_9P_LOCK_TYPE_WRLCK, 0, 0, 5, 42, b"client-a"),
-    );
-    let stale_completion = device.execute_at(14, stale).unwrap();
-    assert_eq!(stale_completion.message_type(), VIRTIO_9P_RLERROR);
-    assert_eq!(stale_completion.payload(), VIRTIO_9P_EBADF.to_le_bytes());
-}
-
-#[test]
-fn virtio_9p_device_reports_no_advisory_lock_conflicts() {
-    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap())
-        .with_file("alpha.txt", b"alpha".to_vec())
-        .unwrap();
-    let attach = decoded_request(
-        VIRTIO_9P_TATTACH,
-        1,
-        p9_attach_payload(1, VIRTIO_9P_NOFID, b"root", b"", 0),
-    );
-    device.execute_at(10, attach).unwrap();
-    let walk = decoded_request(VIRTIO_9P_TWALK, 2, p9_walk_payload(1, 2, &[b"alpha.txt"]));
-    device.execute_at(11, walk).unwrap();
-    let open = decoded_request(VIRTIO_9P_TLOPEN, 3, p9_lopen_payload(2, 0));
-    device.execute_at(12, open).unwrap();
-
-    let getlock = decoded_request(
-        VIRTIO_9P_TGETLOCK,
-        4,
-        p9_lock_payload(2, VIRTIO_9P_LOCK_TYPE_WRLCK, 0, 12, 8, 99, b"client-a"),
-    );
-    let getlock_completion = device.execute_at(13, getlock).unwrap();
-    assert_eq!(getlock_completion.message_type(), VIRTIO_9P_RGETLOCK);
-    let payload = getlock_completion.payload();
-    assert_eq!(payload[0], VIRTIO_9P_LOCK_TYPE_UNLCK);
-    assert_eq!(read_u32(payload, 1), 0);
-    assert_eq!(read_u64(payload, 5), 12);
-    assert_eq!(read_u64(payload, 13), 8);
-    assert_eq!(read_u32(payload, 21), 99);
-    assert_eq!(read_string(payload, 25), b"client-a");
-
-    let stale = decoded_request(
-        VIRTIO_9P_TGETLOCK,
-        5,
-        p9_lock_payload(7, VIRTIO_9P_LOCK_TYPE_WRLCK, 0, 12, 8, 99, b"client-a"),
-    );
-    let stale_completion = device.execute_at(14, stale).unwrap();
-    assert_eq!(stale_completion.message_type(), VIRTIO_9P_RLERROR);
-    assert_eq!(stale_completion.payload(), VIRTIO_9P_EBADF.to_le_bytes());
-}
 #[test]
 fn virtio_9p_device_reports_lerror_for_missing_walk_targets() {
     let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap());
