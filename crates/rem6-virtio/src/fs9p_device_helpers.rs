@@ -1,7 +1,8 @@
 use crate::fs9p_namespace::Virtio9pXattrWritePolicy;
 use crate::fs9p_protocol::{
-    VIRTIO_9P_EINVAL, VIRTIO_9P_LOCK_TYPE_RDLCK, VIRTIO_9P_LOCK_TYPE_UNLCK,
-    VIRTIO_9P_LOCK_TYPE_WRLCK, VIRTIO_9P_XATTR_CREATE, VIRTIO_9P_XATTR_REPLACE,
+    VIRTIO_9P_EINVAL, VIRTIO_9P_LOCK_FLAGS_BLOCK, VIRTIO_9P_LOCK_FLAGS_RECLAIM,
+    VIRTIO_9P_LOCK_TYPE_RDLCK, VIRTIO_9P_LOCK_TYPE_UNLCK, VIRTIO_9P_LOCK_TYPE_WRLCK,
+    VIRTIO_9P_XATTR_CREATE, VIRTIO_9P_XATTR_REPLACE,
 };
 
 pub(crate) const fn valid_lock_type(lock_type: u8) -> bool {
@@ -9,6 +10,11 @@ pub(crate) const fn valid_lock_type(lock_type: u8) -> bool {
         lock_type,
         VIRTIO_9P_LOCK_TYPE_RDLCK | VIRTIO_9P_LOCK_TYPE_WRLCK | VIRTIO_9P_LOCK_TYPE_UNLCK
     )
+}
+
+pub(crate) const fn valid_lock_flags(flags: u32) -> bool {
+    let known_flags = VIRTIO_9P_LOCK_FLAGS_BLOCK | VIRTIO_9P_LOCK_FLAGS_RECLAIM;
+    flags & !known_flags == 0
 }
 
 pub(crate) const fn xattr_write_policy(flags: u32) -> Result<Virtio9pXattrWritePolicy, u32> {

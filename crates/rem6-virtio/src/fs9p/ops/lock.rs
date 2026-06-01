@@ -1,4 +1,4 @@
-use crate::fs9p_device_helpers::valid_lock_type;
+use crate::fs9p_device_helpers::{valid_lock_flags, valid_lock_type};
 use crate::fs9p_protocol::*;
 use crate::{Virtio9pRequest, VirtioError};
 
@@ -12,6 +12,9 @@ impl Virtio9pDevice {
         let lock = parse_lock_request(request)?;
         if !valid_lock_type(lock.lock_type) {
             return Ok(Err(VIRTIO_9P_EBADF));
+        }
+        if !valid_lock_flags(lock.flags) {
+            return Ok(Err(VIRTIO_9P_EINVAL));
         }
         let Some(node) = self.lockable_node(lock.fid) else {
             return Ok(Err(VIRTIO_9P_EBADF));
@@ -31,6 +34,9 @@ impl Virtio9pDevice {
         let lock = parse_getlock_request(request)?;
         if !valid_lock_type(lock.lock_type) {
             return Ok(Err(VIRTIO_9P_EBADF));
+        }
+        if !valid_lock_flags(lock.flags) {
+            return Ok(Err(VIRTIO_9P_EINVAL));
         }
         let Some(node) = self.lockable_node(lock.fid) else {
             return Ok(Err(VIRTIO_9P_EBADF));

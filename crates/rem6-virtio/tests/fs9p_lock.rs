@@ -1,5 +1,5 @@
 use rem6_virtio::{
-    Virtio9pConfig, Virtio9pDevice, VIRTIO_9P_EBADF, VIRTIO_9P_LOCK_BLOCKED,
+    Virtio9pConfig, Virtio9pDevice, VIRTIO_9P_EBADF, VIRTIO_9P_EINVAL, VIRTIO_9P_LOCK_BLOCKED,
     VIRTIO_9P_LOCK_SUCCESS, VIRTIO_9P_LOCK_TYPE_RDLCK, VIRTIO_9P_LOCK_TYPE_UNLCK,
     VIRTIO_9P_LOCK_TYPE_WRLCK, VIRTIO_9P_NOFID, VIRTIO_9P_RGETLOCK, VIRTIO_9P_RLERROR,
     VIRTIO_9P_RLINK, VIRTIO_9P_RLOCK, VIRTIO_9P_RLOPEN, VIRTIO_9P_RREMOVE, VIRTIO_9P_RWALK,
@@ -71,6 +71,84 @@ fn virtio_9p_device_reports_conflicting_byte_range_locks() {
         p9_lock_payload(3, VIRTIO_9P_LOCK_TYPE_RDLCK, 0, 5, 3, 77, b"client-b"),
     );
     let getlock_completion = device.execute_at(22, getlock).unwrap();
+    assert_eq!(getlock_completion.message_type(), VIRTIO_9P_RGETLOCK);
+    let payload = getlock_completion.payload();
+    assert_eq!(payload[0], VIRTIO_9P_LOCK_TYPE_WRLCK);
+    assert_eq!(read_u32(payload, 1), 0);
+    assert_eq!(read_u64(payload, 5), 0);
+    assert_eq!(read_u64(payload, 13), 10);
+    assert_eq!(read_u32(payload, 21), 42);
+    assert_eq!(read_string(payload, 25), b"client-a");
+}
+
+#[test]
+fn virtio_9p_device_rejects_unknown_lock_flags_without_mutation() {
+    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap())
+        .with_file("alpha.txt", b"alpha".to_vec())
+        .unwrap();
+    let attach = decoded_request(
+        VIRTIO_9P_TATTACH,
+        1,
+        p9_attach_payload(1, VIRTIO_9P_NOFID, b"root", b"", 0),
+    );
+    device.execute_at(10, attach).unwrap();
+    open_file_fid(&device, 2, 2, b"alpha.txt");
+    open_file_fid(&device, 4, 3, b"alpha.txt");
+
+    let invalid_lock = decoded_request(
+        VIRTIO_9P_TLOCK,
+        6,
+        p9_lock_payload(2, VIRTIO_9P_LOCK_TYPE_WRLCK, 4, 0, 10, 42, b"client-a"),
+    );
+    let invalid_lock_completion = device.execute_at(20, invalid_lock).unwrap();
+    assert_eq!(invalid_lock_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(
+        invalid_lock_completion.payload(),
+        VIRTIO_9P_EINVAL.to_le_bytes()
+    );
+
+    let no_conflict = decoded_request(
+        VIRTIO_9P_TGETLOCK,
+        7,
+        p9_lock_payload(3, VIRTIO_9P_LOCK_TYPE_RDLCK, 0, 5, 3, 77, b"client-b"),
+    );
+    let no_conflict_completion = device.execute_at(21, no_conflict).unwrap();
+    assert_eq!(no_conflict_completion.message_type(), VIRTIO_9P_RGETLOCK);
+    let payload = no_conflict_completion.payload();
+    assert_eq!(payload[0], VIRTIO_9P_LOCK_TYPE_UNLCK);
+    assert_eq!(read_u32(payload, 1), 0);
+    assert_eq!(read_u64(payload, 5), 5);
+    assert_eq!(read_u64(payload, 13), 3);
+    assert_eq!(read_u32(payload, 21), 77);
+    assert_eq!(read_string(payload, 25), b"client-b");
+
+    let writer = decoded_request(
+        VIRTIO_9P_TLOCK,
+        8,
+        p9_lock_payload(2, VIRTIO_9P_LOCK_TYPE_WRLCK, 0, 0, 10, 42, b"client-a"),
+    );
+    let writer_completion = device.execute_at(22, writer).unwrap();
+    assert_eq!(writer_completion.message_type(), VIRTIO_9P_RLOCK);
+    assert_eq!(writer_completion.payload(), [VIRTIO_9P_LOCK_SUCCESS]);
+
+    let invalid_getlock = decoded_request(
+        VIRTIO_9P_TGETLOCK,
+        9,
+        p9_lock_payload(3, VIRTIO_9P_LOCK_TYPE_RDLCK, 8, 5, 3, 77, b"client-b"),
+    );
+    let invalid_getlock_completion = device.execute_at(23, invalid_getlock).unwrap();
+    assert_eq!(invalid_getlock_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(
+        invalid_getlock_completion.payload(),
+        VIRTIO_9P_EINVAL.to_le_bytes()
+    );
+
+    let getlock = decoded_request(
+        VIRTIO_9P_TGETLOCK,
+        10,
+        p9_lock_payload(3, VIRTIO_9P_LOCK_TYPE_RDLCK, 0, 5, 3, 77, b"client-b"),
+    );
+    let getlock_completion = device.execute_at(24, getlock).unwrap();
     assert_eq!(getlock_completion.message_type(), VIRTIO_9P_RGETLOCK);
     let payload = getlock_completion.payload();
     assert_eq!(payload[0], VIRTIO_9P_LOCK_TYPE_WRLCK);
