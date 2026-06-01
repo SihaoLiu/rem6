@@ -14,6 +14,10 @@ use crate::{
     VirtioError,
 };
 
+mod path_entry;
+
+use path_entry::take_file_node_at_fid_path;
+
 const VIRTIO_9P_QID_BYTES: usize = 13;
 const VIRTIO_9P_STATFS_BLOCKS: u64 = 1024;
 const VIRTIO_9P_STATFS_FSID: u64 = 0x7265_6d36;
@@ -420,6 +424,7 @@ impl Virtio9pNamespace {
     pub(crate) fn rename_node(
         &mut self,
         node: Virtio9pNodeId,
+        old_path: &Virtio9pFidPath,
         new_parent: Virtio9pNodeId,
         newname: &str,
     ) -> Result<Result<Virtio9pRenameOutcome, u32>, VirtioError> {
@@ -446,7 +451,9 @@ impl Virtio9pNamespace {
             Some(Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_))
             | None => {}
         }
-        let Some(moved) = take_file_node_by_id(&mut self.entries, node) else {
+        let Some(moved) = take_file_node_at_fid_path(&mut self.entries, old_path, node)
+            .or_else(|| take_file_node_by_id(&mut self.entries, node))
+        else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
         let entries = self
