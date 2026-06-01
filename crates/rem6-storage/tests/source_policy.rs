@@ -51,6 +51,36 @@ fn ide_core_stays_within_focused_budget() {
     );
 }
 
+#[test]
+fn ide_disk_lives_in_focused_module() {
+    let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let disk_path = src_dir.join("ide_disk.rs");
+    let controller = fs::read_to_string(src_dir.join("ide.rs")).unwrap();
+
+    assert!(
+        disk_path.exists(),
+        "src/ide_disk.rs should own IDE disk behavior"
+    );
+    let disk = fs::read_to_string(disk_path).unwrap();
+
+    assert!(
+        !controller.contains("pub struct IdeDisk"),
+        "src/ide.rs should not define IdeDisk"
+    );
+    assert!(
+        !controller.contains("impl IdeDisk"),
+        "src/ide.rs should not implement IdeDisk"
+    );
+    assert!(
+        disk.contains("pub struct IdeDisk"),
+        "src/ide_disk.rs should define IdeDisk"
+    );
+    assert!(
+        disk.contains("impl IdeDisk"),
+        "src/ide_disk.rs should implement IdeDisk"
+    );
+}
+
 fn rust_source_files(root: &Path) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     collect_rust_source_files(root, &mut paths);
