@@ -204,6 +204,24 @@ fn rtc_snapshot_with_status_c(
     )
 }
 
+fn stable_rtc_checkpoint_bytes(
+    selected_address: u8,
+    cmos_index: usize,
+    cmos_value: u8,
+    status_c: u8,
+) -> Vec<u8> {
+    let mut payload = vec![0; RTC_CHECKPOINT_PAYLOAD_BYTES];
+    payload[RTC_CHECKPOINT_SELECTED_ADDRESS_OFFSET] = selected_address;
+    payload[RTC_CHECKPOINT_CMOS_OFFSET + cmos_index] = cmos_value;
+    payload[RTC_CHECKPOINT_CLOCK_OFFSET
+        ..RTC_CHECKPOINT_CLOCK_OFFSET + RTC_CHECKPOINT_CLOCK_REGISTER_COUNT]
+        .copy_from_slice(&[0x03, 0, 0x02, 0, 0x01, 0, 0x06, 0x29, 0x05, 0x26]);
+    payload[RTC_CHECKPOINT_STATUS_A_OFFSET] = 0x26;
+    payload[RTC_CHECKPOINT_STATUS_B_OFFSET] = 0x42;
+    payload[RTC_CHECKPOINT_STATUS_C_OFFSET] = status_c;
+    payload
+}
+
 fn pl011_snapshot() -> Pl011UartSnapshot {
     Pl011UartSnapshot::from_fields(Pl011UartSnapshotFields {
         tx_bytes: vec![UartTxByte::new(9, b'P')],
@@ -233,6 +251,16 @@ enum RxLedgerFault {
 }
 
 type UartRxRecords = &'static [(u64, u8)];
+
+const RTC_CHECKPOINT_CLOCK_REGISTER_COUNT: usize = 10;
+const RTC_CHECKPOINT_SELECTED_ADDRESS_OFFSET: usize = 0;
+const RTC_CHECKPOINT_CMOS_OFFSET: usize = RTC_CHECKPOINT_SELECTED_ADDRESS_OFFSET + 1;
+const RTC_CHECKPOINT_CLOCK_OFFSET: usize = RTC_CHECKPOINT_CMOS_OFFSET + RTC_CMOS_REGISTER_COUNT;
+const RTC_CHECKPOINT_STATUS_A_OFFSET: usize =
+    RTC_CHECKPOINT_CLOCK_OFFSET + RTC_CHECKPOINT_CLOCK_REGISTER_COUNT;
+const RTC_CHECKPOINT_STATUS_B_OFFSET: usize = RTC_CHECKPOINT_STATUS_A_OFFSET + 1;
+const RTC_CHECKPOINT_STATUS_C_OFFSET: usize = RTC_CHECKPOINT_STATUS_B_OFFSET + 1;
+const RTC_CHECKPOINT_PAYLOAD_BYTES: usize = RTC_CHECKPOINT_STATUS_C_OFFSET + 1;
 
 impl RxLedgerFault {
     const ALL: [Self; 3] = [
@@ -685,6 +713,100 @@ fn rtc_checkpoint_bank_rejects_invalid_bank_without_partial_restore() {
     ));
     assert_eq!(target_valid.snapshot(), original_valid);
     assert_eq!(target_invalid.snapshot(), original_invalid);
+}
+
+#[test]
+fn rtc_checkpoint_port_captures_stable_snapshot_bytes() {
+    let component = checkpoint_component("rtc_payload_stable");
+    let expected = rtc_snapshot_with_status_c(
+        0xa0,
+        0x20,
+        0x5a,
+        RTC_STATUS_C_IRQF | RTC_STATUS_C_AF | RTC_STATUS_C_UF,
+    );
+    let source = rtc_device(0x70);
+    source.restore(&expected).unwrap();
+    let target = rtc_device(0x70);
+    let mut registry = CheckpointRegistry::new();
+    let port = RtcCheckpointPort::new(component.clone(), source);
+
+    port.register(&mut registry).unwrap();
+    let captured = port.capture_into(&mut registry).unwrap();
+
+    assert_eq!(captured.snapshot(), &expected);
+    assert_eq!(
+        registry.chunk(&component, "rtc").unwrap(),
+        stable_rtc_checkpoint_bytes(
+            0xa0,
+            0x20,
+            0x5a,
+            RTC_STATUS_C_IRQF | RTC_STATUS_C_AF | RTC_STATUS_C_UF
+        )
+        .as_slice()
+    );
+
+    RtcCheckpointPort::new(component, target.clone())
+        .restore_from(&registry)
+        .unwrap();
+    assert_eq!(target.snapshot(), expected);
+}
+
+#[test]
+fn rtc_checkpoint_port_rejects_truncated_payload_without_partial_restore() {
+    let component = checkpoint_component("rtc_payload_truncated");
+    let target = rtc_device(0x70);
+    let original = target.snapshot();
+    let mut registry = CheckpointRegistry::new();
+    let mut payload = stable_rtc_checkpoint_bytes(0xa0, 0x20, 0x5a, 0);
+    payload.pop();
+
+    registry.register(component.clone()).unwrap();
+    registry.write_chunk(&component, "rtc", payload).unwrap();
+
+    let error = RtcCheckpointPort::new(component.clone(), target.clone())
+        .restore_from(&registry)
+        .unwrap_err();
+
+    match error {
+        RtcCheckpointError::InvalidChunk {
+            component: actual,
+            reason,
+        } => {
+            assert_eq!(actual, component);
+            assert!(reason.contains("status_c needs 1 bytes"));
+        }
+        other => panic!("unexpected RTC checkpoint error: {other}"),
+    }
+    assert_eq!(target.snapshot(), original);
+}
+
+#[test]
+fn rtc_checkpoint_port_rejects_trailing_payload_bytes_without_partial_restore() {
+    let component = checkpoint_component("rtc_payload_trailing");
+    let target = rtc_device(0x70);
+    let original = target.snapshot();
+    let mut registry = CheckpointRegistry::new();
+    let mut payload = stable_rtc_checkpoint_bytes(0xa0, 0x20, 0x5a, 0);
+    payload.push(0);
+
+    registry.register(component.clone()).unwrap();
+    registry.write_chunk(&component, "rtc", payload).unwrap();
+
+    let error = RtcCheckpointPort::new(component.clone(), target.clone())
+        .restore_from(&registry)
+        .unwrap_err();
+
+    match error {
+        RtcCheckpointError::InvalidChunk {
+            component: actual,
+            reason,
+        } => {
+            assert_eq!(actual, component);
+            assert_eq!(reason, "trailing 1 bytes after RTC checkpoint payload");
+        }
+        other => panic!("unexpected RTC checkpoint error: {other}"),
+    }
+    assert_eq!(target.snapshot(), original);
 }
 
 #[test]
