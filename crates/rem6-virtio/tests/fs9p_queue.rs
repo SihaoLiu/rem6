@@ -298,6 +298,77 @@ fn virtio_split_queue_completes_9p_reply_to_guest_memory_and_raises_isr() {
 }
 
 #[test]
+fn virtio_split_queue_rejects_9p_writeback_before_guest_state_mutates() {
+    let mut store = guest_store();
+    write_guest(&mut store, 0x1400, &p9_message(104, 0x77, b"attach"), 1);
+    write_guest(
+        &mut store,
+        0x1000,
+        &descriptor(0x1400, 13, VIRTIO_SPLIT_DESC_F_NEXT, 1),
+        2,
+    );
+    write_guest(
+        &mut store,
+        0x1010,
+        &descriptor(
+            0x1500,
+            4,
+            VIRTIO_SPLIT_DESC_F_NEXT | VIRTIO_SPLIT_DESC_F_WRITE,
+            2,
+        ),
+        3,
+    );
+    write_guest(
+        &mut store,
+        0x1020,
+        &descriptor(0x2500, 8, VIRTIO_SPLIT_DESC_F_WRITE, 0),
+        4,
+    );
+    write_guest(&mut store, 0x1102, &1_u16.to_le_bytes(), 5);
+    write_guest(&mut store, 0x1104, &0_u16.to_le_bytes(), 6);
+    write_guest(&mut store, 0x1802, &6_u16.to_le_bytes(), 7);
+
+    let isr = VirtioPciIsrDevice::new();
+    let mut split_queue = VirtioSplitQueue::new(
+        4,
+        Address::new(0x1000),
+        Address::new(0x1100),
+        Address::new(0x1800),
+        0,
+    )
+    .unwrap();
+    {
+        let mut guest = VirtioGuestMemory::new(&mut store, layout(), AgentId::new(18));
+        let decoded = split_queue
+            .consume_available_9p(&mut guest, queue(0))
+            .unwrap()
+            .unwrap();
+        let completion = Virtio9pCompletion::new(
+            decoded.request().id(),
+            decoded.request().queue(),
+            91,
+            105,
+            decoded.request().tag(),
+            b"reply".to_vec(),
+        )
+        .unwrap();
+        let error = split_queue
+            .complete_9p_request_and_raise_isr(&mut guest, &decoded, &completion, &isr)
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            VirtioError::PciTransportRuntimeConfig { .. }
+        ));
+    }
+
+    assert_eq!(read_guest(&mut store, 0x1500, 4, 100), [0; 4]);
+    assert_eq!(read_guest(&mut store, 0x1802, 2, 200), 6_u16.to_le_bytes());
+    assert_eq!(read_guest(&mut store, 0x1810, 8, 300), [0; 8]);
+    assert!(isr.events().is_empty());
+}
+
+#[test]
 fn virtio_split_queue_keeps_9p_available_cursor_on_decode_error() {
     let mut store = guest_store();
     write_guest(&mut store, 0x1400, &p9_message(100, 1, b"abc"), 1);

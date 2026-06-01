@@ -414,6 +414,10 @@ impl VirtioSplitQueue {
         guest: &mut VirtioGuestMemory<'_>,
         writeback: &Virtio9pQueueCompletionWrite,
     ) -> Result<(), VirtioError> {
+        let used_element_address =
+            add_address(self.used_ring(), 4 + u64::from(writeback.used_slot()) * 8)?;
+        let used_index_address = add_address(self.used_ring(), 2)?;
+        let mut data_targets = Vec::new();
         for write in writeback.data_writes() {
             let address =
                 write
@@ -424,16 +428,21 @@ impl VirtioSplitQueue {
                             write.descriptor()
                         ),
                     })?;
-            guest.write_exact(
-                add_address(address, u64::from(write.offset()))?,
-                write.bytes(),
-            )?;
+            let target = add_address(address, u64::from(write.offset()))?;
+            guest.validate_write_exact(target, write.bytes().len() as u64)?;
+            data_targets.push((target, write.bytes()));
+        }
+        guest.validate_write_exact(used_element_address, 8)?;
+        guest.validate_write_exact(used_index_address, 2)?;
+
+        for (address, bytes) in data_targets {
+            guest.write_exact(address, bytes)?;
         }
         guest.write_exact(
-            add_address(self.used_ring(), 4 + u64::from(writeback.used_slot()) * 8)?,
+            used_element_address,
             &writeback.used_element().to_le_bytes(),
         )?;
-        guest.write_u16(add_address(self.used_ring(), 2)?, writeback.used_index())
+        guest.write_u16(used_index_address, writeback.used_index())
     }
 }
 
