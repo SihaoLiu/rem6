@@ -1,8 +1,8 @@
 use rem6_virtio::{
-    Virtio9pConfig, Virtio9pDevice, VIRTIO_9P_DEFAULT_MSIZE, VIRTIO_9P_EBADF, VIRTIO_9P_ENOENT,
-    VIRTIO_9P_ENOTSUP, VIRTIO_9P_NOFID, VIRTIO_9P_QTFILE, VIRTIO_9P_RCLUNK, VIRTIO_9P_RLERROR,
-    VIRTIO_9P_RLOPEN, VIRTIO_9P_RREAD, VIRTIO_9P_RWALK, VIRTIO_9P_TATTACH, VIRTIO_9P_TCLUNK,
-    VIRTIO_9P_TLOPEN, VIRTIO_9P_TREAD, VIRTIO_9P_TWALK,
+    Virtio9pConfig, Virtio9pDevice, VIRTIO_9P_DEFAULT_MSIZE, VIRTIO_9P_EBADF, VIRTIO_9P_ENOTSUP,
+    VIRTIO_9P_NOFID, VIRTIO_9P_QTFILE, VIRTIO_9P_RCLUNK, VIRTIO_9P_RLERROR, VIRTIO_9P_RLOPEN,
+    VIRTIO_9P_RREAD, VIRTIO_9P_RWALK, VIRTIO_9P_TATTACH, VIRTIO_9P_TCLUNK, VIRTIO_9P_TLOPEN,
+    VIRTIO_9P_TREAD, VIRTIO_9P_TWALK,
 };
 
 mod support;
@@ -56,24 +56,6 @@ fn virtio_9p_device_walks_opens_reads_and_clunks_in_memory_files() {
     let error_completion = device.execute_at(15, read_after_clunk).unwrap();
     assert_eq!(error_completion.message_type(), VIRTIO_9P_RLERROR);
     assert_eq!(error_completion.payload(), VIRTIO_9P_EBADF.to_le_bytes());
-}
-
-#[test]
-fn virtio_9p_device_reports_lerror_for_missing_walk_targets() {
-    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap());
-    let attach = decoded_request(
-        VIRTIO_9P_TATTACH,
-        1,
-        p9_attach_payload(1, VIRTIO_9P_NOFID, b"root", b"", 0),
-    );
-    device.execute_at(10, attach).unwrap();
-
-    let walk = decoded_request(VIRTIO_9P_TWALK, 2, p9_walk_payload(1, 2, &[b"missing"]));
-    let completion = device.execute_at(11, walk).unwrap();
-
-    assert_eq!(completion.message_type(), VIRTIO_9P_RLERROR);
-    assert_eq!(completion.payload(), VIRTIO_9P_ENOENT.to_le_bytes());
-    assert_eq!(device.fid_count(), 1);
 }
 
 #[test]

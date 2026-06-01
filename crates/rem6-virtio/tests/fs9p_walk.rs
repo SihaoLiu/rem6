@@ -1,8 +1,8 @@
 use rem6_virtio::{
-    Virtio9pConfig, Virtio9pDevice, VirtioError, VIRTIO_9P_EBADF, VIRTIO_9P_NAME_MAX,
-    VIRTIO_9P_NOFID, VIRTIO_9P_RLERROR, VIRTIO_9P_RLOPEN, VIRTIO_9P_RMKDIR, VIRTIO_9P_RREAD,
-    VIRTIO_9P_RWALK, VIRTIO_9P_TATTACH, VIRTIO_9P_TLOPEN, VIRTIO_9P_TMKDIR, VIRTIO_9P_TREAD,
-    VIRTIO_9P_TWALK,
+    Virtio9pConfig, Virtio9pDevice, VirtioError, VIRTIO_9P_EBADF, VIRTIO_9P_ENOENT,
+    VIRTIO_9P_NAME_MAX, VIRTIO_9P_NOFID, VIRTIO_9P_RLERROR, VIRTIO_9P_RLOPEN, VIRTIO_9P_RMKDIR,
+    VIRTIO_9P_RREAD, VIRTIO_9P_RWALK, VIRTIO_9P_TATTACH, VIRTIO_9P_TLOPEN, VIRTIO_9P_TMKDIR,
+    VIRTIO_9P_TREAD, VIRTIO_9P_TWALK,
 };
 
 mod support;
@@ -85,6 +85,24 @@ fn virtio_9p_device_allows_empty_walk_to_same_fid_without_extra_fid() {
     let same_fid_completion = device.execute_at(11, same_fid_walk).unwrap();
     assert_eq!(same_fid_completion.message_type(), VIRTIO_9P_RWALK);
     assert_eq!(same_fid_completion.payload(), 0_u16.to_le_bytes());
+    assert_eq!(device.fid_count(), 1);
+}
+
+#[test]
+fn virtio_9p_device_reports_lerror_for_missing_walk_targets() {
+    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap());
+    let attach = decoded_request(
+        VIRTIO_9P_TATTACH,
+        1,
+        p9_attach_payload(1, VIRTIO_9P_NOFID, b"root", b"", 0),
+    );
+    device.execute_at(10, attach).unwrap();
+
+    let walk = decoded_request(VIRTIO_9P_TWALK, 2, p9_walk_payload(1, 2, &[b"missing"]));
+    let completion = device.execute_at(11, walk).unwrap();
+
+    assert_eq!(completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(completion.payload(), VIRTIO_9P_ENOENT.to_le_bytes());
     assert_eq!(device.fid_count(), 1);
 }
 

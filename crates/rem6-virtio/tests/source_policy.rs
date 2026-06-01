@@ -555,6 +555,27 @@ fn virtio_9p_device_tests_delegate_attach_handshake_cases() {
 }
 
 #[test]
+fn virtio_9p_device_tests_delegate_walk_error_cases() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let device_test = fs::read_to_string(crate_dir.join("tests/fs9p_device.rs")).unwrap();
+    let walk_test = crate_dir.join("tests/fs9p_walk.rs");
+
+    assert!(
+        walk_test.exists(),
+        "9P walk tests belong in tests/fs9p_walk.rs"
+    );
+    for symbol in [
+        "virtio_9p_device_reports_lerror_for_missing_walk_targets",
+        "b\"missing\"",
+    ] {
+        assert!(
+            !device_test.contains(symbol),
+            "tests/fs9p_device.rs should delegate walk error behavior to tests/fs9p_walk.rs; found {symbol}"
+        );
+    }
+}
+
+#[test]
 fn virtio_9p_device_tests_delegate_malformed_attach_cases() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let device_test = fs::read_to_string(crate_dir.join("tests/fs9p_device.rs")).unwrap();
