@@ -383,6 +383,22 @@ fn virtio_9p_device_test_file_stays_focused() {
     );
 }
 
+#[test]
+fn virtio_9p_device_tests_delegate_xattr_cases() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let device_test = fs::read_to_string(crate_dir.join("tests/fs9p_device.rs")).unwrap();
+    let xattr_test = crate_dir.join("tests/fs9p_xattr.rs");
+
+    assert!(
+        xattr_test.exists(),
+        "9P extended attribute tests belong in tests/fs9p_xattr.rs"
+    );
+    assert!(
+        !device_test.contains("xattr"),
+        "tests/fs9p_device.rs should delegate extended attribute behavior to tests/fs9p_xattr.rs"
+    );
+}
+
 fn rust_source_files(root: &Path) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     collect_rust_source_files(root, &mut paths);
