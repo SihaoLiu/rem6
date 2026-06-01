@@ -101,7 +101,7 @@ impl MemoryRequestCheckpointPayload {
         let data = read_optional_data(payload, &mut offset, flags, data_len_usize, data_len)?;
         let byte_mask = read_optional_mask(payload, &mut offset, flags, mask_len_usize, mask_len)?;
         let atomic_op = decode_optional_atomic_op(flags, atomic_code)?;
-        let ordering = decode_ordering(flags);
+        let ordering = decode_ordering(flags)?;
         let snapshot = MemoryRequestSnapshot::new(
             MemoryRequestId::new(crate::AgentId::new(agent), sequence),
             operation,
@@ -116,7 +116,7 @@ impl MemoryRequestCheckpointPayload {
             atomic_op,
         )?;
 
-        Self::from_snapshot(snapshot)
+        Ok(Self { snapshot })
     }
 
     pub fn encode(&self) -> Vec<u8> {
@@ -209,15 +209,15 @@ fn encode_flags(snapshot: &MemoryRequestSnapshot) -> u32 {
     flags
 }
 
-fn decode_ordering(flags: u32) -> MemoryAccessOrdering {
+fn decode_ordering(flags: u32) -> Result<MemoryAccessOrdering, MemoryError> {
     let before = decode_barrier(
         flags,
         FLAG_BEFORE_PRESENT,
         FLAG_BEFORE_READ,
         FLAG_BEFORE_WRITE,
-    );
-    let after = decode_barrier(flags, FLAG_AFTER_PRESENT, FLAG_AFTER_READ, FLAG_AFTER_WRITE);
-    MemoryAccessOrdering::new(before, after)
+    )?;
+    let after = decode_barrier(flags, FLAG_AFTER_PRESENT, FLAG_AFTER_READ, FLAG_AFTER_WRITE)?;
+    Ok(MemoryAccessOrdering::new(before, after))
 }
 
 fn decode_barrier(
@@ -225,15 +225,14 @@ fn decode_barrier(
     present_flag: u32,
     read_flag: u32,
     write_flag: u32,
-) -> Option<MemoryBarrierSet> {
+) -> Result<Option<MemoryBarrierSet>, MemoryError> {
     let present = flags & present_flag != 0;
     let read = flags & read_flag != 0;
     let write = flags & write_flag != 0;
-    if present || read || write {
-        Some(MemoryBarrierSet::new(read, write))
-    } else {
-        None
+    if !present && (read || write) {
+        return Err(MemoryError::InvalidRequestCheckpointFlags { flags });
     }
+    Ok(present.then_some(MemoryBarrierSet::new(read, write)))
 }
 
 fn read_optional_data(

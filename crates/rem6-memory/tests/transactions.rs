@@ -392,10 +392,31 @@ fn memory_request_checkpoint_payload_rejects_reserved_flag_bits() {
 }
 
 #[test]
-fn memory_request_checkpoint_payload_preserves_empty_ordering_edges() {
+fn memory_request_checkpoint_payload_rejects_ordering_bits_without_edge_presence() {
     let request = MemoryRequest::read_shared(
         request_id(25),
         Address::new(0x7200),
+        AccessSize::new(4).unwrap(),
+        line_layout(),
+    )
+    .unwrap();
+    let mut payload = MemoryRequestCheckpointPayload::from_request(&request).encode();
+    payload[REQUEST_CHECKPOINT_FLAGS_OFFSET..REQUEST_CHECKPOINT_FLAGS_OFFSET + 4]
+        .copy_from_slice(&REQUEST_CHECKPOINT_BEFORE_READ_FLAG.to_le_bytes());
+
+    assert_eq!(
+        MemoryRequestCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::InvalidRequestCheckpointFlags {
+            flags: REQUEST_CHECKPOINT_BEFORE_READ_FLAG
+        }
+    );
+}
+
+#[test]
+fn memory_request_checkpoint_payload_preserves_empty_ordering_edges() {
+    let request = MemoryRequest::read_shared(
+        request_id(27),
+        Address::new(0x7400),
         AccessSize::new(4).unwrap(),
         line_layout(),
     )
@@ -423,8 +444,8 @@ fn memory_request_checkpoint_payload_preserves_empty_ordering_edges() {
 #[test]
 fn memory_request_checkpoint_payload_rejects_invalid_mask_byte() {
     let request = MemoryRequest::write(
-        request_id(26),
-        Address::new(0x7300),
+        request_id(28),
+        Address::new(0x7500),
         AccessSize::new(2).unwrap(),
         vec![0xaa, 0xbb],
         ByteMask::from_bits(vec![true, false]).unwrap(),
@@ -443,3 +464,4 @@ fn memory_request_checkpoint_payload_rejects_invalid_mask_byte() {
 
 const REQUEST_CHECKPOINT_OPERATION_OFFSET: usize = 8;
 const REQUEST_CHECKPOINT_FLAGS_OFFSET: usize = 12;
+const REQUEST_CHECKPOINT_BEFORE_READ_FLAG: u32 = 1 << 5;
