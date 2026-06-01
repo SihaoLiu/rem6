@@ -3166,9 +3166,11 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   timer windows, PrimeCell ID reads, ignored PrimeCell ID writes, serial and parallel response paths, serial and parallel
   interrupt pulses, typed width or unknown-register errors, platform MMIO bus
   attachment with paired interrupt routes, retained device lookup, checkpoint
-  bank decode-first restore without partial mutation, host checkpoint-action
-  capture/restore through manifests, and automatic topology host checkpoint
-  attachment. CPU-local timer tests cover per-CPU timer countdown,
+  bank decode-first restore without partial mutation, stable SP804 checkpoint
+  chunk bytes, invalid-bool, truncated second-timer, and trailing chunk
+  rejection without partial restore, host checkpoint-action capture/restore
+  through manifests, and automatic topology host checkpoint attachment.
+  CPU-local timer tests cover per-CPU timer countdown,
   auto-reload, zero-load minimum-decrement scheduling, interrupt latching and
   clearing, watchdog timer-mode countdown, watchdog-mode reset assertion
   evidence without simulator termination, watchdog disable sequencing,
