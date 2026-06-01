@@ -76,6 +76,26 @@ fn workload_replay_summary_tests_live_in_focused_module() {
     );
 }
 
+#[test]
+fn topology_boot_handoff_types_live_in_focused_module() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let topology_rs = fs::read_to_string(crate_dir.join("src/topology.rs")).unwrap();
+    let boot_handoff_rs = crate_dir.join("src/topology/boot_handoff.rs");
+
+    assert!(
+        boot_handoff_rs.exists(),
+        "RISC-V boot handoff types belong in src/topology/boot_handoff.rs"
+    );
+    assert!(
+        !topology_rs.contains("struct RiscvLinuxBootHandoffConfig"),
+        "src/topology.rs should delegate boot handoff data types to a focused module"
+    );
+    assert!(
+        !topology_rs.contains("struct RiscvLinuxInitrdImage"),
+        "src/topology.rs should delegate initrd image validation to a focused module"
+    );
+}
+
 fn rust_source_files(root: &Path) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     collect_rust_source_files(root, &mut paths);
