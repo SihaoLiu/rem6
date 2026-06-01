@@ -211,7 +211,7 @@ fn cpu_local_timer_checkpoint_port_rejects_truncated_reset_assertion_without_par
             assert_eq!(component, checkpoint_component);
             assert_eq!(
                 reason,
-                "watchdog reset assertion tick needs 8 bytes at offset 186 but payload has 190"
+                "watchdog reset assertion count 1 exceeds remaining payload capacity 0 records"
             );
         }
         other => panic!("unexpected CPU local timer checkpoint error: {other}"),
@@ -242,6 +242,36 @@ fn cpu_local_timer_checkpoint_port_rejects_trailing_payload_bytes_without_partia
             assert_eq!(
                 reason,
                 "trailing 1 bytes after CPU local timer checkpoint payload"
+            );
+        }
+        other => panic!("unexpected CPU local timer checkpoint error: {other}"),
+    }
+    assert_eq!(target.snapshot(), original);
+}
+
+#[test]
+fn cpu_local_timer_checkpoint_port_rejects_impossible_cpu_count_without_partial_restore() {
+    let checkpoint_component = component("cpu_local_timer_payload_cpu_count");
+    let target = cpu_local_timer(0x2c00, 2);
+    let original = target.snapshot();
+    let mut payload = Vec::new();
+    write_test_u64(&mut payload, u64::MAX);
+    let mut registry = CheckpointRegistry::new();
+    registry.register(checkpoint_component.clone()).unwrap();
+    registry
+        .write_chunk(&checkpoint_component, CPU_LOCAL_TIMER_CHUNK, payload)
+        .unwrap();
+
+    let error = CpuLocalTimerCheckpointPort::new(checkpoint_component.clone(), target.clone())
+        .restore_from(&registry)
+        .unwrap_err();
+
+    match error {
+        CpuLocalTimerCheckpointError::InvalidChunk { component, reason } => {
+            assert_eq!(component, checkpoint_component);
+            assert_eq!(
+                reason,
+                "CPU local timer CPU count 18446744073709551615 exceeds remaining payload capacity 0 records"
             );
         }
         other => panic!("unexpected CPU local timer checkpoint error: {other}"),

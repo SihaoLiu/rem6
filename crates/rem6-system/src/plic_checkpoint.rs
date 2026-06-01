@@ -13,6 +13,8 @@ use rem6_memory::Address;
 const PLIC_CHUNK: &str = "plic";
 const U32_BYTES: usize = 4;
 const U64_BYTES: usize = 8;
+const PLIC_CONTEXT_MIN_RECORD_BYTES: usize = U64_BYTES + U32_BYTES * 3 + U64_BYTES;
+const PLIC_ENABLED_LINE_RECORD_BYTES: usize = U64_BYTES;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PlicCheckpointRecord {
@@ -281,14 +283,15 @@ fn decode_plic(
 fn read_contexts(
     cursor: &mut PayloadCursor<'_>,
 ) -> Result<Vec<PlicContextSnapshot>, PlicCheckpointError> {
-    let count = cursor.read_count("PLIC context count")?;
+    let count = cursor.read_bounded_count("PLIC context count", PLIC_CONTEXT_MIN_RECORD_BYTES)?;
     let mut contexts = Vec::with_capacity(count);
     for _ in 0..count {
         let context = cursor.read_u64("PLIC context id")?;
         let target = InterruptTargetId::new(cursor.read_u32("PLIC context target")?);
         let target_partition = PartitionId::new(cursor.read_u32("PLIC context target partition")?);
         let threshold = InterruptPriority::new(cursor.read_u32("PLIC context threshold")?);
-        let enabled_count = cursor.read_count("PLIC enabled line count")?;
+        let enabled_count =
+            cursor.read_bounded_count("PLIC enabled line count", PLIC_ENABLED_LINE_RECORD_BYTES)?;
         let mut enabled = Vec::with_capacity(enabled_count);
         for _ in 0..enabled_count {
             enabled.push(InterruptLineId::new(cursor.read_u64("PLIC enabled line")?));
@@ -327,9 +330,22 @@ impl<'a> PayloadCursor<'a> {
         }
     }
 
-    fn read_count(&mut self, name: &str) -> Result<usize, PlicCheckpointError> {
+    fn read_bounded_count(
+        &mut self,
+        name: &str,
+        min_record_bytes: usize,
+    ) -> Result<usize, PlicCheckpointError> {
         let value = self.read_u64(name)?;
-        usize::try_from(value).map_err(|_| self.invalid(format!("{name} {value} overflows usize")))
+        let count = usize::try_from(value)
+            .map_err(|_| self.invalid(format!("{name} {value} overflows usize")))?;
+        let remaining = self.payload.len().saturating_sub(self.offset);
+        let max_records = remaining / min_record_bytes;
+        if count > max_records {
+            return Err(self.invalid(format!(
+                "{name} {value} exceeds remaining payload capacity {max_records} records"
+            )));
+        }
+        Ok(count)
     }
 
     fn read_u32(&mut self, name: &str) -> Result<u32, PlicCheckpointError> {

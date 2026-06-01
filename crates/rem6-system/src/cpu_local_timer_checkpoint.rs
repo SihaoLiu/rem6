@@ -14,6 +14,11 @@ const CPU_LOCAL_TIMER_CHUNK: &str = "cpu-local-timer";
 const U8_BYTES: usize = 1;
 const U32_BYTES: usize = 4;
 const U64_BYTES: usize = 8;
+const TIMER_COUNTER_RECORD_BYTES: usize =
+    U32_BYTES * 2 + U64_BYTES + U32_BYTES + U8_BYTES * 2 + U64_BYTES * 2;
+const WATCHDOG_BASE_RECORD_BYTES: usize =
+    U32_BYTES * 2 + U64_BYTES + U32_BYTES + U8_BYTES * 3 + U32_BYTES + U64_BYTES * 3;
+const CPU_RECORD_MIN_BYTES: usize = TIMER_COUNTER_RECORD_BYTES + WATCHDOG_BASE_RECORD_BYTES;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CpuLocalTimerCheckpointRecord {
@@ -299,7 +304,7 @@ fn decode_cpu_local_timer(
     payload: &[u8],
 ) -> Result<CpuLocalTimerBankSnapshot, CpuLocalTimerCheckpointError> {
     let mut cursor = PayloadCursor::new(component, payload);
-    let cpu_count = cursor.read_count("CPU local timer CPU count")?;
+    let cpu_count = cursor.read_bounded_count("CPU local timer CPU count", CPU_RECORD_MIN_BYTES)?;
     let mut cpus = Vec::with_capacity(cpu_count);
     for _ in 0..cpu_count {
         let timer = CpuLocalTimerCounterSnapshot::from_fields(CpuLocalTimerCounterSnapshotFields {
@@ -323,7 +328,7 @@ fn decode_cpu_local_timer(
         let watchdog_disable = cursor.read_u32("watchdog disable register")?;
         let watchdog_clock = cursor.read_u64("watchdog clock tick")?;
         let watchdog_generation = cursor.read_u64("watchdog generation")?;
-        let reset_count = cursor.read_count("watchdog reset assertion count")?;
+        let reset_count = cursor.read_bounded_count("watchdog reset assertion count", U64_BYTES)?;
         let mut reset_assertions = Vec::with_capacity(reset_count);
         for _ in 0..reset_count {
             reset_assertions.push(cursor.read_u64("watchdog reset assertion tick")?);
@@ -403,9 +408,22 @@ impl<'a> PayloadCursor<'a> {
         Ok(u64::from_le_bytes(bytes))
     }
 
-    fn read_count(&mut self, name: &str) -> Result<usize, CpuLocalTimerCheckpointError> {
-        usize::try_from(self.read_u64(name)?)
-            .map_err(|_| self.invalid(format!("{name} does not fit host usize")))
+    fn read_bounded_count(
+        &mut self,
+        name: &str,
+        min_record_bytes: usize,
+    ) -> Result<usize, CpuLocalTimerCheckpointError> {
+        let count_value = self.read_u64(name)?;
+        let count = usize::try_from(count_value)
+            .map_err(|_| self.invalid(format!("{name} does not fit host usize")))?;
+        let remaining = self.payload.len().saturating_sub(self.offset);
+        let max_records = remaining / min_record_bytes;
+        if count > max_records {
+            return Err(self.invalid(format!(
+                "{name} {count_value} exceeds remaining payload capacity {max_records} records"
+            )));
+        }
+        Ok(count)
     }
 
     fn read_bytes(

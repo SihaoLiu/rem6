@@ -15,6 +15,9 @@ use rem6_timer::{
 const TIMER_CHUNK: &str = "timer";
 const U32_BYTES: usize = 4;
 const U64_BYTES: usize = 8;
+const TIMER_ARM_RECORD_BYTES: usize = U64_BYTES * 3;
+const TIMER_EXPIRY_RECORD_BYTES: usize = U64_BYTES * 2;
+const TIMER_SIGNAL_ERROR_MIN_RECORD_BYTES: usize = U64_BYTES * 3;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TimerCheckpointRecord {
@@ -335,7 +338,7 @@ fn decode_optional_tick(
 }
 
 fn read_timer_arms(cursor: &mut PayloadCursor<'_>) -> Result<Vec<TimerArm>, TimerCheckpointError> {
-    let count = cursor.read_count("timer arm count")?;
+    let count = cursor.read_bounded_count("timer arm count", TIMER_ARM_RECORD_BYTES)?;
     let mut arms = Vec::with_capacity(count);
     for _ in 0..count {
         arms.push(TimerArm::new(
@@ -350,7 +353,7 @@ fn read_timer_arms(cursor: &mut PayloadCursor<'_>) -> Result<Vec<TimerArm>, Time
 fn read_timer_expiries(
     cursor: &mut PayloadCursor<'_>,
 ) -> Result<Vec<TimerExpiry>, TimerCheckpointError> {
-    let count = cursor.read_count("timer expiry count")?;
+    let count = cursor.read_bounded_count("timer expiry count", TIMER_EXPIRY_RECORD_BYTES)?;
     let mut expiries = Vec::with_capacity(count);
     for _ in 0..count {
         expiries.push(TimerExpiry::new(
@@ -364,7 +367,10 @@ fn read_timer_expiries(
 fn read_timer_signal_errors(
     cursor: &mut PayloadCursor<'_>,
 ) -> Result<Vec<TimerSignalError>, TimerCheckpointError> {
-    let count = cursor.read_count("timer signal error count")?;
+    let count = cursor.read_bounded_count(
+        "timer signal error count",
+        TIMER_SIGNAL_ERROR_MIN_RECORD_BYTES,
+    )?;
     let mut errors = Vec::with_capacity(count);
     for _ in 0..count {
         errors.push(TimerSignalError::new(
@@ -840,6 +846,24 @@ impl<'a> PayloadCursor<'a> {
     fn read_count(&mut self, name: &str) -> Result<usize, TimerCheckpointError> {
         usize::try_from(self.read_u64(name)?)
             .map_err(|_| self.invalid(format!("{name} cannot fit in usize")))
+    }
+
+    fn read_bounded_count(
+        &mut self,
+        name: &str,
+        min_record_bytes: usize,
+    ) -> Result<usize, TimerCheckpointError> {
+        let count_value = self.read_u64(name)?;
+        let count = usize::try_from(count_value)
+            .map_err(|_| self.invalid(format!("{name} cannot fit in usize")))?;
+        let remaining = self.payload.len().saturating_sub(self.position);
+        let max_records = remaining / min_record_bytes;
+        if count > max_records {
+            return Err(self.invalid(format!(
+                "{name} {count_value} exceeds remaining payload capacity {max_records} records"
+            )));
+        }
+        Ok(count)
     }
 
     fn read_u32(&mut self, name: &str) -> Result<u32, TimerCheckpointError> {

@@ -3135,7 +3135,7 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   changing the guest-visible CLINT register or asserted-line state.
   Programmable timer checkpoint tests cover stable identity/deadline/arm chunk
   bytes, invalid deadline flags, truncated arm records, trailing payload bytes,
-  and no-partial-restore rejection for malformed chunks.
+  oversized arm counts, and no-partial-restore rejection for malformed chunks.
 - RTC core tests cover MC146818-compatible binary and BCD calendar registers,
   status A/B defaults, status C/D reads, read-clear status-C flags, leap-day
   rollover, SET-bit clock freeze, alarm and update-ended flags, alarm wildcard
@@ -3185,10 +3185,10 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   validation, source-partition-local bus views, and per-CPU timer/watchdog
   interrupt routes, plus checkpoint bank decode-first restore without partial
   mutation, stable CPU-local timer checkpoint chunk bytes, invalid-bool,
-  truncated reset-assertion, and trailing chunk rejection without partial
-  restore, CPU-count validation, host checkpoint-action capture/restore through
-  manifests, and automatic topology host checkpoint attachment. SP805 tests
-  cover watchdog countdown, zero-load minimum-clock
+  truncated reset-assertion, oversized CPU counts, and trailing chunk rejection
+  without partial restore, CPU-count validation, host checkpoint-action
+  capture/restore through manifests, and automatic topology host checkpoint
+  attachment. SP805 tests cover watchdog countdown, zero-load minimum-clock
   scheduling, lock behavior, raw and masked interrupt state, reset-assertion
   records, serial interrupt assert and clear delivery, parallel MMIO response
   paths, PrimeCell ID reads, typed width errors, typed unknown-register errors,
@@ -3210,10 +3210,11 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   context-specific MMIO claim routing for a second hart target. PLIC tests now
   cover context-local snapshot and restore of enable and threshold state, stable
   two-context checkpoint chunk bytes, truncated enabled-line records, trailing
-  payload bytes, and no-partial-restore rejection for malformed chunks, while
-  system checkpoint tests cover PLIC bank decode-first restore and host
-  checkpoint-action round trips through manifests. System topology tests also
-  cover automatic host checkpoint attachment for platform-owned PLIC devices.
+  payload bytes, oversized context counts, and no-partial-restore rejection for
+  malformed chunks, while system checkpoint tests cover PLIC bank decode-first
+  restore and host checkpoint-action round trips through manifests. System
+  topology tests also cover automatic host checkpoint attachment for
+  platform-owned PLIC devices.
 - MMIO tests cover typed unsupported-device trap regions for gem5 `BadDevice`
   alignment, including serial access logs, parallel bus completion errors, name
   validation, and direct range-crossing rejection without simulator-wide panic.

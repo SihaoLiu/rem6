@@ -1062,7 +1062,7 @@ fn timer_checkpoint_port_rejects_truncated_arm_without_partial_restore() {
             assert_eq!(actual, component);
             assert_eq!(
                 reason,
-                "timer arm deadline at offset 56 needs 8 bytes but payload has 4 remaining"
+                "timer arm count 1 exceeds remaining payload capacity 0 records"
             );
         }
         other => panic!("unexpected timer checkpoint error: {other}"),
@@ -1094,6 +1094,44 @@ fn timer_checkpoint_port_rejects_trailing_payload_bytes_without_partial_restore(
         } => {
             assert_eq!(actual, component);
             assert_eq!(reason, "payload has 1 trailing bytes");
+        }
+        other => panic!("unexpected timer checkpoint error: {other}"),
+    }
+    assert_eq!(target.snapshot(), original);
+}
+
+#[test]
+fn timer_checkpoint_port_rejects_impossible_arm_count_without_partial_restore() {
+    let component = checkpoint_component("timer_payload_arm_count");
+    let target = timer(0, 2, 50);
+    let original = target.snapshot();
+    let mut payload = Vec::new();
+    write_u64(&mut payload, 0);
+    write_u32(&mut payload, 2);
+    write_u32(&mut payload, 50);
+    write_u64(&mut payload, 1);
+    write_u64(&mut payload, 64);
+    write_u64(&mut payload, u64::MAX);
+    let mut registry = CheckpointRegistry::new();
+    registry.register(component.clone()).unwrap();
+    registry
+        .write_chunk(&component, TIMER_CHUNK, payload)
+        .unwrap();
+
+    let error = TimerCheckpointPort::new(component.clone(), target.clone())
+        .restore_from(&registry)
+        .unwrap_err();
+
+    match error {
+        TimerCheckpointError::InvalidChunk {
+            component: actual,
+            reason,
+        } => {
+            assert_eq!(actual, component);
+            assert_eq!(
+                reason,
+                "timer arm count 18446744073709551615 exceeds remaining payload capacity 0 records"
+            );
         }
         other => panic!("unexpected timer checkpoint error: {other}"),
     }
@@ -1302,7 +1340,7 @@ fn plic_checkpoint_port_rejects_truncated_enabled_line_without_partial_restore()
             assert_eq!(actual, component);
             assert_eq!(
                 reason,
-                "PLIC enabled line expected 8 bytes at offset 80, payload has 84 bytes"
+                "PLIC enabled line count 1 exceeds remaining payload capacity 0 records"
             );
         }
         other => panic!("unexpected PLIC checkpoint error: {other}"),
@@ -1335,6 +1373,41 @@ fn plic_checkpoint_port_rejects_trailing_payload_bytes_without_partial_restore()
         } => {
             assert_eq!(actual, component);
             assert_eq!(reason, "trailing 1 bytes after PLIC checkpoint payload");
+        }
+        other => panic!("unexpected PLIC checkpoint error: {other}"),
+    }
+    assert_eq!(target.snapshot(), original);
+}
+
+#[test]
+fn plic_checkpoint_port_rejects_impossible_context_count_without_partial_restore() {
+    let component = checkpoint_component("plic_payload_context_count");
+    let contexts = stable_plic_contexts();
+    let target = plic_device(0x0c00_0000, &contexts);
+    let original = target.snapshot();
+    let mut payload = Vec::new();
+    write_u64(&mut payload, 0x0c00_0000);
+    write_u64(&mut payload, u64::MAX);
+    let mut registry = CheckpointRegistry::new();
+    registry.register(component.clone()).unwrap();
+    registry
+        .write_chunk(&component, PLIC_CHUNK, payload)
+        .unwrap();
+
+    let error = PlicCheckpointPort::new(component.clone(), target.clone())
+        .restore_from(&registry)
+        .unwrap_err();
+
+    match error {
+        PlicCheckpointError::InvalidChunk {
+            component: actual,
+            reason,
+        } => {
+            assert_eq!(actual, component);
+            assert_eq!(
+                reason,
+                "PLIC context count 18446744073709551615 exceeds remaining payload capacity 0 records"
+            );
         }
         other => panic!("unexpected PLIC checkpoint error: {other}"),
     }
