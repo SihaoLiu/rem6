@@ -1233,7 +1233,7 @@ fn take_file_node_by_id(
     })
 }
 
-fn validate_file_name(message_type: u8, name: &str) -> Result<(), VirtioError> {
+pub(crate) fn validate_file_name(message_type: u8, name: &str) -> Result<(), VirtioError> {
     if name.is_empty() || name.len() > VIRTIO_9P_NAME_MAX as usize || name.contains('/') {
         return Err(VirtioError::InvalidVirtio9pPayload {
             message_type,

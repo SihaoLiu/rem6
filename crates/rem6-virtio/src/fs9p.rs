@@ -6,8 +6,8 @@ use rem6_memory::ByteMask;
 
 use crate::fs9p_lock::Virtio9pLockTable;
 use crate::fs9p_namespace::{
-    getattr_payload, qid_payload, Virtio9pFidState, Virtio9pNamespace, Virtio9pNodeId,
-    Virtio9pOpenMode, Virtio9pQid, Virtio9pTimestamp, Virtio9pXattrWritePolicy,
+    getattr_payload, qid_payload, validate_file_name, Virtio9pFidState, Virtio9pNamespace,
+    Virtio9pNodeId, Virtio9pOpenMode, Virtio9pQid, Virtio9pTimestamp, Virtio9pXattrWritePolicy,
 };
 use crate::fs9p_protocol::*;
 use crate::{
@@ -383,6 +383,9 @@ impl Virtio9pDevice {
         let Some(mut node) = start.node() else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
+        for name in &walk.names {
+            validate_file_name(VIRTIO_9P_TWALK, name)?;
+        }
         let namespace = self.namespace.lock().expect("virtio 9p namespace lock");
         let mut qids = Vec::new();
         let mut completed = true;
