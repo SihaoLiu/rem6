@@ -223,7 +223,7 @@ fn restore_record(source: GuestSourceId, outcome: &SystemActionOutcome) -> HostA
 }
 
 #[test]
-fn heterogeneous_checkpoint_preserves_dma_read_request_ordering() {
+fn heterogeneous_checkpoint_preserves_dma_read_request_ordering_and_strict_flags() {
     let ordering = MemoryAccessOrdering::new(
         Some(MemoryBarrierSet::new(true, false)),
         Some(MemoryBarrierSet::memory()),
@@ -231,7 +231,9 @@ fn heterogeneous_checkpoint_preserves_dma_read_request_ordering() {
     let copy = AcceleratorDmaCopy::new(
         AcceleratorCommandId::new(80),
         MemoryRouteId::new(3),
-        read_request(21, 5, 0x4000).with_ordering(ordering),
+        read_request(21, 5, 0x4000)
+            .with_ordering(ordering)
+            .with_uncacheable_strict_order(),
         MemoryRouteId::new(4),
         request_id(21, 6),
         Address::new(0x5000),
@@ -268,6 +270,14 @@ fn heterogeneous_checkpoint_preserves_dma_read_request_ordering() {
             .ordering(),
         ordering
     );
+    assert!(target.snapshot().pending_dma_writes()[0]
+        .copy()
+        .read_request()
+        .is_uncacheable());
+    assert!(target.snapshot().pending_dma_writes()[0]
+        .copy()
+        .read_request()
+        .is_strict_ordered());
 }
 
 #[test]

@@ -2837,7 +2837,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   transport, scheduler activity, summaries, and checkpoint banks, including
   DMA write-request ordering inherited from copy read requests and
   heterogeneous checkpoint restore of pending DMA read-request ordering
-  metadata plus bank-level prevalidation before live device state is mutated.
+  metadata plus uncacheable-plus-strict flags through the shared
+  memory-request checkpoint payload before bank-level prevalidation mutates
+  live device state.
 - CPU branch prediction exposes typed direction prediction, GShare PC-history
   indexing with stale-history rejection, BiMode choice and direction-array
   training with stale-history rejection, Tournament local/global/choice

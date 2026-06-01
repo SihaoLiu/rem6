@@ -16,8 +16,7 @@ use rem6_gpu::{
 };
 use rem6_kernel::{PartitionId, Tick};
 use rem6_memory::{
-    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryAccessOrdering,
-    MemoryBarrierSet, MemoryOperation, MemoryRequest, MemoryRequestId,
+    Address, AgentId, MemoryRequest, MemoryRequestCheckpointPayload, MemoryRequestId,
 };
 use rem6_transport::MemoryRouteId;
 
@@ -1157,144 +1156,17 @@ fn read_gpu_dma_copy(reader: &mut ChunkReader<'_>) -> Result<GpuDmaCopy, String>
 }
 
 fn write_memory_request(payload: &mut Vec<u8>, request: &MemoryRequest) {
-    write_request_id(payload, request.id());
-    write_memory_operation(payload, request.operation());
-    write_u64(payload, request.range().start().get());
-    write_u64(payload, request.size().bytes());
-    write_u64(payload, request.line_layout().bytes());
-    write_optional_bytes(payload, request.data());
-    write_optional_mask(payload, request.byte_mask());
-    write_memory_access_ordering(payload, request.ordering());
-}
-
-fn read_memory_request(reader: &mut ChunkReader<'_>) -> Result<MemoryRequest, String> {
-    let id = reader.read_request_id("memory request id")?;
-    let operation = read_memory_operation(reader)?;
-    let address = Address::new(reader.read_u64("memory request address")?);
-    let size = AccessSize::new(reader.read_u64("memory request size")?)
-        .map_err(|error| error.to_string())?;
-    let layout = CacheLineLayout::new(reader.read_u64("memory request line size")?)
-        .map_err(|error| error.to_string())?;
-    let data = reader.read_optional_bytes("memory request data")?;
-    let byte_mask = reader.read_optional_mask("memory request byte mask")?;
-    let ordering = read_memory_access_ordering(reader)?;
-    let request = match operation {
-        MemoryOperation::InstructionFetch => {
-            MemoryRequest::instruction_fetch(id, address, size, layout)
-        }
-        MemoryOperation::ReadShared => MemoryRequest::read_shared(id, address, size, layout),
-        MemoryOperation::ReadUnique => MemoryRequest::read_unique(id, address, size, layout),
-        MemoryOperation::Write => MemoryRequest::write(
-            id,
-            address,
-            size,
-            data.ok_or_else(|| "write request missing data".to_string())?,
-            byte_mask.ok_or_else(|| "write request missing byte mask".to_string())?,
-            layout,
-        ),
-        MemoryOperation::Upgrade => MemoryRequest::upgrade(id, address, size, layout),
-        MemoryOperation::WritebackClean => MemoryRequest::writeback_clean(
-            id,
-            address,
-            data.ok_or_else(|| "writeback-clean request missing data".to_string())?,
-            layout,
-        ),
-        MemoryOperation::WritebackDirty => MemoryRequest::writeback_dirty(
-            id,
-            address,
-            data.ok_or_else(|| "writeback-dirty request missing data".to_string())?,
-            layout,
-        ),
-        other => return Err(format!("unsupported checkpoint memory operation {other:?}")),
-    }
-    .map_err(|error| error.to_string())?;
-    Ok(request.with_ordering(ordering))
-}
-
-fn write_memory_access_ordering(payload: &mut Vec<u8>, ordering: MemoryAccessOrdering) {
-    write_optional_memory_barrier_set(payload, ordering.before());
-    write_optional_memory_barrier_set(payload, ordering.after());
-}
-
-fn read_memory_access_ordering(
-    reader: &mut ChunkReader<'_>,
-) -> Result<MemoryAccessOrdering, String> {
-    let before = read_optional_memory_barrier_set(
-        reader,
-        "memory request before-ordering flag",
-        "memory request before-ordering read flag",
-        "memory request before-ordering write flag",
-    )?;
-    let after = read_optional_memory_barrier_set(
-        reader,
-        "memory request after-ordering flag",
-        "memory request after-ordering read flag",
-        "memory request after-ordering write flag",
-    )?;
-    Ok(MemoryAccessOrdering::new(before, after))
-}
-
-fn write_optional_memory_barrier_set(payload: &mut Vec<u8>, barrier: Option<MemoryBarrierSet>) {
-    match barrier {
-        Some(barrier) => {
-            write_bool(payload, true);
-            write_bool(payload, barrier.read());
-            write_bool(payload, barrier.write());
-        }
-        None => write_bool(payload, false),
-    }
-}
-
-fn read_optional_memory_barrier_set(
-    reader: &mut ChunkReader<'_>,
-    flag_name: &str,
-    read_name: &str,
-    write_name: &str,
-) -> Result<Option<MemoryBarrierSet>, String> {
-    if !reader.read_bool(flag_name)? {
-        return Ok(None);
-    }
-    let read = reader.read_bool(read_name)?;
-    let write = reader.read_bool(write_name)?;
-    Ok(Some(MemoryBarrierSet::new(read, write)))
-}
-
-fn write_memory_operation(payload: &mut Vec<u8>, operation: MemoryOperation) {
-    write_u8(
+    write_bytes(
         payload,
-        match operation {
-            MemoryOperation::InstructionFetch => 0,
-            MemoryOperation::ReadShared => 1,
-            MemoryOperation::ReadUnique => 2,
-            MemoryOperation::Write => 3,
-            MemoryOperation::Upgrade => 4,
-            MemoryOperation::WritebackClean => 5,
-            MemoryOperation::WritebackDirty => 6,
-            MemoryOperation::Atomic => 7,
-            MemoryOperation::PrefetchRead => 8,
-            MemoryOperation::PrefetchWrite => 9,
-            MemoryOperation::CleanEvict => 10,
-            MemoryOperation::Invalidate => 11,
-        },
+        &MemoryRequestCheckpointPayload::from_request(request).encode(),
     );
 }
 
-fn read_memory_operation(reader: &mut ChunkReader<'_>) -> Result<MemoryOperation, String> {
-    match reader.read_u8("memory operation")? {
-        0 => Ok(MemoryOperation::InstructionFetch),
-        1 => Ok(MemoryOperation::ReadShared),
-        2 => Ok(MemoryOperation::ReadUnique),
-        3 => Ok(MemoryOperation::Write),
-        4 => Ok(MemoryOperation::Upgrade),
-        5 => Ok(MemoryOperation::WritebackClean),
-        6 => Ok(MemoryOperation::WritebackDirty),
-        7 => Ok(MemoryOperation::Atomic),
-        8 => Ok(MemoryOperation::PrefetchRead),
-        9 => Ok(MemoryOperation::PrefetchWrite),
-        10 => Ok(MemoryOperation::CleanEvict),
-        11 => Ok(MemoryOperation::Invalidate),
-        tag => Err(format!("unknown memory operation {tag}")),
-    }
+fn read_memory_request(reader: &mut ChunkReader<'_>) -> Result<MemoryRequest, String> {
+    let payload = reader.read_bytes("memory request checkpoint")?;
+    let checkpoint =
+        MemoryRequestCheckpointPayload::decode(&payload).map_err(|error| error.to_string())?;
+    MemoryRequest::from_snapshot(checkpoint.snapshot()).map_err(|error| error.to_string())
 }
 
 fn write_request_id(payload: &mut Vec<u8>, request: MemoryRequestId) {
@@ -1306,29 +1178,6 @@ fn write_u64_vec(payload: &mut Vec<u8>, values: &[Tick]) {
     write_count(payload, values.len());
     for value in values {
         write_u64(payload, *value);
-    }
-}
-
-fn write_optional_bytes(payload: &mut Vec<u8>, value: Option<&[u8]>) {
-    match value {
-        Some(bytes) => {
-            write_bool(payload, true);
-            write_bytes(payload, bytes);
-        }
-        None => write_bool(payload, false),
-    }
-}
-
-fn write_optional_mask(payload: &mut Vec<u8>, mask: Option<&ByteMask>) {
-    match mask {
-        Some(mask) => {
-            write_bool(payload, true);
-            write_count(payload, mask.bits().len());
-            for bit in mask.bits() {
-                write_bool(payload, *bit);
-            }
-        }
-        None => write_bool(payload, false),
     }
 }
 
@@ -1381,28 +1230,6 @@ impl<'a> ChunkReader<'a> {
             AgentId::new(self.read_u32(name)?),
             self.read_u64(name)?,
         ))
-    }
-
-    fn read_optional_bytes(&mut self, name: &str) -> Result<Option<Vec<u8>>, String> {
-        if self.read_bool(name)? {
-            Ok(Some(self.read_bytes(name)?))
-        } else {
-            Ok(None)
-        }
-    }
-
-    fn read_optional_mask(&mut self, name: &str) -> Result<Option<ByteMask>, String> {
-        if !self.read_bool(name)? {
-            return Ok(None);
-        }
-        let count = self.read_count(name)?;
-        let mut bits = Vec::with_capacity(count);
-        for _ in 0..count {
-            bits.push(self.read_bool(name)?);
-        }
-        ByteMask::from_bits(bits)
-            .map(Some)
-            .map_err(|error| error.to_string())
     }
 
     fn read_bytes(&mut self, name: &str) -> Result<Vec<u8>, String> {
