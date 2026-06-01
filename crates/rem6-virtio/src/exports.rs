@@ -29,11 +29,11 @@ pub use crate::block::{
 pub use crate::block_queue::{
     VirtioBlockDecodedRequest, VirtioBlockDescriptorWrite, VirtioBlockInterruptCompletion,
     VirtioBlockIntxCompletionTarget, VirtioBlockMsiCompletionTarget,
-    VirtioBlockMsixCompletionTarget, VirtioBlockQueueCompletionWrite, VirtioGuestMemory,
-    VirtioRngDecodedRequest, VirtioRngDescriptorWrite, VirtioRngQueueCompletionWrite,
-    VirtioSplitDescriptor, VirtioSplitDescriptorChain, VirtioSplitQueue, VirtioSplitQueueSnapshot,
-    VirtioSplitUsedElement, VirtioSplitUsedRing, VIRTIO_SPLIT_AVAIL_F_NO_INTERRUPT,
-    VIRTIO_SPLIT_DESC_F_INDIRECT, VIRTIO_SPLIT_DESC_F_NEXT, VIRTIO_SPLIT_DESC_F_WRITE,
+    VirtioBlockMsixCompletionTarget, VirtioBlockQueueCompletionWrite, VirtioRngDecodedRequest,
+    VirtioRngDescriptorWrite, VirtioRngQueueCompletionWrite, VirtioSplitDescriptor,
+    VirtioSplitDescriptorChain, VirtioSplitQueue, VirtioSplitQueueSnapshot, VirtioSplitUsedElement,
+    VirtioSplitUsedRing, VIRTIO_SPLIT_AVAIL_F_NO_INTERRUPT, VIRTIO_SPLIT_DESC_F_INDIRECT,
+    VIRTIO_SPLIT_DESC_F_NEXT, VIRTIO_SPLIT_DESC_F_WRITE,
 };
 pub use crate::console::{
     VirtioConsoleCompletion, VirtioConsoleConfig, VirtioConsoleDecodedReceive,
@@ -86,6 +86,7 @@ pub use crate::fs9p_queue::{
     Virtio9pCompletion, Virtio9pDecodedRequest, Virtio9pDescriptorWrite,
     Virtio9pQueueCompletionWrite, Virtio9pRequest, Virtio9pRequestId, VIRTIO_9P_HEADER_BYTES,
 };
+pub use crate::guest_memory::VirtioGuestMemory;
 pub use crate::isr::{
     VirtioPciIsrDevice, VirtioPciIsrEvent, VirtioPciIsrEventKind, VirtioPciIsrSnapshot,
     VirtioPciIsrStatus, VIRTIO_PCI_ISR_STATUS_SIZE,

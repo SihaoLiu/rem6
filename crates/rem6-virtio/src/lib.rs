@@ -20,6 +20,7 @@ mod fs9p_lock;
 mod fs9p_namespace;
 mod fs9p_protocol;
 mod fs9p_queue;
+mod guest_memory;
 mod isr;
 mod mmio_transport;
 mod pci_capability;

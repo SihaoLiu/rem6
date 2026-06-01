@@ -353,6 +353,22 @@ fn virtio_source_files_stay_within_size_limit() {
 }
 
 #[test]
+fn virtio_guest_memory_lives_in_focused_module() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let block_queue = fs::read_to_string(crate_dir.join("src/block_queue.rs")).unwrap();
+    let guest_memory = crate_dir.join("src/guest_memory.rs");
+
+    assert!(
+        guest_memory.exists(),
+        "VirtIO guest-memory adapter belongs in src/guest_memory.rs"
+    );
+    assert!(
+        !block_queue.contains("pub struct VirtioGuestMemory"),
+        "src/block_queue.rs should keep split queue logic separate from guest-memory access helpers"
+    );
+}
+
+#[test]
 fn virtio_9p_device_tests_delegate_protocol_helpers() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let device_test = fs::read_to_string(crate_dir.join("tests/fs9p_device.rs")).unwrap();
