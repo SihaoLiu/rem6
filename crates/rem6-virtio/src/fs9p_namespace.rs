@@ -17,7 +17,7 @@ use crate::{
 mod path_entry;
 
 use path_entry::{
-    remove_node_at_fid_path, rename_node_at_fid_path, rename_node_in_parent_entries,
+    node_exists_at_fid_path, remove_node_at_fid_path, rename_node_at_fid_path,
     take_file_node_at_fid_path,
 };
 
@@ -442,6 +442,9 @@ impl Virtio9pNamespace {
         let Some(entries) = self.directory_entries(new_parent) else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
+        if !node_exists_at_fid_path(&self.entries, old_path, node) {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        }
         match entries.get(newname) {
             Some(existing) if existing.id() == node => {
                 return Ok(Ok(Virtio9pRenameOutcome {
@@ -453,9 +456,7 @@ impl Virtio9pNamespace {
             Some(Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_))
             | None => {}
         }
-        let Some(moved) = take_file_node_at_fid_path(&mut self.entries, old_path, node)
-            .or_else(|| take_file_node_by_id(&mut self.entries, node))
-        else {
+        let Some(moved) = take_file_node_at_fid_path(&mut self.entries, old_path, node) else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
         let entries = self
@@ -494,7 +495,6 @@ impl Virtio9pNamespace {
         }
         Ok(
             rename_node_at_fid_path(&mut self.entries, old_path, node, newname)
-                .or_else(|| rename_node_in_parent_entries(&mut self.entries, node, newname))
                 .unwrap_or(Err(VIRTIO_9P_EBADF)),
         )
     }
@@ -1240,29 +1240,6 @@ fn remove_empty_directory_by_path(
         }
     }
     Ok(false)
-}
-
-fn take_file_node_by_id(
-    entries: &mut BTreeMap<String, Virtio9pNode>,
-    id: Virtio9pNodeId,
-) -> Option<Virtio9pNode> {
-    if let Some(name) = entries.iter().find_map(|(name, node)| match node {
-        Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_)
-            if node.id() == id =>
-        {
-            Some(name.clone())
-        }
-        Virtio9pNode::File(_)
-        | Virtio9pNode::Symlink(_)
-        | Virtio9pNode::Special(_)
-        | Virtio9pNode::Directory(_) => None,
-    }) {
-        return entries.remove(&name);
-    }
-    entries.values_mut().find_map(|node| match node {
-        Virtio9pNode::Directory(directory) => take_file_node_by_id(&mut directory.entries, id),
-        Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_) => None,
-    })
 }
 
 pub(crate) fn validate_file_name(message_type: u8, name: &str) -> Result<(), VirtioError> {

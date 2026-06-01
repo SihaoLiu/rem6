@@ -1,9 +1,10 @@
 use rem6_virtio::{
     Virtio9pConfig, Virtio9pDevice, VIRTIO_9P_EBADF, VIRTIO_9P_ENOENT, VIRTIO_9P_ENOTSUP,
     VIRTIO_9P_NOFID, VIRTIO_9P_QTFILE, VIRTIO_9P_RLERROR, VIRTIO_9P_RLINK, VIRTIO_9P_ROPEN,
-    VIRTIO_9P_RREAD, VIRTIO_9P_RREMOVE, VIRTIO_9P_RSTAT, VIRTIO_9P_RWALK, VIRTIO_9P_RWSTAT,
-    VIRTIO_9P_TATTACH, VIRTIO_9P_TAUTH, VIRTIO_9P_TLINK, VIRTIO_9P_TOPEN, VIRTIO_9P_TREAD,
-    VIRTIO_9P_TREMOVE, VIRTIO_9P_TSTAT, VIRTIO_9P_TWALK, VIRTIO_9P_TWSTAT,
+    VIRTIO_9P_RREAD, VIRTIO_9P_RREMOVE, VIRTIO_9P_RSTAT, VIRTIO_9P_RUNLINKAT, VIRTIO_9P_RWALK,
+    VIRTIO_9P_RWSTAT, VIRTIO_9P_TATTACH, VIRTIO_9P_TAUTH, VIRTIO_9P_TLINK, VIRTIO_9P_TOPEN,
+    VIRTIO_9P_TREAD, VIRTIO_9P_TREMOVE, VIRTIO_9P_TSTAT, VIRTIO_9P_TUNLINKAT, VIRTIO_9P_TWALK,
+    VIRTIO_9P_TWSTAT,
 };
 
 mod support;
@@ -329,6 +330,62 @@ fn virtio_9p_device_wstat_keeps_same_file_hardlink_targets() {
     assert_eq!(
         read_qid(alpha_after_remove_completion.payload(), 2).2,
         alpha_path
+    );
+}
+
+#[test]
+fn virtio_9p_device_wstat_rejects_unlinked_hardlink_fids_without_renaming_survivors() {
+    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap())
+        .with_file("alpha.txt", b"alpha".to_vec())
+        .unwrap();
+    let attach = decoded_request(
+        VIRTIO_9P_TATTACH,
+        1,
+        p9_attach_payload(1, VIRTIO_9P_NOFID, b"root", b"", 0),
+    );
+    device.execute_at(10, attach).unwrap();
+
+    let walk_alpha = decoded_request(VIRTIO_9P_TWALK, 2, p9_walk_payload(1, 2, &[b"alpha.txt"]));
+    let alpha_completion = device.execute_at(11, walk_alpha).unwrap();
+    let (_, _, alpha_path) = read_qid(alpha_completion.payload(), 2);
+    let link = decoded_request(VIRTIO_9P_TLINK, 3, p9_link_payload(1, 2, b"beta.txt"));
+    assert_eq!(
+        device.execute_at(12, link).unwrap().message_type(),
+        VIRTIO_9P_RLINK
+    );
+
+    let walk_beta = decoded_request(VIRTIO_9P_TWALK, 4, p9_walk_payload(1, 3, &[b"beta.txt"]));
+    let beta_completion = device.execute_at(13, walk_beta).unwrap();
+    assert_eq!(read_qid(beta_completion.payload(), 2).2, alpha_path);
+
+    let unlink_beta = decoded_request(
+        VIRTIO_9P_TUNLINKAT,
+        5,
+        p9_unlinkat_payload(1, b"beta.txt", 0),
+    );
+    let unlink_completion = device.execute_at(14, unlink_beta).unwrap();
+    assert_eq!(unlink_completion.message_type(), VIRTIO_9P_RUNLINKAT);
+
+    let rename_beta_fid = decoded_request(
+        VIRTIO_9P_TWSTAT,
+        6,
+        p9_legacy_wstat_rename_payload(3, b"gamma.txt"),
+    );
+    let rename_completion = device.execute_at(15, rename_beta_fid).unwrap();
+    assert_eq!(rename_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(rename_completion.payload(), VIRTIO_9P_EBADF.to_le_bytes());
+
+    let alpha_walk = decoded_request(VIRTIO_9P_TWALK, 7, p9_walk_payload(1, 4, &[b"alpha.txt"]));
+    let alpha_walk_completion = device.execute_at(16, alpha_walk).unwrap();
+    assert_eq!(alpha_walk_completion.message_type(), VIRTIO_9P_RWALK);
+    assert_eq!(read_qid(alpha_walk_completion.payload(), 2).2, alpha_path);
+
+    let gamma_walk = decoded_request(VIRTIO_9P_TWALK, 8, p9_walk_payload(1, 5, &[b"gamma.txt"]));
+    let gamma_walk_completion = device.execute_at(17, gamma_walk).unwrap();
+    assert_eq!(gamma_walk_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(
+        gamma_walk_completion.payload(),
+        VIRTIO_9P_ENOENT.to_le_bytes()
     );
 }
 

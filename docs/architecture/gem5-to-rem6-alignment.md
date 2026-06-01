@@ -1279,8 +1279,9 @@ Implementation evidence through 2026-05-31:
   fids with errno payloads, legacy `Twstat` parses stat write requests, applies
   supported mode, uid, gid, mtime, atime, and length updates, supports
   same-parent name updates while preserving open fid access and walked hard-link
-  fid path identity, treats same-file hard-link target names as no-ops, and
-  rejects stale fids before mutation, `Tlopen` and legacy
+  fid path identity, treats same-file hard-link target names as no-ops, rejects
+  stale hard-link rename fids before mutation, and rejects stale fids before
+  mutation, `Tlopen` and legacy
   `Topen` mark file and directory fids open, report qid plus I/O-unit data,
   and enforce read-only, write-only, read-write, and execute-only access bits,
   reject attempts to reopen already-open fids before access-mode mutation,
@@ -3330,8 +3331,8 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   moves with preserved open-fid access and qid identity, `Trenameat`
   same-directory renames, cross-directory file moves including same-name moves,
   preserved moved qids, open-fid access, same-file hardlink target no-ops,
-  replacement-target fid invalidation, post-rename directory entries, and
-  old-name walk rejection,
+  stale fid-backed rename source rejection, replacement-target fid
+  invalidation, post-rename directory entries, and old-name walk rejection,
   `Tunlinkat` root and
   child-directory file removal with post-delete directory and walk checks,
   `Tunlinkat` empty-directory removal through `AT_REMOVEDIR` plus non-empty
