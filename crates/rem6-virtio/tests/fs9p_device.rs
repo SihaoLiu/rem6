@@ -1992,6 +1992,76 @@ fn virtio_9p_device_renameat_renames_directory_and_updates_child_fid_paths() {
 }
 
 #[test]
+fn virtio_9p_device_trename_renames_directory_and_updates_child_fid_paths() {
+    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap());
+    let attach = decoded_request(
+        VIRTIO_9P_TATTACH,
+        1,
+        p9_attach_payload(1, VIRTIO_9P_NOFID, b"root", b"", 0),
+    );
+    device.execute_at(10, attach).unwrap();
+
+    let mkdir = decoded_request(
+        VIRTIO_9P_TMKDIR,
+        2,
+        p9_mkdir_payload(1, b"tmp", 0o040755, 0),
+    );
+    let mkdir_completion = device.execute_at(11, mkdir).unwrap();
+    assert_eq!(mkdir_completion.message_type(), VIRTIO_9P_RMKDIR);
+
+    let walk_tmp_for_create = decoded_request(VIRTIO_9P_TWALK, 3, p9_walk_payload(1, 2, &[b"tmp"]));
+    device.execute_at(12, walk_tmp_for_create).unwrap();
+    let create_child = decoded_request(
+        VIRTIO_9P_TLCREATE,
+        4,
+        p9_lcreate_payload(
+            2,
+            b"child.txt",
+            u32::from(VIRTIO_9P_OPEN_READ_WRITE),
+            0o100644,
+            0,
+        ),
+    );
+    let create_completion = device.execute_at(13, create_child).unwrap();
+    assert_eq!(create_completion.message_type(), VIRTIO_9P_RLCREATE);
+    let (_, _, child_path) = read_qid(create_completion.payload(), 0);
+
+    let walk_tmp_for_rename = decoded_request(VIRTIO_9P_TWALK, 5, p9_walk_payload(1, 3, &[b"tmp"]));
+    device.execute_at(14, walk_tmp_for_rename).unwrap();
+    let rename = decoded_request(VIRTIO_9P_TRENAME, 6, p9_rename_payload(3, 1, b"renamed"));
+    let rename_completion = device.execute_at(15, rename).unwrap();
+    assert_eq!(rename_completion.message_type(), VIRTIO_9P_RRENAME);
+    assert!(rename_completion.payload().is_empty());
+
+    let old_walk = decoded_request(VIRTIO_9P_TWALK, 7, p9_walk_payload(1, 4, &[b"tmp"]));
+    let old_completion = device.execute_at(16, old_walk).unwrap();
+    assert_eq!(old_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(old_completion.payload(), VIRTIO_9P_ENOENT.to_le_bytes());
+
+    let new_walk = decoded_request(
+        VIRTIO_9P_TWALK,
+        8,
+        p9_walk_payload(1, 5, &[b"renamed", b"child.txt"]),
+    );
+    let new_completion = device.execute_at(17, new_walk).unwrap();
+    assert_eq!(new_completion.message_type(), VIRTIO_9P_RWALK);
+    assert_eq!(read_qid(new_completion.payload(), 15).2, child_path);
+
+    let remove_child = decoded_request(VIRTIO_9P_TREMOVE, 9, p9_remove_payload(2));
+    let remove_completion = device.execute_at(18, remove_child).unwrap();
+    assert_eq!(remove_completion.message_type(), VIRTIO_9P_RREMOVE);
+
+    let walk_renamed = decoded_request(VIRTIO_9P_TWALK, 10, p9_walk_payload(1, 6, &[b"renamed"]));
+    let renamed_completion = device.execute_at(19, walk_renamed).unwrap();
+    assert_eq!(renamed_completion.message_type(), VIRTIO_9P_RWALK);
+
+    let removed_walk = decoded_request(VIRTIO_9P_TWALK, 11, p9_walk_payload(6, 7, &[b"child.txt"]));
+    let removed_completion = device.execute_at(20, removed_walk).unwrap();
+    assert_eq!(removed_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(removed_completion.payload(), VIRTIO_9P_ENOENT.to_le_bytes());
+}
+
+#[test]
 fn virtio_9p_device_renameat_keeps_hardlinked_same_file_targets() {
     let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap())
         .with_file("alpha.txt", b"alpha".to_vec())

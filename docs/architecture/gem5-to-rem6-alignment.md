@@ -1314,7 +1314,8 @@ Implementation evidence through 2026-06-01:
   shared qid identity, shared file contents, updated link counts, and unlink
   behavior that keeps surviving linked fids live, `Trename` moves non-directory
   fid-backed nodes into target directories while preserving moved qids, open
-  fid access, and walked-fid path identity, `Trenameat` renames and moves
+  fid access, and walked-fid path identity, and renames same-parent directory
+  fids while updating descendant fid path identity, `Trenameat` renames and moves
   non-directory nodes across directory fids while preserving the moved file qid,
   open fid access, and moved hard-link fid path identity, treating target hard
   links to the same file as no-ops and replacing other target files with
@@ -3348,7 +3349,8 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   replies plus overwrite mutation, `Tlink` hard-link qid reuse, shared write
   visibility, link-count metadata, and surviving-fid reads after one name is
   unlinked, `Trename` fid-backed cross-directory file
-  moves with preserved open-fid access and qid identity, `Trenameat`
+  moves with preserved open-fid access and qid identity plus same-parent
+  directory rename with descendant fid path updates, `Trenameat`
   same-directory renames, cross-directory file moves including same-name moves,
   preserved moved qids, open-fid access, same-file hardlink target no-ops,
   stale fid-backed rename source rejection, replacement-target fid

@@ -434,6 +434,18 @@ impl Virtio9pNamespace {
         if let Some(errno) = validate_mutation_name(VIRTIO_9P_TRENAME, newname)? {
             return Ok(Err(errno));
         }
+        if matches!(node, Virtio9pNodeId::Directory(_)) {
+            if self.parent_directory(node) != Some(new_parent) {
+                return Ok(Err(VIRTIO_9P_EBADF));
+            }
+            return match self.rename_node_in_parent(node, old_path, newname)? {
+                Ok(moved) => Ok(Ok(Virtio9pRenameOutcome {
+                    moved,
+                    replaced: None,
+                })),
+                Err(errno) => Ok(Err(errno)),
+            };
+        }
         if !matches!(
             node,
             Virtio9pNodeId::File(_) | Virtio9pNodeId::Symlink(_) | Virtio9pNodeId::Special(_)
