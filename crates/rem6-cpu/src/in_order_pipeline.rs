@@ -311,10 +311,11 @@ impl InOrderPipelineState {
     }
 
     pub fn restore(snapshot: InOrderPipelineSnapshot) -> Result<Self, InOrderPipelineError> {
-        let mut state = Self::new(snapshot.config);
-        state.cycle = snapshot.cycle;
-        state.replace_in_flight(snapshot.in_flight)?;
-        Ok(state)
+        Ok(Self {
+            config: snapshot.config,
+            cycle: snapshot.cycle,
+            in_flight: canonical_in_flight(snapshot.in_flight)?,
+        })
     }
 
     pub const fn config(&self) -> &InOrderPipelineConfig {
@@ -374,11 +375,7 @@ impl InOrderPipelineState {
     }
 
     pub fn try_advance_cycle(&mut self) -> Result<InOrderPipelinePlan, InOrderPipelineError> {
-        let next_cycle = next_cycle(self.cycle)?;
-        let plan = self.plan_cycle();
-        self.apply_plan(&plan);
-        self.cycle = next_cycle;
-        Ok(plan)
+        self.advance_cycle_with_redirect(None)
     }
 
     pub fn advance_cycle_with_redirect(
