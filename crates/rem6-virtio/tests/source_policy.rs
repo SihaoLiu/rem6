@@ -489,6 +489,32 @@ fn virtio_9p_device_tests_delegate_sync_cases() {
 }
 
 #[test]
+fn virtio_9p_device_tests_delegate_metadata_cases() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let device_test = fs::read_to_string(crate_dir.join("tests/fs9p_device.rs")).unwrap();
+    let metadata_test = crate_dir.join("tests/fs9p_metadata.rs");
+
+    assert!(
+        metadata_test.exists(),
+        "9P metadata tests belong in tests/fs9p_metadata.rs"
+    );
+    for symbol in [
+        "VIRTIO_9P_TSTATFS",
+        "VIRTIO_9P_RSTATFS",
+        "VIRTIO_9P_TSETATTR",
+        "VIRTIO_9P_RSETATTR",
+        "p9_statfs_payload",
+        "p9_setattr_payload",
+        "P9_SETATTR_CTIME",
+    ] {
+        assert!(
+            !device_test.contains(symbol),
+            "tests/fs9p_device.rs should delegate 9P metadata behavior to tests/fs9p_metadata.rs; found {symbol}"
+        );
+    }
+}
+
+#[test]
 fn virtio_9p_device_tests_delegate_xattr_cases() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let device_test = fs::read_to_string(crate_dir.join("tests/fs9p_device.rs")).unwrap();
