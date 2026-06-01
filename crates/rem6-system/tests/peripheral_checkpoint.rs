@@ -295,6 +295,7 @@ const STABLE_SP804_CHECKPOINT_BYTES: &[u8] = &[
 ];
 
 const SP805_CHECKPOINT_HAS_TIMEOUT_START_TICK_OFFSET: usize = 4;
+const SP805_CHECKPOINT_RESET_COUNT_OFFSET: usize = 38;
 const STABLE_SP805_CHECKPOINT_BYTES: &[u8] = &[
     3, 0, 0, 0, 1, 0x10, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 1, 1, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 3,
     0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0x10, 0, 0, 0, 0, 0, 0, 0,
@@ -709,7 +710,43 @@ fn sp805_checkpoint_port_rejects_truncated_reset_assertion_without_partial_resto
             reason,
         } => {
             assert_eq!(actual, component);
-            assert!(reason.contains("reset_assertion needs 8 bytes"));
+            assert_eq!(
+                reason,
+                "reset_assertion_count 1 exceeds remaining payload capacity 0 records"
+            );
+        }
+        other => panic!("unexpected SP805 checkpoint error: {other}"),
+    }
+    assert_eq!(target.snapshot(), original);
+}
+
+#[test]
+fn sp805_checkpoint_port_rejects_impossible_reset_count_without_partial_restore() {
+    let component = checkpoint_component("sp805_payload_reset_count");
+    let target = sp805_device(0x1c20_0000);
+    let original = target.snapshot();
+    let mut registry = CheckpointRegistry::new();
+    let mut payload = STABLE_SP805_CHECKPOINT_BYTES.to_vec();
+    payload[SP805_CHECKPOINT_RESET_COUNT_OFFSET..SP805_CHECKPOINT_RESET_COUNT_OFFSET + 8]
+        .copy_from_slice(&u64::MAX.to_le_bytes());
+
+    registry.register(component.clone()).unwrap();
+    registry.write_chunk(&component, "sp805", payload).unwrap();
+
+    let error = Sp805CheckpointPort::new(component.clone(), target.clone())
+        .restore_from(&registry)
+        .unwrap_err();
+
+    match error {
+        Sp805CheckpointError::InvalidChunk {
+            component: actual,
+            reason,
+        } => {
+            assert_eq!(actual, component);
+            assert_eq!(
+                reason,
+                "reset_assertion_count 18446744073709551615 exceeds remaining payload capacity 1 records"
+            );
         }
         other => panic!("unexpected SP805 checkpoint error: {other}"),
     }

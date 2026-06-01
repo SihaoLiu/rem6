@@ -13,6 +13,7 @@ const SP805_CHUNK: &str = "sp805";
 const U8_BYTES: usize = 1;
 const U32_BYTES: usize = 4;
 const U64_BYTES: usize = 8;
+const RESET_ASSERTION_RECORD_BYTES: usize = U64_BYTES;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Sp805CheckpointRecord {
@@ -295,7 +296,8 @@ fn decode_sp805(
     let raw_interrupt = cursor.read_bool("raw_interrupt")?;
     let clock_tick = cursor.read_u64("clock_tick")?;
     let generation = cursor.read_u64("generation")?;
-    let reset_count = cursor.read_count("reset_assertion_count")?;
+    let reset_count =
+        cursor.read_bounded_count("reset_assertion_count", RESET_ASSERTION_RECORD_BYTES)?;
     let mut reset_assertions = Vec::with_capacity(reset_count);
     for _ in 0..reset_count {
         reset_assertions.push(cursor.read_u64("reset_assertion")?);
@@ -382,6 +384,25 @@ impl<'a> PayloadCursor<'a> {
     fn read_count(&mut self, name: &str) -> Result<usize, Sp805CheckpointError> {
         let value = self.read_u64(name)?;
         usize::try_from(value).map_err(|_| self.invalid(format!("{name} does not fit usize")))
+    }
+
+    fn read_bounded_count(
+        &mut self,
+        name: &str,
+        record_bytes: usize,
+    ) -> Result<usize, Sp805CheckpointError> {
+        let count = self.read_count(name)?;
+        let capacity = self.remaining() / record_bytes;
+        if count > capacity {
+            return Err(self.invalid(format!(
+                "{name} {count} exceeds remaining payload capacity {capacity} records"
+            )));
+        }
+        Ok(count)
+    }
+
+    fn remaining(&self) -> usize {
+        self.payload.len().saturating_sub(self.offset)
     }
 
     fn read_bytes(&mut self, name: &str, size: usize) -> Result<&'a [u8], Sp805CheckpointError> {
