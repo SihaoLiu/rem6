@@ -236,3 +236,57 @@ fn virtio_split_queue_completes_rng_request_to_guest_memory_and_raises_isr() {
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].kind(), VirtioPciIsrEventKind::QueueInterrupt);
 }
+
+#[test]
+fn virtio_split_queue_rejects_rng_writeback_before_guest_state_mutates() {
+    let mut store = guest_store();
+    write_guest(
+        &mut store,
+        0x1000,
+        &descriptor(
+            0x1300,
+            3,
+            VIRTIO_SPLIT_DESC_F_NEXT | VIRTIO_SPLIT_DESC_F_WRITE,
+            1,
+        ),
+        1,
+    );
+    write_guest(
+        &mut store,
+        0x1010,
+        &descriptor(0x13fd, 5, VIRTIO_SPLIT_DESC_F_WRITE, 0),
+        2,
+    );
+    write_guest(&mut store, 0x1102, &1_u16.to_le_bytes(), 3);
+    write_guest(&mut store, 0x1104, &0_u16.to_le_bytes(), 4);
+    write_guest(&mut store, 0x1ffe, &0_u16.to_le_bytes(), 5);
+
+    let device = VirtioRngDevice::new(
+        VirtioRngByteSource::repeating(vec![0xb0, 0xb1, 0xb2, 0xb3, 0xb4, 0xb5, 0xb6, 0xb7])
+            .unwrap(),
+    );
+    let mut split_queue = VirtioSplitQueue::new(
+        4,
+        Address::new(0x1000),
+        Address::new(0x1100),
+        Address::new(0x1ffc),
+        0,
+    )
+    .unwrap();
+    {
+        let mut guest = VirtioGuestMemory::new(&mut store, layout(), AgentId::new(12));
+        let decoded = split_queue
+            .consume_available_rng(&mut guest, queue(0))
+            .unwrap()
+            .unwrap();
+        let completion = device.execute_at(78, decoded.request().clone()).unwrap();
+
+        assert!(split_queue
+            .complete_rng_request(&mut guest, &decoded, &completion)
+            .is_err());
+    }
+
+    assert_eq!(read_guest(&mut store, 0x1300, 3, 100), vec![0; 3]);
+    assert_eq!(read_guest(&mut store, 0x13fd, 5, 200), vec![0; 5]);
+    assert_eq!(read_guest(&mut store, 0x1ffe, 2, 300), vec![0; 2]);
+}
