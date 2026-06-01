@@ -51,6 +51,46 @@ pub enum MemoryError {
         op: MemoryAtomicOp,
         size: AccessSize,
     },
+    InvalidRequestStrictOrdering {
+        request: MemoryRequestId,
+    },
+    InvalidRequestCheckpointPayloadSize {
+        expected: usize,
+        actual: usize,
+    },
+    InvalidRequestCheckpointMagic,
+    UnsupportedRequestCheckpointVersion {
+        version: u32,
+    },
+    InvalidRequestCheckpointReserved {
+        value: u32,
+    },
+    InvalidRequestCheckpointFlags {
+        flags: u32,
+    },
+    InvalidRequestCheckpointOperation {
+        code: u32,
+    },
+    InvalidRequestCheckpointAtomicOp {
+        code: u32,
+    },
+    InvalidRequestCheckpointUsize {
+        value: u64,
+    },
+    RequestCheckpointValueTooLarge {
+        field: &'static str,
+        value: usize,
+        maximum: usize,
+    },
+    InvalidRequestCheckpointDataLength {
+        length: u64,
+    },
+    InvalidRequestCheckpointMaskLength {
+        length: u64,
+    },
+    InvalidRequestCheckpointMaskBit {
+        value: u8,
+    },
     UnalignedLineAddress {
         address: Address,
         line_size: u64,
@@ -249,6 +289,64 @@ impl fmt::Display for MemoryError {
                 request.sequence(),
                 request.agent().get(),
                 size.bytes()
+            ),
+            Self::InvalidRequestStrictOrdering { request } => write!(
+                formatter,
+                "request {} from agent {} cannot be strict-ordered unless it is uncacheable",
+                request.sequence(),
+                request.agent().get()
+            ),
+            Self::InvalidRequestCheckpointPayloadSize { expected, actual } => write!(
+                formatter,
+                "memory-request checkpoint payload has {actual} bytes; expected {expected}"
+            ),
+            Self::InvalidRequestCheckpointMagic => write!(
+                formatter,
+                "memory-request checkpoint payload has invalid magic"
+            ),
+            Self::UnsupportedRequestCheckpointVersion { version } => write!(
+                formatter,
+                "memory-request checkpoint payload version {version} is not supported"
+            ),
+            Self::InvalidRequestCheckpointReserved { value } => write!(
+                formatter,
+                "memory-request checkpoint reserved field has nonzero value {value}"
+            ),
+            Self::InvalidRequestCheckpointFlags { flags } => write!(
+                formatter,
+                "memory-request checkpoint flags {flags:#x} are invalid"
+            ),
+            Self::InvalidRequestCheckpointOperation { code } => write!(
+                formatter,
+                "memory-request checkpoint payload has invalid operation code {code}"
+            ),
+            Self::InvalidRequestCheckpointAtomicOp { code } => write!(
+                formatter,
+                "memory-request checkpoint payload has invalid atomic operation code {code}"
+            ),
+            Self::InvalidRequestCheckpointUsize { value } => write!(
+                formatter,
+                "memory-request checkpoint usize value {value} cannot fit this target"
+            ),
+            Self::RequestCheckpointValueTooLarge {
+                field,
+                value,
+                maximum,
+            } => write!(
+                formatter,
+                "memory-request checkpoint {field} value {value} exceeds maximum {maximum}"
+            ),
+            Self::InvalidRequestCheckpointDataLength { length } => write!(
+                formatter,
+                "memory-request checkpoint has absent data with nonzero length {length}"
+            ),
+            Self::InvalidRequestCheckpointMaskLength { length } => write!(
+                formatter,
+                "memory-request checkpoint has absent byte mask with nonzero length {length}"
+            ),
+            Self::InvalidRequestCheckpointMaskBit { value } => write!(
+                formatter,
+                "memory-request checkpoint byte mask has invalid bit value {value}"
             ),
             Self::UnalignedLineAddress { address, line_size } => write!(
                 formatter,

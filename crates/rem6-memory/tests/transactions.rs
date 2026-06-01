@@ -1,7 +1,7 @@
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, CoherenceIntent, MemoryAccessOrdering,
-    MemoryBarrierSet, MemoryError, MemoryOperation, MemoryRequest, MemoryRequestId, MemoryResponse,
-    ResponseStatus,
+    MemoryAtomicOp, MemoryBarrierSet, MemoryError, MemoryOperation, MemoryRequest,
+    MemoryRequestCheckpointPayload, MemoryRequestId, MemoryResponse, ResponseStatus,
 };
 
 fn line_layout() -> CacheLineLayout {
@@ -318,3 +318,128 @@ fn responses_validate_request_data_contracts() {
     assert_eq!(retry.status(), ResponseStatus::Retry);
     assert!(retry.data().is_none());
 }
+
+#[test]
+fn memory_request_checkpoint_payload_round_trips_atomic_ordering_and_flags() {
+    let size = AccessSize::new(8).unwrap();
+    let mask =
+        ByteMask::from_bits(vec![true, false, true, false, true, false, true, false]).unwrap();
+    let request = MemoryRequest::atomic_with_op(
+        request_id(22),
+        Address::new(0x6008),
+        size,
+        MemoryAtomicOp::Xor,
+        vec![0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80],
+        mask.clone(),
+        line_layout(),
+    )
+    .unwrap()
+    .with_ordering(MemoryAccessOrdering::new(
+        Some(MemoryBarrierSet::memory()),
+        Some(MemoryBarrierSet::new(true, false)),
+    ))
+    .with_uncacheable_strict_order();
+
+    let snapshot = request.snapshot();
+    let payload = MemoryRequestCheckpointPayload::from_request(&request);
+    let decoded = MemoryRequestCheckpointPayload::decode(payload.encode().as_slice()).unwrap();
+    let restored = MemoryRequest::from_snapshot(decoded.snapshot()).unwrap();
+
+    assert_eq!(decoded.snapshot(), &snapshot);
+    assert_eq!(restored, request);
+    assert_eq!(restored.atomic_op(), Some(MemoryAtomicOp::Xor));
+    assert_eq!(restored.byte_mask(), Some(&mask));
+    assert!(restored.is_uncacheable());
+    assert!(restored.is_strict_ordered());
+}
+
+#[test]
+fn memory_request_checkpoint_payload_rejects_invalid_operation_code() {
+    let request = MemoryRequest::read_shared(
+        request_id(23),
+        Address::new(0x7000),
+        AccessSize::new(4).unwrap(),
+        line_layout(),
+    )
+    .unwrap();
+    let mut payload = MemoryRequestCheckpointPayload::from_request(&request).encode();
+    payload[REQUEST_CHECKPOINT_OPERATION_OFFSET..REQUEST_CHECKPOINT_OPERATION_OFFSET + 4]
+        .copy_from_slice(&99u32.to_le_bytes());
+
+    assert_eq!(
+        MemoryRequestCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::InvalidRequestCheckpointOperation { code: 99 }
+    );
+}
+
+#[test]
+fn memory_request_checkpoint_payload_rejects_reserved_flag_bits() {
+    let request = MemoryRequest::read_shared(
+        request_id(24),
+        Address::new(0x7100),
+        AccessSize::new(4).unwrap(),
+        line_layout(),
+    )
+    .unwrap();
+    let mut payload = MemoryRequestCheckpointPayload::from_request(&request).encode();
+    payload[REQUEST_CHECKPOINT_FLAGS_OFFSET..REQUEST_CHECKPOINT_FLAGS_OFFSET + 4]
+        .copy_from_slice(&0x8000_0000u32.to_le_bytes());
+
+    assert_eq!(
+        MemoryRequestCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::InvalidRequestCheckpointFlags { flags: 0x8000_0000 }
+    );
+}
+
+#[test]
+fn memory_request_checkpoint_payload_preserves_empty_ordering_edges() {
+    let request = MemoryRequest::read_shared(
+        request_id(25),
+        Address::new(0x7200),
+        AccessSize::new(4).unwrap(),
+        line_layout(),
+    )
+    .unwrap()
+    .with_ordering(MemoryAccessOrdering::new(
+        Some(MemoryBarrierSet::new(false, false)),
+        Some(MemoryBarrierSet::new(false, false)),
+    ));
+
+    let snapshot = request.snapshot();
+    let payload = MemoryRequestCheckpointPayload::from_snapshot(snapshot.clone()).unwrap();
+    let decoded = MemoryRequestCheckpointPayload::decode(payload.encode().as_slice()).unwrap();
+
+    assert_eq!(decoded.snapshot(), &snapshot);
+    assert_eq!(
+        decoded.snapshot().ordering().before(),
+        Some(MemoryBarrierSet::new(false, false))
+    );
+    assert_eq!(
+        decoded.snapshot().ordering().after(),
+        Some(MemoryBarrierSet::new(false, false))
+    );
+}
+
+#[test]
+fn memory_request_checkpoint_payload_rejects_invalid_mask_byte() {
+    let request = MemoryRequest::write(
+        request_id(26),
+        Address::new(0x7300),
+        AccessSize::new(2).unwrap(),
+        vec![0xaa, 0xbb],
+        ByteMask::from_bits(vec![true, false]).unwrap(),
+        line_layout(),
+    )
+    .unwrap();
+    let mut payload = MemoryRequestCheckpointPayload::from_request(&request).encode();
+    let last = payload.last_mut().unwrap();
+    *last = 2;
+
+    assert_eq!(
+        MemoryRequestCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::InvalidRequestCheckpointMaskBit { value: 2 }
+    );
+}
+
+const REQUEST_CHECKPOINT_OPERATION_OFFSET: usize = 8;
+const REQUEST_CHECKPOINT_FLAGS_OFFSET: usize = 12;

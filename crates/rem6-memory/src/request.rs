@@ -18,6 +18,92 @@ pub struct MemoryRequest {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MemoryRequestSnapshot {
+    id: MemoryRequestId,
+    operation: MemoryOperation,
+    range: AddressRange,
+    line_layout: CacheLineLayout,
+    ordering: MemoryAccessOrdering,
+    uncacheable: bool,
+    strict_order: bool,
+    data: Option<Vec<u8>>,
+    byte_mask: Option<ByteMask>,
+    atomic_op: Option<MemoryAtomicOp>,
+}
+
+impl MemoryRequestSnapshot {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        id: MemoryRequestId,
+        operation: MemoryOperation,
+        address: Address,
+        size: AccessSize,
+        line_layout: CacheLineLayout,
+        ordering: MemoryAccessOrdering,
+        uncacheable: bool,
+        strict_order: bool,
+        data: Option<Vec<u8>>,
+        byte_mask: Option<ByteMask>,
+        atomic_op: Option<MemoryAtomicOp>,
+    ) -> Result<Self, MemoryError> {
+        let snapshot = Self {
+            id,
+            operation,
+            range: AddressRange::new(address, size)?,
+            line_layout,
+            ordering,
+            uncacheable,
+            strict_order,
+            data,
+            byte_mask,
+            atomic_op,
+        };
+        MemoryRequest::from_snapshot(&snapshot)?;
+        Ok(snapshot)
+    }
+
+    pub const fn id(&self) -> MemoryRequestId {
+        self.id
+    }
+
+    pub const fn operation(&self) -> MemoryOperation {
+        self.operation
+    }
+
+    pub const fn range(&self) -> AddressRange {
+        self.range
+    }
+
+    pub const fn line_layout(&self) -> CacheLineLayout {
+        self.line_layout
+    }
+
+    pub const fn ordering(&self) -> MemoryAccessOrdering {
+        self.ordering
+    }
+
+    pub const fn is_uncacheable(&self) -> bool {
+        self.uncacheable
+    }
+
+    pub const fn is_strict_ordered(&self) -> bool {
+        self.strict_order
+    }
+
+    pub fn data(&self) -> Option<&[u8]> {
+        self.data.as_deref()
+    }
+
+    pub fn byte_mask(&self) -> Option<&ByteMask> {
+        self.byte_mask.as_ref()
+    }
+
+    pub const fn atomic_op(&self) -> Option<MemoryAtomicOp> {
+        self.atomic_op
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct MemoryRequestPayload {
     data: Option<Vec<u8>>,
     byte_mask: Option<ByteMask>,
@@ -54,6 +140,14 @@ impl MemoryRequestPayload {
             data: Some(data),
             byte_mask: None,
             atomic_op: None,
+        }
+    }
+
+    fn from_snapshot(snapshot: &MemoryRequestSnapshot) -> Self {
+        Self {
+            data: snapshot.data.clone(),
+            byte_mask: snapshot.byte_mask.clone(),
+            atomic_op: snapshot.atomic_op,
         }
     }
 }
@@ -255,6 +349,27 @@ impl MemoryRequest {
             line_layout,
             MemoryRequestPayload::writeback(data),
         )
+    }
+
+    pub fn from_snapshot(snapshot: &MemoryRequestSnapshot) -> Result<Self, MemoryError> {
+        if snapshot.strict_order && !snapshot.uncacheable {
+            return Err(MemoryError::InvalidRequestStrictOrdering {
+                request: snapshot.id,
+            });
+        }
+
+        let mut request = Self::new(
+            snapshot.id,
+            snapshot.operation,
+            snapshot.range.start(),
+            snapshot.range.size(),
+            snapshot.line_layout,
+            MemoryRequestPayload::from_snapshot(snapshot),
+        )?;
+        request.ordering = snapshot.ordering;
+        request.uncacheable = snapshot.uncacheable;
+        request.strict_order = snapshot.strict_order;
+        Ok(request)
     }
 
     fn new(
@@ -550,6 +665,21 @@ impl MemoryRequest {
 
     pub const fn requires_writable(&self) -> bool {
         self.operation.requires_writable()
+    }
+
+    pub fn snapshot(&self) -> MemoryRequestSnapshot {
+        MemoryRequestSnapshot {
+            id: self.id,
+            operation: self.operation,
+            range: self.range,
+            line_layout: self.line_layout,
+            ordering: self.ordering,
+            uncacheable: self.uncacheable,
+            strict_order: self.strict_order,
+            data: self.data.clone(),
+            byte_mask: self.byte_mask.clone(),
+            atomic_op: self.atomic_op,
+        }
     }
 }
 
