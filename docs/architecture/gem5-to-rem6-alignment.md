@@ -2625,11 +2625,13 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   structural-block, ordering-block, state-change, and count totals across
   records, plus disjoint partial-summary merges and overlap rejection.
   Checkpoint payload tests cover binary round trips, cycle/config/in-flight
-  preservation, duplicate-sequence rejection before payload creation, truncated
-  payload rejection, invalid magic rejection, unsupported-version rejection,
-  invalid stage-code rejection, payload-decoded zero-width rejection through the
-  normal configuration validator, and explicit rejection of values too large for
-  the payload field width.
+  preservation, stable checkpoint golden bytes, duplicate-sequence rejection
+  before payload creation and through decode validation, truncated payload
+  rejection, invalid magic rejection, unsupported-version rejection, invalid
+  stage-code rejection, count-size and trailing-byte mismatch rejection,
+  payload-decoded zero-width rejection through the normal configuration
+  validator, and explicit rejection of values too large for the payload field
+  width.
 - CPU O3 dependency release tests cover writeback-visible destinations,
   commit-visible misc-register destinations, always-ready fixed mappings, and
   the rule that commit-time dependency publication does not rerun
