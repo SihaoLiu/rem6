@@ -3146,8 +3146,10 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   and read-only RTC writes. Platform tests cover RTC MMIO bus attachment,
   retained device lookup, and periodic interrupt route wiring, while system
   checkpoint tests cover RTC bank decode-first restore, status-C flag
-  preservation, host checkpoint-action round trips through manifests, and
-  automatic host checkpoint attachment for platform-owned RTC devices. PL031
+  preservation, stable RTC checkpoint chunk bytes, truncated and trailing RTC
+  chunk rejection without partial restore, host checkpoint-action round trips
+  through manifests, and automatic host checkpoint attachment for
+  platform-owned RTC devices. PL031
   tests cover elapsed data-register reads, load and match writes, ignored
   control writes, PrimeCell ID reads, ignored PrimeCell ID writes, raw and masked interrupt latching, interrupt clearing,
   snapshot restore, no-route match status latching, serial and parallel MMIO
