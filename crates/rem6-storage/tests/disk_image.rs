@@ -195,6 +195,17 @@ fn cow_storage_image_rejects_read_byte_count_overflow_before_allocation() {
 }
 
 #[test]
+fn cow_storage_image_rejects_read_above_vec_capacity_before_allocation() {
+    let cow = CowStorageImage::new(Arc::new(HugeStorageImage));
+    let sectors = isize::MAX as u64 / STORAGE_SECTOR_BYTES + 1;
+
+    assert!(matches!(
+        cow.read(StorageSectorId::new(0), sectors),
+        Err(StorageError::CapacityOverflow { sectors: actual }) if actual == sectors
+    ));
+}
+
+#[test]
 fn nested_cow_storage_images_read_from_nearest_dirty_layer() {
     let raw = RawStorageImage::from_bytes(image_bytes(&[0x41, 0x42])).unwrap();
     let lower = CowStorageImage::new(Arc::new(raw.clone()));

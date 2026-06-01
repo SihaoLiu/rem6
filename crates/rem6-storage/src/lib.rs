@@ -807,17 +807,22 @@ fn file_operation_error(
 }
 
 fn checked_capacity_bytes(sectors: u64) -> Result<usize, StorageError> {
-    let bytes = sectors
-        .checked_mul(STORAGE_SECTOR_BYTES)
-        .ok_or(StorageError::CapacityOverflow { sectors })?;
-    validate_image_bytes(bytes)?;
-    usize::try_from(bytes).map_err(|_| StorageError::CapacityOverflow { sectors })
+    let bytes = checked_allocation_bytes(sectors)?;
+    validate_image_bytes(bytes as u64)?;
+    Ok(bytes)
 }
 
 fn checked_request_bytes(sectors: u64) -> Result<usize, StorageError> {
+    checked_allocation_bytes(sectors)
+}
+
+fn checked_allocation_bytes(sectors: u64) -> Result<usize, StorageError> {
     let bytes = sectors
         .checked_mul(STORAGE_SECTOR_BYTES)
         .ok_or(StorageError::CapacityOverflow { sectors })?;
+    if bytes > isize::MAX as u64 {
+        return Err(StorageError::CapacityOverflow { sectors });
+    }
     usize::try_from(bytes).map_err(|_| StorageError::CapacityOverflow { sectors })
 }
 

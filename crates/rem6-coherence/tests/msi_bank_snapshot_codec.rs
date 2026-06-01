@@ -148,6 +148,22 @@ fn msi_bank_snapshot_rejects_impossible_backing_line_count() {
 }
 
 #[test]
+fn msi_bank_snapshot_rejects_impossible_directory_sharer_count() {
+    let mut payload = payload_after_cache_count();
+    write_u64(&mut payload, 1);
+    write_u64(&mut payload, 0x1000);
+    write_u8(&mut payload, 0);
+    write_u64(&mut payload, u64::MAX);
+
+    let error = MsiBankDirectoryHarnessSnapshot::from_bytes(&payload).unwrap_err();
+
+    assert_eq!(
+        error,
+        "MSI directory sharer count 18446744073709551615 exceeds remaining payload capacity 0 records"
+    );
+}
+
+#[test]
 fn msi_bank_snapshot_rejects_impossible_cpu_response_count() {
     let mut payload = payload_after_cache_count();
     write_empty_top_level_counts_before_cpu_responses(&mut payload);

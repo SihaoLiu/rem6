@@ -402,7 +402,7 @@ fn read_directory_state(cursor: &mut PayloadCursor<'_>) -> Result<DirectoryLineS
     if cursor.read_bool("MSI directory owner flag")? {
         state = state.with_owner(AgentId::new(cursor.read_u32("MSI directory owner")?));
     }
-    let sharer_count = cursor.read_count("MSI directory sharer count")?;
+    let sharer_count = cursor.read_bounded_count("MSI directory sharer count", U32_BYTES)?;
     for _ in 0..sharer_count {
         state = state.with_sharer(AgentId::new(cursor.read_u32("MSI directory sharer")?));
     }
