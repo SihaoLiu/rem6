@@ -134,3 +134,38 @@ fn virtio_9p_device_walks_dot_and_dotdot_directory_components() {
     assert_eq!(root_completion.payload()[0..2], 1_u16.to_le_bytes());
     assert_eq!(read_qid(root_completion.payload(), 2).2, 1);
 }
+
+#[test]
+fn virtio_9p_device_returns_partial_walk_without_binding_newfid() {
+    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap());
+    let attach = decoded_request(
+        VIRTIO_9P_TATTACH,
+        1,
+        p9_attach_payload(1, VIRTIO_9P_NOFID, b"root", b"", 0),
+    );
+    device.execute_at(10, attach).unwrap();
+    let mkdir = decoded_request(
+        VIRTIO_9P_TMKDIR,
+        2,
+        p9_mkdir_payload(1, b"tmp", 0o040755, 0),
+    );
+    let mkdir_completion = device.execute_at(11, mkdir).unwrap();
+    assert_eq!(mkdir_completion.message_type(), VIRTIO_9P_RMKDIR);
+    let tmp_qid = read_qid(mkdir_completion.payload(), 0);
+
+    let partial_walk = decoded_request(
+        VIRTIO_9P_TWALK,
+        3,
+        p9_walk_payload(1, 2, &[b"tmp", b"missing"]),
+    );
+    let partial_completion = device.execute_at(12, partial_walk).unwrap();
+    assert_eq!(partial_completion.message_type(), VIRTIO_9P_RWALK);
+    assert_eq!(partial_completion.payload()[0..2], 1_u16.to_le_bytes());
+    assert_eq!(read_qid(partial_completion.payload(), 2), tmp_qid);
+    assert_eq!(device.fid_count(), 1);
+
+    let open_partial_fid = decoded_request(VIRTIO_9P_TLOPEN, 4, p9_lopen_payload(2, 0));
+    let open_completion = device.execute_at(13, open_partial_fid).unwrap();
+    assert_eq!(open_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(open_completion.payload(), VIRTIO_9P_EBADF.to_le_bytes());
+}

@@ -1260,8 +1260,10 @@ Implementation evidence through 2026-05-31:
   before completion state mutates. A typed in-memory 9P namespace now covers the
   first filesystem operations after attach: `Twalk` resolves named files and
   directories into new fid state, handles `.` and `..` directory components
-  with root-clamped parent traversal, rejects occupied destination fids, rejects
-  non-empty same-fid rebinding, and preserves empty same-fid walk replies,
+  with root-clamped parent traversal, returns partial qid vectors without
+  binding the destination fid when later components miss, rejects occupied
+  destination fids, rejects non-empty same-fid rebinding, and preserves empty
+  same-fid walk replies,
   `Tmkdir` creates deterministic directory qids and rejects duplicate names with
   errno payloads, `Tlcreate` creates named root or child-directory files,
   rejects occupied names without replacing existing nodes, and retargets the
@@ -3273,9 +3275,10 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   recording, unsupported-request `Rlerror` replies, and malformed 9P payload
   rejection without completion mutation, explicit `Tauth` no-auth-backend
   rejection with malformed auth parsing errors, in-memory namespace file installation,
-  `Twalk` qid-vector replies, missing-name `Rlerror` handling, occupied-newfid
-  rejection, `.` and `..` directory component traversal, same-fid non-empty walk
-  rejection, empty same-fid walk replies,
+  `Twalk` qid-vector replies, missing-name `Rlerror` handling, partial qid
+  replies without destination-fid binding, occupied-newfid rejection, `.` and
+  `..` directory component traversal, same-fid non-empty walk rejection,
+  empty same-fid walk replies,
   `Tmkdir` directory creation, duplicate-name errno replies, directory qid preservation,
   and directory walk/listing behavior, `Tlcreate` root and child-directory file
   creation, duplicate-file rejection without clobbering, plus opened-fid

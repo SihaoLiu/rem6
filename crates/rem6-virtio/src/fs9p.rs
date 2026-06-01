@@ -6,7 +6,7 @@ use rem6_memory::ByteMask;
 
 use crate::fs9p_lock::Virtio9pLockTable;
 use crate::fs9p_namespace::{
-    getattr_payload, qid_payload, Virtio9pFidState, Virtio9pNamespace, Virtio9pNodeId,
+    getattr_payload, qid_payload, Virtio9pFidState, Virtio9pNamespace, Virtio9pNodeId, Virtio9pQid,
     Virtio9pTimestamp, Virtio9pXattrWritePolicy,
 };
 use crate::fs9p_protocol::*;
@@ -27,6 +27,15 @@ pub const VIRTIO_9P_CONFIG_TAG_OFFSET: u64 = 2;
 const VIRTIO_9P_CONFIG_LENGTH_BYTES: usize = 2;
 const VIRTIO_9P_HEADER_BYTES: u32 = 7;
 const VIRTIO_9P_COUNT_PREFIX_BYTES: u32 = 4;
+
+fn walk_payload(qids: &[Virtio9pQid]) -> Vec<u8> {
+    let mut payload = Vec::new();
+    payload.extend((qids.len() as u16).to_le_bytes());
+    for qid in qids {
+        payload.extend(qid.to_le_bytes());
+    }
+    payload
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Virtio9pConfig {
@@ -422,12 +431,20 @@ impl Virtio9pDevice {
         };
         let namespace = self.namespace.lock().expect("virtio 9p namespace lock");
         let mut qids = Vec::new();
+        let mut completed = true;
         for name in &walk.names {
             let Some(next) = namespace.walk(node, name) else {
-                return Ok(Err(VIRTIO_9P_ENOENT));
+                completed = false;
+                break;
             };
             node = next;
             qids.push(namespace.qid(node));
+        }
+        if !completed {
+            if qids.is_empty() {
+                return Ok(Err(VIRTIO_9P_ENOENT));
+            }
+            return Ok(Ok(walk_payload(&qids)));
         }
         drop(namespace);
 
@@ -438,12 +455,7 @@ impl Virtio9pDevice {
             }
             fids.insert(walk.newfid, Virtio9pFidState::new(node));
         }
-        let mut payload = Vec::new();
-        payload.extend((qids.len() as u16).to_le_bytes());
-        for qid in qids {
-            payload.extend(qid.to_le_bytes());
-        }
-        Ok(Ok(payload))
+        Ok(Ok(walk_payload(&qids)))
     }
 
     fn handle_lopen(&self, request: &Virtio9pRequest) -> Result<Result<Vec<u8>, u32>, VirtioError> {
