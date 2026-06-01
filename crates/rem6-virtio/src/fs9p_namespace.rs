@@ -1353,6 +1353,12 @@ pub(crate) struct Virtio9pNodeMetadata {
     blocks: u64,
 }
 
+impl Virtio9pNodeMetadata {
+    pub(crate) const fn size(&self) -> u64 {
+        self.size
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Virtio9pXattrWritePolicy {
     Any,
@@ -1403,6 +1409,7 @@ pub(crate) enum Virtio9pFidState {
     Node {
         node: Virtio9pNodeId,
         open: Option<Virtio9pOpenMode>,
+        append: bool,
     },
     XattrRead {
         data: Vec<u8>,
@@ -1418,7 +1425,11 @@ pub(crate) enum Virtio9pFidState {
 
 impl Virtio9pFidState {
     pub(crate) const fn new(node: Virtio9pNodeId) -> Self {
-        Self::Node { node, open: None }
+        Self::Node {
+            node,
+            open: None,
+            append: false,
+        }
     }
 
     pub(crate) fn xattr_read(data: Vec<u8>) -> Self {
@@ -1447,20 +1458,26 @@ impl Virtio9pFidState {
         }
     }
 
-    pub(crate) fn open(&mut self, mode: Virtio9pOpenMode) -> Option<()> {
+    pub(crate) fn open(&mut self, mode: Virtio9pOpenMode, append: bool) -> Option<()> {
         match self {
-            Self::Node { open, .. } => {
+            Self::Node {
+                open,
+                append: stored_append,
+                ..
+            } => {
                 *open = Some(mode);
+                *stored_append = append;
                 Some(())
             }
             Self::XattrRead { .. } | Self::XattrWrite { .. } => None,
         }
     }
 
-    pub(crate) const fn opened(node: Virtio9pNodeId, mode: Virtio9pOpenMode) -> Self {
+    pub(crate) const fn opened(node: Virtio9pNodeId, mode: Virtio9pOpenMode, append: bool) -> Self {
         Self::Node {
             node,
             open: Some(mode),
+            append,
         }
     }
 
@@ -1487,6 +1504,19 @@ impl Virtio9pFidState {
             Self::Node {
                 open: Some(mode), ..
             } => mode.can_write(),
+            Self::Node { open: None, .. } | Self::XattrRead { .. } | Self::XattrWrite { .. } => {
+                false
+            }
+        }
+    }
+
+    pub(crate) const fn append_writes(&self) -> bool {
+        match self {
+            Self::Node {
+                open: Some(_),
+                append,
+                ..
+            } => *append,
             Self::Node { open: None, .. } | Self::XattrRead { .. } | Self::XattrWrite { .. } => {
                 false
             }

@@ -1277,6 +1277,8 @@ Implementation evidence through 2026-05-31:
   before mutation, `Tlopen` and legacy
   `Topen` mark file and directory fids open, report qid plus I/O-unit data,
   and enforce read-only, write-only, read-write, and execute-only access bits,
+  `Tlopen` honors RISC-V/Linux-compatible truncate and append flag values,
+  legacy `Topen` honors 9P2000 truncate mode bits,
   legacy `Tcreate` shares the same checked namespace creation path as
   `Tlcreate`, including duplicate-file rejection and opened-fid access-mode
   propagation, `Treaddir`
@@ -3294,7 +3296,8 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   stale-fid errno replies, and malformed
   stat-blob rejection, `Tlopen` and legacy `Topen` file and directory qid plus
   I/O-unit replies, access-mode checks for read-only, write-only, read-write,
-  and execute-only opened fids, legacy `Tcreate` and `Tlcreate` opened-fid
+  and execute-only opened fids, `Tlopen` truncate and append flag handling,
+  legacy `Topen` truncate mode handling, legacy `Tcreate` and `Tlcreate` opened-fid
   access-mode propagation, legacy `Tcreate` checked file creation, duplicate-file
   rejection without clobbering, plus opened-fid retargeting, `Treaddir` sorted
   root and child-directory dirents, resumable offsets, count-bounded replies,

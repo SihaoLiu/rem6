@@ -407,18 +407,30 @@ impl Virtio9pDevice {
 
     fn handle_lopen(&self, request: &Virtio9pRequest) -> Result<Result<Vec<u8>, u32>, VirtioError> {
         let open = parse_lopen_request(request)?;
-        self.open_fid_payload(open.fid, Virtio9pOpenMode::from_bits(open.mode))
+        self.open_fid_payload(
+            open.fid,
+            Virtio9pOpenMode::from_bits(open.mode),
+            open.truncate,
+            open.append,
+        )
     }
 
     fn handle_open(&self, request: &Virtio9pRequest) -> Result<Result<Vec<u8>, u32>, VirtioError> {
         let open = parse_open_request(request)?;
-        self.open_fid_payload(open.fid, Virtio9pOpenMode::from_bits(open.mode))
+        self.open_fid_payload(
+            open.fid,
+            Virtio9pOpenMode::from_bits(open.mode),
+            open.truncate,
+            open.append,
+        )
     }
 
     fn open_fid_payload(
         &self,
         fid: u32,
         mode: Virtio9pOpenMode,
+        truncate: bool,
+        append: bool,
     ) -> Result<Result<Vec<u8>, u32>, VirtioError> {
         let mut fids = self.fids.lock().expect("virtio 9p fid lock");
         let Some(fid) = fids.get_mut(&fid) else {
@@ -427,11 +439,14 @@ impl Virtio9pDevice {
         let Some(node) = fid.node() else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
-        let namespace = self.namespace.lock().expect("virtio 9p namespace lock");
+        let mut namespace = self.namespace.lock().expect("virtio 9p namespace lock");
         if namespace.metadata(node).is_none() {
             return Ok(Err(VIRTIO_9P_EBADF));
         }
-        if fid.open(mode).is_none() {
+        if truncate && (!mode.can_write() || namespace.resize_file(node, 0).is_none()) {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        }
+        if fid.open(mode, append).is_none() {
             return Ok(Err(VIRTIO_9P_EBADF));
         }
         let mut payload = namespace.qid(node).to_le_bytes().to_vec();
@@ -481,7 +496,7 @@ impl Virtio9pDevice {
             Ok(node) => node,
             Err(errno) => return Ok(Err(errno)),
         };
-        *fid = Virtio9pFidState::opened(node, mode);
+        *fid = Virtio9pFidState::opened(node, mode, false);
         let mut payload = namespace.qid(node).to_le_bytes().to_vec();
         payload.extend(self.negotiated_msize().to_le_bytes());
         Ok(Ok(payload))
@@ -1022,7 +1037,15 @@ impl Virtio9pDevice {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
         let mut namespace = self.namespace.lock().expect("virtio 9p namespace lock");
-        let Some(bytes) = namespace.write_file(node, write.offset, &write.data) else {
+        let offset = if fid.append_writes() {
+            let Some(metadata) = namespace.metadata(node) else {
+                return Ok(Err(VIRTIO_9P_EBADF));
+            };
+            metadata.size()
+        } else {
+            write.offset
+        };
+        let Some(bytes) = namespace.write_file(node, offset, &write.data) else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
         Ok(Ok(bytes.to_le_bytes().to_vec()))
