@@ -1,7 +1,7 @@
 use rem6_memory::{
-    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, LineMemorySnapshot, LineMemoryStore,
-    MemoryAtomicOp, MemoryError, MemoryLineSnapshot, MemoryRequest, MemoryRequestId,
-    ResponseStatus,
+    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, LineMemoryCheckpointPayload,
+    LineMemorySnapshot, LineMemoryStore, MemoryAtomicOp, MemoryError, MemoryLineSnapshot,
+    MemoryRequest, MemoryRequestId, ResponseStatus,
 };
 
 fn layout() -> CacheLineLayout {
@@ -338,6 +338,52 @@ fn line_store_restore_rejects_duplicate_line_snapshots() {
 }
 
 #[test]
+fn line_store_checkpoint_payload_round_trips_snapshot() {
+    let mut store = LineMemoryStore::new(layout());
+    store
+        .insert_line(Address::new(0x1000), line_data(0x10))
+        .unwrap();
+    store
+        .insert_line(Address::new(0x2000), line_data(0x80))
+        .unwrap();
+    let snapshot = store.snapshot();
+    let payload = LineMemoryCheckpointPayload::from_snapshot(snapshot.clone()).unwrap();
+
+    let decoded = LineMemoryCheckpointPayload::decode(payload.encode().as_slice()).unwrap();
+    let restored = LineMemoryStore::from_snapshot(decoded.snapshot()).unwrap();
+
+    assert_eq!(decoded.snapshot(), &snapshot);
+    assert_eq!(restored.line_count(), 2);
+    assert_eq!(
+        restored.line_data(Address::new(0x1000)).unwrap(),
+        line_data(0x10)
+    );
+    assert_eq!(
+        restored.line_data(Address::new(0x2000)).unwrap(),
+        line_data(0x80)
+    );
+}
+
+#[test]
+fn line_store_checkpoint_payload_rejects_duplicate_line_records() {
+    let mut store = LineMemoryStore::new(layout());
+    store
+        .insert_line(Address::new(0x1000), line_data(0x10))
+        .unwrap();
+    let payload = LineMemoryCheckpointPayload::from_snapshot(store.snapshot())
+        .unwrap()
+        .encode();
+    let duplicate_payload = duplicate_first_line_checkpoint_entry(payload);
+
+    assert_eq!(
+        LineMemoryCheckpointPayload::decode(&duplicate_payload).unwrap_err(),
+        MemoryError::DuplicateMemoryLine {
+            line: Address::new(0x1000),
+        }
+    );
+}
+
+#[test]
 fn line_store_rejects_requests_with_different_line_layout() {
     let mut store = LineMemoryStore::new(layout());
     store
@@ -360,4 +406,14 @@ fn line_store_rejects_requests_with_different_line_layout() {
             actual,
         }
     );
+}
+
+fn duplicate_first_line_checkpoint_entry(mut payload: Vec<u8>) -> Vec<u8> {
+    let count_offset = 16;
+    payload[count_offset..count_offset + 4].copy_from_slice(&2_u32.to_le_bytes());
+    let first_entry_offset = 24;
+    let entry_record_bytes = 72;
+    let first_entry = payload[first_entry_offset..first_entry_offset + entry_record_bytes].to_vec();
+    payload.splice(first_entry_offset..first_entry_offset, first_entry);
+    payload
 }

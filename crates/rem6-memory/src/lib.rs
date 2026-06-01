@@ -3,12 +3,14 @@ use std::error::Error;
 use std::fmt;
 
 mod address_map;
+mod line_checkpoint;
 mod ordering;
 mod request;
 mod translation;
 mod translation_tlb;
 
 pub use address_map::{AddressDecode, AddressDecoder, AddressInterleave, AddressMapRegion};
+pub use line_checkpoint::LineMemoryCheckpointPayload;
 pub use request::{MemoryRequest, MemoryResponse, ResponseStatus};
 pub use translation::{
     TranslationAccessKind, TranslationCompletion, TranslationError, TranslationFault,
@@ -321,6 +323,25 @@ pub enum MemoryError {
     DuplicateMemoryLine {
         line: Address,
     },
+    InvalidLineCheckpointPayloadSize {
+        expected: usize,
+        actual: usize,
+    },
+    InvalidLineCheckpointMagic,
+    UnsupportedLineCheckpointVersion {
+        version: u32,
+    },
+    InvalidLineCheckpointReserved {
+        value: u32,
+    },
+    InvalidLineCheckpointLineSize {
+        value: u64,
+    },
+    LineCheckpointValueTooLarge {
+        field: &'static str,
+        value: usize,
+        maximum: usize,
+    },
     UnmappedAddress {
         address: Address,
     },
@@ -475,6 +496,36 @@ impl fmt::Display for MemoryError {
             Self::DuplicateMemoryLine { line } => {
                 write!(formatter, "line {:#x} appears more than once", line.get())
             }
+            Self::InvalidLineCheckpointPayloadSize { expected, actual } => write!(
+                formatter,
+                "line-memory checkpoint payload has {actual} bytes; expected {expected}"
+            ),
+            Self::InvalidLineCheckpointMagic => {
+                write!(
+                    formatter,
+                    "line-memory checkpoint payload has invalid magic"
+                )
+            }
+            Self::UnsupportedLineCheckpointVersion { version } => write!(
+                formatter,
+                "line-memory checkpoint payload version {version} is not supported"
+            ),
+            Self::InvalidLineCheckpointReserved { value } => write!(
+                formatter,
+                "line-memory checkpoint reserved field has nonzero value {value}"
+            ),
+            Self::InvalidLineCheckpointLineSize { value } => write!(
+                formatter,
+                "line-memory checkpoint line size {value} cannot fit this target"
+            ),
+            Self::LineCheckpointValueTooLarge {
+                field,
+                value,
+                maximum,
+            } => write!(
+                formatter,
+                "line-memory checkpoint {field} value {value} exceeds maximum {maximum}"
+            ),
             Self::UnmappedAddress { address } => {
                 write!(formatter, "address {:#x} is not mapped", address.get())
             }
