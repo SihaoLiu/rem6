@@ -1,8 +1,10 @@
 use rem6_virtio::{
-    Virtio9pConfig, Virtio9pDevice, VIRTIO_9P_LOPEN_APPEND, VIRTIO_9P_LOPEN_TRUNCATE,
-    VIRTIO_9P_NOFID, VIRTIO_9P_OPEN_APPEND, VIRTIO_9P_OPEN_READ_WRITE, VIRTIO_9P_OPEN_TRUNCATE,
-    VIRTIO_9P_RLOPEN, VIRTIO_9P_ROPEN, VIRTIO_9P_RREAD, VIRTIO_9P_RWRITE, VIRTIO_9P_TATTACH,
-    VIRTIO_9P_TLOPEN, VIRTIO_9P_TOPEN, VIRTIO_9P_TREAD, VIRTIO_9P_TWALK, VIRTIO_9P_TWRITE,
+    Virtio9pConfig, Virtio9pDevice, VIRTIO_9P_EBADF, VIRTIO_9P_LOPEN_APPEND,
+    VIRTIO_9P_LOPEN_TRUNCATE, VIRTIO_9P_NOFID, VIRTIO_9P_OPEN_APPEND, VIRTIO_9P_OPEN_EXECUTE_ONLY,
+    VIRTIO_9P_OPEN_READ_ONLY, VIRTIO_9P_OPEN_READ_WRITE, VIRTIO_9P_OPEN_TRUNCATE,
+    VIRTIO_9P_OPEN_WRITE_ONLY, VIRTIO_9P_RLERROR, VIRTIO_9P_RLOPEN, VIRTIO_9P_ROPEN,
+    VIRTIO_9P_RREAD, VIRTIO_9P_RWRITE, VIRTIO_9P_TATTACH, VIRTIO_9P_TLOPEN, VIRTIO_9P_TOPEN,
+    VIRTIO_9P_TREAD, VIRTIO_9P_TWALK, VIRTIO_9P_TWRITE,
 };
 
 mod support;
@@ -88,6 +90,144 @@ fn virtio_9p_lopen_append_writes_at_file_end() {
 }
 
 #[test]
+fn virtio_9p_lopen_execute_only_denies_file_reads_and_writes() {
+    let device = attached_device_with_file("exec.txt", b"run");
+    let walk = decoded_request(VIRTIO_9P_TWALK, 2, p9_walk_payload(1, 2, &[b"exec.txt"]));
+    device.execute_at(11, walk).unwrap();
+
+    let open = decoded_request(
+        VIRTIO_9P_TLOPEN,
+        3,
+        p9_lopen_payload(2, u32::from(VIRTIO_9P_OPEN_EXECUTE_ONLY)),
+    );
+    assert_eq!(
+        device.execute_at(12, open).unwrap().message_type(),
+        VIRTIO_9P_RLOPEN
+    );
+
+    let denied_read = decoded_request(VIRTIO_9P_TREAD, 4, p9_read_payload(2, 0, 16));
+    let denied_read_completion = device.execute_at(13, denied_read).unwrap();
+    assert_eq!(denied_read_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(
+        denied_read_completion.payload(),
+        VIRTIO_9P_EBADF.to_le_bytes()
+    );
+
+    let denied_write = decoded_request(VIRTIO_9P_TWRITE, 5, p9_write_payload(2, 0, b"!"));
+    let denied_write_completion = device.execute_at(14, denied_write).unwrap();
+    assert_eq!(denied_write_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(
+        denied_write_completion.payload(),
+        VIRTIO_9P_EBADF.to_le_bytes()
+    );
+}
+
+#[test]
+fn virtio_9p_lopen_rejects_reopening_fids_without_changing_access_mode() {
+    let device = attached_device_with_file("locked.txt", b"locked");
+    let walk = decoded_request(VIRTIO_9P_TWALK, 2, p9_walk_payload(1, 2, &[b"locked.txt"]));
+    device.execute_at(11, walk).unwrap();
+
+    let open_read_only = decoded_request(
+        VIRTIO_9P_TLOPEN,
+        3,
+        p9_lopen_payload(2, u32::from(VIRTIO_9P_OPEN_READ_ONLY)),
+    );
+    assert_eq!(
+        device
+            .execute_at(12, open_read_only)
+            .unwrap()
+            .message_type(),
+        VIRTIO_9P_RLOPEN
+    );
+
+    let reopen_read_write = decoded_request(
+        VIRTIO_9P_TLOPEN,
+        4,
+        p9_lopen_payload(2, u32::from(VIRTIO_9P_OPEN_READ_WRITE)),
+    );
+    let reopen_completion = device.execute_at(13, reopen_read_write).unwrap();
+    assert_eq!(reopen_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(reopen_completion.payload(), VIRTIO_9P_EBADF.to_le_bytes());
+
+    let denied_write = decoded_request(VIRTIO_9P_TWRITE, 5, p9_write_payload(2, 0, b"open"));
+    let denied_write_completion = device.execute_at(14, denied_write).unwrap();
+    assert_eq!(denied_write_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(
+        denied_write_completion.payload(),
+        VIRTIO_9P_EBADF.to_le_bytes()
+    );
+}
+
+#[test]
+fn virtio_9p_lopen_truncate_rejects_stale_non_file_and_non_writable_fids() {
+    let device = attached_device_with_file("log.txt", b"old-data");
+
+    let stale = decoded_request(
+        VIRTIO_9P_TLOPEN,
+        2,
+        p9_lopen_payload(
+            99,
+            u32::from(VIRTIO_9P_OPEN_WRITE_ONLY) | VIRTIO_9P_LOPEN_TRUNCATE,
+        ),
+    );
+    let stale_completion = device.execute_at(11, stale).unwrap();
+    assert_eq!(stale_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(stale_completion.payload(), VIRTIO_9P_EBADF.to_le_bytes());
+
+    let directory = decoded_request(
+        VIRTIO_9P_TLOPEN,
+        3,
+        p9_lopen_payload(
+            1,
+            u32::from(VIRTIO_9P_OPEN_WRITE_ONLY) | VIRTIO_9P_LOPEN_TRUNCATE,
+        ),
+    );
+    let directory_completion = device.execute_at(12, directory).unwrap();
+    assert_eq!(directory_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(
+        directory_completion.payload(),
+        VIRTIO_9P_EBADF.to_le_bytes()
+    );
+
+    let walk_read_only = decoded_request(VIRTIO_9P_TWALK, 4, p9_walk_payload(1, 2, &[b"log.txt"]));
+    device.execute_at(13, walk_read_only).unwrap();
+    let read_only_truncate = decoded_request(
+        VIRTIO_9P_TLOPEN,
+        5,
+        p9_lopen_payload(
+            2,
+            u32::from(VIRTIO_9P_OPEN_READ_ONLY) | VIRTIO_9P_LOPEN_TRUNCATE,
+        ),
+    );
+    let read_only_completion = device.execute_at(14, read_only_truncate).unwrap();
+    assert_eq!(read_only_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(
+        read_only_completion.payload(),
+        VIRTIO_9P_EBADF.to_le_bytes()
+    );
+
+    let walk_check = decoded_request(VIRTIO_9P_TWALK, 6, p9_walk_payload(1, 3, &[b"log.txt"]));
+    device.execute_at(15, walk_check).unwrap();
+    let open_check = decoded_request(
+        VIRTIO_9P_TLOPEN,
+        7,
+        p9_lopen_payload(3, u32::from(VIRTIO_9P_OPEN_READ_ONLY)),
+    );
+    assert_eq!(
+        device.execute_at(16, open_check).unwrap().message_type(),
+        VIRTIO_9P_RLOPEN
+    );
+    let read_check = decoded_request(VIRTIO_9P_TREAD, 8, p9_read_payload(3, 0, 16));
+    let read_check_completion = device.execute_at(17, read_check).unwrap();
+    assert_eq!(read_check_completion.message_type(), VIRTIO_9P_RREAD);
+    assert_eq!(
+        read_counted_data(read_check_completion.payload()),
+        b"old-data"
+    );
+}
+
+#[test]
 fn virtio_9p_legacy_open_truncate_clears_existing_file() {
     let device = attached_device_with_file("legacy.txt", b"legacy-data");
     let walk = decoded_request(VIRTIO_9P_TWALK, 2, p9_walk_payload(1, 2, &[b"legacy.txt"]));
@@ -134,4 +274,128 @@ fn virtio_9p_legacy_open_append_writes_at_file_end() {
     let read_completion = device.execute_at(14, read).unwrap();
     assert_eq!(read_completion.message_type(), VIRTIO_9P_RREAD);
     assert_eq!(read_counted_data(read_completion.payload()), b"headtail");
+}
+
+#[test]
+fn virtio_9p_legacy_open_truncate_rejects_non_writable_fids_without_clobbering() {
+    let device = attached_device_with_file("legacy-read.txt", b"legacy-data");
+    let walk = decoded_request(
+        VIRTIO_9P_TWALK,
+        2,
+        p9_walk_payload(1, 2, &[b"legacy-read.txt"]),
+    );
+    device.execute_at(11, walk).unwrap();
+
+    let read_only_truncate = decoded_request(
+        VIRTIO_9P_TOPEN,
+        3,
+        p9_open_payload(2, VIRTIO_9P_OPEN_READ_ONLY | VIRTIO_9P_OPEN_TRUNCATE),
+    );
+    let read_only_completion = device.execute_at(12, read_only_truncate).unwrap();
+    assert_eq!(read_only_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(
+        read_only_completion.payload(),
+        VIRTIO_9P_EBADF.to_le_bytes()
+    );
+
+    let walk_check = decoded_request(
+        VIRTIO_9P_TWALK,
+        4,
+        p9_walk_payload(1, 3, &[b"legacy-read.txt"]),
+    );
+    device.execute_at(13, walk_check).unwrap();
+    let open_check = decoded_request(
+        VIRTIO_9P_TOPEN,
+        5,
+        p9_open_payload(3, VIRTIO_9P_OPEN_READ_ONLY),
+    );
+    assert_eq!(
+        device.execute_at(14, open_check).unwrap().message_type(),
+        VIRTIO_9P_ROPEN
+    );
+    let read_check = decoded_request(VIRTIO_9P_TREAD, 6, p9_read_payload(3, 0, 16));
+    let read_check_completion = device.execute_at(15, read_check).unwrap();
+    assert_eq!(read_check_completion.message_type(), VIRTIO_9P_RREAD);
+    assert_eq!(
+        read_counted_data(read_check_completion.payload()),
+        b"legacy-data"
+    );
+}
+
+#[test]
+fn virtio_9p_legacy_open_execute_only_denies_file_reads_and_writes() {
+    let device = attached_device_with_file("legacy-exec.txt", b"run");
+    let walk = decoded_request(
+        VIRTIO_9P_TWALK,
+        2,
+        p9_walk_payload(1, 2, &[b"legacy-exec.txt"]),
+    );
+    device.execute_at(11, walk).unwrap();
+
+    let open = decoded_request(
+        VIRTIO_9P_TOPEN,
+        3,
+        p9_open_payload(2, VIRTIO_9P_OPEN_EXECUTE_ONLY),
+    );
+    assert_eq!(
+        device.execute_at(12, open).unwrap().message_type(),
+        VIRTIO_9P_ROPEN
+    );
+
+    let denied_read = decoded_request(VIRTIO_9P_TREAD, 4, p9_read_payload(2, 0, 16));
+    let denied_read_completion = device.execute_at(13, denied_read).unwrap();
+    assert_eq!(denied_read_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(
+        denied_read_completion.payload(),
+        VIRTIO_9P_EBADF.to_le_bytes()
+    );
+
+    let denied_write = decoded_request(VIRTIO_9P_TWRITE, 5, p9_write_payload(2, 0, b"!"));
+    let denied_write_completion = device.execute_at(14, denied_write).unwrap();
+    assert_eq!(denied_write_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(
+        denied_write_completion.payload(),
+        VIRTIO_9P_EBADF.to_le_bytes()
+    );
+}
+
+#[test]
+fn virtio_9p_legacy_open_rejects_reopening_fids_without_changing_access_mode() {
+    let device = attached_device_with_file("legacy-locked.txt", b"locked");
+    let walk = decoded_request(
+        VIRTIO_9P_TWALK,
+        2,
+        p9_walk_payload(1, 2, &[b"legacy-locked.txt"]),
+    );
+    device.execute_at(11, walk).unwrap();
+
+    let open_read_only = decoded_request(
+        VIRTIO_9P_TOPEN,
+        3,
+        p9_open_payload(2, VIRTIO_9P_OPEN_READ_ONLY),
+    );
+    assert_eq!(
+        device
+            .execute_at(12, open_read_only)
+            .unwrap()
+            .message_type(),
+        VIRTIO_9P_ROPEN
+    );
+
+    let reopen_read_write = decoded_request(
+        VIRTIO_9P_TOPEN,
+        4,
+        p9_open_payload(2, VIRTIO_9P_OPEN_READ_WRITE),
+    );
+    let reopen_completion = device.execute_at(13, reopen_read_write).unwrap();
+    assert_eq!(reopen_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(reopen_completion.payload(), VIRTIO_9P_EBADF.to_le_bytes());
+
+    let denied_write = decoded_request(VIRTIO_9P_TWRITE, 5, p9_write_payload(2, 0, b"open"));
+    let denied_write_completion = device.execute_at(14, denied_write).unwrap();
+    assert_eq!(denied_write_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(
+        denied_write_completion.payload(),
+        VIRTIO_9P_EBADF.to_le_bytes()
+    );
 }

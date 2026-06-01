@@ -1,10 +1,10 @@
 use rem6_virtio::{
     Virtio9pConfig, Virtio9pDevice, VIRTIO_9P_DEFAULT_MSIZE, VIRTIO_9P_EBADF, VIRTIO_9P_EEXIST,
-    VIRTIO_9P_LOPEN_APPEND, VIRTIO_9P_NOFID, VIRTIO_9P_OPEN_APPEND, VIRTIO_9P_OPEN_READ_ONLY,
-    VIRTIO_9P_OPEN_READ_WRITE, VIRTIO_9P_OPEN_WRITE_ONLY, VIRTIO_9P_QTFILE, VIRTIO_9P_RCREATE,
-    VIRTIO_9P_RLCREATE, VIRTIO_9P_RLERROR, VIRTIO_9P_RLOPEN, VIRTIO_9P_RREAD, VIRTIO_9P_RWALK,
-    VIRTIO_9P_RWRITE, VIRTIO_9P_TATTACH, VIRTIO_9P_TCREATE, VIRTIO_9P_TLCREATE, VIRTIO_9P_TLOPEN,
-    VIRTIO_9P_TREAD, VIRTIO_9P_TWALK, VIRTIO_9P_TWRITE,
+    VIRTIO_9P_LOPEN_APPEND, VIRTIO_9P_NOFID, VIRTIO_9P_OPEN_APPEND, VIRTIO_9P_OPEN_EXECUTE_ONLY,
+    VIRTIO_9P_OPEN_READ_ONLY, VIRTIO_9P_OPEN_READ_WRITE, VIRTIO_9P_OPEN_WRITE_ONLY,
+    VIRTIO_9P_QTFILE, VIRTIO_9P_RCREATE, VIRTIO_9P_RLCREATE, VIRTIO_9P_RLERROR, VIRTIO_9P_RLOPEN,
+    VIRTIO_9P_RREAD, VIRTIO_9P_RWALK, VIRTIO_9P_RWRITE, VIRTIO_9P_TATTACH, VIRTIO_9P_TCREATE,
+    VIRTIO_9P_TLCREATE, VIRTIO_9P_TLOPEN, VIRTIO_9P_TREAD, VIRTIO_9P_TWALK, VIRTIO_9P_TWRITE,
 };
 
 mod support;
@@ -224,6 +224,51 @@ fn virtio_9p_device_enforces_create_access_modes() {
     let allowed_write_completion = device.execute_at(17, allowed_write).unwrap();
     assert_eq!(allowed_write_completion.message_type(), VIRTIO_9P_RWRITE);
     assert_eq!(allowed_write_completion.payload(), 3_u32.to_le_bytes());
+
+    let reattach_execute = decoded_request(
+        VIRTIO_9P_TATTACH,
+        9,
+        p9_attach_payload(20, VIRTIO_9P_NOFID, b"root", b"", 0),
+    );
+    device.execute_at(18, reattach_execute).unwrap();
+    let create_execute = decoded_request(
+        VIRTIO_9P_TCREATE,
+        10,
+        p9_create_payload(
+            20,
+            b"execute-only.txt",
+            0o100644,
+            VIRTIO_9P_OPEN_EXECUTE_ONLY,
+        ),
+    );
+    assert_eq!(
+        device
+            .execute_at(19, create_execute)
+            .unwrap()
+            .message_type(),
+        VIRTIO_9P_RCREATE
+    );
+    let denied_execute_read = decoded_request(VIRTIO_9P_TREAD, 11, p9_read_payload(20, 0, 16));
+    let denied_execute_read_completion = device.execute_at(20, denied_execute_read).unwrap();
+    assert_eq!(
+        denied_execute_read_completion.message_type(),
+        VIRTIO_9P_RLERROR
+    );
+    assert_eq!(
+        denied_execute_read_completion.payload(),
+        VIRTIO_9P_EBADF.to_le_bytes()
+    );
+    let denied_execute_write =
+        decoded_request(VIRTIO_9P_TWRITE, 12, p9_write_payload(20, 0, b"no"));
+    let denied_execute_write_completion = device.execute_at(21, denied_execute_write).unwrap();
+    assert_eq!(
+        denied_execute_write_completion.message_type(),
+        VIRTIO_9P_RLERROR
+    );
+    assert_eq!(
+        denied_execute_write_completion.payload(),
+        VIRTIO_9P_EBADF.to_le_bytes()
+    );
 }
 
 #[test]

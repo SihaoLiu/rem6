@@ -439,6 +439,9 @@ impl Virtio9pDevice {
         let Some(node) = fid.node() else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
+        if fid.is_open() {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        }
         let mut namespace = self.namespace.lock().expect("virtio 9p namespace lock");
         if namespace.metadata(node).is_none() {
             return Ok(Err(VIRTIO_9P_EBADF));
