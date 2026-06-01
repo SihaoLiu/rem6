@@ -96,6 +96,26 @@ fn topology_boot_handoff_types_live_in_focused_module() {
     );
 }
 
+#[test]
+fn host_execution_mode_checkpoint_lives_in_focused_module() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let host_rs = fs::read_to_string(crate_dir.join("src/host.rs")).unwrap();
+    let checkpoint_rs = crate_dir.join("src/host/execution_mode_checkpoint.rs");
+
+    assert!(
+        checkpoint_rs.exists(),
+        "execution-mode checkpoint helpers belong in src/host/execution_mode_checkpoint.rs"
+    );
+    assert!(
+        !host_rs.contains("enum ExecutionModeCheckpointError"),
+        "src/host.rs should delegate execution-mode checkpoint errors to a focused module"
+    );
+    assert!(
+        !host_rs.contains("fn decode_execution_modes"),
+        "src/host.rs should delegate execution-mode checkpoint decoding to a focused module"
+    );
+}
+
 fn rust_source_files(root: &Path) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     collect_rust_source_files(root, &mut paths);
