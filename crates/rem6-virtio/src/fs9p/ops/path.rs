@@ -13,20 +13,28 @@ impl Virtio9pDevice {
         request: &Virtio9pRequest,
     ) -> Result<Result<Vec<u8>, u32>, VirtioError> {
         let attached = parse_attach_request(request)?;
+        if attached.afid() != VIRTIO_9P_NOFID {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        }
+        {
+            let fids = self.fids.lock().expect("virtio 9p fid lock");
+            if fids.contains_key(&attached.fid()) {
+                return Ok(Err(VIRTIO_9P_EBADF));
+            }
+        }
+
         let root_qid = self
             .namespace
             .lock()
             .expect("virtio 9p namespace lock")
             .root_qid();
-        if attached.afid() != VIRTIO_9P_NOFID {
-            return Ok(Err(VIRTIO_9P_EBADF));
+        {
+            let mut fids = self.fids.lock().expect("virtio 9p fid lock");
+            if fids.contains_key(&attached.fid()) {
+                return Ok(Err(VIRTIO_9P_EBADF));
+            }
+            fids.insert(attached.fid(), Virtio9pFidState::new(Virtio9pNodeId::Root));
         }
-        let mut fids = self.fids.lock().expect("virtio 9p fid lock");
-        if fids.contains_key(&attached.fid()) {
-            return Ok(Err(VIRTIO_9P_EBADF));
-        }
-        fids.insert(attached.fid(), Virtio9pFidState::new(Virtio9pNodeId::Root));
-        drop(fids);
         self.attached_fids
             .lock()
             .expect("virtio 9p attached fid lock")

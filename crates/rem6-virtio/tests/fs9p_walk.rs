@@ -120,6 +120,11 @@ fn virtio_9p_device_rejects_walk_from_open_file_fids_without_binding_newfid() {
     let newfid_completion = device.execute_at(14, open_newfid).unwrap();
     assert_eq!(newfid_completion.message_type(), VIRTIO_9P_RLERROR);
     assert_eq!(newfid_completion.payload(), VIRTIO_9P_EBADF.to_le_bytes());
+
+    let read_alpha = decoded_request(VIRTIO_9P_TREAD, 6, p9_read_payload(2, 0, 16));
+    let read_alpha_completion = device.execute_at(15, read_alpha).unwrap();
+    assert_eq!(read_alpha_completion.message_type(), VIRTIO_9P_RREAD);
+    assert_eq!(read_counted_data(read_alpha_completion.payload()), b"alpha");
 }
 
 #[test]

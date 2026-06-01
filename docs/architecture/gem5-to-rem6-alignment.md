@@ -1065,7 +1065,7 @@ Research anchors refreshed through 2026-05-30:
   mismatches, and pending wait-state transfer can crash or misdirect execution
   after `m5_switch_cpu_addr`.
 
-Implementation evidence through 2026-05-31:
+Implementation evidence through 2026-06-01:
 
 - `rem6-system` has typed guest wait-status encoding for future syscall
   emulation handoff. Tests cover normal exits, signal termination, the
