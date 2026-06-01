@@ -27,8 +27,15 @@ use rem6_topology::{
 };
 use rem6_transport::MemoryRouteId;
 
+const ACCELERATOR_CHUNK: &str = "accelerator";
+const GPU_CHUNK: &str = "gpu";
+
 fn component(name: &str) -> ComponentId {
     ComponentId::new(name).unwrap()
+}
+
+fn checkpoint_component(name: &str) -> CheckpointComponentId {
+    CheckpointComponentId::new(name).unwrap()
 }
 
 fn kind(name: &str) -> ComponentKind {
@@ -222,6 +229,14 @@ fn restore_record(source: GuestSourceId, outcome: &SystemActionOutcome) -> HostA
     )
 }
 
+fn write_u8(payload: &mut Vec<u8>, value: u8) {
+    payload.push(value);
+}
+
+fn write_u64(payload: &mut Vec<u8>, value: u64) {
+    payload.extend_from_slice(&value.to_le_bytes());
+}
+
 #[test]
 fn heterogeneous_checkpoint_preserves_dma_read_request_ordering_and_strict_flags() {
     let ordering = MemoryAccessOrdering::new(
@@ -281,6 +296,39 @@ fn heterogeneous_checkpoint_preserves_dma_read_request_ordering_and_strict_flags
 }
 
 #[test]
+fn accelerator_checkpoint_port_rejects_impossible_queued_count_without_partial_restore() {
+    let checkpoint_component = checkpoint_component("accelerator_payload_queued_count");
+    let target = AcceleratorEngine::new(
+        AcceleratorEngineConfig::new(AcceleratorEngineId::new(72), PartitionId::new(1), 1).unwrap(),
+    );
+    let original = target.snapshot();
+    let mut payload = Vec::new();
+    write_u64(&mut payload, 0);
+    write_u64(&mut payload, u64::MAX);
+    let mut registry = CheckpointRegistry::new();
+    registry.register(checkpoint_component.clone()).unwrap();
+    registry
+        .write_chunk(&checkpoint_component, ACCELERATOR_CHUNK, payload)
+        .unwrap();
+
+    let error = AcceleratorCheckpointPort::new(checkpoint_component.clone(), target.clone())
+        .restore_from(&registry)
+        .unwrap_err();
+
+    match error {
+        AcceleratorCheckpointError::InvalidChunk { component, reason } => {
+            assert_eq!(component, checkpoint_component);
+            assert_eq!(
+                reason,
+                "accelerator queued command count 18446744073709551615 exceeds remaining payload capacity 0 records"
+            );
+        }
+        other => panic!("unexpected accelerator checkpoint error: {other}"),
+    }
+    assert_eq!(target.snapshot(), original);
+}
+
+#[test]
 fn accelerator_checkpoint_bank_rejects_invalid_bank_without_partial_restore() {
     let valid_component = CheckpointComponentId::new("accelerator_atomic_a").unwrap();
     let invalid_component = CheckpointComponentId::new("accelerator_atomic_b").unwrap();
@@ -307,7 +355,7 @@ fn accelerator_checkpoint_bank_rejects_invalid_bank_without_partial_restore() {
         .unwrap();
     registry.register(invalid_component.clone()).unwrap();
     registry
-        .write_chunk(&invalid_component, "accelerator", vec![0xaa])
+        .write_chunk(&invalid_component, ACCELERATOR_CHUNK, vec![0xaa])
         .unwrap();
 
     let bank = AcceleratorCheckpointBank::new([
@@ -387,6 +435,73 @@ fn accelerator_checkpoint_bank_rejects_lane_mismatch_without_partial_restore() {
 }
 
 #[test]
+fn gpu_checkpoint_port_rejects_impossible_slot_count_without_partial_restore() {
+    let checkpoint_component = checkpoint_component("gpu_payload_slot_count");
+    let target = GpuDevice::new(
+        GpuComputeConfig::new(GpuDeviceId::new(73), PartitionId::new(2), 1, 1).unwrap(),
+    );
+    let original = target.snapshot();
+    let mut payload = Vec::new();
+    write_u64(&mut payload, u64::MAX);
+    let mut registry = CheckpointRegistry::new();
+    registry.register(checkpoint_component.clone()).unwrap();
+    registry
+        .write_chunk(&checkpoint_component, GPU_CHUNK, payload)
+        .unwrap();
+
+    let error = GpuCheckpointPort::new(checkpoint_component.clone(), target.clone())
+        .restore_from(&registry)
+        .unwrap_err();
+
+    match error {
+        GpuCheckpointError::InvalidChunk { component, reason } => {
+            assert_eq!(component, checkpoint_component);
+            assert_eq!(
+                reason,
+                "GPU slot count 18446744073709551615 exceeds remaining payload capacity 0 records"
+            );
+        }
+        other => panic!("unexpected GPU checkpoint error: {other}"),
+    }
+    assert_eq!(target.snapshot(), original);
+}
+
+#[test]
+fn gpu_checkpoint_port_rejects_impossible_queued_workgroup_count_without_partial_restore() {
+    let checkpoint_component = checkpoint_component("gpu_payload_queued_workgroup_count");
+    let target = GpuDevice::new(
+        GpuComputeConfig::new(GpuDeviceId::new(74), PartitionId::new(2), 1, 1).unwrap(),
+    );
+    let original = target.snapshot();
+    let mut payload = Vec::new();
+    write_u64(&mut payload, 1);
+    write_u64(&mut payload, 0);
+    write_u8(&mut payload, 0);
+    write_u64(&mut payload, u64::MAX);
+    let mut registry = CheckpointRegistry::new();
+    registry.register(checkpoint_component.clone()).unwrap();
+    registry
+        .write_chunk(&checkpoint_component, GPU_CHUNK, payload)
+        .unwrap();
+
+    let error = GpuCheckpointPort::new(checkpoint_component.clone(), target.clone())
+        .restore_from(&registry)
+        .unwrap_err();
+
+    match error {
+        GpuCheckpointError::InvalidChunk { component, reason } => {
+            assert_eq!(component, checkpoint_component);
+            assert_eq!(
+                reason,
+                "GPU queued workgroup count 18446744073709551615 exceeds remaining payload capacity 0 records"
+            );
+        }
+        other => panic!("unexpected GPU checkpoint error: {other}"),
+    }
+    assert_eq!(target.snapshot(), original);
+}
+
+#[test]
 fn gpu_checkpoint_bank_rejects_invalid_bank_without_partial_restore() {
     let valid_component = CheckpointComponentId::new("gpu_atomic_a").unwrap();
     let invalid_component = CheckpointComponentId::new("gpu_atomic_b").unwrap();
@@ -421,7 +536,7 @@ fn gpu_checkpoint_bank_rejects_invalid_bank_without_partial_restore() {
         .unwrap();
     registry.register(invalid_component.clone()).unwrap();
     registry
-        .write_chunk(&invalid_component, "gpu", vec![0xbb])
+        .write_chunk(&invalid_component, GPU_CHUNK, vec![0xbb])
         .unwrap();
 
     let bank = GpuCheckpointBank::new([

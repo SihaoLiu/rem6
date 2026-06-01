@@ -22,6 +22,23 @@ use rem6_transport::MemoryRouteId;
 
 const ACCELERATOR_CHUNK: &str = "accelerator";
 const GPU_CHUNK: &str = "gpu";
+const U8_BYTES: usize = 1;
+const U32_BYTES: usize = 4;
+const U64_BYTES: usize = 8;
+const REQUEST_ID_RECORD_BYTES: usize = U32_BYTES + U64_BYTES;
+const COMMAND_KIND_MIN_RECORD_BYTES: usize = U8_BYTES + U32_BYTES;
+const ACCELERATOR_QUEUED_RECORD_BYTES: usize =
+    U64_BYTES + COMMAND_KIND_MIN_RECORD_BYTES + U64_BYTES + U32_BYTES + U64_BYTES * 3;
+const ACCELERATOR_TRACE_RECORD_BYTES: usize = U64_BYTES + U8_BYTES + U64_BYTES + U32_BYTES;
+const ACCELERATOR_COMPLETION_RECORD_BYTES: usize =
+    U64_BYTES + COMMAND_KIND_MIN_RECORD_BYTES + U32_BYTES + U64_BYTES * 2;
+const DMA_COPY_MIN_RECORD_BYTES: usize = U64_BYTES * 4 + U64_BYTES + REQUEST_ID_RECORD_BYTES;
+const PENDING_DMA_WRITE_MIN_RECORD_BYTES: usize = DMA_COPY_MIN_RECORD_BYTES + U64_BYTES + U64_BYTES;
+const DMA_COMPLETION_RECORD_BYTES: usize = U64_BYTES * 3 + REQUEST_ID_RECORD_BYTES * 2;
+const GPU_TRACE_RECORD_BYTES: usize = U64_BYTES + U8_BYTES + U64_BYTES + U32_BYTES;
+const GPU_COMPLETION_RECORD_BYTES: usize = U64_BYTES * 3 + U32_BYTES * 3;
+const GPU_SLOT_MIN_RECORD_BYTES: usize = U64_BYTES + U8_BYTES + U64_BYTES;
+const GPU_QUEUED_WORKGROUP_RECORD_BYTES: usize = U64_BYTES * 4 + U32_BYTES * 3;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AcceleratorCheckpointRecord {
@@ -622,7 +639,10 @@ fn write_accelerator_queued_vec(
 fn read_accelerator_queued_vec(
     reader: &mut ChunkReader<'_>,
 ) -> Result<Vec<AcceleratorQueuedCommandSnapshot>, String> {
-    let count = reader.read_count("accelerator queued command count")?;
+    let count = reader.read_bounded_count(
+        "accelerator queued command count",
+        ACCELERATOR_QUEUED_RECORD_BYTES,
+    )?;
     let mut queued = Vec::with_capacity(count);
     for _ in 0..count {
         let command = AcceleratorCommand::new(
@@ -704,7 +724,8 @@ fn write_accelerator_trace_vec(payload: &mut Vec<u8>, events: &[AcceleratorTrace
 fn read_accelerator_trace_vec(
     reader: &mut ChunkReader<'_>,
 ) -> Result<Vec<AcceleratorTraceEvent>, String> {
-    let count = reader.read_count("accelerator trace count")?;
+    let count =
+        reader.read_bounded_count("accelerator trace count", ACCELERATOR_TRACE_RECORD_BYTES)?;
     let mut events = Vec::with_capacity(count);
     for _ in 0..count {
         let tick = reader.read_u64("accelerator trace tick")?;
@@ -761,7 +782,10 @@ fn write_accelerator_completion_vec(payload: &mut Vec<u8>, completions: &[Accele
 fn read_accelerator_completion_vec(
     reader: &mut ChunkReader<'_>,
 ) -> Result<Vec<AcceleratorCompletion>, String> {
-    let count = reader.read_count("accelerator completion count")?;
+    let count = reader.read_bounded_count(
+        "accelerator completion count",
+        ACCELERATOR_COMPLETION_RECORD_BYTES,
+    )?;
     let mut completions = Vec::with_capacity(count);
     for _ in 0..count {
         completions.push(AcceleratorCompletion::new(
@@ -821,7 +845,10 @@ fn write_accelerator_pending_vec(payload: &mut Vec<u8>, pending: &[AcceleratorPe
 fn read_accelerator_pending_vec(
     reader: &mut ChunkReader<'_>,
 ) -> Result<Vec<AcceleratorPendingDmaWrite>, String> {
-    let count = reader.read_count("accelerator pending count")?;
+    let count = reader.read_bounded_count(
+        "accelerator pending count",
+        PENDING_DMA_WRITE_MIN_RECORD_BYTES,
+    )?;
     let mut pending = Vec::with_capacity(count);
     for _ in 0..count {
         pending.push(AcceleratorPendingDmaWrite::new(
@@ -850,7 +877,10 @@ fn write_accelerator_dma_completion_vec(
 fn read_accelerator_dma_completion_vec(
     reader: &mut ChunkReader<'_>,
 ) -> Result<Vec<AcceleratorDmaCompletion>, String> {
-    let count = reader.read_count("accelerator DMA completion count")?;
+    let count = reader.read_bounded_count(
+        "accelerator DMA completion count",
+        DMA_COMPLETION_RECORD_BYTES,
+    )?;
     let mut completions = Vec::with_capacity(count);
     for _ in 0..count {
         completions.push(AcceleratorDmaCompletion::new(
@@ -961,7 +991,7 @@ fn write_gpu_trace_vec(payload: &mut Vec<u8>, events: &[GpuTraceEvent]) {
 }
 
 fn read_gpu_trace_vec(reader: &mut ChunkReader<'_>) -> Result<Vec<GpuTraceEvent>, String> {
-    let count = reader.read_count("GPU trace count")?;
+    let count = reader.read_bounded_count("GPU trace count", GPU_TRACE_RECORD_BYTES)?;
     let mut events = Vec::with_capacity(count);
     for _ in 0..count {
         let tick = reader.read_u64("GPU trace tick")?;
@@ -1027,7 +1057,7 @@ fn write_gpu_completion_vec(payload: &mut Vec<u8>, completions: &[GpuWorkgroupCo
 fn read_gpu_completion_vec(
     reader: &mut ChunkReader<'_>,
 ) -> Result<Vec<GpuWorkgroupCompletion>, String> {
-    let count = reader.read_count("GPU completion count")?;
+    let count = reader.read_bounded_count("GPU completion count", GPU_COMPLETION_RECORD_BYTES)?;
     let mut completions = Vec::with_capacity(count);
     for _ in 0..count {
         completions.push(GpuWorkgroupCompletion::new(
@@ -1061,12 +1091,15 @@ fn write_gpu_slot_vec(payload: &mut Vec<u8>, slots: &[GpuSlotSnapshot]) {
 }
 
 fn read_gpu_slot_vec(reader: &mut ChunkReader<'_>) -> Result<Vec<GpuSlotSnapshot>, String> {
-    let count = reader.read_count("GPU slot count")?;
+    let count = reader.read_bounded_count("GPU slot count", GPU_SLOT_MIN_RECORD_BYTES)?;
     let mut slots = Vec::with_capacity(count);
     for _ in 0..count {
         let available_at = reader.read_u64("GPU slot available tick")?;
         let pump_scheduled = reader.read_bool("GPU slot pump state")?;
-        let queued_count = reader.read_count("GPU queued workgroup count")?;
+        let queued_count = reader.read_bounded_count(
+            "GPU queued workgroup count",
+            GPU_QUEUED_WORKGROUP_RECORD_BYTES,
+        )?;
         let mut queued = Vec::with_capacity(queued_count);
         for _ in 0..queued_count {
             queued.push(GpuQueuedWorkgroupSnapshot::new(
@@ -1094,7 +1127,8 @@ fn write_gpu_pending_vec(payload: &mut Vec<u8>, pending: &[GpuPendingDmaWrite]) 
 }
 
 fn read_gpu_pending_vec(reader: &mut ChunkReader<'_>) -> Result<Vec<GpuPendingDmaWrite>, String> {
-    let count = reader.read_count("GPU pending count")?;
+    let count =
+        reader.read_bounded_count("GPU pending count", PENDING_DMA_WRITE_MIN_RECORD_BYTES)?;
     let mut pending = Vec::with_capacity(count);
     for _ in 0..count {
         pending.push(GpuPendingDmaWrite::new(
@@ -1120,7 +1154,8 @@ fn write_gpu_dma_completion_vec(payload: &mut Vec<u8>, completions: &[GpuDmaComp
 fn read_gpu_dma_completion_vec(
     reader: &mut ChunkReader<'_>,
 ) -> Result<Vec<GpuDmaCompletion>, String> {
-    let count = reader.read_count("GPU DMA completion count")?;
+    let count =
+        reader.read_bounded_count("GPU DMA completion count", DMA_COMPLETION_RECORD_BYTES)?;
     let mut completions = Vec::with_capacity(count);
     for _ in 0..count {
         completions.push(GpuDmaCompletion::new(
@@ -1217,7 +1252,7 @@ impl<'a> ChunkReader<'a> {
     }
 
     fn read_u64_vec(&mut self) -> Result<Vec<Tick>, String> {
-        let count = self.read_count("u64 vector count")?;
+        let count = self.read_bounded_count("u64 vector count", U64_BYTES)?;
         let mut values = Vec::with_capacity(count);
         for _ in 0..count {
             values.push(self.read_u64("u64 vector item")?);
@@ -1241,6 +1276,21 @@ impl<'a> ChunkReader<'a> {
         self.read_u64(name)?
             .try_into()
             .map_err(|_| format!("{name} does not fit usize"))
+    }
+
+    fn read_bounded_count(&mut self, name: &str, record_bytes: usize) -> Result<usize, String> {
+        let count = self.read_count(name)?;
+        let capacity = self.remaining() / record_bytes;
+        if count > capacity {
+            return Err(format!(
+                "{name} {count} exceeds remaining payload capacity {capacity} records"
+            ));
+        }
+        Ok(count)
+    }
+
+    fn remaining(&self) -> usize {
+        self.payload.len().saturating_sub(self.offset)
     }
 
     fn read_bool(&mut self, name: &str) -> Result<bool, String> {

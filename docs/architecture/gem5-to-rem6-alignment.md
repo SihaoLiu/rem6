@@ -2814,8 +2814,10 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   cannot partially rewind another live NoC lane frontier, cache bank,
   architectural PC, integer register file, or PMP snapshot chunk.
   Heterogeneous checkpoint-bank tests cover decode-first accelerator and GPU
-  restore so a malformed later device chunk cannot partially restore an earlier
-  live device. Peripheral
+  restore plus oversized accelerator queued-command counts, GPU slot counts,
+  and nested GPU queued-workgroup counts, so a malformed later device chunk
+  cannot partially restore an earlier live device or trigger host allocation
+  panics. Peripheral
   checkpoint-bank tests cover CLINT, UART, PL011, PLIC, RTC,
   interrupt-controller, VirtIO PCI common-config, notify-MMIO, ISR,
   device-config, and timer decode-first restore so
@@ -2859,7 +2861,10 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   heterogeneous checkpoint restore of pending DMA read-request ordering
   metadata plus uncacheable-plus-strict flags through the shared
   memory-request checkpoint payload before bank-level prevalidation mutates
-  live device state.
+  live device state. Heterogeneous checkpoint decode also bounds accelerator
+  command, trace, completion, pending-DMA, and DMA-completion vectors plus GPU
+  slot, queued-workgroup, trace, completion, pending-DMA, and DMA-completion
+  vectors before allocation, so malformed count fields return typed errors.
 - CPU branch prediction exposes typed direction prediction, GShare PC-history
   indexing with stale-history rejection, BiMode choice and direction-array
   training with stale-history rejection, Tournament local/global/choice
