@@ -1,5 +1,7 @@
 use crate::fs9p_device_helpers::{valid_lock_type, xattr_write_policy};
-use crate::fs9p_namespace::{qid_payload, Virtio9pFidState};
+use crate::fs9p_namespace::{
+    qid_payload, Virtio9pFidPath, Virtio9pFidState, Virtio9pNodeId, Virtio9pRenameOutcome,
+};
 use crate::fs9p_protocol::*;
 use crate::{Virtio9pRequest, VirtioError};
 
@@ -162,16 +164,7 @@ impl Virtio9pDevice {
         request: &Virtio9pRequest,
     ) -> Result<Result<Vec<u8>, u32>, VirtioError> {
         let mkdir = parse_mkdir_request(request)?;
-        let Some(parent) = self
-            .fids
-            .lock()
-            .expect("virtio 9p fid lock")
-            .get(&mkdir.dfid)
-            .cloned()
-        else {
-            return Ok(Err(VIRTIO_9P_EBADF));
-        };
-        let Some(parent) = parent.node() else {
+        let Some(parent) = self.fid_node(mkdir.dfid) else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
         let mut namespace = self.namespace.lock().expect("virtio 9p namespace lock");
@@ -218,16 +211,10 @@ impl Virtio9pDevice {
         let Some(new_dirfid) = fids.get(&rename.newdirfid).cloned() else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
-        let Some(old_dir) = old_dirfid.node() else {
+        let Some((old_dir, old_dir_path)) = fid_node_and_path(&old_dirfid) else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
-        let Some(new_dir) = new_dirfid.node() else {
-            return Ok(Err(VIRTIO_9P_EBADF));
-        };
-        let Some(old_dir_path) = old_dirfid.path().cloned() else {
-            return Ok(Err(VIRTIO_9P_EBADF));
-        };
-        let Some(new_dir_path) = new_dirfid.path().cloned() else {
+        let Some((new_dir, new_dir_path)) = fid_node_and_path(&new_dirfid) else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
         let old_path = old_dir_path.child(rename.oldname.clone());
@@ -242,14 +229,7 @@ impl Virtio9pDevice {
             Ok(rename) => rename,
             Err(errno) => return Ok(Err(errno)),
         };
-        if rename.moved {
-            self.move_fid_paths(&old_path, &new_path);
-        }
-        if let Some(replaced) = rename.replaced {
-            if self.node_is_removed(replaced) {
-                self.remove_fids_for_node(replaced);
-            }
-        }
+        self.apply_rename_outcome(&old_path, &new_path, rename);
         Ok(Ok(()))
     }
 
@@ -265,16 +245,10 @@ impl Virtio9pDevice {
         let Some(new_dirfid) = fids.get(&rename.newdirfid).cloned() else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
-        let Some(node) = fid.node() else {
+        let Some((node, old_path)) = fid_node_and_path(&fid) else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
-        let Some(new_dir) = new_dirfid.node() else {
-            return Ok(Err(VIRTIO_9P_EBADF));
-        };
-        let Some(old_path) = fid.path().cloned() else {
-            return Ok(Err(VIRTIO_9P_EBADF));
-        };
-        let Some(new_dir_path) = new_dirfid.path().cloned() else {
+        let Some((new_dir, new_dir_path)) = fid_node_and_path(&new_dirfid) else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
         let new_path = new_dir_path.child(rename.name.clone());
@@ -288,14 +262,7 @@ impl Virtio9pDevice {
             Ok(rename) => rename,
             Err(errno) => return Ok(Err(errno)),
         };
-        if rename.moved {
-            self.move_fid_paths(&old_path, &new_path);
-        }
-        if let Some(replaced) = rename.replaced {
-            if self.node_is_removed(replaced) {
-                self.remove_fids_for_node(replaced);
-            }
-        }
+        self.apply_rename_outcome(&old_path, &new_path, rename);
         Ok(Ok(()))
     }
 
@@ -304,16 +271,7 @@ impl Virtio9pDevice {
         request: &Virtio9pRequest,
     ) -> Result<Result<(), u32>, VirtioError> {
         let unlink = parse_unlinkat_request(request)?;
-        let Some(fid) = self
-            .fids
-            .lock()
-            .expect("virtio 9p fid lock")
-            .get(&unlink.dirfid)
-            .cloned()
-        else {
-            return Ok(Err(VIRTIO_9P_EBADF));
-        };
-        let Some(dir_node) = fid.node() else {
+        let Some(dir_node) = self.fid_node(unlink.dirfid) else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
         let node = match self
@@ -333,4 +291,24 @@ impl Virtio9pDevice {
         }
         Ok(Ok(()))
     }
+
+    fn apply_rename_outcome(
+        &self,
+        old_path: &Virtio9pFidPath,
+        new_path: &Virtio9pFidPath,
+        rename: Virtio9pRenameOutcome,
+    ) {
+        if rename.moved {
+            self.move_fid_paths(old_path, new_path);
+        }
+        if let Some(replaced) = rename.replaced {
+            if self.node_is_removed(replaced) {
+                self.remove_fids_for_node(replaced);
+            }
+        }
+    }
+}
+
+fn fid_node_and_path(fid: &Virtio9pFidState) -> Option<(Virtio9pNodeId, Virtio9pFidPath)> {
+    Some((fid.node()?, fid.path()?.clone()))
 }

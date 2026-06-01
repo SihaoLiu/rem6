@@ -884,7 +884,7 @@ impl Virtio9pDevice {
         self.fids
             .lock()
             .expect("virtio 9p fid lock")
-            .retain(|_, fid| fid.node() != Some(node));
+            .retain(|_, fid| fid.removal_node() != Some(node));
         self.locks
             .lock()
             .expect("virtio 9p lock table")

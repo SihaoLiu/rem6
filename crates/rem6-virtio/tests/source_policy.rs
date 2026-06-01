@@ -121,17 +121,22 @@ fn virtio_9p_operation_handlers_live_in_focused_module() {
         ops_rs.exists(),
         "9P operation handlers belong in src/fs9p/ops.rs"
     );
+    let ops_rs = fs::read_to_string(ops_rs).unwrap();
     for symbol in [
-        "fn handle_xattrwalk",
-        "fn handle_xattrcreate",
-        "fn handle_readdir",
-        "fn handle_fsync",
-        "fn handle_lock",
-        "fn handle_getlock",
+        "fn handle_xattrwalk(",
+        "fn handle_xattrcreate(",
+        "fn handle_readdir(",
+        "fn handle_fsync(",
+        "fn handle_lock(",
+        "fn handle_getlock(",
     ] {
         assert!(
             !device_rs.contains(symbol),
             "{symbol} should live outside src/fs9p.rs"
+        );
+        assert!(
+            ops_rs.contains(symbol),
+            "{symbol} should live in src/fs9p/ops.rs"
         );
     }
 }
@@ -146,16 +151,21 @@ fn virtio_9p_namespace_mutation_handlers_live_in_focused_module() {
         ops_rs.exists(),
         "9P namespace mutation handlers belong in src/fs9p/ops.rs"
     );
+    let ops_rs = fs::read_to_string(ops_rs).unwrap();
     for symbol in [
-        "fn handle_mkdir",
-        "fn handle_link",
-        "fn handle_renameat",
-        "fn handle_rename",
-        "fn handle_unlinkat",
+        "fn handle_mkdir(",
+        "fn handle_link(",
+        "fn handle_renameat(",
+        "fn handle_rename(",
+        "fn handle_unlinkat(",
     ] {
         assert!(
             !device_rs.contains(symbol),
             "{symbol} should live outside src/fs9p.rs"
+        );
+        assert!(
+            ops_rs.contains(symbol),
+            "{symbol} should live in src/fs9p/ops.rs"
         );
     }
 }

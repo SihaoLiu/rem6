@@ -1585,6 +1585,13 @@ impl Virtio9pFidState {
         }
     }
 
+    pub(crate) const fn removal_node(&self) -> Option<Virtio9pNodeId> {
+        match self {
+            Self::Node { node, .. } | Self::XattrWrite { node, .. } => Some(*node),
+            Self::XattrRead { .. } => None,
+        }
+    }
+
     pub(crate) fn move_path(&mut self, old_path: &Virtio9pFidPath, new_path: &Virtio9pFidPath) {
         if let Self::Node { path, .. } = self {
             if path == old_path {
