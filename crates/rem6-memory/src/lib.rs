@@ -12,11 +12,12 @@ pub use address_map::{AddressDecode, AddressDecoder, AddressInterleave, AddressM
 pub use request::{MemoryRequest, MemoryResponse, ResponseStatus};
 pub use translation::{
     TranslationAccessKind, TranslationCompletion, TranslationError, TranslationFault,
-    TranslationFaultKind, TranslationPageMap, TranslationPageMapSnapshot, TranslationPageMapping,
-    TranslationPagePermissions, TranslationPageSize, TranslationQueue,
-    TranslationQueueCheckpointPayload, TranslationQueueConfig, TranslationQueueEntrySnapshot,
-    TranslationQueueSnapshot, TranslationRequest, TranslationRequestId, TranslationResolution,
-    TranslationSegment, TranslationSegmentedResolution,
+    TranslationFaultKind, TranslationPageMap, TranslationPageMapCheckpointPayload,
+    TranslationPageMapSnapshot, TranslationPageMapping, TranslationPagePermissions,
+    TranslationPageSize, TranslationQueue, TranslationQueueCheckpointPayload,
+    TranslationQueueConfig, TranslationQueueEntrySnapshot, TranslationQueueSnapshot,
+    TranslationRequest, TranslationRequestId, TranslationResolution, TranslationSegment,
+    TranslationSegmentedResolution,
 };
 pub use translation_tlb::{
     TranslationAddressSpaceId, TranslationTlb, TranslationTlbCheckpointPayload,

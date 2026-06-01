@@ -2669,6 +2669,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   read-modify-write responses, writeback replacement, request shape rejection,
   duplicate line-snapshot restore rejection, and partitioned-memory restore
   propagation of line-snapshot validation.
+- Memory translation page-map tests cover offsets, permissions, cross-page
+  segment splits, snapshot restore, checkpoint payload binary round trips, and
+  overlapping mapping-record rejection through snapshot decode validation.
 - Memory translation TLB tests cover public gem5 issue #3010 by preserving
   global same-ASID entries during non-global ASID flush, removing same-ASID
   non-global entries, preserving other ASIDs, snapshotting entry scope, and

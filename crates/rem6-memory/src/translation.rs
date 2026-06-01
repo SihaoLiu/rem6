@@ -13,6 +13,13 @@ const QUEUE_CHECKPOINT_HEADER_BYTES: usize =
 const QUEUE_CHECKPOINT_ENTRY_BYTES: usize = U32_BYTES * 4 + U64_BYTES * 6;
 const QUEUE_CHECKPOINT_U32_MAX: usize = u32::MAX as usize;
 const QUEUE_CHECKPOINT_U64_MAX: usize = u64::MAX as usize;
+const PAGE_MAP_CHECKPOINT_MAGIC: [u8; 4] = *b"MTPM";
+const PAGE_MAP_CHECKPOINT_VERSION: u32 = 1;
+const PAGE_MAP_CHECKPOINT_HEADER_BYTES: usize =
+    PAGE_MAP_CHECKPOINT_MAGIC.len() + U32_BYTES + U64_BYTES + U32_BYTES + U32_BYTES;
+const PAGE_MAP_CHECKPOINT_ENTRY_BYTES: usize = U64_BYTES * 3 + U32_BYTES + U32_BYTES;
+const PAGE_MAP_CHECKPOINT_PERMISSION_MASK: u32 = 0x7;
+const PAGE_MAP_CHECKPOINT_U32_MAX: usize = u32::MAX as usize;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct TranslationRequestId {
@@ -860,6 +867,25 @@ pub enum TranslationError {
         value: usize,
         maximum: usize,
     },
+    InvalidPageMapCheckpointPayloadSize {
+        expected: usize,
+        actual: usize,
+    },
+    InvalidPageMapCheckpointMagic,
+    UnsupportedPageMapCheckpointVersion {
+        version: u32,
+    },
+    InvalidPageMapCheckpointReserved {
+        value: u32,
+    },
+    InvalidPageMapCheckpointPermissions {
+        code: u32,
+    },
+    PageMapCheckpointValueTooLarge {
+        field: &'static str,
+        value: usize,
+        maximum: usize,
+    },
     ZeroPageSize,
     NonPowerOfTwoPageSize {
         bytes: u64,
@@ -1034,6 +1060,36 @@ impl fmt::Display for TranslationError {
             } => write!(
                 formatter,
                 "translation TLB checkpoint {field} value {value} exceeds maximum {maximum}"
+            ),
+            Self::InvalidPageMapCheckpointPayloadSize { expected, actual } => write!(
+                formatter,
+                "translation page-map checkpoint payload has {actual} bytes; expected {expected}"
+            ),
+            Self::InvalidPageMapCheckpointMagic => {
+                write!(
+                    formatter,
+                    "translation page-map checkpoint payload has invalid magic"
+                )
+            }
+            Self::UnsupportedPageMapCheckpointVersion { version } => write!(
+                formatter,
+                "translation page-map checkpoint payload version {version} is not supported"
+            ),
+            Self::InvalidPageMapCheckpointReserved { value } => write!(
+                formatter,
+                "translation page-map checkpoint reserved field has nonzero value {value}"
+            ),
+            Self::InvalidPageMapCheckpointPermissions { code } => write!(
+                formatter,
+                "translation page-map checkpoint payload has invalid permission bits {code:#x}"
+            ),
+            Self::PageMapCheckpointValueTooLarge {
+                field,
+                value,
+                maximum,
+            } => write!(
+                formatter,
+                "translation page-map checkpoint {field} value {value} exceeds maximum {maximum}"
             ),
             Self::ZeroPageSize => write!(formatter, "translation page size must be nonzero"),
             Self::NonPowerOfTwoPageSize { bytes } => {
@@ -1285,6 +1341,193 @@ impl TranslationPageMapSnapshot {
     pub fn mappings(&self) -> &[TranslationPageMapping] {
         &self.mappings
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TranslationPageMapCheckpointPayload {
+    snapshot: TranslationPageMapSnapshot,
+}
+
+impl TranslationPageMapCheckpointPayload {
+    pub fn from_map(map: &TranslationPageMap) -> Self {
+        Self {
+            snapshot: map.snapshot(),
+        }
+    }
+
+    pub fn from_snapshot(snapshot: TranslationPageMapSnapshot) -> Result<Self, TranslationError> {
+        TranslationPageMap::from_snapshot(&snapshot)?;
+        Ok(Self { snapshot })
+    }
+
+    pub fn decode(payload: &[u8]) -> Result<Self, TranslationError> {
+        if payload.len() < PAGE_MAP_CHECKPOINT_HEADER_BYTES {
+            return Err(TranslationError::InvalidPageMapCheckpointPayloadSize {
+                expected: PAGE_MAP_CHECKPOINT_HEADER_BYTES,
+                actual: payload.len(),
+            });
+        }
+        if payload[0..PAGE_MAP_CHECKPOINT_MAGIC.len()] != PAGE_MAP_CHECKPOINT_MAGIC {
+            return Err(TranslationError::InvalidPageMapCheckpointMagic);
+        }
+
+        let mut offset = PAGE_MAP_CHECKPOINT_MAGIC.len();
+        let version = read_page_map_checkpoint_u32(payload, &mut offset);
+        if version != PAGE_MAP_CHECKPOINT_VERSION {
+            return Err(TranslationError::UnsupportedPageMapCheckpointVersion { version });
+        }
+
+        let page_size =
+            TranslationPageSize::new(read_page_map_checkpoint_u64(payload, &mut offset))?;
+        let mapping_count = read_page_map_checkpoint_u32(payload, &mut offset) as usize;
+        let reserved = read_page_map_checkpoint_u32(payload, &mut offset);
+        if reserved != 0 {
+            return Err(TranslationError::InvalidPageMapCheckpointReserved { value: reserved });
+        }
+        let expected = page_map_checkpoint_payload_size(mapping_count)?;
+        if payload.len() != expected {
+            return Err(TranslationError::InvalidPageMapCheckpointPayloadSize {
+                expected,
+                actual: payload.len(),
+            });
+        }
+
+        let mut mappings = Vec::with_capacity(mapping_count);
+        for _ in 0..mapping_count {
+            mappings.push(read_page_map_checkpoint_mapping(
+                page_size,
+                payload,
+                &mut offset,
+            )?);
+        }
+
+        Self::from_snapshot(TranslationPageMapSnapshot::new(page_size, mappings))
+    }
+
+    pub fn encode(&self) -> Vec<u8> {
+        self.try_encode()
+            .expect("translation page-map checkpoint values fit the checkpoint encoding")
+    }
+
+    pub fn try_encode(&self) -> Result<Vec<u8>, TranslationError> {
+        let mapping_count =
+            encode_page_map_checkpoint_u32("mapping count", self.snapshot.mappings().len())?;
+        let mut payload = Vec::with_capacity(page_map_checkpoint_payload_size(
+            self.snapshot.mappings().len(),
+        )?);
+        payload.extend_from_slice(&PAGE_MAP_CHECKPOINT_MAGIC);
+        payload.extend_from_slice(&PAGE_MAP_CHECKPOINT_VERSION.to_le_bytes());
+        payload.extend_from_slice(&self.snapshot.page_size().bytes().to_le_bytes());
+        payload.extend_from_slice(&mapping_count.to_le_bytes());
+        payload.extend_from_slice(&0_u32.to_le_bytes());
+        for mapping in self.snapshot.mappings() {
+            write_page_map_checkpoint_mapping(&mut payload, mapping);
+        }
+        Ok(payload)
+    }
+
+    pub const fn snapshot(&self) -> &TranslationPageMapSnapshot {
+        &self.snapshot
+    }
+
+    pub fn into_snapshot(self) -> TranslationPageMapSnapshot {
+        self.snapshot
+    }
+}
+
+fn write_page_map_checkpoint_mapping(payload: &mut Vec<u8>, mapping: &TranslationPageMapping) {
+    payload.extend_from_slice(&mapping.virtual_start().get().to_le_bytes());
+    payload.extend_from_slice(&mapping.physical_start().get().to_le_bytes());
+    payload.extend_from_slice(&mapping.page_count().to_le_bytes());
+    payload.extend_from_slice(
+        &encode_page_map_checkpoint_permissions(mapping.permissions()).to_le_bytes(),
+    );
+    payload.extend_from_slice(&0_u32.to_le_bytes());
+}
+
+fn read_page_map_checkpoint_mapping(
+    page_size: TranslationPageSize,
+    payload: &[u8],
+    offset: &mut usize,
+) -> Result<TranslationPageMapping, TranslationError> {
+    let virtual_start = Address::new(read_page_map_checkpoint_u64(payload, offset));
+    let physical_start = Address::new(read_page_map_checkpoint_u64(payload, offset));
+    let page_count = read_page_map_checkpoint_u64(payload, offset);
+    let permissions =
+        decode_page_map_checkpoint_permissions(read_page_map_checkpoint_u32(payload, offset))?;
+    let reserved = read_page_map_checkpoint_u32(payload, offset);
+    if reserved != 0 {
+        return Err(TranslationError::InvalidPageMapCheckpointReserved { value: reserved });
+    }
+
+    TranslationPageMapping::new(
+        page_size,
+        virtual_start,
+        physical_start,
+        page_count,
+        permissions,
+    )
+}
+
+fn encode_page_map_checkpoint_permissions(permissions: TranslationPagePermissions) -> u32 {
+    u32::from(permissions.read())
+        | (u32::from(permissions.write()) << 1)
+        | (u32::from(permissions.execute()) << 2)
+}
+
+fn decode_page_map_checkpoint_permissions(
+    code: u32,
+) -> Result<TranslationPagePermissions, TranslationError> {
+    if code & !PAGE_MAP_CHECKPOINT_PERMISSION_MASK != 0 {
+        return Err(TranslationError::InvalidPageMapCheckpointPermissions { code });
+    }
+    Ok(TranslationPagePermissions::new(
+        code & 0x1 != 0,
+        code & 0x2 != 0,
+        code & 0x4 != 0,
+    ))
+}
+
+fn page_map_checkpoint_payload_size(mapping_count: usize) -> Result<usize, TranslationError> {
+    let mapping_bytes = mapping_count
+        .checked_mul(PAGE_MAP_CHECKPOINT_ENTRY_BYTES)
+        .ok_or(TranslationError::InvalidPageMapCheckpointPayloadSize {
+            expected: usize::MAX,
+            actual: 0,
+        })?;
+    PAGE_MAP_CHECKPOINT_HEADER_BYTES
+        .checked_add(mapping_bytes)
+        .ok_or(TranslationError::InvalidPageMapCheckpointPayloadSize {
+            expected: usize::MAX,
+            actual: 0,
+        })
+}
+
+fn encode_page_map_checkpoint_u32(
+    field: &'static str,
+    value: usize,
+) -> Result<u32, TranslationError> {
+    u32::try_from(value).map_err(|_| TranslationError::PageMapCheckpointValueTooLarge {
+        field,
+        value,
+        maximum: PAGE_MAP_CHECKPOINT_U32_MAX,
+    })
+}
+
+fn read_page_map_checkpoint_u32(payload: &[u8], offset: &mut usize) -> u32 {
+    let bytes = payload[*offset..*offset + U32_BYTES]
+        .try_into()
+        .expect("checkpoint u32 slice width is fixed");
+    *offset += U32_BYTES;
+    u32::from_le_bytes(bytes)
+}
+
+fn read_page_map_checkpoint_u64(payload: &[u8], offset: &mut usize) -> u64 {
+    let bytes = payload[*offset..*offset + U64_BYTES]
+        .try_into()
+        .expect("checkpoint u64 slice width is fixed");
+    *offset += U64_BYTES;
+    u64::from_le_bytes(bytes)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

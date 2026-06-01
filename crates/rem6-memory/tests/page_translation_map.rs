@@ -1,8 +1,9 @@
 use rem6_memory::{
     AccessSize, Address, AgentId, TranslationAccessKind, TranslationError, TranslationFault,
-    TranslationFaultKind, TranslationPageMap, TranslationPagePermissions, TranslationPageSize,
-    TranslationQueue, TranslationQueueConfig, TranslationRequest, TranslationRequestId,
-    TranslationResolution, TranslationSegment, TranslationSegmentedResolution,
+    TranslationFaultKind, TranslationPageMap, TranslationPageMapCheckpointPayload,
+    TranslationPagePermissions, TranslationPageSize, TranslationQueue, TranslationQueueConfig,
+    TranslationRequest, TranslationRequestId, TranslationResolution, TranslationSegment,
+    TranslationSegmentedResolution,
 };
 
 fn request_id(sequence: u64) -> TranslationRequestId {
@@ -199,6 +200,71 @@ fn page_translation_map_rejects_bad_shapes_overlaps_and_restores_snapshot() {
 }
 
 #[test]
+fn page_translation_map_checkpoint_payload_round_trips_snapshot() {
+    let page_size = TranslationPageSize::new(4096).unwrap();
+    let mut map = TranslationPageMap::new(page_size);
+    map.map(
+        Address::new(0x4000),
+        Address::new(0x8000),
+        2,
+        TranslationPagePermissions::read_execute(),
+    )
+    .unwrap();
+    map.map(
+        Address::new(0x9000),
+        Address::new(0xc000),
+        1,
+        TranslationPagePermissions::read_write(),
+    )
+    .unwrap();
+    let snapshot = map.snapshot();
+    let payload = TranslationPageMapCheckpointPayload::from_snapshot(snapshot.clone()).unwrap();
+
+    let decoded = TranslationPageMapCheckpointPayload::decode(payload.encode().as_slice()).unwrap();
+    let restored = TranslationPageMap::from_snapshot(decoded.snapshot()).unwrap();
+
+    assert_eq!(decoded.snapshot(), &snapshot);
+    assert_eq!(restored.page_size(), page_size);
+    assert_eq!(restored.mapping_count(), 2);
+    assert_eq!(
+        restored.translate(&request(
+            8,
+            0x4008,
+            4,
+            TranslationAccessKind::InstructionFetch
+        )),
+        TranslationResolution::mapped(Address::new(0x8008))
+    );
+}
+
+#[test]
+fn page_translation_map_checkpoint_payload_rejects_overlapping_mapping_records() {
+    let page_size = TranslationPageSize::new(4096).unwrap();
+    let mut map = TranslationPageMap::new(page_size);
+    map.map(
+        Address::new(0x1000),
+        Address::new(0x8000),
+        1,
+        TranslationPagePermissions::read_write(),
+    )
+    .unwrap();
+    let payload = TranslationPageMapCheckpointPayload::from_snapshot(map.snapshot())
+        .unwrap()
+        .encode();
+    let duplicate_payload = duplicate_first_page_map_checkpoint_entry(payload);
+
+    assert_eq!(
+        TranslationPageMapCheckpointPayload::decode(&duplicate_payload).unwrap_err(),
+        TranslationError::OverlappingTranslationMapping {
+            existing_start: Address::new(0x1000),
+            existing_size: AccessSize::new(0x1000).unwrap(),
+            requested_start: Address::new(0x1000),
+            requested_size: AccessSize::new(0x1000).unwrap(),
+        }
+    );
+}
+
+#[test]
 fn page_translation_map_splits_cross_page_translation_into_explicit_segments() {
     let page_size = TranslationPageSize::new(4096).unwrap();
     let mut map = TranslationPageMap::new(page_size);
@@ -246,6 +312,16 @@ fn page_translation_map_splits_cross_page_translation_into_explicit_segments() {
         )
         .unwrap()])
     );
+}
+
+fn duplicate_first_page_map_checkpoint_entry(mut payload: Vec<u8>) -> Vec<u8> {
+    let count_offset = 16;
+    payload[count_offset..count_offset + 4].copy_from_slice(&2_u32.to_le_bytes());
+    let first_entry_offset = 24;
+    let entry_record_bytes = 32;
+    let first_entry = payload[first_entry_offset..first_entry_offset + entry_record_bytes].to_vec();
+    payload.splice(first_entry_offset..first_entry_offset, first_entry);
+    payload
 }
 
 #[test]
