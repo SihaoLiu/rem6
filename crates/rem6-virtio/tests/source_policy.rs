@@ -112,6 +112,31 @@ fn virtio_9p_protocol_constants_live_in_focused_module() {
 }
 
 #[test]
+fn virtio_9p_operation_handlers_live_in_focused_module() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let device_rs = fs::read_to_string(crate_dir.join("src/fs9p.rs")).unwrap();
+    let ops_rs = crate_dir.join("src/fs9p/ops.rs");
+
+    assert!(
+        ops_rs.exists(),
+        "9P operation handlers belong in src/fs9p/ops.rs"
+    );
+    for symbol in [
+        "fn handle_xattrwalk",
+        "fn handle_xattrcreate",
+        "fn handle_readdir",
+        "fn handle_fsync",
+        "fn handle_lock",
+        "fn handle_getlock",
+    ] {
+        assert!(
+            !device_rs.contains(symbol),
+            "{symbol} should live outside src/fs9p.rs"
+        );
+    }
+}
+
+#[test]
 fn virtio_source_files_stay_within_size_limit() {
     let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut oversized = Vec::new();

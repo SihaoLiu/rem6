@@ -1233,10 +1233,15 @@ Implementation evidence through 2026-05-31:
   enforce the hard per-source-file size budget, so block, queue, rng, console,
   MMIO transport, PCI transport, shared-memory, and future network VirtIO work
   does not recreate gem5-style mixed device, queue, and transport
-  monoliths. Modern VirtIO PCI common-config construction now always exposes
-  the required version-1 reserved feature bit on feature page 1 so device
-  builders cannot accidentally advertise modern PCI capabilities without the
-  corresponding negotiation bit. VirtIO 9P now preserves gem5's device id 9, mount-tag feature,
+  monoliths. The 9P device path now keeps xattr, directory-read, fsync, and
+  advisory-lock operation handlers in a focused child module while the main
+  device file remains responsible for dispatch, transport-facing state, and
+  session state, so future 9P parity work can grow without reintroducing a
+  gem5-style proxy/device/protocol monolith. Modern VirtIO PCI common-config
+  construction now always exposes the required version-1 reserved feature bit
+  on feature page 1 so device builders cannot accidentally advertise modern
+  PCI capabilities without the corresponding negotiation bit. VirtIO 9P now
+  preserves gem5's device id 9, mount-tag feature,
   default 32-entry request queue, and little-endian `len + tag` device-config
   surface, while validating tag length and installing the config as a typed
   read-only PCI device-config region through the same modern PCI transport used
@@ -3361,8 +3366,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   namespace entries survive, `Tflush` no-op acknowledgement without fid
   mutation, `Tfsync` acknowledgement for existing fids, and stale metadata,
   directory, create, fsync, write, remove, unlink, and read `Rlerror` handling,
-  source-policy coverage for keeping 9P typed payload parsing and wire constants
-  out of device dispatch and keeping protocol dispatch below the
+  source-policy coverage for keeping 9P typed payload parsing, wire constants,
+  and xattr, directory-read, fsync, and lock operation handlers out of the main
+  device file while keeping protocol dispatch below the
   focused-device line budget,
   modern PCI version-1 feature exposure for 9P,
   block, console, and RNG, legacy RNG device id and zero-config behavior,
