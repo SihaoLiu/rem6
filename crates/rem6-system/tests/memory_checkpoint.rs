@@ -11,7 +11,8 @@ use rem6_memory::{
 };
 use rem6_system::{
     DramMemoryCheckpointBank, DramMemoryCheckpointPort, DramMemoryCheckpointRecord,
-    MemoryStoreCheckpointBank, MemoryStoreCheckpointPort, MemoryStoreCheckpointRecord,
+    MemoryStoreCheckpointBank, MemoryStoreCheckpointError, MemoryStoreCheckpointPort,
+    MemoryStoreCheckpointRecord,
 };
 
 fn layout() -> CacheLineLayout {
@@ -63,6 +64,14 @@ fn write(address: u64, bytes: &[u8], sequence: u64) -> MemoryRequest {
         layout(),
     )
     .unwrap()
+}
+
+fn write_test_u32(payload: &mut Vec<u8>, value: u32) {
+    payload.extend_from_slice(&value.to_le_bytes());
+}
+
+fn write_test_u64(payload: &mut Vec<u8>, value: u64) {
+    payload.extend_from_slice(&value.to_le_bytes());
 }
 
 fn memory_store() -> (PartitionedMemoryStore, MemoryTargetId, MemoryTargetId) {
@@ -119,6 +128,123 @@ fn dram_memory_controller() -> (DramMemoryController, MemoryTargetId, MemoryTarg
         .insert_line(high, Address::new(0x8000), line_data(0x80))
         .unwrap();
     (controller, low, high)
+}
+
+#[test]
+fn memory_store_checkpoint_rejects_impossible_partition_count_without_mutating_store() {
+    let (store, _low, _high) = memory_store();
+    let store = Arc::new(Mutex::new(store));
+    let before = store.lock().unwrap().snapshot();
+    let component = CheckpointComponentId::new("memory_partition_count").unwrap();
+    let port = MemoryStoreCheckpointPort::new(component.clone(), Arc::clone(&store));
+    let mut payload = Vec::new();
+    write_test_u64(&mut payload, u64::MAX);
+    let mut registry = CheckpointRegistry::new();
+    registry.register(component.clone()).unwrap();
+    registry.write_chunk(&component, "store", payload).unwrap();
+
+    let error = port.restore_from(&registry).unwrap_err();
+
+    assert_eq!(
+        error,
+        MemoryStoreCheckpointError::InvalidChunk {
+            component,
+            reason:
+                "partition count 18446744073709551615 exceeds remaining payload capacity 0 records"
+                    .to_string(),
+        }
+    );
+    assert_eq!(store.lock().unwrap().snapshot(), before);
+}
+
+#[test]
+fn memory_store_checkpoint_rejects_impossible_line_count_without_mutating_store() {
+    let (store, _low, _high) = memory_store();
+    let store = Arc::new(Mutex::new(store));
+    let before = store.lock().unwrap().snapshot();
+    let component = CheckpointComponentId::new("memory_line_count").unwrap();
+    let port = MemoryStoreCheckpointPort::new(component.clone(), Arc::clone(&store));
+    let mut payload = Vec::new();
+    write_test_u64(&mut payload, 1);
+    write_test_u32(&mut payload, 10);
+    write_test_u64(&mut payload, 64);
+    write_test_u64(&mut payload, u64::MAX);
+    let mut registry = CheckpointRegistry::new();
+    registry.register(component.clone()).unwrap();
+    registry.write_chunk(&component, "store", payload).unwrap();
+
+    let error = port.restore_from(&registry).unwrap_err();
+
+    assert_eq!(
+        error,
+        MemoryStoreCheckpointError::InvalidChunk {
+            component,
+            reason: "line count 18446744073709551615 exceeds remaining payload capacity 0 records"
+                .to_string(),
+        }
+    );
+    assert_eq!(store.lock().unwrap().snapshot(), before);
+}
+
+#[test]
+fn memory_store_checkpoint_rejects_impossible_region_count_without_mutating_store() {
+    let (store, _low, _high) = memory_store();
+    let store = Arc::new(Mutex::new(store));
+    let before = store.lock().unwrap().snapshot();
+    let component = CheckpointComponentId::new("memory_region_count").unwrap();
+    let port = MemoryStoreCheckpointPort::new(component.clone(), Arc::clone(&store));
+    let mut payload = Vec::new();
+    write_test_u64(&mut payload, 0);
+    write_test_u64(&mut payload, u64::MAX);
+    let mut registry = CheckpointRegistry::new();
+    registry.register(component.clone()).unwrap();
+    registry.write_chunk(&component, "store", payload).unwrap();
+
+    let error = port.restore_from(&registry).unwrap_err();
+
+    assert_eq!(
+        error,
+        MemoryStoreCheckpointError::InvalidChunk {
+            component,
+            reason:
+                "region count 18446744073709551615 exceeds remaining payload capacity 0 records"
+                    .to_string(),
+        }
+    );
+    assert_eq!(store.lock().unwrap().snapshot(), before);
+}
+
+#[test]
+fn memory_store_checkpoint_rejects_impossible_sparse_hole_count_without_mutating_store() {
+    let (store, _low, _high) = memory_store();
+    let store = Arc::new(Mutex::new(store));
+    let before = store.lock().unwrap().snapshot();
+    let component = CheckpointComponentId::new("memory_sparse_hole_count").unwrap();
+    let port = MemoryStoreCheckpointPort::new(component.clone(), Arc::clone(&store));
+    let mut payload = Vec::new();
+    write_test_u64(&mut payload, 0);
+    write_test_u64(&mut payload, 1);
+    write_test_u32(&mut payload, 10);
+    write_test_u64(&mut payload, 0);
+    write_test_u64(&mut payload, 0x1000);
+    write_test_u64(&mut payload, u64::MAX);
+    write_test_u64(&mut payload, 0);
+    let mut registry = CheckpointRegistry::new();
+    registry.register(component.clone()).unwrap();
+    registry.write_chunk(&component, "store", payload).unwrap();
+
+    let error = port.restore_from(&registry).unwrap_err();
+
+    assert_eq!(
+        error,
+        MemoryStoreCheckpointError::InvalidChunk {
+            component,
+            reason:
+                "region sparse hole count 18446744073709551615 exceeds remaining payload capacity 0 records"
+                    .to_string(),
+        }
+    );
+    assert_eq!(store.lock().unwrap().snapshot(), before);
 }
 
 #[test]

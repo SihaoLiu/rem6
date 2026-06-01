@@ -2809,13 +2809,15 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   `vxsat`, all four fixed-point rounding modes in narrow-clip execution, and
   direct saturation evidence merging without an extra CSR micro-op.
   Memory and cache-controller tests cover atomic responses that capture old
-  bytes before masked writes, and memory checkpoint-bank tests cover prevalidated
-  multi-store and DRAM memory restore so truncated payloads cannot partially
-  mutate live memory state. Fabric checkpoint tests cover oversized lane and
-  credit-return counts, and fabric, coherence, and RISC-V checkpoint-bank tests
-  cover decode-first multi-bank and multi-core restore so malformed chunks
-  cannot partially rewind another live NoC lane frontier, cache bank,
-  architectural PC, integer register file, or PMP snapshot chunk.
+  bytes before masked writes, and memory checkpoint-bank tests cover
+  prevalidated multi-store and DRAM memory restore plus oversized store
+  partition, line, region, and sparse-hole counts, so truncated or malformed
+  payloads cannot partially mutate live memory state. Fabric checkpoint tests
+  cover oversized lane and credit-return counts, and fabric, coherence, and
+  RISC-V checkpoint-bank tests cover decode-first multi-bank and multi-core
+  restore so malformed chunks cannot partially rewind another live NoC lane
+  frontier, cache bank, architectural PC, integer register file, or PMP
+  snapshot chunk.
   Heterogeneous checkpoint-bank tests cover decode-first accelerator and GPU
   restore plus oversized accelerator queued-command counts, GPU slot counts,
   and nested GPU queued-workgroup counts, so a malformed later device chunk

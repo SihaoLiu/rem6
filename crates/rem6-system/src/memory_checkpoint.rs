@@ -19,6 +19,10 @@ const DRAM_CHUNK: &str = "dram";
 const STORE_CHUNK: &str = "store";
 const U32_BYTES: usize = 4;
 const U64_BYTES: usize = 8;
+const STORE_PARTITION_MIN_RECORD_BYTES: usize = U32_BYTES + U64_BYTES * 2;
+const STORE_LINE_MIN_RECORD_BYTES: usize = U64_BYTES * 2;
+const STORE_REGION_MIN_RECORD_BYTES: usize = U32_BYTES + U64_BYTES * 4;
+const STORE_HOLE_RECORD_BYTES: usize = U64_BYTES * 2;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MemoryStoreCheckpointRecord {
@@ -747,7 +751,8 @@ fn decode_store(
     payload: &[u8],
 ) -> Result<PartitionedMemorySnapshot, MemoryStoreCheckpointError> {
     let mut cursor = PayloadCursor::new(component.clone(), payload);
-    let partition_count = cursor.read_count("partition count")?;
+    let partition_count =
+        cursor.read_bounded_count("partition count", STORE_PARTITION_MIN_RECORD_BYTES)?;
     let mut partitions = Vec::with_capacity(partition_count);
     for _ in 0..partition_count {
         let target = MemoryTargetId::new(cursor.read_u32("partition target")?);
@@ -758,7 +763,7 @@ fn decode_store(
                     error,
                 }
             })?;
-        let line_count = cursor.read_count("line count")?;
+        let line_count = cursor.read_bounded_count("line count", STORE_LINE_MIN_RECORD_BYTES)?;
         let mut lines = Vec::with_capacity(line_count);
         for _ in 0..line_count {
             let line = Address::new(cursor.read_u64("line address")?);
@@ -772,7 +777,7 @@ fn decode_store(
         ));
     }
 
-    let region_count = cursor.read_count("region count")?;
+    let region_count = cursor.read_bounded_count("region count", STORE_REGION_MIN_RECORD_BYTES)?;
     let mut regions = Vec::with_capacity(region_count);
     for _ in 0..region_count {
         let target = MemoryTargetId::new(cursor.read_u32("region target")?);
@@ -788,7 +793,8 @@ fn decode_store(
                 component: component.clone(),
                 error,
             })?;
-        let hole_count = cursor.read_count("region sparse hole count")?;
+        let hole_count =
+            cursor.read_bounded_count("region sparse hole count", STORE_HOLE_RECORD_BYTES)?;
         let mut holes = Vec::with_capacity(hole_count);
         for _ in 0..hole_count {
             let start = Address::new(cursor.read_u64("region sparse hole start")?);
@@ -1221,6 +1227,25 @@ impl<'a> PayloadCursor<'a> {
         self.read_u64(name)?
             .try_into()
             .map_err(|_| self.invalid(format!("{name} does not fit host usize")))
+    }
+
+    fn read_bounded_count(
+        &mut self,
+        name: &str,
+        record_bytes: usize,
+    ) -> Result<usize, MemoryStoreCheckpointError> {
+        let count = self.read_count(name)?;
+        let capacity = self.remaining() / record_bytes;
+        if count > capacity {
+            return Err(self.invalid(format!(
+                "{name} {count} exceeds remaining payload capacity {capacity} records"
+            )));
+        }
+        Ok(count)
+    }
+
+    fn remaining(&self) -> usize {
+        self.payload.len().saturating_sub(self.offset)
     }
 
     fn read_u32(&mut self, name: &str) -> Result<u32, MemoryStoreCheckpointError> {
