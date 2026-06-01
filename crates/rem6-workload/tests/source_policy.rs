@@ -72,11 +72,23 @@ fn wait_for_edge_kind_helpers_live_in_focused_module() {
     let diagnostics_rs =
         fs::read_to_string(crate_dir.join("src/result/wait_for_diagnostics.rs")).unwrap();
     let edge_kind_rs = crate_dir.join("src/result/wait_for_edge_kind_windows.rs");
+    let edge_kind_rs_text = fs::read_to_string(&edge_kind_rs).unwrap_or_default();
 
     assert!(
         edge_kind_rs.exists(),
         "wait-for edge-kind helpers belong in src/result/wait_for_edge_kind_windows.rs"
     );
+    for anchor in [
+        "fn collect_wait_for_edge_kind_windows",
+        "fn merge_wait_for_edge_kind_counts",
+        "fn validate_wait_for_edge_kind_window_merge_summary",
+        "fn merge_wait_for_edge_kind_counts_from_windows",
+    ] {
+        assert!(
+            edge_kind_rs_text.contains(anchor),
+            "src/result/wait_for_edge_kind_windows.rs should own {anchor}"
+        );
+    }
     assert!(
         !diagnostics_rs.contains("fn collect_wait_for_edge_kind_windows"),
         "src/result/wait_for_diagnostics.rs should delegate edge-kind window collection"
@@ -92,11 +104,23 @@ fn batch_timeline_worker_tick_helpers_live_in_focused_module() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let timeline_rs = fs::read_to_string(crate_dir.join("src/result/batch_timeline.rs")).unwrap();
     let worker_ticks_rs = crate_dir.join("src/result/batch_timeline/worker_ticks.rs");
+    let worker_ticks_rs_text = fs::read_to_string(&worker_ticks_rs).unwrap_or_default();
 
     assert!(
         worker_ticks_rs.exists(),
         "batch timeline worker tick helpers belong in src/result/batch_timeline/worker_ticks.rs"
     );
+    for anchor in [
+        "fn planned_batch_worker_slot_tick_summaries",
+        "fn collect_batch_worker_slot_tick_summaries",
+        "fn collect_strongest_batch_worker_count_tick_summaries",
+        "fn batch_worker_tick_streak_at_or_above",
+    ] {
+        assert!(
+            worker_ticks_rs_text.contains(anchor),
+            "src/result/batch_timeline/worker_ticks.rs should own {anchor}"
+        );
+    }
     assert!(
         !timeline_rs.contains("fn planned_batch_worker_slot_tick_summaries"),
         "src/result/batch_timeline.rs should delegate planned worker slot summaries"
@@ -112,11 +136,23 @@ fn progress_livelock_helpers_live_in_focused_module() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let progress_rs = fs::read_to_string(crate_dir.join("src/result/progress.rs")).unwrap();
     let livelock_rs = crate_dir.join("src/result/progress/livelock_diagnostics.rs");
+    let livelock_rs_text = fs::read_to_string(&livelock_rs).unwrap_or_default();
 
     assert!(
         livelock_rs.exists(),
         "progress livelock helpers belong in src/result/progress/livelock_diagnostics.rs"
     );
+    for anchor in [
+        "fn collect_livelock_diagnostic_subjects",
+        "fn livelock_diagnostic_tick_window",
+        "fn collect_livelock_diagnostic_transition_kind_summaries",
+        "fn collect_livelock_diagnostic_transition_kind_window_summaries",
+    ] {
+        assert!(
+            livelock_rs_text.contains(anchor),
+            "src/result/progress/livelock_diagnostics.rs should own {anchor}"
+        );
+    }
     assert!(
         !progress_rs.contains("fn collect_livelock_diagnostic_subjects"),
         "src/result/progress.rs should delegate livelock subject summaries"
