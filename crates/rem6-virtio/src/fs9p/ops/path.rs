@@ -161,6 +161,9 @@ impl Virtio9pDevice {
         if fid.is_open() {
             return Ok(Err(VIRTIO_9P_EBADF));
         }
+        if mode.can_write() && matches!(node, Virtio9pNodeId::Root | Virtio9pNodeId::Directory(_)) {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        }
         let mut namespace = self.namespace.lock().expect("virtio 9p namespace lock");
         if namespace.metadata(node).is_none() {
             return Ok(Err(VIRTIO_9P_EBADF));
