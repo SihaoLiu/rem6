@@ -25,7 +25,7 @@ pub(super) fn rename_node_in_parent_entries(
             None
         }
     }) {
-        return Some(rename_node_in_entries(entries, &oldname, newname));
+        return Some(rename_node_in_entries(entries, &oldname, expected, newname));
     }
 
     entries.values_mut().find_map(|node| match node {
@@ -64,7 +64,7 @@ fn rename_node_at_components(
         if node.id() != expected {
             return None;
         }
-        return Some(rename_node_in_entries(entries, name, newname));
+        return Some(rename_node_in_entries(entries, name, expected, newname));
     }
     let Virtio9pNode::Directory(directory) = entries.get_mut(name)? else {
         return None;
@@ -75,9 +75,16 @@ fn rename_node_at_components(
 fn rename_node_in_entries(
     entries: &mut BTreeMap<String, Virtio9pNode>,
     oldname: &str,
+    expected: Virtio9pNodeId,
     newname: &str,
 ) -> Result<bool, u32> {
     if oldname == newname {
+        return Ok(false);
+    }
+    if entries
+        .get(newname)
+        .is_some_and(|existing| existing.id() == expected)
+    {
         return Ok(false);
     }
     if entries.contains_key(newname) {
