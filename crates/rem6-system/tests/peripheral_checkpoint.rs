@@ -253,6 +253,12 @@ enum RxLedgerFault {
 
 type UartRxRecords = &'static [(u64, u8)];
 
+const CLINT_CHECKPOINT_TIMER_ASSERTED_OFFSET: usize = 48;
+const STABLE_CLINT_CHECKPOINT_BYTES: &[u8] = &[
+    0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0,
+    0x40, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0,
+];
+
 const PL031_CHECKPOINT_RAW_INTERRUPT_OFFSET: usize = 20;
 const STABLE_PL031_CHECKPOINT_BYTES: &[u8] = &[
     0x28, 0, 0, 0, 0x0f, 0, 0, 0, 0, 0, 0, 0, 0x28, 0, 0, 0, 0x2d, 0, 0, 0, 1, 1, 1, 5, 0, 0, 0, 0,
@@ -755,6 +761,123 @@ fn clint_checkpoint_bank_rejects_invalid_bank_without_partial_restore() {
     ));
     assert_eq!(target_valid.snapshot(), original_valid);
     assert_eq!(target_invalid.snapshot(), original_invalid);
+}
+
+#[test]
+fn clint_checkpoint_port_captures_stable_snapshot_bytes() {
+    let component = checkpoint_component("clint_payload_stable");
+    let expected = ClintSnapshot::with_mtime(
+        Address::new(0x200_0000),
+        0,
+        vec![ClintHartSnapshot::new(0, 1, 64, 3, true)],
+    );
+    let source = clint_device(0x200_0000, 0);
+    source.restore(&expected).unwrap();
+    let target = clint_device(0x200_0000, 0);
+    let mut registry = CheckpointRegistry::new();
+    let port = ClintCheckpointPort::new(component.clone(), source);
+
+    port.register(&mut registry).unwrap();
+    let captured = port.capture_into(&mut registry).unwrap();
+
+    assert_eq!(captured.snapshot(), &expected);
+    assert_eq!(
+        registry.chunk(&component, "clint").unwrap(),
+        STABLE_CLINT_CHECKPOINT_BYTES
+    );
+
+    ClintCheckpointPort::new(component, target.clone())
+        .restore_from(&registry)
+        .unwrap();
+    assert_eq!(target.snapshot(), expected);
+}
+
+#[test]
+fn clint_checkpoint_port_rejects_invalid_bool_without_partial_restore() {
+    let component = checkpoint_component("clint_payload_bool");
+    let target = clint_device(0x200_0000, 0);
+    let original = target.snapshot();
+    let mut registry = CheckpointRegistry::new();
+    let mut payload = STABLE_CLINT_CHECKPOINT_BYTES.to_vec();
+    payload[CLINT_CHECKPOINT_TIMER_ASSERTED_OFFSET..CLINT_CHECKPOINT_TIMER_ASSERTED_OFFSET + 8]
+        .copy_from_slice(&2_u64.to_le_bytes());
+
+    registry.register(component.clone()).unwrap();
+    registry.write_chunk(&component, "clint", payload).unwrap();
+
+    let error = ClintCheckpointPort::new(component.clone(), target.clone())
+        .restore_from(&registry)
+        .unwrap_err();
+
+    match error {
+        ClintCheckpointError::InvalidChunk {
+            component: actual,
+            reason,
+        } => {
+            assert_eq!(actual, component);
+            assert_eq!(reason, "CLINT timer asserted has invalid bool value 2");
+        }
+        other => panic!("unexpected CLINT checkpoint error: {other}"),
+    }
+    assert_eq!(target.snapshot(), original);
+}
+
+#[test]
+fn clint_checkpoint_port_rejects_truncated_hart_record_without_partial_restore() {
+    let component = checkpoint_component("clint_payload_truncated");
+    let target = clint_device(0x200_0000, 0);
+    let original = target.snapshot();
+    let mut registry = CheckpointRegistry::new();
+    let mut payload = STABLE_CLINT_CHECKPOINT_BYTES.to_vec();
+    payload.pop();
+
+    registry.register(component.clone()).unwrap();
+    registry.write_chunk(&component, "clint", payload).unwrap();
+
+    let error = ClintCheckpointPort::new(component.clone(), target.clone())
+        .restore_from(&registry)
+        .unwrap_err();
+
+    match error {
+        ClintCheckpointError::InvalidChunk {
+            component: actual,
+            reason,
+        } => {
+            assert_eq!(actual, component);
+            assert_eq!(reason, "CLINT timer asserted is truncated");
+        }
+        other => panic!("unexpected CLINT checkpoint error: {other}"),
+    }
+    assert_eq!(target.snapshot(), original);
+}
+
+#[test]
+fn clint_checkpoint_port_rejects_trailing_payload_bytes_without_partial_restore() {
+    let component = checkpoint_component("clint_payload_trailing");
+    let target = clint_device(0x200_0000, 0);
+    let original = target.snapshot();
+    let mut registry = CheckpointRegistry::new();
+    let mut payload = STABLE_CLINT_CHECKPOINT_BYTES.to_vec();
+    payload.push(0);
+
+    registry.register(component.clone()).unwrap();
+    registry.write_chunk(&component, "clint", payload).unwrap();
+
+    let error = ClintCheckpointPort::new(component.clone(), target.clone())
+        .restore_from(&registry)
+        .unwrap_err();
+
+    match error {
+        ClintCheckpointError::InvalidChunk {
+            component: actual,
+            reason,
+        } => {
+            assert_eq!(actual, component);
+            assert_eq!(reason, "1 trailing bytes");
+        }
+        other => panic!("unexpected CLINT checkpoint error: {other}"),
+    }
+    assert_eq!(target.snapshot(), original);
 }
 
 #[test]
