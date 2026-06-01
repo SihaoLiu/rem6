@@ -36,6 +36,22 @@ fn memory_request_response_lives_in_focused_module() {
 }
 
 #[test]
+fn memory_errors_live_in_focused_module() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let lib_rs = fs::read_to_string(crate_dir.join("src/lib.rs")).unwrap();
+    let error_rs = crate_dir.join("src/error.rs");
+
+    assert!(
+        error_rs.exists(),
+        "memory error code belongs in src/error.rs"
+    );
+    assert!(
+        !lib_rs.contains("pub enum MemoryError {"),
+        "src/lib.rs should re-export memory error types from a focused module"
+    );
+}
+
+#[test]
 fn memory_source_files_stay_within_size_limit() {
     let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut oversized = Vec::new();
