@@ -365,6 +365,125 @@ fn line_store_checkpoint_payload_round_trips_snapshot() {
 }
 
 #[test]
+fn line_store_checkpoint_payload_uses_stable_single_line_bytes() {
+    let mut store = LineMemoryStore::new(layout());
+    store
+        .insert_line(Address::new(0x1000), line_data(0x10))
+        .unwrap();
+    let snapshot = store.snapshot();
+    let payload = LineMemoryCheckpointPayload::from_snapshot(snapshot.clone()).unwrap();
+    let mut stable_payload = vec![
+        b'M', b'L', b'I', b'N', 1, 0, 0, 0, 64, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0,
+    ];
+    stable_payload.extend_from_slice(&0x1000_u64.to_le_bytes());
+    stable_payload.extend(line_data(0x10));
+
+    let decoded = LineMemoryCheckpointPayload::decode(&stable_payload).unwrap();
+    let restored = LineMemoryStore::from_snapshot(decoded.snapshot()).unwrap();
+
+    assert_eq!(payload.encode(), stable_payload);
+    assert_eq!(decoded.snapshot(), &snapshot);
+    assert_eq!(
+        restored.line_data(Address::new(0x1000)).unwrap(),
+        line_data(0x10)
+    );
+}
+
+#[test]
+fn line_store_checkpoint_payload_rejects_invalid_magic() {
+    let mut store = LineMemoryStore::new(layout());
+    store
+        .insert_line(Address::new(0x1000), line_data(0x10))
+        .unwrap();
+    let mut payload = LineMemoryCheckpointPayload::from_snapshot(store.snapshot())
+        .unwrap()
+        .encode();
+    payload[0] = b'X';
+
+    assert_eq!(
+        LineMemoryCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::InvalidLineCheckpointMagic
+    );
+}
+
+#[test]
+fn line_store_checkpoint_payload_rejects_unsupported_version() {
+    let mut store = LineMemoryStore::new(layout());
+    store
+        .insert_line(Address::new(0x1000), line_data(0x10))
+        .unwrap();
+    let mut payload = LineMemoryCheckpointPayload::from_snapshot(store.snapshot())
+        .unwrap()
+        .encode();
+    payload[LINE_CHECKPOINT_VERSION_OFFSET..LINE_CHECKPOINT_VERSION_OFFSET + 4]
+        .copy_from_slice(&2u32.to_le_bytes());
+
+    assert_eq!(
+        LineMemoryCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::UnsupportedLineCheckpointVersion { version: 2 }
+    );
+}
+
+#[test]
+fn line_store_checkpoint_payload_rejects_reserved_field() {
+    let mut store = LineMemoryStore::new(layout());
+    store
+        .insert_line(Address::new(0x1000), line_data(0x10))
+        .unwrap();
+    let mut payload = LineMemoryCheckpointPayload::from_snapshot(store.snapshot())
+        .unwrap()
+        .encode();
+    payload[LINE_CHECKPOINT_RESERVED_OFFSET..LINE_CHECKPOINT_RESERVED_OFFSET + 4]
+        .copy_from_slice(&1u32.to_le_bytes());
+
+    assert_eq!(
+        LineMemoryCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::InvalidLineCheckpointReserved { value: 1 }
+    );
+}
+
+#[test]
+fn line_store_checkpoint_payload_rejects_short_payload() {
+    let mut store = LineMemoryStore::new(layout());
+    store
+        .insert_line(Address::new(0x1000), line_data(0x10))
+        .unwrap();
+    let mut payload = LineMemoryCheckpointPayload::from_snapshot(store.snapshot())
+        .unwrap()
+        .encode();
+    payload.truncate(LINE_CHECKPOINT_HEADER_SIZE - 1);
+
+    assert_eq!(
+        LineMemoryCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::InvalidLineCheckpointPayloadSize {
+            expected: LINE_CHECKPOINT_HEADER_SIZE,
+            actual: LINE_CHECKPOINT_HEADER_SIZE - 1
+        }
+    );
+}
+
+#[test]
+fn line_store_checkpoint_payload_rejects_declared_line_count_mismatch() {
+    let mut store = LineMemoryStore::new(layout());
+    store
+        .insert_line(Address::new(0x1000), line_data(0x10))
+        .unwrap();
+    let mut payload = LineMemoryCheckpointPayload::from_snapshot(store.snapshot())
+        .unwrap()
+        .encode();
+    payload[LINE_CHECKPOINT_COUNT_OFFSET..LINE_CHECKPOINT_COUNT_OFFSET + 4]
+        .copy_from_slice(&2u32.to_le_bytes());
+
+    assert_eq!(
+        LineMemoryCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::InvalidLineCheckpointPayloadSize {
+            expected: LINE_CHECKPOINT_HEADER_SIZE + LINE_CHECKPOINT_ENTRY_BYTES * 2,
+            actual: LINE_CHECKPOINT_HEADER_SIZE + LINE_CHECKPOINT_ENTRY_BYTES
+        }
+    );
+}
+
+#[test]
 fn line_store_checkpoint_payload_rejects_duplicate_line_records() {
     let mut store = LineMemoryStore::new(layout());
     store
@@ -407,6 +526,12 @@ fn line_store_rejects_requests_with_different_line_layout() {
         }
     );
 }
+
+const LINE_CHECKPOINT_HEADER_SIZE: usize = 24;
+const LINE_CHECKPOINT_ENTRY_BYTES: usize = 72;
+const LINE_CHECKPOINT_VERSION_OFFSET: usize = 4;
+const LINE_CHECKPOINT_COUNT_OFFSET: usize = 16;
+const LINE_CHECKPOINT_RESERVED_OFFSET: usize = 20;
 
 fn duplicate_first_line_checkpoint_entry(mut payload: Vec<u8>) -> Vec<u8> {
     let count_offset = 16;
