@@ -16,15 +16,7 @@ fn stage_width(
 }
 
 fn scheduler_with_decode_width(decode_width: usize) -> InOrderPipelineScheduler {
-    let config = InOrderPipelineConfig::new([
-        stage_width(InOrderPipelineStage::Fetch1, 1).unwrap(),
-        stage_width(InOrderPipelineStage::Fetch2, 1).unwrap(),
-        stage_width(InOrderPipelineStage::Decode, decode_width).unwrap(),
-        stage_width(InOrderPipelineStage::Execute, 1).unwrap(),
-        stage_width(InOrderPipelineStage::Commit, 1).unwrap(),
-    ])
-    .unwrap();
-    InOrderPipelineScheduler::new(config)
+    InOrderPipelineScheduler::new(config_with_decode_width(decode_width))
 }
 
 fn config_with_decode_width(decode_width: usize) -> InOrderPipelineConfig {
@@ -91,15 +83,17 @@ fn in_order_pipeline_branch_redirect_flushes_younger_pipeline_work() {
     let scheduler = scheduler_with_decode_width(1);
     let redirect = InOrderBranchRedirect::new(30, InOrderPipelineStage::Execute, 0x2000);
 
-    let plan = scheduler.plan_with_redirect(
-        [
-            instruction(29, InOrderPipelineStage::Commit),
-            instruction(30, InOrderPipelineStage::Execute),
-            instruction(31, InOrderPipelineStage::Decode),
-            instruction(32, InOrderPipelineStage::Fetch2),
-        ],
-        Some(redirect),
-    );
+    let plan = scheduler
+        .plan_with_redirect(
+            [
+                instruction(29, InOrderPipelineStage::Commit),
+                instruction(30, InOrderPipelineStage::Execute),
+                instruction(31, InOrderPipelineStage::Decode),
+                instruction(32, InOrderPipelineStage::Fetch2),
+            ],
+            Some(redirect),
+        )
+        .unwrap();
 
     assert_eq!(plan.redirect(), Some(&redirect));
     assert_eq!(plan.advanced_sequences().collect::<Vec<_>>(), vec![29, 30]);
@@ -109,6 +103,48 @@ fn in_order_pipeline_branch_redirect_flushes_younger_pipeline_work() {
         .iter()
         .all(|instruction| instruction.sequence() > redirect.sequence()));
     assert!(!plan.has_blocked_work());
+}
+
+#[test]
+fn in_order_pipeline_rejects_redirect_for_absent_instruction() {
+    let scheduler = scheduler_with_decode_width(1);
+    let redirect = InOrderBranchRedirect::new(30, InOrderPipelineStage::Execute, 0x2000);
+
+    assert_eq!(
+        scheduler
+            .plan_with_redirect(
+                [
+                    instruction(29, InOrderPipelineStage::Commit),
+                    instruction(31, InOrderPipelineStage::Decode),
+                ],
+                Some(redirect),
+            )
+            .unwrap_err(),
+        InOrderPipelineError::MissingBranchRedirectInstruction { sequence: 30 }
+    );
+}
+
+#[test]
+fn in_order_pipeline_rejects_redirect_stage_mismatch() {
+    let scheduler = scheduler_with_decode_width(1);
+    let redirect = InOrderBranchRedirect::new(30, InOrderPipelineStage::Execute, 0x2000);
+
+    assert_eq!(
+        scheduler
+            .plan_with_redirect(
+                [
+                    instruction(29, InOrderPipelineStage::Commit),
+                    instruction(30, InOrderPipelineStage::Decode),
+                ],
+                Some(redirect),
+            )
+            .unwrap_err(),
+        InOrderPipelineError::BranchRedirectStageMismatch {
+            sequence: 30,
+            expected: InOrderPipelineStage::Execute,
+            actual: InOrderPipelineStage::Decode,
+        }
+    );
 }
 
 #[test]

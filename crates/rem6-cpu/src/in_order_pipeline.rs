@@ -317,19 +317,34 @@ impl InOrderPipelineScheduler {
     where
         I: IntoIterator<Item = InOrderPipelineInstruction>,
     {
-        self.plan_with_redirect(instructions, None)
+        match self.plan_ready(instructions, None) {
+            Ok(plan) => plan,
+            Err(error) => unreachable!("planning without a redirect cannot fail: {error}"),
+        }
     }
 
     pub fn plan_with_redirect<I>(
         &self,
         instructions: I,
         redirect: Option<InOrderBranchRedirect>,
-    ) -> InOrderPipelinePlan
+    ) -> Result<InOrderPipelinePlan, InOrderPipelineError>
+    where
+        I: IntoIterator<Item = InOrderPipelineInstruction>,
+    {
+        self.plan_ready(instructions, redirect)
+    }
+
+    fn plan_ready<I>(
+        &self,
+        instructions: I,
+        redirect: Option<InOrderBranchRedirect>,
+    ) -> Result<InOrderPipelinePlan, InOrderPipelineError>
     where
         I: IntoIterator<Item = InOrderPipelineInstruction>,
     {
         let mut ready = instructions.into_iter().collect::<Vec<_>>();
         ready.sort_by_key(|instruction| instruction.sequence());
+        validate_redirect(redirect, &ready)?;
 
         let mut used_slots = BTreeMap::new();
         let mut advanced = Vec::new();
@@ -360,14 +375,42 @@ impl InOrderPipelineScheduler {
             }
         }
 
-        InOrderPipelinePlan {
+        Ok(InOrderPipelinePlan {
             advanced,
             resource_blocked,
             ordering_blocked,
             flushed,
             redirect,
-        }
+        })
     }
+}
+
+fn validate_redirect(
+    redirect: Option<InOrderBranchRedirect>,
+    ready: &[InOrderPipelineInstruction],
+) -> Result<(), InOrderPipelineError> {
+    let Some(redirect) = redirect else {
+        return Ok(());
+    };
+
+    let Some(instruction) = ready
+        .iter()
+        .find(|instruction| instruction.sequence() == redirect.sequence())
+    else {
+        return Err(InOrderPipelineError::MissingBranchRedirectInstruction {
+            sequence: redirect.sequence(),
+        });
+    };
+
+    if instruction.stage() != redirect.resolved_stage() {
+        return Err(InOrderPipelineError::BranchRedirectStageMismatch {
+            sequence: redirect.sequence(),
+            expected: redirect.resolved_stage(),
+            actual: instruction.stage(),
+        });
+    }
+
+    Ok(())
 }
 
 fn canonical_in_flight<I>(
@@ -394,10 +437,26 @@ where
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum InOrderPipelineError {
-    ZeroStageWidth { stage: InOrderPipelineStage },
-    DuplicateStageWidth { stage: InOrderPipelineStage },
-    MissingStageWidth { stage: InOrderPipelineStage },
-    DuplicateInFlightInstruction { sequence: u64 },
+    ZeroStageWidth {
+        stage: InOrderPipelineStage,
+    },
+    DuplicateStageWidth {
+        stage: InOrderPipelineStage,
+    },
+    MissingStageWidth {
+        stage: InOrderPipelineStage,
+    },
+    DuplicateInFlightInstruction {
+        sequence: u64,
+    },
+    MissingBranchRedirectInstruction {
+        sequence: u64,
+    },
+    BranchRedirectStageMismatch {
+        sequence: u64,
+        expected: InOrderPipelineStage,
+        actual: InOrderPipelineStage,
+    },
 }
 
 impl fmt::Display for InOrderPipelineError {
@@ -418,6 +477,18 @@ impl fmt::Display for InOrderPipelineError {
             Self::DuplicateInFlightInstruction { sequence } => write!(
                 formatter,
                 "in-order pipeline has duplicate in-flight instruction sequence {sequence}"
+            ),
+            Self::MissingBranchRedirectInstruction { sequence } => write!(
+                formatter,
+                "in-order branch redirect instruction sequence {sequence} is not in flight"
+            ),
+            Self::BranchRedirectStageMismatch {
+                sequence,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "in-order branch redirect instruction sequence {sequence} resolved at {expected}, but in-flight stage is {actual}"
             ),
         }
     }
