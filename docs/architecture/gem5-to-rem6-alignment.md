@@ -1255,7 +1255,8 @@ Implementation evidence through 2026-05-31:
   `Tversion` also resets live fid and attach state while retaining completion
   history for diagnostics, `Tauth` parses authentication requests before returning an
   explicit no-auth-backend errno, `Tattach` records the attached fid plus user
-  metadata and returns a deterministic root qid, unsupported requests return typed
+  metadata, returns a deterministic root qid, and rejects occupied attach fids
+  before replacing existing fid state, unsupported requests return typed
   `Rlerror` payloads, and malformed protocol payloads fail as typed errors
   before completion state mutates. A typed in-memory 9P namespace now covers the
   first filesystem operations after attach: `Twalk` resolves named files and
@@ -3278,7 +3279,8 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   data-budget enforcement, `Tversion` fid and
   attach-state reset, `Tattach` to
   root-qid response generation, attached-fid metadata
-  recording, unsupported-request `Rlerror` replies, and malformed 9P payload
+  recording, occupied-fid rejection without state replacement,
+  unsupported-request `Rlerror` replies, and malformed 9P payload
   rejection without completion mutation, explicit `Tauth` no-auth-backend
   rejection with malformed auth parsing errors, in-memory namespace file installation,
   `Twalk` qid-vector replies, missing-name `Rlerror` handling, partial qid

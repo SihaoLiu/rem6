@@ -208,23 +208,7 @@ impl Virtio9pDevice {
                 parse_auth_request(&request)?;
                 (VIRTIO_9P_RLERROR, VIRTIO_9P_ENOTSUP.to_le_bytes().to_vec())
             }
-            VIRTIO_9P_TATTACH => {
-                let attached = parse_attach_request(&request)?;
-                let root_qid = self
-                    .namespace
-                    .lock()
-                    .expect("virtio 9p namespace lock")
-                    .root_qid();
-                self.fids
-                    .lock()
-                    .expect("virtio 9p fid lock")
-                    .insert(attached.fid(), Virtio9pFidState::new(Virtio9pNodeId::Root));
-                self.attached_fids
-                    .lock()
-                    .expect("virtio 9p attached fid lock")
-                    .push(attached);
-                (VIRTIO_9P_RATTACH, qid_payload(root_qid))
-            }
+            VIRTIO_9P_TATTACH => reply_payload(VIRTIO_9P_RATTACH, self.handle_attach(&request)?),
             VIRTIO_9P_TWALK => reply_payload(VIRTIO_9P_RWALK, self.handle_walk(&request)?),
             VIRTIO_9P_TOPEN => reply_payload(VIRTIO_9P_ROPEN, self.handle_open(&request)?),
             VIRTIO_9P_TLOPEN => reply_payload(VIRTIO_9P_RLOPEN, self.handle_lopen(&request)?),
@@ -340,6 +324,29 @@ impl Virtio9pDevice {
             self.negotiated_msize()
                 .saturating_sub(VIRTIO_9P_HEADER_BYTES + VIRTIO_9P_COUNT_PREFIX_BYTES),
         )
+    }
+
+    fn handle_attach(
+        &self,
+        request: &Virtio9pRequest,
+    ) -> Result<Result<Vec<u8>, u32>, VirtioError> {
+        let attached = parse_attach_request(request)?;
+        let root_qid = self
+            .namespace
+            .lock()
+            .expect("virtio 9p namespace lock")
+            .root_qid();
+        let mut fids = self.fids.lock().expect("virtio 9p fid lock");
+        if fids.contains_key(&attached.fid()) {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        }
+        fids.insert(attached.fid(), Virtio9pFidState::new(Virtio9pNodeId::Root));
+        drop(fids);
+        self.attached_fids
+            .lock()
+            .expect("virtio 9p attached fid lock")
+            .push(attached);
+        Ok(Ok(qid_payload(root_qid)))
     }
 
     fn handle_statfs(
