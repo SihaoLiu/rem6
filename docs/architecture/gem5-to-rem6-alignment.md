@@ -1259,7 +1259,8 @@ Implementation evidence through 2026-05-31:
   `Rlerror` payloads, and malformed protocol payloads fail as typed errors
   before completion state mutates. A typed in-memory 9P namespace now covers the
   first filesystem operations after attach: `Twalk` resolves named files and
-  directories into new fid state, rejects occupied destination fids, rejects
+  directories into new fid state, handles `.` and `..` directory components
+  with root-clamped parent traversal, rejects occupied destination fids, rejects
   non-empty same-fid rebinding, and preserves empty same-fid walk replies,
   `Tmkdir` creates deterministic directory qids and rejects duplicate names with
   errno payloads, `Tlcreate` creates named root or child-directory files,
@@ -3273,7 +3274,8 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   rejection without completion mutation, explicit `Tauth` no-auth-backend
   rejection with malformed auth parsing errors, in-memory namespace file installation,
   `Twalk` qid-vector replies, missing-name `Rlerror` handling, occupied-newfid
-  rejection, same-fid non-empty walk rejection, empty same-fid walk replies,
+  rejection, `.` and `..` directory component traversal, same-fid non-empty walk
+  rejection, empty same-fid walk replies,
   `Tmkdir` directory creation, duplicate-name errno replies, directory qid preservation,
   and directory walk/listing behavior, `Tlcreate` root and child-directory file
   creation, duplicate-file rejection without clobbering, plus opened-fid

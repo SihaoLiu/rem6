@@ -429,9 +429,12 @@ impl Virtio9pNamespace {
     }
 
     pub(crate) fn walk(&self, node: Virtio9pNodeId, name: &str) -> Option<Virtio9pNodeId> {
-        self.directory_entries(node)?
-            .get(name)
-            .map(Virtio9pNode::id)
+        let entries = self.directory_entries(node)?;
+        match name {
+            "." => Some(node),
+            ".." => Some(self.parent_directory(node).unwrap_or(Virtio9pNodeId::Root)),
+            _ => entries.get(name).map(Virtio9pNode::id),
+        }
     }
 
     pub(crate) fn qid(&self, node: Virtio9pNodeId) -> Virtio9pQid {
@@ -824,6 +827,18 @@ impl Virtio9pNamespace {
         }
     }
 
+    fn parent_directory(&self, node: Virtio9pNodeId) -> Option<Virtio9pNodeId> {
+        match node {
+            Virtio9pNodeId::Root => Some(Virtio9pNodeId::Root),
+            Virtio9pNodeId::Directory(path) => {
+                find_parent_directory(&self.entries, path, Virtio9pNodeId::Root)
+            }
+            Virtio9pNodeId::File(_) | Virtio9pNodeId::Symlink(_) | Virtio9pNodeId::Special(_) => {
+                None
+            }
+        }
+    }
+
     fn node_attrs_mut(&mut self, node: Virtio9pNodeId) -> Option<&mut Virtio9pNodeAttrs> {
         match node {
             Virtio9pNodeId::Root => Some(&mut self.root_attrs),
@@ -922,6 +937,29 @@ fn find_node_name(entries: &BTreeMap<String, Virtio9pNode>, id: Virtio9pNodeId) 
             if let Some(name) = find_node_name(&directory.entries, id) {
                 return Some(name);
             }
+        }
+    }
+    None
+}
+
+fn find_parent_directory(
+    entries: &BTreeMap<String, Virtio9pNode>,
+    child_path: u64,
+    parent: Virtio9pNodeId,
+) -> Option<Virtio9pNodeId> {
+    for node in entries.values() {
+        let Virtio9pNode::Directory(directory) = node else {
+            continue;
+        };
+        if directory.qid_path == child_path {
+            return Some(parent);
+        }
+        if let Some(parent) = find_parent_directory(
+            &directory.entries,
+            child_path,
+            Virtio9pNodeId::Directory(directory.qid_path),
+        ) {
+            return Some(parent);
         }
     }
     None

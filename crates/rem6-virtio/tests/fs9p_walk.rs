@@ -1,7 +1,7 @@
 use rem6_virtio::{
     Virtio9pConfig, Virtio9pDevice, VIRTIO_9P_EBADF, VIRTIO_9P_NOFID, VIRTIO_9P_RLERROR,
-    VIRTIO_9P_RLOPEN, VIRTIO_9P_RREAD, VIRTIO_9P_RWALK, VIRTIO_9P_TATTACH, VIRTIO_9P_TLOPEN,
-    VIRTIO_9P_TREAD, VIRTIO_9P_TWALK,
+    VIRTIO_9P_RLOPEN, VIRTIO_9P_RMKDIR, VIRTIO_9P_RREAD, VIRTIO_9P_RWALK, VIRTIO_9P_TATTACH,
+    VIRTIO_9P_TLOPEN, VIRTIO_9P_TMKDIR, VIRTIO_9P_TREAD, VIRTIO_9P_TWALK,
 };
 
 mod support;
@@ -85,4 +85,52 @@ fn virtio_9p_device_allows_empty_walk_to_same_fid_without_extra_fid() {
     assert_eq!(same_fid_completion.message_type(), VIRTIO_9P_RWALK);
     assert_eq!(same_fid_completion.payload(), 0_u16.to_le_bytes());
     assert_eq!(device.fid_count(), 1);
+}
+
+#[test]
+fn virtio_9p_device_walks_dot_and_dotdot_directory_components() {
+    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap());
+    let attach = decoded_request(
+        VIRTIO_9P_TATTACH,
+        1,
+        p9_attach_payload(1, VIRTIO_9P_NOFID, b"root", b"", 0),
+    );
+    device.execute_at(10, attach).unwrap();
+    let mkdir = decoded_request(
+        VIRTIO_9P_TMKDIR,
+        2,
+        p9_mkdir_payload(1, b"tmp", 0o040755, 0),
+    );
+    let mkdir_completion = device.execute_at(11, mkdir).unwrap();
+    assert_eq!(mkdir_completion.message_type(), VIRTIO_9P_RMKDIR);
+    let (tmp_qtype, _, tmp_qpath) = read_qid(mkdir_completion.payload(), 0);
+
+    let self_walk = decoded_request(VIRTIO_9P_TWALK, 3, p9_walk_payload(1, 2, &[b"tmp", b"."]));
+    let self_completion = device.execute_at(12, self_walk).unwrap();
+    assert_eq!(self_completion.message_type(), VIRTIO_9P_RWALK);
+    assert_eq!(self_completion.payload()[0..2], 2_u16.to_le_bytes());
+    assert_eq!(
+        read_qid(self_completion.payload(), 2),
+        (tmp_qtype, 0, tmp_qpath)
+    );
+    assert_eq!(
+        read_qid(self_completion.payload(), 15),
+        (tmp_qtype, 0, tmp_qpath)
+    );
+
+    let parent_walk = decoded_request(VIRTIO_9P_TWALK, 4, p9_walk_payload(1, 3, &[b"tmp", b".."]));
+    let parent_completion = device.execute_at(13, parent_walk).unwrap();
+    assert_eq!(parent_completion.message_type(), VIRTIO_9P_RWALK);
+    assert_eq!(parent_completion.payload()[0..2], 2_u16.to_le_bytes());
+    assert_eq!(
+        read_qid(parent_completion.payload(), 2),
+        (tmp_qtype, 0, tmp_qpath)
+    );
+    assert_eq!(read_qid(parent_completion.payload(), 15).2, 1);
+
+    let root_parent = decoded_request(VIRTIO_9P_TWALK, 5, p9_walk_payload(1, 4, &[b".."]));
+    let root_completion = device.execute_at(14, root_parent).unwrap();
+    assert_eq!(root_completion.message_type(), VIRTIO_9P_RWALK);
+    assert_eq!(root_completion.payload()[0..2], 1_u16.to_le_bytes());
+    assert_eq!(read_qid(root_completion.payload(), 2).2, 1);
 }
