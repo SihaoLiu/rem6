@@ -700,6 +700,63 @@ fn memory_request_checkpoint_payload_rejects_invalid_operation_code() {
 }
 
 #[test]
+fn memory_request_checkpoint_payload_uses_stable_read_shared_bytes() {
+    let request = MemoryRequest::read_shared(
+        request_id(44),
+        Address::new(0x8400),
+        AccessSize::new(4).unwrap(),
+        line_layout(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        MemoryRequestCheckpointPayload::from_request(&request).encode(),
+        vec![
+            b'M', b'R', b'E', b'Q', 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0, 44,
+            0, 0, 0, 0, 0, 0, 0, 0, 0x84, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 64, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ]
+    );
+}
+
+#[test]
+fn memory_request_checkpoint_payload_rejects_invalid_magic() {
+    let request = MemoryRequest::read_shared(
+        request_id(45),
+        Address::new(0x8500),
+        AccessSize::new(4).unwrap(),
+        line_layout(),
+    )
+    .unwrap();
+    let mut payload = MemoryRequestCheckpointPayload::from_request(&request).encode();
+    payload[0] = b'X';
+
+    assert_eq!(
+        MemoryRequestCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::InvalidRequestCheckpointMagic
+    );
+}
+
+#[test]
+fn memory_request_checkpoint_payload_rejects_unsupported_version() {
+    let request = MemoryRequest::read_shared(
+        request_id(46),
+        Address::new(0x8600),
+        AccessSize::new(4).unwrap(),
+        line_layout(),
+    )
+    .unwrap();
+    let mut payload = MemoryRequestCheckpointPayload::from_request(&request).encode();
+    payload[REQUEST_CHECKPOINT_VERSION_OFFSET..REQUEST_CHECKPOINT_VERSION_OFFSET + 4]
+        .copy_from_slice(&2u32.to_le_bytes());
+
+    assert_eq!(
+        MemoryRequestCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::UnsupportedRequestCheckpointVersion { version: 2 }
+    );
+}
+
+#[test]
 fn memory_request_checkpoint_payload_rejects_reserved_flag_bits() {
     let request = MemoryRequest::read_shared(
         request_id(24),
@@ -715,6 +772,67 @@ fn memory_request_checkpoint_payload_rejects_reserved_flag_bits() {
     assert_eq!(
         MemoryRequestCheckpointPayload::decode(&payload).unwrap_err(),
         MemoryError::InvalidRequestCheckpointFlags { flags: 0x8000_0000 }
+    );
+}
+
+#[test]
+fn memory_request_checkpoint_payload_rejects_primary_reserved_field() {
+    let request = MemoryRequest::read_shared(
+        request_id(47),
+        Address::new(0x8700),
+        AccessSize::new(4).unwrap(),
+        line_layout(),
+    )
+    .unwrap();
+    let mut payload = MemoryRequestCheckpointPayload::from_request(&request).encode();
+    payload[REQUEST_CHECKPOINT_PRIMARY_RESERVED_OFFSET
+        ..REQUEST_CHECKPOINT_PRIMARY_RESERVED_OFFSET + 4]
+        .copy_from_slice(&1u32.to_le_bytes());
+
+    assert_eq!(
+        MemoryRequestCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::InvalidRequestCheckpointReserved { value: 1 }
+    );
+}
+
+#[test]
+fn memory_request_checkpoint_payload_rejects_secondary_reserved_field() {
+    let request = MemoryRequest::read_shared(
+        request_id(48),
+        Address::new(0x8800),
+        AccessSize::new(4).unwrap(),
+        line_layout(),
+    )
+    .unwrap();
+    let mut payload = MemoryRequestCheckpointPayload::from_request(&request).encode();
+    payload[REQUEST_CHECKPOINT_SECONDARY_RESERVED_OFFSET
+        ..REQUEST_CHECKPOINT_SECONDARY_RESERVED_OFFSET + 4]
+        .copy_from_slice(&1u32.to_le_bytes());
+
+    assert_eq!(
+        MemoryRequestCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::InvalidRequestCheckpointReserved { value: 1 }
+    );
+}
+
+#[test]
+fn memory_request_checkpoint_payload_rejects_short_payload() {
+    let request = MemoryRequest::read_shared(
+        request_id(49),
+        Address::new(0x8900),
+        AccessSize::new(4).unwrap(),
+        line_layout(),
+    )
+    .unwrap();
+    let mut payload = MemoryRequestCheckpointPayload::from_request(&request).encode();
+    payload.truncate(REQUEST_CHECKPOINT_HEADER_SIZE - 1);
+
+    assert_eq!(
+        MemoryRequestCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::InvalidRequestCheckpointPayloadSize {
+            expected: REQUEST_CHECKPOINT_HEADER_SIZE,
+            actual: REQUEST_CHECKPOINT_HEADER_SIZE - 1
+        }
     );
 }
 
@@ -789,8 +907,12 @@ fn memory_request_checkpoint_payload_rejects_invalid_mask_byte() {
     );
 }
 
+const REQUEST_CHECKPOINT_HEADER_SIZE: usize = 80;
+const REQUEST_CHECKPOINT_VERSION_OFFSET: usize = 4;
 const REQUEST_CHECKPOINT_OPERATION_OFFSET: usize = 8;
 const REQUEST_CHECKPOINT_FLAGS_OFFSET: usize = 12;
+const REQUEST_CHECKPOINT_PRIMARY_RESERVED_OFFSET: usize = 20;
+const REQUEST_CHECKPOINT_SECONDARY_RESERVED_OFFSET: usize = 76;
 const REQUEST_CHECKPOINT_BEFORE_READ_FLAG: u32 = 1 << 5;
 const RESPONSE_CHECKPOINT_HEADER_SIZE: usize = 40;
 const RESPONSE_CHECKPOINT_VERSION_OFFSET: usize = 4;
