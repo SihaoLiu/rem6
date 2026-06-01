@@ -503,8 +503,8 @@ fn translation_tlb_checkpoint_payload_rejects_overlapping_same_asid_entries() {
     );
     let requested = TranslationTlbEntrySnapshot::new_in_address_space(
         asid,
-        Address::new(0xffff_0000_f000_1000),
-        Address::new(0x0000_0000_f000_1000),
+        Address::new(0xffff_0000_f000_2000),
+        Address::new(0x0000_0000_f000_2000),
         small_page,
         TranslationPagePermissions::read_write(),
         2,
@@ -515,10 +515,15 @@ fn translation_tlb_checkpoint_payload_rejects_overlapping_same_asid_entries() {
         3,
         TranslationTlbStats::new(0, 0, 0, 2, 0),
     );
-    let payload = TranslationTlbCheckpointPayload::from_snapshot(snapshot);
+    let mut payload = TranslationTlbCheckpointPayload::from_snapshot(snapshot)
+        .unwrap()
+        .encode();
+    payload[TLB_CHECKPOINT_SECOND_ENTRY_VIRTUAL_PAGE_OFFSET
+        ..TLB_CHECKPOINT_SECOND_ENTRY_VIRTUAL_PAGE_OFFSET + 8]
+        .copy_from_slice(&0xffff_0000_f000_1000_u64.to_le_bytes());
 
     assert_eq!(
-        payload.unwrap_err(),
+        TranslationTlbCheckpointPayload::decode(&payload).unwrap_err(),
         TranslationError::OverlappingTlbEntry {
             address_space: asid,
             existing_start: Address::new(0xffff_0000_f000_0000),
@@ -589,20 +594,35 @@ fn translation_tlb_checkpoint_payload_rejects_zero_page_size() {
 }
 
 #[test]
+fn translation_tlb_checkpoint_payload_rejects_non_power_of_two_page_size() {
+    let mut payload = TranslationTlbCheckpointPayload::from_snapshot(single_entry_tlb_snapshot())
+        .unwrap()
+        .encode();
+    payload[TLB_CHECKPOINT_FIRST_ENTRY_PAGE_SIZE_OFFSET
+        ..TLB_CHECKPOINT_FIRST_ENTRY_PAGE_SIZE_OFFSET + 8]
+        .copy_from_slice(&3_u64.to_le_bytes());
+
+    assert_eq!(
+        TranslationTlbCheckpointPayload::decode(&payload).unwrap_err(),
+        TranslationError::NonPowerOfTwoPageSize { bytes: 3 }
+    );
+}
+
+#[test]
 fn translation_tlb_checkpoint_payload_rejects_last_used_after_next_lru() {
     let mut payload = TranslationTlbCheckpointPayload::from_snapshot(single_entry_tlb_snapshot())
         .unwrap()
         .encode();
     payload[TLB_CHECKPOINT_FIRST_ENTRY_LAST_USED_OFFSET
         ..TLB_CHECKPOINT_FIRST_ENTRY_LAST_USED_OFFSET + 8]
-        .copy_from_slice(&2_u64.to_le_bytes());
+        .copy_from_slice(&3_u64.to_le_bytes());
 
     assert_eq!(
         TranslationTlbCheckpointPayload::decode(&payload).unwrap_err(),
         TranslationError::SnapshotNextLruTooSmall {
             next_lru: 2,
             virtual_page: Address::new(0xffff_0000_f000_0000),
-            last_used: 2,
+            last_used: 3,
         }
     );
 }
@@ -702,6 +722,10 @@ const TLB_CHECKPOINT_FIRST_ENTRY_PERMISSIONS_OFFSET: usize = TLB_CHECKPOINT_FIRS
 const TLB_CHECKPOINT_FIRST_ENTRY_RESERVED_OFFSET: usize = TLB_CHECKPOINT_FIRST_ENTRY_OFFSET + 12;
 const TLB_CHECKPOINT_FIRST_ENTRY_PAGE_SIZE_OFFSET: usize = TLB_CHECKPOINT_FIRST_ENTRY_OFFSET + 32;
 const TLB_CHECKPOINT_FIRST_ENTRY_LAST_USED_OFFSET: usize = TLB_CHECKPOINT_FIRST_ENTRY_OFFSET + 40;
+const TLB_CHECKPOINT_SECOND_ENTRY_OFFSET: usize =
+    TLB_CHECKPOINT_FIRST_ENTRY_OFFSET + TLB_CHECKPOINT_ENTRY_SIZE;
+const TLB_CHECKPOINT_SECOND_ENTRY_VIRTUAL_PAGE_OFFSET: usize =
+    TLB_CHECKPOINT_SECOND_ENTRY_OFFSET + 16;
 
 fn single_entry_tlb_snapshot() -> TranslationTlbSnapshot {
     let page_size = TranslationPageSize::new(4096).unwrap();
