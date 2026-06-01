@@ -409,6 +409,28 @@ fn memory_response_checkpoint_payload_uses_stable_completed_data_bytes() {
 }
 
 #[test]
+fn memory_response_checkpoint_payload_uses_stable_completed_without_data_bytes() {
+    let write = MemoryRequest::write(
+        request_id(37),
+        Address::new(0x7d00),
+        AccessSize::new(2).unwrap(),
+        vec![0x11, 0x22],
+        ByteMask::full(AccessSize::new(2).unwrap()).unwrap(),
+        line_layout(),
+    )
+    .unwrap();
+    let completed = MemoryResponse::completed(&write, None).unwrap();
+
+    assert_eq!(
+        MemoryResponseCheckpointPayload::from_response(&completed).encode(),
+        vec![
+            b'M', b'R', b'E', b'S', 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0, 37,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ]
+    );
+}
+
+#[test]
 fn memory_response_checkpoint_payload_rejects_invalid_status_code() {
     let response = MemoryResponse::retry(
         &MemoryRequest::read_shared(
