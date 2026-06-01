@@ -9,6 +9,7 @@ use rem6_timer::{ClintHartSnapshot, ClintMmioDevice, ClintSnapshot, TimerError};
 const CLINT_CHUNK: &str = "clint";
 const U32_BYTES: usize = 4;
 const U64_BYTES: usize = 8;
+const CLINT_HART_RECORD_BYTES: usize = U32_BYTES * 2 + U64_BYTES * 3;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClintCheckpointRecord {
@@ -292,7 +293,7 @@ fn decode_clint(
     let mut cursor = PayloadCursor::new(component.clone(), payload);
     let base = Address::new(cursor.read_u64("CLINT base")?);
     let mtime = cursor.read_u64("CLINT mtime")?;
-    let hart_count = cursor.read_count("CLINT hart count")?;
+    let hart_count = cursor.read_bounded_count("CLINT hart count", CLINT_HART_RECORD_BYTES)?;
     let mut harts = Vec::with_capacity(hart_count);
     for _ in 0..hart_count {
         harts.push(ClintHartSnapshot::new(
@@ -363,6 +364,25 @@ impl<'a> PayloadCursor<'a> {
     fn read_count(&mut self, name: &str) -> Result<usize, ClintCheckpointError> {
         let count = self.read_u64(name)?;
         usize::try_from(count).map_err(|_| self.invalid(format!("{name} is too large: {count}")))
+    }
+
+    fn read_bounded_count(
+        &mut self,
+        name: &str,
+        record_bytes: usize,
+    ) -> Result<usize, ClintCheckpointError> {
+        let count = self.read_count(name)?;
+        let capacity = self.remaining() / record_bytes;
+        if count > capacity {
+            return Err(self.invalid(format!(
+                "{name} {count} exceeds remaining payload capacity {capacity} records"
+            )));
+        }
+        Ok(count)
+    }
+
+    fn remaining(&self) -> usize {
+        self.payload.len().saturating_sub(self.offset)
     }
 
     fn read_bytes(&mut self, name: &str, size: usize) -> Result<&'a [u8], ClintCheckpointError> {

@@ -78,6 +78,7 @@ const TIMER_CHUNK: &str = "timer";
 const TIMER_U64_BYTES: usize = 8;
 const TIMER_DEADLINE_FLAG_OFFSET: usize = TIMER_U64_BYTES + 4 + 4;
 const TIMER_ARM_DEADLINE_OFFSET: usize = TIMER_DEADLINE_FLAG_OFFSET + TIMER_U64_BYTES * 5;
+const CLINT_CHUNK: &str = "clint";
 
 fn plic_device(base: u64, contexts: &[PlicContextRoute]) -> PlicMmioDevice {
     PlicMmioDevice::with_contexts(
@@ -865,7 +866,10 @@ fn clint_checkpoint_port_rejects_truncated_hart_record_without_partial_restore()
             reason,
         } => {
             assert_eq!(actual, component);
-            assert_eq!(reason, "CLINT timer asserted is truncated");
+            assert_eq!(
+                reason,
+                "CLINT hart count 1 exceeds remaining payload capacity 0 records"
+            );
         }
         other => panic!("unexpected CLINT checkpoint error: {other}"),
     }
@@ -895,6 +899,41 @@ fn clint_checkpoint_port_rejects_trailing_payload_bytes_without_partial_restore(
         } => {
             assert_eq!(actual, component);
             assert_eq!(reason, "1 trailing bytes");
+        }
+        other => panic!("unexpected CLINT checkpoint error: {other}"),
+    }
+    assert_eq!(target.snapshot(), original);
+}
+
+#[test]
+fn clint_checkpoint_port_rejects_impossible_hart_count_without_partial_restore() {
+    let component = checkpoint_component("clint_payload_hart_count");
+    let target = clint_device(0x200_0000, 0);
+    let original = target.snapshot();
+    let mut payload = Vec::new();
+    write_u64(&mut payload, 0x200_0000);
+    write_u64(&mut payload, 0);
+    write_u64(&mut payload, u64::MAX);
+    let mut registry = CheckpointRegistry::new();
+    registry.register(component.clone()).unwrap();
+    registry
+        .write_chunk(&component, CLINT_CHUNK, payload)
+        .unwrap();
+
+    let error = ClintCheckpointPort::new(component.clone(), target.clone())
+        .restore_from(&registry)
+        .unwrap_err();
+
+    match error {
+        ClintCheckpointError::InvalidChunk {
+            component: actual,
+            reason,
+        } => {
+            assert_eq!(actual, component);
+            assert_eq!(
+                reason,
+                "CLINT hart count 18446744073709551615 exceeds remaining payload capacity 0 records"
+            );
         }
         other => panic!("unexpected CLINT checkpoint error: {other}"),
     }

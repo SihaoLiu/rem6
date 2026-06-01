@@ -3132,18 +3132,19 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   snapshot/restore of per-hart `msip`, `mtimecmp`, timer assertion, and
   RTC-backed `mtime` state. CLINT checkpoint tests cover stable one-hart host
   checkpoint bytes, invalid timer-assertion booleans, truncated hart records,
-  trailing bytes, and decode-first rejection that leaves live checkpoint state
-  unchanged. CLINT reset tests cover `msip` clearing, `mtimecmp` reset policy,
-  timer-assertion clearing, serial and parallel typed interrupt deassertion,
-  and stale timer-event invalidation through generation changes. Programmable
-  timer tests also cover serial and parallel rejection of invalid interrupt
-  routes before arm state is committed, plus serial and parallel rejection of
-  deadline-event delivery that violates remote lookahead before any timer
-  generation is persisted. CLINT tests cover constructor-time rejection of
-  invalid hart interrupt routes before any MMIO, reset, or RTC callback can
-  observe partial device state. They also cover `msip`, immediate `mtimecmp`,
-  and RTC-driven timer assertion failures that reject remote delivery before
-  changing the guest-visible CLINT register or asserted-line state.
+  oversized hart counts, trailing bytes, and decode-first rejection that leaves
+  live checkpoint state unchanged. CLINT reset tests cover `msip` clearing,
+  `mtimecmp` reset policy, timer-assertion clearing, serial and parallel typed
+  interrupt deassertion, and stale timer-event invalidation through generation
+  changes. Programmable timer tests also cover serial and parallel rejection of
+  invalid interrupt routes before arm state is committed, plus serial and
+  parallel rejection of deadline-event delivery that violates remote lookahead
+  before any timer generation is persisted. CLINT tests cover constructor-time
+  rejection of invalid hart interrupt routes before any MMIO, reset, or RTC
+  callback can observe partial device state. They also cover `msip`, immediate
+  `mtimecmp`, and RTC-driven timer assertion failures that reject remote
+  delivery before changing the guest-visible CLINT register or asserted-line
+  state.
   Programmable timer checkpoint tests cover stable identity/deadline/arm chunk
   bytes, invalid deadline flags, truncated arm records, trailing payload bytes,
   oversized arm counts, and no-partial-restore rejection for malformed chunks.
