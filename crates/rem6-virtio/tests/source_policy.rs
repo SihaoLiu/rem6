@@ -384,6 +384,40 @@ fn virtio_9p_device_test_file_stays_focused() {
 }
 
 #[test]
+fn virtio_9p_device_tests_delegate_node_creation_cases() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let device_test = fs::read_to_string(crate_dir.join("tests/fs9p_device.rs")).unwrap();
+    let node_creation_test = crate_dir.join("tests/fs9p_node_creation.rs");
+
+    assert!(
+        node_creation_test.exists(),
+        "9P node creation tests belong in tests/fs9p_node_creation.rs"
+    );
+    for symbol in [
+        "VIRTIO_9P_TSYMLINK",
+        "VIRTIO_9P_RSYMLINK",
+        "VIRTIO_9P_TREADLINK",
+        "VIRTIO_9P_RREADLINK",
+        "VIRTIO_9P_TMKDIR",
+        "VIRTIO_9P_RMKDIR",
+        "VIRTIO_9P_TMKNOD",
+        "VIRTIO_9P_RMKNOD",
+        "VIRTIO_9P_TLCREATE",
+        "VIRTIO_9P_RLCREATE",
+        "p9_symlink_payload",
+        "p9_readlink_payload",
+        "p9_mkdir_payload",
+        "p9_mknod_payload",
+        "p9_lcreate_payload",
+    ] {
+        assert!(
+            !device_test.contains(symbol),
+            "tests/fs9p_device.rs should delegate 9P node creation behavior to tests/fs9p_node_creation.rs; found {symbol}"
+        );
+    }
+}
+
+#[test]
 fn virtio_9p_device_tests_delegate_xattr_cases() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let device_test = fs::read_to_string(crate_dir.join("tests/fs9p_device.rs")).unwrap();
@@ -393,10 +427,21 @@ fn virtio_9p_device_tests_delegate_xattr_cases() {
         xattr_test.exists(),
         "9P extended attribute tests belong in tests/fs9p_xattr.rs"
     );
-    assert!(
-        !device_test.contains("xattr"),
-        "tests/fs9p_device.rs should delegate extended attribute behavior to tests/fs9p_xattr.rs"
-    );
+    for symbol in [
+        "VIRTIO_9P_TXATTRWALK",
+        "VIRTIO_9P_RXATTRWALK",
+        "VIRTIO_9P_TXATTRCREATE",
+        "VIRTIO_9P_RXATTRCREATE",
+        "VIRTIO_9P_XATTR_CREATE",
+        "VIRTIO_9P_XATTR_REPLACE",
+        "p9_xattrwalk_payload",
+        "p9_xattrcreate_payload",
+    ] {
+        assert!(
+            !device_test.contains(symbol),
+            "tests/fs9p_device.rs should delegate extended attribute behavior to tests/fs9p_xattr.rs; found {symbol}"
+        );
+    }
 }
 
 #[test]
@@ -418,7 +463,7 @@ fn virtio_9p_device_tests_delegate_lock_cases() {
     ] {
         assert!(
             !device_test.contains(symbol),
-            "tests/fs9p_device.rs should delegate 9P lock behavior to tests/fs9p_lock.rs"
+            "tests/fs9p_device.rs should delegate 9P lock behavior to tests/fs9p_lock.rs; found {symbol}"
         );
     }
 }
