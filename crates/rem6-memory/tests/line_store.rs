@@ -443,6 +443,24 @@ fn line_store_checkpoint_payload_rejects_reserved_field() {
 }
 
 #[test]
+fn line_store_checkpoint_payload_rejects_zero_line_size() {
+    let mut store = LineMemoryStore::new(layout());
+    store
+        .insert_line(Address::new(0x1000), line_data(0x10))
+        .unwrap();
+    let mut payload = LineMemoryCheckpointPayload::from_snapshot(store.snapshot())
+        .unwrap()
+        .encode();
+    payload[LINE_CHECKPOINT_LINE_SIZE_OFFSET..LINE_CHECKPOINT_LINE_SIZE_OFFSET + 8]
+        .copy_from_slice(&0u64.to_le_bytes());
+
+    assert_eq!(
+        LineMemoryCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::ZeroCacheLineSize
+    );
+}
+
+#[test]
 fn line_store_checkpoint_payload_rejects_short_payload() {
     let mut store = LineMemoryStore::new(layout());
     store
@@ -479,6 +497,30 @@ fn line_store_checkpoint_payload_rejects_declared_line_count_mismatch() {
         MemoryError::InvalidLineCheckpointPayloadSize {
             expected: LINE_CHECKPOINT_HEADER_SIZE + LINE_CHECKPOINT_ENTRY_BYTES * 2,
             actual: LINE_CHECKPOINT_HEADER_SIZE + LINE_CHECKPOINT_ENTRY_BYTES
+        }
+    );
+}
+
+#[test]
+fn line_store_checkpoint_payload_rejects_extra_line_record() {
+    let mut store = LineMemoryStore::new(layout());
+    store
+        .insert_line(Address::new(0x1000), line_data(0x10))
+        .unwrap();
+    store
+        .insert_line(Address::new(0x2000), line_data(0x80))
+        .unwrap();
+    let mut payload = LineMemoryCheckpointPayload::from_snapshot(store.snapshot())
+        .unwrap()
+        .encode();
+    payload[LINE_CHECKPOINT_COUNT_OFFSET..LINE_CHECKPOINT_COUNT_OFFSET + 4]
+        .copy_from_slice(&1u32.to_le_bytes());
+
+    assert_eq!(
+        LineMemoryCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::InvalidLineCheckpointPayloadSize {
+            expected: LINE_CHECKPOINT_HEADER_SIZE + LINE_CHECKPOINT_ENTRY_BYTES,
+            actual: LINE_CHECKPOINT_HEADER_SIZE + LINE_CHECKPOINT_ENTRY_BYTES * 2
         }
     );
 }
@@ -530,6 +572,7 @@ fn line_store_rejects_requests_with_different_line_layout() {
 const LINE_CHECKPOINT_HEADER_SIZE: usize = 24;
 const LINE_CHECKPOINT_ENTRY_BYTES: usize = 72;
 const LINE_CHECKPOINT_VERSION_OFFSET: usize = 4;
+const LINE_CHECKPOINT_LINE_SIZE_OFFSET: usize = 8;
 const LINE_CHECKPOINT_COUNT_OFFSET: usize = 16;
 const LINE_CHECKPOINT_RESERVED_OFFSET: usize = 20;
 
