@@ -4,7 +4,6 @@ use std::sync::{Arc, Mutex};
 use rem6_kernel::Tick;
 use rem6_memory::ByteMask;
 
-use crate::fs9p_device_helpers::{counted_data_payload, read_data_slice};
 use crate::fs9p_lock::Virtio9pLockTable;
 use crate::fs9p_namespace::{
     getattr_payload, qid_payload, validate_file_name, Virtio9pFidPath, Virtio9pFidState,
@@ -749,127 +748,6 @@ impl Virtio9pDevice {
             return Ok(Ok(()));
         }
         Ok(Err(VIRTIO_9P_EBADF))
-    }
-
-    fn handle_read(&self, request: &Virtio9pRequest) -> Result<Result<Vec<u8>, u32>, VirtioError> {
-        let read = parse_read_request(request)?;
-        let Some(fid) = self
-            .fids
-            .lock()
-            .expect("virtio 9p fid lock")
-            .get(&read.fid)
-            .cloned()
-        else {
-            return Ok(Err(VIRTIO_9P_EBADF));
-        };
-        if let Some(data) = fid.xattr_data() {
-            let data = read_data_slice(data, read.offset, self.counted_data_limit(read.count))
-                .ok_or(VirtioError::Virtio9pPayloadLengthOverflow)?;
-            return Ok(Ok(counted_data_payload(data)));
-        }
-        if !fid.can_read() {
-            return Ok(Err(VIRTIO_9P_EBADF));
-        }
-        let Some(node) = fid.node() else {
-            return Ok(Err(VIRTIO_9P_EBADF));
-        };
-        let namespace = self.namespace.lock().expect("virtio 9p namespace lock");
-        let Some(data) =
-            namespace.read_file(node, read.offset, self.counted_data_limit(read.count))
-        else {
-            return Ok(Err(VIRTIO_9P_EBADF));
-        };
-        Ok(Ok(counted_data_payload(data)))
-    }
-
-    fn handle_write(&self, request: &Virtio9pRequest) -> Result<Result<Vec<u8>, u32>, VirtioError> {
-        let write = parse_write_request(request)?;
-        let fid = {
-            let mut fids = self.fids.lock().expect("virtio 9p fid lock");
-            let Some(fid) = fids.get_mut(&write.fid) else {
-                return Ok(Err(VIRTIO_9P_EBADF));
-            };
-            if let Some(bytes) = fid.write_xattr_data(write.offset, &write.data) {
-                return Ok(Ok(bytes.to_le_bytes().to_vec()));
-            }
-            fid.clone()
-        };
-        if !fid.can_write() {
-            return Ok(Err(VIRTIO_9P_EBADF));
-        }
-        let Some(node) = fid.node() else {
-            return Ok(Err(VIRTIO_9P_EBADF));
-        };
-        let mut namespace = self.namespace.lock().expect("virtio 9p namespace lock");
-        let offset = if fid.append_writes() {
-            let Some(metadata) = namespace.metadata(node) else {
-                return Ok(Err(VIRTIO_9P_EBADF));
-            };
-            metadata.size()
-        } else {
-            write.offset
-        };
-        let Some(bytes) = namespace.write_file(node, offset, &write.data) else {
-            return Ok(Err(VIRTIO_9P_EBADF));
-        };
-        Ok(Ok(bytes.to_le_bytes().to_vec()))
-    }
-
-    fn handle_clunk(&self, request: &Virtio9pRequest) -> Result<Result<(), u32>, VirtioError> {
-        let fid = parse_clunk_request(request)?;
-        let removed = self.fids.lock().expect("virtio 9p fid lock").remove(&fid);
-        let Some(removed) = removed else {
-            return Ok(Err(VIRTIO_9P_EBADF));
-        };
-        self.locks
-            .lock()
-            .expect("virtio 9p lock table")
-            .remove_fid(fid);
-        if let Some((node, name, data, policy)) = removed.into_xattr_commit() {
-            if let Err(errno) = self
-                .namespace
-                .lock()
-                .expect("virtio 9p namespace lock")
-                .write_xattr(node, name, data, policy)
-            {
-                return Ok(Err(errno));
-            }
-        }
-        Ok(Ok(()))
-    }
-
-    fn handle_remove(&self, request: &Virtio9pRequest) -> Result<Result<(), u32>, VirtioError> {
-        let remove_fid = parse_remove_request(request)?;
-        let Some(fid) = self
-            .fids
-            .lock()
-            .expect("virtio 9p fid lock")
-            .remove(&remove_fid)
-        else {
-            return Ok(Err(VIRTIO_9P_EBADF));
-        };
-        self.locks
-            .lock()
-            .expect("virtio 9p lock table")
-            .remove_fid(remove_fid);
-        let Some(node) = fid.node() else {
-            return Ok(Err(VIRTIO_9P_EBADF));
-        };
-        let remove_result = if node == Virtio9pNodeId::Root {
-            Err(VIRTIO_9P_EBADF)
-        } else {
-            let mut namespace = self.namespace.lock().expect("virtio 9p namespace lock");
-            namespace.remove_node_by_fid_path(node, fid.path())
-        };
-        match remove_result {
-            Ok(_) => {
-                if self.node_is_removed(node) {
-                    self.remove_fids_for_node(node);
-                }
-                Ok(Ok(()))
-            }
-            Err(error) => Ok(Err(error)),
-        }
     }
 
     fn node_is_removed(&self, node: Virtio9pNodeId) -> bool {
