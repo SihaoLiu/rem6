@@ -305,6 +305,179 @@ fn address_decoder_checkpoint_payload_round_trips_sparse_and_interleaved_regions
 }
 
 #[test]
+fn address_decoder_checkpoint_payload_uses_stable_single_region_bytes() {
+    let target = MemoryTargetId::new(3);
+    let mut decoder = AddressDecoder::new();
+    decoder
+        .insert(
+            target,
+            Address::new(0x1000),
+            AccessSize::new(0x2000).unwrap(),
+        )
+        .unwrap();
+    let snapshot = decoder.snapshot();
+    let payload = AddressDecoderCheckpointPayload::from_snapshot(snapshot.clone()).unwrap();
+    let mut stable_payload = vec![
+        b'M', b'D', b'E', b'C', 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0,
+        0, 0,
+    ];
+    stable_payload.extend_from_slice(&0x1000_u64.to_le_bytes());
+    stable_payload.extend_from_slice(&0x2000_u64.to_le_bytes());
+    stable_payload.extend_from_slice(&0_u32.to_le_bytes());
+    stable_payload.extend_from_slice(&0_u32.to_le_bytes());
+
+    let decoded = AddressDecoderCheckpointPayload::decode(&stable_payload).unwrap();
+    let restored = AddressDecoder::from_snapshot(decoded.snapshot()).unwrap();
+
+    assert_eq!(payload.encode(), stable_payload);
+    assert_eq!(decoded.snapshot(), &snapshot);
+    assert_eq!(restored.decode(Address::new(0x1800)).unwrap(), target);
+}
+
+#[test]
+fn address_decoder_checkpoint_payload_rejects_invalid_magic() {
+    let mut decoder = AddressDecoder::new();
+    decoder
+        .insert(
+            MemoryTargetId::new(3),
+            Address::new(0x1000),
+            AccessSize::new(0x2000).unwrap(),
+        )
+        .unwrap();
+    let mut payload = AddressDecoderCheckpointPayload::from_snapshot(decoder.snapshot())
+        .unwrap()
+        .encode();
+    payload[0] = b'X';
+
+    assert_eq!(
+        AddressDecoderCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::InvalidDecoderCheckpointMagic
+    );
+}
+
+#[test]
+fn address_decoder_checkpoint_payload_rejects_unsupported_version() {
+    let mut decoder = AddressDecoder::new();
+    decoder
+        .insert(
+            MemoryTargetId::new(3),
+            Address::new(0x1000),
+            AccessSize::new(0x2000).unwrap(),
+        )
+        .unwrap();
+    let mut payload = AddressDecoderCheckpointPayload::from_snapshot(decoder.snapshot())
+        .unwrap()
+        .encode();
+    payload[DECODER_CHECKPOINT_VERSION_OFFSET..DECODER_CHECKPOINT_VERSION_OFFSET + 4]
+        .copy_from_slice(&2_u32.to_le_bytes());
+
+    assert_eq!(
+        AddressDecoderCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::UnsupportedDecoderCheckpointVersion { version: 2 }
+    );
+}
+
+#[test]
+fn address_decoder_checkpoint_payload_rejects_reserved_fields() {
+    let mut decoder = AddressDecoder::new();
+    decoder
+        .insert(
+            MemoryTargetId::new(3),
+            Address::new(0x1000),
+            AccessSize::new(0x2000).unwrap(),
+        )
+        .unwrap();
+    for offset in [
+        DECODER_CHECKPOINT_RESERVED_OFFSET,
+        DECODER_CHECKPOINT_RESERVED2_OFFSET,
+    ] {
+        let mut payload = AddressDecoderCheckpointPayload::from_snapshot(decoder.snapshot())
+            .unwrap()
+            .encode();
+        payload[offset..offset + 4].copy_from_slice(&1_u32.to_le_bytes());
+
+        assert_eq!(
+            AddressDecoderCheckpointPayload::decode(&payload).unwrap_err(),
+            MemoryError::InvalidDecoderCheckpointReserved { value: 1 }
+        );
+    }
+}
+
+#[test]
+fn address_decoder_checkpoint_payload_rejects_short_payload() {
+    let mut decoder = AddressDecoder::new();
+    decoder
+        .insert(
+            MemoryTargetId::new(3),
+            Address::new(0x1000),
+            AccessSize::new(0x2000).unwrap(),
+        )
+        .unwrap();
+    let mut payload = AddressDecoderCheckpointPayload::from_snapshot(decoder.snapshot())
+        .unwrap()
+        .encode();
+    payload.truncate(DECODER_CHECKPOINT_HEADER_SIZE - 1);
+
+    assert_eq!(
+        AddressDecoderCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::InvalidDecoderCheckpointPayloadSize {
+            expected: DECODER_CHECKPOINT_HEADER_SIZE,
+            actual: DECODER_CHECKPOINT_HEADER_SIZE - 1
+        }
+    );
+}
+
+#[test]
+fn address_decoder_checkpoint_payload_rejects_declared_region_count_mismatch() {
+    let mut decoder = AddressDecoder::new();
+    decoder
+        .insert(
+            MemoryTargetId::new(3),
+            Address::new(0x1000),
+            AccessSize::new(0x2000).unwrap(),
+        )
+        .unwrap();
+    let mut payload = AddressDecoderCheckpointPayload::from_snapshot(decoder.snapshot())
+        .unwrap()
+        .encode();
+    payload[DECODER_CHECKPOINT_COUNT_OFFSET..DECODER_CHECKPOINT_COUNT_OFFSET + 4]
+        .copy_from_slice(&2_u32.to_le_bytes());
+
+    assert_eq!(
+        AddressDecoderCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::InvalidDecoderCheckpointPayloadSize {
+            expected: DECODER_CHECKPOINT_HEADER_SIZE + DECODER_CHECKPOINT_REGION_RECORD_SIZE + 4,
+            actual: DECODER_CHECKPOINT_HEADER_SIZE + DECODER_CHECKPOINT_REGION_RECORD_SIZE
+        }
+    );
+}
+
+#[test]
+fn address_decoder_checkpoint_payload_rejects_extra_region_record() {
+    let mut decoder = AddressDecoder::new();
+    decoder
+        .insert(
+            MemoryTargetId::new(3),
+            Address::new(0x1000),
+            AccessSize::new(0x2000).unwrap(),
+        )
+        .unwrap();
+    let mut payload = AddressDecoderCheckpointPayload::from_snapshot(decoder.snapshot())
+        .unwrap()
+        .encode();
+    payload[DECODER_CHECKPOINT_COUNT_OFFSET..DECODER_CHECKPOINT_COUNT_OFFSET + 4]
+        .copy_from_slice(&0_u32.to_le_bytes());
+
+    assert_eq!(
+        AddressDecoderCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::InvalidDecoderCheckpointPayloadSize {
+            expected: DECODER_CHECKPOINT_HEADER_SIZE,
+            actual: DECODER_CHECKPOINT_HEADER_SIZE + DECODER_CHECKPOINT_REGION_RECORD_SIZE
+        }
+    );
+}
+
+#[test]
 fn address_decoder_checkpoint_payload_rejects_overlapping_region_records() {
     let mut decoder = AddressDecoder::new();
     decoder
@@ -329,6 +502,13 @@ fn address_decoder_checkpoint_payload_rejects_overlapping_region_records() {
         }
     );
 }
+
+const DECODER_CHECKPOINT_HEADER_SIZE: usize = 20;
+const DECODER_CHECKPOINT_REGION_RECORD_SIZE: usize = 32;
+const DECODER_CHECKPOINT_VERSION_OFFSET: usize = 4;
+const DECODER_CHECKPOINT_COUNT_OFFSET: usize = 8;
+const DECODER_CHECKPOINT_RESERVED_OFFSET: usize = 12;
+const DECODER_CHECKPOINT_RESERVED2_OFFSET: usize = 16;
 
 fn duplicate_first_decoder_checkpoint_region(mut payload: Vec<u8>) -> Vec<u8> {
     let region_count_offset = 8;
