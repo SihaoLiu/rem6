@@ -399,13 +399,19 @@ fn memory_response_checkpoint_payload_uses_stable_completed_data_bytes() {
     .unwrap();
     let completed = MemoryResponse::completed(&read, Some(vec![0xaa, 0xbb])).unwrap();
 
+    let stable_payload = vec![
+        b'M', b'R', b'E', b'S', 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0, 36, 0,
+        0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0xaa, 0xbb,
+    ];
+    let decoded = MemoryResponseCheckpointPayload::decode(&stable_payload).unwrap();
+    let restored = MemoryResponse::from_snapshot(decoded.snapshot()).unwrap();
+
     assert_eq!(
         MemoryResponseCheckpointPayload::from_response(&completed).encode(),
-        vec![
-            b'M', b'R', b'E', b'S', 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0, 36,
-            0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0xaa, 0xbb,
-        ]
+        stable_payload
     );
+    assert_eq!(decoded.snapshot(), &completed.snapshot());
+    assert_eq!(restored, completed);
 }
 
 #[test]
@@ -421,13 +427,19 @@ fn memory_response_checkpoint_payload_uses_stable_completed_without_data_bytes()
     .unwrap();
     let completed = MemoryResponse::completed(&write, None).unwrap();
 
+    let stable_payload = vec![
+        b'M', b'R', b'E', b'S', 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0, 37, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    ];
+    let decoded = MemoryResponseCheckpointPayload::decode(&stable_payload).unwrap();
+    let restored = MemoryResponse::from_snapshot(decoded.snapshot()).unwrap();
+
     assert_eq!(
         MemoryResponseCheckpointPayload::from_response(&completed).encode(),
-        vec![
-            b'M', b'R', b'E', b'S', 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0, 37,
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        ]
+        stable_payload
     );
+    assert_eq!(decoded.snapshot(), &completed.snapshot());
+    assert_eq!(restored, completed);
 }
 
 #[test]
