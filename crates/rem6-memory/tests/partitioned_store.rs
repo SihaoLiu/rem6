@@ -1,8 +1,8 @@
 use rem6_memory::{
     AccessSize, Address, AddressInterleave, AddressMapRegion, AddressRange, AgentId, ByteMask,
     CacheLineLayout, LineMemorySnapshot, MemoryError, MemoryLineSnapshot, MemoryPartitionSnapshot,
-    MemoryRequest, MemoryRequestId, MemoryTargetId, PartitionedMemorySnapshot,
-    PartitionedMemoryStore, ResponseStatus,
+    MemoryRequest, MemoryRequestId, MemoryTargetId, PartitionedMemoryCheckpointPayload,
+    PartitionedMemorySnapshot, PartitionedMemoryStore, ResponseStatus,
 };
 
 fn layout() -> CacheLineLayout {
@@ -199,6 +199,46 @@ fn partitioned_store_snapshots_and_restores_regions_partitions_and_lines() {
             .data()
             .unwrap(),
         &[0x14, 0x15, 0x16, 0x17]
+    );
+}
+
+#[test]
+fn partitioned_store_checkpoint_payload_round_trips_snapshot() {
+    let (store, low, high) = mapped_store();
+    let snapshot = store.snapshot();
+    let payload = PartitionedMemoryCheckpointPayload::from_snapshot(snapshot.clone()).unwrap();
+
+    let decoded = PartitionedMemoryCheckpointPayload::decode(payload.encode().as_slice()).unwrap();
+    let restored = PartitionedMemoryStore::from_snapshot(decoded.snapshot()).unwrap();
+
+    assert_eq!(decoded.snapshot(), &snapshot);
+    assert_eq!(restored.regions(), snapshot.regions());
+    assert_eq!(
+        restored.line_data(low, Address::new(0x1000)).unwrap(),
+        line_data(0x10)
+    );
+    assert_eq!(
+        restored.line_data(high, Address::new(0x8000)).unwrap(),
+        line_data(0x80)
+    );
+}
+
+#[test]
+fn partitioned_store_checkpoint_payload_rejects_duplicate_partition_records() {
+    let target = MemoryTargetId::new(11);
+    let mut store = PartitionedMemoryStore::new();
+    store.add_partition(target, layout()).unwrap();
+    store
+        .insert_line(target, Address::new(0x1000), line_data(0x10))
+        .unwrap();
+    let payload = PartitionedMemoryCheckpointPayload::from_snapshot(store.snapshot())
+        .unwrap()
+        .encode();
+    let duplicate_payload = duplicate_first_partition_checkpoint_record(payload);
+
+    assert_eq!(
+        PartitionedMemoryCheckpointPayload::decode(&duplicate_payload).unwrap_err(),
+        MemoryError::DuplicateMemoryTarget { target }
     );
 }
 
@@ -456,11 +496,14 @@ fn partitioned_store_restores_modulo_interleaved_regions() {
         .unwrap();
 
     let snapshot = store.snapshot();
-    let decoded = store.decode_detail(Address::new(0x0044)).unwrap();
-    assert_eq!(decoded.target(), channel_one);
-    assert_eq!(decoded.offset(), 4);
+    let payload = PartitionedMemoryCheckpointPayload::from_snapshot(snapshot.clone()).unwrap();
+    let decoded_payload =
+        PartitionedMemoryCheckpointPayload::decode(payload.encode().as_slice()).unwrap();
+    let decoded_address = store.decode_detail(Address::new(0x0044)).unwrap();
+    assert_eq!(decoded_address.target(), channel_one);
+    assert_eq!(decoded_address.offset(), 4);
 
-    let mut restored = PartitionedMemoryStore::from_snapshot(&snapshot).unwrap();
+    let mut restored = PartitionedMemoryStore::from_snapshot(decoded_payload.snapshot()).unwrap();
     assert_eq!(
         restored
             .respond(&read(0x0044, 4, 21))
@@ -486,4 +529,19 @@ fn partitioned_store_restores_modulo_interleaved_regions() {
         channel_one
     );
     assert!(restored.regions()[0].1.is_interleaved());
+}
+
+fn duplicate_first_partition_checkpoint_record(mut payload: Vec<u8>) -> Vec<u8> {
+    let partition_count_offset = 8;
+    payload[partition_count_offset..partition_count_offset + 4]
+        .copy_from_slice(&2_u32.to_le_bytes());
+    let first_record_offset = 24;
+    let size_offset = first_record_offset + 8;
+    let mut size_bytes = [0_u8; 8];
+    size_bytes.copy_from_slice(&payload[size_offset..size_offset + 8]);
+    let line_payload_bytes = u64::from_le_bytes(size_bytes) as usize;
+    let record_bytes = 16 + line_payload_bytes;
+    let first_record = payload[first_record_offset..first_record_offset + record_bytes].to_vec();
+    payload.splice(first_record_offset..first_record_offset, first_record);
+    payload
 }

@@ -5,12 +5,14 @@ use std::fmt;
 mod address_map;
 mod line_checkpoint;
 mod ordering;
+mod partition_checkpoint;
 mod request;
 mod translation;
 mod translation_tlb;
 
 pub use address_map::{AddressDecode, AddressDecoder, AddressInterleave, AddressMapRegion};
 pub use line_checkpoint::LineMemoryCheckpointPayload;
+pub use partition_checkpoint::PartitionedMemoryCheckpointPayload;
 pub use request::{MemoryRequest, MemoryResponse, ResponseStatus};
 pub use translation::{
     TranslationAccessKind, TranslationCompletion, TranslationError, TranslationFault,
@@ -342,6 +344,28 @@ pub enum MemoryError {
         value: usize,
         maximum: usize,
     },
+    InvalidPartitionCheckpointPayloadSize {
+        expected: usize,
+        actual: usize,
+    },
+    InvalidPartitionCheckpointMagic,
+    UnsupportedPartitionCheckpointVersion {
+        version: u32,
+    },
+    InvalidPartitionCheckpointReserved {
+        value: u32,
+    },
+    InvalidPartitionCheckpointInterleaveFlag {
+        value: u32,
+    },
+    InvalidPartitionCheckpointUsize {
+        value: u64,
+    },
+    PartitionCheckpointValueTooLarge {
+        field: &'static str,
+        value: usize,
+        maximum: usize,
+    },
     UnmappedAddress {
         address: Address,
     },
@@ -525,6 +549,38 @@ impl fmt::Display for MemoryError {
             } => write!(
                 formatter,
                 "line-memory checkpoint {field} value {value} exceeds maximum {maximum}"
+            ),
+            Self::InvalidPartitionCheckpointPayloadSize { expected, actual } => write!(
+                formatter,
+                "partitioned-memory checkpoint payload has {actual} bytes; expected {expected}"
+            ),
+            Self::InvalidPartitionCheckpointMagic => write!(
+                formatter,
+                "partitioned-memory checkpoint payload has invalid magic"
+            ),
+            Self::UnsupportedPartitionCheckpointVersion { version } => write!(
+                formatter,
+                "partitioned-memory checkpoint payload version {version} is not supported"
+            ),
+            Self::InvalidPartitionCheckpointReserved { value } => write!(
+                formatter,
+                "partitioned-memory checkpoint reserved field has nonzero value {value}"
+            ),
+            Self::InvalidPartitionCheckpointInterleaveFlag { value } => write!(
+                formatter,
+                "partitioned-memory checkpoint interleave flag {value} is invalid"
+            ),
+            Self::InvalidPartitionCheckpointUsize { value } => write!(
+                formatter,
+                "partitioned-memory checkpoint usize value {value} cannot fit this target"
+            ),
+            Self::PartitionCheckpointValueTooLarge {
+                field,
+                value,
+                maximum,
+            } => write!(
+                formatter,
+                "partitioned-memory checkpoint {field} value {value} exceeds maximum {maximum}"
             ),
             Self::UnmappedAddress { address } => {
                 write!(formatter, "address {:#x} is not mapped", address.get())
