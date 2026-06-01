@@ -310,6 +310,19 @@ pub struct InOrderPipelineRunSummary {
 }
 
 impl InOrderPipelineRunSummary {
+    const EMPTY: Self = Self {
+        cycle_count: 0,
+        first_cycle: None,
+        last_cycle: None,
+        advanced_count: 0,
+        retired_count: 0,
+        flushed_count: 0,
+        resource_blocked_count: 0,
+        ordering_blocked_count: 0,
+        redirect_count: 0,
+        state_changed_cycle_count: 0,
+    };
+
     pub fn from_cycle_records<I>(records: I) -> Self
     where
         I: IntoIterator<Item = InOrderPipelineCycleRecord>,
@@ -321,18 +334,7 @@ impl InOrderPipelineRunSummary {
     where
         I: IntoIterator<Item = InOrderPipelineCycleSummary>,
     {
-        let mut summary = Self {
-            cycle_count: 0,
-            first_cycle: None,
-            last_cycle: None,
-            advanced_count: 0,
-            retired_count: 0,
-            flushed_count: 0,
-            resource_blocked_count: 0,
-            ordering_blocked_count: 0,
-            redirect_count: 0,
-            state_changed_cycle_count: 0,
-        };
+        let mut summary = Self::EMPTY;
 
         for cycle in summaries {
             summary.cycle_count += 1;
@@ -362,8 +364,10 @@ impl InOrderPipelineRunSummary {
         summary
     }
 
-    pub fn merge(self, other: Self) -> Self {
-        Self {
+    pub fn merge_disjoint(self, other: Self) -> Result<Self, InOrderPipelineError> {
+        validate_disjoint_run_summary_windows(self, other)?;
+
+        Ok(Self {
             cycle_count: self.cycle_count + other.cycle_count,
             first_cycle: merge_min_cycle(self.first_cycle, other.first_cycle),
             last_cycle: merge_max_cycle(self.last_cycle, other.last_cycle),
@@ -375,7 +379,7 @@ impl InOrderPipelineRunSummary {
             redirect_count: self.redirect_count + other.redirect_count,
             state_changed_cycle_count: self.state_changed_cycle_count
                 + other.state_changed_cycle_count,
-        }
+        })
     }
 
     pub const fn is_empty(self) -> bool {
@@ -437,6 +441,31 @@ fn merge_max_cycle(left: Option<u64>, right: Option<u64>) -> Option<u64> {
         (Some(cycle), None) | (None, Some(cycle)) => Some(cycle),
         (None, None) => None,
     }
+}
+
+fn validate_disjoint_run_summary_windows(
+    left: InOrderPipelineRunSummary,
+    right: InOrderPipelineRunSummary,
+) -> Result<(), InOrderPipelineError> {
+    let (Some(left_first), Some(left_last), Some(right_first), Some(right_last)) = (
+        left.first_cycle(),
+        left.last_cycle(),
+        right.first_cycle(),
+        right.last_cycle(),
+    ) else {
+        return Ok(());
+    };
+
+    if left_first <= right_last && right_first <= left_last {
+        return Err(InOrderPipelineError::OverlappingRunSummaryMerge {
+            left_first_cycle: left_first,
+            left_last_cycle: left_last,
+            right_first_cycle: right_first,
+            right_last_cycle: right_last,
+        });
+    }
+
+    Ok(())
 }
 
 impl InOrderPipelineCycleSummary {
@@ -794,6 +823,12 @@ pub enum InOrderPipelineError {
     CycleCursorOverflow {
         cycle: u64,
     },
+    OverlappingRunSummaryMerge {
+        left_first_cycle: u64,
+        left_last_cycle: u64,
+        right_first_cycle: u64,
+        right_last_cycle: u64,
+    },
 }
 
 impl fmt::Display for InOrderPipelineError {
@@ -830,6 +865,15 @@ impl fmt::Display for InOrderPipelineError {
             Self::CycleCursorOverflow { cycle } => {
                 write!(formatter, "in-order pipeline cycle cursor {cycle} cannot advance")
             }
+            Self::OverlappingRunSummaryMerge {
+                left_first_cycle,
+                left_last_cycle,
+                right_first_cycle,
+                right_last_cycle,
+            } => write!(
+                formatter,
+                "in-order run summary windows overlap: left {left_first_cycle}..={left_last_cycle}, right {right_first_cycle}..={right_last_cycle}"
+            ),
         }
     }
 }

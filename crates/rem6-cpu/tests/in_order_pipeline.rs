@@ -414,6 +414,49 @@ fn in_order_pipeline_run_summary_aggregates_cycle_records() {
 }
 
 #[test]
+fn in_order_pipeline_run_summary_aggregates_redirect_flush_and_ordering_counts() {
+    let mut redirect_state = InOrderPipelineState::new(config_with_decode_width(1));
+    redirect_state
+        .replace_in_flight([
+            instruction(29, InOrderPipelineStage::Commit),
+            instruction(30, InOrderPipelineStage::Execute),
+            instruction(31, InOrderPipelineStage::Decode),
+            instruction(32, InOrderPipelineStage::Fetch2),
+        ])
+        .unwrap();
+    let redirect = InOrderBranchRedirect::new(30, InOrderPipelineStage::Execute, 0x2000);
+    let redirect_record = redirect_state
+        .try_advance_cycle_recorded_with_redirect(Some(redirect))
+        .unwrap();
+
+    let blocked_snapshot = InOrderPipelineSnapshot::with_cycle(
+        config_with_decode_width(1),
+        10,
+        [
+            instruction(40, InOrderPipelineStage::Decode),
+            instruction(41, InOrderPipelineStage::Decode),
+            instruction(42, InOrderPipelineStage::Execute),
+        ],
+    );
+    let mut blocked_state = InOrderPipelineState::restore(blocked_snapshot).unwrap();
+    let blocked_record = blocked_state.advance_cycle_recorded();
+
+    let summary = InOrderPipelineRunSummary::from_cycle_records([redirect_record])
+        .merge_disjoint(InOrderPipelineRunSummary::from_cycle_records([
+            blocked_record,
+        ]))
+        .unwrap();
+
+    assert_eq!(summary.cycle_count(), 2);
+    assert_eq!(summary.first_cycle(), Some(0));
+    assert_eq!(summary.last_cycle(), Some(10));
+    assert_eq!(summary.redirect_count(), 1);
+    assert_eq!(summary.flushed_count(), 2);
+    assert_eq!(summary.resource_blocked_count(), 1);
+    assert_eq!(summary.ordering_blocked_count(), 1);
+}
+
+#[test]
 fn in_order_pipeline_empty_run_summary_has_no_cycle_window() {
     let summary = InOrderPipelineRunSummary::from_cycle_summaries([]);
 
@@ -426,7 +469,7 @@ fn in_order_pipeline_empty_run_summary_has_no_cycle_window() {
 }
 
 #[test]
-fn in_order_pipeline_run_summary_merges_partial_summaries() {
+fn in_order_pipeline_run_summary_merges_disjoint_partial_summaries() {
     let mut state = InOrderPipelineState::new(config_with_decode_width(1));
     state
         .replace_in_flight([
@@ -439,8 +482,10 @@ fn in_order_pipeline_run_summary_merges_partial_summaries() {
     let first = InOrderPipelineRunSummary::from_cycle_records([state.advance_cycle_recorded()]);
     let second = InOrderPipelineRunSummary::from_cycle_records([state.advance_cycle_recorded()]);
     let merged = InOrderPipelineRunSummary::from_cycle_summaries([])
-        .merge(first)
-        .merge(second);
+        .merge_disjoint(first)
+        .unwrap()
+        .merge_disjoint(second)
+        .unwrap();
 
     assert!(!merged.is_empty());
     assert_eq!(merged.cycle_count(), 2);
@@ -450,6 +495,30 @@ fn in_order_pipeline_run_summary_merges_partial_summaries() {
     assert_eq!(merged.retired_count(), 1);
     assert_eq!(merged.resource_blocked_count(), 1);
     assert_eq!(merged.state_changed_cycle_count(), 2);
+}
+
+#[test]
+fn in_order_pipeline_run_summary_rejects_overlapping_partial_summaries() {
+    let left = InOrderPipelineRunSummary::from_cycle_summaries([InOrderPipelineState::new(
+        config_with_decode_width(1),
+    )
+    .advance_cycle_recorded()
+    .summary()]);
+    let right = InOrderPipelineRunSummary::from_cycle_summaries([InOrderPipelineState::new(
+        config_with_decode_width(1),
+    )
+    .advance_cycle_recorded()
+    .summary()]);
+
+    assert_eq!(
+        left.merge_disjoint(right).unwrap_err(),
+        InOrderPipelineError::OverlappingRunSummaryMerge {
+            left_first_cycle: 0,
+            left_last_cycle: 0,
+            right_first_cycle: 0,
+            right_last_cycle: 0,
+        }
+    );
 }
 
 #[test]
