@@ -604,7 +604,8 @@ fn in_order_pipeline_checkpoint_payload_rejects_count_size_mismatches() {
     assert_eq!(
         InOrderPipelineCheckpointPayload::decode(&missing_instruction_payload).unwrap_err(),
         InOrderPipelineError::InvalidCheckpointPayloadSize {
-            expected: 37 + 2 * IN_ORDER_CHECKPOINT_INSTRUCTION_RECORD_BYTES,
+            expected: IN_ORDER_CHECKPOINT_FIRST_INSTRUCTION_OFFSET
+                + 2 * IN_ORDER_CHECKPOINT_INSTRUCTION_RECORD_BYTES,
             actual: SINGLE_IN_ORDER_CHECKPOINT_BYTES.len(),
         }
     );
@@ -649,7 +650,7 @@ fn in_order_pipeline_checkpoint_payload_rejects_malformed_payloads() {
     assert_eq!(
         InOrderPipelineCheckpointPayload::decode(b"bad").unwrap_err(),
         InOrderPipelineError::InvalidCheckpointPayloadSize {
-            expected: 37,
+            expected: IN_ORDER_CHECKPOINT_FIRST_INSTRUCTION_OFFSET,
             actual: 3,
         }
     );
