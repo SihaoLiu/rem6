@@ -2669,7 +2669,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
 - Memory line-store tests cover independent line reads, masked writes, AMO
   read-modify-write responses, writeback replacement, request shape rejection,
   duplicate line-snapshot restore rejection, checkpoint payload binary round
-  trips, duplicate-line payload rejection through snapshot decode validation,
+  trips, stable line checkpoint golden bytes, invalid line checkpoint magic,
+  version, reserved-field, line-size, and exact payload-size rejection,
+  duplicate-line payload rejection through snapshot decode validation,
   partitioned-memory restore propagation of line-snapshot validation,
   address-decoder checkpoint payload round trips for sparse and
   modulo-interleaved regions plus overlapping-region decode rejection, and
