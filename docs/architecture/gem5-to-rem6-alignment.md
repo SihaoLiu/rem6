@@ -1267,8 +1267,8 @@ Implementation evidence through 2026-05-31:
   than the advertised `statfs` `namelen` before state mutation, rejects
   non-empty same-fid rebinding, and preserves empty same-fid walk replies,
   `Tmkdir` creates deterministic directory qids and rejects duplicate names with
-  errno payloads, namespace mutations reject empty names, path separators, and
-  names longer than the advertised `statfs` `namelen` before state mutation,
+  errno payloads, path-name namespace mutations reject empty names, path separators,
+  and names longer than the advertised `statfs` `namelen` before state mutation,
   `Tlcreate` creates named root or child-directory files, rejects occupied names
   without replacing existing nodes, rejects already-open fids before namespace
   mutation, and retargets the directory fid to the opened file,
@@ -1300,8 +1300,9 @@ Implementation evidence through 2026-05-31:
   behavior that keeps surviving linked fids live, `Trename` moves non-directory
   fid-backed nodes into target directories while preserving moved qids and open
   fid access, `Trenameat` renames and moves non-directory nodes across directory
-  fids while preserving the moved file qid and open fid access, replacing
-  target files with explicit target-fid invalidation,
+  fids while preserving the moved file qid and open fid access, treating target
+  hard links to the same file as no-ops and replacing other target files with
+  explicit target-fid invalidation,
   `Tunlinkat` removes named root or child-directory files and invalidates fids
   only when no linked directory entry remains, removes empty directories only
   when `AT_REMOVEDIR` is present, and rejects non-empty directory removal with
@@ -1318,8 +1319,10 @@ Implementation evidence through 2026-05-31:
   preserves unreleased byte ranges when an unlock request covers only the middle
   of an existing lock, `Tgetlock` returns the first conflicting lock or a
   deterministic unlock payload when no conflict exists, `Txattrcreate` converts
-  a target fid into an xattr-write fid with bounded byte writes, honors `XATTR_CREATE` and
-  `XATTR_REPLACE` semantics, rejects invalid flag combinations with `EINVAL`,
+  a target fid into an xattr-write fid with bounded byte writes, validates
+  non-empty xattr names against `statfs` `namelen` without treating slash as a
+  path separator, honors `XATTR_CREATE` and `XATTR_REPLACE` semantics,
+  rejects invalid flag combinations with `EINVAL`,
   `Tclunk` persists the value in the deterministic namespace, and `Txattrwalk`
   returns either a named xattr read fid or a sorted NUL-delimited xattr-name
   list while rejecting occupied destination fids and returning `ENODATA` for
@@ -3318,8 +3321,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   unlinked, `Trename` fid-backed cross-directory file
   moves with preserved open-fid access and qid identity, `Trenameat`
   same-directory renames, cross-directory file moves including same-name moves,
-  preserved moved qids, open-fid access, replacement-target fid invalidation,
-  post-rename directory entries, and old-name walk rejection,
+  preserved moved qids, open-fid access, same-file hardlink target no-ops,
+  replacement-target fid invalidation, post-rename directory entries, and
+  old-name walk rejection,
   `Tunlinkat` root and
   child-directory file removal with post-delete directory and walk checks,
   `Tunlinkat` empty-directory removal through `AT_REMOVEDIR` plus non-empty
@@ -3336,10 +3340,11 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   unsupported ctime-mask rejection, advisory `Tlock` success for open file fids,
   blocked status for overlapping incompatible byte-range locks, full and
   partial unlock requests, `Tgetlock` conflict payloads and no-conflict
-  unlock-payload reporting, `Txattrcreate` value writes and commit-on-clunk persistence with
-  `XATTR_CREATE`/`XATTR_REPLACE` flag handling, `Txattrwalk` named xattr reads,
-  xattr-list read fids, occupied-newfid rejection, missing-xattr `ENODATA`,
-  invalid-flag `EINVAL`, and stale-fid errors,
+  unlock-payload reporting, `Txattrcreate` value writes, slash-bearing xattr
+  names, and commit-on-clunk persistence with `XATTR_CREATE`/`XATTR_REPLACE`
+  flag handling, `Txattrwalk` named xattr reads, xattr-list read fids,
+  occupied-newfid rejection, missing-xattr `ENODATA`, invalid-flag `EINVAL`,
+  and stale-fid errors,
   `Tclunk` fid removal and lock release, `Tremove` lock release while linked
   namespace entries survive, `Tflush` no-op acknowledgement without fid
   mutation, `Tfsync` acknowledgement for existing fids, and stale metadata,

@@ -347,8 +347,11 @@ impl Virtio9pNamespace {
                 None => Ok(Err(VIRTIO_9P_ENOENT)),
             };
         }
-        match old_entries.get(oldname) {
-            Some(Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_)) => {}
+        let old_id = match old_entries.get(oldname) {
+            Some(
+                node
+                @ (Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_)),
+            ) => node.id(),
             Some(Virtio9pNode::Directory(_)) => return Ok(Err(VIRTIO_9P_EBADF)),
             None => return Ok(Err(VIRTIO_9P_ENOENT)),
         };
@@ -356,6 +359,9 @@ impl Virtio9pNamespace {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
         match new_entries.get(newname) {
+            Some(existing) if existing.id() == old_id => {
+                return Ok(Ok(Virtio9pRenameOutcome { replaced: None }));
+            }
             Some(Virtio9pNode::Directory(_)) => return Ok(Err(VIRTIO_9P_EEXIST)),
             Some(Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_))
             | None => {}
@@ -708,7 +714,7 @@ impl Virtio9pNamespace {
         name: &str,
         policy: Virtio9pXattrWritePolicy,
     ) -> Result<(), u32> {
-        validate_file_name(VIRTIO_9P_TXATTRCREATE, name).map_err(|_| VIRTIO_9P_EBADF)?;
+        validate_xattr_name(VIRTIO_9P_TXATTRCREATE, name).map_err(|_| VIRTIO_9P_EBADF)?;
         let exists = self
             .node_xattrs(node)
             .ok_or(VIRTIO_9P_EBADF)?
@@ -723,7 +729,7 @@ impl Virtio9pNamespace {
         data: Vec<u8>,
         policy: Virtio9pXattrWritePolicy,
     ) -> Result<(), u32> {
-        validate_file_name(VIRTIO_9P_TXATTRCREATE, &name).map_err(|_| VIRTIO_9P_EBADF)?;
+        validate_xattr_name(VIRTIO_9P_TXATTRCREATE, &name).map_err(|_| VIRTIO_9P_EBADF)?;
         if let Virtio9pNodeId::File(path) = node {
             let exists = find_file(&self.entries, path)
                 .ok_or(VIRTIO_9P_EBADF)?
@@ -1235,6 +1241,16 @@ fn take_file_node_by_id(
 
 pub(crate) fn validate_file_name(message_type: u8, name: &str) -> Result<(), VirtioError> {
     if name.is_empty() || name.len() > VIRTIO_9P_NAME_MAX as usize || name.contains('/') {
+        return Err(VirtioError::InvalidVirtio9pPayload {
+            message_type,
+            bytes: name.len(),
+        });
+    }
+    Ok(())
+}
+
+fn validate_xattr_name(message_type: u8, name: &str) -> Result<(), VirtioError> {
+    if name.is_empty() || name.len() > VIRTIO_9P_NAME_MAX as usize {
         return Err(VirtioError::InvalidVirtio9pPayload {
             message_type,
             bytes: name.len(),
