@@ -464,6 +464,31 @@ fn virtio_9p_device_tests_delegate_directory_read_cases() {
 }
 
 #[test]
+fn virtio_9p_device_tests_delegate_sync_cases() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let device_test = fs::read_to_string(crate_dir.join("tests/fs9p_device.rs")).unwrap();
+    let sync_test = crate_dir.join("tests/fs9p_sync.rs");
+
+    assert!(
+        sync_test.exists(),
+        "9P sync tests belong in tests/fs9p_sync.rs"
+    );
+    for symbol in [
+        "VIRTIO_9P_TFLUSH",
+        "VIRTIO_9P_RFLUSH",
+        "VIRTIO_9P_TFSYNC",
+        "VIRTIO_9P_RFSYNC",
+        "p9_flush_payload",
+        "p9_fsync_payload",
+    ] {
+        assert!(
+            !device_test.contains(symbol),
+            "tests/fs9p_device.rs should delegate 9P sync behavior to tests/fs9p_sync.rs; found {symbol}"
+        );
+    }
+}
+
+#[test]
 fn virtio_9p_device_tests_delegate_xattr_cases() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let device_test = fs::read_to_string(crate_dir.join("tests/fs9p_device.rs")).unwrap();
