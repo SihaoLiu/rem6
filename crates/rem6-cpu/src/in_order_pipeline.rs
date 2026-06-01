@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
@@ -226,6 +226,80 @@ impl InOrderPipelinePlan {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InOrderPipelineSnapshot {
+    config: InOrderPipelineConfig,
+    in_flight: Vec<InOrderPipelineInstruction>,
+}
+
+impl InOrderPipelineSnapshot {
+    pub fn new<I>(config: InOrderPipelineConfig, in_flight: I) -> Self
+    where
+        I: IntoIterator<Item = InOrderPipelineInstruction>,
+    {
+        Self {
+            config,
+            in_flight: in_flight.into_iter().collect(),
+        }
+    }
+
+    pub const fn config(&self) -> &InOrderPipelineConfig {
+        &self.config
+    }
+
+    pub fn in_flight(&self) -> &[InOrderPipelineInstruction] {
+        &self.in_flight
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InOrderPipelineState {
+    config: InOrderPipelineConfig,
+    in_flight: Vec<InOrderPipelineInstruction>,
+}
+
+impl InOrderPipelineState {
+    pub const fn new(config: InOrderPipelineConfig) -> Self {
+        Self {
+            config,
+            in_flight: Vec::new(),
+        }
+    }
+
+    pub fn restore(snapshot: InOrderPipelineSnapshot) -> Result<Self, InOrderPipelineError> {
+        let mut state = Self::new(snapshot.config);
+        state.replace_in_flight(snapshot.in_flight)?;
+        Ok(state)
+    }
+
+    pub const fn config(&self) -> &InOrderPipelineConfig {
+        &self.config
+    }
+
+    pub fn in_flight(&self) -> &[InOrderPipelineInstruction] {
+        &self.in_flight
+    }
+
+    pub fn replace_in_flight<I>(&mut self, instructions: I) -> Result<(), InOrderPipelineError>
+    where
+        I: IntoIterator<Item = InOrderPipelineInstruction>,
+    {
+        self.in_flight = canonical_in_flight(instructions)?;
+        Ok(())
+    }
+
+    pub fn plan_cycle(&self) -> InOrderPipelinePlan {
+        InOrderPipelineScheduler::new(self.config.clone()).plan(self.in_flight.iter().copied())
+    }
+
+    pub fn snapshot(&self) -> InOrderPipelineSnapshot {
+        InOrderPipelineSnapshot {
+            config: self.config.clone(),
+            in_flight: self.in_flight.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InOrderPipelineScheduler {
     config: InOrderPipelineConfig,
 }
@@ -296,11 +370,34 @@ impl InOrderPipelineScheduler {
     }
 }
 
+fn canonical_in_flight<I>(
+    instructions: I,
+) -> Result<Vec<InOrderPipelineInstruction>, InOrderPipelineError>
+where
+    I: IntoIterator<Item = InOrderPipelineInstruction>,
+{
+    let mut seen = BTreeSet::new();
+    let mut in_flight = Vec::new();
+
+    for instruction in instructions {
+        if !seen.insert(instruction.sequence()) {
+            return Err(InOrderPipelineError::DuplicateInFlightInstruction {
+                sequence: instruction.sequence(),
+            });
+        }
+        in_flight.push(instruction);
+    }
+
+    in_flight.sort_by_key(|instruction| instruction.sequence());
+    Ok(in_flight)
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum InOrderPipelineError {
     ZeroStageWidth { stage: InOrderPipelineStage },
     DuplicateStageWidth { stage: InOrderPipelineStage },
     MissingStageWidth { stage: InOrderPipelineStage },
+    DuplicateInFlightInstruction { sequence: u64 },
 }
 
 impl fmt::Display for InOrderPipelineError {
@@ -318,6 +415,10 @@ impl fmt::Display for InOrderPipelineError {
             Self::MissingStageWidth { stage } => {
                 write!(formatter, "in-order {stage} width is not configured")
             }
+            Self::DuplicateInFlightInstruction { sequence } => write!(
+                formatter,
+                "in-order pipeline has duplicate in-flight instruction sequence {sequence}"
+            ),
         }
     }
 }

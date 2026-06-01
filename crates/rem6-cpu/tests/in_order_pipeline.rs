@@ -1,6 +1,7 @@
 use rem6_cpu::{
     InOrderBranchRedirect, InOrderPipelineConfig, InOrderPipelineError, InOrderPipelineInstruction,
-    InOrderPipelineScheduler, InOrderPipelineStage, InOrderPipelineStageWidth,
+    InOrderPipelineScheduler, InOrderPipelineSnapshot, InOrderPipelineStage,
+    InOrderPipelineStageWidth, InOrderPipelineState,
 };
 
 fn instruction(sequence: u64, stage: InOrderPipelineStage) -> InOrderPipelineInstruction {
@@ -24,6 +25,17 @@ fn scheduler_with_decode_width(decode_width: usize) -> InOrderPipelineScheduler 
     ])
     .unwrap();
     InOrderPipelineScheduler::new(config)
+}
+
+fn config_with_decode_width(decode_width: usize) -> InOrderPipelineConfig {
+    InOrderPipelineConfig::new([
+        stage_width(InOrderPipelineStage::Fetch1, 1).unwrap(),
+        stage_width(InOrderPipelineStage::Fetch2, 1).unwrap(),
+        stage_width(InOrderPipelineStage::Decode, decode_width).unwrap(),
+        stage_width(InOrderPipelineStage::Execute, 1).unwrap(),
+        stage_width(InOrderPipelineStage::Commit, 1).unwrap(),
+    ])
+    .unwrap()
 }
 
 #[test]
@@ -97,6 +109,59 @@ fn in_order_pipeline_branch_redirect_flushes_younger_pipeline_work() {
         .iter()
         .all(|instruction| instruction.sequence() > redirect.sequence()));
     assert!(!plan.has_blocked_work());
+}
+
+#[test]
+fn in_order_pipeline_snapshot_restore_preserves_in_flight_plan() {
+    let mut state = InOrderPipelineState::new(config_with_decode_width(1));
+    state
+        .replace_in_flight([
+            instruction(10, InOrderPipelineStage::Decode),
+            instruction(11, InOrderPipelineStage::Decode),
+            instruction(12, InOrderPipelineStage::Execute),
+        ])
+        .unwrap();
+
+    let snapshot = state.snapshot();
+    assert_eq!(
+        snapshot
+            .in_flight()
+            .iter()
+            .map(|instruction| instruction.sequence())
+            .collect::<Vec<_>>(),
+        vec![10, 11, 12]
+    );
+
+    let restored = InOrderPipelineState::restore(snapshot).unwrap();
+    assert_eq!(
+        restored
+            .in_flight()
+            .iter()
+            .map(|instruction| instruction.sequence())
+            .collect::<Vec<_>>(),
+        vec![10, 11, 12]
+    );
+
+    let plan = restored.plan_cycle();
+    assert_eq!(plan.advanced_sequences().collect::<Vec<_>>(), vec![10]);
+    assert_eq!(plan.resource_blocked()[0].sequence(), 11);
+    assert_eq!(plan.ordering_blocked()[0].sequence(), 12);
+}
+
+#[test]
+fn in_order_pipeline_restore_rejects_duplicate_in_flight_sequences() {
+    let snapshot = InOrderPipelineSnapshot::new(
+        config_with_decode_width(1),
+        [
+            instruction(7, InOrderPipelineStage::Decode),
+            instruction(7, InOrderPipelineStage::Execute),
+        ],
+    );
+
+    assert_eq!(
+        InOrderPipelineState::restore(snapshot).unwrap_err(),
+        InOrderPipelineError::DuplicateInFlightInstruction { sequence: 7 }
+    );
 }
 
 #[test]
