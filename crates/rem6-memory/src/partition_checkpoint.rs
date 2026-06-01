@@ -54,12 +54,12 @@ impl PartitionedMemoryCheckpointPayload {
         reject_reserved(reserved)?;
         reject_reserved(reserved2)?;
 
-        let mut partitions = Vec::with_capacity(partition_count);
+        let mut partitions = Vec::new();
         for _ in 0..partition_count {
             partitions.push(read_partition_record(payload, &mut offset)?);
         }
 
-        let mut regions = Vec::with_capacity(region_count);
+        let mut regions = Vec::new();
         for _ in 0..region_count {
             regions.push(read_region_record(payload, &mut offset)?);
         }
@@ -188,7 +188,7 @@ fn read_region_record(
         value => return Err(MemoryError::InvalidPartitionCheckpointInterleaveFlag { value }),
     };
 
-    let mut holes = Vec::with_capacity(hole_count);
+    let mut holes = Vec::new();
     for _ in 0..hole_count {
         holes.push(AddressRange::new(
             Address::new(read_u64(payload, offset)?),
