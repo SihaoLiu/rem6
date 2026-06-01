@@ -1,12 +1,13 @@
 use std::sync::Arc;
 
 use rem6_storage::{
-    IdeDeviceId, IdeDisk, IdeDiskError, IdeDiskSnapshot, IdeDiskTransferSnapshot, RawStorageImage,
-    StorageError, StorageImageLayer, StorageSectorId, IDE_COMMAND_ATAPI_IDENTIFY_DEVICE,
-    IDE_COMMAND_IDENTIFY, IDE_COMMAND_READ, IDE_COMMAND_READ_NATIVE_MAX, IDE_COMMAND_WRITE,
-    IDE_CONTROL_OFFSET, IDE_CONTROL_RST, IDE_DRIVE_LBA, IDE_DRIVE_OFFSET, IDE_ERROR_ABORT,
-    IDE_ERROR_OFFSET, IDE_HCYL_OFFSET, IDE_LCYL_OFFSET, IDE_NSECTOR_OFFSET, IDE_SECTOR_OFFSET,
-    IDE_STATUS_DRDY, IDE_STATUS_DRQ, IDE_STATUS_ERR, IDE_STATUS_OFFSET, IDE_STATUS_SEEK,
+    IdeDeviceId, IdeDisk, IdeDiskError, IdeDiskSnapshot, IdeDiskTransferSnapshot,
+    IdePendingCommandSnapshot, RawStorageImage, StorageError, StorageImageLayer, StorageSectorId,
+    IDE_COMMAND_ATAPI_IDENTIFY_DEVICE, IDE_COMMAND_IDENTIFY, IDE_COMMAND_READ,
+    IDE_COMMAND_READ_NATIVE_MAX, IDE_COMMAND_WRITE, IDE_CONTROL_OFFSET, IDE_CONTROL_RST,
+    IDE_DRIVE_LBA, IDE_DRIVE_OFFSET, IDE_ERROR_ABORT, IDE_ERROR_OFFSET, IDE_HCYL_OFFSET,
+    IDE_LCYL_OFFSET, IDE_NSECTOR_OFFSET, IDE_SECTOR_OFFSET, IDE_STATUS_DRDY, IDE_STATUS_DRQ,
+    IDE_STATUS_ERR, IDE_STATUS_OFFSET, IDE_STATUS_SEEK, STORAGE_SECTOR_BYTES,
 };
 
 fn sector(byte: u8) -> [u8; 512] {
@@ -237,6 +238,33 @@ fn ide_disk_snapshot_restores_task_file_and_partial_write_transfer() {
     expected.extend(sector(0x02));
     assert_eq!(image.read(StorageSectorId::new(0), 2).unwrap(), expected);
     assert_eq!(disk.status(), IDE_STATUS_DRDY | IDE_STATUS_SEEK);
+}
+
+#[test]
+fn ide_disk_restore_rejects_pending_transfer_above_vec_capacity_before_mutation() {
+    let image = Arc::new(RawStorageImage::from_bytes(image_bytes(&[0x01])).unwrap());
+    let mut disk = IdeDisk::new(image as Arc<dyn StorageImageLayer>, IdeDeviceId::Device0).unwrap();
+    let before = disk.snapshot();
+    let sectors = isize::MAX as u64 / STORAGE_SECTOR_BYTES + 1;
+    let wrong = IdeDiskSnapshot::from_parts(
+        IdeDeviceId::Device0,
+        *before.task_file(),
+        before.status(),
+        before.control(),
+        before.pending_interrupt(),
+        before.transfer().cloned(),
+        Some(IdePendingCommandSnapshot::new(IDE_COMMAND_READ, 0, sectors)),
+    );
+
+    assert!(matches!(
+        disk.restore(&wrong),
+        Err(IdeDiskError::Storage(StorageError::OutOfRange {
+            sector,
+            sectors: actual,
+            capacity_sectors: 1,
+        })) if sector == StorageSectorId::new(0) && actual == sectors
+    ));
+    assert_eq!(disk.snapshot(), before);
 }
 
 #[test]

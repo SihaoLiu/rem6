@@ -151,6 +151,31 @@ impl IdeDisk {
         }
         if let Some(pending) = snapshot.pending_command {
             pending.validate()?;
+            self.validate_snapshot_sector_range(pending.start_sector(), pending.sectors())?;
+        }
+        Ok(())
+    }
+
+    fn validate_snapshot_sector_range(
+        &self,
+        start_sector: u64,
+        sectors: u64,
+    ) -> Result<(), IdeDiskError> {
+        let end =
+            start_sector
+                .checked_add(sectors)
+                .ok_or(StorageError::RequestAddressOverflow {
+                    sector: StorageSectorId::new(start_sector),
+                    sectors,
+                })?;
+        let capacity = self.image.capacity_sectors();
+        if end > capacity {
+            return Err(StorageError::OutOfRange {
+                sector: StorageSectorId::new(start_sector),
+                sectors,
+                capacity_sectors: capacity,
+            }
+            .into());
         }
         Ok(())
     }
