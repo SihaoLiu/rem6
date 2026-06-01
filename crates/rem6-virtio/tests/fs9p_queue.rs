@@ -364,7 +364,7 @@ fn virtio_split_queue_rejects_9p_writeback_before_guest_state_mutates() {
 
     assert_eq!(read_guest(&mut store, 0x1500, 4, 100), [0; 4]);
     assert_eq!(read_guest(&mut store, 0x1802, 2, 200), 6_u16.to_le_bytes());
-    assert_eq!(read_guest(&mut store, 0x1810, 8, 300), [0; 8]);
+    assert_eq!(read_guest(&mut store, 0x1814, 8, 300), [0; 8]);
     assert!(isr.events().is_empty());
 }
 

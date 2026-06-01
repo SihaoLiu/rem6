@@ -414,9 +414,8 @@ impl VirtioSplitQueue {
         guest: &mut VirtioGuestMemory<'_>,
         writeback: &Virtio9pQueueCompletionWrite,
     ) -> Result<(), VirtioError> {
-        let used_element_address =
-            add_address(self.used_ring(), 4 + u64::from(writeback.used_slot()) * 8)?;
-        let used_index_address = add_address(self.used_ring(), 2)?;
+        let (used_element_address, used_index_address) =
+            self.used_writeback_addresses(writeback.used_slot())?;
         let mut data_targets = Vec::new();
         for write in writeback.data_writes() {
             let address =
