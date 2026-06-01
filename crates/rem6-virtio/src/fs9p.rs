@@ -4,10 +4,13 @@ use std::sync::{Arc, Mutex};
 use rem6_kernel::Tick;
 use rem6_memory::ByteMask;
 
+use crate::fs9p_device_helpers::{
+    counted_data_payload, read_data_slice, valid_lock_type, xattr_write_policy,
+};
 use crate::fs9p_lock::Virtio9pLockTable;
 use crate::fs9p_namespace::{
-    getattr_payload, qid_payload, validate_file_name, Virtio9pFidState, Virtio9pNamespace,
-    Virtio9pNodeId, Virtio9pOpenMode, Virtio9pQid, Virtio9pTimestamp, Virtio9pXattrWritePolicy,
+    getattr_payload, qid_payload, validate_file_name, Virtio9pFidPath, Virtio9pFidState,
+    Virtio9pNamespace, Virtio9pNodeId, Virtio9pOpenMode, Virtio9pQid, Virtio9pTimestamp,
 };
 use crate::fs9p_protocol::*;
 use crate::{
@@ -930,6 +933,14 @@ impl Virtio9pDevice {
         let Some(new_dir) = new_dirfid.node() else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
+        let Some(old_dir_path) = old_dirfid.path().cloned() else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        let Some(new_dir_path) = new_dirfid.path().cloned() else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        let old_path = old_dir_path.child(rename.oldname.clone());
+        let new_path = new_dir_path.child(rename.newname.clone());
         drop(fids);
         let rename = match self
             .namespace
@@ -940,6 +951,9 @@ impl Virtio9pDevice {
             Ok(rename) => rename,
             Err(errno) => return Ok(Err(errno)),
         };
+        if rename.moved {
+            self.move_fid_paths(&old_path, &new_path);
+        }
         if let Some(replaced) = rename.replaced {
             if self.node_is_removed(replaced) {
                 self.remove_fids_for_node(replaced);
@@ -963,6 +977,13 @@ impl Virtio9pDevice {
         let Some(new_dir) = new_dirfid.node() else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
+        let Some(old_path) = fid.path().cloned() else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        let Some(new_dir_path) = new_dirfid.path().cloned() else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        let new_path = new_dir_path.child(rename.name.clone());
         drop(fids);
         let rename = match self
             .namespace
@@ -973,6 +994,9 @@ impl Virtio9pDevice {
             Ok(rename) => rename,
             Err(errno) => return Ok(Err(errno)),
         };
+        if rename.moved {
+            self.move_fid_paths(&old_path, &new_path);
+        }
         if let Some(replaced) = rename.replaced {
             if self.node_is_removed(replaced) {
                 self.remove_fids_for_node(replaced);
@@ -1158,6 +1182,12 @@ impl Virtio9pDevice {
             .remove_node(node);
     }
 
+    fn move_fid_paths(&self, old_path: &Virtio9pFidPath, new_path: &Virtio9pFidPath) {
+        for fid in self.fids.lock().expect("virtio 9p fid lock").values_mut() {
+            fid.move_path(old_path, new_path);
+        }
+    }
+
     fn lockable_node(&self, fid: u32) -> Option<Virtio9pNodeId> {
         let fid = self
             .fids
@@ -1181,39 +1211,6 @@ impl Default for Virtio9pDevice {
     fn default() -> Self {
         Self::new(Virtio9pConfig::default())
     }
-}
-
-const fn valid_lock_type(lock_type: u8) -> bool {
-    matches!(
-        lock_type,
-        VIRTIO_9P_LOCK_TYPE_RDLCK | VIRTIO_9P_LOCK_TYPE_WRLCK | VIRTIO_9P_LOCK_TYPE_UNLCK
-    )
-}
-
-const fn xattr_write_policy(flags: u32) -> Result<Virtio9pXattrWritePolicy, u32> {
-    match flags {
-        0 => Ok(Virtio9pXattrWritePolicy::Any),
-        VIRTIO_9P_XATTR_CREATE => Ok(Virtio9pXattrWritePolicy::Create),
-        VIRTIO_9P_XATTR_REPLACE => Ok(Virtio9pXattrWritePolicy::Replace),
-        _ => Err(VIRTIO_9P_EINVAL),
-    }
-}
-
-fn read_data_slice(data: &[u8], offset: u64, count: u32) -> Option<Vec<u8>> {
-    let start = usize::try_from(offset).ok()?;
-    if start >= data.len() {
-        return Some(Vec::new());
-    }
-    let count = usize::try_from(count).ok()?;
-    let end = start.saturating_add(count).min(data.len());
-    Some(data[start..end].to_vec())
-}
-
-fn counted_data_payload(data: Vec<u8>) -> Vec<u8> {
-    let mut payload = Vec::new();
-    payload.extend((data.len() as u32).to_le_bytes());
-    payload.extend(data);
-    payload
 }
 
 fn version_response_msize(requested: u32, version: &[u8]) -> Result<u32, VirtioError> {

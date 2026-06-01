@@ -371,7 +371,10 @@ impl Virtio9pNamespace {
             return match old_entries.get(oldname) {
                 Some(
                     Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_),
-                ) => Ok(Ok(Virtio9pRenameOutcome { replaced: None })),
+                ) => Ok(Ok(Virtio9pRenameOutcome {
+                    moved: false,
+                    replaced: None,
+                })),
                 Some(Virtio9pNode::Directory(_)) => Ok(Err(VIRTIO_9P_EBADF)),
                 None => Ok(Err(VIRTIO_9P_ENOENT)),
             };
@@ -389,7 +392,10 @@ impl Virtio9pNamespace {
         };
         match new_entries.get(newname) {
             Some(existing) if existing.id() == old_id => {
-                return Ok(Ok(Virtio9pRenameOutcome { replaced: None }));
+                return Ok(Ok(Virtio9pRenameOutcome {
+                    moved: false,
+                    replaced: None,
+                }));
             }
             Some(Virtio9pNode::Directory(_)) => return Ok(Err(VIRTIO_9P_EEXIST)),
             Some(Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_))
@@ -405,7 +411,10 @@ impl Virtio9pNamespace {
             .expect("prevalidated 9p rename target parent")
             .insert(newname.to_string(), node)
             .and_then(non_directory_node_id);
-        Ok(Ok(Virtio9pRenameOutcome { replaced }))
+        Ok(Ok(Virtio9pRenameOutcome {
+            moved: true,
+            replaced,
+        }))
     }
 
     pub(crate) fn rename_node(
@@ -428,7 +437,10 @@ impl Virtio9pNamespace {
         };
         match entries.get(newname) {
             Some(existing) if existing.id() == node => {
-                return Ok(Ok(Virtio9pRenameOutcome { replaced: None }));
+                return Ok(Ok(Virtio9pRenameOutcome {
+                    moved: false,
+                    replaced: None,
+                }));
             }
             Some(Virtio9pNode::Directory(_)) => return Ok(Err(VIRTIO_9P_EEXIST)),
             Some(Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_))
@@ -453,7 +465,10 @@ impl Virtio9pNamespace {
                     }
                     Virtio9pNode::Directory(_) => None,
                 });
-        Ok(Ok(Virtio9pRenameOutcome { replaced }))
+        Ok(Ok(Virtio9pRenameOutcome {
+            moved: true,
+            replaced,
+        }))
     }
 
     pub(crate) fn rename_node_in_parent(
@@ -1474,6 +1489,7 @@ impl Virtio9pTimestamp {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct Virtio9pRenameOutcome {
+    pub(crate) moved: bool,
     pub(crate) replaced: Option<Virtio9pNodeId>,
 }
 
@@ -1641,6 +1657,14 @@ impl Virtio9pFidState {
         match self {
             Self::Node { path, .. } => Some(path),
             Self::XattrRead { .. } | Self::XattrWrite { .. } => None,
+        }
+    }
+
+    pub(crate) fn move_path(&mut self, old_path: &Virtio9pFidPath, new_path: &Virtio9pFidPath) {
+        if let Self::Node { path, .. } = self {
+            if path == old_path {
+                *path = new_path.clone();
+            }
         }
     }
 
