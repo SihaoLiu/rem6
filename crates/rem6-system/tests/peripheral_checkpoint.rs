@@ -3,8 +3,8 @@ use std::sync::{Arc, Mutex};
 use rem6_checkpoint::{CheckpointComponentId, CheckpointRegistry};
 use rem6_interrupt::{
     InterruptController, InterruptLineChannel, InterruptLineId, InterruptLinePort,
-    InterruptPriority, InterruptRoute, InterruptSourceId, InterruptTargetId, PendingInterrupt,
-    PlicContextRoute, PlicContextSnapshot, PlicMmioDevice, PlicSnapshot,
+    InterruptPriority, InterruptRoute, InterruptSnapshot, InterruptSourceId, InterruptTargetId,
+    PendingInterrupt, PlicContextRoute, PlicContextSnapshot, PlicMmioDevice, PlicSnapshot,
 };
 use rem6_kernel::PartitionId;
 use rem6_memory::Address;
@@ -98,6 +98,8 @@ const PLIC_CONTEXT_ENABLED_LINE_RELATIVE_OFFSET: usize =
     PLIC_U64_BYTES + PLIC_U32_BYTES * 3 + PLIC_U64_BYTES;
 const PLIC_CONTEXT1_ENABLED_LINE_OFFSET: usize =
     PLIC_CONTEXT1_OFFSET + PLIC_CONTEXT_ENABLED_LINE_RELATIVE_OFFSET;
+
+const INTERRUPT_CHUNK: &str = "interrupt";
 
 fn rtc_device(base: u64) -> Mc146818RtcMmioDevice {
     Mc146818RtcMmioDevice::new(
@@ -1951,21 +1953,7 @@ fn system_action_executor_checkpoints_and_restores_rtc_state() {
 fn interrupt_checkpoint_bank_rejects_invalid_bank_without_partial_restore() {
     let valid_component = checkpoint_component("interrupt_bank_a");
     let invalid_component = checkpoint_component("interrupt_bank_b");
-    let target = InterruptTargetId::new(0);
-    let partition = PartitionId::new(0);
-    let line = InterruptLineId::new(7);
-    let source = InterruptSourceId::new(70);
-    let route = InterruptRoute::new(line, target, partition);
-    let expected = rem6_interrupt::InterruptSnapshot::new(
-        19,
-        vec![route],
-        vec![(line, InterruptPriority::new(6))],
-        vec![PendingInterrupt::routed(
-            line, target, partition, source, 12,
-        )],
-        Vec::new(),
-        Vec::new(),
-    );
+    let expected = stable_interrupt_snapshot();
     let source_controller = Arc::new(Mutex::new(InterruptController::new()));
     source_controller
         .lock()
@@ -1984,7 +1972,7 @@ fn interrupt_checkpoint_bank_rejects_invalid_bank_without_partial_restore() {
         .unwrap();
     registry.register(invalid_component.clone()).unwrap();
     registry
-        .write_chunk(&invalid_component, "interrupt", vec![0xff])
+        .write_chunk(&invalid_component, INTERRUPT_CHUNK, vec![0xff])
         .unwrap();
 
     let bank = InterruptControllerCheckpointBank::new([
@@ -2003,6 +1991,133 @@ fn interrupt_checkpoint_bank_rejects_invalid_bank_without_partial_restore() {
     ));
     assert_eq!(target_valid.lock().unwrap().snapshot(0), original_valid);
     assert_eq!(target_invalid.lock().unwrap().snapshot(0), original_invalid);
+}
+
+#[test]
+fn interrupt_checkpoint_port_captures_stable_snapshot_bytes() {
+    let component = checkpoint_component("interrupt_payload_stable");
+    let expected = stable_interrupt_snapshot();
+    let source = Arc::new(Mutex::new(InterruptController::new()));
+    source.lock().unwrap().restore(&expected).unwrap();
+    let target = Arc::new(Mutex::new(InterruptController::new()));
+    let mut registry = CheckpointRegistry::new();
+    let port = InterruptControllerCheckpointPort::new(component.clone(), source);
+
+    port.register(&mut registry).unwrap();
+    let captured = port.capture_into(&mut registry, 19).unwrap();
+
+    assert_eq!(captured.snapshot(), &expected);
+    assert_eq!(
+        registry.chunk(&component, INTERRUPT_CHUNK).unwrap(),
+        stable_interrupt_checkpoint_bytes()
+    );
+    InterruptControllerCheckpointPort::new(component, Arc::clone(&target))
+        .restore_from(&registry)
+        .unwrap();
+    assert_eq!(target.lock().unwrap().snapshot(19), expected);
+}
+
+#[test]
+fn interrupt_checkpoint_port_rejects_impossible_route_count_without_partial_restore() {
+    let component = checkpoint_component("interrupt_payload_route_count");
+    let target = Arc::new(Mutex::new(InterruptController::new()));
+    let original = target.lock().unwrap().snapshot(0);
+    let mut payload = Vec::new();
+    write_u64(&mut payload, 19);
+    write_u64(&mut payload, u64::MAX);
+    let mut registry = CheckpointRegistry::new();
+    registry.register(component.clone()).unwrap();
+    registry
+        .write_chunk(&component, INTERRUPT_CHUNK, payload)
+        .unwrap();
+
+    let error = InterruptControllerCheckpointPort::new(component.clone(), Arc::clone(&target))
+        .restore_from(&registry)
+        .unwrap_err();
+
+    match error {
+        InterruptControllerCheckpointError::InvalidChunk {
+            component: actual,
+            reason,
+        } => {
+            assert_eq!(actual, component);
+            assert_eq!(
+                reason,
+                "interrupt route count 18446744073709551615 exceeds remaining payload capacity 0 records"
+            );
+        }
+        other => panic!("unexpected interrupt checkpoint error: {other}"),
+    }
+    assert_eq!(target.lock().unwrap().snapshot(0), original);
+}
+
+#[test]
+fn interrupt_checkpoint_port_rejects_trailing_payload_bytes_without_partial_restore() {
+    let component = checkpoint_component("interrupt_payload_trailing");
+    let target = Arc::new(Mutex::new(InterruptController::new()));
+    let original = target.lock().unwrap().snapshot(0);
+    let mut payload = stable_interrupt_checkpoint_bytes();
+    payload.push(0xdd);
+    let mut registry = CheckpointRegistry::new();
+    registry.register(component.clone()).unwrap();
+    registry
+        .write_chunk(&component, INTERRUPT_CHUNK, payload)
+        .unwrap();
+
+    let error = InterruptControllerCheckpointPort::new(component.clone(), Arc::clone(&target))
+        .restore_from(&registry)
+        .unwrap_err();
+
+    match error {
+        InterruptControllerCheckpointError::InvalidChunk {
+            component: actual,
+            reason,
+        } => {
+            assert_eq!(actual, component);
+            assert_eq!(reason, "payload has 1 trailing bytes");
+        }
+        other => panic!("unexpected interrupt checkpoint error: {other}"),
+    }
+    assert_eq!(target.lock().unwrap().snapshot(0), original);
+}
+
+fn stable_interrupt_snapshot() -> InterruptSnapshot {
+    let target = InterruptTargetId::new(0);
+    let partition = PartitionId::new(0);
+    let line = InterruptLineId::new(7);
+    let source = InterruptSourceId::new(70);
+    let route = InterruptRoute::new(line, target, partition);
+    InterruptSnapshot::new(
+        19,
+        vec![route],
+        vec![(line, InterruptPriority::new(6))],
+        vec![PendingInterrupt::routed(
+            line, target, partition, source, 12,
+        )],
+        Vec::new(),
+        Vec::new(),
+    )
+}
+
+fn stable_interrupt_checkpoint_bytes() -> Vec<u8> {
+    let mut payload = Vec::new();
+    write_u64(&mut payload, 19);
+    write_u64(&mut payload, 1);
+    write_u64(&mut payload, 7);
+    write_u32(&mut payload, 0);
+    write_u32(&mut payload, 0);
+    write_u64(&mut payload, 1);
+    write_u64(&mut payload, 7);
+    write_u32(&mut payload, 6);
+    write_u64(&mut payload, 1);
+    write_u64(&mut payload, 7);
+    write_u32(&mut payload, 0);
+    write_u32(&mut payload, 0);
+    write_u32(&mut payload, 70);
+    write_u64(&mut payload, 12);
+    write_u64(&mut payload, 0);
+    write_u64(&mut payload, 0);
+    payload
 }
 
 #[test]

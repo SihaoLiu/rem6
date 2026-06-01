@@ -3214,7 +3214,10 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   malformed chunks, while system checkpoint tests cover PLIC bank decode-first
   restore and host checkpoint-action round trips through manifests. System
   topology tests also cover automatic host checkpoint attachment for
-  platform-owned PLIC devices.
+  platform-owned PLIC devices. Generic interrupt-controller checkpoint tests
+  cover stable route, priority, and pending-interrupt chunk bytes, oversized
+  route counts, trailing payload bytes, and no-partial-restore rejection for
+  malformed chunks.
 - MMIO tests cover typed unsupported-device trap regions for gem5 `BadDevice`
   alignment, including serial access logs, parallel bus completion errors, name
   validation, and direct range-crossing rejection without simulator-wide panic.

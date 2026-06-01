@@ -14,6 +14,11 @@ use rem6_kernel::PartitionId;
 const INTERRUPT_CHUNK: &str = "interrupt";
 const U32_BYTES: usize = 4;
 const U64_BYTES: usize = 8;
+const ROUTE_RECORD_BYTES: usize = U64_BYTES + U32_BYTES * 2;
+const PRIORITY_RECORD_BYTES: usize = U64_BYTES + U32_BYTES;
+const PENDING_RECORD_BYTES: usize = U64_BYTES + U32_BYTES * 3 + U64_BYTES;
+const CLAIM_RECORD_BYTES: usize = PENDING_RECORD_BYTES + U64_BYTES;
+const EVENT_RECORD_BYTES: usize = U64_BYTES * 3 + U32_BYTES * 3;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InterruptControllerCheckpointRecord {
@@ -341,7 +346,7 @@ fn decode_route(
 fn read_routes(
     cursor: &mut PayloadCursor<'_>,
 ) -> Result<Vec<InterruptRoute>, InterruptControllerCheckpointError> {
-    let count = cursor.read_count("interrupt route count")?;
+    let count = cursor.read_bounded_count("interrupt route count", ROUTE_RECORD_BYTES)?;
     let mut routes = Vec::with_capacity(count);
     for _ in 0..count {
         routes.push(decode_route(cursor)?);
@@ -352,7 +357,7 @@ fn read_routes(
 fn read_priorities(
     cursor: &mut PayloadCursor<'_>,
 ) -> Result<Vec<(InterruptLineId, InterruptPriority)>, InterruptControllerCheckpointError> {
-    let count = cursor.read_count("interrupt priority count")?;
+    let count = cursor.read_bounded_count("interrupt priority count", PRIORITY_RECORD_BYTES)?;
     let mut priorities = Vec::with_capacity(count);
     for _ in 0..count {
         priorities.push((
@@ -386,7 +391,7 @@ fn decode_pending(
 fn read_pending(
     cursor: &mut PayloadCursor<'_>,
 ) -> Result<Vec<PendingInterrupt>, InterruptControllerCheckpointError> {
-    let count = cursor.read_count("interrupt pending count")?;
+    let count = cursor.read_bounded_count("interrupt pending count", PENDING_RECORD_BYTES)?;
     let mut pending = Vec::with_capacity(count);
     for _ in 0..count {
         pending.push(decode_pending(cursor)?);
@@ -419,7 +424,7 @@ fn decode_claim(
 fn read_claims(
     cursor: &mut PayloadCursor<'_>,
 ) -> Result<Vec<InterruptClaim>, InterruptControllerCheckpointError> {
-    let count = cursor.read_count("interrupt claim count")?;
+    let count = cursor.read_bounded_count("interrupt claim count", CLAIM_RECORD_BYTES)?;
     let mut claims = Vec::with_capacity(count);
     for _ in 0..count {
         claims.push(decode_claim(cursor)?);
@@ -452,7 +457,7 @@ fn decode_event(
 fn read_history(
     cursor: &mut PayloadCursor<'_>,
 ) -> Result<Vec<InterruptEvent>, InterruptControllerCheckpointError> {
-    let count = cursor.read_count("interrupt history count")?;
+    let count = cursor.read_bounded_count("interrupt history count", EVENT_RECORD_BYTES)?;
     let mut history = Vec::with_capacity(count);
     for _ in 0..count {
         history.push(decode_event(cursor)?);
@@ -507,9 +512,22 @@ impl<'a> PayloadCursor<'a> {
         }
     }
 
-    fn read_count(&mut self, name: &str) -> Result<usize, InterruptControllerCheckpointError> {
-        usize::try_from(self.read_u64(name)?)
-            .map_err(|_| self.invalid(format!("{name} cannot fit in usize")))
+    fn read_bounded_count(
+        &mut self,
+        name: &str,
+        min_record_bytes: usize,
+    ) -> Result<usize, InterruptControllerCheckpointError> {
+        let value = self.read_u64(name)?;
+        let count = usize::try_from(value)
+            .map_err(|_| self.invalid(format!("{name} cannot fit in usize")))?;
+        let remaining = self.payload.len().saturating_sub(self.position);
+        let max_records = remaining / min_record_bytes;
+        if count > max_records {
+            return Err(self.invalid(format!(
+                "{name} {value} exceeds remaining payload capacity {max_records} records"
+            )));
+        }
+        Ok(count)
     }
 
     fn read_u32(&mut self, name: &str) -> Result<u32, InterruptControllerCheckpointError> {
