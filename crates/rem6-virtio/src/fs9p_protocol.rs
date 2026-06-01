@@ -246,6 +246,7 @@ pub(crate) fn parse_lcreate_request(
         fid,
         name,
         mode: (flags & u32::from(VIRTIO_9P_OPEN_ACCESS_MASK)) as u8,
+        remove_on_clunk: false,
         append: flags & VIRTIO_9P_LOPEN_APPEND != 0,
     })
 }
@@ -268,6 +269,7 @@ pub(crate) fn parse_create_request(
         fid,
         name,
         mode,
+        remove_on_clunk: raw_mode & VIRTIO_9P_OPEN_REMOVE_ON_CLOSE != 0,
         append: raw_mode & VIRTIO_9P_OPEN_APPEND != 0,
     })
 }
@@ -818,6 +820,7 @@ pub(crate) struct Virtio9pCreateRequest {
     pub(crate) fid: u32,
     pub(crate) name: String,
     pub(crate) mode: u8,
+    pub(crate) remove_on_clunk: bool,
     pub(crate) append: bool,
 }
 

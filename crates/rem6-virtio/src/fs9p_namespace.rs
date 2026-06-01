@@ -1629,13 +1629,14 @@ impl Virtio9pFidState {
         path: Virtio9pFidPath,
         mode: Virtio9pOpenMode,
         append: bool,
+        remove_on_clunk: bool,
     ) -> Self {
         Self::Node {
             node,
             path,
             open: Some(mode),
             append,
-            remove_on_clunk: false,
+            remove_on_clunk,
         }
     }
 
