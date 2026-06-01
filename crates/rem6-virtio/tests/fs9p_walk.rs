@@ -1,7 +1,7 @@
 use rem6_virtio::{
-    Virtio9pConfig, Virtio9pDevice, VIRTIO_9P_EBADF, VIRTIO_9P_NOFID, VIRTIO_9P_RLERROR,
-    VIRTIO_9P_RLOPEN, VIRTIO_9P_RMKDIR, VIRTIO_9P_RREAD, VIRTIO_9P_RWALK, VIRTIO_9P_TATTACH,
-    VIRTIO_9P_TLOPEN, VIRTIO_9P_TMKDIR, VIRTIO_9P_TREAD, VIRTIO_9P_TWALK,
+    Virtio9pConfig, Virtio9pDevice, VirtioError, VIRTIO_9P_EBADF, VIRTIO_9P_NOFID,
+    VIRTIO_9P_RLERROR, VIRTIO_9P_RLOPEN, VIRTIO_9P_RMKDIR, VIRTIO_9P_RREAD, VIRTIO_9P_RWALK,
+    VIRTIO_9P_TATTACH, VIRTIO_9P_TLOPEN, VIRTIO_9P_TMKDIR, VIRTIO_9P_TREAD, VIRTIO_9P_TWALK,
 };
 
 mod support;
@@ -168,4 +168,51 @@ fn virtio_9p_device_returns_partial_walk_without_binding_newfid() {
     let open_completion = device.execute_at(13, open_partial_fid).unwrap();
     assert_eq!(open_completion.message_type(), VIRTIO_9P_RLERROR);
     assert_eq!(open_completion.payload(), VIRTIO_9P_EBADF.to_le_bytes());
+}
+
+#[test]
+fn virtio_9p_device_rejects_walk_with_too_many_name_elements() {
+    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap());
+    let attach = decoded_request(
+        VIRTIO_9P_TATTACH,
+        1,
+        p9_attach_payload(1, VIRTIO_9P_NOFID, b"root", b"", 0),
+    );
+    device.execute_at(10, attach).unwrap();
+
+    let names = vec![b"." as &[u8]; 17];
+    let payload = p9_walk_payload(1, 2, &names);
+    let payload_len = payload.len();
+    let walk = decoded_request(VIRTIO_9P_TWALK, 2, payload);
+
+    assert!(matches!(
+        device.execute_at(11, walk),
+        Err(VirtioError::InvalidVirtio9pPayload {
+            message_type: VIRTIO_9P_TWALK,
+            bytes
+        }) if bytes == payload_len
+    ));
+    assert_eq!(device.fid_count(), 1);
+    assert_eq!(device.completions().len(), 1);
+}
+
+#[test]
+fn virtio_9p_device_accepts_maximum_walk_name_elements() {
+    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap());
+    let attach = decoded_request(
+        VIRTIO_9P_TATTACH,
+        1,
+        p9_attach_payload(1, VIRTIO_9P_NOFID, b"root", b"", 0),
+    );
+    device.execute_at(10, attach).unwrap();
+
+    let names = vec![b"." as &[u8]; 16];
+    let walk = decoded_request(VIRTIO_9P_TWALK, 2, p9_walk_payload(1, 2, &names));
+    let completion = device.execute_at(11, walk).unwrap();
+
+    assert_eq!(completion.message_type(), VIRTIO_9P_RWALK);
+    assert_eq!(completion.payload()[0..2], 16_u16.to_le_bytes());
+    assert_eq!(read_qid(completion.payload(), 2).2, 1);
+    assert_eq!(read_qid(completion.payload(), 2 + 15 * 13).2, 1);
+    assert_eq!(device.fid_count(), 2);
 }

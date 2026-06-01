@@ -102,6 +102,7 @@ pub const VIRTIO_9P_XATTR_REPLACE: u32 = 0x2;
 pub const VIRTIO_9P_STATFS_TYPE: u32 = 0x0102_1997;
 pub const VIRTIO_9P_STATFS_BLOCK_SIZE: u32 = 4096;
 pub const VIRTIO_9P_NAME_MAX: u32 = 255;
+const VIRTIO_9P_MAX_WALK_ELEMENTS: u16 = 16;
 
 pub(crate) fn parse_version_request(
     request: &Virtio9pRequest,
@@ -165,7 +166,13 @@ pub(crate) fn parse_walk_request(
     let fid = reader.read_u32()?;
     let newfid = reader.read_u32()?;
     let name_count = reader.read_u16()?;
-    let mut names = Vec::new();
+    if name_count > VIRTIO_9P_MAX_WALK_ELEMENTS {
+        return Err(VirtioError::InvalidVirtio9pPayload {
+            message_type: request.message_type(),
+            bytes: request.payload().len(),
+        });
+    }
+    let mut names = Vec::with_capacity(usize::from(name_count));
     for _ in 0..name_count {
         names.push(string_from_9p(
             request.message_type(),
