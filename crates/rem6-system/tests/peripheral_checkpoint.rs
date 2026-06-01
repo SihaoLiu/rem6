@@ -259,6 +259,13 @@ const STABLE_PL031_CHECKPOINT_BYTES: &[u8] = &[
     0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0,
 ];
 
+const SP804_CHECKPOINT_RAW_INTERRUPT_OFFSET: usize = 24;
+const STABLE_SP804_CHECKPOINT_BYTES: &[u8] = &[
+    3, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0x10, 0, 0, 0, 0, 0, 0, 0, 0x21, 0, 0, 0, 1, 1, 2, 0, 0, 0,
+    0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0, 2, 0, 0, 0, 5, 0, 0, 0, 0x14, 0, 0, 0, 0, 0, 0,
+    0, 0xe0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0,
+];
+
 const SP805_CHECKPOINT_HAS_TIMEOUT_START_TICK_OFFSET: usize = 4;
 const STABLE_SP805_CHECKPOINT_BYTES: &[u8] = &[
     3, 0, 0, 0, 1, 0x10, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 1, 1, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 3,
@@ -486,6 +493,117 @@ fn sp804_checkpoint_bank_rejects_invalid_bank_without_partial_restore() {
     .unwrap();
     valid_only_bank.restore_all_from(&registry).unwrap();
     assert_eq!(target_valid.snapshot(), expected);
+}
+
+#[test]
+fn sp804_checkpoint_port_captures_stable_snapshot_bytes() {
+    let component = checkpoint_component("sp804_payload_stable");
+    let source = configured_sp804_device(0x1c11_0000);
+    let expected = source.snapshot();
+    let target = sp804_device(0x1c11_0000);
+    let mut registry = CheckpointRegistry::new();
+    let port = Sp804CheckpointPort::new(component.clone(), source);
+
+    port.register(&mut registry).unwrap();
+    let captured = port.capture_into(&mut registry).unwrap();
+
+    assert_eq!(captured.snapshot(), &expected);
+    assert_eq!(
+        registry.chunk(&component, "sp804").unwrap(),
+        STABLE_SP804_CHECKPOINT_BYTES
+    );
+
+    Sp804CheckpointPort::new(component, target.clone())
+        .restore_from(&registry)
+        .unwrap();
+    assert_eq!(target.snapshot(), expected);
+}
+
+#[test]
+fn sp804_checkpoint_port_rejects_invalid_bool_without_partial_restore() {
+    let component = checkpoint_component("sp804_payload_bool");
+    let target = sp804_device(0x1c11_0000);
+    let original = target.snapshot();
+    let mut registry = CheckpointRegistry::new();
+    let mut payload = STABLE_SP804_CHECKPOINT_BYTES.to_vec();
+    payload[SP804_CHECKPOINT_RAW_INTERRUPT_OFFSET] = 2;
+
+    registry.register(component.clone()).unwrap();
+    registry.write_chunk(&component, "sp804", payload).unwrap();
+
+    let error = Sp804CheckpointPort::new(component.clone(), target.clone())
+        .restore_from(&registry)
+        .unwrap_err();
+
+    match error {
+        Sp804CheckpointError::InvalidChunk {
+            component: actual,
+            reason,
+        } => {
+            assert_eq!(actual, component);
+            assert_eq!(reason, "raw_interrupt has invalid bool byte 2");
+        }
+        other => panic!("unexpected SP804 checkpoint error: {other}"),
+    }
+    assert_eq!(target.snapshot(), original);
+}
+
+#[test]
+fn sp804_checkpoint_port_rejects_truncated_second_timer_without_partial_restore() {
+    let component = checkpoint_component("sp804_payload_truncated");
+    let target = sp804_device(0x1c11_0000);
+    let original = target.snapshot();
+    let mut registry = CheckpointRegistry::new();
+    let mut payload = STABLE_SP804_CHECKPOINT_BYTES.to_vec();
+    payload.pop();
+
+    registry.register(component.clone()).unwrap();
+    registry.write_chunk(&component, "sp804", payload).unwrap();
+
+    let error = Sp804CheckpointPort::new(component.clone(), target.clone())
+        .restore_from(&registry)
+        .unwrap_err();
+
+    match error {
+        Sp804CheckpointError::InvalidChunk {
+            component: actual,
+            reason,
+        } => {
+            assert_eq!(actual, component);
+            assert!(reason.contains("generation needs 8 bytes"));
+        }
+        other => panic!("unexpected SP804 checkpoint error: {other}"),
+    }
+    assert_eq!(target.snapshot(), original);
+}
+
+#[test]
+fn sp804_checkpoint_port_rejects_trailing_payload_bytes_without_partial_restore() {
+    let component = checkpoint_component("sp804_payload_trailing");
+    let target = sp804_device(0x1c11_0000);
+    let original = target.snapshot();
+    let mut registry = CheckpointRegistry::new();
+    let mut payload = STABLE_SP804_CHECKPOINT_BYTES.to_vec();
+    payload.push(0);
+
+    registry.register(component.clone()).unwrap();
+    registry.write_chunk(&component, "sp804", payload).unwrap();
+
+    let error = Sp804CheckpointPort::new(component.clone(), target.clone())
+        .restore_from(&registry)
+        .unwrap_err();
+
+    match error {
+        Sp804CheckpointError::InvalidChunk {
+            component: actual,
+            reason,
+        } => {
+            assert_eq!(actual, component);
+            assert_eq!(reason, "trailing 1 bytes after SP804 checkpoint payload");
+        }
+        other => panic!("unexpected SP804 checkpoint error: {other}"),
+    }
+    assert_eq!(target.snapshot(), original);
 }
 
 #[test]
