@@ -3185,9 +3185,11 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   paths, PrimeCell ID reads, typed width errors, typed unknown-register errors,
   typed unsupported integration-test harness errors, platform MMIO bus
   attachment with optional interrupt routing, retained device lookup,
-  checkpoint bank decode-first restore without partial mutation,
-  host checkpoint-action capture/restore through manifests, and automatic
-  topology host checkpoint attachment.
+  checkpoint bank decode-first restore without partial mutation, stable SP805
+  checkpoint chunk bytes, invalid-bool, truncated reset-assertion, and trailing
+  chunk rejection without partial restore, host checkpoint-action
+  capture/restore through manifests, and automatic topology host checkpoint
+  attachment.
 - PLIC/MMIO tests cover PLIC-compatible 32-bit priority, pending, enable,
   threshold, and claim/complete windows, including serial enable and threshold
   filtering before claim, parallel repeated-claim behavior before matching
