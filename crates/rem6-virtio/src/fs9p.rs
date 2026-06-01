@@ -6,8 +6,8 @@ use rem6_memory::ByteMask;
 
 use crate::fs9p_lock::Virtio9pLockTable;
 use crate::fs9p_namespace::{
-    getattr_payload, qid_payload, Virtio9pFidState, Virtio9pNamespace, Virtio9pNodeId, Virtio9pQid,
-    Virtio9pTimestamp, Virtio9pXattrWritePolicy,
+    getattr_payload, qid_payload, Virtio9pFidState, Virtio9pNamespace, Virtio9pNodeId,
+    Virtio9pOpenMode, Virtio9pQid, Virtio9pTimestamp, Virtio9pXattrWritePolicy,
 };
 use crate::fs9p_protocol::*;
 use crate::{
@@ -407,15 +407,19 @@ impl Virtio9pDevice {
 
     fn handle_lopen(&self, request: &Virtio9pRequest) -> Result<Result<Vec<u8>, u32>, VirtioError> {
         let open = parse_lopen_request(request)?;
-        self.open_fid_payload(open.fid)
+        self.open_fid_payload(open.fid, Virtio9pOpenMode::from_bits(open.mode))
     }
 
     fn handle_open(&self, request: &Virtio9pRequest) -> Result<Result<Vec<u8>, u32>, VirtioError> {
         let open = parse_open_request(request)?;
-        self.open_fid_payload(open.fid)
+        self.open_fid_payload(open.fid, Virtio9pOpenMode::from_bits(open.mode))
     }
 
-    fn open_fid_payload(&self, fid: u32) -> Result<Result<Vec<u8>, u32>, VirtioError> {
+    fn open_fid_payload(
+        &self,
+        fid: u32,
+        mode: Virtio9pOpenMode,
+    ) -> Result<Result<Vec<u8>, u32>, VirtioError> {
         let mut fids = self.fids.lock().expect("virtio 9p fid lock");
         let Some(fid) = fids.get_mut(&fid) else {
             return Ok(Err(VIRTIO_9P_EBADF));
@@ -427,7 +431,7 @@ impl Virtio9pDevice {
         if namespace.metadata(node).is_none() {
             return Ok(Err(VIRTIO_9P_EBADF));
         }
-        if fid.open().is_none() {
+        if fid.open(mode).is_none() {
             return Ok(Err(VIRTIO_9P_EBADF));
         }
         let mut payload = namespace.qid(node).to_le_bytes().to_vec();
@@ -440,7 +444,11 @@ impl Virtio9pDevice {
         request: &Virtio9pRequest,
     ) -> Result<Result<Vec<u8>, u32>, VirtioError> {
         let create = parse_lcreate_request(request)?;
-        self.create_fid_payload(create.fid, create.name)
+        self.create_fid_payload(
+            create.fid,
+            create.name,
+            Virtio9pOpenMode::from_bits(create.mode),
+        )
     }
 
     fn handle_create(
@@ -448,13 +456,18 @@ impl Virtio9pDevice {
         request: &Virtio9pRequest,
     ) -> Result<Result<Vec<u8>, u32>, VirtioError> {
         let create = parse_create_request(request)?;
-        self.create_fid_payload(create.fid, create.name)
+        self.create_fid_payload(
+            create.fid,
+            create.name,
+            Virtio9pOpenMode::from_bits(create.mode),
+        )
     }
 
     fn create_fid_payload(
         &self,
         fid: u32,
         name: String,
+        mode: Virtio9pOpenMode,
     ) -> Result<Result<Vec<u8>, u32>, VirtioError> {
         let mut fids = self.fids.lock().expect("virtio 9p fid lock");
         let Some(fid) = fids.get_mut(&fid) else {
@@ -468,7 +481,7 @@ impl Virtio9pDevice {
             Ok(node) => node,
             Err(errno) => return Ok(Err(errno)),
         };
-        *fid = Virtio9pFidState::opened(node);
+        *fid = Virtio9pFidState::opened(node, mode);
         let mut payload = namespace.qid(node).to_le_bytes().to_vec();
         payload.extend(self.negotiated_msize().to_le_bytes());
         Ok(Ok(payload))
@@ -761,7 +774,7 @@ impl Virtio9pDevice {
         else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
-        if !fid.is_open() {
+        if !fid.can_read() {
             return Ok(Err(VIRTIO_9P_EBADF));
         }
         let Some(node) = fid.node() else {
@@ -975,7 +988,7 @@ impl Virtio9pDevice {
                 .ok_or(VirtioError::Virtio9pPayloadLengthOverflow)?;
             return Ok(Ok(counted_data_payload(data)));
         }
-        if !fid.is_open() {
+        if !fid.can_read() {
             return Ok(Err(VIRTIO_9P_EBADF));
         }
         let Some(node) = fid.node() else {
@@ -1002,7 +1015,7 @@ impl Virtio9pDevice {
             }
             fid.clone()
         };
-        if !fid.is_open() {
+        if !fid.can_write() {
             return Ok(Err(VIRTIO_9P_EBADF));
         }
         let Some(node) = fid.node() else {

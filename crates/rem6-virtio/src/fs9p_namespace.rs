@@ -4,11 +4,12 @@ use crate::{
     fs9p_protocol::{
         VIRTIO_9P_DTBLK, VIRTIO_9P_DTCHR, VIRTIO_9P_DTDIR, VIRTIO_9P_DTREG, VIRTIO_9P_DTSYMLINK,
         VIRTIO_9P_EBADF, VIRTIO_9P_EEXIST, VIRTIO_9P_ENODATA, VIRTIO_9P_ENOENT,
-        VIRTIO_9P_ENOTEMPTY, VIRTIO_9P_GETATTR_BASIC, VIRTIO_9P_NAME_MAX, VIRTIO_9P_QTDIR,
-        VIRTIO_9P_QTFILE, VIRTIO_9P_QTSYMLINK, VIRTIO_9P_STATFS_BLOCK_SIZE, VIRTIO_9P_STATFS_TYPE,
-        VIRTIO_9P_TLCREATE, VIRTIO_9P_TLINK, VIRTIO_9P_TMKDIR, VIRTIO_9P_TMKNOD, VIRTIO_9P_TRENAME,
-        VIRTIO_9P_TRENAMEAT, VIRTIO_9P_TSYMLINK, VIRTIO_9P_TUNLINKAT, VIRTIO_9P_TWALK,
-        VIRTIO_9P_TXATTRCREATE,
+        VIRTIO_9P_ENOTEMPTY, VIRTIO_9P_GETATTR_BASIC, VIRTIO_9P_NAME_MAX,
+        VIRTIO_9P_OPEN_EXECUTE_ONLY, VIRTIO_9P_OPEN_READ_ONLY, VIRTIO_9P_OPEN_READ_WRITE,
+        VIRTIO_9P_OPEN_WRITE_ONLY, VIRTIO_9P_QTDIR, VIRTIO_9P_QTFILE, VIRTIO_9P_QTSYMLINK,
+        VIRTIO_9P_STATFS_BLOCK_SIZE, VIRTIO_9P_STATFS_TYPE, VIRTIO_9P_TLCREATE, VIRTIO_9P_TLINK,
+        VIRTIO_9P_TMKDIR, VIRTIO_9P_TMKNOD, VIRTIO_9P_TRENAME, VIRTIO_9P_TRENAMEAT,
+        VIRTIO_9P_TSYMLINK, VIRTIO_9P_TUNLINKAT, VIRTIO_9P_TWALK, VIRTIO_9P_TXATTRCREATE,
     },
     VirtioError,
 };
@@ -1369,11 +1370,39 @@ impl Virtio9pXattrWritePolicy {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Virtio9pOpenMode {
+    ReadOnly,
+    WriteOnly,
+    ReadWrite,
+    ExecuteOnly,
+}
+
+impl Virtio9pOpenMode {
+    pub(crate) const fn from_bits(bits: u8) -> Self {
+        match bits & crate::fs9p_protocol::VIRTIO_9P_OPEN_ACCESS_MASK {
+            VIRTIO_9P_OPEN_READ_ONLY => Self::ReadOnly,
+            VIRTIO_9P_OPEN_WRITE_ONLY => Self::WriteOnly,
+            VIRTIO_9P_OPEN_READ_WRITE => Self::ReadWrite,
+            VIRTIO_9P_OPEN_EXECUTE_ONLY => Self::ExecuteOnly,
+            _ => Self::ReadOnly,
+        }
+    }
+
+    pub(crate) const fn can_read(self) -> bool {
+        matches!(self, Self::ReadOnly | Self::ReadWrite)
+    }
+
+    pub(crate) const fn can_write(self) -> bool {
+        matches!(self, Self::WriteOnly | Self::ReadWrite)
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum Virtio9pFidState {
     Node {
         node: Virtio9pNodeId,
-        open: bool,
+        open: Option<Virtio9pOpenMode>,
     },
     XattrRead {
         data: Vec<u8>,
@@ -1389,7 +1418,7 @@ pub(crate) enum Virtio9pFidState {
 
 impl Virtio9pFidState {
     pub(crate) const fn new(node: Virtio9pNodeId) -> Self {
-        Self::Node { node, open: false }
+        Self::Node { node, open: None }
     }
 
     pub(crate) fn xattr_read(data: Vec<u8>) -> Self {
@@ -1418,24 +1447,49 @@ impl Virtio9pFidState {
         }
     }
 
-    pub(crate) fn open(&mut self) -> Option<()> {
+    pub(crate) fn open(&mut self, mode: Virtio9pOpenMode) -> Option<()> {
         match self {
             Self::Node { open, .. } => {
-                *open = true;
+                *open = Some(mode);
                 Some(())
             }
             Self::XattrRead { .. } | Self::XattrWrite { .. } => None,
         }
     }
 
-    pub(crate) const fn opened(node: Virtio9pNodeId) -> Self {
-        Self::Node { node, open: true }
+    pub(crate) const fn opened(node: Virtio9pNodeId, mode: Virtio9pOpenMode) -> Self {
+        Self::Node {
+            node,
+            open: Some(mode),
+        }
     }
 
     pub(crate) const fn is_open(&self) -> bool {
         match self {
-            Self::Node { open, .. } => *open,
+            Self::Node { open, .. } => open.is_some(),
             Self::XattrRead { .. } | Self::XattrWrite { .. } => false,
+        }
+    }
+
+    pub(crate) const fn can_read(&self) -> bool {
+        match self {
+            Self::Node {
+                open: Some(mode), ..
+            } => mode.can_read(),
+            Self::Node { open: None, .. } | Self::XattrRead { .. } | Self::XattrWrite { .. } => {
+                false
+            }
+        }
+    }
+
+    pub(crate) const fn can_write(&self) -> bool {
+        match self {
+            Self::Node {
+                open: Some(mode), ..
+            } => mode.can_write(),
+            Self::Node { open: None, .. } | Self::XattrRead { .. } | Self::XattrWrite { .. } => {
+                false
+            }
         }
     }
 

@@ -99,6 +99,11 @@ pub const VIRTIO_9P_LOCK_TYPE_UNLCK: u8 = 2;
 pub const VIRTIO_9P_AT_REMOVEDIR: u32 = 0x200;
 pub const VIRTIO_9P_XATTR_CREATE: u32 = 0x1;
 pub const VIRTIO_9P_XATTR_REPLACE: u32 = 0x2;
+pub const VIRTIO_9P_OPEN_READ_ONLY: u8 = 0;
+pub const VIRTIO_9P_OPEN_WRITE_ONLY: u8 = 1;
+pub const VIRTIO_9P_OPEN_READ_WRITE: u8 = 2;
+pub const VIRTIO_9P_OPEN_EXECUTE_ONLY: u8 = 3;
+pub const VIRTIO_9P_OPEN_ACCESS_MASK: u8 = 0x3;
 pub const VIRTIO_9P_STATFS_TYPE: u32 = 0x0102_1997;
 pub const VIRTIO_9P_STATFS_BLOCK_SIZE: u32 = 4096;
 pub const VIRTIO_9P_NAME_MAX: u32 = 255;
@@ -189,9 +194,12 @@ pub(crate) fn parse_lopen_request(
 ) -> Result<Virtio9pOpenRequest, VirtioError> {
     let mut reader = Virtio9pPayloadReader::new(request.message_type(), request.payload());
     let fid = reader.read_u32()?;
-    let _flags = reader.read_u32()?;
+    let flags = reader.read_u32()?;
     reader.finish()?;
-    Ok(Virtio9pOpenRequest { fid })
+    Ok(Virtio9pOpenRequest {
+        fid,
+        mode: (flags & u32::from(VIRTIO_9P_OPEN_ACCESS_MASK)) as u8,
+    })
 }
 
 pub(crate) fn parse_open_request(
@@ -199,9 +207,9 @@ pub(crate) fn parse_open_request(
 ) -> Result<Virtio9pOpenRequest, VirtioError> {
     let mut reader = Virtio9pPayloadReader::new(request.message_type(), request.payload());
     let fid = reader.read_u32()?;
-    let _mode = reader.read_u8()?;
+    let mode = reader.read_u8()? & VIRTIO_9P_OPEN_ACCESS_MASK;
     reader.finish()?;
-    Ok(Virtio9pOpenRequest { fid })
+    Ok(Virtio9pOpenRequest { fid, mode })
 }
 
 pub(crate) fn parse_lcreate_request(
@@ -214,11 +222,15 @@ pub(crate) fn parse_lcreate_request(
         reader.read_string()?,
         request.payload(),
     )?;
-    let _flags = reader.read_u32()?;
+    let flags = reader.read_u32()?;
     let _mode = reader.read_u32()?;
     let _gid = reader.read_u32()?;
     reader.finish()?;
-    Ok(Virtio9pCreateRequest { fid, name })
+    Ok(Virtio9pCreateRequest {
+        fid,
+        name,
+        mode: (flags & u32::from(VIRTIO_9P_OPEN_ACCESS_MASK)) as u8,
+    })
 }
 
 pub(crate) fn parse_create_request(
@@ -232,9 +244,9 @@ pub(crate) fn parse_create_request(
         request.payload(),
     )?;
     let _perm = reader.read_u32()?;
-    let _mode = reader.read_u8()?;
+    let mode = reader.read_u8()? & VIRTIO_9P_OPEN_ACCESS_MASK;
     reader.finish()?;
-    Ok(Virtio9pCreateRequest { fid, name })
+    Ok(Virtio9pCreateRequest { fid, name, mode })
 }
 
 pub(crate) fn parse_symlink_request(
@@ -772,12 +784,14 @@ pub(crate) struct Virtio9pWalkRequest {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct Virtio9pOpenRequest {
     pub(crate) fid: u32,
+    pub(crate) mode: u8,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Virtio9pCreateRequest {
     pub(crate) fid: u32,
     pub(crate) name: String,
+    pub(crate) mode: u8,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -1275,9 +1275,11 @@ Implementation evidence through 2026-05-31:
   supported mode, uid, gid, mtime, atime, and length updates, supports
   same-parent name updates while preserving open fid access, and rejects stale fids
   before mutation, `Tlopen` and legacy
-  `Topen` mark file and directory fids open and report qid plus I/O-unit data,
+  `Topen` mark file and directory fids open, report qid plus I/O-unit data,
+  and enforce read-only, write-only, read-write, and execute-only access bits,
   legacy `Tcreate` shares the same checked namespace creation path as
-  `Tlcreate`, including duplicate-file rejection, `Treaddir`
+  `Tlcreate`, including duplicate-file rejection and opened-fid access-mode
+  propagation, `Treaddir`
   returns stable `.`/`..` plus sorted file, symlink, or directory dirents with
   resumable byte offsets and count-bounded whole-entry replies, `Tsymlink`
   creates deterministic symlink qids, `Treadlink` returns counted symlink
@@ -3291,7 +3293,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   survival after rename, old-name rejection, new-name walk qid preservation,
   stale-fid errno replies, and malformed
   stat-blob rejection, `Tlopen` and legacy `Topen` file and directory qid plus
-  I/O-unit replies, legacy `Tcreate` checked file creation, duplicate-file
+  I/O-unit replies, access-mode checks for read-only, write-only, read-write,
+  and execute-only opened fids, legacy `Tcreate` and `Tlcreate` opened-fid
+  access-mode propagation, legacy `Tcreate` checked file creation, duplicate-file
   rejection without clobbering, plus opened-fid retargeting, `Treaddir` sorted
   root and child-directory dirents, resumable offsets, count-bounded replies,
   and directory-only error handling, counted `Tread` ranges, `Twrite` counted
