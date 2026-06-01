@@ -15,6 +15,7 @@ const PCI_HOST_TOPOLOGY_VERSION: u16 = 1;
 const U16_BYTES: usize = 2;
 const U32_BYTES: usize = 4;
 const U64_BYTES: usize = 8;
+const PCI_FUNCTION_RECORD_BYTES: usize = 3;
 
 pub type PciHostOptionalCapabilityPayloadMap = BTreeMap<PciFunctionAddress, Option<Vec<u8>>>;
 pub type PciHostRawCapabilityPayloadMap = BTreeMap<PciFunctionAddress, Vec<Vec<u8>>>;
@@ -859,6 +860,9 @@ fn write_functions(payload: &mut Vec<u8>, functions: &[PciFunctionAddress]) {
 
 fn read_functions(payload: &[u8], cursor: &mut usize) -> Result<Vec<PciFunctionAddress>, PciError> {
     let count = read_u32(payload, cursor)? as usize;
+    if count > payload.len().saturating_sub(*cursor) / PCI_FUNCTION_RECORD_BYTES {
+        return Err(PciError::InvalidHostBridgeTopologySnapshot);
+    }
     let mut functions = Vec::with_capacity(count);
     for _ in 0..count {
         let bus = read_u8(payload, cursor)?;
@@ -917,4 +921,22 @@ fn read_exact<'a>(
         .ok_or(PciError::InvalidHostBridgeTopologySnapshot)?;
     *cursor = end;
     Ok(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn read_functions_rejects_count_before_partial_record_consumption() {
+        let mut payload = Vec::new();
+        write_u32(&mut payload, 2);
+        payload.extend_from_slice(&[0, 0, 0]);
+
+        let mut cursor = 0;
+        let result = read_functions(&payload, &mut cursor);
+
+        assert_eq!(result, Err(PciError::InvalidHostBridgeTopologySnapshot));
+        assert_eq!(cursor, U32_BYTES);
+    }
 }
