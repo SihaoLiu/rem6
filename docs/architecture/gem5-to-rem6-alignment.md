@@ -2671,19 +2671,23 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   propagation of line-snapshot validation.
 - Memory translation page-map tests cover offsets, permissions, cross-page
   segment splits, snapshot restore, checkpoint payload binary round trips, and
-  overlapping mapping-record rejection through snapshot decode validation.
+  overlapping mapping-record plus invalid-permission rejection through snapshot
+  decode validation.
 - Memory translation TLB tests cover public gem5 issue #3010 by preserving
   global same-ASID entries during non-global ASID flush, removing same-ASID
   non-global entries, preserving other ASIDs, snapshotting entry scope, and
-  rejecting nonmonotonic restore LRU counters so malformed checkpoints cannot
-  reuse an existing stable replacement value. They also cover checkpoint payload
-  binary round trips and duplicate-entry rejection through snapshot decode
-  validation.
+  rejecting nonmonotonic restore LRU counters and same-ASID overlapping restore
+  entries so malformed checkpoints cannot reuse an existing stable replacement
+  value or create ambiguous lookup ranges. They also cover checkpoint payload
+  binary round trips, duplicate-entry rejection, and address-space overflow
+  rejection through snapshot decode validation.
 - Memory translation queue tests cover pending-request ready ordering, snapshot
   restore, duplicate rejection, nonmonotonic restore order-counter rejection,
-  checkpoint payload binary round trips, and duplicate-request payload rejection
-  through snapshot decode validation, so a malformed checkpoint cannot reuse an
-  existing stable ordering value or duplicate pending request identity.
+  forged-ready-tick rejection, checkpoint payload binary round trips,
+  duplicate-request payload rejection, and invalid access-code rejection through
+  snapshot decode validation, so a malformed checkpoint cannot reuse an
+  existing stable ordering value, duplicate pending request identity, or forge
+  completion timing.
 - x86 ISA prefix scan tests cover public gem5 issue #2962 by requiring a REX
   prefix before a later legacy prefix to be recorded as ignored, requiring a
   REX immediately before a one-byte opcode or `0x0f` escape to stay active,

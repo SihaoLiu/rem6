@@ -648,7 +648,7 @@ impl TranslationTlb {
         }
 
         let mut keys = BTreeSet::new();
-        let mut entries = BTreeMap::new();
+        let mut entries: BTreeMap<TranslationTlbKey, TranslationTlbEntry> = BTreeMap::new();
         for snapshot_entry in snapshot.entries() {
             let key = TranslationTlbKey::new(
                 snapshot_entry.address_space(),
@@ -666,6 +666,23 @@ impl TranslationTlb {
                     virtual_page: snapshot_entry.virtual_page(),
                     last_used: snapshot_entry.last_used(),
                 });
+            }
+            let requested_range = entry_range(entry.virtual_page, entry.page_size)?;
+            for existing_entry in entries.values() {
+                if existing_entry.address_space != entry.address_space {
+                    continue;
+                }
+                let existing_range =
+                    entry_range(existing_entry.virtual_page, existing_entry.page_size)?;
+                if existing_range.overlaps(requested_range) {
+                    return Err(TranslationError::OverlappingTlbEntry {
+                        address_space: entry.address_space,
+                        existing_start: existing_range.start(),
+                        existing_size: existing_range.size(),
+                        requested_start: requested_range.start(),
+                        requested_size: requested_range.size(),
+                    });
+                }
             }
             entries.insert(key, entry);
         }

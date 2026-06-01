@@ -265,6 +265,29 @@ fn page_translation_map_checkpoint_payload_rejects_overlapping_mapping_records()
 }
 
 #[test]
+fn page_translation_map_checkpoint_payload_rejects_invalid_permission_bits() {
+    let page_size = TranslationPageSize::new(4096).unwrap();
+    let mut map = TranslationPageMap::new(page_size);
+    map.map(
+        Address::new(0x1000),
+        Address::new(0x8000),
+        1,
+        TranslationPagePermissions::read_write(),
+    )
+    .unwrap();
+    let mut payload = TranslationPageMapCheckpointPayload::from_snapshot(map.snapshot())
+        .unwrap()
+        .encode();
+    let permissions_offset = 48;
+    payload[permissions_offset..permissions_offset + 4].copy_from_slice(&8_u32.to_le_bytes());
+
+    assert_eq!(
+        TranslationPageMapCheckpointPayload::decode(&payload).unwrap_err(),
+        TranslationError::InvalidPageMapCheckpointPermissions { code: 8 }
+    );
+}
+
+#[test]
 fn page_translation_map_splits_cross_page_translation_into_explicit_segments() {
     let page_size = TranslationPageSize::new(4096).unwrap();
     let mut map = TranslationPageMap::new(page_size);

@@ -1,7 +1,7 @@
 use rem6_memory::{
     AccessSize, Address, AgentId, TranslationAccessKind, TranslationError, TranslationQueue,
-    TranslationQueueCheckpointPayload, TranslationQueueConfig, TranslationQueueSnapshot,
-    TranslationRequest, TranslationRequestId, TranslationResolution,
+    TranslationQueueCheckpointPayload, TranslationQueueConfig, TranslationQueueEntrySnapshot,
+    TranslationQueueSnapshot, TranslationRequest, TranslationRequestId, TranslationResolution,
 };
 
 fn request_id(sequence: u64) -> TranslationRequestId {
@@ -125,6 +125,43 @@ fn translation_queue_checkpoint_payload_rejects_duplicate_request_ids() {
         TranslationQueueCheckpointPayload::decode(&duplicate_payload).unwrap_err(),
         TranslationError::DuplicateRequest {
             request: first.id(),
+        }
+    );
+}
+
+#[test]
+fn translation_queue_checkpoint_payload_rejects_invalid_access_code() {
+    let config = TranslationQueueConfig::new(4, 3).unwrap();
+    let mut queue = TranslationQueue::new(config);
+    queue
+        .enqueue(9, request(15, 0x5000, TranslationAccessKind::Store))
+        .unwrap();
+    let mut payload = TranslationQueueCheckpointPayload::from_snapshot(queue.snapshot())
+        .unwrap()
+        .encode();
+    let access_offset = 44;
+    payload[access_offset..access_offset + 4].copy_from_slice(&99_u32.to_le_bytes());
+
+    assert_eq!(
+        TranslationQueueCheckpointPayload::decode(&payload).unwrap_err(),
+        TranslationError::InvalidQueueCheckpointAccessKind { code: 99 }
+    );
+}
+
+#[test]
+fn translation_queue_restore_rejects_forged_ready_ticks() {
+    let config = TranslationQueueConfig::new(4, 3).unwrap();
+    let load = request(16, 0x6000, TranslationAccessKind::Load);
+    let entry = TranslationQueueEntrySnapshot::new(load.clone(), 9, 10, 0);
+    let snapshot = TranslationQueueSnapshot::new(config, vec![entry], 1);
+
+    assert_eq!(
+        TranslationQueue::from_snapshot(&snapshot).unwrap_err(),
+        TranslationError::SnapshotReadyTickMismatch {
+            request: load.id(),
+            issue_tick: 9,
+            latency: 3,
+            ready_tick: 10,
         }
     );
 }

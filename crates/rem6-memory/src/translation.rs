@@ -639,6 +639,23 @@ impl TranslationQueue {
                     order: entry.order(),
                 });
             }
+            let expected_ready_tick = entry
+                .issue_tick()
+                .checked_add(snapshot.config().latency())
+                .ok_or(TranslationError::SnapshotReadyTickMismatch {
+                    request: request.id(),
+                    issue_tick: entry.issue_tick(),
+                    latency: snapshot.config().latency(),
+                    ready_tick: entry.ready_tick(),
+                })?;
+            if entry.ready_tick() != expected_ready_tick {
+                return Err(TranslationError::SnapshotReadyTickMismatch {
+                    request: request.id(),
+                    issue_tick: entry.issue_tick(),
+                    latency: snapshot.config().latency(),
+                    ready_tick: entry.ready_tick(),
+                });
+            }
             entries.insert(
                 request.id(),
                 TranslationQueueEntry {
@@ -800,6 +817,12 @@ pub enum TranslationError {
         request: TranslationRequestId,
         order: u64,
     },
+    SnapshotReadyTickMismatch {
+        request: TranslationRequestId,
+        issue_tick: u64,
+        latency: u64,
+        ready_tick: u64,
+    },
     QueueOrderOverflow,
     InvalidQueueCheckpointPayloadSize {
         expected: usize,
@@ -837,6 +860,13 @@ pub enum TranslationError {
         next_lru: u64,
         virtual_page: Address,
         last_used: u64,
+    },
+    OverlappingTlbEntry {
+        address_space: crate::TranslationAddressSpaceId,
+        existing_start: Address,
+        existing_size: AccessSize,
+        requested_start: Address,
+        requested_size: AccessSize,
     },
     TlbOrderOverflow,
     InvalidTlbCheckpointPayloadSize {
@@ -957,6 +987,17 @@ impl fmt::Display for TranslationError {
                 request.sequence(),
                 request.agent().get()
             ),
+            Self::SnapshotReadyTickMismatch {
+                request,
+                issue_tick,
+                latency,
+                ready_tick,
+            } => write!(
+                formatter,
+                "translation queue snapshot request {} from agent {} has ready tick {ready_tick}; expected issue tick {issue_tick} plus latency {latency}",
+                request.sequence(),
+                request.agent().get()
+            ),
             Self::QueueOrderOverflow => {
                 write!(
                     formatter,
@@ -1018,6 +1059,21 @@ impl fmt::Display for TranslationError {
                 formatter,
                 "translation TLB snapshot next LRU {next_lru} is not after virtual page {:#x} last-used {last_used}",
                 virtual_page.get()
+            ),
+            Self::OverlappingTlbEntry {
+                address_space,
+                existing_start,
+                existing_size,
+                requested_start,
+                requested_size,
+            } => write!(
+                formatter,
+                "translation TLB entry for ASID {} range {:#x}+{} overlaps existing range {:#x}+{}",
+                address_space.get(),
+                requested_start.get(),
+                requested_size.bytes(),
+                existing_start.get(),
+                existing_size.bytes()
             ),
             Self::TlbOrderOverflow => {
                 write!(formatter, "translation TLB stable order counter overflowed")
