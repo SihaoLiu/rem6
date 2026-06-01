@@ -1,6 +1,7 @@
 use rem6_cpu::{
     CpuId, RiscvStoreConditionalFailureDiagnostic, RiscvStoreConditionalProgress,
-    RiscvStoreConditionalProgressConfig,
+    RiscvStoreConditionalProgressCheckpointPayload, RiscvStoreConditionalProgressConfig,
+    RiscvStoreConditionalProgressError,
 };
 use rem6_kernel::Tick;
 use rem6_memory::{AccessSize, Address};
@@ -103,6 +104,50 @@ fn riscv_sc_progress_snapshot_restore_preserves_streaks_and_diagnostics() {
 }
 
 #[test]
+fn riscv_sc_progress_checkpoint_payload_round_trips_snapshot() {
+    let config = RiscvStoreConditionalProgressConfig::new(2).unwrap();
+    let mut progress = RiscvStoreConditionalProgress::new(config);
+    failure_ticks(
+        &mut progress,
+        CpuId::new(0),
+        Address::new(0xa000),
+        &[50, 51],
+    );
+    failure_ticks(&mut progress, CpuId::new(1), Address::new(0xa040), &[52]);
+    let snapshot = progress.snapshot();
+    let payload =
+        RiscvStoreConditionalProgressCheckpointPayload::from_snapshot(snapshot.clone()).unwrap();
+
+    let decoded =
+        RiscvStoreConditionalProgressCheckpointPayload::decode(payload.encode().as_slice())
+            .unwrap();
+    let mut restored = RiscvStoreConditionalProgress::new(config);
+    restored.restore(decoded.snapshot()).unwrap();
+
+    assert_eq!(restored.snapshot(), snapshot);
+    assert_eq!(decoded.snapshot().streaks().len(), 2);
+    assert_eq!(decoded.snapshot().diagnostics().len(), 1);
+}
+
+#[test]
+fn riscv_sc_progress_checkpoint_payload_rejects_duplicate_streak_cpu() {
+    let config = RiscvStoreConditionalProgressConfig::new(3).unwrap();
+    let mut progress = RiscvStoreConditionalProgress::new(config);
+    failure_ticks(&mut progress, CpuId::new(2), Address::new(0xb000), &[60]);
+    let payload =
+        RiscvStoreConditionalProgressCheckpointPayload::from_snapshot(progress.snapshot())
+            .unwrap()
+            .encode();
+    let duplicate_streak_payload = duplicate_first_sc_checkpoint_streak(payload);
+
+    assert_eq!(
+        RiscvStoreConditionalProgressCheckpointPayload::decode(&duplicate_streak_payload)
+            .unwrap_err(),
+        RiscvStoreConditionalProgressError::DuplicateSnapshotStreak { cpu: CpuId::new(2) }
+    );
+}
+
+#[test]
 fn riscv_sc_progress_rejects_zero_diagnostic_threshold() {
     assert_eq!(
         RiscvStoreConditionalProgressConfig::new(0)
@@ -110,4 +155,15 @@ fn riscv_sc_progress_rejects_zero_diagnostic_threshold() {
             .to_string(),
         "RISC-V store-conditional diagnostic threshold must be nonzero"
     );
+}
+
+fn duplicate_first_sc_checkpoint_streak(mut payload: Vec<u8>) -> Vec<u8> {
+    let count_offset = 12;
+    payload[count_offset..count_offset + 4].copy_from_slice(&2_u32.to_le_bytes());
+    let first_streak_offset = 20;
+    let streak_record_bytes = 44;
+    let first_streak =
+        payload[first_streak_offset..first_streak_offset + streak_record_bytes].to_vec();
+    payload.splice(first_streak_offset..first_streak_offset, first_streak);
+    payload
 }

@@ -8,6 +8,14 @@ use rem6_memory::{AccessSize, Address};
 use crate::CpuId;
 
 pub const DEFAULT_RISCV_SC_DIAGNOSTIC_THRESHOLD: u64 = 10_000;
+const SC_CHECKPOINT_MAGIC: [u8; 4] = *b"RSCP";
+const U32_BYTES: usize = 4;
+const U64_BYTES: usize = 8;
+const SC_CHECKPOINT_HEADER_BYTES: usize =
+    SC_CHECKPOINT_MAGIC.len() + U64_BYTES + U32_BYTES + U32_BYTES;
+const SC_CHECKPOINT_STREAK_BYTES: usize = U32_BYTES + U64_BYTES * 5;
+const SC_CHECKPOINT_DIAGNOSTIC_BYTES: usize = SC_CHECKPOINT_STREAK_BYTES + U64_BYTES;
+const SC_CHECKPOINT_U32_MAX: usize = u32::MAX as usize;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RiscvStoreConditionalProgressConfig {
@@ -200,6 +208,12 @@ impl RiscvStoreConditionalFailureStreak {
         self.last_failure_tick = tick;
         self.failure_count += 1;
     }
+
+    fn with_failure_window(mut self, last_failure_tick: Tick, failure_count: u64) -> Self {
+        self.last_failure_tick = last_failure_tick;
+        self.failure_count = failure_count;
+        self
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -279,6 +293,230 @@ impl RiscvStoreConditionalProgressSnapshot {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiscvStoreConditionalProgressCheckpointPayload {
+    snapshot: RiscvStoreConditionalProgressSnapshot,
+}
+
+impl RiscvStoreConditionalProgressCheckpointPayload {
+    pub fn from_progress(progress: &RiscvStoreConditionalProgress) -> Self {
+        Self {
+            snapshot: progress.snapshot(),
+        }
+    }
+
+    pub fn from_snapshot(
+        snapshot: RiscvStoreConditionalProgressSnapshot,
+    ) -> Result<Self, RiscvStoreConditionalProgressError> {
+        validate_snapshot(&snapshot)?;
+        Ok(Self { snapshot })
+    }
+
+    pub fn decode(payload: &[u8]) -> Result<Self, RiscvStoreConditionalProgressError> {
+        if payload.len() < SC_CHECKPOINT_HEADER_BYTES {
+            return Err(
+                RiscvStoreConditionalProgressError::InvalidCheckpointPayloadSize {
+                    expected: SC_CHECKPOINT_HEADER_BYTES,
+                    actual: payload.len(),
+                },
+            );
+        }
+        if payload[0..SC_CHECKPOINT_MAGIC.len()] != SC_CHECKPOINT_MAGIC {
+            return Err(RiscvStoreConditionalProgressError::InvalidCheckpointMagic);
+        }
+
+        let mut offset = SC_CHECKPOINT_MAGIC.len();
+        let diagnostic_threshold = read_u64(payload, &mut offset);
+        let config = RiscvStoreConditionalProgressConfig::new(diagnostic_threshold)?;
+        let streak_count = read_u32(payload, &mut offset) as usize;
+        let diagnostic_count = read_u32(payload, &mut offset) as usize;
+        let expected = sc_checkpoint_payload_size(streak_count, diagnostic_count)?;
+        if payload.len() != expected {
+            return Err(
+                RiscvStoreConditionalProgressError::InvalidCheckpointPayloadSize {
+                    expected,
+                    actual: payload.len(),
+                },
+            );
+        }
+
+        let mut streaks = Vec::with_capacity(streak_count);
+        for _ in 0..streak_count {
+            streaks.push(read_checkpoint_streak(payload, &mut offset)?);
+        }
+
+        let mut diagnostics = Vec::with_capacity(diagnostic_count);
+        for _ in 0..diagnostic_count {
+            diagnostics.push(read_checkpoint_diagnostic(payload, &mut offset)?);
+        }
+
+        Self::from_snapshot(RiscvStoreConditionalProgressSnapshot {
+            config,
+            streaks,
+            diagnostics,
+        })
+    }
+
+    pub fn encode(&self) -> Vec<u8> {
+        self.try_encode()
+            .expect("RISC-V store-conditional checkpoint values fit the checkpoint encoding")
+    }
+
+    pub fn try_encode(&self) -> Result<Vec<u8>, RiscvStoreConditionalProgressError> {
+        let streak_count = encode_checkpoint_u32("streak count", self.snapshot.streaks().len())?;
+        let diagnostic_count =
+            encode_checkpoint_u32("diagnostic count", self.snapshot.diagnostics().len())?;
+        let mut payload = Vec::with_capacity(sc_checkpoint_payload_size(
+            self.snapshot.streaks().len(),
+            self.snapshot.diagnostics().len(),
+        )?);
+        payload.extend_from_slice(&SC_CHECKPOINT_MAGIC);
+        payload.extend_from_slice(&self.snapshot.config().diagnostic_threshold().to_le_bytes());
+        payload.extend_from_slice(&streak_count.to_le_bytes());
+        payload.extend_from_slice(&diagnostic_count.to_le_bytes());
+        for streak in self.snapshot.streaks() {
+            write_checkpoint_streak(&mut payload, *streak);
+        }
+        for diagnostic in self.snapshot.diagnostics() {
+            write_checkpoint_diagnostic(&mut payload, *diagnostic);
+        }
+        Ok(payload)
+    }
+
+    pub const fn snapshot(&self) -> &RiscvStoreConditionalProgressSnapshot {
+        &self.snapshot
+    }
+
+    pub fn into_snapshot(self) -> RiscvStoreConditionalProgressSnapshot {
+        self.snapshot
+    }
+}
+
+fn validate_snapshot(
+    snapshot: &RiscvStoreConditionalProgressSnapshot,
+) -> Result<(), RiscvStoreConditionalProgressError> {
+    let mut progress = RiscvStoreConditionalProgress::new(snapshot.config());
+    progress.restore(snapshot)
+}
+
+fn write_checkpoint_streak(payload: &mut Vec<u8>, streak: RiscvStoreConditionalFailureStreak) {
+    payload.extend_from_slice(&streak.cpu().get().to_le_bytes());
+    payload.extend_from_slice(&streak.address().get().to_le_bytes());
+    payload.extend_from_slice(&streak.size().bytes().to_le_bytes());
+    payload.extend_from_slice(&streak.first_failure_tick().to_le_bytes());
+    payload.extend_from_slice(&streak.last_failure_tick().to_le_bytes());
+    payload.extend_from_slice(&streak.failure_count().to_le_bytes());
+}
+
+fn write_checkpoint_diagnostic(
+    payload: &mut Vec<u8>,
+    diagnostic: RiscvStoreConditionalFailureDiagnostic,
+) {
+    write_checkpoint_streak(
+        payload,
+        RiscvStoreConditionalFailureStreak::new(
+            diagnostic.cpu(),
+            diagnostic.first_failure_tick(),
+            diagnostic.address(),
+            diagnostic.size(),
+        )
+        .with_failure_window(diagnostic.last_failure_tick(), diagnostic.failure_count()),
+    );
+    payload.extend_from_slice(&diagnostic.diagnostic_threshold().to_le_bytes());
+}
+
+fn read_checkpoint_streak(
+    payload: &[u8],
+    offset: &mut usize,
+) -> Result<RiscvStoreConditionalFailureStreak, RiscvStoreConditionalProgressError> {
+    let cpu = CpuId::new(read_u32(payload, offset));
+    let address = Address::new(read_u64(payload, offset));
+    let size = checkpoint_access_size(read_u64(payload, offset))?;
+    let first_failure_tick = read_u64(payload, offset);
+    let last_failure_tick = read_u64(payload, offset);
+    let failure_count = read_u64(payload, offset);
+
+    Ok(
+        RiscvStoreConditionalFailureStreak::new(cpu, first_failure_tick, address, size)
+            .with_failure_window(last_failure_tick, failure_count),
+    )
+}
+
+fn read_checkpoint_diagnostic(
+    payload: &[u8],
+    offset: &mut usize,
+) -> Result<RiscvStoreConditionalFailureDiagnostic, RiscvStoreConditionalProgressError> {
+    let streak = read_checkpoint_streak(payload, offset)?;
+    let diagnostic_threshold = read_u64(payload, offset);
+    Ok(RiscvStoreConditionalFailureDiagnostic::new(
+        streak,
+        diagnostic_threshold,
+    ))
+}
+
+fn checkpoint_access_size(bytes: u64) -> Result<AccessSize, RiscvStoreConditionalProgressError> {
+    AccessSize::new(bytes)
+        .map_err(|_| RiscvStoreConditionalProgressError::InvalidCheckpointAccessSize { bytes })
+}
+
+fn sc_checkpoint_payload_size(
+    streak_count: usize,
+    diagnostic_count: usize,
+) -> Result<usize, RiscvStoreConditionalProgressError> {
+    let streak_bytes = streak_count.checked_mul(SC_CHECKPOINT_STREAK_BYTES).ok_or(
+        RiscvStoreConditionalProgressError::InvalidCheckpointPayloadSize {
+            expected: usize::MAX,
+            actual: 0,
+        },
+    )?;
+    let diagnostic_bytes = diagnostic_count
+        .checked_mul(SC_CHECKPOINT_DIAGNOSTIC_BYTES)
+        .ok_or(
+            RiscvStoreConditionalProgressError::InvalidCheckpointPayloadSize {
+                expected: usize::MAX,
+                actual: 0,
+            },
+        )?;
+    SC_CHECKPOINT_HEADER_BYTES
+        .checked_add(streak_bytes)
+        .and_then(|size| size.checked_add(diagnostic_bytes))
+        .ok_or(
+            RiscvStoreConditionalProgressError::InvalidCheckpointPayloadSize {
+                expected: usize::MAX,
+                actual: 0,
+            },
+        )
+}
+
+fn encode_checkpoint_u32(
+    field: &'static str,
+    value: usize,
+) -> Result<u32, RiscvStoreConditionalProgressError> {
+    u32::try_from(value).map_err(
+        |_| RiscvStoreConditionalProgressError::CheckpointValueTooLarge {
+            field,
+            value,
+            maximum: SC_CHECKPOINT_U32_MAX,
+        },
+    )
+}
+
+fn read_u32(payload: &[u8], offset: &mut usize) -> u32 {
+    let bytes = payload[*offset..*offset + U32_BYTES]
+        .try_into()
+        .expect("checkpoint u32 slice width is fixed");
+    *offset += U32_BYTES;
+    u32::from_le_bytes(bytes)
+}
+
+fn read_u64(payload: &[u8], offset: &mut usize) -> u64 {
+    let bytes = payload[*offset..*offset + U64_BYTES]
+        .try_into()
+        .expect("checkpoint u64 slice width is fixed");
+    *offset += U64_BYTES;
+    u64::from_le_bytes(bytes)
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RiscvStoreConditionalProgressError {
     ZeroDiagnosticThreshold,
@@ -288,6 +526,19 @@ pub enum RiscvStoreConditionalProgressError {
     },
     DuplicateSnapshotStreak {
         cpu: CpuId,
+    },
+    InvalidCheckpointPayloadSize {
+        expected: usize,
+        actual: usize,
+    },
+    InvalidCheckpointMagic,
+    InvalidCheckpointAccessSize {
+        bytes: u64,
+    },
+    CheckpointValueTooLarge {
+        field: &'static str,
+        value: usize,
+        maximum: usize,
     },
 }
 
@@ -308,6 +559,26 @@ impl fmt::Display for RiscvStoreConditionalProgressError {
                 formatter,
                 "RISC-V store-conditional snapshot contains duplicate streak for CPU {}",
                 cpu.get()
+            ),
+            Self::InvalidCheckpointPayloadSize { expected, actual } => write!(
+                formatter,
+                "RISC-V store-conditional checkpoint payload has {actual} bytes; expected {expected}"
+            ),
+            Self::InvalidCheckpointMagic => write!(
+                formatter,
+                "RISC-V store-conditional checkpoint payload has invalid magic"
+            ),
+            Self::InvalidCheckpointAccessSize { bytes } => write!(
+                formatter,
+                "RISC-V store-conditional checkpoint payload has invalid access size {bytes}"
+            ),
+            Self::CheckpointValueTooLarge {
+                field,
+                value,
+                maximum,
+            } => write!(
+                formatter,
+                "RISC-V store-conditional checkpoint {field} value {value} exceeds maximum {maximum}"
             ),
         }
     }

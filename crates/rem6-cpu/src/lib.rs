@@ -131,9 +131,9 @@ pub use riscv_data_access::{
 };
 pub use riscv_sc_progress::{
     RiscvStoreConditionalFailureDiagnostic, RiscvStoreConditionalFailureStreak,
-    RiscvStoreConditionalProgress, RiscvStoreConditionalProgressConfig,
-    RiscvStoreConditionalProgressError, RiscvStoreConditionalProgressSnapshot,
-    DEFAULT_RISCV_SC_DIAGNOSTIC_THRESHOLD,
+    RiscvStoreConditionalProgress, RiscvStoreConditionalProgressCheckpointPayload,
+    RiscvStoreConditionalProgressConfig, RiscvStoreConditionalProgressError,
+    RiscvStoreConditionalProgressSnapshot, DEFAULT_RISCV_SC_DIAGNOSTIC_THRESHOLD,
 };
 pub use statistical_corrector::{
     StatisticalCorrector, StatisticalCorrectorBranchKind, StatisticalCorrectorConfig,
