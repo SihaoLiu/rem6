@@ -39,6 +39,36 @@ fn kernel_source_files_stay_within_size_limit() {
     );
 }
 
+#[test]
+fn scheduler_snapshot_state_lives_in_focused_module() {
+    let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/scheduler");
+    let state = fs::read_to_string(src_dir.join("state.rs")).unwrap();
+    let snapshot_path = src_dir.join("state/snapshot.rs");
+
+    assert!(
+        snapshot_path.exists(),
+        "src/scheduler/state/snapshot.rs should own scheduler snapshot state"
+    );
+    let snapshot = fs::read_to_string(snapshot_path).unwrap();
+
+    for item in [
+        "pub struct SchedulerSnapshot",
+        "pub struct PartitionSnapshot",
+        "pub struct PendingEventSnapshot",
+        "pub struct SchedulerDispatchRecord",
+        "pub enum ScheduledEventKind",
+    ] {
+        assert!(
+            !state.contains(item),
+            "src/scheduler/state.rs should not define {item}"
+        );
+        assert!(
+            snapshot.contains(item),
+            "src/scheduler/state/snapshot.rs should define {item}"
+        );
+    }
+}
+
 fn rust_source_files(root: &Path) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     collect_rust_source_files(root, &mut paths);
