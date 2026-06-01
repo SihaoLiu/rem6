@@ -362,6 +362,26 @@ impl InOrderPipelineRunSummary {
         summary
     }
 
+    pub fn merge(self, other: Self) -> Self {
+        Self {
+            cycle_count: self.cycle_count + other.cycle_count,
+            first_cycle: merge_min_cycle(self.first_cycle, other.first_cycle),
+            last_cycle: merge_max_cycle(self.last_cycle, other.last_cycle),
+            advanced_count: self.advanced_count + other.advanced_count,
+            retired_count: self.retired_count + other.retired_count,
+            flushed_count: self.flushed_count + other.flushed_count,
+            resource_blocked_count: self.resource_blocked_count + other.resource_blocked_count,
+            ordering_blocked_count: self.ordering_blocked_count + other.ordering_blocked_count,
+            redirect_count: self.redirect_count + other.redirect_count,
+            state_changed_cycle_count: self.state_changed_cycle_count
+                + other.state_changed_cycle_count,
+        }
+    }
+
+    pub const fn is_empty(self) -> bool {
+        self.cycle_count == 0
+    }
+
     pub const fn cycle_count(self) -> usize {
         self.cycle_count
     }
@@ -400,6 +420,22 @@ impl InOrderPipelineRunSummary {
 
     pub const fn state_changed_cycle_count(self) -> usize {
         self.state_changed_cycle_count
+    }
+}
+
+fn merge_min_cycle(left: Option<u64>, right: Option<u64>) -> Option<u64> {
+    match (left, right) {
+        (Some(left), Some(right)) => Some(left.min(right)),
+        (Some(cycle), None) | (None, Some(cycle)) => Some(cycle),
+        (None, None) => None,
+    }
+}
+
+fn merge_max_cycle(left: Option<u64>, right: Option<u64>) -> Option<u64> {
+    match (left, right) {
+        (Some(left), Some(right)) => Some(left.max(right)),
+        (Some(cycle), None) | (None, Some(cycle)) => Some(cycle),
+        (None, None) => None,
     }
 }
 

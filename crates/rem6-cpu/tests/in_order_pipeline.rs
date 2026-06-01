@@ -417,11 +417,39 @@ fn in_order_pipeline_run_summary_aggregates_cycle_records() {
 fn in_order_pipeline_empty_run_summary_has_no_cycle_window() {
     let summary = InOrderPipelineRunSummary::from_cycle_summaries([]);
 
+    assert!(summary.is_empty());
     assert_eq!(summary.cycle_count(), 0);
     assert_eq!(summary.first_cycle(), None);
     assert_eq!(summary.last_cycle(), None);
     assert_eq!(summary.advanced_count(), 0);
     assert_eq!(summary.state_changed_cycle_count(), 0);
+}
+
+#[test]
+fn in_order_pipeline_run_summary_merges_partial_summaries() {
+    let mut state = InOrderPipelineState::new(config_with_decode_width(1));
+    state
+        .replace_in_flight([
+            instruction(9, InOrderPipelineStage::Commit),
+            instruction(10, InOrderPipelineStage::Decode),
+            instruction(11, InOrderPipelineStage::Decode),
+        ])
+        .unwrap();
+
+    let first = InOrderPipelineRunSummary::from_cycle_records([state.advance_cycle_recorded()]);
+    let second = InOrderPipelineRunSummary::from_cycle_records([state.advance_cycle_recorded()]);
+    let merged = InOrderPipelineRunSummary::from_cycle_summaries([])
+        .merge(first)
+        .merge(second);
+
+    assert!(!merged.is_empty());
+    assert_eq!(merged.cycle_count(), 2);
+    assert_eq!(merged.first_cycle(), Some(0));
+    assert_eq!(merged.last_cycle(), Some(1));
+    assert_eq!(merged.advanced_count(), 4);
+    assert_eq!(merged.retired_count(), 1);
+    assert_eq!(merged.resource_blocked_count(), 1);
+    assert_eq!(merged.state_changed_cycle_count(), 2);
 }
 
 #[test]
