@@ -2674,7 +2674,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   duplicate-line payload rejection through snapshot decode validation,
   partitioned-memory restore propagation of line-snapshot validation,
   address-decoder checkpoint payload round trips for sparse and
-  modulo-interleaved regions plus overlapping-region decode rejection, and
+  modulo-interleaved regions plus stable decoder checkpoint golden bytes,
+  invalid decoder checkpoint magic, version, reserved-field, interleave-flag,
+  payload-size, and overlapping-region decode rejection, and
   partitioned-memory checkpoint payload round trips for partitions, lines,
   ordinary regions, and modulo-interleaved regions, plus stable partition
   checkpoint golden bytes, invalid partition checkpoint magic, version,
