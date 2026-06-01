@@ -37,6 +37,21 @@ fn walk_payload(qids: &[Virtio9pQid]) -> Vec<u8> {
     payload
 }
 
+fn reply_payload(message_type: u8, result: Result<Vec<u8>, u32>) -> (u8, Vec<u8>) {
+    match result {
+        Ok(payload) => (message_type, payload),
+        Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
+    }
+}
+
+fn empty_reply_payload(message_type: u8, result: Result<(), u32>) -> (u8, Vec<u8>) {
+    reply_payload(message_type, result.map(|()| Vec::new()))
+}
+
+fn byte_reply_payload(message_type: u8, result: Result<u8, u32>) -> (u8, Vec<u8>) {
+    reply_payload(message_type, result.map(|byte| vec![byte]))
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Virtio9pConfig {
     mount_tag: Vec<u8>,
@@ -174,10 +189,7 @@ impl Virtio9pDevice {
         request: Virtio9pRequest,
     ) -> Result<Virtio9pCompletion, VirtioError> {
         let (message_type, payload) = match request.message_type() {
-            VIRTIO_9P_TSTATFS => match self.handle_statfs(&request)? {
-                Ok(payload) => (VIRTIO_9P_RSTATFS, payload),
-                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
-            },
+            VIRTIO_9P_TSTATFS => reply_payload(VIRTIO_9P_RSTATFS, self.handle_statfs(&request)?),
             VIRTIO_9P_TVERSION => {
                 let version = parse_version_request(&request)?;
                 let response_version = if version.version == VIRTIO_9P_PROTOCOL_VERSION {
@@ -213,114 +225,49 @@ impl Virtio9pDevice {
                     .push(attached);
                 (VIRTIO_9P_RATTACH, qid_payload(root_qid))
             }
-            VIRTIO_9P_TWALK => match self.handle_walk(&request)? {
-                Ok(payload) => (VIRTIO_9P_RWALK, payload),
-                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
-            },
-            VIRTIO_9P_TOPEN => match self.handle_open(&request)? {
-                Ok(payload) => (VIRTIO_9P_ROPEN, payload),
-                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
-            },
-            VIRTIO_9P_TLOPEN => match self.handle_lopen(&request)? {
-                Ok(payload) => (VIRTIO_9P_RLOPEN, payload),
-                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
-            },
-            VIRTIO_9P_TLCREATE => match self.handle_lcreate(&request)? {
-                Ok(payload) => (VIRTIO_9P_RLCREATE, payload),
-                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
-            },
-            VIRTIO_9P_TCREATE => match self.handle_create(&request)? {
-                Ok(payload) => (VIRTIO_9P_RCREATE, payload),
-                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
-            },
-            VIRTIO_9P_TSYMLINK => match self.handle_symlink(&request)? {
-                Ok(payload) => (VIRTIO_9P_RSYMLINK, payload),
-                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
-            },
-            VIRTIO_9P_TMKNOD => match self.handle_mknod(&request)? {
-                Ok(payload) => (VIRTIO_9P_RMKNOD, payload),
-                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
-            },
-            VIRTIO_9P_TREADLINK => match self.handle_readlink(&request)? {
-                Ok(payload) => (VIRTIO_9P_RREADLINK, payload),
-                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
-            },
-            VIRTIO_9P_TGETATTR => match self.handle_getattr(&request)? {
-                Ok(payload) => (VIRTIO_9P_RGETATTR, payload),
-                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
-            },
-            VIRTIO_9P_TSETATTR => match self.handle_setattr(&request)? {
-                Ok(()) => (VIRTIO_9P_RSETATTR, Vec::new()),
-                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
-            },
-            VIRTIO_9P_TSTAT => match self.handle_stat(&request)? {
-                Ok(payload) => (VIRTIO_9P_RSTAT, payload),
-                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
-            },
-            VIRTIO_9P_TWSTAT => match self.handle_wstat(&request)? {
-                Ok(()) => (VIRTIO_9P_RWSTAT, Vec::new()),
-                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
-            },
-            VIRTIO_9P_TXATTRWALK => match self.handle_xattrwalk(&request)? {
-                Ok(payload) => (VIRTIO_9P_RXATTRWALK, payload),
-                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
-            },
-            VIRTIO_9P_TXATTRCREATE => match self.handle_xattrcreate(&request)? {
-                Ok(()) => (VIRTIO_9P_RXATTRCREATE, Vec::new()),
-                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
-            },
-            VIRTIO_9P_TREADDIR => match self.handle_readdir(&request)? {
-                Ok(payload) => (VIRTIO_9P_RREADDIR, payload),
-                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
-            },
-            VIRTIO_9P_TFSYNC => match self.handle_fsync(&request)? {
-                Ok(()) => (VIRTIO_9P_RFSYNC, Vec::new()),
-                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
-            },
-            VIRTIO_9P_TLOCK => match self.handle_lock(&request)? {
-                Ok(status) => (VIRTIO_9P_RLOCK, vec![status]),
-                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
-            },
-            VIRTIO_9P_TGETLOCK => match self.handle_getlock(&request)? {
-                Ok(payload) => (VIRTIO_9P_RGETLOCK, payload),
-                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
-            },
-            VIRTIO_9P_TLINK => match self.handle_link(&request)? {
-                Ok(()) => (VIRTIO_9P_RLINK, Vec::new()),
-                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
-            },
-            VIRTIO_9P_TMKDIR => match self.handle_mkdir(&request)? {
-                Ok(payload) => (VIRTIO_9P_RMKDIR, payload),
-                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
-            },
-            VIRTIO_9P_TRENAME => match self.handle_rename(&request)? {
-                Ok(()) => (VIRTIO_9P_RRENAME, Vec::new()),
-                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
-            },
-            VIRTIO_9P_TRENAMEAT => match self.handle_renameat(&request)? {
-                Ok(()) => (VIRTIO_9P_RRENAMEAT, Vec::new()),
-                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
-            },
-            VIRTIO_9P_TUNLINKAT => match self.handle_unlinkat(&request)? {
-                Ok(()) => (VIRTIO_9P_RUNLINKAT, Vec::new()),
-                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
-            },
-            VIRTIO_9P_TREAD => match self.handle_read(&request)? {
-                Ok(payload) => (VIRTIO_9P_RREAD, payload),
-                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
-            },
-            VIRTIO_9P_TWRITE => match self.handle_write(&request)? {
-                Ok(payload) => (VIRTIO_9P_RWRITE, payload),
-                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
-            },
-            VIRTIO_9P_TCLUNK => match self.handle_clunk(&request)? {
-                Ok(()) => (VIRTIO_9P_RCLUNK, Vec::new()),
-                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
-            },
-            VIRTIO_9P_TREMOVE => match self.handle_remove(&request)? {
-                Ok(()) => (VIRTIO_9P_RREMOVE, Vec::new()),
-                Err(errno) => (VIRTIO_9P_RLERROR, errno.to_le_bytes().to_vec()),
-            },
+            VIRTIO_9P_TWALK => reply_payload(VIRTIO_9P_RWALK, self.handle_walk(&request)?),
+            VIRTIO_9P_TOPEN => reply_payload(VIRTIO_9P_ROPEN, self.handle_open(&request)?),
+            VIRTIO_9P_TLOPEN => reply_payload(VIRTIO_9P_RLOPEN, self.handle_lopen(&request)?),
+            VIRTIO_9P_TLCREATE => reply_payload(VIRTIO_9P_RLCREATE, self.handle_lcreate(&request)?),
+            VIRTIO_9P_TCREATE => reply_payload(VIRTIO_9P_RCREATE, self.handle_create(&request)?),
+            VIRTIO_9P_TSYMLINK => reply_payload(VIRTIO_9P_RSYMLINK, self.handle_symlink(&request)?),
+            VIRTIO_9P_TMKNOD => reply_payload(VIRTIO_9P_RMKNOD, self.handle_mknod(&request)?),
+            VIRTIO_9P_TREADLINK => {
+                reply_payload(VIRTIO_9P_RREADLINK, self.handle_readlink(&request)?)
+            }
+            VIRTIO_9P_TGETATTR => reply_payload(VIRTIO_9P_RGETATTR, self.handle_getattr(&request)?),
+            VIRTIO_9P_TSETATTR => {
+                empty_reply_payload(VIRTIO_9P_RSETATTR, self.handle_setattr(&request)?)
+            }
+            VIRTIO_9P_TSTAT => reply_payload(VIRTIO_9P_RSTAT, self.handle_stat(&request)?),
+            VIRTIO_9P_TWSTAT => empty_reply_payload(VIRTIO_9P_RWSTAT, self.handle_wstat(&request)?),
+            VIRTIO_9P_TXATTRWALK => {
+                reply_payload(VIRTIO_9P_RXATTRWALK, self.handle_xattrwalk(&request)?)
+            }
+            VIRTIO_9P_TXATTRCREATE => {
+                empty_reply_payload(VIRTIO_9P_RXATTRCREATE, self.handle_xattrcreate(&request)?)
+            }
+            VIRTIO_9P_TREADDIR => reply_payload(VIRTIO_9P_RREADDIR, self.handle_readdir(&request)?),
+            VIRTIO_9P_TFSYNC => empty_reply_payload(VIRTIO_9P_RFSYNC, self.handle_fsync(&request)?),
+            VIRTIO_9P_TLOCK => byte_reply_payload(VIRTIO_9P_RLOCK, self.handle_lock(&request)?),
+            VIRTIO_9P_TGETLOCK => reply_payload(VIRTIO_9P_RGETLOCK, self.handle_getlock(&request)?),
+            VIRTIO_9P_TLINK => empty_reply_payload(VIRTIO_9P_RLINK, self.handle_link(&request)?),
+            VIRTIO_9P_TMKDIR => reply_payload(VIRTIO_9P_RMKDIR, self.handle_mkdir(&request)?),
+            VIRTIO_9P_TRENAME => {
+                empty_reply_payload(VIRTIO_9P_RRENAME, self.handle_rename(&request)?)
+            }
+            VIRTIO_9P_TRENAMEAT => {
+                empty_reply_payload(VIRTIO_9P_RRENAMEAT, self.handle_renameat(&request)?)
+            }
+            VIRTIO_9P_TUNLINKAT => {
+                empty_reply_payload(VIRTIO_9P_RUNLINKAT, self.handle_unlinkat(&request)?)
+            }
+            VIRTIO_9P_TREAD => reply_payload(VIRTIO_9P_RREAD, self.handle_read(&request)?),
+            VIRTIO_9P_TWRITE => reply_payload(VIRTIO_9P_RWRITE, self.handle_write(&request)?),
+            VIRTIO_9P_TCLUNK => empty_reply_payload(VIRTIO_9P_RCLUNK, self.handle_clunk(&request)?),
+            VIRTIO_9P_TREMOVE => {
+                empty_reply_payload(VIRTIO_9P_RREMOVE, self.handle_remove(&request)?)
+            }
             VIRTIO_9P_TFLUSH => {
                 parse_flush_request(&request)?;
                 (VIRTIO_9P_RFLUSH, Vec::new())
