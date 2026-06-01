@@ -30,6 +30,27 @@ fn temp_image_path(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!("rem6-storage-{name}-{unique}.img"))
 }
 
+#[derive(Debug)]
+struct HugeStorageImage;
+
+impl StorageImageLayer for HugeStorageImage {
+    fn capacity_sectors(&self) -> u64 {
+        u64::MAX
+    }
+
+    fn read_sector(&self, _sector: StorageSectorId) -> Result<[u8; 512], StorageError> {
+        Ok(sector(0))
+    }
+
+    fn write_sector(&self, _sector: StorageSectorId, _data: [u8; 512]) -> Result<(), StorageError> {
+        Ok(())
+    }
+
+    fn flush(&self) -> Result<(), StorageError> {
+        Ok(())
+    }
+}
+
 #[test]
 fn raw_storage_image_reads_writes_flushes_and_restores_snapshot() {
     let image = RawStorageImage::from_bytes(image_bytes(&[0x11, 0x22, 0x33])).unwrap();
@@ -160,6 +181,17 @@ fn storage_images_reject_bad_requests_before_mutation() {
         cow.read_sector(StorageSectorId::new(0)).unwrap(),
         sector(0xdd)
     );
+}
+
+#[test]
+fn cow_storage_image_rejects_read_byte_count_overflow_before_allocation() {
+    let cow = CowStorageImage::new(Arc::new(HugeStorageImage));
+    let sectors = u64::MAX / STORAGE_SECTOR_BYTES + 1;
+
+    assert!(matches!(
+        cow.read(StorageSectorId::new(0), sectors),
+        Err(StorageError::CapacityOverflow { sectors: actual }) if actual == sectors
+    ));
 }
 
 #[test]

@@ -630,7 +630,7 @@ impl CowStorageImage {
 
     pub fn read(&self, sector: StorageSectorId, sectors: u64) -> Result<Vec<u8>, StorageError> {
         self.validate_range(sector, sectors)?;
-        let mut data = Vec::with_capacity((sectors * STORAGE_SECTOR_BYTES) as usize);
+        let mut data = Vec::with_capacity(checked_request_bytes(sectors)?);
         for offset in 0..sectors {
             data.extend(self.read_sector(StorageSectorId::new(sector.get() + offset))?);
         }
@@ -811,6 +811,13 @@ fn checked_capacity_bytes(sectors: u64) -> Result<usize, StorageError> {
         .checked_mul(STORAGE_SECTOR_BYTES)
         .ok_or(StorageError::CapacityOverflow { sectors })?;
     validate_image_bytes(bytes)?;
+    usize::try_from(bytes).map_err(|_| StorageError::CapacityOverflow { sectors })
+}
+
+fn checked_request_bytes(sectors: u64) -> Result<usize, StorageError> {
+    let bytes = sectors
+        .checked_mul(STORAGE_SECTOR_BYTES)
+        .ok_or(StorageError::CapacityOverflow { sectors })?;
     usize::try_from(bytes).map_err(|_| StorageError::CapacityOverflow { sectors })
 }
 
