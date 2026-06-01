@@ -224,6 +224,149 @@ fn partitioned_store_checkpoint_payload_round_trips_snapshot() {
 }
 
 #[test]
+fn partitioned_store_checkpoint_payload_uses_stable_single_partition_bytes() {
+    let target = MemoryTargetId::new(11);
+    let mut store = PartitionedMemoryStore::new();
+    store.add_partition(target, layout()).unwrap();
+    store
+        .insert_line(target, Address::new(0x1000), line_data(0x10))
+        .unwrap();
+    let snapshot = store.snapshot();
+    let payload = PartitionedMemoryCheckpointPayload::from_snapshot(snapshot.clone()).unwrap();
+    let mut stable_payload = vec![
+        b'M', b'P', b'A', b'R', 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 11, 0,
+        0, 0, 0, 0, 0, 0, 96, 0, 0, 0, 0, 0, 0, 0, b'M', b'L', b'I', b'N', 1, 0, 0, 0, 64, 0, 0, 0,
+        0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0,
+    ];
+    stable_payload.extend_from_slice(&0x1000_u64.to_le_bytes());
+    stable_payload.extend(line_data(0x10));
+
+    let decoded = PartitionedMemoryCheckpointPayload::decode(&stable_payload).unwrap();
+    let restored = PartitionedMemoryStore::from_snapshot(decoded.snapshot()).unwrap();
+
+    assert_eq!(payload.encode(), stable_payload);
+    assert_eq!(decoded.snapshot(), &snapshot);
+    assert_eq!(
+        restored.line_data(target, Address::new(0x1000)).unwrap(),
+        line_data(0x10)
+    );
+}
+
+#[test]
+fn partitioned_store_checkpoint_payload_rejects_invalid_magic() {
+    let (store, _, _) = mapped_store();
+    let mut payload = PartitionedMemoryCheckpointPayload::from_snapshot(store.snapshot())
+        .unwrap()
+        .encode();
+    payload[0] = b'X';
+
+    assert_eq!(
+        PartitionedMemoryCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::InvalidPartitionCheckpointMagic
+    );
+}
+
+#[test]
+fn partitioned_store_checkpoint_payload_rejects_unsupported_version() {
+    let (store, _, _) = mapped_store();
+    let mut payload = PartitionedMemoryCheckpointPayload::from_snapshot(store.snapshot())
+        .unwrap()
+        .encode();
+    payload[PARTITION_CHECKPOINT_VERSION_OFFSET..PARTITION_CHECKPOINT_VERSION_OFFSET + 4]
+        .copy_from_slice(&2_u32.to_le_bytes());
+
+    assert_eq!(
+        PartitionedMemoryCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::UnsupportedPartitionCheckpointVersion { version: 2 }
+    );
+}
+
+#[test]
+fn partitioned_store_checkpoint_payload_rejects_reserved_fields() {
+    let (store, _, _) = mapped_store();
+    for offset in [
+        PARTITION_CHECKPOINT_RESERVED_OFFSET,
+        PARTITION_CHECKPOINT_RESERVED2_OFFSET,
+    ] {
+        let mut payload = PartitionedMemoryCheckpointPayload::from_snapshot(store.snapshot())
+            .unwrap()
+            .encode();
+        payload[offset..offset + 4].copy_from_slice(&1_u32.to_le_bytes());
+
+        assert_eq!(
+            PartitionedMemoryCheckpointPayload::decode(&payload).unwrap_err(),
+            MemoryError::InvalidPartitionCheckpointReserved { value: 1 }
+        );
+    }
+}
+
+#[test]
+fn partitioned_store_checkpoint_payload_rejects_short_payload() {
+    let (store, _, _) = mapped_store();
+    let mut payload = PartitionedMemoryCheckpointPayload::from_snapshot(store.snapshot())
+        .unwrap()
+        .encode();
+    payload.truncate(PARTITION_CHECKPOINT_HEADER_SIZE - 1);
+
+    assert_eq!(
+        PartitionedMemoryCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::InvalidPartitionCheckpointPayloadSize {
+            expected: PARTITION_CHECKPOINT_HEADER_SIZE,
+            actual: PARTITION_CHECKPOINT_HEADER_SIZE - 1
+        }
+    );
+}
+
+#[test]
+fn partitioned_store_checkpoint_payload_rejects_declared_partition_count_mismatch() {
+    let target = MemoryTargetId::new(11);
+    let mut store = PartitionedMemoryStore::new();
+    store.add_partition(target, layout()).unwrap();
+    store
+        .insert_line(target, Address::new(0x1000), line_data(0x10))
+        .unwrap();
+    let mut payload = PartitionedMemoryCheckpointPayload::from_snapshot(store.snapshot())
+        .unwrap()
+        .encode();
+    payload[PARTITION_CHECKPOINT_COUNT_OFFSET..PARTITION_CHECKPOINT_COUNT_OFFSET + 4]
+        .copy_from_slice(&2_u32.to_le_bytes());
+
+    assert_eq!(
+        PartitionedMemoryCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::InvalidPartitionCheckpointPayloadSize {
+            expected: PARTITION_CHECKPOINT_HEADER_SIZE
+                + PARTITION_CHECKPOINT_RECORD_HEADER_SIZE
+                + 96
+                + 4,
+            actual: PARTITION_CHECKPOINT_HEADER_SIZE + PARTITION_CHECKPOINT_RECORD_HEADER_SIZE + 96
+        }
+    );
+}
+
+#[test]
+fn partitioned_store_checkpoint_payload_rejects_extra_partition_record() {
+    let target = MemoryTargetId::new(11);
+    let mut store = PartitionedMemoryStore::new();
+    store.add_partition(target, layout()).unwrap();
+    store
+        .insert_line(target, Address::new(0x1000), line_data(0x10))
+        .unwrap();
+    let mut payload = PartitionedMemoryCheckpointPayload::from_snapshot(store.snapshot())
+        .unwrap()
+        .encode();
+    payload[PARTITION_CHECKPOINT_COUNT_OFFSET..PARTITION_CHECKPOINT_COUNT_OFFSET + 4]
+        .copy_from_slice(&0_u32.to_le_bytes());
+
+    assert_eq!(
+        PartitionedMemoryCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::InvalidPartitionCheckpointPayloadSize {
+            expected: PARTITION_CHECKPOINT_HEADER_SIZE,
+            actual: PARTITION_CHECKPOINT_HEADER_SIZE + PARTITION_CHECKPOINT_RECORD_HEADER_SIZE + 96
+        }
+    );
+}
+
+#[test]
 fn partitioned_store_checkpoint_payload_rejects_duplicate_partition_records() {
     let target = MemoryTargetId::new(11);
     let mut store = PartitionedMemoryStore::new();
@@ -530,6 +673,13 @@ fn partitioned_store_restores_modulo_interleaved_regions() {
     );
     assert!(restored.regions()[0].1.is_interleaved());
 }
+
+const PARTITION_CHECKPOINT_HEADER_SIZE: usize = 24;
+const PARTITION_CHECKPOINT_RECORD_HEADER_SIZE: usize = 16;
+const PARTITION_CHECKPOINT_VERSION_OFFSET: usize = 4;
+const PARTITION_CHECKPOINT_COUNT_OFFSET: usize = 8;
+const PARTITION_CHECKPOINT_RESERVED_OFFSET: usize = 16;
+const PARTITION_CHECKPOINT_RESERVED2_OFFSET: usize = 20;
 
 fn duplicate_first_partition_checkpoint_record(mut payload: Vec<u8>) -> Vec<u8> {
     let partition_count_offset = 8;
