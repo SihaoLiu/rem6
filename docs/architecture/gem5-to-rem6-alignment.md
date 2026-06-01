@@ -1667,10 +1667,12 @@ Implementation evidence on 2026-05-26:
 - Scheduler quiescent restore now also verifies each partition snapshot id
   against its target scheduler slot before mutating clocks or event-order
   counters, rejects snapshots whose global tick is earlier than any partition
-  clock, and rejects snapshots whose partition clock is earlier than the global
-  tick. A malformed checkpoint cannot swap per-partition scheduler state or
-  restore a scheduler-wide clock that later lets callbacks discover a
-  schedule-in-past failure after partial state has already changed.
+  clock, rejects snapshots whose partition clock is earlier than the global
+  tick, and rejects oversized partition counts before allocating decoded
+  partition records. A malformed checkpoint cannot swap per-partition scheduler
+  state, trigger host allocation panics, or restore a scheduler-wide clock that
+  later lets callbacks discover a schedule-in-past failure after partial state
+  has already changed.
 - Checkpoint restore event plans now retain original warmup and live-event
   capture order for audit, while exposing warmup events sorted by replay clock
   and live events sorted by scheduler tick, partition, and restore order. This

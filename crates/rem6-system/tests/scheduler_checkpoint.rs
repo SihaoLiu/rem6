@@ -12,6 +12,12 @@ use rem6_system::{
     SystemError,
 };
 
+const SCHEDULER_CHUNK: &str = "scheduler";
+
+fn write_u64(payload: &mut Vec<u8>, value: u64) {
+    payload.extend_from_slice(&value.to_le_bytes());
+}
+
 #[test]
 fn host_checkpoint_refreshes_and_restores_scheduler_state() {
     let host = PartitionId::new(1);
@@ -253,6 +259,41 @@ fn host_checkpoint_rejects_scheduler_bank_truncated_payload_without_partial_rest
     assert_eq!(error.component(), Some(&component1));
     assert_eq!(scheduler0.lock().unwrap().snapshot(), before0);
     assert_eq!(scheduler1.lock().unwrap().snapshot(), before1);
+}
+
+#[test]
+fn scheduler_checkpoint_port_rejects_impossible_partition_count_without_partial_restore() {
+    let component = CheckpointComponentId::new("scheduler_partition_count").unwrap();
+    let scheduler = Arc::new(Mutex::new(
+        PartitionedScheduler::with_parallel_worker_limit(2, 4, 1).unwrap(),
+    ));
+    let before = scheduler.lock().unwrap().snapshot();
+    let mut payload = Vec::new();
+    write_u64(&mut payload, 4);
+    write_u64(&mut payload, 0);
+    write_u64(&mut payload, 4);
+    write_u64(&mut payload, 1);
+    write_u64(&mut payload, u64::MAX);
+    let mut registry = CheckpointRegistry::new();
+    registry.register(component.clone()).unwrap();
+    registry
+        .write_chunk(&component, SCHEDULER_CHUNK, payload)
+        .unwrap();
+
+    let error = SchedulerCheckpointPort::new(component.clone(), Arc::clone(&scheduler))
+        .restore_from(&registry)
+        .unwrap_err();
+
+    assert_eq!(
+        error,
+        SchedulerCheckpointError::InvalidChunk {
+            component,
+            reason:
+                "scheduler partition count 18446744073709551615 exceeds remaining payload capacity 0 records"
+                    .to_string(),
+        }
+    );
+    assert_eq!(scheduler.lock().unwrap().snapshot(), before);
 }
 
 #[test]

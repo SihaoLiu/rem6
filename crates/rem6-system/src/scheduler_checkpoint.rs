@@ -13,6 +13,7 @@ const SCHEDULER_CHUNK: &str = "scheduler";
 const FORMAT_VERSION: u64 = 4;
 const U32_BYTES: usize = 4;
 const U64_BYTES: usize = 8;
+const PARTITION_RECORD_BYTES: usize = U32_BYTES + U64_BYTES * 6;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SchedulerCheckpointRecord {
@@ -517,7 +518,8 @@ fn decode_snapshot(
     let now = cursor.read_u64("scheduler now")?;
     let min_remote_delay = cursor.read_u64("scheduler lookahead")?;
     let max_parallel_workers = cursor.read_count("scheduler parallel worker limit")?;
-    let partition_count = cursor.read_count("scheduler partition count")?;
+    let partition_count =
+        cursor.read_bounded_count("scheduler partition count", PARTITION_RECORD_BYTES)?;
     let mut partitions = Vec::with_capacity(partition_count);
     for _ in 0..partition_count {
         let partition = PartitionId::new(cursor.read_u32("scheduler partition")?);
@@ -576,6 +578,25 @@ impl<'a> PayloadCursor<'a> {
     fn read_count(&mut self, name: &str) -> Result<usize, SchedulerCheckpointError> {
         usize::try_from(self.read_u64(name)?)
             .map_err(|_| self.invalid(format!("{name} does not fit host usize")))
+    }
+
+    fn read_bounded_count(
+        &mut self,
+        name: &str,
+        record_bytes: usize,
+    ) -> Result<usize, SchedulerCheckpointError> {
+        let count = self.read_count(name)?;
+        let capacity = self.remaining() / record_bytes;
+        if count > capacity {
+            return Err(self.invalid(format!(
+                "{name} {count} exceeds remaining payload capacity {capacity} records"
+            )));
+        }
+        Ok(count)
+    }
+
+    fn remaining(&self) -> usize {
+        self.payload.len().saturating_sub(self.position)
     }
 
     fn read_u32(&mut self, name: &str) -> Result<u32, SchedulerCheckpointError> {
