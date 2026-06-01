@@ -1006,11 +1006,14 @@ impl Virtio9pDevice {
             .fids
             .lock()
             .expect("virtio 9p fid lock")
-            .get(&remove_fid)
-            .cloned()
+            .remove(&remove_fid)
         else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
+        self.locks
+            .lock()
+            .expect("virtio 9p lock table")
+            .remove_fid(remove_fid);
         let Some(node) = fid.node() else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
@@ -1020,14 +1023,6 @@ impl Virtio9pDevice {
             let mut namespace = self.namespace.lock().expect("virtio 9p namespace lock");
             namespace.remove_node_by_fid_path(node, fid.path())
         };
-        self.fids
-            .lock()
-            .expect("virtio 9p fid lock")
-            .remove(&remove_fid);
-        self.locks
-            .lock()
-            .expect("virtio 9p lock table")
-            .remove_fid(remove_fid);
         match remove_result {
             Ok(_) => {
                 if self.node_is_removed(node) {

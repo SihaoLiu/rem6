@@ -3,8 +3,9 @@ use rem6_virtio::{
     VIRTIO_9P_ENODATA, VIRTIO_9P_LOPEN_APPEND, VIRTIO_9P_NOFID, VIRTIO_9P_OPEN_READ_WRITE,
     VIRTIO_9P_RCLUNK, VIRTIO_9P_RLERROR, VIRTIO_9P_RLOPEN, VIRTIO_9P_RREAD, VIRTIO_9P_RWALK,
     VIRTIO_9P_RWRITE, VIRTIO_9P_RXATTRCREATE, VIRTIO_9P_RXATTRWALK, VIRTIO_9P_TATTACH,
-    VIRTIO_9P_TCLUNK, VIRTIO_9P_TLOPEN, VIRTIO_9P_TREAD, VIRTIO_9P_TWALK, VIRTIO_9P_TWRITE,
-    VIRTIO_9P_TXATTRCREATE, VIRTIO_9P_TXATTRWALK, VIRTIO_9P_XATTR_CREATE, VIRTIO_9P_XATTR_REPLACE,
+    VIRTIO_9P_TCLUNK, VIRTIO_9P_TLOPEN, VIRTIO_9P_TREAD, VIRTIO_9P_TREMOVE, VIRTIO_9P_TWALK,
+    VIRTIO_9P_TWRITE, VIRTIO_9P_TXATTRCREATE, VIRTIO_9P_TXATTRWALK, VIRTIO_9P_XATTR_CREATE,
+    VIRTIO_9P_XATTR_REPLACE,
 };
 
 mod support;
@@ -399,4 +400,65 @@ fn virtio_9p_device_rejects_invalid_xattrcreate_flags_without_rebinding_fid() {
     let read_completion = device.execute_at(14, read).unwrap();
     assert_eq!(read_completion.message_type(), VIRTIO_9P_RREAD);
     assert_eq!(read_counted_data(read_completion.payload()), b"alpha");
+}
+
+#[test]
+fn virtio_9p_device_remove_clunks_pending_xattr_write_without_committing() {
+    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap())
+        .with_file("alpha.txt", b"alpha".to_vec())
+        .unwrap();
+    let attach = decoded_request(
+        VIRTIO_9P_TATTACH,
+        1,
+        p9_attach_payload(1, VIRTIO_9P_NOFID, b"root", b"", 0),
+    );
+    device.execute_at(10, attach).unwrap();
+
+    let walk = decoded_request(VIRTIO_9P_TWALK, 2, p9_walk_payload(1, 2, &[b"alpha.txt"]));
+    assert_eq!(
+        device.execute_at(11, walk).unwrap().message_type(),
+        VIRTIO_9P_RWALK
+    );
+    let create = decoded_request(
+        VIRTIO_9P_TXATTRCREATE,
+        3,
+        p9_xattrcreate_payload(2, b"user.note", 4, 0),
+    );
+    assert_eq!(
+        device.execute_at(12, create).unwrap().message_type(),
+        VIRTIO_9P_RXATTRCREATE
+    );
+    let write = decoded_request(VIRTIO_9P_TWRITE, 4, p9_write_payload(2, 0, b"blue"));
+    assert_eq!(
+        device.execute_at(13, write).unwrap().message_type(),
+        VIRTIO_9P_RWRITE
+    );
+
+    let remove = decoded_request(VIRTIO_9P_TREMOVE, 5, p9_remove_payload(2));
+    let remove_completion = device.execute_at(14, remove).unwrap();
+    assert_eq!(remove_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(remove_completion.payload(), VIRTIO_9P_EBADF.to_le_bytes());
+    assert_eq!(device.fid_count(), 1);
+
+    let clunk_removed = decoded_request(VIRTIO_9P_TCLUNK, 6, p9_clunk_payload(2));
+    let clunk_completion = device.execute_at(15, clunk_removed).unwrap();
+    assert_eq!(clunk_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(clunk_completion.payload(), VIRTIO_9P_EBADF.to_le_bytes());
+
+    let walk_again = decoded_request(VIRTIO_9P_TWALK, 7, p9_walk_payload(1, 3, &[b"alpha.txt"]));
+    assert_eq!(
+        device.execute_at(16, walk_again).unwrap().message_type(),
+        VIRTIO_9P_RWALK
+    );
+    let xattrwalk = decoded_request(
+        VIRTIO_9P_TXATTRWALK,
+        8,
+        p9_xattrwalk_payload(3, 4, b"user.note"),
+    );
+    let xattrwalk_completion = device.execute_at(17, xattrwalk).unwrap();
+    assert_eq!(xattrwalk_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(
+        xattrwalk_completion.payload(),
+        VIRTIO_9P_ENODATA.to_le_bytes()
+    );
 }

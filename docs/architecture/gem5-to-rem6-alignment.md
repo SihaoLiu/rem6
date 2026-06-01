@@ -1319,9 +1319,10 @@ Implementation evidence through 2026-05-31:
   fids, including after that hard-link entry is renamed, rejects already-unlinked
   walked hard-link entries without deleting surviving names for the same qid,
   removes empty-directory fids plus their namespace entries, rejects root and
-  non-empty-directory removals while clunking valid remove fids, and releases
-  byte-range locks owned by the removed fid even when a surviving hard link
-  keeps the namespace node live, `Tclunk`
+  non-empty-directory removals while clunking valid remove fids, clunks xattr
+  read/write fids on remove errors without committing pending xattr writes, and
+  releases byte-range locks owned by the removed fid even when a surviving hard
+  link keeps the namespace node live, `Tclunk`
   drops ordinary fid state, releases byte-range locks owned by the clunked fid,
   and commits pending xattr-write fids, `Tflush` acknowledges old tags without
   mutating synchronous fid or namespace state, `Tfsync` validates fids before
@@ -3363,8 +3364,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   occupied-newfid rejection, missing-xattr `ENODATA`, invalid-flag `EINVAL`,
   and stale-fid errors,
   `Tclunk` fid removal and lock release, `Tremove` lock release while linked
-  namespace entries survive, `Tflush` no-op acknowledgement without fid
-  mutation, `Tfsync` acknowledgement for existing fids, and stale metadata,
+  namespace entries survive plus xattr-fid clunking without pending-write
+  commits, `Tflush` no-op acknowledgement without fid mutation, `Tfsync`
+  acknowledgement for existing fids, and stale metadata,
   directory, create, fsync, write, remove, unlink, and read `Rlerror` handling,
   source-policy coverage for keeping 9P typed payload parsing, wire constants,
   and xattr, directory-read, fsync, and lock operation handlers out of the main
