@@ -1709,6 +1709,110 @@ fn virtio_9p_device_renameat_replaces_existing_root_files() {
 }
 
 #[test]
+fn virtio_9p_device_renameat_moves_open_file_between_directories() {
+    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap())
+        .with_file("alpha.txt", b"alpha".to_vec())
+        .unwrap();
+    let attach = decoded_request(
+        VIRTIO_9P_TATTACH,
+        1,
+        p9_attach_payload(1, VIRTIO_9P_NOFID, b"root", b"", 0),
+    );
+    device.execute_at(10, attach).unwrap();
+    let mkdir = decoded_request(
+        VIRTIO_9P_TMKDIR,
+        2,
+        p9_mkdir_payload(1, b"tmp", 0o040755, 0),
+    );
+    device.execute_at(11, mkdir).unwrap();
+
+    let walk_alpha = decoded_request(VIRTIO_9P_TWALK, 3, p9_walk_payload(1, 2, &[b"alpha.txt"]));
+    let alpha_completion = device.execute_at(12, walk_alpha).unwrap();
+    let (_, _, alpha_path) = read_qid(alpha_completion.payload(), 2);
+    let open_alpha = decoded_request(VIRTIO_9P_TLOPEN, 4, p9_lopen_payload(2, 0));
+    device.execute_at(13, open_alpha).unwrap();
+    let walk_tmp = decoded_request(VIRTIO_9P_TWALK, 5, p9_walk_payload(1, 3, &[b"tmp"]));
+    device.execute_at(14, walk_tmp).unwrap();
+
+    let rename = decoded_request(
+        VIRTIO_9P_TRENAMEAT,
+        6,
+        p9_renameat_payload(1, b"alpha.txt", 3, b"moved.txt"),
+    );
+    let rename_completion = device.execute_at(15, rename).unwrap();
+    assert_eq!(rename_completion.message_type(), VIRTIO_9P_RRENAMEAT);
+    assert!(rename_completion.payload().is_empty());
+
+    let read_open = decoded_request(VIRTIO_9P_TREAD, 7, p9_read_payload(2, 0, 16));
+    let read_completion = device.execute_at(16, read_open).unwrap();
+    assert_eq!(read_completion.message_type(), VIRTIO_9P_RREAD);
+    assert_eq!(read_counted_data(read_completion.payload()), b"alpha");
+
+    let old_walk = decoded_request(VIRTIO_9P_TWALK, 8, p9_walk_payload(1, 4, &[b"alpha.txt"]));
+    let old_completion = device.execute_at(17, old_walk).unwrap();
+    assert_eq!(old_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(old_completion.payload(), VIRTIO_9P_ENOENT.to_le_bytes());
+
+    let new_walk = decoded_request(VIRTIO_9P_TWALK, 9, p9_walk_payload(3, 5, &[b"moved.txt"]));
+    let new_completion = device.execute_at(18, new_walk).unwrap();
+    assert_eq!(new_completion.message_type(), VIRTIO_9P_RWALK);
+    let (_, _, moved_path) = read_qid(new_completion.payload(), 2);
+    assert_eq!(moved_path, alpha_path);
+}
+
+#[test]
+fn virtio_9p_device_renameat_moves_same_name_between_directories() {
+    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap())
+        .with_file("alpha.txt", b"alpha".to_vec())
+        .unwrap();
+    let attach = decoded_request(
+        VIRTIO_9P_TATTACH,
+        1,
+        p9_attach_payload(1, VIRTIO_9P_NOFID, b"root", b"", 0),
+    );
+    device.execute_at(10, attach).unwrap();
+    let mkdir = decoded_request(
+        VIRTIO_9P_TMKDIR,
+        2,
+        p9_mkdir_payload(1, b"tmp", 0o040755, 0),
+    );
+    device.execute_at(11, mkdir).unwrap();
+
+    let walk_alpha = decoded_request(VIRTIO_9P_TWALK, 3, p9_walk_payload(1, 2, &[b"alpha.txt"]));
+    let alpha_completion = device.execute_at(12, walk_alpha).unwrap();
+    let (_, _, alpha_path) = read_qid(alpha_completion.payload(), 2);
+    let open_alpha = decoded_request(VIRTIO_9P_TLOPEN, 4, p9_lopen_payload(2, 0));
+    device.execute_at(13, open_alpha).unwrap();
+    let walk_tmp = decoded_request(VIRTIO_9P_TWALK, 5, p9_walk_payload(1, 3, &[b"tmp"]));
+    device.execute_at(14, walk_tmp).unwrap();
+
+    let rename = decoded_request(
+        VIRTIO_9P_TRENAMEAT,
+        6,
+        p9_renameat_payload(1, b"alpha.txt", 3, b"alpha.txt"),
+    );
+    let rename_completion = device.execute_at(15, rename).unwrap();
+    assert_eq!(rename_completion.message_type(), VIRTIO_9P_RRENAMEAT);
+    assert!(rename_completion.payload().is_empty());
+
+    let read_open = decoded_request(VIRTIO_9P_TREAD, 7, p9_read_payload(2, 0, 16));
+    let read_completion = device.execute_at(16, read_open).unwrap();
+    assert_eq!(read_completion.message_type(), VIRTIO_9P_RREAD);
+    assert_eq!(read_counted_data(read_completion.payload()), b"alpha");
+
+    let old_walk = decoded_request(VIRTIO_9P_TWALK, 8, p9_walk_payload(1, 4, &[b"alpha.txt"]));
+    let old_completion = device.execute_at(17, old_walk).unwrap();
+    assert_eq!(old_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(old_completion.payload(), VIRTIO_9P_ENOENT.to_le_bytes());
+
+    let new_walk = decoded_request(VIRTIO_9P_TWALK, 9, p9_walk_payload(3, 5, &[b"alpha.txt"]));
+    let new_completion = device.execute_at(18, new_walk).unwrap();
+    assert_eq!(new_completion.message_type(), VIRTIO_9P_RWALK);
+    let (_, _, moved_path) = read_qid(new_completion.payload(), 2);
+    assert_eq!(moved_path, alpha_path);
+}
+
+#[test]
 fn virtio_9p_device_renames_open_file_fid_into_directory() {
     let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap())
         .with_file("alpha.txt", b"alpha".to_vec())

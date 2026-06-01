@@ -335,14 +335,11 @@ impl Virtio9pNamespace {
     ) -> Result<Result<Virtio9pRenameOutcome, u32>, VirtioError> {
         validate_file_name(VIRTIO_9P_TRENAMEAT, oldname)?;
         validate_file_name(VIRTIO_9P_TRENAMEAT, newname)?;
-        if old_parent != new_parent {
-            return Ok(Err(VIRTIO_9P_EBADF));
-        }
-        let Some(entries) = self.directory_entries_mut(old_parent) else {
+        let Some(old_entries) = self.directory_entries(old_parent) else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
-        if oldname == newname {
-            return match entries.get(oldname) {
+        if old_parent == new_parent && oldname == newname {
+            return match old_entries.get(oldname) {
                 Some(
                     Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_),
                 ) => Ok(Ok(Virtio9pRenameOutcome { replaced: None })),
@@ -350,30 +347,29 @@ impl Virtio9pNamespace {
                 None => Ok(Err(VIRTIO_9P_ENOENT)),
             };
         }
-        match entries.get(newname) {
+        match old_entries.get(oldname) {
+            Some(Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_)) => {}
+            Some(Virtio9pNode::Directory(_)) => return Ok(Err(VIRTIO_9P_EBADF)),
+            None => return Ok(Err(VIRTIO_9P_ENOENT)),
+        };
+        let Some(new_entries) = self.directory_entries(new_parent) else {
+            return Ok(Err(VIRTIO_9P_EBADF));
+        };
+        match new_entries.get(newname) {
             Some(Virtio9pNode::Directory(_)) => return Ok(Err(VIRTIO_9P_EEXIST)),
             Some(Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_))
             | None => {}
         }
-        let Some(
-            node @ (Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_)),
-        ) = entries.remove(oldname)
-        else {
-            return Ok(Err(VIRTIO_9P_ENOENT));
-        };
-        let replaced =
-            entries
-                .insert(newname.to_string(), node)
-                .and_then(|replaced| match replaced {
-                    Virtio9pNode::File(file) => Some(Virtio9pNodeId::File(file.qid_path)),
-                    Virtio9pNode::Symlink(symlink) => {
-                        Some(Virtio9pNodeId::Symlink(symlink.qid_path))
-                    }
-                    Virtio9pNode::Special(special) => {
-                        Some(Virtio9pNodeId::Special(special.qid_path))
-                    }
-                    Virtio9pNode::Directory(_) => None,
-                });
+        let node = self
+            .directory_entries_mut(old_parent)
+            .expect("prevalidated 9p rename source parent")
+            .remove(oldname)
+            .expect("prevalidated 9p rename source");
+        let replaced = self
+            .directory_entries_mut(new_parent)
+            .expect("prevalidated 9p rename target parent")
+            .insert(newname.to_string(), node)
+            .and_then(non_directory_node_id);
         Ok(Ok(Virtio9pRenameOutcome { replaced }))
     }
 
@@ -1301,6 +1297,15 @@ enum Virtio9pNode {
     Directory(Virtio9pDirectoryNode),
     Symlink(Virtio9pSymlinkNode),
     Special(Virtio9pSpecialNode),
+}
+
+fn non_directory_node_id(node: Virtio9pNode) -> Option<Virtio9pNodeId> {
+    match node {
+        Virtio9pNode::File(file) => Some(Virtio9pNodeId::File(file.qid_path)),
+        Virtio9pNode::Symlink(symlink) => Some(Virtio9pNodeId::Symlink(symlink.qid_path)),
+        Virtio9pNode::Special(special) => Some(Virtio9pNodeId::Special(special.qid_path)),
+        Virtio9pNode::Directory(_) => None,
+    }
 }
 
 impl Virtio9pNode {

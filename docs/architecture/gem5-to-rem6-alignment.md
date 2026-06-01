@@ -1296,9 +1296,9 @@ Implementation evidence through 2026-05-31:
   shared qid identity, shared file contents, updated link counts, and unlink
   behavior that keeps surviving linked fids live, `Trename` moves non-directory
   fid-backed nodes into target directories while preserving moved qids and open
-  fid access, `Trenameat` renames root files
-  while preserving the moved file qid and open fid access, replacing
-  same-directory target files with explicit target-fid invalidation,
+  fid access, `Trenameat` renames and moves non-directory nodes across directory
+  fids while preserving the moved file qid and open fid access, replacing
+  target files with explicit target-fid invalidation,
   `Tunlinkat` removes named root or child-directory files and invalidates fids
   only when no linked directory entry remains, removes empty directories only
   when `AT_REMOVEDIR` is present, and rejects non-empty directory removal with
@@ -3312,9 +3312,10 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   replies plus overwrite mutation, `Tlink` hard-link qid reuse, shared write
   visibility, link-count metadata, and surviving-fid reads after one name is
   unlinked, `Trename` fid-backed cross-directory file
-  moves with preserved open-fid access and qid identity, `Trenameat` root-file
-  renames with preserved moved qids, open-fid access, replacement-target fid
-  invalidation, post-rename directory entries, and old-name walk rejection,
+  moves with preserved open-fid access and qid identity, `Trenameat`
+  same-directory renames, cross-directory file moves including same-name moves,
+  preserved moved qids, open-fid access, replacement-target fid invalidation,
+  post-rename directory entries, and old-name walk rejection,
   `Tunlinkat` root and
   child-directory file removal with post-delete directory and walk checks,
   `Tunlinkat` empty-directory removal through `AT_REMOVEDIR` plus non-empty
