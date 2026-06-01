@@ -37,15 +37,7 @@ fn open_payload(message_type: u8, fid: u32, mode: u32) -> Vec<u8> {
 
 #[test]
 fn virtio_9p_device_supports_legacy_open_for_walked_files() {
-    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap())
-        .with_file("legacy.txt", b"legacy open".to_vec())
-        .unwrap();
-    let attach = decoded_request(
-        VIRTIO_9P_TATTACH,
-        1,
-        p9_attach_payload(1, VIRTIO_9P_NOFID, b"root", b"", 0),
-    );
-    device.execute_at(10, attach).unwrap();
+    let device = attached_device_with_file("legacy.txt", b"legacy open");
     let walk = decoded_request(VIRTIO_9P_TWALK, 2, p9_walk_payload(1, 2, &[b"legacy.txt"]));
     let walk_completion = device.execute_at(11, walk).unwrap();
     let (_, _, walk_path) = read_qid(walk_completion.payload(), 2);
@@ -70,15 +62,7 @@ fn virtio_9p_device_supports_legacy_open_for_walked_files() {
 
 #[test]
 fn virtio_9p_device_enforces_lopen_access_modes() {
-    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap())
-        .with_file("alpha.txt", b"alpha".to_vec())
-        .unwrap();
-    let attach = decoded_request(
-        VIRTIO_9P_TATTACH,
-        1,
-        p9_attach_payload(1, VIRTIO_9P_NOFID, b"root", b"", 0),
-    );
-    device.execute_at(10, attach).unwrap();
+    let device = attached_device_with_file("alpha.txt", b"alpha");
 
     let walk_read = decoded_request(VIRTIO_9P_TWALK, 2, p9_walk_payload(1, 2, &[b"alpha.txt"]));
     device.execute_at(11, walk_read).unwrap();
@@ -140,15 +124,7 @@ fn virtio_9p_device_enforces_lopen_access_modes() {
 
 #[test]
 fn virtio_9p_device_enforces_legacy_open_access_modes() {
-    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap())
-        .with_file("legacy.txt", b"legacy".to_vec())
-        .unwrap();
-    let attach = decoded_request(
-        VIRTIO_9P_TATTACH,
-        1,
-        p9_attach_payload(1, VIRTIO_9P_NOFID, b"root", b"", 0),
-    );
-    device.execute_at(10, attach).unwrap();
+    let device = attached_device_with_file("legacy.txt", b"legacy");
     let walk = decoded_request(VIRTIO_9P_TWALK, 2, p9_walk_payload(1, 2, &[b"legacy.txt"]));
     device.execute_at(11, walk).unwrap();
     let open = decoded_request(
