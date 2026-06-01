@@ -88,6 +88,26 @@ fn wait_for_edge_kind_helpers_live_in_focused_module() {
 }
 
 #[test]
+fn batch_timeline_worker_tick_helpers_live_in_focused_module() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let timeline_rs = fs::read_to_string(crate_dir.join("src/result/batch_timeline.rs")).unwrap();
+    let worker_ticks_rs = crate_dir.join("src/result/batch_timeline/worker_ticks.rs");
+
+    assert!(
+        worker_ticks_rs.exists(),
+        "batch timeline worker tick helpers belong in src/result/batch_timeline/worker_ticks.rs"
+    );
+    assert!(
+        !timeline_rs.contains("fn planned_batch_worker_slot_tick_summaries"),
+        "src/result/batch_timeline.rs should delegate planned worker slot summaries"
+    );
+    assert!(
+        !timeline_rs.contains("fn collect_strongest_batch_worker_count_tick_summaries"),
+        "src/result/batch_timeline.rs should delegate strongest worker count tick summaries"
+    );
+}
+
+#[test]
 fn workload_source_files_stay_within_size_limit() {
     let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut oversized = Vec::new();
