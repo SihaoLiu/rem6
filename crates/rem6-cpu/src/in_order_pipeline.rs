@@ -228,6 +228,7 @@ impl InOrderPipelinePlan {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InOrderPipelineSnapshot {
     config: InOrderPipelineConfig,
+    cycle: u64,
     in_flight: Vec<InOrderPipelineInstruction>,
 }
 
@@ -238,12 +239,28 @@ impl InOrderPipelineSnapshot {
     {
         Self {
             config,
+            cycle: 0,
+            in_flight: in_flight.into_iter().collect(),
+        }
+    }
+
+    pub fn with_cycle<I>(config: InOrderPipelineConfig, cycle: u64, in_flight: I) -> Self
+    where
+        I: IntoIterator<Item = InOrderPipelineInstruction>,
+    {
+        Self {
+            config,
+            cycle,
             in_flight: in_flight.into_iter().collect(),
         }
     }
 
     pub const fn config(&self) -> &InOrderPipelineConfig {
         &self.config
+    }
+
+    pub const fn cycle(&self) -> u64 {
+        self.cycle
     }
 
     pub fn in_flight(&self) -> &[InOrderPipelineInstruction] {
@@ -254,6 +271,7 @@ impl InOrderPipelineSnapshot {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InOrderPipelineState {
     config: InOrderPipelineConfig,
+    cycle: u64,
     in_flight: Vec<InOrderPipelineInstruction>,
 }
 
@@ -261,18 +279,24 @@ impl InOrderPipelineState {
     pub const fn new(config: InOrderPipelineConfig) -> Self {
         Self {
             config,
+            cycle: 0,
             in_flight: Vec::new(),
         }
     }
 
     pub fn restore(snapshot: InOrderPipelineSnapshot) -> Result<Self, InOrderPipelineError> {
         let mut state = Self::new(snapshot.config);
+        state.cycle = snapshot.cycle;
         state.replace_in_flight(snapshot.in_flight)?;
         Ok(state)
     }
 
     pub const fn config(&self) -> &InOrderPipelineConfig {
         &self.config
+    }
+
+    pub const fn cycle(&self) -> u64 {
+        self.cycle
     }
 
     pub fn in_flight(&self) -> &[InOrderPipelineInstruction] {
@@ -292,24 +316,34 @@ impl InOrderPipelineState {
     }
 
     pub fn advance_cycle(&mut self) -> InOrderPipelinePlan {
+        self.try_advance_cycle()
+            .expect("in-order pipeline cycle advance failed")
+    }
+
+    pub fn try_advance_cycle(&mut self) -> Result<InOrderPipelinePlan, InOrderPipelineError> {
+        let next_cycle = next_cycle(self.cycle)?;
         let plan = self.plan_cycle();
         self.apply_plan(&plan);
-        plan
+        self.cycle = next_cycle;
+        Ok(plan)
     }
 
     pub fn advance_cycle_with_redirect(
         &mut self,
         redirect: Option<InOrderBranchRedirect>,
     ) -> Result<InOrderPipelinePlan, InOrderPipelineError> {
+        let next_cycle = next_cycle(self.cycle)?;
         let plan = InOrderPipelineScheduler::new(self.config.clone())
             .plan_with_redirect(self.in_flight.iter().copied(), redirect)?;
         self.apply_plan(&plan);
+        self.cycle = next_cycle;
         Ok(plan)
     }
 
     pub fn snapshot(&self) -> InOrderPipelineSnapshot {
         InOrderPipelineSnapshot {
             config: self.config.clone(),
+            cycle: self.cycle,
             in_flight: self.in_flight.clone(),
         }
     }
@@ -447,6 +481,12 @@ fn validate_redirect(
     Ok(())
 }
 
+fn next_cycle(cycle: u64) -> Result<u64, InOrderPipelineError> {
+    cycle
+        .checked_add(1)
+        .ok_or(InOrderPipelineError::CycleCursorOverflow { cycle })
+}
+
 fn canonical_in_flight<I>(
     instructions: I,
 ) -> Result<Vec<InOrderPipelineInstruction>, InOrderPipelineError>
@@ -491,6 +531,9 @@ pub enum InOrderPipelineError {
         expected: InOrderPipelineStage,
         actual: InOrderPipelineStage,
     },
+    CycleCursorOverflow {
+        cycle: u64,
+    },
 }
 
 impl fmt::Display for InOrderPipelineError {
@@ -524,6 +567,9 @@ impl fmt::Display for InOrderPipelineError {
                 formatter,
                 "in-order branch redirect instruction sequence {sequence} resolved at {expected}, but in-flight stage is {actual}"
             ),
+            Self::CycleCursorOverflow { cycle } => {
+                write!(formatter, "in-order pipeline cycle cursor {cycle} cannot advance")
+            }
         }
     }
 }

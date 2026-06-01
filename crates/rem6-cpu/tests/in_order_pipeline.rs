@@ -150,6 +150,7 @@ fn in_order_pipeline_rejects_redirect_stage_mismatch() {
 #[test]
 fn in_order_pipeline_snapshot_restore_preserves_in_flight_plan() {
     let mut state = InOrderPipelineState::new(config_with_decode_width(1));
+    state.advance_cycle();
     state
         .replace_in_flight([
             instruction(10, InOrderPipelineStage::Decode),
@@ -159,6 +160,7 @@ fn in_order_pipeline_snapshot_restore_preserves_in_flight_plan() {
         .unwrap();
 
     let snapshot = state.snapshot();
+    assert_eq!(snapshot.cycle(), 1);
     assert_eq!(
         snapshot
             .in_flight()
@@ -169,6 +171,7 @@ fn in_order_pipeline_snapshot_restore_preserves_in_flight_plan() {
     );
 
     let restored = InOrderPipelineState::restore(snapshot).unwrap();
+    assert_eq!(restored.cycle(), 1);
     assert_eq!(
         restored
             .in_flight()
@@ -182,6 +185,33 @@ fn in_order_pipeline_snapshot_restore_preserves_in_flight_plan() {
     assert_eq!(plan.advanced_sequences().collect::<Vec<_>>(), vec![10]);
     assert_eq!(plan.resource_blocked()[0].sequence(), 11);
     assert_eq!(plan.ordering_blocked()[0].sequence(), 12);
+}
+
+#[test]
+fn in_order_pipeline_advance_cycle_increments_cycle_cursor() {
+    let mut state = InOrderPipelineState::new(config_with_decode_width(1));
+    assert_eq!(state.cycle(), 0);
+    state
+        .replace_in_flight([instruction(1, InOrderPipelineStage::Decode)])
+        .unwrap();
+
+    state.advance_cycle();
+    assert_eq!(state.cycle(), 1);
+
+    state.advance_cycle();
+    assert_eq!(state.cycle(), 2);
+}
+
+#[test]
+fn in_order_pipeline_try_advance_rejects_cycle_cursor_overflow() {
+    let snapshot = InOrderPipelineSnapshot::with_cycle(config_with_decode_width(1), u64::MAX, []);
+    let mut state = InOrderPipelineState::restore(snapshot).unwrap();
+
+    assert_eq!(
+        state.try_advance_cycle().unwrap_err(),
+        InOrderPipelineError::CycleCursorOverflow { cycle: u64::MAX }
+    );
+    assert_eq!(state.cycle(), u64::MAX);
 }
 
 #[test]
