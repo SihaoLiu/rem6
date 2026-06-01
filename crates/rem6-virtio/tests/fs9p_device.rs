@@ -1151,10 +1151,38 @@ fn virtio_9p_device_remove_rejects_non_empty_directories() {
         remove_completion.payload(),
         VIRTIO_9P_ENOTEMPTY.to_le_bytes()
     );
+    assert_eq!(device.fid_count(), 2);
 
-    let walk_parent = decoded_request(VIRTIO_9P_TWALK, 7, p9_walk_payload(1, 4, &[b"parent"]));
-    let walk_completion = device.execute_at(16, walk_parent).unwrap();
+    let stat_removed_fid = decoded_request(VIRTIO_9P_TSTATFS, 7, p9_statfs_payload(2));
+    let stat_completion = device.execute_at(16, stat_removed_fid).unwrap();
+    assert_eq!(stat_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(stat_completion.payload(), VIRTIO_9P_EBADF.to_le_bytes());
+
+    let walk_parent = decoded_request(VIRTIO_9P_TWALK, 8, p9_walk_payload(1, 4, &[b"parent"]));
+    let walk_completion = device.execute_at(17, walk_parent).unwrap();
     assert_eq!(walk_completion.message_type(), VIRTIO_9P_RWALK);
+}
+
+#[test]
+fn virtio_9p_device_remove_rejects_root_and_clunks_the_fid() {
+    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap());
+    let attach = decoded_request(
+        VIRTIO_9P_TATTACH,
+        1,
+        p9_attach_payload(1, VIRTIO_9P_NOFID, b"root", b"", 0),
+    );
+    device.execute_at(10, attach).unwrap();
+
+    let remove = decoded_request(VIRTIO_9P_TREMOVE, 2, p9_remove_payload(1));
+    let remove_completion = device.execute_at(11, remove).unwrap();
+    assert_eq!(remove_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(remove_completion.payload(), VIRTIO_9P_EBADF.to_le_bytes());
+    assert_eq!(device.fid_count(), 0);
+
+    let stat_removed_fid = decoded_request(VIRTIO_9P_TSTATFS, 3, p9_statfs_payload(1));
+    let stat_completion = device.execute_at(12, stat_removed_fid).unwrap();
+    assert_eq!(stat_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(stat_completion.payload(), VIRTIO_9P_EBADF.to_le_bytes());
 }
 
 #[test]

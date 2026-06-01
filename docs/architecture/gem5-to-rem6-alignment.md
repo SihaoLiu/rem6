@@ -1303,19 +1303,19 @@ Implementation evidence through 2026-05-31:
   only when no linked directory entry remains, removes empty directories only
   when `AT_REMOVEDIR` is present, and rejects non-empty directory removal with
   `ENOTEMPTY`, `Tremove` removes file and empty-directory fids plus their
-  namespace entries, rejects non-empty directories with `ENOTEMPTY`, and releases
-  byte-range locks owned by the removed fid even when a surviving hard link
-  keeps the namespace node live, `Tclunk` drops ordinary fid
-  state, releases byte-range locks owned by the clunked fid, and commits pending
-  xattr-write fids, `Tflush` acknowledges old tags without mutating synchronous
-  fid or namespace state, `Tfsync` validates fids before acknowledging writeback
-  intent, `Tlock` accepts advisory lock requests on open file fids, records
-  byte-range read and write locks per namespace node and client owner, reports
-  blocked status for incompatible overlapping locks, preserves unreleased
-  byte ranges when an unlock request covers only the middle of an existing
-  lock, `Tgetlock` returns the first conflicting lock or a deterministic unlock
-  payload when no conflict exists, `Txattrcreate` converts a target fid into an
-  xattr-write fid with bounded byte writes, honors `XATTR_CREATE` and
+  namespace entries, rejects root and non-empty-directory removals while
+  clunking valid remove fids, and releases byte-range locks owned by the removed
+  fid even when a surviving hard link keeps the namespace node live, `Tclunk`
+  drops ordinary fid state, releases byte-range locks owned by the clunked fid,
+  and commits pending xattr-write fids, `Tflush` acknowledges old tags without
+  mutating synchronous fid or namespace state, `Tfsync` validates fids before
+  acknowledging writeback intent, `Tlock` accepts advisory lock requests on open
+  file fids, records byte-range read and write locks per namespace node and
+  client owner, reports blocked status for incompatible overlapping locks,
+  preserves unreleased byte ranges when an unlock request covers only the middle
+  of an existing lock, `Tgetlock` returns the first conflicting lock or a
+  deterministic unlock payload when no conflict exists, `Txattrcreate` converts
+  a target fid into an xattr-write fid with bounded byte writes, honors `XATTR_CREATE` and
   `XATTR_REPLACE` semantics, rejects invalid flag combinations with `EINVAL`,
   `Tclunk` persists the value in the deterministic namespace, and `Txattrwalk`
   returns either a named xattr read fid or a sorted NUL-delimited xattr-name
@@ -3319,7 +3319,8 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   child-directory file removal with post-delete directory and walk checks,
   `Tunlinkat` empty-directory removal through `AT_REMOVEDIR` plus non-empty
   directory `ENOTEMPTY` rejection, `Tremove` fid-backed file and empty-directory
-  removal with stale-fid rejection plus non-empty directory `ENOTEMPTY` rejection,
+  removal with stale-fid rejection, root rejection with fid clunking, and
+  non-empty directory `ENOTEMPTY` rejection that clunks the remove fid,
   `Tsymlink` creation with symlink qids, symlink walk and sorted dirent
   exposure, `Treadlink` target replies, non-symlink and stale readlink
   rejection, `Tmknod` character-device creation, walk, dirent dtype, metadata

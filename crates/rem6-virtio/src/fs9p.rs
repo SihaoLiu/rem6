@@ -1104,23 +1104,22 @@ impl Virtio9pDevice {
         let Some(node) = fid.node() else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
-        if node == Virtio9pNodeId::Root {
-            return Ok(Err(VIRTIO_9P_EBADF));
-        }
-        let remove_result = {
+        let remove_result = if node == Virtio9pNodeId::Root {
+            Err(VIRTIO_9P_EBADF)
+        } else {
             let mut namespace = self.namespace.lock().expect("virtio 9p namespace lock");
             namespace.remove_node_by_id(node)
         };
+        self.fids
+            .lock()
+            .expect("virtio 9p fid lock")
+            .remove(&remove_fid);
+        self.locks
+            .lock()
+            .expect("virtio 9p lock table")
+            .remove_fid(remove_fid);
         match remove_result {
             Ok(_) => {
-                self.fids
-                    .lock()
-                    .expect("virtio 9p fid lock")
-                    .remove(&remove_fid);
-                self.locks
-                    .lock()
-                    .expect("virtio 9p lock table")
-                    .remove_fid(remove_fid);
                 if self.node_is_removed(node) {
                     self.remove_fids_for_node(node);
                 }
