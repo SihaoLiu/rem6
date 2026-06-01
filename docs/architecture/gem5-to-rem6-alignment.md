@@ -1235,10 +1235,11 @@ Implementation evidence through 2026-05-31:
   does not recreate gem5-style mixed device, queue, and transport
   monoliths. The 9P device path now keeps attach, statfs, walk, open, create,
   path, metadata, read, write, clunk, remove, xattr, directory-read, fsync,
-  advisory-lock, and namespace-mutation operation handlers in a focused child
-  module while the main device file remains responsible for dispatch,
-  transport-facing state, and session state, so future 9P parity work can grow
-  without reintroducing a gem5-style proxy/device/protocol monolith. Modern
+  advisory-lock, and namespace-mutation operation handlers in focused
+  operation-family modules while the main device file remains responsible for
+  dispatch, transport-facing state, and session state, so future 9P parity
+  work can grow without reintroducing a gem5-style proxy/device/protocol
+  monolith. Modern
   VirtIO PCI common-config construction now always exposes the required
   version-1 reserved feature bit on feature page 1 so device builders cannot
   accidentally advertise modern
@@ -3375,8 +3376,8 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   source-policy coverage for keeping 9P typed payload parsing, wire constants,
   and attach, statfs, walk, open, create, path, metadata, read, write, clunk,
   remove, xattr, directory-read, fsync, lock, and namespace-mutation operation
-  handlers out of the main device file while keeping protocol dispatch below
-  the focused-device line budget,
+  handlers out of the main device file and out of the operation-root module
+  while keeping protocol dispatch below the focused-device line budget,
   modern PCI version-1 feature exposure for 9P,
   block, console, and RNG, legacy RNG device id and zero-config behavior,
   reproducible entropy generation, writable split descriptor-chain decoding,

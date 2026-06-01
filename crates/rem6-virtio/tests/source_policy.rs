@@ -121,7 +121,7 @@ fn virtio_9p_operation_handlers_live_in_focused_module() {
         ops_rs.exists(),
         "9P operation handlers belong in src/fs9p/ops.rs"
     );
-    let ops_rs = fs::read_to_string(ops_rs).unwrap();
+    let ops_source = fs9p_ops_source(crate_dir);
     for symbol in [
         "fn handle_xattrwalk(",
         "fn handle_xattrcreate(",
@@ -135,8 +135,8 @@ fn virtio_9p_operation_handlers_live_in_focused_module() {
             "{symbol} should live outside src/fs9p.rs"
         );
         assert!(
-            ops_rs.contains(symbol),
-            "{symbol} should live in src/fs9p/ops.rs"
+            ops_source.contains(symbol),
+            "{symbol} should live under src/fs9p/ops"
         );
     }
 }
@@ -151,7 +151,7 @@ fn virtio_9p_namespace_mutation_handlers_live_in_focused_module() {
         ops_rs.exists(),
         "9P namespace mutation handlers belong in src/fs9p/ops.rs"
     );
-    let ops_rs = fs::read_to_string(ops_rs).unwrap();
+    let ops_source = fs9p_ops_source(crate_dir);
     for symbol in [
         "fn handle_mkdir(",
         "fn handle_link(",
@@ -164,8 +164,8 @@ fn virtio_9p_namespace_mutation_handlers_live_in_focused_module() {
             "{symbol} should live outside src/fs9p.rs"
         );
         assert!(
-            ops_rs.contains(symbol),
-            "{symbol} should live in src/fs9p/ops.rs"
+            ops_source.contains(symbol),
+            "{symbol} should live under src/fs9p/ops"
         );
     }
 }
@@ -180,7 +180,7 @@ fn virtio_9p_io_lifecycle_handlers_live_in_focused_module() {
         ops_rs.exists(),
         "9P I/O lifecycle handlers belong in src/fs9p/ops.rs"
     );
-    let ops_rs = fs::read_to_string(ops_rs).unwrap();
+    let ops_source = fs9p_ops_source(crate_dir);
     for symbol in [
         "fn handle_read(",
         "fn handle_write(",
@@ -192,8 +192,8 @@ fn virtio_9p_io_lifecycle_handlers_live_in_focused_module() {
             "{symbol} should live outside src/fs9p.rs"
         );
         assert!(
-            ops_rs.contains(symbol),
-            "{symbol} should live in src/fs9p/ops.rs"
+            ops_source.contains(symbol),
+            "{symbol} should live under src/fs9p/ops"
         );
     }
 }
@@ -208,7 +208,7 @@ fn virtio_9p_path_metadata_handlers_live_in_focused_module() {
         ops_rs.exists(),
         "9P path and metadata handlers belong in src/fs9p/ops.rs"
     );
-    let ops_rs = fs::read_to_string(ops_rs).unwrap();
+    let ops_source = fs9p_ops_source(crate_dir);
     for symbol in [
         "fn handle_attach(",
         "fn handle_statfs(",
@@ -230,9 +230,82 @@ fn virtio_9p_path_metadata_handlers_live_in_focused_module() {
             "{symbol} should live outside src/fs9p.rs"
         );
         assert!(
-            ops_rs.contains(symbol),
-            "{symbol} should live in src/fs9p/ops.rs"
+            ops_source.contains(symbol),
+            "{symbol} should live under src/fs9p/ops"
         );
+    }
+}
+
+#[test]
+fn virtio_9p_operation_handlers_live_in_family_modules() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let ops_root = fs::read_to_string(crate_dir.join("src/fs9p/ops.rs")).unwrap();
+
+    assert!(
+        !ops_root.contains("fn handle_"),
+        "src/fs9p/ops.rs should delegate 9P handlers to operation-family modules"
+    );
+
+    for (module, symbols) in [
+        (
+            "path",
+            &[
+                "fn handle_attach(",
+                "fn handle_statfs(",
+                "fn handle_walk(",
+                "fn handle_lopen(",
+                "fn handle_open(",
+                "fn handle_lcreate(",
+                "fn handle_create(",
+                "fn handle_symlink(",
+                "fn handle_mknod(",
+                "fn handle_readlink(",
+                "fn handle_getattr(",
+                "fn handle_setattr(",
+                "fn handle_stat(",
+                "fn handle_wstat(",
+            ][..],
+        ),
+        (
+            "xattr",
+            &["fn handle_xattrwalk(", "fn handle_xattrcreate("][..],
+        ),
+        (
+            "io",
+            &[
+                "fn handle_read(",
+                "fn handle_write(",
+                "fn handle_clunk(",
+                "fn handle_remove(",
+                "fn handle_readdir(",
+                "fn handle_fsync(",
+            ][..],
+        ),
+        ("lock", &["fn handle_lock(", "fn handle_getlock("][..]),
+        (
+            "namespace",
+            &[
+                "fn handle_mkdir(",
+                "fn handle_link(",
+                "fn handle_renameat(",
+                "fn handle_rename(",
+                "fn handle_unlinkat(",
+            ][..],
+        ),
+    ] {
+        let path = crate_dir.join(format!("src/fs9p/ops/{module}.rs"));
+        assert!(path.exists(), "9P {module} handlers belong in {path:?}");
+        let source = fs::read_to_string(path).unwrap();
+        assert!(
+            ops_root.contains(&format!("mod {module};")),
+            "src/fs9p/ops.rs should declare the {module} operation module"
+        );
+        for symbol in symbols {
+            assert!(
+                source.contains(symbol),
+                "{symbol} should live in the 9P {module} operation module"
+            );
+        }
     }
 }
 
@@ -285,6 +358,25 @@ fn rust_source_files(root: &Path) -> Vec<PathBuf> {
     collect_rust_source_files(root, &mut paths);
     paths.sort();
     paths
+}
+
+fn fs9p_ops_source(crate_dir: &Path) -> String {
+    let mut source = String::new();
+    for path in [
+        "src/fs9p/ops.rs",
+        "src/fs9p/ops/io.rs",
+        "src/fs9p/ops/lock.rs",
+        "src/fs9p/ops/namespace.rs",
+        "src/fs9p/ops/path.rs",
+        "src/fs9p/ops/xattr.rs",
+    ] {
+        let path = crate_dir.join(path);
+        if path.exists() {
+            source.push_str(&fs::read_to_string(path).unwrap());
+            source.push('\n');
+        }
+    }
+    source
 }
 
 fn collect_rust_source_files(root: &Path, paths: &mut Vec<PathBuf>) {
