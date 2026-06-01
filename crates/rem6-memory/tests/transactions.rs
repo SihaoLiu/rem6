@@ -738,6 +738,44 @@ fn memory_request_checkpoint_payload_uses_stable_read_shared_bytes() {
 }
 
 #[test]
+fn memory_request_checkpoint_payload_uses_stable_atomic_ordering_bytes() {
+    let size = AccessSize::new(8).unwrap();
+    let mask =
+        ByteMask::from_bits(vec![true, false, true, false, true, false, true, false]).unwrap();
+    let request = MemoryRequest::atomic_with_op(
+        request_id(54),
+        Address::new(0x8e08),
+        size,
+        MemoryAtomicOp::Xor,
+        vec![0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80],
+        mask,
+        line_layout(),
+    )
+    .unwrap()
+    .with_ordering(MemoryAccessOrdering::new(
+        Some(MemoryBarrierSet::memory()),
+        Some(MemoryBarrierSet::new(true, false)),
+    ))
+    .with_uncacheable_strict_order();
+
+    let stable_payload = vec![
+        b'M', b'R', b'E', b'Q', 1, 0, 0, 0, 7, 0, 0, 0, 0xff, 0x06, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0,
+        54, 0, 0, 0, 0, 0, 0, 0, 0x08, 0x8e, 0, 0, 0, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 64, 0, 0, 0,
+        0, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0x10,
+        0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80, 1, 0, 1, 0, 1, 0, 1, 0,
+    ];
+    let decoded = MemoryRequestCheckpointPayload::decode(&stable_payload).unwrap();
+    let restored = MemoryRequest::from_snapshot(decoded.snapshot()).unwrap();
+
+    assert_eq!(
+        MemoryRequestCheckpointPayload::from_request(&request).encode(),
+        stable_payload
+    );
+    assert_eq!(decoded.snapshot(), &request.snapshot());
+    assert_eq!(restored, request);
+}
+
+#[test]
 fn memory_request_checkpoint_payload_rejects_invalid_magic() {
     let request = MemoryRequest::read_shared(
         request_id(45),
