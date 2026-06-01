@@ -260,14 +260,9 @@ impl<'a> VirtioGuestMemory<'a> {
         while remaining > 0 {
             let line_remaining = self.line_layout.bytes() - self.line_layout.line_offset(cursor);
             let chunk = remaining.min(line_remaining);
-            let request = MemoryRequest::read_shared(
-                self.next_request_id(),
-                cursor,
-                AccessSize::new(chunk).map_err(virtio_memory_error)?,
-                self.line_layout,
-            )
-            .map_err(virtio_memory_error)?;
-            self.store.respond(&request).map_err(virtio_memory_error)?;
+            self.store
+                .validate_access_range(cursor, AccessSize::new(chunk).map_err(virtio_memory_error)?)
+                .map_err(virtio_memory_error)?;
             cursor = add_address(cursor, chunk)?;
             remaining -= chunk;
         }

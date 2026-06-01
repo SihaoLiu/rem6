@@ -270,6 +270,38 @@ fn partitioned_store_reports_missing_lines_after_decode() {
 }
 
 #[test]
+fn partitioned_store_validates_access_ranges_without_requests() {
+    let (store, low, high) = mapped_store();
+
+    assert_eq!(
+        store
+            .validate_access_range(Address::new(0x1004), AccessSize::new(4).unwrap())
+            .unwrap(),
+        low
+    );
+    assert_eq!(
+        store
+            .validate_access_range(Address::new(0x8008), AccessSize::new(8).unwrap())
+            .unwrap(),
+        high
+    );
+    assert_eq!(
+        store
+            .validate_access_range(Address::new(0x1040), AccessSize::new(1).unwrap())
+            .unwrap_err(),
+        MemoryError::UnmappedLine {
+            line: Address::new(0x1040)
+        }
+    );
+    assert!(matches!(
+        store
+            .validate_access_range(Address::new(0x3ff8), AccessSize::new(16).unwrap())
+            .unwrap_err(),
+        MemoryError::AccessCrossesAddressRegion { .. }
+    ));
+}
+
+#[test]
 fn partitioned_store_restore_rejects_duplicate_line_snapshots() {
     let target = MemoryTargetId::new(41);
     let duplicate_line = Address::new(0x1000);

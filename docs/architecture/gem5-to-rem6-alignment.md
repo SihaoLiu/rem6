@@ -267,7 +267,10 @@ isolated bugs:
   interleave granularity, stripe count, match index, and packed local offsets as
   data that snapshots can validate, so a full-system memory map can express
   three, six, or twelve channels and I/O holes without forcing every consumer to
-  reinterpret raw start/end pairs.
+  reinterpret raw start/end pairs. Partitioned stores also expose mapped-range
+  validation that checks decoder ownership and resident cache lines without
+  issuing synthetic memory requests, so device preflight paths can prove
+  guest-memory writeback targets before mutating guest-visible state.
 - Public issue #2816 reports that a full-system `MESI_Three_Level` plus O3 CPU
   run can hit Ruby `MessageBuffer`'s strict-FIFO panic when a newly computed
   arrival tick is earlier than the last recorded arrival tick. The upstream
@@ -3400,10 +3403,14 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   remove, xattr, directory-read, fsync, lock, and namespace-mutation operation
   handlers out of the main device file and out of the operation-root module
   while keeping protocol dispatch below the focused-device line budget,
+  9P completion writeback prevalidation that rejects later response sinks before
+  mutating earlier guest data, used-ring state, or ISR state,
   modern PCI version-1 feature exposure for 9P,
   block, console, and RNG, legacy RNG device id and zero-config behavior,
   reproducible entropy generation, writable split descriptor-chain decoding,
   RNG used-ring writeback, guest-memory scatter writes, ISR queue interrupts,
+  RNG completion writeback prevalidation before guest-data or used-ring
+  mutation,
   readable/empty RNG descriptor rejection, RNG common-config queue exposure,
   notify layout, modern PCI endpoint and capability assembly without a
   device-config capability, common-config MMIO reads, notify MMIO writes through
@@ -3413,7 +3420,8 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   used-ring writeback, typed guest-memory available-ring consumption for
   receive and transmit queues, guest-memory receive scatter writes,
   guest-memory transmit input reads, queue-interrupt ISR status after console
-  completion writeback, console descriptor direction rejection, read-only console
+  completion writeback, console completion writeback prevalidation before
+  guest-data or used-ring mutation, console descriptor direction rejection, read-only console
   PCI device-config bytes, common-config feature and queue exposure, queue
   notify layout, modern PCI endpoint and capability assembly, config MMIO reads,
   and notify MMIO writes through the BAR runtime, legacy MMIO
@@ -3531,7 +3539,8 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   before or after host creation to avoid partial live-state mutation,
   plus guest-memory writeback for block data buffers, status bytes, used
   elements, used indices, legacy available-ring interrupt suppression,
-  event-index interrupt suppression, and queue-interrupt ISR status after
+  event-index interrupt suppression, block completion writeback prevalidation
+  before guest-data, status-byte, or used-ring mutation, and queue-interrupt ISR status after
   completion writeback, with serial and parallel PCI legacy INTx delivery.
   VirtIO PCI ISR-status tests cover queue and configuration-change bit
   recording, serial and parallel read-clear behavior, snapshot restore,

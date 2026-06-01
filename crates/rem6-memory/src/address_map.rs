@@ -327,6 +327,25 @@ impl AddressDecoder {
         Ok(AddressDecode::new(*target, region.clone(), offset))
     }
 
+    pub fn decode_range_detail(&self, range: AddressRange) -> Result<AddressDecode, MemoryError> {
+        let Some((target, region)) = self
+            .regions
+            .iter()
+            .find(|(_, region)| region.contains(range.start()))
+        else {
+            return Err(MemoryError::UnmappedAddress {
+                address: range.start(),
+            });
+        };
+
+        if !region.contains_range(range) {
+            return Err(MemoryError::AccessCrossesAddressRegion { range });
+        }
+
+        let offset = region.offset(range.start()).expect("checked region start");
+        Ok(AddressDecode::new(*target, region.clone(), offset))
+    }
+
     pub fn region_count(&self) -> usize {
         self.regions.len()
     }

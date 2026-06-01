@@ -344,6 +344,9 @@ pub enum MemoryError {
         request: MemoryRequestId,
         range: AddressRange,
     },
+    AccessCrossesAddressRegion {
+        range: AddressRange,
+    },
     DuplicateMemoryTarget {
         target: MemoryTargetId,
     },
@@ -519,6 +522,12 @@ impl fmt::Display for MemoryError {
                 "request {} from agent {} crosses address region boundary at {:#x}..{:#x}",
                 request.sequence(),
                 request.agent().get(),
+                range.start().get(),
+                range.end().get()
+            ),
+            Self::AccessCrossesAddressRegion { range } => write!(
+                formatter,
+                "access crosses address region boundary at {:#x}..{:#x}",
                 range.start().get(),
                 range.end().get()
             ),
@@ -705,6 +714,20 @@ impl LineMemoryStore {
         Err(MemoryError::UnmappedLine {
             line: self.layout.line_address(line),
         })
+    }
+
+    fn validate_access_range(&self, range: AddressRange) -> Result<(), MemoryError> {
+        let mut line = self.layout.line_address(range.start());
+        let last = self
+            .layout
+            .line_address(Address::new(range.end().get() - 1));
+        loop {
+            self.require_line(line)?;
+            if line == last {
+                return Ok(());
+            }
+            line = Address::new(line.get() + self.layout.bytes());
+        }
     }
 
     fn line_mut(&mut self, line: Address) -> Result<&mut Vec<u8>, MemoryError> {
@@ -1030,6 +1053,18 @@ impl PartitionedMemoryStore {
 
     pub fn decode_request(&self, request: &MemoryRequest) -> Result<MemoryTargetId, MemoryError> {
         self.decoder.decode_request(request)
+    }
+
+    pub fn validate_access_range(
+        &self,
+        address: Address,
+        size: AccessSize,
+    ) -> Result<MemoryTargetId, MemoryError> {
+        let range = AddressRange::new(address, size)?;
+        let decode = self.decoder.decode_range_detail(range)?;
+        self.partition(decode.target())?
+            .validate_access_range(range)?;
+        Ok(decode.target())
     }
 
     pub fn decode_detail(&self, address: Address) -> Result<AddressDecode, MemoryError> {
