@@ -499,10 +499,14 @@ fn virtio_9p_device_tests_delegate_metadata_cases() {
         "9P metadata tests belong in tests/fs9p_metadata.rs"
     );
     for symbol in [
+        "VIRTIO_9P_TGETATTR",
+        "VIRTIO_9P_RGETATTR",
+        "VIRTIO_9P_GETATTR_BASIC",
         "VIRTIO_9P_TSTATFS",
         "VIRTIO_9P_RSTATFS",
         "VIRTIO_9P_TSETATTR",
         "VIRTIO_9P_RSETATTR",
+        "p9_getattr_payload",
         "p9_statfs_payload",
         "p9_setattr_payload",
         "P9_SETATTR_CTIME",
