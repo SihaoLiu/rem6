@@ -2731,7 +2731,10 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   statistics, run summaries, and system-level store-conditional failure
   diagnostics through the partitioned scheduler; CPU RISC-V
   store-conditional progress tests cover checkpoint payload binary round trips
-  and duplicate-streak rejection through the restore validator; workload
+  plus stable checkpoint golden bytes, unsupported checkpoint versions,
+  malformed checkpoint headers, invalid access sizes, diagnostic-threshold
+  mismatch rejection, and duplicate-streak rejection through the restore
+  validator; workload
   RISC-V translation tests drive topology-built translated data cores through
   the system parallel run driver with an explicit page map, assert that
   multicore responders observe physical data addresses, and cover a mixed
