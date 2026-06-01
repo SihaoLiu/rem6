@@ -710,6 +710,45 @@ pub enum ResponseStatus {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MemoryResponseSnapshot {
+    request_id: MemoryRequestId,
+    status: ResponseStatus,
+    data: Option<Vec<u8>>,
+}
+
+impl MemoryResponseSnapshot {
+    pub fn new(
+        request_id: MemoryRequestId,
+        status: ResponseStatus,
+        data: Option<Vec<u8>>,
+    ) -> Result<Self, MemoryError> {
+        if status == ResponseStatus::Retry && data.is_some() {
+            return Err(MemoryError::UnexpectedResponseData {
+                request: request_id,
+            });
+        }
+
+        Ok(Self {
+            request_id,
+            status,
+            data,
+        })
+    }
+
+    pub const fn request_id(&self) -> MemoryRequestId {
+        self.request_id
+    }
+
+    pub const fn status(&self) -> ResponseStatus {
+        self.status
+    }
+
+    pub fn data(&self) -> Option<&[u8]> {
+        self.data.as_deref()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MemoryResponse {
     request_id: MemoryRequestId,
     status: ResponseStatus,
@@ -738,6 +777,16 @@ impl MemoryResponse {
             status: ResponseStatus::Retry,
             data: None,
         }
+    }
+
+    pub fn from_snapshot(snapshot: &MemoryResponseSnapshot) -> Result<Self, MemoryError> {
+        let data = snapshot.data().map(<[u8]>::to_vec);
+        MemoryResponseSnapshot::new(snapshot.request_id(), snapshot.status(), data.clone())?;
+        Ok(Self {
+            request_id: snapshot.request_id(),
+            status: snapshot.status(),
+            data,
+        })
     }
 
     fn validate_response_data(
@@ -770,5 +819,13 @@ impl MemoryResponse {
 
     pub fn data(&self) -> Option<&[u8]> {
         self.data.as_deref()
+    }
+
+    pub fn snapshot(&self) -> MemoryResponseSnapshot {
+        MemoryResponseSnapshot {
+            request_id: self.request_id,
+            status: self.status,
+            data: self.data.clone(),
+        }
     }
 }

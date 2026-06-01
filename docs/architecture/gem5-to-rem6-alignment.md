@@ -1146,7 +1146,8 @@ Implementation evidence through 2026-06-01:
   the crate root under the facade budget, require request and response state to
   stay out of the root, and enforce the hard per-source-file size budget, so
   cache, DRAM, transport, and CPU integrations share one typed request contract
-  without regrowing a gem5-style packet utility monolith.
+  with stable request and response checkpoint payloads without regrowing a
+  gem5-style packet utility monolith.
 - `rem6-dram` now keeps public DRAM error formatting in a focused `error`
   module and target-backed external-memory controller state in
   `memory_controller`, leaving the crate root focused on timing, command, bank,
@@ -2770,9 +2771,11 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   typed uncacheable-plus-strict-order flags independent of barrier ordering.
   RISC-V PMA and frontend tests cover uncacheable range matching plus fetch and
   data request delivery with strict-order flags set before transport response.
-  Memory request tests cover stable checkpoint payload round trips for atomic
-  metadata, byte masks, uncacheable-plus-strict flags, explicit ordering-edge
-  presence, invalid operation-code rejection, reserved flag rejection, and
+  Memory request and response tests cover stable checkpoint payload round trips
+  for atomic metadata, byte masks, uncacheable-plus-strict flags, explicit
+  ordering-edge presence, completed-response data, and retry responses, plus
+  invalid request operation-code rejection, invalid response status-code
+  rejection, reserved flag rejection, absent-data length rejection, and
   malformed mask-bit rejection.
   RISC-V vector-config prediction tests cover branch-prediction targets
   that drop copied dynamic `vl`/`vtype` state while preserving the current hart

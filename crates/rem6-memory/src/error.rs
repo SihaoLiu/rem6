@@ -91,6 +91,34 @@ pub enum MemoryError {
     InvalidRequestCheckpointMaskBit {
         value: u8,
     },
+    InvalidResponseCheckpointPayloadSize {
+        expected: usize,
+        actual: usize,
+    },
+    InvalidResponseCheckpointMagic,
+    UnsupportedResponseCheckpointVersion {
+        version: u32,
+    },
+    InvalidResponseCheckpointReserved {
+        value: u32,
+    },
+    InvalidResponseCheckpointFlags {
+        flags: u32,
+    },
+    InvalidResponseCheckpointStatus {
+        code: u32,
+    },
+    InvalidResponseCheckpointUsize {
+        value: u64,
+    },
+    ResponseCheckpointValueTooLarge {
+        field: &'static str,
+        value: usize,
+        maximum: usize,
+    },
+    InvalidResponseCheckpointDataLength {
+        length: u64,
+    },
     UnalignedLineAddress {
         address: Address,
         line_size: u64,
@@ -347,6 +375,46 @@ impl fmt::Display for MemoryError {
             Self::InvalidRequestCheckpointMaskBit { value } => write!(
                 formatter,
                 "memory-request checkpoint byte mask has invalid bit value {value}"
+            ),
+            Self::InvalidResponseCheckpointPayloadSize { expected, actual } => write!(
+                formatter,
+                "memory-response checkpoint payload has {actual} bytes; expected {expected}"
+            ),
+            Self::InvalidResponseCheckpointMagic => write!(
+                formatter,
+                "memory-response checkpoint payload has invalid magic"
+            ),
+            Self::UnsupportedResponseCheckpointVersion { version } => write!(
+                formatter,
+                "memory-response checkpoint payload version {version} is not supported"
+            ),
+            Self::InvalidResponseCheckpointReserved { value } => write!(
+                formatter,
+                "memory-response checkpoint reserved field has nonzero value {value}"
+            ),
+            Self::InvalidResponseCheckpointFlags { flags } => write!(
+                formatter,
+                "memory-response checkpoint flags {flags:#x} are invalid"
+            ),
+            Self::InvalidResponseCheckpointStatus { code } => write!(
+                formatter,
+                "memory-response checkpoint payload has invalid status code {code}"
+            ),
+            Self::InvalidResponseCheckpointUsize { value } => write!(
+                formatter,
+                "memory-response checkpoint usize value {value} cannot fit this target"
+            ),
+            Self::ResponseCheckpointValueTooLarge {
+                field,
+                value,
+                maximum,
+            } => write!(
+                formatter,
+                "memory-response checkpoint {field} value {value} exceeds maximum {maximum}"
+            ),
+            Self::InvalidResponseCheckpointDataLength { length } => write!(
+                formatter,
+                "memory-response checkpoint has absent data with nonzero length {length}"
             ),
             Self::UnalignedLineAddress { address, line_size } => write!(
                 formatter,

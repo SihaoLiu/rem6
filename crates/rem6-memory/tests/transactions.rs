@@ -1,7 +1,8 @@
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, CoherenceIntent, MemoryAccessOrdering,
     MemoryAtomicOp, MemoryBarrierSet, MemoryError, MemoryOperation, MemoryRequest,
-    MemoryRequestCheckpointPayload, MemoryRequestId, MemoryResponse, ResponseStatus,
+    MemoryRequestCheckpointPayload, MemoryRequestId, MemoryResponse,
+    MemoryResponseCheckpointPayload, ResponseStatus,
 };
 
 fn line_layout() -> CacheLineLayout {
@@ -320,6 +321,103 @@ fn responses_validate_request_data_contracts() {
 }
 
 #[test]
+fn memory_response_checkpoint_payload_round_trips_completed_data_and_retry() {
+    let read = MemoryRequest::read_shared(
+        request_id(29),
+        Address::new(0x7600),
+        AccessSize::new(4).unwrap(),
+        line_layout(),
+    )
+    .unwrap();
+    let completed = MemoryResponse::completed(&read, Some(vec![0xde, 0xad, 0xbe, 0xef])).unwrap();
+    let completed_payload = MemoryResponseCheckpointPayload::from_response(&completed);
+    let decoded =
+        MemoryResponseCheckpointPayload::decode(completed_payload.encode().as_slice()).unwrap();
+    let restored = MemoryResponse::from_snapshot(decoded.snapshot()).unwrap();
+
+    assert_eq!(decoded.snapshot(), &completed.snapshot());
+    assert_eq!(restored, completed);
+    assert_eq!(restored.request_id(), request_id(29));
+    assert_eq!(restored.status(), ResponseStatus::Completed);
+    assert_eq!(restored.data(), Some(&[0xde, 0xad, 0xbe, 0xef][..]));
+
+    let retry = MemoryResponse::retry(&read);
+    let retry_payload = MemoryResponseCheckpointPayload::from_response(&retry);
+    let retry_decoded =
+        MemoryResponseCheckpointPayload::decode(retry_payload.encode().as_slice()).unwrap();
+    let retry_restored = MemoryResponse::from_snapshot(retry_decoded.snapshot()).unwrap();
+
+    assert_eq!(retry_decoded.snapshot(), &retry.snapshot());
+    assert_eq!(retry_restored, retry);
+    assert_eq!(retry_restored.status(), ResponseStatus::Retry);
+    assert!(retry_restored.data().is_none());
+}
+
+#[test]
+fn memory_response_checkpoint_payload_rejects_invalid_status_code() {
+    let response = MemoryResponse::retry(
+        &MemoryRequest::read_shared(
+            request_id(30),
+            Address::new(0x7700),
+            AccessSize::new(4).unwrap(),
+            line_layout(),
+        )
+        .unwrap(),
+    );
+    let mut payload = MemoryResponseCheckpointPayload::from_response(&response).encode();
+    payload[RESPONSE_CHECKPOINT_STATUS_OFFSET..RESPONSE_CHECKPOINT_STATUS_OFFSET + 4]
+        .copy_from_slice(&99u32.to_le_bytes());
+
+    assert_eq!(
+        MemoryResponseCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::InvalidResponseCheckpointStatus { code: 99 }
+    );
+}
+
+#[test]
+fn memory_response_checkpoint_payload_rejects_reserved_flag_bits() {
+    let response = MemoryResponse::retry(
+        &MemoryRequest::read_shared(
+            request_id(31),
+            Address::new(0x7800),
+            AccessSize::new(4).unwrap(),
+            line_layout(),
+        )
+        .unwrap(),
+    );
+    let mut payload = MemoryResponseCheckpointPayload::from_response(&response).encode();
+    payload[RESPONSE_CHECKPOINT_FLAGS_OFFSET..RESPONSE_CHECKPOINT_FLAGS_OFFSET + 4]
+        .copy_from_slice(&0x8000_0000u32.to_le_bytes());
+
+    assert_eq!(
+        MemoryResponseCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::InvalidResponseCheckpointFlags { flags: 0x8000_0000 }
+    );
+}
+
+#[test]
+fn memory_response_checkpoint_payload_rejects_absent_data_with_nonzero_length() {
+    let response = MemoryResponse::retry(
+        &MemoryRequest::read_shared(
+            request_id(32),
+            Address::new(0x7900),
+            AccessSize::new(4).unwrap(),
+            line_layout(),
+        )
+        .unwrap(),
+    );
+    let mut payload = MemoryResponseCheckpointPayload::from_response(&response).encode();
+    payload[RESPONSE_CHECKPOINT_DATA_LENGTH_OFFSET..RESPONSE_CHECKPOINT_DATA_LENGTH_OFFSET + 8]
+        .copy_from_slice(&1u64.to_le_bytes());
+    payload.push(0);
+
+    assert_eq!(
+        MemoryResponseCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::InvalidResponseCheckpointDataLength { length: 1 }
+    );
+}
+
+#[test]
 fn memory_request_checkpoint_payload_round_trips_atomic_ordering_and_flags() {
     let size = AccessSize::new(8).unwrap();
     let mask =
@@ -465,3 +563,6 @@ fn memory_request_checkpoint_payload_rejects_invalid_mask_byte() {
 const REQUEST_CHECKPOINT_OPERATION_OFFSET: usize = 8;
 const REQUEST_CHECKPOINT_FLAGS_OFFSET: usize = 12;
 const REQUEST_CHECKPOINT_BEFORE_READ_FLAG: u32 = 1 << 5;
+const RESPONSE_CHECKPOINT_STATUS_OFFSET: usize = 8;
+const RESPONSE_CHECKPOINT_FLAGS_OFFSET: usize = 12;
+const RESPONSE_CHECKPOINT_DATA_LENGTH_OFFSET: usize = 32;

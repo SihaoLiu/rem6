@@ -8,6 +8,7 @@ mod ordering;
 mod partition_checkpoint;
 mod request;
 mod request_checkpoint;
+mod response_checkpoint;
 mod translation;
 mod translation_tlb;
 
@@ -18,8 +19,11 @@ pub use address_map::{
 pub use error::MemoryError;
 pub use line_checkpoint::LineMemoryCheckpointPayload;
 pub use partition_checkpoint::PartitionedMemoryCheckpointPayload;
-pub use request::{MemoryRequest, MemoryRequestSnapshot, MemoryResponse, ResponseStatus};
+pub use request::{
+    MemoryRequest, MemoryRequestSnapshot, MemoryResponse, MemoryResponseSnapshot, ResponseStatus,
+};
 pub use request_checkpoint::MemoryRequestCheckpointPayload;
+pub use response_checkpoint::MemoryResponseCheckpointPayload;
 pub use translation::{
     TranslationAccessKind, TranslationCompletion, TranslationError, TranslationFault,
     TranslationFaultKind, TranslationPageMap, TranslationPageMapCheckpointPayload,
