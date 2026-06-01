@@ -1364,6 +1364,46 @@ fn pl011_uart_checkpoint_port_rejects_impossible_error_count_without_partial_res
 }
 
 #[test]
+fn pl011_uart_checkpoint_port_rejects_short_interrupt_error_record_before_allocation() {
+    let component = checkpoint_component("pl011_payload_short_error");
+    let target = Pl011UartMmioDevice::new(UartId::new(0), Address::new(0x1c09_0000));
+    let original = target.snapshot();
+    let mut payload = Vec::new();
+    write_u64(&mut payload, 0);
+    write_u64(&mut payload, 0);
+    write_u64(&mut payload, 0);
+    write_u64(&mut payload, 0);
+    write_u64(&mut payload, 1);
+    write_u64(&mut payload, 19);
+    write_u32(&mut payload, 70);
+    write_u64(&mut payload, 0);
+    let mut registry = CheckpointRegistry::new();
+    registry.register(component.clone()).unwrap();
+    registry
+        .write_chunk(&component, PL011_CHUNK, payload)
+        .unwrap();
+
+    let error = Pl011UartCheckpointPort::new(component.clone(), target.clone())
+        .restore_from(&registry)
+        .unwrap_err();
+
+    match error {
+        Pl011UartCheckpointError::InvalidChunk {
+            component: actual,
+            reason,
+        } => {
+            assert_eq!(actual, component);
+            assert_eq!(
+                reason,
+                "PL011 interrupt error count 1 exceeds remaining payload capacity 0 records"
+            );
+        }
+        other => panic!("unexpected PL011 checkpoint error: {other}"),
+    }
+    assert_eq!(target.snapshot(), original);
+}
+
+#[test]
 fn plic_checkpoint_port_captures_stable_snapshot_bytes() {
     let component = checkpoint_component("plic_payload_stable");
     let contexts = stable_plic_contexts();

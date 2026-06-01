@@ -19,7 +19,7 @@ const U8_BYTES: usize = 1;
 const U32_BYTES: usize = 4;
 const U64_BYTES: usize = 8;
 const UART_BYTE_RECORD_BYTES: usize = U64_BYTES + U8_BYTES;
-const UART_INTERRUPT_ERROR_MIN_RECORD_BYTES: usize = U64_BYTES + U32_BYTES + U64_BYTES;
+const UART_INTERRUPT_ERROR_MIN_RECORD_BYTES: usize = U64_BYTES + U32_BYTES + U64_BYTES * 2;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UartCheckpointRecord {

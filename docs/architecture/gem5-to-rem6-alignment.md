@@ -3114,8 +3114,8 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   tests cover PL011 platform retention, automatic host checkpoint bank
   attachment, checkpoint chunk capture, and restore through host actions. UART
   checkpoint tests cover oversized TX-byte counts, and PL011 checkpoint tests
-  cover oversized interrupt-error counts, so malformed counts return typed
-  errors without mutating live UART state.
+  cover oversized interrupt-error counts and short interrupt-error records, so
+  malformed counts return typed errors without mutating live UART state.
 - Timer/MMIO tests cover typed RISC-V CLINT `msip` software interrupts,
   `mtimecmp` timer interrupt scheduling, future-deadline timer deassertion,
   read-only `mtime` from scheduler ticks, the same `mtimecmp` path under the
