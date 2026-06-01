@@ -17,6 +17,36 @@ fn component(name: &str) -> CheckpointComponentId {
     CheckpointComponentId::new(name).unwrap()
 }
 
+const CPU_LOCAL_TIMER_CHUNK: &str = "cpu-local-timer";
+const CPU_LOCAL_TIMER_BOOL_BYTES: usize = 1;
+const CPU_LOCAL_TIMER_U32_BYTES: usize = 4;
+const CPU_LOCAL_TIMER_U64_BYTES: usize = 8;
+const CPU_LOCAL_TIMER_COUNTER_BYTES: usize = CPU_LOCAL_TIMER_U32_BYTES * 2
+    + CPU_LOCAL_TIMER_U64_BYTES
+    + CPU_LOCAL_TIMER_U32_BYTES
+    + CPU_LOCAL_TIMER_BOOL_BYTES * 2
+    + CPU_LOCAL_TIMER_U64_BYTES * 2;
+const CPU_LOCAL_TIMER_WATCHDOG_BASE_BYTES: usize = CPU_LOCAL_TIMER_U32_BYTES * 2
+    + CPU_LOCAL_TIMER_U64_BYTES
+    + CPU_LOCAL_TIMER_U32_BYTES
+    + CPU_LOCAL_TIMER_BOOL_BYTES * 3
+    + CPU_LOCAL_TIMER_U32_BYTES
+    + CPU_LOCAL_TIMER_U64_BYTES * 3;
+const CPU_LOCAL_TIMER_CPU_BYTES_WITHOUT_RESETS: usize =
+    CPU_LOCAL_TIMER_COUNTER_BYTES + CPU_LOCAL_TIMER_WATCHDOG_BASE_BYTES;
+const CPU_LOCAL_TIMER_CPU1_OFFSET: usize =
+    CPU_LOCAL_TIMER_U64_BYTES + CPU_LOCAL_TIMER_CPU_BYTES_WITHOUT_RESETS;
+const CPU_LOCAL_TIMER_CPU1_WATCHDOG_OFFSET: usize =
+    CPU_LOCAL_TIMER_CPU1_OFFSET + CPU_LOCAL_TIMER_COUNTER_BYTES;
+const CPU_LOCAL_TIMER_WATCHDOG_RAW_RESET_RELATIVE_OFFSET: usize = CPU_LOCAL_TIMER_U32_BYTES * 2
+    + CPU_LOCAL_TIMER_U64_BYTES
+    + CPU_LOCAL_TIMER_U32_BYTES
+    + CPU_LOCAL_TIMER_BOOL_BYTES * 2;
+const CPU_LOCAL_TIMER_CPU1_WATCHDOG_RAW_RESET_OFFSET: usize =
+    CPU_LOCAL_TIMER_CPU1_WATCHDOG_OFFSET + CPU_LOCAL_TIMER_WATCHDOG_RAW_RESET_RELATIVE_OFFSET;
+const CPU_LOCAL_TIMER_CPU1_WATCHDOG_RESET_ASSERTION_OFFSET: usize =
+    CPU_LOCAL_TIMER_CPU1_WATCHDOG_OFFSET + CPU_LOCAL_TIMER_WATCHDOG_BASE_BYTES;
+
 fn cpu_local_timer(base: u64, cpu_count: usize) -> CpuLocalTimerMmioDevice {
     CpuLocalTimerMmioDevice::new(
         Address::new(base),
@@ -108,6 +138,118 @@ fn cpu_local_timer_checkpoint_bank_round_trips_snapshot() {
 }
 
 #[test]
+fn cpu_local_timer_checkpoint_port_captures_stable_snapshot_bytes() {
+    let checkpoint_component = component("cpu_local_timer_payload_stable");
+    let device = configured_cpu_local_timer(0x2c00);
+    let expected = device.snapshot();
+    let target = cpu_local_timer(0x2c00, 2);
+    let mut registry = CheckpointRegistry::new();
+    let port = CpuLocalTimerCheckpointPort::new(checkpoint_component.clone(), device);
+
+    port.register(&mut registry).unwrap();
+    let captured = port.capture_into(&mut registry).unwrap();
+
+    assert_eq!(captured.snapshot(), &expected);
+    assert_eq!(
+        registry
+            .chunk(&checkpoint_component, CPU_LOCAL_TIMER_CHUNK)
+            .unwrap(),
+        stable_configured_cpu_local_timer_checkpoint_bytes()
+    );
+    CpuLocalTimerCheckpointPort::new(checkpoint_component, target.clone())
+        .restore_from(&registry)
+        .unwrap();
+    assert_eq!(target.snapshot(), expected);
+}
+
+#[test]
+fn cpu_local_timer_checkpoint_port_rejects_invalid_bool_without_partial_restore() {
+    let checkpoint_component = component("cpu_local_timer_payload_bool");
+    let target = cpu_local_timer(0x2c00, 2);
+    let original = target.snapshot();
+    let mut payload = stable_configured_cpu_local_timer_checkpoint_bytes();
+    payload[CPU_LOCAL_TIMER_CPU1_WATCHDOG_RAW_RESET_OFFSET] = 2;
+    let mut registry = CheckpointRegistry::new();
+    registry.register(checkpoint_component.clone()).unwrap();
+    registry
+        .write_chunk(&checkpoint_component, CPU_LOCAL_TIMER_CHUNK, payload)
+        .unwrap();
+
+    let error = CpuLocalTimerCheckpointPort::new(checkpoint_component.clone(), target.clone())
+        .restore_from(&registry)
+        .unwrap_err();
+
+    match error {
+        CpuLocalTimerCheckpointError::InvalidChunk { component, reason } => {
+            assert_eq!(component, checkpoint_component);
+            assert_eq!(reason, "watchdog raw reset has invalid bool byte 2");
+        }
+        other => panic!("unexpected CPU local timer checkpoint error: {other}"),
+    }
+    assert_eq!(target.snapshot(), original);
+}
+
+#[test]
+fn cpu_local_timer_checkpoint_port_rejects_truncated_reset_assertion_without_partial_restore() {
+    let checkpoint_component = component("cpu_local_timer_payload_truncated");
+    let target = cpu_local_timer(0x2c00, 2);
+    let original = target.snapshot();
+    let mut payload = stable_configured_cpu_local_timer_checkpoint_bytes();
+    payload.truncate(CPU_LOCAL_TIMER_CPU1_WATCHDOG_RESET_ASSERTION_OFFSET + 4);
+    let mut registry = CheckpointRegistry::new();
+    registry.register(checkpoint_component.clone()).unwrap();
+    registry
+        .write_chunk(&checkpoint_component, CPU_LOCAL_TIMER_CHUNK, payload)
+        .unwrap();
+
+    let error = CpuLocalTimerCheckpointPort::new(checkpoint_component.clone(), target.clone())
+        .restore_from(&registry)
+        .unwrap_err();
+
+    match error {
+        CpuLocalTimerCheckpointError::InvalidChunk { component, reason } => {
+            assert_eq!(component, checkpoint_component);
+            assert_eq!(
+                reason,
+                "watchdog reset assertion tick needs 8 bytes at offset 186 but payload has 190"
+            );
+        }
+        other => panic!("unexpected CPU local timer checkpoint error: {other}"),
+    }
+    assert_eq!(target.snapshot(), original);
+}
+
+#[test]
+fn cpu_local_timer_checkpoint_port_rejects_trailing_payload_bytes_without_partial_restore() {
+    let checkpoint_component = component("cpu_local_timer_payload_trailing");
+    let target = cpu_local_timer(0x2c00, 2);
+    let original = target.snapshot();
+    let mut payload = stable_configured_cpu_local_timer_checkpoint_bytes();
+    payload.push(0xaa);
+    let mut registry = CheckpointRegistry::new();
+    registry.register(checkpoint_component.clone()).unwrap();
+    registry
+        .write_chunk(&checkpoint_component, CPU_LOCAL_TIMER_CHUNK, payload)
+        .unwrap();
+
+    let error = CpuLocalTimerCheckpointPort::new(checkpoint_component.clone(), target.clone())
+        .restore_from(&registry)
+        .unwrap_err();
+
+    match error {
+        CpuLocalTimerCheckpointError::InvalidChunk { component, reason } => {
+            assert_eq!(component, checkpoint_component);
+            assert_eq!(
+                reason,
+                "trailing 1 bytes after CPU local timer checkpoint payload"
+            );
+        }
+        other => panic!("unexpected CPU local timer checkpoint error: {other}"),
+    }
+    assert_eq!(target.snapshot(), original);
+}
+
+#[test]
 fn cpu_local_timer_checkpoint_bank_rejects_invalid_bank_without_partial_restore() {
     let valid_component = component("cpu_local_timer_valid");
     let invalid_component = component("cpu_local_timer_invalid");
@@ -124,7 +266,7 @@ fn cpu_local_timer_checkpoint_bank_rejects_invalid_bank_without_partial_restore(
         .unwrap();
     registry.register(invalid_component.clone()).unwrap();
     registry
-        .write_chunk(&invalid_component, "cpu-local-timer", vec![0xee])
+        .write_chunk(&invalid_component, CPU_LOCAL_TIMER_CHUNK, vec![0xee])
         .unwrap();
 
     let bank = CpuLocalTimerCheckpointBank::new([
@@ -368,7 +510,7 @@ fn cpu_local_timer_checkpoint_bank_rejects_invalid_prescalar_snapshot() {
     registry
         .write_chunk(
             &checkpoint_component,
-            "cpu-local-timer",
+            CPU_LOCAL_TIMER_CHUNK,
             encode_cpu_local_timer_test_snapshot(&snapshot),
         )
         .unwrap();
@@ -388,6 +530,56 @@ fn cpu_local_timer_checkpoint_bank_rejects_invalid_prescalar_snapshot() {
         } if component == checkpoint_component && prescalar == 16
     ));
     assert_eq!(target.snapshot(), original);
+}
+
+fn stable_configured_cpu_local_timer_checkpoint_bytes() -> Vec<u8> {
+    let mut payload = Vec::new();
+    write_test_u64(&mut payload, 2);
+
+    write_test_u32(&mut payload, 3);
+    write_test_u32(&mut payload, 3);
+    write_test_u64(&mut payload, 16);
+    write_test_u32(&mut payload, 7);
+    write_test_bool(&mut payload, true);
+    write_test_bool(&mut payload, true);
+    write_test_u64(&mut payload, 2);
+    write_test_u64(&mut payload, 2);
+
+    write_test_u32(&mut payload, 0);
+    write_test_u32(&mut payload, 0);
+    write_test_u64(&mut payload, 0);
+    write_test_u32(&mut payload, 0);
+    write_test_bool(&mut payload, false);
+    write_test_bool(&mut payload, false);
+    write_test_bool(&mut payload, false);
+    write_test_u32(&mut payload, 0);
+    write_test_u64(&mut payload, 2);
+    write_test_u64(&mut payload, 0);
+    write_test_u64(&mut payload, 0);
+
+    write_test_u32(&mut payload, 0);
+    write_test_u32(&mut payload, 0);
+    write_test_u64(&mut payload, 0);
+    write_test_u32(&mut payload, 0);
+    write_test_bool(&mut payload, false);
+    write_test_bool(&mut payload, false);
+    write_test_u64(&mut payload, 2);
+    write_test_u64(&mut payload, 0);
+
+    write_test_u32(&mut payload, 2);
+    write_test_u32(&mut payload, 0);
+    write_test_u64(&mut payload, 24);
+    write_test_u32(&mut payload, 9);
+    write_test_bool(&mut payload, true);
+    write_test_bool(&mut payload, false);
+    write_test_bool(&mut payload, true);
+    write_test_u32(&mut payload, 0);
+    write_test_u64(&mut payload, 2);
+    write_test_u64(&mut payload, 1);
+    write_test_u64(&mut payload, 1);
+    write_test_u64(&mut payload, 24);
+
+    payload
 }
 
 fn encode_cpu_local_timer_test_snapshot(snapshot: &CpuLocalTimerBankSnapshot) -> Vec<u8> {

@@ -3181,9 +3181,11 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   attachment with retained device lookup, per-CPU MMIO route coverage
   validation, source-partition-local bus views, and per-CPU timer/watchdog
   interrupt routes, plus checkpoint bank decode-first restore without partial
-  mutation, CPU-count validation, host checkpoint-action capture/restore
-  through manifests, and automatic topology host checkpoint attachment. SP805
-  tests cover watchdog countdown, zero-load minimum-clock
+  mutation, stable CPU-local timer checkpoint chunk bytes, invalid-bool,
+  truncated reset-assertion, and trailing chunk rejection without partial
+  restore, CPU-count validation, host checkpoint-action capture/restore through
+  manifests, and automatic topology host checkpoint attachment. SP805 tests
+  cover watchdog countdown, zero-load minimum-clock
   scheduling, lock behavior, raw and masked interrupt state, reset-assertion
   records, serial interrupt assert and clear delivery, parallel MMIO response
   paths, PrimeCell ID reads, typed width errors, typed unknown-register errors,
