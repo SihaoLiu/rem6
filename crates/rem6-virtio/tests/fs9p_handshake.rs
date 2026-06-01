@@ -1,8 +1,9 @@
 use rem6_virtio::{
     Virtio9pConfig, Virtio9pDevice, VirtioError, VIRTIO_9P_DEFAULT_MSIZE, VIRTIO_9P_EBADF,
-    VIRTIO_9P_NOFID, VIRTIO_9P_PROTOCOL_VERSION, VIRTIO_9P_RLERROR, VIRTIO_9P_RLOPEN,
-    VIRTIO_9P_RREAD, VIRTIO_9P_RREADDIR, VIRTIO_9P_RVERSION, VIRTIO_9P_TATTACH, VIRTIO_9P_TLOPEN,
-    VIRTIO_9P_TREAD, VIRTIO_9P_TREADDIR, VIRTIO_9P_TVERSION, VIRTIO_9P_TWALK,
+    VIRTIO_9P_NOFID, VIRTIO_9P_PROTOCOL_VERSION, VIRTIO_9P_QTDIR, VIRTIO_9P_RATTACH,
+    VIRTIO_9P_RLERROR, VIRTIO_9P_RLOPEN, VIRTIO_9P_RREAD, VIRTIO_9P_RREADDIR, VIRTIO_9P_RVERSION,
+    VIRTIO_9P_TATTACH, VIRTIO_9P_TLOPEN, VIRTIO_9P_TREAD, VIRTIO_9P_TREADDIR, VIRTIO_9P_TVERSION,
+    VIRTIO_9P_TWALK,
 };
 
 mod support;
@@ -45,6 +46,69 @@ fn virtio_9p_device_rejects_attach_with_unsupported_auth_fids() {
     assert_eq!(completion.payload(), VIRTIO_9P_EBADF.to_le_bytes());
     assert_eq!(device.fid_count(), 0);
     assert!(device.attached_fids().is_empty());
+}
+
+#[test]
+fn virtio_9p_device_accepts_attach_and_returns_root_qid() {
+    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap());
+    let request = decoded_request(
+        VIRTIO_9P_TATTACH,
+        21,
+        p9_attach_payload(42, VIRTIO_9P_NOFID, b"root", b"", 0),
+    );
+
+    let completion = device.execute_at(55, request).unwrap();
+
+    assert_eq!(completion.message_type(), VIRTIO_9P_RATTACH);
+    assert_eq!(completion.tag(), 21);
+    assert_eq!(completion.payload().len(), 13);
+    assert_eq!(completion.payload()[0], VIRTIO_9P_QTDIR);
+    assert_eq!(completion.payload()[1..5], 0_u32.to_le_bytes());
+    assert_eq!(completion.payload()[5..13], 1_u64.to_le_bytes());
+
+    let attachments = device.attached_fids();
+    assert_eq!(attachments.len(), 1);
+    assert_eq!(attachments[0].fid(), 42);
+    assert_eq!(attachments[0].afid(), VIRTIO_9P_NOFID);
+    assert_eq!(attachments[0].uname(), "root");
+    assert_eq!(attachments[0].aname(), "");
+    assert_eq!(attachments[0].n_uname(), 0);
+}
+
+#[test]
+fn virtio_9p_device_rejects_attach_on_occupied_fid_without_replacing_it() {
+    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap())
+        .with_file("hello.txt", b"hello rem6".to_vec())
+        .unwrap();
+    let attach = decoded_request(
+        VIRTIO_9P_TATTACH,
+        1,
+        p9_attach_payload(1, VIRTIO_9P_NOFID, b"root", b"", 0),
+    );
+    device.execute_at(10, attach).unwrap();
+    let walk = decoded_request(VIRTIO_9P_TWALK, 2, p9_walk_payload(1, 2, &[b"hello.txt"]));
+    device.execute_at(11, walk).unwrap();
+    let open = decoded_request(VIRTIO_9P_TLOPEN, 3, p9_lopen_payload(2, 0));
+    device.execute_at(12, open).unwrap();
+
+    let duplicate_attach = decoded_request(
+        VIRTIO_9P_TATTACH,
+        4,
+        p9_attach_payload(2, VIRTIO_9P_NOFID, b"root", b"", 0),
+    );
+    let duplicate_completion = device.execute_at(13, duplicate_attach).unwrap();
+    assert_eq!(duplicate_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(
+        duplicate_completion.payload(),
+        VIRTIO_9P_EBADF.to_le_bytes()
+    );
+    assert_eq!(device.attached_fids().len(), 1);
+    assert_eq!(device.fid_count(), 2);
+
+    let read = decoded_request(VIRTIO_9P_TREAD, 5, p9_read_payload(2, 0, 5));
+    let read_completion = device.execute_at(14, read).unwrap();
+    assert_eq!(read_completion.message_type(), VIRTIO_9P_RREAD);
+    assert_eq!(read_counted_data(read_completion.payload()), b"hello");
 }
 
 #[test]
