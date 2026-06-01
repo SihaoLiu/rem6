@@ -252,6 +252,12 @@ enum RxLedgerFault {
 
 type UartRxRecords = &'static [(u64, u8)];
 
+const PL031_CHECKPOINT_RAW_INTERRUPT_OFFSET: usize = 20;
+const STABLE_PL031_CHECKPOINT_BYTES: &[u8] = &[
+    0x28, 0, 0, 0, 0x0f, 0, 0, 0, 0, 0, 0, 0, 0x28, 0, 0, 0, 0x2d, 0, 0, 0, 1, 1, 1, 5, 0, 0, 0, 0,
+    0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0,
+];
+
 const RTC_CHECKPOINT_CLOCK_REGISTER_COUNT: usize = 10;
 const RTC_CHECKPOINT_SELECTED_ADDRESS_OFFSET: usize = 0;
 const RTC_CHECKPOINT_CMOS_OFFSET: usize = RTC_CHECKPOINT_SELECTED_ADDRESS_OFFSET + 1;
@@ -319,6 +325,117 @@ fn pl031_checkpoint_bank_rejects_invalid_bank_without_partial_restore() {
     .unwrap();
     valid_only_bank.restore_all_from(&registry).unwrap();
     assert_eq!(target_valid.snapshot(), expected);
+}
+
+#[test]
+fn pl031_checkpoint_port_captures_stable_snapshot_bytes() {
+    let component = checkpoint_component("pl031_payload_stable");
+    let source = configured_pl031_device(0x1c17_0000);
+    let expected = source.snapshot();
+    let target = pl031_device(0x1c17_0000, 0, 1);
+    let mut registry = CheckpointRegistry::new();
+    let port = Pl031CheckpointPort::new(component.clone(), source);
+
+    port.register(&mut registry).unwrap();
+    let captured = port.capture_into(&mut registry).unwrap();
+
+    assert_eq!(captured.snapshot(), &expected);
+    assert_eq!(
+        registry.chunk(&component, "pl031").unwrap(),
+        STABLE_PL031_CHECKPOINT_BYTES
+    );
+
+    Pl031CheckpointPort::new(component, target.clone())
+        .restore_from(&registry)
+        .unwrap();
+    assert_eq!(target.snapshot(), expected);
+}
+
+#[test]
+fn pl031_checkpoint_port_rejects_invalid_bool_without_partial_restore() {
+    let component = checkpoint_component("pl031_payload_bool");
+    let target = pl031_device(0x1c17_0000, 0, 1);
+    let original = target.snapshot();
+    let mut registry = CheckpointRegistry::new();
+    let mut payload = STABLE_PL031_CHECKPOINT_BYTES.to_vec();
+    payload[PL031_CHECKPOINT_RAW_INTERRUPT_OFFSET] = 2;
+
+    registry.register(component.clone()).unwrap();
+    registry.write_chunk(&component, "pl031", payload).unwrap();
+
+    let error = Pl031CheckpointPort::new(component.clone(), target.clone())
+        .restore_from(&registry)
+        .unwrap_err();
+
+    match error {
+        Pl031CheckpointError::InvalidChunk {
+            component: actual,
+            reason,
+        } => {
+            assert_eq!(actual, component);
+            assert_eq!(reason, "raw_interrupt has invalid bool byte 2");
+        }
+        other => panic!("unexpected PL031 checkpoint error: {other}"),
+    }
+    assert_eq!(target.snapshot(), original);
+}
+
+#[test]
+fn pl031_checkpoint_port_rejects_truncated_payload_without_partial_restore() {
+    let component = checkpoint_component("pl031_payload_truncated");
+    let target = pl031_device(0x1c17_0000, 0, 1);
+    let original = target.snapshot();
+    let mut registry = CheckpointRegistry::new();
+    let mut payload = STABLE_PL031_CHECKPOINT_BYTES.to_vec();
+    payload.pop();
+
+    registry.register(component.clone()).unwrap();
+    registry.write_chunk(&component, "pl031", payload).unwrap();
+
+    let error = Pl031CheckpointPort::new(component.clone(), target.clone())
+        .restore_from(&registry)
+        .unwrap_err();
+
+    match error {
+        Pl031CheckpointError::InvalidChunk {
+            component: actual,
+            reason,
+        } => {
+            assert_eq!(actual, component);
+            assert!(reason.contains("generation needs 8 bytes"));
+        }
+        other => panic!("unexpected PL031 checkpoint error: {other}"),
+    }
+    assert_eq!(target.snapshot(), original);
+}
+
+#[test]
+fn pl031_checkpoint_port_rejects_trailing_payload_bytes_without_partial_restore() {
+    let component = checkpoint_component("pl031_payload_trailing");
+    let target = pl031_device(0x1c17_0000, 0, 1);
+    let original = target.snapshot();
+    let mut registry = CheckpointRegistry::new();
+    let mut payload = STABLE_PL031_CHECKPOINT_BYTES.to_vec();
+    payload.push(0);
+
+    registry.register(component.clone()).unwrap();
+    registry.write_chunk(&component, "pl031", payload).unwrap();
+
+    let error = Pl031CheckpointPort::new(component.clone(), target.clone())
+        .restore_from(&registry)
+        .unwrap_err();
+
+    match error {
+        Pl031CheckpointError::InvalidChunk {
+            component: actual,
+            reason,
+        } => {
+            assert_eq!(actual, component);
+            assert_eq!(reason, "trailing 1 bytes after PL031 checkpoint payload");
+        }
+        other => panic!("unexpected PL031 checkpoint error: {other}"),
+    }
+    assert_eq!(target.snapshot(), original);
 }
 
 #[test]
