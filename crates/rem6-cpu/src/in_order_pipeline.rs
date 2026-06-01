@@ -2,6 +2,18 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
+const CHECKPOINT_MAGIC: [u8; 4] = *b"RIOP";
+const CHECKPOINT_VERSION: u8 = 1;
+const U32_BYTES: usize = 4;
+const U64_BYTES: usize = 8;
+const CHECKPOINT_U32_MAX: usize = u32::MAX as usize;
+const CHECKPOINT_HEADER_BYTES: usize = CHECKPOINT_MAGIC.len()
+    + 1
+    + U64_BYTES
+    + InOrderPipelineStage::ALL.len() * U32_BYTES
+    + U32_BYTES;
+const CHECKPOINT_INSTRUCTION_BYTES: usize = U64_BYTES + 1;
+
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum InOrderPipelineStage {
     Fetch1,
@@ -269,6 +281,113 @@ impl InOrderPipelineSnapshot {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InOrderPipelineCheckpointPayload {
+    snapshot: InOrderPipelineSnapshot,
+}
+
+impl InOrderPipelineCheckpointPayload {
+    pub fn from_state(state: &InOrderPipelineState) -> Self {
+        Self {
+            snapshot: state.snapshot(),
+        }
+    }
+
+    pub fn from_snapshot(snapshot: InOrderPipelineSnapshot) -> Result<Self, InOrderPipelineError> {
+        let state = InOrderPipelineState::restore(snapshot)?;
+        Ok(Self {
+            snapshot: state.snapshot(),
+        })
+    }
+
+    pub fn decode(payload: &[u8]) -> Result<Self, InOrderPipelineError> {
+        if payload.len() < CHECKPOINT_HEADER_BYTES {
+            return Err(InOrderPipelineError::InvalidCheckpointPayloadSize {
+                expected: CHECKPOINT_HEADER_BYTES,
+                actual: payload.len(),
+            });
+        }
+        if payload[0..CHECKPOINT_MAGIC.len()] != CHECKPOINT_MAGIC {
+            return Err(InOrderPipelineError::InvalidCheckpointMagic);
+        }
+
+        let mut offset = CHECKPOINT_MAGIC.len();
+        let version = payload[offset];
+        offset += 1;
+        if version != CHECKPOINT_VERSION {
+            return Err(InOrderPipelineError::UnsupportedCheckpointVersion { version });
+        }
+
+        let cycle = read_u64(payload, &mut offset);
+        let mut widths = Vec::with_capacity(InOrderPipelineStage::ALL.len());
+        for stage in InOrderPipelineStage::ALL {
+            let slots = read_u32(payload, &mut offset) as usize;
+            widths.push(InOrderPipelineStageWidth::new(stage, slots)?);
+        }
+        let config = InOrderPipelineConfig::new(widths)?;
+        let instruction_count = read_u32(payload, &mut offset) as usize;
+        let expected = CHECKPOINT_HEADER_BYTES
+            .checked_add(instruction_count.saturating_mul(CHECKPOINT_INSTRUCTION_BYTES))
+            .ok_or(InOrderPipelineError::InvalidCheckpointPayloadSize {
+                expected: usize::MAX,
+                actual: payload.len(),
+            })?;
+        if payload.len() != expected {
+            return Err(InOrderPipelineError::InvalidCheckpointPayloadSize {
+                expected,
+                actual: payload.len(),
+            });
+        }
+
+        let mut in_flight = Vec::with_capacity(instruction_count);
+        for _ in 0..instruction_count {
+            let sequence = read_u64(payload, &mut offset);
+            let stage = decode_checkpoint_stage(payload[offset])?;
+            offset += 1;
+            in_flight.push(InOrderPipelineInstruction::new(sequence, stage));
+        }
+
+        Self::from_snapshot(InOrderPipelineSnapshot::with_cycle(
+            config, cycle, in_flight,
+        ))
+    }
+
+    pub fn encode(&self) -> Vec<u8> {
+        self.try_encode()
+            .expect("in-order checkpoint payload values fit the checkpoint encoding")
+    }
+
+    pub fn try_encode(&self) -> Result<Vec<u8>, InOrderPipelineError> {
+        let in_flight = self.snapshot.in_flight();
+        let mut payload = Vec::with_capacity(
+            CHECKPOINT_HEADER_BYTES + in_flight.len() * CHECKPOINT_INSTRUCTION_BYTES,
+        );
+        payload.extend_from_slice(&CHECKPOINT_MAGIC);
+        payload.push(CHECKPOINT_VERSION);
+        payload.extend_from_slice(&self.snapshot.cycle().to_le_bytes());
+        for stage in InOrderPipelineStage::ALL {
+            let width = encode_checkpoint_u32("stage width", self.snapshot.config().width(stage))?;
+            payload.extend_from_slice(&width.to_le_bytes());
+        }
+        let in_flight_count =
+            encode_checkpoint_u32("in-flight instruction count", in_flight.len())?;
+        payload.extend_from_slice(&in_flight_count.to_le_bytes());
+        for instruction in in_flight {
+            payload.extend_from_slice(&instruction.sequence().to_le_bytes());
+            payload.push(encode_checkpoint_stage(instruction.stage()));
+        }
+        Ok(payload)
+    }
+
+    pub const fn snapshot(&self) -> &InOrderPipelineSnapshot {
+        &self.snapshot
+    }
+
+    pub fn into_snapshot(self) -> InOrderPipelineSnapshot {
+        self.snapshot
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InOrderPipelineState {
     config: InOrderPipelineConfig,
     cycle: u64,
@@ -466,6 +585,51 @@ fn validate_disjoint_run_summary_windows(
     }
 
     Ok(())
+}
+
+fn encode_checkpoint_stage(stage: InOrderPipelineStage) -> u8 {
+    match stage {
+        InOrderPipelineStage::Fetch1 => 0,
+        InOrderPipelineStage::Fetch2 => 1,
+        InOrderPipelineStage::Decode => 2,
+        InOrderPipelineStage::Execute => 3,
+        InOrderPipelineStage::Commit => 4,
+    }
+}
+
+fn decode_checkpoint_stage(code: u8) -> Result<InOrderPipelineStage, InOrderPipelineError> {
+    match code {
+        0 => Ok(InOrderPipelineStage::Fetch1),
+        1 => Ok(InOrderPipelineStage::Fetch2),
+        2 => Ok(InOrderPipelineStage::Decode),
+        3 => Ok(InOrderPipelineStage::Execute),
+        4 => Ok(InOrderPipelineStage::Commit),
+        _ => Err(InOrderPipelineError::InvalidCheckpointStageCode { code }),
+    }
+}
+
+fn encode_checkpoint_u32(field: &'static str, value: usize) -> Result<u32, InOrderPipelineError> {
+    u32::try_from(value).map_err(|_| InOrderPipelineError::CheckpointValueTooLarge {
+        field,
+        value,
+        maximum: CHECKPOINT_U32_MAX,
+    })
+}
+
+fn read_u32(payload: &[u8], offset: &mut usize) -> u32 {
+    let bytes = payload[*offset..*offset + U32_BYTES]
+        .try_into()
+        .expect("checkpoint u32 slice width is fixed");
+    *offset += U32_BYTES;
+    u32::from_le_bytes(bytes)
+}
+
+fn read_u64(payload: &[u8], offset: &mut usize) -> u64 {
+    let bytes = payload[*offset..*offset + U64_BYTES]
+        .try_into()
+        .expect("checkpoint u64 slice width is fixed");
+    *offset += U64_BYTES;
+    u64::from_le_bytes(bytes)
 }
 
 impl InOrderPipelineCycleSummary {
@@ -829,6 +993,22 @@ pub enum InOrderPipelineError {
         right_first_cycle: u64,
         right_last_cycle: u64,
     },
+    InvalidCheckpointPayloadSize {
+        expected: usize,
+        actual: usize,
+    },
+    InvalidCheckpointMagic,
+    UnsupportedCheckpointVersion {
+        version: u8,
+    },
+    InvalidCheckpointStageCode {
+        code: u8,
+    },
+    CheckpointValueTooLarge {
+        field: &'static str,
+        value: usize,
+        maximum: usize,
+    },
 }
 
 impl fmt::Display for InOrderPipelineError {
@@ -873,6 +1053,28 @@ impl fmt::Display for InOrderPipelineError {
             } => write!(
                 formatter,
                 "in-order run summary windows overlap: left {left_first_cycle}..={left_last_cycle}, right {right_first_cycle}..={right_last_cycle}"
+            ),
+            Self::InvalidCheckpointPayloadSize { expected, actual } => write!(
+                formatter,
+                "in-order checkpoint payload has {actual} bytes; expected {expected}"
+            ),
+            Self::InvalidCheckpointMagic => {
+                write!(formatter, "in-order checkpoint payload has invalid magic")
+            }
+            Self::UnsupportedCheckpointVersion { version } => write!(
+                formatter,
+                "in-order checkpoint payload version {version} is not supported"
+            ),
+            Self::InvalidCheckpointStageCode { code } => {
+                write!(formatter, "in-order checkpoint payload has invalid stage code {code}")
+            }
+            Self::CheckpointValueTooLarge {
+                field,
+                value,
+                maximum,
+            } => write!(
+                formatter,
+                "in-order checkpoint {field} value {value} exceeds maximum {maximum}"
             ),
         }
     }

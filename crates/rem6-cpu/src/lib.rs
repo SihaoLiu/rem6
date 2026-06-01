@@ -75,11 +75,11 @@ pub use gshare_predictor::{
     GShareSquash, GShareThreadSnapshot, GShareTrainingUpdate,
 };
 pub use in_order_pipeline::{
-    InOrderBranchRedirect, InOrderPipelineAdvance, InOrderPipelineConfig,
-    InOrderPipelineCycleRecord, InOrderPipelineCycleSummary, InOrderPipelineError,
-    InOrderPipelineInstruction, InOrderPipelinePlan, InOrderPipelineRunSummary,
-    InOrderPipelineScheduler, InOrderPipelineSnapshot, InOrderPipelineStage,
-    InOrderPipelineStageWidth, InOrderPipelineState,
+    InOrderBranchRedirect, InOrderPipelineAdvance, InOrderPipelineCheckpointPayload,
+    InOrderPipelineConfig, InOrderPipelineCycleRecord, InOrderPipelineCycleSummary,
+    InOrderPipelineError, InOrderPipelineInstruction, InOrderPipelinePlan,
+    InOrderPipelineRunSummary, InOrderPipelineScheduler, InOrderPipelineSnapshot,
+    InOrderPipelineStage, InOrderPipelineStageWidth, InOrderPipelineState,
 };
 pub use indirect_target_predictor::{
     IndirectTargetCommit, IndirectTargetEntry, IndirectTargetHistory, IndirectTargetPathEntry,

@@ -1,7 +1,8 @@
 use rem6_cpu::{
-    InOrderBranchRedirect, InOrderPipelineConfig, InOrderPipelineError, InOrderPipelineInstruction,
-    InOrderPipelineRunSummary, InOrderPipelineScheduler, InOrderPipelineSnapshot,
-    InOrderPipelineStage, InOrderPipelineStageWidth, InOrderPipelineState,
+    InOrderBranchRedirect, InOrderPipelineCheckpointPayload, InOrderPipelineConfig,
+    InOrderPipelineError, InOrderPipelineInstruction, InOrderPipelineRunSummary,
+    InOrderPipelineScheduler, InOrderPipelineSnapshot, InOrderPipelineStage,
+    InOrderPipelineStageWidth, InOrderPipelineState,
 };
 
 fn instruction(sequence: u64, stage: InOrderPipelineStage) -> InOrderPipelineInstruction {
@@ -517,6 +518,129 @@ fn in_order_pipeline_run_summary_rejects_overlapping_partial_summaries() {
             left_last_cycle: 0,
             right_first_cycle: 0,
             right_last_cycle: 0,
+        }
+    );
+}
+
+#[test]
+fn in_order_pipeline_checkpoint_payload_round_trips_state() {
+    let config = InOrderPipelineConfig::new([
+        stage_width(InOrderPipelineStage::Fetch1, 2).unwrap(),
+        stage_width(InOrderPipelineStage::Fetch2, 1).unwrap(),
+        stage_width(InOrderPipelineStage::Decode, 2).unwrap(),
+        stage_width(InOrderPipelineStage::Execute, 1).unwrap(),
+        stage_width(InOrderPipelineStage::Commit, 2).unwrap(),
+    ])
+    .unwrap();
+    let snapshot = InOrderPipelineSnapshot::with_cycle(
+        config.clone(),
+        19,
+        [
+            instruction(80, InOrderPipelineStage::Fetch1),
+            instruction(81, InOrderPipelineStage::Decode),
+            instruction(82, InOrderPipelineStage::Commit),
+        ],
+    );
+    let payload = InOrderPipelineCheckpointPayload::from_snapshot(snapshot.clone()).unwrap();
+
+    let decoded = InOrderPipelineCheckpointPayload::decode(payload.encode().as_slice()).unwrap();
+    let restored = InOrderPipelineState::restore(decoded.into_snapshot()).unwrap();
+
+    assert_eq!(restored.cycle(), 19);
+    assert_eq!(restored.config(), &config);
+    assert_eq!(restored.in_flight(), snapshot.in_flight());
+}
+
+#[test]
+fn in_order_pipeline_checkpoint_payload_rejects_duplicate_sequences() {
+    let snapshot = InOrderPipelineSnapshot::with_cycle(
+        config_with_decode_width(1),
+        3,
+        [
+            instruction(90, InOrderPipelineStage::Fetch2),
+            instruction(90, InOrderPipelineStage::Decode),
+        ],
+    );
+
+    assert_eq!(
+        InOrderPipelineCheckpointPayload::from_snapshot(snapshot).unwrap_err(),
+        InOrderPipelineError::DuplicateInFlightInstruction { sequence: 90 }
+    );
+}
+
+#[test]
+fn in_order_pipeline_checkpoint_payload_rejects_malformed_payloads() {
+    assert_eq!(
+        InOrderPipelineCheckpointPayload::decode(b"bad").unwrap_err(),
+        InOrderPipelineError::InvalidCheckpointPayloadSize {
+            expected: 37,
+            actual: 3,
+        }
+    );
+
+    let payload =
+        InOrderPipelineCheckpointPayload::from_snapshot(InOrderPipelineSnapshot::with_cycle(
+            config_with_decode_width(1),
+            4,
+            [instruction(91, InOrderPipelineStage::Execute)],
+        ))
+        .unwrap()
+        .encode();
+    let mut invalid_stage_payload = payload.clone();
+    *invalid_stage_payload.last_mut().unwrap() = 99;
+    assert_eq!(
+        InOrderPipelineCheckpointPayload::decode(&invalid_stage_payload).unwrap_err(),
+        InOrderPipelineError::InvalidCheckpointStageCode { code: 99 }
+    );
+
+    let mut invalid_magic_payload = payload.clone();
+    invalid_magic_payload[0] = b'X';
+    assert_eq!(
+        InOrderPipelineCheckpointPayload::decode(&invalid_magic_payload).unwrap_err(),
+        InOrderPipelineError::InvalidCheckpointMagic
+    );
+
+    let mut unsupported_version_payload = payload.clone();
+    unsupported_version_payload[4] = 2;
+    assert_eq!(
+        InOrderPipelineCheckpointPayload::decode(&unsupported_version_payload).unwrap_err(),
+        InOrderPipelineError::UnsupportedCheckpointVersion { version: 2 }
+    );
+
+    let mut invalid_width_payload = payload;
+    invalid_width_payload[13..17].copy_from_slice(&0_u32.to_le_bytes());
+    assert_eq!(
+        InOrderPipelineCheckpointPayload::decode(&invalid_width_payload).unwrap_err(),
+        InOrderPipelineError::ZeroStageWidth {
+            stage: InOrderPipelineStage::Fetch1,
+        }
+    );
+}
+
+#[test]
+fn in_order_pipeline_checkpoint_payload_rejects_widths_too_large_to_encode() {
+    let config = InOrderPipelineConfig::new([
+        stage_width(
+            InOrderPipelineStage::Fetch1,
+            usize::try_from(u32::MAX).unwrap() + 1,
+        )
+        .unwrap(),
+        stage_width(InOrderPipelineStage::Fetch2, 1).unwrap(),
+        stage_width(InOrderPipelineStage::Decode, 1).unwrap(),
+        stage_width(InOrderPipelineStage::Execute, 1).unwrap(),
+        stage_width(InOrderPipelineStage::Commit, 1).unwrap(),
+    ])
+    .unwrap();
+    let payload =
+        InOrderPipelineCheckpointPayload::from_snapshot(InOrderPipelineSnapshot::new(config, []))
+            .unwrap();
+
+    assert_eq!(
+        payload.try_encode().unwrap_err(),
+        InOrderPipelineError::CheckpointValueTooLarge {
+            field: "stage width",
+            value: usize::try_from(u32::MAX).unwrap() + 1,
+            maximum: usize::try_from(u32::MAX).unwrap(),
         }
     );
 }
