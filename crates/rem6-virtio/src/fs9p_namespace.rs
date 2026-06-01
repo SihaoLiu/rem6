@@ -18,7 +18,7 @@ mod path_entry;
 
 use path_entry::{
     node_exists_at_fid_path, remove_node_at_fid_path, rename_node_at_fid_path,
-    take_file_node_at_fid_path,
+    rename_node_in_entries, take_file_node_at_fid_path,
 };
 
 const VIRTIO_9P_QID_BYTES: usize = 13;
@@ -370,24 +370,23 @@ impl Virtio9pNamespace {
         if let Some(errno) = validate_mutation_name(VIRTIO_9P_TRENAMEAT, newname)? {
             return Ok(Err(errno));
         }
-        let Some(old_entries) = self.directory_entries(old_parent) else {
-            return Ok(Err(VIRTIO_9P_EBADF));
-        };
-        if old_parent == new_parent && oldname == newname {
-            return match old_entries.get(oldname) {
-                Some(_) => Ok(Ok(Virtio9pRenameOutcome {
-                    moved: false,
-                    replaced: None,
-                })),
-                None => Ok(Err(VIRTIO_9P_ENOENT)),
+        let (old_id, old_is_directory) = {
+            let Some(old_entries) = self.directory_entries(old_parent) else {
+                return Ok(Err(VIRTIO_9P_EBADF));
             };
-        }
-        let (old_id, old_is_directory) = match old_entries.get(oldname) {
-            Some(node) => (node.id(), matches!(node, Virtio9pNode::Directory(_))),
-            None => return Ok(Err(VIRTIO_9P_ENOENT)),
+            match old_entries.get(oldname) {
+                Some(node) => (node.id(), matches!(node, Virtio9pNode::Directory(_))),
+                None => return Ok(Err(VIRTIO_9P_ENOENT)),
+            }
         };
-        if old_is_directory && old_parent != new_parent {
-            return Ok(Err(VIRTIO_9P_EBADF));
+        if old_is_directory {
+            if old_parent != new_parent {
+                return Ok(Err(VIRTIO_9P_EBADF));
+            }
+            let entries = self
+                .directory_entries_mut(old_parent)
+                .expect("prevalidated 9p rename source parent");
+            return Ok(rename_node_in_entries(entries, oldname, old_id, newname));
         }
         let Some(new_entries) = self.directory_entries(new_parent) else {
             return Ok(Err(VIRTIO_9P_EBADF));
@@ -438,13 +437,7 @@ impl Virtio9pNamespace {
             if self.parent_directory(node) != Some(new_parent) {
                 return Ok(Err(VIRTIO_9P_EBADF));
             }
-            return match self.rename_node_in_parent(node, old_path, newname)? {
-                Ok(moved) => Ok(Ok(Virtio9pRenameOutcome {
-                    moved,
-                    replaced: None,
-                })),
-                Err(errno) => Ok(Err(errno)),
-            };
+            return self.rename_node_in_parent(node, old_path, newname);
         }
         if !matches!(
             node,
@@ -499,7 +492,7 @@ impl Virtio9pNamespace {
         node: Virtio9pNodeId,
         old_path: &Virtio9pFidPath,
         newname: &str,
-    ) -> Result<Result<bool, u32>, VirtioError> {
+    ) -> Result<Result<Virtio9pRenameOutcome, u32>, VirtioError> {
         if let Some(errno) = validate_mutation_name(VIRTIO_9P_TRENAME, newname)? {
             return Ok(Err(errno));
         }

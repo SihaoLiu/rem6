@@ -444,10 +444,15 @@ impl Virtio9pDevice {
                 return Ok(Err(VIRTIO_9P_EBADF));
             };
             return match namespace.rename_node_in_parent(node, &old_path, name)? {
-                Ok(moved) => {
+                Ok(rename) => {
                     drop(namespace);
-                    if moved {
+                    if rename.moved {
                         self.move_fid_paths(&old_path, &new_path);
+                    }
+                    if let Some(replaced) = rename.replaced {
+                        if self.node_is_removed(replaced) {
+                            self.remove_fids_for_node(replaced);
+                        }
                     }
                     Ok(Ok(()))
                 }

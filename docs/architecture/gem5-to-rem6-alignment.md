@@ -1315,12 +1315,14 @@ Implementation evidence through 2026-06-01:
   behavior that keeps surviving linked fids live, `Trename` moves non-directory
   fid-backed nodes into target directories while preserving moved qids, open
   fid access, and walked-fid path identity, and renames same-parent directory
-  fids while updating descendant fid path identity, `Trenameat` renames and moves
-  non-directory nodes across directory fids while preserving the moved file qid,
-  open fid access, and moved hard-link fid path identity, treating target hard
-  links to the same file as no-ops and replacing other target files with
-  explicit target-fid invalidation, and renames same-parent directories while
-  updating descendant fid path identity,
+  fids while updating descendant fid path identity, permits empty-directory
+  target replacement, and rejects non-empty directory targets, `Trenameat`
+  renames and moves non-directory nodes across directory fids while preserving
+  the moved file qid, open fid access, and moved hard-link fid path identity,
+  treating target hard links to the same file as no-ops and replacing other
+  target files with explicit target-fid invalidation, and renames same-parent
+  directories while updating descendant fid path identity, permitting
+  empty-directory target replacement, and rejecting non-empty directory targets,
   `Tunlinkat` removes named root or child-directory files and invalidates fids
   only when no linked directory entry remains, removes empty directories only
   when `AT_REMOVEDIR` is present, and rejects non-empty directory removal with
@@ -3350,12 +3352,14 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   visibility, link-count metadata, and surviving-fid reads after one name is
   unlinked, `Trename` fid-backed cross-directory file
   moves with preserved open-fid access and qid identity plus same-parent
-  directory rename with descendant fid path updates, `Trenameat`
+  directory rename with descendant fid path updates, empty-directory target
+  replacement, and non-empty target rejection, `Trenameat`
   same-directory renames, cross-directory file moves including same-name moves,
   preserved moved qids, open-fid access, same-file hardlink target no-ops,
   stale fid-backed rename source rejection, replacement-target fid
   invalidation, same-parent directory rename plus descendant fid path updates,
-  post-rename directory entries, and old-name walk rejection,
+  empty-directory target replacement, non-empty target rejection, post-rename
+  directory entries, and old-name walk rejection,
   `Tunlinkat` root and
   child-directory file removal with post-delete directory and walk checks,
   `Tunlinkat` empty-directory removal through `AT_REMOVEDIR` plus non-empty

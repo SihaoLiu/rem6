@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use crate::fs9p_protocol::{VIRTIO_9P_EEXIST, VIRTIO_9P_ENOTEMPTY};
 
-use super::{Virtio9pFidPath, Virtio9pNode, Virtio9pNodeId};
+use super::{Virtio9pFidPath, Virtio9pNode, Virtio9pNodeId, Virtio9pRenameOutcome};
 
 pub(super) fn node_exists_at_fid_path(
     entries: &BTreeMap<String, Virtio9pNode>,
@@ -17,7 +17,7 @@ pub(super) fn rename_node_at_fid_path(
     fid_path: &Virtio9pFidPath,
     expected: Virtio9pNodeId,
     newname: &str,
-) -> Option<Result<bool, u32>> {
+) -> Option<Result<Virtio9pRenameOutcome, u32>> {
     rename_node_at_components(entries, fid_path.components(), expected, newname)
 }
 
@@ -42,7 +42,7 @@ fn rename_node_at_components(
     components: &[String],
     expected: Virtio9pNodeId,
     newname: &str,
-) -> Option<Result<bool, u32>> {
+) -> Option<Result<Virtio9pRenameOutcome, u32>> {
     let (name, remaining) = components.split_first()?;
     if remaining.is_empty() {
         let node = entries.get(name)?;
@@ -77,29 +77,52 @@ fn node_exists_at_components(
     node_exists_at_components(&directory.entries, remaining, expected)
 }
 
-fn rename_node_in_entries(
+pub(super) fn rename_node_in_entries(
     entries: &mut BTreeMap<String, Virtio9pNode>,
     oldname: &str,
     expected: Virtio9pNodeId,
     newname: &str,
-) -> Result<bool, u32> {
+) -> Result<Virtio9pRenameOutcome, u32> {
     if oldname == newname {
-        return Ok(false);
+        return Ok(Virtio9pRenameOutcome {
+            moved: false,
+            replaced: None,
+        });
     }
-    if entries
-        .get(newname)
-        .is_some_and(|existing| existing.id() == expected)
-    {
-        return Ok(false);
-    }
-    if entries.contains_key(newname) {
-        return Err(VIRTIO_9P_EEXIST);
+    let source_is_directory = entries
+        .get(oldname)
+        .is_some_and(|node| matches!(node, Virtio9pNode::Directory(_)));
+    match entries.get(newname) {
+        Some(existing) if existing.id() == expected => {
+            return Ok(Virtio9pRenameOutcome {
+                moved: false,
+                replaced: None,
+            });
+        }
+        Some(Virtio9pNode::Directory(directory)) if source_is_directory => {
+            if !directory.entries.is_empty() {
+                return Err(VIRTIO_9P_ENOTEMPTY);
+            }
+        }
+        Some(Virtio9pNode::Directory(_)) => return Err(VIRTIO_9P_EEXIST),
+        Some(Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_))
+            if source_is_directory =>
+        {
+            return Err(VIRTIO_9P_EEXIST);
+        }
+        Some(Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_))
+        | None => {}
     }
     let node = entries
         .remove(oldname)
         .expect("prevalidated 9p rename node");
-    entries.insert(newname.to_string(), node);
-    Ok(true)
+    let replaced = entries
+        .insert(newname.to_string(), node)
+        .map(|node| node.id());
+    Ok(Virtio9pRenameOutcome {
+        moved: true,
+        replaced,
+    })
 }
 
 fn remove_node_at_components(
