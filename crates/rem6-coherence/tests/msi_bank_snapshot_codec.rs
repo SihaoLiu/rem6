@@ -162,6 +162,25 @@ fn msi_bank_snapshot_rejects_impossible_cpu_response_count() {
 }
 
 #[test]
+fn msi_bank_snapshot_rejects_cpu_response_count_with_missing_optional_data_flag() {
+    let mut payload = payload_after_cache_count();
+    write_empty_top_level_counts_before_cpu_responses(&mut payload);
+    write_u64(&mut payload, 1);
+    write_u64(&mut payload, 0);
+    write_u8(&mut payload, 0);
+    write_u32(&mut payload, 1);
+    write_u64(&mut payload, 10);
+    write_u8(&mut payload, 0);
+
+    let error = MsiBankDirectoryHarnessSnapshot::from_bytes(&payload).unwrap_err();
+
+    assert_eq!(
+        error,
+        "MSI CPU response count 1 exceeds remaining payload capacity 0 records"
+    );
+}
+
+#[test]
 fn msi_bank_snapshot_rejects_impossible_directory_decision_count() {
     let mut payload = payload_after_cache_count();
     write_empty_top_level_counts_before_directory_decisions(&mut payload);
@@ -176,6 +195,22 @@ fn msi_bank_snapshot_rejects_impossible_directory_decision_count() {
 }
 
 #[test]
+fn msi_bank_snapshot_rejects_directory_decision_count_with_missing_grant_flag() {
+    let mut payload = payload_after_cache_count();
+    write_empty_top_level_counts_before_directory_decisions(&mut payload);
+    write_u64(&mut payload, 1);
+    write_directory_decision_until_snoop_count(&mut payload);
+    write_u64(&mut payload, 0);
+
+    let error = MsiBankDirectoryHarnessSnapshot::from_bytes(&payload).unwrap_err();
+
+    assert_eq!(
+        error,
+        "MSI directory decision count 1 exceeds remaining payload capacity 0 records"
+    );
+}
+
+#[test]
 fn msi_bank_snapshot_rejects_impossible_parallel_cycle_count() {
     let mut payload = payload_after_cache_count();
     write_empty_top_level_counts_before_parallel_cycles(&mut payload);
@@ -186,6 +221,21 @@ fn msi_bank_snapshot_rejects_impossible_parallel_cycle_count() {
     assert_eq!(
         error,
         "MSI parallel cycle count 18446744073709551615 exceeds remaining payload capacity 0 records"
+    );
+}
+
+#[test]
+fn msi_bank_snapshot_rejects_cache_bank_line_count_with_missing_pending_flag() {
+    let mut payload = payload_with_one_cache_bank();
+    write_u64(&mut payload, 1);
+    write_cache_controller_until_trace_count(&mut payload);
+    write_u64(&mut payload, 0);
+
+    let error = MsiBankDirectoryHarnessSnapshot::from_bytes(&payload).unwrap_err();
+
+    assert_eq!(
+        error,
+        "MSI cache bank line count 1 exceeds remaining payload capacity 0 records"
     );
 }
 
@@ -208,12 +258,13 @@ fn msi_bank_snapshot_rejects_impossible_cache_line_trace_length() {
     write_u64(&mut payload, 1);
     write_cache_controller_until_trace_count(&mut payload);
     write_u64(&mut payload, u64::MAX);
+    write_u8(&mut payload, 0);
 
     let error = MsiBankDirectoryHarnessSnapshot::from_bytes(&payload).unwrap_err();
 
     assert_eq!(
         error,
-        "MSI cache line trace length 18446744073709551615 exceeds remaining payload capacity 0 records"
+        "MSI cache line trace length 18446744073709551615 exceeds remaining payload capacity 1 records"
     );
 }
 
@@ -252,6 +303,7 @@ fn msi_bank_snapshot_rejects_impossible_directory_decision_snoop_count() {
     write_u64(&mut payload, 1);
     write_directory_decision_until_snoop_count(&mut payload);
     write_u64(&mut payload, u64::MAX);
+    write_u8(&mut payload, 0);
 
     let error = MsiBankDirectoryHarnessSnapshot::from_bytes(&payload).unwrap_err();
 
