@@ -127,6 +127,7 @@ impl Virtio9pDevice {
             open.fid,
             Virtio9pOpenMode::from_bits(open.mode),
             open.truncate,
+            false,
             open.append,
         )
     }
@@ -140,6 +141,7 @@ impl Virtio9pDevice {
             open.fid,
             Virtio9pOpenMode::from_bits(open.mode),
             open.truncate,
+            open.remove_on_clunk,
             open.append,
         )
     }
@@ -149,6 +151,7 @@ impl Virtio9pDevice {
         fid: u32,
         mode: Virtio9pOpenMode,
         truncate: bool,
+        remove_on_clunk: bool,
         append: bool,
     ) -> Result<Result<Vec<u8>, u32>, VirtioError> {
         let mut fids = self.fids.lock().expect("virtio 9p fid lock");
@@ -171,7 +174,7 @@ impl Virtio9pDevice {
         if truncate && (!mode.can_write() || namespace.resize_file(node, 0).is_none()) {
             return Ok(Err(VIRTIO_9P_EBADF));
         }
-        if fid.open(mode, append).is_none() {
+        if fid.open(mode, append, remove_on_clunk).is_none() {
             return Ok(Err(VIRTIO_9P_EBADF));
         }
         let mut payload = namespace.qid(node).to_le_bytes().to_vec();

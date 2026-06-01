@@ -1297,7 +1297,7 @@ Implementation evidence through 2026-06-01:
   reject write-mode directory opens before changing fid state,
   reject attempts to reopen already-open fids before access-mode mutation,
   `Tlopen` honors RISC-V/Linux-compatible truncate and append flag values,
-  legacy `Topen` honors 9P2000 truncate and append mode bits,
+  legacy `Topen` honors 9P2000 truncate, remove-on-close, and append mode bits,
   legacy `Tcreate` shares the same checked namespace creation path as
   `Tlcreate`, including duplicate-file rejection and opened-fid access-mode
   propagation plus append-mode propagation, `Treaddir`
@@ -3334,9 +3334,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   and execute-only opened fids, write-mode directory-open rejection without
   changing fid state, reopen rejection before access-mode mutation, `Tlopen`
   truncate and append flag handling,
-  legacy `Topen` truncate and append mode handling, legacy `Tcreate` and `Tlcreate`
-  opened-fid access-mode and append-mode propagation, create-on-open-fid rejection
-  without namespace mutation, legacy `Tcreate` checked
+  legacy `Topen` truncate, remove-on-close, and append mode handling, legacy
+  `Tcreate` and `Tlcreate` opened-fid access-mode and append-mode propagation,
+  create-on-open-fid rejection without namespace mutation, legacy `Tcreate` checked
   file creation, duplicate-file rejection without clobbering, statfs-namelen
   create-name rejection before completion mutation, plus created-fid retargeting,
   `Treaddir` sorted

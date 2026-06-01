@@ -1,10 +1,11 @@
 use rem6_virtio::{
-    Virtio9pConfig, Virtio9pDevice, VIRTIO_9P_EBADF, VIRTIO_9P_LOPEN_APPEND,
+    Virtio9pConfig, Virtio9pDevice, VIRTIO_9P_EBADF, VIRTIO_9P_ENOENT, VIRTIO_9P_LOPEN_APPEND,
     VIRTIO_9P_LOPEN_TRUNCATE, VIRTIO_9P_NOFID, VIRTIO_9P_OPEN_APPEND, VIRTIO_9P_OPEN_EXECUTE_ONLY,
-    VIRTIO_9P_OPEN_READ_ONLY, VIRTIO_9P_OPEN_READ_WRITE, VIRTIO_9P_OPEN_TRUNCATE,
-    VIRTIO_9P_OPEN_WRITE_ONLY, VIRTIO_9P_RLERROR, VIRTIO_9P_RLOPEN, VIRTIO_9P_ROPEN,
-    VIRTIO_9P_RREAD, VIRTIO_9P_RREADDIR, VIRTIO_9P_RWRITE, VIRTIO_9P_TATTACH, VIRTIO_9P_TLOPEN,
-    VIRTIO_9P_TOPEN, VIRTIO_9P_TREAD, VIRTIO_9P_TREADDIR, VIRTIO_9P_TWALK, VIRTIO_9P_TWRITE,
+    VIRTIO_9P_OPEN_READ_ONLY, VIRTIO_9P_OPEN_READ_WRITE, VIRTIO_9P_OPEN_REMOVE_ON_CLOSE,
+    VIRTIO_9P_OPEN_TRUNCATE, VIRTIO_9P_OPEN_WRITE_ONLY, VIRTIO_9P_RCLUNK, VIRTIO_9P_RLERROR,
+    VIRTIO_9P_RLOPEN, VIRTIO_9P_ROPEN, VIRTIO_9P_RREAD, VIRTIO_9P_RREADDIR, VIRTIO_9P_RWRITE,
+    VIRTIO_9P_TATTACH, VIRTIO_9P_TCLUNK, VIRTIO_9P_TLOPEN, VIRTIO_9P_TOPEN, VIRTIO_9P_TREAD,
+    VIRTIO_9P_TREADDIR, VIRTIO_9P_TWALK, VIRTIO_9P_TWRITE,
 };
 
 mod support;
@@ -320,6 +321,41 @@ fn virtio_9p_legacy_open_append_writes_at_file_end() {
     let read_completion = device.execute_at(14, read).unwrap();
     assert_eq!(read_completion.message_type(), VIRTIO_9P_RREAD);
     assert_eq!(read_counted_data(read_completion.payload()), b"headtail");
+}
+
+#[test]
+fn virtio_9p_legacy_open_remove_on_close_unlinks_clunked_file() {
+    let device = attached_device_with_file("temporary.txt", b"temporary");
+    let walk = decoded_request(
+        VIRTIO_9P_TWALK,
+        2,
+        p9_walk_payload(1, 2, &[b"temporary.txt"]),
+    );
+    device.execute_at(11, walk).unwrap();
+
+    let open = decoded_request(
+        VIRTIO_9P_TOPEN,
+        3,
+        p9_open_payload(
+            2,
+            VIRTIO_9P_OPEN_READ_WRITE | VIRTIO_9P_OPEN_REMOVE_ON_CLOSE,
+        ),
+    );
+    let open_completion = device.execute_at(12, open).unwrap();
+    assert_eq!(open_completion.message_type(), VIRTIO_9P_ROPEN);
+
+    let clunk = decoded_request(VIRTIO_9P_TCLUNK, 4, p9_clunk_payload(2));
+    let clunk_completion = device.execute_at(13, clunk).unwrap();
+    assert_eq!(clunk_completion.message_type(), VIRTIO_9P_RCLUNK);
+
+    let walk_removed = decoded_request(
+        VIRTIO_9P_TWALK,
+        5,
+        p9_walk_payload(1, 3, &[b"temporary.txt"]),
+    );
+    let removed_completion = device.execute_at(14, walk_removed).unwrap();
+    assert_eq!(removed_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(removed_completion.payload(), VIRTIO_9P_ENOENT.to_le_bytes());
 }
 
 #[test]

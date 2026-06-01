@@ -89,6 +89,26 @@ impl Virtio9pDevice {
             .lock()
             .expect("virtio 9p lock table")
             .remove_fid(fid);
+        if removed.remove_on_clunk() {
+            let Some(node) = removed.node() else {
+                return Ok(Err(VIRTIO_9P_EBADF));
+            };
+            let remove_result = if node == Virtio9pNodeId::Root {
+                Err(VIRTIO_9P_EBADF)
+            } else {
+                let mut namespace = self.namespace.lock().expect("virtio 9p namespace lock");
+                namespace.remove_node_by_fid_path(node, removed.path())
+            };
+            return match remove_result {
+                Ok(_) => {
+                    if self.node_is_removed(node) {
+                        self.remove_fids_for_node(node);
+                    }
+                    Ok(Ok(()))
+                }
+                Err(error) => Ok(Err(error)),
+            };
+        }
         if let Some((node, name, data, policy)) = removed.into_xattr_commit() {
             if let Err(errno) = self
                 .namespace

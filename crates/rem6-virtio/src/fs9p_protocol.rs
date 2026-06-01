@@ -107,6 +107,7 @@ pub const VIRTIO_9P_OPEN_READ_WRITE: u8 = 2;
 pub const VIRTIO_9P_OPEN_EXECUTE_ONLY: u8 = 3;
 pub const VIRTIO_9P_OPEN_ACCESS_MASK: u8 = 0x3;
 pub const VIRTIO_9P_OPEN_TRUNCATE: u8 = 0x10;
+pub const VIRTIO_9P_OPEN_REMOVE_ON_CLOSE: u8 = 0x40;
 pub const VIRTIO_9P_OPEN_APPEND: u8 = 0x80;
 pub const VIRTIO_9P_LOPEN_TRUNCATE: u32 = 0x0000_0200;
 pub const VIRTIO_9P_LOPEN_APPEND: u32 = 0x0000_0400;
@@ -206,6 +207,7 @@ pub(crate) fn parse_lopen_request(
         fid,
         mode: (flags & u32::from(VIRTIO_9P_OPEN_ACCESS_MASK)) as u8,
         truncate: flags & VIRTIO_9P_LOPEN_TRUNCATE != 0,
+        remove_on_clunk: false,
         append: flags & VIRTIO_9P_LOPEN_APPEND != 0,
     })
 }
@@ -221,6 +223,7 @@ pub(crate) fn parse_open_request(
         fid,
         mode: mode & VIRTIO_9P_OPEN_ACCESS_MASK,
         truncate: mode & VIRTIO_9P_OPEN_TRUNCATE != 0,
+        remove_on_clunk: mode & VIRTIO_9P_OPEN_REMOVE_ON_CLOSE != 0,
         append: mode & VIRTIO_9P_OPEN_APPEND != 0,
     })
 }
@@ -806,6 +809,7 @@ pub(crate) struct Virtio9pOpenRequest {
     pub(crate) fid: u32,
     pub(crate) mode: u8,
     pub(crate) truncate: bool,
+    pub(crate) remove_on_clunk: bool,
     pub(crate) append: bool,
 }
 

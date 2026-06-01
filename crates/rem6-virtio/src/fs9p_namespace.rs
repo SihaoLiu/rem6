@@ -1525,6 +1525,7 @@ pub(crate) enum Virtio9pFidState {
         path: Virtio9pFidPath,
         open: Option<Virtio9pOpenMode>,
         append: bool,
+        remove_on_clunk: bool,
     },
     XattrRead {
         data: Vec<u8>,
@@ -1549,6 +1550,7 @@ impl Virtio9pFidState {
             path,
             open: None,
             append: false,
+            remove_on_clunk: false,
         }
     }
 
@@ -1600,15 +1602,22 @@ impl Virtio9pFidState {
         }
     }
 
-    pub(crate) fn open(&mut self, mode: Virtio9pOpenMode, append: bool) -> Option<()> {
+    pub(crate) fn open(
+        &mut self,
+        mode: Virtio9pOpenMode,
+        append: bool,
+        remove_on_clunk: bool,
+    ) -> Option<()> {
         match self {
             Self::Node {
                 open,
                 append: stored_append,
+                remove_on_clunk: stored_remove_on_clunk,
                 ..
             } => {
                 *open = Some(mode);
                 *stored_append = append;
+                *stored_remove_on_clunk = remove_on_clunk;
                 Some(())
             }
             Self::XattrRead { .. } | Self::XattrWrite { .. } => None,
@@ -1626,6 +1635,7 @@ impl Virtio9pFidState {
             path,
             open: Some(mode),
             append,
+            remove_on_clunk: false,
         }
     }
 
@@ -1665,6 +1675,19 @@ impl Virtio9pFidState {
                 append,
                 ..
             } => *append,
+            Self::Node { open: None, .. } | Self::XattrRead { .. } | Self::XattrWrite { .. } => {
+                false
+            }
+        }
+    }
+
+    pub(crate) const fn remove_on_clunk(&self) -> bool {
+        match self {
+            Self::Node {
+                open: Some(_),
+                remove_on_clunk,
+                ..
+            } => *remove_on_clunk,
             Self::Node { open: None, .. } | Self::XattrRead { .. } | Self::XattrWrite { .. } => {
                 false
             }
