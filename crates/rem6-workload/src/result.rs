@@ -44,6 +44,7 @@ mod progress_dma;
 mod remote_endpoints;
 mod wait_for_diagnostics;
 mod wait_for_edge_kind_window;
+mod wait_for_edge_kind_windows;
 mod wait_for_node_windows;
 mod wait_for_raw_audit;
 

@@ -67,6 +67,27 @@ fn workload_wait_for_diagnostics_stays_within_module_budget() {
 }
 
 #[test]
+fn wait_for_edge_kind_helpers_live_in_focused_module() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let diagnostics_rs =
+        fs::read_to_string(crate_dir.join("src/result/wait_for_diagnostics.rs")).unwrap();
+    let edge_kind_rs = crate_dir.join("src/result/wait_for_edge_kind_windows.rs");
+
+    assert!(
+        edge_kind_rs.exists(),
+        "wait-for edge-kind helpers belong in src/result/wait_for_edge_kind_windows.rs"
+    );
+    assert!(
+        !diagnostics_rs.contains("fn collect_wait_for_edge_kind_windows"),
+        "src/result/wait_for_diagnostics.rs should delegate edge-kind window collection"
+    );
+    assert!(
+        !diagnostics_rs.contains("fn merge_wait_for_edge_kind_counts"),
+        "src/result/wait_for_diagnostics.rs should delegate edge-kind count merging"
+    );
+}
+
+#[test]
 fn workload_source_files_stay_within_size_limit() {
     let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut oversized = Vec::new();
