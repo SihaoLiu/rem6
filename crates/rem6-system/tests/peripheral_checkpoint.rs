@@ -74,6 +74,11 @@ fn timer(id: u64, partition: u32, source: u32) -> ProgrammableTimer {
     )
 }
 
+const TIMER_CHUNK: &str = "timer";
+const TIMER_U64_BYTES: usize = 8;
+const TIMER_DEADLINE_FLAG_OFFSET: usize = TIMER_U64_BYTES + 4 + 4;
+const TIMER_ARM_DEADLINE_OFFSET: usize = TIMER_DEADLINE_FLAG_OFFSET + TIMER_U64_BYTES * 5;
+
 fn plic_device(base: u64, contexts: &[PlicContextRoute]) -> PlicMmioDevice {
     PlicMmioDevice::with_contexts(
         Arc::new(Mutex::new(InterruptController::new())),
@@ -967,18 +972,127 @@ fn pl011_uart_checkpoint_bank_rejects_invalid_bank_without_partial_restore() {
 }
 
 #[test]
+fn timer_checkpoint_port_captures_stable_snapshot_bytes() {
+    let component = checkpoint_component("timer_payload_stable");
+    let expected = stable_timer_snapshot();
+    let source = timer(0, 2, 50);
+    source.restore(&expected).unwrap();
+    let target = timer(0, 2, 50);
+    let mut registry = CheckpointRegistry::new();
+    let port = TimerCheckpointPort::new(component.clone(), source);
+
+    port.register(&mut registry).unwrap();
+    let captured = port.capture_into(&mut registry).unwrap();
+
+    assert_eq!(captured.snapshot(), &expected);
+    assert_eq!(
+        registry.chunk(&component, TIMER_CHUNK).unwrap(),
+        stable_timer_checkpoint_bytes()
+    );
+    TimerCheckpointPort::new(component, target.clone())
+        .restore_from(&registry)
+        .unwrap();
+    assert_eq!(target.snapshot(), expected);
+}
+
+#[test]
+fn timer_checkpoint_port_rejects_invalid_deadline_flag_without_partial_restore() {
+    let component = checkpoint_component("timer_payload_deadline_flag");
+    let target = timer(0, 2, 50);
+    let original = target.snapshot();
+    let mut payload = stable_timer_checkpoint_bytes();
+    payload[TIMER_DEADLINE_FLAG_OFFSET] = 2;
+    let mut registry = CheckpointRegistry::new();
+    registry.register(component.clone()).unwrap();
+    registry
+        .write_chunk(&component, TIMER_CHUNK, payload)
+        .unwrap();
+
+    let error = TimerCheckpointPort::new(component.clone(), target.clone())
+        .restore_from(&registry)
+        .unwrap_err();
+
+    match error {
+        TimerCheckpointError::InvalidChunk {
+            component: actual,
+            reason,
+        } => {
+            assert_eq!(actual, component);
+            assert_eq!(reason, "timer deadline flag has invalid value 2");
+        }
+        other => panic!("unexpected timer checkpoint error: {other}"),
+    }
+    assert_eq!(target.snapshot(), original);
+}
+
+#[test]
+fn timer_checkpoint_port_rejects_truncated_arm_without_partial_restore() {
+    let component = checkpoint_component("timer_payload_truncated_arm");
+    let target = timer(0, 2, 50);
+    let original = target.snapshot();
+    let mut payload = stable_timer_checkpoint_bytes();
+    payload.truncate(TIMER_ARM_DEADLINE_OFFSET + 4);
+    let mut registry = CheckpointRegistry::new();
+    registry.register(component.clone()).unwrap();
+    registry
+        .write_chunk(&component, TIMER_CHUNK, payload)
+        .unwrap();
+
+    let error = TimerCheckpointPort::new(component.clone(), target.clone())
+        .restore_from(&registry)
+        .unwrap_err();
+
+    match error {
+        TimerCheckpointError::InvalidChunk {
+            component: actual,
+            reason,
+        } => {
+            assert_eq!(actual, component);
+            assert_eq!(
+                reason,
+                "timer arm deadline at offset 56 needs 8 bytes but payload has 4 remaining"
+            );
+        }
+        other => panic!("unexpected timer checkpoint error: {other}"),
+    }
+    assert_eq!(target.snapshot(), original);
+}
+
+#[test]
+fn timer_checkpoint_port_rejects_trailing_payload_bytes_without_partial_restore() {
+    let component = checkpoint_component("timer_payload_trailing");
+    let target = timer(0, 2, 50);
+    let original = target.snapshot();
+    let mut payload = stable_timer_checkpoint_bytes();
+    payload.push(0xee);
+    let mut registry = CheckpointRegistry::new();
+    registry.register(component.clone()).unwrap();
+    registry
+        .write_chunk(&component, TIMER_CHUNK, payload)
+        .unwrap();
+
+    let error = TimerCheckpointPort::new(component.clone(), target.clone())
+        .restore_from(&registry)
+        .unwrap_err();
+
+    match error {
+        TimerCheckpointError::InvalidChunk {
+            component: actual,
+            reason,
+        } => {
+            assert_eq!(actual, component);
+            assert_eq!(reason, "payload has 1 trailing bytes");
+        }
+        other => panic!("unexpected timer checkpoint error: {other}"),
+    }
+    assert_eq!(target.snapshot(), original);
+}
+
+#[test]
 fn timer_checkpoint_bank_rejects_invalid_bank_without_partial_restore() {
     let valid_component = checkpoint_component("timer_bank_a");
     let invalid_component = checkpoint_component("timer_bank_b");
-    let expected = TimerSnapshot::new(
-        TimerId::new(0),
-        PartitionId::new(2),
-        InterruptSourceId::new(50),
-        Some(64),
-        vec![TimerArm::new(1, 12, 64)],
-        Vec::new(),
-        Vec::new(),
-    );
+    let expected = stable_timer_snapshot();
     let source = timer(0, 2, 50);
     source.restore(&expected).unwrap();
     let target_valid = timer(0, 2, 50);
@@ -993,7 +1107,7 @@ fn timer_checkpoint_bank_rejects_invalid_bank_without_partial_restore() {
         .unwrap();
     registry.register(invalid_component.clone()).unwrap();
     registry
-        .write_chunk(&invalid_component, "timer", vec![0xee])
+        .write_chunk(&invalid_component, TIMER_CHUNK, vec![0xee])
         .unwrap();
 
     let bank = TimerCheckpointBank::new([
@@ -1008,6 +1122,34 @@ fn timer_checkpoint_bank_rejects_invalid_bank_without_partial_restore() {
     ));
     assert_eq!(target_valid.snapshot(), original_valid);
     assert_eq!(target_invalid.snapshot(), original_invalid);
+}
+
+fn stable_timer_snapshot() -> TimerSnapshot {
+    TimerSnapshot::new(
+        TimerId::new(0),
+        PartitionId::new(2),
+        InterruptSourceId::new(50),
+        Some(64),
+        vec![TimerArm::new(1, 12, 64)],
+        Vec::new(),
+        Vec::new(),
+    )
+}
+
+fn stable_timer_checkpoint_bytes() -> Vec<u8> {
+    let mut payload = Vec::new();
+    write_u64(&mut payload, 0);
+    write_u32(&mut payload, 2);
+    write_u32(&mut payload, 50);
+    write_u64(&mut payload, 1);
+    write_u64(&mut payload, 64);
+    write_u64(&mut payload, 1);
+    write_u64(&mut payload, 1);
+    write_u64(&mut payload, 12);
+    write_u64(&mut payload, 64);
+    write_u64(&mut payload, 0);
+    write_u64(&mut payload, 0);
+    payload
 }
 
 #[test]

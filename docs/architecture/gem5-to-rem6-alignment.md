@@ -3133,6 +3133,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   observe partial device state. They also cover `msip`, immediate `mtimecmp`,
   and RTC-driven timer assertion failures that reject remote delivery before
   changing the guest-visible CLINT register or asserted-line state.
+  Programmable timer checkpoint tests cover stable identity/deadline/arm chunk
+  bytes, invalid deadline flags, truncated arm records, trailing payload bytes,
+  and no-partial-restore rejection for malformed chunks.
 - RTC core tests cover MC146818-compatible binary and BCD calendar registers,
   status A/B defaults, status C/D reads, read-clear status-C flags, leap-day
   rollover, SET-bit clock freeze, alarm and update-ended flags, alarm wildcard
