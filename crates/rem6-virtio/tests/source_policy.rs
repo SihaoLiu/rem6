@@ -296,14 +296,32 @@ fn virtio_9p_operation_handlers_live_in_family_modules() {
         let path = crate_dir.join(format!("src/fs9p/ops/{module}.rs"));
         assert!(path.exists(), "9P {module} handlers belong in {path:?}");
         let source = fs::read_to_string(path).unwrap();
+        let module_declaration = format!("mod {module};");
         assert!(
-            ops_root.contains(&format!("mod {module};")),
+            ops_root
+                .lines()
+                .any(|line| line.trim() == module_declaration),
             "src/fs9p/ops.rs should declare the {module} operation module"
+        );
+        assert!(
+            !ops_root
+                .lines()
+                .any(|line| line.trim().ends_with(&module_declaration)
+                    && line.trim() != module_declaration),
+            "9P {module} operation modules should stay private to the 9P device"
+        );
+        assert!(
+            !source.contains("pub(crate) fn handle_"),
+            "9P {module} handlers should not be visible across the VirtIO crate"
+        );
+        assert!(
+            !source.contains("pub fn handle_"),
+            "9P {module} handlers should not be public API"
         );
         for symbol in symbols {
             assert!(
-                source.contains(symbol),
-                "{symbol} should live in the 9P {module} operation module"
+                source.contains(&format!("pub(in crate::fs9p) {symbol}")),
+                "{symbol} should live in the 9P {module} operation module with fs9p-scoped visibility"
             );
         }
     }
