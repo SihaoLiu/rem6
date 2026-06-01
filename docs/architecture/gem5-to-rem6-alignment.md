@@ -2891,11 +2891,14 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   ordering propagation, MSHR-to-transport QoS class export, per-cycle MSI bank
   run QoS counts by effective requestor and priority, parallel-cycle history
   counts by effective requestor and priority, and byte-snapshot restore of MSHR
-  queue configuration plus target QoS and ordering state. They also cover the
-  public gem5 issue #621 hazard by requiring MSHR completion to split local
-  fill-service targets from writeback or clean downstream requests, and by
-  requiring MSI bank fill results to expose deferred writeback traffic instead
-  of returning it as a local no-response target. The same cache-bank coverage
+  queue configuration plus target QoS and ordering state. MSI bank snapshot
+  byte-codec tests also reject oversized directory-line, backing-line,
+  CPU-response, directory-decision, parallel-cycle, cache-line, trace, MSHR,
+  snoop, accepted-request, and byte-mask counts before allocation. They also
+  cover the public gem5 issue #621 hazard by requiring MSHR completion to
+  split local fill-service targets from writeback or clean downstream
+  requests, and by requiring MSI bank fill results to expose deferred writeback
+  traffic instead of returning it as a local no-response target. The same cache-bank coverage
   includes bank-level dirty-line count and address audit plus dirty data restore
   for MSI, MESI, MOESI dirty-owner, and CHI dirty states. It also covers
   clean-resident uncacheable read bypass for MSI and CHI banks, including

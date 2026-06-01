@@ -19,8 +19,24 @@ use crate::{
 };
 
 const FORMAT_VERSION: u64 = 5;
+const U8_BYTES: usize = 1;
 const U32_BYTES: usize = 4;
 const U64_BYTES: usize = 8;
+const DIRECTORY_STATE_PREFIX_BYTES: usize = U64_BYTES + U8_BYTES + U64_BYTES;
+const BACKING_LINE_PREFIX_BYTES: usize = U64_BYTES * 2;
+const CPU_RESPONSE_PREFIX_BYTES: usize = U64_BYTES + U8_BYTES + U32_BYTES + U64_BYTES + U8_BYTES;
+const DIRECTORY_DECISION_PREFIX_BYTES: usize =
+    U64_BYTES + U32_BYTES + U64_BYTES + DIRECTORY_STATE_PREFIX_BYTES * 2 + U64_BYTES;
+const PARALLEL_CYCLE_PREFIX_BYTES: usize = U64_BYTES * 3;
+const CACHE_CONTROLLER_PREFIX_BYTES: usize =
+    U32_BYTES + U64_BYTES + U8_BYTES + U64_BYTES * 2 + U8_BYTES + U64_BYTES;
+const CACHE_LINE_TRACE_RECORD_BYTES: usize = U8_BYTES;
+const MSHR_ENTRY_PREFIX_BYTES: usize = U64_BYTES * 4 + U8_BYTES * 2 + U64_BYTES;
+const MEMORY_REQUEST_PREFIX_BYTES: usize =
+    U32_BYTES + U64_BYTES + U8_BYTES + U64_BYTES * 3 + U8_BYTES * 4;
+const MSHR_TARGET_PREFIX_BYTES: usize = MEMORY_REQUEST_PREFIX_BYTES + U64_BYTES * 2 + U8_BYTES * 3;
+const DECISION_SNOOP_RECORD_BYTES: usize = U32_BYTES + U8_BYTES;
+const PARALLEL_ACCEPTED_PREFIX_BYTES: usize = U32_BYTES * 2 + U64_BYTES * 2 + U8_BYTES * 4;
 
 impl MsiBankDirectoryHarnessSnapshot {
     pub fn to_bytes(&self) -> Vec<u8> {
@@ -90,13 +106,15 @@ fn decode_snapshot(payload: &[u8]) -> Result<MsiBankDirectoryHarnessSnapshot, St
         }
     }
 
-    let directory_count = cursor.read_count("MSI directory line count")?;
+    let directory_count =
+        cursor.read_bounded_count("MSI directory line count", DIRECTORY_STATE_PREFIX_BYTES)?;
     let mut directory_states = Vec::with_capacity(directory_count);
     for _ in 0..directory_count {
         directory_states.push(read_directory_state(&mut cursor)?);
     }
 
-    let backing_count = cursor.read_count("MSI backing line count")?;
+    let backing_count =
+        cursor.read_bounded_count("MSI backing line count", BACKING_LINE_PREFIX_BYTES)?;
     let mut backing_lines = Vec::with_capacity(backing_count);
     for _ in 0..backing_count {
         let line_address = Address::new(cursor.read_u64("MSI backing line address")?);
@@ -104,19 +122,24 @@ fn decode_snapshot(payload: &[u8]) -> Result<MsiBankDirectoryHarnessSnapshot, St
         backing_lines.push(MsiBankBackingLineSnapshot::new(line_address, data));
     }
 
-    let response_count = cursor.read_count("MSI CPU response count")?;
+    let response_count =
+        cursor.read_bounded_count("MSI CPU response count", CPU_RESPONSE_PREFIX_BYTES)?;
     let mut cpu_responses = Vec::with_capacity(response_count);
     for _ in 0..response_count {
         cpu_responses.push(read_cpu_response(&mut cursor)?);
     }
 
-    let decision_count = cursor.read_count("MSI directory decision count")?;
+    let decision_count = cursor.read_bounded_count(
+        "MSI directory decision count",
+        DIRECTORY_DECISION_PREFIX_BYTES,
+    )?;
     let mut directory_decisions = Vec::with_capacity(decision_count);
     for _ in 0..decision_count {
         directory_decisions.push(read_directory_decision(&mut cursor)?);
     }
 
-    let cycle_count = cursor.read_count("MSI parallel cycle count")?;
+    let cycle_count =
+        cursor.read_bounded_count("MSI parallel cycle count", PARALLEL_CYCLE_PREFIX_BYTES)?;
     let mut parallel_cycle_runs = Vec::with_capacity(cycle_count);
     for _ in 0..cycle_count {
         parallel_cycle_runs.push(read_cycle_run(&mut cursor)?);
@@ -150,7 +173,8 @@ fn read_cache_bank(cursor: &mut PayloadCursor<'_>) -> Result<MsiCacheBankSnapsho
     let layout = CacheLineLayout::new(cursor.read_u64("MSI cache bank line size")?)
         .map_err(|error| error.to_string())?;
     let next_sequence = cursor.read_u64("MSI cache bank sequence")?;
-    let line_count = cursor.read_count("MSI cache bank line count")?;
+    let line_count =
+        cursor.read_bounded_count("MSI cache bank line count", CACHE_CONTROLLER_PREFIX_BYTES)?;
     let mut lines = Vec::with_capacity(line_count);
     for _ in 0..line_count {
         lines.push(read_cache_controller(cursor)?);
@@ -207,7 +231,8 @@ fn read_cache_controller(
     let next_sequence = cursor.read_u64("MSI cache line sequence")?;
     let data = cursor.read_optional_vec("MSI cache line data")?;
 
-    let trace_len = cursor.read_count("MSI cache line trace length")?;
+    let trace_len =
+        cursor.read_bounded_count("MSI cache line trace length", CACHE_LINE_TRACE_RECORD_BYTES)?;
     let mut events = Vec::with_capacity(trace_len);
     for _ in 0..trace_len {
         events.push(u8_to_msi_event(
@@ -278,7 +303,8 @@ fn read_optional_mshr_queue(
         .map_err(|error| error.to_string())?;
     let next_handle = cursor.read_u64("MSI cache bank MSHR next handle")?;
     let next_order = cursor.read_u64("MSI cache bank MSHR next order")?;
-    let entry_count = cursor.read_count("MSI cache bank MSHR entry count")?;
+    let entry_count =
+        cursor.read_bounded_count("MSI cache bank MSHR entry count", MSHR_ENTRY_PREFIX_BYTES)?;
     let mut entries = Vec::with_capacity(entry_count);
     for _ in 0..entry_count {
         entries.push(read_mshr_entry(cursor)?);
@@ -311,7 +337,8 @@ fn read_mshr_entry(cursor: &mut PayloadCursor<'_>) -> Result<MshrEntry, String> 
     let order = cursor.read_u64("MSI cache bank MSHR entry order")?;
     let in_service = cursor.read_bool("MSI cache bank MSHR entry in-service flag")?;
     let pending_modified = cursor.read_bool("MSI cache bank MSHR entry pending-modified flag")?;
-    let target_count = cursor.read_count("MSI cache bank MSHR target count")?;
+    let target_count =
+        cursor.read_bounded_count("MSI cache bank MSHR target count", MSHR_TARGET_PREFIX_BYTES)?;
     let mut targets = Vec::with_capacity(target_count);
     for _ in 0..target_count {
         targets.push(read_mshr_target(cursor)?);
@@ -408,7 +435,8 @@ fn read_directory_decision(cursor: &mut PayloadCursor<'_>) -> Result<DirectoryDe
     let request = read_request_id(cursor)?;
     let before = read_directory_state(cursor)?;
     let after = read_directory_state(cursor)?;
-    let snoop_count = cursor.read_count("MSI decision snoop count")?;
+    let snoop_count =
+        cursor.read_bounded_count("MSI decision snoop count", DECISION_SNOOP_RECORD_BYTES)?;
     let mut snoops = Vec::with_capacity(snoop_count);
     for _ in 0..snoop_count {
         snoops.push(DirectorySnoop::new(
@@ -461,7 +489,10 @@ fn write_cycle_run(payload: &mut Vec<u8>, run: &MsiBankCycleRun) {
 fn read_cycle_run(cursor: &mut PayloadCursor<'_>) -> Result<MsiBankCycleRun, String> {
     let tick = cursor.read_u64("MSI parallel cycle tick")?;
     let response_count = cursor.read_count("MSI parallel cycle response count")?;
-    let accepted_count = cursor.read_count("MSI parallel cycle accepted count")?;
+    let accepted_count = cursor.read_bounded_count(
+        "MSI parallel cycle accepted count",
+        PARALLEL_ACCEPTED_PREFIX_BYTES,
+    )?;
     let mut accepted = Vec::with_capacity(accepted_count);
     for _ in 0..accepted_count {
         accepted.push(read_cycle_accepted(cursor)?);
@@ -566,7 +597,7 @@ fn read_request(cursor: &mut PayloadCursor<'_>) -> Result<MemoryRequest, String>
         .map_err(|error| error.to_string())?;
     let data = cursor.read_optional_vec("MSI request data")?;
     let byte_mask = if cursor.read_bool("MSI request byte mask flag")? {
-        let bit_count = cursor.read_count("MSI request byte mask length")?;
+        let bit_count = cursor.read_bounded_count("MSI request byte mask length", U8_BYTES)?;
         let mut bits = Vec::with_capacity(bit_count);
         for _ in 0..bit_count {
             bits.push(cursor.read_bool("MSI request byte mask bit")?);
@@ -766,6 +797,21 @@ impl<'a> PayloadCursor<'a> {
     fn read_count(&mut self, field: &str) -> Result<usize, String> {
         let value = self.read_u64(field)?;
         usize::try_from(value).map_err(|_| format!("{field} exceeds usize"))
+    }
+
+    fn read_bounded_count(&mut self, field: &str, record_bytes: usize) -> Result<usize, String> {
+        let count = self.read_count(field)?;
+        let capacity = self.remaining() / record_bytes;
+        if count > capacity {
+            return Err(format!(
+                "{field} {count} exceeds remaining payload capacity {capacity} records"
+            ));
+        }
+        Ok(count)
+    }
+
+    fn remaining(&self) -> usize {
+        self.payload.len().saturating_sub(self.offset)
     }
 
     fn read_vec(&mut self, field: &str) -> Result<Vec<u8>, String> {
