@@ -308,12 +308,21 @@ impl Virtio9pNamespace {
         Ok(Ok(removed))
     }
 
-    pub(crate) fn remove_file_by_node(&mut self, node: Virtio9pNodeId) -> bool {
+    pub(crate) fn remove_node_by_id(&mut self, node: Virtio9pNodeId) -> Result<(), u32> {
         match node {
             Virtio9pNodeId::File(path)
             | Virtio9pNodeId::Symlink(path)
-            | Virtio9pNodeId::Special(path) => remove_file_by_path(&mut self.entries, path),
-            Virtio9pNodeId::Root | Virtio9pNodeId::Directory(_) => false,
+            | Virtio9pNodeId::Special(path) => remove_file_by_path(&mut self.entries, path)
+                .then_some(())
+                .ok_or(VIRTIO_9P_EBADF),
+            Virtio9pNodeId::Directory(path) => {
+                match remove_empty_directory_by_path(&mut self.entries, path) {
+                    Ok(true) => Ok(()),
+                    Ok(false) => Err(VIRTIO_9P_EBADF),
+                    Err(error) => Err(error),
+                }
+            }
+            Virtio9pNodeId::Root => Err(VIRTIO_9P_EBADF),
         }
     }
 
@@ -1172,6 +1181,37 @@ fn remove_file_by_path(entries: &mut BTreeMap<String, Virtio9pNode>, path: u64) 
         Virtio9pNode::Directory(directory) => remove_file_by_path(&mut directory.entries, path),
         Virtio9pNode::File(_) | Virtio9pNode::Symlink(_) | Virtio9pNode::Special(_) => false,
     })
+}
+
+fn remove_empty_directory_by_path(
+    entries: &mut BTreeMap<String, Virtio9pNode>,
+    path: u64,
+) -> Result<bool, u32> {
+    if let Some((name, is_empty)) = entries.iter().find_map(|(name, node)| match node {
+        Virtio9pNode::Directory(directory) if directory.qid_path == path => {
+            Some((name.clone(), directory.entries.is_empty()))
+        }
+        Virtio9pNode::File(_)
+        | Virtio9pNode::Symlink(_)
+        | Virtio9pNode::Special(_)
+        | Virtio9pNode::Directory(_) => None,
+    }) {
+        if !is_empty {
+            return Err(VIRTIO_9P_ENOTEMPTY);
+        }
+        return Ok(entries.remove(&name).is_some());
+    }
+    for node in entries.values_mut() {
+        let Virtio9pNode::Directory(directory) = node else {
+            continue;
+        };
+        match remove_empty_directory_by_path(&mut directory.entries, path) {
+            Ok(true) => return Ok(true),
+            Ok(false) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(false)
 }
 
 fn take_file_node_by_id(

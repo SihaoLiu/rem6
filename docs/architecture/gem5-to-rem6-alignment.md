@@ -1301,9 +1301,10 @@ Implementation evidence through 2026-05-31:
   `Tunlinkat` removes named root or child-directory files and invalidates fids
   only when no linked directory entry remains, removes empty directories only
   when `AT_REMOVEDIR` is present, and rejects non-empty directory removal with
-  `ENOTEMPTY`, `Tremove` removes file fids plus their namespace
-  entries and releases byte-range locks owned by the removed fid even when a
-  surviving hard link keeps the namespace node live, `Tclunk` drops ordinary fid
+  `ENOTEMPTY`, `Tremove` removes file and empty-directory fids plus their
+  namespace entries, rejects non-empty directories with `ENOTEMPTY`, and releases
+  byte-range locks owned by the removed fid even when a surviving hard link
+  keeps the namespace node live, `Tclunk` drops ordinary fid
   state, releases byte-range locks owned by the clunked fid, and commits pending
   xattr-write fids, `Tflush` acknowledges old tags without mutating synchronous
   fid or namespace state, `Tfsync` validates fids before acknowledging writeback
@@ -3314,7 +3315,8 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   `Tunlinkat` root and
   child-directory file removal with post-delete directory and walk checks,
   `Tunlinkat` empty-directory removal through `AT_REMOVEDIR` plus non-empty
-  directory `ENOTEMPTY` rejection, `Tremove` fid-backed file removal with deleted-fid read rejection,
+  directory `ENOTEMPTY` rejection, `Tremove` fid-backed file and empty-directory
+  removal with stale-fid rejection plus non-empty directory `ENOTEMPTY` rejection,
   `Tsymlink` creation with symlink qids, symlink walk and sorted dirent
   exposure, `Treadlink` target replies, non-symlink and stale readlink
   rejection, `Tmknod` character-device creation, walk, dirent dtype, metadata

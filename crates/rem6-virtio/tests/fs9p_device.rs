@@ -1048,6 +1048,80 @@ fn virtio_9p_device_removes_file_fids_and_rejects_deleted_access() {
 }
 
 #[test]
+fn virtio_9p_device_remove_deletes_empty_directory_fids() {
+    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap());
+    let attach = decoded_request(
+        VIRTIO_9P_TATTACH,
+        1,
+        p9_attach_payload(1, VIRTIO_9P_NOFID, b"root", b"", 0),
+    );
+    device.execute_at(10, attach).unwrap();
+    let mkdir = decoded_request(
+        VIRTIO_9P_TMKDIR,
+        2,
+        p9_mkdir_payload(1, b"empty", 0o040755, 0),
+    );
+    device.execute_at(11, mkdir).unwrap();
+    let walk = decoded_request(VIRTIO_9P_TWALK, 3, p9_walk_payload(1, 2, &[b"empty"]));
+    device.execute_at(12, walk).unwrap();
+
+    let remove = decoded_request(VIRTIO_9P_TREMOVE, 4, p9_remove_payload(2));
+    let remove_completion = device.execute_at(13, remove).unwrap();
+    assert_eq!(remove_completion.message_type(), VIRTIO_9P_RREMOVE);
+    assert!(remove_completion.payload().is_empty());
+    assert_eq!(device.fid_count(), 1);
+
+    let stat_removed = decoded_request(VIRTIO_9P_TSTATFS, 5, p9_statfs_payload(2));
+    let stat_completion = device.execute_at(14, stat_removed).unwrap();
+    assert_eq!(stat_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(stat_completion.payload(), VIRTIO_9P_EBADF.to_le_bytes());
+
+    let walk_removed = decoded_request(VIRTIO_9P_TWALK, 6, p9_walk_payload(1, 3, &[b"empty"]));
+    let removed_completion = device.execute_at(15, walk_removed).unwrap();
+    assert_eq!(removed_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(removed_completion.payload(), VIRTIO_9P_ENOENT.to_le_bytes());
+}
+
+#[test]
+fn virtio_9p_device_remove_rejects_non_empty_directories() {
+    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap());
+    let attach = decoded_request(
+        VIRTIO_9P_TATTACH,
+        1,
+        p9_attach_payload(1, VIRTIO_9P_NOFID, b"root", b"", 0),
+    );
+    device.execute_at(10, attach).unwrap();
+    let mkdir = decoded_request(
+        VIRTIO_9P_TMKDIR,
+        2,
+        p9_mkdir_payload(1, b"parent", 0o040755, 0),
+    );
+    device.execute_at(11, mkdir).unwrap();
+    let remove_target = decoded_request(VIRTIO_9P_TWALK, 3, p9_walk_payload(1, 2, &[b"parent"]));
+    device.execute_at(12, remove_target).unwrap();
+    let create_parent = decoded_request(VIRTIO_9P_TWALK, 4, p9_walk_payload(1, 3, &[b"parent"]));
+    device.execute_at(13, create_parent).unwrap();
+    let create_child = decoded_request(
+        VIRTIO_9P_TLCREATE,
+        5,
+        p9_lcreate_payload(3, b"child.txt", 0, 0o100644, 0),
+    );
+    device.execute_at(14, create_child).unwrap();
+
+    let remove = decoded_request(VIRTIO_9P_TREMOVE, 6, p9_remove_payload(2));
+    let remove_completion = device.execute_at(15, remove).unwrap();
+    assert_eq!(remove_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(
+        remove_completion.payload(),
+        VIRTIO_9P_ENOTEMPTY.to_le_bytes()
+    );
+
+    let walk_parent = decoded_request(VIRTIO_9P_TWALK, 7, p9_walk_payload(1, 4, &[b"parent"]));
+    let walk_completion = device.execute_at(16, walk_parent).unwrap();
+    assert_eq!(walk_completion.message_type(), VIRTIO_9P_RWALK);
+}
+
+#[test]
 fn virtio_9p_device_rejects_remove_and_unlinkat_on_missing_targets() {
     let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap())
         .with_file("hello.txt", b"hello".to_vec())
