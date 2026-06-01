@@ -10,6 +10,8 @@ const FABRIC_CHUNK: &str = "fabric";
 const FORMAT_VERSION: u64 = 1;
 const U32_BYTES: usize = 4;
 const U64_BYTES: usize = 8;
+const FABRIC_LANE_MIN_RECORD_BYTES: usize = U64_BYTES + U32_BYTES + U64_BYTES + U64_BYTES;
+const FABRIC_CREDIT_RECORD_BYTES: usize = U64_BYTES;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FabricCheckpointRecord {
@@ -282,7 +284,8 @@ fn decode_lanes(
         return Err(cursor.invalid(format!("unsupported fabric checkpoint version {version}")));
     }
 
-    let lane_count = cursor.read_count("fabric lane count")?;
+    let lane_count =
+        cursor.read_bounded_count("fabric lane count", FABRIC_LANE_MIN_RECORD_BYTES)?;
     let mut lanes = Vec::with_capacity(lane_count);
     for _ in 0..lane_count {
         let link = FabricLinkId::new(cursor.read_string("fabric link id")?)
@@ -296,7 +299,8 @@ fn decode_lanes(
                 ))
             })?;
         let next_available_tick = cursor.read_u64("fabric next available tick")?;
-        let credit_count = cursor.read_count("fabric credit return count")?;
+        let credit_count =
+            cursor.read_bounded_count("fabric credit return count", FABRIC_CREDIT_RECORD_BYTES)?;
         let mut credit_return_ticks = Vec::with_capacity(credit_count);
         for _ in 0..credit_count {
             credit_return_ticks.push(cursor.read_u64("fabric credit return tick")?);
@@ -353,6 +357,25 @@ impl<'a> PayloadCursor<'a> {
     fn read_count(&mut self, field: &str) -> Result<usize, FabricCheckpointError> {
         let value = self.read_u64(field)?;
         usize::try_from(value).map_err(|_| self.invalid(format!("{field} exceeds usize")))
+    }
+
+    fn read_bounded_count(
+        &mut self,
+        field: &str,
+        record_bytes: usize,
+    ) -> Result<usize, FabricCheckpointError> {
+        let count = self.read_count(field)?;
+        let capacity = self.remaining() / record_bytes;
+        if count > capacity {
+            return Err(self.invalid(format!(
+                "{field} {count} exceeds remaining payload capacity {capacity} records"
+            )));
+        }
+        Ok(count)
+    }
+
+    fn remaining(&self) -> usize {
+        self.payload.len().saturating_sub(self.offset)
     }
 
     fn read_string(&mut self, field: &str) -> Result<String, FabricCheckpointError> {

@@ -12,6 +12,8 @@ use rem6_system::{
     HostAction, HostActionRecord, SystemActionExecutor, SystemActionOutcome, SystemError,
 };
 
+const FABRIC_CHUNK: &str = "fabric";
+
 fn packet(id: u64, bytes: u64, virtual_network: u16) -> FabricPacket {
     FabricPacket::new(
         FabricPacketId::new(id),
@@ -256,6 +258,70 @@ fn host_checkpoint_rejects_duplicate_fabric_lanes_without_mutating_state() {
                 virtual_network: VirtualNetworkId::new(1),
             },
         })
+    );
+    assert_eq!(fabric.lock().unwrap().lane_snapshots(), before);
+}
+
+#[test]
+fn fabric_checkpoint_port_rejects_impossible_lane_count_without_mutating_state() {
+    let component = CheckpointComponentId::new("fabric_lane_count").unwrap();
+    let fabric = Arc::new(Mutex::new(FabricModel::new()));
+    let before = fabric.lock().unwrap().lane_snapshots();
+    let mut payload = Vec::new();
+    write_u64(&mut payload, 1);
+    write_u64(&mut payload, u64::MAX);
+    let mut registry = CheckpointRegistry::new();
+    registry.register(component.clone()).unwrap();
+    registry
+        .write_chunk(&component, FABRIC_CHUNK, payload)
+        .unwrap();
+
+    let error = FabricCheckpointPort::new(component.clone(), Arc::clone(&fabric))
+        .restore_from(&registry)
+        .unwrap_err();
+
+    assert_eq!(
+        error,
+        FabricCheckpointError::InvalidChunk {
+            component,
+            reason:
+                "fabric lane count 18446744073709551615 exceeds remaining payload capacity 0 records"
+                    .to_string(),
+        }
+    );
+    assert_eq!(fabric.lock().unwrap().lane_snapshots(), before);
+}
+
+#[test]
+fn fabric_checkpoint_port_rejects_impossible_credit_count_without_mutating_state() {
+    let component = CheckpointComponentId::new("fabric_credit_count").unwrap();
+    let fabric = Arc::new(Mutex::new(FabricModel::new()));
+    let before = fabric.lock().unwrap().lane_snapshots();
+    let mut payload = Vec::new();
+    write_u64(&mut payload, 1);
+    write_u64(&mut payload, 1);
+    write_string(&mut payload, "fabric_credit_count");
+    write_u32(&mut payload, 1);
+    write_u64(&mut payload, 10);
+    write_u64(&mut payload, u64::MAX);
+    let mut registry = CheckpointRegistry::new();
+    registry.register(component.clone()).unwrap();
+    registry
+        .write_chunk(&component, FABRIC_CHUNK, payload)
+        .unwrap();
+
+    let error = FabricCheckpointPort::new(component.clone(), Arc::clone(&fabric))
+        .restore_from(&registry)
+        .unwrap_err();
+
+    assert_eq!(
+        error,
+        FabricCheckpointError::InvalidChunk {
+            component,
+            reason:
+                "fabric credit return count 18446744073709551615 exceeds remaining payload capacity 0 records"
+                    .to_string(),
+        }
     );
     assert_eq!(fabric.lock().unwrap().lane_snapshots(), before);
 }

@@ -2809,7 +2809,8 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   Memory and cache-controller tests cover atomic responses that capture old
   bytes before masked writes, and memory checkpoint-bank tests cover prevalidated
   multi-store and DRAM memory restore so truncated payloads cannot partially
-  mutate live memory state. Fabric, coherence, and RISC-V checkpoint-bank tests
+  mutate live memory state. Fabric checkpoint tests cover oversized lane and
+  credit-return counts, and fabric, coherence, and RISC-V checkpoint-bank tests
   cover decode-first multi-bank and multi-core restore so malformed chunks
   cannot partially rewind another live NoC lane frontier, cache bank,
   architectural PC, integer register file, or PMP snapshot chunk.
