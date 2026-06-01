@@ -709,14 +709,20 @@ fn memory_request_checkpoint_payload_uses_stable_read_shared_bytes() {
     )
     .unwrap();
 
+    let stable_payload = vec![
+        b'M', b'R', b'E', b'Q', 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0, 44, 0,
+        0, 0, 0, 0, 0, 0, 0, 0x84, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 64, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    ];
+    let decoded = MemoryRequestCheckpointPayload::decode(&stable_payload).unwrap();
+    let restored = MemoryRequest::from_snapshot(decoded.snapshot()).unwrap();
+
     assert_eq!(
         MemoryRequestCheckpointPayload::from_request(&request).encode(),
-        vec![
-            b'M', b'R', b'E', b'Q', 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0, 44,
-            0, 0, 0, 0, 0, 0, 0, 0, 0x84, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 64, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        ]
+        stable_payload
     );
+    assert_eq!(decoded.snapshot(), &request.snapshot());
+    assert_eq!(restored, request);
 }
 
 #[test]
