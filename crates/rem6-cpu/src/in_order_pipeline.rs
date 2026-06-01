@@ -291,11 +291,45 @@ impl InOrderPipelineState {
         InOrderPipelineScheduler::new(self.config.clone()).plan(self.in_flight.iter().copied())
     }
 
+    pub fn advance_cycle(&mut self) -> InOrderPipelinePlan {
+        let plan = self.plan_cycle();
+        self.apply_plan(&plan);
+        plan
+    }
+
+    pub fn advance_cycle_with_redirect(
+        &mut self,
+        redirect: Option<InOrderBranchRedirect>,
+    ) -> Result<InOrderPipelinePlan, InOrderPipelineError> {
+        let plan = InOrderPipelineScheduler::new(self.config.clone())
+            .plan_with_redirect(self.in_flight.iter().copied(), redirect)?;
+        self.apply_plan(&plan);
+        Ok(plan)
+    }
+
     pub fn snapshot(&self) -> InOrderPipelineSnapshot {
         InOrderPipelineSnapshot {
             config: self.config.clone(),
             in_flight: self.in_flight.clone(),
         }
+    }
+
+    fn apply_plan(&mut self, plan: &InOrderPipelinePlan) {
+        let mut next = Vec::new();
+
+        for advance in plan.advanced() {
+            if let Some(destination_stage) = advance.destination_stage() {
+                next.push(InOrderPipelineInstruction::new(
+                    advance.sequence(),
+                    destination_stage,
+                ));
+            }
+        }
+
+        next.extend(plan.resource_blocked().iter().copied());
+        next.extend(plan.ordering_blocked().iter().copied());
+        self.in_flight = canonical_in_flight(next)
+            .expect("cycle plan cannot create duplicate in-flight instruction sequences");
     }
 }
 

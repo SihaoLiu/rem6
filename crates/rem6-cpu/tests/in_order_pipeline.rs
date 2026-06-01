@@ -185,6 +185,69 @@ fn in_order_pipeline_snapshot_restore_preserves_in_flight_plan() {
 }
 
 #[test]
+fn in_order_pipeline_advance_cycle_updates_in_flight_state() {
+    let mut state = InOrderPipelineState::new(config_with_decode_width(1));
+    state
+        .replace_in_flight([
+            instruction(9, InOrderPipelineStage::Commit),
+            instruction(10, InOrderPipelineStage::Decode),
+            instruction(11, InOrderPipelineStage::Decode),
+            instruction(12, InOrderPipelineStage::Execute),
+        ])
+        .unwrap();
+
+    let plan = state.advance_cycle();
+
+    assert_eq!(plan.advanced_sequences().collect::<Vec<_>>(), vec![9, 10]);
+    assert!(plan.advanced()[0].retires());
+    assert_eq!(
+        plan.advanced()[1].destination_stage(),
+        Some(InOrderPipelineStage::Execute)
+    );
+    assert_eq!(plan.resource_blocked()[0].sequence(), 11);
+    assert_eq!(plan.ordering_blocked()[0].sequence(), 12);
+    assert_eq!(
+        state
+            .in_flight()
+            .iter()
+            .map(|instruction| (instruction.sequence(), instruction.stage()))
+            .collect::<Vec<_>>(),
+        vec![
+            (10, InOrderPipelineStage::Execute),
+            (11, InOrderPipelineStage::Decode),
+            (12, InOrderPipelineStage::Execute),
+        ]
+    );
+}
+
+#[test]
+fn in_order_pipeline_advance_cycle_with_redirect_removes_flushed_work() {
+    let mut state = InOrderPipelineState::new(config_with_decode_width(1));
+    state
+        .replace_in_flight([
+            instruction(29, InOrderPipelineStage::Commit),
+            instruction(30, InOrderPipelineStage::Execute),
+            instruction(31, InOrderPipelineStage::Decode),
+            instruction(32, InOrderPipelineStage::Fetch2),
+        ])
+        .unwrap();
+    let redirect = InOrderBranchRedirect::new(30, InOrderPipelineStage::Execute, 0x2000);
+
+    let plan = state.advance_cycle_with_redirect(Some(redirect)).unwrap();
+
+    assert_eq!(plan.advanced_sequences().collect::<Vec<_>>(), vec![29, 30]);
+    assert_eq!(plan.flushed_sequences().collect::<Vec<_>>(), vec![31, 32]);
+    assert_eq!(
+        state
+            .in_flight()
+            .iter()
+            .map(|instruction| (instruction.sequence(), instruction.stage()))
+            .collect::<Vec<_>>(),
+        vec![(30, InOrderPipelineStage::Commit)]
+    );
+}
+
+#[test]
 fn in_order_pipeline_restore_rejects_duplicate_in_flight_sequences() {
     let snapshot = InOrderPipelineSnapshot::new(
         config_with_decode_width(1),
