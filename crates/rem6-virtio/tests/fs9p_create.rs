@@ -1,7 +1,7 @@
 use rem6_virtio::{
     Virtio9pConfig, Virtio9pDevice, VirtioError, VIRTIO_9P_DEFAULT_MSIZE, VIRTIO_9P_EBADF,
-    VIRTIO_9P_EEXIST, VIRTIO_9P_LOPEN_APPEND, VIRTIO_9P_NAME_MAX, VIRTIO_9P_NOFID,
-    VIRTIO_9P_OPEN_APPEND, VIRTIO_9P_OPEN_EXECUTE_ONLY, VIRTIO_9P_OPEN_READ_ONLY,
+    VIRTIO_9P_EEXIST, VIRTIO_9P_EINVAL, VIRTIO_9P_LOPEN_APPEND, VIRTIO_9P_NAME_MAX,
+    VIRTIO_9P_NOFID, VIRTIO_9P_OPEN_APPEND, VIRTIO_9P_OPEN_EXECUTE_ONLY, VIRTIO_9P_OPEN_READ_ONLY,
     VIRTIO_9P_OPEN_READ_WRITE, VIRTIO_9P_OPEN_WRITE_ONLY, VIRTIO_9P_QTFILE, VIRTIO_9P_RCREATE,
     VIRTIO_9P_RLCREATE, VIRTIO_9P_RLERROR, VIRTIO_9P_RLOPEN, VIRTIO_9P_RREAD, VIRTIO_9P_RREADDIR,
     VIRTIO_9P_RWALK, VIRTIO_9P_RWRITE, VIRTIO_9P_TATTACH, VIRTIO_9P_TCREATE, VIRTIO_9P_TLCREATE,
@@ -475,4 +475,32 @@ fn virtio_9p_device_rejects_create_names_longer_than_statfs_limit() {
     ));
     assert_eq!(device.fid_count(), 1);
     assert_eq!(device.completions().len(), 1);
+}
+
+#[test]
+fn virtio_9p_device_rejects_reserved_create_names_without_shadowing_walk_components() {
+    for reserved_name in [b"." as &[u8], b".."] {
+        let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap());
+        let attach = decoded_request(
+            VIRTIO_9P_TATTACH,
+            1,
+            p9_attach_payload(1, VIRTIO_9P_NOFID, b"root", b"", 0),
+        );
+        device.execute_at(10, attach).unwrap();
+
+        let create = decoded_request(
+            VIRTIO_9P_TLCREATE,
+            2,
+            p9_lcreate_payload(1, reserved_name, 0, 0o100644, 0),
+        );
+        let create_completion = device.execute_at(11, create).unwrap();
+        assert_eq!(create_completion.message_type(), VIRTIO_9P_RLERROR);
+        assert_eq!(create_completion.payload(), VIRTIO_9P_EINVAL.to_le_bytes());
+        assert_eq!(device.fid_count(), 1);
+
+        let walk = decoded_request(VIRTIO_9P_TWALK, 3, p9_walk_payload(1, 2, &[reserved_name]));
+        let walk_completion = device.execute_at(12, walk).unwrap();
+        assert_eq!(walk_completion.message_type(), VIRTIO_9P_RWALK);
+        assert_eq!(read_qid(walk_completion.payload(), 2).2, 1);
+    }
 }

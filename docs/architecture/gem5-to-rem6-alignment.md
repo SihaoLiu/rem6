@@ -1267,8 +1267,9 @@ Implementation evidence through 2026-05-31:
   than the advertised `statfs` `namelen` before state mutation, rejects
   non-empty same-fid rebinding, and preserves empty same-fid walk replies,
   `Tmkdir` creates deterministic directory qids and rejects duplicate names with
-  errno payloads, path-name namespace mutations reject empty names, path separators,
-  and names longer than the advertised `statfs` `namelen` before state mutation,
+  errno payloads, path-name namespace mutations reject empty names, reserved dot
+  or dot-dot components, path separators, and names longer than the advertised
+  `statfs` `namelen` before state mutation,
   `Tlcreate` creates named root or child-directory files, rejects occupied names
   without replacing existing nodes, rejects already-open fids before namespace
   mutation, and retargets the directory fid to the opened file,
@@ -3296,8 +3297,8 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   completion mutation, same-fid non-empty walk rejection, empty same-fid walk replies,
   `Tmkdir` directory creation, duplicate-name errno replies, directory qid preservation,
   and directory walk/listing behavior, `Tlcreate` root and child-directory file
-  creation, duplicate-file rejection without clobbering, plus opened-fid
-  retargeting, `Tgetattr` root, directory, and file
+  creation, reserved-name rejection, duplicate-file rejection without clobbering,
+  plus opened-fid retargeting, `Tgetattr` root, directory, and file
   metadata replies, `Tstatfs` deterministic filesystem-capacity replies,
   legacy `Tstat` file stat payloads, stale-fid errno replies, and malformed
   payload rejection, legacy `Twstat` mode, uid, gid, mtime, atime, length, and

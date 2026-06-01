@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use crate::{
     fs9p_protocol::{
         VIRTIO_9P_DTBLK, VIRTIO_9P_DTCHR, VIRTIO_9P_DTDIR, VIRTIO_9P_DTREG, VIRTIO_9P_DTSYMLINK,
-        VIRTIO_9P_EBADF, VIRTIO_9P_EEXIST, VIRTIO_9P_ENODATA, VIRTIO_9P_ENOENT,
+        VIRTIO_9P_EBADF, VIRTIO_9P_EEXIST, VIRTIO_9P_EINVAL, VIRTIO_9P_ENODATA, VIRTIO_9P_ENOENT,
         VIRTIO_9P_ENOTEMPTY, VIRTIO_9P_GETATTR_BASIC, VIRTIO_9P_NAME_MAX,
         VIRTIO_9P_OPEN_EXECUTE_ONLY, VIRTIO_9P_OPEN_READ_ONLY, VIRTIO_9P_OPEN_READ_WRITE,
         VIRTIO_9P_OPEN_WRITE_ONLY, VIRTIO_9P_QTDIR, VIRTIO_9P_QTFILE, VIRTIO_9P_QTSYMLINK,
@@ -138,7 +138,9 @@ impl Virtio9pNamespace {
         parent: Virtio9pNodeId,
         name: String,
     ) -> Result<Result<Virtio9pNodeId, u32>, VirtioError> {
-        validate_file_name(VIRTIO_9P_TLCREATE, &name)?;
+        if let Some(errno) = validate_mutation_name(VIRTIO_9P_TLCREATE, &name)? {
+            return Ok(Err(errno));
+        }
         let Some(entries) = self.directory_entries(parent) else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
@@ -166,7 +168,9 @@ impl Virtio9pNamespace {
         parent: Virtio9pNodeId,
         name: String,
     ) -> Result<Result<Virtio9pNodeId, u32>, VirtioError> {
-        validate_file_name(VIRTIO_9P_TMKDIR, &name)?;
+        if let Some(errno) = validate_mutation_name(VIRTIO_9P_TMKDIR, &name)? {
+            return Ok(Err(errno));
+        }
         let Some(entries) = self.directory_entries(parent) else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
@@ -195,7 +199,9 @@ impl Virtio9pNamespace {
         name: String,
         target: String,
     ) -> Result<Result<Virtio9pNodeId, u32>, VirtioError> {
-        validate_file_name(VIRTIO_9P_TSYMLINK, &name)?;
+        if let Some(errno) = validate_mutation_name(VIRTIO_9P_TSYMLINK, &name)? {
+            return Ok(Err(errno));
+        }
         let Some(entries) = self.directory_entries(parent) else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
@@ -226,7 +232,9 @@ impl Virtio9pNamespace {
         major: u32,
         minor: u32,
     ) -> Result<Result<Virtio9pNodeId, u32>, VirtioError> {
-        validate_file_name(VIRTIO_9P_TMKNOD, &name)?;
+        if let Some(errno) = validate_mutation_name(VIRTIO_9P_TMKNOD, &name)? {
+            return Ok(Err(errno));
+        }
         let Some(entries) = self.directory_entries(parent) else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
@@ -256,7 +264,9 @@ impl Virtio9pNamespace {
         old_node: Virtio9pNodeId,
         newname: String,
     ) -> Result<Result<(), u32>, VirtioError> {
-        validate_file_name(VIRTIO_9P_TLINK, &newname)?;
+        if let Some(errno) = validate_mutation_name(VIRTIO_9P_TLINK, &newname)? {
+            return Ok(Err(errno));
+        }
         let Virtio9pNodeId::File(path) = old_node else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
@@ -282,7 +292,9 @@ impl Virtio9pNamespace {
         name: &str,
         remove_dir: bool,
     ) -> Result<Result<Virtio9pNodeId, u32>, VirtioError> {
-        validate_file_name(VIRTIO_9P_TUNLINKAT, name)?;
+        if let Some(errno) = validate_mutation_name(VIRTIO_9P_TUNLINKAT, name)? {
+            return Ok(Err(errno));
+        }
         let Some(entries) = self.directory_entries_mut(parent) else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
@@ -333,8 +345,12 @@ impl Virtio9pNamespace {
         new_parent: Virtio9pNodeId,
         newname: &str,
     ) -> Result<Result<Virtio9pRenameOutcome, u32>, VirtioError> {
-        validate_file_name(VIRTIO_9P_TRENAMEAT, oldname)?;
-        validate_file_name(VIRTIO_9P_TRENAMEAT, newname)?;
+        if let Some(errno) = validate_mutation_name(VIRTIO_9P_TRENAMEAT, oldname)? {
+            return Ok(Err(errno));
+        }
+        if let Some(errno) = validate_mutation_name(VIRTIO_9P_TRENAMEAT, newname)? {
+            return Ok(Err(errno));
+        }
         let Some(old_entries) = self.directory_entries(old_parent) else {
             return Ok(Err(VIRTIO_9P_EBADF));
         };
@@ -385,7 +401,9 @@ impl Virtio9pNamespace {
         new_parent: Virtio9pNodeId,
         newname: &str,
     ) -> Result<Result<Virtio9pRenameOutcome, u32>, VirtioError> {
-        validate_file_name(VIRTIO_9P_TRENAME, newname)?;
+        if let Some(errno) = validate_mutation_name(VIRTIO_9P_TRENAME, newname)? {
+            return Ok(Err(errno));
+        }
         if !matches!(
             node,
             Virtio9pNodeId::File(_) | Virtio9pNodeId::Symlink(_) | Virtio9pNodeId::Special(_)
@@ -430,7 +448,9 @@ impl Virtio9pNamespace {
         node: Virtio9pNodeId,
         newname: &str,
     ) -> Result<Result<(), u32>, VirtioError> {
-        validate_file_name(VIRTIO_9P_TRENAME, newname)?;
+        if let Some(errno) = validate_mutation_name(VIRTIO_9P_TRENAME, newname)? {
+            return Ok(Err(errno));
+        }
         if matches!(node, Virtio9pNodeId::Root) {
             return Ok(Err(VIRTIO_9P_EBADF));
         }
@@ -1247,6 +1267,15 @@ pub(crate) fn validate_file_name(message_type: u8, name: &str) -> Result<(), Vir
         });
     }
     Ok(())
+}
+
+fn validate_mutation_name(message_type: u8, name: &str) -> Result<Option<u32>, VirtioError> {
+    validate_file_name(message_type, name)?;
+    Ok(is_reserved_path_component(name).then_some(VIRTIO_9P_EINVAL))
+}
+
+fn is_reserved_path_component(name: &str) -> bool {
+    matches!(name, "." | "..")
 }
 
 fn validate_xattr_name(message_type: u8, name: &str) -> Result<(), VirtioError> {
