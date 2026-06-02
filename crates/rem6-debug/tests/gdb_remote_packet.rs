@@ -1,5 +1,6 @@
 use rem6_debug::{
-    parse_gdb_remote_frame, GdbRemoteError, GdbRemoteFrame, GdbRemoteNotification, GdbRemotePacket,
+    parse_gdb_remote_frame, GdbRemoteCommand, GdbRemoteError, GdbRemoteFeature,
+    GdbRemoteFeatureValue, GdbRemoteFrame, GdbRemoteNotification, GdbRemotePacket,
     GdbRemotePacketConfig,
 };
 
@@ -137,6 +138,44 @@ fn gdb_remote_packet_config_rejects_unbounded_or_oversized_payloads() {
         .unwrap_err(),
         GdbRemoteError::PayloadTooLong { len: 4, max: 3 },
     );
+}
+
+#[test]
+fn gdb_remote_commands_decode_supported_feature_tokens() {
+    let supported = GdbRemoteCommand::parse(
+        &GdbRemotePacket::parse_frame(
+            b"$qSupported:multiprocess+;xmlRegisters=riscv;hwbreak-;QNonStop?#56",
+        )
+        .unwrap(),
+    );
+
+    assert_eq!(
+        supported,
+        GdbRemoteCommand::QuerySupported {
+            features: vec![
+                GdbRemoteFeature::new(b"multiprocess".to_vec(), GdbRemoteFeatureValue::Supported),
+                GdbRemoteFeature::new(
+                    b"xmlRegisters".to_vec(),
+                    GdbRemoteFeatureValue::Value(b"riscv".to_vec()),
+                ),
+                GdbRemoteFeature::new(b"hwbreak".to_vec(), GdbRemoteFeatureValue::Unsupported),
+                GdbRemoteFeature::new(b"QNonStop".to_vec(), GdbRemoteFeatureValue::AutoDetect),
+            ],
+        },
+    );
+}
+
+#[test]
+fn gdb_remote_commands_decode_no_ack_requests() {
+    let no_ack =
+        GdbRemoteCommand::parse(&GdbRemotePacket::parse_frame(b"$QStartNoAckMode#b0").unwrap());
+    assert_eq!(no_ack, GdbRemoteCommand::StartNoAckMode);
+}
+
+#[test]
+fn gdb_remote_commands_preserve_unknown_payloads() {
+    let unknown = GdbRemoteCommand::parse(&GdbRemotePacket::parse_frame(b"$vCont?#49").unwrap());
+    assert_eq!(unknown, GdbRemoteCommand::Unknown(b"vCont?".to_vec()));
 }
 
 #[test]

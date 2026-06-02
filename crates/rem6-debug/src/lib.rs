@@ -201,6 +201,48 @@ impl GdbRemotePacket {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub enum GdbRemoteCommand {
+    QuerySupported { features: Vec<GdbRemoteFeature> },
+    StartNoAckMode,
+    Unknown(Vec<u8>),
+}
+
+impl GdbRemoteCommand {
+    pub fn parse(packet: &GdbRemotePacket) -> Self {
+        parse_command_payload(packet.payload())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GdbRemoteFeature {
+    name: Vec<u8>,
+    value: GdbRemoteFeatureValue,
+}
+
+impl GdbRemoteFeature {
+    pub const fn new(name: Vec<u8>, value: GdbRemoteFeatureValue) -> Self {
+        Self { name, value }
+    }
+
+    pub fn name(&self) -> &[u8] {
+        &self.name
+    }
+
+    pub const fn value(&self) -> &GdbRemoteFeatureValue {
+        &self.value
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum GdbRemoteFeatureValue {
+    Supported,
+    Unsupported,
+    AutoDetect,
+    Value(Vec<u8>),
+    Bare,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GdbRemoteNotification {
     data: Vec<u8>,
     checksum: u8,
@@ -506,6 +548,62 @@ fn reject_legacy_sequence_id(payload: &[u8]) -> Result<(), GdbRemoteError> {
         return Err(GdbRemoteError::LegacySequenceIdUnsupported);
     }
     Ok(())
+}
+
+fn parse_command_payload(payload: &[u8]) -> GdbRemoteCommand {
+    const QUERY_SUPPORTED: &[u8] = b"qSupported";
+    const START_NO_ACK_MODE: &[u8] = b"QStartNoAckMode";
+
+    if payload == START_NO_ACK_MODE {
+        return GdbRemoteCommand::StartNoAckMode;
+    }
+
+    if payload == QUERY_SUPPORTED {
+        return GdbRemoteCommand::QuerySupported {
+            features: Vec::new(),
+        };
+    }
+
+    if let Some(features) = payload.strip_prefix(b"qSupported:") {
+        return GdbRemoteCommand::QuerySupported {
+            features: parse_supported_features(features),
+        };
+    }
+
+    GdbRemoteCommand::Unknown(payload.to_vec())
+}
+
+fn parse_supported_features(features: &[u8]) -> Vec<GdbRemoteFeature> {
+    features
+        .split(|byte| *byte == b';')
+        .filter(|feature| !feature.is_empty())
+        .map(parse_supported_feature)
+        .collect()
+}
+
+fn parse_supported_feature(feature: &[u8]) -> GdbRemoteFeature {
+    if let Some(separator) = feature.iter().position(|byte| *byte == b'=') {
+        return GdbRemoteFeature::new(
+            feature[..separator].to_vec(),
+            GdbRemoteFeatureValue::Value(feature[separator + 1..].to_vec()),
+        );
+    }
+
+    match feature.last() {
+        Some(b'+') => GdbRemoteFeature::new(
+            feature[..feature.len() - 1].to_vec(),
+            GdbRemoteFeatureValue::Supported,
+        ),
+        Some(b'-') => GdbRemoteFeature::new(
+            feature[..feature.len() - 1].to_vec(),
+            GdbRemoteFeatureValue::Unsupported,
+        ),
+        Some(b'?') => GdbRemoteFeature::new(
+            feature[..feature.len() - 1].to_vec(),
+            GdbRemoteFeatureValue::AutoDetect,
+        ),
+        _ => GdbRemoteFeature::new(feature.to_vec(), GdbRemoteFeatureValue::Bare),
+    }
 }
 
 fn validate_payload_len(len: usize, config: GdbRemotePacketConfig) -> Result<(), GdbRemoteError> {
