@@ -223,6 +223,44 @@ fn gdb_remote_commands_preserve_malformed_single_register_requests() {
 }
 
 #[test]
+fn gdb_remote_commands_decode_memory_read_requests() {
+    let command = GdbRemoteCommand::parse(&GdbRemotePacket::new(b"m1000,10".to_vec()).unwrap());
+
+    assert_eq!(
+        command,
+        GdbRemoteCommand::ReadMemory {
+            address: 0x1000,
+            length: 0x10,
+        },
+    );
+
+    let uppercase = GdbRemoteCommand::parse(&GdbRemotePacket::new(b"m1A,4".to_vec()).unwrap());
+    assert_eq!(
+        uppercase,
+        GdbRemoteCommand::ReadMemory {
+            address: 0x1a,
+            length: 4,
+        },
+    );
+}
+
+#[test]
+fn gdb_remote_commands_preserve_malformed_memory_read_requests() {
+    for payload in [
+        b"m".as_slice(),
+        b"m1000".as_slice(),
+        b"m,10".as_slice(),
+        b"m1000,".as_slice(),
+        b"mzz,10".as_slice(),
+        b"m1000,zz".as_slice(),
+        b"m10000000000000000,1".as_slice(),
+    ] {
+        let command = GdbRemoteCommand::parse(&GdbRemotePacket::new(payload.to_vec()).unwrap());
+        assert_eq!(command, GdbRemoteCommand::Unknown(payload.to_vec()));
+    }
+}
+
+#[test]
 fn gdb_remote_commands_decode_no_ack_requests() {
     let no_ack =
         GdbRemoteCommand::parse(&GdbRemotePacket::parse_frame(b"$QStartNoAckMode#b0").unwrap());
@@ -309,6 +347,38 @@ fn gdb_remote_session_reports_error_single_register_response_when_missing() {
     assert_eq!(
         session
             .handle_packet(&GdbRemotePacket::new(b"p1a".to_vec()).unwrap())
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"E01".to_vec()).unwrap()),
+        ],
+    );
+}
+
+#[test]
+fn gdb_remote_session_reports_memory_bytes() {
+    let mut session = GdbRemoteSession::new(Vec::new());
+    session.set_memory_bytes(0x1000, vec![0x7f, 0x45, 0x4c, 0x46]);
+
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"m1001,2".to_vec()).unwrap())
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"454c".to_vec()).unwrap()),
+        ],
+    );
+}
+
+#[test]
+fn gdb_remote_session_reports_memory_read_error_when_missing() {
+    let mut session = GdbRemoteSession::new(Vec::new());
+    session.set_memory_bytes(0x1000, vec![0x7f, 0x45]);
+
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"m1000,4".to_vec()).unwrap())
             .unwrap(),
         vec![
             GdbRemoteFrame::Ack,

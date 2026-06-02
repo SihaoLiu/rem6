@@ -205,6 +205,7 @@ impl GdbRemotePacket {
 pub enum GdbRemoteCommand {
     QuerySupported { features: Vec<GdbRemoteFeature> },
     QueryStopReason,
+    ReadMemory { address: u64, length: usize },
     ReadRegisters,
     ReadRegister { number: u64 },
     StartNoAckMode,
@@ -284,12 +285,7 @@ impl GdbRemoteRegisterBytes {
     }
 
     fn encode_payload(&self) -> Vec<u8> {
-        let mut encoded = Vec::with_capacity(self.bytes.len() * 2);
-        for byte in &self.bytes {
-            encoded.push(encode_hex_nibble(byte >> 4));
-            encoded.push(encode_hex_nibble(byte & 0x0f));
-        }
-        encoded
+        encode_hex_bytes(&self.bytes)
     }
 }
 
@@ -336,6 +332,7 @@ pub struct GdbRemoteSession {
     stop_reply: GdbRemoteStopReply,
     register_bytes: GdbRemoteRegisterBytes,
     register_values: BTreeMap<u64, GdbRemoteRegisterValue>,
+    memory_bytes: BTreeMap<u64, u8>,
     last_response: Option<GdbRemotePacket>,
     interrupt_requested: bool,
 }
@@ -349,6 +346,7 @@ impl GdbRemoteSession {
             stop_reply: GdbRemoteStopReply::signal(0x05),
             register_bytes: GdbRemoteRegisterBytes::default(),
             register_values: BTreeMap::new(),
+            memory_bytes: BTreeMap::new(),
             last_response: None,
             interrupt_requested: false,
         }
@@ -400,6 +398,15 @@ impl GdbRemoteSession {
             .insert(number, GdbRemoteRegisterValue::Unavailable { byte_len });
     }
 
+    pub fn set_memory_bytes(&mut self, address: u64, bytes: Vec<u8>) {
+        for (offset, byte) in bytes.into_iter().enumerate() {
+            let Some(address) = address.checked_add(offset as u64) else {
+                break;
+            };
+            self.memory_bytes.insert(address, byte);
+        }
+    }
+
     pub fn handle_packet(
         &mut self,
         packet: &GdbRemotePacket,
@@ -413,6 +420,12 @@ impl GdbRemoteSession {
             }
             GdbRemoteCommand::QueryStopReason => {
                 self.packet_response(self.stop_reply.encode_payload())
+            }
+            GdbRemoteCommand::ReadMemory { address, length } => {
+                let payload = self
+                    .read_memory_payload(address, length)
+                    .unwrap_or_else(|| b"E01".to_vec());
+                self.packet_response(payload)
             }
             GdbRemoteCommand::ReadRegisters => {
                 self.packet_response(self.register_bytes.encode_payload())
@@ -447,6 +460,15 @@ impl GdbRemoteSession {
         }
         frames.push(GdbRemoteFrame::Packet(packet));
         Ok(frames)
+    }
+
+    fn read_memory_payload(&self, address: u64, length: usize) -> Option<Vec<u8>> {
+        let mut bytes = Vec::with_capacity(length);
+        for offset in 0..length {
+            let address = address.checked_add(offset as u64)?;
+            bytes.push(*self.memory_bytes.get(&address)?);
+        }
+        Some(encode_hex_bytes(&bytes))
     }
 
     fn supports_no_ack_mode(&self) -> bool {
@@ -801,6 +823,12 @@ fn parse_command_payload(payload: &[u8]) -> GdbRemoteCommand {
         return GdbRemoteCommand::ReadRegisters;
     }
 
+    if let Some(memory_request) = payload.strip_prefix(b"m") {
+        if let Some((address, length)) = parse_memory_read(memory_request) {
+            return GdbRemoteCommand::ReadMemory { address, length };
+        }
+    }
+
     if let Some(register_number) = payload.strip_prefix(b"p") {
         if let Some(number) = decode_hex_u64(register_number) {
             return GdbRemoteCommand::ReadRegister { number };
@@ -828,6 +856,13 @@ fn parse_command_payload(payload: &[u8]) -> GdbRemoteCommand {
     }
 
     GdbRemoteCommand::Unknown(payload.to_vec())
+}
+
+fn parse_memory_read(request: &[u8]) -> Option<(u64, usize)> {
+    let separator = request.iter().position(|byte| *byte == b',')?;
+    let address = decode_hex_u64(&request[..separator])?;
+    let length = decode_hex_usize(&request[separator + 1..])?;
+    Some((address, length))
 }
 
 fn parse_supported_features(features: &[u8], allow_probe_suffix: bool) -> Vec<GdbRemoteFeature> {
@@ -916,6 +951,15 @@ fn encode_payload(payload: &[u8]) -> Vec<u8> {
     encoded
 }
 
+fn encode_hex_bytes(bytes: &[u8]) -> Vec<u8> {
+    let mut encoded = Vec::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        encoded.push(encode_hex_nibble(byte >> 4));
+        encoded.push(encode_hex_nibble(byte & 0x0f));
+    }
+    encoded
+}
+
 fn is_hex_digit(byte: u8) -> bool {
     byte.is_ascii_hexdigit()
 }
@@ -937,6 +981,10 @@ fn decode_hex_u64(digits: &[u8]) -> Option<u64> {
         value = value.checked_add(u64::from(nibble))?;
     }
     Some(value)
+}
+
+fn decode_hex_usize(digits: &[u8]) -> Option<usize> {
+    usize::try_from(decode_hex_u64(digits)?).ok()
 }
 
 fn decode_checksum(high: u8, low: u8) -> Result<u8, GdbRemoteError> {
