@@ -183,6 +183,13 @@ fn gdb_remote_commands_treat_probe_suffix_as_gdb_feature_data() {
 }
 
 #[test]
+fn gdb_remote_commands_decode_stop_reason_queries() {
+    let command = GdbRemoteCommand::parse(&GdbRemotePacket::parse_frame(b"$?#3f").unwrap());
+
+    assert_eq!(command, GdbRemoteCommand::QueryStopReason);
+}
+
+#[test]
 fn gdb_remote_commands_decode_no_ack_requests() {
     let no_ack =
         GdbRemoteCommand::parse(&GdbRemotePacket::parse_frame(b"$QStartNoAckMode#b0").unwrap());
@@ -193,6 +200,20 @@ fn gdb_remote_commands_decode_no_ack_requests() {
 fn gdb_remote_commands_preserve_unknown_payloads() {
     let unknown = GdbRemoteCommand::parse(&GdbRemotePacket::parse_frame(b"$vCont?#49").unwrap());
     assert_eq!(unknown, GdbRemoteCommand::Unknown(b"vCont?".to_vec()));
+}
+
+#[test]
+fn gdb_remote_session_reports_default_stop_reason() {
+    let mut session = GdbRemoteSession::new(Vec::new());
+    let packet = GdbRemotePacket::new(b"?".to_vec()).unwrap();
+
+    assert_eq!(
+        session.handle_packet(&packet).unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"S05".to_vec()).unwrap()),
+        ],
+    );
 }
 
 #[test]
