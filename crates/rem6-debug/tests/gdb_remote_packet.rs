@@ -308,16 +308,36 @@ fn gdb_remote_commands_preserve_malformed_thread_selection_requests() {
 fn gdb_remote_commands_decode_thread_alive_requests() {
     let alive = GdbRemoteCommand::parse(&GdbRemotePacket::new(b"T1A".to_vec()).unwrap());
 
-    assert_eq!(alive, GdbRemoteCommand::ThreadAlive { thread_id: 0x1a });
+    assert_eq!(
+        alive,
+        GdbRemoteCommand::ThreadAlive {
+            thread: GdbRemoteThreadId::Id(0x1a),
+        },
+    );
+
+    let any = GdbRemoteCommand::parse(&GdbRemotePacket::new(b"T0".to_vec()).unwrap());
+    assert_eq!(
+        any,
+        GdbRemoteCommand::ThreadAlive {
+            thread: GdbRemoteThreadId::Any,
+        },
+    );
+
+    let all = GdbRemoteCommand::parse(&GdbRemotePacket::new(b"T-1".to_vec()).unwrap());
+    assert_eq!(
+        all,
+        GdbRemoteCommand::ThreadAlive {
+            thread: GdbRemoteThreadId::All,
+        },
+    );
 }
 
 #[test]
 fn gdb_remote_commands_preserve_malformed_thread_alive_requests() {
     for payload in [
         b"T".as_slice(),
-        b"T0".as_slice(),
         b"Tzz".as_slice(),
-        b"T-1".as_slice(),
+        b"Tp1.2".as_slice(),
         b"T10000000000000000".as_slice(),
     ] {
         let command = GdbRemoteCommand::parse(&GdbRemotePacket::new(payload.to_vec()).unwrap());
@@ -572,6 +592,9 @@ fn gdb_remote_session_reports_current_thread() {
         ],
     );
 
+    assert!(!session.set_current_thread_id(0x1a));
+    assert_eq!(session.current_thread_id(), 1);
+    assert!(session.set_thread_ids(vec![1, 0x1a]));
     assert!(session.set_current_thread_id(0x1a));
     assert_eq!(
         session
@@ -623,7 +646,14 @@ fn gdb_remote_session_reports_thread_info_sequence() {
     );
     assert!(!session.set_thread_ids(Vec::new()));
     assert!(!session.set_thread_ids(vec![1, 0]));
+    assert!(!session.set_thread_ids(vec![1, 0x1a, 1]));
     assert_eq!(session.thread_ids(), &[1, 0x1a, 0xff]);
+
+    assert!(session.set_current_thread_id(0xff));
+    assert!(session.set_thread_ids(vec![0x1a, 0xff]));
+    assert_eq!(session.current_thread_id(), 0xff);
+    assert!(session.set_thread_ids(vec![0x1a]));
+    assert_eq!(session.current_thread_id(), 0x1a);
 }
 
 #[test]
@@ -634,6 +664,24 @@ fn gdb_remote_session_reports_thread_alive_status() {
     assert_eq!(
         session
             .handle_packet(&GdbRemotePacket::new(b"T1A".to_vec()).unwrap())
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"OK".to_vec()).unwrap()),
+        ],
+    );
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"T0".to_vec()).unwrap())
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"OK".to_vec()).unwrap()),
+        ],
+    );
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"T-1".to_vec()).unwrap())
             .unwrap(),
         vec![
             GdbRemoteFrame::Ack,

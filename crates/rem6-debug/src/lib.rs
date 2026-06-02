@@ -1,9 +1,11 @@
 mod hex;
+mod memory;
 
 use hex::{
     decode_checksum, decode_hex_bytes, decode_hex_u64, decode_hex_usize, encode_hex_bytes,
     encode_hex_nibble, encode_hex_u64, is_hex_digit,
 };
+use memory::memory_addresses;
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
@@ -234,7 +236,7 @@ pub enum GdbRemoteCommand {
     },
     StartNoAckMode,
     ThreadAlive {
-        thread_id: u64,
+        thread: GdbRemoteThreadId,
     },
     WriteMemory {
         address: u64,
@@ -475,7 +477,7 @@ impl GdbRemoteSession {
     }
 
     pub fn set_current_thread_id(&mut self, thread_id: u64) -> bool {
-        if thread_id == 0 {
+        if !self.thread_ids.contains(&thread_id) {
             return false;
         }
         self.current_thread_id = thread_id;
@@ -491,8 +493,11 @@ impl GdbRemoteSession {
     }
 
     pub fn set_thread_ids(&mut self, thread_ids: Vec<u64>) -> bool {
-        if thread_ids.is_empty() || thread_ids.contains(&0) {
+        if thread_ids.is_empty() || thread_ids.contains(&0) || has_duplicates(&thread_ids) {
             return false;
+        }
+        if !thread_ids.contains(&self.current_thread_id) {
+            self.current_thread_id = thread_ids[0];
         }
         self.thread_ids = thread_ids;
         true
@@ -592,8 +597,8 @@ impl GdbRemoteSession {
                 }
                 self.packet_response(b"OK".to_vec())
             }
-            GdbRemoteCommand::ThreadAlive { thread_id } => {
-                let payload = if self.thread_ids.contains(&thread_id) {
+            GdbRemoteCommand::ThreadAlive { thread } => {
+                let payload = if self.is_thread_alive(thread) {
                     b"OK".to_vec()
                 } else {
                     b"E01".to_vec()
@@ -666,6 +671,13 @@ impl GdbRemoteSession {
             feature.name() == b"QStartNoAckMode"
                 && matches!(feature.value(), GdbRemoteFeatureValue::Supported)
         })
+    }
+
+    fn is_thread_alive(&self, thread: GdbRemoteThreadId) -> bool {
+        match thread {
+            GdbRemoteThreadId::All | GdbRemoteThreadId::Any => !self.thread_ids.is_empty(),
+            GdbRemoteThreadId::Id(thread_id) => self.thread_ids.contains(&thread_id),
+        }
     }
 
     fn retransmit_last_response(&self) -> Vec<GdbRemoteFrame> {
@@ -1030,8 +1042,8 @@ fn parse_command_payload(payload: &[u8]) -> GdbRemoteCommand {
     }
 
     if let Some(thread_id) = payload.strip_prefix(b"T") {
-        if let Some(thread_id) = parse_positive_hex_id(thread_id) {
-            return GdbRemoteCommand::ThreadAlive { thread_id };
+        if let Some(thread) = parse_thread_id(thread_id) {
+            return GdbRemoteCommand::ThreadAlive { thread };
         }
     }
 
@@ -1279,11 +1291,8 @@ fn encode_payload(payload: &[u8]) -> Vec<u8> {
     encoded
 }
 
-fn memory_addresses(address: u64, len: usize) -> Option<Vec<u64>> {
-    let mut addresses = Vec::with_capacity(len);
-    for offset in 0..len {
-        let offset = u64::try_from(offset).ok()?;
-        addresses.push(address.checked_add(offset)?);
-    }
-    Some(addresses)
+fn has_duplicates(values: &[u64]) -> bool {
+    let mut sorted = values.to_vec();
+    sorted.sort_unstable();
+    sorted.windows(2).any(|pair| pair[0] == pair[1])
 }
