@@ -246,6 +246,14 @@ fn decoder_extracts_rv64i_fields_and_immediates() {
         }
     );
     assert_eq!(
+        RiscvInstruction::decode(i_type(-2048, 3, 0x6, 3, 0x13)).unwrap(),
+        RiscvInstruction::Ori {
+            rd: reg(3),
+            rs1: reg(3),
+            imm: Immediate::new(-2048),
+        }
+    );
+    assert_eq!(
         RiscvInstruction::decode(i_type(0x02, 3, 0x4, 3, 0x13)).unwrap(),
         RiscvInstruction::Xori {
             rd: reg(3),
@@ -254,11 +262,27 @@ fn decoder_extracts_rv64i_fields_and_immediates() {
         }
     );
     assert_eq!(
+        RiscvInstruction::decode(i_type(-2, 3, 0x4, 3, 0x13)).unwrap(),
+        RiscvInstruction::Xori {
+            rd: reg(3),
+            rs1: reg(3),
+            imm: Immediate::new(-2),
+        }
+    );
+    assert_eq!(
         RiscvInstruction::decode(i_type(0x03, 3, 0x7, 3, 0x13)).unwrap(),
         RiscvInstruction::Andi {
             rd: reg(3),
             rs1: reg(3),
             imm: Immediate::new(0x03),
+        }
+    );
+    assert_eq!(
+        RiscvInstruction::decode(i_type(-16, 3, 0x7, 3, 0x13)).unwrap(),
+        RiscvInstruction::Andi {
+            rd: reg(3),
+            rs1: reg(3),
+            imm: Immediate::new(-16),
         }
     );
     assert_eq!(
@@ -357,6 +381,21 @@ fn hart_executes_integer_register_operations_and_keeps_zero_readonly() {
     hart.execute(RiscvInstruction::decode(shift_i_type(1, 7, 0x5, 7)).unwrap())
         .unwrap();
     assert_eq!(hart.read(reg(7)), 0b0001);
+
+    hart.write(reg(8), 0x55aa_00ff);
+    hart.execute(RiscvInstruction::decode(i_type(-2, 8, 0x4, 8, 0x13)).unwrap())
+        .unwrap();
+    assert_eq!(hart.read(reg(8)), 0xffff_ffff_aa55_ff01);
+
+    hart.write(reg(9), 0x1234_5678_9abc_def0);
+    hart.execute(RiscvInstruction::decode(i_type(-16, 9, 0x7, 9, 0x13)).unwrap())
+        .unwrap();
+    assert_eq!(hart.read(reg(9)), 0x1234_5678_9abc_def0 & !0x0f);
+
+    hart.write(reg(10), 0);
+    hart.execute(RiscvInstruction::decode(i_type(-2048, 10, 0x6, 10, 0x13)).unwrap())
+        .unwrap();
+    assert_eq!(hart.read(reg(10)), 0xffff_ffff_ffff_f800);
 }
 
 #[test]
