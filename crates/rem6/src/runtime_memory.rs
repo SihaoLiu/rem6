@@ -97,6 +97,8 @@ pub(super) fn cli_memory_response(
 impl Rem6DramSummary {
     fn from_profile(profile: DramMemoryActivityProfile) -> Self {
         let nvm_profile = profile.profile_technology_label() == Some("nvm");
+        let timing = profile.profile_timing();
+        let nvm_media_timing = profile.profile_nvm_media_timing();
         Self {
             active_targets: profile.active_target_count() as u64,
             active_ports: profile.active_port_count() as u64,
@@ -114,6 +116,36 @@ impl Rem6DramSummary {
             profile_technology: profile.profile_technology_label(),
             profile_parallel_port_label: profile.profile_parallel_port_label(),
             profile_topology_unit_label: profile.profile_topology_unit_label(),
+            profile_timing_activate_latency: timing
+                .map(|timing| timing.activate_latency())
+                .unwrap_or(0),
+            profile_timing_read_latency: timing.map(|timing| timing.read_latency()).unwrap_or(0),
+            profile_timing_write_latency: timing.map(|timing| timing.write_latency()).unwrap_or(0),
+            profile_timing_precharge_latency: timing
+                .map(|timing| timing.precharge_latency())
+                .unwrap_or(0),
+            profile_timing_bus_turnaround: timing
+                .map(|timing| timing.bus_turnaround())
+                .unwrap_or(0),
+            profile_timing_burst_spacing: timing.map(|timing| timing.burst_spacing()).unwrap_or(0),
+            profile_timing_same_bank_group_burst_spacing: timing
+                .and_then(|timing| timing.same_bank_group_burst_spacing())
+                .unwrap_or(0),
+            profile_nvm_media_read_latency: nvm_media_timing
+                .map(|timing| timing.read_media_latency())
+                .unwrap_or(0),
+            profile_nvm_media_write_latency: nvm_media_timing
+                .map(|timing| timing.write_media_latency())
+                .unwrap_or(0),
+            profile_nvm_media_send_latency: nvm_media_timing
+                .map(|timing| timing.send_latency())
+                .unwrap_or(0),
+            profile_nvm_media_max_pending_reads: nvm_media_timing
+                .map(|timing| u64::from(timing.max_pending_reads()))
+                .unwrap_or(0),
+            profile_nvm_media_max_pending_writes: nvm_media_timing
+                .map(|timing| u64::from(timing.max_pending_writes()))
+                .unwrap_or(0),
             profile_parallel_ports: profile.profile_parallel_port_capacity(),
             profile_topology_units: profile.profile_topology_unit_capacity(),
             profile_scheduler_banks: profile.profile_scheduler_bank_capacity(),

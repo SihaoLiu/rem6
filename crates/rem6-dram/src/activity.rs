@@ -5,7 +5,8 @@ use rem6_memory::MemoryTargetId;
 
 use crate::{
     DramAccess, DramAccessKind, DramLowPowerActivity, DramLowPowerEvent, DramLowPowerState,
-    DramMemoryTechnology, ExternalMemoryParallelResourceSummary, ExternalMemoryProfile,
+    DramMemoryTechnology, DramTiming, ExternalMemoryParallelResourceSummary, ExternalMemoryProfile,
+    NvmMediaTiming,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -695,6 +696,8 @@ pub struct DramMemoryActivityProfile {
     active_target_count: usize,
     profiled_target_count: usize,
     profile_technology: Option<DramMemoryTechnology>,
+    profile_timing: Option<DramTiming>,
+    profile_nvm_media_timing: Option<NvmMediaTiming>,
     profile_parallel_port_capacity: u64,
     profile_topology_unit_capacity: u64,
     profile_scheduler_bank_capacity: u64,
@@ -713,12 +716,34 @@ impl DramMemoryActivityProfile {
         let mut profiled_target_count = 0;
         let mut profile_technology = None;
         let mut mixed_profile_technology = false;
+        let mut profile_timing = None;
+        let mut mixed_profile_timing = false;
+        let mut profile_nvm_media_timing = None;
+        let mut profile_nvm_media_timing_seen = false;
+        let mut mixed_profile_nvm_media_timing = false;
         let mut profile_parallel_port_capacity = 0_u64;
         let mut profile_topology_unit_capacity = 0_u64;
         let mut profile_scheduler_bank_capacity = 0_u64;
         let mut profile_topology_bank_capacity = 0_u64;
         let mut profile_scheduler_bank_group_capacity = 0_u64;
         for activity in activities {
+            if let Some(memory_profile) = activity.memory_profile().copied() {
+                match profile_timing {
+                    Some(timing) if timing != memory_profile.timing() => {
+                        mixed_profile_timing = true;
+                    }
+                    Some(_) => {}
+                    None => profile_timing = Some(memory_profile.timing()),
+                }
+                if profile_nvm_media_timing_seen {
+                    if profile_nvm_media_timing != memory_profile.nvm_media_timing() {
+                        mixed_profile_nvm_media_timing = true;
+                    }
+                } else {
+                    profile_nvm_media_timing = memory_profile.nvm_media_timing();
+                    profile_nvm_media_timing_seen = true;
+                }
+            }
             if let Some(summary) = activity.parallel_resource_summary() {
                 profiled_target_count += 1;
                 match profile_technology {
@@ -750,6 +775,16 @@ impl DramMemoryActivityProfile {
             } else {
                 profile_technology
             },
+            profile_timing: if mixed_profile_timing {
+                None
+            } else {
+                profile_timing
+            },
+            profile_nvm_media_timing: if mixed_profile_nvm_media_timing {
+                None
+            } else {
+                profile_nvm_media_timing
+            },
             profile_parallel_port_capacity,
             profile_topology_unit_capacity,
             profile_scheduler_bank_capacity,
@@ -769,6 +804,14 @@ impl DramMemoryActivityProfile {
 
     pub const fn profile_technology(&self) -> Option<DramMemoryTechnology> {
         self.profile_technology
+    }
+
+    pub const fn profile_timing(&self) -> Option<DramTiming> {
+        self.profile_timing
+    }
+
+    pub const fn profile_nvm_media_timing(&self) -> Option<NvmMediaTiming> {
+        self.profile_nvm_media_timing
     }
 
     pub fn profile_technology_label(&self) -> Option<&'static str> {

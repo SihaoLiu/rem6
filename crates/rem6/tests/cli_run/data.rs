@@ -120,6 +120,16 @@ fn rem6_run_executes_riscv_elf_load_store_through_nvm_profile_and_emits_nvm_stat
     assert!(stdout.contains("\"topology_units\":8"));
     assert!(stdout.contains("\"scheduler_banks\":8"));
     assert!(stdout.contains("\"topology_banks\":32"));
+    assert!(stdout.contains("\"timing\":{\"activate_latency\":3"));
+    assert!(stdout.contains("\"read_latency\":5"));
+    assert!(stdout.contains("\"write_latency\":7"));
+    assert!(stdout.contains("\"precharge_latency\":2"));
+    assert!(stdout.contains("\"bus_turnaround\":4"));
+    assert!(stdout.contains("\"nvm_media\":{\"read_media_latency\":30"));
+    assert!(stdout.contains("\"write_media_latency\":50"));
+    assert!(stdout.contains("\"send_latency\":6"));
+    assert!(stdout.contains("\"max_pending_reads\":4"));
+    assert!(stdout.contains("\"max_pending_writes\":1"));
     assert!(stdout.contains("\"nvm\":{\"persistent_writes\":1"));
     assert!(stdout.contains("\"persistent_write_bytes\":8"));
     assert!(stdout.contains("\"max_pending_persistent_writes\":1"));
@@ -156,6 +166,76 @@ fn rem6_run_executes_riscv_elf_load_store_through_nvm_profile_and_emits_nvm_stat
         "sim.memory.dram.profile.topology_banks",
         "Count",
         32,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.timing.activate_latency",
+        "Tick",
+        3,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.timing.read_latency",
+        "Tick",
+        5,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.timing.write_latency",
+        "Tick",
+        7,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.timing.precharge_latency",
+        "Tick",
+        2,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.timing.bus_turnaround",
+        "Tick",
+        4,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.nvm_media.read_media_latency",
+        "Tick",
+        30,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.nvm_media.write_media_latency",
+        "Tick",
+        50,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.nvm_media.send_latency",
+        "Tick",
+        6,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.nvm_media.max_pending_reads",
+        "Count",
+        4,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.nvm_media.max_pending_writes",
+        "Count",
+        1,
         "constant",
     );
     assert_stat(

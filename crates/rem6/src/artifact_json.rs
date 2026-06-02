@@ -258,7 +258,7 @@ impl Rem6DramSummary {
         let profile_parallel_port_label = optional_string_json(self.profile_parallel_port_label);
         let profile_topology_unit_label = optional_string_json(self.profile_topology_unit_label);
         format!(
-            "{{\"active_targets\":{},\"active_ports\":{},\"active_banks\":{},\"accesses\":{},\"reads\":{},\"writes\":{},\"row_hits\":{},\"row_misses\":{},\"commands\":{},\"turnarounds\":{},\"total_ready_latency_ticks\":{},\"max_ready_latency_ticks\":{},\"profile\":{{\"technology\":{},\"parallel_port_label\":{},\"topology_unit_label\":{},\"profiled_targets\":{},\"parallel_ports\":{},\"topology_units\":{},\"scheduler_banks\":{},\"topology_banks\":{},\"scheduler_bank_groups\":{}}},\"nvm\":{{\"persistent_writes\":{},\"persistent_write_bytes\":{},\"max_pending_reads\":{},\"max_pending_persistent_writes\":{}}},\"low_power\":{{\"active_powerdown\":{{\"entries\":{},\"ticks\":{}}},\"precharge_powerdown\":{{\"entries\":{},\"ticks\":{}}},\"self_refresh\":{{\"entries\":{},\"ticks\":{}}},\"exits\":{},\"exit_latency_ticks\":{}}}}}",
+            "{{\"active_targets\":{},\"active_ports\":{},\"active_banks\":{},\"accesses\":{},\"reads\":{},\"writes\":{},\"row_hits\":{},\"row_misses\":{},\"commands\":{},\"turnarounds\":{},\"total_ready_latency_ticks\":{},\"max_ready_latency_ticks\":{},\"profile\":{{\"technology\":{},\"parallel_port_label\":{},\"topology_unit_label\":{},\"timing\":{{\"activate_latency\":{},\"read_latency\":{},\"write_latency\":{},\"precharge_latency\":{},\"bus_turnaround\":{},\"burst_spacing\":{},\"same_bank_group_burst_spacing\":{}}},\"nvm_media\":{{\"read_media_latency\":{},\"write_media_latency\":{},\"send_latency\":{},\"max_pending_reads\":{},\"max_pending_writes\":{}}},\"profiled_targets\":{},\"parallel_ports\":{},\"topology_units\":{},\"scheduler_banks\":{},\"topology_banks\":{},\"scheduler_bank_groups\":{}}},\"nvm\":{{\"persistent_writes\":{},\"persistent_write_bytes\":{},\"max_pending_reads\":{},\"max_pending_persistent_writes\":{}}},\"low_power\":{{\"active_powerdown\":{{\"entries\":{},\"ticks\":{}}},\"precharge_powerdown\":{{\"entries\":{},\"ticks\":{}}},\"self_refresh\":{{\"entries\":{},\"ticks\":{}}},\"exits\":{},\"exit_latency_ticks\":{}}}}}",
             self.active_targets,
             self.active_ports,
             self.active_banks,
@@ -274,6 +274,18 @@ impl Rem6DramSummary {
             profile_technology,
             profile_parallel_port_label,
             profile_topology_unit_label,
+            self.profile_timing_activate_latency,
+            self.profile_timing_read_latency,
+            self.profile_timing_write_latency,
+            self.profile_timing_precharge_latency,
+            self.profile_timing_bus_turnaround,
+            self.profile_timing_burst_spacing,
+            self.profile_timing_same_bank_group_burst_spacing,
+            self.profile_nvm_media_read_latency,
+            self.profile_nvm_media_write_latency,
+            self.profile_nvm_media_send_latency,
+            self.profile_nvm_media_max_pending_reads,
+            self.profile_nvm_media_max_pending_writes,
             self.profiled_targets,
             self.profile_parallel_ports,
             self.profile_topology_units,
