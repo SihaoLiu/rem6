@@ -189,7 +189,8 @@ pub use topology::{
     RiscvTopologyDmaDeviceActivity, RiscvTopologyDmaRunSummary, RiscvTopologyDmaStageRunSummary,
     RiscvTopologyDramConfig, RiscvTopologyGpuComputeActivity, RiscvTopologyHeterogeneousRunSummary,
     RiscvTopologyHeterogeneousWork, RiscvTopologyHostConfig, RiscvTopologyMemoryConfig,
-    RiscvTopologyMemoryRegion, RiscvTopologySystem, RiscvTopologySystemError,
+    RiscvTopologyMemoryRegion, RiscvTopologySinicPciDeviceConfig, RiscvTopologySystem,
+    RiscvTopologySystemError,
 };
 pub(crate) use trap_event::pending_trap_cores_from_turn;
 pub use trap_event::{

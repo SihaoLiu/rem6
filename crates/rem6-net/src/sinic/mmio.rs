@@ -21,9 +21,13 @@ pub struct SinicMmioDevice {
 
 impl SinicMmioDevice {
     pub fn new(base: Address, device: SinicFifoDevice) -> Self {
+        Self::from_shared(base, Arc::new(Mutex::new(device)))
+    }
+
+    pub fn from_shared(base: Address, state: Arc<Mutex<SinicFifoDevice>>) -> Self {
         Self {
             base,
-            state: Arc::new(Mutex::new(device)),
+            state,
             interrupt_port: None,
         }
     }
@@ -31,6 +35,10 @@ impl SinicMmioDevice {
     pub fn with_pci_interrupt_port(mut self, interrupt_port: crate::SinicPciInterruptPort) -> Self {
         self.interrupt_port = Some(interrupt_port);
         self
+    }
+
+    pub fn state(&self) -> Arc<Mutex<SinicFifoDevice>> {
+        Arc::clone(&self.state)
     }
 
     pub const fn base(&self) -> Address {

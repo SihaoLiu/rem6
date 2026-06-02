@@ -39,6 +39,7 @@ impl SinicRegisterCheckpointRecord {
 pub struct SinicRegisterCheckpointPort {
     component: CheckpointComponentId,
     registers: Arc<Mutex<SinicRegisterBlock>>,
+    fifo_device: Option<Arc<Mutex<SinicFifoDevice>>>,
 }
 
 impl SinicRegisterCheckpointPort {
@@ -49,6 +50,25 @@ impl SinicRegisterCheckpointPort {
         Self {
             component,
             registers,
+            fifo_device: None,
+        }
+    }
+
+    pub fn from_fifo_device(
+        component: CheckpointComponentId,
+        device: Arc<Mutex<SinicFifoDevice>>,
+    ) -> Self {
+        let registers = Arc::new(Mutex::new(
+            device
+                .lock()
+                .expect("SINIC FIFO device lock")
+                .registers()
+                .clone(),
+        ));
+        Self {
+            component,
+            registers,
+            fifo_device: Some(device),
         }
     }
 
@@ -68,11 +88,8 @@ impl SinicRegisterCheckpointPort {
         &self,
         registry: &mut CheckpointRegistry,
     ) -> Result<SinicRegisterCheckpointRecord, CheckpointError> {
-        let snapshot = self
-            .registers
-            .lock()
-            .expect("SINIC register block lock")
-            .snapshot();
+        let snapshot = self.snapshot_registers();
+        self.sync_register_mirror(&snapshot);
         registry.write_chunk(
             &self.component,
             SINIC_REGISTER_CHUNK,
@@ -121,10 +138,8 @@ impl SinicRegisterCheckpointPort {
         &self,
         record: &SinicRegisterCheckpointRecord,
     ) -> Result<(), SinicRegisterCheckpointError> {
-        self.registers
-            .lock()
-            .expect("SINIC register block lock")
-            .clone()
+        let mut registers = self.clone_registers();
+        registers
             .restore(record.snapshot())
             .map_err(|error| SinicRegisterCheckpointError::Sinic {
                 component: self.component.clone(),
@@ -136,6 +151,20 @@ impl SinicRegisterCheckpointPort {
         &self,
         record: &SinicRegisterCheckpointRecord,
     ) -> Result<(), SinicRegisterCheckpointError> {
+        if let Some(device) = &self.fifo_device {
+            device
+                .lock()
+                .expect("SINIC FIFO device lock")
+                .registers_mut()
+                .restore(record.snapshot())
+                .map_err(|error| SinicRegisterCheckpointError::Sinic {
+                    component: self.component.clone(),
+                    error,
+                })?;
+            self.sync_register_mirror(record.snapshot());
+            return Ok(());
+        }
+
         self.registers
             .lock()
             .expect("SINIC register block lock")
@@ -144,6 +173,44 @@ impl SinicRegisterCheckpointPort {
                 component: self.component.clone(),
                 error,
             })
+    }
+
+    fn snapshot_registers(&self) -> SinicRegisterBlockSnapshot {
+        if let Some(device) = &self.fifo_device {
+            return device
+                .lock()
+                .expect("SINIC FIFO device lock")
+                .registers()
+                .snapshot();
+        }
+
+        self.registers
+            .lock()
+            .expect("SINIC register block lock")
+            .snapshot()
+    }
+
+    fn clone_registers(&self) -> SinicRegisterBlock {
+        if let Some(device) = &self.fifo_device {
+            return device
+                .lock()
+                .expect("SINIC FIFO device lock")
+                .registers()
+                .clone();
+        }
+
+        self.registers
+            .lock()
+            .expect("SINIC register block lock")
+            .clone()
+    }
+
+    fn sync_register_mirror(&self, snapshot: &SinicRegisterBlockSnapshot) {
+        self.registers
+            .lock()
+            .expect("SINIC register block lock")
+            .restore(snapshot)
+            .expect("captured SINIC register snapshot restores into mirror");
     }
 }
 

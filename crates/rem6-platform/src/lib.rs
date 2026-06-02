@@ -9,7 +9,7 @@ use rem6_interrupt::{
 };
 use rem6_kernel::{PartitionId, Tick};
 use rem6_memory::{AccessSize, Address, AddressRange, MemoryError};
-use rem6_mmio::{MmioBus, MmioError, MmioRoute};
+use rem6_mmio::{MmioBus, MmioDevice, MmioError, MmioRoute};
 use rem6_timer::{
     ClintHartConfig, ClintId, ClintMmioDevice, ClintResetPolicy, CpuLocalTimerBank,
     CpuLocalTimerError, CpuLocalTimerInterruptPorts, CpuLocalTimerMmioDevice, Mc146818Rtc,
@@ -725,6 +725,22 @@ pub struct Platform {
 impl Platform {
     pub const fn partition_count(&self) -> u32 {
         self.partition_count
+    }
+
+    pub fn with_mmio_device<D>(
+        mut self,
+        range: AddressRange,
+        route: MmioRoute,
+        device: D,
+    ) -> Result<Self, PlatformError>
+    where
+        D: MmioDevice + 'static,
+    {
+        validate_route(self.partition_count, route)?;
+        self.mmio_bus
+            .insert_device(range, route, device)
+            .map_err(PlatformError::Mmio)?;
+        Ok(self)
     }
 
     pub fn interrupt_controller(&self) -> Arc<Mutex<InterruptController>> {

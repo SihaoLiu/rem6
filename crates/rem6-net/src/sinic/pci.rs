@@ -7,7 +7,7 @@ use rem6_kernel::{
 use rem6_memory::{AccessSize, Address};
 use rem6_pci::{
     PciBarIndex, PciBarKind, PciBarMmioDevice, PciBarSpec, PciClassCode, PciDeviceIdentity,
-    PciEndpointConfig, PciFunctionAddress, PciHostBarRange, PciInterruptPin,
+    PciEndpointConfig, PciFunctionAddress, PciHostBarRange, PciHostBridge, PciInterruptPin,
     PciLegacyInterruptPort, PciType0HeaderFields,
 };
 
@@ -106,6 +106,20 @@ impl SinicPciEndpointSpec {
     ) -> Result<PciBarMmioDevice<SinicMmioDevice>, SinicError> {
         self.validate_host_bar_range(&host_bar_range)?;
         Ok(PciBarMmioDevice::new(host_bar_range, device))
+    }
+
+    pub fn build_forwarded_bar_mmio_device(
+        self,
+        host: Arc<Mutex<PciHostBridge>>,
+        host_bar_range: PciHostBarRange,
+        device: SinicMmioDevice,
+    ) -> Result<PciBarMmioDevice<SinicMmioDevice>, SinicError> {
+        self.validate_host_bar_range(&host_bar_range)?;
+        Ok(PciBarMmioDevice::new_forwarded(
+            host,
+            host_bar_range,
+            device,
+        ))
     }
 
     pub fn build_legacy_interrupt_port(

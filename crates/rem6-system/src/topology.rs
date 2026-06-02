@@ -7,6 +7,7 @@ mod heterogeneous_run;
 mod host_checkpoint;
 mod net_checkpoint;
 mod pci_checkpoint;
+mod sinic_pci_device;
 mod storage_checkpoint;
 mod virtio_checkpoint;
 
@@ -22,6 +23,7 @@ pub use heterogeneous_run::{
     RiscvTopologyAcceleratorComputeActivity, RiscvTopologyGpuComputeActivity,
     RiscvTopologyHeterogeneousRunSummary, RiscvTopologyHeterogeneousWork,
 };
+pub use sinic_pci_device::RiscvTopologySinicPciDeviceConfig;
 
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -58,6 +60,8 @@ use rem6_memory::{
     MemoryResponse, MemoryTargetId, PartitionedMemoryStore,
 };
 use rem6_mmio::MmioBus;
+use rem6_net::SinicError;
+use rem6_pci::{PciBarIndex, PciError, PciFunctionAddress};
 use rem6_platform::{Platform, PlatformError, PlatformRiscvDeviceTreeConfig};
 use rem6_stats::StatsRegistry;
 use rem6_timer::{ClintId, TimerId};
@@ -1341,21 +1345,58 @@ impl RiscvTopologySystem {
 pub enum RiscvTopologySystemError {
     Scheduler(SchedulerError),
     CpuTopology(CpuTopologyError),
-    DuplicateAccelerator { engine: AcceleratorEngineId },
-    UnknownAccelerator { engine: AcceleratorEngineId },
-    AcceleratorDmaWriteNotReady { engine: AcceleratorEngineId },
-    DuplicateGpu { device: GpuDeviceId },
-    UnknownGpu { device: GpuDeviceId },
-    GpuDmaWriteNotReady { device: GpuDeviceId },
-    PlatformPartitionMismatch { topology: u32, platform: u32 },
-    HostPartitionOutOfRange { host: PartitionId, partitions: u32 },
+    DuplicateAccelerator {
+        engine: AcceleratorEngineId,
+    },
+    UnknownAccelerator {
+        engine: AcceleratorEngineId,
+    },
+    AcceleratorDmaWriteNotReady {
+        engine: AcceleratorEngineId,
+    },
+    DuplicateGpu {
+        device: GpuDeviceId,
+    },
+    UnknownGpu {
+        device: GpuDeviceId,
+    },
+    GpuDmaWriteNotReady {
+        device: GpuDeviceId,
+    },
+    PlatformPartitionMismatch {
+        topology: u32,
+        platform: u32,
+    },
+    SinicPciBarAddressBelowHostBase {
+        address: Address,
+        host_base: Address,
+    },
+    SinicPciBarAddressTooWide {
+        address: Address,
+    },
+    MissingSinicPciBarRange {
+        function: PciFunctionAddress,
+        bar: PciBarIndex,
+    },
+    HostPartitionOutOfRange {
+        host: PartitionId,
+        partitions: u32,
+    },
     MissingPlatform,
     MissingMemoryStore,
     MissingHostController,
-    MissingMsiDataResponse { request: MemoryRequestId },
-    MissingMesiDataResponse { request: MemoryRequestId },
-    MissingMoesiDataResponse { request: MemoryRequestId },
-    MissingChiDataResponse { request: MemoryRequestId },
+    MissingMsiDataResponse {
+        request: MemoryRequestId,
+    },
+    MissingMesiDataResponse {
+        request: MemoryRequestId,
+    },
+    MissingMoesiDataResponse {
+        request: MemoryRequestId,
+    },
+    MissingChiDataResponse {
+        request: MemoryRequestId,
+    },
     Accelerator(AcceleratorError),
     Gpu(GpuError),
     MsiDataCache(HarnessError),
@@ -1366,6 +1407,8 @@ pub enum RiscvTopologySystemError {
     Memory(MemoryError),
     Dram(DramMemoryError),
     Platform(PlatformError),
+    Pci(PciError),
+    Sinic(SinicError),
     Boot(BootError),
     System(SystemError),
 }
@@ -1402,6 +1445,23 @@ impl fmt::Display for RiscvTopologySystemError {
             Self::PlatformPartitionMismatch { topology, platform } => write!(
                 formatter,
                 "platform partition count {platform} does not match topology partition count {topology}"
+            ),
+            Self::SinicPciBarAddressBelowHostBase { address, host_base } => write!(
+                formatter,
+                "SINIC PCI BAR address {:#x} is below host base {:#x}",
+                address.get(),
+                host_base.get()
+            ),
+            Self::SinicPciBarAddressTooWide { address } => write!(
+                formatter,
+                "SINIC PCI BAR address {:#x} does not fit a 32-bit memory BAR",
+                address.get()
+            ),
+            Self::MissingSinicPciBarRange { function, bar } => write!(
+                formatter,
+                "SINIC PCI endpoint {:?} BAR {} is not active in the host bridge",
+                function,
+                bar.get()
             ),
             Self::HostPartitionOutOfRange { host, partitions } => write!(
                 formatter,
@@ -1447,6 +1507,8 @@ impl fmt::Display for RiscvTopologySystemError {
             Self::Memory(error) => write!(formatter, "{error}"),
             Self::Dram(error) => write!(formatter, "{error}"),
             Self::Platform(error) => write!(formatter, "{error}"),
+            Self::Pci(error) => write!(formatter, "{error}"),
+            Self::Sinic(error) => write!(formatter, "{error}"),
             Self::Boot(error) => write!(formatter, "{error}"),
             Self::System(error) => write!(formatter, "{error}"),
         }
@@ -1465,6 +1527,9 @@ impl Error for RiscvTopologySystemError {
             Self::UnknownGpu { .. } => None,
             Self::GpuDmaWriteNotReady { .. } => None,
             Self::PlatformPartitionMismatch { .. } => None,
+            Self::SinicPciBarAddressBelowHostBase { .. } => None,
+            Self::SinicPciBarAddressTooWide { .. } => None,
+            Self::MissingSinicPciBarRange { .. } => None,
             Self::HostPartitionOutOfRange { .. } => None,
             Self::MissingPlatform => None,
             Self::MissingMemoryStore => None,
@@ -1483,6 +1548,8 @@ impl Error for RiscvTopologySystemError {
             Self::Memory(error) => Some(error),
             Self::Dram(error) => Some(error),
             Self::Platform(error) => Some(error),
+            Self::Pci(error) => Some(error),
+            Self::Sinic(error) => Some(error),
             Self::Boot(error) => Some(error),
             Self::System(error) => Some(error),
         }
