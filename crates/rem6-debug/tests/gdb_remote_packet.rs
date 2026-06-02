@@ -426,6 +426,77 @@ fn gdb_remote_commands_preserve_malformed_resume_requests() {
 }
 
 #[test]
+fn gdb_remote_commands_decode_vcont_query() {
+    let command = GdbRemoteCommand::parse(&GdbRemotePacket::new(b"vCont?".to_vec()).unwrap());
+
+    assert_eq!(command, GdbRemoteCommand::QueryResumeActions);
+}
+
+#[test]
+fn gdb_remote_commands_decode_vcont_resume_requests() {
+    let resume_all = GdbRemoteCommand::parse(&GdbRemotePacket::new(b"vCont;c".to_vec()).unwrap());
+    assert_eq!(
+        resume_all,
+        GdbRemoteCommand::ResumeActions {
+            requests: vec![GdbRemoteResumeRequest::new(
+                GdbRemoteResumeKind::Continue,
+                None,
+                None,
+                GdbRemoteThreadId::All,
+            )],
+        },
+    );
+
+    let mixed =
+        GdbRemoteCommand::parse(&GdbRemotePacket::new(b"vCont;C05:1A;s:2;S0b".to_vec()).unwrap());
+    assert_eq!(
+        mixed,
+        GdbRemoteCommand::ResumeActions {
+            requests: vec![
+                GdbRemoteResumeRequest::new(
+                    GdbRemoteResumeKind::Continue,
+                    Some(0x05),
+                    None,
+                    GdbRemoteThreadId::Id(0x1a),
+                ),
+                GdbRemoteResumeRequest::new(
+                    GdbRemoteResumeKind::SingleInstruction,
+                    None,
+                    None,
+                    GdbRemoteThreadId::Id(2),
+                ),
+                GdbRemoteResumeRequest::new(
+                    GdbRemoteResumeKind::SingleInstruction,
+                    Some(0x0b),
+                    None,
+                    GdbRemoteThreadId::All,
+                ),
+            ],
+        },
+    );
+}
+
+#[test]
+fn gdb_remote_commands_preserve_malformed_vcont_requests() {
+    for payload in [
+        b"vCont".as_slice(),
+        b"vCont;".as_slice(),
+        b"vCont;c:".as_slice(),
+        b"vCont;c:zz".as_slice(),
+        b"vCont;C".as_slice(),
+        b"vCont;C5".as_slice(),
+        b"vCont;Czz:1".as_slice(),
+        b"vCont;C05;".as_slice(),
+        b"vCont;c:10000000000000000".as_slice(),
+        b"vCont;r1000,1004".as_slice(),
+        b"vCont;t:1".as_slice(),
+    ] {
+        let command = GdbRemoteCommand::parse(&GdbRemotePacket::new(payload.to_vec()).unwrap());
+        assert_eq!(command, GdbRemoteCommand::Unknown(payload.to_vec()));
+    }
+}
+
+#[test]
 fn gdb_remote_commands_decode_read_register_requests() {
     let command = GdbRemoteCommand::parse(&GdbRemotePacket::parse_frame(b"$g#67").unwrap());
 
@@ -612,8 +683,12 @@ fn gdb_remote_commands_decode_no_ack_requests() {
 
 #[test]
 fn gdb_remote_commands_preserve_unknown_payloads() {
-    let unknown = GdbRemoteCommand::parse(&GdbRemotePacket::parse_frame(b"$vCont?#49").unwrap());
-    assert_eq!(unknown, GdbRemoteCommand::Unknown(b"vCont?".to_vec()));
+    let unknown =
+        GdbRemoteCommand::parse(&GdbRemotePacket::new(b"vMustReplyEmpty".to_vec()).unwrap());
+    assert_eq!(
+        unknown,
+        GdbRemoteCommand::Unknown(b"vMustReplyEmpty".to_vec()),
+    );
 }
 
 #[test]
@@ -785,6 +860,7 @@ fn gdb_remote_session_records_resume_requests() {
     session.set_stop_reply(GdbRemoteStopReply::signal(0x0b));
 
     assert_eq!(session.last_resume_request(), None);
+    assert_eq!(session.last_resume_requests(), &[]);
     assert_eq!(
         session
             .handle_packet(&GdbRemotePacket::new(b"c1000".to_vec()).unwrap())
@@ -803,6 +879,15 @@ fn gdb_remote_session_records_resume_requests() {
             GdbRemoteThreadId::Any,
         )),
     );
+    assert_eq!(
+        session.last_resume_requests(),
+        &[GdbRemoteResumeRequest::new(
+            GdbRemoteResumeKind::Continue,
+            None,
+            Some(0x1000),
+            GdbRemoteThreadId::Any,
+        )],
+    );
 
     assert!(session
         .handle_packet(&GdbRemotePacket::new(b"Hc1a".to_vec()).unwrap())
@@ -817,6 +902,63 @@ fn gdb_remote_session_records_resume_requests() {
             Some(0x05),
             None,
             GdbRemoteThreadId::Id(0x1a),
+        )),
+    );
+}
+
+#[test]
+fn gdb_remote_session_reports_vcont_actions() {
+    let mut session = GdbRemoteSession::new(Vec::new());
+
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"vCont?".to_vec()).unwrap())
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"vCont;c;C;s;S".to_vec()).unwrap()),
+        ],
+    );
+}
+
+#[test]
+fn gdb_remote_session_records_vcont_resume_actions() {
+    let mut session = GdbRemoteSession::new(Vec::new());
+    session.set_stop_reply(GdbRemoteStopReply::signal(0x0b));
+
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"vCont;c:1a;S05".to_vec()).unwrap())
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"S0b".to_vec()).unwrap()),
+        ],
+    );
+    assert_eq!(
+        session.last_resume_requests(),
+        &[
+            GdbRemoteResumeRequest::new(
+                GdbRemoteResumeKind::Continue,
+                None,
+                None,
+                GdbRemoteThreadId::Id(0x1a),
+            ),
+            GdbRemoteResumeRequest::new(
+                GdbRemoteResumeKind::SingleInstruction,
+                Some(0x05),
+                None,
+                GdbRemoteThreadId::All,
+            ),
+        ],
+    );
+    assert_eq!(
+        session.last_resume_request(),
+        Some(&GdbRemoteResumeRequest::new(
+            GdbRemoteResumeKind::SingleInstruction,
+            Some(0x05),
+            None,
+            GdbRemoteThreadId::All,
         )),
     );
 }
@@ -1140,7 +1282,7 @@ fn gdb_remote_session_rejects_overflowing_memory_writes_without_partial_update()
 #[test]
 fn gdb_remote_session_acknowledges_valid_packets_by_default() {
     let mut session = GdbRemoteSession::new(Vec::new());
-    let packet = GdbRemotePacket::new(b"vCont?".to_vec()).unwrap();
+    let packet = GdbRemotePacket::new(b"qCRC:1000,4".to_vec()).unwrap();
 
     assert_eq!(session.ack_mode(), GdbRemoteAckMode::Acknowledged);
     assert_eq!(

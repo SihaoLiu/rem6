@@ -12,7 +12,7 @@ use hex::{
 };
 use memory::memory_addresses;
 pub use register::{GdbRemoteRegisterBytes, GdbRemoteRegisterValue};
-use resume::parse_resume_request;
+use resume::{parse_resume_request, parse_vcont_requests};
 pub use resume::{GdbRemoteResumeKind, GdbRemoteResumeRequest};
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -227,6 +227,7 @@ pub enum GdbRemoteCommand {
         features: Vec<GdbRemoteFeature>,
     },
     QueryStopReason,
+    QueryResumeActions,
     QueryThreadInfo {
         query: GdbRemoteThreadInfoQuery,
     },
@@ -242,6 +243,9 @@ pub enum GdbRemoteCommand {
         kind: GdbRemoteResumeKind,
         signal: Option<u8>,
         address: Option<u64>,
+    },
+    ResumeActions {
+        requests: Vec<GdbRemoteResumeRequest>,
     },
     SetThread {
         operation: GdbRemoteThreadOperation,
@@ -340,7 +344,7 @@ pub struct GdbRemoteSession {
     current_thread_id: u64,
     general_thread: GdbRemoteThreadId,
     thread_ids: Vec<u64>,
-    last_resume_request: Option<GdbRemoteResumeRequest>,
+    last_resume_requests: Vec<GdbRemoteResumeRequest>,
     last_response: Option<GdbRemotePacket>,
     interrupt_requested: bool,
 }
@@ -368,7 +372,7 @@ impl GdbRemoteSession {
             current_thread_id: 1,
             general_thread: GdbRemoteThreadId::Any,
             thread_ids: vec![1],
-            last_resume_request: None,
+            last_resume_requests: Vec::new(),
             last_response: None,
             interrupt_requested: false,
         }
@@ -431,7 +435,11 @@ impl GdbRemoteSession {
     }
 
     pub fn last_resume_request(&self) -> Option<&GdbRemoteResumeRequest> {
-        self.last_resume_request.as_ref()
+        self.last_resume_requests.last()
+    }
+
+    pub fn last_resume_requests(&self) -> &[GdbRemoteResumeRequest] {
+        &self.last_resume_requests
     }
 
     pub fn set_thread_ids(&mut self, thread_ids: Vec<u64>) -> bool {
@@ -516,6 +524,7 @@ impl GdbRemoteSession {
             GdbRemoteCommand::QueryStopReason => {
                 self.packet_response(self.stop_reply.encode_payload())
             }
+            GdbRemoteCommand::QueryResumeActions => self.packet_response(b"vCont;c;C;s;S".to_vec()),
             GdbRemoteCommand::QueryThreadInfo { query } => {
                 let payload = match query {
                     GdbRemoteThreadInfoQuery::First => encode_thread_info(&self.thread_ids),
@@ -537,12 +546,16 @@ impl GdbRemoteSession {
                 signal,
                 address,
             } => {
-                self.last_resume_request = Some(GdbRemoteResumeRequest::new(
+                self.last_resume_requests = vec![GdbRemoteResumeRequest::new(
                     kind,
                     signal,
                     address,
                     self.continue_thread,
-                ));
+                )];
+                self.packet_response(self.stop_reply.encode_payload())
+            }
+            GdbRemoteCommand::ResumeActions { requests } => {
+                self.last_resume_requests = requests;
                 self.packet_response(self.stop_reply.encode_payload())
             }
             GdbRemoteCommand::SetThread { operation, thread } => {
@@ -979,6 +992,7 @@ fn parse_command_payload(payload: &[u8]) -> GdbRemoteCommand {
     const QUERY_SUPPORTED: &[u8] = b"qSupported";
     const QUERY_STOP_REASON: &[u8] = b"?";
     const START_NO_ACK_MODE: &[u8] = b"QStartNoAckMode";
+    const QUERY_RESUME_ACTIONS: &[u8] = b"vCont?";
 
     if payload == READ_REGISTERS {
         return GdbRemoteCommand::ReadRegisters;
@@ -1096,6 +1110,14 @@ fn parse_command_payload(payload: &[u8]) -> GdbRemoteCommand {
 
     if payload == QUERY_STOP_REASON {
         return GdbRemoteCommand::QueryStopReason;
+    }
+
+    if payload == QUERY_RESUME_ACTIONS {
+        return GdbRemoteCommand::QueryResumeActions;
+    }
+
+    if let Some(requests) = parse_vcont_requests(payload) {
+        return GdbRemoteCommand::ResumeActions { requests };
     }
 
     if payload == START_NO_ACK_MODE {
