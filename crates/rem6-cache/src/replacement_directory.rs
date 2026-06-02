@@ -3,8 +3,9 @@ use std::collections::BTreeSet;
 use rem6_memory::{Address, CacheLineLayout};
 
 use crate::replacement::{
-    CacheReplacementPolicyConfig, CacheReplacementPolicyError, CacheReplacementPolicyKind,
-    ReplacementDecision, ReplacementSet, ReplacementSetSnapshot, ReplacementUpdate,
+    validate_replacement_vector_length, CacheReplacementPolicyConfig, CacheReplacementPolicyError,
+    CacheReplacementPolicyKind, ReplacementDecision, ReplacementSet, ReplacementSetSnapshot,
+    ReplacementUpdate,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -26,6 +27,7 @@ impl CacheReplacementDirectoryConfig {
         if sets == 0 {
             return Err(CacheReplacementPolicyError::ZeroSets);
         }
+        validate_replacement_vector_length("sets", sets)?;
         let policy_config = CacheReplacementPolicyConfig::new(kind, ways)?;
         Ok(Self {
             kind,

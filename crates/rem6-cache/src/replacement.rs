@@ -5,6 +5,8 @@ use rem6_memory::Address;
 
 use crate::replacement_directory::CacheReplacementDirectoryConfig;
 
+pub(crate) const MAX_REPLACEMENT_VECTOR_LENGTH: usize = isize::MAX as usize;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CacheReplacementPolicyKind {
     Lru,
@@ -43,6 +45,7 @@ impl CacheReplacementPolicyConfig {
         if ways == 0 {
             return Err(CacheReplacementPolicyError::ZeroWays);
         }
+        validate_replacement_vector_length("ways", ways)?;
         match kind {
             CacheReplacementPolicyKind::Brrip {
                 rrpv_bits,
@@ -74,6 +77,7 @@ impl CacheReplacementPolicyConfig {
                 if shct_entries == 0 {
                     return Err(CacheReplacementPolicyError::SignatureHistoryTableEmpty);
                 }
+                validate_replacement_vector_length("SHCT entries", shct_entries)?;
                 if insertion_threshold_percent > 100 {
                     return Err(CacheReplacementPolicyError::InsertionThresholdOutOfRange {
                         percent: insertion_threshold_percent,
@@ -114,6 +118,11 @@ impl CacheReplacementPolicyConfig {
 pub enum CacheReplacementPolicyError {
     ZeroWays,
     ZeroSets,
+    VectorLengthTooLarge {
+        field: &'static str,
+        length: usize,
+        maximum: usize,
+    },
     RrpvBitsOutOfRange {
         bits: u8,
     },
@@ -181,6 +190,14 @@ impl fmt::Display for CacheReplacementPolicyError {
         match self {
             Self::ZeroWays => write!(formatter, "cache replacement policy has no ways"),
             Self::ZeroSets => write!(formatter, "cache replacement directory has no sets"),
+            Self::VectorLengthTooLarge {
+                field,
+                length,
+                maximum,
+            } => write!(
+                formatter,
+                "cache replacement {field} length {length} exceeds vector allocation limit {maximum}"
+            ),
             Self::RrpvBitsOutOfRange { bits } => write!(
                 formatter,
                 "cache replacement policy RRPV width {bits} is outside 1..=7"
@@ -273,6 +290,20 @@ impl fmt::Display for CacheReplacementPolicyError {
 }
 
 impl Error for CacheReplacementPolicyError {}
+
+pub(crate) fn validate_replacement_vector_length(
+    field: &'static str,
+    length: usize,
+) -> Result<(), CacheReplacementPolicyError> {
+    if length > MAX_REPLACEMENT_VECTOR_LENGTH {
+        return Err(CacheReplacementPolicyError::VectorLengthTooLarge {
+            field,
+            length,
+            maximum: MAX_REPLACEMENT_VECTOR_LENGTH,
+        });
+    }
+    Ok(())
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReplacementSet {

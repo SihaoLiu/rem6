@@ -4,6 +4,8 @@ use rem6_cache::{
 };
 use rem6_memory::{Address, CacheLineLayout};
 
+const OVERSIZED_VECTOR_LENGTH: usize = isize::MAX as usize + 1;
+
 fn line_layout() -> CacheLineLayout {
     CacheLineLayout::new(16).unwrap()
 }
@@ -284,6 +286,27 @@ fn replacement_set_rejects_bad_configs_candidates_and_snapshots() {
         Err(CacheReplacementPolicyError::ZeroWays)
     );
     assert_eq!(
+        CacheReplacementPolicyConfig::new(CacheReplacementPolicyKind::Lru, OVERSIZED_VECTOR_LENGTH),
+        Err(CacheReplacementPolicyError::VectorLengthTooLarge {
+            field: "ways",
+            length: OVERSIZED_VECTOR_LENGTH,
+            maximum: isize::MAX as usize,
+        })
+    );
+    assert_eq!(
+        CacheReplacementDirectoryConfig::new(
+            CacheReplacementPolicyKind::Lru,
+            line_layout(),
+            OVERSIZED_VECTOR_LENGTH,
+            4,
+        ),
+        Err(CacheReplacementPolicyError::VectorLengthTooLarge {
+            field: "sets",
+            length: OVERSIZED_VECTOR_LENGTH,
+            maximum: isize::MAX as usize,
+        })
+    );
+    assert_eq!(
         CacheReplacementPolicyConfig::new(
             CacheReplacementPolicyKind::Brrip {
                 rrpv_bits: 0,
@@ -321,6 +344,22 @@ fn replacement_set_rejects_bad_configs_candidates_and_snapshots() {
             4,
         ),
         Err(CacheReplacementPolicyError::SignatureHistoryTableEmpty)
+    );
+    assert_eq!(
+        CacheReplacementPolicyConfig::new(
+            CacheReplacementPolicyKind::Ship {
+                rrpv_bits: 2,
+                hit_priority: true,
+                shct_entries: OVERSIZED_VECTOR_LENGTH,
+                insertion_threshold_percent: 1,
+            },
+            4,
+        ),
+        Err(CacheReplacementPolicyError::VectorLengthTooLarge {
+            field: "SHCT entries",
+            length: OVERSIZED_VECTOR_LENGTH,
+            maximum: isize::MAX as usize,
+        })
     );
     assert_eq!(
         CacheReplacementPolicyConfig::new(
