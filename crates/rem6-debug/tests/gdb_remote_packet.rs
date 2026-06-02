@@ -1,7 +1,7 @@
 use rem6_debug::{
-    parse_gdb_remote_frame, GdbRemoteCommand, GdbRemoteError, GdbRemoteFeature,
+    parse_gdb_remote_frame, GdbRemoteAckMode, GdbRemoteCommand, GdbRemoteError, GdbRemoteFeature,
     GdbRemoteFeatureValue, GdbRemoteFrame, GdbRemoteNotification, GdbRemotePacket,
-    GdbRemotePacketConfig,
+    GdbRemotePacketConfig, GdbRemoteSession,
 };
 
 #[test]
@@ -176,6 +176,98 @@ fn gdb_remote_commands_decode_no_ack_requests() {
 fn gdb_remote_commands_preserve_unknown_payloads() {
     let unknown = GdbRemoteCommand::parse(&GdbRemotePacket::parse_frame(b"$vCont?#49").unwrap());
     assert_eq!(unknown, GdbRemoteCommand::Unknown(b"vCont?".to_vec()));
+}
+
+#[test]
+fn gdb_remote_session_acknowledges_valid_packets_by_default() {
+    let mut session = GdbRemoteSession::new(Vec::new());
+    let packet = GdbRemotePacket::new(b"vCont?".to_vec()).unwrap();
+
+    assert_eq!(session.ack_mode(), GdbRemoteAckMode::Acknowledged);
+    assert_eq!(
+        session.handle_packet(&packet).unwrap(),
+        vec![GdbRemoteFrame::Ack],
+    );
+}
+
+#[test]
+fn gdb_remote_session_reports_supported_features() {
+    let mut session = GdbRemoteSession::new(vec![
+        GdbRemoteFeature::new(
+            b"PacketSize".to_vec(),
+            GdbRemoteFeatureValue::Value(b"4000".to_vec()),
+        ),
+        GdbRemoteFeature::new(
+            b"QStartNoAckMode".to_vec(),
+            GdbRemoteFeatureValue::Supported,
+        ),
+    ]);
+    let packet = GdbRemotePacket::new(b"qSupported:multiprocess+".to_vec()).unwrap();
+
+    assert_eq!(
+        session.handle_packet(&packet).unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(
+                GdbRemotePacket::new(b"PacketSize=4000;QStartNoAckMode+".to_vec()).unwrap(),
+            ),
+        ],
+    );
+}
+
+#[test]
+fn gdb_remote_session_replaces_supported_query_features() {
+    let mut session = GdbRemoteSession::new(Vec::new());
+
+    session
+        .handle_packet(
+            &GdbRemotePacket::new(b"qSupported:multiprocess+;xmlRegisters=riscv".to_vec()).unwrap(),
+        )
+        .unwrap();
+    session
+        .handle_packet(&GdbRemotePacket::new(b"qSupported:hwbreak-".to_vec()).unwrap())
+        .unwrap();
+
+    assert_eq!(
+        session.gdb_features(),
+        &[GdbRemoteFeature::new(
+            b"hwbreak".to_vec(),
+            GdbRemoteFeatureValue::Unsupported,
+        )],
+    );
+}
+
+#[test]
+fn gdb_remote_session_switches_to_no_ack_mode() {
+    let mut session = GdbRemoteSession::new(Vec::new());
+    let packet = GdbRemotePacket::new(b"QStartNoAckMode".to_vec()).unwrap();
+
+    assert_eq!(
+        session.handle_packet(&packet).unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"OK".to_vec()).unwrap()),
+        ],
+    );
+    assert_eq!(session.ack_mode(), GdbRemoteAckMode::NoAck);
+}
+
+#[test]
+fn gdb_remote_session_omits_acknowledgements_after_no_ack_mode() {
+    let mut session = GdbRemoteSession::new(Vec::new());
+
+    session
+        .handle_packet(&GdbRemotePacket::new(b"QStartNoAckMode".to_vec()).unwrap())
+        .unwrap();
+
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"qSupported".to_vec()).unwrap())
+            .unwrap(),
+        vec![GdbRemoteFrame::Packet(
+            GdbRemotePacket::new(Vec::new()).unwrap()
+        )],
+    );
 }
 
 #[test]

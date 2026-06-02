@@ -242,6 +242,70 @@ pub enum GdbRemoteFeatureValue {
     Bare,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GdbRemoteAckMode {
+    Acknowledged,
+    NoAck,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GdbRemoteSession {
+    ack_mode: GdbRemoteAckMode,
+    stub_features: Vec<GdbRemoteFeature>,
+    gdb_features: Vec<GdbRemoteFeature>,
+}
+
+impl GdbRemoteSession {
+    pub fn new(stub_features: Vec<GdbRemoteFeature>) -> Self {
+        Self {
+            ack_mode: GdbRemoteAckMode::Acknowledged,
+            stub_features,
+            gdb_features: Vec::new(),
+        }
+    }
+
+    pub const fn ack_mode(&self) -> GdbRemoteAckMode {
+        self.ack_mode
+    }
+
+    pub fn stub_features(&self) -> &[GdbRemoteFeature] {
+        &self.stub_features
+    }
+
+    pub fn gdb_features(&self) -> &[GdbRemoteFeature] {
+        &self.gdb_features
+    }
+
+    pub fn handle_packet(
+        &mut self,
+        packet: &GdbRemotePacket,
+    ) -> Result<Vec<GdbRemoteFrame>, GdbRemoteError> {
+        let command = GdbRemoteCommand::parse(packet);
+        let mut frames = Vec::new();
+        if self.ack_mode == GdbRemoteAckMode::Acknowledged {
+            frames.push(GdbRemoteFrame::Ack);
+        }
+
+        match command {
+            GdbRemoteCommand::QuerySupported { features } => {
+                self.gdb_features = features;
+                frames.push(GdbRemoteFrame::Packet(GdbRemotePacket::new(
+                    encode_supported_features(&self.stub_features),
+                )?));
+            }
+            GdbRemoteCommand::StartNoAckMode => {
+                frames.push(GdbRemoteFrame::Packet(GdbRemotePacket::new(
+                    b"OK".to_vec(),
+                )?));
+                self.ack_mode = GdbRemoteAckMode::NoAck;
+            }
+            GdbRemoteCommand::Unknown(_) => {}
+        }
+
+        Ok(frames)
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GdbRemoteNotification {
     data: Vec<u8>,
@@ -604,6 +668,29 @@ fn parse_supported_feature(feature: &[u8]) -> GdbRemoteFeature {
         ),
         _ => GdbRemoteFeature::new(feature.to_vec(), GdbRemoteFeatureValue::Bare),
     }
+}
+
+fn encode_supported_features(features: &[GdbRemoteFeature]) -> Vec<u8> {
+    let mut encoded = Vec::new();
+
+    for (index, feature) in features.iter().enumerate() {
+        if index > 0 {
+            encoded.push(b';');
+        }
+        encoded.extend_from_slice(feature.name());
+        match feature.value() {
+            GdbRemoteFeatureValue::Supported => encoded.push(b'+'),
+            GdbRemoteFeatureValue::Unsupported => encoded.push(b'-'),
+            GdbRemoteFeatureValue::AutoDetect => encoded.push(b'?'),
+            GdbRemoteFeatureValue::Value(value) => {
+                encoded.push(b'=');
+                encoded.extend_from_slice(value);
+            }
+            GdbRemoteFeatureValue::Bare => {}
+        }
+    }
+
+    encoded
 }
 
 fn validate_payload_len(len: usize, config: GdbRemotePacketConfig) -> Result<(), GdbRemoteError> {
