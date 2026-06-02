@@ -31,6 +31,10 @@ impl DcptPrefetcherConfig {
             return Err(DcptPrefetcherError::DeltaHistoryTooSmall { deltas_per_entry });
         }
         validate_dcpt_vector_length::<i64>("deltas per entry", deltas_per_entry)?;
+        validate_dcpt_vector_length::<DcptPrefetchCandidate>(
+            "candidate results",
+            deltas_per_entry - 2,
+        )?;
         if !(2..=63).contains(&delta_bits) {
             return Err(DcptPrefetcherError::DeltaBitsOutOfRange { delta_bits });
         }

@@ -1,21 +1,34 @@
 use rem6_cache::{
-    AmpmEpochConfig, AmpmPrefetchAccess, AmpmPrefetcher, AmpmPrefetcherConfig, BopDelayQueueConfig,
-    BopPrefetchAccess, BopPrefetcher, BopPrefetcherConfig, BopPrefetcherConfigOptions,
-    BopPrefetcherError, DcptPrefetchAccess, DcptPrefetcher, DcptPrefetcherConfig,
-    DcptPrefetcherError, QueuedPrefetchConfig, QueuedPrefetchDemandAccess,
-    QueuedPrefetchFullPolicy, QueuedPrefetchRedundantLine, QueuedPrefetchThrottle,
-    QueuedPrefetchThrottleConfig, QueuedPrefetchThrottleError, QueuedPrefetcher,
-    SbooePrefetchAccess, SbooePrefetcher, SbooePrefetcherConfig, SignaturePathPrefetchAccess,
-    SignaturePathPrefetcher, SignaturePathPrefetcherConfig, SignaturePathPrefetcherConfigOptions,
-    SignaturePathRatio, SmsPrefetchAccess, SmsPrefetcher, SmsPrefetcherConfig,
-    StridePrefetchAccess, StridePrefetcher, StridePrefetcherConfig, TaggedPrefetchAccess,
-    TaggedPrefetcher, TaggedPrefetcherConfig,
+    AmpmEpochConfig, AmpmPrefetchAccess, AmpmPrefetcher, AmpmPrefetcherConfig, AmpmPrefetcherError,
+    BopDelayQueueConfig, BopDelayQueueEntrySnapshot, BopPrefetchAccess, BopPrefetcher,
+    BopPrefetcherConfig, BopPrefetcherConfigOptions, BopPrefetcherError, DcptPrefetchAccess,
+    DcptPrefetcher, DcptPrefetcherConfig, DcptPrefetcherError, QueuedPrefetchConfig,
+    QueuedPrefetchDemandAccess, QueuedPrefetchFullPolicy, QueuedPrefetchRedundantLine,
+    QueuedPrefetchThrottle, QueuedPrefetchThrottleConfig, QueuedPrefetchThrottleError,
+    QueuedPrefetcher, SbooePrefetchAccess, SbooePrefetcher, SbooePrefetcherConfig,
+    SignaturePathPrefetchAccess, SignaturePathPrefetcher, SignaturePathPrefetcherConfig,
+    SignaturePathPrefetcherConfigOptions, SignaturePathRatio, SmsPrefetchAccess, SmsPrefetcher,
+    SmsPrefetcherConfig, StridePrefetchAccess, StridePrefetcher, StridePrefetcherConfig,
+    TaggedPrefetchAccess, TaggedPrefetcher, TaggedPrefetcherConfig,
 };
 use rem6_memory::{Address, AgentId};
 
 const U64_VECTOR_BYTE_OVERFLOW_LENGTH: usize = isize::MAX as usize / std::mem::size_of::<u64>() + 1;
 const U32_VECTOR_BYTE_OVERFLOW_LENGTH: usize = isize::MAX as usize / std::mem::size_of::<u32>() + 1;
+const BOP_DELAY_QUEUE_BYTE_OVERFLOW_LENGTH: usize =
+    isize::MAX as usize / std::mem::size_of::<BopDelayQueueEntrySnapshot>() + 1;
 const I64_VECTOR_BYTE_OVERFLOW_LENGTH: usize = isize::MAX as usize / std::mem::size_of::<i64>() + 1;
+const DCPT_CANDIDATE_MIN_BYTES: usize = std::mem::size_of::<Address>() * 2
+    + std::mem::size_of::<AgentId>()
+    + std::mem::size_of::<u64>()
+    + std::mem::size_of::<bool>()
+    + std::mem::size_of::<i64>()
+    + std::mem::size_of::<u32>();
+const DCPT_CANDIDATE_BYTE_OVERFLOW_DELTAS: usize =
+    isize::MAX as usize / DCPT_CANDIDATE_MIN_BYTES + 3;
+const OVERSIZED_VECTOR_LENGTH: usize = isize::MAX as usize + 1;
+const AMPM_ACCESS_MAP_BYTE_OVERFLOW_LINES: u64 = isize::MAX as u64 + 1;
+const AMPM_WINDOW_BYTE_OVERFLOW_LINES: u64 = 1_u64 << 62;
 
 fn access(agent: u32, pc: u64, address: u64) -> StridePrefetchAccess {
     StridePrefetchAccess::new(AgentId::new(agent), pc, Address::new(address), false)
@@ -214,6 +227,15 @@ fn bop_prefetcher_config_rejects_vector_lengths_above_host_limit() {
             field: "offset list size",
             length: U32_VECTOR_BYTE_OVERFLOW_LENGTH,
             maximum: isize::MAX as usize / std::mem::size_of::<u32>(),
+        })
+    );
+
+    assert_eq!(
+        BopDelayQueueConfig::new(BOP_DELAY_QUEUE_BYTE_OVERFLOW_LENGTH, 1),
+        Err(BopPrefetcherError::VectorLengthTooLarge {
+            field: "delay queue entries",
+            length: BOP_DELAY_QUEUE_BYTE_OVERFLOW_LENGTH,
+            maximum: isize::MAX as usize / std::mem::size_of::<BopDelayQueueEntrySnapshot>(),
         })
     );
 }
@@ -605,6 +627,42 @@ fn dcpt_prefetcher_config_rejects_vector_lengths_above_host_limit() {
         Err(DcptPrefetcherError::VectorLengthTooLarge {
             field: "table entries",
             length: I64_VECTOR_BYTE_OVERFLOW_LENGTH,
+            ..
+        })
+    ));
+    assert!(matches!(
+        DcptPrefetcherConfig::new(DCPT_CANDIDATE_BYTE_OVERFLOW_DELTAS, 12, 4, 4, true),
+        Err(DcptPrefetcherError::VectorLengthTooLarge {
+            field: "candidate results",
+            length,
+            ..
+        }) if length == DCPT_CANDIDATE_BYTE_OVERFLOW_DELTAS - 2
+    ));
+}
+
+#[test]
+fn ampm_prefetcher_config_rejects_vector_lengths_above_host_limit() {
+    assert!(matches!(
+        AmpmPrefetcherConfig::new(1, AMPM_ACCESS_MAP_BYTE_OVERFLOW_LINES, 1, 3),
+        Err(AmpmPrefetcherError::VectorLengthTooLarge {
+            field: "hot zone lines",
+            length,
+            ..
+        }) if length == AMPM_ACCESS_MAP_BYTE_OVERFLOW_LINES as usize
+    ));
+    assert!(matches!(
+        AmpmPrefetcherConfig::new(1, AMPM_WINDOW_BYTE_OVERFLOW_LINES, 1, 3),
+        Err(AmpmPrefetcherError::VectorLengthTooLarge {
+            field: "hot zone lines",
+            length,
+            ..
+        }) if length == AMPM_WINDOW_BYTE_OVERFLOW_LINES as usize
+    ));
+    assert!(matches!(
+        AmpmPrefetcherConfig::new(64, 256, 1, OVERSIZED_VECTOR_LENGTH),
+        Err(AmpmPrefetcherError::VectorLengthTooLarge {
+            field: "table entries",
+            length: OVERSIZED_VECTOR_LENGTH,
             ..
         })
     ));

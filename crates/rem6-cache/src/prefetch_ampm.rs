@@ -4,6 +4,7 @@ use std::fmt;
 
 use rem6_memory::{Address, AgentId};
 
+use crate::allocation::max_vector_len;
 use crate::prefetch::PrefetchCandidate;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -160,6 +161,12 @@ impl AmpmPrefetcherConfig {
                 line_size,
             });
         }
+        let hot_zone_lines = usize::try_from(hot_zone_size / line_size).unwrap_or(usize::MAX);
+        validate_ampm_vector_length(
+            "hot zone lines",
+            hot_zone_lines,
+            maximum_ampm_hot_zone_lines(),
+        )?;
         if degree == 0 {
             return Err(AmpmPrefetcherError::ZeroDegree);
         }
@@ -169,6 +176,7 @@ impl AmpmPrefetcherConfig {
         if table_entries < 3 {
             return Err(AmpmPrefetcherError::TableTooSmall { table_entries });
         }
+        validate_ampm_vector_length("table entries", table_entries, maximum_ampm_table_entries())?;
 
         Ok(Self {
             line_size,
@@ -246,6 +254,11 @@ pub enum AmpmPrefetcherError {
     TableTooSmall {
         table_entries: usize,
     },
+    VectorLengthTooLarge {
+        field: &'static str,
+        length: usize,
+        maximum: usize,
+    },
     SnapshotConfigMismatch {
         expected: Box<AmpmPrefetcherConfig>,
         actual: Box<AmpmPrefetcherConfig>,
@@ -302,6 +315,14 @@ impl fmt::Display for AmpmPrefetcherError {
                 formatter,
                 "AMPM prefetcher table has {table_entries} entries but needs at least three"
             ),
+            Self::VectorLengthTooLarge {
+                field,
+                length,
+                maximum,
+            } => write!(
+                formatter,
+                "AMPM prefetcher {field} length {length} exceeds maximum {maximum}"
+            ),
             Self::SnapshotConfigMismatch { expected, actual } => write!(
                 formatter,
                 "AMPM prefetcher snapshot config {actual:?} does not match {expected:?}"
@@ -326,6 +347,31 @@ impl fmt::Display for AmpmPrefetcherError {
 }
 
 impl Error for AmpmPrefetcherError {}
+
+fn maximum_ampm_hot_zone_lines() -> usize {
+    max_vector_len::<AmpmAccessMapState>()
+        .min(max_vector_len::<AmpmWindowState>() / 3)
+        .min(usize::MAX / 3)
+}
+
+fn maximum_ampm_table_entries() -> usize {
+    max_vector_len::<AmpmZoneKey>().min(max_vector_len::<AmpmAccessMapEntrySnapshot>())
+}
+
+fn validate_ampm_vector_length(
+    field: &'static str,
+    length: usize,
+    maximum: usize,
+) -> Result<(), AmpmPrefetcherError> {
+    if length > maximum {
+        return Err(AmpmPrefetcherError::VectorLengthTooLarge {
+            field,
+            length,
+            maximum,
+        });
+    }
+    Ok(())
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AmpmPrefetchAccess {

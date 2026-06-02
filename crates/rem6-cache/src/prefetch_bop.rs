@@ -21,6 +21,14 @@ impl BopDelayQueueConfig {
         if delay_ticks == 0 {
             return Err(BopPrefetcherError::ZeroDelayQueueTicks);
         }
+        let maximum = max_vector_len::<BopDelayQueueEntrySnapshot>();
+        if entries > maximum {
+            return Err(BopPrefetcherError::VectorLengthTooLarge {
+                field: "delay queue entries",
+                length: entries,
+                maximum,
+            });
+        }
         Ok(Self {
             entries,
             delay_ticks,
