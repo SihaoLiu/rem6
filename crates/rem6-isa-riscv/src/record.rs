@@ -88,22 +88,20 @@ impl RiscvExecutionRecord {
         }
     }
 
-    pub fn new_with_system_event(
+    pub fn with_system_event(
         instruction: RiscvInstruction,
         pc: u64,
         next_pc: u64,
-        register_writes: Vec<RegisterWrite>,
-        memory_access: Option<MemoryAccessKind>,
-        system_event: Option<RiscvSystemEvent>,
+        system_event: RiscvSystemEvent,
     ) -> Self {
         Self {
             instruction,
             pc,
             next_pc,
-            register_writes,
-            memory_access,
+            register_writes: Vec::new(),
+            memory_access: None,
             trap: None,
-            system_event,
+            system_event: Some(system_event),
         }
     }
 

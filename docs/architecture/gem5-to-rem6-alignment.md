@@ -2959,9 +2959,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   execution, no data-request issue, and ordered fetch progression after barrier
   instructions. RISC-V ISA tests cover canonical `WFI` decode, rejection of
   noncanonical register-field encodings, no register or memory side effects,
-  and typed wait-for-interrupt system-event records. RISC-V ISA and frontend
-  tests cover canonical `SFENCE.VMA` decode, rejection of noncanonical rd and
-  funct3 encodings, zero-register all-address/all-ASID scope, and typed virtual
+  and typed wait-for-interrupt system-event records. RISC-V ISA tests cover
+  canonical `SFENCE.VMA` decode, rejection of noncanonical rd and funct3
+  encodings, zero-register all-address/all-ASID scope, and typed virtual
   address plus ASID system-event records. RISC-V ISA and frontend tests cover
   aq/rl metadata that maps release to a read/write fence before the atomic
   access and acquire to a read/write fence after it. Memory request tests cover

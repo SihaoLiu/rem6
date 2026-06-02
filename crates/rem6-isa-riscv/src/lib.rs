@@ -1227,14 +1227,25 @@ impl RiscvHartState {
         self.pc = next_pc;
         self.counters.add_cycles(1);
         self.counters.retire_instructions(1);
-        Ok(RiscvExecutionRecord::new_with_system_event(
-            instruction,
-            pc,
-            next_pc,
-            register_writes,
-            memory_access,
-            system_event,
-        ))
+        match system_event {
+            Some(system_event) => {
+                debug_assert!(register_writes.is_empty());
+                debug_assert!(memory_access.is_none());
+                Ok(RiscvExecutionRecord::with_system_event(
+                    instruction,
+                    pc,
+                    next_pc,
+                    system_event,
+                ))
+            }
+            None => Ok(RiscvExecutionRecord::new(
+                instruction,
+                pc,
+                next_pc,
+                register_writes,
+                memory_access,
+            )),
+        }
     }
 }
 
