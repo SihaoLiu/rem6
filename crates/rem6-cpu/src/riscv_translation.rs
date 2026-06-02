@@ -2,8 +2,8 @@ use std::error::Error;
 use std::fmt;
 
 use rem6_isa_riscv::{
-    walk_sv39_page_table_with_context, RiscvSv39AccessKind, RiscvSv39PageFault,
-    RiscvSv39PageTableLevel, RiscvSv39Pte, RiscvSv39VirtualAddress,
+    walk_sv39_page_table_with_context, RiscvSv39AccessContext, RiscvSv39AccessKind,
+    RiscvSv39PageFault, RiscvSv39PageTableLevel, RiscvSv39Pte, RiscvSv39VirtualAddress,
     RiscvSv39WalkAdvance as IsaSv39WalkAdvance, RiscvSv39WalkState, RiscvSystemEvent,
 };
 use rem6_kernel::{
@@ -613,6 +613,22 @@ impl RiscvCore {
             .set_translation_address_space(address_space.get());
     }
 
+    pub fn set_sv39_access_context(&self, context: RiscvSv39AccessContext) {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .hart
+            .set_sv39_access_context(context);
+    }
+
+    pub fn ready_data_translation_requests(&self, tick: Tick) -> Vec<CpuTranslationRequest> {
+        let state = self.state.lock().expect("riscv core lock");
+        state
+            .data_translation
+            .as_ref()
+            .map_or_else(Vec::new, |frontend| frontend.ready_cpu_requests(tick))
+    }
+
     pub fn data_translation_tlb_stats(&self) -> Option<TranslationTlbStats> {
         self.state
             .lock()
@@ -868,13 +884,14 @@ impl RiscvCore {
             return Ok(false);
         };
         let size = memory_width_size(access_width(&access))?;
-        let (data, address_space) = {
+        let (data, address_space, access_context) = {
             let state = self.state.lock().expect("riscv core lock");
             (
                 state.data.clone().ok_or(RiscvCpuError::MissingDataConfig {
                     fetch: fetch_request,
                 })?,
                 TranslationAddressSpaceId::new(state.hart.translation_address_space()),
+                state.hart.sv39_access_context(),
             )
         };
         let request_id = MemoryRequestId::new(self.core.agent(), self.core.next_sequence());
@@ -886,7 +903,8 @@ impl RiscvCore {
             size,
         };
         let request = cpu_translation_request(translation_id, request_id, &data, &access, size)?
-            .in_address_space(address_space);
+            .in_address_space(address_space)
+            .with_sv39_access_context(access_context);
 
         let mut state = self.state.lock().expect("riscv core lock");
         let frontend =

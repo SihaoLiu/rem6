@@ -595,6 +595,7 @@ pub struct RiscvHartState {
     hart_id: u64,
     counters: RiscvCounterBank,
     translation_satp: u64,
+    sv39_access_context: RiscvSv39AccessContext,
     vector_config: RiscvVectorConfig,
     registers: [u64; 32],
 }
@@ -610,6 +611,7 @@ impl RiscvHartState {
             hart_id,
             counters: RiscvCounterBank::new(),
             translation_satp: 0,
+            sv39_access_context: RiscvSv39AccessContext::new(RiscvPrivilegeMode::Machine),
             vector_config: RiscvVectorConfig::invalid(),
             registers: [0; 32],
         }
@@ -635,8 +637,16 @@ impl RiscvHartState {
         ((self.translation_satp >> 44) & 0xffff) as u16
     }
 
+    pub const fn sv39_access_context(&self) -> RiscvSv39AccessContext {
+        self.sv39_access_context
+    }
+
     pub fn set_translation_satp(&mut self, value: u64) {
         self.translation_satp = value;
+    }
+
+    pub fn set_sv39_access_context(&mut self, context: RiscvSv39AccessContext) {
+        self.sv39_access_context = context;
     }
 
     pub fn set_translation_address_space(&mut self, address_space: u16) {

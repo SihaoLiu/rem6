@@ -831,6 +831,41 @@ fn riscv_core_data_translation_uses_current_address_space() {
 }
 
 #[test]
+fn riscv_core_data_translation_request_uses_hart_sv39_context() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = translated_data_core_with_latency(fetch_route, data_route, 0x8000, 20);
+    let context = RiscvSv39AccessContext::new(RiscvPrivilegeMode::Supervisor)
+        .with_mxr(true)
+        .with_sum(true);
+    core.set_sv39_access_context(context);
+    core.write_register(reg(2), 0x4000);
+    let page_map = single_page_map(0x4000, 0x9000);
+    let store = loaded_program_store(
+        0x8000,
+        &[i_type(8, 2, 0x3, 5, 0x03)],
+        &[(0x9008, vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88])],
+    );
+
+    assert!(matches!(
+        drive_one_translated_action(&core, store.clone(), &mut scheduler, &transport, &page_map),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+    assert!(matches!(
+        drive_one_translated_action(&core, store.clone(), &mut scheduler, &transport, &page_map),
+        Some(RiscvCoreDriveAction::InstructionExecuted(_))
+    ));
+    assert_eq!(
+        drive_one_translated_action(&core, store, &mut scheduler, &transport, &page_map),
+        None
+    );
+
+    let ready = core.ready_data_translation_requests(u64::MAX);
+    assert_eq!(ready.len(), 1);
+    assert_eq!(ready[0].sv39_access_context(), context);
+}
+
+#[test]
 fn riscv_core_satp_asid_selects_data_translation_address_space() {
     let (mut scheduler, transport, fetch_route, data_route) = data_routes();
     let core = translated_data_core(fetch_route, data_route, 0x8000);

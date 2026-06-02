@@ -2,7 +2,8 @@ use rem6_isa_riscv::{
     AtomicMemoryOp, Immediate, MemoryAccessKind, MemoryWidth, Register, RegisterWrite,
     RiscvCounterBank, RiscvCounterCsr, RiscvCounterSnapshot, RiscvCsrError, RiscvError,
     RiscvExecutionRecord, RiscvFenceSet, RiscvHartState, RiscvInstruction, RiscvMemoryOrdering,
-    RiscvSystemEvent, RiscvTranslationCsr, RiscvTrap, RiscvTrapKind,
+    RiscvPrivilegeMode, RiscvSv39AccessContext, RiscvSystemEvent, RiscvTranslationCsr, RiscvTrap,
+    RiscvTrapKind,
 };
 
 fn r_type(funct7: u32, rs2: u8, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
@@ -44,6 +45,23 @@ fn sfence_vma_type(rs1: u8, rs2: u8, rd: u8, funct3: u32) -> u32 {
         | (funct3 << 12)
         | (u32::from(rd) << 7)
         | 0x73
+}
+
+#[test]
+fn riscv_hart_state_tracks_sv39_access_context() {
+    let mut hart = RiscvHartState::new(0x8000);
+
+    assert_eq!(
+        hart.sv39_access_context(),
+        RiscvSv39AccessContext::new(RiscvPrivilegeMode::Machine)
+    );
+
+    let context = RiscvSv39AccessContext::new(RiscvPrivilegeMode::Supervisor)
+        .with_mxr(true)
+        .with_sum(true);
+    hart.set_sv39_access_context(context);
+
+    assert_eq!(hart.sv39_access_context(), context);
 }
 
 fn i_type(imm: i32, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
