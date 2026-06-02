@@ -20,7 +20,8 @@ use rem6_workload::{
     WorkloadHostActionSummary, WorkloadHostEvent, WorkloadHostPlacement, WorkloadManifest,
     WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadReplayPlan, WorkloadResource,
     WorkloadResourceId, WorkloadResourceKind, WorkloadRiscvCore, WorkloadRiscvDataCache,
-    WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId, WorkloadStatsScope, WorkloadTopology,
+    WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId, WorkloadSinicPciDevice,
+    WorkloadStatsScope, WorkloadTopology,
 };
 
 fn workload_id(value: &str) -> rem6_workload::WorkloadId {
@@ -269,6 +270,66 @@ fn replay_topology() -> WorkloadTopology {
                 Address::new(0x9000),
                 "cpu1.ifetch",
                 route_id("cpu1.fetch"),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+}
+
+fn replay_topology_with_sinic_pci_devices() -> WorkloadTopology {
+    replay_topology()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(
+                route_id("sinic0.mmio"),
+                "cpu0.dmem",
+                0,
+                "sinic0.mmio",
+                2,
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(
+                route_id("sinic1.mmio"),
+                "cpu1.dmem",
+                1,
+                "sinic1.mmio",
+                2,
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_sinic_pci_device(
+            WorkloadSinicPciDevice::new(
+                1,
+                2,
+                0,
+                2,
+                0,
+                Address::new(0x30000),
+                "sinic1.mmio",
+                route_id("sinic1.mmio"),
+                0x1294,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_sinic_pci_device(
+            WorkloadSinicPciDevice::new(
+                0,
+                2,
+                0,
+                1,
+                0,
+                Address::new(0x20000),
+                "sinic0.mmio",
+                route_id("sinic0.mmio"),
+                0x1293,
             )
             .unwrap(),
         )
@@ -751,6 +812,22 @@ fn replay_topology_with_profiled_msi_data_cache() -> WorkloadTopology {
 fn replay_manifest() -> WorkloadManifest {
     WorkloadManifest::builder(workload_id("riscv-replay"), boot_image())
         .with_topology(replay_topology())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .add_host_event(WorkloadHostEvent::new(
+            0,
+            HostEventIntent::Stop {
+                reason: "host-stop".to_string(),
+            },
+        ))
+        .build()
+        .unwrap()
+}
+
+fn replay_manifest_with_sinic_pci_devices() -> WorkloadManifest {
+    WorkloadManifest::builder(workload_id("riscv-replay-sinic-pci"), boot_image())
+        .with_topology(replay_topology_with_sinic_pci_devices())
         .add_resource(kernel_resource())
         .unwrap()
         .add_required_resource(resource_id("kernel"))
@@ -1296,6 +1373,36 @@ fn workload_replay_plan_reconstructs_parallel_riscv_system_run() {
     assert_eq!(outcome.run().scheduled_traps().len(), 2);
     assert!(outcome.run().active_partition_count() >= 2);
     assert!(outcome.run().max_parallel_scheduler_workers() >= 1);
+}
+
+#[test]
+fn workload_replay_records_sinic_pci_device_summaries() {
+    let manifest = replay_manifest_with_sinic_pci_devices();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let outcome = RiscvWorkloadReplay::new(plan.clone())
+        .with_max_turns(20)
+        .run_parallel()
+        .unwrap();
+
+    let devices = outcome.result().sinic_pci_devices();
+    assert_eq!(devices.len(), 2);
+    assert_eq!(devices[0].nic(), 0);
+    assert_eq!(devices[0].partition(), 2);
+    assert_eq!(devices[0].pci_bus(), 0);
+    assert_eq!(devices[0].pci_device(), 1);
+    assert_eq!(devices[0].pci_function(), 0);
+    assert_eq!(devices[0].bar_base(), Address::new(0x20000));
+    assert_eq!(devices[0].mmio_endpoint(), "sinic0.mmio");
+    assert_eq!(devices[0].mmio_route(), &route_id("sinic0.mmio"));
+    assert_eq!(devices[0].interrupt_source(), 0x1293);
+    assert_eq!(devices[1].nic(), 1);
+    assert_eq!(devices[1].pci_device(), 2);
+    assert_eq!(devices[1].bar_base(), Address::new(0x30000));
+    assert_eq!(devices[1].mmio_endpoint(), "sinic1.mmio");
+    assert_eq!(devices[1].mmio_route(), &route_id("sinic1.mmio"));
+    assert_eq!(devices[1].interrupt_source(), 0x1294);
+    plan.verify_result(outcome.result()).unwrap();
 }
 
 #[test]

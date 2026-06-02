@@ -38,8 +38,9 @@ use rem6_workload::{
     WorkloadParallelBatchScope, WorkloadParallelBatchTimelineRecord,
     WorkloadParallelBatchWorkerCount, WorkloadParallelBatchWorkerLaneRecord, WorkloadReplayPlan,
     WorkloadResolvedResources, WorkloadResult, WorkloadRouteFabric, WorkloadRouteHop,
-    WorkloadRouteId, WorkloadTopology, WorkloadWaitForBlockedNodeWindow,
-    WorkloadWaitForEdgeKindWindow, WorkloadWaitForTargetNodeWindow,
+    WorkloadRouteId, WorkloadSinicPciDeviceSummary, WorkloadTopology,
+    WorkloadWaitForBlockedNodeWindow, WorkloadWaitForEdgeKindWindow,
+    WorkloadWaitForTargetNodeWindow,
 };
 
 mod cache_response;
@@ -1063,7 +1064,13 @@ impl RiscvWorkloadReplay {
                 .with_stats_history_records(
                     controller.executor().stats().history_records().to_vec(),
                 )
-                .with_stats_snapshot(controller.executor().stats().snapshot(final_tick)),
+                .with_stats_snapshot(controller.executor().stats().snapshot(final_tick))
+                .with_sinic_pci_device_summaries(
+                    topology
+                        .sinic_pci_devices()
+                        .iter()
+                        .map(WorkloadSinicPciDeviceSummary::from_topology_device),
+                ),
             host_action_outcomes,
         ))
     }

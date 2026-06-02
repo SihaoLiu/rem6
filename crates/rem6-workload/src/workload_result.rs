@@ -1,10 +1,11 @@
 use rem6_kernel::Tick;
+use rem6_memory::Address;
 use rem6_stats::{StatHistoryRecord, StatSnapshot};
 
 use crate::{
     WorkloadError, WorkloadExecutionMode, WorkloadExecutionModeSwitch, WorkloadHostActionSummary,
-    WorkloadManifest, WorkloadManifestIdentity, WorkloadParallelExecutionSummary,
-    WorkloadStatsHistorySummary,
+    WorkloadManifest, WorkloadManifestIdentity, WorkloadParallelExecutionSummary, WorkloadRouteId,
+    WorkloadSinicPciDevice, WorkloadStatsHistorySummary,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -376,6 +377,71 @@ impl WorkloadExpectedCheckpointComponentSummary {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadSinicPciDeviceSummary {
+    nic: u32,
+    partition: u32,
+    pci_bus: u8,
+    pci_device: u8,
+    pci_function: u8,
+    bar_base: Address,
+    mmio_endpoint: String,
+    mmio_route: WorkloadRouteId,
+    interrupt_source: u32,
+}
+
+impl WorkloadSinicPciDeviceSummary {
+    pub fn from_topology_device(device: &WorkloadSinicPciDevice) -> Self {
+        Self {
+            nic: device.nic(),
+            partition: device.partition(),
+            pci_bus: device.pci_bus(),
+            pci_device: device.pci_device(),
+            pci_function: device.pci_function(),
+            bar_base: device.bar_base(),
+            mmio_endpoint: device.mmio_endpoint().to_string(),
+            mmio_route: device.mmio_route().clone(),
+            interrupt_source: device.interrupt_source(),
+        }
+    }
+
+    pub const fn nic(&self) -> u32 {
+        self.nic
+    }
+
+    pub const fn partition(&self) -> u32 {
+        self.partition
+    }
+
+    pub const fn pci_bus(&self) -> u8 {
+        self.pci_bus
+    }
+
+    pub const fn pci_device(&self) -> u8 {
+        self.pci_device
+    }
+
+    pub const fn pci_function(&self) -> u8 {
+        self.pci_function
+    }
+
+    pub const fn bar_base(&self) -> Address {
+        self.bar_base
+    }
+
+    pub fn mmio_endpoint(&self) -> &str {
+        &self.mmio_endpoint
+    }
+
+    pub fn mmio_route(&self) -> &WorkloadRouteId {
+        &self.mmio_route
+    }
+
+    pub const fn interrupt_source(&self) -> u32 {
+        self.interrupt_source
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkloadResult {
     manifest_identity: WorkloadManifestIdentity,
     start_tick: Tick,
@@ -390,6 +456,7 @@ pub struct WorkloadResult {
     checkpoint_manifest_summaries: Vec<WorkloadCheckpointManifestSummary>,
     restored_checkpoint_manifest_summaries: Vec<WorkloadCheckpointManifestSummary>,
     execution_mode_switches: Vec<WorkloadExecutionModeSwitch>,
+    sinic_pci_devices: Vec<WorkloadSinicPciDeviceSummary>,
 }
 
 impl WorkloadResult {
@@ -408,6 +475,7 @@ impl WorkloadResult {
             checkpoint_manifest_summaries: Vec::new(),
             restored_checkpoint_manifest_summaries: Vec::new(),
             execution_mode_switches: Vec::new(),
+            sinic_pci_devices: Vec::new(),
         }
     }
 
@@ -508,6 +576,16 @@ impl WorkloadResult {
         self
     }
 
+    pub fn with_sinic_pci_device_summaries(
+        mut self,
+        summaries: impl IntoIterator<Item = WorkloadSinicPciDeviceSummary>,
+    ) -> Self {
+        self.sinic_pci_devices.extend(summaries);
+        self.sinic_pci_devices
+            .sort_by_key(WorkloadSinicPciDeviceSummary::nic);
+        self
+    }
+
     pub fn manifest_identity(&self) -> WorkloadManifestIdentity {
         self.manifest_identity.clone()
     }
@@ -562,6 +640,10 @@ impl WorkloadResult {
 
     pub fn execution_mode_switches(&self) -> &[WorkloadExecutionModeSwitch] {
         &self.execution_mode_switches
+    }
+
+    pub fn sinic_pci_devices(&self) -> &[WorkloadSinicPciDeviceSummary] {
+        &self.sinic_pci_devices
     }
 
     pub fn verify_manifest(&self, manifest: &WorkloadManifest) -> Result<(), WorkloadError> {

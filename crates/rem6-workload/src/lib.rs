@@ -150,7 +150,7 @@ pub use workload_result::{
     WorkloadCheckpointChunkSummary, WorkloadCheckpointComponentSummary,
     WorkloadCheckpointManifestSummary, WorkloadExpectedCheckpointChunkSummary,
     WorkloadExpectedCheckpointComponentSummary, WorkloadExpectedCheckpointManifestSummary,
-    WorkloadResult,
+    WorkloadResult, WorkloadSinicPciDeviceSummary,
 };
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
