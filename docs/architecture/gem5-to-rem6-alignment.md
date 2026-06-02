@@ -1714,7 +1714,10 @@ Implementation evidence through 2026-06-02:
   interrupts, TX FIFO capacity and full watermark interrupts, peer-busy
   transmit backpressure without popping queued data, TX packet and low
   watermark interrupts, derived RX/TX done status words, and snapshot restore
-  are explicit records.
+  are explicit records. SINIC FIFO snapshots now encode registers, RX/TX packet
+  queues, descriptor state, DMA completion words, pending DMA plans, and partial
+  TX DMA buffers as stable checkpoint payloads, and `rem6-system` stages those
+  chunks through full-system host checkpoints before live restore.
 - `rem6-net` now has typed SINIC DMA copy state aligned with gem5 `rxKick` and
   `txKick`: RX copy plans derive guest address, packet offset, copy length,
   zero/delay-copy limiting, More completion status, RX DMA and empty

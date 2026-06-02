@@ -9,6 +9,12 @@ use crate::{
     SinicRxStatus,
 };
 
+const SINIC_FIFO_SNAPSHOT_VERSION: u32 = 1;
+const SINIC_QUEUE_KIND_RX: u8 = 1;
+const SINIC_QUEUE_KIND_TX: u8 = 2;
+const SINIC_DMA_DIRECTION_RX: u8 = 1;
+const SINIC_DMA_DIRECTION_TX: u8 = 2;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SinicQueueKind {
     Receive,
@@ -580,6 +586,11 @@ impl SinicFifoDevice {
         self.tx_dma_pending = snapshot.tx_dma_pending.clone();
         Ok(())
     }
+
+    pub fn restore_checkpoint_payload(&mut self, payload: &[u8]) -> Result<(), SinicError> {
+        let snapshot = SinicFifoDeviceSnapshot::decode_checkpoint_payload(payload)?;
+        self.restore(&snapshot)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -846,6 +857,116 @@ impl SinicFifoDeviceSnapshot {
     pub fn tx_packet_count(&self) -> usize {
         self.tx_fifo.packet_count()
     }
+
+    pub fn encode_checkpoint_payload(&self) -> Vec<u8> {
+        let register_payload = self.registers.encode_checkpoint_payload();
+        let mut payload = Vec::new();
+        write_u32(&mut payload, SINIC_FIFO_SNAPSHOT_VERSION);
+        write_bytes(&mut payload, &register_payload);
+        write_packet_queue(&mut payload, &self.rx_fifo);
+        write_packet_queue(&mut payload, &self.tx_fifo);
+        write_bool(&mut payload, self.rx_low);
+        write_u64(&mut payload, self.rx_data_descriptor.bits());
+        write_u64(&mut payload, self.tx_data_descriptor.bits());
+        write_u64(&mut payload, self.rx_dma_done.bits());
+        write_u64(&mut payload, self.tx_dma_done.bits());
+        write_u64(&mut payload, self.rx_dma_offset);
+        write_optional_dma_plan(&mut payload, self.rx_dma_pending.as_ref());
+        write_bytes(&mut payload, &self.tx_dma_buffer);
+        write_optional_dma_plan(&mut payload, self.tx_dma_pending.as_ref());
+        payload
+    }
+
+    pub fn decode_checkpoint_payload(payload: &[u8]) -> Result<Self, SinicError> {
+        let mut cursor = SinicFifoSnapshotCursor::new(payload);
+        let version = cursor.read_u32("version")?;
+        if version != SINIC_FIFO_SNAPSHOT_VERSION {
+            return Err(invalid_snapshot(format!(
+                "unsupported SINIC FIFO snapshot version {version}"
+            )));
+        }
+        let register_payload = cursor.read_bytes("registers")?;
+        let registers = SinicRegisterBlockSnapshot::decode_checkpoint_payload(register_payload)?;
+        let mut register_block = SinicRegisterBlock::new(SinicRegisterParams::default())?;
+        register_block.restore(&registers)?;
+        let rx_fifo = cursor.read_packet_queue("rx_fifo")?;
+        let tx_fifo = cursor.read_packet_queue("tx_fifo")?;
+        let rx_low = cursor.read_bool("rx_low")?;
+        let rx_data_descriptor =
+            SinicDataDescriptor::from_bits(cursor.read_u64("rx_data_descriptor")?);
+        let tx_data_descriptor =
+            SinicDataDescriptor::from_bits(cursor.read_u64("tx_data_descriptor")?);
+        let rx_dma_done = SinicDoneStatus::from_bits(cursor.read_u64("rx_dma_done")?);
+        let tx_dma_done = SinicDoneStatus::from_bits(cursor.read_u64("tx_dma_done")?);
+        let rx_dma_offset = cursor.read_u64("rx_dma_offset")?;
+        let rx_dma_pending = cursor.read_optional_dma_plan("rx_dma_pending")?;
+        let tx_dma_buffer = cursor.read_bytes("tx_dma_buffer")?.to_vec();
+        let tx_dma_pending = cursor.read_optional_dma_plan("tx_dma_pending")?;
+        cursor.finish()?;
+
+        if rx_fifo.kind != SinicQueueKind::Receive {
+            return Err(invalid_snapshot("rx_fifo has transmit queue kind"));
+        }
+        if tx_fifo.kind != SinicQueueKind::Transmit {
+            return Err(invalid_snapshot("tx_fifo has receive queue kind"));
+        }
+        if rx_fifo.capacity_bytes != register_block.rx_fifo_size() as u64 {
+            return Err(invalid_snapshot(format!(
+                "rx_fifo capacity {} does not match registers {}",
+                rx_fifo.capacity_bytes,
+                register_block.rx_fifo_size()
+            )));
+        }
+        if tx_fifo.capacity_bytes != register_block.tx_fifo_size() as u64 {
+            return Err(invalid_snapshot(format!(
+                "tx_fifo capacity {} does not match registers {}",
+                tx_fifo.capacity_bytes,
+                register_block.tx_fifo_size()
+            )));
+        }
+        if rx_dma_offset > rx_fifo.front().map_or(0, EthernetPacket::payload_len) {
+            return Err(invalid_snapshot(format!(
+                "rx_dma_offset {rx_dma_offset} exceeds receive packet length"
+            )));
+        }
+        validate_optional_dma_plan(
+            "rx_dma_pending",
+            rx_dma_pending.as_ref(),
+            SinicDmaDirection::Receive,
+        )?;
+        validate_optional_dma_plan(
+            "tx_dma_pending",
+            tx_dma_pending.as_ref(),
+            SinicDmaDirection::Transmit,
+        )?;
+        if let Some(plan) = &rx_dma_pending {
+            let available = rx_fifo
+                .front()
+                .map_or(0, EthernetPacket::payload_len)
+                .saturating_sub(plan.packet_offset);
+            if available < u64::from(plan.copy_len) {
+                return Err(invalid_snapshot(format!(
+                    "rx_dma_pending copy length {} exceeds available receive payload {available}",
+                    plan.copy_len
+                )));
+            }
+        }
+
+        Ok(Self {
+            registers,
+            rx_fifo,
+            tx_fifo,
+            rx_low,
+            rx_data_descriptor,
+            tx_data_descriptor,
+            rx_dma_done,
+            tx_dma_done,
+            rx_dma_offset,
+            rx_dma_pending,
+            tx_dma_buffer,
+            tx_dma_pending,
+        })
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -910,6 +1031,226 @@ impl SinicPacketQueue {
 
     fn available_bytes(&self) -> u64 {
         self.capacity_bytes.saturating_sub(self.occupied_bytes)
+    }
+}
+
+struct SinicFifoSnapshotCursor<'a> {
+    payload: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> SinicFifoSnapshotCursor<'a> {
+    const fn new(payload: &'a [u8]) -> Self {
+        Self { payload, offset: 0 }
+    }
+
+    fn read_u8(&mut self, field: &'static str) -> Result<u8, SinicError> {
+        if self.offset >= self.payload.len() {
+            return Err(invalid_snapshot(format!("missing {field}")));
+        }
+        let value = self.payload[self.offset];
+        self.offset += 1;
+        Ok(value)
+    }
+
+    fn read_u32(&mut self, field: &'static str) -> Result<u32, SinicError> {
+        Ok(u32::from_le_bytes(self.read_array::<4>(field)?))
+    }
+
+    fn read_u64(&mut self, field: &'static str) -> Result<u64, SinicError> {
+        Ok(u64::from_le_bytes(self.read_array::<8>(field)?))
+    }
+
+    fn read_bool(&mut self, field: &'static str) -> Result<bool, SinicError> {
+        match self.read_u8(field)? {
+            0 => Ok(false),
+            1 => Ok(true),
+            value => Err(invalid_snapshot(format!(
+                "{field} boolean has invalid value {value}"
+            ))),
+        }
+    }
+
+    fn read_bytes(&mut self, field: &'static str) -> Result<&'a [u8], SinicError> {
+        let len = self.read_u32(field)? as usize;
+        let end = self
+            .offset
+            .checked_add(len)
+            .ok_or_else(|| invalid_snapshot(format!("{field} offset overflow")))?;
+        let bytes = self
+            .payload
+            .get(self.offset..end)
+            .ok_or_else(|| invalid_snapshot(format!("truncated {field}")))?;
+        self.offset = end;
+        Ok(bytes)
+    }
+
+    fn read_packet_queue(&mut self, field: &'static str) -> Result<SinicPacketQueue, SinicError> {
+        let kind = read_queue_kind(self.read_u8(field)?)?;
+        let capacity_bytes = self.read_u64(field)?;
+        let packet_count = self.read_u32(field)?;
+        let mut queue = SinicPacketQueue::new(kind, capacity_bytes);
+        for _ in 0..packet_count {
+            let wire_length_bytes = self.read_u64(field)?;
+            let payload = self.read_bytes(field)?.to_vec();
+            let packet = EthernetPacket::new(payload)
+                .and_then(|packet| packet.with_wire_length_bytes(wire_length_bytes))
+                .map_err(|source| invalid_snapshot(source.to_string()))?;
+            queue.push(packet)?;
+        }
+        Ok(queue)
+    }
+
+    fn read_optional_dma_plan(
+        &mut self,
+        field: &'static str,
+    ) -> Result<Option<SinicDmaCopyPlan>, SinicError> {
+        if !self.read_bool(field)? {
+            return Ok(None);
+        }
+        let direction = read_dma_direction(self.read_u8(field)?)?;
+        let descriptor = SinicDataDescriptor::from_bits(self.read_u64(field)?);
+        let copy_len = self.read_u32(field)?;
+        let packet_offset = self.read_u64(field)?;
+        let zero_limited = self.read_bool(field)?;
+        Ok(Some(SinicDmaCopyPlan::new(
+            direction,
+            descriptor,
+            copy_len,
+            packet_offset,
+            zero_limited,
+        )))
+    }
+
+    fn finish(&self) -> Result<(), SinicError> {
+        if self.offset == self.payload.len() {
+            return Ok(());
+        }
+        Err(invalid_snapshot(format!(
+            "payload has {} trailing bytes",
+            self.payload.len() - self.offset
+        )))
+    }
+
+    fn read_array<const N: usize>(&mut self, field: &'static str) -> Result<[u8; N], SinicError> {
+        let end = self
+            .offset
+            .checked_add(N)
+            .ok_or_else(|| invalid_snapshot(format!("{field} offset overflow")))?;
+        let bytes = self
+            .payload
+            .get(self.offset..end)
+            .ok_or_else(|| invalid_snapshot(format!("truncated {field}")))?;
+        self.offset = end;
+        Ok(bytes.try_into().expect("slice length checked"))
+    }
+}
+
+fn write_packet_queue(payload: &mut Vec<u8>, queue: &SinicPacketQueue) {
+    write_u8(payload, queue_kind_code(queue.kind));
+    write_u64(payload, queue.capacity_bytes);
+    write_u32(
+        payload,
+        u32::try_from(queue.packets.len()).expect("SINIC packet count fits in u32"),
+    );
+    for packet in &queue.packets {
+        write_u64(payload, packet.wire_length_bytes());
+        write_bytes(payload, packet.payload());
+    }
+}
+
+fn write_optional_dma_plan(payload: &mut Vec<u8>, plan: Option<&SinicDmaCopyPlan>) {
+    write_bool(payload, plan.is_some());
+    if let Some(plan) = plan {
+        write_u8(payload, dma_direction_code(plan.direction));
+        write_u64(payload, plan.descriptor.bits());
+        write_u32(payload, plan.copy_len);
+        write_u64(payload, plan.packet_offset);
+        write_bool(payload, plan.zero_limited);
+    }
+}
+
+fn validate_optional_dma_plan(
+    field: &'static str,
+    plan: Option<&SinicDmaCopyPlan>,
+    direction: SinicDmaDirection,
+) -> Result<(), SinicError> {
+    let Some(plan) = plan else {
+        return Ok(());
+    };
+    if plan.direction != direction {
+        return Err(invalid_snapshot(format!(
+            "{field} has {} direction",
+            plan.direction
+        )));
+    }
+    if plan.copy_len == 0 {
+        return Err(invalid_snapshot(format!("{field} has zero copy length")));
+    }
+    Ok(())
+}
+
+fn write_bytes(payload: &mut Vec<u8>, bytes: &[u8]) {
+    write_u32(
+        payload,
+        u32::try_from(bytes.len()).expect("SINIC snapshot byte slice length fits in u32"),
+    );
+    payload.extend_from_slice(bytes);
+}
+
+fn write_u8(payload: &mut Vec<u8>, value: u8) {
+    payload.push(value);
+}
+
+fn write_u32(payload: &mut Vec<u8>, value: u32) {
+    payload.extend_from_slice(&value.to_le_bytes());
+}
+
+fn write_u64(payload: &mut Vec<u8>, value: u64) {
+    payload.extend_from_slice(&value.to_le_bytes());
+}
+
+fn write_bool(payload: &mut Vec<u8>, value: bool) {
+    payload.push(u8::from(value));
+}
+
+fn read_queue_kind(code: u8) -> Result<SinicQueueKind, SinicError> {
+    match code {
+        SINIC_QUEUE_KIND_RX => Ok(SinicQueueKind::Receive),
+        SINIC_QUEUE_KIND_TX => Ok(SinicQueueKind::Transmit),
+        value => Err(invalid_snapshot(format!(
+            "SINIC queue kind has invalid value {value}"
+        ))),
+    }
+}
+
+fn queue_kind_code(kind: SinicQueueKind) -> u8 {
+    match kind {
+        SinicQueueKind::Receive => SINIC_QUEUE_KIND_RX,
+        SinicQueueKind::Transmit => SINIC_QUEUE_KIND_TX,
+    }
+}
+
+fn read_dma_direction(code: u8) -> Result<SinicDmaDirection, SinicError> {
+    match code {
+        SINIC_DMA_DIRECTION_RX => Ok(SinicDmaDirection::Receive),
+        SINIC_DMA_DIRECTION_TX => Ok(SinicDmaDirection::Transmit),
+        value => Err(invalid_snapshot(format!(
+            "SINIC DMA direction has invalid value {value}"
+        ))),
+    }
+}
+
+fn dma_direction_code(direction: SinicDmaDirection) -> u8 {
+    match direction {
+        SinicDmaDirection::Receive => SINIC_DMA_DIRECTION_RX,
+        SinicDmaDirection::Transmit => SINIC_DMA_DIRECTION_TX,
+    }
+}
+
+fn invalid_snapshot(reason: impl Into<String>) -> SinicError {
+    SinicError::InvalidSnapshotPayload {
+        reason: reason.into(),
     }
 }
 

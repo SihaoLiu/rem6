@@ -208,6 +208,93 @@ fn sinic_register_block_checkpoint_payload_rejects_bad_payload_without_mutation(
 }
 
 #[test]
+fn sinic_fifo_device_checkpoint_payload_round_trips_snapshot() {
+    let params = SinicRegisterParams::default()
+        .with_zero_copy(true)
+        .with_fifo_limits(48, 48, 4, 4, 16, 16)
+        .with_interrupt_mask(
+            SinicInterrupts::RX_PACKET
+                | SinicInterrupts::RX_DMA
+                | SinicInterrupts::TX_DMA
+                | SinicInterrupts::TX_FULL,
+        );
+    let mut device = SinicFifoDevice::new(params).unwrap();
+    device
+        .registers_mut()
+        .change_config(
+            SinicRegisterBlock::CONFIG_INT_EN
+                | SinicRegisterBlock::CONFIG_RX_EN
+                | SinicRegisterBlock::CONFIG_TX_EN
+                | SinicRegisterBlock::CONFIG_ZERO_COPY,
+            1,
+        )
+        .unwrap();
+    device
+        .receive_from_wire(
+            packet(&[1, 2, 3, 4, 5, 6, 7, 8])
+                .with_wire_length_bytes(12)
+                .unwrap(),
+            2,
+            3,
+        )
+        .unwrap();
+    device
+        .begin_rx_dma_copy(SinicDataDescriptor::new(0x1000, 4).unwrap())
+        .unwrap()
+        .expect("pending receive DMA copy");
+    device
+        .complete_rx_dma_copy(3, 4)
+        .expect("complete first receive DMA copy");
+    device
+        .begin_rx_dma_copy(SinicDataDescriptor::new(0x2000, 4).unwrap())
+        .unwrap()
+        .expect("pending second receive DMA copy");
+    device
+        .begin_tx_dma_copy(SinicDataDescriptor::new(0x3000, 3).unwrap().with_more(true))
+        .unwrap();
+    device.complete_tx_dma_copy(&[9, 8, 7], 4, 5).unwrap();
+    device
+        .begin_tx_dma_copy(SinicDataDescriptor::new(0x4000, 2).unwrap())
+        .unwrap();
+
+    let snapshot = device.snapshot();
+    let payload = snapshot.encode_checkpoint_payload();
+    let decoded = rem6_net::SinicFifoDeviceSnapshot::decode_checkpoint_payload(&payload).unwrap();
+    assert_eq!(decoded, snapshot);
+
+    let mut restored = SinicFifoDevice::new(SinicRegisterParams::default()).unwrap();
+    restored.restore_checkpoint_payload(&payload).unwrap();
+    assert_eq!(restored.snapshot(), snapshot);
+}
+
+#[test]
+fn sinic_fifo_device_checkpoint_payload_rejects_bad_payload_without_mutation() {
+    let params = SinicRegisterParams::default()
+        .with_fifo_limits(16, 16, 4, 4, 8, 8)
+        .with_interrupt_mask(SinicInterrupts::RX_PACKET);
+    let mut device = SinicFifoDevice::new(params).unwrap();
+    device
+        .registers_mut()
+        .change_config(
+            SinicRegisterBlock::CONFIG_INT_EN | SinicRegisterBlock::CONFIG_RX_EN,
+            1,
+        )
+        .unwrap();
+    device
+        .receive_from_wire(packet(&[1, 2, 3, 4]), 2, 3)
+        .unwrap();
+    let before = device.snapshot();
+    let mut payload = before.encode_checkpoint_payload();
+    payload.extend_from_slice(&[0xaa, 0xbb]);
+
+    assert!(matches!(
+        device.restore_checkpoint_payload(&payload),
+        Err(SinicError::InvalidSnapshotPayload { .. })
+    ));
+    assert_eq!(device.snapshot(), before);
+}
+
+#[test]
 fn sinic_interrupts_are_masked_delayed_and_cleared_as_typed_events() {
     let mut regs = SinicRegisterBlock::new(
         SinicRegisterParams::default().with_interrupt_mask(SinicInterrupts::SOFT),

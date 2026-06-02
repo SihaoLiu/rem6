@@ -14,13 +14,13 @@ use crate::{
     IdeControllerCheckpointPort, InterruptControllerCheckpointBank, MemoryStoreCheckpointBank,
     MsiBankCheckpointBank, PciHostCheckpointBank, PciLegacyInterruptRouterCheckpointBank,
     Pl011UartCheckpointBank, Pl031CheckpointBank, PlicCheckpointBank, RiscvCoreCheckpointBank,
-    RtcCheckpointBank, SchedulerCheckpointBank, SinicRegisterCheckpointBank, Sp804CheckpointBank,
-    Sp805CheckpointBank, StopRequest, StorageImageCheckpointBank, StorageImageCheckpointPort,
-    SystemError, TimerCheckpointBank, UartCheckpointBank, VirtioPciCommonCheckpointBank,
-    VirtioPciCommonCheckpointPort, VirtioPciDeviceConfigCheckpointBank,
-    VirtioPciDeviceConfigCheckpointPort, VirtioPciIsrCheckpointBank, VirtioPciIsrCheckpointPort,
-    VirtioPciNotifyCheckpointBank, VirtioPciNotifyCheckpointPort, VirtioSplitQueueCheckpointBank,
-    VirtioSplitQueueCheckpointPort,
+    RtcCheckpointBank, SchedulerCheckpointBank, SinicFifoCheckpointBank,
+    SinicRegisterCheckpointBank, Sp804CheckpointBank, Sp805CheckpointBank, StopRequest,
+    StorageImageCheckpointBank, StorageImageCheckpointPort, SystemError, TimerCheckpointBank,
+    UartCheckpointBank, VirtioPciCommonCheckpointBank, VirtioPciCommonCheckpointPort,
+    VirtioPciDeviceConfigCheckpointBank, VirtioPciDeviceConfigCheckpointPort,
+    VirtioPciIsrCheckpointBank, VirtioPciIsrCheckpointPort, VirtioPciNotifyCheckpointBank,
+    VirtioPciNotifyCheckpointPort, VirtioSplitQueueCheckpointBank, VirtioSplitQueueCheckpointPort,
 };
 
 pub use execution_mode_checkpoint::ExecutionModeCheckpointError;
@@ -88,6 +88,7 @@ pub struct SystemActionExecutor {
     storage_image_checkpoints: Option<StorageImageCheckpointBank>,
     ide_controller_checkpoints: Option<IdeControllerCheckpointBank>,
     sinic_register_checkpoints: Option<SinicRegisterCheckpointBank>,
+    sinic_fifo_checkpoints: Option<SinicFifoCheckpointBank>,
     dram_memory_checkpoints: Option<DramMemoryCheckpointBank>,
     interrupt_controller_checkpoints: Option<InterruptControllerCheckpointBank>,
     clint_checkpoints: Option<ClintCheckpointBank>,
@@ -132,6 +133,7 @@ impl SystemActionExecutor {
             storage_image_checkpoints: None,
             ide_controller_checkpoints: None,
             sinic_register_checkpoints: None,
+            sinic_fifo_checkpoints: None,
             dram_memory_checkpoints: None,
             interrupt_controller_checkpoints: None,
             clint_checkpoints: None,
@@ -387,6 +389,15 @@ impl SystemActionExecutor {
     ) -> Result<(), CheckpointError> {
         sinic_register_checkpoints.register_all(&mut self.checkpoints)?;
         self.sinic_register_checkpoints = Some(sinic_register_checkpoints);
+        Ok(())
+    }
+
+    pub fn attach_sinic_fifo_checkpoint_bank(
+        &mut self,
+        sinic_fifo_checkpoints: SinicFifoCheckpointBank,
+    ) -> Result<(), CheckpointError> {
+        sinic_fifo_checkpoints.register_all(&mut self.checkpoints)?;
+        self.sinic_fifo_checkpoints = Some(sinic_fifo_checkpoints);
         Ok(())
     }
 
@@ -751,6 +762,10 @@ impl SystemActionExecutor {
         self.sinic_register_checkpoints.as_ref()
     }
 
+    pub const fn sinic_fifo_checkpoint_bank(&self) -> Option<&SinicFifoCheckpointBank> {
+        self.sinic_fifo_checkpoints.as_ref()
+    }
+
     pub const fn dram_memory_checkpoint_bank(&self) -> Option<&DramMemoryCheckpointBank> {
         self.dram_memory_checkpoints.as_ref()
     }
@@ -918,6 +933,11 @@ impl SystemActionExecutor {
                 .validate_restore_from(checkpoints)
                 .map_err(SystemError::SinicRegisterCheckpoint)?;
         }
+        if let Some(sinic_fifo_checkpoints) = &self.sinic_fifo_checkpoints {
+            sinic_fifo_checkpoints
+                .validate_restore_from(checkpoints)
+                .map_err(SystemError::SinicFifoCheckpoint)?;
+        }
         if let Some(dram_memory_checkpoints) = &self.dram_memory_checkpoints {
             dram_memory_checkpoints
                 .validate_restore_from(checkpoints)
@@ -1070,6 +1090,11 @@ impl SystemActionExecutor {
             sinic_register_checkpoints
                 .restore_all_from(&self.checkpoints)
                 .map_err(SystemError::SinicRegisterCheckpoint)?;
+        }
+        if let Some(sinic_fifo_checkpoints) = &self.sinic_fifo_checkpoints {
+            sinic_fifo_checkpoints
+                .restore_all_from(&self.checkpoints)
+                .map_err(SystemError::SinicFifoCheckpoint)?;
         }
         if let Some(dram_memory_checkpoints) = &self.dram_memory_checkpoints {
             dram_memory_checkpoints
@@ -1271,6 +1296,11 @@ impl SystemActionExecutor {
                 }
                 if let Some(sinic_register_checkpoints) = &self.sinic_register_checkpoints {
                     sinic_register_checkpoints
+                        .capture_all_into(&mut staged_checkpoints)
+                        .map_err(SystemError::Checkpoint)?;
+                }
+                if let Some(sinic_fifo_checkpoints) = &self.sinic_fifo_checkpoints {
+                    sinic_fifo_checkpoints
                         .capture_all_into(&mut staged_checkpoints)
                         .map_err(SystemError::Checkpoint)?;
                 }
