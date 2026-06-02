@@ -2963,8 +2963,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   RISC-V ISA tests cover Sv39 virtual-address canonicality, VPN and offset
   decoding, PTE-address calculation, PTE flag and PPN decoding, typed page-table
   walk sequencing, reserved permission and non-leaf attribute rejection,
-  non-leaf detection, leaf access permissions, superpage physical-address
-  composition and alignment-before-access fault precedence, and accessed/dirty
+  non-leaf detection, leaf access permissions, context-aware MXR/SUM/user-page
+  privilege checks, superpage physical-address composition and
+  alignment-before-access fault precedence, and accessed/dirty
   fault classification. RISC-V frontend tests also cover Sv39 PTE read request
   sequencing, PTE response decoding, and the CPU-layer memory walker driver from
   a ready frontend request through direct responses or chained

@@ -1,5 +1,6 @@
 use rem6_isa_riscv::{
-    walk_sv39_page_table, RiscvSv39AccessKind, RiscvSv39PageFault, RiscvSv39PageTableLevel,
+    walk_sv39_page_table, walk_sv39_page_table_with_context, RiscvPrivilegeMode,
+    RiscvSv39AccessContext, RiscvSv39AccessKind, RiscvSv39PageFault, RiscvSv39PageTableLevel,
     RiscvSv39Pte, RiscvSv39VirtualAddress, RiscvSv39WalkAdvance, RiscvSv39WalkState,
 };
 
@@ -135,6 +136,85 @@ fn sv39_pte_checks_leaf_access_permissions_and_ad_bits() {
     assert_eq!(
         dirty_clear.validate_leaf_access(RiscvSv39AccessKind::Atomic),
         Err(RiscvSv39PageFault::DirtyBitClear)
+    );
+}
+
+#[test]
+fn sv39_pte_access_context_applies_mxr_to_execute_only_loads() {
+    let execute_only = RiscvSv39Pte::new((0x24_u64 << 10) | V | X | A);
+    let supervisor = RiscvSv39AccessContext::new(RiscvPrivilegeMode::Supervisor);
+
+    assert_eq!(
+        execute_only.validate_leaf_access_with_context(RiscvSv39AccessKind::Load, supervisor),
+        Err(RiscvSv39PageFault::PermissionDenied {
+            access: RiscvSv39AccessKind::Load,
+        })
+    );
+    assert_eq!(
+        execute_only.validate_leaf_access_with_context(
+            RiscvSv39AccessKind::Load,
+            supervisor.with_mxr(true),
+        ),
+        Ok(())
+    );
+    assert_eq!(
+        execute_only.validate_leaf_access_with_context(
+            RiscvSv39AccessKind::Store,
+            supervisor.with_mxr(true),
+        ),
+        Err(RiscvSv39PageFault::PermissionDenied {
+            access: RiscvSv39AccessKind::Store,
+        })
+    );
+}
+
+#[test]
+fn sv39_pte_access_context_checks_privilege_against_user_pages() {
+    let user_page = RiscvSv39Pte::new((0x25_u64 << 10) | V | R | W | X | U | A | D);
+    let kernel_page = RiscvSv39Pte::new((0x26_u64 << 10) | V | R | W | X | A | D);
+    let supervisor = RiscvSv39AccessContext::new(RiscvPrivilegeMode::Supervisor);
+    let user = RiscvSv39AccessContext::new(RiscvPrivilegeMode::User);
+
+    assert_eq!(
+        user_page.validate_leaf_access_with_context(
+            RiscvSv39AccessKind::InstructionFetch,
+            supervisor.with_sum(true),
+        ),
+        Err(RiscvSv39PageFault::PrivilegeDenied {
+            access: RiscvSv39AccessKind::InstructionFetch,
+            privilege: RiscvPrivilegeMode::Supervisor,
+            user_page: true,
+        })
+    );
+    assert_eq!(
+        user_page.validate_leaf_access_with_context(RiscvSv39AccessKind::Load, supervisor),
+        Err(RiscvSv39PageFault::PrivilegeDenied {
+            access: RiscvSv39AccessKind::Load,
+            privilege: RiscvPrivilegeMode::Supervisor,
+            user_page: true,
+        })
+    );
+    assert_eq!(
+        user_page.validate_leaf_access_with_context(
+            RiscvSv39AccessKind::Load,
+            supervisor.with_sum(true),
+        ),
+        Ok(())
+    );
+    assert_eq!(
+        user_page.validate_leaf_access_with_context(
+            RiscvSv39AccessKind::Store,
+            supervisor.with_sum(true),
+        ),
+        Ok(())
+    );
+    assert_eq!(
+        kernel_page.validate_leaf_access_with_context(RiscvSv39AccessKind::Load, user),
+        Err(RiscvSv39PageFault::PrivilegeDenied {
+            access: RiscvSv39AccessKind::Load,
+            privilege: RiscvPrivilegeMode::User,
+            user_page: false,
+        })
     );
 }
 
@@ -354,6 +434,54 @@ fn sv39_page_table_walk_follows_pointer_entries_to_level_zero_leaf() {
         &[level2_pte_address, level1_pte_address, level0_pte_address]
     );
     assert_eq!(walk.leaf_pte().physical_page_number(), leaf_ppn);
+}
+
+#[test]
+fn sv39_page_table_walk_with_context_applies_mxr_to_leaf_access() {
+    let address = RiscvSv39VirtualAddress::new(
+        (0x012_u64 << 30) | (0x034_u64 << 21) | (0x056_u64 << 12) | 0x789,
+    )
+    .unwrap();
+    let root_ppn = 0x140;
+    let level1_ppn = 0x240;
+    let level0_ppn = 0x340;
+    let leaf_ppn = 0x55678;
+    let level2_pte_address = (root_ppn << 12) + (0x012 * 8);
+    let level1_pte_address = (level1_ppn << 12) + (0x034 * 8);
+    let level0_pte_address = (level0_ppn << 12) + (0x056 * 8);
+    let read_pte = |pte_address| {
+        Ok(match pte_address {
+            address if address == level2_pte_address => RiscvSv39Pte::new((level1_ppn << 10) | V),
+            address if address == level1_pte_address => RiscvSv39Pte::new((level0_ppn << 10) | V),
+            address if address == level0_pte_address => {
+                RiscvSv39Pte::new((leaf_ppn << 10) | V | X | A)
+            }
+            _ => RiscvSv39Pte::new(0),
+        })
+    };
+
+    assert_eq!(
+        walk_sv39_page_table(root_ppn, address, RiscvSv39AccessKind::Load, read_pte,).unwrap_err(),
+        RiscvSv39PageFault::PermissionDenied {
+            access: RiscvSv39AccessKind::Load,
+        }
+    );
+
+    let walk = walk_sv39_page_table_with_context(
+        root_ppn,
+        address,
+        RiscvSv39AccessKind::Load,
+        RiscvSv39AccessContext::new(RiscvPrivilegeMode::Supervisor).with_mxr(true),
+        read_pte,
+    )
+    .unwrap();
+
+    assert_eq!(walk.physical_address(), (leaf_ppn << 12) | 0x789);
+    assert_eq!(walk.leaf_level(), RiscvSv39PageTableLevel::Level0);
+    assert_eq!(
+        walk.pte_addresses(),
+        &[level2_pte_address, level1_pte_address, level0_pte_address]
+    );
 }
 
 #[test]

@@ -1,6 +1,8 @@
 use std::error::Error;
 use std::fmt;
 
+use crate::pmp::RiscvPrivilegeMode;
+
 const PTE_VALID_BIT: u64 = 1 << 0;
 const PTE_READ_BIT: u64 = 1 << 1;
 const PTE_WRITE_BIT: u64 = 1 << 2;
@@ -34,6 +36,45 @@ pub enum RiscvSv39AccessKind {
     Load,
     Store,
     Atomic,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct RiscvSv39AccessContext {
+    privilege: RiscvPrivilegeMode,
+    mxr: bool,
+    sum: bool,
+}
+
+impl RiscvSv39AccessContext {
+    pub const fn new(privilege: RiscvPrivilegeMode) -> Self {
+        Self {
+            privilege,
+            mxr: false,
+            sum: false,
+        }
+    }
+
+    pub const fn with_mxr(mut self, mxr: bool) -> Self {
+        self.mxr = mxr;
+        self
+    }
+
+    pub const fn with_sum(mut self, sum: bool) -> Self {
+        self.sum = sum;
+        self
+    }
+
+    pub const fn privilege(self) -> RiscvPrivilegeMode {
+        self.privilege
+    }
+
+    pub const fn mxr(self) -> bool {
+        self.mxr
+    }
+
+    pub const fn sum(self) -> bool {
+        self.sum
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -205,6 +246,17 @@ impl RiscvSv39Pte {
         self,
         access: RiscvSv39AccessKind,
     ) -> Result<(), RiscvSv39PageFault> {
+        self.validate_leaf_access_with_context(
+            access,
+            RiscvSv39AccessContext::new(RiscvPrivilegeMode::Machine),
+        )
+    }
+
+    pub const fn validate_leaf_access_with_context(
+        self,
+        access: RiscvSv39AccessKind,
+        context: RiscvSv39AccessContext,
+    ) -> Result<(), RiscvSv39PageFault> {
         match self.validate() {
             Ok(()) => {}
             Err(error) => return Err(error),
@@ -214,8 +266,16 @@ impl RiscvSv39Pte {
             return Err(RiscvSv39PageFault::NonLeaf);
         }
 
-        if !self.permits(access) {
+        if !self.permits_with_context(access, context) {
             return Err(RiscvSv39PageFault::PermissionDenied { access });
+        }
+
+        if !self.permits_privilege(access, context) {
+            return Err(RiscvSv39PageFault::PrivilegeDenied {
+                access,
+                privilege: context.privilege(),
+                user_page: self.user(),
+            });
         }
 
         if !self.accessed() {
@@ -235,6 +295,21 @@ impl RiscvSv39Pte {
         level: RiscvSv39PageTableLevel,
         access: RiscvSv39AccessKind,
     ) -> Result<u64, RiscvSv39PageFault> {
+        self.leaf_physical_address_with_context(
+            virtual_address,
+            level,
+            access,
+            RiscvSv39AccessContext::new(RiscvPrivilegeMode::Machine),
+        )
+    }
+
+    pub const fn leaf_physical_address_with_context(
+        self,
+        virtual_address: RiscvSv39VirtualAddress,
+        level: RiscvSv39PageTableLevel,
+        access: RiscvSv39AccessKind,
+        context: RiscvSv39AccessContext,
+    ) -> Result<u64, RiscvSv39PageFault> {
         match self.validate() {
             Ok(()) => {}
             Err(error) => return Err(error),
@@ -251,8 +326,16 @@ impl RiscvSv39Pte {
             });
         }
 
-        if !self.permits(access) {
+        if !self.permits_with_context(access, context) {
             return Err(RiscvSv39PageFault::PermissionDenied { access });
+        }
+
+        if !self.permits_privilege(access, context) {
+            return Err(RiscvSv39PageFault::PrivilegeDenied {
+                access,
+                privilege: context.privilege(),
+                user_page: self.user(),
+            });
         }
 
         if !self.accessed() {
@@ -282,11 +365,30 @@ impl RiscvSv39Pte {
         })
     }
 
-    const fn permits(self, access: RiscvSv39AccessKind) -> bool {
+    const fn permits_with_context(
+        self,
+        access: RiscvSv39AccessKind,
+        context: RiscvSv39AccessContext,
+    ) -> bool {
         match access {
             RiscvSv39AccessKind::InstructionFetch => self.executable(),
-            RiscvSv39AccessKind::Load => self.readable(),
+            RiscvSv39AccessKind::Load => self.readable() || (context.mxr() && self.executable()),
             RiscvSv39AccessKind::Store | RiscvSv39AccessKind::Atomic => self.writable(),
+        }
+    }
+
+    const fn permits_privilege(
+        self,
+        access: RiscvSv39AccessKind,
+        context: RiscvSv39AccessContext,
+    ) -> bool {
+        match context.privilege() {
+            RiscvPrivilegeMode::User => self.user(),
+            RiscvPrivilegeMode::Supervisor => {
+                !self.user()
+                    || (context.sum() && !matches!(access, RiscvSv39AccessKind::InstructionFetch))
+            }
+            RiscvPrivilegeMode::Machine => true,
         }
     }
 
@@ -346,6 +448,7 @@ impl RiscvSv39WalkResult {
 pub struct RiscvSv39WalkState {
     virtual_address: RiscvSv39VirtualAddress,
     access: RiscvSv39AccessKind,
+    context: RiscvSv39AccessContext,
     table_ppn: u64,
     pending_level: RiscvSv39PageTableLevel,
     pending_pte_address: u64,
@@ -364,9 +467,24 @@ impl RiscvSv39WalkState {
         virtual_address: RiscvSv39VirtualAddress,
         access: RiscvSv39AccessKind,
     ) -> Result<Self, RiscvSv39PageFault> {
+        Self::new_with_context(
+            root_table_ppn,
+            virtual_address,
+            access,
+            RiscvSv39AccessContext::new(RiscvPrivilegeMode::Machine),
+        )
+    }
+
+    pub fn new_with_context(
+        root_table_ppn: u64,
+        virtual_address: RiscvSv39VirtualAddress,
+        access: RiscvSv39AccessKind,
+        context: RiscvSv39AccessContext,
+    ) -> Result<Self, RiscvSv39PageFault> {
         Self::from_table(
             virtual_address,
             access,
+            context,
             root_table_ppn,
             RiscvSv39PageTableLevel::Level2,
             Vec::with_capacity(3),
@@ -376,6 +494,7 @@ impl RiscvSv39WalkState {
     fn from_table(
         virtual_address: RiscvSv39VirtualAddress,
         access: RiscvSv39AccessKind,
+        context: RiscvSv39AccessContext,
         table_ppn: u64,
         pending_level: RiscvSv39PageTableLevel,
         mut pte_addresses: Vec<u64>,
@@ -386,6 +505,7 @@ impl RiscvSv39WalkState {
         Ok(Self {
             virtual_address,
             access,
+            context,
             table_ppn,
             pending_level,
             pending_pte_address,
@@ -399,6 +519,10 @@ impl RiscvSv39WalkState {
 
     pub const fn access(&self) -> RiscvSv39AccessKind {
         self.access
+    }
+
+    pub const fn context(&self) -> RiscvSv39AccessContext {
+        self.context
     }
 
     pub const fn table_ppn(&self) -> u64 {
@@ -421,8 +545,12 @@ impl RiscvSv39WalkState {
         pte.validate()?;
 
         if pte.is_leaf() {
-            let physical_address =
-                pte.leaf_physical_address(self.virtual_address, self.pending_level, self.access)?;
+            let physical_address = pte.leaf_physical_address_with_context(
+                self.virtual_address,
+                self.pending_level,
+                self.access,
+                self.context,
+            )?;
             return Ok(RiscvSv39WalkAdvance::Complete(RiscvSv39WalkResult::new(
                 physical_address,
                 self.pending_level,
@@ -437,6 +565,7 @@ impl RiscvSv39WalkState {
         Self::from_table(
             self.virtual_address,
             self.access,
+            self.context,
             pte.physical_page_number(),
             next_level,
             self.pte_addresses,
@@ -449,12 +578,32 @@ pub fn walk_sv39_page_table<F>(
     root_table_ppn: u64,
     virtual_address: RiscvSv39VirtualAddress,
     access: RiscvSv39AccessKind,
+    read_pte: F,
+) -> Result<RiscvSv39WalkResult, RiscvSv39PageFault>
+where
+    F: FnMut(u64) -> Result<RiscvSv39Pte, RiscvSv39PageFault>,
+{
+    walk_sv39_page_table_with_context(
+        root_table_ppn,
+        virtual_address,
+        access,
+        RiscvSv39AccessContext::new(RiscvPrivilegeMode::Machine),
+        read_pte,
+    )
+}
+
+pub fn walk_sv39_page_table_with_context<F>(
+    root_table_ppn: u64,
+    virtual_address: RiscvSv39VirtualAddress,
+    access: RiscvSv39AccessKind,
+    context: RiscvSv39AccessContext,
     mut read_pte: F,
 ) -> Result<RiscvSv39WalkResult, RiscvSv39PageFault>
 where
     F: FnMut(u64) -> Result<RiscvSv39Pte, RiscvSv39PageFault>,
 {
-    let mut state = RiscvSv39WalkState::new(root_table_ppn, virtual_address, access)?;
+    let mut state =
+        RiscvSv39WalkState::new_with_context(root_table_ppn, virtual_address, access, context)?;
     loop {
         let pte = read_pte(state.pending_pte_address())?;
         match state.advance(pte)? {
@@ -492,6 +641,11 @@ pub enum RiscvSv39PageFault {
     PermissionDenied {
         access: RiscvSv39AccessKind,
     },
+    PrivilegeDenied {
+        access: RiscvSv39AccessKind,
+        privilege: RiscvPrivilegeMode,
+        user_page: bool,
+    },
     AccessedBitClear,
     DirtyBitClear,
     MisalignedSuperpage {
@@ -527,6 +681,14 @@ impl fmt::Display for RiscvSv39PageFault {
             Self::PermissionDenied { access } => {
                 write!(formatter, "RISC-V Sv39 PTE denied {access:?} access")
             }
+            Self::PrivilegeDenied {
+                access,
+                privilege,
+                user_page,
+            } => write!(
+                formatter,
+                "RISC-V Sv39 PTE denied {access:?} access for {privilege:?} privilege on user_page={user_page}"
+            ),
             Self::AccessedBitClear => write!(formatter, "RISC-V Sv39 PTE accessed bit is clear"),
             Self::DirtyBitClear => write!(formatter, "RISC-V Sv39 PTE dirty bit is clear"),
             Self::MisalignedSuperpage { level, ppn } => write!(
