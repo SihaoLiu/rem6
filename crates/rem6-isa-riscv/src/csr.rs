@@ -113,6 +113,42 @@ impl RiscvTranslationCsr {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct RiscvStatusWord {
+    bits: u64,
+}
+
+impl RiscvStatusWord {
+    const SUM_BIT: u32 = 18;
+    const MXR_BIT: u32 = 19;
+
+    pub const fn new(bits: u64) -> Self {
+        Self { bits }
+    }
+
+    pub const fn bits(self) -> u64 {
+        self.bits
+    }
+
+    pub const fn sum(self) -> bool {
+        status_bit(self.bits, Self::SUM_BIT)
+    }
+
+    pub const fn with_sum(mut self, enabled: bool) -> Self {
+        self.bits = set_status_bit(self.bits, Self::SUM_BIT, enabled);
+        self
+    }
+
+    pub const fn mxr(self) -> bool {
+        status_bit(self.bits, Self::MXR_BIT)
+    }
+
+    pub const fn with_mxr(mut self, enabled: bool) -> Self {
+        self.bits = set_status_bit(self.bits, Self::MXR_BIT, enabled);
+        self
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RiscvCounterSnapshot {
     cycle: u64,
@@ -250,4 +286,16 @@ const fn replace_low_word(counter: u64, value: u32) -> u64 {
 
 const fn replace_high_word(counter: u64, value: u32) -> u64 {
     (counter & 0x0000_0000_ffff_ffff) | ((value as u64) << 32)
+}
+
+const fn status_bit(bits: u64, bit: u32) -> bool {
+    bits & (1_u64 << bit) != 0
+}
+
+const fn set_status_bit(bits: u64, bit: u32, enabled: bool) -> u64 {
+    if enabled {
+        bits | (1_u64 << bit)
+    } else {
+        bits & !(1_u64 << bit)
+    }
 }

@@ -2,8 +2,8 @@ use rem6_isa_riscv::{
     AtomicMemoryOp, Immediate, MemoryAccessKind, MemoryWidth, Register, RegisterWrite,
     RiscvCounterBank, RiscvCounterCsr, RiscvCounterSnapshot, RiscvCsrError, RiscvError,
     RiscvExecutionRecord, RiscvFenceSet, RiscvHartState, RiscvInstruction, RiscvMemoryOrdering,
-    RiscvPrivilegeMode, RiscvSv39AccessContext, RiscvSystemEvent, RiscvTranslationCsr, RiscvTrap,
-    RiscvTrapKind,
+    RiscvPrivilegeMode, RiscvStatusWord, RiscvSv39AccessContext, RiscvSystemEvent,
+    RiscvTranslationCsr, RiscvTrap, RiscvTrapKind,
 };
 
 fn r_type(funct7: u32, rs2: u8, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
@@ -50,6 +50,7 @@ fn sfence_vma_type(rs1: u8, rs2: u8, rd: u8, funct3: u32) -> u32 {
 #[test]
 fn riscv_hart_state_tracks_sv39_access_context() {
     let mut hart = RiscvHartState::new(0x8000);
+    hart.set_status(RiscvStatusWord::new(0x2));
 
     assert_eq!(
         hart.sv39_access_context(),
@@ -62,6 +63,43 @@ fn riscv_hart_state_tracks_sv39_access_context() {
     hart.set_sv39_access_context(context);
 
     assert_eq!(hart.sv39_access_context(), context);
+    assert_eq!(hart.privilege_mode(), RiscvPrivilegeMode::Supervisor);
+    assert!(hart.status().mxr());
+    assert!(hart.status().sum());
+    assert_eq!(hart.status().bits(), 0x2 | (1 << 18) | (1 << 19));
+}
+
+#[test]
+fn riscv_hart_state_derives_sv39_access_context_from_status() {
+    let mut hart = RiscvHartState::new(0x8000);
+    hart.set_privilege_mode(RiscvPrivilegeMode::Supervisor);
+    hart.set_status(RiscvStatusWord::new(0).with_mxr(true).with_sum(true));
+
+    assert_eq!(
+        hart.sv39_access_context(),
+        RiscvSv39AccessContext::new(RiscvPrivilegeMode::Supervisor)
+            .with_mxr(true)
+            .with_sum(true)
+    );
+
+    hart.set_status(hart.status().with_sum(false));
+
+    assert_eq!(
+        hart.sv39_access_context(),
+        RiscvSv39AccessContext::new(RiscvPrivilegeMode::Supervisor).with_mxr(true)
+    );
+}
+
+#[test]
+fn riscv_status_word_tracks_mxr_and_sum_bits() {
+    assert_eq!(RiscvStatusWord::new(0).with_sum(true).bits(), 1 << 18);
+    assert_eq!(RiscvStatusWord::new(0).with_mxr(true).bits(), 1 << 19);
+
+    let status = RiscvStatusWord::new((1 << 18) | (1 << 19));
+    assert!(status.sum());
+    assert!(status.mxr());
+    assert_eq!(status.with_sum(false).bits(), 1 << 19);
+    assert_eq!(status.with_mxr(false).bits(), 1 << 18);
 }
 
 fn i_type(imm: i32, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
