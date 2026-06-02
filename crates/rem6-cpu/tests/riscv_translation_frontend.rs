@@ -2,9 +2,10 @@ use std::sync::{Arc, Mutex};
 
 use rem6_boot::BootImage;
 use rem6_cpu::{
-    CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, CpuTranslationFrontend,
-    CpuTranslationOutcome, CpuTranslationRequest, RiscvCore, RiscvCoreDriveAction, RiscvCpuError,
-    RiscvDataAccessEventKind, RiscvSv39PageTableResolver, RiscvSv39PteReadRequestError,
+    decode_sv39_pte_read_response, CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState,
+    CpuTranslationFrontend, CpuTranslationOutcome, CpuTranslationRequest, RiscvCore,
+    RiscvCoreDriveAction, RiscvCpuError, RiscvDataAccessEventKind, RiscvSv39PageTableResolver,
+    RiscvSv39PteReadRequestError, RiscvSv39PteReadResponseError,
 };
 use rem6_isa_riscv::{
     MemoryAccessKind, MemoryWidth, Register, RiscvPmaAccessKind, RiscvPmaError, RiscvPmpAccessKind,
@@ -13,11 +14,11 @@ use rem6_isa_riscv::{
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{
-    AccessSize, Address, AgentId, CacheLineLayout, MemoryOperation, MemoryRequestId,
-    MemoryTargetId, PartitionedMemoryStore, TranslationAddressSpaceId, TranslationFaultKind,
-    TranslationPageMap, TranslationPageMappingScope, TranslationPagePermissions,
-    TranslationPageSize, TranslationQueueConfig, TranslationRequestId, TranslationTlbConfig,
-    TranslationTlbStats,
+    AccessSize, Address, AgentId, CacheLineLayout, MemoryOperation, MemoryRequest, MemoryRequestId,
+    MemoryResponse, MemoryResponseSnapshot, MemoryTargetId, PartitionedMemoryStore, ResponseStatus,
+    TranslationAddressSpaceId, TranslationFaultKind, TranslationPageMap,
+    TranslationPageMappingScope, TranslationPagePermissions, TranslationPageSize,
+    TranslationQueueConfig, TranslationRequestId, TranslationTlbConfig, TranslationTlbStats,
 };
 use rem6_transport::{
     MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTransport, TargetOutcome, TransportEndpointId,
@@ -1035,6 +1036,84 @@ fn riscv_sv39_translation_result_builds_pte_read_requests() {
         RiscvSv39PteReadRequestError::RequestSequenceOverflow {
             first: MemoryRequestId::new(first_id.agent(), u64::MAX - 1),
             index: 2,
+        }
+    );
+}
+
+#[test]
+fn riscv_sv39_pte_read_response_decoder_returns_typed_pte() {
+    let request = MemoryRequest::read_shared(
+        memory_id(95),
+        Address::new(0x130_02a8),
+        AccessSize::new(8).unwrap(),
+        layout(),
+    )
+    .unwrap();
+    let raw_pte = (0x8_7654_u64 << 10) | SV39_PTE_V | SV39_PTE_R | SV39_PTE_A;
+    let response = MemoryResponse::completed(&request, Some(raw_pte.to_le_bytes().to_vec()))
+        .expect("PTE response data should match request width");
+
+    assert_eq!(
+        decode_sv39_pte_read_response(&request, &response).unwrap(),
+        RiscvSv39Pte::new(raw_pte)
+    );
+}
+
+#[test]
+fn riscv_sv39_pte_read_response_decoder_rejects_invalid_responses() {
+    let request = MemoryRequest::read_shared(
+        memory_id(96),
+        Address::new(0x130_02b0),
+        AccessSize::new(8).unwrap(),
+        layout(),
+    )
+    .unwrap();
+    let raw_pte = (0x8_7655_u64 << 10) | SV39_PTE_V | SV39_PTE_X | SV39_PTE_A;
+    let mismatched = MemoryResponseSnapshot::new(
+        memory_id(97),
+        ResponseStatus::Completed,
+        Some(raw_pte.to_le_bytes().to_vec()),
+    )
+    .and_then(|snapshot| MemoryResponse::from_snapshot(&snapshot))
+    .unwrap();
+    assert_eq!(
+        decode_sv39_pte_read_response(&request, &mismatched).unwrap_err(),
+        RiscvSv39PteReadResponseError::UnexpectedRequest {
+            expected: request.id(),
+            actual: mismatched.request_id(),
+        }
+    );
+
+    let retry = MemoryResponse::retry(&request);
+    assert_eq!(
+        decode_sv39_pte_read_response(&request, &retry).unwrap_err(),
+        RiscvSv39PteReadResponseError::Retry {
+            request: request.id(),
+        }
+    );
+
+    let missing = MemoryResponseSnapshot::new(request.id(), ResponseStatus::Completed, None)
+        .and_then(|snapshot| MemoryResponse::from_snapshot(&snapshot))
+        .unwrap();
+    assert_eq!(
+        decode_sv39_pte_read_response(&request, &missing).unwrap_err(),
+        RiscvSv39PteReadResponseError::MissingData {
+            request: request.id(),
+        }
+    );
+
+    let short = MemoryResponseSnapshot::new(
+        request.id(),
+        ResponseStatus::Completed,
+        Some(vec![0xaa, 0xbb, 0xcc, 0xdd]),
+    )
+    .and_then(|snapshot| MemoryResponse::from_snapshot(&snapshot))
+    .unwrap();
+    assert_eq!(
+        decode_sv39_pte_read_response(&request, &short).unwrap_err(),
+        RiscvSv39PteReadResponseError::InvalidDataLength {
+            request: request.id(),
+            actual: 4,
         }
     );
 }

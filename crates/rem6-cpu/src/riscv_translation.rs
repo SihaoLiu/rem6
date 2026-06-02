@@ -10,8 +10,9 @@ use rem6_kernel::{
 };
 use rem6_memory::{
     AccessSize, Address, ByteMask, CacheLineLayout, MemoryError, MemoryRequest, MemoryRequestId,
-    TranslationAddressSpaceId, TranslationFault, TranslationFaultKind, TranslationPageMap,
-    TranslationRequestId, TranslationResolution, TranslationTlbStats,
+    MemoryResponse, ResponseStatus, TranslationAddressSpaceId, TranslationFault,
+    TranslationFaultKind, TranslationPageMap, TranslationRequestId, TranslationResolution,
+    TranslationTlbStats,
 };
 use rem6_mmio::{MmioBus, MmioError};
 use rem6_transport::{
@@ -169,6 +170,89 @@ impl From<MemoryError> for RiscvSv39PteReadRequestError {
     fn from(error: MemoryError) -> Self {
         Self::Memory(error)
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RiscvSv39PteReadResponseError {
+    UnexpectedRequest {
+        expected: MemoryRequestId,
+        actual: MemoryRequestId,
+    },
+    Retry {
+        request: MemoryRequestId,
+    },
+    MissingData {
+        request: MemoryRequestId,
+    },
+    InvalidDataLength {
+        request: MemoryRequestId,
+        actual: usize,
+    },
+}
+
+impl fmt::Display for RiscvSv39PteReadResponseError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnexpectedRequest { expected, actual } => write!(
+                formatter,
+                "PTE read response request {} from agent {} does not match expected request {} from agent {}",
+                actual.sequence(),
+                actual.agent().get(),
+                expected.sequence(),
+                expected.agent().get()
+            ),
+            Self::Retry { request } => write!(
+                formatter,
+                "PTE read request {} from agent {} returned retry",
+                request.sequence(),
+                request.agent().get()
+            ),
+            Self::MissingData { request } => write!(
+                formatter,
+                "PTE read response for request {} from agent {} has no data",
+                request.sequence(),
+                request.agent().get()
+            ),
+            Self::InvalidDataLength { request, actual } => write!(
+                formatter,
+                "PTE read response for request {} from agent {} has {actual} bytes instead of {RISCV_SV39_PTE_ACCESS_BYTES}",
+                request.sequence(),
+                request.agent().get()
+            ),
+        }
+    }
+}
+
+impl Error for RiscvSv39PteReadResponseError {}
+
+pub fn decode_sv39_pte_read_response(
+    expected: &MemoryRequest,
+    response: &MemoryResponse,
+) -> Result<RiscvSv39Pte, RiscvSv39PteReadResponseError> {
+    if response.request_id() != expected.id() {
+        return Err(RiscvSv39PteReadResponseError::UnexpectedRequest {
+            expected: expected.id(),
+            actual: response.request_id(),
+        });
+    }
+    if response.status() != ResponseStatus::Completed {
+        return Err(RiscvSv39PteReadResponseError::Retry {
+            request: expected.id(),
+        });
+    }
+
+    let data = response
+        .data()
+        .ok_or(RiscvSv39PteReadResponseError::MissingData {
+            request: expected.id(),
+        })?;
+    let bytes: [u8; RISCV_SV39_PTE_ACCESS_BYTES as usize] =
+        data.try_into()
+            .map_err(|_| RiscvSv39PteReadResponseError::InvalidDataLength {
+                request: expected.id(),
+                actual: data.len(),
+            })?;
+    Ok(RiscvSv39Pte::new(u64::from_le_bytes(bytes)))
 }
 
 impl RiscvSv39TranslationResult {
