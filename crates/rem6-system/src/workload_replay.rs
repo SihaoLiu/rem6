@@ -26,6 +26,7 @@ use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryError, MemoryRequest, MemoryRequestId,
     MemoryTargetId, PartitionedMemorySnapshot, PartitionedMemoryStore,
 };
+use rem6_net::SinicFifoDeviceSnapshot;
 use rem6_stats::StatsRegistry;
 use rem6_transport::{
     MemoryRoute, MemoryRouteHop, MemoryRouteId, MemoryTrace, MemoryTransport, TargetBatchOutcome,
@@ -394,6 +395,7 @@ impl RiscvWorkloadReplay {
             .map_err(RiscvWorkloadReplayError::Workload)?;
         let memory_snapshot = memory.memory_snapshot();
         let dram_snapshot = memory.dram_snapshot();
+        let sinic_pci_snapshots = sinic_mmio.snapshots();
 
         Ok(RiscvWorkloadReplayOutcome::new(
             cluster,
@@ -402,7 +404,11 @@ impl RiscvWorkloadReplay {
             host_action_outcomes,
             memory_snapshot,
             dram_snapshot,
-            RiscvWorkloadReplayDeviceSnapshots::new(gpu_snapshots, accelerator_snapshots),
+            RiscvWorkloadReplayDeviceSnapshots::new(
+                gpu_snapshots,
+                accelerator_snapshots,
+                sinic_pci_snapshots,
+            ),
         ))
     }
 
@@ -1220,16 +1226,19 @@ pub struct RiscvWorkloadReplayOutcome {
 pub struct RiscvWorkloadReplayDeviceSnapshots {
     gpu_snapshots: BTreeMap<GpuDeviceId, GpuDeviceSnapshot>,
     accelerator_snapshots: BTreeMap<AcceleratorEngineId, AcceleratorEngineSnapshot>,
+    sinic_pci_snapshots: BTreeMap<u32, SinicFifoDeviceSnapshot>,
 }
 
 impl RiscvWorkloadReplayDeviceSnapshots {
     pub fn new(
         gpu_snapshots: BTreeMap<GpuDeviceId, GpuDeviceSnapshot>,
         accelerator_snapshots: BTreeMap<AcceleratorEngineId, AcceleratorEngineSnapshot>,
+        sinic_pci_snapshots: BTreeMap<u32, SinicFifoDeviceSnapshot>,
     ) -> Self {
         Self {
             gpu_snapshots,
             accelerator_snapshots,
+            sinic_pci_snapshots,
         }
     }
 
@@ -1252,6 +1261,14 @@ impl RiscvWorkloadReplayDeviceSnapshots {
         engine: AcceleratorEngineId,
     ) -> Option<&AcceleratorEngineSnapshot> {
         self.accelerator_snapshots.get(&engine)
+    }
+
+    pub fn sinic_pci_snapshots(&self) -> &BTreeMap<u32, SinicFifoDeviceSnapshot> {
+        &self.sinic_pci_snapshots
+    }
+
+    pub fn sinic_pci_snapshot(&self, nic: u32) -> Option<&SinicFifoDeviceSnapshot> {
+        self.sinic_pci_snapshots.get(&nic)
     }
 }
 
@@ -1323,6 +1340,14 @@ impl RiscvWorkloadReplayOutcome {
         engine: AcceleratorEngineId,
     ) -> Option<&AcceleratorEngineSnapshot> {
         self.device_snapshots.accelerator_snapshot(engine)
+    }
+
+    pub fn sinic_pci_snapshots(&self) -> &BTreeMap<u32, SinicFifoDeviceSnapshot> {
+        self.device_snapshots.sinic_pci_snapshots()
+    }
+
+    pub fn sinic_pci_snapshot(&self, nic: u32) -> Option<&SinicFifoDeviceSnapshot> {
+        self.device_snapshots.sinic_pci_snapshot(nic)
     }
 }
 

@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use rem6_kernel::ParallelSchedulerContext;
 use rem6_memory::{AccessSize, AddressRange, MemoryOperation, MemoryRequest, MemoryResponse};
 use rem6_mmio::{MmioRequest, MmioRequestId};
-use rem6_net::{SinicFifoDevice, SinicMmioDevice, SinicRegisterParams};
+use rem6_net::{SinicFifoDevice, SinicFifoDeviceSnapshot, SinicMmioDevice, SinicRegisterParams};
 use rem6_transport::{RequestDelivery, TargetOutcome, TransportEndpointId};
 use rem6_workload::{WorkloadSinicPciDevice, WorkloadTopology};
 
@@ -50,10 +50,18 @@ impl WorkloadSinicPciMmioBackend {
                     .any(|device| device.accepts_request(delivery.request()))
             })
     }
+
+    pub(super) fn snapshots(&self) -> BTreeMap<u32, SinicFifoDeviceSnapshot> {
+        self.devices
+            .values()
+            .flat_map(|devices| devices.iter().map(|device| (device.nic, device.snapshot())))
+            .collect()
+    }
 }
 
 #[derive(Clone, Debug)]
 struct WorkloadSinicPciMmioDevice {
+    nic: u32,
     bar_range: AddressRange,
     device: SinicMmioDevice,
 }
@@ -67,6 +75,7 @@ impl WorkloadSinicPciMmioDevice {
         let fifo = SinicFifoDevice::new(SinicRegisterParams::default())
             .expect("valid default SINIC register parameters");
         Self {
+            nic: device.nic(),
             bar_range,
             device: SinicMmioDevice::new(device.bar_base(), fifo),
         }
@@ -94,6 +103,10 @@ impl WorkloadSinicPciMmioDevice {
 
     fn accepts_request(&self, request: &MemoryRequest) -> bool {
         self.bar_range.contains_range(request.range())
+    }
+
+    fn snapshot(&self) -> SinicFifoDeviceSnapshot {
+        self.device.snapshot()
     }
 }
 

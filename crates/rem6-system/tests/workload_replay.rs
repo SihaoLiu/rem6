@@ -7,7 +7,7 @@ use rem6_dram::{
 use rem6_fabric::VirtualNetworkId;
 use rem6_isa_riscv::Register;
 use rem6_memory::{AccessSize, Address, AddressRange, CacheLineLayout, MemoryTargetId};
-use rem6_net::SinicRegisterOffset;
+use rem6_net::{SinicRegisterBlock, SinicRegisterOffset, SinicRegisterParams};
 use rem6_stats::StatHistoryRecord;
 use rem6_system::{
     ExecutionMode, ExecutionModeTarget, GuestHostCallResponse, RiscvSystemRunStopReason,
@@ -174,6 +174,42 @@ fn boot_image_with_sinic_mmio_load() -> BootImage {
         )
         .unwrap()
         .add_segment(Address::new(0x8008), word(0x0000_0073))
+        .unwrap()
+}
+
+fn boot_image_with_sinic_mmio_config_store() -> BootImage {
+    let config = SinicRegisterBlock::CONFIG_RX_EN | SinicRegisterBlock::CONFIG_INT_EN;
+    BootImage::new(Address::new(0x8000))
+        .add_segment(Address::new(0x8000), word(u_type(0x20000, 2, 0x37)))
+        .unwrap()
+        .add_segment(
+            Address::new(0x8004),
+            word(i_type(config as i32, 0, 0x0, 3, 0x13)),
+        )
+        .unwrap()
+        .add_segment(
+            Address::new(0x8008),
+            word(s_type(
+                SinicRegisterOffset::CONFIG.addr() as i32,
+                3,
+                2,
+                0x2,
+                0x23,
+            )),
+        )
+        .unwrap()
+        .add_segment(
+            Address::new(0x800c),
+            word(i_type(
+                SinicRegisterOffset::CONFIG.addr() as i32,
+                2,
+                0x2,
+                5,
+                0x03,
+            )),
+        )
+        .unwrap()
+        .add_segment(Address::new(0x8010), word(0x0000_0073))
         .unwrap()
 }
 
@@ -1030,6 +1066,25 @@ fn replay_manifest_with_sinic_pci_mmio_load() -> WorkloadManifest {
     .unwrap()
 }
 
+fn replay_manifest_with_sinic_pci_mmio_config_store() -> WorkloadManifest {
+    WorkloadManifest::builder(
+        workload_id("riscv-replay-sinic-pci-mmio-config-store"),
+        boot_image_with_sinic_mmio_config_store(),
+    )
+    .with_topology(replay_topology_with_sinic_pci_mmio_data())
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_host_event(WorkloadHostEvent::new(
+        0,
+        HostEventIntent::Stop {
+            reason: "host-stop".to_string(),
+        },
+    ))
+    .build()
+    .unwrap()
+}
+
 fn replay_manifest_with_shared_sinic_pci_mmio_endpoint_load() -> WorkloadManifest {
     WorkloadManifest::builder(
         workload_id("riscv-replay-shared-sinic-pci-mmio-endpoint"),
@@ -1656,6 +1711,33 @@ fn workload_replay_routes_shared_endpoint_sinic_pci_bar_loads_to_matching_device
             .read_register(Register::new(5).unwrap()),
         16 * 1024
     );
+    plan.verify_result(outcome.result()).unwrap();
+}
+
+#[test]
+fn workload_replay_snapshots_sinic_pci_mmio_register_state() {
+    let manifest = replay_manifest_with_sinic_pci_mmio_config_store();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let config = SinicRegisterBlock::CONFIG_RX_EN | SinicRegisterBlock::CONFIG_INT_EN;
+
+    let outcome = RiscvWorkloadReplay::new(plan.clone())
+        .with_max_turns(48)
+        .run_parallel()
+        .unwrap();
+
+    let cpu0 = CpuId::new(0);
+    assert_eq!(
+        outcome
+            .cluster()
+            .core(cpu0)
+            .unwrap()
+            .read_register(Register::new(5).unwrap()),
+        u64::from(config)
+    );
+    let snapshot = outcome.sinic_pci_snapshot(0).unwrap();
+    let mut registers = SinicRegisterBlock::new(SinicRegisterParams::default()).unwrap();
+    registers.restore(snapshot.registers()).unwrap();
+    assert_eq!(registers.config_bits(), config);
     plan.verify_result(outcome.result()).unwrap();
 }
 
