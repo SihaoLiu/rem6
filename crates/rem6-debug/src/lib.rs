@@ -1,11 +1,19 @@
+mod feature;
 mod hex;
 mod memory;
+mod register;
+mod resume;
 
+use feature::{encode_supported_features, parse_supported_features};
+pub use feature::{GdbRemoteFeature, GdbRemoteFeatureValue};
 use hex::{
     decode_checksum, decode_hex_bytes, decode_hex_u64, decode_hex_usize, encode_hex_bytes,
     encode_hex_nibble, encode_hex_u64, is_hex_digit,
 };
 use memory::memory_addresses;
+pub use register::{GdbRemoteRegisterBytes, GdbRemoteRegisterValue};
+use resume::parse_resume_request;
+pub use resume::{GdbRemoteResumeKind, GdbRemoteResumeRequest};
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
@@ -230,6 +238,11 @@ pub enum GdbRemoteCommand {
     ReadRegister {
         number: u64,
     },
+    Resume {
+        kind: GdbRemoteResumeKind,
+        signal: Option<u8>,
+        address: Option<u64>,
+    },
     SetThread {
         operation: GdbRemoteThreadOperation,
         thread: GdbRemoteThreadId,
@@ -284,35 +297,6 @@ pub enum GdbRemoteThreadInfoQuery {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct GdbRemoteFeature {
-    name: Vec<u8>,
-    value: GdbRemoteFeatureValue,
-}
-
-impl GdbRemoteFeature {
-    pub const fn new(name: Vec<u8>, value: GdbRemoteFeatureValue) -> Self {
-        Self { name, value }
-    }
-
-    pub fn name(&self) -> &[u8] {
-        &self.name
-    }
-
-    pub const fn value(&self) -> &GdbRemoteFeatureValue {
-        &self.value
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum GdbRemoteFeatureValue {
-    Supported,
-    Unsupported,
-    AutoDetect,
-    Value(Vec<u8>),
-    Bare,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum GdbRemoteStopReply {
     Signal { signal: u8 },
 }
@@ -332,54 +316,6 @@ impl GdbRemoteStopReply {
                 ]
             }
         }
-    }
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct GdbRemoteRegisterBytes {
-    bytes: Vec<u8>,
-}
-
-impl GdbRemoteRegisterBytes {
-    pub const fn new(bytes: Vec<u8>) -> Self {
-        Self { bytes }
-    }
-
-    pub fn bytes(&self) -> &[u8] {
-        &self.bytes
-    }
-
-    fn encode_payload(&self) -> Vec<u8> {
-        encode_hex_bytes(&self.bytes)
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum GdbRemoteRegisterValue {
-    Bytes(GdbRemoteRegisterBytes),
-    Unavailable { byte_len: usize },
-}
-
-impl GdbRemoteRegisterValue {
-    pub const fn bytes(bytes: GdbRemoteRegisterBytes) -> Self {
-        Self::Bytes(bytes)
-    }
-
-    pub const fn unavailable(byte_len: usize) -> Self {
-        Self::Unavailable { byte_len }
-    }
-
-    fn encode_payload(&self) -> Vec<u8> {
-        match self {
-            Self::Bytes(bytes) => bytes.encode_payload(),
-            Self::Unavailable { byte_len } => vec![b'x'; byte_len * 2],
-        }
-    }
-}
-
-impl From<GdbRemoteRegisterBytes> for GdbRemoteRegisterValue {
-    fn from(bytes: GdbRemoteRegisterBytes) -> Self {
-        Self::Bytes(bytes)
     }
 }
 
@@ -404,6 +340,7 @@ pub struct GdbRemoteSession {
     current_thread_id: u64,
     general_thread: GdbRemoteThreadId,
     thread_ids: Vec<u64>,
+    last_resume_request: Option<GdbRemoteResumeRequest>,
     last_response: Option<GdbRemotePacket>,
     interrupt_requested: bool,
 }
@@ -431,6 +368,7 @@ impl GdbRemoteSession {
             current_thread_id: 1,
             general_thread: GdbRemoteThreadId::Any,
             thread_ids: vec![1],
+            last_resume_request: None,
             last_response: None,
             interrupt_requested: false,
         }
@@ -490,6 +428,10 @@ impl GdbRemoteSession {
 
     pub fn thread_ids(&self) -> &[u64] {
         &self.thread_ids
+    }
+
+    pub fn last_resume_request(&self) -> Option<&GdbRemoteResumeRequest> {
+        self.last_resume_request.as_ref()
     }
 
     pub fn set_thread_ids(&mut self, thread_ids: Vec<u64>) -> bool {
@@ -589,6 +531,19 @@ impl GdbRemoteSession {
             }
             GdbRemoteCommand::ReadRegisters => {
                 self.packet_response(self.register_bytes.encode_payload())
+            }
+            GdbRemoteCommand::Resume {
+                kind,
+                signal,
+                address,
+            } => {
+                self.last_resume_request = Some(GdbRemoteResumeRequest::new(
+                    kind,
+                    signal,
+                    address,
+                    self.continue_thread,
+                ));
+                self.packet_response(self.stop_reply.encode_payload())
             }
             GdbRemoteCommand::SetThread { operation, thread } => {
                 match operation {
@@ -1047,6 +1002,46 @@ fn parse_command_payload(payload: &[u8]) -> GdbRemoteCommand {
         }
     }
 
+    if let Some(request) = payload.strip_prefix(b"c") {
+        if let Some((signal, address)) = parse_resume_request(request, false) {
+            return GdbRemoteCommand::Resume {
+                kind: GdbRemoteResumeKind::Continue,
+                signal,
+                address,
+            };
+        }
+    }
+
+    if let Some(request) = payload.strip_prefix(b"C") {
+        if let Some((signal, address)) = parse_resume_request(request, true) {
+            return GdbRemoteCommand::Resume {
+                kind: GdbRemoteResumeKind::Continue,
+                signal,
+                address,
+            };
+        }
+    }
+
+    if let Some(request) = payload.strip_prefix(b"s") {
+        if let Some((signal, address)) = parse_resume_request(request, false) {
+            return GdbRemoteCommand::Resume {
+                kind: GdbRemoteResumeKind::SingleInstruction,
+                signal,
+                address,
+            };
+        }
+    }
+
+    if let Some(request) = payload.strip_prefix(b"S") {
+        if let Some((signal, address)) = parse_resume_request(request, true) {
+            return GdbRemoteCommand::Resume {
+                kind: GdbRemoteResumeKind::SingleInstruction,
+                signal,
+                address,
+            };
+        }
+    }
+
     if let Some(memory_request) = payload.strip_prefix(b"m") {
         if let Some((address, length)) = parse_memory_read(memory_request) {
             return GdbRemoteCommand::ReadMemory { address, length };
@@ -1192,62 +1187,6 @@ fn parse_register_write(request: &[u8]) -> Option<(u64, Vec<u8>)> {
         return None;
     }
     Some((number, bytes))
-}
-
-fn parse_supported_features(features: &[u8], allow_probe_suffix: bool) -> Vec<GdbRemoteFeature> {
-    features
-        .split(|byte| *byte == b';')
-        .filter(|feature| !feature.is_empty())
-        .map(|feature| parse_supported_feature(feature, allow_probe_suffix))
-        .collect()
-}
-
-fn parse_supported_feature(feature: &[u8], allow_probe_suffix: bool) -> GdbRemoteFeature {
-    if let Some(separator) = feature.iter().position(|byte| *byte == b'=') {
-        return GdbRemoteFeature::new(
-            feature[..separator].to_vec(),
-            GdbRemoteFeatureValue::Value(feature[separator + 1..].to_vec()),
-        );
-    }
-
-    match feature.last() {
-        Some(b'+') => GdbRemoteFeature::new(
-            feature[..feature.len() - 1].to_vec(),
-            GdbRemoteFeatureValue::Supported,
-        ),
-        Some(b'-') => GdbRemoteFeature::new(
-            feature[..feature.len() - 1].to_vec(),
-            GdbRemoteFeatureValue::Unsupported,
-        ),
-        Some(b'?') if allow_probe_suffix => GdbRemoteFeature::new(
-            feature[..feature.len() - 1].to_vec(),
-            GdbRemoteFeatureValue::AutoDetect,
-        ),
-        _ => GdbRemoteFeature::new(feature.to_vec(), GdbRemoteFeatureValue::Bare),
-    }
-}
-
-fn encode_supported_features(features: &[GdbRemoteFeature]) -> Vec<u8> {
-    let mut encoded = Vec::new();
-
-    for (index, feature) in features.iter().enumerate() {
-        if index > 0 {
-            encoded.push(b';');
-        }
-        encoded.extend_from_slice(feature.name());
-        match feature.value() {
-            GdbRemoteFeatureValue::Supported => encoded.push(b'+'),
-            GdbRemoteFeatureValue::Unsupported => encoded.push(b'-'),
-            GdbRemoteFeatureValue::AutoDetect => encoded.push(b'?'),
-            GdbRemoteFeatureValue::Value(value) => {
-                encoded.push(b'=');
-                encoded.extend_from_slice(value);
-            }
-            GdbRemoteFeatureValue::Bare => {}
-        }
-    }
-
-    encoded
 }
 
 fn encode_thread_info(thread_ids: &[u64]) -> Vec<u8> {
