@@ -127,6 +127,23 @@ impl ExternalMemoryTopology {
         self.kind().as_str()
     }
 
+    pub const fn parallel_port_label(self) -> &'static str {
+        match self {
+            Self::Ddr { .. } | Self::Lpddr { .. } => "channel",
+            Self::Hbm { .. } => "pseudo_channel",
+            Self::Nvm { .. } => "controller",
+        }
+    }
+
+    pub const fn topology_unit_label(self) -> &'static str {
+        match self {
+            Self::Ddr { .. } => "rank",
+            Self::Hbm { .. } => "pseudo_channel",
+            Self::Lpddr { .. } => "die",
+            Self::Nvm { .. } => "media_bank",
+        }
+    }
+
     pub const fn parallel_port_count(self) -> u32 {
         match self {
             Self::Ddr { channels, .. } | Self::Lpddr { channels, .. } => channels,

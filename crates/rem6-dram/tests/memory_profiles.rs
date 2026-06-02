@@ -120,6 +120,8 @@ fn external_memory_profiles_name_ddr_hbm_and_lpddr_topologies() {
     );
     assert_eq!(ddr.topology().kind(), DramMemoryTechnology::Ddr);
     assert_eq!(ddr.topology().as_str(), "ddr");
+    assert_eq!(ddr.topology().parallel_port_label(), "channel");
+    assert_eq!(ddr.topology().topology_unit_label(), "rank");
     assert_eq!(hbm.technology(), DramMemoryTechnology::Hbm);
     assert_eq!(hbm.technology().as_str(), "hbm");
     assert_eq!(
@@ -131,6 +133,8 @@ fn external_memory_profiles_name_ddr_hbm_and_lpddr_topologies() {
     );
     assert_eq!(hbm.topology().kind(), DramMemoryTechnology::Hbm);
     assert_eq!(hbm.topology().as_str(), "hbm");
+    assert_eq!(hbm.topology().parallel_port_label(), "pseudo_channel");
+    assert_eq!(hbm.topology().topology_unit_label(), "pseudo_channel");
     assert_eq!(lpddr.technology(), DramMemoryTechnology::Lpddr);
     assert_eq!(lpddr.technology().as_str(), "lpddr");
     assert_eq!(
@@ -142,6 +146,8 @@ fn external_memory_profiles_name_ddr_hbm_and_lpddr_topologies() {
     );
     assert_eq!(lpddr.topology().kind(), DramMemoryTechnology::Lpddr);
     assert_eq!(lpddr.topology().as_str(), "lpddr");
+    assert_eq!(lpddr.topology().parallel_port_label(), "channel");
+    assert_eq!(lpddr.topology().topology_unit_label(), "die");
     assert_eq!(nvm.technology(), DramMemoryTechnology::Nvm);
     assert_eq!(nvm.technology().as_str(), "nvm");
     assert_eq!(
@@ -153,6 +159,8 @@ fn external_memory_profiles_name_ddr_hbm_and_lpddr_topologies() {
     );
     assert_eq!(nvm.topology().kind(), DramMemoryTechnology::Nvm);
     assert_eq!(nvm.topology().as_str(), "nvm");
+    assert_eq!(nvm.topology().parallel_port_label(), "controller");
+    assert_eq!(nvm.topology().topology_unit_label(), "media_bank");
 
     let default_config = DramControllerConfig::new(target(1), layout(), geometry(), timing());
     assert_eq!(default_config.parallel_port_count(), 1);
