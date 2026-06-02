@@ -45,6 +45,7 @@ pub use boot_image::{WorkloadBootImage, WorkloadBootSegment};
 pub use error::{
     WorkloadError, WorkloadParallelPartitionActivityMergeSummary,
     WorkloadParallelPartitionCountMergeSummary, WorkloadParallelRemoteTrafficConsistencyMismatch,
+    WorkloadSinicPciTopologyError,
 };
 pub use heterogeneous::{
     WorkloadAcceleratorCommand, WorkloadAcceleratorCommandKind, WorkloadAcceleratorDevice,
@@ -143,7 +144,7 @@ pub use suite::{
 pub use topology::{
     WorkloadHostPlacement, WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadRiscvCore,
     WorkloadRiscvDataCache, WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId,
-    WorkloadRouteLatency, WorkloadTopology,
+    WorkloadRouteLatency, WorkloadSinicPciDevice, WorkloadTopology,
 };
 pub use workload_result::{
     WorkloadCheckpointChunkSummary, WorkloadCheckpointComponentSummary,

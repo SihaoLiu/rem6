@@ -442,6 +442,7 @@ impl fmt::Display for WorkloadError {
                 "accelerator engine {engine} DMA route {} starts on endpoint {actual}, expected {expected}",
                 route.as_str()
             ),
+            Self::SinicPciTopology(error) => write!(formatter, "{error}"),
             Self::ZeroQosPriorityLevels => {
                 write!(formatter, "QoS priority levels must be positive")
             }

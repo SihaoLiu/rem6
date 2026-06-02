@@ -5,7 +5,7 @@ use rem6_memory::{Address, AddressRange};
 use crate::{
     WorkloadAcceleratorCommand, WorkloadAcceleratorDevice, WorkloadAcceleratorDmaCopy,
     WorkloadDataCacheProtocol, WorkloadError, WorkloadGpuDevice, WorkloadGpuDmaCopy,
-    WorkloadGpuKernelLaunch, WorkloadQosPolicy,
+    WorkloadGpuKernelLaunch, WorkloadQosPolicy, WorkloadSinicPciTopologyError,
 };
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -579,6 +579,89 @@ impl WorkloadRiscvDataCache {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadSinicPciDevice {
+    nic: u32,
+    partition: u32,
+    pci_bus: u8,
+    pci_device: u8,
+    pci_function: u8,
+    bar_base: Address,
+    mmio_endpoint: String,
+    mmio_route: WorkloadRouteId,
+    interrupt_source: u32,
+}
+
+impl WorkloadSinicPciDevice {
+    pub const BAR_BYTES: u64 = 64 * 1024;
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        nic: u32,
+        partition: u32,
+        pci_bus: u8,
+        pci_device: u8,
+        pci_function: u8,
+        bar_base: Address,
+        mmio_endpoint: impl Into<String>,
+        mmio_route: WorkloadRouteId,
+        interrupt_source: u32,
+    ) -> Result<Self, WorkloadError> {
+        let mmio_endpoint = mmio_endpoint.into();
+        if mmio_endpoint.is_empty() {
+            return Err(WorkloadError::EmptyEndpoint);
+        }
+
+        Ok(Self {
+            nic,
+            partition,
+            pci_bus,
+            pci_device,
+            pci_function,
+            bar_base,
+            mmio_endpoint,
+            mmio_route,
+            interrupt_source,
+        })
+    }
+
+    pub const fn nic(&self) -> u32 {
+        self.nic
+    }
+
+    pub const fn partition(&self) -> u32 {
+        self.partition
+    }
+
+    pub const fn pci_bus(&self) -> u8 {
+        self.pci_bus
+    }
+
+    pub const fn pci_device(&self) -> u8 {
+        self.pci_device
+    }
+
+    pub const fn pci_function(&self) -> u8 {
+        self.pci_function
+    }
+
+    pub const fn bar_base(&self) -> Address {
+        self.bar_base
+    }
+
+    pub fn mmio_endpoint(&self) -> &str {
+        &self.mmio_endpoint
+    }
+
+    pub fn mmio_route(&self) -> &WorkloadRouteId {
+        &self.mmio_route
+    }
+
+    pub const fn interrupt_source(&self) -> u32 {
+        self.interrupt_source
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkloadTopology {
     partition_count: u32,
     min_remote_delay: Tick,
@@ -594,6 +677,7 @@ pub struct WorkloadTopology {
     accelerator_devices: Vec<WorkloadAcceleratorDevice>,
     accelerator_commands: Vec<WorkloadAcceleratorCommand>,
     accelerator_dma_copies: Vec<WorkloadAcceleratorDmaCopy>,
+    sinic_pci_devices: Vec<WorkloadSinicPciDevice>,
     qos_policy: Option<WorkloadQosPolicy>,
 }
 
@@ -635,6 +719,7 @@ impl WorkloadTopology {
             accelerator_devices: Vec::new(),
             accelerator_commands: Vec::new(),
             accelerator_dma_copies: Vec::new(),
+            sinic_pci_devices: Vec::new(),
             qos_policy: None,
         })
     }
@@ -956,6 +1041,85 @@ impl WorkloadTopology {
         Ok(self)
     }
 
+    pub fn add_sinic_pci_device(
+        mut self,
+        device: WorkloadSinicPciDevice,
+    ) -> Result<Self, WorkloadError> {
+        self.validate_partition(device.partition())?;
+        if !device
+            .bar_base()
+            .get()
+            .is_multiple_of(WorkloadSinicPciDevice::BAR_BYTES)
+        {
+            return Err(WorkloadError::SinicPciTopology(
+                WorkloadSinicPciTopologyError::BarBaseMisaligned {
+                    nic: device.nic(),
+                    bar_base: device.bar_base(),
+                    alignment_bytes: WorkloadSinicPciDevice::BAR_BYTES,
+                },
+            ));
+        }
+        if self
+            .sinic_pci_devices
+            .iter()
+            .any(|existing| existing.nic() == device.nic())
+        {
+            return Err(WorkloadError::SinicPciTopology(
+                WorkloadSinicPciTopologyError::DuplicateDevice { nic: device.nic() },
+            ));
+        }
+        if let Some(existing) = self.sinic_pci_devices.iter().find(|existing| {
+            existing.pci_bus() == device.pci_bus()
+                && existing.pci_device() == device.pci_device()
+                && existing.pci_function() == device.pci_function()
+        }) {
+            return Err(WorkloadError::SinicPciTopology(
+                WorkloadSinicPciTopologyError::DuplicateFunction {
+                    nic: device.nic(),
+                    existing_nic: existing.nic(),
+                    bus: device.pci_bus(),
+                    device: device.pci_device(),
+                    function: device.pci_function(),
+                },
+            ));
+        }
+        let route = self
+            .memory_routes
+            .iter()
+            .find(|route| route.id() == device.mmio_route())
+            .ok_or_else(|| {
+                WorkloadError::SinicPciTopology(WorkloadSinicPciTopologyError::MissingMmioRoute {
+                    nic: device.nic(),
+                    route: device.mmio_route().clone(),
+                })
+            })?;
+        if route.target_partition() != device.partition() {
+            return Err(WorkloadError::SinicPciTopology(
+                WorkloadSinicPciTopologyError::MmioRouteTargetMismatch {
+                    nic: device.nic(),
+                    route: device.mmio_route().clone(),
+                    expected: device.partition(),
+                    actual: route.target_partition(),
+                },
+            ));
+        }
+        if route.target_endpoint() != device.mmio_endpoint() {
+            return Err(WorkloadError::SinicPciTopology(
+                WorkloadSinicPciTopologyError::MmioRouteEndpointMismatch {
+                    nic: device.nic(),
+                    route: device.mmio_route().clone(),
+                    expected: device.mmio_endpoint().to_string(),
+                    actual: route.target_endpoint().to_string(),
+                },
+            ));
+        }
+
+        self.sinic_pci_devices.push(device);
+        self.sinic_pci_devices
+            .sort_by_key(WorkloadSinicPciDevice::nic);
+        Ok(self)
+    }
+
     pub fn with_riscv_data_cache(
         mut self,
         cache: WorkloadRiscvDataCache,
@@ -1062,6 +1226,10 @@ impl WorkloadTopology {
 
     pub fn accelerator_dma_copies(&self) -> &[WorkloadAcceleratorDmaCopy] {
         &self.accelerator_dma_copies
+    }
+
+    pub fn sinic_pci_devices(&self) -> &[WorkloadSinicPciDevice] {
+        &self.sinic_pci_devices
     }
 
     pub fn qos_policy(&self) -> Option<&WorkloadQosPolicy> {

@@ -1760,7 +1760,16 @@ Implementation evidence through 2026-06-02:
   latency, and deliver serial or parallel assertions and deassertions through
   `rem6-interrupt` without direct controller mutation. MMIO writes and reads
   now invoke that wiring automatically through the typed SINIC PCI device
-  wrapper. The SINIC FIFO path now covers checksum offload:
+  wrapper. `rem6-workload` can declare SINIC PCI NICs with stable NIC ids,
+  PCI bus/device/function identity, BAR base, MMIO endpoint, MMIO route, and
+  interrupt source identity. Topology validation rejects missing MMIO routes,
+  route target partition or endpoint mismatches, duplicate NIC ids, duplicate
+  PCI functions, and unaligned SINIC BAR bases before the manifest can become
+  replay input, and manifest identity hashing includes every SINIC PCI
+  declaration field so workload artifacts cannot silently drift when a NIC
+  BAR, route, or interrupt source changes. Runtime replay consumption of those
+  manifest declarations remains a separate system boundary from the existing
+  direct topology builder. The SINIC FIFO path now covers checksum offload:
   RX DMA completion reports IPv4/TCP/UDP packet and checksum-error status bits,
   and TX DMA completion fills IPv4 plus TCP/UDP checksums when
   `TxData_Checksum` is set.

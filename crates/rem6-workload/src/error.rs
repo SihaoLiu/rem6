@@ -23,12 +23,12 @@ mod fabric_display;
 mod large_payload;
 mod parallel_partition;
 mod remote_traffic_mismatch;
+mod topology;
 
 pub use large_payload::*;
-pub use parallel_partition::{
-    WorkloadParallelPartitionActivityMergeSummary, WorkloadParallelPartitionCountMergeSummary,
-};
+pub use parallel_partition::*;
 pub use remote_traffic_mismatch::WorkloadParallelRemoteTrafficConsistencyMismatch;
+pub use topology::WorkloadSinicPciTopologyError;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum WorkloadError {
@@ -307,6 +307,7 @@ pub enum WorkloadError {
         expected: String,
         actual: String,
     },
+    SinicPciTopology(WorkloadSinicPciTopologyError),
     ZeroQosPriorityLevels,
     QosPriorityOutOfRange {
         priority: QosPriority,

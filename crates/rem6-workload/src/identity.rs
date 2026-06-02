@@ -1359,6 +1359,19 @@ fn hash_topology(hash: &mut u64, topology: Option<&WorkloadTopology>) {
         hash_u64(hash, copy.destination().get());
         hash_u64(hash, copy.bytes());
     }
+    hash_u64(hash, topology.sinic_pci_devices().len() as u64);
+    for device in topology.sinic_pci_devices() {
+        hash_str(hash, "sinic.pci.device");
+        hash_u64(hash, u64::from(device.nic()));
+        hash_u64(hash, u64::from(device.partition()));
+        hash_u64(hash, u64::from(device.pci_bus()));
+        hash_u64(hash, u64::from(device.pci_device()));
+        hash_u64(hash, u64::from(device.pci_function()));
+        hash_u64(hash, device.bar_base().get());
+        hash_str(hash, device.mmio_endpoint());
+        hash_str(hash, device.mmio_route().as_str());
+        hash_u64(hash, u64::from(device.interrupt_source()));
+    }
 }
 
 fn hash_qos_policy(hash: &mut u64, policy: Option<&crate::WorkloadQosPolicy>) {
