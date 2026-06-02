@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
@@ -205,6 +206,7 @@ pub enum GdbRemoteCommand {
     QuerySupported { features: Vec<GdbRemoteFeature> },
     QueryStopReason,
     ReadRegisters,
+    ReadRegister { number: u64 },
     StartNoAckMode,
     Unknown(Vec<u8>),
 }
@@ -304,6 +306,7 @@ pub struct GdbRemoteSession {
     gdb_features: Vec<GdbRemoteFeature>,
     stop_reply: GdbRemoteStopReply,
     register_bytes: GdbRemoteRegisterBytes,
+    register_values: BTreeMap<u64, GdbRemoteRegisterBytes>,
     last_response: Option<GdbRemotePacket>,
     interrupt_requested: bool,
 }
@@ -316,6 +319,7 @@ impl GdbRemoteSession {
             gdb_features: Vec::new(),
             stop_reply: GdbRemoteStopReply::signal(0x05),
             register_bytes: GdbRemoteRegisterBytes::default(),
+            register_values: BTreeMap::new(),
             last_response: None,
             interrupt_requested: false,
         }
@@ -353,6 +357,14 @@ impl GdbRemoteSession {
         self.register_bytes = register_bytes;
     }
 
+    pub fn register_value(&self, number: u64) -> Option<&GdbRemoteRegisterBytes> {
+        self.register_values.get(&number)
+    }
+
+    pub fn set_register_value(&mut self, number: u64, register_bytes: GdbRemoteRegisterBytes) {
+        self.register_values.insert(number, register_bytes);
+    }
+
     pub fn handle_packet(
         &mut self,
         packet: &GdbRemotePacket,
@@ -369,6 +381,14 @@ impl GdbRemoteSession {
             }
             GdbRemoteCommand::ReadRegisters => {
                 self.packet_response(self.register_bytes.encode_payload())
+            }
+            GdbRemoteCommand::ReadRegister { number } => {
+                let payload = self
+                    .register_values
+                    .get(&number)
+                    .map(GdbRemoteRegisterBytes::encode_payload)
+                    .unwrap_or_default();
+                self.packet_response(payload)
             }
             GdbRemoteCommand::StartNoAckMode => {
                 if !self.supports_no_ack_mode() {
@@ -746,6 +766,12 @@ fn parse_command_payload(payload: &[u8]) -> GdbRemoteCommand {
         return GdbRemoteCommand::ReadRegisters;
     }
 
+    if let Some(register_number) = payload.strip_prefix(b"p") {
+        if let Some(number) = decode_hex_u64(register_number) {
+            return GdbRemoteCommand::ReadRegister { number };
+        }
+    }
+
     if payload == QUERY_STOP_REASON {
         return GdbRemoteCommand::QueryStopReason;
     }
@@ -857,6 +883,25 @@ fn encode_payload(payload: &[u8]) -> Vec<u8> {
 
 fn is_hex_digit(byte: u8) -> bool {
     byte.is_ascii_hexdigit()
+}
+
+fn decode_hex_u64(digits: &[u8]) -> Option<u64> {
+    if digits.is_empty() {
+        return None;
+    }
+
+    let mut value = 0u64;
+    for digit in digits {
+        let nibble = match digit {
+            b'0'..=b'9' => digit - b'0',
+            b'a'..=b'f' => digit - b'a' + 10,
+            b'A'..=b'F' => digit - b'A' + 10,
+            _ => return None,
+        };
+        value = value.checked_mul(16)?;
+        value = value.checked_add(u64::from(nibble))?;
+    }
+    Some(value)
 }
 
 fn decode_checksum(high: u8, low: u8) -> Result<u8, GdbRemoteError> {
