@@ -183,6 +183,9 @@ impl VirtioRngDevice {
         tick: Tick,
         request: VirtioRngRequest,
     ) -> Result<VirtioRngCompletion, VirtioError> {
+        if request.bytes() > isize::MAX as u64 {
+            return Err(VirtioError::VirtioRngPayloadLengthOverflow);
+        }
         let bytes_len = usize::try_from(request.bytes())
             .map_err(|_| VirtioError::VirtioRngPayloadLengthOverflow)?;
         let mut bytes = vec![0; bytes_len];

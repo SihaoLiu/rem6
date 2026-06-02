@@ -3,7 +3,7 @@ use rem6_memory::{
     MemoryTargetId, PartitionedMemoryStore,
 };
 use rem6_virtio::{
-    VirtioGuestMemory, VirtioPciIsrDevice, VirtioPciIsrEventKind, VirtioQueueIndex,
+    VirtioError, VirtioGuestMemory, VirtioPciIsrDevice, VirtioPciIsrEventKind, VirtioQueueIndex,
     VirtioRngByteSource, VirtioRngDevice, VirtioRngRequest, VirtioRngRequestId,
     VirtioSplitDescriptor, VirtioSplitDescriptorChain, VirtioSplitQueue, VirtioSplitUsedElement,
     VirtioSplitUsedRing, VIRTIO_F_VERSION_1_PAGE_BITS, VIRTIO_RNG_DEVICE_ID,
@@ -116,6 +116,19 @@ fn virtio_rng_device_reports_gem5_device_id_and_reproducible_entropy() {
     assert_eq!(completion.tick(), 42);
     assert_eq!(completion.bytes(), &[0x10, 0x20, 0x30, 0x10, 0x20]);
     assert_eq!(device.completions(), vec![completion]);
+}
+
+#[test]
+fn virtio_rng_device_rejects_request_above_vec_limit_before_allocation() {
+    let device = VirtioRngDevice::new(VirtioRngByteSource::repeating(vec![0x10]).unwrap());
+    let request =
+        VirtioRngRequest::new(VirtioRngRequestId::new(8), queue(0), isize::MAX as u64 + 1).unwrap();
+
+    assert!(matches!(
+        device.execute_at(43, request),
+        Err(VirtioError::VirtioRngPayloadLengthOverflow)
+    ));
+    assert!(device.completions().is_empty());
 }
 
 #[test]
