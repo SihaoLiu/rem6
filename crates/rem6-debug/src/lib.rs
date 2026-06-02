@@ -5,6 +5,8 @@ mod memory;
 mod register;
 mod resume;
 mod stop;
+mod thread;
+mod trap;
 
 use disconnect::parse_disconnect_request;
 pub use disconnect::GdbRemoteDisconnectRequest;
@@ -22,6 +24,13 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 pub use stop::GdbRemoteStopReply;
+pub(crate) use thread::parse_thread_id;
+use thread::{encode_thread_info, parse_thread_selection};
+pub use thread::{GdbRemoteThreadId, GdbRemoteThreadInfoQuery, GdbRemoteThreadOperation};
+use trap::parse_trap_request;
+pub use trap::{
+    GdbRemoteTrapKind, GdbRemoteTrapOperation, GdbRemoteTrapPoint, GdbRemoteTrapRequest,
+};
 
 pub const DEFAULT_GDB_REMOTE_MAX_PAYLOAD_BYTES: usize = 16 * 1024;
 const PACKET_START_BYTE: u8 = b'$';
@@ -263,6 +272,9 @@ pub enum GdbRemoteCommand {
     ThreadAlive {
         thread: GdbRemoteThreadId,
     },
+    Trap {
+        request: GdbRemoteTrapRequest,
+    },
     WriteMemory {
         address: u64,
         bytes: Vec<u8>,
@@ -290,25 +302,6 @@ pub enum GdbRemoteAttachKind {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum GdbRemoteThreadOperation {
-    Continue,
-    General,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum GdbRemoteThreadId {
-    All,
-    Any,
-    Id(u64),
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum GdbRemoteThreadInfoQuery {
-    First,
-    Subsequent,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GdbRemoteAckMode {
     Acknowledged,
     NoAck,
@@ -331,6 +324,8 @@ pub struct GdbRemoteSession {
     thread_ids: Vec<u64>,
     last_resume_requests: Vec<GdbRemoteResumeRequest>,
     last_disconnect_request: Option<GdbRemoteDisconnectRequest>,
+    last_trap_request: Option<GdbRemoteTrapRequest>,
+    active_traps: Vec<GdbRemoteTrapPoint>,
     disconnected: bool,
     last_response: Option<GdbRemotePacket>,
     interrupt_requested: bool,
@@ -361,6 +356,8 @@ impl GdbRemoteSession {
             thread_ids: vec![1],
             last_resume_requests: Vec::new(),
             last_disconnect_request: None,
+            last_trap_request: None,
+            active_traps: Vec::new(),
             disconnected: false,
             last_response: None,
             interrupt_requested: false,
@@ -393,6 +390,14 @@ impl GdbRemoteSession {
 
     pub const fn last_disconnect_request(&self) -> Option<&GdbRemoteDisconnectRequest> {
         self.last_disconnect_request.as_ref()
+    }
+
+    pub fn last_trap_request(&self) -> Option<&GdbRemoteTrapRequest> {
+        self.last_trap_request.as_ref()
+    }
+
+    pub fn active_traps(&self) -> &[GdbRemoteTrapPoint] {
+        &self.active_traps
     }
 
     pub fn stub_features(&self) -> &[GdbRemoteFeature] {
@@ -594,6 +599,10 @@ impl GdbRemoteSession {
                 };
                 self.packet_response(payload)
             }
+            GdbRemoteCommand::Trap { request } => {
+                self.apply_trap_request(request);
+                self.packet_response(b"OK".to_vec())
+            }
             GdbRemoteCommand::WriteRegisters { bytes } => {
                 self.set_register_bytes(GdbRemoteRegisterBytes::new(bytes));
                 self.packet_response(b"OK".to_vec())
@@ -647,6 +656,21 @@ impl GdbRemoteSession {
             GdbRemoteAckMode::Acknowledged => vec![GdbRemoteFrame::Ack],
             GdbRemoteAckMode::NoAck => Vec::new(),
         }
+    }
+
+    fn apply_trap_request(&mut self, request: GdbRemoteTrapRequest) {
+        let point = request.point();
+        match request.operation() {
+            GdbRemoteTrapOperation::Insert => {
+                if !self.active_traps.contains(&point) {
+                    self.active_traps.push(point);
+                }
+            }
+            GdbRemoteTrapOperation::Remove => {
+                self.active_traps.retain(|active| *active != point);
+            }
+        }
+        self.last_trap_request = Some(request);
     }
 
     fn read_memory_payload(&self, address: u64, length: usize) -> Option<Vec<u8>> {
@@ -1037,6 +1061,10 @@ fn parse_command_payload(payload: &[u8]) -> GdbRemoteCommand {
         return GdbRemoteCommand::Disconnect { request };
     }
 
+    if let Some(request) = parse_trap_request(payload) {
+        return GdbRemoteCommand::Trap { request };
+    }
+
     if let Some(register_data) = payload.strip_prefix(b"G") {
         if let Some(bytes) = parse_registers_write(register_data) {
             return GdbRemoteCommand::WriteRegisters { bytes };
@@ -1190,31 +1218,6 @@ fn parse_positive_hex_id(id: &[u8]) -> Option<u64> {
     Some(id)
 }
 
-fn parse_thread_selection(request: &[u8]) -> Option<(GdbRemoteThreadOperation, GdbRemoteThreadId)> {
-    let (operation, thread_id) = request.split_first()?;
-    let operation = match operation {
-        b'c' => GdbRemoteThreadOperation::Continue,
-        b'g' => GdbRemoteThreadOperation::General,
-        _ => return None,
-    };
-    Some((operation, parse_thread_id(thread_id)?))
-}
-
-fn parse_thread_id(thread_id: &[u8]) -> Option<GdbRemoteThreadId> {
-    if thread_id == b"-1" {
-        return Some(GdbRemoteThreadId::All);
-    }
-    if thread_id == b"0" {
-        return Some(GdbRemoteThreadId::Any);
-    }
-
-    let id = decode_hex_u64(thread_id)?;
-    if id == 0 {
-        return None;
-    }
-    Some(GdbRemoteThreadId::Id(id))
-}
-
 fn parse_memory_read(request: &[u8]) -> Option<(u64, usize)> {
     let separator = request.iter().position(|byte| *byte == b',')?;
     let address = decode_hex_u64(&request[..separator])?;
@@ -1248,17 +1251,6 @@ fn parse_register_write(request: &[u8]) -> Option<(u64, Vec<u8>)> {
         return None;
     }
     Some((number, bytes))
-}
-
-fn encode_thread_info(thread_ids: &[u64]) -> Vec<u8> {
-    let mut encoded = b"m".to_vec();
-    for (index, thread_id) in thread_ids.iter().enumerate() {
-        if index > 0 {
-            encoded.push(b',');
-        }
-        encoded.extend_from_slice(&encode_hex_u64(*thread_id));
-    }
-    encoded
 }
 
 fn validate_payload_len(len: usize, config: GdbRemotePacketConfig) -> Result<(), GdbRemoteError> {

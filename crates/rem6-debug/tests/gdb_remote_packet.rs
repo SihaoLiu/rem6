@@ -4,6 +4,7 @@ use rem6_debug::{
     GdbRemoteFrame, GdbRemoteNotification, GdbRemotePacket, GdbRemotePacketConfig,
     GdbRemoteRegisterBytes, GdbRemoteResumeKind, GdbRemoteResumeRequest, GdbRemoteSession,
     GdbRemoteStopReply, GdbRemoteThreadId, GdbRemoteThreadInfoQuery, GdbRemoteThreadOperation,
+    GdbRemoteTrapKind, GdbRemoteTrapOperation, GdbRemoteTrapPoint, GdbRemoteTrapRequest,
 };
 
 #[test]
@@ -549,6 +550,79 @@ fn gdb_remote_commands_preserve_malformed_disconnect_requests() {
         b"vKill;zz".as_slice(),
         b"vKill;1;2".as_slice(),
         b"vKill;10000000000000000".as_slice(),
+    ] {
+        let command = GdbRemoteCommand::parse(&GdbRemotePacket::new(payload.to_vec()).unwrap());
+        assert_eq!(command, GdbRemoteCommand::Unknown(payload.to_vec()));
+    }
+}
+
+#[test]
+fn gdb_remote_commands_decode_trap_requests() {
+    let software = GdbRemoteCommand::parse(&GdbRemotePacket::new(b"Z0,1000,4".to_vec()).unwrap());
+    assert_eq!(
+        software,
+        GdbRemoteCommand::Trap {
+            request: GdbRemoteTrapRequest::new(
+                GdbRemoteTrapOperation::Insert,
+                GdbRemoteTrapKind::SoftwareBreakpoint,
+                0x1000,
+                4,
+            ),
+        },
+    );
+
+    let hardware = GdbRemoteCommand::parse(&GdbRemotePacket::new(b"z1,1A,2".to_vec()).unwrap());
+    assert_eq!(
+        hardware,
+        GdbRemoteCommand::Trap {
+            request: GdbRemoteTrapRequest::new(
+                GdbRemoteTrapOperation::Remove,
+                GdbRemoteTrapKind::HardwareBreakpoint,
+                0x1a,
+                2,
+            ),
+        },
+    );
+
+    for (payload, kind) in [
+        (b"Z2,2000,8".as_slice(), GdbRemoteTrapKind::WriteWatchpoint),
+        (b"Z3,2000,8".as_slice(), GdbRemoteTrapKind::ReadWatchpoint),
+        (b"z4,2000,8".as_slice(), GdbRemoteTrapKind::AccessWatchpoint),
+    ] {
+        let command = GdbRemoteCommand::parse(&GdbRemotePacket::new(payload.to_vec()).unwrap());
+        assert_eq!(
+            command,
+            GdbRemoteCommand::Trap {
+                request: GdbRemoteTrapRequest::new(
+                    if payload[0] == b'Z' {
+                        GdbRemoteTrapOperation::Insert
+                    } else {
+                        GdbRemoteTrapOperation::Remove
+                    },
+                    kind,
+                    0x2000,
+                    8,
+                ),
+            },
+        );
+    }
+}
+
+#[test]
+fn gdb_remote_commands_preserve_malformed_trap_requests() {
+    for payload in [
+        b"Z".as_slice(),
+        b"z".as_slice(),
+        b"Z5,1000,4".as_slice(),
+        b"Z0".as_slice(),
+        b"Z0,1000".as_slice(),
+        b"Z0,1000,".as_slice(),
+        b"Z0,,4".as_slice(),
+        b"Z0,zz,4".as_slice(),
+        b"Z0,1000,zz".as_slice(),
+        b"Z0,10000000000000000,4".as_slice(),
+        b"Z0,1000,10000000000000000".as_slice(),
+        b"Z0,1000,4;X1,00".as_slice(),
     ] {
         let command = GdbRemoteCommand::parse(&GdbRemotePacket::new(payload.to_vec()).unwrap());
         assert_eq!(command, GdbRemoteCommand::Unknown(payload.to_vec()));
@@ -1152,6 +1226,64 @@ fn gdb_remote_session_records_terminate_without_response_packet() {
         session.last_disconnect_request(),
         Some(&GdbRemoteDisconnectRequest::Terminate),
     );
+}
+
+#[test]
+fn gdb_remote_session_records_trap_requests_idempotently() {
+    let mut session = GdbRemoteSession::new(Vec::new());
+    let point = GdbRemoteTrapPoint::new(GdbRemoteTrapKind::HardwareBreakpoint, 0x1000, 4);
+
+    assert_eq!(session.active_traps(), &[]);
+    assert_eq!(session.last_trap_request(), None);
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"Z1,1000,4".to_vec()).unwrap())
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"OK".to_vec()).unwrap()),
+        ],
+    );
+    assert_eq!(session.active_traps(), &[point]);
+    assert_eq!(
+        session.last_trap_request(),
+        Some(&GdbRemoteTrapRequest::new(
+            GdbRemoteTrapOperation::Insert,
+            GdbRemoteTrapKind::HardwareBreakpoint,
+            0x1000,
+            4,
+        )),
+    );
+
+    assert!(session
+        .handle_packet(&GdbRemotePacket::new(b"Z1,1000,4".to_vec()).unwrap())
+        .is_ok());
+    assert_eq!(session.active_traps(), &[point]);
+
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"z1,1000,4".to_vec()).unwrap())
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"OK".to_vec()).unwrap()),
+        ],
+    );
+    assert_eq!(session.active_traps(), &[]);
+    assert_eq!(
+        session.last_trap_request(),
+        Some(&GdbRemoteTrapRequest::new(
+            GdbRemoteTrapOperation::Remove,
+            GdbRemoteTrapKind::HardwareBreakpoint,
+            0x1000,
+            4,
+        )),
+    );
+
+    assert!(session
+        .handle_packet(&GdbRemotePacket::new(b"z1,1000,4".to_vec()).unwrap())
+        .is_ok());
+    assert_eq!(session.active_traps(), &[]);
 }
 
 #[test]
