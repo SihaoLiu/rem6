@@ -191,22 +191,17 @@ impl RiscvSv39MemoryWalker {
             + Sync
             + 'static,
     {
-        let walker_snapshot = walker.lock().expect("Sv39 memory walker lock").clone();
-        let frontend_snapshot = frontend.clone();
-        let advances = walker
-            .lock()
-            .expect("Sv39 memory walker lock")
-            .start_ready(frontend, tick)?;
-        match Self::submit_parallel_advances(
-            &walker, advances, scheduler, transport, route, trace, responder,
-        ) {
-            Ok(submission) => Ok(submission),
-            Err(error) => {
-                *walker.lock().expect("Sv39 memory walker lock") = walker_snapshot;
-                *frontend = frontend_snapshot;
-                Err(error)
-            }
-        }
+        Self::submit_transactional_parallel(
+            walker,
+            frontend,
+            scheduler,
+            transport,
+            route,
+            trace,
+            responder,
+            true,
+            |walker, frontend| walker.start_ready(frontend, tick),
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -225,14 +220,102 @@ impl RiscvSv39MemoryWalker {
             + Sync
             + 'static,
     {
+        Self::submit_transactional_parallel(
+            walker,
+            frontend,
+            scheduler,
+            transport,
+            route,
+            trace,
+            responder,
+            false,
+            |walker, frontend| {
+                Ok(walker
+                    .advance_next_response(frontend)?
+                    .into_iter()
+                    .collect::<Vec<_>>())
+            },
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn submit_available_parallel<F>(
+        walker: Arc<Mutex<Self>>,
+        frontend: &mut CpuTranslationFrontend,
+        tick: u64,
+        scheduler: &mut PartitionedScheduler,
+        transport: &MemoryTransport,
+        route: MemoryRouteId,
+        trace: MemoryTrace,
+        responder: F,
+    ) -> Result<RiscvSv39MemoryWalkerParallelSubmission, RiscvSv39MemoryWalkerError>
+    where
+        F: Fn(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + Sync
+            + 'static,
+    {
+        Self::submit_transactional_parallel(
+            walker,
+            frontend,
+            scheduler,
+            transport,
+            route,
+            trace,
+            responder,
+            true,
+            |walker, frontend| {
+                let pending_count = walker.pending_response_count();
+                let mut advances = Vec::new();
+                for _ in 0..pending_count {
+                    if let Some(advance) = walker.advance_next_response(frontend)? {
+                        advances.push(advance);
+                    }
+                }
+                advances.extend(walker.start_ready(frontend, tick)?);
+                Ok(advances)
+            },
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn submit_transactional_parallel<F, C>(
+        walker: Arc<Mutex<Self>>,
+        frontend: &mut CpuTranslationFrontend,
+        scheduler: &mut PartitionedScheduler,
+        transport: &MemoryTransport,
+        route: MemoryRouteId,
+        trace: MemoryTrace,
+        responder: F,
+        rollback_collect_error: bool,
+        collect: C,
+    ) -> Result<RiscvSv39MemoryWalkerParallelSubmission, RiscvSv39MemoryWalkerError>
+    where
+        F: Fn(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + Sync
+            + 'static,
+        C: FnOnce(
+            &mut Self,
+            &mut CpuTranslationFrontend,
+        ) -> Result<Vec<RiscvSv39MemoryWalkerAdvance>, RiscvSv39MemoryWalkerError>,
+    {
         let walker_snapshot = walker.lock().expect("Sv39 memory walker lock").clone();
         let frontend_snapshot = frontend.clone();
-        let advances = walker
-            .lock()
-            .expect("Sv39 memory walker lock")
-            .advance_next_response(frontend)?
-            .into_iter()
-            .collect::<Vec<_>>();
+        let collect_result = {
+            let mut walker = walker.lock().expect("Sv39 memory walker lock");
+            collect(&mut walker, frontend)
+        };
+        let advances = match collect_result {
+            Ok(advances) => advances,
+            Err(error) => {
+                if rollback_collect_error {
+                    *walker.lock().expect("Sv39 memory walker lock") = walker_snapshot;
+                    *frontend = frontend_snapshot;
+                }
+                return Err(error);
+            }
+        };
         match Self::submit_parallel_advances(
             &walker, advances, scheduler, transport, route, trace, responder,
         ) {

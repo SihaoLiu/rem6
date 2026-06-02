@@ -1074,6 +1074,197 @@ fn riscv_sv39_memory_walker_rolls_back_chained_parallel_submission_on_transport_
 }
 
 #[test]
+fn riscv_sv39_memory_walker_submits_pending_response_and_ready_request_together() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 1).unwrap();
+    let mut transport = MemoryTransport::new();
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ptw"),
+                PartitionId::new(0),
+                endpoint("l1d0"),
+                PartitionId::new(0),
+                1,
+                1,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let first_virtual_address = (0x025_u64 << 30) | (0x014_u64 << 21) | 0x890;
+    let second_virtual_address = (0x026_u64 << 30) | 0xabc;
+    let (root_ppn, level1_ppn, leaf_ppn) = (0x210, 0x310, 0x93000);
+    let first_pte_request = MemoryRequestId::new(AgentId::new(31), 2200);
+    let mut frontend = CpuTranslationFrontend::new(TranslationQueueConfig::new(4, 0).unwrap());
+    frontend
+        .enqueue(
+            34,
+            CpuTranslationRequest::load(
+                translation_id(101),
+                memory_id(131),
+                MemoryRouteId::new(6),
+                endpoint("cpu0.dmem"),
+                Address::new(first_virtual_address),
+                AccessSize::new(8).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    frontend
+        .enqueue(
+            36,
+            CpuTranslationRequest::load(
+                translation_id(102),
+                memory_id(132),
+                MemoryRouteId::new(6),
+                endpoint("cpu0.dmem"),
+                Address::new(second_virtual_address),
+                AccessSize::new(8).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let walker = Arc::new(Mutex::new(RiscvSv39MemoryWalker::new(
+        root_ppn,
+        first_pte_request,
+        layout(),
+    )));
+    RiscvSv39MemoryWalker::submit_ready_parallel(
+        Arc::clone(&walker),
+        &mut frontend,
+        34,
+        &mut scheduler,
+        &transport,
+        route,
+        MemoryTrace::new(),
+        move |delivery, _context| {
+            assert_eq!(delivery.request().id(), first_pte_request);
+            TargetOutcome::Respond(pte_response(
+                delivery.request(),
+                RiscvSv39Pte::new((level1_ppn << 10) | SV39_PTE_V),
+            ))
+        },
+    )
+    .unwrap();
+    scheduler.run_until_idle_parallel().unwrap();
+    assert_eq!(walker.lock().unwrap().pending_response_count(), 1);
+    let submission = RiscvSv39MemoryWalker::submit_available_parallel(
+        Arc::clone(&walker),
+        &mut frontend,
+        36,
+        &mut scheduler,
+        &transport,
+        route,
+        MemoryTrace::new(),
+        move |delivery, _context| {
+            assert_eq!(delivery.route(), route);
+            assert_eq!(delivery.endpoint(), &endpoint("l1d0"));
+            assert_eq!(delivery.request().id().agent(), first_pte_request.agent());
+            let sequence = delivery.request().id().sequence();
+            assert!(
+                sequence == first_pte_request.sequence() + 1
+                    || sequence == first_pte_request.sequence() + 3
+            );
+            TargetOutcome::Respond(pte_response(
+                delivery.request(),
+                RiscvSv39Pte::new(
+                    (leaf_ppn << 10)
+                        | SV39_PTE_V
+                        | SV39_PTE_R
+                        | SV39_PTE_W
+                        | SV39_PTE_A
+                        | SV39_PTE_D,
+                ),
+            ))
+        },
+    )
+    .unwrap();
+    assert_eq!(submission.events().len(), 2);
+    assert!(submission.completions().is_empty());
+    assert_eq!(walker.lock().unwrap().active_count(), 2);
+    assert_eq!(walker.lock().unwrap().pending_response_count(), 0);
+    scheduler.run_until_idle_parallel().unwrap();
+    assert_eq!(walker.lock().unwrap().pending_response_count(), 2);
+}
+
+#[test]
+fn riscv_sv39_memory_walker_rolls_back_available_parallel_collection_error() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 1).unwrap();
+    let mut transport = MemoryTransport::new();
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ptw"),
+                PartitionId::new(0),
+                endpoint("l1d0"),
+                PartitionId::new(0),
+                1,
+                1,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let root_ppn = 0x220;
+    let level1_ppn = 0x320;
+    let first_pte_request = MemoryRequestId::new(AgentId::new(31), 2300);
+    let mut frontend = CpuTranslationFrontend::new(TranslationQueueConfig::new(4, 0).unwrap());
+    for (sequence, vpn2) in [(103, 0x027), (104, 0x028)] {
+        frontend
+            .enqueue(
+                38,
+                CpuTranslationRequest::load(
+                    translation_id(sequence),
+                    memory_id(sequence + 30),
+                    MemoryRouteId::new(6),
+                    endpoint("cpu0.dmem"),
+                    Address::new((vpn2 << 30) | 0xace),
+                    AccessSize::new(8).unwrap(),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+    }
+    let walker = Arc::new(Mutex::new(RiscvSv39MemoryWalker::new(
+        root_ppn,
+        first_pte_request,
+        layout(),
+    )));
+    let advances = walker
+        .lock()
+        .unwrap()
+        .start_ready(&mut frontend, 38)
+        .unwrap();
+    let RiscvSv39MemoryWalkerAdvance::ReadPte(first_request) = &advances[0] else {
+        panic!("first ready request should start a PTE read");
+    };
+    let RiscvSv39MemoryWalkerAdvance::ReadPte(second_request) = &advances[1] else {
+        panic!("second ready request should start a PTE read");
+    };
+    walker.lock().unwrap().record_memory_response(pte_response(
+        first_request,
+        RiscvSv39Pte::new((level1_ppn << 10) | SV39_PTE_V),
+    ));
+    walker
+        .lock()
+        .unwrap()
+        .record_memory_response(MemoryResponse::retry(second_request));
+
+    assert!(RiscvSv39MemoryWalker::submit_available_parallel(
+        Arc::clone(&walker),
+        &mut frontend,
+        38,
+        &mut scheduler,
+        &transport,
+        route,
+        MemoryTrace::new(),
+        move |_delivery, _context| panic!("collection error must prevent transport delivery"),
+    )
+    .is_err());
+    assert_eq!(walker.lock().unwrap().active_count(), 2);
+    assert_eq!(walker.lock().unwrap().pending_response_count(), 2);
+    assert_eq!(frontend.pending_count(), 2);
+}
+
+#[test]
 fn riscv_sv39_memory_walker_keeps_queued_response_when_frontend_completion_fails() {
     let virtual_address = (0x01f_u64 << 30) | (0x00b_u64 << 21) | (0x00c_u64 << 12) | 0xcde;
     let root_ppn = 0x1b0;
