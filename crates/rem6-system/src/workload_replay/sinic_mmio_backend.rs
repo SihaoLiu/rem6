@@ -35,6 +35,12 @@ impl WorkloadSinicPciMmioBackend {
         let device = self.devices.get(delivery.endpoint())?;
         device.respond_parallel(delivery.request(), context)
     }
+
+    pub(super) fn accepts_delivery(&self, delivery: &RequestDelivery) -> bool {
+        self.devices
+            .get(delivery.endpoint())
+            .is_some_and(|device| device.accepts_request(delivery.request()))
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -62,7 +68,7 @@ impl WorkloadSinicPciMmioDevice {
         request: &MemoryRequest,
         context: &mut ParallelSchedulerContext<'_>,
     ) -> Option<TargetOutcome> {
-        if !self.bar_range.contains_range(request.range()) {
+        if !self.accepts_request(request) {
             return None;
         }
         let mmio_request = memory_request_to_mmio_request(request)
@@ -75,6 +81,10 @@ impl WorkloadSinicPciMmioDevice {
             memory_response_from_mmio_response(request, response.data())
                 .expect("workload SINIC PCI MMIO response maps to memory"),
         ))
+    }
+
+    fn accepts_request(&self, request: &MemoryRequest) -> bool {
+        self.bar_range.contains_range(request.range())
     }
 }
 

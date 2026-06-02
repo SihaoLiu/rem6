@@ -4,6 +4,7 @@ use rem6_dram::{DramGeometry, DramLowPowerTiming, DramTiming, ExternalMemoryProf
 use rem6_fabric::{QosPriority, QosRequestorId};
 use rem6_isa_riscv::Register;
 use rem6_memory::{AccessSize, Address, AddressRange, CacheLineLayout, MemoryTargetId};
+use rem6_net::SinicRegisterOffset;
 use rem6_system::RiscvWorkloadReplay;
 use rem6_workload::{
     HostEventIntent, WorkloadDataCacheProtocol, WorkloadHostEvent, WorkloadHostPlacement,
@@ -11,7 +12,7 @@ use rem6_workload::{
     WorkloadQosQueuePolicyKind, WorkloadQosTurnaroundPolicyKind, WorkloadReplayPlan,
     WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadRiscvCore,
     WorkloadRiscvDataCache, WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId,
-    WorkloadTopology,
+    WorkloadSinicPciDevice, WorkloadTopology,
 };
 
 fn workload_id(value: &str) -> rem6_workload::WorkloadId {
@@ -92,6 +93,40 @@ fn boot_image_with_same_tick_data_read_write() -> BootImage {
 fn boot_image_with_same_tick_data_read_write_and_cache_line() -> BootImage {
     boot_image_with_same_tick_data_read_write()
         .add_segment(Address::new(0x9020), vec![0x5a; 16])
+        .unwrap()
+}
+
+fn boot_image_with_same_tick_sinic_mmio_loads() -> BootImage {
+    BootImage::new(Address::new(0x8000))
+        .add_segment(Address::new(0x8000), word(u_type(0x20000, 2, 0x37)))
+        .unwrap()
+        .add_segment(
+            Address::new(0x8004),
+            word(i_type(
+                SinicRegisterOffset::RX_FIFO_SIZE.addr() as i32,
+                2,
+                0x2,
+                5,
+                0x03,
+            )),
+        )
+        .unwrap()
+        .add_segment(Address::new(0x8008), word(0x0000_0073))
+        .unwrap()
+        .add_segment(Address::new(0x8010), word(u_type(0x20000, 2, 0x37)))
+        .unwrap()
+        .add_segment(
+            Address::new(0x8014),
+            word(i_type(
+                SinicRegisterOffset::RX_FIFO_SIZE.addr() as i32,
+                2,
+                0x2,
+                5,
+                0x03,
+            )),
+        )
+        .unwrap()
+        .add_segment(Address::new(0x8018), word(0x0010_0073))
         .unwrap()
 }
 
@@ -546,6 +581,110 @@ fn replay_topology_with_qos_dram_data_read_write_and_cache() -> WorkloadTopology
         .unwrap()
 }
 
+fn replay_topology_with_qos_sinic_mmio_loads() -> WorkloadTopology {
+    let policy = WorkloadQosPolicy::new(4, QosPriority::new(1))
+        .unwrap()
+        .with_queue_policy(WorkloadQosQueuePolicyKind::Fifo)
+        .with_requestor_priority(QosRequestorId::new(7), QosPriority::new(1))
+        .unwrap()
+        .with_requestor_priority(QosRequestorId::new(8), QosPriority::new(0))
+        .unwrap();
+
+    WorkloadTopology::new(4, 2, 2, WorkloadHostPlacement::new(3, 2, 51).unwrap())
+        .unwrap()
+        .add_memory_target(
+            WorkloadMemoryTarget::new(
+                0,
+                layout().bytes(),
+                AddressRange::new(Address::new(0x8000), AccessSize::new(0x1000).unwrap()).unwrap(),
+            )
+            .unwrap()
+            .with_external_memory_profile(single_channel_ddr_profile(0))
+            .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(route_id("cpu0.fetch"), "cpu0.ifetch", 0, "memory", 2, 2, 3)
+                .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(
+                route_id("cpu0.sinic"),
+                "cpu0.dmem",
+                0,
+                "sinic0.mmio",
+                2,
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(route_id("cpu1.fetch"), "cpu1.ifetch", 1, "memory", 2, 2, 3)
+                .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(
+                route_id("cpu1.sinic"),
+                "cpu1.dmem",
+                1,
+                "sinic0.mmio",
+                2,
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_riscv_core(
+            WorkloadRiscvCore::new(
+                0,
+                0,
+                7,
+                Address::new(0x8000),
+                "cpu0.ifetch",
+                route_id("cpu0.fetch"),
+            )
+            .unwrap()
+            .with_data("cpu0.dmem", route_id("cpu0.sinic"))
+            .unwrap(),
+        )
+        .unwrap()
+        .add_riscv_core(
+            WorkloadRiscvCore::new(
+                1,
+                1,
+                8,
+                Address::new(0x8010),
+                "cpu1.ifetch",
+                route_id("cpu1.fetch"),
+            )
+            .unwrap()
+            .with_data("cpu1.dmem", route_id("cpu1.sinic"))
+            .unwrap(),
+        )
+        .unwrap()
+        .add_sinic_pci_device(
+            WorkloadSinicPciDevice::new(
+                0,
+                2,
+                0,
+                1,
+                0,
+                Address::new(0x20000),
+                "sinic0.mmio",
+                route_id("cpu0.sinic"),
+                0x1293,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .with_qos_policy(policy)
+}
+
 fn replay_manifest_with_qos_fabric_fetches() -> WorkloadManifest {
     WorkloadManifest::builder(workload_id("qos-fabric-fetches"), boot_image())
         .with_topology(replay_topology_with_qos_fabric_fetches())
@@ -635,6 +774,25 @@ fn replay_manifest_with_qos_dram_data_read_write_and_cache() -> WorkloadManifest
         boot_image_with_same_tick_data_read_write_and_cache_line(),
     )
     .with_topology(replay_topology_with_qos_dram_data_read_write_and_cache())
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_host_event(WorkloadHostEvent::new(
+        0,
+        HostEventIntent::Stop {
+            reason: "host-stop".to_string(),
+        },
+    ))
+    .build()
+    .unwrap()
+}
+
+fn replay_manifest_with_qos_sinic_mmio_loads() -> WorkloadManifest {
+    WorkloadManifest::builder(
+        workload_id("qos-sinic-mmio-loads"),
+        boot_image_with_same_tick_sinic_mmio_loads(),
+    )
+    .with_topology(replay_topology_with_qos_sinic_mmio_loads())
     .add_resource(kernel_resource())
     .unwrap()
     .add_required_resource(resource_id("kernel"))
@@ -813,5 +971,28 @@ fn workload_replay_coalesces_uncached_dram_deliveries_when_data_cache_exists() {
         0xfedc_ba98_7654_3210
     );
     assert_eq!(outcome.run().data_cache_run_count(), 0);
+    plan.verify_result(outcome.result()).unwrap();
+}
+
+#[test]
+fn workload_replay_routes_batched_sinic_pci_bar_loads_to_mmio_registers() {
+    let manifest = replay_manifest_with_qos_sinic_mmio_loads();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let outcome = RiscvWorkloadReplay::new(plan.clone())
+        .with_max_turns(256)
+        .run_parallel()
+        .unwrap();
+
+    for cpu in [CpuId::new(0), CpuId::new(1)] {
+        assert_eq!(
+            outcome
+                .cluster()
+                .core(cpu)
+                .unwrap()
+                .read_register(Register::new(5).unwrap()),
+            16 * 1024
+        );
+    }
     plan.verify_result(outcome.result()).unwrap();
 }

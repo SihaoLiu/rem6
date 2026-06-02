@@ -28,8 +28,8 @@ use rem6_memory::{
 };
 use rem6_stats::StatsRegistry;
 use rem6_transport::{
-    MemoryRoute, MemoryRouteHop, MemoryRouteId, MemoryTrace, MemoryTransport, TransportEndpointId,
-    TransportError,
+    MemoryRoute, MemoryRouteHop, MemoryRouteId, MemoryTrace, MemoryTransport, TargetBatchOutcome,
+    TransportEndpointId, TransportError,
 };
 use rem6_workload::{
     WorkloadCheckpointChunkSummary, WorkloadCheckpointComponentSummary,
@@ -207,14 +207,33 @@ impl RiscvWorkloadReplay {
         if topology.qos_policy().is_some() {
             let batch_memory = memory.clone();
             let batch_data_cache = data_cache.clone();
-            transport =
-                transport.with_direct_target_batch_responder(move |deliveries, _context| {
-                    cached_target_batch_response(
-                        batch_data_cache.as_ref(),
-                        &batch_memory,
-                        deliveries,
-                    )
-                });
+            let batch_sinic_mmio = sinic_mmio.clone();
+            transport = transport.with_direct_target_batch_responder(move |deliveries, context| {
+                if deliveries
+                    .iter()
+                    .any(|delivery| batch_sinic_mmio.accepts_delivery(delivery))
+                {
+                    return Some(
+                        deliveries
+                            .into_iter()
+                            .map(|delivery| {
+                                let request = delivery.request().id();
+                                let outcome = batch_sinic_mmio
+                                    .respond_parallel(&delivery, context)
+                                    .unwrap_or_else(|| {
+                                        cached_memory_response(
+                                            batch_data_cache.as_ref(),
+                                            &batch_memory,
+                                            &delivery,
+                                        )
+                                    });
+                                TargetBatchOutcome::new(request, outcome)
+                            })
+                            .collect(),
+                    );
+                }
+                cached_target_batch_response(batch_data_cache.as_ref(), &batch_memory, deliveries)
+            });
         }
         let fabric_activity_start = transport.mark_fabric_activity();
         let fabric_wait_for_start = transport.mark_fabric_wait_for();
