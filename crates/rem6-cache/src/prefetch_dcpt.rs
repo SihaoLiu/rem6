@@ -6,6 +6,8 @@ use rem6_memory::{Address, AgentId};
 
 use crate::prefetch::PrefetchCandidate;
 
+const MAX_DCPT_VECTOR_LENGTH: usize = isize::MAX as usize;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DcptPrefetcherConfig {
     deltas_per_entry: usize,
@@ -29,6 +31,7 @@ impl DcptPrefetcherConfig {
         if deltas_per_entry < 4 {
             return Err(DcptPrefetcherError::DeltaHistoryTooSmall { deltas_per_entry });
         }
+        validate_dcpt_vector_length("deltas per entry", deltas_per_entry)?;
         if !(2..=63).contains(&delta_bits) {
             return Err(DcptPrefetcherError::DeltaBitsOutOfRange { delta_bits });
         }
@@ -38,6 +41,7 @@ impl DcptPrefetcherConfig {
         if table_entries == 0 {
             return Err(DcptPrefetcherError::ZeroTableEntries);
         }
+        validate_dcpt_vector_length("table entries", table_entries)?;
 
         Ok(Self {
             deltas_per_entry,
@@ -82,6 +86,11 @@ pub enum DcptPrefetcherError {
     DeltaMaskBitsOutOfRange {
         delta_mask_bits: u32,
     },
+    VectorLengthTooLarge {
+        field: &'static str,
+        length: usize,
+        maximum: usize,
+    },
     SnapshotConfigMismatch {
         expected: Box<DcptPrefetcherConfig>,
         actual: Box<DcptPrefetcherConfig>,
@@ -117,6 +126,14 @@ impl fmt::Display for DcptPrefetcherError {
                 formatter,
                 "DCPT delta mask bit count {delta_mask_bits} is outside 0..64"
             ),
+            Self::VectorLengthTooLarge {
+                field,
+                length,
+                maximum,
+            } => write!(
+                formatter,
+                "DCPT {field} length {length} exceeds vector allocation limit {maximum}"
+            ),
             Self::SnapshotConfigMismatch { expected, actual } => write!(
                 formatter,
                 "DCPT snapshot config {actual:?} does not match {expected:?}"
@@ -143,6 +160,20 @@ impl fmt::Display for DcptPrefetcherError {
 }
 
 impl Error for DcptPrefetcherError {}
+
+fn validate_dcpt_vector_length(
+    field: &'static str,
+    length: usize,
+) -> Result<(), DcptPrefetcherError> {
+    if length > MAX_DCPT_VECTOR_LENGTH {
+        return Err(DcptPrefetcherError::VectorLengthTooLarge {
+            field,
+            length,
+            maximum: MAX_DCPT_VECTOR_LENGTH,
+        });
+    }
+    Ok(())
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DcptPrefetchAccess {

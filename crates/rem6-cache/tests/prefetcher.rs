@@ -2,13 +2,14 @@ use rem6_cache::{
     AmpmEpochConfig, AmpmPrefetchAccess, AmpmPrefetcher, AmpmPrefetcherConfig, BopDelayQueueConfig,
     BopPrefetchAccess, BopPrefetcher, BopPrefetcherConfig, BopPrefetcherConfigOptions,
     BopPrefetcherError, DcptPrefetchAccess, DcptPrefetcher, DcptPrefetcherConfig,
-    QueuedPrefetchConfig, QueuedPrefetchDemandAccess, QueuedPrefetchFullPolicy,
-    QueuedPrefetchRedundantLine, QueuedPrefetchThrottle, QueuedPrefetchThrottleConfig,
-    QueuedPrefetchThrottleError, QueuedPrefetcher, SbooePrefetchAccess, SbooePrefetcher,
-    SbooePrefetcherConfig, SignaturePathPrefetchAccess, SignaturePathPrefetcher,
-    SignaturePathPrefetcherConfig, SignaturePathPrefetcherConfigOptions, SignaturePathRatio,
-    SmsPrefetchAccess, SmsPrefetcher, SmsPrefetcherConfig, StridePrefetchAccess, StridePrefetcher,
-    StridePrefetcherConfig, TaggedPrefetchAccess, TaggedPrefetcher, TaggedPrefetcherConfig,
+    DcptPrefetcherError, QueuedPrefetchConfig, QueuedPrefetchDemandAccess,
+    QueuedPrefetchFullPolicy, QueuedPrefetchRedundantLine, QueuedPrefetchThrottle,
+    QueuedPrefetchThrottleConfig, QueuedPrefetchThrottleError, QueuedPrefetcher,
+    SbooePrefetchAccess, SbooePrefetcher, SbooePrefetcherConfig, SignaturePathPrefetchAccess,
+    SignaturePathPrefetcher, SignaturePathPrefetcherConfig, SignaturePathPrefetcherConfigOptions,
+    SignaturePathRatio, SmsPrefetchAccess, SmsPrefetcher, SmsPrefetcherConfig,
+    StridePrefetchAccess, StridePrefetcher, StridePrefetcherConfig, TaggedPrefetchAccess,
+    TaggedPrefetcher, TaggedPrefetcherConfig,
 };
 use rem6_memory::{Address, AgentId};
 
@@ -585,6 +586,26 @@ fn dcpt_prefetcher_matches_masked_delta_pairs_and_restores_state() {
     assert_eq!(restored_candidates[1].delta(), 0x8e);
     assert_eq!(restored_candidates[2].delta(), 0x4f);
     assert_eq!(restored_candidates[3].delta(), 0x8e);
+}
+
+#[test]
+fn dcpt_prefetcher_config_rejects_vector_lengths_above_host_limit() {
+    assert_eq!(
+        DcptPrefetcherConfig::new(OVERSIZED_VECTOR_LENGTH, 12, 4, 4, true),
+        Err(DcptPrefetcherError::VectorLengthTooLarge {
+            field: "deltas per entry",
+            length: OVERSIZED_VECTOR_LENGTH,
+            maximum: isize::MAX as usize,
+        })
+    );
+    assert_eq!(
+        DcptPrefetcherConfig::new(4, 12, 4, OVERSIZED_VECTOR_LENGTH, true),
+        Err(DcptPrefetcherError::VectorLengthTooLarge {
+            field: "table entries",
+            length: OVERSIZED_VECTOR_LENGTH,
+            maximum: isize::MAX as usize,
+        })
+    );
 }
 
 #[test]
