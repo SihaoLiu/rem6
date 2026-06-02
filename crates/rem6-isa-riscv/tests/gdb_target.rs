@@ -1,0 +1,112 @@
+use rem6_isa_riscv::{RiscvGdbTargetDescription, RiscvGdbTargetDocument, RiscvGdbXlen};
+
+#[test]
+fn riscv_gdb_target_description_reports_rv64_cpu_documents() {
+    let description = RiscvGdbTargetDescription::new(RiscvGdbXlen::Rv64);
+
+    assert_eq!(description.xlen(), RiscvGdbXlen::Rv64);
+    assert_eq!(
+        annex_names(description.documents()),
+        vec!["target.xml", "riscv-64bit-cpu.xml"],
+    );
+    assert_eq!(
+        description.document("target.xml").unwrap().content(),
+        concat!(
+            "<?xml version=\"1.0\"?>\n",
+            "<!DOCTYPE target SYSTEM \"gdb-target.dtd\">\n",
+            "<target>\n",
+            "  <architecture>riscv</architecture>\n",
+            "  <xi:include href=\"riscv-64bit-cpu.xml\"/>\n",
+            "</target>\n",
+        )
+        .as_bytes(),
+    );
+    assert!(description.document("riscv-64bit-fpu.xml").is_none());
+    assert!(description.document("riscv-64bit-csr.xml").is_none());
+}
+
+#[test]
+fn riscv_gdb_target_description_reports_rv32_cpu_documents() {
+    let description = RiscvGdbTargetDescription::new(RiscvGdbXlen::Rv32);
+
+    assert_eq!(description.xlen(), RiscvGdbXlen::Rv32);
+    assert_eq!(
+        annex_names(description.documents()),
+        vec!["target.xml", "riscv-32bit-cpu.xml"],
+    );
+
+    let target = text(description.document("target.xml").unwrap());
+    assert!(target.contains("<architecture>riscv</architecture>"));
+    assert!(target.contains("<xi:include href=\"riscv-32bit-cpu.xml\"/>"));
+    assert!(!target.contains("riscv-64bit-cpu.xml"));
+}
+
+#[test]
+fn riscv_gdb_cpu_document_uses_stable_abi_register_order() {
+    let description = RiscvGdbTargetDescription::new(RiscvGdbXlen::Rv64);
+    let cpu = text(description.document("riscv-64bit-cpu.xml").unwrap());
+
+    let names = register_names(cpu);
+    assert_eq!(
+        names,
+        vec![
+            "zero", "ra", "sp", "gp", "tp", "t0", "t1", "t2", "fp", "s1", "a0", "a1", "a2", "a3",
+            "a4", "a5", "a6", "a7", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11",
+            "t3", "t4", "t5", "t6", "pc",
+        ],
+    );
+    assert_eq!(cpu.matches("bitsize=\"64\"").count(), 33);
+    assert!(cpu.contains("<reg name=\"zero\" bitsize=\"64\" type=\"int\" regnum=\"0\"/>"));
+    assert!(cpu.contains("<reg name=\"ra\" bitsize=\"64\" type=\"code_ptr\"/>"));
+    assert!(cpu.contains("<reg name=\"sp\" bitsize=\"64\" type=\"data_ptr\"/>"));
+    assert!(cpu.contains("<reg name=\"pc\" bitsize=\"64\" type=\"code_ptr\"/>"));
+}
+
+#[test]
+fn riscv_gdb_cpu_document_scales_register_bits_by_xlen() {
+    let rv32 = RiscvGdbTargetDescription::new(RiscvGdbXlen::Rv32);
+    let rv64 = RiscvGdbTargetDescription::new(RiscvGdbXlen::Rv64);
+
+    let rv32_cpu = text(rv32.document("riscv-32bit-cpu.xml").unwrap());
+    let rv64_cpu = text(rv64.document("riscv-64bit-cpu.xml").unwrap());
+
+    assert_eq!(rv32_cpu.matches("bitsize=\"32\"").count(), 33);
+    assert_eq!(rv64_cpu.matches("bitsize=\"64\"").count(), 33);
+    assert!(!rv32_cpu.contains("bitsize=\"64\""));
+    assert!(!rv64_cpu.contains("bitsize=\"32\""));
+}
+
+#[test]
+fn riscv_gdb_target_documents_keep_unique_annexes_for_debug_registry() {
+    let description = RiscvGdbTargetDescription::new(RiscvGdbXlen::Rv64);
+    let mut annexes = annex_names(description.documents());
+    annexes.sort_unstable();
+    annexes.dedup();
+
+    assert_eq!(annexes.len(), description.documents().len());
+    for document in description.documents() {
+        assert!(!document.annex().is_empty());
+        assert!(!document.content().is_empty());
+    }
+}
+
+fn annex_names(documents: &[RiscvGdbTargetDocument]) -> Vec<&str> {
+    documents
+        .iter()
+        .map(RiscvGdbTargetDocument::annex)
+        .collect()
+}
+
+fn text(document: &RiscvGdbTargetDocument) -> &str {
+    std::str::from_utf8(document.content()).unwrap()
+}
+
+fn register_names(cpu: &str) -> Vec<&str> {
+    cpu.lines()
+        .filter_map(|line| {
+            let rest = line.trim().strip_prefix("<reg name=\"")?;
+            let end = rest.find('"')?;
+            Some(&rest[..end])
+        })
+        .collect()
+}
