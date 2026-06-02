@@ -4,6 +4,7 @@ use std::fmt;
 
 use rem6_memory::{Address, AgentId};
 
+use crate::allocation::max_vector_len;
 use crate::prefetch::PrefetchCandidate;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -33,11 +34,41 @@ impl SmsPrefetcherConfig {
                 line_size,
             });
         }
+        let region_lines_u64 = region_size / line_size;
+        let region_lines = if region_lines_u64 > usize::MAX as u64 {
+            usize::MAX
+        } else {
+            region_lines_u64 as usize
+        };
+        let maximum_region_lines = maximum_sms_region_lines();
+        if region_lines > maximum_region_lines {
+            return Err(SmsPrefetcherError::VectorLengthTooLarge {
+                field: "region lines",
+                length: region_lines,
+                maximum: maximum_region_lines,
+            });
+        }
         if max_contexts == 0 {
             return Err(SmsPrefetcherError::ZeroMaxContexts);
         }
+        let maximum_context_entries = maximum_sms_context_entries();
+        if max_contexts > maximum_context_entries {
+            return Err(SmsPrefetcherError::VectorLengthTooLarge {
+                field: "context entries",
+                length: max_contexts,
+                maximum: maximum_context_entries,
+            });
+        }
         if pattern_history_entries == 0 {
             return Err(SmsPrefetcherError::ZeroPatternHistoryEntries);
+        }
+        let maximum_pattern_history_entries = maximum_sms_pattern_history_entries();
+        if pattern_history_entries > maximum_pattern_history_entries {
+            return Err(SmsPrefetcherError::VectorLengthTooLarge {
+                field: "pattern history entries",
+                length: pattern_history_entries,
+                maximum: maximum_pattern_history_entries,
+            });
         }
 
         Ok(Self {
@@ -74,6 +105,11 @@ pub enum SmsPrefetcherError {
     RegionLineMismatch {
         region_size: u64,
         line_size: u64,
+    },
+    VectorLengthTooLarge {
+        field: &'static str,
+        length: usize,
+        maximum: usize,
     },
     SnapshotConfigMismatch {
         expected: Box<SmsPrefetcherConfig>,
@@ -120,6 +156,14 @@ impl fmt::Display for SmsPrefetcherError {
             } => write!(
                 formatter,
                 "SMS region size {region_size} is not a positive multiple of line size {line_size}"
+            ),
+            Self::VectorLengthTooLarge {
+                field,
+                length,
+                maximum,
+            } => write!(
+                formatter,
+                "SMS {field} length {length} exceeds maximum {maximum}"
             ),
             Self::SnapshotConfigMismatch { expected, actual } => write!(
                 formatter,
@@ -172,6 +216,41 @@ impl fmt::Display for SmsPrefetcherError {
 }
 
 impl Error for SmsPrefetcherError {}
+
+const fn min_usize(left: usize, right: usize) -> usize {
+    if left < right {
+        left
+    } else {
+        right
+    }
+}
+
+const fn maximum_sms_region_lines() -> usize {
+    min_usize(
+        max_vector_len::<u64>(),
+        max_vector_len::<SmsPrefetchCandidate>(),
+    )
+}
+
+const fn maximum_sms_context_entries() -> usize {
+    min_usize(
+        min_usize(
+            max_vector_len::<u64>(),
+            max_vector_len::<SmsFilterEntrySnapshot>(),
+        ),
+        max_vector_len::<SmsActiveEntrySnapshot>(),
+    )
+}
+
+const fn maximum_sms_pattern_history_entries() -> usize {
+    min_usize(
+        min_usize(
+            max_vector_len::<SmsPatternKey>(),
+            max_vector_len::<(u64, u64)>(),
+        ),
+        max_vector_len::<SmsPatternEntrySnapshot>(),
+    )
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SmsPrefetchAccess {

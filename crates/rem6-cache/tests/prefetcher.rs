@@ -10,9 +10,10 @@ use rem6_cache::{
     SignaturePathPatternEntrySnapshot, SignaturePathPatternStrideSnapshot,
     SignaturePathPrefetchAccess, SignaturePathPrefetcher, SignaturePathPrefetcherConfig,
     SignaturePathPrefetcherConfigOptions, SignaturePathPrefetcherError, SignaturePathRatio,
-    SignaturePathSignatureEntrySnapshot, SmsPrefetchAccess, SmsPrefetcher, SmsPrefetcherConfig,
-    StridePrefetchAccess, StridePrefetcher, StridePrefetcherConfig, TaggedPrefetchAccess,
-    TaggedPrefetcher, TaggedPrefetcherConfig,
+    SignaturePathSignatureEntrySnapshot, SmsActiveEntrySnapshot, SmsPatternEntrySnapshot,
+    SmsPrefetchAccess, SmsPrefetchCandidate, SmsPrefetcher, SmsPrefetcherConfig,
+    SmsPrefetcherError, StridePrefetchAccess, StridePrefetcher, StridePrefetcherConfig,
+    TaggedPrefetchAccess, TaggedPrefetcher, TaggedPrefetcherConfig,
 };
 use rem6_memory::{Address, AgentId};
 
@@ -43,6 +44,12 @@ const SBOOE_SANDBOX_BYTE_OVERFLOW_LENGTH: usize =
 const SBOOE_SANDBOX_ENTRY_BYTE_OVERFLOW_LENGTH: usize =
     isize::MAX as usize / std::mem::size_of::<SbooeSandboxEntrySnapshot>() + 1;
 const U64_BYTE_OVERFLOW_LENGTH: usize = isize::MAX as usize / std::mem::size_of::<u64>() + 1;
+const SMS_CANDIDATE_BYTE_OVERFLOW_LINES: u64 =
+    (isize::MAX as usize / std::mem::size_of::<SmsPrefetchCandidate>() + 1) as u64;
+const SMS_CONTEXT_BYTE_OVERFLOW_LENGTH: usize =
+    isize::MAX as usize / std::mem::size_of::<SmsActiveEntrySnapshot>() + 1;
+const SMS_PATTERN_HISTORY_BYTE_OVERFLOW_LENGTH: usize =
+    isize::MAX as usize / std::mem::size_of::<SmsPatternEntrySnapshot>() + 1;
 
 fn access(agent: u32, pc: u64, address: u64) -> StridePrefetchAccess {
     StridePrefetchAccess::new(AgentId::new(agent), pc, Address::new(address), false)
@@ -521,6 +528,34 @@ fn signature_path_prefetcher_replaces_low_confidence_stride_entries() {
     let snapshot = prefetcher.snapshot();
     assert_eq!(snapshot.pattern_entries().len(), 1);
     assert_eq!(snapshot.signature_entries().len(), 2);
+}
+
+#[test]
+fn sms_prefetcher_config_rejects_vector_lengths_above_host_limit() {
+    assert!(matches!(
+        SmsPrefetcherConfig::new(1, SMS_CANDIDATE_BYTE_OVERFLOW_LINES, 4, 4),
+        Err(SmsPrefetcherError::VectorLengthTooLarge {
+            field: "region lines",
+            length,
+            ..
+        }) if length == SMS_CANDIDATE_BYTE_OVERFLOW_LINES as usize
+    ));
+    assert!(matches!(
+        SmsPrefetcherConfig::new(64, 4096, SMS_CONTEXT_BYTE_OVERFLOW_LENGTH, 4),
+        Err(SmsPrefetcherError::VectorLengthTooLarge {
+            field: "context entries",
+            length: SMS_CONTEXT_BYTE_OVERFLOW_LENGTH,
+            ..
+        })
+    ));
+    assert!(matches!(
+        SmsPrefetcherConfig::new(64, 4096, 4, SMS_PATTERN_HISTORY_BYTE_OVERFLOW_LENGTH),
+        Err(SmsPrefetcherError::VectorLengthTooLarge {
+            field: "pattern history entries",
+            length: SMS_PATTERN_HISTORY_BYTE_OVERFLOW_LENGTH,
+            ..
+        })
+    ));
 }
 
 #[test]
