@@ -343,6 +343,38 @@ fn decoder_extracts_rv64i_fields_and_immediates() {
         }
     );
     assert_eq!(
+        RiscvInstruction::decode(b_type(12, 6, 5, 0x4)).unwrap(),
+        RiscvInstruction::Blt {
+            rs1: reg(5),
+            rs2: reg(6),
+            offset: Immediate::new(12),
+        }
+    );
+    assert_eq!(
+        RiscvInstruction::decode(b_type(-12, 6, 5, 0x5)).unwrap(),
+        RiscvInstruction::Bge {
+            rs1: reg(5),
+            rs2: reg(6),
+            offset: Immediate::new(-12),
+        }
+    );
+    assert_eq!(
+        RiscvInstruction::decode(b_type(20, 6, 5, 0x6)).unwrap(),
+        RiscvInstruction::Bltu {
+            rs1: reg(5),
+            rs2: reg(6),
+            offset: Immediate::new(20),
+        }
+    );
+    assert_eq!(
+        RiscvInstruction::decode(b_type(-20, 6, 5, 0x7)).unwrap(),
+        RiscvInstruction::Bgeu {
+            rs1: reg(5),
+            rs2: reg(6),
+            offset: Immediate::new(-20),
+        }
+    );
+    assert_eq!(
         RiscvInstruction::decode(j_type(2048, 1)).unwrap(),
         RiscvInstruction::Jal {
             rd: reg(1),
@@ -484,6 +516,31 @@ fn hart_executes_upper_immediate_jumps_and_branches() {
         .unwrap();
     assert_eq!(jalr.next_pc(), 0x2006);
     assert_eq!(hart.read(reg(1)), 0x1014);
+}
+
+#[test]
+fn hart_executes_integer_branch_comparisons() {
+    assert_branch_next_pc(0x4, (-2_i64) as u64, 1, 0x2010);
+    assert_branch_next_pc(0x4, 3, (-1_i64) as u64, 0x2004);
+    assert_branch_next_pc(0x5, 2, (-1_i64) as u64, 0x2010);
+    assert_branch_next_pc(0x5, (-2_i64) as u64, 1, 0x2004);
+    assert_branch_next_pc(0x6, 1, u64::MAX, 0x2010);
+    assert_branch_next_pc(0x6, u64::MAX, 1, 0x2004);
+    assert_branch_next_pc(0x7, u64::MAX, 1, 0x2010);
+    assert_branch_next_pc(0x7, 1, u64::MAX, 0x2004);
+}
+
+fn assert_branch_next_pc(funct3: u32, left: u64, right: u64, expected_pc: u64) {
+    let mut hart = RiscvHartState::new(0x2000);
+
+    hart.write(reg(1), left);
+    hart.write(reg(2), right);
+
+    let outcome = hart
+        .execute(RiscvInstruction::decode(b_type(16, 2, 1, funct3)).unwrap())
+        .unwrap();
+
+    assert_eq!(outcome.next_pc(), expected_pc);
 }
 
 #[test]

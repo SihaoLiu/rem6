@@ -4,6 +4,7 @@ mod error;
 mod gdb_target;
 mod pma;
 mod pmp;
+mod types;
 mod vector;
 
 use encoding::{
@@ -22,71 +23,13 @@ pub use pmp::{
     RiscvPmpAccessKind, RiscvPmpAddressMode, RiscvPmpConfig, RiscvPmpEntry, RiscvPmpError,
     RiscvPmpRange, RiscvPmpSnapshot, RiscvPmpSnapshotEntry, RiscvPmpTable, RiscvPrivilegeMode,
 };
+pub use types::{AtomicMemoryOp, Immediate, MemoryWidth, Register};
 pub use vector::{
     RiscvInstructionFlags, RiscvVectorCompressPlan, RiscvVectorCompressResult, RiscvVectorElements,
     RiscvVectorError, RiscvVectorFixedPointState, RiscvVectorFixedRoundingMode, RiscvVectorMicroOp,
     RiscvVectorMicroOpExpansion, RiscvVectorNarrowClipPlan, RiscvVectorNarrowClipResult,
     RiscvVectorTailPolicy,
 };
-
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct Register(u8);
-
-impl Register {
-    pub fn new(index: u8) -> Result<Self, RiscvError> {
-        if index < 32 {
-            Ok(Self(index))
-        } else {
-            Err(RiscvError::InvalidRegister { index })
-        }
-    }
-
-    pub(crate) const fn from_field(index: u32) -> Self {
-        Self(index as u8)
-    }
-
-    pub const fn index(self) -> u8 {
-        self.0
-    }
-
-    pub const fn is_zero(self) -> bool {
-        self.0 == 0
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct Immediate(i64);
-
-impl Immediate {
-    pub const fn new(value: i64) -> Self {
-        Self(value)
-    }
-
-    pub const fn value(self) -> i64 {
-        self.0
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum MemoryWidth {
-    Byte,
-    Halfword,
-    Word,
-    Doubleword,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum AtomicMemoryOp {
-    Swap,
-    Add,
-    Xor,
-    Or,
-    And,
-    MinSigned,
-    MaxSigned,
-    MinUnsigned,
-    MaxUnsigned,
-}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RiscvFenceSet {
@@ -564,6 +507,26 @@ pub enum RiscvInstruction {
         rs2: Register,
         offset: Immediate,
     },
+    Blt {
+        rs1: Register,
+        rs2: Register,
+        offset: Immediate,
+    },
+    Bge {
+        rs1: Register,
+        rs2: Register,
+        offset: Immediate,
+    },
+    Bltu {
+        rs1: Register,
+        rs2: Register,
+        offset: Immediate,
+    },
+    Bgeu {
+        rs1: Register,
+        rs2: Register,
+        offset: Immediate,
+    },
     Jal {
         rd: Register,
         offset: Immediate,
@@ -773,6 +736,26 @@ fn decode_branch(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             offset: Immediate::new(b_imm(raw)),
         }),
         0x1 => Ok(RiscvInstruction::Bne {
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+            offset: Immediate::new(b_imm(raw)),
+        }),
+        0x4 => Ok(RiscvInstruction::Blt {
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+            offset: Immediate::new(b_imm(raw)),
+        }),
+        0x5 => Ok(RiscvInstruction::Bge {
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+            offset: Immediate::new(b_imm(raw)),
+        }),
+        0x6 => Ok(RiscvInstruction::Bltu {
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+            offset: Immediate::new(b_imm(raw)),
+        }),
+        0x7 => Ok(RiscvInstruction::Bgeu {
             rs1: rs1(raw),
             rs2: rs2(raw),
             offset: Immediate::new(b_imm(raw)),
@@ -1119,6 +1102,26 @@ impl RiscvHartState {
             }
             RiscvInstruction::Bne { rs1, rs2, offset } => {
                 if self.read(rs1) != self.read(rs2) {
+                    next_pc = add_signed(pc, offset.value())?;
+                }
+            }
+            RiscvInstruction::Blt { rs1, rs2, offset } => {
+                if (self.read(rs1) as i64) < (self.read(rs2) as i64) {
+                    next_pc = add_signed(pc, offset.value())?;
+                }
+            }
+            RiscvInstruction::Bge { rs1, rs2, offset } => {
+                if (self.read(rs1) as i64) >= (self.read(rs2) as i64) {
+                    next_pc = add_signed(pc, offset.value())?;
+                }
+            }
+            RiscvInstruction::Bltu { rs1, rs2, offset } => {
+                if self.read(rs1) < self.read(rs2) {
+                    next_pc = add_signed(pc, offset.value())?;
+                }
+            }
+            RiscvInstruction::Bgeu { rs1, rs2, offset } => {
+                if self.read(rs1) >= self.read(rs2) {
                     next_pc = add_signed(pc, offset.value())?;
                 }
             }
