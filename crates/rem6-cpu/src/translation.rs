@@ -859,6 +859,34 @@ impl CpuTranslationFrontend {
             .collect()
     }
 
+    pub(crate) fn complete_ready_with_cpu_resolver<F, T>(
+        &mut self,
+        tick: u64,
+        mut resolver: F,
+    ) -> Result<Vec<T>, CpuTranslationFrontendError>
+    where
+        F: FnMut(CpuTranslationRequest) -> (TranslationResolution, T),
+    {
+        let ready = self.queue.ready_request_ids(tick);
+        let mut outcomes = Vec::with_capacity(ready.len());
+        for request_id in ready {
+            let pending = self
+                .pending
+                .get(&request_id)
+                .expect("translation queue ready request has matching CPU metadata")
+                .clone();
+            let (resolution, outcome) = resolver(pending);
+            let completion = self
+                .queue
+                .complete(request_id, resolution)
+                .map_err(CpuTranslationFrontendError::Translation)?;
+            self.take_completed_request(&completion);
+            outcomes.push(outcome);
+        }
+
+        Ok(outcomes)
+    }
+
     pub fn complete_ready_with_tlb_page_map(
         &mut self,
         tick: u64,

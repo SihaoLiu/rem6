@@ -22,9 +22,9 @@ use crate::riscv_data_issue::{
 };
 use crate::{
     riscv_data_access, CpuDataConfig, CpuTranslatedMemoryOperation, CpuTranslatedMemoryRequest,
-    CpuTranslationFaultRecord, CpuTranslationFrontend, CpuTranslationOutcome,
-    CpuTranslationRequest, RiscvCore, RiscvCoreDriveAction, RiscvCoreState, RiscvCpuError,
-    RiscvDataAccessTarget,
+    CpuTranslationFaultRecord, CpuTranslationFrontend, CpuTranslationFrontendError,
+    CpuTranslationOutcome, CpuTranslationRequest, RiscvCore, RiscvCoreDriveAction, RiscvCoreState,
+    RiscvCpuError, RiscvDataAccessTarget,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -53,6 +53,21 @@ impl RiscvSv39PageTableResolver {
 
     pub const fn root_table_ppn(self) -> u64 {
         self.root_table_ppn
+    }
+
+    pub fn complete_ready<F>(
+        &self,
+        frontend: &mut CpuTranslationFrontend,
+        tick: u64,
+        mut read_pte: F,
+    ) -> Result<Vec<RiscvSv39TranslationResult>, CpuTranslationFrontendError>
+    where
+        F: FnMut(Address) -> Result<RiscvSv39Pte, RiscvSv39PageFault>,
+    {
+        frontend.complete_ready_with_cpu_resolver(tick, |request| {
+            let result = self.resolve(request, &mut read_pte);
+            (result.resolution().clone(), result)
+        })
     }
 
     pub fn resolve<F>(
@@ -107,6 +122,7 @@ impl RiscvSv39PageTableResolver {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RiscvSv39TranslationResult {
     outcome: CpuTranslationOutcome,
+    resolution: TranslationResolution,
     pte_addresses: Vec<Address>,
     leaf_level: Option<RiscvSv39PageTableLevel>,
     page_fault: Option<RiscvSv39PageFault>,
@@ -119,11 +135,10 @@ impl RiscvSv39TranslationResult {
         pte_addresses: Vec<Address>,
         leaf_level: RiscvSv39PageTableLevel,
     ) -> Self {
+        let resolution = TranslationResolution::mapped(physical_address);
         Self {
-            outcome: cpu_translation_outcome_from_resolution(
-                request,
-                TranslationResolution::mapped(physical_address),
-            ),
+            outcome: cpu_translation_outcome_from_resolution(request, resolution.clone()),
+            resolution,
             pte_addresses,
             leaf_level: Some(leaf_level),
             page_fault: None,
@@ -139,11 +154,10 @@ impl RiscvSv39TranslationResult {
             request.virtual_address(),
             sv39_translation_fault_kind(&fault),
         );
+        let resolution = TranslationResolution::fault(translation_fault);
         Self {
-            outcome: cpu_translation_outcome_from_resolution(
-                request,
-                TranslationResolution::fault(translation_fault),
-            ),
+            outcome: cpu_translation_outcome_from_resolution(request, resolution.clone()),
+            resolution,
             pte_addresses,
             leaf_level: None,
             page_fault: Some(fault),
@@ -156,6 +170,10 @@ impl RiscvSv39TranslationResult {
 
     pub fn into_outcome(self) -> CpuTranslationOutcome {
         self.outcome
+    }
+
+    pub const fn resolution(&self) -> &TranslationResolution {
+        &self.resolution
     }
 
     pub fn pte_addresses(&self) -> &[Address] {

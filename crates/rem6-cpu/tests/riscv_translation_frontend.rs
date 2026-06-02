@@ -1024,6 +1024,78 @@ fn riscv_sv39_page_table_resolver_reports_permission_fault_and_tracks_walk_addre
 }
 
 #[test]
+fn riscv_sv39_page_table_resolver_completes_ready_frontend_translations() {
+    let resolver = RiscvSv39PageTableResolver::new(0x120);
+    let mut frontend = CpuTranslationFrontend::new(TranslationQueueConfig::new(4, 2).unwrap());
+    let virtual_address = (0x014_u64 << 30) | (0x036_u64 << 21) | (0x058_u64 << 12) | 0x9ab;
+    let level1_ppn = 0x220;
+    let level0_ppn = 0x320;
+    let leaf_ppn = 0x65678;
+    let level2_pte_address = Address::new((0x120_u64 << 12) + (0x014 * 8));
+    let level1_pte_address = Address::new((level1_ppn << 12) + (0x036 * 8));
+    let level0_pte_address = Address::new((level0_ppn << 12) + (0x058 * 8));
+    let request = CpuTranslationRequest::load(
+        translation_id(83),
+        memory_id(93),
+        MemoryRouteId::new(6),
+        endpoint("cpu0.dmem"),
+        Address::new(virtual_address),
+        AccessSize::new(8).unwrap(),
+    )
+    .unwrap();
+
+    frontend.enqueue(40, request).unwrap();
+    assert!(resolver
+        .complete_ready(&mut frontend, 41, |_pte_address| {
+            panic!("translation should not be ready before its latency")
+        })
+        .unwrap()
+        .is_empty());
+    assert_eq!(frontend.pending_count(), 1);
+
+    let resolved = resolver
+        .complete_ready(&mut frontend, 42, |pte_address| {
+            Ok(match pte_address {
+                address if address == level2_pte_address => {
+                    RiscvSv39Pte::new((level1_ppn << 10) | SV39_PTE_V)
+                }
+                address if address == level1_pte_address => {
+                    RiscvSv39Pte::new((level0_ppn << 10) | SV39_PTE_V)
+                }
+                address if address == level0_pte_address => RiscvSv39Pte::new(
+                    (leaf_ppn << 10)
+                        | SV39_PTE_V
+                        | SV39_PTE_R
+                        | SV39_PTE_W
+                        | SV39_PTE_A
+                        | SV39_PTE_D,
+                ),
+                _ => RiscvSv39Pte::new(0),
+            })
+        })
+        .unwrap();
+
+    assert_eq!(resolved.len(), 1);
+    let CpuTranslationOutcome::Mapped(mapped) = resolved[0].outcome() else {
+        panic!("ready Sv39 translation should map");
+    };
+    assert_eq!(
+        mapped.physical_address(),
+        Address::new((leaf_ppn << 12) | 0x9ab)
+    );
+    assert_eq!(mapped.translation_id(), translation_id(83));
+    assert_eq!(
+        resolved[0].pte_addresses(),
+        &[level2_pte_address, level1_pte_address, level0_pte_address]
+    );
+    assert_eq!(
+        resolved[0].leaf_level(),
+        Some(RiscvSv39PageTableLevel::Level0)
+    );
+    assert!(frontend.is_empty());
+}
+
+#[test]
 fn riscv_core_issues_ready_translated_data_after_translation_latency() {
     let (mut scheduler, transport, fetch_route, data_route) = data_routes();
     let core = translated_data_core_with_latency(fetch_route, data_route, 0x8000, 1);
