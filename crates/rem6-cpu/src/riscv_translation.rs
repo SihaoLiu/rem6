@@ -74,7 +74,7 @@ impl RiscvCoreState {
                 tlb.demap_page_all_address_spaces(Address::new(*virtual_address));
             }
             (Some(virtual_address), Some(address_space)) => {
-                tlb.demap_page(address_space, Address::new(*virtual_address));
+                tlb.demap_non_global_page(address_space, Address::new(*virtual_address));
             }
         }
     }
@@ -126,17 +126,21 @@ impl RiscvCore {
     }
 
     pub fn data_translation_address_space(&self) -> TranslationAddressSpaceId {
-        self.state
-            .lock()
-            .expect("riscv core lock")
-            .data_translation_address_space
+        TranslationAddressSpaceId::new(
+            self.state
+                .lock()
+                .expect("riscv core lock")
+                .hart
+                .translation_address_space(),
+        )
     }
 
     pub fn set_data_translation_address_space(&self, address_space: TranslationAddressSpaceId) {
         self.state
             .lock()
             .expect("riscv core lock")
-            .data_translation_address_space = address_space;
+            .hart
+            .set_translation_address_space(address_space.get());
     }
 
     pub fn data_translation_tlb_stats(&self) -> Option<TranslationTlbStats> {
@@ -400,7 +404,7 @@ impl RiscvCore {
                 state.data.clone().ok_or(RiscvCpuError::MissingDataConfig {
                     fetch: fetch_request,
                 })?,
-                state.data_translation_address_space,
+                TranslationAddressSpaceId::new(state.hart.translation_address_space()),
             )
         };
         let request_id = MemoryRequestId::new(self.core.agent(), self.core.next_sequence());

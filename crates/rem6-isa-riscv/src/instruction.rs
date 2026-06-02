@@ -1,4 +1,7 @@
-use crate::{AtomicMemoryOp, Immediate, MemoryWidth, Register, RiscvCounterCsr, RiscvFenceSet};
+use crate::{
+    AtomicMemoryOp, Immediate, MemoryWidth, Register, RiscvCounterCsr, RiscvFenceSet,
+    RiscvTranslationCsr,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RiscvInstruction {
@@ -337,6 +340,40 @@ pub enum RiscvInstruction {
     ClearCounterCsrImmediate {
         rd: Register,
         csr: RiscvCounterCsr,
+        zimm: u8,
+    },
+    ReadTranslationCsr {
+        rd: Register,
+        csr: RiscvTranslationCsr,
+    },
+    WriteTranslationCsr {
+        rd: Register,
+        csr: RiscvTranslationCsr,
+        rs1: Register,
+    },
+    SetTranslationCsr {
+        rd: Register,
+        csr: RiscvTranslationCsr,
+        rs1: Register,
+    },
+    ClearTranslationCsr {
+        rd: Register,
+        csr: RiscvTranslationCsr,
+        rs1: Register,
+    },
+    WriteTranslationCsrImmediate {
+        rd: Register,
+        csr: RiscvTranslationCsr,
+        zimm: u8,
+    },
+    SetTranslationCsrImmediate {
+        rd: Register,
+        csr: RiscvTranslationCsr,
+        zimm: u8,
+    },
+    ClearTranslationCsrImmediate {
+        rd: Register,
+        csr: RiscvTranslationCsr,
         zimm: u8,
     },
     Ecall,

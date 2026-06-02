@@ -1,8 +1,8 @@
 use rem6_isa_riscv::{
-    AtomicMemoryOp, Immediate, MemoryAccessKind, MemoryWidth, Register, RiscvCounterBank,
-    RiscvCounterCsr, RiscvCounterSnapshot, RiscvCsrError, RiscvError, RiscvExecutionRecord,
-    RiscvFenceSet, RiscvHartState, RiscvInstruction, RiscvMemoryOrdering, RiscvSystemEvent,
-    RiscvTrap, RiscvTrapKind,
+    AtomicMemoryOp, Immediate, MemoryAccessKind, MemoryWidth, Register, RegisterWrite,
+    RiscvCounterBank, RiscvCounterCsr, RiscvCounterSnapshot, RiscvCsrError, RiscvError,
+    RiscvExecutionRecord, RiscvFenceSet, RiscvHartState, RiscvInstruction, RiscvMemoryOrdering,
+    RiscvSystemEvent, RiscvTranslationCsr, RiscvTrap, RiscvTrapKind,
 };
 
 fn r_type(funct7: u32, rs2: u8, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
@@ -401,6 +401,136 @@ fn hart_executes_machine_counter_csr_read_modify_write_operations() {
     hart.execute(clear_instret_imm).unwrap();
     assert_eq!(hart.read(reg(10)), 9);
     assert_eq!(hart.counter_snapshot(), RiscvCounterSnapshot::new(0x54, 9));
+}
+
+#[test]
+fn hart_executes_satp_csr_write_and_exposes_address_space() {
+    let write_satp = RiscvInstruction::decode(csr_type(0x180, 2, 0x1, 5)).unwrap();
+    assert_eq!(
+        write_satp,
+        RiscvInstruction::WriteTranslationCsr {
+            rd: reg(5),
+            csr: RiscvTranslationCsr::Satp,
+            rs1: reg(2),
+        }
+    );
+
+    let mut hart = RiscvHartState::new(0x3400);
+    let satp = (8_u64 << 60) | (0x2a_u64 << 44) | 0x12345;
+    hart.write(reg(2), satp);
+    let record = hart.execute(write_satp).unwrap();
+
+    assert_eq!(record.next_pc(), 0x3404);
+    assert_eq!(record.register_writes(), &[RegisterWrite::new(reg(5), 0)]);
+    assert_eq!(hart.translation_address_space(), 0x2a);
+    assert_eq!(hart.translation_satp(), satp);
+
+    let read_satp = RiscvInstruction::decode(csr_read_type(0x180, 6)).unwrap();
+    let read_record = hart.execute(read_satp).unwrap();
+    assert_eq!(
+        read_record.register_writes(),
+        &[RegisterWrite::new(reg(6), satp)]
+    );
+}
+
+#[test]
+fn hart_executes_satp_csr_read_modify_write_operations() {
+    let mut hart = RiscvHartState::new(0x3500);
+    let initial_satp = (8_u64 << 60) | (0x12_u64 << 44) | 0x100;
+    let set_mask = (0x03_u64 << 44) | 0x20;
+    let clear_mask = (0x10_u64 << 44) | 0x100;
+    hart.write(reg(2), initial_satp);
+    hart.write(reg(3), set_mask);
+    hart.write(reg(4), clear_mask);
+
+    let write = RiscvInstruction::decode(csr_type(0x180, 2, 0x1, 5)).unwrap();
+    let set = RiscvInstruction::decode(csr_type(0x180, 3, 0x2, 6)).unwrap();
+    let clear = RiscvInstruction::decode(csr_type(0x180, 4, 0x3, 7)).unwrap();
+    let write_immediate = RiscvInstruction::decode(csr_type(0x180, 0x1f, 0x5, 8)).unwrap();
+    let set_immediate = RiscvInstruction::decode(csr_type(0x180, 0x10, 0x6, 9)).unwrap();
+    let clear_immediate = RiscvInstruction::decode(csr_type(0x180, 0x01, 0x7, 10)).unwrap();
+    let set_read_only = RiscvInstruction::decode(csr_type(0x180, 0, 0x2, 11)).unwrap();
+    let clear_read_only = RiscvInstruction::decode(csr_type(0x180, 0, 0x3, 12)).unwrap();
+    let set_immediate_read_only = RiscvInstruction::decode(csr_type(0x180, 0, 0x6, 13)).unwrap();
+    let clear_immediate_read_only = RiscvInstruction::decode(csr_type(0x180, 0, 0x7, 14)).unwrap();
+
+    assert_eq!(
+        set_read_only,
+        RiscvInstruction::ReadTranslationCsr {
+            rd: reg(11),
+            csr: RiscvTranslationCsr::Satp,
+        }
+    );
+    assert_eq!(
+        clear_read_only,
+        RiscvInstruction::ReadTranslationCsr {
+            rd: reg(12),
+            csr: RiscvTranslationCsr::Satp,
+        }
+    );
+    assert_eq!(
+        set_immediate_read_only,
+        RiscvInstruction::ReadTranslationCsr {
+            rd: reg(13),
+            csr: RiscvTranslationCsr::Satp,
+        }
+    );
+    assert_eq!(
+        clear_immediate_read_only,
+        RiscvInstruction::ReadTranslationCsr {
+            rd: reg(14),
+            csr: RiscvTranslationCsr::Satp,
+        }
+    );
+    assert!(matches!(
+        RiscvInstruction::decode(csr_type(0x180, 1, 0x4, 15)),
+        Err(RiscvError::UnknownEncoding { .. })
+    ));
+    assert!(matches!(
+        RiscvInstruction::decode(csr_type(0x181, 1, 0x1, 15)),
+        Err(RiscvError::UnknownEncoding { .. })
+    ));
+
+    hart.execute(write).unwrap();
+    assert_eq!(hart.translation_satp(), initial_satp);
+    assert_eq!(hart.read(reg(5)), 0);
+
+    hart.execute(set).unwrap();
+    assert_eq!(hart.read(reg(6)), initial_satp);
+    assert_eq!(hart.translation_satp(), initial_satp | set_mask);
+
+    let before_clear = hart.translation_satp();
+    hart.execute(clear).unwrap();
+    assert_eq!(hart.read(reg(7)), before_clear);
+    assert_eq!(hart.translation_satp(), before_clear & !clear_mask);
+
+    let before_immediate_write = hart.translation_satp();
+    hart.execute(write_immediate).unwrap();
+    assert_eq!(hart.read(reg(8)), before_immediate_write);
+    assert_eq!(hart.translation_satp(), 0x1f);
+
+    hart.execute(set_immediate).unwrap();
+    assert_eq!(hart.read(reg(9)), 0x1f);
+    assert_eq!(hart.translation_satp(), 0x1f);
+
+    hart.execute(clear_immediate).unwrap();
+    assert_eq!(hart.read(reg(10)), 0x1f);
+    assert_eq!(hart.translation_satp(), 0x1e);
+
+    for instruction in [
+        set_read_only,
+        clear_read_only,
+        set_immediate_read_only,
+        clear_immediate_read_only,
+    ] {
+        let before_read = hart.translation_satp();
+        hart.execute(instruction).unwrap();
+        assert_eq!(hart.translation_satp(), before_read);
+    }
+    assert_eq!(hart.read(reg(11)), 0x1e);
+    assert_eq!(hart.read(reg(12)), 0x1e);
+    assert_eq!(hart.read(reg(13)), 0x1e);
+    assert_eq!(hart.read(reg(14)), 0x1e);
 }
 
 #[test]

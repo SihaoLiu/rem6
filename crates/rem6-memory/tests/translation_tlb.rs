@@ -988,6 +988,48 @@ fn translation_tlb_asid_flush_preserves_global_entries() {
 }
 
 #[test]
+fn translation_tlb_page_asid_flush_preserves_global_entries() {
+    let page_size = TranslationPageSize::new(4096).unwrap();
+    let asid = TranslationAddressSpaceId::new(12);
+    let global_page = Address::new(0xffff_0002_3000_0000);
+    let non_global_page = Address::new(0xffff_0002_3000_1000);
+    let snapshot = TranslationTlbSnapshot::new(
+        TranslationTlbConfig::new(8).unwrap(),
+        vec![
+            TranslationTlbEntrySnapshot::new_in_address_space(
+                asid,
+                global_page,
+                Address::new(0x0000_0002_3000_0000),
+                page_size,
+                TranslationPagePermissions::read_execute(),
+                0,
+            )
+            .with_scope(TranslationTlbEntryScope::Global),
+            TranslationTlbEntrySnapshot::new_in_address_space(
+                asid,
+                non_global_page,
+                Address::new(0x0000_0002_3000_1000),
+                page_size,
+                TranslationPagePermissions::read_write(),
+                1,
+            )
+            .with_scope(TranslationTlbEntryScope::NonGlobal),
+        ],
+        2,
+        TranslationTlbStats::new(0, 0, 0, 2, 0),
+    );
+    let mut tlb = TranslationTlb::from_snapshot(&snapshot).unwrap();
+
+    assert_eq!(tlb.demap_non_global_page(asid, global_page), 0);
+    assert!(tlb.contains_entry(asid, global_page));
+    assert!(tlb.contains_entry(asid, non_global_page));
+
+    assert_eq!(tlb.demap_non_global_page(asid, non_global_page), 1);
+    assert!(tlb.contains_entry(asid, global_page));
+    assert!(!tlb.contains_entry(asid, non_global_page));
+}
+
+#[test]
 fn translation_tlb_fill_from_page_map_preserves_global_mapping_scope() {
     let asid = TranslationAddressSpaceId::new(11);
     let virtual_base = Address::new(0xffff_0002_2000_0000);

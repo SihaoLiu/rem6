@@ -765,6 +765,18 @@ impl TranslationTlb {
         })
     }
 
+    pub fn demap_non_global_page(
+        &mut self,
+        address_space: TranslationAddressSpaceId,
+        virtual_address: Address,
+    ) -> usize {
+        self.remove_matching_pages(|key, entry| {
+            key.address_space == address_space
+                && entry.scope != TranslationTlbEntryScope::Global
+                && entry.contains_address(virtual_address).unwrap_or(false)
+        })
+    }
+
     pub fn demap_page_all_address_spaces(&mut self, virtual_address: Address) -> usize {
         self.remove_matching_pages(|_, entry| {
             entry.contains_address(virtual_address).unwrap_or(false)

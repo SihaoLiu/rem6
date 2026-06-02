@@ -1,4 +1,5 @@
 mod control_flow;
+mod csr;
 mod encoding;
 mod error;
 mod gdb_target;
@@ -24,6 +25,10 @@ pub use control_flow::{
     RiscvBranchPredictionTarget, RiscvControlFlowSnapshot, RiscvControlFlowUpdate,
     RiscvVectorConfig, RiscvVectorConfigUpdate,
 };
+pub use csr::{
+    RiscvCounterBank, RiscvCounterCsr, RiscvCounterCsrWord, RiscvCounterSnapshot,
+    RiscvTranslationCsr,
+};
 pub use error::{RiscvCsrError, RiscvError};
 pub use gdb_target::{RiscvGdbTargetDescription, RiscvGdbTargetDocument, RiscvGdbXlen};
 pub use instruction::RiscvInstruction;
@@ -43,238 +48,6 @@ pub use vector::{
     RiscvVectorMicroOpExpansion, RiscvVectorNarrowClipPlan, RiscvVectorNarrowClipResult,
     RiscvVectorTailPolicy,
 };
-
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub enum RiscvCounterCsr {
-    Cycle,
-    Instret,
-}
-
-impl RiscvCounterCsr {
-    pub const fn user_address(self) -> u16 {
-        match self {
-            Self::Cycle => 0xc00,
-            Self::Instret => 0xc02,
-        }
-    }
-
-    pub const fn machine_address(self) -> u16 {
-        match self {
-            Self::Cycle => 0xb00,
-            Self::Instret => 0xb02,
-        }
-    }
-
-    pub const fn from_user_address(address: u16) -> Result<Self, RiscvCsrError> {
-        match address {
-            0xc00 => Ok(Self::Cycle),
-            0xc02 => Ok(Self::Instret),
-            _ => Err(RiscvCsrError::UnknownCounterCsr { address }),
-        }
-    }
-
-    pub const fn from_machine_address(address: u16) -> Result<Self, RiscvCsrError> {
-        match address {
-            0xb00 => Ok(Self::Cycle),
-            0xb02 => Ok(Self::Instret),
-            _ => Err(RiscvCsrError::UnknownCounterCsr { address }),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub enum RiscvCounterCsrWord {
-    CycleLow,
-    CycleHigh,
-    InstretLow,
-    InstretHigh,
-}
-
-impl RiscvCounterCsrWord {
-    pub const fn counter(self) -> RiscvCounterCsr {
-        match self {
-            Self::CycleLow | Self::CycleHigh => RiscvCounterCsr::Cycle,
-            Self::InstretLow | Self::InstretHigh => RiscvCounterCsr::Instret,
-        }
-    }
-
-    pub const fn user_address(self) -> u16 {
-        match self {
-            Self::CycleLow => 0xc00,
-            Self::InstretLow => 0xc02,
-            Self::CycleHigh => 0xc80,
-            Self::InstretHigh => 0xc82,
-        }
-    }
-
-    pub const fn machine_address(self) -> u16 {
-        match self {
-            Self::CycleLow => 0xb00,
-            Self::InstretLow => 0xb02,
-            Self::CycleHigh => 0xb80,
-            Self::InstretHigh => 0xb82,
-        }
-    }
-
-    pub const fn from_user_address(address: u16) -> Result<Self, RiscvCsrError> {
-        match address {
-            0xc00 => Ok(Self::CycleLow),
-            0xc02 => Ok(Self::InstretLow),
-            0xc80 => Ok(Self::CycleHigh),
-            0xc82 => Ok(Self::InstretHigh),
-            _ => Err(RiscvCsrError::UnknownCounterCsr { address }),
-        }
-    }
-
-    pub const fn from_machine_address(address: u16) -> Result<Self, RiscvCsrError> {
-        match address {
-            0xb00 => Ok(Self::CycleLow),
-            0xb02 => Ok(Self::InstretLow),
-            0xb80 => Ok(Self::CycleHigh),
-            0xb82 => Ok(Self::InstretHigh),
-            _ => Err(RiscvCsrError::UnknownCounterCsr { address }),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RiscvCounterSnapshot {
-    cycle: u64,
-    instret: u64,
-}
-
-impl RiscvCounterSnapshot {
-    pub const fn new(cycle: u64, instret: u64) -> Self {
-        Self { cycle, instret }
-    }
-
-    pub const fn cycle(&self) -> u64 {
-        self.cycle
-    }
-
-    pub const fn instret(&self) -> u64 {
-        self.instret
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RiscvCounterBank {
-    cycle: u64,
-    instret: u64,
-}
-
-impl RiscvCounterBank {
-    pub const fn new() -> Self {
-        Self {
-            cycle: 0,
-            instret: 0,
-        }
-    }
-
-    pub const fn read_user(&self, csr: RiscvCounterCsr) -> u64 {
-        self.read(csr)
-    }
-
-    pub const fn read_machine(&self, csr: RiscvCounterCsr) -> u64 {
-        self.read(csr)
-    }
-
-    pub const fn read_user_word(&self, csr: RiscvCounterCsrWord) -> u32 {
-        self.read_word(csr)
-    }
-
-    pub const fn read_machine_word(&self, csr: RiscvCounterCsrWord) -> u32 {
-        self.read_word(csr)
-    }
-
-    pub fn write_user(&mut self, csr: RiscvCounterCsr, _value: u64) -> Result<(), RiscvCsrError> {
-        Err(RiscvCsrError::ReadOnlyCounterAlias { csr })
-    }
-
-    pub fn write_user_word(
-        &mut self,
-        csr: RiscvCounterCsrWord,
-        _value: u32,
-    ) -> Result<(), RiscvCsrError> {
-        Err(RiscvCsrError::ReadOnlyCounterWordAlias { csr })
-    }
-
-    pub fn write_machine(&mut self, csr: RiscvCounterCsr, value: u64) -> Result<(), RiscvCsrError> {
-        self.set_machine(csr, value);
-        Ok(())
-    }
-
-    pub fn set_machine(&mut self, csr: RiscvCounterCsr, value: u64) {
-        match csr {
-            RiscvCounterCsr::Cycle => self.cycle = value,
-            RiscvCounterCsr::Instret => self.instret = value,
-        }
-    }
-
-    pub fn write_machine_word(
-        &mut self,
-        csr: RiscvCounterCsrWord,
-        value: u32,
-    ) -> Result<(), RiscvCsrError> {
-        match csr {
-            RiscvCounterCsrWord::CycleLow => self.cycle = replace_low_word(self.cycle, value),
-            RiscvCounterCsrWord::CycleHigh => self.cycle = replace_high_word(self.cycle, value),
-            RiscvCounterCsrWord::InstretLow => self.instret = replace_low_word(self.instret, value),
-            RiscvCounterCsrWord::InstretHigh => {
-                self.instret = replace_high_word(self.instret, value);
-            }
-        }
-        Ok(())
-    }
-
-    pub fn add_cycles(&mut self, cycles: u64) {
-        self.cycle = self.cycle.wrapping_add(cycles);
-    }
-
-    pub fn retire_instructions(&mut self, instructions: u64) {
-        self.instret = self.instret.wrapping_add(instructions);
-    }
-
-    pub const fn snapshot(&self) -> RiscvCounterSnapshot {
-        RiscvCounterSnapshot::new(self.cycle, self.instret)
-    }
-
-    pub fn restore(&mut self, snapshot: &RiscvCounterSnapshot) {
-        self.cycle = snapshot.cycle;
-        self.instret = snapshot.instret;
-    }
-
-    const fn read(&self, csr: RiscvCounterCsr) -> u64 {
-        match csr {
-            RiscvCounterCsr::Cycle => self.cycle,
-            RiscvCounterCsr::Instret => self.instret,
-        }
-    }
-
-    const fn read_word(&self, csr: RiscvCounterCsrWord) -> u32 {
-        let counter = self.read(csr.counter());
-        match csr {
-            RiscvCounterCsrWord::CycleLow | RiscvCounterCsrWord::InstretLow => counter as u32,
-            RiscvCounterCsrWord::CycleHigh | RiscvCounterCsrWord::InstretHigh => {
-                (counter >> 32) as u32
-            }
-        }
-    }
-}
-
-impl Default for RiscvCounterBank {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-const fn replace_low_word(counter: u64, value: u32) -> u64 {
-    (counter & 0xffff_ffff_0000_0000) | value as u64
-}
-
-const fn replace_high_word(counter: u64, value: u32) -> u64 {
-    (counter & 0x0000_0000_ffff_ffff) | ((value as u64) << 32)
-}
 
 impl RiscvInstruction {
     pub fn decode(raw: u32) -> Result<Self, RiscvError> {
@@ -348,41 +121,80 @@ fn decode_csr(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             0xf14 => Ok(RiscvInstruction::ReadMachineHartId { rd: rd(raw) }),
             csr => counter_csr(csr)
                 .map(|csr| RiscvInstruction::ReadCounterCsr { rd: rd(raw), csr })
+                .or_else(|| {
+                    RiscvTranslationCsr::from_address(csr)
+                        .map(|csr| RiscvInstruction::ReadTranslationCsr { rd: rd(raw), csr })
+                })
                 .ok_or(RiscvError::UnknownEncoding { raw }),
         };
     }
 
-    let Some(csr) = machine_counter_csr(csr) else {
+    if let Some(csr) = machine_counter_csr(csr) {
+        return match funct3(raw) {
+            0x1 => Ok(RiscvInstruction::WriteCounterCsr {
+                rd: rd(raw),
+                csr,
+                rs1: rs1(raw),
+            }),
+            0x2 => Ok(RiscvInstruction::SetCounterCsr {
+                rd: rd(raw),
+                csr,
+                rs1: rs1(raw),
+            }),
+            0x3 => Ok(RiscvInstruction::ClearCounterCsr {
+                rd: rd(raw),
+                csr,
+                rs1: rs1(raw),
+            }),
+            0x5 => Ok(RiscvInstruction::WriteCounterCsrImmediate {
+                rd: rd(raw),
+                csr,
+                zimm: rs1(raw).index(),
+            }),
+            0x6 => Ok(RiscvInstruction::SetCounterCsrImmediate {
+                rd: rd(raw),
+                csr,
+                zimm: rs1(raw).index(),
+            }),
+            0x7 => Ok(RiscvInstruction::ClearCounterCsrImmediate {
+                rd: rd(raw),
+                csr,
+                zimm: rs1(raw).index(),
+            }),
+            _ => Err(RiscvError::UnknownEncoding { raw }),
+        };
+    }
+
+    let Some(csr) = RiscvTranslationCsr::from_address(csr) else {
         return Err(RiscvError::UnknownEncoding { raw });
     };
-
     match funct3(raw) {
-        0x1 => Ok(RiscvInstruction::WriteCounterCsr {
+        0x1 => Ok(RiscvInstruction::WriteTranslationCsr {
             rd: rd(raw),
             csr,
             rs1: rs1(raw),
         }),
-        0x2 => Ok(RiscvInstruction::SetCounterCsr {
+        0x2 => Ok(RiscvInstruction::SetTranslationCsr {
             rd: rd(raw),
             csr,
             rs1: rs1(raw),
         }),
-        0x3 => Ok(RiscvInstruction::ClearCounterCsr {
+        0x3 => Ok(RiscvInstruction::ClearTranslationCsr {
             rd: rd(raw),
             csr,
             rs1: rs1(raw),
         }),
-        0x5 => Ok(RiscvInstruction::WriteCounterCsrImmediate {
+        0x5 => Ok(RiscvInstruction::WriteTranslationCsrImmediate {
             rd: rd(raw),
             csr,
             zimm: rs1(raw).index(),
         }),
-        0x6 => Ok(RiscvInstruction::SetCounterCsrImmediate {
+        0x6 => Ok(RiscvInstruction::SetTranslationCsrImmediate {
             rd: rd(raw),
             csr,
             zimm: rs1(raw).index(),
         }),
-        0x7 => Ok(RiscvInstruction::ClearCounterCsrImmediate {
+        0x7 => Ok(RiscvInstruction::ClearTranslationCsrImmediate {
             rd: rd(raw),
             csr,
             zimm: rs1(raw).index(),
@@ -776,6 +588,7 @@ pub struct RiscvHartState {
     pc: u64,
     hart_id: u64,
     counters: RiscvCounterBank,
+    translation_satp: u64,
     vector_config: RiscvVectorConfig,
     registers: [u64; 32],
 }
@@ -790,6 +603,7 @@ impl RiscvHartState {
             pc,
             hart_id,
             counters: RiscvCounterBank::new(),
+            translation_satp: 0,
             vector_config: RiscvVectorConfig::invalid(),
             registers: [0; 32],
         }
@@ -805,6 +619,23 @@ impl RiscvHartState {
 
     pub const fn counter_snapshot(&self) -> RiscvCounterSnapshot {
         self.counters.snapshot()
+    }
+
+    pub const fn translation_satp(&self) -> u64 {
+        self.translation_satp
+    }
+
+    pub const fn translation_address_space(&self) -> u16 {
+        ((self.translation_satp >> 44) & 0xffff) as u16
+    }
+
+    pub fn set_translation_satp(&mut self, value: u64) {
+        self.translation_satp = value;
+    }
+
+    pub fn set_translation_address_space(&mut self, address_space: u16) {
+        self.translation_satp =
+            (self.translation_satp & !(0xffff_u64 << 44)) | (u64::from(address_space) << 44);
     }
 
     pub fn set_pc(&mut self, pc: u64) {
@@ -1202,6 +1033,36 @@ impl RiscvHartState {
                 let value = self.counters.read_machine(csr) & !u64::from(zimm);
                 write_counter_csr(self, &mut register_writes, rd, csr, value);
             }
+            RiscvInstruction::ReadTranslationCsr { rd, csr } => {
+                write_register(
+                    self,
+                    &mut register_writes,
+                    rd,
+                    read_translation_csr(self, csr),
+                );
+            }
+            RiscvInstruction::WriteTranslationCsr { rd, csr, rs1 } => {
+                write_translation_csr(self, &mut register_writes, rd, csr, self.read(rs1));
+            }
+            RiscvInstruction::SetTranslationCsr { rd, csr, rs1 } => {
+                let value = read_translation_csr(self, csr) | self.read(rs1);
+                write_translation_csr(self, &mut register_writes, rd, csr, value);
+            }
+            RiscvInstruction::ClearTranslationCsr { rd, csr, rs1 } => {
+                let value = read_translation_csr(self, csr) & !self.read(rs1);
+                write_translation_csr(self, &mut register_writes, rd, csr, value);
+            }
+            RiscvInstruction::WriteTranslationCsrImmediate { rd, csr, zimm } => {
+                write_translation_csr(self, &mut register_writes, rd, csr, u64::from(zimm));
+            }
+            RiscvInstruction::SetTranslationCsrImmediate { rd, csr, zimm } => {
+                let value = read_translation_csr(self, csr) | u64::from(zimm);
+                write_translation_csr(self, &mut register_writes, rd, csr, value);
+            }
+            RiscvInstruction::ClearTranslationCsrImmediate { rd, csr, zimm } => {
+                let value = read_translation_csr(self, csr) & !u64::from(zimm);
+                write_translation_csr(self, &mut register_writes, rd, csr, value);
+            }
             RiscvInstruction::Ecall => {
                 next_pc = pc;
                 self.pc = next_pc;
@@ -1273,6 +1134,26 @@ fn write_counter_csr(
     let old_value = hart.counters.read_machine(csr);
     write_register(hart, writes, register, old_value);
     hart.counters.set_machine(csr, value);
+}
+
+fn read_translation_csr(hart: &RiscvHartState, csr: RiscvTranslationCsr) -> u64 {
+    match csr {
+        RiscvTranslationCsr::Satp => hart.translation_satp(),
+    }
+}
+
+fn write_translation_csr(
+    hart: &mut RiscvHartState,
+    writes: &mut Vec<RegisterWrite>,
+    register: Register,
+    csr: RiscvTranslationCsr,
+    value: u64,
+) {
+    let old_value = read_translation_csr(hart, csr);
+    write_register(hart, writes, register, old_value);
+    match csr {
+        RiscvTranslationCsr::Satp => hart.set_translation_satp(value),
+    }
 }
 
 fn add_signed(value: u64, offset: i64) -> Result<u64, RiscvError> {
