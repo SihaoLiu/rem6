@@ -411,7 +411,10 @@ isolated bugs:
   `M addr,length:XX...` packets are also handled at the system boundary by
   reading and writing `PartitionedMemoryStore` ranges across cache-line
   boundaries, returning `E01` for invalid ranges without partially mutating
-  guest memory. Multi-core RISC-V debug construction can derive positive GDB
+  guest memory. The RISC-V session constructor can also attach externally
+  supplied page-table dump payloads so the non-standard `.` packet is served
+  through the same system packet handler without pulling page-table ownership
+  into the generic debug crate. Multi-core RISC-V debug construction can derive positive GDB
   thread ids from `RiscvCluster` core ids, publish the sorted thread list
   through generic `qfThreadInfo`/`T`/`qC` session state, route `H g`-scoped
   register reads and writes to the matching live core, reject unsupported

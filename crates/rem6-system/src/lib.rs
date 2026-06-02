@@ -148,9 +148,9 @@ pub use riscv_debug::{
     handle_riscv_gdb_remote_memory_packet, handle_riscv_gdb_remote_packet,
     handle_riscv_gdb_remote_system_packet, riscv_gdb_remote_session,
     riscv_gdb_remote_session_from_cluster, riscv_gdb_remote_session_from_core,
-    riscv_gdb_remote_session_from_hart, riscv_gdb_remote_thread_id,
-    sync_riscv_gdb_remote_threads_from_cluster, RiscvGdbRegisterWriteError,
-    RiscvGdbRemotePacketError,
+    riscv_gdb_remote_session_from_hart, riscv_gdb_remote_session_with_page_table_dump,
+    riscv_gdb_remote_thread_id, sync_riscv_gdb_remote_threads_from_cluster,
+    RiscvGdbRegisterWriteError, RiscvGdbRemotePacketError,
 };
 pub use riscv_run_activity::{RiscvSystemRunCpuActivity, RiscvSystemRunPartitionActivity};
 pub use rtc_checkpoint::{

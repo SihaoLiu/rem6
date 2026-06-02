@@ -39,6 +39,15 @@ pub fn riscv_gdb_remote_session(xlen: RiscvGdbXlen) -> GdbRemoteSession {
     session
 }
 
+pub fn riscv_gdb_remote_session_with_page_table_dump(
+    xlen: RiscvGdbXlen,
+    page_table_dump: Vec<u8>,
+) -> GdbRemoteSession {
+    let mut session = riscv_gdb_remote_session(xlen);
+    session.set_page_table_dump(page_table_dump);
+    session
+}
+
 pub fn riscv_gdb_remote_session_from_hart(
     xlen: RiscvGdbXlen,
     hart: &RiscvHartState,

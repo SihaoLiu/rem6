@@ -11,7 +11,8 @@ use rem6_system::{
     handle_riscv_gdb_remote_packet, handle_riscv_gdb_remote_system_packet,
     riscv_gdb_remote_session, riscv_gdb_remote_session_from_cluster,
     riscv_gdb_remote_session_from_core, riscv_gdb_remote_session_from_hart,
-    RiscvGdbRegisterWriteError, RiscvGdbRemotePacketError,
+    riscv_gdb_remote_session_with_page_table_dump, RiscvGdbRegisterWriteError,
+    RiscvGdbRemotePacketError,
 };
 use rem6_transport::{MemoryRoute, MemoryTransport, TransportEndpointId};
 
@@ -90,6 +91,23 @@ fn riscv_gdb_remote_session_serves_rv32_target_documents() {
     assert!(cpu.contains("<reg name=\"zero\" bitsize=\"32\" type=\"int\" regnum=\"0\"/>"));
     assert!(cpu.contains("<reg name=\"pc\" bitsize=\"32\" type=\"code_ptr\"/>"));
     assert!(!cpu.contains("bitsize=\"64\""));
+}
+
+#[test]
+fn riscv_gdb_remote_session_serves_page_table_dump_payload() {
+    let mut session = riscv_gdb_remote_session_with_page_table_dump(
+        RiscvGdbXlen::Rv64,
+        b"vpn=0x1000 ppn=0x2000 rwx\n".to_vec(),
+    );
+
+    assert_eq!(
+        packet_payload(
+            session
+                .handle_packet(&GdbRemotePacket::new(b".".to_vec()).unwrap())
+                .unwrap(),
+        ),
+        b"vpn=0x1000 ppn=0x2000 rwx\n",
+    );
 }
 
 #[test]
@@ -420,6 +438,30 @@ fn riscv_gdb_remote_packet_handler_canonicalizes_session_register_cache() {
             .unwrap(),
     );
     assert_eq!(&registers[0..16], b"0000000000000000");
+}
+
+#[test]
+fn riscv_gdb_remote_system_packet_handler_serves_page_table_dump_payload() {
+    let cluster = RiscvCluster::new([riscv_core(0x8000)]).unwrap();
+    let mut memory = debug_memory_store();
+    let mut session = riscv_gdb_remote_session_with_page_table_dump(
+        RiscvGdbXlen::Rv64,
+        b"vpn=0x1000 ppn=0x2000 rwx\n".to_vec(),
+    );
+
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_system_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &cluster,
+                &mut memory,
+                &GdbRemotePacket::new(b".".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"vpn=0x1000 ppn=0x2000 rwx\n",
+    );
 }
 
 #[test]
