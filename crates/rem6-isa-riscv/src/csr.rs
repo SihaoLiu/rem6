@@ -1,4 +1,4 @@
-use crate::RiscvCsrError;
+use crate::{RiscvCsrError, RiscvPrivilegeMode};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum RiscvCounterCsr {
@@ -160,6 +160,9 @@ pub struct RiscvStatusWord {
 }
 
 impl RiscvStatusWord {
+    const MPP_SHIFT: u32 = 11;
+    const MPP_MASK: u64 = 0b11 << Self::MPP_SHIFT;
+    const MPRV_BIT: u32 = 17;
     const SUM_BIT: u32 = 18;
     const MXR_BIT: u32 = 19;
 
@@ -169,6 +172,33 @@ impl RiscvStatusWord {
 
     pub const fn bits(self) -> u64 {
         self.bits
+    }
+
+    pub const fn mprv(self) -> bool {
+        status_bit(self.bits, Self::MPRV_BIT)
+    }
+
+    pub const fn with_mprv(mut self, enabled: bool) -> Self {
+        self.bits = set_status_bit(self.bits, Self::MPRV_BIT, enabled);
+        self
+    }
+
+    pub const fn mpp(self) -> RiscvPrivilegeMode {
+        match (self.bits & Self::MPP_MASK) >> Self::MPP_SHIFT {
+            0 => RiscvPrivilegeMode::User,
+            1 => RiscvPrivilegeMode::Supervisor,
+            _ => RiscvPrivilegeMode::Machine,
+        }
+    }
+
+    pub const fn with_mpp(mut self, privilege: RiscvPrivilegeMode) -> Self {
+        let bits = match privilege {
+            RiscvPrivilegeMode::User => 0,
+            RiscvPrivilegeMode::Supervisor => 1,
+            RiscvPrivilegeMode::Machine => 3,
+        };
+        self.bits = (self.bits & !Self::MPP_MASK) | (bits << Self::MPP_SHIFT);
+        self
     }
 
     pub const fn sum(self) -> bool {

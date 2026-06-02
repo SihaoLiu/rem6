@@ -91,6 +91,36 @@ fn riscv_hart_state_derives_sv39_access_context_from_status() {
 }
 
 #[test]
+fn riscv_hart_state_derives_data_sv39_access_context_from_mprv() {
+    let mut hart = RiscvHartState::new(0x8000);
+    hart.set_privilege_mode(RiscvPrivilegeMode::Machine);
+    hart.set_status(
+        RiscvStatusWord::new(0)
+            .with_mprv(true)
+            .with_mpp(RiscvPrivilegeMode::Supervisor)
+            .with_mxr(true)
+            .with_sum(true),
+    );
+
+    assert_eq!(
+        hart.sv39_access_context(),
+        RiscvSv39AccessContext::new(RiscvPrivilegeMode::Machine)
+            .with_mxr(true)
+            .with_sum(true)
+    );
+    assert_eq!(
+        hart.data_sv39_access_context(),
+        RiscvSv39AccessContext::new(RiscvPrivilegeMode::Supervisor)
+            .with_mxr(true)
+            .with_sum(true)
+    );
+
+    hart.set_status(hart.status().with_mprv(false));
+
+    assert_eq!(hart.data_sv39_access_context(), hart.sv39_access_context());
+}
+
+#[test]
 fn riscv_status_word_tracks_mxr_and_sum_bits() {
     assert_eq!(RiscvStatusWord::new(0).with_sum(true).bits(), 1 << 18);
     assert_eq!(RiscvStatusWord::new(0).with_mxr(true).bits(), 1 << 19);
@@ -100,6 +130,28 @@ fn riscv_status_word_tracks_mxr_and_sum_bits() {
     assert!(status.mxr());
     assert_eq!(status.with_sum(false).bits(), 1 << 19);
     assert_eq!(status.with_mxr(false).bits(), 1 << 18);
+}
+
+#[test]
+fn riscv_status_word_tracks_mprv_and_mpp_bits() {
+    assert_eq!(RiscvStatusWord::new(0).with_mprv(true).bits(), 1 << 17);
+    assert_eq!(
+        RiscvStatusWord::new(0)
+            .with_mpp(RiscvPrivilegeMode::Supervisor)
+            .bits(),
+        1 << 11
+    );
+    assert_eq!(
+        RiscvStatusWord::new(0)
+            .with_mpp(RiscvPrivilegeMode::Machine)
+            .bits(),
+        3 << 11
+    );
+
+    let status = RiscvStatusWord::new((1 << 17) | (3 << 11));
+    assert!(status.mprv());
+    assert_eq!(status.mpp(), RiscvPrivilegeMode::Machine);
+    assert_eq!(status.with_mpp(RiscvPrivilegeMode::User).bits(), 1 << 17);
 }
 
 fn i_type(imm: i32, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {

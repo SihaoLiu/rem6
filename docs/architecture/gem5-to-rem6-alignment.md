@@ -2966,15 +2966,16 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   non-leaf detection, leaf access permissions, context-aware MXR/SUM/user-page
   privilege checks, superpage physical-address composition and
   alignment-before-access fault precedence, and accessed/dirty
-  fault classification. RISC-V ISA tests also cover typed hart status MXR/SUM
-  bits feeding the derived Sv39 access context, `mstatus`/`sstatus` reads, and
-  `sstatus` set/clear paths for those bits. RISC-V frontend tests also cover
-  hart-derived request-carried Sv39 access context for data translation,
-  request-carried Sv39 access context in the page-table resolver and
-  memory-walk bridge, PTE read request sequencing, PTE response decoding, and
-  the CPU-layer memory walker driver from a ready frontend request through
-  direct responses or chained parallel-transport-delivered PTE responses to
-  frontend completion.
+  fault classification. RISC-V ISA tests also cover MXR/SUM feeding the
+  derived instruction Sv39 access context, MPRV/MPP plus MXR/SUM feeding the
+  derived data Sv39 access context, `mstatus`/`sstatus` reads, and `sstatus`
+  set/clear paths for the supervisor-visible bits. RISC-V frontend tests also
+  cover hart-derived request-carried Sv39 access context for data translation,
+  including MPRV/MPP-derived data privilege, request-carried Sv39 access
+  context in the page-table resolver and memory-walk bridge, PTE read request
+  sequencing, PTE response decoding, and the CPU-layer memory walker driver
+  from a ready frontend request through direct responses or chained
+  parallel-transport-delivered PTE responses to frontend completion.
   RISC-V ISA and frontend tests cover aq/rl metadata that maps release to a
   read/write fence before the atomic access and acquire to a read/write fence
   after it. Memory request tests cover

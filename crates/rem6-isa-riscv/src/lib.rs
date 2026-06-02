@@ -3,6 +3,7 @@ mod csr;
 mod encoding;
 mod error;
 mod gdb_target;
+mod hart;
 mod instruction;
 mod integer;
 mod pma;
@@ -679,35 +680,8 @@ impl RiscvHartState {
         ((self.translation_satp >> 44) & 0xffff) as u16
     }
 
-    pub const fn privilege_mode(&self) -> RiscvPrivilegeMode {
-        self.privilege_mode
-    }
-
-    pub const fn status(&self) -> RiscvStatusWord {
-        self.status
-    }
-
-    pub const fn sv39_access_context(&self) -> RiscvSv39AccessContext {
-        RiscvSv39AccessContext::new(self.privilege_mode)
-            .with_mxr(self.status.mxr())
-            .with_sum(self.status.sum())
-    }
-
     pub fn set_translation_satp(&mut self, value: u64) {
         self.translation_satp = value;
-    }
-
-    pub fn set_privilege_mode(&mut self, privilege: RiscvPrivilegeMode) {
-        self.privilege_mode = privilege;
-    }
-
-    pub fn set_status(&mut self, status: RiscvStatusWord) {
-        self.status = status;
-    }
-
-    pub fn set_sv39_access_context(&mut self, context: RiscvSv39AccessContext) {
-        self.privilege_mode = context.privilege();
-        self.status = self.status.with_mxr(context.mxr()).with_sum(context.sum());
     }
 
     pub fn set_translation_address_space(&mut self, address_space: u16) {

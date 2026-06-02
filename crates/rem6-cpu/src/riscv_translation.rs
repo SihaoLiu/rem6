@@ -2,9 +2,10 @@ use std::error::Error;
 use std::fmt;
 
 use rem6_isa_riscv::{
-    walk_sv39_page_table_with_context, RiscvSv39AccessContext, RiscvSv39AccessKind,
-    RiscvSv39PageFault, RiscvSv39PageTableLevel, RiscvSv39Pte, RiscvSv39VirtualAddress,
-    RiscvSv39WalkAdvance as IsaSv39WalkAdvance, RiscvSv39WalkState, RiscvSystemEvent,
+    walk_sv39_page_table_with_context, RiscvPrivilegeMode, RiscvStatusWord, RiscvSv39AccessContext,
+    RiscvSv39AccessKind, RiscvSv39PageFault, RiscvSv39PageTableLevel, RiscvSv39Pte,
+    RiscvSv39VirtualAddress, RiscvSv39WalkAdvance as IsaSv39WalkAdvance, RiscvSv39WalkState,
+    RiscvSystemEvent,
 };
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionedScheduler, SchedulerContext, Tick,
@@ -621,6 +622,22 @@ impl RiscvCore {
             .set_sv39_access_context(context);
     }
 
+    pub fn set_privilege_mode(&self, privilege: RiscvPrivilegeMode) {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .hart
+            .set_privilege_mode(privilege);
+    }
+
+    pub fn set_status(&self, status: RiscvStatusWord) {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .hart
+            .set_status(status);
+    }
+
     pub fn ready_data_translation_requests(&self, tick: Tick) -> Vec<CpuTranslationRequest> {
         let state = self.state.lock().expect("riscv core lock");
         state
@@ -891,7 +908,7 @@ impl RiscvCore {
                     fetch: fetch_request,
                 })?,
                 TranslationAddressSpaceId::new(state.hart.translation_address_space()),
-                state.hart.sv39_access_context(),
+                state.hart.data_sv39_access_context(),
             )
         };
         let request_id = MemoryRequestId::new(self.core.agent(), self.core.next_sequence());
