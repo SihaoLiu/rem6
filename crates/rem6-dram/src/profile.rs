@@ -10,6 +10,17 @@ pub enum DramMemoryTechnology {
     Nvm,
 }
 
+impl DramMemoryTechnology {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Ddr => "ddr",
+            Self::Hbm => "hbm",
+            Self::Lpddr => "lpddr",
+            Self::Nvm => "nvm",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DramProfileField {
     Channels,
@@ -103,6 +114,19 @@ pub enum ExternalMemoryTopology {
 }
 
 impl ExternalMemoryTopology {
+    pub const fn kind(self) -> DramMemoryTechnology {
+        match self {
+            Self::Ddr { .. } => DramMemoryTechnology::Ddr,
+            Self::Hbm { .. } => DramMemoryTechnology::Hbm,
+            Self::Lpddr { .. } => DramMemoryTechnology::Lpddr,
+            Self::Nvm { .. } => DramMemoryTechnology::Nvm,
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        self.kind().as_str()
+    }
+
     pub const fn parallel_port_count(self) -> u32 {
         match self {
             Self::Ddr { channels, .. } | Self::Lpddr { channels, .. } => channels,

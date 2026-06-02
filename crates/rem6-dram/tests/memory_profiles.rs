@@ -110,6 +110,7 @@ fn external_memory_profiles_name_ddr_hbm_and_lpddr_topologies() {
     let nvm = ExternalMemoryProfile::nvm(target(4), layout(), 3, 6, geometry(), timing()).unwrap();
 
     assert_eq!(ddr.technology(), DramMemoryTechnology::Ddr);
+    assert_eq!(ddr.technology().as_str(), "ddr");
     assert_eq!(
         ddr.topology(),
         ExternalMemoryTopology::Ddr {
@@ -117,7 +118,10 @@ fn external_memory_profiles_name_ddr_hbm_and_lpddr_topologies() {
             ranks_per_channel: 2,
         },
     );
+    assert_eq!(ddr.topology().kind(), DramMemoryTechnology::Ddr);
+    assert_eq!(ddr.topology().as_str(), "ddr");
     assert_eq!(hbm.technology(), DramMemoryTechnology::Hbm);
+    assert_eq!(hbm.technology().as_str(), "hbm");
     assert_eq!(
         hbm.topology(),
         ExternalMemoryTopology::Hbm {
@@ -125,7 +129,10 @@ fn external_memory_profiles_name_ddr_hbm_and_lpddr_topologies() {
             pseudo_channels_per_stack: 2,
         },
     );
+    assert_eq!(hbm.topology().kind(), DramMemoryTechnology::Hbm);
+    assert_eq!(hbm.topology().as_str(), "hbm");
     assert_eq!(lpddr.technology(), DramMemoryTechnology::Lpddr);
+    assert_eq!(lpddr.technology().as_str(), "lpddr");
     assert_eq!(
         lpddr.topology(),
         ExternalMemoryTopology::Lpddr {
@@ -133,7 +140,10 @@ fn external_memory_profiles_name_ddr_hbm_and_lpddr_topologies() {
             dies_per_channel: 4,
         },
     );
+    assert_eq!(lpddr.topology().kind(), DramMemoryTechnology::Lpddr);
+    assert_eq!(lpddr.topology().as_str(), "lpddr");
     assert_eq!(nvm.technology(), DramMemoryTechnology::Nvm);
+    assert_eq!(nvm.technology().as_str(), "nvm");
     assert_eq!(
         nvm.topology(),
         ExternalMemoryTopology::Nvm {
@@ -141,6 +151,8 @@ fn external_memory_profiles_name_ddr_hbm_and_lpddr_topologies() {
             media_banks_per_controller: 6,
         },
     );
+    assert_eq!(nvm.topology().kind(), DramMemoryTechnology::Nvm);
+    assert_eq!(nvm.topology().as_str(), "nvm");
 
     let default_config = DramControllerConfig::new(target(1), layout(), geometry(), timing());
     assert_eq!(default_config.parallel_port_count(), 1);
