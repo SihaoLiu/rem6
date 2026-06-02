@@ -1,9 +1,9 @@
 use rem6_debug::{
     parse_gdb_remote_frame, GdbRemoteAckMode, GdbRemoteAttachKind, GdbRemoteCommand,
-    GdbRemoteError, GdbRemoteFeature, GdbRemoteFeatureValue, GdbRemoteFrame, GdbRemoteNotification,
-    GdbRemotePacket, GdbRemotePacketConfig, GdbRemoteRegisterBytes, GdbRemoteResumeKind,
-    GdbRemoteResumeRequest, GdbRemoteSession, GdbRemoteStopReply, GdbRemoteThreadId,
-    GdbRemoteThreadInfoQuery, GdbRemoteThreadOperation,
+    GdbRemoteDisconnectRequest, GdbRemoteError, GdbRemoteFeature, GdbRemoteFeatureValue,
+    GdbRemoteFrame, GdbRemoteNotification, GdbRemotePacket, GdbRemotePacketConfig,
+    GdbRemoteRegisterBytes, GdbRemoteResumeKind, GdbRemoteResumeRequest, GdbRemoteSession,
+    GdbRemoteStopReply, GdbRemoteThreadId, GdbRemoteThreadInfoQuery, GdbRemoteThreadOperation,
 };
 
 #[test]
@@ -497,6 +497,65 @@ fn gdb_remote_commands_preserve_malformed_vcont_requests() {
 }
 
 #[test]
+fn gdb_remote_commands_decode_disconnect_requests() {
+    let detach = GdbRemoteCommand::parse(&GdbRemotePacket::new(b"D".to_vec()).unwrap());
+    assert_eq!(
+        detach,
+        GdbRemoteCommand::Disconnect {
+            request: GdbRemoteDisconnectRequest::Detach { process_id: None },
+        },
+    );
+
+    let detach_process = GdbRemoteCommand::parse(&GdbRemotePacket::new(b"D;1A".to_vec()).unwrap());
+    assert_eq!(
+        detach_process,
+        GdbRemoteCommand::Disconnect {
+            request: GdbRemoteDisconnectRequest::Detach {
+                process_id: Some(0x1a),
+            },
+        },
+    );
+
+    let terminate = GdbRemoteCommand::parse(&GdbRemotePacket::new(b"k".to_vec()).unwrap());
+    assert_eq!(
+        terminate,
+        GdbRemoteCommand::Disconnect {
+            request: GdbRemoteDisconnectRequest::Terminate,
+        },
+    );
+
+    let terminate_process =
+        GdbRemoteCommand::parse(&GdbRemotePacket::new(b"vKill;2a".to_vec()).unwrap());
+    assert_eq!(
+        terminate_process,
+        GdbRemoteCommand::Disconnect {
+            request: GdbRemoteDisconnectRequest::TerminateProcess { process_id: 0x2a },
+        },
+    );
+}
+
+#[test]
+fn gdb_remote_commands_preserve_malformed_disconnect_requests() {
+    for payload in [
+        b"D;".as_slice(),
+        b"D1a".as_slice(),
+        b"D;0".as_slice(),
+        b"D;zz".as_slice(),
+        b"D;10000000000000000".as_slice(),
+        b"k1".as_slice(),
+        b"vKill".as_slice(),
+        b"vKill;".as_slice(),
+        b"vKill;0".as_slice(),
+        b"vKill;zz".as_slice(),
+        b"vKill;1;2".as_slice(),
+        b"vKill;10000000000000000".as_slice(),
+    ] {
+        let command = GdbRemoteCommand::parse(&GdbRemotePacket::new(payload.to_vec()).unwrap());
+        assert_eq!(command, GdbRemoteCommand::Unknown(payload.to_vec()));
+    }
+}
+
+#[test]
 fn gdb_remote_commands_decode_read_register_requests() {
     let command = GdbRemoteCommand::parse(&GdbRemotePacket::parse_frame(b"$g#67").unwrap());
 
@@ -960,6 +1019,61 @@ fn gdb_remote_session_records_vcont_resume_actions() {
             None,
             GdbRemoteThreadId::All,
         )),
+    );
+}
+
+#[test]
+fn gdb_remote_session_records_disconnect_requests() {
+    let mut session = GdbRemoteSession::new(Vec::new());
+
+    assert!(!session.is_disconnected());
+    assert_eq!(session.last_disconnect_request(), None);
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"D;1a".to_vec()).unwrap())
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"OK".to_vec()).unwrap()),
+        ],
+    );
+    assert!(session.is_disconnected());
+    assert_eq!(
+        session.last_disconnect_request(),
+        Some(&GdbRemoteDisconnectRequest::Detach {
+            process_id: Some(0x1a),
+        }),
+    );
+
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"vKill;2a".to_vec()).unwrap())
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"OK".to_vec()).unwrap()),
+        ],
+    );
+    assert_eq!(
+        session.last_disconnect_request(),
+        Some(&GdbRemoteDisconnectRequest::TerminateProcess { process_id: 0x2a }),
+    );
+}
+
+#[test]
+fn gdb_remote_session_records_terminate_without_response_packet() {
+    let mut session = GdbRemoteSession::new(Vec::new());
+
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"k".to_vec()).unwrap())
+            .unwrap(),
+        vec![GdbRemoteFrame::Ack],
+    );
+    assert!(session.is_disconnected());
+    assert_eq!(
+        session.last_disconnect_request(),
+        Some(&GdbRemoteDisconnectRequest::Terminate),
     );
 }
 

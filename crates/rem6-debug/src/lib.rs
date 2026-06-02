@@ -1,9 +1,12 @@
+mod disconnect;
 mod feature;
 mod hex;
 mod memory;
 mod register;
 mod resume;
 
+use disconnect::parse_disconnect_request;
+pub use disconnect::GdbRemoteDisconnectRequest;
 use feature::{encode_supported_features, parse_supported_features};
 pub use feature::{GdbRemoteFeature, GdbRemoteFeatureValue};
 use hex::{
@@ -231,6 +234,9 @@ pub enum GdbRemoteCommand {
     QueryThreadInfo {
         query: GdbRemoteThreadInfoQuery,
     },
+    Disconnect {
+        request: GdbRemoteDisconnectRequest,
+    },
     ReadMemory {
         address: u64,
         length: usize,
@@ -345,6 +351,8 @@ pub struct GdbRemoteSession {
     general_thread: GdbRemoteThreadId,
     thread_ids: Vec<u64>,
     last_resume_requests: Vec<GdbRemoteResumeRequest>,
+    last_disconnect_request: Option<GdbRemoteDisconnectRequest>,
+    disconnected: bool,
     last_response: Option<GdbRemotePacket>,
     interrupt_requested: bool,
 }
@@ -373,6 +381,8 @@ impl GdbRemoteSession {
             general_thread: GdbRemoteThreadId::Any,
             thread_ids: vec![1],
             last_resume_requests: Vec::new(),
+            last_disconnect_request: None,
+            disconnected: false,
             last_response: None,
             interrupt_requested: false,
         }
@@ -396,6 +406,14 @@ impl GdbRemoteSession {
 
     pub const fn interrupt_requested(&self) -> bool {
         self.interrupt_requested
+    }
+
+    pub const fn is_disconnected(&self) -> bool {
+        self.disconnected
+    }
+
+    pub const fn last_disconnect_request(&self) -> Option<&GdbRemoteDisconnectRequest> {
+        self.last_disconnect_request.as_ref()
     }
 
     pub fn stub_features(&self) -> &[GdbRemoteFeature] {
@@ -532,6 +550,17 @@ impl GdbRemoteSession {
                 };
                 self.packet_response(payload)
             }
+            GdbRemoteCommand::Disconnect { request } => {
+                self.last_disconnect_request = Some(request);
+                self.disconnected = true;
+                match request {
+                    GdbRemoteDisconnectRequest::Terminate => Ok(self.ack_response()),
+                    GdbRemoteDisconnectRequest::Detach { .. }
+                    | GdbRemoteDisconnectRequest::TerminateProcess { .. } => {
+                        self.packet_response(b"OK".to_vec())
+                    }
+                }
+            }
             GdbRemoteCommand::ReadMemory { address, length } => {
                 let payload = self
                     .read_memory_payload(address, length)
@@ -619,6 +648,13 @@ impl GdbRemoteSession {
         }
         frames.push(GdbRemoteFrame::Packet(packet));
         Ok(frames)
+    }
+
+    fn ack_response(&self) -> Vec<GdbRemoteFrame> {
+        match self.ack_mode {
+            GdbRemoteAckMode::Acknowledged => vec![GdbRemoteFrame::Ack],
+            GdbRemoteAckMode::NoAck => Vec::new(),
+        }
     }
 
     fn read_memory_payload(&self, address: u64, length: usize) -> Option<Vec<u8>> {
@@ -996,6 +1032,10 @@ fn parse_command_payload(payload: &[u8]) -> GdbRemoteCommand {
 
     if payload == READ_REGISTERS {
         return GdbRemoteCommand::ReadRegisters;
+    }
+
+    if let Some(request) = parse_disconnect_request(payload) {
+        return GdbRemoteCommand::Disconnect { request };
     }
 
     if let Some(register_data) = payload.strip_prefix(b"G") {
