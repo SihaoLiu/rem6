@@ -12,7 +12,8 @@ use crate::{
     GpuCheckpointBank, GuestEventDelivery, GuestEventId, GuestHostCallResponse, GuestSourceId,
     HostAction, HostActionRecord, HostEventPolicy, IdeControllerCheckpointBank,
     IdeControllerCheckpointPort, InterruptControllerCheckpointBank, MemoryStoreCheckpointBank,
-    MsiBankCheckpointBank, PciHostCheckpointBank, PciLegacyInterruptRouterCheckpointBank,
+    MsiBankCheckpointBank, PciHostCheckpointBank, PciHostCheckpointPort,
+    PciLegacyInterruptRouterCheckpointBank, PciLegacyInterruptRouterCheckpointPort,
     Pl011UartCheckpointBank, Pl031CheckpointBank, PlicCheckpointBank, RiscvCoreCheckpointBank,
     RtcCheckpointBank, SchedulerCheckpointBank, SinicFifoCheckpointBank, SinicFifoCheckpointPort,
     SinicRegisterCheckpointBank, SinicRegisterCheckpointPort, Sp804CheckpointBank,
@@ -633,6 +634,35 @@ impl SystemActionExecutor {
         self.pci_legacy_interrupt_router_checkpoints =
             Some(pci_legacy_interrupt_router_checkpoints);
         Ok(())
+    }
+
+    pub fn attach_pci_host_checkpoint_port(
+        &mut self,
+        port: PciHostCheckpointPort,
+    ) -> Result<(), CheckpointError> {
+        port.register(&mut self.checkpoints)?;
+        if let Some(pci_host_checkpoints) = &mut self.pci_host_checkpoints {
+            pci_host_checkpoints.insert_port(port)
+        } else {
+            self.pci_host_checkpoints = Some(PciHostCheckpointBank::new([port])?);
+            Ok(())
+        }
+    }
+
+    pub fn attach_pci_legacy_interrupt_router_checkpoint_port(
+        &mut self,
+        port: PciLegacyInterruptRouterCheckpointPort,
+    ) -> Result<(), CheckpointError> {
+        port.register(&mut self.checkpoints)?;
+        if let Some(pci_legacy_interrupt_router_checkpoints) =
+            &mut self.pci_legacy_interrupt_router_checkpoints
+        {
+            pci_legacy_interrupt_router_checkpoints.insert_port(port)
+        } else {
+            self.pci_legacy_interrupt_router_checkpoints =
+                Some(PciLegacyInterruptRouterCheckpointBank::new([port])?);
+            Ok(())
+        }
     }
 
     pub fn attach_virtio_split_queue_checkpoint_bank(

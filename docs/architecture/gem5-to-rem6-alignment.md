@@ -3557,9 +3557,11 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   truncated function payloads, function-set mismatches, and live-snapshot byte
   mismatches are rejected before broader PCI config restore mutates device
   state. `SystemActionExecutor`
-  can be constructed directly with an attached PCI host checkpoint bank. rem6
-  still does not pretend that PCI host checkpoint validation alone restores full
-  PCI configuration state.
+  can be constructed directly with an attached PCI host checkpoint bank.
+  RISC-V topology systems can register PCI host and legacy INTx router
+  checkpoint ports before or after host-controller creation and attach them to
+  host checkpoint actions automatically. rem6 still does not pretend that PCI
+  host checkpoint validation alone restores full PCI configuration state.
   BAR state now has a stable byte codec for endpoint checkpoint audit,
   preserving endpoint shape, raw lower and upper register state, size-probe
   masks, and 64-bit upper-slot ownership while rejecting malformed or
@@ -3807,9 +3809,11 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   attachment, staged capture into host manifests, and malformed storage or IDE
   restore rejection without partial live-state mutation. Topology checkpoint
   tests cover storage image and IDE controller port registration before and
-  after host-controller creation with automatic host executor attachment, plus
-  SINIC register and FIFO port registration before and after host-controller
-  creation with manifest chunk capture and restore through host actions.
+  after host-controller creation with automatic host executor attachment, PCI
+  host and legacy INTx router checkpoint port registration before and after
+  host-controller creation, plus SINIC register and FIFO port registration
+  before and after host-controller creation with manifest chunk capture and
+  restore through host actions.
   VirtIO split descriptor-chain tests cover block
   read, write, flush, and get-id decoding into typed requests, status
   descriptor tracking, writable data-byte accounting, loop rejection, short

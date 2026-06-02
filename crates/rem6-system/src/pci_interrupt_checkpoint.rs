@@ -176,6 +176,18 @@ impl PciLegacyInterruptRouterCheckpointBank {
         self.ports.keys().cloned().collect()
     }
 
+    pub fn insert_port(
+        &mut self,
+        port: PciLegacyInterruptRouterCheckpointPort,
+    ) -> Result<(), CheckpointError> {
+        let component = port.component().clone();
+        if self.ports.contains_key(&component) {
+            return Err(CheckpointError::DuplicateComponent { component });
+        }
+        self.ports.insert(component, port);
+        Ok(())
+    }
+
     pub fn register_all(&self, registry: &mut CheckpointRegistry) -> Result<(), CheckpointError> {
         for port in self.ports.values() {
             port.register(registry)?;
