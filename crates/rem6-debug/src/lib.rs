@@ -13,6 +13,19 @@ const RUN_LENGTH_BYTE: u8 = b'*';
 const ESCAPE_XOR: u8 = 0x20;
 const RUN_LENGTH_COUNT_BIAS: u8 = 29;
 const MIN_RUN_LENGTH_REPEAT_COUNT: u8 = 3;
+const MAX_RUN_LENGTH_COUNT_BYTE: u8 = 126;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum GdbRemotePacketPayloadMode {
+    Command,
+    Response,
+}
+
+impl GdbRemotePacketPayloadMode {
+    const fn decodes_run_length(self) -> bool {
+        matches!(self, Self::Response)
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum GdbRemoteError {
@@ -136,7 +149,26 @@ impl GdbRemotePacket {
         frame: &[u8],
         config: GdbRemotePacketConfig,
     ) -> Result<Self, GdbRemoteError> {
-        let (payload, expected, consumed) = parse_packet_parts(frame, config)?;
+        Self::parse_frame_inner(frame, config, GdbRemotePacketPayloadMode::Command)
+    }
+
+    pub fn parse_response_frame(frame: &[u8]) -> Result<Self, GdbRemoteError> {
+        Self::parse_response_frame_with_config(frame, GdbRemotePacketConfig::default())
+    }
+
+    pub fn parse_response_frame_with_config(
+        frame: &[u8],
+        config: GdbRemotePacketConfig,
+    ) -> Result<Self, GdbRemoteError> {
+        Self::parse_frame_inner(frame, config, GdbRemotePacketPayloadMode::Response)
+    }
+
+    fn parse_frame_inner(
+        frame: &[u8],
+        config: GdbRemotePacketConfig,
+        payload_mode: GdbRemotePacketPayloadMode,
+    ) -> Result<Self, GdbRemoteError> {
+        let (payload, expected, consumed) = parse_packet_parts(frame, config, payload_mode)?;
         if consumed != frame.len() {
             return Err(GdbRemoteError::TrailingBytes {
                 count: frame.len() - consumed,
@@ -282,7 +314,11 @@ pub fn parse_gdb_remote_frame_with_config(
                 )));
             }
             PACKET_START_BYTE => {
-                let (payload, expected, consumed) = parse_packet_parts(&input[position..], config)?;
+                let (payload, expected, consumed) = parse_packet_parts(
+                    &input[position..],
+                    config,
+                    GdbRemotePacketPayloadMode::Command,
+                )?;
                 let packet = GdbRemotePacket {
                     payload,
                     checksum: expected,
@@ -306,11 +342,7 @@ pub fn parse_gdb_remote_frame_with_config(
                     )));
                 }
                 Err(error) => {
-                    if let Some(consumed) = notification_frame_len(&input[position..]) {
-                        search_start = position + consumed;
-                    } else {
-                        search_start = position + 1;
-                    }
+                    search_start = position + notification_recovery_len(&input[position..]);
                     if search_start >= input.len() {
                         return Ok(None);
                     }
@@ -336,6 +368,7 @@ pub fn parse_gdb_remote_frame_with_config(
 fn parse_packet_parts(
     frame: &[u8],
     config: GdbRemotePacketConfig,
+    payload_mode: GdbRemotePacketPayloadMode,
 ) -> Result<(Vec<u8>, u8, usize), GdbRemoteError> {
     if frame.first() != Some(&PACKET_START_BYTE) {
         return Err(GdbRemoteError::MissingPacketStart);
@@ -366,10 +399,11 @@ fn parse_packet_parts(
                 return Err(GdbRemoteError::ChecksumMismatch { expected, actual });
             }
             reject_legacy_sequence_id(&payload)?;
-            return Ok((payload, expected, index + 3));
+            let normalized_checksum = checksum(&encode_payload(&payload));
+            return Ok((payload, normalized_checksum, index + 3));
         }
 
-        if byte == RUN_LENGTH_BYTE {
+        if byte == RUN_LENGTH_BYTE && payload_mode.decodes_run_length() {
             if payload.is_empty() {
                 return Err(GdbRemoteError::RunLengthWithoutPreviousByte);
             }
@@ -379,15 +413,12 @@ fn parse_packet_parts(
                 return Err(GdbRemoteError::MissingRunLengthCount);
             }
             let repeat_byte = frame[index];
-            if repeat_byte < RUN_LENGTH_COUNT_BIAS + MIN_RUN_LENGTH_REPEAT_COUNT {
-                return Err(GdbRemoteError::InvalidRunLengthCount { byte: repeat_byte });
-            }
+            let repeat_count = decode_run_length_count(repeat_byte)?;
             expected = expected.wrapping_add(repeat_byte);
             let previous = payload
                 .last()
                 .copied()
                 .expect("run-length marker already checked preceding payload byte");
-            let repeat_count = (repeat_byte - RUN_LENGTH_COUNT_BIAS) as usize;
             validate_payload_len(payload.len() + repeat_count, config)?;
             payload.extend(std::iter::repeat_n(previous, repeat_count));
             index += 1;
@@ -444,11 +475,26 @@ fn parse_notification_parts(
     Err(GdbRemoteError::MissingChecksumSeparator)
 }
 
-fn notification_frame_len(frame: &[u8]) -> Option<usize> {
-    let checksum_separator = frame
-        .iter()
-        .position(|byte| *byte == CHECKSUM_SEPARATOR_BYTE)?;
-    (frame.len() >= checksum_separator + 3).then_some(checksum_separator + 3)
+fn notification_recovery_len(frame: &[u8]) -> usize {
+    for (index, byte) in frame.iter().enumerate().skip(1) {
+        match *byte {
+            PACKET_START_BYTE | NOTIFICATION_START_BYTE => return index,
+            CHECKSUM_SEPARATOR_BYTE if frame.len() >= index + 3 => return index + 3,
+            _ => {}
+        }
+    }
+    1
+}
+
+fn decode_run_length_count(byte: u8) -> Result<usize, GdbRemoteError> {
+    if byte < RUN_LENGTH_COUNT_BIAS + MIN_RUN_LENGTH_REPEAT_COUNT
+        || byte == PACKET_START_BYTE
+        || byte == CHECKSUM_SEPARATOR_BYTE
+        || byte > MAX_RUN_LENGTH_COUNT_BYTE
+    {
+        return Err(GdbRemoteError::InvalidRunLengthCount { byte });
+    }
+    Ok((byte - RUN_LENGTH_COUNT_BIAS) as usize)
 }
 
 fn reject_legacy_sequence_id(payload: &[u8]) -> Result<(), GdbRemoteError> {

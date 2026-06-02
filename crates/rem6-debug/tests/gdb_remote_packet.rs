@@ -31,15 +31,28 @@ fn gdb_remote_packet_escapes_binary_payload_delimiters() {
 
     let escaped_interrupt_payload = GdbRemotePacket::parse_frame(b"$}##a0").unwrap();
     assert_eq!(escaped_interrupt_payload.payload(), &[0x03]);
-    assert_eq!(escaped_interrupt_payload.checksum(), 0xa0);
+    assert_eq!(escaped_interrupt_payload.checksum(), 0x03);
 }
 
 #[test]
 fn gdb_remote_packet_decodes_run_length_encoded_response_data() {
-    let parsed = GdbRemotePacket::parse_frame(b"$0* #7a").unwrap();
+    let parsed = GdbRemotePacket::parse_response_frame(b"$0* #7a").unwrap();
 
     assert_eq!(parsed.payload(), b"0000");
-    assert_eq!(parsed.checksum(), 0x7a);
+    assert_eq!(parsed.checksum(), 0xc0);
+    assert_eq!(parsed.encode_frame(), b"$0000#c0");
+}
+
+#[test]
+fn gdb_remote_packet_keeps_literal_star_in_command_data() {
+    let parsed = GdbRemotePacket::parse_frame(b"$X*#82").unwrap();
+
+    assert_eq!(parsed.payload(), b"X*");
+    assert_eq!(parsed.checksum(), 0xdf);
+    assert_eq!(
+        parsed.encode_frame(),
+        vec![b'$', b'X', b'}', 0x0a, b'#', b'd', b'f']
+    );
 }
 
 #[test]
@@ -76,16 +89,26 @@ fn gdb_remote_packet_rejects_malformed_frames_before_payload_mutation() {
         GdbRemoteError::LegacySequenceIdUnsupported,
     );
     assert_eq!(
-        GdbRemotePacket::parse_frame(b"$* #4a").unwrap_err(),
+        GdbRemotePacket::parse_response_frame(b"$* #4a").unwrap_err(),
         GdbRemoteError::RunLengthWithoutPreviousByte,
     );
     assert_eq!(
-        GdbRemotePacket::parse_frame(b"$0*#5a").unwrap_err(),
+        GdbRemotePacket::parse_response_frame(b"$0*#5a").unwrap_err(),
         GdbRemoteError::MissingRunLengthCount,
     );
     assert_eq!(
-        GdbRemotePacket::parse_frame(&[b'$', b'0', b'*', 0x1f, b'#', b'7', b'9']).unwrap_err(),
+        GdbRemotePacket::parse_response_frame(&[b'$', b'0', b'*', 0x1f, b'#', b'7', b'9'])
+            .unwrap_err(),
         GdbRemoteError::InvalidRunLengthCount { byte: 0x1f },
+    );
+    assert_eq!(
+        GdbRemotePacket::parse_response_frame(b"$0*$#7e").unwrap_err(),
+        GdbRemoteError::InvalidRunLengthCount { byte: b'$' },
+    );
+    assert_eq!(
+        GdbRemotePacket::parse_response_frame(&[b'$', b'0', b'*', 0x7f, b'#', b'd', b'9'])
+            .unwrap_err(),
+        GdbRemoteError::InvalidRunLengthCount { byte: 0x7f },
     );
 }
 
@@ -107,7 +130,7 @@ fn gdb_remote_packet_config_rejects_unbounded_or_oversized_payloads() {
         GdbRemoteError::PayloadTooLong { len: 5, max: 4 },
     );
     assert_eq!(
-        GdbRemotePacket::parse_frame_with_config(
+        GdbRemotePacket::parse_response_frame_with_config(
             b"$0* #7a",
             GdbRemotePacketConfig::new(3).unwrap(),
         )
@@ -176,5 +199,33 @@ fn gdb_remote_frame_parser_ignores_corrupted_notifications_before_later_frames()
     assert_eq!(
         parsed.frame(),
         &GdbRemoteFrame::Packet(GdbRemotePacket::new(b"qSupported".to_vec()).unwrap()),
+    );
+}
+
+#[test]
+fn gdb_remote_frame_parser_resynchronizes_after_interrupted_notifications() {
+    let parsed_packet = parse_gdb_remote_frame(b"%bad$qSupported#37")
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(parsed_packet.skipped_bytes(), b"%bad");
+    assert_eq!(parsed_packet.consumed_bytes(), b"%bad$qSupported#37".len());
+    assert_eq!(
+        parsed_packet.frame(),
+        &GdbRemoteFrame::Packet(GdbRemotePacket::new(b"qSupported".to_vec()).unwrap()),
+    );
+
+    let parsed_notification = parse_gdb_remote_frame(b"%bad%Stop:T05#99")
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(parsed_notification.skipped_bytes(), b"%bad");
+    assert_eq!(
+        parsed_notification.consumed_bytes(),
+        b"%bad%Stop:T05#99".len()
+    );
+    assert_eq!(
+        parsed_notification.frame(),
+        &GdbRemoteFrame::Notification(GdbRemoteNotification::new(b"Stop:T05".to_vec()).unwrap()),
     );
 }
