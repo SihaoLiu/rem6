@@ -48,6 +48,7 @@ mod data_cache_backend;
 mod dma_scheduler_evidence;
 mod memory_backend;
 mod qos;
+mod sinic_mmio_backend;
 mod summary;
 mod workload_replay_dma;
 
@@ -66,6 +67,7 @@ use self::dma_scheduler_evidence::{
 };
 use self::memory_backend::{memory_response, WorkloadDramBackend, WorkloadMemoryBackend};
 use self::qos::{fixed_priority_policy, queue_arbiter};
+use self::sinic_mmio_backend::WorkloadSinicPciMmioBackend;
 use self::summary::{
     livelock_transition_threshold, parallel_execution_summary, WorkloadReplayActivityRefs,
 };
@@ -199,6 +201,7 @@ impl RiscvWorkloadReplay {
         let route_map = self.build_route_map()?;
         let memory = self.load_memory_backend()?;
         let data_cache = self.build_data_cache(&memory)?;
+        let sinic_mmio = WorkloadSinicPciMmioBackend::from_topology(topology)?;
         let gpu_devices = build_gpu_devices(topology)?;
         let mut transport = self.build_transport()?;
         if topology.qos_policy().is_some() {
@@ -284,7 +287,11 @@ impl RiscvWorkloadReplay {
             |_cpu| {
                 let memory = memory.clone();
                 let data_cache = data_cache.clone();
-                move |delivery, _context| {
+                let sinic_mmio = sinic_mmio.clone();
+                move |delivery, context| {
+                    if let Some(outcome) = sinic_mmio.respond_parallel(&delivery, context) {
+                        return outcome;
+                    }
                     cached_memory_response(data_cache.as_ref(), &memory, &delivery)
                 }
             },
