@@ -486,6 +486,34 @@ fn emit_dram_stats(
     emit_dram_constant(
         stats,
         prefix,
+        "profile.low_power_timing.precharge_powerdown_entry_delay",
+        "Tick",
+        summary.profile_low_power_precharge_powerdown_entry_delay,
+    )?;
+    emit_dram_constant(
+        stats,
+        prefix,
+        "profile.low_power_timing.self_refresh_entry_delay",
+        "Tick",
+        summary.profile_low_power_self_refresh_entry_delay,
+    )?;
+    emit_dram_constant(
+        stats,
+        prefix,
+        "profile.low_power_timing.exit_latency",
+        "Tick",
+        summary.profile_low_power_exit_latency,
+    )?;
+    emit_dram_constant(
+        stats,
+        prefix,
+        "profile.low_power_timing.self_refresh_exit_latency",
+        "Tick",
+        summary.profile_low_power_self_refresh_exit_latency,
+    )?;
+    emit_dram_constant(
+        stats,
+        prefix,
         "profile.nvm_media.read_media_latency",
         "Tick",
         summary.profile_nvm_media_read_latency,

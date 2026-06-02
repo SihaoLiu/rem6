@@ -1,6 +1,7 @@
 use rem6_boot::BootImage;
 use rem6_dram::{
-    DramGeometry, DramMemoryController, DramTiming, ExternalMemoryProfile, NvmMediaTiming,
+    DramGeometry, DramLowPowerTiming, DramMemoryController, DramTiming, ExternalMemoryProfile,
+    NvmMediaTiming,
 };
 use rem6_memory::{
     AccessSize, Address, AddressRange, CacheLineLayout, MemoryError, MemoryTargetId,
@@ -98,7 +99,12 @@ fn build_cli_dram_profile(
     profile: CliDramMemoryProfile,
 ) -> Result<ExternalMemoryProfile, Rem6CliError> {
     let geometry = DramGeometry::new(4, 64, line_layout.bytes()).map_err(execute_error)?;
-    let timing = DramTiming::new(3, 5, 7, 2, 4).map_err(execute_error)?;
+    let low_power_timing = DramLowPowerTiming::new(20, 80, 7)
+        .and_then(|timing| timing.with_self_refresh_exit_latency(17))
+        .map_err(execute_error)?;
+    let timing = DramTiming::new(3, 5, 7, 2, 4)
+        .map_err(execute_error)?
+        .with_low_power_timing(low_power_timing);
     match profile {
         CliDramMemoryProfile::Ddr => {
             ExternalMemoryProfile::ddr(CLI_MEMORY_TARGET, line_layout, 1, 1, geometry, timing)

@@ -5,8 +5,8 @@ use rem6_memory::MemoryTargetId;
 
 use crate::{
     DramAccess, DramAccessKind, DramGeometry, DramLowPowerActivity, DramLowPowerEvent,
-    DramLowPowerState, DramMemoryTechnology, DramTiming, ExternalMemoryParallelResourceSummary,
-    ExternalMemoryProfile, NvmMediaTiming,
+    DramLowPowerState, DramLowPowerTiming, DramMemoryTechnology, DramTiming,
+    ExternalMemoryParallelResourceSummary, ExternalMemoryProfile, NvmMediaTiming,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -698,6 +698,7 @@ pub struct DramMemoryActivityProfile {
     profile_technology: Option<DramMemoryTechnology>,
     profile_geometry: Option<DramGeometry>,
     profile_timing: Option<DramTiming>,
+    profile_low_power_timing: Option<DramLowPowerTiming>,
     profile_nvm_media_timing: Option<NvmMediaTiming>,
     profile_parallel_port_capacity: u64,
     profile_topology_unit_capacity: u64,
@@ -721,6 +722,9 @@ impl DramMemoryActivityProfile {
         let mut mixed_profile_geometry = false;
         let mut profile_timing = None;
         let mut mixed_profile_timing = false;
+        let mut profile_low_power_timing = None;
+        let mut profile_low_power_timing_seen = false;
+        let mut mixed_profile_low_power_timing = false;
         let mut profile_nvm_media_timing = None;
         let mut profile_nvm_media_timing_seen = false;
         let mut mixed_profile_nvm_media_timing = false;
@@ -744,6 +748,15 @@ impl DramMemoryActivityProfile {
                     }
                     Some(_) => {}
                     None => profile_timing = Some(memory_profile.timing()),
+                }
+                let low_power_timing = memory_profile.timing().low_power_timing();
+                if profile_low_power_timing_seen {
+                    if profile_low_power_timing != low_power_timing {
+                        mixed_profile_low_power_timing = true;
+                    }
+                } else {
+                    profile_low_power_timing = low_power_timing;
+                    profile_low_power_timing_seen = true;
                 }
                 if profile_nvm_media_timing_seen {
                     if profile_nvm_media_timing != memory_profile.nvm_media_timing() {
@@ -795,6 +808,11 @@ impl DramMemoryActivityProfile {
             } else {
                 profile_timing
             },
+            profile_low_power_timing: if mixed_profile_low_power_timing {
+                None
+            } else {
+                profile_low_power_timing
+            },
             profile_nvm_media_timing: if mixed_profile_nvm_media_timing {
                 None
             } else {
@@ -827,6 +845,10 @@ impl DramMemoryActivityProfile {
 
     pub const fn profile_timing(&self) -> Option<DramTiming> {
         self.profile_timing
+    }
+
+    pub const fn profile_low_power_timing(&self) -> Option<DramLowPowerTiming> {
+        self.profile_low_power_timing
     }
 
     pub const fn profile_nvm_media_timing(&self) -> Option<NvmMediaTiming> {

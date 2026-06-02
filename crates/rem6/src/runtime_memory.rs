@@ -99,6 +99,7 @@ impl Rem6DramSummary {
         let nvm_profile = profile.profile_technology_label() == Some("nvm");
         let geometry = profile.profile_geometry();
         let timing = profile.profile_timing();
+        let low_power_timing = profile.profile_low_power_timing();
         let nvm_media_timing = profile.profile_nvm_media_timing();
         Self {
             active_targets: profile.active_target_count() as u64,
@@ -143,6 +144,18 @@ impl Rem6DramSummary {
             profile_timing_burst_spacing: timing.map(|timing| timing.burst_spacing()).unwrap_or(0),
             profile_timing_same_bank_group_burst_spacing: timing
                 .and_then(|timing| timing.same_bank_group_burst_spacing())
+                .unwrap_or(0),
+            profile_low_power_precharge_powerdown_entry_delay: low_power_timing
+                .map(|timing| timing.precharge_powerdown_entry_delay())
+                .unwrap_or(0),
+            profile_low_power_self_refresh_entry_delay: low_power_timing
+                .map(|timing| timing.self_refresh_entry_delay())
+                .unwrap_or(0),
+            profile_low_power_exit_latency: low_power_timing
+                .map(|timing| timing.exit_latency())
+                .unwrap_or(0),
+            profile_low_power_self_refresh_exit_latency: low_power_timing
+                .map(|timing| timing.self_refresh_exit_latency())
                 .unwrap_or(0),
             profile_nvm_media_read_latency: nvm_media_timing
                 .map(|timing| timing.read_media_latency())

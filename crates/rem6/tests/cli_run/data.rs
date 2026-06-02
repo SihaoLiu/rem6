@@ -130,6 +130,10 @@ fn rem6_run_executes_riscv_elf_load_store_through_nvm_profile_and_emits_nvm_stat
     assert!(stdout.contains("\"write_latency\":7"));
     assert!(stdout.contains("\"precharge_latency\":2"));
     assert!(stdout.contains("\"bus_turnaround\":4"));
+    assert!(stdout.contains("\"low_power_timing\":{\"precharge_powerdown_entry_delay\":20"));
+    assert!(stdout.contains("\"self_refresh_entry_delay\":80"));
+    assert!(stdout.contains("\"exit_latency\":7"));
+    assert!(stdout.contains("\"self_refresh_exit_latency\":17"));
     assert!(stdout.contains("\"nvm_media\":{\"read_media_latency\":30"));
     assert!(stdout.contains("\"write_media_latency\":50"));
     assert!(stdout.contains("\"send_latency\":6"));
@@ -242,6 +246,34 @@ fn rem6_run_executes_riscv_elf_load_store_through_nvm_profile_and_emits_nvm_stat
         "sim.memory.dram.profile.timing.bus_turnaround",
         "Tick",
         4,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.low_power_timing.precharge_powerdown_entry_delay",
+        "Tick",
+        20,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.low_power_timing.self_refresh_entry_delay",
+        "Tick",
+        80,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.low_power_timing.exit_latency",
+        "Tick",
+        7,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.low_power_timing.self_refresh_exit_latency",
+        "Tick",
+        17,
         "constant",
     );
     assert_stat(
