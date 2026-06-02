@@ -12,8 +12,7 @@ use rem6_cpu::{
 use rem6_isa_riscv::Register;
 use rem6_kernel::{PartitionFrontier, PartitionId, PartitionedScheduler, ReadyPartition};
 use rem6_memory::{
-    AccessSize, Address, AgentId, CacheLineLayout, MemoryOperation, MemoryRequest, MemoryRequestId,
-    PartitionedMemoryStore,
+    AccessSize, Address, AgentId, CacheLineLayout, MemoryOperation, MemoryRequestId,
 };
 use rem6_stats::StatsRegistry;
 use rem6_system::{
@@ -23,7 +22,7 @@ use rem6_system::{
 };
 use rem6_transport::{
     MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTraceEvent, MemoryTraceKind, MemoryTransport,
-    RequestDelivery, TargetOutcome, TransportEndpointId,
+    TransportEndpointId,
 };
 
 mod artifact_json;
@@ -31,6 +30,7 @@ mod config;
 mod formatting;
 mod guest_memory;
 mod parallel_stats;
+mod runtime_memory;
 mod stats_output;
 #[cfg(test)]
 mod transport_summary_tests;
@@ -38,6 +38,7 @@ mod transport_summary_tests;
 pub use config::{LoadBlobRequest, MemoryDumpRequest, Rem6RunConfig, RequestedIsa, StatsFormat};
 use formatting::{elf_architecture_name, json_escape};
 use guest_memory::{build_cli_memory_store, read_load_blobs, LoadedBlob};
+use runtime_memory::{cli_memory_response, read_memory_dumps, CliMemoryRuntime};
 use stats_output::{run_stats_output, Rem6StatsInputs};
 
 const DEFAULT_CACHE_LINE_BYTES: u64 = 16;
@@ -118,8 +119,39 @@ pub struct Rem6ExecutionSummary {
     parallel_scheduler_ready_partitions: Vec<Rem6ParallelReadyPartitionSummary>,
     fetch_transport: Rem6MemoryTransportSummary,
     data_transport: Rem6MemoryTransportSummary,
+    dram: Rem6DramSummary,
     cores: Vec<Rem6CoreSummary>,
     memory_dumps: Vec<Rem6MemoryDump>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct Rem6DramSummary {
+    active_targets: u64,
+    active_ports: u64,
+    active_banks: u64,
+    accesses: u64,
+    reads: u64,
+    writes: u64,
+    row_hits: u64,
+    row_misses: u64,
+    commands: u64,
+    turnarounds: u64,
+    total_ready_latency_ticks: u64,
+    max_ready_latency_ticks: u64,
+    profiled_targets: u64,
+    profile_parallel_ports: u64,
+    profile_topology_units: u64,
+    profile_scheduler_banks: u64,
+    profile_topology_banks: u64,
+    profile_scheduler_bank_groups: u64,
+    low_power_active_powerdown_entries: u64,
+    low_power_active_powerdown_ticks: u64,
+    low_power_precharge_powerdown_entries: u64,
+    low_power_precharge_powerdown_ticks: u64,
+    low_power_self_refresh_entries: u64,
+    low_power_self_refresh_ticks: u64,
+    low_power_exits: u64,
+    low_power_exit_latency_ticks: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -193,7 +225,7 @@ struct Rem6MemoryTransportCounters {
 
 struct ExecutionSummaryInputs<'a> {
     core_count: u32,
-    store: &'a Arc<Mutex<PartitionedMemoryStore>>,
+    memory: &'a CliMemoryRuntime,
     line_layout: CacheLineLayout,
     config: &'a Rem6RunConfig,
     fetch_trace: &'a MemoryTrace,
@@ -608,8 +640,7 @@ fn execute_riscv(
     let tick_limit = config.max_tick();
     let memory_partition = PartitionId::new(core_count);
     let host_partition = PartitionId::new(core_count + 1);
-    let store = build_cli_memory_store(image, load_blobs, line_layout)?;
-    let store = Arc::new(Mutex::new(store));
+    let memory = CliMemoryRuntime::new(image, load_blobs, line_layout, config.dram_memory())?;
 
     let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(
         partition_count,
@@ -693,12 +724,12 @@ fn execute_riscv(
                 fetch_trace.clone(),
                 data_trace.clone(),
                 |_cpu| {
-                    let store = Arc::clone(&store);
-                    move |delivery, _context| memory_response(&store, &delivery)
+                    let memory = memory.clone();
+                    move |delivery, _context| cli_memory_response(&memory, &delivery)
                 },
                 |_cpu| {
-                    let store = Arc::clone(&store);
-                    move |delivery, _context| memory_response(&store, &delivery)
+                    let memory = memory.clone();
+                    move |delivery, _context| cli_memory_response(&memory, &delivery)
                 },
                 tick_limit,
                 max_instructions,
@@ -713,12 +744,12 @@ fn execute_riscv(
                 fetch_trace.clone(),
                 data_trace.clone(),
                 |_cpu| {
-                    let store = Arc::clone(&store);
-                    move |delivery, _context| memory_response(&store, &delivery)
+                    let memory = memory.clone();
+                    move |delivery, _context| cli_memory_response(&memory, &delivery)
                 },
                 |_cpu| {
-                    let store = Arc::clone(&store);
-                    move |delivery, _context| memory_response(&store, &delivery)
+                    let memory = memory.clone();
+                    move |delivery, _context| cli_memory_response(&memory, &delivery)
                 },
                 tick_limit,
                 |cpu| GuestEventId::new(u64::from(cpu.get())),
@@ -728,7 +759,7 @@ fn execute_riscv(
 
     let summary_inputs = ExecutionSummaryInputs {
         core_count,
-        store: &store,
+        memory: &memory,
         line_layout,
         config,
         fetch_trace: &fetch_trace,
@@ -758,21 +789,6 @@ fn add_memory_route(
             .map_err(execute_error)?,
         )
         .map_err(execute_error)
-}
-
-fn memory_response(
-    store: &Arc<Mutex<PartitionedMemoryStore>>,
-    delivery: &RequestDelivery,
-) -> TargetOutcome {
-    let outcome = store
-        .lock()
-        .expect("CLI memory store lock")
-        .respond(delivery.request())
-        .expect("CLI memory response");
-    match outcome.response().cloned() {
-        Some(response) => TargetOutcome::Respond(response),
-        None => TargetOutcome::NoResponse,
-    }
 }
 
 fn execution_summary(
@@ -889,9 +905,10 @@ fn execution_summary(
         ),
         fetch_transport: memory_transport_summary(inputs.fetch_trace),
         data_transport: memory_transport_summary(inputs.data_trace),
+        dram: inputs.memory.dram_summary_until(final_tick),
         cores,
         memory_dumps: read_memory_dumps(
-            inputs.store,
+            inputs.memory,
             inputs.line_layout,
             inputs.config.memory_dumps(),
         )?,
@@ -1081,49 +1098,6 @@ fn core_data_access_counts(core: &RiscvCore) -> DataAccessCounts {
         }
     }
     counts
-}
-
-fn read_memory_dumps(
-    store: &Arc<Mutex<PartitionedMemoryStore>>,
-    line_layout: CacheLineLayout,
-    requests: &[MemoryDumpRequest],
-) -> Result<Vec<Rem6MemoryDump>, Rem6CliError> {
-    requests
-        .iter()
-        .enumerate()
-        .map(|(index, request)| read_memory_dump(store, line_layout, index as u64, *request))
-        .collect()
-}
-
-fn read_memory_dump(
-    store: &Arc<Mutex<PartitionedMemoryStore>>,
-    line_layout: CacheLineLayout,
-    sequence: u64,
-    dump: MemoryDumpRequest,
-) -> Result<Rem6MemoryDump, Rem6CliError> {
-    let request = MemoryRequest::read_shared(
-        MemoryRequestId::new(CLI_MEMORY_DUMP_AGENT, sequence),
-        Address::new(dump.address()),
-        AccessSize::new(dump.bytes()).map_err(execute_error)?,
-        line_layout,
-    )
-    .map_err(execute_error)?;
-    let outcome = store
-        .lock()
-        .expect("CLI memory store lock")
-        .respond(&request)
-        .map_err(execute_error)?;
-    let data = outcome
-        .response()
-        .and_then(|response| response.data())
-        .ok_or_else(|| Rem6CliError::Execute {
-            error: format!("memory dump at 0x{:x} returned no data", dump.address()),
-        })?
-        .to_vec();
-    Ok(Rem6MemoryDump {
-        address: dump.address(),
-        data,
-    })
 }
 
 fn committed_instructions_by_cpu(run: &RiscvSystemRun) -> BTreeMap<CpuId, u64> {

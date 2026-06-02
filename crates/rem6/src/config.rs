@@ -81,6 +81,7 @@ pub struct Rem6RunConfig {
     max_instructions: Option<u64>,
     stats_format: StatsFormat,
     execute: bool,
+    dram_memory: bool,
     cores: usize,
     parallel_workers: usize,
     memory_dumps: Vec<MemoryDumpRequest>,
@@ -115,6 +116,7 @@ impl Rem6RunConfig {
         let mut max_instructions = None;
         let mut stats_format = StatsFormat::Json;
         let mut execute = false;
+        let mut dram_memory = false;
         let mut cores = 1usize;
         let mut parallel_workers = None;
         let mut memory_dumps = Vec::new();
@@ -199,6 +201,9 @@ impl Rem6RunConfig {
                 "--execute" => {
                     execute = true;
                 }
+                "--dram-memory" => {
+                    dram_memory = true;
+                }
                 "--cores" => {
                     let value = required_value(&flag, args.next())?;
                     cores = value
@@ -274,6 +279,7 @@ impl Rem6RunConfig {
             max_instructions,
             stats_format,
             execute,
+            dram_memory,
             cores,
             parallel_workers: parallel_workers.unwrap_or(cores),
             memory_dumps,
@@ -329,6 +335,10 @@ impl Rem6RunConfig {
 
     pub const fn execute(&self) -> bool {
         self.execute
+    }
+
+    pub const fn dram_memory(&self) -> bool {
+        self.dram_memory
     }
 
     pub const fn cores(&self) -> usize {

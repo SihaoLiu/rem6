@@ -1,4 +1,5 @@
 use rem6_boot::BootImage;
+use rem6_dram::{DramGeometry, DramMemoryController, DramTiming, ExternalMemoryProfile};
 use rem6_memory::{
     AccessSize, Address, AddressRange, CacheLineLayout, MemoryError, MemoryTargetId,
     PartitionedMemoryStore,
@@ -7,7 +8,7 @@ use rem6_memory::{
 use crate::config::LoadBlobRequest;
 use crate::{execute_error, Rem6CliError, Rem6LoadBlobSummary};
 
-const CLI_MEMORY_TARGET: MemoryTargetId = MemoryTargetId::new(0);
+pub(super) const CLI_MEMORY_TARGET: MemoryTargetId = MemoryTargetId::new(0);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct LoadedBlob {
@@ -62,6 +63,35 @@ pub(super) fn build_cli_memory_store(
         load_blob_into_store(&mut store, line_layout, blob)?;
     }
     Ok(store)
+}
+
+pub(super) fn build_cli_dram_memory(
+    image: &BootImage,
+    load_blobs: &[LoadedBlob],
+    line_layout: CacheLineLayout,
+) -> Result<DramMemoryController, Rem6CliError> {
+    let store = build_cli_memory_store(image, load_blobs, line_layout)?;
+    let snapshot = store.snapshot();
+    let geometry = DramGeometry::new(4, 64, line_layout.bytes()).map_err(execute_error)?;
+    let timing = DramTiming::new(3, 5, 7, 2, 4).map_err(execute_error)?;
+    let profile =
+        ExternalMemoryProfile::ddr(CLI_MEMORY_TARGET, line_layout, 1, 1, geometry, timing)
+            .map_err(execute_error)?;
+    let mut memory = DramMemoryController::new();
+    memory.add_profile(profile).map_err(execute_error)?;
+    for (target, region) in snapshot.regions() {
+        memory
+            .map_region(*target, region.start(), region.size())
+            .map_err(execute_error)?;
+    }
+    for partition in snapshot.partitions() {
+        for line in partition.lines() {
+            memory
+                .insert_line(partition.target(), line.line(), line.data().to_vec())
+                .map_err(execute_error)?;
+        }
+    }
+    Ok(memory)
 }
 
 fn cli_memory_regions(

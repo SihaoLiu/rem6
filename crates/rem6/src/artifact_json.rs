@@ -2,10 +2,10 @@ use super::formatting::{
     bytes_to_hex, elf_architecture_name, elf_class_name, elf_endian_name, elf_os_name, json_escape,
 };
 use super::{
-    Rem6CoreSummary, Rem6ExecutionStop, Rem6ExecutionSummary, Rem6LoadBlobSummary, Rem6MemoryDump,
-    Rem6MemoryTransportCounters, Rem6MemoryTransportRouteSummary, Rem6MemoryTransportSummary,
-    Rem6ParallelFrontierSummary, Rem6ParallelPartitionSummary, Rem6ParallelReadyPartitionSummary,
-    Rem6RunArtifact, RequestedIsa,
+    Rem6CoreSummary, Rem6DramSummary, Rem6ExecutionStop, Rem6ExecutionSummary, Rem6LoadBlobSummary,
+    Rem6MemoryDump, Rem6MemoryTransportCounters, Rem6MemoryTransportRouteSummary,
+    Rem6MemoryTransportSummary, Rem6ParallelFrontierSummary, Rem6ParallelPartitionSummary,
+    Rem6ParallelReadyPartitionSummary, Rem6RunArtifact, RequestedIsa,
 };
 
 impl Rem6RunArtifact {
@@ -48,6 +48,11 @@ impl Rem6RunArtifact {
             .as_ref()
             .map(Rem6ExecutionSummary::to_memory_json)
             .unwrap_or_else(|| "[]".to_string());
+        let dram = self
+            .execution
+            .as_ref()
+            .map(Rem6ExecutionSummary::to_dram_json)
+            .unwrap_or_else(|| Rem6DramSummary::default().to_json());
         let transport = self
             .execution
             .as_ref()
@@ -69,7 +74,7 @@ impl Rem6RunArtifact {
             String::new()
         };
         format!(
-            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"load_blobs\":[{}],\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"transport\":{},\"stats\":{}}}\n",
+            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"load_blobs\":[{}],\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"dram\":{},\"transport\":{},\"stats\":{}}}\n",
             self.schema,
             self.config.isa().as_str(),
             json_escape(&self.config.binary().display().to_string()),
@@ -87,6 +92,7 @@ impl Rem6RunArtifact {
             parallel,
             cores,
             memory,
+            dram,
             transport,
             self.stats_json,
         )
@@ -238,6 +244,44 @@ impl Rem6ExecutionSummary {
             "{{\"fetch\":{},\"data\":{}}}",
             self.fetch_transport.to_json(),
             self.data_transport.to_json()
+        )
+    }
+
+    fn to_dram_json(&self) -> String {
+        self.dram.to_json()
+    }
+}
+
+impl Rem6DramSummary {
+    fn to_json(self) -> String {
+        format!(
+            "{{\"active_targets\":{},\"active_ports\":{},\"active_banks\":{},\"accesses\":{},\"reads\":{},\"writes\":{},\"row_hits\":{},\"row_misses\":{},\"commands\":{},\"turnarounds\":{},\"total_ready_latency_ticks\":{},\"max_ready_latency_ticks\":{},\"profile\":{{\"profiled_targets\":{},\"parallel_ports\":{},\"topology_units\":{},\"scheduler_banks\":{},\"topology_banks\":{},\"scheduler_bank_groups\":{}}},\"low_power\":{{\"active_powerdown\":{{\"entries\":{},\"ticks\":{}}},\"precharge_powerdown\":{{\"entries\":{},\"ticks\":{}}},\"self_refresh\":{{\"entries\":{},\"ticks\":{}}},\"exits\":{},\"exit_latency_ticks\":{}}}}}",
+            self.active_targets,
+            self.active_ports,
+            self.active_banks,
+            self.accesses,
+            self.reads,
+            self.writes,
+            self.row_hits,
+            self.row_misses,
+            self.commands,
+            self.turnarounds,
+            self.total_ready_latency_ticks,
+            self.max_ready_latency_ticks,
+            self.profiled_targets,
+            self.profile_parallel_ports,
+            self.profile_topology_units,
+            self.profile_scheduler_banks,
+            self.profile_topology_banks,
+            self.profile_scheduler_bank_groups,
+            self.low_power_active_powerdown_entries,
+            self.low_power_active_powerdown_ticks,
+            self.low_power_precharge_powerdown_entries,
+            self.low_power_precharge_powerdown_ticks,
+            self.low_power_self_refresh_entries,
+            self.low_power_self_refresh_ticks,
+            self.low_power_exits,
+            self.low_power_exit_latency_ticks,
         )
     }
 }

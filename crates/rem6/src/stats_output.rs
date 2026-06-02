@@ -2,9 +2,9 @@ use rem6_stats::{StatResetPolicy, StatSnapshot, StatsRegistry};
 
 use super::formatting::json_escape;
 use super::{
-    parallel_stats, stats_error, Rem6CliError, Rem6ExecutionStop, Rem6ExecutionSummary,
-    Rem6LoadBlobSummary, Rem6MemoryTransportCounters, Rem6MemoryTransportSummary, Rem6RunConfig,
-    RequestedIsa,
+    parallel_stats, stats_error, Rem6CliError, Rem6DramSummary, Rem6ExecutionStop,
+    Rem6ExecutionSummary, Rem6LoadBlobSummary, Rem6MemoryTransportCounters,
+    Rem6MemoryTransportSummary, Rem6RunConfig, RequestedIsa,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -252,6 +252,7 @@ pub(super) fn run_stats_output(
         parallel_stats::emit_scheduler_stats(&mut stats, execution)?;
         emit_transport_stats(&mut stats, "sim.memory.fetch", &execution.fetch_transport)?;
         emit_transport_stats(&mut stats, "sim.memory.data", &execution.data_transport)?;
+        emit_dram_stats(&mut stats, "sim.memory.dram", execution.dram)?;
         for core in &execution.cores {
             increment_stat(
                 &mut stats,
@@ -310,6 +311,173 @@ pub(super) fn run_stats_output(
         json: stats_snapshot_json(&snapshot),
         text: stats_snapshot_text(&snapshot),
     })
+}
+
+fn emit_dram_stats(
+    stats: &mut StatsRegistry,
+    prefix: &str,
+    summary: Rem6DramSummary,
+) -> Result<(), Rem6CliError> {
+    emit_dram_counter(
+        stats,
+        prefix,
+        "active_targets",
+        "Count",
+        summary.active_targets,
+    )?;
+    emit_dram_counter(stats, prefix, "active_ports", "Count", summary.active_ports)?;
+    emit_dram_counter(stats, prefix, "active_banks", "Count", summary.active_banks)?;
+    emit_dram_counter(stats, prefix, "accesses", "Count", summary.accesses)?;
+    emit_dram_counter(stats, prefix, "reads", "Count", summary.reads)?;
+    emit_dram_counter(stats, prefix, "writes", "Count", summary.writes)?;
+    emit_dram_counter(stats, prefix, "row_hits", "Count", summary.row_hits)?;
+    emit_dram_counter(stats, prefix, "row_misses", "Count", summary.row_misses)?;
+    emit_dram_counter(stats, prefix, "commands", "Count", summary.commands)?;
+    emit_dram_counter(stats, prefix, "turnarounds", "Count", summary.turnarounds)?;
+    emit_dram_counter(
+        stats,
+        prefix,
+        "total_ready_latency_ticks",
+        "Tick",
+        summary.total_ready_latency_ticks,
+    )?;
+    emit_dram_counter(
+        stats,
+        prefix,
+        "max_ready_latency_ticks",
+        "Tick",
+        summary.max_ready_latency_ticks,
+    )?;
+    emit_dram_constant(
+        stats,
+        prefix,
+        "profile.profiled_targets",
+        "Count",
+        summary.profiled_targets,
+    )?;
+    emit_dram_constant(
+        stats,
+        prefix,
+        "profile.parallel_ports",
+        "Count",
+        summary.profile_parallel_ports,
+    )?;
+    emit_dram_constant(
+        stats,
+        prefix,
+        "profile.topology_units",
+        "Count",
+        summary.profile_topology_units,
+    )?;
+    emit_dram_constant(
+        stats,
+        prefix,
+        "profile.scheduler_banks",
+        "Count",
+        summary.profile_scheduler_banks,
+    )?;
+    emit_dram_constant(
+        stats,
+        prefix,
+        "profile.topology_banks",
+        "Count",
+        summary.profile_topology_banks,
+    )?;
+    emit_dram_constant(
+        stats,
+        prefix,
+        "profile.scheduler_bank_groups",
+        "Count",
+        summary.profile_scheduler_bank_groups,
+    )?;
+    emit_dram_counter(
+        stats,
+        prefix,
+        "low_power.active_powerdown.entries",
+        "Count",
+        summary.low_power_active_powerdown_entries,
+    )?;
+    emit_dram_counter(
+        stats,
+        prefix,
+        "low_power.active_powerdown.ticks",
+        "Tick",
+        summary.low_power_active_powerdown_ticks,
+    )?;
+    emit_dram_counter(
+        stats,
+        prefix,
+        "low_power.precharge_powerdown.entries",
+        "Count",
+        summary.low_power_precharge_powerdown_entries,
+    )?;
+    emit_dram_counter(
+        stats,
+        prefix,
+        "low_power.precharge_powerdown.ticks",
+        "Tick",
+        summary.low_power_precharge_powerdown_ticks,
+    )?;
+    emit_dram_counter(
+        stats,
+        prefix,
+        "low_power.self_refresh.entries",
+        "Count",
+        summary.low_power_self_refresh_entries,
+    )?;
+    emit_dram_counter(
+        stats,
+        prefix,
+        "low_power.self_refresh.ticks",
+        "Tick",
+        summary.low_power_self_refresh_ticks,
+    )?;
+    emit_dram_counter(
+        stats,
+        prefix,
+        "low_power.exits",
+        "Count",
+        summary.low_power_exits,
+    )?;
+    emit_dram_counter(
+        stats,
+        prefix,
+        "low_power.exit_latency_ticks",
+        "Tick",
+        summary.low_power_exit_latency_ticks,
+    )
+}
+
+fn emit_dram_counter(
+    stats: &mut StatsRegistry,
+    prefix: &str,
+    name: &str,
+    unit: &str,
+    value: u64,
+) -> Result<(), Rem6CliError> {
+    increment_stat(
+        stats,
+        &format!("{prefix}.{name}"),
+        unit,
+        StatResetPolicy::Monotonic,
+        value,
+    )
+}
+
+fn emit_dram_constant(
+    stats: &mut StatsRegistry,
+    prefix: &str,
+    name: &str,
+    unit: &str,
+    value: u64,
+) -> Result<(), Rem6CliError> {
+    increment_stat(
+        stats,
+        &format!("{prefix}.{name}"),
+        unit,
+        StatResetPolicy::Constant,
+        value,
+    )
 }
 
 fn stats_snapshot_json(snapshot: &StatSnapshot) -> String {
