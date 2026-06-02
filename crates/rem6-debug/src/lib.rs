@@ -2,7 +2,7 @@ mod hex;
 
 use hex::{
     decode_checksum, decode_hex_bytes, decode_hex_u64, decode_hex_usize, encode_hex_bytes,
-    encode_hex_nibble, encode_hex_u64,
+    encode_hex_nibble, encode_hex_u64, is_hex_digit,
 };
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -233,6 +233,9 @@ pub enum GdbRemoteCommand {
         thread: GdbRemoteThreadId,
     },
     StartNoAckMode,
+    ThreadAlive {
+        thread_id: u64,
+    },
     WriteMemory {
         address: u64,
         bytes: Vec<u8>,
@@ -588,6 +591,14 @@ impl GdbRemoteSession {
                     GdbRemoteThreadOperation::General => self.general_thread = thread,
                 }
                 self.packet_response(b"OK".to_vec())
+            }
+            GdbRemoteCommand::ThreadAlive { thread_id } => {
+                let payload = if self.thread_ids.contains(&thread_id) {
+                    b"OK".to_vec()
+                } else {
+                    b"E01".to_vec()
+                };
+                self.packet_response(payload)
             }
             GdbRemoteCommand::WriteRegisters { bytes } => {
                 self.set_register_bytes(GdbRemoteRegisterBytes::new(bytes));
@@ -1018,6 +1029,12 @@ fn parse_command_payload(payload: &[u8]) -> GdbRemoteCommand {
         }
     }
 
+    if let Some(thread_id) = payload.strip_prefix(b"T") {
+        if let Some(thread_id) = parse_positive_hex_id(thread_id) {
+            return GdbRemoteCommand::ThreadAlive { thread_id };
+        }
+    }
+
     if let Some(memory_request) = payload.strip_prefix(b"m") {
         if let Some((address, length)) = parse_memory_read(memory_request) {
             return GdbRemoteCommand::ReadMemory { address, length };
@@ -1094,11 +1111,15 @@ fn parse_command_payload(payload: &[u8]) -> GdbRemoteCommand {
 }
 
 fn parse_process_id(process_id: &[u8]) -> Option<u64> {
-    let process_id = decode_hex_u64(process_id)?;
-    if process_id == 0 {
+    parse_positive_hex_id(process_id)
+}
+
+fn parse_positive_hex_id(id: &[u8]) -> Option<u64> {
+    let id = decode_hex_u64(id)?;
+    if id == 0 {
         return None;
     }
-    Some(process_id)
+    Some(id)
 }
 
 fn parse_thread_selection(request: &[u8]) -> Option<(GdbRemoteThreadOperation, GdbRemoteThreadId)> {
@@ -1265,8 +1286,4 @@ fn memory_addresses(address: u64, len: usize) -> Option<Vec<u64>> {
         addresses.push(address.checked_add(offset)?);
     }
     Some(addresses)
-}
-
-fn is_hex_digit(byte: u8) -> bool {
-    byte.is_ascii_hexdigit()
 }

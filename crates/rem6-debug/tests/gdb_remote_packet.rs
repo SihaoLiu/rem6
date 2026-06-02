@@ -305,6 +305,27 @@ fn gdb_remote_commands_preserve_malformed_thread_selection_requests() {
 }
 
 #[test]
+fn gdb_remote_commands_decode_thread_alive_requests() {
+    let alive = GdbRemoteCommand::parse(&GdbRemotePacket::new(b"T1A".to_vec()).unwrap());
+
+    assert_eq!(alive, GdbRemoteCommand::ThreadAlive { thread_id: 0x1a });
+}
+
+#[test]
+fn gdb_remote_commands_preserve_malformed_thread_alive_requests() {
+    for payload in [
+        b"T".as_slice(),
+        b"T0".as_slice(),
+        b"Tzz".as_slice(),
+        b"T-1".as_slice(),
+        b"T10000000000000000".as_slice(),
+    ] {
+        let command = GdbRemoteCommand::parse(&GdbRemotePacket::new(payload.to_vec()).unwrap());
+        assert_eq!(command, GdbRemoteCommand::Unknown(payload.to_vec()));
+    }
+}
+
+#[test]
 fn gdb_remote_commands_decode_read_register_requests() {
     let command = GdbRemoteCommand::parse(&GdbRemotePacket::parse_frame(b"$g#67").unwrap());
 
@@ -603,6 +624,31 @@ fn gdb_remote_session_reports_thread_info_sequence() {
     assert!(!session.set_thread_ids(Vec::new()));
     assert!(!session.set_thread_ids(vec![1, 0]));
     assert_eq!(session.thread_ids(), &[1, 0x1a, 0xff]);
+}
+
+#[test]
+fn gdb_remote_session_reports_thread_alive_status() {
+    let mut session = GdbRemoteSession::new(Vec::new());
+    assert!(session.set_thread_ids(vec![1, 0x1a]));
+
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"T1A".to_vec()).unwrap())
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"OK".to_vec()).unwrap()),
+        ],
+    );
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"T2".to_vec()).unwrap())
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"E01".to_vec()).unwrap()),
+        ],
+    );
 }
 
 #[test]

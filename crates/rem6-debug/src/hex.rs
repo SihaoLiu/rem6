@@ -57,6 +57,10 @@ pub(crate) fn decode_checksum(high: u8, low: u8) -> Result<u8, GdbRemoteError> {
     Ok((high << 4) | low)
 }
 
+pub(crate) fn is_hex_digit(byte: u8) -> bool {
+    byte.is_ascii_hexdigit()
+}
+
 fn decode_hex_nibble(byte: u8) -> Result<u8, GdbRemoteError> {
     match byte {
         b'0'..=b'9' => Ok(byte - b'0'),
