@@ -1,6 +1,6 @@
 use rem6_boot::BootImage;
 use rem6_cpu::CpuId;
-use rem6_dram::{DramGeometry, DramTiming, ExternalMemoryProfile};
+use rem6_dram::{DramGeometry, DramLowPowerTiming, DramTiming, ExternalMemoryProfile};
 use rem6_fabric::{QosPriority, QosRequestorId};
 use rem6_isa_riscv::Register;
 use rem6_memory::{AccessSize, Address, AddressRange, CacheLineLayout, MemoryTargetId};
@@ -103,6 +103,17 @@ fn dram_timing() -> DramTiming {
     DramTiming::new(4, 8, 10, 3, 5).unwrap()
 }
 
+fn profile_low_power_timing() -> DramLowPowerTiming {
+    DramLowPowerTiming::new(10_000, 20_000, 6)
+        .unwrap()
+        .with_self_refresh_exit_latency(13)
+        .unwrap()
+}
+
+fn profiled_dram_timing() -> DramTiming {
+    dram_timing().with_low_power_timing(profile_low_power_timing())
+}
+
 fn single_channel_ddr_profile(target: u32) -> ExternalMemoryProfile {
     ExternalMemoryProfile::ddr(
         MemoryTargetId::new(target),
@@ -110,7 +121,7 @@ fn single_channel_ddr_profile(target: u32) -> ExternalMemoryProfile {
         1,
         1,
         dram_geometry(),
-        dram_timing(),
+        profiled_dram_timing(),
     )
     .unwrap()
 }
@@ -668,6 +679,10 @@ fn workload_replay_applies_declared_qos_policy_to_dram_accesses() {
 
     assert_eq!(outcome.run().dram_qos_access_count(), 2);
     assert_eq!(outcome.run().dram_qos_byte_count(), 8);
+    assert_eq!(
+        outcome.run().dram_profile().profile_low_power_timing(),
+        Some(profile_low_power_timing())
+    );
     assert_eq!(
         outcome
             .run()
