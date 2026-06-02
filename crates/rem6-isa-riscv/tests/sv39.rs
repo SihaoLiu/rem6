@@ -1,4 +1,7 @@
-use rem6_isa_riscv::{RiscvSv39AccessKind, RiscvSv39PageFault, RiscvSv39Pte};
+use rem6_isa_riscv::{
+    RiscvSv39AccessKind, RiscvSv39PageFault, RiscvSv39PageTableLevel, RiscvSv39Pte,
+    RiscvSv39VirtualAddress,
+};
 
 const V: u64 = 1 << 0;
 const R: u64 = 1 << 1;
@@ -112,5 +115,47 @@ fn sv39_pte_checks_leaf_access_permissions_and_ad_bits() {
     assert_eq!(
         dirty_clear.validate_leaf_access(RiscvSv39AccessKind::Atomic),
         Err(RiscvSv39PageFault::DirtyBitClear)
+    );
+}
+
+#[test]
+fn sv39_virtual_address_decodes_canonical_low_and_high_halves() {
+    let low_raw = (0x0aa_u64 << 30) | (0x155_u64 << 21) | (0x1fe_u64 << 12) | 0xabc;
+    let low = RiscvSv39VirtualAddress::new(low_raw).unwrap();
+
+    assert_eq!(low.raw(), low_raw);
+    assert_eq!(low.page_offset(), 0xabc);
+    assert_eq!(
+        low.virtual_page_number(),
+        (0x0aa_u32 << 18) | (0x155_u32 << 9) | 0x1fe
+    );
+    assert_eq!(low.vpn(RiscvSv39PageTableLevel::Level0), 0x1fe);
+    assert_eq!(low.vpn(RiscvSv39PageTableLevel::Level1), 0x155);
+    assert_eq!(low.vpn(RiscvSv39PageTableLevel::Level2), 0x0aa);
+
+    let high_low_bits = (0x1ab_u64 << 30) | (0x101_u64 << 21) | (0x017_u64 << 12) | 0x678;
+    let high_raw = high_low_bits | (u64::MAX << 39);
+    let high = RiscvSv39VirtualAddress::new(high_raw).unwrap();
+
+    assert_eq!(high.raw(), high_raw);
+    assert_eq!(high.page_offset(), 0x678);
+    assert_eq!(
+        high.virtual_page_number(),
+        (0x1ab_u32 << 18) | (0x101_u32 << 9) | 0x017
+    );
+    assert_eq!(high.vpn(RiscvSv39PageTableLevel::Level0), 0x017);
+    assert_eq!(high.vpn(RiscvSv39PageTableLevel::Level1), 0x101);
+    assert_eq!(high.vpn(RiscvSv39PageTableLevel::Level2), 0x1ab);
+}
+
+#[test]
+fn sv39_virtual_address_rejects_noncanonical_hole_addresses() {
+    assert_eq!(
+        RiscvSv39VirtualAddress::new(1 << 39),
+        Err(RiscvSv39PageFault::NonCanonicalVirtualAddress { address: 1 << 39 })
+    );
+    assert_eq!(
+        RiscvSv39VirtualAddress::new(1 << 38),
+        Err(RiscvSv39PageFault::NonCanonicalVirtualAddress { address: 1 << 38 })
     );
 }

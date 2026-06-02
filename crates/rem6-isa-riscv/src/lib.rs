@@ -39,7 +39,10 @@ pub use pmp::{
     RiscvPmpRange, RiscvPmpSnapshot, RiscvPmpSnapshotEntry, RiscvPmpTable, RiscvPrivilegeMode,
 };
 pub use record::{RegisterWrite, RiscvExecutionRecord, RiscvSystemEvent, RiscvTrap, RiscvTrapKind};
-pub use sv39::{RiscvSv39AccessKind, RiscvSv39PageFault, RiscvSv39Pte};
+pub use sv39::{
+    RiscvSv39AccessKind, RiscvSv39PageFault, RiscvSv39PageTableLevel, RiscvSv39Pte,
+    RiscvSv39VirtualAddress,
+};
 pub use types::{
     AtomicMemoryOp, Immediate, MemoryAccessKind, MemoryResponseError, MemoryResponseWriteback,
     MemoryWidth, Register, RiscvFenceSet, RiscvMemoryOrdering,

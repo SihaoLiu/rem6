@@ -13,6 +13,14 @@ const PTE_PPN_SHIFT: u64 = 10;
 const PTE_PPN_MASK: u64 = (1_u64 << 44) - 1;
 const PTE_RESERVED_BITS_MASK: u64 = u64::MAX << 54;
 const PAGE_SHIFT: u64 = 12;
+const PAGE_OFFSET_MASK: u64 = (1_u64 << PAGE_SHIFT) - 1;
+const SV39_VIRTUAL_ADDRESS_BITS: u64 = 39;
+const SV39_VIRTUAL_PAGE_NUMBER_BITS: u64 = 27;
+const SV39_SIGN_BIT: u64 = 1 << (SV39_VIRTUAL_ADDRESS_BITS - 1);
+const SV39_HIGH_BITS_MASK: u64 = u64::MAX << SV39_VIRTUAL_ADDRESS_BITS;
+const SV39_VPN_MASK: u64 = (1_u64 << SV39_VIRTUAL_PAGE_NUMBER_BITS) - 1;
+const SV39_LEVEL_BITS: u64 = 9;
+const SV39_LEVEL_MASK: u64 = (1_u64 << SV39_LEVEL_BITS) - 1;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum RiscvSv39AccessKind {
@@ -20,6 +28,54 @@ pub enum RiscvSv39AccessKind {
     Load,
     Store,
     Atomic,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum RiscvSv39PageTableLevel {
+    Level0,
+    Level1,
+    Level2,
+}
+
+impl RiscvSv39PageTableLevel {
+    const fn number(self) -> u64 {
+        match self {
+            Self::Level0 => 0,
+            Self::Level1 => 1,
+            Self::Level2 => 2,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct RiscvSv39VirtualAddress {
+    raw: u64,
+}
+
+impl RiscvSv39VirtualAddress {
+    pub const fn new(raw: u64) -> Result<Self, RiscvSv39PageFault> {
+        if !is_canonical_sv39_address(raw) {
+            return Err(RiscvSv39PageFault::NonCanonicalVirtualAddress { address: raw });
+        }
+        Ok(Self { raw })
+    }
+
+    pub const fn raw(self) -> u64 {
+        self.raw
+    }
+
+    pub const fn page_offset(self) -> u64 {
+        self.raw & PAGE_OFFSET_MASK
+    }
+
+    pub const fn virtual_page_number(self) -> u32 {
+        ((self.raw >> PAGE_SHIFT) & SV39_VPN_MASK) as u32
+    }
+
+    pub const fn vpn(self, level: RiscvSv39PageTableLevel) -> u16 {
+        let shift = PAGE_SHIFT + (level.number() * SV39_LEVEL_BITS);
+        ((self.raw >> shift) & SV39_LEVEL_MASK) as u16
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -144,6 +200,7 @@ impl RiscvSv39AccessKind {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RiscvSv39PageFault {
+    NonCanonicalVirtualAddress { address: u64 },
     InvalidEntry,
     ReservedBitsSet { bits: u64 },
     ReservedPermissionEncoding,
@@ -156,6 +213,10 @@ pub enum RiscvSv39PageFault {
 impl fmt::Display for RiscvSv39PageFault {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::NonCanonicalVirtualAddress { address } => write!(
+                formatter,
+                "RISC-V Sv39 virtual address {address:#x} is not canonical"
+            ),
             Self::InvalidEntry => write!(formatter, "RISC-V Sv39 PTE is not valid"),
             Self::ReservedBitsSet { bits } => {
                 write!(formatter, "RISC-V Sv39 PTE has reserved bits {bits:#x}")
@@ -175,3 +236,12 @@ impl fmt::Display for RiscvSv39PageFault {
 }
 
 impl Error for RiscvSv39PageFault {}
+
+const fn is_canonical_sv39_address(address: u64) -> bool {
+    let high_bits = address & SV39_HIGH_BITS_MASK;
+    if address & SV39_SIGN_BIT == 0 {
+        high_bits == 0
+    } else {
+        high_bits == SV39_HIGH_BITS_MASK
+    }
+}
