@@ -390,6 +390,23 @@ pub fn handle_riscv_gdb_remote_system_packet(
     }
 }
 
+pub fn handle_riscv_gdb_remote_system_packet_with_data_translation(
+    xlen: RiscvGdbXlen,
+    session: &mut GdbRemoteSession,
+    cluster: &RiscvCluster,
+    memory: &mut PartitionedMemoryStore,
+    page_map: &TranslationPageMap,
+    packet: &GdbRemotePacket,
+) -> Result<Vec<GdbRemoteFrame>, RiscvGdbRemotePacketError> {
+    if matches!(
+        GdbRemoteCommand::parse(packet),
+        GdbRemoteCommand::DumpPageTable
+    ) {
+        session.set_page_table_dump(riscv_gdb_page_table_dump_from_translation_map(page_map));
+    }
+    handle_riscv_gdb_remote_system_packet(xlen, session, cluster, memory, packet)
+}
+
 fn sync_riscv_gdb_remote_session_from_hart(
     xlen: RiscvGdbXlen,
     session: &mut GdbRemoteSession,
