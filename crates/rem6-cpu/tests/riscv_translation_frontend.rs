@@ -4,7 +4,7 @@ use rem6_boot::BootImage;
 use rem6_cpu::{
     CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, CpuTranslationFrontend,
     CpuTranslationOutcome, CpuTranslationRequest, RiscvCore, RiscvCoreDriveAction, RiscvCpuError,
-    RiscvDataAccessEventKind, RiscvSv39PageTableResolver,
+    RiscvDataAccessEventKind, RiscvSv39PageTableResolver, RiscvSv39PteReadRequestError,
 };
 use rem6_isa_riscv::{
     MemoryAccessKind, MemoryWidth, Register, RiscvPmaAccessKind, RiscvPmaError, RiscvPmpAccessKind,
@@ -13,10 +13,11 @@ use rem6_isa_riscv::{
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{
-    AccessSize, Address, AgentId, CacheLineLayout, MemoryRequestId, MemoryTargetId,
-    PartitionedMemoryStore, TranslationAddressSpaceId, TranslationFaultKind, TranslationPageMap,
-    TranslationPageMappingScope, TranslationPagePermissions, TranslationPageSize,
-    TranslationQueueConfig, TranslationRequestId, TranslationTlbConfig, TranslationTlbStats,
+    AccessSize, Address, AgentId, CacheLineLayout, MemoryOperation, MemoryRequestId,
+    MemoryTargetId, PartitionedMemoryStore, TranslationAddressSpaceId, TranslationFaultKind,
+    TranslationPageMap, TranslationPageMappingScope, TranslationPagePermissions,
+    TranslationPageSize, TranslationQueueConfig, TranslationRequestId, TranslationTlbConfig,
+    TranslationTlbStats,
 };
 use rem6_transport::{
     MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTransport, TargetOutcome, TransportEndpointId,
@@ -965,6 +966,77 @@ fn riscv_sv39_page_table_resolver_maps_load_and_tracks_walk_addresses() {
     );
     assert_eq!(resolved.leaf_level(), Some(RiscvSv39PageTableLevel::Level0));
     assert_eq!(resolved.page_fault(), None);
+}
+
+#[test]
+fn riscv_sv39_translation_result_builds_pte_read_requests() {
+    let resolver = RiscvSv39PageTableResolver::new(0x130);
+    let virtual_address = (0x015_u64 << 30) | (0x037_u64 << 21) | (0x059_u64 << 12) | 0xabc;
+    let level1_ppn = 0x230;
+    let level0_ppn = 0x330;
+    let leaf_ppn = 0x75678;
+    let level2_pte_address = Address::new((0x130_u64 << 12) + (0x015 * 8));
+    let level1_pte_address = Address::new((level1_ppn << 12) + (0x037 * 8));
+    let level0_pte_address = Address::new((level0_ppn << 12) + (0x059 * 8));
+    let request = CpuTranslationRequest::load(
+        translation_id(84),
+        memory_id(94),
+        MemoryRouteId::new(6),
+        endpoint("cpu0.dmem"),
+        Address::new(virtual_address),
+        AccessSize::new(8).unwrap(),
+    )
+    .unwrap();
+
+    let resolved = resolver.resolve(request, |pte_address| {
+        Ok(match pte_address {
+            address if address == level2_pte_address => {
+                RiscvSv39Pte::new((level1_ppn << 10) | SV39_PTE_V)
+            }
+            address if address == level1_pte_address => {
+                RiscvSv39Pte::new((level0_ppn << 10) | SV39_PTE_V)
+            }
+            address if address == level0_pte_address => RiscvSv39Pte::new(
+                (leaf_ppn << 10) | SV39_PTE_V | SV39_PTE_R | SV39_PTE_W | SV39_PTE_A | SV39_PTE_D,
+            ),
+            _ => RiscvSv39Pte::new(0),
+        })
+    });
+    let first_id = MemoryRequestId::new(AgentId::new(29), 700);
+    let line_layout = layout();
+
+    let pte_requests = resolved
+        .pte_read_requests(first_id, line_layout)
+        .expect("PTE read request planning should succeed");
+
+    assert_eq!(pte_requests.len(), 3);
+    for (index, (request, expected_address)) in pte_requests
+        .iter()
+        .zip([level2_pte_address, level1_pte_address, level0_pte_address])
+        .enumerate()
+    {
+        assert_eq!(
+            request.id(),
+            MemoryRequestId::new(first_id.agent(), first_id.sequence() + index as u64)
+        );
+        assert_eq!(request.operation(), MemoryOperation::ReadShared);
+        assert_eq!(request.range().start(), expected_address);
+        assert_eq!(request.size(), AccessSize::new(8).unwrap());
+        assert_eq!(request.line_layout(), line_layout);
+        assert!(request.data().is_none());
+    }
+    assert_eq!(
+        resolved
+            .pte_read_requests(
+                MemoryRequestId::new(first_id.agent(), u64::MAX - 1),
+                line_layout
+            )
+            .unwrap_err(),
+        RiscvSv39PteReadRequestError::RequestSequenceOverflow {
+            first: MemoryRequestId::new(first_id.agent(), u64::MAX - 1),
+            index: 2,
+        }
+    );
 }
 
 #[test]

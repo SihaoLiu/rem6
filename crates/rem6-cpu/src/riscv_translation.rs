@@ -1,3 +1,6 @@
+use std::error::Error;
+use std::fmt;
+
 use rem6_isa_riscv::{
     walk_sv39_page_table, RiscvSv39AccessKind, RiscvSv39PageFault, RiscvSv39PageTableLevel,
     RiscvSv39Pte, RiscvSv39VirtualAddress, RiscvSystemEvent,
@@ -6,9 +9,9 @@ use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionedScheduler, SchedulerContext, Tick,
 };
 use rem6_memory::{
-    Address, ByteMask, MemoryRequestId, TranslationAddressSpaceId, TranslationFault,
-    TranslationFaultKind, TranslationPageMap, TranslationRequestId, TranslationResolution,
-    TranslationTlbStats,
+    AccessSize, Address, ByteMask, CacheLineLayout, MemoryError, MemoryRequest, MemoryRequestId,
+    TranslationAddressSpaceId, TranslationFault, TranslationFaultKind, TranslationPageMap,
+    TranslationRequestId, TranslationResolution, TranslationTlbStats,
 };
 use rem6_mmio::{MmioBus, MmioError};
 use rem6_transport::{
@@ -26,6 +29,8 @@ use crate::{
     CpuTranslationOutcome, CpuTranslationRequest, RiscvCore, RiscvCoreDriveAction, RiscvCoreState,
     RiscvCpuError, RiscvDataAccessTarget,
 };
+
+const RISCV_SV39_PTE_ACCESS_BYTES: u64 = 8;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PendingDataTranslation {
@@ -128,6 +133,44 @@ pub struct RiscvSv39TranslationResult {
     page_fault: Option<RiscvSv39PageFault>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RiscvSv39PteReadRequestError {
+    RequestSequenceOverflow {
+        first: MemoryRequestId,
+        index: usize,
+    },
+    Memory(MemoryError),
+}
+
+impl fmt::Display for RiscvSv39PteReadRequestError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::RequestSequenceOverflow { first, index } => write!(
+                formatter,
+                "PTE read request id sequence starting at {} from agent {} overflows at index {index}",
+                first.sequence(),
+                first.agent().get()
+            ),
+            Self::Memory(error) => write!(formatter, "{error}"),
+        }
+    }
+}
+
+impl Error for RiscvSv39PteReadRequestError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Memory(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
+impl From<MemoryError> for RiscvSv39PteReadRequestError {
+    fn from(error: MemoryError) -> Self {
+        Self::Memory(error)
+    }
+}
+
 impl RiscvSv39TranslationResult {
     fn mapped(
         request: CpuTranslationRequest,
@@ -178,6 +221,34 @@ impl RiscvSv39TranslationResult {
 
     pub fn pte_addresses(&self) -> &[Address] {
         &self.pte_addresses
+    }
+
+    pub fn pte_read_requests(
+        &self,
+        first_request: MemoryRequestId,
+        line_layout: CacheLineLayout,
+    ) -> Result<Vec<MemoryRequest>, RiscvSv39PteReadRequestError> {
+        let pte_size = AccessSize::new(RISCV_SV39_PTE_ACCESS_BYTES)?;
+        self.pte_addresses
+            .iter()
+            .enumerate()
+            .map(|(index, address)| {
+                let offset = u64::try_from(index).map_err(|_| {
+                    RiscvSv39PteReadRequestError::RequestSequenceOverflow {
+                        first: first_request,
+                        index,
+                    }
+                })?;
+                let sequence = first_request.sequence().checked_add(offset).ok_or(
+                    RiscvSv39PteReadRequestError::RequestSequenceOverflow {
+                        first: first_request,
+                        index,
+                    },
+                )?;
+                let id = MemoryRequestId::new(first_request.agent(), sequence);
+                MemoryRequest::read_shared(id, *address, pte_size, line_layout).map_err(Into::into)
+            })
+            .collect()
     }
 
     pub const fn leaf_level(&self) -> Option<RiscvSv39PageTableLevel> {

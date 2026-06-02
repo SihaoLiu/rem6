@@ -135,7 +135,9 @@ pub use riscv_sc_progress::{
     RiscvStoreConditionalProgressConfig, RiscvStoreConditionalProgressError,
     RiscvStoreConditionalProgressSnapshot, DEFAULT_RISCV_SC_DIAGNOSTIC_THRESHOLD,
 };
-pub use riscv_translation::{RiscvSv39PageTableResolver, RiscvSv39TranslationResult};
+pub use riscv_translation::{
+    RiscvSv39PageTableResolver, RiscvSv39PteReadRequestError, RiscvSv39TranslationResult,
+};
 pub use statistical_corrector::{
     StatisticalCorrector, StatisticalCorrectorBranchKind, StatisticalCorrectorConfig,
     StatisticalCorrectorError, StatisticalCorrectorHistory, StatisticalCorrectorHistoryUpdate,
