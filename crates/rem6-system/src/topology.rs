@@ -5,6 +5,7 @@ mod dma_ops;
 mod dma_run;
 mod heterogeneous_run;
 mod host_checkpoint;
+mod net_checkpoint;
 mod storage_checkpoint;
 mod virtio_checkpoint;
 
@@ -89,6 +90,9 @@ pub struct RiscvTopologySystem {
     memory: Option<RiscvTopologyMemoryBackend>,
     storage_checkpoint_ports: BTreeMap<CheckpointComponentId, crate::StorageImageCheckpointPort>,
     ide_checkpoint_ports: BTreeMap<CheckpointComponentId, crate::IdeControllerCheckpointPort>,
+    sinic_register_checkpoint_ports:
+        BTreeMap<CheckpointComponentId, crate::SinicRegisterCheckpointPort>,
+    sinic_fifo_checkpoint_ports: BTreeMap<CheckpointComponentId, crate::SinicFifoCheckpointPort>,
     virtio_split_queue_checkpoint_ports:
         BTreeMap<CheckpointComponentId, crate::VirtioSplitQueueCheckpointPort>,
     virtio_pci_common_checkpoint_ports:
@@ -592,6 +596,8 @@ impl RiscvTopologySystem {
             memory: None,
             storage_checkpoint_ports: BTreeMap::new(),
             ide_checkpoint_ports: BTreeMap::new(),
+            sinic_register_checkpoint_ports: BTreeMap::new(),
+            sinic_fifo_checkpoint_ports: BTreeMap::new(),
             virtio_split_queue_checkpoint_ports: BTreeMap::new(),
             virtio_pci_common_checkpoint_ports: BTreeMap::new(),
             virtio_pci_notify_checkpoint_ports: BTreeMap::new(),
@@ -683,6 +689,7 @@ impl RiscvTopologySystem {
         self.attach_heterogeneous_checkpoint_to_host()?;
         self.attach_memory_checkpoint_to_host()?;
         self.attach_storage_checkpoint_to_host()?;
+        self.attach_sinic_checkpoint_to_host()?;
         self.attach_virtio_pci_checkpoint_to_host()?;
         self.attach_platform_checkpoint_to_host()?;
         Ok(self)

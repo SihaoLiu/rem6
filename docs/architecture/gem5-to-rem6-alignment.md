@@ -1708,6 +1708,8 @@ Implementation evidence through 2026-06-02:
   checkpoint payload codec. `rem6-system` wraps those payloads in SINIC
   register checkpoint banks, captures them through staged host checkpoints, and
   rejects malformed restore manifests before mutating live register state.
+  RISC-V topology systems can register those ports before or after
+  host-controller creation for automatic host executor attachment.
 - `rem6-net` also has typed SINIC FIFO ingress and egress state aligned with
   gem5 `Sinic::recvPacket` and `Sinic::transmit`: RX disabled drops, RX FIFO
   capacity rejection without mutation, RX packet and high/empty watermark
@@ -1717,7 +1719,10 @@ Implementation evidence through 2026-06-02:
   are explicit records. SINIC FIFO snapshots now encode registers, RX/TX packet
   queues, descriptor state, DMA completion words, pending DMA plans, and partial
   TX DMA buffers as stable checkpoint payloads, and `rem6-system` stages those
-  chunks through full-system host checkpoints before live restore.
+  chunks through full-system host checkpoints before live restore. RISC-V
+  topology systems can register FIFO checkpoint ports before or after
+  host-controller creation, so full-system SINIC checkpoint capture does not
+  require script-side bank wiring.
 - `rem6-net` now has typed SINIC DMA copy state aligned with gem5 `rxKick` and
   `txKick`: RX copy plans derive guest address, packet offset, copy length,
   zero/delay-copy limiting, More completion status, RX DMA and empty
@@ -3802,7 +3807,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   attachment, staged capture into host manifests, and malformed storage or IDE
   restore rejection without partial live-state mutation. Topology checkpoint
   tests cover storage image and IDE controller port registration before and
-  after host-controller creation with automatic host executor attachment.
+  after host-controller creation with automatic host executor attachment, plus
+  SINIC register and FIFO port registration before and after host-controller
+  creation with manifest chunk capture and restore through host actions.
   VirtIO split descriptor-chain tests cover block
   read, write, flush, and get-id decoding into typed requests, status
   descriptor tracking, writable data-byte accounting, loop rejection, short

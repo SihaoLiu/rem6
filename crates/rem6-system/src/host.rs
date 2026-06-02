@@ -14,13 +14,14 @@ use crate::{
     IdeControllerCheckpointPort, InterruptControllerCheckpointBank, MemoryStoreCheckpointBank,
     MsiBankCheckpointBank, PciHostCheckpointBank, PciLegacyInterruptRouterCheckpointBank,
     Pl011UartCheckpointBank, Pl031CheckpointBank, PlicCheckpointBank, RiscvCoreCheckpointBank,
-    RtcCheckpointBank, SchedulerCheckpointBank, SinicFifoCheckpointBank,
-    SinicRegisterCheckpointBank, Sp804CheckpointBank, Sp805CheckpointBank, StopRequest,
-    StorageImageCheckpointBank, StorageImageCheckpointPort, SystemError, TimerCheckpointBank,
-    UartCheckpointBank, VirtioPciCommonCheckpointBank, VirtioPciCommonCheckpointPort,
-    VirtioPciDeviceConfigCheckpointBank, VirtioPciDeviceConfigCheckpointPort,
-    VirtioPciIsrCheckpointBank, VirtioPciIsrCheckpointPort, VirtioPciNotifyCheckpointBank,
-    VirtioPciNotifyCheckpointPort, VirtioSplitQueueCheckpointBank, VirtioSplitQueueCheckpointPort,
+    RtcCheckpointBank, SchedulerCheckpointBank, SinicFifoCheckpointBank, SinicFifoCheckpointPort,
+    SinicRegisterCheckpointBank, SinicRegisterCheckpointPort, Sp804CheckpointBank,
+    Sp805CheckpointBank, StopRequest, StorageImageCheckpointBank, StorageImageCheckpointPort,
+    SystemError, TimerCheckpointBank, UartCheckpointBank, VirtioPciCommonCheckpointBank,
+    VirtioPciCommonCheckpointPort, VirtioPciDeviceConfigCheckpointBank,
+    VirtioPciDeviceConfigCheckpointPort, VirtioPciIsrCheckpointBank, VirtioPciIsrCheckpointPort,
+    VirtioPciNotifyCheckpointBank, VirtioPciNotifyCheckpointPort, VirtioSplitQueueCheckpointBank,
+    VirtioSplitQueueCheckpointPort,
 };
 
 pub use execution_mode_checkpoint::ExecutionModeCheckpointError;
@@ -399,6 +400,32 @@ impl SystemActionExecutor {
         sinic_fifo_checkpoints.register_all(&mut self.checkpoints)?;
         self.sinic_fifo_checkpoints = Some(sinic_fifo_checkpoints);
         Ok(())
+    }
+
+    pub fn attach_sinic_register_checkpoint_port(
+        &mut self,
+        port: SinicRegisterCheckpointPort,
+    ) -> Result<(), CheckpointError> {
+        port.register(&mut self.checkpoints)?;
+        if let Some(sinic_register_checkpoints) = &mut self.sinic_register_checkpoints {
+            sinic_register_checkpoints.insert_port(port)
+        } else {
+            self.sinic_register_checkpoints = Some(SinicRegisterCheckpointBank::new([port])?);
+            Ok(())
+        }
+    }
+
+    pub fn attach_sinic_fifo_checkpoint_port(
+        &mut self,
+        port: SinicFifoCheckpointPort,
+    ) -> Result<(), CheckpointError> {
+        port.register(&mut self.checkpoints)?;
+        if let Some(sinic_fifo_checkpoints) = &mut self.sinic_fifo_checkpoints {
+            sinic_fifo_checkpoints.insert_port(port)
+        } else {
+            self.sinic_fifo_checkpoints = Some(SinicFifoCheckpointBank::new([port])?);
+            Ok(())
+        }
     }
 
     pub fn attach_storage_image_checkpoint_port(
