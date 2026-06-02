@@ -28,6 +28,10 @@ pub(crate) fn shamt64(raw: u32) -> u8 {
     ((raw >> 20) & 0x3f) as u8
 }
 
+pub(crate) fn shamt32(raw: u32) -> u8 {
+    ((raw >> 20) & 0x1f) as u8
+}
+
 pub(crate) fn funct5(raw: u32) -> u32 {
     (raw >> 27) & 0x1f
 }

@@ -4,12 +4,13 @@ mod error;
 mod gdb_target;
 mod pma;
 mod pmp;
+mod record;
 mod types;
 mod vector;
 
 use encoding::{
-    aq, b_imm, csr, funct3, funct5, funct7, i_imm, j_imm, rd, rl, rs1, rs2, s_imm, shamt64,
-    shift_funct6, u_imm,
+    aq, b_imm, csr, funct3, funct5, funct7, i_imm, j_imm, rd, rl, rs1, rs2, s_imm, shamt32,
+    shamt64, shift_funct6, u_imm,
 };
 
 pub use control_flow::{
@@ -23,6 +24,7 @@ pub use pmp::{
     RiscvPmpAccessKind, RiscvPmpAddressMode, RiscvPmpConfig, RiscvPmpEntry, RiscvPmpError,
     RiscvPmpRange, RiscvPmpSnapshot, RiscvPmpSnapshotEntry, RiscvPmpTable, RiscvPrivilegeMode,
 };
+pub use record::{RegisterWrite, RiscvExecutionRecord, RiscvTrap, RiscvTrapKind};
 pub use types::{
     AtomicMemoryOp, Immediate, MemoryAccessKind, MemoryWidth, Register, RiscvFenceSet,
     RiscvMemoryOrdering,
@@ -33,12 +35,6 @@ pub use vector::{
     RiscvVectorMicroOpExpansion, RiscvVectorNarrowClipPlan, RiscvVectorNarrowClipResult,
     RiscvVectorTailPolicy,
 };
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum RiscvTrapKind {
-    EnvironmentCall,
-    Breakpoint,
-}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum RiscvCounterCsr {
@@ -269,26 +265,6 @@ const fn replace_high_word(counter: u64, value: u32) -> u64 {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct RiscvTrap {
-    kind: RiscvTrapKind,
-    pc: u64,
-}
-
-impl RiscvTrap {
-    pub const fn new(kind: RiscvTrapKind, pc: u64) -> Self {
-        Self { kind, pc }
-    }
-
-    pub const fn kind(self) -> RiscvTrapKind {
-        self.kind
-    }
-
-    pub const fn pc(self) -> u64 {
-        self.pc
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RiscvInstruction {
     Lui {
         rd: Register,
@@ -343,6 +319,26 @@ pub enum RiscvInstruction {
         rs1: Register,
         shamt: u8,
     },
+    Addiw {
+        rd: Register,
+        rs1: Register,
+        imm: Immediate,
+    },
+    Slliw {
+        rd: Register,
+        rs1: Register,
+        shamt: u8,
+    },
+    Srliw {
+        rd: Register,
+        rs1: Register,
+        shamt: u8,
+    },
+    Sraiw {
+        rd: Register,
+        rs1: Register,
+        shamt: u8,
+    },
     Add {
         rd: Register,
         rs1: Register,
@@ -389,6 +385,31 @@ pub enum RiscvInstruction {
         rs2: Register,
     },
     And {
+        rd: Register,
+        rs1: Register,
+        rs2: Register,
+    },
+    Addw {
+        rd: Register,
+        rs1: Register,
+        rs2: Register,
+    },
+    Subw {
+        rd: Register,
+        rs1: Register,
+        rs2: Register,
+    },
+    Sllw {
+        rd: Register,
+        rs1: Register,
+        rs2: Register,
+    },
+    Srlw {
+        rd: Register,
+        rs1: Register,
+        rs2: Register,
+    },
+    Sraw {
         rd: Register,
         rs1: Register,
         rs2: Register,
@@ -501,9 +522,11 @@ impl RiscvInstruction {
                 rd: rd(raw),
                 imm: Immediate::new(u_imm(raw)),
             }),
+            0x1b => decode_op_imm_32(raw),
             0x23 => decode_store(raw),
             0x2f => decode_atomic(raw),
             0x33 => decode_op(raw),
+            0x3b => decode_op_32(raw),
             0x37 => Ok(Self::Lui {
                 rd: rd(raw),
                 imm: Immediate::new(u_imm(raw)),
@@ -608,6 +631,32 @@ fn decode_op_imm(raw: u32) -> Result<RiscvInstruction, RiscvError> {
     }
 }
 
+fn decode_op_imm_32(raw: u32) -> Result<RiscvInstruction, RiscvError> {
+    match (funct7(raw), funct3(raw)) {
+        (_, 0x0) => Ok(RiscvInstruction::Addiw {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            imm: Immediate::new(i_imm(raw)),
+        }),
+        (0x00, 0x1) => Ok(RiscvInstruction::Slliw {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            shamt: shamt32(raw),
+        }),
+        (0x00, 0x5) => Ok(RiscvInstruction::Srliw {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            shamt: shamt32(raw),
+        }),
+        (0x20, 0x5) => Ok(RiscvInstruction::Sraiw {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            shamt: shamt32(raw),
+        }),
+        _ => Err(RiscvError::UnknownEncoding { raw }),
+    }
+}
+
 fn decode_op(raw: u32) -> Result<RiscvInstruction, RiscvError> {
     match (funct7(raw), funct3(raw)) {
         (0x00, 0x0) => Ok(RiscvInstruction::Add {
@@ -656,6 +705,37 @@ fn decode_op(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             rs2: rs2(raw),
         }),
         (0x00, 0x7) => Ok(RiscvInstruction::And {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        _ => Err(RiscvError::UnknownEncoding { raw }),
+    }
+}
+
+fn decode_op_32(raw: u32) -> Result<RiscvInstruction, RiscvError> {
+    match (funct7(raw), funct3(raw)) {
+        (0x00, 0x0) => Ok(RiscvInstruction::Addw {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x20, 0x0) => Ok(RiscvInstruction::Subw {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x00, 0x1) => Ok(RiscvInstruction::Sllw {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x00, 0x5) => Ok(RiscvInstruction::Srlw {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x20, 0x5) => Ok(RiscvInstruction::Sraw {
             rd: rd(raw),
             rs1: rs1(raw),
             rs2: rs2(raw),
@@ -802,95 +882,6 @@ fn atomic_memory_op(funct5: u32) -> Option<AtomicMemoryOp> {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RegisterWrite {
-    register: Register,
-    value: u64,
-}
-
-impl RegisterWrite {
-    pub const fn new(register: Register, value: u64) -> Self {
-        Self { register, value }
-    }
-
-    pub const fn register(&self) -> Register {
-        self.register
-    }
-
-    pub const fn value(&self) -> u64 {
-        self.value
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RiscvExecutionRecord {
-    instruction: RiscvInstruction,
-    pc: u64,
-    next_pc: u64,
-    register_writes: Vec<RegisterWrite>,
-    memory_access: Option<MemoryAccessKind>,
-    trap: Option<RiscvTrap>,
-}
-
-impl RiscvExecutionRecord {
-    pub fn new(
-        instruction: RiscvInstruction,
-        pc: u64,
-        next_pc: u64,
-        register_writes: Vec<RegisterWrite>,
-        memory_access: Option<MemoryAccessKind>,
-    ) -> Self {
-        Self {
-            instruction,
-            pc,
-            next_pc,
-            register_writes,
-            memory_access,
-            trap: None,
-        }
-    }
-
-    pub fn with_trap(
-        instruction: RiscvInstruction,
-        pc: u64,
-        next_pc: u64,
-        trap: RiscvTrap,
-    ) -> Self {
-        Self {
-            instruction,
-            pc,
-            next_pc,
-            register_writes: Vec::new(),
-            memory_access: None,
-            trap: Some(trap),
-        }
-    }
-
-    pub const fn instruction(&self) -> RiscvInstruction {
-        self.instruction
-    }
-
-    pub const fn pc(&self) -> u64 {
-        self.pc
-    }
-
-    pub const fn next_pc(&self) -> u64 {
-        self.next_pc
-    }
-
-    pub fn register_writes(&self) -> &[RegisterWrite] {
-        &self.register_writes
-    }
-
-    pub fn memory_access(&self) -> Option<&MemoryAccessKind> {
-        self.memory_access.as_ref()
-    }
-
-    pub fn trap(&self) -> Option<&RiscvTrap> {
-        self.trap.as_ref()
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RiscvHartState {
     pc: u64,
     hart_id: u64,
@@ -1023,6 +1014,27 @@ impl RiscvHartState {
                 let value = (self.read(rs1) as i64).wrapping_shr(u32::from(shamt)) as u64;
                 write_register(self, &mut register_writes, rd, value);
             }
+            RiscvInstruction::Addiw { rd, rs1, imm } => {
+                let value = (self.read(rs1) as u32).wrapping_add(imm.value() as u32);
+                write_register(self, &mut register_writes, rd, sign_extend_word(value));
+            }
+            RiscvInstruction::Slliw { rd, rs1, shamt } => {
+                let value = (self.read(rs1) as u32).wrapping_shl(u32::from(shamt));
+                write_register(self, &mut register_writes, rd, sign_extend_word(value));
+            }
+            RiscvInstruction::Srliw { rd, rs1, shamt } => {
+                let value = (self.read(rs1) as u32).wrapping_shr(u32::from(shamt));
+                write_register(self, &mut register_writes, rd, sign_extend_word(value));
+            }
+            RiscvInstruction::Sraiw { rd, rs1, shamt } => {
+                let value = (self.read(rs1) as u32 as i32).wrapping_shr(u32::from(shamt));
+                write_register(
+                    self,
+                    &mut register_writes,
+                    rd,
+                    sign_extend_word(value as u32),
+                );
+            }
             RiscvInstruction::Add { rd, rs1, rs2 } => {
                 let value = self.read(rs1).wrapping_add(self.read(rs2));
                 write_register(self, &mut register_writes, rd, value);
@@ -1062,6 +1074,32 @@ impl RiscvHartState {
             RiscvInstruction::And { rd, rs1, rs2 } => {
                 let value = self.read(rs1) & self.read(rs2);
                 write_register(self, &mut register_writes, rd, value);
+            }
+            RiscvInstruction::Addw { rd, rs1, rs2 } => {
+                let value = (self.read(rs1) as u32).wrapping_add(self.read(rs2) as u32);
+                write_register(self, &mut register_writes, rd, sign_extend_word(value));
+            }
+            RiscvInstruction::Subw { rd, rs1, rs2 } => {
+                let value = (self.read(rs1) as u32).wrapping_sub(self.read(rs2) as u32);
+                write_register(self, &mut register_writes, rd, sign_extend_word(value));
+            }
+            RiscvInstruction::Sllw { rd, rs1, rs2 } => {
+                let value = (self.read(rs1) as u32).wrapping_shl((self.read(rs2) & 0x1f) as u32);
+                write_register(self, &mut register_writes, rd, sign_extend_word(value));
+            }
+            RiscvInstruction::Srlw { rd, rs1, rs2 } => {
+                let value = (self.read(rs1) as u32).wrapping_shr((self.read(rs2) & 0x1f) as u32);
+                write_register(self, &mut register_writes, rd, sign_extend_word(value));
+            }
+            RiscvInstruction::Sraw { rd, rs1, rs2 } => {
+                let value =
+                    (self.read(rs1) as u32 as i32).wrapping_shr((self.read(rs2) & 0x1f) as u32);
+                write_register(
+                    self,
+                    &mut register_writes,
+                    rd,
+                    sign_extend_word(value as u32),
+                );
             }
             RiscvInstruction::Beq { rs1, rs2, offset } => {
                 if self.read(rs1) == self.read(rs2) {
@@ -1235,6 +1273,10 @@ fn write_register(
 
     hart.write(register, value);
     writes.push(RegisterWrite::new(register, value));
+}
+
+fn sign_extend_word(value: u32) -> u64 {
+    i64::from(value as i32) as u64
 }
 
 fn add_signed(value: u64, offset: i64) -> Result<u64, RiscvError> {
