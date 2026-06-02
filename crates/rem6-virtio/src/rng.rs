@@ -183,12 +183,7 @@ impl VirtioRngDevice {
         tick: Tick,
         request: VirtioRngRequest,
     ) -> Result<VirtioRngCompletion, VirtioError> {
-        if request.bytes() > isize::MAX as u64 {
-            return Err(VirtioError::VirtioRngPayloadLengthOverflow);
-        }
-        let bytes_len = usize::try_from(request.bytes())
-            .map_err(|_| VirtioError::VirtioRngPayloadLengthOverflow)?;
-        let mut bytes = vec![0; bytes_len];
+        let mut bytes = rng_output_buffer(request.bytes())?;
         self.source
             .lock()
             .expect("virtio rng source lock")
@@ -206,5 +201,32 @@ impl VirtioRngDevice {
             .lock()
             .expect("virtio rng completion lock")
             .clone()
+    }
+}
+
+fn rng_output_buffer(bytes: u64) -> Result<Vec<u8>, VirtioError> {
+    if bytes > isize::MAX as u64 {
+        return Err(VirtioError::VirtioRngPayloadLengthOverflow);
+    }
+    let byte_count =
+        usize::try_from(bytes).map_err(|_| VirtioError::VirtioRngPayloadLengthOverflow)?;
+    let mut buffer = Vec::new();
+    buffer
+        .try_reserve_exact(byte_count)
+        .map_err(|_| VirtioError::VirtioRngPayloadLengthOverflow)?;
+    buffer.resize(byte_count, 0);
+    Ok(buffer)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rng_output_buffer_maps_allocator_refusal() {
+        assert!(matches!(
+            rng_output_buffer(isize::MAX as u64),
+            Err(VirtioError::VirtioRngPayloadLengthOverflow)
+        ));
     }
 }

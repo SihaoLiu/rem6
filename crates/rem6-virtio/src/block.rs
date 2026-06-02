@@ -821,10 +821,9 @@ impl VirtioBlockMemoryBackend {
                 sector: capacity_sectors,
                 bytes: VIRTIO_BLOCK_SECTOR_SIZE,
             })?;
-        let byte_count = checked_block_backend_allocation_bytes(bytes)?;
         Ok(Self {
             state: Arc::new(Mutex::new(VirtioBlockMemoryBackendState {
-                bytes: vec![0; byte_count],
+                bytes: zeroed_block_backend_bytes(bytes)?,
                 flush_count: 0,
             })),
         })
@@ -1144,7 +1143,7 @@ fn read_storage_backend(
         backend.capacity_sectors(),
         VIRTIO_BLOCK_T_IN,
     )?;
-    let mut data = Vec::with_capacity(checked_block_request_allocation_bytes(sector, bytes)?);
+    let mut data = block_request_data_buffer(sector, bytes)?;
     for offset in 0..sectors {
         let sector = sector
             .checked_add(offset)
@@ -1209,18 +1208,31 @@ fn validate_storage_backend_range(
     Ok(sectors)
 }
 
-fn checked_block_backend_allocation_bytes(bytes: u64) -> Result<usize, VirtioError> {
+fn zeroed_block_backend_bytes(bytes: u64) -> Result<Vec<u8>, VirtioError> {
     if bytes > isize::MAX as u64 {
         return Err(VirtioError::BlockBackendTooLarge { bytes });
     }
-    usize::try_from(bytes).map_err(|_| VirtioError::BlockBackendTooLarge { bytes })
+    let byte_count =
+        usize::try_from(bytes).map_err(|_| VirtioError::BlockBackendTooLarge { bytes })?;
+    let mut buffer = Vec::new();
+    buffer
+        .try_reserve_exact(byte_count)
+        .map_err(|_| VirtioError::BlockBackendTooLarge { bytes })?;
+    buffer.resize(byte_count, 0);
+    Ok(buffer)
 }
 
-fn checked_block_request_allocation_bytes(sector: u64, bytes: u64) -> Result<usize, VirtioError> {
+fn block_request_data_buffer(sector: u64, bytes: u64) -> Result<Vec<u8>, VirtioError> {
     if bytes > isize::MAX as u64 {
         return Err(VirtioError::BlockRequestTooLarge { sector, bytes });
     }
-    usize::try_from(bytes).map_err(|_| VirtioError::BlockRequestTooLarge { sector, bytes })
+    let byte_count =
+        usize::try_from(bytes).map_err(|_| VirtioError::BlockRequestTooLarge { sector, bytes })?;
+    let mut buffer = Vec::new();
+    buffer
+        .try_reserve_exact(byte_count)
+        .map_err(|_| VirtioError::BlockRequestTooLarge { sector, bytes })?;
+    Ok(buffer)
 }
 
 fn storage_error_to_virtio(error: StorageError) -> VirtioError {
@@ -1264,4 +1276,32 @@ fn write_u32(bytes: &mut [u8], offset: u64, value: u32) {
 
 fn write_u64(bytes: &mut [u8], offset: u64, value: u64) {
     bytes[offset as usize..offset as usize + 8].copy_from_slice(&value.to_le_bytes());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn block_backend_allocation_helper_maps_allocator_refusal() {
+        let bytes = isize::MAX as u64;
+
+        assert!(matches!(
+            zeroed_block_backend_bytes(bytes),
+            Err(VirtioError::BlockBackendTooLarge { bytes: actual }) if actual == bytes
+        ));
+    }
+
+    #[test]
+    fn block_request_allocation_helper_maps_allocator_refusal() {
+        let bytes = isize::MAX as u64;
+
+        assert!(matches!(
+            block_request_data_buffer(7, bytes),
+            Err(VirtioError::BlockRequestTooLarge {
+                sector: 7,
+                bytes: actual,
+            }) if actual == bytes
+        ));
+    }
 }
