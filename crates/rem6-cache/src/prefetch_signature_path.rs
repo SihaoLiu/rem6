@@ -3,6 +3,7 @@ use std::fmt;
 
 use rem6_memory::{Address, AgentId};
 
+use crate::allocation::max_vector_len;
 use crate::prefetch::PrefetchCandidate;
 
 const CONFIDENCE_PPM: u32 = 1_000_000;
@@ -130,12 +131,27 @@ impl SignaturePathPrefetcherConfig {
         if signature_table_entries == 0 {
             return Err(SignaturePathPrefetcherError::ZeroSignatureTableEntries);
         }
+        validate_signature_path_vector_length(
+            "signature table entries",
+            signature_table_entries,
+            maximum_signature_table_entries(),
+        )?;
         if pattern_table_entries == 0 {
             return Err(SignaturePathPrefetcherError::ZeroPatternTableEntries);
         }
+        validate_signature_path_vector_length(
+            "pattern table entries",
+            pattern_table_entries,
+            maximum_pattern_table_entries(),
+        )?;
         if strides_per_pattern_entry == 0 {
             return Err(SignaturePathPrefetcherError::ZeroStridesPerPatternEntry);
         }
+        validate_signature_path_vector_length(
+            "strides per pattern entry",
+            strides_per_pattern_entry,
+            maximum_pattern_stride_entries(),
+        )?;
         if !(1..=31).contains(&counter_bits) {
             return Err(SignaturePathPrefetcherError::CounterBitsOutOfRange { counter_bits });
         }
@@ -233,6 +249,11 @@ pub enum SignaturePathPrefetcherError {
         numerator: u32,
         denominator: u32,
     },
+    VectorLengthTooLarge {
+        field: &'static str,
+        length: usize,
+        maximum: usize,
+    },
     SnapshotConfigMismatch {
         expected: Box<SignaturePathPrefetcherConfig>,
         actual: Box<SignaturePathPrefetcherConfig>,
@@ -312,6 +333,14 @@ impl fmt::Display for SignaturePathPrefetcherError {
                 formatter,
                 "signature path confidence ratio {numerator}/{denominator} is above one"
             ),
+            Self::VectorLengthTooLarge {
+                field,
+                length,
+                maximum,
+            } => write!(
+                formatter,
+                "signature path {field} length {length} exceeds maximum {maximum}"
+            ),
             Self::SnapshotConfigMismatch { expected, actual } => write!(
                 formatter,
                 "signature path snapshot config {actual:?} does not match {expected:?}"
@@ -352,6 +381,34 @@ impl fmt::Display for SignaturePathPrefetcherError {
 }
 
 impl Error for SignaturePathPrefetcherError {}
+
+fn maximum_signature_table_entries() -> usize {
+    max_vector_len::<SignatureEntry>().min(max_vector_len::<SignaturePathSignatureEntrySnapshot>())
+}
+
+fn maximum_pattern_table_entries() -> usize {
+    max_vector_len::<PatternEntry>().min(max_vector_len::<SignaturePathPatternEntrySnapshot>())
+}
+
+fn maximum_pattern_stride_entries() -> usize {
+    max_vector_len::<PatternStrideEntry>()
+        .min(max_vector_len::<SignaturePathPatternStrideSnapshot>())
+}
+
+fn validate_signature_path_vector_length(
+    field: &'static str,
+    length: usize,
+    maximum: usize,
+) -> Result<(), SignaturePathPrefetcherError> {
+    if length > maximum {
+        return Err(SignaturePathPrefetcherError::VectorLengthTooLarge {
+            field,
+            length,
+            maximum,
+        });
+    }
+    Ok(())
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SignaturePathPrefetchAccess {

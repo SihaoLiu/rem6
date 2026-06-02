@@ -6,10 +6,12 @@ use rem6_cache::{
     QueuedPrefetchDemandAccess, QueuedPrefetchFullPolicy, QueuedPrefetchRedundantLine,
     QueuedPrefetchThrottle, QueuedPrefetchThrottleConfig, QueuedPrefetchThrottleError,
     QueuedPrefetcher, SbooePrefetchAccess, SbooePrefetcher, SbooePrefetcherConfig,
+    SignaturePathPatternEntrySnapshot, SignaturePathPatternStrideSnapshot,
     SignaturePathPrefetchAccess, SignaturePathPrefetcher, SignaturePathPrefetcherConfig,
-    SignaturePathPrefetcherConfigOptions, SignaturePathRatio, SmsPrefetchAccess, SmsPrefetcher,
-    SmsPrefetcherConfig, StridePrefetchAccess, StridePrefetcher, StridePrefetcherConfig,
-    TaggedPrefetchAccess, TaggedPrefetcher, TaggedPrefetcherConfig,
+    SignaturePathPrefetcherConfigOptions, SignaturePathPrefetcherError, SignaturePathRatio,
+    SignaturePathSignatureEntrySnapshot, SmsPrefetchAccess, SmsPrefetcher, SmsPrefetcherConfig,
+    StridePrefetchAccess, StridePrefetcher, StridePrefetcherConfig, TaggedPrefetchAccess,
+    TaggedPrefetcher, TaggedPrefetcherConfig,
 };
 use rem6_memory::{Address, AgentId};
 
@@ -29,6 +31,12 @@ const DCPT_CANDIDATE_BYTE_OVERFLOW_DELTAS: usize =
 const OVERSIZED_VECTOR_LENGTH: usize = isize::MAX as usize + 1;
 const AMPM_ACCESS_MAP_BYTE_OVERFLOW_LINES: u64 = isize::MAX as u64 + 1;
 const AMPM_WINDOW_BYTE_OVERFLOW_LINES: u64 = 1_u64 << 62;
+const SIGNATURE_PATH_SIGNATURE_BYTE_OVERFLOW_LENGTH: usize =
+    isize::MAX as usize / std::mem::size_of::<SignaturePathSignatureEntrySnapshot>() + 1;
+const SIGNATURE_PATH_PATTERN_BYTE_OVERFLOW_LENGTH: usize =
+    isize::MAX as usize / std::mem::size_of::<SignaturePathPatternEntrySnapshot>() + 1;
+const SIGNATURE_PATH_STRIDE_BYTE_OVERFLOW_LENGTH: usize =
+    isize::MAX as usize / std::mem::size_of::<SignaturePathPatternStrideSnapshot>() + 1;
 
 fn access(agent: u32, pc: u64, address: u64) -> StridePrefetchAccess {
     StridePrefetchAccess::new(AgentId::new(agent), pc, Address::new(address), false)
@@ -322,6 +330,61 @@ fn sbooe_prefetcher_tracks_latency_and_late_sandbox_hits() {
     assert_eq!(prefetcher.sandbox_scores(), vec![0, 0, 0]);
     assert_eq!(prefetcher.best_sandbox_stride(), Some(-1));
     assert_eq!(prefetcher.last_candidates(), &[]);
+}
+
+#[test]
+fn signature_path_prefetcher_config_rejects_vector_lengths_above_host_limit() {
+    let base = SignaturePathPrefetcherConfigOptions {
+        line_size: 64,
+        page_bytes: 4096,
+        signature_shift: 3,
+        signature_bits: 12,
+        signature_table_entries: 8,
+        pattern_table_entries: 8,
+        strides_per_pattern_entry: 2,
+        counter_bits: 1,
+        prefetch_confidence_threshold: SignaturePathRatio::new(1, 1).unwrap(),
+        lookahead_confidence_threshold: SignaturePathRatio::new(3, 4).unwrap(),
+    };
+
+    let signature_entries = SignaturePathPrefetcherConfigOptions {
+        signature_table_entries: SIGNATURE_PATH_SIGNATURE_BYTE_OVERFLOW_LENGTH,
+        ..base
+    };
+    assert!(matches!(
+        SignaturePathPrefetcherConfig::new(signature_entries),
+        Err(SignaturePathPrefetcherError::VectorLengthTooLarge {
+            field: "signature table entries",
+            length: SIGNATURE_PATH_SIGNATURE_BYTE_OVERFLOW_LENGTH,
+            ..
+        })
+    ));
+
+    let pattern_entries = SignaturePathPrefetcherConfigOptions {
+        pattern_table_entries: SIGNATURE_PATH_PATTERN_BYTE_OVERFLOW_LENGTH,
+        ..base
+    };
+    assert!(matches!(
+        SignaturePathPrefetcherConfig::new(pattern_entries),
+        Err(SignaturePathPrefetcherError::VectorLengthTooLarge {
+            field: "pattern table entries",
+            length: SIGNATURE_PATH_PATTERN_BYTE_OVERFLOW_LENGTH,
+            ..
+        })
+    ));
+
+    let stride_entries = SignaturePathPrefetcherConfigOptions {
+        strides_per_pattern_entry: SIGNATURE_PATH_STRIDE_BYTE_OVERFLOW_LENGTH,
+        ..base
+    };
+    assert!(matches!(
+        SignaturePathPrefetcherConfig::new(stride_entries),
+        Err(SignaturePathPrefetcherError::VectorLengthTooLarge {
+            field: "strides per pattern entry",
+            length: SIGNATURE_PATH_STRIDE_BYTE_OVERFLOW_LENGTH,
+            ..
+        })
+    ));
 }
 
 #[test]
