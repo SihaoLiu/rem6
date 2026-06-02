@@ -1,9 +1,9 @@
 use rem6_memory::{
     AccessSize, Address, AgentId, TranslationAccessKind, TranslationError, TranslationFault,
     TranslationFaultKind, TranslationPageMap, TranslationPageMapCheckpointPayload,
-    TranslationPagePermissions, TranslationPageSize, TranslationQueue, TranslationQueueConfig,
-    TranslationRequest, TranslationRequestId, TranslationResolution, TranslationSegment,
-    TranslationSegmentedResolution,
+    TranslationPageMappingScope, TranslationPagePermissions, TranslationPageSize, TranslationQueue,
+    TranslationQueueConfig, TranslationRequest, TranslationRequestId, TranslationResolution,
+    TranslationSegment, TranslationSegmentedResolution,
 };
 
 fn request_id(sequence: u64) -> TranslationRequestId {
@@ -238,6 +238,41 @@ fn page_translation_map_checkpoint_payload_round_trips_snapshot() {
 }
 
 #[test]
+fn page_translation_map_checkpoint_payload_preserves_mapping_scope() {
+    let page_size = TranslationPageSize::new(4096).unwrap();
+    let mut map = TranslationPageMap::new(page_size);
+    map.map_with_scope(
+        Address::new(0x4000),
+        Address::new(0x8000),
+        1,
+        TranslationPagePermissions::read_execute(),
+        TranslationPageMappingScope::Global,
+    )
+    .unwrap();
+    map.map(
+        Address::new(0x9000),
+        Address::new(0xc000),
+        1,
+        TranslationPagePermissions::read_write(),
+    )
+    .unwrap();
+
+    let payload = TranslationPageMapCheckpointPayload::from_map(&map);
+    let decoded = TranslationPageMapCheckpointPayload::decode(payload.encode().as_slice()).unwrap();
+    let restored = TranslationPageMap::from_snapshot(decoded.snapshot()).unwrap();
+
+    assert_eq!(
+        decoded.snapshot().mappings()[0].scope(),
+        TranslationPageMappingScope::Global,
+    );
+    assert_eq!(
+        decoded.snapshot().mappings()[1].scope(),
+        TranslationPageMappingScope::NonGlobal,
+    );
+    assert_eq!(restored.snapshot(), *decoded.snapshot());
+}
+
+#[test]
 fn page_translation_map_checkpoint_payload_uses_stable_single_mapping_bytes() {
     let page_size = TranslationPageSize::new(4096).unwrap();
     let mut map = TranslationPageMap::new(page_size);
@@ -448,7 +483,7 @@ fn page_translation_map_checkpoint_payload_rejects_overlapping_mapping_records()
 }
 
 #[test]
-fn page_translation_map_checkpoint_payload_rejects_mapping_record_reserved_field() {
+fn page_translation_map_checkpoint_payload_rejects_mapping_record_invalid_scope_field() {
     let page_size = TranslationPageSize::new(4096).unwrap();
     let mut map = TranslationPageMap::new(page_size);
     map.map(
@@ -463,11 +498,11 @@ fn page_translation_map_checkpoint_payload_rejects_mapping_record_reserved_field
         .encode();
     payload[PAGE_MAP_CHECKPOINT_FIRST_ENTRY_RESERVED_OFFSET
         ..PAGE_MAP_CHECKPOINT_FIRST_ENTRY_RESERVED_OFFSET + 4]
-        .copy_from_slice(&1_u32.to_le_bytes());
+        .copy_from_slice(&2_u32.to_le_bytes());
 
     assert_eq!(
         TranslationPageMapCheckpointPayload::decode(&payload).unwrap_err(),
-        TranslationError::InvalidPageMapCheckpointReserved { value: 1 }
+        TranslationError::InvalidPageMapCheckpointScope { code: 2 }
     );
 }
 

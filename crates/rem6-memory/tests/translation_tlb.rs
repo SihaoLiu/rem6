@@ -1,11 +1,11 @@
 use rem6_memory::{
     AccessSize, Address, AgentId, TranslationAccessKind, TranslationAddressSpaceId,
     TranslationError, TranslationFault, TranslationFaultKind, TranslationPageMap,
-    TranslationPagePermissions, TranslationPageSize, TranslationRequest, TranslationRequestId,
-    TranslationResolution, TranslationSegmentedResolution, TranslationTlb,
-    TranslationTlbCheckpointPayload, TranslationTlbConfig, TranslationTlbEntryScope,
-    TranslationTlbEntrySnapshot, TranslationTlbLookupKind, TranslationTlbSnapshot,
-    TranslationTlbStats,
+    TranslationPageMappingScope, TranslationPagePermissions, TranslationPageSize,
+    TranslationRequest, TranslationRequestId, TranslationResolution,
+    TranslationSegmentedResolution, TranslationTlb, TranslationTlbCheckpointPayload,
+    TranslationTlbConfig, TranslationTlbEntryScope, TranslationTlbEntrySnapshot,
+    TranslationTlbLookupKind, TranslationTlbSnapshot, TranslationTlbStats,
 };
 
 fn request_id(sequence: u64) -> TranslationRequestId {
@@ -985,6 +985,43 @@ fn translation_tlb_asid_flush_preserves_global_entries() {
     assert_eq!(tlb.flush_address_space(asid), 1);
     assert!(!tlb.contains_entry(asid, global_page));
     assert!(tlb.contains_entry(TranslationAddressSpaceId::new(10), other_asid_page));
+}
+
+#[test]
+fn translation_tlb_fill_from_page_map_preserves_global_mapping_scope() {
+    let asid = TranslationAddressSpaceId::new(11);
+    let virtual_base = Address::new(0xffff_0002_2000_0000);
+    let mut map = TranslationPageMap::new(TranslationPageSize::new(4096).unwrap());
+    map.map_with_scope(
+        virtual_base,
+        Address::new(0x0000_0000_2000_0000),
+        1,
+        TranslationPagePermissions::read_execute(),
+        TranslationPageMappingScope::Global,
+    )
+    .unwrap();
+
+    let mut tlb = TranslationTlb::new(TranslationTlbConfig::new(4).unwrap());
+    let lookup = tlb
+        .translate_in_address_space(
+            asid,
+            &request(
+                61,
+                virtual_base.get() + 0x40,
+                4,
+                TranslationAccessKind::InstructionFetch,
+            ),
+            &map,
+        )
+        .unwrap();
+
+    assert_eq!(lookup.kind(), TranslationTlbLookupKind::Miss);
+    assert_eq!(tlb.flush_non_global_address_space(asid), 0);
+    assert_eq!(
+        tlb.snapshot().entries()[0].scope(),
+        TranslationTlbEntryScope::Global,
+    );
+    assert!(tlb.contains_entry(asid, virtual_base));
 }
 
 #[test]

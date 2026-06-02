@@ -908,6 +908,9 @@ pub enum TranslationError {
     InvalidPageMapCheckpointReserved {
         value: u32,
     },
+    InvalidPageMapCheckpointScope {
+        code: u32,
+    },
     InvalidPageMapCheckpointPermissions {
         code: u32,
     },
@@ -1135,6 +1138,10 @@ impl fmt::Display for TranslationError {
                 formatter,
                 "translation page-map checkpoint reserved field has nonzero value {value}"
             ),
+            Self::InvalidPageMapCheckpointScope { code } => write!(
+                formatter,
+                "translation page-map checkpoint payload has invalid scope code {code}"
+            ),
             Self::InvalidPageMapCheckpointPermissions { code } => write!(
                 formatter,
                 "translation page-map checkpoint payload has invalid permission bits {code:#x}"
@@ -1286,12 +1293,19 @@ impl TranslationPagePermissions {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum TranslationPageMappingScope {
+    Global,
+    NonGlobal,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TranslationPageMapping {
     virtual_range: AddressRange,
     physical_start: Address,
     page_count: u64,
     permissions: TranslationPagePermissions,
+    scope: TranslationPageMappingScope,
 }
 
 impl TranslationPageMapping {
@@ -1301,6 +1315,7 @@ impl TranslationPageMapping {
         physical_start: Address,
         page_count: u64,
         permissions: TranslationPagePermissions,
+        scope: TranslationPageMappingScope,
     ) -> Result<Self, TranslationError> {
         if page_count == 0 {
             return Err(TranslationError::ZeroPageCount);
@@ -1346,6 +1361,7 @@ impl TranslationPageMapping {
             physical_start,
             page_count,
             permissions,
+            scope,
         })
     }
 
@@ -1367,6 +1383,10 @@ impl TranslationPageMapping {
 
     pub const fn permissions(&self) -> TranslationPagePermissions {
         self.permissions
+    }
+
+    pub const fn scope(&self) -> TranslationPageMappingScope {
+        self.scope
     }
 
     fn physical_address(&self, virtual_address: Address) -> Address {
@@ -1498,7 +1518,7 @@ fn write_page_map_checkpoint_mapping(payload: &mut Vec<u8>, mapping: &Translatio
     payload.extend_from_slice(
         &encode_page_map_checkpoint_permissions(mapping.permissions()).to_le_bytes(),
     );
-    payload.extend_from_slice(&0_u32.to_le_bytes());
+    payload.extend_from_slice(&encode_page_map_checkpoint_scope(mapping.scope()).to_le_bytes());
 }
 
 fn read_page_map_checkpoint_mapping(
@@ -1511,10 +1531,7 @@ fn read_page_map_checkpoint_mapping(
     let page_count = read_page_map_checkpoint_u64(payload, offset);
     let permissions =
         decode_page_map_checkpoint_permissions(read_page_map_checkpoint_u32(payload, offset))?;
-    let reserved = read_page_map_checkpoint_u32(payload, offset);
-    if reserved != 0 {
-        return Err(TranslationError::InvalidPageMapCheckpointReserved { value: reserved });
-    }
+    let scope = decode_page_map_checkpoint_scope(read_page_map_checkpoint_u32(payload, offset))?;
 
     TranslationPageMapping::new(
         page_size,
@@ -1522,6 +1539,7 @@ fn read_page_map_checkpoint_mapping(
         physical_start,
         page_count,
         permissions,
+        scope,
     )
 }
 
@@ -1542,6 +1560,23 @@ fn decode_page_map_checkpoint_permissions(
         code & 0x2 != 0,
         code & 0x4 != 0,
     ))
+}
+
+fn encode_page_map_checkpoint_scope(scope: TranslationPageMappingScope) -> u32 {
+    match scope {
+        TranslationPageMappingScope::NonGlobal => 0,
+        TranslationPageMappingScope::Global => 1,
+    }
+}
+
+fn decode_page_map_checkpoint_scope(
+    code: u32,
+) -> Result<TranslationPageMappingScope, TranslationError> {
+    match code {
+        0 => Ok(TranslationPageMappingScope::NonGlobal),
+        1 => Ok(TranslationPageMappingScope::Global),
+        _ => Err(TranslationError::InvalidPageMapCheckpointScope { code }),
+    }
 }
 
 fn page_map_checkpoint_payload_size(mapping_count: usize) -> Result<usize, TranslationError> {
@@ -1603,11 +1638,12 @@ impl TranslationPageMap {
     pub fn from_snapshot(snapshot: &TranslationPageMapSnapshot) -> Result<Self, TranslationError> {
         let mut map = Self::new(snapshot.page_size());
         for mapping in snapshot.mappings() {
-            map.map(
+            map.map_with_scope(
                 mapping.virtual_start(),
                 mapping.physical_start(),
                 mapping.page_count(),
                 mapping.permissions(),
+                mapping.scope(),
             )?;
         }
         Ok(map)
@@ -1640,12 +1676,30 @@ impl TranslationPageMap {
         page_count: u64,
         permissions: TranslationPagePermissions,
     ) -> Result<(), TranslationError> {
+        self.map_with_scope(
+            virtual_start,
+            physical_start,
+            page_count,
+            permissions,
+            TranslationPageMappingScope::NonGlobal,
+        )
+    }
+
+    pub fn map_with_scope(
+        &mut self,
+        virtual_start: Address,
+        physical_start: Address,
+        page_count: u64,
+        permissions: TranslationPagePermissions,
+        scope: TranslationPageMappingScope,
+    ) -> Result<(), TranslationError> {
         let mapping = TranslationPageMapping::new(
             self.page_size,
             virtual_start,
             physical_start,
             page_count,
             permissions,
+            scope,
         )?;
         if let Some(existing) = self
             .mappings

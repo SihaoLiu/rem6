@@ -2,8 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
     AccessSize, Address, AddressRange, TranslationError, TranslationFault, TranslationFaultKind,
-    TranslationPageMap, TranslationPageMapping, TranslationPagePermissions, TranslationPageSize,
-    TranslationRequest, TranslationResolution, TranslationSegmentedResolution,
+    TranslationPageMap, TranslationPageMapping, TranslationPageMappingScope,
+    TranslationPagePermissions, TranslationPageSize, TranslationRequest, TranslationResolution,
+    TranslationSegmentedResolution,
 };
 
 const TLB_CHECKPOINT_MAGIC: [u8; 4] = *b"MTLB";
@@ -967,7 +968,7 @@ impl TranslationTlb {
                 physical_page,
                 page_size,
                 mapping.permissions(),
-                TranslationTlbEntryScope::NonGlobal,
+                tlb_entry_scope(mapping.scope()),
                 last_used,
             );
             self.stats.record_insert();
@@ -986,7 +987,7 @@ impl TranslationTlb {
                 physical_page,
                 page_size,
                 mapping.permissions(),
-                TranslationTlbEntryScope::NonGlobal,
+                tlb_entry_scope(mapping.scope()),
                 last_used,
             ),
         );
@@ -1024,6 +1025,13 @@ impl TranslationTlb {
             .checked_add(1)
             .ok_or(TranslationError::TlbOrderOverflow)?;
         Ok(next)
+    }
+}
+
+fn tlb_entry_scope(scope: TranslationPageMappingScope) -> TranslationTlbEntryScope {
+    match scope {
+        TranslationPageMappingScope::Global => TranslationTlbEntryScope::Global,
+        TranslationPageMappingScope::NonGlobal => TranslationTlbEntryScope::NonGlobal,
     }
 }
 

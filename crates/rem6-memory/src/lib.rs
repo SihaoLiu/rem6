@@ -29,11 +29,11 @@ pub use response_checkpoint::MemoryResponseCheckpointPayload;
 pub use translation::{
     TranslationAccessKind, TranslationCompletion, TranslationError, TranslationFault,
     TranslationFaultKind, TranslationPageMap, TranslationPageMapCheckpointPayload,
-    TranslationPageMapSnapshot, TranslationPageMapping, TranslationPagePermissions,
-    TranslationPageSize, TranslationQueue, TranslationQueueCheckpointPayload,
-    TranslationQueueConfig, TranslationQueueEntrySnapshot, TranslationQueueSnapshot,
-    TranslationRequest, TranslationRequestId, TranslationResolution, TranslationSegment,
-    TranslationSegmentedResolution,
+    TranslationPageMapSnapshot, TranslationPageMapping, TranslationPageMappingScope,
+    TranslationPagePermissions, TranslationPageSize, TranslationQueue,
+    TranslationQueueCheckpointPayload, TranslationQueueConfig, TranslationQueueEntrySnapshot,
+    TranslationQueueSnapshot, TranslationRequest, TranslationRequestId, TranslationResolution,
+    TranslationSegment, TranslationSegmentedResolution,
 };
 pub use translation_tlb::{
     TranslationAddressSpaceId, TranslationTlb, TranslationTlbCheckpointPayload,
