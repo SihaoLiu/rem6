@@ -34,6 +34,14 @@ fn gdb_remote_packet_escapes_binary_payload_delimiters() {
 }
 
 #[test]
+fn gdb_remote_packet_decodes_run_length_encoded_response_data() {
+    let parsed = GdbRemotePacket::parse_frame(b"$0* #7a").unwrap();
+
+    assert_eq!(parsed.payload(), b"0000");
+    assert_eq!(parsed.checksum(), 0x7a);
+}
+
+#[test]
 fn gdb_remote_packet_rejects_malformed_frames_before_payload_mutation() {
     assert_eq!(
         GdbRemotePacket::parse_frame(b"qSupported#37").unwrap_err(),
@@ -62,6 +70,18 @@ fn gdb_remote_packet_rejects_malformed_frames_before_payload_mutation() {
         GdbRemotePacket::parse_frame(b"$qSupported#37+").unwrap_err(),
         GdbRemoteError::TrailingBytes { count: 1 },
     );
+    assert_eq!(
+        GdbRemotePacket::parse_frame(b"$* #4a").unwrap_err(),
+        GdbRemoteError::RunLengthWithoutPreviousByte,
+    );
+    assert_eq!(
+        GdbRemotePacket::parse_frame(b"$0*#5a").unwrap_err(),
+        GdbRemoteError::MissingRunLengthCount,
+    );
+    assert_eq!(
+        GdbRemotePacket::parse_frame(&[b'$', b'0', b'*', 0x1f, b'#', b'7', b'9']).unwrap_err(),
+        GdbRemoteError::InvalidRunLengthCount { byte: 0x1f },
+    );
 }
 
 #[test]
@@ -80,6 +100,14 @@ fn gdb_remote_packet_config_rejects_unbounded_or_oversized_payloads() {
     assert_eq!(
         GdbRemotePacket::with_config(b"abcde".to_vec(), config).unwrap_err(),
         GdbRemoteError::PayloadTooLong { len: 5, max: 4 },
+    );
+    assert_eq!(
+        GdbRemotePacket::parse_frame_with_config(
+            b"$0* #7a",
+            GdbRemotePacketConfig::new(3).unwrap(),
+        )
+        .unwrap_err(),
+        GdbRemoteError::PayloadTooLong { len: 4, max: 3 },
     );
 }
 

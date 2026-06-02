@@ -10,6 +10,8 @@ const INTERRUPT_BYTE: u8 = 0x03;
 const ESCAPE_BYTE: u8 = b'}';
 const RUN_LENGTH_BYTE: u8 = b'*';
 const ESCAPE_XOR: u8 = 0x20;
+const RUN_LENGTH_COUNT_BIAS: u8 = 29;
+const MIN_RUN_LENGTH_REPEAT_COUNT: u8 = 3;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum GdbRemoteError {
@@ -21,6 +23,9 @@ pub enum GdbRemoteError {
     TrailingBytes { count: usize },
     ZeroMaxPayloadBytes,
     PayloadTooLong { len: usize, max: usize },
+    RunLengthWithoutPreviousByte,
+    MissingRunLengthCount,
+    InvalidRunLengthCount { byte: u8 },
 }
 
 impl fmt::Display for GdbRemoteError {
@@ -49,6 +54,19 @@ impl fmt::Display for GdbRemoteError {
             Self::PayloadTooLong { len, max } => write!(
                 formatter,
                 "GDB remote payload has {len} byte(s), exceeding configured maximum {max}"
+            ),
+            Self::RunLengthWithoutPreviousByte => {
+                write!(
+                    formatter,
+                    "GDB remote run-length marker has no preceding payload byte"
+                )
+            }
+            Self::MissingRunLengthCount => {
+                write!(formatter, "GDB remote run-length marker has no count byte")
+            }
+            Self::InvalidRunLengthCount { byte } => write!(
+                formatter,
+                "GDB remote run-length count byte 0x{byte:02x} encodes fewer than 3 repeats"
             ),
         }
     }
@@ -261,6 +279,31 @@ fn parse_packet_parts(
                 return Err(GdbRemoteError::ChecksumMismatch { expected, actual });
             }
             return Ok((payload, expected, index + 3));
+        }
+
+        if byte == RUN_LENGTH_BYTE {
+            if payload.is_empty() {
+                return Err(GdbRemoteError::RunLengthWithoutPreviousByte);
+            }
+            expected = expected.wrapping_add(byte);
+            index += 1;
+            if index >= frame.len() || frame[index] == CHECKSUM_SEPARATOR_BYTE {
+                return Err(GdbRemoteError::MissingRunLengthCount);
+            }
+            let repeat_byte = frame[index];
+            if repeat_byte < RUN_LENGTH_COUNT_BIAS + MIN_RUN_LENGTH_REPEAT_COUNT {
+                return Err(GdbRemoteError::InvalidRunLengthCount { byte: repeat_byte });
+            }
+            expected = expected.wrapping_add(repeat_byte);
+            let previous = payload
+                .last()
+                .copied()
+                .expect("run-length marker already checked preceding payload byte");
+            let repeat_count = (repeat_byte - RUN_LENGTH_COUNT_BIAS) as usize;
+            validate_payload_len(payload.len() + repeat_count, config)?;
+            payload.extend(std::iter::repeat_n(previous, repeat_count));
+            index += 1;
+            continue;
         }
 
         expected = expected.wrapping_add(byte);
