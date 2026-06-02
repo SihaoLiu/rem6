@@ -4,7 +4,10 @@ use std::fmt;
 use rem6_fabric::QosError;
 use rem6_memory::{MemoryOperation, MemoryRequestId};
 
-use crate::{DramMemoryTechnology, DramProfileField, DramTimingField, NvmMediaTimingField};
+use crate::{
+    DramLowPowerTimingField, DramMemoryTechnology, DramProfileField, DramTimingField,
+    NvmMediaTimingField,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DramError {
@@ -30,6 +33,13 @@ pub enum DramError {
     ZeroCommandWindow,
     ZeroCommandWindowMaxCommands,
     ZeroSameBankGroupBurstSpacing,
+    ZeroLowPowerTiming {
+        field: DramLowPowerTimingField,
+    },
+    LowPowerSelfRefreshBeforePowerdown {
+        precharge_powerdown_entry_delay: u64,
+        self_refresh_entry_delay: u64,
+    },
     ZeroProfileTopology {
         technology: DramMemoryTechnology,
         field: DramProfileField,
@@ -108,6 +118,16 @@ impl fmt::Display for DramError {
                     "DRAM same-bank-group burst spacing must be nonzero"
                 )
             }
+            Self::ZeroLowPowerTiming { field } => {
+                write!(formatter, "DRAM low-power timing field {field:?} must be nonzero")
+            }
+            Self::LowPowerSelfRefreshBeforePowerdown {
+                precharge_powerdown_entry_delay,
+                self_refresh_entry_delay,
+            } => write!(
+                formatter,
+                "DRAM self-refresh entry delay {self_refresh_entry_delay} must be greater than precharge powerdown entry delay {precharge_powerdown_entry_delay}"
+            ),
             Self::ZeroProfileTopology { technology, field } => write!(
                 formatter,
                 "DRAM profile {technology:?} topology field {field:?} must be nonzero"
@@ -170,6 +190,8 @@ impl Error for DramError {
             | Self::ZeroCommandWindow
             | Self::ZeroCommandWindowMaxCommands
             | Self::ZeroSameBankGroupBurstSpacing
+            | Self::ZeroLowPowerTiming { .. }
+            | Self::LowPowerSelfRefreshBeforePowerdown { .. }
             | Self::ZeroProfileTopology { .. }
             | Self::ZeroNvmMediaTiming { .. }
             | Self::ZeroQosDirectionBurst

@@ -6,8 +6,9 @@ use std::sync::{Arc, Mutex};
 use rem6_checkpoint::{CheckpointComponentId, CheckpointError, CheckpointRegistry};
 use rem6_dram::{
     DramAccessKind, DramBankState, DramCommandWindow, DramControllerSnapshot, DramGeometry,
-    DramMemoryController, DramMemoryError, DramMemorySnapshot, DramMemoryTargetSnapshot,
-    DramPortState, DramTiming, ExternalMemoryProfile, ExternalMemoryTopology, NvmMediaTiming,
+    DramLowPowerTiming, DramMemoryController, DramMemoryError, DramMemorySnapshot,
+    DramMemoryTargetSnapshot, DramPortState, DramTiming, ExternalMemoryProfile,
+    ExternalMemoryTopology, NvmMediaTiming,
 };
 use rem6_memory::{
     AccessSize, Address, AddressInterleave, AddressMapRegion, AddressRange, CacheLineLayout,
@@ -23,7 +24,7 @@ const STORE_PARTITION_MIN_RECORD_BYTES: usize = U32_BYTES + U64_BYTES * 2;
 const STORE_LINE_MIN_RECORD_BYTES: usize = U64_BYTES * 2;
 const STORE_REGION_MIN_RECORD_BYTES: usize = U32_BYTES + U64_BYTES * 4;
 const STORE_HOLE_RECORD_BYTES: usize = U64_BYTES * 2;
-const DRAM_TARGET_MIN_RECORD_BYTES: usize = U32_BYTES * 2 + U64_BYTES * 24;
+const DRAM_TARGET_MIN_RECORD_BYTES: usize = U32_BYTES * 2 + U64_BYTES * 28;
 const DRAM_BANK_STATE_MIN_RECORD_BYTES: usize = U64_BYTES * 2;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -597,6 +598,7 @@ fn encode_dram_memory(snapshot: &DramMemorySnapshot) -> Vec<u8> {
         write_u64(&mut payload, timing.burst_spacing());
         write_optional_u64(&mut payload, timing.same_bank_group_burst_spacing());
         write_command_window(&mut payload, timing.command_window());
+        write_low_power_timing(&mut payload, timing.low_power_timing());
         write_profile(&mut payload, target.profile());
         write_nvm_media_state(
             &mut payload,
@@ -660,6 +662,18 @@ fn write_command_window(payload: &mut Vec<u8>, command_window: Option<DramComman
     write_u64(payload, 1);
     write_u64(payload, command_window.window_cycles());
     write_u32(payload, command_window.max_commands());
+}
+
+fn write_low_power_timing(payload: &mut Vec<u8>, low_power_timing: Option<DramLowPowerTiming>) {
+    let Some(low_power_timing) = low_power_timing else {
+        write_u64(payload, 0);
+        return;
+    };
+
+    write_u64(payload, 1);
+    write_u64(payload, low_power_timing.precharge_powerdown_entry_delay());
+    write_u64(payload, low_power_timing.self_refresh_entry_delay());
+    write_u64(payload, low_power_timing.exit_latency());
 }
 
 fn write_profile(payload: &mut Vec<u8>, profile: Option<&ExternalMemoryProfile>) {
@@ -918,6 +932,7 @@ fn decode_dram_memory(
             None => timing,
         };
         let timing = read_command_window(&mut cursor, target, timing)?;
+        let timing = read_low_power_timing(&mut cursor, target, timing)?;
         let line_layout = CacheLineLayout::new(line_size).map_err(|error| {
             cursor.invalid(format!(
                 "DRAM target {} has invalid profile line layout: {error}",
@@ -1147,6 +1162,32 @@ fn read_command_window(
             }),
         value => Err(cursor.invalid(format!(
             "DRAM target {} has invalid command window presence {value}",
+            target.get()
+        ))),
+    }
+}
+
+fn read_low_power_timing(
+    cursor: &mut DramPayloadCursor<'_>,
+    target: MemoryTargetId,
+    timing: DramTiming,
+) -> Result<DramTiming, DramMemoryCheckpointError> {
+    match cursor.read_u64("DRAM low-power timing presence")? {
+        0 => Ok(timing),
+        1 => DramLowPowerTiming::new(
+            cursor.read_u64("DRAM precharge powerdown entry delay")?,
+            cursor.read_u64("DRAM self-refresh entry delay")?,
+            cursor.read_u64("DRAM low-power exit latency")?,
+        )
+        .map(|low_power_timing| timing.with_low_power_timing(low_power_timing))
+        .map_err(|error| {
+            cursor.invalid(format!(
+                "DRAM target {} has invalid low-power timing: {error}",
+                target.get()
+            ))
+        }),
+        value => Err(cursor.invalid(format!(
+            "DRAM target {} has invalid low-power timing presence {value}",
             target.get()
         ))),
     }

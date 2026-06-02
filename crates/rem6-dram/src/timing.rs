@@ -1,6 +1,6 @@
 use rem6_memory::MemoryRequest;
 
-use crate::{DramAccessKind, DramError};
+use crate::{DramAccessKind, DramError, DramLowPowerTiming};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DramTimingField {
@@ -20,6 +20,7 @@ pub struct DramTiming {
     burst_spacing: u64,
     same_bank_group_burst_spacing: Option<u64>,
     command_window: Option<DramCommandWindow>,
+    low_power_timing: Option<DramLowPowerTiming>,
 }
 
 impl DramTiming {
@@ -60,6 +61,7 @@ impl DramTiming {
             burst_spacing: 0,
             same_bank_group_burst_spacing: None,
             command_window: None,
+            low_power_timing: None,
         })
     }
 
@@ -75,6 +77,11 @@ impl DramTiming {
     ) -> Result<Self, DramError> {
         self.command_window = Some(DramCommandWindow::new(window_cycles, max_commands)?);
         Ok(self)
+    }
+
+    pub const fn with_low_power_timing(mut self, low_power_timing: DramLowPowerTiming) -> Self {
+        self.low_power_timing = Some(low_power_timing);
+        self
     }
 
     pub const fn with_same_bank_group_burst_spacing(
@@ -118,6 +125,10 @@ impl DramTiming {
 
     pub const fn command_window(self) -> Option<DramCommandWindow> {
         self.command_window
+    }
+
+    pub const fn low_power_timing(self) -> Option<DramLowPowerTiming> {
+        self.low_power_timing
     }
 
     pub(crate) fn data_latency(self, kind: DramAccessKind) -> u64 {

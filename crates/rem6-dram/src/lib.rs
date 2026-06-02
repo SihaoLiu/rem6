@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 mod activity;
 mod error;
+mod low_power;
 mod memory_controller;
 mod memory_error;
 mod profile;
@@ -15,6 +16,9 @@ pub use activity::{
     DramMemoryActivityProfile, DramPortActivity, DramTargetActivity,
 };
 pub use error::DramError;
+pub use low_power::{
+    DramLowPowerEvent, DramLowPowerState, DramLowPowerTiming, DramLowPowerTimingField,
+};
 pub use memory_controller::{
     DramMemoryController, DramMemoryOutcome, DramMemorySnapshot, DramMemoryTargetSnapshot,
     DramMemoryWaitForMarker,
@@ -135,6 +139,8 @@ pub struct DramAccess {
     persistent_ready_cycle: Option<u64>,
     pending_nvm_read_count: usize,
     pending_persistent_write_count: usize,
+    low_power_events: Vec<DramLowPowerEvent>,
+    low_power_exit_latency_cycles: u64,
     parallel_port: u32,
     bank: u32,
     row: u64,
@@ -169,6 +175,14 @@ impl DramAccess {
 
     pub const fn pending_persistent_write_count(&self) -> usize {
         self.pending_persistent_write_count
+    }
+
+    pub fn low_power_events(&self) -> &[DramLowPowerEvent] {
+        &self.low_power_events
+    }
+
+    pub const fn low_power_exit_latency_cycles(&self) -> u64 {
+        self.low_power_exit_latency_cycles
     }
 
     pub const fn parallel_port(&self) -> u32 {
@@ -768,21 +782,40 @@ impl DramController {
             .decode_request(self.parallel_port_count(), request)?;
         let port_index = decoded.parallel_port as usize;
         let mut port = self.ports[port_index].clone();
-        let bus_ready_cycle = port.ready_cycle(kind, self.timing, decoded.bank_group);
         let bank_index = port_index * self.geometry.bank_count() as usize + decoded.bank as usize;
         let bank = &mut self.banks[bank_index];
+        let low_power_events = if let Some(low_power_timing) = self.timing.low_power_timing() {
+            low_power::events_for_idle_window(
+                low_power_timing,
+                decoded.parallel_port,
+                port.bus_available_cycle().max(bank.available_cycle()),
+                arrival_cycle,
+            )
+        } else {
+            Vec::new()
+        };
+        let low_power_exit_latency_cycles = if low_power_events.is_empty() {
+            0
+        } else {
+            self.timing
+                .low_power_timing()
+                .expect("low-power events require low-power timing")
+                .exit_latency()
+        };
+        let effective_arrival_cycle = arrival_cycle.saturating_add(low_power_exit_latency_cycles);
+        let bus_ready_cycle = port.ready_cycle(kind, self.timing, decoded.bank_group);
         let mut commands = Vec::new();
         let mut waits = Vec::new();
-        if bank.available_cycle > arrival_cycle {
+        if bank.available_cycle > effective_arrival_cycle {
             waits.push(DramWaitRecord::bank_queue(
                 request.id(),
                 decoded.parallel_port,
                 decoded.bank,
-                arrival_cycle,
+                effective_arrival_cycle,
                 bank.available_cycle - 1,
             ));
         }
-        let mut next_cycle = arrival_cycle.max(bank.available_cycle);
+        let mut next_cycle = effective_arrival_cycle.max(bank.available_cycle);
         let row_hit = bank.open_row == Some(decoded.row);
 
         if !row_hit {
@@ -933,6 +966,8 @@ impl DramController {
             persistent_ready_cycle,
             pending_nvm_read_count,
             pending_persistent_write_count,
+            low_power_events,
+            low_power_exit_latency_cycles,
             parallel_port: decoded.parallel_port,
             bank: decoded.bank,
             row: decoded.row,

@@ -2,8 +2,8 @@ use std::sync::{Arc, Mutex};
 
 use rem6_checkpoint::{CheckpointComponentId, CheckpointRegistry};
 use rem6_dram::{
-    DramControllerConfig, DramGeometry, DramMemoryController, DramMemoryTechnology, DramTiming,
-    ExternalMemoryProfile, NvmMediaTiming,
+    DramControllerConfig, DramGeometry, DramLowPowerTiming, DramMemoryController,
+    DramMemoryTechnology, DramTiming, ExternalMemoryProfile, NvmMediaTiming,
 };
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
@@ -16,7 +16,7 @@ use rem6_system::{
 };
 
 const TEST_U64_BYTES: usize = 8;
-const TEST_DRAM_TARGET_MIN_RECORD_BYTES: usize = 200;
+const TEST_DRAM_TARGET_MIN_RECORD_BYTES: usize = 232;
 const TEST_DRAM_BANK_STATE_MIN_RECORD_BYTES: usize = TEST_U64_BYTES * 2;
 
 fn layout() -> CacheLineLayout {
@@ -124,6 +124,7 @@ fn write_minimal_dram_target_prefix_with_bank_count(payload: &mut Vec<u8>, bank_
     write_test_u64(payload, 2);
     write_test_u64(payload, 4);
     write_test_u64(payload, 2);
+    write_test_u64(payload, 0);
     write_test_u64(payload, 0);
     write_test_u64(payload, 0);
     write_test_u64(payload, 0);
@@ -806,6 +807,67 @@ fn dram_memory_checkpoint_preserves_bank_group_burst_history() {
     assert_eq!(same_group.dram_access().bank(), 2);
     assert_eq!(same_group.dram_access().command_cycle(), 9);
     assert_eq!(same_group.ready_cycle(), 14);
+}
+
+#[test]
+fn dram_memory_checkpoint_preserves_low_power_timing() {
+    let target = MemoryTargetId::new(72);
+    let timing = DramTiming::new(3, 5, 7, 2, 4)
+        .unwrap()
+        .with_low_power_timing(DramLowPowerTiming::new(20, 80, 7).unwrap());
+    let mut controller = DramMemoryController::new();
+    controller
+        .add_target(DramControllerConfig::new(
+            target,
+            layout(),
+            dram_geometry(),
+            timing,
+        ))
+        .unwrap();
+    controller
+        .map_region(
+            target,
+            Address::new(0x0000),
+            AccessSize::new(0x4000).unwrap(),
+        )
+        .unwrap();
+    controller
+        .insert_line(target, Address::new(0x0000), line_data(0x10))
+        .unwrap();
+    controller.accept(0, &read(0x0000, 8, 41)).unwrap();
+    let controller = Arc::new(Mutex::new(controller));
+    let component = CheckpointComponentId::new("dram-low-power").unwrap();
+    let port = DramMemoryCheckpointPort::new(component.clone(), Arc::clone(&controller));
+    let mut registry = CheckpointRegistry::new();
+
+    port.register(&mut registry).unwrap();
+    let captured = port.capture_into(&mut registry).unwrap();
+    assert_eq!(
+        captured.snapshot().targets()[0]
+            .controller()
+            .timing()
+            .low_power_timing(),
+        Some(DramLowPowerTiming::new(20, 80, 7).unwrap())
+    );
+
+    controller
+        .lock()
+        .unwrap()
+        .accept(120, &read(0x0000, 8, 42))
+        .unwrap();
+    let restored = port.restore_from(&registry).unwrap();
+
+    assert_eq!(restored, captured);
+    assert_eq!(
+        controller
+            .lock()
+            .unwrap()
+            .dram_controller(target)
+            .unwrap()
+            .timing()
+            .low_power_timing(),
+        Some(DramLowPowerTiming::new(20, 80, 7).unwrap())
+    );
 }
 
 #[test]
