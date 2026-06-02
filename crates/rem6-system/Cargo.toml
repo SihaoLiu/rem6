@@ -11,6 +11,7 @@ rem6-boot = { path = "../rem6-boot" }
 rem6-checkpoint = { path = "../rem6-checkpoint" }
 rem6-coherence = { path = "../rem6-coherence" }
 rem6-cpu = { path = "../rem6-cpu" }
+rem6-debug = { path = "../rem6-debug" }
 rem6-dram = { path = "../rem6-dram" }
 rem6-fabric = { path = "../rem6-fabric" }
 rem6-gpu = { path = "../rem6-gpu" }

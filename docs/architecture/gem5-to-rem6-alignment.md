@@ -394,6 +394,10 @@ isolated bugs:
   installed as typed session data instead of repeating gem5's arch-subclass
   string plumbing. That keeps remote debugger transport errors as ordinary
   data instead of coupling packet parsing to thread-context callbacks.
+  `rem6-system` now builds the RISC-V GDB remote session by advertising
+  `qXfer:features:read+` through `qSupported` and registering RV32/RV64
+  target-description documents produced by `rem6-isa-riscv`, keeping protocol
+  parsing generic while leaving architecture XML ownership in the ISA crate.
   Workload manifests and replay
   plans can declare exact expected remote-send records, exact progress-free
   transition records, remote-flow actual sets, and remote source/target endpoint
@@ -1188,6 +1192,11 @@ Implementation evidence through 2026-06-01:
   generated from a stable ABI register table; FPU and CSR debug documents remain
   open until the corresponding architectural state is wired into the debug
   register cache.
+- `rem6-system` owns the RISC-V GDB remote-session constructor that combines
+  the generic debug packet session with the typed RISC-V target-description
+  annex set. That crate boundary prevents the debug crate from depending on
+  any ISA crate while still giving system construction a single tested entry
+  point for debugger-visible architecture metadata.
 - `rem6-memory` now keeps `MemoryRequest`, `MemoryResponse`, response status,
   atomic request payload validation, and atomic read-modify-write byte
   materialization in a focused `request` module. Memory source-policy tests keep
@@ -2828,6 +2837,8 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   for 32 general registers plus `pc`, XLEN-scaled register bitsizes, unique
   annex names for the debug Xfer registry, and explicit omission of FPU/CSR
   annexes until those states are modeled through the debug register cache.
+  System RISC-V debug-session tests cover `qSupported` feature advertising and
+  RV32/RV64 `qXfer:features:read` serving through the constructed session.
   RISC-V PMP tests cover TOR, NA4, and NAPOT range decoding, lowest
   matching-entry priority, locked-entry write rejection, locked TOR lower-bound
   protection, configuration-before-address materialization, default inactive

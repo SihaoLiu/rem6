@@ -268,6 +268,7 @@ dependencies = [
  "rem6-checkpoint",
  "rem6-coherence",
  "rem6-cpu",
+ "rem6-debug",
  "rem6-dram",
  "rem6-fabric",
  "rem6-gpu",

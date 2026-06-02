@@ -43,6 +43,7 @@ mod pci_interrupt_checkpoint;
 mod pl031_checkpoint;
 mod plic_checkpoint;
 mod riscv_checkpoint;
+mod riscv_debug;
 mod riscv_run_activity;
 mod riscv_run_control;
 mod riscv_run_translation;
@@ -141,6 +142,7 @@ pub use riscv_checkpoint::{
     RiscvCoreCheckpointBank, RiscvCoreCheckpointError, RiscvCoreCheckpointPort,
     RiscvCoreCheckpointRecord,
 };
+pub use riscv_debug::riscv_gdb_remote_session;
 pub use riscv_run_activity::{RiscvSystemRunCpuActivity, RiscvSystemRunPartitionActivity};
 pub use rtc_checkpoint::{
     RtcCheckpointBank, RtcCheckpointError, RtcCheckpointPort, RtcCheckpointRecord,
