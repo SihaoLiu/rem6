@@ -138,6 +138,7 @@ pub use riscv_sc_progress::{
 };
 pub use riscv_sv39_memory_walker::{
     RiscvSv39MemoryWalker, RiscvSv39MemoryWalkerAdvance, RiscvSv39MemoryWalkerError,
+    RiscvSv39MemoryWalkerParallelSubmission,
 };
 pub use riscv_translation::{
     decode_sv39_pte_read_response, RiscvSv39MemoryWalk, RiscvSv39MemoryWalkAdvance,

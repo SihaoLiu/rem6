@@ -1,11 +1,16 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::error::Error;
 use std::fmt;
+use std::sync::{Arc, Mutex};
 
+use rem6_kernel::{ParallelSchedulerContext, PartitionEventId, PartitionedScheduler};
 use rem6_memory::{
     CacheLineLayout, MemoryRequest, MemoryRequestId, MemoryResponse, TranslationRequestId,
 };
-use rem6_transport::ResponseDelivery;
+use rem6_transport::{
+    MemoryRouteId, MemoryTrace, MemoryTransport, ParallelMemoryTransaction, RequestDelivery,
+    ResponseDelivery, TargetOutcome, TransportError,
+};
 
 use crate::riscv_translation::{
     RiscvSv39MemoryWalk, RiscvSv39MemoryWalkAdvance, RiscvSv39MemoryWalkError,
@@ -39,6 +44,30 @@ pub enum RiscvSv39MemoryWalkerError {
     UnexpectedResponse { response: MemoryRequestId },
     Walk(RiscvSv39MemoryWalkError),
     Frontend(CpuTranslationFrontendError),
+    Transport(TransportError),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiscvSv39MemoryWalkerParallelSubmission {
+    events: Vec<PartitionEventId>,
+    completions: Vec<CpuTranslationOutcome>,
+}
+
+impl RiscvSv39MemoryWalkerParallelSubmission {
+    pub fn new(events: Vec<PartitionEventId>, completions: Vec<CpuTranslationOutcome>) -> Self {
+        Self {
+            events,
+            completions,
+        }
+    }
+
+    pub fn events(&self) -> &[PartitionEventId] {
+        &self.events
+    }
+
+    pub fn completions(&self) -> &[CpuTranslationOutcome] {
+        &self.completions
+    }
 }
 
 impl fmt::Display for RiscvSv39MemoryWalkerError {
@@ -58,6 +87,7 @@ impl fmt::Display for RiscvSv39MemoryWalkerError {
             ),
             Self::Walk(error) => write!(formatter, "{error}"),
             Self::Frontend(error) => write!(formatter, "{error}"),
+            Self::Transport(error) => write!(formatter, "{error}"),
         }
     }
 }
@@ -67,6 +97,7 @@ impl Error for RiscvSv39MemoryWalkerError {
         match self {
             Self::Walk(error) => Some(error),
             Self::Frontend(error) => Some(error),
+            Self::Transport(error) => Some(error),
             _ => None,
         }
     }
@@ -81,6 +112,12 @@ impl From<RiscvSv39MemoryWalkError> for RiscvSv39MemoryWalkerError {
 impl From<CpuTranslationFrontendError> for RiscvSv39MemoryWalkerError {
     fn from(error: CpuTranslationFrontendError) -> Self {
         Self::Frontend(error)
+    }
+}
+
+impl From<TransportError> for RiscvSv39MemoryWalkerError {
+    fn from(error: TransportError) -> Self {
+        Self::Transport(error)
     }
 }
 
@@ -135,6 +172,61 @@ impl RiscvSv39MemoryWalker {
             advances.push(self.start_request(frontend, request, first_pte_request)?);
         }
         Ok(advances)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn submit_ready_parallel<F>(
+        walker: Arc<Mutex<Self>>,
+        frontend: &mut CpuTranslationFrontend,
+        tick: u64,
+        scheduler: &mut PartitionedScheduler,
+        transport: &MemoryTransport,
+        route: MemoryRouteId,
+        trace: MemoryTrace,
+        responder: F,
+    ) -> Result<RiscvSv39MemoryWalkerParallelSubmission, RiscvSv39MemoryWalkerError>
+    where
+        F: Fn(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + Sync
+            + 'static,
+    {
+        let advances = walker
+            .lock()
+            .expect("Sv39 memory walker lock")
+            .start_ready(frontend, tick)?;
+        let mut completions = Vec::new();
+        let mut transactions = Vec::new();
+        let responder = Arc::new(responder);
+        for advance in advances {
+            match advance {
+                RiscvSv39MemoryWalkerAdvance::ReadPte(request) => {
+                    let response_walker = Arc::clone(&walker);
+                    let responder = Arc::clone(&responder);
+                    transactions.push(ParallelMemoryTransaction::new(
+                        route,
+                        request,
+                        trace.clone(),
+                        move |delivery, context| responder(delivery, context),
+                        move |delivery| {
+                            response_walker
+                                .lock()
+                                .expect("Sv39 memory walker lock")
+                                .record_response(delivery);
+                        },
+                    ));
+                }
+                RiscvSv39MemoryWalkerAdvance::Complete(outcome) => {
+                    completions.push(outcome);
+                }
+            }
+        }
+
+        let events = transport.submit_parallel_batch(scheduler, transactions)?;
+        Ok(RiscvSv39MemoryWalkerParallelSubmission::new(
+            events,
+            completions,
+        ))
     }
 
     pub fn record_response(&mut self, delivery: ResponseDelivery) {
