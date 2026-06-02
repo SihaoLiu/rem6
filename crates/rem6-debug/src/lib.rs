@@ -236,6 +236,7 @@ pub enum GdbRemoteCommand {
     QuerySupported {
         features: Vec<GdbRemoteFeature>,
     },
+    QuerySymbol,
     QueryStopReason,
     QueryResumeActions,
     QueryThreadInfo {
@@ -540,6 +541,7 @@ impl GdbRemoteSession {
                 self.gdb_features = features;
                 self.packet_response(encode_supported_features(&self.stub_features))
             }
+            GdbRemoteCommand::QuerySymbol => self.packet_response(b"OK".to_vec()),
             GdbRemoteCommand::QueryStopReason => {
                 self.packet_response(self.stop_reply.encode_payload())
             }

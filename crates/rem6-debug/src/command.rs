@@ -18,6 +18,7 @@ fn parse_command_payload(payload: &[u8]) -> GdbRemoteCommand {
     const QUERY_CURRENT_THREAD: &[u8] = b"qC";
     const QUERY_FIRST_THREAD_INFO: &[u8] = b"qfThreadInfo";
     const QUERY_SUBSEQUENT_THREAD_INFO: &[u8] = b"qsThreadInfo";
+    const QUERY_SYMBOL: &[u8] = b"qSymbol";
     const READ_REGISTERS: &[u8] = b"g";
     const QUERY_SUPPORTED: &[u8] = b"qSupported";
     const QUERY_STOP_REASON: &[u8] = b"?";
@@ -132,6 +133,10 @@ fn parse_command_payload(payload: &[u8]) -> GdbRemoteCommand {
 
     if payload == QUERY_CURRENT_THREAD {
         return GdbRemoteCommand::QueryCurrentThread;
+    }
+
+    if payload == QUERY_SYMBOL || payload.starts_with(b"qSymbol:") {
+        return GdbRemoteCommand::QuerySymbol;
     }
 
     if payload == QUERY_FIRST_THREAD_INFO {

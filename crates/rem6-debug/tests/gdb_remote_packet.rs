@@ -221,6 +221,21 @@ fn gdb_remote_commands_decode_current_thread_queries() {
 }
 
 #[test]
+fn gdb_remote_commands_decode_symbol_lookup_queries() {
+    let plain = GdbRemoteCommand::parse(&GdbRemotePacket::new(b"qSymbol".to_vec()).unwrap());
+    assert_eq!(plain, GdbRemoteCommand::QuerySymbol);
+
+    let initial_lookup =
+        GdbRemoteCommand::parse(&GdbRemotePacket::new(b"qSymbol::".to_vec()).unwrap());
+    assert_eq!(initial_lookup, GdbRemoteCommand::QuerySymbol);
+
+    let symbol_reply = GdbRemoteCommand::parse(
+        &GdbRemotePacket::new(b"qSymbol:1000:5f7374617274".to_vec()).unwrap(),
+    );
+    assert_eq!(symbol_reply, GdbRemoteCommand::QuerySymbol);
+}
+
+#[test]
 fn gdb_remote_commands_decode_thread_info_queries() {
     let first = GdbRemoteCommand::parse(&GdbRemotePacket::new(b"qfThreadInfo".to_vec()).unwrap());
     assert_eq!(
@@ -245,6 +260,7 @@ fn gdb_remote_commands_preserve_query_prefix_neighbors() {
     for payload in [
         b"qCRC:1000,4".as_slice(),
         b"qC1".as_slice(),
+        b"qSymbolExtra".as_slice(),
         b"qfThreadInfoExtra".as_slice(),
         b"qsThreadInfoExtra".as_slice(),
     ] {
@@ -954,6 +970,21 @@ fn gdb_remote_session_reports_current_thread() {
     );
     assert!(!session.set_current_thread_id(0));
     assert_eq!(session.current_thread_id(), 0x1a);
+}
+
+#[test]
+fn gdb_remote_session_reports_no_symbol_lookup_needed() {
+    let mut session = GdbRemoteSession::new(Vec::new());
+
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"qSymbol::".to_vec()).unwrap())
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"OK".to_vec()).unwrap()),
+        ],
+    );
 }
 
 #[test]
