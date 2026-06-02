@@ -1704,7 +1704,9 @@ Implementation evidence through 2026-06-01:
   software interrupts, delayed packet/DMA-style interrupts, RX-high and TX-low
   watermark latches, read-clear status behavior, and snapshot restore are
   explicit Rust state with typed errors instead of register macro expansion and
-  panic paths.
+  panic paths. SINIC register snapshots also have a stable little-endian
+  checkpoint payload codec, and payload restore decodes and validates the full
+  snapshot before mutating live register state.
 - `rem6-net` also has typed SINIC FIFO ingress and egress state aligned with
   gem5 `Sinic::recvPacket` and `Sinic::transmit`: RX disabled drops, RX FIFO
   capacity rejection without mutation, RX packet and high/empty watermark

@@ -23,6 +23,7 @@ const ADDR_MASK_40: u64 = (1_u64 << 40) - 1;
 const LEN_MASK_20: u32 = (1_u32 << 20) - 1;
 const INTR_ALL_BITS: u32 = 0x01ff;
 const INTR_NO_DELAY_BITS: u32 = 0x01cc;
+const SINIC_REGISTER_SNAPSHOT_VERSION: u32 = 1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SinicRegisterOffset(u32);
@@ -870,6 +871,11 @@ impl SinicRegisterBlock {
         Ok(())
     }
 
+    pub fn restore_checkpoint_payload(&mut self, payload: &[u8]) -> Result<(), SinicError> {
+        let snapshot = SinicRegisterBlockSnapshot::decode_checkpoint_payload(payload)?;
+        self.restore(&snapshot)
+    }
+
     pub fn reset_action(&mut self) -> Result<Option<SinicInterruptAction>, SinicError> {
         let had_pending = self.pending_interrupt_tick.is_some();
         let params = self.params;
@@ -991,6 +997,76 @@ pub struct SinicRegisterBlockSnapshot {
     pending_interrupt_tick: Option<u64>,
 }
 
+impl SinicRegisterBlockSnapshot {
+    pub fn encode_checkpoint_payload(&self) -> Vec<u8> {
+        let mut payload = Vec::with_capacity(91);
+        write_u32(&mut payload, SINIC_REGISTER_SNAPSHOT_VERSION);
+        write_u32(&mut payload, self.params.config_bits);
+        write_u32(&mut payload, self.params.interrupt_mask.bits());
+        write_u32(&mut payload, self.params.rx_max_copy);
+        write_u32(&mut payload, self.params.tx_max_copy);
+        write_u32(&mut payload, self.params.zero_copy_size);
+        write_u32(&mut payload, self.params.zero_copy_mark);
+        write_u32(&mut payload, self.params.virtual_count);
+        write_u32(&mut payload, self.params.rx_max_intr);
+        write_u32(&mut payload, self.params.rx_fifo_size);
+        write_u32(&mut payload, self.params.tx_fifo_size);
+        write_u32(&mut payload, self.params.rx_fifo_low);
+        write_u32(&mut payload, self.params.tx_fifo_low);
+        write_u32(&mut payload, self.params.rx_fifo_high);
+        write_u32(&mut payload, self.params.tx_fifo_high);
+        write_u64(&mut payload, self.params.hardware_address);
+        write_u32(&mut payload, self.config_bits);
+        write_u32(&mut payload, self.interrupt_status.bits());
+        write_u32(&mut payload, self.interrupt_mask.bits());
+        write_bool(&mut payload, self.rx_empty_seen);
+        write_bool(&mut payload, self.tx_full_seen);
+        write_bool(&mut payload, self.pending_interrupt_tick.is_some());
+        write_u64(&mut payload, self.pending_interrupt_tick.unwrap_or(0));
+        payload
+    }
+
+    pub fn decode_checkpoint_payload(payload: &[u8]) -> Result<Self, SinicError> {
+        let mut cursor = SinicSnapshotCursor::new(payload);
+        let version = cursor.read_u32("version")?;
+        if version != SINIC_REGISTER_SNAPSHOT_VERSION {
+            return Err(SinicError::InvalidSnapshotPayload {
+                reason: format!("unsupported SINIC register snapshot version {version}"),
+            });
+        }
+        let params = SinicRegisterParams {
+            config_bits: cursor.read_u32("params.config_bits")?,
+            interrupt_mask: read_interrupts(&mut cursor, "params.interrupt_mask")?,
+            rx_max_copy: cursor.read_u32("params.rx_max_copy")?,
+            tx_max_copy: cursor.read_u32("params.tx_max_copy")?,
+            zero_copy_size: cursor.read_u32("params.zero_copy_size")?,
+            zero_copy_mark: cursor.read_u32("params.zero_copy_mark")?,
+            virtual_count: cursor.read_u32("params.virtual_count")?,
+            rx_max_intr: cursor.read_u32("params.rx_max_intr")?,
+            rx_fifo_size: cursor.read_u32("params.rx_fifo_size")?,
+            tx_fifo_size: cursor.read_u32("params.tx_fifo_size")?,
+            rx_fifo_low: cursor.read_u32("params.rx_fifo_low")?,
+            tx_fifo_low: cursor.read_u32("params.tx_fifo_low")?,
+            rx_fifo_high: cursor.read_u32("params.rx_fifo_high")?,
+            tx_fifo_high: cursor.read_u32("params.tx_fifo_high")?,
+            hardware_address: cursor.read_u64("params.hardware_address")?,
+        };
+        let snapshot = Self {
+            params,
+            config_bits: cursor.read_u32("config_bits")?,
+            interrupt_status: read_interrupts(&mut cursor, "interrupt_status")?,
+            interrupt_mask: read_interrupts(&mut cursor, "interrupt_mask")?,
+            rx_empty_seen: cursor.read_bool("rx_empty_seen")?,
+            tx_full_seen: cursor.read_bool("tx_full_seen")?,
+            pending_interrupt_tick: read_optional_tick(&mut cursor)?,
+        };
+        cursor.finish()?;
+        let mut validator = SinicRegisterBlock::new(snapshot.params)?;
+        validator.restore(&snapshot)?;
+        Ok(snapshot)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SinicInterruptAction {
     Assert(SinicInterruptRecord),
@@ -1066,6 +1142,9 @@ pub enum SinicError {
     InterruptScheduleInPast {
         current_tick: u64,
         scheduled_tick: u64,
+    },
+    InvalidSnapshotPayload {
+        reason: String,
     },
     PciEndpoint {
         source: rem6_pci::PciError,
@@ -1190,6 +1269,9 @@ impl fmt::Display for SinicError {
                 formatter,
                 "SINIC interrupt scheduled at tick {scheduled_tick} before current tick {current_tick}"
             ),
+            Self::InvalidSnapshotPayload { reason } => {
+                write!(formatter, "SINIC register snapshot payload is invalid: {reason}")
+            }
             Self::PciEndpoint { source } => {
                 write!(formatter, "SINIC PCI endpoint error: {source}")
             }
@@ -1209,6 +1291,101 @@ impl Error for SinicError {
             _ => None,
         }
     }
+}
+
+struct SinicSnapshotCursor<'a> {
+    payload: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> SinicSnapshotCursor<'a> {
+    const fn new(payload: &'a [u8]) -> Self {
+        Self { payload, offset: 0 }
+    }
+
+    fn read_u8(&mut self, field: &'static str) -> Result<u8, SinicError> {
+        if self.offset >= self.payload.len() {
+            return Err(SinicError::InvalidSnapshotPayload {
+                reason: format!("missing {field}"),
+            });
+        }
+        let value = self.payload[self.offset];
+        self.offset += 1;
+        Ok(value)
+    }
+
+    fn read_u32(&mut self, field: &'static str) -> Result<u32, SinicError> {
+        Ok(u32::from_le_bytes(self.read_array::<4>(field)?))
+    }
+
+    fn read_u64(&mut self, field: &'static str) -> Result<u64, SinicError> {
+        Ok(u64::from_le_bytes(self.read_array::<8>(field)?))
+    }
+
+    fn read_bool(&mut self, field: &'static str) -> Result<bool, SinicError> {
+        match self.read_u8(field)? {
+            0 => Ok(false),
+            1 => Ok(true),
+            value => Err(SinicError::InvalidSnapshotPayload {
+                reason: format!("{field} boolean has invalid value {value}"),
+            }),
+        }
+    }
+
+    fn finish(&self) -> Result<(), SinicError> {
+        if self.offset == self.payload.len() {
+            return Ok(());
+        }
+        Err(SinicError::InvalidSnapshotPayload {
+            reason: format!(
+                "payload has {} trailing bytes",
+                self.payload.len() - self.offset
+            ),
+        })
+    }
+
+    fn read_array<const N: usize>(&mut self, field: &'static str) -> Result<[u8; N], SinicError> {
+        let end = self
+            .offset
+            .checked_add(N)
+            .ok_or_else(|| SinicError::InvalidSnapshotPayload {
+                reason: format!("{field} offset overflow"),
+            })?;
+        let bytes = self.payload.get(self.offset..end).ok_or_else(|| {
+            SinicError::InvalidSnapshotPayload {
+                reason: format!("truncated {field}"),
+            }
+        })?;
+        self.offset = end;
+        Ok(bytes.try_into().expect("slice length checked"))
+    }
+}
+
+fn write_u32(payload: &mut Vec<u8>, value: u32) {
+    payload.extend_from_slice(&value.to_le_bytes());
+}
+
+fn write_u64(payload: &mut Vec<u8>, value: u64) {
+    payload.extend_from_slice(&value.to_le_bytes());
+}
+
+fn write_bool(payload: &mut Vec<u8>, value: bool) {
+    payload.push(u8::from(value));
+}
+
+fn read_interrupts(
+    cursor: &mut SinicSnapshotCursor<'_>,
+    field: &'static str,
+) -> Result<SinicInterrupts, SinicError> {
+    let interrupts = SinicInterrupts::from_bits_truncate(cursor.read_u32(field)?);
+    interrupts.validate()?;
+    Ok(interrupts)
+}
+
+fn read_optional_tick(cursor: &mut SinicSnapshotCursor<'_>) -> Result<Option<u64>, SinicError> {
+    let present = cursor.read_bool("pending_interrupt_tick.present")?;
+    let tick = cursor.read_u64("pending_interrupt_tick.value")?;
+    Ok(present.then_some(tick))
 }
 
 fn validate_params(params: SinicRegisterParams) -> Result<(), SinicError> {

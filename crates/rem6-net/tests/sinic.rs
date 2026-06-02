@@ -163,6 +163,51 @@ fn sinic_register_block_validates_reset_parameters_and_snapshots() {
 }
 
 #[test]
+fn sinic_register_block_checkpoint_payload_round_trips_snapshot() {
+    let params = SinicRegisterParams::default()
+        .with_virtual_count(3)
+        .with_fifo_limits(4096, 2048, 64, 128, 512, 1024)
+        .with_hardware_address(0x0012_3456_789a);
+    let mut regs = SinicRegisterBlock::new(params).unwrap();
+    regs.change_interrupt_mask(SinicInterrupts::SOFT | SinicInterrupts::RX_PACKET, 10)
+        .unwrap();
+    regs.change_config(regs.config_bits() | SinicRegisterBlock::CONFIG_INT_EN, 10)
+        .unwrap();
+    regs.post_interrupt(SinicInterrupts::RX_PACKET, 12, 5)
+        .unwrap();
+
+    let snapshot = regs.snapshot();
+    let payload = snapshot.encode_checkpoint_payload();
+    let decoded =
+        rem6_net::SinicRegisterBlockSnapshot::decode_checkpoint_payload(&payload).unwrap();
+    assert_eq!(decoded, snapshot);
+
+    let mut restored = SinicRegisterBlock::new(SinicRegisterParams::default()).unwrap();
+    restored.restore_checkpoint_payload(&payload).unwrap();
+    assert_eq!(restored.snapshot(), snapshot);
+}
+
+#[test]
+fn sinic_register_block_checkpoint_payload_rejects_bad_payload_without_mutation() {
+    let mut regs = SinicRegisterBlock::new(
+        SinicRegisterParams::default().with_interrupt_mask(SinicInterrupts::SOFT),
+    )
+    .unwrap();
+    regs.change_config(regs.config_bits() | SinicRegisterBlock::CONFIG_INT_EN, 1)
+        .unwrap();
+    regs.post_interrupt(SinicInterrupts::SOFT, 2, 4).unwrap();
+    let before = regs.snapshot();
+    let mut payload = before.encode_checkpoint_payload();
+    payload.truncate(payload.len() - 1);
+
+    assert!(matches!(
+        regs.restore_checkpoint_payload(&payload),
+        Err(SinicError::InvalidSnapshotPayload { .. })
+    ));
+    assert_eq!(regs.snapshot(), before);
+}
+
+#[test]
 fn sinic_interrupts_are_masked_delayed_and_cleared_as_typed_events() {
     let mut regs = SinicRegisterBlock::new(
         SinicRegisterParams::default().with_interrupt_mask(SinicInterrupts::SOFT),
