@@ -140,7 +140,7 @@ impl ExternalMemoryTopology {
         }
     }
 
-    pub const fn as_str(self) -> &'static str {
+    pub const fn technology_label(self) -> &'static str {
         self.kind().as_str()
     }
 
