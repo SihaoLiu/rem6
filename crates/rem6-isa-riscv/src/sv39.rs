@@ -51,6 +51,14 @@ impl RiscvSv39PageTableLevel {
             Self::Level2 => 2,
         }
     }
+
+    const fn next_lower(self) -> Option<Self> {
+        match self {
+            Self::Level2 => Some(Self::Level1),
+            Self::Level1 => Some(Self::Level0),
+            Self::Level0 => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -334,6 +342,109 @@ impl RiscvSv39WalkResult {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiscvSv39WalkState {
+    virtual_address: RiscvSv39VirtualAddress,
+    access: RiscvSv39AccessKind,
+    table_ppn: u64,
+    pending_level: RiscvSv39PageTableLevel,
+    pending_pte_address: u64,
+    pte_addresses: Vec<u64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RiscvSv39WalkAdvance {
+    ReadPte(RiscvSv39WalkState),
+    Complete(RiscvSv39WalkResult),
+}
+
+impl RiscvSv39WalkState {
+    pub fn new(
+        root_table_ppn: u64,
+        virtual_address: RiscvSv39VirtualAddress,
+        access: RiscvSv39AccessKind,
+    ) -> Result<Self, RiscvSv39PageFault> {
+        Self::from_table(
+            virtual_address,
+            access,
+            root_table_ppn,
+            RiscvSv39PageTableLevel::Level2,
+            Vec::with_capacity(3),
+        )
+    }
+
+    fn from_table(
+        virtual_address: RiscvSv39VirtualAddress,
+        access: RiscvSv39AccessKind,
+        table_ppn: u64,
+        pending_level: RiscvSv39PageTableLevel,
+        mut pte_addresses: Vec<u64>,
+    ) -> Result<Self, RiscvSv39PageFault> {
+        let pending_pte_address =
+            virtual_address.page_table_entry_address(table_ppn, pending_level)?;
+        pte_addresses.push(pending_pte_address);
+        Ok(Self {
+            virtual_address,
+            access,
+            table_ppn,
+            pending_level,
+            pending_pte_address,
+            pte_addresses,
+        })
+    }
+
+    pub const fn virtual_address(&self) -> RiscvSv39VirtualAddress {
+        self.virtual_address
+    }
+
+    pub const fn access(&self) -> RiscvSv39AccessKind {
+        self.access
+    }
+
+    pub const fn table_ppn(&self) -> u64 {
+        self.table_ppn
+    }
+
+    pub const fn pending_level(&self) -> RiscvSv39PageTableLevel {
+        self.pending_level
+    }
+
+    pub const fn pending_pte_address(&self) -> u64 {
+        self.pending_pte_address
+    }
+
+    pub fn pte_addresses(&self) -> &[u64] {
+        &self.pte_addresses
+    }
+
+    pub fn advance(self, pte: RiscvSv39Pte) -> Result<RiscvSv39WalkAdvance, RiscvSv39PageFault> {
+        pte.validate()?;
+
+        if pte.is_leaf() {
+            let physical_address =
+                pte.leaf_physical_address(self.virtual_address, self.pending_level, self.access)?;
+            return Ok(RiscvSv39WalkAdvance::Complete(RiscvSv39WalkResult::new(
+                physical_address,
+                self.pending_level,
+                pte,
+                self.pte_addresses,
+            )));
+        }
+
+        let Some(next_level) = self.pending_level.next_lower() else {
+            return Err(RiscvSv39PageFault::NonLeaf);
+        };
+        Self::from_table(
+            self.virtual_address,
+            self.access,
+            pte.physical_page_number(),
+            next_level,
+            self.pte_addresses,
+        )
+        .map(RiscvSv39WalkAdvance::ReadPte)
+    }
+}
+
 pub fn walk_sv39_page_table<F>(
     root_table_ppn: u64,
     virtual_address: RiscvSv39VirtualAddress,
@@ -343,37 +454,16 @@ pub fn walk_sv39_page_table<F>(
 where
     F: FnMut(u64) -> Result<RiscvSv39Pte, RiscvSv39PageFault>,
 {
-    let mut table_ppn = root_table_ppn;
-    let mut pte_addresses = Vec::with_capacity(3);
-
-    for level in [
-        RiscvSv39PageTableLevel::Level2,
-        RiscvSv39PageTableLevel::Level1,
-        RiscvSv39PageTableLevel::Level0,
-    ] {
-        let pte_address = virtual_address.page_table_entry_address(table_ppn, level)?;
-        pte_addresses.push(pte_address);
-        let pte = read_pte(pte_address)?;
-        pte.validate()?;
-
-        if pte.is_leaf() {
-            let physical_address = pte.leaf_physical_address(virtual_address, level, access)?;
-            return Ok(RiscvSv39WalkResult::new(
-                physical_address,
-                level,
-                pte,
-                pte_addresses,
-            ));
+    let mut state = RiscvSv39WalkState::new(root_table_ppn, virtual_address, access)?;
+    loop {
+        let pte = read_pte(state.pending_pte_address())?;
+        match state.advance(pte)? {
+            RiscvSv39WalkAdvance::ReadPte(next_state) => {
+                state = next_state;
+            }
+            RiscvSv39WalkAdvance::Complete(result) => return Ok(result),
         }
-
-        if level == RiscvSv39PageTableLevel::Level0 {
-            return Err(RiscvSv39PageFault::NonLeaf);
-        }
-
-        table_ppn = pte.physical_page_number();
     }
-
-    Err(RiscvSv39PageFault::NonLeaf)
 }
 
 impl RiscvSv39AccessKind {

@@ -1,6 +1,6 @@
 use rem6_isa_riscv::{
     walk_sv39_page_table, RiscvSv39AccessKind, RiscvSv39PageFault, RiscvSv39PageTableLevel,
-    RiscvSv39Pte, RiscvSv39VirtualAddress,
+    RiscvSv39Pte, RiscvSv39VirtualAddress, RiscvSv39WalkAdvance, RiscvSv39WalkState,
 };
 
 const V: u64 = 1 << 0;
@@ -354,6 +354,102 @@ fn sv39_page_table_walk_follows_pointer_entries_to_level_zero_leaf() {
         &[level2_pte_address, level1_pte_address, level0_pte_address]
     );
     assert_eq!(walk.leaf_pte().physical_page_number(), leaf_ppn);
+}
+
+#[test]
+fn sv39_incremental_walk_advances_to_level_zero_leaf() {
+    let address = RiscvSv39VirtualAddress::new(
+        (0x012_u64 << 30) | (0x034_u64 << 21) | (0x056_u64 << 12) | 0x789,
+    )
+    .unwrap();
+    let root_ppn = 0x100;
+    let level1_ppn = 0x200;
+    let level0_ppn = 0x300;
+    let leaf_ppn = 0x45678;
+    let level2_pte_address = (root_ppn << 12) + (0x012 * 8);
+    let level1_pte_address = (level1_ppn << 12) + (0x034 * 8);
+    let level0_pte_address = (level0_ppn << 12) + (0x056 * 8);
+    let walk = RiscvSv39WalkState::new(root_ppn, address, RiscvSv39AccessKind::Load).unwrap();
+    assert_eq!(walk.pending_level(), RiscvSv39PageTableLevel::Level2);
+    assert_eq!(walk.pending_pte_address(), level2_pte_address);
+    assert_eq!(walk.pte_addresses(), &[level2_pte_address]);
+
+    let RiscvSv39WalkAdvance::ReadPte(walk) = walk
+        .advance(RiscvSv39Pte::new((level1_ppn << 10) | V))
+        .unwrap()
+    else {
+        panic!("level 2 pointer should require another PTE read");
+    };
+    assert_eq!(walk.pending_level(), RiscvSv39PageTableLevel::Level1);
+    assert_eq!(walk.pending_pte_address(), level1_pte_address);
+    assert_eq!(
+        walk.pte_addresses(),
+        &[level2_pte_address, level1_pte_address]
+    );
+
+    let RiscvSv39WalkAdvance::ReadPte(walk) = walk
+        .advance(RiscvSv39Pte::new((level0_ppn << 10) | V))
+        .unwrap()
+    else {
+        panic!("level 1 pointer should require another PTE read");
+    };
+    assert_eq!(walk.pending_level(), RiscvSv39PageTableLevel::Level0);
+    assert_eq!(walk.pending_pte_address(), level0_pte_address);
+    assert_eq!(
+        walk.pte_addresses(),
+        &[level2_pte_address, level1_pte_address, level0_pte_address]
+    );
+
+    let RiscvSv39WalkAdvance::Complete(result) = walk
+        .advance(RiscvSv39Pte::new((leaf_ppn << 10) | V | R | W | A | D))
+        .unwrap()
+    else {
+        panic!("level 0 leaf should complete the walk");
+    };
+    assert_eq!(result.physical_address(), (leaf_ppn << 12) | 0x789);
+    assert_eq!(result.leaf_level(), RiscvSv39PageTableLevel::Level0);
+    assert_eq!(
+        result.pte_addresses(),
+        &[level2_pte_address, level1_pte_address, level0_pte_address]
+    );
+    assert_eq!(result.leaf_pte().physical_page_number(), leaf_ppn);
+}
+
+#[test]
+fn sv39_incremental_walk_faults_when_lowest_level_is_nonleaf() {
+    let address =
+        RiscvSv39VirtualAddress::new((0x011_u64 << 30) | (0x022_u64 << 21) | (0x033_u64 << 12))
+            .unwrap();
+    let root_ppn = 0x120;
+    let level1_ppn = 0x220;
+    let level0_ppn = 0x320;
+    let level2_pte_address = (root_ppn << 12) + (0x011 * 8);
+    let level1_pte_address = (level1_ppn << 12) + (0x022 * 8);
+    let level0_pte_address = (level0_ppn << 12) + (0x033 * 8);
+    let walk = RiscvSv39WalkState::new(root_ppn, address, RiscvSv39AccessKind::Load).unwrap();
+
+    let RiscvSv39WalkAdvance::ReadPte(walk) = walk
+        .advance(RiscvSv39Pte::new((level1_ppn << 10) | V))
+        .unwrap()
+    else {
+        panic!("level 2 pointer should require another PTE read");
+    };
+    let RiscvSv39WalkAdvance::ReadPte(walk) = walk
+        .advance(RiscvSv39Pte::new((level0_ppn << 10) | V))
+        .unwrap()
+    else {
+        panic!("level 1 pointer should require another PTE read");
+    };
+
+    assert_eq!(walk.pending_level(), RiscvSv39PageTableLevel::Level0);
+    assert_eq!(
+        walk.pte_addresses(),
+        &[level2_pte_address, level1_pte_address, level0_pte_address]
+    );
+    assert_eq!(
+        walk.advance(RiscvSv39Pte::new(V)).unwrap_err(),
+        RiscvSv39PageFault::NonLeaf
+    );
 }
 
 #[test]
