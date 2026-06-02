@@ -1004,6 +1004,69 @@ fn gdb_remote_session_reports_thread_info_sequence() {
 }
 
 #[test]
+fn gdb_remote_session_paginates_thread_info_by_payload_limit() {
+    let mut session =
+        GdbRemoteSession::with_response_config(Vec::new(), GdbRemotePacketConfig::new(5).unwrap());
+    assert!(session.set_thread_ids(vec![1, 2, 3, 4, 5]));
+
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"qfThreadInfo".to_vec()).unwrap())
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(
+                GdbRemotePacket::with_config(b"m1,2".to_vec(), session.response_config()).unwrap()
+            ),
+        ],
+    );
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"qsThreadInfo".to_vec()).unwrap())
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(
+                GdbRemotePacket::with_config(b"m3,4".to_vec(), session.response_config()).unwrap()
+            ),
+        ],
+    );
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"qsThreadInfo".to_vec()).unwrap())
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(
+                GdbRemotePacket::with_config(b"m5".to_vec(), session.response_config()).unwrap()
+            ),
+        ],
+    );
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"qsThreadInfo".to_vec()).unwrap())
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(
+                GdbRemotePacket::with_config(b"l".to_vec(), session.response_config()).unwrap()
+            ),
+        ],
+    );
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"qfThreadInfo".to_vec()).unwrap())
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(
+                GdbRemotePacket::with_config(b"m1,2".to_vec(), session.response_config()).unwrap()
+            ),
+        ],
+    );
+}
+
+#[test]
 fn gdb_remote_session_reports_thread_alive_status() {
     let mut session = GdbRemoteSession::new(Vec::new());
     assert!(session.set_thread_ids(vec![1, 0x1a]));

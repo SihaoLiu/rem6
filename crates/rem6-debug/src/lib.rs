@@ -21,7 +21,6 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 pub use stop::GdbRemoteStopReply;
-use thread::encode_thread_info;
 pub(crate) use thread::parse_thread_id;
 pub use thread::{GdbRemoteThreadId, GdbRemoteThreadInfoQuery, GdbRemoteThreadOperation};
 pub use trap::{
@@ -317,6 +316,7 @@ pub struct GdbRemoteSession {
     current_thread_id: u64,
     general_thread: GdbRemoteThreadId,
     thread_ids: Vec<u64>,
+    thread_info_index: usize,
     last_resume_requests: Vec<GdbRemoteResumeRequest>,
     last_disconnect_request: Option<GdbRemoteDisconnectRequest>,
     last_trap_request: Option<GdbRemoteTrapRequest>,
@@ -350,6 +350,7 @@ impl GdbRemoteSession {
             current_thread_id: 1,
             general_thread: GdbRemoteThreadId::Any,
             thread_ids: vec![1],
+            thread_info_index: 0,
             last_resume_requests: Vec::new(),
             last_disconnect_request: None,
             last_trap_request: None,
@@ -448,6 +449,7 @@ impl GdbRemoteSession {
             self.current_thread_id = thread_ids[0];
         }
         self.thread_ids = thread_ids;
+        self.thread_info_index = 0;
         true
     }
 
@@ -550,8 +552,11 @@ impl GdbRemoteSession {
             }
             GdbRemoteCommand::QueryThreadInfo { query } => {
                 let payload = match query {
-                    GdbRemoteThreadInfoQuery::First => encode_thread_info(&self.thread_ids),
-                    GdbRemoteThreadInfoQuery::Subsequent => b"l".to_vec(),
+                    GdbRemoteThreadInfoQuery::First => {
+                        self.thread_info_index = 0;
+                        self.next_thread_info_payload()
+                    }
+                    GdbRemoteThreadInfoQuery::Subsequent => self.next_thread_info_payload(),
                 };
                 self.packet_response(payload)
             }
@@ -698,6 +703,33 @@ impl GdbRemoteSession {
             bytes.push(*self.memory_bytes.get(&address)?);
         }
         Some(encode_hex_bytes(&bytes))
+    }
+
+    fn next_thread_info_payload(&mut self) -> Vec<u8> {
+        if self.thread_info_index >= self.thread_ids.len() {
+            self.thread_info_index = 0;
+            return b"l".to_vec();
+        }
+
+        let mut payload = b"m".to_vec();
+        let max_payload_bytes = self.response_config.max_payload_bytes();
+        while self.thread_info_index < self.thread_ids.len() {
+            let encoded = encode_hex_u64(self.thread_ids[self.thread_info_index]);
+            let separator_len = usize::from(payload.len() > 1);
+            if payload.len() + separator_len + encoded.len() > max_payload_bytes {
+                if payload.len() == 1 {
+                    payload.extend_from_slice(&encoded);
+                    self.thread_info_index += 1;
+                }
+                break;
+            }
+            if separator_len > 0 {
+                payload.push(b',');
+            }
+            payload.extend_from_slice(&encoded);
+            self.thread_info_index += 1;
+        }
+        payload
     }
 
     fn xfer_read_payload(&self, request: &GdbRemoteXferReadRequest) -> Vec<u8> {

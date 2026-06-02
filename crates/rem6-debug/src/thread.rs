@@ -1,4 +1,4 @@
-use crate::hex::{decode_hex_u64, encode_hex_u64};
+use crate::hex::decode_hex_u64;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GdbRemoteThreadOperation {
@@ -44,15 +44,4 @@ pub(crate) fn parse_thread_id(thread_id: &[u8]) -> Option<GdbRemoteThreadId> {
         return None;
     }
     Some(GdbRemoteThreadId::Id(id))
-}
-
-pub(crate) fn encode_thread_info(thread_ids: &[u64]) -> Vec<u8> {
-    let mut encoded = b"m".to_vec();
-    for (index, thread_id) in thread_ids.iter().enumerate() {
-        if index > 0 {
-            encoded.push(b',');
-        }
-        encoded.extend_from_slice(&encode_hex_u64(*thread_id));
-    }
-    encoded
 }
