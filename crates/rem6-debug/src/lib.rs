@@ -203,6 +203,9 @@ impl GdbRemotePacket {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum GdbRemoteCommand {
+    QueryAttached {
+        process_id: Option<u64>,
+    },
     QuerySupported {
         features: Vec<GdbRemoteFeature>,
     },
@@ -238,6 +241,12 @@ impl GdbRemoteCommand {
     pub fn parse(packet: &GdbRemotePacket) -> Self {
         parse_command_payload(packet.payload())
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GdbRemoteAttachKind {
+    Attached,
+    Created,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -362,6 +371,7 @@ pub enum GdbRemoteAckMode {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GdbRemoteSession {
     ack_mode: GdbRemoteAckMode,
+    attach_kind: GdbRemoteAttachKind,
     response_config: GdbRemotePacketConfig,
     stub_features: Vec<GdbRemoteFeature>,
     gdb_features: Vec<GdbRemoteFeature>,
@@ -386,6 +396,7 @@ impl GdbRemoteSession {
     ) -> Self {
         Self {
             ack_mode: GdbRemoteAckMode::Acknowledged,
+            attach_kind: GdbRemoteAttachKind::Attached,
             response_config,
             stub_features,
             gdb_features: Vec::new(),
@@ -402,6 +413,14 @@ impl GdbRemoteSession {
 
     pub const fn ack_mode(&self) -> GdbRemoteAckMode {
         self.ack_mode
+    }
+
+    pub const fn attach_kind(&self) -> GdbRemoteAttachKind {
+        self.attach_kind
+    }
+
+    pub fn set_attach_kind(&mut self, attach_kind: GdbRemoteAttachKind) {
+        self.attach_kind = attach_kind;
     }
 
     pub const fn response_config(&self) -> GdbRemotePacketConfig {
@@ -484,6 +503,13 @@ impl GdbRemoteSession {
         let command = GdbRemoteCommand::parse(packet);
 
         match command {
+            GdbRemoteCommand::QueryAttached { .. } => {
+                let payload = match self.attach_kind {
+                    GdbRemoteAttachKind::Attached => b"1".to_vec(),
+                    GdbRemoteAttachKind::Created => b"0".to_vec(),
+                };
+                self.packet_response(payload)
+            }
             GdbRemoteCommand::QuerySupported { features } => {
                 self.gdb_features = features;
                 self.packet_response(encode_supported_features(&self.stub_features))
@@ -911,6 +937,7 @@ fn reject_legacy_sequence_id(payload: &[u8]) -> Result<(), GdbRemoteError> {
 }
 
 fn parse_command_payload(payload: &[u8]) -> GdbRemoteCommand {
+    const QUERY_ATTACHED: &[u8] = b"qAttached";
     const READ_REGISTERS: &[u8] = b"g";
     const QUERY_SUPPORTED: &[u8] = b"qSupported";
     const QUERY_STOP_REASON: &[u8] = b"?";
@@ -956,6 +983,18 @@ fn parse_command_payload(payload: &[u8]) -> GdbRemoteCommand {
         }
     }
 
+    if payload == QUERY_ATTACHED {
+        return GdbRemoteCommand::QueryAttached { process_id: None };
+    }
+
+    if let Some(process_id) = payload.strip_prefix(b"qAttached:") {
+        if let Some(process_id) = parse_process_id(process_id) {
+            return GdbRemoteCommand::QueryAttached {
+                process_id: Some(process_id),
+            };
+        }
+    }
+
     if payload == QUERY_STOP_REASON {
         return GdbRemoteCommand::QueryStopReason;
     }
@@ -977,6 +1016,14 @@ fn parse_command_payload(payload: &[u8]) -> GdbRemoteCommand {
     }
 
     GdbRemoteCommand::Unknown(payload.to_vec())
+}
+
+fn parse_process_id(process_id: &[u8]) -> Option<u64> {
+    let process_id = decode_hex_u64(process_id)?;
+    if process_id == 0 {
+        return None;
+    }
+    Some(process_id)
 }
 
 fn parse_thread_selection(request: &[u8]) -> Option<(GdbRemoteThreadOperation, GdbRemoteThreadId)> {

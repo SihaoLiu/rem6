@@ -1,8 +1,8 @@
 use rem6_debug::{
-    parse_gdb_remote_frame, GdbRemoteAckMode, GdbRemoteCommand, GdbRemoteError, GdbRemoteFeature,
-    GdbRemoteFeatureValue, GdbRemoteFrame, GdbRemoteNotification, GdbRemotePacket,
-    GdbRemotePacketConfig, GdbRemoteRegisterBytes, GdbRemoteSession, GdbRemoteThreadId,
-    GdbRemoteThreadOperation,
+    parse_gdb_remote_frame, GdbRemoteAckMode, GdbRemoteAttachKind, GdbRemoteCommand,
+    GdbRemoteError, GdbRemoteFeature, GdbRemoteFeatureValue, GdbRemoteFrame, GdbRemoteNotification,
+    GdbRemotePacket, GdbRemotePacketConfig, GdbRemoteRegisterBytes, GdbRemoteSession,
+    GdbRemoteThreadId, GdbRemoteThreadOperation,
 };
 
 #[test]
@@ -181,6 +181,34 @@ fn gdb_remote_commands_treat_probe_suffix_as_gdb_feature_data() {
             )],
         },
     );
+}
+
+#[test]
+fn gdb_remote_commands_decode_attach_state_queries() {
+    let plain = GdbRemoteCommand::parse(&GdbRemotePacket::new(b"qAttached".to_vec()).unwrap());
+    assert_eq!(plain, GdbRemoteCommand::QueryAttached { process_id: None });
+
+    let with_process =
+        GdbRemoteCommand::parse(&GdbRemotePacket::new(b"qAttached:1A".to_vec()).unwrap());
+    assert_eq!(
+        with_process,
+        GdbRemoteCommand::QueryAttached {
+            process_id: Some(0x1a),
+        },
+    );
+}
+
+#[test]
+fn gdb_remote_commands_preserve_malformed_attach_state_queries() {
+    for payload in [
+        b"qAttached:".as_slice(),
+        b"qAttached:0".as_slice(),
+        b"qAttached:zz".as_slice(),
+        b"qAttached:10000000000000000".as_slice(),
+    ] {
+        let command = GdbRemoteCommand::parse(&GdbRemotePacket::new(payload.to_vec()).unwrap());
+        assert_eq!(command, GdbRemoteCommand::Unknown(payload.to_vec()));
+    }
 }
 
 #[test]
@@ -438,6 +466,33 @@ fn gdb_remote_session_reports_default_stop_reason() {
         vec![
             GdbRemoteFrame::Ack,
             GdbRemoteFrame::Packet(GdbRemotePacket::new(b"S05".to_vec()).unwrap()),
+        ],
+    );
+}
+
+#[test]
+fn gdb_remote_session_reports_attach_state() {
+    let mut session = GdbRemoteSession::new(Vec::new());
+
+    assert_eq!(session.attach_kind(), GdbRemoteAttachKind::Attached);
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"qAttached".to_vec()).unwrap())
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"1".to_vec()).unwrap()),
+        ],
+    );
+
+    session.set_attach_kind(GdbRemoteAttachKind::Created);
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"qAttached:1a".to_vec()).unwrap())
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"0".to_vec()).unwrap()),
         ],
     );
 }
