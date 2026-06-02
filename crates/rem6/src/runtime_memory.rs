@@ -96,6 +96,7 @@ pub(super) fn cli_memory_response(
 
 impl Rem6DramSummary {
     fn from_profile(profile: DramMemoryActivityProfile) -> Self {
+        let nvm_profile = profile.profile_technology_label() == Some("nvm");
         Self {
             active_targets: profile.active_target_count() as u64,
             active_ports: profile.active_port_count() as u64,
@@ -118,6 +119,26 @@ impl Rem6DramSummary {
             profile_scheduler_banks: profile.profile_scheduler_bank_capacity(),
             profile_topology_banks: profile.profile_topology_bank_capacity(),
             profile_scheduler_bank_groups: profile.profile_scheduler_bank_group_capacity(),
+            nvm_persistent_writes: if nvm_profile {
+                profile.write_count() as u64
+            } else {
+                0
+            },
+            nvm_persistent_write_bytes: if nvm_profile {
+                profile.write_byte_count()
+            } else {
+                0
+            },
+            nvm_max_pending_reads: if nvm_profile {
+                profile.max_pending_nvm_reads() as u64
+            } else {
+                0
+            },
+            nvm_max_pending_persistent_writes: if nvm_profile {
+                profile.max_pending_persistent_writes() as u64
+            } else {
+                0
+            },
             low_power_active_powerdown_entries: profile
                 .low_power_entry_count(DramLowPowerState::ActivePowerdown)
                 as u64,

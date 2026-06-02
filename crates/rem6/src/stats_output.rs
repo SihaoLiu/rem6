@@ -402,6 +402,34 @@ fn emit_dram_stats(
     emit_dram_counter(
         stats,
         prefix,
+        "nvm.persistent_writes",
+        "Count",
+        summary.nvm_persistent_writes,
+    )?;
+    emit_dram_counter(
+        stats,
+        prefix,
+        "nvm.persistent_write_bytes",
+        "Byte",
+        summary.nvm_persistent_write_bytes,
+    )?;
+    emit_dram_counter(
+        stats,
+        prefix,
+        "nvm.max_pending_reads",
+        "Count",
+        summary.nvm_max_pending_reads,
+    )?;
+    emit_dram_counter(
+        stats,
+        prefix,
+        "nvm.max_pending_persistent_writes",
+        "Count",
+        summary.nvm_max_pending_persistent_writes,
+    )?;
+    emit_dram_counter(
+        stats,
+        prefix,
         "low_power.active_powerdown.entries",
         "Count",
         summary.low_power_active_powerdown_entries,

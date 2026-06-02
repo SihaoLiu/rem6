@@ -72,6 +72,7 @@ pub enum CliDramMemoryProfile {
     Ddr,
     Hbm,
     Lpddr,
+    Nvm,
 }
 
 impl CliDramMemoryProfile {
@@ -80,6 +81,7 @@ impl CliDramMemoryProfile {
             "ddr" => Ok(Self::Ddr),
             "hbm" => Ok(Self::Hbm),
             "lpddr" => Ok(Self::Lpddr),
+            "nvm" => Ok(Self::Nvm),
             _ => Err(Rem6CliError::UnsupportedDramMemoryProfile {
                 profile: value.to_string(),
             }),
@@ -91,6 +93,7 @@ impl CliDramMemoryProfile {
             Self::Ddr => "ddr",
             Self::Hbm => "hbm",
             Self::Lpddr => "lpddr",
+            Self::Nvm => "nvm",
         }
     }
 }

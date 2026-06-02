@@ -65,6 +65,123 @@ fn rem6_run_executes_riscv_elf_load_store_and_emits_data_stats() {
 }
 
 #[test]
+fn rem6_run_executes_riscv_elf_load_store_through_nvm_profile_and_emits_nvm_stats() {
+    let mut program = riscv64_program(&[
+        u_type(0, 2, 0x17),          // auipc x2, 0
+        i_type(24, 2, 0x0, 2, 0x13), // addi x2, x2, data offset
+        i_type(0, 2, 0x3, 5, 0x03),  // ld x5, 0(x2)
+        i_type(1, 5, 0x0, 6, 0x13),  // addi x6, x5, 1
+        s_type(8, 6, 2, 0x3),        // sd x6, 8(x2)
+        0x0000_0073,                 // ecall
+    ]);
+    program.extend_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
+    program.extend_from_slice(&0u64.to_le_bytes());
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("nvm-profile-data-exec", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "600",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "1",
+            "--dram-memory",
+            "--dram-memory-profile",
+            "nvm",
+            "--dump-memory",
+            "0x80000020:8",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"x5\":\"0x1122334455667788\""));
+    assert!(stdout.contains("\"x6\":\"0x1122334455667789\""));
+    assert!(stdout.contains("\"address\":\"0x80000020\""));
+    assert!(stdout.contains("\"hex\":\"8977665544332211\""));
+    assert!(stdout.contains("\"technology\":\"nvm\""));
+    assert!(stdout.contains("\"parallel_port_label\":\"controller\""));
+    assert!(stdout.contains("\"topology_unit_label\":\"media_bank\""));
+    assert!(stdout.contains("\"parallel_ports\":2"));
+    assert!(stdout.contains("\"topology_units\":8"));
+    assert!(stdout.contains("\"scheduler_banks\":8"));
+    assert!(stdout.contains("\"topology_banks\":32"));
+    assert!(stdout.contains("\"nvm\":{\"persistent_writes\":1"));
+    assert!(stdout.contains("\"persistent_write_bytes\":8"));
+    assert!(stdout.contains("\"max_pending_persistent_writes\":1"));
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.technology.nvm",
+        "Count",
+        1,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.parallel_ports",
+        "Count",
+        2,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.topology_units",
+        "Count",
+        8,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.scheduler_banks",
+        "Count",
+        8,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.topology_banks",
+        "Count",
+        32,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.nvm.persistent_writes",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.nvm.persistent_write_bytes",
+        "Byte",
+        8,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.nvm.max_pending_persistent_writes",
+        "Count",
+        1,
+        "monotonic",
+    );
+}
+
+#[test]
 fn rem6_run_executes_riscv_elf_with_loaded_blob_memory() {
     let program = riscv64_program(&[0x0000_0073]);
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
