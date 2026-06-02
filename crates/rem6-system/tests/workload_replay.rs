@@ -1,6 +1,8 @@
 use rem6_boot::BootImage;
 use rem6_cpu::CpuId;
-use rem6_dram::{DramGeometry, DramMemoryTechnology, DramTiming, ExternalMemoryProfile};
+use rem6_dram::{
+    DramGeometry, DramLowPowerTiming, DramMemoryTechnology, DramTiming, ExternalMemoryProfile,
+};
 use rem6_fabric::VirtualNetworkId;
 use rem6_isa_riscv::Register;
 use rem6_memory::{AccessSize, Address, AddressRange, CacheLineLayout, MemoryTargetId};
@@ -161,6 +163,17 @@ fn dram_timing() -> DramTiming {
     DramTiming::new(4, 8, 10, 3, 5).unwrap()
 }
 
+fn profile_low_power_timing() -> DramLowPowerTiming {
+    DramLowPowerTiming::new(20, 80, 7)
+        .unwrap()
+        .with_self_refresh_exit_latency(17)
+        .unwrap()
+}
+
+fn profiled_dram_timing() -> DramTiming {
+    dram_timing().with_low_power_timing(profile_low_power_timing())
+}
+
 fn hbm_profile(target: u32) -> ExternalMemoryProfile {
     ExternalMemoryProfile::hbm(
         MemoryTargetId::new(target),
@@ -168,7 +181,7 @@ fn hbm_profile(target: u32) -> ExternalMemoryProfile {
         2,
         2,
         dram_geometry(),
-        dram_timing(),
+        profiled_dram_timing(),
     )
     .unwrap()
 }
@@ -1862,6 +1875,10 @@ fn workload_replay_uses_profiled_external_memory() {
         DramMemoryTechnology::Hbm
     );
     assert_eq!(target.profile().unwrap().parallel_port_count(), 4);
+    assert_eq!(
+        target.profile().unwrap().timing().low_power_timing(),
+        Some(profile_low_power_timing())
+    );
     plan.verify_result(outcome.result()).unwrap();
 }
 
