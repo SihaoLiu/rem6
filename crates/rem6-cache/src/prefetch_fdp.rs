@@ -4,6 +4,8 @@ use std::fmt;
 
 use rem6_memory::{Address, AgentId};
 
+use crate::allocation::max_vector_len;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FetchDirectedPrefetcherConfig {
     line_size: u64,
@@ -34,9 +36,19 @@ impl FetchDirectedPrefetcherConfig {
         if prefetch_queue_entries == 0 {
             return Err(FetchDirectedPrefetcherError::ZeroPrefetchQueueEntries);
         }
+        validate_fdp_vector_length(
+            "prefetch queue entries",
+            prefetch_queue_entries,
+            maximum_fdp_prefetch_queue_entries(),
+        )?;
         if translation_queue_entries == 0 {
             return Err(FetchDirectedPrefetcherError::ZeroTranslationQueueEntries);
         }
+        validate_fdp_vector_length(
+            "translation queue entries",
+            translation_queue_entries,
+            maximum_fdp_translation_queue_entries(),
+        )?;
 
         Ok(Self {
             line_size,
@@ -98,6 +110,11 @@ pub enum FetchDirectedPrefetcherError {
         fetch_target_id: u64,
         virtual_block: Address,
     },
+    VectorLengthTooLarge {
+        field: &'static str,
+        length: usize,
+        maximum: usize,
+    },
     SnapshotConfigMismatch {
         expected: Box<FetchDirectedPrefetcherConfig>,
         actual: Box<FetchDirectedPrefetcherConfig>,
@@ -139,6 +156,14 @@ impl fmt::Display for FetchDirectedPrefetcherError {
                 formatter,
                 "FDP has no translation for target {fetch_target_id} block {virtual_block:?}"
             ),
+            Self::VectorLengthTooLarge {
+                field,
+                length,
+                maximum,
+            } => write!(
+                formatter,
+                "FDP {field} length {length} exceeds maximum {maximum}"
+            ),
             Self::SnapshotConfigMismatch { expected, actual } => write!(
                 formatter,
                 "FDP snapshot config {actual:?} does not match {expected:?}"
@@ -162,6 +187,31 @@ impl fmt::Display for FetchDirectedPrefetcherError {
 }
 
 impl Error for FetchDirectedPrefetcherError {}
+
+fn maximum_fdp_prefetch_queue_entries() -> usize {
+    max_vector_len::<FetchDirectedPrefetchQueueEntry>()
+        .min(max_vector_len::<FetchDirectedPrefetchQueueEntrySnapshot>())
+}
+
+fn maximum_fdp_translation_queue_entries() -> usize {
+    max_vector_len::<FetchDirectedTranslationEntry>()
+        .min(max_vector_len::<FetchDirectedTranslationEntrySnapshot>())
+}
+
+fn validate_fdp_vector_length(
+    field: &'static str,
+    length: usize,
+    maximum: usize,
+) -> Result<(), FetchDirectedPrefetcherError> {
+    if length > maximum {
+        return Err(FetchDirectedPrefetcherError::VectorLengthTooLarge {
+            field,
+            length,
+            maximum,
+        });
+    }
+    Ok(())
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FetchDirectedTarget {

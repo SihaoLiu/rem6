@@ -1,8 +1,15 @@
 use rem6_cache::{
-    FetchDirectedCacheLookup, FetchDirectedPrefetcher, FetchDirectedPrefetcherConfig,
-    FetchDirectedTarget, FetchDirectedTranslation, FetchDirectedTranslationOutcome,
+    FetchDirectedCacheLookup, FetchDirectedPrefetchQueueEntrySnapshot, FetchDirectedPrefetcher,
+    FetchDirectedPrefetcherConfig, FetchDirectedPrefetcherError, FetchDirectedTarget,
+    FetchDirectedTranslation, FetchDirectedTranslationEntrySnapshot,
+    FetchDirectedTranslationOutcome,
 };
 use rem6_memory::{Address, AgentId};
+
+const FDP_PREFETCH_QUEUE_BYTE_OVERFLOW_LENGTH: usize =
+    isize::MAX as usize / std::mem::size_of::<FetchDirectedPrefetchQueueEntrySnapshot>() + 1;
+const FDP_TRANSLATION_QUEUE_BYTE_OVERFLOW_LENGTH: usize =
+    isize::MAX as usize / std::mem::size_of::<FetchDirectedTranslationEntrySnapshot>() + 1;
 
 fn fetch_target(agent: u32, target_id: u64, start: u64, end: u64) -> FetchDirectedTarget {
     FetchDirectedTarget::new(
@@ -13,6 +20,42 @@ fn fetch_target(agent: u32, target_id: u64, start: u64, end: u64) -> FetchDirect
         false,
     )
     .unwrap()
+}
+
+#[test]
+fn fetch_directed_prefetcher_config_rejects_vector_lengths_above_host_limit() {
+    assert!(matches!(
+        FetchDirectedPrefetcherConfig::new(
+            64,
+            1,
+            FDP_PREFETCH_QUEUE_BYTE_OVERFLOW_LENGTH,
+            4,
+            true,
+            true,
+            true,
+        ),
+        Err(FetchDirectedPrefetcherError::VectorLengthTooLarge {
+            field: "prefetch queue entries",
+            length: FDP_PREFETCH_QUEUE_BYTE_OVERFLOW_LENGTH,
+            ..
+        })
+    ));
+    assert!(matches!(
+        FetchDirectedPrefetcherConfig::new(
+            64,
+            1,
+            4,
+            FDP_TRANSLATION_QUEUE_BYTE_OVERFLOW_LENGTH,
+            true,
+            true,
+            true,
+        ),
+        Err(FetchDirectedPrefetcherError::VectorLengthTooLarge {
+            field: "translation queue entries",
+            length: FDP_TRANSLATION_QUEUE_BYTE_OVERFLOW_LENGTH,
+            ..
+        })
+    ));
 }
 
 #[test]
