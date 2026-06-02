@@ -399,12 +399,13 @@ isolated bugs:
   target-description documents produced by `rem6-isa-riscv`, keeping protocol
   parsing generic while leaving architecture XML ownership in the ISA crate.
   The same system boundary can seed `g` and `p n` register replies from a
-  RISC-V hart snapshot, using the target-description order for `x0` through
-  `x31` and `pc`, XLEN-sized little-endian values, and typed `G`/`P n...=r...`
-  writeback into the hart state with explicit length and unsupported-register
-  errors. A system packet handler now runs the generic session response and the
-  RISC-V register writeback together, leaving the future socket loop to provide
-  transport without duplicating architecture-specific mutation logic.
+  RISC-V hart snapshots or live `RiscvCore` state, using the target-description
+  order for `x0` through `x31` and `pc`, XLEN-sized little-endian values, and
+  typed `G`/`P n...=r...` writeback into hart or core state with explicit
+  length and unsupported-register errors. A system packet handler now runs the
+  generic session response and the RISC-V register writeback together, leaving
+  the future socket loop to provide transport without duplicating
+  architecture-specific mutation logic.
   Workload manifests and replay
   plans can declare exact expected remote-send records, exact progress-free
   transition records, remote-flow actual sets, and remote source/target endpoint
@@ -1207,10 +1208,12 @@ Implementation evidence through 2026-06-01:
   seeds that session from a `RiscvHartState` snapshot, preserving the same
   RISC-V register order for all-register and single-register reads without
   moving ISA-specific register numbering into the debug crate. The same module
-  applies parsed generic `G` and `P n...=r...` register-write commands back to
-  the hart after validating XLEN-sized payloads and the supported `x0` through
-  `x31` plus `pc` register set, and exposes a packet handler that keeps session
-  state and hart state synchronized for register writes.
+  can seed sessions from live `RiscvCore` state, applies parsed generic `G` and
+  `P n...=r...` register-write commands back to the hart or core after
+  validating XLEN-sized payloads and the supported `x0` through `x31` plus `pc`
+  register set, and exposes packet handlers that keep session state and
+  architecture state synchronized for register writes. Core PC writes use the
+  RISC-V redirect path so fetch state and architectural PC do not diverge.
 - `rem6-memory` now keeps `MemoryRequest`, `MemoryResponse`, response status,
   atomic request payload validation, and atomic read-modify-write byte
   materialization in a focused `request` module. Memory source-policy tests keep
@@ -2853,10 +2856,10 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   annexes until those states are modeled through the debug register cache.
   System RISC-V debug-session tests cover `qSupported` feature advertising and
   RV32/RV64 `qXfer:features:read` serving through the constructed session,
-  plus RV32/RV64 hart register snapshots for `g` and `p n` packets with
-  typed RV32/RV64 `G` and `P n...=r...` writeback into integer registers and
-  `pc`, including wrong-length, unsupported-register, and packet-handler
-  writeback error paths.
+  plus RV32/RV64 hart and live-core register snapshots for `g` and `p n`
+  packets with typed RV32/RV64 `G` and `P n...=r...` writeback into integer
+  registers and `pc`, including wrong-length, unsupported-register,
+  packet-handler writeback error paths, and synchronized core fetch-PC updates.
   RISC-V PMP tests cover TOR, NA4, and NAPOT range decoding, lowest
   matching-entry priority, locked-entry write rejection, locked TOR lower-bound
   protection, configuration-before-address materialization, default inactive

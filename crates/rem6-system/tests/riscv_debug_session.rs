@@ -1,10 +1,14 @@
+use rem6_cpu::{CpuCore, CpuFetchConfig, CpuId, CpuResetState, RiscvCore};
 use rem6_debug::{GdbRemoteCommand, GdbRemoteFrame, GdbRemotePacket};
 use rem6_isa_riscv::{Register, RiscvGdbXlen, RiscvHartState};
+use rem6_kernel::PartitionId;
+use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout};
 use rem6_system::{
-    apply_riscv_gdb_remote_register_write, handle_riscv_gdb_remote_packet,
-    riscv_gdb_remote_session, riscv_gdb_remote_session_from_hart, RiscvGdbRegisterWriteError,
-    RiscvGdbRemotePacketError,
+    apply_riscv_gdb_remote_register_write, handle_riscv_gdb_remote_core_packet,
+    handle_riscv_gdb_remote_packet, riscv_gdb_remote_session, riscv_gdb_remote_session_from_core,
+    riscv_gdb_remote_session_from_hart, RiscvGdbRegisterWriteError, RiscvGdbRemotePacketError,
 };
+use rem6_transport::{MemoryRoute, MemoryTransport, TransportEndpointId};
 
 #[test]
 fn riscv_gdb_remote_session_advertises_target_description_xfer() {
@@ -310,6 +314,136 @@ fn riscv_gdb_remote_packet_handler_reports_writeback_errors() {
         ),
         b"E01",
     );
+}
+
+#[test]
+fn riscv_gdb_remote_session_reports_live_core_registers() {
+    let core = riscv_core(0x8000);
+    core.write_register(Register::new(1).unwrap(), 0x0123_4567_89ab_cdef);
+
+    let mut session = riscv_gdb_remote_session_from_core(RiscvGdbXlen::Rv64, &core);
+
+    let registers = packet_payload(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"g".to_vec()).unwrap())
+            .unwrap(),
+    );
+    assert_eq!(&registers[16..32], b"efcdab8967452301");
+    assert_eq!(&registers[32 * 16..33 * 16], b"0080000000000000");
+    assert_eq!(
+        packet_payload(
+            session
+                .handle_packet(&GdbRemotePacket::new(b"p20".to_vec()).unwrap())
+                .unwrap(),
+        ),
+        b"0080000000000000",
+    );
+}
+
+#[test]
+fn riscv_gdb_remote_core_packet_handler_updates_core_registers_and_pc() {
+    let core = riscv_core(0x8000);
+    let mut session = riscv_gdb_remote_session_from_core(RiscvGdbXlen::Rv64, &core);
+
+    assert_eq!(
+        handle_riscv_gdb_remote_core_packet(
+            RiscvGdbXlen::Rv64,
+            &mut session,
+            &core,
+            &GdbRemotePacket::new(b"P1=efcdab8967452301".to_vec()).unwrap(),
+        )
+        .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"OK".to_vec()).unwrap()),
+        ],
+    );
+    assert_eq!(
+        core.read_register(Register::new(1).unwrap()),
+        0x0123_4567_89ab_cdef
+    );
+
+    assert_eq!(
+        handle_riscv_gdb_remote_core_packet(
+            RiscvGdbXlen::Rv64,
+            &mut session,
+            &core,
+            &GdbRemotePacket::new(b"P20=8877665544332211".to_vec()).unwrap(),
+        )
+        .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"OK".to_vec()).unwrap()),
+        ],
+    );
+    assert_eq!(core.pc(), Address::new(0x1122_3344_5566_7788));
+    assert_eq!(core.inner().pc(), Address::new(0x1122_3344_5566_7788));
+}
+
+#[test]
+fn riscv_gdb_remote_core_packet_handler_rejects_invalid_write_without_session_or_core_mutation() {
+    let core = riscv_core(0x8000);
+    let mut session = riscv_gdb_remote_session_from_core(RiscvGdbXlen::Rv64, &core);
+
+    assert_eq!(
+        handle_riscv_gdb_remote_core_packet(
+            RiscvGdbXlen::Rv64,
+            &mut session,
+            &core,
+            &GdbRemotePacket::new(b"P21=0000000000000000".to_vec()).unwrap(),
+        ),
+        Err(RiscvGdbRemotePacketError::RegisterWrite(
+            RiscvGdbRegisterWriteError::UnsupportedRegister { number: 33 },
+        )),
+    );
+    assert_eq!(core.pc(), Address::new(0x8000));
+    assert_eq!(
+        packet_payload(
+            session
+                .handle_packet(&GdbRemotePacket::new(b"p21".to_vec()).unwrap())
+                .unwrap(),
+        ),
+        b"E01",
+    );
+}
+
+fn riscv_core(entry: u64) -> RiscvCore {
+    let mut transport = MemoryTransport::new();
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    RiscvCore::new(
+        CpuCore::new(
+            CpuResetState::new(
+                CpuId::new(0),
+                PartitionId::new(0),
+                AgentId::new(7),
+                Address::new(entry),
+            ),
+            CpuFetchConfig::new(
+                endpoint("cpu0.ifetch"),
+                route,
+                CacheLineLayout::new(16).unwrap(),
+                AccessSize::new(4).unwrap(),
+            ),
+        )
+        .unwrap(),
+    )
+}
+
+fn endpoint(name: &str) -> TransportEndpointId {
+    TransportEndpointId::new(name).unwrap()
 }
 
 fn packet_payload(frames: Vec<GdbRemoteFrame>) -> Vec<u8> {
