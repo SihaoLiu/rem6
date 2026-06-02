@@ -15,6 +15,8 @@ fn line(fill: u8) -> Vec<u8> {
     vec![fill; 16]
 }
 
+const OVERSIZED_VECTOR_LENGTH: u64 = isize::MAX as u64 + 1;
+
 fn write_u16(bytes: &mut [u8], offset: usize, value: u16) {
     bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
 }
@@ -883,6 +885,31 @@ fn boot_image_rejects_elf64_segment_memory_overflow_with_segment_context() {
                 segment: 0,
                 physical: u64::MAX - 1,
                 memory_size: 4,
+            },
+        },
+    );
+}
+
+#[test]
+fn boot_image_rejects_elf64_segment_memory_above_vec_capacity_before_allocation() {
+    let elf = elf64_image(
+        0x8000,
+        &[ElfProgramHeaderSpec {
+            kind: 1,
+            offset: 0,
+            physical: 0,
+            file_size: 0,
+            memory_size: OVERSIZED_VECTOR_LENGTH,
+        }],
+        &[],
+    );
+
+    assert_eq!(
+        BootImage::from_elf64_le(&elf).unwrap_err(),
+        BootError::InvalidElf {
+            reason: BootElfError::SegmentMemorySizeTooLarge {
+                segment: 0,
+                memory_size: OVERSIZED_VECTOR_LENGTH,
             },
         },
     );

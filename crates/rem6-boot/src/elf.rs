@@ -33,6 +33,7 @@ const EM_SPARCV9: u16 = 43;
 const EM_X86_64: u16 = 62;
 const EM_AARCH64: u16 = 183;
 const EM_RISCV: u16 = 243;
+const MAX_VEC_BYTES: usize = isize::MAX as usize;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BootElfEndian {
@@ -327,12 +328,6 @@ fn parse_elf64(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
                 image_size: bytes.len() as u64,
             })
         })?;
-        let memory_len = usize::try_from(memory_size).map_err(|_| {
-            invalid_elf(BootElfError::SegmentMemorySizeTooLarge {
-                segment: index,
-                memory_size,
-            })
-        })?;
         let memory_access_size = AccessSize::new(memory_size).map_err(|_| {
             invalid_elf(BootElfError::SegmentMemoryRangeOverflow {
                 segment: index,
@@ -347,17 +342,7 @@ fn parse_elf64(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
                 memory_size,
             })
         })?;
-        let file_len = usize::try_from(file_size).map_err(|_| {
-            invalid_elf(BootElfError::SegmentFileRangeOutOfBounds {
-                segment: index,
-                offset: file_offset,
-                size: file_size,
-                image_size: bytes.len() as u64,
-            })
-        })?;
-
-        let mut data = vec![0; memory_len];
-        data[..file_len].copy_from_slice(file_range);
+        let data = zeroed_segment_data(index, memory_size, file_range)?;
         image = image.add_segment(Address::new(physical), data)?;
         loaded_segments += 1;
     }
@@ -472,12 +457,6 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
                 memory_size,
             }));
         }
-        let memory_len = usize::try_from(memory_size).map_err(|_| {
-            invalid_elf(BootElfError::SegmentMemorySizeTooLarge {
-                segment: index,
-                memory_size,
-            })
-        })?;
         let memory_access_size = AccessSize::new(memory_size).map_err(|_| {
             invalid_elf(BootElfError::SegmentMemoryRangeOverflow {
                 segment: index,
@@ -492,17 +471,7 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
                 memory_size,
             })
         })?;
-        let file_len = usize::try_from(file_size).map_err(|_| {
-            invalid_elf(BootElfError::SegmentFileRangeOutOfBounds {
-                segment: index,
-                offset: file_offset,
-                size: file_size,
-                image_size: bytes.len() as u64,
-            })
-        })?;
-
-        let mut data = vec![0; memory_len];
-        data[..file_len].copy_from_slice(file_range);
+        let data = zeroed_segment_data(index, memory_size, file_range)?;
         image = image.add_segment(Address::new(physical), data)?;
         loaded_segments += 1;
     }
@@ -512,6 +481,40 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
     }
 
     Ok(image)
+}
+
+fn zeroed_segment_data(
+    segment: u16,
+    memory_size: u64,
+    file_range: &[u8],
+) -> Result<Vec<u8>, BootError> {
+    let memory_len = segment_memory_len(segment, memory_size)?;
+    let mut data = Vec::new();
+    data.try_reserve_exact(memory_len).map_err(|_| {
+        invalid_elf(BootElfError::SegmentMemorySizeTooLarge {
+            segment,
+            memory_size,
+        })
+    })?;
+    data.resize(memory_len, 0);
+    data[..file_range.len()].copy_from_slice(file_range);
+    Ok(data)
+}
+
+fn segment_memory_len(segment: u16, memory_size: u64) -> Result<usize, BootError> {
+    let memory_len = usize::try_from(memory_size).map_err(|_| {
+        invalid_elf(BootElfError::SegmentMemorySizeTooLarge {
+            segment,
+            memory_size,
+        })
+    })?;
+    if memory_len > MAX_VEC_BYTES {
+        return Err(invalid_elf(BootElfError::SegmentMemorySizeTooLarge {
+            segment,
+            memory_size,
+        }));
+    }
+    Ok(memory_len)
 }
 
 fn validate_elf_ident(
