@@ -1,16 +1,20 @@
 use rem6_cpu::RiscvCore;
 use rem6_debug::{
-    GdbRemoteCommand, GdbRemoteError, GdbRemoteFeature, GdbRemoteFeatureValue, GdbRemoteFrame,
-    GdbRemotePacket, GdbRemoteRegisterBytes, GdbRemoteSession,
+    GdbRemoteAckMode, GdbRemoteCommand, GdbRemoteError, GdbRemoteFeature, GdbRemoteFeatureValue,
+    GdbRemoteFrame, GdbRemotePacket, GdbRemoteRegisterBytes, GdbRemoteSession,
     DEFAULT_GDB_REMOTE_MAX_PAYLOAD_BYTES,
 };
 use rem6_isa_riscv::{Register, RiscvGdbTargetDescription, RiscvGdbXlen, RiscvHartState};
-use rem6_memory::Address;
+use rem6_memory::{
+    AccessSize, Address, AgentId, ByteMask, MemoryError, MemoryRequest, MemoryRequestId,
+    PartitionedMemoryStore,
+};
 use std::error::Error;
 use std::fmt;
 
 const RISCV_GDB_INTEGER_REGISTER_COUNT: u8 = 32;
 const RISCV_GDB_PC_REGISTER: u64 = 32;
+const RISCV_GDB_MEMORY_AGENT: AgentId = AgentId::new(u32::MAX - 1);
 
 pub fn riscv_gdb_remote_session(xlen: RiscvGdbXlen) -> GdbRemoteSession {
     let mut session = GdbRemoteSession::new(vec![
@@ -215,6 +219,46 @@ pub fn handle_riscv_gdb_remote_core_packet(
     Ok(frames)
 }
 
+pub fn handle_riscv_gdb_remote_memory_packet(
+    session: &mut GdbRemoteSession,
+    memory: &mut PartitionedMemoryStore,
+    packet: &GdbRemotePacket,
+) -> Result<Vec<GdbRemoteFrame>, RiscvGdbRemotePacketError> {
+    if session.is_disconnected() {
+        return Ok(session.handle_packet(packet)?);
+    }
+
+    let command = GdbRemoteCommand::parse(packet);
+    match &command {
+        GdbRemoteCommand::ReadMemory { address, length } => {
+            let Some(max_hex_len) = length.checked_mul(2) else {
+                return gdb_remote_error_response(session);
+            };
+            if max_hex_len > session.response_config().max_payload_bytes() {
+                return gdb_remote_error_response(session);
+            }
+
+            let bytes = match read_partitioned_memory_bytes(memory, *address, *length) {
+                Ok(bytes) => bytes,
+                Err(_) => return gdb_remote_error_response(session),
+            };
+            session.set_memory_bytes(*address, bytes);
+            Ok(session.handle_packet(packet)?)
+        }
+        GdbRemoteCommand::WriteMemory { address, bytes } => {
+            let mut updated_memory = memory.clone();
+            if write_partitioned_memory_bytes(&mut updated_memory, *address, bytes).is_err() {
+                return gdb_remote_error_response(session);
+            }
+
+            let frames = session.handle_packet(packet)?;
+            *memory = updated_memory;
+            Ok(frames)
+        }
+        _ => Ok(session.handle_packet(packet)?),
+    }
+}
+
 fn sync_riscv_gdb_remote_session_from_hart(
     xlen: RiscvGdbXlen,
     session: &mut GdbRemoteSession,
@@ -245,6 +289,80 @@ const fn reads_riscv_gdb_remote_registers(command: &GdbRemoteCommand) -> bool {
         command,
         GdbRemoteCommand::ReadRegisters | GdbRemoteCommand::ReadRegister { .. }
     )
+}
+
+fn read_partitioned_memory_bytes(
+    memory: &PartitionedMemoryStore,
+    address: u64,
+    length: usize,
+) -> Result<Vec<u8>, MemoryError> {
+    if length == 0 {
+        return Ok(Vec::new());
+    }
+
+    let start = Address::new(address);
+    memory.validate_access_range(start, AccessSize::new(length as u64)?)?;
+
+    let mut bytes = Vec::with_capacity(length);
+    while bytes.len() < length {
+        let current = Address::new(address + bytes.len() as u64);
+        let decode = memory.decode_detail(current)?;
+        let layout = memory.partition_layout(decode.target())?;
+        let line = layout.line_address(current);
+        let line_offset = layout.line_offset(current) as usize;
+        let chunk_len = (layout.bytes() as usize - line_offset).min(length - bytes.len());
+        let line_data = memory.line_data(decode.target(), line)?;
+        bytes.extend_from_slice(&line_data[line_offset..line_offset + chunk_len]);
+    }
+    Ok(bytes)
+}
+
+fn write_partitioned_memory_bytes(
+    memory: &mut PartitionedMemoryStore,
+    address: u64,
+    bytes: &[u8],
+) -> Result<(), MemoryError> {
+    if bytes.is_empty() {
+        return Ok(());
+    }
+
+    let start = Address::new(address);
+    memory.validate_access_range(start, AccessSize::new(bytes.len() as u64)?)?;
+
+    let mut offset = 0;
+    while offset < bytes.len() {
+        let current = Address::new(address + offset as u64);
+        let decode = memory.decode_detail(current)?;
+        let layout = memory.partition_layout(decode.target())?;
+        let line_offset = layout.line_offset(current) as usize;
+        let chunk_len = (layout.bytes() as usize - line_offset).min(bytes.len() - offset);
+        let size = AccessSize::new(chunk_len as u64)?;
+        let request = MemoryRequest::write(
+            MemoryRequestId::new(RISCV_GDB_MEMORY_AGENT, offset as u64),
+            current,
+            size,
+            bytes[offset..offset + chunk_len].to_vec(),
+            ByteMask::full(size)?,
+            layout,
+        )?;
+        memory.respond(&request)?;
+        offset += chunk_len;
+    }
+    Ok(())
+}
+
+fn gdb_remote_error_response(
+    session: &GdbRemoteSession,
+) -> Result<Vec<GdbRemoteFrame>, RiscvGdbRemotePacketError> {
+    let mut frames = Vec::new();
+    if session.ack_mode() == GdbRemoteAckMode::Acknowledged {
+        frames.push(GdbRemoteFrame::Ack);
+    }
+    frames.push(GdbRemoteFrame::Packet(GdbRemotePacket::with_config(
+        b"E01".to_vec(),
+        session.response_config(),
+    )?));
+    Ok(frames)
 }
 
 fn riscv_gdb_register_bytes(xlen: RiscvGdbXlen, hart: &RiscvHartState) -> Vec<u8> {

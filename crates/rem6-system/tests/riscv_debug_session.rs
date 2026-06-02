@@ -2,10 +2,13 @@ use rem6_cpu::{CpuCore, CpuFetchConfig, CpuId, CpuResetState, RiscvCore};
 use rem6_debug::{GdbRemoteCommand, GdbRemoteFrame, GdbRemotePacket};
 use rem6_isa_riscv::{Register, RiscvGdbXlen, RiscvHartState};
 use rem6_kernel::PartitionId;
-use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout};
+use rem6_memory::{
+    AccessSize, Address, AgentId, CacheLineLayout, MemoryTargetId, PartitionedMemoryStore,
+};
 use rem6_system::{
     apply_riscv_gdb_remote_register_write, handle_riscv_gdb_remote_core_packet,
-    handle_riscv_gdb_remote_packet, riscv_gdb_remote_session, riscv_gdb_remote_session_from_core,
+    handle_riscv_gdb_remote_memory_packet, handle_riscv_gdb_remote_packet,
+    riscv_gdb_remote_session, riscv_gdb_remote_session_from_core,
     riscv_gdb_remote_session_from_hart, RiscvGdbRegisterWriteError, RiscvGdbRemotePacketError,
 };
 use rem6_transport::{MemoryRoute, MemoryTransport, TransportEndpointId};
@@ -567,6 +570,84 @@ fn riscv_gdb_remote_core_packet_handler_does_not_write_after_disconnect() {
     assert_eq!(core.read_register(Register::new(1).unwrap()), 0);
 }
 
+#[test]
+fn riscv_gdb_remote_memory_packet_handler_reads_partitioned_store_across_lines() {
+    let mut store = debug_memory_store();
+    let mut session = riscv_gdb_remote_session(RiscvGdbXlen::Rv64);
+
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_memory_packet(
+                &mut session,
+                &mut store,
+                &GdbRemotePacket::new(b"m100e,4".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"eeff1122",
+    );
+}
+
+#[test]
+fn riscv_gdb_remote_memory_packet_handler_writes_partitioned_store_across_lines() {
+    let mut store = debug_memory_store();
+    let mut session = riscv_gdb_remote_session(RiscvGdbXlen::Rv64);
+
+    assert_eq!(
+        handle_riscv_gdb_remote_memory_packet(
+            &mut session,
+            &mut store,
+            &GdbRemotePacket::new(b"M100e,4:aabbccdd".to_vec()).unwrap(),
+        )
+        .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"OK".to_vec()).unwrap()),
+        ],
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_memory_packet(
+                &mut session,
+                &mut store,
+                &GdbRemotePacket::new(b"m100c,8".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"ccddaabbccdd3344",
+    );
+}
+
+#[test]
+fn riscv_gdb_remote_memory_packet_handler_rejects_invalid_write_without_partial_update() {
+    let mut store = debug_memory_store();
+    let mut session = riscv_gdb_remote_session(RiscvGdbXlen::Rv64);
+
+    assert_eq!(
+        handle_riscv_gdb_remote_memory_packet(
+            &mut session,
+            &mut store,
+            &GdbRemotePacket::new(b"M101f,2:aabb".to_vec()).unwrap(),
+        )
+        .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"E01".to_vec()).unwrap()),
+        ],
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_memory_packet(
+                &mut session,
+                &mut store,
+                &GdbRemotePacket::new(b"m100c,8".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"ccddeeff11223344",
+    );
+}
+
 fn riscv_core(entry: u64) -> RiscvCore {
     let mut transport = MemoryTransport::new();
     let route = transport
@@ -604,6 +685,37 @@ fn riscv_core(entry: u64) -> RiscvCore {
 
 fn endpoint(name: &str) -> TransportEndpointId {
     TransportEndpointId::new(name).unwrap()
+}
+
+fn debug_memory_store() -> PartitionedMemoryStore {
+    let target = MemoryTargetId::new(0);
+    let layout = CacheLineLayout::new(16).unwrap();
+    let mut store = PartitionedMemoryStore::new();
+    store.add_partition(target, layout).unwrap();
+    store
+        .map_region(target, Address::new(0x1000), AccessSize::new(0x20).unwrap())
+        .unwrap();
+    store
+        .insert_line(
+            target,
+            Address::new(0x1000),
+            vec![
+                0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd,
+                0xee, 0xff,
+            ],
+        )
+        .unwrap();
+    store
+        .insert_line(
+            target,
+            Address::new(0x1010),
+            vec![
+                0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee,
+                0xff, 0x00,
+            ],
+        )
+        .unwrap();
+    store
 }
 
 fn register_write_packet(bytes: &[u8]) -> GdbRemotePacket {

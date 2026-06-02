@@ -398,14 +398,18 @@ isolated bugs:
   `qXfer:features:read+` through `qSupported` and registering RV32/RV64
   target-description documents produced by `rem6-isa-riscv`, keeping protocol
   parsing generic while leaving architecture XML ownership in the ISA crate.
-  The same system boundary can seed `g` and `p n` register replies from a
+  The same system boundary can seed `g` and `p n` register replies from
   RISC-V hart snapshots or live `RiscvCore` state, using the target-description
   order for `x0` through `x31` and `pc`, XLEN-sized little-endian values, and
   typed `G`/`P n...=r...` writeback into hart or core state with explicit
   length and unsupported-register errors. A system packet handler now runs the
   generic session response and the RISC-V register writeback together, leaving
   the future socket loop to provide transport without duplicating
-  architecture-specific mutation logic.
+  architecture-specific mutation logic. Store-backed `m` and
+  `M addr,length:XX...` packets are also handled at the system boundary by
+  reading and writing `PartitionedMemoryStore` ranges across cache-line
+  boundaries, returning `E01` for invalid ranges without partially mutating
+  guest memory.
   Workload manifests and replay
   plans can declare exact expected remote-send records, exact progress-free
   transition records, remote-flow actual sets, and remote source/target endpoint
@@ -1213,7 +1217,10 @@ Implementation evidence through 2026-06-01:
   validating XLEN-sized payloads and the supported `x0` through `x31` plus `pc`
   register set, and exposes packet handlers that keep session state and
   architecture state synchronized for register writes. Core PC writes use the
-  RISC-V redirect path so fetch state and architectural PC do not diverge.
+  RISC-V redirect path so fetch state and architectural PC do not diverge. The
+  same module also bridges generic `m`/`M` memory packets to store-backed guest
+  memory, splitting accesses at cache-line boundaries and rejecting invalid
+  ranges before committing writes.
 - `rem6-memory` now keeps `MemoryRequest`, `MemoryResponse`, response status,
   atomic request payload validation, and atomic read-modify-write byte
   materialization in a focused `request` module. Memory source-policy tests keep
