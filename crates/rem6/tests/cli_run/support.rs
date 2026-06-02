@@ -120,19 +120,53 @@ pub(crate) fn temp_output(name: &str) -> std::path::PathBuf {
 }
 
 pub(crate) fn assert_stat(stdout: &str, path: &str, unit: &str, value: u64, reset_policy: &str) {
+    let sample = stat_sample(stdout, path);
     let (scope, name) = stat_scope_and_name(path);
     let scope_json = scope
         .iter()
         .map(|segment| format!("\"{segment}\""))
         .collect::<Vec<_>>()
         .join(",");
-    let expected = format!(
-        "\"path\":\"{path}\",\"scope\":[{scope_json}],\"name\":\"{name}\",\"unit\":\"{unit}\",\"value\":{value},\"reset_policy\":\"{reset_policy}\",\"description\":null"
-    );
+
+    let expected_fields = [
+        format!("\"path\":\"{path}\""),
+        format!("\"scope\":[{scope_json}]"),
+        format!("\"name\":\"{name}\""),
+        format!("\"unit\":\"{unit}\""),
+        format!("\"value\":{value}"),
+        format!("\"reset_policy\":\"{reset_policy}\""),
+        "\"description\":null".to_string(),
+    ];
+    for expected in expected_fields {
+        assert!(
+            sample.contains(&expected),
+            "missing stat field {expected} in {sample}"
+        );
+    }
+}
+
+pub(crate) fn assert_stat_id(stdout: &str, path: &str, id: u64) {
+    let sample = stat_sample(stdout, path);
+    let expected = format!("\"id\":{id}");
     assert!(
-        stdout.contains(&expected),
-        "missing stat {expected} in {stdout}"
+        sample.contains(&expected),
+        "missing stat field {expected} in {sample}"
     );
+}
+
+fn stat_sample<'a>(stdout: &'a str, path: &str) -> &'a str {
+    let path_field = format!("\"path\":\"{path}\"");
+    let path_index = stdout
+        .find(&path_field)
+        .unwrap_or_else(|| panic!("missing stat path {path} in {stdout}"));
+    let sample_start = stdout[..path_index]
+        .rfind('{')
+        .unwrap_or_else(|| panic!("missing stat object start for {path} in {stdout}"));
+    let sample_end = stdout[path_index..]
+        .find('}')
+        .map(|offset| path_index + offset + 1)
+        .unwrap_or_else(|| panic!("missing stat object end for {path} in {stdout}"));
+    &stdout[sample_start..sample_end]
 }
 
 fn stat_scope_and_name(path: &str) -> (Vec<&str>, &str) {
