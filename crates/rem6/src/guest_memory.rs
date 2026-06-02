@@ -110,6 +110,10 @@ fn build_cli_dram_profile(
             ExternalMemoryProfile::ddr(CLI_MEMORY_TARGET, line_layout, 1, 1, geometry, timing)
         }
         CliDramMemoryProfile::Hbm => {
+            let geometry = geometry.with_bank_groups(2).map_err(execute_error)?;
+            let timing = timing
+                .with_same_bank_group_burst_spacing(6)
+                .map_err(execute_error)?;
             ExternalMemoryProfile::hbm(CLI_MEMORY_TARGET, line_layout, 2, 2, geometry, timing)
         }
         CliDramMemoryProfile::Lpddr => {

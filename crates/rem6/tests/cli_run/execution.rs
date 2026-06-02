@@ -565,6 +565,9 @@ fn rem6_run_can_select_external_memory_profile_for_dram_backed_execution() {
         topology_units: u64,
         scheduler_banks: u64,
         topology_banks: u64,
+        bank_group_count: u64,
+        scheduler_bank_groups: u64,
+        same_bank_group_burst_spacing: u64,
     }
 
     let program = riscv64_program(&[
@@ -583,6 +586,9 @@ fn rem6_run_can_select_external_memory_profile_for_dram_backed_execution() {
             topology_units: 4,
             scheduler_banks: 16,
             topology_banks: 16,
+            bank_group_count: 2,
+            scheduler_bank_groups: 8,
+            same_bank_group_burst_spacing: 6,
         },
         Case {
             profile: "lpddr",
@@ -592,6 +598,9 @@ fn rem6_run_can_select_external_memory_profile_for_dram_backed_execution() {
             topology_units: 4,
             scheduler_banks: 8,
             topology_banks: 16,
+            bank_group_count: 0,
+            scheduler_bank_groups: 0,
+            same_bank_group_burst_spacing: 0,
         },
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
@@ -637,6 +646,15 @@ fn rem6_run_can_select_external_memory_profile_for_dram_backed_execution() {
         assert!(stdout.contains(&format!("\"topology_units\":{}", case.topology_units)));
         assert!(stdout.contains(&format!("\"scheduler_banks\":{}", case.scheduler_banks)));
         assert!(stdout.contains(&format!("\"topology_banks\":{}", case.topology_banks)));
+        assert!(stdout.contains(&format!("\"bank_group_count\":{}", case.bank_group_count)));
+        assert!(stdout.contains(&format!(
+            "\"same_bank_group_burst_spacing\":{}",
+            case.same_bank_group_burst_spacing
+        )));
+        assert!(stdout.contains(&format!(
+            "\"scheduler_bank_groups\":{}",
+            case.scheduler_bank_groups
+        )));
         assert_stat(
             &stdout,
             &format!("sim.memory.dram.profile.technology.{}", case.profile),
@@ -670,6 +688,27 @@ fn rem6_run_can_select_external_memory_profile_for_dram_backed_execution() {
             "sim.memory.dram.profile.topology_banks",
             "Count",
             case.topology_banks,
+            "constant",
+        );
+        assert_stat(
+            &stdout,
+            "sim.memory.dram.profile.geometry.bank_group_count",
+            "Count",
+            case.bank_group_count,
+            "constant",
+        );
+        assert_stat(
+            &stdout,
+            "sim.memory.dram.profile.timing.same_bank_group_burst_spacing",
+            "Tick",
+            case.same_bank_group_burst_spacing,
+            "constant",
+        );
+        assert_stat(
+            &stdout,
+            "sim.memory.dram.profile.scheduler_bank_groups",
+            "Count",
+            case.scheduler_bank_groups,
             "constant",
         );
     }
