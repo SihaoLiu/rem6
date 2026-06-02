@@ -1769,10 +1769,14 @@ Implementation evidence through 2026-06-02:
   declaration field so workload artifacts cannot silently drift when a NIC
   BAR, route, or interrupt source changes. Runtime replay results now preserve
   those manifest declarations as typed SINIC PCI device summaries with BDF,
-  BAR, MMIO endpoint, MMIO route, and interrupt-source evidence, while full
-  replay-time SINIC PCI device instantiation remains a separate boundary from
-  the existing direct topology builder. The SINIC FIFO path now covers checksum
-  offload:
+  BAR, MMIO endpoint, MMIO route, and interrupt-source evidence. `rem6-system`
+  can also convert a workload SINIC PCI declaration plus its validated MMIO
+  route into the existing topology-system SINIC PCI device config, preserving
+  the endpoint function, BAR base, route latency, interrupt source, shared PCI
+  host, shared legacy INTx router, and register parameters without string-side
+  parameter rebuilding. Full replay-time SINIC PCI device instantiation remains
+  a separate boundary from the existing direct topology builder. The SINIC FIFO
+  path now covers checksum offload:
   RX DMA completion reports IPv4/TCP/UDP packet and checksum-error status bits,
   and TX DMA completion fills IPv4 plus TCP/UDP checksums when
   `TxData_Checksum` is set.

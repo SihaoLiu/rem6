@@ -28,6 +28,7 @@ use rem6_topology::{
     ComponentId, ComponentKind, ComponentSpec, Endpoint, PortDirection, PortName, Topology,
     TopologyBuilder,
 };
+use rem6_workload::{WorkloadMemoryRoute, WorkloadRouteId, WorkloadSinicPciDevice};
 
 fn component(name: &str) -> ComponentId {
     ComponentId::new(name).unwrap()
@@ -140,6 +141,29 @@ fn pci_function() -> PciFunctionAddress {
     PciFunctionAddress::new(0, 9, 0).unwrap()
 }
 
+fn workload_route_id(value: &str) -> WorkloadRouteId {
+    WorkloadRouteId::new(value).unwrap()
+}
+
+fn workload_sinic_pci_device() -> WorkloadSinicPciDevice {
+    WorkloadSinicPciDevice::new(
+        3,
+        1,
+        0,
+        9,
+        0,
+        Address::new(0x8000_0000),
+        "sinic0.mmio",
+        workload_route_id("sinic0.mmio"),
+        0x1293,
+    )
+    .unwrap()
+}
+
+fn workload_sinic_mmio_route(id: WorkloadRouteId) -> WorkloadMemoryRoute {
+    WorkloadMemoryRoute::new(id, "cpu0.dmem", 0, "sinic0.mmio", 1, 5, 7).unwrap()
+}
+
 fn pci_host() -> Arc<Mutex<PciHostBridge>> {
     let aperture = PciConfigAperture::ecam(Address::new(0x3000_0000), 1).unwrap();
     let bases = PciHostAddressBases::new(
@@ -227,6 +251,72 @@ fn corrupt_register_config_chunk(
         })
         .collect();
     CheckpointManifest::new(manifest.label().to_string(), manifest.tick(), states)
+}
+
+#[test]
+fn workload_sinic_pci_declaration_builds_topology_device_config() {
+    let device = workload_sinic_pci_device();
+    let route = workload_sinic_mmio_route(workload_route_id("sinic0.mmio"));
+    let pci_host = pci_host();
+    let router = legacy_interrupt_router();
+    let register_params = SinicRegisterParams::default()
+        .with_interrupt_mask(SinicInterrupts::SOFT | SinicInterrupts::RX_DMA)
+        .with_hardware_address(0x00aa_bbcc_ddee);
+
+    let config = RiscvTopologySinicPciDeviceConfig::from_workload_device(
+        &device,
+        &route,
+        Arc::clone(&pci_host),
+        Arc::clone(&router),
+        register_params,
+    )
+    .unwrap();
+
+    assert_eq!(config.spec().function(), pci_function());
+    assert_eq!(config.bar_base(), Address::new(0x8000_0000));
+    assert_eq!(
+        config.mmio_route(),
+        MmioRoute::new(PartitionId::new(0), PartitionId::new(1), 5, 7).unwrap()
+    );
+    assert_eq!(config.interrupt_source(), InterruptSourceId::new(0x1293));
+    assert_eq!(config.register_params(), register_params);
+    assert!(Arc::ptr_eq(&config.pci_host(), &pci_host));
+    assert!(Arc::ptr_eq(&config.legacy_interrupt_router(), &router));
+
+    let system = base_system()
+        .with_platform(PlatformBuilder::new(2).build().unwrap())
+        .unwrap()
+        .with_sinic_pci_device(config)
+        .unwrap();
+
+    assert!(pci_host.lock().unwrap().endpoint(pci_function()).is_some());
+    assert!(system.platform_bus().is_some());
+}
+
+#[test]
+fn workload_sinic_pci_declaration_rejects_wrong_mmio_route() {
+    let device = workload_sinic_pci_device();
+    let route = workload_sinic_mmio_route(workload_route_id("other.mmio"));
+
+    let error = match RiscvTopologySinicPciDeviceConfig::from_workload_device(
+        &device,
+        &route,
+        pci_host(),
+        legacy_interrupt_router(),
+        SinicRegisterParams::default(),
+    ) {
+        Ok(_) => panic!("workload SINIC PCI config accepted the wrong MMIO route"),
+        Err(error) => error,
+    };
+
+    assert_eq!(
+        error,
+        RiscvTopologySystemError::WorkloadSinicPciMmioRouteMismatch {
+            nic: 3,
+            expected: workload_route_id("sinic0.mmio"),
+            actual: workload_route_id("other.mmio"),
+        }
+    );
 }
 
 #[test]

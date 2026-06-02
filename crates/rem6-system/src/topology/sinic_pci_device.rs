@@ -3,14 +3,16 @@ use std::sync::{Arc, Mutex};
 
 use rem6_checkpoint::CheckpointComponentId;
 use rem6_interrupt::InterruptSourceId;
+use rem6_kernel::PartitionId;
 use rem6_memory::Address;
 use rem6_mmio::{MmioRoute, UnsupportedMmioDevice};
 use rem6_net::{SinicFifoDevice, SinicMmioDevice, SinicPciEndpointSpec, SinicRegisterParams};
 use rem6_pci::{
-    PciBarKind, PciConfigOffset, PciHostAddressSpace, PciHostBarRange, PciHostBridge,
-    PciLegacyInterruptRouter,
+    PciBarKind, PciConfigOffset, PciFunctionAddress, PciHostAddressSpace, PciHostBarRange,
+    PciHostBridge, PciLegacyInterruptRouter,
 };
 use rem6_platform::PlatformError;
+use rem6_workload::{WorkloadMemoryRoute, WorkloadSinicPciDevice};
 
 use crate::{
     PciHostCheckpointPort, PciLegacyInterruptRouterCheckpointPort, SinicFifoCheckpointPort,
@@ -60,6 +62,44 @@ impl RiscvTopologySinicPciDeviceConfig {
             pci_legacy_interrupt_router_checkpoint_component:
                 default_pci_legacy_interrupt_router_checkpoint_component(spec.function()),
         }
+    }
+
+    pub fn from_workload_device(
+        device: &WorkloadSinicPciDevice,
+        route: &WorkloadMemoryRoute,
+        pci_host: Arc<Mutex<PciHostBridge>>,
+        legacy_interrupt_router: Arc<Mutex<PciLegacyInterruptRouter>>,
+        register_params: SinicRegisterParams,
+    ) -> Result<Self, RiscvTopologySystemError> {
+        if route.id() != device.mmio_route() {
+            return Err(
+                RiscvTopologySystemError::WorkloadSinicPciMmioRouteMismatch {
+                    nic: device.nic(),
+                    expected: device.mmio_route().clone(),
+                    actual: route.id().clone(),
+                },
+            );
+        }
+        let function =
+            PciFunctionAddress::new(device.pci_bus(), device.pci_device(), device.pci_function())
+                .map_err(RiscvTopologySystemError::Pci)?;
+        let mmio_route = MmioRoute::new(
+            PartitionId::new(route.source_partition()),
+            PartitionId::new(route.target_partition()),
+            route.request_latency(),
+            route.response_latency(),
+        )
+        .map_err(PlatformError::Mmio)
+        .map_err(RiscvTopologySystemError::Platform)?;
+        Ok(Self::new(
+            SinicPciEndpointSpec::new(function),
+            pci_host,
+            legacy_interrupt_router,
+            device.bar_base(),
+            mmio_route,
+            InterruptSourceId::new(device.interrupt_source()),
+            register_params,
+        ))
     }
 
     pub const fn spec(&self) -> SinicPciEndpointSpec {
