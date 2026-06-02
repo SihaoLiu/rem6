@@ -4,6 +4,7 @@ use std::fmt;
 
 use rem6_memory::{Address, AgentId};
 
+use crate::allocation::max_vector_len;
 use crate::prefetch::PrefetchCandidate;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -36,18 +37,39 @@ impl PifPrefetcherConfig {
         if preceding_blocks == 0 && succeeding_blocks == 0 {
             return Err(PifPrefetcherError::EmptySpatialWindow);
         }
+        validate_pif_vector_length(
+            "spatial window blocks",
+            preceding_blocks.saturating_add(succeeding_blocks),
+            maximum_pif_spatial_window_blocks(),
+        )?;
         if temporal_compactor_entries == 0 {
             return Err(PifPrefetcherError::ZeroTemporalCompactorEntries);
         }
+        validate_pif_vector_length(
+            "temporal compactor entries",
+            temporal_compactor_entries,
+            maximum_pif_temporal_compactor_entries(),
+        )?;
         if stream_address_buffer_entries == 0 {
             return Err(PifPrefetcherError::ZeroStreamAddressBufferEntries);
         }
+        validate_pif_vector_length(
+            "stream address buffer entries",
+            stream_address_buffer_entries,
+            max_vector_len::<u64>(),
+        )?;
         if history_buffer_entries == 0 {
             return Err(PifPrefetcherError::ZeroHistoryBufferEntries);
         }
+        validate_pif_vector_length(
+            "history buffer entries",
+            history_buffer_entries,
+            maximum_pif_history_entries(),
+        )?;
         if index_entries == 0 {
             return Err(PifPrefetcherError::ZeroIndexEntries);
         }
+        validate_pif_vector_length("index entries", index_entries, maximum_pif_index_entries())?;
 
         Ok(Self {
             line_size,
@@ -100,6 +122,11 @@ pub enum PifPrefetcherError {
     ZeroStreamAddressBufferEntries,
     ZeroHistoryBufferEntries,
     ZeroIndexEntries,
+    VectorLengthTooLarge {
+        field: &'static str,
+        length: usize,
+        maximum: usize,
+    },
     SnapshotConfigMismatch {
         expected: Box<PifPrefetcherConfig>,
         actual: Box<PifPrefetcherConfig>,
@@ -146,6 +173,14 @@ impl fmt::Display for PifPrefetcherError {
                 write!(formatter, "PIF history buffer has no entries")
             }
             Self::ZeroIndexEntries => write!(formatter, "PIF index has no entries"),
+            Self::VectorLengthTooLarge {
+                field,
+                length,
+                maximum,
+            } => write!(
+                formatter,
+                "PIF {field} length {length} exceeds maximum {maximum}"
+            ),
             Self::SnapshotConfigMismatch { expected, actual } => write!(
                 formatter,
                 "PIF snapshot config {actual:?} does not match {expected:?}"
@@ -191,6 +226,39 @@ impl fmt::Display for PifPrefetcherError {
 }
 
 impl Error for PifPrefetcherError {}
+
+fn maximum_pif_spatial_window_blocks() -> usize {
+    max_vector_len::<i64>().min(max_vector_len::<PifPrefetchCandidate>())
+}
+
+fn maximum_pif_temporal_compactor_entries() -> usize {
+    max_vector_len::<PifCompactorEntry>().min(max_vector_len::<PifCompactorEntrySnapshot>())
+}
+
+fn maximum_pif_history_entries() -> usize {
+    max_vector_len::<PifHistoryEntry>().min(max_vector_len::<PifHistoryEntrySnapshot>())
+}
+
+fn maximum_pif_index_entries() -> usize {
+    max_vector_len::<PifIndexKey>()
+        .min(max_vector_len::<PifIndexEntrySnapshot>())
+        .min(max_vector_len::<(Address, bool)>())
+}
+
+fn validate_pif_vector_length(
+    field: &'static str,
+    length: usize,
+    maximum: usize,
+) -> Result<(), PifPrefetcherError> {
+    if length > maximum {
+        return Err(PifPrefetcherError::VectorLengthTooLarge {
+            field,
+            length,
+            maximum,
+        });
+    }
+    Ok(())
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PifPrefetchAccess {

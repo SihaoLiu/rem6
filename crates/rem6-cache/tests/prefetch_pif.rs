@@ -1,8 +1,73 @@
-use rem6_cache::{PifPrefetchAccess, PifPrefetcher, PifPrefetcherConfig};
+use rem6_cache::{
+    PifCompactorEntrySnapshot, PifHistoryEntrySnapshot, PifIndexEntrySnapshot, PifPrefetchAccess,
+    PifPrefetchCandidate, PifPrefetcher, PifPrefetcherConfig, PifPrefetcherError,
+};
 use rem6_memory::{Address, AgentId};
+
+const PIF_SPATIAL_WINDOW_BYTE_OVERFLOW_BLOCKS: usize =
+    isize::MAX as usize / std::mem::size_of::<PifPrefetchCandidate>() + 1;
+const PIF_TEMPORAL_COMPACTOR_BYTE_OVERFLOW_LENGTH: usize =
+    isize::MAX as usize / std::mem::size_of::<PifCompactorEntrySnapshot>() + 1;
+const PIF_HISTORY_BYTE_OVERFLOW_LENGTH: usize =
+    isize::MAX as usize / std::mem::size_of::<PifHistoryEntrySnapshot>() + 1;
+const PIF_INDEX_BYTE_OVERFLOW_LENGTH: usize =
+    isize::MAX as usize / std::mem::size_of::<PifIndexEntrySnapshot>() + 1;
+const U64_BYTE_OVERFLOW_LENGTH: usize = isize::MAX as usize / std::mem::size_of::<u64>() + 1;
 
 fn pif_access(agent: u32, pc: u64, secure: bool) -> PifPrefetchAccess {
     PifPrefetchAccess::new(AgentId::new(agent), Address::new(pc), secure)
+}
+
+#[test]
+fn pif_prefetcher_config_rejects_vector_lengths_above_host_limit() {
+    assert!(matches!(
+        PifPrefetcherConfig::new(64, PIF_SPATIAL_WINDOW_BYTE_OVERFLOW_BLOCKS, 0, 2, 2, 4, 4,),
+        Err(PifPrefetcherError::VectorLengthTooLarge {
+            field: "spatial window blocks",
+            length: PIF_SPATIAL_WINDOW_BYTE_OVERFLOW_BLOCKS,
+            ..
+        })
+    ));
+    assert!(matches!(
+        PifPrefetcherConfig::new(
+            64,
+            2,
+            4,
+            PIF_TEMPORAL_COMPACTOR_BYTE_OVERFLOW_LENGTH,
+            2,
+            4,
+            4,
+        ),
+        Err(PifPrefetcherError::VectorLengthTooLarge {
+            field: "temporal compactor entries",
+            length: PIF_TEMPORAL_COMPACTOR_BYTE_OVERFLOW_LENGTH,
+            ..
+        })
+    ));
+    assert_eq!(
+        PifPrefetcherConfig::new(64, 2, 4, 2, U64_BYTE_OVERFLOW_LENGTH, 4, 4),
+        Err(PifPrefetcherError::VectorLengthTooLarge {
+            field: "stream address buffer entries",
+            length: U64_BYTE_OVERFLOW_LENGTH,
+            maximum: isize::MAX as usize / std::mem::size_of::<u64>(),
+        })
+    );
+    assert!(matches!(
+        PifPrefetcherConfig::new(64, 2, 4, 2, 2, PIF_HISTORY_BYTE_OVERFLOW_LENGTH, 4),
+        Err(PifPrefetcherError::VectorLengthTooLarge {
+            field: "history buffer entries",
+            length: PIF_HISTORY_BYTE_OVERFLOW_LENGTH,
+            ..
+        })
+    ));
+    assert!(matches!(
+        PifPrefetcherConfig::new(64, 2, 4, 2, 2, 4, PIF_INDEX_BYTE_OVERFLOW_LENGTH),
+        Err(PifPrefetcherError::VectorLengthTooLarge {
+            field: "index entries",
+            length: PIF_INDEX_BYTE_OVERFLOW_LENGTH,
+            ..
+        })
+    ));
 }
 
 #[test]
