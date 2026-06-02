@@ -49,3 +49,47 @@ pub(crate) fn rem_unsigned(lhs: u64, rhs: u64) -> u64 {
         lhs % rhs
     }
 }
+
+pub(crate) fn div_signed_word(lhs: u64, rhs: u64) -> u32 {
+    let lhs = lhs as u32 as i32;
+    let rhs = rhs as u32 as i32;
+    if rhs == 0 {
+        -1i32 as u32
+    } else if lhs == i32::MIN && rhs == -1 {
+        lhs as u32
+    } else {
+        (lhs / rhs) as u32
+    }
+}
+
+pub(crate) fn div_unsigned_word(lhs: u64, rhs: u64) -> u32 {
+    let lhs = lhs as u32;
+    let rhs = rhs as u32;
+    if rhs == 0 {
+        u32::MAX
+    } else {
+        lhs / rhs
+    }
+}
+
+pub(crate) fn rem_signed_word(lhs: u64, rhs: u64) -> u32 {
+    let lhs_signed = lhs as u32 as i32;
+    let rhs_signed = rhs as u32 as i32;
+    if rhs_signed == 0 {
+        lhs as u32
+    } else if lhs_signed == i32::MIN && rhs_signed == -1 {
+        0
+    } else {
+        (lhs_signed % rhs_signed) as u32
+    }
+}
+
+pub(crate) fn rem_unsigned_word(lhs: u64, rhs: u64) -> u32 {
+    let lhs = lhs as u32;
+    let rhs = rhs as u32;
+    if rhs == 0 {
+        lhs
+    } else {
+        lhs % rhs
+    }
+}

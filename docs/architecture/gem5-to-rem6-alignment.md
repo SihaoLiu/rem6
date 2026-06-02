@@ -2934,7 +2934,10 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   register execution, `MUL`/`MULH`/`MULHSU`/`MULHU`/`DIV`/`DIVU`/`REM`/`REMU`
   64-bit multiply/divide execution with high-half products, divide-by-zero
   results, signed-overflow division, and signed remainder behavior aligned
-  with gem5's scalar RISC-V arithmetic helpers,
+  with gem5's scalar RISC-V arithmetic helpers, `MULW`/`DIVW`/`DIVUW`/`REMW`/`REMUW`
+  word-form multiply/divide execution with sign-extended low-word results,
+  32-bit divide-by-zero results, 32-bit signed-overflow division, and
+  32-bit signed remainder behavior aligned with gem5's `OP-32` decoder path,
   `ADDIW`/`SLLIW`/`SRLIW`/`SRAIW`/`ADDW`/`SUBW`/`SLLW`/`SRLW`/`SRAW`
   word execution, signed and unsigned conditional branch execution, word and
   doubleword `LR`/`SC` decode,

@@ -15,8 +15,9 @@ use encoding::{
     shamt64, shift_funct6, u_imm,
 };
 use integer::{
-    div_signed, div_unsigned, mulh_signed, mulh_signed_unsigned, mulh_unsigned, rem_signed,
-    rem_unsigned,
+    div_signed, div_signed_word, div_unsigned, div_unsigned_word, mulh_signed,
+    mulh_signed_unsigned, mulh_unsigned, rem_signed, rem_signed_word, rem_unsigned,
+    rem_unsigned_word,
 };
 
 pub use control_flow::{
@@ -544,6 +545,31 @@ fn decode_op_32(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             rs1: rs1(raw),
             rs2: rs2(raw),
         }),
+        (0x01, 0x0) => Ok(RiscvInstruction::Mulw {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x01, 0x4) => Ok(RiscvInstruction::Divw {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x01, 0x5) => Ok(RiscvInstruction::Divuw {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x01, 0x6) => Ok(RiscvInstruction::Remw {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x01, 0x7) => Ok(RiscvInstruction::Remuw {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
         _ => Err(RiscvError::UnknownEncoding { raw }),
     }
 }
@@ -910,6 +936,26 @@ impl RiscvHartState {
             RiscvInstruction::Remu { rd, rs1, rs2 } => {
                 let value = rem_unsigned(self.read(rs1), self.read(rs2));
                 write_register(self, &mut register_writes, rd, value);
+            }
+            RiscvInstruction::Mulw { rd, rs1, rs2 } => {
+                let value = (self.read(rs1) as u32).wrapping_mul(self.read(rs2) as u32);
+                write_register(self, &mut register_writes, rd, sign_extend_word(value));
+            }
+            RiscvInstruction::Divw { rd, rs1, rs2 } => {
+                let value = div_signed_word(self.read(rs1), self.read(rs2));
+                write_register(self, &mut register_writes, rd, sign_extend_word(value));
+            }
+            RiscvInstruction::Divuw { rd, rs1, rs2 } => {
+                let value = div_unsigned_word(self.read(rs1), self.read(rs2));
+                write_register(self, &mut register_writes, rd, sign_extend_word(value));
+            }
+            RiscvInstruction::Remw { rd, rs1, rs2 } => {
+                let value = rem_signed_word(self.read(rs1), self.read(rs2));
+                write_register(self, &mut register_writes, rd, sign_extend_word(value));
+            }
+            RiscvInstruction::Remuw { rd, rs1, rs2 } => {
+                let value = rem_unsigned_word(self.read(rs1), self.read(rs2));
+                write_register(self, &mut register_writes, rd, sign_extend_word(value));
             }
             RiscvInstruction::Addw { rd, rs1, rs2 } => {
                 let value = (self.read(rs1) as u32).wrapping_add(self.read(rs2) as u32);

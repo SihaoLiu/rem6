@@ -165,6 +165,31 @@ pub enum RiscvInstruction {
         rs1: Register,
         rs2: Register,
     },
+    Mulw {
+        rd: Register,
+        rs1: Register,
+        rs2: Register,
+    },
+    Divw {
+        rd: Register,
+        rs1: Register,
+        rs2: Register,
+    },
+    Divuw {
+        rd: Register,
+        rs1: Register,
+        rs2: Register,
+    },
+    Remw {
+        rd: Register,
+        rs1: Register,
+        rs2: Register,
+    },
+    Remuw {
+        rd: Register,
+        rs1: Register,
+        rs2: Register,
+    },
     Addw {
         rd: Register,
         rs1: Register,
