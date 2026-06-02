@@ -821,9 +821,10 @@ impl VirtioBlockMemoryBackend {
                 sector: capacity_sectors,
                 bytes: VIRTIO_BLOCK_SECTOR_SIZE,
             })?;
+        let byte_count = checked_block_backend_allocation_bytes(bytes)?;
         Ok(Self {
             state: Arc::new(Mutex::new(VirtioBlockMemoryBackendState {
-                bytes: vec![0; bytes as usize],
+                bytes: vec![0; byte_count],
                 flush_count: 0,
             })),
         })
@@ -1143,7 +1144,7 @@ fn read_storage_backend(
         backend.capacity_sectors(),
         VIRTIO_BLOCK_T_IN,
     )?;
-    let mut data = Vec::with_capacity(bytes as usize);
+    let mut data = Vec::with_capacity(checked_block_request_allocation_bytes(sector, bytes)?);
     for offset in 0..sectors {
         let sector = sector
             .checked_add(offset)
@@ -1206,6 +1207,20 @@ fn validate_storage_backend_range(
         });
     }
     Ok(sectors)
+}
+
+fn checked_block_backend_allocation_bytes(bytes: u64) -> Result<usize, VirtioError> {
+    if bytes > isize::MAX as u64 {
+        return Err(VirtioError::BlockBackendTooLarge { bytes });
+    }
+    usize::try_from(bytes).map_err(|_| VirtioError::BlockBackendTooLarge { bytes })
+}
+
+fn checked_block_request_allocation_bytes(sector: u64, bytes: u64) -> Result<usize, VirtioError> {
+    if bytes > isize::MAX as u64 {
+        return Err(VirtioError::BlockRequestTooLarge { sector, bytes });
+    }
+    usize::try_from(bytes).map_err(|_| VirtioError::BlockRequestTooLarge { sector, bytes })
 }
 
 fn storage_error_to_virtio(error: StorageError) -> VirtioError {

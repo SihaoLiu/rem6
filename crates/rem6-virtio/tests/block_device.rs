@@ -1,7 +1,9 @@
 use std::sync::{Arc, Mutex};
 
 use rem6_kernel::{PartitionId, PartitionedScheduler};
-use rem6_storage::{CowStorageImage, RawStorageImage, StorageSectorId};
+use rem6_storage::{
+    CowStorageImage, RawStorageImage, StorageError, StorageImageLayer, StorageSectorId,
+};
 use rem6_virtio::{
     VirtioBlockConfigSpec, VirtioBlockDevice, VirtioBlockMemoryBackend, VirtioBlockRequest,
     VirtioBlockRequestId, VirtioBlockStatus, VirtioQueueIndex, VIRTIO_BLOCK_SECTOR_SIZE,
@@ -18,6 +20,27 @@ fn sector_array(byte: u8) -> [u8; 512] {
 
 fn queue(index: u16) -> VirtioQueueIndex {
     VirtioQueueIndex::new(index).unwrap()
+}
+
+#[derive(Debug)]
+struct HugeStorageImage;
+
+impl StorageImageLayer for HugeStorageImage {
+    fn capacity_sectors(&self) -> u64 {
+        u64::MAX
+    }
+
+    fn read_sector(&self, _sector: StorageSectorId) -> Result<[u8; 512], StorageError> {
+        Ok(sector_array(0))
+    }
+
+    fn write_sector(&self, _sector: StorageSectorId, _data: [u8; 512]) -> Result<(), StorageError> {
+        Ok(())
+    }
+
+    fn flush(&self) -> Result<(), StorageError> {
+        Ok(())
+    }
 }
 
 #[test]
@@ -78,6 +101,35 @@ fn virtio_block_device_executes_against_storage_image_layers() {
         sector_array(0xaa)
     );
     assert_eq!(device.completions().len(), 3);
+}
+
+#[test]
+fn virtio_block_memory_backend_rejects_capacity_above_vec_limit_before_allocation() {
+    let sectors = isize::MAX as u64 / VIRTIO_BLOCK_SECTOR_SIZE + 1;
+    let error = VirtioBlockMemoryBackend::zeroed(sectors).unwrap_err();
+
+    assert!(error.to_string().contains("too large"));
+}
+
+#[test]
+fn virtio_block_storage_backend_reports_oversized_read_as_io_error_before_allocation() {
+    let image = Arc::new(HugeStorageImage);
+    let device = VirtioBlockDevice::new_with_storage(
+        VirtioBlockConfigSpec::new(u64::MAX),
+        image as Arc<dyn StorageImageLayer>,
+    )
+    .unwrap();
+    let bytes = (isize::MAX as u64 / VIRTIO_BLOCK_SECTOR_SIZE + 1) * VIRTIO_BLOCK_SECTOR_SIZE;
+
+    let completion = device
+        .execute_at(
+            9,
+            VirtioBlockRequest::read(VirtioBlockRequestId::new(6), queue(0), 0, bytes).unwrap(),
+        )
+        .unwrap();
+
+    assert_eq!(completion.status(), VirtioBlockStatus::IoErr);
+    assert_eq!(completion.data(), None);
 }
 
 #[test]

@@ -89,6 +89,9 @@ pub enum VirtioError {
     InvalidBlockBackendSize {
         bytes: u64,
     },
+    BlockBackendTooLarge {
+        bytes: u64,
+    },
     BlockBackendCapacityMismatch {
         config_sectors: u64,
         backend_sectors: u64,
@@ -108,6 +111,10 @@ pub enum VirtioError {
         sector: u64,
         bytes: u64,
         capacity_sectors: u64,
+    },
+    BlockRequestTooLarge {
+        sector: u64,
+        bytes: u64,
     },
     InvalidBlockDeviceId {
         bytes: usize,
@@ -444,6 +451,9 @@ impl fmt::Display for VirtioError {
                 formatter,
                 "VirtIO block backend image has {bytes} bytes and must contain a nonzero number of 512-byte sectors"
             ),
+            Self::BlockBackendTooLarge { bytes } => {
+                write!(formatter, "VirtIO block backend image has {bytes} bytes and is too large")
+            }
             Self::BlockBackendCapacityMismatch {
                 config_sectors,
                 backend_sectors,
@@ -469,6 +479,10 @@ impl fmt::Display for VirtioError {
             } => write!(
                 formatter,
                 "VirtIO block request at sector {sector} for {bytes} bytes exceeds capacity {capacity_sectors} sectors"
+            ),
+            Self::BlockRequestTooLarge { sector, bytes } => write!(
+                formatter,
+                "VirtIO block request at sector {sector} for {bytes} bytes is too large"
             ),
             Self::InvalidBlockDeviceId { bytes } => write!(
                 formatter,
