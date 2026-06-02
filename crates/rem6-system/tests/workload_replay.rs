@@ -2,6 +2,7 @@ use rem6_boot::BootImage;
 use rem6_cpu::CpuId;
 use rem6_dram::{
     DramGeometry, DramLowPowerTiming, DramMemoryTechnology, DramTiming, ExternalMemoryProfile,
+    NvmMediaTiming,
 };
 use rem6_fabric::VirtualNetworkId;
 use rem6_isa_riscv::Register;
@@ -174,6 +175,10 @@ fn profiled_dram_timing() -> DramTiming {
     dram_timing().with_low_power_timing(profile_low_power_timing())
 }
 
+fn nvm_media_timing() -> NvmMediaTiming {
+    NvmMediaTiming::new(30, 50, 6, 4, 1).unwrap()
+}
+
 fn hbm_profile(target: u32) -> ExternalMemoryProfile {
     ExternalMemoryProfile::hbm(
         MemoryTargetId::new(target),
@@ -183,6 +188,20 @@ fn hbm_profile(target: u32) -> ExternalMemoryProfile {
         dram_geometry(),
         profiled_dram_timing(),
     )
+    .unwrap()
+}
+
+fn nvm_profile(target: u32) -> ExternalMemoryProfile {
+    ExternalMemoryProfile::nvm(
+        MemoryTargetId::new(target),
+        layout(),
+        2,
+        8,
+        dram_geometry(),
+        dram_timing(),
+    )
+    .unwrap()
+    .with_nvm_media_timing(nvm_media_timing())
     .unwrap()
 }
 
@@ -657,6 +676,46 @@ fn replay_topology_with_profiled_data_route() -> WorkloadTopology {
         .unwrap()
 }
 
+fn replay_topology_with_nvm_data_route() -> WorkloadTopology {
+    WorkloadTopology::new(4, 2, 2, WorkloadHostPlacement::new(3, 2, 51).unwrap())
+        .unwrap()
+        .add_memory_target(
+            WorkloadMemoryTarget::new(
+                0,
+                16,
+                AddressRange::new(Address::new(0x8000), AccessSize::new(0x2000).unwrap()).unwrap(),
+            )
+            .unwrap()
+            .with_external_memory_profile(nvm_profile(0))
+            .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(route_id("cpu0.fetch"), "cpu0.ifetch", 0, "memory", 2, 2, 3)
+                .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(route_id("cpu0.data"), "cpu0.dmem", 0, "memory", 2, 2, 3)
+                .unwrap(),
+        )
+        .unwrap()
+        .add_riscv_core(
+            WorkloadRiscvCore::new(
+                0,
+                0,
+                7,
+                Address::new(0x8000),
+                "cpu0.ifetch",
+                route_id("cpu0.fetch"),
+            )
+            .unwrap()
+            .with_data("cpu0.dmem", route_id("cpu0.data"))
+            .unwrap(),
+        )
+        .unwrap()
+}
+
 fn replay_topology_with_profiled_msi_data_cache() -> WorkloadTopology {
     add_data_cache_backing_route(replay_topology_with_profiled_data_route())
         .with_riscv_data_cache(
@@ -803,6 +862,25 @@ fn replay_manifest_with_profiled_data_load() -> WorkloadManifest {
         boot_image_with_data_load(),
     )
     .with_topology(replay_topology_with_profiled_data_route())
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_host_event(WorkloadHostEvent::new(
+        0,
+        HostEventIntent::Stop {
+            reason: "host-stop".to_string(),
+        },
+    ))
+    .build()
+    .unwrap()
+}
+
+fn replay_manifest_with_nvm_data_load() -> WorkloadManifest {
+    WorkloadManifest::builder(
+        workload_id("riscv-replay-nvm-data-load"),
+        boot_image_with_data_load(),
+    )
+    .with_topology(replay_topology_with_nvm_data_route())
     .add_resource(kernel_resource())
     .unwrap()
     .add_required_resource(resource_id("kernel"))
@@ -1877,6 +1955,44 @@ fn workload_replay_uses_profiled_external_memory() {
         profile.timing().low_power_timing(),
         Some(profile_low_power_timing())
     );
+    plan.verify_result(outcome.result()).unwrap();
+}
+
+#[test]
+fn workload_replay_preserves_nvm_media_timing_profile() {
+    let manifest = replay_manifest_with_nvm_data_load();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let outcome = RiscvWorkloadReplay::new(plan.clone())
+        .with_max_turns(128)
+        .run_parallel()
+        .unwrap();
+
+    assert_eq!(
+        outcome
+            .cluster()
+            .core(CpuId::new(0))
+            .unwrap()
+            .read_register(Register::new(5).unwrap()),
+        0xfedc_ba98_7654_3210
+    );
+    assert_eq!(
+        outcome.run().dram_profile().profile_technology(),
+        Some(DramMemoryTechnology::Nvm)
+    );
+    assert_eq!(
+        outcome.run().dram_profile().profile_nvm_media_timing(),
+        Some(nvm_media_timing())
+    );
+    let dram = outcome.dram_snapshot().unwrap();
+    let target = dram
+        .targets()
+        .iter()
+        .find(|target| target.target() == MemoryTargetId::new(0))
+        .unwrap();
+    let profile = target.profile().unwrap();
+    assert_eq!(profile.technology(), DramMemoryTechnology::Nvm);
+    assert_eq!(profile.nvm_media_timing(), Some(nvm_media_timing()));
     plan.verify_result(outcome.result()).unwrap();
 }
 
