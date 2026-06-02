@@ -1066,10 +1066,10 @@ impl RiscvWorkloadReplay {
                     result = result
                         .with_checkpoint_manifest_summary(workload_checkpoint_summary(manifest));
                 }
-                SystemActionOutcome::CheckpointRestored { manifest, .. } => {
+                SystemActionOutcome::CheckpointRestored { tick, manifest, .. } => {
                     host_action_summary.record_checkpoint_restore();
                     result = result.with_restored_checkpoint_manifest_summary(
-                        workload_checkpoint_summary(manifest),
+                        workload_checkpoint_summary_at_tick(manifest, *tick),
                     );
                 }
                 SystemActionOutcome::ExecutionModeSwitched {
@@ -1206,10 +1206,17 @@ fn workload_execution_mode_from_system(
 }
 
 fn workload_checkpoint_summary(manifest: &CheckpointManifest) -> WorkloadCheckpointManifestSummary {
+    workload_checkpoint_summary_at_tick(manifest, manifest.tick())
+}
+
+fn workload_checkpoint_summary_at_tick(
+    manifest: &CheckpointManifest,
+    tick: Tick,
+) -> WorkloadCheckpointManifestSummary {
     let summary = manifest.summary();
     WorkloadCheckpointManifestSummary::with_component_summaries(
         manifest.label(),
-        manifest.tick(),
+        tick,
         summary.component_summaries().iter().map(|component| {
             WorkloadCheckpointComponentSummary::with_chunk_summaries(
                 component.component().as_str(),

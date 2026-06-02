@@ -53,6 +53,12 @@ fn word(raw: u32) -> Vec<u8> {
     raw.to_le_bytes().to_vec()
 }
 
+fn words(raw: impl IntoIterator<Item = u32>) -> Vec<u8> {
+    raw.into_iter()
+        .flat_map(u32::to_le_bytes)
+        .collect::<Vec<_>>()
+}
+
 fn i_type(imm: i32, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
     (((imm as u32) & 0x0fff) << 20)
         | (u32::from(rs1) << 15)
@@ -216,6 +222,31 @@ fn boot_image_with_sinic_mmio_config_store() -> BootImage {
         )
         .unwrap()
         .add_segment(Address::new(0x8010), word(0x0000_0073))
+        .unwrap()
+}
+
+fn boot_image_with_sinic_mmio_config_restore_probe() -> BootImage {
+    let saved = SinicRegisterBlock::CONFIG_RX_EN | SinicRegisterBlock::CONFIG_INT_EN;
+    let mutated = SinicRegisterBlock::CONFIG_TX_EN | SinicRegisterBlock::CONFIG_POLL;
+    let nop = i_type(0, 0, 0x0, 0, 0x13);
+    let mut program = vec![
+        u_type(0x20000, 2, 0x37),
+        i_type(saved as i32, 0, 0x0, 3, 0x13),
+        s_type(SinicRegisterOffset::CONFIG.addr() as i32, 3, 2, 0x2, 0x23),
+    ];
+    program.extend(std::iter::repeat_n(nop, 24));
+    program.extend([
+        i_type(mutated as i32, 0, 0x0, 3, 0x13),
+        s_type(SinicRegisterOffset::CONFIG.addr() as i32, 3, 2, 0x2, 0x23),
+    ]);
+    program.extend(std::iter::repeat_n(nop, 24));
+    program.extend([
+        i_type(SinicRegisterOffset::CONFIG.addr() as i32, 2, 0x2, 5, 0x03),
+        0x0000_0073,
+    ]);
+
+    BootImage::new(Address::new(0x8000))
+        .add_segment(Address::new(0x8000), words(program))
         .unwrap()
 }
 
@@ -1103,6 +1134,37 @@ fn replay_manifest_with_sinic_pci_checkpoint() -> WorkloadManifest {
     .add_host_event(WorkloadHostEvent::new(
         1,
         HostEventIntent::Checkpoint {
+            label: "sinic-state".to_string(),
+        },
+    ))
+    .add_host_event(WorkloadHostEvent::new(
+        0,
+        HostEventIntent::Stop {
+            reason: "host-stop".to_string(),
+        },
+    ))
+    .build()
+    .unwrap()
+}
+
+fn replay_manifest_with_sinic_pci_checkpoint_restore() -> WorkloadManifest {
+    WorkloadManifest::builder(
+        workload_id("riscv-replay-sinic-pci-checkpoint-restore"),
+        boot_image_with_sinic_mmio_config_restore_probe(),
+    )
+    .with_topology(replay_topology_with_sinic_pci_mmio_data())
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_host_event(WorkloadHostEvent::new(
+        40,
+        HostEventIntent::Checkpoint {
+            label: "sinic-state".to_string(),
+        },
+    ))
+    .add_host_event(WorkloadHostEvent::new(
+        240,
+        HostEventIntent::RestoreCheckpoint {
             label: "sinic-state".to_string(),
         },
     ))
@@ -2181,6 +2243,41 @@ fn workload_replay_checkpoint_captures_sinic_pci_mmio_components() {
     assert!(fifo
         .chunk_summary("sinic-fifo")
         .is_some_and(|chunk| chunk.payload_bytes() > 0));
+    plan.verify_result(outcome.result()).unwrap();
+}
+
+#[test]
+fn workload_replay_checkpoint_restore_reverts_sinic_pci_mmio_register_state() {
+    let manifest = replay_manifest_with_sinic_pci_checkpoint_restore();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let saved = SinicRegisterBlock::CONFIG_RX_EN | SinicRegisterBlock::CONFIG_INT_EN;
+
+    let outcome = RiscvWorkloadReplay::new(plan.clone())
+        .with_max_turns(512)
+        .run_parallel()
+        .unwrap();
+
+    let cpu0 = CpuId::new(0);
+    assert_eq!(
+        outcome
+            .cluster()
+            .core(cpu0)
+            .unwrap()
+            .read_register(Register::new(5).unwrap()),
+        u64::from(saved)
+    );
+    let snapshot = outcome.sinic_pci_snapshot(0).unwrap();
+    let mut registers = SinicRegisterBlock::new(SinicRegisterParams::default()).unwrap();
+    registers.restore(snapshot.registers()).unwrap();
+    assert_eq!(registers.config_bits(), saved);
+    assert_eq!(
+        outcome.result().checkpoint_labels(),
+        &["sinic-state".to_string()]
+    );
+    assert_eq!(
+        outcome.result().restored_checkpoint_labels(),
+        &["sinic-state".to_string()]
+    );
     plan.verify_result(outcome.result()).unwrap();
 }
 
