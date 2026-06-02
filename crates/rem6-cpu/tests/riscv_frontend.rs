@@ -53,6 +53,10 @@ fn fence_type(mode: u32, predecessor: u32, successor: u32, funct3: u32) -> u32 {
     (mode << 28) | (predecessor << 24) | (successor << 20) | (funct3 << 12) | 0x0f
 }
 
+fn sfence_vma_type(rs1: u8, rs2: u8) -> u32 {
+    (0x09 << 25) | (u32::from(rs2) << 20) | (u32::from(rs1) << 15) | 0x73
+}
+
 fn locked_tor_without_permissions() -> RiscvPmpConfig {
     RiscvPmpConfig::new(RiscvPmpAddressMode::Tor).with_locked(true)
 }
@@ -1994,6 +1998,74 @@ fn riscv_core_issues_parallel_translated_load_through_data_tlb() {
     );
     assert_eq!(events[0].physical_address(), Address::new(0x9008));
     assert_eq!(events[1].physical_address(), Address::new(0x9008));
+}
+
+#[test]
+fn riscv_core_sfence_vma_all_scope_flushes_data_translation_tlb() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = translated_data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(2), 0x4000);
+    let page_map = single_page_map(0x4000, 0x9000);
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            i_type(8, 2, 0x3, 5, 0x03),
+            sfence_vma_type(0, 0),
+            i_type(8, 2, 0x3, 6, 0x03),
+        ],
+        &[(0x9008, vec![0xef, 0xcd, 0xab, 0x89, 0x67, 0x45, 0x23, 0x01])],
+    );
+
+    assert!(matches!(
+        drive_one_translated_action(&core, store.clone(), &mut scheduler, &transport, &page_map),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+    assert!(matches!(
+        drive_one_translated_action(&core, store.clone(), &mut scheduler, &transport, &page_map),
+        Some(RiscvCoreDriveAction::InstructionExecuted(_))
+    ));
+    assert!(matches!(
+        drive_one_translated_action(&core, store.clone(), &mut scheduler, &transport, &page_map),
+        Some(RiscvCoreDriveAction::DataAccessIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+    assert_eq!(core.read_register(reg(5)), 0x0123_4567_89ab_cdef);
+    assert_eq!(
+        core.data_translation_tlb_stats().unwrap(),
+        TranslationTlbStats::new(0, 1, 0, 1, 0)
+    );
+
+    assert!(matches!(
+        drive_one_translated_action(&core, store.clone(), &mut scheduler, &transport, &page_map),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+    assert!(matches!(
+        drive_one_translated_action(&core, store.clone(), &mut scheduler, &transport, &page_map),
+        Some(RiscvCoreDriveAction::InstructionExecuted(_))
+    ));
+
+    assert!(matches!(
+        drive_one_translated_action(&core, store.clone(), &mut scheduler, &transport, &page_map),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+    assert!(matches!(
+        drive_one_translated_action(&core, store.clone(), &mut scheduler, &transport, &page_map),
+        Some(RiscvCoreDriveAction::InstructionExecuted(_))
+    ));
+    assert!(matches!(
+        drive_one_translated_action(&core, store, &mut scheduler, &transport, &page_map),
+        Some(RiscvCoreDriveAction::DataAccessIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+
+    assert_eq!(core.read_register(reg(6)), 0x0123_4567_89ab_cdef);
+    assert_eq!(
+        core.data_translation_tlb_stats().unwrap(),
+        TranslationTlbStats::new(0, 2, 0, 2, 0)
+    );
 }
 
 #[test]

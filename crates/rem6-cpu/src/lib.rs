@@ -1161,6 +1161,7 @@ impl RiscvCore {
         if let Some(trap) = execution.trap().copied() {
             state.pending_trap = Some(trap);
         }
+        state.apply_riscv_system_event(execution.system_event());
 
         let event = RiscvCpuExecutionEvent::new(fetch.clone(), instruction, execution);
         state.executed_fetches.insert(fetch.request_id());

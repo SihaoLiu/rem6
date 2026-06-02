@@ -1,9 +1,10 @@
+use rem6_isa_riscv::RiscvSystemEvent;
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionedScheduler, SchedulerContext, Tick,
 };
 use rem6_memory::{
-    Address, ByteMask, MemoryRequestId, TranslationFault, TranslationPageMap, TranslationRequestId,
-    TranslationTlbStats,
+    Address, ByteMask, MemoryRequestId, TranslationAddressSpaceId, TranslationFault,
+    TranslationPageMap, TranslationRequestId, TranslationTlbStats,
 };
 use rem6_mmio::{MmioBus, MmioError};
 use rem6_transport::{
@@ -36,6 +37,48 @@ impl PendingDataTranslation {
 }
 
 impl RiscvCoreState {
+    pub(super) fn apply_riscv_system_event(&mut self, system_event: Option<&RiscvSystemEvent>) {
+        let Some(RiscvSystemEvent::SfenceVma {
+            virtual_address,
+            address_space,
+            ..
+        }) = system_event
+        else {
+            return;
+        };
+        let Some(tlb) = self
+            .data_translation
+            .as_mut()
+            .and_then(CpuTranslationFrontend::tlb_mut)
+        else {
+            return;
+        };
+        let address_space = match address_space {
+            Some(value) => {
+                let Ok(value) = u16::try_from(*value) else {
+                    return;
+                };
+                Some(TranslationAddressSpaceId::new(value))
+            }
+            None => None,
+        };
+
+        match (virtual_address, address_space) {
+            (None, None) => {
+                tlb.flush_all();
+            }
+            (None, Some(address_space)) => {
+                tlb.flush_non_global_address_space(address_space);
+            }
+            (Some(virtual_address), None) => {
+                tlb.demap_page_all_address_spaces(Address::new(*virtual_address));
+            }
+            (Some(virtual_address), Some(address_space)) => {
+                tlb.demap_page(address_space, Address::new(*virtual_address));
+            }
+        }
+    }
+
     pub(super) fn next_unissued_data_access(
         &self,
     ) -> Option<(MemoryRequestId, rem6_isa_riscv::MemoryAccessKind)> {
