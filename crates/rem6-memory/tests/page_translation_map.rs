@@ -496,8 +496,8 @@ fn page_translation_map_checkpoint_payload_rejects_mapping_record_invalid_scope_
     let mut payload = TranslationPageMapCheckpointPayload::from_snapshot(map.snapshot())
         .unwrap()
         .encode();
-    payload[PAGE_MAP_CHECKPOINT_FIRST_ENTRY_RESERVED_OFFSET
-        ..PAGE_MAP_CHECKPOINT_FIRST_ENTRY_RESERVED_OFFSET + 4]
+    payload[PAGE_MAP_CHECKPOINT_FIRST_ENTRY_SCOPE_OFFSET
+        ..PAGE_MAP_CHECKPOINT_FIRST_ENTRY_SCOPE_OFFSET + 4]
         .copy_from_slice(&2_u32.to_le_bytes());
 
     assert_eq!(
@@ -564,7 +564,7 @@ const PAGE_MAP_CHECKPOINT_FIRST_ENTRY_PAGE_COUNT_OFFSET: usize =
     PAGE_MAP_CHECKPOINT_FIRST_ENTRY_OFFSET + 16;
 const PAGE_MAP_CHECKPOINT_FIRST_ENTRY_PERMISSIONS_OFFSET: usize =
     PAGE_MAP_CHECKPOINT_FIRST_ENTRY_OFFSET + 24;
-const PAGE_MAP_CHECKPOINT_FIRST_ENTRY_RESERVED_OFFSET: usize =
+const PAGE_MAP_CHECKPOINT_FIRST_ENTRY_SCOPE_OFFSET: usize =
     PAGE_MAP_CHECKPOINT_FIRST_ENTRY_OFFSET + 28;
 
 #[test]
