@@ -697,8 +697,11 @@ impl MmioChannel {
                 route.target_partition(),
                 route.request_latency(),
                 move |context| {
-                    let response =
-                        responder(MmioDelivery::new(context.now(), route, request), context);
+                    let response = responder(
+                        MmioDelivery::new(context.now(), route, request.clone()),
+                        context,
+                    )
+                    .and_then(|response| validate_response(&request, response));
                     if let Err(error) = context.schedule_remote_after(
                         route.source_partition(),
                         route.response_latency(),
@@ -739,8 +742,11 @@ impl MmioChannel {
                 route.target_partition(),
                 route.request_latency(),
                 move |context| {
-                    let response =
-                        responder(MmioDelivery::new(context.now(), route, request), context);
+                    let response = responder(
+                        MmioDelivery::new(context.now(), route, request.clone()),
+                        context,
+                    )
+                    .and_then(|response| validate_response(&request, response));
                     if let Err(error) = context.schedule_remote_after(
                         route.source_partition(),
                         route.response_latency(),
@@ -757,6 +763,45 @@ impl MmioChannel {
             )
             .map_err(MmioError::Scheduler)
     }
+}
+
+fn validate_response(
+    request: &MmioRequest,
+    response: MmioResponse,
+) -> Result<MmioResponse, MmioError> {
+    if response.request() != request.id() {
+        return Err(MmioError::ResponseRequestMismatch {
+            expected: request.id(),
+            actual: response.request(),
+        });
+    }
+
+    match request.operation() {
+        MmioOperation::Read => {
+            let Some(data) = response.data() else {
+                return Err(MmioError::MissingReadResponseData {
+                    request: request.id(),
+                });
+            };
+            if data.len() as u64 != request.size().bytes() {
+                return Err(MmioError::ResponseDataSizeMismatch {
+                    request: request.id(),
+                    expected: request.size().bytes(),
+                    actual: data.len() as u64,
+                });
+            }
+        }
+        MmioOperation::Write => {
+            if let Some(data) = response.data() {
+                return Err(MmioError::UnexpectedWriteResponseData {
+                    request: request.id(),
+                    actual: data.len() as u64,
+                });
+            }
+        }
+    }
+
+    Ok(response)
 }
 
 #[derive(Clone)]
@@ -968,6 +1013,9 @@ pub enum MmioError {
     MissingWriteData {
         request: MmioRequestId,
     },
+    MissingReadResponseData {
+        request: MmioRequestId,
+    },
     MissingByteMask {
         request: MmioRequestId,
     },
@@ -985,6 +1033,19 @@ pub enum MmioError {
         request: MmioRequestId,
         expected: u64,
         actual: u64,
+    },
+    ResponseDataSizeMismatch {
+        request: MmioRequestId,
+        expected: u64,
+        actual: u64,
+    },
+    UnexpectedWriteResponseData {
+        request: MmioRequestId,
+        actual: u64,
+    },
+    ResponseRequestMismatch {
+        expected: MmioRequestId,
+        actual: MmioRequestId,
     },
     UnsupportedDeviceAccess {
         request: MmioRequestId,
@@ -1113,6 +1174,13 @@ impl fmt::Display for MmioError {
                     request.get()
                 )
             }
+            Self::MissingReadResponseData { request } => {
+                write!(
+                    formatter,
+                    "MMIO read request {} response has no payload",
+                    request.get()
+                )
+            }
             Self::MissingByteMask { request } => {
                 write!(
                     formatter,
@@ -1146,6 +1214,26 @@ impl fmt::Display for MmioError {
                 formatter,
                 "MMIO request {} has {actual} bytes but expects {expected}",
                 request.get()
+            ),
+            Self::ResponseDataSizeMismatch {
+                request,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "MMIO request {} response has {actual} bytes but expects {expected}",
+                request.get()
+            ),
+            Self::UnexpectedWriteResponseData { request, actual } => write!(
+                formatter,
+                "MMIO write request {} response has unexpected {actual}-byte payload",
+                request.get()
+            ),
+            Self::ResponseRequestMismatch { expected, actual } => write!(
+                formatter,
+                "MMIO response references request {} but channel expected request {}",
+                actual.get(),
+                expected.get()
             ),
             Self::UnsupportedDeviceAccess {
                 request,

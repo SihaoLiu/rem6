@@ -280,6 +280,151 @@ fn mmio_channel_routes_request_and_response_on_parallel_scheduler() {
 }
 
 #[test]
+fn mmio_channel_rejects_short_read_response_payload() {
+    let cpu = PartitionId::new(0);
+    let device = PartitionId::new(1);
+    let route = MmioRoute::new(cpu, device, 3, 2).unwrap();
+    let channel = MmioChannel::new(route);
+    let completions = Arc::new(Mutex::new(Vec::new()));
+    let request = MmioRequest::read(
+        MmioRequestId::new(18),
+        Address::new(0x4000),
+        AccessSize::new(4).unwrap(),
+    )
+    .unwrap();
+    let mut scheduler = PartitionedScheduler::new(2).unwrap();
+
+    let completed = Arc::clone(&completions);
+    scheduler
+        .schedule_at(cpu, 5, move |context| {
+            channel
+                .submit(
+                    context,
+                    request,
+                    move |delivery, _context| {
+                        Ok(MmioResponse::completed(
+                            delivery.request().id(),
+                            Some(vec![0xaa, 0xbb]),
+                        ))
+                    },
+                    move |completion| completed.lock().unwrap().push(completion),
+                )
+                .unwrap();
+        })
+        .unwrap();
+
+    scheduler.run_until_idle();
+
+    assert_eq!(
+        completions.lock().unwrap().as_slice(),
+        &[MmioCompletion::new(
+            10,
+            route,
+            Err(MmioError::ResponseDataSizeMismatch {
+                request: MmioRequestId::new(18),
+                expected: 4,
+                actual: 2,
+            })
+        )]
+    );
+}
+
+#[test]
+fn mmio_channel_rejects_short_parallel_read_response_payload() {
+    let cpu = PartitionId::new(0);
+    let device = PartitionId::new(1);
+    let route = MmioRoute::new(cpu, device, 3, 2).unwrap();
+    let channel = MmioChannel::new(route);
+    let completions = Arc::new(Mutex::new(Vec::new()));
+    let request = MmioRequest::read(
+        MmioRequestId::new(19),
+        Address::new(0x4800),
+        AccessSize::new(4).unwrap(),
+    )
+    .unwrap();
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+
+    let completed = Arc::clone(&completions);
+    scheduler
+        .schedule_parallel_at(cpu, 5, move |context| {
+            channel
+                .submit_parallel(
+                    context,
+                    request,
+                    move |delivery, _context| {
+                        Ok(MmioResponse::completed(
+                            delivery.request().id(),
+                            Some(vec![0xcc, 0xdd]),
+                        ))
+                    },
+                    move |completion| completed.lock().unwrap().push(completion),
+                )
+                .unwrap();
+        })
+        .unwrap();
+
+    scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(
+        completions.lock().unwrap().as_slice(),
+        &[MmioCompletion::new(
+            10,
+            route,
+            Err(MmioError::ResponseDataSizeMismatch {
+                request: MmioRequestId::new(19),
+                expected: 4,
+                actual: 2,
+            })
+        )]
+    );
+}
+
+#[test]
+fn mmio_channel_rejects_missing_read_response_payload() {
+    let cpu = PartitionId::new(0);
+    let device = PartitionId::new(1);
+    let route = MmioRoute::new(cpu, device, 3, 2).unwrap();
+    let channel = MmioChannel::new(route);
+    let completions = Arc::new(Mutex::new(Vec::new()));
+    let request = MmioRequest::read(
+        MmioRequestId::new(20),
+        Address::new(0x5000),
+        AccessSize::new(4).unwrap(),
+    )
+    .unwrap();
+    let mut scheduler = PartitionedScheduler::new(2).unwrap();
+
+    let completed = Arc::clone(&completions);
+    scheduler
+        .schedule_at(cpu, 5, move |context| {
+            channel
+                .submit(
+                    context,
+                    request,
+                    move |delivery, _context| {
+                        Ok(MmioResponse::completed(delivery.request().id(), None))
+                    },
+                    move |completion| completed.lock().unwrap().push(completion),
+                )
+                .unwrap();
+        })
+        .unwrap();
+
+    scheduler.run_until_idle();
+
+    assert_eq!(
+        completions.lock().unwrap().as_slice(),
+        &[MmioCompletion::new(
+            10,
+            route,
+            Err(MmioError::MissingReadResponseData {
+                request: MmioRequestId::new(20),
+            })
+        )]
+    );
+}
+
+#[test]
 fn mmio_channel_rejects_invalid_latency_and_records_response_errors() {
     let cpu = PartitionId::new(0);
     let device = PartitionId::new(1);
