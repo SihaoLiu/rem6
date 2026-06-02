@@ -1,16 +1,18 @@
 use rem6_cache::{
     AmpmEpochConfig, AmpmPrefetchAccess, AmpmPrefetcher, AmpmPrefetcherConfig, BopDelayQueueConfig,
     BopPrefetchAccess, BopPrefetcher, BopPrefetcherConfig, BopPrefetcherConfigOptions,
-    DcptPrefetchAccess, DcptPrefetcher, DcptPrefetcherConfig, QueuedPrefetchConfig,
-    QueuedPrefetchDemandAccess, QueuedPrefetchFullPolicy, QueuedPrefetchRedundantLine,
-    QueuedPrefetchThrottle, QueuedPrefetchThrottleConfig, QueuedPrefetchThrottleError,
-    QueuedPrefetcher, SbooePrefetchAccess, SbooePrefetcher, SbooePrefetcherConfig,
-    SignaturePathPrefetchAccess, SignaturePathPrefetcher, SignaturePathPrefetcherConfig,
-    SignaturePathPrefetcherConfigOptions, SignaturePathRatio, SmsPrefetchAccess, SmsPrefetcher,
-    SmsPrefetcherConfig, StridePrefetchAccess, StridePrefetcher, StridePrefetcherConfig,
-    TaggedPrefetchAccess, TaggedPrefetcher, TaggedPrefetcherConfig,
+    BopPrefetcherError, DcptPrefetchAccess, DcptPrefetcher, DcptPrefetcherConfig,
+    QueuedPrefetchConfig, QueuedPrefetchDemandAccess, QueuedPrefetchFullPolicy,
+    QueuedPrefetchRedundantLine, QueuedPrefetchThrottle, QueuedPrefetchThrottleConfig,
+    QueuedPrefetchThrottleError, QueuedPrefetcher, SbooePrefetchAccess, SbooePrefetcher,
+    SbooePrefetcherConfig, SignaturePathPrefetchAccess, SignaturePathPrefetcher,
+    SignaturePathPrefetcherConfig, SignaturePathPrefetcherConfigOptions, SignaturePathRatio,
+    SmsPrefetchAccess, SmsPrefetcher, SmsPrefetcherConfig, StridePrefetchAccess, StridePrefetcher,
+    StridePrefetcherConfig, TaggedPrefetchAccess, TaggedPrefetcher, TaggedPrefetcherConfig,
 };
 use rem6_memory::{Address, AgentId};
+
+const OVERSIZED_VECTOR_LENGTH: usize = isize::MAX as usize + 1;
 
 fn access(agent: u32, pc: u64, address: u64) -> StridePrefetchAccess {
     StridePrefetchAccess::new(AgentId::new(agent), pc, Address::new(address), false)
@@ -30,6 +32,21 @@ fn dcpt_access(agent: u32, pc: u64, address: u64) -> DcptPrefetchAccess {
 
 fn bop_access(agent: u32, pc: u64, address: u64) -> BopPrefetchAccess {
     BopPrefetchAccess::new(AgentId::new(agent), pc, Address::new(address), false)
+}
+
+fn bop_options() -> BopPrefetcherConfigOptions {
+    BopPrefetcherConfigOptions {
+        line_size: 64,
+        score_max: 1,
+        round_max: 8,
+        bad_score: 0,
+        rr_entries: 8,
+        tag_bits: 12,
+        offset_list_size: 1,
+        negative_offsets: false,
+        degree: 2,
+        delay_queue: None,
+    }
 }
 
 fn sbooe_access(agent: u32, pc: u64, address: u64) -> SbooePrefetchAccess {
@@ -171,6 +188,31 @@ fn bop_prefetcher_delays_rr_training_and_restores_delay_queue() {
     assert!(restored.issue_prefetch_requests());
     assert_eq!(restored.delay_queue_len(), 2);
     assert_eq!(restored.next_delay_ready_tick(), Some(4));
+}
+
+#[test]
+fn bop_prefetcher_config_rejects_vector_lengths_above_host_limit() {
+    let mut oversized_rr = bop_options();
+    oversized_rr.rr_entries = OVERSIZED_VECTOR_LENGTH;
+    assert_eq!(
+        BopPrefetcherConfig::new(oversized_rr),
+        Err(BopPrefetcherError::VectorLengthTooLarge {
+            field: "RR entries",
+            length: OVERSIZED_VECTOR_LENGTH,
+            maximum: isize::MAX as usize,
+        })
+    );
+
+    let mut oversized_offsets = bop_options();
+    oversized_offsets.offset_list_size = OVERSIZED_VECTOR_LENGTH;
+    assert_eq!(
+        BopPrefetcherConfig::new(oversized_offsets),
+        Err(BopPrefetcherError::VectorLengthTooLarge {
+            field: "offset list size",
+            length: OVERSIZED_VECTOR_LENGTH,
+            maximum: isize::MAX as usize,
+        })
+    );
 }
 
 #[test]

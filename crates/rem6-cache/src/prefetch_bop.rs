@@ -6,6 +6,8 @@ use rem6_memory::{Address, AgentId};
 
 use crate::prefetch::PrefetchCandidate;
 
+const MAX_BOP_VECTOR_LENGTH: usize = isize::MAX as usize;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BopDelayQueueConfig {
     entries: usize,
@@ -93,6 +95,7 @@ impl BopPrefetcherConfig {
         if rr_entries == 0 {
             return Err(BopPrefetcherError::ZeroRrEntries);
         }
+        validate_bop_vector_length("RR entries", rr_entries)?;
         if !rr_entries.is_power_of_two() {
             return Err(BopPrefetcherError::RrEntriesNotPowerOfTwo { rr_entries });
         }
@@ -102,6 +105,7 @@ impl BopPrefetcherConfig {
         if offset_list_size == 0 {
             return Err(BopPrefetcherError::ZeroOffsetListSize);
         }
+        validate_bop_vector_length("offset list size", offset_list_size)?;
         if negative_offsets && !offset_list_size.is_multiple_of(2) {
             return Err(BopPrefetcherError::OddNegativeOffsetList { offset_list_size });
         }
@@ -186,6 +190,11 @@ pub enum BopPrefetcherError {
     OddNegativeOffsetList {
         offset_list_size: usize,
     },
+    VectorLengthTooLarge {
+        field: &'static str,
+        length: usize,
+        maximum: usize,
+    },
     SnapshotConfigMismatch {
         expected: Box<BopPrefetcherConfig>,
         actual: Box<BopPrefetcherConfig>,
@@ -231,6 +240,14 @@ impl fmt::Display for BopPrefetcherError {
                 formatter,
                 "BOP negative offset list size {offset_list_size} is not even"
             ),
+            Self::VectorLengthTooLarge {
+                field,
+                length,
+                maximum,
+            } => write!(
+                formatter,
+                "BOP {field} length {length} exceeds vector allocation limit {maximum}"
+            ),
             Self::SnapshotConfigMismatch { expected, actual } => write!(
                 formatter,
                 "BOP snapshot config {actual:?} does not match {expected:?}"
@@ -263,6 +280,20 @@ impl fmt::Display for BopPrefetcherError {
 }
 
 impl Error for BopPrefetcherError {}
+
+fn validate_bop_vector_length(
+    field: &'static str,
+    length: usize,
+) -> Result<(), BopPrefetcherError> {
+    if length > MAX_BOP_VECTOR_LENGTH {
+        return Err(BopPrefetcherError::VectorLengthTooLarge {
+            field,
+            length,
+            maximum: MAX_BOP_VECTOR_LENGTH,
+        });
+    }
+    Ok(())
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BopPrefetchAccess {
