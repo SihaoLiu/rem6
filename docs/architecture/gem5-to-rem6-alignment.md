@@ -412,8 +412,12 @@ isolated bugs:
   guest memory. Multi-core RISC-V debug construction can derive positive GDB
   thread ids from `RiscvCluster` core ids, publish the sorted thread list
   through generic `qfThreadInfo`/`T`/`qC` session state, route `H g`-scoped
-  register reads and writes to the matching live core, and reject unknown thread
-  selections before they mutate debugger session state. A typed RISC-V system
+  register reads and writes to the matching live core, reject unsupported
+  all-thread register selection and single-thread continue selection before
+  they mutate debugger session state, and keep `qC` aligned with successful
+  `H g` thread switches. Error packets now flow through the generic session
+  response path, so negative acknowledgements retransmit the latest error
+  instead of a stale successful response. A typed RISC-V system
   packet handler now gives the future socket loop one entry point for cluster
   register packets and store-backed `m`/`M` packets, matching gem5
   `BaseRemoteGDB`'s combined command surface without copying its socket,
@@ -1234,6 +1238,12 @@ Implementation evidence through 2026-06-01:
   thread list from those ids, and exposes a cluster packet handler that validates
   thread selections while synchronizing `g`/`p n` reads and `G`/`P n...=r...`
   writes with the live core selected by the generic GDB session state. The
+  handler follows gem5's split between all-thread continue and single-thread
+  register selection while rejecting unsupported combinations before the generic
+  session records them, and successful `H g` selection updates the current
+  thread reported through `qC`. Manual system errors are emitted through the
+  generic response helper so acknowledged-mode retransmission preserves the
+  latest error packet. The
   higher-level RISC-V system packet handler dispatches memory packets to the
   store-backed memory bridge and all other packets to the cluster bridge, so
   memory reads or writes preserve debugger thread selection while register
@@ -2885,8 +2895,10 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   registers and `pc`, including wrong-length, unsupported-register,
   packet-handler writeback error paths, synchronized core fetch-PC updates,
   cluster thread enumeration, selected-thread register routing, unknown-thread
-  rejection, and combined system packet handling for selected-core registers
-  plus store-backed memory reads and writes.
+  rejection, gem5-like `H g`/`H c` selection limits, `qC` synchronization after
+  selected-thread changes, error-packet retransmission after negative
+  acknowledgement, and combined system packet handling for selected-core
+  registers plus store-backed memory reads and writes.
   RISC-V PMP tests cover TOR, NA4, and NAPOT range decoding, lowest
   matching-entry priority, locked-entry write rejection, locked TOR lower-bound
   protection, configuration-before-address materialization, default inactive

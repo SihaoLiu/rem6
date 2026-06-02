@@ -493,6 +493,13 @@ impl GdbRemoteSession {
         true
     }
 
+    pub fn respond_with_payload(
+        &mut self,
+        payload: Vec<u8>,
+    ) -> Result<Vec<GdbRemoteFrame>, GdbRemoteError> {
+        self.packet_response(payload)
+    }
+
     fn write_memory_bytes(&mut self, address: u64, bytes: &[u8]) -> bool {
         let Some(addresses) = memory_addresses(address, bytes.len()) else {
             return false;

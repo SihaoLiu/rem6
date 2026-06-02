@@ -717,7 +717,7 @@ fn riscv_gdb_remote_cluster_packet_handler_rejects_unknown_thread_selection() {
             )
             .unwrap(),
         ),
-        b"E01",
+        b"E04",
     );
     assert_eq!(session.general_thread(), GdbRemoteThreadId::Any);
     assert_eq!(
@@ -731,6 +731,151 @@ fn riscv_gdb_remote_cluster_packet_handler_rejects_unknown_thread_selection() {
             .unwrap(),
         ),
         b"0807060504030201",
+    );
+}
+
+#[test]
+fn riscv_gdb_remote_cluster_packet_handler_applies_gem5_thread_selection_rules() {
+    let core0 = riscv_core_with_id(0, 0x8000);
+    let core2 = riscv_core_with_id(2, 0x9000);
+    let cluster = RiscvCluster::new([core2, core0]).unwrap();
+    let mut session = riscv_gdb_remote_session_from_cluster(RiscvGdbXlen::Rv64, &cluster).unwrap();
+
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_cluster_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &cluster,
+                &GdbRemotePacket::new(b"Hg-1".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"E03",
+    );
+    assert_eq!(session.general_thread(), GdbRemoteThreadId::Any);
+
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_cluster_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &cluster,
+                &GdbRemotePacket::new(b"Hc0".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"E02",
+    );
+    assert_eq!(session.continue_thread(), GdbRemoteThreadId::Any);
+
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_cluster_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &cluster,
+                &GdbRemotePacket::new(b"Hc3".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"E02",
+    );
+    assert_eq!(session.continue_thread(), GdbRemoteThreadId::Any);
+
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_cluster_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &cluster,
+                &GdbRemotePacket::new(b"Hc-1".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"OK",
+    );
+    assert_eq!(session.continue_thread(), GdbRemoteThreadId::All);
+
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_cluster_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &cluster,
+                &GdbRemotePacket::new(b"Hg3".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"OK",
+    );
+    assert_eq!(session.current_thread_id(), 3);
+    assert_eq!(session.general_thread(), GdbRemoteThreadId::Id(3));
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_cluster_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &cluster,
+                &GdbRemotePacket::new(b"qC".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"QC3",
+    );
+
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_cluster_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &cluster,
+                &GdbRemotePacket::new(b"Hg0".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"OK",
+    );
+    assert_eq!(session.current_thread_id(), 3);
+    assert_eq!(session.general_thread(), GdbRemoteThreadId::Any);
+}
+
+#[test]
+fn riscv_gdb_remote_cluster_packet_handler_records_error_response_for_retransmit() {
+    let core0 = riscv_core_with_id(0, 0x8000);
+    let core2 = riscv_core_with_id(2, 0x9000);
+    let cluster = RiscvCluster::new([core2, core0]).unwrap();
+    let mut session = riscv_gdb_remote_session_from_cluster(RiscvGdbXlen::Rv64, &cluster).unwrap();
+
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_cluster_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &cluster,
+                &GdbRemotePacket::new(b"qC".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"QC1",
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_cluster_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &cluster,
+                &GdbRemotePacket::new(b"Hg2".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"E04",
+    );
+    assert_eq!(
+        session.handle_frame(&GdbRemoteFrame::NegativeAck).unwrap(),
+        vec![GdbRemoteFrame::Packet(
+            GdbRemotePacket::new(b"E04".to_vec()).unwrap()
+        )],
     );
 }
 

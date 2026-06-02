@@ -1,8 +1,8 @@
 use rem6_cpu::{CpuId, RiscvCluster, RiscvCore};
 use rem6_debug::{
-    GdbRemoteAckMode, GdbRemoteCommand, GdbRemoteError, GdbRemoteFeature, GdbRemoteFeatureValue,
-    GdbRemoteFrame, GdbRemotePacket, GdbRemoteRegisterBytes, GdbRemoteSession, GdbRemoteThreadId,
-    DEFAULT_GDB_REMOTE_MAX_PAYLOAD_BYTES,
+    GdbRemoteCommand, GdbRemoteError, GdbRemoteFeature, GdbRemoteFeatureValue, GdbRemoteFrame,
+    GdbRemotePacket, GdbRemoteRegisterBytes, GdbRemoteSession, GdbRemoteThreadId,
+    GdbRemoteThreadOperation, DEFAULT_GDB_REMOTE_MAX_PAYLOAD_BYTES,
 };
 use rem6_isa_riscv::{Register, RiscvGdbTargetDescription, RiscvGdbXlen, RiscvHartState};
 use rem6_memory::{
@@ -260,11 +260,15 @@ pub fn handle_riscv_gdb_remote_cluster_packet(
     sync_riscv_gdb_remote_threads_from_cluster(session, cluster);
 
     let command = GdbRemoteCommand::parse(packet);
-    if let GdbRemoteCommand::SetThread { thread, .. } = command {
-        if !riscv_gdb_remote_thread_available(thread, cluster) {
-            return gdb_remote_error_response(session);
+    let selected_current_thread = if let GdbRemoteCommand::SetThread { operation, thread } = command
+    {
+        match riscv_gdb_remote_thread_selection(operation, thread, cluster) {
+            Ok(thread_id) => thread_id,
+            Err(payload) => return gdb_remote_error_response_with_payload(session, payload),
         }
-    }
+    } else {
+        None
+    };
 
     if reads_riscv_gdb_remote_registers(&command) {
         let Some(core) = riscv_gdb_remote_selected_core(session, cluster) else {
@@ -284,6 +288,9 @@ pub fn handle_riscv_gdb_remote_cluster_packet(
     };
 
     let frames = session.handle_packet(packet)?;
+    if let Some(thread_id) = selected_current_thread {
+        debug_assert!(session.set_current_thread_id(thread_id));
+    }
     if let Some(core) = selected_core {
         apply_riscv_gdb_remote_core_register_write(xlen, &core, &command)?;
         sync_riscv_gdb_remote_session_from_core(xlen, session, &core);
@@ -388,13 +395,36 @@ fn riscv_gdb_remote_cpu_id(thread_id: u64) -> Option<CpuId> {
     Some(CpuId::new(u32::try_from(cpu).ok()?))
 }
 
-fn riscv_gdb_remote_thread_available(thread: GdbRemoteThreadId, cluster: &RiscvCluster) -> bool {
-    match thread {
-        GdbRemoteThreadId::All | GdbRemoteThreadId::Any => cluster.core_count() > 0,
-        GdbRemoteThreadId::Id(thread_id) => riscv_gdb_remote_cpu_id(thread_id)
-            .and_then(|cpu| cluster.core(cpu).ok())
-            .is_some(),
+fn riscv_gdb_remote_thread_selection(
+    operation: GdbRemoteThreadOperation,
+    thread: GdbRemoteThreadId,
+    cluster: &RiscvCluster,
+) -> Result<Option<u64>, &'static [u8]> {
+    match operation {
+        GdbRemoteThreadOperation::Continue => match thread {
+            GdbRemoteThreadId::All if cluster.core_count() > 0 => Ok(None),
+            GdbRemoteThreadId::All => Err(b"E04"),
+            GdbRemoteThreadId::Any | GdbRemoteThreadId::Id(_) => Err(b"E02"),
+        },
+        GdbRemoteThreadOperation::General => match thread {
+            GdbRemoteThreadId::All => Err(b"E03"),
+            GdbRemoteThreadId::Any if cluster.core_count() > 0 => Ok(None),
+            GdbRemoteThreadId::Any => Err(b"E04"),
+            GdbRemoteThreadId::Id(thread_id) => {
+                if riscv_gdb_remote_thread_exists(thread_id, cluster) {
+                    Ok(Some(thread_id))
+                } else {
+                    Err(b"E04")
+                }
+            }
+        },
     }
+}
+
+fn riscv_gdb_remote_thread_exists(thread_id: u64, cluster: &RiscvCluster) -> bool {
+    riscv_gdb_remote_cpu_id(thread_id)
+        .and_then(|cpu| cluster.core(cpu).ok())
+        .is_some()
 }
 
 const fn reads_riscv_gdb_remote_registers(command: &GdbRemoteCommand) -> bool {
@@ -465,17 +495,16 @@ fn write_partitioned_memory_bytes(
 }
 
 fn gdb_remote_error_response(
-    session: &GdbRemoteSession,
+    session: &mut GdbRemoteSession,
 ) -> Result<Vec<GdbRemoteFrame>, RiscvGdbRemotePacketError> {
-    let mut frames = Vec::new();
-    if session.ack_mode() == GdbRemoteAckMode::Acknowledged {
-        frames.push(GdbRemoteFrame::Ack);
-    }
-    frames.push(GdbRemoteFrame::Packet(GdbRemotePacket::with_config(
-        b"E01".to_vec(),
-        session.response_config(),
-    )?));
-    Ok(frames)
+    gdb_remote_error_response_with_payload(session, b"E01")
+}
+
+fn gdb_remote_error_response_with_payload(
+    session: &mut GdbRemoteSession,
+    payload: &[u8],
+) -> Result<Vec<GdbRemoteFrame>, RiscvGdbRemotePacketError> {
+    Ok(session.respond_with_payload(payload.to_vec())?)
 }
 
 fn riscv_gdb_register_bytes(xlen: RiscvGdbXlen, hart: &RiscvHartState) -> Vec<u8> {
