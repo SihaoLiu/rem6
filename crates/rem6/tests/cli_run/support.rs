@@ -127,7 +127,7 @@ pub(crate) fn assert_stat(stdout: &str, path: &str, unit: &str, value: u64, rese
         .collect::<Vec<_>>()
         .join(",");
     let expected = format!(
-        "{{\"path\":\"{path}\",\"scope\":[{scope_json}],\"name\":\"{name}\",\"unit\":\"{unit}\",\"value\":{value},\"reset_policy\":\"{reset_policy}\"}}"
+        "\"path\":\"{path}\",\"scope\":[{scope_json}],\"name\":\"{name}\",\"unit\":\"{unit}\",\"value\":{value},\"reset_policy\":\"{reset_policy}\""
     );
     assert!(
         stdout.contains(&expected),

@@ -324,7 +324,8 @@ fn stats_snapshot_json(snapshot: &StatSnapshot) -> String {
                 .collect::<Vec<_>>()
                 .join(",");
             format!(
-                "{{\"path\":\"{}\",\"scope\":[{}],\"name\":\"{}\",\"unit\":\"{}\",\"value\":{},\"reset_policy\":\"{}\"}}",
+                "{{\"id\":{},\"path\":\"{}\",\"scope\":[{}],\"name\":\"{}\",\"unit\":\"{}\",\"value\":{},\"reset_policy\":\"{}\"}}",
+                sample.id().get(),
                 json_escape(sample.path()),
                 scope,
                 json_escape(sample.name()),

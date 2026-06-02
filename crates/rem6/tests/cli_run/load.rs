@@ -43,7 +43,9 @@ fn rem6_run_loads_riscv_elf_and_emits_json_stats_artifact() {
     assert!(stdout.contains("\"batches\":0"));
     assert!(stdout.contains("\"max_workers\":0"));
     assert!(stdout.contains("\"batch_worker_ticks\":0"));
-    assert!(stdout.contains("\"path\":\"sim.binary.bytes\""));
+    assert!(stdout.contains(
+        "{\"id\":0,\"path\":\"sim.binary.bytes\",\"scope\":[\"sim\",\"binary\"],\"name\":\"bytes\""
+    ));
     assert!(stdout.contains("\"path\":\"sim.elf.load_segments\""));
     assert!(stdout.contains("\"path\":\"sim.max_tick\""));
     assert_stat(
@@ -296,7 +298,9 @@ fn rem6_run_writes_stats_array_to_requested_stats_output_path() {
     let stats = fs::read_to_string(&stats_path).unwrap();
     assert!(stats.starts_with('['));
     assert!(stats.ends_with("]\n"));
-    assert!(stats.contains("\"path\":\"sim.binary.bytes\""));
+    assert!(stats.contains(
+        "{\"id\":0,\"path\":\"sim.binary.bytes\",\"scope\":[\"sim\",\"binary\"],\"name\":\"bytes\""
+    ));
     assert!(stats.contains("\"path\":\"sim.max_tick\""));
     assert!(!stats.contains("\"schema\":\"rem6.cli.run.v1\""));
 }

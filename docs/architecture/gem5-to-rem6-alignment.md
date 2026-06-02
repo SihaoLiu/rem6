@@ -66,7 +66,9 @@ isolated bugs:
   checks can parse typed parallel evidence without scraping terminal output or
   losing per-epoch records. Each JSON stats sample also carries its scope
   segments and leaf name alongside the flat path, so consumers can aggregate by
-  any hierarchy level without reparsing dotted paths.
+  any hierarchy level without reparsing dotted paths. The same sample object
+  exposes the registry stat id, giving dump and delta consumers a stable schema
+  key in addition to the human-readable path.
   The same artifact now also carries structured fetch and
   data memory transport summaries with per-route source counters, request and
   response counts, round-trip tick totals, and maximum round-trip ticks, so
