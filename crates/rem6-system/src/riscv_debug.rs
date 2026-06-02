@@ -449,12 +449,21 @@ fn riscv_gdb_remote_cpu_id(thread_id: u64) -> Option<CpuId> {
     Some(CpuId::new(u32::try_from(cpu).ok()?))
 }
 
-fn riscv_gdb_page_permission_flags(permissions: TranslationPagePermissions) -> String {
-    let mut flags = String::with_capacity(3);
-    flags.push(if permissions.read() { 'r' } else { '-' });
-    flags.push(if permissions.write() { 'w' } else { '-' });
-    flags.push(if permissions.execute() { 'x' } else { '-' });
-    flags
+fn riscv_gdb_page_permission_flags(permissions: TranslationPagePermissions) -> &'static str {
+    match (
+        permissions.read(),
+        permissions.write(),
+        permissions.execute(),
+    ) {
+        (false, false, false) => "---",
+        (false, false, true) => "--x",
+        (false, true, false) => "-w-",
+        (false, true, true) => "-wx",
+        (true, false, false) => "r--",
+        (true, false, true) => "r-x",
+        (true, true, false) => "rw-",
+        (true, true, true) => "rwx",
+    }
 }
 
 fn riscv_gdb_remote_thread_selection(
