@@ -7,10 +7,10 @@ use rem6_debug::{
 use rem6_isa_riscv::{Register, RiscvGdbTargetDescription, RiscvGdbXlen, RiscvHartState};
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, MemoryError, MemoryRequest, MemoryRequestId,
-    PartitionedMemoryStore,
+    PartitionedMemoryStore, TranslationPageMap, TranslationPagePermissions,
 };
 use std::error::Error;
-use std::fmt;
+use std::fmt::{self, Write as _};
 
 const RISCV_GDB_INTEGER_REGISTER_COUNT: u8 = 32;
 const RISCV_GDB_PC_REGISTER: u64 = 32;
@@ -46,6 +46,34 @@ pub fn riscv_gdb_remote_session_with_page_table_dump(
     let mut session = riscv_gdb_remote_session(xlen);
     session.set_page_table_dump(page_table_dump);
     session
+}
+
+pub fn riscv_gdb_remote_session_from_translation_map(
+    xlen: RiscvGdbXlen,
+    map: &TranslationPageMap,
+) -> GdbRemoteSession {
+    riscv_gdb_remote_session_with_page_table_dump(
+        xlen,
+        riscv_gdb_page_table_dump_from_translation_map(map),
+    )
+}
+
+pub fn riscv_gdb_page_table_dump_from_translation_map(map: &TranslationPageMap) -> Vec<u8> {
+    let mut dump = String::new();
+    writeln!(dump, "page_size={:#x}", map.page_size().bytes())
+        .expect("page table dump writes into string");
+    for mapping in map.mappings() {
+        writeln!(
+            dump,
+            "vaddr={:#x} paddr={:#x} pages={} flags={}",
+            mapping.virtual_start().get(),
+            mapping.physical_start().get(),
+            mapping.page_count(),
+            riscv_gdb_page_permission_flags(mapping.permissions()),
+        )
+        .expect("page table dump writes into string");
+    }
+    dump.into_bytes()
 }
 
 pub fn riscv_gdb_remote_session_from_hart(
@@ -402,6 +430,14 @@ fn riscv_gdb_remote_selected_core(
 fn riscv_gdb_remote_cpu_id(thread_id: u64) -> Option<CpuId> {
     let cpu = thread_id.checked_sub(1)?;
     Some(CpuId::new(u32::try_from(cpu).ok()?))
+}
+
+fn riscv_gdb_page_permission_flags(permissions: TranslationPagePermissions) -> String {
+    let mut flags = String::with_capacity(3);
+    flags.push(if permissions.read() { 'r' } else { '-' });
+    flags.push(if permissions.write() { 'w' } else { '-' });
+    flags.push(if permissions.execute() { 'x' } else { '-' });
+    flags
 }
 
 fn riscv_gdb_remote_thread_selection(

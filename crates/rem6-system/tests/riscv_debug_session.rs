@@ -4,13 +4,15 @@ use rem6_isa_riscv::{Register, RiscvGdbXlen, RiscvHartState};
 use rem6_kernel::PartitionId;
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryTargetId, PartitionedMemoryStore,
+    TranslationPageMap, TranslationPagePermissions, TranslationPageSize,
 };
 use rem6_system::{
     apply_riscv_gdb_remote_register_write, handle_riscv_gdb_remote_cluster_packet,
     handle_riscv_gdb_remote_core_packet, handle_riscv_gdb_remote_memory_packet,
     handle_riscv_gdb_remote_packet, handle_riscv_gdb_remote_system_packet,
-    riscv_gdb_remote_session, riscv_gdb_remote_session_from_cluster,
-    riscv_gdb_remote_session_from_core, riscv_gdb_remote_session_from_hart,
+    riscv_gdb_page_table_dump_from_translation_map, riscv_gdb_remote_session,
+    riscv_gdb_remote_session_from_cluster, riscv_gdb_remote_session_from_core,
+    riscv_gdb_remote_session_from_hart, riscv_gdb_remote_session_from_translation_map,
     riscv_gdb_remote_session_with_page_table_dump, RiscvGdbRegisterWriteError,
     RiscvGdbRemotePacketError,
 };
@@ -107,6 +109,53 @@ fn riscv_gdb_remote_session_serves_page_table_dump_payload() {
                 .unwrap(),
         ),
         b"vpn=0x1000 ppn=0x2000 rwx\n",
+    );
+}
+
+#[test]
+fn riscv_gdb_page_table_dump_formats_translation_map() {
+    let mut map = TranslationPageMap::new(TranslationPageSize::new(4096).unwrap());
+    map.map(
+        Address::new(0x4000),
+        Address::new(0x8000),
+        2,
+        TranslationPagePermissions::read_execute(),
+    )
+    .unwrap();
+    map.map(
+        Address::new(0x1000),
+        Address::new(0x5000),
+        1,
+        TranslationPagePermissions::read_write(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        riscv_gdb_page_table_dump_from_translation_map(&map),
+        b"page_size=0x1000\nvaddr=0x1000 paddr=0x5000 pages=1 flags=rw-\nvaddr=0x4000 paddr=0x8000 pages=2 flags=r-x\n",
+    );
+}
+
+#[test]
+fn riscv_gdb_remote_session_serves_translation_map_page_table_dump() {
+    let mut map = TranslationPageMap::new(TranslationPageSize::new(4096).unwrap());
+    map.map(
+        Address::new(0x2000),
+        Address::new(0xa000),
+        1,
+        TranslationPagePermissions::read_only(),
+    )
+    .unwrap();
+
+    let mut session = riscv_gdb_remote_session_from_translation_map(RiscvGdbXlen::Rv64, &map);
+
+    assert_eq!(
+        packet_payload(
+            session
+                .handle_packet(&GdbRemotePacket::new(b".".to_vec()).unwrap())
+                .unwrap(),
+        ),
+        b"page_size=0x1000\nvaddr=0x2000 paddr=0xa000 pages=1 flags=r--\n",
     );
 }
 

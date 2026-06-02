@@ -146,9 +146,10 @@ pub use riscv_debug::{
     apply_riscv_gdb_remote_core_register_write, apply_riscv_gdb_remote_register_write,
     handle_riscv_gdb_remote_cluster_packet, handle_riscv_gdb_remote_core_packet,
     handle_riscv_gdb_remote_memory_packet, handle_riscv_gdb_remote_packet,
-    handle_riscv_gdb_remote_system_packet, riscv_gdb_remote_session,
-    riscv_gdb_remote_session_from_cluster, riscv_gdb_remote_session_from_core,
-    riscv_gdb_remote_session_from_hart, riscv_gdb_remote_session_with_page_table_dump,
+    handle_riscv_gdb_remote_system_packet, riscv_gdb_page_table_dump_from_translation_map,
+    riscv_gdb_remote_session, riscv_gdb_remote_session_from_cluster,
+    riscv_gdb_remote_session_from_core, riscv_gdb_remote_session_from_hart,
+    riscv_gdb_remote_session_from_translation_map, riscv_gdb_remote_session_with_page_table_dump,
     riscv_gdb_remote_thread_id, sync_riscv_gdb_remote_threads_from_cluster,
     RiscvGdbRegisterWriteError, RiscvGdbRemotePacketError,
 };
