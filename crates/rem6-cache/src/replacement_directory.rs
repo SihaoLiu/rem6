@@ -27,7 +27,8 @@ impl CacheReplacementDirectoryConfig {
         if sets == 0 {
             return Err(CacheReplacementPolicyError::ZeroSets);
         }
-        validate_replacement_vector_length("sets", sets)?;
+        validate_replacement_vector_length::<ReplacementDirectorySet>("sets", sets)?;
+        validate_replacement_vector_length::<Option<Address>>("ways", ways)?;
         let policy_config = CacheReplacementPolicyConfig::new(kind, ways)?;
         Ok(Self {
             kind,

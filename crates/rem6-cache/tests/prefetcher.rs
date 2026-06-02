@@ -13,7 +13,9 @@ use rem6_cache::{
 };
 use rem6_memory::{Address, AgentId};
 
-const OVERSIZED_VECTOR_LENGTH: usize = isize::MAX as usize + 1;
+const U64_VECTOR_BYTE_OVERFLOW_LENGTH: usize = isize::MAX as usize / std::mem::size_of::<u64>() + 1;
+const U32_VECTOR_BYTE_OVERFLOW_LENGTH: usize = isize::MAX as usize / std::mem::size_of::<u32>() + 1;
+const I64_VECTOR_BYTE_OVERFLOW_LENGTH: usize = isize::MAX as usize / std::mem::size_of::<i64>() + 1;
 
 fn access(agent: u32, pc: u64, address: u64) -> StridePrefetchAccess {
     StridePrefetchAccess::new(AgentId::new(agent), pc, Address::new(address), false)
@@ -194,24 +196,24 @@ fn bop_prefetcher_delays_rr_training_and_restores_delay_queue() {
 #[test]
 fn bop_prefetcher_config_rejects_vector_lengths_above_host_limit() {
     let mut oversized_rr = bop_options();
-    oversized_rr.rr_entries = OVERSIZED_VECTOR_LENGTH;
+    oversized_rr.rr_entries = U64_VECTOR_BYTE_OVERFLOW_LENGTH;
     assert_eq!(
         BopPrefetcherConfig::new(oversized_rr),
         Err(BopPrefetcherError::VectorLengthTooLarge {
             field: "RR entries",
-            length: OVERSIZED_VECTOR_LENGTH,
-            maximum: isize::MAX as usize,
+            length: U64_VECTOR_BYTE_OVERFLOW_LENGTH,
+            maximum: isize::MAX as usize / std::mem::size_of::<u64>(),
         })
     );
 
     let mut oversized_offsets = bop_options();
-    oversized_offsets.offset_list_size = OVERSIZED_VECTOR_LENGTH;
+    oversized_offsets.offset_list_size = U32_VECTOR_BYTE_OVERFLOW_LENGTH;
     assert_eq!(
         BopPrefetcherConfig::new(oversized_offsets),
         Err(BopPrefetcherError::VectorLengthTooLarge {
             field: "offset list size",
-            length: OVERSIZED_VECTOR_LENGTH,
-            maximum: isize::MAX as usize,
+            length: U32_VECTOR_BYTE_OVERFLOW_LENGTH,
+            maximum: isize::MAX as usize / std::mem::size_of::<u32>(),
         })
     );
 }
@@ -591,21 +593,21 @@ fn dcpt_prefetcher_matches_masked_delta_pairs_and_restores_state() {
 #[test]
 fn dcpt_prefetcher_config_rejects_vector_lengths_above_host_limit() {
     assert_eq!(
-        DcptPrefetcherConfig::new(OVERSIZED_VECTOR_LENGTH, 12, 4, 4, true),
+        DcptPrefetcherConfig::new(I64_VECTOR_BYTE_OVERFLOW_LENGTH, 12, 4, 4, true),
         Err(DcptPrefetcherError::VectorLengthTooLarge {
             field: "deltas per entry",
-            length: OVERSIZED_VECTOR_LENGTH,
-            maximum: isize::MAX as usize,
+            length: I64_VECTOR_BYTE_OVERFLOW_LENGTH,
+            maximum: isize::MAX as usize / std::mem::size_of::<i64>(),
         })
     );
-    assert_eq!(
-        DcptPrefetcherConfig::new(4, 12, 4, OVERSIZED_VECTOR_LENGTH, true),
+    assert!(matches!(
+        DcptPrefetcherConfig::new(4, 12, 4, I64_VECTOR_BYTE_OVERFLOW_LENGTH, true),
         Err(DcptPrefetcherError::VectorLengthTooLarge {
             field: "table entries",
-            length: OVERSIZED_VECTOR_LENGTH,
-            maximum: isize::MAX as usize,
+            length: I64_VECTOR_BYTE_OVERFLOW_LENGTH,
+            ..
         })
-    );
+    ));
 }
 
 #[test]

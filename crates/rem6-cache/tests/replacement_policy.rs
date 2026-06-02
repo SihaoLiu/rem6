@@ -1,10 +1,14 @@
 use rem6_cache::{
     CacheReplacementDirectory, CacheReplacementDirectoryConfig, CacheReplacementPolicyConfig,
-    CacheReplacementPolicyError, CacheReplacementPolicyKind, ReplacementSet,
+    CacheReplacementPolicyError, CacheReplacementPolicyKind, ReplacementEntry, ReplacementSet,
 };
 use rem6_memory::{Address, CacheLineLayout};
 
 const OVERSIZED_VECTOR_LENGTH: usize = isize::MAX as usize + 1;
+const REPLACEMENT_ENTRY_BYTE_OVERFLOW_LENGTH: usize =
+    isize::MAX as usize / std::mem::size_of::<ReplacementEntry>() + 1;
+const DIRECTORY_LINE_BYTE_OVERFLOW_LENGTH: usize =
+    isize::MAX as usize / std::mem::size_of::<Option<Address>>() + 1;
 
 fn line_layout() -> CacheLineLayout {
     CacheLineLayout::new(16).unwrap()
@@ -290,10 +294,21 @@ fn replacement_set_rejects_bad_configs_candidates_and_snapshots() {
         Err(CacheReplacementPolicyError::VectorLengthTooLarge {
             field: "ways",
             length: OVERSIZED_VECTOR_LENGTH,
-            maximum: isize::MAX as usize,
+            maximum: isize::MAX as usize / std::mem::size_of::<ReplacementEntry>(),
         })
     );
     assert_eq!(
+        CacheReplacementPolicyConfig::new(
+            CacheReplacementPolicyKind::Lru,
+            REPLACEMENT_ENTRY_BYTE_OVERFLOW_LENGTH,
+        ),
+        Err(CacheReplacementPolicyError::VectorLengthTooLarge {
+            field: "ways",
+            length: REPLACEMENT_ENTRY_BYTE_OVERFLOW_LENGTH,
+            maximum: isize::MAX as usize / std::mem::size_of::<ReplacementEntry>(),
+        })
+    );
+    assert!(matches!(
         CacheReplacementDirectoryConfig::new(
             CacheReplacementPolicyKind::Lru,
             line_layout(),
@@ -302,6 +317,36 @@ fn replacement_set_rejects_bad_configs_candidates_and_snapshots() {
         ),
         Err(CacheReplacementPolicyError::VectorLengthTooLarge {
             field: "sets",
+            length: OVERSIZED_VECTOR_LENGTH,
+            ..
+        })
+    ));
+    assert!(CacheReplacementDirectoryConfig::new(
+        CacheReplacementPolicyKind::Lru,
+        line_layout(),
+        4,
+        DIRECTORY_LINE_BYTE_OVERFLOW_LENGTH,
+    )
+    .is_err());
+    assert!(CacheReplacementDirectoryConfig::new(
+        CacheReplacementPolicyKind::Lru,
+        line_layout(),
+        DIRECTORY_LINE_BYTE_OVERFLOW_LENGTH,
+        4,
+    )
+    .is_err());
+    assert_eq!(
+        CacheReplacementPolicyConfig::new(
+            CacheReplacementPolicyKind::Ship {
+                rrpv_bits: 2,
+                hit_priority: true,
+                shct_entries: OVERSIZED_VECTOR_LENGTH,
+                insertion_threshold_percent: 1,
+            },
+            4,
+        ),
+        Err(CacheReplacementPolicyError::VectorLengthTooLarge {
+            field: "SHCT entries",
             length: OVERSIZED_VECTOR_LENGTH,
             maximum: isize::MAX as usize,
         })
@@ -344,22 +389,6 @@ fn replacement_set_rejects_bad_configs_candidates_and_snapshots() {
             4,
         ),
         Err(CacheReplacementPolicyError::SignatureHistoryTableEmpty)
-    );
-    assert_eq!(
-        CacheReplacementPolicyConfig::new(
-            CacheReplacementPolicyKind::Ship {
-                rrpv_bits: 2,
-                hit_priority: true,
-                shct_entries: OVERSIZED_VECTOR_LENGTH,
-                insertion_threshold_percent: 1,
-            },
-            4,
-        ),
-        Err(CacheReplacementPolicyError::VectorLengthTooLarge {
-            field: "SHCT entries",
-            length: OVERSIZED_VECTOR_LENGTH,
-            maximum: isize::MAX as usize,
-        })
     );
     assert_eq!(
         CacheReplacementPolicyConfig::new(

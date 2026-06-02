@@ -4,9 +4,8 @@ use std::fmt;
 
 use rem6_memory::{Address, AgentId};
 
+use crate::allocation::max_vector_len;
 use crate::prefetch::PrefetchCandidate;
-
-const MAX_DCPT_VECTOR_LENGTH: usize = isize::MAX as usize;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DcptPrefetcherConfig {
@@ -31,7 +30,7 @@ impl DcptPrefetcherConfig {
         if deltas_per_entry < 4 {
             return Err(DcptPrefetcherError::DeltaHistoryTooSmall { deltas_per_entry });
         }
-        validate_dcpt_vector_length("deltas per entry", deltas_per_entry)?;
+        validate_dcpt_vector_length::<i64>("deltas per entry", deltas_per_entry)?;
         if !(2..=63).contains(&delta_bits) {
             return Err(DcptPrefetcherError::DeltaBitsOutOfRange { delta_bits });
         }
@@ -41,7 +40,7 @@ impl DcptPrefetcherConfig {
         if table_entries == 0 {
             return Err(DcptPrefetcherError::ZeroTableEntries);
         }
-        validate_dcpt_vector_length("table entries", table_entries)?;
+        validate_dcpt_vector_length::<DcptPrefetchEntry>("table entries", table_entries)?;
 
         Ok(Self {
             deltas_per_entry,
@@ -161,15 +160,16 @@ impl fmt::Display for DcptPrefetcherError {
 
 impl Error for DcptPrefetcherError {}
 
-fn validate_dcpt_vector_length(
+fn validate_dcpt_vector_length<T>(
     field: &'static str,
     length: usize,
 ) -> Result<(), DcptPrefetcherError> {
-    if length > MAX_DCPT_VECTOR_LENGTH {
+    let maximum = max_vector_len::<T>();
+    if length > maximum {
         return Err(DcptPrefetcherError::VectorLengthTooLarge {
             field,
             length,
-            maximum: MAX_DCPT_VECTOR_LENGTH,
+            maximum,
         });
     }
     Ok(())

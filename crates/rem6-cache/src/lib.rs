@@ -1,3 +1,4 @@
+mod allocation;
 mod bank;
 mod chi;
 mod chi_bank;

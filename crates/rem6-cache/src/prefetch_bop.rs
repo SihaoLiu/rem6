@@ -4,9 +4,8 @@ use std::fmt;
 
 use rem6_memory::{Address, AgentId};
 
+use crate::allocation::max_vector_len;
 use crate::prefetch::PrefetchCandidate;
-
-const MAX_BOP_VECTOR_LENGTH: usize = isize::MAX as usize;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BopDelayQueueConfig {
@@ -95,7 +94,7 @@ impl BopPrefetcherConfig {
         if rr_entries == 0 {
             return Err(BopPrefetcherError::ZeroRrEntries);
         }
-        validate_bop_vector_length("RR entries", rr_entries)?;
+        validate_bop_vector_length::<u64>("RR entries", rr_entries)?;
         if !rr_entries.is_power_of_two() {
             return Err(BopPrefetcherError::RrEntriesNotPowerOfTwo { rr_entries });
         }
@@ -105,7 +104,7 @@ impl BopPrefetcherConfig {
         if offset_list_size == 0 {
             return Err(BopPrefetcherError::ZeroOffsetListSize);
         }
-        validate_bop_vector_length("offset list size", offset_list_size)?;
+        validate_bop_vector_length::<u32>("offset list size", offset_list_size)?;
         if negative_offsets && !offset_list_size.is_multiple_of(2) {
             return Err(BopPrefetcherError::OddNegativeOffsetList { offset_list_size });
         }
@@ -281,15 +280,16 @@ impl fmt::Display for BopPrefetcherError {
 
 impl Error for BopPrefetcherError {}
 
-fn validate_bop_vector_length(
+fn validate_bop_vector_length<T>(
     field: &'static str,
     length: usize,
 ) -> Result<(), BopPrefetcherError> {
-    if length > MAX_BOP_VECTOR_LENGTH {
+    let maximum = max_vector_len::<T>();
+    if length > maximum {
         return Err(BopPrefetcherError::VectorLengthTooLarge {
             field,
             length,
-            maximum: MAX_BOP_VECTOR_LENGTH,
+            maximum,
         });
     }
     Ok(())
