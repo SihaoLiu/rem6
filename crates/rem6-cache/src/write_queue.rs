@@ -7,6 +7,7 @@ use rem6_memory::{
     MemoryRequest, MemoryRequestId,
 };
 
+use crate::allocation::max_vector_len;
 use crate::replacement::ReplacementDecision;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -51,6 +52,11 @@ impl CacheWriteQueueConfig {
         let total_entries = entries
             .checked_add(reserve)
             .ok_or(CacheWriteQueueError::CapacityOverflow { entries, reserve })?;
+        validate_write_queue_vector_length(
+            "total entries",
+            total_entries,
+            maximum_write_queue_entries(),
+        )?;
         Ok(Self {
             entries,
             reserve,
@@ -77,6 +83,11 @@ pub enum CacheWriteQueueError {
     CapacityOverflow {
         entries: usize,
         reserve: usize,
+    },
+    VectorLengthTooLarge {
+        field: &'static str,
+        length: usize,
+        maximum: usize,
     },
     EntrySlotsFull {
         entries: usize,
@@ -133,6 +144,14 @@ impl fmt::Display for CacheWriteQueueError {
             Self::CapacityOverflow { entries, reserve } => write!(
                 formatter,
                 "cache write queue entries {entries} plus reserve {reserve} overflows"
+            ),
+            Self::VectorLengthTooLarge {
+                field,
+                length,
+                maximum,
+            } => write!(
+                formatter,
+                "cache write queue {field} length {length} exceeds maximum {maximum}"
             ),
             Self::EntrySlotsFull { entries, reserve } => write!(
                 formatter,
@@ -216,6 +235,25 @@ impl From<MemoryError> for CacheWriteQueueError {
     fn from(error: MemoryError) -> Self {
         Self::Memory(error)
     }
+}
+
+fn maximum_write_queue_entries() -> usize {
+    max_vector_len::<CacheWriteQueueEntry>().min(max_vector_len::<CacheWriteQueueHandle>())
+}
+
+fn validate_write_queue_vector_length(
+    field: &'static str,
+    length: usize,
+    maximum: usize,
+) -> Result<(), CacheWriteQueueError> {
+    if length > maximum {
+        return Err(CacheWriteQueueError::VectorLengthTooLarge {
+            field,
+            length,
+            maximum,
+        });
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

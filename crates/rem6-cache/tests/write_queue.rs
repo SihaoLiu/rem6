@@ -1,7 +1,7 @@
 use rem6_cache::{
     CacheCleanReplacementPolicy, CacheReplacementPolicyConfig, CacheReplacementPolicyKind,
-    CacheReplacementVictim, CacheWriteQueue, CacheWriteQueueConfig, CacheWriteQueueEntryKind,
-    CacheWriteQueueError, CacheWriteQueueSnapshot, ReplacementSet,
+    CacheReplacementVictim, CacheWriteQueue, CacheWriteQueueConfig, CacheWriteQueueEntry,
+    CacheWriteQueueEntryKind, CacheWriteQueueError, CacheWriteQueueSnapshot, ReplacementSet,
 };
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryOperation, MemoryRequest,
@@ -60,6 +60,21 @@ fn replacement_victim_way() -> usize {
     replacement.reset(1).unwrap();
     replacement.touch(1).unwrap();
     replacement.victim([0, 1]).unwrap().way()
+}
+
+const WRITE_QUEUE_ENTRIES_BYTE_OVERFLOW_LENGTH: usize =
+    isize::MAX as usize / std::mem::size_of::<CacheWriteQueueEntry>() + 1;
+
+#[test]
+fn cache_write_queue_config_rejects_vector_lengths_above_host_limit() {
+    assert!(matches!(
+        CacheWriteQueueConfig::new(WRITE_QUEUE_ENTRIES_BYTE_OVERFLOW_LENGTH, 0),
+        Err(CacheWriteQueueError::VectorLengthTooLarge {
+            field: "total entries",
+            length: WRITE_QUEUE_ENTRIES_BYTE_OVERFLOW_LENGTH,
+            ..
+        })
+    ));
 }
 
 #[test]

@@ -1,6 +1,6 @@
 use rem6_cache::{
-    MshrQosClass, MshrQueue, MshrQueueConfig, MshrQueueError, MshrTargetPostFillAction,
-    MshrTargetSource,
+    MshrEntry, MshrQosClass, MshrQueue, MshrQueueConfig, MshrQueueError, MshrTarget,
+    MshrTargetPostFillAction, MshrTargetSource,
 };
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryAccessOrdering,
@@ -51,6 +51,11 @@ fn clean_writeback(sequence: u64, line: u64, value: u8) -> MemoryRequest {
     )
     .unwrap()
 }
+
+const MSHR_ENTRIES_BYTE_OVERFLOW_LENGTH: usize =
+    isize::MAX as usize / std::mem::size_of::<MshrEntry>() + 1;
+const MSHR_TARGETS_PER_MSHR_BYTE_OVERFLOW_LENGTH: usize =
+    isize::MAX as usize / std::mem::size_of::<MshrTarget>() + 1;
 
 #[test]
 fn mshr_queue_allocates_merges_limits_targets_and_reuses_entries() {
@@ -447,6 +452,26 @@ fn mshr_qos_class_exports_transport_qos_class() {
 
     assert_eq!(qos.requestor().get(), 42);
     assert_eq!(qos.priority().get(), 3);
+}
+
+#[test]
+fn mshr_queue_config_rejects_vector_lengths_above_host_limit() {
+    assert!(matches!(
+        MshrQueueConfig::new(MSHR_ENTRIES_BYTE_OVERFLOW_LENGTH, 1, 0),
+        Err(MshrQueueError::VectorLengthTooLarge {
+            field: "entries",
+            length: MSHR_ENTRIES_BYTE_OVERFLOW_LENGTH,
+            ..
+        })
+    ));
+    assert!(matches!(
+        MshrQueueConfig::new(1, MSHR_TARGETS_PER_MSHR_BYTE_OVERFLOW_LENGTH, 0),
+        Err(MshrQueueError::VectorLengthTooLarge {
+            field: "targets per MSHR",
+            length: MSHR_TARGETS_PER_MSHR_BYTE_OVERFLOW_LENGTH,
+            ..
+        })
+    ));
 }
 
 #[test]

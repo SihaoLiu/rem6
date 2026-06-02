@@ -5,6 +5,8 @@ use std::fmt;
 use rem6_memory::{Address, MemoryOperation, MemoryRequest};
 use rem6_transport::TransportQosClass;
 
+use crate::allocation::max_vector_len;
+
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct MshrHandle(u64);
 
@@ -87,9 +89,15 @@ impl MshrQueueConfig {
         if entries == 0 {
             return Err(MshrQueueError::ZeroEntries);
         }
+        validate_mshr_vector_length("entries", entries, maximum_mshr_entries())?;
         if targets_per_mshr == 0 {
             return Err(MshrQueueError::ZeroTargetsPerMshr);
         }
+        validate_mshr_vector_length(
+            "targets per MSHR",
+            targets_per_mshr,
+            maximum_mshr_targets_per_entry(),
+        )?;
         if demand_reserve >= entries {
             return Err(MshrQueueError::DemandReserveExceedsEntries {
                 demand_reserve,
@@ -123,6 +131,11 @@ pub enum MshrQueueError {
     DemandReserveExceedsEntries {
         demand_reserve: usize,
         entries: usize,
+    },
+    VectorLengthTooLarge {
+        field: &'static str,
+        length: usize,
+        maximum: usize,
     },
     EntrySlotsFull {
         entries: usize,
@@ -164,6 +177,14 @@ impl fmt::Display for MshrQueueError {
                 formatter,
                 "MSHR demand reserve {demand_reserve} leaves no entry in a {entries}-entry queue"
             ),
+            Self::VectorLengthTooLarge {
+                field,
+                length,
+                maximum,
+            } => write!(
+                formatter,
+                "MSHR queue {field} length {length} exceeds maximum {maximum}"
+            ),
             Self::EntrySlotsFull { entries } => {
                 write!(formatter, "MSHR queue has all {entries} entries allocated")
             }
@@ -201,6 +222,31 @@ impl fmt::Display for MshrQueueError {
 }
 
 impl Error for MshrQueueError {}
+
+fn maximum_mshr_entries() -> usize {
+    max_vector_len::<MshrEntry>()
+        .min(max_vector_len::<MshrHandle>())
+        .min(max_vector_len::<usize>())
+}
+
+fn maximum_mshr_targets_per_entry() -> usize {
+    max_vector_len::<MshrTarget>().min(max_vector_len::<MemoryRequest>())
+}
+
+fn validate_mshr_vector_length(
+    field: &'static str,
+    length: usize,
+    maximum: usize,
+) -> Result<(), MshrQueueError> {
+    if length > maximum {
+        return Err(MshrQueueError::VectorLengthTooLarge {
+            field,
+            length,
+            maximum,
+        });
+    }
+    Ok(())
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MshrTarget {
