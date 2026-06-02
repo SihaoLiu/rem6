@@ -5,6 +5,7 @@ use rem6_debug::{
     GdbRemoteRegisterBytes, GdbRemoteResumeKind, GdbRemoteResumeRequest, GdbRemoteSession,
     GdbRemoteStopReply, GdbRemoteThreadId, GdbRemoteThreadInfoQuery, GdbRemoteThreadOperation,
     GdbRemoteTrapKind, GdbRemoteTrapOperation, GdbRemoteTrapPoint, GdbRemoteTrapRequest,
+    GdbRemoteXferObject, GdbRemoteXferReadRequest,
 };
 
 #[test]
@@ -246,6 +247,64 @@ fn gdb_remote_commands_preserve_query_prefix_neighbors() {
         b"qC1".as_slice(),
         b"qfThreadInfoExtra".as_slice(),
         b"qsThreadInfoExtra".as_slice(),
+    ] {
+        let command = GdbRemoteCommand::parse(&GdbRemotePacket::new(payload.to_vec()).unwrap());
+        assert_eq!(command, GdbRemoteCommand::Unknown(payload.to_vec()));
+    }
+}
+
+#[test]
+fn gdb_remote_commands_decode_xfer_feature_reads() {
+    let command = GdbRemoteCommand::parse(
+        &GdbRemotePacket::new(b"qXfer:features:read:target.xml:0,10".to_vec()).unwrap(),
+    );
+
+    assert_eq!(
+        command,
+        GdbRemoteCommand::QueryXferRead {
+            request: GdbRemoteXferReadRequest::new(
+                GdbRemoteXferObject::Features,
+                b"target.xml".to_vec(),
+                0,
+                0x10,
+            ),
+        },
+    );
+
+    let uppercase = GdbRemoteCommand::parse(
+        &GdbRemotePacket::new(b"qXfer:features:read:riscv-64bit-cpu.xml:A,F".to_vec()).unwrap(),
+    );
+    assert_eq!(
+        uppercase,
+        GdbRemoteCommand::QueryXferRead {
+            request: GdbRemoteXferReadRequest::new(
+                GdbRemoteXferObject::Features,
+                b"riscv-64bit-cpu.xml".to_vec(),
+                0x0a,
+                0x0f,
+            ),
+        },
+    );
+}
+
+#[test]
+fn gdb_remote_commands_preserve_malformed_xfer_feature_reads() {
+    for payload in [
+        b"qXfer".as_slice(),
+        b"qXfer:features".as_slice(),
+        b"qXfer:features:write:target.xml:0,10".as_slice(),
+        b"qXfer:auxv:read::0,10".as_slice(),
+        b"qXfer:features:read::0,10".as_slice(),
+        b"qXfer:features:read:target.xml".as_slice(),
+        b"qXfer:features:read:target.xml:0".as_slice(),
+        b"qXfer:features:read:target.xml:,10".as_slice(),
+        b"qXfer:features:read:target.xml:0,".as_slice(),
+        b"qXfer:features:read:target.xml:zz,10".as_slice(),
+        b"qXfer:features:read:target.xml:0,zz".as_slice(),
+        b"qXfer:features:read:target.xml:0,0".as_slice(),
+        b"qXfer:features:read:target.xml:10000000000000000,1".as_slice(),
+        b"qXfer:features:read:target.xml:0,10000000000000000".as_slice(),
+        b"qXfer:features:read:target.xml:0,10:extra".as_slice(),
     ] {
         let command = GdbRemoteCommand::parse(&GdbRemotePacket::new(payload.to_vec()).unwrap());
         assert_eq!(command, GdbRemoteCommand::Unknown(payload.to_vec()));
@@ -1640,6 +1699,93 @@ fn gdb_remote_session_reports_supported_features() {
             ),
         ],
     );
+}
+
+#[test]
+fn gdb_remote_session_reports_xfer_feature_chunks() {
+    let mut session = GdbRemoteSession::new(vec![GdbRemoteFeature::new(
+        b"qXfer:features:read".to_vec(),
+        GdbRemoteFeatureValue::Supported,
+    )]);
+    assert!(session.set_xfer_feature(b"target.xml".to_vec(), b"abcdef".to_vec()));
+
+    assert_eq!(
+        session
+            .handle_packet(
+                &GdbRemotePacket::new(b"qXfer:features:read:target.xml:0,3".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"mabc".to_vec()).unwrap()),
+        ],
+    );
+    assert_eq!(
+        session
+            .handle_packet(
+                &GdbRemotePacket::new(b"qXfer:features:read:target.xml:3,3".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"ldef".to_vec()).unwrap()),
+        ],
+    );
+    assert_eq!(
+        session
+            .handle_packet(
+                &GdbRemotePacket::new(b"qXfer:features:read:target.xml:6,4".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"l".to_vec()).unwrap()),
+        ],
+    );
+}
+
+#[test]
+fn gdb_remote_session_requires_advertised_xfer_feature_support() {
+    let mut session = GdbRemoteSession::new(Vec::new());
+    assert!(session.set_xfer_feature(b"target.xml".to_vec(), b"abcdef".to_vec()));
+
+    assert_eq!(
+        session
+            .handle_packet(
+                &GdbRemotePacket::new(b"qXfer:features:read:target.xml:0,3".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(Vec::new()).unwrap()),
+        ],
+    );
+}
+
+#[test]
+fn gdb_remote_session_reports_xfer_feature_errors_without_partial_data() {
+    let mut session = GdbRemoteSession::new(vec![GdbRemoteFeature::new(
+        b"qXfer:features:read".to_vec(),
+        GdbRemoteFeatureValue::Supported,
+    )]);
+
+    assert!(!session.set_xfer_feature(Vec::new(), b"abcdef".to_vec()));
+    assert!(session.set_xfer_feature(b"target.xml".to_vec(), b"abcdef".to_vec()));
+
+    for payload in [
+        b"qXfer:features:read:missing.xml:0,3".as_slice(),
+        b"qXfer:features:read:target.xml:7,3".as_slice(),
+    ] {
+        assert_eq!(
+            session
+                .handle_packet(&GdbRemotePacket::new(payload.to_vec()).unwrap())
+                .unwrap(),
+            vec![
+                GdbRemoteFrame::Ack,
+                GdbRemoteFrame::Packet(GdbRemotePacket::new(b"E01".to_vec()).unwrap()),
+            ],
+        );
+    }
 }
 
 #[test]
