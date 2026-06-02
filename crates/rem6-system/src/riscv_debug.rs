@@ -1,7 +1,7 @@
 use rem6_cpu::{CpuId, RiscvCluster, RiscvCore};
 use rem6_debug::{
     GdbRemoteAckMode, GdbRemoteCommand, GdbRemoteError, GdbRemoteFeature, GdbRemoteFeatureValue,
-    GdbRemoteFrame, GdbRemotePacket, GdbRemoteRegisterBytes, GdbRemoteSession,
+    GdbRemoteFrame, GdbRemotePacket, GdbRemoteRegisterBytes, GdbRemoteSession, GdbRemoteThreadId,
     DEFAULT_GDB_REMOTE_MAX_PAYLOAD_BYTES,
 };
 use rem6_isa_riscv::{Register, RiscvGdbTargetDescription, RiscvGdbXlen, RiscvHartState};
@@ -247,6 +247,50 @@ pub fn handle_riscv_gdb_remote_core_packet(
     Ok(frames)
 }
 
+pub fn handle_riscv_gdb_remote_cluster_packet(
+    xlen: RiscvGdbXlen,
+    session: &mut GdbRemoteSession,
+    cluster: &RiscvCluster,
+    packet: &GdbRemotePacket,
+) -> Result<Vec<GdbRemoteFrame>, RiscvGdbRemotePacketError> {
+    if session.is_disconnected() {
+        return Ok(session.handle_packet(packet)?);
+    }
+
+    sync_riscv_gdb_remote_threads_from_cluster(session, cluster);
+
+    let command = GdbRemoteCommand::parse(packet);
+    if let GdbRemoteCommand::SetThread { thread, .. } = command {
+        if !riscv_gdb_remote_thread_available(thread, cluster) {
+            return gdb_remote_error_response(session);
+        }
+    }
+
+    if reads_riscv_gdb_remote_registers(&command) {
+        let Some(core) = riscv_gdb_remote_selected_core(session, cluster) else {
+            return gdb_remote_error_response(session);
+        };
+        sync_riscv_gdb_remote_session_from_core(xlen, session, &core);
+    }
+
+    let applies_register_write = validate_riscv_gdb_remote_register_write(xlen, &command)?;
+    let selected_core = if applies_register_write {
+        let Some(core) = riscv_gdb_remote_selected_core(session, cluster) else {
+            return gdb_remote_error_response(session);
+        };
+        Some(core)
+    } else {
+        None
+    };
+
+    let frames = session.handle_packet(packet)?;
+    if let Some(core) = selected_core {
+        apply_riscv_gdb_remote_core_register_write(xlen, &core, &command)?;
+        sync_riscv_gdb_remote_session_from_core(xlen, session, &core);
+    }
+    Ok(frames)
+}
+
 pub fn handle_riscv_gdb_remote_memory_packet(
     session: &mut GdbRemoteSession,
     memory: &mut PartitionedMemoryStore,
@@ -310,6 +354,32 @@ fn sync_riscv_gdb_remote_session_from_core(
         session,
         &riscv_gdb_hart_snapshot_from_core(core),
     );
+}
+
+fn riscv_gdb_remote_selected_core(
+    session: &GdbRemoteSession,
+    cluster: &RiscvCluster,
+) -> Option<RiscvCore> {
+    let thread_id = match session.general_thread() {
+        GdbRemoteThreadId::Id(thread_id) => thread_id,
+        GdbRemoteThreadId::All | GdbRemoteThreadId::Any => session.current_thread_id(),
+    };
+    let cpu = riscv_gdb_remote_cpu_id(thread_id)?;
+    cluster.core(cpu).ok()
+}
+
+fn riscv_gdb_remote_cpu_id(thread_id: u64) -> Option<CpuId> {
+    let cpu = thread_id.checked_sub(1)?;
+    Some(CpuId::new(u32::try_from(cpu).ok()?))
+}
+
+fn riscv_gdb_remote_thread_available(thread: GdbRemoteThreadId, cluster: &RiscvCluster) -> bool {
+    match thread {
+        GdbRemoteThreadId::All | GdbRemoteThreadId::Any => cluster.core_count() > 0,
+        GdbRemoteThreadId::Id(thread_id) => riscv_gdb_remote_cpu_id(thread_id)
+            .and_then(|cpu| cluster.core(cpu).ok())
+            .is_some(),
+    }
 }
 
 const fn reads_riscv_gdb_remote_registers(command: &GdbRemoteCommand) -> bool {

@@ -411,8 +411,9 @@ isolated bugs:
   boundaries, returning `E01` for invalid ranges without partially mutating
   guest memory. Multi-core RISC-V debug construction can derive positive GDB
   thread ids from `RiscvCluster` core ids, publish the sorted thread list
-  through generic `qfThreadInfo`/`T`/`qC` session state, and keep the first core
-  as the initial register source until per-thread register selection is wired.
+  through generic `qfThreadInfo`/`T`/`qC` session state, route `H g`-scoped
+  register reads and writes to the matching live core, and reject unknown thread
+  selections before they mutate debugger session state.
   Workload manifests and replay
   plans can declare exact expected remote-send records, exact progress-free
   transition records, remote-flow actual sets, and remote source/target endpoint
@@ -1225,8 +1226,9 @@ Implementation evidence through 2026-06-01:
   memory, splitting accesses at cache-line boundaries and rejecting invalid
   ranges before committing writes. Cluster construction maps sorted
   `RiscvCluster` core ids to positive GDB thread ids, seeds the generic session
-  thread list from those ids, and leaves the lowest core as the register source
-  until debugger-selected register views are connected.
+  thread list from those ids, and exposes a cluster packet handler that validates
+  thread selections while synchronizing `g`/`p n` reads and `G`/`P n...=r...`
+  writes with the live core selected by the generic GDB session state.
 - `rem6-memory` now keeps `MemoryRequest`, `MemoryResponse`, response status,
   atomic request payload validation, and atomic read-modify-write byte
   materialization in a focused `request` module. Memory source-policy tests keep
