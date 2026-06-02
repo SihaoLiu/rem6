@@ -24,6 +24,7 @@ pub enum GdbRemoteError {
     TrailingBytes { count: usize },
     ZeroMaxPayloadBytes,
     PayloadTooLong { len: usize, max: usize },
+    LegacySequenceIdUnsupported,
     RunLengthWithoutPreviousByte,
     MissingRunLengthCount,
     InvalidRunLengthCount { byte: u8 },
@@ -56,6 +57,12 @@ impl fmt::Display for GdbRemoteError {
                 formatter,
                 "GDB remote payload has {len} byte(s), exceeding configured maximum {max}"
             ),
+            Self::LegacySequenceIdUnsupported => {
+                write!(
+                    formatter,
+                    "GDB remote legacy sequence-id packets are unsupported"
+                )
+            }
             Self::RunLengthWithoutPreviousByte => {
                 write!(
                     formatter,
@@ -358,6 +365,7 @@ fn parse_packet_parts(
             if actual != expected {
                 return Err(GdbRemoteError::ChecksumMismatch { expected, actual });
             }
+            reject_legacy_sequence_id(&payload)?;
             return Ok((payload, expected, index + 3));
         }
 
@@ -443,6 +451,17 @@ fn notification_frame_len(frame: &[u8]) -> Option<usize> {
     (frame.len() >= checksum_separator + 3).then_some(checksum_separator + 3)
 }
 
+fn reject_legacy_sequence_id(payload: &[u8]) -> Result<(), GdbRemoteError> {
+    if payload.len() >= 3
+        && payload[2] == b':'
+        && is_hex_digit(payload[0])
+        && is_hex_digit(payload[1])
+    {
+        return Err(GdbRemoteError::LegacySequenceIdUnsupported);
+    }
+    Ok(())
+}
+
 fn validate_payload_len(len: usize, config: GdbRemotePacketConfig) -> Result<(), GdbRemoteError> {
     if len > config.max_payload_bytes() {
         return Err(GdbRemoteError::PayloadTooLong {
@@ -471,6 +490,10 @@ fn encode_payload(payload: &[u8]) -> Vec<u8> {
         }
     }
     encoded
+}
+
+fn is_hex_digit(byte: u8) -> bool {
+    byte.is_ascii_hexdigit()
 }
 
 fn decode_checksum(high: u8, low: u8) -> Result<u8, GdbRemoteError> {

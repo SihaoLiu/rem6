@@ -72,6 +72,10 @@ fn gdb_remote_packet_rejects_malformed_frames_before_payload_mutation() {
         GdbRemoteError::TrailingBytes { count: 1 },
     );
     assert_eq!(
+        GdbRemotePacket::parse_frame(b"$12:qSupported#d4").unwrap_err(),
+        GdbRemoteError::LegacySequenceIdUnsupported,
+    );
+    assert_eq!(
         GdbRemotePacket::parse_frame(b"$* #4a").unwrap_err(),
         GdbRemoteError::RunLengthWithoutPreviousByte,
     );
