@@ -49,8 +49,10 @@ impl Virtio9pDevice {
             let Some(fid) = fids.get_mut(&write.fid) else {
                 return Ok(Err(VIRTIO_9P_EBADF));
             };
-            if let Some(bytes) = fid.write_xattr_data(write.offset, &write.data) {
-                return Ok(Ok(bytes.to_le_bytes().to_vec()));
+            match fid.write_xattr_data(write.offset, &write.data) {
+                Ok(Some(bytes)) => return Ok(Ok(bytes.to_le_bytes().to_vec())),
+                Ok(None) => {}
+                Err(errno) => return Ok(Err(errno)),
             }
             fid.clone()
         };
@@ -69,8 +71,9 @@ impl Virtio9pDevice {
         } else {
             write.offset
         };
-        let Some(bytes) = namespace.write_file(node, offset, &write.data) else {
-            return Ok(Err(VIRTIO_9P_EBADF));
+        let bytes = match namespace.write_file(node, offset, &write.data) {
+            Ok(bytes) => bytes,
+            Err(errno) => return Ok(Err(errno)),
         };
         Ok(Ok(bytes.to_le_bytes().to_vec()))
     }
@@ -94,12 +97,16 @@ impl Virtio9pDevice {
             };
             return Ok(self.remove_node_for_fid_path(node, removed.path()));
         }
-        if let Some((node, name, data, policy)) = removed.into_xattr_commit() {
+        let commit = match removed.into_xattr_commit() {
+            Ok(commit) => commit,
+            Err(errno) => return Ok(Err(errno)),
+        };
+        if let Some(commit) = commit {
             if let Err(errno) = self
                 .namespace
                 .lock()
                 .expect("virtio 9p namespace lock")
-                .write_xattr(node, name, data, policy)
+                .write_xattr(commit.node, commit.name, commit.data, commit.policy)
             {
                 return Ok(Err(errno));
             }

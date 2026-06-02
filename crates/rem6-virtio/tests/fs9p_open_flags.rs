@@ -1,18 +1,20 @@
 use rem6_virtio::{
-    Virtio9pConfig, Virtio9pDevice, VIRTIO_9P_DEFAULT_MSIZE, VIRTIO_9P_EBADF, VIRTIO_9P_ENOENT,
-    VIRTIO_9P_LOPEN_APPEND, VIRTIO_9P_LOPEN_TRUNCATE, VIRTIO_9P_NOFID, VIRTIO_9P_OPEN_APPEND,
-    VIRTIO_9P_OPEN_EXECUTE_ONLY, VIRTIO_9P_OPEN_READ_ONLY, VIRTIO_9P_OPEN_READ_WRITE,
-    VIRTIO_9P_OPEN_REMOVE_ON_CLOSE, VIRTIO_9P_OPEN_TRUNCATE, VIRTIO_9P_OPEN_WRITE_ONLY,
-    VIRTIO_9P_QTFILE, VIRTIO_9P_RCLUNK, VIRTIO_9P_RLERROR, VIRTIO_9P_RLINK, VIRTIO_9P_RLOPEN,
-    VIRTIO_9P_RMKDIR, VIRTIO_9P_ROPEN, VIRTIO_9P_RREAD, VIRTIO_9P_RREADDIR, VIRTIO_9P_RWALK,
-    VIRTIO_9P_RWRITE, VIRTIO_9P_TATTACH, VIRTIO_9P_TCLUNK, VIRTIO_9P_TLINK, VIRTIO_9P_TLOPEN,
-    VIRTIO_9P_TMKDIR, VIRTIO_9P_TOPEN, VIRTIO_9P_TREAD, VIRTIO_9P_TREADDIR, VIRTIO_9P_TWALK,
-    VIRTIO_9P_TWRITE,
+    Virtio9pConfig, Virtio9pDevice, VIRTIO_9P_DEFAULT_MSIZE, VIRTIO_9P_EBADF, VIRTIO_9P_EINVAL,
+    VIRTIO_9P_ENOENT, VIRTIO_9P_LOPEN_APPEND, VIRTIO_9P_LOPEN_TRUNCATE, VIRTIO_9P_NOFID,
+    VIRTIO_9P_OPEN_APPEND, VIRTIO_9P_OPEN_EXECUTE_ONLY, VIRTIO_9P_OPEN_READ_ONLY,
+    VIRTIO_9P_OPEN_READ_WRITE, VIRTIO_9P_OPEN_REMOVE_ON_CLOSE, VIRTIO_9P_OPEN_TRUNCATE,
+    VIRTIO_9P_OPEN_WRITE_ONLY, VIRTIO_9P_QTFILE, VIRTIO_9P_RCLUNK, VIRTIO_9P_RLERROR,
+    VIRTIO_9P_RLINK, VIRTIO_9P_RLOPEN, VIRTIO_9P_RMKDIR, VIRTIO_9P_ROPEN, VIRTIO_9P_RREAD,
+    VIRTIO_9P_RREADDIR, VIRTIO_9P_RWALK, VIRTIO_9P_RWRITE, VIRTIO_9P_TATTACH, VIRTIO_9P_TCLUNK,
+    VIRTIO_9P_TLINK, VIRTIO_9P_TLOPEN, VIRTIO_9P_TMKDIR, VIRTIO_9P_TOPEN, VIRTIO_9P_TREAD,
+    VIRTIO_9P_TREADDIR, VIRTIO_9P_TWALK, VIRTIO_9P_TWRITE,
 };
 
 mod support;
 
 use support::fs9p::*;
+
+const OVERSIZED_VECTOR_LENGTH: u64 = isize::MAX as u64 + 1;
 
 fn attached_device_with_file(name: &str, data: &[u8]) -> Virtio9pDevice {
     let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap())
@@ -33,6 +35,37 @@ fn open_payload(message_type: u8, fid: u32, mode: u32) -> Vec<u8> {
         VIRTIO_9P_TOPEN => p9_open_payload(fid, u8::try_from(mode).unwrap()),
         _ => unreachable!("unsupported open message type"),
     }
+}
+
+#[test]
+fn virtio_9p_device_rejects_oversized_write_offset_before_resizing_file() {
+    let device = attached_device_with_file("alpha.txt", b"alpha");
+
+    let walk = decoded_request(VIRTIO_9P_TWALK, 2, p9_walk_payload(1, 2, &[b"alpha.txt"]));
+    device.execute_at(11, walk).unwrap();
+    let open = decoded_request(
+        VIRTIO_9P_TLOPEN,
+        3,
+        p9_lopen_payload(2, u32::from(VIRTIO_9P_OPEN_READ_WRITE)),
+    );
+    assert_eq!(
+        device.execute_at(12, open).unwrap().message_type(),
+        VIRTIO_9P_RLOPEN
+    );
+
+    let write = decoded_request(
+        VIRTIO_9P_TWRITE,
+        4,
+        p9_write_payload(2, OVERSIZED_VECTOR_LENGTH, b"!"),
+    );
+    let write_completion = device.execute_at(13, write).unwrap();
+    assert_eq!(write_completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(write_completion.payload(), VIRTIO_9P_EINVAL.to_le_bytes());
+
+    let read = decoded_request(VIRTIO_9P_TREAD, 5, p9_read_payload(2, 0, 16));
+    let read_completion = device.execute_at(14, read).unwrap();
+    assert_eq!(read_completion.message_type(), VIRTIO_9P_RREAD);
+    assert_eq!(read_counted_data(read_completion.payload()), b"alpha");
 }
 
 #[test]

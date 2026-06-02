@@ -171,8 +171,13 @@ impl Virtio9pDevice {
         if namespace.metadata(node).is_none() {
             return Ok(Err(VIRTIO_9P_EBADF));
         }
-        if truncate && (!mode.can_write() || namespace.resize_file(node, 0).is_none()) {
+        if truncate && !mode.can_write() {
             return Ok(Err(VIRTIO_9P_EBADF));
+        }
+        if truncate {
+            if let Err(errno) = namespace.resize_file(node, 0) {
+                return Ok(Err(errno));
+            }
         }
         if fid.open(mode, append, remove_on_clunk).is_none() {
             return Ok(Err(VIRTIO_9P_EBADF));
@@ -373,10 +378,10 @@ impl Virtio9pDevice {
             return Ok(Err(VIRTIO_9P_ENOTSUP));
         }
         let mut namespace = self.namespace.lock().expect("virtio 9p namespace lock");
-        if setattr.valid & VIRTIO_9P_SETATTR_SIZE != 0
-            && namespace.resize_file(node, setattr.size).is_none()
-        {
-            return Ok(Err(VIRTIO_9P_EBADF));
+        if setattr.valid & VIRTIO_9P_SETATTR_SIZE != 0 {
+            if let Err(errno) = namespace.resize_file(node, setattr.size) {
+                return Ok(Err(errno));
+            }
         }
         if namespace
             .set_metadata_fields(
@@ -459,11 +464,10 @@ impl Virtio9pDevice {
                 Err(errno) => Ok(Err(errno)),
             };
         }
-        if wstat
-            .length
-            .is_some_and(|size| namespace.resize_file(node, size).is_none())
-        {
-            return Ok(Err(VIRTIO_9P_EBADF));
+        if let Some(size) = wstat.length {
+            if let Err(errno) = namespace.resize_file(node, size) {
+                return Ok(Err(errno));
+            }
         }
         if namespace
             .set_metadata_fields(

@@ -3,13 +3,13 @@ use std::collections::BTreeMap;
 use crate::{
     fs9p_protocol::{
         VIRTIO_9P_DTBLK, VIRTIO_9P_DTCHR, VIRTIO_9P_DTDIR, VIRTIO_9P_DTREG, VIRTIO_9P_DTSYMLINK,
-        VIRTIO_9P_EBADF, VIRTIO_9P_EEXIST, VIRTIO_9P_EINVAL, VIRTIO_9P_ENODATA, VIRTIO_9P_ENOENT,
-        VIRTIO_9P_ENOTEMPTY, VIRTIO_9P_GETATTR_BASIC, VIRTIO_9P_NAME_MAX,
-        VIRTIO_9P_OPEN_EXECUTE_ONLY, VIRTIO_9P_OPEN_READ_ONLY, VIRTIO_9P_OPEN_READ_WRITE,
-        VIRTIO_9P_OPEN_WRITE_ONLY, VIRTIO_9P_QTDIR, VIRTIO_9P_QTFILE, VIRTIO_9P_QTSYMLINK,
-        VIRTIO_9P_STATFS_BLOCK_SIZE, VIRTIO_9P_STATFS_TYPE, VIRTIO_9P_TLCREATE, VIRTIO_9P_TLINK,
-        VIRTIO_9P_TMKDIR, VIRTIO_9P_TMKNOD, VIRTIO_9P_TRENAME, VIRTIO_9P_TRENAMEAT,
-        VIRTIO_9P_TSYMLINK, VIRTIO_9P_TUNLINKAT, VIRTIO_9P_TWALK, VIRTIO_9P_TXATTRCREATE,
+        VIRTIO_9P_EBADF, VIRTIO_9P_EEXIST, VIRTIO_9P_EINVAL, VIRTIO_9P_ENOENT, VIRTIO_9P_ENOTEMPTY,
+        VIRTIO_9P_GETATTR_BASIC, VIRTIO_9P_NAME_MAX, VIRTIO_9P_OPEN_EXECUTE_ONLY,
+        VIRTIO_9P_OPEN_READ_ONLY, VIRTIO_9P_OPEN_READ_WRITE, VIRTIO_9P_OPEN_WRITE_ONLY,
+        VIRTIO_9P_QTDIR, VIRTIO_9P_QTFILE, VIRTIO_9P_QTSYMLINK, VIRTIO_9P_STATFS_BLOCK_SIZE,
+        VIRTIO_9P_STATFS_TYPE, VIRTIO_9P_TLCREATE, VIRTIO_9P_TLINK, VIRTIO_9P_TMKDIR,
+        VIRTIO_9P_TMKNOD, VIRTIO_9P_TRENAME, VIRTIO_9P_TRENAMEAT, VIRTIO_9P_TSYMLINK,
+        VIRTIO_9P_TUNLINKAT, VIRTIO_9P_TWALK, VIRTIO_9P_TXATTRCREATE,
     },
     VirtioError,
 };
@@ -20,6 +20,14 @@ use path_entry::{
     move_directory_at_fid_path, node_exists_at_fid_path, remove_node_at_fid_path,
     rename_node_at_fid_path, take_file_node_at_fid_path,
 };
+
+mod allocation;
+mod xattr;
+
+use allocation::{
+    checked_vector_len, checked_vector_len_usize, reserve_vec_len, try_for_each_file_mut,
+};
+pub(crate) use xattr::{Virtio9pXattrCommit, Virtio9pXattrWritePolicy};
 
 const VIRTIO_9P_QID_BYTES: usize = 13;
 const VIRTIO_9P_STATFS_BLOCKS: u64 = 1024;
@@ -756,20 +764,24 @@ impl Virtio9pNamespace {
         node: Virtio9pNodeId,
         offset: u64,
         data: &[u8],
-    ) -> Option<u32> {
+    ) -> Result<u32, u32> {
         let Virtio9pNodeId::File(path) = node else {
-            return None;
+            return Err(VIRTIO_9P_EBADF);
         };
-        find_file(&self.entries, path)?;
-        let start = usize::try_from(offset).ok()?;
-        let end = start.checked_add(data.len())?;
+        find_file(&self.entries, path).ok_or(VIRTIO_9P_EBADF)?;
+        let start = checked_vector_len(offset)?;
+        let end = start.checked_add(data.len()).ok_or(VIRTIO_9P_EINVAL)?;
+        checked_vector_len_usize(end)?;
+        try_for_each_file_mut(&mut self.entries, path, &mut |file| {
+            reserve_vec_len(&mut file.data, end)
+        })?;
         for_each_file_mut(&mut self.entries, path, &mut |file| {
             if file.data.len() < end {
                 file.data.resize(end, 0);
             }
             file.data[start..end].copy_from_slice(data);
         });
-        u32::try_from(data.len()).ok()
+        u32::try_from(data.len()).map_err(|_| VIRTIO_9P_EINVAL)
     }
 
     pub(crate) fn xattr_list(&self, node: Virtio9pNodeId) -> Option<Vec<u8>> {
@@ -827,16 +839,19 @@ impl Virtio9pNamespace {
         Ok(())
     }
 
-    pub(crate) fn resize_file(&mut self, node: Virtio9pNodeId, size: u64) -> Option<()> {
+    pub(crate) fn resize_file(&mut self, node: Virtio9pNodeId, size: u64) -> Result<(), u32> {
         let Virtio9pNodeId::File(path) = node else {
-            return None;
+            return Err(VIRTIO_9P_EBADF);
         };
-        find_file(&self.entries, path)?;
-        let size = usize::try_from(size).ok()?;
+        find_file(&self.entries, path).ok_or(VIRTIO_9P_EBADF)?;
+        let size = checked_vector_len(size)?;
+        try_for_each_file_mut(&mut self.entries, path, &mut |file| {
+            reserve_vec_len(&mut file.data, size)
+        })?;
         for_each_file_mut(&mut self.entries, path, &mut |file| {
             file.data.resize(size, 0);
         });
-        Some(())
+        Ok(())
     }
 
     pub(crate) fn set_metadata_fields(
@@ -1465,23 +1480,6 @@ impl Virtio9pNodeMetadata {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum Virtio9pXattrWritePolicy {
-    Any,
-    Create,
-    Replace,
-}
-
-impl Virtio9pXattrWritePolicy {
-    pub(crate) const fn validate_exists(self, exists: bool) -> Result<(), u32> {
-        match (self, exists) {
-            (Self::Create, true) => Err(VIRTIO_9P_EEXIST),
-            (Self::Replace, false) => Err(VIRTIO_9P_ENODATA),
-            (Self::Any, _) | (Self::Create, false) | (Self::Replace, true) => Ok(()),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Virtio9pOpenMode {
     ReadOnly,
     WriteOnly,
@@ -1594,11 +1592,11 @@ impl Virtio9pFidState {
         name: String,
         attr_size: u64,
         policy: Virtio9pXattrWritePolicy,
-    ) -> Option<Self> {
-        Some(Self::XattrWrite {
+    ) -> Result<Self, u32> {
+        Ok(Self::XattrWrite {
             node,
             name,
-            attr_size: usize::try_from(attr_size).ok()?,
+            attr_size: checked_vector_len(attr_size)?,
             data: Vec::new(),
             policy,
         })
@@ -1736,28 +1734,34 @@ impl Virtio9pFidState {
         }
     }
 
-    pub(crate) fn write_xattr_data(&mut self, offset: u64, bytes: &[u8]) -> Option<u32> {
+    pub(crate) fn write_xattr_data(
+        &mut self,
+        offset: u64,
+        bytes: &[u8],
+    ) -> Result<Option<u32>, u32> {
         let Self::XattrWrite {
             attr_size, data, ..
         } = self
         else {
-            return None;
+            return Ok(None);
         };
-        let start = usize::try_from(offset).ok()?;
-        let end = start.checked_add(bytes.len())?;
+        let start = checked_vector_len(offset)?;
+        let end = start.checked_add(bytes.len()).ok_or(VIRTIO_9P_EINVAL)?;
+        checked_vector_len_usize(end)?;
         if end > *attr_size {
-            return None;
+            return Ok(None);
         }
         if data.len() < end {
+            reserve_vec_len(data, end)?;
             data.resize(end, 0);
         }
         data[start..end].copy_from_slice(bytes);
-        u32::try_from(bytes.len()).ok()
+        Ok(Some(
+            u32::try_from(bytes.len()).map_err(|_| VIRTIO_9P_EINVAL)?,
+        ))
     }
 
-    pub(crate) fn into_xattr_commit(
-        self,
-    ) -> Option<(Virtio9pNodeId, String, Vec<u8>, Virtio9pXattrWritePolicy)> {
+    pub(crate) fn into_xattr_commit(self) -> Result<Option<Virtio9pXattrCommit>, u32> {
         let Self::XattrWrite {
             node,
             name,
@@ -1766,9 +1770,15 @@ impl Virtio9pFidState {
             policy,
         } = self
         else {
-            return None;
+            return Ok(None);
         };
+        reserve_vec_len(&mut data, attr_size)?;
         data.resize(attr_size, 0);
-        Some((node, name, data, policy))
+        Ok(Some(Virtio9pXattrCommit {
+            node,
+            name,
+            data,
+            policy,
+        }))
     }
 }

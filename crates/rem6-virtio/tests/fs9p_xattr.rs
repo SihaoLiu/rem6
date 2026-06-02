@@ -12,6 +12,8 @@ mod support;
 
 use support::fs9p::*;
 
+const OVERSIZED_VECTOR_LENGTH: u64 = isize::MAX as u64 + 1;
+
 #[test]
 fn virtio_9p_device_rejects_xattrwalk_to_existing_newfid_without_rebinding_file() {
     let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap())
@@ -395,6 +397,43 @@ fn virtio_9p_device_rejects_invalid_xattrcreate_flags_without_rebinding_fid() {
     let invalid_completion = device.execute_at(13, invalid).unwrap();
     assert_eq!(invalid_completion.message_type(), VIRTIO_9P_RLERROR);
     assert_eq!(invalid_completion.payload(), VIRTIO_9P_EINVAL.to_le_bytes());
+
+    let read = decoded_request(VIRTIO_9P_TREAD, 5, p9_read_payload(2, 0, 16));
+    let read_completion = device.execute_at(14, read).unwrap();
+    assert_eq!(read_completion.message_type(), VIRTIO_9P_RREAD);
+    assert_eq!(read_counted_data(read_completion.payload()), b"alpha");
+}
+
+#[test]
+fn virtio_9p_device_rejects_oversized_xattrcreate_without_rebinding_fid() {
+    let device = Virtio9pDevice::new(Virtio9pConfig::new("rem6share").unwrap())
+        .with_file("alpha.txt", b"alpha".to_vec())
+        .unwrap();
+    let attach = decoded_request(
+        VIRTIO_9P_TATTACH,
+        1,
+        p9_attach_payload(1, VIRTIO_9P_NOFID, b"root", b"", 0),
+    );
+    device.execute_at(10, attach).unwrap();
+    let walk = decoded_request(VIRTIO_9P_TWALK, 2, p9_walk_payload(1, 2, &[b"alpha.txt"]));
+    assert_eq!(
+        device.execute_at(11, walk).unwrap().message_type(),
+        VIRTIO_9P_RWALK
+    );
+    let open = decoded_request(VIRTIO_9P_TLOPEN, 3, p9_lopen_payload(2, 0));
+    assert_eq!(
+        device.execute_at(12, open).unwrap().message_type(),
+        VIRTIO_9P_RLOPEN
+    );
+
+    let oversized = decoded_request(
+        VIRTIO_9P_TXATTRCREATE,
+        4,
+        p9_xattrcreate_payload(2, b"user.large", OVERSIZED_VECTOR_LENGTH, 0),
+    );
+    let completion = device.execute_at(13, oversized).unwrap();
+    assert_eq!(completion.message_type(), VIRTIO_9P_RLERROR);
+    assert_eq!(completion.payload(), VIRTIO_9P_EINVAL.to_le_bytes());
 
     let read = decoded_request(VIRTIO_9P_TREAD, 5, p9_read_payload(2, 0, 16));
     let read_completion = device.execute_at(14, read).unwrap();

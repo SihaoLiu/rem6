@@ -68,10 +68,14 @@ impl Virtio9pDevice {
                 return Ok(Err(errno));
             }
         }
-        let Some(fid) =
-            Virtio9pFidState::xattr_write(node, xattrcreate.name, xattrcreate.attr_size, policy)
-        else {
-            return Ok(Err(VIRTIO_9P_EBADF));
+        let fid = match Virtio9pFidState::xattr_write(
+            node,
+            xattrcreate.name,
+            xattrcreate.attr_size,
+            policy,
+        ) {
+            Ok(fid) => fid,
+            Err(errno) => return Ok(Err(errno)),
         };
         self.fids
             .lock()
