@@ -330,6 +330,7 @@ pub enum Rem6CliError {
     EmptyLoadBlob {
         path: PathBuf,
     },
+    DramMemoryRequiresExecution,
     InstructionLimitRequiresExecution,
     MemoryDumpRequiresExecution,
     ReadBinary {
@@ -441,6 +442,9 @@ impl fmt::Display for Rem6CliError {
             }
             Self::EmptyLoadBlob { path } => {
                 write!(formatter, "load blob {} is empty", path.display())
+            }
+            Self::DramMemoryRequiresExecution => {
+                write!(formatter, "--dram-memory requires --execute")
             }
             Self::InstructionLimitRequiresExecution => {
                 write!(formatter, "--max-instructions requires --execute")
@@ -579,6 +583,9 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
     }
 
     if !config.execute() {
+        if config.dram_memory() {
+            return Err(Rem6CliError::DramMemoryRequiresExecution);
+        }
         if config.max_instructions().is_some() {
             return Err(Rem6CliError::InstructionLimitRequiresExecution);
         }
