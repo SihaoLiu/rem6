@@ -62,6 +62,26 @@ fn sv39_pte_rejects_invalid_reserved_and_reserved_permission_encodings() {
 }
 
 #[test]
+fn sv39_pte_rejects_reserved_nonleaf_attribute_bits() {
+    assert_eq!(
+        RiscvSv39Pte::new(V | U).validate(),
+        Err(RiscvSv39PageFault::ReservedNonLeafAttributes { bits: U })
+    );
+    assert_eq!(
+        RiscvSv39Pte::new(V | A).validate(),
+        Err(RiscvSv39PageFault::ReservedNonLeafAttributes { bits: A })
+    );
+    assert_eq!(
+        RiscvSv39Pte::new(V | D).validate(),
+        Err(RiscvSv39PageFault::ReservedNonLeafAttributes { bits: D })
+    );
+    assert_eq!(
+        RiscvSv39Pte::new(V | U | A | D).validate(),
+        Err(RiscvSv39PageFault::ReservedNonLeafAttributes { bits: U | A | D })
+    );
+}
+
+#[test]
 fn sv39_pte_checks_leaf_access_permissions_and_ad_bits() {
     let read_write = RiscvSv39Pte::new((0x20_u64 << 10) | V | R | W | A | D);
     assert_eq!(
@@ -246,6 +266,42 @@ fn sv39_leaf_physical_address_uses_level_specific_page_fragments() {
         Err(RiscvSv39PageFault::MisalignedSuperpage {
             level: RiscvSv39PageTableLevel::Level2,
             ppn: gigapage_ppn | (1 << 9),
+        })
+    );
+}
+
+#[test]
+fn sv39_leaf_physical_address_reports_superpage_alignment_before_access_faults() {
+    let address = RiscvSv39VirtualAddress::new(
+        (0x012_u64 << 30) | (0x034_u64 << 21) | (0x056_u64 << 12) | 0x789,
+    )
+    .unwrap();
+
+    let unreadable_megapage_ppn = (0x1234_u64 << 18) | (0x1ab_u64 << 9) | 1;
+    let unreadable_megapage = RiscvSv39Pte::new((unreadable_megapage_ppn << 10) | V | X | A);
+    assert_eq!(
+        unreadable_megapage.leaf_physical_address(
+            address,
+            RiscvSv39PageTableLevel::Level1,
+            RiscvSv39AccessKind::Load,
+        ),
+        Err(RiscvSv39PageFault::MisalignedSuperpage {
+            level: RiscvSv39PageTableLevel::Level1,
+            ppn: unreadable_megapage_ppn,
+        })
+    );
+
+    let accessed_clear_gigapage_ppn = (0x2345_u64 << 18) | (1 << 9);
+    let accessed_clear_gigapage = RiscvSv39Pte::new((accessed_clear_gigapage_ppn << 10) | V | R);
+    assert_eq!(
+        accessed_clear_gigapage.leaf_physical_address(
+            address,
+            RiscvSv39PageTableLevel::Level2,
+            RiscvSv39AccessKind::Load,
+        ),
+        Err(RiscvSv39PageFault::MisalignedSuperpage {
+            level: RiscvSv39PageTableLevel::Level2,
+            ppn: accessed_clear_gigapage_ppn,
         })
     );
 }

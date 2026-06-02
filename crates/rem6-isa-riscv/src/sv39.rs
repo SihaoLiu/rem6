@@ -12,6 +12,7 @@ const PTE_DIRTY_BIT: u64 = 1 << 7;
 const PTE_PPN_SHIFT: u64 = 10;
 const PTE_PPN_MASK: u64 = (1_u64 << 44) - 1;
 const PTE_RESERVED_BITS_MASK: u64 = u64::MAX << 54;
+const PTE_NONLEAF_RESERVED_ATTRIBUTES_MASK: u64 = PTE_USER_BIT | PTE_ACCESSED_BIT | PTE_DIRTY_BIT;
 const PTE_SIZE: u64 = 8;
 const PAGE_SHIFT: u64 = 12;
 const PAGE_OFFSET_MASK: u64 = (1_u64 << PAGE_SHIFT) - 1;
@@ -182,6 +183,13 @@ impl RiscvSv39Pte {
             return Err(RiscvSv39PageFault::ReservedPermissionEncoding);
         }
 
+        let nonleaf_reserved_attributes = self.raw & PTE_NONLEAF_RESERVED_ATTRIBUTES_MASK;
+        if !self.is_leaf() && nonleaf_reserved_attributes != 0 {
+            return Err(RiscvSv39PageFault::ReservedNonLeafAttributes {
+                bits: nonleaf_reserved_attributes,
+            });
+        }
+
         Ok(())
     }
 
@@ -219,15 +227,32 @@ impl RiscvSv39Pte {
         level: RiscvSv39PageTableLevel,
         access: RiscvSv39AccessKind,
     ) -> Result<u64, RiscvSv39PageFault> {
-        match self.validate_leaf_access(access) {
+        match self.validate() {
             Ok(()) => {}
             Err(error) => return Err(error),
         }
+
+        if !self.is_leaf() {
+            return Err(RiscvSv39PageFault::NonLeaf);
+        }
+
         if self.is_misaligned_superpage(level) {
             return Err(RiscvSv39PageFault::MisalignedSuperpage {
                 level,
                 ppn: self.physical_page_number(),
             });
+        }
+
+        if !self.permits(access) {
+            return Err(RiscvSv39PageFault::PermissionDenied { access });
+        }
+
+        if !self.accessed() {
+            return Err(RiscvSv39PageFault::AccessedBitClear);
+        }
+
+        if access.requires_dirty() && !self.dirty() {
+            return Err(RiscvSv39PageFault::DirtyBitClear);
         }
 
         Ok(match level {
@@ -287,6 +312,9 @@ pub enum RiscvSv39PageFault {
     ReservedBitsSet {
         bits: u64,
     },
+    ReservedNonLeafAttributes {
+        bits: u64,
+    },
     ReservedPermissionEncoding,
     NonLeaf,
     PermissionDenied {
@@ -315,6 +343,10 @@ impl fmt::Display for RiscvSv39PageFault {
             Self::ReservedBitsSet { bits } => {
                 write!(formatter, "RISC-V Sv39 PTE has reserved bits {bits:#x}")
             }
+            Self::ReservedNonLeafAttributes { bits } => write!(
+                formatter,
+                "RISC-V Sv39 non-leaf PTE has reserved attributes {bits:#x}"
+            ),
             Self::ReservedPermissionEncoding => write!(
                 formatter,
                 "RISC-V Sv39 PTE has writable without readable permission"
