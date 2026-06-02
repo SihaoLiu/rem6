@@ -197,6 +197,31 @@ fn gdb_remote_commands_decode_read_register_requests() {
 }
 
 #[test]
+fn gdb_remote_commands_decode_write_registers_requests() {
+    let command = GdbRemoteCommand::parse(&GdbRemotePacket::new(b"G78563412".to_vec()).unwrap());
+
+    assert_eq!(
+        command,
+        GdbRemoteCommand::WriteRegisters {
+            bytes: vec![0x78, 0x56, 0x34, 0x12],
+        },
+    );
+}
+
+#[test]
+fn gdb_remote_commands_preserve_malformed_write_registers_requests() {
+    for payload in [
+        b"G".as_slice(),
+        b"G7".as_slice(),
+        b"Gzz".as_slice(),
+        b"G78xx".as_slice(),
+    ] {
+        let command = GdbRemoteCommand::parse(&GdbRemotePacket::new(payload.to_vec()).unwrap());
+        assert_eq!(command, GdbRemoteCommand::Unknown(payload.to_vec()));
+    }
+}
+
+#[test]
 fn gdb_remote_commands_decode_single_register_requests() {
     let command = GdbRemoteCommand::parse(&GdbRemotePacket::parse_frame(b"$p1a#02").unwrap());
 
@@ -384,6 +409,43 @@ fn gdb_remote_session_reports_register_bytes() {
             GdbRemoteFrame::Ack,
             GdbRemoteFrame::Packet(GdbRemotePacket::new(b"3412efbeadde".to_vec()).unwrap()),
         ],
+    );
+}
+
+#[test]
+fn gdb_remote_session_writes_register_bytes() {
+    let mut session = GdbRemoteSession::new(Vec::new());
+
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"G78563412".to_vec()).unwrap())
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"OK".to_vec()).unwrap()),
+        ],
+    );
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"g".to_vec()).unwrap())
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"78563412".to_vec()).unwrap()),
+        ],
+    );
+}
+
+#[test]
+fn gdb_remote_session_reports_write_register_response_config_errors() {
+    let mut session =
+        GdbRemoteSession::with_response_config(Vec::new(), GdbRemotePacketConfig::new(1).unwrap());
+
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"G7856".to_vec()).unwrap())
+            .unwrap_err(),
+        GdbRemoteError::PayloadTooLong { len: 2, max: 1 },
     );
 }
 

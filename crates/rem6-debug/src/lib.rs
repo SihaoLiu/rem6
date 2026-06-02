@@ -210,6 +210,7 @@ pub enum GdbRemoteCommand {
     ReadRegister { number: u64 },
     StartNoAckMode,
     WriteMemory { address: u64, bytes: Vec<u8> },
+    WriteRegisters { bytes: Vec<u8> },
     WriteRegister { number: u64, bytes: Vec<u8> },
     Unknown(Vec<u8>),
 }
@@ -454,6 +455,10 @@ impl GdbRemoteSession {
             }
             GdbRemoteCommand::ReadRegisters => {
                 self.packet_response(self.register_bytes.encode_payload())
+            }
+            GdbRemoteCommand::WriteRegisters { bytes } => {
+                self.set_register_bytes(GdbRemoteRegisterBytes::new(bytes));
+                self.packet_response(b"OK".to_vec())
             }
             GdbRemoteCommand::ReadRegister { number } => {
                 let payload = self
@@ -864,6 +869,12 @@ fn parse_command_payload(payload: &[u8]) -> GdbRemoteCommand {
         return GdbRemoteCommand::ReadRegisters;
     }
 
+    if let Some(register_data) = payload.strip_prefix(b"G") {
+        if let Some(bytes) = parse_registers_write(register_data) {
+            return GdbRemoteCommand::WriteRegisters { bytes };
+        }
+    }
+
     if let Some(memory_request) = payload.strip_prefix(b"m") {
         if let Some((address, length)) = parse_memory_read(memory_request) {
             return GdbRemoteCommand::ReadMemory { address, length };
@@ -926,6 +937,14 @@ fn parse_memory_write(request: &[u8]) -> Option<(u64, Vec<u8>)> {
         return None;
     }
     Some((address, bytes))
+}
+
+fn parse_registers_write(request: &[u8]) -> Option<Vec<u8>> {
+    let bytes = decode_hex_bytes(request)?;
+    if bytes.is_empty() {
+        return None;
+    }
+    Some(bytes)
 }
 
 fn parse_register_write(request: &[u8]) -> Option<(u64, Vec<u8>)> {
