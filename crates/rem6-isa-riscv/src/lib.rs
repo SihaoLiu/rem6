@@ -2,6 +2,8 @@ mod control_flow;
 mod encoding;
 mod error;
 mod gdb_target;
+mod instruction;
+mod integer;
 mod pma;
 mod pmp;
 mod record;
@@ -12,6 +14,10 @@ use encoding::{
     aq, b_imm, csr, funct3, funct5, funct7, i_imm, j_imm, rd, rl, rs1, rs2, s_imm, shamt32,
     shamt64, shift_funct6, u_imm,
 };
+use integer::{
+    div_signed, div_unsigned, mulh_signed, mulh_signed_unsigned, mulh_unsigned, rem_signed,
+    rem_unsigned,
+};
 
 pub use control_flow::{
     RiscvBranchPredictionTarget, RiscvControlFlowSnapshot, RiscvControlFlowUpdate,
@@ -19,6 +25,7 @@ pub use control_flow::{
 };
 pub use error::{RiscvCsrError, RiscvError};
 pub use gdb_target::{RiscvGdbTargetDescription, RiscvGdbTargetDocument, RiscvGdbXlen};
+pub use instruction::RiscvInstruction;
 pub use pma::{RiscvPmaAccessKind, RiscvPmaError, RiscvPmaRange, RiscvPmaTable};
 pub use pmp::{
     RiscvPmpAccessKind, RiscvPmpAddressMode, RiscvPmpConfig, RiscvPmpEntry, RiscvPmpError,
@@ -264,249 +271,6 @@ const fn replace_high_word(counter: u64, value: u32) -> u64 {
     (counter & 0x0000_0000_ffff_ffff) | ((value as u64) << 32)
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum RiscvInstruction {
-    Lui {
-        rd: Register,
-        imm: Immediate,
-    },
-    Auipc {
-        rd: Register,
-        imm: Immediate,
-    },
-    Addi {
-        rd: Register,
-        rs1: Register,
-        imm: Immediate,
-    },
-    Slti {
-        rd: Register,
-        rs1: Register,
-        imm: Immediate,
-    },
-    Sltiu {
-        rd: Register,
-        rs1: Register,
-        imm: Immediate,
-    },
-    Xori {
-        rd: Register,
-        rs1: Register,
-        imm: Immediate,
-    },
-    Ori {
-        rd: Register,
-        rs1: Register,
-        imm: Immediate,
-    },
-    Andi {
-        rd: Register,
-        rs1: Register,
-        imm: Immediate,
-    },
-    Slli {
-        rd: Register,
-        rs1: Register,
-        shamt: u8,
-    },
-    Srli {
-        rd: Register,
-        rs1: Register,
-        shamt: u8,
-    },
-    Srai {
-        rd: Register,
-        rs1: Register,
-        shamt: u8,
-    },
-    Addiw {
-        rd: Register,
-        rs1: Register,
-        imm: Immediate,
-    },
-    Slliw {
-        rd: Register,
-        rs1: Register,
-        shamt: u8,
-    },
-    Srliw {
-        rd: Register,
-        rs1: Register,
-        shamt: u8,
-    },
-    Sraiw {
-        rd: Register,
-        rs1: Register,
-        shamt: u8,
-    },
-    Add {
-        rd: Register,
-        rs1: Register,
-        rs2: Register,
-    },
-    Sub {
-        rd: Register,
-        rs1: Register,
-        rs2: Register,
-    },
-    Sll {
-        rd: Register,
-        rs1: Register,
-        rs2: Register,
-    },
-    Slt {
-        rd: Register,
-        rs1: Register,
-        rs2: Register,
-    },
-    Sltu {
-        rd: Register,
-        rs1: Register,
-        rs2: Register,
-    },
-    Xor {
-        rd: Register,
-        rs1: Register,
-        rs2: Register,
-    },
-    Srl {
-        rd: Register,
-        rs1: Register,
-        rs2: Register,
-    },
-    Sra {
-        rd: Register,
-        rs1: Register,
-        rs2: Register,
-    },
-    Or {
-        rd: Register,
-        rs1: Register,
-        rs2: Register,
-    },
-    And {
-        rd: Register,
-        rs1: Register,
-        rs2: Register,
-    },
-    Addw {
-        rd: Register,
-        rs1: Register,
-        rs2: Register,
-    },
-    Subw {
-        rd: Register,
-        rs1: Register,
-        rs2: Register,
-    },
-    Sllw {
-        rd: Register,
-        rs1: Register,
-        rs2: Register,
-    },
-    Srlw {
-        rd: Register,
-        rs1: Register,
-        rs2: Register,
-    },
-    Sraw {
-        rd: Register,
-        rs1: Register,
-        rs2: Register,
-    },
-    Beq {
-        rs1: Register,
-        rs2: Register,
-        offset: Immediate,
-    },
-    Bne {
-        rs1: Register,
-        rs2: Register,
-        offset: Immediate,
-    },
-    Blt {
-        rs1: Register,
-        rs2: Register,
-        offset: Immediate,
-    },
-    Bge {
-        rs1: Register,
-        rs2: Register,
-        offset: Immediate,
-    },
-    Bltu {
-        rs1: Register,
-        rs2: Register,
-        offset: Immediate,
-    },
-    Bgeu {
-        rs1: Register,
-        rs2: Register,
-        offset: Immediate,
-    },
-    Jal {
-        rd: Register,
-        offset: Immediate,
-    },
-    Jalr {
-        rd: Register,
-        rs1: Register,
-        offset: Immediate,
-    },
-    Load {
-        rd: Register,
-        rs1: Register,
-        offset: Immediate,
-        width: MemoryWidth,
-        signed: bool,
-    },
-    Store {
-        rs1: Register,
-        rs2: Register,
-        offset: Immediate,
-        width: MemoryWidth,
-    },
-    LoadReserved {
-        rd: Register,
-        rs1: Register,
-        width: MemoryWidth,
-        acquire: bool,
-        release: bool,
-    },
-    StoreConditional {
-        rd: Register,
-        rs1: Register,
-        rs2: Register,
-        width: MemoryWidth,
-        acquire: bool,
-        release: bool,
-    },
-    AtomicMemory {
-        rd: Register,
-        rs1: Register,
-        rs2: Register,
-        width: MemoryWidth,
-        op: AtomicMemoryOp,
-        acquire: bool,
-        release: bool,
-    },
-    Fence {
-        predecessor: RiscvFenceSet,
-        successor: RiscvFenceSet,
-        mode: u8,
-    },
-    FenceI,
-    ReadMachineHartId {
-        rd: Register,
-    },
-    ReadCounterCsr {
-        rd: Register,
-        csr: RiscvCounterCsr,
-    },
-    Ecall,
-    Ebreak,
-}
-
 impl RiscvInstruction {
     pub fn decode(raw: u32) -> Result<Self, RiscvError> {
         if raw & 0x3 != 0x3 {
@@ -705,6 +469,46 @@ fn decode_op(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             rs2: rs2(raw),
         }),
         (0x00, 0x7) => Ok(RiscvInstruction::And {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x01, 0x0) => Ok(RiscvInstruction::Mul {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x01, 0x1) => Ok(RiscvInstruction::Mulh {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x01, 0x2) => Ok(RiscvInstruction::Mulhsu {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x01, 0x3) => Ok(RiscvInstruction::Mulhu {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x01, 0x4) => Ok(RiscvInstruction::Div {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x01, 0x5) => Ok(RiscvInstruction::Divu {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x01, 0x6) => Ok(RiscvInstruction::Rem {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x01, 0x7) => Ok(RiscvInstruction::Remu {
             rd: rd(raw),
             rs1: rs1(raw),
             rs2: rs2(raw),
@@ -1073,6 +877,38 @@ impl RiscvHartState {
             }
             RiscvInstruction::And { rd, rs1, rs2 } => {
                 let value = self.read(rs1) & self.read(rs2);
+                write_register(self, &mut register_writes, rd, value);
+            }
+            RiscvInstruction::Mul { rd, rs1, rs2 } => {
+                let value = self.read(rs1).wrapping_mul(self.read(rs2));
+                write_register(self, &mut register_writes, rd, value);
+            }
+            RiscvInstruction::Mulh { rd, rs1, rs2 } => {
+                let value = mulh_signed(self.read(rs1), self.read(rs2));
+                write_register(self, &mut register_writes, rd, value);
+            }
+            RiscvInstruction::Mulhsu { rd, rs1, rs2 } => {
+                let value = mulh_signed_unsigned(self.read(rs1), self.read(rs2));
+                write_register(self, &mut register_writes, rd, value);
+            }
+            RiscvInstruction::Mulhu { rd, rs1, rs2 } => {
+                let value = mulh_unsigned(self.read(rs1), self.read(rs2));
+                write_register(self, &mut register_writes, rd, value);
+            }
+            RiscvInstruction::Div { rd, rs1, rs2 } => {
+                let value = div_signed(self.read(rs1), self.read(rs2));
+                write_register(self, &mut register_writes, rd, value);
+            }
+            RiscvInstruction::Divu { rd, rs1, rs2 } => {
+                let value = div_unsigned(self.read(rs1), self.read(rs2));
+                write_register(self, &mut register_writes, rd, value);
+            }
+            RiscvInstruction::Rem { rd, rs1, rs2 } => {
+                let value = rem_signed(self.read(rs1), self.read(rs2));
+                write_register(self, &mut register_writes, rd, value);
+            }
+            RiscvInstruction::Remu { rd, rs1, rs2 } => {
+                let value = rem_unsigned(self.read(rs1), self.read(rs2));
                 write_register(self, &mut register_writes, rd, value);
             }
             RiscvInstruction::Addw { rd, rs1, rs2 } => {

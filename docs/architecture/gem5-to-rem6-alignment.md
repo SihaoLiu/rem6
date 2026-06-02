@@ -2931,7 +2931,11 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   status. Direct topology store and DRAM tests cover redirected fetches and data
   loads into addressed targets with different line layouts. RISC-V ISA and frontend tests cover `ADDI`/`SLTI`/`SLTIU`/`ANDI`/`XORI`/`ORI`/`SLLI`/`SRLI`/`SRAI` integer
   immediate execution, `ADD`/`SUB`/`SLT`/`SLTU`/`XOR`/`OR`/`AND`/`SLL`/`SRL`/`SRA`
-  register execution, `ADDIW`/`SLLIW`/`SRLIW`/`SRAIW`/`ADDW`/`SUBW`/`SLLW`/`SRLW`/`SRAW`
+  register execution, `MUL`/`MULH`/`MULHSU`/`MULHU`/`DIV`/`DIVU`/`REM`/`REMU`
+  64-bit multiply/divide execution with high-half products, divide-by-zero
+  results, signed-overflow division, and signed remainder behavior aligned
+  with gem5's scalar RISC-V arithmetic helpers,
+  `ADDIW`/`SLLIW`/`SRLIW`/`SRAIW`/`ADDW`/`SUBW`/`SLLW`/`SRLW`/`SRAW`
   word execution, signed and unsigned conditional branch execution, word and
   doubleword `LR`/`SC` decode,
   execution, read-shared issue, matching-reservation atomic submission,
