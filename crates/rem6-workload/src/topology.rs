@@ -1083,6 +1083,19 @@ impl WorkloadTopology {
                 },
             ));
         }
+        if let Some(existing) = self
+            .sinic_pci_devices
+            .iter()
+            .find(|existing| existing.bar_base() == device.bar_base())
+        {
+            return Err(WorkloadError::SinicPciTopology(
+                WorkloadSinicPciTopologyError::DuplicateBarBase {
+                    nic: device.nic(),
+                    existing_nic: existing.nic(),
+                    bar_base: device.bar_base(),
+                },
+            ));
+        }
         let route = self
             .memory_routes
             .iter()

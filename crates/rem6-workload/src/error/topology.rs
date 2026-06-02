@@ -16,6 +16,11 @@ pub enum WorkloadSinicPciTopologyError {
         device: u8,
         function: u8,
     },
+    DuplicateBarBase {
+        nic: u32,
+        existing_nic: u32,
+        bar_base: Address,
+    },
     MissingMmioRoute {
         nic: u32,
         route: WorkloadRouteId,
@@ -54,6 +59,15 @@ impl fmt::Display for WorkloadSinicPciTopologyError {
             } => write!(
                 formatter,
                 "SINIC PCI device {nic} uses PCI function {bus}:{device}.{function}, already used by SINIC PCI device {existing_nic}"
+            ),
+            Self::DuplicateBarBase {
+                nic,
+                existing_nic,
+                bar_base,
+            } => write!(
+                formatter,
+                "SINIC PCI device {nic} uses BAR base {:#x}, already used by SINIC PCI device {existing_nic}",
+                bar_base.get()
             ),
             Self::MissingMmioRoute { nic, route } => write!(
                 formatter,

@@ -23,7 +23,7 @@ pub use heterogeneous_run::{
     RiscvTopologyAcceleratorComputeActivity, RiscvTopologyGpuComputeActivity,
     RiscvTopologyHeterogeneousRunSummary, RiscvTopologyHeterogeneousWork,
 };
-pub use sinic_pci_device::RiscvTopologySinicPciDeviceConfig;
+pub use sinic_pci_device::{RiscvTopologySinicPciDeviceConfig, RiscvTopologyWorkloadSinicPciError};
 
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -70,7 +70,6 @@ use rem6_transport::{
     MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome, TransportError,
 };
 use rem6_uart::UartId;
-use rem6_workload::WorkloadRouteId;
 
 use crate::{
     GuestEventId, GuestSourceId, HostEventPolicy, RiscvSystemRun, RiscvSystemRunDriver,
@@ -1386,11 +1385,7 @@ pub enum RiscvTopologySystemError {
         function: PciFunctionAddress,
         bar: PciBarIndex,
     },
-    WorkloadSinicPciMmioRouteMismatch {
-        nic: u32,
-        expected: WorkloadRouteId,
-        actual: WorkloadRouteId,
-    },
+    WorkloadSinicPci(RiscvTopologyWorkloadSinicPciError),
     HostPartitionOutOfRange {
         host: PartitionId,
         partitions: u32,
@@ -1489,16 +1484,7 @@ impl fmt::Display for RiscvTopologySystemError {
                 function,
                 bar.get()
             ),
-            Self::WorkloadSinicPciMmioRouteMismatch {
-                nic,
-                expected,
-                actual,
-            } => write!(
-                formatter,
-                "workload SINIC PCI NIC {nic} uses MMIO route {}, but route {} was provided",
-                expected.as_str(),
-                actual.as_str()
-            ),
+            Self::WorkloadSinicPci(error) => write!(formatter, "{error}"),
             Self::HostPartitionOutOfRange { host, partitions } => write!(
                 formatter,
                 "host partition {} is outside topology partition count {partitions}",
@@ -1568,7 +1554,7 @@ impl Error for RiscvTopologySystemError {
             Self::SinicPciBarAddressMisaligned { .. } => None,
             Self::SinicPciBarAddressTooWide { .. } => None,
             Self::MissingSinicPciBarRange { .. } => None,
-            Self::WorkloadSinicPciMmioRouteMismatch { .. } => None,
+            Self::WorkloadSinicPci(error) => Some(error),
             Self::HostPartitionOutOfRange { .. } => None,
             Self::MissingPlatform => None,
             Self::MissingMemoryStore => None,

@@ -1,4 +1,6 @@
 use std::collections::BTreeSet;
+use std::error::Error;
+use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use rem6_checkpoint::CheckpointComponentId;
@@ -12,7 +14,7 @@ use rem6_pci::{
     PciHostBridge, PciLegacyInterruptRouter,
 };
 use rem6_platform::PlatformError;
-use rem6_workload::{WorkloadMemoryRoute, WorkloadSinicPciDevice};
+use rem6_workload::{WorkloadMemoryRoute, WorkloadRouteId, WorkloadSinicPciDevice};
 
 use crate::{
     PciHostCheckpointPort, PciLegacyInterruptRouterCheckpointPort, SinicFifoCheckpointPort,
@@ -20,6 +22,72 @@ use crate::{
 };
 
 use super::{RiscvTopologySystem, RiscvTopologySystemError};
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RiscvTopologyWorkloadSinicPciError {
+    MmioRouteMismatch {
+        nic: u32,
+        expected: WorkloadRouteId,
+        actual: WorkloadRouteId,
+    },
+    MmioRouteTargetMismatch {
+        nic: u32,
+        route: WorkloadRouteId,
+        expected: u32,
+        actual: u32,
+    },
+    MmioRouteEndpointMismatch {
+        nic: u32,
+        route: WorkloadRouteId,
+        expected: String,
+        actual: String,
+    },
+}
+
+impl fmt::Display for RiscvTopologyWorkloadSinicPciError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MmioRouteMismatch {
+                nic,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "workload SINIC PCI NIC {nic} uses MMIO route {}, but route {} was provided",
+                expected.as_str(),
+                actual.as_str()
+            ),
+            Self::MmioRouteTargetMismatch {
+                nic,
+                route,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "workload SINIC PCI NIC {nic} MMIO route {} targets partition {actual}, expected {expected}",
+                route.as_str()
+            ),
+            Self::MmioRouteEndpointMismatch {
+                nic,
+                route,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "workload SINIC PCI NIC {nic} MMIO route {} targets endpoint {actual}, expected {expected}",
+                route.as_str()
+            ),
+        }
+    }
+}
+
+impl Error for RiscvTopologyWorkloadSinicPciError {}
+
+impl From<RiscvTopologyWorkloadSinicPciError> for RiscvTopologySystemError {
+    fn from(error: RiscvTopologyWorkloadSinicPciError) -> Self {
+        Self::WorkloadSinicPci(error)
+    }
+}
 
 #[derive(Clone)]
 pub struct RiscvTopologySinicPciDeviceConfig {
@@ -72,12 +140,33 @@ impl RiscvTopologySinicPciDeviceConfig {
         register_params: SinicRegisterParams,
     ) -> Result<Self, RiscvTopologySystemError> {
         if route.id() != device.mmio_route() {
+            return Err(RiscvTopologyWorkloadSinicPciError::MmioRouteMismatch {
+                nic: device.nic(),
+                expected: device.mmio_route().clone(),
+                actual: route.id().clone(),
+            }
+            .into());
+        }
+        if route.target_partition() != device.partition() {
             return Err(
-                RiscvTopologySystemError::WorkloadSinicPciMmioRouteMismatch {
+                RiscvTopologyWorkloadSinicPciError::MmioRouteTargetMismatch {
                     nic: device.nic(),
-                    expected: device.mmio_route().clone(),
-                    actual: route.id().clone(),
-                },
+                    route: route.id().clone(),
+                    expected: device.partition(),
+                    actual: route.target_partition(),
+                }
+                .into(),
+            );
+        }
+        if route.target_endpoint() != device.mmio_endpoint() {
+            return Err(
+                RiscvTopologyWorkloadSinicPciError::MmioRouteEndpointMismatch {
+                    nic: device.nic(),
+                    route: route.id().clone(),
+                    expected: device.mmio_endpoint().to_string(),
+                    actual: route.target_endpoint().to_string(),
+                }
+                .into(),
             );
         }
         let function =

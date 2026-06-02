@@ -242,6 +242,24 @@ fn workload_topology_rejects_invalid_sinic_pci_declarations() {
 }
 
 #[test]
+fn workload_topology_rejects_overlapping_sinic_pci_bar_ranges() {
+    let duplicate_bar = base_topology()
+        .add_sinic_pci_device(sinic_device(0, 1, 0x20000, "sinic0.mmio", "sinic0.mmio"))
+        .unwrap()
+        .add_sinic_pci_device(sinic_device(1, 2, 0x20000, "sinic1.mmio", "sinic1.mmio"))
+        .unwrap_err();
+
+    assert_eq!(
+        duplicate_bar,
+        WorkloadError::SinicPciTopology(WorkloadSinicPciTopologyError::DuplicateBarBase {
+            nic: 1,
+            existing_nic: 0,
+            bar_base: Address::new(0x20000),
+        })
+    );
+}
+
+#[test]
 fn workload_manifest_identity_changes_with_sinic_pci_device_declarations() {
     let first = WorkloadManifest::builder(id("sinic-pci-identity"), boot_image())
         .with_topology(

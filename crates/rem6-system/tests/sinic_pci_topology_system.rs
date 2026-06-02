@@ -22,7 +22,7 @@ use rem6_stats::StatsRegistry;
 use rem6_system::{
     GuestEventId, GuestSourceId, HostAction, HostActionRecord, RiscvTopologyHostConfig,
     RiscvTopologySinicPciDeviceConfig, RiscvTopologySystem, RiscvTopologySystemError,
-    SinicFifoCheckpointPort, SystemActionOutcome,
+    RiscvTopologyWorkloadSinicPciError, SinicFifoCheckpointPort, SystemActionOutcome,
 };
 use rem6_topology::{
     ComponentId, ComponentKind, ComponentSpec, Endpoint, PortDirection, PortName, Topology,
@@ -162,6 +162,14 @@ fn workload_sinic_pci_device() -> WorkloadSinicPciDevice {
 
 fn workload_sinic_mmio_route(id: WorkloadRouteId) -> WorkloadMemoryRoute {
     WorkloadMemoryRoute::new(id, "cpu0.dmem", 0, "sinic0.mmio", 1, 5, 7).unwrap()
+}
+
+fn workload_sinic_mmio_route_to(
+    id: WorkloadRouteId,
+    target_endpoint: &str,
+    target_partition: u32,
+) -> WorkloadMemoryRoute {
+    WorkloadMemoryRoute::new(id, "cpu0.dmem", 0, target_endpoint, target_partition, 5, 7).unwrap()
 }
 
 fn pci_host() -> Arc<Mutex<PciHostBridge>> {
@@ -311,11 +319,72 @@ fn workload_sinic_pci_declaration_rejects_wrong_mmio_route() {
 
     assert_eq!(
         error,
-        RiscvTopologySystemError::WorkloadSinicPciMmioRouteMismatch {
-            nic: 3,
-            expected: workload_route_id("sinic0.mmio"),
-            actual: workload_route_id("other.mmio"),
-        }
+        RiscvTopologySystemError::WorkloadSinicPci(
+            RiscvTopologyWorkloadSinicPciError::MmioRouteMismatch {
+                nic: 3,
+                expected: workload_route_id("sinic0.mmio"),
+                actual: workload_route_id("other.mmio"),
+            },
+        )
+    );
+}
+
+#[test]
+fn workload_sinic_pci_declaration_rejects_mismatched_mmio_route_target() {
+    let device = workload_sinic_pci_device();
+    let route = workload_sinic_mmio_route_to(workload_route_id("sinic0.mmio"), "sinic0.mmio", 0);
+
+    let error = match RiscvTopologySinicPciDeviceConfig::from_workload_device(
+        &device,
+        &route,
+        pci_host(),
+        legacy_interrupt_router(),
+        SinicRegisterParams::default(),
+    ) {
+        Ok(_) => panic!("workload SINIC PCI config accepted the wrong MMIO route target"),
+        Err(error) => error,
+    };
+
+    assert_eq!(
+        error,
+        RiscvTopologySystemError::WorkloadSinicPci(
+            RiscvTopologyWorkloadSinicPciError::MmioRouteTargetMismatch {
+                nic: 3,
+                route: workload_route_id("sinic0.mmio"),
+                expected: 1,
+                actual: 0,
+            },
+        )
+    );
+}
+
+#[test]
+fn workload_sinic_pci_declaration_rejects_mismatched_mmio_route_endpoint() {
+    let device = workload_sinic_pci_device();
+    let route =
+        workload_sinic_mmio_route_to(workload_route_id("sinic0.mmio"), "sinic0.other-mmio", 1);
+
+    let error = match RiscvTopologySinicPciDeviceConfig::from_workload_device(
+        &device,
+        &route,
+        pci_host(),
+        legacy_interrupt_router(),
+        SinicRegisterParams::default(),
+    ) {
+        Ok(_) => panic!("workload SINIC PCI config accepted the wrong MMIO route endpoint"),
+        Err(error) => error,
+    };
+
+    assert_eq!(
+        error,
+        RiscvTopologySystemError::WorkloadSinicPci(
+            RiscvTopologyWorkloadSinicPciError::MmioRouteEndpointMismatch {
+                nic: 3,
+                route: workload_route_id("sinic0.mmio"),
+                expected: "sinic0.mmio".to_string(),
+                actual: "sinic0.other-mmio".to_string(),
+            },
+        )
     );
 }
 

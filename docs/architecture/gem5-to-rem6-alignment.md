@@ -1774,9 +1774,12 @@ Implementation evidence through 2026-06-02:
   route into the existing topology-system SINIC PCI device config, preserving
   the endpoint function, BAR base, route latency, interrupt source, shared PCI
   host, shared legacy INTx router, and register parameters without string-side
-  parameter rebuilding. Full replay-time SINIC PCI device instantiation remains
-  a separate boundary from the existing direct topology builder. The SINIC FIFO
-  path now covers checksum offload:
+  parameter rebuilding; the adapter revalidates route id, target partition, and
+  target endpoint before config construction. The workload declaration layer
+  also rejects duplicate BAR bases, so two NIC declarations cannot defer an
+  overlapping BAR map to later topology assembly. Full replay-time SINIC PCI
+  device instantiation remains a separate boundary from the existing direct
+  topology builder. The SINIC FIFO path now covers checksum offload:
   RX DMA completion reports IPv4/TCP/UDP packet and checksum-error status bits,
   and TX DMA completion fills IPv4 plus TCP/UDP checksums when
   `TxData_Checksum` is set.
