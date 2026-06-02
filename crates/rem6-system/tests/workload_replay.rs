@@ -7,7 +7,10 @@ use rem6_dram::{
 use rem6_fabric::VirtualNetworkId;
 use rem6_isa_riscv::Register;
 use rem6_memory::{AccessSize, Address, AddressRange, CacheLineLayout, MemoryTargetId};
-use rem6_net::{SinicDataDescriptor, SinicRegisterBlock, SinicRegisterOffset, SinicRegisterParams};
+use rem6_net::{
+    SinicDataDescriptor, SinicInterrupts, SinicRegisterBlock, SinicRegisterOffset,
+    SinicRegisterParams,
+};
 use rem6_stats::StatHistoryRecord;
 use rem6_system::{
     ExecutionMode, ExecutionModeTarget, GuestHostCallResponse, RiscvSystemRunStopReason,
@@ -283,6 +286,40 @@ fn boot_image_with_sinic_mmio_rx_data_restore_probe() -> BootImage {
     program.extend(std::iter::repeat_n(nop, 24));
     program.extend([
         i_type(SinicRegisterOffset::RX_DATA.addr() as i32, 2, 0x3, 5, 0x03),
+        0x0000_0073,
+    ]);
+
+    BootImage::new(Address::new(0x8000))
+        .add_segment(Address::new(0x8000), words(program))
+        .unwrap()
+}
+
+fn boot_image_with_sinic_mmio_interrupt_restore_probe() -> BootImage {
+    let nop = i_type(0, 0, 0x0, 0, 0x13);
+    let mut program = vec![
+        u_type(0x20000, 2, 0x37),
+        i_type(2, 0, 0x4, 3, 0x13),
+        s_type(SinicRegisterOffset::COMMAND.addr() as i32, 3, 2, 0x2, 0x23),
+    ];
+    program.extend(std::iter::repeat_n(nop, 24));
+    program.extend([i_type(
+        SinicRegisterOffset::INTR_STATUS.addr() as i32,
+        2,
+        0x2,
+        4,
+        0x03,
+    )]);
+    program.extend(std::iter::repeat_n(nop, 24));
+    program.extend([
+        i_type(
+            SinicRegisterOffset::INTR_STATUS.addr() as i32,
+            2,
+            0x2,
+            5,
+            0x03,
+        ),
+        i_type(SinicInterrupts::SOFT.bits() as i32, 5, 0x7, 5, 0x13),
+        i_type(8, 5, 0x5, 5, 0x13),
         0x0000_0073,
     ]);
 
@@ -1238,6 +1275,37 @@ fn replay_manifest_with_sinic_pci_fifo_checkpoint_restore() -> WorkloadManifest 
         240,
         HostEventIntent::RestoreCheckpoint {
             label: "sinic-fifo".to_string(),
+        },
+    ))
+    .add_host_event(WorkloadHostEvent::new(
+        0,
+        HostEventIntent::Stop {
+            reason: "host-stop".to_string(),
+        },
+    ))
+    .build()
+    .unwrap()
+}
+
+fn replay_manifest_with_sinic_pci_interrupt_checkpoint_restore() -> WorkloadManifest {
+    WorkloadManifest::builder(
+        workload_id("riscv-replay-sinic-pci-interrupt-checkpoint-restore"),
+        boot_image_with_sinic_mmio_interrupt_restore_probe(),
+    )
+    .with_topology(replay_topology_with_sinic_pci_mmio_data())
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_host_event(WorkloadHostEvent::new(
+        40,
+        HostEventIntent::Checkpoint {
+            label: "sinic-interrupt".to_string(),
+        },
+    ))
+    .add_host_event(WorkloadHostEvent::new(
+        240,
+        HostEventIntent::RestoreCheckpoint {
+            label: "sinic-interrupt".to_string(),
         },
     ))
     .add_host_event(WorkloadHostEvent::new(
@@ -2382,6 +2450,40 @@ fn workload_replay_checkpoint_restore_reverts_sinic_pci_fifo_descriptor_state() 
     assert_eq!(
         outcome.result().restored_checkpoint_labels(),
         &["sinic-fifo".to_string()]
+    );
+    plan.verify_result(outcome.result()).unwrap();
+}
+
+#[test]
+fn workload_replay_checkpoint_restore_replays_sinic_pci_interrupt_status() {
+    let manifest = replay_manifest_with_sinic_pci_interrupt_checkpoint_restore();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let outcome = RiscvWorkloadReplay::new(plan.clone())
+        .with_max_turns(512)
+        .run_parallel()
+        .unwrap();
+
+    let cpu0 = CpuId::new(0);
+    assert_eq!(
+        outcome
+            .cluster()
+            .core(cpu0)
+            .unwrap()
+            .read_register(Register::new(5).unwrap()),
+        1
+    );
+    let snapshot = outcome.sinic_pci_snapshot(0).unwrap();
+    let mut registers = SinicRegisterBlock::new(SinicRegisterParams::default()).unwrap();
+    registers.restore(snapshot.registers()).unwrap();
+    assert_eq!(registers.interrupt_status().bits(), 0);
+    assert_eq!(
+        outcome.result().checkpoint_labels(),
+        &["sinic-interrupt".to_string()]
+    );
+    assert_eq!(
+        outcome.result().restored_checkpoint_labels(),
+        &["sinic-interrupt".to_string()]
     );
     plan.verify_result(outcome.result()).unwrap();
 }

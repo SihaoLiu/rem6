@@ -1,9 +1,15 @@
 mod control_flow;
+mod encoding;
 mod error;
 mod gdb_target;
 mod pma;
 mod pmp;
 mod vector;
+
+use encoding::{
+    aq, b_imm, csr, funct3, funct5, funct7, i_imm, j_imm, rd, rl, rs1, rs2, s_imm, shamt64,
+    shift_funct6, u_imm,
+};
 
 pub use control_flow::{
     RiscvBranchPredictionTarget, RiscvControlFlowSnapshot, RiscvControlFlowUpdate,
@@ -35,7 +41,7 @@ impl Register {
         }
     }
 
-    const fn from_field(index: u32) -> Self {
+    pub(crate) const fn from_field(index: u32) -> Self {
         Self(index as u8)
     }
 
@@ -498,12 +504,27 @@ pub enum RiscvInstruction {
         rs1: Register,
         imm: Immediate,
     },
+    Xori {
+        rd: Register,
+        rs1: Register,
+        imm: Immediate,
+    },
     Ori {
         rd: Register,
         rs1: Register,
         imm: Immediate,
     },
+    Andi {
+        rd: Register,
+        rs1: Register,
+        imm: Immediate,
+    },
     Slli {
+        rd: Register,
+        rs1: Register,
+        shamt: u8,
+    },
+    Srli {
         rd: Register,
         rs1: Register,
         shamt: u8,
@@ -674,7 +695,22 @@ fn decode_op_imm(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             rs1: rs1(raw),
             shamt: shamt64(raw),
         }),
+        0x4 => Ok(RiscvInstruction::Xori {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            imm: Immediate::new(i_imm(raw)),
+        }),
+        0x5 if shift_funct6(raw) == 0x00 => Ok(RiscvInstruction::Srli {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            shamt: shamt64(raw),
+        }),
         0x6 => Ok(RiscvInstruction::Ori {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            imm: Immediate::new(i_imm(raw)),
+        }),
+        0x7 => Ok(RiscvInstruction::Andi {
             rd: rd(raw),
             rs1: rs1(raw),
             imm: Immediate::new(i_imm(raw)),
@@ -1006,12 +1042,24 @@ impl RiscvHartState {
                 let value = wrapping_add_signed(self.read(rs1), imm.value());
                 write_register(self, &mut register_writes, rd, value);
             }
+            RiscvInstruction::Xori { rd, rs1, imm } => {
+                let value = self.read(rs1) ^ (imm.value() as u64);
+                write_register(self, &mut register_writes, rd, value);
+            }
             RiscvInstruction::Ori { rd, rs1, imm } => {
                 let value = self.read(rs1) | (imm.value() as u64);
                 write_register(self, &mut register_writes, rd, value);
             }
+            RiscvInstruction::Andi { rd, rs1, imm } => {
+                let value = self.read(rs1) & (imm.value() as u64);
+                write_register(self, &mut register_writes, rd, value);
+            }
             RiscvInstruction::Slli { rd, rs1, shamt } => {
                 let value = self.read(rs1).wrapping_shl(u32::from(shamt));
+                write_register(self, &mut register_writes, rd, value);
+            }
+            RiscvInstruction::Srli { rd, rs1, shamt } => {
+                let value = self.read(rs1).wrapping_shr(u32::from(shamt));
                 write_register(self, &mut register_writes, rd, value);
             }
             RiscvInstruction::Add { rd, rs1, rs2 } => {
@@ -1194,82 +1242,4 @@ fn wrapping_add_signed(value: u64, offset: i64) -> u64 {
     } else {
         value.wrapping_sub(offset.unsigned_abs())
     }
-}
-
-fn rd(raw: u32) -> Register {
-    Register::from_field((raw >> 7) & 0x1f)
-}
-
-fn rs1(raw: u32) -> Register {
-    Register::from_field((raw >> 15) & 0x1f)
-}
-
-fn rs2(raw: u32) -> Register {
-    Register::from_field((raw >> 20) & 0x1f)
-}
-
-fn funct3(raw: u32) -> u32 {
-    (raw >> 12) & 0x7
-}
-
-fn funct7(raw: u32) -> u32 {
-    (raw >> 25) & 0x7f
-}
-
-fn shift_funct6(raw: u32) -> u32 {
-    (raw >> 26) & 0x3f
-}
-
-fn shamt64(raw: u32) -> u8 {
-    ((raw >> 20) & 0x3f) as u8
-}
-
-fn funct5(raw: u32) -> u32 {
-    (raw >> 27) & 0x1f
-}
-
-fn csr(raw: u32) -> u16 {
-    ((raw >> 20) & 0x0fff) as u16
-}
-
-fn aq(raw: u32) -> bool {
-    ((raw >> 26) & 0x1) != 0
-}
-
-fn rl(raw: u32) -> bool {
-    ((raw >> 25) & 0x1) != 0
-}
-
-fn i_imm(raw: u32) -> i64 {
-    sign_extend((raw >> 20) as u64, 12)
-}
-
-fn s_imm(raw: u32) -> i64 {
-    let imm = ((raw >> 25) << 5) | ((raw >> 7) & 0x1f);
-    sign_extend(imm as u64, 12)
-}
-
-fn b_imm(raw: u32) -> i64 {
-    let imm = (((raw >> 31) & 0x1) << 12)
-        | (((raw >> 7) & 0x1) << 11)
-        | (((raw >> 25) & 0x3f) << 5)
-        | (((raw >> 8) & 0xf) << 1);
-    sign_extend(imm as u64, 13)
-}
-
-fn u_imm(raw: u32) -> i64 {
-    (raw & 0xffff_f000) as i32 as i64
-}
-
-fn j_imm(raw: u32) -> i64 {
-    let imm = (((raw >> 31) & 0x1) << 20)
-        | (((raw >> 12) & 0xff) << 12)
-        | (((raw >> 20) & 0x1) << 11)
-        | (((raw >> 21) & 0x3ff) << 1);
-    sign_extend(imm as u64, 21)
-}
-
-fn sign_extend(value: u64, bits: u32) -> i64 {
-    let shift = 64 - bits;
-    ((value << shift) as i64) >> shift
 }
