@@ -40,13 +40,7 @@ pub fn riscv_gdb_remote_session_from_hart(
     hart: &RiscvHartState,
 ) -> GdbRemoteSession {
     let mut session = riscv_gdb_remote_session(xlen);
-    let register_bytes = riscv_gdb_register_bytes(xlen, hart);
-
-    session.set_register_bytes(GdbRemoteRegisterBytes::new(register_bytes.clone()));
-    for (number, bytes) in riscv_gdb_single_register_bytes(xlen, hart) {
-        session.set_register_value(number, GdbRemoteRegisterBytes::new(bytes));
-    }
-
+    sync_riscv_gdb_remote_session_from_hart(xlen, &mut session, hart);
     session
 }
 
@@ -157,13 +151,22 @@ pub fn handle_riscv_gdb_remote_packet(
     hart: &mut RiscvHartState,
     packet: &GdbRemotePacket,
 ) -> Result<Vec<GdbRemoteFrame>, RiscvGdbRemotePacketError> {
+    if session.is_disconnected() {
+        return Ok(session.handle_packet(packet)?);
+    }
+
     let command = GdbRemoteCommand::parse(packet);
+    if reads_riscv_gdb_remote_registers(&command) {
+        sync_riscv_gdb_remote_session_from_hart(xlen, session, hart);
+    }
+
     let mut updated_hart = hart.clone();
     let applies_register_write =
         apply_riscv_gdb_remote_register_write(xlen, &mut updated_hart, &command)?;
     let frames = session.handle_packet(packet)?;
     if applies_register_write {
         *hart = updated_hart;
+        sync_riscv_gdb_remote_session_from_hart(xlen, session, hart);
     }
     Ok(frames)
 }
@@ -179,27 +182,9 @@ pub fn apply_riscv_gdb_remote_core_register_write(
             write_core_register_value(xlen, core, *number, decode_register_value(bytes));
         }
         GdbRemoteCommand::WriteRegisters { bytes } => {
-            let register_byte_len = byte_len(xlen);
-            for register in 0..RISCV_GDB_INTEGER_REGISTER_COUNT {
-                let number = u64::from(register);
-                let start = number as usize * register_byte_len;
-                let end = start + register_byte_len;
-                write_core_register_value(
-                    xlen,
-                    core,
-                    number,
-                    decode_register_value(&bytes[start..end]),
-                );
-            }
-
-            let pc_start = RISCV_GDB_PC_REGISTER as usize * register_byte_len;
-            let pc_end = pc_start + register_byte_len;
-            write_core_register_value(
-                xlen,
-                core,
-                RISCV_GDB_PC_REGISTER,
-                decode_register_value(&bytes[pc_start..pc_end]),
-            );
+            for_each_decoded_register_value(xlen, bytes, |number, value| {
+                write_core_register_value(xlen, core, number, value);
+            });
         }
         _ => {}
     }
@@ -212,25 +197,64 @@ pub fn handle_riscv_gdb_remote_core_packet(
     core: &RiscvCore,
     packet: &GdbRemotePacket,
 ) -> Result<Vec<GdbRemoteFrame>, RiscvGdbRemotePacketError> {
+    if session.is_disconnected() {
+        return Ok(session.handle_packet(packet)?);
+    }
+
     let command = GdbRemoteCommand::parse(packet);
+    if reads_riscv_gdb_remote_registers(&command) {
+        sync_riscv_gdb_remote_session_from_core(xlen, session, core);
+    }
+
     let applies_register_write = validate_riscv_gdb_remote_register_write(xlen, &command)?;
     let frames = session.handle_packet(packet)?;
     if applies_register_write {
         apply_riscv_gdb_remote_core_register_write(xlen, core, &command)?;
+        sync_riscv_gdb_remote_session_from_core(xlen, session, core);
     }
     Ok(frames)
 }
 
+fn sync_riscv_gdb_remote_session_from_hart(
+    xlen: RiscvGdbXlen,
+    session: &mut GdbRemoteSession,
+    hart: &RiscvHartState,
+) {
+    session.set_register_bytes(GdbRemoteRegisterBytes::new(riscv_gdb_register_bytes(
+        xlen, hart,
+    )));
+    for (number, bytes) in riscv_gdb_single_register_bytes(xlen, hart) {
+        session.set_register_value(number, GdbRemoteRegisterBytes::new(bytes));
+    }
+}
+
+fn sync_riscv_gdb_remote_session_from_core(
+    xlen: RiscvGdbXlen,
+    session: &mut GdbRemoteSession,
+    core: &RiscvCore,
+) {
+    sync_riscv_gdb_remote_session_from_hart(
+        xlen,
+        session,
+        &riscv_gdb_hart_snapshot_from_core(core),
+    );
+}
+
+const fn reads_riscv_gdb_remote_registers(command: &GdbRemoteCommand) -> bool {
+    matches!(
+        command,
+        GdbRemoteCommand::ReadRegisters | GdbRemoteCommand::ReadRegister { .. }
+    )
+}
+
 fn riscv_gdb_register_bytes(xlen: RiscvGdbXlen, hart: &RiscvHartState) -> Vec<u8> {
-    let mut bytes =
-        Vec::with_capacity((RISCV_GDB_INTEGER_REGISTER_COUNT as usize + 1) * byte_len(xlen));
-    for register in 0..RISCV_GDB_INTEGER_REGISTER_COUNT {
+    let mut bytes = Vec::with_capacity(register_set_byte_len(xlen));
+    for number in riscv_gdb_register_numbers() {
         bytes.extend_from_slice(&encode_register_value(
             xlen,
-            hart.read(Register::new(register).unwrap()),
+            read_hart_register_value(hart, number),
         ));
     }
-    bytes.extend_from_slice(&encode_register_value(xlen, hart.pc()));
     bytes
 }
 
@@ -238,24 +262,20 @@ fn riscv_gdb_single_register_bytes(
     xlen: RiscvGdbXlen,
     hart: &RiscvHartState,
 ) -> Vec<(u64, Vec<u8>)> {
-    let mut registers = Vec::with_capacity(RISCV_GDB_INTEGER_REGISTER_COUNT as usize + 1);
-    for register in 0..RISCV_GDB_INTEGER_REGISTER_COUNT {
+    let mut registers = Vec::with_capacity(register_count());
+    for number in riscv_gdb_register_numbers() {
         registers.push((
-            u64::from(register),
-            encode_register_value(xlen, hart.read(Register::new(register).unwrap())),
+            number,
+            encode_register_value(xlen, read_hart_register_value(hart, number)),
         ));
     }
-    registers.push((
-        RISCV_GDB_PC_REGISTER,
-        encode_register_value(xlen, hart.pc()),
-    ));
     registers
 }
 
 fn riscv_gdb_hart_snapshot_from_core(core: &RiscvCore) -> RiscvHartState {
     let mut hart = RiscvHartState::with_hart_id(core.pc().get(), u64::from(core.id().get()));
     for register in 0..RISCV_GDB_INTEGER_REGISTER_COUNT {
-        let register = Register::new(register).unwrap();
+        let register = riscv_register(u64::from(register));
         hart.write(register, core.read_register(register));
     }
     hart
@@ -295,27 +315,9 @@ fn apply_all_register_write(
     bytes: &[u8],
 ) -> Result<(), RiscvGdbRegisterWriteError> {
     validate_all_register_write(xlen, bytes)?;
-    let register_byte_len = byte_len(xlen);
-    for register in 0..RISCV_GDB_INTEGER_REGISTER_COUNT {
-        let number = u64::from(register);
-        let start = number as usize * register_byte_len;
-        let end = start + register_byte_len;
-        write_register_value(
-            xlen,
-            hart,
-            number,
-            decode_register_value(&bytes[start..end]),
-        );
-    }
-
-    let pc_start = RISCV_GDB_PC_REGISTER as usize * register_byte_len;
-    let pc_end = pc_start + register_byte_len;
-    write_register_value(
-        xlen,
-        hart,
-        RISCV_GDB_PC_REGISTER,
-        decode_register_value(&bytes[pc_start..pc_end]),
-    );
+    for_each_decoded_register_value(xlen, bytes, |number, value| {
+        write_register_value(xlen, hart, number, value);
+    });
     Ok(())
 }
 
@@ -343,7 +345,7 @@ fn validate_all_register_write(
     xlen: RiscvGdbXlen,
     bytes: &[u8],
 ) -> Result<(), RiscvGdbRegisterWriteError> {
-    let expected = (RISCV_GDB_INTEGER_REGISTER_COUNT as usize + 1) * byte_len(xlen);
+    let expected = register_set_byte_len(xlen);
     if bytes.len() != expected {
         return Err(RiscvGdbRegisterWriteError::InvalidRegisterSetBytes {
             expected,
@@ -354,29 +356,69 @@ fn validate_all_register_write(
 }
 
 fn write_register_value(xlen: RiscvGdbXlen, hart: &mut RiscvHartState, number: u64, value: u64) {
-    let value = match xlen {
-        RiscvGdbXlen::Rv32 => value & u64::from(u32::MAX),
-        RiscvGdbXlen::Rv64 => value,
-    };
+    let value = normalize_register_value(xlen, value);
 
     if number == RISCV_GDB_PC_REGISTER {
         hart.set_pc(value);
     } else {
-        hart.write(Register::new(number as u8).unwrap(), value);
+        hart.write(riscv_register(number), value);
     }
 }
 
 fn write_core_register_value(xlen: RiscvGdbXlen, core: &RiscvCore, number: u64, value: u64) {
-    let value = match xlen {
-        RiscvGdbXlen::Rv32 => value & u64::from(u32::MAX),
-        RiscvGdbXlen::Rv64 => value,
-    };
+    let value = normalize_register_value(xlen, value);
 
     if number == RISCV_GDB_PC_REGISTER {
         core.redirect_pc(Address::new(value));
     } else {
-        core.write_register(Register::new(number as u8).unwrap(), value);
+        core.write_register(riscv_register(number), value);
     }
+}
+
+fn read_hart_register_value(hart: &RiscvHartState, number: u64) -> u64 {
+    if number == RISCV_GDB_PC_REGISTER {
+        hart.pc()
+    } else {
+        hart.read(riscv_register(number))
+    }
+}
+
+fn for_each_decoded_register_value(
+    xlen: RiscvGdbXlen,
+    bytes: &[u8],
+    mut visit: impl FnMut(u64, u64),
+) {
+    let register_byte_len = byte_len(xlen);
+    for (index, number) in riscv_gdb_register_numbers().enumerate() {
+        let start = index * register_byte_len;
+        let end = start + register_byte_len;
+        visit(number, decode_register_value(&bytes[start..end]));
+    }
+}
+
+fn normalize_register_value(xlen: RiscvGdbXlen, value: u64) -> u64 {
+    match xlen {
+        RiscvGdbXlen::Rv32 => value & u64::from(u32::MAX),
+        RiscvGdbXlen::Rv64 => value,
+    }
+}
+
+fn riscv_register(number: u64) -> Register {
+    Register::new(number as u8).unwrap()
+}
+
+fn riscv_gdb_register_numbers() -> impl Iterator<Item = u64> {
+    (0..RISCV_GDB_INTEGER_REGISTER_COUNT)
+        .map(u64::from)
+        .chain(std::iter::once(RISCV_GDB_PC_REGISTER))
+}
+
+const fn register_count() -> usize {
+    RISCV_GDB_INTEGER_REGISTER_COUNT as usize + 1
+}
+
+const fn register_set_byte_len(xlen: RiscvGdbXlen) -> usize {
+    register_count() * byte_len(xlen)
 }
 
 fn encode_register_value(xlen: RiscvGdbXlen, value: u64) -> Vec<u8> {
