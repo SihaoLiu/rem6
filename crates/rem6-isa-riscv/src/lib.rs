@@ -200,11 +200,15 @@ impl RiscvCounterBank {
     }
 
     pub fn write_machine(&mut self, csr: RiscvCounterCsr, value: u64) -> Result<(), RiscvCsrError> {
+        self.set_machine(csr, value);
+        Ok(())
+    }
+
+    pub fn set_machine(&mut self, csr: RiscvCounterCsr, value: u64) {
         match csr {
             RiscvCounterCsr::Cycle => self.cycle = value,
             RiscvCounterCsr::Instret => self.instret = value,
         }
-        Ok(())
     }
 
     pub fn write_machine_word(
@@ -330,15 +334,51 @@ fn decode_system(raw: u32) -> Result<RiscvInstruction, RiscvError> {
 
 fn decode_csr(raw: u32) -> Result<RiscvInstruction, RiscvError> {
     let csr = csr(raw);
-    if !is_csr_no_write_read(raw) {
-        return Err(RiscvError::UnknownEncoding { raw });
+    if is_csr_no_write_read(raw) {
+        return match csr {
+            0xf14 => Ok(RiscvInstruction::ReadMachineHartId { rd: rd(raw) }),
+            csr => counter_csr(csr)
+                .map(|csr| RiscvInstruction::ReadCounterCsr { rd: rd(raw), csr })
+                .ok_or(RiscvError::UnknownEncoding { raw }),
+        };
     }
 
-    match csr {
-        0xf14 => Ok(RiscvInstruction::ReadMachineHartId { rd: rd(raw) }),
-        csr => counter_csr(csr)
-            .map(|csr| RiscvInstruction::ReadCounterCsr { rd: rd(raw), csr })
-            .ok_or(RiscvError::UnknownEncoding { raw }),
+    let Some(csr) = machine_counter_csr(csr) else {
+        return Err(RiscvError::UnknownEncoding { raw });
+    };
+
+    match funct3(raw) {
+        0x1 => Ok(RiscvInstruction::WriteCounterCsr {
+            rd: rd(raw),
+            csr,
+            rs1: rs1(raw),
+        }),
+        0x2 => Ok(RiscvInstruction::SetCounterCsr {
+            rd: rd(raw),
+            csr,
+            rs1: rs1(raw),
+        }),
+        0x3 => Ok(RiscvInstruction::ClearCounterCsr {
+            rd: rd(raw),
+            csr,
+            rs1: rs1(raw),
+        }),
+        0x5 => Ok(RiscvInstruction::WriteCounterCsrImmediate {
+            rd: rd(raw),
+            csr,
+            zimm: rs1(raw).index(),
+        }),
+        0x6 => Ok(RiscvInstruction::SetCounterCsrImmediate {
+            rd: rd(raw),
+            csr,
+            zimm: rs1(raw).index(),
+        }),
+        0x7 => Ok(RiscvInstruction::ClearCounterCsrImmediate {
+            rd: rd(raw),
+            csr,
+            zimm: rs1(raw).index(),
+        }),
+        _ => Err(RiscvError::UnknownEncoding { raw }),
     }
 }
 
@@ -350,6 +390,10 @@ fn counter_csr(address: u16) -> Option<RiscvCounterCsr> {
     RiscvCounterCsr::from_user_address(address)
         .or_else(|_| RiscvCounterCsr::from_machine_address(address))
         .ok()
+}
+
+fn machine_counter_csr(address: u16) -> Option<RiscvCounterCsr> {
+    RiscvCounterCsr::from_machine_address(address).ok()
 }
 
 fn decode_op_imm(raw: u32) -> Result<RiscvInstruction, RiscvError> {
@@ -1115,6 +1159,29 @@ impl RiscvHartState {
                 let value = self.counters.read_machine(csr);
                 write_register(self, &mut register_writes, rd, value);
             }
+            RiscvInstruction::WriteCounterCsr { rd, csr, rs1 } => {
+                let value = self.read(rs1);
+                write_counter_csr(self, &mut register_writes, rd, csr, value);
+            }
+            RiscvInstruction::SetCounterCsr { rd, csr, rs1 } => {
+                let value = self.counters.read_machine(csr) | self.read(rs1);
+                write_counter_csr(self, &mut register_writes, rd, csr, value);
+            }
+            RiscvInstruction::ClearCounterCsr { rd, csr, rs1 } => {
+                let value = self.counters.read_machine(csr) & !self.read(rs1);
+                write_counter_csr(self, &mut register_writes, rd, csr, value);
+            }
+            RiscvInstruction::WriteCounterCsrImmediate { rd, csr, zimm } => {
+                write_counter_csr(self, &mut register_writes, rd, csr, u64::from(zimm));
+            }
+            RiscvInstruction::SetCounterCsrImmediate { rd, csr, zimm } => {
+                let value = self.counters.read_machine(csr) | u64::from(zimm);
+                write_counter_csr(self, &mut register_writes, rd, csr, value);
+            }
+            RiscvInstruction::ClearCounterCsrImmediate { rd, csr, zimm } => {
+                let value = self.counters.read_machine(csr) & !u64::from(zimm);
+                write_counter_csr(self, &mut register_writes, rd, csr, value);
+            }
             RiscvInstruction::Ecall => {
                 next_pc = pc;
                 self.pc = next_pc;
@@ -1162,6 +1229,18 @@ fn write_register(
 
     hart.write(register, value);
     writes.push(RegisterWrite::new(register, value));
+}
+
+fn write_counter_csr(
+    hart: &mut RiscvHartState,
+    writes: &mut Vec<RegisterWrite>,
+    register: Register,
+    csr: RiscvCounterCsr,
+    value: u64,
+) {
+    let old_value = hart.counters.read_machine(csr);
+    write_register(hart, writes, register, old_value);
+    hart.counters.set_machine(csr, value);
 }
 
 fn add_signed(value: u64, offset: i64) -> Result<u64, RiscvError> {

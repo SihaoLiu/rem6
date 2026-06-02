@@ -2966,7 +2966,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   `cycle` and `instret` CSR reads from hart state, user read aliases, user write
   rejection, read-only `CSRRS`/`CSRRC` zero-source and `CSRRSI`/`CSRRCI`
   zero-immediate aliases for `cycle`, `instret`, and `mhartid`, wrapping
-  increments, CSR address decoding, and counter snapshot restore.
+  increments, `CSRRW`/`CSRRS`/`CSRRC` plus immediate-form read-modify-write
+  updates for machine `mcycle` and `minstret` aliases, CSR address decoding,
+  and counter snapshot restore.
   Dedicated CSR counter tests cover RV32 low/high word address
   decoding, high-half user read aliases, machine low/high word writes that
   preserve the other half, and read-only errors for user high-half writes.

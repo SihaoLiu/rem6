@@ -304,6 +304,36 @@ pub enum RiscvInstruction {
         rd: Register,
         csr: RiscvCounterCsr,
     },
+    WriteCounterCsr {
+        rd: Register,
+        csr: RiscvCounterCsr,
+        rs1: Register,
+    },
+    SetCounterCsr {
+        rd: Register,
+        csr: RiscvCounterCsr,
+        rs1: Register,
+    },
+    ClearCounterCsr {
+        rd: Register,
+        csr: RiscvCounterCsr,
+        rs1: Register,
+    },
+    WriteCounterCsrImmediate {
+        rd: Register,
+        csr: RiscvCounterCsr,
+        zimm: u8,
+    },
+    SetCounterCsrImmediate {
+        rd: Register,
+        csr: RiscvCounterCsr,
+        zimm: u8,
+    },
+    ClearCounterCsrImmediate {
+        rd: Register,
+        csr: RiscvCounterCsr,
+        zimm: u8,
+    },
     Ecall,
     Ebreak,
 }

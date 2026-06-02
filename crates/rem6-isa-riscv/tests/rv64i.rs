@@ -300,6 +300,100 @@ fn decoder_rejects_counter_csr_write_aliases() {
 }
 
 #[test]
+fn hart_executes_machine_counter_csr_read_modify_write_operations() {
+    let write_cycle = RiscvInstruction::decode(csr_type(0xb00, 2, 0x1, 5)).unwrap();
+    let set_instret = RiscvInstruction::decode(csr_type(0xb02, 3, 0x2, 6)).unwrap();
+    let clear_cycle = RiscvInstruction::decode(csr_type(0xb00, 4, 0x3, 7)).unwrap();
+    let write_instret_imm = RiscvInstruction::decode(csr_type(0xb02, 7, 0x5, 8)).unwrap();
+    let set_cycle_imm = RiscvInstruction::decode(csr_type(0xb00, 0x10, 0x6, 9)).unwrap();
+    let clear_instret_imm = RiscvInstruction::decode(csr_type(0xb02, 1, 0x7, 10)).unwrap();
+
+    assert_eq!(
+        write_cycle,
+        RiscvInstruction::WriteCounterCsr {
+            rd: reg(5),
+            csr: RiscvCounterCsr::Cycle,
+            rs1: reg(2),
+        }
+    );
+    assert_eq!(
+        set_instret,
+        RiscvInstruction::SetCounterCsr {
+            rd: reg(6),
+            csr: RiscvCounterCsr::Instret,
+            rs1: reg(3),
+        }
+    );
+    assert_eq!(
+        clear_cycle,
+        RiscvInstruction::ClearCounterCsr {
+            rd: reg(7),
+            csr: RiscvCounterCsr::Cycle,
+            rs1: reg(4),
+        }
+    );
+    assert_eq!(
+        write_instret_imm,
+        RiscvInstruction::WriteCounterCsrImmediate {
+            rd: reg(8),
+            csr: RiscvCounterCsr::Instret,
+            zimm: 7,
+        }
+    );
+    assert_eq!(
+        set_cycle_imm,
+        RiscvInstruction::SetCounterCsrImmediate {
+            rd: reg(9),
+            csr: RiscvCounterCsr::Cycle,
+            zimm: 0x10,
+        }
+    );
+    assert_eq!(
+        clear_instret_imm,
+        RiscvInstruction::ClearCounterCsrImmediate {
+            rd: reg(10),
+            csr: RiscvCounterCsr::Instret,
+            zimm: 1,
+        }
+    );
+
+    let mut hart = RiscvHartState::new(0x3000);
+    hart.write(reg(2), 0x40);
+    hart.write(reg(3), 0x10);
+    hart.write(reg(4), 0x3);
+
+    hart.execute(write_cycle).unwrap();
+    assert_eq!(hart.read(reg(5)), 0);
+    assert_eq!(hart.counter_snapshot(), RiscvCounterSnapshot::new(0x41, 1));
+
+    hart.execute(set_instret).unwrap();
+    assert_eq!(hart.read(reg(6)), 1);
+    assert_eq!(
+        hart.counter_snapshot(),
+        RiscvCounterSnapshot::new(0x42, 0x12)
+    );
+
+    hart.execute(clear_cycle).unwrap();
+    assert_eq!(hart.read(reg(7)), 0x42);
+    assert_eq!(
+        hart.counter_snapshot(),
+        RiscvCounterSnapshot::new(0x41, 0x13)
+    );
+
+    hart.execute(write_instret_imm).unwrap();
+    assert_eq!(hart.read(reg(8)), 0x13);
+    assert_eq!(hart.counter_snapshot(), RiscvCounterSnapshot::new(0x42, 8));
+
+    hart.execute(set_cycle_imm).unwrap();
+    assert_eq!(hart.read(reg(9)), 0x42);
+    assert_eq!(hart.counter_snapshot(), RiscvCounterSnapshot::new(0x53, 9));
+
+    hart.execute(clear_instret_imm).unwrap();
+    assert_eq!(hart.read(reg(10)), 9);
+    assert_eq!(hart.counter_snapshot(), RiscvCounterSnapshot::new(0x54, 9));
+}
+
+#[test]
 fn decoder_extracts_rv64i_fields_and_immediates() {
     assert_eq!(
         RiscvInstruction::decode(i_type(-1, 0, 0x0, 5, 0x13)).unwrap(),
