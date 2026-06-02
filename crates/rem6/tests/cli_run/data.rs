@@ -130,6 +130,8 @@ fn rem6_run_executes_riscv_elf_load_store_through_nvm_profile_and_emits_nvm_stat
     assert!(stdout.contains("\"write_latency\":7"));
     assert!(stdout.contains("\"precharge_latency\":2"));
     assert!(stdout.contains("\"bus_turnaround\":4"));
+    assert!(stdout.contains("\"command_window\":{\"window_cycles\":16"));
+    assert!(stdout.contains("\"max_commands\":2"));
     assert!(stdout.contains("\"low_power_timing\":{\"precharge_powerdown_entry_delay\":20"));
     assert!(stdout.contains("\"self_refresh_entry_delay\":80"));
     assert!(stdout.contains("\"exit_latency\":7"));
@@ -246,6 +248,20 @@ fn rem6_run_executes_riscv_elf_load_store_through_nvm_profile_and_emits_nvm_stat
         "sim.memory.dram.profile.timing.bus_turnaround",
         "Tick",
         4,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.timing.command_window.window_cycles",
+        "Tick",
+        16,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.timing.command_window.max_commands",
+        "Count",
+        2,
         "constant",
     );
     assert_stat(

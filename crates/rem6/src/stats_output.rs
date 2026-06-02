@@ -486,6 +486,20 @@ fn emit_dram_stats(
     emit_dram_constant(
         stats,
         prefix,
+        "profile.timing.command_window.window_cycles",
+        "Tick",
+        summary.profile_timing_command_window_cycles,
+    )?;
+    emit_dram_constant(
+        stats,
+        prefix,
+        "profile.timing.command_window.max_commands",
+        "Count",
+        summary.profile_timing_command_window_max_commands,
+    )?;
+    emit_dram_constant(
+        stats,
+        prefix,
         "profile.low_power_timing.precharge_powerdown_entry_delay",
         "Tick",
         summary.profile_low_power_precharge_powerdown_entry_delay,

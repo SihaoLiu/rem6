@@ -116,6 +116,7 @@ fn build_cli_dram_profile(
             ExternalMemoryProfile::lpddr(CLI_MEMORY_TARGET, line_layout, 2, 2, geometry, timing)
         }
         CliDramMemoryProfile::Nvm => {
+            let timing = timing.with_command_window(16, 2).map_err(execute_error)?;
             ExternalMemoryProfile::nvm(CLI_MEMORY_TARGET, line_layout, 2, 4, geometry, timing)
                 .and_then(|profile| {
                     profile.with_nvm_media_timing(NvmMediaTiming::new(30, 50, 6, 4, 1)?)
