@@ -850,6 +850,10 @@ pub struct SinicFifoDeviceSnapshot {
 }
 
 impl SinicFifoDeviceSnapshot {
+    pub const fn registers(&self) -> &SinicRegisterBlockSnapshot {
+        &self.registers
+    }
+
     pub fn rx_packet_count(&self) -> usize {
         self.rx_fifo.packet_count()
     }

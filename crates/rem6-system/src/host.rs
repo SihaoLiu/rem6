@@ -2,7 +2,9 @@ mod execution_mode_checkpoint;
 
 use std::collections::BTreeMap;
 
-use rem6_checkpoint::{CheckpointError, CheckpointManifest, CheckpointRegistry};
+use rem6_checkpoint::{
+    CheckpointComponentId, CheckpointError, CheckpointManifest, CheckpointRegistry,
+};
 use rem6_kernel::Tick;
 use rem6_stats::{StatDumpRecord, StatsRegistry, StatsResetRecord};
 
@@ -881,6 +883,10 @@ impl SystemActionExecutor {
         &self,
     ) -> Option<&PciLegacyInterruptRouterCheckpointBank> {
         self.pci_legacy_interrupt_router_checkpoints.as_ref()
+    }
+
+    pub fn has_checkpoint_component(&self, component: &CheckpointComponentId) -> bool {
+        self.checkpoints.contains_component(component)
     }
 
     pub const fn virtio_split_queue_checkpoint_bank(

@@ -293,6 +293,10 @@ impl CheckpointRegistry {
         self.components.get(component)?.get(name).map(Vec::as_slice)
     }
 
+    pub fn contains_component(&self, component: &CheckpointComponentId) -> bool {
+        self.components.contains_key(component)
+    }
+
     pub fn capture(
         &self,
         label: impl Into<String>,

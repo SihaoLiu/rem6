@@ -1,14 +1,16 @@
 use std::sync::{Arc, Mutex};
 
-use rem6_checkpoint::CheckpointComponentId;
+use rem6_checkpoint::{
+    CheckpointChunk, CheckpointComponentId, CheckpointManifest, CheckpointState,
+};
 use rem6_cpu::{CpuId, CpuResetState, RiscvClusterTopologyConfig, RiscvCoreTopologyConfig};
 use rem6_interrupt::{InterruptController, InterruptLineId, InterruptSourceId, InterruptTargetId};
 use rem6_kernel::{ClockDomain, PartitionId};
 use rem6_memory::{AccessSize, Address, AgentId, ByteMask, CacheLineLayout};
 use rem6_mmio::{MmioCompletion, MmioRequest, MmioRequestId, MmioResponse, MmioRoute};
 use rem6_net::{
-    SinicInterrupts, SinicPciEndpointSpec, SinicRegisterBlock, SinicRegisterOffset,
-    SinicRegisterParams,
+    SinicFifoDevice, SinicInterrupts, SinicPciEndpointSpec, SinicRegisterBlock,
+    SinicRegisterOffset, SinicRegisterParams,
 };
 use rem6_pci::{
     PciConfigAperture, PciFunctionAddress, PciHostAddressBases, PciHostBridge,
@@ -19,7 +21,8 @@ use rem6_platform::PlatformBuilder;
 use rem6_stats::StatsRegistry;
 use rem6_system::{
     GuestEventId, GuestSourceId, HostAction, HostActionRecord, RiscvTopologyHostConfig,
-    RiscvTopologySinicPciDeviceConfig, RiscvTopologySystem, SystemActionOutcome,
+    RiscvTopologySinicPciDeviceConfig, RiscvTopologySystem, RiscvTopologySystemError,
+    SinicFifoCheckpointPort, SystemActionOutcome,
 };
 use rem6_topology::{
     ComponentId, ComponentKind, ComponentSpec, Endpoint, PortDirection, PortName, Topology,
@@ -199,6 +202,31 @@ fn response_for(
         })
         .unwrap()
         .response()
+}
+
+fn corrupt_register_config_chunk(
+    manifest: CheckpointManifest,
+    component: &CheckpointComponentId,
+) -> CheckpointManifest {
+    let states = manifest
+        .states()
+        .iter()
+        .map(|state| {
+            let chunks = state
+                .chunks()
+                .iter()
+                .map(|chunk| {
+                    let mut payload = chunk.payload().to_vec();
+                    if state.component() == component && chunk.name() == "sinic-register" {
+                        payload[68..72].copy_from_slice(&0_u32.to_le_bytes());
+                    }
+                    CheckpointChunk::new(chunk.name().to_string(), payload)
+                })
+                .collect();
+            CheckpointState::new(state.component().clone(), chunks)
+        })
+        .collect();
+    CheckpointManifest::new(manifest.label().to_string(), manifest.tick(), states)
 }
 
 #[test]
@@ -396,4 +424,166 @@ fn topology_system_assembles_sinic_pci_device_into_platform_bus_and_checkpoints(
             Some(config_bits.to_le_bytes().to_vec()),
         ))
     );
+}
+
+#[test]
+fn topology_system_rejects_misaligned_sinic_pci_bar_base_without_host_mutation() {
+    let function = pci_function();
+    let pci_host = pci_host();
+    let router = legacy_interrupt_router();
+    let bar_base = Address::new(0x8000_0001);
+    let platform = PlatformBuilder::new(2).build().unwrap();
+    let device_config = RiscvTopologySinicPciDeviceConfig::new(
+        SinicPciEndpointSpec::new(function),
+        Arc::clone(&pci_host),
+        router,
+        bar_base,
+        MmioRoute::new(PartitionId::new(0), PartitionId::new(1), 2, 1).unwrap(),
+        InterruptSourceId::new(0x1293),
+        SinicRegisterParams::default(),
+    );
+
+    let error = match base_system()
+        .with_platform(platform)
+        .unwrap()
+        .with_sinic_pci_device(device_config)
+    {
+        Ok(_) => panic!("misaligned SINIC PCI BAR base succeeded"),
+        Err(error) => error,
+    };
+
+    assert!(matches!(
+        error,
+        RiscvTopologySystemError::SinicPciBarAddressMisaligned {
+            address,
+            alignment_bytes,
+        } if address == bar_base && alignment_bytes == 0x1_0000
+    ));
+    assert!(pci_host.lock().unwrap().endpoint(function).is_none());
+}
+
+#[test]
+fn topology_system_rejects_duplicate_sinic_checkpoint_before_host_mutation() {
+    let function = pci_function();
+    let pci_host = pci_host();
+    let router = legacy_interrupt_router();
+    let fifo_component = CheckpointComponentId::new("net.sinic0.fifo").unwrap();
+    let platform = PlatformBuilder::new(2).build().unwrap();
+    let existing_device = Arc::new(Mutex::new(
+        SinicFifoDevice::new(SinicRegisterParams::default()).unwrap(),
+    ));
+    let device_config = RiscvTopologySinicPciDeviceConfig::new(
+        SinicPciEndpointSpec::new(function),
+        Arc::clone(&pci_host),
+        router,
+        Address::new(0x8000_0000),
+        MmioRoute::new(PartitionId::new(0), PartitionId::new(1), 2, 1).unwrap(),
+        InterruptSourceId::new(0x1293),
+        SinicRegisterParams::default(),
+    )
+    .with_fifo_checkpoint_component(fifo_component.clone());
+
+    let error = match base_system()
+        .with_platform(platform)
+        .unwrap()
+        .with_sinic_fifo_checkpoint_port(SinicFifoCheckpointPort::new(
+            fifo_component,
+            existing_device,
+        ))
+        .unwrap()
+        .with_sinic_pci_device(device_config)
+    {
+        Ok(_) => panic!("duplicate SINIC FIFO checkpoint component succeeded"),
+        Err(error) => error,
+    };
+
+    assert!(matches!(
+        error,
+        RiscvTopologySystemError::DuplicateSinicPciCheckpointComponent { .. }
+    ));
+    assert!(pci_host.lock().unwrap().endpoint(function).is_none());
+}
+
+#[test]
+fn topology_system_rejects_mismatched_sinic_register_and_fifo_checkpoint_chunks() {
+    let function = pci_function();
+    let pci_host = pci_host();
+    let router = legacy_interrupt_router();
+    let register_component = CheckpointComponentId::new("net.sinic0.registers").unwrap();
+    let fifo_component = CheckpointComponentId::new("net.sinic0.fifo").unwrap();
+    let bar_base = Address::new(0x8000_0000);
+    let config_bits = SinicRegisterBlock::CONFIG_INT_EN | SinicRegisterBlock::CONFIG_RX_EN;
+    let source = GuestSourceId::new(132);
+
+    let platform = PlatformBuilder::new(2).build().unwrap();
+    let device_config = RiscvTopologySinicPciDeviceConfig::new(
+        SinicPciEndpointSpec::new(function),
+        Arc::clone(&pci_host),
+        router,
+        bar_base,
+        MmioRoute::new(PartitionId::new(0), PartitionId::new(1), 2, 1).unwrap(),
+        InterruptSourceId::new(0x1293),
+        SinicRegisterParams::default(),
+    )
+    .with_register_checkpoint_component(register_component.clone())
+    .with_fifo_checkpoint_component(fifo_component);
+    let system = base_system()
+        .with_platform(platform)
+        .unwrap()
+        .with_sinic_pci_device(device_config)
+        .unwrap()
+        .with_host_controller(host_config(source), StatsRegistry::new())
+        .unwrap();
+
+    let bus = system.platform_bus().unwrap().clone();
+    let mut scheduler = system.scheduler_mut();
+    scheduler
+        .schedule_parallel_at(PartitionId::new(0), 5, move |context| {
+            bus.submit_parallel(
+                context,
+                write_request(
+                    1,
+                    bar_base.get() + SinicRegisterOffset::CONFIG.addr() as u64,
+                    config_bits.to_le_bytes().to_vec(),
+                ),
+                |_| {},
+            )
+            .unwrap();
+        })
+        .unwrap();
+    scheduler.run_until_idle_parallel().unwrap();
+    drop(scheduler);
+
+    let host = system.host_controller().unwrap();
+    let checkpoint = HostActionRecord::new(
+        20,
+        PartitionId::new(1),
+        PartitionId::new(1),
+        GuestEventId::new(422),
+        source,
+        HostAction::Checkpoint {
+            label: "sinic-pci-conflict".to_string(),
+        },
+    );
+    let manifest = match host
+        .lock()
+        .unwrap()
+        .executor_mut()
+        .apply(&checkpoint)
+        .unwrap()
+    {
+        SystemActionOutcome::Checkpoint { manifest, .. } => manifest,
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+    let manifest = corrupt_register_config_chunk(manifest, &register_component);
+
+    let restore = HostActionRecord::new(
+        30,
+        PartitionId::new(1),
+        PartitionId::new(1),
+        GuestEventId::new(423),
+        source,
+        HostAction::RestoreCheckpoint { manifest },
+    );
+    assert!(host.lock().unwrap().executor_mut().apply(&restore).is_err());
 }

@@ -393,11 +393,21 @@ impl SinicFifoCheckpointRecord {
 pub struct SinicFifoCheckpointPort {
     component: CheckpointComponentId,
     device: Arc<Mutex<SinicFifoDevice>>,
+    register_component: Option<CheckpointComponentId>,
 }
 
 impl SinicFifoCheckpointPort {
     pub fn new(component: CheckpointComponentId, device: Arc<Mutex<SinicFifoDevice>>) -> Self {
-        Self { component, device }
+        Self {
+            component,
+            device,
+            register_component: None,
+        }
+    }
+
+    pub fn with_register_checkpoint_component(mut self, component: CheckpointComponentId) -> Self {
+        self.register_component = Some(component);
+        self
     }
 
     pub fn component(&self) -> &CheckpointComponentId {
@@ -459,6 +469,7 @@ impl SinicFifoCheckpointPort {
                     reason: error.to_string(),
                 }
             })?;
+        self.validate_register_component(registry, &snapshot)?;
         Ok(SinicFifoCheckpointRecord::new(
             self.component.clone(),
             snapshot,
@@ -492,6 +503,37 @@ impl SinicFifoCheckpointPort {
                 component: self.component.clone(),
                 error,
             })
+    }
+
+    fn validate_register_component(
+        &self,
+        registry: &CheckpointRegistry,
+        snapshot: &SinicFifoDeviceSnapshot,
+    ) -> Result<(), SinicFifoCheckpointError> {
+        let Some(component) = &self.register_component else {
+            return Ok(());
+        };
+        let payload = registry
+            .chunk(component, SINIC_REGISTER_CHUNK)
+            .ok_or_else(|| SinicFifoCheckpointError::MissingChunk {
+                component: component.clone(),
+                name: SINIC_REGISTER_CHUNK.to_string(),
+            })?;
+        let register_snapshot = SinicRegisterBlockSnapshot::decode_checkpoint_payload(payload)
+            .map_err(|error| SinicFifoCheckpointError::InvalidChunk {
+                component: component.clone(),
+                reason: error.to_string(),
+            })?;
+        if snapshot.registers() != &register_snapshot {
+            return Err(SinicFifoCheckpointError::InvalidChunk {
+                component: self.component.clone(),
+                reason: format!(
+                    "embedded register snapshot disagrees with component {}",
+                    component.as_str()
+                ),
+            });
+        }
+        Ok(())
     }
 }
 

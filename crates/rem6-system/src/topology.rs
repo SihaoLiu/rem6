@@ -1367,9 +1367,16 @@ pub enum RiscvTopologySystemError {
         topology: u32,
         platform: u32,
     },
+    DuplicateSinicPciCheckpointComponent {
+        component: CheckpointComponentId,
+    },
     SinicPciBarAddressBelowHostBase {
         address: Address,
         host_base: Address,
+    },
+    SinicPciBarAddressMisaligned {
+        address: Address,
+        alignment_bytes: u64,
     },
     SinicPciBarAddressTooWide {
         address: Address,
@@ -1446,11 +1453,24 @@ impl fmt::Display for RiscvTopologySystemError {
                 formatter,
                 "platform partition count {platform} does not match topology partition count {topology}"
             ),
+            Self::DuplicateSinicPciCheckpointComponent { component } => write!(
+                formatter,
+                "SINIC PCI checkpoint component {} is already attached",
+                component.as_str()
+            ),
             Self::SinicPciBarAddressBelowHostBase { address, host_base } => write!(
                 formatter,
                 "SINIC PCI BAR address {:#x} is below host base {:#x}",
                 address.get(),
                 host_base.get()
+            ),
+            Self::SinicPciBarAddressMisaligned {
+                address,
+                alignment_bytes,
+            } => write!(
+                formatter,
+                "SINIC PCI BAR address {:#x} is not aligned to {alignment_bytes} bytes",
+                address.get()
             ),
             Self::SinicPciBarAddressTooWide { address } => write!(
                 formatter,
@@ -1527,7 +1547,9 @@ impl Error for RiscvTopologySystemError {
             Self::UnknownGpu { .. } => None,
             Self::GpuDmaWriteNotReady { .. } => None,
             Self::PlatformPartitionMismatch { .. } => None,
+            Self::DuplicateSinicPciCheckpointComponent { .. } => None,
             Self::SinicPciBarAddressBelowHostBase { .. } => None,
+            Self::SinicPciBarAddressMisaligned { .. } => None,
             Self::SinicPciBarAddressTooWide { .. } => None,
             Self::MissingSinicPciBarRange { .. } => None,
             Self::HostPartitionOutOfRange { .. } => None,
