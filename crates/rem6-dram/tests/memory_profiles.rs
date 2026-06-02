@@ -197,6 +197,9 @@ fn external_memory_profiles_report_parallel_resource_capacity() {
     let ddr_summary = ddr.parallel_resource_summary();
     assert_eq!(ddr_summary.target(), target(30));
     assert_eq!(ddr_summary.technology(), DramMemoryTechnology::Ddr);
+    assert_eq!(ddr_summary.technology_label(), "ddr");
+    assert_eq!(ddr_summary.parallel_port_label(), "channel");
+    assert_eq!(ddr_summary.topology_unit_label(), "rank");
     assert_eq!(ddr_summary.parallel_port_count(), 2);
     assert_eq!(ddr_summary.topology_unit_count(), 4);
     assert_eq!(ddr_summary.banks_per_topology_unit(), 16);
@@ -206,6 +209,9 @@ fn external_memory_profiles_report_parallel_resource_capacity() {
     assert_eq!(ddr_summary.scheduler_bank_group_count(), Some(8));
 
     let hbm_summary = hbm.parallel_resource_summary();
+    assert_eq!(hbm_summary.technology_label(), "hbm");
+    assert_eq!(hbm_summary.parallel_port_label(), "pseudo_channel");
+    assert_eq!(hbm_summary.topology_unit_label(), "pseudo_channel");
     assert_eq!(hbm_summary.parallel_port_count(), 8);
     assert_eq!(hbm_summary.topology_unit_count(), 8);
     assert_eq!(hbm_summary.total_topology_bank_count(), 128);
@@ -213,6 +219,9 @@ fn external_memory_profiles_report_parallel_resource_capacity() {
     assert_eq!(hbm_summary.scheduler_bank_group_count(), Some(32));
 
     let lpddr_summary = lpddr.parallel_resource_summary();
+    assert_eq!(lpddr_summary.technology_label(), "lpddr");
+    assert_eq!(lpddr_summary.parallel_port_label(), "channel");
+    assert_eq!(lpddr_summary.topology_unit_label(), "die");
     assert_eq!(lpddr_summary.parallel_port_count(), 3);
     assert_eq!(lpddr_summary.topology_unit_count(), 6);
     assert_eq!(lpddr_summary.total_topology_bank_count(), 96);
@@ -221,6 +230,9 @@ fn external_memory_profiles_report_parallel_resource_capacity() {
     assert_eq!(lpddr_summary.scheduler_bank_group_count(), None);
 
     let nvm_summary = nvm.parallel_resource_summary();
+    assert_eq!(nvm_summary.technology_label(), "nvm");
+    assert_eq!(nvm_summary.parallel_port_label(), "controller");
+    assert_eq!(nvm_summary.topology_unit_label(), "media_bank");
     assert_eq!(nvm_summary.parallel_port_count(), 2);
     assert_eq!(nvm_summary.topology_unit_count(), 16);
     assert_eq!(nvm_summary.total_topology_bank_count(), 256);

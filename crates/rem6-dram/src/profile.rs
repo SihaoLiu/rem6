@@ -19,6 +19,23 @@ impl DramMemoryTechnology {
             Self::Nvm => "nvm",
         }
     }
+
+    pub const fn parallel_port_label(self) -> &'static str {
+        match self {
+            Self::Ddr | Self::Lpddr => "channel",
+            Self::Hbm => "pseudo_channel",
+            Self::Nvm => "controller",
+        }
+    }
+
+    pub const fn topology_unit_label(self) -> &'static str {
+        match self {
+            Self::Ddr => "rank",
+            Self::Hbm => "pseudo_channel",
+            Self::Lpddr => "die",
+            Self::Nvm => "media_bank",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -128,20 +145,11 @@ impl ExternalMemoryTopology {
     }
 
     pub const fn parallel_port_label(self) -> &'static str {
-        match self {
-            Self::Ddr { .. } | Self::Lpddr { .. } => "channel",
-            Self::Hbm { .. } => "pseudo_channel",
-            Self::Nvm { .. } => "controller",
-        }
+        self.kind().parallel_port_label()
     }
 
     pub const fn topology_unit_label(self) -> &'static str {
-        match self {
-            Self::Ddr { .. } => "rank",
-            Self::Hbm { .. } => "pseudo_channel",
-            Self::Lpddr { .. } => "die",
-            Self::Nvm { .. } => "media_bank",
-        }
+        self.kind().topology_unit_label()
     }
 
     pub const fn parallel_port_count(self) -> u32 {
@@ -232,6 +240,18 @@ impl ExternalMemoryParallelResourceSummary {
 
     pub const fn technology(self) -> DramMemoryTechnology {
         self.technology
+    }
+
+    pub const fn technology_label(self) -> &'static str {
+        self.technology.as_str()
+    }
+
+    pub const fn parallel_port_label(self) -> &'static str {
+        self.technology.parallel_port_label()
+    }
+
+    pub const fn topology_unit_label(self) -> &'static str {
+        self.technology.topology_unit_label()
     }
 
     pub const fn parallel_port_count(self) -> u32 {
