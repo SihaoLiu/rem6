@@ -717,66 +717,19 @@ fn replay_topology_with_nvm_data_route() -> WorkloadTopology {
 }
 
 fn replay_topology_with_nvm_msi_data_cache() -> WorkloadTopology {
-    add_data_cache_backing_route(
-        WorkloadTopology::new(4, 2, 2, WorkloadHostPlacement::new(3, 2, 51).unwrap())
-            .unwrap()
-            .add_memory_target(
-                WorkloadMemoryTarget::new(
-                    0,
-                    16,
-                    AddressRange::new(Address::new(0x8000), AccessSize::new(0x2000).unwrap())
-                        .unwrap(),
-                )
-                .unwrap()
-                .with_external_memory_profile(nvm_profile(0))
-                .unwrap(),
-            )
-            .unwrap()
-            .add_memory_route(
-                WorkloadMemoryRoute::new(
-                    route_id("cpu0.fetch"),
-                    "cpu0.ifetch",
-                    0,
-                    "memory",
-                    2,
-                    2,
-                    3,
-                )
-                .unwrap(),
-            )
-            .unwrap()
-            .add_memory_route(
-                WorkloadMemoryRoute::new(route_id("cpu0.data"), "cpu0.dmem", 0, "memory", 2, 2, 3)
-                    .unwrap(),
-            )
-            .unwrap()
-            .add_riscv_core(
-                WorkloadRiscvCore::new(
-                    0,
-                    0,
-                    7,
-                    Address::new(0x8000),
-                    "cpu0.ifetch",
-                    route_id("cpu0.fetch"),
-                )
-                .unwrap()
-                .with_data("cpu0.dmem", route_id("cpu0.data"))
-                .unwrap(),
+    add_data_cache_backing_route(replay_topology_with_nvm_data_route())
+        .with_riscv_data_cache(
+            WorkloadRiscvDataCache::new(
+                WorkloadDataCacheProtocol::Msi,
+                0,
+                Address::new(0x9000),
+                2,
+                "dcache.dir",
+                route_id("dcache.backing"),
             )
             .unwrap(),
-    )
-    .with_riscv_data_cache(
-        WorkloadRiscvDataCache::new(
-            WorkloadDataCacheProtocol::Msi,
-            0,
-            Address::new(0x9000),
-            2,
-            "dcache.dir",
-            route_id("dcache.backing"),
         )
-        .unwrap(),
-    )
-    .unwrap()
+        .unwrap()
 }
 
 fn replay_topology_with_profiled_msi_data_cache() -> WorkloadTopology {
