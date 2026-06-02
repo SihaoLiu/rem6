@@ -1414,6 +1414,8 @@ pub enum WorkloadError {
         minimum_active_resource_count: usize,
         actual_active_resource_count: usize,
     },
+    MissingDramLowPowerActivitySummary,
+    ExpectedDramLowPowerActivityBelowMinimum,
     ZeroExpectedFabricHopActivity {
         hop_index: usize,
         link: FabricLinkId,

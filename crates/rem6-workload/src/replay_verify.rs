@@ -615,6 +615,22 @@ pub(crate) fn verify_expected_resource_activity(
     Ok(())
 }
 
+pub(crate) fn verify_expected_dram_low_power_activity(
+    plan: &WorkloadReplayPlan,
+    result: &WorkloadResult,
+) -> Result<(), WorkloadError> {
+    let Some(expected) = plan.expected_dram_low_power_activity() else {
+        return Ok(());
+    };
+    let Some(summary) = result.parallel_execution_summary() else {
+        return Err(WorkloadError::MissingDramLowPowerActivitySummary);
+    };
+    if !expected.is_satisfied_by(summary) {
+        return Err(WorkloadError::ExpectedDramLowPowerActivityBelowMinimum);
+    }
+    Ok(())
+}
+
 pub(crate) fn verify_expected_fabric_lane_activity(
     plan: &WorkloadReplayPlan,
     result: &WorkloadResult,

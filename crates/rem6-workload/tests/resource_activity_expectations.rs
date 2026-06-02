@@ -1,11 +1,12 @@
 use rem6_boot::BootImage;
+use rem6_dram::DramLowPowerState;
 use rem6_fabric::{QosPriority, QosRequestorId};
 use rem6_memory::Address;
 use rem6_workload::{
     WorkloadDramQosPrioritySummary, WorkloadDramQosRequestorSummary, WorkloadError,
-    WorkloadExpectedResourceActivity, WorkloadId, WorkloadParallelExecutionSummary,
-    WorkloadReplayPlan, WorkloadResource, WorkloadResourceActivityScope, WorkloadResourceId,
-    WorkloadResourceKind, WorkloadResult,
+    WorkloadExpectedDramLowPowerActivity, WorkloadExpectedResourceActivity, WorkloadId,
+    WorkloadParallelExecutionSummary, WorkloadReplayPlan, WorkloadResource,
+    WorkloadResourceActivityScope, WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -55,6 +56,10 @@ fn expected_activity(
     .unwrap()
 }
 
+fn expected_dram_low_power() -> WorkloadExpectedDramLowPowerActivity {
+    WorkloadExpectedDramLowPowerActivity::new(1, 60, 1, 28, 1, 7).unwrap()
+}
+
 #[test]
 fn workload_manifest_records_resource_activity_expectations() {
     let fabric = expected_activity(WorkloadResourceActivityScope::Fabric, 7, 2);
@@ -90,6 +95,38 @@ fn workload_manifest_records_resource_activity_expectations() {
     let summary = WorkloadParallelExecutionSummary::default()
         .with_fabric_activity(2, 7, 224, 31, 13, 8, 1)
         .with_dram_activity(1, 2, 3, 5, 4, 1, 2, 3, 11, 1, 83, 21);
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
+fn workload_manifest_records_dram_low_power_expectations() {
+    let expected = expected_dram_low_power();
+    let manifest =
+        rem6_workload::WorkloadManifest::builder(id("manifest-dram-low-power"), boot_image())
+            .add_resource(kernel_resource())
+            .unwrap()
+            .add_required_resource(resource_id("kernel"))
+            .add_expected_dram_low_power_activity(expected)
+            .unwrap()
+            .build()
+            .unwrap();
+
+    assert_eq!(manifest.expected_dram_low_power_activity(), Some(expected));
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    assert_eq!(plan.expected_dram_low_power_activity(), Some(expected));
+    assert_eq!(
+        expected.minimum_entry_count(DramLowPowerState::PrechargePowerdown),
+        1,
+    );
+    assert_eq!(
+        expected.minimum_cycle_count(DramLowPowerState::PrechargePowerdown),
+        60,
+    );
+
+    let summary = WorkloadParallelExecutionSummary::default()
+        .with_dram_low_power_activity(1, 60, 1, 28, 1, 7);
     let result =
         WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
     plan.verify_result(&result).unwrap();
@@ -136,6 +173,28 @@ fn workload_manifest_identity_changes_with_resource_activity() {
 }
 
 #[test]
+fn workload_manifest_identity_changes_with_dram_low_power_activity() {
+    let base =
+        rem6_workload::WorkloadManifest::builder(id("identity-dram-low-power"), boot_image())
+            .add_resource(kernel_resource())
+            .unwrap()
+            .add_required_resource(resource_id("kernel"))
+            .build()
+            .unwrap();
+    let low_power =
+        rem6_workload::WorkloadManifest::builder(id("identity-dram-low-power"), boot_image())
+            .add_resource(kernel_resource())
+            .unwrap()
+            .add_required_resource(resource_id("kernel"))
+            .add_expected_dram_low_power_activity(expected_dram_low_power())
+            .unwrap()
+            .build()
+            .unwrap();
+
+    assert_ne!(base.identity(), low_power.identity());
+}
+
+#[test]
 fn workload_replay_plan_rejects_missing_or_underactive_resource_activity() {
     let plan = replay_plan()
         .add_expected_resource_activity(expected_activity(
@@ -168,6 +227,29 @@ fn workload_replay_plan_rejects_missing_or_underactive_resource_activity() {
             minimum_active_resource_count: 2,
             actual_active_resource_count: 1,
         },
+    );
+}
+
+#[test]
+fn workload_replay_plan_rejects_missing_or_underactive_dram_low_power_activity() {
+    let expected = expected_dram_low_power();
+    let plan = replay_plan()
+        .add_expected_dram_low_power_activity(expected)
+        .unwrap();
+
+    let missing_summary = WorkloadResult::new(plan.manifest_identity(), 32);
+    assert_eq!(
+        plan.verify_result(&missing_summary).unwrap_err(),
+        WorkloadError::MissingDramLowPowerActivitySummary,
+    );
+
+    let underactive_summary = WorkloadParallelExecutionSummary::default()
+        .with_dram_low_power_activity(1, 59, 1, 28, 1, 7);
+    let underactive = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_parallel_execution_summary(underactive_summary);
+    assert_eq!(
+        plan.verify_result(&underactive).unwrap_err(),
+        WorkloadError::ExpectedDramLowPowerActivityBelowMinimum,
     );
 }
 
@@ -314,6 +396,29 @@ fn workload_replay_plan_rejects_invalid_or_duplicate_resource_activity() {
             2,
             1,
         ))
+        .unwrap_err();
+    assert_eq!(
+        duplicate,
+        WorkloadError::DuplicateExpectedResourceActivity {
+            scope: WorkloadResourceActivityScope::Dram,
+        },
+    );
+}
+
+#[test]
+fn workload_replay_plan_rejects_invalid_or_duplicate_dram_low_power_activity() {
+    let zero = WorkloadExpectedDramLowPowerActivity::new(0, 0, 0, 0, 0, 0).unwrap_err();
+    assert_eq!(
+        zero,
+        WorkloadError::ZeroExpectedResourceActivity {
+            scope: WorkloadResourceActivityScope::Dram,
+        },
+    );
+
+    let duplicate = replay_plan()
+        .add_expected_dram_low_power_activity(expected_dram_low_power())
+        .unwrap()
+        .add_expected_dram_low_power_activity(expected_dram_low_power())
         .unwrap_err();
     assert_eq!(
         duplicate,

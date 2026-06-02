@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 
+use rem6_dram::DramLowPowerState;
 use rem6_kernel::{
     ParallelPartitionActivity, ParallelRemoteFlowRecord, ParallelRemoteSendRecord,
     PartitionFrontier, PartitionId,
@@ -388,6 +389,82 @@ impl WorkloadExpectedResourceActivity {
                 summary.active_resource_count(),
             ),
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct WorkloadExpectedDramLowPowerActivity {
+    minimum_precharge_powerdown_entry_count: usize,
+    minimum_precharge_powerdown_cycle_count: u64,
+    minimum_self_refresh_entry_count: usize,
+    minimum_self_refresh_cycle_count: u64,
+    minimum_exit_count: usize,
+    minimum_exit_latency_cycles: u64,
+}
+
+impl WorkloadExpectedDramLowPowerActivity {
+    pub fn new(
+        minimum_precharge_powerdown_entry_count: usize,
+        minimum_precharge_powerdown_cycle_count: u64,
+        minimum_self_refresh_entry_count: usize,
+        minimum_self_refresh_cycle_count: u64,
+        minimum_exit_count: usize,
+        minimum_exit_latency_cycles: u64,
+    ) -> Result<Self, WorkloadError> {
+        if minimum_precharge_powerdown_entry_count == 0
+            && minimum_precharge_powerdown_cycle_count == 0
+            && minimum_self_refresh_entry_count == 0
+            && minimum_self_refresh_cycle_count == 0
+            && minimum_exit_count == 0
+            && minimum_exit_latency_cycles == 0
+        {
+            return Err(WorkloadError::ZeroExpectedResourceActivity {
+                scope: WorkloadResourceActivityScope::Dram,
+            });
+        }
+        Ok(Self {
+            minimum_precharge_powerdown_entry_count,
+            minimum_precharge_powerdown_cycle_count,
+            minimum_self_refresh_entry_count,
+            minimum_self_refresh_cycle_count,
+            minimum_exit_count,
+            minimum_exit_latency_cycles,
+        })
+    }
+
+    pub const fn minimum_entry_count(self, state: DramLowPowerState) -> usize {
+        match state {
+            DramLowPowerState::PrechargePowerdown => self.minimum_precharge_powerdown_entry_count,
+            DramLowPowerState::SelfRefresh => self.minimum_self_refresh_entry_count,
+        }
+    }
+
+    pub const fn minimum_cycle_count(self, state: DramLowPowerState) -> u64 {
+        match state {
+            DramLowPowerState::PrechargePowerdown => self.minimum_precharge_powerdown_cycle_count,
+            DramLowPowerState::SelfRefresh => self.minimum_self_refresh_cycle_count,
+        }
+    }
+
+    pub const fn minimum_exit_count(self) -> usize {
+        self.minimum_exit_count
+    }
+
+    pub const fn minimum_exit_latency_cycles(self) -> u64 {
+        self.minimum_exit_latency_cycles
+    }
+
+    pub(crate) fn is_satisfied_by(self, summary: &WorkloadParallelExecutionSummary) -> bool {
+        summary.dram_low_power_entry_count(DramLowPowerState::PrechargePowerdown)
+            >= self.minimum_precharge_powerdown_entry_count
+            && summary.dram_low_power_cycle_count(DramLowPowerState::PrechargePowerdown)
+                >= self.minimum_precharge_powerdown_cycle_count
+            && summary.dram_low_power_entry_count(DramLowPowerState::SelfRefresh)
+                >= self.minimum_self_refresh_entry_count
+            && summary.dram_low_power_cycle_count(DramLowPowerState::SelfRefresh)
+                >= self.minimum_self_refresh_cycle_count
+            && summary.dram_low_power_exit_count() >= self.minimum_exit_count
+            && summary.dram_low_power_exit_latency_cycles() >= self.minimum_exit_latency_cycles
     }
 }
 

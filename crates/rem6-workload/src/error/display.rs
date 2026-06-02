@@ -1179,6 +1179,13 @@ impl fmt::Display for WorkloadError {
                 "expected {} resource activity to reach at least {minimum_operation_count} operations and {minimum_active_resource_count} active resources, got {actual_operation_count} operations and {actual_active_resource_count} active resources",
                 scope.as_str()
             ),
+            Self::MissingDramLowPowerActivitySummary => {
+                write!(formatter, "missing parallel summary for expected DRAM low-power activity")
+            }
+            Self::ExpectedDramLowPowerActivityBelowMinimum => write!(
+                formatter,
+                "expected DRAM low-power activity is below the declared minimum"
+            ),
             Self::ZeroExpectedFabricHopActivity { .. }
             | Self::DuplicateExpectedFabricHopActivity { .. }
             | Self::InvalidExpectedFabricHopActivityWindow { .. }

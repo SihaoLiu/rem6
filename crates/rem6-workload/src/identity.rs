@@ -8,23 +8,24 @@ use crate::{
     CheckpointLineage, HostEventIntent, WorkloadBootImage,
     WorkloadExpectedCheckpointComponentSummary, WorkloadExpectedCheckpointManifestSummary,
     WorkloadExpectedCleanParallelDiagnostics, WorkloadExpectedDataCacheProtocolRunCount,
-    WorkloadExpectedDataCacheRunAttribution, WorkloadExpectedFabricHopActivity,
-    WorkloadExpectedFabricLaneActivity, WorkloadExpectedFabricLinkActivity,
-    WorkloadExpectedFabricVirtualNetworkActivity, WorkloadExpectedParallelBatchActivity,
-    WorkloadExpectedParallelBatchPartitionSet, WorkloadExpectedParallelBatchPartitionStreak,
-    WorkloadExpectedParallelBatchTimelineRecord, WorkloadExpectedParallelBatchWorkerBucket,
-    WorkloadExpectedParallelBatchWorkerTickActivity, WorkloadExpectedParallelBatchWorkerTickBucket,
-    WorkloadExpectedParallelBatchWorkerTickStreak, WorkloadExpectedParallelBatchWorkerTicks,
-    WorkloadExpectedParallelFrontier, WorkloadExpectedParallelPartitionActivity,
-    WorkloadExpectedParallelPartitionUse, WorkloadExpectedParallelProgressTransition,
-    WorkloadExpectedParallelRemoteDelayCeiling, WorkloadExpectedParallelRemoteDelayFloor,
-    WorkloadExpectedParallelRemoteEndpoints, WorkloadExpectedParallelRemoteFlow,
-    WorkloadExpectedParallelRemoteFlowTiming, WorkloadExpectedParallelRemoteSend,
-    WorkloadExpectedParallelRemoteTrafficConsistency, WorkloadExpectedParallelSchedulerIdleBound,
-    WorkloadExpectedParallelSchedulerProgress, WorkloadExpectedParallelWaitForBlockedNodeWindow,
-    WorkloadExpectedParallelWaitForEdgeKindCount, WorkloadExpectedParallelWaitForEdgeKindWindow,
-    WorkloadExpectedParallelWaitForTargetNodeWindow, WorkloadExpectedParallelWorkerActivity,
-    WorkloadExpectedParallelWorkerUse, WorkloadExpectedPlannedParallelBatchIdleWorkerTicks,
+    WorkloadExpectedDataCacheRunAttribution, WorkloadExpectedDramLowPowerActivity,
+    WorkloadExpectedFabricHopActivity, WorkloadExpectedFabricLaneActivity,
+    WorkloadExpectedFabricLinkActivity, WorkloadExpectedFabricVirtualNetworkActivity,
+    WorkloadExpectedParallelBatchActivity, WorkloadExpectedParallelBatchPartitionSet,
+    WorkloadExpectedParallelBatchPartitionStreak, WorkloadExpectedParallelBatchTimelineRecord,
+    WorkloadExpectedParallelBatchWorkerBucket, WorkloadExpectedParallelBatchWorkerTickActivity,
+    WorkloadExpectedParallelBatchWorkerTickBucket, WorkloadExpectedParallelBatchWorkerTickStreak,
+    WorkloadExpectedParallelBatchWorkerTicks, WorkloadExpectedParallelFrontier,
+    WorkloadExpectedParallelPartitionActivity, WorkloadExpectedParallelPartitionUse,
+    WorkloadExpectedParallelProgressTransition, WorkloadExpectedParallelRemoteDelayCeiling,
+    WorkloadExpectedParallelRemoteDelayFloor, WorkloadExpectedParallelRemoteEndpoints,
+    WorkloadExpectedParallelRemoteFlow, WorkloadExpectedParallelRemoteFlowTiming,
+    WorkloadExpectedParallelRemoteSend, WorkloadExpectedParallelRemoteTrafficConsistency,
+    WorkloadExpectedParallelSchedulerIdleBound, WorkloadExpectedParallelSchedulerProgress,
+    WorkloadExpectedParallelWaitForBlockedNodeWindow, WorkloadExpectedParallelWaitForEdgeKindCount,
+    WorkloadExpectedParallelWaitForEdgeKindWindow, WorkloadExpectedParallelWaitForTargetNodeWindow,
+    WorkloadExpectedParallelWorkerActivity, WorkloadExpectedParallelWorkerUse,
+    WorkloadExpectedPlannedParallelBatchIdleWorkerTicks,
     WorkloadExpectedPlannedParallelBatchUtilization,
     WorkloadExpectedPlannedParallelBatchWorkerLanePartitionTicks,
     WorkloadExpectedPlannedParallelBatchWorkerSlotTicks, WorkloadExpectedResourceActivity,
@@ -119,6 +120,7 @@ pub(crate) struct ManifestIdentityInput<'a> {
         &'a [WorkloadExpectedParallelPartitionActivity],
     pub(crate) expected_parallel_frontiers: &'a [WorkloadExpectedParallelFrontier],
     pub(crate) expected_resource_activity: &'a [WorkloadExpectedResourceActivity],
+    pub(crate) expected_dram_low_power_activity: Option<WorkloadExpectedDramLowPowerActivity>,
     pub(crate) expected_fabric_hop_activity: &'a [WorkloadExpectedFabricHopActivity],
     pub(crate) expected_fabric_lane_activity: &'a [WorkloadExpectedFabricLaneActivity],
     pub(crate) expected_fabric_link_activity: &'a [WorkloadExpectedFabricLinkActivity],
@@ -425,6 +427,10 @@ pub(crate) fn manifest_identity(input: ManifestIdentityInput<'_>) -> WorkloadMan
     for expected in input.expected_resource_activity {
         hash_expected_resource_activity(&mut hash, *expected);
     }
+    hash_optional_expected_dram_low_power_activity(
+        &mut hash,
+        input.expected_dram_low_power_activity,
+    );
     hash_u64(&mut hash, input.expected_fabric_hop_activity.len() as u64);
     for expected in input.expected_fabric_hop_activity {
         hash_expected_fabric_hop_activity(&mut hash, expected);
@@ -981,6 +987,35 @@ fn hash_expected_resource_activity(hash: &mut u64, expected: WorkloadExpectedRes
     hash_resource_activity_scope(hash, expected.scope());
     hash_u64(hash, expected.minimum_operation_count() as u64);
     hash_u64(hash, expected.minimum_active_resource_count() as u64);
+}
+
+fn hash_optional_expected_dram_low_power_activity(
+    hash: &mut u64,
+    expected: Option<WorkloadExpectedDramLowPowerActivity>,
+) {
+    let Some(expected) = expected else {
+        hash_u64(hash, 0);
+        return;
+    };
+    hash_u64(hash, 1);
+    hash_u64(
+        hash,
+        expected.minimum_entry_count(rem6_dram::DramLowPowerState::PrechargePowerdown) as u64,
+    );
+    hash_u64(
+        hash,
+        expected.minimum_cycle_count(rem6_dram::DramLowPowerState::PrechargePowerdown),
+    );
+    hash_u64(
+        hash,
+        expected.minimum_entry_count(rem6_dram::DramLowPowerState::SelfRefresh) as u64,
+    );
+    hash_u64(
+        hash,
+        expected.minimum_cycle_count(rem6_dram::DramLowPowerState::SelfRefresh),
+    );
+    hash_u64(hash, expected.minimum_exit_count() as u64);
+    hash_u64(hash, expected.minimum_exit_latency_cycles());
 }
 
 fn hash_expected_fabric_hop_activity(hash: &mut u64, expected: &WorkloadExpectedFabricHopActivity) {
