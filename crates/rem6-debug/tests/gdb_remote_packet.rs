@@ -504,6 +504,23 @@ fn gdb_remote_session_reports_memory_bytes() {
 }
 
 #[test]
+fn gdb_remote_session_rejects_memory_reads_that_exceed_response_packet_limit() {
+    let mut session =
+        GdbRemoteSession::with_response_config(Vec::new(), GdbRemotePacketConfig::new(6).unwrap());
+    session.set_memory_bytes(0x1000, vec![0x7f, 0x45, 0x4c, 0x46]);
+
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"m1000,4".to_vec()).unwrap())
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"E01".to_vec()).unwrap()),
+        ],
+    );
+}
+
+#[test]
 fn gdb_remote_session_reports_memory_read_error_when_missing() {
     let mut session = GdbRemoteSession::new(Vec::new());
     session.set_memory_bytes(0x1000, vec![0x7f, 0x45]);
@@ -511,6 +528,37 @@ fn gdb_remote_session_reports_memory_read_error_when_missing() {
     assert_eq!(
         session
             .handle_packet(&GdbRemotePacket::new(b"m1000,4".to_vec()).unwrap())
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"E01".to_vec()).unwrap()),
+        ],
+    );
+}
+
+#[test]
+fn gdb_remote_session_reports_memory_read_error_before_huge_allocation() {
+    let mut session = GdbRemoteSession::new(Vec::new());
+
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"m0,ffffffffffffffff".to_vec()).unwrap())
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"E01".to_vec()).unwrap()),
+        ],
+    );
+}
+
+#[test]
+fn gdb_remote_session_reports_memory_read_error_on_address_overflow() {
+    let mut session = GdbRemoteSession::new(Vec::new());
+    session.set_memory_bytes(u64::MAX, vec![0xaa]);
+
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"mffffffffffffffff,2".to_vec()).unwrap())
             .unwrap(),
         vec![
             GdbRemoteFrame::Ack,

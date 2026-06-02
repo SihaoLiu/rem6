@@ -329,6 +329,7 @@ pub enum GdbRemoteAckMode {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GdbRemoteSession {
     ack_mode: GdbRemoteAckMode,
+    response_config: GdbRemotePacketConfig,
     stub_features: Vec<GdbRemoteFeature>,
     gdb_features: Vec<GdbRemoteFeature>,
     stop_reply: GdbRemoteStopReply,
@@ -341,8 +342,16 @@ pub struct GdbRemoteSession {
 
 impl GdbRemoteSession {
     pub fn new(stub_features: Vec<GdbRemoteFeature>) -> Self {
+        Self::with_response_config(stub_features, GdbRemotePacketConfig::default())
+    }
+
+    pub fn with_response_config(
+        stub_features: Vec<GdbRemoteFeature>,
+        response_config: GdbRemotePacketConfig,
+    ) -> Self {
         Self {
             ack_mode: GdbRemoteAckMode::Acknowledged,
+            response_config,
             stub_features,
             gdb_features: Vec::new(),
             stop_reply: GdbRemoteStopReply::signal(0x05),
@@ -356,6 +365,10 @@ impl GdbRemoteSession {
 
     pub const fn ack_mode(&self) -> GdbRemoteAckMode {
         self.ack_mode
+    }
+
+    pub const fn response_config(&self) -> GdbRemotePacketConfig {
+        self.response_config
     }
 
     pub const fn interrupt_requested(&self) -> bool {
@@ -475,7 +488,7 @@ impl GdbRemoteSession {
     }
 
     fn packet_response(&mut self, payload: Vec<u8>) -> Result<Vec<GdbRemoteFrame>, GdbRemoteError> {
-        let packet = GdbRemotePacket::new(payload)?;
+        let packet = GdbRemotePacket::with_config(payload, self.response_config)?;
         self.last_response = Some(packet.clone());
 
         let mut frames = Vec::new();
@@ -487,6 +500,10 @@ impl GdbRemoteSession {
     }
 
     fn read_memory_payload(&self, address: u64, length: usize) -> Option<Vec<u8>> {
+        if length.checked_mul(2)? > self.response_config.max_payload_bytes() {
+            return None;
+        }
+
         let mut bytes = Vec::with_capacity(length);
         for offset in 0..length {
             let address = address.checked_add(offset as u64)?;
