@@ -144,7 +144,7 @@ fn gdb_remote_packet_config_rejects_unbounded_or_oversized_payloads() {
 fn gdb_remote_commands_decode_supported_feature_tokens() {
     let supported = GdbRemoteCommand::parse(
         &GdbRemotePacket::parse_frame(
-            b"$qSupported:multiprocess+;xmlRegisters=riscv;hwbreak-;QNonStop?#56",
+            b"$qSupported:multiprocess+;xmlRegisters=riscv;hwbreak-;QNonStop+#42",
         )
         .unwrap(),
     );
@@ -159,8 +159,25 @@ fn gdb_remote_commands_decode_supported_feature_tokens() {
                     GdbRemoteFeatureValue::Value(b"riscv".to_vec()),
                 ),
                 GdbRemoteFeature::new(b"hwbreak".to_vec(), GdbRemoteFeatureValue::Unsupported),
-                GdbRemoteFeature::new(b"QNonStop".to_vec(), GdbRemoteFeatureValue::AutoDetect),
+                GdbRemoteFeature::new(b"QNonStop".to_vec(), GdbRemoteFeatureValue::Supported),
             ],
+        },
+    );
+}
+
+#[test]
+fn gdb_remote_commands_treat_probe_suffix_as_gdb_feature_data() {
+    let supported = GdbRemoteCommand::parse(
+        &GdbRemotePacket::parse_frame(b"$qSupported:QNonStop?#d2").unwrap(),
+    );
+
+    assert_eq!(
+        supported,
+        GdbRemoteCommand::QuerySupported {
+            features: vec![GdbRemoteFeature::new(
+                b"QNonStop?".to_vec(),
+                GdbRemoteFeatureValue::Bare,
+            )],
         },
     );
 }
@@ -186,7 +203,10 @@ fn gdb_remote_session_acknowledges_valid_packets_by_default() {
     assert_eq!(session.ack_mode(), GdbRemoteAckMode::Acknowledged);
     assert_eq!(
         session.handle_packet(&packet).unwrap(),
-        vec![GdbRemoteFrame::Ack],
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(Vec::new()).unwrap()),
+        ],
     );
 }
 
@@ -239,7 +259,10 @@ fn gdb_remote_session_replaces_supported_query_features() {
 
 #[test]
 fn gdb_remote_session_switches_to_no_ack_mode() {
-    let mut session = GdbRemoteSession::new(Vec::new());
+    let mut session = GdbRemoteSession::new(vec![GdbRemoteFeature::new(
+        b"QStartNoAckMode".to_vec(),
+        GdbRemoteFeatureValue::Supported,
+    )]);
     let packet = GdbRemotePacket::new(b"QStartNoAckMode".to_vec()).unwrap();
 
     assert_eq!(
@@ -253,8 +276,26 @@ fn gdb_remote_session_switches_to_no_ack_mode() {
 }
 
 #[test]
-fn gdb_remote_session_omits_acknowledgements_after_no_ack_mode() {
+fn gdb_remote_session_rejects_no_ack_without_advertised_support() {
     let mut session = GdbRemoteSession::new(Vec::new());
+    let packet = GdbRemotePacket::new(b"QStartNoAckMode".to_vec()).unwrap();
+
+    assert_eq!(
+        session.handle_packet(&packet).unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(Vec::new()).unwrap()),
+        ],
+    );
+    assert_eq!(session.ack_mode(), GdbRemoteAckMode::Acknowledged);
+}
+
+#[test]
+fn gdb_remote_session_omits_acknowledgements_after_no_ack_mode() {
+    let mut session = GdbRemoteSession::new(vec![GdbRemoteFeature::new(
+        b"QStartNoAckMode".to_vec(),
+        GdbRemoteFeatureValue::Supported,
+    )]);
 
     session
         .handle_packet(&GdbRemotePacket::new(b"QStartNoAckMode".to_vec()).unwrap())
@@ -265,7 +306,26 @@ fn gdb_remote_session_omits_acknowledgements_after_no_ack_mode() {
             .handle_packet(&GdbRemotePacket::new(b"qSupported".to_vec()).unwrap())
             .unwrap(),
         vec![GdbRemoteFrame::Packet(
-            GdbRemotePacket::new(Vec::new()).unwrap()
+            GdbRemotePacket::new(b"QStartNoAckMode+".to_vec()).unwrap()
+        )],
+    );
+}
+
+#[test]
+fn gdb_remote_session_retransmits_last_response_after_negative_acknowledgement() {
+    let mut session = GdbRemoteSession::new(vec![GdbRemoteFeature::new(
+        b"PacketSize".to_vec(),
+        GdbRemoteFeatureValue::Value(b"4000".to_vec()),
+    )]);
+
+    session
+        .handle_packet(&GdbRemotePacket::new(b"qSupported".to_vec()).unwrap())
+        .unwrap();
+
+    assert_eq!(
+        session.handle_frame(&GdbRemoteFrame::NegativeAck).unwrap(),
+        vec![GdbRemoteFrame::Packet(
+            GdbRemotePacket::new(b"PacketSize=4000".to_vec()).unwrap(),
         )],
     );
 }
