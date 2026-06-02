@@ -212,6 +212,20 @@ fn gdb_remote_commands_preserve_malformed_attach_state_queries() {
 }
 
 #[test]
+fn gdb_remote_commands_decode_current_thread_queries() {
+    let current = GdbRemoteCommand::parse(&GdbRemotePacket::new(b"qC".to_vec()).unwrap());
+    assert_eq!(current, GdbRemoteCommand::QueryCurrentThread);
+}
+
+#[test]
+fn gdb_remote_commands_preserve_query_prefix_neighbors() {
+    for payload in [b"qCRC:1000,4".as_slice(), b"qC1".as_slice()] {
+        let command = GdbRemoteCommand::parse(&GdbRemotePacket::new(payload.to_vec()).unwrap());
+        assert_eq!(command, GdbRemoteCommand::Unknown(payload.to_vec()));
+    }
+}
+
+#[test]
 fn gdb_remote_commands_decode_stop_reason_queries() {
     let command = GdbRemoteCommand::parse(&GdbRemotePacket::parse_frame(b"$?#3f").unwrap());
 
@@ -495,6 +509,35 @@ fn gdb_remote_session_reports_attach_state() {
             GdbRemoteFrame::Packet(GdbRemotePacket::new(b"0".to_vec()).unwrap()),
         ],
     );
+}
+
+#[test]
+fn gdb_remote_session_reports_current_thread() {
+    let mut session = GdbRemoteSession::new(Vec::new());
+
+    assert_eq!(session.current_thread_id(), 1);
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"qC".to_vec()).unwrap())
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"QC1".to_vec()).unwrap()),
+        ],
+    );
+
+    assert!(session.set_current_thread_id(0x1a));
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"qC".to_vec()).unwrap())
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"QC1a".to_vec()).unwrap()),
+        ],
+    );
+    assert!(!session.set_current_thread_id(0));
+    assert_eq!(session.current_thread_id(), 0x1a);
 }
 
 #[test]

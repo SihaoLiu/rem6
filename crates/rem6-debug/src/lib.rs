@@ -206,6 +206,7 @@ pub enum GdbRemoteCommand {
     QueryAttached {
         process_id: Option<u64>,
     },
+    QueryCurrentThread,
     QuerySupported {
         features: Vec<GdbRemoteFeature>,
     },
@@ -380,6 +381,7 @@ pub struct GdbRemoteSession {
     register_values: BTreeMap<u64, GdbRemoteRegisterValue>,
     memory_bytes: BTreeMap<u64, u8>,
     continue_thread: GdbRemoteThreadId,
+    current_thread_id: u64,
     general_thread: GdbRemoteThreadId,
     last_response: Option<GdbRemotePacket>,
     interrupt_requested: bool,
@@ -405,6 +407,7 @@ impl GdbRemoteSession {
             register_values: BTreeMap::new(),
             memory_bytes: BTreeMap::new(),
             continue_thread: GdbRemoteThreadId::Any,
+            current_thread_id: 1,
             general_thread: GdbRemoteThreadId::Any,
             last_response: None,
             interrupt_requested: false,
@@ -445,6 +448,18 @@ impl GdbRemoteSession {
 
     pub const fn continue_thread(&self) -> GdbRemoteThreadId {
         self.continue_thread
+    }
+
+    pub const fn current_thread_id(&self) -> u64 {
+        self.current_thread_id
+    }
+
+    pub fn set_current_thread_id(&mut self, thread_id: u64) -> bool {
+        if thread_id == 0 {
+            return false;
+        }
+        self.current_thread_id = thread_id;
+        true
     }
 
     pub const fn general_thread(&self) -> GdbRemoteThreadId {
@@ -508,6 +523,11 @@ impl GdbRemoteSession {
                     GdbRemoteAttachKind::Attached => b"1".to_vec(),
                     GdbRemoteAttachKind::Created => b"0".to_vec(),
                 };
+                self.packet_response(payload)
+            }
+            GdbRemoteCommand::QueryCurrentThread => {
+                let mut payload = b"QC".to_vec();
+                payload.extend_from_slice(&encode_hex_u64(self.current_thread_id));
                 self.packet_response(payload)
             }
             GdbRemoteCommand::QuerySupported { features } => {
@@ -938,6 +958,7 @@ fn reject_legacy_sequence_id(payload: &[u8]) -> Result<(), GdbRemoteError> {
 
 fn parse_command_payload(payload: &[u8]) -> GdbRemoteCommand {
     const QUERY_ATTACHED: &[u8] = b"qAttached";
+    const QUERY_CURRENT_THREAD: &[u8] = b"qC";
     const READ_REGISTERS: &[u8] = b"g";
     const QUERY_SUPPORTED: &[u8] = b"qSupported";
     const QUERY_STOP_REASON: &[u8] = b"?";
@@ -993,6 +1014,10 @@ fn parse_command_payload(payload: &[u8]) -> GdbRemoteCommand {
                 process_id: Some(process_id),
             };
         }
+    }
+
+    if payload == QUERY_CURRENT_THREAD {
+        return GdbRemoteCommand::QueryCurrentThread;
     }
 
     if payload == QUERY_STOP_REASON {
@@ -1179,6 +1204,10 @@ fn encode_hex_bytes(bytes: &[u8]) -> Vec<u8> {
         encoded.push(encode_hex_nibble(byte & 0x0f));
     }
     encoded
+}
+
+fn encode_hex_u64(value: u64) -> Vec<u8> {
+    format!("{value:x}").into_bytes()
 }
 
 fn decode_hex_bytes(digits: &[u8]) -> Option<Vec<u8>> {
