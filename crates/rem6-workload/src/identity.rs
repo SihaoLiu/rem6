@@ -1444,6 +1444,16 @@ fn hash_external_memory_profile(hash: &mut u64, profile: Option<&ExternalMemoryP
         }
         None => hash_str(hash, "timing.command_window.none"),
     }
+    match profile.timing().low_power_timing() {
+        Some(low_power_timing) => {
+            hash_str(hash, "timing.low_power.some");
+            hash_u64(hash, low_power_timing.precharge_powerdown_entry_delay());
+            hash_u64(hash, low_power_timing.self_refresh_entry_delay());
+            hash_u64(hash, low_power_timing.exit_latency());
+            hash_u64(hash, low_power_timing.self_refresh_exit_latency());
+        }
+        None => hash_str(hash, "timing.low_power.none"),
+    }
     match profile.technology() {
         DramMemoryTechnology::Ddr => hash_str(hash, "ddr"),
         DramMemoryTechnology::Hbm => hash_str(hash, "hbm"),

@@ -3171,9 +3171,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   timing, pending-read buffer limits, pending-write queue limits, checkpoint
   round-trip of media/pending state, NVM queue wait-for diagnostics, profile
   snapshot drift rejection across target, layout, geometry, timing, parallel
-  ports, and NVM media timing, and manifest identity changes for media timing.
-  Checkpoint and workload identity tests cover command-window timing, bank-group
-  timing, and per-port command history state. Coherence, system, DMA, and
+  ports, and NVM media timing, and manifest identity changes for media and
+  low-power timing. Checkpoint and workload identity tests cover command-window
+  timing, bank-group timing, and per-port command history state. Coherence, system, DMA, and
   workload-result summary tests cover direct DRAM QoS diagnostics over those
   typed activity profiles, plus workload-level CPU scheduler, data-cache
   scheduler, merged full-system remote-flow records, scheduler epoch,
