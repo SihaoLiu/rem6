@@ -203,15 +203,34 @@ impl GdbRemotePacket {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum GdbRemoteCommand {
-    QuerySupported { features: Vec<GdbRemoteFeature> },
+    QuerySupported {
+        features: Vec<GdbRemoteFeature>,
+    },
     QueryStopReason,
-    ReadMemory { address: u64, length: usize },
+    ReadMemory {
+        address: u64,
+        length: usize,
+    },
     ReadRegisters,
-    ReadRegister { number: u64 },
+    ReadRegister {
+        number: u64,
+    },
+    SetThread {
+        operation: GdbRemoteThreadOperation,
+        thread: GdbRemoteThreadId,
+    },
     StartNoAckMode,
-    WriteMemory { address: u64, bytes: Vec<u8> },
-    WriteRegisters { bytes: Vec<u8> },
-    WriteRegister { number: u64, bytes: Vec<u8> },
+    WriteMemory {
+        address: u64,
+        bytes: Vec<u8>,
+    },
+    WriteRegisters {
+        bytes: Vec<u8>,
+    },
+    WriteRegister {
+        number: u64,
+        bytes: Vec<u8>,
+    },
     Unknown(Vec<u8>),
 }
 
@@ -219,6 +238,19 @@ impl GdbRemoteCommand {
     pub fn parse(packet: &GdbRemotePacket) -> Self {
         parse_command_payload(packet.payload())
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GdbRemoteThreadOperation {
+    Continue,
+    General,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GdbRemoteThreadId {
+    All,
+    Any,
+    Id(u64),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -337,6 +369,8 @@ pub struct GdbRemoteSession {
     register_bytes: GdbRemoteRegisterBytes,
     register_values: BTreeMap<u64, GdbRemoteRegisterValue>,
     memory_bytes: BTreeMap<u64, u8>,
+    continue_thread: GdbRemoteThreadId,
+    general_thread: GdbRemoteThreadId,
     last_response: Option<GdbRemotePacket>,
     interrupt_requested: bool,
 }
@@ -359,6 +393,8 @@ impl GdbRemoteSession {
             register_bytes: GdbRemoteRegisterBytes::default(),
             register_values: BTreeMap::new(),
             memory_bytes: BTreeMap::new(),
+            continue_thread: GdbRemoteThreadId::Any,
+            general_thread: GdbRemoteThreadId::Any,
             last_response: None,
             interrupt_requested: false,
         }
@@ -386,6 +422,14 @@ impl GdbRemoteSession {
 
     pub const fn stop_reply(&self) -> &GdbRemoteStopReply {
         &self.stop_reply
+    }
+
+    pub const fn continue_thread(&self) -> GdbRemoteThreadId {
+        self.continue_thread
+    }
+
+    pub const fn general_thread(&self) -> GdbRemoteThreadId {
+        self.general_thread
     }
 
     pub fn set_stop_reply(&mut self, stop_reply: GdbRemoteStopReply) {
@@ -455,6 +499,13 @@ impl GdbRemoteSession {
             }
             GdbRemoteCommand::ReadRegisters => {
                 self.packet_response(self.register_bytes.encode_payload())
+            }
+            GdbRemoteCommand::SetThread { operation, thread } => {
+                match operation {
+                    GdbRemoteThreadOperation::Continue => self.continue_thread = thread,
+                    GdbRemoteThreadOperation::General => self.general_thread = thread,
+                }
+                self.packet_response(b"OK".to_vec())
             }
             GdbRemoteCommand::WriteRegisters { bytes } => {
                 self.set_register_bytes(GdbRemoteRegisterBytes::new(bytes));
@@ -875,6 +926,12 @@ fn parse_command_payload(payload: &[u8]) -> GdbRemoteCommand {
         }
     }
 
+    if let Some(thread_request) = payload.strip_prefix(b"H") {
+        if let Some((operation, thread)) = parse_thread_selection(thread_request) {
+            return GdbRemoteCommand::SetThread { operation, thread };
+        }
+    }
+
     if let Some(memory_request) = payload.strip_prefix(b"m") {
         if let Some((address, length)) = parse_memory_read(memory_request) {
             return GdbRemoteCommand::ReadMemory { address, length };
@@ -920,6 +977,31 @@ fn parse_command_payload(payload: &[u8]) -> GdbRemoteCommand {
     }
 
     GdbRemoteCommand::Unknown(payload.to_vec())
+}
+
+fn parse_thread_selection(request: &[u8]) -> Option<(GdbRemoteThreadOperation, GdbRemoteThreadId)> {
+    let (operation, thread_id) = request.split_first()?;
+    let operation = match operation {
+        b'c' => GdbRemoteThreadOperation::Continue,
+        b'g' => GdbRemoteThreadOperation::General,
+        _ => return None,
+    };
+    Some((operation, parse_thread_id(thread_id)?))
+}
+
+fn parse_thread_id(thread_id: &[u8]) -> Option<GdbRemoteThreadId> {
+    if thread_id == b"-1" {
+        return Some(GdbRemoteThreadId::All);
+    }
+    if thread_id == b"0" {
+        return Some(GdbRemoteThreadId::Any);
+    }
+
+    let id = decode_hex_u64(thread_id)?;
+    if id == 0 {
+        return None;
+    }
+    Some(GdbRemoteThreadId::Id(id))
 }
 
 fn parse_memory_read(request: &[u8]) -> Option<(u64, usize)> {

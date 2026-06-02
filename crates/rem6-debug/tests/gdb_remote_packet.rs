@@ -1,7 +1,8 @@
 use rem6_debug::{
     parse_gdb_remote_frame, GdbRemoteAckMode, GdbRemoteCommand, GdbRemoteError, GdbRemoteFeature,
     GdbRemoteFeatureValue, GdbRemoteFrame, GdbRemoteNotification, GdbRemotePacket,
-    GdbRemotePacketConfig, GdbRemoteRegisterBytes, GdbRemoteSession,
+    GdbRemotePacketConfig, GdbRemoteRegisterBytes, GdbRemoteSession, GdbRemoteThreadId,
+    GdbRemoteThreadOperation,
 };
 
 #[test]
@@ -187,6 +188,53 @@ fn gdb_remote_commands_decode_stop_reason_queries() {
     let command = GdbRemoteCommand::parse(&GdbRemotePacket::parse_frame(b"$?#3f").unwrap());
 
     assert_eq!(command, GdbRemoteCommand::QueryStopReason);
+}
+
+#[test]
+fn gdb_remote_commands_decode_thread_selection_requests() {
+    let general_any = GdbRemoteCommand::parse(&GdbRemotePacket::new(b"Hg0".to_vec()).unwrap());
+    assert_eq!(
+        general_any,
+        GdbRemoteCommand::SetThread {
+            operation: GdbRemoteThreadOperation::General,
+            thread: GdbRemoteThreadId::Any,
+        },
+    );
+
+    let continue_all = GdbRemoteCommand::parse(&GdbRemotePacket::new(b"Hc-1".to_vec()).unwrap());
+    assert_eq!(
+        continue_all,
+        GdbRemoteCommand::SetThread {
+            operation: GdbRemoteThreadOperation::Continue,
+            thread: GdbRemoteThreadId::All,
+        },
+    );
+
+    let uppercase = GdbRemoteCommand::parse(&GdbRemotePacket::new(b"Hg1A".to_vec()).unwrap());
+    assert_eq!(
+        uppercase,
+        GdbRemoteCommand::SetThread {
+            operation: GdbRemoteThreadOperation::General,
+            thread: GdbRemoteThreadId::Id(0x1a),
+        },
+    );
+}
+
+#[test]
+fn gdb_remote_commands_preserve_malformed_thread_selection_requests() {
+    for payload in [
+        b"H".as_slice(),
+        b"Hx0".as_slice(),
+        b"Hg".as_slice(),
+        b"Hg-2".as_slice(),
+        b"Hg00".as_slice(),
+        b"Hgzz".as_slice(),
+        b"Hg10000000000000000".as_slice(),
+        b"Hgp1.2".as_slice(),
+    ] {
+        let command = GdbRemoteCommand::parse(&GdbRemotePacket::new(payload.to_vec()).unwrap());
+        assert_eq!(command, GdbRemoteCommand::Unknown(payload.to_vec()));
+    }
 }
 
 #[test]
@@ -447,6 +495,37 @@ fn gdb_remote_session_reports_write_register_response_config_errors() {
             .unwrap_err(),
         GdbRemoteError::PayloadTooLong { len: 2, max: 1 },
     );
+}
+
+#[test]
+fn gdb_remote_session_records_thread_selection() {
+    let mut session = GdbRemoteSession::new(Vec::new());
+
+    assert_eq!(session.general_thread(), GdbRemoteThreadId::Any);
+    assert_eq!(session.continue_thread(), GdbRemoteThreadId::Any);
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"Hg1a".to_vec()).unwrap())
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"OK".to_vec()).unwrap()),
+        ],
+    );
+    assert_eq!(session.general_thread(), GdbRemoteThreadId::Id(0x1a));
+    assert_eq!(session.continue_thread(), GdbRemoteThreadId::Any);
+
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"Hc-1".to_vec()).unwrap())
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"OK".to_vec()).unwrap()),
+        ],
+    );
+    assert_eq!(session.general_thread(), GdbRemoteThreadId::Id(0x1a));
+    assert_eq!(session.continue_thread(), GdbRemoteThreadId::All);
 }
 
 #[test]
