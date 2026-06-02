@@ -11,7 +11,7 @@ use super::RiscvWorkloadReplayError;
 
 #[derive(Clone, Debug)]
 pub(super) struct WorkloadSinicPciMmioBackend {
-    devices: BTreeMap<TransportEndpointId, WorkloadSinicPciMmioDevice>,
+    devices: BTreeMap<TransportEndpointId, Vec<WorkloadSinicPciMmioDevice>>,
 }
 
 impl WorkloadSinicPciMmioBackend {
@@ -22,7 +22,10 @@ impl WorkloadSinicPciMmioBackend {
         for device in topology.sinic_pci_devices() {
             let endpoint = TransportEndpointId::new(device.mmio_endpoint())
                 .map_err(RiscvWorkloadReplayError::Transport)?;
-            devices.insert(endpoint, WorkloadSinicPciMmioDevice::new(device));
+            devices
+                .entry(endpoint)
+                .or_insert_with(Vec::new)
+                .push(WorkloadSinicPciMmioDevice::new(device));
         }
         Ok(Self { devices })
     }
@@ -32,14 +35,20 @@ impl WorkloadSinicPciMmioBackend {
         delivery: &RequestDelivery,
         context: &mut ParallelSchedulerContext<'_>,
     ) -> Option<TargetOutcome> {
-        let device = self.devices.get(delivery.endpoint())?;
-        device.respond_parallel(delivery.request(), context)
+        self.devices
+            .get(delivery.endpoint())?
+            .iter()
+            .find_map(|device| device.respond_parallel(delivery.request(), context))
     }
 
     pub(super) fn accepts_delivery(&self, delivery: &RequestDelivery) -> bool {
         self.devices
             .get(delivery.endpoint())
-            .is_some_and(|device| device.accepts_request(delivery.request()))
+            .is_some_and(|devices| {
+                devices
+                    .iter()
+                    .any(|device| device.accepts_request(delivery.request()))
+            })
     }
 }
 
