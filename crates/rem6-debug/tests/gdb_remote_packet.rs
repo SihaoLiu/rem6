@@ -271,6 +271,50 @@ fn gdb_remote_session_omits_acknowledgements_after_no_ack_mode() {
 }
 
 #[test]
+fn gdb_remote_session_handles_packet_frames() {
+    let mut session = GdbRemoteSession::new(vec![GdbRemoteFeature::new(
+        b"PacketSize".to_vec(),
+        GdbRemoteFeatureValue::Value(b"4000".to_vec()),
+    )]);
+    let frame = GdbRemoteFrame::Packet(GdbRemotePacket::new(b"qSupported".to_vec()).unwrap());
+
+    assert_eq!(
+        session.handle_frame(&frame).unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"PacketSize=4000".to_vec()).unwrap()),
+        ],
+    );
+}
+
+#[test]
+fn gdb_remote_session_ignores_acknowledgement_frames_without_replies() {
+    let mut session = GdbRemoteSession::new(Vec::new());
+
+    assert_eq!(
+        session.handle_frame(&GdbRemoteFrame::Ack).unwrap(),
+        Vec::new()
+    );
+    assert_eq!(
+        session.handle_frame(&GdbRemoteFrame::NegativeAck).unwrap(),
+        Vec::new(),
+    );
+    assert_eq!(session.ack_mode(), GdbRemoteAckMode::Acknowledged);
+    assert!(!session.interrupt_requested());
+}
+
+#[test]
+fn gdb_remote_session_records_interrupt_frames_without_acknowledgement() {
+    let mut session = GdbRemoteSession::new(Vec::new());
+
+    assert_eq!(
+        session.handle_frame(&GdbRemoteFrame::Interrupt).unwrap(),
+        Vec::new(),
+    );
+    assert!(session.interrupt_requested());
+}
+
+#[test]
 fn gdb_remote_frame_parser_reports_ack_interrupt_packet_and_prefix_noise() {
     let parsed_ack = parse_gdb_remote_frame(b"++").unwrap().unwrap();
     assert_eq!(parsed_ack.frame(), &GdbRemoteFrame::Ack);

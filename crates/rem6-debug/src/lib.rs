@@ -253,6 +253,7 @@ pub struct GdbRemoteSession {
     ack_mode: GdbRemoteAckMode,
     stub_features: Vec<GdbRemoteFeature>,
     gdb_features: Vec<GdbRemoteFeature>,
+    interrupt_requested: bool,
 }
 
 impl GdbRemoteSession {
@@ -261,11 +262,16 @@ impl GdbRemoteSession {
             ack_mode: GdbRemoteAckMode::Acknowledged,
             stub_features,
             gdb_features: Vec::new(),
+            interrupt_requested: false,
         }
     }
 
     pub const fn ack_mode(&self) -> GdbRemoteAckMode {
         self.ack_mode
+    }
+
+    pub const fn interrupt_requested(&self) -> bool {
+        self.interrupt_requested
     }
 
     pub fn stub_features(&self) -> &[GdbRemoteFeature] {
@@ -303,6 +309,22 @@ impl GdbRemoteSession {
         }
 
         Ok(frames)
+    }
+
+    pub fn handle_frame(
+        &mut self,
+        frame: &GdbRemoteFrame,
+    ) -> Result<Vec<GdbRemoteFrame>, GdbRemoteError> {
+        match frame {
+            GdbRemoteFrame::Packet(packet) => self.handle_packet(packet),
+            GdbRemoteFrame::Interrupt => {
+                self.interrupt_requested = true;
+                Ok(Vec::new())
+            }
+            GdbRemoteFrame::Ack | GdbRemoteFrame::NegativeAck | GdbRemoteFrame::Notification(_) => {
+                Ok(Vec::new())
+            }
+        }
     }
 }
 
