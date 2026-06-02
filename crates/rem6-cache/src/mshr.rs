@@ -163,6 +163,15 @@ pub enum MshrQueueError {
         expected: MshrQueueConfig,
         actual: MshrQueueConfig,
     },
+    SnapshotTooManyEntries {
+        entries: usize,
+        max_entries: usize,
+    },
+    SnapshotTooManyTargets {
+        handle: MshrHandle,
+        targets: usize,
+        max_targets: usize,
+    },
 }
 
 impl fmt::Display for MshrQueueError {
@@ -216,6 +225,21 @@ impl fmt::Display for MshrQueueError {
             Self::SnapshotConfigMismatch { expected, actual } => write!(
                 formatter,
                 "MSHR snapshot config {actual:?} does not match queue config {expected:?}"
+            ),
+            Self::SnapshotTooManyEntries {
+                entries,
+                max_entries,
+            } => write!(
+                formatter,
+                "MSHR snapshot has {entries} entries for {max_entries} slots"
+            ),
+            Self::SnapshotTooManyTargets {
+                handle,
+                targets,
+                max_targets,
+            } => write!(
+                formatter,
+                "MSHR snapshot entry {handle:?} has {targets} targets for {max_targets} slots"
             ),
         }
     }
@@ -960,9 +984,29 @@ impl MshrQueue {
                 actual: snapshot.config.clone(),
             });
         }
+        self.validate_snapshot_shape(snapshot)?;
         self.entries.clone_from(&snapshot.entries);
         self.next_handle = snapshot.next_handle;
         self.next_order = snapshot.next_order;
+        Ok(())
+    }
+
+    fn validate_snapshot_shape(&self, snapshot: &MshrQueueSnapshot) -> Result<(), MshrQueueError> {
+        if snapshot.entries.len() > self.config.entries {
+            return Err(MshrQueueError::SnapshotTooManyEntries {
+                entries: snapshot.entries.len(),
+                max_entries: self.config.entries,
+            });
+        }
+        for entry in &snapshot.entries {
+            if entry.target_count() > self.config.targets_per_mshr {
+                return Err(MshrQueueError::SnapshotTooManyTargets {
+                    handle: entry.handle(),
+                    targets: entry.target_count(),
+                    max_targets: self.config.targets_per_mshr,
+                });
+            }
+        }
         Ok(())
     }
 

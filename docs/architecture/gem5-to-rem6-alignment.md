@@ -2891,8 +2891,13 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   ordering propagation, MSHR-to-transport QoS class export, per-cycle MSI bank
   run QoS counts by effective requestor and priority, parallel-cycle history
   counts by effective requestor and priority, and byte-snapshot restore of MSHR
-  queue configuration plus target QoS and ordering state. MSI bank snapshot
-  byte-codec tests also reject oversized directory-line, backing-line,
+  queue configuration plus target QoS and ordering state. MSHR queue
+  configuration also rejects host-impossible entry and target counts before any
+  live queue can allocate vectors, and MSHR restore rejects snapshots whose
+  entry count or per-entry target count exceeds the matching live queue
+  configuration. The typed cache write queue rejects host-impossible effective
+  plus reserve capacity before enqueue paths can expose allocator behavior.
+  MSI bank snapshot byte-codec tests also reject oversized directory-line, backing-line,
   CPU-response, directory-decision, parallel-cycle, cache-line, trace, MSHR,
   snoop, accepted-request, and byte-mask counts before allocation. They also
   cover the public gem5 issue #621 hazard by requiring MSHR completion to
@@ -2955,8 +2960,15 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   RMOB reconstruction, duplicate filtering, secure-bit separation, snapshot
   restore, IMP indirect-pattern detection, IPD base matching, stream fallback,
   typed key LRU capacity, future-index lookahead, duplicate-current-index
-  suppression without lookahead, snapshot restore, cache write queue ready ordering,
-  reserve handling, functional-read satisfaction, snapshot restore with
+  suppression without lookahead, snapshot restore, host-impossible vector
+  length rejection for replacement policy state, replacement directory sets and
+  ways, BOP and DCPT internal arrays, AMPM access maps, SignaturePath tables,
+  SBOOE sandboxes and latency buffers, SMS region/context/history tables, FDP
+  queues, shared queued and stride prefetchers, PIF tables and buffers, IMP
+  tables and address arrays, ISB training and mapping tables, and STeMS
+  sequence slot offset limits plus sequence, reconstruction, table, and RMOB
+  state, cache write queue ready ordering, reserve handling, functional-read
+  satisfaction, snapshot restore with
   monotonic order-counter validation, and replacement-triggered dirty
   writeback, clean evict, clean writeback, invalid victim suppression, and
   victim-way validation, plus MSI/MESI/MOESI/CHI bank write queue attachment,

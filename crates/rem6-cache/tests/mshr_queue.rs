@@ -1,6 +1,6 @@
 use rem6_cache::{
-    MshrEntry, MshrQosClass, MshrQueue, MshrQueueConfig, MshrQueueError, MshrTarget,
-    MshrTargetPostFillAction, MshrTargetSource,
+    MshrEntry, MshrHandle, MshrQosClass, MshrQueue, MshrQueueConfig, MshrQueueError,
+    MshrQueueSnapshot, MshrTarget, MshrTargetPostFillAction, MshrTargetSource,
 };
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryAccessOrdering,
@@ -501,10 +501,95 @@ fn mshr_queue_rejects_bad_configs_unknown_handles_and_wrong_snapshots() {
             actual: MshrQueueConfig::new(2, 1, 0).unwrap(),
         })
     );
+    let overflowing_entries = MshrQueueSnapshot::new(
+        MshrQueueConfig::new(1, 1, 0).unwrap(),
+        vec![
+            MshrEntry::from_parts(
+                MshrHandle::new(1),
+                Address::new(0x1000),
+                0,
+                0,
+                false,
+                false,
+                vec![MshrTarget::from_parts(
+                    request(10, 0x1000),
+                    0,
+                    0,
+                    MshrTargetSource::Demand,
+                    true,
+                    None,
+                )],
+            ),
+            MshrEntry::from_parts(
+                MshrHandle::new(2),
+                Address::new(0x2000),
+                0,
+                1,
+                false,
+                false,
+                vec![MshrTarget::from_parts(
+                    request(11, 0x2000),
+                    0,
+                    1,
+                    MshrTargetSource::Demand,
+                    true,
+                    None,
+                )],
+            ),
+        ],
+        3,
+        2,
+    );
     assert_eq!(
-        queue.mark_in_service(rem6_cache::MshrHandle::new(99), false),
+        queue.restore(&overflowing_entries),
+        Err(MshrQueueError::SnapshotTooManyEntries {
+            entries: 2,
+            max_entries: 1,
+        })
+    );
+    let overflowing_targets = MshrQueueSnapshot::new(
+        MshrQueueConfig::new(1, 1, 0).unwrap(),
+        vec![MshrEntry::from_parts(
+            MshrHandle::new(3),
+            Address::new(0x3000),
+            0,
+            0,
+            false,
+            false,
+            vec![
+                MshrTarget::from_parts(
+                    request(12, 0x3000),
+                    0,
+                    0,
+                    MshrTargetSource::Demand,
+                    true,
+                    None,
+                ),
+                MshrTarget::from_parts(
+                    request(13, 0x3008),
+                    0,
+                    1,
+                    MshrTargetSource::Demand,
+                    true,
+                    None,
+                ),
+            ],
+        )],
+        4,
+        2,
+    );
+    assert_eq!(
+        queue.restore(&overflowing_targets),
+        Err(MshrQueueError::SnapshotTooManyTargets {
+            handle: MshrHandle::new(3),
+            targets: 2,
+            max_targets: 1,
+        })
+    );
+    assert_eq!(
+        queue.mark_in_service(MshrHandle::new(99), false),
         Err(MshrQueueError::UnknownEntry {
-            handle: rem6_cache::MshrHandle::new(99),
+            handle: MshrHandle::new(99),
         })
     );
 }

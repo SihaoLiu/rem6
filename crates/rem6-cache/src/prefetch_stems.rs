@@ -364,7 +364,10 @@ impl fmt::Display for StemsPrefetcherError {
 impl Error for StemsPrefetcherError {}
 
 fn maximum_stems_sequence_slots() -> usize {
-    max_vector_len::<SequenceEntry>().min(max_vector_len::<StemsSequenceEntrySnapshot>())
+    let offset_limit = usize::try_from(u64::from(u32::MAX) + 1).unwrap_or(usize::MAX);
+    max_vector_len::<SequenceEntry>()
+        .min(max_vector_len::<StemsSequenceEntrySnapshot>())
+        .min(offset_limit)
 }
 
 fn maximum_stems_reconstruction_entries() -> usize {

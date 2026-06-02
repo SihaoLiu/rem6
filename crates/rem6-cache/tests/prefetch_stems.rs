@@ -11,6 +11,7 @@ const STEMS_SEQUENCE_SLOT_POWER_OF_TWO_OVERFLOW_LENGTH: usize = 1usize << (usize
 const _: () = assert!(
     STEMS_SEQUENCE_SLOT_POWER_OF_TWO_OVERFLOW_LENGTH > STEMS_SEQUENCE_SLOT_BYTE_OVERFLOW_LENGTH
 );
+const STEMS_SEQUENCE_SLOT_OFFSET_OVERFLOW_LENGTH: usize = 1usize << 33;
 const STEMS_RECONSTRUCTION_BYTE_OVERFLOW_LENGTH: usize =
     isize::MAX as usize / std::mem::size_of::<StemsPrefetchCandidate>() + 1;
 const STEMS_ACTIVE_GENERATION_BYTE_OVERFLOW_LENGTH: usize =
@@ -60,6 +61,22 @@ fn stems_prefetcher_config_rejects_vector_lengths_above_host_limit() {
         Err(StemsPrefetcherError::VectorLengthTooLarge {
             field: "sequence slots",
             length: STEMS_SEQUENCE_SLOT_POWER_OF_TWO_OVERFLOW_LENGTH,
+            ..
+        })
+    ));
+    assert!(matches!(
+        StemsPrefetcherConfig::new(
+            1,
+            STEMS_SEQUENCE_SLOT_OFFSET_OVERFLOW_LENGTH as u64,
+            8,
+            4,
+            4,
+            8,
+            false,
+        ),
+        Err(StemsPrefetcherError::VectorLengthTooLarge {
+            field: "sequence slots",
+            length: STEMS_SEQUENCE_SLOT_OFFSET_OVERFLOW_LENGTH,
             ..
         })
     ));
