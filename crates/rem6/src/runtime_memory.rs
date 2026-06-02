@@ -6,6 +6,7 @@ use rem6_memory::{
 };
 use rem6_transport::{RequestDelivery, TargetOutcome};
 
+use crate::config::CliDramMemoryProfile;
 use crate::guest_memory::{build_cli_dram_memory, build_cli_memory_store, CLI_MEMORY_TARGET};
 use crate::{
     execute_error, LoadedBlob, MemoryDumpRequest, Rem6CliError, Rem6DramSummary, Rem6MemoryDump,
@@ -24,12 +25,14 @@ impl CliMemoryRuntime {
         load_blobs: &[LoadedBlob],
         line_layout: CacheLineLayout,
         use_dram: bool,
+        dram_profile: CliDramMemoryProfile,
     ) -> Result<Self, Rem6CliError> {
         if use_dram {
             return Ok(Self::Dram(Arc::new(Mutex::new(build_cli_dram_memory(
                 image,
                 load_blobs,
                 line_layout,
+                dram_profile,
             )?))));
         }
 
@@ -107,6 +110,9 @@ impl Rem6DramSummary {
             total_ready_latency_ticks: profile.total_ready_latency_cycles(),
             max_ready_latency_ticks: profile.max_ready_latency_cycles(),
             profiled_targets: profile.profiled_target_count() as u64,
+            profile_technology: profile.profile_technology_label(),
+            profile_parallel_port_label: profile.profile_parallel_port_label(),
+            profile_topology_unit_label: profile.profile_topology_unit_label(),
             profile_parallel_ports: profile.profile_parallel_port_capacity(),
             profile_topology_units: profile.profile_topology_unit_capacity(),
             profile_scheduler_banks: profile.profile_scheduler_bank_capacity(),

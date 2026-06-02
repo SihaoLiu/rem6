@@ -254,8 +254,11 @@ impl Rem6ExecutionSummary {
 
 impl Rem6DramSummary {
     fn to_json(self) -> String {
+        let profile_technology = optional_string_json(self.profile_technology);
+        let profile_parallel_port_label = optional_string_json(self.profile_parallel_port_label);
+        let profile_topology_unit_label = optional_string_json(self.profile_topology_unit_label);
         format!(
-            "{{\"active_targets\":{},\"active_ports\":{},\"active_banks\":{},\"accesses\":{},\"reads\":{},\"writes\":{},\"row_hits\":{},\"row_misses\":{},\"commands\":{},\"turnarounds\":{},\"total_ready_latency_ticks\":{},\"max_ready_latency_ticks\":{},\"profile\":{{\"profiled_targets\":{},\"parallel_ports\":{},\"topology_units\":{},\"scheduler_banks\":{},\"topology_banks\":{},\"scheduler_bank_groups\":{}}},\"low_power\":{{\"active_powerdown\":{{\"entries\":{},\"ticks\":{}}},\"precharge_powerdown\":{{\"entries\":{},\"ticks\":{}}},\"self_refresh\":{{\"entries\":{},\"ticks\":{}}},\"exits\":{},\"exit_latency_ticks\":{}}}}}",
+            "{{\"active_targets\":{},\"active_ports\":{},\"active_banks\":{},\"accesses\":{},\"reads\":{},\"writes\":{},\"row_hits\":{},\"row_misses\":{},\"commands\":{},\"turnarounds\":{},\"total_ready_latency_ticks\":{},\"max_ready_latency_ticks\":{},\"profile\":{{\"technology\":{},\"parallel_port_label\":{},\"topology_unit_label\":{},\"profiled_targets\":{},\"parallel_ports\":{},\"topology_units\":{},\"scheduler_banks\":{},\"topology_banks\":{},\"scheduler_bank_groups\":{}}},\"low_power\":{{\"active_powerdown\":{{\"entries\":{},\"ticks\":{}}},\"precharge_powerdown\":{{\"entries\":{},\"ticks\":{}}},\"self_refresh\":{{\"entries\":{},\"ticks\":{}}},\"exits\":{},\"exit_latency_ticks\":{}}}}}",
             self.active_targets,
             self.active_ports,
             self.active_banks,
@@ -268,6 +271,9 @@ impl Rem6DramSummary {
             self.turnarounds,
             self.total_ready_latency_ticks,
             self.max_ready_latency_ticks,
+            profile_technology,
+            profile_parallel_port_label,
+            profile_topology_unit_label,
             self.profiled_targets,
             self.profile_parallel_ports,
             self.profile_topology_units,
@@ -284,6 +290,12 @@ impl Rem6DramSummary {
             self.low_power_exit_latency_ticks,
         )
     }
+}
+
+fn optional_string_json(value: Option<&str>) -> String {
+    value
+        .map(|value| format!("\"{}\"", json_escape(value)))
+        .unwrap_or_else(|| "null".to_string())
 }
 
 fn empty_parallel_json(worker_limit: usize, min_remote_delay: u64) -> String {

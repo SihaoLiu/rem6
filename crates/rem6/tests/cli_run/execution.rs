@@ -556,6 +556,126 @@ fn rem6_run_can_execute_riscv_elf_through_dram_memory_and_emit_dram_stats() {
 }
 
 #[test]
+fn rem6_run_can_select_external_memory_profile_for_dram_backed_execution() {
+    struct Case {
+        profile: &'static str,
+        parallel_port_label: &'static str,
+        topology_unit_label: &'static str,
+        parallel_ports: u64,
+        topology_units: u64,
+        scheduler_banks: u64,
+        topology_banks: u64,
+    }
+
+    let program = riscv64_program(&[
+        i_type(7, 0, 0x0, 5, 0x13), // addi x5, x0, 7
+        0x0000_0073,                // ecall
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("dram-memory-profile", &elf);
+
+    for case in [
+        Case {
+            profile: "hbm",
+            parallel_port_label: "pseudo_channel",
+            topology_unit_label: "pseudo_channel",
+            parallel_ports: 4,
+            topology_units: 4,
+            scheduler_banks: 16,
+            topology_banks: 16,
+        },
+        Case {
+            profile: "lpddr",
+            parallel_port_label: "channel",
+            topology_unit_label: "die",
+            parallel_ports: 2,
+            topology_units: 4,
+            scheduler_banks: 8,
+            topology_banks: 16,
+        },
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+            .args([
+                "run",
+                "--isa",
+                "riscv",
+                "--binary",
+                path.to_str().unwrap(),
+                "--max-tick",
+                "80",
+                "--stats-format",
+                "json",
+                "--execute",
+                "--cores",
+                "1",
+                "--dram-memory",
+                "--dram-memory-profile",
+                case.profile,
+            ])
+            .output()
+            .unwrap();
+
+        assert!(
+            output.status.success(),
+            "stderr for {}: {}",
+            case.profile,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+        assert!(stdout.contains("\"x5\":\"0x7\""));
+        assert!(stdout.contains(&format!("\"technology\":\"{}\"", case.profile)));
+        assert!(stdout.contains(&format!(
+            "\"parallel_port_label\":\"{}\"",
+            case.parallel_port_label
+        )));
+        assert!(stdout.contains(&format!(
+            "\"topology_unit_label\":\"{}\"",
+            case.topology_unit_label
+        )));
+        assert!(stdout.contains(&format!("\"parallel_ports\":{}", case.parallel_ports)));
+        assert!(stdout.contains(&format!("\"topology_units\":{}", case.topology_units)));
+        assert!(stdout.contains(&format!("\"scheduler_banks\":{}", case.scheduler_banks)));
+        assert!(stdout.contains(&format!("\"topology_banks\":{}", case.topology_banks)));
+        assert_stat(
+            &stdout,
+            &format!("sim.memory.dram.profile.technology.{}", case.profile),
+            "Count",
+            1,
+            "constant",
+        );
+        assert_stat(
+            &stdout,
+            "sim.memory.dram.profile.parallel_ports",
+            "Count",
+            case.parallel_ports,
+            "constant",
+        );
+        assert_stat(
+            &stdout,
+            "sim.memory.dram.profile.topology_units",
+            "Count",
+            case.topology_units,
+            "constant",
+        );
+        assert_stat(
+            &stdout,
+            "sim.memory.dram.profile.scheduler_banks",
+            "Count",
+            case.scheduler_banks,
+            "constant",
+        );
+        assert_stat(
+            &stdout,
+            "sim.memory.dram.profile.topology_banks",
+            "Count",
+            case.topology_banks,
+            "constant",
+        );
+    }
+}
+
+#[test]
 fn rem6_run_accepts_host_event_delay_runtime_option() {
     let program = riscv64_program(&[
         i_type(7, 0, 0x0, 5, 0x13), // addi x5, x0, 7

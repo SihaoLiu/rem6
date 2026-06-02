@@ -67,6 +67,34 @@ impl StatsFormat {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CliDramMemoryProfile {
+    Ddr,
+    Hbm,
+    Lpddr,
+}
+
+impl CliDramMemoryProfile {
+    pub fn parse(value: &str) -> Result<Self, Rem6CliError> {
+        match value {
+            "ddr" => Ok(Self::Ddr),
+            "hbm" => Ok(Self::Hbm),
+            "lpddr" => Ok(Self::Lpddr),
+            _ => Err(Rem6CliError::UnsupportedDramMemoryProfile {
+                profile: value.to_string(),
+            }),
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Ddr => "ddr",
+            Self::Hbm => "hbm",
+            Self::Lpddr => "lpddr",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Rem6RunConfig {
     isa: RequestedIsa,
@@ -82,6 +110,7 @@ pub struct Rem6RunConfig {
     stats_format: StatsFormat,
     execute: bool,
     dram_memory: bool,
+    dram_memory_profile: CliDramMemoryProfile,
     cores: usize,
     parallel_workers: usize,
     memory_dumps: Vec<MemoryDumpRequest>,
@@ -117,6 +146,8 @@ impl Rem6RunConfig {
         let mut stats_format = StatsFormat::Json;
         let mut execute = false;
         let mut dram_memory = false;
+        let mut dram_memory_profile = CliDramMemoryProfile::Ddr;
+        let mut dram_memory_profile_was_set = false;
         let mut cores = 1usize;
         let mut parallel_workers = None;
         let mut memory_dumps = Vec::new();
@@ -204,6 +235,11 @@ impl Rem6RunConfig {
                 "--dram-memory" => {
                     dram_memory = true;
                 }
+                "--dram-memory-profile" => {
+                    dram_memory_profile_was_set = true;
+                    dram_memory_profile =
+                        CliDramMemoryProfile::parse(&required_value(&flag, args.next())?)?;
+                }
                 "--cores" => {
                     let value = required_value(&flag, args.next())?;
                     cores = value
@@ -265,6 +301,9 @@ impl Rem6RunConfig {
                 min_remote_delay,
             });
         }
+        if dram_memory_profile_was_set && !dram_memory {
+            return Err(Rem6CliError::DramMemoryProfileRequiresDramMemory);
+        }
 
         Ok(Self {
             isa: isa.ok_or(Rem6CliError::MissingRequiredFlag { flag: "--isa" })?,
@@ -280,6 +319,7 @@ impl Rem6RunConfig {
             stats_format,
             execute,
             dram_memory,
+            dram_memory_profile,
             cores,
             parallel_workers: parallel_workers.unwrap_or(cores),
             memory_dumps,
@@ -339,6 +379,10 @@ impl Rem6RunConfig {
 
     pub const fn dram_memory(&self) -> bool {
         self.dram_memory
+    }
+
+    pub const fn dram_memory_profile(&self) -> CliDramMemoryProfile {
+        self.dram_memory_profile
     }
 
     pub const fn cores(&self) -> usize {

@@ -5,7 +5,7 @@ use rem6_memory::{
     PartitionedMemoryStore,
 };
 
-use crate::config::LoadBlobRequest;
+use crate::config::{CliDramMemoryProfile, LoadBlobRequest};
 use crate::{execute_error, Rem6CliError, Rem6LoadBlobSummary};
 
 pub(super) const CLI_MEMORY_TARGET: MemoryTargetId = MemoryTargetId::new(0);
@@ -69,14 +69,11 @@ pub(super) fn build_cli_dram_memory(
     image: &BootImage,
     load_blobs: &[LoadedBlob],
     line_layout: CacheLineLayout,
+    profile: CliDramMemoryProfile,
 ) -> Result<DramMemoryController, Rem6CliError> {
     let store = build_cli_memory_store(image, load_blobs, line_layout)?;
     let snapshot = store.snapshot();
-    let geometry = DramGeometry::new(4, 64, line_layout.bytes()).map_err(execute_error)?;
-    let timing = DramTiming::new(3, 5, 7, 2, 4).map_err(execute_error)?;
-    let profile =
-        ExternalMemoryProfile::ddr(CLI_MEMORY_TARGET, line_layout, 1, 1, geometry, timing)
-            .map_err(execute_error)?;
+    let profile = build_cli_dram_profile(line_layout, profile)?;
     let mut memory = DramMemoryController::new();
     memory.add_profile(profile).map_err(execute_error)?;
     for (target, region) in snapshot.regions() {
@@ -92,6 +89,26 @@ pub(super) fn build_cli_dram_memory(
         }
     }
     Ok(memory)
+}
+
+fn build_cli_dram_profile(
+    line_layout: CacheLineLayout,
+    profile: CliDramMemoryProfile,
+) -> Result<ExternalMemoryProfile, Rem6CliError> {
+    let geometry = DramGeometry::new(4, 64, line_layout.bytes()).map_err(execute_error)?;
+    let timing = DramTiming::new(3, 5, 7, 2, 4).map_err(execute_error)?;
+    match profile {
+        CliDramMemoryProfile::Ddr => {
+            ExternalMemoryProfile::ddr(CLI_MEMORY_TARGET, line_layout, 1, 1, geometry, timing)
+        }
+        CliDramMemoryProfile::Hbm => {
+            ExternalMemoryProfile::hbm(CLI_MEMORY_TARGET, line_layout, 2, 2, geometry, timing)
+        }
+        CliDramMemoryProfile::Lpddr => {
+            ExternalMemoryProfile::lpddr(CLI_MEMORY_TARGET, line_layout, 2, 2, geometry, timing)
+        }
+    }
+    .map_err(execute_error)
 }
 
 fn cli_memory_regions(

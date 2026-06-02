@@ -355,6 +355,15 @@ fn emit_dram_stats(
         "Count",
         summary.profiled_targets,
     )?;
+    for technology in ["ddr", "hbm", "lpddr", "nvm"] {
+        emit_dram_constant(
+            stats,
+            prefix,
+            &format!("profile.technology.{technology}"),
+            "Count",
+            u64::from(summary.profile_technology == Some(technology)),
+        )?;
+    }
     emit_dram_constant(
         stats,
         prefix,

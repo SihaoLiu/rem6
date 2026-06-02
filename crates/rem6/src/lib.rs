@@ -35,7 +35,10 @@ mod stats_output;
 #[cfg(test)]
 mod transport_summary_tests;
 
-pub use config::{LoadBlobRequest, MemoryDumpRequest, Rem6RunConfig, RequestedIsa, StatsFormat};
+pub use config::{
+    CliDramMemoryProfile, LoadBlobRequest, MemoryDumpRequest, Rem6RunConfig, RequestedIsa,
+    StatsFormat,
+};
 use formatting::{elf_architecture_name, json_escape};
 use guest_memory::{build_cli_memory_store, read_load_blobs, LoadedBlob};
 use runtime_memory::{cli_memory_response, read_memory_dumps, CliMemoryRuntime};
@@ -139,6 +142,9 @@ pub struct Rem6DramSummary {
     total_ready_latency_ticks: u64,
     max_ready_latency_ticks: u64,
     profiled_targets: u64,
+    profile_technology: Option<&'static str>,
+    profile_parallel_port_label: Option<&'static str>,
+    profile_topology_unit_label: Option<&'static str>,
     profile_parallel_ports: u64,
     profile_topology_units: u64,
     profile_scheduler_banks: u64,
@@ -273,6 +279,10 @@ pub enum Rem6CliError {
     UnsupportedStatsFormat {
         format: String,
     },
+    UnsupportedDramMemoryProfile {
+        profile: String,
+    },
+    DramMemoryProfileRequiresDramMemory,
     InvalidMaxTick {
         value: String,
     },
@@ -376,6 +386,12 @@ impl fmt::Display for Rem6CliError {
             Self::UnsupportedIsa { isa } => write!(formatter, "unsupported ISA {isa}"),
             Self::UnsupportedStatsFormat { format } => {
                 write!(formatter, "unsupported stats format {format}")
+            }
+            Self::UnsupportedDramMemoryProfile { profile } => {
+                write!(formatter, "unsupported DRAM memory profile {profile}")
+            }
+            Self::DramMemoryProfileRequiresDramMemory => {
+                write!(formatter, "--dram-memory-profile requires --dram-memory")
             }
             Self::InvalidMaxTick { value } => write!(formatter, "invalid max tick {value}"),
             Self::InvalidMinRemoteDelay { value } => {
@@ -640,7 +656,13 @@ fn execute_riscv(
     let tick_limit = config.max_tick();
     let memory_partition = PartitionId::new(core_count);
     let host_partition = PartitionId::new(core_count + 1);
-    let memory = CliMemoryRuntime::new(image, load_blobs, line_layout, config.dram_memory())?;
+    let memory = CliMemoryRuntime::new(
+        image,
+        load_blobs,
+        line_layout,
+        config.dram_memory(),
+        config.dram_memory_profile(),
+    )?;
 
     let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(
         partition_count,
