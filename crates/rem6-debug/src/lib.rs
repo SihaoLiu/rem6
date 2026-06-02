@@ -4,6 +4,7 @@ use std::fmt;
 pub const DEFAULT_GDB_REMOTE_MAX_PAYLOAD_BYTES: usize = 16 * 1024;
 const PACKET_START_BYTE: u8 = b'$';
 const CHECKSUM_SEPARATOR_BYTE: u8 = b'#';
+const NOTIFICATION_START_BYTE: u8 = b'%';
 const ACK_BYTE: u8 = b'+';
 const NEGATIVE_ACK_BYTE: u8 = b'-';
 const INTERRUPT_BYTE: u8 = 0x03;
@@ -161,11 +162,41 @@ impl GdbRemotePacket {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GdbRemoteNotification {
+    data: Vec<u8>,
+    checksum: u8,
+}
+
+impl GdbRemoteNotification {
+    pub fn new(data: Vec<u8>) -> Result<Self, GdbRemoteError> {
+        Self::with_config(data, GdbRemotePacketConfig::default())
+    }
+
+    pub fn with_config(
+        data: Vec<u8>,
+        config: GdbRemotePacketConfig,
+    ) -> Result<Self, GdbRemoteError> {
+        validate_payload_len(data.len(), config)?;
+        let checksum = checksum(&data);
+        Ok(Self { data, checksum })
+    }
+
+    pub fn data(&self) -> &[u8] {
+        &self.data
+    }
+
+    pub const fn checksum(&self) -> u8 {
+        self.checksum
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum GdbRemoteFrame {
     Ack,
     NegativeAck,
     Interrupt,
     Packet(GdbRemotePacket),
+    Notification(GdbRemoteNotification),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -205,44 +236,93 @@ pub fn parse_gdb_remote_frame_with_config(
     input: &[u8],
     config: GdbRemotePacketConfig,
 ) -> Result<Option<GdbRemoteFrameParse>, GdbRemoteError> {
-    let Some(position) = input.iter().position(|byte| {
-        matches!(
-            *byte,
-            ACK_BYTE | NEGATIVE_ACK_BYTE | INTERRUPT_BYTE | PACKET_START_BYTE
-        )
-    }) else {
-        return Ok(None);
-    };
-    let skipped = input[..position].to_vec();
-    match input[position] {
-        ACK_BYTE => Ok(Some(GdbRemoteFrameParse::new(
-            GdbRemoteFrame::Ack,
-            position + 1,
-            skipped,
-        ))),
-        NEGATIVE_ACK_BYTE => Ok(Some(GdbRemoteFrameParse::new(
-            GdbRemoteFrame::NegativeAck,
-            position + 1,
-            skipped,
-        ))),
-        INTERRUPT_BYTE => Ok(Some(GdbRemoteFrameParse::new(
-            GdbRemoteFrame::Interrupt,
-            position + 1,
-            skipped,
-        ))),
-        PACKET_START_BYTE => {
-            let (payload, expected, consumed) = parse_packet_parts(&input[position..], config)?;
-            let packet = GdbRemotePacket {
-                payload,
-                checksum: expected,
-            };
-            Ok(Some(GdbRemoteFrameParse::new(
-                GdbRemoteFrame::Packet(packet),
-                position + consumed,
-                skipped,
-            )))
+    let mut search_start = 0;
+    loop {
+        let Some(relative_position) = input[search_start..].iter().position(|byte| {
+            matches!(
+                *byte,
+                ACK_BYTE
+                    | NEGATIVE_ACK_BYTE
+                    | INTERRUPT_BYTE
+                    | PACKET_START_BYTE
+                    | NOTIFICATION_START_BYTE
+            )
+        }) else {
+            return Ok(None);
+        };
+        let position = search_start + relative_position;
+        let skipped = input[..position].to_vec();
+        match input[position] {
+            ACK_BYTE => {
+                return Ok(Some(GdbRemoteFrameParse::new(
+                    GdbRemoteFrame::Ack,
+                    position + 1,
+                    skipped,
+                )));
+            }
+            NEGATIVE_ACK_BYTE => {
+                return Ok(Some(GdbRemoteFrameParse::new(
+                    GdbRemoteFrame::NegativeAck,
+                    position + 1,
+                    skipped,
+                )));
+            }
+            INTERRUPT_BYTE => {
+                return Ok(Some(GdbRemoteFrameParse::new(
+                    GdbRemoteFrame::Interrupt,
+                    position + 1,
+                    skipped,
+                )));
+            }
+            PACKET_START_BYTE => {
+                let (payload, expected, consumed) = parse_packet_parts(&input[position..], config)?;
+                let packet = GdbRemotePacket {
+                    payload,
+                    checksum: expected,
+                };
+                return Ok(Some(GdbRemoteFrameParse::new(
+                    GdbRemoteFrame::Packet(packet),
+                    position + consumed,
+                    skipped,
+                )));
+            }
+            NOTIFICATION_START_BYTE => match parse_notification_parts(&input[position..], config) {
+                Ok((data, expected, consumed)) => {
+                    let notification = GdbRemoteNotification {
+                        data,
+                        checksum: expected,
+                    };
+                    return Ok(Some(GdbRemoteFrameParse::new(
+                        GdbRemoteFrame::Notification(notification),
+                        position + consumed,
+                        skipped,
+                    )));
+                }
+                Err(error) => {
+                    if let Some(consumed) = notification_frame_len(&input[position..]) {
+                        search_start = position + consumed;
+                    } else {
+                        search_start = position + 1;
+                    }
+                    if search_start >= input.len() {
+                        return Ok(None);
+                    }
+                    if matches!(
+                        error,
+                        GdbRemoteError::MissingPacketStart
+                            | GdbRemoteError::MissingChecksumSeparator
+                            | GdbRemoteError::ShortChecksum
+                            | GdbRemoteError::InvalidChecksumHex { .. }
+                            | GdbRemoteError::ChecksumMismatch { .. }
+                            | GdbRemoteError::PayloadTooLong { .. }
+                    ) {
+                        continue;
+                    }
+                    return Err(error);
+                }
+            },
+            _ => unreachable!("frame marker predicate and match arms must agree"),
         }
-        _ => unreachable!("frame marker predicate and match arms must agree"),
     }
 }
 
@@ -317,6 +397,50 @@ fn parse_packet_parts(
     }
 
     Err(GdbRemoteError::MissingChecksumSeparator)
+}
+
+fn parse_notification_parts(
+    frame: &[u8],
+    config: GdbRemotePacketConfig,
+) -> Result<(Vec<u8>, u8, usize), GdbRemoteError> {
+    if frame.first() != Some(&NOTIFICATION_START_BYTE) {
+        return Err(GdbRemoteError::MissingPacketStart);
+    }
+
+    let mut data = Vec::new();
+    let mut expected = 0u8;
+    let mut index = 1;
+
+    while index < frame.len() {
+        let byte = frame[index];
+        if byte == CHECKSUM_SEPARATOR_BYTE {
+            if frame.len() < index + 3 {
+                return Err(GdbRemoteError::ShortChecksum);
+            }
+            let actual = decode_checksum(frame[index + 1], frame[index + 2])?;
+            if actual != expected {
+                return Err(GdbRemoteError::ChecksumMismatch { expected, actual });
+            }
+            return Ok((data, expected, index + 3));
+        }
+        if matches!(byte, PACKET_START_BYTE | NOTIFICATION_START_BYTE) {
+            return Err(GdbRemoteError::MissingChecksumSeparator);
+        }
+
+        expected = expected.wrapping_add(byte);
+        data.push(byte);
+        validate_payload_len(data.len(), config)?;
+        index += 1;
+    }
+
+    Err(GdbRemoteError::MissingChecksumSeparator)
+}
+
+fn notification_frame_len(frame: &[u8]) -> Option<usize> {
+    let checksum_separator = frame
+        .iter()
+        .position(|byte| *byte == CHECKSUM_SEPARATOR_BYTE)?;
+    (frame.len() >= checksum_separator + 3).then_some(checksum_separator + 3)
 }
 
 fn validate_payload_len(len: usize, config: GdbRemotePacketConfig) -> Result<(), GdbRemoteError> {

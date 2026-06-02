@@ -1,5 +1,6 @@
 use rem6_debug::{
-    parse_gdb_remote_frame, GdbRemoteError, GdbRemoteFrame, GdbRemotePacket, GdbRemotePacketConfig,
+    parse_gdb_remote_frame, GdbRemoteError, GdbRemoteFrame, GdbRemoteNotification, GdbRemotePacket,
+    GdbRemotePacketConfig,
 };
 
 #[test]
@@ -143,5 +144,33 @@ fn gdb_remote_frame_parser_reports_ack_interrupt_packet_and_prefix_noise() {
             expected: 0x37,
             actual: 0x00,
         },
+    );
+}
+
+#[test]
+fn gdb_remote_frame_parser_reports_notification_packets_without_acknowledgement() {
+    let parsed = parse_gdb_remote_frame(b"noise%Stop:T05#99+")
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(parsed.skipped_bytes(), b"noise");
+    assert_eq!(parsed.consumed_bytes(), b"noise%Stop:T05#99".len());
+    assert_eq!(
+        parsed.frame(),
+        &GdbRemoteFrame::Notification(GdbRemoteNotification::new(b"Stop:T05".to_vec()).unwrap()),
+    );
+}
+
+#[test]
+fn gdb_remote_frame_parser_ignores_corrupted_notifications_before_later_frames() {
+    let parsed = parse_gdb_remote_frame(b"%Stop:T05#00$qSupported#37")
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(parsed.skipped_bytes(), b"%Stop:T05#00");
+    assert_eq!(parsed.consumed_bytes(), b"%Stop:T05#00$qSupported#37".len());
+    assert_eq!(
+        parsed.frame(),
+        &GdbRemoteFrame::Packet(GdbRemotePacket::new(b"qSupported".to_vec()).unwrap()),
     );
 }
