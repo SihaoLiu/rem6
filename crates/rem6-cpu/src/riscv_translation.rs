@@ -125,6 +125,20 @@ impl RiscvCore {
         core
     }
 
+    pub fn data_translation_address_space(&self) -> TranslationAddressSpaceId {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .data_translation_address_space
+    }
+
+    pub fn set_data_translation_address_space(&self, address_space: TranslationAddressSpaceId) {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .data_translation_address_space = address_space;
+    }
+
     pub fn data_translation_tlb_stats(&self) -> Option<TranslationTlbStats> {
         self.state
             .lock()
@@ -380,15 +394,15 @@ impl RiscvCore {
             return Ok(false);
         };
         let size = memory_width_size(access_width(&access))?;
-        let data = self
-            .state
-            .lock()
-            .expect("riscv core lock")
-            .data
-            .clone()
-            .ok_or(RiscvCpuError::MissingDataConfig {
-                fetch: fetch_request,
-            })?;
+        let (data, address_space) = {
+            let state = self.state.lock().expect("riscv core lock");
+            (
+                state.data.clone().ok_or(RiscvCpuError::MissingDataConfig {
+                    fetch: fetch_request,
+                })?,
+                state.data_translation_address_space,
+            )
+        };
         let request_id = MemoryRequestId::new(self.core.agent(), self.core.next_sequence());
         let translation_id = TranslationRequestId::new(self.core.agent(), request_id.sequence());
         let pending = PendingDataTranslation {
@@ -397,7 +411,8 @@ impl RiscvCore {
             access: access.clone(),
             size,
         };
-        let request = cpu_translation_request(translation_id, request_id, &data, &access, size)?;
+        let request = cpu_translation_request(translation_id, request_id, &data, &access, size)?
+            .in_address_space(address_space);
 
         let mut state = self.state.lock().expect("riscv core lock");
         let frontend =

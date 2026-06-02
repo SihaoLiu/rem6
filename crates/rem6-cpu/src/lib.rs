@@ -14,7 +14,7 @@ use rem6_kernel::{
 };
 use rem6_memory::{
     AccessSize, Address, AddressRange, AgentId, CacheLineLayout, MemoryOperation, MemoryRequest,
-    MemoryRequestId, ResponseStatus, TranslationRequestId,
+    MemoryRequestId, ResponseStatus, TranslationAddressSpaceId, TranslationRequestId,
 };
 use rem6_transport::{
     MemoryRouteId, MemoryTrace, MemoryTransport, ParallelMemoryTransaction, RequestDelivery,
@@ -1188,6 +1188,7 @@ struct RiscvCoreState {
     hart: RiscvHartState,
     data: Option<CpuDataConfig>,
     data_translation: Option<CpuTranslationFrontend>,
+    data_translation_address_space: TranslationAddressSpaceId,
     executed_fetches: BTreeSet<MemoryRequestId>,
     issued_data_for_fetches: BTreeSet<MemoryRequestId>,
     pending_data_translations:
@@ -1209,6 +1210,7 @@ impl RiscvCoreState {
             hart: RiscvHartState::with_hart_id(pc, hart_id),
             data: None,
             data_translation: None,
+            data_translation_address_space: TranslationAddressSpaceId::global(),
             executed_fetches: BTreeSet::new(),
             issued_data_for_fetches: BTreeSet::new(),
             pending_data_translations: BTreeMap::new(),

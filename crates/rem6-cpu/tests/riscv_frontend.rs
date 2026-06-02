@@ -14,8 +14,9 @@ use rem6_isa_riscv::{
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryOperation, MemoryRequest, MemoryRequestId,
-    MemoryTargetId, PartitionedMemoryStore, TranslationPageMap, TranslationPagePermissions,
-    TranslationPageSize, TranslationQueueConfig, TranslationTlbConfig, TranslationTlbStats,
+    MemoryTargetId, PartitionedMemoryStore, TranslationAddressSpaceId, TranslationPageMap,
+    TranslationPagePermissions, TranslationPageSize, TranslationQueueConfig, TranslationTlbConfig,
+    TranslationTlbStats,
 };
 use rem6_mmio::{MmioAccess, MmioBus, MmioRegisterBank, MmioRoute};
 use rem6_transport::{
@@ -250,7 +251,7 @@ fn loaded_program_store(
         .map_region(
             target,
             Address::new(0x8000),
-            AccessSize::new(0x2000).unwrap(),
+            AccessSize::new(0x3000).unwrap(),
         )
         .unwrap();
 
@@ -2062,6 +2063,62 @@ fn riscv_core_sfence_vma_all_scope_flushes_data_translation_tlb() {
     scheduler.run_until_idle_conservative();
 
     assert_eq!(core.read_register(reg(6)), 0x0123_4567_89ab_cdef);
+    assert_eq!(
+        core.data_translation_tlb_stats().unwrap(),
+        TranslationTlbStats::new(0, 2, 0, 2, 0)
+    );
+}
+
+#[test]
+fn riscv_core_data_translation_uses_current_address_space() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = translated_data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(2), 0x4000);
+    core.set_data_translation_address_space(TranslationAddressSpaceId::new(11));
+    let map_one = single_page_map(0x4000, 0x9000);
+    let map_two = single_page_map(0x4000, 0xa000);
+    let store = loaded_program_store(
+        0x8000,
+        &[i_type(8, 2, 0x3, 5, 0x03), i_type(8, 2, 0x3, 6, 0x03)],
+        &[
+            (0x9008, vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88]),
+            (0xa008, vec![0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x10]),
+        ],
+    );
+
+    assert!(matches!(
+        drive_one_translated_action(&core, store.clone(), &mut scheduler, &transport, &map_one),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+    assert!(matches!(
+        drive_one_translated_action(&core, store.clone(), &mut scheduler, &transport, &map_one),
+        Some(RiscvCoreDriveAction::InstructionExecuted(_))
+    ));
+    assert!(matches!(
+        drive_one_translated_action(&core, store.clone(), &mut scheduler, &transport, &map_one),
+        Some(RiscvCoreDriveAction::DataAccessIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+    assert_eq!(core.read_register(reg(5)), 0x8877_6655_4433_2211);
+
+    core.set_data_translation_address_space(TranslationAddressSpaceId::new(12));
+    assert!(matches!(
+        drive_one_translated_action(&core, store.clone(), &mut scheduler, &transport, &map_two),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+    assert!(matches!(
+        drive_one_translated_action(&core, store.clone(), &mut scheduler, &transport, &map_two),
+        Some(RiscvCoreDriveAction::InstructionExecuted(_))
+    ));
+    assert!(matches!(
+        drive_one_translated_action(&core, store, &mut scheduler, &transport, &map_two),
+        Some(RiscvCoreDriveAction::DataAccessIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+
+    assert_eq!(core.read_register(reg(6)), 0x10ff_eedd_ccbb_aa99);
     assert_eq!(
         core.data_translation_tlb_stats().unwrap(),
         TranslationTlbStats::new(0, 2, 0, 2, 0)
