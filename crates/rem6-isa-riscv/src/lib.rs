@@ -504,6 +504,16 @@ pub enum RiscvInstruction {
         rs1: Register,
         imm: Immediate,
     },
+    Slti {
+        rd: Register,
+        rs1: Register,
+        imm: Immediate,
+    },
+    Sltiu {
+        rd: Register,
+        rs1: Register,
+        imm: Immediate,
+    },
     Xori {
         rd: Register,
         rs1: Register,
@@ -525,6 +535,11 @@ pub enum RiscvInstruction {
         shamt: u8,
     },
     Srli {
+        rd: Register,
+        rs1: Register,
+        shamt: u8,
+    },
+    Srai {
         rd: Register,
         rs1: Register,
         shamt: u8,
@@ -695,12 +710,27 @@ fn decode_op_imm(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             rs1: rs1(raw),
             shamt: shamt64(raw),
         }),
+        0x2 => Ok(RiscvInstruction::Slti {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            imm: Immediate::new(i_imm(raw)),
+        }),
+        0x3 => Ok(RiscvInstruction::Sltiu {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            imm: Immediate::new(i_imm(raw)),
+        }),
         0x4 => Ok(RiscvInstruction::Xori {
             rd: rd(raw),
             rs1: rs1(raw),
             imm: Immediate::new(i_imm(raw)),
         }),
         0x5 if shift_funct6(raw) == 0x00 => Ok(RiscvInstruction::Srli {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            shamt: shamt64(raw),
+        }),
+        0x5 if shift_funct6(raw) == 0x10 => Ok(RiscvInstruction::Srai {
             rd: rd(raw),
             rs1: rs1(raw),
             shamt: shamt64(raw),
@@ -1042,6 +1072,14 @@ impl RiscvHartState {
                 let value = wrapping_add_signed(self.read(rs1), imm.value());
                 write_register(self, &mut register_writes, rd, value);
             }
+            RiscvInstruction::Slti { rd, rs1, imm } => {
+                let value = u64::from((self.read(rs1) as i64) < imm.value());
+                write_register(self, &mut register_writes, rd, value);
+            }
+            RiscvInstruction::Sltiu { rd, rs1, imm } => {
+                let value = u64::from(self.read(rs1) < (imm.value() as u64));
+                write_register(self, &mut register_writes, rd, value);
+            }
             RiscvInstruction::Xori { rd, rs1, imm } => {
                 let value = self.read(rs1) ^ (imm.value() as u64);
                 write_register(self, &mut register_writes, rd, value);
@@ -1060,6 +1098,10 @@ impl RiscvHartState {
             }
             RiscvInstruction::Srli { rd, rs1, shamt } => {
                 let value = self.read(rs1).wrapping_shr(u32::from(shamt));
+                write_register(self, &mut register_writes, rd, value);
+            }
+            RiscvInstruction::Srai { rd, rs1, shamt } => {
+                let value = (self.read(rs1) as i64).wrapping_shr(u32::from(shamt)) as u64;
                 write_register(self, &mut register_writes, rd, value);
             }
             RiscvInstruction::Add { rd, rs1, rs2 } => {

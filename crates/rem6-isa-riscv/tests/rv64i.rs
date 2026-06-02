@@ -44,6 +44,15 @@ fn shift_i_type(shamt: u8, rs1: u8, funct3: u32, rd: u8) -> u32 {
     (u32::from(shamt) << 20) | (u32::from(rs1) << 15) | (funct3 << 12) | (u32::from(rd) << 7) | 0x13
 }
 
+fn shift_i_type_with_funct6(funct6: u32, shamt: u8, rs1: u8, funct3: u32, rd: u8) -> u32 {
+    (funct6 << 26)
+        | (u32::from(shamt) << 20)
+        | (u32::from(rs1) << 15)
+        | (funct3 << 12)
+        | (u32::from(rd) << 7)
+        | 0x13
+}
+
 fn s_type(imm: i32, rs2: u8, rs1: u8, funct3: u32) -> u32 {
     let imm = imm as u32;
     (((imm >> 5) & 0x7f) << 25)
@@ -223,6 +232,22 @@ fn decoder_extracts_rv64i_fields_and_immediates() {
         }
     );
     assert_eq!(
+        RiscvInstruction::decode(i_type(-1, 3, 0x2, 4, 0x13)).unwrap(),
+        RiscvInstruction::Slti {
+            rd: reg(4),
+            rs1: reg(3),
+            imm: Immediate::new(-1),
+        }
+    );
+    assert_eq!(
+        RiscvInstruction::decode(i_type(-1, 3, 0x3, 4, 0x13)).unwrap(),
+        RiscvInstruction::Sltiu {
+            rd: reg(4),
+            rs1: reg(3),
+            imm: Immediate::new(-1),
+        }
+    );
+    assert_eq!(
         RiscvInstruction::decode(u_type(0x1234_5000, 10, 0x37)).unwrap(),
         RiscvInstruction::Lui {
             rd: reg(10),
@@ -302,6 +327,14 @@ fn decoder_extracts_rv64i_fields_and_immediates() {
         }
     );
     assert_eq!(
+        RiscvInstruction::decode(shift_i_type_with_funct6(0x10, 4, 3, 0x5, 3)).unwrap(),
+        RiscvInstruction::Srai {
+            rd: reg(3),
+            rs1: reg(3),
+            shamt: 4,
+        }
+    );
+    assert_eq!(
         RiscvInstruction::decode(b_type(-8, 6, 5, 0x1)).unwrap(),
         RiscvInstruction::Bne {
             rs1: reg(5),
@@ -363,6 +396,23 @@ fn hart_executes_integer_register_operations_and_keeps_zero_readonly() {
         .unwrap();
     assert_eq!(hart.read(reg(5)), 0);
 
+    hart.write(reg(11), (-3_i64) as u64);
+    hart.execute(RiscvInstruction::decode(i_type(-2, 11, 0x2, 12, 0x13)).unwrap())
+        .unwrap();
+    assert_eq!(hart.read(reg(12)), 1);
+    hart.execute(RiscvInstruction::decode(i_type(-4, 11, 0x2, 13, 0x13)).unwrap())
+        .unwrap();
+    assert_eq!(hart.read(reg(13)), 0);
+
+    hart.write(reg(14), 5);
+    hart.execute(RiscvInstruction::decode(i_type(-1, 14, 0x3, 15, 0x13)).unwrap())
+        .unwrap();
+    assert_eq!(hart.read(reg(15)), 1);
+    hart.write(reg(14), u64::MAX);
+    hart.execute(RiscvInstruction::decode(i_type(-1, 14, 0x3, 15, 0x13)).unwrap())
+        .unwrap();
+    assert_eq!(hart.read(reg(15)), 0);
+
     hart.execute(RiscvInstruction::decode(i_type(1, 0, 0x0, 6, 0x13)).unwrap())
         .unwrap();
     hart.execute(RiscvInstruction::decode(shift_i_type(40, 6, 0x1, 6)).unwrap())
@@ -396,6 +446,11 @@ fn hart_executes_integer_register_operations_and_keeps_zero_readonly() {
     hart.execute(RiscvInstruction::decode(i_type(-2048, 10, 0x6, 10, 0x13)).unwrap())
         .unwrap();
     assert_eq!(hart.read(reg(10)), 0xffff_ffff_ffff_f800);
+
+    hart.write(reg(16), 0xffff_ffff_ffff_f000);
+    hart.execute(RiscvInstruction::decode(shift_i_type_with_funct6(0x10, 4, 16, 0x5, 16)).unwrap())
+        .unwrap();
+    assert_eq!(hart.read(reg(16)), 0xffff_ffff_ffff_ff00);
 }
 
 #[test]
