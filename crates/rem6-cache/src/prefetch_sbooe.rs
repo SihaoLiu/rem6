@@ -4,6 +4,7 @@ use std::fmt;
 
 use rem6_memory::{Address, AgentId};
 
+use crate::allocation::max_vector_len;
 use crate::prefetch::PrefetchCandidate;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -33,9 +34,19 @@ impl SbooePrefetcherConfig {
         if sequential_prefetchers == 0 {
             return Err(SbooePrefetcherError::ZeroSequentialPrefetchers);
         }
+        validate_sbooe_vector_length(
+            "sequential prefetchers",
+            sequential_prefetchers,
+            maximum_sbooe_sandboxes(),
+        )?;
         if sandbox_entries == 0 {
             return Err(SbooePrefetcherError::ZeroSandboxEntries);
         }
+        validate_sbooe_vector_length(
+            "sandbox entries",
+            sandbox_entries,
+            max_vector_len::<SbooeSandboxEntrySnapshot>(),
+        )?;
         if score_threshold_pct > 100 {
             return Err(SbooePrefetcherError::ScoreThresholdOutOfRange {
                 score_threshold_pct,
@@ -44,6 +55,11 @@ impl SbooePrefetcherConfig {
         if latency_buffer_entries == 0 {
             return Err(SbooePrefetcherError::ZeroLatencyBufferEntries);
         }
+        validate_sbooe_vector_length(
+            "latency buffer entries",
+            latency_buffer_entries,
+            max_vector_len::<u64>(),
+        )?;
 
         let score_threshold = (sandbox_entries as u128 * score_threshold_pct as u128) / 100;
 
@@ -94,6 +110,11 @@ pub enum SbooePrefetcherError {
     ScoreThresholdOutOfRange {
         score_threshold_pct: u32,
     },
+    VectorLengthTooLarge {
+        field: &'static str,
+        length: usize,
+        maximum: usize,
+    },
     SnapshotConfigMismatch {
         expected: Box<SbooePrefetcherConfig>,
         actual: Box<SbooePrefetcherConfig>,
@@ -133,6 +154,14 @@ impl fmt::Display for SbooePrefetcherError {
                 formatter,
                 "SBOOE score threshold {score_threshold_pct}% is outside 0..=100"
             ),
+            Self::VectorLengthTooLarge {
+                field,
+                length,
+                maximum,
+            } => write!(
+                formatter,
+                "SBOOE {field} length {length} exceeds maximum {maximum}"
+            ),
             Self::SnapshotConfigMismatch { expected, actual } => write!(
                 formatter,
                 "SBOOE snapshot config {actual:?} does not match {expected:?}"
@@ -164,6 +193,25 @@ impl fmt::Display for SbooePrefetcherError {
 }
 
 impl Error for SbooePrefetcherError {}
+
+fn maximum_sbooe_sandboxes() -> usize {
+    max_vector_len::<SbooeSandbox>().min(max_vector_len::<SbooeSandboxSnapshot>())
+}
+
+fn validate_sbooe_vector_length(
+    field: &'static str,
+    length: usize,
+    maximum: usize,
+) -> Result<(), SbooePrefetcherError> {
+    if length > maximum {
+        return Err(SbooePrefetcherError::VectorLengthTooLarge {
+            field,
+            length,
+            maximum,
+        });
+    }
+    Ok(())
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SbooePrefetchAccess {

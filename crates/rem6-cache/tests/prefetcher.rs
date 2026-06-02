@@ -6,6 +6,7 @@ use rem6_cache::{
     QueuedPrefetchDemandAccess, QueuedPrefetchFullPolicy, QueuedPrefetchRedundantLine,
     QueuedPrefetchThrottle, QueuedPrefetchThrottleConfig, QueuedPrefetchThrottleError,
     QueuedPrefetcher, SbooePrefetchAccess, SbooePrefetcher, SbooePrefetcherConfig,
+    SbooePrefetcherError, SbooeSandboxEntrySnapshot, SbooeSandboxSnapshot,
     SignaturePathPatternEntrySnapshot, SignaturePathPatternStrideSnapshot,
     SignaturePathPrefetchAccess, SignaturePathPrefetcher, SignaturePathPrefetcherConfig,
     SignaturePathPrefetcherConfigOptions, SignaturePathPrefetcherError, SignaturePathRatio,
@@ -37,6 +38,11 @@ const SIGNATURE_PATH_PATTERN_BYTE_OVERFLOW_LENGTH: usize =
     isize::MAX as usize / std::mem::size_of::<SignaturePathPatternEntrySnapshot>() + 1;
 const SIGNATURE_PATH_STRIDE_BYTE_OVERFLOW_LENGTH: usize =
     isize::MAX as usize / std::mem::size_of::<SignaturePathPatternStrideSnapshot>() + 1;
+const SBOOE_SANDBOX_BYTE_OVERFLOW_LENGTH: usize =
+    isize::MAX as usize / std::mem::size_of::<SbooeSandboxSnapshot>() + 1;
+const SBOOE_SANDBOX_ENTRY_BYTE_OVERFLOW_LENGTH: usize =
+    isize::MAX as usize / std::mem::size_of::<SbooeSandboxEntrySnapshot>() + 1;
+const U64_BYTE_OVERFLOW_LENGTH: usize = isize::MAX as usize / std::mem::size_of::<u64>() + 1;
 
 fn access(agent: u32, pc: u64, address: u64) -> StridePrefetchAccess {
     StridePrefetchAccess::new(AgentId::new(agent), pc, Address::new(address), false)
@@ -244,6 +250,34 @@ fn bop_prefetcher_config_rejects_vector_lengths_above_host_limit() {
             field: "delay queue entries",
             length: BOP_DELAY_QUEUE_BYTE_OVERFLOW_LENGTH,
             maximum: isize::MAX as usize / std::mem::size_of::<BopDelayQueueEntrySnapshot>(),
+        })
+    );
+}
+
+#[test]
+fn sbooe_prefetcher_config_rejects_vector_lengths_above_host_limit() {
+    assert!(matches!(
+        SbooePrefetcherConfig::new(64, SBOOE_SANDBOX_BYTE_OVERFLOW_LENGTH, 4, 25, 2),
+        Err(SbooePrefetcherError::VectorLengthTooLarge {
+            field: "sequential prefetchers",
+            length: SBOOE_SANDBOX_BYTE_OVERFLOW_LENGTH,
+            ..
+        })
+    ));
+    assert_eq!(
+        SbooePrefetcherConfig::new(64, 3, SBOOE_SANDBOX_ENTRY_BYTE_OVERFLOW_LENGTH, 25, 2),
+        Err(SbooePrefetcherError::VectorLengthTooLarge {
+            field: "sandbox entries",
+            length: SBOOE_SANDBOX_ENTRY_BYTE_OVERFLOW_LENGTH,
+            maximum: isize::MAX as usize / std::mem::size_of::<SbooeSandboxEntrySnapshot>(),
+        })
+    );
+    assert_eq!(
+        SbooePrefetcherConfig::new(64, 3, 4, 25, U64_BYTE_OVERFLOW_LENGTH),
+        Err(SbooePrefetcherError::VectorLengthTooLarge {
+            field: "latency buffer entries",
+            length: U64_BYTE_OVERFLOW_LENGTH,
+            maximum: isize::MAX as usize / std::mem::size_of::<u64>(),
         })
     );
 }
