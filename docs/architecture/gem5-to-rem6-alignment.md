@@ -2964,8 +2964,10 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   aq/rl ordering propagation into parallel transport atomic requests. RISC-V
   ISA tests cover typed `mcycle` and `minstret` machine writes, executable
   `cycle` and `instret` CSR reads from hart state, user read aliases, user write
-  rejection, wrapping increments, CSR address decoding, and counter snapshot
-  restore. Dedicated CSR counter tests cover RV32 low/high word address
+  rejection, read-only `CSRRS`/`CSRRC` zero-source and `CSRRSI`/`CSRRCI`
+  zero-immediate aliases for `cycle`, `instret`, and `mhartid`, wrapping
+  increments, CSR address decoding, and counter snapshot restore.
+  Dedicated CSR counter tests cover RV32 low/high word address
   decoding, high-half user read aliases, machine low/high word writes that
   preserve the other half, and read-only errors for user high-half writes.
   RISC-V GDB target-description tests cover RV32 and RV64 target annex lists,

@@ -32,6 +32,10 @@ fn csr_read_type(csr: u32, rd: u8) -> u32 {
     (csr << 20) | (0x2 << 12) | (u32::from(rd) << 7) | 0x73
 }
 
+fn csr_type(csr: u32, rs1_or_zimm: u8, funct3: u32, rd: u8) -> u32 {
+    (csr << 20) | (u32::from(rs1_or_zimm) << 15) | (funct3 << 12) | (u32::from(rd) << 7) | 0x73
+}
+
 fn i_type(imm: i32, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
     (((imm as u32) & 0x0fff) << 20)
         | (u32::from(rs1) << 15)
@@ -228,6 +232,54 @@ fn hart_reads_cycle_and_instret_counter_csrs() {
     assert_eq!(hart.read(reg(5)), 1);
     assert_eq!(hart.read(reg(6)), 2);
     assert_eq!(hart.counter_snapshot(), RiscvCounterSnapshot::new(3, 3));
+}
+
+#[test]
+fn hart_reads_counter_csrs_through_read_only_csr_aliases() {
+    let cycle_clear = RiscvInstruction::decode(csr_type(0xc00, 0, 0x3, 5)).unwrap();
+    let instret_set_immediate = RiscvInstruction::decode(csr_type(0xc02, 0, 0x6, 6)).unwrap();
+    let cycle_clear_immediate = RiscvInstruction::decode(csr_type(0xb00, 0, 0x7, 7)).unwrap();
+    let hart_id_clear = RiscvInstruction::decode(csr_type(0xf14, 0, 0x3, 8)).unwrap();
+
+    assert_eq!(
+        cycle_clear,
+        RiscvInstruction::ReadCounterCsr {
+            rd: reg(5),
+            csr: RiscvCounterCsr::Cycle,
+        }
+    );
+    assert_eq!(
+        instret_set_immediate,
+        RiscvInstruction::ReadCounterCsr {
+            rd: reg(6),
+            csr: RiscvCounterCsr::Instret,
+        }
+    );
+    assert_eq!(
+        cycle_clear_immediate,
+        RiscvInstruction::ReadCounterCsr {
+            rd: reg(7),
+            csr: RiscvCounterCsr::Cycle,
+        }
+    );
+    assert_eq!(
+        hart_id_clear,
+        RiscvInstruction::ReadMachineHartId { rd: reg(8) }
+    );
+
+    let mut hart = RiscvHartState::with_hart_id(0x2800, 11);
+    hart.execute(RiscvInstruction::decode(i_type(1, 0, 0x0, 1, 0x13)).unwrap())
+        .unwrap();
+    hart.execute(cycle_clear).unwrap();
+    hart.execute(instret_set_immediate).unwrap();
+    hart.execute(cycle_clear_immediate).unwrap();
+    hart.execute(hart_id_clear).unwrap();
+
+    assert_eq!(hart.read(reg(5)), 1);
+    assert_eq!(hart.read(reg(6)), 2);
+    assert_eq!(hart.read(reg(7)), 3);
+    assert_eq!(hart.read(reg(8)), 11);
+    assert_eq!(hart.counter_snapshot(), RiscvCounterSnapshot::new(5, 5));
 }
 
 #[test]

@@ -330,13 +330,20 @@ fn decode_system(raw: u32) -> Result<RiscvInstruction, RiscvError> {
 
 fn decode_csr(raw: u32) -> Result<RiscvInstruction, RiscvError> {
     let csr = csr(raw);
-    match (funct3(raw), csr, rs1(raw).index()) {
-        (0x2, 0xf14, 0) => Ok(RiscvInstruction::ReadMachineHartId { rd: rd(raw) }),
-        (0x2, csr, 0) => counter_csr(csr)
+    if !is_read_only_csr_access(raw) {
+        return Err(RiscvError::UnknownEncoding { raw });
+    }
+
+    match csr {
+        0xf14 => Ok(RiscvInstruction::ReadMachineHartId { rd: rd(raw) }),
+        csr => counter_csr(csr)
             .map(|csr| RiscvInstruction::ReadCounterCsr { rd: rd(raw), csr })
             .ok_or(RiscvError::UnknownEncoding { raw }),
-        _ => Err(RiscvError::UnknownEncoding { raw }),
     }
+}
+
+fn is_read_only_csr_access(raw: u32) -> bool {
+    matches!((funct3(raw), rs1(raw).index()), (0x2 | 0x3 | 0x6 | 0x7, 0))
 }
 
 fn counter_csr(address: u16) -> Option<RiscvCounterCsr> {
