@@ -293,6 +293,35 @@ impl GdbRemoteRegisterBytes {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum GdbRemoteRegisterValue {
+    Bytes(GdbRemoteRegisterBytes),
+    Unavailable { byte_len: usize },
+}
+
+impl GdbRemoteRegisterValue {
+    pub const fn bytes(bytes: GdbRemoteRegisterBytes) -> Self {
+        Self::Bytes(bytes)
+    }
+
+    pub const fn unavailable(byte_len: usize) -> Self {
+        Self::Unavailable { byte_len }
+    }
+
+    fn encode_payload(&self) -> Vec<u8> {
+        match self {
+            Self::Bytes(bytes) => bytes.encode_payload(),
+            Self::Unavailable { byte_len } => vec![b'x'; byte_len * 2],
+        }
+    }
+}
+
+impl From<GdbRemoteRegisterBytes> for GdbRemoteRegisterValue {
+    fn from(bytes: GdbRemoteRegisterBytes) -> Self {
+        Self::Bytes(bytes)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GdbRemoteAckMode {
     Acknowledged,
@@ -306,7 +335,7 @@ pub struct GdbRemoteSession {
     gdb_features: Vec<GdbRemoteFeature>,
     stop_reply: GdbRemoteStopReply,
     register_bytes: GdbRemoteRegisterBytes,
-    register_values: BTreeMap<u64, GdbRemoteRegisterBytes>,
+    register_values: BTreeMap<u64, GdbRemoteRegisterValue>,
     last_response: Option<GdbRemotePacket>,
     interrupt_requested: bool,
 }
@@ -357,12 +386,18 @@ impl GdbRemoteSession {
         self.register_bytes = register_bytes;
     }
 
-    pub fn register_value(&self, number: u64) -> Option<&GdbRemoteRegisterBytes> {
+    pub fn register_value(&self, number: u64) -> Option<&GdbRemoteRegisterValue> {
         self.register_values.get(&number)
     }
 
     pub fn set_register_value(&mut self, number: u64, register_bytes: GdbRemoteRegisterBytes) {
-        self.register_values.insert(number, register_bytes);
+        self.register_values
+            .insert(number, GdbRemoteRegisterValue::Bytes(register_bytes));
+    }
+
+    pub fn set_register_unavailable(&mut self, number: u64, byte_len: usize) {
+        self.register_values
+            .insert(number, GdbRemoteRegisterValue::Unavailable { byte_len });
     }
 
     pub fn handle_packet(
@@ -386,8 +421,8 @@ impl GdbRemoteSession {
                 let payload = self
                     .register_values
                     .get(&number)
-                    .map(GdbRemoteRegisterBytes::encode_payload)
-                    .unwrap_or_default();
+                    .map(GdbRemoteRegisterValue::encode_payload)
+                    .unwrap_or_else(|| b"E01".to_vec());
                 self.packet_response(payload)
             }
             GdbRemoteCommand::StartNoAckMode => {

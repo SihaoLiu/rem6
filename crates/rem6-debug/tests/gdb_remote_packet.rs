@@ -201,6 +201,9 @@ fn gdb_remote_commands_decode_single_register_requests() {
     let command = GdbRemoteCommand::parse(&GdbRemotePacket::parse_frame(b"$p1a#02").unwrap());
 
     assert_eq!(command, GdbRemoteCommand::ReadRegister { number: 0x1a });
+
+    let uppercase = GdbRemoteCommand::parse(&GdbRemotePacket::new(b"p1A".to_vec()).unwrap());
+    assert_eq!(uppercase, GdbRemoteCommand::ReadRegister { number: 0x1a });
 }
 
 #[test]
@@ -210,6 +213,13 @@ fn gdb_remote_commands_preserve_malformed_single_register_requests() {
 
     let invalid_number = GdbRemoteCommand::parse(&GdbRemotePacket::new(b"pzz".to_vec()).unwrap());
     assert_eq!(invalid_number, GdbRemoteCommand::Unknown(b"pzz".to_vec()));
+
+    let overflowing_number =
+        GdbRemoteCommand::parse(&GdbRemotePacket::new(b"p10000000000000000".to_vec()).unwrap());
+    assert_eq!(
+        overflowing_number,
+        GdbRemoteCommand::Unknown(b"p10000000000000000".to_vec()),
+    );
 }
 
 #[test]
@@ -277,7 +287,23 @@ fn gdb_remote_session_reports_single_register_bytes() {
 }
 
 #[test]
-fn gdb_remote_session_reports_empty_single_register_response_when_missing() {
+fn gdb_remote_session_reports_unavailable_single_register_bytes() {
+    let mut session = GdbRemoteSession::new(Vec::new());
+    session.set_register_unavailable(0x1a, 4);
+
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"p1a".to_vec()).unwrap())
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"xxxxxxxx".to_vec()).unwrap()),
+        ],
+    );
+}
+
+#[test]
+fn gdb_remote_session_reports_error_single_register_response_when_missing() {
     let mut session = GdbRemoteSession::new(Vec::new());
 
     assert_eq!(
@@ -286,7 +312,7 @@ fn gdb_remote_session_reports_empty_single_register_response_when_missing() {
             .unwrap(),
         vec![
             GdbRemoteFrame::Ack,
-            GdbRemoteFrame::Packet(GdbRemotePacket::new(Vec::new()).unwrap()),
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"E01".to_vec()).unwrap()),
         ],
     );
 }
