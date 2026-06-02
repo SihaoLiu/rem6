@@ -298,6 +298,10 @@ pub enum RiscvInstruction {
     },
     FenceI,
     WaitForInterrupt,
+    SfenceVma {
+        rs1: Register,
+        rs2: Register,
+    },
     ReadMachineHartId {
         rd: Register,
     },

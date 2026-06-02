@@ -37,6 +37,15 @@ fn csr_type(csr: u32, rs1_or_zimm: u8, funct3: u32, rd: u8) -> u32 {
     (csr << 20) | (u32::from(rs1_or_zimm) << 15) | (funct3 << 12) | (u32::from(rd) << 7) | 0x73
 }
 
+fn sfence_vma_type(rs1: u8, rs2: u8, rd: u8, funct3: u32) -> u32 {
+    (0x09 << 25)
+        | (u32::from(rs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (funct3 << 12)
+        | (u32::from(rd) << 7)
+        | 0x73
+}
+
 fn i_type(imm: i32, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
     (((imm as u32) & 0x0fff) << 20)
         | (u32::from(rs1) << 15)
@@ -1378,6 +1387,57 @@ fn hart_reports_wait_for_interrupt_as_system_event() {
     assert_eq!(hart.counter_snapshot(), RiscvCounterSnapshot::new(1, 1));
 
     for raw in [0x1050_00f3, 0x1050_8073] {
+        assert_eq!(
+            RiscvInstruction::decode(raw),
+            Err(RiscvError::UnknownEncoding { raw })
+        );
+    }
+}
+
+#[test]
+fn hart_reports_sfence_vma_as_system_event() {
+    let instruction = RiscvInstruction::decode(sfence_vma_type(5, 6, 0, 0)).unwrap();
+    assert_eq!(
+        instruction,
+        RiscvInstruction::SfenceVma {
+            rs1: reg(5),
+            rs2: reg(6),
+        }
+    );
+
+    let mut hart = RiscvHartState::new(0xd000);
+    hart.write(reg(5), 0xffff_0000_8000_1000);
+    hart.write(reg(6), 0x2a);
+
+    let record = hart.execute(instruction).unwrap();
+
+    assert_eq!(record.next_pc(), 0xd004);
+    assert_eq!(record.register_writes(), &[]);
+    assert_eq!(record.memory_access(), None);
+    assert_eq!(record.trap(), None);
+    assert_eq!(
+        record.system_event(),
+        Some(&RiscvSystemEvent::SfenceVma {
+            pc: 0xd000,
+            virtual_address: Some(0xffff_0000_8000_1000),
+            address_space: Some(0x2a),
+        })
+    );
+    assert_eq!(hart.counter_snapshot(), RiscvCounterSnapshot::new(1, 1));
+
+    let all_scope = RiscvInstruction::decode(sfence_vma_type(0, 0, 0, 0)).unwrap();
+    let all_scope_record = hart.execute(all_scope).unwrap();
+    assert_eq!(
+        all_scope_record.system_event(),
+        Some(&RiscvSystemEvent::SfenceVma {
+            pc: 0xd004,
+            virtual_address: None,
+            address_space: None,
+        })
+    );
+    assert_eq!(hart.pc(), 0xd008);
+
+    for raw in [sfence_vma_type(0, 0, 1, 0), sfence_vma_type(0, 0, 0, 1)] {
         assert_eq!(
             RiscvInstruction::decode(raw),
             Err(RiscvError::UnknownEncoding { raw })

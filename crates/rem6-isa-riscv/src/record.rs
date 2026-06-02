@@ -28,7 +28,14 @@ impl RiscvTrap {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RiscvSystemEvent {
-    WaitForInterrupt { pc: u64 },
+    WaitForInterrupt {
+        pc: u64,
+    },
+    SfenceVma {
+        pc: u64,
+        virtual_address: Option<u64>,
+        address_space: Option<u64>,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

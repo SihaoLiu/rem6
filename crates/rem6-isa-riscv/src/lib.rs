@@ -329,8 +329,16 @@ fn decode_system(raw: u32) -> Result<RiscvInstruction, RiscvError> {
         0x0000_0073 => Ok(RiscvInstruction::Ecall),
         0x0010_0073 => Ok(RiscvInstruction::Ebreak),
         0x1050_0073 => Ok(RiscvInstruction::WaitForInterrupt),
+        raw if is_sfence_vma(raw) => Ok(RiscvInstruction::SfenceVma {
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
         _ => decode_csr(raw),
     }
+}
+
+const fn is_sfence_vma(raw: u32) -> bool {
+    raw & 0xfe00_7fff == 0x1200_0073
 }
 
 fn decode_csr(raw: u32) -> Result<RiscvInstruction, RiscvError> {
@@ -1156,6 +1164,13 @@ impl RiscvHartState {
             RiscvInstruction::Fence { .. } | RiscvInstruction::FenceI => {}
             RiscvInstruction::WaitForInterrupt => {
                 system_event = Some(RiscvSystemEvent::WaitForInterrupt { pc });
+            }
+            RiscvInstruction::SfenceVma { rs1, rs2 } => {
+                system_event = Some(RiscvSystemEvent::SfenceVma {
+                    pc,
+                    virtual_address: (!rs1.is_zero()).then(|| self.read(rs1)),
+                    address_space: (!rs2.is_zero()).then(|| self.read(rs2)),
+                });
             }
             RiscvInstruction::ReadMachineHartId { rd } => {
                 write_register(self, &mut register_writes, rd, self.hart_id);
