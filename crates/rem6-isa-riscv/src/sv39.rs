@@ -12,6 +12,7 @@ const PTE_DIRTY_BIT: u64 = 1 << 7;
 const PTE_PPN_SHIFT: u64 = 10;
 const PTE_PPN_MASK: u64 = (1_u64 << 44) - 1;
 const PTE_RESERVED_BITS_MASK: u64 = u64::MAX << 54;
+const PTE_SIZE: u64 = 8;
 const PAGE_SHIFT: u64 = 12;
 const PAGE_OFFSET_MASK: u64 = (1_u64 << PAGE_SHIFT) - 1;
 const SV39_VIRTUAL_ADDRESS_BITS: u64 = 39;
@@ -21,6 +22,10 @@ const SV39_HIGH_BITS_MASK: u64 = u64::MAX << SV39_VIRTUAL_ADDRESS_BITS;
 const SV39_VPN_MASK: u64 = (1_u64 << SV39_VIRTUAL_PAGE_NUMBER_BITS) - 1;
 const SV39_LEVEL_BITS: u64 = 9;
 const SV39_LEVEL_MASK: u64 = (1_u64 << SV39_LEVEL_BITS) - 1;
+const SV39_PPN0_SHIFT: u64 = 0;
+const SV39_PPN1_SHIFT: u64 = SV39_LEVEL_BITS;
+const SV39_PPN2_SHIFT: u64 = SV39_LEVEL_BITS * 2;
+const SV39_PPN2_MASK: u64 = (1_u64 << 26) - 1;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum RiscvSv39AccessKind {
@@ -75,6 +80,17 @@ impl RiscvSv39VirtualAddress {
     pub const fn vpn(self, level: RiscvSv39PageTableLevel) -> u16 {
         let shift = PAGE_SHIFT + (level.number() * SV39_LEVEL_BITS);
         ((self.raw >> shift) & SV39_LEVEL_MASK) as u16
+    }
+
+    pub const fn page_table_entry_address(
+        self,
+        table_ppn: u64,
+        level: RiscvSv39PageTableLevel,
+    ) -> Result<u64, RiscvSv39PageFault> {
+        if table_ppn > PTE_PPN_MASK {
+            return Err(RiscvSv39PageFault::PageTablePointerOutOfRange { ppn: table_ppn });
+        }
+        Ok((table_ppn << PAGE_SHIFT) + ((self.vpn(level) as u64) * PTE_SIZE))
     }
 }
 
@@ -136,6 +152,20 @@ impl RiscvSv39Pte {
         self.physical_page_number() << PAGE_SHIFT
     }
 
+    pub const fn ppn(self, level: RiscvSv39PageTableLevel) -> u64 {
+        match level {
+            RiscvSv39PageTableLevel::Level0 => {
+                (self.physical_page_number() >> SV39_PPN0_SHIFT) & SV39_LEVEL_MASK
+            }
+            RiscvSv39PageTableLevel::Level1 => {
+                (self.physical_page_number() >> SV39_PPN1_SHIFT) & SV39_LEVEL_MASK
+            }
+            RiscvSv39PageTableLevel::Level2 => {
+                (self.physical_page_number() >> SV39_PPN2_SHIFT) & SV39_PPN2_MASK
+            }
+        }
+    }
+
     pub const fn validate(self) -> Result<(), RiscvSv39PageFault> {
         if !self.valid() {
             return Err(RiscvSv39PageFault::InvalidEntry);
@@ -183,11 +213,58 @@ impl RiscvSv39Pte {
         Ok(())
     }
 
+    pub const fn leaf_physical_address(
+        self,
+        virtual_address: RiscvSv39VirtualAddress,
+        level: RiscvSv39PageTableLevel,
+        access: RiscvSv39AccessKind,
+    ) -> Result<u64, RiscvSv39PageFault> {
+        match self.validate_leaf_access(access) {
+            Ok(()) => {}
+            Err(error) => return Err(error),
+        }
+        if self.is_misaligned_superpage(level) {
+            return Err(RiscvSv39PageFault::MisalignedSuperpage {
+                level,
+                ppn: self.physical_page_number(),
+            });
+        }
+
+        Ok(match level {
+            RiscvSv39PageTableLevel::Level0 => {
+                self.physical_address_base() | virtual_address.page_offset()
+            }
+            RiscvSv39PageTableLevel::Level1 => {
+                (self.ppn(RiscvSv39PageTableLevel::Level2) << 30)
+                    | (self.ppn(RiscvSv39PageTableLevel::Level1) << 21)
+                    | ((virtual_address.vpn(RiscvSv39PageTableLevel::Level0) as u64) << 12)
+                    | virtual_address.page_offset()
+            }
+            RiscvSv39PageTableLevel::Level2 => {
+                (self.ppn(RiscvSv39PageTableLevel::Level2) << 30)
+                    | ((virtual_address.vpn(RiscvSv39PageTableLevel::Level1) as u64) << 21)
+                    | ((virtual_address.vpn(RiscvSv39PageTableLevel::Level0) as u64) << 12)
+                    | virtual_address.page_offset()
+            }
+        })
+    }
+
     const fn permits(self, access: RiscvSv39AccessKind) -> bool {
         match access {
             RiscvSv39AccessKind::InstructionFetch => self.executable(),
             RiscvSv39AccessKind::Load => self.readable(),
             RiscvSv39AccessKind::Store | RiscvSv39AccessKind::Atomic => self.writable(),
+        }
+    }
+
+    const fn is_misaligned_superpage(self, level: RiscvSv39PageTableLevel) -> bool {
+        match level {
+            RiscvSv39PageTableLevel::Level0 => false,
+            RiscvSv39PageTableLevel::Level1 => self.ppn(RiscvSv39PageTableLevel::Level0) != 0,
+            RiscvSv39PageTableLevel::Level2 => {
+                self.ppn(RiscvSv39PageTableLevel::Level0) != 0
+                    || self.ppn(RiscvSv39PageTableLevel::Level1) != 0
+            }
         }
     }
 }
@@ -200,14 +277,27 @@ impl RiscvSv39AccessKind {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RiscvSv39PageFault {
-    NonCanonicalVirtualAddress { address: u64 },
+    NonCanonicalVirtualAddress {
+        address: u64,
+    },
+    PageTablePointerOutOfRange {
+        ppn: u64,
+    },
     InvalidEntry,
-    ReservedBitsSet { bits: u64 },
+    ReservedBitsSet {
+        bits: u64,
+    },
     ReservedPermissionEncoding,
     NonLeaf,
-    PermissionDenied { access: RiscvSv39AccessKind },
+    PermissionDenied {
+        access: RiscvSv39AccessKind,
+    },
     AccessedBitClear,
     DirtyBitClear,
+    MisalignedSuperpage {
+        level: RiscvSv39PageTableLevel,
+        ppn: u64,
+    },
 }
 
 impl fmt::Display for RiscvSv39PageFault {
@@ -216,6 +306,10 @@ impl fmt::Display for RiscvSv39PageFault {
             Self::NonCanonicalVirtualAddress { address } => write!(
                 formatter,
                 "RISC-V Sv39 virtual address {address:#x} is not canonical"
+            ),
+            Self::PageTablePointerOutOfRange { ppn } => write!(
+                formatter,
+                "RISC-V Sv39 page-table pointer PPN {ppn:#x} is out of range"
             ),
             Self::InvalidEntry => write!(formatter, "RISC-V Sv39 PTE is not valid"),
             Self::ReservedBitsSet { bits } => {
@@ -231,6 +325,10 @@ impl fmt::Display for RiscvSv39PageFault {
             }
             Self::AccessedBitClear => write!(formatter, "RISC-V Sv39 PTE accessed bit is clear"),
             Self::DirtyBitClear => write!(formatter, "RISC-V Sv39 PTE dirty bit is clear"),
+            Self::MisalignedSuperpage { level, ppn } => write!(
+                formatter,
+                "RISC-V Sv39 {level:?} superpage PPN {ppn:#x} is not aligned"
+            ),
         }
     }
 }

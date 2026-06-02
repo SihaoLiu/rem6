@@ -159,3 +159,93 @@ fn sv39_virtual_address_rejects_noncanonical_hole_addresses() {
         Err(RiscvSv39PageFault::NonCanonicalVirtualAddress { address: 1 << 38 })
     );
 }
+
+#[test]
+fn sv39_virtual_address_computes_page_table_entry_addresses() {
+    let address =
+        RiscvSv39VirtualAddress::new((0x012_u64 << 30) | (0x034_u64 << 21) | (0x056_u64 << 12))
+            .unwrap();
+
+    assert_eq!(
+        address.page_table_entry_address(0x12345, RiscvSv39PageTableLevel::Level2),
+        Ok((0x12345_u64 << 12) + (0x012 * 8))
+    );
+    assert_eq!(
+        address.page_table_entry_address(0x22001, RiscvSv39PageTableLevel::Level1),
+        Ok((0x22001_u64 << 12) + (0x034 * 8))
+    );
+    assert_eq!(
+        address.page_table_entry_address(0x33002, RiscvSv39PageTableLevel::Level0),
+        Ok((0x33002_u64 << 12) + (0x056 * 8))
+    );
+    assert_eq!(
+        address.page_table_entry_address(1 << 44, RiscvSv39PageTableLevel::Level2),
+        Err(RiscvSv39PageFault::PageTablePointerOutOfRange { ppn: 1 << 44 })
+    );
+}
+
+#[test]
+fn sv39_leaf_physical_address_uses_level_specific_page_fragments() {
+    let address = RiscvSv39VirtualAddress::new(
+        (0x012_u64 << 30) | (0x034_u64 << 21) | (0x056_u64 << 12) | 0x789,
+    )
+    .unwrap();
+
+    let page = RiscvSv39Pte::new((0x12345_u64 << 10) | V | R | A);
+    assert_eq!(
+        page.leaf_physical_address(
+            address,
+            RiscvSv39PageTableLevel::Level0,
+            RiscvSv39AccessKind::Load
+        ),
+        Ok((0x12345_u64 << 12) | 0x789)
+    );
+
+    let megapage_ppn = (0x1234_u64 << 18) | (0x1ab_u64 << 9);
+    let megapage = RiscvSv39Pte::new((megapage_ppn << 10) | V | R | W | A | D);
+    assert_eq!(
+        megapage.leaf_physical_address(
+            address,
+            RiscvSv39PageTableLevel::Level1,
+            RiscvSv39AccessKind::Store,
+        ),
+        Ok((0x1234_u64 << 30) | (0x1ab_u64 << 21) | (0x056_u64 << 12) | 0x789)
+    );
+
+    let gigapage_ppn = 0x2345_u64 << 18;
+    let gigapage = RiscvSv39Pte::new((gigapage_ppn << 10) | V | X | A);
+    assert_eq!(
+        gigapage.leaf_physical_address(
+            address,
+            RiscvSv39PageTableLevel::Level2,
+            RiscvSv39AccessKind::InstructionFetch,
+        ),
+        Ok((0x2345_u64 << 30) | (0x034_u64 << 21) | (0x056_u64 << 12) | 0x789)
+    );
+
+    let misaligned_megapage = RiscvSv39Pte::new(((megapage_ppn | 1) << 10) | V | R | A);
+    assert_eq!(
+        misaligned_megapage.leaf_physical_address(
+            address,
+            RiscvSv39PageTableLevel::Level1,
+            RiscvSv39AccessKind::Load,
+        ),
+        Err(RiscvSv39PageFault::MisalignedSuperpage {
+            level: RiscvSv39PageTableLevel::Level1,
+            ppn: megapage_ppn | 1,
+        })
+    );
+
+    let misaligned_gigapage = RiscvSv39Pte::new(((gigapage_ppn | (1 << 9)) << 10) | V | X | A);
+    assert_eq!(
+        misaligned_gigapage.leaf_physical_address(
+            address,
+            RiscvSv39PageTableLevel::Level2,
+            RiscvSv39AccessKind::InstructionFetch,
+        ),
+        Err(RiscvSv39PageFault::MisalignedSuperpage {
+            level: RiscvSv39PageTableLevel::Level2,
+            ppn: gigapage_ppn | (1 << 9),
+        })
+    );
+}
