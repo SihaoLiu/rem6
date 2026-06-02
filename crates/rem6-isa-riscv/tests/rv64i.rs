@@ -283,6 +283,23 @@ fn hart_reads_counter_csrs_through_read_only_csr_aliases() {
 }
 
 #[test]
+fn decoder_rejects_counter_csr_write_aliases() {
+    let cases = [
+        csr_type(0xc00, 1, 0x2, 5),
+        csr_type(0xc02, 1, 0x3, 6),
+        csr_type(0xc00, 1, 0x6, 7),
+        csr_type(0xc02, 1, 0x7, 8),
+    ];
+
+    for raw in cases {
+        assert_eq!(
+            RiscvInstruction::decode(raw),
+            Err(RiscvError::UnknownEncoding { raw })
+        );
+    }
+}
+
+#[test]
 fn decoder_extracts_rv64i_fields_and_immediates() {
     assert_eq!(
         RiscvInstruction::decode(i_type(-1, 0, 0x0, 5, 0x13)).unwrap(),

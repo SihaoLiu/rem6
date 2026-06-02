@@ -17,7 +17,7 @@ use encoding::{
 use integer::{
     div_signed, div_signed_word, div_unsigned, div_unsigned_word, mulh_signed,
     mulh_signed_unsigned, mulh_unsigned, rem_signed, rem_signed_word, rem_unsigned,
-    rem_unsigned_word,
+    rem_unsigned_word, sign_extend_word,
 };
 
 pub use control_flow::{
@@ -330,7 +330,7 @@ fn decode_system(raw: u32) -> Result<RiscvInstruction, RiscvError> {
 
 fn decode_csr(raw: u32) -> Result<RiscvInstruction, RiscvError> {
     let csr = csr(raw);
-    if !is_read_only_csr_access(raw) {
+    if !is_csr_no_write_read(raw) {
         return Err(RiscvError::UnknownEncoding { raw });
     }
 
@@ -342,7 +342,7 @@ fn decode_csr(raw: u32) -> Result<RiscvInstruction, RiscvError> {
     }
 }
 
-fn is_read_only_csr_access(raw: u32) -> bool {
+fn is_csr_no_write_read(raw: u32) -> bool {
     matches!((funct3(raw), rs1(raw).index()), (0x2 | 0x3 | 0x6 | 0x7, 0))
 }
 
@@ -950,19 +950,19 @@ impl RiscvHartState {
             }
             RiscvInstruction::Divw { rd, rs1, rs2 } => {
                 let value = div_signed_word(self.read(rs1), self.read(rs2));
-                write_register(self, &mut register_writes, rd, sign_extend_word(value));
+                write_register(self, &mut register_writes, rd, value);
             }
             RiscvInstruction::Divuw { rd, rs1, rs2 } => {
                 let value = div_unsigned_word(self.read(rs1), self.read(rs2));
-                write_register(self, &mut register_writes, rd, sign_extend_word(value));
+                write_register(self, &mut register_writes, rd, value);
             }
             RiscvInstruction::Remw { rd, rs1, rs2 } => {
                 let value = rem_signed_word(self.read(rs1), self.read(rs2));
-                write_register(self, &mut register_writes, rd, sign_extend_word(value));
+                write_register(self, &mut register_writes, rd, value);
             }
             RiscvInstruction::Remuw { rd, rs1, rs2 } => {
                 let value = rem_unsigned_word(self.read(rs1), self.read(rs2));
-                write_register(self, &mut register_writes, rd, sign_extend_word(value));
+                write_register(self, &mut register_writes, rd, value);
             }
             RiscvInstruction::Addw { rd, rs1, rs2 } => {
                 let value = (self.read(rs1) as u32).wrapping_add(self.read(rs2) as u32);
@@ -1162,10 +1162,6 @@ fn write_register(
 
     hart.write(register, value);
     writes.push(RegisterWrite::new(register, value));
-}
-
-fn sign_extend_word(value: u32) -> u64 {
-    i64::from(value as i32) as u64
 }
 
 fn add_signed(value: u64, offset: i64) -> Result<u64, RiscvError> {

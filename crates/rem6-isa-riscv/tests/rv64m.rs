@@ -111,6 +111,20 @@ fn hart_executes_rv64m_multiplication_high_and_low_results() {
 }
 
 #[test]
+fn hart_executes_mulhsu_with_high_unsigned_operand_bit() {
+    let mut hart = RiscvHartState::new(0x1800);
+    hart.write(reg(2), u64::MAX);
+    hart.write(reg(3), u64::MAX);
+
+    let instruction = RiscvInstruction::decode(r_type(0x01, 3, 2, 0x2, 5, 0x33)).unwrap();
+    let record = hart.execute(instruction).unwrap();
+
+    assert_eq!(hart.read(reg(5)), u64::MAX);
+    assert_eq!(record.memory_access(), None);
+    assert_eq!(record.register_writes()[0].value(), u64::MAX);
+}
+
+#[test]
 fn hart_executes_rv64m_division_and_remainder_edge_cases() {
     let mut hart = RiscvHartState::new(0x2000);
 
