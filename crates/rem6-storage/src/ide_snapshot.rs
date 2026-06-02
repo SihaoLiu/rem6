@@ -1,7 +1,10 @@
+use crate::ide::IDE_MAX_TRANSFER_SECTORS;
 use crate::{
     IdeChannelId, IdeControllerError, IdeDeviceId, IdeDmaDirection, IdeTaskFile,
     IDE_BMI_COMMAND_RW, IDE_BMI_COMMAND_START, IDE_BMI_STATUS_ACTIVE, IDE_BMI_STATUS_DMA_CAP0,
-    IDE_BMI_STATUS_DMA_CAP1, IDE_BMI_STATUS_DMA_ERROR, IDE_BMI_STATUS_INTERRUPT,
+    IDE_BMI_STATUS_DMA_CAP1, IDE_BMI_STATUS_DMA_ERROR, IDE_BMI_STATUS_INTERRUPT, IDE_COMMAND_READ,
+    IDE_COMMAND_READ_DMA, IDE_COMMAND_READ_MULTI, IDE_COMMAND_WRITE, IDE_COMMAND_WRITE_DMA,
+    IDE_COMMAND_WRITE_MULTI,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -259,7 +262,17 @@ impl IdePendingCommandSnapshot {
     }
 
     pub(crate) fn validate(self) -> Result<(), IdeSnapshotError> {
-        if self.sectors == 0 {
+        if !matches!(
+            self.command,
+            IDE_COMMAND_READ
+                | IDE_COMMAND_READ_MULTI
+                | IDE_COMMAND_WRITE
+                | IDE_COMMAND_WRITE_MULTI
+                | IDE_COMMAND_READ_DMA
+                | IDE_COMMAND_WRITE_DMA
+        ) || self.sectors == 0
+            || self.sectors > IDE_MAX_TRANSFER_SECTORS
+        {
             return Err(IdeSnapshotError::InvalidPendingCommand {
                 command: self.command,
                 sectors: self.sectors,

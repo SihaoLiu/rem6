@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use rem6_storage::{
-    IdeDeviceId, IdeDisk, IdeDiskError, IdeDiskSnapshot, IdeDiskTransferSnapshot,
+    IdeDeviceId, IdeDisk, IdeDiskError, IdeDiskSnapshot, IdeDiskTransferSnapshot, IdeDmaDirection,
     IdePendingCommandSnapshot, RawStorageImage, StorageError, StorageImageLayer, StorageSectorId,
     IDE_COMMAND_ATAPI_IDENTIFY_DEVICE, IDE_COMMAND_IDENTIFY, IDE_COMMAND_READ,
     IDE_COMMAND_READ_NATIVE_MAX, IDE_COMMAND_WRITE, IDE_CONTROL_OFFSET, IDE_CONTROL_RST,
@@ -241,11 +241,13 @@ fn ide_disk_snapshot_restores_task_file_and_partial_write_transfer() {
 }
 
 #[test]
-fn ide_disk_restore_rejects_pending_transfer_above_vec_capacity_before_mutation() {
-    let image = Arc::new(RawStorageImage::from_bytes(image_bytes(&[0x01])).unwrap());
+fn ide_disk_restore_rejects_pending_transfer_above_ide_sector_count_before_mutation() {
+    let image = Arc::new(
+        RawStorageImage::from_bytes(vec![0; 300 * STORAGE_SECTOR_BYTES as usize]).unwrap(),
+    );
     let mut disk = IdeDisk::new(image as Arc<dyn StorageImageLayer>, IdeDeviceId::Device0).unwrap();
     let before = disk.snapshot();
-    let sectors = isize::MAX as u64 / STORAGE_SECTOR_BYTES + 1;
+    let sectors = 257;
     let wrong = IdeDiskSnapshot::from_parts(
         IdeDeviceId::Device0,
         *before.task_file(),
@@ -258,11 +260,184 @@ fn ide_disk_restore_rejects_pending_transfer_above_vec_capacity_before_mutation(
 
     assert!(matches!(
         disk.restore(&wrong),
+        Err(IdeDiskError::InvalidPendingCommandSnapshot {
+            command: IDE_COMMAND_READ,
+            sectors: actual,
+        }) if actual == sectors
+    ));
+    assert_eq!(disk.snapshot(), before);
+}
+
+#[test]
+fn ide_disk_restore_rejects_invalid_pending_command_opcode_before_mutation() {
+    let image = Arc::new(RawStorageImage::from_bytes(image_bytes(&[0x01])).unwrap());
+    let mut disk = IdeDisk::new(image as Arc<dyn StorageImageLayer>, IdeDeviceId::Device0).unwrap();
+    let before = disk.snapshot();
+    let command = 0x99;
+    let wrong = IdeDiskSnapshot::from_parts(
+        IdeDeviceId::Device0,
+        *before.task_file(),
+        before.status(),
+        before.control(),
+        before.pending_interrupt(),
+        before.transfer().cloned(),
+        Some(IdePendingCommandSnapshot::new(command, 0, 1)),
+    );
+
+    assert!(matches!(
+        disk.restore(&wrong),
+        Err(IdeDiskError::InvalidPendingCommandSnapshot {
+            command: actual_command,
+            sectors: 1,
+        }) if actual_command == command
+    ));
+    assert_eq!(disk.snapshot(), before);
+}
+
+#[test]
+fn ide_disk_restore_rejects_active_output_transfer_out_of_range_before_mutation() {
+    let image = Arc::new(RawStorageImage::from_bytes(image_bytes(&[0x01])).unwrap());
+    let mut disk = IdeDisk::new(image as Arc<dyn StorageImageLayer>, IdeDeviceId::Device0).unwrap();
+    let before = disk.snapshot();
+    let wrong = IdeDiskSnapshot::from_parts(
+        IdeDeviceId::Device0,
+        *before.task_file(),
+        IDE_STATUS_DRDY | IDE_STATUS_DRQ,
+        before.control(),
+        before.pending_interrupt(),
+        Some(IdeDiskTransferSnapshot::Output {
+            start_sector: 1,
+            cursor: 0,
+            payload: sector(0xaa).to_vec(),
+        }),
+        before.pending_command().copied(),
+    );
+
+    assert!(matches!(
+        disk.restore(&wrong),
         Err(IdeDiskError::Storage(StorageError::OutOfRange {
             sector,
-            sectors: actual,
+            sectors: 1,
             capacity_sectors: 1,
-        })) if sector == StorageSectorId::new(0) && actual == sectors
+        })) if sector == StorageSectorId::new(1)
+    ));
+    assert_eq!(disk.snapshot(), before);
+}
+
+#[test]
+fn ide_disk_restore_rejects_active_output_payload_without_sector_shape_before_mutation() {
+    let image = Arc::new(RawStorageImage::from_bytes(image_bytes(&[0x01])).unwrap());
+    let mut disk = IdeDisk::new(image as Arc<dyn StorageImageLayer>, IdeDeviceId::Device0).unwrap();
+    let before = disk.snapshot();
+    let payload = vec![0; 2];
+    let wrong = IdeDiskSnapshot::from_parts(
+        IdeDeviceId::Device0,
+        *before.task_file(),
+        IDE_STATUS_DRDY | IDE_STATUS_DRQ,
+        before.control(),
+        before.pending_interrupt(),
+        Some(IdeDiskTransferSnapshot::Output {
+            start_sector: 0,
+            cursor: 0,
+            payload,
+        }),
+        before.pending_command().copied(),
+    );
+
+    assert!(matches!(
+        disk.restore(&wrong),
+        Err(IdeDiskError::InvalidTransferSnapshot {
+            cursor: 0,
+            payload_bytes: 2,
+        })
+    ));
+    assert_eq!(disk.snapshot(), before);
+}
+
+#[test]
+fn ide_disk_restore_rejects_active_output_transfer_above_ide_sector_count_before_mutation() {
+    let image = Arc::new(
+        RawStorageImage::from_bytes(vec![0; 300 * STORAGE_SECTOR_BYTES as usize]).unwrap(),
+    );
+    let mut disk = IdeDisk::new(image as Arc<dyn StorageImageLayer>, IdeDeviceId::Device0).unwrap();
+    let before = disk.snapshot();
+    let sectors = 257;
+    let wrong = IdeDiskSnapshot::from_parts(
+        IdeDeviceId::Device0,
+        *before.task_file(),
+        IDE_STATUS_DRDY | IDE_STATUS_DRQ,
+        before.control(),
+        before.pending_interrupt(),
+        Some(IdeDiskTransferSnapshot::Output {
+            start_sector: 0,
+            cursor: 0,
+            payload: vec![0; sectors as usize * STORAGE_SECTOR_BYTES as usize],
+        }),
+        before.pending_command().copied(),
+    );
+
+    assert!(matches!(
+        disk.restore(&wrong),
+        Err(IdeDiskError::TransferTooLarge { sectors: actual }) if actual == sectors
+    ));
+    assert_eq!(disk.snapshot(), before);
+}
+
+#[test]
+fn ide_disk_restore_rejects_active_dma_transfer_out_of_range_before_mutation() {
+    let image = Arc::new(RawStorageImage::from_bytes(image_bytes(&[0x01])).unwrap());
+    let mut disk = IdeDisk::new(image as Arc<dyn StorageImageLayer>, IdeDeviceId::Device0).unwrap();
+    let before = disk.snapshot();
+    let wrong = IdeDiskSnapshot::from_parts(
+        IdeDeviceId::Device0,
+        *before.task_file(),
+        IDE_STATUS_DRDY | IDE_STATUS_DRQ,
+        before.control(),
+        before.pending_interrupt(),
+        Some(IdeDiskTransferSnapshot::Dma {
+            direction: IdeDmaDirection::ToGuest,
+            start_sector: 1,
+            sectors: 1,
+        }),
+        before.pending_command().copied(),
+    );
+
+    assert!(matches!(
+        disk.restore(&wrong),
+        Err(IdeDiskError::Storage(StorageError::OutOfRange {
+            sector,
+            sectors: 1,
+            capacity_sectors: 1,
+        })) if sector == StorageSectorId::new(1)
+    ));
+    assert_eq!(disk.snapshot(), before);
+}
+
+#[test]
+fn ide_disk_restore_rejects_active_dma_transfer_above_ide_sector_count_before_mutation() {
+    let image = Arc::new(
+        RawStorageImage::from_bytes(vec![0; 300 * STORAGE_SECTOR_BYTES as usize]).unwrap(),
+    );
+    let mut disk = IdeDisk::new(image as Arc<dyn StorageImageLayer>, IdeDeviceId::Device0).unwrap();
+    let before = disk.snapshot();
+    let sectors = 257;
+    let wrong = IdeDiskSnapshot::from_parts(
+        IdeDeviceId::Device0,
+        *before.task_file(),
+        IDE_STATUS_DRDY | IDE_STATUS_DRQ,
+        before.control(),
+        before.pending_interrupt(),
+        Some(IdeDiskTransferSnapshot::Dma {
+            direction: IdeDmaDirection::ToGuest,
+            start_sector: 0,
+            sectors,
+        }),
+        before.pending_command().copied(),
+    );
+
+    assert!(matches!(
+        disk.restore(&wrong),
+        Err(IdeDiskError::TransferTooLarge { sectors: actual }) if actual == sectors
     ));
     assert_eq!(disk.snapshot(), before);
 }

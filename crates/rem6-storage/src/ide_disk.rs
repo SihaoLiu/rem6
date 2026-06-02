@@ -6,12 +6,12 @@ use crate::ide::{
     IDE_COMMAND_READ_NATIVE_MAX, IDE_COMMAND_WRITE, IDE_COMMAND_WRITE_DMA, IDE_COMMAND_WRITE_MULTI,
     IDE_CONTROL_IEN, IDE_CONTROL_OFFSET, IDE_CONTROL_RST, IDE_DRIVE_LBA, IDE_DRIVE_OFFSET,
     IDE_ERROR_ABORT, IDE_ERROR_OFFSET, IDE_FEATURES_OFFSET, IDE_HCYL_OFFSET, IDE_LCYL_OFFSET,
-    IDE_NSECTOR_OFFSET, IDE_SECTOR_OFFSET, IDE_STATUS_BSY, IDE_STATUS_DF, IDE_STATUS_DRDY,
-    IDE_STATUS_DRQ, IDE_STATUS_ERR, IDE_STATUS_OFFSET, IDE_STATUS_SEEK,
+    IDE_MAX_TRANSFER_SECTORS, IDE_NSECTOR_OFFSET, IDE_SECTOR_OFFSET, IDE_STATUS_BSY, IDE_STATUS_DF,
+    IDE_STATUS_DRDY, IDE_STATUS_DRQ, IDE_STATUS_ERR, IDE_STATUS_OFFSET, IDE_STATUS_SEEK,
 };
 use crate::{
-    ide_identify_payload, IdeDiskError, IdeDiskSnapshot, IdeDmaDirection, IdeDmaRequest,
-    IdePendingCommand, IdeTaskFile, IdeTransfer, IdeTransferDirection, StorageError,
+    ide_identify_payload, IdeDiskError, IdeDiskSnapshot, IdeDiskTransferSnapshot, IdeDmaDirection,
+    IdeDmaRequest, IdePendingCommand, IdeTaskFile, IdeTransfer, IdeTransferDirection, StorageError,
     StorageImageLayer, StorageSectorId, STORAGE_SECTOR_BYTES,
 };
 
@@ -147,11 +147,42 @@ impl IdeDisk {
             });
         }
         if let Some(transfer) = &snapshot.transfer {
-            transfer.validate()?;
+            self.validate_snapshot_transfer(transfer)?;
         }
         if let Some(pending) = snapshot.pending_command {
             pending.validate()?;
             self.validate_snapshot_sector_range(pending.start_sector(), pending.sectors())?;
+        }
+        Ok(())
+    }
+
+    fn validate_snapshot_transfer(
+        &self,
+        transfer: &IdeDiskTransferSnapshot,
+    ) -> Result<(), IdeDiskError> {
+        transfer.validate()?;
+        match transfer {
+            IdeDiskTransferSnapshot::Input {
+                cursor, payload, ..
+            } => {
+                validate_snapshot_pio_payload(*cursor, payload)?;
+            }
+            IdeDiskTransferSnapshot::Output {
+                start_sector,
+                cursor,
+                payload,
+            } => {
+                let sectors = validate_snapshot_pio_payload(*cursor, payload)?;
+                self.validate_snapshot_sector_range(*start_sector, sectors)?;
+            }
+            IdeDiskTransferSnapshot::Dma {
+                start_sector,
+                sectors,
+                ..
+            } => {
+                validate_snapshot_sector_count(*sectors)?;
+                self.validate_snapshot_sector_range(*start_sector, *sectors)?;
+            }
         }
         Ok(())
     }
@@ -709,4 +740,23 @@ impl IdeDisk {
     const fn interrupts_disabled(&self) -> bool {
         self.control & IDE_CONTROL_IEN != 0
     }
+}
+
+fn validate_snapshot_pio_payload(cursor: usize, payload: &[u8]) -> Result<u64, IdeDiskError> {
+    if payload.is_empty() || !payload.len().is_multiple_of(STORAGE_SECTOR_BYTES as usize) {
+        return Err(IdeDiskError::InvalidTransferSnapshot {
+            cursor,
+            payload_bytes: payload.len(),
+        });
+    }
+    let sectors = payload.len() as u64 / STORAGE_SECTOR_BYTES;
+    validate_snapshot_sector_count(sectors)?;
+    Ok(sectors)
+}
+
+fn validate_snapshot_sector_count(sectors: u64) -> Result<(), IdeDiskError> {
+    if sectors == 0 || sectors > IDE_MAX_TRANSFER_SECTORS {
+        return Err(IdeDiskError::TransferTooLarge { sectors });
+    }
+    Ok(())
 }

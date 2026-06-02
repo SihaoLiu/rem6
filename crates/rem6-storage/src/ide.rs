@@ -38,6 +38,7 @@ pub const IDE_COMMAND_WRITE_DMA: u8 = 0xca;
 pub const IDE_COMMAND_IDENTIFY: u8 = 0xec;
 pub const IDE_COMMAND_ATAPI_IDENTIFY_DEVICE: u8 = 0xa1;
 pub const IDE_COMMAND_READ_NATIVE_MAX: u8 = 0xf8;
+pub(crate) const IDE_MAX_TRANSFER_SECTORS: u64 = 256;
 
 pub const IDE_BMI_COMMAND_OFFSET: u8 = 0x0;
 pub const IDE_BMI_STATUS_OFFSET: u8 = 0x2;
