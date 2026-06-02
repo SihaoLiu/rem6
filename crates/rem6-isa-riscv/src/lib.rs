@@ -32,7 +32,7 @@ pub use pmp::{
     RiscvPmpAccessKind, RiscvPmpAddressMode, RiscvPmpConfig, RiscvPmpEntry, RiscvPmpError,
     RiscvPmpRange, RiscvPmpSnapshot, RiscvPmpSnapshotEntry, RiscvPmpTable, RiscvPrivilegeMode,
 };
-pub use record::{RegisterWrite, RiscvExecutionRecord, RiscvTrap, RiscvTrapKind};
+pub use record::{RegisterWrite, RiscvExecutionRecord, RiscvSystemEvent, RiscvTrap, RiscvTrapKind};
 pub use types::{
     AtomicMemoryOp, Immediate, MemoryAccessKind, MemoryResponseError, MemoryResponseWriteback,
     MemoryWidth, Register, RiscvFenceSet, RiscvMemoryOrdering,
@@ -328,6 +328,7 @@ fn decode_system(raw: u32) -> Result<RiscvInstruction, RiscvError> {
     match raw {
         0x0000_0073 => Ok(RiscvInstruction::Ecall),
         0x0010_0073 => Ok(RiscvInstruction::Ebreak),
+        0x1050_0073 => Ok(RiscvInstruction::WaitForInterrupt),
         _ => decode_csr(raw),
     }
 }
@@ -850,6 +851,7 @@ impl RiscvHartState {
             .ok_or(RiscvError::PcOverflow { pc, offset: 4 })?;
         let mut register_writes = Vec::new();
         let mut memory_access = None;
+        let mut system_event = None;
 
         match instruction {
             RiscvInstruction::Lui { rd, imm } => {
@@ -1152,6 +1154,9 @@ impl RiscvHartState {
                 });
             }
             RiscvInstruction::Fence { .. } | RiscvInstruction::FenceI => {}
+            RiscvInstruction::WaitForInterrupt => {
+                system_event = Some(RiscvSystemEvent::WaitForInterrupt { pc });
+            }
             RiscvInstruction::ReadMachineHartId { rd } => {
                 write_register(self, &mut register_writes, rd, self.hart_id);
             }
@@ -1207,12 +1212,13 @@ impl RiscvHartState {
         self.pc = next_pc;
         self.counters.add_cycles(1);
         self.counters.retire_instructions(1);
-        Ok(RiscvExecutionRecord::new(
+        Ok(RiscvExecutionRecord::new_with_system_event(
             instruction,
             pc,
             next_pc,
             register_writes,
             memory_access,
+            system_event,
         ))
     }
 }

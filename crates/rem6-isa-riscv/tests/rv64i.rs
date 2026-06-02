@@ -1,7 +1,8 @@
 use rem6_isa_riscv::{
     AtomicMemoryOp, Immediate, MemoryAccessKind, MemoryWidth, Register, RiscvCounterBank,
     RiscvCounterCsr, RiscvCounterSnapshot, RiscvCsrError, RiscvError, RiscvExecutionRecord,
-    RiscvFenceSet, RiscvHartState, RiscvInstruction, RiscvMemoryOrdering, RiscvTrap, RiscvTrapKind,
+    RiscvFenceSet, RiscvHartState, RiscvInstruction, RiscvMemoryOrdering, RiscvSystemEvent,
+    RiscvTrap, RiscvTrapKind,
 };
 
 fn r_type(funct7: u32, rs2: u8, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
@@ -1352,6 +1353,36 @@ fn hart_reports_fence_barriers_without_memory_or_register_side_effects() {
     assert_eq!(fence_i_record.register_writes(), &[]);
     assert_eq!(fence_i_record.memory_access(), None);
     assert_eq!(hart.read(reg(1)), 0x1234);
+}
+
+#[test]
+fn hart_reports_wait_for_interrupt_as_system_event() {
+    let instruction = RiscvInstruction::decode(0x1050_0073).unwrap();
+    assert_eq!(instruction, RiscvInstruction::WaitForInterrupt);
+
+    let mut hart = RiscvHartState::new(0xc000);
+    hart.write(reg(1), 0x1234);
+
+    let record = hart.execute(instruction).unwrap();
+
+    assert_eq!(record.next_pc(), 0xc004);
+    assert_eq!(record.register_writes(), &[]);
+    assert_eq!(record.memory_access(), None);
+    assert_eq!(record.trap(), None);
+    assert_eq!(
+        record.system_event(),
+        Some(&RiscvSystemEvent::WaitForInterrupt { pc: 0xc000 })
+    );
+    assert_eq!(hart.pc(), 0xc004);
+    assert_eq!(hart.read(reg(1)), 0x1234);
+    assert_eq!(hart.counter_snapshot(), RiscvCounterSnapshot::new(1, 1));
+
+    for raw in [0x1050_00f3, 0x1050_8073] {
+        assert_eq!(
+            RiscvInstruction::decode(raw),
+            Err(RiscvError::UnknownEncoding { raw })
+        );
+    }
 }
 
 #[test]

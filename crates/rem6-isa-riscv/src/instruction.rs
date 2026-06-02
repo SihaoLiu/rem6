@@ -297,6 +297,7 @@ pub enum RiscvInstruction {
         mode: u8,
     },
     FenceI,
+    WaitForInterrupt,
     ReadMachineHartId {
         rd: Register,
     },

@@ -26,6 +26,11 @@ impl RiscvTrap {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RiscvSystemEvent {
+    WaitForInterrupt { pc: u64 },
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RegisterWrite {
     register: Register,
@@ -54,6 +59,7 @@ pub struct RiscvExecutionRecord {
     register_writes: Vec<RegisterWrite>,
     memory_access: Option<MemoryAccessKind>,
     trap: Option<RiscvTrap>,
+    system_event: Option<RiscvSystemEvent>,
 }
 
 impl RiscvExecutionRecord {
@@ -71,6 +77,26 @@ impl RiscvExecutionRecord {
             register_writes,
             memory_access,
             trap: None,
+            system_event: None,
+        }
+    }
+
+    pub fn new_with_system_event(
+        instruction: RiscvInstruction,
+        pc: u64,
+        next_pc: u64,
+        register_writes: Vec<RegisterWrite>,
+        memory_access: Option<MemoryAccessKind>,
+        system_event: Option<RiscvSystemEvent>,
+    ) -> Self {
+        Self {
+            instruction,
+            pc,
+            next_pc,
+            register_writes,
+            memory_access,
+            trap: None,
+            system_event,
         }
     }
 
@@ -87,6 +113,7 @@ impl RiscvExecutionRecord {
             register_writes: Vec::new(),
             memory_access: None,
             trap: Some(trap),
+            system_event: None,
         }
     }
 
@@ -112,5 +139,9 @@ impl RiscvExecutionRecord {
 
     pub fn trap(&self) -> Option<&RiscvTrap> {
         self.trap.as_ref()
+    }
+
+    pub fn system_event(&self) -> Option<&RiscvSystemEvent> {
+        self.system_event.as_ref()
     }
 }
