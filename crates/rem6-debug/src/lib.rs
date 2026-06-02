@@ -541,13 +541,7 @@ impl GdbRemoteSession {
         let command = GdbRemoteCommand::parse(packet);
 
         match command {
-            GdbRemoteCommand::DumpPageTable => {
-                let payload = self
-                    .page_table_dump
-                    .clone()
-                    .unwrap_or_else(|| b"E01".to_vec());
-                self.packet_response(payload)
-            }
+            GdbRemoteCommand::DumpPageTable => self.packet_response(self.page_table_dump_payload()),
             GdbRemoteCommand::QueryAttached { .. } => {
                 let payload = match self.attach_kind {
                     GdbRemoteAttachKind::Attached => b"1".to_vec(),
@@ -732,6 +726,16 @@ impl GdbRemoteSession {
             bytes.push(*self.memory_bytes.get(&address)?);
         }
         Some(encode_hex_bytes(&bytes))
+    }
+
+    fn page_table_dump_payload(&self) -> Vec<u8> {
+        let Some(payload) = self.page_table_dump.as_ref() else {
+            return b"E01".to_vec();
+        };
+        if payload.len() > self.response_config.max_payload_bytes() {
+            return b"E01".to_vec();
+        }
+        payload.clone()
     }
 
     fn next_thread_info_payload(&mut self) -> Vec<u8> {

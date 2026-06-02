@@ -1074,6 +1074,25 @@ fn gdb_remote_session_reports_page_table_dump() {
 }
 
 #[test]
+fn gdb_remote_session_reports_oversized_page_table_dump_as_error_payload() {
+    let mut session =
+        GdbRemoteSession::with_response_config(Vec::new(), GdbRemotePacketConfig::new(3).unwrap());
+    session.set_page_table_dump(b"abcd".to_vec());
+
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b".".to_vec()).unwrap())
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(
+                GdbRemotePacket::with_config(b"E01".to_vec(), session.response_config()).unwrap()
+            ),
+        ],
+    );
+}
+
+#[test]
 fn gdb_remote_session_reports_thread_info_sequence() {
     let mut session = GdbRemoteSession::new(Vec::new());
 

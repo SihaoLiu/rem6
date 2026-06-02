@@ -362,6 +362,7 @@ isolated bugs:
   thread-list end replies, `qSupported` feature tokens, `qSupported` response feature emission,
   `qSymbol` no-symbol-needed replies, `qRcmd` monitor-command decoding with typed records,
   `.` page-table dump replies from externally supplied page-table payloads,
+  response-payload-capped oversized page-table dump errors,
   `qXfer:features:read:annex:offset,length` target-description reads with
   advertised-support gating, annex-backed XML chunks, final-chunk markers,
   malformed-request preservation, missing-annex errors, and offset bounds
