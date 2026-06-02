@@ -263,6 +263,70 @@ fn decoder_extracts_rv64i_fields_and_immediates() {
         }
     );
     assert_eq!(
+        RiscvInstruction::decode(r_type(0x00, 6, 5, 0x1, 4, 0x33)).unwrap(),
+        RiscvInstruction::Sll {
+            rd: reg(4),
+            rs1: reg(5),
+            rs2: reg(6),
+        }
+    );
+    assert_eq!(
+        RiscvInstruction::decode(r_type(0x00, 6, 5, 0x2, 4, 0x33)).unwrap(),
+        RiscvInstruction::Slt {
+            rd: reg(4),
+            rs1: reg(5),
+            rs2: reg(6),
+        }
+    );
+    assert_eq!(
+        RiscvInstruction::decode(r_type(0x00, 6, 5, 0x3, 4, 0x33)).unwrap(),
+        RiscvInstruction::Sltu {
+            rd: reg(4),
+            rs1: reg(5),
+            rs2: reg(6),
+        }
+    );
+    assert_eq!(
+        RiscvInstruction::decode(r_type(0x00, 6, 5, 0x4, 4, 0x33)).unwrap(),
+        RiscvInstruction::Xor {
+            rd: reg(4),
+            rs1: reg(5),
+            rs2: reg(6),
+        }
+    );
+    assert_eq!(
+        RiscvInstruction::decode(r_type(0x00, 6, 5, 0x5, 4, 0x33)).unwrap(),
+        RiscvInstruction::Srl {
+            rd: reg(4),
+            rs1: reg(5),
+            rs2: reg(6),
+        }
+    );
+    assert_eq!(
+        RiscvInstruction::decode(r_type(0x20, 6, 5, 0x5, 4, 0x33)).unwrap(),
+        RiscvInstruction::Sra {
+            rd: reg(4),
+            rs1: reg(5),
+            rs2: reg(6),
+        }
+    );
+    assert_eq!(
+        RiscvInstruction::decode(r_type(0x00, 6, 5, 0x6, 4, 0x33)).unwrap(),
+        RiscvInstruction::Or {
+            rd: reg(4),
+            rs1: reg(5),
+            rs2: reg(6),
+        }
+    );
+    assert_eq!(
+        RiscvInstruction::decode(r_type(0x00, 6, 5, 0x7, 4, 0x33)).unwrap(),
+        RiscvInstruction::And {
+            rd: reg(4),
+            rs1: reg(5),
+            rs2: reg(6),
+        }
+    );
+    assert_eq!(
         RiscvInstruction::decode(i_type(0x180, 3, 0x6, 3, 0x13)).unwrap(),
         RiscvInstruction::Ori {
             rd: reg(3),
@@ -420,6 +484,44 @@ fn hart_executes_integer_register_operations_and_keeps_zero_readonly() {
     hart.execute(RiscvInstruction::decode(r_type(0x20, 1, 2, 0x0, 3, 0x33)).unwrap())
         .unwrap();
     assert_eq!(hart.read(reg(3)), 5);
+
+    hart.write(reg(7), (-2_i64) as u64);
+    hart.write(reg(8), 1);
+    hart.execute(RiscvInstruction::decode(r_type(0x00, 8, 7, 0x2, 9, 0x33)).unwrap())
+        .unwrap();
+    assert_eq!(hart.read(reg(9)), 1);
+    hart.execute(RiscvInstruction::decode(r_type(0x00, 8, 7, 0x3, 10, 0x33)).unwrap())
+        .unwrap();
+    assert_eq!(hart.read(reg(10)), 0);
+    hart.execute(RiscvInstruction::decode(r_type(0x00, 7, 8, 0x3, 10, 0x33)).unwrap())
+        .unwrap();
+    assert_eq!(hart.read(reg(10)), 1);
+
+    hart.write(reg(17), 0x00ff_00ff);
+    hart.write(reg(18), 0x0f0f_0f0f);
+    hart.execute(RiscvInstruction::decode(r_type(0x00, 18, 17, 0x4, 19, 0x33)).unwrap())
+        .unwrap();
+    assert_eq!(hart.read(reg(19)), 0x0ff0_0ff0);
+    hart.execute(RiscvInstruction::decode(r_type(0x00, 18, 17, 0x6, 20, 0x33)).unwrap())
+        .unwrap();
+    assert_eq!(hart.read(reg(20)), 0x0fff_0fff);
+    hart.execute(RiscvInstruction::decode(r_type(0x00, 18, 17, 0x7, 21, 0x33)).unwrap())
+        .unwrap();
+    assert_eq!(hart.read(reg(21)), 0x000f_000f);
+
+    hart.write(reg(22), 1);
+    hart.write(reg(23), 68);
+    hart.execute(RiscvInstruction::decode(r_type(0x00, 23, 22, 0x1, 24, 0x33)).unwrap())
+        .unwrap();
+    assert_eq!(hart.read(reg(24)), 0x10);
+    hart.write(reg(25), 0x100);
+    hart.execute(RiscvInstruction::decode(r_type(0x00, 23, 25, 0x5, 26, 0x33)).unwrap())
+        .unwrap();
+    assert_eq!(hart.read(reg(26)), 0x10);
+    hart.write(reg(27), 0xffff_ffff_ffff_ff00);
+    hart.execute(RiscvInstruction::decode(r_type(0x20, 23, 27, 0x5, 28, 0x33)).unwrap())
+        .unwrap();
+    assert_eq!(hart.read(reg(28)), 0xffff_ffff_ffff_fff0);
 
     hart.execute(RiscvInstruction::decode(i_type(-1, 0, 0x0, 4, 0x13)).unwrap())
         .unwrap();

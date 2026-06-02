@@ -23,160 +23,16 @@ pub use pmp::{
     RiscvPmpAccessKind, RiscvPmpAddressMode, RiscvPmpConfig, RiscvPmpEntry, RiscvPmpError,
     RiscvPmpRange, RiscvPmpSnapshot, RiscvPmpSnapshotEntry, RiscvPmpTable, RiscvPrivilegeMode,
 };
-pub use types::{AtomicMemoryOp, Immediate, MemoryWidth, Register};
+pub use types::{
+    AtomicMemoryOp, Immediate, MemoryAccessKind, MemoryWidth, Register, RiscvFenceSet,
+    RiscvMemoryOrdering,
+};
 pub use vector::{
     RiscvInstructionFlags, RiscvVectorCompressPlan, RiscvVectorCompressResult, RiscvVectorElements,
     RiscvVectorError, RiscvVectorFixedPointState, RiscvVectorFixedRoundingMode, RiscvVectorMicroOp,
     RiscvVectorMicroOpExpansion, RiscvVectorNarrowClipPlan, RiscvVectorNarrowClipResult,
     RiscvVectorTailPolicy,
 };
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct RiscvFenceSet {
-    input: bool,
-    output: bool,
-    read: bool,
-    write: bool,
-}
-
-impl RiscvFenceSet {
-    pub const fn new(input: bool, output: bool, read: bool, write: bool) -> Self {
-        Self {
-            input,
-            output,
-            read,
-            write,
-        }
-    }
-
-    pub const fn memory() -> Self {
-        Self {
-            input: false,
-            output: false,
-            read: true,
-            write: true,
-        }
-    }
-
-    const fn from_bits(bits: u32) -> Self {
-        Self {
-            input: bits & 0b1000 != 0,
-            output: bits & 0b0100 != 0,
-            read: bits & 0b0010 != 0,
-            write: bits & 0b0001 != 0,
-        }
-    }
-
-    pub const fn input(self) -> bool {
-        self.input
-    }
-
-    pub const fn output(self) -> bool {
-        self.output
-    }
-
-    pub const fn read(self) -> bool {
-        self.read
-    }
-
-    pub const fn write(self) -> bool {
-        self.write
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct RiscvMemoryOrdering {
-    before: Option<RiscvFenceSet>,
-    after: Option<RiscvFenceSet>,
-}
-
-impl RiscvMemoryOrdering {
-    pub const fn new(before: Option<RiscvFenceSet>, after: Option<RiscvFenceSet>) -> Self {
-        Self { before, after }
-    }
-
-    pub const fn none() -> Self {
-        Self {
-            before: None,
-            after: None,
-        }
-    }
-
-    pub const fn before(self) -> Option<RiscvFenceSet> {
-        self.before
-    }
-
-    pub const fn after(self) -> Option<RiscvFenceSet> {
-        self.after
-    }
-
-    pub const fn is_ordered(self) -> bool {
-        self.before.is_some() || self.after.is_some()
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum MemoryAccessKind {
-    Load {
-        rd: Register,
-        address: u64,
-        width: MemoryWidth,
-        signed: bool,
-    },
-    LoadReserved {
-        rd: Register,
-        address: u64,
-        width: MemoryWidth,
-        acquire: bool,
-        release: bool,
-    },
-    StoreConditional {
-        rd: Register,
-        address: u64,
-        width: MemoryWidth,
-        value: u64,
-        acquire: bool,
-        release: bool,
-    },
-    AtomicMemory {
-        rd: Register,
-        address: u64,
-        width: MemoryWidth,
-        op: AtomicMemoryOp,
-        value: u64,
-        acquire: bool,
-        release: bool,
-    },
-    Store {
-        address: u64,
-        width: MemoryWidth,
-        value: u64,
-    },
-}
-
-impl MemoryAccessKind {
-    pub fn memory_ordering(&self) -> RiscvMemoryOrdering {
-        match self {
-            Self::LoadReserved {
-                acquire, release, ..
-            }
-            | Self::StoreConditional {
-                acquire, release, ..
-            }
-            | Self::AtomicMemory {
-                acquire, release, ..
-            } => aq_rl_ordering(*acquire, *release),
-            Self::Load { .. } | Self::Store { .. } => RiscvMemoryOrdering::none(),
-        }
-    }
-}
-
-fn aq_rl_ordering(acquire: bool, release: bool) -> RiscvMemoryOrdering {
-    RiscvMemoryOrdering::new(
-        release.then_some(RiscvFenceSet::memory()),
-        acquire.then_some(RiscvFenceSet::memory()),
-    )
-}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RiscvTrapKind {
@@ -497,6 +353,46 @@ pub enum RiscvInstruction {
         rs1: Register,
         rs2: Register,
     },
+    Sll {
+        rd: Register,
+        rs1: Register,
+        rs2: Register,
+    },
+    Slt {
+        rd: Register,
+        rs1: Register,
+        rs2: Register,
+    },
+    Sltu {
+        rd: Register,
+        rs1: Register,
+        rs2: Register,
+    },
+    Xor {
+        rd: Register,
+        rs1: Register,
+        rs2: Register,
+    },
+    Srl {
+        rd: Register,
+        rs1: Register,
+        rs2: Register,
+    },
+    Sra {
+        rd: Register,
+        rs1: Register,
+        rs2: Register,
+    },
+    Or {
+        rd: Register,
+        rs1: Register,
+        rs2: Register,
+    },
+    And {
+        rd: Register,
+        rs1: Register,
+        rs2: Register,
+    },
     Beq {
         rs1: Register,
         rs2: Register,
@@ -720,6 +616,46 @@ fn decode_op(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             rs2: rs2(raw),
         }),
         (0x20, 0x0) => Ok(RiscvInstruction::Sub {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x00, 0x1) => Ok(RiscvInstruction::Sll {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x00, 0x2) => Ok(RiscvInstruction::Slt {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x00, 0x3) => Ok(RiscvInstruction::Sltu {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x00, 0x4) => Ok(RiscvInstruction::Xor {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x00, 0x5) => Ok(RiscvInstruction::Srl {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x20, 0x5) => Ok(RiscvInstruction::Sra {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x00, 0x6) => Ok(RiscvInstruction::Or {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x00, 0x7) => Ok(RiscvInstruction::And {
             rd: rd(raw),
             rs1: rs1(raw),
             rs2: rs2(raw),
@@ -1093,6 +1029,38 @@ impl RiscvHartState {
             }
             RiscvInstruction::Sub { rd, rs1, rs2 } => {
                 let value = self.read(rs1).wrapping_sub(self.read(rs2));
+                write_register(self, &mut register_writes, rd, value);
+            }
+            RiscvInstruction::Sll { rd, rs1, rs2 } => {
+                let value = self.read(rs1).wrapping_shl((self.read(rs2) & 0x3f) as u32);
+                write_register(self, &mut register_writes, rd, value);
+            }
+            RiscvInstruction::Slt { rd, rs1, rs2 } => {
+                let value = u64::from((self.read(rs1) as i64) < (self.read(rs2) as i64));
+                write_register(self, &mut register_writes, rd, value);
+            }
+            RiscvInstruction::Sltu { rd, rs1, rs2 } => {
+                let value = u64::from(self.read(rs1) < self.read(rs2));
+                write_register(self, &mut register_writes, rd, value);
+            }
+            RiscvInstruction::Xor { rd, rs1, rs2 } => {
+                let value = self.read(rs1) ^ self.read(rs2);
+                write_register(self, &mut register_writes, rd, value);
+            }
+            RiscvInstruction::Srl { rd, rs1, rs2 } => {
+                let value = self.read(rs1).wrapping_shr((self.read(rs2) & 0x3f) as u32);
+                write_register(self, &mut register_writes, rd, value);
+            }
+            RiscvInstruction::Sra { rd, rs1, rs2 } => {
+                let value = (self.read(rs1) as i64).wrapping_shr((self.read(rs2) & 0x3f) as u32);
+                write_register(self, &mut register_writes, rd, value as u64);
+            }
+            RiscvInstruction::Or { rd, rs1, rs2 } => {
+                let value = self.read(rs1) | self.read(rs2);
+                write_register(self, &mut register_writes, rd, value);
+            }
+            RiscvInstruction::And { rd, rs1, rs2 } => {
+                let value = self.read(rs1) & self.read(rs2);
                 write_register(self, &mut register_writes, rd, value);
             }
             RiscvInstruction::Beq { rs1, rs2, offset } => {
