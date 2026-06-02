@@ -9,8 +9,8 @@ use rem6_cpu::{
 };
 use rem6_isa_riscv::{
     MemoryAccessKind, MemoryWidth, Register, RiscvPmaAccessKind, RiscvPmaError, RiscvPmpAccessKind,
-    RiscvPmpAddressMode, RiscvPmpConfig, RiscvPmpError, RiscvPrivilegeMode, RiscvSv39AccessKind,
-    RiscvSv39PageFault, RiscvSv39PageTableLevel, RiscvSv39Pte,
+    RiscvPmpAddressMode, RiscvPmpConfig, RiscvPmpError, RiscvPrivilegeMode, RiscvSv39AccessContext,
+    RiscvSv39AccessKind, RiscvSv39PageFault, RiscvSv39PageTableLevel, RiscvSv39Pte,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{
@@ -1172,6 +1172,55 @@ fn riscv_sv39_page_table_resolver_reports_permission_fault_and_tracks_walk_addre
             access: RiscvSv39AccessKind::Load
         })
     );
+}
+
+#[test]
+fn riscv_sv39_page_table_resolver_uses_request_access_context() {
+    let resolver = RiscvSv39PageTableResolver::new(0x115);
+    let virtual_address = (0x013_u64 << 30) | (0x035_u64 << 21) | (0x057_u64 << 12) | 0x89a;
+    let level1_ppn = 0x215;
+    let level0_ppn = 0x315;
+    let leaf_ppn = 0x85678;
+    let level2_pte_address = Address::new((0x115_u64 << 12) + (0x013 * 8));
+    let level1_pte_address = Address::new((level1_ppn << 12) + (0x035 * 8));
+    let level0_pte_address = Address::new((level0_ppn << 12) + (0x057 * 8));
+    let request = CpuTranslationRequest::load(
+        translation_id(182),
+        memory_id(192),
+        MemoryRouteId::new(6),
+        endpoint("cpu0.dmem"),
+        Address::new(virtual_address),
+        AccessSize::new(8).unwrap(),
+    )
+    .unwrap()
+    .with_sv39_access_context(
+        RiscvSv39AccessContext::new(RiscvPrivilegeMode::Supervisor).with_mxr(true),
+    );
+
+    let resolved = resolver.resolve(request, |pte_address| {
+        Ok(match pte_address {
+            address if address == level2_pte_address => {
+                RiscvSv39Pte::new((level1_ppn << 10) | SV39_PTE_V)
+            }
+            address if address == level1_pte_address => {
+                RiscvSv39Pte::new((level0_ppn << 10) | SV39_PTE_V)
+            }
+            address if address == level0_pte_address => {
+                RiscvSv39Pte::new((leaf_ppn << 10) | SV39_PTE_V | SV39_PTE_X | SV39_PTE_A)
+            }
+            _ => RiscvSv39Pte::new(0),
+        })
+    });
+
+    let CpuTranslationOutcome::Mapped(mapped) = resolved.outcome() else {
+        panic!("Sv39 translation should map when request MXR allows load from execute leaf");
+    };
+    assert_eq!(
+        mapped.physical_address(),
+        Address::new((leaf_ppn << 12) | 0x89a)
+    );
+    assert_eq!(resolved.leaf_level(), Some(RiscvSv39PageTableLevel::Level0));
+    assert_eq!(resolved.page_fault(), None);
 }
 
 #[test]

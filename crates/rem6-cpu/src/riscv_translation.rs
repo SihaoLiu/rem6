@@ -2,9 +2,9 @@ use std::error::Error;
 use std::fmt;
 
 use rem6_isa_riscv::{
-    walk_sv39_page_table, RiscvSv39AccessKind, RiscvSv39PageFault, RiscvSv39PageTableLevel,
-    RiscvSv39Pte, RiscvSv39VirtualAddress, RiscvSv39WalkAdvance as IsaSv39WalkAdvance,
-    RiscvSv39WalkState, RiscvSystemEvent,
+    walk_sv39_page_table_with_context, RiscvSv39AccessKind, RiscvSv39PageFault,
+    RiscvSv39PageTableLevel, RiscvSv39Pte, RiscvSv39VirtualAddress,
+    RiscvSv39WalkAdvance as IsaSv39WalkAdvance, RiscvSv39WalkState, RiscvSystemEvent,
 };
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionedScheduler, SchedulerContext, Tick,
@@ -93,10 +93,11 @@ impl RiscvSv39PageTableResolver {
             }
         };
         let access = sv39_access_kind(request.operation());
-        let walk = walk_sv39_page_table(
+        let walk = walk_sv39_page_table_with_context(
             self.root_table_ppn,
             virtual_address,
             access,
+            request.sv39_access_context(),
             |pte_address| {
                 let pte_address = Address::new(pte_address);
                 pte_addresses.push(pte_address);
@@ -323,7 +324,12 @@ impl RiscvSv39MemoryWalk {
             }
         };
         let access = sv39_access_kind(request.operation());
-        let state = match RiscvSv39WalkState::new(root_table_ppn, virtual_address, access) {
+        let state = match RiscvSv39WalkState::new_with_context(
+            root_table_ppn,
+            virtual_address,
+            access,
+            request.sv39_access_context(),
+        ) {
             Ok(state) => state,
             Err(fault) => {
                 return Ok(RiscvSv39MemoryWalkAdvance::Complete(

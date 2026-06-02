@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
+use rem6_isa_riscv::{RiscvPrivilegeMode, RiscvSv39AccessContext};
 use rem6_memory::{
     AccessSize, Address, AddressRange, ByteMask, CacheLineLayout, MemoryAtomicOp, MemoryError,
     MemoryOperation, MemoryRequest, MemoryRequestId, TranslationAccessKind,
@@ -50,6 +51,7 @@ pub struct CpuTranslationRequest {
     virtual_address: Address,
     size: AccessSize,
     operation: CpuTranslatedMemoryOperation,
+    sv39_access_context: RiscvSv39AccessContext,
     write_data: Option<Vec<u8>>,
     byte_mask: Option<ByteMask>,
     atomic_op: Option<MemoryAtomicOp>,
@@ -259,6 +261,7 @@ impl CpuTranslationRequest {
             virtual_address,
             size,
             operation,
+            sv39_access_context: RiscvSv39AccessContext::new(RiscvPrivilegeMode::Machine),
             write_data,
             byte_mask,
             atomic_op,
@@ -272,6 +275,15 @@ impl CpuTranslationRequest {
     pub fn in_address_space(mut self, address_space: TranslationAddressSpaceId) -> Self {
         self.address_space = address_space;
         self
+    }
+
+    pub const fn with_sv39_access_context(mut self, context: RiscvSv39AccessContext) -> Self {
+        self.sv39_access_context = context;
+        self
+    }
+
+    pub const fn sv39_access_context(&self) -> RiscvSv39AccessContext {
+        self.sv39_access_context
     }
 
     pub const fn translation_id(&self) -> TranslationRequestId {

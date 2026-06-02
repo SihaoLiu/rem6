@@ -5,7 +5,9 @@ use rem6_cpu::{
     RiscvSv39MemoryWalkAdvance, RiscvSv39MemoryWalker, RiscvSv39MemoryWalkerAdvance,
     RiscvSv39MemoryWalkerError,
 };
-use rem6_isa_riscv::{RiscvSv39PageTableLevel, RiscvSv39Pte};
+use rem6_isa_riscv::{
+    RiscvPrivilegeMode, RiscvSv39AccessContext, RiscvSv39PageTableLevel, RiscvSv39Pte,
+};
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryOperation, MemoryRequest, MemoryRequestId,
@@ -35,6 +37,7 @@ fn layout() -> CacheLineLayout {
 const SV39_PTE_V: u64 = 1 << 0;
 const SV39_PTE_R: u64 = 1 << 1;
 const SV39_PTE_W: u64 = 1 << 2;
+const SV39_PTE_X: u64 = 1 << 3;
 const SV39_PTE_A: u64 = 1 << 6;
 const SV39_PTE_D: u64 = 1 << 7;
 
@@ -165,6 +168,66 @@ fn riscv_sv39_memory_walk_issues_pte_requests_and_completes_translation() {
     assert_eq!(
         resolved.pte_addresses(),
         &[level2_pte_address, level1_pte_address, level0_pte_address]
+    );
+    assert_eq!(resolved.leaf_level(), Some(RiscvSv39PageTableLevel::Level0));
+    assert_eq!(resolved.page_fault(), None);
+}
+
+#[test]
+fn riscv_sv39_memory_walk_uses_request_access_context() {
+    let virtual_address = (0x015_u64 << 30) | (0x037_u64 << 21) | (0x059_u64 << 12) | 0xabc;
+    let root_ppn = 0x135;
+    let level1_ppn = 0x235;
+    let level0_ppn = 0x335;
+    let leaf_ppn = 0x95678;
+    let request = CpuTranslationRequest::load(
+        translation_id(185),
+        memory_id(198),
+        MemoryRouteId::new(6),
+        endpoint("cpu0.dmem"),
+        Address::new(virtual_address),
+        AccessSize::new(8).unwrap(),
+    )
+    .unwrap()
+    .with_sv39_access_context(
+        RiscvSv39AccessContext::new(RiscvPrivilegeMode::Supervisor).with_mxr(true),
+    );
+    let first_pte_request = MemoryRequestId::new(AgentId::new(31), 950);
+    let line_layout = layout();
+
+    let RiscvSv39MemoryWalkAdvance::ReadPte(walk) =
+        RiscvSv39MemoryWalk::start(request, root_ppn, first_pte_request, line_layout).unwrap()
+    else {
+        panic!("canonical address should start with a PTE read");
+    };
+    let response = pte_response(
+        walk.pte_request(),
+        RiscvSv39Pte::new((level1_ppn << 10) | SV39_PTE_V),
+    );
+    let RiscvSv39MemoryWalkAdvance::ReadPte(walk) = walk.advance(&response).unwrap() else {
+        panic!("level 2 pointer should request another PTE");
+    };
+    let response = pte_response(
+        walk.pte_request(),
+        RiscvSv39Pte::new((level0_ppn << 10) | SV39_PTE_V),
+    );
+    let RiscvSv39MemoryWalkAdvance::ReadPte(walk) = walk.advance(&response).unwrap() else {
+        panic!("level 1 pointer should request another PTE");
+    };
+    let response = pte_response(
+        walk.pte_request(),
+        RiscvSv39Pte::new((leaf_ppn << 10) | SV39_PTE_V | SV39_PTE_X | SV39_PTE_A),
+    );
+
+    let RiscvSv39MemoryWalkAdvance::Complete(resolved) = walk.advance(&response).unwrap() else {
+        panic!("level 0 leaf should complete the translation");
+    };
+    let CpuTranslationOutcome::Mapped(mapped) = resolved.outcome() else {
+        panic!("Sv39 memory walk should map when request MXR allows load from execute leaf");
+    };
+    assert_eq!(
+        mapped.physical_address(),
+        Address::new((leaf_ppn << 12) | 0xabc)
     );
     assert_eq!(resolved.leaf_level(), Some(RiscvSv39PageTableLevel::Level0));
     assert_eq!(resolved.page_fault(), None);
