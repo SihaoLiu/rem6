@@ -271,7 +271,8 @@ impl RiscvTopologySystem {
         let fabric_wait_for = fabric_wait_for_start
             .and_then(|marker| self.transport.fabric_wait_for_graph_since(marker))
             .unwrap_or_default();
-        let dram_activity = dram_activities_since(&memory, dram_activity_start);
+        let final_tick = scheduler_run.summary().final_tick();
+        let dram_activity = dram_activities_since(&memory, dram_activity_start, Some(final_tick));
         let dram_wait_for = dram_wait_for_since(&memory, dram_wait_for_start);
         let (fabric_activity, dram_activity) = merge_msi_data_cache_activity(
             fabric_activity,
@@ -506,7 +507,8 @@ impl RiscvTopologySystem {
         let fabric_wait_for = fabric_wait_for_start
             .and_then(|marker| self.transport.fabric_wait_for_graph_since(marker))
             .unwrap_or_default();
-        let dram_activity = dram_activities_since(&memory, dram_activity_start);
+        let final_tick = scheduler_run.summary().final_tick();
+        let dram_activity = dram_activities_since(&memory, dram_activity_start, Some(final_tick));
         let dram_wait_for = dram_wait_for_since(&memory, dram_wait_for_start);
         let (fabric_activity, dram_activity) = merge_msi_data_cache_activity(
             fabric_activity,

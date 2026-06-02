@@ -157,6 +157,15 @@ fn activity_profile_until_records_terminal_open_row_idle_window() {
         profile.low_power_cycle_count(DramLowPowerState::ActivePowerdown),
         88
     );
+    assert_eq!(
+        profile.low_power_entry_count(DramLowPowerState::PrechargePowerdown),
+        0
+    );
+    assert_eq!(
+        profile.low_power_entry_count(DramLowPowerState::SelfRefresh),
+        0
+    );
+    assert_eq!(profile.active_bank_count(), 1);
     assert_eq!(profile.low_power_exit_count(), 0);
     assert_eq!(profile.low_power_exit_latency_cycles(), 0);
 }

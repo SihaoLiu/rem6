@@ -261,6 +261,21 @@ impl DramMemoryController {
         })
     }
 
+    pub fn target_activity_until(
+        &self,
+        target: MemoryTargetId,
+        end_cycle: u64,
+    ) -> Option<DramTargetActivity> {
+        self.dram.get(&target).map(|controller| {
+            let activity =
+                DramTargetActivity::new(target, controller.activity_profile_until(end_cycle));
+            match self.profiles.get(&target).copied() {
+                Some(profile) => activity.with_memory_profile(profile),
+                None => activity,
+            }
+        })
+    }
+
     pub fn target_activity_since(
         &self,
         marker: &DramMemoryActivityMarker,
@@ -279,10 +294,37 @@ impl DramMemoryController {
         })
     }
 
+    pub fn target_activity_since_until(
+        &self,
+        marker: &DramMemoryActivityMarker,
+        target: MemoryTargetId,
+        end_cycle: u64,
+    ) -> Option<DramTargetActivity> {
+        self.dram.get(&target).map(|controller| {
+            let profile = marker.marker_for(target).map_or_else(
+                || controller.activity_profile_until(end_cycle),
+                |marker| controller.activity_profile_since_until(marker, end_cycle),
+            );
+            let activity = DramTargetActivity::new(target, profile);
+            match self.profiles.get(&target).copied() {
+                Some(profile) => activity.with_memory_profile(profile),
+                None => activity,
+            }
+        })
+    }
+
     pub fn target_activities(&self) -> Vec<DramTargetActivity> {
         self.dram
             .keys()
             .filter_map(|target| self.target_activity(*target))
+            .collect()
+    }
+
+    pub fn target_activities_until(&self, end_cycle: u64) -> Vec<DramTargetActivity> {
+        self.dram
+            .keys()
+            .filter_map(|target| self.target_activity_until(*target, end_cycle))
+            .filter(|activity| !activity.profile().is_empty())
             .collect()
     }
 
@@ -297,8 +339,26 @@ impl DramMemoryController {
             .collect()
     }
 
+    pub fn target_activities_since_until(
+        &self,
+        marker: &DramMemoryActivityMarker,
+        end_cycle: u64,
+    ) -> Vec<DramTargetActivity> {
+        self.dram
+            .keys()
+            .filter_map(|target| self.target_activity_since_until(marker, *target, end_cycle))
+            .filter(|activity| !activity.profile().is_empty())
+            .collect()
+    }
+
     pub fn activity_profile(&self) -> DramMemoryActivityProfile {
         DramMemoryActivityProfile::from_target_activities(self.target_activities().iter())
+    }
+
+    pub fn activity_profile_until(&self, end_cycle: u64) -> DramMemoryActivityProfile {
+        DramMemoryActivityProfile::from_target_activities(
+            self.target_activities_until(end_cycle).iter(),
+        )
     }
 
     pub fn activity_profile_since(
@@ -310,6 +370,15 @@ impl DramMemoryController {
             .keys()
             .filter_map(|target| self.target_activity_since(marker, *target))
             .collect::<Vec<_>>();
+        DramMemoryActivityProfile::from_target_activities(activities.iter())
+    }
+
+    pub fn activity_profile_since_until(
+        &self,
+        marker: &DramMemoryActivityMarker,
+        end_cycle: u64,
+    ) -> DramMemoryActivityProfile {
+        let activities = self.target_activities_since_until(marker, end_cycle);
         DramMemoryActivityProfile::from_target_activities(activities.iter())
     }
 

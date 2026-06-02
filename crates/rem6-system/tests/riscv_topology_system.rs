@@ -3,7 +3,10 @@ use std::sync::{Arc, Mutex};
 use rem6_boot::BootImage;
 use rem6_checkpoint::CheckpointComponentId;
 use rem6_cpu::{CpuId, CpuResetState, RiscvClusterTopologyConfig, RiscvCoreTopologyConfig};
-use rem6_dram::{DramGeometry, DramMemoryTechnology, DramTiming, ExternalMemoryProfile};
+use rem6_dram::{
+    DramGeometry, DramLowPowerState, DramLowPowerTiming, DramMemoryTechnology, DramTiming,
+    ExternalMemoryProfile,
+};
 use rem6_interrupt::{
     InterruptLineId, InterruptPriority, InterruptSourceId, InterruptTargetId, PlicContextSnapshot,
     PlicSnapshot,
@@ -1535,7 +1538,9 @@ fn topology_system_with_dram_memory_delays_fetch_response_by_dram_timing() {
         MemoryTargetId::new(0),
         layout(),
         DramGeometry::new(2, 64, 16).unwrap(),
-        DramTiming::new(5, 7, 11, 3, 2).unwrap(),
+        DramTiming::new(5, 7, 11, 3, 2)
+            .unwrap()
+            .with_low_power_timing(DramLowPowerTiming::new(2, 10, 3).unwrap()),
     )
     .add_region(Address::new(0x8000), AccessSize::new(0x1000).unwrap());
     let source = GuestSourceId::new(43);
@@ -1614,6 +1619,19 @@ fn topology_system_with_dram_memory_delays_fetch_response_by_dram_timing() {
     assert_eq!(target_activity.profile().access_count(), 1);
     assert_eq!(target_activity.profile().active_port_count(), 1);
     assert_eq!(target_activity.profile().active_bank_count(), 1);
+    assert_eq!(
+        run.dram_low_power_entry_count(DramLowPowerState::ActivePowerdown),
+        1
+    );
+    assert_eq!(
+        run.dram_low_power_cycle_count(DramLowPowerState::ActivePowerdown),
+        4
+    );
+    assert_eq!(
+        run.dram_low_power_entry_count(DramLowPowerState::PrechargePowerdown),
+        0
+    );
+    assert_eq!(run.dram_low_power_exit_count(), 0);
 }
 
 #[test]

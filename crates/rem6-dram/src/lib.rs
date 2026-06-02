@@ -746,6 +746,16 @@ impl DramController {
         )
     }
 
+    pub fn activity_profile_since_until(
+        &self,
+        marker: DramActivityMarker,
+        end_cycle: u64,
+    ) -> DramActivityProfile {
+        let mut bank_activities = self.bank_activities_since(marker);
+        self.record_terminal_low_power_activity(&mut bank_activities, end_cycle);
+        DramActivityProfile::from_activities(&self.port_activities_since(marker), &bank_activities)
+    }
+
     fn record_terminal_low_power_activity(
         &self,
         bank_activities: &mut BTreeMap<(u32, u32), DramBankActivity>,
@@ -755,22 +765,25 @@ impl DramController {
             return;
         };
         let bank_count = self.geometry.bank_count() as usize;
-        for (bank_index, bank) in self.banks.iter().enumerate() {
-            let parallel_port = bank_index / bank_count;
-            let local_bank = bank_index % bank_count;
-            let Some(port) = self.ports.get(parallel_port) else {
+        let active_banks = bank_activities.keys().copied().collect::<Vec<_>>();
+        for (parallel_port, local_bank) in active_banks {
+            let bank_index = parallel_port as usize * bank_count + local_bank as usize;
+            let Some(bank) = self.banks.get(bank_index) else {
+                continue;
+            };
+            let Some(port) = self.ports.get(parallel_port as usize) else {
                 continue;
             };
             let events = low_power::events_for_idle_window(
                 low_power_timing,
-                parallel_port as u32,
+                parallel_port,
                 port.bus_available_cycle().max(bank.available_cycle()),
                 end_cycle,
                 bank.open_row().is_some(),
             );
             if !events.is_empty() {
                 bank_activities
-                    .entry((parallel_port as u32, local_bank as u32))
+                    .entry((parallel_port, local_bank))
                     .or_default()
                     .record_terminal_low_power_events(&events);
             }

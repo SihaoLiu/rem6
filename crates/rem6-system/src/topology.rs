@@ -1254,7 +1254,7 @@ impl RiscvTopologySystem {
         let fabric_wait_for = fabric_wait_for_start
             .and_then(|marker| self.transport.fabric_wait_for_graph_since(marker))
             .unwrap_or_default();
-        let dram_activity = dram_activities_since(&memory, dram_activity_start);
+        let dram_activity = dram_activities_since(&memory, dram_activity_start, run.final_tick());
         let dram_wait_for = dram_wait_for_since(&memory, dram_wait_for_start);
         let (fabric_activity, dram_activity) = merge_msi_data_cache_activity(
             fabric_activity,
@@ -1597,16 +1597,21 @@ fn mark_dram_wait_for(memory: &RiscvTopologyMemoryBackend) -> Option<DramMemoryW
 fn dram_activities_since(
     memory: &RiscvTopologyMemoryBackend,
     marker: Option<DramMemoryActivityMarker>,
+    end_tick: Option<Tick>,
 ) -> Vec<DramTargetActivity> {
     let Some(marker) = marker else {
         return Vec::new();
     };
     match memory {
         RiscvTopologyMemoryBackend::Store { .. } => Vec::new(),
-        RiscvTopologyMemoryBackend::Dram { memory, .. } => memory
-            .lock()
-            .expect("topology DRAM memory lock")
-            .target_activities_since(&marker),
+        RiscvTopologyMemoryBackend::Dram { memory, .. } => {
+            let memory = memory.lock().expect("topology DRAM memory lock");
+            if let Some(end_tick) = end_tick {
+                memory.target_activities_since_until(&marker, end_tick)
+            } else {
+                memory.target_activities_since(&marker)
+            }
+        }
     }
 }
 
