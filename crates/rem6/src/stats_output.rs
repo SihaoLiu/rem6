@@ -323,15 +323,20 @@ fn stats_snapshot_json(snapshot: &StatSnapshot) -> String {
                 .map(|segment| format!("\"{}\"", json_escape(segment)))
                 .collect::<Vec<_>>()
                 .join(",");
+            let description = sample
+                .description()
+                .map(|description| format!("\"{}\"", json_escape(description)))
+                .unwrap_or_else(|| "null".to_string());
             format!(
-                "{{\"id\":{},\"path\":\"{}\",\"scope\":[{}],\"name\":\"{}\",\"unit\":\"{}\",\"value\":{},\"reset_policy\":\"{}\"}}",
+                "{{\"id\":{},\"path\":\"{}\",\"scope\":[{}],\"name\":\"{}\",\"unit\":\"{}\",\"value\":{},\"reset_policy\":\"{}\",\"description\":{}}}",
                 sample.id().get(),
                 json_escape(sample.path()),
                 scope,
                 json_escape(sample.name()),
                 json_escape(sample.unit()),
                 sample.value(),
-                sample.reset_policy()
+                sample.reset_policy(),
+                description
             )
         })
         .collect::<Vec<_>>()
