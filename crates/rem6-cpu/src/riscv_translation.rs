@@ -3,7 +3,8 @@ use std::fmt;
 
 use rem6_isa_riscv::{
     walk_sv39_page_table, RiscvSv39AccessKind, RiscvSv39PageFault, RiscvSv39PageTableLevel,
-    RiscvSv39Pte, RiscvSv39VirtualAddress, RiscvSystemEvent,
+    RiscvSv39Pte, RiscvSv39VirtualAddress, RiscvSv39WalkAdvance as IsaSv39WalkAdvance,
+    RiscvSv39WalkState, RiscvSystemEvent,
 };
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionedScheduler, SchedulerContext, Tick,
@@ -255,6 +256,175 @@ pub fn decode_sv39_pte_read_response(
     Ok(RiscvSv39Pte::new(u64::from_le_bytes(bytes)))
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RiscvSv39MemoryWalkError {
+    PteReadRequest(RiscvSv39PteReadRequestError),
+    PteReadResponse(RiscvSv39PteReadResponseError),
+}
+
+impl fmt::Display for RiscvSv39MemoryWalkError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::PteReadRequest(error) => write!(formatter, "{error}"),
+            Self::PteReadResponse(error) => write!(formatter, "{error}"),
+        }
+    }
+}
+
+impl Error for RiscvSv39MemoryWalkError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::PteReadRequest(error) => Some(error),
+            Self::PteReadResponse(error) => Some(error),
+        }
+    }
+}
+
+impl From<RiscvSv39PteReadRequestError> for RiscvSv39MemoryWalkError {
+    fn from(error: RiscvSv39PteReadRequestError) -> Self {
+        Self::PteReadRequest(error)
+    }
+}
+
+impl From<RiscvSv39PteReadResponseError> for RiscvSv39MemoryWalkError {
+    fn from(error: RiscvSv39PteReadResponseError) -> Self {
+        Self::PteReadResponse(error)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiscvSv39MemoryWalk {
+    request: CpuTranslationRequest,
+    state: RiscvSv39WalkState,
+    first_pte_request: MemoryRequestId,
+    line_layout: CacheLineLayout,
+    pte_request: MemoryRequest,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RiscvSv39MemoryWalkAdvance {
+    ReadPte(RiscvSv39MemoryWalk),
+    Complete(RiscvSv39TranslationResult),
+}
+
+impl RiscvSv39MemoryWalk {
+    pub fn start(
+        request: CpuTranslationRequest,
+        root_table_ppn: u64,
+        first_pte_request: MemoryRequestId,
+        line_layout: CacheLineLayout,
+    ) -> Result<RiscvSv39MemoryWalkAdvance, RiscvSv39MemoryWalkError> {
+        let virtual_address = match RiscvSv39VirtualAddress::new(request.virtual_address().get()) {
+            Ok(address) => address,
+            Err(fault) => {
+                return Ok(RiscvSv39MemoryWalkAdvance::Complete(
+                    RiscvSv39TranslationResult::fault(request, fault, Vec::new()),
+                ));
+            }
+        };
+        let access = sv39_access_kind(request.operation());
+        let state = match RiscvSv39WalkState::new(root_table_ppn, virtual_address, access) {
+            Ok(state) => state,
+            Err(fault) => {
+                return Ok(RiscvSv39MemoryWalkAdvance::Complete(
+                    RiscvSv39TranslationResult::fault(request, fault, Vec::new()),
+                ));
+            }
+        };
+        Self::from_state(request, state, first_pte_request, line_layout)
+            .map(RiscvSv39MemoryWalkAdvance::ReadPte)
+    }
+
+    fn from_state(
+        request: CpuTranslationRequest,
+        state: RiscvSv39WalkState,
+        first_pte_request: MemoryRequestId,
+        line_layout: CacheLineLayout,
+    ) -> Result<Self, RiscvSv39MemoryWalkError> {
+        let index = state.pte_addresses().len() - 1;
+        let pte_request = sv39_pte_read_request(
+            first_pte_request,
+            index,
+            Address::new(state.pending_pte_address()),
+            line_layout,
+        )?;
+        Ok(Self {
+            request,
+            state,
+            first_pte_request,
+            line_layout,
+            pte_request,
+        })
+    }
+
+    pub const fn translation_request(&self) -> &CpuTranslationRequest {
+        &self.request
+    }
+
+    pub const fn pte_request(&self) -> &MemoryRequest {
+        &self.pte_request
+    }
+
+    pub fn pte_addresses(&self) -> Vec<Address> {
+        sv39_pte_addresses(self.state.pte_addresses())
+    }
+
+    pub fn advance(
+        self,
+        response: &MemoryResponse,
+    ) -> Result<RiscvSv39MemoryWalkAdvance, RiscvSv39MemoryWalkError> {
+        let pte = decode_sv39_pte_read_response(&self.pte_request, response)?;
+        let fault_pte_addresses = sv39_pte_addresses(self.state.pte_addresses());
+        match self.state.advance(pte) {
+            Ok(IsaSv39WalkAdvance::ReadPte(state)) => Self::from_state(
+                self.request,
+                state,
+                self.first_pte_request,
+                self.line_layout,
+            )
+            .map(RiscvSv39MemoryWalkAdvance::ReadPte),
+            Ok(IsaSv39WalkAdvance::Complete(walk)) => Ok(RiscvSv39MemoryWalkAdvance::Complete(
+                RiscvSv39TranslationResult::mapped(
+                    self.request,
+                    Address::new(walk.physical_address()),
+                    sv39_pte_addresses(walk.pte_addresses()),
+                    walk.leaf_level(),
+                ),
+            )),
+            Err(fault) => Ok(RiscvSv39MemoryWalkAdvance::Complete(
+                RiscvSv39TranslationResult::fault(self.request, fault, fault_pte_addresses),
+            )),
+        }
+    }
+}
+
+fn sv39_pte_read_request(
+    first_request: MemoryRequestId,
+    index: usize,
+    address: Address,
+    line_layout: CacheLineLayout,
+) -> Result<MemoryRequest, RiscvSv39PteReadRequestError> {
+    let offset = u64::try_from(index).map_err(|_| {
+        RiscvSv39PteReadRequestError::RequestSequenceOverflow {
+            first: first_request,
+            index,
+        }
+    })?;
+    let sequence = first_request.sequence().checked_add(offset).ok_or(
+        RiscvSv39PteReadRequestError::RequestSequenceOverflow {
+            first: first_request,
+            index,
+        },
+    )?;
+    let id = MemoryRequestId::new(first_request.agent(), sequence);
+    let pte_size = AccessSize::new(RISCV_SV39_PTE_ACCESS_BYTES)?;
+    MemoryRequest::read_shared(id, address, pte_size, line_layout).map_err(Into::into)
+}
+
+fn sv39_pte_addresses(addresses: &[u64]) -> Vec<Address> {
+    addresses.iter().copied().map(Address::new).collect()
+}
+
 impl RiscvSv39TranslationResult {
     fn mapped(
         request: CpuTranslationRequest,
@@ -312,25 +482,11 @@ impl RiscvSv39TranslationResult {
         first_request: MemoryRequestId,
         line_layout: CacheLineLayout,
     ) -> Result<Vec<MemoryRequest>, RiscvSv39PteReadRequestError> {
-        let pte_size = AccessSize::new(RISCV_SV39_PTE_ACCESS_BYTES)?;
         self.pte_addresses
             .iter()
             .enumerate()
             .map(|(index, address)| {
-                let offset = u64::try_from(index).map_err(|_| {
-                    RiscvSv39PteReadRequestError::RequestSequenceOverflow {
-                        first: first_request,
-                        index,
-                    }
-                })?;
-                let sequence = first_request.sequence().checked_add(offset).ok_or(
-                    RiscvSv39PteReadRequestError::RequestSequenceOverflow {
-                        first: first_request,
-                        index,
-                    },
-                )?;
-                let id = MemoryRequestId::new(first_request.agent(), sequence);
-                MemoryRequest::read_shared(id, *address, pte_size, line_layout).map_err(Into::into)
+                sv39_pte_read_request(first_request, index, *address, line_layout)
             })
             .collect()
     }

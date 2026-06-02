@@ -136,7 +136,8 @@ pub use riscv_sc_progress::{
     RiscvStoreConditionalProgressSnapshot, DEFAULT_RISCV_SC_DIAGNOSTIC_THRESHOLD,
 };
 pub use riscv_translation::{
-    decode_sv39_pte_read_response, RiscvSv39PageTableResolver, RiscvSv39PteReadRequestError,
+    decode_sv39_pte_read_response, RiscvSv39MemoryWalk, RiscvSv39MemoryWalkAdvance,
+    RiscvSv39MemoryWalkError, RiscvSv39PageTableResolver, RiscvSv39PteReadRequestError,
     RiscvSv39PteReadResponseError, RiscvSv39TranslationResult,
 };
 pub use statistical_corrector::{
