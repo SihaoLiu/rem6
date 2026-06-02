@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
+use crate::allocation::max_vector_len;
 use crate::prefetch_throttle::QueuedPrefetchThrottle;
 use rem6_memory::{Address, AgentId};
 
@@ -38,6 +39,11 @@ impl QueuedPrefetchConfig {
         if capacity == 0 {
             return Err(QueuedPrefetcherError::ZeroCapacity);
         }
+        validate_queued_prefetch_vector_length(
+            "capacity",
+            capacity,
+            maximum_queued_prefetch_entries(),
+        )?;
         if max_issue_per_tick == 0 {
             return Err(QueuedPrefetcherError::ZeroIssueWidth);
         }
@@ -111,6 +117,11 @@ pub enum QueuedPrefetcherError {
         source_tick: u64,
         latency: u64,
     },
+    VectorLengthTooLarge {
+        field: &'static str,
+        length: usize,
+        maximum: usize,
+    },
     SnapshotConfigMismatch {
         expected: QueuedPrefetchConfig,
         actual: QueuedPrefetchConfig,
@@ -139,6 +150,14 @@ impl fmt::Display for QueuedPrefetcherError {
                 formatter,
                 "queued prefetch ready tick overflows for source tick {source_tick} and latency {latency}"
             ),
+            Self::VectorLengthTooLarge {
+                field,
+                length,
+                maximum,
+            } => write!(
+                formatter,
+                "queued prefetch {field} length {length} exceeds maximum {maximum}"
+            ),
             Self::SnapshotConfigMismatch { expected, actual } => write!(
                 formatter,
                 "queued prefetch snapshot config {actual:?} does not match {expected:?}"
@@ -152,6 +171,25 @@ impl fmt::Display for QueuedPrefetcherError {
 }
 
 impl Error for QueuedPrefetcherError {}
+
+fn maximum_queued_prefetch_entries() -> usize {
+    max_vector_len::<QueuedPrefetchEntry>().min(max_vector_len::<QueuedPrefetchEntrySnapshot>())
+}
+
+fn validate_queued_prefetch_vector_length(
+    field: &'static str,
+    length: usize,
+    maximum: usize,
+) -> Result<(), QueuedPrefetcherError> {
+    if length > maximum {
+        return Err(QueuedPrefetcherError::VectorLengthTooLarge {
+            field,
+            length,
+            maximum,
+        });
+    }
+    Ok(())
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum QueuedPrefetchFullPolicy {
@@ -1081,6 +1119,11 @@ impl StridePrefetcherConfig {
         if table_entries == 0 {
             return Err(StridePrefetcherError::ZeroTableEntries);
         }
+        validate_stride_vector_length(
+            "table entries",
+            table_entries,
+            maximum_stride_table_entries(),
+        )?;
         if confidence_threshold > MAX_CONFIDENCE {
             return Err(StridePrefetcherError::ConfidenceThresholdOutOfRange {
                 threshold: confidence_threshold,
@@ -1135,6 +1178,11 @@ pub enum StridePrefetcherError {
         threshold: u8,
         max: u8,
     },
+    VectorLengthTooLarge {
+        field: &'static str,
+        length: usize,
+        maximum: usize,
+    },
     SnapshotConfigMismatch {
         expected: StridePrefetcherConfig,
         actual: StridePrefetcherConfig,
@@ -1156,6 +1204,14 @@ impl fmt::Display for StridePrefetcherError {
                 formatter,
                 "stride prefetcher confidence threshold {threshold} exceeds {max}"
             ),
+            Self::VectorLengthTooLarge {
+                field,
+                length,
+                maximum,
+            } => write!(
+                formatter,
+                "stride prefetcher {field} length {length} exceeds maximum {maximum}"
+            ),
             Self::SnapshotConfigMismatch { expected, actual } => write!(
                 formatter,
                 "stride prefetcher snapshot config {actual:?} does not match {expected:?}"
@@ -1174,6 +1230,25 @@ impl fmt::Display for StridePrefetcherError {
 }
 
 impl Error for StridePrefetcherError {}
+
+fn maximum_stride_table_entries() -> usize {
+    max_vector_len::<StridePrefetchEntry>().min(max_vector_len::<StridePrefetchEntrySnapshot>())
+}
+
+fn validate_stride_vector_length(
+    field: &'static str,
+    length: usize,
+    maximum: usize,
+) -> Result<(), StridePrefetcherError> {
+    if length > maximum {
+        return Err(StridePrefetcherError::VectorLengthTooLarge {
+            field,
+            length,
+            maximum,
+        });
+    }
+    Ok(())
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct StridePrefetchAccess {

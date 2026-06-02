@@ -3,17 +3,18 @@ use rem6_cache::{
     BopDelayQueueConfig, BopDelayQueueEntrySnapshot, BopPrefetchAccess, BopPrefetcher,
     BopPrefetcherConfig, BopPrefetcherConfigOptions, BopPrefetcherError, DcptPrefetchAccess,
     DcptPrefetcher, DcptPrefetcherConfig, DcptPrefetcherError, QueuedPrefetchConfig,
-    QueuedPrefetchDemandAccess, QueuedPrefetchFullPolicy, QueuedPrefetchRedundantLine,
-    QueuedPrefetchThrottle, QueuedPrefetchThrottleConfig, QueuedPrefetchThrottleError,
-    QueuedPrefetcher, SbooePrefetchAccess, SbooePrefetcher, SbooePrefetcherConfig,
-    SbooePrefetcherError, SbooeSandboxEntrySnapshot, SbooeSandboxSnapshot,
-    SignaturePathPatternEntrySnapshot, SignaturePathPatternStrideSnapshot,
+    QueuedPrefetchDemandAccess, QueuedPrefetchEntrySnapshot, QueuedPrefetchFullPolicy,
+    QueuedPrefetchRedundantLine, QueuedPrefetchThrottle, QueuedPrefetchThrottleConfig,
+    QueuedPrefetchThrottleError, QueuedPrefetcher, QueuedPrefetcherError, SbooePrefetchAccess,
+    SbooePrefetcher, SbooePrefetcherConfig, SbooePrefetcherError, SbooeSandboxEntrySnapshot,
+    SbooeSandboxSnapshot, SignaturePathPatternEntrySnapshot, SignaturePathPatternStrideSnapshot,
     SignaturePathPrefetchAccess, SignaturePathPrefetcher, SignaturePathPrefetcherConfig,
     SignaturePathPrefetcherConfigOptions, SignaturePathPrefetcherError, SignaturePathRatio,
     SignaturePathSignatureEntrySnapshot, SmsActiveEntrySnapshot, SmsPatternEntrySnapshot,
     SmsPrefetchAccess, SmsPrefetchCandidate, SmsPrefetcher, SmsPrefetcherConfig,
-    SmsPrefetcherError, StridePrefetchAccess, StridePrefetcher, StridePrefetcherConfig,
-    TaggedPrefetchAccess, TaggedPrefetcher, TaggedPrefetcherConfig,
+    SmsPrefetcherError, StridePrefetchAccess, StridePrefetchEntrySnapshot, StridePrefetcher,
+    StridePrefetcherConfig, StridePrefetcherError, TaggedPrefetchAccess, TaggedPrefetcher,
+    TaggedPrefetcherConfig,
 };
 use rem6_memory::{Address, AgentId};
 
@@ -50,6 +51,10 @@ const SMS_CONTEXT_BYTE_OVERFLOW_LENGTH: usize =
     isize::MAX as usize / std::mem::size_of::<SmsActiveEntrySnapshot>() + 1;
 const SMS_PATTERN_HISTORY_BYTE_OVERFLOW_LENGTH: usize =
     isize::MAX as usize / std::mem::size_of::<SmsPatternEntrySnapshot>() + 1;
+const QUEUED_PREFETCH_ENTRY_BYTE_OVERFLOW_LENGTH: usize =
+    isize::MAX as usize / std::mem::size_of::<QueuedPrefetchEntrySnapshot>() + 1;
+const STRIDE_PREFETCH_ENTRY_BYTE_OVERFLOW_LENGTH: usize =
+    isize::MAX as usize / std::mem::size_of::<StridePrefetchEntrySnapshot>() + 1;
 
 fn access(agent: u32, pc: u64, address: u64) -> StridePrefetchAccess {
     StridePrefetchAccess::new(AgentId::new(agent), pc, Address::new(address), false)
@@ -908,6 +913,39 @@ fn ampm_epoch_control_adjusts_degree_with_typed_stats_and_restores_state() {
     assert_eq!(low_report.next_degree(), 1);
     assert_eq!(low_report.stats().raw_cache_misses(), 1);
     assert_eq!(low_report.stats().raw_cache_hits(), 9);
+}
+
+#[test]
+fn shared_prefetcher_configs_reject_vector_lengths_above_host_limit() {
+    assert!(matches!(
+        QueuedPrefetchConfig::with_line_size(
+            QUEUED_PREFETCH_ENTRY_BYTE_OVERFLOW_LENGTH,
+            1,
+            1,
+            true,
+            64,
+        ),
+        Err(QueuedPrefetcherError::VectorLengthTooLarge {
+            field: "capacity",
+            length: QUEUED_PREFETCH_ENTRY_BYTE_OVERFLOW_LENGTH,
+            ..
+        })
+    ));
+    assert!(matches!(
+        StridePrefetcherConfig::new(
+            64,
+            STRIDE_PREFETCH_ENTRY_BYTE_OVERFLOW_LENGTH,
+            2,
+            2,
+            0,
+            true,
+        ),
+        Err(StridePrefetcherError::VectorLengthTooLarge {
+            field: "table entries",
+            length: STRIDE_PREFETCH_ENTRY_BYTE_OVERFLOW_LENGTH,
+            ..
+        })
+    ));
 }
 
 #[test]
