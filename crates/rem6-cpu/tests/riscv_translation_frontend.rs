@@ -3,18 +3,20 @@ use std::sync::{Arc, Mutex};
 use rem6_boot::BootImage;
 use rem6_cpu::{
     CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, CpuTranslationFrontend,
-    RiscvCore, RiscvCoreDriveAction, RiscvCpuError, RiscvDataAccessEventKind,
+    CpuTranslationOutcome, CpuTranslationRequest, RiscvCore, RiscvCoreDriveAction, RiscvCpuError,
+    RiscvDataAccessEventKind, RiscvSv39PageTableResolver,
 };
 use rem6_isa_riscv::{
     MemoryAccessKind, MemoryWidth, Register, RiscvPmaAccessKind, RiscvPmaError, RiscvPmpAccessKind,
-    RiscvPmpAddressMode, RiscvPmpConfig, RiscvPmpError, RiscvPrivilegeMode,
+    RiscvPmpAddressMode, RiscvPmpConfig, RiscvPmpError, RiscvPrivilegeMode, RiscvSv39AccessKind,
+    RiscvSv39PageFault, RiscvSv39PageTableLevel, RiscvSv39Pte,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{
-    AccessSize, Address, AgentId, CacheLineLayout, MemoryTargetId, PartitionedMemoryStore,
-    TranslationAddressSpaceId, TranslationPageMap, TranslationPageMappingScope,
-    TranslationPagePermissions, TranslationPageSize, TranslationQueueConfig, TranslationTlbConfig,
-    TranslationTlbStats,
+    AccessSize, Address, AgentId, CacheLineLayout, MemoryRequestId, MemoryTargetId,
+    PartitionedMemoryStore, TranslationAddressSpaceId, TranslationFaultKind, TranslationPageMap,
+    TranslationPageMappingScope, TranslationPagePermissions, TranslationPageSize,
+    TranslationQueueConfig, TranslationRequestId, TranslationTlbConfig, TranslationTlbStats,
 };
 use rem6_transport::{
     MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTransport, TargetOutcome, TransportEndpointId,
@@ -22,6 +24,14 @@ use rem6_transport::{
 
 fn endpoint(name: &str) -> TransportEndpointId {
     TransportEndpointId::new(name).unwrap()
+}
+
+fn translation_id(sequence: u64) -> TranslationRequestId {
+    TranslationRequestId::new(AgentId::new(17), sequence)
+}
+
+fn memory_id(sequence: u64) -> MemoryRequestId {
+    MemoryRequestId::new(AgentId::new(19), sequence)
 }
 
 fn layout() -> CacheLineLayout {
@@ -227,6 +237,13 @@ fn data_routes() -> (
 
     (scheduler, transport, fetch_route, data_route)
 }
+
+const SV39_PTE_V: u64 = 1 << 0;
+const SV39_PTE_R: u64 = 1 << 1;
+const SV39_PTE_W: u64 = 1 << 2;
+const SV39_PTE_X: u64 = 1 << 3;
+const SV39_PTE_A: u64 = 1 << 6;
+const SV39_PTE_D: u64 = 1 << 7;
 
 fn fetch_one(
     core: &RiscvCore,
@@ -895,6 +912,114 @@ fn riscv_core_satp_asid_selects_data_translation_address_space() {
     assert_eq!(
         core.data_translation_tlb_stats().unwrap(),
         TranslationTlbStats::new(0, 2, 0, 2, 0)
+    );
+}
+
+#[test]
+fn riscv_sv39_page_table_resolver_maps_load_and_tracks_walk_addresses() {
+    let resolver = RiscvSv39PageTableResolver::new(0x100);
+    let virtual_address = (0x012_u64 << 30) | (0x034_u64 << 21) | (0x056_u64 << 12) | 0x789;
+    let level1_ppn = 0x200;
+    let level0_ppn = 0x300;
+    let leaf_ppn = 0x45678;
+    let level2_pte_address = Address::new((0x100_u64 << 12) + (0x012 * 8));
+    let level1_pte_address = Address::new((level1_ppn << 12) + (0x034 * 8));
+    let level0_pte_address = Address::new((level0_ppn << 12) + (0x056 * 8));
+    let request = CpuTranslationRequest::load(
+        translation_id(81),
+        memory_id(91),
+        MemoryRouteId::new(6),
+        endpoint("cpu0.dmem"),
+        Address::new(virtual_address),
+        AccessSize::new(8).unwrap(),
+    )
+    .unwrap();
+
+    let resolved = resolver.resolve(request, |pte_address| {
+        Ok(match pte_address {
+            address if address == level2_pte_address => {
+                RiscvSv39Pte::new((level1_ppn << 10) | SV39_PTE_V)
+            }
+            address if address == level1_pte_address => {
+                RiscvSv39Pte::new((level0_ppn << 10) | SV39_PTE_V)
+            }
+            address if address == level0_pte_address => RiscvSv39Pte::new(
+                (leaf_ppn << 10) | SV39_PTE_V | SV39_PTE_R | SV39_PTE_W | SV39_PTE_A | SV39_PTE_D,
+            ),
+            _ => RiscvSv39Pte::new(0),
+        })
+    });
+
+    let CpuTranslationOutcome::Mapped(mapped) = resolved.outcome() else {
+        panic!("Sv39 translation should map");
+    };
+    assert_eq!(
+        mapped.physical_address(),
+        Address::new((leaf_ppn << 12) | 0x789)
+    );
+    assert_eq!(mapped.virtual_address(), Address::new(virtual_address));
+    assert_eq!(mapped.size(), AccessSize::new(8).unwrap());
+    assert_eq!(
+        resolved.pte_addresses(),
+        &[level2_pte_address, level1_pte_address, level0_pte_address]
+    );
+    assert_eq!(resolved.leaf_level(), Some(RiscvSv39PageTableLevel::Level0));
+    assert_eq!(resolved.page_fault(), None);
+}
+
+#[test]
+fn riscv_sv39_page_table_resolver_reports_permission_fault_and_tracks_walk_addresses() {
+    let resolver = RiscvSv39PageTableResolver::new(0x110);
+    let virtual_address = (0x013_u64 << 30) | (0x035_u64 << 21) | (0x057_u64 << 12) | 0x89a;
+    let level1_ppn = 0x210;
+    let level0_ppn = 0x310;
+    let leaf_ppn = 0x55678;
+    let level2_pte_address = Address::new((0x110_u64 << 12) + (0x013 * 8));
+    let level1_pte_address = Address::new((level1_ppn << 12) + (0x035 * 8));
+    let level0_pte_address = Address::new((level0_ppn << 12) + (0x057 * 8));
+    let request = CpuTranslationRequest::load(
+        translation_id(82),
+        memory_id(92),
+        MemoryRouteId::new(6),
+        endpoint("cpu0.dmem"),
+        Address::new(virtual_address),
+        AccessSize::new(8).unwrap(),
+    )
+    .unwrap();
+
+    let resolved = resolver.resolve(request, |pte_address| {
+        Ok(match pte_address {
+            address if address == level2_pte_address => {
+                RiscvSv39Pte::new((level1_ppn << 10) | SV39_PTE_V)
+            }
+            address if address == level1_pte_address => {
+                RiscvSv39Pte::new((level0_ppn << 10) | SV39_PTE_V)
+            }
+            address if address == level0_pte_address => {
+                RiscvSv39Pte::new((leaf_ppn << 10) | SV39_PTE_V | SV39_PTE_X | SV39_PTE_A)
+            }
+            _ => RiscvSv39Pte::new(0),
+        })
+    });
+
+    let CpuTranslationOutcome::Fault(fault) = resolved.outcome() else {
+        panic!("Sv39 translation should fault");
+    };
+    assert_eq!(
+        fault.fault().virtual_address(),
+        Address::new(virtual_address)
+    );
+    assert_eq!(fault.fault().kind(), TranslationFaultKind::PermissionFault);
+    assert_eq!(
+        resolved.pte_addresses(),
+        &[level2_pte_address, level1_pte_address, level0_pte_address]
+    );
+    assert_eq!(resolved.leaf_level(), None);
+    assert_eq!(
+        resolved.page_fault(),
+        Some(&RiscvSv39PageFault::PermissionDenied {
+            access: RiscvSv39AccessKind::Load
+        })
     );
 }
 

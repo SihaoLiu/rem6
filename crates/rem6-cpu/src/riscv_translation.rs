@@ -1,10 +1,14 @@
-use rem6_isa_riscv::RiscvSystemEvent;
+use rem6_isa_riscv::{
+    walk_sv39_page_table, RiscvSv39AccessKind, RiscvSv39PageFault, RiscvSv39PageTableLevel,
+    RiscvSv39Pte, RiscvSv39VirtualAddress, RiscvSystemEvent,
+};
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionedScheduler, SchedulerContext, Tick,
 };
 use rem6_memory::{
     Address, ByteMask, MemoryRequestId, TranslationAddressSpaceId, TranslationFault,
-    TranslationPageMap, TranslationRequestId, TranslationTlbStats,
+    TranslationFaultKind, TranslationPageMap, TranslationRequestId, TranslationResolution,
+    TranslationTlbStats,
 };
 use rem6_mmio::{MmioBus, MmioError};
 use rem6_transport::{
@@ -17,7 +21,8 @@ use crate::riscv_data_issue::{
     PreparedDataParallelAccess,
 };
 use crate::{
-    riscv_data_access, CpuDataConfig, CpuTranslationFrontend, CpuTranslationOutcome,
+    riscv_data_access, CpuDataConfig, CpuTranslatedMemoryOperation, CpuTranslatedMemoryRequest,
+    CpuTranslationFaultRecord, CpuTranslationFrontend, CpuTranslationOutcome,
     CpuTranslationRequest, RiscvCore, RiscvCoreDriveAction, RiscvCoreState, RiscvCpuError,
     RiscvDataAccessTarget,
 };
@@ -33,6 +38,136 @@ pub(crate) struct PendingDataTranslation {
 impl PendingDataTranslation {
     pub(crate) const fn fetch_request(&self) -> MemoryRequestId {
         self.fetch_request
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RiscvSv39PageTableResolver {
+    root_table_ppn: u64,
+}
+
+impl RiscvSv39PageTableResolver {
+    pub const fn new(root_table_ppn: u64) -> Self {
+        Self { root_table_ppn }
+    }
+
+    pub const fn root_table_ppn(self) -> u64 {
+        self.root_table_ppn
+    }
+
+    pub fn resolve<F>(
+        &self,
+        request: CpuTranslationRequest,
+        mut read_pte: F,
+    ) -> RiscvSv39TranslationResult
+    where
+        F: FnMut(Address) -> Result<RiscvSv39Pte, RiscvSv39PageFault>,
+    {
+        let mut pte_addresses = Vec::with_capacity(3);
+        let virtual_address = match RiscvSv39VirtualAddress::new(request.virtual_address().get()) {
+            Ok(address) => address,
+            Err(fault) => {
+                return RiscvSv39TranslationResult::fault(request, fault, pte_addresses);
+            }
+        };
+        let access = sv39_access_kind(request.operation());
+        let walk = walk_sv39_page_table(
+            self.root_table_ppn,
+            virtual_address,
+            access,
+            |pte_address| {
+                let pte_address = Address::new(pte_address);
+                pte_addresses.push(pte_address);
+                read_pte(pte_address)
+            },
+        );
+
+        match walk {
+            Ok(walk) => {
+                debug_assert_eq!(
+                    pte_addresses,
+                    walk.pte_addresses()
+                        .iter()
+                        .copied()
+                        .map(Address::new)
+                        .collect::<Vec<_>>()
+                );
+                RiscvSv39TranslationResult::mapped(
+                    request,
+                    Address::new(walk.physical_address()),
+                    pte_addresses,
+                    walk.leaf_level(),
+                )
+            }
+            Err(fault) => RiscvSv39TranslationResult::fault(request, fault, pte_addresses),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiscvSv39TranslationResult {
+    outcome: CpuTranslationOutcome,
+    pte_addresses: Vec<Address>,
+    leaf_level: Option<RiscvSv39PageTableLevel>,
+    page_fault: Option<RiscvSv39PageFault>,
+}
+
+impl RiscvSv39TranslationResult {
+    fn mapped(
+        request: CpuTranslationRequest,
+        physical_address: Address,
+        pte_addresses: Vec<Address>,
+        leaf_level: RiscvSv39PageTableLevel,
+    ) -> Self {
+        Self {
+            outcome: cpu_translation_outcome_from_resolution(
+                request,
+                TranslationResolution::mapped(physical_address),
+            ),
+            pte_addresses,
+            leaf_level: Some(leaf_level),
+            page_fault: None,
+        }
+    }
+
+    fn fault(
+        request: CpuTranslationRequest,
+        fault: RiscvSv39PageFault,
+        pte_addresses: Vec<Address>,
+    ) -> Self {
+        let translation_fault = TranslationFault::new(
+            request.virtual_address(),
+            sv39_translation_fault_kind(&fault),
+        );
+        Self {
+            outcome: cpu_translation_outcome_from_resolution(
+                request,
+                TranslationResolution::fault(translation_fault),
+            ),
+            pte_addresses,
+            leaf_level: None,
+            page_fault: Some(fault),
+        }
+    }
+
+    pub const fn outcome(&self) -> &CpuTranslationOutcome {
+        &self.outcome
+    }
+
+    pub fn into_outcome(self) -> CpuTranslationOutcome {
+        self.outcome
+    }
+
+    pub fn pte_addresses(&self) -> &[Address] {
+        &self.pte_addresses
+    }
+
+    pub const fn leaf_level(&self) -> Option<RiscvSv39PageTableLevel> {
+        self.leaf_level
+    }
+
+    pub const fn page_fault(&self) -> Option<&RiscvSv39PageFault> {
+        self.page_fault.as_ref()
     }
 }
 
@@ -769,4 +904,43 @@ fn translated_data_from_outcome(
 
 fn data_translation_fault(fetch: MemoryRequestId, fault: TranslationFault) -> RiscvCpuError {
     RiscvCpuError::DataTranslationFault { fetch, fault }
+}
+
+fn sv39_access_kind(operation: CpuTranslatedMemoryOperation) -> RiscvSv39AccessKind {
+    match operation {
+        CpuTranslatedMemoryOperation::InstructionFetch => RiscvSv39AccessKind::InstructionFetch,
+        CpuTranslatedMemoryOperation::Read => RiscvSv39AccessKind::Load,
+        CpuTranslatedMemoryOperation::Write => RiscvSv39AccessKind::Store,
+        CpuTranslatedMemoryOperation::Atomic => RiscvSv39AccessKind::Atomic,
+    }
+}
+
+fn sv39_translation_fault_kind(fault: &RiscvSv39PageFault) -> TranslationFaultKind {
+    match fault {
+        RiscvSv39PageFault::PermissionDenied { .. } => TranslationFaultKind::PermissionFault,
+        _ => TranslationFaultKind::PageFault,
+    }
+}
+
+fn cpu_translation_outcome_from_resolution(
+    request: CpuTranslationRequest,
+    resolution: TranslationResolution,
+) -> CpuTranslationOutcome {
+    match resolution {
+        TranslationResolution::Mapped(physical_address) => CpuTranslationOutcome::Mapped(
+            CpuTranslatedMemoryRequest::new(request, physical_address),
+        ),
+        TranslationResolution::Fault(fault) => {
+            CpuTranslationOutcome::Fault(CpuTranslationFaultRecord::new(
+                request.translation_id(),
+                request.memory_request_id(),
+                request.route(),
+                request.endpoint().clone(),
+                request.virtual_address(),
+                request.size(),
+                request.operation(),
+                fault,
+            ))
+        }
+    }
 }
