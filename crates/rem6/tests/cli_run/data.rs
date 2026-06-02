@@ -137,6 +137,7 @@ fn rem6_run_executes_riscv_elf_load_store_through_nvm_profile_and_emits_nvm_stat
     assert!(stdout.contains("\"max_pending_writes\":1"));
     assert!(stdout.contains("\"nvm\":{\"persistent_writes\":1"));
     assert!(stdout.contains("\"persistent_write_bytes\":8"));
+    assert!(stdout.contains("\"max_pending_reads\":1,\"max_pending_persistent_writes\":1"));
     assert!(stdout.contains("\"max_pending_persistent_writes\":1"));
     assert_stat(
         &stdout,
@@ -290,6 +291,13 @@ fn rem6_run_executes_riscv_elf_load_store_through_nvm_profile_and_emits_nvm_stat
         "sim.memory.dram.nvm.persistent_write_bytes",
         "Byte",
         8,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.nvm.max_pending_reads",
+        "Count",
+        1,
         "monotonic",
     );
     assert_stat(
