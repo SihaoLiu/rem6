@@ -5,6 +5,8 @@ use rem6_memory::{
     MemoryResponseCheckpointPayload, MemoryResponseSnapshot, ResponseStatus,
 };
 
+const OVERSIZED_VECTOR_LENGTH: u64 = isize::MAX as u64 + 1;
+
 fn line_layout() -> CacheLineLayout {
     CacheLineLayout::new(64).unwrap()
 }
@@ -118,6 +120,16 @@ fn request_rejects_invalid_sizes_and_address_overflow() {
             start: Address::new(u64::MAX - 3),
             size: AccessSize::new(8).unwrap(),
         }
+    );
+}
+
+#[test]
+fn byte_mask_full_rejects_sizes_above_vec_capacity_before_allocation() {
+    let size = AccessSize::new(OVERSIZED_VECTOR_LENGTH).unwrap();
+
+    assert_eq!(
+        ByteMask::full(size),
+        Err(MemoryError::AccessSizeTooLarge { size })
     );
 }
 

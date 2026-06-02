@@ -69,6 +69,9 @@ impl AccessSize {
     }
 
     fn as_usize(self) -> Result<usize, MemoryError> {
+        if self.0 > isize::MAX as u64 {
+            return Err(MemoryError::AccessSizeTooLarge { size: self });
+        }
         self.0
             .try_into()
             .map_err(|_| MemoryError::AccessSizeTooLarge { size: self })
