@@ -27,8 +27,8 @@ pub use control_flow::{
     RiscvVectorConfig, RiscvVectorConfigUpdate,
 };
 pub use csr::{
-    RiscvCounterBank, RiscvCounterCsr, RiscvCounterCsrWord, RiscvCounterSnapshot, RiscvStatusWord,
-    RiscvTranslationCsr,
+    RiscvCounterBank, RiscvCounterCsr, RiscvCounterCsrWord, RiscvCounterSnapshot, RiscvStatusCsr,
+    RiscvStatusWord, RiscvTranslationCsr,
 };
 pub use error::{RiscvCsrError, RiscvError};
 pub use gdb_target::{RiscvGdbTargetDescription, RiscvGdbTargetDocument, RiscvGdbXlen};
@@ -128,6 +128,10 @@ fn decode_csr(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             csr => counter_csr(csr)
                 .map(|csr| RiscvInstruction::ReadCounterCsr { rd: rd(raw), csr })
                 .or_else(|| {
+                    RiscvStatusCsr::from_address(csr)
+                        .map(|csr| RiscvInstruction::ReadStatusCsr { rd: rd(raw), csr })
+                })
+                .or_else(|| {
                     RiscvTranslationCsr::from_address(csr)
                         .map(|csr| RiscvInstruction::ReadTranslationCsr { rd: rd(raw), csr })
                 })
@@ -163,6 +167,42 @@ fn decode_csr(raw: u32) -> Result<RiscvInstruction, RiscvError> {
                 zimm: rs1(raw).index(),
             }),
             0x7 => Ok(RiscvInstruction::ClearCounterCsrImmediate {
+                rd: rd(raw),
+                csr,
+                zimm: rs1(raw).index(),
+            }),
+            _ => Err(RiscvError::UnknownEncoding { raw }),
+        };
+    }
+
+    if let Some(csr) = RiscvStatusCsr::from_address(csr) {
+        return match funct3(raw) {
+            0x1 => Ok(RiscvInstruction::WriteStatusCsr {
+                rd: rd(raw),
+                csr,
+                rs1: rs1(raw),
+            }),
+            0x2 => Ok(RiscvInstruction::SetStatusCsr {
+                rd: rd(raw),
+                csr,
+                rs1: rs1(raw),
+            }),
+            0x3 => Ok(RiscvInstruction::ClearStatusCsr {
+                rd: rd(raw),
+                csr,
+                rs1: rs1(raw),
+            }),
+            0x5 => Ok(RiscvInstruction::WriteStatusCsrImmediate {
+                rd: rd(raw),
+                csr,
+                zimm: rs1(raw).index(),
+            }),
+            0x6 => Ok(RiscvInstruction::SetStatusCsrImmediate {
+                rd: rd(raw),
+                csr,
+                zimm: rs1(raw).index(),
+            }),
+            0x7 => Ok(RiscvInstruction::ClearStatusCsrImmediate {
                 rd: rd(raw),
                 csr,
                 zimm: rs1(raw).index(),
@@ -1070,6 +1110,31 @@ impl RiscvHartState {
                 let value = self.counters.read_machine(csr) & !u64::from(zimm);
                 write_counter_csr(self, &mut register_writes, rd, csr, value);
             }
+            RiscvInstruction::ReadStatusCsr { rd, csr } => {
+                write_register(self, &mut register_writes, rd, read_status_csr(self, csr));
+            }
+            RiscvInstruction::WriteStatusCsr { rd, csr, rs1 } => {
+                write_status_csr(self, &mut register_writes, rd, csr, self.read(rs1));
+            }
+            RiscvInstruction::SetStatusCsr { rd, csr, rs1 } => {
+                let value = read_status_csr(self, csr) | self.read(rs1);
+                write_status_csr(self, &mut register_writes, rd, csr, value);
+            }
+            RiscvInstruction::ClearStatusCsr { rd, csr, rs1 } => {
+                let value = read_status_csr(self, csr) & !self.read(rs1);
+                write_status_csr(self, &mut register_writes, rd, csr, value);
+            }
+            RiscvInstruction::WriteStatusCsrImmediate { rd, csr, zimm } => {
+                write_status_csr(self, &mut register_writes, rd, csr, u64::from(zimm));
+            }
+            RiscvInstruction::SetStatusCsrImmediate { rd, csr, zimm } => {
+                let value = read_status_csr(self, csr) | u64::from(zimm);
+                write_status_csr(self, &mut register_writes, rd, csr, value);
+            }
+            RiscvInstruction::ClearStatusCsrImmediate { rd, csr, zimm } => {
+                let value = read_status_csr(self, csr) & !u64::from(zimm);
+                write_status_csr(self, &mut register_writes, rd, csr, value);
+            }
             RiscvInstruction::ReadTranslationCsr { rd, csr } => {
                 write_register(
                     self,
@@ -1171,6 +1236,22 @@ fn write_counter_csr(
     let old_value = hart.counters.read_machine(csr);
     write_register(hart, writes, register, old_value);
     hart.counters.set_machine(csr, value);
+}
+
+fn read_status_csr(hart: &RiscvHartState, csr: RiscvStatusCsr) -> u64 {
+    csr.read(hart.status())
+}
+
+fn write_status_csr(
+    hart: &mut RiscvHartState,
+    writes: &mut Vec<RegisterWrite>,
+    register: Register,
+    csr: RiscvStatusCsr,
+    value: u64,
+) {
+    let old_value = read_status_csr(hart, csr);
+    write_register(hart, writes, register, old_value);
+    hart.set_status(csr.write(hart.status(), value));
 }
 
 fn read_translation_csr(hart: &RiscvHartState, csr: RiscvTranslationCsr) -> u64 {

@@ -2,7 +2,7 @@ use rem6_isa_riscv::{
     AtomicMemoryOp, Immediate, MemoryAccessKind, MemoryWidth, Register, RegisterWrite,
     RiscvCounterBank, RiscvCounterCsr, RiscvCounterSnapshot, RiscvCsrError, RiscvError,
     RiscvExecutionRecord, RiscvFenceSet, RiscvHartState, RiscvInstruction, RiscvMemoryOrdering,
-    RiscvPrivilegeMode, RiscvStatusWord, RiscvSv39AccessContext, RiscvSystemEvent,
+    RiscvPrivilegeMode, RiscvStatusCsr, RiscvStatusWord, RiscvSv39AccessContext, RiscvSystemEvent,
     RiscvTranslationCsr, RiscvTrap, RiscvTrapKind,
 };
 
@@ -457,6 +457,56 @@ fn hart_executes_machine_counter_csr_read_modify_write_operations() {
     hart.execute(clear_instret_imm).unwrap();
     assert_eq!(hart.read(reg(10)), 9);
     assert_eq!(hart.counter_snapshot(), RiscvCounterSnapshot::new(0x54, 9));
+}
+
+#[test]
+fn hart_executes_status_csr_read_modify_write_operations() {
+    let mut hart = RiscvHartState::new(0x3300);
+    hart.set_status(RiscvStatusWord::new(0x2 | (1 << 18)));
+    hart.write(reg(2), 1 << 19);
+    hart.write(reg(3), 1 << 18);
+
+    let read_mstatus = RiscvInstruction::decode(csr_read_type(0x300, 5)).unwrap();
+    let read_sstatus = RiscvInstruction::decode(csr_read_type(0x100, 6)).unwrap();
+    let set_sstatus = RiscvInstruction::decode(csr_type(0x100, 2, 0x2, 7)).unwrap();
+    let clear_sstatus = RiscvInstruction::decode(csr_type(0x100, 3, 0x3, 8)).unwrap();
+
+    assert_eq!(
+        read_mstatus,
+        RiscvInstruction::ReadStatusCsr {
+            rd: reg(5),
+            csr: RiscvStatusCsr::Mstatus,
+        }
+    );
+    assert_eq!(
+        read_sstatus,
+        RiscvInstruction::ReadStatusCsr {
+            rd: reg(6),
+            csr: RiscvStatusCsr::Sstatus,
+        }
+    );
+
+    let read_record = hart.execute(read_mstatus).unwrap();
+    assert_eq!(
+        read_record.register_writes(),
+        &[RegisterWrite::new(reg(5), 0x2 | (1 << 18))]
+    );
+    hart.execute(read_sstatus).unwrap();
+    assert_eq!(hart.read(reg(6)), 1 << 18);
+
+    hart.execute(set_sstatus).unwrap();
+    assert_eq!(hart.read(reg(7)), 1 << 18);
+    assert_eq!(hart.status().bits(), 0x2 | (1 << 18) | (1 << 19));
+    assert_eq!(
+        hart.sv39_access_context(),
+        RiscvSv39AccessContext::new(RiscvPrivilegeMode::Machine)
+            .with_mxr(true)
+            .with_sum(true)
+    );
+
+    hart.execute(clear_sstatus).unwrap();
+    assert_eq!(hart.read(reg(8)), (1 << 18) | (1 << 19));
+    assert_eq!(hart.status().bits(), 0x2 | (1 << 19));
 }
 
 #[test]

@@ -2967,7 +2967,8 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   privilege checks, superpage physical-address composition and
   alignment-before-access fault precedence, and accessed/dirty
   fault classification. RISC-V ISA tests also cover typed hart status MXR/SUM
-  bits feeding the derived Sv39 access context. RISC-V frontend tests also cover
+  bits feeding the derived Sv39 access context, `mstatus`/`sstatus` reads, and
+  `sstatus` set/clear paths for those bits. RISC-V frontend tests also cover
   hart-derived request-carried Sv39 access context for data translation,
   request-carried Sv39 access context in the page-table resolver and
   memory-walk bridge, PTE read request sequencing, PTE response decoding, and

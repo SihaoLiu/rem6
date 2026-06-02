@@ -114,6 +114,47 @@ impl RiscvTranslationCsr {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum RiscvStatusCsr {
+    Mstatus,
+    Sstatus,
+}
+
+impl RiscvStatusCsr {
+    const S_MODE_MASK: u64 = (1 << 18) | (1 << 19);
+
+    pub const fn address(self) -> u16 {
+        match self {
+            Self::Mstatus => 0x300,
+            Self::Sstatus => 0x100,
+        }
+    }
+
+    pub const fn from_address(address: u16) -> Option<Self> {
+        match address {
+            0x300 => Some(Self::Mstatus),
+            0x100 => Some(Self::Sstatus),
+            _ => None,
+        }
+    }
+
+    pub const fn read(self, status: RiscvStatusWord) -> u64 {
+        match self {
+            Self::Mstatus => status.bits(),
+            Self::Sstatus => status.bits() & Self::S_MODE_MASK,
+        }
+    }
+
+    pub const fn write(self, status: RiscvStatusWord, value: u64) -> RiscvStatusWord {
+        match self {
+            Self::Mstatus => RiscvStatusWord::new(value),
+            Self::Sstatus => RiscvStatusWord::new(
+                (status.bits() & !Self::S_MODE_MASK) | (value & Self::S_MODE_MASK),
+            ),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct RiscvStatusWord {
     bits: u64,
 }
