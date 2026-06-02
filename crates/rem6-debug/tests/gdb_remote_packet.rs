@@ -1,7 +1,7 @@
 use rem6_debug::{
     parse_gdb_remote_frame, GdbRemoteAckMode, GdbRemoteCommand, GdbRemoteError, GdbRemoteFeature,
     GdbRemoteFeatureValue, GdbRemoteFrame, GdbRemoteNotification, GdbRemotePacket,
-    GdbRemotePacketConfig, GdbRemoteSession,
+    GdbRemotePacketConfig, GdbRemoteRegisterBytes, GdbRemoteSession,
 };
 
 #[test]
@@ -190,6 +190,13 @@ fn gdb_remote_commands_decode_stop_reason_queries() {
 }
 
 #[test]
+fn gdb_remote_commands_decode_read_register_requests() {
+    let command = GdbRemoteCommand::parse(&GdbRemotePacket::parse_frame(b"$g#67").unwrap());
+
+    assert_eq!(command, GdbRemoteCommand::ReadRegisters);
+}
+
+#[test]
 fn gdb_remote_commands_decode_no_ack_requests() {
     let no_ack =
         GdbRemoteCommand::parse(&GdbRemotePacket::parse_frame(b"$QStartNoAckMode#b0").unwrap());
@@ -212,6 +219,24 @@ fn gdb_remote_session_reports_default_stop_reason() {
         vec![
             GdbRemoteFrame::Ack,
             GdbRemoteFrame::Packet(GdbRemotePacket::new(b"S05".to_vec()).unwrap()),
+        ],
+    );
+}
+
+#[test]
+fn gdb_remote_session_reports_register_bytes() {
+    let mut session = GdbRemoteSession::new(Vec::new());
+    session.set_register_bytes(GdbRemoteRegisterBytes::new(vec![
+        0x34, 0x12, 0xef, 0xbe, 0xad, 0xde,
+    ]));
+
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"g".to_vec()).unwrap())
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"3412efbeadde".to_vec()).unwrap()),
         ],
     );
 }

@@ -204,6 +204,7 @@ impl GdbRemotePacket {
 pub enum GdbRemoteCommand {
     QuerySupported { features: Vec<GdbRemoteFeature> },
     QueryStopReason,
+    ReadRegisters,
     StartNoAckMode,
     Unknown(Vec<u8>),
 }
@@ -266,6 +267,30 @@ impl GdbRemoteStopReply {
     }
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct GdbRemoteRegisterBytes {
+    bytes: Vec<u8>,
+}
+
+impl GdbRemoteRegisterBytes {
+    pub const fn new(bytes: Vec<u8>) -> Self {
+        Self { bytes }
+    }
+
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    fn encode_payload(&self) -> Vec<u8> {
+        let mut encoded = Vec::with_capacity(self.bytes.len() * 2);
+        for byte in &self.bytes {
+            encoded.push(encode_hex_nibble(byte >> 4));
+            encoded.push(encode_hex_nibble(byte & 0x0f));
+        }
+        encoded
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GdbRemoteAckMode {
     Acknowledged,
@@ -278,6 +303,7 @@ pub struct GdbRemoteSession {
     stub_features: Vec<GdbRemoteFeature>,
     gdb_features: Vec<GdbRemoteFeature>,
     stop_reply: GdbRemoteStopReply,
+    register_bytes: GdbRemoteRegisterBytes,
     last_response: Option<GdbRemotePacket>,
     interrupt_requested: bool,
 }
@@ -289,6 +315,7 @@ impl GdbRemoteSession {
             stub_features,
             gdb_features: Vec::new(),
             stop_reply: GdbRemoteStopReply::signal(0x05),
+            register_bytes: GdbRemoteRegisterBytes::default(),
             last_response: None,
             interrupt_requested: false,
         }
@@ -318,6 +345,14 @@ impl GdbRemoteSession {
         self.stop_reply = stop_reply;
     }
 
+    pub const fn register_bytes(&self) -> &GdbRemoteRegisterBytes {
+        &self.register_bytes
+    }
+
+    pub fn set_register_bytes(&mut self, register_bytes: GdbRemoteRegisterBytes) {
+        self.register_bytes = register_bytes;
+    }
+
     pub fn handle_packet(
         &mut self,
         packet: &GdbRemotePacket,
@@ -331,6 +366,9 @@ impl GdbRemoteSession {
             }
             GdbRemoteCommand::QueryStopReason => {
                 self.packet_response(self.stop_reply.encode_payload())
+            }
+            GdbRemoteCommand::ReadRegisters => {
+                self.packet_response(self.register_bytes.encode_payload())
             }
             GdbRemoteCommand::StartNoAckMode => {
                 if !self.supports_no_ack_mode() {
@@ -699,9 +737,14 @@ fn reject_legacy_sequence_id(payload: &[u8]) -> Result<(), GdbRemoteError> {
 }
 
 fn parse_command_payload(payload: &[u8]) -> GdbRemoteCommand {
+    const READ_REGISTERS: &[u8] = b"g";
     const QUERY_SUPPORTED: &[u8] = b"qSupported";
     const QUERY_STOP_REASON: &[u8] = b"?";
     const START_NO_ACK_MODE: &[u8] = b"QStartNoAckMode";
+
+    if payload == READ_REGISTERS {
+        return GdbRemoteCommand::ReadRegisters;
+    }
 
     if payload == QUERY_STOP_REASON {
         return GdbRemoteCommand::QueryStopReason;
