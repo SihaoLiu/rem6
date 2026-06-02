@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 
+const MAX_VECTOR_ALLOCATION_BYTES: u64 = isize::MAX as u64;
+
 mod address_checkpoint;
 mod address_map;
 mod error;
@@ -69,7 +71,7 @@ impl AccessSize {
     }
 
     fn as_usize(self) -> Result<usize, MemoryError> {
-        if self.0 > isize::MAX as u64 {
+        if self.0 > MAX_VECTOR_ALLOCATION_BYTES {
             return Err(MemoryError::AccessSizeTooLarge { size: self });
         }
         self.0
@@ -547,6 +549,9 @@ impl CacheLineLayout {
         }
         if !bytes.is_power_of_two() {
             return Err(MemoryError::NonPowerOfTwoCacheLineSize { bytes });
+        }
+        if bytes > MAX_VECTOR_ALLOCATION_BYTES {
+            return Err(MemoryError::CacheLineSizeTooLarge { bytes });
         }
 
         Ok(Self { bytes })

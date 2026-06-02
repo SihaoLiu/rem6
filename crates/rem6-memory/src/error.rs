@@ -20,6 +20,9 @@ pub enum MemoryError {
     NonPowerOfTwoCacheLineSize {
         bytes: u64,
     },
+    CacheLineSizeTooLarge {
+        bytes: u64,
+    },
     PayloadSizeMismatch {
         expected: AccessSize,
         actual: u64,
@@ -268,6 +271,9 @@ impl fmt::Display for MemoryError {
             Self::ZeroCacheLineSize => write!(formatter, "cache line size must be nonzero"),
             Self::NonPowerOfTwoCacheLineSize { bytes } => {
                 write!(formatter, "cache line size {bytes} is not a power of two")
+            }
+            Self::CacheLineSizeTooLarge { bytes } => {
+                write!(formatter, "cache line size {bytes} is too large")
             }
             Self::PayloadSizeMismatch { expected, actual } => write!(
                 formatter,

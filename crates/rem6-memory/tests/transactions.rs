@@ -143,6 +143,12 @@ fn line_layout_requires_nonzero_power_of_two_bytes() {
         CacheLineLayout::new(48).unwrap_err(),
         MemoryError::NonPowerOfTwoCacheLineSize { bytes: 48 }
     );
+    assert_eq!(
+        CacheLineLayout::new(OVERSIZED_VECTOR_LENGTH).unwrap_err(),
+        MemoryError::CacheLineSizeTooLarge {
+            bytes: OVERSIZED_VECTOR_LENGTH
+        }
+    );
 
     let layout = CacheLineLayout::new(128).unwrap();
     assert_eq!(layout.bytes(), 128);
