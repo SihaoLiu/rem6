@@ -237,6 +237,9 @@ pub enum GdbRemoteCommand {
         features: Vec<GdbRemoteFeature>,
     },
     QuerySymbol,
+    QueryMonitorCommand {
+        command: Vec<u8>,
+    },
     QueryStopReason,
     QueryResumeActions,
     QueryThreadInfo {
@@ -319,6 +322,7 @@ pub struct GdbRemoteSession {
     thread_ids: Vec<u64>,
     thread_info_index: usize,
     last_resume_requests: Vec<GdbRemoteResumeRequest>,
+    last_monitor_command: Option<Vec<u8>>,
     last_disconnect_request: Option<GdbRemoteDisconnectRequest>,
     last_trap_request: Option<GdbRemoteTrapRequest>,
     active_traps: Vec<GdbRemoteTrapPoint>,
@@ -353,6 +357,7 @@ impl GdbRemoteSession {
             thread_ids: vec![1],
             thread_info_index: 0,
             last_resume_requests: Vec::new(),
+            last_monitor_command: None,
             last_disconnect_request: None,
             last_trap_request: None,
             active_traps: Vec::new(),
@@ -440,6 +445,10 @@ impl GdbRemoteSession {
 
     pub fn last_resume_requests(&self) -> &[GdbRemoteResumeRequest] {
         &self.last_resume_requests
+    }
+
+    pub fn last_monitor_command(&self) -> Option<&[u8]> {
+        self.last_monitor_command.as_deref()
     }
 
     pub fn set_thread_ids(&mut self, thread_ids: Vec<u64>) -> bool {
@@ -542,6 +551,10 @@ impl GdbRemoteSession {
                 self.packet_response(encode_supported_features(&self.stub_features))
             }
             GdbRemoteCommand::QuerySymbol => self.packet_response(b"OK".to_vec()),
+            GdbRemoteCommand::QueryMonitorCommand { command } => {
+                self.last_monitor_command = Some(command);
+                Ok(self.ack_response())
+            }
             GdbRemoteCommand::QueryStopReason => {
                 self.packet_response(self.stop_reply.encode_payload())
             }

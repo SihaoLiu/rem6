@@ -17,6 +17,7 @@ fn parse_command_payload(payload: &[u8]) -> GdbRemoteCommand {
     const QUERY_ATTACHED: &[u8] = b"qAttached";
     const QUERY_CURRENT_THREAD: &[u8] = b"qC";
     const QUERY_FIRST_THREAD_INFO: &[u8] = b"qfThreadInfo";
+    const QUERY_MONITOR_COMMAND: &[u8] = b"qRcmd";
     const QUERY_SUBSEQUENT_THREAD_INFO: &[u8] = b"qsThreadInfo";
     const QUERY_SYMBOL: &[u8] = b"qSymbol";
     const READ_REGISTERS: &[u8] = b"g";
@@ -139,6 +140,10 @@ fn parse_command_payload(payload: &[u8]) -> GdbRemoteCommand {
         return GdbRemoteCommand::QuerySymbol;
     }
 
+    if let Some(command) = parse_monitor_command(payload, QUERY_MONITOR_COMMAND) {
+        return GdbRemoteCommand::QueryMonitorCommand { command };
+    }
+
     if payload == QUERY_FIRST_THREAD_INFO {
         return GdbRemoteCommand::QueryThreadInfo {
             query: GdbRemoteThreadInfoQuery::First,
@@ -196,6 +201,17 @@ fn parse_positive_hex_id(id: &[u8]) -> Option<u64> {
         return None;
     }
     Some(id)
+}
+
+fn parse_monitor_command(payload: &[u8], query: &[u8]) -> Option<Vec<u8>> {
+    let rest = payload.strip_prefix(query)?;
+    if rest.is_empty() {
+        return Some(Vec::new());
+    }
+    let encoded = rest
+        .strip_prefix(b",")
+        .or_else(|| rest.strip_prefix(b":"))?;
+    decode_hex_bytes(encoded)
 }
 
 fn parse_memory_read(request: &[u8]) -> Option<(u64, usize)> {

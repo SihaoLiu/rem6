@@ -236,6 +236,35 @@ fn gdb_remote_commands_decode_symbol_lookup_queries() {
 }
 
 #[test]
+fn gdb_remote_commands_decode_monitor_command_queries() {
+    let command =
+        GdbRemoteCommand::parse(&GdbRemotePacket::new(b"qRcmd,68656c6c6f".to_vec()).unwrap());
+    assert_eq!(
+        command,
+        GdbRemoteCommand::QueryMonitorCommand {
+            command: b"hello".to_vec(),
+        },
+    );
+
+    let colon_command =
+        GdbRemoteCommand::parse(&GdbRemotePacket::new(b"qRcmd:65786974".to_vec()).unwrap());
+    assert_eq!(
+        colon_command,
+        GdbRemoteCommand::QueryMonitorCommand {
+            command: b"exit".to_vec(),
+        },
+    );
+
+    let empty = GdbRemoteCommand::parse(&GdbRemotePacket::new(b"qRcmd".to_vec()).unwrap());
+    assert_eq!(
+        empty,
+        GdbRemoteCommand::QueryMonitorCommand {
+            command: Vec::new(),
+        },
+    );
+}
+
+#[test]
 fn gdb_remote_commands_decode_thread_info_queries() {
     let first = GdbRemoteCommand::parse(&GdbRemotePacket::new(b"qfThreadInfo".to_vec()).unwrap());
     assert_eq!(
@@ -260,10 +289,19 @@ fn gdb_remote_commands_preserve_query_prefix_neighbors() {
     for payload in [
         b"qCRC:1000,4".as_slice(),
         b"qC1".as_slice(),
+        b"qRcmdExtra".as_slice(),
         b"qSymbolExtra".as_slice(),
         b"qfThreadInfoExtra".as_slice(),
         b"qsThreadInfoExtra".as_slice(),
     ] {
+        let command = GdbRemoteCommand::parse(&GdbRemotePacket::new(payload.to_vec()).unwrap());
+        assert_eq!(command, GdbRemoteCommand::Unknown(payload.to_vec()));
+    }
+}
+
+#[test]
+fn gdb_remote_commands_preserve_malformed_monitor_command_queries() {
+    for payload in [b"qRcmd,6".as_slice(), b"qRcmd,zz".as_slice()] {
         let command = GdbRemoteCommand::parse(&GdbRemotePacket::new(payload.to_vec()).unwrap());
         assert_eq!(command, GdbRemoteCommand::Unknown(payload.to_vec()));
     }
@@ -985,6 +1023,20 @@ fn gdb_remote_session_reports_no_symbol_lookup_needed() {
             GdbRemoteFrame::Packet(GdbRemotePacket::new(b"OK".to_vec()).unwrap()),
         ],
     );
+}
+
+#[test]
+fn gdb_remote_session_records_monitor_command_without_packet_response() {
+    let mut session = GdbRemoteSession::new(Vec::new());
+
+    assert_eq!(session.last_monitor_command(), None);
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"qRcmd,65786974".to_vec()).unwrap())
+            .unwrap(),
+        vec![GdbRemoteFrame::Ack],
+    );
+    assert_eq!(session.last_monitor_command(), Some(b"exit".as_slice()));
 }
 
 #[test]
