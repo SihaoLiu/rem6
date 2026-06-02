@@ -273,6 +273,16 @@ impl RiscvWorkloadReplay {
             HostEventPolicy,
             stats,
         )));
+        sinic_mmio
+            .attach_checkpoint_ports(
+                controller
+                    .lock()
+                    .expect("system host controller lock")
+                    .executor_mut(),
+            )
+            .map_err(|error| {
+                RiscvWorkloadReplayError::System(crate::SystemError::Checkpoint(error))
+            })?;
         schedule_planned_host_events(
             &self.plan,
             &mut scheduler,

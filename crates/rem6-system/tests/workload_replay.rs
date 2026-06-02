@@ -93,6 +93,12 @@ fn boot_image() -> BootImage {
         .unwrap()
 }
 
+fn boot_image_with_entry_ecall() -> BootImage {
+    BootImage::new(Address::new(0x8000))
+        .add_segment(Address::new(0x8000), word(0x0000_0073))
+        .unwrap()
+}
+
 fn boot_image_with_second_target_entry() -> BootImage {
     BootImage::new(Address::new(0x9000))
         .add_segment(Address::new(0x9000), word(0x0000_0073))
@@ -1075,6 +1081,31 @@ fn replay_manifest_with_sinic_pci_mmio_config_store() -> WorkloadManifest {
     .add_resource(kernel_resource())
     .unwrap()
     .add_required_resource(resource_id("kernel"))
+    .add_host_event(WorkloadHostEvent::new(
+        0,
+        HostEventIntent::Stop {
+            reason: "host-stop".to_string(),
+        },
+    ))
+    .build()
+    .unwrap()
+}
+
+fn replay_manifest_with_sinic_pci_checkpoint() -> WorkloadManifest {
+    WorkloadManifest::builder(
+        workload_id("riscv-replay-sinic-pci-checkpoint"),
+        boot_image_with_entry_ecall(),
+    )
+    .with_topology(replay_topology_with_sinic_pci_mmio_data())
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_host_event(WorkloadHostEvent::new(
+        1,
+        HostEventIntent::Checkpoint {
+            label: "sinic-state".to_string(),
+        },
+    ))
     .add_host_event(WorkloadHostEvent::new(
         0,
         HostEventIntent::Stop {
@@ -2121,6 +2152,35 @@ fn workload_replay_records_checkpoint_manifest_summaries() {
         outcome.result().restored_checkpoint_manifest_summaries(),
         &[expected]
     );
+    plan.verify_result(outcome.result()).unwrap();
+}
+
+#[test]
+fn workload_replay_checkpoint_captures_sinic_pci_mmio_components() {
+    let manifest = replay_manifest_with_sinic_pci_checkpoint();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let outcome = RiscvWorkloadReplay::new(plan.clone())
+        .with_max_turns(20)
+        .run_parallel()
+        .unwrap();
+
+    let captured = outcome
+        .result()
+        .checkpoint_manifest_summaries()
+        .iter()
+        .find(|summary| summary.label() == "sinic-state")
+        .unwrap();
+    let registers = captured
+        .component_summary("net.sinic.0.1.0.registers")
+        .unwrap();
+    let fifo = captured.component_summary("net.sinic.0.1.0.fifo").unwrap();
+    assert!(registers
+        .chunk_summary("sinic-register")
+        .is_some_and(|chunk| chunk.payload_bytes() > 0));
+    assert!(fifo
+        .chunk_summary("sinic-fifo")
+        .is_some_and(|chunk| chunk.payload_bytes() > 0));
     plan.verify_result(outcome.result()).unwrap();
 }
 

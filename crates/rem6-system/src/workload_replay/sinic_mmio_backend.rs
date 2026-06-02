@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use rem6_checkpoint::{CheckpointComponentId, CheckpointError};
 use rem6_kernel::ParallelSchedulerContext;
 use rem6_memory::{AccessSize, AddressRange, MemoryOperation, MemoryRequest, MemoryResponse};
 use rem6_mmio::{MmioRequest, MmioRequestId};
@@ -8,6 +9,7 @@ use rem6_transport::{RequestDelivery, TargetOutcome, TransportEndpointId};
 use rem6_workload::{WorkloadSinicPciDevice, WorkloadTopology};
 
 use super::RiscvWorkloadReplayError;
+use crate::{SinicFifoCheckpointPort, SinicRegisterCheckpointPort, SystemActionExecutor};
 
 #[derive(Clone, Debug)]
 pub(super) struct WorkloadSinicPciMmioBackend {
@@ -52,10 +54,24 @@ impl WorkloadSinicPciMmioBackend {
     }
 
     pub(super) fn snapshots(&self) -> BTreeMap<u32, SinicFifoDeviceSnapshot> {
-        self.devices
-            .values()
-            .flat_map(|devices| devices.iter().map(|device| (device.nic, device.snapshot())))
+        self.iter_devices()
+            .map(|device| (device.nic, device.snapshot()))
             .collect()
+    }
+
+    pub(super) fn attach_checkpoint_ports(
+        &self,
+        executor: &mut SystemActionExecutor,
+    ) -> Result<(), CheckpointError> {
+        for device in self.iter_devices() {
+            executor.attach_sinic_register_checkpoint_port(device.register_checkpoint_port())?;
+            executor.attach_sinic_fifo_checkpoint_port(device.fifo_checkpoint_port())?;
+        }
+        Ok(())
+    }
+
+    fn iter_devices(&self) -> impl Iterator<Item = &WorkloadSinicPciMmioDevice> {
+        self.devices.values().flat_map(|devices| devices.iter())
     }
 }
 
@@ -64,6 +80,8 @@ struct WorkloadSinicPciMmioDevice {
     nic: u32,
     bar_range: AddressRange,
     device: SinicMmioDevice,
+    register_checkpoint_component: CheckpointComponentId,
+    fifo_checkpoint_component: CheckpointComponentId,
 }
 
 impl WorkloadSinicPciMmioDevice {
@@ -78,6 +96,8 @@ impl WorkloadSinicPciMmioDevice {
             nic: device.nic(),
             bar_range,
             device: SinicMmioDevice::new(device.bar_base(), fifo),
+            register_checkpoint_component: sinic_register_checkpoint_component(device),
+            fifo_checkpoint_component: sinic_fifo_checkpoint_component(device),
         }
     }
 
@@ -108,6 +128,38 @@ impl WorkloadSinicPciMmioDevice {
     fn snapshot(&self) -> SinicFifoDeviceSnapshot {
         self.device.snapshot()
     }
+
+    fn register_checkpoint_port(&self) -> SinicRegisterCheckpointPort {
+        SinicRegisterCheckpointPort::from_fifo_device(
+            self.register_checkpoint_component.clone(),
+            self.device.state(),
+        )
+    }
+
+    fn fifo_checkpoint_port(&self) -> SinicFifoCheckpointPort {
+        SinicFifoCheckpointPort::new(self.fifo_checkpoint_component.clone(), self.device.state())
+            .with_register_checkpoint_component(self.register_checkpoint_component.clone())
+    }
+}
+
+fn sinic_register_checkpoint_component(device: &WorkloadSinicPciDevice) -> CheckpointComponentId {
+    CheckpointComponentId::new(format!(
+        "net.sinic.{}.{}.{}.registers",
+        device.pci_bus(),
+        device.pci_device(),
+        device.pci_function()
+    ))
+    .expect("formatted workload SINIC register checkpoint component is nonempty")
+}
+
+fn sinic_fifo_checkpoint_component(device: &WorkloadSinicPciDevice) -> CheckpointComponentId {
+    CheckpointComponentId::new(format!(
+        "net.sinic.{}.{}.{}.fifo",
+        device.pci_bus(),
+        device.pci_device(),
+        device.pci_function()
+    ))
+    .expect("formatted workload SINIC FIFO checkpoint component is nonempty")
 }
 
 fn memory_request_to_mmio_request(request: &MemoryRequest) -> Result<MmioRequest, &'static str> {
