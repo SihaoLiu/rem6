@@ -398,6 +398,11 @@ isolated bugs:
   `qXfer:features:read+` through `qSupported` and registering RV32/RV64
   target-description documents produced by `rem6-isa-riscv`, keeping protocol
   parsing generic while leaving architecture XML ownership in the ISA crate.
+  The same system boundary can seed `g` and `p n` register replies from a
+  RISC-V hart snapshot, using the target-description order for `x0` through
+  `x31` and `pc`, XLEN-sized little-endian values, and generic session-local
+  single-register writes until live hart mutation is wired into the debugger
+  loop.
   Workload manifests and replay
   plans can declare exact expected remote-send records, exact progress-free
   transition records, remote-flow actual sets, and remote source/target endpoint
@@ -1196,7 +1201,10 @@ Implementation evidence through 2026-06-01:
   the generic debug packet session with the typed RISC-V target-description
   annex set. That crate boundary prevents the debug crate from depending on
   any ISA crate while still giving system construction a single tested entry
-  point for debugger-visible architecture metadata.
+  point for debugger-visible architecture metadata. A companion constructor
+  seeds that session from a `RiscvHartState` snapshot, preserving the same
+  RISC-V register order for all-register and single-register reads without
+  moving ISA-specific register numbering into the debug crate.
 - `rem6-memory` now keeps `MemoryRequest`, `MemoryResponse`, response status,
   atomic request payload validation, and atomic read-modify-write byte
   materialization in a focused `request` module. Memory source-policy tests keep
@@ -2838,7 +2846,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   annex names for the debug Xfer registry, and explicit omission of FPU/CSR
   annexes until those states are modeled through the debug register cache.
   System RISC-V debug-session tests cover `qSupported` feature advertising and
-  RV32/RV64 `qXfer:features:read` serving through the constructed session.
+  RV32/RV64 `qXfer:features:read` serving through the constructed session,
+  plus RV32/RV64 hart register snapshots for `g` and `p n` packets with
+  session-local single-register write readback.
   RISC-V PMP tests cover TOR, NA4, and NAPOT range decoding, lowest
   matching-entry priority, locked-entry write rejection, locked TOR lower-bound
   protection, configuration-before-address materialization, default inactive
