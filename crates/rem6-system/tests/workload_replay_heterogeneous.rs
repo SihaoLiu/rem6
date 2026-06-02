@@ -1,6 +1,6 @@
 use rem6_accelerator::AcceleratorEngineId;
 use rem6_boot::BootImage;
-use rem6_dram::{DramGeometry, DramTiming, ExternalMemoryProfile};
+use rem6_dram::{DramGeometry, DramLowPowerTiming, DramTiming, ExternalMemoryProfile};
 use rem6_gpu::GpuDeviceId;
 use rem6_memory::{AccessSize, Address, AddressRange, CacheLineLayout, MemoryTargetId};
 use rem6_system::{RiscvWorkloadReplay, RiscvWorkloadReplayError};
@@ -61,6 +61,17 @@ fn dram_timing() -> DramTiming {
     DramTiming::new(4, 8, 10, 3, 5).unwrap()
 }
 
+fn profile_low_power_timing() -> DramLowPowerTiming {
+    DramLowPowerTiming::new(18, 72, 6)
+        .unwrap()
+        .with_self_refresh_exit_latency(13)
+        .unwrap()
+}
+
+fn profiled_dram_timing() -> DramTiming {
+    dram_timing().with_low_power_timing(profile_low_power_timing())
+}
+
 fn single_channel_ddr_profile(target: u32) -> ExternalMemoryProfile {
     ExternalMemoryProfile::ddr(
         MemoryTargetId::new(target),
@@ -68,7 +79,7 @@ fn single_channel_ddr_profile(target: u32) -> ExternalMemoryProfile {
         1,
         1,
         DramGeometry::new(2, 64, 16).unwrap(),
-        dram_timing(),
+        profiled_dram_timing(),
     )
     .unwrap()
 }
@@ -926,6 +937,10 @@ fn workload_replay_summary_reports_dma_wait_diagnostics() {
     assert_eq!(summary.gpu_dma_completion_count(), 2);
     assert_eq!(summary.accelerator_dma_copy_count(), 2);
     assert_eq!(summary.accelerator_dma_completion_count(), 2);
+    assert_eq!(
+        outcome.run().dram_profile().profile_low_power_timing(),
+        Some(profile_low_power_timing())
+    );
     assert!(summary.gpu_dma_scheduler_batch_count() >= summary.gpu_dma_copy_count());
     assert!(
         summary.accelerator_dma_scheduler_batch_count() >= summary.accelerator_dma_copy_count()
