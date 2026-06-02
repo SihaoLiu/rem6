@@ -409,7 +409,10 @@ isolated bugs:
   `M addr,length:XX...` packets are also handled at the system boundary by
   reading and writing `PartitionedMemoryStore` ranges across cache-line
   boundaries, returning `E01` for invalid ranges without partially mutating
-  guest memory.
+  guest memory. Multi-core RISC-V debug construction can derive positive GDB
+  thread ids from `RiscvCluster` core ids, publish the sorted thread list
+  through generic `qfThreadInfo`/`T`/`qC` session state, and keep the first core
+  as the initial register source until per-thread register selection is wired.
   Workload manifests and replay
   plans can declare exact expected remote-send records, exact progress-free
   transition records, remote-flow actual sets, and remote source/target endpoint
@@ -1220,7 +1223,10 @@ Implementation evidence through 2026-06-01:
   RISC-V redirect path so fetch state and architectural PC do not diverge. The
   same module also bridges generic `m`/`M` memory packets to store-backed guest
   memory, splitting accesses at cache-line boundaries and rejecting invalid
-  ranges before committing writes.
+  ranges before committing writes. Cluster construction maps sorted
+  `RiscvCluster` core ids to positive GDB thread ids, seeds the generic session
+  thread list from those ids, and leaves the lowest core as the register source
+  until debugger-selected register views are connected.
 - `rem6-memory` now keeps `MemoryRequest`, `MemoryResponse`, response status,
   atomic request payload validation, and atomic read-modify-write byte
   materialization in a focused `request` module. Memory source-policy tests keep

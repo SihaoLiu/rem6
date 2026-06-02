@@ -1,4 +1,4 @@
-use rem6_cpu::RiscvCore;
+use rem6_cpu::{CpuId, RiscvCluster, RiscvCore};
 use rem6_debug::{
     GdbRemoteAckMode, GdbRemoteCommand, GdbRemoteError, GdbRemoteFeature, GdbRemoteFeatureValue,
     GdbRemoteFrame, GdbRemotePacket, GdbRemoteRegisterBytes, GdbRemoteSession,
@@ -53,6 +53,34 @@ pub fn riscv_gdb_remote_session_from_core(
     core: &RiscvCore,
 ) -> GdbRemoteSession {
     riscv_gdb_remote_session_from_hart(xlen, &riscv_gdb_hart_snapshot_from_core(core))
+}
+
+pub fn riscv_gdb_remote_session_from_cluster(
+    xlen: RiscvGdbXlen,
+    cluster: &RiscvCluster,
+) -> Option<GdbRemoteSession> {
+    let first_cpu = cluster.core_ids().into_iter().next()?;
+    let first_core = cluster.core(first_cpu).ok()?;
+    let mut session = riscv_gdb_remote_session_from_core(xlen, &first_core);
+    sync_riscv_gdb_remote_threads_from_cluster(&mut session, cluster);
+    Some(session)
+}
+
+pub fn sync_riscv_gdb_remote_threads_from_cluster(
+    session: &mut GdbRemoteSession,
+    cluster: &RiscvCluster,
+) -> bool {
+    session.set_thread_ids(
+        cluster
+            .core_ids()
+            .into_iter()
+            .map(riscv_gdb_remote_thread_id)
+            .collect(),
+    )
+}
+
+pub fn riscv_gdb_remote_thread_id(cpu: CpuId) -> u64 {
+    u64::from(cpu.get()) + 1
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

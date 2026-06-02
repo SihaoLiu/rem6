@@ -1,4 +1,4 @@
-use rem6_cpu::{CpuCore, CpuFetchConfig, CpuId, CpuResetState, RiscvCore};
+use rem6_cpu::{CpuCore, CpuFetchConfig, CpuId, CpuResetState, RiscvCluster, RiscvCore};
 use rem6_debug::{GdbRemoteCommand, GdbRemoteFrame, GdbRemotePacket};
 use rem6_isa_riscv::{Register, RiscvGdbXlen, RiscvHartState};
 use rem6_kernel::PartitionId;
@@ -8,8 +8,9 @@ use rem6_memory::{
 use rem6_system::{
     apply_riscv_gdb_remote_register_write, handle_riscv_gdb_remote_core_packet,
     handle_riscv_gdb_remote_memory_packet, handle_riscv_gdb_remote_packet,
-    riscv_gdb_remote_session, riscv_gdb_remote_session_from_core,
-    riscv_gdb_remote_session_from_hart, RiscvGdbRegisterWriteError, RiscvGdbRemotePacketError,
+    riscv_gdb_remote_session, riscv_gdb_remote_session_from_cluster,
+    riscv_gdb_remote_session_from_core, riscv_gdb_remote_session_from_hart,
+    RiscvGdbRegisterWriteError, RiscvGdbRemotePacketError,
 };
 use rem6_transport::{MemoryRoute, MemoryTransport, TransportEndpointId};
 
@@ -571,6 +572,59 @@ fn riscv_gdb_remote_core_packet_handler_does_not_write_after_disconnect() {
 }
 
 #[test]
+fn riscv_gdb_remote_session_from_cluster_reports_core_threads() {
+    let core0 = riscv_core_with_id(0, 0x8000);
+    core0.write_register(Register::new(1).unwrap(), 0x0123_4567_89ab_cdef);
+    let core2 = riscv_core_with_id(2, 0x9000);
+    let cluster = RiscvCluster::new([core2, core0]).unwrap();
+
+    let mut session = riscv_gdb_remote_session_from_cluster(RiscvGdbXlen::Rv64, &cluster).unwrap();
+
+    assert_eq!(session.thread_ids(), &[1, 3]);
+    assert_eq!(session.current_thread_id(), 1);
+    assert_eq!(
+        packet_payload(
+            session
+                .handle_packet(&GdbRemotePacket::new(b"qC".to_vec()).unwrap())
+                .unwrap(),
+        ),
+        b"QC1",
+    );
+    assert_eq!(
+        packet_payload(
+            session
+                .handle_packet(&GdbRemotePacket::new(b"qfThreadInfo".to_vec()).unwrap())
+                .unwrap(),
+        ),
+        b"m1,3",
+    );
+    assert_eq!(
+        packet_payload(
+            session
+                .handle_packet(&GdbRemotePacket::new(b"T3".to_vec()).unwrap())
+                .unwrap(),
+        ),
+        b"OK",
+    );
+    assert_eq!(
+        packet_payload(
+            session
+                .handle_packet(&GdbRemotePacket::new(b"T2".to_vec()).unwrap())
+                .unwrap(),
+        ),
+        b"E01",
+    );
+    assert_eq!(
+        packet_payload(
+            session
+                .handle_packet(&GdbRemotePacket::new(b"p1".to_vec()).unwrap())
+                .unwrap(),
+        ),
+        b"efcdab8967452301",
+    );
+}
+
+#[test]
 fn riscv_gdb_remote_memory_packet_handler_reads_partitioned_store_across_lines() {
     let mut store = debug_memory_store();
     let mut session = riscv_gdb_remote_session(RiscvGdbXlen::Rv64);
@@ -649,12 +703,16 @@ fn riscv_gdb_remote_memory_packet_handler_rejects_invalid_write_without_partial_
 }
 
 fn riscv_core(entry: u64) -> RiscvCore {
+    riscv_core_with_id(0, entry)
+}
+
+fn riscv_core_with_id(cpu: u32, entry: u64) -> RiscvCore {
     let mut transport = MemoryTransport::new();
     let route = transport
         .add_route(
             MemoryRoute::new(
-                endpoint("cpu0.ifetch"),
-                PartitionId::new(0),
+                endpoint(&format!("cpu{cpu}.ifetch")),
+                PartitionId::new(cpu),
                 endpoint("l1i"),
                 PartitionId::new(1),
                 2,
@@ -667,13 +725,13 @@ fn riscv_core(entry: u64) -> RiscvCore {
     RiscvCore::new(
         CpuCore::new(
             CpuResetState::new(
-                CpuId::new(0),
-                PartitionId::new(0),
-                AgentId::new(7),
+                CpuId::new(cpu),
+                PartitionId::new(cpu),
+                AgentId::new(7 + cpu),
                 Address::new(entry),
             ),
             CpuFetchConfig::new(
-                endpoint("cpu0.ifetch"),
+                endpoint(&format!("cpu{cpu}.ifetch")),
                 route,
                 CacheLineLayout::new(16).unwrap(),
                 AccessSize::new(4).unwrap(),
