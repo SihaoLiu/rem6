@@ -8,6 +8,7 @@ mod integer;
 mod pma;
 mod pmp;
 mod record;
+mod sv39;
 mod types;
 mod vector;
 
@@ -38,6 +39,7 @@ pub use pmp::{
     RiscvPmpRange, RiscvPmpSnapshot, RiscvPmpSnapshotEntry, RiscvPmpTable, RiscvPrivilegeMode,
 };
 pub use record::{RegisterWrite, RiscvExecutionRecord, RiscvSystemEvent, RiscvTrap, RiscvTrapKind};
+pub use sv39::{RiscvSv39AccessKind, RiscvSv39PageFault, RiscvSv39Pte};
 pub use types::{
     AtomicMemoryOp, Immediate, MemoryAccessKind, MemoryResponseError, MemoryResponseWriteback,
     MemoryWidth, Register, RiscvFenceSet, RiscvMemoryOrdering,
