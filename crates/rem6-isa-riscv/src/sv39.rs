@@ -294,6 +294,88 @@ impl RiscvSv39Pte {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiscvSv39WalkResult {
+    physical_address: u64,
+    leaf_level: RiscvSv39PageTableLevel,
+    leaf_pte: RiscvSv39Pte,
+    pte_addresses: Vec<u64>,
+}
+
+impl RiscvSv39WalkResult {
+    fn new(
+        physical_address: u64,
+        leaf_level: RiscvSv39PageTableLevel,
+        leaf_pte: RiscvSv39Pte,
+        pte_addresses: Vec<u64>,
+    ) -> Self {
+        Self {
+            physical_address,
+            leaf_level,
+            leaf_pte,
+            pte_addresses,
+        }
+    }
+
+    pub const fn physical_address(&self) -> u64 {
+        self.physical_address
+    }
+
+    pub const fn leaf_level(&self) -> RiscvSv39PageTableLevel {
+        self.leaf_level
+    }
+
+    pub const fn leaf_pte(&self) -> RiscvSv39Pte {
+        self.leaf_pte
+    }
+
+    pub fn pte_addresses(&self) -> &[u64] {
+        &self.pte_addresses
+    }
+}
+
+pub fn walk_sv39_page_table<F>(
+    root_table_ppn: u64,
+    virtual_address: RiscvSv39VirtualAddress,
+    access: RiscvSv39AccessKind,
+    mut read_pte: F,
+) -> Result<RiscvSv39WalkResult, RiscvSv39PageFault>
+where
+    F: FnMut(u64) -> Result<RiscvSv39Pte, RiscvSv39PageFault>,
+{
+    let mut table_ppn = root_table_ppn;
+    let mut pte_addresses = Vec::with_capacity(3);
+
+    for level in [
+        RiscvSv39PageTableLevel::Level2,
+        RiscvSv39PageTableLevel::Level1,
+        RiscvSv39PageTableLevel::Level0,
+    ] {
+        let pte_address = virtual_address.page_table_entry_address(table_ppn, level)?;
+        pte_addresses.push(pte_address);
+        let pte = read_pte(pte_address)?;
+        pte.validate()?;
+
+        if pte.is_leaf() {
+            let physical_address = pte.leaf_physical_address(virtual_address, level, access)?;
+            return Ok(RiscvSv39WalkResult::new(
+                physical_address,
+                level,
+                pte,
+                pte_addresses,
+            ));
+        }
+
+        if level == RiscvSv39PageTableLevel::Level0 {
+            return Err(RiscvSv39PageFault::NonLeaf);
+        }
+
+        table_ppn = pte.physical_page_number();
+    }
+
+    Err(RiscvSv39PageFault::NonLeaf)
+}
+
 impl RiscvSv39AccessKind {
     const fn requires_dirty(self) -> bool {
         matches!(self, Self::Store | Self::Atomic)

@@ -40,8 +40,8 @@ pub use pmp::{
 };
 pub use record::{RegisterWrite, RiscvExecutionRecord, RiscvSystemEvent, RiscvTrap, RiscvTrapKind};
 pub use sv39::{
-    RiscvSv39AccessKind, RiscvSv39PageFault, RiscvSv39PageTableLevel, RiscvSv39Pte,
-    RiscvSv39VirtualAddress,
+    walk_sv39_page_table, RiscvSv39AccessKind, RiscvSv39PageFault, RiscvSv39PageTableLevel,
+    RiscvSv39Pte, RiscvSv39VirtualAddress, RiscvSv39WalkResult,
 };
 pub use types::{
     AtomicMemoryOp, Immediate, MemoryAccessKind, MemoryResponseError, MemoryResponseWriteback,
