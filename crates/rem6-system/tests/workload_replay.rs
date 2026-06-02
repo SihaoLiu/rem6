@@ -1870,13 +1870,11 @@ fn workload_replay_uses_profiled_external_memory() {
         .iter()
         .find(|target| target.target() == MemoryTargetId::new(0))
         .unwrap();
+    let profile = target.profile().unwrap();
+    assert_eq!(profile.technology(), DramMemoryTechnology::Hbm);
+    assert_eq!(profile.parallel_port_count(), 4);
     assert_eq!(
-        target.profile().unwrap().technology(),
-        DramMemoryTechnology::Hbm
-    );
-    assert_eq!(target.profile().unwrap().parallel_port_count(), 4);
-    assert_eq!(
-        target.profile().unwrap().timing().low_power_timing(),
+        profile.timing().low_power_timing(),
         Some(profile_low_power_timing())
     );
     plan.verify_result(outcome.result()).unwrap();

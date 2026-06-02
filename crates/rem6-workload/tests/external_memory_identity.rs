@@ -80,29 +80,43 @@ fn workload_manifest_identity_changes_with_external_memory_command_window() {
 #[test]
 fn workload_manifest_identity_changes_with_external_memory_low_power_timing() {
     let base = manifest_with_timing(DramTiming::new(4, 8, 10, 3, 5).unwrap());
+    let low_power_timing = DramLowPowerTiming::new(20, 80, 7)
+        .unwrap()
+        .with_self_refresh_exit_latency(17)
+        .unwrap();
     let low_power = manifest_with_timing(
         DramTiming::new(4, 8, 10, 3, 5)
             .unwrap()
-            .with_low_power_timing(
-                DramLowPowerTiming::new(20, 80, 7)
-                    .unwrap()
-                    .with_self_refresh_exit_latency(17)
-                    .unwrap(),
-            ),
-    );
-    let alternate_low_power = manifest_with_timing(
-        DramTiming::new(4, 8, 10, 3, 5)
-            .unwrap()
-            .with_low_power_timing(
-                DramLowPowerTiming::new(21, 80, 7)
-                    .unwrap()
-                    .with_self_refresh_exit_latency(17)
-                    .unwrap(),
-            ),
+            .with_low_power_timing(low_power_timing),
     );
 
     assert_ne!(base.identity(), low_power.identity());
-    assert_ne!(low_power.identity(), alternate_low_power.identity());
+    for alternate_low_power_timing in [
+        DramLowPowerTiming::new(21, 80, 7)
+            .unwrap()
+            .with_self_refresh_exit_latency(17)
+            .unwrap(),
+        DramLowPowerTiming::new(20, 81, 7)
+            .unwrap()
+            .with_self_refresh_exit_latency(17)
+            .unwrap(),
+        DramLowPowerTiming::new(20, 80, 8)
+            .unwrap()
+            .with_self_refresh_exit_latency(17)
+            .unwrap(),
+        DramLowPowerTiming::new(20, 80, 7)
+            .unwrap()
+            .with_self_refresh_exit_latency(18)
+            .unwrap(),
+    ] {
+        let alternate_low_power = manifest_with_timing(
+            DramTiming::new(4, 8, 10, 3, 5)
+                .unwrap()
+                .with_low_power_timing(alternate_low_power_timing),
+        );
+
+        assert_ne!(low_power.identity(), alternate_low_power.identity());
+    }
 }
 
 #[test]
