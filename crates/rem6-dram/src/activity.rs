@@ -4,9 +4,9 @@ use rem6_fabric::{QosPriority, QosRequestorId};
 use rem6_memory::MemoryTargetId;
 
 use crate::{
-    DramAccess, DramAccessKind, DramLowPowerActivity, DramLowPowerEvent, DramLowPowerState,
-    DramMemoryTechnology, DramTiming, ExternalMemoryParallelResourceSummary, ExternalMemoryProfile,
-    NvmMediaTiming,
+    DramAccess, DramAccessKind, DramGeometry, DramLowPowerActivity, DramLowPowerEvent,
+    DramLowPowerState, DramMemoryTechnology, DramTiming, ExternalMemoryParallelResourceSummary,
+    ExternalMemoryProfile, NvmMediaTiming,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -696,6 +696,7 @@ pub struct DramMemoryActivityProfile {
     active_target_count: usize,
     profiled_target_count: usize,
     profile_technology: Option<DramMemoryTechnology>,
+    profile_geometry: Option<DramGeometry>,
     profile_timing: Option<DramTiming>,
     profile_nvm_media_timing: Option<NvmMediaTiming>,
     profile_parallel_port_capacity: u64,
@@ -716,6 +717,8 @@ impl DramMemoryActivityProfile {
         let mut profiled_target_count = 0;
         let mut profile_technology = None;
         let mut mixed_profile_technology = false;
+        let mut profile_geometry = None;
+        let mut mixed_profile_geometry = false;
         let mut profile_timing = None;
         let mut mixed_profile_timing = false;
         let mut profile_nvm_media_timing = None;
@@ -728,6 +731,13 @@ impl DramMemoryActivityProfile {
         let mut profile_scheduler_bank_group_capacity = 0_u64;
         for activity in activities {
             if let Some(memory_profile) = activity.memory_profile().copied() {
+                match profile_geometry {
+                    Some(geometry) if geometry != memory_profile.geometry() => {
+                        mixed_profile_geometry = true;
+                    }
+                    Some(_) => {}
+                    None => profile_geometry = Some(memory_profile.geometry()),
+                }
                 match profile_timing {
                     Some(timing) if timing != memory_profile.timing() => {
                         mixed_profile_timing = true;
@@ -775,6 +785,11 @@ impl DramMemoryActivityProfile {
             } else {
                 profile_technology
             },
+            profile_geometry: if mixed_profile_geometry {
+                None
+            } else {
+                profile_geometry
+            },
             profile_timing: if mixed_profile_timing {
                 None
             } else {
@@ -804,6 +819,10 @@ impl DramMemoryActivityProfile {
 
     pub const fn profile_technology(&self) -> Option<DramMemoryTechnology> {
         self.profile_technology
+    }
+
+    pub const fn profile_geometry(&self) -> Option<DramGeometry> {
+        self.profile_geometry
     }
 
     pub const fn profile_timing(&self) -> Option<DramTiming> {

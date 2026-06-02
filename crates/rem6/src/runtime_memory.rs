@@ -97,6 +97,7 @@ pub(super) fn cli_memory_response(
 impl Rem6DramSummary {
     fn from_profile(profile: DramMemoryActivityProfile) -> Self {
         let nvm_profile = profile.profile_technology_label() == Some("nvm");
+        let geometry = profile.profile_geometry();
         let timing = profile.profile_timing();
         let nvm_media_timing = profile.profile_nvm_media_timing();
         Self {
@@ -116,6 +117,18 @@ impl Rem6DramSummary {
             profile_technology: profile.profile_technology_label(),
             profile_parallel_port_label: profile.profile_parallel_port_label(),
             profile_topology_unit_label: profile.profile_topology_unit_label(),
+            profile_geometry_bank_count: geometry
+                .map(|geometry| u64::from(geometry.bank_count()))
+                .unwrap_or(0),
+            profile_geometry_row_size: geometry.map(|geometry| geometry.row_size()).unwrap_or(0),
+            profile_geometry_line_size: geometry.map(|geometry| geometry.line_size()).unwrap_or(0),
+            profile_geometry_lines_per_row: geometry
+                .map(|geometry| geometry.lines_per_row())
+                .unwrap_or(0),
+            profile_geometry_bank_group_count: geometry
+                .and_then(|geometry| geometry.bank_group_count())
+                .map(u64::from)
+                .unwrap_or(0),
             profile_timing_activate_latency: timing
                 .map(|timing| timing.activate_latency())
                 .unwrap_or(0),

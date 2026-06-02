@@ -120,6 +120,11 @@ fn rem6_run_executes_riscv_elf_load_store_through_nvm_profile_and_emits_nvm_stat
     assert!(stdout.contains("\"topology_units\":8"));
     assert!(stdout.contains("\"scheduler_banks\":8"));
     assert!(stdout.contains("\"topology_banks\":32"));
+    assert!(stdout.contains("\"geometry\":{\"bank_count\":4"));
+    assert!(stdout.contains("\"row_size\":64"));
+    assert!(stdout.contains("\"line_size\":16"));
+    assert!(stdout.contains("\"lines_per_row\":4"));
+    assert!(stdout.contains("\"bank_group_count\":0"));
     assert!(stdout.contains("\"timing\":{\"activate_latency\":3"));
     assert!(stdout.contains("\"read_latency\":5"));
     assert!(stdout.contains("\"write_latency\":7"));
@@ -166,6 +171,41 @@ fn rem6_run_executes_riscv_elf_load_store_through_nvm_profile_and_emits_nvm_stat
         "sim.memory.dram.profile.topology_banks",
         "Count",
         32,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.geometry.bank_count",
+        "Count",
+        4,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.geometry.row_size",
+        "Byte",
+        64,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.geometry.line_size",
+        "Byte",
+        16,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.geometry.lines_per_row",
+        "Count",
+        4,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.geometry.bank_group_count",
+        "Count",
+        0,
         "constant",
     );
     assert_stat(

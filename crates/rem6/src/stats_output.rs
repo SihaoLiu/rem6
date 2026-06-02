@@ -402,6 +402,41 @@ fn emit_dram_stats(
     emit_dram_constant(
         stats,
         prefix,
+        "profile.geometry.bank_count",
+        "Count",
+        summary.profile_geometry_bank_count,
+    )?;
+    emit_dram_constant(
+        stats,
+        prefix,
+        "profile.geometry.row_size",
+        "Byte",
+        summary.profile_geometry_row_size,
+    )?;
+    emit_dram_constant(
+        stats,
+        prefix,
+        "profile.geometry.line_size",
+        "Byte",
+        summary.profile_geometry_line_size,
+    )?;
+    emit_dram_constant(
+        stats,
+        prefix,
+        "profile.geometry.lines_per_row",
+        "Count",
+        summary.profile_geometry_lines_per_row,
+    )?;
+    emit_dram_constant(
+        stats,
+        prefix,
+        "profile.geometry.bank_group_count",
+        "Count",
+        summary.profile_geometry_bank_group_count,
+    )?;
+    emit_dram_constant(
+        stats,
+        prefix,
         "profile.timing.activate_latency",
         "Tick",
         summary.profile_timing_activate_latency,
