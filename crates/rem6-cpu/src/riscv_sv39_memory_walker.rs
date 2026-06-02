@@ -1,10 +1,11 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::error::Error;
 use std::fmt;
 
 use rem6_memory::{
     CacheLineLayout, MemoryRequest, MemoryRequestId, MemoryResponse, TranslationRequestId,
 };
+use rem6_transport::ResponseDelivery;
 
 use crate::riscv_translation::{
     RiscvSv39MemoryWalk, RiscvSv39MemoryWalkAdvance, RiscvSv39MemoryWalkError,
@@ -23,6 +24,7 @@ pub struct RiscvSv39MemoryWalker {
     next_pte_request: MemoryRequestId,
     line_layout: CacheLineLayout,
     active_reads: BTreeMap<MemoryRequestId, RiscvSv39MemoryWalk>,
+    pending_responses: VecDeque<MemoryResponse>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -93,6 +95,7 @@ impl RiscvSv39MemoryWalker {
             next_pte_request: first_pte_request,
             line_layout,
             active_reads: BTreeMap::new(),
+            pending_responses: VecDeque::new(),
         }
     }
 
@@ -112,6 +115,10 @@ impl RiscvSv39MemoryWalker {
         self.active_reads.is_empty()
     }
 
+    pub fn pending_response_count(&self) -> usize {
+        self.pending_responses.len()
+    }
+
     pub fn start_ready(
         &mut self,
         frontend: &mut CpuTranslationFrontend,
@@ -128,6 +135,31 @@ impl RiscvSv39MemoryWalker {
             advances.push(self.start_request(frontend, request, first_pte_request)?);
         }
         Ok(advances)
+    }
+
+    pub fn record_response(&mut self, delivery: ResponseDelivery) {
+        self.record_memory_response(delivery.response().clone());
+    }
+
+    pub fn record_memory_response(&mut self, response: MemoryResponse) {
+        self.pending_responses.push_back(response);
+    }
+
+    pub fn advance_next_response(
+        &mut self,
+        frontend: &mut CpuTranslationFrontend,
+    ) -> Result<Option<RiscvSv39MemoryWalkerAdvance>, RiscvSv39MemoryWalkerError> {
+        let Some(response) = self.pending_responses.pop_front() else {
+            return Ok(None);
+        };
+        match self.advance(frontend, &response) {
+            Ok(advance) => Ok(Some(advance)),
+            Err(error @ RiscvSv39MemoryWalkerError::Frontend(_)) => {
+                self.pending_responses.push_front(response);
+                Err(error)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     pub fn advance(
