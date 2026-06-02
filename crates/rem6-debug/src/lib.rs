@@ -1,3 +1,9 @@
+mod hex;
+
+use hex::{
+    decode_checksum, decode_hex_bytes, decode_hex_u64, decode_hex_usize, encode_hex_bytes,
+    encode_hex_nibble, encode_hex_u64,
+};
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
@@ -211,6 +217,9 @@ pub enum GdbRemoteCommand {
         features: Vec<GdbRemoteFeature>,
     },
     QueryStopReason,
+    QueryThreadInfo {
+        query: GdbRemoteThreadInfoQuery,
+    },
     ReadMemory {
         address: u64,
         length: usize,
@@ -261,6 +270,12 @@ pub enum GdbRemoteThreadId {
     All,
     Any,
     Id(u64),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GdbRemoteThreadInfoQuery {
+    First,
+    Subsequent,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -383,6 +398,7 @@ pub struct GdbRemoteSession {
     continue_thread: GdbRemoteThreadId,
     current_thread_id: u64,
     general_thread: GdbRemoteThreadId,
+    thread_ids: Vec<u64>,
     last_response: Option<GdbRemotePacket>,
     interrupt_requested: bool,
 }
@@ -409,6 +425,7 @@ impl GdbRemoteSession {
             continue_thread: GdbRemoteThreadId::Any,
             current_thread_id: 1,
             general_thread: GdbRemoteThreadId::Any,
+            thread_ids: vec![1],
             last_response: None,
             interrupt_requested: false,
         }
@@ -464,6 +481,18 @@ impl GdbRemoteSession {
 
     pub const fn general_thread(&self) -> GdbRemoteThreadId {
         self.general_thread
+    }
+
+    pub fn thread_ids(&self) -> &[u64] {
+        &self.thread_ids
+    }
+
+    pub fn set_thread_ids(&mut self, thread_ids: Vec<u64>) -> bool {
+        if thread_ids.is_empty() || thread_ids.contains(&0) {
+            return false;
+        }
+        self.thread_ids = thread_ids;
+        true
     }
 
     pub fn set_stop_reply(&mut self, stop_reply: GdbRemoteStopReply) {
@@ -536,6 +565,13 @@ impl GdbRemoteSession {
             }
             GdbRemoteCommand::QueryStopReason => {
                 self.packet_response(self.stop_reply.encode_payload())
+            }
+            GdbRemoteCommand::QueryThreadInfo { query } => {
+                let payload = match query {
+                    GdbRemoteThreadInfoQuery::First => encode_thread_info(&self.thread_ids),
+                    GdbRemoteThreadInfoQuery::Subsequent => b"l".to_vec(),
+                };
+                self.packet_response(payload)
             }
             GdbRemoteCommand::ReadMemory { address, length } => {
                 let payload = self
@@ -959,6 +995,8 @@ fn reject_legacy_sequence_id(payload: &[u8]) -> Result<(), GdbRemoteError> {
 fn parse_command_payload(payload: &[u8]) -> GdbRemoteCommand {
     const QUERY_ATTACHED: &[u8] = b"qAttached";
     const QUERY_CURRENT_THREAD: &[u8] = b"qC";
+    const QUERY_FIRST_THREAD_INFO: &[u8] = b"qfThreadInfo";
+    const QUERY_SUBSEQUENT_THREAD_INFO: &[u8] = b"qsThreadInfo";
     const READ_REGISTERS: &[u8] = b"g";
     const QUERY_SUPPORTED: &[u8] = b"qSupported";
     const QUERY_STOP_REASON: &[u8] = b"?";
@@ -1018,6 +1056,18 @@ fn parse_command_payload(payload: &[u8]) -> GdbRemoteCommand {
 
     if payload == QUERY_CURRENT_THREAD {
         return GdbRemoteCommand::QueryCurrentThread;
+    }
+
+    if payload == QUERY_FIRST_THREAD_INFO {
+        return GdbRemoteCommand::QueryThreadInfo {
+            query: GdbRemoteThreadInfoQuery::First,
+        };
+    }
+
+    if payload == QUERY_SUBSEQUENT_THREAD_INFO {
+        return GdbRemoteCommand::QueryThreadInfo {
+            query: GdbRemoteThreadInfoQuery::Subsequent,
+        };
     }
 
     if payload == QUERY_STOP_REASON {
@@ -1167,6 +1217,17 @@ fn encode_supported_features(features: &[GdbRemoteFeature]) -> Vec<u8> {
     encoded
 }
 
+fn encode_thread_info(thread_ids: &[u64]) -> Vec<u8> {
+    let mut encoded = b"m".to_vec();
+    for (index, thread_id) in thread_ids.iter().enumerate() {
+        if index > 0 {
+            encoded.push(b',');
+        }
+        encoded.extend_from_slice(&encode_hex_u64(*thread_id));
+    }
+    encoded
+}
+
 fn validate_payload_len(len: usize, config: GdbRemotePacketConfig) -> Result<(), GdbRemoteError> {
     if len > config.max_payload_bytes() {
         return Err(GdbRemoteError::PayloadTooLong {
@@ -1197,34 +1258,6 @@ fn encode_payload(payload: &[u8]) -> Vec<u8> {
     encoded
 }
 
-fn encode_hex_bytes(bytes: &[u8]) -> Vec<u8> {
-    let mut encoded = Vec::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        encoded.push(encode_hex_nibble(byte >> 4));
-        encoded.push(encode_hex_nibble(byte & 0x0f));
-    }
-    encoded
-}
-
-fn encode_hex_u64(value: u64) -> Vec<u8> {
-    format!("{value:x}").into_bytes()
-}
-
-fn decode_hex_bytes(digits: &[u8]) -> Option<Vec<u8>> {
-    let mut bytes = Vec::with_capacity(digits.len() / 2);
-    let mut chunks = digits.chunks_exact(2);
-    for chunk in &mut chunks {
-        let high = decode_hex_nibble(chunk[0]).ok()?;
-        let low = decode_hex_nibble(chunk[1]).ok()?;
-        bytes.push((high << 4) | low);
-    }
-    if chunks.remainder().is_empty() {
-        Some(bytes)
-    } else {
-        None
-    }
-}
-
 fn memory_addresses(address: u64, len: usize) -> Option<Vec<u64>> {
     let mut addresses = Vec::with_capacity(len);
     for offset in 0..len {
@@ -1236,51 +1269,4 @@ fn memory_addresses(address: u64, len: usize) -> Option<Vec<u64>> {
 
 fn is_hex_digit(byte: u8) -> bool {
     byte.is_ascii_hexdigit()
-}
-
-fn decode_hex_u64(digits: &[u8]) -> Option<u64> {
-    if digits.is_empty() {
-        return None;
-    }
-
-    let mut value = 0u64;
-    for digit in digits {
-        let nibble = match digit {
-            b'0'..=b'9' => digit - b'0',
-            b'a'..=b'f' => digit - b'a' + 10,
-            b'A'..=b'F' => digit - b'A' + 10,
-            _ => return None,
-        };
-        value = value.checked_mul(16)?;
-        value = value.checked_add(u64::from(nibble))?;
-    }
-    Some(value)
-}
-
-fn decode_hex_usize(digits: &[u8]) -> Option<usize> {
-    usize::try_from(decode_hex_u64(digits)?).ok()
-}
-
-fn decode_checksum(high: u8, low: u8) -> Result<u8, GdbRemoteError> {
-    let high = decode_hex_nibble(high)?;
-    let low = decode_hex_nibble(low)?;
-    Ok((high << 4) | low)
-}
-
-fn decode_hex_nibble(byte: u8) -> Result<u8, GdbRemoteError> {
-    match byte {
-        b'0'..=b'9' => Ok(byte - b'0'),
-        b'a'..=b'f' => Ok(byte - b'a' + 10),
-        b'A'..=b'F' => Ok(byte - b'A' + 10),
-        _ => Err(GdbRemoteError::InvalidChecksumHex { byte }),
-    }
-}
-
-fn encode_hex_nibble(nibble: u8) -> u8 {
-    debug_assert!(nibble < 16);
-    match nibble {
-        0..=9 => b'0' + nibble,
-        10..=15 => b'a' + (nibble - 10),
-        _ => unreachable!("nibble must be less than 16"),
-    }
 }
