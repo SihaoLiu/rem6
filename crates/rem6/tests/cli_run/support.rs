@@ -120,13 +120,25 @@ pub(crate) fn temp_output(name: &str) -> std::path::PathBuf {
 }
 
 pub(crate) fn assert_stat(stdout: &str, path: &str, unit: &str, value: u64, reset_policy: &str) {
+    let (scope, name) = stat_scope_and_name(path);
+    let scope_json = scope
+        .iter()
+        .map(|segment| format!("\"{segment}\""))
+        .collect::<Vec<_>>()
+        .join(",");
     let expected = format!(
-        "{{\"path\":\"{path}\",\"unit\":\"{unit}\",\"value\":{value},\"reset_policy\":\"{reset_policy}\"}}"
+        "{{\"path\":\"{path}\",\"scope\":[{scope_json}],\"name\":\"{name}\",\"unit\":\"{unit}\",\"value\":{value},\"reset_policy\":\"{reset_policy}\"}}"
     );
     assert!(
         stdout.contains(&expected),
         "missing stat {expected} in {stdout}"
     );
+}
+
+fn stat_scope_and_name(path: &str) -> (Vec<&str>, &str) {
+    let mut segments = path.split('.').collect::<Vec<_>>();
+    let name = segments.pop().unwrap_or(path);
+    (segments, name)
 }
 
 pub(crate) fn assert_transport_stats(

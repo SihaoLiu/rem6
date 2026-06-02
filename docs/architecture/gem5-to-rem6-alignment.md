@@ -64,7 +64,9 @@ isolated bugs:
   a structured `parallel.scheduler` object, while hierarchical stats expose the
   same frontier and ready-partition records with stable indexes, so scripted
   checks can parse typed parallel evidence without scraping terminal output or
-  losing per-epoch records.
+  losing per-epoch records. Each JSON stats sample also carries its scope
+  segments and leaf name alongside the flat path, so consumers can aggregate by
+  any hierarchy level without reparsing dotted paths.
   The same artifact now also carries structured fetch and
   data memory transport summaries with per-route source counters, request and
   response counts, round-trip tick totals, and maximum round-trip ticks, so
