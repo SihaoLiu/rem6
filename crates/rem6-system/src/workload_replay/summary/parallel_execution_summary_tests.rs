@@ -253,20 +253,20 @@ fn parallel_execution_summary_copies_dram_low_power_activity() {
 
     assert!(summary.has_dram_low_power_activity());
     assert_eq!(
-        summary.dram_low_power_entry_count(DramLowPowerState::PrechargePowerdown),
+        summary.dram_low_power_entry_count(DramLowPowerState::ActivePowerdown),
         1
     );
     assert_eq!(
-        summary.dram_low_power_cycle_count(DramLowPowerState::PrechargePowerdown),
-        60
+        summary.dram_low_power_cycle_count(DramLowPowerState::ActivePowerdown),
+        88
+    );
+    assert_eq!(
+        summary.dram_low_power_entry_count(DramLowPowerState::PrechargePowerdown),
+        0
     );
     assert_eq!(
         summary.dram_low_power_entry_count(DramLowPowerState::SelfRefresh),
-        1
-    );
-    assert_eq!(
-        summary.dram_low_power_cycle_count(DramLowPowerState::SelfRefresh),
-        28
+        0
     );
     assert_eq!(summary.dram_low_power_exit_count(), 1);
     assert_eq!(summary.dram_low_power_exit_latency_cycles(), 7);

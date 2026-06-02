@@ -670,10 +670,11 @@ fn write_low_power_timing(payload: &mut Vec<u8>, low_power_timing: Option<DramLo
         return;
     };
 
-    write_u64(payload, 1);
+    write_u64(payload, 2);
     write_u64(payload, low_power_timing.precharge_powerdown_entry_delay());
     write_u64(payload, low_power_timing.self_refresh_entry_delay());
     write_u64(payload, low_power_timing.exit_latency());
+    write_u64(payload, low_power_timing.self_refresh_exit_latency());
 }
 
 fn write_profile(payload: &mut Vec<u8>, profile: Option<&ExternalMemoryProfile>) {
@@ -1186,6 +1187,28 @@ fn read_low_power_timing(
                 target.get()
             ))
         }),
+        2 => {
+            let precharge_powerdown_entry_delay =
+                cursor.read_u64("DRAM precharge powerdown entry delay")?;
+            let self_refresh_entry_delay = cursor.read_u64("DRAM self-refresh entry delay")?;
+            let powerdown_exit_latency = cursor.read_u64("DRAM low-power exit latency")?;
+            let self_refresh_exit_latency = cursor.read_u64("DRAM self-refresh exit latency")?;
+            DramLowPowerTiming::new(
+                precharge_powerdown_entry_delay,
+                self_refresh_entry_delay,
+                powerdown_exit_latency,
+            )
+            .and_then(|low_power_timing| {
+                low_power_timing.with_self_refresh_exit_latency(self_refresh_exit_latency)
+            })
+            .map(|low_power_timing| timing.with_low_power_timing(low_power_timing))
+            .map_err(|error| {
+                cursor.invalid(format!(
+                    "DRAM target {} has invalid low-power timing: {error}",
+                    target.get()
+                ))
+            })
+        }
         value => Err(cursor.invalid(format!(
             "DRAM target {} has invalid low-power timing presence {value}",
             target.get()

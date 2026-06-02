@@ -304,6 +304,8 @@ pub struct WorkloadParallelExecutionSummary {
     dram_qos_escalated_access_count: usize,
     dram_qos_priority_summaries: Vec<WorkloadDramQosPrioritySummary>,
     dram_qos_requestor_summaries: Vec<WorkloadDramQosRequestorSummary>,
+    dram_active_powerdown_entry_count: usize,
+    dram_active_powerdown_cycle_count: u64,
     dram_precharge_powerdown_entry_count: usize,
     dram_precharge_powerdown_cycle_count: u64,
     dram_self_refresh_entry_count: usize,

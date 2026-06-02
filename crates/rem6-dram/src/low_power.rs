@@ -2,6 +2,7 @@ use crate::DramError;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub enum DramLowPowerState {
+    ActivePowerdown,
     PrechargePowerdown,
     SelfRefresh,
 }
@@ -11,13 +12,15 @@ pub enum DramLowPowerTimingField {
     PrechargePowerdownEntryDelay,
     SelfRefreshEntryDelay,
     ExitLatency,
+    SelfRefreshExitLatency,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DramLowPowerTiming {
     precharge_powerdown_entry_delay: u64,
     self_refresh_entry_delay: u64,
-    exit_latency: u64,
+    powerdown_exit_latency: u64,
+    self_refresh_exit_latency: u64,
 }
 
 impl DramLowPowerTiming {
@@ -51,8 +54,23 @@ impl DramLowPowerTiming {
         Ok(Self {
             precharge_powerdown_entry_delay,
             self_refresh_entry_delay,
-            exit_latency,
+            powerdown_exit_latency: exit_latency,
+            self_refresh_exit_latency: exit_latency,
         })
+    }
+
+    pub const fn with_self_refresh_exit_latency(
+        mut self,
+        self_refresh_exit_latency: u64,
+    ) -> Result<Self, DramError> {
+        if self_refresh_exit_latency == 0 {
+            return Err(DramError::ZeroLowPowerTiming {
+                field: DramLowPowerTimingField::SelfRefreshExitLatency,
+            });
+        }
+
+        self.self_refresh_exit_latency = self_refresh_exit_latency;
+        Ok(self)
     }
 
     pub const fn precharge_powerdown_entry_delay(self) -> u64 {
@@ -64,7 +82,20 @@ impl DramLowPowerTiming {
     }
 
     pub const fn exit_latency(self) -> u64 {
-        self.exit_latency
+        self.powerdown_exit_latency
+    }
+
+    pub const fn self_refresh_exit_latency(self) -> u64 {
+        self.self_refresh_exit_latency
+    }
+
+    pub const fn exit_latency_for_state(self, state: DramLowPowerState) -> u64 {
+        match state {
+            DramLowPowerState::ActivePowerdown | DramLowPowerState::PrechargePowerdown => {
+                self.powerdown_exit_latency
+            }
+            DramLowPowerState::SelfRefresh => self.self_refresh_exit_latency,
+        }
     }
 }
 
@@ -112,11 +143,89 @@ impl DramLowPowerEvent {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct DramLowPowerActivity {
+    active_powerdown_entry_count: usize,
+    active_powerdown_cycle_count: u64,
+    precharge_powerdown_entry_count: usize,
+    precharge_powerdown_cycle_count: u64,
+    self_refresh_entry_count: usize,
+    self_refresh_cycle_count: u64,
+    exit_count: usize,
+    exit_latency_cycles: u64,
+}
+
+impl DramLowPowerActivity {
+    pub(crate) fn record_event(&mut self, event: DramLowPowerEvent) {
+        match event.state() {
+            DramLowPowerState::ActivePowerdown => {
+                self.active_powerdown_entry_count += 1;
+                self.active_powerdown_cycle_count += event.cycle_count();
+            }
+            DramLowPowerState::PrechargePowerdown => {
+                self.precharge_powerdown_entry_count += 1;
+                self.precharge_powerdown_cycle_count += event.cycle_count();
+            }
+            DramLowPowerState::SelfRefresh => {
+                self.self_refresh_entry_count += 1;
+                self.self_refresh_cycle_count += event.cycle_count();
+            }
+        }
+    }
+
+    pub(crate) fn record_events(&mut self, events: &[DramLowPowerEvent]) {
+        for event in events {
+            self.record_event(*event);
+        }
+    }
+
+    pub(crate) fn record_exit(&mut self, exit_latency_cycles: u64) {
+        self.exit_count += 1;
+        self.exit_latency_cycles += exit_latency_cycles;
+    }
+
+    pub(crate) fn merge(&mut self, later: Self) {
+        self.active_powerdown_entry_count += later.active_powerdown_entry_count;
+        self.active_powerdown_cycle_count += later.active_powerdown_cycle_count;
+        self.precharge_powerdown_entry_count += later.precharge_powerdown_entry_count;
+        self.precharge_powerdown_cycle_count += later.precharge_powerdown_cycle_count;
+        self.self_refresh_entry_count += later.self_refresh_entry_count;
+        self.self_refresh_cycle_count += later.self_refresh_cycle_count;
+        self.exit_count += later.exit_count;
+        self.exit_latency_cycles += later.exit_latency_cycles;
+    }
+
+    pub const fn entry_count(self, state: DramLowPowerState) -> usize {
+        match state {
+            DramLowPowerState::ActivePowerdown => self.active_powerdown_entry_count,
+            DramLowPowerState::PrechargePowerdown => self.precharge_powerdown_entry_count,
+            DramLowPowerState::SelfRefresh => self.self_refresh_entry_count,
+        }
+    }
+
+    pub const fn cycle_count(self, state: DramLowPowerState) -> u64 {
+        match state {
+            DramLowPowerState::ActivePowerdown => self.active_powerdown_cycle_count,
+            DramLowPowerState::PrechargePowerdown => self.precharge_powerdown_cycle_count,
+            DramLowPowerState::SelfRefresh => self.self_refresh_cycle_count,
+        }
+    }
+
+    pub const fn exit_count(self) -> usize {
+        self.exit_count
+    }
+
+    pub const fn exit_latency_cycles(self) -> u64 {
+        self.exit_latency_cycles
+    }
+}
+
 pub(crate) fn events_for_idle_window(
     timing: DramLowPowerTiming,
     parallel_port: u32,
     idle_start_cycle: u64,
     arrival_cycle: u64,
+    has_open_row: bool,
 ) -> Vec<DramLowPowerEvent> {
     if arrival_cycle <= idle_start_cycle {
         return Vec::new();
@@ -125,6 +234,15 @@ pub(crate) fn events_for_idle_window(
     let precharge_entry = idle_start_cycle.saturating_add(timing.precharge_powerdown_entry_delay());
     if precharge_entry >= arrival_cycle {
         return Vec::new();
+    }
+
+    if has_open_row {
+        return vec![DramLowPowerEvent::new(
+            DramLowPowerState::ActivePowerdown,
+            parallel_port,
+            precharge_entry,
+            arrival_cycle,
+        )];
     }
 
     let self_refresh_entry = idle_start_cycle.saturating_add(timing.self_refresh_entry_delay());
@@ -162,7 +280,7 @@ mod tests {
         let timing = DramLowPowerTiming::new(20, 80, 7).unwrap();
 
         assert_eq!(
-            events_for_idle_window(timing, 0, u64::MAX - 10, u64::MAX),
+            events_for_idle_window(timing, 0, u64::MAX - 10, u64::MAX, false),
             Vec::new()
         );
     }

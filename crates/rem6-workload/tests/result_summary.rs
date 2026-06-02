@@ -1869,9 +1869,24 @@ fn workload_result_marks_dram_qos_breakdown_evidence_as_activity() {
 
 #[test]
 fn workload_result_marks_dram_low_power_evidence_as_activity() {
-    let low_power = WorkloadParallelExecutionSummary::default()
-        .with_dram_low_power_activity(1, 60, 1, 28, 1, 7);
+    let low_power = WorkloadParallelExecutionSummary::default().with_dram_low_power_activity(
+        [
+            (DramLowPowerState::ActivePowerdown, 1, 88),
+            (DramLowPowerState::PrechargePowerdown, 1, 60),
+            (DramLowPowerState::SelfRefresh, 1, 28),
+        ],
+        1,
+        7,
+    );
 
+    assert_eq!(
+        low_power.dram_low_power_entry_count(DramLowPowerState::ActivePowerdown),
+        1,
+    );
+    assert_eq!(
+        low_power.dram_low_power_cycle_count(DramLowPowerState::ActivePowerdown),
+        88,
+    );
     assert_eq!(
         low_power.dram_low_power_entry_count(DramLowPowerState::PrechargePowerdown),
         1,
@@ -1890,8 +1905,8 @@ fn workload_result_marks_dram_low_power_evidence_as_activity() {
     );
     assert_eq!(low_power.dram_low_power_exit_count(), 1);
     assert_eq!(low_power.dram_low_power_exit_latency_cycles(), 7);
-    assert_eq!(low_power.dram_operation_count(), 2);
-    assert_eq!(low_power.resource_activity_count(), 2);
+    assert_eq!(low_power.dram_operation_count(), 3);
+    assert_eq!(low_power.resource_activity_count(), 3);
     assert!(low_power.has_dram_low_power_activity());
     assert!(low_power.has_dram_activity());
     assert!(low_power.has_resource_activity());

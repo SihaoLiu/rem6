@@ -814,7 +814,12 @@ fn dram_memory_checkpoint_preserves_low_power_timing() {
     let target = MemoryTargetId::new(72);
     let timing = DramTiming::new(3, 5, 7, 2, 4)
         .unwrap()
-        .with_low_power_timing(DramLowPowerTiming::new(20, 80, 7).unwrap());
+        .with_low_power_timing(
+            DramLowPowerTiming::new(20, 80, 7)
+                .unwrap()
+                .with_self_refresh_exit_latency(17)
+                .unwrap(),
+        );
     let mut controller = DramMemoryController::new();
     controller
         .add_target(DramControllerConfig::new(
@@ -847,7 +852,12 @@ fn dram_memory_checkpoint_preserves_low_power_timing() {
             .controller()
             .timing()
             .low_power_timing(),
-        Some(DramLowPowerTiming::new(20, 80, 7).unwrap())
+        Some(
+            DramLowPowerTiming::new(20, 80, 7)
+                .unwrap()
+                .with_self_refresh_exit_latency(17)
+                .unwrap()
+        )
     );
 
     controller
@@ -866,8 +876,99 @@ fn dram_memory_checkpoint_preserves_low_power_timing() {
             .unwrap()
             .timing()
             .low_power_timing(),
+        Some(
+            DramLowPowerTiming::new(20, 80, 7)
+                .unwrap()
+                .with_self_refresh_exit_latency(17)
+                .unwrap()
+        )
+    );
+}
+
+#[test]
+fn dram_memory_checkpoint_reads_legacy_shared_low_power_exit_timing() {
+    let target = MemoryTargetId::new(73);
+    let timing = DramTiming::new(3, 5, 7, 2, 4)
+        .unwrap()
+        .with_low_power_timing(
+            DramLowPowerTiming::new(20, 80, 7)
+                .unwrap()
+                .with_self_refresh_exit_latency(17)
+                .unwrap(),
+        );
+    let mut controller = DramMemoryController::new();
+    controller
+        .add_target(DramControllerConfig::new(
+            target,
+            layout(),
+            dram_geometry(),
+            timing,
+        ))
+        .unwrap();
+    controller
+        .map_region(
+            target,
+            Address::new(0x0000),
+            AccessSize::new(0x4000).unwrap(),
+        )
+        .unwrap();
+    let controller = Arc::new(Mutex::new(controller));
+    let component = CheckpointComponentId::new("dram-low-power-legacy").unwrap();
+    let port = DramMemoryCheckpointPort::new(component.clone(), Arc::clone(&controller));
+    let mut registry = CheckpointRegistry::new();
+
+    port.register(&mut registry).unwrap();
+    port.capture_into(&mut registry).unwrap();
+    let legacy_payload = legacy_shared_low_power_exit_payload(
+        registry.chunk(&component, "dram").unwrap(),
+        20,
+        80,
+        7,
+        17,
+    );
+    registry
+        .write_chunk(&component, "dram", legacy_payload)
+        .unwrap();
+    port.restore_from(&registry).unwrap();
+
+    assert_eq!(
+        controller
+            .lock()
+            .unwrap()
+            .dram_controller(target)
+            .unwrap()
+            .timing()
+            .low_power_timing(),
         Some(DramLowPowerTiming::new(20, 80, 7).unwrap())
     );
+}
+
+fn legacy_shared_low_power_exit_payload(
+    payload: &[u8],
+    precharge_powerdown_entry_delay: u64,
+    self_refresh_entry_delay: u64,
+    powerdown_exit_latency: u64,
+    self_refresh_exit_latency: u64,
+) -> Vec<u8> {
+    let mut encoded = Vec::new();
+    encoded.extend_from_slice(&2u64.to_le_bytes());
+    encoded.extend_from_slice(&precharge_powerdown_entry_delay.to_le_bytes());
+    encoded.extend_from_slice(&self_refresh_entry_delay.to_le_bytes());
+    encoded.extend_from_slice(&powerdown_exit_latency.to_le_bytes());
+    encoded.extend_from_slice(&self_refresh_exit_latency.to_le_bytes());
+    let start = payload
+        .windows(encoded.len())
+        .position(|window| window == encoded)
+        .unwrap();
+
+    let mut legacy = Vec::new();
+    legacy.extend_from_slice(&payload[..start]);
+    legacy.extend_from_slice(&1u64.to_le_bytes());
+    legacy.extend_from_slice(&precharge_powerdown_entry_delay.to_le_bytes());
+    legacy.extend_from_slice(&self_refresh_entry_delay.to_le_bytes());
+    legacy.extend_from_slice(&powerdown_exit_latency.to_le_bytes());
+    legacy.extend_from_slice(&payload[start + encoded.len()..]);
+    legacy
 }
 
 #[test]

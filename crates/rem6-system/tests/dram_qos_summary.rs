@@ -144,20 +144,20 @@ fn system_run_reports_dram_low_power_diagnostics() {
     assert!(run.has_dram_low_power_activity());
     assert!(run.has_dram_activity());
     assert_eq!(
-        run.dram_low_power_entry_count(DramLowPowerState::PrechargePowerdown),
+        run.dram_low_power_entry_count(DramLowPowerState::ActivePowerdown),
         1
     );
     assert_eq!(
-        run.dram_low_power_cycle_count(DramLowPowerState::PrechargePowerdown),
-        60
+        run.dram_low_power_cycle_count(DramLowPowerState::ActivePowerdown),
+        88
+    );
+    assert_eq!(
+        run.dram_low_power_entry_count(DramLowPowerState::PrechargePowerdown),
+        0
     );
     assert_eq!(
         run.dram_low_power_entry_count(DramLowPowerState::SelfRefresh),
-        1
-    );
-    assert_eq!(
-        run.dram_low_power_cycle_count(DramLowPowerState::SelfRefresh),
-        28
+        0
     );
     assert_eq!(run.dram_low_power_exit_count(), 1);
     assert_eq!(run.dram_low_power_exit_latency_cycles(), 7);

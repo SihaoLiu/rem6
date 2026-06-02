@@ -1001,7 +1001,8 @@ impl WorkloadParallelExecutionSummary {
                 count.saturating_add(summary.access_count())
             });
         let low_power_entry_count = self
-            .dram_precharge_powerdown_entry_count
+            .dram_active_powerdown_entry_count
+            .saturating_add(self.dram_precharge_powerdown_entry_count)
             .saturating_add(self.dram_self_refresh_entry_count);
 
         self.dram_access_count
@@ -1045,7 +1046,9 @@ impl WorkloadParallelExecutionSummary {
     }
 
     pub const fn has_dram_low_power_activity(&self) -> bool {
-        self.dram_precharge_powerdown_entry_count != 0
+        self.dram_active_powerdown_entry_count != 0
+            || self.dram_active_powerdown_cycle_count != 0
+            || self.dram_precharge_powerdown_entry_count != 0
             || self.dram_precharge_powerdown_cycle_count != 0
             || self.dram_self_refresh_entry_count != 0
             || self.dram_self_refresh_cycle_count != 0

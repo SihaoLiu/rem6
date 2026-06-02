@@ -57,7 +57,15 @@ fn expected_activity(
 }
 
 fn expected_dram_low_power() -> WorkloadExpectedDramLowPowerActivity {
-    WorkloadExpectedDramLowPowerActivity::new(1, 60, 1, 28, 1, 7).unwrap()
+    WorkloadExpectedDramLowPowerActivity::new(
+        [
+            (DramLowPowerState::PrechargePowerdown, 1, 60),
+            (DramLowPowerState::SelfRefresh, 1, 28),
+        ],
+        1,
+        7,
+    )
+    .unwrap()
 }
 
 #[test]
@@ -117,6 +125,10 @@ fn workload_manifest_records_dram_low_power_expectations() {
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
     assert_eq!(plan.expected_dram_low_power_activity(), Some(expected));
     assert_eq!(
+        expected.minimum_entry_count(DramLowPowerState::ActivePowerdown),
+        0,
+    );
+    assert_eq!(
         expected.minimum_entry_count(DramLowPowerState::PrechargePowerdown),
         1,
     );
@@ -125,11 +137,58 @@ fn workload_manifest_records_dram_low_power_expectations() {
         60,
     );
 
-    let summary = WorkloadParallelExecutionSummary::default()
-        .with_dram_low_power_activity(1, 60, 1, 28, 1, 7);
+    let summary = WorkloadParallelExecutionSummary::default().with_dram_low_power_activity(
+        [
+            (DramLowPowerState::PrechargePowerdown, 1, 60),
+            (DramLowPowerState::SelfRefresh, 1, 28),
+        ],
+        1,
+        7,
+    );
     let result =
         WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(summary);
     plan.verify_result(&result).unwrap();
+}
+
+#[test]
+fn workload_replay_plan_verifies_active_powerdown_low_power_expectations() {
+    let expected = WorkloadExpectedDramLowPowerActivity::new(
+        [(DramLowPowerState::ActivePowerdown, 1, 88)],
+        0,
+        0,
+    )
+    .unwrap();
+    let manifest =
+        rem6_workload::WorkloadManifest::builder(id("manifest-active-powerdown"), boot_image())
+            .add_resource(kernel_resource())
+            .unwrap()
+            .add_required_resource(resource_id("kernel"))
+            .add_expected_dram_low_power_activity(expected)
+            .unwrap()
+            .build()
+            .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let matching = WorkloadParallelExecutionSummary::default().with_dram_low_power_activity(
+        [(DramLowPowerState::ActivePowerdown, 1, 88)],
+        0,
+        0,
+    );
+    let weak = WorkloadParallelExecutionSummary::default().with_dram_low_power_activity(
+        [(DramLowPowerState::ActivePowerdown, 1, 87)],
+        0,
+        0,
+    );
+
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(matching);
+    plan.verify_result(&result).unwrap();
+
+    let result =
+        WorkloadResult::new(plan.manifest_identity(), 32).with_parallel_execution_summary(weak);
+    assert_eq!(
+        plan.verify_result(&result).unwrap_err(),
+        WorkloadError::ExpectedDramLowPowerActivityBelowMinimum,
+    );
 }
 
 #[test]
@@ -244,7 +303,14 @@ fn workload_replay_plan_rejects_missing_or_underactive_dram_low_power_activity()
     );
 
     let underactive_summary = WorkloadParallelExecutionSummary::default()
-        .with_dram_low_power_activity(1, 59, 1, 28, 1, 7);
+        .with_dram_low_power_activity(
+            [
+                (DramLowPowerState::PrechargePowerdown, 1, 59),
+                (DramLowPowerState::SelfRefresh, 1, 28),
+            ],
+            1,
+            7,
+        );
     let underactive = WorkloadResult::new(plan.manifest_identity(), 32)
         .with_parallel_execution_summary(underactive_summary);
     assert_eq!(
@@ -407,7 +473,12 @@ fn workload_replay_plan_rejects_invalid_or_duplicate_resource_activity() {
 
 #[test]
 fn workload_replay_plan_rejects_invalid_or_duplicate_dram_low_power_activity() {
-    let zero = WorkloadExpectedDramLowPowerActivity::new(0, 0, 0, 0, 0, 0).unwrap_err();
+    let zero = WorkloadExpectedDramLowPowerActivity::new(
+        std::iter::empty::<(DramLowPowerState, usize, u64)>(),
+        0,
+        0,
+    )
+    .unwrap_err();
     assert_eq!(
         zero,
         WorkloadError::ZeroExpectedResourceActivity {

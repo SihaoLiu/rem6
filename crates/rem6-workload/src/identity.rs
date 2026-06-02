@@ -131,7 +131,7 @@ pub(crate) struct ManifestIdentityInput<'a> {
 
 pub(crate) fn manifest_identity(input: ManifestIdentityInput<'_>) -> WorkloadManifestIdentity {
     let mut hash = FNV_OFFSET;
-    hash_str(&mut hash, "rem6.workload.manifest.v1");
+    hash_str(&mut hash, "rem6.workload.manifest.v2");
     hash_str(&mut hash, input.id.as_str());
     hash_u64(&mut hash, input.boot.entry().get());
     hash_elf_metadata(&mut hash, input.boot.elf_metadata());
@@ -998,6 +998,14 @@ fn hash_optional_expected_dram_low_power_activity(
         return;
     };
     hash_u64(hash, 1);
+    hash_u64(
+        hash,
+        expected.minimum_entry_count(rem6_dram::DramLowPowerState::ActivePowerdown) as u64,
+    );
+    hash_u64(
+        hash,
+        expected.minimum_cycle_count(rem6_dram::DramLowPowerState::ActivePowerdown),
+    );
     hash_u64(
         hash,
         expected.minimum_entry_count(rem6_dram::DramLowPowerState::PrechargePowerdown) as u64,

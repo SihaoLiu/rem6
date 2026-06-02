@@ -4,8 +4,8 @@ use rem6_fabric::{QosPriority, QosRequestorId};
 use rem6_memory::MemoryTargetId;
 
 use crate::{
-    DramAccess, DramAccessKind, DramLowPowerState, DramMemoryTechnology,
-    ExternalMemoryParallelResourceSummary, ExternalMemoryProfile,
+    DramAccess, DramAccessKind, DramLowPowerActivity, DramLowPowerEvent, DramLowPowerState,
+    DramMemoryTechnology, ExternalMemoryParallelResourceSummary, ExternalMemoryProfile,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -40,12 +40,7 @@ pub struct DramBankActivity {
     qos_priority_byte_counts: BTreeMap<QosPriority, u64>,
     qos_requestor_access_counts: BTreeMap<QosRequestorId, usize>,
     qos_requestor_byte_counts: BTreeMap<QosRequestorId, u64>,
-    precharge_powerdown_entry_count: usize,
-    precharge_powerdown_cycle_count: u64,
-    self_refresh_entry_count: usize,
-    self_refresh_cycle_count: u64,
-    low_power_exit_count: usize,
-    low_power_exit_latency_cycles: u64,
+    low_power: DramLowPowerActivity,
 }
 
 impl DramBankActivity {
@@ -99,22 +94,15 @@ impl DramBankActivity {
                 .entry(qos.requestor())
                 .or_default() += qos.bytes();
         }
-        for event in access.low_power_events() {
-            match event.state() {
-                DramLowPowerState::PrechargePowerdown => {
-                    self.precharge_powerdown_entry_count += 1;
-                    self.precharge_powerdown_cycle_count += event.cycle_count();
-                }
-                DramLowPowerState::SelfRefresh => {
-                    self.self_refresh_entry_count += 1;
-                    self.self_refresh_cycle_count += event.cycle_count();
-                }
-            }
-        }
+        self.low_power.record_events(access.low_power_events());
         if !access.low_power_events().is_empty() {
-            self.low_power_exit_count += 1;
-            self.low_power_exit_latency_cycles += access.low_power_exit_latency_cycles();
+            self.low_power
+                .record_exit(access.low_power_exit_latency_cycles());
         }
+    }
+
+    pub(crate) fn record_terminal_low_power_events(&mut self, events: &[DramLowPowerEvent]) {
+        self.low_power.record_events(events);
     }
 
     pub const fn access_count(&self) -> usize {
@@ -224,25 +212,19 @@ impl DramBankActivity {
     }
 
     pub const fn low_power_entry_count(&self, state: DramLowPowerState) -> usize {
-        match state {
-            DramLowPowerState::PrechargePowerdown => self.precharge_powerdown_entry_count,
-            DramLowPowerState::SelfRefresh => self.self_refresh_entry_count,
-        }
+        self.low_power.entry_count(state)
     }
 
     pub const fn low_power_cycle_count(&self, state: DramLowPowerState) -> u64 {
-        match state {
-            DramLowPowerState::PrechargePowerdown => self.precharge_powerdown_cycle_count,
-            DramLowPowerState::SelfRefresh => self.self_refresh_cycle_count,
-        }
+        self.low_power.cycle_count(state)
     }
 
     pub const fn low_power_exit_count(&self) -> usize {
-        self.low_power_exit_count
+        self.low_power.exit_count()
     }
 
     pub const fn low_power_exit_latency_cycles(&self) -> u64 {
-        self.low_power_exit_latency_cycles
+        self.low_power.exit_latency_cycles()
     }
 }
 
@@ -315,12 +297,7 @@ pub struct DramActivityProfile {
     qos_priority_byte_counts: BTreeMap<QosPriority, u64>,
     qos_requestor_access_counts: BTreeMap<QosRequestorId, usize>,
     qos_requestor_byte_counts: BTreeMap<QosRequestorId, u64>,
-    precharge_powerdown_entry_count: usize,
-    precharge_powerdown_cycle_count: u64,
-    self_refresh_entry_count: usize,
-    self_refresh_cycle_count: u64,
-    low_power_exit_count: usize,
-    low_power_exit_latency_cycles: u64,
+    low_power: DramLowPowerActivity,
 }
 
 impl DramActivityProfile {
@@ -376,16 +353,7 @@ impl DramActivityProfile {
                 &mut profile.qos_requestor_byte_counts,
                 &bank.qos_requestor_byte_counts,
             );
-            profile.precharge_powerdown_entry_count +=
-                bank.low_power_entry_count(DramLowPowerState::PrechargePowerdown);
-            profile.precharge_powerdown_cycle_count +=
-                bank.low_power_cycle_count(DramLowPowerState::PrechargePowerdown);
-            profile.self_refresh_entry_count +=
-                bank.low_power_entry_count(DramLowPowerState::SelfRefresh);
-            profile.self_refresh_cycle_count +=
-                bank.low_power_cycle_count(DramLowPowerState::SelfRefresh);
-            profile.low_power_exit_count += bank.low_power_exit_count();
-            profile.low_power_exit_latency_cycles += bank.low_power_exit_latency_cycles();
+            profile.low_power.merge(bank.low_power);
         }
         profile
     }
@@ -415,12 +383,7 @@ impl DramActivityProfile {
         self.qos_access_count += later.qos_access_count;
         self.qos_byte_count += later.qos_byte_count;
         self.qos_escalated_access_count += later.qos_escalated_access_count;
-        self.precharge_powerdown_entry_count += later.precharge_powerdown_entry_count;
-        self.precharge_powerdown_cycle_count += later.precharge_powerdown_cycle_count;
-        self.self_refresh_entry_count += later.self_refresh_entry_count;
-        self.self_refresh_cycle_count += later.self_refresh_cycle_count;
-        self.low_power_exit_count += later.low_power_exit_count;
-        self.low_power_exit_latency_cycles += later.low_power_exit_latency_cycles;
+        self.low_power.merge(later.low_power);
         merge_count_map(
             &mut self.qos_priority_access_counts,
             &later.qos_priority_access_counts,
@@ -563,25 +526,19 @@ impl DramActivityProfile {
     }
 
     pub const fn low_power_entry_count(&self, state: DramLowPowerState) -> usize {
-        match state {
-            DramLowPowerState::PrechargePowerdown => self.precharge_powerdown_entry_count,
-            DramLowPowerState::SelfRefresh => self.self_refresh_entry_count,
-        }
+        self.low_power.entry_count(state)
     }
 
     pub const fn low_power_cycle_count(&self, state: DramLowPowerState) -> u64 {
-        match state {
-            DramLowPowerState::PrechargePowerdown => self.precharge_powerdown_cycle_count,
-            DramLowPowerState::SelfRefresh => self.self_refresh_cycle_count,
-        }
+        self.low_power.cycle_count(state)
     }
 
     pub const fn low_power_exit_count(&self) -> usize {
-        self.low_power_exit_count
+        self.low_power.exit_count()
     }
 
     pub const fn low_power_exit_latency_cycles(&self) -> u64 {
-        self.low_power_exit_latency_cycles
+        self.low_power.exit_latency_cycles()
     }
 
     fn add_independent_target_profile(&mut self, profile: &Self) {
@@ -609,12 +566,7 @@ impl DramActivityProfile {
         self.qos_access_count += profile.qos_access_count;
         self.qos_byte_count += profile.qos_byte_count;
         self.qos_escalated_access_count += profile.qos_escalated_access_count;
-        self.precharge_powerdown_entry_count += profile.precharge_powerdown_entry_count;
-        self.precharge_powerdown_cycle_count += profile.precharge_powerdown_cycle_count;
-        self.self_refresh_entry_count += profile.self_refresh_entry_count;
-        self.self_refresh_cycle_count += profile.self_refresh_cycle_count;
-        self.low_power_exit_count += profile.low_power_exit_count;
-        self.low_power_exit_latency_cycles += profile.low_power_exit_latency_cycles;
+        self.low_power.merge(profile.low_power);
         merge_count_map(
             &mut self.qos_priority_access_counts,
             &profile.qos_priority_access_counts,

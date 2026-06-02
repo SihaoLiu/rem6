@@ -19,7 +19,8 @@ impl RiscvSystemRun {
                 count.saturating_add(dram.qos_requestor_access_count(requestor))
             });
         let low_power_entry_count = dram
-            .low_power_entry_count(DramLowPowerState::PrechargePowerdown)
+            .low_power_entry_count(DramLowPowerState::ActivePowerdown)
+            .saturating_add(dram.low_power_entry_count(DramLowPowerState::PrechargePowerdown))
             .saturating_add(dram.low_power_entry_count(DramLowPowerState::SelfRefresh));
 
         dram.access_count()
@@ -87,7 +88,9 @@ impl RiscvSystemRun {
     }
 
     pub fn has_dram_low_power_activity(&self) -> bool {
-        self.dram_low_power_entry_count(DramLowPowerState::PrechargePowerdown) != 0
+        self.dram_low_power_entry_count(DramLowPowerState::ActivePowerdown) != 0
+            || self.dram_low_power_cycle_count(DramLowPowerState::ActivePowerdown) != 0
+            || self.dram_low_power_entry_count(DramLowPowerState::PrechargePowerdown) != 0
             || self.dram_low_power_cycle_count(DramLowPowerState::PrechargePowerdown) != 0
             || self.dram_low_power_entry_count(DramLowPowerState::SelfRefresh) != 0
             || self.dram_low_power_cycle_count(DramLowPowerState::SelfRefresh) != 0

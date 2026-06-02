@@ -17,7 +17,8 @@ pub use activity::{
 };
 pub use error::DramError;
 pub use low_power::{
-    DramLowPowerEvent, DramLowPowerState, DramLowPowerTiming, DramLowPowerTimingField,
+    DramLowPowerActivity, DramLowPowerEvent, DramLowPowerState, DramLowPowerTiming,
+    DramLowPowerTimingField,
 };
 pub use memory_controller::{
     DramMemoryController, DramMemoryOutcome, DramMemorySnapshot, DramMemoryTargetSnapshot,
@@ -732,11 +733,48 @@ impl DramController {
         DramActivityProfile::from_activities(&self.port_activities(), &self.bank_activities())
     }
 
+    pub fn activity_profile_until(&self, end_cycle: u64) -> DramActivityProfile {
+        let mut bank_activities = self.bank_activities();
+        self.record_terminal_low_power_activity(&mut bank_activities, end_cycle);
+        DramActivityProfile::from_activities(&self.port_activities(), &bank_activities)
+    }
+
     pub fn activity_profile_since(&self, marker: DramActivityMarker) -> DramActivityProfile {
         DramActivityProfile::from_activities(
             &self.port_activities_since(marker),
             &self.bank_activities_since(marker),
         )
+    }
+
+    fn record_terminal_low_power_activity(
+        &self,
+        bank_activities: &mut BTreeMap<(u32, u32), DramBankActivity>,
+        end_cycle: u64,
+    ) {
+        let Some(low_power_timing) = self.timing.low_power_timing() else {
+            return;
+        };
+        let bank_count = self.geometry.bank_count() as usize;
+        for (bank_index, bank) in self.banks.iter().enumerate() {
+            let parallel_port = bank_index / bank_count;
+            let local_bank = bank_index % bank_count;
+            let Some(port) = self.ports.get(parallel_port) else {
+                continue;
+            };
+            let events = low_power::events_for_idle_window(
+                low_power_timing,
+                parallel_port as u32,
+                port.bus_available_cycle().max(bank.available_cycle()),
+                end_cycle,
+                bank.open_row().is_some(),
+            );
+            if !events.is_empty() {
+                bank_activities
+                    .entry((parallel_port as u32, local_bank as u32))
+                    .or_default()
+                    .record_terminal_low_power_events(&events);
+            }
+        }
     }
 
     pub fn clear_activity(&mut self) {
@@ -790,18 +828,19 @@ impl DramController {
                 decoded.parallel_port,
                 port.bus_available_cycle().max(bank.available_cycle()),
                 arrival_cycle,
+                bank.open_row.is_some(),
             )
         } else {
             Vec::new()
         };
-        let low_power_exit_latency_cycles = if low_power_events.is_empty() {
-            0
-        } else {
-            self.timing
-                .low_power_timing()
-                .expect("low-power events require low-power timing")
-                .exit_latency()
-        };
+        let low_power_exit_latency_cycles = low_power_events
+            .last()
+            .and_then(|event| {
+                self.timing
+                    .low_power_timing()
+                    .map(|timing| timing.exit_latency_for_state(event.state()))
+            })
+            .unwrap_or(0);
         let effective_arrival_cycle = arrival_cycle.saturating_add(low_power_exit_latency_cycles);
         let bus_ready_cycle = port.ready_cycle(kind, self.timing, decoded.bank_group);
         let mut commands = Vec::new();

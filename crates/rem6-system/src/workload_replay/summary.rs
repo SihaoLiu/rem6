@@ -306,10 +306,23 @@ pub(super) fn parallel_execution_summary(
             }),
         )
         .with_dram_low_power_activity(
-            dram.low_power_entry_count(rem6_dram::DramLowPowerState::PrechargePowerdown),
-            dram.low_power_cycle_count(rem6_dram::DramLowPowerState::PrechargePowerdown),
-            dram.low_power_entry_count(rem6_dram::DramLowPowerState::SelfRefresh),
-            dram.low_power_cycle_count(rem6_dram::DramLowPowerState::SelfRefresh),
+            [
+                (
+                    rem6_dram::DramLowPowerState::ActivePowerdown,
+                    dram.low_power_entry_count(rem6_dram::DramLowPowerState::ActivePowerdown),
+                    dram.low_power_cycle_count(rem6_dram::DramLowPowerState::ActivePowerdown),
+                ),
+                (
+                    rem6_dram::DramLowPowerState::PrechargePowerdown,
+                    dram.low_power_entry_count(rem6_dram::DramLowPowerState::PrechargePowerdown),
+                    dram.low_power_cycle_count(rem6_dram::DramLowPowerState::PrechargePowerdown),
+                ),
+                (
+                    rem6_dram::DramLowPowerState::SelfRefresh,
+                    dram.low_power_entry_count(rem6_dram::DramLowPowerState::SelfRefresh),
+                    dram.low_power_cycle_count(rem6_dram::DramLowPowerState::SelfRefresh),
+                ),
+            ],
             dram.low_power_exit_count(),
             dram.low_power_exit_latency_cycles(),
         )
