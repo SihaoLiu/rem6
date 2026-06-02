@@ -99,12 +99,7 @@ fn build_cli_dram_profile(
     profile: CliDramMemoryProfile,
 ) -> Result<ExternalMemoryProfile, Rem6CliError> {
     let geometry = DramGeometry::new(4, 64, line_layout.bytes()).map_err(execute_error)?;
-    let low_power_timing = DramLowPowerTiming::new(20, 80, 7)
-        .and_then(|timing| timing.with_self_refresh_exit_latency(17))
-        .map_err(execute_error)?;
-    let timing = DramTiming::new(3, 5, 7, 2, 4)
-        .map_err(execute_error)?
-        .with_low_power_timing(low_power_timing);
+    let timing = DramTiming::new(3, 5, 7, 2, 4).map_err(execute_error)?;
     match profile {
         CliDramMemoryProfile::Ddr => {
             ExternalMemoryProfile::ddr(CLI_MEMORY_TARGET, line_layout, 1, 1, geometry, timing)
@@ -120,7 +115,11 @@ fn build_cli_dram_profile(
             ExternalMemoryProfile::lpddr(CLI_MEMORY_TARGET, line_layout, 2, 2, geometry, timing)
         }
         CliDramMemoryProfile::Nvm => {
+            let low_power_timing = DramLowPowerTiming::new(20, 80, 7)
+                .and_then(|timing| timing.with_self_refresh_exit_latency(17))
+                .map_err(execute_error)?;
             let timing = timing.with_command_window(16, 2).map_err(execute_error)?;
+            let timing = timing.with_low_power_timing(low_power_timing);
             ExternalMemoryProfile::nvm(CLI_MEMORY_TARGET, line_layout, 2, 4, geometry, timing)
                 .and_then(|profile| {
                     profile.with_nvm_media_timing(NvmMediaTiming::new(30, 50, 6, 4, 1)?)

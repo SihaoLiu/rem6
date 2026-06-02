@@ -508,6 +508,10 @@ fn rem6_run_can_execute_riscv_elf_through_dram_memory_and_emit_dram_stats() {
     assert!(stdout.contains("\"row_misses\":1"));
     assert!(stdout.contains("\"total_ready_latency_ticks\":13"));
     assert!(stdout.contains("\"max_ready_latency_ticks\":8"));
+    assert!(stdout.contains("\"low_power_timing\":{\"precharge_powerdown_entry_delay\":0"));
+    assert!(stdout.contains("\"self_refresh_entry_delay\":0"));
+    assert!(stdout.contains("\"exit_latency\":0"));
+    assert!(stdout.contains("\"self_refresh_exit_latency\":0"));
     assert_stat(
         &stdout,
         "sim.memory.dram.active_targets",
@@ -551,6 +555,34 @@ fn rem6_run_can_execute_riscv_elf_through_dram_memory_and_emit_dram_stats() {
         "sim.memory.dram.profile.scheduler_banks",
         "Count",
         4,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.low_power_timing.precharge_powerdown_entry_delay",
+        "Tick",
+        0,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.low_power_timing.self_refresh_entry_delay",
+        "Tick",
+        0,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.low_power_timing.exit_latency",
+        "Tick",
+        0,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.low_power_timing.self_refresh_exit_latency",
+        "Tick",
+        0,
         "constant",
     );
 }
