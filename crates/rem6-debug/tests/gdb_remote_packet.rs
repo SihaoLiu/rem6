@@ -924,10 +924,7 @@ fn gdb_remote_session_records_resume_requests() {
         session
             .handle_packet(&GdbRemotePacket::new(b"c1000".to_vec()).unwrap())
             .unwrap(),
-        vec![
-            GdbRemoteFrame::Ack,
-            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"S0b".to_vec()).unwrap()),
-        ],
+        vec![GdbRemoteFrame::Ack],
     );
     assert_eq!(
         session.last_resume_request(),
@@ -951,9 +948,12 @@ fn gdb_remote_session_records_resume_requests() {
     assert!(session
         .handle_packet(&GdbRemotePacket::new(b"Hc1a".to_vec()).unwrap())
         .is_ok());
-    assert!(session
-        .handle_packet(&GdbRemotePacket::new(b"S05".to_vec()).unwrap())
-        .is_ok());
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"S05".to_vec()).unwrap())
+            .unwrap(),
+        vec![GdbRemoteFrame::Ack],
+    );
     assert_eq!(
         session.last_resume_request(),
         Some(&GdbRemoteResumeRequest::new(
@@ -967,7 +967,22 @@ fn gdb_remote_session_records_resume_requests() {
 
 #[test]
 fn gdb_remote_session_reports_vcont_actions() {
-    let mut session = GdbRemoteSession::new(Vec::new());
+    let mut unsupported = GdbRemoteSession::new(Vec::new());
+
+    assert_eq!(
+        unsupported
+            .handle_packet(&GdbRemotePacket::new(b"vCont?".to_vec()).unwrap())
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(Vec::new()).unwrap()),
+        ],
+    );
+
+    let mut session = GdbRemoteSession::new(vec![GdbRemoteFeature::new(
+        b"vContSupported".to_vec(),
+        GdbRemoteFeatureValue::Supported,
+    )]);
 
     assert_eq!(
         session
@@ -982,17 +997,29 @@ fn gdb_remote_session_reports_vcont_actions() {
 
 #[test]
 fn gdb_remote_session_records_vcont_resume_actions() {
-    let mut session = GdbRemoteSession::new(Vec::new());
+    let mut unsupported = GdbRemoteSession::new(Vec::new());
+    assert_eq!(
+        unsupported
+            .handle_packet(&GdbRemotePacket::new(b"vCont;c:1a".to_vec()).unwrap())
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(Vec::new()).unwrap()),
+        ],
+    );
+    assert_eq!(unsupported.last_resume_requests(), &[]);
+
+    let mut session = GdbRemoteSession::new(vec![GdbRemoteFeature::new(
+        b"vContSupported".to_vec(),
+        GdbRemoteFeatureValue::Supported,
+    )]);
     session.set_stop_reply(GdbRemoteStopReply::signal(0x0b));
 
     assert_eq!(
         session
             .handle_packet(&GdbRemotePacket::new(b"vCont;c:1a;S05".to_vec()).unwrap())
             .unwrap(),
-        vec![
-            GdbRemoteFrame::Ack,
-            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"S0b".to_vec()).unwrap()),
-        ],
+        vec![GdbRemoteFrame::Ack],
     );
     assert_eq!(
         session.last_resume_requests(),
@@ -1023,6 +1050,36 @@ fn gdb_remote_session_records_vcont_resume_actions() {
 }
 
 #[test]
+fn gdb_remote_session_records_resume_requests_in_no_ack_mode_without_stop_reply() {
+    let mut session = GdbRemoteSession::new(vec![
+        GdbRemoteFeature::new(
+            b"QStartNoAckMode".to_vec(),
+            GdbRemoteFeatureValue::Supported,
+        ),
+        GdbRemoteFeature::new(b"vContSupported".to_vec(), GdbRemoteFeatureValue::Supported),
+    ]);
+    session
+        .handle_packet(&GdbRemotePacket::new(b"QStartNoAckMode".to_vec()).unwrap())
+        .unwrap();
+
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"vCont;s:1".to_vec()).unwrap())
+            .unwrap(),
+        Vec::<GdbRemoteFrame>::new(),
+    );
+    assert_eq!(
+        session.last_resume_requests(),
+        &[GdbRemoteResumeRequest::new(
+            GdbRemoteResumeKind::SingleInstruction,
+            None,
+            None,
+            GdbRemoteThreadId::Id(1),
+        )],
+    );
+}
+
+#[test]
 fn gdb_remote_session_records_disconnect_requests() {
     let mut session = GdbRemoteSession::new(Vec::new());
 
@@ -1045,6 +1102,7 @@ fn gdb_remote_session_records_disconnect_requests() {
         }),
     );
 
+    let mut session = GdbRemoteSession::new(Vec::new());
     assert_eq!(
         session
             .handle_packet(&GdbRemotePacket::new(b"vKill;2a".to_vec()).unwrap())
@@ -1057,6 +1115,25 @@ fn gdb_remote_session_records_disconnect_requests() {
     assert_eq!(
         session.last_disconnect_request(),
         Some(&GdbRemoteDisconnectRequest::TerminateProcess { process_id: 0x2a }),
+    );
+}
+
+#[test]
+fn gdb_remote_session_ignores_packets_after_disconnect() {
+    let mut session = GdbRemoteSession::new(Vec::new());
+
+    session
+        .handle_packet(&GdbRemotePacket::new(b"D".to_vec()).unwrap())
+        .unwrap();
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"qC".to_vec()).unwrap())
+            .unwrap(),
+        Vec::<GdbRemoteFrame>::new(),
+    );
+    assert_eq!(
+        session.last_disconnect_request(),
+        Some(&GdbRemoteDisconnectRequest::Detach { process_id: None }),
     );
 }
 

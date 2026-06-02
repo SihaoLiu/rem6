@@ -4,6 +4,7 @@ mod hex;
 mod memory;
 mod register;
 mod resume;
+mod stop;
 
 use disconnect::parse_disconnect_request;
 pub use disconnect::GdbRemoteDisconnectRequest;
@@ -20,6 +21,7 @@ pub use resume::{GdbRemoteResumeKind, GdbRemoteResumeRequest};
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
+pub use stop::GdbRemoteStopReply;
 
 pub const DEFAULT_GDB_REMOTE_MAX_PAYLOAD_BYTES: usize = 16 * 1024;
 const PACKET_START_BYTE: u8 = b'$';
@@ -306,29 +308,6 @@ pub enum GdbRemoteThreadInfoQuery {
     Subsequent,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum GdbRemoteStopReply {
-    Signal { signal: u8 },
-}
-
-impl GdbRemoteStopReply {
-    pub const fn signal(signal: u8) -> Self {
-        Self::Signal { signal }
-    }
-
-    fn encode_payload(&self) -> Vec<u8> {
-        match self {
-            Self::Signal { signal } => {
-                vec![
-                    b'S',
-                    encode_hex_nibble(signal >> 4),
-                    encode_hex_nibble(signal & 0x0f),
-                ]
-            }
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GdbRemoteAckMode {
     Acknowledged,
@@ -520,6 +499,10 @@ impl GdbRemoteSession {
         &mut self,
         packet: &GdbRemotePacket,
     ) -> Result<Vec<GdbRemoteFrame>, GdbRemoteError> {
+        if self.disconnected {
+            return Ok(Vec::new());
+        }
+
         let command = GdbRemoteCommand::parse(packet);
 
         match command {
@@ -542,7 +525,13 @@ impl GdbRemoteSession {
             GdbRemoteCommand::QueryStopReason => {
                 self.packet_response(self.stop_reply.encode_payload())
             }
-            GdbRemoteCommand::QueryResumeActions => self.packet_response(b"vCont;c;C;s;S".to_vec()),
+            GdbRemoteCommand::QueryResumeActions => {
+                if self.supports_vcont() {
+                    self.packet_response(b"vCont;c;C;s;S".to_vec())
+                } else {
+                    self.packet_response(Vec::new())
+                }
+            }
             GdbRemoteCommand::QueryThreadInfo { query } => {
                 let payload = match query {
                     GdbRemoteThreadInfoQuery::First => encode_thread_info(&self.thread_ids),
@@ -581,11 +570,14 @@ impl GdbRemoteSession {
                     address,
                     self.continue_thread,
                 )];
-                self.packet_response(self.stop_reply.encode_payload())
+                Ok(self.ack_response())
             }
             GdbRemoteCommand::ResumeActions { requests } => {
+                if !self.supports_vcont() {
+                    return self.packet_response(Vec::new());
+                }
                 self.last_resume_requests = requests;
-                self.packet_response(self.stop_reply.encode_payload())
+                Ok(self.ack_response())
             }
             GdbRemoteCommand::SetThread { operation, thread } => {
                 match operation {
@@ -673,6 +665,13 @@ impl GdbRemoteSession {
     fn supports_no_ack_mode(&self) -> bool {
         self.stub_features.iter().any(|feature| {
             feature.name() == b"QStartNoAckMode"
+                && matches!(feature.value(), GdbRemoteFeatureValue::Supported)
+        })
+    }
+
+    fn supports_vcont(&self) -> bool {
+        self.stub_features.iter().any(|feature| {
+            feature.name() == b"vContSupported"
                 && matches!(feature.value(), GdbRemoteFeatureValue::Supported)
         })
     }
