@@ -1677,6 +1677,11 @@ Implementation evidence through 2026-06-02:
 - `rem6-system` workload replay now keeps data-cache line harness ownership,
   protocol-specific response routing, final-line extraction, and profiled DRAM
   line fallback in a focused `workload_replay::data_cache_backend` module.
+  Replay-side SINIC PCI MMIO ownership is also isolated in
+  `workload_replay::sinic_mmio_backend`: declared devices route BAR-contained
+  CPU data requests to typed SINIC MMIO state, preserve shared-endpoint BAR
+  selection, expose final SINIC FIFO snapshots in replay outcomes, and attach
+  SINIC register plus FIFO checkpoint ports to planned host checkpoint capture.
   System source-policy tests require that backend to stay out of the replay
   root, preserving the manifest-driven full-system replay path without letting
   cache protocol wiring, DRAM backing, and workload orchestration collapse into
@@ -2914,7 +2919,10 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   data-cache backing routes whose source partition or endpoint does not match
   the declared directory placement, workload replay tests cover RISC-V entry
   fetches, redirected fetches, and data loads from non-first memory targets with
-  different line layouts, and direct topology store and DRAM tests cover
+  different line layouts, SINIC PCI declaration summaries, BAR-routed MMIO
+  loads, shared-endpoint BAR selection, final SINIC snapshot state after MMIO
+  writes, and SINIC register/FIFO checkpoint chunks in workload replay
+  checkpoint manifest summaries, and direct topology store and DRAM tests cover
   redirected fetches and data loads into addressed targets with different line
   layouts. RISC-V ISA and frontend tests cover word and doubleword `LR`/`SC` decode,
   execution, read-shared issue, matching-reservation atomic submission,
