@@ -1,6 +1,6 @@
 use rem6_dram::{
-    DramController, DramGeometry, DramQosRequest, DramQosSchedulingPolicy, DramQosTurnaroundPolicy,
-    DramTargetActivity, DramTiming,
+    DramController, DramGeometry, DramLowPowerState, DramLowPowerTiming, DramQosRequest,
+    DramQosSchedulingPolicy, DramQosTurnaroundPolicy, DramTargetActivity, DramTiming,
 };
 use rem6_fabric::{QosPriority, QosQueueArbiter, QosQueuePolicyKind, QosRequestorId};
 use rem6_kernel::RecordedConservativeRunSummary;
@@ -50,6 +50,18 @@ fn qos_dram_activity(target: MemoryTargetId) -> DramTargetActivity {
                 .with_turnaround(DramQosTurnaroundPolicy::RequestOrder),
         )
         .unwrap();
+
+    DramTargetActivity::new(target, controller.activity_profile())
+}
+
+fn low_power_dram_activity(target: MemoryTargetId) -> DramTargetActivity {
+    let timing = DramTiming::new(4, 8, 10, 3, 5)
+        .unwrap()
+        .with_low_power_timing(DramLowPowerTiming::new(20, 80, 7).unwrap());
+    let mut controller = DramController::new(DramGeometry::new(4, 256, 64).unwrap(), timing);
+
+    controller.schedule(0, &request(7, 0x0000, 70)).unwrap();
+    controller.schedule(120, &request(7, 0x0000, 71)).unwrap();
 
     DramTargetActivity::new(target, controller.activity_profile())
 }
@@ -118,4 +130,35 @@ fn dma_run_summary_merges_dram_qos_diagnostics() {
         summary.dram_qos_requestor_byte_count(QosRequestorId::new(7)),
         32
     );
+}
+
+#[test]
+fn system_run_reports_dram_low_power_diagnostics() {
+    let run = RiscvSystemRun::new(
+        Vec::new(),
+        Vec::new(),
+        RiscvSystemRunStopReason::Idle { tick: 0 },
+    )
+    .with_dram_activity(vec![low_power_dram_activity(MemoryTargetId::new(3))]);
+
+    assert!(run.has_dram_low_power_activity());
+    assert!(run.has_dram_activity());
+    assert_eq!(
+        run.dram_low_power_entry_count(DramLowPowerState::PrechargePowerdown),
+        1
+    );
+    assert_eq!(
+        run.dram_low_power_cycle_count(DramLowPowerState::PrechargePowerdown),
+        60
+    );
+    assert_eq!(
+        run.dram_low_power_entry_count(DramLowPowerState::SelfRefresh),
+        1
+    );
+    assert_eq!(
+        run.dram_low_power_cycle_count(DramLowPowerState::SelfRefresh),
+        28
+    );
+    assert_eq!(run.dram_low_power_exit_count(), 1);
+    assert_eq!(run.dram_low_power_exit_latency_cycles(), 7);
 }

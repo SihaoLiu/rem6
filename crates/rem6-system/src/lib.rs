@@ -569,6 +569,7 @@ impl RiscvSystemRun {
             || dram.total_ready_latency_cycles() != 0
             || dram.max_ready_latency_cycles() != 0
             || self.has_dram_qos_activity()
+            || self.has_dram_low_power_activity()
     }
 
     pub fn resource_activity_count(&self) -> usize {

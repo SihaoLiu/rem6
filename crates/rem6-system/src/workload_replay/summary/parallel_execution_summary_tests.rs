@@ -4,8 +4,8 @@ use crate::workload_replay_heterogeneous::{WorkloadAcceleratorActivity, Workload
 use crate::{RiscvClusterTurn, RiscvSystemRunStopReason};
 use rem6_coherence::{ParallelCoherenceRunSummary, ParallelCoherenceWaitForGraphs};
 use rem6_dram::{
-    DramController, DramGeometry, DramQosRequest, DramQosSchedulingPolicy, DramQosTurnaroundPolicy,
-    DramTargetActivity, DramTiming,
+    DramController, DramGeometry, DramLowPowerState, DramLowPowerTiming, DramQosRequest,
+    DramQosSchedulingPolicy, DramQosTurnaroundPolicy, DramTargetActivity, DramTiming,
 };
 use rem6_fabric::{QosPriority, QosQueueArbiter, QosQueuePolicyKind, QosRequestorId};
 use rem6_kernel::{
@@ -157,6 +157,17 @@ fn qos_dram_activity(target: MemoryTargetId) -> DramTargetActivity {
         .unwrap();
     DramTargetActivity::new(target, controller.activity_profile())
 }
+
+fn low_power_dram_activity(target: MemoryTargetId) -> DramTargetActivity {
+    let timing = DramTiming::new(4, 8, 10, 3, 5)
+        .unwrap()
+        .with_low_power_timing(DramLowPowerTiming::new(20, 80, 7).unwrap());
+    let mut controller = DramController::new(DramGeometry::new(4, 256, 64).unwrap(), timing);
+    controller.schedule(0, &request(7, 0x0000, 70)).unwrap();
+    controller.schedule(120, &request(7, 0x0000, 71)).unwrap();
+    DramTargetActivity::new(target, controller.activity_profile())
+}
+
 #[test]
 fn parallel_execution_summary_copies_dram_qos_activity() {
     let topology = WorkloadTopology::new(
@@ -208,6 +219,59 @@ fn parallel_execution_summary_copies_dram_qos_activity() {
         16,
     );
 }
+
+#[test]
+fn parallel_execution_summary_copies_dram_low_power_activity() {
+    let topology = WorkloadTopology::new(
+        1,
+        1,
+        1,
+        rem6_workload::WorkloadHostPlacement::new(0, 1, 0).unwrap(),
+    )
+    .unwrap();
+    let run = RiscvSystemRun::new(
+        Vec::new(),
+        Vec::new(),
+        RiscvSystemRunStopReason::Idle { tick: 0 },
+    )
+    .with_dram_activity(vec![low_power_dram_activity(MemoryTargetId::new(2))]);
+    let gpu = WorkloadGpuActivity::default();
+    let gpu_dma = WorkloadGpuDmaActivity::default();
+    let accelerator = WorkloadAcceleratorActivity::default();
+    let accelerator_dma = WorkloadAcceleratorDmaActivity::default();
+    let summary = parallel_execution_summary(
+        &run,
+        &topology,
+        WorkloadReplayActivityRefs {
+            gpu: &gpu,
+            gpu_dma: &gpu_dma,
+            accelerator: &accelerator,
+            accelerator_dma: &accelerator_dma,
+        },
+        None,
+    );
+
+    assert!(summary.has_dram_low_power_activity());
+    assert_eq!(
+        summary.dram_low_power_entry_count(DramLowPowerState::PrechargePowerdown),
+        1
+    );
+    assert_eq!(
+        summary.dram_low_power_cycle_count(DramLowPowerState::PrechargePowerdown),
+        60
+    );
+    assert_eq!(
+        summary.dram_low_power_entry_count(DramLowPowerState::SelfRefresh),
+        1
+    );
+    assert_eq!(
+        summary.dram_low_power_cycle_count(DramLowPowerState::SelfRefresh),
+        28
+    );
+    assert_eq!(summary.dram_low_power_exit_count(), 1);
+    assert_eq!(summary.dram_low_power_exit_latency_cycles(), 7);
+}
+
 #[test]
 fn parallel_execution_summary_copies_dma_scheduler_empty_epochs() {
     let topology = WorkloadTopology::new(

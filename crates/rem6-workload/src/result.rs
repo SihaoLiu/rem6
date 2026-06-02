@@ -35,6 +35,7 @@ mod batch_timeline;
 mod batch_worker_count;
 mod batch_worker_lane;
 mod data_cache;
+mod dram_activity;
 mod fabric_activity;
 mod full_system_parallel;
 mod heterogeneous_activity;
@@ -303,6 +304,12 @@ pub struct WorkloadParallelExecutionSummary {
     dram_qos_escalated_access_count: usize,
     dram_qos_priority_summaries: Vec<WorkloadDramQosPrioritySummary>,
     dram_qos_requestor_summaries: Vec<WorkloadDramQosRequestorSummary>,
+    dram_precharge_powerdown_entry_count: usize,
+    dram_precharge_powerdown_cycle_count: u64,
+    dram_self_refresh_entry_count: usize,
+    dram_self_refresh_cycle_count: u64,
+    dram_low_power_exit_count: usize,
+    dram_low_power_exit_latency_cycles: u64,
     dram_wait_for_edge_count: usize,
     dram_wait_for_edge_kind_counts: BTreeMap<WaitForEdgeKind, usize>,
     dram_wait_for_edge_kind_windows: Vec<WorkloadWaitForEdgeKindWindow>,

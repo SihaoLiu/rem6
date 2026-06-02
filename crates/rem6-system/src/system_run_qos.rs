@@ -1,3 +1,4 @@
+use rem6_dram::DramLowPowerState;
 use rem6_fabric::{QosPriority, QosRequestorId};
 
 use crate::RiscvSystemRun;
@@ -17,6 +18,9 @@ impl RiscvSystemRun {
             .fold(0usize, |count, requestor| {
                 count.saturating_add(dram.qos_requestor_access_count(requestor))
             });
+        let low_power_entry_count = dram
+            .low_power_entry_count(DramLowPowerState::PrechargePowerdown)
+            .saturating_add(dram.low_power_entry_count(DramLowPowerState::SelfRefresh));
 
         dram.access_count()
             .max(dram.read_count().saturating_add(dram.write_count()))
@@ -25,6 +29,8 @@ impl RiscvSystemRun {
             .max(dram.qos_access_count())
             .max(qos_priority_access_count)
             .max(qos_requestor_access_count)
+            .max(low_power_entry_count)
+            .max(dram.low_power_exit_count())
     }
 
     pub fn dram_qos_access_count(&self) -> usize {
@@ -62,5 +68,30 @@ impl RiscvSystemRun {
             || self.dram_qos_escalated_access_count() != 0
             || !dram.qos_priorities().is_empty()
             || !dram.qos_requestors().is_empty()
+    }
+
+    pub fn dram_low_power_entry_count(&self, state: DramLowPowerState) -> usize {
+        self.dram_profile().low_power_entry_count(state)
+    }
+
+    pub fn dram_low_power_cycle_count(&self, state: DramLowPowerState) -> u64 {
+        self.dram_profile().low_power_cycle_count(state)
+    }
+
+    pub fn dram_low_power_exit_count(&self) -> usize {
+        self.dram_profile().low_power_exit_count()
+    }
+
+    pub fn dram_low_power_exit_latency_cycles(&self) -> u64 {
+        self.dram_profile().low_power_exit_latency_cycles()
+    }
+
+    pub fn has_dram_low_power_activity(&self) -> bool {
+        self.dram_low_power_entry_count(DramLowPowerState::PrechargePowerdown) != 0
+            || self.dram_low_power_cycle_count(DramLowPowerState::PrechargePowerdown) != 0
+            || self.dram_low_power_entry_count(DramLowPowerState::SelfRefresh) != 0
+            || self.dram_low_power_cycle_count(DramLowPowerState::SelfRefresh) != 0
+            || self.dram_low_power_exit_count() != 0
+            || self.dram_low_power_exit_latency_cycles() != 0
     }
 }

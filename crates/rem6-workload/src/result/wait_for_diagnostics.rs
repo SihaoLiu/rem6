@@ -1000,6 +1000,9 @@ impl WorkloadParallelExecutionSummary {
             .fold(0usize, |count, summary| {
                 count.saturating_add(summary.access_count())
             });
+        let low_power_entry_count = self
+            .dram_precharge_powerdown_entry_count
+            .saturating_add(self.dram_self_refresh_entry_count);
 
         self.dram_access_count
             .max(self.dram_read_count.saturating_add(self.dram_write_count))
@@ -1011,6 +1014,8 @@ impl WorkloadParallelExecutionSummary {
             .max(self.dram_qos_access_count)
             .max(qos_priority_access_count)
             .max(qos_requestor_access_count)
+            .max(low_power_entry_count)
+            .max(self.dram_low_power_exit_count)
     }
 
     pub fn active_dram_resource_count(&self) -> usize {
@@ -1039,6 +1044,15 @@ impl WorkloadParallelExecutionSummary {
             || !self.dram_qos_requestor_summaries.is_empty()
     }
 
+    pub const fn has_dram_low_power_activity(&self) -> bool {
+        self.dram_precharge_powerdown_entry_count != 0
+            || self.dram_precharge_powerdown_cycle_count != 0
+            || self.dram_self_refresh_entry_count != 0
+            || self.dram_self_refresh_cycle_count != 0
+            || self.dram_low_power_exit_count != 0
+            || self.dram_low_power_exit_latency_cycles != 0
+    }
+
     pub fn has_dram_activity(&self) -> bool {
         self.dram_access_count != 0
             || self.dram_read_count != 0
@@ -1050,6 +1064,7 @@ impl WorkloadParallelExecutionSummary {
             || self.dram_total_ready_latency_cycles != 0
             || self.dram_max_ready_latency_cycles != 0
             || self.has_dram_qos_activity()
+            || self.has_dram_low_power_activity()
     }
 
     pub fn has_resource_activity(&self) -> bool {

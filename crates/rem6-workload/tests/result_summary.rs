@@ -1,4 +1,5 @@
 use rem6_boot::BootImage;
+use rem6_dram::DramLowPowerState;
 use rem6_fabric::{QosPriority, QosRequestorId};
 use rem6_kernel::{
     LivelockTransitionKind, ParallelPartitionActivity, ParallelProgressTransitionRecord,
@@ -1864,6 +1865,36 @@ fn workload_result_marks_dram_qos_breakdown_evidence_as_activity() {
     assert!(qos_breakdowns.has_dram_qos_activity());
     assert!(qos_breakdowns.has_dram_activity());
     assert!(qos_breakdowns.has_resource_activity());
+}
+
+#[test]
+fn workload_result_marks_dram_low_power_evidence_as_activity() {
+    let low_power = WorkloadParallelExecutionSummary::default()
+        .with_dram_low_power_activity(1, 60, 1, 28, 1, 7);
+
+    assert_eq!(
+        low_power.dram_low_power_entry_count(DramLowPowerState::PrechargePowerdown),
+        1,
+    );
+    assert_eq!(
+        low_power.dram_low_power_cycle_count(DramLowPowerState::PrechargePowerdown),
+        60,
+    );
+    assert_eq!(
+        low_power.dram_low_power_entry_count(DramLowPowerState::SelfRefresh),
+        1,
+    );
+    assert_eq!(
+        low_power.dram_low_power_cycle_count(DramLowPowerState::SelfRefresh),
+        28,
+    );
+    assert_eq!(low_power.dram_low_power_exit_count(), 1);
+    assert_eq!(low_power.dram_low_power_exit_latency_cycles(), 7);
+    assert_eq!(low_power.dram_operation_count(), 2);
+    assert_eq!(low_power.resource_activity_count(), 2);
+    assert!(low_power.has_dram_low_power_activity());
+    assert!(low_power.has_dram_activity());
+    assert!(low_power.has_resource_activity());
 }
 
 #[test]
