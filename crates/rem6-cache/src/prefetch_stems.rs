@@ -4,6 +4,7 @@ use std::fmt;
 
 use rem6_memory::{Address, AgentId};
 
+use crate::allocation::max_vector_len;
 use crate::prefetch::PrefetchCandidate;
 
 const SEQUENCE_MAX_COUNTER: u8 = 3;
@@ -54,17 +55,42 @@ impl StemsPrefetcherConfig {
         if reconstruction_entries == 0 {
             return Err(StemsPrefetcherError::ZeroReconstructionEntries);
         }
+        validate_stems_vector_length(
+            "reconstruction entries",
+            reconstruction_entries,
+            maximum_stems_reconstruction_entries(),
+        )?;
         if active_generation_entries == 0 {
             return Err(StemsPrefetcherError::ZeroActiveGenerationEntries);
         }
+        validate_stems_vector_length(
+            "active generation entries",
+            active_generation_entries,
+            maximum_stems_active_generation_entries(),
+        )?;
         if pattern_sequence_entries == 0 {
             return Err(StemsPrefetcherError::ZeroPatternSequenceEntries);
         }
+        validate_stems_vector_length(
+            "pattern sequence entries",
+            pattern_sequence_entries,
+            maximum_stems_pattern_sequence_entries(),
+        )?;
         if region_miss_order_buffer_entries == 0 {
             return Err(StemsPrefetcherError::ZeroRegionMissOrderBufferEntries);
         }
+        validate_stems_vector_length(
+            "RMOB entries",
+            region_miss_order_buffer_entries,
+            maximum_stems_rmob_entries(),
+        )?;
 
-        let sequence_slots = (spatial_region_size / line_size) as usize;
+        let sequence_slots = usize::try_from(spatial_region_size / line_size).unwrap_or(usize::MAX);
+        validate_stems_vector_length(
+            "sequence slots",
+            sequence_slots,
+            maximum_stems_sequence_slots(),
+        )?;
         Ok(Self {
             line_size,
             spatial_region_size,
@@ -133,6 +159,11 @@ pub enum StemsPrefetcherError {
     ZeroActiveGenerationEntries,
     ZeroPatternSequenceEntries,
     ZeroRegionMissOrderBufferEntries,
+    VectorLengthTooLarge {
+        field: &'static str,
+        length: usize,
+        maximum: usize,
+    },
     PstAddressOverflow {
         pc: u64,
         spatial_region_size: u64,
@@ -226,6 +257,14 @@ impl fmt::Display for StemsPrefetcherError {
             Self::ZeroRegionMissOrderBufferEntries => {
                 write!(formatter, "STeMS region miss order buffer has no entries")
             }
+            Self::VectorLengthTooLarge {
+                field,
+                length,
+                maximum,
+            } => write!(
+                formatter,
+                "STeMS {field} length {length} exceeds maximum {maximum}"
+            ),
             Self::PstAddressOverflow {
                 pc,
                 spatial_region_size,
@@ -323,6 +362,46 @@ impl fmt::Display for StemsPrefetcherError {
 }
 
 impl Error for StemsPrefetcherError {}
+
+fn maximum_stems_sequence_slots() -> usize {
+    max_vector_len::<SequenceEntry>().min(max_vector_len::<StemsSequenceEntrySnapshot>())
+}
+
+fn maximum_stems_reconstruction_entries() -> usize {
+    max_vector_len::<Option<ReconstructionEntry>>().min(max_vector_len::<StemsPrefetchCandidate>())
+}
+
+fn maximum_stems_active_generation_entries() -> usize {
+    max_vector_len::<StemsGenerationEntrySnapshot>()
+        .min(max_vector_len::<StemsActiveGenerationKeySnapshot>())
+        .min(max_vector_len::<(ActiveGenerationKey, GenerationEntry)>())
+}
+
+fn maximum_stems_pattern_sequence_entries() -> usize {
+    max_vector_len::<StemsPatternSequenceEntrySnapshot>()
+        .min(max_vector_len::<StemsPatternSequenceKeySnapshot>())
+        .min(max_vector_len::<(PatternSequenceKey, GenerationEntry)>())
+}
+
+fn maximum_stems_rmob_entries() -> usize {
+    max_vector_len::<RegionMissOrderBufferEntry>()
+        .min(max_vector_len::<StemsRegionMissOrderBufferEntrySnapshot>())
+}
+
+fn validate_stems_vector_length(
+    field: &'static str,
+    length: usize,
+    maximum: usize,
+) -> Result<(), StemsPrefetcherError> {
+    if length > maximum {
+        return Err(StemsPrefetcherError::VectorLengthTooLarge {
+            field,
+            length,
+            maximum,
+        });
+    }
+    Ok(())
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct StemsPrefetchAccess {

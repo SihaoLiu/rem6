@@ -1,7 +1,24 @@
 use rem6_cache::{
-    StemsCacheResidency, StemsPrefetchAccess, StemsPrefetcher, StemsPrefetcherConfig,
+    StemsCacheResidency, StemsGenerationEntrySnapshot, StemsPatternSequenceEntrySnapshot,
+    StemsPrefetchAccess, StemsPrefetchCandidate, StemsPrefetcher, StemsPrefetcherConfig,
+    StemsPrefetcherError, StemsRegionMissOrderBufferEntrySnapshot, StemsSequenceEntrySnapshot,
 };
 use rem6_memory::{Address, AgentId};
+
+const STEMS_SEQUENCE_SLOT_BYTE_OVERFLOW_LENGTH: usize =
+    isize::MAX as usize / std::mem::size_of::<StemsSequenceEntrySnapshot>() + 1;
+const STEMS_SEQUENCE_SLOT_POWER_OF_TWO_OVERFLOW_LENGTH: usize = 1usize << (usize::BITS - 4);
+const _: () = assert!(
+    STEMS_SEQUENCE_SLOT_POWER_OF_TWO_OVERFLOW_LENGTH > STEMS_SEQUENCE_SLOT_BYTE_OVERFLOW_LENGTH
+);
+const STEMS_RECONSTRUCTION_BYTE_OVERFLOW_LENGTH: usize =
+    isize::MAX as usize / std::mem::size_of::<StemsPrefetchCandidate>() + 1;
+const STEMS_ACTIVE_GENERATION_BYTE_OVERFLOW_LENGTH: usize =
+    isize::MAX as usize / std::mem::size_of::<StemsGenerationEntrySnapshot>() + 1;
+const STEMS_PATTERN_SEQUENCE_BYTE_OVERFLOW_LENGTH: usize =
+    isize::MAX as usize / std::mem::size_of::<StemsPatternSequenceEntrySnapshot>() + 1;
+const STEMS_RMOB_BYTE_OVERFLOW_LENGTH: usize =
+    isize::MAX as usize / std::mem::size_of::<StemsRegionMissOrderBufferEntrySnapshot>() + 1;
 
 fn stems_access(
     agent: u32,
@@ -26,6 +43,82 @@ fn residency(addresses: &[u64]) -> StemsCacheResidency {
         .fold(StemsCacheResidency::new(), |resident, address| {
             resident.with_cache_line(Address::new(*address), false)
         })
+}
+
+#[test]
+fn stems_prefetcher_config_rejects_vector_lengths_above_host_limit() {
+    assert!(matches!(
+        StemsPrefetcherConfig::new(
+            1,
+            STEMS_SEQUENCE_SLOT_POWER_OF_TWO_OVERFLOW_LENGTH as u64,
+            8,
+            4,
+            4,
+            8,
+            false,
+        ),
+        Err(StemsPrefetcherError::VectorLengthTooLarge {
+            field: "sequence slots",
+            length: STEMS_SEQUENCE_SLOT_POWER_OF_TWO_OVERFLOW_LENGTH,
+            ..
+        })
+    ));
+    assert!(matches!(
+        StemsPrefetcherConfig::new(
+            64,
+            256,
+            STEMS_RECONSTRUCTION_BYTE_OVERFLOW_LENGTH,
+            4,
+            4,
+            8,
+            false,
+        ),
+        Err(StemsPrefetcherError::VectorLengthTooLarge {
+            field: "reconstruction entries",
+            length: STEMS_RECONSTRUCTION_BYTE_OVERFLOW_LENGTH,
+            ..
+        })
+    ));
+    assert!(matches!(
+        StemsPrefetcherConfig::new(
+            64,
+            256,
+            8,
+            STEMS_ACTIVE_GENERATION_BYTE_OVERFLOW_LENGTH,
+            4,
+            8,
+            false,
+        ),
+        Err(StemsPrefetcherError::VectorLengthTooLarge {
+            field: "active generation entries",
+            length: STEMS_ACTIVE_GENERATION_BYTE_OVERFLOW_LENGTH,
+            ..
+        })
+    ));
+    assert!(matches!(
+        StemsPrefetcherConfig::new(
+            64,
+            256,
+            8,
+            4,
+            STEMS_PATTERN_SEQUENCE_BYTE_OVERFLOW_LENGTH,
+            8,
+            false,
+        ),
+        Err(StemsPrefetcherError::VectorLengthTooLarge {
+            field: "pattern sequence entries",
+            length: STEMS_PATTERN_SEQUENCE_BYTE_OVERFLOW_LENGTH,
+            ..
+        })
+    ));
+    assert!(matches!(
+        StemsPrefetcherConfig::new(64, 256, 8, 4, 4, STEMS_RMOB_BYTE_OVERFLOW_LENGTH, false,),
+        Err(StemsPrefetcherError::VectorLengthTooLarge {
+            field: "RMOB entries",
+            length: STEMS_RMOB_BYTE_OVERFLOW_LENGTH,
+            ..
+        })
+    ));
 }
 
 #[test]
