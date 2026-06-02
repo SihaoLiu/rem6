@@ -498,6 +498,16 @@ pub enum RiscvInstruction {
         rs1: Register,
         imm: Immediate,
     },
+    Ori {
+        rd: Register,
+        rs1: Register,
+        imm: Immediate,
+    },
+    Slli {
+        rd: Register,
+        rs1: Register,
+        shamt: u8,
+    },
     Add {
         rd: Register,
         rs1: Register,
@@ -655,6 +665,16 @@ fn counter_csr(address: u16) -> Option<RiscvCounterCsr> {
 fn decode_op_imm(raw: u32) -> Result<RiscvInstruction, RiscvError> {
     match funct3(raw) {
         0x0 => Ok(RiscvInstruction::Addi {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            imm: Immediate::new(i_imm(raw)),
+        }),
+        0x1 if shift_funct6(raw) == 0x00 => Ok(RiscvInstruction::Slli {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            shamt: shamt64(raw),
+        }),
+        0x6 => Ok(RiscvInstruction::Ori {
             rd: rd(raw),
             rs1: rs1(raw),
             imm: Immediate::new(i_imm(raw)),
@@ -986,6 +1006,14 @@ impl RiscvHartState {
                 let value = wrapping_add_signed(self.read(rs1), imm.value());
                 write_register(self, &mut register_writes, rd, value);
             }
+            RiscvInstruction::Ori { rd, rs1, imm } => {
+                let value = self.read(rs1) | (imm.value() as u64);
+                write_register(self, &mut register_writes, rd, value);
+            }
+            RiscvInstruction::Slli { rd, rs1, shamt } => {
+                let value = self.read(rs1).wrapping_shl(u32::from(shamt));
+                write_register(self, &mut register_writes, rd, value);
+            }
             RiscvInstruction::Add { rd, rs1, rs2 } => {
                 let value = self.read(rs1).wrapping_add(self.read(rs2));
                 write_register(self, &mut register_writes, rd, value);
@@ -1186,6 +1214,14 @@ fn funct3(raw: u32) -> u32 {
 
 fn funct7(raw: u32) -> u32 {
     (raw >> 25) & 0x7f
+}
+
+fn shift_funct6(raw: u32) -> u32 {
+    (raw >> 26) & 0x3f
+}
+
+fn shamt64(raw: u32) -> u8 {
+    ((raw >> 20) & 0x3f) as u8
 }
 
 fn funct5(raw: u32) -> u32 {

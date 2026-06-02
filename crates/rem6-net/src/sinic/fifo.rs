@@ -862,6 +862,14 @@ impl SinicFifoDeviceSnapshot {
         self.tx_fifo.packet_count()
     }
 
+    pub const fn rx_data_descriptor(&self) -> SinicDataDescriptor {
+        self.rx_data_descriptor
+    }
+
+    pub const fn tx_data_descriptor(&self) -> SinicDataDescriptor {
+        self.tx_data_descriptor
+    }
+
     pub fn encode_checkpoint_payload(&self) -> Vec<u8> {
         let register_payload = self.registers.encode_checkpoint_payload();
         let mut payload = Vec::new();

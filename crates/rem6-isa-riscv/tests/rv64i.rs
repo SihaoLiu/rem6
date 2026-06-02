@@ -40,6 +40,10 @@ fn i_type(imm: i32, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
         | opcode
 }
 
+fn shift_i_type(shamt: u8, rs1: u8, funct3: u32, rd: u8) -> u32 {
+    (u32::from(shamt) << 20) | (u32::from(rs1) << 15) | (funct3 << 12) | (u32::from(rd) << 7) | 0x13
+}
+
 fn s_type(imm: i32, rs2: u8, rs1: u8, funct3: u32) -> u32 {
     let imm = imm as u32;
     (((imm >> 5) & 0x7f) << 25)
@@ -234,6 +238,22 @@ fn decoder_extracts_rv64i_fields_and_immediates() {
         }
     );
     assert_eq!(
+        RiscvInstruction::decode(i_type(0x180, 3, 0x6, 3, 0x13)).unwrap(),
+        RiscvInstruction::Ori {
+            rd: reg(3),
+            rs1: reg(3),
+            imm: Immediate::new(0x180),
+        }
+    );
+    assert_eq!(
+        RiscvInstruction::decode(shift_i_type(40, 3, 0x1, 3)).unwrap(),
+        RiscvInstruction::Slli {
+            rd: reg(3),
+            rs1: reg(3),
+            shamt: 40,
+        }
+    );
+    assert_eq!(
         RiscvInstruction::decode(b_type(-8, 6, 5, 0x1)).unwrap(),
         RiscvInstruction::Bne {
             rs1: reg(5),
@@ -294,6 +314,14 @@ fn hart_executes_integer_register_operations_and_keeps_zero_readonly() {
     hart.execute(RiscvInstruction::decode(i_type(1, 4, 0x0, 5, 0x13)).unwrap())
         .unwrap();
     assert_eq!(hart.read(reg(5)), 0);
+
+    hart.execute(RiscvInstruction::decode(i_type(1, 0, 0x0, 6, 0x13)).unwrap())
+        .unwrap();
+    hart.execute(RiscvInstruction::decode(shift_i_type(40, 6, 0x1, 6)).unwrap())
+        .unwrap();
+    hart.execute(RiscvInstruction::decode(i_type(0x180, 6, 0x6, 6, 0x13)).unwrap())
+        .unwrap();
+    assert_eq!(hart.read(reg(6)), (1_u64 << 40) | 0x180);
 }
 
 #[test]
