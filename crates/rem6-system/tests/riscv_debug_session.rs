@@ -4,7 +4,8 @@ use rem6_isa_riscv::{Register, RiscvGdbXlen, RiscvHartState};
 use rem6_kernel::PartitionId;
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryTargetId, PartitionedMemoryStore,
-    TranslationPageMap, TranslationPagePermissions, TranslationPageSize,
+    TranslationPageMap, TranslationPageMappingScope, TranslationPagePermissions,
+    TranslationPageSize,
 };
 use rem6_system::{
     apply_riscv_gdb_remote_register_write, handle_riscv_gdb_remote_cluster_packet,
@@ -133,7 +134,25 @@ fn riscv_gdb_page_table_dump_formats_translation_map() {
 
     assert_eq!(
         riscv_gdb_page_table_dump_from_translation_map(&map),
-        b"page_size=0x1000\nvaddr=0x1000 paddr=0x5000 pages=1 flags=rw-\nvaddr=0x4000 paddr=0x8000 pages=2 flags=r-x\n",
+        b"page_size=0x1000\nvaddr=0x1000 paddr=0x5000 pages=1 flags=rw- scope=non-global\nvaddr=0x4000 paddr=0x8000 pages=2 flags=r-x scope=non-global\n",
+    );
+}
+
+#[test]
+fn riscv_gdb_page_table_dump_formats_translation_map_scope() {
+    let mut map = TranslationPageMap::new(TranslationPageSize::new(4096).unwrap());
+    map.map_with_scope(
+        Address::new(0x6000),
+        Address::new(0xe000),
+        1,
+        TranslationPagePermissions::read_execute(),
+        TranslationPageMappingScope::Global,
+    )
+    .unwrap();
+
+    assert_eq!(
+        riscv_gdb_page_table_dump_from_translation_map(&map),
+        b"page_size=0x1000\nvaddr=0x6000 paddr=0xe000 pages=1 flags=r-x scope=global\n",
     );
 }
 
@@ -156,7 +175,7 @@ fn riscv_gdb_remote_session_serves_translation_map_page_table_dump() {
                 .handle_packet(&GdbRemotePacket::new(b".".to_vec()).unwrap())
                 .unwrap(),
         ),
-        b"page_size=0x1000\nvaddr=0x2000 paddr=0xa000 pages=1 flags=r--\n",
+        b"page_size=0x1000\nvaddr=0x2000 paddr=0xa000 pages=1 flags=r-- scope=non-global\n",
     );
 }
 
@@ -540,7 +559,7 @@ fn riscv_gdb_remote_system_packet_handler_serves_translation_map_page_table_dump
             )
             .unwrap(),
         ),
-        b"page_size=0x1000\nvaddr=0x4000 paddr=0x8000 pages=2 flags=r-x\n",
+        b"page_size=0x1000\nvaddr=0x4000 paddr=0x8000 pages=2 flags=r-x scope=non-global\n",
     );
 }
 

@@ -414,7 +414,10 @@ isolated bugs:
   guest memory. The RISC-V session constructor can also attach externally
   supplied page-table dump payloads so the non-standard `.` packet is served
   through the same system packet handler without pulling page-table ownership
-  into the generic debug crate. Multi-core RISC-V debug construction can derive positive GDB
+  into the generic debug crate. System-level RISC-V debug helpers can also
+  derive dump text from `TranslationPageMap`, including virtual start,
+  physical start, page count, permission flags, and global/non-global mapping
+  scope for each entry. Multi-core RISC-V debug construction can derive positive GDB
   thread ids from `RiscvCluster` core ids, publish the sorted thread list
   through generic `qfThreadInfo`/`T`/`qC` session state, route `H g`-scoped
   register reads and writes to the matching live core, reject unsupported

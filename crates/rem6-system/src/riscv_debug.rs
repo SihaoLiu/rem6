@@ -7,7 +7,8 @@ use rem6_debug::{
 use rem6_isa_riscv::{Register, RiscvGdbTargetDescription, RiscvGdbXlen, RiscvHartState};
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, MemoryError, MemoryRequest, MemoryRequestId,
-    PartitionedMemoryStore, TranslationPageMap, TranslationPagePermissions,
+    PartitionedMemoryStore, TranslationPageMap, TranslationPageMappingScope,
+    TranslationPagePermissions,
 };
 use std::error::Error;
 use std::fmt::{self, Write as _};
@@ -65,11 +66,12 @@ pub fn riscv_gdb_page_table_dump_from_translation_map(map: &TranslationPageMap) 
     for mapping in map.mappings() {
         writeln!(
             dump,
-            "vaddr={:#x} paddr={:#x} pages={} flags={}",
+            "vaddr={:#x} paddr={:#x} pages={} flags={} scope={}",
             mapping.virtual_start().get(),
             mapping.physical_start().get(),
             mapping.page_count(),
             riscv_gdb_page_permission_flags(mapping.permissions()),
+            riscv_gdb_page_mapping_scope(mapping.scope()),
         )
         .expect("page table dump writes into string");
     }
@@ -463,6 +465,13 @@ fn riscv_gdb_page_permission_flags(permissions: TranslationPagePermissions) -> &
         (true, false, true) => "r-x",
         (true, true, false) => "rw-",
         (true, true, true) => "rwx",
+    }
+}
+
+fn riscv_gdb_page_mapping_scope(scope: TranslationPageMappingScope) -> &'static str {
+    match scope {
+        TranslationPageMappingScope::Global => "global",
+        TranslationPageMappingScope::NonGlobal => "non-global",
     }
 }
 
