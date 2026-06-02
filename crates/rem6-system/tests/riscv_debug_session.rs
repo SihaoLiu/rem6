@@ -8,9 +8,10 @@ use rem6_memory::{
 use rem6_system::{
     apply_riscv_gdb_remote_register_write, handle_riscv_gdb_remote_cluster_packet,
     handle_riscv_gdb_remote_core_packet, handle_riscv_gdb_remote_memory_packet,
-    handle_riscv_gdb_remote_packet, riscv_gdb_remote_session,
-    riscv_gdb_remote_session_from_cluster, riscv_gdb_remote_session_from_core,
-    riscv_gdb_remote_session_from_hart, RiscvGdbRegisterWriteError, RiscvGdbRemotePacketError,
+    handle_riscv_gdb_remote_packet, handle_riscv_gdb_remote_system_packet,
+    riscv_gdb_remote_session, riscv_gdb_remote_session_from_cluster,
+    riscv_gdb_remote_session_from_core, riscv_gdb_remote_session_from_hart,
+    RiscvGdbRegisterWriteError, RiscvGdbRemotePacketError,
 };
 use rem6_transport::{MemoryRoute, MemoryTransport, TransportEndpointId};
 
@@ -730,6 +731,96 @@ fn riscv_gdb_remote_cluster_packet_handler_rejects_unknown_thread_selection() {
             .unwrap(),
         ),
         b"0807060504030201",
+    );
+}
+
+#[test]
+fn riscv_gdb_remote_system_packet_handler_combines_cluster_registers_and_memory() {
+    let core0 = riscv_core_with_id(0, 0x8000);
+    core0.write_register(Register::new(1).unwrap(), 0x0102_0304_0506_0708);
+    let core2 = riscv_core_with_id(2, 0x9000);
+    core2.write_register(Register::new(1).unwrap(), 0x1112_1314_1516_1718);
+    let cluster = RiscvCluster::new([core2, core0]).unwrap();
+    let mut memory = debug_memory_store();
+    let mut session = riscv_gdb_remote_session_from_cluster(RiscvGdbXlen::Rv64, &cluster).unwrap();
+
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_system_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &cluster,
+                &mut memory,
+                &GdbRemotePacket::new(b"Hg3".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"OK",
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_system_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &cluster,
+                &mut memory,
+                &GdbRemotePacket::new(b"p1".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"1817161514131211",
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_system_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &cluster,
+                &mut memory,
+                &GdbRemotePacket::new(b"m100e,4".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"eeff1122",
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_system_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &cluster,
+                &mut memory,
+                &GdbRemotePacket::new(b"M100e,4:aabbccdd".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"OK",
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_system_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &cluster,
+                &mut memory,
+                &GdbRemotePacket::new(b"m100c,8".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"ccddaabbccdd3344",
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_system_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &cluster,
+                &mut memory,
+                &GdbRemotePacket::new(b"p1".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"1817161514131211",
     );
 }
 

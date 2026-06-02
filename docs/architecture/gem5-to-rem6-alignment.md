@@ -413,7 +413,12 @@ isolated bugs:
   thread ids from `RiscvCluster` core ids, publish the sorted thread list
   through generic `qfThreadInfo`/`T`/`qC` session state, route `H g`-scoped
   register reads and writes to the matching live core, and reject unknown thread
-  selections before they mutate debugger session state.
+  selections before they mutate debugger session state. A typed RISC-V system
+  packet handler now gives the future socket loop one entry point for cluster
+  register packets and store-backed `m`/`M` packets, matching gem5
+  `BaseRemoteGDB`'s combined command surface without copying its socket,
+  thread-context, memory-proxy, and ISA register-cache responsibilities into
+  one class.
   Workload manifests and replay
   plans can declare exact expected remote-send records, exact progress-free
   transition records, remote-flow actual sets, and remote source/target endpoint
@@ -1228,7 +1233,11 @@ Implementation evidence through 2026-06-01:
   `RiscvCluster` core ids to positive GDB thread ids, seeds the generic session
   thread list from those ids, and exposes a cluster packet handler that validates
   thread selections while synchronizing `g`/`p n` reads and `G`/`P n...=r...`
-  writes with the live core selected by the generic GDB session state.
+  writes with the live core selected by the generic GDB session state. The
+  higher-level RISC-V system packet handler dispatches memory packets to the
+  store-backed memory bridge and all other packets to the cluster bridge, so
+  memory reads or writes preserve debugger thread selection while register
+  mutation remains isolated to the selected core.
 - `rem6-memory` now keeps `MemoryRequest`, `MemoryResponse`, response status,
   atomic request payload validation, and atomic read-modify-write byte
   materialization in a focused `request` module. Memory source-policy tests keep
@@ -2874,7 +2883,10 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   plus RV32/RV64 hart and live-core register snapshots for `g` and `p n`
   packets with typed RV32/RV64 `G` and `P n...=r...` writeback into integer
   registers and `pc`, including wrong-length, unsupported-register,
-  packet-handler writeback error paths, and synchronized core fetch-PC updates.
+  packet-handler writeback error paths, synchronized core fetch-PC updates,
+  cluster thread enumeration, selected-thread register routing, unknown-thread
+  rejection, and combined system packet handling for selected-core registers
+  plus store-backed memory reads and writes.
   RISC-V PMP tests cover TOR, NA4, and NAPOT range decoding, lowest
   matching-entry priority, locked-entry write rejection, locked TOR lower-bound
   protection, configuration-before-address materialization, default inactive

@@ -331,6 +331,21 @@ pub fn handle_riscv_gdb_remote_memory_packet(
     }
 }
 
+pub fn handle_riscv_gdb_remote_system_packet(
+    xlen: RiscvGdbXlen,
+    session: &mut GdbRemoteSession,
+    cluster: &RiscvCluster,
+    memory: &mut PartitionedMemoryStore,
+    packet: &GdbRemotePacket,
+) -> Result<Vec<GdbRemoteFrame>, RiscvGdbRemotePacketError> {
+    match GdbRemoteCommand::parse(packet) {
+        GdbRemoteCommand::ReadMemory { .. } | GdbRemoteCommand::WriteMemory { .. } => {
+            handle_riscv_gdb_remote_memory_packet(session, memory, packet)
+        }
+        _ => handle_riscv_gdb_remote_cluster_packet(xlen, session, cluster, packet),
+    }
+}
+
 fn sync_riscv_gdb_remote_session_from_hart(
     xlen: RiscvGdbXlen,
     session: &mut GdbRemoteSession,
