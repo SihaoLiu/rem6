@@ -1270,7 +1270,7 @@ impl fmt::Display for SinicError {
                 "SINIC interrupt scheduled at tick {scheduled_tick} before current tick {current_tick}"
             ),
             Self::InvalidSnapshotPayload { reason } => {
-                write!(formatter, "SINIC register snapshot payload is invalid: {reason}")
+                write!(formatter, "SINIC snapshot payload is invalid: {reason}")
             }
             Self::PciEndpoint { source } => {
                 write!(formatter, "SINIC PCI endpoint error: {source}")

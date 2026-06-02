@@ -940,6 +940,19 @@ impl SinicFifoDeviceSnapshot {
             SinicDmaDirection::Transmit,
         )?;
         if let Some(plan) = &rx_dma_pending {
+            if plan.packet_offset != rx_dma_offset {
+                return Err(invalid_snapshot(format!(
+                    "rx_dma_pending packet offset {} does not match rx_dma_offset {rx_dma_offset}",
+                    plan.packet_offset
+                )));
+            }
+            if plan.copy_len > plan.descriptor.byte_len() {
+                return Err(invalid_snapshot(format!(
+                    "rx_dma_pending copy length {} exceeds descriptor length {}",
+                    plan.copy_len,
+                    plan.descriptor.byte_len()
+                )));
+            }
             let available = rx_fifo
                 .front()
                 .map_or(0, EthernetPacket::payload_len)
@@ -948,6 +961,22 @@ impl SinicFifoDeviceSnapshot {
                 return Err(invalid_snapshot(format!(
                     "rx_dma_pending copy length {} exceeds available receive payload {available}",
                     plan.copy_len
+                )));
+            }
+        }
+        if let Some(plan) = &tx_dma_pending {
+            let buffered_bytes = tx_dma_buffer.len() as u64;
+            if plan.packet_offset != buffered_bytes {
+                return Err(invalid_snapshot(format!(
+                    "tx_dma_pending packet offset {} does not match buffered bytes {buffered_bytes}",
+                    plan.packet_offset
+                )));
+            }
+            if plan.copy_len != plan.descriptor.byte_len() {
+                return Err(invalid_snapshot(format!(
+                    "tx_dma_pending copy length {} does not match descriptor length {}",
+                    plan.copy_len,
+                    plan.descriptor.byte_len()
                 )));
             }
         }
