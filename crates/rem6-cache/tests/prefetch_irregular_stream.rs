@@ -1,10 +1,60 @@
 use rem6_cache::{
-    IrregularStreamBufferAccess, IrregularStreamBufferConfig, IrregularStreamBufferPrefetcher,
+    IrregularStreamBufferAccess, IrregularStreamBufferCandidate, IrregularStreamBufferConfig,
+    IrregularStreamBufferError, IrregularStreamBufferMappingEntrySnapshot,
+    IrregularStreamBufferPrefetcher, IrregularStreamBufferTrainingEntrySnapshot,
 };
 use rem6_memory::{Address, AgentId};
 
+const ISB_TRAINING_BYTE_OVERFLOW_LENGTH: usize =
+    isize::MAX as usize / std::mem::size_of::<IrregularStreamBufferTrainingEntrySnapshot>() + 1;
+const ISB_ADDRESS_MAP_BYTE_OVERFLOW_LENGTH: usize =
+    isize::MAX as usize / std::mem::size_of::<IrregularStreamBufferMappingEntrySnapshot>() + 1;
+const ISB_PREFETCH_CANDIDATE_BYTE_OVERFLOW_LENGTH: usize =
+    isize::MAX as usize / std::mem::size_of::<IrregularStreamBufferCandidate>() + 1;
+const ISB_PREFETCH_CANDIDATE_POWER_OF_TWO_OVERFLOW_LENGTH: usize = 1usize << (usize::BITS - 2);
+const _: () = assert!(
+    ISB_PREFETCH_CANDIDATE_POWER_OF_TWO_OVERFLOW_LENGTH
+        > ISB_PREFETCH_CANDIDATE_BYTE_OVERFLOW_LENGTH
+);
+
 fn isb_access(agent: u32, pc: u64, address: u64, secure: bool) -> IrregularStreamBufferAccess {
     IrregularStreamBufferAccess::new(AgentId::new(agent), pc, Address::new(address), secure)
+}
+
+#[test]
+fn irregular_stream_buffer_config_rejects_vector_lengths_above_host_limit() {
+    assert!(matches!(
+        IrregularStreamBufferConfig::new(64, 2, 16, 3, ISB_TRAINING_BYTE_OVERFLOW_LENGTH, 8, 4,),
+        Err(IrregularStreamBufferError::VectorLengthTooLarge {
+            field: "training entries",
+            length: ISB_TRAINING_BYTE_OVERFLOW_LENGTH,
+            ..
+        })
+    ));
+    assert!(matches!(
+        IrregularStreamBufferConfig::new(64, 2, 16, 3, 4, ISB_ADDRESS_MAP_BYTE_OVERFLOW_LENGTH, 4,),
+        Err(IrregularStreamBufferError::VectorLengthTooLarge {
+            field: "address map entries",
+            length: ISB_ADDRESS_MAP_BYTE_OVERFLOW_LENGTH,
+            ..
+        })
+    ));
+    assert!(matches!(
+        IrregularStreamBufferConfig::new(
+            64,
+            2,
+            16,
+            3,
+            4,
+            8,
+            ISB_PREFETCH_CANDIDATE_POWER_OF_TWO_OVERFLOW_LENGTH,
+        ),
+        Err(IrregularStreamBufferError::VectorLengthTooLarge {
+            field: "prefetch candidates per entry",
+            length: ISB_PREFETCH_CANDIDATE_POWER_OF_TWO_OVERFLOW_LENGTH,
+            ..
+        })
+    ));
 }
 
 #[test]

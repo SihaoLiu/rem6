@@ -4,6 +4,7 @@ use std::fmt;
 
 use rem6_memory::{Address, AgentId};
 
+use crate::allocation::max_vector_len;
 use crate::prefetch::PrefetchCandidate;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -46,9 +47,19 @@ impl IrregularStreamBufferConfig {
         if training_entries == 0 {
             return Err(IrregularStreamBufferError::ZeroTrainingEntries);
         }
+        validate_isb_vector_length(
+            "training entries",
+            training_entries,
+            maximum_isb_training_entries(),
+        )?;
         if address_map_entries == 0 {
             return Err(IrregularStreamBufferError::ZeroAddressMapEntries);
         }
+        validate_isb_vector_length(
+            "address map entries",
+            address_map_entries,
+            maximum_isb_address_map_entries(),
+        )?;
         if prefetch_candidates_per_entry == 0 {
             return Err(IrregularStreamBufferError::ZeroPrefetchCandidatesPerEntry);
         }
@@ -59,6 +70,11 @@ impl IrregularStreamBufferConfig {
                 },
             );
         }
+        validate_isb_vector_length(
+            "prefetch candidates per entry",
+            prefetch_candidates_per_entry,
+            maximum_isb_mapping_slots(),
+        )?;
 
         let max_counter = ((1_u16 << counter_bits) - 1) as u8;
         Ok(Self {
@@ -126,6 +142,11 @@ pub enum IrregularStreamBufferError {
     ZeroPrefetchCandidatesPerEntry,
     PrefetchCandidatesPerEntryNotPowerOfTwo {
         prefetch_candidates_per_entry: usize,
+    },
+    VectorLengthTooLarge {
+        field: &'static str,
+        length: usize,
+        maximum: usize,
     },
     StructuralAddressCounterOverflow {
         current: u64,
@@ -214,6 +235,14 @@ impl fmt::Display for IrregularStreamBufferError {
             } => write!(
                 formatter,
                 "irregular stream buffer candidate count {prefetch_candidates_per_entry} is not a power of two"
+            ),
+            Self::VectorLengthTooLarge {
+                field,
+                length,
+                maximum,
+            } => write!(
+                formatter,
+                "irregular stream buffer {field} length {length} exceeds maximum {maximum}"
             ),
             Self::StructuralAddressCounterOverflow {
                 current,
@@ -308,6 +337,41 @@ impl fmt::Display for IrregularStreamBufferError {
 }
 
 impl Error for IrregularStreamBufferError {}
+
+fn maximum_isb_training_entries() -> usize {
+    max_vector_len::<TrainingEntry>()
+        .min(max_vector_len::<IrregularStreamBufferTrainingEntrySnapshot>())
+        .min(max_vector_len::<TrainingKey>())
+        .min(max_vector_len::<IrregularStreamBufferTrainingKeySnapshot>())
+}
+
+fn maximum_isb_address_map_entries() -> usize {
+    max_vector_len::<AddressMappingEntry>()
+        .min(max_vector_len::<IrregularStreamBufferMappingEntrySnapshot>())
+        .min(max_vector_len::<MappingKey>())
+        .min(max_vector_len::<IrregularStreamBufferMappingKeySnapshot>())
+}
+
+fn maximum_isb_mapping_slots() -> usize {
+    max_vector_len::<AddressMapping>()
+        .min(max_vector_len::<IrregularStreamBufferMappingSnapshot>())
+        .min(max_vector_len::<IrregularStreamBufferCandidate>())
+}
+
+fn validate_isb_vector_length(
+    field: &'static str,
+    length: usize,
+    maximum: usize,
+) -> Result<(), IrregularStreamBufferError> {
+    if length > maximum {
+        return Err(IrregularStreamBufferError::VectorLengthTooLarge {
+            field,
+            length,
+            maximum,
+        });
+    }
+    Ok(())
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct IrregularStreamBufferAccess {
