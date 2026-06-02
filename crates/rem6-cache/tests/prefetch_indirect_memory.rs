@@ -1,8 +1,16 @@
 use rem6_cache::{
-    IndirectMemoryPrefetchAccess, IndirectMemoryPrefetchKind, IndirectMemoryPrefetcher,
-    IndirectMemoryPrefetcherConfig,
+    IndirectMemoryPatternDetectorEntrySnapshot, IndirectMemoryPrefetchAccess,
+    IndirectMemoryPrefetchEntrySnapshot, IndirectMemoryPrefetchKind, IndirectMemoryPrefetcher,
+    IndirectMemoryPrefetcherConfig, IndirectMemoryPrefetcherError,
 };
 use rem6_memory::{Address, AgentId};
+
+const IMP_PREFETCH_TABLE_BYTE_OVERFLOW_LENGTH: usize =
+    isize::MAX as usize / std::mem::size_of::<IndirectMemoryPrefetchEntrySnapshot>() + 1;
+const IMP_PATTERN_DETECTOR_BYTE_OVERFLOW_LENGTH: usize =
+    isize::MAX as usize / std::mem::size_of::<IndirectMemoryPatternDetectorEntrySnapshot>() + 1;
+const IMP_ADDRESS_ARRAY_BYTE_OVERFLOW_LENGTH: usize =
+    isize::MAX as usize / std::mem::size_of::<Vec<Option<Address>>>() + 1;
 
 fn imp_access(
     agent: u32,
@@ -36,6 +44,64 @@ fn imp_index_access_with_lookahead(
     imp_access(agent, pc, address, false, false)
         .with_read_index_lookahead(8, index, lookahead)
         .unwrap()
+}
+
+#[test]
+fn indirect_memory_prefetcher_config_rejects_vector_lengths_above_host_limit() {
+    assert!(matches!(
+        IndirectMemoryPrefetcherConfig::new(
+            IMP_PREFETCH_TABLE_BYTE_OVERFLOW_LENGTH,
+            2,
+            2,
+            vec![2],
+            4,
+            2,
+            1,
+            100,
+            2,
+        ),
+        Err(IndirectMemoryPrefetcherError::VectorLengthTooLarge {
+            field: "prefetch table entries",
+            length: IMP_PREFETCH_TABLE_BYTE_OVERFLOW_LENGTH,
+            ..
+        })
+    ));
+    assert!(matches!(
+        IndirectMemoryPrefetcherConfig::new(
+            4,
+            IMP_PATTERN_DETECTOR_BYTE_OVERFLOW_LENGTH,
+            2,
+            vec![2],
+            4,
+            2,
+            1,
+            100,
+            2,
+        ),
+        Err(IndirectMemoryPrefetcherError::VectorLengthTooLarge {
+            field: "pattern detector entries",
+            length: IMP_PATTERN_DETECTOR_BYTE_OVERFLOW_LENGTH,
+            ..
+        })
+    ));
+    assert!(matches!(
+        IndirectMemoryPrefetcherConfig::new(
+            4,
+            2,
+            IMP_ADDRESS_ARRAY_BYTE_OVERFLOW_LENGTH,
+            vec![2],
+            4,
+            2,
+            1,
+            100,
+            2,
+        ),
+        Err(IndirectMemoryPrefetcherError::VectorLengthTooLarge {
+            field: "address array length",
+            length: IMP_ADDRESS_ARRAY_BYTE_OVERFLOW_LENGTH,
+            ..
+        })
+    ));
 }
 
 #[test]

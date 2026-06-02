@@ -4,6 +4,7 @@ use std::fmt;
 
 use rem6_memory::{Address, AgentId};
 
+use crate::allocation::max_vector_len;
 use crate::prefetch::PrefetchCandidate;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -36,12 +37,27 @@ impl IndirectMemoryPrefetcherConfig {
         if prefetch_table_entries == 0 {
             return Err(IndirectMemoryPrefetcherError::ZeroPrefetchTableEntries);
         }
+        validate_indirect_memory_vector_length(
+            "prefetch table entries",
+            prefetch_table_entries,
+            maximum_indirect_memory_prefetch_entries(),
+        )?;
         if pattern_detector_entries == 0 {
             return Err(IndirectMemoryPrefetcherError::ZeroPatternDetectorEntries);
         }
+        validate_indirect_memory_vector_length(
+            "pattern detector entries",
+            pattern_detector_entries,
+            maximum_indirect_memory_pattern_entries(),
+        )?;
         if address_array_len == 0 {
             return Err(IndirectMemoryPrefetcherError::ZeroAddressArrayLen);
         }
+        validate_indirect_memory_vector_length(
+            "address array length",
+            address_array_len,
+            max_vector_len::<Vec<Option<Address>>>(),
+        )?;
         if shift_values.is_empty() {
             return Err(IndirectMemoryPrefetcherError::EmptyShiftValues);
         }
@@ -144,6 +160,11 @@ pub enum IndirectMemoryPrefetcherError {
         delta: i128,
         degree: u32,
     },
+    VectorLengthTooLarge {
+        field: &'static str,
+        length: usize,
+        maximum: usize,
+    },
     SnapshotConfigMismatch {
         expected: Box<IndirectMemoryPrefetcherConfig>,
         actual: Box<IndirectMemoryPrefetcherConfig>,
@@ -242,6 +263,14 @@ impl fmt::Display for IndirectMemoryPrefetcherError {
                 "indirect memory stream address overflows from {:#x} with delta {delta} and degree {degree}",
                 address.get()
             ),
+            Self::VectorLengthTooLarge {
+                field,
+                length,
+                maximum,
+            } => write!(
+                formatter,
+                "indirect memory {field} length {length} exceeds maximum {maximum}"
+            ),
             Self::SnapshotConfigMismatch { expected, actual } => write!(
                 formatter,
                 "indirect memory snapshot config {actual:?} does not match {expected:?}"
@@ -323,6 +352,35 @@ impl fmt::Display for IndirectMemoryPrefetcherError {
 }
 
 impl Error for IndirectMemoryPrefetcherError {}
+
+fn maximum_indirect_memory_prefetch_entries() -> usize {
+    max_vector_len::<PrefetchTableEntry>()
+        .min(max_vector_len::<IndirectMemoryPrefetchEntrySnapshot>())
+        .min(max_vector_len::<PrefetchTableKey>())
+        .min(max_vector_len::<IndirectMemoryPrefetchKeySnapshot>())
+}
+
+fn maximum_indirect_memory_pattern_entries() -> usize {
+    max_vector_len::<PatternDetectorEntry>()
+        .min(max_vector_len::<IndirectMemoryPatternDetectorEntrySnapshot>())
+        .min(max_vector_len::<PrefetchTableKey>())
+        .min(max_vector_len::<IndirectMemoryPrefetchKeySnapshot>())
+}
+
+fn validate_indirect_memory_vector_length(
+    field: &'static str,
+    length: usize,
+    maximum: usize,
+) -> Result<(), IndirectMemoryPrefetcherError> {
+    if length > maximum {
+        return Err(IndirectMemoryPrefetcherError::VectorLengthTooLarge {
+            field,
+            length,
+            maximum,
+        });
+    }
+    Ok(())
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IndirectMemoryPrefetchAccess {
