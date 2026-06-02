@@ -1,8 +1,11 @@
 use rem6_debug::{
-    GdbRemoteFeature, GdbRemoteFeatureValue, GdbRemoteRegisterBytes, GdbRemoteSession,
+    GdbRemoteCommand, GdbRemoteError, GdbRemoteFeature, GdbRemoteFeatureValue, GdbRemoteFrame,
+    GdbRemotePacket, GdbRemoteRegisterBytes, GdbRemoteSession,
     DEFAULT_GDB_REMOTE_MAX_PAYLOAD_BYTES,
 };
 use rem6_isa_riscv::{Register, RiscvGdbTargetDescription, RiscvGdbXlen, RiscvHartState};
+use std::error::Error;
+use std::fmt;
 
 const RISCV_GDB_INTEGER_REGISTER_COUNT: u8 = 32;
 const RISCV_GDB_PC_REGISTER: u64 = 32;
@@ -45,6 +48,117 @@ pub fn riscv_gdb_remote_session_from_hart(
     session
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RiscvGdbRegisterWriteError {
+    InvalidRegisterBytes {
+        number: u64,
+        expected: usize,
+        actual: usize,
+    },
+    InvalidRegisterSetBytes {
+        expected: usize,
+        actual: usize,
+    },
+    UnsupportedRegister {
+        number: u64,
+    },
+}
+
+impl fmt::Display for RiscvGdbRegisterWriteError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidRegisterBytes {
+                number,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "RISC-V GDB register {number} write has {actual} byte(s), expected {expected}"
+            ),
+            Self::InvalidRegisterSetBytes { expected, actual } => write!(
+                formatter,
+                "RISC-V GDB all-register write has {actual} byte(s), expected {expected}"
+            ),
+            Self::UnsupportedRegister { number } => {
+                write!(formatter, "RISC-V GDB register {number} is unsupported")
+            }
+        }
+    }
+}
+
+impl Error for RiscvGdbRegisterWriteError {}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RiscvGdbRemotePacketError {
+    Protocol(GdbRemoteError),
+    RegisterWrite(RiscvGdbRegisterWriteError),
+}
+
+impl fmt::Display for RiscvGdbRemotePacketError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Protocol(error) => write!(formatter, "{error}"),
+            Self::RegisterWrite(error) => write!(formatter, "{error}"),
+        }
+    }
+}
+
+impl Error for RiscvGdbRemotePacketError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Protocol(error) => Some(error),
+            Self::RegisterWrite(error) => Some(error),
+        }
+    }
+}
+
+impl From<GdbRemoteError> for RiscvGdbRemotePacketError {
+    fn from(error: GdbRemoteError) -> Self {
+        Self::Protocol(error)
+    }
+}
+
+impl From<RiscvGdbRegisterWriteError> for RiscvGdbRemotePacketError {
+    fn from(error: RiscvGdbRegisterWriteError) -> Self {
+        Self::RegisterWrite(error)
+    }
+}
+
+pub fn apply_riscv_gdb_remote_register_write(
+    xlen: RiscvGdbXlen,
+    hart: &mut RiscvHartState,
+    command: &GdbRemoteCommand,
+) -> Result<bool, RiscvGdbRegisterWriteError> {
+    match command {
+        GdbRemoteCommand::WriteRegister { number, bytes } => {
+            apply_single_register_write(xlen, hart, *number, bytes)?;
+            Ok(true)
+        }
+        GdbRemoteCommand::WriteRegisters { bytes } => {
+            apply_all_register_write(xlen, hart, bytes)?;
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
+}
+
+pub fn handle_riscv_gdb_remote_packet(
+    xlen: RiscvGdbXlen,
+    session: &mut GdbRemoteSession,
+    hart: &mut RiscvHartState,
+    packet: &GdbRemotePacket,
+) -> Result<Vec<GdbRemoteFrame>, RiscvGdbRemotePacketError> {
+    let command = GdbRemoteCommand::parse(packet);
+    let mut updated_hart = hart.clone();
+    let applies_register_write =
+        apply_riscv_gdb_remote_register_write(xlen, &mut updated_hart, &command)?;
+    let frames = session.handle_packet(packet)?;
+    if applies_register_write {
+        *hart = updated_hart;
+    }
+    Ok(frames)
+}
+
 fn riscv_gdb_register_bytes(xlen: RiscvGdbXlen, hart: &RiscvHartState) -> Vec<u8> {
     let mut bytes =
         Vec::with_capacity((RISCV_GDB_INTEGER_REGISTER_COUNT as usize + 1) * byte_len(xlen));
@@ -76,11 +190,90 @@ fn riscv_gdb_single_register_bytes(
     registers
 }
 
+fn apply_single_register_write(
+    xlen: RiscvGdbXlen,
+    hart: &mut RiscvHartState,
+    number: u64,
+    bytes: &[u8],
+) -> Result<(), RiscvGdbRegisterWriteError> {
+    if number > RISCV_GDB_PC_REGISTER {
+        return Err(RiscvGdbRegisterWriteError::UnsupportedRegister { number });
+    }
+
+    let expected = byte_len(xlen);
+    if bytes.len() != expected {
+        return Err(RiscvGdbRegisterWriteError::InvalidRegisterBytes {
+            number,
+            expected,
+            actual: bytes.len(),
+        });
+    }
+
+    write_register_value(xlen, hart, number, decode_register_value(bytes));
+    Ok(())
+}
+
+fn apply_all_register_write(
+    xlen: RiscvGdbXlen,
+    hart: &mut RiscvHartState,
+    bytes: &[u8],
+) -> Result<(), RiscvGdbRegisterWriteError> {
+    let register_byte_len = byte_len(xlen);
+    let expected = (RISCV_GDB_INTEGER_REGISTER_COUNT as usize + 1) * register_byte_len;
+    if bytes.len() != expected {
+        return Err(RiscvGdbRegisterWriteError::InvalidRegisterSetBytes {
+            expected,
+            actual: bytes.len(),
+        });
+    }
+
+    for register in 0..RISCV_GDB_INTEGER_REGISTER_COUNT {
+        let number = u64::from(register);
+        let start = number as usize * register_byte_len;
+        let end = start + register_byte_len;
+        write_register_value(
+            xlen,
+            hart,
+            number,
+            decode_register_value(&bytes[start..end]),
+        );
+    }
+
+    let pc_start = RISCV_GDB_PC_REGISTER as usize * register_byte_len;
+    let pc_end = pc_start + register_byte_len;
+    write_register_value(
+        xlen,
+        hart,
+        RISCV_GDB_PC_REGISTER,
+        decode_register_value(&bytes[pc_start..pc_end]),
+    );
+    Ok(())
+}
+
+fn write_register_value(xlen: RiscvGdbXlen, hart: &mut RiscvHartState, number: u64, value: u64) {
+    let value = match xlen {
+        RiscvGdbXlen::Rv32 => value & u64::from(u32::MAX),
+        RiscvGdbXlen::Rv64 => value,
+    };
+
+    if number == RISCV_GDB_PC_REGISTER {
+        hart.set_pc(value);
+    } else {
+        hart.write(Register::new(number as u8).unwrap(), value);
+    }
+}
+
 fn encode_register_value(xlen: RiscvGdbXlen, value: u64) -> Vec<u8> {
     match xlen {
         RiscvGdbXlen::Rv32 => (value as u32).to_le_bytes().to_vec(),
         RiscvGdbXlen::Rv64 => value.to_le_bytes().to_vec(),
     }
+}
+
+fn decode_register_value(bytes: &[u8]) -> u64 {
+    let mut raw = [0; 8];
+    raw[..bytes.len()].copy_from_slice(bytes);
+    u64::from_le_bytes(raw)
 }
 
 const fn byte_len(xlen: RiscvGdbXlen) -> usize {

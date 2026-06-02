@@ -142,7 +142,11 @@ pub use riscv_checkpoint::{
     RiscvCoreCheckpointBank, RiscvCoreCheckpointError, RiscvCoreCheckpointPort,
     RiscvCoreCheckpointRecord,
 };
-pub use riscv_debug::{riscv_gdb_remote_session, riscv_gdb_remote_session_from_hart};
+pub use riscv_debug::{
+    apply_riscv_gdb_remote_register_write, handle_riscv_gdb_remote_packet,
+    riscv_gdb_remote_session, riscv_gdb_remote_session_from_hart, RiscvGdbRegisterWriteError,
+    RiscvGdbRemotePacketError,
+};
 pub use riscv_run_activity::{RiscvSystemRunCpuActivity, RiscvSystemRunPartitionActivity};
 pub use rtc_checkpoint::{
     RtcCheckpointBank, RtcCheckpointError, RtcCheckpointPort, RtcCheckpointRecord,
