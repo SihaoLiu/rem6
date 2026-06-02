@@ -210,6 +210,7 @@ pub enum GdbRemoteCommand {
     ReadRegister { number: u64 },
     StartNoAckMode,
     WriteMemory { address: u64, bytes: Vec<u8> },
+    WriteRegister { number: u64, bytes: Vec<u8> },
     Unknown(Vec<u8>),
 }
 
@@ -448,6 +449,10 @@ impl GdbRemoteSession {
                     .map(GdbRemoteRegisterValue::encode_payload)
                     .unwrap_or_else(|| b"E01".to_vec());
                 self.packet_response(payload)
+            }
+            GdbRemoteCommand::WriteRegister { number, bytes } => {
+                self.set_register_value(number, GdbRemoteRegisterBytes::new(bytes));
+                self.packet_response(b"OK".to_vec())
             }
             GdbRemoteCommand::WriteMemory { address, bytes } => {
                 let payload = if self.write_memory_bytes(address, &bytes) {
@@ -860,6 +865,12 @@ fn parse_command_payload(payload: &[u8]) -> GdbRemoteCommand {
         }
     }
 
+    if let Some(register_request) = payload.strip_prefix(b"P") {
+        if let Some((number, bytes)) = parse_register_write(register_request) {
+            return GdbRemoteCommand::WriteRegister { number, bytes };
+        }
+    }
+
     if payload == QUERY_STOP_REASON {
         return GdbRemoteCommand::QueryStopReason;
     }
@@ -898,6 +909,16 @@ fn parse_memory_write(request: &[u8]) -> Option<(u64, Vec<u8>)> {
         return None;
     }
     Some((address, bytes))
+}
+
+fn parse_register_write(request: &[u8]) -> Option<(u64, Vec<u8>)> {
+    let separator = request.iter().position(|byte| *byte == b'=')?;
+    let number = decode_hex_u64(&request[..separator])?;
+    let bytes = decode_hex_bytes(&request[separator + 1..])?;
+    if bytes.is_empty() {
+        return None;
+    }
+    Some((number, bytes))
 }
 
 fn parse_supported_features(features: &[u8], allow_probe_suffix: bool) -> Vec<GdbRemoteFeature> {

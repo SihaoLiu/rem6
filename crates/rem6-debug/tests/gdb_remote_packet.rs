@@ -223,6 +223,45 @@ fn gdb_remote_commands_preserve_malformed_single_register_requests() {
 }
 
 #[test]
+fn gdb_remote_commands_decode_single_register_write_requests() {
+    let command = GdbRemoteCommand::parse(&GdbRemotePacket::new(b"P1a=78563412".to_vec()).unwrap());
+
+    assert_eq!(
+        command,
+        GdbRemoteCommand::WriteRegister {
+            number: 0x1a,
+            bytes: vec![0x78, 0x56, 0x34, 0x12],
+        },
+    );
+
+    let uppercase = GdbRemoteCommand::parse(&GdbRemotePacket::new(b"P1A=DeAd".to_vec()).unwrap());
+    assert_eq!(
+        uppercase,
+        GdbRemoteCommand::WriteRegister {
+            number: 0x1a,
+            bytes: vec![0xde, 0xad],
+        },
+    );
+}
+
+#[test]
+fn gdb_remote_commands_preserve_malformed_single_register_write_requests() {
+    for payload in [
+        b"P".as_slice(),
+        b"P1a".as_slice(),
+        b"P=7856".as_slice(),
+        b"Pzz=7856".as_slice(),
+        b"P1a=".as_slice(),
+        b"P1a=7".as_slice(),
+        b"P1a=zz".as_slice(),
+        b"P10000000000000000=78".as_slice(),
+    ] {
+        let command = GdbRemoteCommand::parse(&GdbRemotePacket::new(payload.to_vec()).unwrap());
+        assert_eq!(command, GdbRemoteCommand::Unknown(payload.to_vec()));
+    }
+}
+
+#[test]
 fn gdb_remote_commands_decode_memory_read_requests() {
     let command = GdbRemoteCommand::parse(&GdbRemotePacket::new(b"m1000,10".to_vec()).unwrap());
 
@@ -394,6 +433,56 @@ fn gdb_remote_session_reports_error_single_register_response_when_missing() {
         vec![
             GdbRemoteFrame::Ack,
             GdbRemoteFrame::Packet(GdbRemotePacket::new(b"E01".to_vec()).unwrap()),
+        ],
+    );
+}
+
+#[test]
+fn gdb_remote_session_writes_single_register_bytes() {
+    let mut session = GdbRemoteSession::new(Vec::new());
+    session.set_register_value(0x1a, GdbRemoteRegisterBytes::new(vec![0, 0, 0, 0]));
+
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"P1a=78563412".to_vec()).unwrap())
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"OK".to_vec()).unwrap()),
+        ],
+    );
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"p1a".to_vec()).unwrap())
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"78563412".to_vec()).unwrap()),
+        ],
+    );
+}
+
+#[test]
+fn gdb_remote_session_writes_unavailable_single_register_as_bytes() {
+    let mut session = GdbRemoteSession::new(Vec::new());
+    session.set_register_unavailable(0x1a, 4);
+
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"P1a=7856".to_vec()).unwrap())
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"OK".to_vec()).unwrap()),
+        ],
+    );
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"p1a".to_vec()).unwrap())
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"7856".to_vec()).unwrap()),
         ],
     );
 }
