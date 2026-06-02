@@ -26,8 +26,8 @@ pub use pmp::{
 };
 pub use record::{RegisterWrite, RiscvExecutionRecord, RiscvTrap, RiscvTrapKind};
 pub use types::{
-    AtomicMemoryOp, Immediate, MemoryAccessKind, MemoryWidth, Register, RiscvFenceSet,
-    RiscvMemoryOrdering,
+    AtomicMemoryOp, Immediate, MemoryAccessKind, MemoryResponseError, MemoryResponseWriteback,
+    MemoryWidth, Register, RiscvFenceSet, RiscvMemoryOrdering,
 };
 pub use vector::{
     RiscvInstructionFlags, RiscvVectorCompressPlan, RiscvVectorCompressResult, RiscvVectorElements,

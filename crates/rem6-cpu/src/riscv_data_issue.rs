@@ -644,16 +644,21 @@ fn record_load_completion(
     missing_data: &'static str,
 ) {
     match &access.access {
-        MemoryAccessKind::Load {
-            rd, width, signed, ..
-        } => {
-            let value = load_response_value(data.expect(missing_data), *width, *signed);
-            state.hart.write(*rd, value);
+        MemoryAccessKind::Load { .. } | MemoryAccessKind::AtomicMemory { .. } => {
+            let writeback = access
+                .access
+                .read_response_writeback(data.expect(missing_data))
+                .expect("read response payload width")
+                .expect("read response writeback");
+            state.hart.write(writeback.register(), writeback.value());
         }
-        MemoryAccessKind::LoadReserved { rd, width, .. } => {
-            let signed = *width == MemoryWidth::Word;
-            let value = load_response_value(data.expect(missing_data), *width, signed);
-            state.hart.write(*rd, value);
+        MemoryAccessKind::LoadReserved { .. } => {
+            let writeback = access
+                .access
+                .read_response_writeback(data.expect(missing_data))
+                .expect("read response payload width")
+                .expect("read response writeback");
+            state.hart.write(writeback.register(), writeback.value());
             state.reservation = Some(RiscvLoadReservation::new(
                 access.physical_address,
                 access.size,
@@ -663,11 +668,6 @@ fn record_load_completion(
             state.hart.write(*rd, 0);
             state.reservation = None;
             state.sc_progress.record_success(cpu);
-        }
-        MemoryAccessKind::AtomicMemory { rd, width, .. } => {
-            let signed = *width == MemoryWidth::Word;
-            let value = load_response_value(data.expect(missing_data), *width, signed);
-            state.hart.write(*rd, value);
         }
         MemoryAccessKind::Store { .. } => {}
     }
@@ -716,13 +716,7 @@ fn access_address(access: &MemoryAccessKind) -> u64 {
 }
 
 pub(crate) fn memory_width_size(width: MemoryWidth) -> Result<AccessSize, RiscvCpuError> {
-    let bytes = match width {
-        MemoryWidth::Byte => 1,
-        MemoryWidth::Halfword => 2,
-        MemoryWidth::Word => 4,
-        MemoryWidth::Doubleword => 8,
-    };
-    AccessSize::new(bytes).map_err(RiscvCpuError::Memory)
+    AccessSize::new(width.bytes() as u64).map_err(RiscvCpuError::Memory)
 }
 
 pub(crate) fn store_bytes(value: u64, size: AccessSize) -> Vec<u8> {
@@ -755,21 +749,4 @@ pub(crate) fn mmio_request(
 
 fn mmio_request_id(request: MemoryRequestId) -> MmioRequestId {
     MmioRequestId::new(request.sequence())
-}
-
-fn load_response_value(data: &[u8], width: MemoryWidth, signed: bool) -> u64 {
-    let raw = data.iter().enumerate().fold(0u64, |value, (shift, byte)| {
-        value | (u64::from(*byte) << (shift * 8))
-    });
-    if !signed || width == MemoryWidth::Doubleword {
-        return raw;
-    }
-
-    let bits = data.len() as u32 * 8;
-    let sign_bit = 1u64 << (bits - 1);
-    if raw & sign_bit == 0 {
-        raw
-    } else {
-        raw | (!0u64 << bits)
-    }
 }

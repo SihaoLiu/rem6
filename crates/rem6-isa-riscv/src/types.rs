@@ -46,6 +46,42 @@ pub enum MemoryWidth {
     Doubleword,
 }
 
+impl MemoryWidth {
+    pub const fn bytes(self) -> usize {
+        match self {
+            Self::Byte => 1,
+            Self::Halfword => 2,
+            Self::Word => 4,
+            Self::Doubleword => 8,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MemoryResponseWriteback {
+    register: Register,
+    value: u64,
+}
+
+impl MemoryResponseWriteback {
+    pub const fn new(register: Register, value: u64) -> Self {
+        Self { register, value }
+    }
+
+    pub const fn register(self) -> Register {
+        self.register
+    }
+
+    pub const fn value(self) -> u64 {
+        self.value
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MemoryResponseError {
+    ShortData { expected: usize, actual: usize },
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AtomicMemoryOp {
     Swap,
@@ -197,6 +233,29 @@ impl MemoryAccessKind {
             Self::Load { .. } | Self::Store { .. } => RiscvMemoryOrdering::none(),
         }
     }
+
+    pub fn read_response_writeback(
+        &self,
+        data: &[u8],
+    ) -> Result<Option<MemoryResponseWriteback>, MemoryResponseError> {
+        let Some((register, width, signed)) = self.read_response_target() else {
+            return Ok(None);
+        };
+        let value = read_response_value(data, width, signed)?;
+        Ok(Some(MemoryResponseWriteback::new(register, value)))
+    }
+
+    fn read_response_target(&self) -> Option<(Register, MemoryWidth, bool)> {
+        match self {
+            Self::Load {
+                rd, width, signed, ..
+            } => Some((*rd, *width, *signed)),
+            Self::LoadReserved { rd, width, .. } | Self::AtomicMemory { rd, width, .. } => {
+                Some((*rd, *width, *width == MemoryWidth::Word))
+            }
+            Self::StoreConditional { .. } | Self::Store { .. } => None,
+        }
+    }
 }
 
 fn aq_rl_ordering(acquire: bool, release: bool) -> RiscvMemoryOrdering {
@@ -204,4 +263,30 @@ fn aq_rl_ordering(acquire: bool, release: bool) -> RiscvMemoryOrdering {
         release.then_some(RiscvFenceSet::memory()),
         acquire.then_some(RiscvFenceSet::memory()),
     )
+}
+
+fn read_response_value(
+    data: &[u8],
+    width: MemoryWidth,
+    signed: bool,
+) -> Result<u64, MemoryResponseError> {
+    let expected = width.bytes();
+    let bytes = data.get(..expected).ok_or(MemoryResponseError::ShortData {
+        expected,
+        actual: data.len(),
+    })?;
+    let raw = bytes.iter().enumerate().fold(0u64, |value, (shift, byte)| {
+        value | (u64::from(*byte) << (shift * 8))
+    });
+    if !signed || width == MemoryWidth::Doubleword {
+        return Ok(raw);
+    }
+
+    let bits = expected as u32 * 8;
+    let sign_bit = 1u64 << (bits - 1);
+    if raw & sign_bit == 0 {
+        Ok(raw)
+    } else {
+        Ok(raw | (!0u64 << bits))
+    }
 }

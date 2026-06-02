@@ -2943,7 +2943,11 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   `AMOMIN.D`/`AMOMAX.D`/`AMOMINU.D`/`AMOMAXU.D` signed and unsigned selection
   through the memory store, cache hit path, ISA, and CPU frontend. Word-width
   AMO frontend tests cover all non-LR/SC operations, four-byte updates, and
-  sign-extended old-value register writes. RISC-V ISA and frontend tests cover
+  sign-extended old-value register writes. RISC-V ISA memory-response tests
+  cover typed byte counts, little-endian read-response decoding, signed and
+  unsigned extension for byte, halfword, word, and doubleword loads,
+  short-payload rejection, and no read-response writeback for stores or
+  store-conditionals. RISC-V ISA and frontend tests cover
   `FENCE` predecessor/successor set decode, `FENCE.I` decode, no-register-write
   execution, no data-request issue, and ordered fetch progression after barrier
   instructions. RISC-V ISA and frontend tests cover aq/rl metadata that maps
