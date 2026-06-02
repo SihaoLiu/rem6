@@ -261,6 +261,49 @@ fn gdb_remote_commands_preserve_malformed_memory_read_requests() {
 }
 
 #[test]
+fn gdb_remote_commands_decode_memory_write_requests() {
+    let command =
+        GdbRemoteCommand::parse(&GdbRemotePacket::new(b"M1000,4:7f454c46".to_vec()).unwrap());
+
+    assert_eq!(
+        command,
+        GdbRemoteCommand::WriteMemory {
+            address: 0x1000,
+            bytes: vec![0x7f, 0x45, 0x4c, 0x46],
+        },
+    );
+
+    let uppercase = GdbRemoteCommand::parse(&GdbRemotePacket::new(b"M1A,2:DeAd".to_vec()).unwrap());
+    assert_eq!(
+        uppercase,
+        GdbRemoteCommand::WriteMemory {
+            address: 0x1a,
+            bytes: vec![0xde, 0xad],
+        },
+    );
+}
+
+#[test]
+fn gdb_remote_commands_preserve_malformed_memory_write_requests() {
+    for payload in [
+        b"M".as_slice(),
+        b"M1000,4".as_slice(),
+        b"M1000:7f".as_slice(),
+        b"M,1:7f".as_slice(),
+        b"M1000,:7f".as_slice(),
+        b"Mzz,1:7f".as_slice(),
+        b"M1000,zz:7f".as_slice(),
+        b"M1000,1:7".as_slice(),
+        b"M1000,1:zz".as_slice(),
+        b"M1000,2:7f".as_slice(),
+        b"M10000000000000000,1:7f".as_slice(),
+    ] {
+        let command = GdbRemoteCommand::parse(&GdbRemotePacket::new(payload.to_vec()).unwrap());
+        assert_eq!(command, GdbRemoteCommand::Unknown(payload.to_vec()));
+    }
+}
+
+#[test]
 fn gdb_remote_commands_decode_no_ack_requests() {
     let no_ack =
         GdbRemoteCommand::parse(&GdbRemotePacket::parse_frame(b"$QStartNoAckMode#b0").unwrap());
@@ -383,6 +426,56 @@ fn gdb_remote_session_reports_memory_read_error_when_missing() {
         vec![
             GdbRemoteFrame::Ack,
             GdbRemoteFrame::Packet(GdbRemotePacket::new(b"E01".to_vec()).unwrap()),
+        ],
+    );
+}
+
+#[test]
+fn gdb_remote_session_writes_memory_bytes() {
+    let mut session = GdbRemoteSession::new(Vec::new());
+    session.set_memory_bytes(0x1000, vec![0x00, 0x00, 0x00, 0x00]);
+
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"M1001,2:abcd".to_vec()).unwrap())
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"OK".to_vec()).unwrap()),
+        ],
+    );
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"m1000,4".to_vec()).unwrap())
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"00abcd00".to_vec()).unwrap()),
+        ],
+    );
+}
+
+#[test]
+fn gdb_remote_session_rejects_overflowing_memory_writes_without_partial_update() {
+    let mut session = GdbRemoteSession::new(Vec::new());
+    session.set_memory_bytes(u64::MAX, vec![0xaa]);
+
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"Mffffffffffffffff,2:0102".to_vec()).unwrap())
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"E01".to_vec()).unwrap()),
+        ],
+    );
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"mffffffffffffffff,1".to_vec()).unwrap())
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"aa".to_vec()).unwrap()),
         ],
     );
 }
