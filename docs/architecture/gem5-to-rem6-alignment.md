@@ -1167,7 +1167,7 @@ Research anchors refreshed through 2026-05-30:
   mismatches, and pending wait-state transfer can crash or misdirect execution
   after `m5_switch_cpu_addr`.
 
-Implementation evidence through 2026-06-01:
+Implementation evidence through 2026-06-02:
 
 - `rem6-system` has typed guest wait-status encoding for future syscall
   emulation handoff. Tests cover normal exits, signal termination, the
@@ -1705,8 +1705,9 @@ Implementation evidence through 2026-06-01:
   watermark latches, read-clear status behavior, and snapshot restore are
   explicit Rust state with typed errors instead of register macro expansion and
   panic paths. SINIC register snapshots also have a stable little-endian
-  checkpoint payload codec, and payload restore decodes and validates the full
-  snapshot before mutating live register state.
+  checkpoint payload codec. `rem6-system` wraps those payloads in SINIC
+  register checkpoint banks, captures them through staged host checkpoints, and
+  rejects malformed restore manifests before mutating live register state.
 - `rem6-net` also has typed SINIC FIFO ingress and egress state aligned with
   gem5 `Sinic::recvPacket` and `Sinic::transmit`: RX disabled drops, RX FIFO
   capacity rejection without mutation, RX packet and high/empty watermark

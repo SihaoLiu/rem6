@@ -38,6 +38,7 @@ mod host;
 mod host_assist;
 mod interrupt_checkpoint;
 mod memory_checkpoint;
+mod net_checkpoint;
 mod pci_checkpoint;
 mod pci_interrupt_checkpoint;
 mod pl031_checkpoint;
@@ -119,6 +120,10 @@ pub use memory_checkpoint::{
     DramMemoryCheckpointBank, DramMemoryCheckpointError, DramMemoryCheckpointPort,
     DramMemoryCheckpointRecord, MemoryStoreCheckpointBank, MemoryStoreCheckpointError,
     MemoryStoreCheckpointPort, MemoryStoreCheckpointRecord,
+};
+pub use net_checkpoint::{
+    SinicRegisterCheckpointBank, SinicRegisterCheckpointError, SinicRegisterCheckpointPort,
+    SinicRegisterCheckpointRecord,
 };
 pub use pci_checkpoint::{
     PciHostCheckpointBank, PciHostCheckpointError, PciHostCheckpointPort, PciHostCheckpointRecord,
@@ -1044,6 +1049,7 @@ pub enum SystemError {
     SchedulerCheckpoint(SchedulerCheckpointError),
     MemoryCheckpoint(MemoryStoreCheckpointError),
     StorageCheckpoint(StorageCheckpointError),
+    SinicRegisterCheckpoint(SinicRegisterCheckpointError),
     DramMemoryCheckpoint(DramMemoryCheckpointError),
     InterruptControllerCheckpoint(InterruptControllerCheckpointError),
     ClintCheckpoint(ClintCheckpointError),
@@ -1087,6 +1093,7 @@ impl fmt::Display for SystemError {
             Self::SchedulerCheckpoint(error) => write!(formatter, "{error}"),
             Self::MemoryCheckpoint(error) => write!(formatter, "{error}"),
             Self::StorageCheckpoint(error) => write!(formatter, "{error}"),
+            Self::SinicRegisterCheckpoint(error) => write!(formatter, "{error}"),
             Self::DramMemoryCheckpoint(error) => write!(formatter, "{error}"),
             Self::InterruptControllerCheckpoint(error) => write!(formatter, "{error}"),
             Self::ClintCheckpoint(error) => write!(formatter, "{error}"),
@@ -1127,6 +1134,7 @@ impl Error for SystemError {
             Self::SchedulerCheckpoint(error) => Some(error),
             Self::MemoryCheckpoint(error) => Some(error),
             Self::StorageCheckpoint(error) => Some(error),
+            Self::SinicRegisterCheckpoint(error) => Some(error),
             Self::DramMemoryCheckpoint(error) => Some(error),
             Self::InterruptControllerCheckpoint(error) => Some(error),
             Self::ClintCheckpoint(error) => Some(error),
