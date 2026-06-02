@@ -836,6 +836,19 @@ impl CpuTranslationFrontend {
         self.queue.ready_request_ids(tick)
     }
 
+    pub fn ready_cpu_requests(&self, tick: u64) -> Vec<CpuTranslationRequest> {
+        self.queue
+            .ready_request_ids(tick)
+            .into_iter()
+            .map(|request| {
+                self.pending
+                    .get(&request)
+                    .expect("translation queue ready request has matching CPU metadata")
+                    .clone()
+            })
+            .collect()
+    }
+
     pub fn complete(
         &mut self,
         request: TranslationRequestId,

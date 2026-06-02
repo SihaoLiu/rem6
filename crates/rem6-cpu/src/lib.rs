@@ -43,6 +43,7 @@ mod riscv_data_issue;
 mod riscv_fetch;
 mod riscv_reservation;
 mod riscv_sc_progress;
+mod riscv_sv39_memory_walker;
 mod riscv_translation;
 mod statistical_corrector;
 mod tage_predictor;
@@ -134,6 +135,9 @@ pub use riscv_sc_progress::{
     RiscvStoreConditionalProgress, RiscvStoreConditionalProgressCheckpointPayload,
     RiscvStoreConditionalProgressConfig, RiscvStoreConditionalProgressError,
     RiscvStoreConditionalProgressSnapshot, DEFAULT_RISCV_SC_DIAGNOSTIC_THRESHOLD,
+};
+pub use riscv_sv39_memory_walker::{
+    RiscvSv39MemoryWalker, RiscvSv39MemoryWalkerAdvance, RiscvSv39MemoryWalkerError,
 };
 pub use riscv_translation::{
     decode_sv39_pte_read_response, RiscvSv39MemoryWalk, RiscvSv39MemoryWalkAdvance,
