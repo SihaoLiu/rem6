@@ -26,6 +26,10 @@ fn parse_command_payload(payload: &[u8]) -> GdbRemoteCommand {
     const START_NO_ACK_MODE: &[u8] = b"QStartNoAckMode";
     const QUERY_RESUME_ACTIONS: &[u8] = b"vCont?";
 
+    if payload == b"." {
+        return GdbRemoteCommand::DumpPageTable;
+    }
+
     if payload == READ_REGISTERS {
         return GdbRemoteCommand::ReadRegisters;
     }

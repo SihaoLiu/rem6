@@ -229,6 +229,7 @@ impl GdbRemotePacket {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum GdbRemoteCommand {
+    DumpPageTable,
     QueryAttached {
         process_id: Option<u64>,
     },
@@ -315,6 +316,7 @@ pub struct GdbRemoteSession {
     register_bytes: GdbRemoteRegisterBytes,
     register_values: BTreeMap<u64, GdbRemoteRegisterValue>,
     memory_bytes: BTreeMap<u64, u8>,
+    page_table_dump: Option<Vec<u8>>,
     xfer_features: BTreeMap<Vec<u8>, Vec<u8>>,
     continue_thread: GdbRemoteThreadId,
     current_thread_id: u64,
@@ -350,6 +352,7 @@ impl GdbRemoteSession {
             register_bytes: GdbRemoteRegisterBytes::default(),
             register_values: BTreeMap::new(),
             memory_bytes: BTreeMap::new(),
+            page_table_dump: None,
             xfer_features: BTreeMap::new(),
             continue_thread: GdbRemoteThreadId::Any,
             current_thread_id: 1,
@@ -497,6 +500,10 @@ impl GdbRemoteSession {
         }
     }
 
+    pub fn set_page_table_dump(&mut self, page_table_dump: Vec<u8>) {
+        self.page_table_dump = Some(page_table_dump);
+    }
+
     pub fn set_xfer_feature(&mut self, annex: Vec<u8>, content: Vec<u8>) -> bool {
         if annex.is_empty() {
             return false;
@@ -534,6 +541,13 @@ impl GdbRemoteSession {
         let command = GdbRemoteCommand::parse(packet);
 
         match command {
+            GdbRemoteCommand::DumpPageTable => {
+                let payload = self
+                    .page_table_dump
+                    .clone()
+                    .unwrap_or_else(|| b"E01".to_vec());
+                self.packet_response(payload)
+            }
             GdbRemoteCommand::QueryAttached { .. } => {
                 let payload = match self.attach_kind {
                     GdbRemoteAttachKind::Attached => b"1".to_vec(),

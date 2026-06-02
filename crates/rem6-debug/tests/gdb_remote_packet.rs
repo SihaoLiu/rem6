@@ -265,6 +265,12 @@ fn gdb_remote_commands_decode_monitor_command_queries() {
 }
 
 #[test]
+fn gdb_remote_commands_decode_page_table_dump_request() {
+    let command = GdbRemoteCommand::parse(&GdbRemotePacket::new(b".".to_vec()).unwrap());
+    assert_eq!(command, GdbRemoteCommand::DumpPageTable);
+}
+
+#[test]
 fn gdb_remote_commands_decode_thread_info_queries() {
     let first = GdbRemoteCommand::parse(&GdbRemotePacket::new(b"qfThreadInfo".to_vec()).unwrap());
     assert_eq!(
@@ -1037,6 +1043,34 @@ fn gdb_remote_session_records_monitor_command_without_packet_response() {
         vec![GdbRemoteFrame::Ack],
     );
     assert_eq!(session.last_monitor_command(), Some(b"exit".as_slice()));
+}
+
+#[test]
+fn gdb_remote_session_reports_page_table_dump() {
+    let mut missing = GdbRemoteSession::new(Vec::new());
+    assert_eq!(
+        missing
+            .handle_packet(&GdbRemotePacket::new(b".".to_vec()).unwrap())
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"E01".to_vec()).unwrap()),
+        ],
+    );
+
+    let mut session = GdbRemoteSession::new(Vec::new());
+    session.set_page_table_dump(b"vpn=0x1000 ppn=0x2000 rwx\n".to_vec());
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b".".to_vec()).unwrap())
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(
+                GdbRemotePacket::new(b"vpn=0x1000 ppn=0x2000 rwx\n".to_vec()).unwrap()
+            ),
+        ],
+    );
 }
 
 #[test]
