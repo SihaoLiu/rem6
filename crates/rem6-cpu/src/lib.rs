@@ -118,7 +118,9 @@ pub use o3_pipeline::{
     O3ScopedIssuePlan, O3ScopedIssueScheduler, O3ScopedReadyInstruction, O3UnblockDecision,
     O3UnblockDecisionReason, O3UnblockPolicy, O3VectorReductionDependencyPlan,
     O3VectorReductionGroupId, O3VectorReductionMicroOp, O3VectorReductionOrdering,
-    O3WritebackAdmission, O3WritebackTransferPlan, O3WritebackTransferPolicy,
+    O3WritebackAdmission, O3WritebackCompletion, O3WritebackCompletionAdmission,
+    O3WritebackTransferBuffer, O3WritebackTransferCycle, O3WritebackTransferPlan,
+    O3WritebackTransferPolicy,
 };
 pub use riscv_activity::RiscvCoreDriveActivity;
 pub use riscv_cluster::{RiscvCluster, RiscvClusterError};

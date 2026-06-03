@@ -3,7 +3,7 @@ use rem6_cpu::{
     O3IssueQueueId, O3PipelineError, O3PipelineStage, O3ReadyInstruction, O3ScopedIssueScheduler,
     O3ScopedReadyInstruction, O3UnblockDecisionReason, O3UnblockPolicy,
     O3VectorReductionDependencyPlan, O3VectorReductionGroupId, O3VectorReductionOrdering,
-    O3WritebackTransferPolicy,
+    O3WritebackCompletion, O3WritebackTransferBuffer, O3WritebackTransferPolicy,
 };
 
 #[test]
@@ -114,6 +114,72 @@ fn o3_writeback_transfer_policy_rejects_unrepresentable_windows() {
             future_cycles: 1,
         }
     );
+}
+
+#[test]
+fn o3_writeback_transfer_buffer_replays_deferred_before_new_ready_work() {
+    let policy = O3WritebackTransferPolicy::new(O3PipelineStage::Iew, 2, 0).unwrap();
+    let mut buffer = O3WritebackTransferBuffer::new(policy);
+
+    let first = buffer.plan_cycle([
+        O3WritebackCompletion::new(10),
+        O3WritebackCompletion::new(11),
+        O3WritebackCompletion::new(12),
+    ]);
+
+    assert_eq!(first.new_ready_count(), 3);
+    assert_eq!(first.deferred_before_count(), 0);
+    assert_eq!(first.admitted_sequences().collect::<Vec<_>>(), vec![10, 11]);
+    assert_eq!(first.deferred_sequences().collect::<Vec<_>>(), vec![12]);
+    assert_eq!(buffer.pending_deferred_count(), 1);
+
+    let second = buffer.plan_cycle([O3WritebackCompletion::new(13)]);
+
+    assert_eq!(second.new_ready_count(), 1);
+    assert_eq!(second.deferred_before_count(), 1);
+    assert_eq!(
+        second.admitted_sequences().collect::<Vec<_>>(),
+        vec![12, 13]
+    );
+    assert!(second.deferred_sequences().next().is_none());
+    assert_eq!(buffer.pending_deferred_count(), 0);
+}
+
+#[test]
+fn o3_writeback_transfer_buffer_preserves_window_offsets_for_admitted_work() {
+    let policy = O3WritebackTransferPolicy::new(O3PipelineStage::Iew, 2, 1).unwrap();
+    let mut buffer = O3WritebackTransferBuffer::new(policy);
+
+    let first = buffer.plan_cycle([
+        O3WritebackCompletion::new(20),
+        O3WritebackCompletion::new(21),
+        O3WritebackCompletion::new(22),
+        O3WritebackCompletion::new(23),
+        O3WritebackCompletion::new(24),
+    ]);
+
+    assert_eq!(
+        first
+            .admissions()
+            .iter()
+            .map(|admission| {
+                (
+                    admission.completion().sequence(),
+                    admission.cycle_offset(),
+                    admission.slot(),
+                )
+            })
+            .collect::<Vec<_>>(),
+        vec![(20, 0, 0), (21, 0, 1), (22, 1, 0), (23, 1, 1)]
+    );
+    assert_eq!(first.deferred_sequences().collect::<Vec<_>>(), vec![24]);
+
+    let second = buffer.plan_cycle([]);
+
+    assert_eq!(second.admitted_sequences().collect::<Vec<_>>(), vec![24]);
+    assert_eq!(second.admissions()[0].cycle_offset(), 0);
+    assert_eq!(second.admissions()[0].slot(), 0);
+    assert_eq!(buffer.pending_deferred_count(), 0);
 }
 
 #[test]

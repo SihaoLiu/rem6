@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::error::Error;
 use std::fmt;
 
@@ -919,6 +919,143 @@ impl O3WritebackTransferPlan {
 
     pub fn admissions(&self) -> &[O3WritebackAdmission] {
         &self.admissions
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct O3WritebackCompletion {
+    sequence: u64,
+}
+
+impl O3WritebackCompletion {
+    pub const fn new(sequence: u64) -> Self {
+        Self { sequence }
+    }
+
+    pub const fn sequence(self) -> u64 {
+        self.sequence
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct O3WritebackCompletionAdmission {
+    completion: O3WritebackCompletion,
+    cycle_offset: u64,
+    slot: usize,
+}
+
+impl O3WritebackCompletionAdmission {
+    pub const fn completion(self) -> O3WritebackCompletion {
+        self.completion
+    }
+
+    pub const fn cycle_offset(self) -> u64 {
+        self.cycle_offset
+    }
+
+    pub const fn slot(self) -> usize {
+        self.slot
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct O3WritebackTransferCycle {
+    new_ready_count: usize,
+    deferred_before_count: usize,
+    admissions: Vec<O3WritebackCompletionAdmission>,
+    deferred: Vec<O3WritebackCompletion>,
+}
+
+impl O3WritebackTransferCycle {
+    pub const fn new_ready_count(&self) -> usize {
+        self.new_ready_count
+    }
+
+    pub const fn deferred_before_count(&self) -> usize {
+        self.deferred_before_count
+    }
+
+    pub fn admissions(&self) -> &[O3WritebackCompletionAdmission] {
+        &self.admissions
+    }
+
+    pub fn admitted_sequences(&self) -> impl Iterator<Item = u64> + '_ {
+        self.admissions
+            .iter()
+            .map(|admission| admission.completion.sequence())
+    }
+
+    pub fn deferred(&self) -> &[O3WritebackCompletion] {
+        &self.deferred
+    }
+
+    pub fn deferred_sequences(&self) -> impl Iterator<Item = u64> + '_ {
+        self.deferred.iter().map(|completion| completion.sequence())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct O3WritebackTransferBuffer {
+    policy: O3WritebackTransferPolicy,
+    deferred: VecDeque<O3WritebackCompletion>,
+}
+
+impl O3WritebackTransferBuffer {
+    pub fn new(policy: O3WritebackTransferPolicy) -> Self {
+        Self {
+            policy,
+            deferred: VecDeque::new(),
+        }
+    }
+
+    pub const fn policy(&self) -> &O3WritebackTransferPolicy {
+        &self.policy
+    }
+
+    pub fn pending_deferred_count(&self) -> usize {
+        self.deferred.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.deferred.is_empty()
+    }
+
+    pub fn plan_cycle<I>(&mut self, ready: I) -> O3WritebackTransferCycle
+    where
+        I: IntoIterator<Item = O3WritebackCompletion>,
+    {
+        let deferred_before_count = self.deferred.len();
+        let new_ready = ready.into_iter().collect::<Vec<_>>();
+        let new_ready_count = new_ready.len();
+
+        let mut ordered = Vec::with_capacity(deferred_before_count + new_ready_count);
+        while let Some(completion) = self.deferred.pop_front() {
+            ordered.push(completion);
+        }
+        ordered.extend(new_ready);
+
+        let plan = self.policy.plan_ready_count(ordered.len());
+        let mut admissions = Vec::with_capacity(plan.admitted_count());
+        for admission in plan.admissions() {
+            admissions.push(O3WritebackCompletionAdmission {
+                completion: ordered[admission.ready_index()],
+                cycle_offset: admission.cycle_offset(),
+                slot: admission.slot(),
+            });
+        }
+
+        let deferred = ordered
+            .into_iter()
+            .skip(plan.admitted_count())
+            .collect::<Vec<_>>();
+        self.deferred.extend(deferred.iter().copied());
+
+        O3WritebackTransferCycle {
+            new_ready_count,
+            deferred_before_count,
+            admissions,
+            deferred,
+        }
     }
 }
 
