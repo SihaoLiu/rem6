@@ -9,11 +9,11 @@ use rem6_memory::{
 };
 use rem6_stats::StatsRegistry;
 use rem6_system::{
-    ExecutionMode, ExecutionModeTarget, GuestEvent, GuestEventChannel, GuestEventDelivery,
-    GuestEventId, GuestEventKind, GuestHostCallResponse, GuestSourceId, GuestTrap, GuestTrapKind,
-    HostAction, HostActionRecord, HostEventPolicy, RiscvTrapEventPort, ScheduledRiscvTrap,
-    StopRequest, SystemActionOutcome, SystemError, SystemEventPort, SystemHostController,
-    SystemHostEventPort, SystemRunController,
+    guest_trap_from_riscv, guest_trap_kind_from_riscv, ExecutionMode, ExecutionModeTarget,
+    GuestEvent, GuestEventChannel, GuestEventDelivery, GuestEventId, GuestEventKind,
+    GuestHostCallResponse, GuestSourceId, GuestTrap, GuestTrapKind, HostAction, HostActionRecord,
+    HostEventPolicy, RiscvTrapEventPort, ScheduledRiscvTrap, StopRequest, SystemActionOutcome,
+    SystemError, SystemEventPort, SystemHostController, SystemHostEventPort, SystemRunController,
 };
 use rem6_transport::{
     MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTransport, TargetOutcome, TransportEndpointId,
@@ -29,6 +29,19 @@ fn layout() -> CacheLineLayout {
 
 fn word(raw: u32) -> Vec<u8> {
     raw.to_le_bytes().to_vec()
+}
+
+#[test]
+fn riscv_trap_mapping_preserves_illegal_instruction_kind() {
+    assert_eq!(
+        guest_trap_kind_from_riscv(RiscvTrapKind::IllegalInstruction),
+        GuestTrapKind::IllegalInstruction
+    );
+    assert_eq!(
+        guest_trap_from_riscv(RiscvTrap::new(RiscvTrapKind::IllegalInstruction, 0x7400)),
+        GuestTrap::new(GuestTrapKind::IllegalInstruction, 0x7400)
+    );
+    assert_eq!(GuestTrapKind::IllegalInstruction.default_stop_code(), 2);
 }
 
 fn loaded_store(entry: u64, instruction: u32) -> Arc<Mutex<PartitionedMemoryStore>> {

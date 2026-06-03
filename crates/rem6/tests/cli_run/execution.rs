@@ -114,6 +114,49 @@ fn rem6_run_executes_riscv_elf_on_parallel_cores_and_emits_core_stats() {
 }
 
 #[test]
+fn rem6_run_reports_illegal_instruction_trap_name() {
+    let program = riscv64_program(&[
+        0x0000_12b7,                                    // lui x5, 0x1
+        i_type(16, 5, 0x0, 5, 0x13),                    // addi x5, x5, 16
+        (0x341 << 20) | (5 << 15) | (0x1 << 12) | 0x73, // csrrw x0, mepc, x5
+        0x3020_0073,                                    // mret into user mode
+        0x3020_0073,                                    // mret from user mode
+    ]);
+    let elf = riscv64_elf(0x1000, 0x1000, &program);
+    let path = temp_binary("illegal-instruction-trap", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "20",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "1",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"stop_reason\":\"host_trap\""));
+    assert!(stdout.contains("\"stop_code\":2"));
+    assert!(stdout.contains("\"trap\":\"illegal_instruction\""));
+    assert!(stdout.contains("\"trap_pc\":\"0x1010\""));
+}
+
+#[test]
 fn rem6_run_respects_explicit_parallel_worker_limit() {
     let program = riscv64_program(&[
         0x0070_0293, // addi x5, x0, 7

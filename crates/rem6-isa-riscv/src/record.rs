@@ -2,6 +2,7 @@ use crate::{MemoryAccessKind, Register, RiscvInstruction};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RiscvTrapKind {
+    IllegalInstruction,
     EnvironmentCall,
     Breakpoint,
 }

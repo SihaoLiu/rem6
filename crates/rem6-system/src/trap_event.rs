@@ -513,5 +513,6 @@ pub const fn guest_trap_kind_from_riscv(kind: RiscvTrapKind) -> GuestTrapKind {
     match kind {
         RiscvTrapKind::EnvironmentCall => GuestTrapKind::EnvironmentCall,
         RiscvTrapKind::Breakpoint => GuestTrapKind::Breakpoint,
+        RiscvTrapKind::IllegalInstruction => GuestTrapKind::IllegalInstruction,
     }
 }

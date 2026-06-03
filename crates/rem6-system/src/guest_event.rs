@@ -152,6 +152,7 @@ impl ExecutionModeTarget {
 pub enum GuestTrapKind {
     EnvironmentCall,
     Breakpoint,
+    IllegalInstruction,
 }
 
 impl GuestTrapKind {
@@ -159,6 +160,7 @@ impl GuestTrapKind {
         match self {
             Self::EnvironmentCall => 0,
             Self::Breakpoint => 1,
+            Self::IllegalInstruction => 2,
         }
     }
 }
