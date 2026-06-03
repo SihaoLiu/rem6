@@ -10,10 +10,11 @@ use rem6_protocol_chi::{ChiEvent, ChiLineId, ChiState};
 use rem6_transport::TargetOutcome;
 
 use crate::{
-    CacheReplacementDirectory, CacheReplacementDirectoryConfig, CacheReplacementDirectorySnapshot,
-    CacheReplacementPolicyError, CacheWriteQueue, CacheWriteQueueConfig, CacheWriteQueueEntryKind,
-    CacheWriteQueueError, CacheWriteQueueHandle, CacheWriteQueueIssue, CacheWriteQueueSnapshot,
-    CacheWriteQueueUpdate, ChiCacheController, ChiCacheControllerError, ChiCacheControllerResult,
+    CacheIndexingPolicyKind, CacheReplacementDirectory, CacheReplacementDirectoryConfig,
+    CacheReplacementDirectorySnapshot, CacheReplacementPolicyError, CacheReplacementPolicyKind,
+    CacheWriteQueue, CacheWriteQueueConfig, CacheWriteQueueEntryKind, CacheWriteQueueError,
+    CacheWriteQueueHandle, CacheWriteQueueIssue, CacheWriteQueueSnapshot, CacheWriteQueueUpdate,
+    ChiCacheController, ChiCacheControllerError, ChiCacheControllerResult,
     ChiCacheControllerResultKind, ChiCacheControllerSnapshot, MshrCompletion, MshrHandle,
     MshrQosClass, MshrQosProfile, MshrQueue, MshrQueueConfig, MshrQueueError, MshrQueueSnapshot,
     MshrTargetSource,
@@ -588,6 +589,24 @@ impl ChiCacheBank {
             write_queue: None,
             replacement_directory: Some(CacheReplacementDirectory::new(replacement_config)),
         })
+    }
+
+    pub fn new_with_indexed_replacement_directory(
+        agent: AgentId,
+        layout: CacheLineLayout,
+        replacement_kind: CacheReplacementPolicyKind,
+        indexing_kind: CacheIndexingPolicyKind,
+        sets: usize,
+        ways: usize,
+    ) -> Result<Self, ChiCacheBankError> {
+        let replacement_config = CacheReplacementDirectoryConfig::new_with_indexing(
+            replacement_kind,
+            indexing_kind,
+            layout,
+            sets,
+            ways,
+        )?;
+        Self::new_with_replacement_directory(agent, layout, replacement_config)
     }
 
     pub const fn agent(&self) -> AgentId {

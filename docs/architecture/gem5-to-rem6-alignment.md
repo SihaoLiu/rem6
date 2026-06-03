@@ -284,9 +284,10 @@ isolated bugs:
   and over-wide skewed address fields. Replacement directories can consume
   those candidate locations for resident lookup, victim selection,
   resident-line relocation, snapshot restore validation, and BRRIP-style
-  cross-set candidate aging under explicit skewed indexing. Cache-bank
-  configuration plumbing for selecting skewed indexing plus richer sector or
-  compressed tags remain separate alignment targets.
+  cross-set candidate aging under explicit skewed indexing. CHI cache banks can
+  construct replacement directories with explicit cache indexing policies, while
+  broader cache-bank configuration surfaces plus richer sector or compressed
+  tags remain separate alignment targets.
 - `AddrRange` is a central gem5 memory primitive, but public issue #2855
   identifies two full-system limits that have leaked into many call sites:
   non-power-of-two memory or CHI SNF channel counts need modulo interleaving,
@@ -3184,9 +3185,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
 - Cache indexing and replacement-directory tests cover gem5-style
   SetAssociative identity mapping and SkewedAssociative per-way set hashing,
   including tag extraction, address regeneration, skewed candidate residency,
-  cross-set relocation, BRRIP candidate aging, snapshot restore validation, and
-  typed rejection of invalid indexing shapes before cache tag state can be
-  allocated.
+  CHI bank-level skewed replacement indexing selection, cross-set relocation,
+  BRRIP candidate aging, snapshot restore validation, and typed rejection of
+  invalid indexing shapes before cache tag state can be allocated.
 - Cache MSHR, MSI/MESI/MOESI/CHI cache-bank, and MSI bank directory harness
   tests cover typed QoS class metadata, QoS-aware ready ordering, promotion of
   merged same-line targets to the highest effective priority, recorded
