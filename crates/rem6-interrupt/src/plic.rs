@@ -1,3 +1,4 @@
+use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
@@ -108,6 +109,84 @@ impl PlicContextSnapshot {
 
     const fn route(&self) -> PlicContextRoute {
         PlicContextRoute::new(self.context, self.target, self.target_partition)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PlicOutputLine {
+    line: InterruptLineId,
+    priority: InterruptPriority,
+}
+
+impl PlicOutputLine {
+    pub const fn new(line: InterruptLineId, priority: InterruptPriority) -> Self {
+        Self { line, priority }
+    }
+
+    pub const fn line(self) -> InterruptLineId {
+        self.line
+    }
+
+    pub const fn priority(self) -> InterruptPriority {
+        self.priority
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PlicContextOutputState {
+    context: u64,
+    target: InterruptTargetId,
+    target_partition: PartitionId,
+    output: Option<PlicOutputLine>,
+}
+
+impl PlicContextOutputState {
+    pub const fn new(
+        context: u64,
+        target: InterruptTargetId,
+        target_partition: PartitionId,
+        output: Option<PlicOutputLine>,
+    ) -> Self {
+        Self {
+            context,
+            target,
+            target_partition,
+            output,
+        }
+    }
+
+    pub const fn context(&self) -> u64 {
+        self.context
+    }
+
+    pub const fn target(&self) -> InterruptTargetId {
+        self.target
+    }
+
+    pub const fn target_partition(&self) -> PartitionId {
+        self.target_partition
+    }
+
+    pub const fn output(&self) -> Option<PlicOutputLine> {
+        self.output
+    }
+
+    pub const fn is_asserted(&self) -> bool {
+        self.output.is_some()
+    }
+
+    pub const fn line(&self) -> Option<InterruptLineId> {
+        match self.output {
+            Some(output) => Some(output.line()),
+            None => None,
+        }
+    }
+
+    pub const fn priority(&self) -> Option<InterruptPriority> {
+        match self.output {
+            Some(output) => Some(output.priority()),
+            None => None,
+        }
     }
 }
 
@@ -312,6 +391,28 @@ impl PlicMmioDevice {
         PlicSnapshot::new(self.base, contexts)
     }
 
+    pub fn context_output_states(&self) -> Vec<PlicContextOutputState> {
+        let state = self.state.lock().expect("plic state lock");
+        let controller = self.controller.lock().expect("interrupt controller lock");
+        let claimed_contexts = controller
+            .claimed()
+            .into_iter()
+            .map(|claim| (claim.target(), claim.target_partition()))
+            .collect::<BTreeSet<_>>();
+
+        self.context_routes()
+            .into_iter()
+            .map(|route| {
+                PlicContextOutputState::new(
+                    route.context(),
+                    route.target(),
+                    route.target_partition(),
+                    self.context_output_line(route, &state, &controller, &claimed_contexts),
+                )
+            })
+            .collect()
+    }
+
     pub fn validate_snapshot(&self, snapshot: &PlicSnapshot) -> Result<(), PlicError> {
         if snapshot.base() != self.base {
             return Err(PlicError::SnapshotBaseMismatch {
@@ -367,6 +468,35 @@ impl PlicMmioDevice {
                 PlicContextRoute::new(*context, *target, *target_partition)
             })
             .collect()
+    }
+
+    fn context_output_line(
+        &self,
+        route: PlicContextRoute,
+        state: &PlicMmioState,
+        controller: &InterruptController,
+        claimed_contexts: &BTreeSet<PlicContextKey>,
+    ) -> Option<PlicOutputLine> {
+        let key = route.key();
+        if claimed_contexts.contains(&key) {
+            return None;
+        }
+
+        let threshold = state.threshold(key);
+        controller
+            .pending()
+            .into_iter()
+            .filter(|pending| {
+                pending.target() == route.target()
+                    && pending.target_partition() == route.target_partition()
+            })
+            .filter(|pending| self.source_in_range(pending.line()))
+            .filter(|pending| state.enabled(key, pending.line()))
+            .filter_map(|pending| {
+                let priority = controller.priority(pending.line()).ok()?;
+                (priority > threshold).then_some(PlicOutputLine::new(pending.line(), priority))
+            })
+            .min_by_key(|output| (Reverse(output.priority()), output.line()))
     }
 
     pub fn respond(

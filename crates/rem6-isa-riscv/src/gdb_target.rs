@@ -18,6 +18,13 @@ impl RiscvGdbXlen {
             Self::Rv64 => "riscv-64bit-cpu.xml",
         }
     }
+
+    const fn csr_annex(self) -> Option<&'static str> {
+        match self {
+            Self::Rv32 => None,
+            Self::Rv64 => Some("riscv-64bit-csr.xml"),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -52,10 +59,12 @@ pub struct RiscvGdbTargetDescription {
 
 impl RiscvGdbTargetDescription {
     pub fn new(xlen: RiscvGdbXlen) -> Self {
-        Self {
-            xlen,
-            documents: vec![target_document(xlen), cpu_document(xlen)],
+        let mut documents = vec![target_document(xlen), cpu_document(xlen)];
+        if let Some(document) = csr_document(xlen) {
+            documents.push(document);
         }
+
+        Self { xlen, documents }
     }
 
     pub const fn xlen(&self) -> RiscvGdbXlen {
@@ -78,21 +87,22 @@ impl RiscvGdbTargetDescription {
 }
 
 fn target_document(xlen: RiscvGdbXlen) -> RiscvGdbTargetDocument {
-    RiscvGdbTargetDocument::new(
-        "target.xml",
-        format!(
-            concat!(
-                "<?xml version=\"1.0\"?>\n",
-                "<!DOCTYPE target SYSTEM \"gdb-target.dtd\">\n",
-                "<target>\n",
-                "  <architecture>riscv</architecture>\n",
-                "  <xi:include href=\"{}\"/>\n",
-                "</target>\n",
-            ),
-            xlen.cpu_annex(),
-        )
-        .into_bytes(),
-    )
+    let mut content = format!(
+        concat!(
+            "<?xml version=\"1.0\"?>\n",
+            "<!DOCTYPE target SYSTEM \"gdb-target.dtd\">\n",
+            "<target>\n",
+            "  <architecture>riscv</architecture>\n",
+            "  <xi:include href=\"{}\"/>\n",
+        ),
+        xlen.cpu_annex(),
+    );
+    if let Some(annex) = xlen.csr_annex() {
+        content.push_str(&format!("  <xi:include href=\"{annex}\"/>\n"));
+    }
+    content.push_str("</target>\n");
+
+    RiscvGdbTargetDocument::new("target.xml", content.into_bytes())
 }
 
 fn cpu_document(xlen: RiscvGdbXlen) -> RiscvGdbTargetDocument {
@@ -117,6 +127,26 @@ fn cpu_document(xlen: RiscvGdbXlen) -> RiscvGdbTargetDocument {
     content.push_str("</feature>\n");
 
     RiscvGdbTargetDocument::new(xlen.cpu_annex(), content.into_bytes())
+}
+
+fn csr_document(xlen: RiscvGdbXlen) -> Option<RiscvGdbTargetDocument> {
+    let annex = xlen.csr_annex()?;
+    let mut content = concat!(
+        "<?xml version=\"1.0\"?>\n",
+        "<!DOCTYPE feature SYSTEM \"gdb-target.dtd\">\n",
+        "<feature name=\"org.gnu.gdb.riscv.csr\">\n",
+    )
+    .to_string();
+    for register in RV64_CSR_REGISTERS {
+        content.push_str(&format!(
+            "  <reg name=\"{}\" bitsize=\"{}\"/>\n",
+            register,
+            xlen.bits(),
+        ));
+    }
+    content.push_str("</feature>\n");
+
+    Some(RiscvGdbTargetDocument::new(annex, content.into_bytes()))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -167,3 +197,5 @@ const CPU_REGISTERS: &[CpuRegister] = &[
     CpuRegister::new("t6", "int", None),
     CpuRegister::new("pc", "code_ptr", None),
 ];
+
+const RV64_CSR_REGISTERS: &[&str] = &["sstatus", "stvec", "sepc", "scause", "stval"];

@@ -7,7 +7,7 @@ fn riscv_gdb_target_description_reports_rv64_cpu_documents() {
     assert_eq!(description.xlen(), RiscvGdbXlen::Rv64);
     assert_eq!(
         annex_names(description.documents()),
-        vec!["target.xml", "riscv-64bit-cpu.xml"],
+        vec!["target.xml", "riscv-64bit-cpu.xml", "riscv-64bit-csr.xml",],
     );
     assert_eq!(
         description.document("target.xml").unwrap().content(),
@@ -17,12 +17,41 @@ fn riscv_gdb_target_description_reports_rv64_cpu_documents() {
             "<target>\n",
             "  <architecture>riscv</architecture>\n",
             "  <xi:include href=\"riscv-64bit-cpu.xml\"/>\n",
+            "  <xi:include href=\"riscv-64bit-csr.xml\"/>\n",
             "</target>\n",
         )
         .as_bytes(),
     );
     assert!(description.document("riscv-64bit-fpu.xml").is_none());
-    assert!(description.document("riscv-64bit-csr.xml").is_none());
+}
+
+#[test]
+fn riscv_gdb_target_description_reports_rv64_csr_document() {
+    let description = RiscvGdbTargetDescription::new(RiscvGdbXlen::Rv64);
+
+    let target = text(description.document("target.xml").unwrap());
+    assert!(target.contains("<xi:include href=\"riscv-64bit-csr.xml\"/>"));
+
+    let csr = text(description.document("riscv-64bit-csr.xml").unwrap());
+    assert_eq!(
+        csr,
+        concat!(
+            "<?xml version=\"1.0\"?>\n",
+            "<!DOCTYPE feature SYSTEM \"gdb-target.dtd\">\n",
+            "<feature name=\"org.gnu.gdb.riscv.csr\">\n",
+            "  <reg name=\"sstatus\" bitsize=\"64\"/>\n",
+            "  <reg name=\"stvec\" bitsize=\"64\"/>\n",
+            "  <reg name=\"sepc\" bitsize=\"64\"/>\n",
+            "  <reg name=\"scause\" bitsize=\"64\"/>\n",
+            "  <reg name=\"stval\" bitsize=\"64\"/>\n",
+            "</feature>\n",
+        ),
+    );
+    assert_eq!(
+        register_names(csr),
+        vec!["sstatus", "stvec", "sepc", "scause", "stval"],
+    );
+    assert_eq!(csr.matches("bitsize=\"64\"").count(), 5);
 }
 
 #[test]

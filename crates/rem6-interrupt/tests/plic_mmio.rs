@@ -2,11 +2,11 @@ use std::sync::{Arc, Mutex};
 
 use rem6_interrupt::{
     InterruptClaim, InterruptController, InterruptError, InterruptEvent, InterruptEventKind,
-    InterruptLineId, InterruptRoute, InterruptSourceId, InterruptTargetId, PlicContextRoute,
-    PlicContextSnapshot, PlicMmioDevice, PlicSnapshot, PLIC_MMIO_CLAIM_COMPLETE_OFFSET,
-    PLIC_MMIO_CONTEXT_BASE_OFFSET, PLIC_MMIO_CONTEXT_STRIDE, PLIC_MMIO_ENABLE_BASE_OFFSET,
-    PLIC_MMIO_ENABLE_CONTEXT_STRIDE, PLIC_MMIO_PENDING_BASE_OFFSET, PLIC_MMIO_PRIORITY_STRIDE,
-    PLIC_MMIO_REGISTER_BYTES,
+    InterruptLineId, InterruptPriority, InterruptRoute, InterruptSourceId, InterruptTargetId,
+    PlicContextRoute, PlicContextSnapshot, PlicMmioDevice, PlicSnapshot,
+    PLIC_MMIO_CLAIM_COMPLETE_OFFSET, PLIC_MMIO_CONTEXT_BASE_OFFSET, PLIC_MMIO_CONTEXT_STRIDE,
+    PLIC_MMIO_ENABLE_BASE_OFFSET, PLIC_MMIO_ENABLE_CONTEXT_STRIDE, PLIC_MMIO_PENDING_BASE_OFFSET,
+    PLIC_MMIO_PRIORITY_STRIDE, PLIC_MMIO_REGISTER_BYTES,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{AccessSize, Address, AddressRange, ByteMask};
@@ -78,6 +78,144 @@ fn plic_bus_with_contexts(
     )
     .unwrap();
     (bus, route)
+}
+
+fn assert_context_output(
+    device: &PlicMmioDevice,
+    context: u64,
+    target: InterruptTargetId,
+    target_partition: PartitionId,
+    expected_line: Option<InterruptLineId>,
+    expected_priority: Option<InterruptPriority>,
+) {
+    let outputs = device.context_output_states();
+    let output = outputs
+        .iter()
+        .find(|output| output.context() == context)
+        .expect("PLIC context output state");
+
+    assert_eq!(output.target(), target);
+    assert_eq!(output.target_partition(), target_partition);
+    assert_eq!(output.line(), expected_line);
+    assert_eq!(output.priority(), expected_priority);
+    assert_eq!(output.is_asserted(), expected_line.is_some());
+}
+
+#[test]
+fn plic_context_output_tracks_enable_threshold_claim_and_complete() {
+    let cpu = PartitionId::new(0);
+    let target = InterruptTargetId::new(0);
+    let base = Address::new(0x0c58_0000);
+    let claimed_line = InterruptLineId::new(6);
+    let next_line = InterruptLineId::new(7);
+    let claimed_source = InterruptSourceId::new(41);
+    let next_source = InterruptSourceId::new(42);
+    let controller = Arc::new(Mutex::new(InterruptController::new()));
+    {
+        let mut controller = controller.lock().unwrap();
+        controller
+            .register_route(InterruptRoute::new(claimed_line, target, cpu))
+            .unwrap();
+        controller
+            .register_route(InterruptRoute::new(next_line, target, cpu))
+            .unwrap();
+        controller.assert(claimed_line, claimed_source, 0).unwrap();
+        controller.assert(next_line, next_source, 0).unwrap();
+    }
+    let device = PlicMmioDevice::new(controller, base, target, cpu);
+    let mut scheduler = PartitionedScheduler::new(1).unwrap();
+
+    scheduler
+        .schedule_at(cpu, 1, move |context| {
+            assert_context_output(&device, 0, target, cpu, None, None);
+
+            device
+                .respond(
+                    context,
+                    &write(81, base, claimed_line.get() * PLIC_MMIO_PRIORITY_STRIDE, 7),
+                )
+                .unwrap();
+            device
+                .respond(
+                    context,
+                    &write(82, base, next_line.get() * PLIC_MMIO_PRIORITY_STRIDE, 3),
+                )
+                .unwrap();
+            assert_context_output(&device, 0, target, cpu, None, None);
+
+            device
+                .respond(
+                    context,
+                    &write(
+                        83,
+                        base,
+                        PLIC_MMIO_ENABLE_BASE_OFFSET,
+                        (1 << claimed_line.get()) | (1 << next_line.get()),
+                    ),
+                )
+                .unwrap();
+            assert_context_output(
+                &device,
+                0,
+                target,
+                cpu,
+                Some(claimed_line),
+                Some(InterruptPriority::new(7)),
+            );
+
+            device
+                .respond(context, &write(84, base, PLIC_MMIO_CONTEXT_BASE_OFFSET, 7))
+                .unwrap();
+            assert_context_output(&device, 0, target, cpu, None, None);
+
+            device
+                .respond(context, &write(85, base, PLIC_MMIO_CONTEXT_BASE_OFFSET, 2))
+                .unwrap();
+            assert_context_output(
+                &device,
+                0,
+                target,
+                cpu,
+                Some(claimed_line),
+                Some(InterruptPriority::new(7)),
+            );
+
+            let claim = device
+                .respond(
+                    context,
+                    &read(
+                        86,
+                        base,
+                        PLIC_MMIO_CONTEXT_BASE_OFFSET + PLIC_MMIO_CLAIM_COMPLETE_OFFSET,
+                    ),
+                )
+                .unwrap();
+            assert_eq!(claim.data(), Some(&le32(claimed_line.get() as u32)[..]));
+            assert_context_output(&device, 0, target, cpu, None, None);
+
+            device
+                .respond(
+                    context,
+                    &write(
+                        87,
+                        base,
+                        PLIC_MMIO_CONTEXT_BASE_OFFSET + PLIC_MMIO_CLAIM_COMPLETE_OFFSET,
+                        claimed_line.get() as u32,
+                    ),
+                )
+                .unwrap();
+            assert_context_output(
+                &device,
+                0,
+                target,
+                cpu,
+                Some(next_line),
+                Some(InterruptPriority::new(3)),
+            );
+        })
+        .unwrap();
+
+    scheduler.run_until_idle();
 }
 
 #[test]

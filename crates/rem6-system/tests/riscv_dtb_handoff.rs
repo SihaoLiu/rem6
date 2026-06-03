@@ -230,7 +230,7 @@ fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
 }
 
 #[test]
-fn topology_system_installs_riscv_device_tree_handoff() {
+fn riscv_device_tree_handoff_sets_a0_hart_id_and_a1_dtb_pointer() {
     let topology = topology();
     let platform = platform_with_two_hart_clint(&topology, ClintId::new(0));
     let memory = RiscvTopologyMemoryConfig::new(MemoryTargetId::new(0), layout()).add_region(
@@ -262,6 +262,24 @@ fn topology_system_installs_riscv_device_tree_handoff() {
         .line_data(MemoryTargetId::new(0), dtb_addr)
         .unwrap();
     assert_eq!(&line[..4], &[0xd0, 0x0d, 0xfe, 0xed]);
+
+    let a0 = Register::new(10).unwrap();
+    assert_eq!(
+        system
+            .cluster()
+            .core(CpuId::new(0))
+            .unwrap()
+            .read_register(a0),
+        0
+    );
+    assert_eq!(
+        system
+            .cluster()
+            .core(CpuId::new(1))
+            .unwrap()
+            .read_register(a0),
+        1
+    );
     assert_a1_handoff(&system, dtb_addr);
 }
 

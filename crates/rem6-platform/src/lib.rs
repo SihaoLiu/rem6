@@ -248,6 +248,7 @@ impl PlatformTopologyRoute {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct PlatformBuilder {
     partition_count: u32,
+    memory_ranges: Vec<AddressRange>,
     interrupt_controllers: Vec<PlatformInterruptControllerConfig>,
     clints: Vec<PlatformClintConfig>,
     timers: Vec<PlatformTimerConfig>,
@@ -264,6 +265,7 @@ impl PlatformBuilder {
     pub const fn new(partition_count: u32) -> Self {
         Self {
             partition_count,
+            memory_ranges: Vec::new(),
             interrupt_controllers: Vec::new(),
             clints: Vec::new(),
             timers: Vec::new(),
@@ -279,6 +281,11 @@ impl PlatformBuilder {
 
     pub fn from_topology(topology: &Topology) -> Self {
         Self::new(topology.partition_count())
+    }
+
+    pub fn add_memory_range(mut self, range: AddressRange) -> Self {
+        self.memory_ranges.push(range);
+        self
     }
 
     pub fn add_interrupt_controller(mut self, config: PlatformInterruptControllerConfig) -> Self {
@@ -337,6 +344,7 @@ impl PlatformBuilder {
         }
 
         let device_tree_inventory = PlatformDeviceTreeInventory::new(
+            self.memory_ranges.clone(),
             self.interrupt_controllers.clone(),
             self.clints.clone(),
             self.timers.clone(),

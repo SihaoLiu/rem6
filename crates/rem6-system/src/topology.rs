@@ -876,12 +876,12 @@ impl RiscvTopologySystem {
     ) -> Result<RiscvDtbHandoffReport, RiscvTopologySystemError> {
         let load_report = self.load_boot_image_by_address(image)?;
 
+        let a0 = Register::new(10).expect("RISC-V A0 register index is valid");
         let a1 = Register::new(11).expect("RISC-V A1 register index is valid");
         for cpu in self.cluster.core_ids() {
-            self.cluster
-                .core(cpu)
-                .expect("cluster core id is valid")
-                .write_register(a1, dtb_addr.get());
+            let core = self.cluster.core(cpu).expect("cluster core id is valid");
+            core.write_register(a0, u64::from(cpu.get()));
+            core.write_register(a1, dtb_addr.get());
         }
 
         Ok(RiscvDtbHandoffReport::new(dtb_addr, dtb_len, load_report))

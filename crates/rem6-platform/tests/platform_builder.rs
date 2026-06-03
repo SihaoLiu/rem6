@@ -4,7 +4,7 @@ use rem6_interrupt::{
     PLIC_MMIO_ENABLE_BASE_OFFSET, PLIC_MMIO_PENDING_BASE_OFFSET, PLIC_MMIO_REGISTER_BYTES,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
-use rem6_memory::{AccessSize, Address, ByteMask};
+use rem6_memory::{AccessSize, Address, AddressRange, ByteMask};
 use rem6_mmio::{MmioCompletion, MmioError, MmioRequest, MmioRequestId, MmioResponse, MmioRoute};
 use rem6_platform::{
     PlatformBuilder, PlatformClintConfig, PlatformClintHartConfig, PlatformError,
@@ -916,6 +916,66 @@ fn platform_builder_wires_clint_hart_interrupts_and_mmio_bus() {
             ),
         ]
     );
+}
+
+#[test]
+fn riscv_device_tree_includes_memory_nodes_from_configured_ranges() {
+    let platform = PlatformBuilder::new(1)
+        .add_memory_range(
+            AddressRange::new(
+                Address::new(0x8000_0000),
+                AccessSize::new(0x0800_0000).unwrap(),
+            )
+            .unwrap(),
+        )
+        .add_memory_range(
+            AddressRange::new(
+                Address::new(0x1_0000_0000),
+                AccessSize::new(0x2000_0000).unwrap(),
+            )
+            .unwrap(),
+        )
+        .build()
+        .unwrap();
+    let config =
+        PlatformRiscvDeviceTreeConfig::new(10_000_000, "rv64imafdc", "riscv,sv48", 0x384000)
+            .unwrap();
+
+    let tree = platform.riscv_device_tree(&config).unwrap();
+
+    let root = tree.root();
+    let low_memory = root.child("memory@80000000").unwrap();
+    let high_memory = root.child("memory@100000000").unwrap();
+    assert_eq!(
+        root.property("#address-cells").unwrap().words(),
+        Some(&[2][..])
+    );
+    assert_eq!(
+        root.property("#size-cells").unwrap().words(),
+        Some(&[2][..])
+    );
+    assert_eq!(
+        low_memory.property("device_type").unwrap().strings(),
+        Some(&["memory".to_string()][..])
+    );
+    assert_eq!(
+        low_memory.property("reg").unwrap().words(),
+        Some(&[0, 0x8000_0000, 0, 0x0800_0000][..])
+    );
+    assert_eq!(
+        high_memory.property("device_type").unwrap().strings(),
+        Some(&["memory".to_string()][..])
+    );
+    assert_eq!(
+        high_memory.property("reg").unwrap().words(),
+        Some(&[1, 0, 0, 0x2000_0000][..])
+    );
+
+    let dts = tree.to_dts();
+    assert!(dts.contains("memory@80000000 {"));
+    assert!(dts.contains("reg = <0x0 0x80000000 0x0 0x8000000>;"));
+    assert!(dts.contains("memory@100000000 {"));
+    assert!(dts.contains("reg = <0x1 0x0 0x0 0x20000000>;"));
 }
 
 #[test]

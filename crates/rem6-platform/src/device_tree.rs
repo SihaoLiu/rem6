@@ -449,6 +449,7 @@ pub enum PlatformDeviceTreePropertyValue {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct PlatformDeviceTreeInventory {
+    memory_ranges: Vec<AddressRange>,
     interrupt_controllers: Vec<PlatformInterruptControllerConfig>,
     clints: Vec<PlatformClintConfig>,
     timers: Vec<PlatformTimerConfig>,
@@ -459,6 +460,7 @@ pub(crate) struct PlatformDeviceTreeInventory {
 
 impl PlatformDeviceTreeInventory {
     pub(crate) fn new(
+        memory_ranges: Vec<AddressRange>,
         interrupt_controllers: Vec<PlatformInterruptControllerConfig>,
         clints: Vec<PlatformClintConfig>,
         timers: Vec<PlatformTimerConfig>,
@@ -467,6 +469,7 @@ impl PlatformDeviceTreeInventory {
         pl031_rtcs: Vec<PlatformPl031RtcConfig>,
     ) -> Self {
         Self {
+            memory_ranges,
             interrupt_controllers,
             clints,
             timers,
@@ -484,13 +487,32 @@ impl PlatformDeviceTreeInventory {
         let controller_phandles = self.interrupt_controller_phandles(hart_phandles.len() as u32);
         let cpus = self.cpus_node(config, &hart_phandles);
         let soc = self.soc_node(config, &hart_phandles, &controller_phandles)?;
-        let mut root = PlatformDeviceTreeNode::new("/")
-            .with_child(cpus)
-            .with_child(soc);
+        let mut root = PlatformDeviceTreeNode::new("/");
+        if !self.memory_ranges.is_empty() {
+            root = root
+                .with_property(PlatformDeviceTreeProperty::word_list("#address-cells", [2]))
+                .with_property(PlatformDeviceTreeProperty::word_list("#size-cells", [2]));
+        }
+        for range in &self.memory_ranges {
+            root = root.with_child(Self::memory_node(*range));
+        }
+        root = root.with_child(cpus).with_child(soc);
         if let Some(chosen) = self.chosen_node(config) {
             root = root.with_child(chosen);
         }
         Ok(PlatformDeviceTree::new(root))
+    }
+
+    fn memory_node(range: AddressRange) -> PlatformDeviceTreeNode {
+        PlatformDeviceTreeNode::new(device_node_name("memory", range.start()))
+            .with_property(PlatformDeviceTreeProperty::string_list(
+                "device_type",
+                ["memory"],
+            ))
+            .with_property(PlatformDeviceTreeProperty::word_list(
+                "reg",
+                address_size_cells(range.start(), range.size()),
+            ))
     }
 
     fn chosen_node(
