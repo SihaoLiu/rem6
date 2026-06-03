@@ -91,9 +91,9 @@ pub use guest_event::{
     HostAction, HostActionRecord, HostEventPolicy, StopRequest,
 };
 pub use guest_fd::{
-    GuestFd, GuestFdCloseRecord, GuestFdDup2Record, GuestFdEntry, GuestFdError, GuestFdTable,
-    GuestFileDescription, GuestFileDescriptionId, GuestFileOffset, GuestFileStatusFlags,
-    GuestHostFd,
+    GuestFd, GuestFdCloseRecord, GuestFdDup2Record, GuestFdEntry, GuestFdError,
+    GuestFdSnapshotEntry, GuestFdTable, GuestFdTableSnapshot, GuestFileDescription,
+    GuestFileDescriptionId, GuestFileOffset, GuestFileStatusFlags, GuestHostFd,
 };
 pub use guest_futex::{
     GuestFutexAddress, GuestFutexError, GuestFutexKey, GuestFutexRequeueOutcome,

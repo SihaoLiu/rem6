@@ -174,6 +174,60 @@ impl GuestFdEntry {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GuestFdSnapshotEntry {
+    fd: GuestFd,
+    entry: GuestFdEntry,
+}
+
+impl GuestFdSnapshotEntry {
+    pub const fn new(fd: GuestFd, entry: GuestFdEntry) -> Self {
+        Self { fd, entry }
+    }
+
+    pub const fn fd(&self) -> GuestFd {
+        self.fd
+    }
+
+    pub const fn entry(&self) -> &GuestFdEntry {
+        &self.entry
+    }
+
+    fn into_parts(self) -> (GuestFd, GuestFdEntry) {
+        (self.fd, self.entry)
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct GuestFdTableSnapshot {
+    entries: Vec<GuestFdSnapshotEntry>,
+    descriptions: Vec<GuestFileDescription>,
+}
+
+impl GuestFdTableSnapshot {
+    pub fn new(
+        entries: Vec<GuestFdSnapshotEntry>,
+        descriptions: Vec<GuestFileDescription>,
+    ) -> Self {
+        Self {
+            entries,
+            descriptions,
+        }
+    }
+
+    pub fn entries(&self) -> &[GuestFdSnapshotEntry] {
+        &self.entries
+    }
+
+    pub fn descriptions(&self) -> &[GuestFileDescription] {
+        &self.descriptions
+    }
+
+    fn into_parts(self) -> (Vec<GuestFdSnapshotEntry>, Vec<GuestFileDescription>) {
+        (self.entries, self.descriptions)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GuestFdCloseRecord {
     fd: GuestFd,
     entry: GuestFdEntry,
@@ -322,6 +376,42 @@ pub struct GuestFdTable {
 impl GuestFdTable {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn snapshot(&self) -> GuestFdTableSnapshot {
+        GuestFdTableSnapshot::new(
+            self.entries
+                .iter()
+                .map(|(&fd, entry)| GuestFdSnapshotEntry::new(fd, entry.clone()))
+                .collect(),
+            self.descriptions.values().cloned().collect(),
+        )
+    }
+
+    pub fn from_snapshot(snapshot: GuestFdTableSnapshot) -> Result<Self, GuestFdError> {
+        let (entries, descriptions) = snapshot.into_parts();
+        let mut table = Self::new();
+
+        for description in descriptions {
+            table.insert_description(description)?;
+        }
+
+        for snapshot_entry in entries {
+            let (fd, entry) = snapshot_entry.into_parts();
+            let description = entry.description();
+            if !table.descriptions.contains_key(&description) {
+                return Err(GuestFdError::MissingFileDescription { description });
+            }
+            table.insert(fd, entry)?;
+        }
+
+        Ok(table)
+    }
+
+    pub fn restore_snapshot(&mut self, snapshot: GuestFdTableSnapshot) -> Result<(), GuestFdError> {
+        let restored = Self::from_snapshot(snapshot)?;
+        *self = restored;
+        Ok(())
     }
 
     pub fn insert(&mut self, fd: GuestFd, entry: GuestFdEntry) -> Result<(), GuestFdError> {

@@ -1,6 +1,7 @@
 use rem6_system::{
-    GuestFd, GuestFdEntry, GuestFdError, GuestFdTable, GuestFileDescription,
-    GuestFileDescriptionId, GuestFileOffset, GuestFileStatusFlags, GuestHostFd,
+    GuestFd, GuestFdEntry, GuestFdError, GuestFdSnapshotEntry, GuestFdTable, GuestFdTableSnapshot,
+    GuestFileDescription, GuestFileDescriptionId, GuestFileOffset, GuestFileStatusFlags,
+    GuestHostFd,
 };
 
 #[test]
@@ -814,4 +815,193 @@ fn guest_fd_exec_close_keeps_description_referenced_by_retained_alias() {
             .get(),
         46
     );
+}
+
+#[test]
+fn guest_fd_snapshot_restore_preserves_shared_description_aliases() {
+    let mut table = GuestFdTable::new();
+    let original = GuestFd::new(40).unwrap();
+    let description = GuestFileDescriptionId::new(400);
+    let unreferenced_description = GuestFileDescriptionId::new(401);
+    table
+        .insert_description(GuestFileDescription::host_backed(
+            description,
+            GuestHostFd::new(47).unwrap(),
+            GuestFileStatusFlags::new(0x02),
+        ))
+        .unwrap();
+    table
+        .insert_description(GuestFileDescription::guest_backed(
+            unreferenced_description,
+            GuestFileStatusFlags::new(0x40),
+        ))
+        .unwrap();
+    table
+        .insert(
+            original,
+            GuestFdEntry::new(description).with_close_on_exec(true),
+        )
+        .unwrap();
+    table
+        .set_file_offset(original, GuestFileOffset::new(1024))
+        .unwrap();
+    let duplicate = table.dup(original).unwrap();
+
+    let snapshot = table.snapshot();
+    let original_snapshot = snapshot.clone();
+
+    table
+        .set_status_flags(duplicate, GuestFileStatusFlags::new(0x802))
+        .unwrap();
+    table
+        .set_file_offset(original, GuestFileOffset::new(2048))
+        .unwrap();
+    table.set_close_on_exec(original, false).unwrap();
+
+    table.restore_snapshot(snapshot).unwrap();
+
+    assert_eq!(table.snapshot(), original_snapshot);
+    assert_eq!(table.entry(original).unwrap().description(), description);
+    assert_eq!(table.entry(duplicate).unwrap().description(), description);
+    assert!(table.close_on_exec(original).unwrap());
+    assert!(!table.close_on_exec(duplicate).unwrap());
+    assert_eq!(table.status_flags(original).unwrap().bits(), 0x02);
+    assert_eq!(table.status_flags(duplicate).unwrap().bits(), 0x02);
+    assert_eq!(table.file_offset(original).unwrap().get(), 1024);
+
+    table.advance_file_offset(duplicate, 64).unwrap();
+
+    assert_eq!(table.file_offset(original).unwrap().get(), 1088);
+    assert_eq!(table.file_offset(duplicate).unwrap().get(), 1088);
+}
+
+#[test]
+fn guest_fd_snapshot_orders_entries_and_descriptions_deterministically() {
+    let mut table = GuestFdTable::new();
+    let low_fd = GuestFd::new(41).unwrap();
+    let high_fd = GuestFd::new(43).unwrap();
+    let low_description = GuestFileDescriptionId::new(410);
+    let high_description = GuestFileDescriptionId::new(430);
+    table
+        .insert_description(GuestFileDescription::guest_backed(
+            high_description,
+            GuestFileStatusFlags::new(0x04),
+        ))
+        .unwrap();
+    table
+        .insert_description(GuestFileDescription::guest_backed(
+            low_description,
+            GuestFileStatusFlags::new(0x01),
+        ))
+        .unwrap();
+    table
+        .insert(high_fd, GuestFdEntry::new(high_description))
+        .unwrap();
+    table
+        .insert(low_fd, GuestFdEntry::new(low_description))
+        .unwrap();
+
+    let snapshot = table.snapshot();
+
+    assert_eq!(snapshot.entries()[0].fd(), low_fd);
+    assert_eq!(snapshot.entries()[1].fd(), high_fd);
+    assert_eq!(snapshot.descriptions()[0].id(), low_description);
+    assert_eq!(snapshot.descriptions()[1].id(), high_description);
+}
+
+#[test]
+fn guest_fd_restore_snapshot_rejects_missing_description_without_mutating_table() {
+    let mut table = GuestFdTable::new();
+    let live_fd = GuestFd::new(44).unwrap();
+    let live_description = GuestFileDescriptionId::new(440);
+    table
+        .insert_description(GuestFileDescription::guest_backed(
+            live_description,
+            GuestFileStatusFlags::new(0x10),
+        ))
+        .unwrap();
+    table
+        .insert(live_fd, GuestFdEntry::new(live_description))
+        .unwrap();
+    let live_snapshot = table.snapshot();
+    let missing_description = GuestFileDescriptionId::new(441);
+    let malformed = GuestFdTableSnapshot::new(
+        vec![GuestFdSnapshotEntry::new(
+            GuestFd::new(45).unwrap(),
+            GuestFdEntry::new(missing_description),
+        )],
+        vec![],
+    );
+
+    assert_eq!(
+        table.restore_snapshot(malformed),
+        Err(GuestFdError::MissingFileDescription {
+            description: missing_description
+        })
+    );
+    assert_eq!(table.snapshot(), live_snapshot);
+}
+
+#[test]
+fn guest_fd_restore_snapshot_rejects_duplicate_descriptions_without_mutating_table() {
+    let mut table = GuestFdTable::new();
+    let live_fd = GuestFd::new(46).unwrap();
+    let live_description = GuestFileDescriptionId::new(460);
+    table
+        .insert_description(GuestFileDescription::guest_backed(
+            live_description,
+            GuestFileStatusFlags::new(0x20),
+        ))
+        .unwrap();
+    table
+        .insert(live_fd, GuestFdEntry::new(live_description))
+        .unwrap();
+    let live_snapshot = table.snapshot();
+    let duplicate_description = GuestFileDescriptionId::new(461);
+    let duplicated =
+        GuestFileDescription::guest_backed(duplicate_description, GuestFileStatusFlags::new(0x40));
+    let malformed = GuestFdTableSnapshot::new(vec![], vec![duplicated.clone(), duplicated]);
+
+    assert_eq!(
+        table.restore_snapshot(malformed),
+        Err(GuestFdError::DuplicateFileDescription {
+            description: duplicate_description
+        })
+    );
+    assert_eq!(table.snapshot(), live_snapshot);
+}
+
+#[test]
+fn guest_fd_restore_snapshot_rejects_duplicate_fds_without_mutating_table() {
+    let mut table = GuestFdTable::new();
+    let live_fd = GuestFd::new(47).unwrap();
+    let live_description = GuestFileDescriptionId::new(470);
+    table
+        .insert_description(GuestFileDescription::guest_backed(
+            live_description,
+            GuestFileStatusFlags::new(0x80),
+        ))
+        .unwrap();
+    table
+        .insert(live_fd, GuestFdEntry::new(live_description))
+        .unwrap();
+    let live_snapshot = table.snapshot();
+    let duplicate_fd = GuestFd::new(48).unwrap();
+    let restored_description = GuestFileDescriptionId::new(480);
+    let malformed = GuestFdTableSnapshot::new(
+        vec![
+            GuestFdSnapshotEntry::new(duplicate_fd, GuestFdEntry::new(restored_description)),
+            GuestFdSnapshotEntry::new(duplicate_fd, GuestFdEntry::new(restored_description)),
+        ],
+        vec![GuestFileDescription::guest_backed(
+            restored_description,
+            GuestFileStatusFlags::new(0x100),
+        )],
+    );
+
+    assert_eq!(
+        table.restore_snapshot(malformed),
+        Err(GuestFdError::DuplicateFd { fd: duplicate_fd })
+    );
+    assert_eq!(table.snapshot(), live_snapshot);
 }

@@ -875,7 +875,9 @@ isolated bugs:
   not shared among duplicated descriptors and calls out offset and flag
   maintenance as difficult; rem6 models guest file offsets and status flags in
   the shared guest file description instead, with descriptor-local
-  close-on-exec remaining outside that shared record.
+  close-on-exec remaining outside that shared record. Guest fd snapshots store
+  descriptor entries separately from shared descriptions, preserving logical
+  aliasing for status flags and file offsets on restore.
   Public gem5 issue #3132 reports O3 data prefetches tying up LQ/ROB retirement
   resources until memory responses arrive. rem6 therefore records O3 prefetches
   as typed dependency-trace memory records with an explicit retire-after-issue
@@ -1309,7 +1311,10 @@ Implementation evidence through 2026-06-03:
   without fabricating description metadata. File offsets are also shared by
   description id, so duplicated and `dup2`-replaced descriptors observe the
   same offset updates, missing descriptions are typed errors, and overflow is
-  rejected without mutating the stored offset.
+  rejected without mutating the stored offset. Guest fd table snapshots emit
+  entries and descriptions in deterministic order, restore them through a
+  staged table, and reject duplicate fds, duplicate descriptions, or entries
+  referencing missing descriptions before mutating live state.
 - `rem6-memory` has typed sparse and modulo-interleaved address map regions for
   future full-system memory maps. Tests cover the gem5 issue #2855 shape by
   routing one base physical range across three modulo stripes, rejecting
