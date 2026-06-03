@@ -16,7 +16,7 @@ use rem6_protocol_chi::{ChiEvent, ChiLineId, ChiState};
 use rem6_transport::TargetOutcome;
 
 use crate::{
-    CacheCompressedTags, CacheCompressedTagsConfig, CacheCompressedTagsError,
+    post_fill, CacheCompressedTags, CacheCompressedTagsConfig, CacheCompressedTagsError,
     CacheIndexingPolicyKind, CacheReplacementDirectory, CacheReplacementDirectoryConfig,
     CacheReplacementPolicyError, CacheReplacementPolicyKind, CacheSectorTags,
     CacheSectorTagsConfig, CacheSectorTagsError, CacheWriteQueue, CacheWriteQueueConfig,
@@ -1120,6 +1120,24 @@ impl ChiCacheBank {
                 ));
             }
         };
+        let post_fill_downstream_requests = match mshr {
+            Some(handle) => post_fill::downstream_requests_for_mshr(
+                self.mshr
+                    .as_ref()
+                    .ok_or(ChiCacheBankError::SnapshotMshrModeMismatch {
+                        snapshot_has_mshr: true,
+                        bank_has_mshr: false,
+                    })?,
+                handle,
+            )?,
+            None => Vec::new(),
+        };
+        post_fill::preflight_downstream_requests(
+            self.write_queue.as_ref(),
+            &post_fill_downstream_requests,
+            ChiCacheBankError::WriteQueueDisabled,
+            |request| self.validate_write_queue_request(request),
+        )?;
         let controller_snapshot = self
             .lines
             .get(&line)
@@ -1179,6 +1197,11 @@ impl ChiCacheBank {
 
         if let Some(completion) = completion {
             let post_fill_downstream_requests = completion.post_fill_downstream_requests();
+            post_fill::enqueue_downstream_requests(
+                self.write_queue.as_mut(),
+                &post_fill_downstream_requests,
+                ChiCacheBankError::WriteQueueDisabled,
+            )?;
             let outcomes = self.target_outcomes_for_completion(&completion)?;
             return Ok(result
                 .with_target_outcomes(outcomes)

@@ -905,10 +905,10 @@ isolated bugs:
   Demand reads, writes, upgrades, atomics, and prefetches remain local
   fill-service targets, while writeback, clean-evict, and invalidation
   maintenance requests are represented as explicit post-fill downstream
-  requests on MSHR completion records. MSI banks with a typed write queue now
-  enqueue supported writeback and clean-evict post-fill maintenance requests
-  before returning the fill result, and reject unsupported or queue-unavailable
-  paths without mutating the pending fill. That keeps maintenance traffic observable to
+  requests on MSHR completion records. MSI, MESI, MOESI, and CHI banks with a
+  typed write queue now enqueue supported writeback and clean-evict post-fill
+  maintenance requests before returning the fill result, and reject unsupported
+  or queue-unavailable paths without mutating the pending fill. That keeps maintenance traffic observable to
   NoC, directory, and memory scheduling instead of hiding it behind a local
   cache-block side effect.
   Public gem5 issue #2955 reports a classic-cache block move hazard: the local
@@ -3352,10 +3352,10 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   snoop, accepted-request, and byte-mask counts before allocation. They also
   cover the public gem5 issue #621 hazard by requiring MSHR completion to
   split local fill-service targets from writeback or clean downstream
-  requests, and by requiring MSI bank fill completion to enqueue supported
-  deferred writeback traffic into the typed write queue instead of returning it
-  as a local no-response target while rejecting unsupported downstream targets
-  before pending-fill mutation. The same cache-bank coverage
+  requests, and by requiring MSI, MESI, MOESI, and CHI bank fill completion to
+  enqueue supported deferred writeback traffic into the typed write queue
+  instead of returning it as a local no-response target while rejecting
+  unsupported downstream targets before pending-fill mutation. The same cache-bank coverage
   includes bank-level dirty-line count and address audit plus dirty data restore
   for MSI, MESI, MOESI dirty-owner, and CHI dirty states. It also covers
   clean-resident uncacheable read bypass for MSI, MESI, MOESI, and CHI banks,
