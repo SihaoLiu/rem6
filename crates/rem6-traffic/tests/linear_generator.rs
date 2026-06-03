@@ -106,6 +106,21 @@ fn linear_traffic_generator_separates_period_and_kind_samples() {
 }
 
 #[test]
+fn linear_traffic_generator_fixed_period_consumes_rng_for_kind_order() {
+    let config = linear_config()
+        .with_period(4, 4)
+        .unwrap()
+        .with_read_percent(10)
+        .unwrap();
+    let mut generator = LinearTrafficGenerator::new(config);
+
+    let event = generator.next_request(10, 0).unwrap().unwrap();
+
+    assert_eq!(event.tick(), 14);
+    assert_eq!(event.kind(), TrafficRequestKind::Read);
+}
+
+#[test]
 fn linear_traffic_generator_accepts_full_u64_period_range() {
     let config = linear_config()
         .with_period(0, u64::MAX)

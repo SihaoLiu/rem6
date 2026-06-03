@@ -21,6 +21,30 @@ pub enum TrafficGeneratorError {
         block_size: u64,
         range_size: u64,
     },
+    ZeroSuperblockSize,
+    ZeroStrideSize,
+    SuperblockSizeNotMultipleOfBlockSize {
+        superblock_size: u64,
+        block_size: u64,
+    },
+    OffsetNotMultipleOfSuperblock {
+        offset: u64,
+        superblock_size: u64,
+    },
+    StrideSizeNotMultipleOfSuperblock {
+        stride_size: u64,
+        superblock_size: u64,
+    },
+    StridedOffsetOutsideRange {
+        next_address: Address,
+        start: Address,
+        end: Address,
+    },
+    AddressOverflow {
+        label: &'static str,
+        value: u64,
+        increment: u64,
+    },
     InvalidReadPercent {
         read_percent: u8,
     },
@@ -85,6 +109,50 @@ impl fmt::Display for TrafficGeneratorError {
             } => write!(
                 formatter,
                 "traffic generator block size {block_size} does not divide range size {range_size}"
+            ),
+            Self::ZeroSuperblockSize => {
+                write!(formatter, "traffic generator superblock size is zero")
+            }
+            Self::ZeroStrideSize => write!(formatter, "traffic generator stride size is zero"),
+            Self::SuperblockSizeNotMultipleOfBlockSize {
+                superblock_size,
+                block_size,
+            } => write!(
+                formatter,
+                "traffic generator superblock size {superblock_size} is not a multiple of block size {block_size}"
+            ),
+            Self::OffsetNotMultipleOfSuperblock {
+                offset,
+                superblock_size,
+            } => write!(
+                formatter,
+                "traffic generator offset {offset} is not a multiple of superblock size {superblock_size}"
+            ),
+            Self::StrideSizeNotMultipleOfSuperblock {
+                stride_size,
+                superblock_size,
+            } => write!(
+                formatter,
+                "traffic generator stride size {stride_size} is not a multiple of superblock size {superblock_size}"
+            ),
+            Self::StridedOffsetOutsideRange {
+                next_address,
+                start,
+                end,
+            } => write!(
+                formatter,
+                "traffic generator strided offset starts at {:#x}, outside {:#x}..{:#x}",
+                next_address.get(),
+                start.get(),
+                end.get()
+            ),
+            Self::AddressOverflow {
+                label,
+                value,
+                increment,
+            } => write!(
+                formatter,
+                "traffic generator address {label} with value {value} cannot advance by {increment}"
             ),
             Self::InvalidReadPercent { read_percent } => write!(
                 formatter,

@@ -3,7 +3,8 @@ mod linear;
 
 pub use error::TrafficGeneratorError;
 pub use linear::{
-    LinearTrafficGenerator, RandomTrafficGenerator, TrafficGeneratorSummary, TrafficLinearConfig,
-    TrafficLinearSnapshot, TrafficRandomConfig, TrafficRandomSnapshot, TrafficRequestEvent,
-    TrafficRequestKind,
+    LinearTrafficGenerator, RandomTrafficGenerator, StridedTrafficGenerator,
+    TrafficGeneratorSummary, TrafficLinearConfig, TrafficLinearSnapshot, TrafficRandomConfig,
+    TrafficRandomSnapshot, TrafficRequestEvent, TrafficRequestKind, TrafficStridedConfig,
+    TrafficStridedSnapshot,
 };
