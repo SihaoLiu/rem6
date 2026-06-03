@@ -22,8 +22,8 @@ use crate::{
     CacheReplacementPolicyKind, CacheSectorTags, CacheSectorTagsConfig, CacheSectorTagsError,
     CacheWriteQueue, CacheWriteQueueConfig, CacheWriteQueueEntryKind, CacheWriteQueueError,
     CacheWriteQueueHandle, CacheWriteQueueIssue, CacheWriteQueueUpdate, MshrCompletion, MshrHandle,
-    MshrQosClass, MshrQosProfile, MshrQueue, MshrQueueConfig, MshrQueueError, MshrTargetSource,
-    MsiCacheController,
+    MshrQosClass, MshrQosProfile, MshrQueue, MshrQueueConfig, MshrQueueError,
+    MshrTargetPostFillAction, MshrTargetSource, MsiCacheController,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1117,6 +1117,8 @@ impl MsiCacheBank {
                 ));
             }
         };
+        let post_fill_downstream_requests = self.post_fill_downstream_requests_for_mshr(mshr)?;
+        self.preflight_post_fill_downstream_requests(&post_fill_downstream_requests)?;
         let controller_snapshot = self
             .lines
             .get(&line)
@@ -1161,6 +1163,7 @@ impl MsiCacheBank {
 
         if let Some(completion) = completion {
             let post_fill_downstream_requests = completion.post_fill_downstream_requests();
+            self.enqueue_post_fill_downstream_requests(&post_fill_downstream_requests)?;
             let outcomes = self.target_outcomes_for_completion(&completion)?;
             return Ok(result
                 .with_target_outcomes(outcomes)
@@ -1541,6 +1544,65 @@ impl MsiCacheBank {
                 reserve: queue.config().reserve(),
             }
             .into());
+        }
+        Ok(())
+    }
+
+    fn post_fill_downstream_requests_for_mshr(
+        &self,
+        handle: Option<MshrHandle>,
+    ) -> Result<Vec<MemoryRequest>, MsiCacheBankError> {
+        let Some(handle) = handle else {
+            return Ok(Vec::new());
+        };
+        let Some(mshr) = &self.mshr else {
+            return Err(MsiCacheBankError::SnapshotMshrModeMismatch {
+                snapshot_has_mshr: true,
+                bank_has_mshr: false,
+            });
+        };
+        let entry = mshr.entry(handle)?;
+        Ok(entry
+            .targets()
+            .iter()
+            .filter(|target| {
+                target.post_fill_action() == MshrTargetPostFillAction::ForwardDownstream
+            })
+            .map(|target| target.request().clone())
+            .collect())
+    }
+    fn preflight_post_fill_downstream_requests(
+        &self,
+        requests: &[MemoryRequest],
+    ) -> Result<(), MsiCacheBankError> {
+        if requests.is_empty() {
+            return Ok(());
+        }
+        self.write_queue_ref()?;
+        for request in requests {
+            self.validate_write_queue_request(request)?;
+            if !matches!(
+                request.operation(),
+                MemoryOperation::WritebackClean
+                    | MemoryOperation::WritebackDirty
+                    | MemoryOperation::CleanEvict
+            ) {
+                return Err(CacheWriteQueueError::WritebackOperationRequired {
+                    operation: request.operation(),
+                }
+                .into());
+            }
+        }
+        self.require_write_queue_entries(requests.len())?;
+        Ok(())
+    }
+    fn enqueue_post_fill_downstream_requests(
+        &mut self,
+        requests: &[MemoryRequest],
+    ) -> Result<(), MsiCacheBankError> {
+        for request in requests {
+            self.write_queue_mut()?
+                .enqueue_writeback(request.clone(), false, 0)?;
         }
         Ok(())
     }

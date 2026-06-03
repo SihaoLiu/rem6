@@ -904,8 +904,11 @@ isolated bugs:
   downstream. rem6 therefore gives each MSHR target a typed post-fill action.
   Demand reads, writes, upgrades, atomics, and prefetches remain local
   fill-service targets, while writeback, clean-evict, and invalidation
-  maintenance requests are exported as explicit post-fill downstream requests
-  from cache-bank fill results. That keeps maintenance traffic observable to
+  maintenance requests are represented as explicit post-fill downstream
+  requests on MSHR completion records. MSI banks with a typed write queue now
+  enqueue supported writeback and clean-evict post-fill maintenance requests
+  before returning the fill result, and reject unsupported or queue-unavailable
+  paths without mutating the pending fill. That keeps maintenance traffic observable to
   NoC, directory, and memory scheduling instead of hiding it behind a local
   cache-block side effect.
   Public gem5 issue #2955 reports a classic-cache block move hazard: the local
@@ -3339,15 +3342,20 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   configuration also rejects host-impossible entry and target counts before any
   live queue can allocate vectors, and MSHR restore rejects snapshots whose
   entry count or per-entry target count exceeds the matching live queue
-  configuration. The typed cache write queue rejects host-impossible effective
-  plus reserve capacity before enqueue paths can expose allocator behavior.
+  configuration, whose entries have empty targets, repeated handles, target
+  lines that disagree with the entry line, or next handle/order counters that
+  would reuse restored identity. The typed cache write queue rejects
+  host-impossible effective plus reserve capacity before enqueue paths can
+  expose allocator behavior.
   MSI bank snapshot byte-codec tests also reject oversized directory-line, backing-line,
   CPU-response, directory-decision, parallel-cycle, cache-line, trace, MSHR,
   snoop, accepted-request, and byte-mask counts before allocation. They also
   cover the public gem5 issue #621 hazard by requiring MSHR completion to
   split local fill-service targets from writeback or clean downstream
-  requests, and by requiring MSI bank fill results to expose deferred writeback
-  traffic instead of returning it as a local no-response target. The same cache-bank coverage
+  requests, and by requiring MSI bank fill completion to enqueue supported
+  deferred writeback traffic into the typed write queue instead of returning it
+  as a local no-response target while rejecting unsupported downstream targets
+  before pending-fill mutation. The same cache-bank coverage
   includes bank-level dirty-line count and address audit plus dirty data restore
   for MSI, MESI, MOESI dirty-owner, and CHI dirty states. It also covers
   clean-resident uncacheable read bypass for MSI, MESI, MOESI, and CHI banks,

@@ -475,6 +475,177 @@ fn mshr_queue_config_rejects_vector_lengths_above_host_limit() {
 }
 
 #[test]
+fn mshr_queue_restore_rejects_structurally_invalid_snapshots_without_mutation() {
+    let config = MshrQueueConfig::new(2, 2, 0).unwrap();
+    let mut queue = MshrQueue::new(config.clone());
+    queue
+        .allocate_or_merge(request(90, 0x9000), 1, MshrTargetSource::Demand, true)
+        .unwrap();
+    let before = queue.snapshot();
+
+    let empty_targets = MshrQueueSnapshot::new(
+        config.clone(),
+        vec![MshrEntry::from_parts(
+            MshrHandle::new(1),
+            Address::new(0x1000),
+            0,
+            0,
+            false,
+            false,
+            Vec::new(),
+        )],
+        2,
+        1,
+    );
+    assert_eq!(
+        queue.restore(&empty_targets),
+        Err(MshrQueueError::SnapshotEmptyTargets {
+            handle: MshrHandle::new(1),
+        })
+    );
+    assert_eq!(queue.snapshot(), before);
+
+    let wrong_line = MshrQueueSnapshot::new(
+        config.clone(),
+        vec![MshrEntry::from_parts(
+            MshrHandle::new(2),
+            Address::new(0x2000),
+            0,
+            0,
+            false,
+            false,
+            vec![MshrTarget::from_parts(
+                request(91, 0x3000),
+                0,
+                0,
+                MshrTargetSource::Demand,
+                true,
+                None,
+            )],
+        )],
+        3,
+        1,
+    );
+    assert_eq!(
+        queue.restore(&wrong_line),
+        Err(MshrQueueError::SnapshotTargetLineMismatch {
+            handle: MshrHandle::new(2),
+            entry_line: Address::new(0x2000),
+            target_line: Address::new(0x3000),
+        })
+    );
+    assert_eq!(queue.snapshot(), before);
+
+    let duplicate_handles = MshrQueueSnapshot::new(
+        config.clone(),
+        vec![
+            MshrEntry::from_parts(
+                MshrHandle::new(3),
+                Address::new(0x3000),
+                0,
+                0,
+                false,
+                false,
+                vec![MshrTarget::from_parts(
+                    request(92, 0x3000),
+                    0,
+                    0,
+                    MshrTargetSource::Demand,
+                    true,
+                    None,
+                )],
+            ),
+            MshrEntry::from_parts(
+                MshrHandle::new(3),
+                Address::new(0x4000),
+                0,
+                1,
+                false,
+                false,
+                vec![MshrTarget::from_parts(
+                    request(93, 0x4000),
+                    0,
+                    1,
+                    MshrTargetSource::Demand,
+                    true,
+                    None,
+                )],
+            ),
+        ],
+        4,
+        2,
+    );
+    assert_eq!(
+        queue.restore(&duplicate_handles),
+        Err(MshrQueueError::DuplicateSnapshotHandle {
+            handle: MshrHandle::new(3),
+        })
+    );
+    assert_eq!(queue.snapshot(), before);
+
+    let stale_next_handle = MshrQueueSnapshot::new(
+        config.clone(),
+        vec![MshrEntry::from_parts(
+            MshrHandle::new(4),
+            Address::new(0x4000),
+            0,
+            0,
+            false,
+            false,
+            vec![MshrTarget::from_parts(
+                request(94, 0x4000),
+                0,
+                0,
+                MshrTargetSource::Demand,
+                true,
+                None,
+            )],
+        )],
+        4,
+        1,
+    );
+    assert_eq!(
+        queue.restore(&stale_next_handle),
+        Err(MshrQueueError::SnapshotNextHandleNotAfterEntry {
+            next_handle: 4,
+            handle: MshrHandle::new(4),
+        })
+    );
+    assert_eq!(queue.snapshot(), before);
+
+    let stale_next_order = MshrQueueSnapshot::new(
+        config,
+        vec![MshrEntry::from_parts(
+            MshrHandle::new(5),
+            Address::new(0x5000),
+            0,
+            2,
+            false,
+            false,
+            vec![MshrTarget::from_parts(
+                request(95, 0x5000),
+                0,
+                3,
+                MshrTargetSource::Demand,
+                true,
+                None,
+            )],
+        )],
+        6,
+        3,
+    );
+    assert_eq!(
+        queue.restore(&stale_next_order),
+        Err(MshrQueueError::SnapshotNextOrderNotAfterTarget {
+            next_order: 3,
+            handle: MshrHandle::new(5),
+            order: 3,
+        })
+    );
+    assert_eq!(queue.snapshot(), before);
+}
+
+#[test]
 fn mshr_queue_rejects_bad_configs_unknown_handles_and_wrong_snapshots() {
     assert_eq!(
         MshrQueueConfig::new(0, 2, 0),

@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
@@ -172,6 +172,31 @@ pub enum MshrQueueError {
         targets: usize,
         max_targets: usize,
     },
+    SnapshotEmptyTargets {
+        handle: MshrHandle,
+    },
+    SnapshotTargetLineMismatch {
+        handle: MshrHandle,
+        entry_line: Address,
+        target_line: Address,
+    },
+    DuplicateSnapshotHandle {
+        handle: MshrHandle,
+    },
+    SnapshotNextHandleNotAfterEntry {
+        next_handle: u64,
+        handle: MshrHandle,
+    },
+    SnapshotNextOrderNotAfterEntry {
+        next_order: u64,
+        handle: MshrHandle,
+        order: u64,
+    },
+    SnapshotNextOrderNotAfterTarget {
+        next_order: u64,
+        handle: MshrHandle,
+        order: u64,
+    },
 }
 
 impl fmt::Display for MshrQueueError {
@@ -240,6 +265,45 @@ impl fmt::Display for MshrQueueError {
             } => write!(
                 formatter,
                 "MSHR snapshot entry {handle:?} has {targets} targets for {max_targets} slots"
+            ),
+            Self::SnapshotEmptyTargets { handle } => {
+                write!(formatter, "MSHR snapshot entry {handle:?} has no targets")
+            }
+            Self::SnapshotTargetLineMismatch {
+                handle,
+                entry_line,
+                target_line,
+            } => write!(
+                formatter,
+                "MSHR snapshot entry {handle:?} for line {:#x} contains target for line {:#x}",
+                entry_line.get(),
+                target_line.get()
+            ),
+            Self::DuplicateSnapshotHandle { handle } => {
+                write!(formatter, "MSHR snapshot repeats entry handle {handle:?}")
+            }
+            Self::SnapshotNextHandleNotAfterEntry {
+                next_handle,
+                handle,
+            } => write!(
+                formatter,
+                "MSHR snapshot next handle {next_handle} is not after entry handle {handle:?}"
+            ),
+            Self::SnapshotNextOrderNotAfterEntry {
+                next_order,
+                handle,
+                order,
+            } => write!(
+                formatter,
+                "MSHR snapshot next order {next_order} is not after entry {handle:?} order {order}"
+            ),
+            Self::SnapshotNextOrderNotAfterTarget {
+                next_order,
+                handle,
+                order,
+            } => write!(
+                formatter,
+                "MSHR snapshot next order {next_order} is not after entry {handle:?} target order {order}"
             ),
         }
     }
@@ -998,6 +1062,7 @@ impl MshrQueue {
                 max_entries: self.config.entries,
             });
         }
+        let mut handles = BTreeSet::new();
         for entry in &snapshot.entries {
             if entry.target_count() > self.config.targets_per_mshr {
                 return Err(MshrQueueError::SnapshotTooManyTargets {
@@ -1005,6 +1070,46 @@ impl MshrQueue {
                     targets: entry.target_count(),
                     max_targets: self.config.targets_per_mshr,
                 });
+            }
+            if entry.targets().is_empty() {
+                return Err(MshrQueueError::SnapshotEmptyTargets {
+                    handle: entry.handle(),
+                });
+            }
+            if !handles.insert(entry.handle()) {
+                return Err(MshrQueueError::DuplicateSnapshotHandle {
+                    handle: entry.handle(),
+                });
+            }
+            if snapshot.next_handle <= entry.handle().index() {
+                return Err(MshrQueueError::SnapshotNextHandleNotAfterEntry {
+                    next_handle: snapshot.next_handle,
+                    handle: entry.handle(),
+                });
+            }
+            if snapshot.next_order <= entry.order() {
+                return Err(MshrQueueError::SnapshotNextOrderNotAfterEntry {
+                    next_order: snapshot.next_order,
+                    handle: entry.handle(),
+                    order: entry.order(),
+                });
+            }
+            for target in entry.targets() {
+                let target_line = target.request().line_address();
+                if target_line != entry.line() {
+                    return Err(MshrQueueError::SnapshotTargetLineMismatch {
+                        handle: entry.handle(),
+                        entry_line: entry.line(),
+                        target_line,
+                    });
+                }
+                if snapshot.next_order <= target.order() {
+                    return Err(MshrQueueError::SnapshotNextOrderNotAfterTarget {
+                        next_order: snapshot.next_order,
+                        handle: entry.handle(),
+                        order: target.order(),
+                    });
+                }
             }
         }
         Ok(())
