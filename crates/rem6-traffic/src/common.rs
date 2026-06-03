@@ -135,3 +135,42 @@ pub(crate) fn checked_counter_add(
             increment,
         })
 }
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct TrafficRng {
+    state: u64,
+}
+
+impl TrafficRng {
+    const MULTIPLIER: u64 = 6364136223846793005;
+    const INCREMENT: u64 = 1442695040888963407;
+
+    pub(crate) const fn new(state: u64) -> Self {
+        Self { state }
+    }
+
+    pub(crate) const fn state(&self) -> u64 {
+        self.state
+    }
+
+    pub(crate) fn next_inclusive(&mut self, min: u64, max: u64) -> u64 {
+        let value = self.peek_inclusive(min, max);
+        self.state = self
+            .state
+            .wrapping_mul(Self::MULTIPLIER)
+            .wrapping_add(Self::INCREMENT);
+        value
+    }
+
+    fn peek_inclusive(&self, min: u64, max: u64) -> u64 {
+        if min == max {
+            return min;
+        }
+
+        let width = max - min;
+        match width.checked_add(1) {
+            Some(span) => min + (self.state % span),
+            None => self.state,
+        }
+    }
+}

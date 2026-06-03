@@ -5,6 +5,7 @@ use rem6_memory::{
 use crate::{
     common::{
         checked_counter_add, TrafficGeneratorSummary, TrafficRequestEvent, TrafficRequestKind,
+        TrafficRng,
     },
     TrafficGeneratorError,
 };
@@ -1151,45 +1152,6 @@ impl StridedTrafficGenerator {
         self.config
             .data_limit()
             .is_some_and(|limit| self.data_manipulated >= limit)
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct TrafficRng {
-    state: u64,
-}
-
-impl TrafficRng {
-    const MULTIPLIER: u64 = 6364136223846793005;
-    const INCREMENT: u64 = 1442695040888963407;
-
-    const fn new(state: u64) -> Self {
-        Self { state }
-    }
-
-    const fn state(&self) -> u64 {
-        self.state
-    }
-
-    fn next_inclusive(&mut self, min: u64, max: u64) -> u64 {
-        let value = self.peek_inclusive(min, max);
-        self.state = self
-            .state
-            .wrapping_mul(Self::MULTIPLIER)
-            .wrapping_add(Self::INCREMENT);
-        value
-    }
-
-    fn peek_inclusive(&self, min: u64, max: u64) -> u64 {
-        if min == max {
-            return min;
-        }
-
-        let width = max - min;
-        match width.checked_add(1) {
-            Some(span) => min + (self.state % span),
-            None => self.state,
-        }
     }
 }
 

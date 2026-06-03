@@ -3,6 +3,8 @@ use std::fmt;
 
 use rem6_memory::{Address, MemoryError};
 
+use crate::TrafficStateId;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TrafficGeneratorError {
     EmptyAddressRange {
@@ -61,6 +63,35 @@ pub enum TrafficGeneratorError {
         value: u64,
         increment: u64,
     },
+    TrafficStateGraphEmpty,
+    TrafficStateDuplicate {
+        state: TrafficStateId,
+    },
+    TrafficStateUnknownInitial {
+        state: TrafficStateId,
+    },
+    TrafficStateUnknownTransition {
+        state: TrafficStateId,
+        role: &'static str,
+    },
+    TrafficStateDuplicateTransition {
+        from: TrafficStateId,
+        to: TrafficStateId,
+    },
+    TrafficStateTransitionRowSumMismatch {
+        state: TrafficStateId,
+        sum: u32,
+        expected: u32,
+    },
+    TrafficTransitionProbabilityOutOfRange {
+        probability: u32,
+        scale: u32,
+    },
+    TrafficTransitionRatioZeroDenominator,
+    TrafficStateSnapshotUnknownState {
+        state: TrafficStateId,
+    },
+    TrafficStateSnapshotMissingCurrentState,
     TraceTruncatedMagic {
         length: usize,
     },
@@ -250,6 +281,54 @@ impl fmt::Display for TrafficGeneratorError {
                 formatter,
                 "traffic generator counter {counter} with value {value} cannot advance by {increment}"
             ),
+            Self::TrafficStateGraphEmpty => {
+                write!(formatter, "traffic state graph has no states")
+            }
+            Self::TrafficStateDuplicate { state } => write!(
+                formatter,
+                "traffic state graph defines duplicate state {}",
+                state.get()
+            ),
+            Self::TrafficStateUnknownInitial { state } => write!(
+                formatter,
+                "traffic state graph initial state {} is not defined",
+                state.get()
+            ),
+            Self::TrafficStateUnknownTransition { state, role } => write!(
+                formatter,
+                "traffic state graph transition {role} state {} is not defined",
+                state.get()
+            ),
+            Self::TrafficStateDuplicateTransition { from, to } => write!(
+                formatter,
+                "traffic state graph defines duplicate transition {} -> {}",
+                from.get(),
+                to.get()
+            ),
+            Self::TrafficStateTransitionRowSumMismatch {
+                state,
+                sum,
+                expected,
+            } => write!(
+                formatter,
+                "traffic state graph transition probabilities from state {} sum to {sum}, expected {expected}",
+                state.get()
+            ),
+            Self::TrafficTransitionProbabilityOutOfRange { probability, scale } => write!(
+                formatter,
+                "traffic transition probability {probability} exceeds scale {scale}"
+            ),
+            Self::TrafficTransitionRatioZeroDenominator => {
+                write!(formatter, "traffic transition probability ratio has zero denominator")
+            }
+            Self::TrafficStateSnapshotUnknownState { state } => write!(
+                formatter,
+                "traffic state snapshot current state {} is not defined",
+                state.get()
+            ),
+            Self::TrafficStateSnapshotMissingCurrentState => {
+                write!(formatter, "traffic state snapshot is active without a current state")
+            }
             Self::TraceTruncatedMagic { length } => write!(
                 formatter,
                 "gem5 packet trace has {length} bytes before the magic header"
