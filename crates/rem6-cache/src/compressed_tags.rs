@@ -5,8 +5,9 @@ use rem6_memory::{Address, CacheLineLayout};
 use crate::allocation::{max_vector_len, MAX_VECTOR_ALLOCATION_BYTES};
 use crate::indexing::{CacheIndexingLocation, CacheIndexingPolicyConfig, CacheIndexingPolicyKind};
 use crate::replacement::{
-    CacheReplacementPolicyConfig, CacheReplacementPolicyError, CacheReplacementPolicyKind,
-    ReplacementDecision, ReplacementSet, ReplacementUpdate,
+    random_replacement_candidate_index, CacheReplacementPolicyConfig, CacheReplacementPolicyError,
+    CacheReplacementPolicyKind, ReplacementDecision, ReplacementSet, ReplacementUpdate,
+    RANDOM_REPLACEMENT_INITIAL_STATE,
 };
 
 mod error;
@@ -166,6 +167,7 @@ impl CacheCompressedTagsConfig {
 pub struct CacheCompressedTags {
     config: CacheCompressedTagsConfig,
     tick: u64,
+    random_state: u64,
     sets: Vec<CacheCompressedTagSet>,
 }
 
@@ -177,6 +179,7 @@ impl CacheCompressedTags {
         Self {
             config,
             tick: 0,
+            random_state: RANDOM_REPLACEMENT_INITIAL_STATE,
             sets,
         }
     }
@@ -463,6 +466,7 @@ impl CacheCompressedTags {
         CacheCompressedTagsSnapshot {
             config: self.config.clone(),
             tick: self.tick,
+            random_state: self.random_state,
             sets: self
                 .sets
                 .iter()
@@ -493,6 +497,7 @@ impl CacheCompressedTags {
             });
         }
         self.tick = snapshot.tick;
+        self.random_state = snapshot.random_state;
         self.sets = restored;
         Ok(())
     }
@@ -566,6 +571,15 @@ impl CacheCompressedTags {
                     source: CacheReplacementPolicyError::NoCandidates,
                 })?
                 .set();
+            if self.config.kind() == CacheReplacementPolicyKind::Random {
+                let selected = self.select_cross_set_random_victim(&locations)?;
+                let decision = self.decision_for_superblock_location(
+                    superblock_base,
+                    selected.set(),
+                    selected.way(),
+                )?;
+                return Ok((set, selected.way(), decision));
+            }
             let decision = self.sets[set]
                 .replacement
                 .victim(0..self.config.ways())
@@ -618,7 +632,31 @@ impl CacheCompressedTags {
             CacheReplacementPolicyKind::SecondChance => {
                 self.select_cross_set_second_chance_victim(locations)
             }
+            CacheReplacementPolicyKind::Random => self.select_cross_set_random_victim(locations),
         }
+    }
+
+    fn select_cross_set_random_victim(
+        &mut self,
+        locations: &[CacheIndexingLocation],
+    ) -> Result<CacheIndexingLocation, CacheCompressedTagsError> {
+        if locations.is_empty() {
+            return Err(CacheCompressedTagsError::ReplacementPolicyState {
+                source: CacheReplacementPolicyError::NoCandidates,
+            });
+        }
+
+        let sampled =
+            locations[random_replacement_candidate_index(&mut self.random_state, locations.len())];
+        for location in locations {
+            if !self.sets[location.set()].entries[location.way()]
+                .replacement_state
+                .valid
+            {
+                return Ok(*location);
+            }
+        }
+        Ok(sampled)
     }
 
     fn select_cross_set_second_chance_victim(
@@ -751,6 +789,7 @@ impl CacheCompressedTags {
             CacheReplacementPolicyKind::Lfu => {
                 current_state.reference_count < selected_state.reference_count
             }
+            CacheReplacementPolicyKind::Random => false,
             CacheReplacementPolicyKind::Brrip { .. } | CacheReplacementPolicyKind::Ship { .. } => {
                 let current_entry = self.sets[current.set()]
                     .replacement
@@ -1389,10 +1428,14 @@ impl CacheCompressedTagReplacementState {
             CacheReplacementPolicyKind::Lfu => {
                 self.reference_count = 1;
             }
+            CacheReplacementPolicyKind::Random => {}
         }
     }
 
     fn touch(&mut self, kind: CacheReplacementPolicyKind, tick: u64) {
+        if kind == CacheReplacementPolicyKind::Random {
+            return;
+        }
         self.valid = true;
         match kind {
             CacheReplacementPolicyKind::Lru
@@ -1411,6 +1454,7 @@ impl CacheCompressedTagReplacementState {
             CacheReplacementPolicyKind::Lfu => {
                 self.reference_count = self.reference_count.saturating_add(1);
             }
+            CacheReplacementPolicyKind::Random => {}
         }
     }
 

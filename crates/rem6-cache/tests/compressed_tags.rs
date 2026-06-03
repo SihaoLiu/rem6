@@ -202,6 +202,32 @@ fn compressed_tags_snapshot_restore_preserves_replacement_state() {
 }
 
 #[test]
+fn compressed_tags_random_replays_valid_superblock_victims() {
+    let tag_config =
+        CacheCompressedTagsConfig::new(CacheReplacementPolicyKind::Random, line_layout(), 1, 4, 4)
+            .unwrap();
+    let mut tags = CacheCompressedTags::new(tag_config.clone());
+
+    for (way, address) in [0x0000, 0x0040, 0x0080, 0x00c0].into_iter().enumerate() {
+        let insert = tags.insert(Address::new(address), 64).unwrap();
+        assert_eq!(insert.way(), way);
+        assert_eq!(insert.evicted_lines(), &[]);
+    }
+
+    let snapshot = tags.snapshot();
+    let expected = tags.insert(Address::new(0x0100), 64).unwrap();
+
+    assert_eq!(expected.way(), 2);
+    assert_eq!(expected.evicted_lines(), &[Address::new(0x0080)]);
+
+    let mut restored = CacheCompressedTags::new(tag_config);
+    restored.restore(&snapshot).unwrap();
+    let replayed = restored.insert(Address::new(0x0100), 64).unwrap();
+    assert_eq!(replayed.way(), expected.way());
+    assert_eq!(replayed.evicted_lines(), expected.evicted_lines());
+}
+
+#[test]
 fn compressed_tags_skewed_lru_uses_comparable_cross_set_recency() {
     let tag_config = CacheCompressedTagsConfig::new_with_indexing(
         CacheReplacementPolicyKind::Lru,

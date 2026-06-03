@@ -10,8 +10,9 @@ use crate::indexing::{
     CacheIndexingPolicyKind,
 };
 use crate::replacement::{
-    CacheReplacementPolicyConfig, CacheReplacementPolicyError, CacheReplacementPolicyKind,
-    ReplacementDecision, ReplacementSet, ReplacementSetSnapshot, ReplacementUpdate,
+    random_replacement_candidate_index, CacheReplacementPolicyConfig, CacheReplacementPolicyError,
+    CacheReplacementPolicyKind, ReplacementDecision, ReplacementSet, ReplacementSetSnapshot,
+    ReplacementUpdate, RANDOM_REPLACEMENT_INITIAL_STATE,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -406,6 +407,7 @@ pub struct CacheSectorTags {
     config: CacheSectorTagsConfig,
     sets: Vec<CacheSectorTagSet>,
     tick: u64,
+    random_state: u64,
 }
 
 impl CacheSectorTags {
@@ -417,6 +419,7 @@ impl CacheSectorTags {
             config,
             sets,
             tick: 0,
+            random_state: RANDOM_REPLACEMENT_INITIAL_STATE,
         }
     }
 
@@ -613,6 +616,7 @@ impl CacheSectorTags {
         CacheSectorTagsSnapshot {
             config: self.config.clone(),
             tick: self.tick,
+            random_state: self.random_state,
             sets: self.sets.iter().map(CacheSectorTagSet::snapshot).collect(),
         }
     }
@@ -640,6 +644,7 @@ impl CacheSectorTags {
         }
         self.sets = restored;
         self.tick = snapshot.tick;
+        self.random_state = snapshot.random_state;
         Ok(())
     }
 
@@ -729,6 +734,18 @@ impl CacheSectorTags {
                     source: CacheReplacementPolicyError::NoCandidates,
                 })?
                 .set();
+            if self.config.kind() == CacheReplacementPolicyKind::Random {
+                let selected = self.select_cross_set_random_victim(&locations)?;
+                let candidates = locations
+                    .iter()
+                    .map(|location| location.way())
+                    .collect::<Vec<_>>();
+                let decision = self.sets[selected.set()]
+                    .replacement
+                    .decision_for_selected_victim(selected.way(), candidates)
+                    .map_err(|source| CacheSectorTagsError::ReplacementPolicyState { source })?;
+                return Ok((set, selected.way(), decision));
+            }
             let decision = self.sets[set]
                 .replacement
                 .victim(0..self.config.ways())
@@ -769,7 +786,31 @@ impl CacheSectorTags {
             CacheReplacementPolicyKind::SecondChance => {
                 self.select_cross_set_second_chance_victim(locations)
             }
+            CacheReplacementPolicyKind::Random => self.select_cross_set_random_victim(locations),
         }
+    }
+
+    fn select_cross_set_random_victim(
+        &mut self,
+        locations: &[CacheIndexingLocation],
+    ) -> Result<CacheIndexingLocation, CacheSectorTagsError> {
+        if locations.is_empty() {
+            return Err(CacheSectorTagsError::ReplacementPolicyState {
+                source: CacheReplacementPolicyError::NoCandidates,
+            });
+        }
+
+        let sampled =
+            locations[random_replacement_candidate_index(&mut self.random_state, locations.len())];
+        for location in locations {
+            if !self.sets[location.set()].sectors[location.way()]
+                .replacement_state
+                .valid
+            {
+                return Ok(*location);
+            }
+        }
+        Ok(sampled)
     }
 
     fn select_cross_set_second_chance_victim(
@@ -900,6 +941,7 @@ impl CacheSectorTags {
             CacheReplacementPolicyKind::Lfu => {
                 current_state.reference_count < selected_state.reference_count
             }
+            CacheReplacementPolicyKind::Random => false,
             CacheReplacementPolicyKind::Brrip { .. } | CacheReplacementPolicyKind::Ship { .. } => {
                 let current_entry = self.sets[current.set()]
                     .replacement
@@ -1338,10 +1380,14 @@ impl CacheSectorTagReplacementState {
             CacheReplacementPolicyKind::Lfu => {
                 self.reference_count = 1;
             }
+            CacheReplacementPolicyKind::Random => {}
         }
     }
 
     fn touch(&mut self, kind: CacheReplacementPolicyKind, tick: u64) {
+        if kind == CacheReplacementPolicyKind::Random {
+            return;
+        }
         self.valid = true;
         match kind {
             CacheReplacementPolicyKind::Lru
@@ -1360,6 +1406,7 @@ impl CacheSectorTagReplacementState {
             CacheReplacementPolicyKind::Lfu => {
                 self.reference_count = self.reference_count.saturating_add(1);
             }
+            CacheReplacementPolicyKind::Random => {}
         }
     }
 
@@ -1372,6 +1419,7 @@ impl CacheSectorTagReplacementState {
 pub struct CacheSectorTagsSnapshot {
     config: CacheSectorTagsConfig,
     tick: u64,
+    random_state: u64,
     sets: Vec<CacheSectorTagSetSnapshot>,
 }
 
@@ -1380,6 +1428,7 @@ impl CacheSectorTagsSnapshot {
         Self {
             config,
             tick: 0,
+            random_state: RANDOM_REPLACEMENT_INITIAL_STATE,
             sets,
         }
     }

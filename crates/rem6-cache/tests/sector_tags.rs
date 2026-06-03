@@ -226,6 +226,32 @@ fn sector_tags_snapshot_restore_preserves_sector_and_policy_state() {
 }
 
 #[test]
+fn sector_tags_random_replays_valid_sector_victims() {
+    let tag_config =
+        CacheSectorTagsConfig::new(CacheReplacementPolicyKind::Random, line_layout(), 1, 4, 4)
+            .unwrap();
+    let mut tags = CacheSectorTags::new(tag_config.clone());
+
+    for (way, address) in [0x0000, 0x0040, 0x0080, 0x00c0].into_iter().enumerate() {
+        let insert = tags.insert(Address::new(address)).unwrap();
+        assert_eq!(insert.way(), way);
+        assert_eq!(insert.evicted_lines(), &[]);
+    }
+
+    let snapshot = tags.snapshot();
+    let expected = tags.insert(Address::new(0x0100)).unwrap();
+
+    assert_eq!(expected.way(), 2);
+    assert_eq!(expected.evicted_lines(), &[Address::new(0x0080)]);
+
+    let mut restored = CacheSectorTags::new(tag_config);
+    restored.restore(&snapshot).unwrap();
+    let replayed = restored.insert(Address::new(0x0100)).unwrap();
+    assert_eq!(replayed.way(), expected.way());
+    assert_eq!(replayed.evicted_lines(), expected.evicted_lines());
+}
+
+#[test]
 fn sector_tags_access_updates_lru_state_without_allocating() {
     let mut tags = CacheSectorTags::new(config(1, 2));
     tags.insert(Address::new(0x0000)).unwrap();

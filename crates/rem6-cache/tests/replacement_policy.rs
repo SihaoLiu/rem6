@@ -90,6 +90,66 @@ fn replacement_set_lru_fifo_mru_and_lfu_follow_gem5_victim_rules() {
 }
 
 #[test]
+fn replacement_set_random_prioritizes_first_invalid_candidate() {
+    let mut set = ReplacementSet::new(
+        CacheReplacementPolicyConfig::new(CacheReplacementPolicyKind::Random, 4).unwrap(),
+    );
+    for way in 0..4 {
+        set.reset(way).unwrap();
+    }
+    set.invalidate(2).unwrap();
+
+    let decision = set.victim([0, 1, 2, 3]).unwrap();
+
+    assert_eq!(decision.way(), 2);
+    assert!(!set.entry(2).unwrap().valid());
+}
+
+#[test]
+fn replacement_set_random_snapshot_restores_valid_candidate_stream() {
+    let mut set = ReplacementSet::new(
+        CacheReplacementPolicyConfig::new(CacheReplacementPolicyKind::Random, 4).unwrap(),
+    );
+    for way in 0..4 {
+        set.reset(way).unwrap();
+    }
+
+    let snapshot = set.snapshot();
+    let expected = set.victim([0, 1, 2, 3]).unwrap();
+    let mut restored = ReplacementSet::new(
+        CacheReplacementPolicyConfig::new(CacheReplacementPolicyKind::Random, 4).unwrap(),
+    );
+    restored.restore(&snapshot).unwrap();
+
+    assert_eq!(restored.victim([0, 1, 2, 3]).unwrap(), expected);
+}
+
+#[test]
+fn replacement_set_random_invalid_victims_advance_candidate_stream() {
+    let mut set = ReplacementSet::new(
+        CacheReplacementPolicyConfig::new(CacheReplacementPolicyKind::Random, 4).unwrap(),
+    );
+    for way in 0..4 {
+        set.reset(way).unwrap();
+    }
+    let snapshot = set.snapshot();
+
+    set.invalidate(2).unwrap();
+    assert_eq!(set.victim([0, 1, 2, 3]).unwrap().way(), 2);
+    set.reset(2).unwrap();
+    let after_invalid_victim = set.victim([0, 1, 2, 3]).unwrap();
+
+    let mut control = ReplacementSet::new(
+        CacheReplacementPolicyConfig::new(CacheReplacementPolicyKind::Random, 4).unwrap(),
+    );
+    control.restore(&snapshot).unwrap();
+    control.victim([0, 1, 2, 3]).unwrap();
+    let after_one_random_draw = control.victim([0, 1, 2, 3]).unwrap();
+
+    assert_eq!(after_invalid_victim, after_one_random_draw);
+}
+
+#[test]
 fn replacement_set_weighted_lru_prefers_lowest_occupancy_then_oldest_touch() {
     let mut set = ReplacementSet::new(
         CacheReplacementPolicyConfig::new(CacheReplacementPolicyKind::WeightedLru, 4).unwrap(),
@@ -552,6 +612,48 @@ fn replacement_directory_tracks_set_way_ownership_and_lru_victims() {
         directory.set_lines(1).unwrap(),
         vec![Some(Address::new(0x0010)), None]
     );
+}
+
+#[test]
+fn replacement_directory_random_uses_cache_wide_candidate_stream_across_sets() {
+    let config = CacheReplacementDirectoryConfig::new(
+        CacheReplacementPolicyKind::Random,
+        line_layout(),
+        2,
+        4,
+    )
+    .unwrap();
+    let mut directory = CacheReplacementDirectory::new(config.clone());
+    let mut used = BTreeSet::new();
+
+    for set in 0..2 {
+        for expected_way in 0..4 {
+            let line =
+                line_for_candidate_location(&config, CacheIndexingLocation::new(set, 0), &mut used);
+            let install = directory.install(line).unwrap();
+            assert_eq!(install.set(), set);
+            assert_eq!(install.way(), expected_way);
+            assert_eq!(install.evicted_line(), None);
+        }
+    }
+
+    let snapshot = directory.snapshot();
+    let replacement0 =
+        line_for_candidate_location(&config, CacheIndexingLocation::new(0, 0), &mut used);
+    let replacement1 =
+        line_for_candidate_location(&config, CacheIndexingLocation::new(1, 0), &mut used);
+    let evict0 = directory.install(replacement0).unwrap();
+    let evict1 = directory.install(replacement1).unwrap();
+
+    assert_eq!(evict0.set(), 0);
+    assert_eq!(evict0.way(), 1);
+    assert_eq!(evict1.set(), 1);
+    assert_eq!(evict1.way(), 3);
+
+    let mut restored = CacheReplacementDirectory::new(config);
+    restored.restore(&snapshot).unwrap();
+    assert_eq!(restored.install(replacement0).unwrap(), evict0);
+    assert_eq!(restored.install(replacement1).unwrap(), evict1);
 }
 
 #[test]

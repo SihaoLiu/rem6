@@ -13,6 +13,7 @@ pub enum CacheReplacementPolicyKind {
     WeightedLru,
     Fifo,
     Mru,
+    Random,
     Lfu,
     Brrip {
         rrpv_bits: u8,
@@ -104,6 +105,7 @@ impl CacheReplacementPolicyConfig {
             | CacheReplacementPolicyKind::WeightedLru
             | CacheReplacementPolicyKind::Fifo
             | CacheReplacementPolicyKind::Mru
+            | CacheReplacementPolicyKind::Random
             | CacheReplacementPolicyKind::Lfu
             | CacheReplacementPolicyKind::SecondChance => {}
         }
@@ -376,6 +378,7 @@ pub struct ReplacementSet {
     ship_signature_counters: Option<Vec<u8>>,
     tick: u64,
     bip_accumulator: u8,
+    random_state: u64,
     reset_count: u64,
     touch_count: u64,
     invalidate_count: u64,
@@ -400,6 +403,7 @@ impl ReplacementSet {
             ship_signature_counters,
             tick: 0,
             bip_accumulator: 0,
+            random_state: RANDOM_REPLACEMENT_INITIAL_STATE,
             reset_count: 0,
             touch_count: 0,
             invalidate_count: 0,
@@ -468,6 +472,9 @@ impl ReplacementSet {
                 self.entries[way].insertion_tick = 0;
                 self.entries[way].second_chance = false;
             }
+            CacheReplacementPolicyKind::Random => {
+                self.entries[way].valid = false;
+            }
             CacheReplacementPolicyKind::Lfu => {
                 self.entries[way].reference_count = 0;
             }
@@ -503,7 +510,7 @@ impl ReplacementSet {
             | CacheReplacementPolicyKind::Bip { .. } => {
                 self.entries[way].last_touch_tick = self.next_tick();
             }
-            CacheReplacementPolicyKind::Fifo => {}
+            CacheReplacementPolicyKind::Fifo | CacheReplacementPolicyKind::Random => {}
             CacheReplacementPolicyKind::SecondChance => {
                 self.entries[way].second_chance = true;
             }
@@ -615,6 +622,9 @@ impl ReplacementSet {
             }
             CacheReplacementPolicyKind::Fifo => {
                 self.entries[way].insertion_tick = self.next_tick();
+                self.entries[way].valid = true;
+            }
+            CacheReplacementPolicyKind::Random => {
                 self.entries[way].valid = true;
             }
             CacheReplacementPolicyKind::Lfu => {
@@ -805,6 +815,7 @@ impl ReplacementSet {
             }
             CacheReplacementPolicyKind::SecondChance => self.second_chance_victim(&candidates),
             CacheReplacementPolicyKind::Mru => self.mru_victim(&candidates),
+            CacheReplacementPolicyKind::Random => self.random_victim(&candidates),
             CacheReplacementPolicyKind::Lfu => {
                 self.min_by(&candidates, |entry| entry.reference_count)
             }
@@ -833,6 +844,7 @@ impl ReplacementSet {
             ship_signature_counters: self.ship_signature_counters.clone(),
             tick: self.tick,
             bip_accumulator: self.bip_accumulator,
+            random_state: self.random_state,
             reset_count: self.reset_count,
             touch_count: self.touch_count,
             invalidate_count: self.invalidate_count,
@@ -856,6 +868,7 @@ impl ReplacementSet {
             .clone_from(&snapshot.ship_signature_counters);
         self.tick = snapshot.tick;
         self.bip_accumulator = snapshot.bip_accumulator;
+        self.random_state = snapshot.random_state;
         self.reset_count = snapshot.reset_count;
         self.touch_count = snapshot.touch_count;
         self.invalidate_count = snapshot.invalidate_count;
@@ -954,6 +967,16 @@ impl ReplacementSet {
             }
         }
         selected
+    }
+
+    fn random_victim(&mut self, candidates: &[usize]) -> usize {
+        let sampled = candidates
+            [random_replacement_candidate_index(&mut self.random_state, candidates.len())];
+        candidates
+            .iter()
+            .find(|way| !self.entries[**way].valid)
+            .copied()
+            .unwrap_or(sampled)
     }
 
     fn bip_insert_as_mru(&mut self, btp_percent: u8) -> bool {
@@ -1083,6 +1106,7 @@ impl ReplacementEntry {
             | CacheReplacementPolicyKind::WeightedLru
             | CacheReplacementPolicyKind::Fifo
             | CacheReplacementPolicyKind::Mru
+            | CacheReplacementPolicyKind::Random
             | CacheReplacementPolicyKind::Lfu
             | CacheReplacementPolicyKind::Bip { .. }
             | CacheReplacementPolicyKind::SecondChance
@@ -1206,6 +1230,7 @@ pub struct ReplacementSetSnapshot {
     ship_signature_counters: Option<Vec<u8>>,
     tick: u64,
     bip_accumulator: u8,
+    random_state: u64,
     reset_count: u64,
     touch_count: u64,
     invalidate_count: u64,
@@ -1218,9 +1243,22 @@ impl ReplacementSetSnapshot {
     }
 }
 
+pub(crate) fn random_replacement_candidate_index(state: &mut u64, candidate_count: usize) -> usize {
+    debug_assert!(candidate_count > 0);
+    *state = (*state)
+        .wrapping_mul(RANDOM_REPLACEMENT_MULTIPLIER)
+        .wrapping_add(RANDOM_REPLACEMENT_INCREMENT);
+    ((*state >> 32) as usize) % candidate_count
+}
+
 fn max_rrpv(bits: u8) -> u64 {
     (1u64 << bits) - 1
 }
+
+pub(crate) const RANDOM_REPLACEMENT_INITIAL_STATE: u64 = 0;
+
+const RANDOM_REPLACEMENT_MULTIPLIER: u64 = 6364136223846793005;
+const RANDOM_REPLACEMENT_INCREMENT: u64 = 1442695040888963407;
 
 fn leaf_node(ways: usize, way: usize) -> usize {
     way + ways - 1

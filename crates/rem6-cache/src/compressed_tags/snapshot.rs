@@ -1,6 +1,6 @@
 use rem6_memory::Address;
 
-use crate::replacement::ReplacementSetSnapshot;
+use crate::replacement::{ReplacementSetSnapshot, RANDOM_REPLACEMENT_INITIAL_STATE};
 
 use super::{
     CacheCompressedTagLine, CacheCompressedTagReplacementState, CacheCompressedTagsConfig,
@@ -10,6 +10,7 @@ use super::{
 pub struct CacheCompressedTagsSnapshot {
     pub(super) config: CacheCompressedTagsConfig,
     pub(super) tick: u64,
+    pub(super) random_state: u64,
     pub(super) sets: Vec<CacheCompressedTagSetSnapshot>,
 }
 
@@ -21,6 +22,7 @@ impl CacheCompressedTagsSnapshot {
         Self {
             config,
             tick: 0,
+            random_state: RANDOM_REPLACEMENT_INITIAL_STATE,
             sets,
         }
     }

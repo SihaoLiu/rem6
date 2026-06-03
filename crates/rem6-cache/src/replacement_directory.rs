@@ -4,9 +4,10 @@ use rem6_memory::{Address, CacheLineLayout};
 
 use crate::indexing::{CacheIndexingLocation, CacheIndexingPolicyConfig, CacheIndexingPolicyKind};
 use crate::replacement::{
-    validate_replacement_vector_length, weighted_lru_precedes, CacheReplacementPolicyConfig,
-    CacheReplacementPolicyError, CacheReplacementPolicyKind, ReplacementDecision, ReplacementSet,
-    ReplacementSetSnapshot, ReplacementUpdate,
+    random_replacement_candidate_index, validate_replacement_vector_length, weighted_lru_precedes,
+    CacheReplacementPolicyConfig, CacheReplacementPolicyError, CacheReplacementPolicyKind,
+    ReplacementDecision, ReplacementSet, ReplacementSetSnapshot, ReplacementUpdate,
+    RANDOM_REPLACEMENT_INITIAL_STATE,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -114,6 +115,7 @@ impl CacheReplacementDirectoryConfig {
 pub struct CacheReplacementDirectory {
     config: CacheReplacementDirectoryConfig,
     sets: Vec<ReplacementDirectorySet>,
+    random_state: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -154,7 +156,11 @@ impl CacheReplacementDirectory {
         let sets = (0..config.sets())
             .map(|_| ReplacementDirectorySet::new(config.policy_config().clone()))
             .collect();
-        Self { config, sets }
+        Self {
+            config,
+            sets,
+            random_state: RANDOM_REPLACEMENT_INITIAL_STATE,
+        }
     }
 
     pub const fn config(&self) -> &CacheReplacementDirectoryConfig {
@@ -315,6 +321,7 @@ impl CacheReplacementDirectory {
     pub fn snapshot(&self) -> CacheReplacementDirectorySnapshot {
         CacheReplacementDirectorySnapshot {
             config: self.config.clone(),
+            random_state: self.random_state,
             sets: self
                 .sets
                 .iter()
@@ -392,6 +399,7 @@ impl CacheReplacementDirectory {
         }
 
         self.sets = restored;
+        self.random_state = snapshot.random_state;
         Ok(())
     }
 
@@ -449,6 +457,17 @@ impl CacheReplacementDirectory {
                 .first()
                 .ok_or(CacheReplacementPolicyError::NoCandidates)?
                 .set();
+            if self.config.kind() == CacheReplacementPolicyKind::Random {
+                let selected = self.select_cross_set_random_victim(&locations)?;
+                let candidates = locations
+                    .iter()
+                    .map(|location| location.way())
+                    .collect::<Vec<_>>();
+                let decision = self.sets[selected.set()]
+                    .replacement
+                    .decision_for_selected_victim(selected.way(), candidates)?;
+                return Ok((set, selected.way(), decision));
+            }
             let decision = self.sets[set].replacement.victim(0..self.config.ways())?;
             return Ok((set, decision.way(), decision));
         }
@@ -483,7 +502,30 @@ impl CacheReplacementDirectory {
             | CacheReplacementPolicyKind::TreePlru => {
                 self.select_cross_set_metadata_victim(locations)
             }
+            CacheReplacementPolicyKind::Random => self.select_cross_set_random_victim(locations),
         }
+    }
+
+    fn select_cross_set_random_victim(
+        &mut self,
+        locations: &[CacheIndexingLocation],
+    ) -> Result<CacheIndexingLocation, CacheReplacementPolicyError> {
+        if locations.is_empty() {
+            return Err(CacheReplacementPolicyError::NoCandidates);
+        }
+
+        let sampled =
+            locations[random_replacement_candidate_index(&mut self.random_state, locations.len())];
+        for location in locations {
+            if !self.sets[location.set()]
+                .replacement
+                .entry(location.way())?
+                .valid()
+            {
+                return Ok(*location);
+            }
+        }
+        Ok(sampled)
     }
 
     fn select_cross_set_brrip_victim(
@@ -577,6 +619,7 @@ impl CacheReplacementDirectory {
             CacheReplacementPolicyKind::Lfu => {
                 current_entry.reference_count() < selected_entry.reference_count()
             }
+            CacheReplacementPolicyKind::Random => false,
             CacheReplacementPolicyKind::Brrip { .. } | CacheReplacementPolicyKind::Ship { .. } => {
                 if !selected_entry.valid() {
                     false
@@ -724,6 +767,7 @@ impl ReplacementDirectoryMove {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CacheReplacementDirectorySnapshot {
     config: CacheReplacementDirectoryConfig,
+    random_state: u64,
     sets: Vec<ReplacementDirectorySetSnapshot>,
 }
 
