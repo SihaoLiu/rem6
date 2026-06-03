@@ -84,7 +84,23 @@ fn ampm_snapshot_has_zone(
 }
 
 fn dcpt_access(agent: u32, pc: u64, address: u64) -> DcptPrefetchAccess {
-    DcptPrefetchAccess::new(AgentId::new(agent), pc, Address::new(address), false)
+    dcpt_access_with_secure(agent, pc, address, false)
+}
+
+fn dcpt_access_with_secure(agent: u32, pc: u64, address: u64, secure: bool) -> DcptPrefetchAccess {
+    DcptPrefetchAccess::new(AgentId::new(agent), pc, Address::new(address), secure)
+}
+
+fn dcpt_snapshot_has_pc(
+    snapshot: &rem6_cache::DcptPrefetcherSnapshot,
+    context: AgentId,
+    pc: u64,
+) -> bool {
+    snapshot
+        .contexts()
+        .iter()
+        .find(|entry| entry.context() == context)
+        .is_some_and(|entry| entry.entries().iter().any(|entry| entry.pc() == pc))
 }
 
 fn bop_access(agent: u32, pc: u64, address: u64) -> BopPrefetchAccess {
@@ -762,6 +778,137 @@ fn dcpt_prefetcher_matches_masked_delta_pairs_and_restores_state() {
     assert_eq!(restored_candidates[1].delta(), 0x8e);
     assert_eq!(restored_candidates[2].delta(), 0x4f);
     assert_eq!(restored_candidates[3].delta(), 0x8e);
+}
+
+#[test]
+fn dcpt_prefetcher_config_validates_table_associativity() {
+    let config = DcptPrefetcherConfig::new(6, 12, 4, 8, true).unwrap();
+    assert_eq!(config.table_entries(), 8);
+    assert_eq!(config.table_assoc(), 8);
+    assert_eq!(config.table_sets(), 1);
+
+    let two_way = config.clone().with_table_assoc(2).unwrap();
+    assert_eq!(two_way.table_assoc(), 2);
+    assert_eq!(two_way.table_sets(), 4);
+
+    assert_eq!(
+        config.clone().with_table_assoc(0),
+        Err(DcptPrefetcherError::ZeroTableAssoc)
+    );
+    assert_eq!(
+        config.clone().with_table_assoc(16),
+        Err(DcptPrefetcherError::TableAssocExceedsEntries {
+            table_entries: 8,
+            table_assoc: 16,
+        })
+    );
+    assert_eq!(
+        config.clone().with_table_assoc(3),
+        Err(DcptPrefetcherError::TableEntriesNotMultipleOfAssoc {
+            table_entries: 8,
+            table_assoc: 3,
+        })
+    );
+    assert_eq!(
+        DcptPrefetcherConfig::new(6, 12, 4, 12, true)
+            .unwrap()
+            .with_table_assoc(4),
+        Err(DcptPrefetcherError::TableSetCountNotPowerOfTwo {
+            table_entries: 12,
+            table_assoc: 4,
+            table_sets: 3,
+        })
+    );
+}
+
+#[test]
+fn dcpt_table_uses_set_associative_lru_and_pc_only_tags() {
+    let config = DcptPrefetcherConfig::new(6, 12, 4, 4, true)
+        .unwrap()
+        .with_table_assoc(2)
+        .unwrap();
+    let mut prefetcher = DcptPrefetcher::new(config);
+    let context = AgentId::new(5);
+
+    prefetcher
+        .observe(dcpt_access_with_secure(5, 0x0, 0x1000, false))
+        .unwrap();
+    prefetcher
+        .observe(dcpt_access_with_secure(5, 0x2, 0x2000, false))
+        .unwrap();
+    prefetcher
+        .observe(dcpt_access_with_secure(5, 0x0, 0x1040, true))
+        .unwrap();
+    prefetcher
+        .observe(dcpt_access_with_secure(5, 0x4, 0x3000, false))
+        .unwrap();
+
+    let snapshot = prefetcher.snapshot();
+    assert_eq!(prefetcher.entry_count(context), 2);
+    assert!(!dcpt_snapshot_has_pc(&snapshot, context, 0x0));
+    assert!(dcpt_snapshot_has_pc(&snapshot, context, 0x2));
+    assert!(dcpt_snapshot_has_pc(&snapshot, context, 0x4));
+}
+
+#[test]
+fn dcpt_table_keys_entries_by_pc_without_secure_split() {
+    let config = DcptPrefetcherConfig::new(6, 12, 4, 4, true).unwrap();
+    let mut prefetcher = DcptPrefetcher::new(config);
+    let context = AgentId::new(5);
+
+    prefetcher
+        .observe(dcpt_access_with_secure(5, 0x80, 0x1000, false))
+        .unwrap();
+    prefetcher
+        .observe(dcpt_access_with_secure(5, 0x80, 0x1040, true))
+        .unwrap();
+
+    let snapshot = prefetcher.snapshot();
+    assert_eq!(prefetcher.entry_count(context), 1);
+    assert!(dcpt_snapshot_has_pc(&snapshot, context, 0x80));
+}
+
+#[test]
+fn dcpt_table_hits_do_not_refresh_lru_state() {
+    let config = DcptPrefetcherConfig::new(6, 12, 4, 2, true).unwrap();
+    let mut prefetcher = DcptPrefetcher::new(config);
+    let context = AgentId::new(5);
+
+    prefetcher.observe(dcpt_access(5, 0x0, 0x1000)).unwrap();
+    prefetcher.observe(dcpt_access(5, 0x2, 0x2000)).unwrap();
+    prefetcher.observe(dcpt_access(5, 0x0, 0x1040)).unwrap();
+    prefetcher.observe(dcpt_access(5, 0x4, 0x3000)).unwrap();
+
+    let snapshot = prefetcher.snapshot();
+    assert_eq!(prefetcher.entry_count(context), 2);
+    assert!(!dcpt_snapshot_has_pc(&snapshot, context, 0x0));
+    assert!(dcpt_snapshot_has_pc(&snapshot, context, 0x2));
+    assert!(dcpt_snapshot_has_pc(&snapshot, context, 0x4));
+}
+
+#[test]
+fn dcpt_snapshot_restore_preserves_table_lru_order() {
+    let config = DcptPrefetcherConfig::new(6, 12, 4, 4, true)
+        .unwrap()
+        .with_table_assoc(2)
+        .unwrap();
+    let mut prefetcher = DcptPrefetcher::new(config.clone());
+    let context = AgentId::new(5);
+
+    prefetcher.observe(dcpt_access(5, 0x0, 0x1000)).unwrap();
+    prefetcher.observe(dcpt_access(5, 0x2, 0x2000)).unwrap();
+    prefetcher.observe(dcpt_access(5, 0x0, 0x1040)).unwrap();
+
+    let snapshot = prefetcher.snapshot();
+    let mut restored = DcptPrefetcher::new(config);
+    restored.restore(&snapshot).unwrap();
+    restored.observe(dcpt_access(5, 0x4, 0x3000)).unwrap();
+
+    let restored_snapshot = restored.snapshot();
+    assert_eq!(restored.entry_count(context), 2);
+    assert!(!dcpt_snapshot_has_pc(&restored_snapshot, context, 0x0));
+    assert!(dcpt_snapshot_has_pc(&restored_snapshot, context, 0x2));
+    assert!(dcpt_snapshot_has_pc(&restored_snapshot, context, 0x4));
 }
 
 #[test]

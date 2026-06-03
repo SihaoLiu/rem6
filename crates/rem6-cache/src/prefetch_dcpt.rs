@@ -13,6 +13,7 @@ pub struct DcptPrefetcherConfig {
     delta_bits: u32,
     delta_mask_bits: u32,
     table_entries: usize,
+    table_assoc: usize,
     use_requestor_id: bool,
 }
 
@@ -51,6 +52,7 @@ impl DcptPrefetcherConfig {
             delta_bits,
             delta_mask_bits,
             table_entries,
+            table_assoc: table_entries,
             use_requestor_id,
         })
     }
@@ -71,6 +73,20 @@ impl DcptPrefetcherConfig {
         self.table_entries
     }
 
+    pub const fn table_assoc(&self) -> usize {
+        self.table_assoc
+    }
+
+    pub const fn table_sets(&self) -> usize {
+        self.table_entries / self.table_assoc
+    }
+
+    pub fn with_table_assoc(mut self, table_assoc: usize) -> Result<Self, DcptPrefetcherError> {
+        validate_dcpt_table_assoc(self.table_entries, table_assoc)?;
+        self.table_assoc = table_assoc;
+        Ok(self)
+    }
+
     pub const fn use_requestor_id(&self) -> bool {
         self.use_requestor_id
     }
@@ -80,6 +96,7 @@ impl DcptPrefetcherConfig {
 pub enum DcptPrefetcherError {
     ZeroDeltasPerEntry,
     ZeroTableEntries,
+    ZeroTableAssoc,
     DeltaHistoryTooSmall {
         deltas_per_entry: usize,
     },
@@ -93,6 +110,19 @@ pub enum DcptPrefetcherError {
         field: &'static str,
         length: usize,
         maximum: usize,
+    },
+    TableAssocExceedsEntries {
+        table_entries: usize,
+        table_assoc: usize,
+    },
+    TableEntriesNotMultipleOfAssoc {
+        table_entries: usize,
+        table_assoc: usize,
+    },
+    TableSetCountNotPowerOfTwo {
+        table_entries: usize,
+        table_assoc: usize,
+        table_sets: usize,
     },
     SnapshotConfigMismatch {
         expected: Box<DcptPrefetcherConfig>,
@@ -108,6 +138,12 @@ pub enum DcptPrefetcherError {
         deltas: usize,
         expected: usize,
     },
+    SnapshotSetEntryCountOutOfRange {
+        context: AgentId,
+        set: usize,
+        entries: usize,
+        table_assoc: usize,
+    },
 }
 
 impl fmt::Display for DcptPrefetcherError {
@@ -115,6 +151,7 @@ impl fmt::Display for DcptPrefetcherError {
         match self {
             Self::ZeroDeltasPerEntry => write!(formatter, "DCPT delta history is empty"),
             Self::ZeroTableEntries => write!(formatter, "DCPT table has no entries"),
+            Self::ZeroTableAssoc => write!(formatter, "DCPT table associativity is zero"),
             Self::DeltaHistoryTooSmall { deltas_per_entry } => write!(
                 formatter,
                 "DCPT delta history has {deltas_per_entry} entries but needs at least four"
@@ -137,6 +174,28 @@ impl fmt::Display for DcptPrefetcherError {
                 formatter,
                 "DCPT {field} length {length} exceeds vector allocation limit {maximum}"
             ),
+            Self::TableAssocExceedsEntries {
+                table_entries,
+                table_assoc,
+            } => write!(
+                formatter,
+                "DCPT table associativity {table_assoc} exceeds {table_entries} entries"
+            ),
+            Self::TableEntriesNotMultipleOfAssoc {
+                table_entries,
+                table_assoc,
+            } => write!(
+                formatter,
+                "DCPT table entries {table_entries} are not a multiple of associativity {table_assoc}"
+            ),
+            Self::TableSetCountNotPowerOfTwo {
+                table_entries,
+                table_assoc,
+                table_sets,
+            } => write!(
+                formatter,
+                "DCPT table with {table_entries} entries and associativity {table_assoc} has {table_sets} non-power-of-two sets"
+            ),
             Self::SnapshotConfigMismatch { expected, actual } => write!(
                 formatter,
                 "DCPT snapshot config {actual:?} does not match {expected:?}"
@@ -158,6 +217,16 @@ impl fmt::Display for DcptPrefetcherError {
                 formatter,
                 "DCPT snapshot entry for pc {pc:#x} has {deltas} deltas instead of {expected}"
             ),
+            Self::SnapshotSetEntryCountOutOfRange {
+                context,
+                set,
+                entries,
+                table_assoc,
+            } => write!(
+                formatter,
+                "DCPT snapshot context {} set {set} has {entries} entries for associativity {table_assoc}",
+                context.get()
+            ),
         }
     }
 }
@@ -174,6 +243,36 @@ fn validate_dcpt_vector_length<T>(
             field,
             length,
             maximum,
+        });
+    }
+    Ok(())
+}
+
+fn validate_dcpt_table_assoc(
+    table_entries: usize,
+    table_assoc: usize,
+) -> Result<(), DcptPrefetcherError> {
+    if table_assoc == 0 {
+        return Err(DcptPrefetcherError::ZeroTableAssoc);
+    }
+    if table_assoc > table_entries {
+        return Err(DcptPrefetcherError::TableAssocExceedsEntries {
+            table_entries,
+            table_assoc,
+        });
+    }
+    if !table_entries.is_multiple_of(table_assoc) {
+        return Err(DcptPrefetcherError::TableEntriesNotMultipleOfAssoc {
+            table_entries,
+            table_assoc,
+        });
+    }
+    let table_sets = table_entries / table_assoc;
+    if !table_sets.is_power_of_two() {
+        return Err(DcptPrefetcherError::TableSetCountNotPowerOfTwo {
+            table_entries,
+            table_assoc,
+            table_sets,
         });
     }
     Ok(())
@@ -564,7 +663,7 @@ impl DcptPrefetcher {
         let Some(index) = context
             .entries
             .iter()
-            .position(|entry| entry.pc == access.pc() && entry.secure == access.secure())
+            .position(|entry| entry.pc == access.pc())
         else {
             allocate_entry(
                 &config,
@@ -578,6 +677,7 @@ impl DcptPrefetcher {
 
         let entry = &mut context.entries[index];
         entry.push_address(&config, access.address());
+        entry.secure = access.secure();
         self.last_candidates = entry.candidates(access, context_key, &config);
         Ok(&self.last_candidates)
     }
@@ -623,6 +723,7 @@ impl DcptPrefetcher {
                     });
                 }
             }
+            validate_dcpt_snapshot_set_counts(&self.config, context)?;
             contexts.insert(
                 context.context(),
                 DcptPrefetchContext::from_snapshot(context),
@@ -651,13 +752,47 @@ fn allocate_entry(
     last_address: Address,
 ) {
     let entry = DcptPrefetchEntry::new(config, pc, secure, last_address);
-    if context.entries.len() == config.table_entries() {
-        let victim_index = context.next_victim % context.entries.len();
-        context.entries[victim_index] = entry;
-        context.next_victim = (victim_index + 1) % config.table_entries();
-    } else {
-        context.entries.push(entry);
+    let set = dcpt_table_set(config, pc);
+    let set_entries = context
+        .entries
+        .iter()
+        .filter(|entry| dcpt_table_set(config, entry.pc) == set)
+        .count();
+    if set_entries == config.table_assoc() {
+        if let Some(victim_index) = context
+            .entries
+            .iter()
+            .position(|entry| dcpt_table_set(config, entry.pc) == set)
+        {
+            context.entries.remove(victim_index);
+        }
     }
+    context.entries.push(entry);
+}
+
+fn dcpt_table_set(config: &DcptPrefetcherConfig, pc: u64) -> usize {
+    (pc as usize) & (config.table_sets() - 1)
+}
+
+fn validate_dcpt_snapshot_set_counts(
+    config: &DcptPrefetcherConfig,
+    context: &DcptPrefetchContextSnapshot,
+) -> Result<(), DcptPrefetcherError> {
+    let mut set_counts = vec![0_usize; config.table_sets()];
+    for entry in context.entries() {
+        set_counts[dcpt_table_set(config, entry.pc())] += 1;
+    }
+    for (set, entries) in set_counts.into_iter().enumerate() {
+        if entries > config.table_assoc() {
+            return Err(DcptPrefetcherError::SnapshotSetEntryCountOutOfRange {
+                context: context.context(),
+                set,
+                entries,
+                table_assoc: config.table_assoc(),
+            });
+        }
+    }
+    Ok(())
 }
 
 fn clamp_delta(delta: i128, delta_bits: u32) -> i64 {
