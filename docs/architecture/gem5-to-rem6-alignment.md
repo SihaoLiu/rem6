@@ -288,8 +288,13 @@ isolated bugs:
   resident-line relocation, snapshot restore validation, and BRRIP-style
   cross-set candidate aging under explicit skewed indexing. MSI, MESI, MOESI,
   and CHI cache banks can construct replacement directories with explicit cache
-  indexing policies, while broader cache-bank configuration surfaces plus
-  richer sector or compressed tags remain separate alignment targets.
+  indexing policies. rem6-cache also has protocol-neutral sector-tag metadata
+  that uses gem5's sector-sized tag-entry indexing, per-sector replacement
+  state, per-sub-block validity, last-sub-block invalidation, whole-sector
+  eviction, hit-path replacement access, SHiP signature updates, skewed
+  indexing, cross-set replacement recency, and snapshot restore validation.
+  Broader cache-bank sector-tag wiring and compressed tags remain separate
+  alignment targets.
 - `AddrRange` is a central gem5 memory primitive, but public issue #2855
   identifies two full-system limits that have leaked into many call sites:
   non-power-of-two memory or CHI SNF channel counts need modulo interleaving,
@@ -3191,7 +3196,12 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   MSI/MESI/MOESI/CHI bank-level skewed replacement indexing selection,
   cross-set relocation, BRRIP candidate aging, snapshot restore validation, and
   typed rejection of invalid indexing shapes before cache tag state can be
-  allocated.
+  allocated. Sector-tag tests cover invalid geometry rejection, sector-sized
+  indexing and offset extraction, sibling sub-block miss behavior, same-sector
+  insertion, last-sub-block invalidation, whole-sector eviction, policy-state
+  snapshot restore, duplicate-sector restore rejection, explicit hit access,
+  SHiP signature-based insert/access, and skewed-indexed sector residency with
+  cross-set LRU, BIP, and second-chance replacement checks.
 - Cache MSHR, MSI/MESI/MOESI/CHI cache-bank, and MSI bank directory harness
   tests cover typed QoS class metadata, QoS-aware ready ordering, promotion of
   merged same-line targets to the highest effective priority, recorded
@@ -4163,7 +4173,7 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   data-cache attribution, and direct topology CHI data-cache attach, plus
   richer cache internals such as additional prefetcher algorithms, prefetch
   translation and snoop integration, fuller cache/DRAM QoS policy integration,
-  and sector/compressed tags.
+  cache-bank sector-tag wiring, and compressed tags.
 - Broaden device coverage to PCI, virtio, storage, network, richer GPU runtime,
   and platform-specific devices.
 - Add optional adapters for SystemC, TLM, SST, DRAM simulators, power models,

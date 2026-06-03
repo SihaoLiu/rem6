@@ -26,6 +26,7 @@ mod prefetch_stems;
 mod prefetch_throttle;
 mod replacement;
 mod replacement_directory;
+mod sector_tags;
 mod write_queue;
 
 pub use bank::{
@@ -155,6 +156,11 @@ pub use replacement::{
 pub use replacement_directory::{
     CacheReplacementDirectory, CacheReplacementDirectoryConfig, CacheReplacementDirectorySnapshot,
     ReplacementDirectoryInstall, ReplacementDirectoryMove, ReplacementDirectorySetSnapshot,
+};
+pub use sector_tags::{
+    CacheSectorTagAccess, CacheSectorTagEntrySnapshot, CacheSectorTagInsert,
+    CacheSectorTagInvalidate, CacheSectorTagLookup, CacheSectorTagSetSnapshot, CacheSectorTags,
+    CacheSectorTagsConfig, CacheSectorTagsError, CacheSectorTagsSnapshot,
 };
 pub use write_queue::{
     CacheCleanReplacementPolicy, CacheReplacementVictim, CacheReplacementVictimState,
