@@ -4,9 +4,11 @@ use std::fmt;
 
 use rem6_kernel::Tick;
 
+mod export;
 mod expression;
 mod thermal;
 
+pub use export::{ExternalPowerAnalysisKind, PowerAnalysisExport, PowerAnalysisRecord};
 pub use expression::{
     PowerExpression, PowerExpressionInputs, PowerExpressionModel, PowerExpressionModelSnapshot,
     PowerMetricBinding, PowerMetricBindings, PowerMetricId, PowerStateExpression,
@@ -939,6 +941,16 @@ pub enum PowerError {
     MissingThermalDomain {
         domain: ThermalDomainId,
     },
+    DuplicatePowerAnalysisTarget {
+        target: String,
+    },
+    PowerAnalysisCurrentStateMissingResidency {
+        target: String,
+        state: PowerStateKind,
+    },
+    PowerAnalysisUndefinedResidencyState {
+        target: String,
+    },
 }
 
 impl fmt::Display for PowerError {
@@ -1114,6 +1126,24 @@ impl fmt::Display for PowerError {
             }
             Self::MissingThermalDomain { domain } => {
                 write!(formatter, "missing thermal domain {}", domain.get())
+            }
+            Self::DuplicatePowerAnalysisTarget { target } => {
+                write!(
+                    formatter,
+                    "duplicate external power analysis target {target}"
+                )
+            }
+            Self::PowerAnalysisCurrentStateMissingResidency { target, state } => {
+                write!(
+                    formatter,
+                    "external power analysis target {target} is in {state:?} without residency evidence"
+                )
+            }
+            Self::PowerAnalysisUndefinedResidencyState { target } => {
+                write!(
+                    formatter,
+                    "external power analysis target {target} has undefined residency evidence"
+                )
             }
         }
     }
