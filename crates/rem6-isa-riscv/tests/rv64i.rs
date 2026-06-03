@@ -1,9 +1,9 @@
 use rem6_isa_riscv::{
     AtomicMemoryOp, Immediate, MemoryAccessKind, MemoryWidth, Register, RegisterWrite,
     RiscvCounterBank, RiscvCounterCsr, RiscvCounterSnapshot, RiscvCsrError, RiscvError,
-    RiscvExecutionRecord, RiscvFenceSet, RiscvHartState, RiscvInstruction, RiscvMemoryOrdering,
-    RiscvPrivilegeMode, RiscvStatusCsr, RiscvStatusWord, RiscvSv39AccessContext, RiscvSystemEvent,
-    RiscvTranslationCsr, RiscvTrap, RiscvTrapKind,
+    RiscvExecutionRecord, RiscvFenceSet, RiscvHartState, RiscvInstruction, RiscvMachineTrapCsr,
+    RiscvMemoryOrdering, RiscvPrivilegeMode, RiscvStatusCsr, RiscvStatusWord,
+    RiscvSv39AccessContext, RiscvSystemEvent, RiscvTranslationCsr, RiscvTrap, RiscvTrapKind,
 };
 
 fn r_type(funct7: u32, rs2: u8, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
@@ -572,6 +572,14 @@ fn hart_decodes_and_executes_machine_exception_pc_csr() {
     hart.write(reg(3), 0x40);
 
     let write_mepc = RiscvInstruction::decode(csr_type(0x341, 2, 0x1, 5)).unwrap();
+    assert_eq!(
+        write_mepc,
+        RiscvInstruction::WriteMachineTrapCsr {
+            rd: reg(5),
+            csr: RiscvMachineTrapCsr::Mepc,
+            rs1: reg(2),
+        }
+    );
     let write_record = hart.execute(write_mepc).unwrap();
     assert_eq!(hart.machine_exception_pc(), 0x9000);
     assert_eq!(hart.read(reg(5)), 0);
@@ -588,6 +596,60 @@ fn hart_decodes_and_executes_machine_exception_pc_csr() {
     let read_mepc = RiscvInstruction::decode(csr_read_type(0x341, 7)).unwrap();
     hart.execute(read_mepc).unwrap();
     assert_eq!(hart.read(reg(7)), 0x9040);
+}
+
+#[test]
+fn hart_decodes_and_executes_machine_trap_csrs() {
+    let mut hart = RiscvHartState::new(0x4100);
+    hart.write(reg(2), 0x8001);
+    hart.write(reg(3), 11);
+    hart.write(reg(4), 0xfeed);
+
+    let write_mtvec = RiscvInstruction::decode(csr_type(0x305, 2, 0x1, 5)).unwrap();
+    let write_mcause = RiscvInstruction::decode(csr_type(0x342, 3, 0x1, 6)).unwrap();
+    let write_mtval = RiscvInstruction::decode(csr_type(0x343, 4, 0x1, 7)).unwrap();
+    let set_mcause_imm = RiscvInstruction::decode(csr_type(0x342, 0x10, 0x6, 8)).unwrap();
+    let clear_mtval_imm = RiscvInstruction::decode(csr_type(0x343, 0x0e, 0x7, 9)).unwrap();
+    let read_mtvec = RiscvInstruction::decode(csr_read_type(0x305, 10)).unwrap();
+
+    assert_eq!(
+        write_mtvec,
+        RiscvInstruction::WriteMachineTrapCsr {
+            rd: reg(5),
+            csr: RiscvMachineTrapCsr::Mtvec,
+            rs1: reg(2),
+        }
+    );
+    assert_eq!(
+        read_mtvec,
+        RiscvInstruction::ReadMachineTrapCsr {
+            rd: reg(10),
+            csr: RiscvMachineTrapCsr::Mtvec,
+        }
+    );
+
+    hart.execute(write_mtvec).unwrap();
+    assert_eq!(hart.machine_trap_vector(), 0x8001);
+    assert_eq!(hart.read(reg(5)), 0);
+
+    hart.execute(write_mcause).unwrap();
+    assert_eq!(hart.machine_trap_cause(), 11);
+    assert_eq!(hart.read(reg(6)), 0);
+
+    hart.execute(write_mtval).unwrap();
+    assert_eq!(hart.machine_trap_value(), 0xfeed);
+    assert_eq!(hart.read(reg(7)), 0);
+
+    hart.execute(set_mcause_imm).unwrap();
+    assert_eq!(hart.read(reg(8)), 11);
+    assert_eq!(hart.machine_trap_cause(), 27);
+
+    hart.execute(clear_mtval_imm).unwrap();
+    assert_eq!(hart.read(reg(9)), 0xfeed);
+    assert_eq!(hart.machine_trap_value(), 0xfee1);
+
+    hart.execute(read_mtvec).unwrap();
+    assert_eq!(hart.read(reg(10)), 0x8001);
 }
 
 #[test]
@@ -1813,13 +1875,26 @@ fn atomic_memory_accesses_report_aq_rl_barrier_ordering() {
 }
 
 #[test]
-fn hart_records_environment_and_breakpoint_traps_without_advancing_pc() {
+fn hart_takes_machine_trap_for_environment_call() {
     let mut hart = RiscvHartState::new(0x7000);
+    hart.set_machine_trap_vector(0x8001);
+    hart.set_privilege_mode(RiscvPrivilegeMode::Supervisor);
+    hart.set_status(RiscvStatusWord::new(0).with_mie(true));
 
     let ecall = hart
         .execute(RiscvInstruction::decode(0x0000_0073).unwrap())
         .unwrap();
-    assert_eq!(hart.pc(), 0x7000);
+
+    assert_eq!(ecall.pc(), 0x7000);
+    assert_eq!(ecall.next_pc(), 0x8000);
+    assert_eq!(hart.pc(), 0x8000);
+    assert_eq!(hart.privilege_mode(), RiscvPrivilegeMode::Machine);
+    assert_eq!(hart.machine_exception_pc(), 0x7000);
+    assert_eq!(hart.machine_trap_cause(), 9);
+    assert_eq!(hart.machine_trap_value(), 0);
+    assert_eq!(hart.status().mpp(), RiscvPrivilegeMode::Supervisor);
+    assert!(hart.status().mpie());
+    assert!(!hart.status().mie());
     assert_eq!(
         ecall.trap(),
         Some(&RiscvTrap::new(RiscvTrapKind::EnvironmentCall, 0x7000))
@@ -1827,14 +1902,41 @@ fn hart_records_environment_and_breakpoint_traps_without_advancing_pc() {
     assert_eq!(ecall.register_writes(), &[]);
     assert_eq!(ecall.memory_access(), None);
 
+    let mret = hart
+        .execute(RiscvInstruction::decode(0x3020_0073).unwrap())
+        .unwrap();
+    assert_eq!(mret.next_pc(), 0x7000);
+    assert_eq!(hart.pc(), 0x7000);
+    assert_eq!(hart.privilege_mode(), RiscvPrivilegeMode::Supervisor);
+    assert!(hart.status().mie());
+}
+
+#[test]
+fn hart_takes_machine_trap_for_breakpoint() {
+    let mut hart = RiscvHartState::new(0x7100);
+    hart.set_machine_trap_vector(0x9000);
+    hart.set_status(RiscvStatusWord::new(0).with_mie(false));
+
     let ebreak = hart
         .execute(RiscvInstruction::decode(0x0010_0073).unwrap())
         .unwrap();
-    assert_eq!(hart.pc(), 0x7000);
+
+    assert_eq!(ebreak.pc(), 0x7100);
+    assert_eq!(ebreak.next_pc(), 0x9000);
+    assert_eq!(hart.pc(), 0x9000);
+    assert_eq!(hart.privilege_mode(), RiscvPrivilegeMode::Machine);
+    assert_eq!(hart.machine_exception_pc(), 0x7100);
+    assert_eq!(hart.machine_trap_cause(), 3);
+    assert_eq!(hart.machine_trap_value(), 0);
+    assert_eq!(hart.status().mpp(), RiscvPrivilegeMode::Machine);
+    assert!(!hart.status().mpie());
+    assert!(!hart.status().mie());
     assert_eq!(
         ebreak.trap(),
-        Some(&RiscvTrap::new(RiscvTrapKind::Breakpoint, 0x7000))
+        Some(&RiscvTrap::new(RiscvTrapKind::Breakpoint, 0x7100))
     );
+    assert_eq!(ebreak.register_writes(), &[]);
+    assert_eq!(ebreak.memory_access(), None);
 }
 
 #[test]

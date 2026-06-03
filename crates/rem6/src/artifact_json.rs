@@ -144,9 +144,13 @@ impl Rem6ExecutionSummary {
             self.committed_instructions,
         );
         match self.stop {
-            Rem6ExecutionStop::HostTrap { stop_code, trap } => format!(
-                "{{\"status\":\"executed_until_trap\",\"stop_reason\":\"host_trap\",{},\"stop_code\":{},\"trap\":\"{}\"}}",
-                common, stop_code, trap
+            Rem6ExecutionStop::HostTrap {
+                stop_code,
+                trap,
+                trap_pc,
+            } => format!(
+                "{{\"status\":\"executed_until_trap\",\"stop_reason\":\"host_trap\",{},\"stop_code\":{},\"trap\":\"{}\",\"trap_pc\":\"0x{:x}\"}}",
+                common, stop_code, trap, trap_pc
             ),
             Rem6ExecutionStop::TickLimit { tick_limit } => format!(
                 "{{\"status\":\"stopped_at_tick_limit\",\"stop_reason\":\"tick_limit\",{},\"tick_limit\":{}}}",

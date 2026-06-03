@@ -32,8 +32,20 @@ impl RiscvHartState {
         self.status
     }
 
+    pub const fn machine_trap_vector(&self) -> u64 {
+        self.machine_trap_vector
+    }
+
     pub const fn machine_exception_pc(&self) -> u64 {
         self.machine_exception_pc
+    }
+
+    pub const fn machine_trap_cause(&self) -> u64 {
+        self.machine_trap_cause
+    }
+
+    pub const fn machine_trap_value(&self) -> u64 {
+        self.machine_trap_value
     }
 
     pub const fn sv39_access_context(&self) -> RiscvSv39AccessContext {
@@ -67,8 +79,20 @@ impl RiscvHartState {
             (self.translation_satp & !(0xffff_u64 << 44)) | (u64::from(address_space) << 44);
     }
 
+    pub fn set_machine_trap_vector(&mut self, vector: u64) {
+        self.machine_trap_vector = vector;
+    }
+
     pub fn set_machine_exception_pc(&mut self, pc: u64) {
         self.machine_exception_pc = pc;
+    }
+
+    pub fn set_machine_trap_cause(&mut self, cause: u64) {
+        self.machine_trap_cause = cause;
+    }
+
+    pub fn set_machine_trap_value(&mut self, value: u64) {
+        self.machine_trap_value = value;
     }
 
     pub fn set_sv39_access_context(&mut self, context: RiscvSv39AccessContext) {

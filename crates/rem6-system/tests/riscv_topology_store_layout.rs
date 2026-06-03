@@ -183,9 +183,10 @@ fn topology_store_fetch_uses_addressed_target_layout_after_pc_redirect() {
         run.host_stop().map(|stop| stop.event()),
         Some(GuestEventId::new(210))
     );
+    assert_eq!(run.scheduled_traps()[0].trap().pc(), 0x9000);
     assert_eq!(
         system.cluster().core(CpuId::new(0)).unwrap().pc(),
-        Address::new(0x9000)
+        Address::new(0)
     );
 }
 

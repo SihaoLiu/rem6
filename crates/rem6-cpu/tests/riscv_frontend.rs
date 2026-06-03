@@ -771,7 +771,7 @@ fn riscv_core_records_system_trap_and_stops_issuing_fetches() {
         Some(&RiscvTrap::new(RiscvTrapKind::EnvironmentCall, 0x8000))
     );
     assert!(core.has_pending_trap());
-    assert_eq!(core.pc(), Address::new(0x8000));
+    assert_eq!(core.pc(), Address::new(0));
     assert_eq!(
         drive_one_action(
             &core,

@@ -51,7 +51,7 @@ fn rem6_run_executes_riscv_elf_on_parallel_cores_and_emits_core_stats() {
     assert!(stdout.contains("\"data\":{\"requests\":0"));
     assert!(stdout.contains("\"cpu\":0"));
     assert!(stdout.contains("\"cpu\":1"));
-    assert!(stdout.contains("\"pc\":\"0x80000004\""));
+    assert!(stdout.contains("\"trap_pc\":\"0x80000004\""));
     assert!(stdout.contains("\"x5\":\"0x7\""));
     assert!(stdout.contains("\"path\":\"sim.instructions.committed\""));
     assert!(stdout.contains("\"path\":\"sim.cpu0.instructions.committed\""));

@@ -1,6 +1,6 @@
 use crate::{
     AtomicMemoryOp, Immediate, MemoryWidth, Register, RiscvCounterCsr, RiscvFenceSet,
-    RiscvStatusCsr, RiscvTranslationCsr,
+    RiscvMachineTrapCsr, RiscvStatusCsr, RiscvTranslationCsr,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -377,20 +377,39 @@ pub enum RiscvInstruction {
         csr: RiscvStatusCsr,
         zimm: u8,
     },
-    ReadMachineExceptionPcCsr {
+    ReadMachineTrapCsr {
         rd: Register,
+        csr: RiscvMachineTrapCsr,
     },
-    WriteMachineExceptionPcCsr {
+    WriteMachineTrapCsr {
         rd: Register,
+        csr: RiscvMachineTrapCsr,
         rs1: Register,
     },
-    SetMachineExceptionPcCsr {
+    SetMachineTrapCsr {
         rd: Register,
+        csr: RiscvMachineTrapCsr,
         rs1: Register,
     },
-    ClearMachineExceptionPcCsr {
+    ClearMachineTrapCsr {
         rd: Register,
+        csr: RiscvMachineTrapCsr,
         rs1: Register,
+    },
+    WriteMachineTrapCsrImmediate {
+        rd: Register,
+        csr: RiscvMachineTrapCsr,
+        zimm: u8,
+    },
+    SetMachineTrapCsrImmediate {
+        rd: Register,
+        csr: RiscvMachineTrapCsr,
+        zimm: u8,
+    },
+    ClearMachineTrapCsrImmediate {
+        rd: Register,
+        csr: RiscvMachineTrapCsr,
+        zimm: u8,
     },
     ReadTranslationCsr {
         rd: Register,

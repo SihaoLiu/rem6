@@ -189,9 +189,17 @@ pub struct Rem6DramSummary {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Rem6ExecutionStop {
-    HostTrap { stop_code: i32, trap: &'static str },
-    TickLimit { tick_limit: u64 },
-    InstructionLimit { instruction_limit: u64 },
+    HostTrap {
+        stop_code: i32,
+        trap: &'static str,
+        trap_pc: u64,
+    },
+    TickLimit {
+        tick_limit: u64,
+    },
+    InstructionLimit {
+        instruction_limit: u64,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -869,6 +877,7 @@ fn execution_summary(
             Rem6ExecutionStop::HostTrap {
                 stop_code: stop.code(),
                 trap: guest_trap_name(scheduled_trap.trap().kind()),
+                trap_pc: scheduled_trap.trap().pc(),
             }
         }
         RiscvSystemRunStopReason::InstructionLimit { limit, .. } => {

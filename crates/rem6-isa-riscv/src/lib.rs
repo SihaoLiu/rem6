@@ -1,5 +1,6 @@
 mod control_flow;
 mod csr;
+mod decode;
 mod encoding;
 mod error;
 mod gdb_target;
@@ -14,8 +15,8 @@ mod types;
 mod vector;
 
 use encoding::{
-    aq, b_imm, csr, funct3, funct5, funct7, i_imm, j_imm, rd, rl, rs1, rs2, s_imm, shamt32,
-    shamt64, shift_funct6, u_imm,
+    aq, b_imm, funct3, funct5, funct7, i_imm, j_imm, rd, rl, rs1, rs2, s_imm, shamt32, shamt64,
+    shift_funct6, u_imm,
 };
 use integer::{
     div_signed, div_signed_word, div_unsigned, div_unsigned_word, mulh_signed,
@@ -28,8 +29,8 @@ pub use control_flow::{
     RiscvVectorConfig, RiscvVectorConfigUpdate,
 };
 pub use csr::{
-    RiscvCounterBank, RiscvCounterCsr, RiscvCounterCsrWord, RiscvCounterSnapshot, RiscvStatusCsr,
-    RiscvStatusWord, RiscvTranslationCsr,
+    RiscvCounterBank, RiscvCounterCsr, RiscvCounterCsrWord, RiscvCounterSnapshot,
+    RiscvMachineTrapCsr, RiscvStatusCsr, RiscvStatusWord, RiscvTranslationCsr,
 };
 pub use error::{RiscvCsrError, RiscvError};
 pub use gdb_target::{RiscvGdbTargetDescription, RiscvGdbTargetDocument, RiscvGdbXlen};
@@ -114,177 +115,12 @@ fn decode_system(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             rs1: rs1(raw),
             rs2: rs2(raw),
         }),
-        _ => decode_csr(raw),
+        _ => decode::decode_csr(raw),
     }
 }
 
 const fn is_sfence_vma(raw: u32) -> bool {
     raw & 0xfe00_7fff == 0x1200_0073
-}
-
-fn decode_csr(raw: u32) -> Result<RiscvInstruction, RiscvError> {
-    let csr = csr(raw);
-    if is_csr_no_write_read(raw) {
-        return match csr {
-            0xf14 => Ok(RiscvInstruction::ReadMachineHartId { rd: rd(raw) }),
-            csr => counter_csr(csr)
-                .map(|csr| RiscvInstruction::ReadCounterCsr { rd: rd(raw), csr })
-                .or_else(|| {
-                    RiscvStatusCsr::from_address(csr)
-                        .map(|csr| RiscvInstruction::ReadStatusCsr { rd: rd(raw), csr })
-                })
-                .or_else(|| {
-                    (csr == 0x341)
-                        .then_some(RiscvInstruction::ReadMachineExceptionPcCsr { rd: rd(raw) })
-                })
-                .or_else(|| {
-                    RiscvTranslationCsr::from_address(csr)
-                        .map(|csr| RiscvInstruction::ReadTranslationCsr { rd: rd(raw), csr })
-                })
-                .ok_or(RiscvError::UnknownEncoding { raw }),
-        };
-    }
-
-    if let Some(csr) = machine_counter_csr(csr) {
-        return match funct3(raw) {
-            0x1 => Ok(RiscvInstruction::WriteCounterCsr {
-                rd: rd(raw),
-                csr,
-                rs1: rs1(raw),
-            }),
-            0x2 => Ok(RiscvInstruction::SetCounterCsr {
-                rd: rd(raw),
-                csr,
-                rs1: rs1(raw),
-            }),
-            0x3 => Ok(RiscvInstruction::ClearCounterCsr {
-                rd: rd(raw),
-                csr,
-                rs1: rs1(raw),
-            }),
-            0x5 => Ok(RiscvInstruction::WriteCounterCsrImmediate {
-                rd: rd(raw),
-                csr,
-                zimm: rs1(raw).index(),
-            }),
-            0x6 => Ok(RiscvInstruction::SetCounterCsrImmediate {
-                rd: rd(raw),
-                csr,
-                zimm: rs1(raw).index(),
-            }),
-            0x7 => Ok(RiscvInstruction::ClearCounterCsrImmediate {
-                rd: rd(raw),
-                csr,
-                zimm: rs1(raw).index(),
-            }),
-            _ => Err(RiscvError::UnknownEncoding { raw }),
-        };
-    }
-
-    if csr == 0x341 {
-        return match funct3(raw) {
-            0x1 => Ok(RiscvInstruction::WriteMachineExceptionPcCsr {
-                rd: rd(raw),
-                rs1: rs1(raw),
-            }),
-            0x2 => Ok(RiscvInstruction::SetMachineExceptionPcCsr {
-                rd: rd(raw),
-                rs1: rs1(raw),
-            }),
-            0x3 => Ok(RiscvInstruction::ClearMachineExceptionPcCsr {
-                rd: rd(raw),
-                rs1: rs1(raw),
-            }),
-            _ => Err(RiscvError::UnknownEncoding { raw }),
-        };
-    }
-
-    if let Some(csr) = RiscvStatusCsr::from_address(csr) {
-        return match funct3(raw) {
-            0x1 => Ok(RiscvInstruction::WriteStatusCsr {
-                rd: rd(raw),
-                csr,
-                rs1: rs1(raw),
-            }),
-            0x2 => Ok(RiscvInstruction::SetStatusCsr {
-                rd: rd(raw),
-                csr,
-                rs1: rs1(raw),
-            }),
-            0x3 => Ok(RiscvInstruction::ClearStatusCsr {
-                rd: rd(raw),
-                csr,
-                rs1: rs1(raw),
-            }),
-            0x5 => Ok(RiscvInstruction::WriteStatusCsrImmediate {
-                rd: rd(raw),
-                csr,
-                zimm: rs1(raw).index(),
-            }),
-            0x6 => Ok(RiscvInstruction::SetStatusCsrImmediate {
-                rd: rd(raw),
-                csr,
-                zimm: rs1(raw).index(),
-            }),
-            0x7 => Ok(RiscvInstruction::ClearStatusCsrImmediate {
-                rd: rd(raw),
-                csr,
-                zimm: rs1(raw).index(),
-            }),
-            _ => Err(RiscvError::UnknownEncoding { raw }),
-        };
-    }
-
-    let Some(csr) = RiscvTranslationCsr::from_address(csr) else {
-        return Err(RiscvError::UnknownEncoding { raw });
-    };
-    match funct3(raw) {
-        0x1 => Ok(RiscvInstruction::WriteTranslationCsr {
-            rd: rd(raw),
-            csr,
-            rs1: rs1(raw),
-        }),
-        0x2 => Ok(RiscvInstruction::SetTranslationCsr {
-            rd: rd(raw),
-            csr,
-            rs1: rs1(raw),
-        }),
-        0x3 => Ok(RiscvInstruction::ClearTranslationCsr {
-            rd: rd(raw),
-            csr,
-            rs1: rs1(raw),
-        }),
-        0x5 => Ok(RiscvInstruction::WriteTranslationCsrImmediate {
-            rd: rd(raw),
-            csr,
-            zimm: rs1(raw).index(),
-        }),
-        0x6 => Ok(RiscvInstruction::SetTranslationCsrImmediate {
-            rd: rd(raw),
-            csr,
-            zimm: rs1(raw).index(),
-        }),
-        0x7 => Ok(RiscvInstruction::ClearTranslationCsrImmediate {
-            rd: rd(raw),
-            csr,
-            zimm: rs1(raw).index(),
-        }),
-        _ => Err(RiscvError::UnknownEncoding { raw }),
-    }
-}
-
-fn is_csr_no_write_read(raw: u32) -> bool {
-    matches!((funct3(raw), rs1(raw).index()), (0x2 | 0x3 | 0x6 | 0x7, 0))
-}
-
-fn counter_csr(address: u16) -> Option<RiscvCounterCsr> {
-    RiscvCounterCsr::from_user_address(address)
-        .or_else(|_| RiscvCounterCsr::from_machine_address(address))
-        .ok()
-}
-
-fn machine_counter_csr(address: u16) -> Option<RiscvCounterCsr> {
-    RiscvCounterCsr::from_machine_address(address).ok()
 }
 
 fn decode_op_imm(raw: u32) -> Result<RiscvInstruction, RiscvError> {
@@ -658,7 +494,10 @@ pub struct RiscvHartState {
     pc: u64,
     hart_id: u64,
     counters: RiscvCounterBank,
+    machine_trap_vector: u64,
     machine_exception_pc: u64,
+    machine_trap_cause: u64,
+    machine_trap_value: u64,
     translation_satp: u64,
     privilege_mode: RiscvPrivilegeMode,
     status: RiscvStatusWord,
@@ -676,7 +515,10 @@ impl RiscvHartState {
             pc,
             hart_id,
             counters: RiscvCounterBank::new(),
+            machine_trap_vector: 0,
             machine_exception_pc: 0,
+            machine_trap_cause: 0,
+            machine_trap_value: 0,
             translation_satp: 0,
             privilege_mode: RiscvPrivilegeMode::Machine,
             status: RiscvStatusWord::new(0),
@@ -1074,19 +916,35 @@ impl RiscvHartState {
                 let value = read_status_csr(self, csr) & !u64::from(zimm);
                 write_status_csr(self, &mut register_writes, rd, csr, value);
             }
-            RiscvInstruction::ReadMachineExceptionPcCsr { rd } => {
-                write_register(self, &mut register_writes, rd, self.machine_exception_pc());
+            RiscvInstruction::ReadMachineTrapCsr { rd, csr } => {
+                write_register(
+                    self,
+                    &mut register_writes,
+                    rd,
+                    read_machine_trap_csr(self, csr),
+                );
             }
-            RiscvInstruction::WriteMachineExceptionPcCsr { rd, rs1 } => {
-                write_machine_exception_pc_csr(self, &mut register_writes, rd, self.read(rs1));
+            RiscvInstruction::WriteMachineTrapCsr { rd, csr, rs1 } => {
+                write_machine_trap_csr(self, &mut register_writes, rd, csr, self.read(rs1));
             }
-            RiscvInstruction::SetMachineExceptionPcCsr { rd, rs1 } => {
-                let value = self.machine_exception_pc() | self.read(rs1);
-                write_machine_exception_pc_csr(self, &mut register_writes, rd, value);
+            RiscvInstruction::SetMachineTrapCsr { rd, csr, rs1 } => {
+                let value = read_machine_trap_csr(self, csr) | self.read(rs1);
+                write_machine_trap_csr(self, &mut register_writes, rd, csr, value);
             }
-            RiscvInstruction::ClearMachineExceptionPcCsr { rd, rs1 } => {
-                let value = self.machine_exception_pc() & !self.read(rs1);
-                write_machine_exception_pc_csr(self, &mut register_writes, rd, value);
+            RiscvInstruction::ClearMachineTrapCsr { rd, csr, rs1 } => {
+                let value = read_machine_trap_csr(self, csr) & !self.read(rs1);
+                write_machine_trap_csr(self, &mut register_writes, rd, csr, value);
+            }
+            RiscvInstruction::WriteMachineTrapCsrImmediate { rd, csr, zimm } => {
+                write_machine_trap_csr(self, &mut register_writes, rd, csr, u64::from(zimm));
+            }
+            RiscvInstruction::SetMachineTrapCsrImmediate { rd, csr, zimm } => {
+                let value = read_machine_trap_csr(self, csr) | u64::from(zimm);
+                write_machine_trap_csr(self, &mut register_writes, rd, csr, value);
+            }
+            RiscvInstruction::ClearMachineTrapCsrImmediate { rd, csr, zimm } => {
+                let value = read_machine_trap_csr(self, csr) & !u64::from(zimm);
+                write_machine_trap_csr(self, &mut register_writes, rd, csr, value);
             }
             RiscvInstruction::ReadTranslationCsr { rd, csr } => {
                 write_register(
@@ -1119,23 +977,19 @@ impl RiscvHartState {
                 write_translation_csr(self, &mut register_writes, rd, csr, value);
             }
             RiscvInstruction::Ecall => {
-                next_pc = pc;
-                self.pc = next_pc;
-                return Ok(RiscvExecutionRecord::with_trap(
+                return Ok(enter_machine_trap(
+                    self,
                     instruction,
                     pc,
-                    next_pc,
-                    RiscvTrap::new(RiscvTrapKind::EnvironmentCall, pc),
+                    RiscvTrapKind::EnvironmentCall,
                 ));
             }
             RiscvInstruction::Ebreak => {
-                next_pc = pc;
-                self.pc = next_pc;
-                return Ok(RiscvExecutionRecord::with_trap(
+                return Ok(enter_machine_trap(
+                    self,
                     instruction,
                     pc,
-                    next_pc,
-                    RiscvTrap::new(RiscvTrapKind::Breakpoint, pc),
+                    RiscvTrapKind::Breakpoint,
                 ));
             }
         }
@@ -1162,6 +1016,41 @@ impl RiscvHartState {
                 memory_access,
             )),
         }
+    }
+}
+
+fn enter_machine_trap(
+    hart: &mut RiscvHartState,
+    instruction: RiscvInstruction,
+    pc: u64,
+    kind: RiscvTrapKind,
+) -> RiscvExecutionRecord {
+    let previous_privilege = hart.privilege_mode();
+    let cause = machine_trap_cause(kind, previous_privilege);
+    let handler_pc = hart.machine_trap_vector() & !0b11;
+    hart.set_machine_exception_pc(pc);
+    hart.set_machine_trap_cause(cause);
+    hart.set_machine_trap_value(0);
+    hart.set_privilege_mode(RiscvPrivilegeMode::Machine);
+    let status = hart.status();
+    hart.set_status(
+        status
+            .with_mpp(previous_privilege)
+            .with_mpie(status.mie())
+            .with_mie(false),
+    );
+    hart.set_pc(handler_pc);
+    RiscvExecutionRecord::with_trap(instruction, pc, handler_pc, RiscvTrap::new(kind, pc))
+}
+
+const fn machine_trap_cause(kind: RiscvTrapKind, privilege: RiscvPrivilegeMode) -> u64 {
+    match kind {
+        RiscvTrapKind::EnvironmentCall => match privilege {
+            RiscvPrivilegeMode::User => 8,
+            RiscvPrivilegeMode::Supervisor => 9,
+            RiscvPrivilegeMode::Machine => 11,
+        },
+        RiscvTrapKind::Breakpoint => 3,
     }
 }
 
@@ -1207,15 +1096,30 @@ fn write_status_csr(
     hart.set_status(csr.write(hart.status(), value));
 }
 
-fn write_machine_exception_pc_csr(
+fn read_machine_trap_csr(hart: &RiscvHartState, csr: RiscvMachineTrapCsr) -> u64 {
+    match csr {
+        RiscvMachineTrapCsr::Mtvec => hart.machine_trap_vector(),
+        RiscvMachineTrapCsr::Mepc => hart.machine_exception_pc(),
+        RiscvMachineTrapCsr::Mcause => hart.machine_trap_cause(),
+        RiscvMachineTrapCsr::Mtval => hart.machine_trap_value(),
+    }
+}
+
+fn write_machine_trap_csr(
     hart: &mut RiscvHartState,
     writes: &mut Vec<RegisterWrite>,
     register: Register,
+    csr: RiscvMachineTrapCsr,
     value: u64,
 ) {
-    let old_value = hart.machine_exception_pc();
+    let old_value = read_machine_trap_csr(hart, csr);
     write_register(hart, writes, register, old_value);
-    hart.set_machine_exception_pc(value);
+    match csr {
+        RiscvMachineTrapCsr::Mtvec => hart.set_machine_trap_vector(value),
+        RiscvMachineTrapCsr::Mepc => hart.set_machine_exception_pc(value),
+        RiscvMachineTrapCsr::Mcause => hart.set_machine_trap_cause(value),
+        RiscvMachineTrapCsr::Mtval => hart.set_machine_trap_value(value),
+    }
 }
 
 fn read_translation_csr(hart: &RiscvHartState, csr: RiscvTranslationCsr) -> u64 {

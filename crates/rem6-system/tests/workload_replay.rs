@@ -2001,7 +2001,8 @@ fn workload_replay_uses_fetch_target_layout_after_pc_redirect() {
         .unwrap();
 
     let core = outcome.cluster().core(CpuId::new(0)).unwrap();
-    assert_eq!(core.pc(), Address::new(0x9000));
+    assert_eq!(outcome.run().scheduled_traps()[0].trap().pc(), 0x9000);
+    assert_eq!(core.pc(), Address::new(0));
     assert_eq!(outcome.run().active_cpu_count(), 1);
     plan.verify_result(outcome.result()).unwrap();
 }
