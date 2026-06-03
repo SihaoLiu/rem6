@@ -3324,7 +3324,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   monitor-id validation, snapshot restore, BOP and DCPT internal arrays,
   DCPT table associativity, AMPM access-map associativity and LRU replacement, SignaturePath tables,
   SBOOE sandboxes and latency buffers, SMS region/context/history tables, FDP
-  queues, shared queued and stride prefetchers, PIF tables and buffers, IMP
+  queues, shared queued missing-translation deferral, translation start width,
+  ongoing-state suppression, translation fault and redundant-drop completion,
+  translation-completion ready latency, shared queued and stride prefetchers, PIF tables and buffers, IMP
   tables and address arrays, ISB training and mapping tables, and STeMS
   sequence slot offset limits plus sequence, reconstruction, table, and RMOB
   state, cache write queue ready ordering, reserve handling, functional-read
@@ -4210,8 +4212,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   plus initial partitioned, topology-built cache-directory, topology-built
   DRAM-backed harnesses with recorded resource summaries, workload-replay
   data-cache attribution, and direct topology CHI data-cache attach, plus
-  richer cache internals such as additional prefetcher algorithms, prefetch
-  translation and snoop integration, and fuller cache/DRAM QoS policy
+  richer cache internals such as additional prefetcher algorithms,
+  end-to-end cache and MMU wiring for prefetch translation requests, and fuller
+  cache/DRAM QoS policy
   integration.
 - Broaden device coverage to PCI, virtio, storage, network, richer GPU runtime,
   and platform-specific devices.

@@ -21,6 +21,7 @@ mod prefetch_indirect_memory;
 mod prefetch_isb;
 mod prefetch_multi;
 mod prefetch_pif;
+mod prefetch_queue;
 mod prefetch_sbooe;
 mod prefetch_signature_path;
 mod prefetch_signature_path_v2;
@@ -83,10 +84,7 @@ pub use msi::{
     MsiCacheControllerSnapshot, MsiPendingMissSnapshot,
 };
 pub use prefetch::{
-    PrefetchCandidate, QueuedPrefetchConfig, QueuedPrefetchDemandAccess,
-    QueuedPrefetchEnqueueResult, QueuedPrefetchEntrySnapshot, QueuedPrefetchFullPolicy,
-    QueuedPrefetchIssue, QueuedPrefetchRedundantLine, QueuedPrefetchResidency, QueuedPrefetcher,
-    QueuedPrefetcherError, QueuedPrefetcherSnapshot, StridePrefetchAccess, StridePrefetchCandidate,
+    PrefetchCandidate, StridePrefetchAccess, StridePrefetchCandidate,
     StridePrefetchContextSnapshot, StridePrefetchEntrySnapshot, StridePrefetcher,
     StridePrefetcherConfig, StridePrefetcherError, StridePrefetcherSnapshot, TaggedPrefetchAccess,
     TaggedPrefetchCandidate, TaggedPrefetcher, TaggedPrefetcherConfig, TaggedPrefetcherError,
@@ -137,6 +135,13 @@ pub use prefetch_pif::{
     PifCompactorEntrySnapshot, PifHistoryEntrySnapshot, PifIndexEntrySnapshot, PifPrefetchAccess,
     PifPrefetchCandidate, PifPrefetcher, PifPrefetcherConfig, PifPrefetcherError,
     PifPrefetcherSnapshot,
+};
+pub use prefetch_queue::{
+    QueuedPrefetchConfig, QueuedPrefetchDemandAccess, QueuedPrefetchEnqueueResult,
+    QueuedPrefetchEntrySnapshot, QueuedPrefetchFullPolicy, QueuedPrefetchIssue,
+    QueuedPrefetchMissingTranslationEntrySnapshot, QueuedPrefetchRedundantLine,
+    QueuedPrefetchResidency, QueuedPrefetchTranslationOutcome, QueuedPrefetchTranslationRequest,
+    QueuedPrefetcher, QueuedPrefetcherError, QueuedPrefetcherSnapshot,
 };
 pub use prefetch_sbooe::{
     SbooePrefetchAccess, SbooePrefetchCandidate, SbooePrefetcher, SbooePrefetcherConfig,
