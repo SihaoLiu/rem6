@@ -1,7 +1,7 @@
 use crate::encoding::{csr, funct3, rd, rs1};
 use crate::{
     RiscvCounterCsr, RiscvError, RiscvInstruction, RiscvMachineTrapCsr, RiscvStatusCsr,
-    RiscvTranslationCsr,
+    RiscvSupervisorTrapCsr, RiscvTranslationCsr,
 };
 
 pub(crate) fn decode_csr(raw: u32) -> Result<RiscvInstruction, RiscvError> {
@@ -18,6 +18,10 @@ pub(crate) fn decode_csr(raw: u32) -> Result<RiscvInstruction, RiscvError> {
                 .or_else(|| {
                     RiscvMachineTrapCsr::from_address(csr_address)
                         .map(|csr| RiscvInstruction::ReadMachineTrapCsr { rd: rd(raw), csr })
+                })
+                .or_else(|| {
+                    RiscvSupervisorTrapCsr::from_address(csr_address)
+                        .map(|csr| RiscvInstruction::ReadSupervisorTrapCsr { rd: rd(raw), csr })
                 })
                 .or_else(|| {
                     RiscvTranslationCsr::from_address(csr_address)
@@ -127,6 +131,42 @@ pub(crate) fn decode_csr(raw: u32) -> Result<RiscvInstruction, RiscvError> {
                 zimm: rs1(raw).index(),
             }),
             0x7 => Ok(RiscvInstruction::ClearMachineTrapCsrImmediate {
+                rd: rd(raw),
+                csr,
+                zimm: rs1(raw).index(),
+            }),
+            _ => Err(RiscvError::UnknownEncoding { raw }),
+        };
+    }
+
+    if let Some(csr) = RiscvSupervisorTrapCsr::from_address(csr_address) {
+        return match funct3(raw) {
+            0x1 => Ok(RiscvInstruction::WriteSupervisorTrapCsr {
+                rd: rd(raw),
+                csr,
+                rs1: rs1(raw),
+            }),
+            0x2 => Ok(RiscvInstruction::SetSupervisorTrapCsr {
+                rd: rd(raw),
+                csr,
+                rs1: rs1(raw),
+            }),
+            0x3 => Ok(RiscvInstruction::ClearSupervisorTrapCsr {
+                rd: rd(raw),
+                csr,
+                rs1: rs1(raw),
+            }),
+            0x5 => Ok(RiscvInstruction::WriteSupervisorTrapCsrImmediate {
+                rd: rd(raw),
+                csr,
+                zimm: rs1(raw).index(),
+            }),
+            0x6 => Ok(RiscvInstruction::SetSupervisorTrapCsrImmediate {
+                rd: rd(raw),
+                csr,
+                zimm: rs1(raw).index(),
+            }),
+            0x7 => Ok(RiscvInstruction::ClearSupervisorTrapCsrImmediate {
                 rd: rd(raw),
                 csr,
                 zimm: rs1(raw).index(),

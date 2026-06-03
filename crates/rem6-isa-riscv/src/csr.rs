@@ -143,13 +143,42 @@ impl RiscvMachineTrapCsr {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum RiscvSupervisorTrapCsr {
+    Stvec,
+    Sepc,
+    Scause,
+    Stval,
+}
+
+impl RiscvSupervisorTrapCsr {
+    pub const fn address(self) -> u16 {
+        match self {
+            Self::Stvec => 0x105,
+            Self::Sepc => 0x141,
+            Self::Scause => 0x142,
+            Self::Stval => 0x143,
+        }
+    }
+
+    pub const fn from_address(address: u16) -> Option<Self> {
+        match address {
+            0x105 => Some(Self::Stvec),
+            0x141 => Some(Self::Sepc),
+            0x142 => Some(Self::Scause),
+            0x143 => Some(Self::Stval),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum RiscvStatusCsr {
     Mstatus,
     Sstatus,
 }
 
 impl RiscvStatusCsr {
-    const S_MODE_MASK: u64 = (1 << 18) | (1 << 19);
+    const S_MODE_MASK: u64 = (1 << 1) | (1 << 5) | (1 << 8) | (1 << 18) | (1 << 19);
 
     pub const fn address(self) -> u16 {
         match self {
@@ -189,8 +218,11 @@ pub struct RiscvStatusWord {
 }
 
 impl RiscvStatusWord {
+    const SIE_BIT: u32 = 1;
     const MIE_BIT: u32 = 3;
+    const SPIE_BIT: u32 = 5;
     const MPIE_BIT: u32 = 7;
+    const SPP_BIT: u32 = 8;
     const MPP_SHIFT: u32 = 11;
     const MPP_MASK: u64 = 0b11 << Self::MPP_SHIFT;
     const MPRV_BIT: u32 = 17;
@@ -205,12 +237,30 @@ impl RiscvStatusWord {
         self.bits
     }
 
+    pub const fn sie(self) -> bool {
+        status_bit(self.bits, Self::SIE_BIT)
+    }
+
+    pub const fn with_sie(mut self, enabled: bool) -> Self {
+        self.bits = set_status_bit(self.bits, Self::SIE_BIT, enabled);
+        self
+    }
+
     pub const fn mie(self) -> bool {
         status_bit(self.bits, Self::MIE_BIT)
     }
 
     pub const fn with_mie(mut self, enabled: bool) -> Self {
         self.bits = set_status_bit(self.bits, Self::MIE_BIT, enabled);
+        self
+    }
+
+    pub const fn spie(self) -> bool {
+        status_bit(self.bits, Self::SPIE_BIT)
+    }
+
+    pub const fn with_spie(mut self, enabled: bool) -> Self {
+        self.bits = set_status_bit(self.bits, Self::SPIE_BIT, enabled);
         self
     }
 
@@ -229,6 +279,26 @@ impl RiscvStatusWord {
 
     pub const fn with_mprv(mut self, enabled: bool) -> Self {
         self.bits = set_status_bit(self.bits, Self::MPRV_BIT, enabled);
+        self
+    }
+
+    pub const fn spp(self) -> RiscvPrivilegeMode {
+        if status_bit(self.bits, Self::SPP_BIT) {
+            RiscvPrivilegeMode::Supervisor
+        } else {
+            RiscvPrivilegeMode::User
+        }
+    }
+
+    pub const fn with_spp(mut self, privilege: RiscvPrivilegeMode) -> Self {
+        self.bits = set_status_bit(
+            self.bits,
+            Self::SPP_BIT,
+            matches!(
+                privilege,
+                RiscvPrivilegeMode::Supervisor | RiscvPrivilegeMode::Machine
+            ),
+        );
         self
     }
 

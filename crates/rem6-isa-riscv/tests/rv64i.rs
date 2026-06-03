@@ -3,7 +3,8 @@ use rem6_isa_riscv::{
     RiscvCounterBank, RiscvCounterCsr, RiscvCounterSnapshot, RiscvCsrError, RiscvError,
     RiscvExecutionRecord, RiscvFenceSet, RiscvHartState, RiscvInstruction, RiscvMachineTrapCsr,
     RiscvMemoryOrdering, RiscvPrivilegeMode, RiscvStatusCsr, RiscvStatusWord,
-    RiscvSv39AccessContext, RiscvSystemEvent, RiscvTranslationCsr, RiscvTrap, RiscvTrapKind,
+    RiscvSupervisorTrapCsr, RiscvSv39AccessContext, RiscvSystemEvent, RiscvTranslationCsr,
+    RiscvTrap, RiscvTrapKind,
 };
 
 fn r_type(funct7: u32, rs2: u8, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
@@ -130,6 +131,27 @@ fn riscv_status_word_tracks_mxr_and_sum_bits() {
     assert!(status.mxr());
     assert_eq!(status.with_sum(false).bits(), 1 << 19);
     assert_eq!(status.with_mxr(false).bits(), 1 << 18);
+}
+
+#[test]
+fn riscv_status_word_tracks_supervisor_return_bits() {
+    assert_eq!(RiscvStatusWord::new(0).with_sie(true).bits(), 1 << 1);
+    assert_eq!(RiscvStatusWord::new(0).with_spie(true).bits(), 1 << 5);
+    assert_eq!(
+        RiscvStatusWord::new(0)
+            .with_spp(RiscvPrivilegeMode::Supervisor)
+            .bits(),
+        1 << 8
+    );
+
+    let status = RiscvStatusWord::new((1 << 1) | (1 << 5) | (1 << 8));
+    assert!(status.sie());
+    assert!(status.spie());
+    assert_eq!(status.spp(), RiscvPrivilegeMode::Supervisor);
+    assert_eq!(
+        status.with_spp(RiscvPrivilegeMode::User).bits(),
+        (1 << 1) | (1 << 5)
+    );
 }
 
 #[test]
@@ -548,10 +570,10 @@ fn hart_executes_status_csr_read_modify_write_operations() {
         &[RegisterWrite::new(reg(5), 0x2 | (1 << 18))]
     );
     hart.execute(read_sstatus).unwrap();
-    assert_eq!(hart.read(reg(6)), 1 << 18);
+    assert_eq!(hart.read(reg(6)), 0x2 | (1 << 18));
 
     hart.execute(set_sstatus).unwrap();
-    assert_eq!(hart.read(reg(7)), 1 << 18);
+    assert_eq!(hart.read(reg(7)), 0x2 | (1 << 18));
     assert_eq!(hart.status().bits(), 0x2 | (1 << 18) | (1 << 19));
     assert_eq!(
         hart.sv39_access_context(),
@@ -561,7 +583,7 @@ fn hart_executes_status_csr_read_modify_write_operations() {
     );
 
     hart.execute(clear_sstatus).unwrap();
-    assert_eq!(hart.read(reg(8)), (1 << 18) | (1 << 19));
+    assert_eq!(hart.read(reg(8)), 0x2 | (1 << 18) | (1 << 19));
     assert_eq!(hart.status().bits(), 0x2 | (1 << 19));
 }
 
@@ -650,6 +672,84 @@ fn hart_decodes_and_executes_machine_trap_csrs() {
 
     hart.execute(read_mtvec).unwrap();
     assert_eq!(hart.read(reg(10)), 0x8001);
+}
+
+#[test]
+fn hart_decodes_and_executes_supervisor_trap_csrs() {
+    let mut hart = RiscvHartState::new(0x4200);
+    hart.write(reg(2), 0x8101);
+    hart.write(reg(3), 9);
+    hart.write(reg(4), 0xbeef);
+    hart.write(reg(11), 0x9000);
+    hart.write(reg(12), 0x30);
+
+    let write_stvec = RiscvInstruction::decode(csr_type(0x105, 2, 0x1, 5)).unwrap();
+    let write_scause = RiscvInstruction::decode(csr_type(0x142, 3, 0x1, 6)).unwrap();
+    let write_stval = RiscvInstruction::decode(csr_type(0x143, 4, 0x1, 7)).unwrap();
+    let set_scause_imm = RiscvInstruction::decode(csr_type(0x142, 0x10, 0x6, 8)).unwrap();
+    let clear_stval_imm = RiscvInstruction::decode(csr_type(0x143, 0x0e, 0x7, 9)).unwrap();
+    let read_stvec = RiscvInstruction::decode(csr_read_type(0x105, 10)).unwrap();
+    let write_sepc = RiscvInstruction::decode(csr_type(0x141, 11, 0x1, 13)).unwrap();
+    let set_sepc = RiscvInstruction::decode(csr_type(0x141, 12, 0x2, 14)).unwrap();
+    let read_sepc = RiscvInstruction::decode(csr_read_type(0x141, 15)).unwrap();
+
+    assert_eq!(
+        write_stvec,
+        RiscvInstruction::WriteSupervisorTrapCsr {
+            rd: reg(5),
+            csr: RiscvSupervisorTrapCsr::Stvec,
+            rs1: reg(2),
+        }
+    );
+    assert_eq!(
+        read_stvec,
+        RiscvInstruction::ReadSupervisorTrapCsr {
+            rd: reg(10),
+            csr: RiscvSupervisorTrapCsr::Stvec,
+        }
+    );
+    assert_eq!(
+        write_sepc,
+        RiscvInstruction::WriteSupervisorTrapCsr {
+            rd: reg(13),
+            csr: RiscvSupervisorTrapCsr::Sepc,
+            rs1: reg(11),
+        }
+    );
+
+    hart.execute(write_stvec).unwrap();
+    assert_eq!(hart.supervisor_trap_vector(), 0x8101);
+    assert_eq!(hart.read(reg(5)), 0);
+
+    hart.execute(write_scause).unwrap();
+    assert_eq!(hart.supervisor_trap_cause(), 9);
+    assert_eq!(hart.read(reg(6)), 0);
+
+    hart.execute(write_stval).unwrap();
+    assert_eq!(hart.supervisor_trap_value(), 0xbeef);
+    assert_eq!(hart.read(reg(7)), 0);
+
+    hart.execute(set_scause_imm).unwrap();
+    assert_eq!(hart.read(reg(8)), 9);
+    assert_eq!(hart.supervisor_trap_cause(), 25);
+
+    hart.execute(clear_stval_imm).unwrap();
+    assert_eq!(hart.read(reg(9)), 0xbeef);
+    assert_eq!(hart.supervisor_trap_value(), 0xbee1);
+
+    hart.execute(read_stvec).unwrap();
+    assert_eq!(hart.read(reg(10)), 0x8101);
+
+    hart.execute(write_sepc).unwrap();
+    assert_eq!(hart.supervisor_exception_pc(), 0x9000);
+    assert_eq!(hart.read(reg(13)), 0);
+
+    hart.execute(set_sepc).unwrap();
+    assert_eq!(hart.read(reg(14)), 0x9000);
+    assert_eq!(hart.supervisor_exception_pc(), 0x9030);
+
+    hart.execute(read_sepc).unwrap();
+    assert_eq!(hart.read(reg(15)), 0x9030);
 }
 
 #[test]
@@ -1963,6 +2063,38 @@ fn hart_executes_machine_return_from_machine_mode() {
     assert!(hart.status().mie());
     assert!(hart.status().mpie());
     assert_eq!(hart.status().mpp(), RiscvPrivilegeMode::User);
+    assert!(!hart.status().mprv());
+    assert_eq!(record.trap(), None);
+    assert_eq!(record.system_event(), None);
+    assert_eq!(record.register_writes(), &[]);
+    assert_eq!(record.memory_access(), None);
+}
+
+#[test]
+fn hart_executes_supervisor_return_from_supervisor_mode() {
+    let mut hart = RiscvHartState::new(0x7200);
+    hart.set_supervisor_exception_pc(0x9300);
+    hart.set_privilege_mode(RiscvPrivilegeMode::Supervisor);
+    hart.set_status(
+        RiscvStatusWord::new(0)
+            .with_spp(RiscvPrivilegeMode::User)
+            .with_spie(true)
+            .with_sie(false)
+            .with_mprv(true),
+    );
+
+    let instruction = RiscvInstruction::decode(0x1020_0073).unwrap();
+    assert_eq!(instruction, RiscvInstruction::SupervisorReturn);
+
+    let record = hart.execute(instruction).unwrap();
+
+    assert_eq!(record.pc(), 0x7200);
+    assert_eq!(record.next_pc(), 0x9300);
+    assert_eq!(hart.pc(), 0x9300);
+    assert_eq!(hart.privilege_mode(), RiscvPrivilegeMode::User);
+    assert!(hart.status().sie());
+    assert!(hart.status().spie());
+    assert_eq!(hart.status().spp(), RiscvPrivilegeMode::User);
     assert!(!hart.status().mprv());
     assert_eq!(record.trap(), None);
     assert_eq!(record.system_event(), None);

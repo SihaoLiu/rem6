@@ -1,6 +1,6 @@
 use crate::{
     AtomicMemoryOp, Immediate, MemoryWidth, Register, RiscvCounterCsr, RiscvFenceSet,
-    RiscvMachineTrapCsr, RiscvStatusCsr, RiscvTranslationCsr,
+    RiscvMachineTrapCsr, RiscvStatusCsr, RiscvSupervisorTrapCsr, RiscvTranslationCsr,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -301,6 +301,7 @@ pub enum RiscvInstruction {
     },
     FenceI,
     WaitForInterrupt,
+    SupervisorReturn,
     MachineReturn,
     SfenceVma {
         rs1: Register,
@@ -409,6 +410,40 @@ pub enum RiscvInstruction {
     ClearMachineTrapCsrImmediate {
         rd: Register,
         csr: RiscvMachineTrapCsr,
+        zimm: u8,
+    },
+    ReadSupervisorTrapCsr {
+        rd: Register,
+        csr: RiscvSupervisorTrapCsr,
+    },
+    WriteSupervisorTrapCsr {
+        rd: Register,
+        csr: RiscvSupervisorTrapCsr,
+        rs1: Register,
+    },
+    SetSupervisorTrapCsr {
+        rd: Register,
+        csr: RiscvSupervisorTrapCsr,
+        rs1: Register,
+    },
+    ClearSupervisorTrapCsr {
+        rd: Register,
+        csr: RiscvSupervisorTrapCsr,
+        rs1: Register,
+    },
+    WriteSupervisorTrapCsrImmediate {
+        rd: Register,
+        csr: RiscvSupervisorTrapCsr,
+        zimm: u8,
+    },
+    SetSupervisorTrapCsrImmediate {
+        rd: Register,
+        csr: RiscvSupervisorTrapCsr,
+        zimm: u8,
+    },
+    ClearSupervisorTrapCsrImmediate {
+        rd: Register,
+        csr: RiscvSupervisorTrapCsr,
         zimm: u8,
     },
     ReadTranslationCsr {
