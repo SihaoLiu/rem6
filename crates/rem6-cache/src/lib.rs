@@ -2,6 +2,7 @@ mod allocation;
 mod bank;
 mod chi;
 mod chi_bank;
+mod compressed_tags;
 mod downstream;
 mod indexing;
 mod mesi;
@@ -38,6 +39,12 @@ pub use chi::{
 };
 pub use chi_bank::{
     ChiCacheBank, ChiCacheBankError, ChiCacheBankSnapshot, ChiPendingUncacheableReadSnapshot,
+};
+pub use compressed_tags::{
+    CacheCompressedTagAccess, CacheCompressedTagEntrySnapshot, CacheCompressedTagInsert,
+    CacheCompressedTagInvalidate, CacheCompressedTagLine, CacheCompressedTagLookup,
+    CacheCompressedTagSetSnapshot, CacheCompressedTags, CacheCompressedTagsConfig,
+    CacheCompressedTagsError, CacheCompressedTagsSnapshot,
 };
 pub use indexing::{
     CacheIndexingLocation, CacheIndexingPolicyConfig, CacheIndexingPolicyError,
