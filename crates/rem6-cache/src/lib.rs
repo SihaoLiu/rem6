@@ -23,6 +23,7 @@ mod prefetch_pif;
 mod prefetch_sbooe;
 mod prefetch_signature_path;
 mod prefetch_signature_path_v2;
+mod prefetch_slim_ampm;
 mod prefetch_sms;
 mod prefetch_stems;
 mod prefetch_throttle;
@@ -146,6 +147,10 @@ pub use prefetch_signature_path_v2::{
     SignaturePathV2PatternStrideSnapshot, SignaturePathV2PrefetchCandidate,
     SignaturePathV2Prefetcher, SignaturePathV2PrefetcherConfig, SignaturePathV2PrefetcherError,
     SignaturePathV2PrefetcherSnapshot, SignaturePathV2SignatureEntrySnapshot,
+};
+pub use prefetch_slim_ampm::{
+    SlimAmpmPrefetchAccess, SlimAmpmPrefetchCandidate, SlimAmpmPrefetchSource, SlimAmpmPrefetcher,
+    SlimAmpmPrefetcherConfig, SlimAmpmPrefetcherError, SlimAmpmPrefetcherSnapshot,
 };
 pub use prefetch_sms::{
     SmsActiveEntrySnapshot, SmsFilterEntrySnapshot, SmsPatternEntrySnapshot, SmsPrefetchAccess,
