@@ -183,3 +183,42 @@ fn guest_wait_queue_reports_no_ready_or_retry_without_consuming_children() {
         GuestWaitOutcome::Ready(child)
     );
 }
+
+#[test]
+fn guest_wait_queue_snapshot_restore_preserves_selector_behavior() {
+    let current_group = GuestProcessGroupId::new(40).unwrap();
+    let other_group = GuestProcessGroupId::new(41).unwrap();
+    let first = GuestChildStatus::new(
+        GuestProcessId::new(400).unwrap(),
+        other_group,
+        GuestWaitStatus::exited(7),
+    );
+    let selected = GuestChildStatus::new(
+        GuestProcessId::new(401).unwrap(),
+        current_group,
+        GuestWaitStatus::signaled(GuestSignal::new(11).unwrap(), true),
+    );
+    let mut queue = GuestWaitQueue::new(current_group);
+    queue.push(first);
+    queue.push(selected);
+    let snapshot = queue.snapshot();
+
+    let mut restored = GuestWaitQueue::from_snapshot(snapshot.clone());
+
+    assert_eq!(restored.snapshot(), snapshot);
+    assert_eq!(
+        restored.wait(
+            GuestWaitSelector::from_wait4_pid(0).unwrap(),
+            GuestWaitOptions::blocking()
+        ),
+        GuestWaitOutcome::Ready(selected)
+    );
+    assert_eq!(
+        restored.wait(
+            GuestWaitSelector::from_wait4_pid(-41).unwrap(),
+            GuestWaitOptions::blocking()
+        ),
+        GuestWaitOutcome::Ready(first)
+    );
+    assert!(restored.is_empty());
+}

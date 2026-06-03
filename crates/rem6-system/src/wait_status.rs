@@ -199,6 +199,25 @@ impl GuestWaitQueue {
         }
     }
 
+    pub fn from_snapshot(snapshot: GuestWaitQueueSnapshot) -> Self {
+        Self {
+            current_process_group: snapshot.current_process_group,
+            pending: snapshot.pending,
+        }
+    }
+
+    pub fn snapshot(&self) -> GuestWaitQueueSnapshot {
+        GuestWaitQueueSnapshot::new(self.current_process_group, self.pending.clone())
+    }
+
+    pub fn restore_snapshot(&mut self, snapshot: GuestWaitQueueSnapshot) {
+        *self = Self::from_snapshot(snapshot);
+    }
+
+    pub const fn current_process_group(&self) -> GuestProcessGroupId {
+        self.current_process_group
+    }
+
     pub fn push(&mut self, child: GuestChildStatus) {
         self.pending.push(child);
     }
@@ -221,6 +240,37 @@ impl GuestWaitQueue {
         } else {
             GuestWaitOutcome::Retry
         }
+    }
+
+    pub fn len(&self) -> usize {
+        self.pending.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.pending.is_empty()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GuestWaitQueueSnapshot {
+    current_process_group: GuestProcessGroupId,
+    pending: Vec<GuestChildStatus>,
+}
+
+impl GuestWaitQueueSnapshot {
+    pub fn new(current_process_group: GuestProcessGroupId, pending: Vec<GuestChildStatus>) -> Self {
+        Self {
+            current_process_group,
+            pending,
+        }
+    }
+
+    pub const fn current_process_group(&self) -> GuestProcessGroupId {
+        self.current_process_group
+    }
+
+    pub fn pending(&self) -> &[GuestChildStatus] {
+        &self.pending
     }
 
     pub fn len(&self) -> usize {

@@ -845,7 +845,10 @@ isolated bugs:
   normal exit encodes `code << 8`, signal termination preserves the low
   seven-bit signal with an optional core-dump bit, stopped children encode
   `(signal << 8) | 0x7f`, continued children encode `0xffff`, and invalid guest
-  signals are typed errors.
+  signals are typed errors. The reference stores waitable child exits as
+  pending `SIGCHLD` entries in `signalList`, but that list is not serialized by
+  `System::serialize`; rem6 checkpoints the typed guest wait queue explicitly,
+  avoiding restore states that lose already-waitable child results.
   Public gem5 issue #1320 reports RISC-V GAP benchmark hangs with timing and
   minor multicore CPUs where the final barrier reaches a `futex` wait with only
   one core still awake, while atomic multicore reaches the same barrier with
@@ -1292,7 +1295,11 @@ Implementation evidence through 2026-06-03:
   a successful exit before being copied to guest memory. A typed wait queue now
   consumes the first matching child status for wait4-style exact-pid,
   any-child, current-process-group, and explicit process-group selectors, with
-  distinct nonblocking no-ready and blocking retry outcomes. It also has a typed
+  distinct nonblocking no-ready and blocking retry outcomes. Guest wait queue
+  snapshots and checkpoint banks now encode versioned `guest-wait` chunks,
+  preserve pending child statuses across selector-based restore, reject
+  malformed child records before live mutation, and participate in host
+  checkpoint capture/restore staging. It also has a typed
   guest futex table for future syscall emulation handoff. Tests cover public
   gem5 issue #1320 by requiring multicore barrier waiters to remain visible
   until a wake, mismatch waits to return would-block without mutation, zero

@@ -66,6 +66,7 @@ mod topology;
 mod trap_event;
 mod uart_checkpoint;
 mod virtio_checkpoint;
+mod wait_checkpoint;
 mod wait_status;
 mod workload_replay;
 mod workload_replay_heterogeneous;
@@ -225,9 +226,14 @@ pub use virtio_checkpoint::{
     VirtioSplitQueueCheckpointBank, VirtioSplitQueueCheckpointError,
     VirtioSplitQueueCheckpointPort, VirtioSplitQueueCheckpointRecord,
 };
+pub use wait_checkpoint::{
+    GuestWaitCheckpointBank, GuestWaitCheckpointError, GuestWaitCheckpointPort,
+    GuestWaitCheckpointRecord,
+};
 pub use wait_status::{
     GuestChildStatus, GuestProcessGroupId, GuestProcessId, GuestSignal, GuestWaitOptions,
-    GuestWaitOutcome, GuestWaitQueue, GuestWaitSelector, GuestWaitStatus, GuestWaitStatusError,
+    GuestWaitOutcome, GuestWaitQueue, GuestWaitQueueSnapshot, GuestWaitSelector, GuestWaitStatus,
+    GuestWaitStatusError,
 };
 pub use workload_replay::{
     RiscvWorkloadReplay, RiscvWorkloadReplayError, RiscvWorkloadReplayOutcome,
@@ -1059,6 +1065,7 @@ pub enum SystemError {
     GpuCheckpoint(GpuCheckpointError),
     GuestFdCheckpoint(GuestFdCheckpointError),
     GuestFutexCheckpoint(GuestFutexCheckpointError),
+    GuestWaitCheckpoint(GuestWaitCheckpointError),
     PciHostCheckpoint(PciHostCheckpointError),
     PciLegacyInterruptRouterCheckpoint(PciLegacyInterruptRouterCheckpointError),
     Pl031Checkpoint(Pl031CheckpointError),
@@ -1106,6 +1113,7 @@ impl fmt::Display for SystemError {
             Self::GpuCheckpoint(error) => write!(formatter, "{error}"),
             Self::GuestFdCheckpoint(error) => write!(formatter, "{error}"),
             Self::GuestFutexCheckpoint(error) => write!(formatter, "{error}"),
+            Self::GuestWaitCheckpoint(error) => write!(formatter, "{error}"),
             Self::PciHostCheckpoint(error) => write!(formatter, "{error}"),
             Self::PciLegacyInterruptRouterCheckpoint(error) => write!(formatter, "{error}"),
             Self::Pl031Checkpoint(error) => write!(formatter, "{error}"),
@@ -1150,6 +1158,7 @@ impl Error for SystemError {
             Self::GpuCheckpoint(error) => Some(error),
             Self::GuestFdCheckpoint(error) => Some(error),
             Self::GuestFutexCheckpoint(error) => Some(error),
+            Self::GuestWaitCheckpoint(error) => Some(error),
             Self::PciHostCheckpoint(error) => Some(error),
             Self::PciLegacyInterruptRouterCheckpoint(error) => Some(error),
             Self::Pl031Checkpoint(error) => Some(error),

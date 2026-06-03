@@ -12,19 +12,20 @@ use crate::{
     AcceleratorCheckpointBank, ClintCheckpointBank, CpuLocalTimerCheckpointBank,
     DramMemoryCheckpointBank, ExecutionMode, ExecutionModeTarget, FabricCheckpointBank,
     GpuCheckpointBank, GuestEventDelivery, GuestEventId, GuestFdCheckpointBank,
-    GuestFutexCheckpointBank, GuestHostCallResponse, GuestSourceId, HostAction, HostActionRecord,
-    HostEventPolicy, IdeControllerCheckpointBank, IdeControllerCheckpointPort,
-    InterruptControllerCheckpointBank, MemoryStoreCheckpointBank, MsiBankCheckpointBank,
-    PciHostCheckpointBank, PciHostCheckpointPort, PciLegacyInterruptRouterCheckpointBank,
-    PciLegacyInterruptRouterCheckpointPort, Pl011UartCheckpointBank, Pl031CheckpointBank,
-    PlicCheckpointBank, RiscvCoreCheckpointBank, RtcCheckpointBank, SchedulerCheckpointBank,
-    SinicFifoCheckpointBank, SinicFifoCheckpointPort, SinicRegisterCheckpointBank,
-    SinicRegisterCheckpointPort, Sp804CheckpointBank, Sp805CheckpointBank, StopRequest,
-    StorageImageCheckpointBank, StorageImageCheckpointPort, SystemError, TimerCheckpointBank,
-    UartCheckpointBank, VirtioPciCommonCheckpointBank, VirtioPciCommonCheckpointPort,
-    VirtioPciDeviceConfigCheckpointBank, VirtioPciDeviceConfigCheckpointPort,
-    VirtioPciIsrCheckpointBank, VirtioPciIsrCheckpointPort, VirtioPciNotifyCheckpointBank,
-    VirtioPciNotifyCheckpointPort, VirtioSplitQueueCheckpointBank, VirtioSplitQueueCheckpointPort,
+    GuestFutexCheckpointBank, GuestHostCallResponse, GuestSourceId, GuestWaitCheckpointBank,
+    HostAction, HostActionRecord, HostEventPolicy, IdeControllerCheckpointBank,
+    IdeControllerCheckpointPort, InterruptControllerCheckpointBank, MemoryStoreCheckpointBank,
+    MsiBankCheckpointBank, PciHostCheckpointBank, PciHostCheckpointPort,
+    PciLegacyInterruptRouterCheckpointBank, PciLegacyInterruptRouterCheckpointPort,
+    Pl011UartCheckpointBank, Pl031CheckpointBank, PlicCheckpointBank, RiscvCoreCheckpointBank,
+    RtcCheckpointBank, SchedulerCheckpointBank, SinicFifoCheckpointBank, SinicFifoCheckpointPort,
+    SinicRegisterCheckpointBank, SinicRegisterCheckpointPort, Sp804CheckpointBank,
+    Sp805CheckpointBank, StopRequest, StorageImageCheckpointBank, StorageImageCheckpointPort,
+    SystemError, TimerCheckpointBank, UartCheckpointBank, VirtioPciCommonCheckpointBank,
+    VirtioPciCommonCheckpointPort, VirtioPciDeviceConfigCheckpointBank,
+    VirtioPciDeviceConfigCheckpointPort, VirtioPciIsrCheckpointBank, VirtioPciIsrCheckpointPort,
+    VirtioPciNotifyCheckpointBank, VirtioPciNotifyCheckpointPort, VirtioSplitQueueCheckpointBank,
+    VirtioSplitQueueCheckpointPort,
 };
 
 pub use execution_mode_checkpoint::ExecutionModeCheckpointError;
@@ -92,6 +93,7 @@ pub struct SystemActionExecutor {
     storage_image_checkpoints: Option<StorageImageCheckpointBank>,
     guest_fd_checkpoints: Option<GuestFdCheckpointBank>,
     guest_futex_checkpoints: Option<GuestFutexCheckpointBank>,
+    guest_wait_checkpoints: Option<GuestWaitCheckpointBank>,
     ide_controller_checkpoints: Option<IdeControllerCheckpointBank>,
     sinic_register_checkpoints: Option<SinicRegisterCheckpointBank>,
     sinic_fifo_checkpoints: Option<SinicFifoCheckpointBank>,
@@ -139,6 +141,7 @@ impl SystemActionExecutor {
             storage_image_checkpoints: None,
             guest_fd_checkpoints: None,
             guest_futex_checkpoints: None,
+            guest_wait_checkpoints: None,
             ide_controller_checkpoints: None,
             sinic_register_checkpoints: None,
             sinic_fifo_checkpoints: None,
@@ -397,6 +400,15 @@ impl SystemActionExecutor {
     ) -> Result<(), CheckpointError> {
         guest_futex_checkpoints.register_all(&mut self.checkpoints)?;
         self.guest_futex_checkpoints = Some(guest_futex_checkpoints);
+        Ok(())
+    }
+
+    pub fn attach_guest_wait_checkpoint_bank(
+        &mut self,
+        guest_wait_checkpoints: GuestWaitCheckpointBank,
+    ) -> Result<(), CheckpointError> {
+        guest_wait_checkpoints.register_all(&mut self.checkpoints)?;
+        self.guest_wait_checkpoints = Some(guest_wait_checkpoints);
         Ok(())
     }
 
@@ -843,6 +855,10 @@ impl SystemActionExecutor {
         self.guest_futex_checkpoints.as_ref()
     }
 
+    pub const fn guest_wait_checkpoint_bank(&self) -> Option<&GuestWaitCheckpointBank> {
+        self.guest_wait_checkpoints.as_ref()
+    }
+
     pub const fn ide_controller_checkpoint_bank(&self) -> Option<&IdeControllerCheckpointBank> {
         self.ide_controller_checkpoints.as_ref()
     }
@@ -1026,6 +1042,11 @@ impl SystemActionExecutor {
                 .validate_restore_from(checkpoints)
                 .map_err(SystemError::GuestFutexCheckpoint)?;
         }
+        if let Some(guest_wait_checkpoints) = &self.guest_wait_checkpoints {
+            guest_wait_checkpoints
+                .validate_restore_from(checkpoints)
+                .map_err(SystemError::GuestWaitCheckpoint)?;
+        }
         if let Some(ide_controller_checkpoints) = &self.ide_controller_checkpoints {
             ide_controller_checkpoints
                 .validate_restore_from(checkpoints)
@@ -1193,6 +1214,11 @@ impl SystemActionExecutor {
             guest_futex_checkpoints
                 .restore_all_from(&self.checkpoints)
                 .map_err(SystemError::GuestFutexCheckpoint)?;
+        }
+        if let Some(guest_wait_checkpoints) = &self.guest_wait_checkpoints {
+            guest_wait_checkpoints
+                .restore_all_from(&self.checkpoints)
+                .map_err(SystemError::GuestWaitCheckpoint)?;
         }
         if let Some(ide_controller_checkpoints) = &self.ide_controller_checkpoints {
             ide_controller_checkpoints
@@ -1409,6 +1435,11 @@ impl SystemActionExecutor {
                 }
                 if let Some(guest_futex_checkpoints) = &self.guest_futex_checkpoints {
                     guest_futex_checkpoints
+                        .capture_all_into(&mut staged_checkpoints)
+                        .map_err(SystemError::Checkpoint)?;
+                }
+                if let Some(guest_wait_checkpoints) = &self.guest_wait_checkpoints {
+                    guest_wait_checkpoints
                         .capture_all_into(&mut staged_checkpoints)
                         .map_err(SystemError::Checkpoint)?;
                 }
