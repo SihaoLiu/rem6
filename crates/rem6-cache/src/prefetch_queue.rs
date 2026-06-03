@@ -66,7 +66,7 @@ impl QueuedPrefetchConfig {
             line_size,
             page_size: 0,
             missing_translation_capacity: 0,
-            full_policy: QueuedPrefetchFullPolicy::RejectNew,
+            full_policy: QueuedPrefetchFullPolicy::EvictOldestLowestPriority,
             throttle_config: None,
         })
     }

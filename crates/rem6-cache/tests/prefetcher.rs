@@ -1572,6 +1572,41 @@ fn queued_prefetcher_can_evict_oldest_lowest_priority_entry_when_full() {
 }
 
 #[test]
+fn queued_prefetcher_default_full_policy_matches_gem5_eviction() {
+    let stride_config = StridePrefetcherConfig::new(64, 4, 2, 2, 0, true).unwrap();
+    let mut stride = StridePrefetcher::new(stride_config);
+    assert!(stride.observe(access(1, 0x80, 0x1000)).unwrap().is_empty());
+    assert!(stride.observe(access(1, 0x80, 0x1040)).unwrap().is_empty());
+    let initial_candidates = stride.observe(access(1, 0x80, 0x1080)).unwrap().to_vec();
+
+    let queue_config = QueuedPrefetchConfig::with_line_size(2, 3, 4, true, 64).unwrap();
+    let mut queue = QueuedPrefetcher::new(queue_config);
+    assert_eq!(
+        queue.enqueue_candidates(10, &initial_candidates).unwrap(),
+        2
+    );
+
+    let next_candidates = stride.observe(access(1, 0x80, 0x10c0)).unwrap().to_vec();
+    assert_eq!(next_candidates[1].address(), Address::new(0x1140));
+    let result = queue
+        .enqueue_candidates_filtered(11, &next_candidates[1..], &[])
+        .unwrap();
+
+    assert_eq!(result.accepted(), 1);
+    assert_eq!(result.evicted_full(), 1);
+    assert_eq!(queue.stats().removed_by_full_queue(), 1);
+    assert_eq!(
+        queue
+            .snapshot()
+            .pending()
+            .iter()
+            .map(|entry| entry.address())
+            .collect::<Vec<_>>(),
+        vec![Address::new(0x10c0), Address::new(0x1140)]
+    );
+}
+
+#[test]
 fn queued_prefetcher_exposes_next_ready_tick_for_scheduler_planning() {
     let stride_config = StridePrefetcherConfig::new(64, 4, 2, 2, 0, true).unwrap();
     let mut stride = StridePrefetcher::new(stride_config);
