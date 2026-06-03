@@ -1,4 +1,7 @@
-use rem6_system::{GuestFd, GuestFdEntry, GuestFdError, GuestFdTable, GuestFileDescriptionId};
+use rem6_system::{
+    GuestFd, GuestFdEntry, GuestFdError, GuestFdTable, GuestFileDescription,
+    GuestFileDescriptionId, GuestFileStatusFlags, GuestHostFd,
+};
 
 #[test]
 fn guest_fd_dup2_respects_requested_destination_fd() {
@@ -151,4 +154,117 @@ fn guest_fd_exec_closes_marked_descriptors_and_returns_closed_entries() {
     );
     assert!(!table.close_on_exec(retained).unwrap());
     assert_eq!(table.dup(retained).unwrap(), GuestFd::new(0).unwrap());
+}
+
+#[test]
+fn guest_fd_status_flags_are_shared_by_file_description_not_descriptor() {
+    let mut table = GuestFdTable::new();
+    let fd = GuestFd::new(11).unwrap();
+    let description = GuestFileDescriptionId::new(110);
+    table
+        .insert_description(GuestFileDescription::host_backed(
+            description,
+            GuestHostFd::new(40).unwrap(),
+            GuestFileStatusFlags::new(0x02),
+        ))
+        .unwrap();
+    table
+        .insert(fd, GuestFdEntry::new(description).with_close_on_exec(true))
+        .unwrap();
+
+    let duplicate = table.dup(fd).unwrap();
+
+    assert_eq!(table.status_flags(fd).unwrap().bits(), 0x02);
+    assert_eq!(table.status_flags(duplicate).unwrap().bits(), 0x02);
+    assert!(table.close_on_exec(fd).unwrap());
+    assert!(!table.close_on_exec(duplicate).unwrap());
+
+    table
+        .set_status_flags(duplicate, GuestFileStatusFlags::new(0x802))
+        .unwrap();
+
+    assert_eq!(table.status_flags(fd).unwrap().bits(), 0x802);
+    assert_eq!(table.status_flags(duplicate).unwrap().bits(), 0x802);
+    assert_eq!(
+        table
+            .description_for_fd(fd)
+            .unwrap()
+            .host_fd()
+            .unwrap()
+            .get(),
+        40
+    );
+}
+
+#[test]
+fn guest_fd_status_flags_reject_missing_description_without_mutating_entries() {
+    let mut table = GuestFdTable::new();
+    let fd = GuestFd::new(12).unwrap();
+    let missing = GuestFileDescriptionId::new(120);
+    table
+        .insert(fd, GuestFdEntry::new(missing).with_close_on_exec(true))
+        .unwrap();
+
+    assert_eq!(
+        table.status_flags(fd),
+        Err(GuestFdError::MissingFileDescription {
+            description: missing
+        })
+    );
+    assert_eq!(
+        table.set_status_flags(fd, GuestFileStatusFlags::new(0x20)),
+        Err(GuestFdError::MissingFileDescription {
+            description: missing
+        })
+    );
+    assert!(table.close_on_exec(fd).unwrap());
+    assert_eq!(table.entry(fd).unwrap().description(), missing);
+}
+
+#[test]
+fn guest_fd_rejects_duplicate_descriptions_and_negative_host_fd() {
+    let mut table = GuestFdTable::new();
+    let description = GuestFileDescriptionId::new(130);
+    let file = GuestFileDescription::host_backed(
+        description,
+        GuestHostFd::new(41).unwrap(),
+        GuestFileStatusFlags::new(0),
+    );
+
+    table.insert_description(file.clone()).unwrap();
+
+    assert_eq!(
+        table.insert_description(file),
+        Err(GuestFdError::DuplicateFileDescription { description })
+    );
+    assert_eq!(
+        GuestHostFd::new(-1).unwrap_err(),
+        GuestFdError::NegativeHostFd { fd: -1 }
+    );
+}
+
+#[test]
+fn guest_fd_guest_backed_description_has_shared_status_without_host_fd() {
+    let mut table = GuestFdTable::new();
+    let fd = GuestFd::new(13).unwrap();
+    let description = GuestFileDescriptionId::new(140);
+    table
+        .insert_description(GuestFileDescription::guest_backed(
+            description,
+            GuestFileStatusFlags::new(0x40),
+        ))
+        .unwrap();
+    table.insert(fd, GuestFdEntry::new(description)).unwrap();
+
+    let duplicate = table.dup(fd).unwrap();
+
+    assert_eq!(table.description_for_fd(fd).unwrap().host_fd(), None);
+    assert_eq!(table.status_flags(duplicate).unwrap().bits(), 0x40);
+
+    table
+        .set_status_flags(fd, GuestFileStatusFlags::new(0x240))
+        .unwrap();
+
+    assert_eq!(table.status_flags(fd).unwrap().bits(), 0x240);
+    assert_eq!(table.status_flags(duplicate).unwrap().bits(), 0x240);
 }

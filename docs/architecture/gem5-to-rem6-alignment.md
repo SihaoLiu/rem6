@@ -1292,7 +1292,9 @@ Implementation evidence through 2026-06-03:
   close-on-exec reads and updates for future `fcntl` handoff, with invalid-fd
   errors leaving unrelated descriptors unchanged. Exec handoff can now close
   only descriptors marked close-on-exec while returning the removed entries for
-  host-backed cleanup.
+  host-backed cleanup. Host-backed description metadata now keeps file status
+  flags shared by description id, so duplicated descriptors share `F_GETFL` and
+  `F_SETFL` state without merging per-descriptor close-on-exec bits.
 - `rem6-memory` has typed sparse and modulo-interleaved address map regions for
   future full-system memory maps. Tests cover the gem5 issue #2855 shape by
   routing one base physical range across three modulo stripes, rejecting
