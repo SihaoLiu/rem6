@@ -130,6 +130,17 @@ fn linear_traffic_generator_stops_at_data_limit() {
 }
 
 #[test]
+fn linear_traffic_generator_treats_zero_data_limit_as_unlimited() {
+    let config = linear_config().with_data_limit(0).unwrap();
+    let mut generator = LinearTrafficGenerator::new(config);
+
+    assert!(generator.next_request(0, 0).unwrap().is_some());
+    assert!(generator.next_request(4, 0).unwrap().is_some());
+
+    assert_eq!(generator.summary().packet_count(), 2);
+}
+
+#[test]
 fn linear_traffic_generator_snapshots_after_partial_block_limit() {
     let config = linear_config().with_data_limit(17).unwrap();
     let mut generator = LinearTrafficGenerator::new(config);
