@@ -1,6 +1,7 @@
 use rem6_cache::{
     QueuedPrefetchConfig, QueuedPrefetchDemandAccess, QueuedPrefetchFullPolicy,
-    QueuedPrefetchRedundantLine, QueuedPrefetcher, StridePrefetchAccess, StridePrefetcher,
+    QueuedPrefetchRedundantLine, QueuedPrefetchSourceStatus, QueuedPrefetchThrottle,
+    QueuedPrefetchThrottleConfig, QueuedPrefetcher, StridePrefetchAccess, StridePrefetcher,
     StridePrefetcherConfig, TaggedPrefetchAccess, TaggedPrefetcher, TaggedPrefetcherConfig,
 };
 use rem6_memory::{Address, AgentId};
@@ -122,4 +123,75 @@ fn queued_prefetcher_records_resource_stats_in_snapshots() {
     assert_eq!(page_queue.stats().identified_prefetches(), 0);
     assert_eq!(page_queue.stats().span_page_prefetches(), 2);
     assert_eq!(page_queue.stats().useful_span_page_prefetches(), 0);
+}
+
+#[test]
+fn queued_prefetcher_records_useful_span_page_candidates_from_prefetched_source() {
+    let mut tagged = TaggedPrefetcher::new(TaggedPrefetcherConfig::new(64, 2).unwrap());
+    let page_crossing = tagged
+        .observe(tagged_access(4, 0x90, 0x0fc0))
+        .unwrap()
+        .to_vec();
+
+    let queue_config = QueuedPrefetchConfig::with_line_size(4, 3, 4, true, 64)
+        .unwrap()
+        .with_page_size(4096)
+        .unwrap();
+    let mut demand_source_queue = QueuedPrefetcher::new(queue_config.clone());
+    let demand_result = demand_source_queue
+        .enqueue_candidates_filtered_with_source(
+            20,
+            &page_crossing,
+            &[],
+            QueuedPrefetchSourceStatus::demand(),
+        )
+        .unwrap();
+    assert_eq!(demand_result.dropped_page_crossing(), 2);
+    assert_eq!(demand_source_queue.stats().span_page_prefetches(), 2);
+    assert_eq!(demand_source_queue.stats().useful_span_page_prefetches(), 0);
+
+    let mut prefetched_source_queue = QueuedPrefetcher::new(queue_config);
+    let prefetched_result = prefetched_source_queue
+        .enqueue_candidates_filtered_with_source(
+            20,
+            &page_crossing,
+            &[],
+            QueuedPrefetchSourceStatus::prefetched(),
+        )
+        .unwrap();
+    assert_eq!(prefetched_result.dropped_page_crossing(), 2);
+    assert_eq!(prefetched_source_queue.stats().span_page_prefetches(), 2);
+    assert_eq!(
+        prefetched_source_queue
+            .stats()
+            .useful_span_page_prefetches(),
+        2
+    );
+
+    let snapshot = prefetched_source_queue.snapshot();
+    let mut restored = QueuedPrefetcher::new(snapshot.config().clone());
+    restored.restore(&snapshot).unwrap();
+    assert_eq!(
+        restored.stats().useful_span_page_prefetches(),
+        prefetched_source_queue
+            .stats()
+            .useful_span_page_prefetches()
+    );
+
+    let throttle = QueuedPrefetchThrottle::new(QueuedPrefetchThrottleConfig::new(0).unwrap());
+    let mut throttled_source_queue = QueuedPrefetcher::new(restored.config().clone());
+    let throttled_result = throttled_source_queue
+        .enqueue_candidates_throttled_with_source(
+            20,
+            &page_crossing,
+            &[],
+            &throttle,
+            QueuedPrefetchSourceStatus::prefetched(),
+        )
+        .unwrap();
+    assert_eq!(throttled_result.dropped_page_crossing(), 2);
+    assert_eq!(
+        throttled_source_queue.stats().useful_span_page_prefetches(),
+        2
+    );
 }

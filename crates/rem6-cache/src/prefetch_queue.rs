@@ -170,6 +170,9 @@ pub enum QueuedPrefetcherError {
     UnknownTranslation {
         request: TranslationRequestId,
     },
+    TranslationNotStarted {
+        request: TranslationRequestId,
+    },
     TranslationRequestAddressOverflow {
         address: Address,
         size: u64,
@@ -220,6 +223,11 @@ impl fmt::Display for QueuedPrefetcherError {
             Self::UnknownTranslation { request } => write!(
                 formatter,
                 "queued prefetch translation request {:?} is unknown",
+                request
+            ),
+            Self::TranslationNotStarted { request } => write!(
+                formatter,
+                "queued prefetch translation request {:?} has not started",
                 request
             ),
             Self::TranslationRequestAddressOverflow { address, size } => write!(
@@ -304,6 +312,25 @@ impl QueuedPrefetchRedundantLine {
 
     pub const fn residency(&self) -> QueuedPrefetchResidency {
         self.residency
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct QueuedPrefetchSourceStatus {
+    prefetched: bool,
+}
+
+impl QueuedPrefetchSourceStatus {
+    pub const fn demand() -> Self {
+        Self { prefetched: false }
+    }
+
+    pub const fn prefetched() -> Self {
+        Self { prefetched: true }
+    }
+
+    pub const fn is_prefetched(&self) -> bool {
+        self.prefetched
     }
 }
 
@@ -949,6 +976,23 @@ impl QueuedPrefetcher {
             candidates,
             redundant_lines,
             candidates.len(),
+            QueuedPrefetchSourceStatus::demand(),
+        )
+    }
+
+    pub fn enqueue_candidates_filtered_with_source<C: PrefetchCandidate>(
+        &mut self,
+        source_tick: u64,
+        candidates: &[C],
+        redundant_lines: &[QueuedPrefetchRedundantLine],
+        source_status: QueuedPrefetchSourceStatus,
+    ) -> Result<QueuedPrefetchEnqueueResult, QueuedPrefetcherError> {
+        self.enqueue_candidates_filtered_limited(
+            source_tick,
+            candidates,
+            redundant_lines,
+            candidates.len(),
+            source_status,
         )
     }
 
@@ -964,6 +1008,24 @@ impl QueuedPrefetcher {
             candidates,
             redundant_lines,
             throttle.max_permitted(candidates.len()),
+            QueuedPrefetchSourceStatus::demand(),
+        )
+    }
+
+    pub fn enqueue_candidates_throttled_with_source<C: PrefetchCandidate>(
+        &mut self,
+        source_tick: u64,
+        candidates: &[C],
+        redundant_lines: &[QueuedPrefetchRedundantLine],
+        throttle: &QueuedPrefetchThrottle,
+        source_status: QueuedPrefetchSourceStatus,
+    ) -> Result<QueuedPrefetchEnqueueResult, QueuedPrefetcherError> {
+        self.enqueue_candidates_filtered_limited(
+            source_tick,
+            candidates,
+            redundant_lines,
+            throttle.max_permitted(candidates.len()),
+            source_status,
         )
     }
 
@@ -973,6 +1035,7 @@ impl QueuedPrefetcher {
         candidates: &[C],
         redundant_lines: &[QueuedPrefetchRedundantLine],
         accepted_limit: usize,
+        source_status: QueuedPrefetchSourceStatus,
     ) -> Result<QueuedPrefetchEnqueueResult, QueuedPrefetcherError> {
         let ready_tick = source_tick.checked_add(self.config.latency()).ok_or(
             QueuedPrefetcherError::ReadyTickOverflow {
@@ -998,6 +1061,9 @@ impl QueuedPrefetcher {
             let address = self.normalized_address(candidate.address());
             if self.crosses_page(address, candidate.source_address()) {
                 self.stats.record_span_page(1);
+                if source_status.is_prefetched() {
+                    self.stats.record_useful_span_page(1);
+                }
                 if self.config.missing_translation_capacity().is_none() {
                     dropped_page_crossing += 1;
                     continue;
@@ -1145,6 +1211,9 @@ impl QueuedPrefetcher {
         else {
             return Err(QueuedPrefetcherError::UnknownTranslation { request });
         };
+        if !self.missing_translations[position].ongoing_translation {
+            return Err(QueuedPrefetcherError::TranslationNotStarted { request });
+        }
         let entry = self.missing_translations.remove(position);
         let Some(physical_address) = resolution.physical_address() else {
             return Ok(QueuedPrefetchTranslationOutcome::TranslationFailed);

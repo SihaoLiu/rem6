@@ -138,4 +138,8 @@ impl QueuedPrefetchStatsSnapshot {
     pub(crate) fn record_span_page(&mut self, delta: u64) {
         self.span_page_prefetches = self.span_page_prefetches.saturating_add(delta);
     }
+
+    pub(crate) fn record_useful_span_page(&mut self, delta: u64) {
+        self.useful_span_page_prefetches = self.useful_span_page_prefetches.saturating_add(delta);
+    }
 }

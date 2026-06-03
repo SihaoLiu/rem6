@@ -140,8 +140,9 @@ pub use prefetch_queue::{
     QueuedPrefetchConfig, QueuedPrefetchDemandAccess, QueuedPrefetchEnqueueResult,
     QueuedPrefetchEntrySnapshot, QueuedPrefetchFullPolicy, QueuedPrefetchIssue,
     QueuedPrefetchMissingTranslationEntrySnapshot, QueuedPrefetchRedundantLine,
-    QueuedPrefetchResidency, QueuedPrefetchTranslationOutcome, QueuedPrefetchTranslationRequest,
-    QueuedPrefetcher, QueuedPrefetcherError, QueuedPrefetcherSnapshot,
+    QueuedPrefetchResidency, QueuedPrefetchSourceStatus, QueuedPrefetchTranslationOutcome,
+    QueuedPrefetchTranslationRequest, QueuedPrefetcher, QueuedPrefetcherError,
+    QueuedPrefetcherSnapshot,
 };
 pub use prefetch_sbooe::{
     SbooePrefetchAccess, SbooePrefetchCandidate, SbooePrefetcher, SbooePrefetcherConfig,

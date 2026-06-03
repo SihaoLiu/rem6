@@ -6,7 +6,7 @@ use rem6_cache::{
 };
 use rem6_memory::{
     Address, AgentId, TranslationAccessKind, TranslationFault, TranslationFaultKind,
-    TranslationResolution,
+    TranslationRequestId, TranslationResolution,
 };
 
 fn tagged_access(agent: u32, pc: u64, address: u64) -> TaggedPrefetchAccess {
@@ -153,6 +153,41 @@ fn queued_prefetcher_defers_page_crossing_candidates_until_translation_completes
     assert_eq!(issues[0].context(), AgentId::new(4));
     assert_eq!(issues[0].source_tick(), 20);
     assert_eq!(issues[0].ready_tick(), 33);
+}
+
+#[test]
+fn queued_prefetcher_rejects_completion_for_not_started_translation() {
+    let candidates = page_crossing_candidates();
+    let queue_config = QueuedPrefetchConfig::with_line_size(4, 3, 4, true, 64)
+        .unwrap()
+        .with_page_size(4096)
+        .unwrap()
+        .with_missing_translation_capacity(2)
+        .unwrap();
+    let mut queue = QueuedPrefetcher::new(queue_config);
+
+    assert_eq!(
+        queue
+            .enqueue_candidates_filtered(20, &candidates[..1], &[])
+            .unwrap()
+            .pending_translations(),
+        1
+    );
+    let snapshot = queue.snapshot();
+    let missing = &snapshot.missing_translations()[0];
+    assert!(!missing.ongoing_translation());
+    let request = TranslationRequestId::new(missing.context(), missing.order());
+
+    assert_eq!(
+        queue.complete_translation(
+            30,
+            request,
+            TranslationResolution::mapped(Address::new(0x3008)),
+            &[],
+        ),
+        Err(QueuedPrefetcherError::TranslationNotStarted { request })
+    );
+    assert_eq!(queue.snapshot(), snapshot);
 }
 
 #[test]
