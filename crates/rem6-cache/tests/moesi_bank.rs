@@ -1,6 +1,7 @@
 use rem6_cache::{
-    CacheWriteQueueConfig, CacheWriteQueueEntryKind, CacheWriteQueueError, CacheWriteQueueHandle,
-    MoesiCacheBank, MoesiCacheBankError, MoesiCacheControllerError, MoesiCacheControllerResultKind,
+    CacheReplacementDirectoryConfig, CacheReplacementPolicyKind, CacheWriteQueueConfig,
+    CacheWriteQueueEntryKind, CacheWriteQueueError, CacheWriteQueueHandle, MoesiCacheBank,
+    MoesiCacheBankError, MoesiCacheControllerError, MoesiCacheControllerResultKind,
     MoesiPendingUncacheableReadSnapshot, MshrQosClass, MshrQueueConfig,
 };
 use rem6_memory::{
@@ -147,6 +148,287 @@ fn response_id(outcome: &TargetOutcome) -> MemoryRequestId {
         TargetOutcome::RespondAfter { response, .. } => response.request_id(),
         TargetOutcome::NoResponse => panic!("expected response outcome"),
     }
+}
+
+fn lru_replacement_config(sets: usize, ways: usize) -> CacheReplacementDirectoryConfig {
+    CacheReplacementDirectoryConfig::new(CacheReplacementPolicyKind::Lru, layout(), sets, ways)
+        .unwrap()
+}
+
+fn fill_read_line(bank: &mut MoesiCacheBank, cache_agent: AgentId, sequence: u64, address: u64) {
+    let request = read(cache_agent, sequence, address);
+    let miss = bank.accept_cpu_request(request).unwrap();
+    bank.accept_fill(
+        fill(miss.downstream_request().unwrap(), sequence as u8),
+        MoesiEvent::DataShared,
+    )
+    .unwrap();
+}
+
+fn fill_modified_line(
+    bank: &mut MoesiCacheBank,
+    cache_agent: AgentId,
+    sequence: u64,
+    address: u64,
+) {
+    let store = write(cache_agent, sequence, address, vec![0xde, 0xad]);
+    let miss = bank.accept_cpu_request(store).unwrap();
+    bank.accept_fill(
+        fill(miss.downstream_request().unwrap(), 0x00),
+        MoesiEvent::DataModified,
+    )
+    .unwrap();
+}
+
+#[test]
+fn moesi_cache_bank_replacement_directory_evicts_clean_lru_lines() {
+    let cache_agent = agent(30);
+    let config = lru_replacement_config(1, 2);
+    let mut bank =
+        MoesiCacheBank::new_with_replacement_directory(cache_agent, layout(), config.clone())
+            .unwrap();
+
+    fill_read_line(&mut bank, cache_agent, 10, 0x5004);
+    fill_read_line(&mut bank, cache_agent, 11, 0x5014);
+    assert_eq!(
+        bank.line_addresses(),
+        vec![Address::new(0x5000), Address::new(0x5010)]
+    );
+    assert_eq!(bank.replacement_way_for(Address::new(0x5000)), Some((0, 0)));
+    assert_eq!(bank.replacement_way_for(Address::new(0x5010)), Some((0, 1)));
+
+    let hit = bank
+        .accept_cpu_request(read(cache_agent, 12, 0x5004))
+        .unwrap();
+    assert_eq!(response_data(hit.target_outcome().unwrap()), &[10; 8]);
+    let snapshot = bank.snapshot();
+
+    fill_read_line(&mut bank, cache_agent, 13, 0x5024);
+    assert_eq!(bank.state(Address::new(0x5010)), None);
+    assert_eq!(
+        bank.line_addresses(),
+        vec![Address::new(0x5000), Address::new(0x5020)]
+    );
+    assert_eq!(bank.replacement_way_for(Address::new(0x5010)), None);
+    assert_eq!(bank.replacement_way_for(Address::new(0x5020)), Some((0, 1)));
+
+    bank.restore(&snapshot).unwrap();
+    fill_read_line(&mut bank, cache_agent, 14, 0x5024);
+    assert_eq!(
+        bank.line_addresses(),
+        vec![Address::new(0x5000), Address::new(0x5020)]
+    );
+    assert_eq!(bank.replacement_way_for(Address::new(0x5020)), Some((0, 1)));
+
+    let mut directory_bank =
+        MoesiCacheBank::new_with_replacement_directory(cache_agent, layout(), config).unwrap();
+    assert_eq!(
+        directory_bank.restore(&MoesiCacheBank::new(cache_agent, layout()).snapshot()),
+        Err(
+            MoesiCacheBankError::SnapshotReplacementDirectoryModeMismatch {
+                snapshot_has_replacement_directory: false,
+                bank_has_replacement_directory: true,
+            }
+        )
+    );
+
+    let mut plain_bank = MoesiCacheBank::new(cache_agent, layout());
+    assert_eq!(
+        plain_bank.restore(&snapshot),
+        Err(
+            MoesiCacheBankError::SnapshotReplacementDirectoryModeMismatch {
+                snapshot_has_replacement_directory: true,
+                bank_has_replacement_directory: false,
+            }
+        )
+    );
+}
+
+#[test]
+fn moesi_cache_bank_replacement_directory_rejects_dirty_evictions() {
+    let cache_agent = agent(30);
+    let mut modified_bank = MoesiCacheBank::new_with_replacement_directory(
+        cache_agent,
+        layout(),
+        lru_replacement_config(1, 1),
+    )
+    .unwrap();
+
+    fill_modified_line(&mut modified_bank, cache_agent, 20, 0x5104);
+    assert_eq!(
+        modified_bank.state(Address::new(0x5100)),
+        Some(MoesiState::Modified)
+    );
+    let modified_miss = modified_bank
+        .accept_cpu_request(read(cache_agent, 21, 0x5114))
+        .unwrap();
+    assert_eq!(
+        modified_bank.accept_fill(
+            fill(modified_miss.downstream_request().unwrap(), 0x22),
+            MoesiEvent::DataShared,
+        ),
+        Err(MoesiCacheBankError::DirtyReplacementRequiresWriteQueue {
+            line: Address::new(0x5100),
+        })
+    );
+    assert_eq!(
+        modified_bank.state(Address::new(0x5100)),
+        Some(MoesiState::Modified)
+    );
+    assert_eq!(
+        modified_bank.state(Address::new(0x5110)),
+        Some(MoesiState::InvalidToExclusive)
+    );
+    assert_eq!(
+        modified_bank.pending_fill_line(modified_miss.downstream_request().unwrap().id()),
+        Some(Address::new(0x5110))
+    );
+    assert_eq!(
+        modified_bank.replacement_way_for(Address::new(0x5100)),
+        Some((0, 0))
+    );
+    assert_eq!(
+        modified_bank.replacement_way_for(Address::new(0x5110)),
+        None
+    );
+
+    let mut owned_bank = MoesiCacheBank::new_with_replacement_directory(
+        cache_agent,
+        layout(),
+        lru_replacement_config(1, 1),
+    )
+    .unwrap();
+
+    fill_modified_line(&mut owned_bank, cache_agent, 22, 0x5204);
+    owned_bank
+        .accept_snoop(Address::new(0x5204), MoesiEvent::SnoopRead)
+        .unwrap();
+    assert_eq!(
+        owned_bank.state(Address::new(0x5200)),
+        Some(MoesiState::Owned)
+    );
+    let owned_miss = owned_bank
+        .accept_cpu_request(read(cache_agent, 23, 0x5214))
+        .unwrap();
+    assert_eq!(
+        owned_bank.accept_fill(
+            fill(owned_miss.downstream_request().unwrap(), 0x33),
+            MoesiEvent::DataShared,
+        ),
+        Err(MoesiCacheBankError::DirtyReplacementRequiresWriteQueue {
+            line: Address::new(0x5200),
+        })
+    );
+    assert_eq!(
+        owned_bank.state(Address::new(0x5200)),
+        Some(MoesiState::Owned)
+    );
+    assert_eq!(
+        owned_bank.state(Address::new(0x5210)),
+        Some(MoesiState::InvalidToExclusive)
+    );
+    assert_eq!(
+        owned_bank.pending_fill_line(owned_miss.downstream_request().unwrap().id()),
+        Some(Address::new(0x5210))
+    );
+    assert_eq!(
+        owned_bank.replacement_way_for(Address::new(0x5200)),
+        Some((0, 0))
+    );
+    assert_eq!(owned_bank.replacement_way_for(Address::new(0x5210)), None);
+}
+
+#[test]
+fn moesi_cache_bank_replacement_directory_rejects_transient_eviction() {
+    let cache_agent = agent(30);
+    let mut bank = MoesiCacheBank::new_with_replacement_directory(
+        cache_agent,
+        layout(),
+        lru_replacement_config(1, 2),
+    )
+    .unwrap();
+
+    fill_read_line(&mut bank, cache_agent, 30, 0x5304);
+    fill_read_line(&mut bank, cache_agent, 31, 0x5314);
+
+    let upgrade = bank
+        .accept_cpu_request(write(cache_agent, 32, 0x5304, vec![0x44]))
+        .unwrap();
+    let upgrade_downstream = upgrade.downstream_request().unwrap().clone();
+    assert_eq!(
+        bank.state(Address::new(0x5300)),
+        Some(MoesiState::SharedToModified)
+    );
+
+    let read_miss = bank
+        .accept_cpu_request(read(cache_agent, 33, 0x5324))
+        .unwrap();
+    assert_eq!(
+        bank.accept_fill(
+            fill(read_miss.downstream_request().unwrap(), 0x55),
+            MoesiEvent::DataShared,
+        ),
+        Err(
+            MoesiCacheBankError::TransientReplacementRequiresStableLine {
+                line: Address::new(0x5300),
+            }
+        )
+    );
+    assert_eq!(
+        bank.state(Address::new(0x5300)),
+        Some(MoesiState::SharedToModified)
+    );
+    assert_eq!(
+        bank.pending_fill_line(upgrade_downstream.id()),
+        Some(Address::new(0x5300))
+    );
+    assert_eq!(bank.replacement_way_for(Address::new(0x5300)), Some((0, 0)));
+    assert_eq!(bank.replacement_way_for(Address::new(0x5320)), None);
+}
+
+#[test]
+fn moesi_cache_bank_uncacheable_read_removes_clean_resident_from_replacement_directory() {
+    let cache_agent = agent(30);
+    let mut bank = MoesiCacheBank::new_with_replacement_directory(
+        cache_agent,
+        layout(),
+        lru_replacement_config(1, 2),
+    )
+    .unwrap();
+
+    fill_read_line(&mut bank, cache_agent, 40, 0x5404);
+    assert_eq!(bank.state(Address::new(0x5400)), Some(MoesiState::Shared));
+    assert_eq!(bank.replacement_way_for(Address::new(0x5400)), Some((0, 0)));
+
+    let uncached = uncacheable_read(cache_agent, 41, 0x5408);
+    let uncached_miss = bank.accept_cpu_request(uncached.clone()).unwrap();
+    let uncached_downstream = uncached_miss.downstream_request().unwrap();
+
+    assert_eq!(uncached_miss.kind(), MoesiCacheControllerResultKind::Miss);
+    assert_eq!(uncached_downstream.id(), uncached.id());
+    assert_eq!(uncached_downstream.range(), uncached.range());
+    assert!(uncached_downstream.is_uncacheable());
+    assert!(uncached_downstream.is_strict_ordered());
+    assert_eq!(bank.state(Address::new(0x5400)), None);
+    assert_eq!(bank.replacement_way_for(Address::new(0x5400)), None);
+
+    let uncached_fill = bank
+        .accept_fill(
+            MemoryResponse::completed(uncached_downstream, Some(vec![0x88; 8])).unwrap(),
+            MoesiEvent::DataShared,
+        )
+        .unwrap();
+    assert_eq!(
+        response_data(uncached_fill.target_outcome().unwrap()),
+        &[0x88; 8]
+    );
+    assert_eq!(bank.state(Address::new(0x5400)), None);
+    assert_eq!(bank.replacement_way_for(Address::new(0x5400)), None);
+
+    let normal_again = bank
+        .accept_cpu_request(read(cache_agent, 42, 0x5404))
+        .unwrap();
+    assert_eq!(normal_again.kind(), MoesiCacheControllerResultKind::Miss);
 }
 
 #[test]

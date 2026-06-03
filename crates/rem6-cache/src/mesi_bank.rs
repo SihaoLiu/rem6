@@ -10,12 +10,13 @@ use rem6_protocol_mesi::{MesiEvent, MesiLineId, MesiState};
 use rem6_transport::TargetOutcome;
 
 use crate::{
-    CacheWriteQueue, CacheWriteQueueConfig, CacheWriteQueueEntryKind, CacheWriteQueueError,
-    CacheWriteQueueHandle, CacheWriteQueueIssue, CacheWriteQueueSnapshot, CacheWriteQueueUpdate,
-    MesiCacheController, MesiCacheControllerError, MesiCacheControllerResult,
-    MesiCacheControllerResultKind, MesiCacheControllerSnapshot, MshrCompletion, MshrHandle,
-    MshrQosClass, MshrQosProfile, MshrQueue, MshrQueueConfig, MshrQueueError, MshrQueueSnapshot,
-    MshrTargetSource,
+    CacheReplacementDirectory, CacheReplacementDirectoryConfig, CacheReplacementDirectorySnapshot,
+    CacheReplacementPolicyError, CacheWriteQueue, CacheWriteQueueConfig, CacheWriteQueueEntryKind,
+    CacheWriteQueueError, CacheWriteQueueHandle, CacheWriteQueueIssue, CacheWriteQueueSnapshot,
+    CacheWriteQueueUpdate, MesiCacheController, MesiCacheControllerError,
+    MesiCacheControllerResult, MesiCacheControllerResultKind, MesiCacheControllerSnapshot,
+    MshrCompletion, MshrHandle, MshrQosClass, MshrQosProfile, MshrQueue, MshrQueueConfig,
+    MshrQueueError, MshrQueueSnapshot, MshrTargetSource,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -23,6 +24,11 @@ pub enum MesiCacheBankError {
     Controller(MesiCacheControllerError),
     Mshr(MshrQueueError),
     WriteQueue(CacheWriteQueueError),
+    Replacement(CacheReplacementPolicyError),
+    ReplacementDirectoryLayoutMismatch {
+        expected: CacheLineLayout,
+        actual: CacheLineLayout,
+    },
     WrongAgent {
         expected: AgentId,
         actual: AgentId,
@@ -35,6 +41,12 @@ pub enum MesiCacheBankError {
         line: Address,
     },
     UncacheableBypassRequiresCleanLine {
+        line: Address,
+    },
+    DirtyReplacementRequiresWriteQueue {
+        line: Address,
+    },
+    TransientReplacementRequiresStableLine {
         line: Address,
     },
     UnknownPendingFill {
@@ -59,6 +71,10 @@ pub enum MesiCacheBankError {
     SnapshotWriteQueueModeMismatch {
         snapshot_has_write_queue: bool,
         bank_has_write_queue: bool,
+    },
+    SnapshotReplacementDirectoryModeMismatch {
+        snapshot_has_replacement_directory: bool,
+        bank_has_replacement_directory: bool,
     },
     SnapshotPendingUncacheableRequestMismatch {
         response: MemoryRequestId,
@@ -91,6 +107,13 @@ impl fmt::Display for MesiCacheBankError {
             Self::Controller(error) => write!(formatter, "{error}"),
             Self::Mshr(error) => write!(formatter, "{error}"),
             Self::WriteQueue(error) => write!(formatter, "{error}"),
+            Self::Replacement(error) => write!(formatter, "{error}"),
+            Self::ReplacementDirectoryLayoutMismatch { expected, actual } => write!(
+                formatter,
+                "MESI cache bank replacement directory line size {} cannot attach to bank line size {}",
+                actual.bytes(),
+                expected.bytes()
+            ),
             Self::WrongAgent { expected, actual } => write!(
                 formatter,
                 "MESI cache bank for agent {} cannot accept request from agent {}",
@@ -111,6 +134,16 @@ impl fmt::Display for MesiCacheBankError {
             Self::UncacheableBypassRequiresCleanLine { line } => write!(
                 formatter,
                 "MESI cache bank cannot bypass uncacheable request over non-clean resident line {:#x}",
+                line.get()
+            ),
+            Self::DirtyReplacementRequiresWriteQueue { line } => write!(
+                formatter,
+                "MESI cache bank cannot evict dirty line {:#x} without replacement writeback support",
+                line.get()
+            ),
+            Self::TransientReplacementRequiresStableLine { line } => write!(
+                formatter,
+                "MESI cache bank cannot evict transient line {:#x} through replacement capacity",
                 line.get()
             ),
             Self::UnknownPendingFill { response } => write!(
@@ -156,6 +189,13 @@ impl fmt::Display for MesiCacheBankError {
             } => write!(
                 formatter,
                 "MESI cache bank snapshot write queue mode {snapshot_has_write_queue} cannot restore bank write queue mode {bank_has_write_queue}"
+            ),
+            Self::SnapshotReplacementDirectoryModeMismatch {
+                snapshot_has_replacement_directory,
+                bank_has_replacement_directory,
+            } => write!(
+                formatter,
+                "MESI cache bank snapshot replacement directory mode {snapshot_has_replacement_directory} cannot restore bank replacement directory mode {bank_has_replacement_directory}"
             ),
             Self::SnapshotPendingUncacheableRequestMismatch {
                 response,
@@ -213,17 +253,22 @@ impl Error for MesiCacheBankError {
             Self::Controller(error) => Some(error),
             Self::Mshr(error) => Some(error),
             Self::WriteQueue(error) => Some(error),
-            Self::WrongAgent { .. }
+            Self::Replacement(error) => Some(error),
+            Self::ReplacementDirectoryLayoutMismatch { .. }
+            | Self::WrongAgent { .. }
             | Self::WriteQueueDisabled
             | Self::WriteQueueConflict { .. }
             | Self::PendingUncacheableConflict { .. }
             | Self::UncacheableBypassRequiresCleanLine { .. }
+            | Self::DirtyReplacementRequiresWriteQueue { .. }
+            | Self::TransientReplacementRequiresStableLine { .. }
             | Self::UnknownPendingFill { .. }
             | Self::UnknownUncacheableWriteResponse { .. }
             | Self::UnknownSnoopLine { .. }
             | Self::SnapshotIdentityMismatch { .. }
             | Self::SnapshotMshrModeMismatch { .. }
             | Self::SnapshotWriteQueueModeMismatch { .. }
+            | Self::SnapshotReplacementDirectoryModeMismatch { .. }
             | Self::SnapshotPendingUncacheableRequestMismatch { .. }
             | Self::SnapshotPendingUncacheableReadWritebackMismatch { .. }
             | Self::DuplicateSnapshotLine { .. }
@@ -249,6 +294,12 @@ impl From<MshrQueueError> for MesiCacheBankError {
 impl From<CacheWriteQueueError> for MesiCacheBankError {
     fn from(error: CacheWriteQueueError) -> Self {
         Self::WriteQueue(error)
+    }
+}
+
+impl From<CacheReplacementPolicyError> for MesiCacheBankError {
+    fn from(error: CacheReplacementPolicyError) -> Self {
+        Self::Replacement(error)
     }
 }
 
@@ -283,6 +334,7 @@ pub struct MesiCacheBankSnapshot {
     lines: Vec<MesiCacheControllerSnapshot>,
     mshr: Option<MshrQueueSnapshot>,
     write_queue: Option<CacheWriteQueueSnapshot>,
+    replacement_directory: Option<CacheReplacementDirectorySnapshot>,
     inflight_uncacheable_writes: Vec<MemoryRequest>,
     pending_uncacheable_reads: Vec<MesiPendingUncacheableReadSnapshot>,
 }
@@ -301,6 +353,7 @@ impl MesiCacheBankSnapshot {
             lines,
             mshr: None,
             write_queue: None,
+            replacement_directory: None,
             inflight_uncacheable_writes: Vec::new(),
             pending_uncacheable_reads: Vec::new(),
         }
@@ -320,6 +373,7 @@ impl MesiCacheBankSnapshot {
             lines,
             mshr: Some(mshr),
             write_queue: None,
+            replacement_directory: None,
             inflight_uncacheable_writes: Vec::new(),
             pending_uncacheable_reads: Vec::new(),
         }
@@ -327,6 +381,14 @@ impl MesiCacheBankSnapshot {
 
     pub fn with_write_queue(mut self, write_queue: CacheWriteQueueSnapshot) -> Self {
         self.write_queue = Some(write_queue);
+        self
+    }
+
+    pub fn with_replacement_directory(
+        mut self,
+        replacement_directory: CacheReplacementDirectorySnapshot,
+    ) -> Self {
+        self.replacement_directory = Some(replacement_directory);
         self
     }
 
@@ -365,6 +427,10 @@ impl MesiCacheBankSnapshot {
 
     pub fn write_queue(&self) -> Option<&CacheWriteQueueSnapshot> {
         self.write_queue.as_ref()
+    }
+
+    pub fn replacement_directory(&self) -> Option<&CacheReplacementDirectorySnapshot> {
+        self.replacement_directory.as_ref()
     }
 
     pub fn inflight_uncacheable_writes(&self) -> &[MemoryRequest] {
@@ -436,6 +502,7 @@ pub struct MesiCacheBank {
     inflight_uncacheable_writes: BTreeMap<MemoryRequestId, MemoryRequest>,
     mshr: Option<MshrQueue>,
     write_queue: Option<CacheWriteQueue>,
+    replacement_directory: Option<CacheReplacementDirectory>,
 }
 
 impl MesiCacheBank {
@@ -449,6 +516,7 @@ impl MesiCacheBank {
             inflight_uncacheable_writes: BTreeMap::new(),
             mshr: None,
             write_queue: None,
+            replacement_directory: None,
         }
     }
 
@@ -466,6 +534,7 @@ impl MesiCacheBank {
             inflight_uncacheable_writes: BTreeMap::new(),
             mshr: Some(MshrQueue::new(mshr_config)),
             write_queue: None,
+            replacement_directory: None,
         }
     }
 
@@ -483,6 +552,7 @@ impl MesiCacheBank {
             inflight_uncacheable_writes: BTreeMap::new(),
             mshr: None,
             write_queue: Some(CacheWriteQueue::new(write_queue_config)),
+            replacement_directory: None,
         }
     }
 
@@ -501,7 +571,32 @@ impl MesiCacheBank {
             inflight_uncacheable_writes: BTreeMap::new(),
             mshr: Some(MshrQueue::new(mshr_config)),
             write_queue: Some(CacheWriteQueue::new(write_queue_config)),
+            replacement_directory: None,
         }
+    }
+
+    pub fn new_with_replacement_directory(
+        agent: AgentId,
+        layout: CacheLineLayout,
+        replacement_config: CacheReplacementDirectoryConfig,
+    ) -> Result<Self, MesiCacheBankError> {
+        if replacement_config.line_layout() != layout {
+            return Err(MesiCacheBankError::ReplacementDirectoryLayoutMismatch {
+                expected: layout,
+                actual: replacement_config.line_layout(),
+            });
+        }
+        Ok(Self {
+            agent,
+            layout,
+            next_sequence: 0,
+            lines: BTreeMap::new(),
+            pending_fills: BTreeMap::new(),
+            inflight_uncacheable_writes: BTreeMap::new(),
+            mshr: None,
+            write_queue: None,
+            replacement_directory: Some(CacheReplacementDirectory::new(replacement_config)),
+        })
     }
 
     pub const fn agent(&self) -> AgentId {
@@ -530,6 +625,12 @@ impl MesiCacheBank {
 
     pub fn line_addresses(&self) -> Vec<Address> {
         self.lines.keys().copied().collect()
+    }
+
+    pub fn replacement_way_for(&self, address: Address) -> Option<(usize, usize)> {
+        self.replacement_directory
+            .as_ref()
+            .and_then(|directory| directory.way_for(address))
     }
 
     pub fn pending_fill_line(&self, response: MemoryRequestId) -> Option<Address> {
@@ -615,6 +716,12 @@ impl MesiCacheBank {
             Some(write_queue) => snapshot.with_write_queue(write_queue.snapshot()),
             None => snapshot,
         };
+        let snapshot = match &self.replacement_directory {
+            Some(replacement_directory) => {
+                snapshot.with_replacement_directory(replacement_directory.snapshot())
+            }
+            None => snapshot,
+        };
         let pending_uncacheable_reads = self
             .pending_fills
             .values()
@@ -675,6 +782,34 @@ impl MesiCacheBank {
                     snapshot_has_write_queue: true,
                     bank_has_write_queue: false,
                 });
+            }
+        };
+
+        let restored_replacement_directory = match (
+            &self.replacement_directory,
+            snapshot.replacement_directory(),
+        ) {
+            (Some(directory), Some(snapshot_directory)) => {
+                let mut restored = CacheReplacementDirectory::new(directory.config().clone());
+                restored.restore(snapshot_directory)?;
+                Some(restored)
+            }
+            (Some(_), None) => {
+                return Err(
+                    MesiCacheBankError::SnapshotReplacementDirectoryModeMismatch {
+                        snapshot_has_replacement_directory: false,
+                        bank_has_replacement_directory: true,
+                    },
+                );
+            }
+            (None, None) => None,
+            (None, Some(_)) => {
+                return Err(
+                    MesiCacheBankError::SnapshotReplacementDirectoryModeMismatch {
+                        snapshot_has_replacement_directory: true,
+                        bank_has_replacement_directory: false,
+                    },
+                );
             }
         };
 
@@ -746,6 +881,7 @@ impl MesiCacheBank {
         self.inflight_uncacheable_writes = inflight_uncacheable_writes;
         self.mshr = restored_mshr;
         self.write_queue = restored_write_queue;
+        self.replacement_directory = restored_replacement_directory;
         Ok(())
     }
 
@@ -878,6 +1014,8 @@ impl MesiCacheBank {
             };
             self.pending_fills
                 .insert(downstream.id(), PendingBankFill::Line { line, mshr });
+        } else if result.kind() == MesiCacheControllerResultKind::Hit {
+            self.touch_replacement_line(line)?;
         }
         Ok(result)
     }
@@ -908,11 +1046,32 @@ impl MesiCacheBank {
                 ));
             }
         };
+        let controller_snapshot = self
+            .lines
+            .get(&line)
+            .expect("pending fill references an existing MESI cache line")
+            .snapshot();
+        let replacement_snapshot = self
+            .replacement_directory
+            .as_ref()
+            .map(CacheReplacementDirectory::snapshot);
         let controller = self
             .lines
             .get_mut(&line)
             .expect("pending fill references an existing MESI cache line");
         let result = controller.accept_fill(response, event)?;
+        if let Err(error) = self.install_replacement_line(line) {
+            self.lines
+                .get_mut(&line)
+                .expect("pending fill references an existing MESI cache line")
+                .restore(&controller_snapshot)?;
+            if let (Some(directory), Some(snapshot)) =
+                (&mut self.replacement_directory, &replacement_snapshot)
+            {
+                directory.restore(snapshot)?;
+            }
+            return Err(error);
+        }
         self.pending_fills.remove(&response_id);
 
         let completion = match mshr {
@@ -1199,7 +1358,7 @@ impl MesiCacheBank {
         if !self.can_bypass_uncacheable_resident_line(line) {
             return Err(MesiCacheBankError::UncacheableBypassRequiresCleanLine { line });
         }
-        self.lines.remove(&line);
+        self.remove_resident_line(line)?;
         self.pending_fills.insert(
             request.id(),
             PendingBankFill::Uncacheable {
@@ -1241,7 +1400,7 @@ impl MesiCacheBank {
         self.validate_write_queue_request(&request)?;
         self.write_queue_mut()?
             .enqueue_uncacheable_write(request, false, 0)?;
-        self.lines.remove(&line);
+        self.remove_resident_line(line)?;
         Ok(MesiCacheControllerResult::new(
             MesiCacheControllerResultKind::Miss,
             MesiState::Invalid,
@@ -1273,7 +1432,7 @@ impl MesiCacheBank {
             .write_queue_mut()?
             .enqueue_writeback(writeback, false, 0)?;
         self.next_sequence += 1;
-        self.lines.remove(&line);
+        self.remove_resident_line(line)?;
         Ok(Some(update.handle()))
     }
 
@@ -1325,6 +1484,60 @@ impl MesiCacheBank {
         self.write_queue
             .as_mut()
             .ok_or(MesiCacheBankError::WriteQueueDisabled)
+    }
+
+    fn remove_resident_line(&mut self, line: Address) -> Result<(), MesiCacheBankError> {
+        self.lines.remove(&line);
+        if let Some(directory) = &mut self.replacement_directory {
+            directory.remove_resident_line(line)?;
+        }
+        Ok(())
+    }
+
+    fn touch_replacement_line(&mut self, line: Address) -> Result<(), MesiCacheBankError> {
+        if let Some(directory) = &mut self.replacement_directory {
+            directory.touch(line)?;
+        }
+        Ok(())
+    }
+
+    fn install_replacement_line(&mut self, line: Address) -> Result<(), MesiCacheBankError> {
+        let Some(directory) = &mut self.replacement_directory else {
+            return Ok(());
+        };
+        let install = directory.install(line)?;
+        let Some(evicted_line) = install.evicted_line() else {
+            return Ok(());
+        };
+        if evicted_line == self.layout.line_address(line) {
+            return Ok(());
+        }
+        if let Some(controller) = self.lines.get(&evicted_line) {
+            match controller.state() {
+                MesiState::Modified => {
+                    return Err(MesiCacheBankError::DirtyReplacementRequiresWriteQueue {
+                        line: evicted_line,
+                    });
+                }
+                MesiState::InvalidToShared
+                | MesiState::InvalidToExclusive
+                | MesiState::InvalidToModified
+                | MesiState::SharedToModified => {
+                    return Err(MesiCacheBankError::TransientReplacementRequiresStableLine {
+                        line: evicted_line,
+                    });
+                }
+                MesiState::Invalid | MesiState::Shared | MesiState::Exclusive => {}
+            }
+        }
+        self.lines.remove(&evicted_line);
+        self.pending_fills.retain(|_, pending| {
+            !matches!(
+                pending,
+                PendingBankFill::Line { line, .. } if *line == evicted_line
+            )
+        });
+        Ok(())
     }
 
     fn can_merge_pending_read_miss(&self, line: Address, request: &MemoryRequest) -> bool {

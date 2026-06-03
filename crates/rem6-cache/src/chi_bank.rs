@@ -47,6 +47,9 @@ pub enum ChiCacheBankError {
     DirtyReplacementRequiresWriteQueue {
         line: Address,
     },
+    TransientReplacementRequiresStableLine {
+        line: Address,
+    },
     UnknownPendingFill {
         response: MemoryRequestId,
     },
@@ -137,6 +140,11 @@ impl fmt::Display for ChiCacheBankError {
             Self::DirtyReplacementRequiresWriteQueue { line } => write!(
                 formatter,
                 "CHI cache bank cannot evict dirty line {:#x} without replacement writeback support",
+                line.get()
+            ),
+            Self::TransientReplacementRequiresStableLine { line } => write!(
+                formatter,
+                "CHI cache bank cannot evict transient line {:#x} through replacement capacity",
                 line.get()
             ),
             Self::UnknownPendingFill { response } => write!(
@@ -254,6 +262,7 @@ impl Error for ChiCacheBankError {
             | Self::PendingUncacheableConflict { .. }
             | Self::UncacheableBypassRequiresCleanLine { .. }
             | Self::DirtyReplacementRequiresWriteQueue { .. }
+            | Self::TransientReplacementRequiresStableLine { .. }
             | Self::UnknownPendingFill { .. }
             | Self::UnknownUncacheableWriteResponse { .. }
             | Self::UnknownSnoopLine { .. }
@@ -1527,6 +1536,15 @@ impl ChiCacheBank {
             .is_some_and(|controller| controller.state().is_dirty())
         {
             return Err(ChiCacheBankError::DirtyReplacementRequiresWriteQueue {
+                line: evicted_line,
+            });
+        }
+        if self
+            .lines
+            .get(&evicted_line)
+            .is_some_and(|controller| controller.state().is_transient())
+        {
+            return Err(ChiCacheBankError::TransientReplacementRequiresStableLine {
                 line: evicted_line,
             });
         }

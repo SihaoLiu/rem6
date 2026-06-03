@@ -1131,6 +1131,61 @@ fn chi_cache_bank_replacement_directory_rejects_dirty_eviction_without_write_que
         Some(ChiState::InvalidToSharedClean)
     );
     assert_eq!(bank.replacement_way_for(Address::new(0x2000)), Some((0, 0)));
+    assert_eq!(bank.replacement_way_for(Address::new(0x2010)), None);
+}
+
+#[test]
+fn chi_cache_bank_replacement_directory_rejects_transient_eviction() {
+    let cache_agent = agent(40);
+    let mut bank = ChiCacheBank::new_with_replacement_directory(
+        cache_agent,
+        layout(),
+        lru_replacement_config(1, 2),
+    )
+    .unwrap();
+
+    fill_read_line(&mut bank, cache_agent, 522, 0x2024);
+    fill_read_line(&mut bank, cache_agent, 523, 0x2034);
+
+    let upgrade = bank
+        .accept_cpu_request(write(cache_agent, 524, 0x2024, vec![0x44]))
+        .unwrap();
+    let upgrade_downstream = upgrade.downstream_request().unwrap().clone();
+    assert_eq!(
+        bank.state(Address::new(0x2020)),
+        Some(ChiState::SharedCleanToUniqueClean)
+    );
+
+    let read_miss = bank
+        .accept_cpu_request(read(cache_agent, 525, 0x2044))
+        .unwrap();
+    assert_eq!(
+        bank.accept_fill(
+            fill(read_miss.downstream_request().unwrap(), 0x22),
+            ChiEvent::CompDataSharedClean,
+        ),
+        Err(ChiCacheBankError::TransientReplacementRequiresStableLine {
+            line: Address::new(0x2020),
+        })
+    );
+    assert_eq!(
+        bank.state(Address::new(0x2020)),
+        Some(ChiState::SharedCleanToUniqueClean)
+    );
+    assert_eq!(
+        bank.pending_fill_line(upgrade_downstream.id()),
+        Some(Address::new(0x2020))
+    );
+    assert_eq!(
+        bank.pending_fill_line(read_miss.downstream_request().unwrap().id()),
+        Some(Address::new(0x2040))
+    );
+    assert_eq!(
+        bank.state(Address::new(0x2040)),
+        Some(ChiState::InvalidToSharedClean)
+    );
+    assert_eq!(bank.replacement_way_for(Address::new(0x2020)), Some((0, 0)));
+    assert_eq!(bank.replacement_way_for(Address::new(0x2040)), None);
 }
 
 #[test]
