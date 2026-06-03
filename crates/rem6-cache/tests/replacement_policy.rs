@@ -1,6 +1,9 @@
+use std::collections::BTreeSet;
+
 use rem6_cache::{
-    CacheReplacementDirectory, CacheReplacementDirectoryConfig, CacheReplacementPolicyConfig,
-    CacheReplacementPolicyError, CacheReplacementPolicyKind, ReplacementEntry, ReplacementSet,
+    CacheIndexingLocation, CacheIndexingPolicyKind, CacheReplacementDirectory,
+    CacheReplacementDirectoryConfig, CacheReplacementPolicyConfig, CacheReplacementPolicyError,
+    CacheReplacementPolicyKind, ReplacementEntry, ReplacementSet,
 };
 use rem6_memory::{Address, CacheLineLayout};
 
@@ -12,6 +15,28 @@ const DIRECTORY_LINE_BYTE_OVERFLOW_LENGTH: usize =
 
 fn line_layout() -> CacheLineLayout {
     CacheLineLayout::new(16).unwrap()
+}
+
+fn line_for_candidate_location(
+    config: &CacheReplacementDirectoryConfig,
+    location: CacheIndexingLocation,
+    used: &mut BTreeSet<Address>,
+) -> Address {
+    for block in 0..4096 {
+        let line = Address::new(block * config.line_layout().bytes());
+        if used.contains(&line) {
+            continue;
+        }
+        if config
+            .indexing_config()
+            .candidate_locations(line)
+            .contains(&location)
+        {
+            used.insert(line);
+            return line;
+        }
+    }
+    panic!("candidate location has no matching line in bounded search");
 }
 
 #[test]
@@ -494,6 +519,166 @@ fn replacement_directory_tracks_set_way_ownership_and_lru_victims() {
     assert_eq!(
         directory.set_lines(1).unwrap(),
         vec![Some(Address::new(0x0010)), None]
+    );
+}
+
+#[test]
+fn replacement_directory_uses_skewed_indexing_candidate_locations() {
+    let config = CacheReplacementDirectoryConfig::new_with_indexing(
+        CacheReplacementPolicyKind::Lru,
+        CacheIndexingPolicyKind::SkewedAssociative,
+        line_layout(),
+        8,
+        4,
+    )
+    .unwrap();
+    let mut directory = CacheReplacementDirectory::new(config);
+
+    let install = directory.install(Address::new(0x80)).unwrap();
+
+    assert_eq!(install.line(), Address::new(0x80));
+    assert_eq!(install.set(), 5);
+    assert_eq!(install.way(), 0);
+    assert_eq!(directory.way_for(Address::new(0x83)), Some((5, 0)));
+    assert_eq!(
+        directory.set_lines(0).unwrap(),
+        vec![None, None, None, None]
+    );
+    assert_eq!(
+        directory.set_lines(5).unwrap(),
+        vec![Some(Address::new(0x80)), None, None, None]
+    );
+}
+
+#[test]
+fn replacement_directory_ages_skewed_brrip_candidates_before_eviction() {
+    let target = Address::new(0x80);
+    let config = CacheReplacementDirectoryConfig::new_with_indexing(
+        CacheReplacementPolicyKind::Brrip {
+            rrpv_bits: 2,
+            hit_priority: false,
+            btp_percent: 100,
+        },
+        CacheIndexingPolicyKind::SkewedAssociative,
+        line_layout(),
+        8,
+        4,
+    )
+    .unwrap();
+    let locations = config.indexing_config().candidate_locations(target);
+    let mut directory = CacheReplacementDirectory::new(config);
+    let mut used = BTreeSet::from([target]);
+    let fillers = locations
+        .iter()
+        .map(|location| {
+            let line = line_for_candidate_location(directory.config(), *location, &mut used);
+            directory.install(line).unwrap();
+            if directory.way_for(line) != Some((location.set(), location.way())) {
+                directory
+                    .move_resident_line(line, location.set(), location.way())
+                    .unwrap();
+            }
+            line
+        })
+        .collect::<Vec<_>>();
+
+    let install = directory.install(target).unwrap();
+
+    assert_eq!(install.evicted_line(), Some(fillers[0]));
+    assert_eq!(install.set(), locations[0].set());
+    assert_eq!(install.way(), locations[0].way());
+    let snapshot = directory.snapshot();
+    assert_eq!(
+        snapshot.sets()[install.set()].replacement().entries()[install.way()].rrpv(),
+        2
+    );
+    for location in &locations[1..] {
+        assert_eq!(
+            snapshot.sets()[location.set()].replacement().entries()[location.way()].rrpv(),
+            3
+        );
+    }
+}
+
+#[test]
+fn replacement_directory_moves_skewed_line_between_valid_candidates() {
+    let line = Address::new(0x80);
+    let mut directory = CacheReplacementDirectory::new(
+        CacheReplacementDirectoryConfig::new_with_indexing(
+            CacheReplacementPolicyKind::Lru,
+            CacheIndexingPolicyKind::SkewedAssociative,
+            line_layout(),
+            8,
+            4,
+        )
+        .unwrap(),
+    );
+    directory.install(line).unwrap();
+
+    let relocation = directory.move_resident_line(line, 4, 1).unwrap();
+
+    assert_eq!(relocation.line(), line);
+    assert_eq!(relocation.source_set(), 5);
+    assert_eq!(relocation.source_way(), 0);
+    assert_eq!(relocation.destination_set(), 4);
+    assert_eq!(relocation.destination_way(), 1);
+    assert_eq!(directory.way_for(line), Some((4, 1)));
+    assert_eq!(
+        directory.set_lines(4).unwrap(),
+        vec![None, Some(line), None, None]
+    );
+    assert_eq!(
+        directory.set_lines(5).unwrap(),
+        vec![None, None, None, None]
+    );
+    assert_eq!(
+        directory.move_resident_line(line, 0, 1).unwrap_err(),
+        CacheReplacementPolicyError::LineSetMismatch {
+            line,
+            set: 0,
+            expected_set: 4,
+        }
+    );
+}
+
+#[test]
+fn replacement_directory_snapshot_restore_preserves_skewed_candidates() {
+    let line = Address::new(0x80);
+    let config = CacheReplacementDirectoryConfig::new_with_indexing(
+        CacheReplacementPolicyKind::Lru,
+        CacheIndexingPolicyKind::SkewedAssociative,
+        line_layout(),
+        8,
+        4,
+    )
+    .unwrap();
+    let mut directory = CacheReplacementDirectory::new(config.clone());
+    directory.install(line).unwrap();
+    directory.move_resident_line(line, 3, 2).unwrap();
+    let snapshot = directory.snapshot();
+
+    directory.remove_resident_line(line).unwrap();
+    directory.restore(&snapshot).unwrap();
+
+    assert_eq!(directory.way_for(line), Some((3, 2)));
+    assert_eq!(
+        directory.set_lines(3).unwrap(),
+        vec![None, None, Some(line), None]
+    );
+    assert_eq!(directory.snapshot(), snapshot);
+
+    let incompatible =
+        CacheReplacementDirectoryConfig::new(CacheReplacementPolicyKind::Lru, line_layout(), 8, 4)
+            .unwrap();
+    let mut incompatible_directory = CacheReplacementDirectory::new(incompatible.clone());
+    assert_eq!(
+        incompatible_directory.restore(&snapshot),
+        Err(
+            CacheReplacementPolicyError::SnapshotDirectoryConfigMismatch {
+                expected: Box::new(incompatible),
+                actual: Box::new(config),
+            }
+        )
     );
 }
 

@@ -89,6 +89,32 @@ impl CacheIndexingPolicyConfig {
         })
     }
 
+    pub(crate) fn new_set_associative_for_directory(
+        line_layout: CacheLineLayout,
+        sets: usize,
+        ways: usize,
+    ) -> Result<Self, CacheIndexingPolicyError> {
+        if sets == 0 {
+            return Err(CacheIndexingPolicyError::ZeroSets);
+        }
+        if ways == 0 {
+            return Err(CacheIndexingPolicyError::ZeroWays);
+        }
+
+        let set_shift = line_layout.bytes().trailing_zeros();
+        let set_bits = usize::BITS - (sets - 1).leading_zeros();
+        Ok(Self {
+            kind: CacheIndexingPolicyKind::SetAssociative,
+            line_layout,
+            sets,
+            ways,
+            set_shift,
+            set_bits,
+            tag_shift: set_shift + set_bits,
+            set_mask: sets as u64 - 1,
+        })
+    }
+
     pub const fn kind(&self) -> CacheIndexingPolicyKind {
         self.kind
     }
@@ -114,7 +140,7 @@ impl CacheIndexingPolicyConfig {
         (0..self.ways)
             .map(|way| {
                 let set = match self.kind {
-                    CacheIndexingPolicyKind::SetAssociative => block_address & self.set_mask,
+                    CacheIndexingPolicyKind::SetAssociative => block_address % self.sets as u64,
                     CacheIndexingPolicyKind::SkewedAssociative => {
                         self.skew(block_address, way) & self.set_mask
                     }

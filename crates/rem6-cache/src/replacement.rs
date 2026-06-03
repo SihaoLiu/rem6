@@ -4,6 +4,7 @@ use std::fmt;
 use rem6_memory::Address;
 
 use crate::allocation::max_vector_len;
+use crate::indexing::CacheIndexingPolicyError;
 use crate::replacement_directory::CacheReplacementDirectoryConfig;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -135,6 +136,9 @@ pub enum CacheReplacementPolicyError {
     TreePlruWaysNotPowerOfTwo {
         ways: usize,
     },
+    IndexingPolicyConfig {
+        source: CacheIndexingPolicyError,
+    },
     SignatureRequired,
     UnknownWay {
         way: usize,
@@ -216,6 +220,9 @@ impl fmt::Display for CacheReplacementPolicyError {
                 formatter,
                 "TreePLRU replacement policy needs a power-of-two way count, got {ways}"
             ),
+            Self::IndexingPolicyConfig { source } => {
+                write!(formatter, "cache replacement directory indexing config is invalid: {source}")
+            }
             Self::SignatureRequired => write!(
                 formatter,
                 "SHiP replacement policy requires an access signature"
@@ -288,7 +295,50 @@ impl fmt::Display for CacheReplacementPolicyError {
     }
 }
 
-impl Error for CacheReplacementPolicyError {}
+impl Error for CacheReplacementPolicyError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::IndexingPolicyConfig { source } => Some(source),
+            Self::ZeroWays
+            | Self::ZeroSets
+            | Self::VectorLengthTooLarge { .. }
+            | Self::RrpvBitsOutOfRange { .. }
+            | Self::BtpOutOfRange { .. }
+            | Self::InsertionThresholdOutOfRange { .. }
+            | Self::SignatureHistoryTableEmpty
+            | Self::TreePlruWaysNotPowerOfTwo { .. }
+            | Self::SignatureRequired
+            | Self::UnknownWay { .. }
+            | Self::UnknownSet { .. }
+            | Self::UnknownResidentLine { .. }
+            | Self::LineSetMismatch { .. }
+            | Self::OccupiedDestinationWay { .. }
+            | Self::NoCandidates
+            | Self::SnapshotConfigMismatch { .. }
+            | Self::SnapshotDirectoryConfigMismatch { .. }
+            | Self::SnapshotDirectorySetCountMismatch { .. }
+            | Self::SnapshotDirectoryWayCountMismatch { .. }
+            | Self::SnapshotDuplicateLine { .. }
+            | Self::SnapshotLineSetMismatch { .. } => None,
+        }
+    }
+}
+
+impl From<CacheIndexingPolicyError> for CacheReplacementPolicyError {
+    fn from(error: CacheIndexingPolicyError) -> Self {
+        match error {
+            CacheIndexingPolicyError::ZeroSets => Self::ZeroSets,
+            CacheIndexingPolicyError::ZeroWays => Self::ZeroWays,
+            CacheIndexingPolicyError::UnknownSet { set, sets } => Self::UnknownSet { set, sets },
+            CacheIndexingPolicyError::UnknownWay { way, ways } => Self::UnknownWay { way, ways },
+            CacheIndexingPolicyError::SetsNotPowerOfTwo { .. }
+            | CacheIndexingPolicyError::SkewedAssociativeTooFewSets { .. }
+            | CacheIndexingPolicyError::SkewedAssociativeAddressBitsTooWide { .. } => {
+                Self::IndexingPolicyConfig { source: error }
+            }
+        }
+    }
+}
 
 pub(crate) fn validate_replacement_vector_length<T>(
     field: &'static str,
@@ -608,6 +658,67 @@ impl ReplacementSet {
         if self.config.kind() == CacheReplacementPolicyKind::TreePlru {
             self.set_tree_points_to_leaf(source_way);
         }
+        Ok(())
+    }
+
+    pub(crate) fn relocate_way_to_set(
+        &mut self,
+        source_way: usize,
+        destination: &mut Self,
+        destination_way: usize,
+    ) -> Result<(), CacheReplacementPolicyError> {
+        self.check_way(source_way)?;
+        destination.check_way(destination_way)?;
+        if self.config != destination.config {
+            return Err(CacheReplacementPolicyError::SnapshotConfigMismatch {
+                expected: Box::new(self.config.clone()),
+                actual: Box::new(destination.config.clone()),
+            });
+        }
+
+        let mut moved = self.entries[source_way].clone();
+        moved.way = destination_way;
+        self.entries[source_way] = ReplacementEntry::new(source_way, self.config.kind());
+        destination.entries[destination_way] = moved;
+        if self.config.kind() == CacheReplacementPolicyKind::TreePlru {
+            self.set_tree_points_to_leaf(source_way);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn decision_for_selected_victim<I>(
+        &mut self,
+        way: usize,
+        candidates: I,
+    ) -> Result<ReplacementDecision, CacheReplacementPolicyError>
+    where
+        I: IntoIterator<Item = usize>,
+    {
+        self.check_way(way)?;
+        let candidates = candidates.into_iter().collect::<Vec<_>>();
+        if candidates.is_empty() {
+            return Err(CacheReplacementPolicyError::NoCandidates);
+        }
+        for candidate in &candidates {
+            self.check_way(*candidate)?;
+        }
+
+        self.victim_count += 1;
+        Ok(ReplacementDecision {
+            way,
+            candidates,
+            victim_count: self.victim_count,
+        })
+    }
+
+    pub(crate) fn age_rrpv_candidate(
+        &mut self,
+        way: usize,
+        increment: u64,
+        max: u64,
+    ) -> Result<(), CacheReplacementPolicyError> {
+        self.check_way(way)?;
+        self.entries[way].rrpv = self.entries[way].rrpv.saturating_add(increment).min(max);
         Ok(())
     }
 
@@ -1018,6 +1129,12 @@ pub struct ReplacementSetSnapshot {
     touch_count: u64,
     invalidate_count: u64,
     victim_count: u64,
+}
+
+impl ReplacementSetSnapshot {
+    pub fn entries(&self) -> &[ReplacementEntry] {
+        &self.entries
+    }
 }
 
 fn max_rrpv(bits: u8) -> u64 {
