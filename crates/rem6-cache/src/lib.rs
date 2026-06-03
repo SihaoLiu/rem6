@@ -26,6 +26,7 @@ mod prefetch_signature_path;
 mod prefetch_signature_path_v2;
 mod prefetch_slim_ampm;
 mod prefetch_sms;
+mod prefetch_stats;
 mod prefetch_stems;
 mod prefetch_throttle;
 mod replacement;
@@ -163,6 +164,7 @@ pub use prefetch_sms::{
     SmsPrefetchCandidate, SmsPrefetcher, SmsPrefetcherConfig, SmsPrefetcherError,
     SmsPrefetcherSnapshot,
 };
+pub use prefetch_stats::QueuedPrefetchStatsSnapshot;
 pub use prefetch_stems::{
     StemsActiveGenerationKeySnapshot, StemsCacheResidency, StemsGenerationEntrySnapshot,
     StemsPatternSequenceEntrySnapshot, StemsPatternSequenceKeySnapshot, StemsPrefetchAccess,

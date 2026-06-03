@@ -1600,6 +1600,48 @@ fn queued_prefetcher_exposes_next_ready_tick_for_scheduler_planning() {
 }
 
 #[test]
+fn queued_prefetcher_records_base_service_stats_and_restores_them() {
+    let stride_config = StridePrefetcherConfig::new(64, 4, 2, 2, 0, true).unwrap();
+    let mut stride = StridePrefetcher::new(stride_config);
+    assert!(stride.observe(access(1, 0x80, 0x1000)).unwrap().is_empty());
+    assert!(stride.observe(access(1, 0x80, 0x1040)).unwrap().is_empty());
+    let candidates = stride.observe(access(1, 0x80, 0x1080)).unwrap().to_vec();
+
+    let queue_config = QueuedPrefetchConfig::with_line_size(4, 3, 2, true, 64).unwrap();
+    let mut queue = QueuedPrefetcher::new(queue_config.clone());
+    assert_eq!(queue.enqueue_candidates(10, &candidates).unwrap(), 2);
+    assert_eq!(queue.stats().issued_prefetches(), 0);
+
+    let issued = queue.issue_ready(13);
+    assert_eq!(issued.len(), 2);
+    assert_eq!(queue.stats().issued_prefetches(), 2);
+
+    queue.record_useful_prefetch(false);
+    queue.record_useful_prefetch(true);
+    queue.record_prefetch_unused();
+    queue.record_demand_mshr_miss();
+    queue.record_prefetch_hit_in_cache();
+    queue.record_prefetch_hit_in_mshr();
+    queue.record_prefetch_hit_in_write_buffer();
+
+    let stats = queue.stats();
+    assert_eq!(stats.useful_prefetches(), 2);
+    assert_eq!(stats.useful_but_miss_prefetches(), 1);
+    assert_eq!(stats.unused_prefetches(), 1);
+    assert_eq!(stats.demand_mshr_misses(), 1);
+    assert_eq!(stats.prefetch_hits_in_cache(), 1);
+    assert_eq!(stats.prefetch_hits_in_mshr(), 1);
+    assert_eq!(stats.prefetch_hits_in_write_buffer(), 1);
+    assert_eq!(stats.late_prefetches(), 3);
+
+    let snapshot = queue.snapshot();
+    let mut restored = QueuedPrefetcher::new(queue_config);
+    restored.restore(&snapshot).unwrap();
+    assert_eq!(restored.snapshot(), snapshot);
+    assert_eq!(restored.stats(), stats);
+}
+
+#[test]
 fn queued_prefetcher_applies_accuracy_throttle_before_candidate_enqueue() {
     let stride_config = StridePrefetcherConfig::new(64, 4, 2, 5, 0, true).unwrap();
     let mut stride = StridePrefetcher::new(stride_config);

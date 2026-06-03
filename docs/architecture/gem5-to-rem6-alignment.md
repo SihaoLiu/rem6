@@ -2771,6 +2771,13 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 | `src/mem/probes` | `rem6-stats`, runtime summaries | partial | Observability should be typed counters, typed probe points/listeners/events, and run summaries, not string-only probes. |
 | memory ports, packets, requests in `src/mem` root | `rem6-transport`, `rem6-memory` | partial | Shared request/response transport exists, and `MemoryRequest` now has a stable checkpoint payload preserving operation, identity, address, size, line layout, data, byte masks, atomic operation, uncacheable-plus-strict flags, and explicit before/after ordering edges. `MemoryResponse` also has a stable checkpoint payload preserving request identity, status, and optional response data without pulling response state into an untyped packet container. More gem5 packet semantics need mapping as features are added. |
 
+Cache prefetch note: `QueuedPrefetcher` snapshots gem5 Base-style issued,
+useful, useful-but-miss, unused, demand-MSHR miss, cache-hit, MSHR-hit,
+write-buffer-hit, and late-prefetch service statistics. `MultiQueuedPrefetcher`
+keeps its own issued statistic while broadcasting unused-prefetch and
+demand-MSHR-miss events to every child queued source, matching gem5 `Multi`
+event fan-out.
+
 ### DRAM and External Memory
 
 | gem5 source anchor | rem6 owner | Coverage | Notes |

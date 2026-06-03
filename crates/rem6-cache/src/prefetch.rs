@@ -3,6 +3,7 @@ use std::error::Error;
 use std::fmt;
 
 use crate::allocation::max_vector_len;
+use crate::prefetch_stats::QueuedPrefetchStatsSnapshot;
 use crate::prefetch_throttle::QueuedPrefetchThrottle;
 use rem6_memory::{Address, AgentId};
 
@@ -362,6 +363,7 @@ pub struct QueuedPrefetcherSnapshot {
     config: QueuedPrefetchConfig,
     pending: Vec<QueuedPrefetchEntrySnapshot>,
     next_order: u64,
+    stats: QueuedPrefetchStatsSnapshot,
 }
 
 impl QueuedPrefetcherSnapshot {
@@ -375,6 +377,10 @@ impl QueuedPrefetcherSnapshot {
 
     pub const fn next_order(&self) -> u64 {
         self.next_order
+    }
+
+    pub const fn stats(&self) -> &QueuedPrefetchStatsSnapshot {
+        &self.stats
     }
 }
 
@@ -533,6 +539,7 @@ pub struct QueuedPrefetcher {
     config: QueuedPrefetchConfig,
     pending: Vec<QueuedPrefetchEntry>,
     next_order: u64,
+    stats: QueuedPrefetchStatsSnapshot,
 }
 
 impl QueuedPrefetcher {
@@ -541,6 +548,7 @@ impl QueuedPrefetcher {
             config,
             pending: Vec::new(),
             next_order: 0,
+            stats: QueuedPrefetchStatsSnapshot::default(),
         }
     }
 
@@ -554,6 +562,34 @@ impl QueuedPrefetcher {
 
     pub fn next_ready_tick(&self) -> Option<u64> {
         self.pending.first().map(|entry| entry.ready_tick)
+    }
+
+    pub const fn stats(&self) -> &QueuedPrefetchStatsSnapshot {
+        &self.stats
+    }
+
+    pub fn record_useful_prefetch(&mut self, missed_usable_state: bool) {
+        self.stats.record_useful(missed_usable_state);
+    }
+
+    pub fn record_prefetch_unused(&mut self) {
+        self.stats.record_unused();
+    }
+
+    pub fn record_demand_mshr_miss(&mut self) {
+        self.stats.record_demand_mshr_miss();
+    }
+
+    pub fn record_prefetch_hit_in_cache(&mut self) {
+        self.stats.record_hit_in_cache();
+    }
+
+    pub fn record_prefetch_hit_in_mshr(&mut self) {
+        self.stats.record_hit_in_mshr();
+    }
+
+    pub fn record_prefetch_hit_in_write_buffer(&mut self) {
+        self.stats.record_hit_in_write_buffer();
     }
 
     pub fn enqueue_candidates<C: PrefetchCandidate>(
@@ -705,7 +741,9 @@ impl QueuedPrefetcher {
         if self.pending.first()?.ready_tick > tick {
             return None;
         }
-        Some(self.pending.remove(0).issue())
+        let issue = self.pending.remove(0).issue();
+        self.stats.record_issued(1);
+        Some(issue)
     }
 
     pub fn snapshot(&self) -> QueuedPrefetcherSnapshot {
@@ -717,6 +755,7 @@ impl QueuedPrefetcher {
                 .map(QueuedPrefetchEntry::snapshot)
                 .collect(),
             next_order: self.next_order,
+            stats: self.stats.clone(),
         }
     }
 
@@ -744,6 +783,7 @@ impl QueuedPrefetcher {
         sort_pending_entries(&mut pending);
         self.pending = pending;
         self.next_order = snapshot.next_order();
+        self.stats = snapshot.stats().clone();
         Ok(())
     }
 

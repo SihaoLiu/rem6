@@ -4,7 +4,8 @@ use std::fmt;
 use rem6_memory::{Address, AgentId};
 
 use crate::{
-    QueuedPrefetchIssue, QueuedPrefetcher, QueuedPrefetcherError, QueuedPrefetcherSnapshot,
+    QueuedPrefetchIssue, QueuedPrefetchStatsSnapshot, QueuedPrefetcher, QueuedPrefetcherError,
+    QueuedPrefetcherSnapshot,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -65,6 +66,7 @@ impl Error for MultiQueuedPrefetcherError {
 pub struct MultiQueuedPrefetcherSnapshot {
     sources: Vec<QueuedPrefetcherSnapshot>,
     last_chosen_source: usize,
+    stats: QueuedPrefetchStatsSnapshot,
 }
 
 impl MultiQueuedPrefetcherSnapshot {
@@ -74,6 +76,10 @@ impl MultiQueuedPrefetcherSnapshot {
 
     pub const fn last_chosen_source(&self) -> usize {
         self.last_chosen_source
+    }
+
+    pub const fn stats(&self) -> &QueuedPrefetchStatsSnapshot {
+        &self.stats
     }
 }
 
@@ -109,6 +115,7 @@ impl MultiQueuedPrefetchIssue {
 pub struct MultiQueuedPrefetcher {
     sources: Vec<QueuedPrefetcher>,
     last_chosen_source: usize,
+    stats: QueuedPrefetchStatsSnapshot,
 }
 
 impl MultiQueuedPrefetcher {
@@ -120,6 +127,7 @@ impl MultiQueuedPrefetcher {
         Ok(Self {
             sources,
             last_chosen_source: 0,
+            stats: QueuedPrefetchStatsSnapshot::default(),
         })
     }
 
@@ -135,6 +143,10 @@ impl MultiQueuedPrefetcher {
         self.sources.get_mut(index)
     }
 
+    pub const fn stats(&self) -> &QueuedPrefetchStatsSnapshot {
+        &self.stats
+    }
+
     pub fn snapshot(&self) -> MultiQueuedPrefetcherSnapshot {
         MultiQueuedPrefetcherSnapshot {
             sources: self
@@ -143,6 +155,7 @@ impl MultiQueuedPrefetcher {
                 .map(QueuedPrefetcher::snapshot)
                 .collect(),
             last_chosen_source: self.last_chosen_source,
+            stats: self.stats.clone(),
         }
     }
 
@@ -179,6 +192,7 @@ impl MultiQueuedPrefetcher {
 
         self.sources = sources;
         self.last_chosen_source = snapshot.last_chosen_source();
+        self.stats = snapshot.stats().clone();
         Ok(())
     }
 
@@ -199,6 +213,7 @@ impl MultiQueuedPrefetcher {
                 .is_some_and(|ready| ready <= tick)
             {
                 let issue = self.sources[source_index].issue_one_ready(tick)?;
+                self.stats.record_issued(1);
                 return Some(MultiQueuedPrefetchIssue {
                     source_index,
                     issue,
@@ -208,5 +223,17 @@ impl MultiQueuedPrefetcher {
         }
 
         None
+    }
+
+    pub fn record_prefetch_unused(&mut self) {
+        for source in &mut self.sources {
+            source.record_prefetch_unused();
+        }
+    }
+
+    pub fn record_demand_mshr_miss(&mut self) {
+        for source in &mut self.sources {
+            source.record_demand_mshr_miss();
+        }
     }
 }

@@ -126,6 +126,42 @@ fn multi_queued_prefetcher_restores_sources_and_round_robin_state() {
 }
 
 #[test]
+fn multi_queued_prefetcher_records_parent_issue_and_fans_service_stats_to_sources() {
+    let source0 = source_queue(0, 0x80, 0x1000, 5, 1, 1);
+    let source1 = source_queue(1, 0x90, 0x2000, 3, 2, 1);
+    let source2 = empty_source_queue(3, 1);
+    let mut multi = MultiQueuedPrefetcher::new(vec![source0, source1, source2]).unwrap();
+
+    assert_eq!(multi.stats().issued_prefetches(), 0);
+    let issued = multi.issue_ready(13).unwrap();
+    assert_eq!(issued.source_index(), 1);
+    assert_eq!(multi.stats().issued_prefetches(), 1);
+    assert_eq!(multi.source(1).unwrap().stats().issued_prefetches(), 1);
+
+    multi.record_prefetch_unused();
+    multi.record_demand_mshr_miss();
+    assert_eq!(multi.stats().unused_prefetches(), 0);
+    assert_eq!(multi.stats().demand_mshr_misses(), 0);
+    for source_index in 0..multi.source_count() {
+        let stats = multi.source(source_index).unwrap().stats();
+        assert_eq!(stats.unused_prefetches(), 1);
+        assert_eq!(stats.demand_mshr_misses(), 1);
+    }
+
+    let snapshot = multi.snapshot();
+    let mut restored = MultiQueuedPrefetcher::new(vec![
+        empty_source_queue(5, 1),
+        empty_source_queue(3, 2),
+        empty_source_queue(3, 1),
+    ])
+    .unwrap();
+    restored.restore(&snapshot).unwrap();
+    assert_eq!(restored.snapshot(), snapshot);
+    assert_eq!(restored.stats().issued_prefetches(), 1);
+    assert_eq!(restored.source(1).unwrap().stats().issued_prefetches(), 1);
+}
+
+#[test]
 fn multi_queued_prefetcher_restore_rejects_source_count_mismatch() {
     let snapshot = MultiQueuedPrefetcher::new(vec![
         source_queue(0, 0x80, 0x1000, 5, 1, 1),
