@@ -4,7 +4,10 @@ use std::fmt;
 use crate::allocation::max_vector_len;
 use crate::prefetch::PrefetchCandidate;
 use crate::prefetch_stats::QueuedPrefetchStatsSnapshot;
-use crate::prefetch_throttle::QueuedPrefetchThrottle;
+use crate::prefetch_throttle::{
+    QueuedPrefetchThrottle, QueuedPrefetchThrottleConfig, QueuedPrefetchThrottleError,
+    QueuedPrefetchThrottleSnapshot,
+};
 use rem6_memory::{
     AccessSize, Address, AgentId, TranslationAccessKind, TranslationRequest, TranslationRequestId,
     TranslationResolution,
@@ -20,6 +23,7 @@ pub struct QueuedPrefetchConfig {
     page_size: u64,
     missing_translation_capacity: usize,
     full_policy: QueuedPrefetchFullPolicy,
+    throttle_config: Option<QueuedPrefetchThrottleConfig>,
 }
 
 impl QueuedPrefetchConfig {
@@ -63,6 +67,7 @@ impl QueuedPrefetchConfig {
             page_size: 0,
             missing_translation_capacity: 0,
             full_policy: QueuedPrefetchFullPolicy::RejectNew,
+            throttle_config: None,
         })
     }
 
@@ -106,6 +111,10 @@ impl QueuedPrefetchConfig {
         self.full_policy
     }
 
+    pub const fn throttle_config(&self) -> Option<&QueuedPrefetchThrottleConfig> {
+        self.throttle_config.as_ref()
+    }
+
     pub fn with_page_size(mut self, page_size: u64) -> Result<Self, QueuedPrefetcherError> {
         if page_size == 0 {
             return Err(QueuedPrefetcherError::ZeroPageSize);
@@ -132,6 +141,11 @@ impl QueuedPrefetchConfig {
 
     pub const fn with_full_policy(mut self, full_policy: QueuedPrefetchFullPolicy) -> Self {
         self.full_policy = full_policy;
+        self
+    }
+
+    pub fn with_throttle_config(mut self, throttle_config: QueuedPrefetchThrottleConfig) -> Self {
+        self.throttle_config = Some(throttle_config);
         self
     }
 }
@@ -176,6 +190,16 @@ pub enum QueuedPrefetcherError {
     TranslationRequestAddressOverflow {
         address: Address,
         size: u64,
+    },
+    ThrottleUsefulCounter {
+        source: QueuedPrefetchThrottleError,
+    },
+    SnapshotThrottleStateMismatch {
+        expected_enabled: bool,
+        actual_enabled: bool,
+    },
+    SnapshotThrottleRestore {
+        source: QueuedPrefetchThrottleError,
     },
 }
 
@@ -235,11 +259,48 @@ impl fmt::Display for QueuedPrefetcherError {
                 "queued prefetch translation request at {:?} with size {size} overflows",
                 address
             ),
+            Self::ThrottleUsefulCounter { source } => {
+                write!(formatter, "queued prefetch throttle useful counter failed: {source}")
+            }
+            Self::SnapshotThrottleStateMismatch {
+                expected_enabled,
+                actual_enabled,
+            } => write!(
+                formatter,
+                "queued prefetch snapshot throttle enabled state {actual_enabled} does not match expected {expected_enabled}"
+            ),
+            Self::SnapshotThrottleRestore { source } => write!(
+                formatter,
+                "queued prefetch throttle snapshot restore failed: {source}"
+            ),
         }
     }
 }
 
-impl Error for QueuedPrefetcherError {}
+impl Error for QueuedPrefetcherError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::ThrottleUsefulCounter { source } | Self::SnapshotThrottleRestore { source } => {
+                Some(source)
+            }
+            Self::ZeroCapacity
+            | Self::ZeroIssueWidth
+            | Self::ZeroLineSize
+            | Self::ZeroPageSize
+            | Self::ZeroMissingTranslationCapacity
+            | Self::QueueFull { .. }
+            | Self::ReadyTickOverflow { .. }
+            | Self::VectorLengthTooLarge { .. }
+            | Self::SnapshotConfigMismatch { .. }
+            | Self::SnapshotQueueTooLarge { .. }
+            | Self::SnapshotMissingTranslationQueueTooLarge { .. }
+            | Self::UnknownTranslation { .. }
+            | Self::TranslationNotStarted { .. }
+            | Self::TranslationRequestAddressOverflow { .. }
+            | Self::SnapshotThrottleStateMismatch { .. } => None,
+        }
+    }
+}
 
 fn maximum_queued_prefetch_entries() -> usize {
     max_vector_len::<QueuedPrefetchEntry>().min(max_vector_len::<QueuedPrefetchEntrySnapshot>())
@@ -537,6 +598,7 @@ pub struct QueuedPrefetcherSnapshot {
     missing_translations: Vec<QueuedPrefetchMissingTranslationEntrySnapshot>,
     next_order: u64,
     stats: QueuedPrefetchStatsSnapshot,
+    throttle: Option<QueuedPrefetchThrottleSnapshot>,
 }
 
 impl QueuedPrefetcherSnapshot {
@@ -558,6 +620,10 @@ impl QueuedPrefetcherSnapshot {
 
     pub const fn stats(&self) -> &QueuedPrefetchStatsSnapshot {
         &self.stats
+    }
+
+    pub const fn throttle(&self) -> Option<&QueuedPrefetchThrottleSnapshot> {
+        self.throttle.as_ref()
     }
 }
 
@@ -905,16 +971,22 @@ pub struct QueuedPrefetcher {
     missing_translations: Vec<QueuedPrefetchMissingTranslationEntry>,
     next_order: u64,
     stats: QueuedPrefetchStatsSnapshot,
+    throttle: Option<QueuedPrefetchThrottle>,
 }
 
 impl QueuedPrefetcher {
     pub fn new(config: QueuedPrefetchConfig) -> Self {
+        let throttle = config
+            .throttle_config()
+            .cloned()
+            .map(QueuedPrefetchThrottle::new);
         Self {
             config,
             pending: Vec::new(),
             missing_translations: Vec::new(),
             next_order: 0,
             stats: QueuedPrefetchStatsSnapshot::default(),
+            throttle,
         }
     }
 
@@ -938,8 +1010,21 @@ impl QueuedPrefetcher {
         &self.stats
     }
 
-    pub fn record_useful_prefetch(&mut self, missed_usable_state: bool) {
+    pub const fn throttle(&self) -> Option<&QueuedPrefetchThrottle> {
+        self.throttle.as_ref()
+    }
+
+    pub fn record_useful_prefetch(
+        &mut self,
+        missed_usable_state: bool,
+    ) -> Result<(), QueuedPrefetcherError> {
+        if let Some(throttle) = &mut self.throttle {
+            throttle
+                .record_useful(1)
+                .map_err(|source| QueuedPrefetcherError::ThrottleUsefulCounter { source })?;
+        }
         self.stats.record_useful(missed_usable_state);
+        Ok(())
     }
 
     pub fn record_prefetch_unused(&mut self) {
@@ -981,7 +1066,7 @@ impl QueuedPrefetcher {
             source_tick,
             candidates,
             redundant_lines,
-            candidates.len(),
+            self.configured_prefetch_limit(candidates.len()),
             QueuedPrefetchSourceStatus::demand(),
         )
     }
@@ -997,7 +1082,7 @@ impl QueuedPrefetcher {
             source_tick,
             candidates,
             redundant_lines,
-            candidates.len(),
+            self.configured_prefetch_limit(candidates.len()),
             source_status,
         )
     }
@@ -1278,6 +1363,9 @@ impl QueuedPrefetcher {
         }
         let issue = self.pending.remove(0).issue();
         self.stats.record_issued(1);
+        if let Some(throttle) = &mut self.throttle {
+            throttle.record_issued_saturating(1);
+        }
         Some(issue)
     }
 
@@ -1296,6 +1384,7 @@ impl QueuedPrefetcher {
                 .collect(),
             next_order: self.next_order,
             stats: self.stats.clone(),
+            throttle: self.throttle.as_ref().map(QueuedPrefetchThrottle::snapshot),
         }
     }
 
@@ -1334,13 +1423,36 @@ impl QueuedPrefetcher {
             .iter()
             .map(QueuedPrefetchMissingTranslationEntry::from_snapshot)
             .collect();
+        let throttle = match (self.config.throttle_config(), snapshot.throttle()) {
+            (Some(config), Some(snapshot)) => {
+                let mut throttle = QueuedPrefetchThrottle::new(config.clone());
+                throttle
+                    .restore(snapshot)
+                    .map_err(|source| QueuedPrefetcherError::SnapshotThrottleRestore { source })?;
+                Some(throttle)
+            }
+            (None, None) => None,
+            (expected, actual) => {
+                return Err(QueuedPrefetcherError::SnapshotThrottleStateMismatch {
+                    expected_enabled: expected.is_some(),
+                    actual_enabled: actual.is_some(),
+                });
+            }
+        };
         sort_pending_entries(&mut pending);
         sort_missing_translation_entries(&mut missing_translations);
         self.pending = pending;
         self.missing_translations = missing_translations;
         self.next_order = snapshot.next_order();
         self.stats = snapshot.stats().clone();
+        self.throttle = throttle;
         Ok(())
+    }
+
+    fn configured_prefetch_limit(&self, total_candidates: usize) -> usize {
+        self.throttle.as_ref().map_or(total_candidates, |throttle| {
+            throttle.max_permitted(total_candidates)
+        })
     }
 
     fn normalized_address(&self, address: Address) -> Address {

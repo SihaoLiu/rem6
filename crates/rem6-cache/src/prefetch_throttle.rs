@@ -176,6 +176,10 @@ impl QueuedPrefetchThrottle {
         Ok(())
     }
 
+    pub(crate) fn record_issued_saturating(&mut self, delta: u64) {
+        self.issued_prefetches = self.issued_prefetches.saturating_add(delta);
+    }
+
     pub fn record_useful(&mut self, delta: u64) -> Result<(), QueuedPrefetchThrottleError> {
         let useful_prefetches = self.useful_prefetches.checked_add(delta).ok_or(
             QueuedPrefetchThrottleError::UsefulCounterOverflow {

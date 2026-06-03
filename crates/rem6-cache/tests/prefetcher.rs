@@ -1616,8 +1616,8 @@ fn queued_prefetcher_records_base_service_stats_and_restores_them() {
     assert_eq!(issued.len(), 2);
     assert_eq!(queue.stats().issued_prefetches(), 2);
 
-    queue.record_useful_prefetch(false);
-    queue.record_useful_prefetch(true);
+    queue.record_useful_prefetch(false).unwrap();
+    queue.record_useful_prefetch(true).unwrap();
     queue.record_prefetch_unused();
     queue.record_demand_mshr_miss();
     queue.record_prefetch_hit_in_cache();
@@ -1686,6 +1686,96 @@ fn queued_prefetcher_applies_accuracy_throttle_before_candidate_enqueue() {
             Address::new(0x1140)
         ]
     );
+}
+
+#[test]
+fn queued_prefetcher_owned_throttle_tracks_issue_usefulness_and_snapshot() {
+    let stride_config = StridePrefetcherConfig::new(64, 4, 2, 5, 0, true).unwrap();
+    let mut stride = StridePrefetcher::new(stride_config);
+    assert!(stride.observe(access(1, 0x80, 0x1000)).unwrap().is_empty());
+    assert!(stride.observe(access(1, 0x80, 0x1040)).unwrap().is_empty());
+    let candidates = stride.observe(access(1, 0x80, 0x1080)).unwrap().to_vec();
+    assert_eq!(candidates.len(), 5);
+
+    let queue_config = QueuedPrefetchConfig::with_line_size(8, 3, 8, true, 64)
+        .unwrap()
+        .with_throttle_config(QueuedPrefetchThrottleConfig::new(60).unwrap());
+    let mut queue = QueuedPrefetcher::new(queue_config.clone());
+    assert_eq!(queue.throttle().unwrap().max_permitted(5), 5);
+
+    assert_eq!(queue.enqueue_candidates(10, &candidates).unwrap(), 5);
+    assert_eq!(queue.issue_ready(13).len(), 5);
+    assert_eq!(queue.stats().issued_prefetches(), 5);
+    assert_eq!(queue.throttle().unwrap().issued_prefetches(), 5);
+    assert_eq!(queue.throttle().unwrap().useful_prefetches(), 0);
+
+    queue.record_useful_prefetch(false).unwrap();
+    queue.record_useful_prefetch(false).unwrap();
+    assert_eq!(queue.stats().useful_prefetches(), 2);
+    assert_eq!(queue.throttle().unwrap().useful_prefetches(), 2);
+    assert_eq!(queue.throttle().unwrap().max_permitted(5), 3);
+
+    let snapshot = queue.snapshot();
+    assert_eq!(snapshot.throttle().unwrap().issued_prefetches(), 5);
+    assert_eq!(snapshot.throttle().unwrap().useful_prefetches(), 2);
+    let mut restored = QueuedPrefetcher::new(queue_config);
+    restored.restore(&snapshot).unwrap();
+    assert_eq!(restored.snapshot(), snapshot);
+    assert_eq!(restored.throttle().unwrap().max_permitted(5), 3);
+
+    let next_candidates = stride.observe(access(1, 0x80, 0x10c0)).unwrap().to_vec();
+    let result = restored
+        .enqueue_candidates_filtered(20, &next_candidates, &[])
+        .unwrap();
+    assert_eq!(result.accepted(), 3);
+    assert_eq!(result.dropped_throttled(), 2);
+}
+
+#[test]
+fn queued_prefetcher_without_owned_throttle_keeps_unthrottled_enqueue() {
+    let stride_config = StridePrefetcherConfig::new(64, 4, 2, 5, 0, true).unwrap();
+    let mut stride = StridePrefetcher::new(stride_config);
+    assert!(stride.observe(access(1, 0x80, 0x1000)).unwrap().is_empty());
+    assert!(stride.observe(access(1, 0x80, 0x1040)).unwrap().is_empty());
+    let candidates = stride.observe(access(1, 0x80, 0x1080)).unwrap().to_vec();
+
+    let queue_config = QueuedPrefetchConfig::with_line_size(8, 3, 8, true, 64).unwrap();
+    let mut queue = QueuedPrefetcher::new(queue_config);
+    assert_eq!(queue.throttle(), None);
+    assert_eq!(queue.snapshot().throttle(), None);
+
+    let result = queue
+        .enqueue_candidates_filtered(10, &candidates, &[])
+        .unwrap();
+    assert_eq!(result.accepted(), 5);
+    assert_eq!(result.dropped_throttled(), 0);
+    assert_eq!(queue.snapshot().throttle(), None);
+}
+
+#[test]
+fn queued_prefetcher_explicit_throttle_enqueue_does_not_double_limit() {
+    let stride_config = StridePrefetcherConfig::new(64, 4, 2, 5, 0, true).unwrap();
+    let mut stride = StridePrefetcher::new(stride_config);
+    assert!(stride.observe(access(1, 0x80, 0x1000)).unwrap().is_empty());
+    assert!(stride.observe(access(1, 0x80, 0x1040)).unwrap().is_empty());
+    let candidates = stride.observe(access(1, 0x80, 0x1080)).unwrap().to_vec();
+
+    let queue_config = QueuedPrefetchConfig::with_line_size(16, 3, 8, true, 64)
+        .unwrap()
+        .with_throttle_config(QueuedPrefetchThrottleConfig::new(100).unwrap());
+    let mut queue = QueuedPrefetcher::new(queue_config);
+    assert_eq!(queue.enqueue_candidates(10, &candidates).unwrap(), 5);
+    assert_eq!(queue.issue_ready(13).len(), 5);
+    assert_eq!(queue.throttle().unwrap().max_permitted(5), 1);
+
+    let mut external = QueuedPrefetchThrottle::new(QueuedPrefetchThrottleConfig::new(0).unwrap());
+    external.record_issued(1).unwrap();
+    let next_candidates = stride.observe(access(1, 0x80, 0x10c0)).unwrap().to_vec();
+    let result = queue
+        .enqueue_candidates_throttled(20, &next_candidates, &[], &external)
+        .unwrap();
+    assert_eq!(result.accepted(), 5);
+    assert_eq!(result.dropped_throttled(), 0);
 }
 
 #[test]
