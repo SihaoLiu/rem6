@@ -25,7 +25,7 @@ enum WorkloadDataCacheHarness {
 
 pub(super) enum WorkloadDataCacheLineMemory {
     Line(Vec<u8>),
-    Dram(PartitionedDramMemoryConfig),
+    Dram(Box<PartitionedDramMemoryConfig>),
 }
 
 pub(super) struct WorkloadDataCacheLineBackend {
@@ -72,7 +72,7 @@ impl WorkloadDataCacheLineBackend {
                                 line,
                                 directory_partition,
                                 directory_endpoint,
-                                memory,
+                                *memory,
                                 agents,
                             )
                         }
@@ -104,7 +104,7 @@ impl WorkloadDataCacheLineBackend {
                                 line,
                                 directory_partition,
                                 directory_endpoint,
-                                memory,
+                                *memory,
                                 agents,
                             )
                         }
@@ -136,7 +136,7 @@ impl WorkloadDataCacheLineBackend {
                                 line,
                                 directory_partition,
                                 directory_endpoint,
-                                memory,
+                                *memory,
                                 agents,
                             )
                         }
@@ -168,7 +168,7 @@ impl WorkloadDataCacheLineBackend {
                                 line,
                                 directory_partition,
                                 directory_endpoint,
-                                memory,
+                                *memory,
                                 agents,
                             )
                         }

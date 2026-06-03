@@ -3,11 +3,15 @@ use rem6_coherence::{
     CpuResponseRecord, DirectoryDecisionRecord, DramMemoryAccessRecord, HarnessError,
     LineBackingStore, ParallelCoherenceRunHistory, PartitionedCacheAgentConfig,
     PartitionedDirectoryLineHarness, PartitionedDirectoryLineHarnessSnapshot,
-    PartitionedDramMemoryConfig, PartitionedMemoryConfig, PartitionedRouteHopConfig, SubmitKind,
+    PartitionedDramMemoryConfig, PartitionedDramQosState, PartitionedMemoryConfig,
+    PartitionedRouteHopConfig, SubmitKind,
 };
 use rem6_directory::{DirectoryDataSource, DirectoryLineState, DirectorySnoop};
 use rem6_dram::{DramControllerConfig, DramGeometry, DramMemoryController, DramTiming};
-use rem6_fabric::{FabricLinkId, FabricPath, FabricPathHop};
+use rem6_fabric::{
+    FabricLinkId, FabricPath, FabricPathHop, QosFixedPriorityPolicy, QosPriority,
+    QosPriorityPolicy, QosQueueArbiter, QosQueuePolicyKind,
+};
 use rem6_kernel::{PartitionId, SchedulerError};
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
@@ -205,6 +209,53 @@ fn harness_with_dram_memory() -> PartitionedDirectoryLineHarness {
         PartitionId::new(2),
         endpoint("dir0"),
         PartitionedDramMemoryConfig::new(PartitionId::new(3), endpoint("mem0"), 7, 11, memory),
+        [
+            cache_config(1, 0, "l1d0", 3, 5),
+            cache_config(2, 1, "l1d1", 3, 5),
+        ],
+    )
+    .unwrap()
+}
+
+fn qos_state() -> PartitionedDramQosState {
+    PartitionedDramQosState::new(
+        QosPriorityPolicy::fixed_priority(
+            QosFixedPriorityPolicy::new(8, QosPriority::new(2)).unwrap(),
+        ),
+        QosQueueArbiter::new(QosQueuePolicyKind::LeastRecentlyGranted),
+        Default::default(),
+    )
+}
+
+fn harness_with_dram_qos_memory() -> PartitionedDirectoryLineHarness {
+    let target = dram_target();
+    let mut memory = DramMemoryController::new();
+    memory
+        .add_target(DramControllerConfig::new(
+            target,
+            layout(),
+            DramGeometry::new(4, 256, 64).unwrap(),
+            DramTiming::new(3, 5, 7, 2, 4).unwrap(),
+        ))
+        .unwrap();
+    memory
+        .map_region(
+            target,
+            Address::new(0x0000),
+            AccessSize::new(0x4000).unwrap(),
+        )
+        .unwrap();
+    memory
+        .insert_line(target, Address::new(0x1000), line_data())
+        .unwrap();
+
+    PartitionedDirectoryLineHarness::new_with_dram_memory(
+        layout(),
+        Address::new(0x1000),
+        PartitionId::new(2),
+        endpoint("dir0"),
+        PartitionedDramMemoryConfig::new(PartitionId::new(3), endpoint("mem0"), 7, 11, memory)
+            .with_qos(qos_state()),
         [
             cache_config(1, 0, "l1d0", 3, 5),
             cache_config(2, 1, "l1d1", 3, 5),
@@ -566,6 +617,23 @@ fn partitioned_directory_harness_quiescent_snapshot_restores_dram_memory_state()
 }
 
 #[test]
+fn partitioned_directory_harness_quiescent_snapshot_restores_dram_qos_state() {
+    let mut source = harness_with_dram_qos_memory();
+    source
+        .submit_cpu_request(agent(1), read(1, 0, 0x1004, 4))
+        .unwrap();
+    source.run_until_idle();
+    let snapshot = source.quiescent_snapshot().unwrap();
+    assert!(snapshot.dram_qos().is_some());
+
+    let mut restored = harness_with_dram_qos_memory();
+    assert_ne!(restored.quiescent_snapshot().unwrap(), snapshot);
+
+    restored.restore_quiescent(&snapshot).unwrap();
+    assert_eq!(restored.quiescent_snapshot().unwrap(), snapshot);
+}
+
+#[test]
 fn partitioned_directory_harness_quiescent_snapshot_restores_fabric_lane_state() {
     let mut source = harness_with_fabric_memory();
     source
@@ -741,6 +809,7 @@ fn partitioned_directory_harness_quiescent_restore_rejects_backing_line_mismatch
         snapshot.caches().clone(),
         Some(LineBackingStore::new(layout(), Address::new(0x2000), line_data()).unwrap()),
         snapshot.dram_memory().cloned(),
+        snapshot.dram_qos().cloned(),
         snapshot.fabric_lanes().map(<[_]>::to_vec),
         snapshot.trace(),
         snapshot.cpu_responses(),
@@ -778,6 +847,7 @@ fn partitioned_directory_harness_quiescent_restore_rejects_directory_line_mismat
         snapshot.caches().clone(),
         snapshot.backing().cloned(),
         snapshot.dram_memory().cloned(),
+        snapshot.dram_qos().cloned(),
         snapshot.fabric_lanes().map(<[_]>::to_vec),
         snapshot.trace(),
         snapshot.cpu_responses(),

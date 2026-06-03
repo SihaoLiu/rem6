@@ -12,7 +12,7 @@ use rem6_transport::{
 };
 
 use crate::wait_for::CoherenceWaitFor;
-use crate::{DramMemoryAccessRecord, LineBackingStore};
+use crate::{DramMemoryAccessRecord, LineBackingStore, PartitionedDramQosState};
 
 use super::{
     moesi_response_record, MoesiCpuResponseRecord, MoesiHarnessError, PartitionedMoesiRoute,
@@ -27,6 +27,7 @@ pub(super) fn schedule_partitioned_moesi_memory_response_parallel(
     memory_route: PartitionedMoesiRoute,
     backing: Arc<Mutex<LineBackingStore>>,
     dram_memory: Option<Arc<Mutex<DramMemoryController>>>,
+    dram_qos: Option<Arc<Mutex<PartitionedDramQosState>>>,
     fabric: Option<Arc<Mutex<FabricModel>>>,
     trace: MemoryTrace,
     response_cache: Arc<Mutex<MoesiCacheController>>,
@@ -43,6 +44,7 @@ pub(super) fn schedule_partitioned_moesi_memory_response_parallel(
         memory_route,
         backing,
         dram_memory,
+        dram_qos,
         fabric,
         trace,
         response_cache,
@@ -62,6 +64,7 @@ struct PartitionedMoesiMemoryResponseWork {
     memory_route: PartitionedMoesiRoute,
     backing: Arc<Mutex<LineBackingStore>>,
     dram_memory: Option<Arc<Mutex<DramMemoryController>>>,
+    dram_qos: Option<Arc<Mutex<PartitionedDramQosState>>>,
     fabric: Option<Arc<Mutex<FabricModel>>>,
     trace: MemoryTrace,
     response_cache: Arc<Mutex<MoesiCacheController>>,
@@ -132,6 +135,7 @@ impl PartitionedMoesiMemoryResponseWork {
             &request,
             &self.backing,
             self.dram_memory.as_ref(),
+            self.dram_qos.as_ref(),
             &self.dram_accesses,
         )
         .expect("memory response");
@@ -213,6 +217,7 @@ fn complete_partitioned_moesi_memory_request(
     request: &MemoryRequest,
     backing: &Arc<Mutex<LineBackingStore>>,
     dram_memory: Option<&Arc<Mutex<DramMemoryController>>>,
+    dram_qos: Option<&Arc<Mutex<PartitionedDramQosState>>>,
     dram_accesses: &Arc<Mutex<Vec<DramMemoryAccessRecord>>>,
 ) -> Result<(u64, MemoryResponse), MoesiHarnessError> {
     let Some(dram_memory) = dram_memory else {
@@ -224,11 +229,17 @@ fn complete_partitioned_moesi_memory_request(
         return Ok((now, response));
     };
 
-    let outcome = dram_memory
-        .lock()
-        .expect("DRAM memory lock")
-        .accept(now, request)
-        .map_err(MoesiHarnessError::Dram)?;
+    let mut controller = dram_memory.lock().expect("DRAM memory lock");
+    let outcome = match dram_qos {
+        Some(qos) => qos
+            .lock()
+            .expect("DRAM QoS lock")
+            .accept(&mut controller, now, request)
+            .map_err(MoesiHarnessError::Dram)?,
+        None => controller
+            .accept(now, request)
+            .map_err(MoesiHarnessError::Dram)?,
+    };
     dram_accesses
         .lock()
         .expect("DRAM access lock")

@@ -12,7 +12,7 @@ use rem6_transport::{MemoryTrace, MemoryTraceEvent};
 
 use crate::{
     DramMemoryAccessRecord, HarnessError, LineBackingStore, ParallelCoherenceRunHistory,
-    ParallelCoherenceRunSummary,
+    ParallelCoherenceRunSummary, PartitionedDramQosState,
 };
 
 use super::{
@@ -28,6 +28,7 @@ pub struct PartitionedMoesiDirectoryLineHarnessSnapshot {
     caches: BTreeMap<AgentId, MoesiCacheControllerSnapshot>,
     backing: LineBackingStore,
     dram_memory: Option<DramMemorySnapshot>,
+    dram_qos: Option<PartitionedDramQosState>,
     fabric_lanes: Option<Vec<FabricLaneSnapshot>>,
     trace: Vec<MemoryTraceEvent>,
     cpu_responses: Vec<MoesiCpuResponseRecord>,
@@ -45,6 +46,7 @@ impl PartitionedMoesiDirectoryLineHarnessSnapshot {
         caches: BTreeMap<AgentId, MoesiCacheControllerSnapshot>,
         backing: LineBackingStore,
         dram_memory: Option<DramMemorySnapshot>,
+        dram_qos: Option<PartitionedDramQosState>,
         fabric_lanes: Option<Vec<FabricLaneSnapshot>>,
         trace: Vec<MemoryTraceEvent>,
         cpu_responses: Vec<MoesiCpuResponseRecord>,
@@ -59,6 +61,7 @@ impl PartitionedMoesiDirectoryLineHarnessSnapshot {
             caches,
             backing,
             dram_memory,
+            dram_qos,
             fabric_lanes,
             trace,
             cpu_responses,
@@ -90,6 +93,10 @@ impl PartitionedMoesiDirectoryLineHarnessSnapshot {
 
     pub const fn dram_memory(&self) -> Option<&DramMemorySnapshot> {
         self.dram_memory.as_ref()
+    }
+
+    pub const fn dram_qos(&self) -> Option<&PartitionedDramQosState> {
+        self.dram_qos.as_ref()
     }
 
     pub fn fabric_lanes(&self) -> Option<&[FabricLaneSnapshot]> {
@@ -144,6 +151,9 @@ impl PartitionedMoesiDirectoryLineHarness {
             self.dram_memory
                 .as_ref()
                 .map(|dram| dram.lock().expect("DRAM memory lock").snapshot()),
+            self.dram_qos
+                .as_ref()
+                .map(|qos| qos.lock().expect("DRAM QoS lock").clone()),
             self.fabric
                 .as_ref()
                 .map(|fabric| fabric.lock().expect("fabric lock").lane_snapshots()),
@@ -187,6 +197,7 @@ impl PartitionedMoesiDirectoryLineHarness {
 
         let backing = Arc::new(Mutex::new(snapshot.backing.clone()));
         let dram_memory = restored_moesi_dram_memory(&self.dram_memory, snapshot.dram_memory())?;
+        let dram_qos = restored_moesi_dram_qos(&self.dram_qos, snapshot.dram_qos())?;
         validate_moesi_fabric_snapshot(&self.fabric, snapshot.fabric_lanes())?;
 
         self.scheduler
@@ -196,6 +207,7 @@ impl PartitionedMoesiDirectoryLineHarness {
         self.caches = caches;
         self.backing = backing;
         self.dram_memory = dram_memory;
+        self.dram_qos = dram_qos;
         restore_moesi_fabric_in_place(&self.fabric, snapshot.fabric_lanes())?;
         self.trace = MemoryTrace::from_events(snapshot.trace.clone());
         *self.cpu_responses.lock().expect("response lock") = snapshot.cpu_responses.clone();
@@ -255,6 +267,19 @@ fn restored_moesi_dram_memory(
         }
         (None, None) => Ok(None),
         _ => Err(MoesiHarnessError::SnapshotResourceMismatch { resource: "dram" }),
+    }
+}
+
+fn restored_moesi_dram_qos(
+    current: &Option<Arc<Mutex<PartitionedDramQosState>>>,
+    snapshot: Option<&PartitionedDramQosState>,
+) -> Result<Option<Arc<Mutex<PartitionedDramQosState>>>, MoesiHarnessError> {
+    match (current, snapshot) {
+        (Some(_), Some(snapshot)) => Ok(Some(Arc::new(Mutex::new(snapshot.clone())))),
+        (None, None) => Ok(None),
+        _ => Err(MoesiHarnessError::SnapshotResourceMismatch {
+            resource: "dram_qos",
+        }),
     }
 }
 

@@ -10,7 +10,7 @@ use rem6_transport::{
 };
 
 use crate::wait_for::CoherenceWaitFor;
-use crate::{DramMemoryAccessRecord, LineBackingStore};
+use crate::{DramMemoryAccessRecord, LineBackingStore, PartitionedDramQosState};
 
 use super::{mesi_response_record, MesiCpuResponseRecord, MesiHarnessError, PartitionedMesiRoute};
 
@@ -23,6 +23,7 @@ pub(super) fn schedule_partitioned_mesi_memory_response(
     memory_route: PartitionedMesiRoute,
     backing: Arc<Mutex<LineBackingStore>>,
     dram_memory: Option<Arc<Mutex<DramMemoryController>>>,
+    dram_qos: Option<Arc<Mutex<PartitionedDramQosState>>>,
     trace: MemoryTrace,
     response_cache: Arc<Mutex<MesiCacheController>>,
     responses: Arc<Mutex<Vec<MesiCpuResponseRecord>>>,
@@ -36,6 +37,7 @@ pub(super) fn schedule_partitioned_mesi_memory_response(
         memory_route,
         backing,
         dram_memory,
+        dram_qos,
         trace,
         response_cache,
         responses,
@@ -75,6 +77,7 @@ pub(super) fn schedule_partitioned_mesi_memory_response_parallel(
     memory_route: PartitionedMesiRoute,
     backing: Arc<Mutex<LineBackingStore>>,
     dram_memory: Option<Arc<Mutex<DramMemoryController>>>,
+    dram_qos: Option<Arc<Mutex<PartitionedDramQosState>>>,
     trace: MemoryTrace,
     response_cache: Arc<Mutex<MesiCacheController>>,
     responses: Arc<Mutex<Vec<MesiCpuResponseRecord>>>,
@@ -90,6 +93,7 @@ pub(super) fn schedule_partitioned_mesi_memory_response_parallel(
         memory_route,
         backing,
         dram_memory,
+        dram_qos,
         trace,
         response_cache,
         responses,
@@ -133,6 +137,7 @@ struct SerialMesiMemoryResponseWork {
     memory_route: PartitionedMesiRoute,
     backing: Arc<Mutex<LineBackingStore>>,
     dram_memory: Option<Arc<Mutex<DramMemoryController>>>,
+    dram_qos: Option<Arc<Mutex<PartitionedDramQosState>>>,
     trace: MemoryTrace,
     response_cache: Arc<Mutex<MesiCacheController>>,
     responses: Arc<Mutex<Vec<MesiCpuResponseRecord>>>,
@@ -191,6 +196,7 @@ impl SerialMesiMemoryResponseWork {
             &request,
             &self.backing,
             self.dram_memory.as_ref(),
+            self.dram_qos.as_ref(),
             &self.dram_accesses,
         )
         .expect("memory response");
@@ -335,6 +341,7 @@ struct ParallelMesiMemoryResponseWork {
     memory_route: PartitionedMesiRoute,
     backing: Arc<Mutex<LineBackingStore>>,
     dram_memory: Option<Arc<Mutex<DramMemoryController>>>,
+    dram_qos: Option<Arc<Mutex<PartitionedDramQosState>>>,
     trace: MemoryTrace,
     response_cache: Arc<Mutex<MesiCacheController>>,
     responses: Arc<Mutex<Vec<MesiCpuResponseRecord>>>,
@@ -395,6 +402,7 @@ impl ParallelMesiMemoryResponseWork {
             &request,
             &self.backing,
             self.dram_memory.as_ref(),
+            self.dram_qos.as_ref(),
             &self.dram_accesses,
         )
         .expect("memory response");
@@ -544,6 +552,7 @@ fn complete_partitioned_mesi_memory_request(
     request: &MemoryRequest,
     backing: &Arc<Mutex<LineBackingStore>>,
     dram_memory: Option<&Arc<Mutex<DramMemoryController>>>,
+    dram_qos: Option<&Arc<Mutex<PartitionedDramQosState>>>,
     dram_accesses: &Arc<Mutex<Vec<DramMemoryAccessRecord>>>,
 ) -> Result<(u64, MemoryResponse), MesiHarnessError> {
     let Some(dram_memory) = dram_memory else {
@@ -555,11 +564,17 @@ fn complete_partitioned_mesi_memory_request(
         return Ok((now, response));
     };
 
-    let outcome = dram_memory
-        .lock()
-        .expect("DRAM memory lock")
-        .accept(now, request)
-        .map_err(MesiHarnessError::Dram)?;
+    let mut controller = dram_memory.lock().expect("DRAM memory lock");
+    let outcome = match dram_qos {
+        Some(qos) => qos
+            .lock()
+            .expect("DRAM QoS lock")
+            .accept(&mut controller, now, request)
+            .map_err(MesiHarnessError::Dram)?,
+        None => controller
+            .accept(now, request)
+            .map_err(MesiHarnessError::Dram)?,
+    };
     dram_accesses
         .lock()
         .expect("DRAM access lock")

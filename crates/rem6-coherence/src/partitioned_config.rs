@@ -1,8 +1,12 @@
 use rem6_directory::DirectoryDecision;
-use rem6_dram::DramMemoryController;
-use rem6_fabric::{FabricPath, VirtualNetworkId};
+use rem6_dram::{
+    DramMemoryController, DramMemoryError, DramMemoryOutcome, DramQosSchedulingPolicy,
+};
+use rem6_fabric::{
+    FabricPath, QosPriorityPolicy, QosQueueArbiter, QosRequestorId, VirtualNetworkId,
+};
 use rem6_kernel::PartitionId;
-use rem6_memory::{AgentId, MemoryRequestId, MemoryTargetId};
+use rem6_memory::{AgentId, MemoryRequest, MemoryRequestId, MemoryTargetId};
 use rem6_transport::TransportEndpointId;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -236,6 +240,62 @@ pub struct PartitionedDramMemoryConfig {
     response_virtual_network: VirtualNetworkId,
     controller: DramMemoryController,
     route_hops: Vec<PartitionedRouteHopConfig>,
+    qos: Option<PartitionedDramQosState>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PartitionedDramQosState {
+    priority_policy: QosPriorityPolicy,
+    arbiter: QosQueueArbiter,
+    scheduling_policy: DramQosSchedulingPolicy,
+    next_order: u64,
+}
+
+impl PartitionedDramQosState {
+    pub fn new(
+        priority_policy: QosPriorityPolicy,
+        arbiter: QosQueueArbiter,
+        scheduling_policy: DramQosSchedulingPolicy,
+    ) -> Self {
+        Self {
+            priority_policy,
+            arbiter,
+            scheduling_policy,
+            next_order: 0,
+        }
+    }
+
+    pub fn accept(
+        &mut self,
+        controller: &mut DramMemoryController,
+        arrival_cycle: u64,
+        request: &MemoryRequest,
+    ) -> Result<DramMemoryOutcome, DramMemoryError> {
+        let mut priority_policy = self.priority_policy.clone();
+        let priority = priority_policy
+            .priority_for(
+                QosRequestorId::new(request.id().agent().get()),
+                request.size().bytes(),
+            )
+            .map_err(|source| DramMemoryError::Qos { source })?;
+        let order = self.next_order;
+        let mut arbiter = self.arbiter.clone();
+        let outcome = controller.accept_qos_with_policy(
+            arrival_cycle,
+            request,
+            priority,
+            order,
+            &mut arbiter,
+            self.scheduling_policy,
+        )?;
+        self.priority_policy = priority_policy;
+        self.arbiter = arbiter;
+        self.next_order = self
+            .next_order
+            .checked_add(1)
+            .expect("partitioned DRAM QoS order does not overflow");
+        Ok(outcome)
+    }
 }
 
 impl PartitionedDramMemoryConfig {
@@ -255,6 +315,7 @@ impl PartitionedDramMemoryConfig {
             response_virtual_network: VirtualNetworkId::new(0),
             controller,
             route_hops: Vec::new(),
+            qos: None,
         }
     }
 
@@ -273,6 +334,11 @@ impl PartitionedDramMemoryConfig {
         I: IntoIterator<Item = PartitionedRouteHopConfig>,
     {
         self.route_hops = route_hops.into_iter().collect();
+        self
+    }
+
+    pub fn with_qos(mut self, qos: PartitionedDramQosState) -> Self {
+        self.qos = Some(qos);
         self
     }
 
@@ -302,6 +368,10 @@ impl PartitionedDramMemoryConfig {
 
     pub fn route_hops(&self) -> &[PartitionedRouteHopConfig] {
         &self.route_hops
+    }
+
+    pub const fn qos(&self) -> Option<&PartitionedDramQosState> {
+        self.qos.as_ref()
     }
 
     pub(crate) fn into_controller(self) -> DramMemoryController {
@@ -396,5 +466,77 @@ impl DramMemoryAccessRecord {
 
     pub const fn ready_cycle(&self) -> u64 {
         self.ready_cycle
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rem6_dram::{DramControllerConfig, DramGeometry, DramQosTurnaroundPolicy, DramTiming};
+    use rem6_fabric::{QosFixedPriorityPolicy, QosPriority, QosQueuePolicyKind};
+    use rem6_memory::{AccessSize, Address, CacheLineLayout};
+
+    fn layout() -> CacheLineLayout {
+        CacheLineLayout::new(64).unwrap()
+    }
+
+    fn geometry() -> DramGeometry {
+        DramGeometry::new(4, 256, 64).unwrap()
+    }
+
+    fn timing() -> DramTiming {
+        DramTiming::new(3, 5, 7, 2, 4).unwrap()
+    }
+
+    fn request_id(sequence: u64) -> MemoryRequestId {
+        MemoryRequestId::new(AgentId::new(6), sequence)
+    }
+
+    fn line_data() -> Vec<u8> {
+        vec![0xaa; layout().bytes() as usize]
+    }
+
+    fn controller_with_line() -> DramMemoryController {
+        let target = MemoryTargetId::new(1);
+        let mut controller = DramMemoryController::new();
+        controller
+            .add_target(DramControllerConfig::new(
+                target,
+                layout(),
+                geometry(),
+                timing(),
+            ))
+            .unwrap();
+        controller
+            .map_region(
+                target,
+                Address::new(0x0000),
+                AccessSize::new(0x4000).unwrap(),
+            )
+            .unwrap();
+        controller
+            .insert_line(target, Address::new(0x1000), line_data())
+            .unwrap();
+        controller
+    }
+
+    #[test]
+    fn partitioned_dram_qos_state_does_not_advance_on_rejected_access() {
+        let mut controller = controller_with_line();
+        let mut state = PartitionedDramQosState::new(
+            QosPriorityPolicy::fixed_priority(
+                QosFixedPriorityPolicy::new(8, QosPriority::new(3)).unwrap(),
+            ),
+            QosQueueArbiter::new(QosQueuePolicyKind::LeastRecentlyGranted),
+            DramQosSchedulingPolicy::new().with_turnaround(DramQosTurnaroundPolicy::RequestOrder),
+        );
+        let before = state.clone();
+        let request =
+            MemoryRequest::clean_evict(request_id(1), Address::new(0x1000), layout()).unwrap();
+
+        let error = state.accept(&mut controller, 0, &request).unwrap_err();
+
+        assert!(matches!(error, DramMemoryError::Dram { .. }));
+        assert_eq!(state, before);
     }
 }

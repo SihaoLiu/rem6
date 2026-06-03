@@ -33,7 +33,7 @@ use crate::wait_for::CoherenceWaitFor;
 use crate::{
     DramMemoryAccessRecord, HarnessError, LineBackingStore, ParallelCoherenceRunHistory,
     ParallelCoherenceRunSummary, ParallelCoherenceWaitForGraphs, PartitionedCacheAgentConfig,
-    PartitionedDramMemoryConfig, PartitionedRouteHopConfig, SubmitKind,
+    PartitionedDramMemoryConfig, PartitionedDramQosState, PartitionedRouteHopConfig, SubmitKind,
 };
 
 mod response;
@@ -333,6 +333,7 @@ pub struct PartitionedMoesiDirectoryLineHarness {
     memory_route: Option<PartitionedMoesiRoute>,
     backing: Arc<Mutex<LineBackingStore>>,
     dram_memory: Option<Arc<Mutex<DramMemoryController>>>,
+    dram_qos: Option<Arc<Mutex<PartitionedDramQosState>>>,
     fabric: Option<Arc<Mutex<FabricModel>>>,
     trace: MemoryTrace,
     cpu_responses: Arc<Mutex<Vec<MoesiCpuResponseRecord>>>,
@@ -699,6 +700,7 @@ impl PartitionedMoesiDirectoryLineHarness {
             memory_route: None,
             backing: Arc::new(Mutex::new(backing)),
             dram_memory: None,
+            dram_qos: None,
             fabric,
             trace: MemoryTrace::new(),
             cpu_responses: Arc::new(Mutex::new(Vec::new())),
@@ -804,6 +806,7 @@ impl PartitionedMoesiDirectoryLineHarness {
             routes.insert(config.agent(), PartitionedMoesiRoute::new(route_id, route));
         }
 
+        let dram_qos = memory.qos().cloned().map(|qos| Arc::new(Mutex::new(qos)));
         let dram_controller = memory.into_controller();
         let backing = line_backing_from_moesi_dram_memory(layout, line_address, &dram_controller)?;
 
@@ -818,6 +821,7 @@ impl PartitionedMoesiDirectoryLineHarness {
             memory_route: Some(PartitionedMoesiRoute::new(memory_route_id, memory_route)),
             backing: Arc::new(Mutex::new(backing)),
             dram_memory: Some(Arc::new(Mutex::new(dram_controller))),
+            dram_qos,
             fabric,
             trace: MemoryTrace::new(),
             cpu_responses: Arc::new(Mutex::new(Vec::new())),
@@ -886,6 +890,7 @@ impl PartitionedMoesiDirectoryLineHarness {
         let memory_route = self.memory_route.clone();
         let backing = Arc::clone(&self.backing);
         let dram_memory = self.dram_memory.clone();
+        let dram_qos = self.dram_qos.clone();
         let fabric = self.fabric.clone();
         let trace = self.trace.clone();
         let response_cache = Arc::clone(&cache);
@@ -935,6 +940,7 @@ impl PartitionedMoesiDirectoryLineHarness {
                             memory_route,
                             backing,
                             dram_memory,
+                            dram_qos,
                             fabric.clone(),
                             trace.clone(),
                             response_cache,

@@ -33,7 +33,7 @@ use crate::summary::CoherenceResourceActivityWindow;
 use crate::{
     HarnessError, LineBackingStore, ParallelCoherenceRunHistory, ParallelCoherenceRunSummary,
     ParallelCoherenceWaitForGraphs, PartitionedCacheAgentConfig, PartitionedDramMemoryConfig,
-    SubmitKind,
+    PartitionedDramQosState, SubmitKind,
 };
 
 mod partitioned;
@@ -329,6 +329,7 @@ pub struct PartitionedChiDirectoryLineHarness {
     memory_route: Option<PartitionedChiRoute>,
     backing: Arc<Mutex<LineBackingStore>>,
     dram_memory: Option<Arc<Mutex<DramMemoryController>>>,
+    dram_qos: Option<Arc<Mutex<PartitionedDramQosState>>>,
     trace: MemoryTrace,
     cpu_responses: Arc<Mutex<Vec<ChiCpuResponseRecord>>>,
     directory_decisions: Arc<Mutex<Vec<ChiDirectoryDecisionRecord>>>,
@@ -343,6 +344,7 @@ pub struct PartitionedChiDirectoryLineHarnessSnapshot {
     caches: BTreeMap<AgentId, ChiCacheControllerSnapshot>,
     backing: LineBackingStore,
     dram_memory: Option<DramMemoryController>,
+    dram_qos: Option<PartitionedDramQosState>,
     trace: Vec<MemoryTraceEvent>,
     cpu_responses: Vec<ChiCpuResponseRecord>,
     directory_decisions: Vec<ChiDirectoryDecisionRecord>,
@@ -357,6 +359,7 @@ impl PartitionedChiDirectoryLineHarnessSnapshot {
         caches: BTreeMap<AgentId, ChiCacheControllerSnapshot>,
         backing: LineBackingStore,
         dram_memory: Option<DramMemoryController>,
+        dram_qos: Option<PartitionedDramQosState>,
         trace: Vec<MemoryTraceEvent>,
         cpu_responses: Vec<ChiCpuResponseRecord>,
         directory_decisions: Vec<ChiDirectoryDecisionRecord>,
@@ -368,6 +371,7 @@ impl PartitionedChiDirectoryLineHarnessSnapshot {
             caches,
             backing,
             dram_memory,
+            dram_qos,
             trace,
             cpu_responses,
             directory_decisions,
@@ -396,6 +400,10 @@ impl PartitionedChiDirectoryLineHarnessSnapshot {
 
     pub const fn dram_memory(&self) -> Option<&DramMemoryController> {
         self.dram_memory.as_ref()
+    }
+
+    pub const fn dram_qos(&self) -> Option<&PartitionedDramQosState> {
+        self.dram_qos.as_ref()
     }
 
     pub fn trace(&self) -> Vec<MemoryTraceEvent> {
@@ -761,6 +769,7 @@ impl PartitionedChiDirectoryLineHarness {
             memory_route: None,
             backing: Arc::new(Mutex::new(backing)),
             dram_memory: None,
+            dram_qos: None,
             trace: MemoryTrace::new(),
             cpu_responses: Arc::new(Mutex::new(Vec::new())),
             directory_decisions: Arc::new(Mutex::new(Vec::new())),
@@ -863,6 +872,7 @@ impl PartitionedChiDirectoryLineHarness {
             routes.insert(config.agent(), PartitionedChiRoute::new(route_id, route));
         }
 
+        let dram_qos = memory.qos().cloned().map(|qos| Arc::new(Mutex::new(qos)));
         let dram_controller = memory.into_controller();
         let backing = line_backing_from_chi_dram_memory(layout, line_address, &dram_controller)?;
 
@@ -877,6 +887,7 @@ impl PartitionedChiDirectoryLineHarness {
             memory_route: Some(PartitionedChiRoute::new(memory_route_id, memory_route)),
             backing: Arc::new(Mutex::new(backing)),
             dram_memory: Some(Arc::new(Mutex::new(dram_controller))),
+            dram_qos,
             trace: MemoryTrace::new(),
             cpu_responses: Arc::new(Mutex::new(Vec::new())),
             directory_decisions: Arc::new(Mutex::new(Vec::new())),
@@ -926,6 +937,7 @@ impl PartitionedChiDirectoryLineHarness {
         let memory_route = self.memory_route.clone();
         let backing = Arc::clone(&self.backing);
         let dram_memory = self.dram_memory.clone();
+        let dram_qos = self.dram_qos.clone();
         let trace = self.trace.clone();
         let response_cache = Arc::clone(&cache);
         let responses = Arc::clone(&self.cpu_responses);
@@ -969,6 +981,7 @@ impl PartitionedChiDirectoryLineHarness {
                             memory_route,
                             backing,
                             dram_memory,
+                            dram_qos,
                             trace.clone(),
                             response_cache,
                             responses,
@@ -1150,6 +1163,9 @@ impl PartitionedChiDirectoryLineHarness {
             self.dram_memory
                 .as_ref()
                 .map(|memory| memory.lock().expect("DRAM memory lock").clone()),
+            self.dram_qos
+                .as_ref()
+                .map(|qos| qos.lock().expect("DRAM QoS lock").clone()),
             self.trace.snapshot(),
             self.cpu_responses.lock().expect("response lock").clone(),
             self.directory_decisions
@@ -1184,16 +1200,17 @@ impl PartitionedChiDirectoryLineHarness {
             caches.insert(*agent, Arc::new(Mutex::new(cache)));
         }
 
+        let dram_memory = restored_chi_dram_memory(&self.dram_memory, snapshot.dram_memory())?;
+        let dram_qos = restored_chi_dram_qos(&self.dram_qos, snapshot.dram_qos())?;
+
         self.scheduler
             .restore_quiescent(snapshot.scheduler())
             .map_err(ChiHarnessError::Scheduler)?;
         self.directory = Arc::new(Mutex::new(directory));
         self.caches = caches;
         self.backing = Arc::new(Mutex::new(snapshot.backing.clone()));
-        self.dram_memory = snapshot
-            .dram_memory
-            .clone()
-            .map(|memory| Arc::new(Mutex::new(memory)));
+        self.dram_memory = dram_memory;
+        self.dram_qos = dram_qos;
         self.trace = MemoryTrace::from_events(snapshot.trace.clone());
         *self.cpu_responses.lock().expect("response lock") = snapshot.cpu_responses.clone();
         *self.directory_decisions.lock().expect("decision lock") =
@@ -1242,6 +1259,30 @@ impl PartitionedChiDirectoryLineHarness {
             .get(&agent)
             .cloned()
             .ok_or(ChiHarnessError::UnknownCache { agent })
+    }
+}
+
+fn restored_chi_dram_memory(
+    current: &Option<Arc<Mutex<DramMemoryController>>>,
+    snapshot: Option<&DramMemoryController>,
+) -> Result<Option<Arc<Mutex<DramMemoryController>>>, ChiHarnessError> {
+    match (current, snapshot) {
+        (Some(_), Some(snapshot)) => Ok(Some(Arc::new(Mutex::new(snapshot.clone())))),
+        (None, None) => Ok(None),
+        _ => Err(ChiHarnessError::SnapshotResourceMismatch { resource: "dram" }),
+    }
+}
+
+fn restored_chi_dram_qos(
+    current: &Option<Arc<Mutex<PartitionedDramQosState>>>,
+    snapshot: Option<&PartitionedDramQosState>,
+) -> Result<Option<Arc<Mutex<PartitionedDramQosState>>>, ChiHarnessError> {
+    match (current, snapshot) {
+        (Some(_), Some(snapshot)) => Ok(Some(Arc::new(Mutex::new(snapshot.clone())))),
+        (None, None) => Ok(None),
+        _ => Err(ChiHarnessError::SnapshotResourceMismatch {
+            resource: "dram_qos",
+        }),
     }
 }
 

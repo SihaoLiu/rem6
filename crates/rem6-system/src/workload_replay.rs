@@ -7,7 +7,8 @@ use rem6_accelerator::{AcceleratorEngineId, AcceleratorEngineSnapshot, Accelerat
 use rem6_boot::{BootError, BootImage};
 use rem6_checkpoint::CheckpointManifest;
 use rem6_coherence::{
-    ChiHarnessError, HarnessError, MesiHarnessError, MoesiHarnessError, PartitionedDramMemoryConfig,
+    ChiHarnessError, HarnessError, MesiHarnessError, MoesiHarnessError,
+    PartitionedDramMemoryConfig, PartitionedDramQosState,
 };
 use rem6_cpu::{
     CpuCore, CpuDataConfig, CpuError, CpuFetchConfig, CpuId, CpuResetState, RiscvCluster, RiscvCore,
@@ -67,7 +68,7 @@ use self::dma_scheduler_evidence::{
     dma_scheduler_remote_sends, DmaSchedulerEvidence,
 };
 use self::memory_backend::{memory_response, WorkloadDramBackend, WorkloadMemoryBackend};
-use self::qos::{priority_policy, queue_arbiter};
+use self::qos::{dram_scheduling_policy, priority_policy, queue_arbiter};
 use self::sinic_mmio_backend::WorkloadSinicPciMmioBackend;
 use self::summary::{
     livelock_transition_threshold, parallel_execution_summary, WorkloadReplayActivityRefs,
@@ -834,16 +835,23 @@ impl RiscvWorkloadReplay {
         dram.insert_line(target_id, line, line_data)
             .map_err(RiscvWorkloadReplayError::Dram)?;
 
-        Ok(WorkloadDataCacheLineMemory::Dram(
-            PartitionedDramMemoryConfig::new(
-                PartitionId::new(memory_route.target_partition()),
-                TransportEndpointId::new(memory_route.target_endpoint())
-                    .map_err(RiscvWorkloadReplayError::Transport)?,
-                memory_route.request_latency(),
-                memory_route.response_latency(),
-                dram,
-            ),
-        ))
+        let mut memory = PartitionedDramMemoryConfig::new(
+            PartitionId::new(memory_route.target_partition()),
+            TransportEndpointId::new(memory_route.target_endpoint())
+                .map_err(RiscvWorkloadReplayError::Transport)?,
+            memory_route.request_latency(),
+            memory_route.response_latency(),
+            dram,
+        );
+        if let Some(policy) = topology.qos_policy() {
+            memory = memory.with_qos(PartitionedDramQosState::new(
+                priority_policy(policy),
+                queue_arbiter(policy),
+                dram_scheduling_policy(policy),
+            ));
+        }
+
+        Ok(WorkloadDataCacheLineMemory::Dram(Box::new(memory)))
     }
 
     fn data_cache_memory_route<'a>(

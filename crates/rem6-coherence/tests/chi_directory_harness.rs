@@ -3,13 +3,17 @@ use rem6_coherence::{
     ChiCpuResponseRecord, ChiDirectoryLineHarness, ChiDirectoryLineHarnessSnapshot,
     ChiHarnessError, HarnessError, LineBackingStore, PartitionedCacheAgentConfig,
     PartitionedChiDirectoryLineHarness, PartitionedChiDirectoryLineHarnessSnapshot,
-    PartitionedRouteHopConfig, SubmitKind,
+    PartitionedDramMemoryConfig, PartitionedDramQosState, PartitionedRouteHopConfig, SubmitKind,
 };
 use rem6_directory::{ChiDirectoryDataSource, ChiDirectoryLineState, ChiDirectorySnoop};
+use rem6_dram::{DramControllerConfig, DramGeometry, DramMemoryController, DramTiming};
+use rem6_fabric::{
+    QosFixedPriorityPolicy, QosPriority, QosPriorityPolicy, QosQueueArbiter, QosQueuePolicyKind,
+};
 use rem6_kernel::PartitionId;
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
-    ResponseStatus,
+    MemoryTargetId, ResponseStatus,
 };
 use rem6_protocol_chi::{ChiEvent, ChiLineId, ChiState};
 use rem6_transport::{MemoryTraceKind, TransportEndpointId};
@@ -101,6 +105,40 @@ fn route_hop(
     )
 }
 
+fn chi_dram_memory() -> DramMemoryController {
+    let target = MemoryTargetId::new(0);
+    let mut memory = DramMemoryController::new();
+    memory
+        .add_target(DramControllerConfig::new(
+            target,
+            layout(),
+            DramGeometry::new(4, 256, 64).unwrap(),
+            DramTiming::new(3, 5, 7, 2, 4).unwrap(),
+        ))
+        .unwrap();
+    memory
+        .map_region(
+            target,
+            Address::new(0x6000),
+            AccessSize::new(0x1000).unwrap(),
+        )
+        .unwrap();
+    memory
+        .insert_line(target, Address::new(0x6000), line_data())
+        .unwrap();
+    memory
+}
+
+fn chi_dram_qos_state() -> PartitionedDramQosState {
+    PartitionedDramQosState::new(
+        QosPriorityPolicy::fixed_priority(
+            QosFixedPriorityPolicy::new(8, QosPriority::new(2)).unwrap(),
+        ),
+        QosQueueArbiter::new(QosQueuePolicyKind::LeastRecentlyGranted),
+        Default::default(),
+    )
+}
+
 fn partitioned_harness() -> PartitionedChiDirectoryLineHarness {
     PartitionedChiDirectoryLineHarness::new(
         layout(),
@@ -112,6 +150,28 @@ fn partitioned_harness() -> PartitionedChiDirectoryLineHarness {
             cache_config(1, 0, "l1d0", 3, 9),
             cache_config(2, 1, "l1d1", 5, 7),
             cache_config(3, 3, "l1d2", 2, 4),
+        ],
+    )
+    .unwrap()
+}
+
+fn partitioned_harness_with_dram_qos_memory() -> PartitionedChiDirectoryLineHarness {
+    PartitionedChiDirectoryLineHarness::new_with_dram_memory(
+        layout(),
+        Address::new(0x6000),
+        PartitionId::new(2),
+        endpoint("dir0"),
+        PartitionedDramMemoryConfig::new(
+            PartitionId::new(4),
+            endpoint("mem0"),
+            7,
+            11,
+            chi_dram_memory(),
+        )
+        .with_qos(chi_dram_qos_state()),
+        [
+            cache_config(1, 0, "l1d0", 3, 9),
+            cache_config(2, 1, "l1d1", 5, 7),
         ],
     )
     .unwrap()
@@ -499,6 +559,7 @@ fn partitioned_chi_harness_quiescent_restore_rejects_backing_line_mismatch_witho
         snapshot.caches().clone(),
         LineBackingStore::new(layout(), Address::new(0x7000), line_data()).unwrap(),
         snapshot.dram_memory().cloned(),
+        snapshot.dram_qos().cloned(),
         snapshot.trace(),
         snapshot.cpu_responses(),
         snapshot.directory_decisions(),
@@ -532,6 +593,7 @@ fn partitioned_chi_harness_quiescent_restore_rejects_directory_line_mismatch_wit
         snapshot.caches().clone(),
         snapshot.backing().clone(),
         snapshot.dram_memory().cloned(),
+        snapshot.dram_qos().cloned(),
         snapshot.trace(),
         snapshot.cpu_responses(),
         snapshot.directory_decisions(),
@@ -546,6 +608,37 @@ fn partitioned_chi_harness_quiescent_restore_rejects_directory_line_mismatch_wit
             expected: Address::new(0x6000),
             actual: Address::new(0x7000),
         })
+    );
+    assert_eq!(restored.quiescent_snapshot().unwrap(), before);
+}
+
+#[test]
+fn partitioned_chi_harness_quiescent_restore_rejects_dram_qos_without_dram_memory() {
+    let mut source = partitioned_harness_with_dram_qos_memory();
+    source
+        .submit_cpu_request_parallel(agent(1), read(1, 0, 0x6000, 4))
+        .unwrap();
+    source.run_until_idle_parallel().unwrap();
+    let snapshot = source.quiescent_snapshot().unwrap();
+    let bad_snapshot = PartitionedChiDirectoryLineHarnessSnapshot::new(
+        snapshot.line(),
+        snapshot.scheduler().clone(),
+        snapshot.directory().clone(),
+        snapshot.caches().clone(),
+        snapshot.backing().clone(),
+        None,
+        snapshot.dram_qos().cloned(),
+        snapshot.trace(),
+        snapshot.cpu_responses(),
+        snapshot.directory_decisions(),
+    );
+
+    let mut restored = partitioned_harness_with_dram_qos_memory();
+    let before = restored.quiescent_snapshot().unwrap();
+
+    assert_eq!(
+        restored.restore_quiescent(&bad_snapshot).unwrap_err(),
+        ChiHarnessError::SnapshotResourceMismatch { resource: "dram" }
     );
     assert_eq!(restored.quiescent_snapshot().unwrap(), before);
 }

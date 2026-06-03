@@ -180,7 +180,7 @@ impl QosFixedPriorityPolicy {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum QosPriorityPolicy {
     FixedPriority(QosFixedPriorityPolicy),
     ProportionalFair(QosProportionalFairPolicy),

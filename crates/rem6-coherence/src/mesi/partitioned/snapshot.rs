@@ -11,7 +11,7 @@ use rem6_transport::{MemoryTrace, MemoryTraceEvent};
 
 use crate::{
     DramMemoryAccessRecord, HarnessError, LineBackingStore, ParallelCoherenceRunHistory,
-    ParallelCoherenceRunSummary,
+    ParallelCoherenceRunSummary, PartitionedDramQosState,
 };
 
 use super::super::{
@@ -27,6 +27,7 @@ pub struct PartitionedMesiDirectoryLineHarnessSnapshot {
     caches: BTreeMap<AgentId, MesiCacheControllerSnapshot>,
     backing: LineBackingStore,
     dram_memory: Option<DramMemorySnapshot>,
+    dram_qos: Option<PartitionedDramQosState>,
     trace: Vec<MemoryTraceEvent>,
     cpu_responses: Vec<MesiCpuResponseRecord>,
     directory_decisions: Vec<MesiDirectoryDecisionRecord>,
@@ -43,6 +44,7 @@ impl PartitionedMesiDirectoryLineHarnessSnapshot {
         caches: BTreeMap<AgentId, MesiCacheControllerSnapshot>,
         backing: LineBackingStore,
         dram_memory: Option<DramMemorySnapshot>,
+        dram_qos: Option<PartitionedDramQosState>,
         trace: Vec<MemoryTraceEvent>,
         cpu_responses: Vec<MesiCpuResponseRecord>,
         directory_decisions: Vec<MesiDirectoryDecisionRecord>,
@@ -56,6 +58,7 @@ impl PartitionedMesiDirectoryLineHarnessSnapshot {
             caches,
             backing,
             dram_memory,
+            dram_qos,
             trace,
             cpu_responses,
             directory_decisions,
@@ -86,6 +89,10 @@ impl PartitionedMesiDirectoryLineHarnessSnapshot {
 
     pub const fn dram_memory(&self) -> Option<&DramMemorySnapshot> {
         self.dram_memory.as_ref()
+    }
+
+    pub const fn dram_qos(&self) -> Option<&PartitionedDramQosState> {
+        self.dram_qos.as_ref()
     }
 
     pub fn trace(&self) -> Vec<MemoryTraceEvent> {
@@ -136,6 +143,9 @@ impl PartitionedMesiDirectoryLineHarness {
             self.dram_memory
                 .as_ref()
                 .map(|dram| dram.lock().expect("DRAM memory lock").snapshot()),
+            self.dram_qos
+                .as_ref()
+                .map(|qos| qos.lock().expect("DRAM QoS lock").clone()),
             self.trace.snapshot(),
             self.cpu_responses.lock().expect("response lock").clone(),
             self.directory_decisions
@@ -176,6 +186,7 @@ impl PartitionedMesiDirectoryLineHarness {
 
         let backing = Arc::new(Mutex::new(snapshot.backing.clone()));
         let dram_memory = restored_mesi_dram_memory(&self.dram_memory, snapshot.dram_memory())?;
+        let dram_qos = restored_mesi_dram_qos(&self.dram_qos, snapshot.dram_qos())?;
 
         self.scheduler
             .restore_quiescent(snapshot.scheduler())
@@ -184,6 +195,7 @@ impl PartitionedMesiDirectoryLineHarness {
         self.caches = caches;
         self.backing = backing;
         self.dram_memory = dram_memory;
+        self.dram_qos = dram_qos;
         self.trace = MemoryTrace::from_events(snapshot.trace.clone());
         *self.cpu_responses.lock().expect("response lock") = snapshot.cpu_responses.clone();
         *self.directory_decisions.lock().expect("decision lock") =
@@ -242,5 +254,18 @@ fn restored_mesi_dram_memory(
         }
         (None, None) => Ok(None),
         _ => Err(MesiHarnessError::SnapshotResourceMismatch { resource: "dram" }),
+    }
+}
+
+fn restored_mesi_dram_qos(
+    current: &Option<Arc<Mutex<PartitionedDramQosState>>>,
+    snapshot: Option<&PartitionedDramQosState>,
+) -> Result<Option<Arc<Mutex<PartitionedDramQosState>>>, MesiHarnessError> {
+    match (current, snapshot) {
+        (Some(_), Some(snapshot)) => Ok(Some(Arc::new(Mutex::new(snapshot.clone())))),
+        (None, None) => Ok(None),
+        _ => Err(MesiHarnessError::SnapshotResourceMismatch {
+            resource: "dram_qos",
+        }),
     }
 }

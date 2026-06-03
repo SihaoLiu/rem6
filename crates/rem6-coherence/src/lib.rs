@@ -66,7 +66,8 @@ pub use moesi::{
 };
 pub use partitioned_config::{
     DirectoryDecisionRecord, DramMemoryAccessRecord, PartitionedCacheAgentConfig,
-    PartitionedDramMemoryConfig, PartitionedMemoryConfig, PartitionedRouteHopConfig,
+    PartitionedDramMemoryConfig, PartitionedDramQosState, PartitionedMemoryConfig,
+    PartitionedRouteHopConfig,
 };
 pub use partitioned_snapshot::PartitionedDirectoryLineHarnessSnapshot;
 use response::{push_locked_response_records_from_outcomes, push_response_records_from_outcomes};
@@ -259,6 +260,7 @@ pub struct PartitionedDirectoryLineHarness {
     routes: BTreeMap<AgentId, MemoryRouteId>,
     backing: Option<Arc<Mutex<LineBackingStore>>>,
     dram_memory: Option<Arc<Mutex<DramMemoryController>>>,
+    dram_qos: Option<Arc<Mutex<PartitionedDramQosState>>>,
     fabric: Option<Arc<Mutex<FabricModel>>>,
     memory_route: Option<MemoryRouteId>,
     memory_route_info: Option<MemoryRoute>,
@@ -390,6 +392,7 @@ impl PartitionedDirectoryLineHarness {
         let mut memory_route = None;
         let mut memory_route_info = None;
         let mut dram_controller = None;
+        let mut dram_qos = None;
 
         if let Some(memory) = memory {
             partition_count = partition_count.max(
@@ -447,6 +450,7 @@ impl PartitionedDirectoryLineHarness {
                     .map_err(HarnessError::Transport)?,
             );
             memory_route_info = Some(route);
+            dram_qos = memory.qos().cloned().map(|qos| Arc::new(Mutex::new(qos)));
             dram_controller = Some(Arc::new(Mutex::new(memory.into_controller())));
         }
 
@@ -503,6 +507,7 @@ impl PartitionedDirectoryLineHarness {
             routes,
             backing: backing.map(|backing| Arc::new(Mutex::new(backing))),
             dram_memory: dram_controller,
+            dram_qos,
             fabric,
             memory_route,
             memory_route_info,
@@ -568,6 +573,7 @@ impl PartitionedDirectoryLineHarness {
         let caches = self.caches.clone();
         let backing = self.backing.clone();
         let dram_memory = self.dram_memory.clone();
+        let dram_qos = self.dram_qos.clone();
         let decisions = Arc::clone(&self.directory_decisions);
         let dram_accesses = Arc::clone(&self.dram_accesses);
         let fabric = self.fabric.clone();
@@ -588,6 +594,7 @@ impl PartitionedDirectoryLineHarness {
             caches: caches.clone(),
             backing: backing.clone(),
             dram_memory: dram_memory.clone(),
+            dram_qos: dram_qos.clone(),
             fabric: fabric.clone(),
             trace: trace.clone(),
             response_cache: Arc::clone(&response_cache),

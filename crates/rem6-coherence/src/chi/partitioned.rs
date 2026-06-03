@@ -20,7 +20,7 @@ use super::{
     chi_response_record, decision_downgrades_unique_owner, map_chi_cache_error,
     ChiCpuResponseRecord, ChiHarnessError, PartitionedChiRoute,
 };
-use crate::{LineBackingStore, PartitionedRouteHopConfig};
+use crate::{LineBackingStore, PartitionedDramQosState, PartitionedRouteHopConfig};
 
 pub(super) fn expand_partition_count_for_chi_hops(
     partition_count: &mut u32,
@@ -241,6 +241,7 @@ pub(super) fn schedule_partitioned_chi_memory_response(
     memory_route: PartitionedChiRoute,
     backing: Arc<Mutex<LineBackingStore>>,
     dram_memory: Option<Arc<Mutex<DramMemoryController>>>,
+    dram_qos: Option<Arc<Mutex<PartitionedDramQosState>>>,
     trace: MemoryTrace,
     response_cache: Arc<Mutex<ChiCacheController>>,
     responses: Arc<Mutex<Vec<ChiCpuResponseRecord>>>,
@@ -263,6 +264,7 @@ pub(super) fn schedule_partitioned_chi_memory_response(
         memory_route,
         backing,
         dram_memory,
+        dram_qos,
         trace,
         response_cache,
         responses,
@@ -281,6 +283,7 @@ fn schedule_partitioned_chi_memory_request_hop(
     memory_route: PartitionedChiRoute,
     backing: Arc<Mutex<LineBackingStore>>,
     dram_memory: Option<Arc<Mutex<DramMemoryController>>>,
+    dram_qos: Option<Arc<Mutex<PartitionedDramQosState>>>,
     trace: MemoryTrace,
     response_cache: Arc<Mutex<ChiCacheController>>,
     responses: Arc<Mutex<Vec<ChiCpuResponseRecord>>>,
@@ -305,6 +308,7 @@ fn schedule_partitioned_chi_memory_request_hop(
                     &request,
                     &backing,
                     dram_memory.as_ref(),
+                    dram_qos.as_ref(),
                 )
                 .expect("CHI memory response");
                 context
@@ -341,6 +345,7 @@ fn schedule_partitioned_chi_memory_request_hop(
                     memory_route,
                     backing,
                     dram_memory,
+                    dram_qos,
                     trace,
                     response_cache,
                     responses,
@@ -425,6 +430,7 @@ fn complete_partitioned_chi_memory_request(
     request: &MemoryRequest,
     backing: &Arc<Mutex<LineBackingStore>>,
     dram_memory: Option<&Arc<Mutex<DramMemoryController>>>,
+    dram_qos: Option<&Arc<Mutex<PartitionedDramQosState>>>,
 ) -> Result<(u64, MemoryResponse), ChiHarnessError> {
     let Some(dram_memory) = dram_memory else {
         let response = backing
@@ -435,11 +441,17 @@ fn complete_partitioned_chi_memory_request(
         return Ok((now, response));
     };
 
-    let outcome = dram_memory
-        .lock()
-        .expect("DRAM memory lock")
-        .accept(now, request)
-        .map_err(ChiHarnessError::Dram)?;
+    let mut controller = dram_memory.lock().expect("DRAM memory lock");
+    let outcome = match dram_qos {
+        Some(qos) => qos
+            .lock()
+            .expect("DRAM QoS lock")
+            .accept(&mut controller, now, request)
+            .map_err(ChiHarnessError::Dram)?,
+        None => controller
+            .accept(now, request)
+            .map_err(ChiHarnessError::Dram)?,
+    };
     let response = outcome.response().cloned().ok_or(ChiHarnessError::Memory(
         MemoryError::MissingResponseData {
             request: request.id(),

@@ -25,7 +25,8 @@ use crate::wait_for::CoherenceWaitFor;
 use crate::{
     DramMemoryAccessRecord, HarnessError, LineBackingStore, ParallelCoherenceRunHistory,
     ParallelCoherenceRunSummary, ParallelCoherenceWaitForGraphs, PartitionedCacheAgentConfig,
-    PartitionedDramMemoryConfig, PartitionedMemoryConfig, PartitionedRouteHopConfig, SubmitKind,
+    PartitionedDramMemoryConfig, PartitionedDramQosState, PartitionedMemoryConfig,
+    PartitionedRouteHopConfig, SubmitKind,
 };
 
 use super::{
@@ -64,6 +65,7 @@ pub struct PartitionedMesiDirectoryLineHarness {
     memory_route: Option<PartitionedMesiRoute>,
     backing: Arc<Mutex<LineBackingStore>>,
     dram_memory: Option<Arc<Mutex<DramMemoryController>>>,
+    dram_qos: Option<Arc<Mutex<PartitionedDramQosState>>>,
     trace: MemoryTrace,
     cpu_responses: Arc<Mutex<Vec<MesiCpuResponseRecord>>>,
     directory_decisions: Arc<Mutex<Vec<MesiDirectoryDecisionRecord>>>,
@@ -153,6 +155,7 @@ impl PartitionedMesiDirectoryLineHarness {
             memory_route: None,
             backing: Arc::new(Mutex::new(backing)),
             dram_memory: None,
+            dram_qos: None,
             trace: MemoryTrace::new(),
             cpu_responses: Arc::new(Mutex::new(Vec::new())),
             directory_decisions: Arc::new(Mutex::new(Vec::new())),
@@ -265,6 +268,7 @@ impl PartitionedMesiDirectoryLineHarness {
             memory_route: Some(PartitionedMesiRoute::new(memory_route_id, memory_route)),
             backing: Arc::new(Mutex::new(backing)),
             dram_memory: None,
+            dram_qos: None,
             trace: MemoryTrace::new(),
             cpu_responses: Arc::new(Mutex::new(Vec::new())),
             directory_decisions: Arc::new(Mutex::new(Vec::new())),
@@ -359,6 +363,7 @@ impl PartitionedMesiDirectoryLineHarness {
             routes.insert(config.agent(), PartitionedMesiRoute::new(route_id, route));
         }
 
+        let dram_qos = memory.qos().cloned().map(|qos| Arc::new(Mutex::new(qos)));
         let dram_controller = memory.into_controller();
         let backing = line_backing_from_dram_memory(layout, line_address, &dram_controller)?;
 
@@ -373,6 +378,7 @@ impl PartitionedMesiDirectoryLineHarness {
             memory_route: Some(PartitionedMesiRoute::new(memory_route_id, memory_route)),
             backing: Arc::new(Mutex::new(backing)),
             dram_memory: Some(Arc::new(Mutex::new(dram_controller))),
+            dram_qos,
             trace: MemoryTrace::new(),
             cpu_responses: Arc::new(Mutex::new(Vec::new())),
             directory_decisions: Arc::new(Mutex::new(Vec::new())),
@@ -427,6 +433,7 @@ impl PartitionedMesiDirectoryLineHarness {
         let memory_route = self.memory_route.clone();
         let backing = Arc::clone(&self.backing);
         let dram_memory = self.dram_memory.clone();
+        let dram_qos = self.dram_qos.clone();
         let trace = self.trace.clone();
         let response_cache = Arc::clone(&cache);
         let responses = Arc::clone(&self.cpu_responses);
@@ -471,6 +478,7 @@ impl PartitionedMesiDirectoryLineHarness {
                             memory_route,
                             backing,
                             dram_memory,
+                            dram_qos,
                             trace.clone(),
                             response_cache,
                             responses,
@@ -586,6 +594,7 @@ impl PartitionedMesiDirectoryLineHarness {
         let memory_route = self.memory_route.clone();
         let backing = Arc::clone(&self.backing);
         let dram_memory = self.dram_memory.clone();
+        let dram_qos = self.dram_qos.clone();
         let trace = self.trace.clone();
         let response_cache = Arc::clone(&cache);
         let responses = Arc::clone(&self.cpu_responses);
@@ -632,6 +641,7 @@ impl PartitionedMesiDirectoryLineHarness {
                             memory_route,
                             backing,
                             dram_memory,
+                            dram_qos,
                             trace.clone(),
                             response_cache,
                             responses,

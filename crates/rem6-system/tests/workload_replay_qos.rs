@@ -96,6 +96,33 @@ fn boot_image_with_same_tick_data_read_write_and_cache_line() -> BootImage {
         .unwrap()
 }
 
+fn boot_image_with_same_tick_data_read_write_on_distinct_cache_lines() -> BootImage {
+    BootImage::new(Address::new(0x8000))
+        .add_segment(Address::new(0x8000), word(u_type(0x9000, 2, 0x37)))
+        .unwrap()
+        .add_segment(Address::new(0x8004), word(i_type(0x7b, 0, 0x0, 3, 0x13)))
+        .unwrap()
+        .add_segment(Address::new(0x8008), word(s_type(8, 3, 2, 0x3, 0x23)))
+        .unwrap()
+        .add_segment(Address::new(0x800c), word(0x0000_0073))
+        .unwrap()
+        .add_segment(Address::new(0x8010), word(u_type(0x9000, 2, 0x37)))
+        .unwrap()
+        .add_segment(Address::new(0x8014), word(i_type(0, 0, 0x0, 0, 0x13)))
+        .unwrap()
+        .add_segment(Address::new(0x8018), word(i_type(0x20, 2, 0x3, 5, 0x03)))
+        .unwrap()
+        .add_segment(Address::new(0x801c), word(0x0010_0073))
+        .unwrap()
+        .add_segment(
+            Address::new(0x9008),
+            0xfedc_ba98_7654_3210_u64.to_le_bytes().to_vec(),
+        )
+        .unwrap()
+        .add_segment(Address::new(0x9020), vec![0x5a; 16])
+        .unwrap()
+}
+
 fn boot_image_with_same_tick_sinic_mmio_loads() -> BootImage {
     BootImage::new(Address::new(0x8000))
         .add_segment(Address::new(0x8000), word(u_type(0x20000, 2, 0x37)))
@@ -705,6 +732,38 @@ fn replay_topology_with_qos_dram_data_read_write_and_cache() -> WorkloadTopology
         .unwrap()
 }
 
+fn replay_topology_with_qos_dram_data_read_write_and_cacheable_cache(
+    protocol: WorkloadDataCacheProtocol,
+) -> WorkloadTopology {
+    replay_topology_with_qos_dram_data_read_write()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(
+                route_id("dcache.backing"),
+                "dcache.dir",
+                2,
+                "memory",
+                2,
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .with_riscv_data_cache(
+            WorkloadRiscvDataCache::new(
+                protocol,
+                1,
+                Address::new(0x9000),
+                2,
+                "dcache.dir",
+                route_id("dcache.backing"),
+            )
+            .unwrap()
+            .with_line_address(Address::new(0x9020)),
+        )
+        .unwrap()
+}
+
 fn replay_topology_with_qos_sinic_mmio_loads() -> WorkloadTopology {
     let policy = WorkloadQosPolicy::new(4, QosPriority::new(1))
         .unwrap()
@@ -914,6 +973,28 @@ fn replay_manifest_with_qos_dram_data_read_write_and_cache() -> WorkloadManifest
         boot_image_with_same_tick_data_read_write_and_cache_line(),
     )
     .with_topology(replay_topology_with_qos_dram_data_read_write_and_cache())
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_host_event(WorkloadHostEvent::new(
+        0,
+        HostEventIntent::Stop {
+            reason: "host-stop".to_string(),
+        },
+    ))
+    .build()
+    .unwrap()
+}
+
+fn replay_manifest_with_qos_dram_data_cacheable_read_write(
+    id: &str,
+    protocol: WorkloadDataCacheProtocol,
+) -> WorkloadManifest {
+    WorkloadManifest::builder(
+        workload_id(id),
+        boot_image_with_same_tick_data_read_write_on_distinct_cache_lines(),
+    )
+    .with_topology(replay_topology_with_qos_dram_data_read_write_and_cacheable_cache(protocol))
     .add_resource(kernel_resource())
     .unwrap()
     .add_required_resource(resource_id("kernel"))
@@ -1197,6 +1278,96 @@ fn workload_replay_coalesces_uncached_dram_deliveries_when_data_cache_exists() {
     );
     assert_eq!(outcome.run().data_cache_run_count(), 0);
     plan.verify_result(outcome.result()).unwrap();
+}
+
+#[test]
+fn workload_replay_applies_declared_qos_policy_to_data_cache_backing_dram_accesses() {
+    for (protocol, id) in [
+        (
+            WorkloadDataCacheProtocol::Msi,
+            "qos-dram-data-cacheable-read-write-msi",
+        ),
+        (
+            WorkloadDataCacheProtocol::Mesi,
+            "qos-dram-data-cacheable-read-write-mesi",
+        ),
+        (
+            WorkloadDataCacheProtocol::Moesi,
+            "qos-dram-data-cacheable-read-write-moesi",
+        ),
+        (
+            WorkloadDataCacheProtocol::Chi,
+            "qos-dram-data-cacheable-read-write-chi",
+        ),
+    ] {
+        let manifest = replay_manifest_with_qos_dram_data_cacheable_read_write(id, protocol);
+        let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+        let outcome = RiscvWorkloadReplay::new(plan.clone())
+            .with_max_turns(256)
+            .run_parallel()
+            .unwrap();
+
+        assert!(outcome.run().data_cache_run_count() > 0, "{protocol:?}");
+        let cache_dram_qos_access_count: usize = outcome
+            .run()
+            .data_cache_runs()
+            .iter()
+            .map(|run| run.dram_qos_access_count())
+            .sum();
+        assert!(cache_dram_qos_access_count > 0, "{protocol:?}");
+        let priority_0_count: usize = outcome
+            .run()
+            .data_cache_runs()
+            .iter()
+            .map(|run| run.dram_qos_priority_access_count(QosPriority::new(0)))
+            .sum();
+        let priority_1_count: usize = outcome
+            .run()
+            .data_cache_runs()
+            .iter()
+            .map(|run| run.dram_qos_priority_access_count(QosPriority::new(1)))
+            .sum();
+        assert!(
+            priority_0_count > 0,
+            "{protocol:?}: priority 0 had no backing DRAM QoS activity"
+        );
+        assert!(
+            priority_1_count > 0,
+            "{protocol:?}: priority 1 had no backing DRAM QoS activity"
+        );
+        assert_eq!(
+            priority_0_count + priority_1_count,
+            cache_dram_qos_access_count,
+            "{protocol:?}"
+        );
+        let requestor_7_count: usize = outcome
+            .run()
+            .data_cache_runs()
+            .iter()
+            .map(|run| run.dram_qos_requestor_access_count(QosRequestorId::new(7)))
+            .sum();
+        let requestor_8_count: usize = outcome
+            .run()
+            .data_cache_runs()
+            .iter()
+            .map(|run| run.dram_qos_requestor_access_count(QosRequestorId::new(8)))
+            .sum();
+        assert!(
+            requestor_7_count > 0,
+            "{protocol:?}: requestor 7 had no backing DRAM QoS activity"
+        );
+        assert!(
+            requestor_8_count > 0,
+            "{protocol:?}: requestor 8 had no backing DRAM QoS activity"
+        );
+        assert_eq!(
+            requestor_7_count + requestor_8_count,
+            cache_dram_qos_access_count,
+            "{protocol:?}"
+        );
+        plan.verify_result(outcome.result()).unwrap();
+    }
 }
 
 #[test]

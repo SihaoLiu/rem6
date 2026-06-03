@@ -81,6 +81,7 @@ impl PartitionedDirectoryLineHarness {
         let caches = self.caches.clone();
         let backing = self.backing.clone();
         let dram_memory = self.dram_memory.clone();
+        let dram_qos = self.dram_qos.clone();
         let decisions = Arc::clone(&self.directory_decisions);
         let dram_accesses = Arc::clone(&self.dram_accesses);
         let fabric = self.fabric.clone();
@@ -103,6 +104,7 @@ impl PartitionedDirectoryLineHarness {
             caches: caches.clone(),
             backing: backing.clone(),
             dram_memory: dram_memory.clone(),
+            dram_qos: dram_qos.clone(),
             fabric: fabric.clone(),
             trace: trace.clone(),
             response_cache: Arc::clone(&response_cache),

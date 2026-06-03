@@ -15,7 +15,7 @@ use rem6_transport::{
 
 use super::{
     push_locked_response_records_from_outcomes, CpuResponseRecord, DirectoryDecisionRecord,
-    DramMemoryAccessRecord, HarnessError, LineBackingStore,
+    DramMemoryAccessRecord, HarnessError, LineBackingStore, PartitionedDramQosState,
 };
 use crate::snoop::{schedule_directory_snoops, schedule_directory_snoops_parallel, SnoopRoute};
 use crate::wait_for::CoherenceWaitFor;
@@ -34,6 +34,7 @@ pub(super) struct DeferredMemoryWork {
     pub(super) caches: BTreeMap<AgentId, Arc<Mutex<MsiCacheController>>>,
     pub(super) backing: Option<Arc<Mutex<LineBackingStore>>>,
     pub(super) dram_memory: Option<Arc<Mutex<DramMemoryController>>>,
+    pub(super) dram_qos: Option<Arc<Mutex<PartitionedDramQosState>>>,
     pub(super) fabric: Option<Arc<Mutex<FabricModel>>>,
     pub(super) trace: MemoryTrace,
     pub(super) response_cache: Arc<Mutex<MsiCacheController>>,
@@ -95,6 +96,7 @@ impl DeferredMemoryWork {
             path: self.path,
             backing: self.backing,
             dram_memory: self.dram_memory,
+            dram_qos: self.dram_qos,
             fabric: self.fabric,
             snoop_ready_tick,
             trace: self.trace,
@@ -142,6 +144,7 @@ impl DeferredMemoryWork {
             path: self.path,
             backing: self.backing,
             dram_memory: self.dram_memory,
+            dram_qos: self.dram_qos,
             fabric: self.fabric,
             snoop_ready_tick,
             trace: self.trace,
@@ -160,6 +163,7 @@ struct DeferredMemoryRequestWork {
     path: DeferredMemoryPath,
     backing: Option<Arc<Mutex<LineBackingStore>>>,
     dram_memory: Option<Arc<Mutex<DramMemoryController>>>,
+    dram_qos: Option<Arc<Mutex<PartitionedDramQosState>>>,
     fabric: Option<Arc<Mutex<FabricModel>>>,
     snoop_ready_tick: Tick,
     trace: MemoryTrace,
@@ -247,6 +251,7 @@ impl DeferredMemoryRequestWork {
             path,
             backing,
             dram_memory,
+            dram_qos,
             fabric,
             snoop_ready_tick,
             trace,
@@ -266,11 +271,8 @@ impl DeferredMemoryRequestWork {
         };
 
         if let Some(dram_memory) = dram_memory {
-            let outcome = dram_memory
-                .lock()
-                .expect("DRAM memory lock")
-                .accept(context.now(), &request)
-                .expect("DRAM memory response");
+            let outcome =
+                accept_deferred_dram(&dram_memory, dram_qos.as_ref(), context.now(), &request);
             dram_accesses
                 .lock()
                 .expect("DRAM access lock")
@@ -317,6 +319,7 @@ impl DeferredMemoryRequestWork {
             path,
             backing,
             dram_memory,
+            dram_qos,
             fabric,
             snoop_ready_tick,
             trace,
@@ -336,11 +339,8 @@ impl DeferredMemoryRequestWork {
         };
 
         if let Some(dram_memory) = dram_memory {
-            let outcome = dram_memory
-                .lock()
-                .expect("DRAM memory lock")
-                .accept(context.now(), &request)
-                .expect("DRAM memory response");
+            let outcome =
+                accept_deferred_dram(&dram_memory, dram_qos.as_ref(), context.now(), &request);
             dram_accesses
                 .lock()
                 .expect("DRAM access lock")
@@ -376,6 +376,25 @@ impl DeferredMemoryRequestWork {
                 .expect("backing store response");
             response_work.schedule_parallel(context, response);
         }
+    }
+}
+
+fn accept_deferred_dram(
+    dram_memory: &Arc<Mutex<DramMemoryController>>,
+    dram_qos: Option<&Arc<Mutex<PartitionedDramQosState>>>,
+    arrival_cycle: u64,
+    request: &MemoryRequest,
+) -> rem6_dram::DramMemoryOutcome {
+    let mut controller = dram_memory.lock().expect("DRAM memory lock");
+    match dram_qos {
+        Some(qos) => qos
+            .lock()
+            .expect("DRAM QoS lock")
+            .accept(&mut controller, arrival_cycle, request)
+            .expect("DRAM memory response"),
+        None => controller
+            .accept(arrival_cycle, request)
+            .expect("DRAM memory response"),
     }
 }
 
