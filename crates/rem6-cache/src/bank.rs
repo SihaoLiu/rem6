@@ -2,7 +2,11 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
+mod msi_compressed_tags;
 mod msi_sector_tags;
+mod snapshot;
+
+pub use snapshot::{MsiCacheBankSnapshot, MsiPendingUncacheableReadSnapshot};
 
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryError, MemoryOperation, MemoryRequest,
@@ -12,15 +16,14 @@ use rem6_protocol_msi::{MsiEvent, MsiLineId, MsiState};
 use rem6_transport::TargetOutcome;
 
 use crate::{
-    CacheControllerError, CacheControllerResult, CacheControllerResultKind,
-    CacheIndexingPolicyKind, CacheReplacementDirectory, CacheReplacementDirectoryConfig,
-    CacheReplacementDirectorySnapshot, CacheReplacementPolicyError, CacheReplacementPolicyKind,
-    CacheSectorTags, CacheSectorTagsConfig, CacheSectorTagsError, CacheSectorTagsSnapshot,
+    CacheCompressedTags, CacheCompressedTagsConfig, CacheCompressedTagsError, CacheControllerError,
+    CacheControllerResult, CacheControllerResultKind, CacheIndexingPolicyKind,
+    CacheReplacementDirectory, CacheReplacementDirectoryConfig, CacheReplacementPolicyError,
+    CacheReplacementPolicyKind, CacheSectorTags, CacheSectorTagsConfig, CacheSectorTagsError,
     CacheWriteQueue, CacheWriteQueueConfig, CacheWriteQueueEntryKind, CacheWriteQueueError,
-    CacheWriteQueueHandle, CacheWriteQueueIssue, CacheWriteQueueSnapshot, CacheWriteQueueUpdate,
-    MshrCompletion, MshrHandle, MshrQosClass, MshrQosProfile, MshrQueue, MshrQueueConfig,
-    MshrQueueError, MshrQueueSnapshot, MshrTargetSource, MsiCacheController,
-    MsiCacheControllerSnapshot,
+    CacheWriteQueueHandle, CacheWriteQueueIssue, CacheWriteQueueUpdate, MshrCompletion, MshrHandle,
+    MshrQosClass, MshrQosProfile, MshrQueue, MshrQueueConfig, MshrQueueError, MshrTargetSource,
+    MsiCacheController,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -30,11 +33,16 @@ pub enum MsiCacheBankError {
     WriteQueue(CacheWriteQueueError),
     Replacement(CacheReplacementPolicyError),
     SectorTags(CacheSectorTagsError),
+    CompressedTags(CacheCompressedTagsError),
     ReplacementDirectoryLayoutMismatch {
         expected: CacheLineLayout,
         actual: CacheLineLayout,
     },
     SectorTagsLayoutMismatch {
+        expected: CacheLineLayout,
+        actual: CacheLineLayout,
+    },
+    CompressedTagsLayoutMismatch {
         expected: CacheLineLayout,
         actual: CacheLineLayout,
     },
@@ -89,6 +97,10 @@ pub enum MsiCacheBankError {
         snapshot_has_sector_tags: bool,
         bank_has_sector_tags: bool,
     },
+    SnapshotCompressedTagsModeMismatch {
+        snapshot_has_compressed_tags: bool,
+        bank_has_compressed_tags: bool,
+    },
     SnapshotPendingUncacheableRequestMismatch {
         response: MemoryRequestId,
         operation: MemoryOperation,
@@ -122,6 +134,7 @@ impl fmt::Display for MsiCacheBankError {
             Self::WriteQueue(error) => write!(formatter, "{error}"),
             Self::Replacement(error) => write!(formatter, "{error}"),
             Self::SectorTags(error) => write!(formatter, "{error}"),
+            Self::CompressedTags(error) => write!(formatter, "{error}"),
             Self::ReplacementDirectoryLayoutMismatch { expected, actual } => write!(
                 formatter,
                 "MSI cache bank replacement directory line size {} cannot attach to bank line size {}",
@@ -131,6 +144,12 @@ impl fmt::Display for MsiCacheBankError {
             Self::SectorTagsLayoutMismatch { expected, actual } => write!(
                 formatter,
                 "MSI cache bank sector tags line size {} cannot attach to bank line size {}",
+                actual.bytes(),
+                expected.bytes()
+            ),
+            Self::CompressedTagsLayoutMismatch { expected, actual } => write!(
+                formatter,
+                "MSI cache bank compressed tags line size {} cannot attach to bank line size {}",
                 actual.bytes(),
                 expected.bytes()
             ),
@@ -224,6 +243,13 @@ impl fmt::Display for MsiCacheBankError {
                 formatter,
                 "MSI cache bank snapshot sector tags mode {snapshot_has_sector_tags} cannot restore bank sector tags mode {bank_has_sector_tags}"
             ),
+            Self::SnapshotCompressedTagsModeMismatch {
+                snapshot_has_compressed_tags,
+                bank_has_compressed_tags,
+            } => write!(
+                formatter,
+                "MSI cache bank snapshot compressed tags mode {snapshot_has_compressed_tags} cannot restore bank compressed tags mode {bank_has_compressed_tags}"
+            ),
             Self::SnapshotPendingUncacheableRequestMismatch {
                 response,
                 operation,
@@ -282,8 +308,10 @@ impl Error for MsiCacheBankError {
             Self::WriteQueue(error) => Some(error),
             Self::Replacement(error) => Some(error),
             Self::SectorTags(error) => Some(error),
+            Self::CompressedTags(error) => Some(error),
             Self::ReplacementDirectoryLayoutMismatch { .. }
             | Self::SectorTagsLayoutMismatch { .. }
+            | Self::CompressedTagsLayoutMismatch { .. }
             | Self::WrongAgent { .. }
             | Self::WriteQueueDisabled
             | Self::WriteQueueConflict { .. }
@@ -299,6 +327,7 @@ impl Error for MsiCacheBankError {
             | Self::SnapshotWriteQueueModeMismatch { .. }
             | Self::SnapshotReplacementDirectoryModeMismatch { .. }
             | Self::SnapshotSectorTagsModeMismatch { .. }
+            | Self::SnapshotCompressedTagsModeMismatch { .. }
             | Self::SnapshotPendingUncacheableRequestMismatch { .. }
             | Self::SnapshotPendingUncacheableReadWritebackMismatch { .. }
             | Self::DuplicateSnapshotLine { .. }
@@ -339,192 +368,9 @@ impl From<CacheSectorTagsError> for MsiCacheBankError {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MsiPendingUncacheableReadSnapshot {
-    request: MemoryRequest,
-    blocked_by: Option<CacheWriteQueueHandle>,
-}
-
-impl MsiPendingUncacheableReadSnapshot {
-    pub fn new(request: MemoryRequest, blocked_by: Option<CacheWriteQueueHandle>) -> Self {
-        Self {
-            request,
-            blocked_by,
-        }
-    }
-
-    pub const fn request(&self) -> &MemoryRequest {
-        &self.request
-    }
-
-    pub const fn blocked_by(&self) -> Option<CacheWriteQueueHandle> {
-        self.blocked_by
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MsiCacheBankSnapshot {
-    agent: AgentId,
-    layout: CacheLineLayout,
-    next_sequence: u64,
-    lines: Vec<MsiCacheControllerSnapshot>,
-    mshr: Option<MshrQueueSnapshot>,
-    write_queue: Option<CacheWriteQueueSnapshot>,
-    replacement_directory: Option<CacheReplacementDirectorySnapshot>,
-    sector_tags: Option<CacheSectorTagsSnapshot>,
-    inflight_uncacheable_writes: Vec<MemoryRequest>,
-    pending_uncacheable_reads: Vec<MsiPendingUncacheableReadSnapshot>,
-}
-
-impl MsiCacheBankSnapshot {
-    pub fn new(
-        agent: AgentId,
-        layout: CacheLineLayout,
-        next_sequence: u64,
-        lines: Vec<MsiCacheControllerSnapshot>,
-    ) -> Self {
-        Self {
-            agent,
-            layout,
-            next_sequence,
-            lines,
-            mshr: None,
-            write_queue: None,
-            replacement_directory: None,
-            sector_tags: None,
-            inflight_uncacheable_writes: Vec::new(),
-            pending_uncacheable_reads: Vec::new(),
-        }
-    }
-
-    pub fn new_with_mshr(
-        agent: AgentId,
-        layout: CacheLineLayout,
-        next_sequence: u64,
-        lines: Vec<MsiCacheControllerSnapshot>,
-        mshr: MshrQueueSnapshot,
-    ) -> Self {
-        Self {
-            agent,
-            layout,
-            next_sequence,
-            lines,
-            mshr: Some(mshr),
-            write_queue: None,
-            replacement_directory: None,
-            sector_tags: None,
-            inflight_uncacheable_writes: Vec::new(),
-            pending_uncacheable_reads: Vec::new(),
-        }
-    }
-
-    pub fn with_write_queue(mut self, write_queue: CacheWriteQueueSnapshot) -> Self {
-        self.write_queue = Some(write_queue);
-        self
-    }
-
-    pub fn with_replacement_directory(
-        mut self,
-        replacement_directory: CacheReplacementDirectorySnapshot,
-    ) -> Self {
-        self.replacement_directory = Some(replacement_directory);
-        self
-    }
-
-    pub fn with_sector_tags(mut self, sector_tags: CacheSectorTagsSnapshot) -> Self {
-        self.sector_tags = Some(sector_tags);
-        self
-    }
-
-    pub fn with_inflight_uncacheable_writes(mut self, writes: Vec<MemoryRequest>) -> Self {
-        self.inflight_uncacheable_writes = writes;
-        self
-    }
-
-    pub fn with_pending_uncacheable_reads(
-        mut self,
-        reads: Vec<MsiPendingUncacheableReadSnapshot>,
-    ) -> Self {
-        self.pending_uncacheable_reads = reads;
-        self
-    }
-
-    pub const fn agent(&self) -> AgentId {
-        self.agent
-    }
-
-    pub const fn layout(&self) -> CacheLineLayout {
-        self.layout
-    }
-
-    pub const fn next_sequence(&self) -> u64 {
-        self.next_sequence
-    }
-
-    pub fn lines(&self) -> &[MsiCacheControllerSnapshot] {
-        &self.lines
-    }
-
-    pub fn mshr(&self) -> Option<&MshrQueueSnapshot> {
-        self.mshr.as_ref()
-    }
-
-    pub fn write_queue(&self) -> Option<&CacheWriteQueueSnapshot> {
-        self.write_queue.as_ref()
-    }
-
-    pub fn replacement_directory(&self) -> Option<&CacheReplacementDirectorySnapshot> {
-        self.replacement_directory.as_ref()
-    }
-
-    pub fn sector_tags(&self) -> Option<&CacheSectorTagsSnapshot> {
-        self.sector_tags.as_ref()
-    }
-
-    pub fn inflight_uncacheable_writes(&self) -> &[MemoryRequest] {
-        &self.inflight_uncacheable_writes
-    }
-
-    pub fn inflight_uncacheable_write_count(&self) -> usize {
-        self.inflight_uncacheable_writes.len()
-    }
-
-    pub fn pending_uncacheable_reads(&self) -> &[MsiPendingUncacheableReadSnapshot] {
-        &self.pending_uncacheable_reads
-    }
-
-    pub fn pending_uncacheable_read_count(&self) -> usize {
-        self.pending_uncacheable_reads.len()
-    }
-
-    pub fn mshr_qos_profile(&self) -> Option<MshrQosProfile> {
-        self.mshr.as_ref().map(MshrQueueSnapshot::qos_profile)
-    }
-
-    pub fn line_addresses(&self) -> Vec<Address> {
-        self.lines
-            .iter()
-            .map(|line| line.line().address())
-            .collect()
-    }
-
-    pub fn line_count(&self) -> usize {
-        self.lines.len()
-    }
-
-    pub fn dirty_line_addresses(&self) -> Vec<Address> {
-        self.lines
-            .iter()
-            .filter(|line| line.state().is_modified())
-            .map(|line| line.line().address())
-            .collect()
-    }
-
-    pub fn dirty_line_count(&self) -> usize {
-        self.lines
-            .iter()
-            .filter(|line| line.state().is_modified())
-            .count()
+impl From<CacheCompressedTagsError> for MsiCacheBankError {
+    fn from(error: CacheCompressedTagsError) -> Self {
+        Self::CompressedTags(error)
     }
 }
 
@@ -552,6 +398,7 @@ pub struct MsiCacheBank {
     write_queue: Option<CacheWriteQueue>,
     replacement_directory: Option<CacheReplacementDirectory>,
     sector_tags: Option<CacheSectorTags>,
+    compressed_tags: Option<CacheCompressedTags>,
 }
 
 impl MsiCacheBank {
@@ -567,6 +414,7 @@ impl MsiCacheBank {
             write_queue: None,
             replacement_directory: None,
             sector_tags: None,
+            compressed_tags: None,
         }
     }
 
@@ -586,6 +434,7 @@ impl MsiCacheBank {
             write_queue: None,
             replacement_directory: None,
             sector_tags: None,
+            compressed_tags: None,
         }
     }
 
@@ -605,6 +454,7 @@ impl MsiCacheBank {
             write_queue: Some(CacheWriteQueue::new(write_queue_config)),
             replacement_directory: None,
             sector_tags: None,
+            compressed_tags: None,
         }
     }
 
@@ -625,6 +475,7 @@ impl MsiCacheBank {
             write_queue: Some(CacheWriteQueue::new(write_queue_config)),
             replacement_directory: None,
             sector_tags: None,
+            compressed_tags: None,
         }
     }
 
@@ -650,6 +501,7 @@ impl MsiCacheBank {
             write_queue: None,
             replacement_directory: Some(CacheReplacementDirectory::new(replacement_config)),
             sector_tags: None,
+            compressed_tags: None,
         })
     }
 
@@ -693,6 +545,33 @@ impl MsiCacheBank {
             write_queue: None,
             replacement_directory: None,
             sector_tags: Some(CacheSectorTags::new(sector_tags_config)),
+            compressed_tags: None,
+        })
+    }
+
+    pub fn new_with_compressed_tags(
+        agent: AgentId,
+        layout: CacheLineLayout,
+        compressed_tags_config: CacheCompressedTagsConfig,
+    ) -> Result<Self, MsiCacheBankError> {
+        if compressed_tags_config.line_layout() != layout {
+            return Err(MsiCacheBankError::CompressedTagsLayoutMismatch {
+                expected: layout,
+                actual: compressed_tags_config.line_layout(),
+            });
+        }
+        Ok(Self {
+            agent,
+            layout,
+            next_sequence: 0,
+            lines: BTreeMap::new(),
+            pending_fills: BTreeMap::new(),
+            inflight_uncacheable_writes: BTreeMap::new(),
+            mshr: None,
+            write_queue: None,
+            replacement_directory: None,
+            sector_tags: None,
+            compressed_tags: Some(CacheCompressedTags::new(compressed_tags_config)),
         })
     }
 
@@ -728,11 +607,20 @@ impl MsiCacheBank {
         if let Some(directory) = &self.replacement_directory {
             return directory.way_for(address);
         }
-        self.sector_tags.as_ref().and_then(|sector_tags| {
-            sector_tags
-                .find(address)
-                .map(|lookup| (lookup.set(), lookup.way()))
-        })
+        self.sector_tags
+            .as_ref()
+            .and_then(|sector_tags| {
+                sector_tags
+                    .find(address)
+                    .map(|lookup| (lookup.set(), lookup.way()))
+            })
+            .or_else(|| {
+                self.compressed_tags.as_ref().and_then(|compressed_tags| {
+                    compressed_tags
+                        .find(address)
+                        .map(|lookup| (lookup.set(), lookup.way()))
+                })
+            })
     }
 
     pub fn pending_fill_line(&self, response: MemoryRequestId) -> Option<Address> {
@@ -828,6 +716,10 @@ impl MsiCacheBank {
             Some(sector_tags) => snapshot.with_sector_tags(sector_tags.snapshot()),
             None => snapshot,
         };
+        let snapshot = match &self.compressed_tags {
+            Some(compressed_tags) => snapshot.with_compressed_tags(compressed_tags.snapshot()),
+            None => snapshot,
+        };
         let pending_uncacheable_reads = self
             .pending_fills
             .values()
@@ -862,6 +754,14 @@ impl MsiCacheBank {
             return Err(MsiCacheBankError::SnapshotSectorTagsModeMismatch {
                 snapshot_has_sector_tags: true,
                 bank_has_sector_tags: self.sector_tags.is_some(),
+            });
+        }
+        if snapshot.compressed_tags().is_some()
+            && (snapshot.replacement_directory().is_some() || snapshot.sector_tags().is_some())
+        {
+            return Err(MsiCacheBankError::SnapshotCompressedTagsModeMismatch {
+                snapshot_has_compressed_tags: true,
+                bank_has_compressed_tags: self.compressed_tags.is_some(),
             });
         }
 
@@ -946,6 +846,27 @@ impl MsiCacheBank {
             }
         };
 
+        let restored_compressed_tags = match (&self.compressed_tags, snapshot.compressed_tags()) {
+            (Some(compressed_tags), Some(snapshot_compressed_tags)) => {
+                let mut restored = CacheCompressedTags::new(compressed_tags.config().clone());
+                restored.restore(snapshot_compressed_tags)?;
+                Some(restored)
+            }
+            (Some(_), None) => {
+                return Err(MsiCacheBankError::SnapshotCompressedTagsModeMismatch {
+                    snapshot_has_compressed_tags: false,
+                    bank_has_compressed_tags: true,
+                });
+            }
+            (None, None) => None,
+            (None, Some(_)) => {
+                return Err(MsiCacheBankError::SnapshotCompressedTagsModeMismatch {
+                    snapshot_has_compressed_tags: true,
+                    bank_has_compressed_tags: false,
+                });
+            }
+        };
+
         let mut lines = BTreeMap::new();
         let mut pending_fills = BTreeMap::new();
         let mut inflight_uncacheable_writes = BTreeMap::new();
@@ -1016,6 +937,7 @@ impl MsiCacheBank {
         self.write_queue = restored_write_queue;
         self.replacement_directory = restored_replacement_directory;
         self.sector_tags = restored_sector_tags;
+        self.compressed_tags = restored_compressed_tags;
         Ok(())
     }
 
@@ -1158,6 +1080,22 @@ impl MsiCacheBank {
         &mut self,
         response: MemoryResponse,
     ) -> Result<CacheControllerResult, MsiCacheBankError> {
+        self.accept_fill_inner(response, None)
+    }
+
+    pub fn accept_fill_with_compressed_size_bits(
+        &mut self,
+        response: MemoryResponse,
+        compressed_size_bits: usize,
+    ) -> Result<CacheControllerResult, MsiCacheBankError> {
+        self.accept_fill_inner(response, Some(compressed_size_bits))
+    }
+
+    fn accept_fill_inner(
+        &mut self,
+        response: MemoryResponse,
+        compressed_size_bits: Option<usize>,
+    ) -> Result<CacheControllerResult, MsiCacheBankError> {
         let response_id = response.request_id();
         let pending = self.pending_fills.get(&response_id).cloned().ok_or(
             MsiCacheBankError::UnknownPendingFill {
@@ -1193,7 +1131,7 @@ impl MsiCacheBank {
             .get_mut(&line)
             .expect("pending fill references an existing MSI cache line");
         let result = controller.accept_fill(response)?;
-        if let Err(error) = self.install_replacement_line(line) {
+        if let Err(error) = self.install_replacement_line(line, compressed_size_bits) {
             self.lines
                 .get_mut(&line)
                 .expect("pending fill references an existing MSI cache line")
@@ -1627,6 +1565,9 @@ impl MsiCacheBank {
         if let Some(sector_tags) = &mut self.sector_tags {
             sector_tags.invalidate(line)?;
         }
+        if let Some(compressed_tags) = &mut self.compressed_tags {
+            compressed_tags.invalidate(line)?;
+        }
         Ok(())
     }
 
@@ -1637,12 +1578,19 @@ impl MsiCacheBank {
         if let Some(sector_tags) = &mut self.sector_tags {
             sector_tags.access(line)?;
         }
+        if let Some(compressed_tags) = &mut self.compressed_tags {
+            compressed_tags.access(line)?;
+        }
         Ok(())
     }
 
-    fn install_replacement_line(&mut self, line: Address) -> Result<(), MsiCacheBankError> {
+    fn install_replacement_line(
+        &mut self,
+        line: Address,
+        compressed_size_bits: Option<usize>,
+    ) -> Result<(), MsiCacheBankError> {
         let Some(directory) = &mut self.replacement_directory else {
-            return self.install_sector_tag_line(line);
+            return self.install_tag_backend_line(line, compressed_size_bits);
         };
         let install = directory.install(line)?;
         let Some(evicted_line) = install.evicted_line() else {
@@ -1676,6 +1624,17 @@ impl MsiCacheBank {
             )
         });
         Ok(())
+    }
+
+    fn install_tag_backend_line(
+        &mut self,
+        line: Address,
+        compressed_size_bits: Option<usize>,
+    ) -> Result<(), MsiCacheBankError> {
+        if self.sector_tags.is_some() {
+            return self.install_sector_tag_line(line);
+        }
+        self.install_compressed_tag_line(line, compressed_size_bits)
     }
 
     fn can_merge_pending_read_miss(&self, line: Address, request: &MemoryRequest) -> bool {
