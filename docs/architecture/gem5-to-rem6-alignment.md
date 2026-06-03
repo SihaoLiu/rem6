@@ -2782,10 +2782,11 @@ snapshots queued resource statistics for identified candidates, duplicate
 buffer hits, redundant cache/MSHR drops, demand removals, full-queue removals,
 and page-span drops that do not have a translation path. A configured
 queue-owned throttle updates issued and useful counters from queue issue and
-usefulness events, applies max-permitted admission to later enqueue attempts,
-and round-trips through queue snapshots. `MultiQueuedPrefetcher` keeps its own
-issued statistic while broadcasting unused-prefetch and demand-MSHR-miss events
-to every child queued source, matching gem5 `Multi` event fan-out.
+usefulness events, applies max-permitted admission to later eligible insertion
+attempts including duplicate hits, and round-trips through queue snapshots.
+`MultiQueuedPrefetcher` keeps its own issued statistic while broadcasting
+unused-prefetch and demand-MSHR-miss events to every child queued source,
+matching gem5 `Multi` event fan-out.
 
 ### DRAM and External Memory
 
@@ -3326,9 +3327,10 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   ready-latency issue, fetch-target-insert PFQ/TQ occupancy statistics,
   source-prefetched span-page usefulness accounting, Base-style f64 and ppm
   accuracy and coverage accessors, queued throttle accuracy accessors,
-  queue-owned issued/useful throttle state, max-permitted edge cases, and
-  snapshot restore, cross-requestor queued duplicate filtering with
-  post-translation duplicate-key preservation, snapshot restore, PIF
+  queue-owned issued/useful throttle state, max-permitted edge cases,
+  duplicate-attempt throttling, and snapshot restore, cross-requestor queued
+  duplicate filtering with post-translation duplicate-key preservation,
+  snapshot restore, PIF
   retired-PC compaction, trigger index lookup, stream address buffer
   continuation, capacity limits, snapshot restore, ISB structural stream
   learning, PS/SP mapping cache capacity, secure-bit separation, snapshot

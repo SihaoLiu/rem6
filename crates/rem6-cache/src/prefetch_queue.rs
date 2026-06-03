@@ -1125,7 +1125,7 @@ impl QueuedPrefetcher {
         source_tick: u64,
         candidates: &[C],
         redundant_lines: &[QueuedPrefetchRedundantLine],
-        accepted_limit: usize,
+        attempt_limit: usize,
         source_status: QueuedPrefetchSourceStatus,
     ) -> Result<QueuedPrefetchEnqueueResult, QueuedPrefetcherError> {
         let ready_tick = source_tick.checked_add(self.config.latency()).ok_or(
@@ -1134,7 +1134,8 @@ impl QueuedPrefetcher {
                 latency: self.config.latency(),
             },
         )?;
-        let accepted_limit = accepted_limit.min(candidates.len());
+        let attempt_limit = attempt_limit.min(candidates.len());
+        let mut insertion_attempts = 0;
         let mut accepted = 0;
         let mut duplicate_hits = 0;
         let mut updated_priorities = 0;
@@ -1144,7 +1145,7 @@ impl QueuedPrefetcher {
         let mut dropped_throttled = 0;
         let mut evicted_full = 0;
         for (index, candidate) in candidates.iter().enumerate() {
-            if accepted + pending_translations == accepted_limit {
+            if insertion_attempts == attempt_limit {
                 dropped_throttled = candidates.len() - index;
                 break;
             }
@@ -1160,6 +1161,7 @@ impl QueuedPrefetcher {
                     continue;
                 }
                 self.stats.record_identified(1);
+                insertion_attempts += 1;
                 if self.config.filter_duplicates() {
                     if let Some(index) = self
                         .pending
@@ -1194,6 +1196,7 @@ impl QueuedPrefetcher {
                 continue;
             }
             self.stats.record_identified(1);
+            insertion_attempts += 1;
             if self.is_redundant(address, candidate.secure(), redundant_lines) {
                 self.stats.record_in_cache_drop(1);
                 dropped_redundant += 1;

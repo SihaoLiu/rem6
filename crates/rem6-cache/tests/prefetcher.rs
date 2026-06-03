@@ -1732,6 +1732,54 @@ fn queued_prefetcher_owned_throttle_tracks_issue_usefulness_and_snapshot() {
 }
 
 #[test]
+fn queued_prefetcher_owned_throttle_counts_duplicate_insert_attempts() {
+    let stride_config = StridePrefetcherConfig::new(64, 4, 2, 2, 0, true).unwrap();
+    let mut stride = StridePrefetcher::new(stride_config);
+    assert!(stride.observe(access(1, 0x80, 0x1000)).unwrap().is_empty());
+    assert!(stride.observe(access(1, 0x80, 0x1040)).unwrap().is_empty());
+    let candidates = stride.observe(access(1, 0x80, 0x1080)).unwrap().to_vec();
+    assert_eq!(
+        candidates
+            .iter()
+            .map(|candidate| candidate.address())
+            .collect::<Vec<_>>(),
+        vec![Address::new(0x10c0), Address::new(0x1100)]
+    );
+
+    let queue_config = QueuedPrefetchConfig::with_line_size(8, 3, 1, true, 64)
+        .unwrap()
+        .with_throttle_config(QueuedPrefetchThrottleConfig::new(100).unwrap());
+    let mut queue = QueuedPrefetcher::new(queue_config);
+    assert_eq!(queue.enqueue_candidates(10, &candidates).unwrap(), 2);
+    assert_eq!(queue.issue_ready(13).len(), 1);
+    assert_eq!(queue.throttle().unwrap().max_permitted(2), 1);
+    assert_eq!(
+        queue.snapshot().pending()[0].address(),
+        Address::new(0x1100)
+    );
+
+    let next_candidates = stride.observe(access(1, 0x80, 0x10c0)).unwrap().to_vec();
+    assert_eq!(
+        next_candidates
+            .iter()
+            .map(|candidate| candidate.address())
+            .collect::<Vec<_>>(),
+        vec![Address::new(0x1100), Address::new(0x1140)]
+    );
+    let result = queue
+        .enqueue_candidates_filtered(14, &next_candidates, &[])
+        .unwrap();
+    assert_eq!(result.duplicate_hits(), 1);
+    assert_eq!(result.accepted(), 0);
+    assert_eq!(result.dropped_throttled(), 1);
+    assert_eq!(queue.pending_count(), 1);
+    assert_eq!(
+        queue.snapshot().pending()[0].address(),
+        Address::new(0x1100)
+    );
+}
+
+#[test]
 fn queued_prefetcher_without_owned_throttle_keeps_unthrottled_enqueue() {
     let stride_config = StridePrefetcherConfig::new(64, 4, 2, 5, 0, true).unwrap();
     let mut stride = StridePrefetcher::new(stride_config);
