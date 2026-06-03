@@ -1633,6 +1633,16 @@ fn queued_prefetcher_records_base_service_stats_and_restores_them() {
     assert_eq!(stats.prefetch_hits_in_mshr(), 1);
     assert_eq!(stats.prefetch_hits_in_write_buffer(), 1);
     assert_eq!(stats.late_prefetches(), 3);
+    assert_eq!(stats.accuracy(), 1.0);
+    assert!((stats.coverage() - (2.0 / 3.0)).abs() < f64::EPSILON);
+    assert_eq!(stats.accuracy_ppm(), Some(1_000_000));
+    assert_eq!(stats.coverage_ppm(), Some(666_666));
+
+    let empty_stats = QueuedPrefetcher::new(queue_config.clone());
+    assert!(empty_stats.stats().accuracy().is_nan());
+    assert!(empty_stats.stats().coverage().is_nan());
+    assert_eq!(empty_stats.stats().accuracy_ppm(), None);
+    assert_eq!(empty_stats.stats().coverage_ppm(), None);
 
     let snapshot = queue.snapshot();
     let mut restored = QueuedPrefetcher::new(queue_config);
@@ -1688,13 +1698,18 @@ fn queued_prefetch_throttle_uses_accuracy_and_snapshots_counters() {
     throttle.record_issued(10).unwrap();
     throttle.record_useful(5).unwrap();
     assert_eq!(throttle.max_permitted(5), 3);
+    assert_eq!(throttle.accuracy(), 0.5);
+    assert_eq!(throttle.accuracy_ppm(), Some(500_000));
     assert_eq!(throttle.issued_prefetches(), 10);
     assert_eq!(throttle.useful_prefetches(), 5);
 
     let snapshot = throttle.snapshot();
+    assert_eq!(snapshot.accuracy(), 0.5);
+    assert_eq!(snapshot.accuracy_ppm(), Some(500_000));
     let mut restored = QueuedPrefetchThrottle::new(config);
     restored.restore(&snapshot).unwrap();
     assert_eq!(restored.snapshot(), snapshot);
+    assert_eq!(restored.accuracy_ppm(), Some(500_000));
     assert_eq!(restored.max_permitted(5), 3);
 
     let mut always_keeps_one =
@@ -1702,6 +1717,29 @@ fn queued_prefetch_throttle_uses_accuracy_and_snapshots_counters() {
     assert_eq!(always_keeps_one.max_permitted(4), 4);
     always_keeps_one.record_issued(4).unwrap();
     assert_eq!(always_keeps_one.max_permitted(4), 1);
+}
+
+#[test]
+fn queued_prefetch_throttle_matches_gem5_edge_cases() {
+    let mut disabled = QueuedPrefetchThrottle::new(QueuedPrefetchThrottleConfig::new(0).unwrap());
+    disabled.record_issued(100).unwrap();
+    assert_eq!(disabled.max_permitted(7), 7);
+
+    let cold = QueuedPrefetchThrottle::new(QueuedPrefetchThrottleConfig::new(100).unwrap());
+    assert!(cold.accuracy().is_nan());
+    assert_eq!(cold.accuracy_ppm(), None);
+    assert_eq!(cold.max_permitted(7), 7);
+    assert_eq!(cold.max_permitted(0), 0);
+
+    let mut no_useful = QueuedPrefetchThrottle::new(QueuedPrefetchThrottleConfig::new(60).unwrap());
+    no_useful.record_issued(10).unwrap();
+    assert_eq!(no_useful.max_permitted(5), 2);
+
+    let mut fully_accurate =
+        QueuedPrefetchThrottle::new(QueuedPrefetchThrottleConfig::new(100).unwrap());
+    fully_accurate.record_issued(4).unwrap();
+    fully_accurate.record_useful(4).unwrap();
+    assert_eq!(fully_accurate.max_permitted(4), 4);
 }
 
 #[test]

@@ -56,6 +56,30 @@ impl QueuedPrefetchStatsSnapshot {
             .saturating_add(self.prefetch_hits_in_write_buffer)
     }
 
+    pub fn accuracy(&self) -> f64 {
+        ratio(self.useful_prefetches, self.issued_prefetches)
+    }
+
+    pub fn coverage(&self) -> f64 {
+        ratio(
+            self.useful_prefetches,
+            self.useful_prefetches
+                .saturating_add(self.demand_mshr_misses),
+        )
+    }
+
+    pub fn accuracy_ppm(&self) -> Option<u32> {
+        ratio_ppm(self.useful_prefetches, self.issued_prefetches)
+    }
+
+    pub fn coverage_ppm(&self) -> Option<u32> {
+        ratio_ppm(
+            self.useful_prefetches,
+            self.useful_prefetches
+                .saturating_add(self.demand_mshr_misses),
+        )
+    }
+
     pub const fn identified_prefetches(&self) -> u64 {
         self.identified_prefetches
     }
@@ -142,4 +166,16 @@ impl QueuedPrefetchStatsSnapshot {
     pub(crate) fn record_useful_span_page(&mut self, delta: u64) {
         self.useful_span_page_prefetches = self.useful_span_page_prefetches.saturating_add(delta);
     }
+}
+
+pub(crate) fn ratio(numerator: u64, denominator: u64) -> f64 {
+    numerator as f64 / denominator as f64
+}
+
+pub(crate) fn ratio_ppm(numerator: u64, denominator: u64) -> Option<u32> {
+    if denominator == 0 {
+        return None;
+    }
+    let ppm = u128::from(numerator).saturating_mul(1_000_000) / u128::from(denominator);
+    Some(ppm.min(u128::from(u32::MAX)) as u32)
 }

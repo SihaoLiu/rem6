@@ -1,6 +1,8 @@
 use std::error::Error;
 use std::fmt;
 
+use crate::prefetch_stats::{ratio, ratio_ppm};
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct QueuedPrefetchThrottleConfig {
     control_percentage: u8,
@@ -107,6 +109,14 @@ impl QueuedPrefetchThrottleSnapshot {
     pub const fn useful_prefetches(&self) -> u64 {
         self.useful_prefetches
     }
+
+    pub fn accuracy(&self) -> f64 {
+        ratio(self.useful_prefetches, self.issued_prefetches)
+    }
+
+    pub fn accuracy_ppm(&self) -> Option<u32> {
+        ratio_ppm(self.useful_prefetches, self.issued_prefetches)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -135,6 +145,14 @@ impl QueuedPrefetchThrottle {
 
     pub const fn useful_prefetches(&self) -> u64 {
         self.useful_prefetches
+    }
+
+    pub fn accuracy(&self) -> f64 {
+        ratio(self.useful_prefetches, self.issued_prefetches)
+    }
+
+    pub fn accuracy_ppm(&self) -> Option<u32> {
+        ratio_ppm(self.useful_prefetches, self.issued_prefetches)
     }
 
     pub fn max_permitted(&self, total_candidates: usize) -> usize {

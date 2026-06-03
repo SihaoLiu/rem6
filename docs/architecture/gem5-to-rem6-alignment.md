@@ -2773,12 +2773,17 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 
 Cache prefetch note: `QueuedPrefetcher` snapshots gem5 Base-style issued,
 useful, useful-but-miss, unused, demand-MSHR miss, cache-hit, MSHR-hit,
-write-buffer-hit, and late-prefetch service statistics. It also snapshots queued
-resource statistics for identified candidates, duplicate buffer hits, redundant
-cache/MSHR drops, demand removals, full-queue removals, and page-span drops that
-do not have a translation path. `MultiQueuedPrefetcher` keeps its own issued
-statistic while broadcasting unused-prefetch and demand-MSHR-miss events to
-every child queued source, matching gem5 `Multi` event fan-out.
+write-buffer-hit, and late-prefetch service statistics. Its typed accessors
+expose gem5's accuracy formula as useful prefetches divided by issued
+prefetches and coverage as useful prefetches divided by the sum of useful
+prefetches and demand-MSHR misses, with f64 empty-denominator behavior plus
+optional ppm accessors for consumers that need integer ratios. It also
+snapshots queued resource statistics for identified candidates, duplicate
+buffer hits, redundant cache/MSHR drops, demand removals, full-queue removals,
+and page-span drops that do not have a translation path. `MultiQueuedPrefetcher`
+keeps its own issued statistic while broadcasting unused-prefetch and
+demand-MSHR-miss events to every child queued source, matching gem5 `Multi`
+event fan-out.
 
 ### DRAM and External Memory
 
@@ -3317,7 +3322,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   snapshot restore, FDP FTQ range expansion, PFQ/TQ duplicate filtering,
   fetch-target squash, translation failure, cache-snoop drop, queue capacity,
   ready-latency issue, fetch-target-insert PFQ/TQ occupancy statistics,
-  source-prefetched span-page usefulness accounting, cross-requestor queued
+  source-prefetched span-page usefulness accounting, Base-style f64 and ppm
+  accuracy and coverage accessors, queued throttle accuracy accessors,
+  max-permitted edge cases, and snapshot restore, cross-requestor queued
   duplicate filtering with post-translation duplicate-key preservation,
   snapshot restore, PIF retired-PC compaction, trigger index lookup, stream address buffer
   continuation, capacity limits, snapshot restore, ISB structural stream
