@@ -1,7 +1,7 @@
 use crate::encoding::{csr, funct3, rd, rs1};
 use crate::{
-    RiscvCounterCsr, RiscvError, RiscvInstruction, RiscvMachineTrapCsr, RiscvStatusCsr,
-    RiscvSupervisorTrapCsr, RiscvTranslationCsr,
+    RiscvCounterCsr, RiscvError, RiscvInstruction, RiscvInterruptCsr, RiscvMachineTrapCsr,
+    RiscvStatusCsr, RiscvSupervisorTrapCsr, RiscvTranslationCsr,
 };
 
 pub(crate) fn decode_csr(raw: u32) -> Result<RiscvInstruction, RiscvError> {
@@ -21,6 +21,10 @@ pub(crate) fn decode_csr(raw: u32) -> Result<RiscvInstruction, RiscvError> {
                         .map(|csr| RiscvInstruction::ReadStatusCsr { rd: rd(raw), csr })
                 })
                 .or_else(|| {
+                    RiscvInterruptCsr::from_address(csr_address)
+                        .map(|csr| RiscvInstruction::ReadInterruptCsr { rd: rd(raw), csr })
+                })
+                .or_else(|| {
                     RiscvMachineTrapCsr::from_address(csr_address)
                         .map(|csr| RiscvInstruction::ReadMachineTrapCsr { rd: rd(raw), csr })
                 })
@@ -33,6 +37,42 @@ pub(crate) fn decode_csr(raw: u32) -> Result<RiscvInstruction, RiscvError> {
                         .map(|csr| RiscvInstruction::ReadTranslationCsr { rd: rd(raw), csr })
                 })
                 .ok_or(RiscvError::UnknownEncoding { raw }),
+        };
+    }
+
+    if let Some(csr) = RiscvInterruptCsr::from_address(csr_address) {
+        return match funct3(raw) {
+            0x1 => Ok(RiscvInstruction::WriteInterruptCsr {
+                rd: rd(raw),
+                csr,
+                rs1: rs1(raw),
+            }),
+            0x2 => Ok(RiscvInstruction::SetInterruptCsr {
+                rd: rd(raw),
+                csr,
+                rs1: rs1(raw),
+            }),
+            0x3 => Ok(RiscvInstruction::ClearInterruptCsr {
+                rd: rd(raw),
+                csr,
+                rs1: rs1(raw),
+            }),
+            0x5 => Ok(RiscvInstruction::WriteInterruptCsrImmediate {
+                rd: rd(raw),
+                csr,
+                zimm: rs1(raw).index(),
+            }),
+            0x6 => Ok(RiscvInstruction::SetInterruptCsrImmediate {
+                rd: rd(raw),
+                csr,
+                zimm: rs1(raw).index(),
+            }),
+            0x7 => Ok(RiscvInstruction::ClearInterruptCsrImmediate {
+                rd: rd(raw),
+                csr,
+                zimm: rs1(raw).index(),
+            }),
+            _ => Err(RiscvError::UnknownEncoding { raw }),
         };
     }
 

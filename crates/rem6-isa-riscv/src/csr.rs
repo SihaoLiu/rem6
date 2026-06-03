@@ -114,6 +114,35 @@ impl RiscvTranslationCsr {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum RiscvInterruptCsr {
+    SupervisorInterruptEnable,
+    SupervisorInterruptPending,
+    MachineInterruptEnable,
+    MachineInterruptPending,
+}
+
+impl RiscvInterruptCsr {
+    pub const fn address(self) -> u16 {
+        match self {
+            Self::SupervisorInterruptEnable => 0x104,
+            Self::SupervisorInterruptPending => 0x144,
+            Self::MachineInterruptEnable => 0x304,
+            Self::MachineInterruptPending => 0x344,
+        }
+    }
+
+    pub const fn from_address(address: u16) -> Option<Self> {
+        match address {
+            0x104 => Some(Self::SupervisorInterruptEnable),
+            0x144 => Some(Self::SupervisorInterruptPending),
+            0x304 => Some(Self::MachineInterruptEnable),
+            0x344 => Some(Self::MachineInterruptPending),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum RiscvMachineTrapCsr {
     Medeleg,
     Mideleg,

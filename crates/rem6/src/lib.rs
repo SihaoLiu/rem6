@@ -1180,6 +1180,7 @@ fn guest_trap_name(kind: GuestTrapKind) -> &'static str {
         GuestTrapKind::EnvironmentCall => "environment_call",
         GuestTrapKind::Breakpoint => "breakpoint",
         GuestTrapKind::IllegalInstruction => "illegal_instruction",
+        GuestTrapKind::Interrupt { .. } => "interrupt",
     }
 }
 

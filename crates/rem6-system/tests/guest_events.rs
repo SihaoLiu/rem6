@@ -44,6 +44,19 @@ fn riscv_trap_mapping_preserves_illegal_instruction_kind() {
     assert_eq!(GuestTrapKind::IllegalInstruction.default_stop_code(), 2);
 }
 
+#[test]
+fn riscv_trap_mapping_preserves_interrupt_code() {
+    assert_eq!(
+        guest_trap_kind_from_riscv(RiscvTrapKind::Interrupt { code: 5 }),
+        GuestTrapKind::Interrupt { code: 5 }
+    );
+    assert_eq!(
+        guest_trap_from_riscv(RiscvTrap::new(RiscvTrapKind::Interrupt { code: 5 }, 0x7500)),
+        GuestTrap::new(GuestTrapKind::Interrupt { code: 5 }, 0x7500)
+    );
+    assert_eq!(GuestTrapKind::Interrupt { code: 5 }.default_stop_code(), 3);
+}
+
 fn loaded_store(entry: u64, instruction: u32) -> Arc<Mutex<PartitionedMemoryStore>> {
     let target = MemoryTargetId::new(0);
     let mut store = PartitionedMemoryStore::new();

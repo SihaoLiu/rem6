@@ -1,7 +1,7 @@
 use crate::{
     AtomicMemoryOp, Immediate, MemoryWidth, Register, RiscvCounterCsr, RiscvFenceSet,
-    RiscvMachineTrapCsr, RiscvPrivilegeMode, RiscvStatusCsr, RiscvSupervisorTrapCsr,
-    RiscvTranslationCsr,
+    RiscvInterruptCsr, RiscvMachineTrapCsr, RiscvPrivilegeMode, RiscvStatusCsr,
+    RiscvSupervisorTrapCsr, RiscvTranslationCsr,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -383,6 +383,40 @@ pub enum RiscvInstruction {
         csr: RiscvStatusCsr,
         zimm: u8,
     },
+    ReadInterruptCsr {
+        rd: Register,
+        csr: RiscvInterruptCsr,
+    },
+    WriteInterruptCsr {
+        rd: Register,
+        csr: RiscvInterruptCsr,
+        rs1: Register,
+    },
+    SetInterruptCsr {
+        rd: Register,
+        csr: RiscvInterruptCsr,
+        rs1: Register,
+    },
+    ClearInterruptCsr {
+        rd: Register,
+        csr: RiscvInterruptCsr,
+        rs1: Register,
+    },
+    WriteInterruptCsrImmediate {
+        rd: Register,
+        csr: RiscvInterruptCsr,
+        zimm: u8,
+    },
+    SetInterruptCsrImmediate {
+        rd: Register,
+        csr: RiscvInterruptCsr,
+        zimm: u8,
+    },
+    ClearInterruptCsrImmediate {
+        rd: Register,
+        csr: RiscvInterruptCsr,
+        zimm: u8,
+    },
     ReadMachineTrapCsr {
         rd: Register,
         csr: RiscvMachineTrapCsr,
@@ -510,6 +544,15 @@ impl RiscvInstruction {
             | Self::ClearStatusCsrImmediate { csr, .. } => {
                 Some(required_csr_privilege(csr.address()))
             }
+            Self::ReadInterruptCsr { csr, .. }
+            | Self::WriteInterruptCsr { csr, .. }
+            | Self::SetInterruptCsr { csr, .. }
+            | Self::ClearInterruptCsr { csr, .. }
+            | Self::WriteInterruptCsrImmediate { csr, .. }
+            | Self::SetInterruptCsrImmediate { csr, .. }
+            | Self::ClearInterruptCsrImmediate { csr, .. } => {
+                Some(required_csr_privilege(csr.address()))
+            }
             Self::ReadMachineTrapCsr { csr, .. }
             | Self::WriteMachineTrapCsr { csr, .. }
             | Self::SetMachineTrapCsr { csr, .. }
@@ -547,5 +590,20 @@ const fn required_csr_privilege(address: u16) -> RiscvPrivilegeMode {
         0 => RiscvPrivilegeMode::User,
         1 => RiscvPrivilegeMode::Supervisor,
         _ => RiscvPrivilegeMode::Machine,
+    }
+}
+
+pub(crate) fn csr_privilege_allowed(
+    current: RiscvPrivilegeMode,
+    required: RiscvPrivilegeMode,
+) -> bool {
+    privilege_rank(current) >= privilege_rank(required)
+}
+
+const fn privilege_rank(privilege: RiscvPrivilegeMode) -> u8 {
+    match privilege {
+        RiscvPrivilegeMode::User => 0,
+        RiscvPrivilegeMode::Supervisor => 1,
+        RiscvPrivilegeMode::Machine => 3,
     }
 }

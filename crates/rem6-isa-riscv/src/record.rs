@@ -5,6 +5,7 @@ pub enum RiscvTrapKind {
     IllegalInstruction,
     EnvironmentCall,
     Breakpoint,
+    Interrupt { code: u64 },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

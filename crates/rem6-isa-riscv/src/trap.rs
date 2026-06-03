@@ -11,6 +11,47 @@ pub(crate) const fn machine_return_allowed(privilege: RiscvPrivilegeMode) -> boo
     matches!(privilege, RiscvPrivilegeMode::Machine)
 }
 
+pub(crate) fn enter_pending_interrupt(
+    hart: &mut RiscvHartState,
+    instruction: RiscvInstruction,
+    pc: u64,
+) -> Option<RiscvExecutionRecord> {
+    let pending = hart.machine_interrupt_pending() & hart.machine_interrupt_enable();
+    if pending == 0 {
+        return None;
+    }
+
+    let previous_privilege = hart.privilege_mode();
+    let delegated = pending & hart.machine_interrupt_delegation();
+    let machine_pending = pending & !hart.machine_interrupt_delegation();
+    if machine_interrupt_allowed(hart, previous_privilege) {
+        if let Some(code) = interrupt_code(machine_pending) {
+            return Some(enter_machine_trap(
+                hart,
+                instruction,
+                pc,
+                RiscvTrapKind::Interrupt { code },
+            ));
+        }
+    }
+
+    if supervisor_interrupt_allowed(hart, previous_privilege) {
+        if let Some(code) = interrupt_code(delegated) {
+            let cause = interrupt_trap_cause(code);
+            return Some(enter_supervisor_trap(
+                hart,
+                instruction,
+                pc,
+                RiscvTrapKind::Interrupt { code },
+                cause,
+                previous_privilege,
+            ));
+        }
+    }
+
+    None
+}
+
 pub(crate) fn enter_synchronous_trap(
     hart: &mut RiscvHartState,
     instruction: RiscvInstruction,
@@ -85,6 +126,25 @@ fn enter_machine_trap(
     RiscvExecutionRecord::with_trap(instruction, pc, handler_pc, RiscvTrap::new(kind, pc))
 }
 
+fn machine_interrupt_allowed(hart: &RiscvHartState, privilege: RiscvPrivilegeMode) -> bool {
+    match privilege {
+        RiscvPrivilegeMode::User | RiscvPrivilegeMode::Supervisor => true,
+        RiscvPrivilegeMode::Machine => hart.status().mie(),
+    }
+}
+
+fn supervisor_interrupt_allowed(hart: &RiscvHartState, privilege: RiscvPrivilegeMode) -> bool {
+    match privilege {
+        RiscvPrivilegeMode::User => true,
+        RiscvPrivilegeMode::Supervisor => hart.status().sie(),
+        RiscvPrivilegeMode::Machine => false,
+    }
+}
+
+fn interrupt_code(pending: u64) -> Option<u64> {
+    (pending != 0).then(|| u64::from(pending.trailing_zeros()))
+}
+
 const fn machine_trap_cause(kind: RiscvTrapKind, privilege: RiscvPrivilegeMode) -> u64 {
     match kind {
         RiscvTrapKind::IllegalInstruction => 2,
@@ -94,5 +154,10 @@ const fn machine_trap_cause(kind: RiscvTrapKind, privilege: RiscvPrivilegeMode) 
             RiscvPrivilegeMode::Machine => 11,
         },
         RiscvTrapKind::Breakpoint => 3,
+        RiscvTrapKind::Interrupt { code } => interrupt_trap_cause(code),
     }
+}
+
+const fn interrupt_trap_cause(code: u64) -> u64 {
+    (1_u64 << 63) | code
 }

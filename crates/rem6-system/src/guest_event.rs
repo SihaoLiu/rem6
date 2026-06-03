@@ -153,6 +153,7 @@ pub enum GuestTrapKind {
     EnvironmentCall,
     Breakpoint,
     IllegalInstruction,
+    Interrupt { code: u64 },
 }
 
 impl GuestTrapKind {
@@ -161,6 +162,7 @@ impl GuestTrapKind {
             Self::EnvironmentCall => 0,
             Self::Breakpoint => 1,
             Self::IllegalInstruction => 2,
+            Self::Interrupt { .. } => 3,
         }
     }
 }

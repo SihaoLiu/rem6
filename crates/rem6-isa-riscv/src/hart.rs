@@ -1,6 +1,7 @@
 use crate::{
     Register, RiscvControlFlowSnapshot, RiscvControlFlowUpdate, RiscvCounterSnapshot,
-    RiscvHartState, RiscvPrivilegeMode, RiscvStatusWord, RiscvSv39AccessContext, RiscvVectorConfig,
+    RiscvHartState, RiscvInterruptCsr, RiscvPrivilegeMode, RiscvStatusWord, RiscvSv39AccessContext,
+    RiscvVectorConfig,
 };
 
 impl RiscvHartState {
@@ -58,6 +59,14 @@ impl RiscvHartState {
 
     pub const fn machine_interrupt_delegation(&self) -> u64 {
         self.machine_interrupt_delegation
+    }
+
+    pub const fn machine_interrupt_enable(&self) -> u64 {
+        self.machine_interrupt_enable
+    }
+
+    pub const fn machine_interrupt_pending(&self) -> u64 {
+        self.machine_interrupt_pending
     }
 
     pub const fn machine_exception_pc(&self) -> u64 {
@@ -129,6 +138,44 @@ impl RiscvHartState {
 
     pub fn set_machine_interrupt_delegation(&mut self, delegation: u64) {
         self.machine_interrupt_delegation = delegation;
+    }
+
+    pub fn set_machine_interrupt_enable(&mut self, enable: u64) {
+        self.machine_interrupt_enable = enable;
+    }
+
+    pub fn set_machine_interrupt_pending(&mut self, pending: u64) {
+        self.machine_interrupt_pending = pending;
+    }
+
+    pub(crate) const fn read_interrupt_csr(&self, csr: RiscvInterruptCsr) -> u64 {
+        match csr {
+            RiscvInterruptCsr::MachineInterruptEnable => self.machine_interrupt_enable,
+            RiscvInterruptCsr::MachineInterruptPending => self.machine_interrupt_pending,
+            RiscvInterruptCsr::SupervisorInterruptEnable => {
+                self.machine_interrupt_enable & self.machine_interrupt_delegation
+            }
+            RiscvInterruptCsr::SupervisorInterruptPending => {
+                self.machine_interrupt_pending & self.machine_interrupt_delegation
+            }
+        }
+    }
+
+    pub(crate) fn write_interrupt_csr(&mut self, csr: RiscvInterruptCsr, value: u64) {
+        match csr {
+            RiscvInterruptCsr::MachineInterruptEnable => self.machine_interrupt_enable = value,
+            RiscvInterruptCsr::MachineInterruptPending => self.machine_interrupt_pending = value,
+            RiscvInterruptCsr::SupervisorInterruptEnable => {
+                let mask = self.machine_interrupt_delegation;
+                self.machine_interrupt_enable =
+                    (self.machine_interrupt_enable & !mask) | (value & mask);
+            }
+            RiscvInterruptCsr::SupervisorInterruptPending => {
+                let mask = self.machine_interrupt_delegation;
+                self.machine_interrupt_pending =
+                    (self.machine_interrupt_pending & !mask) | (value & mask);
+            }
+        }
     }
 
     pub fn set_machine_exception_pc(&mut self, pc: u64) {

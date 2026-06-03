@@ -19,12 +19,16 @@ use encoding::{
     aq, b_imm, funct3, funct5, funct7, i_imm, j_imm, rd, rl, rs1, rs2, s_imm, shamt32, shamt64,
     shift_funct6, u_imm,
 };
+use instruction::csr_privilege_allowed;
 use integer::{
     div_signed, div_signed_word, div_unsigned, div_unsigned_word, mulh_signed,
     mulh_signed_unsigned, mulh_unsigned, rem_signed, rem_signed_word, rem_unsigned,
     rem_unsigned_word, sign_extend_word,
 };
-use trap::{enter_synchronous_trap, machine_return_allowed, supervisor_return_allowed};
+use trap::{
+    enter_pending_interrupt, enter_synchronous_trap, machine_return_allowed,
+    supervisor_return_allowed,
+};
 
 pub use control_flow::{
     RiscvBranchPredictionTarget, RiscvControlFlowSnapshot, RiscvControlFlowUpdate,
@@ -32,8 +36,8 @@ pub use control_flow::{
 };
 pub use csr::{
     RiscvCounterBank, RiscvCounterCsr, RiscvCounterCsrWord, RiscvCounterSnapshot,
-    RiscvMachineTrapCsr, RiscvStatusCsr, RiscvStatusWord, RiscvSupervisorTrapCsr,
-    RiscvTranslationCsr,
+    RiscvInterruptCsr, RiscvMachineTrapCsr, RiscvStatusCsr, RiscvStatusWord,
+    RiscvSupervisorTrapCsr, RiscvTranslationCsr,
 };
 pub use error::{RiscvCsrError, RiscvError};
 pub use gdb_target::{RiscvGdbTargetDescription, RiscvGdbTargetDocument, RiscvGdbXlen};
@@ -504,6 +508,8 @@ pub struct RiscvHartState {
     supervisor_trap_value: u64,
     machine_exception_delegation: u64,
     machine_interrupt_delegation: u64,
+    machine_interrupt_enable: u64,
+    machine_interrupt_pending: u64,
     machine_trap_vector: u64,
     machine_exception_pc: u64,
     machine_trap_cause: u64,
@@ -531,6 +537,8 @@ impl RiscvHartState {
             supervisor_trap_value: 0,
             machine_exception_delegation: 0,
             machine_interrupt_delegation: 0,
+            machine_interrupt_enable: 0,
+            machine_interrupt_pending: 0,
             machine_trap_vector: 0,
             machine_exception_pc: 0,
             machine_trap_cause: 0,
@@ -548,6 +556,10 @@ impl RiscvHartState {
         instruction: RiscvInstruction,
     ) -> Result<RiscvExecutionRecord, RiscvError> {
         let pc = self.pc;
+        if let Some(record) = enter_pending_interrupt(self, instruction, pc) {
+            return Ok(record);
+        }
+
         let mut next_pc = pc
             .checked_add(4)
             .ok_or(RiscvError::PcOverflow { pc, offset: 4 })?;
@@ -974,6 +986,31 @@ impl RiscvHartState {
                 let value = read_status_csr(self, csr) & !u64::from(zimm);
                 write_status_csr(self, &mut register_writes, rd, csr, value);
             }
+            RiscvInstruction::ReadInterruptCsr { rd, csr } => {
+                write_register(self, &mut register_writes, rd, self.read_interrupt_csr(csr));
+            }
+            RiscvInstruction::WriteInterruptCsr { rd, csr, rs1 } => {
+                write_interrupt_csr(self, &mut register_writes, rd, csr, self.read(rs1));
+            }
+            RiscvInstruction::SetInterruptCsr { rd, csr, rs1 } => {
+                let value = self.read_interrupt_csr(csr) | self.read(rs1);
+                write_interrupt_csr(self, &mut register_writes, rd, csr, value);
+            }
+            RiscvInstruction::ClearInterruptCsr { rd, csr, rs1 } => {
+                let value = self.read_interrupt_csr(csr) & !self.read(rs1);
+                write_interrupt_csr(self, &mut register_writes, rd, csr, value);
+            }
+            RiscvInstruction::WriteInterruptCsrImmediate { rd, csr, zimm } => {
+                write_interrupt_csr(self, &mut register_writes, rd, csr, u64::from(zimm));
+            }
+            RiscvInstruction::SetInterruptCsrImmediate { rd, csr, zimm } => {
+                let value = self.read_interrupt_csr(csr) | u64::from(zimm);
+                write_interrupt_csr(self, &mut register_writes, rd, csr, value);
+            }
+            RiscvInstruction::ClearInterruptCsrImmediate { rd, csr, zimm } => {
+                let value = self.read_interrupt_csr(csr) & !u64::from(zimm);
+                write_interrupt_csr(self, &mut register_writes, rd, csr, value);
+            }
             RiscvInstruction::ReadMachineTrapCsr { rd, csr } => {
                 write_register(
                     self,
@@ -1121,18 +1158,6 @@ fn write_register(
     writes.push(RegisterWrite::new(register, value));
 }
 
-fn csr_privilege_allowed(current: RiscvPrivilegeMode, required: RiscvPrivilegeMode) -> bool {
-    privilege_rank(current) >= privilege_rank(required)
-}
-
-const fn privilege_rank(privilege: RiscvPrivilegeMode) -> u8 {
-    match privilege {
-        RiscvPrivilegeMode::User => 0,
-        RiscvPrivilegeMode::Supervisor => 1,
-        RiscvPrivilegeMode::Machine => 3,
-    }
-}
-
 fn write_counter_csr(
     hart: &mut RiscvHartState,
     writes: &mut Vec<RegisterWrite>,
@@ -1159,6 +1184,18 @@ fn write_status_csr(
     let old_value = read_status_csr(hart, csr);
     write_register(hart, writes, register, old_value);
     hart.set_status(csr.write(hart.status(), value));
+}
+
+fn write_interrupt_csr(
+    hart: &mut RiscvHartState,
+    writes: &mut Vec<RegisterWrite>,
+    register: Register,
+    csr: RiscvInterruptCsr,
+    value: u64,
+) {
+    let old_value = hart.read_interrupt_csr(csr);
+    write_register(hart, writes, register, old_value);
+    hart.write_interrupt_csr(csr, value);
 }
 
 fn read_machine_trap_csr(hart: &RiscvHartState, csr: RiscvMachineTrapCsr) -> u64 {
