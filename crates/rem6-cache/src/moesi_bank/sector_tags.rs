@@ -34,7 +34,7 @@ impl MoesiCacheBank {
         Ok(())
     }
 
-    fn validate_clean_stable_victims(
+    pub(super) fn validate_clean_stable_victims(
         &self,
         evicted_lines: &[Address],
     ) -> Result<(), MoesiCacheBankError> {
