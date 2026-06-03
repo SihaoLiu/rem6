@@ -134,6 +134,8 @@ fn riscv_status_word_tracks_mxr_and_sum_bits() {
 
 #[test]
 fn riscv_status_word_tracks_mprv_and_mpp_bits() {
+    assert_eq!(RiscvStatusWord::new(0).with_mie(true).bits(), 1 << 3);
+    assert_eq!(RiscvStatusWord::new(0).with_mpie(true).bits(), 1 << 7);
     assert_eq!(RiscvStatusWord::new(0).with_mprv(true).bits(), 1 << 17);
     assert_eq!(
         RiscvStatusWord::new(0)
@@ -149,6 +151,8 @@ fn riscv_status_word_tracks_mprv_and_mpp_bits() {
     );
 
     let status = RiscvStatusWord::new((1 << 17) | (3 << 11));
+    assert!(!status.mie());
+    assert!(!status.mpie());
     assert!(status.mprv());
     assert_eq!(status.mpp(), RiscvPrivilegeMode::Machine);
     assert_eq!(status.with_mpp(RiscvPrivilegeMode::User).bits(), 1 << 17);
@@ -559,6 +563,31 @@ fn hart_executes_status_csr_read_modify_write_operations() {
     hart.execute(clear_sstatus).unwrap();
     assert_eq!(hart.read(reg(8)), (1 << 18) | (1 << 19));
     assert_eq!(hart.status().bits(), 0x2 | (1 << 19));
+}
+
+#[test]
+fn hart_decodes_and_executes_machine_exception_pc_csr() {
+    let mut hart = RiscvHartState::new(0x4000);
+    hart.write(reg(2), 0x9000);
+    hart.write(reg(3), 0x40);
+
+    let write_mepc = RiscvInstruction::decode(csr_type(0x341, 2, 0x1, 5)).unwrap();
+    let write_record = hart.execute(write_mepc).unwrap();
+    assert_eq!(hart.machine_exception_pc(), 0x9000);
+    assert_eq!(hart.read(reg(5)), 0);
+    assert_eq!(
+        write_record.register_writes(),
+        &[RegisterWrite::new(reg(5), 0)]
+    );
+
+    let set_mepc = RiscvInstruction::decode(csr_type(0x341, 3, 0x2, 6)).unwrap();
+    hart.execute(set_mepc).unwrap();
+    assert_eq!(hart.read(reg(6)), 0x9000);
+    assert_eq!(hart.machine_exception_pc(), 0x9040);
+
+    let read_mepc = RiscvInstruction::decode(csr_read_type(0x341, 7)).unwrap();
+    hart.execute(read_mepc).unwrap();
+    assert_eq!(hart.read(reg(7)), 0x9040);
 }
 
 #[test]
@@ -1806,6 +1835,37 @@ fn hart_records_environment_and_breakpoint_traps_without_advancing_pc() {
         ebreak.trap(),
         Some(&RiscvTrap::new(RiscvTrapKind::Breakpoint, 0x7000))
     );
+}
+
+#[test]
+fn hart_executes_machine_return_from_machine_mode() {
+    let mut hart = RiscvHartState::new(0x7000);
+    hart.set_machine_exception_pc(0x9000);
+    hart.set_status(
+        RiscvStatusWord::new(0)
+            .with_mpp(RiscvPrivilegeMode::Supervisor)
+            .with_mpie(true)
+            .with_mie(false)
+            .with_mprv(true),
+    );
+
+    let instruction = RiscvInstruction::decode(0x3020_0073).unwrap();
+    assert_eq!(instruction, RiscvInstruction::MachineReturn);
+
+    let record = hart.execute(instruction).unwrap();
+
+    assert_eq!(record.pc(), 0x7000);
+    assert_eq!(record.next_pc(), 0x9000);
+    assert_eq!(hart.pc(), 0x9000);
+    assert_eq!(hart.privilege_mode(), RiscvPrivilegeMode::Supervisor);
+    assert!(hart.status().mie());
+    assert!(hart.status().mpie());
+    assert_eq!(hart.status().mpp(), RiscvPrivilegeMode::User);
+    assert!(!hart.status().mprv());
+    assert_eq!(record.trap(), None);
+    assert_eq!(record.system_event(), None);
+    assert_eq!(record.register_writes(), &[]);
+    assert_eq!(record.memory_access(), None);
 }
 
 #[test]

@@ -160,6 +160,8 @@ pub struct RiscvStatusWord {
 }
 
 impl RiscvStatusWord {
+    const MIE_BIT: u32 = 3;
+    const MPIE_BIT: u32 = 7;
     const MPP_SHIFT: u32 = 11;
     const MPP_MASK: u64 = 0b11 << Self::MPP_SHIFT;
     const MPRV_BIT: u32 = 17;
@@ -172,6 +174,24 @@ impl RiscvStatusWord {
 
     pub const fn bits(self) -> u64 {
         self.bits
+    }
+
+    pub const fn mie(self) -> bool {
+        status_bit(self.bits, Self::MIE_BIT)
+    }
+
+    pub const fn with_mie(mut self, enabled: bool) -> Self {
+        self.bits = set_status_bit(self.bits, Self::MIE_BIT, enabled);
+        self
+    }
+
+    pub const fn mpie(self) -> bool {
+        status_bit(self.bits, Self::MPIE_BIT)
+    }
+
+    pub const fn with_mpie(mut self, enabled: bool) -> Self {
+        self.bits = set_status_bit(self.bits, Self::MPIE_BIT, enabled);
+        self
     }
 
     pub const fn mprv(self) -> bool {

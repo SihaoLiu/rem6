@@ -301,6 +301,7 @@ pub enum RiscvInstruction {
     },
     FenceI,
     WaitForInterrupt,
+    MachineReturn,
     SfenceVma {
         rs1: Register,
         rs2: Register,
@@ -375,6 +376,21 @@ pub enum RiscvInstruction {
         rd: Register,
         csr: RiscvStatusCsr,
         zimm: u8,
+    },
+    ReadMachineExceptionPcCsr {
+        rd: Register,
+    },
+    WriteMachineExceptionPcCsr {
+        rd: Register,
+        rs1: Register,
+    },
+    SetMachineExceptionPcCsr {
+        rd: Register,
+        rs1: Register,
+    },
+    ClearMachineExceptionPcCsr {
+        rd: Register,
+        rs1: Register,
     },
     ReadTranslationCsr {
         rd: Register,

@@ -109,6 +109,7 @@ fn decode_system(raw: u32) -> Result<RiscvInstruction, RiscvError> {
         0x0000_0073 => Ok(RiscvInstruction::Ecall),
         0x0010_0073 => Ok(RiscvInstruction::Ebreak),
         0x1050_0073 => Ok(RiscvInstruction::WaitForInterrupt),
+        0x3020_0073 => Ok(RiscvInstruction::MachineReturn),
         raw if is_sfence_vma(raw) => Ok(RiscvInstruction::SfenceVma {
             rs1: rs1(raw),
             rs2: rs2(raw),
@@ -131,6 +132,10 @@ fn decode_csr(raw: u32) -> Result<RiscvInstruction, RiscvError> {
                 .or_else(|| {
                     RiscvStatusCsr::from_address(csr)
                         .map(|csr| RiscvInstruction::ReadStatusCsr { rd: rd(raw), csr })
+                })
+                .or_else(|| {
+                    (csr == 0x341)
+                        .then_some(RiscvInstruction::ReadMachineExceptionPcCsr { rd: rd(raw) })
                 })
                 .or_else(|| {
                     RiscvTranslationCsr::from_address(csr)
@@ -171,6 +176,24 @@ fn decode_csr(raw: u32) -> Result<RiscvInstruction, RiscvError> {
                 rd: rd(raw),
                 csr,
                 zimm: rs1(raw).index(),
+            }),
+            _ => Err(RiscvError::UnknownEncoding { raw }),
+        };
+    }
+
+    if csr == 0x341 {
+        return match funct3(raw) {
+            0x1 => Ok(RiscvInstruction::WriteMachineExceptionPcCsr {
+                rd: rd(raw),
+                rs1: rs1(raw),
+            }),
+            0x2 => Ok(RiscvInstruction::SetMachineExceptionPcCsr {
+                rd: rd(raw),
+                rs1: rs1(raw),
+            }),
+            0x3 => Ok(RiscvInstruction::ClearMachineExceptionPcCsr {
+                rd: rd(raw),
+                rs1: rs1(raw),
             }),
             _ => Err(RiscvError::UnknownEncoding { raw }),
         };
@@ -635,6 +658,7 @@ pub struct RiscvHartState {
     pc: u64,
     hart_id: u64,
     counters: RiscvCounterBank,
+    machine_exception_pc: u64,
     translation_satp: u64,
     privilege_mode: RiscvPrivilegeMode,
     status: RiscvStatusWord,
@@ -652,82 +676,12 @@ impl RiscvHartState {
             pc,
             hart_id,
             counters: RiscvCounterBank::new(),
+            machine_exception_pc: 0,
             translation_satp: 0,
             privilege_mode: RiscvPrivilegeMode::Machine,
             status: RiscvStatusWord::new(0),
             vector_config: RiscvVectorConfig::invalid(),
             registers: [0; 32],
-        }
-    }
-
-    pub const fn pc(&self) -> u64 {
-        self.pc
-    }
-
-    pub const fn hart_id(&self) -> u64 {
-        self.hart_id
-    }
-
-    pub const fn counter_snapshot(&self) -> RiscvCounterSnapshot {
-        self.counters.snapshot()
-    }
-
-    pub const fn translation_satp(&self) -> u64 {
-        self.translation_satp
-    }
-
-    pub const fn translation_address_space(&self) -> u16 {
-        ((self.translation_satp >> 44) & 0xffff) as u16
-    }
-
-    pub fn set_translation_satp(&mut self, value: u64) {
-        self.translation_satp = value;
-    }
-
-    pub fn set_translation_address_space(&mut self, address_space: u16) {
-        self.translation_satp =
-            (self.translation_satp & !(0xffff_u64 << 44)) | (u64::from(address_space) << 44);
-    }
-
-    pub fn set_pc(&mut self, pc: u64) {
-        self.pc = pc;
-    }
-
-    pub const fn vector_config(&self) -> RiscvVectorConfig {
-        self.vector_config
-    }
-
-    pub fn set_vector_config(&mut self, vector_config: RiscvVectorConfig) {
-        self.vector_config = vector_config;
-    }
-
-    pub const fn control_flow_snapshot(&self) -> RiscvControlFlowSnapshot {
-        RiscvControlFlowSnapshot::new(self.pc, self.vector_config)
-    }
-
-    pub fn apply_control_flow_update(&mut self, update: RiscvControlFlowUpdate) {
-        match update {
-            RiscvControlFlowUpdate::BranchPrediction(target) => {
-                self.pc = target.pc();
-            }
-            RiscvControlFlowUpdate::VectorConfig(update) => {
-                self.pc = update.pc();
-                self.vector_config = update.vector_config();
-            }
-        }
-    }
-
-    pub fn read(&self, register: Register) -> u64 {
-        if register.is_zero() {
-            0
-        } else {
-            self.registers[register.index() as usize]
-        }
-    }
-
-    pub fn write(&mut self, register: Register, value: u64) {
-        if !register.is_zero() {
-            self.registers[register.index() as usize] = value;
         }
     }
 
@@ -1047,6 +1001,17 @@ impl RiscvHartState {
             RiscvInstruction::WaitForInterrupt => {
                 system_event = Some(RiscvSystemEvent::WaitForInterrupt { pc });
             }
+            RiscvInstruction::MachineReturn => {
+                let privilege = self.status.mpp();
+                next_pc = self.machine_exception_pc;
+                self.privilege_mode = privilege;
+                self.status = self
+                    .status
+                    .with_mie(self.status.mpie())
+                    .with_mpie(true)
+                    .with_mpp(RiscvPrivilegeMode::User)
+                    .with_mprv(privilege == RiscvPrivilegeMode::Machine && self.status.mprv());
+            }
             RiscvInstruction::SfenceVma { rs1, rs2 } => {
                 system_event = Some(RiscvSystemEvent::SfenceVma {
                     pc,
@@ -1108,6 +1073,20 @@ impl RiscvHartState {
             RiscvInstruction::ClearStatusCsrImmediate { rd, csr, zimm } => {
                 let value = read_status_csr(self, csr) & !u64::from(zimm);
                 write_status_csr(self, &mut register_writes, rd, csr, value);
+            }
+            RiscvInstruction::ReadMachineExceptionPcCsr { rd } => {
+                write_register(self, &mut register_writes, rd, self.machine_exception_pc());
+            }
+            RiscvInstruction::WriteMachineExceptionPcCsr { rd, rs1 } => {
+                write_machine_exception_pc_csr(self, &mut register_writes, rd, self.read(rs1));
+            }
+            RiscvInstruction::SetMachineExceptionPcCsr { rd, rs1 } => {
+                let value = self.machine_exception_pc() | self.read(rs1);
+                write_machine_exception_pc_csr(self, &mut register_writes, rd, value);
+            }
+            RiscvInstruction::ClearMachineExceptionPcCsr { rd, rs1 } => {
+                let value = self.machine_exception_pc() & !self.read(rs1);
+                write_machine_exception_pc_csr(self, &mut register_writes, rd, value);
             }
             RiscvInstruction::ReadTranslationCsr { rd, csr } => {
                 write_register(
@@ -1226,6 +1205,17 @@ fn write_status_csr(
     let old_value = read_status_csr(hart, csr);
     write_register(hart, writes, register, old_value);
     hart.set_status(csr.write(hart.status(), value));
+}
+
+fn write_machine_exception_pc_csr(
+    hart: &mut RiscvHartState,
+    writes: &mut Vec<RegisterWrite>,
+    register: Register,
+    value: u64,
+) {
+    let old_value = hart.machine_exception_pc();
+    write_register(hart, writes, register, old_value);
+    hart.set_machine_exception_pc(value);
 }
 
 fn read_translation_csr(hart: &RiscvHartState, csr: RiscvTranslationCsr) -> u64 {
