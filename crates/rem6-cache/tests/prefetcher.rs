@@ -65,7 +65,22 @@ fn tagged_access(agent: u32, pc: u64, address: u64) -> TaggedPrefetchAccess {
 }
 
 fn ampm_access(agent: u32, pc: u64, address: u64) -> AmpmPrefetchAccess {
-    AmpmPrefetchAccess::new(AgentId::new(agent), pc, Address::new(address), false)
+    ampm_access_with_secure(agent, pc, address, false)
+}
+
+fn ampm_access_with_secure(agent: u32, pc: u64, address: u64, secure: bool) -> AmpmPrefetchAccess {
+    AmpmPrefetchAccess::new(AgentId::new(agent), pc, Address::new(address), secure)
+}
+
+fn ampm_snapshot_has_zone(
+    snapshot: &rem6_cache::AmpmPrefetcherSnapshot,
+    zone: u64,
+    secure: bool,
+) -> bool {
+    snapshot
+        .entries()
+        .iter()
+        .any(|entry| entry.zone() == zone && entry.secure() == secure)
 }
 
 fn dcpt_access(agent: u32, pc: u64, address: u64) -> DcptPrefetchAccess {
@@ -806,6 +821,47 @@ fn ampm_prefetcher_config_rejects_vector_lengths_above_host_limit() {
 }
 
 #[test]
+fn ampm_prefetcher_config_validates_access_map_associativity() {
+    let config = AmpmPrefetcherConfig::new(64, 256, 1, 8).unwrap();
+    assert_eq!(config.table_entries(), 8);
+    assert_eq!(config.table_assoc(), 8);
+    assert_eq!(config.table_sets(), 1);
+
+    let two_way = config.clone().with_table_assoc(2).unwrap();
+    assert_eq!(two_way.table_assoc(), 2);
+    assert_eq!(two_way.table_sets(), 4);
+
+    assert_eq!(
+        config.clone().with_table_assoc(0),
+        Err(AmpmPrefetcherError::ZeroTableAssoc)
+    );
+    assert_eq!(
+        config.clone().with_table_assoc(16),
+        Err(AmpmPrefetcherError::TableAssocExceedsEntries {
+            table_entries: 8,
+            table_assoc: 16,
+        })
+    );
+    assert_eq!(
+        config.clone().with_table_assoc(3),
+        Err(AmpmPrefetcherError::TableEntriesNotMultipleOfAssoc {
+            table_entries: 8,
+            table_assoc: 3,
+        })
+    );
+    assert_eq!(
+        AmpmPrefetcherConfig::new(64, 256, 1, 12)
+            .unwrap()
+            .with_table_assoc(4),
+        Err(AmpmPrefetcherError::TableSetCountNotPowerOfTwo {
+            table_entries: 12,
+            table_assoc: 4,
+            table_sets: 3,
+        })
+    );
+}
+
+#[test]
 fn ampm_prefetcher_matches_cross_zone_access_map_patterns_and_restores_state() {
     let config = AmpmPrefetcherConfig::new(64, 256, 2, 8).unwrap();
     let mut prefetcher = AmpmPrefetcher::new(config.clone());
@@ -857,6 +913,66 @@ fn ampm_prefetcher_matches_cross_zone_access_map_patterns_and_restores_state() {
     assert_eq!(restored.issued_prefetch_count(), 2);
     assert_eq!(restored.useful_prefetch_count(), 1);
     assert_eq!(restored.raw_cache_miss_count(), 3);
+}
+
+#[test]
+fn ampm_access_map_lru_touch_keeps_revisited_hot_zone_under_set_pressure() {
+    let config = AmpmPrefetcherConfig::new(64, 256, 1, 4)
+        .unwrap()
+        .with_table_assoc(2)
+        .unwrap();
+    let mut prefetcher = AmpmPrefetcher::new(config);
+
+    prefetcher.observe(ampm_access(3, 0x700, 0x100)).unwrap();
+    prefetcher.observe(ampm_access(3, 0x704, 0x000)).unwrap();
+    prefetcher.observe(ampm_access(3, 0x708, 0x400)).unwrap();
+
+    let snapshot = prefetcher.snapshot();
+    assert!(ampm_snapshot_has_zone(&snapshot, 0, false));
+    assert!(ampm_snapshot_has_zone(&snapshot, 4, false));
+    assert!(!ampm_snapshot_has_zone(&snapshot, 2, false));
+}
+
+#[test]
+fn ampm_access_map_secure_bit_is_tag_only_not_set_index() {
+    let config = AmpmPrefetcherConfig::new(64, 256, 1, 8)
+        .unwrap()
+        .with_table_assoc(1)
+        .unwrap();
+    let mut prefetcher = AmpmPrefetcher::new(config);
+
+    prefetcher
+        .observe(ampm_access_with_secure(3, 0x700, 0x400, false))
+        .unwrap();
+    prefetcher
+        .observe(ampm_access_with_secure(3, 0x704, 0x400, true))
+        .unwrap();
+
+    let snapshot = prefetcher.snapshot();
+    assert!(ampm_snapshot_has_zone(&snapshot, 4, true));
+    assert!(!ampm_snapshot_has_zone(&snapshot, 4, false));
+}
+
+#[test]
+fn ampm_snapshot_restore_preserves_access_map_lru_order() {
+    let config = AmpmPrefetcherConfig::new(64, 256, 1, 4)
+        .unwrap()
+        .with_table_assoc(2)
+        .unwrap();
+    let mut prefetcher = AmpmPrefetcher::new(config.clone());
+
+    prefetcher.observe(ampm_access(3, 0x700, 0x100)).unwrap();
+    prefetcher.observe(ampm_access(3, 0x704, 0x000)).unwrap();
+
+    let snapshot = prefetcher.snapshot();
+    let mut restored = AmpmPrefetcher::new(config);
+    restored.restore(&snapshot).unwrap();
+    restored.observe(ampm_access(3, 0x708, 0x400)).unwrap();
+
+    let restored_snapshot = restored.snapshot();
+    assert!(ampm_snapshot_has_zone(&restored_snapshot, 0, false));
+    assert!(ampm_snapshot_has_zone(&restored_snapshot, 4, false));
+    assert!(!ampm_snapshot_has_zone(&restored_snapshot, 2, false));
 }
 
 #[test]

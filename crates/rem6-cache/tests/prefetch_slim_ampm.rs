@@ -26,6 +26,8 @@ fn slim_ampm_defaults_match_gem5_slim_parameters() {
     assert_eq!(config.ampm().degree(), 2);
     assert_eq!(config.ampm().limit_stride(), Some(4));
     assert_eq!(config.ampm().table_entries(), 256);
+    assert_eq!(config.ampm().table_assoc(), 8);
+    assert_eq!(config.ampm().table_sets(), 32);
     assert_eq!(config.dcpt().deltas_per_entry(), 9);
     assert_eq!(config.dcpt().delta_bits(), 12);
     assert_eq!(config.dcpt().delta_mask_bits(), 8);

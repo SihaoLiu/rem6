@@ -129,6 +129,7 @@ pub struct AmpmPrefetcherConfig {
     hot_zone_size: u64,
     degree: u32,
     table_entries: usize,
+    table_assoc: usize,
     limit_stride: Option<u64>,
     epoch_control: Option<AmpmEpochConfig>,
 }
@@ -183,6 +184,7 @@ impl AmpmPrefetcherConfig {
             hot_zone_size,
             degree,
             table_entries,
+            table_assoc: table_entries,
             limit_stride: None,
             epoch_control: None,
         })
@@ -204,6 +206,14 @@ impl AmpmPrefetcherConfig {
         self.table_entries
     }
 
+    pub const fn table_assoc(&self) -> usize {
+        self.table_assoc
+    }
+
+    pub const fn table_sets(&self) -> usize {
+        self.table_entries / self.table_assoc
+    }
+
     pub const fn limit_stride(&self) -> Option<u64> {
         self.limit_stride
     }
@@ -223,6 +233,12 @@ impl AmpmPrefetcherConfig {
         Ok(self)
     }
 
+    pub fn with_table_assoc(mut self, table_assoc: usize) -> Result<Self, AmpmPrefetcherError> {
+        validate_table_assoc(self.table_entries, table_assoc)?;
+        self.table_assoc = table_assoc;
+        Ok(self)
+    }
+
     pub const fn with_epoch_control(mut self, epoch_control: AmpmEpochConfig) -> Self {
         self.epoch_control = Some(epoch_control);
         self
@@ -235,6 +251,7 @@ pub enum AmpmPrefetcherError {
     ZeroHotZoneSize,
     ZeroDegree,
     ZeroTableEntries,
+    ZeroTableAssoc,
     ZeroLimitStride,
     ZeroEpochCycles,
     ZeroOffchipMemoryLatency,
@@ -254,6 +271,19 @@ pub enum AmpmPrefetcherError {
     TableTooSmall {
         table_entries: usize,
     },
+    TableAssocExceedsEntries {
+        table_entries: usize,
+        table_assoc: usize,
+    },
+    TableEntriesNotMultipleOfAssoc {
+        table_entries: usize,
+        table_assoc: usize,
+    },
+    TableSetCountNotPowerOfTwo {
+        table_entries: usize,
+        table_assoc: usize,
+        table_sets: usize,
+    },
     VectorLengthTooLarge {
         field: &'static str,
         length: usize,
@@ -272,6 +302,11 @@ pub enum AmpmPrefetcherError {
         states: usize,
         expected: usize,
     },
+    SnapshotSetEntryCountOutOfRange {
+        set: usize,
+        entries: usize,
+        table_assoc: usize,
+    },
 }
 
 impl fmt::Display for AmpmPrefetcherError {
@@ -281,6 +316,9 @@ impl fmt::Display for AmpmPrefetcherError {
             Self::ZeroHotZoneSize => write!(formatter, "AMPM prefetcher hot zone size is zero"),
             Self::ZeroDegree => write!(formatter, "AMPM prefetcher degree is zero"),
             Self::ZeroTableEntries => write!(formatter, "AMPM prefetcher table has no entries"),
+            Self::ZeroTableAssoc => {
+                write!(formatter, "AMPM prefetcher table associativity is zero")
+            }
             Self::ZeroLimitStride => write!(formatter, "AMPM prefetcher stride limit is zero"),
             Self::ZeroEpochCycles => write!(formatter, "AMPM prefetcher epoch cycle count is zero"),
             Self::ZeroOffchipMemoryLatency => write!(
@@ -315,6 +353,28 @@ impl fmt::Display for AmpmPrefetcherError {
                 formatter,
                 "AMPM prefetcher table has {table_entries} entries but needs at least three"
             ),
+            Self::TableAssocExceedsEntries {
+                table_entries,
+                table_assoc,
+            } => write!(
+                formatter,
+                "AMPM prefetcher table associativity {table_assoc} exceeds {table_entries} entries"
+            ),
+            Self::TableEntriesNotMultipleOfAssoc {
+                table_entries,
+                table_assoc,
+            } => write!(
+                formatter,
+                "AMPM prefetcher table entries {table_entries} are not a multiple of associativity {table_assoc}"
+            ),
+            Self::TableSetCountNotPowerOfTwo {
+                table_entries,
+                table_assoc,
+                table_sets,
+            } => write!(
+                formatter,
+                "AMPM prefetcher table with {table_entries} entries and associativity {table_assoc} has {table_sets} non-power-of-two sets"
+            ),
             Self::VectorLengthTooLarge {
                 field,
                 length,
@@ -342,6 +402,14 @@ impl fmt::Display for AmpmPrefetcherError {
                 formatter,
                 "AMPM prefetcher snapshot zone {zone} has {states} states instead of {expected}"
             ),
+            Self::SnapshotSetEntryCountOutOfRange {
+                set,
+                entries,
+                table_assoc,
+            } => write!(
+                formatter,
+                "AMPM prefetcher snapshot set {set} has {entries} entries for associativity {table_assoc}"
+            ),
         }
     }
 }
@@ -368,6 +436,36 @@ fn validate_ampm_vector_length(
             field,
             length,
             maximum,
+        });
+    }
+    Ok(())
+}
+
+fn validate_table_assoc(
+    table_entries: usize,
+    table_assoc: usize,
+) -> Result<(), AmpmPrefetcherError> {
+    if table_assoc == 0 {
+        return Err(AmpmPrefetcherError::ZeroTableAssoc);
+    }
+    if table_assoc > table_entries {
+        return Err(AmpmPrefetcherError::TableAssocExceedsEntries {
+            table_entries,
+            table_assoc,
+        });
+    }
+    if !table_entries.is_multiple_of(table_assoc) {
+        return Err(AmpmPrefetcherError::TableEntriesNotMultipleOfAssoc {
+            table_entries,
+            table_assoc,
+        });
+    }
+    let table_sets = table_entries / table_assoc;
+    if !table_sets.is_power_of_two() {
+        return Err(AmpmPrefetcherError::TableSetCountNotPowerOfTwo {
+            table_entries,
+            table_assoc,
+            table_sets,
         });
     }
     Ok(())
@@ -597,8 +695,7 @@ impl AmpmAccessMapEntrySnapshot {
 pub struct AmpmPrefetcherSnapshot {
     config: AmpmPrefetcherConfig,
     entries: Vec<AmpmAccessMapEntrySnapshot>,
-    insertion_order: Vec<AmpmZoneKey>,
-    next_victim: usize,
+    lru_order: Vec<AmpmZoneKey>,
     last_candidates: Vec<AmpmPrefetchCandidate>,
     current_degree: u32,
     useful_degree: u32,
@@ -687,8 +784,7 @@ impl From<AmpmAccessMapState> for AmpmWindowState {
 pub struct AmpmPrefetcher {
     config: AmpmPrefetcherConfig,
     entries: BTreeMap<AmpmZoneKey, AmpmAccessMapEntry>,
-    insertion_order: Vec<AmpmZoneKey>,
-    next_victim: usize,
+    lru_order: Vec<AmpmZoneKey>,
     last_candidates: Vec<AmpmPrefetchCandidate>,
     current_degree: u32,
     useful_degree: u32,
@@ -706,8 +802,7 @@ impl AmpmPrefetcher {
         Self {
             config,
             entries: BTreeMap::new(),
-            insertion_order: Vec::new(),
-            next_victim: 0,
+            lru_order: Vec::new(),
             last_candidates: Vec::new(),
             current_degree,
             useful_degree: current_degree,
@@ -880,8 +975,7 @@ impl AmpmPrefetcher {
                     states: entry.states.clone(),
                 })
                 .collect(),
-            insertion_order: self.insertion_order.clone(),
-            next_victim: self.next_victim,
+            lru_order: self.lru_order.clone(),
             last_candidates: self.last_candidates.clone(),
             current_degree: self.current_degree,
             useful_degree: self.useful_degree,
@@ -930,22 +1024,18 @@ impl AmpmPrefetcher {
         }
 
         self.entries = entries;
-        self.insertion_order = snapshot
-            .insertion_order
+        self.lru_order = snapshot
+            .lru_order
             .iter()
             .copied()
             .filter(|key| self.entries.contains_key(key))
             .collect();
         for key in self.entries.keys() {
-            if !self.insertion_order.contains(key) {
-                self.insertion_order.push(*key);
+            if !self.lru_order.contains(key) {
+                self.lru_order.push(*key);
             }
         }
-        self.next_victim = if self.insertion_order.is_empty() {
-            0
-        } else {
-            snapshot.next_victim % self.insertion_order.len()
-        };
+        self.validate_restored_set_counts()?;
         self.last_candidates = snapshot.last_candidates().to_vec();
         self.current_degree = snapshot.current_degree;
         self.useful_degree = snapshot.useful_degree;
@@ -983,19 +1073,60 @@ impl AmpmPrefetcher {
     fn ensure_zone(&mut self, zone: u64, secure: bool) {
         let key = AmpmZoneKey::new(zone, secure);
         if self.entries.contains_key(&key) {
+            self.touch_zone(key);
             return;
         }
-        if self.entries.len() == self.config.table_entries() {
-            let victim_index = self.next_victim % self.insertion_order.len();
-            let victim = self.insertion_order[victim_index];
-            self.entries.remove(&victim);
-            self.insertion_order[victim_index] = key;
-            self.next_victim = (victim_index + 1) % self.config.table_entries();
-        } else {
-            self.insertion_order.push(key);
+        let set = self.table_set(key);
+        let set_entries = self
+            .lru_order
+            .iter()
+            .filter(|candidate| self.table_set(**candidate) == set)
+            .count();
+        if set_entries == self.config.table_assoc() {
+            if let Some(victim_index) = self
+                .lru_order
+                .iter()
+                .position(|candidate| self.table_set(*candidate) == set)
+            {
+                let victim = self.lru_order.remove(victim_index);
+                self.entries.remove(&victim);
+            }
         }
+        self.lru_order.push(key);
         self.entries
             .insert(key, AmpmAccessMapEntry::new(self.lines_per_zone()));
+    }
+
+    fn touch_zone(&mut self, key: AmpmZoneKey) {
+        if let Some(index) = self
+            .lru_order
+            .iter()
+            .position(|candidate| *candidate == key)
+        {
+            self.lru_order.remove(index);
+        }
+        self.lru_order.push(key);
+    }
+
+    fn table_set(&self, key: AmpmZoneKey) -> usize {
+        (key.zone as usize) & (self.config.table_sets() - 1)
+    }
+
+    fn validate_restored_set_counts(&self) -> Result<(), AmpmPrefetcherError> {
+        let mut set_counts = vec![0_usize; self.config.table_sets()];
+        for key in self.entries.keys() {
+            set_counts[self.table_set(*key)] += 1;
+        }
+        for (set, entries) in set_counts.into_iter().enumerate() {
+            if entries > self.config.table_assoc() {
+                return Err(AmpmPrefetcherError::SnapshotSetEntryCountOutOfRange {
+                    set,
+                    entries,
+                    table_assoc: self.config.table_assoc(),
+                });
+            }
+        }
+        Ok(())
     }
 
     fn set_entry_state(&mut self, zone: u64, secure: bool, block: u64, state: AmpmAccessMapState) {

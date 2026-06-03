@@ -22,7 +22,9 @@ impl SlimAmpmPrefetcherConfig {
     }
 
     pub fn gem5_defaults(line_size: u64) -> Result<Self, SlimAmpmPrefetcherError> {
-        let ampm = AmpmPrefetcherConfig::new(line_size, 2048, 2, 256)?.with_limit_stride(4)?;
+        let ampm = AmpmPrefetcherConfig::new(line_size, 2048, 2, 256)?
+            .with_table_assoc(8)?
+            .with_limit_stride(4)?;
         let dcpt = DcptPrefetcherConfig::new(9, 12, 8, 256, false)?;
         Ok(Self::new(ampm, dcpt))
     }
