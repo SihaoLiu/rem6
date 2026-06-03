@@ -162,6 +162,154 @@ impl InOrderBranchRedirect {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InOrderBranchPrediction {
+    sequence: u64,
+    resolved_stage: InOrderPipelineStage,
+    fetch_pc: u64,
+    predicted_taken: bool,
+    predicted_target_pc: Option<u64>,
+    resolved_taken: bool,
+    resolved_target_pc: Option<u64>,
+}
+
+impl InOrderBranchPrediction {
+    pub const fn new(
+        sequence: u64,
+        resolved_stage: InOrderPipelineStage,
+        fetch_pc: u64,
+        predicted_taken: bool,
+        predicted_target_pc: Option<u64>,
+        resolved_taken: bool,
+        resolved_target_pc: Option<u64>,
+    ) -> Self {
+        Self {
+            sequence,
+            resolved_stage,
+            fetch_pc,
+            predicted_taken,
+            predicted_target_pc,
+            resolved_taken,
+            resolved_target_pc,
+        }
+    }
+
+    pub const fn sequence(self) -> u64 {
+        self.sequence
+    }
+
+    pub const fn resolved_stage(self) -> InOrderPipelineStage {
+        self.resolved_stage
+    }
+
+    pub const fn fetch_pc(self) -> u64 {
+        self.fetch_pc
+    }
+
+    pub const fn predicted_taken(self) -> bool {
+        self.predicted_taken
+    }
+
+    pub const fn predicted_target_pc(self) -> Option<u64> {
+        self.predicted_target_pc
+    }
+
+    pub const fn resolved_taken(self) -> bool {
+        self.resolved_taken
+    }
+
+    pub const fn resolved_target_pc(self) -> Option<u64> {
+        self.resolved_target_pc
+    }
+
+    pub fn mispredicted(self) -> bool {
+        if self.predicted_taken != self.resolved_taken {
+            return true;
+        }
+
+        self.predicted_taken && self.predicted_target_pc != self.resolved_target_pc
+    }
+
+    fn repair_target_pc(self) -> Result<Option<u64>, InOrderPipelineError> {
+        if !self.mispredicted() {
+            return Ok(None);
+        }
+
+        self.resolved_target_pc
+            .ok_or(InOrderPipelineError::MissingBranchPredictionRepairTarget {
+                sequence: self.sequence,
+            })
+            .map(Some)
+    }
+
+    fn redirect(self) -> Result<Option<InOrderBranchRedirect>, InOrderPipelineError> {
+        self.repair_target_pc().map(|target| {
+            target.map(|target_pc| {
+                InOrderBranchRedirect::new(self.sequence, self.resolved_stage, target_pc)
+            })
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InOrderBranchPredictionRecord {
+    prediction: InOrderBranchPrediction,
+    repair_target_pc: Option<u64>,
+    flushed: Vec<InOrderPipelineInstruction>,
+}
+
+impl InOrderBranchPredictionRecord {
+    fn from_plan(prediction: InOrderBranchPrediction, plan: &InOrderPipelinePlan) -> Self {
+        let repair_target_pc = plan.redirect().map(|redirect| redirect.target_pc());
+
+        Self {
+            prediction,
+            repair_target_pc,
+            flushed: plan.flushed().to_vec(),
+        }
+    }
+
+    pub const fn sequence(&self) -> u64 {
+        self.prediction.sequence()
+    }
+
+    pub const fn resolved_stage(&self) -> InOrderPipelineStage {
+        self.prediction.resolved_stage()
+    }
+
+    pub const fn fetch_pc(&self) -> u64 {
+        self.prediction.fetch_pc()
+    }
+
+    pub const fn predicted_taken(&self) -> bool {
+        self.prediction.predicted_taken()
+    }
+
+    pub const fn predicted_target_pc(&self) -> Option<u64> {
+        self.prediction.predicted_target_pc()
+    }
+
+    pub const fn resolved_taken(&self) -> bool {
+        self.prediction.resolved_taken()
+    }
+
+    pub const fn resolved_target_pc(&self) -> Option<u64> {
+        self.prediction.resolved_target_pc()
+    }
+
+    pub fn mispredicted(&self) -> bool {
+        self.prediction.mispredicted()
+    }
+
+    pub const fn repair_target_pc(&self) -> Option<u64> {
+        self.repair_target_pc
+    }
+
+    pub fn flushed(&self) -> &[InOrderPipelineInstruction] {
+        &self.flushed
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct InOrderPipelineAdvance {
     instruction: InOrderPipelineInstruction,
     destination_stage: Option<InOrderPipelineStage>,
@@ -405,6 +553,7 @@ pub struct InOrderPipelineCycleRecord {
     cycle: u64,
     before: InOrderPipelineSnapshot,
     plan: InOrderPipelinePlan,
+    branch_predictions: Vec<InOrderBranchPredictionRecord>,
     after: InOrderPipelineSnapshot,
 }
 
@@ -416,6 +565,10 @@ pub struct InOrderPipelineCycleSummary {
     flushed_count: usize,
     resource_blocked_count: usize,
     ordering_blocked_count: usize,
+    branch_prediction_count: usize,
+    correct_branch_prediction_count: usize,
+    branch_misprediction_count: usize,
+    branch_prediction_flushed_count: usize,
     state_changed: bool,
     redirect_target_pc: Option<u64>,
 }
@@ -430,6 +583,10 @@ pub struct InOrderPipelineRunSummary {
     flushed_count: usize,
     resource_blocked_count: usize,
     ordering_blocked_count: usize,
+    branch_prediction_count: usize,
+    correct_branch_prediction_count: usize,
+    branch_misprediction_count: usize,
+    branch_prediction_flushed_count: usize,
     redirect_count: usize,
     state_changed_cycle_count: usize,
 }
@@ -444,6 +601,10 @@ impl InOrderPipelineRunSummary {
         flushed_count: 0,
         resource_blocked_count: 0,
         ordering_blocked_count: 0,
+        branch_prediction_count: 0,
+        correct_branch_prediction_count: 0,
+        branch_misprediction_count: 0,
+        branch_prediction_flushed_count: 0,
         redirect_count: 0,
         state_changed_cycle_count: 0,
     };
@@ -478,6 +639,10 @@ impl InOrderPipelineRunSummary {
             summary.flushed_count += cycle.flushed_count();
             summary.resource_blocked_count += cycle.resource_blocked_count();
             summary.ordering_blocked_count += cycle.ordering_blocked_count();
+            summary.branch_prediction_count += cycle.branch_prediction_count();
+            summary.correct_branch_prediction_count += cycle.correct_branch_prediction_count();
+            summary.branch_misprediction_count += cycle.branch_misprediction_count();
+            summary.branch_prediction_flushed_count += cycle.branch_prediction_flushed_count();
             if cycle.redirect_target_pc().is_some() {
                 summary.redirect_count += 1;
             }
@@ -501,6 +666,13 @@ impl InOrderPipelineRunSummary {
             flushed_count: self.flushed_count + other.flushed_count,
             resource_blocked_count: self.resource_blocked_count + other.resource_blocked_count,
             ordering_blocked_count: self.ordering_blocked_count + other.ordering_blocked_count,
+            branch_prediction_count: self.branch_prediction_count + other.branch_prediction_count,
+            correct_branch_prediction_count: self.correct_branch_prediction_count
+                + other.correct_branch_prediction_count,
+            branch_misprediction_count: self.branch_misprediction_count
+                + other.branch_misprediction_count,
+            branch_prediction_flushed_count: self.branch_prediction_flushed_count
+                + other.branch_prediction_flushed_count,
             redirect_count: self.redirect_count + other.redirect_count,
             state_changed_cycle_count: self.state_changed_cycle_count
                 + other.state_changed_cycle_count,
@@ -541,6 +713,22 @@ impl InOrderPipelineRunSummary {
 
     pub const fn ordering_blocked_count(self) -> usize {
         self.ordering_blocked_count
+    }
+
+    pub const fn branch_prediction_count(self) -> usize {
+        self.branch_prediction_count
+    }
+
+    pub const fn correct_branch_prediction_count(self) -> usize {
+        self.correct_branch_prediction_count
+    }
+
+    pub const fn branch_misprediction_count(self) -> usize {
+        self.branch_misprediction_count
+    }
+
+    pub const fn branch_prediction_flushed_count(self) -> usize {
+        self.branch_prediction_flushed_count
     }
 
     pub const fn redirect_count(self) -> usize {
@@ -663,6 +851,22 @@ impl InOrderPipelineCycleSummary {
         self.ordering_blocked_count
     }
 
+    pub const fn branch_prediction_count(self) -> usize {
+        self.branch_prediction_count
+    }
+
+    pub const fn correct_branch_prediction_count(self) -> usize {
+        self.correct_branch_prediction_count
+    }
+
+    pub const fn branch_misprediction_count(self) -> usize {
+        self.branch_misprediction_count
+    }
+
+    pub const fn branch_prediction_flushed_count(self) -> usize {
+        self.branch_prediction_flushed_count
+    }
+
     pub const fn state_changed(self) -> bool {
         self.state_changed
     }
@@ -685,6 +889,10 @@ impl InOrderPipelineCycleRecord {
         &self.plan
     }
 
+    pub fn branch_predictions(&self) -> &[InOrderBranchPredictionRecord] {
+        &self.branch_predictions
+    }
+
     pub const fn after(&self) -> &InOrderPipelineSnapshot {
         &self.after
     }
@@ -696,6 +904,17 @@ impl InOrderPipelineCycleRecord {
             .iter()
             .filter(|advance| advance.retires())
             .count();
+        let branch_prediction_count = self.branch_predictions.len();
+        let branch_misprediction_count = self
+            .branch_predictions
+            .iter()
+            .filter(|prediction| prediction.mispredicted())
+            .count();
+        let branch_prediction_flushed_count = self
+            .branch_predictions
+            .iter()
+            .map(|prediction| prediction.flushed().len())
+            .sum();
 
         InOrderPipelineCycleSummary {
             cycle: self.cycle,
@@ -704,6 +923,10 @@ impl InOrderPipelineCycleRecord {
             flushed_count: self.plan.flushed().len(),
             resource_blocked_count: self.plan.resource_blocked().len(),
             ordering_blocked_count: self.plan.ordering_blocked().len(),
+            branch_prediction_count,
+            correct_branch_prediction_count: branch_prediction_count - branch_misprediction_count,
+            branch_misprediction_count,
+            branch_prediction_flushed_count,
             state_changed: self.before.in_flight() != self.after.in_flight(),
             redirect_target_pc: self.plan.redirect().map(|redirect| redirect.target_pc()),
         }
@@ -779,6 +1002,33 @@ impl InOrderPipelineState {
             cycle: before.cycle(),
             before,
             plan,
+            branch_predictions: Vec::new(),
+            after,
+        })
+    }
+
+    pub fn try_advance_cycle_recorded_with_prediction(
+        &mut self,
+        prediction: Option<InOrderBranchPrediction>,
+    ) -> Result<InOrderPipelineCycleRecord, InOrderPipelineError> {
+        let before = self.snapshot();
+        validate_branch_prediction(prediction, before.in_flight())?;
+        let redirect = prediction
+            .map(|prediction| prediction.redirect())
+            .transpose()?
+            .flatten();
+        let plan = self.advance_cycle_with_redirect(redirect)?;
+        let branch_predictions = prediction
+            .map(|prediction| InOrderBranchPredictionRecord::from_plan(prediction, &plan))
+            .into_iter()
+            .collect();
+        let after = self.snapshot();
+
+        Ok(InOrderPipelineCycleRecord {
+            cycle: before.cycle(),
+            before,
+            plan,
+            branch_predictions,
             after,
         })
     }
@@ -940,6 +1190,34 @@ fn validate_redirect(
     Ok(())
 }
 
+fn validate_branch_prediction(
+    prediction: Option<InOrderBranchPrediction>,
+    ready: &[InOrderPipelineInstruction],
+) -> Result<(), InOrderPipelineError> {
+    let Some(prediction) = prediction else {
+        return Ok(());
+    };
+
+    let Some(instruction) = ready
+        .iter()
+        .find(|instruction| instruction.sequence() == prediction.sequence())
+    else {
+        return Err(InOrderPipelineError::MissingBranchPredictionInstruction {
+            sequence: prediction.sequence(),
+        });
+    };
+
+    if instruction.stage() != prediction.resolved_stage() {
+        return Err(InOrderPipelineError::BranchPredictionStageMismatch {
+            sequence: prediction.sequence(),
+            expected: prediction.resolved_stage(),
+            actual: instruction.stage(),
+        });
+    }
+
+    Ok(())
+}
+
 fn next_cycle(cycle: u64) -> Result<u64, InOrderPipelineError> {
     cycle
         .checked_add(1)
@@ -989,6 +1267,17 @@ pub enum InOrderPipelineError {
         sequence: u64,
         expected: InOrderPipelineStage,
         actual: InOrderPipelineStage,
+    },
+    MissingBranchPredictionInstruction {
+        sequence: u64,
+    },
+    BranchPredictionStageMismatch {
+        sequence: u64,
+        expected: InOrderPipelineStage,
+        actual: InOrderPipelineStage,
+    },
+    MissingBranchPredictionRepairTarget {
+        sequence: u64,
     },
     CycleCursorOverflow {
         cycle: u64,
@@ -1047,6 +1336,22 @@ impl fmt::Display for InOrderPipelineError {
             } => write!(
                 formatter,
                 "in-order branch redirect instruction sequence {sequence} resolved at {expected}, but in-flight stage is {actual}"
+            ),
+            Self::MissingBranchPredictionInstruction { sequence } => write!(
+                formatter,
+                "in-order branch prediction instruction sequence {sequence} is not in flight"
+            ),
+            Self::BranchPredictionStageMismatch {
+                sequence,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "in-order branch prediction instruction sequence {sequence} resolved at {expected}, but in-flight stage is {actual}"
+            ),
+            Self::MissingBranchPredictionRepairTarget { sequence } => write!(
+                formatter,
+                "in-order branch prediction instruction sequence {sequence} needs a repair target PC"
             ),
             Self::CycleCursorOverflow { cycle } => {
                 write!(formatter, "in-order pipeline cycle cursor {cycle} cannot advance")

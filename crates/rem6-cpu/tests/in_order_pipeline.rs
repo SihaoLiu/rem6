@@ -1,8 +1,8 @@
 use rem6_cpu::{
-    InOrderBranchRedirect, InOrderPipelineCheckpointPayload, InOrderPipelineConfig,
-    InOrderPipelineError, InOrderPipelineInstruction, InOrderPipelineRunSummary,
-    InOrderPipelineScheduler, InOrderPipelineSnapshot, InOrderPipelineStage,
-    InOrderPipelineStageWidth, InOrderPipelineState,
+    InOrderBranchPrediction, InOrderBranchRedirect, InOrderPipelineCheckpointPayload,
+    InOrderPipelineConfig, InOrderPipelineError, InOrderPipelineInstruction,
+    InOrderPipelineRunSummary, InOrderPipelineScheduler, InOrderPipelineSnapshot,
+    InOrderPipelineStage, InOrderPipelineStageWidth, InOrderPipelineState,
 };
 
 const IN_ORDER_CHECKPOINT_INSTRUCTION_COUNT_OFFSET: usize = 33;
@@ -112,6 +112,207 @@ fn in_order_pipeline_branch_redirect_flushes_younger_pipeline_work() {
         .iter()
         .all(|instruction| instruction.sequence() > redirect.sequence()));
     assert!(!plan.has_blocked_work());
+}
+
+#[test]
+fn in_order_pipeline_records_pc_only_branch_prediction() {
+    let mut state = InOrderPipelineState::new(config_with_decode_width(1));
+    state
+        .replace_in_flight([instruction(30, InOrderPipelineStage::Execute)])
+        .unwrap();
+    let prediction = InOrderBranchPrediction::new(
+        30,
+        InOrderPipelineStage::Execute,
+        0x1000,
+        true,
+        Some(0x2000),
+        true,
+        Some(0x2000),
+    );
+
+    let record = state
+        .try_advance_cycle_recorded_with_prediction(Some(prediction))
+        .unwrap();
+
+    assert_eq!(record.branch_predictions().len(), 1);
+    let evidence = &record.branch_predictions()[0];
+    assert_eq!(evidence.sequence(), 30);
+    assert_eq!(evidence.resolved_stage(), InOrderPipelineStage::Execute);
+    assert_eq!(evidence.fetch_pc(), 0x1000);
+    assert!(evidence.predicted_taken());
+    assert_eq!(evidence.predicted_target_pc(), Some(0x2000));
+    assert!(evidence.resolved_taken());
+    assert_eq!(evidence.resolved_target_pc(), Some(0x2000));
+    assert!(!evidence.mispredicted());
+    assert_eq!(evidence.repair_target_pc(), None);
+    assert!(evidence.flushed().is_empty());
+
+    let summary = record.summary();
+    assert_eq!(summary.branch_prediction_count(), 1);
+    assert_eq!(summary.correct_branch_prediction_count(), 1);
+    assert_eq!(summary.branch_misprediction_count(), 0);
+    assert_eq!(summary.branch_prediction_flushed_count(), 0);
+}
+
+#[test]
+fn in_order_pipeline_prediction_mispredict_flushes_younger_work() {
+    let mut state = InOrderPipelineState::new(config_with_decode_width(1));
+    state
+        .replace_in_flight([
+            instruction(29, InOrderPipelineStage::Commit),
+            instruction(30, InOrderPipelineStage::Execute),
+            instruction(31, InOrderPipelineStage::Decode),
+            instruction(32, InOrderPipelineStage::Fetch2),
+        ])
+        .unwrap();
+    let prediction = InOrderBranchPrediction::new(
+        30,
+        InOrderPipelineStage::Execute,
+        0x1000,
+        false,
+        None,
+        true,
+        Some(0x2000),
+    );
+
+    let record = state
+        .try_advance_cycle_recorded_with_prediction(Some(prediction))
+        .unwrap();
+
+    assert_eq!(
+        record
+            .plan()
+            .redirect()
+            .map(|redirect| redirect.target_pc()),
+        Some(0x2000)
+    );
+    let evidence = &record.branch_predictions()[0];
+    assert!(evidence.mispredicted());
+    assert_eq!(evidence.repair_target_pc(), Some(0x2000));
+    assert_eq!(
+        evidence
+            .flushed()
+            .iter()
+            .map(|instruction| instruction.sequence())
+            .collect::<Vec<_>>(),
+        vec![31, 32]
+    );
+    assert_eq!(
+        state
+            .in_flight()
+            .iter()
+            .map(|instruction| (instruction.sequence(), instruction.stage()))
+            .collect::<Vec<_>>(),
+        vec![(30, InOrderPipelineStage::Commit)]
+    );
+
+    let summary = record.summary();
+    assert_eq!(summary.branch_prediction_count(), 1);
+    assert_eq!(summary.branch_misprediction_count(), 1);
+    assert_eq!(summary.branch_prediction_flushed_count(), 2);
+}
+
+#[test]
+fn in_order_pipeline_prediction_mispredict_requires_repair_target() {
+    let mut state = InOrderPipelineState::new(config_with_decode_width(1));
+    state
+        .replace_in_flight([instruction(30, InOrderPipelineStage::Execute)])
+        .unwrap();
+    let prediction = InOrderBranchPrediction::new(
+        30,
+        InOrderPipelineStage::Execute,
+        0x1000,
+        true,
+        Some(0x2000),
+        false,
+        None,
+    );
+
+    assert_eq!(
+        state
+            .try_advance_cycle_recorded_with_prediction(Some(prediction))
+            .unwrap_err(),
+        InOrderPipelineError::MissingBranchPredictionRepairTarget { sequence: 30 }
+    );
+    assert_eq!(state.cycle(), 0);
+    assert_eq!(
+        state
+            .in_flight()
+            .iter()
+            .map(|instruction| (instruction.sequence(), instruction.stage()))
+            .collect::<Vec<_>>(),
+        vec![(30, InOrderPipelineStage::Execute)]
+    );
+}
+
+#[test]
+fn in_order_pipeline_correct_prediction_rejects_absent_instruction() {
+    let mut state = InOrderPipelineState::new(config_with_decode_width(1));
+    state
+        .replace_in_flight([instruction(31, InOrderPipelineStage::Execute)])
+        .unwrap();
+    let prediction = InOrderBranchPrediction::new(
+        30,
+        InOrderPipelineStage::Execute,
+        0x1000,
+        false,
+        None,
+        false,
+        None,
+    );
+
+    assert_eq!(
+        state
+            .try_advance_cycle_recorded_with_prediction(Some(prediction))
+            .unwrap_err(),
+        InOrderPipelineError::MissingBranchPredictionInstruction { sequence: 30 }
+    );
+    assert_eq!(state.cycle(), 0);
+    assert_eq!(
+        state
+            .in_flight()
+            .iter()
+            .map(|instruction| (instruction.sequence(), instruction.stage()))
+            .collect::<Vec<_>>(),
+        vec![(31, InOrderPipelineStage::Execute)]
+    );
+}
+
+#[test]
+fn in_order_pipeline_correct_prediction_rejects_wrong_stage() {
+    let mut state = InOrderPipelineState::new(config_with_decode_width(1));
+    state
+        .replace_in_flight([instruction(30, InOrderPipelineStage::Decode)])
+        .unwrap();
+    let prediction = InOrderBranchPrediction::new(
+        30,
+        InOrderPipelineStage::Execute,
+        0x1000,
+        true,
+        Some(0x2000),
+        true,
+        Some(0x2000),
+    );
+
+    assert_eq!(
+        state
+            .try_advance_cycle_recorded_with_prediction(Some(prediction))
+            .unwrap_err(),
+        InOrderPipelineError::BranchPredictionStageMismatch {
+            sequence: 30,
+            expected: InOrderPipelineStage::Execute,
+            actual: InOrderPipelineStage::Decode,
+        }
+    );
+    assert_eq!(state.cycle(), 0);
+    assert_eq!(
+        state
+            .in_flight()
+            .iter()
+            .map(|instruction| (instruction.sequence(), instruction.stage()))
+            .collect::<Vec<_>>(),
+        vec![(30, InOrderPipelineStage::Decode)]
+    );
 }
 
 #[test]
@@ -507,6 +708,61 @@ fn in_order_pipeline_run_summary_merges_disjoint_partial_summaries() {
 }
 
 #[test]
+fn in_order_pipeline_prediction_summary_merges_disjoint_windows() {
+    let first_snapshot = InOrderPipelineSnapshot::with_cycle(
+        config_with_decode_width(1),
+        4,
+        [instruction(50, InOrderPipelineStage::Execute)],
+    );
+    let mut first_state = InOrderPipelineState::restore(first_snapshot).unwrap();
+    let correct_prediction = InOrderBranchPrediction::new(
+        50,
+        InOrderPipelineStage::Execute,
+        0x4000,
+        false,
+        None,
+        false,
+        None,
+    );
+    let first = InOrderPipelineRunSummary::from_cycle_records([first_state
+        .try_advance_cycle_recorded_with_prediction(Some(correct_prediction))
+        .unwrap()]);
+
+    let second_snapshot = InOrderPipelineSnapshot::with_cycle(
+        config_with_decode_width(1),
+        10,
+        [
+            instruction(60, InOrderPipelineStage::Execute),
+            instruction(61, InOrderPipelineStage::Decode),
+            instruction(62, InOrderPipelineStage::Fetch2),
+        ],
+    );
+    let mut second_state = InOrderPipelineState::restore(second_snapshot).unwrap();
+    let misprediction = InOrderBranchPrediction::new(
+        60,
+        InOrderPipelineStage::Execute,
+        0x5000,
+        false,
+        None,
+        true,
+        Some(0x5800),
+    );
+    let second = InOrderPipelineRunSummary::from_cycle_records([second_state
+        .try_advance_cycle_recorded_with_prediction(Some(misprediction))
+        .unwrap()]);
+
+    let merged = first.merge_disjoint(second).unwrap();
+
+    assert_eq!(merged.cycle_count(), 2);
+    assert_eq!(merged.first_cycle(), Some(4));
+    assert_eq!(merged.last_cycle(), Some(10));
+    assert_eq!(merged.branch_prediction_count(), 2);
+    assert_eq!(merged.correct_branch_prediction_count(), 1);
+    assert_eq!(merged.branch_misprediction_count(), 1);
+    assert_eq!(merged.branch_prediction_flushed_count(), 2);
+}
+
+#[test]
 fn in_order_pipeline_run_summary_rejects_overlapping_partial_summaries() {
     let left = InOrderPipelineRunSummary::from_cycle_summaries([InOrderPipelineState::new(
         config_with_decode_width(1),
@@ -557,6 +813,44 @@ fn in_order_pipeline_checkpoint_payload_round_trips_state() {
     assert_eq!(restored.cycle(), 19);
     assert_eq!(restored.config(), &config);
     assert_eq!(restored.in_flight(), snapshot.in_flight());
+}
+
+#[test]
+fn in_order_pipeline_prediction_flush_checkpoint_round_trips_remaining_state() {
+    let mut state = InOrderPipelineState::new(config_with_decode_width(1));
+    state
+        .replace_in_flight([
+            instruction(30, InOrderPipelineStage::Execute),
+            instruction(31, InOrderPipelineStage::Decode),
+            instruction(32, InOrderPipelineStage::Fetch2),
+        ])
+        .unwrap();
+    let prediction = InOrderBranchPrediction::new(
+        30,
+        InOrderPipelineStage::Execute,
+        0x1000,
+        false,
+        None,
+        true,
+        Some(0x2000),
+    );
+
+    state
+        .try_advance_cycle_recorded_with_prediction(Some(prediction))
+        .unwrap();
+    let payload = InOrderPipelineCheckpointPayload::from_state(&state).encode();
+    let decoded = InOrderPipelineCheckpointPayload::decode(&payload).unwrap();
+    let restored = InOrderPipelineState::restore(decoded.into_snapshot()).unwrap();
+
+    assert_eq!(restored.cycle(), 1);
+    assert_eq!(
+        restored
+            .in_flight()
+            .iter()
+            .map(|instruction| (instruction.sequence(), instruction.stage()))
+            .collect::<Vec<_>>(),
+        vec![(30, InOrderPipelineStage::Commit)]
+    );
 }
 
 #[test]
