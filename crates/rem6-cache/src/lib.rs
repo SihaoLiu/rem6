@@ -12,6 +12,7 @@ mod moesi;
 mod moesi_bank;
 mod mshr;
 mod msi;
+mod partitioning;
 mod prefetch;
 mod prefetch_ampm;
 mod prefetch_bop;
@@ -82,6 +83,11 @@ pub use mshr::{
 pub use msi::{
     CacheControllerError, CacheControllerResult, CacheControllerResultKind, MsiCacheController,
     MsiCacheControllerSnapshot, MsiPendingMissSnapshot,
+};
+pub use partitioning::{
+    CachePartitionCandidate, CachePartitionId, CachePartitionManager, CachePartitionPolicy,
+    CachePartitioningError, MaxCapacityPartitioningPolicy, WayPartitionAllocation,
+    WayPartitioningPolicy,
 };
 pub use prefetch::{
     PrefetchAccessKind, PrefetchCandidate, PrefetchObservation, PrefetchObservationConfig,
