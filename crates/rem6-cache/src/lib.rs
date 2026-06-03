@@ -130,6 +130,7 @@ pub use prefetch_isb::{
 };
 pub use prefetch_multi::{
     MultiQueuedPrefetchIssue, MultiQueuedPrefetcher, MultiQueuedPrefetcherError,
+    MultiQueuedPrefetcherSnapshot,
 };
 pub use prefetch_pif::{
     PifCompactorEntrySnapshot, PifHistoryEntrySnapshot, PifIndexEntrySnapshot, PifPrefetchAccess,

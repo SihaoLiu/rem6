@@ -3,22 +3,79 @@ use std::fmt;
 
 use rem6_memory::{Address, AgentId};
 
-use crate::{QueuedPrefetchIssue, QueuedPrefetcher};
+use crate::{
+    QueuedPrefetchIssue, QueuedPrefetcher, QueuedPrefetcherError, QueuedPrefetcherSnapshot,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MultiQueuedPrefetcherError {
     NoSources,
+    SnapshotSourceCountMismatch {
+        expected: usize,
+        actual: usize,
+    },
+    SnapshotLastChosenSourceOutOfRange {
+        last_chosen_source: usize,
+        source_count: usize,
+    },
+    SnapshotSourceRestore {
+        source_index: usize,
+        source: QueuedPrefetcherError,
+    },
 }
 
 impl fmt::Display for MultiQueuedPrefetcherError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NoSources => write!(formatter, "multi queued prefetcher has no sources"),
+            Self::SnapshotSourceCountMismatch { expected, actual } => write!(
+                formatter,
+                "multi queued prefetcher snapshot has {actual} sources for {expected} live sources"
+            ),
+            Self::SnapshotLastChosenSourceOutOfRange {
+                last_chosen_source,
+                source_count,
+            } => write!(
+                formatter,
+                "multi queued prefetcher snapshot last chosen source {last_chosen_source} is outside {source_count} sources"
+            ),
+            Self::SnapshotSourceRestore {
+                source_index,
+                source,
+            } => write!(
+                formatter,
+                "multi queued prefetcher snapshot source {source_index} failed restore: {source}"
+            ),
         }
     }
 }
 
-impl Error for MultiQueuedPrefetcherError {}
+impl Error for MultiQueuedPrefetcherError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::SnapshotSourceRestore { source, .. } => Some(source),
+            Self::NoSources
+            | Self::SnapshotSourceCountMismatch { .. }
+            | Self::SnapshotLastChosenSourceOutOfRange { .. } => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MultiQueuedPrefetcherSnapshot {
+    sources: Vec<QueuedPrefetcherSnapshot>,
+    last_chosen_source: usize,
+}
+
+impl MultiQueuedPrefetcherSnapshot {
+    pub fn sources(&self) -> &[QueuedPrefetcherSnapshot] {
+        &self.sources
+    }
+
+    pub const fn last_chosen_source(&self) -> usize {
+        self.last_chosen_source
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MultiQueuedPrefetchIssue {
@@ -78,6 +135,53 @@ impl MultiQueuedPrefetcher {
         self.sources.get_mut(index)
     }
 
+    pub fn snapshot(&self) -> MultiQueuedPrefetcherSnapshot {
+        MultiQueuedPrefetcherSnapshot {
+            sources: self
+                .sources
+                .iter()
+                .map(QueuedPrefetcher::snapshot)
+                .collect(),
+            last_chosen_source: self.last_chosen_source,
+        }
+    }
+
+    pub fn restore(
+        &mut self,
+        snapshot: &MultiQueuedPrefetcherSnapshot,
+    ) -> Result<(), MultiQueuedPrefetcherError> {
+        if snapshot.sources().len() != self.sources.len() {
+            return Err(MultiQueuedPrefetcherError::SnapshotSourceCountMismatch {
+                expected: self.sources.len(),
+                actual: snapshot.sources().len(),
+            });
+        }
+        if snapshot.last_chosen_source() >= self.sources.len() {
+            return Err(
+                MultiQueuedPrefetcherError::SnapshotLastChosenSourceOutOfRange {
+                    last_chosen_source: snapshot.last_chosen_source(),
+                    source_count: self.sources.len(),
+                },
+            );
+        }
+
+        let mut sources = self.sources.clone();
+        for (source_index, (source, source_snapshot)) in
+            sources.iter_mut().zip(snapshot.sources()).enumerate()
+        {
+            source.restore(source_snapshot).map_err(|source| {
+                MultiQueuedPrefetcherError::SnapshotSourceRestore {
+                    source_index,
+                    source,
+                }
+            })?;
+        }
+
+        self.sources = sources;
+        self.last_chosen_source = snapshot.last_chosen_source();
+        Ok(())
+    }
+
     pub fn next_ready_tick(&self) -> Option<u64> {
         self.sources
             .iter()
@@ -86,7 +190,8 @@ impl MultiQueuedPrefetcher {
     }
 
     pub fn issue_ready(&mut self, tick: u64) -> Option<MultiQueuedPrefetchIssue> {
-        let mut source_index = (self.last_chosen_source + 1) % self.sources.len();
+        self.last_chosen_source = (self.last_chosen_source + 1) % self.sources.len();
+        let mut source_index = self.last_chosen_source;
 
         for _ in 0..self.sources.len() {
             if self.sources[source_index]
@@ -94,7 +199,6 @@ impl MultiQueuedPrefetcher {
                 .is_some_and(|ready| ready <= tick)
             {
                 let issue = self.sources[source_index].issue_one_ready(tick)?;
-                self.last_chosen_source = source_index;
                 return Some(MultiQueuedPrefetchIssue {
                     source_index,
                     issue,
