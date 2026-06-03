@@ -62,11 +62,29 @@ impl GuestFileStatusFlags {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct GuestFileOffset(u64);
+
+impl GuestFileOffset {
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+
+    fn checked_add(self, increment: u64) -> Option<Self> {
+        self.0.checked_add(increment).map(Self)
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GuestFileDescription {
     id: GuestFileDescriptionId,
     host_fd: Option<GuestHostFd>,
     status_flags: GuestFileStatusFlags,
+    file_offset: GuestFileOffset,
 }
 
 impl GuestFileDescription {
@@ -78,6 +96,7 @@ impl GuestFileDescription {
             id,
             host_fd: None,
             status_flags,
+            file_offset: GuestFileOffset::new(0),
         }
     }
 
@@ -90,6 +109,7 @@ impl GuestFileDescription {
             id,
             host_fd: Some(host_fd),
             status_flags,
+            file_offset: GuestFileOffset::new(0),
         }
     }
 
@@ -107,6 +127,14 @@ impl GuestFileDescription {
 
     pub const fn set_status_flags(&mut self, status_flags: GuestFileStatusFlags) {
         self.status_flags = status_flags;
+    }
+
+    pub const fn file_offset(&self) -> GuestFileOffset {
+        self.file_offset
+    }
+
+    pub const fn set_file_offset(&mut self, file_offset: GuestFileOffset) {
+        self.file_offset = file_offset;
     }
 }
 
@@ -212,12 +240,29 @@ impl GuestFdDup2Record {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum GuestFdError {
-    NegativeFd { fd: i32 },
-    NegativeHostFd { fd: i32 },
-    BadFd { fd: GuestFd },
-    DuplicateFd { fd: GuestFd },
-    DuplicateFileDescription { description: GuestFileDescriptionId },
-    MissingFileDescription { description: GuestFileDescriptionId },
+    NegativeFd {
+        fd: i32,
+    },
+    NegativeHostFd {
+        fd: i32,
+    },
+    BadFd {
+        fd: GuestFd,
+    },
+    DuplicateFd {
+        fd: GuestFd,
+    },
+    DuplicateFileDescription {
+        description: GuestFileDescriptionId,
+    },
+    MissingFileDescription {
+        description: GuestFileDescriptionId,
+    },
+    FileOffsetOverflow {
+        description: GuestFileDescriptionId,
+        offset: GuestFileOffset,
+        increment: u64,
+    },
     FdSpaceExhausted,
 }
 
@@ -246,6 +291,19 @@ impl fmt::Display for GuestFdError {
                     formatter,
                     "guest file description {} is missing",
                     description.get()
+                )
+            }
+            Self::FileOffsetOverflow {
+                description,
+                offset,
+                increment,
+            } => {
+                write!(
+                    formatter,
+                    "guest file description {} offset {} overflows when advanced by {} bytes",
+                    description.get(),
+                    offset.get(),
+                    increment
                 )
             }
             Self::FdSpaceExhausted => write!(formatter, "guest file descriptor space exhausted"),
@@ -317,16 +375,41 @@ impl GuestFdTable {
         fd: GuestFd,
         status_flags: GuestFileStatusFlags,
     ) -> Result<(), GuestFdError> {
-        let description = self
-            .entry(fd)
-            .ok_or(GuestFdError::BadFd { fd })?
-            .description();
-        let description = self
-            .descriptions
-            .get_mut(&description)
-            .ok_or(GuestFdError::MissingFileDescription { description })?;
+        let (_, description) = self.description_for_fd_mut(fd)?;
         description.set_status_flags(status_flags);
         Ok(())
+    }
+
+    pub fn file_offset(&self, fd: GuestFd) -> Result<GuestFileOffset, GuestFdError> {
+        Ok(self.description_for_fd(fd)?.file_offset())
+    }
+
+    pub fn set_file_offset(
+        &mut self,
+        fd: GuestFd,
+        file_offset: GuestFileOffset,
+    ) -> Result<(), GuestFdError> {
+        let (_, description) = self.description_for_fd_mut(fd)?;
+        description.set_file_offset(file_offset);
+        Ok(())
+    }
+
+    pub fn advance_file_offset(
+        &mut self,
+        fd: GuestFd,
+        increment: u64,
+    ) -> Result<GuestFileOffset, GuestFdError> {
+        let (description, description_record) = self.description_for_fd_mut(fd)?;
+        let offset = description_record.file_offset();
+        let advanced = offset
+            .checked_add(increment)
+            .ok_or(GuestFdError::FileOffsetOverflow {
+                description,
+                offset,
+                increment,
+            })?;
+        description_record.set_file_offset(advanced);
+        Ok(advanced)
     }
 
     pub fn close_descriptor(&mut self, fd: GuestFd) -> Result<GuestFdCloseRecord, GuestFdError> {
@@ -475,5 +558,20 @@ impl GuestFdTable {
         }
 
         self.descriptions.remove(&description)
+    }
+
+    fn description_for_fd_mut(
+        &mut self,
+        fd: GuestFd,
+    ) -> Result<(GuestFileDescriptionId, &mut GuestFileDescription), GuestFdError> {
+        let description = self
+            .entry(fd)
+            .ok_or(GuestFdError::BadFd { fd })?
+            .description();
+        let description_record = self
+            .descriptions
+            .get_mut(&description)
+            .ok_or(GuestFdError::MissingFileDescription { description })?;
+        Ok((description, description_record))
     }
 }

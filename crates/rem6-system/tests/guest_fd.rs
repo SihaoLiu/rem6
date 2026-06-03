@@ -1,6 +1,6 @@
 use rem6_system::{
     GuestFd, GuestFdEntry, GuestFdError, GuestFdTable, GuestFileDescription,
-    GuestFileDescriptionId, GuestFileStatusFlags, GuestHostFd,
+    GuestFileDescriptionId, GuestFileOffset, GuestFileStatusFlags, GuestHostFd,
 };
 
 #[test]
@@ -270,11 +270,185 @@ fn guest_fd_guest_backed_description_has_shared_status_without_host_fd() {
 }
 
 #[test]
+fn guest_fd_file_offsets_are_shared_by_file_description_not_descriptor() {
+    let mut table = GuestFdTable::new();
+    let fd = GuestFd::new(14).unwrap();
+    let description = GuestFileDescriptionId::new(150);
+    table
+        .insert_description(GuestFileDescription::host_backed(
+            description,
+            GuestHostFd::new(42).unwrap(),
+            GuestFileStatusFlags::new(0x02),
+        ))
+        .unwrap();
+    table
+        .insert(fd, GuestFdEntry::new(description).with_close_on_exec(true))
+        .unwrap();
+
+    let duplicate = table.dup(fd).unwrap();
+
+    assert_eq!(table.file_offset(fd).unwrap().get(), 0);
+    assert_eq!(table.file_offset(duplicate).unwrap().get(), 0);
+    assert!(table.close_on_exec(fd).unwrap());
+    assert!(!table.close_on_exec(duplicate).unwrap());
+
+    table
+        .set_file_offset(duplicate, GuestFileOffset::new(128))
+        .unwrap();
+
+    assert_eq!(table.file_offset(fd).unwrap().get(), 128);
+    assert_eq!(
+        table.advance_file_offset(fd, 64).unwrap(),
+        GuestFileOffset::new(192)
+    );
+    assert_eq!(table.file_offset(duplicate).unwrap().get(), 192);
+}
+
+#[test]
+fn guest_fd_dup2_with_replacement_shares_source_file_offset() {
+    let mut table = GuestFdTable::new();
+    let source = GuestFd::new(15).unwrap();
+    let destination = GuestFd::new(16).unwrap();
+    let source_description = GuestFileDescriptionId::new(160);
+    let destination_description = GuestFileDescriptionId::new(170);
+    table
+        .insert_description(GuestFileDescription::guest_backed(
+            source_description,
+            GuestFileStatusFlags::new(0x04),
+        ))
+        .unwrap();
+    table
+        .insert_description(GuestFileDescription::host_backed(
+            destination_description,
+            GuestHostFd::new(43).unwrap(),
+            GuestFileStatusFlags::new(0x08),
+        ))
+        .unwrap();
+    table
+        .insert(source, GuestFdEntry::new(source_description))
+        .unwrap();
+    table
+        .insert(destination, GuestFdEntry::new(destination_description))
+        .unwrap();
+    table
+        .set_file_offset(source, GuestFileOffset::new(4096))
+        .unwrap();
+
+    let duplicated = table.dup2_with_replacement(source, destination).unwrap();
+
+    assert_eq!(duplicated.fd(), destination);
+    assert_eq!(table.file_offset(destination).unwrap().get(), 4096);
+    assert_eq!(
+        table.advance_file_offset(destination, 512).unwrap().get(),
+        4608
+    );
+    assert_eq!(table.file_offset(source).unwrap().get(), 4608);
+}
+
+#[test]
+fn guest_fd_plain_dup2_shares_source_file_offset() {
+    let mut table = GuestFdTable::new();
+    let source = GuestFd::new(15).unwrap();
+    let destination = GuestFd::new(16).unwrap();
+    let source_description = GuestFileDescriptionId::new(160);
+    let destination_description = GuestFileDescriptionId::new(170);
+    table
+        .insert_description(GuestFileDescription::guest_backed(
+            source_description,
+            GuestFileStatusFlags::new(0x04),
+        ))
+        .unwrap();
+    table
+        .insert_description(GuestFileDescription::host_backed(
+            destination_description,
+            GuestHostFd::new(43).unwrap(),
+            GuestFileStatusFlags::new(0x08),
+        ))
+        .unwrap();
+    table
+        .insert(source, GuestFdEntry::new(source_description))
+        .unwrap();
+    table
+        .insert(destination, GuestFdEntry::new(destination_description))
+        .unwrap();
+    table
+        .set_file_offset(source, GuestFileOffset::new(2048))
+        .unwrap();
+
+    assert_eq!(table.dup2(source, destination).unwrap(), destination);
+
+    assert_eq!(table.file_offset(destination).unwrap().get(), 2048);
+    assert_eq!(
+        table.advance_file_offset(destination, 8).unwrap().get(),
+        2056
+    );
+    assert_eq!(table.file_offset(source).unwrap().get(), 2056);
+    assert!(table.description(destination_description).is_some());
+}
+
+#[test]
+fn guest_fd_file_offsets_reject_missing_description_without_mutating_entries() {
+    let mut table = GuestFdTable::new();
+    let fd = GuestFd::new(17).unwrap();
+    let missing = GuestFileDescriptionId::new(180);
+    table
+        .insert(fd, GuestFdEntry::new(missing).with_close_on_exec(true))
+        .unwrap();
+
+    assert_eq!(
+        table.file_offset(fd),
+        Err(GuestFdError::MissingFileDescription {
+            description: missing
+        })
+    );
+    assert_eq!(
+        table.set_file_offset(fd, GuestFileOffset::new(16)),
+        Err(GuestFdError::MissingFileDescription {
+            description: missing
+        })
+    );
+    assert_eq!(
+        table.advance_file_offset(fd, 16),
+        Err(GuestFdError::MissingFileDescription {
+            description: missing
+        })
+    );
+    assert!(table.close_on_exec(fd).unwrap());
+    assert_eq!(table.entry(fd).unwrap().description(), missing);
+}
+
+#[test]
+fn guest_fd_file_offset_advance_rejects_overflow_without_mutating_offset() {
+    let mut table = GuestFdTable::new();
+    let fd = GuestFd::new(18).unwrap();
+    let description = GuestFileDescriptionId::new(190);
+    let original_offset = GuestFileOffset::new(u64::MAX - 1);
+    table
+        .insert_description(GuestFileDescription::guest_backed(
+            description,
+            GuestFileStatusFlags::new(0x10),
+        ))
+        .unwrap();
+    table.insert(fd, GuestFdEntry::new(description)).unwrap();
+    table.set_file_offset(fd, original_offset).unwrap();
+
+    assert_eq!(
+        table.advance_file_offset(fd, 2),
+        Err(GuestFdError::FileOffsetOverflow {
+            description,
+            offset: original_offset,
+            increment: 2
+        })
+    );
+    assert_eq!(table.file_offset(fd).unwrap(), original_offset);
+}
+
+#[test]
 fn guest_fd_close_descriptor_releases_description_only_after_last_reference() {
     let mut table = GuestFdTable::new();
-    let first = GuestFd::new(14).unwrap();
-    let second = GuestFd::new(15).unwrap();
-    let description = GuestFileDescriptionId::new(150);
+    let first = GuestFd::new(19).unwrap();
+    let second = GuestFd::new(20).unwrap();
+    let description = GuestFileDescriptionId::new(200);
     table
         .insert_description(GuestFileDescription::host_backed(
             description,
@@ -313,8 +487,8 @@ fn guest_fd_close_descriptor_releases_description_only_after_last_reference() {
 #[test]
 fn guest_fd_close_descriptor_allows_missing_description_cleanup() {
     let mut table = GuestFdTable::new();
-    let fd = GuestFd::new(16).unwrap();
-    let missing = GuestFileDescriptionId::new(160);
+    let fd = GuestFd::new(21).unwrap();
+    let missing = GuestFileDescriptionId::new(210);
     table.insert(fd, GuestFdEntry::new(missing)).unwrap();
 
     let closed = table.close_descriptor(fd).unwrap();
@@ -328,8 +502,8 @@ fn guest_fd_close_descriptor_allows_missing_description_cleanup() {
 #[test]
 fn guest_fd_entry_only_close_preserves_description_metadata() {
     let mut table = GuestFdTable::new();
-    let fd = GuestFd::new(17).unwrap();
-    let description = GuestFileDescriptionId::new(170);
+    let fd = GuestFd::new(22).unwrap();
+    let description = GuestFileDescriptionId::new(220);
     table
         .insert_description(GuestFileDescription::host_backed(
             description,
@@ -357,10 +531,10 @@ fn guest_fd_entry_only_close_preserves_description_metadata() {
 #[test]
 fn guest_fd_entry_only_dup2_preserves_replaced_description_metadata() {
     let mut table = GuestFdTable::new();
-    let source = GuestFd::new(18).unwrap();
-    let destination = GuestFd::new(19).unwrap();
-    let source_description = GuestFileDescriptionId::new(180);
-    let destination_description = GuestFileDescriptionId::new(190);
+    let source = GuestFd::new(23).unwrap();
+    let destination = GuestFd::new(24).unwrap();
+    let source_description = GuestFileDescriptionId::new(230);
+    let destination_description = GuestFileDescriptionId::new(240);
     table
         .insert_description(GuestFileDescription::guest_backed(
             source_description,
@@ -401,10 +575,10 @@ fn guest_fd_entry_only_dup2_preserves_replaced_description_metadata() {
 #[test]
 fn guest_fd_dup2_with_replacement_reports_released_destination_description() {
     let mut table = GuestFdTable::new();
-    let source = GuestFd::new(20).unwrap();
-    let destination = GuestFd::new(21).unwrap();
-    let source_description = GuestFileDescriptionId::new(200);
-    let destination_description = GuestFileDescriptionId::new(210);
+    let source = GuestFd::new(25).unwrap();
+    let destination = GuestFd::new(26).unwrap();
+    let source_description = GuestFileDescriptionId::new(250);
+    let destination_description = GuestFileDescriptionId::new(260);
     table
         .insert_description(GuestFileDescription::guest_backed(
             source_description,
@@ -447,11 +621,11 @@ fn guest_fd_dup2_with_replacement_reports_released_destination_description() {
 #[test]
 fn guest_fd_dup2_with_replacement_keeps_destination_description_until_last_alias() {
     let mut table = GuestFdTable::new();
-    let source = GuestFd::new(22).unwrap();
-    let destination = GuestFd::new(23).unwrap();
-    let destination_alias = GuestFd::new(24).unwrap();
-    let source_description = GuestFileDescriptionId::new(220);
-    let destination_description = GuestFileDescriptionId::new(230);
+    let source = GuestFd::new(27).unwrap();
+    let destination = GuestFd::new(28).unwrap();
+    let destination_alias = GuestFd::new(29).unwrap();
+    let source_description = GuestFileDescriptionId::new(270);
+    let destination_description = GuestFileDescriptionId::new(280);
     table
         .insert_description(GuestFileDescription::guest_backed(
             source_description,
@@ -499,9 +673,9 @@ fn guest_fd_dup2_with_replacement_keeps_destination_description_until_last_alias
 #[test]
 fn guest_fd_dup2_with_replacement_handles_noop_bad_source_and_absent_destination() {
     let mut table = GuestFdTable::new();
-    let source = GuestFd::new(25).unwrap();
-    let absent_destination = GuestFd::new(26).unwrap();
-    let source_description = GuestFileDescriptionId::new(250);
+    let source = GuestFd::new(30).unwrap();
+    let absent_destination = GuestFd::new(31).unwrap();
+    let source_description = GuestFileDescriptionId::new(300);
     table
         .insert_description(GuestFileDescription::guest_backed(
             source_description,
@@ -533,7 +707,7 @@ fn guest_fd_dup2_with_replacement_handles_noop_bad_source_and_absent_destination
     );
     assert!(!table.close_on_exec(absent_destination).unwrap());
 
-    let bad_source = GuestFd::new(27).unwrap();
+    let bad_source = GuestFd::new(32).unwrap();
     assert_eq!(
         table.dup2_with_replacement(bad_source, absent_destination),
         Err(GuestFdError::BadFd { fd: bad_source })
@@ -547,11 +721,11 @@ fn guest_fd_dup2_with_replacement_handles_noop_bad_source_and_absent_destination
 #[test]
 fn guest_fd_exec_close_releases_shared_description_after_all_marked_references() {
     let mut table = GuestFdTable::new();
-    let retained = GuestFd::new(28).unwrap();
-    let first_closed = GuestFd::new(29).unwrap();
-    let second_closed = GuestFd::new(30).unwrap();
-    let retained_description = GuestFileDescriptionId::new(280);
-    let closed_description = GuestFileDescriptionId::new(290);
+    let retained = GuestFd::new(33).unwrap();
+    let first_closed = GuestFd::new(34).unwrap();
+    let second_closed = GuestFd::new(35).unwrap();
+    let retained_description = GuestFileDescriptionId::new(330);
+    let closed_description = GuestFileDescriptionId::new(340);
     table
         .insert_description(GuestFileDescription::guest_backed(
             retained_description,
@@ -603,9 +777,9 @@ fn guest_fd_exec_close_releases_shared_description_after_all_marked_references()
 #[test]
 fn guest_fd_exec_close_keeps_description_referenced_by_retained_alias() {
     let mut table = GuestFdTable::new();
-    let retained = GuestFd::new(31).unwrap();
-    let closed = GuestFd::new(32).unwrap();
-    let description = GuestFileDescriptionId::new(310);
+    let retained = GuestFd::new(36).unwrap();
+    let closed = GuestFd::new(37).unwrap();
+    let description = GuestFileDescriptionId::new(360);
     table
         .insert_description(GuestFileDescription::host_backed(
             description,

@@ -871,7 +871,11 @@ isolated bugs:
   Recorded close, `dup2` replacement, and exec close-on-exec handoff now report
   removed descriptions only when the last guest descriptor alias is gone, so
   future host-backed cleanup can be driven by typed metadata instead of
-  fd-table scavenging.
+  fd-table scavenging. gem5's local `dup` path notes that file descriptions are
+  not shared among duplicated descriptors and calls out offset and flag
+  maintenance as difficult; rem6 models guest file offsets and status flags in
+  the shared guest file description instead, with descriptor-local
+  close-on-exec remaining outside that shared record.
   Public gem5 issue #3132 reports O3 data prefetches tying up LQ/ROB retirement
   resources until memory responses arrive. rem6 therefore records O3 prefetches
   as typed dependency-trace memory records with an explicit retire-after-issue
@@ -1302,7 +1306,10 @@ Implementation evidence through 2026-06-03:
   Record-returning close, `dup2` replacement, and exec close-on-exec records
   also release shared description metadata only when no remaining descriptor
   references it, while dangling entry cleanup still removes the descriptor
-  without fabricating description metadata.
+  without fabricating description metadata. File offsets are also shared by
+  description id, so duplicated and `dup2`-replaced descriptors observe the
+  same offset updates, missing descriptions are typed errors, and overflow is
+  rejected without mutating the stored offset.
 - `rem6-memory` has typed sparse and modulo-interleaved address map regions for
   future full-system memory maps. Tests cover the gem5 issue #2855 shape by
   routing one base physical range across three modulo stripes, rejecting

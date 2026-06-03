@@ -92,7 +92,8 @@ pub use guest_event::{
 };
 pub use guest_fd::{
     GuestFd, GuestFdCloseRecord, GuestFdDup2Record, GuestFdEntry, GuestFdError, GuestFdTable,
-    GuestFileDescription, GuestFileDescriptionId, GuestFileStatusFlags, GuestHostFd,
+    GuestFileDescription, GuestFileDescriptionId, GuestFileOffset, GuestFileStatusFlags,
+    GuestHostFd,
 };
 pub use guest_futex::{
     GuestFutexAddress, GuestFutexError, GuestFutexKey, GuestFutexRequeueOutcome,
