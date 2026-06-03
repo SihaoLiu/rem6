@@ -149,11 +149,28 @@ impl GuestFdEntry {
 pub struct GuestFdCloseRecord {
     fd: GuestFd,
     entry: GuestFdEntry,
+    released_description: Option<GuestFileDescription>,
 }
 
 impl GuestFdCloseRecord {
     pub const fn new(fd: GuestFd, entry: GuestFdEntry) -> Self {
-        Self { fd, entry }
+        Self {
+            fd,
+            entry,
+            released_description: None,
+        }
+    }
+
+    const fn with_released_description(
+        fd: GuestFd,
+        entry: GuestFdEntry,
+        released_description: GuestFileDescription,
+    ) -> Self {
+        Self {
+            fd,
+            entry,
+            released_description: Some(released_description),
+        }
     }
 
     pub const fn fd(&self) -> GuestFd {
@@ -162,6 +179,34 @@ impl GuestFdCloseRecord {
 
     pub const fn entry(&self) -> &GuestFdEntry {
         &self.entry
+    }
+
+    pub fn released_description(&self) -> Option<&GuestFileDescription> {
+        self.released_description.as_ref()
+    }
+
+    pub fn into_released_description(self) -> Option<GuestFileDescription> {
+        self.released_description
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GuestFdDup2Record {
+    fd: GuestFd,
+    replaced: Option<GuestFdCloseRecord>,
+}
+
+impl GuestFdDup2Record {
+    const fn new(fd: GuestFd, replaced: Option<GuestFdCloseRecord>) -> Self {
+        Self { fd, replaced }
+    }
+
+    pub const fn fd(&self) -> GuestFd {
+        self.fd
+    }
+
+    pub fn replaced(&self) -> Option<&GuestFdCloseRecord> {
+        self.replaced.as_ref()
     }
 }
 
@@ -284,6 +329,11 @@ impl GuestFdTable {
         Ok(())
     }
 
+    pub fn close_descriptor(&mut self, fd: GuestFd) -> Result<GuestFdCloseRecord, GuestFdError> {
+        let entry = self.entries.remove(&fd).ok_or(GuestFdError::BadFd { fd })?;
+        Ok(self.close_record_after_removal(fd, entry))
+    }
+
     pub fn close(&mut self, fd: GuestFd) -> Result<GuestFdEntry, GuestFdError> {
         self.entries.remove(&fd).ok_or(GuestFdError::BadFd { fd })
     }
@@ -309,9 +359,13 @@ impl GuestFdTable {
     pub fn close_on_exec_descriptors(&mut self) -> Vec<GuestFdCloseRecord> {
         let mut retained = BTreeMap::new();
         let mut closed = Vec::new();
+        let mut closed_description_counts = BTreeMap::new();
 
         for (fd, entry) in std::mem::take(&mut self.entries) {
             if entry.close_on_exec {
+                *closed_description_counts
+                    .entry(entry.description())
+                    .or_insert(0_usize) += 1;
                 closed.push(GuestFdCloseRecord::new(fd, entry));
             } else {
                 retained.insert(fd, entry);
@@ -319,6 +373,16 @@ impl GuestFdTable {
         }
 
         self.entries = retained;
+        for record in &mut closed {
+            let description = record.entry().description();
+            let closed_count = closed_description_counts
+                .get_mut(&description)
+                .expect("closed record description count must exist");
+            *closed_count -= 1;
+            if *closed_count == 0 {
+                record.released_description = self.remove_description_if_unreferenced(description);
+            }
+        }
         closed
     }
 
@@ -344,6 +408,26 @@ impl GuestFdTable {
         Ok(new_fd)
     }
 
+    pub fn dup2_with_replacement(
+        &mut self,
+        old_fd: GuestFd,
+        new_fd: GuestFd,
+    ) -> Result<GuestFdDup2Record, GuestFdError> {
+        let entry = self
+            .entry(old_fd)
+            .ok_or(GuestFdError::BadFd { fd: old_fd })?;
+        if old_fd == new_fd {
+            return Ok(GuestFdDup2Record::new(new_fd, None));
+        }
+
+        let duplicated = entry.duplicated();
+        let replaced = self
+            .entries
+            .insert(new_fd, duplicated)
+            .map(|entry| self.close_record_after_removal(new_fd, entry));
+        Ok(GuestFdDup2Record::new(new_fd, replaced))
+    }
+
     pub fn len(&self) -> usize {
         self.entries.len()
     }
@@ -363,5 +447,33 @@ impl GuestFdTable {
                 .checked_add(1)
                 .ok_or(GuestFdError::FdSpaceExhausted)?;
         }
+    }
+
+    fn close_record_after_removal(
+        &mut self,
+        fd: GuestFd,
+        entry: GuestFdEntry,
+    ) -> GuestFdCloseRecord {
+        match self.remove_description_if_unreferenced(entry.description()) {
+            Some(released_description) => {
+                GuestFdCloseRecord::with_released_description(fd, entry, released_description)
+            }
+            None => GuestFdCloseRecord::new(fd, entry),
+        }
+    }
+
+    fn remove_description_if_unreferenced(
+        &mut self,
+        description: GuestFileDescriptionId,
+    ) -> Option<GuestFileDescription> {
+        if self
+            .entries
+            .values()
+            .any(|entry| entry.description() == description)
+        {
+            return None;
+        }
+
+        self.descriptions.remove(&description)
     }
 }
