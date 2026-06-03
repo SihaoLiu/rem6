@@ -2,6 +2,8 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
+mod msi_sector_tags;
+
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryError, MemoryOperation, MemoryRequest,
     MemoryRequestId, MemoryResponse,
@@ -13,6 +15,7 @@ use crate::{
     CacheControllerError, CacheControllerResult, CacheControllerResultKind,
     CacheIndexingPolicyKind, CacheReplacementDirectory, CacheReplacementDirectoryConfig,
     CacheReplacementDirectorySnapshot, CacheReplacementPolicyError, CacheReplacementPolicyKind,
+    CacheSectorTags, CacheSectorTagsConfig, CacheSectorTagsError, CacheSectorTagsSnapshot,
     CacheWriteQueue, CacheWriteQueueConfig, CacheWriteQueueEntryKind, CacheWriteQueueError,
     CacheWriteQueueHandle, CacheWriteQueueIssue, CacheWriteQueueSnapshot, CacheWriteQueueUpdate,
     MshrCompletion, MshrHandle, MshrQosClass, MshrQosProfile, MshrQueue, MshrQueueConfig,
@@ -26,7 +29,12 @@ pub enum MsiCacheBankError {
     Mshr(MshrQueueError),
     WriteQueue(CacheWriteQueueError),
     Replacement(CacheReplacementPolicyError),
+    SectorTags(CacheSectorTagsError),
     ReplacementDirectoryLayoutMismatch {
+        expected: CacheLineLayout,
+        actual: CacheLineLayout,
+    },
+    SectorTagsLayoutMismatch {
         expected: CacheLineLayout,
         actual: CacheLineLayout,
     },
@@ -77,6 +85,10 @@ pub enum MsiCacheBankError {
         snapshot_has_replacement_directory: bool,
         bank_has_replacement_directory: bool,
     },
+    SnapshotSectorTagsModeMismatch {
+        snapshot_has_sector_tags: bool,
+        bank_has_sector_tags: bool,
+    },
     SnapshotPendingUncacheableRequestMismatch {
         response: MemoryRequestId,
         operation: MemoryOperation,
@@ -109,9 +121,16 @@ impl fmt::Display for MsiCacheBankError {
             Self::Mshr(error) => write!(formatter, "{error}"),
             Self::WriteQueue(error) => write!(formatter, "{error}"),
             Self::Replacement(error) => write!(formatter, "{error}"),
+            Self::SectorTags(error) => write!(formatter, "{error}"),
             Self::ReplacementDirectoryLayoutMismatch { expected, actual } => write!(
                 formatter,
                 "MSI cache bank replacement directory line size {} cannot attach to bank line size {}",
+                actual.bytes(),
+                expected.bytes()
+            ),
+            Self::SectorTagsLayoutMismatch { expected, actual } => write!(
+                formatter,
+                "MSI cache bank sector tags line size {} cannot attach to bank line size {}",
                 actual.bytes(),
                 expected.bytes()
             ),
@@ -198,6 +217,13 @@ impl fmt::Display for MsiCacheBankError {
                 formatter,
                 "MSI cache bank snapshot replacement directory mode {snapshot_has_replacement_directory} cannot restore bank replacement directory mode {bank_has_replacement_directory}"
             ),
+            Self::SnapshotSectorTagsModeMismatch {
+                snapshot_has_sector_tags,
+                bank_has_sector_tags,
+            } => write!(
+                formatter,
+                "MSI cache bank snapshot sector tags mode {snapshot_has_sector_tags} cannot restore bank sector tags mode {bank_has_sector_tags}"
+            ),
             Self::SnapshotPendingUncacheableRequestMismatch {
                 response,
                 operation,
@@ -255,7 +281,9 @@ impl Error for MsiCacheBankError {
             Self::Mshr(error) => Some(error),
             Self::WriteQueue(error) => Some(error),
             Self::Replacement(error) => Some(error),
+            Self::SectorTags(error) => Some(error),
             Self::ReplacementDirectoryLayoutMismatch { .. }
+            | Self::SectorTagsLayoutMismatch { .. }
             | Self::WrongAgent { .. }
             | Self::WriteQueueDisabled
             | Self::WriteQueueConflict { .. }
@@ -270,6 +298,7 @@ impl Error for MsiCacheBankError {
             | Self::SnapshotMshrModeMismatch { .. }
             | Self::SnapshotWriteQueueModeMismatch { .. }
             | Self::SnapshotReplacementDirectoryModeMismatch { .. }
+            | Self::SnapshotSectorTagsModeMismatch { .. }
             | Self::SnapshotPendingUncacheableRequestMismatch { .. }
             | Self::SnapshotPendingUncacheableReadWritebackMismatch { .. }
             | Self::DuplicateSnapshotLine { .. }
@@ -301,6 +330,12 @@ impl From<CacheWriteQueueError> for MsiCacheBankError {
 impl From<CacheReplacementPolicyError> for MsiCacheBankError {
     fn from(error: CacheReplacementPolicyError) -> Self {
         Self::Replacement(error)
+    }
+}
+
+impl From<CacheSectorTagsError> for MsiCacheBankError {
+    fn from(error: CacheSectorTagsError) -> Self {
+        Self::SectorTags(error)
     }
 }
 
@@ -336,6 +371,7 @@ pub struct MsiCacheBankSnapshot {
     mshr: Option<MshrQueueSnapshot>,
     write_queue: Option<CacheWriteQueueSnapshot>,
     replacement_directory: Option<CacheReplacementDirectorySnapshot>,
+    sector_tags: Option<CacheSectorTagsSnapshot>,
     inflight_uncacheable_writes: Vec<MemoryRequest>,
     pending_uncacheable_reads: Vec<MsiPendingUncacheableReadSnapshot>,
 }
@@ -355,6 +391,7 @@ impl MsiCacheBankSnapshot {
             mshr: None,
             write_queue: None,
             replacement_directory: None,
+            sector_tags: None,
             inflight_uncacheable_writes: Vec::new(),
             pending_uncacheable_reads: Vec::new(),
         }
@@ -375,6 +412,7 @@ impl MsiCacheBankSnapshot {
             mshr: Some(mshr),
             write_queue: None,
             replacement_directory: None,
+            sector_tags: None,
             inflight_uncacheable_writes: Vec::new(),
             pending_uncacheable_reads: Vec::new(),
         }
@@ -390,6 +428,11 @@ impl MsiCacheBankSnapshot {
         replacement_directory: CacheReplacementDirectorySnapshot,
     ) -> Self {
         self.replacement_directory = Some(replacement_directory);
+        self
+    }
+
+    pub fn with_sector_tags(mut self, sector_tags: CacheSectorTagsSnapshot) -> Self {
+        self.sector_tags = Some(sector_tags);
         self
     }
 
@@ -432,6 +475,10 @@ impl MsiCacheBankSnapshot {
 
     pub fn replacement_directory(&self) -> Option<&CacheReplacementDirectorySnapshot> {
         self.replacement_directory.as_ref()
+    }
+
+    pub fn sector_tags(&self) -> Option<&CacheSectorTagsSnapshot> {
+        self.sector_tags.as_ref()
     }
 
     pub fn inflight_uncacheable_writes(&self) -> &[MemoryRequest] {
@@ -504,6 +551,7 @@ pub struct MsiCacheBank {
     mshr: Option<MshrQueue>,
     write_queue: Option<CacheWriteQueue>,
     replacement_directory: Option<CacheReplacementDirectory>,
+    sector_tags: Option<CacheSectorTags>,
 }
 
 impl MsiCacheBank {
@@ -518,6 +566,7 @@ impl MsiCacheBank {
             mshr: None,
             write_queue: None,
             replacement_directory: None,
+            sector_tags: None,
         }
     }
 
@@ -536,6 +585,7 @@ impl MsiCacheBank {
             mshr: Some(MshrQueue::new(mshr_config)),
             write_queue: None,
             replacement_directory: None,
+            sector_tags: None,
         }
     }
 
@@ -554,6 +604,7 @@ impl MsiCacheBank {
             mshr: None,
             write_queue: Some(CacheWriteQueue::new(write_queue_config)),
             replacement_directory: None,
+            sector_tags: None,
         }
     }
 
@@ -573,6 +624,7 @@ impl MsiCacheBank {
             mshr: Some(MshrQueue::new(mshr_config)),
             write_queue: Some(CacheWriteQueue::new(write_queue_config)),
             replacement_directory: None,
+            sector_tags: None,
         }
     }
 
@@ -597,6 +649,7 @@ impl MsiCacheBank {
             mshr: None,
             write_queue: None,
             replacement_directory: Some(CacheReplacementDirectory::new(replacement_config)),
+            sector_tags: None,
         })
     }
 
@@ -616,6 +669,31 @@ impl MsiCacheBank {
             ways,
         )?;
         Self::new_with_replacement_directory(agent, layout, replacement_config)
+    }
+
+    pub fn new_with_sector_tags(
+        agent: AgentId,
+        layout: CacheLineLayout,
+        sector_tags_config: CacheSectorTagsConfig,
+    ) -> Result<Self, MsiCacheBankError> {
+        if sector_tags_config.line_layout() != layout {
+            return Err(MsiCacheBankError::SectorTagsLayoutMismatch {
+                expected: layout,
+                actual: sector_tags_config.line_layout(),
+            });
+        }
+        Ok(Self {
+            agent,
+            layout,
+            next_sequence: 0,
+            lines: BTreeMap::new(),
+            pending_fills: BTreeMap::new(),
+            inflight_uncacheable_writes: BTreeMap::new(),
+            mshr: None,
+            write_queue: None,
+            replacement_directory: None,
+            sector_tags: Some(CacheSectorTags::new(sector_tags_config)),
+        })
     }
 
     pub const fn agent(&self) -> AgentId {
@@ -647,9 +725,14 @@ impl MsiCacheBank {
     }
 
     pub fn replacement_way_for(&self, address: Address) -> Option<(usize, usize)> {
-        self.replacement_directory
-            .as_ref()
-            .and_then(|directory| directory.way_for(address))
+        if let Some(directory) = &self.replacement_directory {
+            return directory.way_for(address);
+        }
+        self.sector_tags.as_ref().and_then(|sector_tags| {
+            sector_tags
+                .find(address)
+                .map(|lookup| (lookup.set(), lookup.way()))
+        })
     }
 
     pub fn pending_fill_line(&self, response: MemoryRequestId) -> Option<Address> {
@@ -741,6 +824,10 @@ impl MsiCacheBank {
             }
             None => snapshot,
         };
+        let snapshot = match &self.sector_tags {
+            Some(sector_tags) => snapshot.with_sector_tags(sector_tags.snapshot()),
+            None => snapshot,
+        };
         let pending_uncacheable_reads = self
             .pending_fills
             .values()
@@ -769,6 +856,12 @@ impl MsiCacheBank {
                 actual_agent: snapshot.agent(),
                 expected_layout: self.layout,
                 actual_layout: snapshot.layout(),
+            });
+        }
+        if snapshot.replacement_directory().is_some() && snapshot.sector_tags().is_some() {
+            return Err(MsiCacheBankError::SnapshotSectorTagsModeMismatch {
+                snapshot_has_sector_tags: true,
+                bank_has_sector_tags: self.sector_tags.is_some(),
             });
         }
 
@@ -829,6 +922,27 @@ impl MsiCacheBank {
                         bank_has_replacement_directory: false,
                     },
                 );
+            }
+        };
+
+        let restored_sector_tags = match (&self.sector_tags, snapshot.sector_tags()) {
+            (Some(sector_tags), Some(snapshot_sector_tags)) => {
+                let mut restored = CacheSectorTags::new(sector_tags.config().clone());
+                restored.restore(snapshot_sector_tags)?;
+                Some(restored)
+            }
+            (Some(_), None) => {
+                return Err(MsiCacheBankError::SnapshotSectorTagsModeMismatch {
+                    snapshot_has_sector_tags: false,
+                    bank_has_sector_tags: true,
+                });
+            }
+            (None, None) => None,
+            (None, Some(_)) => {
+                return Err(MsiCacheBankError::SnapshotSectorTagsModeMismatch {
+                    snapshot_has_sector_tags: true,
+                    bank_has_sector_tags: false,
+                });
             }
         };
 
@@ -901,6 +1015,7 @@ impl MsiCacheBank {
         self.mshr = restored_mshr;
         self.write_queue = restored_write_queue;
         self.replacement_directory = restored_replacement_directory;
+        self.sector_tags = restored_sector_tags;
         Ok(())
     }
 
@@ -1509,6 +1624,9 @@ impl MsiCacheBank {
         if let Some(directory) = &mut self.replacement_directory {
             directory.remove_resident_line(line)?;
         }
+        if let Some(sector_tags) = &mut self.sector_tags {
+            sector_tags.invalidate(line)?;
+        }
         Ok(())
     }
 
@@ -1516,12 +1634,15 @@ impl MsiCacheBank {
         if let Some(directory) = &mut self.replacement_directory {
             directory.touch(line)?;
         }
+        if let Some(sector_tags) = &mut self.sector_tags {
+            sector_tags.access(line)?;
+        }
         Ok(())
     }
 
     fn install_replacement_line(&mut self, line: Address) -> Result<(), MsiCacheBankError> {
         let Some(directory) = &mut self.replacement_directory else {
-            return Ok(());
+            return self.install_sector_tag_line(line);
         };
         let install = directory.install(line)?;
         let Some(evicted_line) = install.evicted_line() else {
