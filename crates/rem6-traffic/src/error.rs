@@ -61,6 +61,79 @@ pub enum TrafficGeneratorError {
         value: u64,
         increment: u64,
     },
+    TraceTruncatedMagic {
+        length: usize,
+    },
+    TraceBadMagic {
+        actual: [u8; 4],
+    },
+    TraceMissingHeader,
+    TraceTruncatedVarint {
+        offset: usize,
+    },
+    TraceVarintTooLong {
+        offset: usize,
+    },
+    TraceVarint32TooLong {
+        offset: usize,
+    },
+    TraceMessageTooLarge {
+        offset: usize,
+        length: u64,
+    },
+    TraceTruncatedMessage {
+        offset: usize,
+        length: usize,
+        remaining: usize,
+    },
+    TraceMissingField {
+        message: &'static str,
+        field: &'static str,
+    },
+    TraceTickFrequencyMismatch {
+        expected: u64,
+        actual: u64,
+    },
+    TraceUnsupportedCommand {
+        command: u32,
+    },
+    TraceUnsupportedFlags {
+        flags: u32,
+    },
+    TraceZeroSize,
+    TraceInvalidFieldWireType {
+        message: &'static str,
+        field: &'static str,
+        wire_type: u64,
+    },
+    TraceFieldOutOfRange {
+        message: &'static str,
+        field: &'static str,
+        value: u64,
+    },
+    TraceInvalidFieldNumber,
+    TraceFieldNumberTooLarge {
+        number: u64,
+    },
+    TraceLengthDelimitedFieldTooLarge {
+        offset: usize,
+        length: u64,
+    },
+    TraceTruncatedField {
+        offset: usize,
+        length: usize,
+        remaining: usize,
+    },
+    TraceUnsupportedWireType {
+        wire_type: u64,
+    },
+    TraceInvalidWireType {
+        wire_type: u64,
+    },
+    TraceSnapshotCursorOutsideTrace {
+        cursor: usize,
+        length: usize,
+    },
     SnapshotCursorOutsideRange {
         next_address: Address,
         start: Address,
@@ -176,6 +249,109 @@ impl fmt::Display for TrafficGeneratorError {
             } => write!(
                 formatter,
                 "traffic generator counter {counter} with value {value} cannot advance by {increment}"
+            ),
+            Self::TraceTruncatedMagic { length } => write!(
+                formatter,
+                "gem5 packet trace has {length} bytes before the magic header"
+            ),
+            Self::TraceBadMagic { actual } => write!(
+                formatter,
+                "gem5 packet trace magic {actual:02x?} does not match expected magic"
+            ),
+            Self::TraceMissingHeader => {
+                write!(formatter, "gem5 packet trace is missing its PacketHeader")
+            }
+            Self::TraceTruncatedVarint { offset } => write!(
+                formatter,
+                "gem5 packet trace varint at byte offset {offset} is truncated"
+            ),
+            Self::TraceVarintTooLong { offset } => write!(
+                formatter,
+                "gem5 packet trace varint at byte offset {offset} exceeds 64 bits"
+            ),
+            Self::TraceVarint32TooLong { offset } => write!(
+                formatter,
+                "gem5 packet trace varint32 at byte offset {offset} exceeds 5 bytes"
+            ),
+            Self::TraceMessageTooLarge { offset, length } => write!(
+                formatter,
+                "gem5 packet trace message at byte offset {offset} has oversized length {length}"
+            ),
+            Self::TraceTruncatedMessage {
+                offset,
+                length,
+                remaining,
+            } => write!(
+                formatter,
+                "gem5 packet trace message at byte offset {offset} has length {length} but only {remaining} bytes remain"
+            ),
+            Self::TraceMissingField { message, field } => write!(
+                formatter,
+                "gem5 packet trace {message} message is missing required field {field}"
+            ),
+            Self::TraceTickFrequencyMismatch { expected, actual } => write!(
+                formatter,
+                "gem5 packet trace tick frequency {actual} does not match expected {expected}"
+            ),
+            Self::TraceUnsupportedCommand { command } => write!(
+                formatter,
+                "gem5 packet trace command {command} is not supported"
+            ),
+            Self::TraceUnsupportedFlags { flags } => write!(
+                formatter,
+                "gem5 packet trace flags {flags:#x} are not supported"
+            ),
+            Self::TraceZeroSize => write!(
+                formatter,
+                "gem5 packet trace packet has zero access size"
+            ),
+            Self::TraceInvalidFieldWireType {
+                message,
+                field,
+                wire_type,
+            } => write!(
+                formatter,
+                "gem5 packet trace {message}.{field} has protobuf wire type {wire_type}, expected varint"
+            ),
+            Self::TraceFieldOutOfRange {
+                message,
+                field,
+                value,
+            } => write!(
+                formatter,
+                "gem5 packet trace {message}.{field} value {value} exceeds u32 range"
+            ),
+            Self::TraceInvalidFieldNumber => write!(
+                formatter,
+                "gem5 packet trace protobuf field number zero is invalid"
+            ),
+            Self::TraceFieldNumberTooLarge { number } => write!(
+                formatter,
+                "gem5 packet trace protobuf field number {number} exceeds u32 range"
+            ),
+            Self::TraceLengthDelimitedFieldTooLarge { offset, length } => write!(
+                formatter,
+                "gem5 packet trace length-delimited field at byte offset {offset} has oversized length {length}"
+            ),
+            Self::TraceTruncatedField {
+                offset,
+                length,
+                remaining,
+            } => write!(
+                formatter,
+                "gem5 packet trace field at byte offset {offset} has length {length} but only {remaining} bytes remain"
+            ),
+            Self::TraceUnsupportedWireType { wire_type } => write!(
+                formatter,
+                "gem5 packet trace protobuf wire type {wire_type} is not supported"
+            ),
+            Self::TraceInvalidWireType { wire_type } => write!(
+                formatter,
+                "gem5 packet trace protobuf wire type {wire_type} is invalid"
+            ),
+            Self::TraceSnapshotCursorOutsideTrace { cursor, length } => write!(
+                formatter,
+                "traffic trace snapshot cursor {cursor} is outside trace length {length}"
             ),
             Self::SnapshotCursorOutsideRange {
                 next_address,
