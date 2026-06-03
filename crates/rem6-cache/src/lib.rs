@@ -4,6 +4,7 @@ mod chi;
 mod chi_bank;
 mod compressed_tags;
 mod downstream;
+mod dueling;
 mod indexing;
 mod mesi;
 mod mesi_bank;
@@ -47,6 +48,10 @@ pub use compressed_tags::{
     CacheCompressedTagInvalidate, CacheCompressedTagLine, CacheCompressedTagLookup,
     CacheCompressedTagSetSnapshot, CacheCompressedTags, CacheCompressedTagsConfig,
     CacheCompressedTagsError, CacheCompressedTagsSnapshot,
+};
+pub use dueling::{
+    Dueler, DuelerSnapshot, DuelingMonitor, DuelingMonitorConfig, DuelingMonitorError,
+    DuelingMonitorSnapshot, DuelingRatio, DuelingTeam,
 };
 pub use indexing::{
     CacheIndexingLocation, CacheIndexingPolicyConfig, CacheIndexingPolicyError,
