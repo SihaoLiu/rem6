@@ -1,7 +1,10 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use rem6_cache::{CacheControllerResultKind, MshrQosClass, MshrQueueConfig, MsiCacheBank};
+use rem6_cache::{
+    CacheControllerResultKind, MshrEntry, MshrQosClass, MshrQueueConfig, MshrQueueSnapshot,
+    MshrTarget, MshrTargetSource, MsiCacheBank, MsiCacheBankSnapshot,
+};
 use rem6_coherence::{
     CpuResponseRecord, HarnessError, MsiBankDirectoryHarness, MsiBankDirectoryHarnessSnapshot,
     MsiFunctionalReadSource, SubmitKind,
@@ -11,7 +14,8 @@ use rem6_fabric::{QosFixedPriorityPolicy, QosPriority, QosQueueArbiter, QosQueue
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryAccessOrdering,
-    MemoryBarrierSet, MemoryRequest, MemoryRequestId, ResponseStatus,
+    MemoryBarrierSet, MemoryOperation, MemoryRequest, MemoryRequestId, MemoryRequestSnapshot,
+    MemoryResponse, ResponseStatus,
 };
 use rem6_protocol_msi::{MsiLineId, MsiState};
 use rem6_transport::{
@@ -83,7 +87,7 @@ fn pending_bank_snapshot(
     sequence: u64,
     address: u64,
     qos: MshrQosClass,
-) -> rem6_cache::MsiCacheBankSnapshot {
+) -> MsiCacheBankSnapshot {
     let mut bank = MsiCacheBank::new_with_mshr(
         cache_agent,
         layout(),
@@ -92,6 +96,74 @@ fn pending_bank_snapshot(
     bank.accept_cpu_request_with_qos(read(cache_agent.get(), sequence, address), qos)
         .unwrap();
     bank.snapshot()
+}
+
+fn invalidate(agent_id: u32, sequence: u64, address: u64) -> MemoryRequest {
+    let snapshot = MemoryRequestSnapshot::new(
+        request_id(agent_id, sequence),
+        MemoryOperation::Invalidate,
+        Address::new(address),
+        size(layout().bytes()),
+        layout(),
+        MemoryAccessOrdering::none(),
+        false,
+        false,
+        None,
+        None,
+        None,
+    )
+    .unwrap();
+    MemoryRequest::from_snapshot(&snapshot).unwrap()
+}
+
+fn pending_bank_snapshot_with_post_fill_invalidate(
+    cache_agent: AgentId,
+    read_sequence: u64,
+    invalidate_sequence: u64,
+    address: u64,
+) -> (MsiCacheBankSnapshot, MemoryRequest, MemoryRequest) {
+    let config = MshrQueueConfig::new(2, 3, 0).unwrap();
+    let mut bank = MsiCacheBank::new_with_mshr(cache_agent, layout(), config.clone());
+    let read_miss = bank
+        .accept_cpu_request(read(cache_agent.get(), read_sequence, address))
+        .unwrap();
+    let first_downstream = read_miss.downstream_request().unwrap().clone();
+
+    let snapshot = bank.snapshot();
+    let current_mshr = snapshot.mshr().unwrap();
+    let current_entry = &current_mshr.entries()[0];
+    let invalidation = invalidate(cache_agent.get(), invalidate_sequence, address);
+    let mut targets = current_entry.targets().to_vec();
+    targets.push(MshrTarget::from_parts(
+        invalidation.clone(),
+        1,
+        1,
+        MshrTargetSource::Demand,
+        false,
+        None,
+    ));
+    let mshr_snapshot = MshrQueueSnapshot::new(
+        config,
+        vec![MshrEntry::from_parts(
+            current_entry.handle(),
+            current_entry.line(),
+            current_entry.ready_tick(),
+            current_entry.order(),
+            current_entry.in_service(),
+            current_entry.pending_modified(),
+            targets,
+        )],
+        current_mshr.next_handle(),
+        current_mshr.next_order() + 1,
+    );
+    let cache_snapshot = MsiCacheBankSnapshot::new_with_mshr(
+        snapshot.agent(),
+        snapshot.layout(),
+        snapshot.next_sequence(),
+        snapshot.lines().to_vec(),
+        mshr_snapshot,
+    );
+    (cache_snapshot, first_downstream, invalidation)
 }
 
 #[test]
@@ -804,6 +876,50 @@ fn msi_bank_harness_exports_mshr_qos_to_transport_miss_batch() {
             (2, agent(2), Address::new(0x1010)),
             (2, agent(1), Address::new(0x1000)),
         ]]
+    );
+}
+
+#[test]
+fn msi_bank_harness_exports_post_fill_invalidate_on_transport_fill() {
+    let cache_agent = agent(1);
+    let (cache_snapshot, first_downstream, invalidation) =
+        pending_bank_snapshot_with_post_fill_invalidate(cache_agent, 33, 34, 0x1004);
+    let snapshot = MsiBankDirectoryHarnessSnapshot::new(
+        layout(),
+        BTreeMap::from([(cache_agent, cache_snapshot)]),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    );
+    let mut harness = MsiBankDirectoryHarness::new_with_mshr(
+        layout(),
+        [cache_agent],
+        MshrQueueConfig::new(2, 3, 0).unwrap(),
+    )
+    .unwrap();
+    harness.restore(&snapshot).unwrap();
+
+    let downstream_requests = harness
+        .accept_transport_fill(
+            17,
+            cache_agent,
+            MemoryResponse::completed(&first_downstream, Some(line_data(0x44))).unwrap(),
+        )
+        .unwrap();
+
+    assert_eq!(downstream_requests.len(), 1);
+    assert_eq!(downstream_requests[0].agent(), cache_agent);
+    assert_eq!(downstream_requests[0].line_address(), Address::new(0x1000));
+    assert_eq!(downstream_requests[0].request(), &invalidation);
+    assert_eq!(downstream_requests[0].mshr_qos(), None);
+    assert_eq!(harness.cpu_responses().len(), 1);
+    assert_eq!(
+        harness
+            .cache_state(cache_agent, Address::new(0x1000))
+            .unwrap(),
+        Some(MsiState::Shared)
     );
 }
 

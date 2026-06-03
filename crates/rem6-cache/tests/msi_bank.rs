@@ -1382,15 +1382,10 @@ fn msi_cache_bank_rejects_post_fill_writeback_targets_when_write_queue_full() {
 }
 
 #[test]
-fn msi_cache_bank_rejects_unsupported_post_fill_downstream_targets_before_mutation() {
+fn msi_cache_bank_forwards_post_fill_invalidate_targets_without_write_queue() {
     let cache_agent = agent(7);
     let config = MshrQueueConfig::new(2, 3, 0).unwrap();
-    let mut bank = MsiCacheBank::new_with_mshr_and_write_queue(
-        cache_agent,
-        layout(),
-        config.clone(),
-        CacheWriteQueueConfig::new(2, 0).unwrap(),
-    );
+    let mut bank = MsiCacheBank::new_with_mshr(cache_agent, layout(), config.clone());
 
     let first = read(cache_agent, 124, 0x1004);
     let first_miss = bank.accept_cpu_request(first).unwrap();
@@ -1402,7 +1397,7 @@ fn msi_cache_bank_rejects_unsupported_post_fill_downstream_targets_before_mutati
     let invalidation = invalidate(cache_agent, 125, 0x1000);
     let mut targets = current_entry.targets().to_vec();
     targets.push(MshrTarget::from_parts(
-        invalidation,
+        invalidation.clone(),
         1,
         1,
         MshrTargetSource::Demand,
@@ -1429,31 +1424,18 @@ fn msi_cache_bank_rejects_unsupported_post_fill_downstream_targets_before_mutati
         snapshot.next_sequence(),
         snapshot.lines().to_vec(),
         mshr_snapshot,
-    )
-    .with_write_queue(snapshot.write_queue().unwrap().clone());
-    let mut restored = MsiCacheBank::new_with_mshr_and_write_queue(
-        cache_agent,
-        layout(),
-        config,
-        CacheWriteQueueConfig::new(2, 0).unwrap(),
     );
+    let mut restored = MsiCacheBank::new_with_mshr(cache_agent, layout(), config);
     restored.restore(&restored_snapshot).unwrap();
 
+    let fill_result = restored.accept_fill(fill(&first_downstream, 0x44)).unwrap();
+
     assert_eq!(
-        restored.accept_fill(fill(&first_downstream, 0x44)),
-        Err(MsiCacheBankError::WriteQueue(
-            CacheWriteQueueError::WritebackOperationRequired {
-                operation: MemoryOperation::Invalidate,
-            },
-        ))
+        fill_result.post_fill_downstream_requests(),
+        std::slice::from_ref(&invalidation)
     );
-    assert_eq!(restored.pending_fill_count(), 1);
-    assert_eq!(restored.mshr_allocated_count(), 1);
-    assert_eq!(restored.write_queue_allocated_count(), 0);
-    assert_eq!(
-        restored.state(Address::new(0x1000)),
-        Some(MsiState::InvalidToShared)
-    );
+    assert_eq!(restored.pending_fill_count(), 0);
+    assert_eq!(restored.mshr_allocated_count(), 0);
 }
 
 #[test]

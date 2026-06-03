@@ -905,11 +905,15 @@ isolated bugs:
   Demand reads, writes, upgrades, atomics, and prefetches remain local
   fill-service targets, while writeback, clean-evict, and invalidation
   maintenance requests are represented as explicit post-fill downstream
-  requests on MSHR completion records. MSI, MESI, MOESI, and CHI banks with a
-  typed write queue now enqueue supported writeback and clean-evict post-fill
-  maintenance requests before returning the fill result, and reject unsupported
-  or queue-unavailable paths without mutating the pending fill. That keeps maintenance traffic observable to
-  NoC, directory, and memory scheduling instead of hiding it behind a local
+  requests on MSHR completion records. MSI, MESI, MOESI, and CHI banks enqueue
+  queue-backed writeback and clean-evict post-fill maintenance requests before
+  returning the fill result, and reject unsupported operations or
+  queue-unavailable writeback and clean-evict paths without mutating the
+  pending fill. Invalidation maintenance is preserved as a result-level
+  post-fill downstream request instead of a write-queue entry, and the MSI bank
+  directory harness exposes transport fill completions that return those
+  requests for routing. That keeps maintenance traffic observable to NoC,
+  directory, and memory scheduling instead of hiding it behind a local
   cache-block side effect.
   Public gem5 issue #2955 reports a classic-cache block move hazard: the local
   reference `CacheBlk` move assignment calls `insert` with the source tag after

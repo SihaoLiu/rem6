@@ -9,7 +9,8 @@ use rem6_directory::{
 };
 use rem6_kernel::ParallelSchedulerContext;
 use rem6_memory::{
-    Address, AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId, MemoryResponse,
+    Address, AgentId, CacheLineLayout, MemoryOperation, MemoryRequest, MemoryRequestId,
+    MemoryResponse,
 };
 use rem6_protocol_msi::{MsiLineId, MsiState};
 use rem6_transport::{
@@ -1189,6 +1190,20 @@ impl MsiBankDirectoryHarness {
         Ok(MsiBankTransportCycleRun::new(run, downstream_requests))
     }
 
+    pub fn accept_transport_fill(
+        &mut self,
+        tick: u64,
+        agent: AgentId,
+        response: MemoryResponse,
+    ) -> Result<Vec<MsiBankDownstreamTransportRequest>, HarnessError> {
+        let fill = self
+            .cache_mut(agent)?
+            .accept_fill(response)
+            .map_err(HarnessError::CacheBank)?;
+        self.record_target_outcomes(tick, fill.kind(), fill.target_outcomes());
+        Ok(self.transport_requests_for_post_fill(agent, fill.post_fill_downstream_requests()))
+    }
+
     fn validate_parallel_cycle_requests(
         &self,
         requests: &[MsiBankCycleRequest],
@@ -1596,6 +1611,26 @@ impl MsiBankDirectoryHarness {
         outcomes: &[TargetOutcome],
     ) -> usize {
         push_response_records_from_outcomes(&mut self.cpu_responses, tick, cache_result, outcomes)
+    }
+
+    fn transport_requests_for_post_fill(
+        &self,
+        agent: AgentId,
+        requests: &[MemoryRequest],
+    ) -> Vec<MsiBankDownstreamTransportRequest> {
+        requests
+            .iter()
+            .filter(|request| request.operation() == MemoryOperation::Invalidate)
+            .cloned()
+            .map(|request| {
+                MsiBankDownstreamTransportRequest::new(
+                    agent,
+                    self.layout.line_address(request.line_address()),
+                    request,
+                    None,
+                )
+            })
+            .collect()
     }
 
     fn validate_snapshot_identity(

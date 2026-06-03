@@ -241,24 +241,45 @@ macro_rules! protocol_post_fill_bank_tests {
             }
 
             #[test]
-            fn rejects_unsupported_post_fill_downstream_targets_before_mutation() {
+            fn forwards_post_fill_invalidate_targets_without_write_queue() {
                 let cache_agent = agent(7);
                 let invalidation = invalidate(cache_agent, 105, 0x1000);
                 let (mut restored, _, first_downstream) =
-                    restored_bank_with_target(invalidation, Some(2));
+                    restored_bank_with_target(invalidation.clone(), None);
+
+                let fill_result = restored
+                    .accept_fill(fill(&first_downstream, 0x44), $fill_event)
+                    .unwrap();
 
                 assert_eq!(
-                    restored.accept_fill(fill(&first_downstream, 0x44), $fill_event),
-                    Err(<$error>::WriteQueue(
-                        CacheWriteQueueError::WritebackOperationRequired {
-                            operation: MemoryOperation::Invalidate,
-                        },
-                    ))
+                    fill_result.post_fill_downstream_requests(),
+                    std::slice::from_ref(&invalidation)
                 );
-                assert_eq!(restored.pending_fill_count(), 1);
-                assert_eq!(restored.mshr_allocated_count(), 1);
-                assert_eq!(restored.write_queue_allocated_count(), 0);
-                assert_eq!(restored.state(Address::new(0x1000)), Some($transient_state));
+                assert_eq!(restored.pending_fill_count(), 0);
+                assert_eq!(restored.mshr_allocated_count(), 0);
+            }
+
+            #[test]
+            fn forwards_post_fill_invalidate_targets_when_write_queue_full() {
+                let cache_agent = agent(7);
+                let invalidation = invalidate(cache_agent, 106, 0x1000);
+                let (mut restored, _, first_downstream) =
+                    restored_bank_with_target(invalidation.clone(), Some(1));
+                restored
+                    .enqueue_writeback(clean_evict(cache_agent, 107, 0x2000), false, 0)
+                    .unwrap();
+
+                let fill_result = restored
+                    .accept_fill(fill(&first_downstream, 0x44), $fill_event)
+                    .unwrap();
+
+                assert_eq!(
+                    fill_result.post_fill_downstream_requests(),
+                    std::slice::from_ref(&invalidation)
+                );
+                assert_eq!(restored.pending_fill_count(), 0);
+                assert_eq!(restored.mshr_allocated_count(), 0);
+                assert_eq!(restored.write_queue_allocated_count(), 1);
             }
         }
     };

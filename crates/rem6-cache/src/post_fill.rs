@@ -30,24 +30,20 @@ where
     if requests.is_empty() {
         return Ok(());
     }
+    let mut queued_requests = 0;
+    for request in requests {
+        validate_request(request)?;
+        if is_queue_backed(request)? {
+            queued_requests += 1;
+        }
+    }
+    if queued_requests == 0 {
+        return Ok(());
+    }
     let Some(queue) = queue else {
         return Err(disabled_error);
     };
-    for request in requests {
-        validate_request(request)?;
-        if !matches!(
-            request.operation(),
-            MemoryOperation::WritebackClean
-                | MemoryOperation::WritebackDirty
-                | MemoryOperation::CleanEvict
-        ) {
-            return Err(CacheWriteQueueError::WritebackOperationRequired {
-                operation: request.operation(),
-            }
-            .into());
-        }
-    }
-    if queue.allocated_count() + requests.len() > queue.config().entries() {
+    if queue.allocated_count() + queued_requests > queue.config().entries() {
         return Err(CacheWriteQueueError::EntrySlotsFull {
             entries: queue.config().entries(),
             reserve: queue.config().reserve(),
@@ -55,6 +51,19 @@ where
         .into());
     }
     Ok(())
+}
+
+fn is_queue_backed<E>(request: &MemoryRequest) -> Result<bool, E>
+where
+    E: From<CacheWriteQueueError>,
+{
+    match request.operation() {
+        MemoryOperation::WritebackClean
+        | MemoryOperation::WritebackDirty
+        | MemoryOperation::CleanEvict => Ok(true),
+        MemoryOperation::Invalidate => Ok(false),
+        operation => Err(CacheWriteQueueError::WritebackOperationRequired { operation }.into()),
+    }
 }
 
 pub(crate) fn enqueue_downstream_requests<E>(
@@ -68,13 +77,16 @@ where
     if requests.is_empty() {
         return Ok(());
     }
-    let Some(queue) = queue else {
-        return Err(disabled_error);
-    };
+    let mut queue = queue;
     for request in requests {
-        queue
-            .enqueue_writeback(request.clone(), false, 0)
-            .map_err(E::from)?;
+        if is_queue_backed(request)? {
+            let Some(queue) = queue.as_deref_mut() else {
+                return Err(disabled_error);
+            };
+            queue
+                .enqueue_writeback(request.clone(), false, 0)
+                .map_err(E::from)?;
+        }
     }
     Ok(())
 }
