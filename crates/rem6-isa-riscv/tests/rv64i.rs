@@ -401,7 +401,7 @@ fn hart_reads_counter_csrs_through_read_only_csr_aliases() {
     );
     assert_eq!(
         cycle_clear_immediate,
-        RiscvInstruction::ReadCounterCsr {
+        RiscvInstruction::ReadMachineCounterCsr {
             rd: reg(7),
             csr: RiscvCounterCsr::Cycle,
         }

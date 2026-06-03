@@ -9,8 +9,13 @@ pub(crate) fn decode_csr(raw: u32) -> Result<RiscvInstruction, RiscvError> {
     if is_csr_no_write_read(raw) {
         return match csr_address {
             0xf14 => Ok(RiscvInstruction::ReadMachineHartId { rd: rd(raw) }),
-            csr_address => counter_csr(csr_address)
+            csr_address => RiscvCounterCsr::from_user_address(csr_address)
+                .ok()
                 .map(|csr| RiscvInstruction::ReadCounterCsr { rd: rd(raw), csr })
+                .or_else(|| {
+                    machine_counter_csr(csr_address)
+                        .map(|csr| RiscvInstruction::ReadMachineCounterCsr { rd: rd(raw), csr })
+                })
                 .or_else(|| {
                     RiscvStatusCsr::from_address(csr_address)
                         .map(|csr| RiscvInstruction::ReadStatusCsr { rd: rd(raw), csr })
@@ -215,12 +220,6 @@ pub(crate) fn decode_csr(raw: u32) -> Result<RiscvInstruction, RiscvError> {
 
 fn is_csr_no_write_read(raw: u32) -> bool {
     matches!((funct3(raw), rs1(raw).index()), (0x2 | 0x3 | 0x6 | 0x7, 0))
-}
-
-fn counter_csr(address: u16) -> Option<RiscvCounterCsr> {
-    RiscvCounterCsr::from_user_address(address)
-        .or_else(|_| RiscvCounterCsr::from_machine_address(address))
-        .ok()
 }
 
 fn machine_counter_csr(address: u16) -> Option<RiscvCounterCsr> {

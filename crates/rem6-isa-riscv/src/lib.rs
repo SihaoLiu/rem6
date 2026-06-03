@@ -555,6 +555,17 @@ impl RiscvHartState {
         let mut memory_access = None;
         let mut system_event = None;
 
+        if let Some(required_privilege) = instruction.required_csr_privilege() {
+            if !csr_privilege_allowed(self.privilege_mode(), required_privilege) {
+                return Ok(enter_synchronous_trap(
+                    self,
+                    instruction,
+                    pc,
+                    RiscvTrapKind::IllegalInstruction,
+                ));
+            }
+        }
+
         match instruction {
             RiscvInstruction::Lui { rd, imm } => {
                 write_register(self, &mut register_writes, rd, imm.value() as u64);
@@ -911,6 +922,10 @@ impl RiscvHartState {
                 let value = self.counters.read_machine(csr);
                 write_register(self, &mut register_writes, rd, value);
             }
+            RiscvInstruction::ReadMachineCounterCsr { rd, csr } => {
+                let value = self.counters.read_machine(csr);
+                write_register(self, &mut register_writes, rd, value);
+            }
             RiscvInstruction::WriteCounterCsr { rd, csr, rs1 } => {
                 let value = self.read(rs1);
                 write_counter_csr(self, &mut register_writes, rd, csr, value);
@@ -1104,6 +1119,18 @@ fn write_register(
 
     hart.write(register, value);
     writes.push(RegisterWrite::new(register, value));
+}
+
+fn csr_privilege_allowed(current: RiscvPrivilegeMode, required: RiscvPrivilegeMode) -> bool {
+    privilege_rank(current) >= privilege_rank(required)
+}
+
+const fn privilege_rank(privilege: RiscvPrivilegeMode) -> u8 {
+    match privilege {
+        RiscvPrivilegeMode::User => 0,
+        RiscvPrivilegeMode::Supervisor => 1,
+        RiscvPrivilegeMode::Machine => 3,
+    }
 }
 
 fn write_counter_csr(
