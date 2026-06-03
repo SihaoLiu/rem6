@@ -1,7 +1,8 @@
 use rem6_fabric::{
     FabricLinkId, FabricModel, FabricPacket, FabricPacketId, FabricPath, FabricPathHop,
-    FabricQosRequest, QosError, QosFixedPriorityPolicy, QosPriority, QosQueueArbiter,
-    QosQueuePolicyKind, QosQueuedRequest, QosRequestId, QosRequestorId, VirtualNetworkId,
+    FabricQosRequest, QosError, QosFixedPriorityPolicy, QosPriority, QosProportionalFairPolicy,
+    QosQueueArbiter, QosQueuePolicyKind, QosQueuedRequest, QosRequestId, QosRequestorId,
+    VirtualNetworkId,
 };
 
 fn request(id: u64, requestor: u32, priority: u8, bytes: u64, order: u64) -> QosQueuedRequest {
@@ -80,6 +81,128 @@ fn qos_fixed_priority_assigns_explicit_requestor_priorities() {
             priority_levels: 4
         }
     );
+}
+
+#[test]
+fn qos_proportional_fair_maps_gem5_rank_to_rem6_priority_and_updates_scores() {
+    let requestor_a = QosRequestorId::new(1);
+    let requestor_b = QosRequestorId::new(2);
+    let requestor_c = QosRequestorId::new(3);
+    let mut policy = QosProportionalFairPolicy::new(3, 0.5)
+        .unwrap()
+        .with_requestor_score(requestor_a, 100.0)
+        .unwrap()
+        .with_requestor_score(requestor_b, 40.0)
+        .unwrap()
+        .with_requestor_score(requestor_c, 10.0)
+        .unwrap();
+
+    assert_eq!(
+        policy.priority_for(requestor_a, 64).unwrap(),
+        QosPriority::new(2)
+    );
+    assert_eq!(policy.score_for(requestor_a), Some(82.0));
+    assert_eq!(policy.score_for(requestor_b), Some(20.0));
+    assert_eq!(policy.score_for(requestor_c), Some(5.0));
+
+    assert_eq!(
+        policy.priority_for(requestor_c, 64).unwrap(),
+        QosPriority::new(0)
+    );
+    assert_eq!(policy.score_for(requestor_a), Some(41.0));
+    assert_eq!(policy.score_for(requestor_b), Some(10.0));
+    assert_eq!(policy.score_for(requestor_c), Some(34.5));
+
+    assert_eq!(
+        policy.priority_for(requestor_b, 64).unwrap(),
+        QosPriority::new(0)
+    );
+    assert_eq!(policy.score_for(requestor_a), Some(20.5));
+    assert_eq!(policy.score_for(requestor_b), Some(37.0));
+    assert_eq!(policy.score_for(requestor_c), Some(17.25));
+}
+
+#[test]
+fn qos_proportional_fair_rejects_ambiguous_configuration() {
+    assert_eq!(
+        QosProportionalFairPolicy::new(0, 0.5).unwrap_err(),
+        QosError::ZeroPriorityLevels
+    );
+    assert!(matches!(
+        QosProportionalFairPolicy::new(2, -0.1).unwrap_err(),
+        QosError::InvalidProportionalFairWeight { .. }
+    ));
+    assert!(matches!(
+        QosProportionalFairPolicy::new(2, f64::NAN).unwrap_err(),
+        QosError::InvalidProportionalFairWeight { .. }
+    ));
+
+    let requestor = QosRequestorId::new(10);
+    let policy = QosProportionalFairPolicy::new(1, 0.5)
+        .unwrap()
+        .with_requestor_score(requestor, 1.0)
+        .unwrap();
+    assert_eq!(
+        policy
+            .clone()
+            .with_requestor_score(requestor, 2.0)
+            .unwrap_err(),
+        QosError::DuplicateRequestorScore { requestor }
+    );
+    assert_eq!(
+        policy
+            .clone()
+            .with_requestor_score(QosRequestorId::new(11), 1.0)
+            .unwrap_err(),
+        QosError::TooManyProportionalFairRequestors {
+            requestor_count: 2,
+            priority_levels: 1,
+        }
+    );
+    assert!(matches!(
+        QosProportionalFairPolicy::new(1, 0.5)
+            .unwrap()
+            .with_requestor_score(QosRequestorId::new(12), f64::INFINITY)
+            .unwrap_err(),
+        QosError::InvalidProportionalFairScore { .. }
+    ));
+}
+
+#[test]
+fn qos_proportional_fair_preserves_snapshot_replay_and_unknown_errors() {
+    let requestor_a = QosRequestorId::new(21);
+    let requestor_b = QosRequestorId::new(22);
+    let mut policy = QosProportionalFairPolicy::new(2, 0.25)
+        .unwrap()
+        .with_requestor_score(requestor_a, 16.0)
+        .unwrap()
+        .with_requestor_score(requestor_b, 4.0)
+        .unwrap();
+
+    assert_eq!(
+        policy.priority_for(requestor_a, 8).unwrap(),
+        QosPriority::new(1)
+    );
+    let replay_point = policy.snapshot();
+    let next_priority = policy.priority_for(requestor_b, 8).unwrap();
+    let next_scores = (policy.score_for(requestor_a), policy.score_for(requestor_b));
+
+    policy.restore(replay_point.clone()).unwrap();
+    assert_eq!(policy.priority_for(requestor_b, 8).unwrap(), next_priority);
+    assert_eq!(
+        (policy.score_for(requestor_a), policy.score_for(requestor_b)),
+        next_scores
+    );
+
+    policy.restore(replay_point).unwrap();
+    let before_unknown = policy.snapshot();
+    assert_eq!(
+        policy.priority_for(QosRequestorId::new(23), 8).unwrap_err(),
+        QosError::UnknownProportionalFairRequestor {
+            requestor: QosRequestorId::new(23),
+        }
+    );
+    assert_eq!(policy.snapshot(), before_unknown);
 }
 
 #[test]

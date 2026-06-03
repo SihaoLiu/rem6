@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, VecDeque};
 use std::error::Error;
 use std::fmt;
@@ -53,6 +54,23 @@ pub enum QosError {
     DuplicateRequestorPriority {
         requestor: QosRequestorId,
     },
+    DuplicateRequestorScore {
+        requestor: QosRequestorId,
+    },
+    TooManyProportionalFairRequestors {
+        requestor_count: usize,
+        priority_levels: u8,
+    },
+    UnknownProportionalFairRequestor {
+        requestor: QosRequestorId,
+    },
+    InvalidProportionalFairWeight {
+        weight_bits: u64,
+    },
+    InvalidProportionalFairScore {
+        requestor: QosRequestorId,
+        score_bits: u64,
+    },
     ZeroRequestBytes,
 }
 
@@ -73,6 +91,38 @@ impl fmt::Display for QosError {
                 formatter,
                 "QoS requestor {} has more than one fixed priority",
                 requestor.get()
+            ),
+            Self::DuplicateRequestorScore { requestor } => write!(
+                formatter,
+                "QoS requestor {} has more than one proportional-fair score",
+                requestor.get()
+            ),
+            Self::TooManyProportionalFairRequestors {
+                requestor_count,
+                priority_levels,
+            } => write!(
+                formatter,
+                "QoS proportional-fair requestor count {} exceeds {} priority levels",
+                requestor_count, priority_levels
+            ),
+            Self::UnknownProportionalFairRequestor { requestor } => write!(
+                formatter,
+                "QoS proportional-fair requestor {} is not registered",
+                requestor.get()
+            ),
+            Self::InvalidProportionalFairWeight { weight_bits } => write!(
+                formatter,
+                "QoS proportional-fair weight {} must be finite and between 0 and 1",
+                f64::from_bits(*weight_bits)
+            ),
+            Self::InvalidProportionalFairScore {
+                requestor,
+                score_bits,
+            } => write!(
+                formatter,
+                "QoS proportional-fair requestor {} score {} must be finite",
+                requestor.get(),
+                f64::from_bits(*score_bits)
             ),
             Self::ZeroRequestBytes => write!(formatter, "QoS request bytes must be nonzero"),
         }
@@ -129,6 +179,199 @@ impl QosFixedPriorityPolicy {
             .unwrap_or(self.default_priority)
     }
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct QosProportionalFairScoreSnapshot {
+    requestor: QosRequestorId,
+    score_bits: u64,
+}
+
+impl QosProportionalFairScoreSnapshot {
+    pub const fn requestor(&self) -> QosRequestorId {
+        self.requestor
+    }
+
+    pub fn score(&self) -> f64 {
+        f64::from_bits(self.score_bits)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct QosProportionalFairPolicySnapshot {
+    priority_levels: u8,
+    weight_bits: u64,
+    scores: Vec<QosProportionalFairScoreSnapshot>,
+}
+
+impl QosProportionalFairPolicySnapshot {
+    pub const fn priority_levels(&self) -> u8 {
+        self.priority_levels
+    }
+
+    pub fn weight(&self) -> f64 {
+        f64::from_bits(self.weight_bits)
+    }
+
+    pub fn scores(&self) -> &[QosProportionalFairScoreSnapshot] {
+        &self.scores
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct QosProportionalFairPolicy {
+    priority_levels: u8,
+    weight: f64,
+    scores: BTreeMap<QosRequestorId, f64>,
+}
+
+impl QosProportionalFairPolicy {
+    pub fn new(priority_levels: u8, weight: f64) -> Result<Self, QosError> {
+        validate_priority_levels(priority_levels)?;
+        validate_proportional_fair_weight(weight)?;
+
+        Ok(Self {
+            priority_levels,
+            weight,
+            scores: BTreeMap::new(),
+        })
+    }
+
+    pub const fn priority_levels(&self) -> u8 {
+        self.priority_levels
+    }
+
+    pub const fn weight(&self) -> f64 {
+        self.weight
+    }
+
+    pub fn with_requestor_score(
+        mut self,
+        requestor: QosRequestorId,
+        score: f64,
+    ) -> Result<Self, QosError> {
+        validate_proportional_fair_score(requestor, score)?;
+        if self.scores.contains_key(&requestor) {
+            return Err(QosError::DuplicateRequestorScore { requestor });
+        }
+        let requestor_count = self.scores.len() + 1;
+        if requestor_count > self.priority_levels as usize {
+            return Err(QosError::TooManyProportionalFairRequestors {
+                requestor_count,
+                priority_levels: self.priority_levels,
+            });
+        }
+
+        self.scores.insert(requestor, score);
+        Ok(self)
+    }
+
+    pub fn score_for(&self, requestor: QosRequestorId) -> Option<f64> {
+        self.scores.get(&requestor).copied()
+    }
+
+    pub fn priority_for(
+        &mut self,
+        requestor: QosRequestorId,
+        bytes: u64,
+    ) -> Result<QosPriority, QosError> {
+        if !self.scores.contains_key(&requestor) {
+            return Err(QosError::UnknownProportionalFairRequestor { requestor });
+        }
+
+        let sorted = self.sorted_requestors_by_gem5_score();
+        let position = sorted
+            .iter()
+            .position(|(candidate, _)| *candidate == requestor)
+            .expect("registered proportional-fair requestor must be present");
+        // gem5 PF ranks high-score requestors at 0, while rem6 priority 0
+        // is served first. Invert the rank and keep the score formula.
+        let priority = QosPriority::new((sorted.len() - 1 - position) as u8);
+        self.update_scores_after_service(requestor, bytes);
+        Ok(priority)
+    }
+
+    pub fn snapshot(&self) -> QosProportionalFairPolicySnapshot {
+        QosProportionalFairPolicySnapshot {
+            priority_levels: self.priority_levels,
+            weight_bits: self.weight.to_bits(),
+            scores: self
+                .scores
+                .iter()
+                .map(|(requestor, score)| QosProportionalFairScoreSnapshot {
+                    requestor: *requestor,
+                    score_bits: score.to_bits(),
+                })
+                .collect(),
+        }
+    }
+
+    pub fn restore(&mut self, snapshot: QosProportionalFairPolicySnapshot) -> Result<(), QosError> {
+        let weight = f64::from_bits(snapshot.weight_bits);
+        validate_priority_levels(snapshot.priority_levels)?;
+        validate_proportional_fair_weight(weight)?;
+
+        let mut scores = BTreeMap::new();
+        for score in snapshot.scores {
+            let value = f64::from_bits(score.score_bits);
+            validate_proportional_fair_score(score.requestor, value)?;
+            if scores.insert(score.requestor, value).is_some() {
+                return Err(QosError::DuplicateRequestorScore {
+                    requestor: score.requestor,
+                });
+            }
+        }
+        if scores.len() > snapshot.priority_levels as usize {
+            return Err(QosError::TooManyProportionalFairRequestors {
+                requestor_count: scores.len(),
+                priority_levels: snapshot.priority_levels,
+            });
+        }
+
+        self.priority_levels = snapshot.priority_levels;
+        self.weight = weight;
+        self.scores = scores;
+        Ok(())
+    }
+
+    fn sorted_requestors_by_gem5_score(&self) -> Vec<(QosRequestorId, f64)> {
+        let mut sorted = self
+            .scores
+            .iter()
+            .map(|(requestor, score)| (*requestor, *score))
+            .collect::<Vec<_>>();
+        sorted.sort_by(
+            |(left_requestor, left_score), (right_requestor, right_score)| {
+                right_score
+                    .partial_cmp(left_score)
+                    .unwrap_or(Ordering::Equal)
+                    .then_with(|| left_requestor.cmp(right_requestor))
+            },
+        );
+        sorted
+    }
+
+    fn update_scores_after_service(&mut self, served_requestor: QosRequestorId, bytes: u64) {
+        let served_bytes = bytes as f64;
+        for (requestor, score) in &mut self.scores {
+            let bytes = if *requestor == served_requestor {
+                served_bytes
+            } else {
+                0.0
+            };
+            *score = ((1.0 - self.weight) * *score) + (self.weight * bytes);
+        }
+    }
+}
+
+impl PartialEq for QosProportionalFairPolicy {
+    fn eq(&self, other: &Self) -> bool {
+        self.priority_levels == other.priority_levels
+            && self.weight.to_bits() == other.weight.to_bits()
+            && scores_equal_by_bits(&self.scores, &other.scores)
+    }
+}
+
+impl Eq for QosProportionalFairPolicy {}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum QosQueuePolicyKind {
@@ -433,4 +676,35 @@ fn validate_priority(priority_levels: u8, priority: QosPriority) -> Result<(), Q
         });
     }
     Ok(())
+}
+
+fn validate_proportional_fair_weight(weight: f64) -> Result<(), QosError> {
+    if !(0.0..=1.0).contains(&weight) {
+        return Err(QosError::InvalidProportionalFairWeight {
+            weight_bits: weight.to_bits(),
+        });
+    }
+    Ok(())
+}
+
+fn validate_proportional_fair_score(requestor: QosRequestorId, score: f64) -> Result<(), QosError> {
+    if !score.is_finite() {
+        return Err(QosError::InvalidProportionalFairScore {
+            requestor,
+            score_bits: score.to_bits(),
+        });
+    }
+    Ok(())
+}
+
+fn scores_equal_by_bits(
+    left: &BTreeMap<QosRequestorId, f64>,
+    right: &BTreeMap<QosRequestorId, f64>,
+) -> bool {
+    left.len() == right.len()
+        && left.iter().all(|(requestor, score)| {
+            right
+                .get(requestor)
+                .is_some_and(|other| score.to_bits() == other.to_bits())
+        })
 }

@@ -2,7 +2,9 @@ use rem6_dram::{
     DramAccessKind, DramCommandKind, DramController, DramError, DramGeometry, DramQosRequest,
     DramQosSchedulingPolicy, DramQosTurnaroundPolicy, DramTiming,
 };
-use rem6_fabric::{QosPriority, QosQueueArbiter, QosQueuePolicyKind, QosRequestorId};
+use rem6_fabric::{
+    QosPriority, QosProportionalFairPolicy, QosQueueArbiter, QosQueuePolicyKind, QosRequestorId,
+};
 use rem6_kernel::{WaitForEdgeKind, WaitForNode};
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
@@ -231,6 +233,61 @@ fn dram_controller_qos_batch_can_escalate_requestor_priority() {
         2
     );
     assert_eq!(profile.qos_requestor_byte_count(QosRequestorId::new(7)), 16);
+}
+
+#[test]
+fn dram_controller_qos_batch_consumes_proportional_fair_priorities() {
+    let mut controller = DramController::new(geometry(), timing());
+    let mut arbiter = QosQueueArbiter::new(QosQueuePolicyKind::Fifo);
+    let requestor_a = QosRequestorId::new(10);
+    let requestor_b = QosRequestorId::new(20);
+    let requestor_c = QosRequestorId::new(30);
+    let mut policy = QosProportionalFairPolicy::new(3, 0.5)
+        .unwrap()
+        .with_requestor_score(requestor_a, 100.0)
+        .unwrap()
+        .with_requestor_score(requestor_b, 40.0)
+        .unwrap()
+        .with_requestor_score(requestor_c, 10.0)
+        .unwrap();
+    let first = read_from(10, 0x0000, 8, 60);
+    let second = read_from(20, 0x0040, 8, 61);
+    let third = read_from(30, 0x0080, 8, 62);
+
+    let accesses = controller
+        .schedule_qos_batch_with_policy(
+            0,
+            [
+                DramQosRequest::from_proportional_fair_policy(&first, &mut policy, 0).unwrap(),
+                DramQosRequest::from_proportional_fair_policy(&second, &mut policy, 1).unwrap(),
+                DramQosRequest::from_proportional_fair_policy(&third, &mut policy, 2).unwrap(),
+            ],
+            &mut arbiter,
+            DramQosSchedulingPolicy::new().with_turnaround(DramQosTurnaroundPolicy::RequestOrder),
+        )
+        .unwrap();
+
+    assert_eq!(
+        accesses
+            .iter()
+            .map(|access| access.request())
+            .collect::<Vec<_>>(),
+        vec![third.id(), second.id(), first.id()]
+    );
+    assert_eq!(
+        accesses
+            .iter()
+            .map(|access| access.qos().unwrap().effective_priority())
+            .collect::<Vec<_>>(),
+        vec![
+            QosPriority::new(0),
+            QosPriority::new(1),
+            QosPriority::new(2)
+        ]
+    );
+    assert_eq!(policy.score_for(requestor_a), Some(13.5));
+    assert_eq!(policy.score_for(requestor_b), Some(7.0));
+    assert_eq!(policy.score_for(requestor_c), Some(5.25));
 }
 
 fn write(address: u64, sequence: u64) -> MemoryRequest {

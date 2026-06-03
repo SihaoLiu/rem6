@@ -13,8 +13,10 @@ pub use activity::{
     FabricActivityProfile, FabricLaneActivity, FabricLinkActivity, FabricVirtualNetworkActivity,
 };
 pub use qos::{
-    FabricQosRequest, QosError, QosFixedPriorityPolicy, QosGrant, QosPriority, QosQueueArbiter,
-    QosQueueArbiterSnapshot, QosQueuePolicyKind, QosQueuedRequest, QosRequestId, QosRequestorId,
+    FabricQosRequest, QosError, QosFixedPriorityPolicy, QosGrant, QosPriority,
+    QosProportionalFairPolicy, QosProportionalFairPolicySnapshot, QosProportionalFairScoreSnapshot,
+    QosQueueArbiter, QosQueueArbiterSnapshot, QosQueuePolicyKind, QosQueuedRequest, QosRequestId,
+    QosRequestorId,
 };
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]

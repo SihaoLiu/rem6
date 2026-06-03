@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 
 use rem6_fabric::{
-    QosError, QosPriority, QosQueueArbiter, QosQueuedRequest, QosRequestId, QosRequestorId,
+    QosError, QosPriority, QosProportionalFairPolicy, QosQueueArbiter, QosQueuedRequest,
+    QosRequestId, QosRequestorId,
 };
 use rem6_memory::MemoryRequest;
 
@@ -84,6 +85,16 @@ impl<'a> DramQosRequest<'a> {
             effective_priority: priority,
             order,
         }
+    }
+
+    pub fn from_proportional_fair_policy(
+        request: &'a MemoryRequest,
+        policy: &mut QosProportionalFairPolicy,
+        order: u64,
+    ) -> Result<Self, QosError> {
+        let requestor = QosRequestorId::new(request.id().agent().get());
+        let priority = policy.priority_for(requestor, request.size().bytes())?;
+        Ok(Self::new(request, priority, order))
     }
 
     pub const fn with_requestor(mut self, requestor: QosRequestorId) -> Self {
