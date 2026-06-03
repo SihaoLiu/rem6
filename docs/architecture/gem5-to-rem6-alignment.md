@@ -1285,7 +1285,9 @@ Implementation evidence through 2026-06-03:
   issue #2750 by requiring `dup2` to return and install the requested
   destination fd, replace an existing destination without allocating another
   fd, clear close-on-exec only on newly duplicated descriptors, and preserve
-  same-fd no-op behavior after source validation.
+  same-fd no-op behavior after source validation. The table also exposes
+  close-on-exec reads and updates for future `fcntl` handoff, with invalid-fd
+  errors leaving unrelated descriptors unchanged.
 - `rem6-memory` has typed sparse and modulo-interleaved address map regions for
   future full-system memory maps. Tests cover the gem5 issue #2855 shape by
   routing one base physical range across three modulo stripes, rejecting

@@ -70,3 +70,43 @@ fn guest_fd_dup2_same_fd_is_a_noop_after_source_validation() {
         })
     );
 }
+
+#[test]
+fn guest_fd_close_on_exec_can_be_read_and_updated_by_fd() {
+    let mut table = GuestFdTable::new();
+    let fd = GuestFd::new(7).unwrap();
+    table
+        .insert(fd, GuestFdEntry::new(GuestFileDescriptionId::new(70)))
+        .unwrap();
+
+    assert!(!table.close_on_exec(fd).unwrap());
+
+    table.set_close_on_exec(fd, true).unwrap();
+    assert!(table.close_on_exec(fd).unwrap());
+
+    table.set_close_on_exec(fd, false).unwrap();
+    assert!(!table.close_on_exec(fd).unwrap());
+}
+
+#[test]
+fn guest_fd_close_on_exec_rejects_bad_fd_without_mutating_other_entries() {
+    let mut table = GuestFdTable::new();
+    let fd = GuestFd::new(8).unwrap();
+    let bad_fd = GuestFd::new(9).unwrap();
+    table
+        .insert(
+            fd,
+            GuestFdEntry::new(GuestFileDescriptionId::new(80)).with_close_on_exec(true),
+        )
+        .unwrap();
+
+    assert_eq!(
+        table.set_close_on_exec(bad_fd, false),
+        Err(GuestFdError::BadFd { fd: bad_fd })
+    );
+    assert_eq!(
+        table.close_on_exec(bad_fd),
+        Err(GuestFdError::BadFd { fd: bad_fd })
+    );
+    assert!(table.close_on_exec(fd).unwrap());
+}

@@ -121,6 +121,24 @@ impl GuestFdTable {
         self.entries.remove(&fd).ok_or(GuestFdError::BadFd { fd })
     }
 
+    pub fn close_on_exec(&self, fd: GuestFd) -> Result<bool, GuestFdError> {
+        let entry = self.entry(fd).ok_or(GuestFdError::BadFd { fd })?;
+        Ok(entry.close_on_exec())
+    }
+
+    pub fn set_close_on_exec(
+        &mut self,
+        fd: GuestFd,
+        close_on_exec: bool,
+    ) -> Result<(), GuestFdError> {
+        let entry = self
+            .entries
+            .get_mut(&fd)
+            .ok_or(GuestFdError::BadFd { fd })?;
+        entry.close_on_exec = close_on_exec;
+        Ok(())
+    }
+
     pub fn dup(&mut self, old_fd: GuestFd) -> Result<GuestFd, GuestFdError> {
         let entry = self
             .entry(old_fd)
