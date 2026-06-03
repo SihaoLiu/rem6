@@ -11,10 +11,10 @@ use rem6_stats::{StatDumpRecord, StatsRegistry, StatsResetRecord};
 use crate::{
     AcceleratorCheckpointBank, ClintCheckpointBank, CpuLocalTimerCheckpointBank,
     DramMemoryCheckpointBank, ExecutionMode, ExecutionModeTarget, FabricCheckpointBank,
-    GpuCheckpointBank, GuestEventDelivery, GuestEventId, GuestHostCallResponse, GuestSourceId,
-    HostAction, HostActionRecord, HostEventPolicy, IdeControllerCheckpointBank,
-    IdeControllerCheckpointPort, InterruptControllerCheckpointBank, MemoryStoreCheckpointBank,
-    MsiBankCheckpointBank, PciHostCheckpointBank, PciHostCheckpointPort,
+    GpuCheckpointBank, GuestEventDelivery, GuestEventId, GuestFdCheckpointBank,
+    GuestHostCallResponse, GuestSourceId, HostAction, HostActionRecord, HostEventPolicy,
+    IdeControllerCheckpointBank, IdeControllerCheckpointPort, InterruptControllerCheckpointBank,
+    MemoryStoreCheckpointBank, MsiBankCheckpointBank, PciHostCheckpointBank, PciHostCheckpointPort,
     PciLegacyInterruptRouterCheckpointBank, PciLegacyInterruptRouterCheckpointPort,
     Pl011UartCheckpointBank, Pl031CheckpointBank, PlicCheckpointBank, RiscvCoreCheckpointBank,
     RtcCheckpointBank, SchedulerCheckpointBank, SinicFifoCheckpointBank, SinicFifoCheckpointPort,
@@ -90,6 +90,7 @@ pub struct SystemActionExecutor {
     scheduler_checkpoints: Option<SchedulerCheckpointBank>,
     memory_checkpoints: Option<MemoryStoreCheckpointBank>,
     storage_image_checkpoints: Option<StorageImageCheckpointBank>,
+    guest_fd_checkpoints: Option<GuestFdCheckpointBank>,
     ide_controller_checkpoints: Option<IdeControllerCheckpointBank>,
     sinic_register_checkpoints: Option<SinicRegisterCheckpointBank>,
     sinic_fifo_checkpoints: Option<SinicFifoCheckpointBank>,
@@ -135,6 +136,7 @@ impl SystemActionExecutor {
             scheduler_checkpoints: None,
             memory_checkpoints: None,
             storage_image_checkpoints: None,
+            guest_fd_checkpoints: None,
             ide_controller_checkpoints: None,
             sinic_register_checkpoints: None,
             sinic_fifo_checkpoints: None,
@@ -375,6 +377,15 @@ impl SystemActionExecutor {
     ) -> Result<(), CheckpointError> {
         storage_image_checkpoints.register_all(&mut self.checkpoints)?;
         self.storage_image_checkpoints = Some(storage_image_checkpoints);
+        Ok(())
+    }
+
+    pub fn attach_guest_fd_checkpoint_bank(
+        &mut self,
+        guest_fd_checkpoints: GuestFdCheckpointBank,
+    ) -> Result<(), CheckpointError> {
+        guest_fd_checkpoints.register_all(&mut self.checkpoints)?;
+        self.guest_fd_checkpoints = Some(guest_fd_checkpoints);
         Ok(())
     }
 
@@ -813,6 +824,10 @@ impl SystemActionExecutor {
         self.storage_image_checkpoints.as_ref()
     }
 
+    pub const fn guest_fd_checkpoint_bank(&self) -> Option<&GuestFdCheckpointBank> {
+        self.guest_fd_checkpoints.as_ref()
+    }
+
     pub const fn ide_controller_checkpoint_bank(&self) -> Option<&IdeControllerCheckpointBank> {
         self.ide_controller_checkpoints.as_ref()
     }
@@ -986,6 +1001,11 @@ impl SystemActionExecutor {
                 .validate_restore_from(checkpoints)
                 .map_err(SystemError::StorageCheckpoint)?;
         }
+        if let Some(guest_fd_checkpoints) = &self.guest_fd_checkpoints {
+            guest_fd_checkpoints
+                .validate_restore_from(checkpoints)
+                .map_err(SystemError::GuestFdCheckpoint)?;
+        }
         if let Some(ide_controller_checkpoints) = &self.ide_controller_checkpoints {
             ide_controller_checkpoints
                 .validate_restore_from(checkpoints)
@@ -1143,6 +1163,11 @@ impl SystemActionExecutor {
             storage_image_checkpoints
                 .restore_all_from(&self.checkpoints)
                 .map_err(SystemError::StorageCheckpoint)?;
+        }
+        if let Some(guest_fd_checkpoints) = &self.guest_fd_checkpoints {
+            guest_fd_checkpoints
+                .restore_all_from(&self.checkpoints)
+                .map_err(SystemError::GuestFdCheckpoint)?;
         }
         if let Some(ide_controller_checkpoints) = &self.ide_controller_checkpoints {
             ide_controller_checkpoints
@@ -1351,6 +1376,11 @@ impl SystemActionExecutor {
                     storage_image_checkpoints
                         .capture_all_into(&mut staged_checkpoints)
                         .map_err(SystemError::StorageCheckpoint)?;
+                }
+                if let Some(guest_fd_checkpoints) = &self.guest_fd_checkpoints {
+                    guest_fd_checkpoints
+                        .capture_all_into(&mut staged_checkpoints)
+                        .map_err(SystemError::Checkpoint)?;
                 }
                 if let Some(ide_controller_checkpoints) = &self.ide_controller_checkpoints {
                     ide_controller_checkpoints

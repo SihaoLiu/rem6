@@ -877,7 +877,9 @@ isolated bugs:
   the shared guest file description instead, with descriptor-local
   close-on-exec remaining outside that shared record. Guest fd snapshots store
   descriptor entries separately from shared descriptions, preserving logical
-  aliasing for status flags and file offsets on restore.
+  aliasing for status flags and file offsets on restore. Guest fd checkpoint
+  chunks carry that logical graph through host checkpoint actions without
+  claiming durable host fd reopening.
   Public gem5 issue #3132 reports O3 data prefetches tying up LQ/ROB retirement
   resources until memory responses arrive. rem6 therefore records O3 prefetches
   as typed dependency-trace memory records with an explicit retire-after-issue
@@ -1314,7 +1316,10 @@ Implementation evidence through 2026-06-03:
   rejected without mutating the stored offset. Guest fd table snapshots emit
   entries and descriptions in deterministic order, restore them through a
   staged table, and reject duplicate fds, duplicate descriptions, or entries
-  referencing missing descriptions before mutating live state.
+  referencing missing descriptions before mutating live state. Guest fd
+  checkpoint banks now write versioned `guest-fd` chunks, canonicalize decoded
+  payloads, reject malformed host-fd fields before live mutation, and are
+  included in host checkpoint capture/restore staging.
 - `rem6-memory` has typed sparse and modulo-interleaved address map regions for
   future full-system memory maps. Tests cover the gem5 issue #2855 shape by
   routing one base physical range across three modulo stripes, rejecting

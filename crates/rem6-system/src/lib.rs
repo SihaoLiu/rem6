@@ -32,6 +32,7 @@ mod fabric_checkpoint;
 mod fabric_wait_run;
 mod guest_event;
 mod guest_fd;
+mod guest_fd_checkpoint;
 mod guest_futex;
 mod heterogeneous_checkpoint;
 mod host;
@@ -94,6 +95,9 @@ pub use guest_fd::{
     GuestFd, GuestFdCloseRecord, GuestFdDup2Record, GuestFdEntry, GuestFdError,
     GuestFdSnapshotEntry, GuestFdTable, GuestFdTableSnapshot, GuestFileDescription,
     GuestFileDescriptionId, GuestFileOffset, GuestFileStatusFlags, GuestHostFd,
+};
+pub use guest_fd_checkpoint::{
+    GuestFdCheckpointBank, GuestFdCheckpointError, GuestFdCheckpointPort, GuestFdCheckpointRecord,
 };
 pub use guest_futex::{
     GuestFutexAddress, GuestFutexError, GuestFutexKey, GuestFutexRequeueOutcome,
@@ -1048,6 +1052,7 @@ pub enum SystemError {
     MsiBankCheckpoint(MsiBankCheckpointError),
     FabricCheckpoint(FabricCheckpointError),
     GpuCheckpoint(GpuCheckpointError),
+    GuestFdCheckpoint(GuestFdCheckpointError),
     PciHostCheckpoint(PciHostCheckpointError),
     PciLegacyInterruptRouterCheckpoint(PciLegacyInterruptRouterCheckpointError),
     Pl031Checkpoint(Pl031CheckpointError),
@@ -1093,6 +1098,7 @@ impl fmt::Display for SystemError {
             Self::MsiBankCheckpoint(error) => write!(formatter, "{error}"),
             Self::FabricCheckpoint(error) => write!(formatter, "{error}"),
             Self::GpuCheckpoint(error) => write!(formatter, "{error}"),
+            Self::GuestFdCheckpoint(error) => write!(formatter, "{error}"),
             Self::PciHostCheckpoint(error) => write!(formatter, "{error}"),
             Self::PciLegacyInterruptRouterCheckpoint(error) => write!(formatter, "{error}"),
             Self::Pl031Checkpoint(error) => write!(formatter, "{error}"),
@@ -1135,6 +1141,7 @@ impl Error for SystemError {
             Self::MsiBankCheckpoint(error) => Some(error),
             Self::FabricCheckpoint(error) => Some(error),
             Self::GpuCheckpoint(error) => Some(error),
+            Self::GuestFdCheckpoint(error) => Some(error),
             Self::PciHostCheckpoint(error) => Some(error),
             Self::PciLegacyInterruptRouterCheckpoint(error) => Some(error),
             Self::Pl031Checkpoint(error) => Some(error),
