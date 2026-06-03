@@ -3,6 +3,7 @@ mod control;
 mod error;
 mod linear;
 mod state;
+mod text_config;
 mod trace;
 
 pub use common::{TrafficGeneratorSummary, TrafficRequestEvent, TrafficRequestKind};
@@ -20,6 +21,10 @@ pub use state::{
     TrafficStateGraphConfig, TrafficStateId, TrafficStateMachine, TrafficStateSnapshot,
     TrafficStateSpec, TrafficTransition, TrafficTransitionEvent, TrafficTransitionProbability,
     TRAFFIC_TRANSITION_PROBABILITY_SCALE,
+};
+pub use text_config::{
+    TrafficTextConfig, TrafficTextDramParams, TrafficTextMemoryParams, TrafficTextState,
+    TrafficTextStateMode, TrafficTextStridedParams,
 };
 pub use trace::{
     TrafficTrace, TrafficTraceConfig, TrafficTraceExitStatus, TrafficTraceGenerator,

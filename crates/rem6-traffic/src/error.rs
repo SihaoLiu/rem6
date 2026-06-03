@@ -92,6 +92,46 @@ pub enum TrafficGeneratorError {
         state: TrafficStateId,
     },
     TrafficStateSnapshotMissingCurrentState,
+    TrafficConfigMissingInitial,
+    TrafficConfigDuplicateInitial {
+        line: usize,
+    },
+    TrafficConfigSparseStateIds {
+        expected: u32,
+        actual: TrafficStateId,
+    },
+    TrafficConfigUnknownKeyword {
+        line: usize,
+        keyword: String,
+    },
+    TrafficConfigUnknownStateMode {
+        line: usize,
+        mode: String,
+    },
+    TrafficConfigMissingToken {
+        line: usize,
+        record: &'static str,
+        field: &'static str,
+    },
+    TrafficConfigUnexpectedToken {
+        line: usize,
+        record: &'static str,
+        token: String,
+    },
+    TrafficConfigInvalidNumber {
+        line: usize,
+        field: &'static str,
+        token: String,
+    },
+    TrafficConfigProbabilityTooPrecise {
+        line: usize,
+        token: String,
+        scale: u32,
+    },
+    TrafficConfigReadPercentOutOfRange {
+        line: usize,
+        read_percent: u32,
+    },
     TraceTruncatedMagic {
         length: usize,
     },
@@ -329,6 +369,56 @@ impl fmt::Display for TrafficGeneratorError {
             Self::TrafficStateSnapshotMissingCurrentState => {
                 write!(formatter, "traffic state snapshot is active without a current state")
             }
+            Self::TrafficConfigMissingInitial => {
+                write!(formatter, "traffic text config is missing INIT record")
+            }
+            Self::TrafficConfigDuplicateInitial { line } => {
+                write!(
+                    formatter,
+                    "traffic text config line {line} defines duplicate INIT record"
+                )
+            }
+            Self::TrafficConfigSparseStateIds { expected, actual } => write!(
+                formatter,
+                "traffic text config expected dense state id {expected}, found {}",
+                actual.get()
+            ),
+            Self::TrafficConfigUnknownKeyword { line, keyword } => write!(
+                formatter,
+                "traffic text config line {line} has unknown keyword {keyword}"
+            ),
+            Self::TrafficConfigUnknownStateMode { line, mode } => write!(
+                formatter,
+                "traffic text config line {line} has unknown STATE mode {mode}"
+            ),
+            Self::TrafficConfigMissingToken {
+                line,
+                record,
+                field,
+            } => write!(
+                formatter,
+                "traffic text config line {line} {record} record is missing {field}"
+            ),
+            Self::TrafficConfigUnexpectedToken {
+                line,
+                record,
+                token,
+            } => write!(
+                formatter,
+                "traffic text config line {line} {record} record has unexpected token {token}"
+            ),
+            Self::TrafficConfigInvalidNumber { line, field, token } => write!(
+                formatter,
+                "traffic text config line {line} field {field} has invalid number {token}"
+            ),
+            Self::TrafficConfigProbabilityTooPrecise { line, token, scale } => write!(
+                formatter,
+                "traffic text config line {line} probability {token} exceeds fixed scale {scale}"
+            ),
+            Self::TrafficConfigReadPercentOutOfRange { line, read_percent } => write!(
+                formatter,
+                "traffic text config line {line} read percentage {read_percent} exceeds 100"
+            ),
             Self::TraceTruncatedMagic { length } => write!(
                 formatter,
                 "gem5 packet trace has {length} bytes before the magic header"
