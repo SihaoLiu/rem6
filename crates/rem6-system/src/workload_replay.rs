@@ -67,7 +67,7 @@ use self::dma_scheduler_evidence::{
     dma_scheduler_remote_sends, DmaSchedulerEvidence,
 };
 use self::memory_backend::{memory_response, WorkloadDramBackend, WorkloadMemoryBackend};
-use self::qos::{fixed_priority_policy, queue_arbiter};
+use self::qos::{priority_policy, queue_arbiter};
 use self::sinic_mmio_backend::WorkloadSinicPciMmioBackend;
 use self::summary::{
     livelock_transition_threshold, parallel_execution_summary, WorkloadReplayActivityRefs,
@@ -448,16 +448,19 @@ impl RiscvWorkloadReplay {
             .any(|route| route.hops().iter().any(|hop| hop.fabric().is_some()));
         let mut transport = if has_fabric_routes {
             if let Some(policy) = topology.qos_policy() {
-                MemoryTransport::with_fabric_qos_policy(
+                MemoryTransport::with_fabric_qos_priority_policy(
                     FabricModel::new(),
                     queue_arbiter(policy),
-                    fixed_priority_policy(policy),
+                    priority_policy(policy),
                 )
             } else {
                 MemoryTransport::with_fabric(FabricModel::new())
             }
         } else if let Some(policy) = topology.qos_policy() {
-            MemoryTransport::with_qos_policy(queue_arbiter(policy), fixed_priority_policy(policy))
+            MemoryTransport::with_qos_priority_policy(
+                queue_arbiter(policy),
+                priority_policy(policy),
+            )
         } else {
             MemoryTransport::new()
         };

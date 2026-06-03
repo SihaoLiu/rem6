@@ -17,8 +17,9 @@ use rem6_workload::{
     WorkloadExecutionModeSwitch, WorkloadExpectedCheckpointComponentSummary, WorkloadGpuDevice,
     WorkloadGpuDmaCopy, WorkloadGpuKernelLaunch, WorkloadGuestHostCallResponse,
     WorkloadHostActionSummary, WorkloadHostEvent, WorkloadHostPlacement, WorkloadId,
-    WorkloadManifest, WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadQosPolicy,
-    WorkloadQosQueuePolicyKind, WorkloadQosRequestorPriority, WorkloadQosTurnaroundPolicyKind,
+    WorkloadManifest, WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadQosError,
+    WorkloadQosPolicy, WorkloadQosPriorityPolicyKind, WorkloadQosQueuePolicyKind,
+    WorkloadQosRequestorPriority, WorkloadQosRequestorScore, WorkloadQosTurnaroundPolicyKind,
     WorkloadReplayPlan, WorkloadResource, WorkloadResourceAcquisition,
     WorkloadResourceAcquisitionField, WorkloadResourceAcquisitionKind,
     WorkloadResourceConstructionField, WorkloadResourceId, WorkloadResourceKind,
@@ -372,6 +373,65 @@ fn workload_topology_records_qos_policy_and_requestor_intents() {
     let plan = WorkloadReplayPlan::from_manifest(&with_qos).unwrap();
 
     assert_ne!(plain.identity(), with_qos.identity());
+    assert_eq!(with_qos.identity().as_str(), "wl-428d45646c10c61e");
+    assert_eq!(plan.topology().unwrap().qos_policy(), Some(&policy));
+}
+
+#[test]
+fn workload_topology_records_proportional_fair_qos_policy_and_scores() {
+    let policy = WorkloadQosPolicy::proportional_fair(3, 0.25)
+        .unwrap()
+        .with_queue_policy(WorkloadQosQueuePolicyKind::LeastRecentlyGranted)
+        .with_turnaround_policy(WorkloadQosTurnaroundPolicyKind::PreferCurrentDirection)
+        .with_requestor_score(QosRequestorId::new(8), 4.0)
+        .unwrap()
+        .with_requestor_score(QosRequestorId::new(7), 32.0)
+        .unwrap();
+    let topology = riscv_topology().with_qos_policy(policy.clone());
+
+    assert_eq!(topology.qos_policy(), Some(&policy));
+    assert_eq!(
+        policy.priority_policy_kind(),
+        WorkloadQosPriorityPolicyKind::ProportionalFair,
+    );
+    assert_eq!(policy.priority_levels(), 3);
+    assert_eq!(policy.proportional_fair_weight(), Some(0.25));
+    assert_eq!(
+        policy.queue_policy(),
+        WorkloadQosQueuePolicyKind::LeastRecentlyGranted,
+    );
+    assert_eq!(
+        policy.turnaround_policy(),
+        WorkloadQosTurnaroundPolicyKind::PreferCurrentDirection,
+    );
+    assert_eq!(
+        policy.requestor_scores(),
+        &[
+            WorkloadQosRequestorScore::new(QosRequestorId::new(7), 32.0),
+            WorkloadQosRequestorScore::new(QosRequestorId::new(8), 4.0),
+        ]
+    );
+
+    let fixed = WorkloadManifest::builder(id("pf-qos-policy-identity"), boot_image())
+        .with_topology(
+            riscv_topology()
+                .with_qos_policy(WorkloadQosPolicy::new(3, QosPriority::new(2)).unwrap()),
+        )
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .build()
+        .unwrap();
+    let with_pf = WorkloadManifest::builder(id("pf-qos-policy-identity"), boot_image())
+        .with_topology(topology)
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .build()
+        .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&with_pf).unwrap();
+
+    assert_ne!(fixed.identity(), with_pf.identity());
     assert_eq!(plan.topology().unwrap().qos_policy(), Some(&policy));
 }
 
@@ -379,14 +439,14 @@ fn workload_topology_records_qos_policy_and_requestor_intents() {
 fn workload_qos_policy_rejects_invalid_declarations() {
     assert_eq!(
         WorkloadQosPolicy::new(0, QosPriority::new(0)).unwrap_err(),
-        WorkloadError::ZeroQosPriorityLevels,
+        WorkloadError::Qos(WorkloadQosError::ZeroPriorityLevels),
     );
     assert_eq!(
         WorkloadQosPolicy::new(2, QosPriority::new(2)).unwrap_err(),
-        WorkloadError::QosPriorityOutOfRange {
+        WorkloadError::Qos(WorkloadQosError::PriorityOutOfRange {
             priority: QosPriority::new(2),
             priority_levels: 2,
-        },
+        }),
     );
     let invalid_requestor = WorkloadQosPolicy::new(2, QosPriority::new(1))
         .unwrap()
@@ -394,10 +454,10 @@ fn workload_qos_policy_rejects_invalid_declarations() {
         .unwrap_err();
     assert_eq!(
         invalid_requestor,
-        WorkloadError::QosPriorityOutOfRange {
+        WorkloadError::Qos(WorkloadQosError::PriorityOutOfRange {
             priority: QosPriority::new(3),
             priority_levels: 2,
-        },
+        }),
     );
     let duplicate = WorkloadQosPolicy::new(4, QosPriority::new(3))
         .unwrap()
@@ -407,9 +467,51 @@ fn workload_qos_policy_rejects_invalid_declarations() {
         .unwrap_err();
     assert_eq!(
         duplicate,
-        WorkloadError::DuplicateQosRequestorPriority {
+        WorkloadError::Qos(WorkloadQosError::DuplicateRequestorPriority {
             requestor: QosRequestorId::new(7),
-        },
+        }),
+    );
+    assert_eq!(
+        WorkloadQosPolicy::proportional_fair(0, 0.5).unwrap_err(),
+        WorkloadError::Qos(WorkloadQosError::ZeroPriorityLevels),
+    );
+    assert!(matches!(
+        WorkloadQosPolicy::proportional_fair(2, f64::NAN).unwrap_err(),
+        WorkloadError::Qos(WorkloadQosError::InvalidProportionalFairWeight { .. })
+    ));
+    assert!(matches!(
+        WorkloadQosPolicy::proportional_fair(2, 1.1).unwrap_err(),
+        WorkloadError::Qos(WorkloadQosError::InvalidProportionalFairWeight { .. })
+    ));
+    assert!(matches!(
+        WorkloadQosPolicy::proportional_fair(2, 0.5)
+            .unwrap()
+            .with_requestor_score(QosRequestorId::new(7), f64::INFINITY)
+            .unwrap_err(),
+        WorkloadError::Qos(WorkloadQosError::InvalidProportionalFairScore { .. })
+    ));
+    assert_eq!(
+        WorkloadQosPolicy::proportional_fair(2, 0.5)
+            .unwrap()
+            .with_requestor_score(QosRequestorId::new(7), 1.0)
+            .unwrap()
+            .with_requestor_score(QosRequestorId::new(7), 2.0)
+            .unwrap_err(),
+        WorkloadError::Qos(WorkloadQosError::DuplicateRequestorScore {
+            requestor: QosRequestorId::new(7),
+        }),
+    );
+    assert_eq!(
+        WorkloadQosPolicy::proportional_fair(1, 0.5)
+            .unwrap()
+            .with_requestor_score(QosRequestorId::new(7), 1.0)
+            .unwrap()
+            .with_requestor_score(QosRequestorId::new(8), 2.0)
+            .unwrap_err(),
+        WorkloadError::Qos(WorkloadQosError::TooManyProportionalFairRequestors {
+            requestor_count: 2,
+            priority_levels: 1,
+        }),
     );
 }
 

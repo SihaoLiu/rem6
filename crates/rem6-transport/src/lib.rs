@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use rem6_fabric::{
     FabricActivityMarker, FabricActivityProfile, FabricError, FabricHopActivity,
     FabricLaneActivity, FabricModel, FabricPacket, FabricPacketId, FabricWaitForMarker,
-    QosFixedPriorityPolicy, QosQueueArbiter,
+    QosFixedPriorityPolicy, QosPriorityPolicy, QosQueueArbiter,
 };
 pub use rem6_fabric::{QosPriority, QosRequestorId};
 use rem6_kernel::{
@@ -130,7 +130,7 @@ pub struct MemoryTransport {
     routes: Vec<StoredRoute>,
     fabric: Option<Arc<Mutex<FabricModel>>>,
     qos_arbiter: Option<Arc<Mutex<QosQueueArbiter>>>,
-    qos_priority_policy: Option<QosFixedPriorityPolicy>,
+    qos_priority_policy: Option<Arc<Mutex<QosPriorityPolicy>>>,
     direct_target_batch_responder: Option<ParallelTargetBatchResponder>,
     direct_target_batches:
         Arc<Mutex<BTreeMap<DirectTargetBatchKey, SharedPendingDirectTargetBatch>>>,
@@ -189,12 +189,19 @@ impl MemoryTransport {
         arbiter: QosQueueArbiter,
         priority_policy: QosFixedPriorityPolicy,
     ) -> Self {
+        Self::with_qos_priority_policy(arbiter, priority_policy.into())
+    }
+
+    pub fn with_qos_priority_policy(
+        arbiter: QosQueueArbiter,
+        priority_policy: QosPriorityPolicy,
+    ) -> Self {
         Self {
             next_route_id: 0,
             routes: Vec::new(),
             fabric: None,
             qos_arbiter: Some(Arc::new(Mutex::new(arbiter))),
-            qos_priority_policy: Some(priority_policy),
+            qos_priority_policy: Some(Arc::new(Mutex::new(priority_policy))),
             direct_target_batch_responder: None,
             direct_target_batches: Arc::new(Mutex::new(BTreeMap::new())),
         }
@@ -205,12 +212,20 @@ impl MemoryTransport {
         arbiter: QosQueueArbiter,
         priority_policy: QosFixedPriorityPolicy,
     ) -> Self {
+        Self::with_fabric_qos_priority_policy(fabric, arbiter, priority_policy.into())
+    }
+
+    pub fn with_fabric_qos_priority_policy(
+        fabric: FabricModel,
+        arbiter: QosQueueArbiter,
+        priority_policy: QosPriorityPolicy,
+    ) -> Self {
         Self {
             next_route_id: 0,
             routes: Vec::new(),
             fabric: Some(Arc::new(Mutex::new(fabric))),
             qos_arbiter: Some(Arc::new(Mutex::new(arbiter))),
-            qos_priority_policy: Some(priority_policy),
+            qos_priority_policy: Some(Arc::new(Mutex::new(priority_policy))),
             direct_target_batch_responder: None,
             direct_target_batches: Arc::new(Mutex::new(BTreeMap::new())),
         }
@@ -241,7 +256,7 @@ impl MemoryTransport {
             routes: Vec::new(),
             fabric: Some(fabric),
             qos_arbiter: Some(arbiter),
-            qos_priority_policy: Some(priority_policy),
+            qos_priority_policy: Some(Arc::new(Mutex::new(priority_policy.into()))),
             direct_target_batch_responder: None,
             direct_target_batches: Arc::new(Mutex::new(BTreeMap::new())),
         }
@@ -488,12 +503,19 @@ impl MemoryTransport {
         I: IntoIterator<Item = ParallelMemoryTransaction>,
     {
         let start_tick = scheduler.now();
-        let mut prepared = transactions
-            .into_iter()
-            .map(|transaction| {
-                self.prepare_parallel_transaction(scheduler, start_tick, transaction)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let mut priority_policy = self
+            .qos_priority_policy
+            .as_ref()
+            .map(|policy| policy.lock().expect("QoS priority policy lock").clone());
+        let mut prepared = Vec::new();
+        for transaction in transactions {
+            prepared.push(self.prepare_parallel_transaction(
+                scheduler,
+                start_tick,
+                transaction,
+                priority_policy.as_mut(),
+            )?);
+        }
         let first_hop_delays =
             self.reserve_parallel_batch_first_hops(start_tick, prepared.iter())?;
         for (transaction, delay) in prepared.iter_mut().zip(first_hop_delays) {
@@ -501,7 +523,11 @@ impl MemoryTransport {
         }
 
         if self.can_submit_direct_qos_parallel_batch(&prepared) {
-            return self.submit_direct_qos_parallel_batch(scheduler, start_tick, prepared);
+            let result = self.submit_direct_qos_parallel_batch(scheduler, start_tick, prepared);
+            if result.is_ok() {
+                self.commit_qos_priority_policy(priority_policy);
+            }
+            return result;
         }
 
         let mut events = Vec::with_capacity(prepared.len());
@@ -548,7 +574,14 @@ impl MemoryTransport {
             );
         }
 
+        self.commit_qos_priority_policy(priority_policy);
         Ok(events)
+    }
+
+    fn commit_qos_priority_policy(&self, priority_policy: Option<QosPriorityPolicy>) {
+        if let (Some(staged), Some(policy)) = (priority_policy, &self.qos_priority_policy) {
+            *policy.lock().expect("QoS priority policy lock") = staged;
+        }
     }
 
     fn prepare_parallel_transaction(
@@ -556,6 +589,7 @@ impl MemoryTransport {
         scheduler: &PartitionedScheduler,
         start_tick: Tick,
         transaction: ParallelMemoryTransaction,
+        priority_policy: Option<&mut QosPriorityPolicy>,
     ) -> Result<PreparedParallelTransaction, TransportError> {
         let route = self
             .route(transaction.route)
@@ -578,13 +612,15 @@ impl MemoryTransport {
         let qos_requestor = transaction
             .qos_requestor
             .unwrap_or_else(|| QosRequestorId::new(transaction.request.id().agent().get()));
-        let qos_priority = transaction.qos_priority.unwrap_or_else(|| {
-            self.qos_priority_policy
-                .as_ref()
-                .map_or(QosPriority::new(0), |policy| {
-                    policy.priority_for(qos_requestor, transaction.request.size().bytes())
-                })
-        });
+        let qos_priority = match transaction.qos_priority {
+            Some(priority) => priority,
+            None => match priority_policy {
+                Some(policy) => policy
+                    .priority_for(qos_requestor, transaction.request.size().bytes())
+                    .map_err(|source| TransportError::Qos { source })?,
+                None => QosPriority::new(0),
+            },
+        };
 
         Ok(PreparedParallelTransaction {
             route_id: transaction.route,

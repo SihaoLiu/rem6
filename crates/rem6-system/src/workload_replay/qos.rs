@@ -1,7 +1,11 @@
 use rem6_dram::{DramQosSchedulingPolicy, DramQosTurnaroundPolicy};
-use rem6_fabric::{QosFixedPriorityPolicy, QosQueueArbiter, QosQueuePolicyKind};
+use rem6_fabric::{
+    QosFixedPriorityPolicy, QosPriorityPolicy, QosProportionalFairPolicy, QosQueueArbiter,
+    QosQueuePolicyKind,
+};
 use rem6_workload::{
-    WorkloadQosPolicy, WorkloadQosQueuePolicyKind, WorkloadQosTurnaroundPolicyKind,
+    WorkloadQosPolicy, WorkloadQosPriorityPolicyKind, WorkloadQosQueuePolicyKind,
+    WorkloadQosTurnaroundPolicyKind,
 };
 
 pub(super) fn fixed_priority_policy(policy: &WorkloadQosPolicy) -> QosFixedPriorityPolicy {
@@ -14,6 +18,29 @@ pub(super) fn fixed_priority_policy(policy: &WorkloadQosPolicy) -> QosFixedPrior
             .expect("workload QoS policy validates requestor priorities");
     }
     fixed
+}
+
+pub(super) fn proportional_fair_policy(policy: &WorkloadQosPolicy) -> QosProportionalFairPolicy {
+    let mut proportional = QosProportionalFairPolicy::new(
+        policy.priority_levels(),
+        policy
+            .proportional_fair_weight()
+            .expect("workload proportional-fair QoS policy validates weight"),
+    )
+    .expect("workload proportional-fair QoS policy validates priority levels and weight");
+    for requestor in policy.requestor_scores() {
+        proportional = proportional
+            .with_requestor_score(requestor.requestor(), requestor.score())
+            .expect("workload proportional-fair QoS policy validates requestor scores");
+    }
+    proportional
+}
+
+pub(super) fn priority_policy(policy: &WorkloadQosPolicy) -> QosPriorityPolicy {
+    match policy.priority_policy_kind() {
+        WorkloadQosPriorityPolicyKind::FixedPriority => fixed_priority_policy(policy).into(),
+        WorkloadQosPriorityPolicyKind::ProportionalFair => proportional_fair_policy(policy).into(),
+    }
 }
 
 pub(super) fn queue_arbiter(policy: &WorkloadQosPolicy) -> QosQueueArbiter {

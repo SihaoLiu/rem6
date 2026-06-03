@@ -1,7 +1,9 @@
 use std::error::Error;
 use std::fmt;
 
-use rem6_fabric::{FabricError, FabricPath, QosPriority, QosRequestorId, VirtualNetworkId};
+use rem6_fabric::{
+    FabricError, FabricPath, QosError, QosPriority, QosRequestorId, VirtualNetworkId,
+};
 use rem6_kernel::{PartitionId, SchedulerError, Tick};
 use rem6_topology::{Endpoint, Topology, TopologyError, TopologyPath};
 
@@ -98,6 +100,9 @@ pub enum TransportError {
     MissingFabricModel {
         route: MemoryRouteId,
     },
+    Qos {
+        source: QosError,
+    },
     Fabric(FabricError),
     Scheduler(SchedulerError),
 }
@@ -122,6 +127,7 @@ impl fmt::Display for TransportError {
             Self::MissingFabricModel { route } => {
                 write!(formatter, "route {} needs a fabric model", route.get())
             }
+            Self::Qos { source } => write!(formatter, "{source}"),
             Self::Fabric(error) => write!(formatter, "{error}"),
             Self::Scheduler(error) => write!(formatter, "{error}"),
         }
@@ -131,6 +137,7 @@ impl fmt::Display for TransportError {
 impl Error for TransportError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
+            Self::Qos { source } => Some(source),
             Self::Fabric(error) => Some(error),
             Self::Scheduler(error) => Some(error),
             _ => None,

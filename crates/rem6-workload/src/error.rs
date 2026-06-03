@@ -1,5 +1,5 @@
 use rem6_boot::BootError;
-use rem6_fabric::{FabricLinkId, QosPriority, QosRequestorId, VirtualNetworkId};
+use rem6_fabric::{FabricLinkId, VirtualNetworkId};
 use rem6_kernel::{LivelockTransitionKind, PartitionId, Tick, WaitForEdgeKind, WaitForNode};
 use rem6_memory::MemoryError;
 
@@ -22,11 +22,13 @@ mod display;
 mod fabric_display;
 mod large_payload;
 mod parallel_partition;
+mod qos;
 mod remote_traffic_mismatch;
 mod topology;
 
 pub use large_payload::*;
 pub use parallel_partition::*;
+pub use qos::WorkloadQosError;
 pub use remote_traffic_mismatch::WorkloadParallelRemoteTrafficConsistencyMismatch;
 pub use topology::WorkloadSinicPciTopologyError;
 
@@ -308,14 +310,7 @@ pub enum WorkloadError {
         actual: String,
     },
     SinicPciTopology(WorkloadSinicPciTopologyError),
-    ZeroQosPriorityLevels,
-    QosPriorityOutOfRange {
-        priority: QosPriority,
-        priority_levels: u8,
-    },
-    DuplicateQosRequestorPriority {
-        requestor: QosRequestorId,
-    },
+    Qos(WorkloadQosError),
     ManifestIdentityMismatch {
         expected: WorkloadManifestIdentity,
         actual: WorkloadManifestIdentity,

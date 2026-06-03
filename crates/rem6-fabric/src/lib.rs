@@ -13,7 +13,7 @@ pub use activity::{
     FabricActivityProfile, FabricLaneActivity, FabricLinkActivity, FabricVirtualNetworkActivity,
 };
 pub use qos::{
-    FabricQosRequest, QosError, QosFixedPriorityPolicy, QosGrant, QosPriority,
+    FabricQosRequest, QosError, QosFixedPriorityPolicy, QosGrant, QosPriority, QosPriorityPolicy,
     QosProportionalFairPolicy, QosProportionalFairPolicySnapshot, QosProportionalFairScoreSnapshot,
     QosQueueArbiter, QosQueueArbiterSnapshot, QosQueuePolicyKind, QosQueuedRequest, QosRequestId,
     QosRequestorId,

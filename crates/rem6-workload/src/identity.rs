@@ -1380,23 +1380,53 @@ fn hash_qos_policy(hash: &mut u64, policy: Option<&crate::WorkloadQosPolicy>) {
         return;
     };
 
-    hash_str(hash, "qos.policy.fixed_priority.v1");
-    hash_u64(hash, u64::from(policy.priority_levels()));
-    hash_u64(hash, u64::from(policy.default_priority().get()));
-    hash_str(hash, policy.queue_policy().as_str());
-    hash_str(hash, policy.turnaround_policy().as_str());
-    hash_u64(
-        hash,
-        if policy.priority_escalation_enabled() {
-            1
-        } else {
-            0
-        },
-    );
-    hash_u64(hash, policy.requestor_priorities().len() as u64);
-    for requestor in policy.requestor_priorities() {
-        hash_u64(hash, u64::from(requestor.requestor().get()));
-        hash_u64(hash, u64::from(requestor.priority().get()));
+    match policy.priority_policy_kind() {
+        crate::WorkloadQosPriorityPolicyKind::FixedPriority => {
+            hash_str(hash, "qos.policy.fixed_priority.v1");
+            hash_u64(hash, u64::from(policy.priority_levels()));
+            hash_u64(hash, u64::from(policy.default_priority().get()));
+            hash_str(hash, policy.queue_policy().as_str());
+            hash_str(hash, policy.turnaround_policy().as_str());
+            hash_u64(
+                hash,
+                if policy.priority_escalation_enabled() {
+                    1
+                } else {
+                    0
+                },
+            );
+            hash_u64(hash, policy.requestor_priorities().len() as u64);
+            for requestor in policy.requestor_priorities() {
+                hash_u64(hash, u64::from(requestor.requestor().get()));
+                hash_u64(hash, u64::from(requestor.priority().get()));
+            }
+        }
+        crate::WorkloadQosPriorityPolicyKind::ProportionalFair => {
+            hash_str(hash, "qos.policy.proportional_fair.v1");
+            hash_u64(hash, u64::from(policy.priority_levels()));
+            hash_u64(
+                hash,
+                policy
+                    .proportional_fair_weight()
+                    .expect("proportional-fair policy carries a weight")
+                    .to_bits(),
+            );
+            hash_str(hash, policy.queue_policy().as_str());
+            hash_str(hash, policy.turnaround_policy().as_str());
+            hash_u64(
+                hash,
+                if policy.priority_escalation_enabled() {
+                    1
+                } else {
+                    0
+                },
+            );
+            hash_u64(hash, policy.requestor_scores().len() as u64);
+            for requestor in policy.requestor_scores() {
+                hash_u64(hash, u64::from(requestor.requestor().get()));
+                hash_u64(hash, requestor.score_bits());
+            }
+        }
     }
 }
 

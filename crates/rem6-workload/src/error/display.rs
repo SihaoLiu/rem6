@@ -443,22 +443,7 @@ impl fmt::Display for WorkloadError {
                 route.as_str()
             ),
             Self::SinicPciTopology(error) => write!(formatter, "{error}"),
-            Self::ZeroQosPriorityLevels => {
-                write!(formatter, "QoS priority levels must be positive")
-            }
-            Self::QosPriorityOutOfRange {
-                priority,
-                priority_levels,
-            } => write!(
-                formatter,
-                "QoS priority {} is outside {priority_levels} configured levels",
-                priority.get()
-            ),
-            Self::DuplicateQosRequestorPriority { requestor } => write!(
-                formatter,
-                "QoS requestor {} has more than one priority declaration",
-                requestor.get()
-            ),
+            Self::Qos(error) => write!(formatter, "{error}"),
             Self::ManifestIdentityMismatch { expected, actual } => write!(
                 formatter,
                 "workload result belongs to manifest {}, expected {}",

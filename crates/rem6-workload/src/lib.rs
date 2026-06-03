@@ -45,7 +45,7 @@ pub use boot_image::{WorkloadBootImage, WorkloadBootSegment};
 pub use error::{
     WorkloadError, WorkloadParallelPartitionActivityMergeSummary,
     WorkloadParallelPartitionCountMergeSummary, WorkloadParallelRemoteTrafficConsistencyMismatch,
-    WorkloadSinicPciTopologyError,
+    WorkloadQosError, WorkloadSinicPciTopologyError,
 };
 pub use heterogeneous::{
     WorkloadAcceleratorCommand, WorkloadAcceleratorCommandKind, WorkloadAcceleratorDevice,
@@ -108,8 +108,8 @@ pub use parallel_progress_transition_expectation::{
     WorkloadParallelProgressTransitionExpectationFailure,
 };
 pub use qos::{
-    WorkloadQosPolicy, WorkloadQosQueuePolicyKind, WorkloadQosRequestorPriority,
-    WorkloadQosTurnaroundPolicyKind,
+    WorkloadQosPolicy, WorkloadQosPriorityPolicyKind, WorkloadQosQueuePolicyKind,
+    WorkloadQosRequestorPriority, WorkloadQosRequestorScore, WorkloadQosTurnaroundPolicyKind,
 };
 pub use replay_plan::WorkloadReplayPlan;
 pub use resource::{

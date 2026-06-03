@@ -163,7 +163,7 @@ impl WorkloadSuiteReplayPlan {
                 let plan = WorkloadReplayPlan::from_manifest(entry.manifest())?;
                 let manifest_identity = plan.manifest_identity();
                 plans.push(plan);
-                Ok(WorkloadSuiteReplayEntry::new(
+                Ok::<_, WorkloadError>(WorkloadSuiteReplayEntry::new(
                     entry.workload_id().clone(),
                     manifest_identity,
                 ))

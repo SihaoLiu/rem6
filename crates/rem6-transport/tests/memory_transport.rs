@@ -2,7 +2,8 @@ use std::sync::{Arc, Mutex};
 
 use rem6_fabric::{
     FabricLinkId, FabricModel, FabricPath, FabricPathHop, QosFixedPriorityPolicy, QosPriority,
-    QosQueueArbiter, QosQueuePolicyKind, QosQueuedRequest, QosRequestId, QosRequestorId,
+    QosPriorityPolicy, QosProportionalFairPolicy, QosQueueArbiter, QosQueuePolicyKind,
+    QosQueuedRequest, QosRequestId, QosRequestorId,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler, WaitForEdgeKind, WaitForNode};
 use rem6_memory::{
@@ -1717,6 +1718,144 @@ fn transport_direct_qos_batch_can_assign_priority_from_explicit_requestor() {
     assert_eq!(
         *batch_log.lock().unwrap(),
         vec![vec![(4, promoted_request.id()), (4, default_request.id())]]
+    );
+}
+
+#[test]
+fn transport_proportional_fair_batch_failure_does_not_commit_scores() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(3, 2).unwrap();
+    let batch_log = Arc::new(Mutex::new(Vec::new()));
+    let responder_log = Arc::clone(&batch_log);
+    let requestor_a = QosRequestorId::new(7);
+    let requestor_b = QosRequestorId::new(8);
+    let priority_policy = QosPriorityPolicy::from(
+        QosProportionalFairPolicy::new(2, 1.0)
+            .unwrap()
+            .with_requestor_score(requestor_a, 100.0)
+            .unwrap()
+            .with_requestor_score(requestor_b, 1.0)
+            .unwrap(),
+    );
+    let mut transport = MemoryTransport::with_qos_priority_policy(
+        QosQueueArbiter::new(QosQueuePolicyKind::Fifo),
+        priority_policy,
+    )
+    .with_direct_target_batch_responder(move |deliveries, _context| {
+        responder_log.lock().unwrap().push(
+            deliveries
+                .iter()
+                .map(|delivery| delivery.request().id())
+                .collect::<Vec<_>>(),
+        );
+        Some(
+            deliveries
+                .iter()
+                .map(|delivery| {
+                    TargetBatchOutcome::new(delivery.request().id(), TargetOutcome::NoResponse)
+                })
+                .collect(),
+        )
+    });
+    let memory = endpoint("memory0");
+    let route_a = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("core0"),
+                PartitionId::new(0),
+                memory.clone(),
+                PartitionId::new(2),
+                4,
+                2,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let route_b = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("core1"),
+                PartitionId::new(1),
+                memory.clone(),
+                PartitionId::new(2),
+                4,
+                2,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let route_unknown = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("core2"),
+                PartitionId::new(0),
+                memory,
+                PartitionId::new(2),
+                4,
+                2,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let trace = MemoryTrace::new();
+    let failed_b = request_from(8, 280, 0x2800, 200);
+    let failed_unknown = request_from(9, 281, 0x2900, 8);
+
+    let error = transport
+        .submit_parallel_batch(
+            &mut scheduler,
+            [
+                ParallelMemoryTransaction::new(
+                    route_b,
+                    failed_b,
+                    trace.clone(),
+                    |_, _| panic!("failed batch must not schedule"),
+                    |_| panic!("failed batch must not schedule"),
+                ),
+                ParallelMemoryTransaction::new(
+                    route_unknown,
+                    failed_unknown,
+                    trace.clone(),
+                    |_, _| panic!("failed batch must not schedule"),
+                    |_| panic!("failed batch must not schedule"),
+                ),
+            ],
+        )
+        .unwrap_err();
+
+    assert!(matches!(error, TransportError::Qos { .. }));
+    assert!(scheduler.is_idle());
+    assert!(batch_log.lock().unwrap().is_empty());
+
+    let valid_a = request_from(7, 282, 0x2a00, 8);
+    let valid_b = request_from(8, 283, 0x2b00, 8);
+    transport
+        .submit_parallel_batch(
+            &mut scheduler,
+            [
+                ParallelMemoryTransaction::new(
+                    route_a,
+                    valid_a.clone(),
+                    trace.clone(),
+                    |_, _| panic!("batch responder should handle the request"),
+                    |_| panic!("request-only transfer must not deliver a response"),
+                ),
+                ParallelMemoryTransaction::new(
+                    route_b,
+                    valid_b.clone(),
+                    trace,
+                    |_, _| panic!("batch responder should handle the request"),
+                    |_| panic!("request-only transfer must not deliver a response"),
+                ),
+            ],
+        )
+        .unwrap();
+
+    let summary = scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(summary.executed_events(), 1);
+    assert_eq!(
+        *batch_log.lock().unwrap(),
+        vec![vec![valid_b.id(), valid_a.id()]]
     );
 }
 

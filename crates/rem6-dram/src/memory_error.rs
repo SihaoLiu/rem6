@@ -1,6 +1,7 @@
 use std::error::Error;
 use std::fmt;
 
+use rem6_fabric::QosError;
 use rem6_memory::{MemoryError, MemoryTargetId};
 
 use crate::{DramError, DramProfileSnapshotMismatch};
@@ -23,6 +24,9 @@ pub enum DramMemoryError {
     },
     MissingDramTarget {
         target: MemoryTargetId,
+    },
+    Qos {
+        source: QosError,
     },
 }
 
@@ -64,6 +68,7 @@ impl fmt::Display for DramMemoryError {
             Self::MissingDramTarget { target } => {
                 write!(formatter, "DRAM target {} is missing timing state", target.get())
             }
+            Self::Qos { source } => write!(formatter, "DRAM QoS scheduling failed: {source}"),
         }
     }
 }
@@ -73,6 +78,7 @@ impl Error for DramMemoryError {
         match self {
             Self::Memory(error) => Some(error),
             Self::Dram { source, .. } => Some(source),
+            Self::Qos { source } => Some(source),
             Self::TargetLineSizeMismatch { .. }
             | Self::ProfileSnapshotMismatch { .. }
             | Self::MissingDramTarget { .. } => None,

@@ -180,6 +180,45 @@ impl QosFixedPriorityPolicy {
     }
 }
 
+#[derive(Clone, Debug)]
+pub enum QosPriorityPolicy {
+    FixedPriority(QosFixedPriorityPolicy),
+    ProportionalFair(QosProportionalFairPolicy),
+}
+
+impl QosPriorityPolicy {
+    pub const fn fixed_priority(policy: QosFixedPriorityPolicy) -> Self {
+        Self::FixedPriority(policy)
+    }
+
+    pub const fn proportional_fair(policy: QosProportionalFairPolicy) -> Self {
+        Self::ProportionalFair(policy)
+    }
+
+    pub fn priority_for(
+        &mut self,
+        requestor: QosRequestorId,
+        bytes: u64,
+    ) -> Result<QosPriority, QosError> {
+        match self {
+            Self::FixedPriority(policy) => Ok(policy.priority_for(requestor, bytes)),
+            Self::ProportionalFair(policy) => policy.priority_for(requestor, bytes),
+        }
+    }
+}
+
+impl From<QosFixedPriorityPolicy> for QosPriorityPolicy {
+    fn from(policy: QosFixedPriorityPolicy) -> Self {
+        Self::fixed_priority(policy)
+    }
+}
+
+impl From<QosProportionalFairPolicy> for QosPriorityPolicy {
+    fn from(policy: QosProportionalFairPolicy) -> Self {
+        Self::proportional_fair(policy)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct QosProportionalFairScoreSnapshot {
     requestor: QosRequestorId,
