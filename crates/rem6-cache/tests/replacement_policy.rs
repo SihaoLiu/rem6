@@ -451,6 +451,10 @@ fn replacement_set_rejects_bad_configs_candidates_and_snapshots() {
         CacheReplacementPolicyConfig::new(CacheReplacementPolicyKind::TreePlru, 3),
         Err(CacheReplacementPolicyError::TreePlruWaysNotPowerOfTwo { ways: 3 })
     );
+    assert_eq!(
+        CacheReplacementPolicyConfig::new(CacheReplacementPolicyKind::TreePlru, 1),
+        Err(CacheReplacementPolicyError::TreePlruWaysTooFew { ways: 1 })
+    );
 
     let mut set = ReplacementSet::new(
         CacheReplacementPolicyConfig::new(CacheReplacementPolicyKind::Lru, 2).unwrap(),

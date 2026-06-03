@@ -11,6 +11,251 @@ fn normalized_address(address: Address, line_size: u64) -> Address {
     Address::new(address.get() / line_size * line_size)
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PrefetchAccessKind {
+    Read,
+    Write,
+    Invalidate,
+}
+
+impl PrefetchAccessKind {
+    const fn is_read(self) -> bool {
+        matches!(self, Self::Read)
+    }
+
+    const fn is_write(self) -> bool {
+        matches!(self, Self::Write)
+    }
+
+    const fn is_invalidate(self) -> bool {
+        matches!(self, Self::Invalidate)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PrefetchObservation {
+    access_kind: PrefetchAccessKind,
+    miss: bool,
+    instruction_fetch: bool,
+    prefetched: bool,
+    uncacheable: bool,
+    software_prefetch: bool,
+    cache_maintenance: bool,
+    clean_eviction: bool,
+    write_coalesced: bool,
+}
+
+impl PrefetchObservation {
+    pub const fn new(access_kind: PrefetchAccessKind, miss: bool, instruction_fetch: bool) -> Self {
+        Self {
+            access_kind,
+            miss,
+            instruction_fetch,
+            prefetched: false,
+            uncacheable: false,
+            software_prefetch: false,
+            cache_maintenance: false,
+            clean_eviction: false,
+            write_coalesced: false,
+        }
+    }
+
+    pub const fn access_kind(&self) -> PrefetchAccessKind {
+        self.access_kind
+    }
+
+    pub const fn miss(&self) -> bool {
+        self.miss
+    }
+
+    pub const fn instruction_fetch(&self) -> bool {
+        self.instruction_fetch
+    }
+
+    pub const fn prefetched(&self) -> bool {
+        self.prefetched
+    }
+
+    pub const fn uncacheable(&self) -> bool {
+        self.uncacheable
+    }
+
+    pub const fn software_prefetch(&self) -> bool {
+        self.software_prefetch
+    }
+
+    pub const fn cache_maintenance(&self) -> bool {
+        self.cache_maintenance
+    }
+
+    pub const fn clean_eviction(&self) -> bool {
+        self.clean_eviction
+    }
+
+    pub const fn write_coalesced(&self) -> bool {
+        self.write_coalesced
+    }
+
+    pub const fn with_prefetched(mut self, prefetched: bool) -> Self {
+        self.prefetched = prefetched;
+        self
+    }
+
+    pub const fn with_uncacheable(mut self, uncacheable: bool) -> Self {
+        self.uncacheable = uncacheable;
+        self
+    }
+
+    pub const fn with_software_prefetch(mut self, software_prefetch: bool) -> Self {
+        self.software_prefetch = software_prefetch;
+        self
+    }
+
+    pub const fn with_cache_maintenance(mut self, cache_maintenance: bool) -> Self {
+        self.cache_maintenance = cache_maintenance;
+        self
+    }
+
+    pub const fn with_clean_eviction(mut self, clean_eviction: bool) -> Self {
+        self.clean_eviction = clean_eviction;
+        self
+    }
+
+    pub const fn with_write_coalesced(mut self, write_coalesced: bool) -> Self {
+        self.write_coalesced = write_coalesced;
+        self
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PrefetchObservationConfigOptions {
+    pub on_miss: bool,
+    pub on_read: bool,
+    pub on_write: bool,
+    pub on_data: bool,
+    pub on_inst: bool,
+    pub prefetch_on_access: bool,
+    pub prefetch_on_prefetch_hit: bool,
+}
+
+impl Default for PrefetchObservationConfigOptions {
+    fn default() -> Self {
+        Self {
+            on_miss: false,
+            on_read: true,
+            on_write: true,
+            on_data: true,
+            on_inst: true,
+            prefetch_on_access: false,
+            prefetch_on_prefetch_hit: true,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PrefetchObservationConfig {
+    on_miss: bool,
+    on_read: bool,
+    on_write: bool,
+    on_data: bool,
+    on_inst: bool,
+    prefetch_on_access: bool,
+    prefetch_on_prefetch_hit: bool,
+}
+
+impl PrefetchObservationConfig {
+    pub const fn new(options: PrefetchObservationConfigOptions) -> Self {
+        Self {
+            on_miss: options.on_miss,
+            on_read: options.on_read,
+            on_write: options.on_write,
+            on_data: options.on_data,
+            on_inst: options.on_inst,
+            prefetch_on_access: options.prefetch_on_access,
+            prefetch_on_prefetch_hit: options.prefetch_on_prefetch_hit,
+        }
+    }
+
+    pub const fn on_miss(&self) -> bool {
+        self.on_miss
+    }
+
+    pub const fn on_read(&self) -> bool {
+        self.on_read
+    }
+
+    pub const fn on_write(&self) -> bool {
+        self.on_write
+    }
+
+    pub const fn on_data(&self) -> bool {
+        self.on_data
+    }
+
+    pub const fn on_inst(&self) -> bool {
+        self.on_inst
+    }
+
+    pub const fn prefetch_on_access(&self) -> bool {
+        self.prefetch_on_access
+    }
+
+    pub const fn prefetch_on_prefetch_hit(&self) -> bool {
+        self.prefetch_on_prefetch_hit
+    }
+
+    pub const fn should_observe(&self, observation: PrefetchObservation) -> bool {
+        if observation.software_prefetch()
+            || observation.cache_maintenance()
+            || observation.clean_eviction()
+        {
+            return false;
+        }
+        if observation.access_kind().is_write() && observation.write_coalesced() {
+            return false;
+        }
+        if !observation.miss() {
+            if self.prefetch_on_prefetch_hit() {
+                return observation.prefetched();
+            }
+            if !self.prefetch_on_access() {
+                return false;
+            }
+        }
+        if observation.uncacheable() {
+            return false;
+        }
+        if observation.instruction_fetch() {
+            if !self.on_inst() {
+                return false;
+            }
+        } else {
+            if !self.on_data() {
+                return false;
+            }
+            if observation.access_kind().is_read() && !self.on_read() {
+                return false;
+            }
+            if !observation.access_kind().is_read() && !self.on_write() {
+                return false;
+            }
+            if !observation.access_kind().is_read() && observation.access_kind().is_invalidate() {
+                return false;
+            }
+        }
+        if self.on_miss() {
+            return observation.miss();
+        }
+        true
+    }
+}
+
+impl Default for PrefetchObservationConfig {
+    fn default() -> Self {
+        Self::new(PrefetchObservationConfigOptions::default())
+    }
+}
+
 pub trait PrefetchCandidate {
     fn address(&self) -> Address;
     fn source_address(&self) -> Address;

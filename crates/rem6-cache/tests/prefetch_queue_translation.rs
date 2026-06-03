@@ -243,6 +243,68 @@ fn queued_prefetcher_drops_failed_or_redundant_translations() {
 }
 
 #[test]
+fn queued_prefetcher_filters_page_crossing_duplicates_after_translation_completion() {
+    let first = TestCandidate::new(0x1000, 0x0fc0, 7, 1);
+    let same_line_other_requestor = TestCandidate::new(0x1000, 0x0fc0, 8, 1);
+    let queue_config = QueuedPrefetchConfig::with_line_size(4, 3, 4, true, 64)
+        .unwrap()
+        .with_page_size(4096)
+        .unwrap()
+        .with_missing_translation_capacity(4)
+        .unwrap();
+    let mut queue = QueuedPrefetcher::new(queue_config.clone());
+
+    assert_eq!(
+        queue
+            .enqueue_candidates_filtered(20, std::slice::from_ref(&first), &[])
+            .unwrap()
+            .pending_translations(),
+        1
+    );
+    let duplicate_in_translation_queue = queue
+        .enqueue_candidates_filtered(21, std::slice::from_ref(&same_line_other_requestor), &[])
+        .unwrap();
+    assert_eq!(duplicate_in_translation_queue.pending_translations(), 0);
+    assert_eq!(duplicate_in_translation_queue.duplicate_hits(), 1);
+    assert_eq!(queue.missing_translation_count(), 1);
+
+    let started = queue.process_missing_translations(1).unwrap();
+    assert_eq!(started.len(), 1);
+    assert_eq!(
+        queue
+            .complete_translation(
+                30,
+                started[0].request().id(),
+                TranslationResolution::mapped(Address::new(0x3008)),
+                &[],
+            )
+            .unwrap(),
+        QueuedPrefetchTranslationOutcome::Queued
+    );
+    assert_eq!(queue.pending_count(), 1);
+    assert_eq!(queue.missing_translation_count(), 0);
+
+    let duplicate_in_prefetch_queue = queue
+        .enqueue_candidates_filtered(31, std::slice::from_ref(&same_line_other_requestor), &[])
+        .unwrap();
+    assert_eq!(duplicate_in_prefetch_queue.pending_translations(), 0);
+    assert_eq!(duplicate_in_prefetch_queue.duplicate_hits(), 1);
+    assert_eq!(queue.pending_count(), 1);
+    assert_eq!(queue.missing_translation_count(), 0);
+
+    let snapshot = queue.snapshot();
+    let mut restored = QueuedPrefetcher::new(queue_config);
+    restored.restore(&snapshot).unwrap();
+    let restored_duplicate = restored
+        .enqueue_candidates_filtered(32, &[same_line_other_requestor], &[])
+        .unwrap();
+    assert_eq!(restored_duplicate.pending_translations(), 0);
+    assert_eq!(restored_duplicate.duplicate_hits(), 1);
+    assert_eq!(restored.pending_count(), 1);
+    assert_eq!(restored.missing_translation_count(), 0);
+}
+
+#[test]
 fn queued_prefetcher_processes_missing_translations_with_width_and_full_policy() {
     let candidates = page_crossing_candidates();
     let queue_config = QueuedPrefetchConfig::with_line_size(4, 3, 4, true, 64)

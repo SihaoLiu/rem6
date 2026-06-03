@@ -3301,10 +3301,11 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   entries are rejected before restore mutates the bank, including cacheable
   writes, uncacheable atomics, no-response evictions, foreign-agent writes, and
   wrong-layout writes.
-- Cache prefetch tests cover tagged next-line candidate generation, DCPT masked
-  delta-pair matching with earliest historical replay, PC-only table lookup,
-  set-associative replacement, hit-without-touch eviction, and snapshot restore,
-  BOP best-offset learning with degree candidate metadata, delayed RR training, RR
+- Cache prefetch tests cover base access-observation filtering, tagged
+  next-line candidate generation, DCPT masked delta-pair matching with
+  earliest historical replay, PC-only table lookup, set-associative
+  replacement, hit-without-touch eviction, and snapshot restore, BOP
+  best-offset learning with degree candidate metadata, delayed RR training, RR
   snapshot restore, delay-queue snapshot restore, SBOOE sandbox stride selection,
   latency feedback, late-hit scoring, snapshot restore, SignaturePath page
   signature lookahead, low-confidence stride replacement, snapshot restore, SMS
@@ -3312,8 +3313,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   snapshot restore, FDP FTQ range expansion, PFQ/TQ duplicate filtering,
   fetch-target squash, translation failure, cache-snoop drop, queue capacity,
   ready-latency issue, fetch-target-insert PFQ/TQ occupancy statistics,
-  source-prefetched span-page usefulness accounting, snapshot restore, PIF
-  retired-PC compaction, trigger index lookup, stream address buffer
+  source-prefetched span-page usefulness accounting, cross-requestor queued
+  duplicate filtering with post-translation duplicate-key preservation,
+  snapshot restore, PIF retired-PC compaction, trigger index lookup, stream address buffer
   continuation, capacity limits, snapshot restore, ISB structural stream
   learning, PS/SP mapping cache capacity, secure-bit separation, snapshot
   restore, STeMS active-generation commit, RMOB reconstruction, duplicate
@@ -3322,8 +3324,8 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   future-index lookahead, duplicate-current-index suppression without
   lookahead, snapshot restore, host-impossible vector length rejection for
   replacement policy state, replacement directory sets and ways, cache-tag
-  dueling sample assignment, hysteresis winner selection, monitor-id
-  validation, snapshot restore, BOP and DCPT internal arrays, DCPT table
+  dueling sample assignment, hysteresis winner selection, TreePLRU one-way
+  rejection, monitor-id validation, snapshot restore, BOP and DCPT internal arrays, DCPT table
   associativity, AMPM access-map associativity and LRU replacement,
   SignaturePath tables, SBOOE sandboxes and latency buffers, SMS
   region/context/history tables, FDP queues, shared queued

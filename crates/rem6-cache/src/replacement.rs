@@ -92,6 +92,9 @@ impl CacheReplacementPolicyConfig {
                 }
             }
             CacheReplacementPolicyKind::TreePlru => {
+                if ways < 2 {
+                    return Err(CacheReplacementPolicyError::TreePlruWaysTooFew { ways });
+                }
                 if !ways.is_power_of_two() {
                     return Err(CacheReplacementPolicyError::TreePlruWaysNotPowerOfTwo { ways });
                 }
@@ -133,6 +136,9 @@ pub enum CacheReplacementPolicyError {
         percent: u8,
     },
     SignatureHistoryTableEmpty,
+    TreePlruWaysTooFew {
+        ways: usize,
+    },
     TreePlruWaysNotPowerOfTwo {
         ways: usize,
     },
@@ -216,6 +222,10 @@ impl fmt::Display for CacheReplacementPolicyError {
             Self::SignatureHistoryTableEmpty => {
                 write!(formatter, "SHiP replacement policy has no SHCT entries")
             }
+            Self::TreePlruWaysTooFew { ways } => write!(
+                formatter,
+                "TreePLRU replacement policy needs at least two ways, got {ways}"
+            ),
             Self::TreePlruWaysNotPowerOfTwo { ways } => write!(
                 formatter,
                 "TreePLRU replacement policy needs a power-of-two way count, got {ways}"
@@ -306,6 +316,7 @@ impl Error for CacheReplacementPolicyError {
             | Self::BtpOutOfRange { .. }
             | Self::InsertionThresholdOutOfRange { .. }
             | Self::SignatureHistoryTableEmpty
+            | Self::TreePlruWaysTooFew { .. }
             | Self::TreePlruWaysNotPowerOfTwo { .. }
             | Self::SignatureRequired
             | Self::UnknownWay { .. }

@@ -84,7 +84,8 @@ pub use msi::{
     MsiCacheControllerSnapshot, MsiPendingMissSnapshot,
 };
 pub use prefetch::{
-    PrefetchCandidate, StridePrefetchAccess, StridePrefetchCandidate,
+    PrefetchAccessKind, PrefetchCandidate, PrefetchObservation, PrefetchObservationConfig,
+    PrefetchObservationConfigOptions, StridePrefetchAccess, StridePrefetchCandidate,
     StridePrefetchContextSnapshot, StridePrefetchEntrySnapshot, StridePrefetcher,
     StridePrefetcherConfig, StridePrefetcherError, StridePrefetcherSnapshot, TaggedPrefetchAccess,
     TaggedPrefetchCandidate, TaggedPrefetcher, TaggedPrefetcherConfig, TaggedPrefetcherError,

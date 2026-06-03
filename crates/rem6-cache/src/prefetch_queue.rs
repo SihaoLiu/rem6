@@ -472,6 +472,7 @@ impl QueuedPrefetchMissingTranslationEntrySnapshot {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct QueuedPrefetchEntrySnapshot {
     address: Address,
+    duplicate_address: Address,
     context: AgentId,
     pc: u64,
     secure: bool,
@@ -486,6 +487,10 @@ pub struct QueuedPrefetchEntrySnapshot {
 impl QueuedPrefetchEntrySnapshot {
     pub const fn address(&self) -> Address {
         self.address
+    }
+
+    pub const fn duplicate_address(&self) -> Address {
+        self.duplicate_address
     }
 
     pub const fn context(&self) -> AgentId {
@@ -662,6 +667,7 @@ impl QueuedPrefetchIssue {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct QueuedPrefetchEntry {
     address: Address,
+    duplicate_address: Address,
     context: AgentId,
     pc: u64,
     secure: bool,
@@ -683,6 +689,7 @@ impl QueuedPrefetchEntry {
     ) -> Self {
         Self {
             address,
+            duplicate_address: address,
             context: candidate.context(),
             pc: candidate.pc(),
             secure: candidate.secure(),
@@ -698,6 +705,7 @@ impl QueuedPrefetchEntry {
     fn from_snapshot(snapshot: &QueuedPrefetchEntrySnapshot) -> Self {
         Self {
             address: snapshot.address,
+            duplicate_address: snapshot.duplicate_address,
             context: snapshot.context,
             pc: snapshot.pc,
             secure: snapshot.secure,
@@ -713,6 +721,7 @@ impl QueuedPrefetchEntry {
     fn snapshot(&self) -> QueuedPrefetchEntrySnapshot {
         QueuedPrefetchEntrySnapshot {
             address: self.address,
+            duplicate_address: self.duplicate_address,
             context: self.context,
             pc: self.pc,
             secure: self.secure,
@@ -741,9 +750,7 @@ impl QueuedPrefetchEntry {
     }
 
     fn same_request<C: PrefetchCandidate>(&self, address: Address, candidate: &C) -> bool {
-        self.address == address
-            && self.context == candidate.context()
-            && self.secure == candidate.secure()
+        self.duplicate_address == address && self.secure == candidate.secure()
     }
 
     fn update_priority<C: PrefetchCandidate>(&mut self, candidate: &C) -> bool {
@@ -861,9 +868,7 @@ impl QueuedPrefetchMissingTranslationEntry {
     }
 
     fn same_request<C: PrefetchCandidate>(&self, virtual_address: Address, candidate: &C) -> bool {
-        self.virtual_address == virtual_address
-            && self.context == candidate.context()
-            && self.secure == candidate.secure()
+        self.virtual_address == virtual_address && self.secure == candidate.secure()
     }
 
     fn update_priority<C: PrefetchCandidate>(&mut self, candidate: &C) -> bool {
@@ -879,6 +884,7 @@ impl QueuedPrefetchMissingTranslationEntry {
     fn ready_entry(&self, address: Address, ready_tick: u64) -> QueuedPrefetchEntry {
         QueuedPrefetchEntry {
             address,
+            duplicate_address: self.virtual_address,
             context: self.context,
             pc: self.pc,
             secure: self.secure,

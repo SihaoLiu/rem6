@@ -1,5 +1,5 @@
 use rem6_cache::{
-    QueuedPrefetchConfig, QueuedPrefetchDemandAccess, QueuedPrefetchFullPolicy,
+    PrefetchCandidate, QueuedPrefetchConfig, QueuedPrefetchDemandAccess, QueuedPrefetchFullPolicy,
     QueuedPrefetchRedundantLine, QueuedPrefetchSourceStatus, QueuedPrefetchThrottle,
     QueuedPrefetchThrottleConfig, QueuedPrefetcher, StridePrefetchAccess, StridePrefetcher,
     StridePrefetcherConfig, TaggedPrefetchAccess, TaggedPrefetcher, TaggedPrefetcherConfig,
@@ -12,6 +12,57 @@ fn access(agent: u32, pc: u64, address: u64) -> StridePrefetchAccess {
 
 fn tagged_access(agent: u32, pc: u64, address: u64) -> TaggedPrefetchAccess {
     TaggedPrefetchAccess::new(AgentId::new(agent), pc, Address::new(address), false)
+}
+
+#[derive(Clone, Debug)]
+struct QueueCandidate {
+    address: Address,
+    source_address: Address,
+    context: AgentId,
+    secure: bool,
+    degree_index: u32,
+}
+
+impl QueueCandidate {
+    const fn new(address: u64, source_address: u64, context: u32, secure: bool) -> Self {
+        Self {
+            address: Address::new(address),
+            source_address: Address::new(source_address),
+            context: AgentId::new(context),
+            secure,
+            degree_index: 1,
+        }
+    }
+}
+
+impl PrefetchCandidate for QueueCandidate {
+    fn address(&self) -> Address {
+        self.address
+    }
+
+    fn source_address(&self) -> Address {
+        self.source_address
+    }
+
+    fn context(&self) -> AgentId {
+        self.context
+    }
+
+    fn pc(&self) -> u64 {
+        0x100
+    }
+
+    fn secure(&self) -> bool {
+        self.secure
+    }
+
+    fn stride(&self) -> i64 {
+        64
+    }
+
+    fn degree_index(&self) -> u32 {
+        self.degree_index
+    }
 }
 
 #[test]
@@ -123,6 +174,38 @@ fn queued_prefetcher_records_resource_stats_in_snapshots() {
     assert_eq!(page_queue.stats().identified_prefetches(), 0);
     assert_eq!(page_queue.stats().span_page_prefetches(), 2);
     assert_eq!(page_queue.stats().useful_span_page_prefetches(), 0);
+}
+
+#[test]
+fn queued_prefetcher_filters_duplicates_across_requestors_by_line_and_secure_bit() {
+    let queue_config = QueuedPrefetchConfig::with_line_size(4, 3, 4, true, 64).unwrap();
+    let mut queue = QueuedPrefetcher::new(queue_config);
+    let first = QueueCandidate::new(0x1040, 0x1000, 1, false);
+    let same_line_other_requestor = QueueCandidate::new(0x1040, 0x1000, 2, false);
+    let same_line_secure = QueueCandidate::new(0x1040, 0x1000, 2, true);
+
+    assert_eq!(
+        queue
+            .enqueue_candidates_filtered(10, &[first], &[])
+            .unwrap()
+            .accepted(),
+        1
+    );
+    let duplicate = queue
+        .enqueue_candidates_filtered(11, &[same_line_other_requestor], &[])
+        .unwrap();
+    assert_eq!(duplicate.accepted(), 0);
+    assert_eq!(duplicate.duplicate_hits(), 1);
+    assert_eq!(queue.pending_count(), 1);
+    assert_eq!(queue.stats().buffer_hits(), 1);
+    assert_eq!(queue.stats().identified_prefetches(), 2);
+
+    let secure_result = queue
+        .enqueue_candidates_filtered(12, &[same_line_secure], &[])
+        .unwrap();
+    assert_eq!(secure_result.accepted(), 1);
+    assert_eq!(secure_result.duplicate_hits(), 0);
+    assert_eq!(queue.pending_count(), 2);
 }
 
 #[test]
