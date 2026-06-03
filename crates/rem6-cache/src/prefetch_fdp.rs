@@ -368,6 +368,52 @@ impl FetchDirectedRemoveSummary {
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct FetchDirectedQueueOccupancySnapshot {
+    samples: u64,
+    total_entries: u64,
+    minimum_entries: Option<u64>,
+    maximum_entries: Option<u64>,
+    last_entries: Option<u64>,
+}
+
+impl FetchDirectedQueueOccupancySnapshot {
+    pub const fn samples(&self) -> u64 {
+        self.samples
+    }
+
+    pub const fn total_entries(&self) -> u64 {
+        self.total_entries
+    }
+
+    pub const fn minimum_entries(&self) -> Option<u64> {
+        self.minimum_entries
+    }
+
+    pub const fn maximum_entries(&self) -> Option<u64> {
+        self.maximum_entries
+    }
+
+    pub const fn last_entries(&self) -> Option<u64> {
+        self.last_entries
+    }
+
+    fn record(&mut self, entries: usize) {
+        let entries = entries as u64;
+        self.samples = self.samples.saturating_add(1);
+        self.total_entries = self.total_entries.saturating_add(entries);
+        self.minimum_entries = Some(
+            self.minimum_entries
+                .map_or(entries, |value| value.min(entries)),
+        );
+        self.maximum_entries = Some(
+            self.maximum_entries
+                .map_or(entries, |value| value.max(entries)),
+        );
+        self.last_entries = Some(entries);
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct FetchDirectedStatsSnapshot {
     prefetches_identified: u64,
     prefetches_squashed: u64,
@@ -385,6 +431,8 @@ pub struct FetchDirectedStatsSnapshot {
     translation_queue_inserts: u64,
     translation_queue_pops: u64,
     translation_queue_drops: u64,
+    prefetch_queue_occupancy_at_fetch_target_insert: FetchDirectedQueueOccupancySnapshot,
+    translation_queue_occupancy_at_fetch_target_insert: FetchDirectedQueueOccupancySnapshot,
 }
 
 impl FetchDirectedStatsSnapshot {
@@ -450,6 +498,18 @@ impl FetchDirectedStatsSnapshot {
 
     pub const fn translation_queue_drops(&self) -> u64 {
         self.translation_queue_drops
+    }
+
+    pub const fn prefetch_queue_occupancy_at_fetch_target_insert(
+        &self,
+    ) -> &FetchDirectedQueueOccupancySnapshot {
+        &self.prefetch_queue_occupancy_at_fetch_target_insert
+    }
+
+    pub const fn translation_queue_occupancy_at_fetch_target_insert(
+        &self,
+    ) -> &FetchDirectedQueueOccupancySnapshot {
+        &self.translation_queue_occupancy_at_fetch_target_insert
     }
 }
 
@@ -675,6 +735,12 @@ impl FetchDirectedPrefetcher {
                         });
                     summary.translation_queue_inserts += 1;
                     self.stats.translation_queue_inserts += 1;
+                    self.stats
+                        .translation_queue_occupancy_at_fetch_target_insert
+                        .record(self.translation_queue.len());
+                    self.stats
+                        .prefetch_queue_occupancy_at_fetch_target_insert
+                        .record(self.prefetch_queue.len());
                 }
             }
 

@@ -109,8 +109,8 @@ pub use prefetch_fdp::{
     FetchDirectedCacheLookup, FetchDirectedInsertSummary, FetchDirectedPrefetchIssue,
     FetchDirectedPrefetchQueueEntrySnapshot, FetchDirectedPrefetcher,
     FetchDirectedPrefetcherConfig, FetchDirectedPrefetcherError, FetchDirectedPrefetcherSnapshot,
-    FetchDirectedRemoveSummary, FetchDirectedStatsSnapshot, FetchDirectedTarget,
-    FetchDirectedTranslation, FetchDirectedTranslationEntrySnapshot,
+    FetchDirectedQueueOccupancySnapshot, FetchDirectedRemoveSummary, FetchDirectedStatsSnapshot,
+    FetchDirectedTarget, FetchDirectedTranslation, FetchDirectedTranslationEntrySnapshot,
     FetchDirectedTranslationOutcome,
 };
 pub use prefetch_indirect_memory::{

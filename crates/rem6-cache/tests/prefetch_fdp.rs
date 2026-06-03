@@ -113,6 +113,78 @@ fn fetch_directed_prefetcher_queues_translated_ftq_blocks_and_restores_state() {
 }
 
 #[test]
+fn fetch_directed_prefetcher_samples_queue_occupancy_at_insert_notifications() {
+    let config = FetchDirectedPrefetcherConfig::new(64, 3, 4, 4, true, true, true).unwrap();
+    let mut prefetcher = FetchDirectedPrefetcher::new(config.clone());
+
+    prefetcher
+        .notify_fetch_target_insert(fetch_target(2, 31, 0x1000, 0x1040))
+        .unwrap();
+    let stats = prefetcher.stats();
+    let translation_occupancy = stats.translation_queue_occupancy_at_fetch_target_insert();
+    let prefetch_occupancy = stats.prefetch_queue_occupancy_at_fetch_target_insert();
+
+    assert_eq!(translation_occupancy.samples(), 2);
+    assert_eq!(translation_occupancy.total_entries(), 3);
+    assert_eq!(translation_occupancy.minimum_entries(), Some(1));
+    assert_eq!(translation_occupancy.maximum_entries(), Some(2));
+    assert_eq!(translation_occupancy.last_entries(), Some(2));
+    assert_eq!(prefetch_occupancy.samples(), 2);
+    assert_eq!(prefetch_occupancy.total_entries(), 0);
+    assert_eq!(prefetch_occupancy.minimum_entries(), Some(0));
+    assert_eq!(prefetch_occupancy.maximum_entries(), Some(0));
+    assert_eq!(prefetch_occupancy.last_entries(), Some(0));
+
+    assert_eq!(
+        prefetcher
+            .complete_translation(
+                10,
+                31,
+                Address::new(0x1000),
+                Ok(FetchDirectedTranslation::new(
+                    Address::new(0x8000),
+                    false,
+                    FetchDirectedCacheLookup::Miss,
+                )),
+            )
+            .unwrap(),
+        FetchDirectedTranslationOutcome::Queued
+    );
+    prefetcher
+        .notify_fetch_target_insert(fetch_target(2, 32, 0x1080, 0x1080))
+        .unwrap();
+
+    let stats = prefetcher.stats();
+    let translation_occupancy = stats.translation_queue_occupancy_at_fetch_target_insert();
+    let prefetch_occupancy = stats.prefetch_queue_occupancy_at_fetch_target_insert();
+
+    assert_eq!(translation_occupancy.samples(), 3);
+    assert_eq!(translation_occupancy.total_entries(), 5);
+    assert_eq!(translation_occupancy.maximum_entries(), Some(2));
+    assert_eq!(translation_occupancy.last_entries(), Some(2));
+    assert_eq!(prefetch_occupancy.samples(), 3);
+    assert_eq!(prefetch_occupancy.total_entries(), 1);
+    assert_eq!(prefetch_occupancy.maximum_entries(), Some(1));
+    assert_eq!(prefetch_occupancy.last_entries(), Some(1));
+
+    let snapshot = prefetcher.snapshot();
+    let mut restored = FetchDirectedPrefetcher::new(config);
+    restored.restore(&snapshot).unwrap();
+    assert_eq!(
+        restored
+            .stats()
+            .translation_queue_occupancy_at_fetch_target_insert(),
+        translation_occupancy
+    );
+    assert_eq!(
+        restored
+            .stats()
+            .prefetch_queue_occupancy_at_fetch_target_insert(),
+        prefetch_occupancy
+    );
+}
+
+#[test]
 fn fetch_directed_prefetcher_squashes_snoops_fails_and_tracks_capacity() {
     let config = FetchDirectedPrefetcherConfig::new(64, 1, 1, 2, true, true, true).unwrap();
     let mut prefetcher = FetchDirectedPrefetcher::new(config);

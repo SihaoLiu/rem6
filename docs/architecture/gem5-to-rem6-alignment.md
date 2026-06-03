@@ -3311,19 +3311,20 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   eviction-committed region patterns, filter FIFO capacity, PHT LRU capacity,
   snapshot restore, FDP FTQ range expansion, PFQ/TQ duplicate filtering,
   fetch-target squash, translation failure, cache-snoop drop, queue capacity,
-  ready-latency issue, source-prefetched span-page usefulness accounting,
-  snapshot restore, PIF retired-PC compaction, trigger index lookup, stream
-  address buffer continuation, capacity limits, snapshot restore, ISB
-  structural stream learning, PS/SP mapping cache capacity, secure-bit
-  separation, snapshot restore, STeMS active-generation commit, RMOB
-  reconstruction, duplicate filtering, secure-bit separation, snapshot
-  restore, IMP indirect-pattern detection, IPD base matching, stream fallback,
-  typed key LRU capacity, future-index lookahead, duplicate-current-index
-  suppression without lookahead, snapshot restore, host-impossible vector
-  length rejection for replacement policy state, replacement directory sets and
-  ways, cache-tag dueling sample assignment, hysteresis winner selection,
-  monitor-id validation, snapshot restore, BOP and DCPT internal arrays, DCPT
-  table associativity, AMPM access-map associativity and LRU replacement,
+  ready-latency issue, fetch-target-insert PFQ/TQ occupancy statistics,
+  source-prefetched span-page usefulness accounting, snapshot restore, PIF
+  retired-PC compaction, trigger index lookup, stream address buffer
+  continuation, capacity limits, snapshot restore, ISB structural stream
+  learning, PS/SP mapping cache capacity, secure-bit separation, snapshot
+  restore, STeMS active-generation commit, RMOB reconstruction, duplicate
+  filtering, secure-bit separation, snapshot restore, IMP indirect-pattern
+  detection, IPD base matching, stream fallback, typed key LRU capacity,
+  future-index lookahead, duplicate-current-index suppression without
+  lookahead, snapshot restore, host-impossible vector length rejection for
+  replacement policy state, replacement directory sets and ways, cache-tag
+  dueling sample assignment, hysteresis winner selection, monitor-id
+  validation, snapshot restore, BOP and DCPT internal arrays, DCPT table
+  associativity, AMPM access-map associativity and LRU replacement,
   SignaturePath tables, SBOOE sandboxes and latency buffers, SMS
   region/context/history tables, FDP queues, shared queued
   missing-translation deferral, translation start width, ongoing-state
