@@ -5,6 +5,7 @@ use rem6_memory::Address;
 
 use crate::allocation::max_vector_len;
 use crate::indexing::CacheIndexingPolicyError;
+use crate::partitioning::CachePartitioningError;
 use crate::replacement_directory::CacheReplacementDirectoryConfig;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -170,7 +171,14 @@ pub enum CacheReplacementPolicyError {
         set: usize,
         way: usize,
     },
+    PartitionManagerRequired {
+        line: Address,
+        partition: crate::partitioning::CachePartitionId,
+    },
     NoCandidates,
+    PartitioningPolicy {
+        source: CachePartitioningError,
+    },
     SnapshotConfigMismatch {
         expected: Box<CacheReplacementPolicyConfig>,
         actual: Box<CacheReplacementPolicyConfig>,
@@ -267,7 +275,16 @@ impl fmt::Display for CacheReplacementPolicyError {
                 formatter,
                 "cache replacement directory destination set {set} way {way} is occupied"
             ),
+            Self::PartitionManagerRequired { line, partition } => write!(
+                formatter,
+                "cache replacement directory line {:#x} has partition {:?} and needs a partition manager",
+                line.get(),
+                partition
+            ),
             Self::NoCandidates => write!(formatter, "cache replacement policy has no candidates"),
+            Self::PartitioningPolicy { source } => {
+                write!(formatter, "cache partitioning policy update failed: {source}")
+            }
             Self::SnapshotConfigMismatch { expected, actual } => write!(
                 formatter,
                 "cache replacement snapshot config {actual:?} does not match policy config {expected:?}"
@@ -313,6 +330,7 @@ impl Error for CacheReplacementPolicyError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::IndexingPolicyConfig { source } => Some(source),
+            Self::PartitioningPolicy { source } => Some(source),
             Self::ZeroWays
             | Self::ZeroSets
             | Self::VectorLengthTooLarge { .. }
@@ -328,6 +346,7 @@ impl Error for CacheReplacementPolicyError {
             | Self::UnknownResidentLine { .. }
             | Self::LineSetMismatch { .. }
             | Self::OccupiedDestinationWay { .. }
+            | Self::PartitionManagerRequired { .. }
             | Self::NoCandidates
             | Self::SnapshotConfigMismatch { .. }
             | Self::SnapshotDirectoryConfigMismatch { .. }
@@ -336,6 +355,12 @@ impl Error for CacheReplacementPolicyError {
             | Self::SnapshotDuplicateLine { .. }
             | Self::SnapshotLineSetMismatch { .. } => None,
         }
+    }
+}
+
+impl From<CachePartitioningError> for CacheReplacementPolicyError {
+    fn from(error: CachePartitioningError) -> Self {
+        Self::PartitioningPolicy { source: error }
     }
 }
 

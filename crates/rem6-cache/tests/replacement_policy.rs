@@ -1,9 +1,11 @@
 use std::collections::BTreeSet;
 
 use rem6_cache::{
-    CacheIndexingLocation, CacheIndexingPolicyKind, CacheReplacementDirectory,
-    CacheReplacementDirectoryConfig, CacheReplacementPolicyConfig, CacheReplacementPolicyError,
-    CacheReplacementPolicyKind, ReplacementEntry, ReplacementSet,
+    CacheIndexingLocation, CacheIndexingPolicyKind, CachePartitionId, CachePartitionManager,
+    CachePartitionPolicy, CacheReplacementDirectory, CacheReplacementDirectoryConfig,
+    CacheReplacementPolicyConfig, CacheReplacementPolicyError, CacheReplacementPolicyKind,
+    MaxCapacityPartitioningPolicy, ReplacementEntry, ReplacementSet, WayPartitionAllocation,
+    WayPartitioningPolicy,
 };
 use rem6_memory::{Address, CacheLineLayout};
 
@@ -1035,4 +1037,300 @@ fn replacement_directory_snapshot_restore_preserves_policy_state() {
         directory.set_lines(2),
         Err(CacheReplacementPolicyError::UnknownSet { set: 2, sets: 1 })
     );
+}
+
+#[test]
+fn replacement_directory_filters_partition_candidates_before_victim_selection() {
+    let mut directory = CacheReplacementDirectory::new(
+        CacheReplacementDirectoryConfig::new(CacheReplacementPolicyKind::Lru, line_layout(), 1, 4)
+            .unwrap(),
+    );
+    let partition = CachePartitionId::new(7);
+    let mut manager = CachePartitionManager::new([CachePartitionPolicy::Way(
+        WayPartitioningPolicy::new(4, &[WayPartitionAllocation::new(partition, [2, 3])]).unwrap(),
+    )]);
+
+    for line in [0x0000, 0x0010, 0x0020, 0x0030] {
+        directory.install(Address::new(line)).unwrap();
+    }
+    directory.touch(Address::new(0x0020)).unwrap();
+
+    let install = directory
+        .install_for_partition(Address::new(0x0040), partition, &mut manager)
+        .unwrap();
+
+    assert_eq!(install.evicted_line(), Some(Address::new(0x0030)));
+    assert_eq!(install.set(), 0);
+    assert_eq!(install.way(), 3);
+    assert_eq!(directory.way_for(Address::new(0x0000)), Some((0, 0)));
+    assert_eq!(directory.way_for(Address::new(0x0010)), Some((0, 1)));
+    assert_eq!(directory.way_for(Address::new(0x0020)), Some((0, 2)));
+    assert_eq!(directory.way_for(Address::new(0x0040)), Some((0, 3)));
+}
+
+#[test]
+fn replacement_directory_reports_empty_partition_candidate_set_without_mutation() {
+    let mut directory = CacheReplacementDirectory::new(
+        CacheReplacementDirectoryConfig::new(CacheReplacementPolicyKind::Lru, line_layout(), 1, 2)
+            .unwrap(),
+    );
+    let partition = CachePartitionId::new(7);
+    let mut max_capacity = MaxCapacityPartitioningPolicy::new(2, &[(partition, 0.5)]).unwrap();
+    max_capacity.notify_acquire(partition).unwrap();
+    let mut manager = CachePartitionManager::new([CachePartitionPolicy::MaxCapacity(max_capacity)]);
+    directory.install(Address::new(0x0000)).unwrap();
+    directory.install(Address::new(0x0010)).unwrap();
+
+    let result = directory.install_for_partition(Address::new(0x0020), partition, &mut manager);
+
+    assert_eq!(result, Err(CacheReplacementPolicyError::NoCandidates));
+    assert_eq!(
+        directory.resident_lines(),
+        vec![Address::new(0x0000), Address::new(0x0010)]
+    );
+    let CachePartitionPolicy::MaxCapacity(policy) = &manager.policies()[0] else {
+        panic!("expected max-capacity partition policy");
+    };
+    assert_eq!(policy.current_capacity(partition), Some(1));
+}
+
+#[test]
+fn replacement_directory_updates_partition_manager_counts_on_partition_install() {
+    let mut directory = CacheReplacementDirectory::new(
+        CacheReplacementDirectoryConfig::new(CacheReplacementPolicyKind::Lru, line_layout(), 1, 2)
+            .unwrap(),
+    );
+    let partition = CachePartitionId::new(7);
+    let mut manager = CachePartitionManager::new([CachePartitionPolicy::MaxCapacity(
+        MaxCapacityPartitioningPolicy::new(2, &[(partition, 0.5)]).unwrap(),
+    )]);
+
+    directory
+        .install_for_partition(Address::new(0x0000), partition, &mut manager)
+        .unwrap();
+
+    let CachePartitionPolicy::MaxCapacity(policy) = &manager.policies()[0] else {
+        panic!("expected max-capacity partition policy");
+    };
+    assert_eq!(policy.current_capacity(partition), Some(1));
+}
+
+#[test]
+fn replacement_directory_preserves_partition_owner_across_move_and_restore() {
+    let partition = CachePartitionId::new(7);
+    let mut empty_manager = CachePartitionManager::default();
+    let mut directory = CacheReplacementDirectory::new(
+        CacheReplacementDirectoryConfig::new(CacheReplacementPolicyKind::Lru, line_layout(), 1, 2)
+            .unwrap(),
+    );
+    directory
+        .install_for_partition(Address::new(0x0000), partition, &mut empty_manager)
+        .unwrap();
+    directory
+        .move_resident_line(Address::new(0x0000), 0, 1)
+        .unwrap();
+    directory.install(Address::new(0x0010)).unwrap();
+    let snapshot = directory.snapshot();
+
+    let mut restored = CacheReplacementDirectory::new(directory.config().clone());
+    restored.restore(&snapshot).unwrap();
+    let mut max_capacity = MaxCapacityPartitioningPolicy::new(2, &[(partition, 0.5)]).unwrap();
+    max_capacity.notify_acquire(partition).unwrap();
+    let mut manager = CachePartitionManager::new([CachePartitionPolicy::MaxCapacity(max_capacity)]);
+
+    let install = restored
+        .install_for_partition(Address::new(0x0020), partition, &mut manager)
+        .unwrap();
+
+    assert_eq!(install.evicted_line(), Some(Address::new(0x0000)));
+    assert_eq!(install.way(), 1);
+    assert_eq!(restored.way_for(Address::new(0x0010)), Some((0, 0)));
+    assert_eq!(restored.way_for(Address::new(0x0020)), Some((0, 1)));
+    let CachePartitionPolicy::MaxCapacity(policy) = &manager.policies()[0] else {
+        panic!("expected max-capacity partition policy");
+    };
+    assert_eq!(policy.current_capacity(partition), Some(1));
+}
+
+#[test]
+fn replacement_directory_partition_remove_releases_manager_counts() {
+    let partition = CachePartitionId::new(7);
+    let mut manager = CachePartitionManager::new([CachePartitionPolicy::MaxCapacity(
+        MaxCapacityPartitioningPolicy::new(2, &[(partition, 0.5)]).unwrap(),
+    )]);
+    let mut directory = CacheReplacementDirectory::new(
+        CacheReplacementDirectoryConfig::new(CacheReplacementPolicyKind::Lru, line_layout(), 1, 2)
+            .unwrap(),
+    );
+    directory
+        .install_for_partition(Address::new(0x0000), partition, &mut manager)
+        .unwrap();
+
+    assert_eq!(
+        directory.remove_resident_line(Address::new(0x0000)),
+        Err(CacheReplacementPolicyError::PartitionManagerRequired {
+            line: Address::new(0x0000),
+            partition,
+        })
+    );
+    assert_eq!(directory.way_for(Address::new(0x0000)), Some((0, 0)));
+    let removal = directory
+        .remove_resident_line_with_partition_manager(Address::new(0x0000), &mut manager)
+        .unwrap();
+
+    assert!(removal.is_some());
+    assert_eq!(directory.way_for(Address::new(0x0000)), None);
+    let CachePartitionPolicy::MaxCapacity(policy) = &manager.policies()[0] else {
+        panic!("expected max-capacity partition policy");
+    };
+    assert_eq!(policy.current_capacity(partition), Some(0));
+}
+
+#[test]
+fn replacement_directory_partition_remove_reports_typed_release_errors_without_mutation() {
+    let partition = CachePartitionId::new(7);
+    let mut install_manager = CachePartitionManager::default();
+    let mut stale_manager = CachePartitionManager::new([CachePartitionPolicy::MaxCapacity(
+        MaxCapacityPartitioningPolicy::new(2, &[(partition, 0.5)]).unwrap(),
+    )]);
+    let mut directory = CacheReplacementDirectory::new(
+        CacheReplacementDirectoryConfig::new(CacheReplacementPolicyKind::Lru, line_layout(), 1, 2)
+            .unwrap(),
+    );
+    directory
+        .install_for_partition(Address::new(0x0000), partition, &mut install_manager)
+        .unwrap();
+
+    assert_eq!(
+        directory
+            .remove_resident_line_with_partition_manager(Address::new(0x0000), &mut stale_manager),
+        Err(CacheReplacementPolicyError::PartitioningPolicy {
+            source: rem6_cache::CachePartitioningError::CapacityUnderflow { partition },
+        })
+    );
+    assert_eq!(directory.way_for(Address::new(0x0000)), Some((0, 0)));
+}
+
+#[test]
+fn replacement_directory_rebuilds_partition_manager_counts_after_restore() {
+    let partition = CachePartitionId::new(7);
+    let mut empty_manager = CachePartitionManager::default();
+    let mut directory = CacheReplacementDirectory::new(
+        CacheReplacementDirectoryConfig::new(CacheReplacementPolicyKind::Lru, line_layout(), 1, 2)
+            .unwrap(),
+    );
+    directory
+        .install_for_partition(Address::new(0x0000), partition, &mut empty_manager)
+        .unwrap();
+    let snapshot = directory.snapshot();
+    let mut restored = CacheReplacementDirectory::new(directory.config().clone());
+    restored.restore(&snapshot).unwrap();
+    let mut rebuilt_manager = CachePartitionManager::new([CachePartitionPolicy::MaxCapacity(
+        MaxCapacityPartitioningPolicy::new(2, &[(partition, 0.5)]).unwrap(),
+    )]);
+
+    restored.rebuild_partition_manager(&mut rebuilt_manager);
+
+    let CachePartitionPolicy::MaxCapacity(policy) = &rebuilt_manager.policies()[0] else {
+        panic!("expected max-capacity partition policy");
+    };
+    assert_eq!(policy.current_capacity(partition), Some(1));
+}
+
+#[test]
+fn replacement_directory_plain_install_refuses_to_evict_partition_owned_line() {
+    let partition = CachePartitionId::new(7);
+    let mut manager = CachePartitionManager::new([CachePartitionPolicy::MaxCapacity(
+        MaxCapacityPartitioningPolicy::new(1, &[(partition, 1.0)]).unwrap(),
+    )]);
+    let mut directory = CacheReplacementDirectory::new(
+        CacheReplacementDirectoryConfig::new(CacheReplacementPolicyKind::Lru, line_layout(), 1, 1)
+            .unwrap(),
+    );
+    directory
+        .install_for_partition(Address::new(0x0000), partition, &mut manager)
+        .unwrap();
+
+    assert_eq!(
+        directory.install(Address::new(0x0010)),
+        Err(CacheReplacementPolicyError::PartitionManagerRequired {
+            line: Address::new(0x0000),
+            partition,
+        })
+    );
+    assert_eq!(directory.way_for(Address::new(0x0000)), Some((0, 0)));
+    let CachePartitionPolicy::MaxCapacity(policy) = &manager.policies()[0] else {
+        panic!("expected max-capacity partition policy");
+    };
+    assert_eq!(policy.current_capacity(partition), Some(1));
+}
+
+#[test]
+fn replacement_directory_plain_install_failure_preserves_replacement_snapshot() {
+    let partition = CachePartitionId::new(7);
+    let mut manager = CachePartitionManager::default();
+    let mut directory = CacheReplacementDirectory::new(
+        CacheReplacementDirectoryConfig::new(
+            CacheReplacementPolicyKind::Brrip {
+                rrpv_bits: 2,
+                hit_priority: false,
+                btp_percent: 0,
+            },
+            line_layout(),
+            1,
+            2,
+        )
+        .unwrap(),
+    );
+    directory
+        .install_for_partition(Address::new(0x0000), partition, &mut manager)
+        .unwrap();
+    directory.install(Address::new(0x0010)).unwrap();
+    let snapshot = directory.snapshot();
+
+    assert_eq!(
+        directory.install(Address::new(0x0020)),
+        Err(CacheReplacementPolicyError::PartitionManagerRequired {
+            line: Address::new(0x0000),
+            partition,
+        })
+    );
+
+    assert_eq!(directory.snapshot(), snapshot);
+}
+
+#[test]
+fn replacement_directory_partition_update_failure_preserves_replacement_snapshot() {
+    let partition = CachePartitionId::new(7);
+    let mut install_manager = CachePartitionManager::default();
+    let mut stale_manager = CachePartitionManager::new([CachePartitionPolicy::MaxCapacity(
+        MaxCapacityPartitioningPolicy::new(2, &[(partition, 0.5)]).unwrap(),
+    )]);
+    let mut directory = CacheReplacementDirectory::new(
+        CacheReplacementDirectoryConfig::new(
+            CacheReplacementPolicyKind::Brrip {
+                rrpv_bits: 2,
+                hit_priority: false,
+                btp_percent: 0,
+            },
+            line_layout(),
+            1,
+            2,
+        )
+        .unwrap(),
+    );
+    directory
+        .install_for_partition(Address::new(0x0000), partition, &mut install_manager)
+        .unwrap();
+    directory.install(Address::new(0x0010)).unwrap();
+    let snapshot = directory.snapshot();
+
+    assert_eq!(
+        directory.install_for_partition(Address::new(0x0020), partition, &mut stale_manager),
+        Err(CacheReplacementPolicyError::PartitioningPolicy {
+            source: rem6_cache::CachePartitioningError::CapacityUnderflow { partition },
+        })
+    );
+
+    assert_eq!(directory.snapshot(), snapshot);
 }

@@ -71,7 +71,7 @@ impl WayPartitionAllocation {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum CachePartitioningError {
     ZeroWays,
     ZeroTotalBlocks,
@@ -96,6 +96,67 @@ pub enum CachePartitioningError {
         partition: CachePartitionId,
     },
 }
+
+impl PartialEq for CachePartitioningError {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::ZeroWays, Self::ZeroWays) | (Self::ZeroTotalBlocks, Self::ZeroTotalBlocks) => {
+                true
+            }
+            (
+                Self::WayOutOfRange {
+                    partition,
+                    way,
+                    ways,
+                },
+                Self::WayOutOfRange {
+                    partition: other_partition,
+                    way: other_way,
+                    ways: other_ways,
+                },
+            ) => partition == other_partition && way == other_way && ways == other_ways,
+            (
+                Self::InvalidCapacityFraction {
+                    partition,
+                    fraction,
+                },
+                Self::InvalidCapacityFraction {
+                    partition: other_partition,
+                    fraction: other_fraction,
+                },
+            ) => partition == other_partition && fraction.to_bits() == other_fraction.to_bits(),
+            (
+                Self::DuplicatePartition { partition },
+                Self::DuplicatePartition {
+                    partition: other_partition,
+                },
+            ) => partition == other_partition,
+            (
+                Self::CapacityExceeded {
+                    partition,
+                    current,
+                    maximum,
+                },
+                Self::CapacityExceeded {
+                    partition: other_partition,
+                    current: other_current,
+                    maximum: other_maximum,
+                },
+            ) => {
+                partition == other_partition && current == other_current && maximum == other_maximum
+            }
+            (
+                Self::CapacityUnderflow { partition },
+                Self::CapacityUnderflow {
+                    partition: other_partition,
+                },
+            ) => partition == other_partition,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for CachePartitioningError {}
 
 impl fmt::Display for CachePartitioningError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -338,6 +399,18 @@ impl MaxCapacityPartitioningPolicy {
         }
         Ok(())
     }
+
+    pub fn rebuild_current_capacity<I>(&mut self, owners: I)
+    where
+        I: IntoIterator<Item = CachePartitionId>,
+    {
+        self.current_capacity.clear();
+        for owner in owners {
+            if self.max_capacity.contains_key(&owner) {
+                *self.current_capacity.entry(owner).or_insert(0) += 1;
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -375,6 +448,15 @@ impl CachePartitionPolicy {
         match self {
             Self::Way(policy) => policy.notify_release(partition),
             Self::MaxCapacity(policy) => policy.notify_release(partition),
+        }
+    }
+
+    pub fn rebuild_current_capacity(&mut self, owners: &[CachePartitionId]) {
+        match self {
+            Self::Way(_) => {}
+            Self::MaxCapacity(policy) => {
+                policy.rebuild_current_capacity(owners.iter().copied());
+            }
         }
     }
 }
@@ -428,5 +510,15 @@ impl CachePartitionManager {
             policy.notify_release(partition)?;
         }
         Ok(())
+    }
+
+    pub fn rebuild_current_capacity<I>(&mut self, owners: I)
+    where
+        I: IntoIterator<Item = CachePartitionId>,
+    {
+        let owners = owners.into_iter().collect::<Vec<_>>();
+        for policy in &mut self.policies {
+            policy.rebuild_current_capacity(&owners);
+        }
     }
 }

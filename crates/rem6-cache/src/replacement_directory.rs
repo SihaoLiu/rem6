@@ -3,6 +3,7 @@ use std::collections::BTreeSet;
 use rem6_memory::{Address, CacheLineLayout};
 
 use crate::indexing::{CacheIndexingLocation, CacheIndexingPolicyConfig, CacheIndexingPolicyKind};
+use crate::partitioning::{CachePartitionCandidate, CachePartitionId, CachePartitionManager};
 use crate::replacement::{
     random_replacement_candidate_index, validate_replacement_vector_length, weighted_lru_precedes,
     CacheReplacementPolicyConfig, CacheReplacementPolicyError, CacheReplacementPolicyKind,
@@ -198,7 +199,20 @@ impl CacheReplacementDirectory {
         &mut self,
         line: Address,
     ) -> Result<ReplacementDirectoryInstall, CacheReplacementPolicyError> {
-        self.install_inner(line, ReplacementDirectoryAccess::Default)
+        self.install_inner(line, ReplacementDirectoryAccess::Default, None)
+    }
+
+    pub fn install_for_partition(
+        &mut self,
+        line: Address,
+        partition: CachePartitionId,
+        manager: &mut CachePartitionManager,
+    ) -> Result<ReplacementDirectoryInstall, CacheReplacementPolicyError> {
+        self.install_inner(
+            line,
+            ReplacementDirectoryAccess::Default,
+            Some((partition, manager)),
+        )
     }
 
     pub fn install_with_signature(
@@ -206,7 +220,21 @@ impl CacheReplacementDirectory {
         line: Address,
         signature: u64,
     ) -> Result<ReplacementDirectoryInstall, CacheReplacementPolicyError> {
-        self.install_inner(line, ReplacementDirectoryAccess::Signature(signature))
+        self.install_inner(line, ReplacementDirectoryAccess::Signature(signature), None)
+    }
+
+    pub fn install_with_signature_for_partition(
+        &mut self,
+        line: Address,
+        signature: u64,
+        partition: CachePartitionId,
+        manager: &mut CachePartitionManager,
+    ) -> Result<ReplacementDirectoryInstall, CacheReplacementPolicyError> {
+        self.install_inner(
+            line,
+            ReplacementDirectoryAccess::Signature(signature),
+            Some((partition, manager)),
+        )
     }
 
     pub fn install_with_occupancy(
@@ -214,7 +242,21 @@ impl CacheReplacementDirectory {
         line: Address,
         occupancy: i64,
     ) -> Result<ReplacementDirectoryInstall, CacheReplacementPolicyError> {
-        self.install_inner(line, ReplacementDirectoryAccess::Occupancy(occupancy))
+        self.install_inner(line, ReplacementDirectoryAccess::Occupancy(occupancy), None)
+    }
+
+    pub fn install_with_occupancy_for_partition(
+        &mut self,
+        line: Address,
+        occupancy: i64,
+        partition: CachePartitionId,
+        manager: &mut CachePartitionManager,
+    ) -> Result<ReplacementDirectoryInstall, CacheReplacementPolicyError> {
+        self.install_inner(
+            line,
+            ReplacementDirectoryAccess::Occupancy(occupancy),
+            Some((partition, manager)),
+        )
     }
 
     pub fn touch(
@@ -244,14 +286,66 @@ impl CacheReplacementDirectory {
         &mut self,
         line: Address,
     ) -> Result<Option<ReplacementUpdate>, CacheReplacementPolicyError> {
+        self.remove_resident_line_inner(line, None)
+    }
+
+    pub fn remove_resident_line_with_partition_manager(
+        &mut self,
+        line: Address,
+        manager: &mut CachePartitionManager,
+    ) -> Result<Option<ReplacementUpdate>, CacheReplacementPolicyError> {
+        self.remove_resident_line_inner(line, Some(manager))
+    }
+
+    pub fn resident_partition_owners(&self) -> Vec<CachePartitionId> {
+        self.sets
+            .iter()
+            .flat_map(|set| {
+                set.lines
+                    .iter()
+                    .zip(&set.owners)
+                    .filter_map(|(line, owner)| line.is_some().then_some(*owner).flatten())
+            })
+            .collect()
+    }
+
+    pub fn rebuild_partition_manager(&self, manager: &mut CachePartitionManager) {
+        manager.rebuild_current_capacity(self.resident_partition_owners());
+    }
+
+    fn remove_resident_line_inner(
+        &mut self,
+        line: Address,
+        manager: Option<&mut CachePartitionManager>,
+    ) -> Result<Option<ReplacementUpdate>, CacheReplacementPolicyError> {
         let line = self.config.line_address(line);
         let Some((set, way)) = self.way_for(line) else {
             return Ok(None);
         };
 
+        let owner = self.sets[set].owners[way];
+        let updated_partition_manager = match (owner, manager) {
+            (Some(partition), Some(manager)) => {
+                let mut updated = (*manager).clone();
+                updated.notify_release(partition)?;
+                Some((manager, updated))
+            }
+            (Some(partition), None) => {
+                return Err(CacheReplacementPolicyError::PartitionManagerRequired {
+                    line,
+                    partition,
+                });
+            }
+            (None, _) => None,
+        };
+
         let directory_set = &mut self.sets[set];
         let update = directory_set.replacement.invalidate(way)?;
         directory_set.lines[way] = None;
+        directory_set.owners[way] = None;
+        if let Some((manager, updated)) = updated_partition_manager {
+            *manager = updated;
+        }
         Ok(Some(update))
     }
 
@@ -295,6 +389,8 @@ impl CacheReplacementDirectory {
             directory_set
                 .replacement
                 .relocate_way(source_way, destination_way)?;
+            directory_set.owners[destination_way] = directory_set.owners[source_way];
+            directory_set.owners[source_way] = None;
             directory_set.lines[source_way] = None;
             directory_set.lines[destination_way] = Some(line);
         } else {
@@ -305,6 +401,8 @@ impl CacheReplacementDirectory {
                 &mut destination.replacement,
                 destination_way,
             )?;
+            destination.owners[destination_way] = source.owners[source_way];
+            source.owners[source_way] = None;
             source.lines[source_way] = None;
             destination.lines[destination_way] = Some(line);
         }
@@ -363,6 +461,15 @@ impl CacheReplacementDirectory {
                     },
                 );
             }
+            if set_snapshot.owners.len() != self.config.ways() {
+                return Err(
+                    CacheReplacementPolicyError::SnapshotDirectoryWayCountMismatch {
+                        set: set_index,
+                        ways: set_snapshot.owners.len(),
+                        expected_ways: self.config.ways(),
+                    },
+                );
+            }
             for (way_index, line) in set_snapshot.lines.iter().enumerate() {
                 let Some(line) = *line else {
                     continue;
@@ -394,6 +501,7 @@ impl CacheReplacementDirectory {
                     .iter()
                     .map(|line| line.map(|line| self.config.line_address(line)))
                     .collect(),
+                owners: set_snapshot.owners.clone(),
                 replacement,
             });
         }
@@ -407,6 +515,7 @@ impl CacheReplacementDirectory {
         &mut self,
         line: Address,
         access: ReplacementDirectoryAccess,
+        partition: Option<(CachePartitionId, &mut CachePartitionManager)>,
     ) -> Result<ReplacementDirectoryInstall, CacheReplacementPolicyError> {
         let line = self.config.line_address(line);
         if let Some((set, way)) = self.way_for(line) {
@@ -421,10 +530,42 @@ impl CacheReplacementDirectory {
             });
         }
 
-        let (set, way, decision) = self.victim_location(line)?;
-        let directory_set = &mut self.sets[set];
-        let evicted_line = directory_set.lines[way].replace(line);
+        let owner = partition.as_ref().map(|(partition, _)| *partition);
+        let mut staged = self.clone();
+        let (set, way, decision) = staged.victim_location(
+            line,
+            partition
+                .as_ref()
+                .map(|(partition, manager)| (*partition, &**manager)),
+        )?;
+        let evicted_line = staged.sets[set].lines[way];
+        let evicted_owner = staged.sets[set].owners[way];
+        let updated_partition_manager = if let Some((owner, manager)) = partition {
+            let mut updated = (*manager).clone();
+            if evicted_line.is_some() {
+                if let Some(evicted_owner) = evicted_owner {
+                    updated.notify_release(evicted_owner)?;
+                }
+            }
+            updated.notify_acquire(owner)?;
+            Some((manager, updated))
+        } else {
+            if let (Some(line), Some(partition)) = (evicted_line, evicted_owner) {
+                return Err(CacheReplacementPolicyError::PartitionManagerRequired {
+                    line,
+                    partition,
+                });
+            }
+            None
+        };
+        let directory_set = &mut staged.sets[set];
         let update = access.reset(&mut directory_set.replacement, way)?;
+        let evicted_line = directory_set.lines[way].replace(line);
+        directory_set.owners[way] = owner;
+        *self = staged;
+        if let Some((manager, updated)) = updated_partition_manager {
+            *manager = updated;
+        }
         Ok(ReplacementDirectoryInstall {
             line,
             set,
@@ -450,8 +591,21 @@ impl CacheReplacementDirectory {
     fn victim_location(
         &mut self,
         line: Address,
+        partition: Option<(CachePartitionId, &CachePartitionManager)>,
     ) -> Result<(usize, usize, ReplacementDecision), CacheReplacementPolicyError> {
-        let locations = self.config.locations_for_line(line);
+        let mut locations = self.config.locations_for_line(line);
+        if let Some((partition, manager)) = partition {
+            let candidates = self.partition_candidates(&locations);
+            locations = manager
+                .filter_candidates(partition, &candidates)
+                .into_iter()
+                .map(CachePartitionCandidate::location)
+                .collect();
+        }
+        if locations.is_empty() {
+            return Err(CacheReplacementPolicyError::NoCandidates);
+        }
+
         if self.config.indexing_config().kind() == CacheIndexingPolicyKind::SetAssociative {
             let set = locations
                 .first()
@@ -466,9 +620,13 @@ impl CacheReplacementDirectory {
                 let decision = self.sets[selected.set()]
                     .replacement
                     .decision_for_selected_victim(selected.way(), candidates)?;
-                return Ok((set, selected.way(), decision));
+                return Ok((selected.set(), selected.way(), decision));
             }
-            let decision = self.sets[set].replacement.victim(0..self.config.ways())?;
+            let candidates = locations
+                .iter()
+                .map(|location| location.way())
+                .collect::<Vec<_>>();
+            let decision = self.sets[set].replacement.victim(candidates)?;
             return Ok((set, decision.way(), decision));
         }
 
@@ -481,6 +639,22 @@ impl CacheReplacementDirectory {
             .replacement
             .decision_for_selected_victim(selected.way(), candidates)?;
         Ok((selected.set(), selected.way(), decision))
+    }
+
+    fn partition_candidates(
+        &self,
+        locations: &[CacheIndexingLocation],
+    ) -> Vec<CachePartitionCandidate> {
+        locations
+            .iter()
+            .copied()
+            .map(|location| {
+                CachePartitionCandidate::new(
+                    location,
+                    self.sets[location.set()].owners[location.way()],
+                )
+            })
+            .collect()
     }
 
     fn select_cross_set_victim(
@@ -678,6 +852,7 @@ fn two_directory_sets_mut(
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ReplacementDirectorySet {
     lines: Vec<Option<Address>>,
+    owners: Vec<Option<CachePartitionId>>,
     replacement: ReplacementSet,
 }
 
@@ -685,6 +860,7 @@ impl ReplacementDirectorySet {
     fn new(config: CacheReplacementPolicyConfig) -> Self {
         Self {
             lines: vec![None; config.ways()],
+            owners: vec![None; config.ways()],
             replacement: ReplacementSet::new(config),
         }
     }
@@ -692,6 +868,7 @@ impl ReplacementDirectorySet {
     fn snapshot(&self) -> ReplacementDirectorySetSnapshot {
         ReplacementDirectorySetSnapshot {
             lines: self.lines.clone(),
+            owners: self.owners.clone(),
             replacement: self.replacement.snapshot(),
         }
     }
@@ -784,6 +961,7 @@ impl CacheReplacementDirectorySnapshot {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReplacementDirectorySetSnapshot {
     lines: Vec<Option<Address>>,
+    owners: Vec<Option<CachePartitionId>>,
     replacement: ReplacementSetSnapshot,
 }
 
