@@ -293,10 +293,10 @@ isolated bugs:
   state, per-sub-block validity, last-sub-block invalidation, whole-sector
   eviction, hit-path replacement access, SHiP signature updates, skewed
   indexing, cross-set replacement recency, and snapshot restore validation.
-  The MSI cache bank can now opt into those sector tags for fill, hit,
-  resident-removal, whole-sector clean eviction, dirty/transient victim
-  rejection, and snapshot restore. MESI, MOESI, CHI cache-bank sector-tag
-  wiring and compressed tags remain separate alignment targets.
+  MSI, MESI, MOESI, and CHI cache banks can now opt into those sector tags for
+  fill, hit, resident-removal, whole-sector clean eviction, protocol-specific
+  dirty/transient victim rejection, and snapshot restore. Compressed tags remain
+  a separate alignment target.
 - `AddrRange` is a central gem5 memory primitive, but public issue #2855
   identifies two full-system limits that have leaked into many call sites:
   non-power-of-two memory or CHI SNF channel counts need modulo interleaving,
@@ -3203,10 +3203,11 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   insertion, last-sub-block invalidation, whole-sector eviction, policy-state
   snapshot restore, duplicate-sector restore rejection, explicit hit access,
   SHiP signature-based insert/access, and skewed-indexed sector residency with
-  cross-set LRU, BIP, and second-chance replacement checks. MSI cache-bank
-  sector-tag tests cover same-sector sub-block fills and hits, whole-sector
-  clean eviction, dirty and transient victim rejection with tag rollback,
-  snapshot LRU-order restore, and tag-backend mode mismatch rejection.
+  cross-set LRU, BIP, and second-chance replacement checks. MSI, MESI, MOESI,
+  and CHI cache-bank sector-tag tests cover same-sector sub-block fills and
+  hits, whole-sector clean eviction, dirty and transient victim rejection with
+  tag rollback, snapshot LRU-order restore, and tag-backend mode mismatch
+  rejection.
 - Cache MSHR, MSI/MESI/MOESI/CHI cache-bank, and MSI bank directory harness
   tests cover typed QoS class metadata, QoS-aware ready ordering, promotion of
   merged same-line targets to the highest effective priority, recorded
@@ -4178,7 +4179,7 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   data-cache attribution, and direct topology CHI data-cache attach, plus
   richer cache internals such as additional prefetcher algorithms, prefetch
   translation and snoop integration, fuller cache/DRAM QoS policy integration,
-  MESI/MOESI/CHI cache-bank sector-tag wiring, and compressed tags.
+  and compressed tags.
 - Broaden device coverage to PCI, virtio, storage, network, richer GPU runtime,
   and platform-specific devices.
 - Add optional adapters for SystemC, TLM, SST, DRAM simulators, power models,
