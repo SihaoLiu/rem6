@@ -38,6 +38,7 @@ impl WorkloadQosQueuePolicyKind {
 pub enum WorkloadQosTurnaroundPolicyKind {
     RequestOrder,
     PreferCurrentDirection,
+    HighestPriorityOppositeOnTie,
 }
 
 impl WorkloadQosTurnaroundPolicyKind {
@@ -45,6 +46,7 @@ impl WorkloadQosTurnaroundPolicyKind {
         match self {
             Self::RequestOrder => "request_order",
             Self::PreferCurrentDirection => "prefer_current_direction",
+            Self::HighestPriorityOppositeOnTie => "highest_priority_opposite_on_tie",
         }
     }
 }

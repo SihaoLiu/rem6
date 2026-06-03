@@ -436,6 +436,67 @@ fn workload_topology_records_proportional_fair_qos_policy_and_scores() {
 }
 
 #[test]
+fn workload_topology_records_highest_priority_opposite_on_tie_turnaround_policy() {
+    let request_order_policy = WorkloadQosPolicy::new(4, QosPriority::new(3))
+        .unwrap()
+        .with_queue_policy(WorkloadQosQueuePolicyKind::LeastRecentlyGranted)
+        .with_requestor_priority(QosRequestorId::new(8), QosPriority::new(1))
+        .unwrap()
+        .with_requestor_priority(QosRequestorId::new(7), QosPriority::new(0))
+        .unwrap();
+    let highest_priority_opposite_on_tie_policy = WorkloadQosPolicy::new(4, QosPriority::new(3))
+        .unwrap()
+        .with_queue_policy(WorkloadQosQueuePolicyKind::LeastRecentlyGranted)
+        .with_turnaround_policy(WorkloadQosTurnaroundPolicyKind::HighestPriorityOppositeOnTie)
+        .with_requestor_priority(QosRequestorId::new(8), QosPriority::new(1))
+        .unwrap()
+        .with_requestor_priority(QosRequestorId::new(7), QosPriority::new(0))
+        .unwrap();
+    let topology =
+        riscv_topology().with_qos_policy(highest_priority_opposite_on_tie_policy.clone());
+
+    assert_eq!(
+        WorkloadQosTurnaroundPolicyKind::HighestPriorityOppositeOnTie.as_str(),
+        "highest_priority_opposite_on_tie",
+    );
+    assert_eq!(
+        topology.qos_policy(),
+        Some(&highest_priority_opposite_on_tie_policy)
+    );
+    assert_eq!(
+        highest_priority_opposite_on_tie_policy.turnaround_policy(),
+        WorkloadQosTurnaroundPolicyKind::HighestPriorityOppositeOnTie,
+    );
+
+    let request_order =
+        WorkloadManifest::builder(id("qos-turnaround-policy-identity"), boot_image())
+            .with_topology(riscv_topology().with_qos_policy(request_order_policy))
+            .add_resource(kernel_resource())
+            .unwrap()
+            .add_required_resource(resource_id("kernel"))
+            .build()
+            .unwrap();
+    let highest_priority_opposite_on_tie =
+        WorkloadManifest::builder(id("qos-turnaround-policy-identity"), boot_image())
+            .with_topology(topology)
+            .add_resource(kernel_resource())
+            .unwrap()
+            .add_required_resource(resource_id("kernel"))
+            .build()
+            .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&highest_priority_opposite_on_tie).unwrap();
+
+    assert_ne!(
+        request_order.identity(),
+        highest_priority_opposite_on_tie.identity()
+    );
+    assert_eq!(
+        plan.topology().unwrap().qos_policy(),
+        Some(&highest_priority_opposite_on_tie_policy),
+    );
+}
+
+#[test]
 fn workload_qos_policy_rejects_invalid_declarations() {
     assert_eq!(
         WorkloadQosPolicy::new(0, QosPriority::new(0)).unwrap_err(),

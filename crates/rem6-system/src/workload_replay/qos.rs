@@ -72,5 +72,8 @@ fn turnaround_policy_kind(policy: WorkloadQosTurnaroundPolicyKind) -> DramQosTur
         WorkloadQosTurnaroundPolicyKind::PreferCurrentDirection => {
             DramQosTurnaroundPolicy::PreferCurrentDirection
         }
+        WorkloadQosTurnaroundPolicyKind::HighestPriorityOppositeOnTie => {
+            DramQosTurnaroundPolicy::HighestPriorityOppositeOnTie
+        }
     }
 }

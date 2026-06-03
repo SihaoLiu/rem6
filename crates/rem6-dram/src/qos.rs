@@ -12,6 +12,7 @@ use crate::{DramAccess, DramAccessKind, DramController, DramError};
 pub enum DramQosTurnaroundPolicy {
     RequestOrder,
     PreferCurrentDirection,
+    HighestPriorityOppositeOnTie,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -253,6 +254,9 @@ where
             arbiter,
             policy.max_same_direction_burst(),
         )?,
+        DramQosTurnaroundPolicy::HighestPriorityOppositeOnTie => {
+            order_requests_with_highest_priority_opposite_on_tie(controller, requests, arbiter)?
+        }
     };
     ordered
         .into_iter()
@@ -311,6 +315,36 @@ fn order_requests_with_current_direction<'a>(
     Ok(ordered)
 }
 
+fn order_requests_with_highest_priority_opposite_on_tie<'a>(
+    controller: &DramController,
+    requests: Vec<DramQosRequest<'a>>,
+    arbiter: &mut QosQueueArbiter,
+) -> Result<Vec<DramQosRequest<'a>>, DramError> {
+    let mut pending = requests;
+    let mut ordered = Vec::with_capacity(pending.len());
+    let mut current_direction = controller
+        .activity_log
+        .last()
+        .map(DramAccess::kind)
+        .or_else(|| {
+            controller
+                .ports
+                .first()
+                .and_then(|port| port.last_access_kind())
+        })
+        .unwrap_or(DramAccessKind::Read);
+    while !pending.is_empty() {
+        let candidates =
+            highest_priority_opposite_on_tie_candidates(controller, &pending, current_direction)?;
+        let grant_index = grant_index_for_candidates(&pending, &candidates, arbiter)
+            .map_err(|source| DramError::Qos { source })?;
+        let (_, kind) = projected_request_port_and_kind(controller, &pending[grant_index])?;
+        current_direction = kind;
+        ordered.push(pending.remove(grant_index));
+    }
+    Ok(ordered)
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct ProjectedDramPortDirection {
     last_access_kind: Option<DramAccessKind>,
@@ -337,6 +371,72 @@ impl ProjectedDramPortDirection {
     fn can_continue_current_direction(self, max_same_direction_burst: Option<usize>) -> bool {
         max_same_direction_burst.is_none_or(|limit| self.same_direction_burst < limit)
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct DirectionAvailability {
+    read: bool,
+    write: bool,
+}
+
+impl DirectionAvailability {
+    fn record(&mut self, kind: DramAccessKind) {
+        match kind {
+            DramAccessKind::Read => self.read = true,
+            DramAccessKind::Write => self.write = true,
+        }
+    }
+
+    const fn preferred_kind(self, current: DramAccessKind) -> DramAccessKind {
+        match (self.read, self.write) {
+            (true, true) => match current {
+                DramAccessKind::Read => DramAccessKind::Write,
+                DramAccessKind::Write => DramAccessKind::Read,
+            },
+            (true, false) => DramAccessKind::Read,
+            (false, true) => DramAccessKind::Write,
+            (false, false) => current,
+        }
+    }
+}
+
+fn highest_priority_opposite_on_tie_candidates<'a>(
+    controller: &DramController,
+    pending: &[DramQosRequest<'a>],
+    current_direction: DramAccessKind,
+) -> Result<Vec<usize>, DramError> {
+    let eligible = ordering_eligible_candidates(pending);
+    let highest_priority = eligible
+        .iter()
+        .map(|index| pending[*index].priority())
+        .min()
+        .expect("candidate selection is called only with pending requests");
+    let mut highest = Vec::new();
+    let mut availability = DirectionAvailability::default();
+    let mut projected = Vec::new();
+
+    for index in eligible {
+        let request = &pending[index];
+        if request.priority() != highest_priority {
+            continue;
+        }
+        let (_, kind) = projected_request_port_and_kind(controller, request)?;
+        availability.record(kind);
+        projected.push((index, kind));
+        highest.push(index);
+    }
+
+    let preferred_kind = availability.preferred_kind(current_direction);
+    let selected = projected
+        .into_iter()
+        .filter_map(|(index, kind)| (kind == preferred_kind).then_some(index))
+        .collect::<Vec<_>>();
+
+    Ok(if selected.is_empty() {
+        highest
+    } else {
+        selected
+    })
 }
 
 fn current_direction_candidates<'a>(

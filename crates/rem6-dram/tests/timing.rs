@@ -113,6 +113,41 @@ fn dram_controller_qos_batch_can_prefer_current_bus_direction() {
 }
 
 #[test]
+fn dram_controller_qos_turnaround_highest_priority_uses_opposite_direction_on_tie() {
+    let mut controller = DramController::new(geometry(), timing());
+    controller.schedule(0, &read(0x0000, 8, 43)).unwrap();
+    let mut arbiter = QosQueueArbiter::new(QosQueuePolicyKind::Fifo);
+    let low_priority_read = read_from(4, 0x0040, 8, 44);
+    let high_priority_write = write_from(5, 0x0080, 45);
+    let high_priority_read = read_from(6, 0x0100, 8, 46);
+
+    let accesses = controller
+        .schedule_qos_batch_with_turnaround_policy(
+            8,
+            [
+                DramQosRequest::new(&low_priority_read, QosPriority::new(1), 0),
+                DramQosRequest::new(&high_priority_write, QosPriority::new(0), 1),
+                DramQosRequest::new(&high_priority_read, QosPriority::new(0), 2),
+            ],
+            &mut arbiter,
+            DramQosTurnaroundPolicy::HighestPriorityOppositeOnTie,
+        )
+        .unwrap();
+
+    assert_eq!(
+        accesses
+            .iter()
+            .map(|access| (access.request(), access.kind()))
+            .collect::<Vec<_>>(),
+        vec![
+            (high_priority_write.id(), DramAccessKind::Write),
+            (high_priority_read.id(), DramAccessKind::Read),
+            (low_priority_read.id(), DramAccessKind::Read),
+        ]
+    );
+}
+
+#[test]
 fn dram_controller_qos_turnaround_burst_limit_switches_only_to_waiting_direction() {
     let mut controller = DramController::new(geometry(), timing());
     controller.schedule(0, &write(0x0000, 30)).unwrap();

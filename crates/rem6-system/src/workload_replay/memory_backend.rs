@@ -353,13 +353,15 @@ fn dram_target_outcome(delivery_tick: Tick, outcome: DramMemoryOutcome) -> Targe
 
 #[cfg(test)]
 mod tests {
-    use rem6_dram::{DramControllerConfig, DramGeometry, DramTiming};
+    use rem6_dram::{DramAccessKind, DramControllerConfig, DramGeometry, DramTiming};
     use rem6_fabric::{QosError, QosPriority, QosRequestorId};
     use rem6_memory::{
-        AccessSize, Address, AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId,
+        AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
         MemoryTargetId,
     };
-    use rem6_workload::WorkloadQosPolicy;
+    use rem6_workload::{
+        WorkloadQosPolicy, WorkloadQosQueuePolicyKind, WorkloadQosTurnaroundPolicyKind,
+    };
 
     use super::{DramMemoryController, DramMemoryError, WorkloadDramQosState};
 
@@ -401,6 +403,57 @@ mod tests {
             layout(),
         )
         .unwrap()
+    }
+
+    fn write(agent: u32, sequence: u64, address: u64) -> MemoryRequest {
+        let size = AccessSize::new(4).unwrap();
+        MemoryRequest::write(
+            MemoryRequestId::new(AgentId::new(agent), sequence),
+            Address::new(address),
+            size,
+            vec![0xaa, 0xbb, 0xcc, 0xdd],
+            ByteMask::full(size).unwrap(),
+            layout(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn workload_dram_qos_uses_highest_priority_opposite_on_tie_turnaround() {
+        let mut controller = controller();
+        controller.accept(0, &read(6, 1, 0x0000, 8)).unwrap();
+        let policy = WorkloadQosPolicy::new(2, QosPriority::new(0))
+            .unwrap()
+            .with_queue_policy(WorkloadQosQueuePolicyKind::Fifo)
+            .with_turnaround_policy(WorkloadQosTurnaroundPolicyKind::HighestPriorityOppositeOnTie);
+        let mut qos = WorkloadDramQosState::new(&policy);
+        let read_first_in_request_order = read(7, 2, 0x0040, 8);
+        let write_second_in_request_order = write(8, 3, 0x0080);
+
+        let outcomes = qos
+            .accept_requests(
+                &mut controller,
+                8,
+                [&read_first_in_request_order, &write_second_in_request_order],
+            )
+            .unwrap();
+
+        assert_eq!(outcomes.len(), 2);
+        assert_eq!(
+            outcomes
+                .iter()
+                .map(|outcome| outcome.dram_access().kind())
+                .collect::<Vec<_>>(),
+            vec![DramAccessKind::Write, DramAccessKind::Read]
+        );
+        assert_eq!(
+            outcomes[0].dram_access().request(),
+            write_second_in_request_order.id()
+        );
+        assert_eq!(
+            outcomes[1].dram_access().request(),
+            read_first_in_request_order.id()
+        );
     }
 
     #[test]

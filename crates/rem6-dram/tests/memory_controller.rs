@@ -1,6 +1,7 @@
 use rem6_dram::{
     DramAccessKind, DramControllerConfig, DramError, DramGeometry, DramMemoryController,
     DramMemoryError, DramQosRequest, DramQosSchedulingPolicy, DramQosTurnaroundPolicy, DramTiming,
+    ExternalMemoryProfile,
 };
 use rem6_fabric::{QosPriority, QosQueueArbiter, QosQueuePolicyKind};
 use rem6_kernel::{WaitForEdgeKind, WaitForNode};
@@ -88,6 +89,26 @@ fn controller_with_targets() -> (DramMemoryController, MemoryTargetId, MemoryTar
         .insert_line(high, Address::new(0x8000), line_data(0x80))
         .unwrap();
     (controller, low, high)
+}
+
+fn two_channel_ddr_controller() -> (DramMemoryController, MemoryTargetId) {
+    let target = MemoryTargetId::new(9);
+    let profile = ExternalMemoryProfile::ddr(target, layout(), 2, 1, geometry(), timing()).unwrap();
+    let mut controller = DramMemoryController::new();
+    controller.add_profile(profile).unwrap();
+    controller
+        .map_region(
+            target,
+            Address::new(0x0000),
+            AccessSize::new(0x4000).unwrap(),
+        )
+        .unwrap();
+    for address in [0x0000, 0x0040, 0x0080] {
+        controller
+            .insert_line(target, Address::new(address), line_data(0x30))
+            .unwrap();
+    }
+    (controller, target)
 }
 
 #[test]
@@ -208,6 +229,45 @@ fn dram_memory_controller_accepts_qos_batch_before_storage_response() {
             .qos_priority_access_count(QosPriority::new(0)),
         1
     );
+}
+
+#[test]
+fn dram_memory_controller_qos_turnaround_highest_priority_tie_is_controller_wide() {
+    let (mut controller, _) = two_channel_ddr_controller();
+    controller.accept(0, &read(0x0000, 8, 12)).unwrap();
+    let read_first_in_request_order = read(0x0040, 8, 13);
+    let write_second_in_request_order = write(0x0080, &[0xaa, 0xbb, 0xcc, 0xdd], 14);
+    let mut arbiter = QosQueueArbiter::new(QosQueuePolicyKind::Fifo);
+
+    let outcomes = controller
+        .accept_qos_batch_with_policy(
+            8,
+            [
+                DramQosRequest::new(&read_first_in_request_order, QosPriority::new(0), 0),
+                DramQosRequest::new(&write_second_in_request_order, QosPriority::new(0), 1),
+            ],
+            &mut arbiter,
+            DramQosSchedulingPolicy::new()
+                .with_turnaround(DramQosTurnaroundPolicy::HighestPriorityOppositeOnTie),
+        )
+        .unwrap();
+
+    assert_eq!(outcomes.len(), 2);
+    assert_eq!(
+        outcomes
+            .iter()
+            .map(|outcome| (
+                outcome.dram_access().request(),
+                outcome.dram_access().kind()
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            (write_second_in_request_order.id(), DramAccessKind::Write),
+            (read_first_in_request_order.id(), DramAccessKind::Read),
+        ]
+    );
+    assert_eq!(outcomes[0].dram_access().parallel_port(), 0);
+    assert_eq!(outcomes[1].dram_access().parallel_port(), 1);
 }
 
 #[test]
