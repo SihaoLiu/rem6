@@ -3,6 +3,7 @@ mod bank;
 mod chi;
 mod chi_bank;
 mod downstream;
+mod indexing;
 mod mesi;
 mod mesi_bank;
 mod moesi;
@@ -36,6 +37,10 @@ pub use chi::{
 };
 pub use chi_bank::{
     ChiCacheBank, ChiCacheBankError, ChiCacheBankSnapshot, ChiPendingUncacheableReadSnapshot,
+};
+pub use indexing::{
+    CacheIndexingLocation, CacheIndexingPolicyConfig, CacheIndexingPolicyError,
+    CacheIndexingPolicyKind,
 };
 pub use mesi::{
     MesiCacheController, MesiCacheControllerError, MesiCacheControllerResult,

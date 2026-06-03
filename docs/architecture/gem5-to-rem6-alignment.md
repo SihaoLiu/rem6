@@ -275,6 +275,15 @@ isolated bugs:
   that boundary for clean-line capacity eviction, preserve replacement state in
   bank snapshots, and reject dirty capacity victims with typed state instead of
   silently dropping ownership before writeback integration exists.
+- gem5 cache tags split set selection between SetAssociative and
+  SkewedAssociative indexing policies, with the latter using per-way hash and
+  inverse-hash formulas over set and tag bits. rem6-cache now keeps that
+  mapping as typed `CacheIndexingPolicyConfig` data with explicit candidate
+  locations, tag extraction, address regeneration, and validation errors for
+  gem5-fatal shapes such as non-power-of-two set counts, too few skewed sets,
+  and over-wide skewed address fields. Cache-bank integration for skewed
+  replacement directories and richer sector or compressed tags remain separate
+  alignment targets.
 - `AddrRange` is a central gem5 memory primitive, but public issue #2855
   identifies two full-system limits that have leaked into many call sites:
   non-power-of-two memory or CHI SNF channel counts need modulo interleaving,
@@ -3169,6 +3178,10 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   indirect-target lookup,
   deterministic replacement, update, target, speculative history, return-stack
   operation, commit, repair, and snapshot records with restore validation.
+- Cache indexing tests cover gem5-style SetAssociative identity mapping and
+  SkewedAssociative per-way set hashing, including tag extraction, address
+  regeneration, and typed rejection of invalid indexing shapes before cache tag
+  state can be allocated.
 - Cache MSHR, MSI/MESI/MOESI/CHI cache-bank, and MSI bank directory harness
   tests cover typed QoS class metadata, QoS-aware ready ordering, promotion of
   merged same-line targets to the highest effective priority, recorded
