@@ -74,6 +74,9 @@ impl CacheCompressedTagsConfig {
             "max compression ratio",
             max_compression_ratio,
         )?;
+        if kind == CacheReplacementPolicyKind::WeightedLru {
+            return Err(CacheCompressedTagsError::UnsupportedReplacementPolicy { kind });
+        }
 
         let superblock_layout = superblock_layout(line_layout, max_compression_ratio)?;
         let indexing_config =
@@ -604,6 +607,7 @@ impl CacheCompressedTags {
                 self.select_cross_set_brrip_victim(locations, rrpv_bits)
             }
             CacheReplacementPolicyKind::Lru
+            | CacheReplacementPolicyKind::WeightedLru
             | CacheReplacementPolicyKind::Fifo
             | CacheReplacementPolicyKind::Mru
             | CacheReplacementPolicyKind::Lfu
@@ -733,7 +737,9 @@ impl CacheCompressedTags {
             return Ok(true);
         }
         let precedes = match self.config.kind() {
-            CacheReplacementPolicyKind::Lru | CacheReplacementPolicyKind::Bip { .. } => {
+            CacheReplacementPolicyKind::Lru
+            | CacheReplacementPolicyKind::WeightedLru
+            | CacheReplacementPolicyKind::Bip { .. } => {
                 current_state.last_touch_tick < selected_state.last_touch_tick
             }
             CacheReplacementPolicyKind::Fifo | CacheReplacementPolicyKind::SecondChance => {
@@ -1368,6 +1374,7 @@ impl CacheCompressedTagReplacementState {
         self.valid = true;
         match kind {
             CacheReplacementPolicyKind::Lru
+            | CacheReplacementPolicyKind::WeightedLru
             | CacheReplacementPolicyKind::Mru
             | CacheReplacementPolicyKind::Bip { .. }
             | CacheReplacementPolicyKind::TreePlru
@@ -1389,6 +1396,7 @@ impl CacheCompressedTagReplacementState {
         self.valid = true;
         match kind {
             CacheReplacementPolicyKind::Lru
+            | CacheReplacementPolicyKind::WeightedLru
             | CacheReplacementPolicyKind::Mru
             | CacheReplacementPolicyKind::Bip { .. }
             | CacheReplacementPolicyKind::TreePlru

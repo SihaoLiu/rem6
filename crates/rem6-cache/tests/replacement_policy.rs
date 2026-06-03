@@ -90,6 +90,34 @@ fn replacement_set_lru_fifo_mru_and_lfu_follow_gem5_victim_rules() {
 }
 
 #[test]
+fn replacement_set_weighted_lru_prefers_lowest_occupancy_then_oldest_touch() {
+    let mut set = ReplacementSet::new(
+        CacheReplacementPolicyConfig::new(CacheReplacementPolicyKind::WeightedLru, 4).unwrap(),
+    );
+    for way in 0..4 {
+        set.reset(way).unwrap();
+    }
+    assert_eq!(set.victim([0, 1, 2, 3]).unwrap().way(), 0);
+
+    set.touch_with_occupancy(0, 9).unwrap();
+    set.touch_with_occupancy(1, 4).unwrap();
+    set.touch_with_occupancy(2, 4).unwrap();
+    set.touch_with_occupancy(3, 8).unwrap();
+
+    assert_eq!(set.entry(1).unwrap().weighted_occupancy(), 4);
+    assert_eq!(set.entry(2).unwrap().weighted_occupancy(), 4);
+    assert_eq!(set.victim([0, 1, 2, 3]).unwrap().way(), 1);
+
+    let snapshot = set.snapshot();
+    let mut restored = ReplacementSet::new(
+        CacheReplacementPolicyConfig::new(CacheReplacementPolicyKind::WeightedLru, 4).unwrap(),
+    );
+    restored.restore(&snapshot).unwrap();
+    restored.touch_with_occupancy(1, 10).unwrap();
+    assert_eq!(restored.victim([0, 1, 2, 3]).unwrap().way(), 2);
+}
+
+#[test]
 fn replacement_set_brrip_uses_valid_bits_rrpv_aging_and_hit_priority() {
     let mut distant = ReplacementSet::new(
         CacheReplacementPolicyConfig::new(
@@ -602,6 +630,78 @@ fn replacement_directory_ages_skewed_brrip_candidates_before_eviction() {
             3
         );
     }
+}
+
+#[test]
+fn replacement_directory_weighted_lru_uses_occupancy_for_skewed_victims_and_snapshots() {
+    let target = Address::new(0x80);
+    let config = CacheReplacementDirectoryConfig::new_with_indexing(
+        CacheReplacementPolicyKind::WeightedLru,
+        CacheIndexingPolicyKind::SkewedAssociative,
+        line_layout(),
+        8,
+        4,
+    )
+    .unwrap();
+    let locations = config.indexing_config().candidate_locations(target);
+    let mut directory = CacheReplacementDirectory::new(config.clone());
+    let mut used = BTreeSet::from([target]);
+    let occupancies = [9, 4, 4, 8];
+    let fillers = locations
+        .iter()
+        .zip(occupancies)
+        .map(|(location, occupancy)| {
+            let line = line_for_candidate_location(directory.config(), *location, &mut used);
+            directory.install_with_occupancy(line, occupancy).unwrap();
+            if directory.way_for(line) != Some((location.set(), location.way())) {
+                directory
+                    .move_resident_line(line, location.set(), location.way())
+                    .unwrap();
+            }
+            directory.touch_with_occupancy(line, occupancy).unwrap();
+            line
+        })
+        .collect::<Vec<_>>();
+
+    let snapshot = directory.snapshot();
+    let mut restored = CacheReplacementDirectory::new(config);
+    restored.restore(&snapshot).unwrap();
+    let install = restored.install_with_occupancy(target, 7).unwrap();
+
+    assert_eq!(install.evicted_line(), Some(fillers[1]));
+    assert_eq!(install.set(), locations[1].set());
+    assert_eq!(install.way(), locations[1].way());
+    assert_eq!(
+        restored.way_for(target),
+        Some((locations[1].set(), locations[1].way()))
+    );
+}
+
+#[test]
+fn replacement_directory_weighted_lru_reuses_invalidated_high_occupancy_way() {
+    let mut directory = CacheReplacementDirectory::new(
+        CacheReplacementDirectoryConfig::new(
+            CacheReplacementPolicyKind::WeightedLru,
+            line_layout(),
+            1,
+            2,
+        )
+        .unwrap(),
+    );
+    let high = Address::new(0x0000);
+    let low = Address::new(0x0010);
+    let next = Address::new(0x0020);
+
+    directory.install_with_occupancy(high, 9).unwrap();
+    directory.install_with_occupancy(low, 1).unwrap();
+    directory.remove_resident_line(high).unwrap();
+
+    let install = directory.install_with_occupancy(next, 5).unwrap();
+
+    assert_eq!(install.evicted_line(), None);
+    assert_eq!(install.way(), 0);
+    assert_eq!(directory.way_for(low), Some((0, 1)));
+    assert_eq!(directory.way_for(next), Some((0, 0)));
 }
 
 #[test]

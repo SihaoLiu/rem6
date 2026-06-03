@@ -10,6 +10,7 @@ use crate::replacement_directory::CacheReplacementDirectoryConfig;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CacheReplacementPolicyKind {
     Lru,
+    WeightedLru,
     Fifo,
     Mru,
     Lfu,
@@ -100,6 +101,7 @@ impl CacheReplacementPolicyConfig {
                 }
             }
             CacheReplacementPolicyKind::Lru
+            | CacheReplacementPolicyKind::WeightedLru
             | CacheReplacementPolicyKind::Fifo
             | CacheReplacementPolicyKind::Mru
             | CacheReplacementPolicyKind::Lfu
@@ -454,9 +456,13 @@ impl ReplacementSet {
         let before = self.entries[way].clone();
         match self.config.kind() {
             CacheReplacementPolicyKind::Lru
+            | CacheReplacementPolicyKind::WeightedLru
             | CacheReplacementPolicyKind::Mru
             | CacheReplacementPolicyKind::Bip { .. } => {
                 self.entries[way].last_touch_tick = 0;
+                if self.config.kind() == CacheReplacementPolicyKind::WeightedLru {
+                    self.entries[way].weighted_occupancy = 0;
+                }
             }
             CacheReplacementPolicyKind::Fifo | CacheReplacementPolicyKind::SecondChance => {
                 self.entries[way].insertion_tick = 0;
@@ -492,6 +498,7 @@ impl ReplacementSet {
         let before = self.entries[way].clone();
         match self.config.kind() {
             CacheReplacementPolicyKind::Lru
+            | CacheReplacementPolicyKind::WeightedLru
             | CacheReplacementPolicyKind::Mru
             | CacheReplacementPolicyKind::Bip { .. } => {
                 self.entries[way].last_touch_tick = self.next_tick();
@@ -526,6 +533,41 @@ impl ReplacementSet {
             after: self.entries[way].clone(),
             update_count: self.touch_count,
         })
+    }
+
+    pub fn touch_with_occupancy(
+        &mut self,
+        way: usize,
+        occupancy: i64,
+    ) -> Result<ReplacementUpdate, CacheReplacementPolicyError> {
+        self.check_way(way)?;
+        if self.config.kind() != CacheReplacementPolicyKind::WeightedLru {
+            return self.touch(way);
+        }
+
+        let before = self.entries[way].clone();
+        self.entries[way].last_touch_tick = self.next_tick();
+        self.entries[way].weighted_occupancy = occupancy;
+        self.touch_count += 1;
+        Ok(ReplacementUpdate {
+            way,
+            before,
+            after: self.entries[way].clone(),
+            update_count: self.touch_count,
+        })
+    }
+
+    pub fn reset_with_occupancy(
+        &mut self,
+        way: usize,
+        occupancy: i64,
+    ) -> Result<ReplacementUpdate, CacheReplacementPolicyError> {
+        let update = self.reset(way)?;
+        if self.config.kind() == CacheReplacementPolicyKind::WeightedLru {
+            self.touch_with_occupancy(way, occupancy)
+        } else {
+            Ok(update)
+        }
     }
 
     pub fn touch_with_signature(
@@ -565,7 +607,9 @@ impl ReplacementSet {
         self.check_way(way)?;
         let before = self.entries[way].clone();
         match self.config.kind() {
-            CacheReplacementPolicyKind::Lru | CacheReplacementPolicyKind::Mru => {
+            CacheReplacementPolicyKind::Lru
+            | CacheReplacementPolicyKind::WeightedLru
+            | CacheReplacementPolicyKind::Mru => {
                 self.entries[way].last_touch_tick = self.next_tick();
                 self.entries[way].valid = true;
             }
@@ -752,6 +796,7 @@ impl ReplacementSet {
             CacheReplacementPolicyKind::Lru => {
                 self.min_by(&candidates, |entry| entry.last_touch_tick)
             }
+            CacheReplacementPolicyKind::WeightedLru => self.weighted_lru_victim(&candidates),
             CacheReplacementPolicyKind::Bip { .. } => {
                 self.min_by(&candidates, |entry| entry.last_touch_tick)
             }
@@ -901,6 +946,16 @@ impl ReplacementSet {
         }
     }
 
+    fn weighted_lru_victim(&self, candidates: &[usize]) -> usize {
+        let mut selected = candidates[0];
+        for way in &candidates[1..] {
+            if weighted_lru_precedes(&self.entries[*way], &self.entries[selected]) {
+                selected = *way;
+            }
+        }
+        selected
+    }
+
     fn bip_insert_as_mru(&mut self, btp_percent: u8) -> bool {
         if btp_percent == 0 {
             return false;
@@ -1012,6 +1067,7 @@ pub struct ReplacementEntry {
     last_touch_tick: u64,
     insertion_tick: u64,
     reference_count: u64,
+    weighted_occupancy: i64,
     rrpv: u64,
     second_chance: bool,
     ship_signature: u64,
@@ -1024,6 +1080,7 @@ impl ReplacementEntry {
             CacheReplacementPolicyKind::Brrip { rrpv_bits, .. }
             | CacheReplacementPolicyKind::Ship { rrpv_bits, .. } => max_rrpv(rrpv_bits),
             CacheReplacementPolicyKind::Lru
+            | CacheReplacementPolicyKind::WeightedLru
             | CacheReplacementPolicyKind::Fifo
             | CacheReplacementPolicyKind::Mru
             | CacheReplacementPolicyKind::Lfu
@@ -1037,6 +1094,7 @@ impl ReplacementEntry {
             last_touch_tick: 0,
             insertion_tick: 0,
             reference_count: 0,
+            weighted_occupancy: 0,
             rrpv,
             second_chance: false,
             ship_signature: 0,
@@ -1064,6 +1122,10 @@ impl ReplacementEntry {
         self.reference_count
     }
 
+    pub const fn weighted_occupancy(&self) -> i64 {
+        self.weighted_occupancy
+    }
+
     pub const fn rrpv(&self) -> u64 {
         self.rrpv
     }
@@ -1079,6 +1141,14 @@ impl ReplacementEntry {
     pub const fn ship_re_referenced(&self) -> bool {
         self.ship_re_referenced
     }
+}
+
+pub(crate) fn weighted_lru_precedes(
+    current: &ReplacementEntry,
+    selected: &ReplacementEntry,
+) -> bool {
+    (current.weighted_occupancy(), current.last_touch_tick())
+        < (selected.weighted_occupancy(), selected.last_touch_tick())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -4,7 +4,7 @@ use std::fmt;
 use rem6_memory::Address;
 
 use crate::indexing::CacheIndexingPolicyError;
-use crate::replacement::CacheReplacementPolicyError;
+use crate::replacement::{CacheReplacementPolicyError, CacheReplacementPolicyKind};
 
 use super::CacheCompressedTagsConfig;
 
@@ -31,6 +31,9 @@ pub enum CacheCompressedTagsError {
     },
     ReplacementPolicyConfig {
         source: CacheReplacementPolicyError,
+    },
+    UnsupportedReplacementPolicy {
+        kind: CacheReplacementPolicyKind,
     },
     ReplacementPolicyState {
         source: CacheReplacementPolicyError,
@@ -169,6 +172,10 @@ impl fmt::Display for CacheCompressedTagsError {
             Self::ReplacementPolicyConfig { source } => write!(
                 formatter,
                 "cache compressed tag replacement config is invalid: {source}"
+            ),
+            Self::UnsupportedReplacementPolicy { kind } => write!(
+                formatter,
+                "cache compressed tags do not support replacement policy {kind:?}"
             ),
             Self::ReplacementPolicyState { source } => write!(
                 formatter,
@@ -326,6 +333,7 @@ impl Error for CacheCompressedTagsError {
             | Self::LineSizeTooSmall { .. }
             | Self::SuperblockSpanTooLarge { .. }
             | Self::VectorLengthTooLarge { .. }
+            | Self::UnsupportedReplacementPolicy { .. }
             | Self::UnknownSet { .. }
             | Self::UnknownWay { .. }
             | Self::SnapshotConfigMismatch { .. }

@@ -68,6 +68,18 @@ fn sector_tags_reject_invalid_gem5_sector_shapes() {
             source: CacheIndexingPolicyError::SetsNotPowerOfTwo { sets: 3 },
         })
     );
+    assert_eq!(
+        CacheSectorTagsConfig::new(
+            CacheReplacementPolicyKind::WeightedLru,
+            line_layout(),
+            2,
+            2,
+            4,
+        ),
+        Err(CacheSectorTagsError::UnsupportedReplacementPolicy {
+            kind: CacheReplacementPolicyKind::WeightedLru,
+        })
+    );
 }
 
 #[test]

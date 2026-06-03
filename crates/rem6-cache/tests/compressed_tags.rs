@@ -63,6 +63,18 @@ fn compressed_tags_reject_invalid_gem5_superblock_shapes() {
         ),
         Err(CacheCompressedTagsError::LineSizeTooSmall { bytes: 2 })
     );
+    assert_eq!(
+        CacheCompressedTagsConfig::new(
+            CacheReplacementPolicyKind::WeightedLru,
+            line_layout(),
+            1,
+            1,
+            2,
+        ),
+        Err(CacheCompressedTagsError::UnsupportedReplacementPolicy {
+            kind: CacheReplacementPolicyKind::WeightedLru,
+        })
+    );
 }
 
 #[test]

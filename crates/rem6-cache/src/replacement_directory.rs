@@ -4,9 +4,9 @@ use rem6_memory::{Address, CacheLineLayout};
 
 use crate::indexing::{CacheIndexingLocation, CacheIndexingPolicyConfig, CacheIndexingPolicyKind};
 use crate::replacement::{
-    validate_replacement_vector_length, CacheReplacementPolicyConfig, CacheReplacementPolicyError,
-    CacheReplacementPolicyKind, ReplacementDecision, ReplacementSet, ReplacementSetSnapshot,
-    ReplacementUpdate,
+    validate_replacement_vector_length, weighted_lru_precedes, CacheReplacementPolicyConfig,
+    CacheReplacementPolicyError, CacheReplacementPolicyKind, ReplacementDecision, ReplacementSet,
+    ReplacementSetSnapshot, ReplacementUpdate,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -116,6 +116,39 @@ pub struct CacheReplacementDirectory {
     sets: Vec<ReplacementDirectorySet>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReplacementDirectoryAccess {
+    Default,
+    Signature(u64),
+    Occupancy(i64),
+}
+
+impl ReplacementDirectoryAccess {
+    fn touch(
+        self,
+        replacement: &mut ReplacementSet,
+        way: usize,
+    ) -> Result<ReplacementUpdate, CacheReplacementPolicyError> {
+        match self {
+            Self::Default => replacement.touch(way),
+            Self::Signature(signature) => replacement.touch_with_signature(way, signature),
+            Self::Occupancy(occupancy) => replacement.touch_with_occupancy(way, occupancy),
+        }
+    }
+
+    fn reset(
+        self,
+        replacement: &mut ReplacementSet,
+        way: usize,
+    ) -> Result<ReplacementUpdate, CacheReplacementPolicyError> {
+        match self {
+            Self::Default => replacement.reset(way),
+            Self::Signature(signature) => replacement.reset_with_signature(way, signature),
+            Self::Occupancy(occupancy) => replacement.reset_with_occupancy(way, occupancy),
+        }
+    }
+}
+
 impl CacheReplacementDirectory {
     pub fn new(config: CacheReplacementDirectoryConfig) -> Self {
         let sets = (0..config.sets())
@@ -159,7 +192,7 @@ impl CacheReplacementDirectory {
         &mut self,
         line: Address,
     ) -> Result<ReplacementDirectoryInstall, CacheReplacementPolicyError> {
-        self.install_inner(line, None)
+        self.install_inner(line, ReplacementDirectoryAccess::Default)
     }
 
     pub fn install_with_signature(
@@ -167,14 +200,22 @@ impl CacheReplacementDirectory {
         line: Address,
         signature: u64,
     ) -> Result<ReplacementDirectoryInstall, CacheReplacementPolicyError> {
-        self.install_inner(line, Some(signature))
+        self.install_inner(line, ReplacementDirectoryAccess::Signature(signature))
+    }
+
+    pub fn install_with_occupancy(
+        &mut self,
+        line: Address,
+        occupancy: i64,
+    ) -> Result<ReplacementDirectoryInstall, CacheReplacementPolicyError> {
+        self.install_inner(line, ReplacementDirectoryAccess::Occupancy(occupancy))
     }
 
     pub fn touch(
         &mut self,
         line: Address,
     ) -> Result<ReplacementUpdate, CacheReplacementPolicyError> {
-        self.touch_inner(line, None)
+        self.touch_inner(line, ReplacementDirectoryAccess::Default)
     }
 
     pub fn touch_with_signature(
@@ -182,7 +223,15 @@ impl CacheReplacementDirectory {
         line: Address,
         signature: u64,
     ) -> Result<ReplacementUpdate, CacheReplacementPolicyError> {
-        self.touch_inner(line, Some(signature))
+        self.touch_inner(line, ReplacementDirectoryAccess::Signature(signature))
+    }
+
+    pub fn touch_with_occupancy(
+        &mut self,
+        line: Address,
+        occupancy: i64,
+    ) -> Result<ReplacementUpdate, CacheReplacementPolicyError> {
+        self.touch_inner(line, ReplacementDirectoryAccess::Occupancy(occupancy))
     }
 
     pub fn remove_resident_line(
@@ -349,16 +398,11 @@ impl CacheReplacementDirectory {
     fn install_inner(
         &mut self,
         line: Address,
-        signature: Option<u64>,
+        access: ReplacementDirectoryAccess,
     ) -> Result<ReplacementDirectoryInstall, CacheReplacementPolicyError> {
         let line = self.config.line_address(line);
         if let Some((set, way)) = self.way_for(line) {
-            let update = match signature {
-                Some(signature) => self.sets[set]
-                    .replacement
-                    .touch_with_signature(way, signature)?,
-                None => self.sets[set].replacement.touch(way)?,
-            };
+            let update = access.touch(&mut self.sets[set].replacement, way)?;
             return Ok(ReplacementDirectoryInstall {
                 line,
                 set,
@@ -372,12 +416,7 @@ impl CacheReplacementDirectory {
         let (set, way, decision) = self.victim_location(line)?;
         let directory_set = &mut self.sets[set];
         let evicted_line = directory_set.lines[way].replace(line);
-        let update = match signature {
-            Some(signature) => directory_set
-                .replacement
-                .reset_with_signature(way, signature)?,
-            None => directory_set.replacement.reset(way)?,
-        };
+        let update = access.reset(&mut directory_set.replacement, way)?;
         Ok(ReplacementDirectoryInstall {
             line,
             set,
@@ -391,18 +430,13 @@ impl CacheReplacementDirectory {
     fn touch_inner(
         &mut self,
         line: Address,
-        signature: Option<u64>,
+        access: ReplacementDirectoryAccess,
     ) -> Result<ReplacementUpdate, CacheReplacementPolicyError> {
         let line = self.config.line_address(line);
         let (set, way) = self
             .way_for(line)
             .ok_or(CacheReplacementPolicyError::UnknownResidentLine { line })?;
-        match signature {
-            Some(signature) => self.sets[set]
-                .replacement
-                .touch_with_signature(way, signature),
-            None => self.sets[set].replacement.touch(way),
-        }
+        access.touch(&mut self.sets[set].replacement, way)
     }
 
     fn victim_location(
@@ -440,6 +474,7 @@ impl CacheReplacementDirectory {
                 self.select_cross_set_brrip_victim(locations, rrpv_bits)
             }
             CacheReplacementPolicyKind::Lru
+            | CacheReplacementPolicyKind::WeightedLru
             | CacheReplacementPolicyKind::Fifo
             | CacheReplacementPolicyKind::Mru
             | CacheReplacementPolicyKind::Lfu
@@ -523,6 +558,9 @@ impl CacheReplacementDirectory {
         let precedes = match self.config.kind() {
             CacheReplacementPolicyKind::Lru | CacheReplacementPolicyKind::Bip { .. } => {
                 current_entry.last_touch_tick() < selected_entry.last_touch_tick()
+            }
+            CacheReplacementPolicyKind::WeightedLru => {
+                weighted_lru_precedes(current_entry, selected_entry)
             }
             CacheReplacementPolicyKind::Fifo | CacheReplacementPolicyKind::SecondChance => {
                 current_entry.insertion_tick() < selected_entry.insertion_tick()

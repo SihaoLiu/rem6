@@ -68,6 +68,9 @@ impl CacheSectorTagsConfig {
         validate_vector_length::<CacheSectorTagSet>("sets", sets)?;
         validate_vector_length::<CacheSectorTagEntry>("ways", ways)?;
         validate_vector_length::<Option<Address>>("blocks per sector", blocks_per_sector)?;
+        if kind == CacheReplacementPolicyKind::WeightedLru {
+            return Err(CacheSectorTagsError::UnsupportedReplacementPolicy { kind });
+        }
 
         let sector_layout = sector_layout(line_layout, blocks_per_sector)?;
         let indexing_config =
@@ -169,6 +172,9 @@ pub enum CacheSectorTagsError {
     ReplacementPolicyConfig {
         source: CacheReplacementPolicyError,
     },
+    UnsupportedReplacementPolicy {
+        kind: CacheReplacementPolicyKind,
+    },
     ReplacementPolicyState {
         source: CacheReplacementPolicyError,
     },
@@ -266,6 +272,10 @@ impl fmt::Display for CacheSectorTagsError {
             Self::ReplacementPolicyConfig { source } => {
                 write!(formatter, "cache sector tag replacement config is invalid: {source}")
             }
+            Self::UnsupportedReplacementPolicy { kind } => write!(
+                formatter,
+                "cache sector tags do not support replacement policy {kind:?}"
+            ),
             Self::ReplacementPolicyState { source } => {
                 write!(formatter, "cache sector tag replacement state is invalid: {source}")
             }
@@ -372,6 +382,7 @@ impl Error for CacheSectorTagsError {
             | Self::LineSizeTooSmall { .. }
             | Self::SectorSpanTooLarge { .. }
             | Self::VectorLengthTooLarge { .. }
+            | Self::UnsupportedReplacementPolicy { .. }
             | Self::UnknownSet { .. }
             | Self::UnknownWay { .. }
             | Self::SnapshotConfigMismatch { .. }
@@ -747,6 +758,7 @@ impl CacheSectorTags {
                 self.select_cross_set_brrip_victim(locations, rrpv_bits)
             }
             CacheReplacementPolicyKind::Lru
+            | CacheReplacementPolicyKind::WeightedLru
             | CacheReplacementPolicyKind::Fifo
             | CacheReplacementPolicyKind::Mru
             | CacheReplacementPolicyKind::Lfu
@@ -874,7 +886,9 @@ impl CacheSectorTags {
             return Ok(true);
         }
         let precedes = match self.config.kind() {
-            CacheReplacementPolicyKind::Lru | CacheReplacementPolicyKind::Bip { .. } => {
+            CacheReplacementPolicyKind::Lru
+            | CacheReplacementPolicyKind::WeightedLru
+            | CacheReplacementPolicyKind::Bip { .. } => {
                 current_state.last_touch_tick < selected_state.last_touch_tick
             }
             CacheReplacementPolicyKind::Fifo | CacheReplacementPolicyKind::SecondChance => {
@@ -1309,6 +1323,7 @@ impl CacheSectorTagReplacementState {
         self.valid = true;
         match kind {
             CacheReplacementPolicyKind::Lru
+            | CacheReplacementPolicyKind::WeightedLru
             | CacheReplacementPolicyKind::Mru
             | CacheReplacementPolicyKind::Bip { .. }
             | CacheReplacementPolicyKind::TreePlru
@@ -1330,6 +1345,7 @@ impl CacheSectorTagReplacementState {
         self.valid = true;
         match kind {
             CacheReplacementPolicyKind::Lru
+            | CacheReplacementPolicyKind::WeightedLru
             | CacheReplacementPolicyKind::Mru
             | CacheReplacementPolicyKind::Bip { .. }
             | CacheReplacementPolicyKind::TreePlru
