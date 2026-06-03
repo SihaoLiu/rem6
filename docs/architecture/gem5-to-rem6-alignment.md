@@ -2773,10 +2773,12 @@ rem6 test, typed trace, runtime summary, checkpoint record, or explicit error.
 
 Cache prefetch note: `QueuedPrefetcher` snapshots gem5 Base-style issued,
 useful, useful-but-miss, unused, demand-MSHR miss, cache-hit, MSHR-hit,
-write-buffer-hit, and late-prefetch service statistics. `MultiQueuedPrefetcher`
-keeps its own issued statistic while broadcasting unused-prefetch and
-demand-MSHR-miss events to every child queued source, matching gem5 `Multi`
-event fan-out.
+write-buffer-hit, and late-prefetch service statistics. It also snapshots queued
+resource statistics for identified candidates, duplicate buffer hits, redundant
+cache/MSHR drops, demand removals, full-queue removals, and page-span drops that
+do not have a translation path. `MultiQueuedPrefetcher` keeps its own issued
+statistic while broadcasting unused-prefetch and demand-MSHR-miss events to
+every child queued source, matching gem5 `Multi` event fan-out.
 
 ### DRAM and External Memory
 

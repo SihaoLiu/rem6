@@ -660,10 +660,13 @@ impl QueuedPrefetcher {
 
             let address = self.normalized_address(candidate.address());
             if self.crosses_page(address, candidate.source_address()) {
+                self.stats.record_span_page(1);
                 dropped_page_crossing += 1;
                 continue;
             }
+            self.stats.record_identified(1);
             if self.is_redundant(address, candidate.secure(), redundant_lines) {
+                self.stats.record_in_cache_drop(1);
                 dropped_redundant += 1;
                 continue;
             }
@@ -673,6 +676,7 @@ impl QueuedPrefetcher {
                     .iter()
                     .position(|entry| entry.same_request(address, candidate))
                 {
+                    self.stats.record_buffer_hit(1);
                     duplicate_hits += 1;
                     if self.pending[index].update_priority(candidate) {
                         updated_priorities += 1;
@@ -691,6 +695,7 @@ impl QueuedPrefetcher {
                     QueuedPrefetchFullPolicy::EvictOldestLowestPriority => {
                         let victim = oldest_lowest_priority_index(&self.pending);
                         self.pending.remove(victim);
+                        self.stats.record_removed_by_full_queue(1);
                         evicted_full += 1;
                     }
                 }
@@ -723,7 +728,9 @@ impl QueuedPrefetcher {
         let original_len = self.pending.len();
         self.pending
             .retain(|entry| !(entry.address == line_address && entry.secure == access.secure()));
-        original_len - self.pending.len()
+        let removed = original_len - self.pending.len();
+        self.stats.record_removed_by_demand(removed as u64);
+        removed
     }
 
     pub fn issue_ready(&mut self, tick: u64) -> Vec<QueuedPrefetchIssue> {
