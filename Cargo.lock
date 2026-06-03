@@ -315,6 +315,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rem6-traffic"
+version = "0.1.0"
+dependencies = [
+ "rem6-memory",
+]
+
+[[package]]
 name = "rem6-transport"
 version = "0.1.0"
 dependencies = [

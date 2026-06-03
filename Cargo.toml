@@ -33,6 +33,7 @@ members = [
     "crates/rem6-system",
     "crates/rem6-timer",
     "crates/rem6-topology",
+    "crates/rem6-traffic",
     "crates/rem6-transport",
     "crates/rem6-uart",
     "crates/rem6-virtio",
