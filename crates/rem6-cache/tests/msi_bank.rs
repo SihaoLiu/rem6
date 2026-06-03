@@ -1,5 +1,6 @@
 use rem6_cache::{
-    CacheControllerError, CacheControllerResultKind, CacheReplacementDirectoryConfig,
+    CacheControllerError, CacheControllerResultKind, CacheIndexingPolicyError,
+    CacheIndexingPolicyKind, CacheReplacementDirectoryConfig, CacheReplacementPolicyError,
     CacheReplacementPolicyKind, CacheWriteQueueConfig, CacheWriteQueueEntryKind,
     CacheWriteQueueError, CacheWriteQueueHandle, MshrEntry, MshrQosClass, MshrQueueConfig,
     MshrQueueError, MshrQueueSnapshot, MshrTarget, MshrTargetSource, MsiCacheBank,
@@ -287,6 +288,52 @@ fn msi_cache_bank_replacement_directory_evicts_clean_lru_lines() {
                 bank_has_replacement_directory: true,
             }
         )
+    );
+}
+
+#[test]
+fn msi_cache_bank_can_select_skewed_replacement_indexing() {
+    let cache_agent = agent(7);
+    let mut bank = MsiCacheBank::new_with_indexed_replacement_directory(
+        cache_agent,
+        layout(),
+        CacheReplacementPolicyKind::Lru,
+        CacheIndexingPolicyKind::SkewedAssociative,
+        8,
+        4,
+    )
+    .unwrap();
+
+    fill_read_line(&mut bank, cache_agent, 510, 0x80);
+
+    assert_eq!(bank.state(Address::new(0x80)), Some(MsiState::Shared));
+    assert_eq!(bank.replacement_way_for(Address::new(0x83)), Some((5, 0)));
+    assert_eq!(
+        bank.snapshot()
+            .replacement_directory()
+            .unwrap()
+            .config()
+            .indexing_config()
+            .kind(),
+        CacheIndexingPolicyKind::SkewedAssociative
+    );
+}
+
+#[test]
+fn msi_cache_bank_reports_invalid_indexed_replacement_shapes() {
+    assert_eq!(
+        MsiCacheBank::new_with_indexed_replacement_directory(
+            agent(7),
+            layout(),
+            CacheReplacementPolicyKind::Lru,
+            CacheIndexingPolicyKind::SkewedAssociative,
+            6,
+            4,
+        )
+        .unwrap_err(),
+        MsiCacheBankError::Replacement(CacheReplacementPolicyError::IndexingPolicyConfig {
+            source: CacheIndexingPolicyError::SetsNotPowerOfTwo { sets: 6 },
+        },)
     );
 }
 

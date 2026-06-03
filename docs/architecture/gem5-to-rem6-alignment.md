@@ -286,10 +286,10 @@ isolated bugs:
   and over-wide skewed address fields. Replacement directories can consume
   those candidate locations for resident lookup, victim selection,
   resident-line relocation, snapshot restore validation, and BRRIP-style
-  cross-set candidate aging under explicit skewed indexing. CHI cache banks can
-  construct replacement directories with explicit cache indexing policies, while
-  broader cache-bank configuration surfaces plus richer sector or compressed
-  tags remain separate alignment targets.
+  cross-set candidate aging under explicit skewed indexing. MSI, MESI, MOESI,
+  and CHI cache banks can construct replacement directories with explicit cache
+  indexing policies, while broader cache-bank configuration surfaces plus
+  richer sector or compressed tags remain separate alignment targets.
 - `AddrRange` is a central gem5 memory primitive, but public issue #2855
   identifies two full-system limits that have leaked into many call sites:
   non-power-of-two memory or CHI SNF channel counts need modulo interleaving,
@@ -1391,10 +1391,10 @@ Implementation evidence through 2026-06-03:
   monoliths. The same crate now also exposes a protocol-neutral replacement
   directory for set/way line ownership, victim replacement, hit touch, resident
   lookup, and snapshot restore validation. MSI, MESI, MOESI, and CHI cache
-  banks now attach that directory for clean-line capacity eviction,
-  deterministic snapshot replay, and typed victim rejection before writeback
-  integration. This gives protocol banks one typed replacement boundary
-  instead of Ruby/CHI-specific callback state.
+  banks now attach that directory for clean-line capacity eviction, explicit
+  indexing-policy selection, deterministic snapshot replay, and typed victim
+  rejection before writeback integration. This gives protocol banks one typed
+  replacement boundary instead of Ruby/CHI-specific callback state.
 - `rem6-transport` now keeps endpoint ids, route ids, route hops, route
   topology derivation, route errors, and transport QoS class state in a focused
   `route` module, and strict-FIFO message admission, bypass metadata, ready
@@ -3188,9 +3188,10 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
 - Cache indexing and replacement-directory tests cover gem5-style
   SetAssociative identity mapping and SkewedAssociative per-way set hashing,
   including tag extraction, address regeneration, skewed candidate residency,
-  CHI bank-level skewed replacement indexing selection, cross-set relocation,
-  BRRIP candidate aging, snapshot restore validation, and typed rejection of
-  invalid indexing shapes before cache tag state can be allocated.
+  MSI/MESI/MOESI/CHI bank-level skewed replacement indexing selection,
+  cross-set relocation, BRRIP candidate aging, snapshot restore validation, and
+  typed rejection of invalid indexing shapes before cache tag state can be
+  allocated.
 - Cache MSHR, MSI/MESI/MOESI/CHI cache-bank, and MSI bank directory harness
   tests cover typed QoS class metadata, QoS-aware ready ordering, promotion of
   merged same-line targets to the highest effective priority, recorded
