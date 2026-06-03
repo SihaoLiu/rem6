@@ -1,7 +1,8 @@
 use rem6_cache::{
-    CacheControllerError, CacheControllerResultKind, CacheWriteQueueConfig,
-    CacheWriteQueueEntryKind, CacheWriteQueueError, CacheWriteQueueHandle, MshrEntry, MshrQosClass,
-    MshrQueueConfig, MshrQueueError, MshrQueueSnapshot, MshrTarget, MshrTargetSource, MsiCacheBank,
+    CacheControllerError, CacheControllerResultKind, CacheReplacementDirectoryConfig,
+    CacheReplacementPolicyKind, CacheWriteQueueConfig, CacheWriteQueueEntryKind,
+    CacheWriteQueueError, CacheWriteQueueHandle, MshrEntry, MshrQosClass, MshrQueueConfig,
+    MshrQueueError, MshrQueueSnapshot, MshrTarget, MshrTargetSource, MsiCacheBank,
     MsiCacheBankError, MsiCacheBankSnapshot, MsiPendingUncacheableReadSnapshot,
 };
 use rem6_memory::{
@@ -150,6 +151,18 @@ fn response_id(outcome: &TargetOutcome) -> MemoryRequestId {
     }
 }
 
+fn lru_replacement_config(sets: usize, ways: usize) -> CacheReplacementDirectoryConfig {
+    CacheReplacementDirectoryConfig::new(CacheReplacementPolicyKind::Lru, layout(), sets, ways)
+        .unwrap()
+}
+
+fn fill_read_line(bank: &mut MsiCacheBank, cache_agent: AgentId, sequence: u64, address: u64) {
+    let request = read(cache_agent, sequence, address);
+    let miss = bank.accept_cpu_request(request).unwrap();
+    bank.accept_fill(fill(miss.downstream_request().unwrap(), sequence as u8))
+        .unwrap();
+}
+
 #[test]
 fn msi_cache_bank_tracks_multiple_lines_with_unique_downstream_ids() {
     let cache_agent = agent(7);
@@ -225,6 +238,130 @@ fn msi_cache_bank_tracks_multiple_lines_with_unique_downstream_ids() {
 }
 
 #[test]
+fn msi_cache_bank_replacement_directory_evicts_clean_lru_lines() {
+    let cache_agent = agent(7);
+    let config = lru_replacement_config(1, 2);
+    let mut bank =
+        MsiCacheBank::new_with_replacement_directory(cache_agent, layout(), config.clone())
+            .unwrap();
+
+    fill_read_line(&mut bank, cache_agent, 160, 0x3004);
+    fill_read_line(&mut bank, cache_agent, 161, 0x3014);
+    assert_eq!(
+        bank.line_addresses(),
+        vec![Address::new(0x3000), Address::new(0x3010)]
+    );
+    assert_eq!(bank.replacement_way_for(Address::new(0x3000)), Some((0, 0)));
+    assert_eq!(bank.replacement_way_for(Address::new(0x3010)), Some((0, 1)));
+
+    let hit = bank
+        .accept_cpu_request(read(cache_agent, 162, 0x3004))
+        .unwrap();
+    assert_eq!(response_data(hit.target_outcome().unwrap()), &[160; 8]);
+    let snapshot = bank.snapshot();
+
+    fill_read_line(&mut bank, cache_agent, 163, 0x3024);
+    assert_eq!(bank.state(Address::new(0x3010)), None);
+    assert_eq!(
+        bank.line_addresses(),
+        vec![Address::new(0x3000), Address::new(0x3020)]
+    );
+    assert_eq!(bank.replacement_way_for(Address::new(0x3010)), None);
+    assert_eq!(bank.replacement_way_for(Address::new(0x3020)), Some((0, 1)));
+
+    bank.restore(&snapshot).unwrap();
+    fill_read_line(&mut bank, cache_agent, 164, 0x3024);
+    assert_eq!(
+        bank.line_addresses(),
+        vec![Address::new(0x3000), Address::new(0x3020)]
+    );
+    assert_eq!(bank.replacement_way_for(Address::new(0x3020)), Some((0, 1)));
+
+    let mut incompatible =
+        MsiCacheBank::new_with_replacement_directory(cache_agent, layout(), config).unwrap();
+    assert_eq!(
+        incompatible.restore(&MsiCacheBank::new(cache_agent, layout()).snapshot()),
+        Err(
+            MsiCacheBankError::SnapshotReplacementDirectoryModeMismatch {
+                snapshot_has_replacement_directory: false,
+                bank_has_replacement_directory: true,
+            }
+        )
+    );
+}
+
+#[test]
+fn msi_cache_bank_replacement_directory_rejects_modified_eviction_without_write_queue() {
+    let cache_agent = agent(7);
+    let mut bank = MsiCacheBank::new_with_replacement_directory(
+        cache_agent,
+        layout(),
+        lru_replacement_config(1, 1),
+    )
+    .unwrap();
+
+    let store = write(cache_agent, 165, 0x3104, vec![0xde, 0xad]);
+    let store_miss = bank.accept_cpu_request(store).unwrap();
+    bank.accept_fill(fill(store_miss.downstream_request().unwrap(), 0x00))
+        .unwrap();
+    assert_eq!(bank.state(Address::new(0x3100)), Some(MsiState::Modified));
+
+    let read_miss = bank
+        .accept_cpu_request(read(cache_agent, 166, 0x3114))
+        .unwrap();
+    assert_eq!(
+        bank.accept_fill(fill(read_miss.downstream_request().unwrap(), 0x22)),
+        Err(MsiCacheBankError::DirtyReplacementRequiresWriteQueue {
+            line: Address::new(0x3100),
+        })
+    );
+    assert_eq!(bank.state(Address::new(0x3100)), Some(MsiState::Modified));
+    assert_eq!(bank.replacement_way_for(Address::new(0x3100)), Some((0, 0)));
+}
+
+#[test]
+fn msi_cache_bank_replacement_directory_rejects_transient_eviction() {
+    let cache_agent = agent(7);
+    let mut bank = MsiCacheBank::new_with_replacement_directory(
+        cache_agent,
+        layout(),
+        lru_replacement_config(1, 2),
+    )
+    .unwrap();
+
+    fill_read_line(&mut bank, cache_agent, 167, 0x3204);
+    fill_read_line(&mut bank, cache_agent, 168, 0x3214);
+
+    let upgrade = bank
+        .accept_cpu_request(write(cache_agent, 169, 0x3204, vec![0x44]))
+        .unwrap();
+    let upgrade_downstream = upgrade.downstream_request().unwrap().clone();
+    assert_eq!(
+        bank.state(Address::new(0x3200)),
+        Some(MsiState::SharedToModified)
+    );
+
+    let read_miss = bank
+        .accept_cpu_request(read(cache_agent, 170, 0x3224))
+        .unwrap();
+    assert_eq!(
+        bank.accept_fill(fill(read_miss.downstream_request().unwrap(), 0x55)),
+        Err(MsiCacheBankError::TransientReplacementRequiresStableLine {
+            line: Address::new(0x3200),
+        })
+    );
+    assert_eq!(
+        bank.state(Address::new(0x3200)),
+        Some(MsiState::SharedToModified)
+    );
+    assert_eq!(
+        bank.pending_fill_line(upgrade_downstream.id()),
+        Some(Address::new(0x3200))
+    );
+    assert_eq!(bank.replacement_way_for(Address::new(0x3200)), Some((0, 0)));
+}
+
+#[test]
 fn msi_cache_bank_mshr_coalesces_same_line_read_misses() {
     let cache_agent = agent(7);
     let mut bank = MsiCacheBank::new_with_mshr(
@@ -271,13 +408,19 @@ fn msi_cache_bank_mshr_coalesces_same_line_read_misses() {
 #[test]
 fn msi_cache_bank_uncacheable_read_bypasses_clean_resident_line() {
     let cache_agent = agent(7);
-    let mut bank = MsiCacheBank::new(cache_agent, layout());
+    let mut bank = MsiCacheBank::new_with_replacement_directory(
+        cache_agent,
+        layout(),
+        lru_replacement_config(1, 2),
+    )
+    .unwrap();
 
     let cached = read(cache_agent, 130, 0x1804);
     let cached_miss = bank.accept_cpu_request(cached.clone()).unwrap();
     let cached_downstream = cached_miss.downstream_request().unwrap().clone();
     bank.accept_fill(fill(&cached_downstream, 0x11)).unwrap();
     assert_eq!(bank.state(Address::new(0x1800)), Some(MsiState::Shared));
+    assert_eq!(bank.replacement_way_for(Address::new(0x1800)), Some((0, 0)));
 
     let uncached = uncacheable_read(cache_agent, 131, 0x1808);
     let uncached_miss = bank.accept_cpu_request(uncached.clone()).unwrap();
@@ -289,6 +432,7 @@ fn msi_cache_bank_uncacheable_read_bypasses_clean_resident_line() {
     assert!(uncached_downstream.is_uncacheable());
     assert!(uncached_downstream.is_strict_ordered());
     assert_eq!(bank.state(Address::new(0x1800)), None);
+    assert_eq!(bank.replacement_way_for(Address::new(0x1800)), None);
 
     let uncached_fill = bank
         .accept_fill(MemoryResponse::completed(uncached_downstream, Some(vec![0x99; 8])).unwrap())
@@ -298,6 +442,7 @@ fn msi_cache_bank_uncacheable_read_bypasses_clean_resident_line() {
         &[0x99; 8]
     );
     assert_eq!(bank.state(Address::new(0x1800)), None);
+    assert_eq!(bank.replacement_way_for(Address::new(0x1800)), None);
 
     let normal_again = bank.accept_cpu_request(cached).unwrap();
     assert_eq!(normal_again.kind(), CacheControllerResultKind::Miss);
