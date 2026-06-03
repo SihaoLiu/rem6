@@ -182,3 +182,56 @@ fn guest_futex_requeue_preserves_fifo_order_and_waiting_index() {
     assert!(!table.is_waiting(GuestThreadId::new(2)));
     assert!(!table.is_waiting(GuestThreadId::new(3)));
 }
+
+#[test]
+fn guest_futex_snapshot_restore_rebuilds_waiting_index() {
+    let mut table = GuestFutexTable::new();
+    let address = GuestFutexAddress::new(0x6000);
+    let other_address = GuestFutexAddress::new(0x7000);
+    let thread_group = GuestThreadGroupId::new(11);
+    let key = GuestFutexKey::new(address, thread_group);
+
+    table
+        .wait(
+            GuestFutexWaitRequest::new(key, GuestThreadId::new(5), PartitionId::new(5), 50, 13, 13)
+                .with_bitset(0x20),
+        )
+        .unwrap();
+    table
+        .wait(
+            GuestFutexWaitRequest::new(key, GuestThreadId::new(6), PartitionId::new(6), 51, 13, 13)
+                .with_bitset(0x40),
+        )
+        .unwrap();
+    let snapshot = table.snapshot();
+
+    let mut restored = GuestFutexTable::from_snapshot(snapshot.clone()).unwrap();
+
+    assert_eq!(restored.snapshot(), snapshot);
+    assert_eq!(
+        restored
+            .wait(
+                GuestFutexWaitRequest::new(
+                    GuestFutexKey::new(other_address, thread_group),
+                    GuestThreadId::new(5),
+                    PartitionId::new(5),
+                    52,
+                    17,
+                    17,
+                )
+                .with_bitset(0x20),
+            )
+            .unwrap_err(),
+        GuestFutexError::DuplicateWaiter {
+            thread: GuestThreadId::new(5)
+        }
+    );
+
+    let wake = restored
+        .wake_bitset(address, thread_group, 10, 0x20, 60)
+        .unwrap();
+
+    assert_eq!(wake.woken_threads(), vec![GuestThreadId::new(5)]);
+    assert!(!restored.is_waiting(GuestThreadId::new(5)));
+    assert!(restored.is_waiting(GuestThreadId::new(6)));
+}

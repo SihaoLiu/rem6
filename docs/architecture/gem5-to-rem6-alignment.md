@@ -858,7 +858,9 @@ isolated bugs:
   thread-group id, partition, enqueue tick, and bitset, wake and requeue
   operations emit deterministic FIFO records, duplicate waiters and empty
   wait bitsets are typed errors, and the waiting index is explicitly cleared
-  or moved as wake and requeue records are produced.
+  or moved as wake and requeue records are produced. gem5 does not serialize
+  `FutexMap`; rem6 checkpoints the typed wait queue explicitly, avoiding a
+  restore state where a suspended thread has no futex wakeability metadata.
   Public gem5 issue #2750 reports sim-se `dup2` allocating the next available
   guest file descriptor like `dup` instead of occupying the requested
   destination descriptor. The local reference clones the source host-backed fd,
@@ -1295,12 +1297,16 @@ Implementation evidence through 2026-06-03:
   gem5 issue #1320 by requiring multicore barrier waiters to remain visible
   until a wake, mismatch waits to return would-block without mutation, zero
   wait bitsets and duplicate waiters to fail without mutation, and requeue to
-  preserve FIFO order while updating the waiting index. It also has a typed
-  guest fd table for future syscall emulation handoff. Tests cover public gem5
-  issue #2750 by requiring `dup2` to return and install the requested
-  destination fd, replace an existing destination without allocating another
-  fd, clear close-on-exec only on newly duplicated descriptors, and preserve
-  same-fd no-op behavior after source validation. The table also exposes
+  preserve FIFO order while updating the waiting index. Guest futex snapshots
+  and checkpoint banks now encode versioned `guest-futex` chunks, rebuild the
+  waiting index through staged restore, reject malformed waiter records before
+  live mutation, and participate in host checkpoint capture/restore staging.
+  It also has a typed guest fd table for future syscall emulation handoff.
+  Tests cover public gem5 issue #2750 by requiring `dup2` to return and install
+  the requested destination fd, replace an existing destination without
+  allocating another fd, clear close-on-exec only on newly duplicated
+  descriptors, and preserve same-fd no-op behavior after source validation.
+  The table also exposes
   close-on-exec reads and updates for future `fcntl` handoff, with invalid-fd
   errors leaving unrelated descriptors unchanged. Exec handoff can now close
   only descriptors marked close-on-exec while returning the removed entries for

@@ -34,6 +34,7 @@ mod guest_event;
 mod guest_fd;
 mod guest_fd_checkpoint;
 mod guest_futex;
+mod guest_futex_checkpoint;
 mod heterogeneous_checkpoint;
 mod host;
 mod host_assist;
@@ -101,9 +102,13 @@ pub use guest_fd_checkpoint::{
 };
 pub use guest_futex::{
     GuestFutexAddress, GuestFutexError, GuestFutexKey, GuestFutexRequeueOutcome,
-    GuestFutexRequeueRecord, GuestFutexTable, GuestFutexWaitOutcome, GuestFutexWaitRequest,
-    GuestFutexWaiter, GuestFutexWakeOutcome, GuestFutexWakeRecord, GuestThreadGroupId,
-    GuestThreadId,
+    GuestFutexRequeueRecord, GuestFutexTable, GuestFutexTableSnapshot, GuestFutexWaitOutcome,
+    GuestFutexWaitRequest, GuestFutexWaiter, GuestFutexWakeOutcome, GuestFutexWakeRecord,
+    GuestThreadGroupId, GuestThreadId,
+};
+pub use guest_futex_checkpoint::{
+    GuestFutexCheckpointBank, GuestFutexCheckpointError, GuestFutexCheckpointPort,
+    GuestFutexCheckpointRecord,
 };
 pub use heterogeneous_checkpoint::{
     AcceleratorCheckpointBank, AcceleratorCheckpointError, AcceleratorCheckpointPort,
@@ -1053,6 +1058,7 @@ pub enum SystemError {
     FabricCheckpoint(FabricCheckpointError),
     GpuCheckpoint(GpuCheckpointError),
     GuestFdCheckpoint(GuestFdCheckpointError),
+    GuestFutexCheckpoint(GuestFutexCheckpointError),
     PciHostCheckpoint(PciHostCheckpointError),
     PciLegacyInterruptRouterCheckpoint(PciLegacyInterruptRouterCheckpointError),
     Pl031Checkpoint(Pl031CheckpointError),
@@ -1099,6 +1105,7 @@ impl fmt::Display for SystemError {
             Self::FabricCheckpoint(error) => write!(formatter, "{error}"),
             Self::GpuCheckpoint(error) => write!(formatter, "{error}"),
             Self::GuestFdCheckpoint(error) => write!(formatter, "{error}"),
+            Self::GuestFutexCheckpoint(error) => write!(formatter, "{error}"),
             Self::PciHostCheckpoint(error) => write!(formatter, "{error}"),
             Self::PciLegacyInterruptRouterCheckpoint(error) => write!(formatter, "{error}"),
             Self::Pl031Checkpoint(error) => write!(formatter, "{error}"),
@@ -1142,6 +1149,7 @@ impl Error for SystemError {
             Self::FabricCheckpoint(error) => Some(error),
             Self::GpuCheckpoint(error) => Some(error),
             Self::GuestFdCheckpoint(error) => Some(error),
+            Self::GuestFutexCheckpoint(error) => Some(error),
             Self::PciHostCheckpoint(error) => Some(error),
             Self::PciLegacyInterruptRouterCheckpoint(error) => Some(error),
             Self::Pl031Checkpoint(error) => Some(error),

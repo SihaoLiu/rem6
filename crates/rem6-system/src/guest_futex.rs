@@ -76,6 +76,25 @@ pub struct GuestFutexWaiter {
 }
 
 impl GuestFutexWaiter {
+    pub fn new(
+        key: GuestFutexKey,
+        thread: GuestThreadId,
+        partition: PartitionId,
+        enqueued_tick: Tick,
+        bitset: u32,
+    ) -> Result<Self, GuestFutexError> {
+        if bitset == 0 {
+            return Err(GuestFutexError::ZeroBitset { thread });
+        }
+        Ok(Self {
+            key,
+            thread,
+            partition,
+            enqueued_tick,
+            bitset,
+        })
+    }
+
     pub const fn key(self) -> GuestFutexKey {
         self.key
     }
@@ -388,6 +407,29 @@ impl fmt::Display for GuestFutexError {
 impl Error for GuestFutexError {}
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct GuestFutexTableSnapshot {
+    waiters: Vec<GuestFutexWaiter>,
+}
+
+impl GuestFutexTableSnapshot {
+    pub fn new(waiters: Vec<GuestFutexWaiter>) -> Self {
+        Self { waiters }
+    }
+
+    pub fn waiters(&self) -> &[GuestFutexWaiter] {
+        &self.waiters
+    }
+
+    pub fn waiter_count(&self) -> usize {
+        self.waiters.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.waiters.is_empty()
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct GuestFutexTable {
     waiters: BTreeMap<GuestFutexKey, VecDeque<GuestFutexWaiter>>,
     waiting_threads: BTreeMap<GuestThreadId, GuestFutexKey>,
@@ -396,6 +438,32 @@ pub struct GuestFutexTable {
 impl GuestFutexTable {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn from_snapshot(snapshot: GuestFutexTableSnapshot) -> Result<Self, GuestFutexError> {
+        let mut table = Self::new();
+        for waiter in snapshot.waiters {
+            table.insert_waiter(waiter)?;
+        }
+        Ok(table)
+    }
+
+    pub fn snapshot(&self) -> GuestFutexTableSnapshot {
+        GuestFutexTableSnapshot::new(
+            self.waiters
+                .values()
+                .flat_map(|queue| queue.iter().copied())
+                .collect(),
+        )
+    }
+
+    pub fn restore_snapshot(
+        &mut self,
+        snapshot: GuestFutexTableSnapshot,
+    ) -> Result<(), GuestFutexError> {
+        let restored = Self::from_snapshot(snapshot)?;
+        *self = restored;
+        Ok(())
     }
 
     pub fn is_empty(&self) -> bool {
@@ -446,10 +514,6 @@ impl GuestFutexTable {
             });
         }
         let thread = request.thread();
-        if self.waiting_threads.contains_key(&thread) {
-            return Err(GuestFutexError::DuplicateWaiter { thread });
-        }
-
         let key = request.key();
         let waiter = GuestFutexWaiter {
             key,
@@ -458,13 +522,11 @@ impl GuestFutexTable {
             enqueued_tick: request.tick(),
             bitset: request.bitset(),
         };
-        let queue = self.waiters.entry(key).or_default();
-        queue.push_back(waiter);
-        self.waiting_threads.insert(thread, key);
+        let waiter_count = self.insert_waiter(waiter)?;
 
         Ok(GuestFutexWaitOutcome::Queued {
             thread,
-            waiter_count: queue.len(),
+            waiter_count,
         })
     }
 
@@ -565,6 +627,24 @@ impl GuestFutexTable {
 
     fn waiter_queue(&self, key: GuestFutexKey) -> Option<&VecDeque<GuestFutexWaiter>> {
         self.waiters.get(&key)
+    }
+
+    fn insert_waiter(&mut self, waiter: GuestFutexWaiter) -> Result<usize, GuestFutexError> {
+        if waiter.bitset() == 0 {
+            return Err(GuestFutexError::ZeroBitset {
+                thread: waiter.thread(),
+            });
+        }
+        let thread = waiter.thread();
+        if self.waiting_threads.contains_key(&thread) {
+            return Err(GuestFutexError::DuplicateWaiter { thread });
+        }
+
+        let key = waiter.key();
+        let queue = self.waiters.entry(key).or_default();
+        queue.push_back(waiter);
+        self.waiting_threads.insert(thread, key);
+        Ok(queue.len())
     }
 
     fn restore_queue(&mut self, key: GuestFutexKey, queue: VecDeque<GuestFutexWaiter>) {
