@@ -115,6 +115,8 @@ impl RiscvTranslationCsr {
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum RiscvMachineTrapCsr {
+    Medeleg,
+    Mideleg,
     Mtvec,
     Mepc,
     Mcause,
@@ -124,6 +126,8 @@ pub enum RiscvMachineTrapCsr {
 impl RiscvMachineTrapCsr {
     pub const fn address(self) -> u16 {
         match self {
+            Self::Medeleg => 0x302,
+            Self::Mideleg => 0x303,
             Self::Mtvec => 0x305,
             Self::Mepc => 0x341,
             Self::Mcause => 0x342,
@@ -133,6 +137,8 @@ impl RiscvMachineTrapCsr {
 
     pub const fn from_address(address: u16) -> Option<Self> {
         match address {
+            0x302 => Some(Self::Medeleg),
+            0x303 => Some(Self::Mideleg),
             0x305 => Some(Self::Mtvec),
             0x341 => Some(Self::Mepc),
             0x342 => Some(Self::Mcause),

@@ -52,6 +52,14 @@ impl RiscvHartState {
         self.machine_trap_vector
     }
 
+    pub const fn machine_exception_delegation(&self) -> u64 {
+        self.machine_exception_delegation
+    }
+
+    pub const fn machine_interrupt_delegation(&self) -> u64 {
+        self.machine_interrupt_delegation
+    }
+
     pub const fn machine_exception_pc(&self) -> u64 {
         self.machine_exception_pc
     }
@@ -113,6 +121,14 @@ impl RiscvHartState {
 
     pub fn set_machine_trap_vector(&mut self, vector: u64) {
         self.machine_trap_vector = vector;
+    }
+
+    pub fn set_machine_exception_delegation(&mut self, delegation: u64) {
+        self.machine_exception_delegation = delegation;
+    }
+
+    pub fn set_machine_interrupt_delegation(&mut self, delegation: u64) {
+        self.machine_interrupt_delegation = delegation;
     }
 
     pub fn set_machine_exception_pc(&mut self, pc: u64) {

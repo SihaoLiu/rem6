@@ -500,6 +500,8 @@ pub struct RiscvHartState {
     supervisor_exception_pc: u64,
     supervisor_trap_cause: u64,
     supervisor_trap_value: u64,
+    machine_exception_delegation: u64,
+    machine_interrupt_delegation: u64,
     machine_trap_vector: u64,
     machine_exception_pc: u64,
     machine_trap_cause: u64,
@@ -525,6 +527,8 @@ impl RiscvHartState {
             supervisor_exception_pc: 0,
             supervisor_trap_cause: 0,
             supervisor_trap_value: 0,
+            machine_exception_delegation: 0,
+            machine_interrupt_delegation: 0,
             machine_trap_vector: 0,
             machine_exception_pc: 0,
             machine_trap_cause: 0,
@@ -1028,7 +1032,7 @@ impl RiscvHartState {
                 write_translation_csr(self, &mut register_writes, rd, csr, value);
             }
             RiscvInstruction::Ecall => {
-                return Ok(enter_machine_trap(
+                return Ok(enter_synchronous_trap(
                     self,
                     instruction,
                     pc,
@@ -1036,7 +1040,7 @@ impl RiscvHartState {
                 ));
             }
             RiscvInstruction::Ebreak => {
-                return Ok(enter_machine_trap(
+                return Ok(enter_synchronous_trap(
                     self,
                     instruction,
                     pc,
@@ -1068,6 +1072,56 @@ impl RiscvHartState {
             )),
         }
     }
+}
+
+fn enter_synchronous_trap(
+    hart: &mut RiscvHartState,
+    instruction: RiscvInstruction,
+    pc: u64,
+    kind: RiscvTrapKind,
+) -> RiscvExecutionRecord {
+    let previous_privilege = hart.privilege_mode();
+    let cause = machine_trap_cause(kind, previous_privilege);
+    if exception_delegated_to_supervisor(hart, previous_privilege, cause) {
+        enter_supervisor_trap(hart, instruction, pc, kind, cause, previous_privilege)
+    } else {
+        enter_machine_trap(hart, instruction, pc, kind)
+    }
+}
+
+fn exception_delegated_to_supervisor(
+    hart: &RiscvHartState,
+    previous_privilege: RiscvPrivilegeMode,
+    cause: u64,
+) -> bool {
+    if matches!(previous_privilege, RiscvPrivilegeMode::Machine) || cause >= u64::BITS as u64 {
+        return false;
+    }
+    (hart.machine_exception_delegation() & (1_u64 << (cause as u32))) != 0
+}
+
+fn enter_supervisor_trap(
+    hart: &mut RiscvHartState,
+    instruction: RiscvInstruction,
+    pc: u64,
+    kind: RiscvTrapKind,
+    cause: u64,
+    previous_privilege: RiscvPrivilegeMode,
+) -> RiscvExecutionRecord {
+    let handler_pc = hart.supervisor_trap_vector() & !0b11;
+    hart.set_supervisor_exception_pc(pc);
+    hart.set_supervisor_trap_cause(cause);
+    hart.set_supervisor_trap_value(0);
+    hart.set_privilege_mode(RiscvPrivilegeMode::Supervisor);
+    let status = hart.status();
+    hart.set_status(
+        status
+            .with_spp(previous_privilege)
+            .with_spie(status.sie())
+            .with_sie(false),
+    );
+    hart.set_pc(handler_pc);
+    RiscvExecutionRecord::with_trap(instruction, pc, handler_pc, RiscvTrap::new(kind, pc))
 }
 
 fn enter_machine_trap(
@@ -1149,6 +1203,8 @@ fn write_status_csr(
 
 fn read_machine_trap_csr(hart: &RiscvHartState, csr: RiscvMachineTrapCsr) -> u64 {
     match csr {
+        RiscvMachineTrapCsr::Medeleg => hart.machine_exception_delegation(),
+        RiscvMachineTrapCsr::Mideleg => hart.machine_interrupt_delegation(),
         RiscvMachineTrapCsr::Mtvec => hart.machine_trap_vector(),
         RiscvMachineTrapCsr::Mepc => hart.machine_exception_pc(),
         RiscvMachineTrapCsr::Mcause => hart.machine_trap_cause(),
@@ -1166,6 +1222,8 @@ fn write_machine_trap_csr(
     let old_value = read_machine_trap_csr(hart, csr);
     write_register(hart, writes, register, old_value);
     match csr {
+        RiscvMachineTrapCsr::Medeleg => hart.set_machine_exception_delegation(value),
+        RiscvMachineTrapCsr::Mideleg => hart.set_machine_interrupt_delegation(value),
         RiscvMachineTrapCsr::Mtvec => hart.set_machine_trap_vector(value),
         RiscvMachineTrapCsr::Mepc => hart.set_machine_exception_pc(value),
         RiscvMachineTrapCsr::Mcause => hart.set_machine_trap_cause(value),
