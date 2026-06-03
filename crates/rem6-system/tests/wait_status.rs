@@ -1,4 +1,7 @@
-use rem6_system::{GuestSignal, GuestWaitStatus, GuestWaitStatusError};
+use rem6_system::{
+    GuestChildStatus, GuestProcessGroupId, GuestProcessId, GuestSignal, GuestWaitOptions,
+    GuestWaitOutcome, GuestWaitQueue, GuestWaitSelector, GuestWaitStatus, GuestWaitStatusError,
+};
 
 #[test]
 fn guest_wait_status_encodes_normal_exit_for_wait4() {
@@ -47,5 +50,136 @@ fn guest_wait_status_rejects_invalid_guest_signals() {
     assert_eq!(
         GuestSignal::new(128).unwrap_err(),
         GuestWaitStatusError::InvalidSignal { signal: 128 }
+    );
+}
+
+#[test]
+fn guest_wait_selectors_reject_invalid_guest_ids() {
+    assert_eq!(
+        GuestProcessId::new(0).unwrap_err(),
+        GuestWaitStatusError::InvalidProcessId { pid: 0 }
+    );
+    assert_eq!(
+        GuestProcessGroupId::new(0).unwrap_err(),
+        GuestWaitStatusError::InvalidProcessGroupId { pgid: 0 }
+    );
+    assert_eq!(
+        GuestWaitSelector::from_wait4_pid(i32::MIN).unwrap_err(),
+        GuestWaitStatusError::InvalidWaitPid { pid: i32::MIN }
+    );
+}
+
+#[test]
+fn guest_wait_queue_selects_exact_child_and_consumes_it() {
+    let current_group = GuestProcessGroupId::new(10).unwrap();
+    let other_group = GuestProcessGroupId::new(11).unwrap();
+    let first = GuestChildStatus::new(
+        GuestProcessId::new(100).unwrap(),
+        other_group,
+        GuestWaitStatus::exited(1),
+    );
+    let selected = GuestChildStatus::new(
+        GuestProcessId::new(101).unwrap(),
+        current_group,
+        GuestWaitStatus::signaled(GuestSignal::new(6).unwrap(), false),
+    );
+    let mut queue = GuestWaitQueue::new(current_group);
+    queue.push(first);
+    queue.push(selected);
+
+    assert_eq!(
+        queue.wait(
+            GuestWaitSelector::Process(selected.pid()),
+            GuestWaitOptions::blocking()
+        ),
+        GuestWaitOutcome::Ready(selected)
+    );
+    assert_eq!(queue.len(), 1);
+    assert_eq!(selected.status().raw_wait_status(), 6);
+    assert_eq!(
+        queue.wait(GuestWaitSelector::AnyChild, GuestWaitOptions::blocking()),
+        GuestWaitOutcome::Ready(first)
+    );
+    assert!(queue.is_empty());
+}
+
+#[test]
+fn guest_wait_queue_applies_wait4_process_group_and_any_child_rules() {
+    let current_group = GuestProcessGroupId::new(20).unwrap();
+    let other_group = GuestProcessGroupId::new(21).unwrap();
+    let other_first = GuestChildStatus::new(
+        GuestProcessId::new(200).unwrap(),
+        other_group,
+        GuestWaitStatus::exited(2),
+    );
+    let current_child = GuestChildStatus::new(
+        GuestProcessId::new(201).unwrap(),
+        current_group,
+        GuestWaitStatus::exited(3),
+    );
+    let other_second = GuestChildStatus::new(
+        GuestProcessId::new(202).unwrap(),
+        other_group,
+        GuestWaitStatus::exited(4),
+    );
+    let mut queue = GuestWaitQueue::new(current_group);
+    queue.push(other_first);
+    queue.push(current_child);
+    queue.push(other_second);
+
+    assert_eq!(
+        queue.wait(
+            GuestWaitSelector::from_wait4_pid(0).unwrap(),
+            GuestWaitOptions::nonblocking()
+        ),
+        GuestWaitOutcome::Ready(current_child)
+    );
+    assert_eq!(
+        queue.wait(
+            GuestWaitSelector::from_wait4_pid(-21).unwrap(),
+            GuestWaitOptions::blocking()
+        ),
+        GuestWaitOutcome::Ready(other_first)
+    );
+    assert_eq!(
+        queue.wait(
+            GuestWaitSelector::from_wait4_pid(-1).unwrap(),
+            GuestWaitOptions::blocking()
+        ),
+        GuestWaitOutcome::Ready(other_second)
+    );
+    assert!(queue.is_empty());
+}
+
+#[test]
+fn guest_wait_queue_reports_no_ready_or_retry_without_consuming_children() {
+    let current_group = GuestProcessGroupId::new(30).unwrap();
+    let child = GuestChildStatus::new(
+        GuestProcessId::new(300).unwrap(),
+        current_group,
+        GuestWaitStatus::exited(5),
+    );
+    let mut queue = GuestWaitQueue::new(current_group);
+    queue.push(child);
+
+    assert_eq!(
+        queue.wait(
+            GuestWaitSelector::from_wait4_pid(999).unwrap(),
+            GuestWaitOptions::nonblocking()
+        ),
+        GuestWaitOutcome::NoReady
+    );
+    assert_eq!(queue.len(), 1);
+    assert_eq!(
+        queue.wait(
+            GuestWaitSelector::from_wait4_pid(999).unwrap(),
+            GuestWaitOptions::blocking()
+        ),
+        GuestWaitOutcome::Retry
+    );
+    assert_eq!(queue.len(), 1);
+    assert_eq!(
+        queue.wait(GuestWaitSelector::AnyChild, GuestWaitOptions::blocking()),
+        GuestWaitOutcome::Ready(child)
     );
 }

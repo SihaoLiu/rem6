@@ -110,3 +110,45 @@ fn guest_fd_close_on_exec_rejects_bad_fd_without_mutating_other_entries() {
     );
     assert!(table.close_on_exec(fd).unwrap());
 }
+
+#[test]
+fn guest_fd_exec_closes_marked_descriptors_and_returns_closed_entries() {
+    let mut table = GuestFdTable::new();
+    let retained = GuestFd::new(2).unwrap();
+    let first_closed = GuestFd::new(3).unwrap();
+    let second_closed = GuestFd::new(10).unwrap();
+    let retained_description = GuestFileDescriptionId::new(20);
+    let first_closed_description = GuestFileDescriptionId::new(30);
+    let second_closed_description = GuestFileDescriptionId::new(100);
+    table
+        .insert(retained, GuestFdEntry::new(retained_description))
+        .unwrap();
+    table
+        .insert(
+            first_closed,
+            GuestFdEntry::new(first_closed_description).with_close_on_exec(true),
+        )
+        .unwrap();
+    table
+        .insert(
+            second_closed,
+            GuestFdEntry::new(second_closed_description).with_close_on_exec(true),
+        )
+        .unwrap();
+
+    let closed = table.close_on_exec_descriptors();
+
+    assert_eq!(closed.len(), 2);
+    assert_eq!(closed[0].fd(), first_closed);
+    assert_eq!(closed[0].entry().description(), first_closed_description);
+    assert_eq!(closed[1].fd(), second_closed);
+    assert_eq!(closed[1].entry().description(), second_closed_description);
+    assert!(table.entry(first_closed).is_none());
+    assert!(table.entry(second_closed).is_none());
+    assert_eq!(
+        table.entry(retained).unwrap().description(),
+        retained_description
+    );
+    assert!(!table.close_on_exec(retained).unwrap());
+    assert_eq!(table.dup(retained).unwrap(), GuestFd::new(0).unwrap());
+}

@@ -90,7 +90,9 @@ pub use guest_event::{
     GuestEventId, GuestEventKind, GuestHostCallResponse, GuestSourceId, GuestTrap, GuestTrapKind,
     HostAction, HostActionRecord, HostEventPolicy, StopRequest,
 };
-pub use guest_fd::{GuestFd, GuestFdEntry, GuestFdError, GuestFdTable, GuestFileDescriptionId};
+pub use guest_fd::{
+    GuestFd, GuestFdCloseRecord, GuestFdEntry, GuestFdError, GuestFdTable, GuestFileDescriptionId,
+};
 pub use guest_futex::{
     GuestFutexAddress, GuestFutexError, GuestFutexKey, GuestFutexRequeueOutcome,
     GuestFutexRequeueRecord, GuestFutexTable, GuestFutexWaitOutcome, GuestFutexWaitRequest,
@@ -212,7 +214,10 @@ pub use virtio_checkpoint::{
     VirtioSplitQueueCheckpointBank, VirtioSplitQueueCheckpointError,
     VirtioSplitQueueCheckpointPort, VirtioSplitQueueCheckpointRecord,
 };
-pub use wait_status::{GuestSignal, GuestWaitStatus, GuestWaitStatusError};
+pub use wait_status::{
+    GuestChildStatus, GuestProcessGroupId, GuestProcessId, GuestSignal, GuestWaitOptions,
+    GuestWaitOutcome, GuestWaitQueue, GuestWaitSelector, GuestWaitStatus, GuestWaitStatusError,
+};
 pub use workload_replay::{
     RiscvWorkloadReplay, RiscvWorkloadReplayError, RiscvWorkloadReplayOutcome,
 };

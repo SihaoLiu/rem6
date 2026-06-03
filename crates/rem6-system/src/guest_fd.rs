@@ -68,6 +68,26 @@ impl GuestFdEntry {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GuestFdCloseRecord {
+    fd: GuestFd,
+    entry: GuestFdEntry,
+}
+
+impl GuestFdCloseRecord {
+    pub const fn new(fd: GuestFd, entry: GuestFdEntry) -> Self {
+        Self { fd, entry }
+    }
+
+    pub const fn fd(&self) -> GuestFd {
+        self.fd
+    }
+
+    pub const fn entry(&self) -> &GuestFdEntry {
+        &self.entry
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum GuestFdError {
     NegativeFd { fd: i32 },
     BadFd { fd: GuestFd },
@@ -137,6 +157,22 @@ impl GuestFdTable {
             .ok_or(GuestFdError::BadFd { fd })?;
         entry.close_on_exec = close_on_exec;
         Ok(())
+    }
+
+    pub fn close_on_exec_descriptors(&mut self) -> Vec<GuestFdCloseRecord> {
+        let mut retained = BTreeMap::new();
+        let mut closed = Vec::new();
+
+        for (fd, entry) in std::mem::take(&mut self.entries) {
+            if entry.close_on_exec {
+                closed.push(GuestFdCloseRecord::new(fd, entry));
+            } else {
+                retained.insert(fd, entry);
+            }
+        }
+
+        self.entries = retained;
+        closed
     }
 
     pub fn dup(&mut self, old_fd: GuestFd) -> Result<GuestFd, GuestFdError> {

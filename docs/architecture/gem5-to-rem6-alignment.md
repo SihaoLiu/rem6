@@ -1275,7 +1275,10 @@ Implementation evidence through 2026-06-03:
   emulation handoff. Tests cover normal exits, signal termination, the
   core-dump bit, stopped children, continued children, and invalid signal
   rejection, so guest ABI status values cannot collapse every child result into
-  a successful exit before being copied to guest memory. It also has a typed
+  a successful exit before being copied to guest memory. A typed wait queue now
+  consumes the first matching child status for wait4-style exact-pid,
+  any-child, current-process-group, and explicit process-group selectors, with
+  distinct nonblocking no-ready and blocking retry outcomes. It also has a typed
   guest futex table for future syscall emulation handoff. Tests cover public
   gem5 issue #1320 by requiring multicore barrier waiters to remain visible
   until a wake, mismatch waits to return would-block without mutation, zero
@@ -1287,7 +1290,9 @@ Implementation evidence through 2026-06-03:
   fd, clear close-on-exec only on newly duplicated descriptors, and preserve
   same-fd no-op behavior after source validation. The table also exposes
   close-on-exec reads and updates for future `fcntl` handoff, with invalid-fd
-  errors leaving unrelated descriptors unchanged.
+  errors leaving unrelated descriptors unchanged. Exec handoff can now close
+  only descriptors marked close-on-exec while returning the removed entries for
+  host-backed cleanup.
 - `rem6-memory` has typed sparse and modulo-interleaved address map regions for
   future full-system memory maps. Tests cover the gem5 issue #2855 shape by
   routing one base physical range across three modulo stripes, rejecting
