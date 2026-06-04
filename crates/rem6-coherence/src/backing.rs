@@ -55,14 +55,16 @@ impl LineBackingStore {
     pub fn respond(&mut self, request: &MemoryRequest) -> Result<MemoryResponse, HarnessError> {
         self.check_line(request)?;
         match request.operation() {
-            MemoryOperation::ReadShared | MemoryOperation::ReadUnique => {
+            MemoryOperation::ReadShared
+            | MemoryOperation::ReadUnique
+            | MemoryOperation::LockedRmwRead => {
                 MemoryResponse::completed(request, Some(self.data.clone()))
                     .map_err(HarnessError::Memory)
             }
             MemoryOperation::Upgrade => {
                 MemoryResponse::completed(request, None).map_err(HarnessError::Memory)
             }
-            MemoryOperation::Write => {
+            MemoryOperation::Write | MemoryOperation::LockedRmwWrite => {
                 self.apply_write(request)?;
                 MemoryResponse::completed(request, None).map_err(HarnessError::Memory)
             }

@@ -217,6 +217,40 @@ impl MemoryRequest {
         )
     }
 
+    pub fn locked_rmw_read(
+        id: MemoryRequestId,
+        address: Address,
+        size: AccessSize,
+        line_layout: CacheLineLayout,
+    ) -> Result<Self, MemoryError> {
+        Self::new(
+            id,
+            MemoryOperation::LockedRmwRead,
+            address,
+            size,
+            line_layout,
+            MemoryRequestPayload::empty(),
+        )
+    }
+
+    pub fn locked_rmw_write(
+        id: MemoryRequestId,
+        address: Address,
+        size: AccessSize,
+        data: Vec<u8>,
+        byte_mask: ByteMask,
+        line_layout: CacheLineLayout,
+    ) -> Result<Self, MemoryError> {
+        Self::new(
+            id,
+            MemoryOperation::LockedRmwWrite,
+            address,
+            size,
+            line_layout,
+            MemoryRequestPayload::write(data, byte_mask),
+        )
+    }
+
     pub fn instruction_fetch(
         id: MemoryRequestId,
         address: Address,
@@ -503,20 +537,21 @@ impl MemoryRequest {
         byte_mask: Option<&ByteMask>,
     ) -> Result<(), MemoryError> {
         match (operation, byte_mask) {
-            (MemoryOperation::Write | MemoryOperation::Atomic, Some(mask))
-                if mask.len() == size.bytes() =>
-            {
-                Ok(())
-            }
-            (MemoryOperation::Write | MemoryOperation::Atomic, Some(mask)) => {
-                Err(MemoryError::ByteMaskSizeMismatch {
-                    expected: size,
-                    actual: mask.len(),
-                })
-            }
-            (MemoryOperation::Write | MemoryOperation::Atomic, None) => {
-                Err(MemoryError::MissingByteMask { request: id })
-            }
+            (
+                MemoryOperation::Write | MemoryOperation::LockedRmwWrite | MemoryOperation::Atomic,
+                Some(mask),
+            ) if mask.len() == size.bytes() => Ok(()),
+            (
+                MemoryOperation::Write | MemoryOperation::LockedRmwWrite | MemoryOperation::Atomic,
+                Some(mask),
+            ) => Err(MemoryError::ByteMaskSizeMismatch {
+                expected: size,
+                actual: mask.len(),
+            }),
+            (
+                MemoryOperation::Write | MemoryOperation::LockedRmwWrite | MemoryOperation::Atomic,
+                None,
+            ) => Err(MemoryError::MissingByteMask { request: id }),
             (_, Some(_)) => Err(MemoryError::UnexpectedByteMask { request: id }),
             (_, None) => Ok(()),
         }

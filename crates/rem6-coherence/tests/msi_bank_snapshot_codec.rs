@@ -99,6 +99,61 @@ fn write_mshr_entry_until_target_count(payload: &mut Vec<u8>) {
     write_u8(payload, 0);
 }
 
+fn write_mshr_target_with_request_payload(
+    payload: &mut Vec<u8>,
+    operation: u8,
+    data: Option<&[u8]>,
+    byte_mask: Option<&[bool]>,
+) {
+    write_u32(payload, 1);
+    write_u64(payload, 10);
+    write_u8(payload, operation);
+    write_u64(payload, 0x1000);
+    write_u64(payload, 8);
+    write_u64(payload, LINE_BYTES);
+    match data {
+        Some(data) => {
+            write_u8(payload, 1);
+            write_u64(payload, data.len() as u64);
+            payload.extend_from_slice(data);
+        }
+        None => write_u8(payload, 0),
+    }
+    match byte_mask {
+        Some(bits) => {
+            write_u8(payload, 1);
+            write_u64(payload, bits.len() as u64);
+            for bit in bits {
+                write_u8(payload, u8::from(*bit));
+            }
+        }
+        None => write_u8(payload, 0),
+    }
+    write_u8(payload, 0);
+    write_u8(payload, 0);
+
+    write_u64(payload, 0);
+    write_u64(payload, 0);
+    write_u8(payload, 0);
+    write_u8(payload, 0);
+    write_u8(payload, 0);
+}
+
+fn payload_with_one_mshr_target_request(
+    operation: u8,
+    data: Option<&[u8]>,
+    byte_mask: Option<&[bool]>,
+) -> Vec<u8> {
+    let mut payload = payload_with_one_cache_bank_until_mshr_entry_count();
+    write_u64(&mut payload, 1);
+    write_mshr_entry_until_target_count(&mut payload);
+    write_u64(&mut payload, 1);
+    write_mshr_target_with_request_payload(&mut payload, operation, data, byte_mask);
+    write_empty_top_level_counts_before_parallel_cycles(&mut payload);
+    write_u64(&mut payload, 0);
+    payload
+}
+
 fn write_directory_state_without_owner_or_sharers(payload: &mut Vec<u8>) {
     write_u64(payload, 0x1000);
     write_u8(payload, 0);
@@ -371,6 +426,27 @@ fn msi_bank_snapshot_rejects_impossible_request_byte_mask_length() {
         format!(
             "MSI request byte mask length 18446744073709551615 exceeds remaining payload capacity {capacity} records"
         )
+    );
+}
+
+#[test]
+fn msi_bank_snapshot_rejects_locked_rmw_read_request_with_data() {
+    let payload = payload_with_one_mshr_target_request(15, Some(&[0x5a; 8]), None);
+
+    let error = MsiBankDirectoryHarnessSnapshot::from_bytes(&payload).unwrap_err();
+
+    assert_eq!(error, "MSI locked RMW read request cannot carry data");
+}
+
+#[test]
+fn msi_bank_snapshot_rejects_locked_rmw_read_request_with_byte_mask() {
+    let payload = payload_with_one_mshr_target_request(15, None, Some(&[true; 8]));
+
+    let error = MsiBankDirectoryHarnessSnapshot::from_bytes(&payload).unwrap_err();
+
+    assert_eq!(
+        error,
+        "MSI locked RMW read request cannot carry a byte mask"
     );
 }
 

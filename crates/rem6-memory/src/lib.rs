@@ -131,6 +131,8 @@ pub enum MemoryOperation {
     InstructionFetch,
     ReadShared,
     ReadUnique,
+    LockedRmwRead,
+    LockedRmwWrite,
     Write,
     Upgrade,
     Atomic,
@@ -221,8 +223,10 @@ impl MemoryOperation {
         match self {
             Self::InstructionFetch => CoherenceIntent::InstructionFetch,
             Self::ReadShared | Self::PrefetchRead => CoherenceIntent::ReadShared,
-            Self::ReadUnique => CoherenceIntent::ReadUnique,
-            Self::Write | Self::PrefetchWrite | Self::Atomic => CoherenceIntent::WriteUnique,
+            Self::ReadUnique | Self::LockedRmwRead => CoherenceIntent::ReadUnique,
+            Self::Write | Self::LockedRmwWrite | Self::PrefetchWrite | Self::Atomic => {
+                CoherenceIntent::WriteUnique
+            }
             Self::Upgrade => CoherenceIntent::Upgrade,
             Self::WriteClean => CoherenceIntent::WriteClean,
             Self::WritebackClean => CoherenceIntent::WritebackClean,
@@ -249,7 +253,11 @@ impl MemoryOperation {
     pub const fn returns_data(self) -> bool {
         matches!(
             self,
-            Self::InstructionFetch | Self::ReadShared | Self::ReadUnique | Self::Atomic
+            Self::InstructionFetch
+                | Self::ReadShared
+                | Self::ReadUnique
+                | Self::LockedRmwRead
+                | Self::Atomic
         )
     }
 
@@ -257,6 +265,7 @@ impl MemoryOperation {
         matches!(
             self,
             Self::Write
+                | Self::LockedRmwWrite
                 | Self::Atomic
                 | Self::WriteClean
                 | Self::WritebackClean
@@ -268,7 +277,9 @@ impl MemoryOperation {
         matches!(
             self,
             Self::ReadUnique
+                | Self::LockedRmwRead
                 | Self::Write
+                | Self::LockedRmwWrite
                 | Self::Upgrade
                 | Self::Atomic
                 | Self::PrefetchWrite
@@ -366,11 +377,12 @@ impl LineMemoryStore {
         match request.operation() {
             MemoryOperation::InstructionFetch
             | MemoryOperation::ReadShared
-            | MemoryOperation::ReadUnique => {
+            | MemoryOperation::ReadUnique
+            | MemoryOperation::LockedRmwRead => {
                 let data = self.read_slice(request)?;
                 MemoryResponse::completed(request, Some(data)).map(Some)
             }
-            MemoryOperation::Write => {
+            MemoryOperation::Write | MemoryOperation::LockedRmwWrite => {
                 self.apply_write(request)?;
                 MemoryResponse::completed(request, None).map(Some)
             }

@@ -528,7 +528,9 @@ impl ChiDirectory {
                 self.accept_read_shared(line, request_id, requester, &mut after_line)
             }
             MemoryOperation::ReadUnique
+            | MemoryOperation::LockedRmwRead
             | MemoryOperation::Write
+            | MemoryOperation::LockedRmwWrite
             | MemoryOperation::Atomic
             | MemoryOperation::PrefetchWrite
             | MemoryOperation::InvalidateWritable => {

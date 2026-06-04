@@ -62,8 +62,10 @@ impl DramAccessKind {
             MemoryOperation::InstructionFetch
             | MemoryOperation::ReadShared
             | MemoryOperation::ReadUnique
+            | MemoryOperation::LockedRmwRead
             | MemoryOperation::PrefetchRead => Ok(Self::Read),
             MemoryOperation::Write
+            | MemoryOperation::LockedRmwWrite
             | MemoryOperation::Atomic
             | MemoryOperation::PrefetchWrite
             | MemoryOperation::WriteClean

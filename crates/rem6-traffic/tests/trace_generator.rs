@@ -624,6 +624,72 @@ fn trace_traffic_generator_maps_swap_packet_to_atomic_swap_operation() {
 }
 
 #[test]
+fn trace_traffic_generator_maps_locked_rmw_packets_to_typed_locked_operations() {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace(
+            TICK_FREQUENCY,
+            &[
+                PacketFields {
+                    tick: 13,
+                    command: 30,
+                    address: 0x208,
+                    size: 8,
+                    flags: None,
+                },
+                PacketFields {
+                    tick: 17,
+                    command: 32,
+                    address: 0x208,
+                    size: 8,
+                    flags: None,
+                },
+            ],
+        ),
+        TICK_FREQUENCY,
+    )
+    .unwrap();
+    let mut generator = TrafficTraceGenerator::new(trace_config(trace));
+    generator.enter(90);
+
+    let read = generator.next_request(90, 0).unwrap().unwrap();
+    assert_eq!(read.tick(), 103);
+    assert_eq!(read.kind(), TrafficRequestKind::Read);
+    assert_eq!(read.address(), Address::new(0x208));
+    assert_eq!(read.request().operation(), MemoryOperation::LockedRmwRead);
+    assert_eq!(read.request().size(), AccessSize::new(8).unwrap());
+    assert_eq!(read.request().data(), None);
+    assert_eq!(read.request().byte_mask(), None);
+    assert_eq!(read.request().atomic_op(), None);
+    assert!(read.request().requires_writable());
+    assert!(read.request().returns_data());
+
+    let write = generator.next_request(read.tick(), 0).unwrap().unwrap();
+    assert_eq!(write.tick(), 107);
+    assert_eq!(write.kind(), TrafficRequestKind::Write);
+    assert_eq!(write.address(), Address::new(0x208));
+    assert_eq!(write.request().operation(), MemoryOperation::LockedRmwWrite);
+    assert_eq!(write.request().size(), AccessSize::new(8).unwrap());
+    assert_eq!(write.request().data(), Some(&vec![7; 8][..]));
+    assert_eq!(write.request().byte_mask().unwrap().len(), 8);
+    assert!(write
+        .request()
+        .byte_mask()
+        .unwrap()
+        .bits()
+        .iter()
+        .all(|bit| *bit));
+    assert_eq!(write.request().atomic_op(), None);
+    assert!(write.request().requires_writable());
+    assert!(!write.request().returns_data());
+
+    assert_eq!(generator.summary().packet_count(), 2);
+    assert_eq!(generator.summary().read_count(), 1);
+    assert_eq!(generator.summary().write_count(), 1);
+    assert_eq!(generator.summary().bytes_read(), 8);
+    assert_eq!(generator.summary().bytes_written(), 8);
+}
+
+#[test]
 fn trace_traffic_generator_rejects_write_clean_packet_with_partial_line_size() {
     let trace = TrafficTrace::from_gem5_packet_trace(
         &gem5_packet_trace(

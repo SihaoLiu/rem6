@@ -684,7 +684,9 @@ fn chi_cpu_event(request: &MemoryRequest) -> ChiEvent {
     match request.operation() {
         MemoryOperation::InstructionFetch | MemoryOperation::ReadShared => ChiEvent::CpuRead,
         MemoryOperation::ReadUnique
+        | MemoryOperation::LockedRmwRead
         | MemoryOperation::Write
+        | MemoryOperation::LockedRmwWrite
         | MemoryOperation::Upgrade
         | MemoryOperation::Atomic
         | MemoryOperation::PrefetchWrite => ChiEvent::CpuWrite,

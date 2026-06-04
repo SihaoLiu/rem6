@@ -689,7 +689,9 @@ fn moesi_cpu_event(request: &MemoryRequest) -> MoesiEvent {
     match request.operation() {
         MemoryOperation::InstructionFetch | MemoryOperation::ReadShared => MoesiEvent::CpuRead,
         MemoryOperation::ReadUnique
+        | MemoryOperation::LockedRmwRead
         | MemoryOperation::Write
+        | MemoryOperation::LockedRmwWrite
         | MemoryOperation::Upgrade
         | MemoryOperation::Atomic
         | MemoryOperation::PrefetchWrite => MoesiEvent::CpuWrite,

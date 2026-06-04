@@ -125,6 +125,29 @@ fn invalidate_writable(agent_id: u32, sequence: u64, address: u64) -> MemoryRequ
     .unwrap()
 }
 
+fn locked_rmw_read(agent_id: u32, sequence: u64, address: u64) -> MemoryRequest {
+    MemoryRequest::locked_rmw_read(
+        request_id(agent_id, sequence),
+        Address::new(address),
+        size(8),
+        layout(),
+    )
+    .unwrap()
+}
+
+fn locked_rmw_write(agent_id: u32, sequence: u64, address: u64, data: Vec<u8>) -> MemoryRequest {
+    let size = size(data.len() as u64);
+    MemoryRequest::locked_rmw_write(
+        request_id(agent_id, sequence),
+        Address::new(address),
+        size,
+        data,
+        ByteMask::full(size).unwrap(),
+        layout(),
+    )
+    .unwrap()
+}
+
 fn pending_bank_snapshot_with_post_fill_invalidate(
     cache_agent: AgentId,
     read_sequence: u64,
@@ -464,6 +487,81 @@ fn msi_bank_harness_byte_snapshot_round_trips_pending_writable_invalidate_target
             .request(),
         &invalidation
     );
+}
+
+#[test]
+fn msi_bank_harness_byte_snapshot_round_trips_pending_locked_rmw_targets() {
+    let config = MshrQueueConfig::new(2, 4, 0).unwrap();
+    let mut bank = MsiCacheBank::new_with_mshr(agent(1), layout(), config.clone());
+    bank.accept_cpu_request(read(1, 60, 0x2004)).unwrap();
+
+    let snapshot = bank.snapshot();
+    let current_mshr = snapshot.mshr().unwrap();
+    let current_entry = &current_mshr.entries()[0];
+    let locked_read = locked_rmw_read(1, 61, 0x2008);
+    let locked_write = locked_rmw_write(1, 62, 0x2008, vec![0x5a; 8]);
+    let mut targets = current_entry.targets().to_vec();
+    targets.push(MshrTarget::from_parts(
+        locked_read.clone(),
+        1,
+        1,
+        MshrTargetSource::Demand,
+        false,
+        None,
+    ));
+    targets.push(MshrTarget::from_parts(
+        locked_write.clone(),
+        1,
+        1,
+        MshrTargetSource::Demand,
+        true,
+        None,
+    ));
+    let mshr_snapshot = MshrQueueSnapshot::new(
+        config,
+        vec![MshrEntry::from_parts(
+            current_entry.handle(),
+            current_entry.line(),
+            current_entry.ready_tick(),
+            current_entry.order(),
+            current_entry.in_service(),
+            current_entry.pending_modified(),
+            targets,
+        )],
+        current_mshr.next_handle(),
+        current_mshr.next_order() + 1,
+    );
+    let snapshot = MsiBankDirectoryHarnessSnapshot::new(
+        layout(),
+        BTreeMap::from([(
+            agent(1),
+            MsiCacheBankSnapshot::new_with_mshr(
+                snapshot.agent(),
+                snapshot.layout(),
+                snapshot.next_sequence(),
+                snapshot.lines().to_vec(),
+                mshr_snapshot,
+            ),
+        )]),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    );
+
+    let rebuilt = MsiBankDirectoryHarnessSnapshot::from_bytes(&snapshot.to_bytes()).unwrap();
+    let targets = rebuilt
+        .cache_snapshot(agent(1))
+        .unwrap()
+        .mshr()
+        .unwrap()
+        .entries()[0]
+        .targets();
+
+    assert_eq!(rebuilt, snapshot);
+    assert_eq!(targets[1].request(), &locked_read);
+    assert_eq!(targets[2].request(), &locked_write);
 }
 
 #[test]

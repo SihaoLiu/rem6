@@ -677,7 +677,9 @@ fn cpu_event(request: &MemoryRequest) -> MsiEvent {
     match request.operation() {
         MemoryOperation::InstructionFetch | MemoryOperation::ReadShared => MsiEvent::CpuRead,
         MemoryOperation::ReadUnique
+        | MemoryOperation::LockedRmwRead
         | MemoryOperation::Write
+        | MemoryOperation::LockedRmwWrite
         | MemoryOperation::Upgrade
         | MemoryOperation::Atomic
         | MemoryOperation::PrefetchWrite => MsiEvent::CpuWrite,

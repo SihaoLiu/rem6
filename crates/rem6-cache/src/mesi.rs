@@ -683,7 +683,9 @@ fn mesi_cpu_event(request: &MemoryRequest) -> MesiEvent {
     match request.operation() {
         MemoryOperation::InstructionFetch | MemoryOperation::ReadShared => MesiEvent::CpuRead,
         MemoryOperation::ReadUnique
+        | MemoryOperation::LockedRmwRead
         | MemoryOperation::Write
+        | MemoryOperation::LockedRmwWrite
         | MemoryOperation::Upgrade
         | MemoryOperation::Atomic
         | MemoryOperation::PrefetchWrite => MesiEvent::CpuWrite,

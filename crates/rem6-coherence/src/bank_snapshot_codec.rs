@@ -615,12 +615,25 @@ fn read_request(cursor: &mut PayloadCursor<'_>) -> Result<MemoryRequest, String>
         }
         MemoryOperation::ReadShared => MemoryRequest::read_shared(id, address, size, layout),
         MemoryOperation::ReadUnique => MemoryRequest::read_unique(id, address, size, layout),
+        MemoryOperation::LockedRmwRead => {
+            reject_unexpected_request_payload("locked RMW read", &data, &byte_mask)?;
+            MemoryRequest::locked_rmw_read(id, address, size, layout)
+        }
         MemoryOperation::Write => MemoryRequest::write(
             id,
             address,
             size,
             data.ok_or_else(|| "MSI write request is missing data".to_string())?,
             byte_mask.ok_or_else(|| "MSI write request is missing byte mask".to_string())?,
+            layout,
+        ),
+        MemoryOperation::LockedRmwWrite => MemoryRequest::locked_rmw_write(
+            id,
+            address,
+            size,
+            data.ok_or_else(|| "MSI locked RMW write request is missing data".to_string())?,
+            byte_mask
+                .ok_or_else(|| "MSI locked RMW write request is missing byte mask".to_string())?,
             layout,
         ),
         MemoryOperation::Upgrade => MemoryRequest::upgrade(id, address, size, layout),
@@ -691,6 +704,20 @@ fn read_request(cursor: &mut PayloadCursor<'_>) -> Result<MemoryRequest, String>
     }
     .map_err(|error| error.to_string())?;
     Ok(request.with_ordering(ordering))
+}
+
+fn reject_unexpected_request_payload(
+    operation: &str,
+    data: &Option<Vec<u8>>,
+    byte_mask: &Option<ByteMask>,
+) -> Result<(), String> {
+    if data.is_some() {
+        return Err(format!("MSI {operation} request cannot carry data"));
+    }
+    if byte_mask.is_some() {
+        return Err(format!("MSI {operation} request cannot carry a byte mask"));
+    }
+    Ok(())
 }
 
 fn write_memory_access_ordering(payload: &mut Vec<u8>, ordering: MemoryAccessOrdering) {
@@ -959,6 +986,8 @@ fn memory_operation_to_u8(operation: MemoryOperation) -> u8 {
         MemoryOperation::WriteClean => 12,
         MemoryOperation::CleanShared => 13,
         MemoryOperation::InvalidateWritable => 14,
+        MemoryOperation::LockedRmwRead => 15,
+        MemoryOperation::LockedRmwWrite => 16,
     }
 }
 
@@ -979,6 +1008,8 @@ fn u8_to_memory_operation(value: u8) -> Result<MemoryOperation, String> {
         12 => Ok(MemoryOperation::WriteClean),
         13 => Ok(MemoryOperation::CleanShared),
         14 => Ok(MemoryOperation::InvalidateWritable),
+        15 => Ok(MemoryOperation::LockedRmwRead),
+        16 => Ok(MemoryOperation::LockedRmwWrite),
         _ => Err(format!("unknown memory operation {value}")),
     }
 }

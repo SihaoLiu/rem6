@@ -38,6 +38,26 @@ fn read(agent_id: AgentId, sequence: u64, address: u64) -> MemoryRequest {
     .unwrap()
 }
 
+fn locked_rmw_read(agent_id: AgentId, sequence: u64, address: u64) -> MemoryRequest {
+    MemoryRequest::locked_rmw_read(
+        MemoryRequestId::new(agent_id, sequence),
+        Address::new(address),
+        size(8),
+        layout(),
+    )
+    .unwrap()
+}
+
+fn read_unique(agent_id: AgentId, sequence: u64, address: u64) -> MemoryRequest {
+    MemoryRequest::read_unique(
+        MemoryRequestId::new(agent_id, sequence),
+        Address::new(address),
+        size(8),
+        layout(),
+    )
+    .unwrap()
+}
+
 fn uncacheable_read(agent_id: AgentId, sequence: u64, address: u64) -> MemoryRequest {
     read(agent_id, sequence, address).with_uncacheable_strict_order()
 }
@@ -981,6 +1001,41 @@ fn moesi_cache_bank_uncacheable_read_queues_dirty_writeback_before_forwarding() 
         &[0x99; 8]
     );
     assert_eq!(bank.state(Address::new(0x4500)), None);
+}
+
+#[test]
+fn moesi_cache_bank_locked_rmw_read_waits_for_write_queue_conflict() {
+    let cache_agent = agent(30);
+    let mut bank = MoesiCacheBank::new_with_write_queue(
+        cache_agent,
+        layout(),
+        CacheWriteQueueConfig::new(1, 0).unwrap(),
+    );
+    let store = write(cache_agent, 133, 0x4604, vec![0xde, 0xad]);
+    let miss = bank.accept_cpu_request(store).unwrap();
+    bank.accept_fill(
+        fill(miss.downstream_request().unwrap(), 0x00),
+        MoesiEvent::DataModified,
+    )
+    .unwrap();
+
+    let uncached = uncacheable_read(cache_agent, 134, 0x4608);
+    bank.accept_cpu_request(uncached).unwrap();
+
+    let forwarded = bank
+        .accept_cpu_request(read(cache_agent, 135, 0x4604))
+        .unwrap();
+    assert_eq!(forwarded.kind(), MoesiCacheControllerResultKind::Hit);
+    assert!(matches!(
+        bank.accept_cpu_request(read_unique(cache_agent, 136, 0x4604)),
+        Err(MoesiCacheBankError::WriteQueueConflict { line })
+            if line == Address::new(0x4600)
+    ));
+    assert!(matches!(
+        bank.accept_cpu_request(locked_rmw_read(cache_agent, 137, 0x4604)),
+        Err(MoesiCacheBankError::WriteQueueConflict { line })
+            if line == Address::new(0x4600)
+    ));
 }
 
 #[test]

@@ -245,6 +245,56 @@ fn atomic_request_carries_data_and_returns_data() {
 }
 
 #[test]
+fn locked_rmw_requests_preserve_read_and_write_half_semantics() {
+    let read = MemoryRequest::locked_rmw_read(
+        request_id(22),
+        Address::new(0x2108),
+        AccessSize::new(8).unwrap(),
+        line_layout(),
+    )
+    .unwrap();
+
+    assert_eq!(read.operation(), MemoryOperation::LockedRmwRead);
+    assert_eq!(read.coherence_intent(), CoherenceIntent::ReadUnique);
+    assert_eq!(read.range().start(), Address::new(0x2108));
+    assert_eq!(read.size(), AccessSize::new(8).unwrap());
+    assert_eq!(read.data(), None);
+    assert_eq!(read.byte_mask(), None);
+    assert_eq!(read.atomic_op(), None);
+    assert!(!read.carries_data());
+    assert!(read.requires_writable());
+    assert!(read.requires_response());
+    assert!(read.returns_data());
+
+    let size = AccessSize::new(8).unwrap();
+    let mask = ByteMask::full(size).unwrap();
+    let write = MemoryRequest::locked_rmw_write(
+        request_id(23),
+        Address::new(0x2110),
+        size,
+        vec![0x10, 0x32, 0x54, 0x76, 0x98, 0xba, 0xdc, 0xfe],
+        mask.clone(),
+        line_layout(),
+    )
+    .unwrap();
+
+    assert_eq!(write.operation(), MemoryOperation::LockedRmwWrite);
+    assert_eq!(write.coherence_intent(), CoherenceIntent::WriteUnique);
+    assert_eq!(write.range().start(), Address::new(0x2110));
+    assert_eq!(write.size(), size);
+    assert_eq!(
+        write.data(),
+        Some(&[0x10, 0x32, 0x54, 0x76, 0x98, 0xba, 0xdc, 0xfe][..])
+    );
+    assert_eq!(write.byte_mask(), Some(&mask));
+    assert_eq!(write.atomic_op(), None);
+    assert!(write.carries_data());
+    assert!(write.requires_writable());
+    assert!(write.requires_response());
+    assert!(!write.returns_data());
+}
+
+#[test]
 fn coherence_operations_expose_protocol_relevant_attributes() {
     let upgrade = MemoryRequest::upgrade(
         request_id(17),
@@ -890,6 +940,48 @@ fn memory_request_checkpoint_payload_round_trips_invalidate_writable() {
     assert_eq!(restored.data(), None);
     assert_eq!(restored.byte_mask(), None);
     assert!(restored.requires_writable());
+}
+
+#[test]
+fn memory_request_checkpoint_payload_round_trips_locked_rmw_requests() {
+    let read = MemoryRequest::locked_rmw_read(
+        request_id(46),
+        Address::new(0x7d08),
+        AccessSize::new(8).unwrap(),
+        line_layout(),
+    )
+    .unwrap();
+    let read_payload = MemoryRequestCheckpointPayload::from_request(&read);
+    let read_decoded =
+        MemoryRequestCheckpointPayload::decode(read_payload.encode().as_slice()).unwrap();
+    let read_restored = MemoryRequest::from_snapshot(read_decoded.snapshot()).unwrap();
+
+    assert_eq!(read_decoded.snapshot(), &read.snapshot());
+    assert_eq!(read_restored, read);
+    assert_eq!(read_restored.operation(), MemoryOperation::LockedRmwRead);
+    assert!(read_restored.requires_writable());
+    assert!(read_restored.returns_data());
+
+    let size = AccessSize::new(8).unwrap();
+    let write = MemoryRequest::locked_rmw_write(
+        request_id(47),
+        Address::new(0x7d10),
+        size,
+        vec![0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7],
+        ByteMask::full(size).unwrap(),
+        line_layout(),
+    )
+    .unwrap();
+    let write_payload = MemoryRequestCheckpointPayload::from_request(&write);
+    let write_decoded =
+        MemoryRequestCheckpointPayload::decode(write_payload.encode().as_slice()).unwrap();
+    let write_restored = MemoryRequest::from_snapshot(write_decoded.snapshot()).unwrap();
+
+    assert_eq!(write_decoded.snapshot(), &write.snapshot());
+    assert_eq!(write_restored, write);
+    assert_eq!(write_restored.operation(), MemoryOperation::LockedRmwWrite);
+    assert!(write_restored.requires_writable());
+    assert!(!write_restored.returns_data());
 }
 
 #[test]

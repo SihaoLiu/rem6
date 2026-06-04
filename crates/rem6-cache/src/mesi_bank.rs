@@ -1421,7 +1421,7 @@ impl MesiCacheBank {
         if self.write_queue_pending_conflict(line, false).is_none() {
             return Ok(None);
         }
-        if request.returns_data() && !request.carries_data() {
+        if request.returns_data() && !request.carries_data() && !request.requires_writable() {
             if let Some(data) = self.write_queue_ref()?.satisfy_read(
                 request.range().start(),
                 request.size(),

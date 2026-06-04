@@ -29,6 +29,8 @@ const GEM5_UPGRADE_REQ: u32 = 17;
 const GEM5_READ_EX_REQ: u32 = 22;
 const GEM5_READ_CLEAN_REQ: u32 = 24;
 const GEM5_READ_SHARED_REQ: u32 = 25;
+const GEM5_LOCKED_RMW_READ_REQ: u32 = 30;
+const GEM5_LOCKED_RMW_WRITE_REQ: u32 = 32;
 const GEM5_SWAP_REQ: u32 = 34;
 const GEM5_CLEAN_SHARED_REQ: u32 = 42;
 const GEM5_CLEAN_INVALID_REQ: u32 = 44;
@@ -47,6 +49,8 @@ enum TrafficTraceCommand {
     SoftPrefetchRead,
     HardPrefetchRead,
     PrefetchWrite,
+    LockedRmwRead,
+    LockedRmwWrite,
     Write,
     WriteLine,
     WritebackDirty,
@@ -67,8 +71,10 @@ impl TrafficTraceCommand {
             | Self::ReadUnique
             | Self::SoftPrefetchRead
             | Self::HardPrefetchRead
-            | Self::PrefetchWrite => TrafficRequestKind::Read,
+            | Self::PrefetchWrite
+            | Self::LockedRmwRead => TrafficRequestKind::Read,
             Self::Write
+            | Self::LockedRmwWrite
             | Self::WriteLine
             | Self::WritebackDirty
             | Self::WritebackClean
@@ -89,6 +95,8 @@ impl TrafficTraceCommand {
             Self::SoftPrefetchRead => "SoftPFReq",
             Self::HardPrefetchRead => "HardPFReq",
             Self::PrefetchWrite => "SoftPFExReq",
+            Self::LockedRmwRead => "LockedRMWReadReq",
+            Self::LockedRmwWrite => "LockedRMWWriteReq",
             Self::Write => "WriteReq",
             Self::WriteLine => "WriteLineReq",
             Self::WritebackDirty => "WritebackDirty",
@@ -475,6 +483,10 @@ impl TrafficTraceGenerator {
             TrafficRequestKind::Read if element.command == TrafficTraceCommand::PrefetchWrite => {
                 MemoryRequest::prefetch_write(id, address, element.size, layout).map_err(Into::into)
             }
+            TrafficRequestKind::Read if element.command == TrafficTraceCommand::LockedRmwRead => {
+                MemoryRequest::locked_rmw_read(id, address, element.size, layout)
+                    .map_err(Into::into)
+            }
             TrafficRequestKind::Read => {
                 MemoryRequest::read_shared(id, address, element.size, layout).map_err(Into::into)
             }
@@ -501,7 +513,17 @@ impl TrafficTraceGenerator {
                 )
             }
             TrafficRequestKind::Write => {
-                build_write_request(self.config.agent(), id, address, element.size, layout)
+                if element.command == TrafficTraceCommand::LockedRmwWrite {
+                    build_locked_rmw_write_request(
+                        self.config.agent(),
+                        id,
+                        address,
+                        element.size,
+                        layout,
+                    )
+                } else {
+                    build_write_request(self.config.agent(), id, address, element.size, layout)
+                }
             }
             TrafficRequestKind::Atomic if element.command == TrafficTraceCommand::Swap => {
                 build_atomic_swap_request(self.config.agent(), id, address, element.size, layout)
@@ -591,6 +613,20 @@ fn build_write_request(
         usize::try_from(mask.len()).expect("byte mask length fits usize after construction");
     let data = vec![agent.get() as u8; data_len];
     MemoryRequest::write(id, address, size, data, mask, layout).map_err(Into::into)
+}
+
+fn build_locked_rmw_write_request(
+    agent: AgentId,
+    id: MemoryRequestId,
+    address: Address,
+    size: AccessSize,
+    layout: CacheLineLayout,
+) -> Result<MemoryRequest, TrafficGeneratorError> {
+    let mask = ByteMask::full(size)?;
+    let data_len =
+        usize::try_from(mask.len()).expect("byte mask length fits usize after construction");
+    let data = vec![agent.get() as u8; data_len];
+    MemoryRequest::locked_rmw_write(id, address, size, data, mask, layout).map_err(Into::into)
 }
 
 fn validate_writeback_request(
@@ -844,6 +880,8 @@ fn parse_packet(message: &[u8]) -> Result<TrafficTraceElement, TrafficGeneratorE
         GEM5_SOFT_PF_REQ => TrafficTraceCommand::SoftPrefetchRead,
         GEM5_HARD_PF_REQ => TrafficTraceCommand::HardPrefetchRead,
         GEM5_SOFT_PF_EX_REQ => TrafficTraceCommand::PrefetchWrite,
+        GEM5_LOCKED_RMW_READ_REQ => TrafficTraceCommand::LockedRmwRead,
+        GEM5_LOCKED_RMW_WRITE_REQ => TrafficTraceCommand::LockedRmwWrite,
         GEM5_WRITE_REQ => TrafficTraceCommand::Write,
         GEM5_WRITEBACK_DIRTY => TrafficTraceCommand::WritebackDirty,
         GEM5_WRITEBACK_CLEAN => TrafficTraceCommand::WritebackClean,
