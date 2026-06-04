@@ -20,6 +20,7 @@ const GEM5_WRITEBACK_DIRTY: u32 = 7;
 const GEM5_WRITEBACK_CLEAN: u32 = 8;
 const GEM5_CLEAN_EVICT: u32 = 10;
 const GEM5_WRITE_LINE_REQ: u32 = 16;
+const GEM5_UPGRADE_REQ: u32 = 17;
 const GEM5_READ_EX_REQ: u32 = 22;
 const GEM5_READ_CLEAN_REQ: u32 = 24;
 const GEM5_READ_SHARED_REQ: u32 = 25;
@@ -39,6 +40,7 @@ enum TrafficTraceCommand {
     WritebackDirty,
     WritebackClean,
     CleanEvict,
+    Upgrade,
 }
 
 impl TrafficTraceCommand {
@@ -48,7 +50,7 @@ impl TrafficTraceCommand {
             Self::Write | Self::WriteLine | Self::WritebackDirty | Self::WritebackClean => {
                 TrafficRequestKind::Write
             }
-            Self::CleanEvict => TrafficRequestKind::Maintenance,
+            Self::CleanEvict | Self::Upgrade => TrafficRequestKind::Maintenance,
         }
     }
 
@@ -61,6 +63,7 @@ impl TrafficTraceCommand {
             Self::WritebackDirty => "WritebackDirty",
             Self::WritebackClean => "WritebackClean",
             Self::CleanEvict => "CleanEvict",
+            Self::Upgrade => "UpgradeReq",
         }
     }
 }
@@ -457,6 +460,10 @@ impl TrafficTraceGenerator {
                 validate_clean_evict_request(address, element.size, layout)?;
                 MemoryRequest::clean_evict(id, address, layout).map_err(Into::into)
             }
+            TrafficRequestKind::Maintenance if element.command == TrafficTraceCommand::Upgrade => {
+                validate_upgrade_request(address, element.size, layout)?;
+                MemoryRequest::upgrade(id, address, element.size, layout).map_err(Into::into)
+            }
             TrafficRequestKind::Maintenance => {
                 unreachable!("maintenance trace kind has no request builder")
             }
@@ -556,6 +563,26 @@ fn validate_clean_evict_request(
     }
     if layout.line_offset(address) != 0 {
         return Err(TrafficGeneratorError::TraceCleanEvictUnalignedAddress {
+            address,
+            line_size: layout.bytes(),
+        });
+    }
+    Ok(())
+}
+
+fn validate_upgrade_request(
+    address: Address,
+    size: AccessSize,
+    layout: CacheLineLayout,
+) -> Result<(), TrafficGeneratorError> {
+    if size.bytes() != layout.bytes() {
+        return Err(TrafficGeneratorError::TraceUpgradeSizeMismatch {
+            size: size.bytes(),
+            line_size: layout.bytes(),
+        });
+    }
+    if layout.line_offset(address) != 0 {
+        return Err(TrafficGeneratorError::TraceUpgradeUnalignedAddress {
             address,
             line_size: layout.bytes(),
         });
@@ -683,6 +710,7 @@ fn parse_packet(message: &[u8]) -> Result<TrafficTraceElement, TrafficGeneratorE
         GEM5_WRITEBACK_CLEAN => TrafficTraceCommand::WritebackClean,
         GEM5_CLEAN_EVICT => TrafficTraceCommand::CleanEvict,
         GEM5_WRITE_LINE_REQ => TrafficTraceCommand::WriteLine,
+        GEM5_UPGRADE_REQ => TrafficTraceCommand::Upgrade,
         command => return Err(TrafficGeneratorError::TraceUnsupportedCommand { command }),
     };
     let address = address.ok_or(TrafficGeneratorError::TraceMissingField {
