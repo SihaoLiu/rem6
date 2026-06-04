@@ -584,6 +584,104 @@ fn trace_parser_rejects_writeback_packet_with_nonzero_flags() {
 }
 
 #[test]
+fn trace_traffic_generator_maps_clean_evict_packet_to_maintenance_operation() {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace(
+            TICK_FREQUENCY,
+            &[PacketFields {
+                tick: 6,
+                command: 10,
+                address: 0x100,
+                size: 64,
+                flags: None,
+            }],
+        ),
+        TICK_FREQUENCY,
+    )
+    .unwrap();
+    let mut generator = TrafficTraceGenerator::new(trace_config(trace));
+    generator.enter(40);
+
+    let event = generator.next_request(40, 0).unwrap().unwrap();
+
+    assert_eq!(event.tick(), 46);
+    assert_eq!(event.kind(), TrafficRequestKind::Maintenance);
+    assert_eq!(event.address(), Address::new(0x100));
+    assert_eq!(event.request().operation(), MemoryOperation::CleanEvict);
+    assert_eq!(event.request().size(), AccessSize::new(64).unwrap());
+    assert_eq!(event.request().data(), None);
+    assert_eq!(event.request().byte_mask(), None);
+    assert!(!event.request().carries_data());
+    assert!(!event.request().requires_response());
+    assert_eq!(generator.summary().packet_count(), 1);
+    assert_eq!(generator.summary().read_count(), 0);
+    assert_eq!(generator.summary().write_count(), 0);
+    assert_eq!(generator.summary().bytes_read(), 0);
+    assert_eq!(generator.summary().bytes_written(), 0);
+}
+
+#[test]
+fn trace_traffic_generator_rejects_clean_evict_packet_with_partial_line_size() {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace(
+            TICK_FREQUENCY,
+            &[PacketFields {
+                tick: 6,
+                command: 10,
+                address: 0x100,
+                size: 32,
+                flags: None,
+            }],
+        ),
+        TICK_FREQUENCY,
+    )
+    .unwrap();
+    let mut generator = TrafficTraceGenerator::new(trace_config(trace));
+    generator.enter(40);
+
+    let error = generator.next_request(40, 0).unwrap_err();
+
+    assert_eq!(
+        error,
+        TrafficGeneratorError::TraceCleanEvictSizeMismatch {
+            size: 32,
+            line_size: 64,
+        }
+    );
+}
+
+#[test]
+fn trace_traffic_generator_validates_clean_evict_alignment_after_addr_offset() {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace(
+            TICK_FREQUENCY,
+            &[PacketFields {
+                tick: 6,
+                command: 10,
+                address: 0x100,
+                size: 64,
+                flags: None,
+            }],
+        ),
+        TICK_FREQUENCY,
+    )
+    .unwrap();
+    let config = trace_config(trace).with_addr_offset(4).unwrap();
+    let mut generator = TrafficTraceGenerator::new(config);
+    generator.enter(40);
+
+    let error = generator.next_request(40, 0).unwrap_err();
+
+    assert_eq!(
+        error,
+        TrafficGeneratorError::TraceCleanEvictUnalignedAddress {
+            address: Address::new(0x104),
+            line_size: 64,
+        }
+    );
+}
+
+#[test]
 fn trace_parser_rejects_read_exclusive_packet_with_nonzero_flags() {
     assert_eq!(
         TrafficTrace::from_gem5_packet_trace(

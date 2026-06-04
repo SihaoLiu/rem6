@@ -18,6 +18,7 @@ const GEM5_READ_REQ: u32 = 1;
 const GEM5_WRITE_REQ: u32 = 4;
 const GEM5_WRITEBACK_DIRTY: u32 = 7;
 const GEM5_WRITEBACK_CLEAN: u32 = 8;
+const GEM5_CLEAN_EVICT: u32 = 10;
 const GEM5_WRITE_LINE_REQ: u32 = 16;
 const GEM5_READ_EX_REQ: u32 = 22;
 const GEM5_READ_CLEAN_REQ: u32 = 24;
@@ -37,6 +38,7 @@ enum TrafficTraceCommand {
     WriteLine,
     WritebackDirty,
     WritebackClean,
+    CleanEvict,
 }
 
 impl TrafficTraceCommand {
@@ -46,6 +48,7 @@ impl TrafficTraceCommand {
             Self::Write | Self::WriteLine | Self::WritebackDirty | Self::WritebackClean => {
                 TrafficRequestKind::Write
             }
+            Self::CleanEvict => TrafficRequestKind::Maintenance,
         }
     }
 
@@ -57,6 +60,7 @@ impl TrafficTraceCommand {
             Self::WriteLine => "WriteLineReq",
             Self::WritebackDirty => "WritebackDirty",
             Self::WritebackClean => "WritebackClean",
+            Self::CleanEvict => "CleanEvict",
         }
     }
 }
@@ -447,6 +451,15 @@ impl TrafficTraceGenerator {
             TrafficRequestKind::Write => {
                 build_write_request(self.config.agent(), id, address, element.size, layout)
             }
+            TrafficRequestKind::Maintenance
+                if element.command == TrafficTraceCommand::CleanEvict =>
+            {
+                validate_clean_evict_request(address, element.size, layout)?;
+                MemoryRequest::clean_evict(id, address, layout).map_err(Into::into)
+            }
+            TrafficRequestKind::Maintenance => {
+                unreachable!("maintenance trace kind has no request builder")
+            }
         }
     }
 }
@@ -528,6 +541,26 @@ fn build_writeback_request(
         }
         _ => unreachable!("writeback builder is only called for writeback trace commands"),
     }
+}
+
+fn validate_clean_evict_request(
+    address: Address,
+    size: AccessSize,
+    layout: CacheLineLayout,
+) -> Result<(), TrafficGeneratorError> {
+    if size.bytes() != layout.bytes() {
+        return Err(TrafficGeneratorError::TraceCleanEvictSizeMismatch {
+            size: size.bytes(),
+            line_size: layout.bytes(),
+        });
+    }
+    if layout.line_offset(address) != 0 {
+        return Err(TrafficGeneratorError::TraceCleanEvictUnalignedAddress {
+            address,
+            line_size: layout.bytes(),
+        });
+    }
+    Ok(())
 }
 
 struct Gem5PacketTraceReader<'a> {
@@ -648,6 +681,7 @@ fn parse_packet(message: &[u8]) -> Result<TrafficTraceElement, TrafficGeneratorE
         GEM5_WRITE_REQ => TrafficTraceCommand::Write,
         GEM5_WRITEBACK_DIRTY => TrafficTraceCommand::WritebackDirty,
         GEM5_WRITEBACK_CLEAN => TrafficTraceCommand::WritebackClean,
+        GEM5_CLEAN_EVICT => TrafficTraceCommand::CleanEvict,
         GEM5_WRITE_LINE_REQ => TrafficTraceCommand::WriteLine,
         command => return Err(TrafficGeneratorError::TraceUnsupportedCommand { command }),
     };

@@ -616,6 +616,9 @@ impl HybridTrafficGenerator {
                 let data = vec![self.config.agent().get() as u8; data_len];
                 MemoryRequest::write(id, address, size, data, mask, layout).map_err(Into::into)
             }
+            TrafficRequestKind::Maintenance => {
+                unreachable!("hybrid traffic generator does not emit maintenance requests")
+            }
         }
     }
 

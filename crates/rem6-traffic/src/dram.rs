@@ -542,6 +542,9 @@ impl DramTrafficGenerator {
                 self.current_kind = match self.current_kind {
                     TrafficRequestKind::Read => TrafficRequestKind::Write,
                     TrafficRequestKind::Write => TrafficRequestKind::Read,
+                    TrafficRequestKind::Maintenance => {
+                        unreachable!("DRAM rotation never selects maintenance requests")
+                    }
                 };
             }
             _ => {}
@@ -660,6 +663,9 @@ impl DramTrafficGenerator {
                     .expect("byte mask length fits usize after construction");
                 let data = vec![self.config.agent().get() as u8; data_len];
                 MemoryRequest::write(id, address, size, data, mask, layout).map_err(Into::into)
+            }
+            TrafficRequestKind::Maintenance => {
+                unreachable!("DRAM traffic generator does not emit maintenance requests")
             }
         }
     }

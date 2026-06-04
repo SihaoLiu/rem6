@@ -260,6 +260,14 @@ pub enum TrafficGeneratorError {
         address: Address,
         line_size: u64,
     },
+    TraceCleanEvictSizeMismatch {
+        size: u64,
+        line_size: u64,
+    },
+    TraceCleanEvictUnalignedAddress {
+        address: Address,
+        line_size: u64,
+    },
     TraceInvalidFieldWireType {
         message: &'static str,
         field: &'static str,
@@ -690,6 +698,15 @@ impl fmt::Display for TrafficGeneratorError {
             } => write!(
                 formatter,
                 "gem5 packet trace {command} address {:#x} is not aligned to cache line size {line_size}",
+                address.get()
+            ),
+            Self::TraceCleanEvictSizeMismatch { size, line_size } => write!(
+                formatter,
+                "gem5 packet trace CleanEvict size {size} does not match cache line size {line_size}"
+            ),
+            Self::TraceCleanEvictUnalignedAddress { address, line_size } => write!(
+                formatter,
+                "gem5 packet trace CleanEvict address {:#x} is not aligned to cache line size {line_size}",
                 address.get()
             ),
             Self::TraceInvalidFieldWireType {

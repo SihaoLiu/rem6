@@ -357,6 +357,9 @@ impl LinearTrafficGenerator {
                 let data = vec![self.config.agent().get() as u8; data_len];
                 MemoryRequest::write(id, address, size, data, mask, layout).map_err(Into::into)
             }
+            TrafficRequestKind::Maintenance => {
+                unreachable!("linear traffic generator does not emit maintenance requests")
+            }
         }
     }
 
@@ -942,6 +945,9 @@ impl RandomTrafficGenerator {
                 let data = vec![self.config.agent().get() as u8; data_len];
                 MemoryRequest::write(id, address, size, data, mask, layout).map_err(Into::into)
             }
+            TrafficRequestKind::Maintenance => {
+                unreachable!("random traffic generator does not emit maintenance requests")
+            }
         }
     }
 
@@ -1130,6 +1136,9 @@ impl StridedTrafficGenerator {
                     .expect("byte mask length fits usize after construction");
                 let data = vec![self.config.agent().get() as u8; data_len];
                 MemoryRequest::write(id, address, size, data, mask, layout).map_err(Into::into)
+            }
+            TrafficRequestKind::Maintenance => {
+                unreachable!("strided traffic generator does not emit maintenance requests")
             }
         }
     }
