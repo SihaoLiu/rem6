@@ -136,6 +136,52 @@ pub enum TrafficGeneratorError {
         line: usize,
         read_percent: u32,
     },
+    TrafficDramUnsupportedAddressMapping {
+        mapping: u32,
+    },
+    TrafficDramBanksUtilExceedsAvailable {
+        banks_util: u32,
+        banks: u32,
+    },
+    TrafficDramRotateUnsupportedReadPercent {
+        read_percent: u8,
+    },
+    TrafficDramGeometryTooSmall {
+        field: &'static str,
+        value: u64,
+        minimum: u64,
+    },
+    TrafficDramGeometryNotPowerOfTwo {
+        field: &'static str,
+        value: u64,
+    },
+    TrafficDramGeometryNotMultiple {
+        field: &'static str,
+        value: u64,
+        factor: u64,
+    },
+    TrafficDramAddressBitWidthTooLarge {
+        block_bits: u32,
+        page_bits: u32,
+        bank_bits: u32,
+        rank_bits: u32,
+    },
+    TrafficDramRotationCycleTooLarge {
+        ranks: u32,
+        max_seq_count_per_rank: u64,
+    },
+    TrafficDramSnapshotSeriesOutsideRange {
+        series_remaining: u32,
+        num_seq_packets: u32,
+    },
+    TrafficDramSnapshotRotateSequenceOutsideCycle {
+        rotate_sequence_count: u32,
+        cycle_size: u64,
+    },
+    TrafficDramSeriesExceedsPage {
+        num_seq_packets: u32,
+        columns_per_page_or_buffer: u64,
+    },
     TrafficControllerMissingStateGenerator {
         state: TrafficStateId,
     },
@@ -436,6 +482,75 @@ impl fmt::Display for TrafficGeneratorError {
             Self::TrafficConfigReadPercentOutOfRange { line, read_percent } => write!(
                 formatter,
                 "traffic text config line {line} read percentage {read_percent} exceeds 100"
+            ),
+            Self::TrafficDramUnsupportedAddressMapping { mapping } => write!(
+                formatter,
+                "traffic DRAM address mapping code {mapping} is not supported"
+            ),
+            Self::TrafficDramBanksUtilExceedsAvailable { banks_util, banks } => write!(
+                formatter,
+                "traffic DRAM bank utilization {banks_util} exceeds available banks {banks}"
+            ),
+            Self::TrafficDramRotateUnsupportedReadPercent { read_percent } => write!(
+                formatter,
+                "traffic DRAM rotate read percentage {read_percent} is not 0, 50, or 100"
+            ),
+            Self::TrafficDramGeometryTooSmall {
+                field,
+                value,
+                minimum,
+            } => write!(
+                formatter,
+                "traffic DRAM geometry {field} value {value} is below minimum {minimum}"
+            ),
+            Self::TrafficDramGeometryNotPowerOfTwo { field, value } => write!(
+                formatter,
+                "traffic DRAM geometry {field} value {value} is not a power of two"
+            ),
+            Self::TrafficDramGeometryNotMultiple {
+                field,
+                value,
+                factor,
+            } => write!(
+                formatter,
+                "traffic DRAM geometry {field} value {value} is not a multiple of {factor}"
+            ),
+            Self::TrafficDramAddressBitWidthTooLarge {
+                block_bits,
+                page_bits,
+                bank_bits,
+                rank_bits,
+            } => write!(
+                formatter,
+                "traffic DRAM address geometry uses {block_bits} block bits, {page_bits} page bits, {bank_bits} bank bits, and {rank_bits} rank bits"
+            ),
+            Self::TrafficDramRotationCycleTooLarge {
+                ranks,
+                max_seq_count_per_rank,
+            } => write!(
+                formatter,
+                "traffic DRAM rotate cycle with {ranks} ranks and {max_seq_count_per_rank} series per rank exceeds supported state"
+            ),
+            Self::TrafficDramSnapshotSeriesOutsideRange {
+                series_remaining,
+                num_seq_packets,
+            } => write!(
+                formatter,
+                "traffic DRAM snapshot has {series_remaining} packets remaining in a series of {num_seq_packets}"
+            ),
+            Self::TrafficDramSnapshotRotateSequenceOutsideCycle {
+                rotate_sequence_count,
+                cycle_size,
+            } => write!(
+                formatter,
+                "traffic DRAM snapshot rotate sequence {rotate_sequence_count} is outside cycle size {cycle_size}"
+            ),
+            Self::TrafficDramSeriesExceedsPage {
+                num_seq_packets,
+                columns_per_page_or_buffer,
+            } => write!(
+                formatter,
+                "traffic DRAM series length {num_seq_packets} exceeds available columns {columns_per_page_or_buffer}"
             ),
             Self::TrafficControllerMissingStateGenerator { state } => write!(
                 formatter,

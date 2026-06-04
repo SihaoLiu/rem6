@@ -1,12 +1,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    LinearTrafficGenerator, RandomTrafficGenerator, StridedTrafficGenerator, TrafficExitEvent,
-    TrafficExitGenerator, TrafficExitSnapshot, TrafficGeneratorError, TrafficGeneratorSummary,
-    TrafficIdleGenerator, TrafficIdleSnapshot, TrafficLinearSnapshot, TrafficRandomSnapshot,
-    TrafficRequestEvent, TrafficStateGraphConfig, TrafficStateId, TrafficStateMachine,
-    TrafficStateSnapshot, TrafficStridedSnapshot, TrafficTraceExitStatus, TrafficTraceGenerator,
-    TrafficTraceSnapshot, TrafficTransitionEvent,
+    DramTrafficGenerator, LinearTrafficGenerator, RandomTrafficGenerator, StridedTrafficGenerator,
+    TrafficDramSnapshot, TrafficExitEvent, TrafficExitGenerator, TrafficExitSnapshot,
+    TrafficGeneratorError, TrafficGeneratorSummary, TrafficIdleGenerator, TrafficIdleSnapshot,
+    TrafficLinearSnapshot, TrafficRandomSnapshot, TrafficRequestEvent, TrafficStateGraphConfig,
+    TrafficStateId, TrafficStateMachine, TrafficStateSnapshot, TrafficStridedSnapshot,
+    TrafficTraceExitStatus, TrafficTraceGenerator, TrafficTraceSnapshot, TrafficTransitionEvent,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -64,6 +64,7 @@ pub enum TrafficStateGenerator {
     Linear(LinearTrafficGenerator),
     Random(RandomTrafficGenerator),
     Strided(StridedTrafficGenerator),
+    Dram(DramTrafficGenerator),
     Trace(TrafficTraceGenerator),
 }
 
@@ -86,6 +87,10 @@ impl TrafficStateGenerator {
                 Vec::new()
             }
             Self::Strided(generator) => {
+                generator.enter();
+                Vec::new()
+            }
+            Self::Dram(generator) => {
                 generator.enter();
                 Vec::new()
             }
@@ -114,6 +119,7 @@ impl TrafficStateGenerator {
             Self::Linear(generator) => generator.clone().schedule_tick(tick, retry_delay),
             Self::Random(generator) => generator.clone().schedule_tick(tick, retry_delay),
             Self::Strided(generator) => generator.clone().schedule_tick(tick, retry_delay),
+            Self::Dram(generator) => generator.clone().schedule_tick(tick, retry_delay),
             Self::Trace(generator) => generator.clone().schedule_tick(tick, retry_delay),
         }
     }
@@ -129,6 +135,7 @@ impl TrafficStateGenerator {
             Self::Linear(generator) => generator.next_request(tick, retry_delay),
             Self::Random(generator) => generator.next_request(tick, retry_delay),
             Self::Strided(generator) => generator.next_request(tick, retry_delay),
+            Self::Dram(generator) => generator.next_request(tick, retry_delay),
             Self::Trace(generator) => generator.next_request(tick, retry_delay),
         }
     }
@@ -140,6 +147,7 @@ impl TrafficStateGenerator {
             Self::Linear(generator) => generator.summary(),
             Self::Random(generator) => generator.summary(),
             Self::Strided(generator) => generator.summary(),
+            Self::Dram(generator) => generator.summary(),
             Self::Trace(generator) => generator.summary(),
         }
     }
@@ -153,6 +161,7 @@ impl TrafficStateGenerator {
             Self::Strided(generator) => {
                 TrafficStateGeneratorSnapshot::Strided(generator.snapshot())
             }
+            Self::Dram(generator) => TrafficStateGeneratorSnapshot::Dram(generator.snapshot()),
             Self::Trace(generator) => TrafficStateGeneratorSnapshot::Trace(generator.snapshot()),
         }
     }
@@ -173,6 +182,9 @@ impl TrafficStateGenerator {
             }
             TrafficStateGeneratorSnapshot::Strided(snapshot) => {
                 Ok(Self::Strided(StridedTrafficGenerator::restore(snapshot)?))
+            }
+            TrafficStateGeneratorSnapshot::Dram(snapshot) => {
+                Ok(Self::Dram(DramTrafficGenerator::restore(snapshot)?))
             }
             TrafficStateGeneratorSnapshot::Trace(snapshot) => {
                 Ok(Self::Trace(TrafficTraceGenerator::restore(snapshot)?))
@@ -471,6 +483,7 @@ pub enum TrafficStateGeneratorSnapshot {
     Linear(TrafficLinearSnapshot),
     Random(TrafficRandomSnapshot),
     Strided(TrafficStridedSnapshot),
+    Dram(TrafficDramSnapshot),
     Trace(TrafficTraceSnapshot),
 }
 

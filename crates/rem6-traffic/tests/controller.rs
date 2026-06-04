@@ -2,13 +2,14 @@ use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryOperation, MemoryRequestId,
 };
 use rem6_traffic::{
-    LinearTrafficGenerator, RandomTrafficGenerator, StridedTrafficGenerator, TrafficController,
-    TrafficControllerConfig, TrafficControllerSnapshot, TrafficControllerState,
-    TrafficGeneratorError, TrafficIdleGenerator, TrafficLinearConfig, TrafficRandomConfig,
-    TrafficRequestKind, TrafficStateGenerator, TrafficStateGeneratorSnapshot,
-    TrafficStateGraphConfig, TrafficStateId, TrafficStateSpec, TrafficStridedConfig, TrafficTrace,
-    TrafficTraceConfig, TrafficTraceExitStatus, TrafficTraceGenerator, TrafficTransition,
-    TrafficTransitionProbability, TRAFFIC_TRANSITION_PROBABILITY_SCALE,
+    DramTrafficGenerator, LinearTrafficGenerator, RandomTrafficGenerator, StridedTrafficGenerator,
+    TrafficController, TrafficControllerConfig, TrafficControllerSnapshot, TrafficControllerState,
+    TrafficDramAddressMapping, TrafficDramConfig, TrafficDramMode, TrafficGeneratorError,
+    TrafficIdleGenerator, TrafficLinearConfig, TrafficRandomConfig, TrafficRequestKind,
+    TrafficStateGenerator, TrafficStateGeneratorSnapshot, TrafficStateGraphConfig, TrafficStateId,
+    TrafficStateSpec, TrafficStridedConfig, TrafficTrace, TrafficTraceConfig,
+    TrafficTraceExitStatus, TrafficTraceGenerator, TrafficTransition, TrafficTransitionProbability,
+    TRAFFIC_TRANSITION_PROBABILITY_SCALE,
 };
 
 const GEM5_MAGIC: [u8; 4] = [0x67, 0x65, 0x6d, 0x35];
@@ -93,6 +94,28 @@ fn strided_config(period: u64, read_percent: u8) -> TrafficStridedConfig {
     .unwrap()
 }
 
+fn dram_config(period: u64, read_percent: u8) -> TrafficDramConfig {
+    TrafficDramConfig::new(
+        AgentId::new(7),
+        line_layout(),
+        TrafficDramMode::Dram,
+        Address::new(0x1000),
+        Address::new(0x1400),
+        AccessSize::new(16).unwrap(),
+        64,
+        2,
+        2,
+        TrafficDramAddressMapping::RoRaBaCoCh,
+        1,
+        1,
+    )
+    .unwrap()
+    .with_period(period, period)
+    .unwrap()
+    .with_read_percent(read_percent)
+    .unwrap()
+}
+
 fn linear_state(id: u32, period: u64, read_percent: u8) -> TrafficControllerState {
     TrafficControllerState::new(
         TrafficStateId::new(id),
@@ -120,6 +143,13 @@ fn strided_state(id: u32, period: u64, read_percent: u8) -> TrafficControllerSta
             period,
             read_percent,
         ))),
+    )
+}
+
+fn dram_state(id: u32, period: u64, read_percent: u8) -> TrafficControllerState {
+    TrafficControllerState::new(
+        TrafficStateId::new(id),
+        TrafficStateGenerator::Dram(DramTrafficGenerator::new(dram_config(period, read_percent))),
     )
 }
 
@@ -276,8 +306,8 @@ fn traffic_controller_snapshot_restores_machine_generator_and_summary_state() {
 fn traffic_controller_snapshot_preserves_every_leaf_generator() {
     let config = TrafficControllerConfig::new(
         graph(
-            (0..6).map(|id| state(id, u64::MAX)).collect(),
-            (0..6).map(|id| transition(id, id)).collect(),
+            (0..7).map(|id| state(id, u64::MAX)).collect(),
+            (0..7).map(|id| transition(id, id)).collect(),
         ),
         vec![
             linear_state(0, 4, 100),
@@ -285,7 +315,8 @@ fn traffic_controller_snapshot_preserves_every_leaf_generator() {
             exit_state(2, u64::MAX),
             random_state(3, 4, 100),
             strided_state(4, 4, 100),
-            trace_state(5, u64::MAX, 0),
+            dram_state(5, 4, 100),
+            trace_state(6, u64::MAX, 0),
         ],
     )
     .unwrap();
@@ -317,6 +348,10 @@ fn traffic_controller_snapshot_preserves_every_leaf_generator() {
     ));
     assert!(matches!(
         snapshot_generator(&snapshot, 5),
+        TrafficStateGeneratorSnapshot::Dram(_)
+    ));
+    assert!(matches!(
+        snapshot_generator(&snapshot, 6),
         TrafficStateGeneratorSnapshot::Trace(_)
     ));
     assert_eq!(restored.snapshot().generators(), snapshot.generators());
@@ -407,6 +442,12 @@ fn traffic_controller_forces_transition_after_data_limited_leaf_exhausts() {
             "strided",
             TrafficStateGenerator::Strided(StridedTrafficGenerator::new(
                 strided_config(4, 100).with_data_limit(16).unwrap(),
+            )),
+        ),
+        (
+            "dram",
+            TrafficStateGenerator::Dram(DramTrafficGenerator::new(
+                dram_config(4, 100).with_data_limit(16).unwrap(),
             )),
         ),
     ];

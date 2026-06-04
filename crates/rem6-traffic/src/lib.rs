@@ -1,6 +1,7 @@
 mod common;
 mod control;
 mod controller;
+mod dram;
 mod error;
 mod linear;
 mod state;
@@ -16,6 +17,10 @@ pub use controller::{
     TrafficController, TrafficControllerConfig, TrafficControllerEvent,
     TrafficControllerEventBatch, TrafficControllerSnapshot, TrafficControllerState,
     TrafficStateGenerator, TrafficStateGeneratorSnapshot, TrafficStateGeneratorSnapshotEntry,
+};
+pub use dram::{
+    DramTrafficGenerator, TrafficDramAddressMapping, TrafficDramConfig, TrafficDramMode,
+    TrafficDramSnapshot,
 };
 pub use error::TrafficGeneratorError;
 pub use linear::{

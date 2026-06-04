@@ -1,8 +1,9 @@
 use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout};
 use rem6_traffic::{
-    TrafficController, TrafficControllerConfig, TrafficGeneratorError, TrafficStateGenerator,
-    TrafficStateId, TrafficTextBindingOptions, TrafficTextConfig, TrafficTextMemoryParams,
-    TrafficTextStateMode, TRAFFIC_TRANSITION_PROBABILITY_SCALE,
+    TrafficController, TrafficControllerConfig, TrafficDramAddressMapping, TrafficDramMode,
+    TrafficGeneratorError, TrafficStateGenerator, TrafficStateId, TrafficTextBindingOptions,
+    TrafficTextConfig, TrafficTextMemoryParams, TrafficTextStateMode,
+    TRAFFIC_TRANSITION_PROBABILITY_SCALE,
 };
 
 const GEM5_MAGIC: [u8; 4] = [0x67, 0x65, 0x6d, 0x35];
@@ -272,6 +273,69 @@ fn traffic_text_config_trace_binding_propagates_trace_parse_errors() {
 }
 
 #[test]
+fn traffic_text_config_binds_dram_family_modes_to_controller_generators() {
+    let config = parse(
+        r#"
+        STATE 0 20 DRAM 50 0 4096 64 11 13 2048 256 1024 8 4 1 2
+        STATE 1 30 DRAM_ROTATE 100 4096 8192 32 17 19 0 96 256 4 2 2 1
+        STATE 2 40 NVM 0 8192 12288 16 23 29 4096 48 128 2 1 0 2
+        INIT 0
+        TRANSITION 0 1 1
+        TRANSITION 1 2 1
+        TRANSITION 2 2 1
+        "#,
+    );
+
+    let controller = config.to_controller_config(binding_options()).unwrap();
+
+    let TrafficStateGenerator::Dram(dram) = bound_generator(&controller, 0) else {
+        panic!("state 0 should bind to DRAM");
+    };
+    assert_eq!(dram.config().mode(), TrafficDramMode::Dram);
+    assert_eq!(dram.config().agent(), AgentId::new(9));
+    assert_eq!(dram.config().line_layout(), line_layout());
+    assert_eq!(dram.config().start(), Address::new(0));
+    assert_eq!(dram.config().end(), Address::new(4096));
+    assert_eq!(dram.config().block_size(), AccessSize::new(64).unwrap());
+    assert_eq!(dram.config().min_period(), 11);
+    assert_eq!(dram.config().max_period(), 13);
+    assert_eq!(dram.config().read_percent(), 50);
+    assert_eq!(dram.config().data_limit(), Some(2048));
+    assert_eq!(dram.config().num_seq_packets(), 4);
+    assert_eq!(dram.config().page_or_buffer_size(), 1024);
+    assert_eq!(dram.config().banks(), 8);
+    assert_eq!(dram.config().banks_util(), 4);
+    assert_eq!(
+        dram.config().address_mapping(),
+        TrafficDramAddressMapping::RoRaBaCoCh
+    );
+    assert_eq!(dram.config().ranks(), 2);
+    assert!(!dram.config().elastic_requests());
+
+    let TrafficStateGenerator::Dram(rotating) = bound_generator(&controller, 1) else {
+        panic!("state 1 should bind to DRAM_ROTATE");
+    };
+    assert_eq!(rotating.config().mode(), TrafficDramMode::DramRotate);
+    assert_eq!(rotating.config().num_seq_packets(), 3);
+    assert_eq!(
+        rotating.config().address_mapping(),
+        TrafficDramAddressMapping::RoCoRaBaCh
+    );
+    assert_eq!(rotating.config().ranks(), 1);
+
+    let TrafficStateGenerator::Dram(nvm) = bound_generator(&controller, 2) else {
+        panic!("state 2 should bind to NVM");
+    };
+    assert_eq!(nvm.config().mode(), TrafficDramMode::Nvm);
+    assert_eq!(nvm.config().num_seq_packets(), 3);
+    assert_eq!(nvm.config().page_or_buffer_size(), 128);
+    assert_eq!(
+        nvm.config().address_mapping(),
+        TrafficDramAddressMapping::RoRaBaChCo
+    );
+}
+
+#[test]
 fn traffic_text_binding_options_default_to_gem5_non_elastic_requests() {
     let config = parse(
         r#"
@@ -301,39 +365,18 @@ fn traffic_text_binding_options_default_to_gem5_non_elastic_requests() {
 
 #[test]
 fn traffic_text_config_rejects_modes_without_generator_binding() {
-    let cases = [
-        (
-            "TRACE",
-            "STATE 0 1 TRACE trace.pkt 0\nINIT 0\nTRANSITION 0 0 1",
-        ),
-        (
-            "DRAM",
-            "STATE 0 1 DRAM 50 0 4096 64 1 1 0 256 1024 8 4 1 2\nINIT 0\nTRANSITION 0 0 1",
-        ),
-        (
-            "DRAM_ROTATE",
-            "STATE 0 1 DRAM_ROTATE 50 0 4096 64 1 1 0 256 1024 8 4 1 2\nINIT 0\nTRANSITION 0 0 1",
-        ),
-        (
-            "NVM",
-            "STATE 0 1 NVM 50 0 4096 64 1 1 0 256 1024 8 4 1 2\nINIT 0\nTRANSITION 0 0 1",
-        ),
-    ];
+    let error = TrafficTextConfig::parse("STATE 0 1 TRACE trace.pkt 0\nINIT 0\nTRANSITION 0 0 1")
+        .unwrap()
+        .to_controller_config(binding_options())
+        .unwrap_err();
 
-    for (mode, input) in cases {
-        let error = TrafficTextConfig::parse(input)
-            .unwrap()
-            .to_controller_config(binding_options())
-            .unwrap_err();
-
-        assert_eq!(
-            error,
-            TrafficGeneratorError::TrafficConfigUnsupportedStateMode {
-                state: TrafficStateId::new(0),
-                mode,
-            }
-        );
-    }
+    assert_eq!(
+        error,
+        TrafficGeneratorError::TrafficConfigUnsupportedStateMode {
+            state: TrafficStateId::new(0),
+            mode: "TRACE",
+        }
+    );
 }
 
 #[test]

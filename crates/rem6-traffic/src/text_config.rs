@@ -3,13 +3,13 @@ use std::str::FromStr;
 use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout};
 
 use crate::{
-    LinearTrafficGenerator, RandomTrafficGenerator, StridedTrafficGenerator,
-    TrafficControllerConfig, TrafficControllerState, TrafficExitConfig, TrafficExitGenerator,
-    TrafficGeneratorError, TrafficIdleConfig, TrafficIdleGenerator, TrafficLinearConfig,
-    TrafficRandomConfig, TrafficStateGenerator, TrafficStateGraphConfig, TrafficStateId,
-    TrafficStateSpec, TrafficStridedConfig, TrafficTrace, TrafficTraceConfig,
-    TrafficTraceGenerator, TrafficTransition, TrafficTransitionProbability,
-    TRAFFIC_TRANSITION_PROBABILITY_SCALE,
+    DramTrafficGenerator, LinearTrafficGenerator, RandomTrafficGenerator, StridedTrafficGenerator,
+    TrafficControllerConfig, TrafficControllerState, TrafficDramAddressMapping, TrafficDramConfig,
+    TrafficDramMode, TrafficExitConfig, TrafficExitGenerator, TrafficGeneratorError,
+    TrafficIdleConfig, TrafficIdleGenerator, TrafficLinearConfig, TrafficRandomConfig,
+    TrafficStateGenerator, TrafficStateGraphConfig, TrafficStateId, TrafficStateSpec,
+    TrafficStridedConfig, TrafficTrace, TrafficTraceConfig, TrafficTraceGenerator,
+    TrafficTransition, TrafficTransitionProbability, TRAFFIC_TRANSITION_PROBABILITY_SCALE,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -171,10 +171,28 @@ impl TrafficTextState {
             TrafficTextStateMode::Strided(params) => TrafficStateGenerator::Strided(
                 StridedTrafficGenerator::new(strided_config_from_text(*params, options)?),
             ),
-            TrafficTextStateMode::Trace { .. }
-            | TrafficTextStateMode::Dram(_)
-            | TrafficTextStateMode::DramRotate(_)
-            | TrafficTextStateMode::Nvm(_) => {
+            TrafficTextStateMode::Dram(params) => {
+                TrafficStateGenerator::Dram(DramTrafficGenerator::new(dram_config_from_text(
+                    TrafficDramMode::Dram,
+                    *params,
+                    options,
+                )?))
+            }
+            TrafficTextStateMode::DramRotate(params) => {
+                TrafficStateGenerator::Dram(DramTrafficGenerator::new(dram_config_from_text(
+                    TrafficDramMode::DramRotate,
+                    *params,
+                    options,
+                )?))
+            }
+            TrafficTextStateMode::Nvm(params) => {
+                TrafficStateGenerator::Dram(DramTrafficGenerator::new(dram_config_from_text(
+                    TrafficDramMode::Nvm,
+                    *params,
+                    options,
+                )?))
+            }
+            TrafficTextStateMode::Trace { .. } => {
                 return Err(TrafficGeneratorError::TrafficConfigUnsupportedStateMode {
                     state: self.id,
                     mode: self.mode.name(),
@@ -495,6 +513,45 @@ fn strided_config_from_text(
         block_size,
         params.superblock_size(),
         params.stride_size(),
+    )?
+    .with_period(memory.min_period(), memory.max_period())?
+    .with_read_percent(memory.read_percent())?
+    .with_data_limit(memory.data_limit())?
+    .with_elastic_requests(options.elastic_requests()))
+}
+
+fn dram_config_from_text(
+    mode: TrafficDramMode,
+    params: TrafficTextDramParams,
+    options: TrafficTextBindingOptions,
+) -> Result<TrafficDramConfig, TrafficGeneratorError> {
+    let memory = params.memory();
+    let block_size = AccessSize::new(memory.block_size())?;
+    let num_seq_packets = if params.stride_size() > memory.block_size() {
+        params.stride_size().div_ceil(memory.block_size())
+    } else {
+        1
+    };
+    let num_seq_packets =
+        u32::try_from(num_seq_packets).map_err(|_| TrafficGeneratorError::CounterOverflow {
+            counter: "dram.num_seq_packets",
+            value: u64::MAX,
+            increment: 1,
+        })?;
+
+    Ok(TrafficDramConfig::new(
+        options.agent(),
+        options.line_layout(),
+        mode,
+        Address::new(memory.start_addr()),
+        Address::new(memory.end_addr()),
+        block_size,
+        params.page_or_buffer_size(),
+        params.bank_count(),
+        params.bank_utilization(),
+        TrafficDramAddressMapping::from_gem5_code(params.addr_mapping())?,
+        params.rank_count(),
+        num_seq_packets,
     )?
     .with_period(memory.min_period(), memory.max_period())?
     .with_read_percent(memory.read_percent())?
