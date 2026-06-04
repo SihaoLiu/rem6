@@ -1,9 +1,12 @@
 use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout};
 use rem6_traffic::{
-    TrafficControllerConfig, TrafficGeneratorError, TrafficStateGenerator, TrafficStateId,
-    TrafficTextBindingOptions, TrafficTextConfig, TrafficTextMemoryParams, TrafficTextStateMode,
-    TRAFFIC_TRANSITION_PROBABILITY_SCALE,
+    TrafficController, TrafficControllerConfig, TrafficGeneratorError, TrafficStateGenerator,
+    TrafficStateId, TrafficTextBindingOptions, TrafficTextConfig, TrafficTextMemoryParams,
+    TrafficTextStateMode, TRAFFIC_TRANSITION_PROBABILITY_SCALE,
 };
+
+const GEM5_MAGIC: [u8; 4] = [0x67, 0x65, 0x6d, 0x35];
+const TICK_FREQUENCY: u64 = 1_000;
 
 fn parse(input: &str) -> TrafficTextConfig {
     TrafficTextConfig::parse(input).unwrap()
@@ -24,6 +27,15 @@ fn bound_generator(config: &TrafficControllerConfig, id: u32) -> &TrafficStateGe
         .find(|state| state.id() == TrafficStateId::new(id))
         .expect("controller config contains state")
         .generator()
+}
+
+#[derive(Clone, Copy)]
+struct PacketFields {
+    tick: u64,
+    command: u32,
+    address: u64,
+    size: u32,
+    flags: Option<u32>,
 }
 
 #[test]
@@ -177,6 +189,86 @@ fn traffic_text_config_binds_implemented_modes_to_controller_generators() {
     assert_eq!(strided.config().read_percent(), 100);
     assert_eq!(strided.config().data_limit(), Some(256));
     assert!(!strided.config().elastic_requests());
+}
+
+#[test]
+fn traffic_text_config_binds_trace_modes_with_explicit_trace_resolver() {
+    let config = parse(
+        r#"
+        STATE 0 13 TRACE traces/request.pkt 128
+        INIT 0
+        TRANSITION 0 0 1
+        "#,
+    );
+    let trace_bytes = gem5_packet_trace(
+        TICK_FREQUENCY,
+        &[PacketFields {
+            tick: 5,
+            command: 1,
+            address: 0x20,
+            size: 8,
+            flags: None,
+        }],
+    );
+
+    let controller = config
+        .to_controller_config_with_trace_resolver(
+            binding_options().with_elastic_requests(true),
+            TICK_FREQUENCY,
+            |trace_file| {
+                assert_eq!(trace_file, "traces/request.pkt");
+                Ok(trace_bytes.clone())
+            },
+        )
+        .unwrap();
+
+    let TrafficStateGenerator::Trace(trace) = bound_generator(&controller, 0) else {
+        panic!("state 0 should bind to trace");
+    };
+    assert_eq!(trace.config().agent(), AgentId::new(9));
+    assert_eq!(trace.config().line_layout(), line_layout());
+    assert_eq!(trace.config().duration(), 13);
+    assert_eq!(trace.config().addr_offset(), 128);
+    assert!(trace.config().elastic());
+    assert_eq!(trace.config().trace().tick_frequency(), TICK_FREQUENCY);
+    assert_eq!(trace.config().trace().len(), 1);
+
+    let mut controller = TrafficController::new(controller);
+    assert!(controller.start(0).unwrap().is_empty());
+    let request = controller
+        .next_event(0, 0)
+        .unwrap()
+        .unwrap()
+        .request()
+        .unwrap()
+        .clone();
+    assert_eq!(request.tick(), 5);
+    assert_eq!(request.address(), Address::new(0xa0));
+}
+
+#[test]
+fn traffic_text_config_trace_binding_propagates_trace_parse_errors() {
+    let config = parse(
+        r#"
+        STATE 0 13 TRACE trace.pkt 0
+        INIT 0
+        TRANSITION 0 0 1
+        "#,
+    );
+
+    let error = config
+        .to_controller_config_with_trace_resolver(binding_options(), TICK_FREQUENCY, |_| {
+            Ok(gem5_packet_trace(TICK_FREQUENCY + 1, &[]))
+        })
+        .unwrap_err();
+
+    assert_eq!(
+        error,
+        TrafficGeneratorError::TraceTickFrequencyMismatch {
+            expected: TICK_FREQUENCY,
+            actual: TICK_FREQUENCY + 1,
+        }
+    );
 }
 
 #[test]
@@ -396,4 +488,57 @@ fn traffic_text_config_rejects_invalid_probabilities() {
             scale: TRAFFIC_TRANSITION_PROBABILITY_SCALE,
         }
     );
+}
+
+fn gem5_packet_trace(tick_frequency: u64, packets: &[PacketFields]) -> Vec<u8> {
+    let mut trace = GEM5_MAGIC.to_vec();
+    append_message(&mut trace, &header_message(tick_frequency));
+
+    for packet in packets {
+        append_message(&mut trace, &packet_message(*packet));
+    }
+
+    trace
+}
+
+fn append_message(trace: &mut Vec<u8>, message: &[u8]) {
+    append_varint(trace, message.len() as u64);
+    trace.extend_from_slice(message);
+}
+
+fn header_message(tick_frequency: u64) -> Vec<u8> {
+    let mut message = Vec::new();
+    append_field_varint(&mut message, 3, tick_frequency);
+    message
+}
+
+fn packet_message(packet: PacketFields) -> Vec<u8> {
+    let mut message = Vec::new();
+    append_field_varint(&mut message, 1, packet.tick);
+    append_field_varint(&mut message, 2, u64::from(packet.command));
+    append_field_varint(&mut message, 3, packet.address);
+    append_field_varint(&mut message, 4, u64::from(packet.size));
+    if let Some(flags) = packet.flags {
+        append_field_varint(&mut message, 5, u64::from(flags));
+    }
+    message
+}
+
+fn append_field_varint(message: &mut Vec<u8>, field: u32, value: u64) {
+    append_varint(message, u64::from(field << 3));
+    append_varint(message, value);
+}
+
+fn append_varint(bytes: &mut Vec<u8>, mut value: u64) {
+    loop {
+        let mut byte = (value & 0x7f) as u8;
+        value >>= 7;
+        if value != 0 {
+            byte |= 0x80;
+        }
+        bytes.push(byte);
+        if value == 0 {
+            break;
+        }
+    }
 }

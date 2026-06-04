@@ -7,7 +7,8 @@ use crate::{
     TrafficControllerConfig, TrafficControllerState, TrafficExitConfig, TrafficExitGenerator,
     TrafficGeneratorError, TrafficIdleConfig, TrafficIdleGenerator, TrafficLinearConfig,
     TrafficRandomConfig, TrafficStateGenerator, TrafficStateGraphConfig, TrafficStateId,
-    TrafficStateSpec, TrafficStridedConfig, TrafficTransition, TrafficTransitionProbability,
+    TrafficStateSpec, TrafficStridedConfig, TrafficTrace, TrafficTraceConfig,
+    TrafficTraceGenerator, TrafficTransition, TrafficTransitionProbability,
     TRAFFIC_TRANSITION_PROBABILITY_SCALE,
 };
 
@@ -93,6 +94,29 @@ impl TrafficTextConfig {
             .collect::<Result<Vec<_>, _>>()?;
         TrafficControllerConfig::new(self.graph.clone(), states)
     }
+
+    pub fn to_controller_config_with_trace_resolver<F>(
+        &self,
+        options: TrafficTextBindingOptions,
+        expected_tick_frequency: u64,
+        mut resolve_trace: F,
+    ) -> Result<TrafficControllerConfig, TrafficGeneratorError>
+    where
+        F: FnMut(&str) -> Result<Vec<u8>, TrafficGeneratorError>,
+    {
+        let states = self
+            .states
+            .iter()
+            .map(|state| {
+                state.to_controller_state_with_trace_resolver(
+                    options,
+                    expected_tick_frequency,
+                    &mut resolve_trace,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        TrafficControllerConfig::new(self.graph.clone(), states)
+    }
 }
 
 impl FromStr for TrafficTextConfig {
@@ -157,6 +181,36 @@ impl TrafficTextState {
                 });
             }
         };
+
+        Ok(TrafficControllerState::new(self.id, generator))
+    }
+
+    fn to_controller_state_with_trace_resolver<F>(
+        &self,
+        options: TrafficTextBindingOptions,
+        expected_tick_frequency: u64,
+        resolve_trace: &mut F,
+    ) -> Result<TrafficControllerState, TrafficGeneratorError>
+    where
+        F: FnMut(&str) -> Result<Vec<u8>, TrafficGeneratorError>,
+    {
+        let TrafficTextStateMode::Trace {
+            trace_file,
+            addr_offset,
+        } = &self.mode
+        else {
+            return self.to_controller_state(options);
+        };
+
+        let generator =
+            TrafficStateGenerator::Trace(TrafficTraceGenerator::new(trace_config_from_text(
+                trace_file,
+                *addr_offset,
+                self.duration,
+                options,
+                expected_tick_frequency,
+                resolve_trace,
+            )?));
 
         Ok(TrafficControllerState::new(self.id, generator))
     }
@@ -446,6 +500,26 @@ fn strided_config_from_text(
     .with_read_percent(memory.read_percent())?
     .with_data_limit(memory.data_limit())?
     .with_elastic_requests(options.elastic_requests()))
+}
+
+fn trace_config_from_text<F>(
+    trace_file: &str,
+    addr_offset: u64,
+    duration: u64,
+    options: TrafficTextBindingOptions,
+    expected_tick_frequency: u64,
+    resolve_trace: &mut F,
+) -> Result<TrafficTraceConfig, TrafficGeneratorError>
+where
+    F: FnMut(&str) -> Result<Vec<u8>, TrafficGeneratorError>,
+{
+    let bytes = resolve_trace(trace_file)?;
+    let trace = TrafficTrace::from_gem5_packet_trace(&bytes, expected_tick_frequency)?;
+    Ok(
+        TrafficTraceConfig::new(options.agent(), options.line_layout(), duration, trace)?
+            .with_addr_offset(addr_offset)?
+            .with_elastic(options.elastic_requests()),
+    )
 }
 
 fn parse_state(line: usize, tokens: &[&str]) -> Result<TrafficTextState, TrafficGeneratorError> {
