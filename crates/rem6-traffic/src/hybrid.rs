@@ -280,7 +280,7 @@ impl TrafficHybridSnapshot {
         current_kind: TrafficRequestKind,
         current_side: TrafficHybridSide,
     ) -> Result<Self, TrafficGeneratorError> {
-        validate_hybrid_snapshot(config, series_remaining, current_side)?;
+        validate_hybrid_snapshot(config, series_remaining, current_kind, current_side)?;
 
         Ok(Self {
             config,
@@ -364,6 +364,7 @@ impl HybridTrafficGenerator {
         validate_hybrid_snapshot(
             snapshot.config(),
             snapshot.series_remaining(),
+            snapshot.current_kind(),
             snapshot.current_side(),
         )?;
 
@@ -616,6 +617,9 @@ impl HybridTrafficGenerator {
                 let data = vec![self.config.agent().get() as u8; data_len];
                 MemoryRequest::write(id, address, size, data, mask, layout).map_err(Into::into)
             }
+            TrafficRequestKind::Atomic => {
+                unreachable!("hybrid traffic generator does not emit atomic requests")
+            }
             TrafficRequestKind::Maintenance => {
                 unreachable!("hybrid traffic generator does not emit maintenance requests")
             }
@@ -657,9 +661,17 @@ fn validate_hybrid_config(config: TrafficHybridConfig) -> Result<(), TrafficGene
 fn validate_hybrid_snapshot(
     config: TrafficHybridConfig,
     series_remaining: u32,
+    current_kind: TrafficRequestKind,
     current_side: TrafficHybridSide,
 ) -> Result<(), TrafficGeneratorError> {
     validate_hybrid_config(config)?;
+
+    if !matches!(
+        current_kind,
+        TrafficRequestKind::Read | TrafficRequestKind::Write
+    ) {
+        return Err(TrafficGeneratorError::TrafficHybridSnapshotUnsupportedKind { current_kind });
+    }
 
     let side_config = config.side(current_side);
     if series_remaining > side_config.num_seq_packets() {

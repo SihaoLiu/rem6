@@ -384,6 +384,24 @@ fn dram_generator_rejects_invalid_config_and_snapshots() {
         }
     );
 
+    assert_eq!(
+        TrafficDramSnapshot::new(
+            dram_config(TrafficDramMode::Dram),
+            0,
+            0,
+            TrafficGeneratorSummary::default(),
+            1,
+            1,
+            Address::new(0),
+            TrafficRequestKind::Atomic,
+            0,
+        )
+        .unwrap_err(),
+        TrafficGeneratorError::TrafficDramSnapshotUnsupportedKind {
+            current_kind: TrafficRequestKind::Atomic,
+        }
+    );
+
     let rotating_config = dram_config(TrafficDramMode::DramRotate)
         .with_read_percent(50)
         .unwrap();

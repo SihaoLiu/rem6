@@ -3,7 +3,7 @@ use std::fmt;
 
 use rem6_memory::{Address, MemoryError};
 
-use crate::{TrafficHybridSide, TrafficStateId};
+use crate::{TrafficHybridSide, TrafficRequestKind, TrafficStateId};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TrafficGeneratorError {
@@ -178,6 +178,9 @@ pub enum TrafficGeneratorError {
         rotate_sequence_count: u32,
         cycle_size: u64,
     },
+    TrafficDramSnapshotUnsupportedKind {
+        current_kind: TrafficRequestKind,
+    },
     TrafficHybridInvalidNvmPercent {
         nvm_percent: u8,
     },
@@ -185,6 +188,9 @@ pub enum TrafficGeneratorError {
         side: TrafficHybridSide,
         series_remaining: u32,
         num_seq_packets: u32,
+    },
+    TrafficHybridSnapshotUnsupportedKind {
+        current_kind: TrafficRequestKind,
     },
     TrafficDramSeriesExceedsPage {
         num_seq_packets: u32,
@@ -608,6 +614,10 @@ impl fmt::Display for TrafficGeneratorError {
                 formatter,
                 "traffic DRAM snapshot rotate sequence {rotate_sequence_count} is outside cycle size {cycle_size}"
             ),
+            Self::TrafficDramSnapshotUnsupportedKind { current_kind } => write!(
+                formatter,
+                "traffic DRAM snapshot current request kind {current_kind:?} is not supported"
+            ),
             Self::TrafficHybridInvalidNvmPercent { nvm_percent } => write!(
                 formatter,
                 "traffic hybrid NVM percentage {nvm_percent} exceeds 100"
@@ -619,6 +629,10 @@ impl fmt::Display for TrafficGeneratorError {
             } => write!(
                 formatter,
                 "traffic hybrid snapshot has {series_remaining} packets remaining on {side:?} in a series of {num_seq_packets}"
+            ),
+            Self::TrafficHybridSnapshotUnsupportedKind { current_kind } => write!(
+                formatter,
+                "traffic hybrid snapshot current request kind {current_kind:?} is not supported"
             ),
             Self::TrafficDramSeriesExceedsPage {
                 num_seq_packets,

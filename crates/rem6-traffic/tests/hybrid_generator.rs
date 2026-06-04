@@ -264,4 +264,22 @@ fn hybrid_generator_rejects_invalid_config_and_snapshots() {
             num_seq_packets: 2,
         }
     );
+
+    assert_eq!(
+        TrafficHybridSnapshot::new(
+            hybrid_config(TrafficDramAddressMapping::RoRaBaCoCh),
+            0,
+            0,
+            TrafficGeneratorSummary::default(),
+            1,
+            1,
+            Address::new(0),
+            TrafficRequestKind::Atomic,
+            TrafficHybridSide::Dram,
+        )
+        .unwrap_err(),
+        TrafficGeneratorError::TrafficHybridSnapshotUnsupportedKind {
+            current_kind: TrafficRequestKind::Atomic,
+        }
+    );
 }

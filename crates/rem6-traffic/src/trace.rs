@@ -2,7 +2,8 @@ use std::io::Read;
 
 use flate2::read::GzDecoder;
 use rem6_memory::{
-    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
+    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryAtomicOp, MemoryRequest,
+    MemoryRequestId,
 };
 
 use crate::{
@@ -28,6 +29,7 @@ const GEM5_UPGRADE_REQ: u32 = 17;
 const GEM5_READ_EX_REQ: u32 = 22;
 const GEM5_READ_CLEAN_REQ: u32 = 24;
 const GEM5_READ_SHARED_REQ: u32 = 25;
+const GEM5_SWAP_REQ: u32 = 34;
 const GEM5_CLEAN_SHARED_REQ: u32 = 42;
 const GEM5_CLEAN_INVALID_REQ: u32 = 44;
 const GEM5_INVALIDATE_REQ: u32 = 54;
@@ -50,6 +52,7 @@ enum TrafficTraceCommand {
     WritebackDirty,
     WritebackClean,
     WriteClean,
+    Swap,
     CleanEvict,
     CleanShared,
     CleanInvalid,
@@ -70,6 +73,7 @@ impl TrafficTraceCommand {
             | Self::WritebackDirty
             | Self::WritebackClean
             | Self::WriteClean => TrafficRequestKind::Write,
+            Self::Swap => TrafficRequestKind::Atomic,
             Self::CleanEvict
             | Self::CleanShared
             | Self::CleanInvalid
@@ -90,6 +94,7 @@ impl TrafficTraceCommand {
             Self::WritebackDirty => "WritebackDirty",
             Self::WritebackClean => "WritebackClean",
             Self::WriteClean => "WriteClean",
+            Self::Swap => "SwapReq",
             Self::CleanEvict => "CleanEvict",
             Self::CleanShared => "CleanSharedReq",
             Self::CleanInvalid => "CleanInvalidReq",
@@ -498,6 +503,12 @@ impl TrafficTraceGenerator {
             TrafficRequestKind::Write => {
                 build_write_request(self.config.agent(), id, address, element.size, layout)
             }
+            TrafficRequestKind::Atomic if element.command == TrafficTraceCommand::Swap => {
+                build_atomic_swap_request(self.config.agent(), id, address, element.size, layout)
+            }
+            TrafficRequestKind::Atomic => {
+                unreachable!("atomic trace kind has no request builder")
+            }
             TrafficRequestKind::Maintenance
                 if element.command == TrafficTraceCommand::CleanEvict =>
             {
@@ -531,6 +542,21 @@ impl TrafficTraceGenerator {
             }
         }
     }
+}
+
+fn build_atomic_swap_request(
+    agent: AgentId,
+    id: MemoryRequestId,
+    address: Address,
+    size: AccessSize,
+    layout: CacheLineLayout,
+) -> Result<MemoryRequest, TrafficGeneratorError> {
+    let mask = ByteMask::full(size)?;
+    let data_len =
+        usize::try_from(mask.len()).expect("byte mask length fits usize after construction");
+    let data = vec![agent.get() as u8; data_len];
+    MemoryRequest::atomic_with_op(id, address, size, MemoryAtomicOp::Swap, data, mask, layout)
+        .map_err(Into::into)
 }
 
 fn validate_write_line_request(
@@ -822,6 +848,7 @@ fn parse_packet(message: &[u8]) -> Result<TrafficTraceElement, TrafficGeneratorE
         GEM5_WRITEBACK_DIRTY => TrafficTraceCommand::WritebackDirty,
         GEM5_WRITEBACK_CLEAN => TrafficTraceCommand::WritebackClean,
         GEM5_WRITE_CLEAN => TrafficTraceCommand::WriteClean,
+        GEM5_SWAP_REQ => TrafficTraceCommand::Swap,
         GEM5_CLEAN_EVICT => TrafficTraceCommand::CleanEvict,
         GEM5_WRITE_LINE_REQ => TrafficTraceCommand::WriteLine,
         GEM5_UPGRADE_REQ => TrafficTraceCommand::Upgrade,

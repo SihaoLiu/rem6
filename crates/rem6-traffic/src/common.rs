@@ -6,6 +6,7 @@ use crate::TrafficGeneratorError;
 pub enum TrafficRequestKind {
     Read,
     Write,
+    Atomic,
     Maintenance,
 }
 
@@ -86,6 +87,14 @@ impl TrafficGeneratorSummary {
             }
             TrafficRequestKind::Write => {
                 self.write_count = checked_counter_add("summary.write_count", self.write_count, 1)?;
+                self.bytes_written =
+                    checked_counter_add("summary.bytes_written", self.bytes_written, bytes)?;
+            }
+            TrafficRequestKind::Atomic => {
+                self.read_count = checked_counter_add("summary.read_count", self.read_count, 1)?;
+                self.write_count = checked_counter_add("summary.write_count", self.write_count, 1)?;
+                self.bytes_read =
+                    checked_counter_add("summary.bytes_read", self.bytes_read, bytes)?;
                 self.bytes_written =
                     checked_counter_add("summary.bytes_written", self.bytes_written, bytes)?;
             }

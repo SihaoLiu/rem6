@@ -2,7 +2,7 @@ use std::io::Write;
 
 use flate2::{write::GzEncoder, Compression};
 use rem6_memory::{
-    AccessSize, Address, AgentId, CacheLineLayout, MemoryOperation, MemoryRequestId,
+    AccessSize, Address, AgentId, CacheLineLayout, MemoryAtomicOp, MemoryOperation, MemoryRequestId,
 };
 use rem6_traffic::{
     TrafficGeneratorError, TrafficRequestKind, TrafficTrace, TrafficTraceConfig,
@@ -581,6 +581,46 @@ fn trace_traffic_generator_maps_write_clean_packet_to_write_clean_operation() {
     assert_eq!(generator.summary().write_count(), 1);
     assert_eq!(generator.summary().bytes_written(), 64);
     assert_eq!(generator.summary().read_count(), 0);
+}
+
+#[test]
+fn trace_traffic_generator_maps_swap_packet_to_atomic_swap_operation() {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace(
+            TICK_FREQUENCY,
+            &[PacketFields {
+                tick: 11,
+                command: 34,
+                address: 0x108,
+                size: 8,
+                flags: None,
+            }],
+        ),
+        TICK_FREQUENCY,
+    )
+    .unwrap();
+    let mut generator = TrafficTraceGenerator::new(trace_config(trace));
+    generator.enter(70);
+
+    let event = generator.next_request(70, 0).unwrap().unwrap();
+
+    assert_eq!(event.tick(), 81);
+    assert_eq!(event.kind(), TrafficRequestKind::Atomic);
+    assert_eq!(event.address(), Address::new(0x108));
+    assert_eq!(event.request().operation(), MemoryOperation::Atomic);
+    assert_eq!(event.request().atomic_op(), Some(MemoryAtomicOp::Swap));
+    assert_eq!(event.request().size(), AccessSize::new(8).unwrap());
+    assert_eq!(event.request().data(), Some(&vec![7; 8][..]));
+    assert_eq!(event.request().byte_mask().unwrap().len(), 8);
+    assert!(event.request().carries_data());
+    assert!(event.request().requires_writable());
+    assert!(event.request().requires_response());
+    assert!(event.request().returns_data());
+    assert_eq!(generator.summary().packet_count(), 1);
+    assert_eq!(generator.summary().read_count(), 1);
+    assert_eq!(generator.summary().write_count(), 1);
+    assert_eq!(generator.summary().bytes_read(), 8);
+    assert_eq!(generator.summary().bytes_written(), 8);
 }
 
 #[test]

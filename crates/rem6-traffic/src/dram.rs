@@ -276,7 +276,12 @@ impl TrafficDramSnapshot {
         current_kind: TrafficRequestKind,
         rotate_sequence_count: u32,
     ) -> Result<Self, TrafficGeneratorError> {
-        validate_dram_snapshot(config, series_remaining, rotate_sequence_count)?;
+        validate_dram_snapshot(
+            config,
+            series_remaining,
+            current_kind,
+            rotate_sequence_count,
+        )?;
 
         Ok(Self {
             config,
@@ -360,6 +365,7 @@ impl DramTrafficGenerator {
         validate_dram_snapshot(
             snapshot.config(),
             snapshot.series_remaining(),
+            snapshot.current_kind(),
             snapshot.rotate_sequence_count(),
         )?;
 
@@ -542,6 +548,9 @@ impl DramTrafficGenerator {
                 self.current_kind = match self.current_kind {
                     TrafficRequestKind::Read => TrafficRequestKind::Write,
                     TrafficRequestKind::Write => TrafficRequestKind::Read,
+                    TrafficRequestKind::Atomic => {
+                        unreachable!("DRAM rotation never selects atomic requests")
+                    }
                     TrafficRequestKind::Maintenance => {
                         unreachable!("DRAM rotation never selects maintenance requests")
                     }
@@ -664,6 +673,9 @@ impl DramTrafficGenerator {
                 let data = vec![self.config.agent().get() as u8; data_len];
                 MemoryRequest::write(id, address, size, data, mask, layout).map_err(Into::into)
             }
+            TrafficRequestKind::Atomic => {
+                unreachable!("DRAM traffic generator does not emit atomic requests")
+            }
             TrafficRequestKind::Maintenance => {
                 unreachable!("DRAM traffic generator does not emit maintenance requests")
             }
@@ -700,9 +712,17 @@ fn validate_dram_config(config: TrafficDramConfig) -> Result<(), TrafficGenerato
 fn validate_dram_snapshot(
     config: TrafficDramConfig,
     series_remaining: u32,
+    current_kind: TrafficRequestKind,
     rotate_sequence_count: u32,
 ) -> Result<(), TrafficGeneratorError> {
     validate_dram_config(config)?;
+
+    if !matches!(
+        current_kind,
+        TrafficRequestKind::Read | TrafficRequestKind::Write
+    ) {
+        return Err(TrafficGeneratorError::TrafficDramSnapshotUnsupportedKind { current_kind });
+    }
 
     if series_remaining > config.num_seq_packets() {
         return Err(
