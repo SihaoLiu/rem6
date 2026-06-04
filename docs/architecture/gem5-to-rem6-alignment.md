@@ -2804,9 +2804,12 @@ frequency to match the caller-declared frequency, and replays packet ticks
 relative to state entry with gem5-style current-tick clamping. The supported
 command subset is intentionally narrow: `ReadReq` maps to `ReadShared`,
 `ReadCleanReq` and `ReadSharedReq` map to `ReadShared`, `ReadExReq` maps to
-`ReadUnique`, `WriteReq` maps to `Write`, cache-line-aligned line-sized
-`WriteLineReq` maps to `Write`, and cache-line-aligned line-sized
-`WritebackDirty` plus `WritebackClean` packets map to native writeback
+`ReadUnique`, `SoftPFReq` command-id 11 and `HardPFReq` command-id 13 map to
+native prefetch-read requests, `SoftPFExReq` command-id 12 maps to native
+prefetch-write requests with writable intent, `WriteReq` maps to `Write`,
+cache-line-aligned line-sized `WriteLineReq` maps to `Write`, and
+cache-line-aligned line-sized `WritebackDirty` plus `WritebackClean` packets
+map to native writeback
 operations. Cache-line-aligned line-sized `WriteClean` command-id 9 packets map
 to a native non-evicting clean write operation with data, no byte mask, no
 response, and write byte accounting; packet trace import still uses deterministic
@@ -2822,6 +2825,8 @@ mutation. Line-sized `CleanInvalidReq` command-id 44 packets whose effective
 address after the configured offset is cache-line aligned map to native
 invalidate maintenance requests with no data, no byte mask, response required,
 no response data, no writable intent, and no read/write byte accounting.
+Prefetch packets consume read-side traffic accounting but use rem6's native
+no-data, no-mask, no-CPU-response prefetch request contract.
 Line-sized `UpgradeReq` command-id 17 packets whose effective address after the
 configured offset is cache-line aligned map to native maintenance upgrade
 requests with no data, no byte mask, response required, no response data,
@@ -2915,6 +2920,11 @@ statistics remain open traffic-generator targets.
 | `src/cpu/checker` | `rem6-cpu` verification harness | planned | Checker behavior should compare architectural commits without hidden simulator state. |
 | `src/cpu/kvm` | host-controlled execution modes | partial | rem6 models execution modes and statistics scope, and host-assisted switch admission now requires complete architecture state, matching memory mode, no unsupported host registers, and no pending host service before a detailed or timing target can take over. Native host-assisted execution is not present yet. |
 | `src/cpu/testers`, `src/cpu/trace`, `src/cpu/probes` | `rem6-traffic`, tests, trace, stats crates | partial | `rem6-traffic` has typed idle and exit control states plus initial linear, random, strided, DRAM-family, hybrid, and trace-backed memory traffic generators matching gem5's no-packet idle, typed exit-on-entry, read/write selection, requestor-id write payload bytes, fixed-period RNG consumption before mixed read/write selection, data-limit stop including zero-as-unlimited, retry-delay compensation for non-elastic request injection, typed overflow-checked summary counters, and deterministic snapshot restore. Linear traffic keeps full-block range validation and cursor restore; random traffic keeps gem5's byte-sampled absolute block alignment with gem5-valid unaligned or partial ranges; strided traffic keeps gem5's offset start, superblock/stride cursor jump, post-jump wrap, shape validation, and gap-rejecting snapshot restore. DRAM-family traffic keeps DRAM, DRAM_ROTATE, and NVM text geometry as typed config, validates supported address mappings, bank/rank/page-or-buffer geometry, sequence length, and rotate read percentages, emits page-contained read/write series with snapshots and summary accounting, and models DRAM_ROTATE bank/rank/type rotation separately from randomized DRAM/NVM series selection. Trace-backed traffic keeps gem5 packet-trace magic, gzip-wrapper decoding, and varint32 record framing, header tick-frequency validation, `ReadReq`, `ReadCleanReq`, and `ReadSharedReq` to shared read, `ReadExReq` to unique read, `WriteReq` to write, cache-line-aligned line-sized `WriteLineReq` to write, cache-line-aligned line-sized `WritebackDirty` or `WritebackClean` to native writeback mapping, cache-line-aligned line-sized `WriteClean` to native non-evicting clean write mapping, and cache-line-aligned line-sized `CleanEvict`, `CleanSharedReq`, `CleanInvalidReq`, and `UpgradeReq` maintenance mappings, absent-or-zero flags acceptance plus nonzero flag rejection, entry-relative packet ticks, default non-elastic current-tick clamping, optional elastic delay, cursor snapshots, and reset-on-exit behavior. The typed traffic state machine keeps gem5-style initial-state entry, duration-driven transition ticks, Markov row selection, deterministic snapshots, and exact row-sum validation while rejecting duplicate states, duplicate transitions, unknown references, and invalid probabilities before runtime. The text config parser accepts gem5 `STATE`, `INIT`, and `TRANSITION` records as typed declarations, validates sparse state ids, malformed fields, duplicate rows, and probability precision before graph construction, and instantiates implemented IDLE, EXIT, LINEAR, RANDOM, STRIDED, DRAM, DRAM_ROTATE, NVM, HYBRID, and resolver-backed TRACE modes through explicit binding options. The traffic controller binds graph states to implemented leaf generators, emits typed request, transition, exit, and trace-exit events, keeps same-tick transition priority, and snapshots machine plus leaf state. Traffic shared event, kind, and summary types are split out so additional trace features can grow without turning existing generators into a monolith. Full memory-controller-coupled DRAM/NVM execution, non-memory trace commands, nonzero trace flag mapping, transport execution, traffic QoS, probes, and the remaining gem5 traffic tests remain open and should feed typed events and summaries. |
+
+Trace prefetch note: the packet-trace support summarized above now includes
+gem5 `SoftPFReq`, `SoftPFExReq`, and `HardPFReq` as native rem6 prefetch
+requests; the detailed command mapping paragraph records their accounting and
+response contract.
 
 ### Memory, Cache, Coherence, and NoC
 

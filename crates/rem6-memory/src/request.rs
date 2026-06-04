@@ -185,6 +185,38 @@ impl MemoryRequest {
         )
     }
 
+    pub fn prefetch_read(
+        id: MemoryRequestId,
+        address: Address,
+        size: AccessSize,
+        line_layout: CacheLineLayout,
+    ) -> Result<Self, MemoryError> {
+        Self::new(
+            id,
+            MemoryOperation::PrefetchRead,
+            address,
+            size,
+            line_layout,
+            MemoryRequestPayload::empty(),
+        )
+    }
+
+    pub fn prefetch_write(
+        id: MemoryRequestId,
+        address: Address,
+        size: AccessSize,
+        line_layout: CacheLineLayout,
+    ) -> Result<Self, MemoryError> {
+        Self::new(
+            id,
+            MemoryOperation::PrefetchWrite,
+            address,
+            size,
+            line_layout,
+            MemoryRequestPayload::empty(),
+        )
+    }
+
     pub fn instruction_fetch(
         id: MemoryRequestId,
         address: Address,

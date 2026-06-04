@@ -324,6 +324,83 @@ fn trace_traffic_generator_maps_cache_read_packets_to_read_shared() {
 }
 
 #[test]
+fn trace_traffic_generator_maps_prefetch_packets_to_prefetch_operations() {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace(
+            TICK_FREQUENCY,
+            &[
+                PacketFields {
+                    tick: 2,
+                    command: 11,
+                    address: 0x140,
+                    size: 8,
+                    flags: None,
+                },
+                PacketFields {
+                    tick: 5,
+                    command: 13,
+                    address: 0x180,
+                    size: 16,
+                    flags: None,
+                },
+                PacketFields {
+                    tick: 9,
+                    command: 12,
+                    address: 0x1c0,
+                    size: 32,
+                    flags: None,
+                },
+            ],
+        ),
+        TICK_FREQUENCY,
+    )
+    .unwrap();
+    let mut generator = TrafficTraceGenerator::new(trace_config(trace));
+    generator.enter(40);
+
+    let soft = generator.next_request(40, 0).unwrap().unwrap();
+    let hard = generator.next_request(soft.tick(), 0).unwrap().unwrap();
+    let exclusive = generator.next_request(hard.tick(), 0).unwrap().unwrap();
+
+    assert_eq!(soft.tick(), 42);
+    assert_eq!(soft.kind(), TrafficRequestKind::Read);
+    assert_eq!(soft.request().operation(), MemoryOperation::PrefetchRead);
+    assert_eq!(soft.request().size(), AccessSize::new(8).unwrap());
+    assert!(!soft.request().requires_writable());
+    assert!(!soft.request().requires_response());
+    assert!(!soft.request().returns_data());
+    assert_eq!(soft.request().byte_mask(), None);
+    assert_eq!(soft.request().data(), None);
+
+    assert_eq!(hard.tick(), 45);
+    assert_eq!(hard.kind(), TrafficRequestKind::Read);
+    assert_eq!(hard.request().operation(), MemoryOperation::PrefetchRead);
+    assert_eq!(hard.request().size(), AccessSize::new(16).unwrap());
+    assert!(!hard.request().requires_writable());
+    assert!(!hard.request().requires_response());
+    assert!(!hard.request().returns_data());
+    assert_eq!(hard.request().byte_mask(), None);
+    assert_eq!(hard.request().data(), None);
+
+    assert_eq!(exclusive.tick(), 49);
+    assert_eq!(exclusive.kind(), TrafficRequestKind::Read);
+    assert_eq!(
+        exclusive.request().operation(),
+        MemoryOperation::PrefetchWrite
+    );
+    assert_eq!(exclusive.request().size(), AccessSize::new(32).unwrap());
+    assert!(exclusive.request().requires_writable());
+    assert!(!exclusive.request().requires_response());
+    assert_eq!(exclusive.request().byte_mask(), None);
+    assert_eq!(exclusive.request().data(), None);
+
+    assert_eq!(generator.summary().read_count(), 3);
+    assert_eq!(generator.summary().bytes_read(), 56);
+    assert_eq!(generator.summary().write_count(), 0);
+    assert_eq!(generator.summary().bytes_written(), 0);
+}
+
+#[test]
 fn trace_traffic_generator_maps_write_line_packet_to_full_line_write() {
     let trace = TrafficTrace::from_gem5_packet_trace(
         &gem5_packet_trace(

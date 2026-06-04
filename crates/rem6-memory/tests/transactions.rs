@@ -342,6 +342,42 @@ fn coherence_operations_expose_protocol_relevant_attributes() {
             line_size: 64
         }
     );
+
+    let prefetch_read = MemoryRequest::prefetch_read(
+        request_id(24),
+        Address::new(0x7008),
+        AccessSize::new(8).unwrap(),
+        line_layout(),
+    )
+    .unwrap();
+    assert_eq!(prefetch_read.operation(), MemoryOperation::PrefetchRead);
+    assert_eq!(
+        prefetch_read.coherence_intent(),
+        CoherenceIntent::ReadShared
+    );
+    assert_eq!(prefetch_read.byte_mask(), None);
+    assert!(!prefetch_read.carries_data());
+    assert!(!prefetch_read.requires_writable());
+    assert!(!prefetch_read.requires_response());
+    assert!(!prefetch_read.returns_data());
+
+    let prefetch_write = MemoryRequest::prefetch_write(
+        request_id(25),
+        Address::new(0x7010),
+        AccessSize::new(16).unwrap(),
+        line_layout(),
+    )
+    .unwrap();
+    assert_eq!(prefetch_write.operation(), MemoryOperation::PrefetchWrite);
+    assert_eq!(
+        prefetch_write.coherence_intent(),
+        CoherenceIntent::WriteUnique
+    );
+    assert_eq!(prefetch_write.byte_mask(), None);
+    assert!(!prefetch_write.carries_data());
+    assert!(prefetch_write.requires_writable());
+    assert!(!prefetch_write.requires_response());
+    assert!(!prefetch_write.returns_data());
 }
 
 #[test]

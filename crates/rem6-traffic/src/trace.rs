@@ -20,6 +20,9 @@ const GEM5_WRITEBACK_DIRTY: u32 = 7;
 const GEM5_WRITEBACK_CLEAN: u32 = 8;
 const GEM5_WRITE_CLEAN: u32 = 9;
 const GEM5_CLEAN_EVICT: u32 = 10;
+const GEM5_SOFT_PF_REQ: u32 = 11;
+const GEM5_SOFT_PF_EX_REQ: u32 = 12;
+const GEM5_HARD_PF_REQ: u32 = 13;
 const GEM5_WRITE_LINE_REQ: u32 = 16;
 const GEM5_UPGRADE_REQ: u32 = 17;
 const GEM5_READ_EX_REQ: u32 = 22;
@@ -38,6 +41,9 @@ const WIRE_FIXED32: u64 = 5;
 enum TrafficTraceCommand {
     ReadShared,
     ReadUnique,
+    SoftPrefetchRead,
+    HardPrefetchRead,
+    PrefetchWrite,
     Write,
     WriteLine,
     WritebackDirty,
@@ -52,7 +58,11 @@ enum TrafficTraceCommand {
 impl TrafficTraceCommand {
     const fn request_kind(self) -> TrafficRequestKind {
         match self {
-            Self::ReadShared | Self::ReadUnique => TrafficRequestKind::Read,
+            Self::ReadShared
+            | Self::ReadUnique
+            | Self::SoftPrefetchRead
+            | Self::HardPrefetchRead
+            | Self::PrefetchWrite => TrafficRequestKind::Read,
             Self::Write
             | Self::WriteLine
             | Self::WritebackDirty
@@ -68,6 +78,9 @@ impl TrafficTraceCommand {
         match self {
             Self::ReadShared => "ReadReq",
             Self::ReadUnique => "ReadExReq",
+            Self::SoftPrefetchRead => "SoftPFReq",
+            Self::HardPrefetchRead => "HardPFReq",
+            Self::PrefetchWrite => "SoftPFExReq",
             Self::Write => "WriteReq",
             Self::WriteLine => "WriteLineReq",
             Self::WritebackDirty => "WritebackDirty",
@@ -441,6 +454,17 @@ impl TrafficTraceGenerator {
             TrafficRequestKind::Read if element.command == TrafficTraceCommand::ReadUnique => {
                 MemoryRequest::read_unique(id, address, element.size, layout).map_err(Into::into)
             }
+            TrafficRequestKind::Read
+                if matches!(
+                    element.command,
+                    TrafficTraceCommand::SoftPrefetchRead | TrafficTraceCommand::HardPrefetchRead
+                ) =>
+            {
+                MemoryRequest::prefetch_read(id, address, element.size, layout).map_err(Into::into)
+            }
+            TrafficRequestKind::Read if element.command == TrafficTraceCommand::PrefetchWrite => {
+                MemoryRequest::prefetch_write(id, address, element.size, layout).map_err(Into::into)
+            }
             TrafficRequestKind::Read => {
                 MemoryRequest::read_shared(id, address, element.size, layout).map_err(Into::into)
             }
@@ -760,6 +784,9 @@ fn parse_packet(message: &[u8]) -> Result<TrafficTraceElement, TrafficGeneratorE
             TrafficTraceCommand::ReadShared
         }
         GEM5_READ_EX_REQ => TrafficTraceCommand::ReadUnique,
+        GEM5_SOFT_PF_REQ => TrafficTraceCommand::SoftPrefetchRead,
+        GEM5_HARD_PF_REQ => TrafficTraceCommand::HardPrefetchRead,
+        GEM5_SOFT_PF_EX_REQ => TrafficTraceCommand::PrefetchWrite,
         GEM5_WRITE_REQ => TrafficTraceCommand::Write,
         GEM5_WRITEBACK_DIRTY => TrafficTraceCommand::WritebackDirty,
         GEM5_WRITEBACK_CLEAN => TrafficTraceCommand::WritebackClean,
