@@ -1,3 +1,6 @@
+use std::io::Write;
+
+use flate2::{write::GzEncoder, Compression};
 use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout};
 use rem6_traffic::{
     TrafficController, TrafficControllerConfig, TrafficDramAddressMapping, TrafficDramMode,
@@ -245,6 +248,40 @@ fn traffic_text_config_binds_trace_modes_with_explicit_trace_resolver() {
         .clone();
     assert_eq!(request.tick(), 5);
     assert_eq!(request.address(), Address::new(0xa0));
+}
+
+#[test]
+fn traffic_text_config_binds_gzip_trace_bytes_from_resolver() {
+    let config = parse(
+        r#"
+        STATE 0 13 TRACE traces/request.pkt.gz 0
+        INIT 0
+        TRANSITION 0 0 1
+        "#,
+    );
+    let trace_bytes = gzip_bytes(&gem5_packet_trace(
+        TICK_FREQUENCY,
+        &[PacketFields {
+            tick: 5,
+            command: 1,
+            address: 0x20,
+            size: 8,
+            flags: None,
+        }],
+    ));
+
+    let controller = config
+        .to_controller_config_with_trace_resolver(binding_options(), TICK_FREQUENCY, |trace_file| {
+            assert_eq!(trace_file, "traces/request.pkt.gz");
+            Ok(trace_bytes.clone())
+        })
+        .unwrap();
+
+    let TrafficStateGenerator::Trace(trace) = bound_generator(&controller, 0) else {
+        panic!("state 0 should bind to trace");
+    };
+    assert_eq!(trace.config().trace().tick_frequency(), TICK_FREQUENCY);
+    assert_eq!(trace.config().trace().len(), 1);
 }
 
 #[test]
@@ -662,4 +699,10 @@ fn append_varint(bytes: &mut Vec<u8>, mut value: u64) {
             break;
         }
     }
+}
+
+fn gzip_bytes(bytes: &[u8]) -> Vec<u8> {
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(bytes).unwrap();
+    encoder.finish().unwrap()
 }

@@ -205,6 +205,9 @@ pub enum TrafficGeneratorError {
     TraceBadMagic {
         actual: [u8; 4],
     },
+    TraceGzipDecode {
+        message: String,
+    },
     TraceMissingHeader,
     TraceTruncatedVarint {
         offset: usize,
@@ -595,6 +598,9 @@ impl fmt::Display for TrafficGeneratorError {
                 formatter,
                 "gem5 packet trace magic {actual:02x?} does not match expected magic"
             ),
+            Self::TraceGzipDecode { message } => {
+                write!(formatter, "gem5 packet trace gzip decode failed: {message}")
+            }
             Self::TraceMissingHeader => {
                 write!(formatter, "gem5 packet trace is missing its PacketHeader")
             }

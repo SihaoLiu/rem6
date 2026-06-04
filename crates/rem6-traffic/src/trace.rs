@@ -1,3 +1,6 @@
+use std::io::Read;
+
+use flate2::read::GzDecoder;
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
 };
@@ -10,6 +13,7 @@ use crate::{
 };
 
 const GEM5_PROTO_MAGIC: [u8; 4] = [0x67, 0x65, 0x6d, 0x35];
+const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];
 const GEM5_READ_REQ: u32 = 1;
 const GEM5_WRITE_REQ: u32 = 4;
 const WIRE_VARINT: u64 = 0;
@@ -53,7 +57,14 @@ impl TrafficTrace {
         bytes: &[u8],
         expected_tick_frequency: u64,
     ) -> Result<Self, TrafficGeneratorError> {
-        let mut stream = Gem5PacketTraceReader::new(bytes)?;
+        let decompressed;
+        let trace_bytes = if is_gzip_stream(bytes) {
+            decompressed = decompress_gzip_trace(bytes)?;
+            decompressed.as_slice()
+        } else {
+            bytes
+        };
+        let mut stream = Gem5PacketTraceReader::new(trace_bytes)?;
         let header = stream
             .next_message()?
             .ok_or(TrafficGeneratorError::TraceMissingHeader)?;
@@ -444,6 +455,21 @@ impl<'a> Gem5PacketTraceReader<'a> {
         self.offset += length;
         Ok(Some(&self.bytes[start..self.offset]))
     }
+}
+
+fn is_gzip_stream(bytes: &[u8]) -> bool {
+    bytes.starts_with(&GZIP_MAGIC)
+}
+
+fn decompress_gzip_trace(bytes: &[u8]) -> Result<Vec<u8>, TrafficGeneratorError> {
+    let mut decoder = GzDecoder::new(bytes);
+    let mut decompressed = Vec::new();
+    decoder.read_to_end(&mut decompressed).map_err(|error| {
+        TrafficGeneratorError::TraceGzipDecode {
+            message: error.to_string(),
+        }
+    })?;
+    Ok(decompressed)
 }
 
 fn parse_header(message: &[u8]) -> Result<u64, TrafficGeneratorError> {

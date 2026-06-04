@@ -1,3 +1,6 @@
+use std::io::Write;
+
+use flate2::{write::GzEncoder, Compression};
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryOperation, MemoryRequestId,
 };
@@ -59,6 +62,46 @@ fn trace_parser_decodes_minimal_gem5_packet_trace() {
     assert_eq!(trace.tick_frequency(), TICK_FREQUENCY);
     assert_eq!(trace.len(), 2);
     assert!(!trace.is_empty());
+}
+
+#[test]
+fn trace_parser_decodes_gzip_wrapped_gem5_packet_trace() {
+    let plain = gem5_packet_trace(
+        TICK_FREQUENCY,
+        &[
+            PacketFields {
+                tick: 5,
+                command: 1,
+                address: 0x20,
+                size: 8,
+                flags: None,
+            },
+            PacketFields {
+                tick: 9,
+                command: 4,
+                address: 0x30,
+                size: 4,
+                flags: Some(0),
+            },
+        ],
+    );
+    let compressed = gzip_bytes(&plain);
+
+    let trace = TrafficTrace::from_gem5_packet_trace(&compressed, TICK_FREQUENCY).unwrap();
+
+    assert_eq!(trace.tick_frequency(), TICK_FREQUENCY);
+    assert_eq!(trace.len(), 2);
+}
+
+#[test]
+fn trace_parser_rejects_invalid_gzip_packet_trace() {
+    let error = TrafficTrace::from_gem5_packet_trace(&[0x1f, 0x8b, 0x08, 0x00], TICK_FREQUENCY)
+        .unwrap_err();
+
+    let TrafficGeneratorError::TraceGzipDecode { message } = error else {
+        panic!("invalid gzip packet trace should report gzip decoding");
+    };
+    assert!(!message.is_empty());
 }
 
 #[test]
@@ -419,4 +462,10 @@ fn append_varint(bytes: &mut Vec<u8>, mut value: u64) {
             break;
         }
     }
+}
+
+fn gzip_bytes(bytes: &[u8]) -> Vec<u8> {
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(bytes).unwrap();
+    encoder.finish().unwrap()
 }

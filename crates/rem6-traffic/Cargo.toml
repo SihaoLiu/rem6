@@ -6,6 +6,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+flate2 = "1"
 rem6-memory = { path = "../rem6-memory" }
 
 [lints]
