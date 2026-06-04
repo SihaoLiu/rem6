@@ -292,6 +292,7 @@ fn encode_operation(operation: MemoryOperation) -> u32 {
         MemoryOperation::CleanEvict => 10,
         MemoryOperation::Invalidate => 11,
         MemoryOperation::WriteClean => 12,
+        MemoryOperation::CleanShared => 13,
     }
 }
 
@@ -310,6 +311,7 @@ fn decode_operation(code: u32) -> Result<MemoryOperation, MemoryError> {
         10 => Ok(MemoryOperation::CleanEvict),
         11 => Ok(MemoryOperation::Invalidate),
         12 => Ok(MemoryOperation::WriteClean),
+        13 => Ok(MemoryOperation::CleanShared),
         code => Err(MemoryError::InvalidRequestCheckpointOperation { code }),
     }
 }

@@ -346,7 +346,7 @@ impl MoesiDirectory {
             MemoryOperation::WritebackDirty => {
                 self.accept_dirty_writeback(line, requester, &mut after_line)?
             }
-            MemoryOperation::WriteClean => {
+            MemoryOperation::WriteClean | MemoryOperation::CleanShared => {
                 self.accept_write_clean(line, requester, &mut after_line)?
             }
             MemoryOperation::WritebackClean

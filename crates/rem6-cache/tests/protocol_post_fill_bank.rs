@@ -65,6 +65,15 @@ fn clean_evict(agent_id: AgentId, sequence: u64, line: u64) -> MemoryRequest {
     .unwrap()
 }
 
+fn clean_shared(agent_id: AgentId, sequence: u64, line: u64) -> MemoryRequest {
+    MemoryRequest::clean_shared(
+        MemoryRequestId::new(agent_id, sequence),
+        Address::new(line),
+        layout(),
+    )
+    .unwrap()
+}
+
 fn invalidate(agent_id: AgentId, sequence: u64, line: u64) -> MemoryRequest {
     let snapshot = MemoryRequestSnapshot::new(
         MemoryRequestId::new(agent_id, sequence),
@@ -321,6 +330,25 @@ macro_rules! protocol_post_fill_bank_tests {
                 assert_eq!(restored.pending_fill_count(), 0);
                 assert_eq!(restored.mshr_allocated_count(), 0);
                 assert_eq!(restored.write_queue_allocated_count(), 1);
+            }
+
+            #[test]
+            fn forwards_post_fill_clean_shared_targets_without_write_queue() {
+                let cache_agent = agent(7);
+                let clean = clean_shared(cache_agent, 109, 0x1000);
+                let (mut restored, _, first_downstream) =
+                    restored_bank_with_target(clean.clone(), None);
+
+                let fill_result = restored
+                    .accept_fill(fill(&first_downstream, 0x44), $fill_event)
+                    .unwrap();
+
+                assert_eq!(
+                    fill_result.post_fill_downstream_requests(),
+                    std::slice::from_ref(&clean)
+                );
+                assert_eq!(restored.pending_fill_count(), 0);
+                assert_eq!(restored.mshr_allocated_count(), 0);
             }
         }
     };

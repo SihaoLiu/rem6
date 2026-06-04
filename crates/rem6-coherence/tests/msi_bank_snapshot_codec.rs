@@ -411,3 +411,39 @@ fn msi_bank_snapshot_rejects_write_clean_request_with_byte_mask() {
 
     assert_eq!(error, "MSI write clean request cannot carry a byte mask");
 }
+
+#[test]
+fn msi_bank_snapshot_rejects_clean_shared_request_with_byte_mask() {
+    let mut payload = payload_with_one_cache_bank_until_mshr_entry_count();
+    write_u64(&mut payload, 1);
+    write_mshr_entry_until_target_count(&mut payload);
+    write_u64(&mut payload, 1);
+
+    write_u32(&mut payload, 1);
+    write_u64(&mut payload, 11);
+    write_u8(&mut payload, 13);
+    write_u64(&mut payload, 0x1000);
+    write_u64(&mut payload, LINE_BYTES);
+    write_u64(&mut payload, LINE_BYTES);
+    write_u8(&mut payload, 0);
+    write_u8(&mut payload, 1);
+    write_u64(&mut payload, LINE_BYTES);
+    for _ in 0..LINE_BYTES {
+        write_u8(&mut payload, 1);
+    }
+    write_u8(&mut payload, 0);
+    write_u8(&mut payload, 0);
+
+    write_u64(&mut payload, 0);
+    write_u64(&mut payload, 0);
+    write_u8(&mut payload, 0);
+    write_u8(&mut payload, 0);
+    write_u8(&mut payload, 0);
+
+    write_empty_top_level_counts_before_parallel_cycles(&mut payload);
+    write_u64(&mut payload, 0);
+
+    let error = MsiBankDirectoryHarnessSnapshot::from_bytes(&payload).unwrap_err();
+
+    assert_eq!(error, "MSI clean shared request cannot carry a byte mask");
+}

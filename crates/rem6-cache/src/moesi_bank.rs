@@ -1023,6 +1023,9 @@ impl MoesiCacheBank {
             }
             return self.accept_uncacheable_request(request);
         }
+        if crate::clean_maintenance::is_clean_maintenance(&request) {
+            return Ok(crate::clean_maintenance::moesi_result(self, request, line));
+        }
         if request.operation() == MemoryOperation::WriteClean {
             let state = self
                 .lines
@@ -1056,14 +1059,12 @@ impl MoesiCacheBank {
                 None,
             ));
         }
-
         if self.should_preflight_mshr_allocation(line, &request) {
             self.mshr
                 .as_ref()
                 .expect("MSHR preflight requested but bank has no MSHR queue")
                 .can_allocate_entry(MshrTargetSource::Demand)?;
         }
-
         let original = request.clone();
         let controller = self
             .lines

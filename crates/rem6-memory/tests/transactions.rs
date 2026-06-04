@@ -318,6 +318,30 @@ fn coherence_operations_expose_protocol_relevant_attributes() {
             line_size: 64
         }
     );
+
+    let clean_shared =
+        MemoryRequest::clean_shared(request_id(22), Address::new(0x6000), line_layout()).unwrap();
+    assert_eq!(clean_shared.operation(), MemoryOperation::CleanShared);
+    assert_eq!(
+        clean_shared.coherence_intent(),
+        CoherenceIntent::CleanShared
+    );
+    assert_eq!(clean_shared.byte_mask(), None);
+    assert!(!clean_shared.carries_data());
+    assert!(!clean_shared.requires_writable());
+    assert!(clean_shared.requires_response());
+    assert!(!clean_shared.returns_data());
+
+    let unaligned_clean_shared =
+        MemoryRequest::clean_shared(request_id(23), Address::new(0x6004), line_layout())
+            .unwrap_err();
+    assert_eq!(
+        unaligned_clean_shared,
+        MemoryError::UnalignedLineAddress {
+            address: Address::new(0x6004),
+            line_size: 64
+        }
+    );
 }
 
 #[test]
@@ -761,6 +785,25 @@ fn memory_request_checkpoint_payload_round_trips_write_clean() {
     assert_eq!(restored, request);
     assert_eq!(restored.operation(), MemoryOperation::WriteClean);
     assert_eq!(restored.data(), Some(&vec![0x7c; 64][..]));
+    assert_eq!(restored.byte_mask(), None);
+}
+
+#[test]
+fn memory_request_checkpoint_payload_round_trips_clean_shared() {
+    let request = MemoryRequest::clean_shared(request_id(24), Address::new(0x7400), line_layout())
+        .unwrap()
+        .with_ordering(MemoryAccessOrdering::new(
+            Some(MemoryBarrierSet::new(true, false)),
+            Some(MemoryBarrierSet::new(false, true)),
+        ));
+
+    let payload = MemoryRequestCheckpointPayload::from_request(&request);
+    let decoded = MemoryRequestCheckpointPayload::decode(payload.encode().as_slice()).unwrap();
+    let restored = MemoryRequest::from_snapshot(decoded.snapshot()).unwrap();
+
+    assert_eq!(restored, request);
+    assert_eq!(restored.operation(), MemoryOperation::CleanShared);
+    assert_eq!(restored.data(), None);
     assert_eq!(restored.byte_mask(), None);
 }
 

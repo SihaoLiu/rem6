@@ -25,6 +25,8 @@ const GEM5_UPGRADE_REQ: u32 = 17;
 const GEM5_READ_EX_REQ: u32 = 22;
 const GEM5_READ_CLEAN_REQ: u32 = 24;
 const GEM5_READ_SHARED_REQ: u32 = 25;
+const GEM5_CLEAN_SHARED_REQ: u32 = 42;
+const GEM5_CLEAN_INVALID_REQ: u32 = 44;
 const WIRE_VARINT: u64 = 0;
 const WIRE_FIXED64: u64 = 1;
 const WIRE_LENGTH_DELIMITED: u64 = 2;
@@ -42,6 +44,8 @@ enum TrafficTraceCommand {
     WritebackClean,
     WriteClean,
     CleanEvict,
+    CleanShared,
+    CleanInvalid,
     Upgrade,
 }
 
@@ -54,7 +58,9 @@ impl TrafficTraceCommand {
             | Self::WritebackDirty
             | Self::WritebackClean
             | Self::WriteClean => TrafficRequestKind::Write,
-            Self::CleanEvict | Self::Upgrade => TrafficRequestKind::Maintenance,
+            Self::CleanEvict | Self::CleanShared | Self::CleanInvalid | Self::Upgrade => {
+                TrafficRequestKind::Maintenance
+            }
         }
     }
 
@@ -68,6 +74,8 @@ impl TrafficTraceCommand {
             Self::WritebackClean => "WritebackClean",
             Self::WriteClean => "WriteClean",
             Self::CleanEvict => "CleanEvict",
+            Self::CleanShared => "CleanSharedReq",
+            Self::CleanInvalid => "CleanInvalidReq",
             Self::Upgrade => "UpgradeReq",
         }
     }
@@ -467,6 +475,18 @@ impl TrafficTraceGenerator {
                 validate_clean_evict_request(address, element.size, layout)?;
                 MemoryRequest::clean_evict(id, address, layout).map_err(Into::into)
             }
+            TrafficRequestKind::Maintenance
+                if element.command == TrafficTraceCommand::CleanShared =>
+            {
+                validate_clean_maintenance_request(element.command, address, element.size, layout)?;
+                MemoryRequest::clean_shared(id, address, layout).map_err(Into::into)
+            }
+            TrafficRequestKind::Maintenance
+                if element.command == TrafficTraceCommand::CleanInvalid =>
+            {
+                validate_clean_maintenance_request(element.command, address, element.size, layout)?;
+                MemoryRequest::invalidate(id, address, layout).map_err(Into::into)
+            }
             TrafficRequestKind::Maintenance if element.command == TrafficTraceCommand::Upgrade => {
                 validate_upgrade_request(address, element.size, layout)?;
                 MemoryRequest::upgrade(id, address, element.size, layout).map_err(Into::into)
@@ -576,6 +596,31 @@ fn validate_clean_evict_request(
             address,
             line_size: layout.bytes(),
         });
+    }
+    Ok(())
+}
+
+fn validate_clean_maintenance_request(
+    command: TrafficTraceCommand,
+    address: Address,
+    size: AccessSize,
+    layout: CacheLineLayout,
+) -> Result<(), TrafficGeneratorError> {
+    if size.bytes() != layout.bytes() {
+        return Err(TrafficGeneratorError::TraceCleanMaintenanceSizeMismatch {
+            command: command.gem5_name(),
+            size: size.bytes(),
+            line_size: layout.bytes(),
+        });
+    }
+    if layout.line_offset(address) != 0 {
+        return Err(
+            TrafficGeneratorError::TraceCleanMaintenanceUnalignedAddress {
+                command: command.gem5_name(),
+                address,
+                line_size: layout.bytes(),
+            },
+        );
     }
     Ok(())
 }
@@ -722,6 +767,8 @@ fn parse_packet(message: &[u8]) -> Result<TrafficTraceElement, TrafficGeneratorE
         GEM5_CLEAN_EVICT => TrafficTraceCommand::CleanEvict,
         GEM5_WRITE_LINE_REQ => TrafficTraceCommand::WriteLine,
         GEM5_UPGRADE_REQ => TrafficTraceCommand::Upgrade,
+        GEM5_CLEAN_SHARED_REQ => TrafficTraceCommand::CleanShared,
+        GEM5_CLEAN_INVALID_REQ => TrafficTraceCommand::CleanInvalid,
         command => return Err(TrafficGeneratorError::TraceUnsupportedCommand { command }),
     };
     let address = address.ok_or(TrafficGeneratorError::TraceMissingField {

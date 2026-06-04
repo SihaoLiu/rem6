@@ -405,6 +405,7 @@ impl MshrTarget {
             MemoryOperation::WriteClean
             | MemoryOperation::WritebackClean
             | MemoryOperation::WritebackDirty
+            | MemoryOperation::CleanShared
             | MemoryOperation::CleanEvict
             | MemoryOperation::Invalidate => MshrTargetPostFillAction::ForwardDownstream,
             _ => MshrTargetPostFillAction::SatisfyLocally,

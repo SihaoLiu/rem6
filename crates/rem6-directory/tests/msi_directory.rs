@@ -67,6 +67,10 @@ fn write_clean(agent: u32, sequence: u64) -> MemoryRequest {
     .unwrap()
 }
 
+fn clean_shared(agent: u32, sequence: u64) -> MemoryRequest {
+    MemoryRequest::clean_shared(id(agent, sequence), Address::new(0x1000), layout()).unwrap()
+}
+
 fn line_size() -> AccessSize {
     AccessSize::new(64).unwrap()
 }
@@ -248,6 +252,33 @@ fn directory_write_clean_keeps_holder_as_clean_sharer() {
     );
 
     let decision = directory.accept(write_clean(1, 1)).unwrap();
+    let after = DirectoryLineState::new(line()).with_sharer(AgentId::new(1));
+
+    assert_eq!(decision.snoops(), &[]);
+    assert_eq!(decision.grant(), None);
+    assert_eq!(
+        decision.before(),
+        &DirectoryLineState::new(line()).with_owner(AgentId::new(1))
+    );
+    assert_eq!(decision.after(), &after);
+    assert_eq!(directory.line_state(line()), after);
+}
+
+#[test]
+fn directory_clean_shared_keeps_holder_as_clean_sharer() {
+    let mut directory = MsiDirectory::new();
+    directory.accept(read_unique(1, 0)).unwrap();
+
+    let non_holder = directory.accept(clean_shared(2, 0)).unwrap_err();
+    assert_eq!(
+        non_holder,
+        DirectoryError::EvictFromNonHolder {
+            line: line(),
+            requester: AgentId::new(2),
+        }
+    );
+
+    let decision = directory.accept(clean_shared(1, 1)).unwrap();
     let after = DirectoryLineState::new(line()).with_sharer(AgentId::new(1));
 
     assert_eq!(decision.snoops(), &[]);

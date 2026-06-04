@@ -30,6 +30,7 @@ impl MemoryOperation {
                 | Self::WriteClean
                 | Self::WritebackClean
                 | Self::WritebackDirty
+                | Self::CleanShared
                 | Self::CleanEvict
                 | Self::Invalidate
         )

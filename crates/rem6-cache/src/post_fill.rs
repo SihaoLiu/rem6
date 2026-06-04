@@ -62,7 +62,7 @@ where
         | MemoryOperation::WritebackClean
         | MemoryOperation::WritebackDirty
         | MemoryOperation::CleanEvict => Ok(true),
-        MemoryOperation::Invalidate => Ok(false),
+        MemoryOperation::CleanShared | MemoryOperation::Invalidate => Ok(false),
         operation => Err(CacheWriteQueueError::WritebackOperationRequired { operation }.into()),
     }
 }

@@ -783,6 +783,147 @@ fn trace_traffic_generator_validates_clean_evict_alignment_after_addr_offset() {
 }
 
 #[test]
+fn trace_traffic_generator_maps_clean_shared_packet_to_maintenance_operation() {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace(
+            TICK_FREQUENCY,
+            &[PacketFields {
+                tick: 7,
+                command: 42,
+                address: 0x180,
+                size: 64,
+                flags: None,
+            }],
+        ),
+        TICK_FREQUENCY,
+    )
+    .unwrap();
+    let mut generator = TrafficTraceGenerator::new(trace_config(trace));
+    generator.enter(50);
+
+    let event = generator.next_request(50, 0).unwrap().unwrap();
+
+    assert_eq!(event.tick(), 57);
+    assert_eq!(event.kind(), TrafficRequestKind::Maintenance);
+    assert_eq!(event.address(), Address::new(0x180));
+    assert_eq!(event.request().operation(), MemoryOperation::CleanShared);
+    assert_eq!(event.request().size(), AccessSize::new(64).unwrap());
+    assert_eq!(event.request().data(), None);
+    assert_eq!(event.request().byte_mask(), None);
+    assert!(!event.request().carries_data());
+    assert!(event.request().requires_response());
+    assert!(!event.request().requires_writable());
+    assert!(!event.request().returns_data());
+    assert_eq!(generator.summary().packet_count(), 1);
+    assert_eq!(generator.summary().read_count(), 0);
+    assert_eq!(generator.summary().write_count(), 0);
+    assert_eq!(generator.summary().bytes_read(), 0);
+    assert_eq!(generator.summary().bytes_written(), 0);
+}
+
+#[test]
+fn trace_traffic_generator_rejects_clean_shared_packet_with_partial_line_size() {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace(
+            TICK_FREQUENCY,
+            &[PacketFields {
+                tick: 7,
+                command: 42,
+                address: 0x180,
+                size: 32,
+                flags: None,
+            }],
+        ),
+        TICK_FREQUENCY,
+    )
+    .unwrap();
+    let mut generator = TrafficTraceGenerator::new(trace_config(trace));
+    generator.enter(50);
+
+    let error = generator.next_request(50, 0).unwrap_err();
+
+    assert_eq!(
+        error,
+        TrafficGeneratorError::TraceCleanMaintenanceSizeMismatch {
+            command: "CleanSharedReq",
+            size: 32,
+            line_size: 64,
+        }
+    );
+}
+
+#[test]
+fn trace_traffic_generator_maps_clean_invalid_packet_to_invalidate_operation() {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace(
+            TICK_FREQUENCY,
+            &[PacketFields {
+                tick: 9,
+                command: 44,
+                address: 0x1c0,
+                size: 64,
+                flags: None,
+            }],
+        ),
+        TICK_FREQUENCY,
+    )
+    .unwrap();
+    let mut generator = TrafficTraceGenerator::new(trace_config(trace));
+    generator.enter(70);
+
+    let event = generator.next_request(70, 0).unwrap().unwrap();
+
+    assert_eq!(event.tick(), 79);
+    assert_eq!(event.kind(), TrafficRequestKind::Maintenance);
+    assert_eq!(event.address(), Address::new(0x1c0));
+    assert_eq!(event.request().operation(), MemoryOperation::Invalidate);
+    assert_eq!(event.request().size(), AccessSize::new(64).unwrap());
+    assert_eq!(event.request().data(), None);
+    assert_eq!(event.request().byte_mask(), None);
+    assert!(!event.request().carries_data());
+    assert!(event.request().requires_response());
+    assert!(!event.request().requires_writable());
+    assert!(!event.request().returns_data());
+    assert_eq!(generator.summary().packet_count(), 1);
+    assert_eq!(generator.summary().read_count(), 0);
+    assert_eq!(generator.summary().write_count(), 0);
+    assert_eq!(generator.summary().bytes_read(), 0);
+    assert_eq!(generator.summary().bytes_written(), 0);
+}
+
+#[test]
+fn trace_traffic_generator_validates_clean_invalid_alignment_after_addr_offset() {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace(
+            TICK_FREQUENCY,
+            &[PacketFields {
+                tick: 9,
+                command: 44,
+                address: 0x1c0,
+                size: 64,
+                flags: None,
+            }],
+        ),
+        TICK_FREQUENCY,
+    )
+    .unwrap();
+    let config = trace_config(trace).with_addr_offset(4).unwrap();
+    let mut generator = TrafficTraceGenerator::new(config);
+    generator.enter(70);
+
+    let error = generator.next_request(70, 0).unwrap_err();
+
+    assert_eq!(
+        error,
+        TrafficGeneratorError::TraceCleanMaintenanceUnalignedAddress {
+            command: "CleanInvalidReq",
+            address: Address::new(0x1c4),
+            line_size: 64,
+        }
+    );
+}
+
+#[test]
 fn trace_traffic_generator_maps_upgrade_packet_to_maintenance_operation() {
     let trace = TrafficTrace::from_gem5_packet_trace(
         &gem5_packet_trace(

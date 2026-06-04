@@ -2,6 +2,7 @@ mod allocation;
 mod bank;
 mod chi;
 mod chi_bank;
+mod clean_maintenance;
 mod compressed_tags;
 mod downstream;
 mod dueling;

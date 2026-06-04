@@ -71,6 +71,10 @@ fn write_clean(agent: u32, sequence: u64) -> MemoryRequest {
     .unwrap()
 }
 
+fn clean_shared(agent: u32, sequence: u64) -> MemoryRequest {
+    MemoryRequest::clean_shared(id(agent, sequence), Address::new(0x4000), layout()).unwrap()
+}
+
 fn grant(
     request: MemoryRequestId,
     state: MoesiState,
@@ -242,6 +246,36 @@ fn moesi_directory_write_clean_keeps_owner_as_clean_sharer() {
         .with_sharer(AgentId::new(1))
         .with_sharer(AgentId::new(2));
     let decision = directory.accept(write_clean(1, 1)).unwrap();
+
+    assert_eq!(decision.snoops(), &[]);
+    assert_eq!(decision.grant(), None);
+    assert_eq!(decision.before(), &before);
+    assert_eq!(decision.after(), &after);
+    assert_eq!(directory.line_state(line()), after);
+}
+
+#[test]
+fn moesi_directory_clean_shared_keeps_owner_as_clean_sharer() {
+    let mut directory = MoesiDirectory::new();
+    directory.accept(read_unique(1, 0)).unwrap();
+    directory.accept(read_shared(2, 0)).unwrap();
+
+    let non_holder = directory.accept(clean_shared(3, 0)).unwrap_err();
+    assert_eq!(
+        non_holder,
+        MoesiDirectoryError::EvictFromNonHolder {
+            line: line(),
+            requester: AgentId::new(3),
+        }
+    );
+
+    let before = MoesiDirectoryLineState::new(line())
+        .with_owner(AgentId::new(1), MoesiState::Owned)
+        .with_sharer(AgentId::new(2));
+    let after = MoesiDirectoryLineState::new(line())
+        .with_sharer(AgentId::new(1))
+        .with_sharer(AgentId::new(2));
+    let decision = directory.accept(clean_shared(1, 1)).unwrap();
 
     assert_eq!(decision.snoops(), &[]);
     assert_eq!(decision.grant(), None);

@@ -635,6 +635,22 @@ fn read_request(cursor: &mut PayloadCursor<'_>) -> Result<MemoryRequest, String>
                 layout,
             )
         }
+        MemoryOperation::CleanShared => {
+            if data.is_some() {
+                return Err("MSI clean shared request cannot carry data".to_string());
+            }
+            if byte_mask.is_some() {
+                return Err("MSI clean shared request cannot carry a byte mask".to_string());
+            }
+            if size.bytes() != layout.bytes() {
+                return Err(format!(
+                    "MSI clean shared request size {} does not match line size {}",
+                    size.bytes(),
+                    layout.bytes()
+                ));
+            }
+            MemoryRequest::clean_shared(id, address, layout)
+        }
         MemoryOperation::WritebackClean => MemoryRequest::writeback_clean(
             id,
             address,
@@ -925,6 +941,7 @@ fn memory_operation_to_u8(operation: MemoryOperation) -> u8 {
         MemoryOperation::CleanEvict => 10,
         MemoryOperation::Invalidate => 11,
         MemoryOperation::WriteClean => 12,
+        MemoryOperation::CleanShared => 13,
     }
 }
 
@@ -943,6 +960,7 @@ fn u8_to_memory_operation(value: u8) -> Result<MemoryOperation, String> {
         10 => Ok(MemoryOperation::CleanEvict),
         11 => Ok(MemoryOperation::Invalidate),
         12 => Ok(MemoryOperation::WriteClean),
+        13 => Ok(MemoryOperation::CleanShared),
         _ => Err(format!("unknown memory operation {value}")),
     }
 }

@@ -59,6 +59,10 @@ fn write_clean(sequence: u64, address: u64, data: Vec<u8>) -> MemoryRequest {
     MemoryRequest::write_clean(request_id(sequence), Address::new(address), data, layout()).unwrap()
 }
 
+fn clean_shared(sequence: u64, address: u64) -> MemoryRequest {
+    MemoryRequest::clean_shared(request_id(sequence), Address::new(address), layout()).unwrap()
+}
+
 fn atomic_with_op(
     sequence: u64,
     address: u64,
@@ -291,6 +295,22 @@ fn line_store_installs_write_clean_on_missing_line_without_response() {
         store.line_data(Address::new(0x3000)).unwrap(),
         line_data(0x30)
     );
+}
+
+#[test]
+fn line_store_completes_clean_shared_without_mutating_data() {
+    let original = line_data(0x20);
+    let mut store = LineMemoryStore::new(layout());
+    store
+        .insert_line(Address::new(0x1000), original.clone())
+        .unwrap();
+    let request = clean_shared(42, 0x1000);
+
+    let response = store.respond(&request).unwrap().unwrap();
+
+    assert_eq!(response.status(), ResponseStatus::Completed);
+    assert_eq!(response.data(), None);
+    assert_eq!(store.line_data(Address::new(0x1000)).unwrap(), original);
 }
 
 #[test]

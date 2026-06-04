@@ -317,6 +317,31 @@ impl MemoryRequest {
         address: Address,
         line_layout: CacheLineLayout,
     ) -> Result<Self, MemoryError> {
+        Self::line_maintenance(id, MemoryOperation::CleanEvict, address, line_layout)
+    }
+
+    pub fn clean_shared(
+        id: MemoryRequestId,
+        address: Address,
+        line_layout: CacheLineLayout,
+    ) -> Result<Self, MemoryError> {
+        Self::line_maintenance(id, MemoryOperation::CleanShared, address, line_layout)
+    }
+
+    pub fn invalidate(
+        id: MemoryRequestId,
+        address: Address,
+        line_layout: CacheLineLayout,
+    ) -> Result<Self, MemoryError> {
+        Self::line_maintenance(id, MemoryOperation::Invalidate, address, line_layout)
+    }
+
+    fn line_maintenance(
+        id: MemoryRequestId,
+        operation: MemoryOperation,
+        address: Address,
+        line_layout: CacheLineLayout,
+    ) -> Result<Self, MemoryError> {
         if line_layout.line_offset(address) != 0 {
             return Err(MemoryError::UnalignedLineAddress {
                 address,
@@ -327,7 +352,7 @@ impl MemoryRequest {
         let size = AccessSize::new(line_layout.bytes())?;
         Self::new(
             id,
-            MemoryOperation::CleanEvict,
+            operation,
             address,
             size,
             line_layout,

@@ -692,6 +692,7 @@ fn chi_cpu_event(request: &MemoryRequest) -> ChiEvent {
         MemoryOperation::WriteClean
         | MemoryOperation::WritebackClean
         | MemoryOperation::WritebackDirty
+        | MemoryOperation::CleanShared
         | MemoryOperation::CleanEvict
         | MemoryOperation::Invalidate => ChiEvent::CpuWrite,
     }

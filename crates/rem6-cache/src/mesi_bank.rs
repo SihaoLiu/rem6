@@ -1020,6 +1020,9 @@ impl MesiCacheBank {
             }
             return self.accept_uncacheable_request(request);
         }
+        if crate::clean_maintenance::is_clean_maintenance(&request) {
+            return Ok(crate::clean_maintenance::mesi_result(self, request, line));
+        }
         if request.operation() == MemoryOperation::WriteClean {
             let state = self
                 .lines

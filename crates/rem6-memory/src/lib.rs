@@ -139,6 +139,7 @@ pub enum MemoryOperation {
     WriteClean,
     WritebackClean,
     WritebackDirty,
+    CleanShared,
     CleanEvict,
     Invalidate,
 }
@@ -225,6 +226,7 @@ impl MemoryOperation {
             Self::WriteClean => CoherenceIntent::WriteClean,
             Self::WritebackClean => CoherenceIntent::WritebackClean,
             Self::WritebackDirty => CoherenceIntent::WritebackDirty,
+            Self::CleanShared => CoherenceIntent::CleanShared,
             Self::CleanEvict => CoherenceIntent::CleanEvict,
             Self::Invalidate => CoherenceIntent::Invalidate,
         }
@@ -278,6 +280,7 @@ pub enum CoherenceIntent {
     WriteClean,
     WritebackClean,
     WritebackDirty,
+    CleanShared,
     CleanEvict,
     Invalidate,
 }
@@ -369,7 +372,9 @@ impl LineMemoryStore {
                 self.apply_write_data(request, &write_data)?;
                 MemoryResponse::completed(request, Some(data)).map(Some)
             }
-            MemoryOperation::Upgrade | MemoryOperation::Invalidate => {
+            MemoryOperation::Upgrade
+            | MemoryOperation::CleanShared
+            | MemoryOperation::Invalidate => {
                 self.require_line(request.line_address())?;
                 MemoryResponse::completed(request, None).map(Some)
             }

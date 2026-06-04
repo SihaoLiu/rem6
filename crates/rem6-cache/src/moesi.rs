@@ -697,6 +697,7 @@ fn moesi_cpu_event(request: &MemoryRequest) -> MoesiEvent {
         MemoryOperation::WriteClean
         | MemoryOperation::WritebackClean
         | MemoryOperation::WritebackDirty
+        | MemoryOperation::CleanShared
         | MemoryOperation::CleanEvict
         | MemoryOperation::Invalidate => MoesiEvent::CpuWrite,
     }
