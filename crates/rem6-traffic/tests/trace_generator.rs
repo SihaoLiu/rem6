@@ -282,6 +282,48 @@ fn trace_traffic_generator_maps_read_exclusive_packet_to_read_unique() {
 }
 
 #[test]
+fn trace_traffic_generator_maps_cache_read_packets_to_read_shared() {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace(
+            TICK_FREQUENCY,
+            &[
+                PacketFields {
+                    tick: 3,
+                    command: 24,
+                    address: 0x40,
+                    size: 8,
+                    flags: None,
+                },
+                PacketFields {
+                    tick: 6,
+                    command: 25,
+                    address: 0x48,
+                    size: 8,
+                    flags: None,
+                },
+            ],
+        ),
+        TICK_FREQUENCY,
+    )
+    .unwrap();
+    let mut generator = TrafficTraceGenerator::new(trace_config(trace));
+    generator.enter(20);
+
+    let clean = generator.next_request(20, 0).unwrap().unwrap();
+    let shared = generator.next_request(clean.tick(), 0).unwrap().unwrap();
+
+    assert_eq!(clean.tick(), 23);
+    assert_eq!(clean.kind(), TrafficRequestKind::Read);
+    assert_eq!(clean.request().operation(), MemoryOperation::ReadShared);
+    assert_eq!(shared.tick(), 26);
+    assert_eq!(shared.kind(), TrafficRequestKind::Read);
+    assert_eq!(shared.request().operation(), MemoryOperation::ReadShared);
+    assert_eq!(generator.summary().read_count(), 2);
+    assert_eq!(generator.summary().bytes_read(), 16);
+    assert_eq!(generator.summary().write_count(), 0);
+}
+
+#[test]
 fn trace_parser_rejects_read_exclusive_packet_with_nonzero_flags() {
     assert_eq!(
         TrafficTrace::from_gem5_packet_trace(

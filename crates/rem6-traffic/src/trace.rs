@@ -17,6 +17,8 @@ const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];
 const GEM5_READ_REQ: u32 = 1;
 const GEM5_WRITE_REQ: u32 = 4;
 const GEM5_READ_EX_REQ: u32 = 22;
+const GEM5_READ_CLEAN_REQ: u32 = 24;
+const GEM5_READ_SHARED_REQ: u32 = 25;
 const WIRE_VARINT: u64 = 0;
 const WIRE_FIXED64: u64 = 1;
 const WIRE_LENGTH_DELIMITED: u64 = 2;
@@ -526,7 +528,9 @@ fn parse_packet(message: &[u8]) -> Result<TrafficTraceElement, TrafficGeneratorE
         message: "Packet",
         field: "cmd",
     })? {
-        GEM5_READ_REQ => TrafficTraceCommand::ReadShared,
+        GEM5_READ_REQ | GEM5_READ_CLEAN_REQ | GEM5_READ_SHARED_REQ => {
+            TrafficTraceCommand::ReadShared
+        }
         GEM5_READ_EX_REQ => TrafficTraceCommand::ReadUnique,
         GEM5_WRITE_REQ => TrafficTraceCommand::Write,
         command => return Err(TrafficGeneratorError::TraceUnsupportedCommand { command }),
