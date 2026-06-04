@@ -16,6 +16,7 @@ const GEM5_PROTO_MAGIC: [u8; 4] = [0x67, 0x65, 0x6d, 0x35];
 const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];
 const GEM5_READ_REQ: u32 = 1;
 const GEM5_WRITE_REQ: u32 = 4;
+const GEM5_READ_EX_REQ: u32 = 22;
 const WIRE_VARINT: u64 = 0;
 const WIRE_FIXED64: u64 = 1;
 const WIRE_LENGTH_DELIMITED: u64 = 2;
@@ -25,15 +26,16 @@ const WIRE_FIXED32: u64 = 5;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TrafficTraceCommand {
-    ReadReq,
-    WriteReq,
+    ReadShared,
+    ReadUnique,
+    Write,
 }
 
 impl TrafficTraceCommand {
     const fn request_kind(self) -> TrafficRequestKind {
         match self {
-            Self::ReadReq => TrafficRequestKind::Read,
-            Self::WriteReq => TrafficRequestKind::Write,
+            Self::ReadShared | Self::ReadUnique => TrafficRequestKind::Read,
+            Self::Write => TrafficRequestKind::Write,
         }
     }
 }
@@ -395,6 +397,9 @@ impl TrafficTraceGenerator {
         let layout = self.config.line_layout();
 
         match kind {
+            TrafficRequestKind::Read if element.command == TrafficTraceCommand::ReadUnique => {
+                MemoryRequest::read_unique(id, address, element.size, layout).map_err(Into::into)
+            }
             TrafficRequestKind::Read => {
                 MemoryRequest::read_shared(id, address, element.size, layout).map_err(Into::into)
             }
@@ -521,8 +526,9 @@ fn parse_packet(message: &[u8]) -> Result<TrafficTraceElement, TrafficGeneratorE
         message: "Packet",
         field: "cmd",
     })? {
-        GEM5_READ_REQ => TrafficTraceCommand::ReadReq,
-        GEM5_WRITE_REQ => TrafficTraceCommand::WriteReq,
+        GEM5_READ_REQ => TrafficTraceCommand::ReadShared,
+        GEM5_READ_EX_REQ => TrafficTraceCommand::ReadUnique,
+        GEM5_WRITE_REQ => TrafficTraceCommand::Write,
         command => return Err(TrafficGeneratorError::TraceUnsupportedCommand { command }),
     };
     let address = address.ok_or(TrafficGeneratorError::TraceMissingField {

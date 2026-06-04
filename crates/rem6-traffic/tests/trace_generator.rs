@@ -251,6 +251,58 @@ fn trace_traffic_generator_replays_read_write_packets_with_offset_and_summary() 
 }
 
 #[test]
+fn trace_traffic_generator_maps_read_exclusive_packet_to_read_unique() {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace(
+            TICK_FREQUENCY,
+            &[PacketFields {
+                tick: 7,
+                command: 22,
+                address: 0x80,
+                size: 16,
+                flags: None,
+            }],
+        ),
+        TICK_FREQUENCY,
+    )
+    .unwrap();
+    let mut generator = TrafficTraceGenerator::new(trace_config(trace));
+    generator.enter(50);
+
+    let event = generator.next_request(50, 0).unwrap().unwrap();
+
+    assert_eq!(event.tick(), 57);
+    assert_eq!(event.kind(), TrafficRequestKind::Read);
+    assert_eq!(event.address(), Address::new(0x80));
+    assert_eq!(event.request().operation(), MemoryOperation::ReadUnique);
+    assert_eq!(event.request().size(), AccessSize::new(16).unwrap());
+    assert_eq!(generator.summary().read_count(), 1);
+    assert_eq!(generator.summary().bytes_read(), 16);
+    assert_eq!(generator.summary().write_count(), 0);
+}
+
+#[test]
+fn trace_parser_rejects_read_exclusive_packet_with_nonzero_flags() {
+    assert_eq!(
+        TrafficTrace::from_gem5_packet_trace(
+            &gem5_packet_trace(
+                TICK_FREQUENCY,
+                &[PacketFields {
+                    tick: 1,
+                    command: 22,
+                    address: 0,
+                    size: 8,
+                    flags: Some(0x400),
+                }],
+            ),
+            TICK_FREQUENCY,
+        )
+        .unwrap_err(),
+        TrafficGeneratorError::TraceUnsupportedFlags { flags: 0x400 }
+    );
+}
+
+#[test]
 fn trace_traffic_generator_applies_elastic_delay_and_non_elastic_clamp() {
     let trace = TrafficTrace::from_gem5_packet_trace(
         &gem5_packet_trace(
