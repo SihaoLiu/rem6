@@ -116,6 +116,15 @@ fn invalidate(agent_id: u32, sequence: u64, address: u64) -> MemoryRequest {
     MemoryRequest::from_snapshot(&snapshot).unwrap()
 }
 
+fn invalidate_writable(agent_id: u32, sequence: u64, address: u64) -> MemoryRequest {
+    MemoryRequest::invalidate_writable(
+        request_id(agent_id, sequence),
+        Address::new(address),
+        layout(),
+    )
+    .unwrap()
+}
+
 fn pending_bank_snapshot_with_post_fill_invalidate(
     cache_agent: AgentId,
     read_sequence: u64,
@@ -386,6 +395,74 @@ fn msi_bank_harness_byte_snapshot_preserves_mshr_target_ordering() {
             .request()
             .ordering(),
         ordering
+    );
+}
+
+#[test]
+fn msi_bank_harness_byte_snapshot_round_trips_pending_writable_invalidate_target() {
+    let config = MshrQueueConfig::new(2, 3, 0).unwrap();
+    let mut bank = MsiCacheBank::new_with_mshr(agent(1), layout(), config.clone());
+    bank.accept_cpu_request(read(1, 50, 0x2004)).unwrap();
+
+    let snapshot = bank.snapshot();
+    let current_mshr = snapshot.mshr().unwrap();
+    let current_entry = &current_mshr.entries()[0];
+    let invalidation = invalidate_writable(1, 51, 0x2000);
+    let mut targets = current_entry.targets().to_vec();
+    targets.push(MshrTarget::from_parts(
+        invalidation.clone(),
+        1,
+        1,
+        MshrTargetSource::Demand,
+        false,
+        None,
+    ));
+    let mshr_snapshot = MshrQueueSnapshot::new(
+        config,
+        vec![MshrEntry::from_parts(
+            current_entry.handle(),
+            current_entry.line(),
+            current_entry.ready_tick(),
+            current_entry.order(),
+            current_entry.in_service(),
+            current_entry.pending_modified(),
+            targets,
+        )],
+        current_mshr.next_handle(),
+        current_mshr.next_order() + 1,
+    );
+    let snapshot = MsiBankDirectoryHarnessSnapshot::new(
+        layout(),
+        BTreeMap::from([(
+            agent(1),
+            MsiCacheBankSnapshot::new_with_mshr(
+                snapshot.agent(),
+                snapshot.layout(),
+                snapshot.next_sequence(),
+                snapshot.lines().to_vec(),
+                mshr_snapshot,
+            ),
+        )]),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    );
+
+    let rebuilt = MsiBankDirectoryHarnessSnapshot::from_bytes(&snapshot.to_bytes()).unwrap();
+
+    assert_eq!(rebuilt, snapshot);
+    assert_eq!(
+        rebuilt
+            .cache_snapshot(agent(1))
+            .unwrap()
+            .mshr()
+            .unwrap()
+            .entries()[0]
+            .targets()[1]
+            .request(),
+        &invalidation
     );
 }
 

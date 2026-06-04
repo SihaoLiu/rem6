@@ -33,6 +33,7 @@ impl MemoryOperation {
                 | Self::CleanShared
                 | Self::CleanEvict
                 | Self::Invalidate
+                | Self::InvalidateWritable
         )
     }
 }

@@ -693,6 +693,7 @@ fn mesi_cpu_event(request: &MemoryRequest) -> MesiEvent {
         | MemoryOperation::WritebackDirty
         | MemoryOperation::CleanShared
         | MemoryOperation::CleanEvict
-        | MemoryOperation::Invalidate => MesiEvent::CpuWrite,
+        | MemoryOperation::Invalidate
+        | MemoryOperation::InvalidateWritable => MesiEvent::CpuWrite,
     }
 }

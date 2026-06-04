@@ -71,6 +71,10 @@ fn clean_shared(agent: u32, sequence: u64) -> MemoryRequest {
     MemoryRequest::clean_shared(id(agent, sequence), Address::new(0x1000), layout()).unwrap()
 }
 
+fn invalidate_writable(agent: u32, sequence: u64) -> MemoryRequest {
+    MemoryRequest::invalidate_writable(id(agent, sequence), Address::new(0x1000), layout()).unwrap()
+}
+
 fn line_size() -> AccessSize {
     AccessSize::new(64).unwrap()
 }
@@ -150,6 +154,35 @@ fn directory_read_unique_invalidates_clean_sharers_deterministically() {
         .protocol_snapshot()
         .validate()
         .unwrap();
+}
+
+#[test]
+fn directory_writable_invalidate_invalidates_peers_without_existing_sharer() {
+    let mut directory = MsiDirectory::new();
+    directory.accept(read_shared(1, 0)).unwrap();
+    directory.accept(read_shared(3, 0)).unwrap();
+
+    let decision = directory.accept(invalidate_writable(2, 0)).unwrap();
+
+    assert_eq!(
+        decision.snoops(),
+        &[
+            DirectorySnoop::new(AgentId::new(1), MsiEvent::SnoopWrite),
+            DirectorySnoop::new(AgentId::new(3), MsiEvent::SnoopWrite),
+        ]
+    );
+    assert_eq!(
+        decision.grant(),
+        Some(&grant(
+            id(2, 0),
+            MsiState::Modified,
+            DirectoryDataSource::BackingMemory,
+        ))
+    );
+    assert_eq!(
+        directory.line_state(line()),
+        DirectoryLineState::new(line()).with_owner(AgentId::new(2))
+    );
 }
 
 #[test]

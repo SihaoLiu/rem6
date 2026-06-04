@@ -142,6 +142,7 @@ pub enum MemoryOperation {
     CleanShared,
     CleanEvict,
     Invalidate,
+    InvalidateWritable,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -229,6 +230,7 @@ impl MemoryOperation {
             Self::CleanShared => CoherenceIntent::CleanShared,
             Self::CleanEvict => CoherenceIntent::CleanEvict,
             Self::Invalidate => CoherenceIntent::Invalidate,
+            Self::InvalidateWritable => CoherenceIntent::InvalidateWritable,
         }
     }
 
@@ -265,7 +267,12 @@ impl MemoryOperation {
     pub const fn requires_writable(self) -> bool {
         matches!(
             self,
-            Self::ReadUnique | Self::Write | Self::Upgrade | Self::Atomic | Self::PrefetchWrite
+            Self::ReadUnique
+                | Self::Write
+                | Self::Upgrade
+                | Self::Atomic
+                | Self::PrefetchWrite
+                | Self::InvalidateWritable
         )
     }
 }
@@ -283,6 +290,7 @@ pub enum CoherenceIntent {
     CleanShared,
     CleanEvict,
     Invalidate,
+    InvalidateWritable,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -374,7 +382,8 @@ impl LineMemoryStore {
             }
             MemoryOperation::Upgrade
             | MemoryOperation::CleanShared
-            | MemoryOperation::Invalidate => {
+            | MemoryOperation::Invalidate
+            | MemoryOperation::InvalidateWritable => {
                 self.require_line(request.line_address())?;
                 MemoryResponse::completed(request, None).map(Some)
             }

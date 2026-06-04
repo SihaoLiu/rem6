@@ -337,7 +337,8 @@ impl MoesiDirectory {
             MemoryOperation::ReadUnique
             | MemoryOperation::Write
             | MemoryOperation::Atomic
-            | MemoryOperation::PrefetchWrite => {
+            | MemoryOperation::PrefetchWrite
+            | MemoryOperation::InvalidateWritable => {
                 self.accept_read_unique(line, request_id, requester, &mut after_line)
             }
             MemoryOperation::Upgrade => {

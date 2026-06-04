@@ -343,9 +343,37 @@ fn coherence_operations_expose_protocol_relevant_attributes() {
         }
     );
 
+    let invalidate_writable =
+        MemoryRequest::invalidate_writable(request_id(24), Address::new(0x7000), line_layout())
+            .unwrap();
+    assert_eq!(
+        invalidate_writable.operation(),
+        MemoryOperation::InvalidateWritable
+    );
+    assert_eq!(
+        invalidate_writable.coherence_intent(),
+        CoherenceIntent::InvalidateWritable
+    );
+    assert_eq!(invalidate_writable.byte_mask(), None);
+    assert!(!invalidate_writable.carries_data());
+    assert!(invalidate_writable.requires_writable());
+    assert!(invalidate_writable.requires_response());
+    assert!(!invalidate_writable.returns_data());
+
+    let unaligned_invalidate_writable =
+        MemoryRequest::invalidate_writable(request_id(25), Address::new(0x7004), line_layout())
+            .unwrap_err();
+    assert_eq!(
+        unaligned_invalidate_writable,
+        MemoryError::UnalignedLineAddress {
+            address: Address::new(0x7004),
+            line_size: 64
+        }
+    );
+
     let prefetch_read = MemoryRequest::prefetch_read(
-        request_id(24),
-        Address::new(0x7008),
+        request_id(26),
+        Address::new(0x8008),
         AccessSize::new(8).unwrap(),
         line_layout(),
     )
@@ -362,8 +390,8 @@ fn coherence_operations_expose_protocol_relevant_attributes() {
     assert!(!prefetch_read.returns_data());
 
     let prefetch_write = MemoryRequest::prefetch_write(
-        request_id(25),
-        Address::new(0x7010),
+        request_id(27),
+        Address::new(0x8010),
         AccessSize::new(16).unwrap(),
         line_layout(),
     )
@@ -841,6 +869,27 @@ fn memory_request_checkpoint_payload_round_trips_clean_shared() {
     assert_eq!(restored.operation(), MemoryOperation::CleanShared);
     assert_eq!(restored.data(), None);
     assert_eq!(restored.byte_mask(), None);
+}
+
+#[test]
+fn memory_request_checkpoint_payload_round_trips_invalidate_writable() {
+    let request =
+        MemoryRequest::invalidate_writable(request_id(25), Address::new(0x7800), line_layout())
+            .unwrap()
+            .with_ordering(MemoryAccessOrdering::new(
+                Some(MemoryBarrierSet::memory()),
+                None,
+            ));
+
+    let payload = MemoryRequestCheckpointPayload::from_request(&request);
+    let decoded = MemoryRequestCheckpointPayload::decode(payload.encode().as_slice()).unwrap();
+    let restored = MemoryRequest::from_snapshot(decoded.snapshot()).unwrap();
+
+    assert_eq!(restored, request);
+    assert_eq!(restored.operation(), MemoryOperation::InvalidateWritable);
+    assert_eq!(restored.data(), None);
+    assert_eq!(restored.byte_mask(), None);
+    assert!(restored.requires_writable());
 }
 
 #[test]

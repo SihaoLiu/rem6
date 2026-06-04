@@ -368,6 +368,19 @@ impl MemoryRequest {
         Self::line_maintenance(id, MemoryOperation::Invalidate, address, line_layout)
     }
 
+    pub fn invalidate_writable(
+        id: MemoryRequestId,
+        address: Address,
+        line_layout: CacheLineLayout,
+    ) -> Result<Self, MemoryError> {
+        Self::line_maintenance(
+            id,
+            MemoryOperation::InvalidateWritable,
+            address,
+            line_layout,
+        )
+    }
+
     fn line_maintenance(
         id: MemoryRequestId,
         operation: MemoryOperation,
