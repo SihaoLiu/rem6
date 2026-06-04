@@ -74,7 +74,9 @@ impl LineBackingStore {
                 self.apply_write_data(request, &write_data)?;
                 MemoryResponse::completed(request, Some(data)).map_err(HarnessError::Memory)
             }
-            MemoryOperation::WritebackClean | MemoryOperation::WritebackDirty => {
+            MemoryOperation::WriteClean
+            | MemoryOperation::WritebackClean
+            | MemoryOperation::WritebackDirty => {
                 self.replace_line(request)?;
                 Ok(MemoryResponse::retry(request))
             }

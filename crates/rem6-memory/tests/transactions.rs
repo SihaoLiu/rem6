@@ -288,6 +288,36 @@ fn coherence_operations_expose_protocol_relevant_attributes() {
             line_size: 64
         }
     );
+
+    let write_clean = MemoryRequest::write_clean(
+        request_id(20),
+        Address::new(0x5000),
+        vec![0xa5; 64],
+        line_layout(),
+    )
+    .unwrap();
+    assert_eq!(write_clean.operation(), MemoryOperation::WriteClean);
+    assert_eq!(write_clean.coherence_intent(), CoherenceIntent::WriteClean);
+    assert!(write_clean.carries_data());
+    assert_eq!(write_clean.byte_mask(), None);
+    assert!(!write_clean.requires_writable());
+    assert!(!write_clean.requires_response());
+    assert!(!write_clean.returns_data());
+
+    let unaligned_write_clean = MemoryRequest::write_clean(
+        request_id(21),
+        Address::new(0x5004),
+        vec![0xa5; 64],
+        line_layout(),
+    )
+    .unwrap_err();
+    assert_eq!(
+        unaligned_write_clean,
+        MemoryError::UnalignedLineAddress {
+            address: Address::new(0x5004),
+            line_size: 64
+        }
+    );
 }
 
 #[test]
@@ -708,6 +738,30 @@ fn memory_request_checkpoint_payload_round_trips_atomic_ordering_and_flags() {
     assert_eq!(restored.byte_mask(), Some(&mask));
     assert!(restored.is_uncacheable());
     assert!(restored.is_strict_ordered());
+}
+
+#[test]
+fn memory_request_checkpoint_payload_round_trips_write_clean() {
+    let request = MemoryRequest::write_clean(
+        request_id(23),
+        Address::new(0x7000),
+        vec![0x7c; 64],
+        line_layout(),
+    )
+    .unwrap()
+    .with_ordering(MemoryAccessOrdering::new(
+        Some(MemoryBarrierSet::new(false, true)),
+        None,
+    ));
+
+    let payload = MemoryRequestCheckpointPayload::from_request(&request);
+    let decoded = MemoryRequestCheckpointPayload::decode(payload.encode().as_slice()).unwrap();
+    let restored = MemoryRequest::from_snapshot(decoded.snapshot()).unwrap();
+
+    assert_eq!(restored, request);
+    assert_eq!(restored.operation(), MemoryOperation::WriteClean);
+    assert_eq!(restored.data(), Some(&vec![0x7c; 64][..]));
+    assert_eq!(restored.byte_mask(), None);
 }
 
 #[test]

@@ -18,6 +18,7 @@ const GEM5_READ_REQ: u32 = 1;
 const GEM5_WRITE_REQ: u32 = 4;
 const GEM5_WRITEBACK_DIRTY: u32 = 7;
 const GEM5_WRITEBACK_CLEAN: u32 = 8;
+const GEM5_WRITE_CLEAN: u32 = 9;
 const GEM5_CLEAN_EVICT: u32 = 10;
 const GEM5_WRITE_LINE_REQ: u32 = 16;
 const GEM5_UPGRADE_REQ: u32 = 17;
@@ -39,6 +40,7 @@ enum TrafficTraceCommand {
     WriteLine,
     WritebackDirty,
     WritebackClean,
+    WriteClean,
     CleanEvict,
     Upgrade,
 }
@@ -47,9 +49,11 @@ impl TrafficTraceCommand {
     const fn request_kind(self) -> TrafficRequestKind {
         match self {
             Self::ReadShared | Self::ReadUnique => TrafficRequestKind::Read,
-            Self::Write | Self::WriteLine | Self::WritebackDirty | Self::WritebackClean => {
-                TrafficRequestKind::Write
-            }
+            Self::Write
+            | Self::WriteLine
+            | Self::WritebackDirty
+            | Self::WritebackClean
+            | Self::WriteClean => TrafficRequestKind::Write,
             Self::CleanEvict | Self::Upgrade => TrafficRequestKind::Maintenance,
         }
     }
@@ -62,6 +66,7 @@ impl TrafficTraceCommand {
             Self::WriteLine => "WriteLineReq",
             Self::WritebackDirty => "WritebackDirty",
             Self::WritebackClean => "WritebackClean",
+            Self::WriteClean => "WriteClean",
             Self::CleanEvict => "CleanEvict",
             Self::Upgrade => "UpgradeReq",
         }
@@ -438,7 +443,9 @@ impl TrafficTraceGenerator {
             TrafficRequestKind::Write
                 if matches!(
                     element.command,
-                    TrafficTraceCommand::WritebackDirty | TrafficTraceCommand::WritebackClean
+                    TrafficTraceCommand::WritebackDirty
+                        | TrafficTraceCommand::WritebackClean
+                        | TrafficTraceCommand::WriteClean
                 ) =>
             {
                 validate_writeback_request(element.command, address, element.size, layout)?;
@@ -545,6 +552,9 @@ fn build_writeback_request(
         }
         TrafficTraceCommand::WritebackClean => {
             MemoryRequest::writeback_clean(id, address, data, layout).map_err(Into::into)
+        }
+        TrafficTraceCommand::WriteClean => {
+            MemoryRequest::write_clean(id, address, data, layout).map_err(Into::into)
         }
         _ => unreachable!("writeback builder is only called for writeback trace commands"),
     }
@@ -708,6 +718,7 @@ fn parse_packet(message: &[u8]) -> Result<TrafficTraceElement, TrafficGeneratorE
         GEM5_WRITE_REQ => TrafficTraceCommand::Write,
         GEM5_WRITEBACK_DIRTY => TrafficTraceCommand::WritebackDirty,
         GEM5_WRITEBACK_CLEAN => TrafficTraceCommand::WritebackClean,
+        GEM5_WRITE_CLEAN => TrafficTraceCommand::WriteClean,
         GEM5_CLEAN_EVICT => TrafficTraceCommand::CleanEvict,
         GEM5_WRITE_LINE_REQ => TrafficTraceCommand::WriteLine,
         GEM5_UPGRADE_REQ => TrafficTraceCommand::Upgrade,

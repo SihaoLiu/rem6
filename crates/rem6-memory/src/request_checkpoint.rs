@@ -291,6 +291,7 @@ fn encode_operation(operation: MemoryOperation) -> u32 {
         MemoryOperation::PrefetchWrite => 9,
         MemoryOperation::CleanEvict => 10,
         MemoryOperation::Invalidate => 11,
+        MemoryOperation::WriteClean => 12,
     }
 }
 
@@ -308,6 +309,7 @@ fn decode_operation(code: u32) -> Result<MemoryOperation, MemoryError> {
         9 => Ok(MemoryOperation::PrefetchWrite),
         10 => Ok(MemoryOperation::CleanEvict),
         11 => Ok(MemoryOperation::Invalidate),
+        12 => Ok(MemoryOperation::WriteClean),
         code => Err(MemoryError::InvalidRequestCheckpointOperation { code }),
     }
 }

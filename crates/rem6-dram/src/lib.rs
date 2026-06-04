@@ -66,6 +66,7 @@ impl DramAccessKind {
             MemoryOperation::Write
             | MemoryOperation::Atomic
             | MemoryOperation::PrefetchWrite
+            | MemoryOperation::WriteClean
             | MemoryOperation::WritebackClean
             | MemoryOperation::WritebackDirty => Ok(Self::Write),
             operation => Err(DramError::UnsupportedOperation {

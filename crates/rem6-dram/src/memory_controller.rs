@@ -606,7 +606,9 @@ impl DramMemoryController {
 
         if matches!(
             request.operation(),
-            MemoryOperation::WritebackClean | MemoryOperation::WritebackDirty
+            MemoryOperation::WriteClean
+                | MemoryOperation::WritebackClean
+                | MemoryOperation::WritebackDirty
         ) {
             return Ok(());
         }

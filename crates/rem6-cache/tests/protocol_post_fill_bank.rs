@@ -46,6 +46,16 @@ fn clean_writeback(agent_id: AgentId, sequence: u64, line: u64, value: u8) -> Me
     .unwrap()
 }
 
+fn write_clean(agent_id: AgentId, sequence: u64, line: u64, value: u8) -> MemoryRequest {
+    MemoryRequest::write_clean(
+        MemoryRequestId::new(agent_id, sequence),
+        Address::new(line),
+        vec![value; layout().bytes() as usize],
+        layout(),
+    )
+    .unwrap()
+}
+
 fn clean_evict(agent_id: AgentId, sequence: u64, line: u64) -> MemoryRequest {
     MemoryRequest::clean_evict(
         MemoryRequestId::new(agent_id, sequence),
@@ -200,6 +210,37 @@ macro_rules! protocol_post_fill_bank_tests {
                 let issue = restored.issue_write_queue(0).unwrap().unwrap();
                 assert_eq!(issue.kind(), CacheWriteQueueEntryKind::WritebackClean);
                 assert_eq!(issue.request(), &clean);
+                assert_eq!(restored.mshr_allocated_count(), 0);
+            }
+
+            #[test]
+            fn enqueues_post_fill_write_clean_without_rewriting_operation() {
+                let cache_agent = agent(7);
+                let clean = write_clean(cache_agent, 108, 0x1000, 0xc8);
+                let (mut restored, first, first_downstream) =
+                    restored_bank_with_target(clean.clone(), Some(2));
+
+                let fill_result = restored
+                    .accept_fill(fill(&first_downstream, 0x44), $fill_event)
+                    .unwrap();
+
+                assert_eq!(fill_result.kind(), <$result_kind>::Fill);
+                assert_eq!(
+                    fill_result
+                        .target_outcomes()
+                        .iter()
+                        .map(response_id)
+                        .collect::<Vec<_>>(),
+                    vec![first.id()]
+                );
+                assert_eq!(
+                    fill_result.post_fill_downstream_requests(),
+                    std::slice::from_ref(&clean)
+                );
+                let issue = restored.issue_write_queue(0).unwrap().unwrap();
+                assert_eq!(issue.kind(), CacheWriteQueueEntryKind::WritebackClean);
+                assert_eq!(issue.request(), &clean);
+                assert_eq!(issue.request().operation(), MemoryOperation::WriteClean);
                 assert_eq!(restored.mshr_allocated_count(), 0);
             }
 

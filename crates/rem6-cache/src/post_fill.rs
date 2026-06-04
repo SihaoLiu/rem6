@@ -58,7 +58,8 @@ where
     E: From<CacheWriteQueueError>,
 {
     match request.operation() {
-        MemoryOperation::WritebackClean
+        MemoryOperation::WriteClean
+        | MemoryOperation::WritebackClean
         | MemoryOperation::WritebackDirty
         | MemoryOperation::CleanEvict => Ok(true),
         MemoryOperation::Invalidate => Ok(false),

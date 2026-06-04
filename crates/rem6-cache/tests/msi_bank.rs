@@ -105,6 +105,16 @@ fn clean_writeback(agent_id: AgentId, sequence: u64, line: u64, value: u8) -> Me
     .unwrap()
 }
 
+fn write_clean(agent_id: AgentId, sequence: u64, line: u64, value: u8) -> MemoryRequest {
+    MemoryRequest::write_clean(
+        MemoryRequestId::new(agent_id, sequence),
+        Address::new(line),
+        vec![value; layout().bytes() as usize],
+        layout(),
+    )
+    .unwrap()
+}
+
 fn clean_evict(agent_id: AgentId, sequence: u64, line: u64) -> MemoryRequest {
     MemoryRequest::clean_evict(
         MemoryRequestId::new(agent_id, sequence),
@@ -1590,6 +1600,28 @@ fn msi_cache_bank_write_queue_orders_issues_and_restores_snapshot() {
         reissued.request().operation(),
         MemoryOperation::WritebackClean
     );
+}
+
+#[test]
+fn msi_cache_bank_direct_write_clean_enters_write_queue_without_local_response() {
+    let cache_agent = agent(7);
+    let mut bank = MsiCacheBank::new_with_write_queue(
+        cache_agent,
+        layout(),
+        CacheWriteQueueConfig::new(2, 0).unwrap(),
+    );
+    let request = write_clean(cache_agent, 405, 0x5000, 0x5c);
+
+    let result = bank.accept_cpu_request(request.clone()).unwrap();
+
+    assert_eq!(result.kind(), CacheControllerResultKind::Miss);
+    assert_eq!(result.downstream_request(), None);
+    assert_eq!(result.target_outcome(), None);
+    assert_eq!(bank.write_queue_allocated_count(), 1);
+    let issued = bank.issue_write_queue(0).unwrap().unwrap();
+    assert_eq!(issued.kind(), CacheWriteQueueEntryKind::WritebackClean);
+    assert_eq!(issued.request(), &request);
+    assert_eq!(issued.request().operation(), MemoryOperation::WriteClean);
 }
 
 #[test]

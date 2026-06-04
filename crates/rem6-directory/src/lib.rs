@@ -348,6 +348,9 @@ impl MsiDirectory {
             MemoryOperation::WritebackDirty => {
                 self.accept_dirty_writeback(line, requester, &mut after_line)?
             }
+            MemoryOperation::WriteClean => {
+                self.accept_write_clean(line, requester, &mut after_line)?
+            }
             MemoryOperation::WritebackClean
             | MemoryOperation::CleanEvict
             | MemoryOperation::Invalidate => {
@@ -512,6 +515,25 @@ impl MsiDirectory {
 
         state.owner = None;
         Ok((Vec::new(), None))
+    }
+
+    fn accept_write_clean(
+        &self,
+        line: MsiLineId,
+        requester: AgentId,
+        state: &mut DirectoryLine,
+    ) -> Result<(Vec<DirectorySnoop>, Option<DirectoryGrant>), DirectoryError> {
+        if state.owner == Some(requester) {
+            state.owner = None;
+            state.sharers.insert(requester);
+            return Ok((Vec::new(), None));
+        }
+
+        if state.sharers.contains(&requester) {
+            return Ok((Vec::new(), None));
+        }
+
+        Err(DirectoryError::EvictFromNonHolder { line, requester })
     }
 
     fn accept_clean_departure(
@@ -867,6 +889,9 @@ impl MesiDirectory {
             MemoryOperation::WritebackDirty => {
                 self.accept_dirty_writeback(line, requester, &mut after_line)?
             }
+            MemoryOperation::WriteClean => {
+                self.accept_write_clean(line, requester, &mut after_line)?
+            }
             MemoryOperation::WritebackClean
             | MemoryOperation::CleanEvict
             | MemoryOperation::Invalidate => {
@@ -1046,6 +1071,25 @@ impl MesiDirectory {
 
         state.owner = None;
         Ok((Vec::new(), None))
+    }
+
+    fn accept_write_clean(
+        &self,
+        line: MesiLineId,
+        requester: AgentId,
+        state: &mut MesiStoredLine,
+    ) -> Result<(Vec<MesiDirectorySnoop>, Option<MesiDirectoryGrant>), MesiDirectoryError> {
+        if state.owner.is_some_and(|(owner, _)| owner == requester) {
+            state.owner = None;
+            state.sharers.insert(requester);
+            return Ok((Vec::new(), None));
+        }
+
+        if state.sharers.contains(&requester) {
+            return Ok((Vec::new(), None));
+        }
+
+        Err(MesiDirectoryError::EvictFromNonHolder { line, requester })
     }
 
     fn accept_clean_departure(

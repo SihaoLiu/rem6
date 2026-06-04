@@ -682,7 +682,8 @@ fn cpu_event(request: &MemoryRequest) -> MsiEvent {
         | MemoryOperation::Atomic
         | MemoryOperation::PrefetchWrite => MsiEvent::CpuWrite,
         MemoryOperation::PrefetchRead => MsiEvent::CpuRead,
-        MemoryOperation::WritebackClean
+        MemoryOperation::WriteClean
+        | MemoryOperation::WritebackClean
         | MemoryOperation::WritebackDirty
         | MemoryOperation::CleanEvict
         | MemoryOperation::Invalidate => MsiEvent::CpuWrite,

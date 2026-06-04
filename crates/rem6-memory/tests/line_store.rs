@@ -55,6 +55,10 @@ fn atomic(sequence: u64, address: u64, data: Vec<u8>, mask: ByteMask) -> MemoryR
     .unwrap()
 }
 
+fn write_clean(sequence: u64, address: u64, data: Vec<u8>) -> MemoryRequest {
+    MemoryRequest::write_clean(request_id(sequence), Address::new(address), data, layout()).unwrap()
+}
+
 fn atomic_with_op(
     sequence: u64,
     address: u64,
@@ -255,6 +259,37 @@ fn line_store_replaces_dirty_writebacks_without_response() {
     assert_eq!(
         store.line_data(Address::new(0x1000)).unwrap(),
         line_data(0x40)
+    );
+}
+
+#[test]
+fn line_store_applies_write_clean_without_response() {
+    let mut store = LineMemoryStore::new(layout());
+    store
+        .insert_line(Address::new(0x1000), line_data(0x00))
+        .unwrap();
+    let request = write_clean(40, 0x1000, line_data(0x90));
+
+    let response = store.respond(&request).unwrap();
+
+    assert_eq!(response, None);
+    assert_eq!(
+        store.line_data(Address::new(0x1000)).unwrap(),
+        line_data(0x90)
+    );
+}
+
+#[test]
+fn line_store_installs_write_clean_on_missing_line_without_response() {
+    let mut store = LineMemoryStore::new(layout());
+    let request = write_clean(41, 0x3000, line_data(0x30));
+
+    let response = store.respond(&request).unwrap();
+
+    assert_eq!(response, None);
+    assert_eq!(
+        store.line_data(Address::new(0x3000)).unwrap(),
+        line_data(0x30)
     );
 }
 

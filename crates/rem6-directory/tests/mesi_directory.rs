@@ -57,6 +57,16 @@ fn writeback_dirty(agent: u32, sequence: u64) -> MemoryRequest {
     .unwrap()
 }
 
+fn write_clean(agent: u32, sequence: u64) -> MemoryRequest {
+    MemoryRequest::write_clean(
+        id(agent, sequence),
+        Address::new(0x3000),
+        (0..64).collect(),
+        layout(),
+    )
+    .unwrap()
+}
+
 fn line_size() -> AccessSize {
     AccessSize::new(64).unwrap()
 }
@@ -207,6 +217,33 @@ fn mesi_directory_dirty_writeback_clears_modified_owner_and_rejects_non_owner() 
         directory.line_state(line()),
         MesiDirectoryLineState::new(line())
     );
+}
+
+#[test]
+fn mesi_directory_write_clean_keeps_holder_as_clean_sharer() {
+    let mut directory = MesiDirectory::new();
+    directory.accept(read_unique(1, 0)).unwrap();
+
+    let non_holder = directory.accept(write_clean(2, 0)).unwrap_err();
+    assert_eq!(
+        non_holder,
+        MesiDirectoryError::EvictFromNonHolder {
+            line: line(),
+            requester: AgentId::new(2),
+        }
+    );
+
+    let decision = directory.accept(write_clean(1, 1)).unwrap();
+    let after = MesiDirectoryLineState::new(line()).with_sharer(AgentId::new(1));
+
+    assert_eq!(decision.snoops(), &[]);
+    assert_eq!(decision.grant(), None);
+    assert_eq!(
+        decision.before(),
+        &MesiDirectoryLineState::new(line()).with_owner(AgentId::new(1), MesiState::Modified)
+    );
+    assert_eq!(decision.after(), &after);
+    assert_eq!(directory.line_state(line()), after);
 }
 
 #[test]

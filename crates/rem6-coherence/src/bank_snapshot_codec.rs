@@ -624,6 +624,17 @@ fn read_request(cursor: &mut PayloadCursor<'_>) -> Result<MemoryRequest, String>
             layout,
         ),
         MemoryOperation::Upgrade => MemoryRequest::upgrade(id, address, size, layout),
+        MemoryOperation::WriteClean => {
+            if byte_mask.is_some() {
+                return Err("MSI write clean request cannot carry a byte mask".to_string());
+            }
+            MemoryRequest::write_clean(
+                id,
+                address,
+                data.ok_or_else(|| "MSI write clean request is missing data".to_string())?,
+                layout,
+            )
+        }
         MemoryOperation::WritebackClean => MemoryRequest::writeback_clean(
             id,
             address,
@@ -913,6 +924,7 @@ fn memory_operation_to_u8(operation: MemoryOperation) -> u8 {
         MemoryOperation::WritebackDirty => 9,
         MemoryOperation::CleanEvict => 10,
         MemoryOperation::Invalidate => 11,
+        MemoryOperation::WriteClean => 12,
     }
 }
 
@@ -930,6 +942,7 @@ fn u8_to_memory_operation(value: u8) -> Result<MemoryOperation, String> {
         9 => Ok(MemoryOperation::WritebackDirty),
         10 => Ok(MemoryOperation::CleanEvict),
         11 => Ok(MemoryOperation::Invalidate),
+        12 => Ok(MemoryOperation::WriteClean),
         _ => Err(format!("unknown memory operation {value}")),
     }
 }

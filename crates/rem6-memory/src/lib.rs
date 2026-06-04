@@ -136,6 +136,7 @@ pub enum MemoryOperation {
     Atomic,
     PrefetchRead,
     PrefetchWrite,
+    WriteClean,
     WritebackClean,
     WritebackDirty,
     CleanEvict,
@@ -221,6 +222,7 @@ impl MemoryOperation {
             Self::ReadUnique => CoherenceIntent::ReadUnique,
             Self::Write | Self::PrefetchWrite | Self::Atomic => CoherenceIntent::WriteUnique,
             Self::Upgrade => CoherenceIntent::Upgrade,
+            Self::WriteClean => CoherenceIntent::WriteClean,
             Self::WritebackClean => CoherenceIntent::WritebackClean,
             Self::WritebackDirty => CoherenceIntent::WritebackDirty,
             Self::CleanEvict => CoherenceIntent::CleanEvict,
@@ -233,6 +235,7 @@ impl MemoryOperation {
             self,
             Self::PrefetchRead
                 | Self::PrefetchWrite
+                | Self::WriteClean
                 | Self::WritebackClean
                 | Self::WritebackDirty
                 | Self::CleanEvict
@@ -249,7 +252,11 @@ impl MemoryOperation {
     pub const fn carries_request_data(self) -> bool {
         matches!(
             self,
-            Self::Write | Self::Atomic | Self::WritebackClean | Self::WritebackDirty
+            Self::Write
+                | Self::Atomic
+                | Self::WriteClean
+                | Self::WritebackClean
+                | Self::WritebackDirty
         )
     }
 
@@ -268,6 +275,7 @@ pub enum CoherenceIntent {
     ReadUnique,
     WriteUnique,
     Upgrade,
+    WriteClean,
     WritebackClean,
     WritebackDirty,
     CleanEvict,
@@ -369,7 +377,9 @@ impl LineMemoryStore {
                 self.require_line(request.line_address())?;
                 Ok(None)
             }
-            MemoryOperation::WritebackClean | MemoryOperation::WritebackDirty => {
+            MemoryOperation::WriteClean
+            | MemoryOperation::WritebackClean
+            | MemoryOperation::WritebackDirty => {
                 self.replace_line(request)?;
                 Ok(None)
             }

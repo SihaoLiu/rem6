@@ -59,6 +59,16 @@ fn upgrade(agent_id: u32, sequence: u64) -> MemoryRequest {
     .unwrap()
 }
 
+fn write_clean(agent_id: u32, sequence: u64) -> MemoryRequest {
+    MemoryRequest::write_clean(
+        id(agent_id, sequence),
+        Address::new(0x6000),
+        (0..64).collect(),
+        layout(),
+    )
+    .unwrap()
+}
+
 fn grant(
     request: MemoryRequestId,
     state: ChiState,
@@ -172,6 +182,34 @@ fn chi_directory_upgrade_requires_existing_sharer_and_uses_no_data_grant() {
         directory.line_state(line()),
         ChiDirectoryLineState::new(line()).with_unique_owner(agent(2), ChiState::UniqueDirty)
     );
+}
+
+#[test]
+fn chi_directory_write_clean_converts_dirty_sharer_to_clean_sharer() {
+    let mut directory = ChiDirectory::new();
+    let before = ChiDirectoryLineState::new(line())
+        .with_sharer(agent(1), ChiState::SharedDirty)
+        .with_sharer(agent(2), ChiState::SharedClean);
+    directory.restore_line_state(&before).unwrap();
+
+    assert_eq!(
+        directory.accept(write_clean(3, 0)).unwrap_err(),
+        ChiDirectoryError::EvictFromNonHolder {
+            line: line(),
+            requester: agent(3),
+        }
+    );
+
+    let after = ChiDirectoryLineState::new(line())
+        .with_sharer(agent(1), ChiState::SharedClean)
+        .with_sharer(agent(2), ChiState::SharedClean);
+    let decision = directory.accept(write_clean(1, 1)).unwrap();
+
+    assert_eq!(decision.snoops(), &[]);
+    assert_eq!(decision.grant(), None);
+    assert_eq!(decision.before(), &before);
+    assert_eq!(decision.after(), &after);
+    assert_eq!(directory.line_state(line()), after);
 }
 
 #[test]

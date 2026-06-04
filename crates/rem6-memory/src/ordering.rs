@@ -27,6 +27,7 @@ impl MemoryOperation {
                 | Self::Upgrade
                 | Self::Atomic
                 | Self::PrefetchWrite
+                | Self::WriteClean
                 | Self::WritebackClean
                 | Self::WritebackDirty
                 | Self::CleanEvict

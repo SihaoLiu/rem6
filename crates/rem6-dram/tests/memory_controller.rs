@@ -56,6 +56,11 @@ fn write(address: u64, bytes: &[u8], sequence: u64) -> MemoryRequest {
     .unwrap()
 }
 
+fn write_clean(address: u64, bytes: Vec<u8>, sequence: u64) -> MemoryRequest {
+    MemoryRequest::write_clean(request_id(sequence), Address::new(address), bytes, layout())
+        .unwrap()
+}
+
 fn controller_with_targets() -> (DramMemoryController, MemoryTargetId, MemoryTargetId) {
     let low = MemoryTargetId::new(1);
     let high = MemoryTargetId::new(2);
@@ -170,6 +175,23 @@ fn dram_memory_controller_applies_writes_and_preserves_target_data() {
     assert_eq!(
         read_outcome.response().unwrap().data().unwrap(),
         &[0xaa, 0xbb, 0xcc, 0xdd]
+    );
+}
+
+#[test]
+fn dram_memory_controller_installs_write_clean_on_missing_line_without_response() {
+    let (mut controller, low, _) = controller_with_targets();
+    let request = write_clean(0x2000, line_data(0x60), 73);
+
+    let outcome = controller.accept(0, &request).unwrap();
+
+    assert_eq!(outcome.target(), low);
+    assert_eq!(outcome.dram_access().kind(), DramAccessKind::Write);
+    assert_eq!(outcome.dram_access().byte_count(), 64);
+    assert_eq!(outcome.response(), None);
+    assert_eq!(
+        controller.line_data(low, Address::new(0x2000)).unwrap(),
+        line_data(0x60)
     );
 }
 

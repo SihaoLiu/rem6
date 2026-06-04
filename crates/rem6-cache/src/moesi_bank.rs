@@ -1023,7 +1023,22 @@ impl MoesiCacheBank {
             }
             return self.accept_uncacheable_request(request);
         }
-
+        if request.operation() == MemoryOperation::WriteClean {
+            let state = self
+                .lines
+                .get(&line)
+                .map_or(MoesiState::Invalid, MoesiCacheController::state);
+            self.validate_write_queue_request(&request)?;
+            self.write_queue_mut()?
+                .enqueue_writeback(request, false, 0)?;
+            return Ok(MoesiCacheControllerResult::new(
+                MoesiCacheControllerResultKind::Miss,
+                state,
+                None,
+                None,
+                None,
+            ));
+        }
         if self.can_merge_pending_read_miss(line, &request) {
             let state = self
                 .lines
@@ -1524,14 +1539,12 @@ impl MoesiCacheBank {
             None,
         ))
     }
-
     fn can_bypass_uncacheable_resident_line(&self, line: Address) -> bool {
         matches!(
             self.lines.get(&line).map(MoesiCacheController::state),
             None | Some(MoesiState::Invalid | MoesiState::Shared | MoesiState::Exclusive)
         )
     }
-
     fn enqueue_dirty_resident_writeback_and_remove(
         &mut self,
         request: &MemoryRequest,

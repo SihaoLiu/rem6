@@ -539,6 +539,9 @@ impl ChiDirectory {
             MemoryOperation::WritebackDirty => {
                 self.accept_dirty_writeback(line, requester, &mut after_line)?
             }
+            MemoryOperation::WriteClean => {
+                self.accept_write_clean(line, requester, &mut after_line)?
+            }
             MemoryOperation::WritebackClean
             | MemoryOperation::CleanEvict
             | MemoryOperation::Invalidate => {
@@ -785,6 +788,29 @@ impl ChiDirectory {
             requester,
             owner: state.dirty_holder(),
         })
+    }
+
+    fn accept_write_clean(
+        &self,
+        line: ChiLineId,
+        requester: AgentId,
+        state: &mut ChiStoredLine,
+    ) -> Result<(Vec<ChiDirectorySnoop>, Option<ChiDirectoryGrant>), ChiDirectoryError> {
+        if state
+            .unique_owner
+            .is_some_and(|(owner, _)| owner == requester)
+        {
+            state.unique_owner = None;
+            state.sharers.insert(requester, ChiState::SharedClean);
+            return Ok((Vec::new(), None));
+        }
+
+        if let Some(sharer_state) = state.sharers.get_mut(&requester) {
+            *sharer_state = ChiState::SharedClean;
+            return Ok((Vec::new(), None));
+        }
+
+        Err(ChiDirectoryError::EvictFromNonHolder { line, requester })
     }
 
     fn accept_clean_departure(

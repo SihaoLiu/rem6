@@ -1000,7 +1000,9 @@ impl CacheWriteQueue {
 
 fn entry_kind(operation: MemoryOperation, uncacheable: bool) -> Option<CacheWriteQueueEntryKind> {
     match (operation, uncacheable) {
-        (MemoryOperation::WritebackClean, false) => Some(CacheWriteQueueEntryKind::WritebackClean),
+        (MemoryOperation::WriteClean | MemoryOperation::WritebackClean, false) => {
+            Some(CacheWriteQueueEntryKind::WritebackClean)
+        }
         (MemoryOperation::WritebackDirty, false) => Some(CacheWriteQueueEntryKind::WritebackDirty),
         (MemoryOperation::CleanEvict, false) => Some(CacheWriteQueueEntryKind::CleanEvict),
         (MemoryOperation::Write, true) => Some(CacheWriteQueueEntryKind::UncacheableWrite),

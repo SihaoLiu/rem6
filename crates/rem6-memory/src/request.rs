@@ -303,6 +303,15 @@ impl MemoryRequest {
         )
     }
 
+    pub fn write_clean(
+        id: MemoryRequestId,
+        address: Address,
+        data: Vec<u8>,
+        line_layout: CacheLineLayout,
+    ) -> Result<Self, MemoryError> {
+        Self::writeback(id, MemoryOperation::WriteClean, address, data, line_layout)
+    }
+
     pub fn clean_evict(
         id: MemoryRequestId,
         address: Address,

@@ -346,6 +346,9 @@ impl MoesiDirectory {
             MemoryOperation::WritebackDirty => {
                 self.accept_dirty_writeback(line, requester, &mut after_line)?
             }
+            MemoryOperation::WriteClean => {
+                self.accept_write_clean(line, requester, &mut after_line)?
+            }
             MemoryOperation::WritebackClean
             | MemoryOperation::CleanEvict
             | MemoryOperation::Invalidate => {
@@ -546,6 +549,25 @@ impl MoesiDirectory {
 
         state.owner = None;
         Ok((Vec::new(), None))
+    }
+
+    fn accept_write_clean(
+        &self,
+        line: MoesiLineId,
+        requester: AgentId,
+        state: &mut MoesiStoredLine,
+    ) -> Result<(Vec<MoesiDirectorySnoop>, Option<MoesiDirectoryGrant>), MoesiDirectoryError> {
+        if state.owner.is_some_and(|(owner, _)| owner == requester) {
+            state.owner = None;
+            state.sharers.insert(requester);
+            return Ok((Vec::new(), None));
+        }
+
+        if state.sharers.contains(&requester) {
+            return Ok((Vec::new(), None));
+        }
+
+        Err(MoesiDirectoryError::EvictFromNonHolder { line, requester })
     }
 
     fn accept_clean_departure(

@@ -1020,6 +1020,22 @@ impl MsiCacheBank {
             }
             return self.accept_uncacheable_request(request);
         }
+        if request.operation() == MemoryOperation::WriteClean {
+            let state = self
+                .lines
+                .get(&line)
+                .map_or(MsiState::Invalid, MsiCacheController::state);
+            self.validate_write_queue_request(&request)?;
+            self.write_queue_mut()?
+                .enqueue_writeback(request, false, 0)?;
+            return Ok(CacheControllerResult::new(
+                CacheControllerResultKind::Miss,
+                state,
+                None,
+                None,
+                None,
+            ));
+        }
 
         if self.can_merge_pending_read_miss(line, &request) {
             let state = self

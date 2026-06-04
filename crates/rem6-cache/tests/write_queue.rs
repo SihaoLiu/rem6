@@ -36,6 +36,16 @@ fn clean_writeback(sequence: u64, line: u64, value: u8) -> MemoryRequest {
     .unwrap()
 }
 
+fn write_clean(sequence: u64, line: u64, value: u8) -> MemoryRequest {
+    MemoryRequest::write_clean(
+        request_id(sequence),
+        Address::new(line),
+        vec![value; 64],
+        layout(),
+    )
+    .unwrap()
+}
+
 fn clean_evict(sequence: u64, line: u64) -> MemoryRequest {
     MemoryRequest::clean_evict(request_id(sequence), Address::new(line), layout()).unwrap()
 }
@@ -178,6 +188,20 @@ fn cache_write_queue_restore_rejects_non_monotonic_next_order() {
             order: later_order,
         })
     );
+}
+
+#[test]
+fn cache_write_queue_issues_write_clean_without_rewriting_operation() {
+    let mut queue = CacheWriteQueue::new(CacheWriteQueueConfig::new(2, 0).unwrap());
+    let request = write_clean(12, 0x5000, 0x5c);
+
+    let update = queue.enqueue_writeback(request.clone(), false, 7).unwrap();
+    let issued = queue.issue_next(7).unwrap().unwrap();
+
+    assert_eq!(issued.handle(), update.handle());
+    assert_eq!(issued.kind(), CacheWriteQueueEntryKind::WritebackClean);
+    assert_eq!(issued.request(), &request);
+    assert_eq!(issued.request().operation(), MemoryOperation::WriteClean);
 }
 
 #[test]

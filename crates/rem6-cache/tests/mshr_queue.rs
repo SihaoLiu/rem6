@@ -52,6 +52,16 @@ fn clean_writeback(sequence: u64, line: u64, value: u8) -> MemoryRequest {
     .unwrap()
 }
 
+fn write_clean(sequence: u64, line: u64, value: u8) -> MemoryRequest {
+    MemoryRequest::write_clean(
+        MemoryRequestId::new(AgentId::new(7), sequence),
+        Address::new(line),
+        vec![value; layout().bytes() as usize],
+        layout(),
+    )
+    .unwrap()
+}
+
 const MSHR_ENTRIES_BYTE_OVERFLOW_LENGTH: usize =
     isize::MAX as usize / std::mem::size_of::<MshrEntry>() + 1;
 const MSHR_TARGETS_PER_MSHR_BYTE_OVERFLOW_LENGTH: usize =
@@ -213,6 +223,27 @@ fn mshr_completion_splits_post_fill_clean_targets_from_local_targets() {
     assert_eq!(downstream, vec![clean]);
     assert_eq!(downstream[0].operation(), MemoryOperation::WritebackClean);
     assert_eq!(downstream[0].data().unwrap(), &[0xbb; 64]);
+}
+
+#[test]
+fn mshr_completion_forwards_write_clean_without_rewriting_operation() {
+    let mut queue = MshrQueue::new(MshrQueueConfig::new(1, 2, 0).unwrap());
+    let read = request(24, 0x5000);
+    let clean = write_clean(25, 0x5000, 0xc5);
+
+    let allocated = queue
+        .allocate_or_merge(read, 3, MshrTargetSource::Demand, true)
+        .unwrap();
+    queue
+        .allocate_or_merge(clean.clone(), 4, MshrTargetSource::Demand, false)
+        .unwrap();
+
+    let completion = queue.complete(allocated.handle()).unwrap();
+    let downstream = completion.post_fill_downstream_requests();
+
+    assert_eq!(downstream, vec![clean]);
+    assert_eq!(downstream[0].operation(), MemoryOperation::WriteClean);
+    assert_eq!(downstream[0].data().unwrap(), &[0xc5; 64]);
 }
 
 #[test]
