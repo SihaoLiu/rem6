@@ -29,8 +29,8 @@ pub use state::{
     TRAFFIC_TRANSITION_PROBABILITY_SCALE,
 };
 pub use text_config::{
-    TrafficTextConfig, TrafficTextDramParams, TrafficTextMemoryParams, TrafficTextState,
-    TrafficTextStateMode, TrafficTextStridedParams,
+    TrafficTextBindingOptions, TrafficTextConfig, TrafficTextDramParams, TrafficTextMemoryParams,
+    TrafficTextState, TrafficTextStateMode, TrafficTextStridedParams,
 };
 pub use trace::{
     TrafficTrace, TrafficTraceConfig, TrafficTraceExitStatus, TrafficTraceGenerator,

@@ -1,8 +1,14 @@
 use std::str::FromStr;
 
+use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout};
+
 use crate::{
-    TrafficGeneratorError, TrafficStateGraphConfig, TrafficStateId, TrafficStateSpec,
-    TrafficTransition, TrafficTransitionProbability, TRAFFIC_TRANSITION_PROBABILITY_SCALE,
+    LinearTrafficGenerator, RandomTrafficGenerator, StridedTrafficGenerator,
+    TrafficControllerConfig, TrafficControllerState, TrafficExitConfig, TrafficExitGenerator,
+    TrafficGeneratorError, TrafficIdleConfig, TrafficIdleGenerator, TrafficLinearConfig,
+    TrafficRandomConfig, TrafficStateGenerator, TrafficStateGraphConfig, TrafficStateId,
+    TrafficStateSpec, TrafficStridedConfig, TrafficTransition, TrafficTransitionProbability,
+    TRAFFIC_TRANSITION_PROBABILITY_SCALE,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -75,6 +81,18 @@ impl TrafficTextConfig {
     pub fn state(&self, id: TrafficStateId) -> Option<&TrafficTextState> {
         self.states.iter().find(|state| state.id() == id)
     }
+
+    pub fn to_controller_config(
+        &self,
+        options: TrafficTextBindingOptions,
+    ) -> Result<TrafficControllerConfig, TrafficGeneratorError> {
+        let states = self
+            .states
+            .iter()
+            .map(|state| state.to_controller_state(options))
+            .collect::<Result<Vec<_>, _>>()?;
+        TrafficControllerConfig::new(self.graph.clone(), states)
+    }
 }
 
 impl FromStr for TrafficTextConfig {
@@ -108,6 +126,40 @@ impl TrafficTextState {
     pub const fn mode(&self) -> &TrafficTextStateMode {
         &self.mode
     }
+
+    fn to_controller_state(
+        &self,
+        options: TrafficTextBindingOptions,
+    ) -> Result<TrafficControllerState, TrafficGeneratorError> {
+        let generator = match &self.mode {
+            TrafficTextStateMode::Idle => TrafficStateGenerator::Idle(TrafficIdleGenerator::new(
+                TrafficIdleConfig::new(self.duration),
+            )),
+            TrafficTextStateMode::Exit => TrafficStateGenerator::Exit(TrafficExitGenerator::new(
+                TrafficExitConfig::new(self.duration),
+            )),
+            TrafficTextStateMode::Linear(params) => TrafficStateGenerator::Linear(
+                LinearTrafficGenerator::new(linear_config_from_text(*params, options)?),
+            ),
+            TrafficTextStateMode::Random(params) => TrafficStateGenerator::Random(
+                RandomTrafficGenerator::new(random_config_from_text(*params, options)?),
+            ),
+            TrafficTextStateMode::Strided(params) => TrafficStateGenerator::Strided(
+                StridedTrafficGenerator::new(strided_config_from_text(*params, options)?),
+            ),
+            TrafficTextStateMode::Trace { .. }
+            | TrafficTextStateMode::Dram(_)
+            | TrafficTextStateMode::DramRotate(_)
+            | TrafficTextStateMode::Nvm(_) => {
+                return Err(TrafficGeneratorError::TrafficConfigUnsupportedStateMode {
+                    state: self.id,
+                    mode: self.mode.name(),
+                });
+            }
+        };
+
+        Ok(TrafficControllerState::new(self.id, generator))
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -124,6 +176,56 @@ pub enum TrafficTextStateMode {
     Dram(TrafficTextDramParams),
     DramRotate(TrafficTextDramParams),
     Nvm(TrafficTextDramParams),
+}
+
+impl TrafficTextStateMode {
+    const fn name(&self) -> &'static str {
+        match self {
+            Self::Trace { .. } => "TRACE",
+            Self::Idle => "IDLE",
+            Self::Exit => "EXIT",
+            Self::Linear(_) => "LINEAR",
+            Self::Random(_) => "RANDOM",
+            Self::Strided(_) => "STRIDED",
+            Self::Dram(_) => "DRAM",
+            Self::DramRotate(_) => "DRAM_ROTATE",
+            Self::Nvm(_) => "NVM",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TrafficTextBindingOptions {
+    agent: AgentId,
+    line_layout: CacheLineLayout,
+    elastic_requests: bool,
+}
+
+impl TrafficTextBindingOptions {
+    pub const fn new(agent: AgentId, line_layout: CacheLineLayout) -> Self {
+        Self {
+            agent,
+            line_layout,
+            elastic_requests: false,
+        }
+    }
+
+    pub const fn with_elastic_requests(mut self, elastic_requests: bool) -> Self {
+        self.elastic_requests = elastic_requests;
+        self
+    }
+
+    pub const fn agent(self) -> AgentId {
+        self.agent
+    }
+
+    pub const fn line_layout(self) -> CacheLineLayout {
+        self.line_layout
+    }
+
+    pub const fn elastic_requests(self) -> bool {
+        self.elastic_requests
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -286,6 +388,64 @@ impl TrafficTextDramParams {
     pub const fn rank_count(self) -> u32 {
         self.rank_count
     }
+}
+
+fn linear_config_from_text(
+    params: TrafficTextMemoryParams,
+    options: TrafficTextBindingOptions,
+) -> Result<TrafficLinearConfig, TrafficGeneratorError> {
+    let block_size = AccessSize::new(params.block_size())?;
+    Ok(TrafficLinearConfig::new(
+        options.agent(),
+        options.line_layout(),
+        Address::new(params.start_addr()),
+        Address::new(params.end_addr()),
+        block_size,
+    )?
+    .with_period(params.min_period(), params.max_period())?
+    .with_read_percent(params.read_percent())?
+    .with_data_limit(params.data_limit())?
+    .with_elastic_requests(options.elastic_requests()))
+}
+
+fn random_config_from_text(
+    params: TrafficTextMemoryParams,
+    options: TrafficTextBindingOptions,
+) -> Result<TrafficRandomConfig, TrafficGeneratorError> {
+    let block_size = AccessSize::new(params.block_size())?;
+    Ok(TrafficRandomConfig::new(
+        options.agent(),
+        options.line_layout(),
+        Address::new(params.start_addr()),
+        Address::new(params.end_addr()),
+        block_size,
+    )?
+    .with_period(params.min_period(), params.max_period())?
+    .with_read_percent(params.read_percent())?
+    .with_data_limit(params.data_limit())?
+    .with_elastic_requests(options.elastic_requests()))
+}
+
+fn strided_config_from_text(
+    params: TrafficTextStridedParams,
+    options: TrafficTextBindingOptions,
+) -> Result<TrafficStridedConfig, TrafficGeneratorError> {
+    let memory = params.memory();
+    let block_size = AccessSize::new(memory.block_size())?;
+    Ok(TrafficStridedConfig::new(
+        options.agent(),
+        options.line_layout(),
+        Address::new(memory.start_addr()),
+        Address::new(memory.end_addr()),
+        params.offset(),
+        block_size,
+        params.superblock_size(),
+        params.stride_size(),
+    )?
+    .with_period(memory.min_period(), memory.max_period())?
+    .with_read_percent(memory.read_percent())?
+    .with_data_limit(memory.data_limit())?
+    .with_elastic_requests(options.elastic_requests()))
 }
 
 fn parse_state(line: usize, tokens: &[&str]) -> Result<TrafficTextState, TrafficGeneratorError> {

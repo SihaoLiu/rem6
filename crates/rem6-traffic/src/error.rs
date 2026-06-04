@@ -108,6 +108,10 @@ pub enum TrafficGeneratorError {
         line: usize,
         mode: String,
     },
+    TrafficConfigUnsupportedStateMode {
+        state: TrafficStateId,
+        mode: &'static str,
+    },
     TrafficConfigMissingToken {
         line: usize,
         record: &'static str,
@@ -399,6 +403,11 @@ impl fmt::Display for TrafficGeneratorError {
             Self::TrafficConfigUnknownStateMode { line, mode } => write!(
                 formatter,
                 "traffic text config line {line} has unknown STATE mode {mode}"
+            ),
+            Self::TrafficConfigUnsupportedStateMode { state, mode } => write!(
+                formatter,
+                "traffic text config state {} mode {mode} has no controller generator binding",
+                state.get()
             ),
             Self::TrafficConfigMissingToken {
                 line,
