@@ -16,6 +16,7 @@ const GEM5_PROTO_MAGIC: [u8; 4] = [0x67, 0x65, 0x6d, 0x35];
 const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];
 const GEM5_READ_REQ: u32 = 1;
 const GEM5_WRITE_REQ: u32 = 4;
+const GEM5_WRITE_LINE_REQ: u32 = 16;
 const GEM5_READ_EX_REQ: u32 = 22;
 const GEM5_READ_CLEAN_REQ: u32 = 24;
 const GEM5_READ_SHARED_REQ: u32 = 25;
@@ -31,13 +32,14 @@ enum TrafficTraceCommand {
     ReadShared,
     ReadUnique,
     Write,
+    WriteLine,
 }
 
 impl TrafficTraceCommand {
     const fn request_kind(self) -> TrafficRequestKind {
         match self {
             Self::ReadShared | Self::ReadUnique => TrafficRequestKind::Read,
-            Self::Write => TrafficRequestKind::Write,
+            Self::Write | Self::WriteLine => TrafficRequestKind::Write,
         }
     }
 }
@@ -405,16 +407,49 @@ impl TrafficTraceGenerator {
             TrafficRequestKind::Read => {
                 MemoryRequest::read_shared(id, address, element.size, layout).map_err(Into::into)
             }
+            TrafficRequestKind::Write if element.command == TrafficTraceCommand::WriteLine => {
+                validate_write_line_request(address, element.size, layout)?;
+                build_write_request(self.config.agent(), id, address, element.size, layout)
+            }
             TrafficRequestKind::Write => {
-                let mask = ByteMask::full(element.size)?;
-                let data_len = usize::try_from(mask.len())
-                    .expect("byte mask length fits usize after construction");
-                let data = vec![self.config.agent().get() as u8; data_len];
-                MemoryRequest::write(id, address, element.size, data, mask, layout)
-                    .map_err(Into::into)
+                build_write_request(self.config.agent(), id, address, element.size, layout)
             }
         }
     }
+}
+
+fn validate_write_line_request(
+    address: Address,
+    size: AccessSize,
+    layout: CacheLineLayout,
+) -> Result<(), TrafficGeneratorError> {
+    if size.bytes() != layout.bytes() {
+        return Err(TrafficGeneratorError::TraceWriteLineSizeMismatch {
+            size: size.bytes(),
+            line_size: layout.bytes(),
+        });
+    }
+    if layout.line_offset(address) != 0 {
+        return Err(TrafficGeneratorError::TraceWriteLineUnalignedAddress {
+            address,
+            line_size: layout.bytes(),
+        });
+    }
+    Ok(())
+}
+
+fn build_write_request(
+    agent: AgentId,
+    id: MemoryRequestId,
+    address: Address,
+    size: AccessSize,
+    layout: CacheLineLayout,
+) -> Result<MemoryRequest, TrafficGeneratorError> {
+    let mask = ByteMask::full(size)?;
+    let data_len =
+        usize::try_from(mask.len()).expect("byte mask length fits usize after construction");
+    let data = vec![agent.get() as u8; data_len];
+    MemoryRequest::write(id, address, size, data, mask, layout).map_err(Into::into)
 }
 
 struct Gem5PacketTraceReader<'a> {
@@ -533,6 +568,7 @@ fn parse_packet(message: &[u8]) -> Result<TrafficTraceElement, TrafficGeneratorE
         }
         GEM5_READ_EX_REQ => TrafficTraceCommand::ReadUnique,
         GEM5_WRITE_REQ => TrafficTraceCommand::Write,
+        GEM5_WRITE_LINE_REQ => TrafficTraceCommand::WriteLine,
         command => return Err(TrafficGeneratorError::TraceUnsupportedCommand { command }),
     };
     let address = address.ok_or(TrafficGeneratorError::TraceMissingField {

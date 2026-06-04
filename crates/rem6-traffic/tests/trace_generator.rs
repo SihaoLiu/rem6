@@ -324,6 +324,99 @@ fn trace_traffic_generator_maps_cache_read_packets_to_read_shared() {
 }
 
 #[test]
+fn trace_traffic_generator_maps_write_line_packet_to_full_line_write() {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace(
+            TICK_FREQUENCY,
+            &[PacketFields {
+                tick: 4,
+                command: 16,
+                address: 0x80,
+                size: 64,
+                flags: None,
+            }],
+        ),
+        TICK_FREQUENCY,
+    )
+    .unwrap();
+    let mut generator = TrafficTraceGenerator::new(trace_config(trace));
+    generator.enter(30);
+
+    let event = generator.next_request(30, 0).unwrap().unwrap();
+
+    assert_eq!(event.tick(), 34);
+    assert_eq!(event.kind(), TrafficRequestKind::Write);
+    assert_eq!(event.address(), Address::new(0x80));
+    assert_eq!(event.request().operation(), MemoryOperation::Write);
+    assert_eq!(event.request().size(), AccessSize::new(64).unwrap());
+    assert_eq!(event.request().data(), Some(&vec![7; 64][..]));
+    assert_eq!(event.request().byte_mask().unwrap().len(), 64);
+    assert_eq!(generator.summary().write_count(), 1);
+    assert_eq!(generator.summary().bytes_written(), 64);
+    assert_eq!(generator.summary().read_count(), 0);
+}
+
+#[test]
+fn trace_traffic_generator_rejects_write_line_packet_with_partial_line_size() {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace(
+            TICK_FREQUENCY,
+            &[PacketFields {
+                tick: 4,
+                command: 16,
+                address: 0x80,
+                size: 32,
+                flags: None,
+            }],
+        ),
+        TICK_FREQUENCY,
+    )
+    .unwrap();
+    let mut generator = TrafficTraceGenerator::new(trace_config(trace));
+    generator.enter(30);
+
+    let error = generator.next_request(30, 0).unwrap_err();
+
+    assert_eq!(
+        error,
+        TrafficGeneratorError::TraceWriteLineSizeMismatch {
+            size: 32,
+            line_size: 64,
+        }
+    );
+}
+
+#[test]
+fn trace_traffic_generator_rejects_write_line_packet_with_unaligned_address() {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace(
+            TICK_FREQUENCY,
+            &[PacketFields {
+                tick: 4,
+                command: 16,
+                address: 0x84,
+                size: 64,
+                flags: None,
+            }],
+        ),
+        TICK_FREQUENCY,
+    )
+    .unwrap();
+    let mut generator = TrafficTraceGenerator::new(trace_config(trace));
+    generator.enter(30);
+
+    let error = generator.next_request(30, 0).unwrap_err();
+
+    assert_eq!(
+        error,
+        TrafficGeneratorError::TraceWriteLineUnalignedAddress {
+            address: Address::new(0x84),
+            line_size: 64,
+        }
+    );
+}
+
+#[test]
 fn trace_parser_rejects_read_exclusive_packet_with_nonzero_flags() {
     assert_eq!(
         TrafficTrace::from_gem5_packet_trace(
