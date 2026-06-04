@@ -3,7 +3,7 @@ use std::fmt;
 
 use rem6_memory::{Address, MemoryError};
 
-use crate::TrafficStateId;
+use crate::{TrafficHybridSide, TrafficStateId};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TrafficGeneratorError {
@@ -177,6 +177,14 @@ pub enum TrafficGeneratorError {
     TrafficDramSnapshotRotateSequenceOutsideCycle {
         rotate_sequence_count: u32,
         cycle_size: u64,
+    },
+    TrafficHybridInvalidNvmPercent {
+        nvm_percent: u8,
+    },
+    TrafficHybridSnapshotSeriesOutsideRange {
+        side: TrafficHybridSide,
+        series_remaining: u32,
+        num_seq_packets: u32,
     },
     TrafficDramSeriesExceedsPage {
         num_seq_packets: u32,
@@ -544,6 +552,18 @@ impl fmt::Display for TrafficGeneratorError {
             } => write!(
                 formatter,
                 "traffic DRAM snapshot rotate sequence {rotate_sequence_count} is outside cycle size {cycle_size}"
+            ),
+            Self::TrafficHybridInvalidNvmPercent { nvm_percent } => write!(
+                formatter,
+                "traffic hybrid NVM percentage {nvm_percent} exceeds 100"
+            ),
+            Self::TrafficHybridSnapshotSeriesOutsideRange {
+                side,
+                series_remaining,
+                num_seq_packets,
+            } => write!(
+                formatter,
+                "traffic hybrid snapshot has {series_remaining} packets remaining on {side:?} in a series of {num_seq_packets}"
             ),
             Self::TrafficDramSeriesExceedsPage {
                 num_seq_packets,

@@ -1,8 +1,8 @@
 use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout};
 use rem6_traffic::{
     TrafficController, TrafficControllerConfig, TrafficDramAddressMapping, TrafficDramMode,
-    TrafficGeneratorError, TrafficStateGenerator, TrafficStateId, TrafficTextBindingOptions,
-    TrafficTextConfig, TrafficTextMemoryParams, TrafficTextStateMode,
+    TrafficGeneratorError, TrafficHybridSide, TrafficStateGenerator, TrafficStateId,
+    TrafficTextBindingOptions, TrafficTextConfig, TrafficTextMemoryParams, TrafficTextStateMode,
     TRAFFIC_TRANSITION_PROBABILITY_SCALE,
 };
 
@@ -336,6 +336,72 @@ fn traffic_text_config_binds_dram_family_modes_to_controller_generators() {
 }
 
 #[test]
+fn traffic_text_config_binds_hybrid_mode_to_controller_generator() {
+    let config = parse(
+        r#"
+        STATE 0 20 HYBRID 75 0 4096 64 8192 16384 32 11 13 2048 4 1024 8 4 3 256 4 2 1 2 1 60
+        INIT 0
+        TRANSITION 0 0 1
+        "#,
+    );
+
+    let controller = config.to_controller_config(binding_options()).unwrap();
+
+    let TrafficStateGenerator::Hybrid(hybrid) = bound_generator(&controller, 0) else {
+        panic!("state 0 should bind to HYBRID");
+    };
+    assert_eq!(hybrid.config().agent(), AgentId::new(9));
+    assert_eq!(hybrid.config().line_layout(), line_layout());
+    assert_eq!(hybrid.config().min_period(), 11);
+    assert_eq!(hybrid.config().max_period(), 13);
+    assert_eq!(hybrid.config().read_percent(), 75);
+    assert_eq!(hybrid.config().data_limit(), Some(2048));
+    assert_eq!(hybrid.config().nvm_percent(), 60);
+    assert_eq!(
+        hybrid.config().address_mapping(),
+        TrafficDramAddressMapping::RoRaBaCoCh
+    );
+    assert!(!hybrid.config().elastic_requests());
+    assert_eq!(
+        hybrid.config().side(TrafficHybridSide::Dram).start(),
+        Address::new(0)
+    );
+    assert_eq!(
+        hybrid.config().side(TrafficHybridSide::Dram).end(),
+        Address::new(4096)
+    );
+    assert_eq!(
+        hybrid.config().side(TrafficHybridSide::Dram).block_size(),
+        AccessSize::new(64).unwrap()
+    );
+    assert_eq!(
+        hybrid
+            .config()
+            .side(TrafficHybridSide::Dram)
+            .num_seq_packets(),
+        4
+    );
+    assert_eq!(
+        hybrid.config().side(TrafficHybridSide::Nvm).start(),
+        Address::new(8192)
+    );
+    assert_eq!(
+        hybrid.config().side(TrafficHybridSide::Nvm).block_size(),
+        AccessSize::new(32).unwrap()
+    );
+    assert_eq!(
+        hybrid
+            .config()
+            .side(TrafficHybridSide::Nvm)
+            .num_seq_packets(),
+        3
+    );
+    assert_eq!(hybrid.config().side(TrafficHybridSide::Nvm).banks(), 4);
+    assert_eq!(hybrid.config().side(TrafficHybridSide::Nvm).banks_util(), 2);
+    assert_eq!(hybrid.config().side(TrafficHybridSide::Nvm).ranks(), 1);
+}
+
+#[test]
 fn traffic_text_binding_options_default_to_gem5_non_elastic_requests() {
     let config = parse(
         r#"
@@ -387,11 +453,13 @@ fn traffic_text_config_parses_strided_and_dram_family_modes() {
         STATE 1 20 DRAM 50 0 4096 64 11 13 2048 256 1024 8 4 1 2
         STATE 2 30 DRAM_ROTATE 100 0 4096 64 11 13 0 256 1024 8 4 1 2
         STATE 3 40 NVM 0 0 4096 64 11 13 4096 256 1024 8 4 1 2
+        STATE 4 50 HYBRID 75 0 4096 64 8192 16384 32 11 13 2048 4 1024 8 4 3 256 4 2 1 2 1 60
         INIT 0
         TRANSITION 0 1 1
         TRANSITION 1 2 1
         TRANSITION 2 3 1
-        TRANSITION 3 3 1
+        TRANSITION 3 4 1
+        TRANSITION 4 4 1
         "#,
     );
 
@@ -416,6 +484,16 @@ fn traffic_text_config_parses_strided_and_dram_family_modes() {
     };
     assert_eq!(nvm.memory().data_limit(), 4096);
     assert_eq!(nvm.page_or_buffer_size(), 1024);
+    let TrafficTextStateMode::Hybrid(hybrid) = config.state(TrafficStateId::new(4)).unwrap().mode()
+    else {
+        panic!("state 4 should be HYBRID");
+    };
+    assert_eq!(hybrid.read_percent(), 75);
+    assert_eq!(hybrid.dram().num_seq_packets(), 4);
+    assert_eq!(hybrid.dram().page_or_buffer_size(), 1024);
+    assert_eq!(hybrid.nvm().num_seq_packets(), 3);
+    assert_eq!(hybrid.nvm().page_or_buffer_size(), 256);
+    assert_eq!(hybrid.nvm_percent(), 60);
 }
 
 #[test]
@@ -476,10 +554,10 @@ fn traffic_text_config_rejects_sparse_state_ids() {
 #[test]
 fn traffic_text_config_rejects_unknown_mode_and_keyword() {
     assert_eq!(
-        TrafficTextConfig::parse("STATE 0 10 HYBRID\nINIT 0\nTRANSITION 0 0 1").unwrap_err(),
+        TrafficTextConfig::parse("STATE 0 10 UNKNOWN\nINIT 0\nTRANSITION 0 0 1").unwrap_err(),
         TrafficGeneratorError::TrafficConfigUnknownStateMode {
             line: 1,
-            mode: "HYBRID".to_string(),
+            mode: "UNKNOWN".to_string(),
         }
     );
 

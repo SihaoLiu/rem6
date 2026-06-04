@@ -6,10 +6,11 @@ use crate::{
     DramTrafficGenerator, LinearTrafficGenerator, RandomTrafficGenerator, StridedTrafficGenerator,
     TrafficControllerConfig, TrafficControllerState, TrafficDramAddressMapping, TrafficDramConfig,
     TrafficDramMode, TrafficExitConfig, TrafficExitGenerator, TrafficGeneratorError,
-    TrafficIdleConfig, TrafficIdleGenerator, TrafficLinearConfig, TrafficRandomConfig,
-    TrafficStateGenerator, TrafficStateGraphConfig, TrafficStateId, TrafficStateSpec,
-    TrafficStridedConfig, TrafficTrace, TrafficTraceConfig, TrafficTraceGenerator,
-    TrafficTransition, TrafficTransitionProbability, TRAFFIC_TRANSITION_PROBABILITY_SCALE,
+    TrafficHybridConfig, TrafficHybridSideConfig, TrafficIdleConfig, TrafficIdleGenerator,
+    TrafficLinearConfig, TrafficRandomConfig, TrafficStateGenerator, TrafficStateGraphConfig,
+    TrafficStateId, TrafficStateSpec, TrafficStridedConfig, TrafficTrace, TrafficTraceConfig,
+    TrafficTraceGenerator, TrafficTransition, TrafficTransitionProbability,
+    TRAFFIC_TRANSITION_PROBABILITY_SCALE,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -192,6 +193,9 @@ impl TrafficTextState {
                     options,
                 )?))
             }
+            TrafficTextStateMode::Hybrid(params) => TrafficStateGenerator::Hybrid(
+                crate::HybridTrafficGenerator::new(hybrid_config_from_text(*params, options)?),
+            ),
             TrafficTextStateMode::Trace { .. } => {
                 return Err(TrafficGeneratorError::TrafficConfigUnsupportedStateMode {
                     state: self.id,
@@ -248,6 +252,7 @@ pub enum TrafficTextStateMode {
     Dram(TrafficTextDramParams),
     DramRotate(TrafficTextDramParams),
     Nvm(TrafficTextDramParams),
+    Hybrid(TrafficTextHybridParams),
 }
 
 impl TrafficTextStateMode {
@@ -262,6 +267,7 @@ impl TrafficTextStateMode {
             Self::Dram(_) => "DRAM",
             Self::DramRotate(_) => "DRAM_ROTATE",
             Self::Nvm(_) => "NVM",
+            Self::Hybrid(_) => "HYBRID",
         }
     }
 }
@@ -462,6 +468,144 @@ impl TrafficTextDramParams {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TrafficTextHybridSideParams {
+    start_addr: u64,
+    end_addr: u64,
+    block_size: u64,
+    num_seq_packets: u32,
+    page_or_buffer_size: u64,
+    bank_count: u32,
+    bank_utilization: u32,
+    rank_count: u32,
+}
+
+impl TrafficTextHybridSideParams {
+    #[allow(clippy::too_many_arguments)]
+    pub const fn new(
+        start_addr: u64,
+        end_addr: u64,
+        block_size: u64,
+        num_seq_packets: u32,
+        page_or_buffer_size: u64,
+        bank_count: u32,
+        bank_utilization: u32,
+        rank_count: u32,
+    ) -> Self {
+        Self {
+            start_addr,
+            end_addr,
+            block_size,
+            num_seq_packets,
+            page_or_buffer_size,
+            bank_count,
+            bank_utilization,
+            rank_count,
+        }
+    }
+
+    pub const fn start_addr(self) -> u64 {
+        self.start_addr
+    }
+
+    pub const fn end_addr(self) -> u64 {
+        self.end_addr
+    }
+
+    pub const fn block_size(self) -> u64 {
+        self.block_size
+    }
+
+    pub const fn num_seq_packets(self) -> u32 {
+        self.num_seq_packets
+    }
+
+    pub const fn page_or_buffer_size(self) -> u64 {
+        self.page_or_buffer_size
+    }
+
+    pub const fn bank_count(self) -> u32 {
+        self.bank_count
+    }
+
+    pub const fn bank_utilization(self) -> u32 {
+        self.bank_utilization
+    }
+
+    pub const fn rank_count(self) -> u32 {
+        self.rank_count
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TrafficTextHybridParams {
+    read_percent: u8,
+    min_period: u64,
+    max_period: u64,
+    data_limit: u64,
+    dram: TrafficTextHybridSideParams,
+    nvm: TrafficTextHybridSideParams,
+    addr_mapping: u32,
+    nvm_percent: u8,
+}
+
+impl TrafficTextHybridParams {
+    #[allow(clippy::too_many_arguments)]
+    pub const fn new(
+        read_percent: u8,
+        min_period: u64,
+        max_period: u64,
+        data_limit: u64,
+        dram: TrafficTextHybridSideParams,
+        nvm: TrafficTextHybridSideParams,
+        addr_mapping: u32,
+        nvm_percent: u8,
+    ) -> Self {
+        Self {
+            read_percent,
+            min_period,
+            max_period,
+            data_limit,
+            dram,
+            nvm,
+            addr_mapping,
+            nvm_percent,
+        }
+    }
+
+    pub const fn read_percent(self) -> u8 {
+        self.read_percent
+    }
+
+    pub const fn min_period(self) -> u64 {
+        self.min_period
+    }
+
+    pub const fn max_period(self) -> u64 {
+        self.max_period
+    }
+
+    pub const fn data_limit(self) -> u64 {
+        self.data_limit
+    }
+
+    pub const fn dram(self) -> TrafficTextHybridSideParams {
+        self.dram
+    }
+
+    pub const fn nvm(self) -> TrafficTextHybridSideParams {
+        self.nvm
+    }
+
+    pub const fn addr_mapping(self) -> u32 {
+        self.addr_mapping
+    }
+
+    pub const fn nvm_percent(self) -> u8 {
+        self.nvm_percent
+    }
+}
+
 fn linear_config_from_text(
     params: TrafficTextMemoryParams,
     options: TrafficTextBindingOptions,
@@ -559,6 +703,40 @@ fn dram_config_from_text(
     .with_elastic_requests(options.elastic_requests()))
 }
 
+fn hybrid_config_from_text(
+    params: TrafficTextHybridParams,
+    options: TrafficTextBindingOptions,
+) -> Result<TrafficHybridConfig, TrafficGeneratorError> {
+    Ok(TrafficHybridConfig::new(
+        options.agent(),
+        options.line_layout(),
+        hybrid_side_config_from_text(params.dram())?,
+        hybrid_side_config_from_text(params.nvm())?,
+        TrafficDramAddressMapping::from_gem5_code(params.addr_mapping())?,
+    )?
+    .with_period(params.min_period(), params.max_period())?
+    .with_read_percent(params.read_percent())?
+    .with_nvm_percent(params.nvm_percent())?
+    .with_data_limit(params.data_limit())?
+    .with_elastic_requests(options.elastic_requests()))
+}
+
+fn hybrid_side_config_from_text(
+    params: TrafficTextHybridSideParams,
+) -> Result<TrafficHybridSideConfig, TrafficGeneratorError> {
+    let block_size = AccessSize::new(params.block_size())?;
+    TrafficHybridSideConfig::new(
+        Address::new(params.start_addr()),
+        Address::new(params.end_addr()),
+        block_size,
+        params.page_or_buffer_size(),
+        params.bank_count(),
+        params.bank_utilization(),
+        params.rank_count(),
+        params.num_seq_packets(),
+    )
+}
+
 fn trace_config_from_text<F>(
     trace_file: &str,
     addr_offset: u64,
@@ -601,6 +779,7 @@ fn parse_state(line: usize, tokens: &[&str]) -> Result<TrafficTextState, Traffic
         "DRAM" => TrafficTextStateMode::Dram(parse_dram_params(&mut parser)?),
         "DRAM_ROTATE" => TrafficTextStateMode::DramRotate(parse_dram_params(&mut parser)?),
         "NVM" => TrafficTextStateMode::Nvm(parse_dram_params(&mut parser)?),
+        "HYBRID" => TrafficTextStateMode::Hybrid(parse_hybrid_params(&mut parser)?),
         mode => {
             return Err(TrafficGeneratorError::TrafficConfigUnknownStateMode {
                 line,
@@ -724,6 +903,68 @@ fn parse_dram_params(
         bank_utilization,
         addr_mapping,
         rank_count,
+    ))
+}
+
+fn parse_hybrid_params(
+    parser: &mut LineParser<'_>,
+) -> Result<TrafficTextHybridParams, TrafficGeneratorError> {
+    let read_percent = parser.next_read_percent("read_percent")?;
+    let dram_start_addr = parser.next_u64("dram_start_addr")?;
+    let dram_end_addr = parser.next_u64("dram_end_addr")?;
+    let dram_block_size = parser.next_u64("dram_block_size")?;
+    let nvm_start_addr = parser.next_u64("nvm_start_addr")?;
+    let nvm_end_addr = parser.next_u64("nvm_end_addr")?;
+    let nvm_block_size = parser.next_u64("nvm_block_size")?;
+    let min_period = parser.next_u64("min_period")?;
+    let max_period = parser.next_u64("max_period")?;
+    if min_period > max_period {
+        return Err(TrafficGeneratorError::InvertedPeriod {
+            min_period,
+            max_period,
+        });
+    }
+    let data_limit = parser.next_u64("data_limit")?;
+    let dram_num_seq_packets = parser.next_u32("dram_num_seq_packets")?;
+    let dram_page_size = parser.next_u64("dram_page_size")?;
+    let dram_bank_count = parser.next_u32("dram_bank_count")?;
+    let dram_bank_utilization = parser.next_u32("dram_bank_utilization")?;
+    let nvm_num_seq_packets = parser.next_u32("nvm_num_seq_packets")?;
+    let nvm_buffer_size = parser.next_u64("nvm_buffer_size")?;
+    let nvm_bank_count = parser.next_u32("nvm_bank_count")?;
+    let nvm_bank_utilization = parser.next_u32("nvm_bank_utilization")?;
+    let addr_mapping = parser.next_u32("addr_mapping")?;
+    let dram_rank_count = parser.next_u32("dram_rank_count")?;
+    let nvm_rank_count = parser.next_u32("nvm_rank_count")?;
+    let nvm_percent = parser.next_read_percent("nvm_percent")?;
+
+    Ok(TrafficTextHybridParams::new(
+        read_percent,
+        min_period,
+        max_period,
+        data_limit,
+        TrafficTextHybridSideParams::new(
+            dram_start_addr,
+            dram_end_addr,
+            dram_block_size,
+            dram_num_seq_packets,
+            dram_page_size,
+            dram_bank_count,
+            dram_bank_utilization,
+            dram_rank_count,
+        ),
+        TrafficTextHybridSideParams::new(
+            nvm_start_addr,
+            nvm_end_addr,
+            nvm_block_size,
+            nvm_num_seq_packets,
+            nvm_buffer_size,
+            nvm_bank_count,
+            nvm_bank_utilization,
+            nvm_rank_count,
+        ),
+        addr_mapping,
+        nvm_percent,
     ))
 }
 

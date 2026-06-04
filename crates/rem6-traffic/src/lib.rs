@@ -3,6 +3,7 @@ mod control;
 mod controller;
 mod dram;
 mod error;
+mod hybrid;
 mod linear;
 mod state;
 mod text_config;
@@ -23,6 +24,10 @@ pub use dram::{
     TrafficDramSnapshot,
 };
 pub use error::TrafficGeneratorError;
+pub use hybrid::{
+    HybridTrafficGenerator, TrafficHybridConfig, TrafficHybridSide, TrafficHybridSideConfig,
+    TrafficHybridSnapshot,
+};
 pub use linear::{
     LinearTrafficGenerator, RandomTrafficGenerator, StridedTrafficGenerator, TrafficLinearConfig,
     TrafficLinearSnapshot, TrafficRandomConfig, TrafficRandomSnapshot, TrafficStridedConfig,
@@ -34,8 +39,9 @@ pub use state::{
     TRAFFIC_TRANSITION_PROBABILITY_SCALE,
 };
 pub use text_config::{
-    TrafficTextBindingOptions, TrafficTextConfig, TrafficTextDramParams, TrafficTextMemoryParams,
-    TrafficTextState, TrafficTextStateMode, TrafficTextStridedParams,
+    TrafficTextBindingOptions, TrafficTextConfig, TrafficTextDramParams, TrafficTextHybridParams,
+    TrafficTextHybridSideParams, TrafficTextMemoryParams, TrafficTextState, TrafficTextStateMode,
+    TrafficTextStridedParams,
 };
 pub use trace::{
     TrafficTrace, TrafficTraceConfig, TrafficTraceExitStatus, TrafficTraceGenerator,

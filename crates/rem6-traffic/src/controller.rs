@@ -1,12 +1,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    DramTrafficGenerator, LinearTrafficGenerator, RandomTrafficGenerator, StridedTrafficGenerator,
-    TrafficDramSnapshot, TrafficExitEvent, TrafficExitGenerator, TrafficExitSnapshot,
-    TrafficGeneratorError, TrafficGeneratorSummary, TrafficIdleGenerator, TrafficIdleSnapshot,
-    TrafficLinearSnapshot, TrafficRandomSnapshot, TrafficRequestEvent, TrafficStateGraphConfig,
-    TrafficStateId, TrafficStateMachine, TrafficStateSnapshot, TrafficStridedSnapshot,
-    TrafficTraceExitStatus, TrafficTraceGenerator, TrafficTraceSnapshot, TrafficTransitionEvent,
+    DramTrafficGenerator, HybridTrafficGenerator, LinearTrafficGenerator, RandomTrafficGenerator,
+    StridedTrafficGenerator, TrafficDramSnapshot, TrafficExitEvent, TrafficExitGenerator,
+    TrafficExitSnapshot, TrafficGeneratorError, TrafficGeneratorSummary, TrafficHybridSnapshot,
+    TrafficIdleGenerator, TrafficIdleSnapshot, TrafficLinearSnapshot, TrafficRandomSnapshot,
+    TrafficRequestEvent, TrafficStateGraphConfig, TrafficStateId, TrafficStateMachine,
+    TrafficStateSnapshot, TrafficStridedSnapshot, TrafficTraceExitStatus, TrafficTraceGenerator,
+    TrafficTraceSnapshot, TrafficTransitionEvent,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -65,6 +66,7 @@ pub enum TrafficStateGenerator {
     Random(RandomTrafficGenerator),
     Strided(StridedTrafficGenerator),
     Dram(DramTrafficGenerator),
+    Hybrid(HybridTrafficGenerator),
     Trace(TrafficTraceGenerator),
 }
 
@@ -94,6 +96,10 @@ impl TrafficStateGenerator {
                 generator.enter();
                 Vec::new()
             }
+            Self::Hybrid(generator) => {
+                generator.enter();
+                Vec::new()
+            }
             Self::Trace(generator) => {
                 generator.enter(tick);
                 Vec::new()
@@ -120,6 +126,7 @@ impl TrafficStateGenerator {
             Self::Random(generator) => generator.clone().schedule_tick(tick, retry_delay),
             Self::Strided(generator) => generator.clone().schedule_tick(tick, retry_delay),
             Self::Dram(generator) => generator.clone().schedule_tick(tick, retry_delay),
+            Self::Hybrid(generator) => generator.clone().schedule_tick(tick, retry_delay),
             Self::Trace(generator) => generator.clone().schedule_tick(tick, retry_delay),
         }
     }
@@ -136,6 +143,7 @@ impl TrafficStateGenerator {
             Self::Random(generator) => generator.next_request(tick, retry_delay),
             Self::Strided(generator) => generator.next_request(tick, retry_delay),
             Self::Dram(generator) => generator.next_request(tick, retry_delay),
+            Self::Hybrid(generator) => generator.next_request(tick, retry_delay),
             Self::Trace(generator) => generator.next_request(tick, retry_delay),
         }
     }
@@ -148,6 +156,7 @@ impl TrafficStateGenerator {
             Self::Random(generator) => generator.summary(),
             Self::Strided(generator) => generator.summary(),
             Self::Dram(generator) => generator.summary(),
+            Self::Hybrid(generator) => generator.summary(),
             Self::Trace(generator) => generator.summary(),
         }
     }
@@ -162,6 +171,7 @@ impl TrafficStateGenerator {
                 TrafficStateGeneratorSnapshot::Strided(generator.snapshot())
             }
             Self::Dram(generator) => TrafficStateGeneratorSnapshot::Dram(generator.snapshot()),
+            Self::Hybrid(generator) => TrafficStateGeneratorSnapshot::Hybrid(generator.snapshot()),
             Self::Trace(generator) => TrafficStateGeneratorSnapshot::Trace(generator.snapshot()),
         }
     }
@@ -185,6 +195,9 @@ impl TrafficStateGenerator {
             }
             TrafficStateGeneratorSnapshot::Dram(snapshot) => {
                 Ok(Self::Dram(DramTrafficGenerator::restore(snapshot)?))
+            }
+            TrafficStateGeneratorSnapshot::Hybrid(snapshot) => {
+                Ok(Self::Hybrid(HybridTrafficGenerator::restore(snapshot)?))
             }
             TrafficStateGeneratorSnapshot::Trace(snapshot) => {
                 Ok(Self::Trace(TrafficTraceGenerator::restore(snapshot)?))
@@ -484,6 +497,7 @@ pub enum TrafficStateGeneratorSnapshot {
     Random(TrafficRandomSnapshot),
     Strided(TrafficStridedSnapshot),
     Dram(TrafficDramSnapshot),
+    Hybrid(TrafficHybridSnapshot),
     Trace(TrafficTraceSnapshot),
 }
 

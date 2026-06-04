@@ -1,14 +1,17 @@
+use std::ops::Range;
+
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryOperation, MemoryRequestId,
 };
 use rem6_traffic::{
-    DramTrafficGenerator, LinearTrafficGenerator, RandomTrafficGenerator, StridedTrafficGenerator,
-    TrafficController, TrafficControllerConfig, TrafficControllerSnapshot, TrafficControllerState,
-    TrafficDramAddressMapping, TrafficDramConfig, TrafficDramMode, TrafficGeneratorError,
-    TrafficIdleGenerator, TrafficLinearConfig, TrafficRandomConfig, TrafficRequestKind,
-    TrafficStateGenerator, TrafficStateGeneratorSnapshot, TrafficStateGraphConfig, TrafficStateId,
-    TrafficStateSpec, TrafficStridedConfig, TrafficTrace, TrafficTraceConfig,
-    TrafficTraceExitStatus, TrafficTraceGenerator, TrafficTransition, TrafficTransitionProbability,
+    DramTrafficGenerator, HybridTrafficGenerator, LinearTrafficGenerator, RandomTrafficGenerator,
+    StridedTrafficGenerator, TrafficController, TrafficControllerConfig, TrafficControllerSnapshot,
+    TrafficControllerState, TrafficDramAddressMapping, TrafficDramConfig, TrafficDramMode,
+    TrafficGeneratorError, TrafficHybridConfig, TrafficHybridSideConfig, TrafficIdleGenerator,
+    TrafficLinearConfig, TrafficRandomConfig, TrafficRequestKind, TrafficStateGenerator,
+    TrafficStateGeneratorSnapshot, TrafficStateGraphConfig, TrafficStateId, TrafficStateSpec,
+    TrafficStridedConfig, TrafficTrace, TrafficTraceConfig, TrafficTraceExitStatus,
+    TrafficTraceGenerator, TrafficTransition, TrafficTransitionProbability,
     TRAFFIC_TRANSITION_PROBABILITY_SCALE,
 };
 
@@ -116,6 +119,43 @@ fn dram_config(period: u64, read_percent: u8) -> TrafficDramConfig {
     .unwrap()
 }
 
+fn hybrid_side(
+    range: Range<u64>,
+    block_size: u64,
+    page_or_buffer_size: u64,
+    banks: u32,
+    banks_util: u32,
+    ranks: u32,
+    num_seq_packets: u32,
+) -> TrafficHybridSideConfig {
+    TrafficHybridSideConfig::new(
+        Address::new(range.start),
+        Address::new(range.end),
+        AccessSize::new(block_size).unwrap(),
+        page_or_buffer_size,
+        banks,
+        banks_util,
+        ranks,
+        num_seq_packets,
+    )
+    .unwrap()
+}
+
+fn hybrid_config(period: u64, read_percent: u8) -> TrafficHybridConfig {
+    TrafficHybridConfig::new(
+        AgentId::new(7),
+        line_layout(),
+        hybrid_side(0x1000..0x1400, 16, 64, 2, 2, 1, 1),
+        hybrid_side(0x2000..0x2400, 16, 64, 2, 2, 1, 1),
+        TrafficDramAddressMapping::RoRaBaCoCh,
+    )
+    .unwrap()
+    .with_period(period, period)
+    .unwrap()
+    .with_read_percent(read_percent)
+    .unwrap()
+}
+
 fn linear_state(id: u32, period: u64, read_percent: u8) -> TrafficControllerState {
     TrafficControllerState::new(
         TrafficStateId::new(id),
@@ -150,6 +190,16 @@ fn dram_state(id: u32, period: u64, read_percent: u8) -> TrafficControllerState 
     TrafficControllerState::new(
         TrafficStateId::new(id),
         TrafficStateGenerator::Dram(DramTrafficGenerator::new(dram_config(period, read_percent))),
+    )
+}
+
+fn hybrid_state(id: u32, period: u64, read_percent: u8) -> TrafficControllerState {
+    TrafficControllerState::new(
+        TrafficStateId::new(id),
+        TrafficStateGenerator::Hybrid(HybridTrafficGenerator::new(hybrid_config(
+            period,
+            read_percent,
+        ))),
     )
 }
 
@@ -306,8 +356,8 @@ fn traffic_controller_snapshot_restores_machine_generator_and_summary_state() {
 fn traffic_controller_snapshot_preserves_every_leaf_generator() {
     let config = TrafficControllerConfig::new(
         graph(
-            (0..7).map(|id| state(id, u64::MAX)).collect(),
-            (0..7).map(|id| transition(id, id)).collect(),
+            (0..8).map(|id| state(id, u64::MAX)).collect(),
+            (0..8).map(|id| transition(id, id)).collect(),
         ),
         vec![
             linear_state(0, 4, 100),
@@ -316,7 +366,8 @@ fn traffic_controller_snapshot_preserves_every_leaf_generator() {
             random_state(3, 4, 100),
             strided_state(4, 4, 100),
             dram_state(5, 4, 100),
-            trace_state(6, u64::MAX, 0),
+            hybrid_state(6, 4, 100),
+            trace_state(7, u64::MAX, 0),
         ],
     )
     .unwrap();
@@ -352,6 +403,10 @@ fn traffic_controller_snapshot_preserves_every_leaf_generator() {
     ));
     assert!(matches!(
         snapshot_generator(&snapshot, 6),
+        TrafficStateGeneratorSnapshot::Hybrid(_)
+    ));
+    assert!(matches!(
+        snapshot_generator(&snapshot, 7),
         TrafficStateGeneratorSnapshot::Trace(_)
     ));
     assert_eq!(restored.snapshot().generators(), snapshot.generators());
@@ -448,6 +503,12 @@ fn traffic_controller_forces_transition_after_data_limited_leaf_exhausts() {
             "dram",
             TrafficStateGenerator::Dram(DramTrafficGenerator::new(
                 dram_config(4, 100).with_data_limit(16).unwrap(),
+            )),
+        ),
+        (
+            "hybrid",
+            TrafficStateGenerator::Hybrid(HybridTrafficGenerator::new(
+                hybrid_config(4, 100).with_data_limit(16).unwrap(),
             )),
         ),
     ];
