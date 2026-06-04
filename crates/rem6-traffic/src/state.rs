@@ -347,7 +347,7 @@ impl TrafficStateMachine {
         &mut self,
         tick: u64,
     ) -> Result<Option<TrafficTransitionEvent>, TrafficGeneratorError> {
-        let Some(from) = self.current_state else {
+        if self.current_state.is_none() {
             return Ok(None);
         };
 
@@ -356,6 +356,16 @@ impl TrafficStateMachine {
             return Ok(None);
         }
 
+        self.transition_now(tick).map(Some)
+    }
+
+    pub(crate) fn transition_now(
+        &mut self,
+        tick: u64,
+    ) -> Result<TrafficTransitionEvent, TrafficGeneratorError> {
+        let from = self
+            .current_state
+            .expect("active traffic state machine has current state before transition");
         let sequence = self.next_sequence;
         let next_sequence = checked_counter_add("state.next_sequence", sequence, 1)?;
         let mut next_rng = self.rng.clone();
@@ -372,7 +382,7 @@ impl TrafficStateMachine {
         self.next_sequence = next_sequence;
         self.rng = next_rng;
 
-        Ok(Some(event))
+        Ok(event)
     }
 
     pub const fn current_state(&self) -> Option<TrafficStateId> {

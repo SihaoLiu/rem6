@@ -1,5 +1,6 @@
 mod common;
 mod control;
+mod controller;
 mod error;
 mod linear;
 mod state;
@@ -10,6 +11,11 @@ pub use common::{TrafficGeneratorSummary, TrafficRequestEvent, TrafficRequestKin
 pub use control::{
     TrafficExitConfig, TrafficExitEvent, TrafficExitGenerator, TrafficExitSnapshot,
     TrafficIdleConfig, TrafficIdleGenerator, TrafficIdleSnapshot,
+};
+pub use controller::{
+    TrafficController, TrafficControllerConfig, TrafficControllerEvent,
+    TrafficControllerEventBatch, TrafficControllerSnapshot, TrafficControllerState,
+    TrafficStateGenerator, TrafficStateGeneratorSnapshot, TrafficStateGeneratorSnapshotEntry,
 };
 pub use error::TrafficGeneratorError;
 pub use linear::{

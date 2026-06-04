@@ -132,6 +132,15 @@ pub enum TrafficGeneratorError {
         line: usize,
         read_percent: u32,
     },
+    TrafficControllerMissingStateGenerator {
+        state: TrafficStateId,
+    },
+    TrafficControllerDuplicateStateGenerator {
+        state: TrafficStateId,
+    },
+    TrafficControllerUnknownStateGenerator {
+        state: TrafficStateId,
+    },
     TraceTruncatedMagic {
         length: usize,
     },
@@ -418,6 +427,21 @@ impl fmt::Display for TrafficGeneratorError {
             Self::TrafficConfigReadPercentOutOfRange { line, read_percent } => write!(
                 formatter,
                 "traffic text config line {line} read percentage {read_percent} exceeds 100"
+            ),
+            Self::TrafficControllerMissingStateGenerator { state } => write!(
+                formatter,
+                "traffic controller has no generator for state {}",
+                state.get()
+            ),
+            Self::TrafficControllerDuplicateStateGenerator { state } => write!(
+                formatter,
+                "traffic controller has duplicate generator for state {}",
+                state.get()
+            ),
+            Self::TrafficControllerUnknownStateGenerator { state } => write!(
+                formatter,
+                "traffic controller has generator for unknown state {}",
+                state.get()
             ),
             Self::TraceTruncatedMagic { length } => write!(
                 formatter,

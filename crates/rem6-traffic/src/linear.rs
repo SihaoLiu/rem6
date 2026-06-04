@@ -239,6 +239,11 @@ impl LinearTrafficGenerator {
         })
     }
 
+    pub fn enter(&mut self) {
+        self.next_address = self.config.start();
+        self.data_manipulated = 0;
+    }
+
     pub fn next_request(
         &mut self,
         tick: u64,
@@ -277,6 +282,10 @@ impl LinearTrafficGenerator {
         tick: u64,
         retry_delay: u64,
     ) -> Result<u64, TrafficGeneratorError> {
+        if self.limit_reached() {
+            return Ok(u64::MAX);
+        }
+
         Self::schedule_tick_with(self.config, &mut self.rng, tick, retry_delay)
     }
 
@@ -822,6 +831,10 @@ impl RandomTrafficGenerator {
         })
     }
 
+    pub fn enter(&mut self) {
+        self.data_manipulated = 0;
+    }
+
     pub fn next_request(
         &mut self,
         tick: u64,
@@ -859,6 +872,10 @@ impl RandomTrafficGenerator {
         tick: u64,
         retry_delay: u64,
     ) -> Result<u64, TrafficGeneratorError> {
+        if self.limit_reached() {
+            return Ok(u64::MAX);
+        }
+
         Self::schedule_tick_with(self.config, &mut self.rng, tick, retry_delay)
     }
 
@@ -994,6 +1011,12 @@ impl StridedTrafficGenerator {
         })
     }
 
+    pub fn enter(&mut self) {
+        self.next_address = strided_base_address(self.config)
+            .expect("validated strided traffic config has an in-range base address");
+        self.data_manipulated = 0;
+    }
+
     pub fn next_request(
         &mut self,
         tick: u64,
@@ -1033,6 +1056,10 @@ impl StridedTrafficGenerator {
         tick: u64,
         retry_delay: u64,
     ) -> Result<u64, TrafficGeneratorError> {
+        if self.limit_reached() {
+            return Ok(u64::MAX);
+        }
+
         Self::schedule_tick_with(self.config, &mut self.rng, tick, retry_delay)
     }
 
