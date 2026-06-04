@@ -16,6 +16,8 @@ const GEM5_PROTO_MAGIC: [u8; 4] = [0x67, 0x65, 0x6d, 0x35];
 const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];
 const GEM5_READ_REQ: u32 = 1;
 const GEM5_WRITE_REQ: u32 = 4;
+const GEM5_WRITEBACK_DIRTY: u32 = 7;
+const GEM5_WRITEBACK_CLEAN: u32 = 8;
 const GEM5_WRITE_LINE_REQ: u32 = 16;
 const GEM5_READ_EX_REQ: u32 = 22;
 const GEM5_READ_CLEAN_REQ: u32 = 24;
@@ -33,13 +35,28 @@ enum TrafficTraceCommand {
     ReadUnique,
     Write,
     WriteLine,
+    WritebackDirty,
+    WritebackClean,
 }
 
 impl TrafficTraceCommand {
     const fn request_kind(self) -> TrafficRequestKind {
         match self {
             Self::ReadShared | Self::ReadUnique => TrafficRequestKind::Read,
-            Self::Write | Self::WriteLine => TrafficRequestKind::Write,
+            Self::Write | Self::WriteLine | Self::WritebackDirty | Self::WritebackClean => {
+                TrafficRequestKind::Write
+            }
+        }
+    }
+
+    const fn gem5_name(self) -> &'static str {
+        match self {
+            Self::ReadShared => "ReadReq",
+            Self::ReadUnique => "ReadExReq",
+            Self::Write => "WriteReq",
+            Self::WriteLine => "WriteLineReq",
+            Self::WritebackDirty => "WritebackDirty",
+            Self::WritebackClean => "WritebackClean",
         }
     }
 }
@@ -411,6 +428,22 @@ impl TrafficTraceGenerator {
                 validate_write_line_request(address, element.size, layout)?;
                 build_write_request(self.config.agent(), id, address, element.size, layout)
             }
+            TrafficRequestKind::Write
+                if matches!(
+                    element.command,
+                    TrafficTraceCommand::WritebackDirty | TrafficTraceCommand::WritebackClean
+                ) =>
+            {
+                validate_writeback_request(element.command, address, element.size, layout)?;
+                build_writeback_request(
+                    element.command,
+                    self.config.agent(),
+                    id,
+                    address,
+                    element.size,
+                    layout,
+                )
+            }
             TrafficRequestKind::Write => {
                 build_write_request(self.config.agent(), id, address, element.size, layout)
             }
@@ -450,6 +483,51 @@ fn build_write_request(
         usize::try_from(mask.len()).expect("byte mask length fits usize after construction");
     let data = vec![agent.get() as u8; data_len];
     MemoryRequest::write(id, address, size, data, mask, layout).map_err(Into::into)
+}
+
+fn validate_writeback_request(
+    command: TrafficTraceCommand,
+    address: Address,
+    size: AccessSize,
+    layout: CacheLineLayout,
+) -> Result<(), TrafficGeneratorError> {
+    if size.bytes() != layout.bytes() {
+        return Err(TrafficGeneratorError::TraceWritebackSizeMismatch {
+            command: command.gem5_name(),
+            size: size.bytes(),
+            line_size: layout.bytes(),
+        });
+    }
+    if layout.line_offset(address) != 0 {
+        return Err(TrafficGeneratorError::TraceWritebackUnalignedAddress {
+            command: command.gem5_name(),
+            address,
+            line_size: layout.bytes(),
+        });
+    }
+    Ok(())
+}
+
+fn build_writeback_request(
+    command: TrafficTraceCommand,
+    agent: AgentId,
+    id: MemoryRequestId,
+    address: Address,
+    size: AccessSize,
+    layout: CacheLineLayout,
+) -> Result<MemoryRequest, TrafficGeneratorError> {
+    let data_len =
+        usize::try_from(size.bytes()).expect("access size fits usize after construction");
+    let data = vec![agent.get() as u8; data_len];
+    match command {
+        TrafficTraceCommand::WritebackDirty => {
+            MemoryRequest::writeback_dirty(id, address, data, layout).map_err(Into::into)
+        }
+        TrafficTraceCommand::WritebackClean => {
+            MemoryRequest::writeback_clean(id, address, data, layout).map_err(Into::into)
+        }
+        _ => unreachable!("writeback builder is only called for writeback trace commands"),
+    }
 }
 
 struct Gem5PacketTraceReader<'a> {
@@ -568,6 +646,8 @@ fn parse_packet(message: &[u8]) -> Result<TrafficTraceElement, TrafficGeneratorE
         }
         GEM5_READ_EX_REQ => TrafficTraceCommand::ReadUnique,
         GEM5_WRITE_REQ => TrafficTraceCommand::Write,
+        GEM5_WRITEBACK_DIRTY => TrafficTraceCommand::WritebackDirty,
+        GEM5_WRITEBACK_CLEAN => TrafficTraceCommand::WritebackClean,
         GEM5_WRITE_LINE_REQ => TrafficTraceCommand::WriteLine,
         command => return Err(TrafficGeneratorError::TraceUnsupportedCommand { command }),
     };

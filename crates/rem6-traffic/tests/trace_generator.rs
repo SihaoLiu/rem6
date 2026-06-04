@@ -417,6 +417,173 @@ fn trace_traffic_generator_rejects_write_line_packet_with_unaligned_address() {
 }
 
 #[test]
+fn trace_traffic_generator_maps_writeback_packets_to_writeback_operations() {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace(
+            TICK_FREQUENCY,
+            &[
+                PacketFields {
+                    tick: 4,
+                    command: 7,
+                    address: 0x80,
+                    size: 64,
+                    flags: None,
+                },
+                PacketFields {
+                    tick: 9,
+                    command: 8,
+                    address: 0xc0,
+                    size: 64,
+                    flags: None,
+                },
+            ],
+        ),
+        TICK_FREQUENCY,
+    )
+    .unwrap();
+    let mut generator = TrafficTraceGenerator::new(trace_config(trace));
+    generator.enter(30);
+
+    let dirty = generator.next_request(30, 0).unwrap().unwrap();
+    let clean = generator.next_request(dirty.tick(), 0).unwrap().unwrap();
+
+    assert_eq!(dirty.tick(), 34);
+    assert_eq!(dirty.kind(), TrafficRequestKind::Write);
+    assert_eq!(dirty.address(), Address::new(0x80));
+    assert_eq!(dirty.request().operation(), MemoryOperation::WritebackDirty);
+    assert_eq!(dirty.request().size(), AccessSize::new(64).unwrap());
+    assert_eq!(dirty.request().data(), Some(&vec![7; 64][..]));
+    assert_eq!(dirty.request().byte_mask(), None);
+    assert!(!dirty.request().requires_response());
+    assert_eq!(clean.tick(), 39);
+    assert_eq!(clean.kind(), TrafficRequestKind::Write);
+    assert_eq!(clean.address(), Address::new(0xc0));
+    assert_eq!(clean.request().operation(), MemoryOperation::WritebackClean);
+    assert_eq!(clean.request().size(), AccessSize::new(64).unwrap());
+    assert_eq!(clean.request().data(), Some(&vec![7; 64][..]));
+    assert_eq!(clean.request().byte_mask(), None);
+    assert!(!clean.request().requires_response());
+    assert_eq!(generator.summary().write_count(), 2);
+    assert_eq!(generator.summary().bytes_written(), 128);
+    assert_eq!(generator.summary().read_count(), 0);
+}
+
+#[test]
+fn trace_traffic_generator_rejects_writeback_packet_with_partial_line_size() {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace(
+            TICK_FREQUENCY,
+            &[PacketFields {
+                tick: 4,
+                command: 7,
+                address: 0x80,
+                size: 32,
+                flags: None,
+            }],
+        ),
+        TICK_FREQUENCY,
+    )
+    .unwrap();
+    let mut generator = TrafficTraceGenerator::new(trace_config(trace));
+    generator.enter(30);
+
+    let error = generator.next_request(30, 0).unwrap_err();
+
+    assert_eq!(
+        error,
+        TrafficGeneratorError::TraceWritebackSizeMismatch {
+            command: "WritebackDirty",
+            size: 32,
+            line_size: 64,
+        }
+    );
+}
+
+#[test]
+fn trace_traffic_generator_rejects_writeback_packet_with_unaligned_address() {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace(
+            TICK_FREQUENCY,
+            &[PacketFields {
+                tick: 4,
+                command: 8,
+                address: 0x84,
+                size: 64,
+                flags: None,
+            }],
+        ),
+        TICK_FREQUENCY,
+    )
+    .unwrap();
+    let mut generator = TrafficTraceGenerator::new(trace_config(trace));
+    generator.enter(30);
+
+    let error = generator.next_request(30, 0).unwrap_err();
+
+    assert_eq!(
+        error,
+        TrafficGeneratorError::TraceWritebackUnalignedAddress {
+            command: "WritebackClean",
+            address: Address::new(0x84),
+            line_size: 64,
+        }
+    );
+}
+
+#[test]
+fn trace_traffic_generator_validates_writeback_alignment_after_addr_offset() {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace(
+            TICK_FREQUENCY,
+            &[PacketFields {
+                tick: 4,
+                command: 7,
+                address: 0x80,
+                size: 64,
+                flags: None,
+            }],
+        ),
+        TICK_FREQUENCY,
+    )
+    .unwrap();
+    let config = trace_config(trace).with_addr_offset(4).unwrap();
+    let mut generator = TrafficTraceGenerator::new(config);
+    generator.enter(30);
+
+    let error = generator.next_request(30, 0).unwrap_err();
+
+    assert_eq!(
+        error,
+        TrafficGeneratorError::TraceWritebackUnalignedAddress {
+            command: "WritebackDirty",
+            address: Address::new(0x84),
+            line_size: 64,
+        }
+    );
+}
+
+#[test]
+fn trace_parser_rejects_writeback_packet_with_nonzero_flags() {
+    assert_eq!(
+        TrafficTrace::from_gem5_packet_trace(
+            &gem5_packet_trace(
+                TICK_FREQUENCY,
+                &[PacketFields {
+                    tick: 1,
+                    command: 7,
+                    address: 0x80,
+                    size: 64,
+                    flags: Some(0x10),
+                }],
+            ),
+            TICK_FREQUENCY,
+        )
+        .unwrap_err(),
+        TrafficGeneratorError::TraceUnsupportedFlags { flags: 0x10 }
+    );
+}
+
+#[test]
 fn trace_parser_rejects_read_exclusive_packet_with_nonzero_flags() {
     assert_eq!(
         TrafficTrace::from_gem5_packet_trace(
