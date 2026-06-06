@@ -175,6 +175,14 @@ impl TrafficTraceErrorKind {
             Self::FunctionalWrite => "FunctionalWriteError",
         }
     }
+
+    pub const fn is_read(self) -> bool {
+        matches!(self, Self::Read | Self::FunctionalRead)
+    }
+
+    pub const fn is_write(self) -> bool {
+        matches!(self, Self::Write | Self::FunctionalWrite)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -532,6 +540,14 @@ impl TrafficTraceErrorEvent {
 
     pub const fn size_bytes(self) -> Option<u64> {
         self.size_bytes
+    }
+
+    pub const fn is_read(self) -> bool {
+        self.kind.is_read()
+    }
+
+    pub const fn is_write(self) -> bool {
+        self.kind.is_write()
     }
 
     pub const fn trace_packet_id(self) -> Option<u64> {
