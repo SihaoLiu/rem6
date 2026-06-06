@@ -22,6 +22,14 @@ use crate::{
     TrafficGeneratorError,
 };
 
+mod shape;
+
+use self::shape::{
+    validate_cache_block_zero_request, validate_cache_read_request, validate_clean_evict_request,
+    validate_clean_maintenance_request, validate_invalidate_request, validate_upgrade_request,
+    validate_write_line_request, validate_writeback_request,
+};
+
 const GEM5_READ_REQ: u32 = 1;
 const GEM5_READ_RESP: u32 = 2;
 const GEM5_READ_RESP_WITH_INVALIDATE: u32 = 3;
@@ -1218,7 +1226,7 @@ impl TrafficTraceGenerator {
             TrafficRequestKind::Read
                 if element.command == TrafficTraceCommand::StoreConditionalUpgradeFail =>
             {
-                validate_upgrade_request(address, size, layout)?;
+                validate_upgrade_request(element.command, address, size, layout)?;
                 MemoryRequest::store_conditional_upgrade_fail(id, address, size, layout)
                     .map_err(Into::into)
             }
@@ -1316,13 +1324,13 @@ impl TrafficTraceGenerator {
                 MemoryRequest::invalidate_writable(id, address, layout).map_err(Into::into)
             }
             TrafficRequestKind::Maintenance if element.command == TrafficTraceCommand::Upgrade => {
-                validate_upgrade_request(address, size, layout)?;
+                validate_upgrade_request(element.command, address, size, layout)?;
                 MemoryRequest::upgrade(id, address, size, layout).map_err(Into::into)
             }
             TrafficRequestKind::Maintenance
                 if element.command == TrafficTraceCommand::StoreConditionalUpgrade =>
             {
-                validate_upgrade_request(address, size, layout)?;
+                validate_upgrade_request(element.command, address, size, layout)?;
                 MemoryRequest::store_conditional_upgrade(id, address, size, layout)
                     .map_err(Into::into)
             }
@@ -1347,69 +1355,6 @@ fn build_atomic_swap_request(
     let data = vec![agent.get() as u8; data_len];
     MemoryRequest::atomic_with_op(id, address, size, MemoryAtomicOp::Swap, data, mask, layout)
         .map_err(Into::into)
-}
-
-fn validate_cache_read_request(
-    command: TrafficTraceCommand,
-    address: Address,
-    size: AccessSize,
-    layout: CacheLineLayout,
-) -> Result<(), TrafficGeneratorError> {
-    if size.bytes() != layout.bytes() {
-        return Err(TrafficGeneratorError::TraceCacheReadSizeMismatch {
-            command: command.gem5_name(),
-            size: size.bytes(),
-            line_size: layout.bytes(),
-        });
-    }
-    if layout.line_offset(address) != 0 {
-        return Err(TrafficGeneratorError::TraceCacheReadUnalignedAddress {
-            command: command.gem5_name(),
-            address,
-            line_size: layout.bytes(),
-        });
-    }
-    Ok(())
-}
-
-fn validate_write_line_request(
-    address: Address,
-    size: AccessSize,
-    layout: CacheLineLayout,
-) -> Result<(), TrafficGeneratorError> {
-    if size.bytes() != layout.bytes() {
-        return Err(TrafficGeneratorError::TraceWriteLineSizeMismatch {
-            size: size.bytes(),
-            line_size: layout.bytes(),
-        });
-    }
-    if layout.line_offset(address) != 0 {
-        return Err(TrafficGeneratorError::TraceWriteLineUnalignedAddress {
-            address,
-            line_size: layout.bytes(),
-        });
-    }
-    Ok(())
-}
-
-fn validate_cache_block_zero_request(
-    address: Address,
-    size: AccessSize,
-    layout: CacheLineLayout,
-) -> Result<(), TrafficGeneratorError> {
-    if size.bytes() != layout.bytes() {
-        return Err(TrafficGeneratorError::TraceCacheBlockZeroSizeMismatch {
-            size: size.bytes(),
-            line_size: layout.bytes(),
-        });
-    }
-    if layout.line_offset(address) != 0 {
-        return Err(TrafficGeneratorError::TraceCacheBlockZeroUnalignedAddress {
-            address,
-            line_size: layout.bytes(),
-        });
-    }
-    Ok(())
 }
 
 fn build_write_request(
@@ -1468,29 +1413,6 @@ fn build_store_conditional_fail_request(
     MemoryRequest::store_conditional_fail(id, address, size, data, mask, layout).map_err(Into::into)
 }
 
-fn validate_writeback_request(
-    command: TrafficTraceCommand,
-    address: Address,
-    size: AccessSize,
-    layout: CacheLineLayout,
-) -> Result<(), TrafficGeneratorError> {
-    if size.bytes() != layout.bytes() {
-        return Err(TrafficGeneratorError::TraceWritebackSizeMismatch {
-            command: command.gem5_name(),
-            size: size.bytes(),
-            line_size: layout.bytes(),
-        });
-    }
-    if layout.line_offset(address) != 0 {
-        return Err(TrafficGeneratorError::TraceWritebackUnalignedAddress {
-            command: command.gem5_name(),
-            address,
-            line_size: layout.bytes(),
-        });
-    }
-    Ok(())
-}
-
 fn build_writeback_request(
     command: TrafficTraceCommand,
     agent: AgentId,
@@ -1514,91 +1436,6 @@ fn build_writeback_request(
         }
         _ => unreachable!("writeback builder is only called for writeback trace commands"),
     }
-}
-
-fn validate_clean_evict_request(
-    address: Address,
-    size: AccessSize,
-    layout: CacheLineLayout,
-) -> Result<(), TrafficGeneratorError> {
-    if size.bytes() != layout.bytes() {
-        return Err(TrafficGeneratorError::TraceCleanEvictSizeMismatch {
-            size: size.bytes(),
-            line_size: layout.bytes(),
-        });
-    }
-    if layout.line_offset(address) != 0 {
-        return Err(TrafficGeneratorError::TraceCleanEvictUnalignedAddress {
-            address,
-            line_size: layout.bytes(),
-        });
-    }
-    Ok(())
-}
-
-fn validate_clean_maintenance_request(
-    command: TrafficTraceCommand,
-    address: Address,
-    size: AccessSize,
-    layout: CacheLineLayout,
-) -> Result<(), TrafficGeneratorError> {
-    if size.bytes() != layout.bytes() {
-        return Err(TrafficGeneratorError::TraceCleanMaintenanceSizeMismatch {
-            command: command.gem5_name(),
-            size: size.bytes(),
-            line_size: layout.bytes(),
-        });
-    }
-    if layout.line_offset(address) != 0 {
-        return Err(
-            TrafficGeneratorError::TraceCleanMaintenanceUnalignedAddress {
-                command: command.gem5_name(),
-                address,
-                line_size: layout.bytes(),
-            },
-        );
-    }
-    Ok(())
-}
-
-fn validate_upgrade_request(
-    address: Address,
-    size: AccessSize,
-    layout: CacheLineLayout,
-) -> Result<(), TrafficGeneratorError> {
-    if size.bytes() != layout.bytes() {
-        return Err(TrafficGeneratorError::TraceUpgradeSizeMismatch {
-            size: size.bytes(),
-            line_size: layout.bytes(),
-        });
-    }
-    if layout.line_offset(address) != 0 {
-        return Err(TrafficGeneratorError::TraceUpgradeUnalignedAddress {
-            address,
-            line_size: layout.bytes(),
-        });
-    }
-    Ok(())
-}
-
-fn validate_invalidate_request(
-    address: Address,
-    size: AccessSize,
-    layout: CacheLineLayout,
-) -> Result<(), TrafficGeneratorError> {
-    if size.bytes() != layout.bytes() {
-        return Err(TrafficGeneratorError::TraceInvalidateSizeMismatch {
-            size: size.bytes(),
-            line_size: layout.bytes(),
-        });
-    }
-    if layout.line_offset(address) != 0 {
-        return Err(TrafficGeneratorError::TraceInvalidateUnalignedAddress {
-            address,
-            line_size: layout.bytes(),
-        });
-    }
-    Ok(())
 }
 
 fn parse_packet(message: &[u8]) -> Result<TrafficTraceElement, TrafficGeneratorError> {

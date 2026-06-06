@@ -1587,6 +1587,7 @@ fn trace_traffic_generator_rejects_upgrade_packet_with_partial_line_size() {
     assert_eq!(
         error,
         TrafficGeneratorError::TraceUpgradeSizeMismatch {
+            command: "UpgradeReq",
             size: 32,
             line_size: 64,
         }
@@ -1618,6 +1619,7 @@ fn trace_traffic_generator_validates_upgrade_alignment_after_addr_offset() {
     assert_eq!(
         error,
         TrafficGeneratorError::TraceUpgradeUnalignedAddress {
+            command: "UpgradeReq",
             address: Address::new(0x144),
             line_size: 64,
         }

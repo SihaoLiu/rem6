@@ -3067,7 +3067,8 @@ store-conditional request that never mutates backing data.
 Trace store-conditional-upgrade note: packet-trace support now maps gem5
 `SCUpgradeReq` and `SCUpgradeFailReq` to native typed store-conditional upgrade
 operations, preserving writable intent and response-data behavior without
-folding them into plain `Upgrade` or `ReadUnique` requests.
+folding them into plain `Upgrade` or `ReadUnique` requests; their line-shape
+diagnostics retain the original gem5 command name.
 
 Trace sync note: packet-trace support now maps gem5 no-address `MemFenceReq`
 and `MemSyncReq` packets to typed trace sync events rather than

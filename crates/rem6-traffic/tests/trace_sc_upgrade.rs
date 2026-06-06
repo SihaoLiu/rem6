@@ -110,9 +110,49 @@ fn trace_traffic_generator_rejects_sc_upgrade_packet_with_partial_line_size() {
     assert_eq!(
         error,
         rem6_traffic::TrafficGeneratorError::TraceUpgradeSizeMismatch {
+            command: "SCUpgradeReq",
             size: 32,
             line_size: 64,
         }
+    );
+    assert_eq!(
+        error.to_string(),
+        "gem5 packet trace SCUpgradeReq size 32 does not match cache line size 64"
+    );
+}
+
+#[test]
+fn trace_traffic_generator_rejects_sc_upgrade_fail_packet_unaligned_after_addr_offset() {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace(
+            TICK_FREQUENCY,
+            &[PacketFields {
+                tick: 9,
+                command: 20,
+                address: 0x1c0,
+                size: 64,
+            }],
+        ),
+        TICK_FREQUENCY,
+    )
+    .unwrap();
+    let config = trace_config(trace).with_addr_offset(8).unwrap();
+    let mut generator = TrafficTraceGenerator::new(config);
+    generator.enter(30);
+
+    let error = generator.next_request(30, 0).unwrap_err();
+
+    assert_eq!(
+        error,
+        rem6_traffic::TrafficGeneratorError::TraceUpgradeUnalignedAddress {
+            command: "SCUpgradeFailReq",
+            address: Address::new(0x1c8),
+            line_size: 64,
+        }
+    );
+    assert_eq!(
+        error.to_string(),
+        "gem5 packet trace SCUpgradeFailReq address 0x1c8 is not aligned to cache line size 64"
     );
 }
 
