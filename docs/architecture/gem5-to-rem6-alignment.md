@@ -2941,8 +2941,10 @@ read/write byte accounting. This imports gem5 packet error responses as
 first-class trace observations, and the traffic controller now matches them to
 pending replay sources using optional trace packet id, source-appropriate
 address and size metadata, and error policy so a wrong error class does not
-consume an unrelated pending request. Full error propagation through memory
-controllers, caches, and CPU ports remains a separate contract.
+consume an unrelated pending request. Matched errors now carry typed replay
+failure records for memory-request failures and sync/HTM control failures,
+while full error propagation through memory controllers, caches, and CPU ports
+remains a separate contract.
 Trace packet flag handling now maps non-prefetch `INST_FETCH` on `ReadReq`,
 `ReadCleanReq`, and
 `ReadSharedReq` packets to native instruction-fetch requests, accepts `PHYSICAL`

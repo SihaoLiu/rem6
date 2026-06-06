@@ -2,8 +2,9 @@ use rem6_memory::{AgentId, CacheLineLayout, MemoryOperation, ResponseStatus};
 use rem6_traffic::{
     TrafficController, TrafficControllerConfig, TrafficControllerState, TrafficStateGenerator,
     TrafficStateGraphConfig, TrafficStateId, TrafficStateSpec, TrafficTrace, TrafficTraceConfig,
-    TrafficTraceReplayCompletion, TrafficTraceReplaySource, TrafficTraceResponseKind,
-    TrafficTransition, TrafficTransitionProbability, TRAFFIC_TRANSITION_PROBABILITY_SCALE,
+    TrafficTraceErrorKind, TrafficTraceReplayCompletion, TrafficTraceReplayFailure,
+    TrafficTraceReplaySource, TrafficTraceResponseKind, TrafficTransition,
+    TrafficTransitionProbability, TRAFFIC_TRANSITION_PROBABILITY_SCALE,
 };
 
 const GEM5_MAGIC: [u8; 4] = [0x67, 0x65, 0x6d, 0x35];
@@ -182,9 +183,57 @@ fn traffic_controller_matches_trace_error_to_pending_write_request() {
     let error_batch = controller.next_event(request.tick(), 0).unwrap().unwrap();
     let matched = error_batch.trace_error_match().unwrap();
     assert!(matched.error().is_write());
+    match matched.failure() {
+        TrafficTraceReplayFailure::Memory(failure) => {
+            assert_eq!(failure.request_id(), request.request().id());
+            assert_eq!(failure.error(), TrafficTraceErrorKind::Write);
+        }
+        failure => panic!("unexpected trace replay failure: {failure:?}"),
+    }
     match matched.source() {
         TrafficTraceReplaySource::Memory(source) => {
             assert_eq!(source.request().id(), request.request().id());
+        }
+        source => panic!("unexpected trace replay source: {source:?}"),
+    }
+}
+
+#[test]
+fn traffic_controller_matches_trace_error_to_pending_htm_request() {
+    let mut controller = controller_for_packets(&[
+        PacketFields {
+            tick: 5,
+            command: GEM5_HTM_REQ,
+            address: Some(0x5400),
+            size: Some(16),
+            packet_id: Some(14),
+        },
+        PacketFields {
+            tick: 7,
+            command: GEM5_INVALID_DEST_ERROR,
+            address: Some(0x5400),
+            size: Some(16),
+            packet_id: Some(14),
+        },
+    ]);
+
+    assert!(controller.start(20).unwrap().is_empty());
+    let htm_batch = controller.next_event(20, 0).unwrap().unwrap();
+    let htm = htm_batch.trace_htm().unwrap();
+    assert!(htm.requires_response());
+
+    let error_batch = controller.next_event(htm.tick(), 0).unwrap().unwrap();
+    let matched = error_batch.trace_error_match().unwrap();
+    match matched.failure() {
+        TrafficTraceReplayFailure::Control(failure) => {
+            assert_eq!(failure.error(), TrafficTraceErrorKind::InvalidDestination);
+        }
+        failure => panic!("unexpected trace replay failure: {failure:?}"),
+    }
+    match matched.source() {
+        TrafficTraceReplaySource::Htm(source) => {
+            assert_eq!(source.sequence(), htm.sequence());
+            assert_eq!(source.trace_packet_id(), Some(14));
         }
         source => panic!("unexpected trace replay source: {source:?}"),
     }

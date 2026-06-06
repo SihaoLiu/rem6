@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use rem6_memory::{MemoryOperation, MemoryResponse};
+use rem6_memory::{MemoryOperation, MemoryRequestId, MemoryResponse};
 
 use crate::{
     stream::{apply_stream_ids_to_event, TrafficStreamConfig, TrafficStreamPicker},
@@ -10,10 +10,10 @@ use crate::{
     TrafficGupsSnapshot, TrafficHybridSnapshot, TrafficIdleGenerator, TrafficIdleSnapshot,
     TrafficLinearSnapshot, TrafficRandomSnapshot, TrafficRequestEvent, TrafficStateGraphConfig,
     TrafficStateId, TrafficStateMachine, TrafficStateSnapshot, TrafficStridedSnapshot,
-    TrafficTraceCacheEvent, TrafficTraceDiagnosticEvent, TrafficTraceErrorEvent, TrafficTraceEvent,
-    TrafficTraceExitStatus, TrafficTraceGenerator, TrafficTraceHtmEvent, TrafficTraceResponseEvent,
-    TrafficTraceResponseKind, TrafficTraceSnapshot, TrafficTraceSyncEvent, TrafficTraceTlbEvent,
-    TrafficTransitionEvent,
+    TrafficTraceCacheEvent, TrafficTraceDiagnosticEvent, TrafficTraceErrorEvent,
+    TrafficTraceErrorKind, TrafficTraceEvent, TrafficTraceExitStatus, TrafficTraceGenerator,
+    TrafficTraceHtmEvent, TrafficTraceResponseEvent, TrafficTraceResponseKind,
+    TrafficTraceSnapshot, TrafficTraceSyncEvent, TrafficTraceTlbEvent, TrafficTransitionEvent,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -775,6 +775,47 @@ pub enum TrafficTraceReplayCompletion {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TrafficTraceReplayFailure {
+    Memory(TrafficTraceMemoryFailure),
+    Control(TrafficTraceControlFailure),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TrafficTraceMemoryFailure {
+    request_id: MemoryRequestId,
+    error: TrafficTraceErrorKind,
+}
+
+impl TrafficTraceMemoryFailure {
+    pub const fn new(request_id: MemoryRequestId, error: TrafficTraceErrorKind) -> Self {
+        Self { request_id, error }
+    }
+
+    pub const fn request_id(self) -> MemoryRequestId {
+        self.request_id
+    }
+
+    pub const fn error(self) -> TrafficTraceErrorKind {
+        self.error
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TrafficTraceControlFailure {
+    error: TrafficTraceErrorKind,
+}
+
+impl TrafficTraceControlFailure {
+    pub const fn new(error: TrafficTraceErrorKind) -> Self {
+        Self { error }
+    }
+
+    pub const fn error(self) -> TrafficTraceErrorKind {
+        self.error
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TrafficTraceResponseMatch {
     response: TrafficTraceResponseEvent,
     source: TrafficTraceReplaySource,
@@ -811,11 +852,17 @@ impl TrafficTraceResponseMatch {
 pub struct TrafficTraceErrorMatch {
     error: TrafficTraceErrorEvent,
     source: TrafficTraceReplaySource,
+    failure: TrafficTraceReplayFailure,
 }
 
 impl TrafficTraceErrorMatch {
-    pub const fn new(error: TrafficTraceErrorEvent, source: TrafficTraceReplaySource) -> Self {
-        Self { error, source }
+    pub fn new(error: TrafficTraceErrorEvent, source: TrafficTraceReplaySource) -> Self {
+        let failure = trace_error_failure(error, &source);
+        Self {
+            error,
+            source,
+            failure,
+        }
     }
 
     pub const fn error(&self) -> TrafficTraceErrorEvent {
@@ -824,6 +871,10 @@ impl TrafficTraceErrorMatch {
 
     pub const fn source(&self) -> &TrafficTraceReplaySource {
         &self.source
+    }
+
+    pub const fn failure(&self) -> &TrafficTraceReplayFailure {
+        &self.failure
     }
 }
 
@@ -1156,6 +1207,20 @@ fn trace_response_completion(
         TrafficTraceReplaySource::Sync(_) | TrafficTraceReplaySource::Htm(_) => {
             debug_assert!(!response.is_write());
             Ok(TrafficTraceReplayCompletion::Ack)
+        }
+    }
+}
+
+fn trace_error_failure(
+    error: TrafficTraceErrorEvent,
+    source: &TrafficTraceReplaySource,
+) -> TrafficTraceReplayFailure {
+    match source {
+        TrafficTraceReplaySource::Memory(request) => TrafficTraceReplayFailure::Memory(
+            TrafficTraceMemoryFailure::new(request.request().id(), error.kind()),
+        ),
+        TrafficTraceReplaySource::Sync(_) | TrafficTraceReplaySource::Htm(_) => {
+            TrafficTraceReplayFailure::Control(TrafficTraceControlFailure::new(error.kind()))
         }
     }
 }
