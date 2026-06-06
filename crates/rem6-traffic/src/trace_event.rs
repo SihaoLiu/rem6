@@ -131,6 +131,27 @@ impl TrafficTraceResponseKind {
             Self::HtmRequest => "HTMReqResp",
         }
     }
+
+    pub const fn returns_data(self) -> bool {
+        matches!(
+            self,
+            Self::Read
+                | Self::ReadWithInvalidate
+                | Self::SoftPrefetch
+                | Self::HardPrefetch
+                | Self::UpgradeFail
+                | Self::ReadExclusive
+                | Self::LockedRmwRead
+                | Self::Swap
+        )
+    }
+
+    pub const fn invalidates_line(self) -> bool {
+        matches!(
+            self,
+            Self::ReadWithInvalidate | Self::CleanInvalid | Self::Invalidate
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -439,6 +460,14 @@ impl TrafficTraceResponseEvent {
 
     pub const fn size_bytes(self) -> Option<u64> {
         self.size_bytes
+    }
+
+    pub const fn returns_data(self) -> bool {
+        self.kind.returns_data()
+    }
+
+    pub const fn invalidates_line(self) -> bool {
+        self.kind.invalidates_line()
     }
 
     pub const fn trace_packet_id(self) -> Option<u64> {

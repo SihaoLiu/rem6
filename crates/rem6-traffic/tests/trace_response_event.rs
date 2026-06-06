@@ -122,6 +122,8 @@ fn trace_generator_emits_response_events() {
     );
     assert_eq!(read_response.address(), Some(Address::new(0x4000)));
     assert_eq!(read_response.size_bytes(), Some(8));
+    assert!(read_response.returns_data());
+    assert!(read_response.invalidates_line());
     assert_eq!(read_response.trace_packet_id(), Some(2));
     assert_eq!(read_response.trace_pc(), Some(Address::new(0x1004)));
 
@@ -138,6 +140,8 @@ fn trace_generator_emits_response_events() {
     assert_eq!(fence_response.kind(), TrafficTraceResponseKind::MemFence);
     assert_eq!(fence_response.address(), None);
     assert_eq!(fence_response.size_bytes(), None);
+    assert!(!fence_response.returns_data());
+    assert!(!fence_response.invalidates_line());
     assert_eq!(fence_response.trace_packet_id(), Some(3));
     assert_eq!(fence_response.trace_pc(), Some(Address::new(0x1008)));
 
@@ -347,6 +351,46 @@ fn trace_generator_maps_all_gem5_response_kinds() {
             TrafficTraceResponseKind::HtmRequest,
         ]
     );
+}
+
+#[test]
+fn trace_response_kind_preserves_gem5_response_attributes() {
+    let expectations = [
+        (TrafficTraceResponseKind::Read, true, false),
+        (TrafficTraceResponseKind::ReadWithInvalidate, true, true),
+        (TrafficTraceResponseKind::Write, false, false),
+        (TrafficTraceResponseKind::WriteComplete, false, false),
+        (TrafficTraceResponseKind::SoftPrefetch, true, false),
+        (TrafficTraceResponseKind::HardPrefetch, true, false),
+        (TrafficTraceResponseKind::Upgrade, false, false),
+        (TrafficTraceResponseKind::UpgradeFail, true, false),
+        (TrafficTraceResponseKind::ReadExclusive, true, false),
+        (TrafficTraceResponseKind::StoreConditional, false, false),
+        (TrafficTraceResponseKind::LockedRmwRead, true, false),
+        (TrafficTraceResponseKind::LockedRmwWrite, false, false),
+        (TrafficTraceResponseKind::Swap, true, false),
+        (TrafficTraceResponseKind::MemSync, false, false),
+        (TrafficTraceResponseKind::MemFence, false, false),
+        (TrafficTraceResponseKind::CleanShared, false, false),
+        (TrafficTraceResponseKind::CleanInvalid, false, true),
+        (TrafficTraceResponseKind::Invalidate, false, true),
+        (TrafficTraceResponseKind::HtmRequest, false, false),
+    ];
+
+    for (kind, returns_data, invalidates_line) in expectations {
+        assert_eq!(
+            kind.returns_data(),
+            returns_data,
+            "{} data policy should match gem5",
+            kind.gem5_name()
+        );
+        assert_eq!(
+            kind.invalidates_line(),
+            invalidates_line,
+            "{} invalidate policy should match gem5",
+            kind.gem5_name()
+        );
+    }
 }
 
 fn state(id: u32, duration: u64) -> TrafficStateSpec {
