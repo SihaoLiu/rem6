@@ -9,7 +9,7 @@ use crate::{
     TrafficExitGenerator, TrafficGeneratorError, TrafficGupsConfig, TrafficHybridConfig,
     TrafficHybridSideConfig, TrafficIdleConfig, TrafficIdleGenerator, TrafficLinearConfig,
     TrafficRandomConfig, TrafficStateGenerator, TrafficStateGraphConfig, TrafficStateId,
-    TrafficStateSpec, TrafficStridedConfig, TrafficTrace, TrafficTraceConfig,
+    TrafficStateSpec, TrafficStreamConfig, TrafficStridedConfig, TrafficTrace, TrafficTraceConfig,
     TrafficTraceGenerator, TrafficTransition, TrafficTransitionProbability,
     TRAFFIC_TRANSITION_PROBABILITY_SCALE,
 };
@@ -92,9 +92,10 @@ impl TrafficTextConfig {
         let states = self
             .states
             .iter()
-            .map(|state| state.to_controller_state(options))
+            .map(|state| state.to_controller_state(options.clone()))
             .collect::<Result<Vec<_>, _>>()?;
-        TrafficControllerConfig::new(self.graph.clone(), states)
+        let config = TrafficControllerConfig::new(self.graph.clone(), states)?;
+        Ok(options.apply_stream(config))
     }
 
     pub fn to_controller_config_with_trace_resolver<F>(
@@ -111,13 +112,14 @@ impl TrafficTextConfig {
             .iter()
             .map(|state| {
                 state.to_controller_state_with_trace_resolver(
-                    options,
+                    options.clone(),
                     expected_tick_frequency,
                     &mut resolve_trace,
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
-        TrafficControllerConfig::new(self.graph.clone(), states)
+        let config = TrafficControllerConfig::new(self.graph.clone(), states)?;
+        Ok(options.apply_stream(config))
     }
 }
 
@@ -278,11 +280,12 @@ impl TrafficTextStateMode {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TrafficTextBindingOptions {
     agent: AgentId,
     line_layout: CacheLineLayout,
     elastic_requests: bool,
+    stream: Option<TrafficStreamConfig>,
 }
 
 impl TrafficTextBindingOptions {
@@ -291,6 +294,7 @@ impl TrafficTextBindingOptions {
             agent,
             line_layout,
             elastic_requests: false,
+            stream: None,
         }
     }
 
@@ -299,16 +303,32 @@ impl TrafficTextBindingOptions {
         self
     }
 
-    pub const fn agent(self) -> AgentId {
+    pub fn with_stream(mut self, stream: TrafficStreamConfig) -> Self {
+        self.stream = Some(stream);
+        self
+    }
+
+    pub const fn agent(&self) -> AgentId {
         self.agent
     }
 
-    pub const fn line_layout(self) -> CacheLineLayout {
+    pub const fn line_layout(&self) -> CacheLineLayout {
         self.line_layout
     }
 
-    pub const fn elastic_requests(self) -> bool {
+    pub const fn elastic_requests(&self) -> bool {
         self.elastic_requests
+    }
+
+    pub fn stream(&self) -> Option<&TrafficStreamConfig> {
+        self.stream.as_ref()
+    }
+
+    fn apply_stream(self, config: TrafficControllerConfig) -> TrafficControllerConfig {
+        match self.stream {
+            Some(stream) => config.with_stream(stream),
+            None => config,
+        }
     }
 }
 

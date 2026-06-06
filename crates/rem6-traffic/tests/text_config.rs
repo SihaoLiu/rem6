@@ -5,8 +5,8 @@ use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout, MemoryOperation
 use rem6_traffic::{
     TrafficController, TrafficControllerConfig, TrafficDramAddressMapping, TrafficDramMode,
     TrafficGeneratorError, TrafficHybridSide, TrafficStateGenerator, TrafficStateId,
-    TrafficTextBindingOptions, TrafficTextConfig, TrafficTextGupsParams, TrafficTextMemoryParams,
-    TrafficTextStateMode, TRAFFIC_TRANSITION_PROBABILITY_SCALE,
+    TrafficStreamConfig, TrafficTextBindingOptions, TrafficTextConfig, TrafficTextGupsParams,
+    TrafficTextMemoryParams, TrafficTextStateMode, TRAFFIC_TRANSITION_PROBABILITY_SCALE,
 };
 
 const GEM5_MAGIC: [u8; 4] = [0x67, 0x65, 0x6d, 0x35];
@@ -507,6 +507,38 @@ fn traffic_text_config_binds_gups_mode_to_controller_generator() {
 }
 
 #[test]
+fn traffic_text_binding_options_apply_stream_generator_to_controller_requests() {
+    let config = parse(
+        r#"
+        STATE 0 10 LINEAR 100 4096 8192 32 1 1 32
+        INIT 0
+        TRANSITION 0 0 1
+        "#,
+    );
+    let stream = TrafficStreamConfig::fixed(21).with_fixed_substream_id(34);
+    let controller_config = config
+        .to_controller_config(binding_options().with_stream(stream))
+        .unwrap();
+
+    assert_eq!(controller_config.stream().unwrap().stream_ids(), &[21]);
+    assert_eq!(controller_config.stream().unwrap().substream_ids(), &[34]);
+
+    let mut controller = TrafficController::new(controller_config);
+    assert!(controller.start(0).unwrap().is_empty());
+    let request = controller
+        .next_event(0, 0)
+        .unwrap()
+        .unwrap()
+        .request()
+        .unwrap()
+        .clone();
+
+    assert_eq!(request.tick(), 1);
+    assert_eq!(request.request().stream_id(), Some(21));
+    assert_eq!(request.request().substream_id(), Some(34));
+}
+
+#[test]
 fn traffic_text_binding_options_default_to_gem5_non_elastic_requests() {
     let config = parse(
         r#"
@@ -517,7 +549,9 @@ fn traffic_text_binding_options_default_to_gem5_non_elastic_requests() {
     );
 
     let default_options = TrafficTextBindingOptions::new(AgentId::new(9), line_layout());
-    let default_controller = config.to_controller_config(default_options).unwrap();
+    let default_controller = config
+        .to_controller_config(default_options.clone())
+        .unwrap();
     let TrafficStateGenerator::Linear(default_linear) = bound_generator(&default_controller, 0)
     else {
         panic!("state 0 should bind to linear");
