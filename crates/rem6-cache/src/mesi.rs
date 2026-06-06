@@ -727,6 +727,7 @@ fn mesi_cpu_event(request: &MemoryRequest) -> MesiEvent {
         MemoryOperation::ReadUnique
         | MemoryOperation::LockedRmwRead
         | MemoryOperation::Write
+        | MemoryOperation::CacheBlockZero
         | MemoryOperation::StoreConditional
         | MemoryOperation::LockedRmwWrite
         | MemoryOperation::Upgrade

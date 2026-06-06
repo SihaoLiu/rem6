@@ -43,6 +43,7 @@ const GEM5_FLAG_UNCACHEABLE: u32 = 0x0000_0400;
 const GEM5_FLAG_STRICT_ORDER: u32 = 0x0000_0800;
 const GEM5_FLAG_PRIVILEGED: u32 = 0x0000_8000;
 const GEM5_FLAG_ACQUIRE_PC: u32 = 0x0000_2000;
+const GEM5_FLAG_CACHE_BLOCK_ZERO: u32 = 0x0001_0000;
 const GEM5_FLAG_ACQUIRE: u32 = 0x0002_0000;
 const GEM5_FLAG_RELEASE: u32 = 0x0004_0000;
 const GEM5_FLAG_LOCKED_RMW: u32 = 0x0010_0000;
@@ -60,6 +61,7 @@ const GEM5_SUPPORTED_TRACE_FLAGS: u32 = GEM5_FLAG_INST_FETCH
     | GEM5_FLAG_STRICT_ORDER
     | GEM5_FLAG_PRIVILEGED
     | GEM5_FLAG_ACQUIRE_PC
+    | GEM5_FLAG_CACHE_BLOCK_ZERO
     | GEM5_FLAG_ACQUIRE
     | GEM5_FLAG_RELEASE
     | GEM5_FLAG_LOCKED_RMW
@@ -182,6 +184,7 @@ struct TrafficTraceRequestFlags {
     uncacheable: bool,
     strict_order: bool,
     privileged: bool,
+    cache_block_zero: bool,
     acquire: bool,
     release: bool,
     locked_rmw: bool,
@@ -210,6 +213,7 @@ impl TrafficTraceRequestFlags {
             uncacheable: bits & GEM5_FLAG_UNCACHEABLE != 0,
             strict_order: bits & GEM5_FLAG_STRICT_ORDER != 0,
             privileged: bits & GEM5_FLAG_PRIVILEGED != 0,
+            cache_block_zero: bits & GEM5_FLAG_CACHE_BLOCK_ZERO != 0,
             acquire: bits & (GEM5_FLAG_ACQUIRE | GEM5_FLAG_ACQUIRE_PC) != 0,
             release: bits & GEM5_FLAG_RELEASE != 0,
             locked_rmw: bits & GEM5_FLAG_LOCKED_RMW != 0,
@@ -255,6 +259,9 @@ impl TrafficTraceRequestFlags {
             }
         }
         if self.prefetch && command == TrafficTraceCommand::Write && !self.prefetch_exclusive {
+            return Err(TrafficGeneratorError::TraceUnsupportedFlags { flags: self.bits });
+        }
+        if self.cache_block_zero && command != TrafficTraceCommand::Write {
             return Err(TrafficGeneratorError::TraceUnsupportedFlags { flags: self.bits });
         }
         if self.llsc
@@ -696,6 +703,10 @@ impl TrafficTraceGenerator {
                 validate_write_line_request(address, element.size, layout)?;
                 build_write_request(self.config.agent(), id, address, element.size, layout)
             }
+            TrafficRequestKind::Write if element.flags.cache_block_zero => {
+                validate_cache_block_zero_request(address, element.size, layout)?;
+                MemoryRequest::cache_block_zero(id, address, layout).map_err(Into::into)
+            }
             TrafficRequestKind::Write
                 if matches!(
                     element.command,
@@ -805,6 +816,26 @@ fn validate_write_line_request(
     }
     if layout.line_offset(address) != 0 {
         return Err(TrafficGeneratorError::TraceWriteLineUnalignedAddress {
+            address,
+            line_size: layout.bytes(),
+        });
+    }
+    Ok(())
+}
+
+fn validate_cache_block_zero_request(
+    address: Address,
+    size: AccessSize,
+    layout: CacheLineLayout,
+) -> Result<(), TrafficGeneratorError> {
+    if size.bytes() != layout.bytes() {
+        return Err(TrafficGeneratorError::TraceCacheBlockZeroSizeMismatch {
+            size: size.bytes(),
+            line_size: layout.bytes(),
+        });
+    }
+    if layout.line_offset(address) != 0 {
+        return Err(TrafficGeneratorError::TraceCacheBlockZeroUnalignedAddress {
             address,
             line_size: layout.bytes(),
         });

@@ -419,6 +419,14 @@ impl MemoryRequest {
         )
     }
 
+    pub fn cache_block_zero(
+        id: MemoryRequestId,
+        address: Address,
+        line_layout: CacheLineLayout,
+    ) -> Result<Self, MemoryError> {
+        Self::line_maintenance(id, MemoryOperation::CacheBlockZero, address, line_layout)
+    }
+
     pub fn atomic(
         id: MemoryRequestId,
         address: Address,
@@ -632,6 +640,7 @@ impl MemoryRequest {
         Self::validate_payload(id, operation, size, payload.data.as_deref())?;
         Self::validate_mask(id, operation, size, payload.byte_mask.as_ref())?;
         Self::validate_atomic_op(id, operation, payload.atomic_op)?;
+        Self::validate_cache_block_zero_shape(operation, address, size, line_layout)?;
 
         Ok(Self {
             id,
@@ -700,6 +709,30 @@ impl MemoryRequest {
             (_, Some(_)) => Err(MemoryError::UnexpectedByteMask { request: id }),
             (_, None) => Ok(()),
         }
+    }
+
+    fn validate_cache_block_zero_shape(
+        operation: MemoryOperation,
+        address: Address,
+        size: AccessSize,
+        line_layout: CacheLineLayout,
+    ) -> Result<(), MemoryError> {
+        if operation != MemoryOperation::CacheBlockZero {
+            return Ok(());
+        }
+        if line_layout.line_offset(address) != 0 {
+            return Err(MemoryError::UnalignedLineAddress {
+                address,
+                line_size: line_layout.bytes(),
+            });
+        }
+        if size.bytes() != line_layout.bytes() {
+            return Err(MemoryError::PayloadSizeMismatch {
+                expected: AccessSize::new(line_layout.bytes())?,
+                actual: size.bytes(),
+            });
+        }
+        Ok(())
     }
 
     fn validate_atomic_op(

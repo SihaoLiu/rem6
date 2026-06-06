@@ -136,6 +136,7 @@ pub enum MemoryOperation {
     LockedRmwRead,
     LockedRmwWrite,
     Write,
+    CacheBlockZero,
     StoreConditional,
     Upgrade,
     Atomic,
@@ -232,6 +233,7 @@ impl MemoryOperation {
             | Self::LockedRmwWrite
             | Self::PrefetchWrite
             | Self::Atomic => CoherenceIntent::WriteUnique,
+            Self::CacheBlockZero => CoherenceIntent::CacheBlockZero,
             Self::Upgrade => CoherenceIntent::Upgrade,
             Self::WriteClean => CoherenceIntent::WriteClean,
             Self::WritebackClean => CoherenceIntent::WritebackClean,
@@ -286,6 +288,7 @@ impl MemoryOperation {
             Self::ReadUnique
                 | Self::LockedRmwRead
                 | Self::Write
+                | Self::CacheBlockZero
                 | Self::StoreConditional
                 | Self::LockedRmwWrite
                 | Self::Upgrade
@@ -302,6 +305,7 @@ pub enum CoherenceIntent {
     ReadShared,
     ReadUnique,
     WriteUnique,
+    CacheBlockZero,
     Upgrade,
     WriteClean,
     WritebackClean,
@@ -412,6 +416,11 @@ impl LineMemoryStore {
             }
             MemoryOperation::Write | MemoryOperation::LockedRmwWrite => {
                 self.apply_write(request)?;
+                self.clear_locked_reservations(request);
+                MemoryResponse::completed(request, None).map(Some)
+            }
+            MemoryOperation::CacheBlockZero => {
+                self.apply_cache_block_zero(request)?;
                 self.clear_locked_reservations(request);
                 MemoryResponse::completed(request, None).map(Some)
             }
@@ -573,6 +582,12 @@ impl LineMemoryStore {
             }
         }
 
+        Ok(())
+    }
+
+    fn apply_cache_block_zero(&mut self, request: &MemoryRequest) -> Result<(), MemoryError> {
+        let line = self.line_mut(request.line_address())?;
+        line.fill(0);
         Ok(())
     }
 

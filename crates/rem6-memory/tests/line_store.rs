@@ -59,6 +59,10 @@ fn write_clean(sequence: u64, address: u64, data: Vec<u8>) -> MemoryRequest {
     MemoryRequest::write_clean(request_id(sequence), Address::new(address), data, layout()).unwrap()
 }
 
+fn cache_block_zero(sequence: u64, address: u64) -> MemoryRequest {
+    MemoryRequest::cache_block_zero(request_id(sequence), Address::new(address), layout()).unwrap()
+}
+
 fn clean_shared(sequence: u64, address: u64) -> MemoryRequest {
     MemoryRequest::clean_shared(request_id(sequence), Address::new(address), layout()).unwrap()
 }
@@ -125,6 +129,23 @@ fn line_store_applies_masked_writes_and_reports_completed_response() {
         &store.line_data(Address::new(0x1000)).unwrap()[0..8],
         &[0, 1, 0xaa, 3, 0xcc, 5, 6, 7]
     );
+}
+
+#[test]
+fn line_store_applies_cache_block_zero_to_existing_line() {
+    let mut store = LineMemoryStore::new(layout());
+    store
+        .insert_line(Address::new(0x1000), line_data(0x10))
+        .unwrap();
+
+    let response = store
+        .respond(&cache_block_zero(5, 0x1000))
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(response.status(), ResponseStatus::Completed);
+    assert_eq!(response.data(), None);
+    assert_eq!(store.line_data(Address::new(0x1000)).unwrap(), vec![0; 64]);
 }
 
 #[test]

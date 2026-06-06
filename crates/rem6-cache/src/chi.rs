@@ -728,6 +728,7 @@ fn chi_cpu_event(request: &MemoryRequest) -> ChiEvent {
         MemoryOperation::ReadUnique
         | MemoryOperation::LockedRmwRead
         | MemoryOperation::Write
+        | MemoryOperation::CacheBlockZero
         | MemoryOperation::StoreConditional
         | MemoryOperation::LockedRmwWrite
         | MemoryOperation::Upgrade

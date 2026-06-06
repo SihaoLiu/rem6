@@ -332,6 +332,7 @@ fn encode_operation(operation: MemoryOperation) -> u32 {
         MemoryOperation::LockedRmwWrite => 16,
         MemoryOperation::LoadLocked => 17,
         MemoryOperation::StoreConditional => 18,
+        MemoryOperation::CacheBlockZero => 19,
     }
 }
 
@@ -356,6 +357,7 @@ fn decode_operation(code: u32) -> Result<MemoryOperation, MemoryError> {
         16 => Ok(MemoryOperation::LockedRmwWrite),
         17 => Ok(MemoryOperation::LoadLocked),
         18 => Ok(MemoryOperation::StoreConditional),
+        19 => Ok(MemoryOperation::CacheBlockZero),
         code => Err(MemoryError::InvalidRequestCheckpointOperation { code }),
     }
 }

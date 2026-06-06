@@ -338,6 +338,7 @@ impl MoesiDirectory {
             MemoryOperation::ReadUnique
             | MemoryOperation::LockedRmwRead
             | MemoryOperation::Write
+            | MemoryOperation::CacheBlockZero
             | MemoryOperation::StoreConditional
             | MemoryOperation::LockedRmwWrite
             | MemoryOperation::Atomic

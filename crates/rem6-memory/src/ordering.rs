@@ -27,6 +27,7 @@ impl MemoryOperation {
             Self::ReadUnique
                 | Self::LockedRmwRead
                 | Self::Write
+                | Self::CacheBlockZero
                 | Self::StoreConditional
                 | Self::LockedRmwWrite
                 | Self::Upgrade

@@ -2820,7 +2820,9 @@ request with writable intent, response data, and read byte accounting,
 `LockedRMWWriteReq` command-id 32 maps to a native locked-RMW write request with
 deterministic synthetic write data, a full byte mask, writable intent, a
 response without data, and write byte accounting, cache-line-aligned line-sized
-`WriteLineReq` maps to `Write`, and cache-line-aligned line-sized
+`WriteLineReq` maps to `Write`, line-sized `WriteReq` packets carrying
+`CACHE_BLOCK_ZERO` map to native no-payload block-zero writes when cache-line
+aligned, and cache-line-aligned line-sized
 `WritebackDirty` plus `WritebackClean` packets map to native writeback
 operations. Cache-line-aligned line-sized `WriteClean` command-id 9 packets map
 to a native non-evicting clean write operation with data, no byte mask, no
@@ -2852,10 +2854,12 @@ now maps non-prefetch `INST_FETCH` on `ReadReq`, `ReadCleanReq`, and
 `ReadSharedReq` packets to native instruction-fetch requests, accepts `PHYSICAL`
 as trace-address metadata, maps `PREFETCH` and `PF_EXCLUSIVE` packet flags to
 native read and writable prefetch requests with prefetch precedence when those
-read-family packets also carry `INST_FETCH`, and maps
-`UNCACHEABLE`, `STRICT_ORDER` plus `UNCACHEABLE`, `ACQUIRE`, `ACQUIRE_PC`,
-`RELEASE`, `PRIVILEGED`, `SECURE`, `PT_WALK`, and `EVICT_NEXT` into typed rem6 request
-metadata, accepts matching-packet `LLSC`, `LOCKED_RMW`, `MEM_SWAP`, and
+read-family packets also carry `INST_FETCH`, maps `CACHE_BLOCK_ZERO` on
+line-sized cache-line-aligned `WriteReq` packets to native block-zero requests,
+and maps `UNCACHEABLE`, `STRICT_ORDER` plus `UNCACHEABLE`, `ACQUIRE`,
+`ACQUIRE_PC`, `RELEASE`, `PRIVILEGED`, `SECURE`, `PT_WALK`, and `EVICT_NEXT`
+into typed rem6 request metadata, accepts matching-packet `LLSC`,
+`LOCKED_RMW`, `MEM_SWAP`, and
 `MEM_SWAP_COND` as redundant operation selector flags, and rejects unsupported
 flag bits and
 non-fetch packet combinations before request construction. Trace replay
@@ -2952,6 +2956,11 @@ gem5 `SoftPFReq`, `SoftPFExReq`, and `HardPFReq` as native rem6 prefetch
 requests; the detailed command mapping paragraph records their accounting and
 response contract.
 
+Trace cache-block-zero note: packet-trace support now maps gem5
+`CACHE_BLOCK_ZERO` on line-sized cache-line-aligned `WriteReq` packets to a
+native no-payload `CacheBlockZero` memory request. Non-line-sized or unaligned
+block-zero trace packets are rejected during request construction.
+
 ### Memory, Cache, Coherence, and NoC
 
 | gem5 source anchor | rem6 owner | Coverage | Notes |
@@ -2969,6 +2978,13 @@ native `CleanShared` and `Invalidate` requests downstream before ordinary CPU
 write handling. The direct path returns a miss result with the original request,
 no local target outcome, and no typed write-queue allocation, matching the
 post-fill clean-shared and invalidation behavior above.
+
+Cache-block-zero protocol note: `CacheBlockZero` is a write-side coherence
+request. MSI, MESI, MOESI, and CHI cache banks classify it with CPU writes for
+local-controller event selection, and directory controllers route it through the
+read-unique and write-ownership path so clean sharers are invalidated before the
+backing line is zeroed. The request still carries no data or byte mask; the
+line store performs the zero fill after coherence grants writable ownership.
 
 Cache prefetch note: `QueuedPrefetcher` snapshots gem5 Base-style issued,
 useful, useful-but-miss, unused, demand-MSHR miss, cache-hit, MSHR-hit,
@@ -3136,8 +3152,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   pending `mwait` service still needs a materialized request. They also require
   a successful takeover plan to expose ordered quiesce, validation, state
   capture, target-install, and resume actions.
-- Memory line-store tests cover independent line reads, masked writes, AMO
-  read-modify-write responses, writeback replacement, request shape rejection,
+- Memory line-store tests cover independent line reads, masked writes,
+  cache-block-zero line mutation, AMO read-modify-write responses, writeback
+  replacement, request shape rejection,
   duplicate line-snapshot restore rejection, checkpoint payload binary round
   trips, stable line checkpoint golden bytes, invalid line checkpoint magic,
   version, reserved-field, line-size, and exact payload-size rejection,
@@ -3402,8 +3419,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   DMA write-request ordering inherited from copy read requests and
   heterogeneous checkpoint restore of pending DMA read-request ordering
   metadata plus uncacheable-plus-strict flags and typed request attributes,
-  including `EVICT_NEXT`, through the shared memory-request checkpoint payload
-  before bank-level prevalidation mutates live device state. Heterogeneous
+  including `EVICT_NEXT`, plus the native `CacheBlockZero` request operation
+  through the shared memory-request checkpoint payload before bank-level
+  prevalidation mutates live device state. Heterogeneous
   checkpoint decode also bounds accelerator
   command, trace, completion, pending-DMA, and DMA-completion vectors plus GPU
   slot, queued-workgroup, trace, completion, pending-DMA, and DMA-completion

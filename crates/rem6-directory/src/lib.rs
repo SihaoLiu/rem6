@@ -340,6 +340,7 @@ impl MsiDirectory {
             MemoryOperation::ReadUnique
             | MemoryOperation::LockedRmwRead
             | MemoryOperation::Write
+            | MemoryOperation::CacheBlockZero
             | MemoryOperation::StoreConditional
             | MemoryOperation::LockedRmwWrite
             | MemoryOperation::Atomic
@@ -886,6 +887,7 @@ impl MesiDirectory {
             MemoryOperation::ReadUnique
             | MemoryOperation::LockedRmwRead
             | MemoryOperation::Write
+            | MemoryOperation::CacheBlockZero
             | MemoryOperation::StoreConditional
             | MemoryOperation::LockedRmwWrite
             | MemoryOperation::Atomic

@@ -256,6 +256,14 @@ pub enum TrafficGeneratorError {
         address: Address,
         line_size: u64,
     },
+    TraceCacheBlockZeroSizeMismatch {
+        size: u64,
+        line_size: u64,
+    },
+    TraceCacheBlockZeroUnalignedAddress {
+        address: Address,
+        line_size: u64,
+    },
     TraceWritebackSizeMismatch {
         command: &'static str,
         size: u64,
@@ -721,6 +729,15 @@ impl fmt::Display for TrafficGeneratorError {
             Self::TraceWriteLineUnalignedAddress { address, line_size } => write!(
                 formatter,
                 "gem5 packet trace WriteLineReq address {:#x} is not aligned to cache line size {line_size}",
+                address.get()
+            ),
+            Self::TraceCacheBlockZeroSizeMismatch { size, line_size } => write!(
+                formatter,
+                "gem5 packet trace CACHE_BLOCK_ZERO size {size} does not match cache line size {line_size}"
+            ),
+            Self::TraceCacheBlockZeroUnalignedAddress { address, line_size } => write!(
+                formatter,
+                "gem5 packet trace CACHE_BLOCK_ZERO address {:#x} is not aligned to cache line size {line_size}",
                 address.get()
             ),
             Self::TraceWritebackSizeMismatch {

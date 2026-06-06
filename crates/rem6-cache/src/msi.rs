@@ -720,6 +720,7 @@ fn cpu_event(request: &MemoryRequest) -> MsiEvent {
         MemoryOperation::ReadUnique
         | MemoryOperation::LockedRmwRead
         | MemoryOperation::Write
+        | MemoryOperation::CacheBlockZero
         | MemoryOperation::StoreConditional
         | MemoryOperation::LockedRmwWrite
         | MemoryOperation::Upgrade

@@ -603,6 +603,34 @@ fn coherence_operations_expose_protocol_relevant_attributes() {
     assert!(!write_clean.requires_response());
     assert!(!write_clean.returns_data());
 
+    let cache_block_zero =
+        MemoryRequest::cache_block_zero(request_id(42), Address::new(0x5400), line_layout())
+            .unwrap();
+    assert_eq!(
+        cache_block_zero.operation(),
+        MemoryOperation::CacheBlockZero
+    );
+    assert_eq!(
+        cache_block_zero.coherence_intent(),
+        CoherenceIntent::CacheBlockZero
+    );
+    assert!(!cache_block_zero.carries_data());
+    assert_eq!(cache_block_zero.byte_mask(), None);
+    assert!(cache_block_zero.requires_writable());
+    assert!(cache_block_zero.requires_response());
+    assert!(!cache_block_zero.returns_data());
+
+    let unaligned_cache_block_zero =
+        MemoryRequest::cache_block_zero(request_id(43), Address::new(0x5404), line_layout())
+            .unwrap_err();
+    assert_eq!(
+        unaligned_cache_block_zero,
+        MemoryError::UnalignedLineAddress {
+            address: Address::new(0x5404),
+            line_size: 64
+        }
+    );
+
     let unaligned_write_clean = MemoryRequest::write_clean(
         request_id(21),
         Address::new(0x5004),
@@ -1178,6 +1206,28 @@ fn memory_request_checkpoint_payload_round_trips_write_clean() {
     assert_eq!(restored.operation(), MemoryOperation::WriteClean);
     assert_eq!(restored.data(), Some(&vec![0x7c; 64][..]));
     assert_eq!(restored.byte_mask(), None);
+}
+
+#[test]
+fn memory_request_checkpoint_payload_round_trips_cache_block_zero() {
+    let request =
+        MemoryRequest::cache_block_zero(request_id(25), Address::new(0x7800), line_layout())
+            .unwrap()
+            .with_ordering(MemoryAccessOrdering::new(
+                Some(MemoryBarrierSet::new(false, true)),
+                Some(MemoryBarrierSet::memory()),
+            ))
+            .with_evict_next();
+
+    let payload = MemoryRequestCheckpointPayload::from_request(&request);
+    let decoded = MemoryRequestCheckpointPayload::decode(payload.encode().as_slice()).unwrap();
+    let restored = MemoryRequest::from_snapshot(decoded.snapshot()).unwrap();
+
+    assert_eq!(restored, request);
+    assert_eq!(restored.operation(), MemoryOperation::CacheBlockZero);
+    assert_eq!(restored.data(), None);
+    assert_eq!(restored.byte_mask(), None);
+    assert!(restored.is_evict_next());
 }
 
 #[test]

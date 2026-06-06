@@ -631,6 +631,10 @@ fn read_request(cursor: &mut PayloadCursor<'_>) -> Result<MemoryRequest, String>
             byte_mask.ok_or_else(|| "MSI write request is missing byte mask".to_string())?,
             layout,
         ),
+        MemoryOperation::CacheBlockZero => {
+            reject_unexpected_request_payload("cache block zero", &data, &byte_mask)?;
+            MemoryRequest::cache_block_zero(id, address, layout)
+        }
         MemoryOperation::LockedRmwWrite => MemoryRequest::locked_rmw_write(
             id,
             address,
@@ -1003,6 +1007,7 @@ fn memory_operation_to_u8(operation: MemoryOperation) -> u8 {
         MemoryOperation::LockedRmwWrite => 16,
         MemoryOperation::LoadLocked => 17,
         MemoryOperation::StoreConditional => 18,
+        MemoryOperation::CacheBlockZero => 19,
     }
 }
 
@@ -1027,6 +1032,7 @@ fn u8_to_memory_operation(value: u8) -> Result<MemoryOperation, String> {
         16 => Ok(MemoryOperation::LockedRmwWrite),
         17 => Ok(MemoryOperation::LoadLocked),
         18 => Ok(MemoryOperation::StoreConditional),
+        19 => Ok(MemoryOperation::CacheBlockZero),
         _ => Err(format!("unknown memory operation {value}")),
     }
 }
