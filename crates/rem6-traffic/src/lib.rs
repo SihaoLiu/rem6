@@ -7,6 +7,7 @@ mod gups;
 mod hybrid;
 mod linear;
 mod state;
+mod stream;
 mod text_config;
 mod trace;
 mod trace_event;
@@ -43,6 +44,7 @@ pub use state::{
     TrafficStateSpec, TrafficTransition, TrafficTransitionEvent, TrafficTransitionProbability,
     TRAFFIC_TRANSITION_PROBABILITY_SCALE,
 };
+pub use stream::{TrafficStreamConfig, TrafficStreamIdMode};
 pub use text_config::{
     TrafficTextBindingOptions, TrafficTextConfig, TrafficTextDramParams, TrafficTextGupsParams,
     TrafficTextHybridParams, TrafficTextHybridSideParams, TrafficTextMemoryParams,

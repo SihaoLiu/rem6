@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
+    stream::{apply_stream_ids_to_event, TrafficStreamConfig, TrafficStreamPicker},
     DramTrafficGenerator, GupsTrafficGenerator, HybridTrafficGenerator, LinearTrafficGenerator,
     RandomTrafficGenerator, StridedTrafficGenerator, TrafficDramSnapshot, TrafficExitEvent,
     TrafficExitGenerator, TrafficExitSnapshot, TrafficGeneratorError, TrafficGeneratorSummary,
@@ -16,6 +17,7 @@ use crate::{
 pub struct TrafficControllerConfig {
     graph: TrafficStateGraphConfig,
     states: Vec<TrafficControllerState>,
+    stream: Option<TrafficStreamConfig>,
 }
 
 impl TrafficControllerConfig {
@@ -28,7 +30,11 @@ impl TrafficControllerConfig {
         let mut states = states;
         states.sort_by_key(TrafficControllerState::id);
 
-        Ok(Self { graph, states })
+        Ok(Self {
+            graph,
+            states,
+            stream: None,
+        })
     }
 
     pub const fn graph(&self) -> &TrafficStateGraphConfig {
@@ -37,6 +43,15 @@ impl TrafficControllerConfig {
 
     pub fn states(&self) -> &[TrafficControllerState] {
         &self.states
+    }
+
+    pub fn with_stream(mut self, stream: TrafficStreamConfig) -> Self {
+        self.stream = Some(stream);
+        self
+    }
+
+    pub fn stream(&self) -> Option<&TrafficStreamConfig> {
+        self.stream.as_ref()
     }
 }
 
@@ -271,11 +286,13 @@ impl TrafficStateGenerator {
 pub struct TrafficController {
     machine: TrafficStateMachine,
     generators: BTreeMap<TrafficStateId, TrafficStateGenerator>,
+    stream_picker: Option<TrafficStreamPicker>,
 }
 
 impl TrafficController {
     pub fn new(config: TrafficControllerConfig) -> Self {
         let machine = TrafficStateMachine::new(config.graph.clone());
+        let stream_picker = config.stream.clone().map(TrafficStreamPicker::new);
         let generators = config
             .states
             .into_iter()
@@ -284,6 +301,7 @@ impl TrafficController {
         Self {
             machine,
             generators,
+            stream_picker,
         }
     }
 
@@ -302,6 +320,12 @@ impl TrafficController {
         let config = TrafficControllerConfig::new(machine.snapshot().config().clone(), states)?;
         let mut controller = Self::new(config);
         controller.machine = machine;
+        controller.stream_picker = snapshot.stream().cloned().map(|stream| {
+            let rng_state = snapshot
+                .stream_rng_state()
+                .unwrap_or_else(|| stream.rng_state());
+            TrafficStreamPicker::with_rng_state(stream, rng_state)
+        });
         Ok(controller)
     }
 
@@ -363,6 +387,7 @@ impl TrafficController {
             return Ok(None);
         };
 
+        let event = self.apply_stream_to_event(event)?;
         let event_tick = event.tick();
         let mut events = vec![event];
         if self.should_force_transition_after_event(current, event_tick)? {
@@ -412,7 +437,14 @@ impl TrafficController {
                 TrafficStateGeneratorSnapshotEntry::new(*id, generator.snapshot())
             })
             .collect();
-        TrafficControllerSnapshot::new(self.machine.snapshot(), generators)
+        TrafficControllerSnapshot::new(self.machine.snapshot(), generators).with_stream(
+            self.stream_picker
+                .as_ref()
+                .map(|picker| picker.config().clone()),
+            self.stream_picker
+                .as_ref()
+                .map(TrafficStreamPicker::rng_state),
+        )
     }
 
     fn transition_at(
@@ -467,6 +499,21 @@ impl TrafficController {
         let force_transition =
             request_tick == u64::MAX && self.machine.next_transition_tick() == u64::MAX;
         Ok(force_transition && !generator.blocks_transition())
+    }
+
+    fn apply_stream_to_event(
+        &mut self,
+        event: TrafficControllerEvent,
+    ) -> Result<TrafficControllerEvent, TrafficGeneratorError> {
+        match (&mut self.stream_picker, event) {
+            (Some(stream_picker), TrafficControllerEvent::Request(request)) => {
+                Ok(TrafficControllerEvent::Request(apply_stream_ids_to_event(
+                    request,
+                    stream_picker.next_ids(),
+                )?))
+            }
+            (_, event) => Ok(event),
+        }
     }
 }
 
@@ -607,6 +654,8 @@ impl TrafficControllerEvent {
 pub struct TrafficControllerSnapshot {
     machine: TrafficStateSnapshot,
     generators: Vec<TrafficStateGeneratorSnapshotEntry>,
+    stream: Option<TrafficStreamConfig>,
+    stream_rng_state: Option<u64>,
 }
 
 impl TrafficControllerSnapshot {
@@ -617,7 +666,19 @@ impl TrafficControllerSnapshot {
         Self {
             machine,
             generators,
+            stream: None,
+            stream_rng_state: None,
         }
+    }
+
+    pub fn with_stream(
+        mut self,
+        stream: Option<TrafficStreamConfig>,
+        stream_rng_state: Option<u64>,
+    ) -> Self {
+        self.stream = stream;
+        self.stream_rng_state = stream_rng_state;
+        self
     }
 
     pub const fn machine(&self) -> &TrafficStateSnapshot {
@@ -626,6 +687,14 @@ impl TrafficControllerSnapshot {
 
     pub fn generators(&self) -> &[TrafficStateGeneratorSnapshotEntry] {
         &self.generators
+    }
+
+    pub fn stream(&self) -> Option<&TrafficStreamConfig> {
+        self.stream.as_ref()
+    }
+
+    pub const fn stream_rng_state(&self) -> Option<u64> {
+        self.stream_rng_state
     }
 }
 

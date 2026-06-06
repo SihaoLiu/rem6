@@ -41,6 +41,7 @@ fn no_access_checkpoint_payload_round_trips_ordering_and_attributes() {
     )
     .unwrap()
     .with_attributes(MemoryRequestAttributes::new(true, true, false))
+    .unwrap()
     .with_ordering(MemoryAccessOrdering::new(
         Some(MemoryBarrierSet::memory()),
         Some(MemoryBarrierSet::new(false, true)),

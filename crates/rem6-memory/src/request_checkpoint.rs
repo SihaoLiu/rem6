@@ -24,6 +24,8 @@ const FLAG_SECURE: u32 = 1 << 12;
 const FLAG_PAGE_TABLE_WALK: u32 = 1 << 13;
 const FLAG_EVICT_NEXT: u32 = 1 << 14;
 const FLAG_KERNEL_SYNC: u32 = 1 << 15;
+const FLAG_STREAM_ID_PRESENT: u32 = 1 << 16;
+const FLAG_SUBSTREAM_ID_PRESENT: u32 = 1 << 17;
 const KNOWN_FLAGS: u32 = FLAG_DATA_PRESENT
     | FLAG_MASK_PRESENT
     | FLAG_ATOMIC_PRESENT
@@ -39,7 +41,9 @@ const KNOWN_FLAGS: u32 = FLAG_DATA_PRESENT
     | FLAG_SECURE
     | FLAG_PAGE_TABLE_WALK
     | FLAG_EVICT_NEXT
-    | FLAG_KERNEL_SYNC;
+    | FLAG_KERNEL_SYNC
+    | FLAG_STREAM_ID_PRESENT
+    | FLAG_SUBSTREAM_ID_PRESENT;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MemoryRequestCheckpointPayload {
@@ -81,10 +85,11 @@ impl MemoryRequestCheckpointPayload {
             return Err(MemoryError::InvalidRequestCheckpointFlags { flags });
         }
         let agent = read_u32(payload, &mut offset)?;
-        let reserved = read_u32(payload, &mut offset)?;
-        if reserved != 0 {
-            return Err(MemoryError::InvalidRequestCheckpointReserved { value: reserved });
-        }
+        let stream_id = read_optional_u32_field(
+            flags,
+            FLAG_STREAM_ID_PRESENT,
+            read_u32(payload, &mut offset)?,
+        )?;
 
         let sequence = read_u64(payload, &mut offset)?;
         let address = Address::new(read_u64(payload, &mut offset)?);
@@ -93,9 +98,13 @@ impl MemoryRequestCheckpointPayload {
         let data_len = read_u64(payload, &mut offset)?;
         let mask_len = read_u64(payload, &mut offset)?;
         let atomic_code = read_u32(payload, &mut offset)?;
-        let reserved = read_u32(payload, &mut offset)?;
-        if reserved != 0 {
-            return Err(MemoryError::InvalidRequestCheckpointReserved { value: reserved });
+        let substream_id = read_optional_u32_field(
+            flags,
+            FLAG_SUBSTREAM_ID_PRESENT,
+            read_u32(payload, &mut offset)?,
+        )?;
+        if substream_id.is_some() && stream_id.is_none() {
+            return Err(MemoryError::InvalidRequestCheckpointFlags { flags });
         }
 
         let data_len_usize = request_checkpoint_usize(data_len)?;
@@ -121,7 +130,7 @@ impl MemoryRequestCheckpointPayload {
             ordering,
             flags & FLAG_UNCACHEABLE != 0,
             flags & FLAG_STRICT_ORDER != 0,
-            decode_attributes(flags),
+            decode_attributes(flags, stream_id, substream_id),
             data,
             byte_mask,
             atomic_op,
@@ -148,7 +157,7 @@ impl MemoryRequestCheckpointPayload {
         payload.extend_from_slice(&encode_operation(self.snapshot.operation()).to_le_bytes());
         payload.extend_from_slice(&encode_flags(&self.snapshot).to_le_bytes());
         payload.extend_from_slice(&self.snapshot.id().agent().get().to_le_bytes());
-        payload.extend_from_slice(&0u32.to_le_bytes());
+        payload.extend_from_slice(&self.snapshot.stream_id().unwrap_or(0).to_le_bytes());
         payload.extend_from_slice(&self.snapshot.id().sequence().to_le_bytes());
         payload.extend_from_slice(&self.snapshot.range().start().get().to_le_bytes());
         payload.extend_from_slice(&self.snapshot.range().size().bytes().to_le_bytes());
@@ -161,7 +170,7 @@ impl MemoryRequestCheckpointPayload {
         );
         payload
             .extend_from_slice(&encode_optional_atomic_op(self.snapshot.atomic_op()).to_le_bytes());
-        payload.extend_from_slice(&0u32.to_le_bytes());
+        payload.extend_from_slice(&self.snapshot.substream_id().unwrap_or(0).to_le_bytes());
         if let Some(data) = self.snapshot.data() {
             payload.extend_from_slice(data);
         }
@@ -214,6 +223,12 @@ fn encode_flags(snapshot: &MemoryRequestSnapshot) -> u32 {
     if snapshot.is_kernel_sync() {
         flags |= FLAG_KERNEL_SYNC;
     }
+    if snapshot.stream_id().is_some() {
+        flags |= FLAG_STREAM_ID_PRESENT;
+    }
+    if snapshot.substream_id().is_some() {
+        flags |= FLAG_SUBSTREAM_ID_PRESENT;
+    }
     if let Some(before) = snapshot.ordering().before() {
         flags |= FLAG_BEFORE_PRESENT;
         if before.read() {
@@ -235,7 +250,11 @@ fn encode_flags(snapshot: &MemoryRequestSnapshot) -> u32 {
     flags
 }
 
-fn decode_attributes(flags: u32) -> MemoryRequestAttributes {
+fn decode_attributes(
+    flags: u32,
+    stream_id: Option<u32>,
+    substream_id: Option<u32>,
+) -> MemoryRequestAttributes {
     let attributes = MemoryRequestAttributes::new(
         flags & FLAG_PRIVILEGED != 0,
         flags & FLAG_SECURE != 0,
@@ -251,6 +270,43 @@ fn decode_attributes(flags: u32) -> MemoryRequestAttributes {
     } else {
         attributes
     }
+    .with_optional_stream_id(stream_id)
+    .with_optional_substream_id(substream_id)
+}
+
+trait OptionalStreamAttributes {
+    fn with_optional_stream_id(self, stream_id: Option<u32>) -> Self;
+    fn with_optional_substream_id(self, substream_id: Option<u32>) -> Self;
+}
+
+impl OptionalStreamAttributes for MemoryRequestAttributes {
+    fn with_optional_stream_id(self, stream_id: Option<u32>) -> Self {
+        match stream_id {
+            Some(stream_id) => self.with_stream_id(stream_id),
+            None => self,
+        }
+    }
+
+    fn with_optional_substream_id(self, substream_id: Option<u32>) -> Self {
+        match substream_id {
+            Some(substream_id) => self.with_substream_id(substream_id),
+            None => self,
+        }
+    }
+}
+
+fn read_optional_u32_field(
+    flags: u32,
+    present_flag: u32,
+    value: u32,
+) -> Result<Option<u32>, MemoryError> {
+    if flags & present_flag != 0 {
+        return Ok(Some(value));
+    }
+    if value != 0 {
+        return Err(MemoryError::InvalidRequestCheckpointReserved { value });
+    }
+    Ok(None)
 }
 
 fn decode_ordering(flags: u32) -> Result<MemoryAccessOrdering, MemoryError> {

@@ -1440,13 +1440,16 @@ Implementation evidence through 2026-06-03:
   memory reads or writes preserve debugger thread selection while register
   mutation remains isolated to the selected core.
 - `rem6-memory` now keeps `MemoryRequest`, `MemoryResponse`, response status,
-  atomic request payload validation, and atomic read-modify-write byte
-  materialization in a focused `request` module. Memory source-policy tests keep
-  the crate root under the facade budget, require request and response state to
-  stay out of the root, and enforce the hard per-source-file size budget, so
-  cache, DRAM, transport, and CPU integrations share one typed request contract
-  with stable request and response checkpoint payloads without regrowing a
-  gem5-style packet utility monolith.
+  atomic request payload validation, optional stream and substream IDs, and
+  atomic read-modify-write byte materialization in a focused `request` module.
+  Stream metadata is preserved through request snapshots and checkpoint payloads,
+  and malformed substream-only metadata is rejected before restore can construct
+  an invalid request. Memory source-policy tests keep the crate root under the
+  facade budget, require request and response state to stay out of the root, and
+  enforce the hard per-source-file size budget, so cache, DRAM, transport, and
+  CPU integrations share one typed request contract with stable request and
+  response checkpoint payloads without regrowing a gem5-style packet utility
+  monolith.
 - `rem6-dram` now keeps public DRAM error formatting in a focused `error`
   module and target-backed external-memory controller state in
   `memory_controller`, leaving the crate root focused on timing, command, bank,
@@ -2966,9 +2969,10 @@ pointer maps with sequence-keyed pending reads and writes. A typed traffic
 controller now binds Markov graph states to the implemented idle, exit,
 linear, random, strided, DRAM-family, hybrid, GUPS, and trace generators,
 preserves gem5's transition-before-packet priority at equal ticks, surfaces
-exit and trace-exit events, and avoids live RNG mutation while comparing packet
-and transition timing. Non-memory command coverage, broader trace flag mapping,
-full
+exit and trace-exit events, applies fixed or random stream IDs with optional
+substream IDs across state generators, preserves stream-picker RNG state in
+controller snapshots, and avoids live RNG mutation while comparing packet and
+transition timing. Non-memory command coverage, broader trace flag mapping, full
 memory-controller-coupled DRAM/NVM execution, GUPS port-level transport, and
 transport retry or response statistics remain open traffic-generator targets.
 

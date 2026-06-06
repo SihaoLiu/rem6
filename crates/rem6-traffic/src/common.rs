@@ -70,6 +70,14 @@ impl TrafficRequestEvent {
         &self.request
     }
 
+    pub(crate) fn try_map_request(
+        mut self,
+        f: impl FnOnce(MemoryRequest) -> Result<MemoryRequest, TrafficGeneratorError>,
+    ) -> Result<Self, TrafficGeneratorError> {
+        self.request = f(self.request)?;
+        Ok(self)
+    }
+
     pub const fn trace_packet_id(&self) -> Option<u64> {
         self.trace_packet_id
     }

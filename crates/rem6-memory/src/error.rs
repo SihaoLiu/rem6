@@ -57,6 +57,9 @@ pub enum MemoryError {
     InvalidRequestStrictOrdering {
         request: MemoryRequestId,
     },
+    InvalidRequestStreamAttributes {
+        request: MemoryRequestId,
+    },
     InvalidRequestCheckpointPayloadSize {
         expected: usize,
         actual: usize,
@@ -334,6 +337,12 @@ impl fmt::Display for MemoryError {
             Self::InvalidRequestStrictOrdering { request } => write!(
                 formatter,
                 "request {} from agent {} cannot be strict-ordered unless it is uncacheable",
+                request.sequence(),
+                request.agent().get()
+            ),
+            Self::InvalidRequestStreamAttributes { request } => write!(
+                formatter,
+                "request {} from agent {} cannot carry a substream ID without a stream ID",
                 request.sequence(),
                 request.agent().get()
             ),

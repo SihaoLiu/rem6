@@ -10,9 +10,10 @@ use rem6_traffic::{
     TrafficDramConfig, TrafficDramMode, TrafficGeneratorError, TrafficGupsConfig,
     TrafficHybridConfig, TrafficHybridSideConfig, TrafficIdleGenerator, TrafficLinearConfig,
     TrafficRandomConfig, TrafficRequestKind, TrafficStateGenerator, TrafficStateGeneratorSnapshot,
-    TrafficStateGraphConfig, TrafficStateId, TrafficStateSpec, TrafficStridedConfig, TrafficTrace,
-    TrafficTraceConfig, TrafficTraceExitStatus, TrafficTraceGenerator, TrafficTransition,
-    TrafficTransitionProbability, TRAFFIC_TRANSITION_PROBABILITY_SCALE,
+    TrafficStateGraphConfig, TrafficStateId, TrafficStateSpec, TrafficStreamConfig,
+    TrafficStreamIdMode, TrafficStridedConfig, TrafficTrace, TrafficTraceConfig,
+    TrafficTraceExitStatus, TrafficTraceGenerator, TrafficTransition, TrafficTransitionProbability,
+    TRAFFIC_TRANSITION_PROBABILITY_SCALE,
 };
 
 const GEM5_MAGIC: [u8; 4] = [0x67, 0x65, 0x6d, 0x35];
@@ -364,6 +365,79 @@ fn traffic_controller_snapshot_restores_machine_generator_and_summary_state() {
         MemoryRequestId::new(AgentId::new(7), 1)
     );
     assert_eq!(restored.summary().packet_count(), 2);
+}
+
+#[test]
+fn traffic_controller_stream_tags_requests_across_state_generators() {
+    let stream = TrafficStreamConfig::new(
+        TrafficStreamIdMode::Random,
+        vec![4, 8, 15],
+        vec![16, 23, 42],
+    )
+    .unwrap()
+    .with_rng_state(2);
+    let config = TrafficControllerConfig::new(
+        graph(
+            vec![state(0, u64::MAX), state(1, 100)],
+            vec![transition(0, 1), transition(1, 1)],
+        ),
+        vec![
+            data_limited_state(
+                0,
+                TrafficStateGenerator::Linear(LinearTrafficGenerator::new(
+                    linear_config(1, 100).with_data_limit(16).unwrap(),
+                )),
+            ),
+            random_state(1, 1, 100),
+        ],
+    )
+    .unwrap()
+    .with_stream(stream);
+    let mut controller = TrafficController::new(config);
+
+    controller.start(0).unwrap();
+    let first = controller.next_event(0, 0).unwrap().unwrap();
+    let second = controller.next_event(1, 0).unwrap().unwrap();
+
+    assert_eq!(first.request().unwrap().request().stream_id(), Some(15));
+    assert_eq!(first.request().unwrap().request().substream_id(), Some(23));
+    assert_eq!(second.request().unwrap().request().stream_id(), Some(4));
+    assert_eq!(second.request().unwrap().request().substream_id(), Some(16));
+}
+
+#[test]
+fn traffic_controller_snapshot_restores_stream_picker_state() {
+    let stream = TrafficStreamConfig::new(
+        TrafficStreamIdMode::Random,
+        vec![4, 8, 15],
+        vec![16, 23, 42],
+    )
+    .unwrap()
+    .with_rng_state(2);
+    let config = TrafficControllerConfig::new(
+        graph(vec![state(0, 100)], vec![transition(0, 0)]),
+        vec![linear_state(0, 1, 100)],
+    )
+    .unwrap()
+    .with_stream(stream);
+    let mut controller = TrafficController::new(config);
+
+    controller.start(0).unwrap();
+    let first = controller.next_event(0, 0).unwrap().unwrap();
+    let snapshot = controller.snapshot();
+    let mut restored = TrafficController::restore(snapshot).unwrap();
+    let restored_next = restored.next_event(1, 0).unwrap().unwrap();
+
+    assert_eq!(first.request().unwrap().request().stream_id(), Some(15));
+    assert_eq!(first.request().unwrap().request().substream_id(), Some(23));
+    assert_eq!(
+        restored_next.request().unwrap().request().stream_id(),
+        Some(4)
+    );
+    assert_eq!(
+        restored_next.request().unwrap().request().substream_id(),
+        Some(16)
+    );
 }
 
 #[test]

@@ -163,7 +163,7 @@ impl TrafficLinearSnapshot {
         summary: TrafficGeneratorSummary,
         rng_state: u64,
     ) -> Result<Self, TrafficGeneratorError> {
-        validate_snapshot(config, next_address, data_manipulated)?;
+        validate_snapshot(&config, next_address, data_manipulated)?;
 
         Ok(Self {
             config,
@@ -223,14 +223,15 @@ impl LinearTrafficGenerator {
     }
 
     pub fn restore(snapshot: TrafficLinearSnapshot) -> Result<Self, TrafficGeneratorError> {
+        let config = snapshot.config();
         validate_snapshot(
-            snapshot.config(),
+            &config,
             snapshot.next_address(),
             snapshot.data_manipulated(),
         )?;
 
         Ok(Self {
-            config: snapshot.config(),
+            config,
             next_address: snapshot.next_address(),
             next_sequence: snapshot.next_sequence(),
             data_manipulated: snapshot.data_manipulated(),
@@ -259,8 +260,8 @@ impl LinearTrafficGenerator {
         let next_data_manipulated =
             checked_counter_add("data_manipulated", self.data_manipulated, block_bytes)?;
         let mut next_rng = self.rng.clone();
-        let event_tick = Self::schedule_tick_with(self.config, &mut next_rng, tick, retry_delay)?;
-        let kind = Self::next_kind_with(self.config, &mut next_rng);
+        let event_tick = Self::schedule_tick_with(&self.config, &mut next_rng, tick, retry_delay)?;
+        let kind = Self::next_kind_with(&self.config, &mut next_rng);
         let address = self.next_address;
         let request = self.build_request(sequence, kind, address)?;
         let mut next_summary = self.summary;
@@ -286,11 +287,11 @@ impl LinearTrafficGenerator {
             return Ok(u64::MAX);
         }
 
-        Self::schedule_tick_with(self.config, &mut self.rng, tick, retry_delay)
+        Self::schedule_tick_with(&self.config, &mut self.rng, tick, retry_delay)
     }
 
     fn schedule_tick_with(
-        config: TrafficLinearConfig,
+        config: &TrafficLinearConfig,
         rng: &mut TrafficRng,
         tick: u64,
         retry_delay: u64,
@@ -347,15 +348,15 @@ impl LinearTrafficGenerator {
         let layout = self.config.line_layout();
 
         match kind {
-            TrafficRequestKind::Read => {
-                MemoryRequest::read_shared(id, address, size, layout).map_err(Into::into)
-            }
+            TrafficRequestKind::Read => MemoryRequest::read_shared(id, address, size, layout)
+                .map_err(TrafficGeneratorError::from),
             TrafficRequestKind::Write => {
                 let mask = ByteMask::full(size)?;
                 let data_len = usize::try_from(mask.len())
                     .expect("byte mask length fits usize after construction");
                 let data = vec![self.config.agent().get() as u8; data_len];
-                MemoryRequest::write(id, address, size, data, mask, layout).map_err(Into::into)
+                MemoryRequest::write(id, address, size, data, mask, layout)
+                    .map_err(TrafficGeneratorError::from)
             }
             TrafficRequestKind::Atomic => {
                 unreachable!("linear traffic generator does not emit atomic requests")
@@ -366,7 +367,7 @@ impl LinearTrafficGenerator {
         }
     }
 
-    fn next_kind_with(config: TrafficLinearConfig, rng: &mut TrafficRng) -> TrafficRequestKind {
+    fn next_kind_with(config: &TrafficLinearConfig, rng: &mut TrafficRng) -> TrafficRequestKind {
         match config.read_percent() {
             0 => TrafficRequestKind::Write,
             100 => TrafficRequestKind::Read,
@@ -380,7 +381,7 @@ impl LinearTrafficGenerator {
         }
     }
 
-    fn next_wait_with(config: TrafficLinearConfig, rng: &mut TrafficRng) -> u64 {
+    fn next_wait_with(config: &TrafficLinearConfig, rng: &mut TrafficRng) -> u64 {
         rng.next_inclusive(config.min_period(), config.max_period())
     }
 
@@ -1367,7 +1368,7 @@ fn validate_strided_snapshot(
 }
 
 fn validate_snapshot(
-    config: TrafficLinearConfig,
+    config: &TrafficLinearConfig,
     next_address: Address,
     _data_manipulated: u64,
 ) -> Result<(), TrafficGeneratorError> {

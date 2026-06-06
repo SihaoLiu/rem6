@@ -27,6 +27,8 @@ pub struct MemoryRequestAttributes {
     page_table_walk: bool,
     evict_next: bool,
     kernel_sync: bool,
+    stream_id: Option<u32>,
+    substream_id: Option<u32>,
 }
 
 impl MemoryRequestAttributes {
@@ -37,6 +39,8 @@ impl MemoryRequestAttributes {
             page_table_walk,
             evict_next: false,
             kernel_sync: false,
+            stream_id: None,
+            substream_id: None,
         }
     }
 
@@ -47,6 +51,8 @@ impl MemoryRequestAttributes {
             page_table_walk: self.page_table_walk,
             evict_next: true,
             kernel_sync: self.kernel_sync,
+            stream_id: self.stream_id,
+            substream_id: self.substream_id,
         }
     }
 
@@ -57,6 +63,32 @@ impl MemoryRequestAttributes {
             page_table_walk: self.page_table_walk,
             evict_next: self.evict_next,
             kernel_sync: true,
+            stream_id: self.stream_id,
+            substream_id: self.substream_id,
+        }
+    }
+
+    pub const fn with_stream_id(self, stream_id: u32) -> Self {
+        Self {
+            privileged: self.privileged,
+            secure: self.secure,
+            page_table_walk: self.page_table_walk,
+            evict_next: self.evict_next,
+            kernel_sync: self.kernel_sync,
+            stream_id: Some(stream_id),
+            substream_id: self.substream_id,
+        }
+    }
+
+    pub const fn with_substream_id(self, substream_id: u32) -> Self {
+        Self {
+            privileged: self.privileged,
+            secure: self.secure,
+            page_table_walk: self.page_table_walk,
+            evict_next: self.evict_next,
+            kernel_sync: self.kernel_sync,
+            stream_id: self.stream_id,
+            substream_id: Some(substream_id),
         }
     }
 
@@ -78,6 +110,14 @@ impl MemoryRequestAttributes {
 
     pub const fn is_kernel_sync(self) -> bool {
         self.kernel_sync
+    }
+
+    pub const fn stream_id(self) -> Option<u32> {
+        self.stream_id
+    }
+
+    pub const fn substream_id(self) -> Option<u32> {
+        self.substream_id
     }
 }
 
@@ -209,6 +249,14 @@ impl MemoryRequestSnapshot {
 
     pub const fn is_kernel_sync(&self) -> bool {
         self.attributes.is_kernel_sync()
+    }
+
+    pub const fn stream_id(&self) -> Option<u32> {
+        self.attributes.stream_id()
+    }
+
+    pub const fn substream_id(&self) -> Option<u32> {
+        self.attributes.substream_id()
     }
 
     pub fn data(&self) -> Option<&[u8]> {
@@ -699,6 +747,7 @@ impl MemoryRequest {
                 request: snapshot.id,
             });
         }
+        Self::validate_stream_attributes(snapshot.id, snapshot.attributes)?;
 
         let mut request = Self::new(
             snapshot.id,
@@ -838,6 +887,16 @@ impl MemoryRequest {
         }
     }
 
+    fn validate_stream_attributes(
+        id: MemoryRequestId,
+        attributes: MemoryRequestAttributes,
+    ) -> Result<(), MemoryError> {
+        if attributes.substream_id().is_some() && attributes.stream_id().is_none() {
+            return Err(MemoryError::InvalidRequestStreamAttributes { request: id });
+        }
+        Ok(())
+    }
+
     pub const fn id(&self) -> MemoryRequestId {
         self.id
     }
@@ -887,9 +946,21 @@ impl MemoryRequest {
         self.attributes.is_kernel_sync()
     }
 
-    pub fn with_attributes(mut self, attributes: MemoryRequestAttributes) -> Self {
+    pub const fn stream_id(&self) -> Option<u32> {
+        self.attributes.stream_id()
+    }
+
+    pub const fn substream_id(&self) -> Option<u32> {
+        self.attributes.substream_id()
+    }
+
+    pub fn with_attributes(
+        mut self,
+        attributes: MemoryRequestAttributes,
+    ) -> Result<Self, MemoryError> {
+        Self::validate_stream_attributes(self.id, attributes)?;
         self.attributes = attributes;
-        self
+        Ok(self)
     }
 
     pub fn with_privileged(mut self) -> Self {
@@ -915,6 +986,19 @@ impl MemoryRequest {
     pub fn with_kernel_sync(mut self) -> Self {
         self.attributes.kernel_sync = true;
         self
+    }
+
+    pub fn with_stream_id(mut self, stream_id: u32) -> Self {
+        self.attributes.stream_id = Some(stream_id);
+        self
+    }
+
+    pub fn with_substream_id(mut self, substream_id: u32) -> Result<Self, MemoryError> {
+        if self.attributes.stream_id.is_none() {
+            return Err(MemoryError::InvalidRequestStreamAttributes { request: self.id });
+        }
+        self.attributes.substream_id = Some(substream_id);
+        Ok(self)
     }
 
     pub fn with_uncacheable(mut self) -> Self {

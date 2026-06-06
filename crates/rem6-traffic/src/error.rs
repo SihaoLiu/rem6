@@ -136,6 +136,11 @@ pub enum TrafficGeneratorError {
         line: usize,
         read_percent: u32,
     },
+    TrafficStreamMissingIds,
+    TrafficStreamInvalidFixedIds {
+        stream_ids: usize,
+        substream_ids: usize,
+    },
     TrafficDramUnsupportedAddressMapping {
         mapping: u32,
     },
@@ -620,6 +625,16 @@ impl fmt::Display for TrafficGeneratorError {
             Self::TrafficConfigReadPercentOutOfRange { line, read_percent } => write!(
                 formatter,
                 "traffic text config line {line} read percentage {read_percent} exceeds 100"
+            ),
+            Self::TrafficStreamMissingIds => {
+                write!(formatter, "traffic stream generator has no stream IDs")
+            }
+            Self::TrafficStreamInvalidFixedIds {
+                stream_ids,
+                substream_ids,
+            } => write!(
+                formatter,
+                "traffic fixed stream generator has {stream_ids} stream IDs and {substream_ids} substream IDs"
             ),
             Self::TrafficDramUnsupportedAddressMapping { mapping } => write!(
                 formatter,
