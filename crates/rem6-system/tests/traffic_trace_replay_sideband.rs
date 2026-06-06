@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use rem6_kernel::{PartitionId, PartitionedScheduler};
-use rem6_memory::{Address, AgentId, CacheLineLayout};
+use rem6_memory::Address;
 use rem6_system::{
     traffic_trace_replay_controller_control_completion,
     traffic_trace_replay_controller_runtime_sideband_events,
@@ -10,60 +10,17 @@ use rem6_system::{
     TrafficTraceReplaySidebandRuntime,
 };
 use rem6_traffic::{
-    TrafficController, TrafficControllerConfig, TrafficControllerState, TrafficStateGenerator,
-    TrafficStateGraphConfig, TrafficStateId, TrafficStateSpec, TrafficTrace, TrafficTraceCacheKind,
-    TrafficTraceConfig, TrafficTraceDiagnosticKind, TrafficTraceHtmKind, TrafficTraceTlbKind,
-    TrafficTransition, TrafficTransitionProbability, TRAFFIC_TRANSITION_PROBABILITY_SCALE,
+    TrafficTraceCacheKind, TrafficTraceDiagnosticKind, TrafficTraceHtmKind, TrafficTraceTlbKind,
 };
-use rem6_transport::{
-    MemoryRoute, MemoryTrace, MemoryTransport, ResponseDelivery, TransportEndpointId,
+use rem6_transport::{MemoryRoute, MemoryTrace, MemoryTransport, ResponseDelivery};
+
+mod support;
+
+use support::traffic_trace::{
+    controller_for_packets, endpoint, PacketFields, GEM5_FLUSH_REQ, GEM5_HTM_ABORT,
+    GEM5_MEM_FENCE_REQ, GEM5_MEM_FENCE_RESP, GEM5_PRINT_REQ, GEM5_READ_REQ,
+    GEM5_READ_RESP_WITH_INVALIDATE, GEM5_TLBI_EXT_SYNC,
 };
-
-const GEM5_MAGIC: [u8; 4] = [0x67, 0x65, 0x6d, 0x35];
-const TICK_FREQUENCY: u64 = 1_000;
-const GEM5_READ_REQ: u32 = 1;
-const GEM5_READ_RESP_WITH_INVALIDATE: u32 = 3;
-const GEM5_MEM_FENCE_REQ: u32 = 38;
-const GEM5_MEM_FENCE_RESP: u32 = 41;
-const GEM5_PRINT_REQ: u32 = 52;
-const GEM5_FLUSH_REQ: u32 = 53;
-const GEM5_HTM_ABORT: u32 = 58;
-const GEM5_TLBI_EXT_SYNC: u32 = 59;
-
-#[derive(Clone, Copy)]
-struct PacketFields {
-    tick: u64,
-    command: u32,
-    address: Option<u64>,
-    size: Option<u32>,
-    packet_id: Option<u64>,
-}
-
-fn line_layout() -> CacheLineLayout {
-    CacheLineLayout::new(64).unwrap()
-}
-
-fn endpoint(name: &str) -> TransportEndpointId {
-    TransportEndpointId::new(name).unwrap()
-}
-
-fn controller_for_packets(packets: &[PacketFields]) -> TrafficController {
-    let trace = TrafficTrace::from_gem5_packet_trace(
-        &gem5_packet_trace(TICK_FREQUENCY, packets),
-        TICK_FREQUENCY,
-    )
-    .unwrap();
-    let config = TrafficTraceConfig::new(AgentId::new(7), line_layout(), 99, trace).unwrap();
-    let controller_config = TrafficControllerConfig::new(
-        graph(vec![state(0, u64::MAX)], vec![transition(0, 0)]),
-        vec![TrafficControllerState::new(
-            TrafficStateId::new(0),
-            TrafficStateGenerator::Trace(rem6_traffic::TrafficTraceGenerator::new(config)),
-        )],
-    )
-    .unwrap();
-    TrafficController::new(controller_config)
-}
 
 #[test]
 fn traffic_trace_replay_sideband_runtime_schedules_non_memory_trace_events() {
@@ -543,74 +500,4 @@ impl TrafficControllerEventTestTick for rem6_traffic::TrafficControllerEvent {
             event => panic!("unexpected test event {event:?}"),
         }
     }
-}
-
-fn state(id: u32, duration: u64) -> TrafficStateSpec {
-    TrafficStateSpec::new(TrafficStateId::new(id), duration)
-}
-
-fn transition(from: u32, to: u32) -> TrafficTransition {
-    TrafficTransition::new(
-        TrafficStateId::new(from),
-        TrafficStateId::new(to),
-        TrafficTransitionProbability::from_micros(TRAFFIC_TRANSITION_PROBABILITY_SCALE).unwrap(),
-    )
-}
-
-fn graph(
-    states: Vec<TrafficStateSpec>,
-    transitions: Vec<TrafficTransition>,
-) -> TrafficStateGraphConfig {
-    TrafficStateGraphConfig::new(states, TrafficStateId::new(0), transitions).unwrap()
-}
-
-fn gem5_packet_trace(tick_frequency: u64, packets: &[PacketFields]) -> Vec<u8> {
-    let mut bytes = GEM5_MAGIC.to_vec();
-    let mut header = Vec::new();
-    append_key(&mut header, 3, 0);
-    append_varint(&mut header, tick_frequency);
-    append_record(&mut bytes, &header);
-
-    for packet in packets {
-        let mut message = Vec::new();
-        append_key(&mut message, 1, 0);
-        append_varint(&mut message, packet.tick);
-        append_key(&mut message, 2, 0);
-        append_varint(&mut message, u64::from(packet.command));
-        if let Some(address) = packet.address {
-            append_key(&mut message, 3, 0);
-            append_varint(&mut message, address);
-        }
-        if let Some(size) = packet.size {
-            append_key(&mut message, 4, 0);
-            append_varint(&mut message, u64::from(size));
-        }
-        if let Some(packet_id) = packet.packet_id {
-            append_key(&mut message, 6, 0);
-            append_varint(&mut message, packet_id);
-        }
-        append_record(&mut bytes, &message);
-    }
-
-    bytes
-}
-
-fn append_record(bytes: &mut Vec<u8>, message: &[u8]) {
-    append_varint(
-        bytes,
-        u64::try_from(message.len()).expect("test message length fits u64"),
-    );
-    bytes.extend_from_slice(message);
-}
-
-fn append_key(bytes: &mut Vec<u8>, field: u32, wire_type: u8) {
-    append_varint(bytes, (u64::from(field) << 3) | u64::from(wire_type));
-}
-
-fn append_varint(bytes: &mut Vec<u8>, mut value: u64) {
-    while value >= 0x80 {
-        bytes.push((value as u8) | 0x80);
-        value >>= 7;
-    }
-    bytes.push(value as u8);
 }

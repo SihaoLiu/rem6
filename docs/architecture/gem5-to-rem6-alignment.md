@@ -2945,9 +2945,12 @@ combined runtime that fans out each batch advanced from the shared
 `TrafficController` into the memory target runtime, the control runtime, and a
 sideband trace-event runtime. `rem6-system` also exposes a controller-aware
 control-completion helper for response-required sync and HTM events: it records
-the control source tick, advances the same `TrafficController` until a control
-acknowledgement or control failure appears, and schedules a typed control ack
-or failure record at the replay tick. TLB external-sync, cache flush,
+the queued control source identity, advances the same `TrafficController` until
+a control acknowledgement or control failure appears, and schedules a typed
+control ack or failure record at the replay tick. If the controller replays the
+same response-required sync or HTM source without a matching control action,
+the helper reports the missing replay action before cycling through trace
+transition state. TLB external-sync, cache flush,
 diagnostic print, and non-response HTM abort trace events are captured by the
 sideband runtime. The standalone sideband helper can schedule those events
 from an already-recorded sideband runtime, and the controller-aware memory and

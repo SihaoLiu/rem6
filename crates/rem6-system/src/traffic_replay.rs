@@ -9,7 +9,7 @@ use rem6_traffic::{
     TrafficController, TrafficControllerEvent, TrafficControllerEventBatch, TrafficGeneratorError,
     TrafficTraceCacheEvent, TrafficTraceControlFailureRecord, TrafficTraceDiagnosticEvent,
     TrafficTraceHtmEvent, TrafficTraceMemoryFailureRecord, TrafficTraceReplayAction,
-    TrafficTraceReplayActionQueue, TrafficTraceTlbEvent,
+    TrafficTraceReplayActionQueue, TrafficTraceSyncEvent, TrafficTraceTlbEvent,
 };
 use rem6_transport::{RequestDelivery, TargetOutcome};
 
@@ -238,12 +238,27 @@ impl TrafficTraceReplaySidebandRuntime {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TrafficTraceReplayControlSource {
+    Sync(TrafficTraceSyncEvent),
+    Htm(TrafficTraceHtmEvent),
+}
+
+impl TrafficTraceReplayControlSource {
+    const fn tick(self) -> Tick {
+        match self {
+            Self::Sync(event) => event.tick(),
+            Self::Htm(event) => event.tick(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct TrafficTraceReplayControlRuntime {
     action_queue: TrafficTraceReplayActionQueue,
     control_acks: Vec<TrafficTraceReplayScheduledControlAck>,
     control_failures: Vec<TrafficTraceReplayScheduledControlFailure>,
-    source_ticks: VecDeque<Tick>,
+    sources: VecDeque<TrafficTraceReplayControlSource>,
 }
 
 impl TrafficTraceReplayControlRuntime {
@@ -254,10 +269,12 @@ impl TrafficTraceReplayControlRuntime {
         for event in batch.events() {
             match event {
                 TrafficControllerEvent::TraceSync(sync) if sync.requires_response() => {
-                    self.source_ticks.push_back(sync.tick());
+                    self.sources
+                        .push_back(TrafficTraceReplayControlSource::Sync(*sync));
                 }
                 TrafficControllerEvent::TraceHtm(htm) if htm.requires_response() => {
-                    self.source_ticks.push_back(htm.tick());
+                    self.sources
+                        .push_back(TrafficTraceReplayControlSource::Htm(*htm));
                 }
                 TrafficControllerEvent::TraceReplayAction(action)
                     if matches!(
@@ -308,7 +325,7 @@ impl TrafficTraceReplayControlRuntime {
         self.action_queue
             .pop_action()
             .expect("validated trace replay control action remains queued");
-        self.source_ticks.pop_front();
+        self.sources.pop_front();
         Ok(event)
     }
 
@@ -331,11 +348,15 @@ impl TrafficTraceReplayControlRuntime {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.action_queue.is_empty() && self.source_ticks.is_empty()
+        self.action_queue.is_empty() && self.sources.is_empty()
     }
 
     fn source_tick(&self) -> Option<Tick> {
-        self.source_ticks.front().copied()
+        self.source().map(TrafficTraceReplayControlSource::tick)
+    }
+
+    fn source(&self) -> Option<TrafficTraceReplayControlSource> {
+        self.sources.front().copied()
     }
 
     fn has_control_action(&self) -> bool {
@@ -343,7 +364,7 @@ impl TrafficTraceReplayControlRuntime {
     }
 
     fn clear_control_sources(&mut self) {
-        self.source_ticks.clear();
+        self.sources.clear();
     }
 }
 
@@ -406,6 +427,10 @@ impl TrafficTraceReplayControllerRuntime {
 
     fn control_source_tick(&self) -> Option<Tick> {
         self.control.source_tick()
+    }
+
+    fn control_source(&self) -> Option<TrafficTraceReplayControlSource> {
+        self.control.source()
     }
 
     fn control_event(
@@ -632,6 +657,11 @@ pub fn traffic_trace_replay_controller_control_completion(
         };
 
         let trace_exited = batch.trace_exit().is_some();
+        let repeated_source = runtime
+            .lock()
+            .expect("trace replay controller runtime lock")
+            .control_source()
+            .is_some_and(|source| batch_has_control_source(&batch, source));
         let control_action_available = {
             let mut runtime = runtime
                 .lock()
@@ -644,7 +674,7 @@ pub fn traffic_trace_replay_controller_control_completion(
             context.now(),
             context,
         );
-        if trace_exited && !control_action_available {
+        if (trace_exited || repeated_source) && !control_action_available {
             runtime
                 .lock()
                 .expect("trace replay controller runtime lock")
@@ -654,6 +684,22 @@ pub fn traffic_trace_replay_controller_control_completion(
             );
         }
     }
+}
+
+fn batch_has_control_source(
+    batch: &TrafficControllerEventBatch,
+    source: TrafficTraceReplayControlSource,
+) -> bool {
+    batch.events().iter().any(|event| match (event, source) {
+        (
+            TrafficControllerEvent::TraceSync(event),
+            TrafficTraceReplayControlSource::Sync(source),
+        ) => *event == source,
+        (TrafficControllerEvent::TraceHtm(event), TrafficTraceReplayControlSource::Htm(source)) => {
+            *event == source
+        }
+        _ => false,
+    })
 }
 
 fn traffic_trace_replay_controller_runtime_target_outcome(
