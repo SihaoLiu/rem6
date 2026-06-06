@@ -616,6 +616,185 @@ fn riscv_cluster_invalidates_peer_reservation_after_completed_store() {
 }
 
 #[test]
+fn riscv_cluster_invalidates_peer_reservation_after_completed_store_conditional() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let cpu0_fetch = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu0_data = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.dmem"),
+                PartitionId::new(0),
+                endpoint("l1d0"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu1_fetch = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu1.ifetch"),
+                PartitionId::new(1),
+                endpoint("l1i1"),
+                PartitionId::new(3),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu1_data = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu1.dmem"),
+                PartitionId::new(1),
+                endpoint("l1d1"),
+                PartitionId::new(3),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cluster = RiscvCluster::new([
+        riscv_core(CoreSpec {
+            cpu: 0,
+            partition: 0,
+            agent: 7,
+            entry: 0x8000,
+            fetch_endpoint: "cpu0.ifetch",
+            fetch_route: cpu0_fetch,
+            data_endpoint: "cpu0.dmem",
+            data_route: cpu0_data,
+        }),
+        riscv_core(CoreSpec {
+            cpu: 1,
+            partition: 1,
+            agent: 8,
+            entry: 0x8100,
+            fetch_endpoint: "cpu1.ifetch",
+            fetch_route: cpu1_fetch,
+            data_endpoint: "cpu1.dmem",
+            data_route: cpu1_data,
+        }),
+    ])
+    .unwrap();
+    let cpu0 = cluster.core(CpuId::new(0)).unwrap();
+    let cpu1 = cluster.core(CpuId::new(1)).unwrap();
+    cpu0.write_register(reg(2), 0x9008);
+    cpu0.write_register(reg(6), 0x0102_0304_0506_0708);
+    cpu1.write_register(reg(2), 0x9008);
+    cpu1.write_register(reg(6), 0x1112_1314_1516_1718);
+    let store = store_with_programs_and_data(
+        &[
+            (0x8000, atomic_type(0x02, false, false, 0, 2, 0x3, 5)),
+            (0x8004, atomic_type(0x03, false, true, 6, 2, 0x3, 7)),
+            (0x8100, atomic_type(0x02, false, false, 0, 2, 0x3, 5)),
+            (0x8104, atomic_type(0x03, false, true, 6, 2, 0x3, 7)),
+        ],
+        &[(0x9008, vec![0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x11])],
+    );
+
+    let mut drive = |cpu| {
+        let action = cluster
+            .drive_core_next_action(
+                cpu,
+                &mut scheduler,
+                &transport,
+                MemoryTrace::new(),
+                MemoryTrace::new(),
+                responder(store.clone()),
+                responder(store.clone()),
+            )
+            .unwrap();
+        scheduler.run_until_idle_conservative();
+        action
+    };
+
+    assert!(matches!(
+        drive(CpuId::new(0)),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    assert!(matches!(
+        drive(CpuId::new(0)),
+        Some(RiscvCoreDriveAction::InstructionExecuted(_))
+    ));
+    assert!(matches!(
+        drive(CpuId::new(0)),
+        Some(RiscvCoreDriveAction::DataAccessIssued { .. })
+    ));
+    assert!(cpu0.load_reservation().is_some());
+
+    assert!(matches!(
+        drive(CpuId::new(1)),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    assert!(matches!(
+        drive(CpuId::new(1)),
+        Some(RiscvCoreDriveAction::InstructionExecuted(_))
+    ));
+    assert!(matches!(
+        drive(CpuId::new(1)),
+        Some(RiscvCoreDriveAction::DataAccessIssued { .. })
+    ));
+    assert!(cpu1.load_reservation().is_some());
+
+    assert!(matches!(
+        drive(CpuId::new(0)),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    assert!(matches!(
+        drive(CpuId::new(0)),
+        Some(RiscvCoreDriveAction::InstructionExecuted(_))
+    ));
+    assert!(matches!(
+        drive(CpuId::new(0)),
+        Some(RiscvCoreDriveAction::DataAccessIssued { .. })
+    ));
+    assert_eq!(cpu0.read_register(reg(7)), 0);
+    assert_eq!(cpu0.load_reservation(), None);
+
+    assert!(matches!(
+        drive(CpuId::new(1)),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    assert_eq!(cpu1.load_reservation(), None);
+    assert!(matches!(
+        drive(CpuId::new(1)),
+        Some(RiscvCoreDriveAction::InstructionExecuted(_))
+    ));
+    assert!(matches!(
+        drive(CpuId::new(1)),
+        Some(RiscvCoreDriveAction::DataAccessIssued { .. })
+    ));
+
+    assert_eq!(cpu1.read_register(reg(7)), 1);
+    assert_eq!(
+        read_store_bytes(&store, 0x9008, 8, 91),
+        vec![0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01]
+    );
+    assert!(cpu1.data_access_events().iter().any(|event| {
+        event.kind() == RiscvDataAccessEventKind::ConditionalFailed
+            && event.request_id().agent() == AgentId::new(8)
+    }));
+}
+
+#[test]
 fn riscv_cluster_parallel_data_batches_shared_fabric_by_packet_order() {
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(3, 2).unwrap();
     let mut transport = MemoryTransport::with_fabric(FabricModel::new());

@@ -23,7 +23,9 @@ impl RiscvReservationTracker {
                 }
                 if !matches!(
                     event.operation(),
-                    MemoryOperation::Write | MemoryOperation::Atomic
+                    MemoryOperation::Write
+                        | MemoryOperation::StoreConditional
+                        | MemoryOperation::Atomic
                 ) {
                     continue;
                 }

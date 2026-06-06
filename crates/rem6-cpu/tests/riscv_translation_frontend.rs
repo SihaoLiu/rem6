@@ -4,8 +4,8 @@ use rem6_boot::BootImage;
 use rem6_cpu::{
     decode_sv39_pte_read_response, CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState,
     CpuTranslationFrontend, CpuTranslationOutcome, CpuTranslationRequest, RiscvCore,
-    RiscvCoreDriveAction, RiscvCpuError, RiscvDataAccessEventKind, RiscvSv39PageTableResolver,
-    RiscvSv39PteReadRequestError, RiscvSv39PteReadResponseError,
+    RiscvCoreDriveAction, RiscvCpuError, RiscvDataAccessEventKind, RiscvLoadReservation,
+    RiscvSv39PageTableResolver, RiscvSv39PteReadRequestError, RiscvSv39PteReadResponseError,
 };
 use rem6_isa_riscv::{
     MemoryAccessKind, MemoryWidth, Register, RiscvPmaAccessKind, RiscvPmaError, RiscvPmpAccessKind,
@@ -49,6 +49,17 @@ fn i_type(imm: i32, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
         | opcode
 }
 
+fn atomic_type(funct5: u32, aq: bool, rl: bool, rs2: u8, rs1: u8, funct3: u32, rd: u8) -> u32 {
+    (funct5 << 27)
+        | (u32::from(aq) << 26)
+        | (u32::from(rl) << 25)
+        | (u32::from(rs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (funct3 << 12)
+        | (u32::from(rd) << 7)
+        | 0x2f
+}
+
 fn csr_type(csr: u32, rs1_or_zimm: u8, funct3: u32, rd: u8) -> u32 {
     (csr << 20) | (u32::from(rs1_or_zimm) << 15) | (funct3 << 12) | (u32::from(rd) << 7) | 0x73
 }
@@ -74,6 +85,34 @@ fn word(raw: u32) -> Vec<u8> {
 
 fn reg(index: u8) -> Register {
     Register::new(index).unwrap()
+}
+
+fn data_read(address: u64, size: u64, sequence: u64) -> MemoryRequest {
+    MemoryRequest::read_shared(
+        MemoryRequestId::new(AgentId::new(99), sequence),
+        Address::new(address),
+        AccessSize::new(size).unwrap(),
+        layout(),
+    )
+    .unwrap()
+}
+
+fn read_store_bytes(
+    store: &Arc<Mutex<PartitionedMemoryStore>>,
+    address: u64,
+    size: u64,
+    sequence: u64,
+) -> Vec<u8> {
+    store
+        .lock()
+        .unwrap()
+        .respond(&data_read(address, size, sequence))
+        .unwrap()
+        .response()
+        .unwrap()
+        .data()
+        .unwrap()
+        .to_vec()
 }
 
 fn core(route: rem6_transport::MemoryRouteId, entry: u64) -> CpuCore {
@@ -577,6 +616,124 @@ fn riscv_core_issues_translated_load_through_data_tlb() {
     );
     assert_eq!(events[0].physical_address(), Address::new(0x9008));
     assert_eq!(events[1].physical_address(), Address::new(0x9008));
+}
+
+#[test]
+fn riscv_core_issues_translated_llsc_requests_through_data_tlb() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = translated_data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(2), 0x4008);
+    core.write_register(reg(6), 0x0102_0304_0506_0708);
+    let page_map = single_page_map(0x4000, 0x9000);
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            atomic_type(0x02, true, false, 0, 2, 0x3, 5),
+            atomic_type(0x03, false, true, 6, 2, 0x3, 7),
+        ],
+        &[(0x9008, vec![0x78, 0x56, 0x34, 0x12, 0xef, 0xcd, 0xab, 0x90])],
+    );
+    let delivered_operations = Arc::new(Mutex::new(Vec::new()));
+
+    fetch_one(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+    );
+    core.execute_next_completed_fetch().unwrap().unwrap();
+    let observed_operations = delivered_operations.clone();
+    let data_store = store.clone();
+    core.issue_next_translated_data_access(
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+        &page_map,
+        move |delivery, _context| {
+            observed_operations
+                .lock()
+                .unwrap()
+                .push(delivery.request().operation());
+            assert_eq!(delivery.request().range().start(), Address::new(0x9008));
+            let response = data_store
+                .lock()
+                .unwrap()
+                .respond(delivery.request())
+                .unwrap()
+                .response()
+                .cloned()
+                .unwrap();
+            TargetOutcome::Respond(response)
+        },
+    )
+    .unwrap()
+    .unwrap();
+    scheduler.run_until_idle_conservative();
+
+    assert_eq!(core.read_register(reg(5)), 0x90ab_cdef_1234_5678);
+    assert_eq!(
+        core.load_reservation(),
+        Some(RiscvLoadReservation::new(
+            Address::new(0x9008),
+            AccessSize::new(8).unwrap()
+        ))
+    );
+
+    fetch_one(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+    );
+    core.execute_next_completed_fetch().unwrap().unwrap();
+    let observed_operations = delivered_operations.clone();
+    let data_store = store.clone();
+    core.issue_next_translated_data_access(
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+        &page_map,
+        move |delivery, _context| {
+            observed_operations
+                .lock()
+                .unwrap()
+                .push(delivery.request().operation());
+            assert_eq!(delivery.request().range().start(), Address::new(0x9008));
+            let response = data_store
+                .lock()
+                .unwrap()
+                .respond(delivery.request())
+                .unwrap()
+                .response()
+                .cloned()
+                .unwrap();
+            TargetOutcome::Respond(response)
+        },
+    )
+    .unwrap()
+    .unwrap();
+    scheduler.run_until_idle_conservative();
+
+    assert_eq!(core.read_register(reg(7)), 0);
+    assert_eq!(core.load_reservation(), None);
+    assert_eq!(
+        read_store_bytes(&store, 0x9008, 8, 91),
+        vec![0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01]
+    );
+    assert_eq!(
+        *delivered_operations.lock().unwrap(),
+        vec![
+            MemoryOperation::LoadLocked,
+            MemoryOperation::StoreConditional
+        ]
+    );
+    let events = core.data_access_events();
+    assert_eq!(events[0].operation(), MemoryOperation::LoadLocked);
+    assert_eq!(events[0].physical_address(), Address::new(0x9008));
+    assert_eq!(events[2].operation(), MemoryOperation::StoreConditional);
+    assert_eq!(events[2].physical_address(), Address::new(0x9008));
 }
 
 #[test]

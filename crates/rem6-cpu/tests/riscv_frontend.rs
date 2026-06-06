@@ -358,7 +358,23 @@ fn issue_one_data_access(
     transport: &MemoryTransport,
     trace: MemoryTrace,
 ) {
+    let _ = issue_one_data_access_with_request_operations(core, store, scheduler, transport, trace);
+}
+
+fn issue_one_data_access_with_request_operations(
+    core: &RiscvCore,
+    store: Arc<Mutex<PartitionedMemoryStore>>,
+    scheduler: &mut PartitionedScheduler,
+    transport: &MemoryTransport,
+    trace: MemoryTrace,
+) -> Vec<MemoryOperation> {
+    let operations = Arc::new(Mutex::new(Vec::new()));
+    let observed_operations = operations.clone();
     core.issue_next_data_access(scheduler, transport, trace, move |delivery, _context| {
+        observed_operations
+            .lock()
+            .unwrap()
+            .push(delivery.request().operation());
         let response = store
             .lock()
             .unwrap()
@@ -372,6 +388,8 @@ fn issue_one_data_access(
     .unwrap()
     .unwrap();
     scheduler.run_until_idle_conservative();
+    let recorded_operations = operations.lock().unwrap().clone();
+    recorded_operations
 }
 
 #[test]
@@ -1056,7 +1074,13 @@ fn riscv_core_issues_load_reserved_and_records_reservation() {
     assert_eq!(core.read_register(reg(5)), 0);
     assert_eq!(core.load_reservation(), None);
 
-    issue_one_data_access(&core, store, &mut scheduler, &transport, MemoryTrace::new());
+    let delivered_operations = issue_one_data_access_with_request_operations(
+        &core,
+        store,
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+    );
 
     assert_eq!(core.read_register(reg(5)), 0x90ab_cdef_1234_5678);
     assert_eq!(
@@ -1074,7 +1098,8 @@ fn riscv_core_issues_load_reserved_and_records_reservation() {
             RiscvDataAccessEventKind::Completed
         ]
     );
-    assert_eq!(events[0].operation(), MemoryOperation::ReadShared);
+    assert_eq!(delivered_operations, vec![MemoryOperation::LoadLocked]);
+    assert_eq!(events[0].operation(), MemoryOperation::LoadLocked);
     assert_eq!(
         events[0].access(),
         &MemoryAccessKind::LoadReserved {
@@ -1148,7 +1173,7 @@ fn riscv_core_store_conditional_succeeds_with_matching_reservation() {
             release: true,
         })
     );
-    issue_one_data_access(
+    let delivered_operations = issue_one_data_access_with_request_operations(
         &core,
         store.clone(),
         &mut scheduler,
@@ -1172,7 +1197,11 @@ fn riscv_core_store_conditional_succeeds_with_matching_reservation() {
             RiscvDataAccessEventKind::Completed,
         ]
     );
-    assert_eq!(events[2].operation(), MemoryOperation::Atomic);
+    assert_eq!(
+        delivered_operations,
+        vec![MemoryOperation::StoreConditional]
+    );
+    assert_eq!(events[2].operation(), MemoryOperation::StoreConditional);
     assert_eq!(
         events[2].access(),
         &MemoryAccessKind::StoreConditional {
@@ -1184,10 +1213,7 @@ fn riscv_core_store_conditional_succeeds_with_matching_reservation() {
             release: true,
         }
     );
-    assert_eq!(
-        events[3].data(),
-        Some(&[0xff, 0xee, 0xdd, 0xcc, 0xbb, 0xaa, 0x99, 0x88][..])
-    );
+    assert_eq!(events[3].data(), None);
 }
 
 #[test]
@@ -1330,7 +1356,7 @@ fn riscv_core_store_conditional_fails_without_matching_reservation() {
             RiscvDataAccessEventKind::ConditionalFailed,
         ]
     );
-    assert_eq!(events[0].operation(), MemoryOperation::Atomic);
+    assert_eq!(events[0].operation(), MemoryOperation::StoreConditional);
     assert_eq!(events[1].data(), None);
 }
 

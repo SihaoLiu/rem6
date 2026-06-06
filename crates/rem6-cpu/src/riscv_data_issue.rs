@@ -545,15 +545,20 @@ impl OutstandingDataAccess {
     pub(crate) fn memory_request(&self) -> Result<MemoryRequest, RiscvCpuError> {
         let line_layout = self.line_layout.expect("memory data access line layout");
         let request = match &self.access {
-            MemoryAccessKind::Load { .. } | MemoryAccessKind::LoadReserved { .. } => {
-                MemoryRequest::read_shared(
-                    self.request_id,
-                    self.physical_address,
-                    self.size,
-                    line_layout,
-                )
-                .map_err(RiscvCpuError::Memory)
-            }
+            MemoryAccessKind::Load { .. } => MemoryRequest::read_shared(
+                self.request_id,
+                self.physical_address,
+                self.size,
+                line_layout,
+            )
+            .map_err(RiscvCpuError::Memory),
+            MemoryAccessKind::LoadReserved { .. } => MemoryRequest::load_locked(
+                self.request_id,
+                self.physical_address,
+                self.size,
+                line_layout,
+            )
+            .map_err(RiscvCpuError::Memory),
             MemoryAccessKind::Store { value, .. } => MemoryRequest::write(
                 self.request_id,
                 self.physical_address,
@@ -563,7 +568,7 @@ impl OutstandingDataAccess {
                 line_layout,
             )
             .map_err(RiscvCpuError::Memory),
-            MemoryAccessKind::StoreConditional { value, .. } => MemoryRequest::atomic(
+            MemoryAccessKind::StoreConditional { value, .. } => MemoryRequest::store_conditional(
                 self.request_id,
                 self.physical_address,
                 self.size,

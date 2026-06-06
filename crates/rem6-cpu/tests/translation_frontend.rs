@@ -134,6 +134,68 @@ fn cpu_translation_frontend_maps_ready_translations_to_memory_requests() {
 }
 
 #[test]
+fn cpu_translation_frontend_preserves_llsc_memory_requests() {
+    let mut frontend = CpuTranslationFrontend::new(TranslationQueueConfig::new(4, 1).unwrap());
+    let load_locked = CpuTranslationRequest::load_locked(
+        translation_id(15),
+        memory_id(24),
+        route(),
+        endpoint(),
+        Address::new(0xffff_0000_d000_0010),
+        AccessSize::new(8).unwrap(),
+    )
+    .unwrap();
+    let store_conditional = CpuTranslationRequest::store_conditional(
+        translation_id(16),
+        memory_id(25),
+        route(),
+        endpoint(),
+        Address::new(0xffff_0000_d000_0018),
+        AccessSize::new(8).unwrap(),
+        vec![0x10, 0x32, 0x54, 0x76, 0x98, 0xba, 0xdc, 0xfe],
+        ByteMask::full(AccessSize::new(8).unwrap()).unwrap(),
+    )
+    .unwrap();
+
+    frontend.enqueue(1, store_conditional).unwrap();
+    frontend.enqueue(1, load_locked).unwrap();
+    let outcomes = frontend.complete_ready(2, |request| {
+        TranslationResolution::mapped(Address::new(request.virtual_address().get() & 0x0fff))
+    });
+
+    assert_eq!(outcomes.len(), 2);
+    let CpuTranslationOutcome::Mapped(store_conditional) = &outcomes[0] else {
+        panic!("store-conditional translation should map");
+    };
+    assert_eq!(
+        store_conditional.operation(),
+        &CpuTranslatedMemoryOperation::StoreConditional
+    );
+    let store_request = store_conditional.memory_request(layout()).unwrap();
+    assert_eq!(store_request.id(), memory_id(25));
+    assert_eq!(store_request.operation(), MemoryOperation::StoreConditional);
+    assert_eq!(store_request.range().start(), Address::new(0x0018));
+    assert_eq!(
+        store_request.data(),
+        Some(&[0x10, 0x32, 0x54, 0x76, 0x98, 0xba, 0xdc, 0xfe][..])
+    );
+
+    let CpuTranslationOutcome::Mapped(load_locked) = &outcomes[1] else {
+        panic!("load-locked translation should map");
+    };
+    assert_eq!(
+        load_locked.operation(),
+        &CpuTranslatedMemoryOperation::LoadLocked
+    );
+    let load_request = load_locked.memory_request(layout()).unwrap();
+    assert_eq!(load_request.id(), memory_id(24));
+    assert_eq!(load_request.operation(), MemoryOperation::LoadLocked);
+    assert_eq!(load_request.range().start(), Address::new(0x0010));
+    assert!(load_request.data().is_none());
+    assert!(frontend.is_empty());
+}
+
+#[test]
 fn cpu_translation_frontend_restores_snapshot_and_records_faults() {
     let mut frontend = CpuTranslationFrontend::new(TranslationQueueConfig::new(2, 3).unwrap());
     let load = CpuTranslationRequest::load(

@@ -1170,9 +1170,16 @@ fn cpu_translation_request(
     size: rem6_memory::AccessSize,
 ) -> Result<CpuTranslationRequest, RiscvCpuError> {
     match access {
-        rem6_isa_riscv::MemoryAccessKind::Load { address, .. }
-        | rem6_isa_riscv::MemoryAccessKind::LoadReserved { address, .. } => {
-            CpuTranslationRequest::load(
+        rem6_isa_riscv::MemoryAccessKind::Load { address, .. } => CpuTranslationRequest::load(
+            translation_id,
+            memory_request_id,
+            data.route(),
+            data.endpoint().clone(),
+            Address::new(*address),
+            size,
+        ),
+        rem6_isa_riscv::MemoryAccessKind::LoadReserved { address, .. } => {
+            CpuTranslationRequest::load_locked(
                 translation_id,
                 memory_request_id,
                 data.route(),
@@ -1194,7 +1201,7 @@ fn cpu_translation_request(
             )
         }
         rem6_isa_riscv::MemoryAccessKind::StoreConditional { address, value, .. } => {
-            CpuTranslationRequest::atomic(
+            CpuTranslationRequest::store_conditional(
                 translation_id,
                 memory_request_id,
                 data.route(),
@@ -1279,9 +1286,13 @@ fn data_translation_fault(fetch: MemoryRequestId, fault: TranslationFault) -> Ri
 fn sv39_access_kind(operation: CpuTranslatedMemoryOperation) -> RiscvSv39AccessKind {
     match operation {
         CpuTranslatedMemoryOperation::InstructionFetch => RiscvSv39AccessKind::InstructionFetch,
-        CpuTranslatedMemoryOperation::Read => RiscvSv39AccessKind::Load,
+        CpuTranslatedMemoryOperation::Read | CpuTranslatedMemoryOperation::LoadLocked => {
+            RiscvSv39AccessKind::Load
+        }
         CpuTranslatedMemoryOperation::Write => RiscvSv39AccessKind::Store,
-        CpuTranslatedMemoryOperation::Atomic => RiscvSv39AccessKind::Atomic,
+        CpuTranslatedMemoryOperation::StoreConditional | CpuTranslatedMemoryOperation::Atomic => {
+            RiscvSv39AccessKind::Atomic
+        }
     }
 }
 

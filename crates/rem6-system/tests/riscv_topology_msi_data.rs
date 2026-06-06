@@ -404,7 +404,7 @@ fn topology_system_msi_snoop_invalidates_peer_lr_reservation_before_store_respon
         .into_iter()
         .find(|event| {
             event.kind() == RiscvDataAccessEventKind::ConditionalFailed
-                && event.operation() == MemoryOperation::Atomic
+                && event.operation() == MemoryOperation::StoreConditional
         })
         .expect("core0 store conditional failure")
         .tick();

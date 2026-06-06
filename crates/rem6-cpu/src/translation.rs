@@ -17,7 +17,9 @@ use rem6_transport::{MemoryRouteId, TransportEndpointId};
 pub enum CpuTranslatedMemoryOperation {
     InstructionFetch,
     Read,
+    LoadLocked,
     Write,
+    StoreConditional,
     Atomic,
 }
 
@@ -26,7 +28,9 @@ impl CpuTranslatedMemoryOperation {
         match self {
             Self::InstructionFetch => TranslationAccessKind::InstructionFetch,
             Self::Read => TranslationAccessKind::Load,
+            Self::LoadLocked => TranslationAccessKind::Load,
             Self::Write => TranslationAccessKind::Store,
+            Self::StoreConditional => TranslationAccessKind::Atomic,
             Self::Atomic => TranslationAccessKind::Atomic,
         }
     }
@@ -35,7 +39,9 @@ impl CpuTranslatedMemoryOperation {
         match self {
             Self::InstructionFetch => MemoryOperation::InstructionFetch,
             Self::Read => MemoryOperation::ReadShared,
+            Self::LoadLocked => MemoryOperation::LoadLocked,
             Self::Write => MemoryOperation::Write,
+            Self::StoreConditional => MemoryOperation::StoreConditional,
             Self::Atomic => MemoryOperation::Atomic,
         }
     }
@@ -102,6 +108,28 @@ impl CpuTranslationRequest {
         )
     }
 
+    pub fn load_locked(
+        translation_id: TranslationRequestId,
+        memory_request_id: MemoryRequestId,
+        route: MemoryRouteId,
+        endpoint: TransportEndpointId,
+        virtual_address: Address,
+        size: AccessSize,
+    ) -> Result<Self, CpuTranslationFrontendError> {
+        Self::new(
+            translation_id,
+            memory_request_id,
+            route,
+            endpoint,
+            virtual_address,
+            size,
+            CpuTranslatedMemoryOperation::LoadLocked,
+            None,
+            None,
+            None,
+        )
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn store(
         translation_id: TranslationRequestId,
@@ -121,6 +149,31 @@ impl CpuTranslationRequest {
             virtual_address,
             size,
             CpuTranslatedMemoryOperation::Write,
+            Some(write_data),
+            Some(byte_mask),
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn store_conditional(
+        translation_id: TranslationRequestId,
+        memory_request_id: MemoryRequestId,
+        route: MemoryRouteId,
+        endpoint: TransportEndpointId,
+        virtual_address: Address,
+        size: AccessSize,
+        write_data: Vec<u8>,
+        byte_mask: ByteMask,
+    ) -> Result<Self, CpuTranslationFrontendError> {
+        Self::new(
+            translation_id,
+            memory_request_id,
+            route,
+            endpoint,
+            virtual_address,
+            size,
+            CpuTranslatedMemoryOperation::StoreConditional,
             Some(write_data),
             Some(byte_mask),
             None,
@@ -192,7 +245,9 @@ impl CpuTranslationRequest {
     ) -> Result<Self, CpuTranslationFrontendError> {
         AddressRange::new(virtual_address, size).map_err(CpuTranslationFrontendError::Memory)?;
         match operation {
-            CpuTranslatedMemoryOperation::Write | CpuTranslatedMemoryOperation::Atomic => {
+            CpuTranslatedMemoryOperation::Write
+            | CpuTranslatedMemoryOperation::StoreConditional
+            | CpuTranslatedMemoryOperation::Atomic => {
                 let data =
                     write_data
                         .as_ref()
@@ -220,7 +275,9 @@ impl CpuTranslationRequest {
                     });
                 }
             }
-            CpuTranslatedMemoryOperation::InstructionFetch | CpuTranslatedMemoryOperation::Read => {
+            CpuTranslatedMemoryOperation::InstructionFetch
+            | CpuTranslatedMemoryOperation::Read
+            | CpuTranslatedMemoryOperation::LoadLocked => {
                 if write_data.is_some() {
                     return Err(CpuTranslationFrontendError::UnexpectedWriteData {
                         request: memory_request_id,
@@ -389,7 +446,31 @@ impl CpuTranslatedMemoryRequest {
                 line_layout,
             )
             .map_err(CpuTranslationFrontendError::Memory),
+            CpuTranslatedMemoryOperation::LoadLocked => MemoryRequest::load_locked(
+                self.request.memory_request_id,
+                self.physical_address,
+                self.request.size,
+                line_layout,
+            )
+            .map_err(CpuTranslationFrontendError::Memory),
             CpuTranslatedMemoryOperation::Write => MemoryRequest::write(
+                self.request.memory_request_id,
+                self.physical_address,
+                self.request.size,
+                self.request.write_data.clone().ok_or(
+                    CpuTranslationFrontendError::MissingWriteData {
+                        request: self.request.memory_request_id,
+                    },
+                )?,
+                self.request.byte_mask.clone().ok_or(
+                    CpuTranslationFrontendError::MissingByteMask {
+                        request: self.request.memory_request_id,
+                    },
+                )?,
+                line_layout,
+            )
+            .map_err(CpuTranslationFrontendError::Memory),
+            CpuTranslatedMemoryOperation::StoreConditional => MemoryRequest::store_conditional(
                 self.request.memory_request_id,
                 self.physical_address,
                 self.request.size,
@@ -541,7 +622,31 @@ impl CpuTranslatedMemorySegment {
                 line_layout,
             )
             .map_err(CpuTranslationFrontendError::Memory),
+            CpuTranslatedMemoryOperation::LoadLocked => MemoryRequest::load_locked(
+                request_id,
+                self.physical_address,
+                self.size,
+                line_layout,
+            )
+            .map_err(CpuTranslationFrontendError::Memory),
             CpuTranslatedMemoryOperation::Write => MemoryRequest::write(
+                request_id,
+                self.physical_address,
+                self.size,
+                self.write_data
+                    .clone()
+                    .ok_or(CpuTranslationFrontendError::MissingWriteData {
+                        request: self.memory_request_id,
+                    })?,
+                self.byte_mask
+                    .clone()
+                    .ok_or(CpuTranslationFrontendError::MissingByteMask {
+                        request: self.memory_request_id,
+                    })?,
+                line_layout,
+            )
+            .map_err(CpuTranslationFrontendError::Memory),
+            CpuTranslatedMemoryOperation::StoreConditional => MemoryRequest::store_conditional(
                 request_id,
                 self.physical_address,
                 self.size,
