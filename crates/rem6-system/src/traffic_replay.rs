@@ -115,9 +115,26 @@ impl TrafficTraceReplaySidebandEvent {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct TrafficTraceReplayTargetRuntime {
-    action_queue: TrafficTraceReplayActionQueue,
+    actions: VecDeque<TrafficTraceReplayTargetAction>,
     memory_failures: Vec<TrafficTraceReplayScheduledMemoryFailure>,
     request_ticks: BTreeMap<MemoryRequestId, Tick>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct TrafficTraceReplayTargetAction {
+    action: TrafficTraceReplayAction,
+    request: Option<MemoryRequestId>,
+}
+
+impl TrafficTraceReplayTargetAction {
+    fn new(action: TrafficTraceReplayAction, request: Option<MemoryRequestId>) -> Self {
+        Self { action, request }
+    }
+
+    fn matches_request(&self, request: MemoryRequestId) -> bool {
+        self.request
+            .is_none_or(|action_request| action_request == request)
+    }
 }
 
 impl TrafficTraceReplayTargetRuntime {
@@ -125,6 +142,7 @@ impl TrafficTraceReplayTargetRuntime {
         &mut self,
         batch: &TrafficControllerEventBatch,
     ) -> Result<(), rem6_traffic::TrafficGeneratorError> {
+        let mut matched_request = None;
         if let Some(request) = batch
             .request()
             .filter(|request| request.request().requires_response())
@@ -133,15 +151,29 @@ impl TrafficTraceReplayTargetRuntime {
                 .insert(request.request().id(), request.tick());
         }
         for event in batch.events() {
-            let TrafficControllerEvent::TraceReplayAction(action) = event else {
-                continue;
-            };
-            if matches!(
-                action,
-                TrafficTraceReplayAction::MemoryResponse { .. }
-                    | TrafficTraceReplayAction::MemoryFailure { .. }
-            ) {
-                self.action_queue.record_action(action.clone())?;
+            match event {
+                TrafficControllerEvent::TraceResponseMatch(response) => {
+                    matched_request = replay_source_request(response.source());
+                }
+                TrafficControllerEvent::TraceErrorMatch(error) => {
+                    matched_request = replay_source_request(error.source());
+                }
+                TrafficControllerEvent::TraceReplayAction(action)
+                    if matches!(
+                        action,
+                        TrafficTraceReplayAction::MemoryResponse { .. }
+                            | TrafficTraceReplayAction::MemoryFailure { .. }
+                    ) =>
+                {
+                    self.actions.push_back(TrafficTraceReplayTargetAction::new(
+                        action.clone(),
+                        matched_request.take(),
+                    ));
+                }
+                TrafficControllerEvent::TraceReplayAction(_) => {
+                    matched_request = None;
+                }
+                _ => {}
             }
         }
         Ok(())
@@ -151,7 +183,14 @@ impl TrafficTraceReplayTargetRuntime {
         &mut self,
         delivery: &RequestDelivery,
     ) -> Result<TrafficTraceReplayTargetEvent, TrafficTraceReplayTargetError> {
-        let event = traffic_trace_replay_target_event(&mut self.action_queue, delivery)?;
+        let request = delivery.request().id();
+        let action_index = self
+            .target_action_index(request)
+            .ok_or(TrafficTraceReplayTargetError::ActionQueueEmpty { request })?;
+        let event = target_event_for_action(&self.actions[action_index].action, delivery)?;
+        self.actions
+            .remove(action_index)
+            .expect("validated trace replay target action remains queued");
         self.request_ticks.remove(&delivery.request().id());
         Ok(event)
     }
@@ -166,15 +205,28 @@ impl TrafficTraceReplayTargetRuntime {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.action_queue.is_empty() && self.request_ticks.is_empty()
+        self.actions.is_empty() && self.request_ticks.is_empty()
     }
 
-    fn has_replay_action(&self) -> bool {
-        !self.action_queue.is_empty()
+    fn has_replay_action(&self, request: MemoryRequestId) -> bool {
+        self.target_action_index(request).is_some()
     }
 
     pub fn request_tick(&self, request: MemoryRequestId) -> Option<Tick> {
         self.request_ticks.get(&request).copied()
+    }
+
+    fn target_action_index(&self, request: MemoryRequestId) -> Option<usize> {
+        self.actions
+            .iter()
+            .position(|action| action.matches_request(request))
+    }
+}
+
+fn replay_source_request(source: &TrafficTraceReplaySource) -> Option<MemoryRequestId> {
+    match source {
+        TrafficTraceReplaySource::Memory(request) => Some(request.request().id()),
+        TrafficTraceReplaySource::Sync(_) | TrafficTraceReplaySource::Htm(_) => None,
     }
 }
 
@@ -482,8 +534,8 @@ impl TrafficTraceReplayControllerRuntime {
         self.target.target_event(delivery)
     }
 
-    fn has_target_action(&self) -> bool {
-        self.target.has_replay_action()
+    fn has_target_action(&self, request: MemoryRequestId) -> bool {
+        self.target.has_replay_action(request)
     }
 
     fn record_memory_failure(&mut self, tick: Tick, record: TrafficTraceMemoryFailureRecord) {
@@ -667,7 +719,7 @@ pub fn traffic_trace_replay_controller_target_outcome(
                 .lock()
                 .expect("trace replay controller runtime lock");
             runtime.record_batch(&batch)?;
-            runtime.has_target_action()
+            runtime.has_target_action(delivery.request().id())
         };
         traffic_trace_replay_controller_runtime_sideband_events(
             Arc::clone(&runtime),
@@ -1140,28 +1192,18 @@ pub fn traffic_trace_replay_target_outcome(
     let action = queue
         .peek_action()
         .ok_or(TrafficTraceReplayTargetError::ActionQueueEmpty { request })?;
-    let (tick, response_request) = match action {
-        TrafficTraceReplayAction::MemoryResponse { tick, response } => {
-            (*tick, response.request_id())
-        }
-        action => {
-            return Err(TrafficTraceReplayTargetError::UnexpectedAction {
-                request,
-                action: action.clone(),
-            });
-        }
-    };
-
-    if response_request != request {
-        return Err(TrafficTraceReplayTargetError::RequestMismatch {
+    if !matches!(action, TrafficTraceReplayAction::MemoryResponse { .. }) {
+        return Err(TrafficTraceReplayTargetError::UnexpectedAction {
             request,
-            response: response_request,
+            action: action.clone(),
         });
     }
-
-    let delay = memory_response_delay(request, delivery.tick(), tick)?;
-    let response = pop_validated_memory_response(queue);
-    Ok(memory_response_outcome(delay, response))
+    let event = target_event_for_action(action, delivery)?;
+    let TrafficTraceReplayTargetEvent::MemoryResponse(outcome) = event else {
+        unreachable!("validated trace replay target outcome is a memory response")
+    };
+    pop_validated_memory_response(queue);
+    Ok(outcome)
 }
 
 pub fn traffic_trace_replay_target_event(
@@ -1172,6 +1214,23 @@ pub fn traffic_trace_replay_target_event(
     let action = queue
         .peek_action()
         .ok_or(TrafficTraceReplayTargetError::ActionQueueEmpty { request })?;
+    let event = target_event_for_action(action, delivery)?;
+    match event {
+        TrafficTraceReplayTargetEvent::MemoryResponse(_) => {
+            pop_validated_memory_response(queue);
+        }
+        TrafficTraceReplayTargetEvent::MemoryFailure { .. } => {
+            pop_validated_memory_failure(queue);
+        }
+    }
+    Ok(event)
+}
+
+fn target_event_for_action(
+    action: &TrafficTraceReplayAction,
+    delivery: &RequestDelivery,
+) -> Result<TrafficTraceReplayTargetEvent, TrafficTraceReplayTargetError> {
+    let request = delivery.request().id();
     match action {
         TrafficTraceReplayAction::MemoryResponse { tick, response } => {
             let response_request = response.request_id();
@@ -1182,9 +1241,8 @@ pub fn traffic_trace_replay_target_event(
                 });
             }
             let delay = memory_response_delay(request, delivery.tick(), *tick)?;
-            let response = pop_validated_memory_response(queue);
             Ok(TrafficTraceReplayTargetEvent::MemoryResponse(
-                memory_response_outcome(delay, response),
+                memory_response_outcome(delay, response.clone()),
             ))
         }
         TrafficTraceReplayAction::MemoryFailure { tick, failure } => {
@@ -1198,7 +1256,7 @@ pub fn traffic_trace_replay_target_event(
             let delay = memory_failure_delay(request, delivery.tick(), *tick)?;
             Ok(TrafficTraceReplayTargetEvent::MemoryFailure {
                 delay,
-                record: pop_validated_memory_failure(queue),
+                record: TrafficTraceMemoryFailureRecord::new(*tick, *failure),
             })
         }
         action => Err(TrafficTraceReplayTargetError::UnexpectedAction {
