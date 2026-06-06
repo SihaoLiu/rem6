@@ -26,6 +26,8 @@ const GEM5_SOFT_PF_EX_REQ: u32 = 12;
 const GEM5_HARD_PF_REQ: u32 = 13;
 const GEM5_WRITE_LINE_REQ: u32 = 16;
 const GEM5_UPGRADE_REQ: u32 = 17;
+const GEM5_SC_UPGRADE_REQ: u32 = 18;
+const GEM5_SC_UPGRADE_FAIL_REQ: u32 = 20;
 const GEM5_READ_EX_REQ: u32 = 22;
 const GEM5_READ_CLEAN_REQ: u32 = 24;
 const GEM5_READ_SHARED_REQ: u32 = 25;
@@ -93,6 +95,8 @@ enum TrafficTraceCommand {
     PrefetchWrite,
     LoadLocked,
     StoreConditional,
+    StoreConditionalUpgrade,
+    StoreConditionalUpgradeFail,
     LockedRmwRead,
     LockedRmwWrite,
     Write,
@@ -117,6 +121,7 @@ impl TrafficTraceCommand {
             | Self::HardPrefetchRead
             | Self::PrefetchWrite
             | Self::LoadLocked
+            | Self::StoreConditionalUpgradeFail
             | Self::LockedRmwRead => TrafficRequestKind::Read,
             Self::Write
             | Self::StoreConditional
@@ -130,6 +135,7 @@ impl TrafficTraceCommand {
             | Self::CleanShared
             | Self::CleanInvalid
             | Self::Invalidate
+            | Self::StoreConditionalUpgrade
             | Self::Upgrade => TrafficRequestKind::Maintenance,
         }
     }
@@ -143,6 +149,8 @@ impl TrafficTraceCommand {
             Self::PrefetchWrite => "SoftPFExReq",
             Self::LoadLocked => "LoadLockedReq",
             Self::StoreConditional => "StoreCondReq",
+            Self::StoreConditionalUpgrade => "SCUpgradeReq",
+            Self::StoreConditionalUpgradeFail => "SCUpgradeFailReq",
             Self::LockedRmwRead => "LockedRMWReadReq",
             Self::LockedRmwWrite => "LockedRMWWriteReq",
             Self::Write => "WriteReq",
@@ -292,7 +300,10 @@ impl TrafficTraceRequestFlags {
         if self.llsc
             && !matches!(
                 command,
-                TrafficTraceCommand::LoadLocked | TrafficTraceCommand::StoreConditional
+                TrafficTraceCommand::LoadLocked
+                    | TrafficTraceCommand::StoreConditional
+                    | TrafficTraceCommand::StoreConditionalUpgrade
+                    | TrafficTraceCommand::StoreConditionalUpgradeFail
             )
         {
             return Err(TrafficGeneratorError::TraceUnsupportedFlags { flags: self.bits });
@@ -711,6 +722,13 @@ impl TrafficTraceGenerator {
                 MemoryRequest::read_unique(id, address, element.size, layout).map_err(Into::into)
             }
             TrafficRequestKind::Read
+                if element.command == TrafficTraceCommand::StoreConditionalUpgradeFail =>
+            {
+                validate_upgrade_request(address, element.size, layout)?;
+                MemoryRequest::store_conditional_upgrade_fail(id, address, element.size, layout)
+                    .map_err(Into::into)
+            }
+            TrafficRequestKind::Read
                 if matches!(
                     element.command,
                     TrafficTraceCommand::SoftPrefetchRead | TrafficTraceCommand::HardPrefetchRead
@@ -811,6 +829,13 @@ impl TrafficTraceGenerator {
             TrafficRequestKind::Maintenance if element.command == TrafficTraceCommand::Upgrade => {
                 validate_upgrade_request(address, element.size, layout)?;
                 MemoryRequest::upgrade(id, address, element.size, layout).map_err(Into::into)
+            }
+            TrafficRequestKind::Maintenance
+                if element.command == TrafficTraceCommand::StoreConditionalUpgrade =>
+            {
+                validate_upgrade_request(address, element.size, layout)?;
+                MemoryRequest::store_conditional_upgrade(id, address, element.size, layout)
+                    .map_err(Into::into)
             }
             TrafficRequestKind::Maintenance => {
                 unreachable!("maintenance trace kind has no request builder")
@@ -1182,6 +1207,8 @@ fn parse_packet(message: &[u8]) -> Result<TrafficTraceElement, TrafficGeneratorE
         GEM5_CLEAN_EVICT => TrafficTraceCommand::CleanEvict,
         GEM5_WRITE_LINE_REQ => TrafficTraceCommand::WriteLine,
         GEM5_UPGRADE_REQ => TrafficTraceCommand::Upgrade,
+        GEM5_SC_UPGRADE_REQ => TrafficTraceCommand::StoreConditionalUpgrade,
+        GEM5_SC_UPGRADE_FAIL_REQ => TrafficTraceCommand::StoreConditionalUpgradeFail,
         GEM5_CLEAN_SHARED_REQ => TrafficTraceCommand::CleanShared,
         GEM5_CLEAN_INVALID_REQ => TrafficTraceCommand::CleanInvalid,
         GEM5_INVALIDATE_REQ => TrafficTraceCommand::Invalidate,

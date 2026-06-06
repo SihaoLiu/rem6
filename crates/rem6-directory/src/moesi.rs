@@ -338,6 +338,7 @@ impl MoesiDirectory {
             }
             MemoryOperation::ReadUnique
             | MemoryOperation::LockedRmwRead
+            | MemoryOperation::StoreConditionalUpgradeFail
             | MemoryOperation::Write
             | MemoryOperation::CacheBlockZero
             | MemoryOperation::StoreConditional
@@ -347,7 +348,7 @@ impl MoesiDirectory {
             | MemoryOperation::InvalidateWritable => {
                 self.accept_read_unique(line, request_id, requester, &mut after_line)
             }
-            MemoryOperation::Upgrade => {
+            MemoryOperation::StoreConditionalUpgrade | MemoryOperation::Upgrade => {
                 self.accept_upgrade(line, request_id, requester, &mut after_line)?
             }
             MemoryOperation::WritebackDirty => {

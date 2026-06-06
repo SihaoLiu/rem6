@@ -2815,7 +2815,11 @@ intent, `StoreCondReq` command-id 27 maps to a native store-conditional write
 request with deterministic synthetic write data, a full byte mask, writable
 intent, response without data on success, failed-response status without backing
 data mutation when no matching 16-byte reservation exists, and write byte
-accounting, `LockedRMWReadReq` command-id 30 maps to a native locked-RMW read
+accounting, `SCUpgradeReq` command-id 18 maps to a native store-conditional
+upgrade request with writable intent and no payload, `SCUpgradeFailReq`
+command-id 20 maps to a native store-conditional upgrade-fail read with
+writable intent and response data, `LockedRMWReadReq` command-id 30 maps to a
+native locked-RMW read
 request with writable intent, response data, and read byte accounting,
 `LockedRMWWriteReq` command-id 32 maps to a native locked-RMW write request with
 deterministic synthetic write data, a full byte mask, writable intent, a
@@ -2975,6 +2979,13 @@ flags to native `kernel_sync` memory-request attributes. The metadata survives
 request snapshots and shared memory-request checkpoint payloads without adding
 a new packet command; fuller GPU launch and completion scheduling remains an
 open typed event target.
+
+Trace store-conditional-upgrade note: packet-trace support now maps gem5
+`SCUpgradeReq` and `SCUpgradeFailReq` to native typed store-conditional upgrade
+operations, preserving writable intent and response-data behavior without
+folding them into plain `Upgrade` or `ReadUnique` requests. No-address
+`MemSyncReq`, `MemFenceReq`, TLBI, and HTM commands remain open because they
+need non-memory trace events rather than `TrafficRequestEvent` shims.
 
 ### Memory, Cache, Coherence, and NoC
 

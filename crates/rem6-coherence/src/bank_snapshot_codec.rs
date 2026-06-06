@@ -657,6 +657,14 @@ fn read_request(cursor: &mut PayloadCursor<'_>) -> Result<MemoryRequest, String>
                 .ok_or_else(|| "MSI store conditional request is missing byte mask".to_string())?,
             layout,
         ),
+        MemoryOperation::StoreConditionalUpgrade => {
+            reject_unexpected_request_payload("store conditional upgrade", &data, &byte_mask)?;
+            MemoryRequest::store_conditional_upgrade(id, address, size, layout)
+        }
+        MemoryOperation::StoreConditionalUpgradeFail => {
+            reject_unexpected_request_payload("store conditional upgrade fail", &data, &byte_mask)?;
+            MemoryRequest::store_conditional_upgrade_fail(id, address, size, layout)
+        }
         MemoryOperation::Upgrade => MemoryRequest::upgrade(id, address, size, layout),
         MemoryOperation::WriteClean => {
             if byte_mask.is_some() {
@@ -1013,6 +1021,8 @@ fn memory_operation_to_u8(operation: MemoryOperation) -> u8 {
         MemoryOperation::LoadLocked => 17,
         MemoryOperation::StoreConditional => 18,
         MemoryOperation::CacheBlockZero => 19,
+        MemoryOperation::StoreConditionalUpgrade => 21,
+        MemoryOperation::StoreConditionalUpgradeFail => 22,
     }
 }
 
@@ -1039,6 +1049,8 @@ fn u8_to_memory_operation(value: u8) -> Result<MemoryOperation, String> {
         17 => Ok(MemoryOperation::LoadLocked),
         18 => Ok(MemoryOperation::StoreConditional),
         19 => Ok(MemoryOperation::CacheBlockZero),
+        21 => Ok(MemoryOperation::StoreConditionalUpgrade),
+        22 => Ok(MemoryOperation::StoreConditionalUpgradeFail),
         _ => Err(format!("unknown memory operation {value}")),
     }
 }

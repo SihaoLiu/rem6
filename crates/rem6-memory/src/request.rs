@@ -422,6 +422,38 @@ impl MemoryRequest {
         )
     }
 
+    pub fn store_conditional_upgrade(
+        id: MemoryRequestId,
+        address: Address,
+        size: AccessSize,
+        line_layout: CacheLineLayout,
+    ) -> Result<Self, MemoryError> {
+        Self::new(
+            id,
+            MemoryOperation::StoreConditionalUpgrade,
+            address,
+            size,
+            line_layout,
+            MemoryRequestPayload::empty(),
+        )
+    }
+
+    pub fn store_conditional_upgrade_fail(
+        id: MemoryRequestId,
+        address: Address,
+        size: AccessSize,
+        line_layout: CacheLineLayout,
+    ) -> Result<Self, MemoryError> {
+        Self::new(
+            id,
+            MemoryOperation::StoreConditionalUpgradeFail,
+            address,
+            size,
+            line_layout,
+            MemoryRequestPayload::empty(),
+        )
+    }
+
     pub fn instruction_fetch(
         id: MemoryRequestId,
         address: Address,

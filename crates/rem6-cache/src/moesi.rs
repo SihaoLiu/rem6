@@ -749,6 +749,8 @@ fn moesi_cpu_event(request: &MemoryRequest) -> MoesiEvent {
         | MemoryOperation::Write
         | MemoryOperation::CacheBlockZero
         | MemoryOperation::StoreConditional
+        | MemoryOperation::StoreConditionalUpgrade
+        | MemoryOperation::StoreConditionalUpgradeFail
         | MemoryOperation::LockedRmwWrite
         | MemoryOperation::Upgrade
         | MemoryOperation::Atomic

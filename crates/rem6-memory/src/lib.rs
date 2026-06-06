@@ -139,6 +139,8 @@ pub enum MemoryOperation {
     Write,
     CacheBlockZero,
     StoreConditional,
+    StoreConditionalUpgrade,
+    StoreConditionalUpgradeFail,
     Upgrade,
     Atomic,
     PrefetchRead,
@@ -229,14 +231,16 @@ impl MemoryOperation {
             Self::NoAccess => CoherenceIntent::NoAccess,
             Self::InstructionFetch => CoherenceIntent::InstructionFetch,
             Self::ReadShared | Self::LoadLocked | Self::PrefetchRead => CoherenceIntent::ReadShared,
-            Self::ReadUnique | Self::LockedRmwRead => CoherenceIntent::ReadUnique,
+            Self::ReadUnique | Self::LockedRmwRead | Self::StoreConditionalUpgradeFail => {
+                CoherenceIntent::ReadUnique
+            }
             Self::Write
             | Self::StoreConditional
             | Self::LockedRmwWrite
             | Self::PrefetchWrite
             | Self::Atomic => CoherenceIntent::WriteUnique,
             Self::CacheBlockZero => CoherenceIntent::CacheBlockZero,
-            Self::Upgrade => CoherenceIntent::Upgrade,
+            Self::StoreConditionalUpgrade | Self::Upgrade => CoherenceIntent::Upgrade,
             Self::WriteClean => CoherenceIntent::WriteClean,
             Self::WritebackClean => CoherenceIntent::WritebackClean,
             Self::WritebackDirty => CoherenceIntent::WritebackDirty,
@@ -267,6 +271,7 @@ impl MemoryOperation {
                 | Self::ReadUnique
                 | Self::LoadLocked
                 | Self::LockedRmwRead
+                | Self::StoreConditionalUpgradeFail
                 | Self::Atomic
         )
     }
@@ -292,6 +297,8 @@ impl MemoryOperation {
                 | Self::Write
                 | Self::CacheBlockZero
                 | Self::StoreConditional
+                | Self::StoreConditionalUpgrade
+                | Self::StoreConditionalUpgradeFail
                 | Self::LockedRmwWrite
                 | Self::Upgrade
                 | Self::Atomic
@@ -405,7 +412,8 @@ impl LineMemoryStore {
             MemoryOperation::InstructionFetch
             | MemoryOperation::ReadShared
             | MemoryOperation::ReadUnique
-            | MemoryOperation::LockedRmwRead => {
+            | MemoryOperation::LockedRmwRead
+            | MemoryOperation::StoreConditionalUpgradeFail => {
                 let data = self.read_slice(request)?;
                 MemoryResponse::completed(request, Some(data)).map(Some)
             }
@@ -440,7 +448,8 @@ impl LineMemoryStore {
                 self.clear_locked_reservations(request);
                 MemoryResponse::completed(request, Some(data)).map(Some)
             }
-            MemoryOperation::Upgrade
+            MemoryOperation::StoreConditionalUpgrade
+            | MemoryOperation::Upgrade
             | MemoryOperation::CleanShared
             | MemoryOperation::Invalidate
             | MemoryOperation::InvalidateWritable => {

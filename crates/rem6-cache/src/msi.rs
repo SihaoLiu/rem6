@@ -734,6 +734,8 @@ fn cpu_event(request: &MemoryRequest) -> MsiEvent {
         | MemoryOperation::Write
         | MemoryOperation::CacheBlockZero
         | MemoryOperation::StoreConditional
+        | MemoryOperation::StoreConditionalUpgrade
+        | MemoryOperation::StoreConditionalUpgradeFail
         | MemoryOperation::LockedRmwWrite
         | MemoryOperation::Upgrade
         | MemoryOperation::Atomic

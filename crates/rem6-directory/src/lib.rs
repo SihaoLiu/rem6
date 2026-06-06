@@ -340,6 +340,7 @@ impl MsiDirectory {
             }
             MemoryOperation::ReadUnique
             | MemoryOperation::LockedRmwRead
+            | MemoryOperation::StoreConditionalUpgradeFail
             | MemoryOperation::Write
             | MemoryOperation::CacheBlockZero
             | MemoryOperation::StoreConditional
@@ -349,7 +350,7 @@ impl MsiDirectory {
             | MemoryOperation::InvalidateWritable => {
                 self.accept_read_unique(line, request_id, requester, &mut after_line)
             }
-            MemoryOperation::Upgrade => {
+            MemoryOperation::StoreConditionalUpgrade | MemoryOperation::Upgrade => {
                 self.accept_upgrade(line, request_id, requester, &mut after_line)?
             }
             MemoryOperation::WritebackDirty => {
@@ -888,6 +889,7 @@ impl MesiDirectory {
             }
             MemoryOperation::ReadUnique
             | MemoryOperation::LockedRmwRead
+            | MemoryOperation::StoreConditionalUpgradeFail
             | MemoryOperation::Write
             | MemoryOperation::CacheBlockZero
             | MemoryOperation::StoreConditional
@@ -897,7 +899,7 @@ impl MesiDirectory {
             | MemoryOperation::InvalidateWritable => {
                 self.accept_read_unique(line, request_id, requester, &mut after_line)
             }
-            MemoryOperation::Upgrade => {
+            MemoryOperation::StoreConditionalUpgrade | MemoryOperation::Upgrade => {
                 self.accept_upgrade(line, request_id, requester, &mut after_line)?
             }
             MemoryOperation::WritebackDirty => {
