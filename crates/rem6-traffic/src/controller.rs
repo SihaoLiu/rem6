@@ -976,6 +976,10 @@ impl TrafficTraceReplayActionQueue {
         self.actions.pop_front()
     }
 
+    pub fn peek_action(&self) -> Option<&TrafficTraceReplayAction> {
+        self.actions.front()
+    }
+
     pub fn pop_memory_response(&mut self) -> Option<TrafficTraceMemoryResponseRecord> {
         let index = self
             .actions

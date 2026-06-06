@@ -63,6 +63,7 @@ mod system_run_sc_progress;
 mod system_run_worker_lanes;
 mod timer_checkpoint;
 mod topology;
+mod traffic_replay;
 mod trap_event;
 mod uart_checkpoint;
 mod virtio_checkpoint;
@@ -206,6 +207,7 @@ pub use topology::{
     RiscvTopologyMemoryRegion, RiscvTopologySinicPciDeviceConfig, RiscvTopologySystem,
     RiscvTopologySystemError, RiscvTopologyWorkloadSinicPciError,
 };
+pub use traffic_replay::{traffic_trace_replay_target_outcome, TrafficTraceReplayTargetError};
 pub(crate) use trap_event::pending_trap_cores_from_turn;
 pub use trap_event::{
     guest_trap_from_riscv, guest_trap_kind_from_riscv, RiscvTrapEventPort, ScheduledRiscvTrap,

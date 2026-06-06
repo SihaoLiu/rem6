@@ -2933,7 +2933,10 @@ matched replay completions in a typed outcome summary and emits replay action
 events carrying owned memory responses or control acknowledgements. The
 execution-facing replay action queue records those controller batches and drains
 owned memory response records, control acknowledgement ticks, or the original
-actions in recorded order for downstream consumers. Full response propagation
+actions in recorded order for downstream consumers. `rem6-system` can consume
+the ordered memory-response actions as a transport target outcome, preserving
+the trace response tick as target-side response delay and rejecting mismatched
+request ids without discarding the queued action. Full response propagation
 through memory controllers, caches, and CPU ports remains a separate contract.
 `InvalidDestError`, `BadAddressError`, `ReadError`, `WriteError`,
 `FunctionalReadError`, and `FunctionalWriteError` command-ids 46-51 map to
