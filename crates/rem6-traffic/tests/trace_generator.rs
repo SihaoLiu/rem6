@@ -13,6 +13,7 @@ use rem6_traffic::{
 const GEM5_MAGIC: [u8; 4] = [0x67, 0x65, 0x6d, 0x35];
 const TICK_FREQUENCY: u64 = 1_000;
 const GEM5_FLAG_INST_FETCH: u32 = 0x0000_0100;
+const GEM5_FLAG_PHYSICAL: u32 = 0x0000_0200;
 const GEM5_FLAG_UNCACHEABLE: u32 = 0x0000_0400;
 const GEM5_FLAG_STRICT_ORDER: u32 = 0x0000_0800;
 const GEM5_FLAG_KERNEL: u32 = 0x0000_1000;
@@ -297,6 +298,52 @@ fn trace_traffic_generator_maps_supported_gem5_request_flags() {
         uncacheable.request().ordering(),
         MemoryAccessOrdering::none()
     );
+}
+
+#[test]
+fn trace_traffic_generator_accepts_gem5_physical_flag_as_trace_address_metadata() {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace(
+            TICK_FREQUENCY,
+            &[
+                PacketFields {
+                    tick: 2,
+                    command: 1,
+                    address: 0x40,
+                    size: 8,
+                    flags: Some(GEM5_FLAG_PHYSICAL | GEM5_FLAG_ACQUIRE),
+                },
+                PacketFields {
+                    tick: 5,
+                    command: 4,
+                    address: 0x80,
+                    size: 4,
+                    flags: Some(GEM5_FLAG_PHYSICAL),
+                },
+            ],
+        ),
+        TICK_FREQUENCY,
+    )
+    .unwrap();
+    let mut generator = TrafficTraceGenerator::new(trace_config(trace));
+    generator.enter(30);
+
+    let read = generator.next_request(30, 0).unwrap().unwrap();
+    assert_eq!(read.tick(), 32);
+    assert_eq!(read.kind(), TrafficRequestKind::Read);
+    assert_eq!(read.request().operation(), MemoryOperation::ReadShared);
+    assert_eq!(
+        read.request().ordering(),
+        MemoryAccessOrdering::new(None, Some(MemoryBarrierSet::memory()))
+    );
+    assert!(!read.request().is_uncacheable());
+
+    let write = generator.next_request(32, 0).unwrap().unwrap();
+    assert_eq!(write.tick(), 35);
+    assert_eq!(write.kind(), TrafficRequestKind::Write);
+    assert_eq!(write.request().operation(), MemoryOperation::Write);
+    assert_eq!(write.request().ordering(), MemoryAccessOrdering::none());
+    assert!(!write.request().is_uncacheable());
 }
 
 #[test]
