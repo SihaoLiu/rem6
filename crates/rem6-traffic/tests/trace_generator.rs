@@ -2,7 +2,8 @@ use std::io::Write;
 
 use flate2::{write::GzEncoder, Compression};
 use rem6_memory::{
-    AccessSize, Address, AgentId, CacheLineLayout, MemoryAtomicOp, MemoryOperation, MemoryRequestId,
+    AccessSize, Address, AgentId, CacheLineLayout, MemoryAccessOrdering, MemoryAtomicOp,
+    MemoryBarrierSet, MemoryOperation, MemoryRequestId,
 };
 use rem6_traffic::{
     TrafficGeneratorError, TrafficRequestKind, TrafficTrace, TrafficTraceConfig,
@@ -11,6 +12,11 @@ use rem6_traffic::{
 
 const GEM5_MAGIC: [u8; 4] = [0x67, 0x65, 0x6d, 0x35];
 const TICK_FREQUENCY: u64 = 1_000;
+const GEM5_FLAG_UNCACHEABLE: u32 = 0x0000_0400;
+const GEM5_FLAG_STRICT_ORDER: u32 = 0x0000_0800;
+const GEM5_FLAG_KERNEL: u32 = 0x0000_1000;
+const GEM5_FLAG_ACQUIRE: u32 = 0x0002_0000;
+const GEM5_FLAG_RELEASE: u32 = 0x0004_0000;
 
 #[derive(Clone, Copy)]
 struct PacketFields {
@@ -192,6 +198,26 @@ fn trace_parser_rejects_invalid_gem5_packet_traces() {
                     tick: 1,
                     command: 1,
                     address: 0,
+                    size: 8,
+                    flags: Some(GEM5_FLAG_STRICT_ORDER),
+                }],
+            ),
+            TICK_FREQUENCY,
+        )
+        .unwrap_err(),
+        TrafficGeneratorError::TraceUnsupportedFlags {
+            flags: GEM5_FLAG_STRICT_ORDER,
+        }
+    );
+
+    assert_eq!(
+        TrafficTrace::from_gem5_packet_trace(
+            &gem5_packet_trace(
+                TICK_FREQUENCY,
+                &[PacketFields {
+                    tick: 1,
+                    command: 1,
+                    address: 0,
                     size: 0,
                     flags: None,
                 }],
@@ -200,6 +226,75 @@ fn trace_parser_rejects_invalid_gem5_packet_traces() {
         )
         .unwrap_err(),
         TrafficGeneratorError::TraceZeroSize
+    );
+}
+
+#[test]
+fn trace_traffic_generator_maps_supported_gem5_request_flags() {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace(
+            TICK_FREQUENCY,
+            &[
+                PacketFields {
+                    tick: 2,
+                    command: 4,
+                    address: 0x40,
+                    size: 8,
+                    flags: Some(GEM5_FLAG_UNCACHEABLE | GEM5_FLAG_STRICT_ORDER | GEM5_FLAG_RELEASE),
+                },
+                PacketFields {
+                    tick: 7,
+                    command: 1,
+                    address: 0x80,
+                    size: 16,
+                    flags: Some(GEM5_FLAG_ACQUIRE),
+                },
+                PacketFields {
+                    tick: 11,
+                    command: 1,
+                    address: 0xc0,
+                    size: 4,
+                    flags: Some(GEM5_FLAG_UNCACHEABLE),
+                },
+            ],
+        ),
+        TICK_FREQUENCY,
+    )
+    .unwrap();
+    let mut generator = TrafficTraceGenerator::new(trace_config(trace));
+    generator.enter(10);
+
+    let release = generator.next_request(10, 0).unwrap().unwrap();
+    assert_eq!(release.tick(), 12);
+    assert_eq!(release.request().operation(), MemoryOperation::Write);
+    assert!(release.request().is_uncacheable());
+    assert!(release.request().is_strict_ordered());
+    assert_eq!(
+        release.request().ordering(),
+        MemoryAccessOrdering::new(Some(MemoryBarrierSet::memory()), None)
+    );
+
+    let acquire = generator.next_request(12, 0).unwrap().unwrap();
+    assert_eq!(acquire.tick(), 17);
+    assert_eq!(acquire.request().operation(), MemoryOperation::ReadShared);
+    assert!(!acquire.request().is_uncacheable());
+    assert!(!acquire.request().is_strict_ordered());
+    assert_eq!(
+        acquire.request().ordering(),
+        MemoryAccessOrdering::new(None, Some(MemoryBarrierSet::memory()))
+    );
+
+    let uncacheable = generator.next_request(17, 0).unwrap().unwrap();
+    assert_eq!(uncacheable.tick(), 21);
+    assert_eq!(
+        uncacheable.request().operation(),
+        MemoryOperation::ReadShared
+    );
+    assert!(uncacheable.request().is_uncacheable());
+    assert!(!uncacheable.request().is_strict_ordered());
+    assert_eq!(
+        uncacheable.request().ordering(),
+        MemoryAccessOrdering::none()
     );
 }
 
@@ -1379,7 +1474,7 @@ fn trace_traffic_generator_validates_upgrade_alignment_after_addr_offset() {
 }
 
 #[test]
-fn trace_parser_rejects_read_exclusive_packet_with_nonzero_flags() {
+fn trace_parser_rejects_read_exclusive_packet_with_unsupported_flags() {
     assert_eq!(
         TrafficTrace::from_gem5_packet_trace(
             &gem5_packet_trace(
@@ -1389,13 +1484,15 @@ fn trace_parser_rejects_read_exclusive_packet_with_nonzero_flags() {
                     command: 22,
                     address: 0,
                     size: 8,
-                    flags: Some(0x400),
+                    flags: Some(GEM5_FLAG_KERNEL),
                 }],
             ),
             TICK_FREQUENCY,
         )
         .unwrap_err(),
-        TrafficGeneratorError::TraceUnsupportedFlags { flags: 0x400 }
+        TrafficGeneratorError::TraceUnsupportedFlags {
+            flags: GEM5_FLAG_KERNEL,
+        }
     );
 }
 

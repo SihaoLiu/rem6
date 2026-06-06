@@ -640,6 +640,11 @@ impl MemoryRequest {
         self.strict_order
     }
 
+    pub fn with_uncacheable(mut self) -> Self {
+        self.uncacheable = true;
+        self
+    }
+
     pub fn with_uncacheable_strict_order(mut self) -> Self {
         self.uncacheable = true;
         self.strict_order = true;

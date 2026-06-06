@@ -2,8 +2,8 @@ use std::io::Read;
 
 use flate2::read::GzDecoder;
 use rem6_memory::{
-    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryAtomicOp, MemoryRequest,
-    MemoryRequestId,
+    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryAccessOrdering, MemoryAtomicOp,
+    MemoryBarrierSet, MemoryRequest, MemoryRequestId,
 };
 
 use crate::{
@@ -37,6 +37,12 @@ const GEM5_SWAP_REQ: u32 = 34;
 const GEM5_CLEAN_SHARED_REQ: u32 = 42;
 const GEM5_CLEAN_INVALID_REQ: u32 = 44;
 const GEM5_INVALIDATE_REQ: u32 = 54;
+const GEM5_FLAG_UNCACHEABLE: u32 = 0x0000_0400;
+const GEM5_FLAG_STRICT_ORDER: u32 = 0x0000_0800;
+const GEM5_FLAG_ACQUIRE: u32 = 0x0002_0000;
+const GEM5_FLAG_RELEASE: u32 = 0x0004_0000;
+const GEM5_SUPPORTED_TRACE_FLAGS: u32 =
+    GEM5_FLAG_UNCACHEABLE | GEM5_FLAG_STRICT_ORDER | GEM5_FLAG_ACQUIRE | GEM5_FLAG_RELEASE;
 const WIRE_VARINT: u64 = 0;
 const WIRE_FIXED64: u64 = 1;
 const WIRE_LENGTH_DELIMITED: u64 = 2;
@@ -126,6 +132,48 @@ struct TrafficTraceElement {
     command: TrafficTraceCommand,
     address: Address,
     size: AccessSize,
+    flags: TrafficTraceRequestFlags,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct TrafficTraceRequestFlags {
+    uncacheable: bool,
+    strict_order: bool,
+    acquire: bool,
+    release: bool,
+}
+
+impl TrafficTraceRequestFlags {
+    fn from_gem5(bits: u32) -> Result<Self, TrafficGeneratorError> {
+        let unsupported = bits & !GEM5_SUPPORTED_TRACE_FLAGS;
+        if unsupported != 0
+            || (bits & GEM5_FLAG_STRICT_ORDER != 0 && bits & GEM5_FLAG_UNCACHEABLE == 0)
+        {
+            return Err(TrafficGeneratorError::TraceUnsupportedFlags { flags: bits });
+        }
+
+        Ok(Self {
+            uncacheable: bits & GEM5_FLAG_UNCACHEABLE != 0,
+            strict_order: bits & GEM5_FLAG_STRICT_ORDER != 0,
+            acquire: bits & GEM5_FLAG_ACQUIRE != 0,
+            release: bits & GEM5_FLAG_RELEASE != 0,
+        })
+    }
+
+    fn apply(self, request: MemoryRequest) -> MemoryRequest {
+        let ordered = request.with_ordering(MemoryAccessOrdering::new(
+            self.release.then_some(MemoryBarrierSet::memory()),
+            self.acquire.then_some(MemoryBarrierSet::memory()),
+        ));
+
+        if self.strict_order {
+            ordered.with_uncacheable_strict_order()
+        } else if self.uncacheable {
+            ordered.with_uncacheable()
+        } else {
+            ordered
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -476,7 +524,7 @@ impl TrafficTraceGenerator {
         let id = MemoryRequestId::new(self.config.agent(), sequence);
         let layout = self.config.line_layout();
 
-        match kind {
+        let request = match kind {
             TrafficRequestKind::Read if element.command == TrafficTraceCommand::ReadUnique => {
                 MemoryRequest::read_unique(id, address, element.size, layout).map_err(Into::into)
             }
@@ -581,7 +629,8 @@ impl TrafficTraceGenerator {
             TrafficRequestKind::Maintenance => {
                 unreachable!("maintenance trace kind has no request builder")
             }
-        }
+        }?;
+        Ok(element.flags.apply(request))
     }
 }
 
@@ -894,9 +943,7 @@ fn parse_packet(message: &[u8]) -> Result<TrafficTraceElement, TrafficGeneratorE
         parser.skip(field)?;
     }
 
-    if flags != 0 {
-        return Err(TrafficGeneratorError::TraceUnsupportedFlags { flags });
-    }
+    let flags = TrafficTraceRequestFlags::from_gem5(flags)?;
 
     let tick = tick.ok_or(TrafficGeneratorError::TraceMissingField {
         message: "Packet",
@@ -947,6 +994,7 @@ fn parse_packet(message: &[u8]) -> Result<TrafficTraceElement, TrafficGeneratorE
         command,
         address: Address::new(address),
         size: AccessSize::new(u64::from(size))?,
+        flags,
     })
 }
 
