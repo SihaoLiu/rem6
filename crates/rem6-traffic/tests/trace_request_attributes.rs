@@ -9,7 +9,8 @@ use rem6_traffic::{
 
 const GEM5_MAGIC: [u8; 4] = [0x67, 0x65, 0x6d, 0x35];
 const TICK_FREQUENCY: u64 = 1_000;
-const GEM5_UNSUPPORTED_FLAG: u32 = 0x0000_0010;
+const GEM5_ARCH_FLAGS: u32 = 0x0000_005a;
+const GEM5_UNSUPPORTED_FLAG: u32 = 0x0000_4000;
 const GEM5_FLAG_INST_FETCH: u32 = 0x0000_0100;
 const GEM5_FLAG_PHYSICAL: u32 = 0x0000_0200;
 const GEM5_FLAG_UNCACHEABLE: u32 = 0x0000_0400;
@@ -25,6 +26,9 @@ const GEM5_FLAG_KERNEL: u32 = 0x0000_1000;
 const GEM5_FLAG_NO_ACCESS: u32 = 0x0008_0000;
 const GEM5_FLAG_PREFETCH: u32 = 0x0100_0000;
 const GEM5_FLAG_PF_EXCLUSIVE: u32 = 0x0200_0000;
+const GEM5_MEM_FENCE_REQ: u32 = 38;
+const GEM5_MEM_SYNC_REQ: u32 = 39;
+const GEM5_FLUSH_REQ: u32 = 53;
 
 #[derive(Clone, Copy)]
 struct PacketFields {
@@ -110,6 +114,46 @@ fn trace_traffic_generator_maps_gem5_request_attribute_flags() {
 }
 
 #[test]
+fn trace_traffic_generator_maps_gem5_arch_flags_to_request_metadata() {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace(
+            TICK_FREQUENCY,
+            &[
+                PacketFields {
+                    tick: 2,
+                    command: 1,
+                    address: 0x180,
+                    size: 8,
+                    flags: Some(GEM5_ARCH_FLAGS | GEM5_FLAG_PRIVILEGED),
+                },
+                PacketFields {
+                    tick: 4,
+                    command: 4,
+                    address: 0x1c0,
+                    size: 4,
+                    flags: Some(GEM5_ARCH_FLAGS),
+                },
+            ],
+        ),
+        TICK_FREQUENCY,
+    )
+    .unwrap();
+    let mut generator = TrafficTraceGenerator::new(trace_config(trace));
+    generator.enter(30);
+
+    let read = generator.next_request(30, 0).unwrap().unwrap();
+    let write = generator.next_request(read.tick(), 0).unwrap().unwrap();
+
+    assert_eq!(read.request().operation(), MemoryOperation::ReadShared);
+    assert_eq!(read.request().arch_flags(), 0x5a);
+    assert!(read.request().is_privileged());
+
+    assert_eq!(write.request().operation(), MemoryOperation::Write);
+    assert_eq!(write.request().arch_flags(), 0x5a);
+    assert!(!write.request().is_privileged());
+}
+
+#[test]
 fn trace_traffic_generator_maps_gem5_kernel_sync_flag_to_native_attribute() {
     let trace = TrafficTrace::from_gem5_packet_trace(
         &gem5_packet_trace(
@@ -147,6 +191,31 @@ fn trace_traffic_generator_maps_gem5_kernel_sync_flag_to_native_attribute() {
     assert_eq!(no_access.tick(), 22);
     assert_eq!(no_access.request().operation(), MemoryOperation::NoAccess);
     assert!(no_access.request().is_kernel_sync());
+}
+
+#[test]
+fn trace_parser_rejects_gem5_arch_flags_on_non_memory_trace_events() {
+    for command in [GEM5_MEM_FENCE_REQ, GEM5_MEM_SYNC_REQ, GEM5_FLUSH_REQ] {
+        assert_eq!(
+            TrafficTrace::from_gem5_packet_trace(
+                &gem5_packet_trace(
+                    TICK_FREQUENCY,
+                    &[PacketFields {
+                        tick: 1,
+                        command,
+                        address: 0,
+                        size: 0,
+                        flags: Some(GEM5_ARCH_FLAGS | GEM5_FLAG_KERNEL),
+                    }],
+                ),
+                TICK_FREQUENCY,
+            )
+            .unwrap_err(),
+            TrafficGeneratorError::TraceUnsupportedFlags {
+                flags: GEM5_ARCH_FLAGS | GEM5_FLAG_KERNEL,
+            }
+        );
+    }
 }
 
 #[test]

@@ -5,7 +5,8 @@ use crate::{
 };
 
 const REQUEST_CHECKPOINT_MAGIC: [u8; 4] = *b"MREQ";
-const REQUEST_CHECKPOINT_VERSION: u32 = 1;
+const REQUEST_CHECKPOINT_VERSION_V1: u32 = 1;
+const REQUEST_CHECKPOINT_VERSION_V2: u32 = 2;
 const REQUEST_CHECKPOINT_HEADER_SIZE: usize = 80;
 
 const FLAG_DATA_PRESENT: u32 = 1 << 0;
@@ -27,7 +28,9 @@ const FLAG_KERNEL_SYNC: u32 = 1 << 15;
 const FLAG_STREAM_ID_PRESENT: u32 = 1 << 16;
 const FLAG_SUBSTREAM_ID_PRESENT: u32 = 1 << 17;
 const FLAG_RESPONSE_REQUIRED: u32 = 1 << 18;
-const KNOWN_FLAGS: u32 = FLAG_DATA_PRESENT
+const FLAG_ARCH_FLAGS_SHIFT: u32 = 24;
+const FLAG_ARCH_FLAGS_MASK: u32 = 0xff << FLAG_ARCH_FLAGS_SHIFT;
+const KNOWN_FLAGS_V1: u32 = FLAG_DATA_PRESENT
     | FLAG_MASK_PRESENT
     | FLAG_ATOMIC_PRESENT
     | FLAG_UNCACHEABLE
@@ -46,6 +49,7 @@ const KNOWN_FLAGS: u32 = FLAG_DATA_PRESENT
     | FLAG_STREAM_ID_PRESENT
     | FLAG_SUBSTREAM_ID_PRESENT
     | FLAG_RESPONSE_REQUIRED;
+const KNOWN_FLAGS_V2: u32 = KNOWN_FLAGS_V1 | FLAG_ARCH_FLAGS_MASK;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MemoryRequestCheckpointPayload {
@@ -77,13 +81,11 @@ impl MemoryRequestCheckpointPayload {
 
         let mut offset = 4;
         let version = read_u32(payload, &mut offset)?;
-        if version != REQUEST_CHECKPOINT_VERSION {
-            return Err(MemoryError::UnsupportedRequestCheckpointVersion { version });
-        }
+        let known_flags = request_checkpoint_known_flags(version)?;
 
         let operation = decode_operation(read_u32(payload, &mut offset)?)?;
         let flags = read_u32(payload, &mut offset)?;
-        if flags & !KNOWN_FLAGS != 0 {
+        if flags & !known_flags != 0 {
             return Err(MemoryError::InvalidRequestCheckpointFlags { flags });
         }
         let agent = read_u32(payload, &mut offset)?;
@@ -132,7 +134,7 @@ impl MemoryRequestCheckpointPayload {
             ordering,
             flags & FLAG_UNCACHEABLE != 0,
             flags & FLAG_STRICT_ORDER != 0,
-            decode_attributes(flags, stream_id, substream_id),
+            decode_attributes(version, flags, stream_id, substream_id),
             data,
             byte_mask,
             atomic_op,
@@ -158,7 +160,7 @@ impl MemoryRequestCheckpointPayload {
             .unwrap_or(0);
         let mut payload = Vec::with_capacity(request_checkpoint_payload_size(data_len, mask_len)?);
         payload.extend_from_slice(&REQUEST_CHECKPOINT_MAGIC);
-        payload.extend_from_slice(&REQUEST_CHECKPOINT_VERSION.to_le_bytes());
+        payload.extend_from_slice(&encode_version(&self.snapshot).to_le_bytes());
         payload.extend_from_slice(&encode_operation(self.snapshot.operation()).to_le_bytes());
         payload.extend_from_slice(&encode_flags(&self.snapshot).to_le_bytes());
         payload.extend_from_slice(&self.snapshot.id().agent().get().to_le_bytes());
@@ -193,6 +195,22 @@ impl MemoryRequestCheckpointPayload {
 
     pub fn into_snapshot(self) -> MemoryRequestSnapshot {
         self.snapshot
+    }
+}
+
+fn encode_version(snapshot: &MemoryRequestSnapshot) -> u32 {
+    if snapshot.arch_flags() == 0 {
+        REQUEST_CHECKPOINT_VERSION_V1
+    } else {
+        REQUEST_CHECKPOINT_VERSION_V2
+    }
+}
+
+fn request_checkpoint_known_flags(version: u32) -> Result<u32, MemoryError> {
+    match version {
+        REQUEST_CHECKPOINT_VERSION_V1 => Ok(KNOWN_FLAGS_V1),
+        REQUEST_CHECKPOINT_VERSION_V2 => Ok(KNOWN_FLAGS_V2),
+        version => Err(MemoryError::UnsupportedRequestCheckpointVersion { version }),
     }
 }
 
@@ -237,6 +255,7 @@ fn encode_flags(snapshot: &MemoryRequestSnapshot) -> u32 {
     if snapshot.requires_response() && !snapshot.operation().requires_response() {
         flags |= FLAG_RESPONSE_REQUIRED;
     }
+    flags |= u32::from(snapshot.arch_flags()) << FLAG_ARCH_FLAGS_SHIFT;
     if let Some(before) = snapshot.ordering().before() {
         flags |= FLAG_BEFORE_PRESENT;
         if before.read() {
@@ -259,6 +278,7 @@ fn encode_flags(snapshot: &MemoryRequestSnapshot) -> u32 {
 }
 
 fn decode_attributes(
+    version: u32,
     flags: u32,
     stream_id: Option<u32>,
     substream_id: Option<u32>,
@@ -268,6 +288,12 @@ fn decode_attributes(
         flags & FLAG_SECURE != 0,
         flags & FLAG_PAGE_TABLE_WALK != 0,
     );
+    let arch_flags = if version == REQUEST_CHECKPOINT_VERSION_V2 {
+        ((flags & FLAG_ARCH_FLAGS_MASK) >> FLAG_ARCH_FLAGS_SHIFT) as u8
+    } else {
+        0
+    };
+    let attributes = attributes.with_arch_flags(arch_flags);
     let attributes = if flags & FLAG_EVICT_NEXT != 0 {
         attributes.with_evict_next()
     } else {

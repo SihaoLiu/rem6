@@ -5,6 +5,7 @@ use rem6_memory::{
 };
 
 const REQUEST_CHECKPOINT_FLAGS_OFFSET: usize = 12;
+const REQUEST_CHECKPOINT_VERSION_OFFSET: usize = 4;
 const REQUEST_CHECKPOINT_SUBSTREAM_OFFSET: usize = 76;
 const REQUEST_CHECKPOINT_SUBSTREAM_ID_PRESENT_FLAG: u32 = 1 << 17;
 
@@ -32,25 +33,29 @@ fn memory_request_attributes_default_empty_and_builder_preserves_operation() {
     assert!(!request.is_page_table_walk());
     assert!(!request.is_evict_next());
     assert!(!request.is_kernel_sync());
+    assert_eq!(request.arch_flags(), 0);
 
     let attributed = request
         .with_privileged()
         .with_secure()
         .with_page_table_walk()
         .with_evict_next()
-        .with_kernel_sync();
+        .with_kernel_sync()
+        .with_arch_flags(0x5a);
 
     assert_eq!(
         attributed.attributes(),
         MemoryRequestAttributes::new(true, true, true)
             .with_evict_next()
             .with_kernel_sync()
+            .with_arch_flags(0x5a)
     );
     assert!(attributed.is_privileged());
     assert!(attributed.is_secure());
     assert!(attributed.is_page_table_walk());
     assert!(attributed.is_evict_next());
     assert!(attributed.is_kernel_sync());
+    assert_eq!(attributed.arch_flags(), 0x5a);
     assert_eq!(
         attributed.operation(),
         rem6_memory::MemoryOperation::ReadShared
@@ -70,10 +75,21 @@ fn memory_request_checkpoint_payload_round_trips_attributes() {
     .with_secure()
     .with_page_table_walk()
     .with_evict_next()
-    .with_kernel_sync();
+    .with_kernel_sync()
+    .with_arch_flags(0xa5);
 
     let payload = MemoryRequestCheckpointPayload::from_request(&request);
-    let decoded = MemoryRequestCheckpointPayload::decode(payload.encode().as_slice()).unwrap();
+    let encoded = payload.encode();
+    assert_eq!(
+        &encoded[REQUEST_CHECKPOINT_VERSION_OFFSET..REQUEST_CHECKPOINT_VERSION_OFFSET + 4],
+        &2u32.to_le_bytes()
+    );
+    assert_eq!(
+        &encoded[REQUEST_CHECKPOINT_FLAGS_OFFSET..REQUEST_CHECKPOINT_FLAGS_OFFSET + 4],
+        &0xa500_f800u32.to_le_bytes()
+    );
+
+    let decoded = MemoryRequestCheckpointPayload::decode(encoded.as_slice()).unwrap();
     let restored = MemoryRequest::from_snapshot(decoded.snapshot()).unwrap();
 
     assert_eq!(decoded.snapshot().attributes(), request.attributes());
@@ -83,6 +99,31 @@ fn memory_request_checkpoint_payload_round_trips_attributes() {
     assert!(restored.is_page_table_walk());
     assert!(restored.is_evict_next());
     assert!(restored.is_kernel_sync());
+    assert_eq!(restored.arch_flags(), 0xa5);
+}
+
+#[test]
+fn memory_request_checkpoint_v1_rejects_arch_flag_bits_as_reserved() {
+    let request = MemoryRequest::read_shared(
+        request_id(9),
+        Address::new(0x9000),
+        AccessSize::new(8).unwrap(),
+        line_layout(),
+    )
+    .unwrap();
+    let mut payload = MemoryRequestCheckpointPayload::from_request(&request).encode();
+
+    assert_eq!(
+        &payload[REQUEST_CHECKPOINT_VERSION_OFFSET..REQUEST_CHECKPOINT_VERSION_OFFSET + 4],
+        &1u32.to_le_bytes()
+    );
+    payload[REQUEST_CHECKPOINT_FLAGS_OFFSET..REQUEST_CHECKPOINT_FLAGS_OFFSET + 4]
+        .copy_from_slice(&0xa500_0000u32.to_le_bytes());
+
+    assert_eq!(
+        MemoryRequestCheckpointPayload::decode(&payload).unwrap_err(),
+        MemoryError::InvalidRequestCheckpointFlags { flags: 0xa500_0000 }
+    );
 }
 
 #[test]

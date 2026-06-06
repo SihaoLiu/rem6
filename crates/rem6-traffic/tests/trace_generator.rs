@@ -176,13 +176,13 @@ fn trace_parser_rejects_invalid_gem5_packet_traces() {
                     command: 1,
                     address: 0,
                     size: 8,
-                    flags: Some(1),
+                    flags: Some(0x0000_4000),
                 }],
             ),
             TICK_FREQUENCY,
         )
         .unwrap_err(),
-        TrafficGeneratorError::TraceUnsupportedFlags { flags: 1 }
+        TrafficGeneratorError::TraceUnsupportedFlags { flags: 0x0000_4000 }
     );
 
     assert_eq!(
@@ -1172,13 +1172,13 @@ fn trace_parser_rejects_writeback_packet_with_nonzero_flags() {
                     command: 7,
                     address: 0x80,
                     size: 64,
-                    flags: Some(0x10),
+                    flags: Some(0x0000_4000),
                 }],
             ),
             TICK_FREQUENCY,
         )
         .unwrap_err(),
-        TrafficGeneratorError::TraceUnsupportedFlags { flags: 0x10 }
+        TrafficGeneratorError::TraceUnsupportedFlags { flags: 0x0000_4000 }
     );
 }
 

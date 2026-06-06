@@ -1576,11 +1576,11 @@ fn memory_request_checkpoint_payload_rejects_unsupported_version() {
     .unwrap();
     let mut payload = MemoryRequestCheckpointPayload::from_request(&request).encode();
     payload[REQUEST_CHECKPOINT_VERSION_OFFSET..REQUEST_CHECKPOINT_VERSION_OFFSET + 4]
-        .copy_from_slice(&2u32.to_le_bytes());
+        .copy_from_slice(&3u32.to_le_bytes());
 
     assert_eq!(
         MemoryRequestCheckpointPayload::decode(&payload).unwrap_err(),
-        MemoryError::UnsupportedRequestCheckpointVersion { version: 2 }
+        MemoryError::UnsupportedRequestCheckpointVersion { version: 3 }
     );
 }
 
@@ -1595,11 +1595,11 @@ fn memory_request_checkpoint_payload_rejects_reserved_flag_bits() {
     .unwrap();
     let mut payload = MemoryRequestCheckpointPayload::from_request(&request).encode();
     payload[REQUEST_CHECKPOINT_FLAGS_OFFSET..REQUEST_CHECKPOINT_FLAGS_OFFSET + 4]
-        .copy_from_slice(&0x8000_0000u32.to_le_bytes());
+        .copy_from_slice(&0x0080_0000u32.to_le_bytes());
 
     assert_eq!(
         MemoryRequestCheckpointPayload::decode(&payload).unwrap_err(),
-        MemoryError::InvalidRequestCheckpointFlags { flags: 0x8000_0000 }
+        MemoryError::InvalidRequestCheckpointFlags { flags: 0x0080_0000 }
     );
 }
 

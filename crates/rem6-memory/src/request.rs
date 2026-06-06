@@ -28,6 +28,7 @@ pub struct MemoryRequestAttributes {
     page_table_walk: bool,
     evict_next: bool,
     kernel_sync: bool,
+    arch_flags: u8,
     stream_id: Option<u32>,
     substream_id: Option<u32>,
 }
@@ -40,6 +41,7 @@ impl MemoryRequestAttributes {
             page_table_walk,
             evict_next: false,
             kernel_sync: false,
+            arch_flags: 0,
             stream_id: None,
             substream_id: None,
         }
@@ -52,6 +54,7 @@ impl MemoryRequestAttributes {
             page_table_walk: self.page_table_walk,
             evict_next: true,
             kernel_sync: self.kernel_sync,
+            arch_flags: self.arch_flags,
             stream_id: self.stream_id,
             substream_id: self.substream_id,
         }
@@ -64,6 +67,20 @@ impl MemoryRequestAttributes {
             page_table_walk: self.page_table_walk,
             evict_next: self.evict_next,
             kernel_sync: true,
+            arch_flags: self.arch_flags,
+            stream_id: self.stream_id,
+            substream_id: self.substream_id,
+        }
+    }
+
+    pub const fn with_arch_flags(self, arch_flags: u8) -> Self {
+        Self {
+            privileged: self.privileged,
+            secure: self.secure,
+            page_table_walk: self.page_table_walk,
+            evict_next: self.evict_next,
+            kernel_sync: self.kernel_sync,
+            arch_flags,
             stream_id: self.stream_id,
             substream_id: self.substream_id,
         }
@@ -76,6 +93,7 @@ impl MemoryRequestAttributes {
             page_table_walk: self.page_table_walk,
             evict_next: self.evict_next,
             kernel_sync: self.kernel_sync,
+            arch_flags: self.arch_flags,
             stream_id: Some(stream_id),
             substream_id: self.substream_id,
         }
@@ -88,6 +106,7 @@ impl MemoryRequestAttributes {
             page_table_walk: self.page_table_walk,
             evict_next: self.evict_next,
             kernel_sync: self.kernel_sync,
+            arch_flags: self.arch_flags,
             stream_id: self.stream_id,
             substream_id: Some(substream_id),
         }
@@ -111,6 +130,10 @@ impl MemoryRequestAttributes {
 
     pub const fn is_kernel_sync(self) -> bool {
         self.kernel_sync
+    }
+
+    pub const fn arch_flags(self) -> u8 {
+        self.arch_flags
     }
 
     pub const fn stream_id(self) -> Option<u32> {
@@ -261,6 +284,10 @@ impl MemoryRequestSnapshot {
 
     pub const fn is_kernel_sync(&self) -> bool {
         self.attributes.is_kernel_sync()
+    }
+
+    pub const fn arch_flags(&self) -> u8 {
+        self.attributes.arch_flags()
     }
 
     pub const fn stream_id(&self) -> Option<u32> {
@@ -960,6 +987,10 @@ impl MemoryRequest {
         self.attributes.is_kernel_sync()
     }
 
+    pub const fn arch_flags(&self) -> u8 {
+        self.attributes.arch_flags()
+    }
+
     pub const fn stream_id(&self) -> Option<u32> {
         self.attributes.stream_id()
     }
@@ -999,6 +1030,11 @@ impl MemoryRequest {
 
     pub fn with_kernel_sync(mut self) -> Self {
         self.attributes.kernel_sync = true;
+        self
+    }
+
+    pub fn with_arch_flags(mut self, arch_flags: u8) -> Self {
+        self.attributes.arch_flags = arch_flags;
         self
     }
 

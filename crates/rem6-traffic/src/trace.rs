@@ -88,6 +88,7 @@ const GEM5_HTM_REQ_RESP: u32 = 57;
 const GEM5_HTM_ABORT: u32 = 58;
 const GEM5_TLBI_EXT_SYNC: u32 = 59;
 const GEM5_FLAG_INST_FETCH: u32 = 0x0000_0100;
+const GEM5_FLAG_ARCH_MASK: u32 = 0x0000_00ff;
 const GEM5_FLAG_PHYSICAL: u32 = 0x0000_0200;
 const GEM5_FLAG_UNCACHEABLE: u32 = 0x0000_0400;
 const GEM5_FLAG_STRICT_ORDER: u32 = 0x0000_0800;
@@ -108,7 +109,8 @@ const GEM5_FLAG_EVICT_NEXT: u32 = 0x0400_0000;
 const GEM5_FLAG_SECURE: u32 = 0x1000_0000;
 const GEM5_FLAG_PT_WALK: u32 = 0x2000_0000;
 const GEM5_FLAG_ATOMIC_RETURN_OP: u32 = 0x4000_0000;
-const GEM5_SUPPORTED_TRACE_FLAGS: u32 = GEM5_FLAG_INST_FETCH
+const GEM5_SUPPORTED_TRACE_FLAGS: u32 = GEM5_FLAG_ARCH_MASK
+    | GEM5_FLAG_INST_FETCH
     | GEM5_FLAG_PHYSICAL
     | GEM5_FLAG_UNCACHEABLE
     | GEM5_FLAG_STRICT_ORDER
@@ -476,6 +478,7 @@ struct TrafficTraceRequestFlags {
     mem_swap: bool,
     mem_swap_cond: bool,
     atomic_return: bool,
+    arch_flags: u8,
     evict_next: bool,
     secure: bool,
     page_table_walk: bool,
@@ -508,6 +511,7 @@ impl TrafficTraceRequestFlags {
             mem_swap: bits & GEM5_FLAG_MEM_SWAP != 0,
             mem_swap_cond: bits & GEM5_FLAG_MEM_SWAP_COND != 0,
             atomic_return: bits & GEM5_FLAG_ATOMIC_RETURN_OP != 0,
+            arch_flags: (bits & GEM5_FLAG_ARCH_MASK) as u8,
             evict_next: bits & GEM5_FLAG_EVICT_NEXT != 0,
             secure: bits & GEM5_FLAG_SECURE != 0,
             page_table_walk: bits & GEM5_FLAG_PT_WALK != 0,
@@ -685,6 +689,9 @@ impl TrafficTraceRequestFlags {
         }
         if self.kernel_sync {
             mapped = mapped.with_kernel_sync();
+        }
+        if self.arch_flags != 0 {
+            mapped = mapped.with_arch_flags(self.arch_flags);
         }
         mapped
     }
