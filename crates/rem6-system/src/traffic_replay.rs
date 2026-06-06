@@ -9,7 +9,8 @@ use rem6_traffic::{
     TrafficController, TrafficControllerEvent, TrafficControllerEventBatch, TrafficGeneratorError,
     TrafficTraceCacheEvent, TrafficTraceControlFailureRecord, TrafficTraceDiagnosticEvent,
     TrafficTraceHtmEvent, TrafficTraceMemoryFailureRecord, TrafficTraceReplayAction,
-    TrafficTraceReplayActionQueue, TrafficTraceSyncEvent, TrafficTraceTlbEvent,
+    TrafficTraceReplayActionQueue, TrafficTraceReplaySource, TrafficTraceSyncEvent,
+    TrafficTraceTlbEvent,
 };
 use rem6_transport::{RequestDelivery, TargetOutcome};
 
@@ -251,11 +252,42 @@ impl TrafficTraceReplayControlSource {
             Self::Htm(event) => event.tick(),
         }
     }
+
+    fn from_replay_source(source: &TrafficTraceReplaySource) -> Option<Self> {
+        match source {
+            TrafficTraceReplaySource::Sync(event) => Some(Self::Sync(*event)),
+            TrafficTraceReplaySource::Htm(event) => Some(Self::Htm(*event)),
+            TrafficTraceReplaySource::Memory(_) => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct TrafficTraceReplayControlAction {
+    action: TrafficTraceReplayAction,
+    source: Option<TrafficTraceReplayControlSource>,
+}
+
+impl TrafficTraceReplayControlAction {
+    fn new(
+        action: TrafficTraceReplayAction,
+        source: Option<TrafficTraceReplayControlSource>,
+    ) -> Self {
+        Self { action, source }
+    }
+
+    fn matches_source(&self, source: Option<TrafficTraceReplayControlSource>) -> bool {
+        match (source, self.source) {
+            (Some(source), Some(action_source)) => source == action_source,
+            (None, Some(_)) => false,
+            (_, None) => true,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct TrafficTraceReplayControlRuntime {
-    action_queue: TrafficTraceReplayActionQueue,
+    actions: VecDeque<TrafficTraceReplayControlAction>,
     control_acks: Vec<TrafficTraceReplayScheduledControlAck>,
     control_failures: Vec<TrafficTraceReplayScheduledControlFailure>,
     sources: VecDeque<TrafficTraceReplayControlSource>,
@@ -266,6 +298,7 @@ impl TrafficTraceReplayControlRuntime {
         &mut self,
         batch: &TrafficControllerEventBatch,
     ) -> Result<(), rem6_traffic::TrafficGeneratorError> {
+        let mut matched_source = None;
         for event in batch.events() {
             match event {
                 TrafficControllerEvent::TraceSync(sync) if sync.requires_response() => {
@@ -276,6 +309,14 @@ impl TrafficTraceReplayControlRuntime {
                     self.sources
                         .push_back(TrafficTraceReplayControlSource::Htm(*htm));
                 }
+                TrafficControllerEvent::TraceResponseMatch(response) => {
+                    matched_source =
+                        TrafficTraceReplayControlSource::from_replay_source(response.source());
+                }
+                TrafficControllerEvent::TraceErrorMatch(error) => {
+                    matched_source =
+                        TrafficTraceReplayControlSource::from_replay_source(error.source());
+                }
                 TrafficControllerEvent::TraceReplayAction(action)
                     if matches!(
                         action,
@@ -283,7 +324,13 @@ impl TrafficTraceReplayControlRuntime {
                             | TrafficTraceReplayAction::ControlFailure { .. }
                     ) =>
                 {
-                    self.action_queue.record_action(action.clone())?;
+                    self.actions.push_back(TrafficTraceReplayControlAction::new(
+                        action.clone(),
+                        matched_source.take(),
+                    ));
+                }
+                TrafficControllerEvent::TraceReplayAction(_) => {
+                    matched_source = None;
                 }
                 _ => {}
             }
@@ -295,10 +342,14 @@ impl TrafficTraceReplayControlRuntime {
         &mut self,
         delivery_tick: Tick,
     ) -> Result<TrafficTraceReplayControlEvent, TrafficTraceReplayControlError> {
-        let action = self
-            .action_queue
-            .peek_action()
+        let action_index = self
+            .control_action_index()
             .ok_or(TrafficTraceReplayControlError::ActionQueueEmpty { delivery_tick })?;
+        let action = &self
+            .actions
+            .get(action_index)
+            .expect("validated trace replay control action remains queued")
+            .action;
         let event = match action {
             TrafficTraceReplayAction::ControlAck { tick } => {
                 let delay = control_ack_delay(delivery_tick, *tick)?;
@@ -322,10 +373,12 @@ impl TrafficTraceReplayControlRuntime {
             }
         };
 
-        self.action_queue
-            .pop_action()
+        self.actions
+            .remove(action_index)
             .expect("validated trace replay control action remains queued");
-        self.sources.pop_front();
+        if self.source().is_some() {
+            self.sources.pop_front();
+        }
         Ok(event)
     }
 
@@ -348,7 +401,7 @@ impl TrafficTraceReplayControlRuntime {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.action_queue.is_empty() && self.sources.is_empty()
+        self.actions.is_empty() && self.sources.is_empty()
     }
 
     fn source_tick(&self) -> Option<Tick> {
@@ -360,11 +413,23 @@ impl TrafficTraceReplayControlRuntime {
     }
 
     fn has_control_action(&self) -> bool {
-        !self.action_queue.is_empty()
+        self.control_action_index().is_some()
     }
 
-    fn clear_control_sources(&mut self) {
-        self.sources.clear();
+    fn control_action_index(&self) -> Option<usize> {
+        let source = self.source();
+        self.actions
+            .iter()
+            .position(|action| action.matches_source(source))
+    }
+
+    fn drop_current_source(&mut self) {
+        let Some(source) = self.sources.pop_front() else {
+            return;
+        };
+        while self.sources.front().copied() == Some(source) {
+            self.sources.pop_front();
+        }
     }
 }
 
@@ -444,8 +509,8 @@ impl TrafficTraceReplayControllerRuntime {
         self.control.has_control_action()
     }
 
-    fn clear_control_sources(&mut self) {
-        self.control.clear_control_sources();
+    fn drop_current_control_source(&mut self) {
+        self.control.drop_current_source();
     }
 
     fn record_control_ack(&mut self, tick: Tick, trace_tick: Tick) {
@@ -650,7 +715,7 @@ pub fn traffic_trace_replay_controller_control_completion(
             runtime
                 .lock()
                 .expect("trace replay controller runtime lock")
-                .clear_control_sources();
+                .drop_current_control_source();
             return Err(
                 TrafficTraceReplayControllerControlError::ReplayActionMissing { delivery_tick },
             );
@@ -678,7 +743,7 @@ pub fn traffic_trace_replay_controller_control_completion(
             runtime
                 .lock()
                 .expect("trace replay controller runtime lock")
-                .clear_control_sources();
+                .drop_current_control_source();
             return Err(
                 TrafficTraceReplayControllerControlError::ReplayActionMissing { delivery_tick },
             );
