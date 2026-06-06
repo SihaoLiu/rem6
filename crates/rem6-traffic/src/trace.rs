@@ -122,6 +122,8 @@ const GEM5_SUPPORTED_TRACE_FLAGS: u32 = GEM5_FLAG_INST_FETCH
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TrafficTraceCommand {
+    Read,
+    ReadClean,
     ReadShared,
     ReadUnique,
     SoftPrefetchRead,
@@ -183,6 +185,8 @@ impl TrafficTraceCommand {
     const fn request_kind(self) -> TrafficRequestKind {
         match self {
             Self::ReadShared
+            | Self::ReadClean
+            | Self::Read
             | Self::ReadUnique
             | Self::SoftPrefetchRead
             | Self::HardPrefetchRead
@@ -316,7 +320,9 @@ impl TrafficTraceCommand {
 
     const fn gem5_name(self) -> &'static str {
         match self {
-            Self::ReadShared => "ReadReq",
+            Self::Read => "ReadReq",
+            Self::ReadClean => "ReadCleanReq",
+            Self::ReadShared => "ReadSharedReq",
             Self::ReadUnique => "ReadExReq",
             Self::SoftPrefetchRead => "SoftPFReq",
             Self::HardPrefetchRead => "HardPFReq",
@@ -554,12 +560,21 @@ impl TrafficTraceRequestFlags {
             return Ok(());
         }
 
-        if self.inst_fetch && command != TrafficTraceCommand::ReadShared {
+        if self.inst_fetch
+            && !matches!(
+                command,
+                TrafficTraceCommand::Read
+                    | TrafficTraceCommand::ReadClean
+                    | TrafficTraceCommand::ReadShared
+            )
+        {
             return Err(TrafficGeneratorError::TraceUnsupportedFlags { flags: self.bits });
         }
         if self.is_prefetch() {
             let supported_command = match command {
-                TrafficTraceCommand::ReadShared
+                TrafficTraceCommand::Read
+                | TrafficTraceCommand::ReadClean
+                | TrafficTraceCommand::ReadShared
                 | TrafficTraceCommand::SoftPrefetchRead
                 | TrafficTraceCommand::HardPrefetchRead
                 | TrafficTraceCommand::PrefetchWrite => true,
@@ -579,7 +594,9 @@ impl TrafficTraceRequestFlags {
         if self.no_access
             && (!matches!(
                 command,
-                TrafficTraceCommand::ReadShared
+                TrafficTraceCommand::Read
+                    | TrafficTraceCommand::ReadClean
+                    | TrafficTraceCommand::ReadShared
                     | TrafficTraceCommand::ReadUnique
                     | TrafficTraceCommand::Write
             ) || self.is_prefetch()
@@ -1165,6 +1182,12 @@ impl TrafficTraceGenerator {
         let id = MemoryRequestId::new(self.config.agent(), sequence);
         let layout = self.config.line_layout();
         let size = element.request_size();
+        if matches!(
+            element.command,
+            TrafficTraceCommand::ReadClean | TrafficTraceCommand::ReadShared
+        ) {
+            validate_cache_read_request(element.command, address, size, layout)?;
+        }
 
         let request = match kind {
             TrafficRequestKind::Read | TrafficRequestKind::Write if element.flags.no_access => {
@@ -1181,6 +1204,14 @@ impl TrafficTraceGenerator {
             }
             TrafficRequestKind::Read if element.command == TrafficTraceCommand::ReadUnique => {
                 MemoryRequest::read_unique(id, address, size, layout).map_err(Into::into)
+            }
+            TrafficRequestKind::Read
+                if matches!(
+                    element.command,
+                    TrafficTraceCommand::ReadClean | TrafficTraceCommand::ReadShared
+                ) =>
+            {
+                MemoryRequest::read_shared(id, address, size, layout).map_err(Into::into)
             }
             TrafficRequestKind::Read
                 if element.command == TrafficTraceCommand::StoreConditionalUpgradeFail =>
@@ -1314,6 +1345,29 @@ fn build_atomic_swap_request(
     let data = vec![agent.get() as u8; data_len];
     MemoryRequest::atomic_with_op(id, address, size, MemoryAtomicOp::Swap, data, mask, layout)
         .map_err(Into::into)
+}
+
+fn validate_cache_read_request(
+    command: TrafficTraceCommand,
+    address: Address,
+    size: AccessSize,
+    layout: CacheLineLayout,
+) -> Result<(), TrafficGeneratorError> {
+    if size.bytes() != layout.bytes() {
+        return Err(TrafficGeneratorError::TraceCacheReadSizeMismatch {
+            command: command.gem5_name(),
+            size: size.bytes(),
+            line_size: layout.bytes(),
+        });
+    }
+    if layout.line_offset(address) != 0 {
+        return Err(TrafficGeneratorError::TraceCacheReadUnalignedAddress {
+            command: command.gem5_name(),
+            address,
+            line_size: layout.bytes(),
+        });
+    }
+    Ok(())
 }
 
 fn validate_write_line_request(
@@ -1579,9 +1633,9 @@ fn parse_packet(message: &[u8]) -> Result<TrafficTraceElement, TrafficGeneratorE
         message: "Packet",
         field: "cmd",
     })? {
-        GEM5_READ_REQ | GEM5_READ_CLEAN_REQ | GEM5_READ_SHARED_REQ => {
-            TrafficTraceCommand::ReadShared
-        }
+        GEM5_READ_REQ => TrafficTraceCommand::Read,
+        GEM5_READ_CLEAN_REQ => TrafficTraceCommand::ReadClean,
+        GEM5_READ_SHARED_REQ => TrafficTraceCommand::ReadShared,
         GEM5_READ_RESP => TrafficTraceCommand::ReadResp,
         GEM5_READ_RESP_WITH_INVALIDATE => TrafficTraceCommand::ReadRespWithInvalidate,
         GEM5_READ_EX_REQ => TrafficTraceCommand::ReadUnique,

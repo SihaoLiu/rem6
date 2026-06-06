@@ -312,14 +312,14 @@ fn trace_traffic_generator_maps_cache_read_packets_to_read_shared() {
                     tick: 3,
                     command: 24,
                     address: 0x40,
-                    size: 8,
+                    size: 64,
                     flags: None,
                 },
                 PacketFields {
                     tick: 6,
                     command: 25,
-                    address: 0x48,
-                    size: 8,
+                    address: 0x80,
+                    size: 64,
                     flags: None,
                 },
             ],
@@ -340,8 +340,96 @@ fn trace_traffic_generator_maps_cache_read_packets_to_read_shared() {
     assert_eq!(shared.kind(), TrafficRequestKind::Read);
     assert_eq!(shared.request().operation(), MemoryOperation::ReadShared);
     assert_eq!(generator.summary().read_count(), 2);
-    assert_eq!(generator.summary().bytes_read(), 16);
+    assert_eq!(generator.summary().bytes_read(), 128);
     assert_eq!(generator.summary().write_count(), 0);
+}
+
+#[test]
+fn trace_traffic_generator_rejects_cache_read_packet_with_partial_line_size() {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace(
+            TICK_FREQUENCY,
+            &[PacketFields {
+                tick: 3,
+                command: 24,
+                address: 0x40,
+                size: 32,
+                flags: None,
+            }],
+        ),
+        TICK_FREQUENCY,
+    )
+    .unwrap();
+    let mut generator = TrafficTraceGenerator::new(trace_config(trace));
+    generator.enter(20);
+
+    assert_eq!(
+        generator.next_request(20, 0).unwrap_err(),
+        TrafficGeneratorError::TraceCacheReadSizeMismatch {
+            command: "ReadCleanReq",
+            size: 32,
+            line_size: 64,
+        }
+    );
+}
+
+#[test]
+fn trace_traffic_generator_rejects_cache_read_packet_with_unaligned_address() {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace(
+            TICK_FREQUENCY,
+            &[PacketFields {
+                tick: 3,
+                command: 25,
+                address: 0x48,
+                size: 64,
+                flags: None,
+            }],
+        ),
+        TICK_FREQUENCY,
+    )
+    .unwrap();
+    let mut generator = TrafficTraceGenerator::new(trace_config(trace));
+    generator.enter(20);
+
+    assert_eq!(
+        generator.next_request(20, 0).unwrap_err(),
+        TrafficGeneratorError::TraceCacheReadUnalignedAddress {
+            command: "ReadSharedReq",
+            address: Address::new(0x48),
+            line_size: 64,
+        }
+    );
+}
+
+#[test]
+fn trace_traffic_generator_validates_cache_read_alignment_after_addr_offset() {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace(
+            TICK_FREQUENCY,
+            &[PacketFields {
+                tick: 3,
+                command: 24,
+                address: 0x40,
+                size: 64,
+                flags: None,
+            }],
+        ),
+        TICK_FREQUENCY,
+    )
+    .unwrap();
+    let config = trace_config(trace).with_addr_offset(8).unwrap();
+    let mut generator = TrafficTraceGenerator::new(config);
+    generator.enter(20);
+
+    assert_eq!(
+        generator.next_request(20, 0).unwrap_err(),
+        TrafficGeneratorError::TraceCacheReadUnalignedAddress {
+            command: "ReadCleanReq",
+            address: Address::new(0x48),
+            line_size: 64,
+        }
+    );
 }
 
 #[test]
