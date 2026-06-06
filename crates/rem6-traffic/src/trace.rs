@@ -25,9 +25,9 @@ use crate::{
 mod shape;
 
 use self::shape::{
-    validate_cache_block_zero_request, validate_cache_read_request, validate_clean_evict_request,
-    validate_clean_maintenance_request, validate_invalidate_request, validate_upgrade_request,
-    validate_write_line_request, validate_writeback_request,
+    validate_cache_block_zero_request, validate_cache_event_request, validate_cache_read_request,
+    validate_clean_evict_request, validate_clean_maintenance_request, validate_invalidate_request,
+    validate_upgrade_request, validate_write_line_request, validate_writeback_request,
 };
 
 const GEM5_READ_REQ: u32 = 1;
@@ -1044,13 +1044,22 @@ impl TrafficTraceGenerator {
                 element.pc,
             ))
         } else if let Some(kind) = element.cache_kind() {
+            let address =
+                checked_trace_address(element.request_address(), self.config.addr_offset())?;
+            let size = element.request_size();
+            validate_cache_event_request(
+                element.command,
+                address,
+                size,
+                self.config.line_layout(),
+            )?;
             next_summary.record(event_tick, TrafficRequestKind::Maintenance, 0)?;
             TrafficTraceEvent::Cache(TrafficTraceCacheEvent::new(
                 event_tick,
                 sequence,
                 kind,
-                element.request_address(),
-                element.request_size(),
+                address,
+                size,
                 element.packet_id,
                 element.pc,
             ))

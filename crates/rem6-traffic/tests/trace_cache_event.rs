@@ -158,6 +158,102 @@ fn trace_generator_next_request_reports_cache_event_boundary() {
 }
 
 #[test]
+fn trace_generator_applies_addr_offset_to_flush_req_cache_event() {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace(
+            TICK_FREQUENCY,
+            &[PacketFields {
+                tick: 5,
+                command: GEM5_FLUSH_REQ,
+                address: Some(0x4000),
+                size: Some(64),
+                flags: None,
+                packet_id: None,
+                pc: None,
+            }],
+        ),
+        TICK_FREQUENCY,
+    )
+    .unwrap();
+    let config = trace_config(trace).with_addr_offset(0x40).unwrap();
+    let mut generator = TrafficTraceGenerator::new(config);
+    generator.enter(0);
+
+    let flush = match generator.next_event(0, 0).unwrap().unwrap() {
+        TrafficTraceEvent::Cache(event) => event,
+        _ => panic!("FlushReq should emit a cache event"),
+    };
+    assert_eq!(flush.tick(), 5);
+    assert_eq!(flush.sequence(), 0);
+    assert_eq!(flush.kind(), TrafficTraceCacheKind::Flush);
+    assert_eq!(flush.address(), Address::new(0x4040));
+    assert_eq!(flush.size_bytes(), 64);
+}
+
+#[test]
+fn trace_generator_rejects_flush_req_with_partial_line_size() {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace(
+            TICK_FREQUENCY,
+            &[PacketFields {
+                tick: 5,
+                command: GEM5_FLUSH_REQ,
+                address: Some(0x4000),
+                size: Some(32),
+                flags: None,
+                packet_id: None,
+                pc: None,
+            }],
+        ),
+        TICK_FREQUENCY,
+    )
+    .unwrap();
+    let mut generator = TrafficTraceGenerator::new(trace_config(trace));
+    generator.enter(0);
+
+    assert_eq!(
+        generator.next_event(0, 0).unwrap_err(),
+        TrafficGeneratorError::TraceCacheEventSizeMismatch {
+            command: "FlushReq",
+            size: 32,
+            line_size: 64,
+        }
+    );
+}
+
+#[test]
+fn trace_generator_rejects_flush_req_unaligned_after_addr_offset() {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace(
+            TICK_FREQUENCY,
+            &[PacketFields {
+                tick: 5,
+                command: GEM5_FLUSH_REQ,
+                address: Some(0x4000),
+                size: Some(64),
+                flags: None,
+                packet_id: None,
+                pc: None,
+            }],
+        ),
+        TICK_FREQUENCY,
+    )
+    .unwrap();
+    let config = trace_config(trace).with_addr_offset(8).unwrap();
+    let mut generator = TrafficTraceGenerator::new(config);
+    generator.enter(0);
+
+    assert_eq!(
+        generator.next_event(0, 0).unwrap_err(),
+        TrafficGeneratorError::TraceCacheEventUnalignedAddress {
+            command: "FlushReq",
+            address: Address::new(0x4008),
+            line_size: 64,
+        }
+    );
+}
+
+#[test]
 fn trace_parser_rejects_flush_req_flags() {
     assert_eq!(
         TrafficTrace::from_gem5_packet_trace(

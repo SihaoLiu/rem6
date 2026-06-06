@@ -2893,7 +2893,8 @@ metadata, and packet-count accounting without pretending the packet is a memory
 access. Full gem5 `PrintReqState` label-stack and object-print execution
 semantics remain a debug subsystem contract because those sender-state details
 are not carried by the packet trace proto.
-`FlushReq` command-id 53 packets map to typed `TrafficTraceEvent::Cache`
+Line-sized `FlushReq` command-id 53 packets whose effective address after the
+configured offset is cache-line aligned map to typed `TrafficTraceEvent::Cache`
 flush events that preserve tick ordering, sequence, address, size, optional
 packet id, optional PC metadata, and packet-count accounting without
 constructing a `MemoryRequest` or adding read/write byte accounting. Full cache
@@ -3080,9 +3081,9 @@ packets to typed TLB external-sync trace events instead of memory requests.
 events, preserving replay order and metadata without pretending that full
 transactional-memory execution exists yet. `PrintReq` packet-trace commands now
 import as typed diagnostic trace events without rebuilding the sender-state
-print tree that the packet trace does not encode. `FlushReq` packet-trace
-commands now import as typed cache flush events without pretending cache flush
-execution is already wired through every cache protocol. Broader TLBI execution
+print tree that the packet trace does not encode. Line-shaped `FlushReq`
+packet-trace commands now import as typed cache flush events without pretending
+cache flush execution is already wired through every cache protocol. Broader TLBI execution
 semantics, TLBI completion forms, CPU-visible HTM behavior, full diagnostic
 printing, and executable cache flush handling remain open because they need
 CPU/MMU/cache/debug-visible event contracts, and sync flags beyond `KERNEL`

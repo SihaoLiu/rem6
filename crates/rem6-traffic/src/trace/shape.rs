@@ -66,6 +66,29 @@ pub(super) fn validate_cache_block_zero_request(
     Ok(())
 }
 
+pub(super) fn validate_cache_event_request(
+    command: TrafficTraceCommand,
+    address: Address,
+    size: AccessSize,
+    layout: CacheLineLayout,
+) -> Result<(), TrafficGeneratorError> {
+    if size.bytes() != layout.bytes() {
+        return Err(TrafficGeneratorError::TraceCacheEventSizeMismatch {
+            command: command.gem5_name(),
+            size: size.bytes(),
+            line_size: layout.bytes(),
+        });
+    }
+    if layout.line_offset(address) != 0 {
+        return Err(TrafficGeneratorError::TraceCacheEventUnalignedAddress {
+            command: command.gem5_name(),
+            address,
+            line_size: layout.bytes(),
+        });
+    }
+    Ok(())
+}
+
 pub(super) fn validate_writeback_request(
     command: TrafficTraceCommand,
     address: Address,
