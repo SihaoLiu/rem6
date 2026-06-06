@@ -2969,6 +2969,13 @@ paths reject
 mismatched request ids or pre-delivery trace ticks without discarding the queued
 action, and report a missing replay action if the controller reaches trace exit
 before a matching response or failure.
+Response-required memory requests remain tracked in the target runtime until a
+matching response or failure is consumed, so runtime emptiness cannot hide an
+outstanding replay obligation. The controller-aware memory helper checks queued
+target replay actions separately from those pending request ticks; if trace
+exit or a replayed same request appears with no memory target action queued, it
+reports the missing replay action instead of cycling through the trace
+transition again.
 CLI/workload runner integration and full response and error propagation through
 memory controllers, caches, and CPU ports remain separate contracts.
 `InvalidDestError`, `BadAddressError`, `ReadError`, `WriteError`,

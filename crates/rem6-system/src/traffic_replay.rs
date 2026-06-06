@@ -165,7 +165,11 @@ impl TrafficTraceReplayTargetRuntime {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.action_queue.is_empty()
+        self.action_queue.is_empty() && self.request_ticks.is_empty()
+    }
+
+    fn has_replay_action(&self) -> bool {
+        !self.action_queue.is_empty()
     }
 
     pub fn request_tick(&self, request: MemoryRequestId) -> Option<Tick> {
@@ -393,7 +397,7 @@ impl TrafficTraceReplayControllerRuntime {
     }
 
     fn has_target_action(&self) -> bool {
-        !self.target.is_empty()
+        self.target.has_replay_action()
     }
 
     fn record_memory_failure(&mut self, tick: Tick, record: TrafficTraceMemoryFailureRecord) {
@@ -565,6 +569,9 @@ pub fn traffic_trace_replay_controller_target_outcome(
         };
 
         let trace_exited = batch.trace_exit().is_some();
+        let repeated_request = batch
+            .request()
+            .is_some_and(|request| request.request().id() == delivery.request().id());
         let target_action_available = {
             let mut runtime = runtime
                 .lock()
@@ -577,7 +584,7 @@ pub fn traffic_trace_replay_controller_target_outcome(
             context.now(),
             context,
         );
-        if trace_exited && !target_action_available {
+        if (trace_exited || repeated_request) && !target_action_available {
             return Err(
                 TrafficTraceReplayControllerTargetError::ReplayActionMissing {
                     request: delivery.request().id(),

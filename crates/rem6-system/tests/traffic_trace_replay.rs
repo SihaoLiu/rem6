@@ -18,10 +18,10 @@ use rem6_system::{
 use rem6_traffic::{
     TrafficController, TrafficControllerConfig, TrafficControllerEvent,
     TrafficControllerEventBatch, TrafficControllerState, TrafficStateGenerator,
-    TrafficStateGraphConfig, TrafficStateId, TrafficStateSpec, TrafficTrace, TrafficTraceConfig,
-    TrafficTraceControlFailure, TrafficTraceErrorKind, TrafficTraceMemoryFailure,
-    TrafficTraceReplayAction, TrafficTraceReplayActionQueue, TrafficTransition,
-    TrafficTransitionProbability, TRAFFIC_TRANSITION_PROBABILITY_SCALE,
+    TrafficStateGeneratorSnapshot, TrafficStateGraphConfig, TrafficStateId, TrafficStateSpec,
+    TrafficTrace, TrafficTraceConfig, TrafficTraceControlFailure, TrafficTraceErrorKind,
+    TrafficTraceMemoryFailure, TrafficTraceReplayAction, TrafficTraceReplayActionQueue,
+    TrafficTransition, TrafficTransitionProbability, TRAFFIC_TRANSITION_PROBABILITY_SCALE,
 };
 use rem6_transport::{
     MemoryRoute, MemoryTrace, MemoryTraceEvent, MemoryTraceKind, MemoryTransport, ResponseDelivery,
@@ -76,6 +76,13 @@ fn completed_response(request: &MemoryRequest, data: &[u8]) -> MemoryResponse {
 }
 
 fn controller_for_packets(packets: &[PacketFields]) -> TrafficController {
+    controller_for_packets_with_state_duration(packets, u64::MAX)
+}
+
+fn controller_for_packets_with_state_duration(
+    packets: &[PacketFields],
+    duration: u64,
+) -> TrafficController {
     let trace = TrafficTrace::from_gem5_packet_trace(
         &gem5_packet_trace(TICK_FREQUENCY, packets),
         TICK_FREQUENCY,
@@ -83,7 +90,7 @@ fn controller_for_packets(packets: &[PacketFields]) -> TrafficController {
     .unwrap();
     let config = TrafficTraceConfig::new(AgentId::new(7), line_layout(), 99, trace).unwrap();
     let controller_config = TrafficControllerConfig::new(
-        graph(vec![state(0, u64::MAX)], vec![transition(0, 0)]),
+        graph(vec![state(0, duration)], vec![transition(0, 0)]),
         vec![TrafficControllerState::new(
             TrafficStateId::new(0),
             TrafficStateGenerator::Trace(rem6_traffic::TrafficTraceGenerator::new(config)),
@@ -91,6 +98,13 @@ fn controller_for_packets(packets: &[PacketFields]) -> TrafficController {
     )
     .unwrap();
     TrafficController::new(controller_config)
+}
+
+fn trace_cursor(controller: &TrafficController) -> usize {
+    match controller.snapshot().generators()[0].generator() {
+        TrafficStateGeneratorSnapshot::Trace(snapshot) => snapshot.cursor(),
+        _ => panic!("traffic replay test controller must use trace generator"),
+    }
 }
 
 #[test]
@@ -478,6 +492,27 @@ fn traffic_trace_replay_target_runtime_records_batch_and_drives_memory_response(
 }
 
 #[test]
+fn traffic_trace_replay_target_runtime_reports_pending_request_as_not_empty() {
+    let mut controller = controller_for_packets(&[PacketFields {
+        tick: 0,
+        command: GEM5_READ_REQ,
+        address: Some(0x4400),
+        size: Some(8),
+        packet_id: Some(17),
+    }]);
+
+    assert!(controller.start(0).unwrap().is_empty());
+    let request_batch = controller.next_event(0, 0).unwrap().unwrap();
+    let req = request_batch.request().unwrap().request().clone();
+
+    let mut runtime = TrafficTraceReplayTargetRuntime::default();
+    runtime.record_batch(&request_batch).unwrap();
+
+    assert_eq!(runtime.request_tick(req.id()), Some(0));
+    assert!(!runtime.is_empty());
+}
+
+#[test]
 fn traffic_trace_replay_target_runtime_schedules_memory_failure_from_batch() {
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
     let mut transport = MemoryTransport::new();
@@ -580,7 +615,7 @@ fn traffic_trace_replay_controller_target_outcome_advances_controller_for_transp
         .unwrap()
         .record_batch(&request_batch)
         .unwrap();
-    assert!(runtime.lock().unwrap().is_empty());
+    assert!(!runtime.lock().unwrap().is_empty());
 
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
     let mut transport = MemoryTransport::new();
@@ -1310,7 +1345,90 @@ fn traffic_trace_replay_controller_target_outcome_reports_missing_replay_action(
         *errors.lock().unwrap(),
         vec![TrafficTraceReplayControllerTargetError::ReplayActionMissing { request: req.id() }]
     );
-    assert!(runtime.lock().unwrap().is_empty());
+    assert!(!runtime.lock().unwrap().is_empty());
+    assert!(runtime.lock().unwrap().memory_failures().is_empty());
+}
+
+#[test]
+fn traffic_trace_replay_controller_target_outcome_reports_missing_on_replayed_request() {
+    let packets = [PacketFields {
+        tick: 0,
+        command: GEM5_READ_REQ,
+        address: Some(0x6400),
+        size: Some(8),
+        packet_id: Some(73),
+    }];
+
+    let mut source_controller = controller_for_packets_with_state_duration(&packets, 10);
+    assert!(source_controller.start(0).unwrap().is_empty());
+    let request_batch = source_controller.next_event(0, 0).unwrap().unwrap();
+    assert!(request_batch.trace_exit().is_none());
+    assert_eq!(trace_cursor(&source_controller), 1);
+    let req = request_batch.request().unwrap().request().clone();
+
+    let mut replay_controller = controller_for_packets_with_state_duration(&packets, 10);
+    assert!(replay_controller.start(0).unwrap().is_empty());
+    assert_eq!(trace_cursor(&replay_controller), 0);
+
+    let controller = Arc::new(Mutex::new(replay_controller));
+    let runtime = Arc::new(Mutex::new(TrafficTraceReplayControllerRuntime::default()));
+    runtime
+        .lock()
+        .unwrap()
+        .record_batch(&request_batch)
+        .unwrap();
+
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let errors = Arc::new(Mutex::new(Vec::new()));
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("core0"),
+                PartitionId::new(0),
+                endpoint("memory0"),
+                PartitionId::new(1),
+                3,
+                5,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    let replay = Arc::clone(&runtime);
+    let trace_controller = Arc::clone(&controller);
+    let error_log = Arc::clone(&errors);
+    transport
+        .submit(
+            &mut scheduler,
+            route,
+            req.clone(),
+            MemoryTrace::new(),
+            move |delivery, context| match traffic_trace_replay_controller_target_outcome(
+                Arc::clone(&replay),
+                Arc::clone(&trace_controller),
+                &delivery,
+                context,
+                0,
+            ) {
+                Ok(outcome) => outcome,
+                Err(error) => {
+                    error_log.lock().unwrap().push(error);
+                    TargetOutcome::NoResponse
+                }
+            },
+            |_| panic!("replayed request without response action must not deliver a response"),
+        )
+        .unwrap();
+
+    scheduler.run_until_idle_conservative();
+
+    assert_eq!(
+        *errors.lock().unwrap(),
+        vec![TrafficTraceReplayControllerTargetError::ReplayActionMissing { request: req.id() }]
+    );
+    assert_eq!(trace_cursor(&controller.lock().unwrap()), 1);
+    assert!(!runtime.lock().unwrap().is_empty());
     assert!(runtime.lock().unwrap().memory_failures().is_empty());
 }
 
