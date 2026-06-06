@@ -1184,7 +1184,9 @@ impl TrafficTraceGenerator {
         let size = element.request_size();
         if matches!(
             element.command,
-            TrafficTraceCommand::ReadClean | TrafficTraceCommand::ReadShared
+            TrafficTraceCommand::ReadClean
+                | TrafficTraceCommand::ReadShared
+                | TrafficTraceCommand::ReadUnique
         ) {
             validate_cache_read_request(element.command, address, size, layout)?;
         }

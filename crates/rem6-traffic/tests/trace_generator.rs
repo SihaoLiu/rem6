@@ -280,7 +280,7 @@ fn trace_traffic_generator_maps_read_exclusive_packet_to_read_unique() {
                 tick: 7,
                 command: 22,
                 address: 0x80,
-                size: 16,
+                size: 64,
                 flags: None,
             }],
         ),
@@ -296,10 +296,98 @@ fn trace_traffic_generator_maps_read_exclusive_packet_to_read_unique() {
     assert_eq!(event.kind(), TrafficRequestKind::Read);
     assert_eq!(event.address(), Address::new(0x80));
     assert_eq!(event.request().operation(), MemoryOperation::ReadUnique);
-    assert_eq!(event.request().size(), AccessSize::new(16).unwrap());
+    assert_eq!(event.request().size(), AccessSize::new(64).unwrap());
     assert_eq!(generator.summary().read_count(), 1);
-    assert_eq!(generator.summary().bytes_read(), 16);
+    assert_eq!(generator.summary().bytes_read(), 64);
     assert_eq!(generator.summary().write_count(), 0);
+}
+
+#[test]
+fn trace_traffic_generator_rejects_read_exclusive_packet_with_partial_line_size() {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace(
+            TICK_FREQUENCY,
+            &[PacketFields {
+                tick: 7,
+                command: 22,
+                address: 0x80,
+                size: 32,
+                flags: None,
+            }],
+        ),
+        TICK_FREQUENCY,
+    )
+    .unwrap();
+    let mut generator = TrafficTraceGenerator::new(trace_config(trace));
+    generator.enter(50);
+
+    assert_eq!(
+        generator.next_request(50, 0).unwrap_err(),
+        TrafficGeneratorError::TraceCacheReadSizeMismatch {
+            command: "ReadExReq",
+            size: 32,
+            line_size: 64,
+        }
+    );
+}
+
+#[test]
+fn trace_traffic_generator_rejects_read_exclusive_packet_with_unaligned_address() {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace(
+            TICK_FREQUENCY,
+            &[PacketFields {
+                tick: 7,
+                command: 22,
+                address: 0x88,
+                size: 64,
+                flags: None,
+            }],
+        ),
+        TICK_FREQUENCY,
+    )
+    .unwrap();
+    let mut generator = TrafficTraceGenerator::new(trace_config(trace));
+    generator.enter(50);
+
+    assert_eq!(
+        generator.next_request(50, 0).unwrap_err(),
+        TrafficGeneratorError::TraceCacheReadUnalignedAddress {
+            command: "ReadExReq",
+            address: Address::new(0x88),
+            line_size: 64,
+        }
+    );
+}
+
+#[test]
+fn trace_traffic_generator_rejects_read_exclusive_packet_unaligned_after_addr_offset() {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace(
+            TICK_FREQUENCY,
+            &[PacketFields {
+                tick: 7,
+                command: 22,
+                address: 0x80,
+                size: 64,
+                flags: None,
+            }],
+        ),
+        TICK_FREQUENCY,
+    )
+    .unwrap();
+    let config = trace_config(trace).with_addr_offset(8).unwrap();
+    let mut generator = TrafficTraceGenerator::new(config);
+    generator.enter(50);
+
+    assert_eq!(
+        generator.next_request(50, 0).unwrap_err(),
+        TrafficGeneratorError::TraceCacheReadUnalignedAddress {
+            command: "ReadExReq",
+            address: Address::new(0x88),
+            line_size: 64,
+        }
+    );
 }
 
 #[test]
