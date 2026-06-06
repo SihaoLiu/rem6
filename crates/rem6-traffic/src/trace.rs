@@ -1,6 +1,3 @@
-use std::io::Read;
-
-use flate2::read::GzDecoder;
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryAccessOrdering, MemoryAtomicOp,
     MemoryBarrierSet, MemoryRequest, MemoryRequestId,
@@ -12,14 +9,17 @@ use crate::{
     },
     trace_event::{
         TrafficTraceCacheEvent, TrafficTraceCacheKind, TrafficTraceDiagnosticEvent,
-        TrafficTraceDiagnosticKind, TrafficTraceEvent, TrafficTraceHtmEvent, TrafficTraceHtmKind,
-        TrafficTraceSyncEvent, TrafficTraceSyncKind, TrafficTraceTlbEvent, TrafficTraceTlbKind,
+        TrafficTraceDiagnosticKind, TrafficTraceErrorEvent, TrafficTraceErrorKind,
+        TrafficTraceEvent, TrafficTraceHtmEvent, TrafficTraceHtmKind, TrafficTraceSyncEvent,
+        TrafficTraceSyncKind, TrafficTraceTlbEvent, TrafficTraceTlbKind,
+    },
+    trace_proto::{
+        decompress_gzip_trace, is_gzip_stream, read_u32_field, Gem5PacketTraceReader,
+        ProtoMessageParser,
     },
     TrafficGeneratorError,
 };
 
-const GEM5_PROTO_MAGIC: [u8; 4] = [0x67, 0x65, 0x6d, 0x35];
-const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];
 const GEM5_READ_REQ: u32 = 1;
 const GEM5_WRITE_REQ: u32 = 4;
 const GEM5_WRITEBACK_DIRTY: u32 = 7;
@@ -46,6 +46,12 @@ const GEM5_MEM_FENCE_REQ: u32 = 38;
 const GEM5_MEM_SYNC_REQ: u32 = 39;
 const GEM5_CLEAN_SHARED_REQ: u32 = 42;
 const GEM5_CLEAN_INVALID_REQ: u32 = 44;
+const GEM5_INVALID_DEST_ERROR: u32 = 46;
+const GEM5_BAD_ADDRESS_ERROR: u32 = 47;
+const GEM5_READ_ERROR: u32 = 48;
+const GEM5_WRITE_ERROR: u32 = 49;
+const GEM5_FUNCTIONAL_READ_ERROR: u32 = 50;
+const GEM5_FUNCTIONAL_WRITE_ERROR: u32 = 51;
 const GEM5_PRINT_REQ: u32 = 52;
 const GEM5_FLUSH_REQ: u32 = 53;
 const GEM5_INVALIDATE_REQ: u32 = 54;
@@ -92,12 +98,6 @@ const GEM5_SUPPORTED_TRACE_FLAGS: u32 = GEM5_FLAG_INST_FETCH
     | GEM5_FLAG_EVICT_NEXT
     | GEM5_FLAG_SECURE
     | GEM5_FLAG_PT_WALK;
-const WIRE_VARINT: u64 = 0;
-const WIRE_FIXED64: u64 = 1;
-const WIRE_LENGTH_DELIMITED: u64 = 2;
-const WIRE_START_GROUP: u64 = 3;
-const WIRE_END_GROUP: u64 = 4;
-const WIRE_FIXED32: u64 = 5;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TrafficTraceCommand {
@@ -131,6 +131,12 @@ enum TrafficTraceCommand {
     Print,
     Flush,
     TlbiExtSync,
+    InvalidDestError,
+    BadAddressError,
+    ReadError,
+    WriteError,
+    FunctionalReadError,
+    FunctionalWriteError,
 }
 
 impl TrafficTraceCommand {
@@ -165,7 +171,13 @@ impl TrafficTraceCommand {
             | Self::HtmAbort
             | Self::Print
             | Self::Flush
-            | Self::TlbiExtSync => TrafficRequestKind::Maintenance,
+            | Self::TlbiExtSync
+            | Self::InvalidDestError
+            | Self::BadAddressError
+            | Self::ReadError
+            | Self::WriteError
+            | Self::FunctionalReadError
+            | Self::FunctionalWriteError => TrafficRequestKind::Maintenance,
         }
     }
 
@@ -206,6 +218,18 @@ impl TrafficTraceCommand {
         }
     }
 
+    const fn error_kind(self) -> Option<TrafficTraceErrorKind> {
+        match self {
+            Self::InvalidDestError => Some(TrafficTraceErrorKind::InvalidDestination),
+            Self::BadAddressError => Some(TrafficTraceErrorKind::BadAddress),
+            Self::ReadError => Some(TrafficTraceErrorKind::Read),
+            Self::WriteError => Some(TrafficTraceErrorKind::Write),
+            Self::FunctionalReadError => Some(TrafficTraceErrorKind::FunctionalRead),
+            Self::FunctionalWriteError => Some(TrafficTraceErrorKind::FunctionalWrite),
+            _ => None,
+        }
+    }
+
     const fn gem5_name(self) -> &'static str {
         match self {
             Self::ReadShared => "ReadReq",
@@ -238,6 +262,12 @@ impl TrafficTraceCommand {
             Self::Print => "PrintReq",
             Self::Flush => "FlushReq",
             Self::TlbiExtSync => "TlbiExtSync",
+            Self::InvalidDestError => "InvalidDestError",
+            Self::BadAddressError => "BadAddressError",
+            Self::ReadError => "ReadError",
+            Self::WriteError => "WriteError",
+            Self::FunctionalReadError => "FunctionalReadError",
+            Self::FunctionalWriteError => "FunctionalWriteError",
         }
     }
 }
@@ -280,6 +310,10 @@ impl TrafficTraceElement {
 
     const fn diagnostic_kind(self) -> Option<TrafficTraceDiagnosticKind> {
         self.command.diagnostic_kind()
+    }
+
+    const fn error_kind(self) -> Option<TrafficTraceErrorKind> {
+        self.command.error_kind()
     }
 
     fn request_address(self) -> Address {
@@ -393,6 +427,13 @@ impl TrafficTraceRequestFlags {
         }
 
         if command.diagnostic_kind().is_some() {
+            if self.bits != 0 {
+                return Err(TrafficGeneratorError::TraceUnsupportedFlags { flags: self.bits });
+            }
+            return Ok(());
+        }
+
+        if command.error_kind().is_some() {
             if self.bits != 0 {
                 return Err(TrafficGeneratorError::TraceUnsupportedFlags { flags: self.bits });
             }
@@ -777,6 +818,11 @@ impl TrafficTraceGenerator {
                 },
             );
         }
+        if let Some(kind) = element.error_kind() {
+            return Err(TrafficGeneratorError::TraceErrorEventRequiresNextEvent {
+                command: kind.gem5_name(),
+            });
+        }
 
         let Some(event) = self.next_event(tick, retry_delay)? else {
             return Ok(None);
@@ -797,6 +843,9 @@ impl TrafficTraceGenerator {
             }
             TrafficTraceEvent::Diagnostic(_) => {
                 unreachable!("diagnostic trace event was rejected before advancing")
+            }
+            TrafficTraceEvent::Error(_) => {
+                unreachable!("error trace event was rejected before advancing")
             }
         }
     }
@@ -859,6 +908,17 @@ impl TrafficTraceGenerator {
         } else if let Some(kind) = element.diagnostic_kind() {
             next_summary.record(event_tick, TrafficRequestKind::Maintenance, 0)?;
             TrafficTraceEvent::Diagnostic(TrafficTraceDiagnosticEvent::new(
+                event_tick,
+                sequence,
+                kind,
+                element.address,
+                element.size,
+                element.packet_id,
+                element.pc,
+            ))
+        } else if let Some(kind) = element.error_kind() {
+            next_summary.record(event_tick, TrafficRequestKind::Maintenance, 0)?;
+            TrafficTraceEvent::Error(TrafficTraceErrorEvent::new(
                 event_tick,
                 sequence,
                 kind,
@@ -1339,68 +1399,6 @@ fn validate_invalidate_request(
     Ok(())
 }
 
-struct Gem5PacketTraceReader<'a> {
-    bytes: &'a [u8],
-    offset: usize,
-}
-
-impl<'a> Gem5PacketTraceReader<'a> {
-    fn new(bytes: &'a [u8]) -> Result<Self, TrafficGeneratorError> {
-        if bytes.len() < GEM5_PROTO_MAGIC.len() {
-            return Err(TrafficGeneratorError::TraceTruncatedMagic {
-                length: bytes.len(),
-            });
-        }
-
-        let actual = [bytes[0], bytes[1], bytes[2], bytes[3]];
-        if actual != GEM5_PROTO_MAGIC {
-            return Err(TrafficGeneratorError::TraceBadMagic { actual });
-        }
-
-        Ok(Self {
-            bytes,
-            offset: GEM5_PROTO_MAGIC.len(),
-        })
-    }
-
-    fn next_message(&mut self) -> Result<Option<&'a [u8]>, TrafficGeneratorError> {
-        if self.offset == self.bytes.len() {
-            return Ok(None);
-        }
-
-        let length_offset = self.offset;
-        let length = read_varint_u32(self.bytes, &mut self.offset)?;
-        let length = usize::try_from(length).expect("u32 message length fits usize");
-        let remaining = self.bytes.len() - self.offset;
-        if length > remaining {
-            return Err(TrafficGeneratorError::TraceTruncatedMessage {
-                offset: length_offset,
-                length,
-                remaining,
-            });
-        }
-
-        let start = self.offset;
-        self.offset += length;
-        Ok(Some(&self.bytes[start..self.offset]))
-    }
-}
-
-fn is_gzip_stream(bytes: &[u8]) -> bool {
-    bytes.starts_with(&GZIP_MAGIC)
-}
-
-fn decompress_gzip_trace(bytes: &[u8]) -> Result<Vec<u8>, TrafficGeneratorError> {
-    let mut decoder = GzDecoder::new(bytes);
-    let mut decompressed = Vec::new();
-    decoder.read_to_end(&mut decompressed).map_err(|error| {
-        TrafficGeneratorError::TraceGzipDecode {
-            message: error.to_string(),
-        }
-    })?;
-    Ok(decompressed)
-}
-
 fn parse_header(message: &[u8]) -> Result<u64, TrafficGeneratorError> {
     let mut parser = ProtoMessageParser::new(message);
     let mut tick_frequency = None;
@@ -1478,6 +1476,12 @@ fn parse_packet(message: &[u8]) -> Result<TrafficTraceElement, TrafficGeneratorE
         GEM5_MEM_SYNC_REQ => TrafficTraceCommand::MemSync,
         GEM5_CLEAN_SHARED_REQ => TrafficTraceCommand::CleanShared,
         GEM5_CLEAN_INVALID_REQ => TrafficTraceCommand::CleanInvalid,
+        GEM5_INVALID_DEST_ERROR => TrafficTraceCommand::InvalidDestError,
+        GEM5_BAD_ADDRESS_ERROR => TrafficTraceCommand::BadAddressError,
+        GEM5_READ_ERROR => TrafficTraceCommand::ReadError,
+        GEM5_WRITE_ERROR => TrafficTraceCommand::WriteError,
+        GEM5_FUNCTIONAL_READ_ERROR => TrafficTraceCommand::FunctionalReadError,
+        GEM5_FUNCTIONAL_WRITE_ERROR => TrafficTraceCommand::FunctionalWriteError,
         GEM5_PRINT_REQ => TrafficTraceCommand::Print,
         GEM5_FLUSH_REQ => TrafficTraceCommand::Flush,
         GEM5_INVALIDATE_REQ => TrafficTraceCommand::Invalidate,
@@ -1520,7 +1524,10 @@ fn parse_packet(message: &[u8]) -> Result<TrafficTraceElement, TrafficGeneratorE
             pc,
         });
     }
-    if command.htm_kind().is_some() || command.diagnostic_kind().is_some() {
+    if command.htm_kind().is_some()
+        || command.diagnostic_kind().is_some()
+        || command.error_kind().is_some()
+    {
         let size = match size {
             Some(0) | None => None,
             Some(size) => Some(AccessSize::new(u64::from(size))?),
@@ -1557,184 +1564,6 @@ fn parse_packet(message: &[u8]) -> Result<TrafficTraceElement, TrafficGeneratorE
         packet_id,
         pc,
     })
-}
-
-#[derive(Clone, Copy)]
-struct ProtoField {
-    number: u32,
-    wire_type: u64,
-    value_offset: usize,
-    varint_value: Option<u64>,
-}
-
-impl ProtoField {
-    fn varint(
-        self,
-        message: &'static str,
-        field: &'static str,
-    ) -> Result<u64, TrafficGeneratorError> {
-        if self.wire_type != WIRE_VARINT {
-            return Err(TrafficGeneratorError::TraceInvalidFieldWireType {
-                message,
-                field,
-                wire_type: self.wire_type,
-            });
-        }
-
-        self.varint_value
-            .ok_or(TrafficGeneratorError::TraceInvalidFieldWireType {
-                message,
-                field,
-                wire_type: self.wire_type,
-            })
-    }
-}
-
-struct ProtoMessageParser<'a> {
-    bytes: &'a [u8],
-    offset: usize,
-}
-
-impl<'a> ProtoMessageParser<'a> {
-    const fn new(bytes: &'a [u8]) -> Self {
-        Self { bytes, offset: 0 }
-    }
-
-    fn next_field(&mut self) -> Result<Option<ProtoField>, TrafficGeneratorError> {
-        if self.offset == self.bytes.len() {
-            return Ok(None);
-        }
-
-        let tag = read_varint_u64(self.bytes, &mut self.offset)?;
-        let number = tag >> 3;
-        let wire_type = tag & 0x7;
-        if number == 0 {
-            return Err(TrafficGeneratorError::TraceInvalidFieldNumber);
-        }
-        let number = u32::try_from(number)
-            .map_err(|_| TrafficGeneratorError::TraceFieldNumberTooLarge { number })?;
-        let value_offset = self.offset;
-        let varint_value = if wire_type == WIRE_VARINT {
-            let mut value_end = value_offset;
-            Some(read_varint_u64(self.bytes, &mut value_end)?)
-        } else {
-            None
-        };
-
-        Ok(Some(ProtoField {
-            number,
-            wire_type,
-            value_offset,
-            varint_value,
-        }))
-    }
-
-    fn skip(&mut self, field: ProtoField) -> Result<(), TrafficGeneratorError> {
-        match field.wire_type {
-            WIRE_VARINT => {
-                self.offset = field.value_offset;
-                let _ = read_varint_u64(self.bytes, &mut self.offset)?;
-                Ok(())
-            }
-            WIRE_FIXED64 => self.skip_bytes(field.value_offset, 8),
-            WIRE_LENGTH_DELIMITED => {
-                self.offset = field.value_offset;
-                let length = read_varint_u64(self.bytes, &mut self.offset)?;
-                let length = usize::try_from(length).map_err(|_| {
-                    TrafficGeneratorError::TraceLengthDelimitedFieldTooLarge {
-                        offset: field.value_offset,
-                        length,
-                    }
-                })?;
-                self.skip_bytes(self.offset, length)
-            }
-            WIRE_FIXED32 => self.skip_bytes(field.value_offset, 4),
-            WIRE_START_GROUP | WIRE_END_GROUP => {
-                Err(TrafficGeneratorError::TraceUnsupportedWireType {
-                    wire_type: field.wire_type,
-                })
-            }
-            wire_type => Err(TrafficGeneratorError::TraceInvalidWireType { wire_type }),
-        }
-    }
-
-    fn skip_bytes(&mut self, start: usize, length: usize) -> Result<(), TrafficGeneratorError> {
-        let remaining = self.bytes.len().saturating_sub(start);
-        if length > remaining {
-            return Err(TrafficGeneratorError::TraceTruncatedField {
-                offset: start,
-                length,
-                remaining,
-            });
-        }
-
-        self.offset = start + length;
-        Ok(())
-    }
-}
-
-fn read_u32_field(
-    field: ProtoField,
-    message: &'static str,
-    name: &'static str,
-) -> Result<u32, TrafficGeneratorError> {
-    let value = field.varint(message, name)?;
-    u32::try_from(value).map_err(|_| TrafficGeneratorError::TraceFieldOutOfRange {
-        message,
-        field: name,
-        value,
-    })
-}
-
-fn read_varint_u64(bytes: &[u8], offset: &mut usize) -> Result<u64, TrafficGeneratorError> {
-    let start = *offset;
-    let mut value = 0u64;
-
-    for byte_index in 0..10 {
-        let byte = *bytes
-            .get(*offset)
-            .ok_or(TrafficGeneratorError::TraceTruncatedVarint { offset: start })?;
-        *offset += 1;
-
-        let payload = u64::from(byte & 0x7f);
-        if byte_index == 9 && payload > 1 {
-            return Err(TrafficGeneratorError::TraceVarintTooLong { offset: start });
-        }
-        value |= payload << (byte_index * 7);
-
-        if byte & 0x80 == 0 {
-            return Ok(value);
-        }
-    }
-
-    Err(TrafficGeneratorError::TraceVarintTooLong { offset: start })
-}
-
-fn read_varint_u32(bytes: &[u8], offset: &mut usize) -> Result<u32, TrafficGeneratorError> {
-    let start = *offset;
-    let mut value = 0u64;
-
-    for byte_index in 0..5 {
-        let byte = *bytes
-            .get(*offset)
-            .ok_or(TrafficGeneratorError::TraceTruncatedVarint { offset: start })?;
-        *offset += 1;
-
-        let payload = u64::from(byte & 0x7f);
-        value |= payload << (byte_index * 7);
-
-        if byte & 0x80 == 0 {
-            if value > u64::from(u32::MAX) {
-                return Err(TrafficGeneratorError::TraceMessageTooLarge {
-                    offset: start,
-                    length: value,
-                });
-            }
-            return Ok(value as u32);
-        }
-    }
-
-    Err(TrafficGeneratorError::TraceVarint32TooLong { offset: start })
 }
 
 fn checked_trace_address(address: Address, offset: u64) -> Result<Address, TrafficGeneratorError> {

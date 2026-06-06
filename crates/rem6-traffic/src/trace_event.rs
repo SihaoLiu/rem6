@@ -72,6 +72,29 @@ impl TrafficTraceDiagnosticKind {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TrafficTraceErrorKind {
+    InvalidDestination,
+    BadAddress,
+    Read,
+    Write,
+    FunctionalRead,
+    FunctionalWrite,
+}
+
+impl TrafficTraceErrorKind {
+    pub const fn gem5_name(self) -> &'static str {
+        match self {
+            Self::InvalidDestination => "InvalidDestError",
+            Self::BadAddress => "BadAddressError",
+            Self::Read => "ReadError",
+            Self::Write => "WriteError",
+            Self::FunctionalRead => "FunctionalReadError",
+            Self::FunctionalWrite => "FunctionalWriteError",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TrafficTraceSyncEvent {
     tick: u64,
     sequence: u64,
@@ -298,6 +321,70 @@ impl TrafficTraceDiagnosticEvent {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TrafficTraceErrorEvent {
+    tick: u64,
+    sequence: u64,
+    kind: TrafficTraceErrorKind,
+    address: Option<Address>,
+    size_bytes: Option<u64>,
+    trace_packet_id: Option<u64>,
+    trace_pc: Option<Address>,
+}
+
+impl TrafficTraceErrorEvent {
+    pub(crate) const fn new(
+        tick: u64,
+        sequence: u64,
+        kind: TrafficTraceErrorKind,
+        address: Option<Address>,
+        size: Option<AccessSize>,
+        trace_packet_id: Option<u64>,
+        trace_pc: Option<Address>,
+    ) -> Self {
+        Self {
+            tick,
+            sequence,
+            kind,
+            address,
+            size_bytes: match size {
+                Some(size) => Some(size.bytes()),
+                None => None,
+            },
+            trace_packet_id,
+            trace_pc,
+        }
+    }
+
+    pub const fn tick(self) -> u64 {
+        self.tick
+    }
+
+    pub const fn sequence(self) -> u64 {
+        self.sequence
+    }
+
+    pub const fn kind(self) -> TrafficTraceErrorKind {
+        self.kind
+    }
+
+    pub const fn address(self) -> Option<Address> {
+        self.address
+    }
+
+    pub const fn size_bytes(self) -> Option<u64> {
+        self.size_bytes
+    }
+
+    pub const fn trace_packet_id(self) -> Option<u64> {
+        self.trace_packet_id
+    }
+
+    pub const fn trace_pc(self) -> Option<Address> {
+        self.trace_pc
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TrafficTraceHtmEvent {
     tick: u64,
     sequence: u64,
@@ -369,6 +456,7 @@ pub enum TrafficTraceEvent {
     Cache(TrafficTraceCacheEvent),
     Htm(TrafficTraceHtmEvent),
     Diagnostic(TrafficTraceDiagnosticEvent),
+    Error(TrafficTraceErrorEvent),
 }
 
 impl TrafficTraceEvent {
@@ -380,6 +468,7 @@ impl TrafficTraceEvent {
             Self::Cache(event) => event.tick(),
             Self::Htm(event) => event.tick(),
             Self::Diagnostic(event) => event.tick(),
+            Self::Error(event) => event.tick(),
         }
     }
 
@@ -391,6 +480,7 @@ impl TrafficTraceEvent {
             Self::Cache(event) => event.sequence(),
             Self::Htm(event) => event.sequence(),
             Self::Diagnostic(event) => event.sequence(),
+            Self::Error(event) => event.sequence(),
         }
     }
 }
