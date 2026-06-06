@@ -164,6 +164,32 @@ impl TrafficTraceResponseKind {
         )
     }
 
+    pub const fn is_read(self) -> bool {
+        matches!(
+            self,
+            Self::Read
+                | Self::ReadWithInvalidate
+                | Self::SoftPrefetch
+                | Self::HardPrefetch
+                | Self::UpgradeFail
+                | Self::ReadExclusive
+                | Self::LockedRmwRead
+                | Self::Swap
+                | Self::HtmRequest
+        )
+    }
+
+    pub const fn is_write(self) -> bool {
+        matches!(
+            self,
+            Self::Write
+                | Self::WriteComplete
+                | Self::StoreConditional
+                | Self::LockedRmwWrite
+                | Self::Swap
+        )
+    }
+
     pub const fn invalidates_line(self) -> bool {
         matches!(
             self,
@@ -502,6 +528,14 @@ impl TrafficTraceResponseEvent {
 
     pub const fn returns_data(self) -> bool {
         self.kind.returns_data()
+    }
+
+    pub const fn is_read(self) -> bool {
+        self.kind.is_read()
+    }
+
+    pub const fn is_write(self) -> bool {
+        self.kind.is_write()
     }
 
     pub const fn invalidates_line(self) -> bool {

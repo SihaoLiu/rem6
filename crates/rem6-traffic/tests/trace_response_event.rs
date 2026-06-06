@@ -124,6 +124,8 @@ fn trace_generator_emits_response_events() {
     assert_eq!(read_response.size_bytes(), Some(8));
     assert!(read_response.returns_data());
     assert!(read_response.invalidates_line());
+    assert!(read_response.is_read());
+    assert!(!read_response.is_write());
     assert_eq!(read_response.trace_packet_id(), Some(2));
     assert_eq!(read_response.trace_pc(), Some(Address::new(0x1004)));
 
@@ -142,6 +144,8 @@ fn trace_generator_emits_response_events() {
     assert_eq!(fence_response.size_bytes(), None);
     assert!(!fence_response.returns_data());
     assert!(!fence_response.invalidates_line());
+    assert!(!fence_response.is_read());
+    assert!(!fence_response.is_write());
     assert_eq!(fence_response.trace_packet_id(), Some(3));
     assert_eq!(fence_response.trace_pc(), Some(Address::new(0x1008)));
 
@@ -356,28 +360,124 @@ fn trace_generator_maps_all_gem5_response_kinds() {
 #[test]
 fn trace_response_kind_preserves_gem5_response_attributes() {
     let expectations = [
-        (TrafficTraceResponseKind::Read, true, false),
-        (TrafficTraceResponseKind::ReadWithInvalidate, true, true),
-        (TrafficTraceResponseKind::Write, false, false),
-        (TrafficTraceResponseKind::WriteComplete, false, false),
-        (TrafficTraceResponseKind::SoftPrefetch, true, false),
-        (TrafficTraceResponseKind::HardPrefetch, true, false),
-        (TrafficTraceResponseKind::Upgrade, false, false),
-        (TrafficTraceResponseKind::UpgradeFail, true, false),
-        (TrafficTraceResponseKind::ReadExclusive, true, false),
-        (TrafficTraceResponseKind::StoreConditional, false, false),
-        (TrafficTraceResponseKind::LockedRmwRead, true, false),
-        (TrafficTraceResponseKind::LockedRmwWrite, false, false),
-        (TrafficTraceResponseKind::Swap, true, false),
-        (TrafficTraceResponseKind::MemSync, false, false),
-        (TrafficTraceResponseKind::MemFence, false, false),
-        (TrafficTraceResponseKind::CleanShared, false, false),
-        (TrafficTraceResponseKind::CleanInvalid, false, true),
-        (TrafficTraceResponseKind::Invalidate, false, true),
-        (TrafficTraceResponseKind::HtmRequest, false, false),
+        (TrafficTraceResponseKind::Read, true, false, true, false),
+        (
+            TrafficTraceResponseKind::ReadWithInvalidate,
+            true,
+            true,
+            true,
+            false,
+        ),
+        (TrafficTraceResponseKind::Write, false, false, false, true),
+        (
+            TrafficTraceResponseKind::WriteComplete,
+            false,
+            false,
+            false,
+            true,
+        ),
+        (
+            TrafficTraceResponseKind::SoftPrefetch,
+            true,
+            false,
+            true,
+            false,
+        ),
+        (
+            TrafficTraceResponseKind::HardPrefetch,
+            true,
+            false,
+            true,
+            false,
+        ),
+        (
+            TrafficTraceResponseKind::Upgrade,
+            false,
+            false,
+            false,
+            false,
+        ),
+        (
+            TrafficTraceResponseKind::UpgradeFail,
+            true,
+            false,
+            true,
+            false,
+        ),
+        (
+            TrafficTraceResponseKind::ReadExclusive,
+            true,
+            false,
+            true,
+            false,
+        ),
+        (
+            TrafficTraceResponseKind::StoreConditional,
+            false,
+            false,
+            false,
+            true,
+        ),
+        (
+            TrafficTraceResponseKind::LockedRmwRead,
+            true,
+            false,
+            true,
+            false,
+        ),
+        (
+            TrafficTraceResponseKind::LockedRmwWrite,
+            false,
+            false,
+            false,
+            true,
+        ),
+        (TrafficTraceResponseKind::Swap, true, false, true, true),
+        (
+            TrafficTraceResponseKind::MemSync,
+            false,
+            false,
+            false,
+            false,
+        ),
+        (
+            TrafficTraceResponseKind::MemFence,
+            false,
+            false,
+            false,
+            false,
+        ),
+        (
+            TrafficTraceResponseKind::CleanShared,
+            false,
+            false,
+            false,
+            false,
+        ),
+        (
+            TrafficTraceResponseKind::CleanInvalid,
+            false,
+            true,
+            false,
+            false,
+        ),
+        (
+            TrafficTraceResponseKind::Invalidate,
+            false,
+            true,
+            false,
+            false,
+        ),
+        (
+            TrafficTraceResponseKind::HtmRequest,
+            false,
+            false,
+            true,
+            false,
+        ),
     ];
 
-    for (kind, returns_data, invalidates_line) in expectations {
+    for (kind, returns_data, invalidates_line, is_read, is_write) in expectations {
         assert_eq!(
             kind.returns_data(),
             returns_data,
@@ -388,6 +488,18 @@ fn trace_response_kind_preserves_gem5_response_attributes() {
             kind.invalidates_line(),
             invalidates_line,
             "{} invalidate policy should match gem5",
+            kind.gem5_name()
+        );
+        assert_eq!(
+            kind.is_read(),
+            is_read,
+            "{} read policy should match gem5",
+            kind.gem5_name()
+        );
+        assert_eq!(
+            kind.is_write(),
+            is_write,
+            "{} write policy should match gem5",
             kind.gem5_name()
         );
     }
