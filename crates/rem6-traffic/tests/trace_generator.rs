@@ -19,6 +19,8 @@ const GEM5_FLAG_STRICT_ORDER: u32 = 0x0000_0800;
 const GEM5_FLAG_KERNEL: u32 = 0x0000_1000;
 const GEM5_FLAG_ACQUIRE: u32 = 0x0002_0000;
 const GEM5_FLAG_RELEASE: u32 = 0x0004_0000;
+const GEM5_FLAG_PREFETCH: u32 = 0x0100_0000;
+const GEM5_FLAG_PF_EXCLUSIVE: u32 = 0x0200_0000;
 
 #[derive(Clone, Copy)]
 struct PacketFields {
@@ -384,6 +386,42 @@ fn trace_traffic_generator_maps_gem5_inst_fetch_flag() {
 }
 
 #[test]
+fn trace_traffic_generator_prefetch_flag_takes_priority_over_inst_fetch_flag() {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace(
+            TICK_FREQUENCY,
+            &[PacketFields {
+                tick: 3,
+                command: 1,
+                address: 0x180,
+                size: 8,
+                flags: Some(GEM5_FLAG_INST_FETCH | GEM5_FLAG_PREFETCH),
+            }],
+        ),
+        TICK_FREQUENCY,
+    )
+    .unwrap();
+    let mut generator = TrafficTraceGenerator::new(trace_config(trace));
+    generator.enter(40);
+
+    let event = generator.next_request(40, 0).unwrap().unwrap();
+
+    assert_eq!(event.tick(), 43);
+    assert_eq!(event.kind(), TrafficRequestKind::Read);
+    assert_eq!(event.address(), Address::new(0x180));
+    assert_eq!(event.request().operation(), MemoryOperation::PrefetchRead);
+    assert!(!event.request().requires_writable());
+    assert!(!event.request().requires_response());
+    assert_eq!(event.request().range().start(), Address::new(0x180));
+    assert_eq!(event.request().size(), AccessSize::new(8).unwrap());
+    assert_eq!(event.request().data(), None);
+    assert_eq!(event.request().byte_mask(), None);
+    assert_eq!(generator.summary().packet_count(), 1);
+    assert_eq!(generator.summary().read_count(), 1);
+    assert_eq!(generator.summary().bytes_read(), 8);
+}
+
+#[test]
 fn trace_parser_rejects_gem5_inst_fetch_flag_on_non_fetch_packet() {
     for command in [4, 22] {
         assert_eq!(
@@ -603,6 +641,107 @@ fn trace_traffic_generator_maps_prefetch_packets_to_prefetch_operations() {
     assert_eq!(generator.summary().bytes_read(), 56);
     assert_eq!(generator.summary().write_count(), 0);
     assert_eq!(generator.summary().bytes_written(), 0);
+}
+
+#[test]
+fn trace_traffic_generator_maps_gem5_prefetch_request_flags() {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace(
+            TICK_FREQUENCY,
+            &[
+                PacketFields {
+                    tick: 3,
+                    command: 1,
+                    address: 0x200,
+                    size: 8,
+                    flags: Some(GEM5_FLAG_PREFETCH),
+                },
+                PacketFields {
+                    tick: 5,
+                    command: 1,
+                    address: 0x240,
+                    size: 16,
+                    flags: Some(GEM5_FLAG_PREFETCH | GEM5_FLAG_PF_EXCLUSIVE),
+                },
+                PacketFields {
+                    tick: 8,
+                    command: 4,
+                    address: 0x280,
+                    size: 32,
+                    flags: Some(GEM5_FLAG_PREFETCH | GEM5_FLAG_PF_EXCLUSIVE),
+                },
+            ],
+        ),
+        TICK_FREQUENCY,
+    )
+    .unwrap();
+    let mut generator = TrafficTraceGenerator::new(trace_config(trace));
+    generator.enter(90);
+
+    let read = generator.next_request(90, 0).unwrap().unwrap();
+    let read_exclusive = generator.next_request(read.tick(), 0).unwrap().unwrap();
+    let write_exclusive = generator
+        .next_request(read_exclusive.tick(), 0)
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(read.tick(), 93);
+    assert_eq!(read.kind(), TrafficRequestKind::Read);
+    assert_eq!(read.request().operation(), MemoryOperation::PrefetchRead);
+    assert!(!read.request().requires_writable());
+    assert!(!read.request().requires_response());
+    assert_eq!(read.request().data(), None);
+    assert_eq!(read.request().byte_mask(), None);
+
+    assert_eq!(read_exclusive.tick(), 95);
+    assert_eq!(read_exclusive.kind(), TrafficRequestKind::Read);
+    assert_eq!(
+        read_exclusive.request().operation(),
+        MemoryOperation::PrefetchWrite
+    );
+    assert!(read_exclusive.request().requires_writable());
+    assert!(!read_exclusive.request().requires_response());
+    assert_eq!(read_exclusive.request().data(), None);
+    assert_eq!(read_exclusive.request().byte_mask(), None);
+
+    assert_eq!(write_exclusive.tick(), 98);
+    assert_eq!(write_exclusive.kind(), TrafficRequestKind::Read);
+    assert_eq!(
+        write_exclusive.request().operation(),
+        MemoryOperation::PrefetchWrite
+    );
+    assert!(write_exclusive.request().requires_writable());
+    assert!(!write_exclusive.request().requires_response());
+    assert_eq!(write_exclusive.request().data(), None);
+    assert_eq!(write_exclusive.request().byte_mask(), None);
+
+    assert_eq!(generator.summary().read_count(), 3);
+    assert_eq!(generator.summary().bytes_read(), 56);
+    assert_eq!(generator.summary().write_count(), 0);
+    assert_eq!(generator.summary().bytes_written(), 0);
+}
+
+#[test]
+fn trace_parser_rejects_gem5_write_packet_with_nonexclusive_prefetch_flag() {
+    assert_eq!(
+        TrafficTrace::from_gem5_packet_trace(
+            &gem5_packet_trace(
+                TICK_FREQUENCY,
+                &[PacketFields {
+                    tick: 1,
+                    command: 4,
+                    address: 0x200,
+                    size: 8,
+                    flags: Some(GEM5_FLAG_PREFETCH),
+                }],
+            ),
+            TICK_FREQUENCY,
+        )
+        .unwrap_err(),
+        TrafficGeneratorError::TraceUnsupportedFlags {
+            flags: GEM5_FLAG_PREFETCH,
+        }
+    );
 }
 
 #[test]

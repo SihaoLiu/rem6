@@ -43,12 +43,16 @@ const GEM5_FLAG_UNCACHEABLE: u32 = 0x0000_0400;
 const GEM5_FLAG_STRICT_ORDER: u32 = 0x0000_0800;
 const GEM5_FLAG_ACQUIRE: u32 = 0x0002_0000;
 const GEM5_FLAG_RELEASE: u32 = 0x0004_0000;
+const GEM5_FLAG_PREFETCH: u32 = 0x0100_0000;
+const GEM5_FLAG_PF_EXCLUSIVE: u32 = 0x0200_0000;
 const GEM5_SUPPORTED_TRACE_FLAGS: u32 = GEM5_FLAG_INST_FETCH
     | GEM5_FLAG_PHYSICAL
     | GEM5_FLAG_UNCACHEABLE
     | GEM5_FLAG_STRICT_ORDER
     | GEM5_FLAG_ACQUIRE
-    | GEM5_FLAG_RELEASE;
+    | GEM5_FLAG_RELEASE
+    | GEM5_FLAG_PREFETCH
+    | GEM5_FLAG_PF_EXCLUSIVE;
 const WIRE_VARINT: u64 = 0;
 const WIRE_FIXED64: u64 = 1;
 const WIRE_LENGTH_DELIMITED: u64 = 2;
@@ -141,10 +145,22 @@ struct TrafficTraceElement {
     flags: TrafficTraceRequestFlags,
 }
 
+impl TrafficTraceElement {
+    const fn request_kind(self) -> TrafficRequestKind {
+        if self.flags.is_prefetch() {
+            TrafficRequestKind::Read
+        } else {
+            self.command.request_kind()
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct TrafficTraceRequestFlags {
     bits: u32,
     inst_fetch: bool,
+    prefetch: bool,
+    prefetch_exclusive: bool,
     uncacheable: bool,
     strict_order: bool,
     acquire: bool,
@@ -163,6 +179,8 @@ impl TrafficTraceRequestFlags {
         Ok(Self {
             bits,
             inst_fetch: bits & GEM5_FLAG_INST_FETCH != 0,
+            prefetch: bits & GEM5_FLAG_PREFETCH != 0,
+            prefetch_exclusive: bits & GEM5_FLAG_PF_EXCLUSIVE != 0,
             uncacheable: bits & GEM5_FLAG_UNCACHEABLE != 0,
             strict_order: bits & GEM5_FLAG_STRICT_ORDER != 0,
             acquire: bits & GEM5_FLAG_ACQUIRE != 0,
@@ -174,11 +192,35 @@ impl TrafficTraceRequestFlags {
         self.inst_fetch
     }
 
+    const fn is_prefetch(self) -> bool {
+        self.prefetch || self.prefetch_exclusive
+    }
+
+    const fn is_prefetch_exclusive(self) -> bool {
+        self.prefetch_exclusive
+    }
+
     fn validate_for_command(
         self,
         command: TrafficTraceCommand,
     ) -> Result<(), TrafficGeneratorError> {
         if self.inst_fetch && command != TrafficTraceCommand::ReadShared {
+            return Err(TrafficGeneratorError::TraceUnsupportedFlags { flags: self.bits });
+        }
+        if self.is_prefetch() {
+            let supported_command = match command {
+                TrafficTraceCommand::ReadShared
+                | TrafficTraceCommand::SoftPrefetchRead
+                | TrafficTraceCommand::HardPrefetchRead
+                | TrafficTraceCommand::PrefetchWrite => true,
+                TrafficTraceCommand::Write => self.prefetch_exclusive,
+                _ => false,
+            };
+            if !supported_command {
+                return Err(TrafficGeneratorError::TraceUnsupportedFlags { flags: self.bits });
+            }
+        }
+        if self.prefetch && command == TrafficTraceCommand::Write && !self.prefetch_exclusive {
             return Err(TrafficGeneratorError::TraceUnsupportedFlags { flags: self.bits });
         }
         Ok(())
@@ -460,7 +502,7 @@ impl TrafficTraceGenerator {
         let next_sequence = checked_counter_add("next_sequence", sequence, 1)?;
         let (next_tick_offset, event_tick) =
             self.next_packet_tick_from(self.tick_offset, element.tick, tick, retry_delay)?;
-        let kind = element.command.request_kind();
+        let kind = element.request_kind();
         let address = checked_trace_address(element.address, self.config.addr_offset())?;
         let request = self.build_request(sequence, element, kind, address)?;
         let mut next_summary = self.summary;
@@ -549,6 +591,12 @@ impl TrafficTraceGenerator {
         let layout = self.config.line_layout();
 
         let request = match kind {
+            TrafficRequestKind::Read if element.flags.is_prefetch_exclusive() => {
+                MemoryRequest::prefetch_write(id, address, element.size, layout).map_err(Into::into)
+            }
+            TrafficRequestKind::Read if element.flags.is_prefetch() => {
+                MemoryRequest::prefetch_read(id, address, element.size, layout).map_err(Into::into)
+            }
             TrafficRequestKind::Read if element.flags.is_inst_fetch() => {
                 MemoryRequest::instruction_fetch(id, address, element.size, layout)
                     .map_err(Into::into)
