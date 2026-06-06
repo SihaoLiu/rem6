@@ -2927,9 +2927,9 @@ contracts.
 `FunctionalReadError`, and `FunctionalWriteError` command-ids 46-51 map to
 typed `TrafficTraceEvent::Error` events that preserve tick ordering, sequence,
 optional address, optional size, optional packet id, optional PC metadata, and
-gem5 read/write classification plus packet-count accounting without
-constructing a `MemoryRequest` or adding read/write byte accounting. This
-imports gem5 packet error responses as
+gem5 response/error classification plus read/write classification and
+packet-count accounting without constructing a `MemoryRequest` or adding
+read/write byte accounting. This imports gem5 packet error responses as
 first-class trace observations while leaving executable response matching and
 error propagation through memory controllers, caches, and CPU ports as separate
 contracts.

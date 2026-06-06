@@ -252,6 +252,28 @@ impl TrafficTraceErrorKind {
         }
     }
 
+    pub const fn is_response(self) -> bool {
+        match self {
+            Self::InvalidDestination
+            | Self::BadAddress
+            | Self::Read
+            | Self::Write
+            | Self::FunctionalRead
+            | Self::FunctionalWrite => true,
+        }
+    }
+
+    pub const fn is_error(self) -> bool {
+        match self {
+            Self::InvalidDestination
+            | Self::BadAddress
+            | Self::Read
+            | Self::Write
+            | Self::FunctionalRead
+            | Self::FunctionalWrite => true,
+        }
+    }
+
     pub const fn is_read(self) -> bool {
         matches!(self, Self::Read | Self::FunctionalRead)
     }
@@ -668,6 +690,14 @@ impl TrafficTraceErrorEvent {
 
     pub const fn size_bytes(self) -> Option<u64> {
         self.size_bytes
+    }
+
+    pub const fn is_response(self) -> bool {
+        self.kind.is_response()
+    }
+
+    pub const fn is_error(self) -> bool {
+        self.kind.is_error()
     }
 
     pub const fn is_read(self) -> bool {

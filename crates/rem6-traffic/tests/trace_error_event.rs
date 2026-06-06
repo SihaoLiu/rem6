@@ -106,6 +106,8 @@ fn trace_generator_emits_error_response_events() {
     assert_eq!(bad_address.kind(), TrafficTraceErrorKind::BadAddress);
     assert_eq!(bad_address.address(), Some(Address::new(0x4000)));
     assert_eq!(bad_address.size_bytes(), Some(8));
+    assert!(bad_address.is_response());
+    assert!(bad_address.is_error());
     assert!(!bad_address.is_read());
     assert!(!bad_address.is_write());
     assert_eq!(bad_address.trace_packet_id(), Some(2));
@@ -127,6 +129,8 @@ fn trace_generator_emits_error_response_events() {
     );
     assert_eq!(functional_write.address(), None);
     assert_eq!(functional_write.size_bytes(), None);
+    assert!(functional_write.is_response());
+    assert!(functional_write.is_error());
     assert!(!functional_write.is_read());
     assert!(functional_write.is_write());
     assert_eq!(functional_write.trace_packet_id(), Some(3));
@@ -314,7 +318,7 @@ fn trace_generator_maps_all_gem5_error_response_kinds() {
 }
 
 #[test]
-fn trace_error_kind_preserves_gem5_read_write_policy() {
+fn trace_error_kind_preserves_gem5_response_error_policy() {
     let expectations = [
         (TrafficTraceErrorKind::InvalidDestination, false, false),
         (TrafficTraceErrorKind::BadAddress, false, false),
@@ -325,6 +329,16 @@ fn trace_error_kind_preserves_gem5_read_write_policy() {
     ];
 
     for (kind, is_read, is_write) in expectations {
+        assert!(
+            kind.is_response(),
+            "{} response policy should match gem5",
+            kind.gem5_name()
+        );
+        assert!(
+            kind.is_error(),
+            "{} error policy should match gem5",
+            kind.gem5_name()
+        );
         assert_eq!(
             kind.is_read(),
             is_read,
