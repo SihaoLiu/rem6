@@ -15,6 +15,12 @@ impl TrafficTraceSyncKind {
             Self::MemSync => "MemSyncReq",
         }
     }
+
+    pub const fn requires_response(self) -> bool {
+        match self {
+            Self::MemFence | Self::MemSync => true,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -26,6 +32,12 @@ impl TrafficTraceTlbKind {
     pub const fn gem5_name(self) -> &'static str {
         match self {
             Self::ExternalSync => "TlbiExtSync",
+        }
+    }
+
+    pub const fn requires_response(self) -> bool {
+        match self {
+            Self::ExternalSync => false,
         }
     }
 }
@@ -80,6 +92,12 @@ impl TrafficTraceDiagnosticKind {
     pub const fn gem5_name(self) -> &'static str {
         match self {
             Self::Print => "PrintReq",
+        }
+    }
+
+    pub const fn is_print(self) -> bool {
+        match self {
+            Self::Print => true,
         }
     }
 }
@@ -230,6 +248,10 @@ impl TrafficTraceSyncEvent {
         self.kernel_sync
     }
 
+    pub const fn requires_response(self) -> bool {
+        self.kind.requires_response()
+    }
+
     pub const fn trace_packet_id(self) -> Option<u64> {
         self.trace_packet_id
     }
@@ -275,6 +297,10 @@ impl TrafficTraceTlbEvent {
 
     pub const fn kind(self) -> TrafficTraceTlbKind {
         self.kind
+    }
+
+    pub const fn requires_response(self) -> bool {
+        self.kind.requires_response()
     }
 
     pub const fn trace_packet_id(self) -> Option<u64> {
@@ -404,6 +430,10 @@ impl TrafficTraceDiagnosticEvent {
 
     pub const fn size_bytes(self) -> Option<u64> {
         self.size_bytes
+    }
+
+    pub const fn is_print(self) -> bool {
+        self.kind.is_print()
     }
 
     pub const fn trace_packet_id(self) -> Option<u64> {

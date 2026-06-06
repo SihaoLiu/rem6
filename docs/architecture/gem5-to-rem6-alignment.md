@@ -2867,18 +2867,20 @@ requests with no data, no byte mask, response required, no response data,
 writable intent, and no read/write byte accounting. No-address `MemFenceReq`
 command-id 38 and `MemSyncReq` command-id 39 packets map to typed
 `TrafficTraceEvent::Sync` events that preserve tick ordering, sequence,
-optional packet id, optional PC metadata, and packet-count accounting without
-constructing a `MemoryRequest` or adding read/write byte accounting; the traffic
-controller exposes those events as `TraceSync` batch entries. If a gem5 probe
+optional packet id, optional PC metadata, gem5 response-required policy, and
+packet-count accounting without constructing a `MemoryRequest` or adding
+read/write byte accounting; the traffic controller exposes those events as
+`TraceSync` batch entries. If a gem5 probe
 record carries synthetic `addr` or `size` fields for those commands, rem6
 accepts the fields for trace compatibility but treats them as non-semantic
 because the sync event contract is not address-scoped. The same sync event
 contract preserves gem5 `KERNEL` request flags as typed `kernel_sync` metadata.
 `TlbiExtSync` command-id 59 packets map to typed
 `TrafficTraceEvent::Tlb` external-sync events that preserve tick ordering,
-sequence, optional packet id, optional PC metadata, and packet-count accounting
-without constructing a `MemoryRequest` or adding read/write byte accounting.
-If a gem5 probe record carries synthetic `addr` or `size` fields for
+sequence, optional packet id, optional PC metadata, gem5 no-response policy,
+and packet-count accounting without constructing a `MemoryRequest` or adding
+read/write byte accounting. If a gem5 probe record carries synthetic `addr` or
+`size` fields for
 `TlbiExtSync`, rem6 accepts the fields for trace compatibility but treats them
 as non-semantic TLB metadata because the external-sync trace event is not
 address-scoped.
@@ -2893,8 +2895,9 @@ execution semantics as a separate architectural contract.
 `PrintReq` command-id 52 packets map to typed
 `TrafficTraceEvent::Diagnostic` print events that preserve tick ordering,
 sequence, optional address, optional size, optional packet id, optional PC
-metadata, and packet-count accounting without pretending the packet is a memory
-access. Full gem5 `PrintReqState` label-stack and object-print execution
+metadata, gem5 print classification, and packet-count accounting without
+pretending the packet is a memory access. Full gem5 `PrintReqState` label-stack
+and object-print execution
 semantics remain a debug subsystem contract because those sender-state details
 are not carried by the packet trace proto.
 Line-sized `FlushReq` command-id 53 packets whose effective address after the
