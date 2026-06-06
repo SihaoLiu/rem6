@@ -1,5 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use rem6_memory::{MemoryOperation, MemoryResponse};
+
 use crate::{
     stream::{apply_stream_ids_to_event, TrafficStreamConfig, TrafficStreamPicker},
     DramTrafficGenerator, GupsTrafficGenerator, HybridTrafficGenerator, LinearTrafficGenerator,
@@ -10,7 +12,8 @@ use crate::{
     TrafficStateId, TrafficStateMachine, TrafficStateSnapshot, TrafficStridedSnapshot,
     TrafficTraceCacheEvent, TrafficTraceDiagnosticEvent, TrafficTraceErrorEvent, TrafficTraceEvent,
     TrafficTraceExitStatus, TrafficTraceGenerator, TrafficTraceHtmEvent, TrafficTraceResponseEvent,
-    TrafficTraceSnapshot, TrafficTraceSyncEvent, TrafficTraceTlbEvent, TrafficTransitionEvent,
+    TrafficTraceResponseKind, TrafficTraceSnapshot, TrafficTraceSyncEvent, TrafficTraceTlbEvent,
+    TrafficTransitionEvent,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -287,6 +290,7 @@ pub struct TrafficController {
     machine: TrafficStateMachine,
     generators: BTreeMap<TrafficStateId, TrafficStateGenerator>,
     stream_picker: Option<TrafficStreamPicker>,
+    trace_pending: Vec<TrafficTraceReplaySource>,
 }
 
 impl TrafficController {
@@ -302,6 +306,7 @@ impl TrafficController {
             machine,
             generators,
             stream_picker,
+            trace_pending: Vec::new(),
         }
     }
 
@@ -320,6 +325,7 @@ impl TrafficController {
         let config = TrafficControllerConfig::new(machine.snapshot().config().clone(), states)?;
         let mut controller = Self::new(config);
         controller.machine = machine;
+        controller.trace_pending = snapshot.trace_pending().to_vec();
         controller.stream_picker = snapshot.stream().cloned().map(|stream| {
             let rng_state = snapshot
                 .stream_rng_state()
@@ -334,6 +340,7 @@ impl TrafficController {
         tick: u64,
     ) -> Result<TrafficControllerEventBatch, TrafficGeneratorError> {
         self.machine.start(tick)?;
+        self.trace_pending.clear();
         let events = self.enter_current_state(tick)?;
         Ok(TrafficControllerEventBatch::new(events))
     }
@@ -387,9 +394,13 @@ impl TrafficController {
             return Ok(None);
         };
 
+        let trace_event_source = matches!(
+            self.generators.get(&current),
+            Some(TrafficStateGenerator::Trace(_))
+        );
         let event = self.apply_stream_to_event(event)?;
         let event_tick = event.tick();
-        let mut events = vec![event];
+        let mut events = self.apply_trace_replay_to_event(event, trace_event_source)?;
         if self.should_force_transition_after_event(current, event_tick)? {
             events.extend(self.transition_at(event_tick)?.into_events());
         }
@@ -437,14 +448,16 @@ impl TrafficController {
                 TrafficStateGeneratorSnapshotEntry::new(*id, generator.snapshot())
             })
             .collect();
-        TrafficControllerSnapshot::new(self.machine.snapshot(), generators).with_stream(
-            self.stream_picker
-                .as_ref()
-                .map(|picker| picker.config().clone()),
-            self.stream_picker
-                .as_ref()
-                .map(TrafficStreamPicker::rng_state),
-        )
+        TrafficControllerSnapshot::new(self.machine.snapshot(), generators)
+            .with_stream(
+                self.stream_picker
+                    .as_ref()
+                    .map(|picker| picker.config().clone()),
+                self.stream_picker
+                    .as_ref()
+                    .map(TrafficStreamPicker::rng_state),
+            )
+            .with_trace_pending(self.trace_pending.clone())
     }
 
     fn transition_at(
@@ -464,6 +477,7 @@ impl TrafficController {
         {
             events.push(TrafficControllerEvent::TraceExit(status));
         }
+        self.trace_pending.clear();
 
         let transition = self.machine.transition_now(tick)?;
         events.push(TrafficControllerEvent::Transition(transition));
@@ -514,6 +528,75 @@ impl TrafficController {
             }
             (_, event) => Ok(event),
         }
+    }
+
+    fn apply_trace_replay_to_event(
+        &mut self,
+        event: TrafficControllerEvent,
+        trace_event_source: bool,
+    ) -> Result<Vec<TrafficControllerEvent>, TrafficGeneratorError> {
+        let replay_event = if trace_event_source {
+            self.trace_replay_event(&event)?
+        } else {
+            None
+        };
+        let mut events = vec![event];
+        if let Some(event) = replay_event {
+            events.push(event);
+        }
+        Ok(events)
+    }
+
+    fn trace_replay_event(
+        &mut self,
+        event: &TrafficControllerEvent,
+    ) -> Result<Option<TrafficControllerEvent>, TrafficGeneratorError> {
+        match event {
+            TrafficControllerEvent::Request(request) if request.request().requires_response() => {
+                self.trace_pending
+                    .push(TrafficTraceReplaySource::Memory(request.clone()));
+                Ok(None)
+            }
+            TrafficControllerEvent::TraceSync(sync) if sync.requires_response() => {
+                self.trace_pending
+                    .push(TrafficTraceReplaySource::Sync(*sync));
+                Ok(None)
+            }
+            TrafficControllerEvent::TraceHtm(htm) if htm.requires_response() => {
+                self.trace_pending.push(TrafficTraceReplaySource::Htm(*htm));
+                Ok(None)
+            }
+            TrafficControllerEvent::TraceResponse(response) => {
+                let Some(source) = self.take_matching_trace_source(|source| {
+                    response_matches_trace_source(*response, source)
+                }) else {
+                    return Ok(None);
+                };
+                let completion = trace_response_completion(*response, &source)?;
+                Ok(Some(TrafficControllerEvent::TraceResponseMatch(
+                    TrafficTraceResponseMatch::new(*response, source, completion),
+                )))
+            }
+            TrafficControllerEvent::TraceError(error) => {
+                let Some(source) = self.take_matching_trace_source(|source| {
+                    error_matches_trace_source(*error, source)
+                }) else {
+                    return Ok(None);
+                };
+                Ok(Some(TrafficControllerEvent::TraceErrorMatch(
+                    TrafficTraceErrorMatch::new(*error, source),
+                )))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    fn take_matching_trace_source(
+        &mut self,
+        predicate: impl Fn(&TrafficTraceReplaySource) -> bool,
+    ) -> Option<TrafficTraceReplaySource> {
+        let index = self.trace_pending.iter().position(predicate)?;
+        Some(self.trace_pending.remove(index))
     }
 }
 
@@ -612,6 +695,20 @@ impl TrafficControllerEventBatch {
         })
     }
 
+    pub fn trace_response_match(&self) -> Option<&TrafficTraceResponseMatch> {
+        self.events.iter().find_map(|event| match event {
+            TrafficControllerEvent::TraceResponseMatch(response) => Some(response),
+            _ => None,
+        })
+    }
+
+    pub fn trace_error_match(&self) -> Option<&TrafficTraceErrorMatch> {
+        self.events.iter().find_map(|event| match event {
+            TrafficControllerEvent::TraceErrorMatch(error) => Some(error),
+            _ => None,
+        })
+    }
+
     pub fn is_empty(&self) -> bool {
         self.events.is_empty()
     }
@@ -630,6 +727,8 @@ pub enum TrafficControllerEvent {
     TraceDiagnostic(TrafficTraceDiagnosticEvent),
     TraceResponse(TrafficTraceResponseEvent),
     TraceError(TrafficTraceErrorEvent),
+    TraceResponseMatch(TrafficTraceResponseMatch),
+    TraceErrorMatch(TrafficTraceErrorMatch),
 }
 
 impl TrafficControllerEvent {
@@ -646,7 +745,85 @@ impl TrafficControllerEvent {
             Self::TraceDiagnostic(diagnostic) => diagnostic.tick(),
             Self::TraceResponse(response) => response.tick(),
             Self::TraceError(error) => error.tick(),
+            Self::TraceResponseMatch(response) => response.response().tick(),
+            Self::TraceErrorMatch(error) => error.error().tick(),
         }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TrafficTraceReplaySource {
+    Memory(TrafficRequestEvent),
+    Sync(TrafficTraceSyncEvent),
+    Htm(TrafficTraceHtmEvent),
+}
+
+impl TrafficTraceReplaySource {
+    fn trace_packet_id(&self) -> Option<u64> {
+        match self {
+            Self::Memory(request) => request.trace_packet_id(),
+            Self::Sync(sync) => sync.trace_packet_id(),
+            Self::Htm(htm) => htm.trace_packet_id(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TrafficTraceReplayCompletion {
+    Memory(MemoryResponse),
+    Ack,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TrafficTraceResponseMatch {
+    response: TrafficTraceResponseEvent,
+    source: TrafficTraceReplaySource,
+    completion: TrafficTraceReplayCompletion,
+}
+
+impl TrafficTraceResponseMatch {
+    pub const fn new(
+        response: TrafficTraceResponseEvent,
+        source: TrafficTraceReplaySource,
+        completion: TrafficTraceReplayCompletion,
+    ) -> Self {
+        Self {
+            response,
+            source,
+            completion,
+        }
+    }
+
+    pub const fn response(&self) -> TrafficTraceResponseEvent {
+        self.response
+    }
+
+    pub const fn source(&self) -> &TrafficTraceReplaySource {
+        &self.source
+    }
+
+    pub const fn completion(&self) -> &TrafficTraceReplayCompletion {
+        &self.completion
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TrafficTraceErrorMatch {
+    error: TrafficTraceErrorEvent,
+    source: TrafficTraceReplaySource,
+}
+
+impl TrafficTraceErrorMatch {
+    pub const fn new(error: TrafficTraceErrorEvent, source: TrafficTraceReplaySource) -> Self {
+        Self { error, source }
+    }
+
+    pub const fn error(&self) -> TrafficTraceErrorEvent {
+        self.error
+    }
+
+    pub const fn source(&self) -> &TrafficTraceReplaySource {
+        &self.source
     }
 }
 
@@ -656,6 +833,7 @@ pub struct TrafficControllerSnapshot {
     generators: Vec<TrafficStateGeneratorSnapshotEntry>,
     stream: Option<TrafficStreamConfig>,
     stream_rng_state: Option<u64>,
+    trace_pending: Vec<TrafficTraceReplaySource>,
 }
 
 impl TrafficControllerSnapshot {
@@ -668,6 +846,7 @@ impl TrafficControllerSnapshot {
             generators,
             stream: None,
             stream_rng_state: None,
+            trace_pending: Vec::new(),
         }
     }
 
@@ -678,6 +857,11 @@ impl TrafficControllerSnapshot {
     ) -> Self {
         self.stream = stream;
         self.stream_rng_state = stream_rng_state;
+        self
+    }
+
+    pub fn with_trace_pending(mut self, trace_pending: Vec<TrafficTraceReplaySource>) -> Self {
+        self.trace_pending = trace_pending;
         self
     }
 
@@ -695,6 +879,10 @@ impl TrafficControllerSnapshot {
 
     pub const fn stream_rng_state(&self) -> Option<u64> {
         self.stream_rng_state
+    }
+
+    pub fn trace_pending(&self) -> &[TrafficTraceReplaySource] {
+        &self.trace_pending
     }
 }
 
@@ -764,4 +952,210 @@ fn validate_controller_states(
     }
 
     Ok(())
+}
+
+fn response_matches_trace_source(
+    response: TrafficTraceResponseEvent,
+    source: &TrafficTraceReplaySource,
+) -> bool {
+    if !trace_packet_ids_match(response.trace_packet_id(), source.trace_packet_id()) {
+        return false;
+    }
+
+    match source {
+        TrafficTraceReplaySource::Memory(request) => {
+            trace_address_matches(response.address(), Some(request.address()))
+                && trace_size_matches(
+                    response.size_bytes(),
+                    Some(request.request().size().bytes()),
+                )
+                && response_matches_memory_operation(response.kind(), request.request().operation())
+        }
+        TrafficTraceReplaySource::Sync(sync) => {
+            matches!(
+                (sync.kind(), response.kind()),
+                (
+                    crate::TrafficTraceSyncKind::MemFence,
+                    TrafficTraceResponseKind::MemFence
+                ) | (
+                    crate::TrafficTraceSyncKind::MemSync,
+                    TrafficTraceResponseKind::MemSync
+                )
+            )
+        }
+        TrafficTraceReplaySource::Htm(htm) => {
+            trace_address_matches(response.address(), htm.address())
+                && trace_size_matches(response.size_bytes(), htm.size_bytes())
+                && matches!(
+                    (htm.kind(), response.kind()),
+                    (
+                        crate::TrafficTraceHtmKind::Request,
+                        TrafficTraceResponseKind::HtmRequest
+                    )
+                )
+        }
+    }
+}
+
+fn error_matches_trace_source(
+    error: TrafficTraceErrorEvent,
+    source: &TrafficTraceReplaySource,
+) -> bool {
+    if !trace_packet_ids_match(error.trace_packet_id(), source.trace_packet_id()) {
+        return false;
+    }
+
+    match source {
+        TrafficTraceReplaySource::Memory(request) => {
+            trace_address_matches(error.address(), Some(request.address()))
+                && trace_size_matches(error.size_bytes(), Some(request.request().size().bytes()))
+                && error_matches_memory_operation(error, request.request().operation())
+        }
+        TrafficTraceReplaySource::Sync(_) => !error.is_read() && !error.is_write(),
+        TrafficTraceReplaySource::Htm(htm) => {
+            trace_address_matches(error.address(), htm.address())
+                && trace_size_matches(error.size_bytes(), htm.size_bytes())
+                && !error.is_read()
+                && !error.is_write()
+        }
+    }
+}
+
+fn trace_packet_ids_match(response: Option<u64>, source: Option<u64>) -> bool {
+    match (response, source) {
+        (Some(response), Some(source)) => response == source,
+        _ => true,
+    }
+}
+
+fn trace_address_matches(
+    response: Option<rem6_memory::Address>,
+    source: Option<rem6_memory::Address>,
+) -> bool {
+    match (response, source) {
+        (Some(response), Some(source)) => response == source,
+        _ => true,
+    }
+}
+
+fn trace_size_matches(response: Option<u64>, source: Option<u64>) -> bool {
+    match (response, source) {
+        (Some(response), Some(source)) => response == source,
+        _ => true,
+    }
+}
+
+fn response_matches_memory_operation(
+    response: TrafficTraceResponseKind,
+    operation: MemoryOperation,
+) -> bool {
+    match response {
+        TrafficTraceResponseKind::Read | TrafficTraceResponseKind::ReadWithInvalidate => matches!(
+            operation,
+            MemoryOperation::InstructionFetch
+                | MemoryOperation::ReadShared
+                | MemoryOperation::LoadLocked
+        ),
+        TrafficTraceResponseKind::ReadExclusive => operation == MemoryOperation::ReadUnique,
+        TrafficTraceResponseKind::Write | TrafficTraceResponseKind::WriteComplete => {
+            matches!(
+                operation,
+                MemoryOperation::Write | MemoryOperation::CacheBlockZero
+            )
+        }
+        TrafficTraceResponseKind::SoftPrefetch | TrafficTraceResponseKind::HardPrefetch => {
+            matches!(
+                operation,
+                MemoryOperation::PrefetchRead | MemoryOperation::PrefetchWrite
+            )
+        }
+        TrafficTraceResponseKind::Upgrade => {
+            matches!(
+                operation,
+                MemoryOperation::Upgrade | MemoryOperation::StoreConditionalUpgrade
+            )
+        }
+        TrafficTraceResponseKind::UpgradeFail => {
+            operation == MemoryOperation::StoreConditionalUpgradeFail
+        }
+        TrafficTraceResponseKind::StoreConditional => {
+            matches!(
+                operation,
+                MemoryOperation::StoreConditional | MemoryOperation::StoreConditionalFail
+            )
+        }
+        TrafficTraceResponseKind::LockedRmwRead => operation == MemoryOperation::LockedRmwRead,
+        TrafficTraceResponseKind::LockedRmwWrite => operation == MemoryOperation::LockedRmwWrite,
+        TrafficTraceResponseKind::Swap => operation == MemoryOperation::Atomic,
+        TrafficTraceResponseKind::CleanShared => operation == MemoryOperation::CleanShared,
+        TrafficTraceResponseKind::CleanInvalid => operation == MemoryOperation::Invalidate,
+        TrafficTraceResponseKind::Invalidate => operation == MemoryOperation::InvalidateWritable,
+        TrafficTraceResponseKind::MemSync
+        | TrafficTraceResponseKind::MemFence
+        | TrafficTraceResponseKind::HtmRequest => false,
+    }
+}
+
+fn error_matches_memory_operation(
+    error: TrafficTraceErrorEvent,
+    operation: MemoryOperation,
+) -> bool {
+    if error.is_read() {
+        return matches!(
+            operation,
+            MemoryOperation::InstructionFetch
+                | MemoryOperation::ReadShared
+                | MemoryOperation::ReadUnique
+                | MemoryOperation::LoadLocked
+                | MemoryOperation::LockedRmwRead
+                | MemoryOperation::StoreConditionalUpgradeFail
+                | MemoryOperation::Atomic
+                | MemoryOperation::PrefetchRead
+        );
+    }
+    if error.is_write() {
+        return matches!(
+            operation,
+            MemoryOperation::Write
+                | MemoryOperation::CacheBlockZero
+                | MemoryOperation::StoreConditional
+                | MemoryOperation::StoreConditionalFail
+                | MemoryOperation::LockedRmwWrite
+                | MemoryOperation::Atomic
+                | MemoryOperation::PrefetchWrite
+                | MemoryOperation::WriteClean
+                | MemoryOperation::WritebackClean
+                | MemoryOperation::WritebackDirty
+        );
+    }
+    true
+}
+
+fn trace_response_completion(
+    response: TrafficTraceResponseEvent,
+    source: &TrafficTraceReplaySource,
+) -> Result<TrafficTraceReplayCompletion, TrafficGeneratorError> {
+    match source {
+        TrafficTraceReplaySource::Memory(request) => {
+            if request.request().operation() == MemoryOperation::StoreConditionalFail {
+                return MemoryResponse::store_conditional_failed(request.request())
+                    .map(TrafficTraceReplayCompletion::Memory)
+                    .map_err(Into::into);
+            }
+            let data = if request.request().returns_data() {
+                let size = usize::try_from(request.request().size().bytes())
+                    .expect("memory request size fits usize after construction");
+                Some(vec![0; size])
+            } else {
+                None
+            };
+            MemoryResponse::completed(request.request(), data)
+                .map(TrafficTraceReplayCompletion::Memory)
+                .map_err(Into::into)
+        }
+        TrafficTraceReplaySource::Sync(_) | TrafficTraceReplaySource::Htm(_) => {
+            debug_assert!(!response.is_write());
+            Ok(TrafficTraceReplayCompletion::Ack)
+        }
+    }
 }

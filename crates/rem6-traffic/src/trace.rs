@@ -1086,45 +1086,53 @@ impl TrafficTraceGenerator {
                 element.pc,
             ))
         } else if let Some(kind) = element.htm_kind() {
+            let address =
+                checked_optional_trace_address(element.address, self.config.addr_offset())?;
             next_summary.record(event_tick, TrafficRequestKind::Maintenance, 0)?;
             TrafficTraceEvent::Htm(TrafficTraceHtmEvent::new(
                 event_tick,
                 sequence,
                 kind,
-                element.address,
+                address,
                 element.size,
                 element.packet_id,
                 element.pc,
             ))
         } else if let Some(kind) = element.diagnostic_kind() {
+            let address =
+                checked_optional_trace_address(element.address, self.config.addr_offset())?;
             next_summary.record(event_tick, TrafficRequestKind::Maintenance, 0)?;
             TrafficTraceEvent::Diagnostic(TrafficTraceDiagnosticEvent::new(
                 event_tick,
                 sequence,
                 kind,
-                element.address,
+                address,
                 element.size,
                 element.packet_id,
                 element.pc,
             ))
         } else if let Some(kind) = element.response_kind() {
+            let address =
+                checked_optional_trace_address(element.address, self.config.addr_offset())?;
             next_summary.record(event_tick, TrafficRequestKind::Maintenance, 0)?;
             TrafficTraceEvent::Response(TrafficTraceResponseEvent::new(
                 event_tick,
                 sequence,
                 kind,
-                element.address,
+                address,
                 element.size,
                 element.packet_id,
                 element.pc,
             ))
         } else if let Some(kind) = element.error_kind() {
+            let address =
+                checked_optional_trace_address(element.address, self.config.addr_offset())?;
             next_summary.record(event_tick, TrafficRequestKind::Maintenance, 0)?;
             TrafficTraceEvent::Error(TrafficTraceErrorEvent::new(
                 event_tick,
                 sequence,
                 kind,
-                element.address,
+                address,
                 element.size,
                 element.packet_id,
                 element.pc,
@@ -1652,6 +1660,15 @@ fn checked_trace_address(address: Address, offset: u64) -> Result<Address, Traff
             increment: offset,
         },
     )
+}
+
+fn checked_optional_trace_address(
+    address: Option<Address>,
+    offset: u64,
+) -> Result<Option<Address>, TrafficGeneratorError> {
+    address
+        .map(|address| checked_trace_address(address, offset))
+        .transpose()
 }
 
 fn checked_tick_add(tick: u64, delta: u64) -> Result<u64, TrafficGeneratorError> {

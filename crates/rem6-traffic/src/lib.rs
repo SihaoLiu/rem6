@@ -23,6 +23,8 @@ pub use controller::{
     TrafficController, TrafficControllerConfig, TrafficControllerEvent,
     TrafficControllerEventBatch, TrafficControllerSnapshot, TrafficControllerState,
     TrafficStateGenerator, TrafficStateGeneratorSnapshot, TrafficStateGeneratorSnapshotEntry,
+    TrafficTraceErrorMatch, TrafficTraceReplayCompletion, TrafficTraceReplaySource,
+    TrafficTraceResponseMatch,
 };
 pub use dram::{
     DramTrafficGenerator, TrafficDramAddressMapping, TrafficDramConfig, TrafficDramMode,
