@@ -167,6 +167,8 @@ struct TrafficTraceElement {
     address: Address,
     size: AccessSize,
     flags: TrafficTraceRequestFlags,
+    packet_id: Option<u64>,
+    pc: Option<Address>,
 }
 
 impl TrafficTraceElement {
@@ -613,9 +615,10 @@ impl TrafficTraceGenerator {
         self.summary = next_summary;
         self.tick_offset = next_tick_offset;
 
-        Ok(Some(TrafficRequestEvent::new(
-            event_tick, sequence, kind, address, request,
-        )))
+        Ok(Some(
+            TrafficRequestEvent::new(event_tick, sequence, kind, address, request)
+                .with_trace_metadata(element.packet_id, element.pc),
+        ))
     }
 
     pub fn schedule_tick(
@@ -1133,6 +1136,8 @@ fn parse_packet(message: &[u8]) -> Result<TrafficTraceElement, TrafficGeneratorE
     let mut address = None;
     let mut size = None;
     let mut flags = 0;
+    let mut packet_id = None;
+    let mut pc = None;
 
     while let Some(field) = parser.next_field()? {
         match field.number {
@@ -1141,6 +1146,8 @@ fn parse_packet(message: &[u8]) -> Result<TrafficTraceElement, TrafficGeneratorE
             3 => address = Some(field.varint("Packet", "addr")?),
             4 => size = Some(read_u32_field(field, "Packet", "size")?),
             5 => flags = read_u32_field(field, "Packet", "flags")?,
+            6 => packet_id = Some(field.varint("Packet", "pkt_id")?),
+            7 => pc = Some(Address::new(field.varint("Packet", "pc")?)),
             _ => {}
         }
         parser.skip(field)?;
@@ -1199,6 +1206,8 @@ fn parse_packet(message: &[u8]) -> Result<TrafficTraceElement, TrafficGeneratorE
         address: Address::new(address),
         size: AccessSize::new(u64::from(size))?,
         flags,
+        packet_id,
+        pc,
     })
 }
 

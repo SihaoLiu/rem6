@@ -17,6 +17,8 @@ pub struct TrafficRequestEvent {
     kind: TrafficRequestKind,
     address: Address,
     request: MemoryRequest,
+    trace_packet_id: Option<u64>,
+    trace_pc: Option<Address>,
 }
 
 impl TrafficRequestEvent {
@@ -33,7 +35,19 @@ impl TrafficRequestEvent {
             kind,
             address,
             request,
+            trace_packet_id: None,
+            trace_pc: None,
         }
+    }
+
+    pub(crate) const fn with_trace_metadata(
+        mut self,
+        trace_packet_id: Option<u64>,
+        trace_pc: Option<Address>,
+    ) -> Self {
+        self.trace_packet_id = trace_packet_id;
+        self.trace_pc = trace_pc;
+        self
     }
 
     pub const fn tick(&self) -> u64 {
@@ -54,6 +68,14 @@ impl TrafficRequestEvent {
 
     pub const fn request(&self) -> &MemoryRequest {
         &self.request
+    }
+
+    pub const fn trace_packet_id(&self) -> Option<u64> {
+        self.trace_packet_id
+    }
+
+    pub const fn trace_pc(&self) -> Option<Address> {
+        self.trace_pc
     }
 }
 
