@@ -196,6 +196,10 @@ impl TrafficTraceResponseKind {
             Self::ReadWithInvalidate | Self::CleanInvalid | Self::Invalidate
         )
     }
+
+    pub const fn cleans_line(self) -> bool {
+        matches!(self, Self::CleanShared | Self::CleanInvalid)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -540,6 +544,10 @@ impl TrafficTraceResponseEvent {
 
     pub const fn invalidates_line(self) -> bool {
         self.kind.invalidates_line()
+    }
+
+    pub const fn cleans_line(self) -> bool {
+        self.kind.cleans_line()
     }
 
     pub const fn trace_packet_id(self) -> Option<u64> {
