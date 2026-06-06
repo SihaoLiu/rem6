@@ -3,6 +3,7 @@ mod control;
 mod controller;
 mod dram;
 mod error;
+mod gups;
 mod hybrid;
 mod linear;
 mod state;
@@ -27,6 +28,7 @@ pub use dram::{
     TrafficDramSnapshot,
 };
 pub use error::TrafficGeneratorError;
+pub use gups::{GupsTrafficGenerator, TrafficGupsConfig, TrafficGupsSnapshot};
 pub use hybrid::{
     HybridTrafficGenerator, TrafficHybridConfig, TrafficHybridSide, TrafficHybridSideConfig,
     TrafficHybridSnapshot,

@@ -192,6 +192,34 @@ pub enum TrafficGeneratorError {
     TrafficHybridSnapshotUnsupportedKind {
         current_kind: TrafficRequestKind,
     },
+    TrafficGupsZeroMemorySize,
+    TrafficGupsMemorySizeNotMultiple {
+        mem_size: u64,
+        element_size: u64,
+    },
+    TrafficGupsAddressRangeOverflow {
+        start: Address,
+        mem_size: u64,
+    },
+    TrafficGupsUnknownReadCompletion {
+        sequence: u64,
+    },
+    TrafficGupsSnapshotReadCountOutsideTarget {
+        reads_created: u64,
+        target_updates: u64,
+    },
+    TrafficGupsSnapshotPendingReadFutureSequence {
+        sequence: u64,
+        next_sequence: u64,
+    },
+    TrafficGupsSnapshotPendingReadDuplicate {
+        sequence: u64,
+    },
+    TrafficGupsSnapshotAddressOutsideRange {
+        address: Address,
+        start: Address,
+        end: Address,
+    },
     TrafficDramSeriesExceedsPage {
         num_seq_packets: u32,
         columns_per_page_or_buffer: u64,
@@ -671,6 +699,54 @@ impl fmt::Display for TrafficGeneratorError {
             Self::TrafficHybridSnapshotUnsupportedKind { current_kind } => write!(
                 formatter,
                 "traffic hybrid snapshot current request kind {current_kind:?} is not supported"
+            ),
+            Self::TrafficGupsZeroMemorySize => {
+                write!(formatter, "traffic GUPS memory size is zero")
+            }
+            Self::TrafficGupsMemorySizeNotMultiple {
+                mem_size,
+                element_size,
+            } => write!(
+                formatter,
+                "traffic GUPS memory size {mem_size} is not a multiple of element size {element_size}"
+            ),
+            Self::TrafficGupsAddressRangeOverflow { start, mem_size } => write!(
+                formatter,
+                "traffic GUPS address range starts at {:#x} and overflows by size {mem_size}",
+                start.get()
+            ),
+            Self::TrafficGupsUnknownReadCompletion { sequence } => write!(
+                formatter,
+                "traffic GUPS read completion sequence {sequence} is not pending"
+            ),
+            Self::TrafficGupsSnapshotReadCountOutsideTarget {
+                reads_created,
+                target_updates,
+            } => write!(
+                formatter,
+                "traffic GUPS snapshot has {reads_created} reads created, beyond target {target_updates}"
+            ),
+            Self::TrafficGupsSnapshotPendingReadFutureSequence {
+                sequence,
+                next_sequence,
+            } => write!(
+                formatter,
+                "traffic GUPS snapshot pending read sequence {sequence} is not below next sequence {next_sequence}"
+            ),
+            Self::TrafficGupsSnapshotPendingReadDuplicate { sequence } => write!(
+                formatter,
+                "traffic GUPS snapshot has duplicate pending read sequence {sequence}"
+            ),
+            Self::TrafficGupsSnapshotAddressOutsideRange {
+                address,
+                start,
+                end,
+            } => write!(
+                formatter,
+                "traffic GUPS snapshot address {:#x} is outside table range {:#x}..{:#x}",
+                address.get(),
+                start.get(),
+                end.get()
             ),
             Self::TrafficDramSeriesExceedsPage {
                 num_seq_packets,
