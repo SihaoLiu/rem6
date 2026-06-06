@@ -1,11 +1,11 @@
 use rem6_memory::{AgentId, CacheLineLayout, MemoryOperation, ResponseStatus};
 use rem6_traffic::{
-    TrafficController, TrafficControllerConfig, TrafficControllerState, TrafficStateGenerator,
-    TrafficStateGraphConfig, TrafficStateId, TrafficStateSpec, TrafficTrace, TrafficTraceConfig,
-    TrafficTraceErrorKind, TrafficTraceReplayAction, TrafficTraceReplayCompletion,
-    TrafficTraceReplayFailure, TrafficTraceReplayOutcome, TrafficTraceReplaySource,
-    TrafficTraceResponseKind, TrafficTransition, TrafficTransitionProbability,
-    TRAFFIC_TRANSITION_PROBABILITY_SCALE,
+    TrafficController, TrafficControllerConfig, TrafficControllerEvent, TrafficControllerState,
+    TrafficStateGenerator, TrafficStateGraphConfig, TrafficStateId, TrafficStateSpec, TrafficTrace,
+    TrafficTraceConfig, TrafficTraceErrorKind, TrafficTraceReplayAction,
+    TrafficTraceReplayActionQueue, TrafficTraceReplayCompletion, TrafficTraceReplayFailure,
+    TrafficTraceReplayOutcome, TrafficTraceReplaySource, TrafficTraceResponseKind,
+    TrafficTransition, TrafficTransitionProbability, TRAFFIC_TRANSITION_PROBABILITY_SCALE,
 };
 
 const GEM5_MAGIC: [u8; 4] = [0x67, 0x65, 0x6d, 0x35];
@@ -413,6 +413,306 @@ fn traffic_controller_records_trace_replay_outcomes() {
     assert_eq!(controller.trace_replay_summary().control_completions(), 1);
     assert_eq!(controller.trace_replay_summary().memory_failures(), 1);
     assert_eq!(controller.trace_replay_summary().control_failures(), 1);
+}
+
+#[test]
+fn traffic_trace_replay_action_queue_drains_executable_results() {
+    let mut controller = controller_for_packets(&[
+        PacketFields {
+            tick: 5,
+            command: GEM5_READ_REQ,
+            address: Some(0x5e00),
+            size: Some(8),
+            packet_id: Some(19),
+        },
+        PacketFields {
+            tick: 7,
+            command: GEM5_READ_RESP,
+            address: Some(0x5e00),
+            size: Some(8),
+            packet_id: Some(19),
+        },
+        PacketFields {
+            tick: 9,
+            command: GEM5_MEM_FENCE_REQ,
+            address: None,
+            size: None,
+            packet_id: Some(20),
+        },
+        PacketFields {
+            tick: 11,
+            command: GEM5_MEM_FENCE_RESP,
+            address: None,
+            size: None,
+            packet_id: Some(20),
+        },
+        PacketFields {
+            tick: 13,
+            command: GEM5_WRITE_REQ,
+            address: Some(0x5f00),
+            size: Some(8),
+            packet_id: Some(21),
+        },
+        PacketFields {
+            tick: 15,
+            command: GEM5_WRITE_ERROR,
+            address: Some(0x5f00),
+            size: Some(8),
+            packet_id: Some(21),
+        },
+        PacketFields {
+            tick: 17,
+            command: GEM5_HTM_REQ,
+            address: Some(0x6000),
+            size: Some(16),
+            packet_id: Some(22),
+        },
+        PacketFields {
+            tick: 19,
+            command: GEM5_INVALID_DEST_ERROR,
+            address: Some(0x6000),
+            size: Some(16),
+            packet_id: Some(22),
+        },
+    ]);
+    let mut action_queue = TrafficTraceReplayActionQueue::default();
+
+    assert!(controller.start(20).unwrap().is_empty());
+
+    let request_batch = controller.next_event(20, 0).unwrap().unwrap();
+    let request = request_batch.request().unwrap().clone();
+    action_queue.record_batch(&request_batch).unwrap();
+    assert!(action_queue.is_empty());
+
+    let response_batch = controller.next_event(request.tick(), 0).unwrap().unwrap();
+    assert!(matches!(
+        response_batch.events(),
+        [
+            TrafficControllerEvent::TraceResponse(_),
+            TrafficControllerEvent::TraceResponseMatch(_),
+            TrafficControllerEvent::TraceReplayAction(
+                TrafficTraceReplayAction::MemoryResponse { .. }
+            ),
+        ]
+    ));
+    action_queue.record_batch(&response_batch).unwrap();
+    let response_record = action_queue.pop_memory_response().unwrap();
+    assert_eq!(
+        response_record.tick(),
+        response_batch.trace_response().unwrap().tick()
+    );
+    let response = response_record.response();
+    assert_eq!(response.request_id(), request.request().id());
+    assert_eq!(response.status(), ResponseStatus::Completed);
+    assert_eq!(response.data().unwrap().len(), 8);
+    assert!(action_queue.pop_memory_response().is_none());
+    assert_eq!(action_queue.summary().memory_completions(), 1);
+    assert_eq!(action_queue.summary().control_completions(), 0);
+    assert_eq!(action_queue.summary().memory_failures(), 0);
+    assert_eq!(action_queue.summary().control_failures(), 0);
+
+    let sync_batch = controller
+        .next_event(response_batch.trace_response().unwrap().tick(), 0)
+        .unwrap()
+        .unwrap();
+    let sync = sync_batch.trace_sync().unwrap();
+    action_queue.record_batch(&sync_batch).unwrap();
+    assert!(action_queue.is_empty());
+
+    let sync_response_batch = controller.next_event(sync.tick(), 0).unwrap().unwrap();
+    action_queue.record_batch(&sync_response_batch).unwrap();
+    assert_eq!(
+        action_queue.pop_control_ack_tick().unwrap(),
+        sync_response_batch.trace_response().unwrap().tick()
+    );
+    assert!(action_queue.pop_control_ack_tick().is_none());
+    assert_eq!(action_queue.summary().memory_completions(), 1);
+    assert_eq!(action_queue.summary().control_completions(), 1);
+    assert_eq!(action_queue.summary().memory_failures(), 0);
+    assert_eq!(action_queue.summary().control_failures(), 0);
+
+    let write_batch = controller
+        .next_event(sync_response_batch.trace_response().unwrap().tick(), 0)
+        .unwrap()
+        .unwrap();
+    let write = write_batch.request().unwrap().clone();
+    action_queue.record_batch(&write_batch).unwrap();
+    assert!(action_queue.is_empty());
+
+    let write_error_batch = controller.next_event(write.tick(), 0).unwrap().unwrap();
+    action_queue.record_batch(&write_error_batch).unwrap();
+    let memory_failure = action_queue.pop_memory_failure().unwrap();
+    assert_eq!(
+        memory_failure.tick(),
+        write_error_batch.trace_error().unwrap().tick()
+    );
+    assert_eq!(memory_failure.failure().request_id(), write.request().id());
+    assert_eq!(
+        memory_failure.failure().error(),
+        TrafficTraceErrorKind::Write
+    );
+    assert!(action_queue.pop_memory_failure().is_none());
+    assert_eq!(action_queue.summary().memory_completions(), 1);
+    assert_eq!(action_queue.summary().control_completions(), 1);
+    assert_eq!(action_queue.summary().memory_failures(), 1);
+    assert_eq!(action_queue.summary().control_failures(), 0);
+
+    let htm_batch = controller
+        .next_event(write_error_batch.trace_error().unwrap().tick(), 0)
+        .unwrap()
+        .unwrap();
+    let htm = htm_batch.trace_htm().unwrap();
+    action_queue.record_batch(&htm_batch).unwrap();
+    assert!(action_queue.is_empty());
+
+    let error_batch = controller.next_event(htm.tick(), 0).unwrap().unwrap();
+    action_queue.record_batch(&error_batch).unwrap();
+    let control_failure = action_queue.pop_control_failure().unwrap();
+    assert_eq!(
+        control_failure.tick(),
+        error_batch.trace_error().unwrap().tick()
+    );
+    assert_eq!(
+        control_failure.failure().error(),
+        TrafficTraceErrorKind::InvalidDestination
+    );
+    assert!(action_queue.pop_control_failure().is_none());
+    assert_eq!(action_queue.summary().memory_completions(), 1);
+    assert_eq!(action_queue.summary().control_completions(), 1);
+    assert_eq!(action_queue.summary().memory_failures(), 1);
+    assert_eq!(action_queue.summary().control_failures(), 1);
+    assert!(action_queue.is_empty());
+}
+
+#[test]
+fn traffic_trace_replay_action_queue_preserves_recorded_action_order() {
+    let mut controller = controller_for_packets(&[
+        PacketFields {
+            tick: 5,
+            command: GEM5_READ_REQ,
+            address: Some(0x6100),
+            size: Some(8),
+            packet_id: Some(23),
+        },
+        PacketFields {
+            tick: 7,
+            command: GEM5_READ_RESP,
+            address: Some(0x6100),
+            size: Some(8),
+            packet_id: Some(23),
+        },
+        PacketFields {
+            tick: 9,
+            command: GEM5_MEM_FENCE_REQ,
+            address: None,
+            size: None,
+            packet_id: Some(24),
+        },
+        PacketFields {
+            tick: 11,
+            command: GEM5_MEM_FENCE_RESP,
+            address: None,
+            size: None,
+            packet_id: Some(24),
+        },
+        PacketFields {
+            tick: 13,
+            command: GEM5_WRITE_REQ,
+            address: Some(0x6200),
+            size: Some(8),
+            packet_id: Some(25),
+        },
+        PacketFields {
+            tick: 15,
+            command: GEM5_WRITE_ERROR,
+            address: Some(0x6200),
+            size: Some(8),
+            packet_id: Some(25),
+        },
+        PacketFields {
+            tick: 17,
+            command: GEM5_HTM_REQ,
+            address: Some(0x6300),
+            size: Some(16),
+            packet_id: Some(26),
+        },
+        PacketFields {
+            tick: 19,
+            command: GEM5_INVALID_DEST_ERROR,
+            address: Some(0x6300),
+            size: Some(16),
+            packet_id: Some(26),
+        },
+    ]);
+    let mut action_queue = TrafficTraceReplayActionQueue::default();
+
+    assert!(controller.start(20).unwrap().is_empty());
+    let request_batch = controller.next_event(20, 0).unwrap().unwrap();
+    let request = request_batch.request().unwrap().clone();
+    action_queue.record_batch(&request_batch).unwrap();
+
+    let response_batch = controller.next_event(request.tick(), 0).unwrap().unwrap();
+    let response_tick = response_batch.trace_response().unwrap().tick();
+    action_queue.record_batch(&response_batch).unwrap();
+    let sync_batch = controller.next_event(response_tick, 0).unwrap().unwrap();
+    let sync = sync_batch.trace_sync().unwrap();
+    action_queue.record_batch(&sync_batch).unwrap();
+
+    let sync_response_batch = controller.next_event(sync.tick(), 0).unwrap().unwrap();
+    let sync_response_tick = sync_response_batch.trace_response().unwrap().tick();
+    action_queue.record_batch(&sync_response_batch).unwrap();
+    let write_batch = controller
+        .next_event(sync_response_tick, 0)
+        .unwrap()
+        .unwrap();
+    let write = write_batch.request().unwrap().clone();
+    action_queue.record_batch(&write_batch).unwrap();
+
+    let write_error_batch = controller.next_event(write.tick(), 0).unwrap().unwrap();
+    let write_error_tick = write_error_batch.trace_error().unwrap().tick();
+    action_queue.record_batch(&write_error_batch).unwrap();
+    let htm_batch = controller.next_event(write_error_tick, 0).unwrap().unwrap();
+    let htm = htm_batch.trace_htm().unwrap();
+    action_queue.record_batch(&htm_batch).unwrap();
+
+    let error_batch = controller.next_event(htm.tick(), 0).unwrap().unwrap();
+    let error_tick = error_batch.trace_error().unwrap().tick();
+    action_queue.record_batch(&error_batch).unwrap();
+
+    let first = action_queue.pop_action().unwrap();
+    match first {
+        TrafficTraceReplayAction::MemoryResponse { tick, .. } => {
+            assert_eq!(tick, response_tick);
+        }
+        action => panic!("unexpected first replay action: {action:?}"),
+    }
+    let second = action_queue.pop_action().unwrap();
+    assert_eq!(
+        second,
+        TrafficTraceReplayAction::ControlAck {
+            tick: sync_response_tick
+        }
+    );
+    let third = action_queue.pop_action().unwrap();
+    match third {
+        TrafficTraceReplayAction::MemoryFailure { tick, .. } => {
+            assert_eq!(tick, write_error_tick);
+        }
+        action => panic!("unexpected third replay action: {action:?}"),
+    }
+    let fourth = action_queue.pop_action().unwrap();
+    match fourth {
+        TrafficTraceReplayAction::ControlFailure { tick, .. } => {
+            assert_eq!(tick, error_tick);
+        }
+        action => panic!("unexpected fourth replay action: {action:?}"),
+    }
+    assert!(action_queue.pop_action().is_none());
+    assert_eq!(action_queue.summary().memory_completions(), 1);
+    assert_eq!(action_queue.summary().control_completions(), 1);
+    assert_eq!(action_queue.summary().memory_failures(), 1);
+    assert_eq!(action_queue.summary().control_failures(), 1);
+    assert!(action_queue.is_empty());
 }
 
 #[test]

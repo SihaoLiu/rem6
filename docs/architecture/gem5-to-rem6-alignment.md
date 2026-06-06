@@ -2930,9 +2930,11 @@ id, source-appropriate address and size metadata, and gem5 command policy.
 Matched memory responses emit a validated `MemoryResponse`, while matched
 non-memory responses emit typed acknowledgement records. The controller records
 matched replay completions in a typed outcome summary and emits replay action
-events carrying owned memory responses or control acknowledgements. Full
-response propagation through memory controllers, caches, and CPU ports remains
-a separate contract.
+events carrying owned memory responses or control acknowledgements. The
+execution-facing replay action queue records those controller batches and drains
+owned memory response records, control acknowledgement ticks, or the original
+actions in recorded order for downstream consumers. Full response propagation
+through memory controllers, caches, and CPU ports remains a separate contract.
 `InvalidDestError`, `BadAddressError`, `ReadError`, `WriteError`,
 `FunctionalReadError`, and `FunctionalWriteError` command-ids 46-51 map to
 typed `TrafficTraceEvent::Error` events that preserve tick ordering, sequence,
@@ -2947,8 +2949,11 @@ consume an unrelated pending request. Matched errors now carry typed replay
 failure records for memory-request failures and sync/HTM control failures,
 and the controller records those failures in the same typed outcome summary
 while emitting replay action events carrying owned memory and control failure
-records. Full error propagation through memory controllers, caches, and CPU
-ports remains a separate contract.
+records. The execution-facing replay action queue drains those failure records
+separately from successful memory and control completions while preserving an
+ordered action drain for consumers that need cross-kind replay order. Full
+error propagation through memory controllers, caches, and CPU ports remains a
+separate contract.
 Trace packet flag handling now maps non-prefetch `INST_FETCH` on `ReadReq`,
 `ReadCleanReq`, and
 `ReadSharedReq` packets to native instruction-fetch requests, accepts `PHYSICAL`
