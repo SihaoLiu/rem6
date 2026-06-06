@@ -6,8 +6,12 @@ use rem6_memory::{
     ResponseStatus,
 };
 use rem6_system::{
-    traffic_trace_replay_controller_target_outcome, traffic_trace_replay_runtime_target_outcome,
+    traffic_trace_replay_controller_control_completion,
+    traffic_trace_replay_controller_target_outcome,
+    traffic_trace_replay_runtime_control_completion, traffic_trace_replay_runtime_target_outcome,
     traffic_trace_replay_target_event, traffic_trace_replay_target_outcome,
+    TrafficTraceReplayControlError, TrafficTraceReplayControlRuntime,
+    TrafficTraceReplayControllerControlError, TrafficTraceReplayControllerRuntime,
     TrafficTraceReplayControllerTargetError, TrafficTraceReplayTargetError,
     TrafficTraceReplayTargetEvent, TrafficTraceReplayTargetRuntime,
 };
@@ -15,9 +19,9 @@ use rem6_traffic::{
     TrafficController, TrafficControllerConfig, TrafficControllerEvent,
     TrafficControllerEventBatch, TrafficControllerState, TrafficStateGenerator,
     TrafficStateGraphConfig, TrafficStateId, TrafficStateSpec, TrafficTrace, TrafficTraceConfig,
-    TrafficTraceErrorKind, TrafficTraceMemoryFailure, TrafficTraceReplayAction,
-    TrafficTraceReplayActionQueue, TrafficTransition, TrafficTransitionProbability,
-    TRAFFIC_TRANSITION_PROBABILITY_SCALE,
+    TrafficTraceControlFailure, TrafficTraceErrorKind, TrafficTraceMemoryFailure,
+    TrafficTraceReplayAction, TrafficTraceReplayActionQueue, TrafficTransition,
+    TrafficTransitionProbability, TRAFFIC_TRANSITION_PROBABILITY_SCALE,
 };
 use rem6_transport::{
     MemoryRoute, MemoryTrace, MemoryTraceEvent, MemoryTraceKind, MemoryTransport, ResponseDelivery,
@@ -32,7 +36,9 @@ const GEM5_WRITE_REQ: u32 = 4;
 const GEM5_WRITEBACK_DIRTY: u32 = 7;
 const GEM5_MEM_FENCE_REQ: u32 = 38;
 const GEM5_MEM_FENCE_RESP: u32 = 41;
+const GEM5_INVALID_DEST_ERROR: u32 = 46;
 const GEM5_WRITE_ERROR: u32 = 49;
+const GEM5_HTM_REQ: u32 = 56;
 
 #[derive(Clone, Copy)]
 struct PacketFields {
@@ -568,7 +574,7 @@ fn traffic_trace_replay_controller_target_outcome_advances_controller_for_transp
     let req = request_batch.request().unwrap().request().clone();
 
     let controller = Arc::new(Mutex::new(controller));
-    let runtime = Arc::new(Mutex::new(TrafficTraceReplayTargetRuntime::default()));
+    let runtime = Arc::new(Mutex::new(TrafficTraceReplayControllerRuntime::default()));
     runtime
         .lock()
         .unwrap()
@@ -684,7 +690,7 @@ fn traffic_trace_replay_controller_target_outcome_advances_controller_for_memory
     let req = request_batch.request().unwrap().request().clone();
 
     let controller = Arc::new(Mutex::new(controller));
-    let runtime = Arc::new(Mutex::new(TrafficTraceReplayTargetRuntime::default()));
+    let runtime = Arc::new(Mutex::new(TrafficTraceReplayControllerRuntime::default()));
     runtime
         .lock()
         .unwrap()
@@ -782,7 +788,7 @@ fn traffic_trace_replay_controller_target_outcome_rejects_response_before_delive
     let req = request_batch.request().unwrap().request().clone();
 
     let controller = Arc::new(Mutex::new(controller));
-    let runtime = Arc::new(Mutex::new(TrafficTraceReplayTargetRuntime::default()));
+    let runtime = Arc::new(Mutex::new(TrafficTraceReplayControllerRuntime::default()));
     runtime
         .lock()
         .unwrap()
@@ -871,7 +877,7 @@ fn traffic_trace_replay_controller_target_outcome_rejects_failure_before_deliver
     let req = request_batch.request().unwrap().request().clone();
 
     let controller = Arc::new(Mutex::new(controller));
-    let runtime = Arc::new(Mutex::new(TrafficTraceReplayTargetRuntime::default()));
+    let runtime = Arc::new(Mutex::new(TrafficTraceReplayControllerRuntime::default()));
     runtime
         .lock()
         .unwrap()
@@ -938,49 +944,52 @@ fn traffic_trace_replay_controller_target_outcome_rejects_failure_before_deliver
 }
 
 #[test]
-fn traffic_trace_replay_controller_target_outcome_skips_control_ack_for_memory_response() {
+fn traffic_trace_replay_controller_runtime_preserves_control_action_while_target_advances() {
     let mut controller = controller_for_packets(&[
         PacketFields {
             tick: 0,
             command: GEM5_READ_REQ,
-            address: Some(0x8000),
+            address: Some(0x8800),
             size: Some(8),
-            packet_id: Some(74),
+            packet_id: Some(84),
         },
         PacketFields {
             tick: 1,
             command: GEM5_MEM_FENCE_REQ,
             address: None,
             size: None,
-            packet_id: Some(75),
-        },
-        PacketFields {
-            tick: 2,
-            command: GEM5_MEM_FENCE_RESP,
-            address: None,
-            size: None,
-            packet_id: Some(75),
+            packet_id: Some(85),
         },
         PacketFields {
             tick: 7,
+            command: GEM5_MEM_FENCE_RESP,
+            address: None,
+            size: None,
+            packet_id: Some(85),
+        },
+        PacketFields {
+            tick: 8,
             command: GEM5_READ_RESP_WITH_INVALIDATE,
-            address: Some(0x8000),
+            address: Some(0x8800),
             size: Some(8),
-            packet_id: Some(74),
+            packet_id: Some(84),
         },
     ]);
 
     assert!(controller.start(0).unwrap().is_empty());
     let request_batch = controller.next_event(0, 0).unwrap().unwrap();
     let req = request_batch.request().unwrap().request().clone();
+    let sync_batch = controller.next_event(1, 0).unwrap().unwrap();
+    assert!(sync_batch.trace_sync().unwrap().requires_response());
 
     let controller = Arc::new(Mutex::new(controller));
-    let runtime = Arc::new(Mutex::new(TrafficTraceReplayTargetRuntime::default()));
+    let runtime = Arc::new(Mutex::new(TrafficTraceReplayControllerRuntime::default()));
     runtime
         .lock()
         .unwrap()
         .record_batch(&request_batch)
         .unwrap();
+    runtime.lock().unwrap().record_batch(&sync_batch).unwrap();
 
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
     let mut transport = MemoryTransport::new();
@@ -1020,7 +1029,7 @@ fn traffic_trace_replay_controller_target_outcome_skips_control_ack_for_memory_r
             ) {
                 Ok(outcome) => outcome,
                 Err(error) => {
-                    error_log.lock().unwrap().push(error);
+                    error_log.lock().unwrap().push(format!("{error}"));
                     TargetOutcome::NoResponse
                 }
             },
@@ -1034,10 +1043,33 @@ fn traffic_trace_replay_controller_target_outcome_skips_control_ack_for_memory_r
         )
         .unwrap();
 
+    let replay = Arc::clone(&runtime);
+    let trace_controller = Arc::clone(&controller);
+    let error_log = Arc::clone(&errors);
+    scheduler
+        .schedule_at(PartitionId::new(1), 3, move |context| {
+            if let Err(error) = traffic_trace_replay_controller_control_completion(
+                Arc::clone(&replay),
+                Arc::clone(&trace_controller),
+                context.now(),
+                context,
+                0,
+            ) {
+                error_log.lock().unwrap().push(format!("{error}"));
+            }
+        })
+        .unwrap();
+
     scheduler.run_until_idle_conservative();
 
     assert!(errors.lock().unwrap().is_empty());
-    assert_eq!(*responses.lock().unwrap(), vec![(12, core, req.id())]);
+    assert_eq!(*responses.lock().unwrap(), vec![(13, core, req.id())]);
+    assert_eq!(runtime.lock().unwrap().control_acks().len(), 1);
+    let ack = runtime.lock().unwrap().control_acks()[0];
+    assert_eq!(ack.tick(), 7);
+    assert_eq!(ack.trace_tick(), 7);
+    assert!(runtime.lock().unwrap().control_failures().is_empty());
+    assert!(runtime.lock().unwrap().memory_failures().is_empty());
     assert!(runtime.lock().unwrap().is_empty());
 }
 
@@ -1072,7 +1104,7 @@ fn traffic_trace_replay_controller_target_outcome_reports_missing_after_control_
     let req = request_batch.request().unwrap().request().clone();
 
     let controller = Arc::new(Mutex::new(controller));
-    let runtime = Arc::new(Mutex::new(TrafficTraceReplayTargetRuntime::default()));
+    let runtime = Arc::new(Mutex::new(TrafficTraceReplayControllerRuntime::default()));
     runtime
         .lock()
         .unwrap()
@@ -1128,7 +1160,9 @@ fn traffic_trace_replay_controller_target_outcome_reports_missing_after_control_
         *errors.lock().unwrap(),
         vec![TrafficTraceReplayControllerTargetError::ReplayActionMissing { request: req.id() }]
     );
-    assert!(runtime.lock().unwrap().is_empty());
+    assert!(!runtime.lock().unwrap().is_empty());
+    assert!(runtime.lock().unwrap().memory_failures().is_empty());
+    assert!(runtime.lock().unwrap().control_acks().is_empty());
 }
 
 #[test]
@@ -1147,7 +1181,7 @@ fn traffic_trace_replay_controller_target_outcome_accepts_no_response_memory_req
     assert!(!req.requires_response());
 
     let controller = Arc::new(Mutex::new(controller));
-    let runtime = Arc::new(Mutex::new(TrafficTraceReplayTargetRuntime::default()));
+    let runtime = Arc::new(Mutex::new(TrafficTraceReplayControllerRuntime::default()));
     runtime
         .lock()
         .unwrap()
@@ -1220,7 +1254,7 @@ fn traffic_trace_replay_controller_target_outcome_reports_missing_replay_action(
     let req = request_batch.request().unwrap().request().clone();
 
     let controller = Arc::new(Mutex::new(controller));
-    let runtime = Arc::new(Mutex::new(TrafficTraceReplayTargetRuntime::default()));
+    let runtime = Arc::new(Mutex::new(TrafficTraceReplayControllerRuntime::default()));
     runtime
         .lock()
         .unwrap()
@@ -1278,6 +1312,323 @@ fn traffic_trace_replay_controller_target_outcome_reports_missing_replay_action(
     );
     assert!(runtime.lock().unwrap().is_empty());
     assert!(runtime.lock().unwrap().memory_failures().is_empty());
+}
+
+#[test]
+fn traffic_trace_replay_control_runtime_schedules_control_ack_from_batch() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let runtime = Arc::new(Mutex::new(TrafficTraceReplayControlRuntime::default()));
+    runtime
+        .lock()
+        .unwrap()
+        .record_batch(&TrafficControllerEventBatch::new(vec![
+            TrafficControllerEvent::TraceReplayAction(TrafficTraceReplayAction::ControlAck {
+                tick: 7,
+            }),
+        ]))
+        .unwrap();
+
+    let replay = Arc::clone(&runtime);
+    scheduler
+        .schedule_at(PartitionId::new(0), 3, move |context| {
+            traffic_trace_replay_runtime_control_completion(
+                Arc::clone(&replay),
+                context.now(),
+                context,
+            )
+            .unwrap();
+        })
+        .unwrap();
+
+    scheduler.run_until_idle_conservative();
+
+    assert!(runtime.lock().unwrap().is_empty());
+    assert_eq!(runtime.lock().unwrap().control_acks().len(), 1);
+    let ack = runtime.lock().unwrap().control_acks()[0];
+    assert_eq!(ack.tick(), 7);
+    assert_eq!(ack.trace_tick(), 7);
+    assert!(runtime.lock().unwrap().control_failures().is_empty());
+}
+
+#[test]
+fn traffic_trace_replay_control_runtime_schedules_control_failure_from_batch() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let runtime = Arc::new(Mutex::new(TrafficTraceReplayControlRuntime::default()));
+    let failure = TrafficTraceControlFailure::new(TrafficTraceErrorKind::InvalidDestination);
+    runtime
+        .lock()
+        .unwrap()
+        .record_batch(&TrafficControllerEventBatch::new(vec![
+            TrafficControllerEvent::TraceReplayAction(TrafficTraceReplayAction::ControlFailure {
+                tick: 9,
+                failure,
+            }),
+        ]))
+        .unwrap();
+
+    let replay = Arc::clone(&runtime);
+    scheduler
+        .schedule_at(PartitionId::new(0), 4, move |context| {
+            traffic_trace_replay_runtime_control_completion(
+                Arc::clone(&replay),
+                context.now(),
+                context,
+            )
+            .unwrap();
+        })
+        .unwrap();
+
+    scheduler.run_until_idle_conservative();
+
+    assert!(runtime.lock().unwrap().is_empty());
+    assert_eq!(runtime.lock().unwrap().control_failures().len(), 1);
+    let scheduled_failure = runtime.lock().unwrap().control_failures()[0];
+    assert_eq!(scheduled_failure.tick(), 9);
+    assert_eq!(scheduled_failure.record().tick(), 9);
+    assert_eq!(scheduled_failure.record().failure(), failure);
+    assert!(runtime.lock().unwrap().control_acks().is_empty());
+}
+
+#[test]
+fn traffic_trace_replay_control_runtime_rejects_ack_before_delivery() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let runtime = Arc::new(Mutex::new(TrafficTraceReplayControlRuntime::default()));
+    let errors = Arc::new(Mutex::new(Vec::new()));
+    runtime
+        .lock()
+        .unwrap()
+        .record_batch(&TrafficControllerEventBatch::new(vec![
+            TrafficControllerEvent::TraceReplayAction(TrafficTraceReplayAction::ControlAck {
+                tick: 2,
+            }),
+        ]))
+        .unwrap();
+
+    let replay = Arc::clone(&runtime);
+    let error_log = Arc::clone(&errors);
+    scheduler
+        .schedule_at(PartitionId::new(0), 3, move |context| {
+            if let Err(error) = traffic_trace_replay_runtime_control_completion(
+                Arc::clone(&replay),
+                context.now(),
+                context,
+            ) {
+                error_log.lock().unwrap().push(error);
+            }
+        })
+        .unwrap();
+
+    scheduler.run_until_idle_conservative();
+
+    assert_eq!(
+        *errors.lock().unwrap(),
+        vec![TrafficTraceReplayControlError::AckBeforeDelivery {
+            delivery_tick: 3,
+            ack_tick: 2,
+        }]
+    );
+    assert!(!runtime.lock().unwrap().is_empty());
+    assert!(runtime.lock().unwrap().control_acks().is_empty());
+}
+
+#[test]
+fn traffic_trace_replay_control_runtime_rejects_failure_before_delivery() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let runtime = Arc::new(Mutex::new(TrafficTraceReplayControlRuntime::default()));
+    let errors = Arc::new(Mutex::new(Vec::new()));
+    let failure = TrafficTraceControlFailure::new(TrafficTraceErrorKind::InvalidDestination);
+    runtime
+        .lock()
+        .unwrap()
+        .record_batch(&TrafficControllerEventBatch::new(vec![
+            TrafficControllerEvent::TraceReplayAction(TrafficTraceReplayAction::ControlFailure {
+                tick: 2,
+                failure,
+            }),
+        ]))
+        .unwrap();
+
+    let replay = Arc::clone(&runtime);
+    let error_log = Arc::clone(&errors);
+    scheduler
+        .schedule_at(PartitionId::new(0), 3, move |context| {
+            if let Err(error) = traffic_trace_replay_runtime_control_completion(
+                Arc::clone(&replay),
+                context.now(),
+                context,
+            ) {
+                error_log.lock().unwrap().push(error);
+            }
+        })
+        .unwrap();
+
+    scheduler.run_until_idle_conservative();
+
+    assert_eq!(
+        *errors.lock().unwrap(),
+        vec![TrafficTraceReplayControlError::FailureBeforeDelivery {
+            delivery_tick: 3,
+            failure_tick: 2,
+        }]
+    );
+    assert!(!runtime.lock().unwrap().is_empty());
+    assert!(runtime.lock().unwrap().control_failures().is_empty());
+}
+
+#[test]
+fn traffic_trace_replay_controller_control_completion_advances_controller_for_sync_ack() {
+    let mut controller = controller_for_packets(&[
+        PacketFields {
+            tick: 0,
+            command: GEM5_MEM_FENCE_REQ,
+            address: None,
+            size: None,
+            packet_id: Some(80),
+        },
+        PacketFields {
+            tick: 7,
+            command: GEM5_MEM_FENCE_RESP,
+            address: None,
+            size: None,
+            packet_id: Some(80),
+        },
+    ]);
+
+    assert!(controller.start(0).unwrap().is_empty());
+    let sync_batch = controller.next_event(0, 0).unwrap().unwrap();
+    assert!(sync_batch.trace_sync().unwrap().requires_response());
+    assert!(sync_batch.trace_replay_action().is_none());
+
+    let controller = Arc::new(Mutex::new(controller));
+    let runtime = Arc::new(Mutex::new(TrafficTraceReplayControllerRuntime::default()));
+    runtime.lock().unwrap().record_batch(&sync_batch).unwrap();
+
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let replay = Arc::clone(&runtime);
+    let trace_controller = Arc::clone(&controller);
+    scheduler
+        .schedule_at(PartitionId::new(0), 3, move |context| {
+            traffic_trace_replay_controller_control_completion(
+                Arc::clone(&replay),
+                Arc::clone(&trace_controller),
+                context.now(),
+                context,
+                0,
+            )
+            .unwrap();
+        })
+        .unwrap();
+
+    scheduler.run_until_idle_conservative();
+
+    assert!(runtime.lock().unwrap().is_empty());
+    assert_eq!(runtime.lock().unwrap().control_acks().len(), 1);
+    assert_eq!(runtime.lock().unwrap().control_acks()[0].tick(), 7);
+    assert!(runtime.lock().unwrap().control_failures().is_empty());
+}
+
+#[test]
+fn traffic_trace_replay_controller_control_completion_advances_controller_for_htm_failure() {
+    let mut controller = controller_for_packets(&[
+        PacketFields {
+            tick: 0,
+            command: GEM5_HTM_REQ,
+            address: Some(0xb000),
+            size: Some(16),
+            packet_id: Some(81),
+        },
+        PacketFields {
+            tick: 7,
+            command: GEM5_INVALID_DEST_ERROR,
+            address: Some(0xb000),
+            size: Some(16),
+            packet_id: Some(81),
+        },
+    ]);
+
+    assert!(controller.start(0).unwrap().is_empty());
+    let htm_batch = controller.next_event(0, 0).unwrap().unwrap();
+    assert!(htm_batch.trace_htm().unwrap().requires_response());
+    assert!(htm_batch.trace_replay_action().is_none());
+
+    let controller = Arc::new(Mutex::new(controller));
+    let runtime = Arc::new(Mutex::new(TrafficTraceReplayControllerRuntime::default()));
+    runtime.lock().unwrap().record_batch(&htm_batch).unwrap();
+
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let replay = Arc::clone(&runtime);
+    let trace_controller = Arc::clone(&controller);
+    scheduler
+        .schedule_at(PartitionId::new(0), 3, move |context| {
+            traffic_trace_replay_controller_control_completion(
+                Arc::clone(&replay),
+                Arc::clone(&trace_controller),
+                context.now(),
+                context,
+                0,
+            )
+            .unwrap();
+        })
+        .unwrap();
+
+    scheduler.run_until_idle_conservative();
+
+    assert!(runtime.lock().unwrap().is_empty());
+    assert!(runtime.lock().unwrap().control_acks().is_empty());
+    assert_eq!(runtime.lock().unwrap().control_failures().len(), 1);
+    let scheduled_failure = runtime.lock().unwrap().control_failures()[0];
+    assert_eq!(scheduled_failure.tick(), 7);
+    assert_eq!(scheduled_failure.record().tick(), 7);
+    assert_eq!(
+        scheduled_failure.record().failure().error(),
+        TrafficTraceErrorKind::InvalidDestination
+    );
+}
+
+#[test]
+fn traffic_trace_replay_controller_control_completion_reports_missing_control_action() {
+    let mut controller = controller_for_packets(&[PacketFields {
+        tick: 0,
+        command: GEM5_MEM_FENCE_REQ,
+        address: None,
+        size: None,
+        packet_id: Some(82),
+    }]);
+
+    assert!(controller.start(0).unwrap().is_empty());
+    let sync_batch = controller.next_event(0, 0).unwrap().unwrap();
+    assert!(sync_batch.trace_sync().unwrap().requires_response());
+
+    let controller = Arc::new(Mutex::new(controller));
+    let runtime = Arc::new(Mutex::new(TrafficTraceReplayControllerRuntime::default()));
+    runtime.lock().unwrap().record_batch(&sync_batch).unwrap();
+
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let errors = Arc::new(Mutex::new(Vec::new()));
+    let replay = Arc::clone(&runtime);
+    let trace_controller = Arc::clone(&controller);
+    let error_log = Arc::clone(&errors);
+    scheduler
+        .schedule_at(PartitionId::new(0), 3, move |context| {
+            if let Err(error) = traffic_trace_replay_controller_control_completion(
+                Arc::clone(&replay),
+                Arc::clone(&trace_controller),
+                context.now(),
+                context,
+                0,
+            ) {
+                error_log.lock().unwrap().push(error);
+            }
+        })
+        .unwrap();
+
+    scheduler.run_until_idle_conservative();
+
+    assert_eq!(
+        *errors.lock().unwrap(),
+        vec![TrafficTraceReplayControllerControlError::ReplayActionMissing { delivery_tick: 3 }]
+    );
+    assert!(runtime.lock().unwrap().is_empty());
 }
 
 fn state(id: u32, duration: u64) -> TrafficStateSpec {

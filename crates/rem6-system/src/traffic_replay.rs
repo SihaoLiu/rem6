@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::error::Error;
 use std::fmt;
 use std::sync::{Arc, Mutex};
@@ -7,7 +7,8 @@ use rem6_kernel::{SchedulerContext, Tick};
 use rem6_memory::MemoryRequestId;
 use rem6_traffic::{
     TrafficController, TrafficControllerEvent, TrafficControllerEventBatch, TrafficGeneratorError,
-    TrafficTraceMemoryFailureRecord, TrafficTraceReplayAction, TrafficTraceReplayActionQueue,
+    TrafficTraceControlFailureRecord, TrafficTraceMemoryFailureRecord, TrafficTraceReplayAction,
+    TrafficTraceReplayActionQueue,
 };
 use rem6_transport::{RequestDelivery, TargetOutcome};
 
@@ -27,6 +28,46 @@ impl TrafficTraceReplayScheduledMemoryFailure {
     }
 
     pub const fn record(self) -> TrafficTraceMemoryFailureRecord {
+        self.record
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TrafficTraceReplayScheduledControlAck {
+    tick: Tick,
+    trace_tick: Tick,
+}
+
+impl TrafficTraceReplayScheduledControlAck {
+    pub const fn new(tick: Tick, trace_tick: Tick) -> Self {
+        Self { tick, trace_tick }
+    }
+
+    pub const fn tick(self) -> Tick {
+        self.tick
+    }
+
+    pub const fn trace_tick(self) -> Tick {
+        self.trace_tick
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TrafficTraceReplayScheduledControlFailure {
+    tick: Tick,
+    record: TrafficTraceControlFailureRecord,
+}
+
+impl TrafficTraceReplayScheduledControlFailure {
+    pub const fn new(tick: Tick, record: TrafficTraceControlFailureRecord) -> Self {
+        Self { tick, record }
+    }
+
+    pub const fn tick(self) -> Tick {
+        self.tick
+    }
+
+    pub const fn record(self) -> TrafficTraceControlFailureRecord {
         self.record
     }
 }
@@ -92,6 +133,194 @@ impl TrafficTraceReplayTargetRuntime {
     }
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct TrafficTraceReplayControlRuntime {
+    action_queue: TrafficTraceReplayActionQueue,
+    control_acks: Vec<TrafficTraceReplayScheduledControlAck>,
+    control_failures: Vec<TrafficTraceReplayScheduledControlFailure>,
+    source_ticks: VecDeque<Tick>,
+}
+
+impl TrafficTraceReplayControlRuntime {
+    pub fn record_batch(
+        &mut self,
+        batch: &TrafficControllerEventBatch,
+    ) -> Result<(), rem6_traffic::TrafficGeneratorError> {
+        for event in batch.events() {
+            match event {
+                TrafficControllerEvent::TraceSync(sync) if sync.requires_response() => {
+                    self.source_ticks.push_back(sync.tick());
+                }
+                TrafficControllerEvent::TraceHtm(htm) if htm.requires_response() => {
+                    self.source_ticks.push_back(htm.tick());
+                }
+                TrafficControllerEvent::TraceReplayAction(action)
+                    if matches!(
+                        action,
+                        TrafficTraceReplayAction::ControlAck { .. }
+                            | TrafficTraceReplayAction::ControlFailure { .. }
+                    ) =>
+                {
+                    self.action_queue.record_action(action.clone())?;
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    pub fn control_event(
+        &mut self,
+        delivery_tick: Tick,
+    ) -> Result<TrafficTraceReplayControlEvent, TrafficTraceReplayControlError> {
+        let action = self
+            .action_queue
+            .peek_action()
+            .ok_or(TrafficTraceReplayControlError::ActionQueueEmpty { delivery_tick })?;
+        let event = match action {
+            TrafficTraceReplayAction::ControlAck { tick } => {
+                let delay = control_ack_delay(delivery_tick, *tick)?;
+                TrafficTraceReplayControlEvent::ControlAck {
+                    delay,
+                    trace_tick: *tick,
+                }
+            }
+            TrafficTraceReplayAction::ControlFailure { tick, failure } => {
+                let delay = control_failure_delay(delivery_tick, *tick)?;
+                TrafficTraceReplayControlEvent::ControlFailure {
+                    delay,
+                    record: TrafficTraceControlFailureRecord::new(*tick, *failure),
+                }
+            }
+            action => {
+                return Err(TrafficTraceReplayControlError::UnexpectedAction {
+                    delivery_tick,
+                    action: action.clone(),
+                });
+            }
+        };
+
+        self.action_queue
+            .pop_action()
+            .expect("validated trace replay control action remains queued");
+        self.source_ticks.pop_front();
+        Ok(event)
+    }
+
+    pub fn record_control_ack(&mut self, tick: Tick, trace_tick: Tick) {
+        self.control_acks
+            .push(TrafficTraceReplayScheduledControlAck::new(tick, trace_tick));
+    }
+
+    pub fn record_control_failure(&mut self, tick: Tick, record: TrafficTraceControlFailureRecord) {
+        self.control_failures
+            .push(TrafficTraceReplayScheduledControlFailure::new(tick, record));
+    }
+
+    pub fn control_acks(&self) -> &[TrafficTraceReplayScheduledControlAck] {
+        &self.control_acks
+    }
+
+    pub fn control_failures(&self) -> &[TrafficTraceReplayScheduledControlFailure] {
+        &self.control_failures
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.action_queue.is_empty() && self.source_ticks.is_empty()
+    }
+
+    fn source_tick(&self) -> Option<Tick> {
+        self.source_ticks.front().copied()
+    }
+
+    fn has_control_action(&self) -> bool {
+        !self.action_queue.is_empty()
+    }
+
+    fn clear_control_sources(&mut self) {
+        self.source_ticks.clear();
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct TrafficTraceReplayControllerRuntime {
+    target: TrafficTraceReplayTargetRuntime,
+    control: TrafficTraceReplayControlRuntime,
+}
+
+impl TrafficTraceReplayControllerRuntime {
+    pub fn record_batch(
+        &mut self,
+        batch: &TrafficControllerEventBatch,
+    ) -> Result<(), TrafficGeneratorError> {
+        self.target.record_batch(batch)?;
+        self.control.record_batch(batch)?;
+        Ok(())
+    }
+
+    pub fn memory_failures(&self) -> &[TrafficTraceReplayScheduledMemoryFailure] {
+        self.target.memory_failures()
+    }
+
+    pub fn control_acks(&self) -> &[TrafficTraceReplayScheduledControlAck] {
+        self.control.control_acks()
+    }
+
+    pub fn control_failures(&self) -> &[TrafficTraceReplayScheduledControlFailure] {
+        self.control.control_failures()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.target.is_empty() && self.control.is_empty()
+    }
+
+    fn target_request_tick(&self, request: MemoryRequestId) -> Option<Tick> {
+        self.target.request_tick(request)
+    }
+
+    fn target_event(
+        &mut self,
+        delivery: &RequestDelivery,
+    ) -> Result<TrafficTraceReplayTargetEvent, TrafficTraceReplayTargetError> {
+        self.target.target_event(delivery)
+    }
+
+    fn has_target_action(&self) -> bool {
+        !self.target.is_empty()
+    }
+
+    fn record_memory_failure(&mut self, tick: Tick, record: TrafficTraceMemoryFailureRecord) {
+        self.target.record_memory_failure(tick, record);
+    }
+
+    fn control_source_tick(&self) -> Option<Tick> {
+        self.control.source_tick()
+    }
+
+    fn control_event(
+        &mut self,
+        delivery_tick: Tick,
+    ) -> Result<TrafficTraceReplayControlEvent, TrafficTraceReplayControlError> {
+        self.control.control_event(delivery_tick)
+    }
+
+    fn has_control_action(&self) -> bool {
+        self.control.has_control_action()
+    }
+
+    fn clear_control_sources(&mut self) {
+        self.control.clear_control_sources();
+    }
+
+    fn record_control_ack(&mut self, tick: Tick, trace_tick: Tick) {
+        self.control.record_control_ack(tick, trace_tick);
+    }
+
+    fn record_control_failure(&mut self, tick: Tick, record: TrafficTraceControlFailureRecord) {
+        self.control.record_control_failure(tick, record);
+    }
+}
+
 pub fn traffic_trace_replay_runtime_target_outcome(
     runtime: Arc<Mutex<TrafficTraceReplayTargetRuntime>>,
     delivery: &RequestDelivery,
@@ -117,8 +346,42 @@ pub fn traffic_trace_replay_runtime_target_outcome(
     }
 }
 
+pub fn traffic_trace_replay_runtime_control_completion(
+    runtime: Arc<Mutex<TrafficTraceReplayControlRuntime>>,
+    delivery_tick: Tick,
+    context: &mut SchedulerContext<'_>,
+) -> Result<(), TrafficTraceReplayControlError> {
+    let event = runtime
+        .lock()
+        .expect("trace replay control runtime lock")
+        .control_event(delivery_tick)?;
+    match event {
+        TrafficTraceReplayControlEvent::ControlAck { delay, trace_tick } => {
+            context
+                .schedule_local_after(delay, move |context| {
+                    runtime
+                        .lock()
+                        .expect("trace replay control runtime lock")
+                        .record_control_ack(context.now(), trace_tick);
+                })
+                .expect("validated trace replay control ack delay");
+        }
+        TrafficTraceReplayControlEvent::ControlFailure { delay, record } => {
+            context
+                .schedule_local_after(delay, move |context| {
+                    runtime
+                        .lock()
+                        .expect("trace replay control runtime lock")
+                        .record_control_failure(context.now(), record);
+                })
+                .expect("validated trace replay control failure delay");
+        }
+    }
+    Ok(())
+}
+
 pub fn traffic_trace_replay_controller_target_outcome(
-    runtime: Arc<Mutex<TrafficTraceReplayTargetRuntime>>,
+    runtime: Arc<Mutex<TrafficTraceReplayControllerRuntime>>,
     controller: Arc<Mutex<TrafficController>>,
     delivery: &RequestDelivery,
     context: &mut SchedulerContext<'_>,
@@ -130,11 +393,15 @@ pub fn traffic_trace_replay_controller_target_outcome(
 
     let controller_tick = runtime
         .lock()
-        .expect("trace replay target runtime lock")
-        .request_tick(delivery.request().id())
+        .expect("trace replay controller runtime lock")
+        .target_request_tick(delivery.request().id())
         .unwrap_or_else(|| delivery.tick());
     loop {
-        match traffic_trace_replay_runtime_target_outcome(Arc::clone(&runtime), delivery, context) {
+        match traffic_trace_replay_controller_runtime_target_outcome(
+            Arc::clone(&runtime),
+            delivery,
+            context,
+        ) {
             Ok(outcome) => return Ok(outcome),
             Err(TrafficTraceReplayTargetError::ActionQueueEmpty { .. }) => {}
             Err(error) => return Err(error.into()),
@@ -154,9 +421,11 @@ pub fn traffic_trace_replay_controller_target_outcome(
 
         let trace_exited = batch.trace_exit().is_some();
         let target_action_available = {
-            let mut runtime = runtime.lock().expect("trace replay target runtime lock");
+            let mut runtime = runtime
+                .lock()
+                .expect("trace replay controller runtime lock");
             runtime.record_batch(&batch)?;
-            !runtime.is_empty()
+            runtime.has_target_action()
         };
         if trace_exited && !target_action_available {
             return Err(
@@ -166,6 +435,122 @@ pub fn traffic_trace_replay_controller_target_outcome(
             );
         }
     }
+}
+
+pub fn traffic_trace_replay_controller_control_completion(
+    runtime: Arc<Mutex<TrafficTraceReplayControllerRuntime>>,
+    controller: Arc<Mutex<TrafficController>>,
+    delivery_tick: Tick,
+    context: &mut SchedulerContext<'_>,
+    retry_delay: Tick,
+) -> Result<(), TrafficTraceReplayControllerControlError> {
+    let controller_tick = runtime
+        .lock()
+        .expect("trace replay controller runtime lock")
+        .control_source_tick()
+        .unwrap_or(delivery_tick);
+    loop {
+        match traffic_trace_replay_controller_runtime_control_completion(
+            Arc::clone(&runtime),
+            delivery_tick,
+            context,
+        ) {
+            Ok(()) => return Ok(()),
+            Err(TrafficTraceReplayControlError::ActionQueueEmpty { .. }) => {}
+            Err(error) => return Err(error.into()),
+        }
+
+        let batch = controller
+            .lock()
+            .expect("traffic controller lock")
+            .next_event(controller_tick, retry_delay)?;
+        let Some(batch) = batch else {
+            runtime
+                .lock()
+                .expect("trace replay controller runtime lock")
+                .clear_control_sources();
+            return Err(
+                TrafficTraceReplayControllerControlError::ReplayActionMissing { delivery_tick },
+            );
+        };
+
+        let trace_exited = batch.trace_exit().is_some();
+        let control_action_available = {
+            let mut runtime = runtime
+                .lock()
+                .expect("trace replay controller runtime lock");
+            runtime.record_batch(&batch)?;
+            runtime.has_control_action()
+        };
+        if trace_exited && !control_action_available {
+            runtime
+                .lock()
+                .expect("trace replay controller runtime lock")
+                .clear_control_sources();
+            return Err(
+                TrafficTraceReplayControllerControlError::ReplayActionMissing { delivery_tick },
+            );
+        }
+    }
+}
+
+fn traffic_trace_replay_controller_runtime_target_outcome(
+    runtime: Arc<Mutex<TrafficTraceReplayControllerRuntime>>,
+    delivery: &RequestDelivery,
+    context: &mut SchedulerContext<'_>,
+) -> Result<TargetOutcome, TrafficTraceReplayTargetError> {
+    let event = runtime
+        .lock()
+        .expect("trace replay controller runtime lock")
+        .target_event(delivery)?;
+    match event {
+        TrafficTraceReplayTargetEvent::MemoryResponse(outcome) => Ok(outcome),
+        TrafficTraceReplayTargetEvent::MemoryFailure { delay, record } => {
+            context
+                .schedule_local_after(delay, move |context| {
+                    runtime
+                        .lock()
+                        .expect("trace replay controller runtime lock")
+                        .record_memory_failure(context.now(), record);
+                })
+                .expect("validated trace replay failure delay");
+            Ok(TargetOutcome::NoResponse)
+        }
+    }
+}
+
+fn traffic_trace_replay_controller_runtime_control_completion(
+    runtime: Arc<Mutex<TrafficTraceReplayControllerRuntime>>,
+    delivery_tick: Tick,
+    context: &mut SchedulerContext<'_>,
+) -> Result<(), TrafficTraceReplayControlError> {
+    let event = runtime
+        .lock()
+        .expect("trace replay controller runtime lock")
+        .control_event(delivery_tick)?;
+    match event {
+        TrafficTraceReplayControlEvent::ControlAck { delay, trace_tick } => {
+            context
+                .schedule_local_after(delay, move |context| {
+                    runtime
+                        .lock()
+                        .expect("trace replay controller runtime lock")
+                        .record_control_ack(context.now(), trace_tick);
+                })
+                .expect("validated trace replay control ack delay");
+        }
+        TrafficTraceReplayControlEvent::ControlFailure { delay, record } => {
+            context
+                .schedule_local_after(delay, move |context| {
+                    runtime
+                        .lock()
+                        .expect("trace replay controller runtime lock")
+                        .record_control_failure(context.now(), record);
+                })
+                .expect("validated trace replay control failure delay");
+        }
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -203,6 +588,123 @@ impl From<TrafficGeneratorError> for TrafficTraceReplayControllerTargetError {
         Self::Generator(error)
     }
 }
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TrafficTraceReplayControllerControlError {
+    Control(TrafficTraceReplayControlError),
+    Generator(TrafficGeneratorError),
+    ReplayActionMissing { delivery_tick: Tick },
+}
+
+impl fmt::Display for TrafficTraceReplayControllerControlError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Control(error) => write!(formatter, "{error}"),
+            Self::Generator(error) => write!(formatter, "{error}"),
+            Self::ReplayActionMissing { delivery_tick } => {
+                write!(
+                    formatter,
+                    "trace replay controller has no control acknowledgement or failure action for delivery tick {delivery_tick}"
+                )
+            }
+        }
+    }
+}
+
+impl Error for TrafficTraceReplayControllerControlError {}
+
+impl From<TrafficTraceReplayControlError> for TrafficTraceReplayControllerControlError {
+    fn from(error: TrafficTraceReplayControlError) -> Self {
+        Self::Control(error)
+    }
+}
+
+impl From<TrafficGeneratorError> for TrafficTraceReplayControllerControlError {
+    fn from(error: TrafficGeneratorError) -> Self {
+        Self::Generator(error)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TrafficTraceReplayControlEvent {
+    ControlAck {
+        delay: Tick,
+        trace_tick: Tick,
+    },
+    ControlFailure {
+        delay: Tick,
+        record: TrafficTraceControlFailureRecord,
+    },
+}
+
+impl TrafficTraceReplayControlEvent {
+    pub const fn control_delay(&self) -> Tick {
+        match self {
+            Self::ControlAck { delay, .. } | Self::ControlFailure { delay, .. } => *delay,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TrafficTraceReplayControlError {
+    ActionQueueEmpty {
+        delivery_tick: Tick,
+    },
+    UnexpectedAction {
+        delivery_tick: Tick,
+        action: TrafficTraceReplayAction,
+    },
+    AckBeforeDelivery {
+        delivery_tick: Tick,
+        ack_tick: Tick,
+    },
+    FailureBeforeDelivery {
+        delivery_tick: Tick,
+        failure_tick: Tick,
+    },
+}
+
+impl fmt::Display for TrafficTraceReplayControlError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ActionQueueEmpty { delivery_tick } => {
+                write!(
+                    formatter,
+                    "trace replay control action queue is empty for delivery tick {delivery_tick}"
+                )
+            }
+            Self::UnexpectedAction {
+                delivery_tick,
+                action,
+            } => {
+                write!(
+                    formatter,
+                    "trace replay action {action:?} cannot answer control delivery tick {delivery_tick}"
+                )
+            }
+            Self::AckBeforeDelivery {
+                delivery_tick,
+                ack_tick,
+            } => {
+                write!(
+                    formatter,
+                    "trace replay control acknowledgement at tick {ack_tick} precedes delivery tick {delivery_tick}"
+                )
+            }
+            Self::FailureBeforeDelivery {
+                delivery_tick,
+                failure_tick,
+            } => {
+                write!(
+                    formatter,
+                    "trace replay control failure at tick {failure_tick} precedes delivery tick {delivery_tick}"
+                )
+            }
+        }
+    }
+}
+
+impl Error for TrafficTraceReplayControlError {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TrafficTraceReplayTargetEvent {
@@ -412,6 +914,30 @@ fn memory_failure_delay(
     failure_tick.checked_sub(delivery_tick).ok_or(
         TrafficTraceReplayTargetError::FailureBeforeRequest {
             request,
+            delivery_tick,
+            failure_tick,
+        },
+    )
+}
+
+fn control_ack_delay(
+    delivery_tick: Tick,
+    ack_tick: Tick,
+) -> Result<Tick, TrafficTraceReplayControlError> {
+    ack_tick
+        .checked_sub(delivery_tick)
+        .ok_or(TrafficTraceReplayControlError::AckBeforeDelivery {
+            delivery_tick,
+            ack_tick,
+        })
+}
+
+fn control_failure_delay(
+    delivery_tick: Tick,
+    failure_tick: Tick,
+) -> Result<Tick, TrafficTraceReplayControlError> {
+    failure_tick.checked_sub(delivery_tick).ok_or(
+        TrafficTraceReplayControlError::FailureBeforeDelivery {
             delivery_tick,
             failure_tick,
         },

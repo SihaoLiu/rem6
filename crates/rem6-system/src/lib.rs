@@ -208,10 +208,16 @@ pub use topology::{
     RiscvTopologySystemError, RiscvTopologyWorkloadSinicPciError,
 };
 pub use traffic_replay::{
-    traffic_trace_replay_controller_target_outcome, traffic_trace_replay_runtime_target_outcome,
+    traffic_trace_replay_controller_control_completion,
+    traffic_trace_replay_controller_target_outcome,
+    traffic_trace_replay_runtime_control_completion, traffic_trace_replay_runtime_target_outcome,
     traffic_trace_replay_target_event, traffic_trace_replay_target_outcome,
-    TrafficTraceReplayControllerTargetError, TrafficTraceReplayScheduledMemoryFailure,
-    TrafficTraceReplayTargetError, TrafficTraceReplayTargetEvent, TrafficTraceReplayTargetRuntime,
+    TrafficTraceReplayControlError, TrafficTraceReplayControlEvent,
+    TrafficTraceReplayControlRuntime, TrafficTraceReplayControllerControlError,
+    TrafficTraceReplayControllerRuntime, TrafficTraceReplayControllerTargetError,
+    TrafficTraceReplayScheduledControlAck, TrafficTraceReplayScheduledControlFailure,
+    TrafficTraceReplayScheduledMemoryFailure, TrafficTraceReplayTargetError,
+    TrafficTraceReplayTargetEvent, TrafficTraceReplayTargetRuntime,
 };
 pub(crate) use trap_event::pending_trap_cores_from_turn;
 pub use trap_event::{
