@@ -207,7 +207,10 @@ pub use topology::{
     RiscvTopologyMemoryRegion, RiscvTopologySinicPciDeviceConfig, RiscvTopologySystem,
     RiscvTopologySystemError, RiscvTopologyWorkloadSinicPciError,
 };
-pub use traffic_replay::{traffic_trace_replay_target_outcome, TrafficTraceReplayTargetError};
+pub use traffic_replay::{
+    traffic_trace_replay_target_event, traffic_trace_replay_target_outcome,
+    TrafficTraceReplayTargetError, TrafficTraceReplayTargetEvent,
+};
 pub(crate) use trap_event::pending_trap_cores_from_turn;
 pub use trap_event::{
     guest_trap_from_riscv, guest_trap_kind_from_riscv, RiscvTrapEventPort, ScheduledRiscvTrap,

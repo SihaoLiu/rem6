@@ -5,8 +5,14 @@ use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId, MemoryResponse,
     ResponseStatus,
 };
-use rem6_system::{traffic_trace_replay_target_outcome, TrafficTraceReplayTargetError};
-use rem6_traffic::{TrafficTraceReplayAction, TrafficTraceReplayActionQueue};
+use rem6_system::{
+    traffic_trace_replay_target_event, traffic_trace_replay_target_outcome,
+    TrafficTraceReplayTargetError, TrafficTraceReplayTargetEvent,
+};
+use rem6_traffic::{
+    TrafficTraceErrorKind, TrafficTraceMemoryFailure, TrafficTraceReplayAction,
+    TrafficTraceReplayActionQueue,
+};
 use rem6_transport::{
     MemoryRoute, MemoryTrace, MemoryTraceEvent, MemoryTraceKind, MemoryTransport, ResponseDelivery,
     TargetOutcome, TransportEndpointId,
@@ -187,6 +193,163 @@ fn traffic_trace_replay_target_outcome_rejects_wrong_request_response() {
         vec![TrafficTraceReplayTargetError::RequestMismatch {
             request: req.id(),
             response: wrong_req.id(),
+        }]
+    );
+    assert!(!action_queue.lock().unwrap().is_empty());
+}
+
+#[test]
+fn traffic_trace_replay_target_event_consumes_memory_failure_without_response_delivery() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let trace = MemoryTrace::new();
+    let action_queue = Arc::new(Mutex::new(TrafficTraceReplayActionQueue::default()));
+    let failures = Arc::new(Mutex::new(Vec::new()));
+
+    let core = endpoint("core0");
+    let memory = endpoint("memory0");
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                core.clone(),
+                PartitionId::new(0),
+                memory,
+                PartitionId::new(1),
+                3,
+                5,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let req = request(30);
+    let failure = TrafficTraceMemoryFailure::new(req.id(), TrafficTraceErrorKind::Write);
+    action_queue
+        .lock()
+        .unwrap()
+        .record_action(TrafficTraceReplayAction::MemoryFailure { tick: 7, failure })
+        .unwrap();
+
+    let queue = Arc::clone(&action_queue);
+    let failure_log = Arc::clone(&failures);
+    transport
+        .submit(
+            &mut scheduler,
+            route,
+            req.clone(),
+            trace.clone(),
+            move |delivery, context| {
+                assert_eq!(delivery.tick(), 3);
+                let event =
+                    traffic_trace_replay_target_event(&mut queue.lock().unwrap(), &delivery)
+                        .unwrap();
+                match &event {
+                    TrafficTraceReplayTargetEvent::MemoryFailure { delay, record } => {
+                        assert_eq!(*delay, 4);
+                        let record = *record;
+                        let failure_log = Arc::clone(&failure_log);
+                        context
+                            .schedule_local_after(event.target_delay(), move |context| {
+                                failure_log.lock().unwrap().push((context.now(), record));
+                            })
+                            .unwrap();
+                    }
+                    TrafficTraceReplayTargetEvent::MemoryResponse(_) => {
+                        panic!("trace memory failure must not become a response event");
+                    }
+                }
+                event.into_target_outcome()
+            },
+            |_| panic!("trace memory failure must not reach the requester as a response"),
+        )
+        .unwrap();
+
+    scheduler.run_until_idle_conservative();
+
+    assert_eq!(failures.lock().unwrap().len(), 1);
+    let (failure_tick, record) = failures.lock().unwrap()[0];
+    assert_eq!(failure_tick, 7);
+    assert_eq!(record.tick(), 7);
+    assert_eq!(record.failure(), failure);
+    assert!(action_queue.lock().unwrap().is_empty());
+    assert_eq!(
+        trace.snapshot(),
+        vec![
+            MemoryTraceEvent::request(
+                0,
+                route,
+                core.clone(),
+                MemoryTraceKind::RequestSent,
+                req.id()
+            ),
+            MemoryTraceEvent::request(
+                3,
+                route,
+                endpoint("memory0"),
+                MemoryTraceKind::RequestArrived,
+                req.id()
+            ),
+        ]
+    );
+}
+
+#[test]
+fn traffic_trace_replay_target_event_preserves_memory_failure_on_request_mismatch() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let action_queue = Arc::new(Mutex::new(TrafficTraceReplayActionQueue::default()));
+    let errors = Arc::new(Mutex::new(Vec::new()));
+
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("core0"),
+                PartitionId::new(0),
+                endpoint("memory0"),
+                PartitionId::new(1),
+                3,
+                5,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let req = request(40);
+    let wrong_req = request_from(2, 100);
+    let failure = TrafficTraceMemoryFailure::new(wrong_req.id(), TrafficTraceErrorKind::Read);
+    action_queue
+        .lock()
+        .unwrap()
+        .record_action(TrafficTraceReplayAction::MemoryFailure { tick: 7, failure })
+        .unwrap();
+
+    let queue = Arc::clone(&action_queue);
+    let error_log = Arc::clone(&errors);
+    transport
+        .submit(
+            &mut scheduler,
+            route,
+            req.clone(),
+            MemoryTrace::new(),
+            move |delivery, _context| match traffic_trace_replay_target_event(
+                &mut queue.lock().unwrap(),
+                &delivery,
+            ) {
+                Ok(event) => event.into_target_outcome(),
+                Err(error) => {
+                    error_log.lock().unwrap().push(error);
+                    TargetOutcome::NoResponse
+                }
+            },
+            |_| panic!("mismatched trace failure must not reach the requester"),
+        )
+        .unwrap();
+
+    scheduler.run_until_idle_conservative();
+
+    assert_eq!(
+        *errors.lock().unwrap(),
+        vec![TrafficTraceReplayTargetError::FailureRequestMismatch {
+            request: req.id(),
+            failure: wrong_req.id(),
         }]
     );
     assert!(!action_queue.lock().unwrap().is_empty());
