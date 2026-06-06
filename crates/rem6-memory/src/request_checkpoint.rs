@@ -1,7 +1,7 @@
 use crate::{
     AccessSize, Address, ByteMask, CacheLineLayout, MemoryAccessOrdering, MemoryAtomicOp,
-    MemoryBarrierSet, MemoryError, MemoryOperation, MemoryRequest, MemoryRequestId,
-    MemoryRequestSnapshot,
+    MemoryBarrierSet, MemoryError, MemoryOperation, MemoryRequest, MemoryRequestAttributes,
+    MemoryRequestId, MemoryRequestSnapshot,
 };
 
 const REQUEST_CHECKPOINT_MAGIC: [u8; 4] = *b"MREQ";
@@ -19,6 +19,9 @@ const FLAG_AFTER_READ: u32 = 1 << 7;
 const FLAG_AFTER_WRITE: u32 = 1 << 8;
 const FLAG_BEFORE_PRESENT: u32 = 1 << 9;
 const FLAG_AFTER_PRESENT: u32 = 1 << 10;
+const FLAG_PRIVILEGED: u32 = 1 << 11;
+const FLAG_SECURE: u32 = 1 << 12;
+const FLAG_PAGE_TABLE_WALK: u32 = 1 << 13;
 const KNOWN_FLAGS: u32 = FLAG_DATA_PRESENT
     | FLAG_MASK_PRESENT
     | FLAG_ATOMIC_PRESENT
@@ -29,7 +32,10 @@ const KNOWN_FLAGS: u32 = FLAG_DATA_PRESENT
     | FLAG_AFTER_READ
     | FLAG_AFTER_WRITE
     | FLAG_BEFORE_PRESENT
-    | FLAG_AFTER_PRESENT;
+    | FLAG_AFTER_PRESENT
+    | FLAG_PRIVILEGED
+    | FLAG_SECURE
+    | FLAG_PAGE_TABLE_WALK;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MemoryRequestCheckpointPayload {
@@ -102,7 +108,7 @@ impl MemoryRequestCheckpointPayload {
         let byte_mask = read_optional_mask(payload, &mut offset, flags, mask_len_usize, mask_len)?;
         let atomic_op = decode_optional_atomic_op(flags, atomic_code)?;
         let ordering = decode_ordering(flags)?;
-        let snapshot = MemoryRequestSnapshot::new(
+        let snapshot = MemoryRequestSnapshot::new_with_attributes(
             MemoryRequestId::new(crate::AgentId::new(agent), sequence),
             operation,
             address,
@@ -111,6 +117,7 @@ impl MemoryRequestCheckpointPayload {
             ordering,
             flags & FLAG_UNCACHEABLE != 0,
             flags & FLAG_STRICT_ORDER != 0,
+            decode_attributes(flags),
             data,
             byte_mask,
             atomic_op,
@@ -188,6 +195,15 @@ fn encode_flags(snapshot: &MemoryRequestSnapshot) -> u32 {
     if snapshot.is_strict_ordered() {
         flags |= FLAG_STRICT_ORDER;
     }
+    if snapshot.is_privileged() {
+        flags |= FLAG_PRIVILEGED;
+    }
+    if snapshot.is_secure() {
+        flags |= FLAG_SECURE;
+    }
+    if snapshot.is_page_table_walk() {
+        flags |= FLAG_PAGE_TABLE_WALK;
+    }
     if let Some(before) = snapshot.ordering().before() {
         flags |= FLAG_BEFORE_PRESENT;
         if before.read() {
@@ -207,6 +223,14 @@ fn encode_flags(snapshot: &MemoryRequestSnapshot) -> u32 {
         }
     }
     flags
+}
+
+fn decode_attributes(flags: u32) -> MemoryRequestAttributes {
+    MemoryRequestAttributes::new(
+        flags & FLAG_PRIVILEGED != 0,
+        flags & FLAG_SECURE != 0,
+        flags & FLAG_PAGE_TABLE_WALK != 0,
+    )
 }
 
 fn decode_ordering(flags: u32) -> Result<MemoryAccessOrdering, MemoryError> {

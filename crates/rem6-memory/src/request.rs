@@ -14,9 +14,39 @@ pub struct MemoryRequest {
     ordering: MemoryAccessOrdering,
     uncacheable: bool,
     strict_order: bool,
+    attributes: MemoryRequestAttributes,
     data: Option<Vec<u8>>,
     byte_mask: Option<ByteMask>,
     atomic_op: Option<MemoryAtomicOp>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct MemoryRequestAttributes {
+    privileged: bool,
+    secure: bool,
+    page_table_walk: bool,
+}
+
+impl MemoryRequestAttributes {
+    pub const fn new(privileged: bool, secure: bool, page_table_walk: bool) -> Self {
+        Self {
+            privileged,
+            secure,
+            page_table_walk,
+        }
+    }
+
+    pub const fn is_privileged(self) -> bool {
+        self.privileged
+    }
+
+    pub const fn is_secure(self) -> bool {
+        self.secure
+    }
+
+    pub const fn is_page_table_walk(self) -> bool {
+        self.page_table_walk
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -28,6 +58,7 @@ pub struct MemoryRequestSnapshot {
     ordering: MemoryAccessOrdering,
     uncacheable: bool,
     strict_order: bool,
+    attributes: MemoryRequestAttributes,
     data: Option<Vec<u8>>,
     byte_mask: Option<ByteMask>,
     atomic_op: Option<MemoryAtomicOp>,
@@ -48,6 +79,37 @@ impl MemoryRequestSnapshot {
         byte_mask: Option<ByteMask>,
         atomic_op: Option<MemoryAtomicOp>,
     ) -> Result<Self, MemoryError> {
+        Self::new_with_attributes(
+            id,
+            operation,
+            address,
+            size,
+            line_layout,
+            ordering,
+            uncacheable,
+            strict_order,
+            MemoryRequestAttributes::default(),
+            data,
+            byte_mask,
+            atomic_op,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_attributes(
+        id: MemoryRequestId,
+        operation: MemoryOperation,
+        address: Address,
+        size: AccessSize,
+        line_layout: CacheLineLayout,
+        ordering: MemoryAccessOrdering,
+        uncacheable: bool,
+        strict_order: bool,
+        attributes: MemoryRequestAttributes,
+        data: Option<Vec<u8>>,
+        byte_mask: Option<ByteMask>,
+        atomic_op: Option<MemoryAtomicOp>,
+    ) -> Result<Self, MemoryError> {
         let snapshot = Self {
             id,
             operation,
@@ -56,6 +118,7 @@ impl MemoryRequestSnapshot {
             ordering,
             uncacheable,
             strict_order,
+            attributes,
             data,
             byte_mask,
             atomic_op,
@@ -90,6 +153,22 @@ impl MemoryRequestSnapshot {
 
     pub const fn is_strict_ordered(&self) -> bool {
         self.strict_order
+    }
+
+    pub const fn attributes(&self) -> MemoryRequestAttributes {
+        self.attributes
+    }
+
+    pub const fn is_privileged(&self) -> bool {
+        self.attributes.is_privileged()
+    }
+
+    pub const fn is_secure(&self) -> bool {
+        self.attributes.is_secure()
+    }
+
+    pub const fn is_page_table_walk(&self) -> bool {
+        self.attributes.is_page_table_walk()
     }
 
     pub fn data(&self) -> Option<&[u8]> {
@@ -518,6 +597,7 @@ impl MemoryRequest {
         request.ordering = snapshot.ordering;
         request.uncacheable = snapshot.uncacheable;
         request.strict_order = snapshot.strict_order;
+        request.attributes = snapshot.attributes;
         Ok(request)
     }
 
@@ -542,6 +622,7 @@ impl MemoryRequest {
             ordering: MemoryAccessOrdering::none(),
             uncacheable: false,
             strict_order: false,
+            attributes: MemoryRequestAttributes::default(),
             data: payload.data,
             byte_mask: payload.byte_mask,
             atomic_op: payload.atomic_op,
@@ -638,6 +719,42 @@ impl MemoryRequest {
 
     pub const fn is_strict_ordered(&self) -> bool {
         self.strict_order
+    }
+
+    pub const fn attributes(&self) -> MemoryRequestAttributes {
+        self.attributes
+    }
+
+    pub const fn is_privileged(&self) -> bool {
+        self.attributes.is_privileged()
+    }
+
+    pub const fn is_secure(&self) -> bool {
+        self.attributes.is_secure()
+    }
+
+    pub const fn is_page_table_walk(&self) -> bool {
+        self.attributes.is_page_table_walk()
+    }
+
+    pub fn with_attributes(mut self, attributes: MemoryRequestAttributes) -> Self {
+        self.attributes = attributes;
+        self
+    }
+
+    pub fn with_privileged(mut self) -> Self {
+        self.attributes.privileged = true;
+        self
+    }
+
+    pub fn with_secure(mut self) -> Self {
+        self.attributes.secure = true;
+        self
+    }
+
+    pub fn with_page_table_walk(mut self) -> Self {
+        self.attributes.page_table_walk = true;
+        self
     }
 
     pub fn with_uncacheable(mut self) -> Self {
@@ -856,6 +973,7 @@ impl MemoryRequest {
             ordering: self.ordering,
             uncacheable: self.uncacheable,
             strict_order: self.strict_order,
+            attributes: self.attributes,
             data: self.data.clone(),
             byte_mask: self.byte_mask.clone(),
             atomic_op: self.atomic_op,

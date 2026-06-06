@@ -41,18 +41,24 @@ const GEM5_FLAG_INST_FETCH: u32 = 0x0000_0100;
 const GEM5_FLAG_PHYSICAL: u32 = 0x0000_0200;
 const GEM5_FLAG_UNCACHEABLE: u32 = 0x0000_0400;
 const GEM5_FLAG_STRICT_ORDER: u32 = 0x0000_0800;
+const GEM5_FLAG_PRIVILEGED: u32 = 0x0000_8000;
 const GEM5_FLAG_ACQUIRE: u32 = 0x0002_0000;
 const GEM5_FLAG_RELEASE: u32 = 0x0004_0000;
 const GEM5_FLAG_PREFETCH: u32 = 0x0100_0000;
 const GEM5_FLAG_PF_EXCLUSIVE: u32 = 0x0200_0000;
+const GEM5_FLAG_SECURE: u32 = 0x1000_0000;
+const GEM5_FLAG_PT_WALK: u32 = 0x2000_0000;
 const GEM5_SUPPORTED_TRACE_FLAGS: u32 = GEM5_FLAG_INST_FETCH
     | GEM5_FLAG_PHYSICAL
     | GEM5_FLAG_UNCACHEABLE
     | GEM5_FLAG_STRICT_ORDER
+    | GEM5_FLAG_PRIVILEGED
     | GEM5_FLAG_ACQUIRE
     | GEM5_FLAG_RELEASE
     | GEM5_FLAG_PREFETCH
-    | GEM5_FLAG_PF_EXCLUSIVE;
+    | GEM5_FLAG_PF_EXCLUSIVE
+    | GEM5_FLAG_SECURE
+    | GEM5_FLAG_PT_WALK;
 const WIRE_VARINT: u64 = 0;
 const WIRE_FIXED64: u64 = 1;
 const WIRE_LENGTH_DELIMITED: u64 = 2;
@@ -163,8 +169,11 @@ struct TrafficTraceRequestFlags {
     prefetch_exclusive: bool,
     uncacheable: bool,
     strict_order: bool,
+    privileged: bool,
     acquire: bool,
     release: bool,
+    secure: bool,
+    page_table_walk: bool,
 }
 
 impl TrafficTraceRequestFlags {
@@ -183,8 +192,11 @@ impl TrafficTraceRequestFlags {
             prefetch_exclusive: bits & GEM5_FLAG_PF_EXCLUSIVE != 0,
             uncacheable: bits & GEM5_FLAG_UNCACHEABLE != 0,
             strict_order: bits & GEM5_FLAG_STRICT_ORDER != 0,
+            privileged: bits & GEM5_FLAG_PRIVILEGED != 0,
             acquire: bits & GEM5_FLAG_ACQUIRE != 0,
             release: bits & GEM5_FLAG_RELEASE != 0,
+            secure: bits & GEM5_FLAG_SECURE != 0,
+            page_table_walk: bits & GEM5_FLAG_PT_WALK != 0,
         })
     }
 
@@ -232,13 +244,24 @@ impl TrafficTraceRequestFlags {
             self.acquire.then_some(MemoryBarrierSet::memory()),
         ));
 
-        if self.strict_order {
+        let mut mapped = if self.strict_order {
             ordered.with_uncacheable_strict_order()
         } else if self.uncacheable {
             ordered.with_uncacheable()
         } else {
             ordered
+        };
+
+        if self.privileged {
+            mapped = mapped.with_privileged();
         }
+        if self.secure {
+            mapped = mapped.with_secure();
+        }
+        if self.page_table_walk {
+            mapped = mapped.with_page_table_walk();
+        }
+        mapped
     }
 }
 

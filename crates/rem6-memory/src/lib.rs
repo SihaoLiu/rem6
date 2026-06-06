@@ -22,7 +22,8 @@ pub use error::MemoryError;
 pub use line_checkpoint::LineMemoryCheckpointPayload;
 pub use partition_checkpoint::PartitionedMemoryCheckpointPayload;
 pub use request::{
-    MemoryRequest, MemoryRequestSnapshot, MemoryResponse, MemoryResponseSnapshot, ResponseStatus,
+    MemoryRequest, MemoryRequestAttributes, MemoryRequestSnapshot, MemoryResponse,
+    MemoryResponseSnapshot, ResponseStatus,
 };
 pub use request_checkpoint::MemoryRequestCheckpointPayload;
 pub use response_checkpoint::MemoryResponseCheckpointPayload;
