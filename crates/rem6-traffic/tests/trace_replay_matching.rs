@@ -3,8 +3,8 @@ use rem6_traffic::{
     TrafficController, TrafficControllerConfig, TrafficControllerState, TrafficStateGenerator,
     TrafficStateGraphConfig, TrafficStateId, TrafficStateSpec, TrafficTrace, TrafficTraceConfig,
     TrafficTraceErrorKind, TrafficTraceReplayCompletion, TrafficTraceReplayFailure,
-    TrafficTraceReplaySource, TrafficTraceResponseKind, TrafficTransition,
-    TrafficTransitionProbability, TRAFFIC_TRANSITION_PROBABILITY_SCALE,
+    TrafficTraceReplayOutcome, TrafficTraceReplaySource, TrafficTraceResponseKind,
+    TrafficTransition, TrafficTransitionProbability, TRAFFIC_TRANSITION_PROBABILITY_SCALE,
 };
 
 const GEM5_MAGIC: [u8; 4] = [0x67, 0x65, 0x6d, 0x35];
@@ -237,6 +237,186 @@ fn traffic_controller_matches_trace_error_to_pending_htm_request() {
         }
         source => panic!("unexpected trace replay source: {source:?}"),
     }
+}
+
+#[test]
+fn traffic_controller_records_trace_replay_outcomes() {
+    let mut controller = controller_for_packets(&[
+        PacketFields {
+            tick: 5,
+            command: GEM5_READ_REQ,
+            address: Some(0x5800),
+            size: Some(8),
+            packet_id: Some(15),
+        },
+        PacketFields {
+            tick: 7,
+            command: GEM5_READ_RESP,
+            address: Some(0x5800),
+            size: Some(8),
+            packet_id: Some(15),
+        },
+        PacketFields {
+            tick: 9,
+            command: GEM5_MEM_FENCE_REQ,
+            address: None,
+            size: None,
+            packet_id: Some(16),
+        },
+        PacketFields {
+            tick: 11,
+            command: GEM5_MEM_FENCE_RESP,
+            address: None,
+            size: None,
+            packet_id: Some(16),
+        },
+        PacketFields {
+            tick: 13,
+            command: GEM5_WRITE_REQ,
+            address: Some(0x5a00),
+            size: Some(8),
+            packet_id: Some(17),
+        },
+        PacketFields {
+            tick: 15,
+            command: GEM5_WRITE_ERROR,
+            address: Some(0x5a00),
+            size: Some(8),
+            packet_id: Some(17),
+        },
+        PacketFields {
+            tick: 17,
+            command: GEM5_HTM_REQ,
+            address: Some(0x5c00),
+            size: Some(16),
+            packet_id: Some(18),
+        },
+        PacketFields {
+            tick: 19,
+            command: GEM5_INVALID_DEST_ERROR,
+            address: Some(0x5c00),
+            size: Some(16),
+            packet_id: Some(18),
+        },
+    ]);
+
+    assert!(controller.start(20).unwrap().is_empty());
+    assert_eq!(controller.trace_replay_summary().memory_completions(), 0);
+    assert_eq!(controller.trace_replay_summary().control_completions(), 0);
+    assert_eq!(controller.trace_replay_summary().memory_failures(), 0);
+    assert_eq!(controller.trace_replay_summary().control_failures(), 0);
+
+    let request_batch = controller.next_event(20, 0).unwrap().unwrap();
+    let request = request_batch.request().unwrap().clone();
+    assert!(request_batch.trace_replay_outcome().is_none());
+
+    let response_batch = controller.next_event(request.tick(), 0).unwrap().unwrap();
+    match response_batch.trace_replay_outcome().unwrap() {
+        TrafficTraceReplayOutcome::Completion(match_) => {
+            assert_eq!(match_.response().trace_packet_id(), Some(15));
+        }
+        outcome => panic!("unexpected trace replay outcome: {outcome:?}"),
+    }
+    assert_eq!(controller.trace_replay_summary().memory_completions(), 1);
+    assert_eq!(controller.trace_replay_summary().control_completions(), 0);
+    assert_eq!(controller.trace_replay_summary().memory_failures(), 0);
+    assert_eq!(controller.trace_replay_summary().control_failures(), 0);
+
+    let sync_batch = controller
+        .next_event(response_batch.trace_response().unwrap().tick(), 0)
+        .unwrap()
+        .unwrap();
+    let sync = sync_batch.trace_sync().unwrap();
+    assert!(sync_batch.trace_replay_outcome().is_none());
+
+    let sync_response_batch = controller.next_event(sync.tick(), 0).unwrap().unwrap();
+    match sync_response_batch.trace_replay_outcome().unwrap() {
+        TrafficTraceReplayOutcome::Completion(match_) => {
+            assert_eq!(match_.completion(), &TrafficTraceReplayCompletion::Ack);
+        }
+        outcome => panic!("unexpected trace replay outcome: {outcome:?}"),
+    }
+    assert_eq!(controller.trace_replay_summary().memory_completions(), 1);
+    assert_eq!(controller.trace_replay_summary().control_completions(), 1);
+    assert_eq!(controller.trace_replay_summary().memory_failures(), 0);
+    assert_eq!(controller.trace_replay_summary().control_failures(), 0);
+
+    let write_batch = controller
+        .next_event(sync_response_batch.trace_response().unwrap().tick(), 0)
+        .unwrap()
+        .unwrap();
+    let write = write_batch.request().unwrap().clone();
+    assert!(write_batch.trace_replay_outcome().is_none());
+
+    let write_error_batch = controller.next_event(write.tick(), 0).unwrap().unwrap();
+    match write_error_batch.trace_replay_outcome().unwrap() {
+        TrafficTraceReplayOutcome::Failure(match_) => match match_.failure() {
+            TrafficTraceReplayFailure::Memory(failure) => {
+                assert_eq!(failure.request_id(), write.request().id());
+            }
+            failure => panic!("unexpected trace replay failure: {failure:?}"),
+        },
+        outcome => panic!("unexpected trace replay outcome: {outcome:?}"),
+    }
+    assert_eq!(controller.trace_replay_summary().memory_completions(), 1);
+    assert_eq!(controller.trace_replay_summary().control_completions(), 1);
+    assert_eq!(controller.trace_replay_summary().memory_failures(), 1);
+    assert_eq!(controller.trace_replay_summary().control_failures(), 0);
+
+    let htm_batch = controller
+        .next_event(write_error_batch.trace_error().unwrap().tick(), 0)
+        .unwrap()
+        .unwrap();
+    let htm = htm_batch.trace_htm().unwrap();
+    assert!(htm_batch.trace_replay_outcome().is_none());
+
+    let error_batch = controller.next_event(htm.tick(), 0).unwrap().unwrap();
+    match error_batch.trace_replay_outcome().unwrap() {
+        TrafficTraceReplayOutcome::Failure(match_) => {
+            assert_eq!(
+                match_.error().kind(),
+                TrafficTraceErrorKind::InvalidDestination
+            );
+        }
+        outcome => panic!("unexpected trace replay outcome: {outcome:?}"),
+    }
+    assert_eq!(controller.trace_replay_summary().memory_completions(), 1);
+    assert_eq!(controller.trace_replay_summary().control_completions(), 1);
+    assert_eq!(controller.trace_replay_summary().memory_failures(), 1);
+    assert_eq!(controller.trace_replay_summary().control_failures(), 1);
+}
+
+#[test]
+fn traffic_controller_snapshot_restores_trace_replay_summary() {
+    let mut controller = controller_for_packets(&[
+        PacketFields {
+            tick: 5,
+            command: GEM5_READ_REQ,
+            address: Some(0x5d00),
+            size: Some(8),
+            packet_id: Some(17),
+        },
+        PacketFields {
+            tick: 7,
+            command: GEM5_READ_RESP,
+            address: Some(0x5d00),
+            size: Some(8),
+            packet_id: Some(17),
+        },
+    ]);
+
+    assert!(controller.start(20).unwrap().is_empty());
+    let request_batch = controller.next_event(20, 0).unwrap().unwrap();
+    let request = request_batch.request().unwrap().clone();
+    let response_batch = controller.next_event(request.tick(), 0).unwrap().unwrap();
+    assert!(response_batch.trace_replay_outcome().is_some());
+    assert_eq!(controller.trace_replay_summary().memory_completions(), 1);
+
+    let restored = TrafficController::restore(controller.snapshot()).unwrap();
+    assert_eq!(restored.trace_replay_summary().memory_completions(), 1);
+    assert_eq!(restored.trace_replay_summary().control_completions(), 0);
+    assert_eq!(restored.trace_replay_summary().memory_failures(), 0);
+    assert_eq!(restored.trace_replay_summary().control_failures(), 0);
 }
 
 #[test]

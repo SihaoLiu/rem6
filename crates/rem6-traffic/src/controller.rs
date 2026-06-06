@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use rem6_memory::{MemoryOperation, MemoryRequestId, MemoryResponse};
 
 use crate::{
+    common::checked_counter_add,
     stream::{apply_stream_ids_to_event, TrafficStreamConfig, TrafficStreamPicker},
     DramTrafficGenerator, GupsTrafficGenerator, HybridTrafficGenerator, LinearTrafficGenerator,
     RandomTrafficGenerator, StridedTrafficGenerator, TrafficDramSnapshot, TrafficExitEvent,
@@ -291,6 +292,7 @@ pub struct TrafficController {
     generators: BTreeMap<TrafficStateId, TrafficStateGenerator>,
     stream_picker: Option<TrafficStreamPicker>,
     trace_pending: Vec<TrafficTraceReplaySource>,
+    trace_replay_summary: TrafficTraceReplaySummary,
 }
 
 impl TrafficController {
@@ -307,6 +309,7 @@ impl TrafficController {
             generators,
             stream_picker,
             trace_pending: Vec::new(),
+            trace_replay_summary: TrafficTraceReplaySummary::default(),
         }
     }
 
@@ -326,6 +329,7 @@ impl TrafficController {
         let mut controller = Self::new(config);
         controller.machine = machine;
         controller.trace_pending = snapshot.trace_pending().to_vec();
+        controller.trace_replay_summary = snapshot.trace_replay_summary();
         controller.stream_picker = snapshot.stream().cloned().map(|stream| {
             let rng_state = snapshot
                 .stream_rng_state()
@@ -341,6 +345,7 @@ impl TrafficController {
     ) -> Result<TrafficControllerEventBatch, TrafficGeneratorError> {
         self.machine.start(tick)?;
         self.trace_pending.clear();
+        self.trace_replay_summary = TrafficTraceReplaySummary::default();
         let events = self.enter_current_state(tick)?;
         Ok(TrafficControllerEventBatch::new(events))
     }
@@ -425,6 +430,10 @@ impl TrafficController {
             )
     }
 
+    pub const fn trace_replay_summary(&self) -> TrafficTraceReplaySummary {
+        self.trace_replay_summary
+    }
+
     pub fn complete_gups_read(
         &mut self,
         state: TrafficStateId,
@@ -458,6 +467,7 @@ impl TrafficController {
                     .map(TrafficStreamPicker::rng_state),
             )
             .with_trace_pending(self.trace_pending.clone())
+            .with_trace_replay_summary(self.trace_replay_summary)
     }
 
     fn transition_at(
@@ -573,6 +583,7 @@ impl TrafficController {
                     return Ok(None);
                 };
                 let completion = trace_response_completion(*response, &source)?;
+                self.trace_replay_summary.record_completion(&completion)?;
                 Ok(Some(TrafficControllerEvent::TraceResponseMatch(
                     TrafficTraceResponseMatch::new(*response, source, completion),
                 )))
@@ -583,9 +594,10 @@ impl TrafficController {
                 }) else {
                     return Ok(None);
                 };
-                Ok(Some(TrafficControllerEvent::TraceErrorMatch(
-                    TrafficTraceErrorMatch::new(*error, source),
-                )))
+                let matched = TrafficTraceErrorMatch::new(*error, source);
+                self.trace_replay_summary
+                    .record_failure(matched.failure())?;
+                Ok(Some(TrafficControllerEvent::TraceErrorMatch(matched)))
             }
             _ => Ok(None),
         }
@@ -709,6 +721,18 @@ impl TrafficControllerEventBatch {
         })
     }
 
+    pub fn trace_replay_outcome(&self) -> Option<TrafficTraceReplayOutcome<'_>> {
+        self.events.iter().find_map(|event| match event {
+            TrafficControllerEvent::TraceResponseMatch(response) => {
+                Some(TrafficTraceReplayOutcome::Completion(response))
+            }
+            TrafficControllerEvent::TraceErrorMatch(error) => {
+                Some(TrafficTraceReplayOutcome::Failure(error))
+            }
+            _ => None,
+        })
+    }
+
     pub fn is_empty(&self) -> bool {
         self.events.is_empty()
     }
@@ -778,6 +802,78 @@ pub enum TrafficTraceReplayCompletion {
 pub enum TrafficTraceReplayFailure {
     Memory(TrafficTraceMemoryFailure),
     Control(TrafficTraceControlFailure),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TrafficTraceReplayOutcome<'a> {
+    Completion(&'a TrafficTraceResponseMatch),
+    Failure(&'a TrafficTraceErrorMatch),
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct TrafficTraceReplaySummary {
+    memory_completions: u64,
+    control_completions: u64,
+    memory_failures: u64,
+    control_failures: u64,
+}
+
+impl TrafficTraceReplaySummary {
+    pub const fn memory_completions(self) -> u64 {
+        self.memory_completions
+    }
+
+    pub const fn control_completions(self) -> u64 {
+        self.control_completions
+    }
+
+    pub const fn memory_failures(self) -> u64 {
+        self.memory_failures
+    }
+
+    pub const fn control_failures(self) -> u64 {
+        self.control_failures
+    }
+
+    fn record_completion(
+        &mut self,
+        completion: &TrafficTraceReplayCompletion,
+    ) -> Result<(), TrafficGeneratorError> {
+        match completion {
+            TrafficTraceReplayCompletion::Memory(_) => {
+                self.memory_completions = checked_counter_add(
+                    "trace_replay.memory_completions",
+                    self.memory_completions,
+                    1,
+                )?;
+            }
+            TrafficTraceReplayCompletion::Ack => {
+                self.control_completions = checked_counter_add(
+                    "trace_replay.control_completions",
+                    self.control_completions,
+                    1,
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    fn record_failure(
+        &mut self,
+        failure: &TrafficTraceReplayFailure,
+    ) -> Result<(), TrafficGeneratorError> {
+        match failure {
+            TrafficTraceReplayFailure::Memory(_) => {
+                self.memory_failures =
+                    checked_counter_add("trace_replay.memory_failures", self.memory_failures, 1)?;
+            }
+            TrafficTraceReplayFailure::Control(_) => {
+                self.control_failures =
+                    checked_counter_add("trace_replay.control_failures", self.control_failures, 1)?;
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -885,6 +981,7 @@ pub struct TrafficControllerSnapshot {
     stream: Option<TrafficStreamConfig>,
     stream_rng_state: Option<u64>,
     trace_pending: Vec<TrafficTraceReplaySource>,
+    trace_replay_summary: TrafficTraceReplaySummary,
 }
 
 impl TrafficControllerSnapshot {
@@ -898,6 +995,12 @@ impl TrafficControllerSnapshot {
             stream: None,
             stream_rng_state: None,
             trace_pending: Vec::new(),
+            trace_replay_summary: TrafficTraceReplaySummary {
+                memory_completions: 0,
+                control_completions: 0,
+                memory_failures: 0,
+                control_failures: 0,
+            },
         }
     }
 
@@ -913,6 +1016,14 @@ impl TrafficControllerSnapshot {
 
     pub fn with_trace_pending(mut self, trace_pending: Vec<TrafficTraceReplaySource>) -> Self {
         self.trace_pending = trace_pending;
+        self
+    }
+
+    pub const fn with_trace_replay_summary(
+        mut self,
+        trace_replay_summary: TrafficTraceReplaySummary,
+    ) -> Self {
+        self.trace_replay_summary = trace_replay_summary;
         self
     }
 
@@ -934,6 +1045,10 @@ impl TrafficControllerSnapshot {
 
     pub fn trace_pending(&self) -> &[TrafficTraceReplaySource] {
         &self.trace_pending
+    }
+
+    pub const fn trace_replay_summary(&self) -> TrafficTraceReplaySummary {
+        self.trace_replay_summary
     }
 }
 
