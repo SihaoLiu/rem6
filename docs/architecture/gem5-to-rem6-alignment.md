@@ -2934,16 +2934,27 @@ events carrying owned memory responses or control acknowledgements. The
 execution-facing replay action queue records those controller batches and drains
 owned memory response records, control acknowledgement ticks, or the original
 actions in recorded order for downstream consumers. `rem6-system` now exposes
-a target runtime helper that records controller batches into that queue and can
-be used from a `MemoryTransport` responder for ordered memory-response and
-memory-failure actions. Response actions become transport target outcomes that
-preserve the trace response tick as target-side response delay, while
-memory-failure actions preserve the trace failure tick as target-side delay
-plus error metadata and let the helper schedule runtime failure records without
-delivering a memory response. Both paths reject mismatched request ids or
-pre-delivery trace ticks without discarding the queued action. CLI/workload
-runner integration and full response and error propagation through memory
-controllers, caches, and CPU ports remain separate contracts.
+a controller-aware target helper for `MemoryTransport` responders: when a
+delivered response-required memory request has no queued response or failure
+action yet, the helper advances the same `TrafficController` from the recorded
+request trace tick, records emitted memory-target replay actions into the
+target runtime, and then consumes the matching replay action as an executable
+target outcome. Memory requests that do not require a response return
+`NoResponse` without forcing a replay response. Control acknowledgement and
+control-failure actions remain part of the generic replay action queue
+contract; the target runtime ignores those actions while advancing for a memory
+target, so a control acknowledgement does not block a later memory response and
+a control-only trace exit does not satisfy a pending memory target. Response
+actions become transport target outcomes that use the trace response tick to
+compute the target-side delay from request delivery to replay response, while
+memory-failure actions use the trace failure tick to compute the target-side
+delay plus error metadata and let the helper schedule runtime failure records
+without delivering a memory response. Both paths reject mismatched request ids
+or pre-delivery trace ticks without discarding the queued action, and report a
+missing replay action if the controller reaches trace exit before a matching
+response or failure.
+CLI/workload runner integration and full response and error propagation through
+memory controllers, caches, and CPU ports remain separate contracts.
 `InvalidDestError`, `BadAddressError`, `ReadError`, `WriteError`,
 `FunctionalReadError`, and `FunctionalWriteError` command-ids 46-51 map to
 typed `TrafficTraceEvent::Error` events that preserve tick ordering, sequence,
