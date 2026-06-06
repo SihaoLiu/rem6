@@ -356,7 +356,7 @@ fn llsc_requests_preserve_load_and_store_conditional_semantics() {
     );
     assert_eq!(no_reservation_response.data(), None);
     let read_back =
-        MemoryRequest::read_shared(request_id(26), Address::new(0x2210), size, line_layout())
+        MemoryRequest::read_shared(request_id(27), Address::new(0x2210), size, line_layout())
             .unwrap();
     let read_back = memory.respond(&read_back).unwrap().unwrap();
     assert_eq!(read_back.data(), Some(&[0x55; 4][..]));
@@ -370,20 +370,20 @@ fn llsc_requests_preserve_load_and_store_conditional_semantics() {
         ResponseStatus::StoreConditionalFailed
     );
     let read_back =
-        MemoryRequest::read_shared(request_id(27), Address::new(0x2210), size, line_layout())
+        MemoryRequest::read_shared(request_id(28), Address::new(0x2210), size, line_layout())
             .unwrap();
     let read_back = memory.respond(&read_back).unwrap().unwrap();
     assert_eq!(read_back.data(), Some(&[0x55; 4][..]));
 
     let matching_load = MemoryRequest::load_locked(
-        request_id(28),
+        request_id(29),
         Address::new(0x2218),
         AccessSize::new(8).unwrap(),
         line_layout(),
     )
     .unwrap();
     let matching_store = MemoryRequest::store_conditional(
-        request_id(29),
+        request_id(31),
         Address::new(0x2210),
         size,
         vec![0x10, 0x20, 0x30, 0x40],
@@ -396,7 +396,7 @@ fn llsc_requests_preserve_load_and_store_conditional_semantics() {
     assert_eq!(matching_store_response.status(), ResponseStatus::Completed);
     assert_eq!(matching_store_response.data(), None);
     let read_back =
-        MemoryRequest::read_shared(request_id(30), Address::new(0x2210), size, line_layout())
+        MemoryRequest::read_shared(request_id(32), Address::new(0x2210), size, line_layout())
             .unwrap();
     let read_back = memory.respond(&read_back).unwrap().unwrap();
     assert_eq!(read_back.data(), Some(&[0x10, 0x55, 0x30, 0x40][..]));

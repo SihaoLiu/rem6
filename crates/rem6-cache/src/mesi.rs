@@ -606,6 +606,11 @@ impl MesiCacheController {
                 .map_err(MesiCacheControllerError::Memory);
         }
 
+        if request.operation() == MemoryOperation::StoreConditionalFail {
+            return MemoryResponse::store_conditional_failed(request)
+                .map_err(MesiCacheControllerError::Memory);
+        }
+
         if request.carries_data() {
             self.apply_store(request)?;
             self.clear_locked_reservations(request);
@@ -741,6 +746,7 @@ fn mesi_cpu_event(request: &MemoryRequest) -> MesiEvent {
         | MemoryOperation::Write
         | MemoryOperation::CacheBlockZero
         | MemoryOperation::StoreConditional
+        | MemoryOperation::StoreConditionalFail
         | MemoryOperation::StoreConditionalUpgrade
         | MemoryOperation::StoreConditionalUpgradeFail
         | MemoryOperation::LockedRmwWrite

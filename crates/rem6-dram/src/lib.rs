@@ -67,6 +67,7 @@ impl DramAccessKind {
             | MemoryOperation::PrefetchRead => Ok(Self::Read),
             MemoryOperation::Write
             | MemoryOperation::StoreConditional
+            | MemoryOperation::StoreConditionalFail
             | MemoryOperation::LockedRmwWrite
             | MemoryOperation::Atomic
             | MemoryOperation::PrefetchWrite

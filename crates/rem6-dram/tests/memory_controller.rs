@@ -78,6 +78,18 @@ fn store_conditional(address: u64, bytes: &[u8], sequence: u64) -> MemoryRequest
     .unwrap()
 }
 
+fn store_conditional_fail(address: u64, bytes: &[u8], sequence: u64) -> MemoryRequest {
+    MemoryRequest::store_conditional_fail(
+        request_id(sequence),
+        Address::new(address),
+        AccessSize::new(bytes.len() as u64).unwrap(),
+        bytes.to_vec(),
+        ByteMask::full(AccessSize::new(bytes.len() as u64).unwrap()).unwrap(),
+        layout(),
+    )
+    .unwrap()
+}
+
 fn write_clean(address: u64, bytes: Vec<u8>, sequence: u64) -> MemoryRequest {
     MemoryRequest::write_clean(request_id(sequence), Address::new(address), bytes, layout())
         .unwrap()
@@ -232,6 +244,29 @@ fn dram_memory_controller_preserves_llsc_reservation_semantics() {
     assert_eq!(
         &controller.line_data(low, Address::new(0x1000)).unwrap()[0x10..0x14],
         &[0xaa, 0xbb, 0xcc, 0xdd]
+    );
+}
+
+#[test]
+fn dram_memory_controller_times_store_conditional_fail_as_write_without_mutating_line() {
+    let (mut controller, low, _) = controller_with_targets();
+
+    let failed = controller
+        .accept(
+            0,
+            &store_conditional_fail(0x1010, &[0xaa, 0xbb, 0xcc, 0xdd], 77),
+        )
+        .unwrap();
+
+    assert_eq!(failed.target(), low);
+    assert_eq!(failed.dram_access().kind(), DramAccessKind::Write);
+    assert_eq!(
+        failed.response().unwrap().status(),
+        ResponseStatus::StoreConditionalFailed
+    );
+    assert_eq!(
+        &controller.line_data(low, Address::new(0x1000)).unwrap()[0x10..0x14],
+        &[0x20, 0x21, 0x22, 0x23]
     );
 }
 

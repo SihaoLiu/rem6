@@ -139,6 +139,7 @@ pub enum MemoryOperation {
     Write,
     CacheBlockZero,
     StoreConditional,
+    StoreConditionalFail,
     StoreConditionalUpgrade,
     StoreConditionalUpgradeFail,
     Upgrade,
@@ -236,6 +237,7 @@ impl MemoryOperation {
             }
             Self::Write
             | Self::StoreConditional
+            | Self::StoreConditionalFail
             | Self::LockedRmwWrite
             | Self::PrefetchWrite
             | Self::Atomic => CoherenceIntent::WriteUnique,
@@ -281,6 +283,7 @@ impl MemoryOperation {
             self,
             Self::Write
                 | Self::StoreConditional
+                | Self::StoreConditionalFail
                 | Self::LockedRmwWrite
                 | Self::Atomic
                 | Self::WriteClean
@@ -297,6 +300,7 @@ impl MemoryOperation {
                 | Self::Write
                 | Self::CacheBlockZero
                 | Self::StoreConditional
+                | Self::StoreConditionalFail
                 | Self::StoreConditionalUpgrade
                 | Self::StoreConditionalUpgradeFail
                 | Self::LockedRmwWrite
@@ -430,6 +434,9 @@ impl LineMemoryStore {
                 self.apply_write(request)?;
                 self.clear_locked_reservations(request);
                 MemoryResponse::completed(request, None).map(Some)
+            }
+            MemoryOperation::StoreConditionalFail => {
+                MemoryResponse::store_conditional_failed(request).map(Some)
             }
             MemoryOperation::Write | MemoryOperation::LockedRmwWrite => {
                 self.apply_write(request)?;

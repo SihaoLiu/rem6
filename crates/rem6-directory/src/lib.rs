@@ -344,6 +344,7 @@ impl MsiDirectory {
             | MemoryOperation::Write
             | MemoryOperation::CacheBlockZero
             | MemoryOperation::StoreConditional
+            | MemoryOperation::StoreConditionalFail
             | MemoryOperation::LockedRmwWrite
             | MemoryOperation::Atomic
             | MemoryOperation::PrefetchWrite
@@ -893,6 +894,7 @@ impl MesiDirectory {
             | MemoryOperation::Write
             | MemoryOperation::CacheBlockZero
             | MemoryOperation::StoreConditional
+            | MemoryOperation::StoreConditionalFail
             | MemoryOperation::LockedRmwWrite
             | MemoryOperation::Atomic
             | MemoryOperation::PrefetchWrite

@@ -46,6 +46,19 @@ fn store_conditional(sequence: u64, address: u64, data: Vec<u8>) -> MemoryReques
     .unwrap()
 }
 
+fn store_conditional_fail(sequence: u64, address: u64, data: Vec<u8>) -> MemoryRequest {
+    let size = AccessSize::new(data.len() as u64).unwrap();
+    MemoryRequest::store_conditional_fail(
+        request_id(sequence),
+        Address::new(address),
+        size,
+        data,
+        ByteMask::full(size).unwrap(),
+        layout(),
+    )
+    .unwrap()
+}
+
 fn atomic(sequence: u64, address: u64, data: Vec<u8>, mask: ByteMask) -> MemoryRequest {
     let size = AccessSize::new(data.len() as u64).unwrap();
     MemoryRequest::atomic(
@@ -214,6 +227,29 @@ fn controller_atomic_hit_returns_old_bytes_and_updates_modified_line() {
         Some(&TargetOutcome::Respond(
             MemoryResponse::completed(&read_back, Some(vec![0xaa, 9, 0xcc, 11])).unwrap()
         ))
+    );
+}
+
+#[test]
+fn controller_store_conditional_fail_hit_does_not_write_even_with_reservation() {
+    let mut controller = controller();
+    controller.install_modified((0..64).collect()).unwrap();
+
+    let load = load_locked(27, 0x1010, 4);
+    controller.accept_cpu_request(load).unwrap();
+    let forced_fail = store_conditional_fail(28, 0x1010, vec![0xaa, 0xbb, 0xcc, 0xdd]);
+    let failed = controller.accept_cpu_request(forced_fail.clone()).unwrap();
+
+    assert_eq!(failed.kind(), CacheControllerResultKind::Hit);
+    assert_eq!(
+        failed.target_outcome(),
+        Some(&TargetOutcome::Respond(
+            MemoryResponse::store_conditional_failed(&forced_fail).unwrap()
+        ))
+    );
+    assert_eq!(
+        &controller.cached_data().unwrap()[0x10..0x14],
+        &[0x10, 0x11, 0x12, 0x13]
     );
 }
 

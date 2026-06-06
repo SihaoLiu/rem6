@@ -422,6 +422,24 @@ impl MemoryRequest {
         )
     }
 
+    pub fn store_conditional_fail(
+        id: MemoryRequestId,
+        address: Address,
+        size: AccessSize,
+        data: Vec<u8>,
+        byte_mask: ByteMask,
+        line_layout: CacheLineLayout,
+    ) -> Result<Self, MemoryError> {
+        Self::new(
+            id,
+            MemoryOperation::StoreConditionalFail,
+            address,
+            size,
+            line_layout,
+            MemoryRequestPayload::write(data, byte_mask),
+        )
+    }
+
     pub fn store_conditional_upgrade(
         id: MemoryRequestId,
         address: Address,
@@ -754,6 +772,7 @@ impl MemoryRequest {
             (
                 MemoryOperation::Write
                 | MemoryOperation::StoreConditional
+                | MemoryOperation::StoreConditionalFail
                 | MemoryOperation::LockedRmwWrite
                 | MemoryOperation::Atomic,
                 Some(mask),
@@ -761,6 +780,7 @@ impl MemoryRequest {
             (
                 MemoryOperation::Write
                 | MemoryOperation::StoreConditional
+                | MemoryOperation::StoreConditionalFail
                 | MemoryOperation::LockedRmwWrite
                 | MemoryOperation::Atomic,
                 Some(mask),
@@ -771,6 +791,7 @@ impl MemoryRequest {
             (
                 MemoryOperation::Write
                 | MemoryOperation::StoreConditional
+                | MemoryOperation::StoreConditionalFail
                 | MemoryOperation::LockedRmwWrite
                 | MemoryOperation::Atomic,
                 None,
@@ -1228,7 +1249,10 @@ impl MemoryResponse {
     }
 
     pub fn store_conditional_failed(request: &MemoryRequest) -> Result<Self, MemoryError> {
-        if request.operation() != MemoryOperation::StoreConditional {
+        if !matches!(
+            request.operation(),
+            MemoryOperation::StoreConditional | MemoryOperation::StoreConditionalFail
+        ) {
             return Err(MemoryError::InvalidStoreConditionalFailureResponse {
                 request: request.id(),
             });

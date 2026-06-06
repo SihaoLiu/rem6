@@ -30,6 +30,7 @@ impl MemoryOperation {
                 | Self::Write
                 | Self::CacheBlockZero
                 | Self::StoreConditional
+                | Self::StoreConditionalFail
                 | Self::StoreConditionalUpgrade
                 | Self::StoreConditionalUpgradeFail
                 | Self::LockedRmwWrite

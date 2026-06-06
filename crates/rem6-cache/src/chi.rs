@@ -607,6 +607,11 @@ impl ChiCacheController {
                 .map_err(ChiCacheControllerError::Memory);
         }
 
+        if request.operation() == MemoryOperation::StoreConditionalFail {
+            return MemoryResponse::store_conditional_failed(request)
+                .map_err(ChiCacheControllerError::Memory);
+        }
+
         if request.carries_data() {
             self.apply_store(request)?;
             self.clear_locked_reservations(request);
@@ -742,6 +747,7 @@ fn chi_cpu_event(request: &MemoryRequest) -> ChiEvent {
         | MemoryOperation::Write
         | MemoryOperation::CacheBlockZero
         | MemoryOperation::StoreConditional
+        | MemoryOperation::StoreConditionalFail
         | MemoryOperation::StoreConditionalUpgrade
         | MemoryOperation::StoreConditionalUpgradeFail
         | MemoryOperation::LockedRmwWrite

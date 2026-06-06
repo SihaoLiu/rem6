@@ -780,6 +780,55 @@ fn trace_traffic_generator_maps_llsc_packets_to_typed_operations() {
 }
 
 #[test]
+fn trace_traffic_generator_maps_store_cond_fail_packet_to_forced_fail_operation() {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace(
+            TICK_FREQUENCY,
+            &[PacketFields {
+                tick: 29,
+                command: 28,
+                address: 0x308,
+                size: 8,
+                flags: None,
+            }],
+        ),
+        TICK_FREQUENCY,
+    )
+    .unwrap();
+    let mut generator = TrafficTraceGenerator::new(trace_config(trace));
+    generator.enter(110);
+
+    let store = generator.next_request(110, 0).unwrap().unwrap();
+    assert_eq!(store.tick(), 139);
+    assert_eq!(store.sequence(), 0);
+    assert_eq!(store.kind(), TrafficRequestKind::Write);
+    assert_eq!(store.address(), Address::new(0x308));
+    assert_eq!(
+        store.request().operation(),
+        MemoryOperation::StoreConditionalFail
+    );
+    assert_eq!(store.request().size(), AccessSize::new(8).unwrap());
+    assert_eq!(store.request().data(), Some(&vec![7; 8][..]));
+    assert_eq!(store.request().byte_mask().unwrap().len(), 8);
+    assert!(store
+        .request()
+        .byte_mask()
+        .unwrap()
+        .bits()
+        .iter()
+        .all(|bit| *bit));
+    assert_eq!(store.request().atomic_op(), None);
+    assert!(store.request().requires_writable());
+    assert!(!store.request().returns_data());
+
+    assert_eq!(generator.summary().packet_count(), 1);
+    assert_eq!(generator.summary().read_count(), 0);
+    assert_eq!(generator.summary().write_count(), 1);
+    assert_eq!(generator.summary().bytes_read(), 0);
+    assert_eq!(generator.summary().bytes_written(), 8);
+}
+
+#[test]
 fn trace_traffic_generator_rejects_write_clean_packet_with_partial_line_size() {
     let trace = TrafficTrace::from_gem5_packet_trace(
         &gem5_packet_trace(

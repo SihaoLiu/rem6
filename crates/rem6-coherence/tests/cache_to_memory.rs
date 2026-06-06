@@ -72,6 +72,19 @@ fn store_conditional(sequence: u64, address: u64, data: Vec<u8>) -> MemoryReques
     .unwrap()
 }
 
+fn store_conditional_fail(sequence: u64, address: u64, data: Vec<u8>) -> MemoryRequest {
+    let size = AccessSize::new(data.len() as u64).unwrap();
+    MemoryRequest::store_conditional_fail(
+        request_id(sequence),
+        Address::new(address),
+        size,
+        data,
+        ByteMask::full(size).unwrap(),
+        layout(),
+    )
+    .unwrap()
+}
+
 fn harness() -> CoherentLineHarness {
     CoherentLineHarness::new(
         AgentId::new(10),
@@ -86,6 +99,18 @@ fn harness() -> CoherentLineHarness {
         LineBackingStore::new(layout(), Address::new(0x1000), line_data()).unwrap(),
     )
     .unwrap()
+}
+
+#[test]
+fn line_backing_store_store_conditional_fail_never_mutates_data() {
+    let mut backing = LineBackingStore::new(layout(), Address::new(0x1000), line_data()).unwrap();
+    let request = store_conditional_fail(41, 0x1010, vec![0xaa, 0xbb, 0xcc, 0xdd]);
+
+    let response = backing.respond(&request).unwrap();
+
+    assert_eq!(response.status(), ResponseStatus::StoreConditionalFailed);
+    assert_eq!(response.data(), None);
+    assert_eq!(&backing.data()[0x10..0x14], &[0x10, 0x11, 0x12, 0x13]);
 }
 
 #[test]

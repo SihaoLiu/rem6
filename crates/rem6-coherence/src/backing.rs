@@ -83,6 +83,9 @@ impl LineBackingStore {
                 self.clear_locked_reservations(request);
                 MemoryResponse::completed(request, None).map_err(HarnessError::Memory)
             }
+            MemoryOperation::StoreConditionalFail => {
+                MemoryResponse::store_conditional_failed(request).map_err(HarnessError::Memory)
+            }
             MemoryOperation::Write | MemoryOperation::LockedRmwWrite => {
                 self.apply_write(request)?;
                 self.clear_locked_reservations(request);

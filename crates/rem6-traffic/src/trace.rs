@@ -33,6 +33,7 @@ const GEM5_READ_CLEAN_REQ: u32 = 24;
 const GEM5_READ_SHARED_REQ: u32 = 25;
 const GEM5_LOAD_LOCKED_REQ: u32 = 26;
 const GEM5_STORE_COND_REQ: u32 = 27;
+const GEM5_STORE_COND_FAIL_REQ: u32 = 28;
 const GEM5_LOCKED_RMW_READ_REQ: u32 = 30;
 const GEM5_LOCKED_RMW_WRITE_REQ: u32 = 32;
 const GEM5_SWAP_REQ: u32 = 34;
@@ -126,6 +127,7 @@ enum TrafficTraceCommand {
     PrefetchWrite,
     LoadLocked,
     StoreConditional,
+    StoreConditionalFail,
     StoreConditionalUpgrade,
     StoreConditionalUpgradeFail,
     LockedRmwRead,
@@ -159,6 +161,7 @@ impl TrafficTraceCommand {
             | Self::LockedRmwRead => TrafficRequestKind::Read,
             Self::Write
             | Self::StoreConditional
+            | Self::StoreConditionalFail
             | Self::LockedRmwWrite
             | Self::WriteLine
             | Self::WritebackDirty
@@ -201,6 +204,7 @@ impl TrafficTraceCommand {
             Self::PrefetchWrite => "SoftPFExReq",
             Self::LoadLocked => "LoadLockedReq",
             Self::StoreConditional => "StoreCondReq",
+            Self::StoreConditionalFail => "StoreCondFailReq",
             Self::StoreConditionalUpgrade => "SCUpgradeReq",
             Self::StoreConditionalUpgradeFail => "SCUpgradeFailReq",
             Self::LockedRmwRead => "LockedRMWReadReq",
@@ -389,6 +393,7 @@ impl TrafficTraceRequestFlags {
                 command,
                 TrafficTraceCommand::LoadLocked
                     | TrafficTraceCommand::StoreConditional
+                    | TrafficTraceCommand::StoreConditionalFail
                     | TrafficTraceCommand::StoreConditionalUpgrade
                     | TrafficTraceCommand::StoreConditionalUpgradeFail
             )
@@ -1046,6 +1051,14 @@ impl TrafficTraceGenerator {
             TrafficRequestKind::Write => {
                 if element.command == TrafficTraceCommand::StoreConditional {
                     build_store_conditional_request(self.config.agent(), id, address, size, layout)
+                } else if element.command == TrafficTraceCommand::StoreConditionalFail {
+                    build_store_conditional_fail_request(
+                        self.config.agent(),
+                        id,
+                        address,
+                        size,
+                        layout,
+                    )
                 } else if element.command == TrafficTraceCommand::LockedRmwWrite {
                     build_locked_rmw_write_request(self.config.agent(), id, address, size, layout)
                 } else {
@@ -1196,6 +1209,20 @@ fn build_store_conditional_request(
         usize::try_from(mask.len()).expect("byte mask length fits usize after construction");
     let data = vec![agent.get() as u8; data_len];
     MemoryRequest::store_conditional(id, address, size, data, mask, layout).map_err(Into::into)
+}
+
+fn build_store_conditional_fail_request(
+    agent: AgentId,
+    id: MemoryRequestId,
+    address: Address,
+    size: AccessSize,
+    layout: CacheLineLayout,
+) -> Result<MemoryRequest, TrafficGeneratorError> {
+    let mask = ByteMask::full(size)?;
+    let data_len =
+        usize::try_from(mask.len()).expect("byte mask length fits usize after construction");
+    let data = vec![agent.get() as u8; data_len];
+    MemoryRequest::store_conditional_fail(id, address, size, data, mask, layout).map_err(Into::into)
 }
 
 fn validate_writeback_request(
@@ -1453,6 +1480,7 @@ fn parse_packet(message: &[u8]) -> Result<TrafficTraceElement, TrafficGeneratorE
         GEM5_SOFT_PF_EX_REQ => TrafficTraceCommand::PrefetchWrite,
         GEM5_LOAD_LOCKED_REQ => TrafficTraceCommand::LoadLocked,
         GEM5_STORE_COND_REQ => TrafficTraceCommand::StoreConditional,
+        GEM5_STORE_COND_FAIL_REQ => TrafficTraceCommand::StoreConditionalFail,
         GEM5_LOCKED_RMW_READ_REQ => TrafficTraceCommand::LockedRmwRead,
         GEM5_LOCKED_RMW_WRITE_REQ => TrafficTraceCommand::LockedRmwWrite,
         GEM5_WRITE_REQ => TrafficTraceCommand::Write,
