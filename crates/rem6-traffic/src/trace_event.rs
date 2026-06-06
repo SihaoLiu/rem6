@@ -72,6 +72,55 @@ impl TrafficTraceDiagnosticKind {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TrafficTraceResponseKind {
+    Read,
+    ReadWithInvalidate,
+    Write,
+    WriteComplete,
+    SoftPrefetch,
+    HardPrefetch,
+    Upgrade,
+    UpgradeFail,
+    ReadExclusive,
+    StoreConditional,
+    LockedRmwRead,
+    LockedRmwWrite,
+    Swap,
+    MemSync,
+    MemFence,
+    CleanShared,
+    CleanInvalid,
+    Invalidate,
+    HtmRequest,
+}
+
+impl TrafficTraceResponseKind {
+    pub const fn gem5_name(self) -> &'static str {
+        match self {
+            Self::Read => "ReadResp",
+            Self::ReadWithInvalidate => "ReadRespWithInvalidate",
+            Self::Write => "WriteResp",
+            Self::WriteComplete => "WriteCompleteResp",
+            Self::SoftPrefetch => "SoftPFResp",
+            Self::HardPrefetch => "HardPFResp",
+            Self::Upgrade => "UpgradeResp",
+            Self::UpgradeFail => "UpgradeFailResp",
+            Self::ReadExclusive => "ReadExResp",
+            Self::StoreConditional => "StoreCondResp",
+            Self::LockedRmwRead => "LockedRMWReadResp",
+            Self::LockedRmwWrite => "LockedRMWWriteResp",
+            Self::Swap => "SwapResp",
+            Self::MemSync => "MemSyncResp",
+            Self::MemFence => "MemFenceResp",
+            Self::CleanShared => "CleanSharedResp",
+            Self::CleanInvalid => "CleanInvalidResp",
+            Self::Invalidate => "InvalidateResp",
+            Self::HtmRequest => "HTMReqResp",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TrafficTraceErrorKind {
     InvalidDestination,
     BadAddress,
@@ -321,6 +370,70 @@ impl TrafficTraceDiagnosticEvent {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TrafficTraceResponseEvent {
+    tick: u64,
+    sequence: u64,
+    kind: TrafficTraceResponseKind,
+    address: Option<Address>,
+    size_bytes: Option<u64>,
+    trace_packet_id: Option<u64>,
+    trace_pc: Option<Address>,
+}
+
+impl TrafficTraceResponseEvent {
+    pub(crate) const fn new(
+        tick: u64,
+        sequence: u64,
+        kind: TrafficTraceResponseKind,
+        address: Option<Address>,
+        size: Option<AccessSize>,
+        trace_packet_id: Option<u64>,
+        trace_pc: Option<Address>,
+    ) -> Self {
+        Self {
+            tick,
+            sequence,
+            kind,
+            address,
+            size_bytes: match size {
+                Some(size) => Some(size.bytes()),
+                None => None,
+            },
+            trace_packet_id,
+            trace_pc,
+        }
+    }
+
+    pub const fn tick(self) -> u64 {
+        self.tick
+    }
+
+    pub const fn sequence(self) -> u64 {
+        self.sequence
+    }
+
+    pub const fn kind(self) -> TrafficTraceResponseKind {
+        self.kind
+    }
+
+    pub const fn address(self) -> Option<Address> {
+        self.address
+    }
+
+    pub const fn size_bytes(self) -> Option<u64> {
+        self.size_bytes
+    }
+
+    pub const fn trace_packet_id(self) -> Option<u64> {
+        self.trace_packet_id
+    }
+
+    pub const fn trace_pc(self) -> Option<Address> {
+        self.trace_pc
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TrafficTraceErrorEvent {
     tick: u64,
     sequence: u64,
@@ -456,6 +569,7 @@ pub enum TrafficTraceEvent {
     Cache(TrafficTraceCacheEvent),
     Htm(TrafficTraceHtmEvent),
     Diagnostic(TrafficTraceDiagnosticEvent),
+    Response(TrafficTraceResponseEvent),
     Error(TrafficTraceErrorEvent),
 }
 
@@ -468,6 +582,7 @@ impl TrafficTraceEvent {
             Self::Cache(event) => event.tick(),
             Self::Htm(event) => event.tick(),
             Self::Diagnostic(event) => event.tick(),
+            Self::Response(event) => event.tick(),
             Self::Error(event) => event.tick(),
         }
     }
@@ -480,6 +595,7 @@ impl TrafficTraceEvent {
             Self::Cache(event) => event.sequence(),
             Self::Htm(event) => event.sequence(),
             Self::Diagnostic(event) => event.sequence(),
+            Self::Response(event) => event.sequence(),
             Self::Error(event) => event.sequence(),
         }
     }

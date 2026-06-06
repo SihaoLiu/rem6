@@ -10,8 +10,9 @@ use crate::{
     trace_event::{
         TrafficTraceCacheEvent, TrafficTraceCacheKind, TrafficTraceDiagnosticEvent,
         TrafficTraceDiagnosticKind, TrafficTraceErrorEvent, TrafficTraceErrorKind,
-        TrafficTraceEvent, TrafficTraceHtmEvent, TrafficTraceHtmKind, TrafficTraceSyncEvent,
-        TrafficTraceSyncKind, TrafficTraceTlbEvent, TrafficTraceTlbKind,
+        TrafficTraceEvent, TrafficTraceHtmEvent, TrafficTraceHtmKind, TrafficTraceResponseEvent,
+        TrafficTraceResponseKind, TrafficTraceSyncEvent, TrafficTraceSyncKind,
+        TrafficTraceTlbEvent, TrafficTraceTlbKind,
     },
     trace_proto::{
         decompress_gzip_trace, is_gzip_stream, read_u32_field, Gem5PacketTraceReader,
@@ -21,7 +22,11 @@ use crate::{
 };
 
 const GEM5_READ_REQ: u32 = 1;
+const GEM5_READ_RESP: u32 = 2;
+const GEM5_READ_RESP_WITH_INVALIDATE: u32 = 3;
 const GEM5_WRITE_REQ: u32 = 4;
+const GEM5_WRITE_RESP: u32 = 5;
+const GEM5_WRITE_COMPLETE_RESP: u32 = 6;
 const GEM5_WRITEBACK_DIRTY: u32 = 7;
 const GEM5_WRITEBACK_CLEAN: u32 = 8;
 const GEM5_WRITE_CLEAN: u32 = 9;
@@ -29,23 +34,36 @@ const GEM5_CLEAN_EVICT: u32 = 10;
 const GEM5_SOFT_PF_REQ: u32 = 11;
 const GEM5_SOFT_PF_EX_REQ: u32 = 12;
 const GEM5_HARD_PF_REQ: u32 = 13;
+const GEM5_SOFT_PF_RESP: u32 = 14;
+const GEM5_HARD_PF_RESP: u32 = 15;
 const GEM5_WRITE_LINE_REQ: u32 = 16;
 const GEM5_UPGRADE_REQ: u32 = 17;
 const GEM5_SC_UPGRADE_REQ: u32 = 18;
+const GEM5_UPGRADE_RESP: u32 = 19;
 const GEM5_SC_UPGRADE_FAIL_REQ: u32 = 20;
+const GEM5_UPGRADE_FAIL_RESP: u32 = 21;
 const GEM5_READ_EX_REQ: u32 = 22;
+const GEM5_READ_EX_RESP: u32 = 23;
 const GEM5_READ_CLEAN_REQ: u32 = 24;
 const GEM5_READ_SHARED_REQ: u32 = 25;
 const GEM5_LOAD_LOCKED_REQ: u32 = 26;
 const GEM5_STORE_COND_REQ: u32 = 27;
 const GEM5_STORE_COND_FAIL_REQ: u32 = 28;
+const GEM5_STORE_COND_RESP: u32 = 29;
 const GEM5_LOCKED_RMW_READ_REQ: u32 = 30;
+const GEM5_LOCKED_RMW_READ_RESP: u32 = 31;
 const GEM5_LOCKED_RMW_WRITE_REQ: u32 = 32;
+const GEM5_LOCKED_RMW_WRITE_RESP: u32 = 33;
 const GEM5_SWAP_REQ: u32 = 34;
+const GEM5_SWAP_RESP: u32 = 35;
 const GEM5_MEM_FENCE_REQ: u32 = 38;
 const GEM5_MEM_SYNC_REQ: u32 = 39;
+const GEM5_MEM_SYNC_RESP: u32 = 40;
+const GEM5_MEM_FENCE_RESP: u32 = 41;
 const GEM5_CLEAN_SHARED_REQ: u32 = 42;
+const GEM5_CLEAN_SHARED_RESP: u32 = 43;
 const GEM5_CLEAN_INVALID_REQ: u32 = 44;
+const GEM5_CLEAN_INVALID_RESP: u32 = 45;
 const GEM5_INVALID_DEST_ERROR: u32 = 46;
 const GEM5_BAD_ADDRESS_ERROR: u32 = 47;
 const GEM5_READ_ERROR: u32 = 48;
@@ -55,7 +73,9 @@ const GEM5_FUNCTIONAL_WRITE_ERROR: u32 = 51;
 const GEM5_PRINT_REQ: u32 = 52;
 const GEM5_FLUSH_REQ: u32 = 53;
 const GEM5_INVALIDATE_REQ: u32 = 54;
+const GEM5_INVALIDATE_RESP: u32 = 55;
 const GEM5_HTM_REQ: u32 = 56;
+const GEM5_HTM_REQ_RESP: u32 = 57;
 const GEM5_HTM_ABORT: u32 = 58;
 const GEM5_TLBI_EXT_SYNC: u32 = 59;
 const GEM5_FLAG_INST_FETCH: u32 = 0x0000_0100;
@@ -131,6 +151,25 @@ enum TrafficTraceCommand {
     Print,
     Flush,
     TlbiExtSync,
+    ReadResp,
+    ReadRespWithInvalidate,
+    WriteResp,
+    WriteCompleteResp,
+    SoftPrefetchResp,
+    HardPrefetchResp,
+    UpgradeResp,
+    UpgradeFailResp,
+    ReadExclusiveResp,
+    StoreConditionalResp,
+    LockedRmwReadResp,
+    LockedRmwWriteResp,
+    SwapResp,
+    MemSyncResp,
+    MemFenceResp,
+    CleanSharedResp,
+    CleanInvalidResp,
+    InvalidateResp,
+    HtmRequestResp,
     InvalidDestError,
     BadAddressError,
     ReadError,
@@ -172,6 +211,25 @@ impl TrafficTraceCommand {
             | Self::Print
             | Self::Flush
             | Self::TlbiExtSync
+            | Self::ReadResp
+            | Self::ReadRespWithInvalidate
+            | Self::WriteResp
+            | Self::WriteCompleteResp
+            | Self::SoftPrefetchResp
+            | Self::HardPrefetchResp
+            | Self::UpgradeResp
+            | Self::UpgradeFailResp
+            | Self::ReadExclusiveResp
+            | Self::StoreConditionalResp
+            | Self::LockedRmwReadResp
+            | Self::LockedRmwWriteResp
+            | Self::SwapResp
+            | Self::MemSyncResp
+            | Self::MemFenceResp
+            | Self::CleanSharedResp
+            | Self::CleanInvalidResp
+            | Self::InvalidateResp
+            | Self::HtmRequestResp
             | Self::InvalidDestError
             | Self::BadAddressError
             | Self::ReadError
@@ -214,6 +272,31 @@ impl TrafficTraceCommand {
     const fn diagnostic_kind(self) -> Option<TrafficTraceDiagnosticKind> {
         match self {
             Self::Print => Some(TrafficTraceDiagnosticKind::Print),
+            _ => None,
+        }
+    }
+
+    const fn response_kind(self) -> Option<TrafficTraceResponseKind> {
+        match self {
+            Self::ReadResp => Some(TrafficTraceResponseKind::Read),
+            Self::ReadRespWithInvalidate => Some(TrafficTraceResponseKind::ReadWithInvalidate),
+            Self::WriteResp => Some(TrafficTraceResponseKind::Write),
+            Self::WriteCompleteResp => Some(TrafficTraceResponseKind::WriteComplete),
+            Self::SoftPrefetchResp => Some(TrafficTraceResponseKind::SoftPrefetch),
+            Self::HardPrefetchResp => Some(TrafficTraceResponseKind::HardPrefetch),
+            Self::UpgradeResp => Some(TrafficTraceResponseKind::Upgrade),
+            Self::UpgradeFailResp => Some(TrafficTraceResponseKind::UpgradeFail),
+            Self::ReadExclusiveResp => Some(TrafficTraceResponseKind::ReadExclusive),
+            Self::StoreConditionalResp => Some(TrafficTraceResponseKind::StoreConditional),
+            Self::LockedRmwReadResp => Some(TrafficTraceResponseKind::LockedRmwRead),
+            Self::LockedRmwWriteResp => Some(TrafficTraceResponseKind::LockedRmwWrite),
+            Self::SwapResp => Some(TrafficTraceResponseKind::Swap),
+            Self::MemSyncResp => Some(TrafficTraceResponseKind::MemSync),
+            Self::MemFenceResp => Some(TrafficTraceResponseKind::MemFence),
+            Self::CleanSharedResp => Some(TrafficTraceResponseKind::CleanShared),
+            Self::CleanInvalidResp => Some(TrafficTraceResponseKind::CleanInvalid),
+            Self::InvalidateResp => Some(TrafficTraceResponseKind::Invalidate),
+            Self::HtmRequestResp => Some(TrafficTraceResponseKind::HtmRequest),
             _ => None,
         }
     }
@@ -262,6 +345,25 @@ impl TrafficTraceCommand {
             Self::Print => "PrintReq",
             Self::Flush => "FlushReq",
             Self::TlbiExtSync => "TlbiExtSync",
+            Self::ReadResp => "ReadResp",
+            Self::ReadRespWithInvalidate => "ReadRespWithInvalidate",
+            Self::WriteResp => "WriteResp",
+            Self::WriteCompleteResp => "WriteCompleteResp",
+            Self::SoftPrefetchResp => "SoftPFResp",
+            Self::HardPrefetchResp => "HardPFResp",
+            Self::UpgradeResp => "UpgradeResp",
+            Self::UpgradeFailResp => "UpgradeFailResp",
+            Self::ReadExclusiveResp => "ReadExResp",
+            Self::StoreConditionalResp => "StoreCondResp",
+            Self::LockedRmwReadResp => "LockedRMWReadResp",
+            Self::LockedRmwWriteResp => "LockedRMWWriteResp",
+            Self::SwapResp => "SwapResp",
+            Self::MemSyncResp => "MemSyncResp",
+            Self::MemFenceResp => "MemFenceResp",
+            Self::CleanSharedResp => "CleanSharedResp",
+            Self::CleanInvalidResp => "CleanInvalidResp",
+            Self::InvalidateResp => "InvalidateResp",
+            Self::HtmRequestResp => "HTMReqResp",
             Self::InvalidDestError => "InvalidDestError",
             Self::BadAddressError => "BadAddressError",
             Self::ReadError => "ReadError",
@@ -310,6 +412,10 @@ impl TrafficTraceElement {
 
     const fn diagnostic_kind(self) -> Option<TrafficTraceDiagnosticKind> {
         self.command.diagnostic_kind()
+    }
+
+    const fn response_kind(self) -> Option<TrafficTraceResponseKind> {
+        self.command.response_kind()
     }
 
     const fn error_kind(self) -> Option<TrafficTraceErrorKind> {
@@ -427,6 +533,13 @@ impl TrafficTraceRequestFlags {
         }
 
         if command.diagnostic_kind().is_some() {
+            if self.bits != 0 {
+                return Err(TrafficGeneratorError::TraceUnsupportedFlags { flags: self.bits });
+            }
+            return Ok(());
+        }
+
+        if command.response_kind().is_some() {
             if self.bits != 0 {
                 return Err(TrafficGeneratorError::TraceUnsupportedFlags { flags: self.bits });
             }
@@ -818,6 +931,11 @@ impl TrafficTraceGenerator {
                 },
             );
         }
+        if let Some(kind) = element.response_kind() {
+            return Err(TrafficGeneratorError::TraceResponseEventRequiresNextEvent {
+                command: kind.gem5_name(),
+            });
+        }
         if let Some(kind) = element.error_kind() {
             return Err(TrafficGeneratorError::TraceErrorEventRequiresNextEvent {
                 command: kind.gem5_name(),
@@ -843,6 +961,9 @@ impl TrafficTraceGenerator {
             }
             TrafficTraceEvent::Diagnostic(_) => {
                 unreachable!("diagnostic trace event was rejected before advancing")
+            }
+            TrafficTraceEvent::Response(_) => {
+                unreachable!("response trace event was rejected before advancing")
             }
             TrafficTraceEvent::Error(_) => {
                 unreachable!("error trace event was rejected before advancing")
@@ -908,6 +1029,17 @@ impl TrafficTraceGenerator {
         } else if let Some(kind) = element.diagnostic_kind() {
             next_summary.record(event_tick, TrafficRequestKind::Maintenance, 0)?;
             TrafficTraceEvent::Diagnostic(TrafficTraceDiagnosticEvent::new(
+                event_tick,
+                sequence,
+                kind,
+                element.address,
+                element.size,
+                element.packet_id,
+                element.pc,
+            ))
+        } else if let Some(kind) = element.response_kind() {
+            next_summary.record(event_tick, TrafficRequestKind::Maintenance, 0)?;
+            TrafficTraceEvent::Response(TrafficTraceResponseEvent::new(
                 event_tick,
                 sequence,
                 kind,
@@ -1453,29 +1585,46 @@ fn parse_packet(message: &[u8]) -> Result<TrafficTraceElement, TrafficGeneratorE
         GEM5_READ_REQ | GEM5_READ_CLEAN_REQ | GEM5_READ_SHARED_REQ => {
             TrafficTraceCommand::ReadShared
         }
+        GEM5_READ_RESP => TrafficTraceCommand::ReadResp,
+        GEM5_READ_RESP_WITH_INVALIDATE => TrafficTraceCommand::ReadRespWithInvalidate,
         GEM5_READ_EX_REQ => TrafficTraceCommand::ReadUnique,
+        GEM5_READ_EX_RESP => TrafficTraceCommand::ReadExclusiveResp,
         GEM5_SOFT_PF_REQ => TrafficTraceCommand::SoftPrefetchRead,
         GEM5_HARD_PF_REQ => TrafficTraceCommand::HardPrefetchRead,
         GEM5_SOFT_PF_EX_REQ => TrafficTraceCommand::PrefetchWrite,
+        GEM5_SOFT_PF_RESP => TrafficTraceCommand::SoftPrefetchResp,
+        GEM5_HARD_PF_RESP => TrafficTraceCommand::HardPrefetchResp,
         GEM5_LOAD_LOCKED_REQ => TrafficTraceCommand::LoadLocked,
         GEM5_STORE_COND_REQ => TrafficTraceCommand::StoreConditional,
         GEM5_STORE_COND_FAIL_REQ => TrafficTraceCommand::StoreConditionalFail,
+        GEM5_STORE_COND_RESP => TrafficTraceCommand::StoreConditionalResp,
         GEM5_LOCKED_RMW_READ_REQ => TrafficTraceCommand::LockedRmwRead,
+        GEM5_LOCKED_RMW_READ_RESP => TrafficTraceCommand::LockedRmwReadResp,
         GEM5_LOCKED_RMW_WRITE_REQ => TrafficTraceCommand::LockedRmwWrite,
+        GEM5_LOCKED_RMW_WRITE_RESP => TrafficTraceCommand::LockedRmwWriteResp,
         GEM5_WRITE_REQ => TrafficTraceCommand::Write,
+        GEM5_WRITE_RESP => TrafficTraceCommand::WriteResp,
+        GEM5_WRITE_COMPLETE_RESP => TrafficTraceCommand::WriteCompleteResp,
         GEM5_WRITEBACK_DIRTY => TrafficTraceCommand::WritebackDirty,
         GEM5_WRITEBACK_CLEAN => TrafficTraceCommand::WritebackClean,
         GEM5_WRITE_CLEAN => TrafficTraceCommand::WriteClean,
         GEM5_SWAP_REQ => TrafficTraceCommand::Swap,
+        GEM5_SWAP_RESP => TrafficTraceCommand::SwapResp,
         GEM5_CLEAN_EVICT => TrafficTraceCommand::CleanEvict,
         GEM5_WRITE_LINE_REQ => TrafficTraceCommand::WriteLine,
         GEM5_UPGRADE_REQ => TrafficTraceCommand::Upgrade,
         GEM5_SC_UPGRADE_REQ => TrafficTraceCommand::StoreConditionalUpgrade,
+        GEM5_UPGRADE_RESP => TrafficTraceCommand::UpgradeResp,
         GEM5_SC_UPGRADE_FAIL_REQ => TrafficTraceCommand::StoreConditionalUpgradeFail,
+        GEM5_UPGRADE_FAIL_RESP => TrafficTraceCommand::UpgradeFailResp,
         GEM5_MEM_FENCE_REQ => TrafficTraceCommand::MemFence,
         GEM5_MEM_SYNC_REQ => TrafficTraceCommand::MemSync,
+        GEM5_MEM_SYNC_RESP => TrafficTraceCommand::MemSyncResp,
+        GEM5_MEM_FENCE_RESP => TrafficTraceCommand::MemFenceResp,
         GEM5_CLEAN_SHARED_REQ => TrafficTraceCommand::CleanShared,
+        GEM5_CLEAN_SHARED_RESP => TrafficTraceCommand::CleanSharedResp,
         GEM5_CLEAN_INVALID_REQ => TrafficTraceCommand::CleanInvalid,
+        GEM5_CLEAN_INVALID_RESP => TrafficTraceCommand::CleanInvalidResp,
         GEM5_INVALID_DEST_ERROR => TrafficTraceCommand::InvalidDestError,
         GEM5_BAD_ADDRESS_ERROR => TrafficTraceCommand::BadAddressError,
         GEM5_READ_ERROR => TrafficTraceCommand::ReadError,
@@ -1485,7 +1634,9 @@ fn parse_packet(message: &[u8]) -> Result<TrafficTraceElement, TrafficGeneratorE
         GEM5_PRINT_REQ => TrafficTraceCommand::Print,
         GEM5_FLUSH_REQ => TrafficTraceCommand::Flush,
         GEM5_INVALIDATE_REQ => TrafficTraceCommand::Invalidate,
+        GEM5_INVALIDATE_RESP => TrafficTraceCommand::InvalidateResp,
         GEM5_HTM_REQ => TrafficTraceCommand::HtmRequest,
+        GEM5_HTM_REQ_RESP => TrafficTraceCommand::HtmRequestResp,
         GEM5_HTM_ABORT => TrafficTraceCommand::HtmAbort,
         GEM5_TLBI_EXT_SYNC => TrafficTraceCommand::TlbiExtSync,
         command => return Err(TrafficGeneratorError::TraceUnsupportedCommand { command }),
@@ -1526,6 +1677,7 @@ fn parse_packet(message: &[u8]) -> Result<TrafficTraceElement, TrafficGeneratorE
     }
     if command.htm_kind().is_some()
         || command.diagnostic_kind().is_some()
+        || command.response_kind().is_some()
         || command.error_kind().is_some()
     {
         let size = match size {

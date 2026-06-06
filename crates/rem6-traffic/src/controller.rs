@@ -8,8 +8,8 @@ use crate::{
     TrafficRequestEvent, TrafficStateGraphConfig, TrafficStateId, TrafficStateMachine,
     TrafficStateSnapshot, TrafficStridedSnapshot, TrafficTraceCacheEvent,
     TrafficTraceDiagnosticEvent, TrafficTraceErrorEvent, TrafficTraceEvent, TrafficTraceExitStatus,
-    TrafficTraceGenerator, TrafficTraceHtmEvent, TrafficTraceSnapshot, TrafficTraceSyncEvent,
-    TrafficTraceTlbEvent, TrafficTransitionEvent,
+    TrafficTraceGenerator, TrafficTraceHtmEvent, TrafficTraceResponseEvent, TrafficTraceSnapshot,
+    TrafficTraceSyncEvent, TrafficTraceTlbEvent, TrafficTransitionEvent,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -175,6 +175,9 @@ impl TrafficStateGenerator {
                         TrafficTraceEvent::Htm(htm) => TrafficControllerEvent::TraceHtm(htm),
                         TrafficTraceEvent::Diagnostic(diagnostic) => {
                             TrafficControllerEvent::TraceDiagnostic(diagnostic)
+                        }
+                        TrafficTraceEvent::Response(response) => {
+                            TrafficControllerEvent::TraceResponse(response)
                         }
                         TrafficTraceEvent::Error(error) => {
                             TrafficControllerEvent::TraceError(error)
@@ -509,6 +512,13 @@ impl TrafficControllerEventBatch {
         })
     }
 
+    pub fn trace_response(&self) -> Option<TrafficTraceResponseEvent> {
+        self.events.iter().find_map(|event| match event {
+            TrafficControllerEvent::TraceResponse(response) => Some(*response),
+            _ => None,
+        })
+    }
+
     pub fn is_empty(&self) -> bool {
         self.events.is_empty()
     }
@@ -525,6 +535,7 @@ pub enum TrafficControllerEvent {
     TraceCache(TrafficTraceCacheEvent),
     TraceHtm(TrafficTraceHtmEvent),
     TraceDiagnostic(TrafficTraceDiagnosticEvent),
+    TraceResponse(TrafficTraceResponseEvent),
     TraceError(TrafficTraceErrorEvent),
 }
 
@@ -540,6 +551,7 @@ impl TrafficControllerEvent {
             Self::TraceCache(cache) => cache.tick(),
             Self::TraceHtm(htm) => htm.tick(),
             Self::TraceDiagnostic(diagnostic) => diagnostic.tick(),
+            Self::TraceResponse(response) => response.tick(),
             Self::TraceError(error) => error.tick(),
         }
     }

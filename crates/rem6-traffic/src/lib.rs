@@ -52,6 +52,6 @@ pub use trace::{
 pub use trace_event::{
     TrafficTraceCacheEvent, TrafficTraceCacheKind, TrafficTraceDiagnosticEvent,
     TrafficTraceDiagnosticKind, TrafficTraceErrorEvent, TrafficTraceErrorKind, TrafficTraceEvent,
-    TrafficTraceHtmEvent, TrafficTraceHtmKind, TrafficTraceSyncEvent, TrafficTraceSyncKind,
-    TrafficTraceTlbEvent, TrafficTraceTlbKind,
+    TrafficTraceHtmEvent, TrafficTraceHtmKind, TrafficTraceResponseEvent, TrafficTraceResponseKind,
+    TrafficTraceSyncEvent, TrafficTraceSyncKind, TrafficTraceTlbEvent, TrafficTraceTlbKind,
 };

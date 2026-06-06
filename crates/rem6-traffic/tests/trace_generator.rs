@@ -155,7 +155,7 @@ fn trace_parser_rejects_invalid_gem5_packet_traces() {
                 TICK_FREQUENCY,
                 &[PacketFields {
                     tick: 1,
-                    command: 2,
+                    command: 36,
                     address: 0,
                     size: 8,
                     flags: None,
@@ -164,7 +164,7 @@ fn trace_parser_rejects_invalid_gem5_packet_traces() {
             TICK_FREQUENCY,
         )
         .unwrap_err(),
-        TrafficGeneratorError::TraceUnsupportedCommand { command: 2 }
+        TrafficGeneratorError::TraceUnsupportedCommand { command: 36 }
     );
 
     assert_eq!(

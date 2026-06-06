@@ -259,6 +259,9 @@ pub enum TrafficGeneratorError {
     TraceDiagnosticEventRequiresNextEvent {
         command: &'static str,
     },
+    TraceResponseEventRequiresNextEvent {
+        command: &'static str,
+    },
     TraceErrorEventRequiresNextEvent {
         command: &'static str,
     },
@@ -749,6 +752,10 @@ impl fmt::Display for TrafficGeneratorError {
                 "gem5 packet trace {command} requires TrafficTraceGenerator::next_event"
             ),
             Self::TraceDiagnosticEventRequiresNextEvent { command } => write!(
+                formatter,
+                "gem5 packet trace {command} requires TrafficTraceGenerator::next_event"
+            ),
+            Self::TraceResponseEventRequiresNextEvent { command } => write!(
                 formatter,
                 "gem5 packet trace {command} requires TrafficTraceGenerator::next_event"
             ),
