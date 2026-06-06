@@ -42,6 +42,7 @@ const GEM5_FLAG_PHYSICAL: u32 = 0x0000_0200;
 const GEM5_FLAG_UNCACHEABLE: u32 = 0x0000_0400;
 const GEM5_FLAG_STRICT_ORDER: u32 = 0x0000_0800;
 const GEM5_FLAG_PRIVILEGED: u32 = 0x0000_8000;
+const GEM5_FLAG_ACQUIRE_PC: u32 = 0x0000_2000;
 const GEM5_FLAG_ACQUIRE: u32 = 0x0002_0000;
 const GEM5_FLAG_RELEASE: u32 = 0x0004_0000;
 const GEM5_FLAG_LOCKED_RMW: u32 = 0x0010_0000;
@@ -57,6 +58,7 @@ const GEM5_SUPPORTED_TRACE_FLAGS: u32 = GEM5_FLAG_INST_FETCH
     | GEM5_FLAG_UNCACHEABLE
     | GEM5_FLAG_STRICT_ORDER
     | GEM5_FLAG_PRIVILEGED
+    | GEM5_FLAG_ACQUIRE_PC
     | GEM5_FLAG_ACQUIRE
     | GEM5_FLAG_RELEASE
     | GEM5_FLAG_LOCKED_RMW
@@ -205,7 +207,7 @@ impl TrafficTraceRequestFlags {
             uncacheable: bits & GEM5_FLAG_UNCACHEABLE != 0,
             strict_order: bits & GEM5_FLAG_STRICT_ORDER != 0,
             privileged: bits & GEM5_FLAG_PRIVILEGED != 0,
-            acquire: bits & GEM5_FLAG_ACQUIRE != 0,
+            acquire: bits & (GEM5_FLAG_ACQUIRE | GEM5_FLAG_ACQUIRE_PC) != 0,
             release: bits & GEM5_FLAG_RELEASE != 0,
             locked_rmw: bits & GEM5_FLAG_LOCKED_RMW != 0,
             llsc: bits & GEM5_FLAG_LLSC != 0,

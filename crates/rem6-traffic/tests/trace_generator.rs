@@ -17,6 +17,7 @@ const GEM5_FLAG_PHYSICAL: u32 = 0x0000_0200;
 const GEM5_FLAG_UNCACHEABLE: u32 = 0x0000_0400;
 const GEM5_FLAG_STRICT_ORDER: u32 = 0x0000_0800;
 const GEM5_FLAG_KERNEL: u32 = 0x0000_1000;
+const GEM5_FLAG_ACQUIRE_PC: u32 = 0x0000_2000;
 const GEM5_FLAG_ACQUIRE: u32 = 0x0002_0000;
 const GEM5_FLAG_RELEASE: u32 = 0x0004_0000;
 const GEM5_FLAG_PREFETCH: u32 = 0x0100_0000;
@@ -260,6 +261,13 @@ fn trace_traffic_generator_maps_supported_gem5_request_flags() {
                     size: 4,
                     flags: Some(GEM5_FLAG_UNCACHEABLE),
                 },
+                PacketFields {
+                    tick: 15,
+                    command: 1,
+                    address: 0x100,
+                    size: 8,
+                    flags: Some(GEM5_FLAG_ACQUIRE_PC),
+                },
             ],
         ),
         TICK_FREQUENCY,
@@ -299,6 +307,17 @@ fn trace_traffic_generator_maps_supported_gem5_request_flags() {
     assert_eq!(
         uncacheable.request().ordering(),
         MemoryAccessOrdering::none()
+    );
+
+    let acquire_pc = generator.next_request(21, 0).unwrap().unwrap();
+    assert_eq!(acquire_pc.tick(), 25);
+    assert_eq!(
+        acquire_pc.request().operation(),
+        MemoryOperation::ReadShared
+    );
+    assert_eq!(
+        acquire_pc.request().ordering(),
+        MemoryAccessOrdering::new(None, Some(MemoryBarrierSet::memory()))
     );
 }
 
