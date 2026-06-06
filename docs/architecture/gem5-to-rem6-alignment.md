@@ -3010,7 +3010,10 @@ memory error records are available to the memory target helpers, including a
 controller-aware target-event helper that returns memory failures directly to
 execution consumers before the target-outcome wrapper records them for audit.
 Matched sync/HTM control failures are available to the control-completion
-helper, and broader cache and CPU error propagation remains open.
+helper and to a controller-aware control-event helper that returns
+acknowledgement or failure events directly to execution consumers before the
+completion wrapper records them for audit. Broader cache and CPU error
+propagation remains open.
 Trace packet flag handling now maps non-prefetch `INST_FETCH` on `ReadReq`,
 `ReadCleanReq`, and
 `ReadSharedReq` packets to native instruction-fetch requests, accepts `PHYSICAL`

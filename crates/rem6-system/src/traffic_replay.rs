@@ -789,18 +789,56 @@ pub fn traffic_trace_replay_controller_control_completion(
     context: &mut SchedulerContext<'_>,
     retry_delay: Tick,
 ) -> Result<(), TrafficTraceReplayControllerControlError> {
+    let event = traffic_trace_replay_controller_control_event(
+        Arc::clone(&runtime),
+        controller,
+        delivery_tick,
+        context,
+        retry_delay,
+    )?;
+    match event {
+        TrafficTraceReplayControlEvent::ControlAck { delay, trace_tick } => {
+            context
+                .schedule_local_after(delay, move |context| {
+                    runtime
+                        .lock()
+                        .expect("trace replay controller runtime lock")
+                        .record_control_ack(context.now(), trace_tick);
+                })
+                .expect("validated trace replay control ack delay");
+        }
+        TrafficTraceReplayControlEvent::ControlFailure { delay, record } => {
+            context
+                .schedule_local_after(delay, move |context| {
+                    runtime
+                        .lock()
+                        .expect("trace replay controller runtime lock")
+                        .record_control_failure(context.now(), record);
+                })
+                .expect("validated trace replay control failure delay");
+        }
+    }
+    Ok(())
+}
+
+pub fn traffic_trace_replay_controller_control_event(
+    runtime: Arc<Mutex<TrafficTraceReplayControllerRuntime>>,
+    controller: Arc<Mutex<TrafficController>>,
+    delivery_tick: Tick,
+    context: &mut SchedulerContext<'_>,
+    retry_delay: Tick,
+) -> Result<TrafficTraceReplayControlEvent, TrafficTraceReplayControllerControlError> {
     let controller_tick = runtime
         .lock()
         .expect("trace replay controller runtime lock")
         .control_source_tick()
         .unwrap_or(delivery_tick);
     loop {
-        match traffic_trace_replay_controller_runtime_control_completion(
+        match traffic_trace_replay_controller_runtime_control_event(
             Arc::clone(&runtime),
             delivery_tick,
-            context,
         ) {
-            Ok(()) => return Ok(()),
+            Ok(event) => return Ok(event),
             Err(TrafficTraceReplayControlError::ActionQueueEmpty { .. }) => {}
             Err(error) => return Err(error.into()),
         }
@@ -875,38 +913,14 @@ fn traffic_trace_replay_controller_runtime_target_event(
         .target_event(delivery)
 }
 
-fn traffic_trace_replay_controller_runtime_control_completion(
+fn traffic_trace_replay_controller_runtime_control_event(
     runtime: Arc<Mutex<TrafficTraceReplayControllerRuntime>>,
     delivery_tick: Tick,
-    context: &mut SchedulerContext<'_>,
-) -> Result<(), TrafficTraceReplayControlError> {
-    let event = runtime
+) -> Result<TrafficTraceReplayControlEvent, TrafficTraceReplayControlError> {
+    runtime
         .lock()
         .expect("trace replay controller runtime lock")
-        .control_event(delivery_tick)?;
-    match event {
-        TrafficTraceReplayControlEvent::ControlAck { delay, trace_tick } => {
-            context
-                .schedule_local_after(delay, move |context| {
-                    runtime
-                        .lock()
-                        .expect("trace replay controller runtime lock")
-                        .record_control_ack(context.now(), trace_tick);
-                })
-                .expect("validated trace replay control ack delay");
-        }
-        TrafficTraceReplayControlEvent::ControlFailure { delay, record } => {
-            context
-                .schedule_local_after(delay, move |context| {
-                    runtime
-                        .lock()
-                        .expect("trace replay controller runtime lock")
-                        .record_control_failure(context.now(), record);
-                })
-                .expect("validated trace replay control failure delay");
-        }
-    }
-    Ok(())
+        .control_event(delivery_tick)
 }
 
 pub fn traffic_trace_replay_controller_runtime_sideband_events(
