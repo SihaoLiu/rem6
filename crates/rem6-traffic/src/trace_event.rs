@@ -212,6 +212,22 @@ impl TrafficTraceResponseKind {
     pub const fn is_prefetch(self) -> bool {
         self.is_software_prefetch() || self.is_hardware_prefetch()
     }
+
+    pub const fn is_upgrade(self) -> bool {
+        matches!(self, Self::Upgrade)
+    }
+
+    pub const fn is_llsc(self) -> bool {
+        matches!(self, Self::StoreConditional)
+    }
+
+    pub const fn is_locked_rmw(self) -> bool {
+        matches!(self, Self::LockedRmwRead | Self::LockedRmwWrite)
+    }
+
+    pub const fn requires_writable(self) -> bool {
+        matches!(self, Self::LockedRmwRead | Self::LockedRmwWrite)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -572,6 +588,22 @@ impl TrafficTraceResponseEvent {
 
     pub const fn is_prefetch(self) -> bool {
         self.kind.is_prefetch()
+    }
+
+    pub const fn is_upgrade(self) -> bool {
+        self.kind.is_upgrade()
+    }
+
+    pub const fn is_llsc(self) -> bool {
+        self.kind.is_llsc()
+    }
+
+    pub const fn is_locked_rmw(self) -> bool {
+        self.kind.is_locked_rmw()
+    }
+
+    pub const fn requires_writable(self) -> bool {
+        self.kind.requires_writable()
     }
 
     pub const fn trace_packet_id(self) -> Option<u64> {

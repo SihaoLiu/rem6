@@ -252,6 +252,119 @@ fn trace_generator_next_request_reports_response_event_boundary() {
 }
 
 #[test]
+fn trace_response_event_forwards_gem5_atomic_response_attributes() {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace(
+            TICK_FREQUENCY,
+            &[
+                PacketFields {
+                    tick: 5,
+                    command: GEM5_UPGRADE_RESP,
+                    address: Some(0x4000),
+                    size: Some(64),
+                    flags: None,
+                    packet_id: Some(1),
+                    pc: Some(0x2000),
+                },
+                PacketFields {
+                    tick: 7,
+                    command: GEM5_STORE_COND_RESP,
+                    address: Some(0x4040),
+                    size: Some(8),
+                    flags: None,
+                    packet_id: Some(2),
+                    pc: Some(0x2004),
+                },
+                PacketFields {
+                    tick: 9,
+                    command: GEM5_LOCKED_RMW_READ_RESP,
+                    address: Some(0x4080),
+                    size: Some(8),
+                    flags: None,
+                    packet_id: Some(3),
+                    pc: Some(0x2008),
+                },
+                PacketFields {
+                    tick: 11,
+                    command: GEM5_LOCKED_RMW_WRITE_RESP,
+                    address: Some(0x4080),
+                    size: Some(8),
+                    flags: None,
+                    packet_id: Some(4),
+                    pc: Some(0x200c),
+                },
+            ],
+        ),
+        TICK_FREQUENCY,
+    )
+    .unwrap();
+    let mut generator = TrafficTraceGenerator::new(trace_config(trace));
+    generator.enter(100);
+
+    let upgrade = match generator.next_event(100, 0).unwrap().unwrap() {
+        TrafficTraceEvent::Response(event) => event,
+        _ => panic!("UpgradeResp should emit a response event"),
+    };
+    assert_eq!(upgrade.tick(), 105);
+    assert_eq!(upgrade.sequence(), 0);
+    assert_eq!(upgrade.kind(), TrafficTraceResponseKind::Upgrade);
+    assert!(upgrade.is_upgrade());
+    assert!(!upgrade.is_llsc());
+    assert!(!upgrade.is_locked_rmw());
+    assert!(!upgrade.requires_writable());
+
+    let store_conditional = match generator.next_event(upgrade.tick(), 0).unwrap().unwrap() {
+        TrafficTraceEvent::Response(event) => event,
+        _ => panic!("StoreCondResp should emit a response event"),
+    };
+    assert_eq!(store_conditional.tick(), 107);
+    assert_eq!(store_conditional.sequence(), 1);
+    assert_eq!(
+        store_conditional.kind(),
+        TrafficTraceResponseKind::StoreConditional
+    );
+    assert!(!store_conditional.is_upgrade());
+    assert!(store_conditional.is_llsc());
+    assert!(!store_conditional.is_locked_rmw());
+    assert!(!store_conditional.requires_writable());
+
+    let locked_read = match generator
+        .next_event(store_conditional.tick(), 0)
+        .unwrap()
+        .unwrap()
+    {
+        TrafficTraceEvent::Response(event) => event,
+        _ => panic!("LockedRMWReadResp should emit a response event"),
+    };
+    assert_eq!(locked_read.tick(), 109);
+    assert_eq!(locked_read.sequence(), 2);
+    assert_eq!(locked_read.kind(), TrafficTraceResponseKind::LockedRmwRead);
+    assert!(!locked_read.is_upgrade());
+    assert!(!locked_read.is_llsc());
+    assert!(locked_read.is_locked_rmw());
+    assert!(locked_read.requires_writable());
+
+    let locked_write = match generator
+        .next_event(locked_read.tick(), 0)
+        .unwrap()
+        .unwrap()
+    {
+        TrafficTraceEvent::Response(event) => event,
+        _ => panic!("LockedRMWWriteResp should emit a response event"),
+    };
+    assert_eq!(locked_write.tick(), 111);
+    assert_eq!(locked_write.sequence(), 3);
+    assert_eq!(
+        locked_write.kind(),
+        TrafficTraceResponseKind::LockedRmwWrite
+    );
+    assert!(!locked_write.is_upgrade());
+    assert!(!locked_write.is_llsc());
+    assert!(locked_write.is_locked_rmw());
+    assert!(locked_write.requires_writable());
+}
+
+#[test]
 fn trace_parser_rejects_response_flags() {
     assert_eq!(
         TrafficTrace::from_gem5_packet_trace(
@@ -408,6 +521,10 @@ fn trace_response_kind_preserves_gem5_response_attributes() {
         is_software_prefetch: bool,
         is_hardware_prefetch: bool,
         is_prefetch: bool,
+        is_upgrade: bool,
+        is_llsc: bool,
+        is_locked_rmw: bool,
+        requires_writable: bool,
         is_read: bool,
         is_write: bool,
     }
@@ -421,6 +538,10 @@ fn trace_response_kind_preserves_gem5_response_attributes() {
             is_software_prefetch: false,
             is_hardware_prefetch: false,
             is_prefetch: false,
+            is_upgrade: false,
+            is_llsc: false,
+            is_locked_rmw: false,
+            requires_writable: false,
             is_read: false,
             is_write: false,
         }
@@ -460,7 +581,10 @@ fn trace_response_kind_preserves_gem5_response_attributes() {
             is_read: true,
             ..response_policy(TrafficTraceResponseKind::HardPrefetch)
         },
-        response_policy(TrafficTraceResponseKind::Upgrade),
+        ResponsePolicyExpectation {
+            is_upgrade: true,
+            ..response_policy(TrafficTraceResponseKind::Upgrade)
+        },
         ResponsePolicyExpectation {
             returns_data: true,
             is_read: true,
@@ -473,15 +597,20 @@ fn trace_response_kind_preserves_gem5_response_attributes() {
         },
         ResponsePolicyExpectation {
             is_write: true,
+            is_llsc: true,
             ..response_policy(TrafficTraceResponseKind::StoreConditional)
         },
         ResponsePolicyExpectation {
             returns_data: true,
             is_read: true,
+            is_locked_rmw: true,
+            requires_writable: true,
             ..response_policy(TrafficTraceResponseKind::LockedRmwRead)
         },
         ResponsePolicyExpectation {
             is_write: true,
+            is_locked_rmw: true,
+            requires_writable: true,
             ..response_policy(TrafficTraceResponseKind::LockedRmwWrite)
         },
         ResponsePolicyExpectation {
@@ -547,6 +676,30 @@ fn trace_response_kind_preserves_gem5_response_attributes() {
             kind.is_prefetch(),
             expectation.is_prefetch,
             "{} prefetch policy should match gem5",
+            kind.gem5_name()
+        );
+        assert_eq!(
+            kind.is_upgrade(),
+            expectation.is_upgrade,
+            "{} upgrade policy should match gem5",
+            kind.gem5_name()
+        );
+        assert_eq!(
+            kind.is_llsc(),
+            expectation.is_llsc,
+            "{} LLSC policy should match gem5",
+            kind.gem5_name()
+        );
+        assert_eq!(
+            kind.is_locked_rmw(),
+            expectation.is_locked_rmw,
+            "{} locked-RMW policy should match gem5",
+            kind.gem5_name()
+        );
+        assert_eq!(
+            kind.requires_writable(),
+            expectation.requires_writable,
+            "{} writable policy should match gem5",
             kind.gem5_name()
         );
         assert_eq!(

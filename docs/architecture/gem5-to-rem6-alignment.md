@@ -2916,8 +2916,9 @@ Full cache flush execution remains a cache subsystem contract because gem5 uses
 `TrafficTraceEvent::Response` events that preserve tick ordering, sequence,
 optional address, optional size, optional packet id, optional PC metadata, and
 gem5 response read/write classification, data policy, invalidation policy,
-clean policy, and prefetch policy, plus packet-count accounting without
-constructing a `MemoryRequest` or adding read/write byte accounting.
+clean policy, prefetch policy, upgrade policy, LLSC policy, locked-RMW policy,
+and writable-response policy, plus packet-count accounting without constructing
+a `MemoryRequest` or adding read/write byte accounting.
 This makes gem5 response packets visible to trace replay and traffic-controller
 clients while leaving executable response matching and response-status
 propagation through memory controllers, caches, and CPU ports as separate
