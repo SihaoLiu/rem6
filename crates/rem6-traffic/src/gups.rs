@@ -216,6 +216,15 @@ impl GupsTrafficGenerator {
         }
     }
 
+    pub fn enter(&mut self) {
+        self.next_sequence = 0;
+        self.reads_created = 0;
+        self.summary = TrafficGeneratorSummary::default();
+        self.rng = TrafficRng::new(self.config.rng_state());
+        self.pending_reads.clear();
+        self.pending_writes.clear();
+    }
+
     pub fn restore(snapshot: TrafficGupsSnapshot) -> Result<Self, TrafficGeneratorError> {
         validate_snapshot(
             snapshot.config,
@@ -252,6 +261,17 @@ impl GupsTrafficGenerator {
         }
 
         self.emit_read(tick)
+    }
+
+    pub fn schedule_tick(
+        &self,
+        tick: u64,
+        _retry_delay: u64,
+    ) -> Result<u64, TrafficGeneratorError> {
+        if !self.pending_writes.is_empty() || self.reads_created < self.config.target_updates() {
+            return next_cycle(tick);
+        }
+        Ok(u64::MAX)
     }
 
     pub fn complete_read(

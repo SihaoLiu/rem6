@@ -233,6 +233,9 @@ pub enum TrafficGeneratorError {
     TrafficControllerUnknownStateGenerator {
         state: TrafficStateId,
     },
+    TrafficControllerStateNotGups {
+        state: TrafficStateId,
+    },
     TraceTruncatedMagic {
         length: usize,
     },
@@ -768,6 +771,11 @@ impl fmt::Display for TrafficGeneratorError {
             Self::TrafficControllerUnknownStateGenerator { state } => write!(
                 formatter,
                 "traffic controller has generator for unknown state {}",
+                state.get()
+            ),
+            Self::TrafficControllerStateNotGups { state } => write!(
+                formatter,
+                "traffic controller state {} is not a GUPS generator",
                 state.get()
             ),
             Self::TraceTruncatedMagic { length } => write!(

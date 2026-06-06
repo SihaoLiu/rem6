@@ -1,12 +1,12 @@
 use std::io::Write;
 
 use flate2::{write::GzEncoder, Compression};
-use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout};
+use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout, MemoryOperation};
 use rem6_traffic::{
     TrafficController, TrafficControllerConfig, TrafficDramAddressMapping, TrafficDramMode,
     TrafficGeneratorError, TrafficHybridSide, TrafficStateGenerator, TrafficStateId,
-    TrafficTextBindingOptions, TrafficTextConfig, TrafficTextMemoryParams, TrafficTextStateMode,
-    TRAFFIC_TRANSITION_PROBABILITY_SCALE,
+    TrafficTextBindingOptions, TrafficTextConfig, TrafficTextGupsParams, TrafficTextMemoryParams,
+    TrafficTextStateMode, TRAFFIC_TRANSITION_PROBABILITY_SCALE,
 };
 
 const GEM5_MAGIC: [u8; 4] = [0x67, 0x65, 0x6d, 0x35];
@@ -439,6 +439,74 @@ fn traffic_text_config_binds_hybrid_mode_to_controller_generator() {
 }
 
 #[test]
+fn traffic_text_config_binds_gups_mode_to_controller_generator() {
+    let config = parse(
+        r#"
+        STATE 0 100 GUPS 4096 16 1
+        INIT 0
+        TRANSITION 0 0 1
+        "#,
+    );
+
+    assert_eq!(
+        config.state(TrafficStateId::new(0)).unwrap().mode(),
+        &TrafficTextStateMode::Gups(TrafficTextGupsParams::new(4096, 16, 1))
+    );
+
+    let controller_config = config.to_controller_config(binding_options()).unwrap();
+    let TrafficStateGenerator::Gups(gups) = bound_generator(&controller_config, 0) else {
+        panic!("state 0 should bind to GUPS");
+    };
+    assert_eq!(gups.config().agent(), AgentId::new(9));
+    assert_eq!(gups.config().line_layout(), line_layout());
+    assert_eq!(gups.config().start(), Address::new(4096));
+    assert_eq!(gups.config().mem_size(), 16);
+    assert_eq!(gups.config().update_limit(), Some(1));
+    assert_eq!(gups.config().target_updates(), 1);
+
+    let mut controller = TrafficController::new(controller_config);
+    assert!(controller.start(0).unwrap().is_empty());
+
+    let read = controller
+        .next_event(0, 0)
+        .unwrap()
+        .unwrap()
+        .request()
+        .unwrap()
+        .clone();
+    assert_eq!(read.tick(), 1);
+    assert_eq!(read.request().operation(), MemoryOperation::ReadShared);
+    assert_eq!(read.request().size(), AccessSize::new(8).unwrap());
+
+    assert!(controller.next_event(read.tick(), 0).unwrap().is_none());
+    assert_eq!(controller.current_state(), Some(TrafficStateId::new(0)));
+
+    controller
+        .complete_gups_read(
+            TrafficStateId::new(0),
+            read.sequence(),
+            0x1122_3344_5566_7788,
+        )
+        .unwrap();
+
+    let write = controller
+        .next_event(read.tick(), 0)
+        .unwrap()
+        .unwrap()
+        .request()
+        .unwrap()
+        .clone();
+    assert_eq!(write.tick(), 2);
+    assert_eq!(write.address(), read.address());
+    assert_eq!(write.request().operation(), MemoryOperation::Write);
+    assert_eq!(
+        write.request().data().unwrap(),
+        &0x1122_3344_5566_7788_u64.to_le_bytes()
+    );
+    assert_eq!(write.request().byte_mask().unwrap().len(), 8);
+}
+
+#[test]
 fn traffic_text_binding_options_default_to_gem5_non_elastic_requests() {
     let config = parse(
         r#"
@@ -478,6 +546,22 @@ fn traffic_text_config_rejects_modes_without_generator_binding() {
         TrafficGeneratorError::TrafficConfigUnsupportedStateMode {
             state: TrafficStateId::new(0),
             mode: "TRACE",
+        }
+    );
+}
+
+#[test]
+fn traffic_text_config_rejects_malformed_gups_state_fields() {
+    let error =
+        TrafficTextConfig::parse("STATE 0 1 GUPS 4096 16 1 extra\nINIT 0\nTRANSITION 0 0 1")
+            .unwrap_err();
+
+    assert_eq!(
+        error,
+        TrafficGeneratorError::TrafficConfigUnexpectedToken {
+            line: 1,
+            record: "STATE",
+            token: "extra".to_string(),
         }
     );
 }

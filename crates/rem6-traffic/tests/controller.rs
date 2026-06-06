@@ -4,15 +4,15 @@ use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryOperation, MemoryRequestId,
 };
 use rem6_traffic::{
-    DramTrafficGenerator, HybridTrafficGenerator, LinearTrafficGenerator, RandomTrafficGenerator,
-    StridedTrafficGenerator, TrafficController, TrafficControllerConfig, TrafficControllerSnapshot,
-    TrafficControllerState, TrafficDramAddressMapping, TrafficDramConfig, TrafficDramMode,
-    TrafficGeneratorError, TrafficHybridConfig, TrafficHybridSideConfig, TrafficIdleGenerator,
-    TrafficLinearConfig, TrafficRandomConfig, TrafficRequestKind, TrafficStateGenerator,
-    TrafficStateGeneratorSnapshot, TrafficStateGraphConfig, TrafficStateId, TrafficStateSpec,
-    TrafficStridedConfig, TrafficTrace, TrafficTraceConfig, TrafficTraceExitStatus,
-    TrafficTraceGenerator, TrafficTransition, TrafficTransitionProbability,
-    TRAFFIC_TRANSITION_PROBABILITY_SCALE,
+    DramTrafficGenerator, GupsTrafficGenerator, HybridTrafficGenerator, LinearTrafficGenerator,
+    RandomTrafficGenerator, StridedTrafficGenerator, TrafficController, TrafficControllerConfig,
+    TrafficControllerSnapshot, TrafficControllerState, TrafficDramAddressMapping,
+    TrafficDramConfig, TrafficDramMode, TrafficGeneratorError, TrafficGupsConfig,
+    TrafficHybridConfig, TrafficHybridSideConfig, TrafficIdleGenerator, TrafficLinearConfig,
+    TrafficRandomConfig, TrafficRequestKind, TrafficStateGenerator, TrafficStateGeneratorSnapshot,
+    TrafficStateGraphConfig, TrafficStateId, TrafficStateSpec, TrafficStridedConfig, TrafficTrace,
+    TrafficTraceConfig, TrafficTraceExitStatus, TrafficTraceGenerator, TrafficTransition,
+    TrafficTransitionProbability, TRAFFIC_TRANSITION_PROBABILITY_SCALE,
 };
 
 const GEM5_MAGIC: [u8; 4] = [0x67, 0x65, 0x6d, 0x35];
@@ -156,6 +156,13 @@ fn hybrid_config(period: u64, read_percent: u8) -> TrafficHybridConfig {
     .unwrap()
 }
 
+fn gups_config() -> TrafficGupsConfig {
+    TrafficGupsConfig::new(AgentId::new(7), line_layout(), Address::new(0x3000), 8)
+        .unwrap()
+        .with_update_limit(1)
+        .unwrap()
+}
+
 fn linear_state(id: u32, period: u64, read_percent: u8) -> TrafficControllerState {
     TrafficControllerState::new(
         TrafficStateId::new(id),
@@ -200,6 +207,13 @@ fn hybrid_state(id: u32, period: u64, read_percent: u8) -> TrafficControllerStat
             period,
             read_percent,
         ))),
+    )
+}
+
+fn gups_state(id: u32) -> TrafficControllerState {
+    TrafficControllerState::new(
+        TrafficStateId::new(id),
+        TrafficStateGenerator::Gups(GupsTrafficGenerator::new(gups_config())),
     )
 }
 
@@ -356,8 +370,8 @@ fn traffic_controller_snapshot_restores_machine_generator_and_summary_state() {
 fn traffic_controller_snapshot_preserves_every_leaf_generator() {
     let config = TrafficControllerConfig::new(
         graph(
-            (0..8).map(|id| state(id, u64::MAX)).collect(),
-            (0..8).map(|id| transition(id, id)).collect(),
+            (0..9).map(|id| state(id, u64::MAX)).collect(),
+            (0..9).map(|id| transition(id, id)).collect(),
         ),
         vec![
             linear_state(0, 4, 100),
@@ -368,6 +382,7 @@ fn traffic_controller_snapshot_preserves_every_leaf_generator() {
             dram_state(5, 4, 100),
             hybrid_state(6, 4, 100),
             trace_state(7, u64::MAX, 0),
+            gups_state(8),
         ],
     )
     .unwrap();
@@ -409,7 +424,109 @@ fn traffic_controller_snapshot_preserves_every_leaf_generator() {
         snapshot_generator(&snapshot, 7),
         TrafficStateGeneratorSnapshot::Trace(_)
     ));
+    assert!(matches!(
+        snapshot_generator(&snapshot, 8),
+        TrafficStateGeneratorSnapshot::Gups(_)
+    ));
     assert_eq!(restored.snapshot().generators(), snapshot.generators());
+}
+
+#[test]
+fn traffic_controller_restarts_gups_leaf_on_state_reentry() {
+    let config = TrafficControllerConfig::new(
+        graph(
+            vec![state(0, u64::MAX), state(1, 1)],
+            vec![transition(0, 1), transition(1, 0)],
+        ),
+        vec![gups_state(0), idle_state(1, 1)],
+    )
+    .unwrap();
+    let mut controller = TrafficController::new(config);
+
+    controller.start(0).unwrap();
+    let first_read = controller
+        .next_event(0, 0)
+        .unwrap()
+        .unwrap()
+        .request()
+        .unwrap()
+        .clone();
+    controller
+        .complete_gups_read(TrafficStateId::new(0), first_read.sequence(), 0x44)
+        .unwrap();
+    let first_write_batch = controller
+        .next_event(first_read.tick(), 0)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        first_write_batch.transition().unwrap().to(),
+        TrafficStateId::new(1)
+    );
+    let first_write = first_write_batch.request().unwrap().clone();
+
+    let reenter_gups = controller
+        .next_event(first_write.tick(), 0)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        reenter_gups.transition().unwrap().to(),
+        TrafficStateId::new(0)
+    );
+
+    let second_read = controller
+        .next_event(reenter_gups.transition().unwrap().tick(), 0)
+        .unwrap()
+        .unwrap()
+        .request()
+        .unwrap()
+        .clone();
+    assert_eq!(second_read.sequence(), 0);
+    assert_eq!(second_read.kind(), TrafficRequestKind::Read);
+    assert_eq!(controller.summary().read_count(), 1);
+}
+
+#[test]
+fn traffic_controller_keeps_finite_gups_state_until_update_completes() {
+    let config = TrafficControllerConfig::new(
+        graph(
+            vec![state(0, 1), state(1, u64::MAX)],
+            vec![transition(0, 1), transition(1, 1)],
+        ),
+        vec![gups_state(0), idle_state(1, u64::MAX)],
+    )
+    .unwrap();
+    let mut controller = TrafficController::new(config);
+
+    controller.start(0).unwrap();
+    let read_batch = controller.next_event(0, 0).unwrap().unwrap();
+    assert!(read_batch.transition().is_none());
+    let read = read_batch.request().unwrap().clone();
+    assert_eq!(read.tick(), 1);
+    assert_eq!(read.kind(), TrafficRequestKind::Read);
+    assert_eq!(controller.current_state(), Some(TrafficStateId::new(0)));
+
+    assert!(controller.next_event(read.tick(), 0).unwrap().is_none());
+    assert_eq!(controller.current_state(), Some(TrafficStateId::new(0)));
+
+    controller
+        .complete_gups_read(TrafficStateId::new(0), read.sequence(), 0x55)
+        .unwrap();
+    let write = controller
+        .next_event(read.tick(), 0)
+        .unwrap()
+        .unwrap()
+        .request()
+        .unwrap()
+        .clone();
+    assert_eq!(write.kind(), TrafficRequestKind::Write);
+    assert_eq!(controller.current_state(), Some(TrafficStateId::new(0)));
+
+    let transition_batch = controller.next_event(write.tick(), 0).unwrap().unwrap();
+    assert_eq!(
+        transition_batch.transition().unwrap().to(),
+        TrafficStateId::new(1)
+    );
+    assert_eq!(controller.current_state(), Some(TrafficStateId::new(1)));
 }
 
 #[test]

@@ -1,15 +1,15 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    DramTrafficGenerator, HybridTrafficGenerator, LinearTrafficGenerator, RandomTrafficGenerator,
-    StridedTrafficGenerator, TrafficDramSnapshot, TrafficExitEvent, TrafficExitGenerator,
-    TrafficExitSnapshot, TrafficGeneratorError, TrafficGeneratorSummary, TrafficHybridSnapshot,
-    TrafficIdleGenerator, TrafficIdleSnapshot, TrafficLinearSnapshot, TrafficRandomSnapshot,
-    TrafficRequestEvent, TrafficStateGraphConfig, TrafficStateId, TrafficStateMachine,
-    TrafficStateSnapshot, TrafficStridedSnapshot, TrafficTraceCacheEvent,
-    TrafficTraceDiagnosticEvent, TrafficTraceErrorEvent, TrafficTraceEvent, TrafficTraceExitStatus,
-    TrafficTraceGenerator, TrafficTraceHtmEvent, TrafficTraceResponseEvent, TrafficTraceSnapshot,
-    TrafficTraceSyncEvent, TrafficTraceTlbEvent, TrafficTransitionEvent,
+    DramTrafficGenerator, GupsTrafficGenerator, HybridTrafficGenerator, LinearTrafficGenerator,
+    RandomTrafficGenerator, StridedTrafficGenerator, TrafficDramSnapshot, TrafficExitEvent,
+    TrafficExitGenerator, TrafficExitSnapshot, TrafficGeneratorError, TrafficGeneratorSummary,
+    TrafficGupsSnapshot, TrafficHybridSnapshot, TrafficIdleGenerator, TrafficIdleSnapshot,
+    TrafficLinearSnapshot, TrafficRandomSnapshot, TrafficRequestEvent, TrafficStateGraphConfig,
+    TrafficStateId, TrafficStateMachine, TrafficStateSnapshot, TrafficStridedSnapshot,
+    TrafficTraceCacheEvent, TrafficTraceDiagnosticEvent, TrafficTraceErrorEvent, TrafficTraceEvent,
+    TrafficTraceExitStatus, TrafficTraceGenerator, TrafficTraceHtmEvent, TrafficTraceResponseEvent,
+    TrafficTraceSnapshot, TrafficTraceSyncEvent, TrafficTraceTlbEvent, TrafficTransitionEvent,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -69,6 +69,7 @@ pub enum TrafficStateGenerator {
     Strided(StridedTrafficGenerator),
     Dram(DramTrafficGenerator),
     Hybrid(HybridTrafficGenerator),
+    Gups(GupsTrafficGenerator),
     Trace(TrafficTraceGenerator),
 }
 
@@ -102,6 +103,10 @@ impl TrafficStateGenerator {
                 generator.enter();
                 Vec::new()
             }
+            Self::Gups(generator) => {
+                generator.enter();
+                Vec::new()
+            }
             Self::Trace(generator) => {
                 generator.enter(tick);
                 Vec::new()
@@ -129,6 +134,7 @@ impl TrafficStateGenerator {
             Self::Strided(generator) => generator.clone().schedule_tick(tick, retry_delay),
             Self::Dram(generator) => generator.clone().schedule_tick(tick, retry_delay),
             Self::Hybrid(generator) => generator.clone().schedule_tick(tick, retry_delay),
+            Self::Gups(generator) => generator.schedule_tick(tick, retry_delay),
             Self::Trace(generator) => generator.clone().schedule_tick(tick, retry_delay),
         }
     }
@@ -159,6 +165,9 @@ impl TrafficStateGenerator {
                 .map(TrafficControllerEvent::Request),
             Self::Hybrid(generator) => generator
                 .next_request(tick, retry_delay)?
+                .map(TrafficControllerEvent::Request),
+            Self::Gups(generator) => generator
+                .next_request(tick)?
                 .map(TrafficControllerEvent::Request),
             Self::Trace(generator) => {
                 generator
@@ -197,7 +206,15 @@ impl TrafficStateGenerator {
             Self::Strided(generator) => generator.summary(),
             Self::Dram(generator) => generator.summary(),
             Self::Hybrid(generator) => generator.summary(),
+            Self::Gups(generator) => generator.summary(),
             Self::Trace(generator) => generator.summary(),
+        }
+    }
+
+    fn blocks_transition(&self) -> bool {
+        match self {
+            Self::Gups(generator) => !generator.is_complete(),
+            _ => false,
         }
     }
 
@@ -212,6 +229,7 @@ impl TrafficStateGenerator {
             }
             Self::Dram(generator) => TrafficStateGeneratorSnapshot::Dram(generator.snapshot()),
             Self::Hybrid(generator) => TrafficStateGeneratorSnapshot::Hybrid(generator.snapshot()),
+            Self::Gups(generator) => TrafficStateGeneratorSnapshot::Gups(generator.snapshot()),
             Self::Trace(generator) => TrafficStateGeneratorSnapshot::Trace(generator.snapshot()),
         }
     }
@@ -238,6 +256,9 @@ impl TrafficStateGenerator {
             }
             TrafficStateGeneratorSnapshot::Hybrid(snapshot) => {
                 Ok(Self::Hybrid(HybridTrafficGenerator::restore(snapshot)?))
+            }
+            TrafficStateGeneratorSnapshot::Gups(snapshot) => {
+                Ok(Self::Gups(GupsTrafficGenerator::restore(snapshot)?))
             }
             TrafficStateGeneratorSnapshot::Trace(snapshot) => {
                 Ok(Self::Trace(TrafficTraceGenerator::restore(snapshot)?))
@@ -309,12 +330,20 @@ impl TrafficController {
             .peek_schedule_tick(tick, retry_delay)?;
 
         let next_transition_tick = self.machine.next_transition_tick();
+        let blocks_transition = self
+            .generators
+            .get(&current)
+            .expect("validated traffic controller has current generator")
+            .blocks_transition();
+        if blocks_transition && request_tick == u64::MAX {
+            return Ok(None);
+        }
         if request_tick == u64::MAX && next_transition_tick == u64::MAX {
             let batch = self.transition_at(tick)?;
             return Ok(Some(batch));
         }
 
-        if next_transition_tick <= request_tick {
+        if !blocks_transition && next_transition_tick <= request_tick {
             let batch = self.transition_at(tick.max(next_transition_tick))?;
             return Ok(Some(batch));
         }
@@ -358,6 +387,21 @@ impl TrafficController {
                 TrafficGeneratorSummary::default,
                 TrafficStateGenerator::summary,
             )
+    }
+
+    pub fn complete_gups_read(
+        &mut self,
+        state: TrafficStateId,
+        sequence: u64,
+        value: u64,
+    ) -> Result<(), TrafficGeneratorError> {
+        match self.generators.get_mut(&state) {
+            Some(TrafficStateGenerator::Gups(generator)) => {
+                generator.complete_read(sequence, value)
+            }
+            Some(_) => Err(TrafficGeneratorError::TrafficControllerStateNotGups { state }),
+            None => Err(TrafficGeneratorError::TrafficControllerMissingStateGenerator { state }),
+        }
     }
 
     pub fn snapshot(&self) -> TrafficControllerSnapshot {
@@ -415,12 +459,14 @@ impl TrafficController {
         state: TrafficStateId,
         tick: u64,
     ) -> Result<bool, TrafficGeneratorError> {
-        let request_tick = self
+        let generator = self
             .generators
             .get(&state)
-            .expect("validated traffic controller has current generator")
-            .peek_schedule_tick(tick, 0)?;
-        Ok(request_tick == u64::MAX && self.machine.next_transition_tick() == u64::MAX)
+            .expect("validated traffic controller has current generator");
+        let request_tick = generator.peek_schedule_tick(tick, 0)?;
+        let force_transition =
+            request_tick == u64::MAX && self.machine.next_transition_tick() == u64::MAX;
+        Ok(force_transition && !generator.blocks_transition())
     }
 }
 
@@ -612,6 +658,7 @@ pub enum TrafficStateGeneratorSnapshot {
     Strided(TrafficStridedSnapshot),
     Dram(TrafficDramSnapshot),
     Hybrid(TrafficHybridSnapshot),
+    Gups(TrafficGupsSnapshot),
     Trace(TrafficTraceSnapshot),
 }
 

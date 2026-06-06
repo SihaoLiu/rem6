@@ -3,12 +3,13 @@ use std::str::FromStr;
 use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout};
 
 use crate::{
-    DramTrafficGenerator, LinearTrafficGenerator, RandomTrafficGenerator, StridedTrafficGenerator,
-    TrafficControllerConfig, TrafficControllerState, TrafficDramAddressMapping, TrafficDramConfig,
-    TrafficDramMode, TrafficExitConfig, TrafficExitGenerator, TrafficGeneratorError,
-    TrafficHybridConfig, TrafficHybridSideConfig, TrafficIdleConfig, TrafficIdleGenerator,
-    TrafficLinearConfig, TrafficRandomConfig, TrafficStateGenerator, TrafficStateGraphConfig,
-    TrafficStateId, TrafficStateSpec, TrafficStridedConfig, TrafficTrace, TrafficTraceConfig,
+    DramTrafficGenerator, GupsTrafficGenerator, LinearTrafficGenerator, RandomTrafficGenerator,
+    StridedTrafficGenerator, TrafficControllerConfig, TrafficControllerState,
+    TrafficDramAddressMapping, TrafficDramConfig, TrafficDramMode, TrafficExitConfig,
+    TrafficExitGenerator, TrafficGeneratorError, TrafficGupsConfig, TrafficHybridConfig,
+    TrafficHybridSideConfig, TrafficIdleConfig, TrafficIdleGenerator, TrafficLinearConfig,
+    TrafficRandomConfig, TrafficStateGenerator, TrafficStateGraphConfig, TrafficStateId,
+    TrafficStateSpec, TrafficStridedConfig, TrafficTrace, TrafficTraceConfig,
     TrafficTraceGenerator, TrafficTransition, TrafficTransitionProbability,
     TRAFFIC_TRANSITION_PROBABILITY_SCALE,
 };
@@ -196,6 +197,9 @@ impl TrafficTextState {
             TrafficTextStateMode::Hybrid(params) => TrafficStateGenerator::Hybrid(
                 crate::HybridTrafficGenerator::new(hybrid_config_from_text(*params, options)?),
             ),
+            TrafficTextStateMode::Gups(params) => TrafficStateGenerator::Gups(
+                GupsTrafficGenerator::new(gups_config_from_text(*params, options)?),
+            ),
             TrafficTextStateMode::Trace { .. } => {
                 return Err(TrafficGeneratorError::TrafficConfigUnsupportedStateMode {
                     state: self.id,
@@ -253,6 +257,7 @@ pub enum TrafficTextStateMode {
     DramRotate(TrafficTextDramParams),
     Nvm(TrafficTextDramParams),
     Hybrid(TrafficTextHybridParams),
+    Gups(TrafficTextGupsParams),
 }
 
 impl TrafficTextStateMode {
@@ -268,6 +273,7 @@ impl TrafficTextStateMode {
             Self::DramRotate(_) => "DRAM_ROTATE",
             Self::Nvm(_) => "NVM",
             Self::Hybrid(_) => "HYBRID",
+            Self::Gups(_) => "GUPS",
         }
     }
 }
@@ -549,6 +555,35 @@ pub struct TrafficTextHybridParams {
     nvm_percent: u8,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TrafficTextGupsParams {
+    start_addr: u64,
+    mem_size: u64,
+    update_limit: u64,
+}
+
+impl TrafficTextGupsParams {
+    pub const fn new(start_addr: u64, mem_size: u64, update_limit: u64) -> Self {
+        Self {
+            start_addr,
+            mem_size,
+            update_limit,
+        }
+    }
+
+    pub const fn start_addr(self) -> u64 {
+        self.start_addr
+    }
+
+    pub const fn mem_size(self) -> u64 {
+        self.mem_size
+    }
+
+    pub const fn update_limit(self) -> u64 {
+        self.update_limit
+    }
+}
+
 impl TrafficTextHybridParams {
     #[allow(clippy::too_many_arguments)]
     pub const fn new(
@@ -721,6 +756,19 @@ fn hybrid_config_from_text(
     .with_elastic_requests(options.elastic_requests()))
 }
 
+fn gups_config_from_text(
+    params: TrafficTextGupsParams,
+    options: TrafficTextBindingOptions,
+) -> Result<TrafficGupsConfig, TrafficGeneratorError> {
+    TrafficGupsConfig::new(
+        options.agent(),
+        options.line_layout(),
+        Address::new(params.start_addr()),
+        params.mem_size(),
+    )?
+    .with_update_limit(params.update_limit())
+}
+
 fn hybrid_side_config_from_text(
     params: TrafficTextHybridSideParams,
 ) -> Result<TrafficHybridSideConfig, TrafficGeneratorError> {
@@ -780,6 +828,7 @@ fn parse_state(line: usize, tokens: &[&str]) -> Result<TrafficTextState, Traffic
         "DRAM_ROTATE" => TrafficTextStateMode::DramRotate(parse_dram_params(&mut parser)?),
         "NVM" => TrafficTextStateMode::Nvm(parse_dram_params(&mut parser)?),
         "HYBRID" => TrafficTextStateMode::Hybrid(parse_hybrid_params(&mut parser)?),
+        "GUPS" => TrafficTextStateMode::Gups(parse_gups_params(&mut parser)?),
         mode => {
             return Err(TrafficGeneratorError::TrafficConfigUnknownStateMode {
                 line,
@@ -965,6 +1014,20 @@ fn parse_hybrid_params(
         ),
         addr_mapping,
         nvm_percent,
+    ))
+}
+
+fn parse_gups_params(
+    parser: &mut LineParser<'_>,
+) -> Result<TrafficTextGupsParams, TrafficGeneratorError> {
+    let start_addr = parser.next_u64("start_addr")?;
+    let mem_size = parser.next_u64("mem_size")?;
+    let update_limit = parser.next_u64("update_limit")?;
+
+    Ok(TrafficTextGupsParams::new(
+        start_addr,
+        mem_size,
+        update_limit,
     ))
 }
 
