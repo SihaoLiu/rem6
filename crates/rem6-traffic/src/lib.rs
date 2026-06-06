@@ -9,6 +9,7 @@ mod state;
 mod text_config;
 mod trace;
 mod trace_event;
+mod trace_header;
 mod trace_proto;
 
 pub use common::{TrafficGeneratorSummary, TrafficRequestEvent, TrafficRequestKind};
@@ -55,3 +56,4 @@ pub use trace_event::{
     TrafficTraceHtmEvent, TrafficTraceHtmKind, TrafficTraceResponseEvent, TrafficTraceResponseKind,
     TrafficTraceSyncEvent, TrafficTraceSyncKind, TrafficTraceTlbEvent, TrafficTraceTlbKind,
 };
+pub use trace_header::TrafficTraceIdString;

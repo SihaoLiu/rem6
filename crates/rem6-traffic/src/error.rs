@@ -334,6 +334,15 @@ pub enum TrafficGeneratorError {
         field: &'static str,
         wire_type: u64,
     },
+    TraceInvalidLengthDelimitedFieldWireType {
+        message: &'static str,
+        field: &'static str,
+        wire_type: u64,
+    },
+    TraceInvalidUtf8Field {
+        message: &'static str,
+        field: &'static str,
+    },
     TraceFieldOutOfRange {
         message: &'static str,
         field: &'static str,
@@ -857,6 +866,18 @@ impl fmt::Display for TrafficGeneratorError {
             } => write!(
                 formatter,
                 "gem5 packet trace {message}.{field} has protobuf wire type {wire_type}, expected varint"
+            ),
+            Self::TraceInvalidLengthDelimitedFieldWireType {
+                message,
+                field,
+                wire_type,
+            } => write!(
+                formatter,
+                "gem5 packet trace {message}.{field} has protobuf wire type {wire_type}, expected length-delimited"
+            ),
+            Self::TraceInvalidUtf8Field { message, field } => write!(
+                formatter,
+                "gem5 packet trace {message}.{field} is not valid UTF-8"
             ),
             Self::TraceFieldOutOfRange {
                 message,

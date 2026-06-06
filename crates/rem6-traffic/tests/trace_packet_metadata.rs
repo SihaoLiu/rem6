@@ -109,6 +109,43 @@ fn trace_snapshot_restore_preserves_pending_packet_metadata() {
     assert_eq!(second.trace_pc(), Some(Address::new(0x1400)));
 }
 
+#[test]
+fn trace_preserves_gem5_packet_header_metadata() {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&GEM5_MAGIC);
+    push_message(
+        &mut bytes,
+        &[
+            field_length(1, b"system.cpu.trace"),
+            field_varint(2, 7),
+            field_varint(3, TICK_FREQUENCY),
+            id_string_entry(3, b"cpu0"),
+            id_string_entry(9, b"dma"),
+        ],
+    );
+    push_message(
+        &mut bytes,
+        &[
+            field_varint(1, 1),
+            field_varint(2, 1),
+            field_varint(3, 0x100),
+            field_varint(4, 8),
+        ],
+    );
+
+    let trace = TrafficTrace::from_gem5_packet_trace(&bytes, TICK_FREQUENCY).unwrap();
+
+    assert_eq!(trace.object_id(), Some("system.cpu.trace"));
+    assert_eq!(trace.header_version(), 7);
+    assert_eq!(trace.id_strings().len(), 2);
+    assert_eq!(trace.id_strings()[0].key(), 3);
+    assert_eq!(trace.id_strings()[0].value(), "cpu0");
+    assert_eq!(trace.id_strings()[1].key(), 9);
+    assert_eq!(trace.id_strings()[1].value(), "dma");
+    assert_eq!(trace.id_string(9), Some("dma"));
+    assert_eq!(trace.id_string(4), None);
+}
+
 fn gem5_packet_trace(tick_frequency: u64, packets: &[PacketFields]) -> Vec<u8> {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(&GEM5_MAGIC);
@@ -157,6 +194,11 @@ fn field_length(field: u64, value: &[u8]) -> Vec<u8> {
     push_varint(&mut out, value.len() as u64);
     out.extend_from_slice(value);
     out
+}
+
+fn id_string_entry(key: u32, value: &[u8]) -> Vec<u8> {
+    let fields = [field_varint(1, u64::from(key)), field_length(2, value)];
+    field_length(4, &fields.iter().flatten().copied().collect::<Vec<_>>())
 }
 
 fn push_varint(out: &mut Vec<u8>, mut value: u64) {

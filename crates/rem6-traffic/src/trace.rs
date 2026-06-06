@@ -14,6 +14,7 @@ use crate::{
         TrafficTraceResponseKind, TrafficTraceSyncEvent, TrafficTraceSyncKind,
         TrafficTraceTlbEvent, TrafficTraceTlbKind,
     },
+    trace_header::{parse_gem5_packet_header, TrafficTraceHeader, TrafficTraceIdString},
     trace_proto::{
         decompress_gzip_trace, is_gzip_stream, read_u32_field, Gem5PacketTraceReader,
         ProtoMessageParser,
@@ -651,7 +652,7 @@ impl TrafficTraceRequestFlags {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TrafficTrace {
-    tick_frequency: u64,
+    header: TrafficTraceHeader,
     elements: Vec<TrafficTraceElement>,
 }
 
@@ -671,12 +672,12 @@ impl TrafficTrace {
         let header = stream
             .next_message()?
             .ok_or(TrafficGeneratorError::TraceMissingHeader)?;
-        let tick_frequency = parse_header(header)?;
+        let header = parse_gem5_packet_header(header)?;
 
-        if tick_frequency != expected_tick_frequency {
+        if header.tick_frequency() != expected_tick_frequency {
             return Err(TrafficGeneratorError::TraceTickFrequencyMismatch {
                 expected: expected_tick_frequency,
-                actual: tick_frequency,
+                actual: header.tick_frequency(),
             });
         }
 
@@ -685,14 +686,27 @@ impl TrafficTrace {
             elements.push(parse_packet(message)?);
         }
 
-        Ok(Self {
-            tick_frequency,
-            elements,
-        })
+        Ok(Self { header, elements })
     }
 
     pub const fn tick_frequency(&self) -> u64 {
-        self.tick_frequency
+        self.header.tick_frequency()
+    }
+
+    pub fn object_id(&self) -> Option<&str> {
+        self.header.object_id()
+    }
+
+    pub const fn header_version(&self) -> u32 {
+        self.header.version()
+    }
+
+    pub fn id_strings(&self) -> &[TrafficTraceIdString] {
+        self.header.id_strings()
+    }
+
+    pub fn id_string(&self, key: u32) -> Option<&str> {
+        self.header.id_string(key)
     }
 
     pub fn len(&self) -> usize {
@@ -1529,23 +1543,6 @@ fn validate_invalidate_request(
         });
     }
     Ok(())
-}
-
-fn parse_header(message: &[u8]) -> Result<u64, TrafficGeneratorError> {
-    let mut parser = ProtoMessageParser::new(message);
-    let mut tick_frequency = None;
-
-    while let Some(field) = parser.next_field()? {
-        if field.number == 3 {
-            tick_frequency = Some(field.varint("PacketHeader", "tick_freq")?);
-        }
-        parser.skip(field)?;
-    }
-
-    tick_frequency.ok_or(TrafficGeneratorError::TraceMissingField {
-        message: "PacketHeader",
-        field: "tick_freq",
-    })
 }
 
 fn parse_packet(message: &[u8]) -> Result<TrafficTraceElement, TrafficGeneratorError> {

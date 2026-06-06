@@ -104,6 +104,42 @@ impl ProtoField {
                 wire_type: self.wire_type,
             })
     }
+
+    pub(crate) fn length_delimited<'a>(
+        self,
+        bytes: &'a [u8],
+        message: &'static str,
+        field: &'static str,
+    ) -> Result<&'a [u8], TrafficGeneratorError> {
+        if self.wire_type != WIRE_LENGTH_DELIMITED {
+            return Err(
+                TrafficGeneratorError::TraceInvalidLengthDelimitedFieldWireType {
+                    message,
+                    field,
+                    wire_type: self.wire_type,
+                },
+            );
+        }
+
+        let mut offset = self.value_offset;
+        let length = read_varint_u64(bytes, &mut offset)?;
+        let length = usize::try_from(length).map_err(|_| {
+            TrafficGeneratorError::TraceLengthDelimitedFieldTooLarge {
+                offset: self.value_offset,
+                length,
+            }
+        })?;
+        let remaining = bytes.len().saturating_sub(offset);
+        if length > remaining {
+            return Err(TrafficGeneratorError::TraceTruncatedField {
+                offset,
+                length,
+                remaining,
+            });
+        }
+
+        Ok(&bytes[offset..offset + length])
+    }
 }
 
 pub(crate) struct ProtoMessageParser<'a> {
@@ -199,6 +235,19 @@ pub(crate) fn read_u32_field(
         message,
         field: name,
         value,
+    })
+}
+
+pub(crate) fn read_string_field<'a>(
+    field: ProtoField,
+    bytes: &'a [u8],
+    message: &'static str,
+    name: &'static str,
+) -> Result<&'a str, TrafficGeneratorError> {
+    let raw = field.length_delimited(bytes, message, name)?;
+    std::str::from_utf8(raw).map_err(|_| TrafficGeneratorError::TraceInvalidUtf8Field {
+        message,
+        field: name,
     })
 }
 
