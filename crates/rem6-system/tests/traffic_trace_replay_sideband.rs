@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{Address, AgentId, CacheLineLayout};
 use rem6_system::{
+    traffic_trace_replay_controller_control_completion,
     traffic_trace_replay_controller_runtime_sideband_events,
     traffic_trace_replay_controller_target_outcome, traffic_trace_replay_runtime_sideband_events,
     TrafficTraceReplayControllerRuntime, TrafficTraceReplaySidebandEvent,
@@ -22,6 +23,8 @@ const GEM5_MAGIC: [u8; 4] = [0x67, 0x65, 0x6d, 0x35];
 const TICK_FREQUENCY: u64 = 1_000;
 const GEM5_READ_REQ: u32 = 1;
 const GEM5_READ_RESP_WITH_INVALIDATE: u32 = 3;
+const GEM5_MEM_FENCE_REQ: u32 = 38;
+const GEM5_MEM_FENCE_RESP: u32 = 41;
 const GEM5_PRINT_REQ: u32 = 52;
 const GEM5_FLUSH_REQ: u32 = 53;
 const GEM5_HTM_ABORT: u32 = 58;
@@ -231,7 +234,7 @@ fn traffic_trace_replay_controller_runtime_preserves_sideband_while_target_advan
                         context.now(),
                         context,
                     ),
-                    1
+                    0
                 );
                 outcome
             },
@@ -256,6 +259,172 @@ fn traffic_trace_replay_controller_runtime_preserves_sideband_while_target_advan
         TrafficTraceReplaySidebandEvent::Cache(event)
             if event.kind() == TrafficTraceCacheKind::Flush
                 && event.address() == Address::new(0x8040)
+    ));
+    assert!(runtime.lock().unwrap().is_empty());
+}
+
+#[test]
+fn traffic_trace_replay_controller_target_outcome_schedules_sideband_while_advancing() {
+    let mut controller = controller_for_packets(&[
+        PacketFields {
+            tick: 0,
+            command: GEM5_READ_REQ,
+            address: Some(0x8800),
+            size: Some(8),
+            packet_id: Some(25),
+        },
+        PacketFields {
+            tick: 5,
+            command: GEM5_FLUSH_REQ,
+            address: Some(0x8840),
+            size: Some(64),
+            packet_id: Some(26),
+        },
+        PacketFields {
+            tick: 8,
+            command: GEM5_READ_RESP_WITH_INVALIDATE,
+            address: Some(0x8800),
+            size: Some(8),
+            packet_id: Some(25),
+        },
+    ]);
+
+    assert!(controller.start(0).unwrap().is_empty());
+    let request_batch = controller.next_event(0, 0).unwrap().unwrap();
+    let req = request_batch.request().unwrap().request().clone();
+
+    let controller = Arc::new(Mutex::new(controller));
+    let runtime = Arc::new(Mutex::new(TrafficTraceReplayControllerRuntime::default()));
+    runtime
+        .lock()
+        .unwrap()
+        .record_batch(&request_batch)
+        .unwrap();
+
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let responses = Arc::new(Mutex::new(Vec::new()));
+    let core = endpoint("core0");
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                core.clone(),
+                PartitionId::new(0),
+                endpoint("memory0"),
+                PartitionId::new(1),
+                3,
+                5,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    let replay = Arc::clone(&runtime);
+    let trace_controller = Arc::clone(&controller);
+    let response_log = Arc::clone(&responses);
+    transport
+        .submit(
+            &mut scheduler,
+            route,
+            req.clone(),
+            MemoryTrace::new(),
+            move |delivery, context| {
+                traffic_trace_replay_controller_target_outcome(
+                    Arc::clone(&replay),
+                    Arc::clone(&trace_controller),
+                    &delivery,
+                    context,
+                    0,
+                )
+                .unwrap()
+            },
+            move |delivery: ResponseDelivery| {
+                response_log.lock().unwrap().push((
+                    delivery.tick(),
+                    delivery.endpoint().clone(),
+                    delivery.response().request_id(),
+                ));
+            },
+        )
+        .unwrap();
+
+    scheduler.run_until_idle_conservative();
+
+    assert_eq!(*responses.lock().unwrap(), vec![(13, core, req.id())]);
+    let records = runtime.lock().unwrap().sideband_events().to_vec();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].tick(), 5);
+    assert!(matches!(
+        records[0].event(),
+        TrafficTraceReplaySidebandEvent::Cache(event)
+            if event.kind() == TrafficTraceCacheKind::Flush
+                && event.address() == Address::new(0x8840)
+    ));
+    assert!(runtime.lock().unwrap().is_empty());
+}
+
+#[test]
+fn traffic_trace_replay_controller_control_completion_schedules_sideband_while_advancing() {
+    let mut controller = controller_for_packets(&[
+        PacketFields {
+            tick: 0,
+            command: GEM5_MEM_FENCE_REQ,
+            address: None,
+            size: None,
+            packet_id: Some(28),
+        },
+        PacketFields {
+            tick: 5,
+            command: GEM5_FLUSH_REQ,
+            address: Some(0x8940),
+            size: Some(64),
+            packet_id: Some(29),
+        },
+        PacketFields {
+            tick: 7,
+            command: GEM5_MEM_FENCE_RESP,
+            address: None,
+            size: None,
+            packet_id: Some(28),
+        },
+    ]);
+
+    assert!(controller.start(0).unwrap().is_empty());
+    let sync_batch = controller.next_event(0, 0).unwrap().unwrap();
+    assert!(sync_batch.trace_sync().unwrap().requires_response());
+
+    let controller = Arc::new(Mutex::new(controller));
+    let runtime = Arc::new(Mutex::new(TrafficTraceReplayControllerRuntime::default()));
+    runtime.lock().unwrap().record_batch(&sync_batch).unwrap();
+
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let replay = Arc::clone(&runtime);
+    let trace_controller = Arc::clone(&controller);
+    scheduler
+        .schedule_at(PartitionId::new(0), 3, move |context| {
+            traffic_trace_replay_controller_control_completion(
+                Arc::clone(&replay),
+                Arc::clone(&trace_controller),
+                context.now(),
+                context,
+                0,
+            )
+            .unwrap();
+        })
+        .unwrap();
+
+    scheduler.run_until_idle_conservative();
+
+    assert_eq!(runtime.lock().unwrap().control_acks().len(), 1);
+    assert_eq!(runtime.lock().unwrap().control_acks()[0].tick(), 7);
+    let records = runtime.lock().unwrap().sideband_events().to_vec();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].tick(), 5);
+    assert!(matches!(
+        records[0].event(),
+        TrafficTraceReplaySidebandEvent::Cache(event)
+            if event.kind() == TrafficTraceCacheKind::Flush
+                && event.address() == Address::new(0x8940)
     ));
     assert!(runtime.lock().unwrap().is_empty());
 }
@@ -338,7 +507,7 @@ fn traffic_trace_replay_controller_runtime_records_late_sideband_after_target_ad
                         context.now(),
                         context,
                     ),
-                    1
+                    0
                 );
                 outcome
             },

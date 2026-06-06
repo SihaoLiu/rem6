@@ -2948,9 +2948,11 @@ control-completion helper for response-required sync and HTM events: it records
 the control source tick, advances the same `TrafficController` until a control
 acknowledgement or control failure appears, and schedules a typed control ack
 or failure record at the replay tick. TLB external-sync, cache flush,
-diagnostic print, and non-response HTM abort trace events are now captured by
-the sideband runtime and scheduled at their trace ticks, so controller-aware
-memory replay that advances past those events preserves executable audit
+diagnostic print, and non-response HTM abort trace events are captured by the
+sideband runtime. The standalone sideband helper can schedule those events
+from an already-recorded sideband runtime, and the controller-aware memory and
+control helpers now also drain sideband events automatically whenever their
+trace-controller advance crosses those events. This preserves executable audit
 records instead of dropping them; if a sideband event is discovered after its
 trace tick, it is recorded at the current scheduler tick as late-observed trace
 evidence rather than blocking the replay queue. The lower-level memory target
@@ -2958,11 +2960,12 @@ runtime ignores control and sideband actions, and the lower-level control
 runtime ignores memory and sideband actions only after that fanout, so a
 controller-aware memory replay that advances past a control ack keeps the ack
 available for the control consumer, and the inverse remains true for memory
-responses and failures. Response actions become transport target outcomes that use the trace
-response tick to compute the target-side delay from request delivery to replay
-response, while memory-failure actions use the trace failure tick to compute
-the target-side delay plus error metadata and let the helper schedule runtime
-failure records without delivering a memory response. Both paths reject
+responses and failures. Response actions become transport target outcomes that
+use the trace response tick to compute the target-side delay from request
+delivery to replay response, while memory-failure actions use the trace failure
+tick to compute the target-side delay plus error metadata and let the helper
+schedule runtime failure records without delivering a memory response. Both
+paths reject
 mismatched request ids or pre-delivery trace ticks without discarding the queued
 action, and report a missing replay action if the controller reaches trace exit
 before a matching response or failure.

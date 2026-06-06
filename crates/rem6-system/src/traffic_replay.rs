@@ -572,6 +572,11 @@ pub fn traffic_trace_replay_controller_target_outcome(
             runtime.record_batch(&batch)?;
             runtime.has_target_action()
         };
+        traffic_trace_replay_controller_runtime_sideband_events(
+            Arc::clone(&runtime),
+            context.now(),
+            context,
+        );
         if trace_exited && !target_action_available {
             return Err(
                 TrafficTraceReplayControllerTargetError::ReplayActionMissing {
@@ -627,6 +632,11 @@ pub fn traffic_trace_replay_controller_control_completion(
             runtime.record_batch(&batch)?;
             runtime.has_control_action()
         };
+        traffic_trace_replay_controller_runtime_sideband_events(
+            Arc::clone(&runtime),
+            context.now(),
+            context,
+        );
         if trace_exited && !control_action_available {
             runtime
                 .lock()
