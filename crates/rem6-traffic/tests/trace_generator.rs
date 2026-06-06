@@ -12,6 +12,7 @@ use rem6_traffic::{
 
 const GEM5_MAGIC: [u8; 4] = [0x67, 0x65, 0x6d, 0x35];
 const TICK_FREQUENCY: u64 = 1_000;
+const GEM5_FLAG_INST_FETCH: u32 = 0x0000_0100;
 const GEM5_FLAG_UNCACHEABLE: u32 = 0x0000_0400;
 const GEM5_FLAG_STRICT_ORDER: u32 = 0x0000_0800;
 const GEM5_FLAG_KERNEL: u32 = 0x0000_1000;
@@ -296,6 +297,68 @@ fn trace_traffic_generator_maps_supported_gem5_request_flags() {
         uncacheable.request().ordering(),
         MemoryAccessOrdering::none()
     );
+}
+
+#[test]
+fn trace_traffic_generator_maps_gem5_inst_fetch_flag() {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace(
+            TICK_FREQUENCY,
+            &[PacketFields {
+                tick: 3,
+                command: 1,
+                address: 0x100,
+                size: 4,
+                flags: Some(GEM5_FLAG_INST_FETCH),
+            }],
+        ),
+        TICK_FREQUENCY,
+    )
+    .unwrap();
+    let mut generator = TrafficTraceGenerator::new(trace_config(trace));
+    generator.enter(20);
+
+    let event = generator.next_request(20, 0).unwrap().unwrap();
+
+    assert_eq!(event.tick(), 23);
+    assert_eq!(event.kind(), TrafficRequestKind::Read);
+    assert_eq!(event.address(), Address::new(0x100));
+    assert_eq!(
+        event.request().operation(),
+        MemoryOperation::InstructionFetch
+    );
+    assert_eq!(event.request().range().start(), Address::new(0x100));
+    assert_eq!(event.request().size(), AccessSize::new(4).unwrap());
+    assert_eq!(event.request().data(), None);
+    assert_eq!(event.request().byte_mask(), None);
+    assert_eq!(generator.summary().packet_count(), 1);
+    assert_eq!(generator.summary().read_count(), 1);
+    assert_eq!(generator.summary().bytes_read(), 4);
+}
+
+#[test]
+fn trace_parser_rejects_gem5_inst_fetch_flag_on_non_fetch_packet() {
+    for command in [4, 22] {
+        assert_eq!(
+            TrafficTrace::from_gem5_packet_trace(
+                &gem5_packet_trace(
+                    TICK_FREQUENCY,
+                    &[PacketFields {
+                        tick: 1,
+                        command,
+                        address: 0x100,
+                        size: 4,
+                        flags: Some(GEM5_FLAG_INST_FETCH),
+                    }],
+                ),
+                TICK_FREQUENCY,
+            )
+            .unwrap_err(),
+            TrafficGeneratorError::TraceUnsupportedFlags {
+                flags: GEM5_FLAG_INST_FETCH,
+            }
+        );
+    }
 }
 
 #[test]

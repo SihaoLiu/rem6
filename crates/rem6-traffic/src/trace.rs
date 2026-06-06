@@ -37,12 +37,16 @@ const GEM5_SWAP_REQ: u32 = 34;
 const GEM5_CLEAN_SHARED_REQ: u32 = 42;
 const GEM5_CLEAN_INVALID_REQ: u32 = 44;
 const GEM5_INVALIDATE_REQ: u32 = 54;
+const GEM5_FLAG_INST_FETCH: u32 = 0x0000_0100;
 const GEM5_FLAG_UNCACHEABLE: u32 = 0x0000_0400;
 const GEM5_FLAG_STRICT_ORDER: u32 = 0x0000_0800;
 const GEM5_FLAG_ACQUIRE: u32 = 0x0002_0000;
 const GEM5_FLAG_RELEASE: u32 = 0x0004_0000;
-const GEM5_SUPPORTED_TRACE_FLAGS: u32 =
-    GEM5_FLAG_UNCACHEABLE | GEM5_FLAG_STRICT_ORDER | GEM5_FLAG_ACQUIRE | GEM5_FLAG_RELEASE;
+const GEM5_SUPPORTED_TRACE_FLAGS: u32 = GEM5_FLAG_INST_FETCH
+    | GEM5_FLAG_UNCACHEABLE
+    | GEM5_FLAG_STRICT_ORDER
+    | GEM5_FLAG_ACQUIRE
+    | GEM5_FLAG_RELEASE;
 const WIRE_VARINT: u64 = 0;
 const WIRE_FIXED64: u64 = 1;
 const WIRE_LENGTH_DELIMITED: u64 = 2;
@@ -137,6 +141,8 @@ struct TrafficTraceElement {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct TrafficTraceRequestFlags {
+    bits: u32,
+    inst_fetch: bool,
     uncacheable: bool,
     strict_order: bool,
     acquire: bool,
@@ -153,11 +159,27 @@ impl TrafficTraceRequestFlags {
         }
 
         Ok(Self {
+            bits,
+            inst_fetch: bits & GEM5_FLAG_INST_FETCH != 0,
             uncacheable: bits & GEM5_FLAG_UNCACHEABLE != 0,
             strict_order: bits & GEM5_FLAG_STRICT_ORDER != 0,
             acquire: bits & GEM5_FLAG_ACQUIRE != 0,
             release: bits & GEM5_FLAG_RELEASE != 0,
         })
+    }
+
+    const fn is_inst_fetch(self) -> bool {
+        self.inst_fetch
+    }
+
+    fn validate_for_command(
+        self,
+        command: TrafficTraceCommand,
+    ) -> Result<(), TrafficGeneratorError> {
+        if self.inst_fetch && command != TrafficTraceCommand::ReadShared {
+            return Err(TrafficGeneratorError::TraceUnsupportedFlags { flags: self.bits });
+        }
+        Ok(())
     }
 
     fn apply(self, request: MemoryRequest) -> MemoryRequest {
@@ -525,6 +547,10 @@ impl TrafficTraceGenerator {
         let layout = self.config.line_layout();
 
         let request = match kind {
+            TrafficRequestKind::Read if element.flags.is_inst_fetch() => {
+                MemoryRequest::instruction_fetch(id, address, element.size, layout)
+                    .map_err(Into::into)
+            }
             TrafficRequestKind::Read if element.command == TrafficTraceCommand::ReadUnique => {
                 MemoryRequest::read_unique(id, address, element.size, layout).map_err(Into::into)
             }
@@ -977,6 +1003,7 @@ fn parse_packet(message: &[u8]) -> Result<TrafficTraceElement, TrafficGeneratorE
         GEM5_INVALIDATE_REQ => TrafficTraceCommand::Invalidate,
         command => return Err(TrafficGeneratorError::TraceUnsupportedCommand { command }),
     };
+    flags.validate_for_command(command)?;
     let address = address.ok_or(TrafficGeneratorError::TraceMissingField {
         message: "Packet",
         field: "addr",
