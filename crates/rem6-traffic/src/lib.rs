@@ -44,6 +44,6 @@ pub use text_config::{
     TrafficTextStridedParams,
 };
 pub use trace::{
-    TrafficTrace, TrafficTraceConfig, TrafficTraceExitStatus, TrafficTraceGenerator,
-    TrafficTraceSnapshot,
+    TrafficTrace, TrafficTraceConfig, TrafficTraceEvent, TrafficTraceExitStatus,
+    TrafficTraceGenerator, TrafficTraceSnapshot, TrafficTraceSyncEvent, TrafficTraceSyncKind,
 };

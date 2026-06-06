@@ -36,6 +36,8 @@ const GEM5_STORE_COND_REQ: u32 = 27;
 const GEM5_LOCKED_RMW_READ_REQ: u32 = 30;
 const GEM5_LOCKED_RMW_WRITE_REQ: u32 = 32;
 const GEM5_SWAP_REQ: u32 = 34;
+const GEM5_MEM_FENCE_REQ: u32 = 38;
+const GEM5_MEM_SYNC_REQ: u32 = 39;
 const GEM5_CLEAN_SHARED_REQ: u32 = 42;
 const GEM5_CLEAN_INVALID_REQ: u32 = 44;
 const GEM5_INVALIDATE_REQ: u32 = 54;
@@ -87,6 +89,21 @@ const WIRE_END_GROUP: u64 = 4;
 const WIRE_FIXED32: u64 = 5;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TrafficTraceSyncKind {
+    MemFence,
+    MemSync,
+}
+
+impl TrafficTraceSyncKind {
+    pub const fn gem5_name(self) -> &'static str {
+        match self {
+            Self::MemFence => "MemFenceReq",
+            Self::MemSync => "MemSyncReq",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TrafficTraceCommand {
     ReadShared,
     ReadUnique,
@@ -110,6 +127,8 @@ enum TrafficTraceCommand {
     CleanInvalid,
     Invalidate,
     Upgrade,
+    MemFence,
+    MemSync,
 }
 
 impl TrafficTraceCommand {
@@ -136,7 +155,17 @@ impl TrafficTraceCommand {
             | Self::CleanInvalid
             | Self::Invalidate
             | Self::StoreConditionalUpgrade
-            | Self::Upgrade => TrafficRequestKind::Maintenance,
+            | Self::Upgrade
+            | Self::MemFence
+            | Self::MemSync => TrafficRequestKind::Maintenance,
+        }
+    }
+
+    const fn sync_kind(self) -> Option<TrafficTraceSyncKind> {
+        match self {
+            Self::MemFence => Some(TrafficTraceSyncKind::MemFence),
+            Self::MemSync => Some(TrafficTraceSyncKind::MemSync),
+            _ => None,
         }
     }
 
@@ -164,6 +193,8 @@ impl TrafficTraceCommand {
             Self::CleanInvalid => "CleanInvalidReq",
             Self::Invalidate => "InvalidateReq",
             Self::Upgrade => "UpgradeReq",
+            Self::MemFence => "MemFenceReq",
+            Self::MemSync => "MemSyncReq",
         }
     }
 }
@@ -172,8 +203,8 @@ impl TrafficTraceCommand {
 struct TrafficTraceElement {
     tick: u64,
     command: TrafficTraceCommand,
-    address: Address,
-    size: AccessSize,
+    address: Option<Address>,
+    size: Option<AccessSize>,
     flags: TrafficTraceRequestFlags,
     packet_id: Option<u64>,
     pc: Option<Address>,
@@ -186,6 +217,20 @@ impl TrafficTraceElement {
         } else {
             self.command.request_kind()
         }
+    }
+
+    const fn sync_kind(self) -> Option<TrafficTraceSyncKind> {
+        self.command.sync_kind()
+    }
+
+    fn request_address(self) -> Address {
+        self.address
+            .expect("validated trace request element has an address")
+    }
+
+    fn request_size(self) -> AccessSize {
+        self.size
+            .expect("validated trace request element has an access size")
     }
 }
 
@@ -260,6 +305,13 @@ impl TrafficTraceRequestFlags {
         self,
         command: TrafficTraceCommand,
     ) -> Result<(), TrafficGeneratorError> {
+        if command.sync_kind().is_some() {
+            if self.bits & !GEM5_FLAG_KERNEL != 0 {
+                return Err(TrafficGeneratorError::TraceUnsupportedFlags { flags: self.bits });
+            }
+            return Ok(());
+        }
+
         if self.inst_fetch && command != TrafficTraceCommand::ReadShared {
             return Err(TrafficGeneratorError::TraceUnsupportedFlags { flags: self.bits });
         }
@@ -545,6 +597,82 @@ impl TrafficTraceExitStatus {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TrafficTraceSyncEvent {
+    tick: u64,
+    sequence: u64,
+    kind: TrafficTraceSyncKind,
+    kernel_sync: bool,
+    trace_packet_id: Option<u64>,
+    trace_pc: Option<Address>,
+}
+
+impl TrafficTraceSyncEvent {
+    const fn new(
+        tick: u64,
+        sequence: u64,
+        kind: TrafficTraceSyncKind,
+        kernel_sync: bool,
+        trace_packet_id: Option<u64>,
+        trace_pc: Option<Address>,
+    ) -> Self {
+        Self {
+            tick,
+            sequence,
+            kind,
+            kernel_sync,
+            trace_packet_id,
+            trace_pc,
+        }
+    }
+
+    pub const fn tick(self) -> u64 {
+        self.tick
+    }
+
+    pub const fn sequence(self) -> u64 {
+        self.sequence
+    }
+
+    pub const fn kind(self) -> TrafficTraceSyncKind {
+        self.kind
+    }
+
+    pub const fn kernel_sync(self) -> bool {
+        self.kernel_sync
+    }
+
+    pub const fn trace_packet_id(self) -> Option<u64> {
+        self.trace_packet_id
+    }
+
+    pub const fn trace_pc(self) -> Option<Address> {
+        self.trace_pc
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TrafficTraceEvent {
+    Request(TrafficRequestEvent),
+    Sync(TrafficTraceSyncEvent),
+}
+
+impl TrafficTraceEvent {
+    pub const fn tick(&self) -> u64 {
+        match self {
+            Self::Request(event) => event.tick(),
+            Self::Sync(event) => event.tick(),
+        }
+    }
+
+    pub const fn sequence(&self) -> u64 {
+        match self {
+            Self::Request(event) => event.sequence(),
+            Self::Sync(event) => event.sequence(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TrafficTraceGenerator {
     config: TrafficTraceConfig,
@@ -610,26 +738,65 @@ impl TrafficTraceGenerator {
         let Some(element) = self.next_element() else {
             return Ok(None);
         };
+        if let Some(kind) = element.sync_kind() {
+            return Err(TrafficGeneratorError::TraceSyncEventRequiresNextEvent {
+                command: kind.gem5_name(),
+            });
+        }
+
+        let Some(event) = self.next_event(tick, retry_delay)? else {
+            return Ok(None);
+        };
+        match event {
+            TrafficTraceEvent::Request(request) => Ok(Some(request)),
+            TrafficTraceEvent::Sync(_) => {
+                unreachable!("sync trace event was rejected before advancing")
+            }
+        }
+    }
+
+    pub fn next_event(
+        &mut self,
+        tick: u64,
+        retry_delay: u64,
+    ) -> Result<Option<TrafficTraceEvent>, TrafficGeneratorError> {
+        let Some(element) = self.next_element() else {
+            return Ok(None);
+        };
 
         let sequence = self.next_sequence;
         let next_sequence = checked_counter_add("next_sequence", sequence, 1)?;
         let (next_tick_offset, event_tick) =
             self.next_packet_tick_from(self.tick_offset, element.tick, tick, retry_delay)?;
-        let kind = element.request_kind();
-        let address = checked_trace_address(element.address, self.config.addr_offset())?;
-        let request = self.build_request(sequence, element, kind, address)?;
         let mut next_summary = self.summary;
-        next_summary.record(event_tick, kind, element.size.bytes())?;
+        let event = if let Some(kind) = element.sync_kind() {
+            next_summary.record(event_tick, TrafficRequestKind::Maintenance, 0)?;
+            TrafficTraceEvent::Sync(TrafficTraceSyncEvent::new(
+                event_tick,
+                sequence,
+                kind,
+                element.flags.kernel_sync,
+                element.packet_id,
+                element.pc,
+            ))
+        } else {
+            let kind = element.request_kind();
+            let address =
+                checked_trace_address(element.request_address(), self.config.addr_offset())?;
+            let request = self.build_request(sequence, element, kind, address)?;
+            next_summary.record(event_tick, kind, element.request_size().bytes())?;
+            TrafficTraceEvent::Request(
+                TrafficRequestEvent::new(event_tick, sequence, kind, address, request)
+                    .with_trace_metadata(element.packet_id, element.pc),
+            )
+        };
 
         self.cursor += 1;
         self.next_sequence = next_sequence;
         self.summary = next_summary;
         self.tick_offset = next_tick_offset;
 
-        Ok(Some(
-            TrafficRequestEvent::new(event_tick, sequence, kind, address, request)
-                .with_trace_metadata(element.packet_id, element.pc),
-        ))
+        Ok(Some(event))
     }
 
     pub fn schedule_tick(
@@ -703,29 +870,29 @@ impl TrafficTraceGenerator {
     ) -> Result<MemoryRequest, TrafficGeneratorError> {
         let id = MemoryRequestId::new(self.config.agent(), sequence);
         let layout = self.config.line_layout();
+        let size = element.request_size();
 
         let request = match kind {
             TrafficRequestKind::Read | TrafficRequestKind::Write if element.flags.no_access => {
-                MemoryRequest::no_access(id, address, element.size, layout).map_err(Into::into)
+                MemoryRequest::no_access(id, address, size, layout).map_err(Into::into)
             }
             TrafficRequestKind::Read if element.flags.is_prefetch_exclusive() => {
-                MemoryRequest::prefetch_write(id, address, element.size, layout).map_err(Into::into)
+                MemoryRequest::prefetch_write(id, address, size, layout).map_err(Into::into)
             }
             TrafficRequestKind::Read if element.flags.is_prefetch() => {
-                MemoryRequest::prefetch_read(id, address, element.size, layout).map_err(Into::into)
+                MemoryRequest::prefetch_read(id, address, size, layout).map_err(Into::into)
             }
             TrafficRequestKind::Read if element.flags.is_inst_fetch() => {
-                MemoryRequest::instruction_fetch(id, address, element.size, layout)
-                    .map_err(Into::into)
+                MemoryRequest::instruction_fetch(id, address, size, layout).map_err(Into::into)
             }
             TrafficRequestKind::Read if element.command == TrafficTraceCommand::ReadUnique => {
-                MemoryRequest::read_unique(id, address, element.size, layout).map_err(Into::into)
+                MemoryRequest::read_unique(id, address, size, layout).map_err(Into::into)
             }
             TrafficRequestKind::Read
                 if element.command == TrafficTraceCommand::StoreConditionalUpgradeFail =>
             {
-                validate_upgrade_request(address, element.size, layout)?;
-                MemoryRequest::store_conditional_upgrade_fail(id, address, element.size, layout)
+                validate_upgrade_request(address, size, layout)?;
+                MemoryRequest::store_conditional_upgrade_fail(id, address, size, layout)
                     .map_err(Into::into)
             }
             TrafficRequestKind::Read
@@ -734,27 +901,26 @@ impl TrafficTraceGenerator {
                     TrafficTraceCommand::SoftPrefetchRead | TrafficTraceCommand::HardPrefetchRead
                 ) =>
             {
-                MemoryRequest::prefetch_read(id, address, element.size, layout).map_err(Into::into)
+                MemoryRequest::prefetch_read(id, address, size, layout).map_err(Into::into)
             }
             TrafficRequestKind::Read if element.command == TrafficTraceCommand::PrefetchWrite => {
-                MemoryRequest::prefetch_write(id, address, element.size, layout).map_err(Into::into)
+                MemoryRequest::prefetch_write(id, address, size, layout).map_err(Into::into)
             }
             TrafficRequestKind::Read if element.command == TrafficTraceCommand::LoadLocked => {
-                MemoryRequest::load_locked(id, address, element.size, layout).map_err(Into::into)
+                MemoryRequest::load_locked(id, address, size, layout).map_err(Into::into)
             }
             TrafficRequestKind::Read if element.command == TrafficTraceCommand::LockedRmwRead => {
-                MemoryRequest::locked_rmw_read(id, address, element.size, layout)
-                    .map_err(Into::into)
+                MemoryRequest::locked_rmw_read(id, address, size, layout).map_err(Into::into)
             }
             TrafficRequestKind::Read => {
-                MemoryRequest::read_shared(id, address, element.size, layout).map_err(Into::into)
+                MemoryRequest::read_shared(id, address, size, layout).map_err(Into::into)
             }
             TrafficRequestKind::Write if element.command == TrafficTraceCommand::WriteLine => {
-                validate_write_line_request(address, element.size, layout)?;
-                build_write_request(self.config.agent(), id, address, element.size, layout)
+                validate_write_line_request(address, size, layout)?;
+                build_write_request(self.config.agent(), id, address, size, layout)
             }
             TrafficRequestKind::Write if element.flags.cache_block_zero => {
-                validate_cache_block_zero_request(address, element.size, layout)?;
+                validate_cache_block_zero_request(address, size, layout)?;
                 MemoryRequest::cache_block_zero(id, address, layout).map_err(Into::into)
             }
             TrafficRequestKind::Write
@@ -765,39 +931,27 @@ impl TrafficTraceGenerator {
                         | TrafficTraceCommand::WriteClean
                 ) =>
             {
-                validate_writeback_request(element.command, address, element.size, layout)?;
+                validate_writeback_request(element.command, address, size, layout)?;
                 build_writeback_request(
                     element.command,
                     self.config.agent(),
                     id,
                     address,
-                    element.size,
+                    size,
                     layout,
                 )
             }
             TrafficRequestKind::Write => {
                 if element.command == TrafficTraceCommand::StoreConditional {
-                    build_store_conditional_request(
-                        self.config.agent(),
-                        id,
-                        address,
-                        element.size,
-                        layout,
-                    )
+                    build_store_conditional_request(self.config.agent(), id, address, size, layout)
                 } else if element.command == TrafficTraceCommand::LockedRmwWrite {
-                    build_locked_rmw_write_request(
-                        self.config.agent(),
-                        id,
-                        address,
-                        element.size,
-                        layout,
-                    )
+                    build_locked_rmw_write_request(self.config.agent(), id, address, size, layout)
                 } else {
-                    build_write_request(self.config.agent(), id, address, element.size, layout)
+                    build_write_request(self.config.agent(), id, address, size, layout)
                 }
             }
             TrafficRequestKind::Atomic if element.command == TrafficTraceCommand::Swap => {
-                build_atomic_swap_request(self.config.agent(), id, address, element.size, layout)
+                build_atomic_swap_request(self.config.agent(), id, address, size, layout)
             }
             TrafficRequestKind::Atomic => {
                 unreachable!("atomic trace kind has no request builder")
@@ -805,36 +959,36 @@ impl TrafficTraceGenerator {
             TrafficRequestKind::Maintenance
                 if element.command == TrafficTraceCommand::CleanEvict =>
             {
-                validate_clean_evict_request(address, element.size, layout)?;
+                validate_clean_evict_request(address, size, layout)?;
                 MemoryRequest::clean_evict(id, address, layout).map_err(Into::into)
             }
             TrafficRequestKind::Maintenance
                 if element.command == TrafficTraceCommand::CleanShared =>
             {
-                validate_clean_maintenance_request(element.command, address, element.size, layout)?;
+                validate_clean_maintenance_request(element.command, address, size, layout)?;
                 MemoryRequest::clean_shared(id, address, layout).map_err(Into::into)
             }
             TrafficRequestKind::Maintenance
                 if element.command == TrafficTraceCommand::CleanInvalid =>
             {
-                validate_clean_maintenance_request(element.command, address, element.size, layout)?;
+                validate_clean_maintenance_request(element.command, address, size, layout)?;
                 MemoryRequest::invalidate(id, address, layout).map_err(Into::into)
             }
             TrafficRequestKind::Maintenance
                 if element.command == TrafficTraceCommand::Invalidate =>
             {
-                validate_invalidate_request(address, element.size, layout)?;
+                validate_invalidate_request(address, size, layout)?;
                 MemoryRequest::invalidate_writable(id, address, layout).map_err(Into::into)
             }
             TrafficRequestKind::Maintenance if element.command == TrafficTraceCommand::Upgrade => {
-                validate_upgrade_request(address, element.size, layout)?;
-                MemoryRequest::upgrade(id, address, element.size, layout).map_err(Into::into)
+                validate_upgrade_request(address, size, layout)?;
+                MemoryRequest::upgrade(id, address, size, layout).map_err(Into::into)
             }
             TrafficRequestKind::Maintenance
                 if element.command == TrafficTraceCommand::StoreConditionalUpgrade =>
             {
-                validate_upgrade_request(address, element.size, layout)?;
-                MemoryRequest::store_conditional_upgrade(id, address, element.size, layout)
+                validate_upgrade_request(address, size, layout)?;
+                MemoryRequest::store_conditional_upgrade(id, address, size, layout)
                     .map_err(Into::into)
             }
             TrafficRequestKind::Maintenance => {
@@ -1209,12 +1363,26 @@ fn parse_packet(message: &[u8]) -> Result<TrafficTraceElement, TrafficGeneratorE
         GEM5_UPGRADE_REQ => TrafficTraceCommand::Upgrade,
         GEM5_SC_UPGRADE_REQ => TrafficTraceCommand::StoreConditionalUpgrade,
         GEM5_SC_UPGRADE_FAIL_REQ => TrafficTraceCommand::StoreConditionalUpgradeFail,
+        GEM5_MEM_FENCE_REQ => TrafficTraceCommand::MemFence,
+        GEM5_MEM_SYNC_REQ => TrafficTraceCommand::MemSync,
         GEM5_CLEAN_SHARED_REQ => TrafficTraceCommand::CleanShared,
         GEM5_CLEAN_INVALID_REQ => TrafficTraceCommand::CleanInvalid,
         GEM5_INVALIDATE_REQ => TrafficTraceCommand::Invalidate,
         command => return Err(TrafficGeneratorError::TraceUnsupportedCommand { command }),
     };
     flags.validate_for_command(command)?;
+    if command.sync_kind().is_some() {
+        return Ok(TrafficTraceElement {
+            tick,
+            command,
+            address: None,
+            size: None,
+            flags,
+            packet_id,
+            pc,
+        });
+    }
+
     let address = address.ok_or(TrafficGeneratorError::TraceMissingField {
         message: "Packet",
         field: "addr",
@@ -1230,8 +1398,8 @@ fn parse_packet(message: &[u8]) -> Result<TrafficTraceElement, TrafficGeneratorE
     Ok(TrafficTraceElement {
         tick,
         command,
-        address: Address::new(address),
-        size: AccessSize::new(u64::from(size))?,
+        address: Some(Address::new(address)),
+        size: Some(AccessSize::new(u64::from(size))?),
         flags,
         packet_id,
         pc,

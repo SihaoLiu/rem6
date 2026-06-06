@@ -6,8 +6,8 @@ use crate::{
     TrafficExitSnapshot, TrafficGeneratorError, TrafficGeneratorSummary, TrafficHybridSnapshot,
     TrafficIdleGenerator, TrafficIdleSnapshot, TrafficLinearSnapshot, TrafficRandomSnapshot,
     TrafficRequestEvent, TrafficStateGraphConfig, TrafficStateId, TrafficStateMachine,
-    TrafficStateSnapshot, TrafficStridedSnapshot, TrafficTraceExitStatus, TrafficTraceGenerator,
-    TrafficTraceSnapshot, TrafficTransitionEvent,
+    TrafficStateSnapshot, TrafficStridedSnapshot, TrafficTraceEvent, TrafficTraceExitStatus,
+    TrafficTraceGenerator, TrafficTraceSnapshot, TrafficTraceSyncEvent, TrafficTransitionEvent,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -131,21 +131,45 @@ impl TrafficStateGenerator {
         }
     }
 
-    fn next_request(
+    fn next_event(
         &mut self,
         tick: u64,
         retry_delay: u64,
-    ) -> Result<Option<TrafficRequestEvent>, TrafficGeneratorError> {
-        match self {
-            Self::Idle(generator) => generator.next_request(tick, retry_delay),
-            Self::Exit(generator) => generator.next_request(tick, retry_delay),
-            Self::Linear(generator) => generator.next_request(tick, retry_delay),
-            Self::Random(generator) => generator.next_request(tick, retry_delay),
-            Self::Strided(generator) => generator.next_request(tick, retry_delay),
-            Self::Dram(generator) => generator.next_request(tick, retry_delay),
-            Self::Hybrid(generator) => generator.next_request(tick, retry_delay),
-            Self::Trace(generator) => generator.next_request(tick, retry_delay),
-        }
+    ) -> Result<Option<TrafficControllerEvent>, TrafficGeneratorError> {
+        let event = match self {
+            Self::Idle(generator) => generator
+                .next_request(tick, retry_delay)?
+                .map(TrafficControllerEvent::Request),
+            Self::Exit(generator) => generator
+                .next_request(tick, retry_delay)?
+                .map(TrafficControllerEvent::Request),
+            Self::Linear(generator) => generator
+                .next_request(tick, retry_delay)?
+                .map(TrafficControllerEvent::Request),
+            Self::Random(generator) => generator
+                .next_request(tick, retry_delay)?
+                .map(TrafficControllerEvent::Request),
+            Self::Strided(generator) => generator
+                .next_request(tick, retry_delay)?
+                .map(TrafficControllerEvent::Request),
+            Self::Dram(generator) => generator
+                .next_request(tick, retry_delay)?
+                .map(TrafficControllerEvent::Request),
+            Self::Hybrid(generator) => generator
+                .next_request(tick, retry_delay)?
+                .map(TrafficControllerEvent::Request),
+            Self::Trace(generator) => {
+                generator
+                    .next_event(tick, retry_delay)?
+                    .map(|event| match event {
+                        TrafficTraceEvent::Request(request) => {
+                            TrafficControllerEvent::Request(request)
+                        }
+                        TrafficTraceEvent::Sync(sync) => TrafficControllerEvent::TraceSync(sync),
+                    })
+            }
+        };
+        Ok(event)
     }
 
     fn summary(&self) -> TrafficGeneratorSummary {
@@ -284,20 +308,20 @@ impl TrafficController {
             return Ok(Some(batch));
         }
 
-        let request = self
+        let event = self
             .generators
             .get_mut(&current)
             .expect("validated traffic controller has current generator")
-            .next_request(tick, retry_delay)?;
+            .next_event(tick, retry_delay)?;
 
-        let Some(request) = request else {
+        let Some(event) = event else {
             return Ok(None);
         };
 
-        let request_tick = request.tick();
-        let mut events = vec![TrafficControllerEvent::Request(request)];
-        if self.should_force_transition_after_request(current, request_tick)? {
-            events.extend(self.transition_at(request_tick)?.into_events());
+        let event_tick = event.tick();
+        let mut events = vec![event];
+        if self.should_force_transition_after_event(current, event_tick)? {
+            events.extend(self.transition_at(event_tick)?.into_events());
         }
 
         Ok(Some(TrafficControllerEventBatch::new(events)))
@@ -370,7 +394,7 @@ impl TrafficController {
             .enter(tick))
     }
 
-    fn should_force_transition_after_request(
+    fn should_force_transition_after_event(
         &self,
         state: TrafficStateId,
         tick: u64,
@@ -430,6 +454,13 @@ impl TrafficControllerEventBatch {
         })
     }
 
+    pub fn trace_sync(&self) -> Option<TrafficTraceSyncEvent> {
+        self.events.iter().find_map(|event| match event {
+            TrafficControllerEvent::TraceSync(sync) => Some(*sync),
+            _ => None,
+        })
+    }
+
     pub fn is_empty(&self) -> bool {
         self.events.is_empty()
     }
@@ -441,6 +472,19 @@ pub enum TrafficControllerEvent {
     Transition(TrafficTransitionEvent),
     Exit(TrafficExitEvent),
     TraceExit(TrafficTraceExitStatus),
+    TraceSync(TrafficTraceSyncEvent),
+}
+
+impl TrafficControllerEvent {
+    fn tick(&self) -> u64 {
+        match self {
+            Self::Request(request) => request.tick(),
+            Self::Transition(transition) => transition.tick(),
+            Self::Exit(exit) => exit.tick(),
+            Self::TraceExit(_) => u64::MAX,
+            Self::TraceSync(sync) => sync.tick(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

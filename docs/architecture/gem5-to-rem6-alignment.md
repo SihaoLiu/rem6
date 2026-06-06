@@ -2853,8 +2853,18 @@ no-data, no-mask, no-CPU-response prefetch request contract.
 Line-sized `UpgradeReq` command-id 17 packets whose effective address after the
 configured offset is cache-line aligned map to native maintenance upgrade
 requests with no data, no byte mask, response required, no response data,
-writable intent, and no read/write byte accounting. Trace packet flag handling
-now maps non-prefetch `INST_FETCH` on `ReadReq`, `ReadCleanReq`, and
+writable intent, and no read/write byte accounting. No-address `MemFenceReq`
+command-id 38 and `MemSyncReq` command-id 39 packets map to typed
+`TrafficTraceEvent::Sync` events that preserve tick ordering, sequence,
+optional packet id, optional PC metadata, and packet-count accounting without
+constructing a `MemoryRequest` or adding read/write byte accounting; the traffic
+controller exposes those events as `TraceSync` batch entries. If a gem5 probe
+record carries synthetic `addr` or `size` fields for those commands, rem6
+accepts the fields for trace compatibility but treats them as non-semantic
+because the sync event contract is not address-scoped. The same sync event
+contract preserves gem5 `KERNEL` request flags as typed `kernel_sync` metadata.
+Trace packet flag handling now maps non-prefetch `INST_FETCH` on `ReadReq`,
+`ReadCleanReq`, and
 `ReadSharedReq` packets to native instruction-fetch requests, accepts `PHYSICAL`
 as trace-address metadata, maps `PREFETCH` and `PF_EXCLUSIVE` packet flags to
 native read and writable prefetch requests with prefetch precedence when those
@@ -2983,9 +2993,15 @@ open typed event target.
 Trace store-conditional-upgrade note: packet-trace support now maps gem5
 `SCUpgradeReq` and `SCUpgradeFailReq` to native typed store-conditional upgrade
 operations, preserving writable intent and response-data behavior without
-folding them into plain `Upgrade` or `ReadUnique` requests. No-address
-`MemSyncReq`, `MemFenceReq`, TLBI, and HTM commands remain open because they
-need non-memory trace events rather than `TrafficRequestEvent` shims.
+folding them into plain `Upgrade` or `ReadUnique` requests.
+
+Trace sync note: packet-trace support now maps gem5 no-address `MemFenceReq`
+and `MemSyncReq` packets to typed trace sync events rather than
+`TrafficRequestEvent` shims. The importer accepts gem5 probe records that carry
+synthetic address or size fields for those commands but discards those fields as
+non-semantic sync metadata. TLBI and HTM commands remain open because they need
+their own non-memory trace event contracts, and sync flags beyond `KERNEL` need
+additional typed metadata before import can accept them.
 
 ### Memory, Cache, Coherence, and NoC
 
