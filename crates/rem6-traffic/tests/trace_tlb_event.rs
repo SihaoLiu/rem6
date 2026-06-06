@@ -94,6 +94,7 @@ fn trace_generator_emits_tlbi_ext_sync_event() {
     assert_eq!(tlb.tick(), 107);
     assert_eq!(tlb.sequence(), 1);
     assert_eq!(tlb.kind(), TrafficTraceTlbKind::ExternalSync);
+    assert!(tlb.is_request());
     assert!(!tlb.requires_response());
     assert_eq!(tlb.trace_packet_id(), Some(2));
     assert_eq!(tlb.trace_pc(), Some(Address::new(0x1004)));
@@ -118,7 +119,12 @@ fn trace_generator_emits_tlbi_ext_sync_event() {
 }
 
 #[test]
-fn trace_tlb_kind_preserves_gem5_response_policy() {
+fn trace_tlb_kind_preserves_gem5_request_response_policy() {
+    assert!(
+        TrafficTraceTlbKind::ExternalSync.is_request(),
+        "{} request policy should match gem5",
+        TrafficTraceTlbKind::ExternalSync.gem5_name()
+    );
     assert!(
         !TrafficTraceTlbKind::ExternalSync.requires_response(),
         "{} response policy should match gem5",

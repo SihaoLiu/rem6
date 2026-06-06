@@ -105,6 +105,7 @@ fn trace_generator_emits_print_req_diagnostic_events() {
     assert_eq!(print.kind(), TrafficTraceDiagnosticKind::Print);
     assert_eq!(print.address(), Some(Address::new(0x4000)));
     assert_eq!(print.size_bytes(), Some(1));
+    assert!(print.is_request());
     assert!(print.is_print());
     assert_eq!(print.trace_packet_id(), Some(2));
     assert_eq!(print.trace_pc(), Some(Address::new(0x1004)));
@@ -122,6 +123,7 @@ fn trace_generator_emits_print_req_diagnostic_events() {
     );
     assert_eq!(print_without_probe.address(), None);
     assert_eq!(print_without_probe.size_bytes(), None);
+    assert!(print_without_probe.is_request());
     assert!(print_without_probe.is_print());
     assert_eq!(print_without_probe.trace_packet_id(), Some(3));
     assert_eq!(print_without_probe.trace_pc(), Some(Address::new(0x1008)));
@@ -155,7 +157,12 @@ fn trace_generator_emits_print_req_diagnostic_events() {
 }
 
 #[test]
-fn trace_diagnostic_kind_preserves_gem5_print_policy() {
+fn trace_diagnostic_kind_preserves_gem5_request_print_policy() {
+    assert!(
+        TrafficTraceDiagnosticKind::Print.is_request(),
+        "{} request policy should match gem5",
+        TrafficTraceDiagnosticKind::Print.gem5_name()
+    );
     assert!(
         TrafficTraceDiagnosticKind::Print.is_print(),
         "{} print policy should match gem5",

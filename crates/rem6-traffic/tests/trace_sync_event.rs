@@ -109,6 +109,7 @@ fn trace_generator_emits_mem_fence_and_mem_sync_events() {
     assert_eq!(fence.sequence(), 1);
     assert_eq!(fence.kind(), TrafficTraceSyncKind::MemFence);
     assert!(!fence.kernel_sync());
+    assert!(fence.is_request());
     assert!(fence.requires_response());
     assert_eq!(fence.trace_packet_id(), Some(2));
     assert_eq!(fence.trace_pc(), Some(Address::new(0x1004)));
@@ -122,6 +123,7 @@ fn trace_generator_emits_mem_fence_and_mem_sync_events() {
     assert_eq!(sync.sequence(), 2);
     assert_eq!(sync.kind(), TrafficTraceSyncKind::MemSync);
     assert!(!sync.kernel_sync());
+    assert!(sync.is_request());
     assert!(sync.requires_response());
     assert_eq!(sync.trace_packet_id(), Some(3));
     assert_eq!(sync.trace_pc(), Some(Address::new(0x1008)));
@@ -149,11 +151,16 @@ fn trace_generator_emits_mem_fence_and_mem_sync_events() {
 }
 
 #[test]
-fn trace_sync_kind_preserves_gem5_response_policy() {
+fn trace_sync_kind_preserves_gem5_request_response_policy() {
     for kind in [
         TrafficTraceSyncKind::MemFence,
         TrafficTraceSyncKind::MemSync,
     ] {
+        assert!(
+            kind.is_request(),
+            "{} request policy should match gem5",
+            kind.gem5_name()
+        );
         assert!(
             kind.requires_response(),
             "{} response policy should match gem5",

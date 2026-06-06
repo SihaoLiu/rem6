@@ -16,6 +16,12 @@ impl TrafficTraceSyncKind {
         }
     }
 
+    pub const fn is_request(self) -> bool {
+        match self {
+            Self::MemFence | Self::MemSync => true,
+        }
+    }
+
     pub const fn requires_response(self) -> bool {
         match self {
             Self::MemFence | Self::MemSync => true,
@@ -35,6 +41,12 @@ impl TrafficTraceTlbKind {
         }
     }
 
+    pub const fn is_request(self) -> bool {
+        match self {
+            Self::ExternalSync => true,
+        }
+    }
+
     pub const fn requires_response(self) -> bool {
         match self {
             Self::ExternalSync => false,
@@ -51,6 +63,18 @@ impl TrafficTraceCacheKind {
     pub const fn gem5_name(self) -> &'static str {
         match self {
             Self::Flush => "FlushReq",
+        }
+    }
+
+    pub const fn is_request(self) -> bool {
+        match self {
+            Self::Flush => true,
+        }
+    }
+
+    pub const fn is_flush(self) -> bool {
+        match self {
+            Self::Flush => true,
         }
     }
 
@@ -75,6 +99,18 @@ impl TrafficTraceHtmKind {
         }
     }
 
+    pub const fn is_request(self) -> bool {
+        match self {
+            Self::Request | Self::Abort => true,
+        }
+    }
+
+    pub const fn is_read(self) -> bool {
+        match self {
+            Self::Request | Self::Abort => true,
+        }
+    }
+
     pub const fn requires_response(self) -> bool {
         match self {
             Self::Request => true,
@@ -92,6 +128,12 @@ impl TrafficTraceDiagnosticKind {
     pub const fn gem5_name(self) -> &'static str {
         match self {
             Self::Print => "PrintReq",
+        }
+    }
+
+    pub const fn is_request(self) -> bool {
+        match self {
+            Self::Print => true,
         }
     }
 
@@ -328,6 +370,10 @@ impl TrafficTraceSyncEvent {
         self.kernel_sync
     }
 
+    pub const fn is_request(self) -> bool {
+        self.kind.is_request()
+    }
+
     pub const fn requires_response(self) -> bool {
         self.kind.requires_response()
     }
@@ -377,6 +423,10 @@ impl TrafficTraceTlbEvent {
 
     pub const fn kind(self) -> TrafficTraceTlbKind {
         self.kind
+    }
+
+    pub const fn is_request(self) -> bool {
+        self.kind.is_request()
     }
 
     pub const fn requires_response(self) -> bool {
@@ -442,6 +492,14 @@ impl TrafficTraceCacheEvent {
 
     pub const fn size_bytes(self) -> u64 {
         self.size_bytes
+    }
+
+    pub const fn is_request(self) -> bool {
+        self.kind.is_request()
+    }
+
+    pub const fn is_flush(self) -> bool {
+        self.kind.is_flush()
     }
 
     pub const fn requires_writable(self) -> bool {
@@ -510,6 +568,10 @@ impl TrafficTraceDiagnosticEvent {
 
     pub const fn size_bytes(self) -> Option<u64> {
         self.size_bytes
+    }
+
+    pub const fn is_request(self) -> bool {
+        self.kind.is_request()
     }
 
     pub const fn is_print(self) -> bool {
@@ -770,6 +832,14 @@ impl TrafficTraceHtmEvent {
 
     pub const fn size_bytes(self) -> Option<u64> {
         self.size_bytes
+    }
+
+    pub const fn is_request(self) -> bool {
+        self.kind.is_request()
+    }
+
+    pub const fn is_read(self) -> bool {
+        self.kind.is_read()
     }
 
     pub const fn requires_response(self) -> bool {

@@ -106,6 +106,8 @@ fn trace_generator_emits_htm_request_and_abort_events() {
     assert_eq!(begin.kind(), TrafficTraceHtmKind::Request);
     assert_eq!(begin.address(), Some(Address::new(0x4000)));
     assert_eq!(begin.size_bytes(), Some(16));
+    assert!(begin.is_request());
+    assert!(begin.is_read());
     assert!(begin.requires_response());
     assert_eq!(begin.trace_packet_id(), Some(2));
     assert_eq!(begin.trace_pc(), Some(Address::new(0x1004)));
@@ -120,6 +122,8 @@ fn trace_generator_emits_htm_request_and_abort_events() {
     assert_eq!(abort.kind(), TrafficTraceHtmKind::Abort);
     assert_eq!(abort.address(), None);
     assert_eq!(abort.size_bytes(), None);
+    assert!(abort.is_request());
+    assert!(abort.is_read());
     assert!(!abort.requires_response());
     assert_eq!(abort.trace_packet_id(), Some(3));
     assert_eq!(abort.trace_pc(), Some(Address::new(0x1008)));
@@ -176,6 +180,33 @@ fn trace_generator_next_request_reports_htm_event_boundary() {
     assert_eq!(htm.tick(), 5);
     assert_eq!(htm.sequence(), 0);
     assert_eq!(htm.kind(), TrafficTraceHtmKind::Request);
+}
+
+#[test]
+fn trace_htm_kind_preserves_gem5_request_read_policy() {
+    let expectations = [
+        (TrafficTraceHtmKind::Request, true),
+        (TrafficTraceHtmKind::Abort, false),
+    ];
+
+    for (kind, requires_response) in expectations {
+        assert!(
+            kind.is_request(),
+            "{} request policy should match gem5",
+            kind.gem5_name()
+        );
+        assert!(
+            kind.is_read(),
+            "{} read policy should match gem5",
+            kind.gem5_name()
+        );
+        assert_eq!(
+            kind.requires_response(),
+            requires_response,
+            "{} response policy should match gem5",
+            kind.gem5_name()
+        );
+    }
 }
 
 #[test]

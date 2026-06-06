@@ -2867,45 +2867,47 @@ requests with no data, no byte mask, response required, no response data,
 writable intent, and no read/write byte accounting. No-address `MemFenceReq`
 command-id 38 and `MemSyncReq` command-id 39 packets map to typed
 `TrafficTraceEvent::Sync` events that preserve tick ordering, sequence,
-optional packet id, optional PC metadata, gem5 response-required policy, and
-packet-count accounting without constructing a `MemoryRequest` or adding
-read/write byte accounting; the traffic controller exposes those events as
-`TraceSync` batch entries. If a gem5 probe
+optional packet id, optional PC metadata, gem5 request and response-required
+policies, and packet-count accounting without constructing a `MemoryRequest` or
+adding read/write byte accounting; the traffic controller exposes those events
+as `TraceSync` batch entries. If a gem5 probe
 record carries synthetic `addr` or `size` fields for those commands, rem6
 accepts the fields for trace compatibility but treats them as non-semantic
 because the sync event contract is not address-scoped. The same sync event
 contract preserves gem5 `KERNEL` request flags as typed `kernel_sync` metadata.
 `TlbiExtSync` command-id 59 packets map to typed
 `TrafficTraceEvent::Tlb` external-sync events that preserve tick ordering,
-sequence, optional packet id, optional PC metadata, gem5 no-response policy,
-and packet-count accounting without constructing a `MemoryRequest` or adding
-read/write byte accounting. If a gem5 probe record carries synthetic `addr` or
-`size` fields for
+sequence, optional packet id, optional PC metadata, gem5 request and
+no-response policies, and packet-count accounting without constructing a
+`MemoryRequest` or adding read/write byte accounting. If a gem5 probe record
+carries synthetic `addr` or `size` fields for
 `TlbiExtSync`, rem6 accepts the fields for trace compatibility but treats them
 as non-semantic TLB metadata because the external-sync trace event is not
 address-scoped.
 `HTMReq` command-id 56 and `HTMAbort` command-id 58 packets map to typed
 `TrafficTraceEvent::Htm` events that preserve tick ordering, sequence, optional
 address, optional size, optional packet id, optional PC metadata,
-`HTMReq` response-required policy, `HTMAbort` no-response policy, and
-packet-count accounting without constructing a `MemoryRequest` or adding
-read/write byte accounting. This keeps hardware-transaction markers visible to
-trace replay and controller clients while leaving CPU-visible transaction
+gem5 request/read classification, `HTMReq` response-required policy,
+`HTMAbort` no-response policy, and packet-count accounting without constructing
+a `MemoryRequest` or adding read/write byte accounting. This keeps
+hardware-transaction markers visible to trace replay and controller clients
+while leaving CPU-visible transaction
 execution semantics as a separate architectural contract.
 `PrintReq` command-id 52 packets map to typed
 `TrafficTraceEvent::Diagnostic` print events that preserve tick ordering,
 sequence, optional address, optional size, optional packet id, optional PC
-metadata, gem5 print classification, and packet-count accounting without
-pretending the packet is a memory access. Full gem5 `PrintReqState` label-stack
-and object-print execution
+metadata, gem5 request and print classification, and packet-count accounting
+without pretending the packet is a memory access. Full gem5 `PrintReqState`
+label-stack and object-print execution
 semantics remain a debug subsystem contract because those sender-state details
 are not carried by the packet trace proto.
 Line-sized `FlushReq` command-id 53 packets whose effective address after the
 configured offset is cache-line aligned map to typed `TrafficTraceEvent::Cache`
 flush events that preserve tick ordering, sequence, address, size, optional
-packet id, optional PC metadata, writable intent, and packet-count accounting
-without constructing a `MemoryRequest` or adding read/write byte accounting.
-Full cache flush execution remains a cache subsystem contract because gem5 uses
+packet id, optional PC metadata, gem5 request and flush classification,
+writable intent, and packet-count accounting without constructing a
+`MemoryRequest` or adding read/write byte accounting. Full cache flush
+execution remains a cache subsystem contract because gem5 uses
 `FlushReq` both from Ruby tester checks and cache-trace replay paths.
 `ReadResp`, `ReadRespWithInvalidate`, `WriteResp`, `WriteCompleteResp`,
 `SoftPFResp`, `HardPFResp`, `UpgradeResp`, `UpgradeFailResp`, `ReadExResp`,
@@ -3086,15 +3088,18 @@ Trace sync note: packet-trace support now maps gem5 no-address `MemFenceReq`
 and `MemSyncReq` packets to typed trace sync events rather than
 `TrafficRequestEvent` shims. The importer accepts gem5 probe records that carry
 synthetic address or size fields for those commands but discards those fields as
-non-semantic sync metadata. Packet-trace support also maps gem5 `TlbiExtSync`
-packets to typed TLB external-sync trace events instead of memory requests.
-`HTMReq` and `HTMAbort` packet-trace commands now import as typed HTM trace
-events, preserving replay order and metadata without pretending that full
+non-semantic sync metadata while preserving gem5 request and response-required
+policies. Packet-trace support also maps gem5 `TlbiExtSync` packets to typed TLB
+external-sync trace events instead of memory requests while preserving gem5's
+request and no-response policies. `HTMReq` and `HTMAbort` packet-trace commands
+now import as typed HTM trace events, preserving replay order, metadata,
+request/read classification, and response policy without pretending that full
 transactional-memory execution exists yet. `PrintReq` packet-trace commands now
-import as typed diagnostic trace events without rebuilding the sender-state
-print tree that the packet trace does not encode. Line-shaped `FlushReq`
-packet-trace commands now import as typed cache flush events that retain gem5's
-writable intent without pretending cache flush execution is already wired
+import as typed diagnostic trace events with request and print classification
+without rebuilding the sender-state print tree that the packet trace does not
+encode. Line-shaped `FlushReq` packet-trace commands now import as typed cache
+flush events that retain gem5's request classification, flush classification,
+and writable intent without pretending cache flush execution is already wired
 through every cache protocol. Broader TLBI execution
 semantics, TLBI completion forms, CPU-visible HTM behavior, full diagnostic
 printing, and executable cache flush handling remain open because they need
