@@ -686,8 +686,42 @@ pub fn traffic_trace_replay_controller_target_outcome(
     context: &mut SchedulerContext<'_>,
     retry_delay: Tick,
 ) -> Result<TargetOutcome, TrafficTraceReplayControllerTargetError> {
-    if !delivery.request().requires_response() {
+    let Some(event) = traffic_trace_replay_controller_target_event(
+        Arc::clone(&runtime),
+        controller,
+        delivery,
+        context,
+        retry_delay,
+    )?
+    else {
         return Ok(TargetOutcome::NoResponse);
+    };
+
+    match event {
+        TrafficTraceReplayTargetEvent::MemoryResponse(outcome) => Ok(outcome),
+        TrafficTraceReplayTargetEvent::MemoryFailure { delay, record } => {
+            context
+                .schedule_local_after(delay, move |context| {
+                    runtime
+                        .lock()
+                        .expect("trace replay controller runtime lock")
+                        .record_memory_failure(context.now(), record);
+                })
+                .expect("validated trace replay failure delay");
+            Ok(TargetOutcome::NoResponse)
+        }
+    }
+}
+
+pub fn traffic_trace_replay_controller_target_event(
+    runtime: Arc<Mutex<TrafficTraceReplayControllerRuntime>>,
+    controller: Arc<Mutex<TrafficController>>,
+    delivery: &RequestDelivery,
+    context: &mut SchedulerContext<'_>,
+    retry_delay: Tick,
+) -> Result<Option<TrafficTraceReplayTargetEvent>, TrafficTraceReplayControllerTargetError> {
+    if !delivery.request().requires_response() {
+        return Ok(None);
     }
 
     let controller_tick = runtime
@@ -696,12 +730,8 @@ pub fn traffic_trace_replay_controller_target_outcome(
         .target_request_tick(delivery.request().id())
         .unwrap_or_else(|| delivery.tick());
     loop {
-        match traffic_trace_replay_controller_runtime_target_outcome(
-            Arc::clone(&runtime),
-            delivery,
-            context,
-        ) {
-            Ok(outcome) => return Ok(outcome),
+        match traffic_trace_replay_controller_runtime_target_event(Arc::clone(&runtime), delivery) {
+            Ok(event) => return Ok(Some(event)),
             Err(TrafficTraceReplayTargetError::ActionQueueEmpty { .. }) => {}
             Err(error) => return Err(error.into()),
         }
@@ -835,29 +865,14 @@ fn batch_has_control_source(
     })
 }
 
-fn traffic_trace_replay_controller_runtime_target_outcome(
+fn traffic_trace_replay_controller_runtime_target_event(
     runtime: Arc<Mutex<TrafficTraceReplayControllerRuntime>>,
     delivery: &RequestDelivery,
-    context: &mut SchedulerContext<'_>,
-) -> Result<TargetOutcome, TrafficTraceReplayTargetError> {
-    let event = runtime
+) -> Result<TrafficTraceReplayTargetEvent, TrafficTraceReplayTargetError> {
+    runtime
         .lock()
         .expect("trace replay controller runtime lock")
-        .target_event(delivery)?;
-    match event {
-        TrafficTraceReplayTargetEvent::MemoryResponse(outcome) => Ok(outcome),
-        TrafficTraceReplayTargetEvent::MemoryFailure { delay, record } => {
-            context
-                .schedule_local_after(delay, move |context| {
-                    runtime
-                        .lock()
-                        .expect("trace replay controller runtime lock")
-                        .record_memory_failure(context.now(), record);
-                })
-                .expect("validated trace replay failure delay");
-            Ok(TargetOutcome::NoResponse)
-        }
-    }
+        .target_event(delivery)
 }
 
 fn traffic_trace_replay_controller_runtime_control_completion(

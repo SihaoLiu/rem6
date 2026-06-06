@@ -3006,9 +3006,11 @@ while emitting replay action events carrying owned memory and control failure
 records. The execution-facing replay action queue drains those failure records
 separately from successful memory and control completions while preserving an
 ordered action drain for consumers that need cross-kind replay order. Matched
-memory error records are available to the memory target helper, matched
-sync/HTM control failures are available to the control-completion helper, and
-broader controller, cache, and CPU error propagation remains open.
+memory error records are available to the memory target helpers, including a
+controller-aware target-event helper that returns memory failures directly to
+execution consumers before the target-outcome wrapper records them for audit.
+Matched sync/HTM control failures are available to the control-completion
+helper, and broader cache and CPU error propagation remains open.
 Trace packet flag handling now maps non-prefetch `INST_FETCH` on `ReadReq`,
 `ReadCleanReq`, and
 `ReadSharedReq` packets to native instruction-fetch requests, accepts `PHYSICAL`

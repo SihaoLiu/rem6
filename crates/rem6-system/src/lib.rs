@@ -210,7 +210,7 @@ pub use topology::{
 pub use traffic_replay::{
     traffic_trace_replay_controller_control_completion,
     traffic_trace_replay_controller_runtime_sideband_events,
-    traffic_trace_replay_controller_target_outcome,
+    traffic_trace_replay_controller_target_event, traffic_trace_replay_controller_target_outcome,
     traffic_trace_replay_runtime_control_completion, traffic_trace_replay_runtime_sideband_events,
     traffic_trace_replay_runtime_target_outcome, traffic_trace_replay_target_event,
     traffic_trace_replay_target_outcome, TrafficTraceReplayControlError,

@@ -3,9 +3,11 @@ use std::sync::{Arc, Mutex};
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::ResponseStatus;
 use rem6_system::{
-    traffic_trace_replay_controller_target_outcome, TrafficTraceReplayControllerRuntime,
-    TrafficTraceReplayControllerTargetError,
+    traffic_trace_replay_controller_target_event, traffic_trace_replay_controller_target_outcome,
+    TrafficTraceReplayControllerRuntime, TrafficTraceReplayControllerTargetError,
+    TrafficTraceReplayTargetEvent,
 };
+use rem6_traffic::TrafficTraceErrorKind;
 use rem6_transport::{MemoryRoute, MemoryTrace, MemoryTransport, ResponseDelivery, TargetOutcome};
 
 mod support;
@@ -385,5 +387,108 @@ fn traffic_trace_replay_target_outcome_drops_reported_missing_request_before_lat
     scheduler.run_until_idle_conservative();
 
     assert_eq!(*responses.lock().unwrap(), vec![(12, second_req.id())]);
+    assert!(runtime.lock().unwrap().is_empty());
+}
+
+#[test]
+fn traffic_trace_replay_target_event_exposes_controller_memory_failure_to_consumer() {
+    let mut controller = controller_for_packets(&[
+        PacketFields {
+            tick: 0,
+            command: GEM5_WRITE_REQ,
+            address: Some(0x7000),
+            size: Some(8),
+            packet_id: Some(96),
+        },
+        PacketFields {
+            tick: 7,
+            command: GEM5_WRITE_ERROR,
+            address: Some(0x7000),
+            size: Some(8),
+            packet_id: Some(96),
+        },
+    ]);
+
+    assert!(controller.start(0).unwrap().is_empty());
+    let request_batch = controller.next_event(0, 0).unwrap().unwrap();
+    let req = request_batch.request().unwrap().request().clone();
+
+    let controller = Arc::new(Mutex::new(controller));
+    let runtime = Arc::new(Mutex::new(TrafficTraceReplayControllerRuntime::default()));
+    runtime
+        .lock()
+        .unwrap()
+        .record_batch(&request_batch)
+        .unwrap();
+
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let failures = Arc::new(Mutex::new(Vec::new()));
+    let responses = Arc::new(Mutex::new(Vec::new()));
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("core0"),
+                PartitionId::new(0),
+                endpoint("memory0"),
+                PartitionId::new(1),
+                3,
+                5,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    let replay = Arc::clone(&runtime);
+    let trace_controller = Arc::clone(&controller);
+    let failure_log = Arc::clone(&failures);
+    let response_log = Arc::clone(&responses);
+    transport
+        .submit(
+            &mut scheduler,
+            route,
+            req.clone(),
+            MemoryTrace::new(),
+            move |delivery, context| {
+                let event = traffic_trace_replay_controller_target_event(
+                    Arc::clone(&replay),
+                    Arc::clone(&trace_controller),
+                    &delivery,
+                    context,
+                    0,
+                )
+                .unwrap()
+                .unwrap();
+                match event {
+                    TrafficTraceReplayTargetEvent::MemoryFailure { delay, record } => {
+                        failure_log.lock().unwrap().push((
+                            context.now(),
+                            delay,
+                            record.tick(),
+                            record.failure().request_id(),
+                            record.failure().error(),
+                        ));
+                        TargetOutcome::NoResponse
+                    }
+                    TrafficTraceReplayTargetEvent::MemoryResponse(outcome) => outcome,
+                }
+            },
+            move |delivery: ResponseDelivery| {
+                response_log
+                    .lock()
+                    .unwrap()
+                    .push(delivery.response().request_id());
+            },
+        )
+        .unwrap();
+
+    scheduler.run_until_idle_conservative();
+
+    assert_eq!(
+        *failures.lock().unwrap(),
+        vec![(3, 4, 7, req.id(), TrafficTraceErrorKind::Write)]
+    );
+    assert!(responses.lock().unwrap().is_empty());
+    assert!(runtime.lock().unwrap().memory_failures().is_empty());
     assert!(runtime.lock().unwrap().is_empty());
 }
