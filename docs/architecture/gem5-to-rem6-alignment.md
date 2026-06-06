@@ -2933,17 +2933,17 @@ matched replay completions in a typed outcome summary and emits replay action
 events carrying owned memory responses or control acknowledgements. The
 execution-facing replay action queue records those controller batches and drains
 owned memory response records, control acknowledgement ticks, or the original
-actions in recorded order for downstream consumers. `rem6-system` can consume
-the ordered memory-response and memory-failure actions as target events at the
-transport responder boundary. Response actions become transport target outcomes
-that preserve the trace response tick as target-side response delay, while
+actions in recorded order for downstream consumers. `rem6-system` now exposes
+a target runtime helper that records controller batches into that queue and can
+be used from a `MemoryTransport` responder for ordered memory-response and
+memory-failure actions. Response actions become transport target outcomes that
+preserve the trace response tick as target-side response delay, while
 memory-failure actions preserve the trace failure tick as target-side delay
-plus error metadata and can be converted to a no-response transport outcome.
-A focused `MemoryTransport` responder test schedules failure-side handling from
-that exposed delay. Both paths reject mismatched request ids or pre-delivery
-trace ticks without discarding the queued action. Automatic runner integration
-and full response and error propagation through memory controllers, caches, and
-CPU ports remain separate contracts.
+plus error metadata and let the helper schedule runtime failure records without
+delivering a memory response. Both paths reject mismatched request ids or
+pre-delivery trace ticks without discarding the queued action. CLI/workload
+runner integration and full response and error propagation through memory
+controllers, caches, and CPU ports remain separate contracts.
 `InvalidDestError`, `BadAddressError`, `ReadError`, `WriteError`,
 `FunctionalReadError`, and `FunctionalWriteError` command-ids 46-51 map to
 typed `TrafficTraceEvent::Error` events that preserve tick ordering, sequence,
@@ -2960,11 +2960,9 @@ and the controller records those failures in the same typed outcome summary
 while emitting replay action events carrying owned memory and control failure
 records. The execution-facing replay action queue drains those failure records
 separately from successful memory and control completions while preserving an
-ordered action drain for consumers that need cross-kind replay order. The
-system target-event adapter consumes memory-failure actions at the same
-responder boundary as successful trace memory responses and exposes the
-failure delay needed by callers that schedule trace-error handling; wiring that
-adapter into broader controller, cache, and CPU error propagation remains open.
+ordered action drain for consumers that need cross-kind replay order. Those
+matched error records are available to the same target runtime helper, while
+broader controller, cache, and CPU error propagation remains open.
 Trace packet flag handling now maps non-prefetch `INST_FETCH` on `ReadReq`,
 `ReadCleanReq`, and
 `ReadSharedReq` packets to native instruction-fetch requests, accepts `PHYSICAL`
