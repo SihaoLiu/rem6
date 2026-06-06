@@ -85,12 +85,21 @@ fn trace_generator_emits_response_events() {
                     pc: Some(0x1008),
                 },
                 PacketFields {
+                    tick: 11,
+                    command: GEM5_SOFT_PF_RESP,
+                    address: Some(0x4040),
+                    size: Some(16),
+                    flags: None,
+                    packet_id: Some(4),
+                    pc: Some(0x100a),
+                },
+                PacketFields {
                     tick: 13,
                     command: GEM5_WRITE_REQ,
                     address: Some(0x30),
                     size: Some(4),
                     flags: None,
-                    packet_id: Some(4),
+                    packet_id: Some(5),
                     pc: Some(0x100c),
                 },
             ],
@@ -151,8 +160,38 @@ fn trace_generator_emits_response_events() {
     assert_eq!(fence_response.trace_packet_id(), Some(3));
     assert_eq!(fence_response.trace_pc(), Some(Address::new(0x1008)));
 
-    let write = match generator
+    let soft_prefetch_response = match generator
         .next_event(fence_response.tick(), 0)
+        .unwrap()
+        .unwrap()
+    {
+        TrafficTraceEvent::Response(event) => event,
+        _ => panic!("SoftPFResp should emit a response event"),
+    };
+    assert_eq!(soft_prefetch_response.tick(), 111);
+    assert_eq!(soft_prefetch_response.sequence(), 3);
+    assert_eq!(
+        soft_prefetch_response.kind(),
+        TrafficTraceResponseKind::SoftPrefetch
+    );
+    assert_eq!(soft_prefetch_response.address(), Some(Address::new(0x4040)));
+    assert_eq!(soft_prefetch_response.size_bytes(), Some(16));
+    assert!(soft_prefetch_response.returns_data());
+    assert!(!soft_prefetch_response.invalidates_line());
+    assert!(!soft_prefetch_response.cleans_line());
+    assert!(soft_prefetch_response.is_software_prefetch());
+    assert!(!soft_prefetch_response.is_hardware_prefetch());
+    assert!(soft_prefetch_response.is_prefetch());
+    assert!(soft_prefetch_response.is_read());
+    assert!(!soft_prefetch_response.is_write());
+    assert_eq!(soft_prefetch_response.trace_packet_id(), Some(4));
+    assert_eq!(
+        soft_prefetch_response.trace_pc(),
+        Some(Address::new(0x100a))
+    );
+
+    let write = match generator
+        .next_event(soft_prefetch_response.tick(), 0)
         .unwrap()
         .unwrap()
     {
@@ -160,11 +199,11 @@ fn trace_generator_emits_response_events() {
         _ => panic!("write packet should emit a request event"),
     };
     assert_eq!(write.tick(), 113);
-    assert_eq!(write.sequence(), 3);
+    assert_eq!(write.sequence(), 4);
     assert_eq!(write.kind(), TrafficRequestKind::Write);
     assert_eq!(write.request().operation(), MemoryOperation::Write);
 
-    assert_eq!(generator.summary().packet_count(), 4);
+    assert_eq!(generator.summary().packet_count(), 5);
     assert_eq!(generator.summary().read_count(), 1);
     assert_eq!(generator.summary().write_count(), 1);
     assert_eq!(generator.summary().bytes_read(), 8);
@@ -366,162 +405,109 @@ fn trace_response_kind_preserves_gem5_response_attributes() {
         returns_data: bool,
         invalidates_line: bool,
         cleans_line: bool,
+        is_software_prefetch: bool,
+        is_hardware_prefetch: bool,
+        is_prefetch: bool,
         is_read: bool,
         is_write: bool,
     }
 
+    fn response_policy(kind: TrafficTraceResponseKind) -> ResponsePolicyExpectation {
+        ResponsePolicyExpectation {
+            kind,
+            returns_data: false,
+            invalidates_line: false,
+            cleans_line: false,
+            is_software_prefetch: false,
+            is_hardware_prefetch: false,
+            is_prefetch: false,
+            is_read: false,
+            is_write: false,
+        }
+    }
+
     let expectations = [
         ResponsePolicyExpectation {
-            kind: TrafficTraceResponseKind::Read,
             returns_data: true,
-            invalidates_line: false,
-            cleans_line: false,
             is_read: true,
-            is_write: false,
+            ..response_policy(TrafficTraceResponseKind::Read)
         },
         ResponsePolicyExpectation {
-            kind: TrafficTraceResponseKind::ReadWithInvalidate,
             returns_data: true,
             invalidates_line: true,
-            cleans_line: false,
             is_read: true,
-            is_write: false,
+            ..response_policy(TrafficTraceResponseKind::ReadWithInvalidate)
         },
         ResponsePolicyExpectation {
-            kind: TrafficTraceResponseKind::Write,
-            returns_data: false,
-            invalidates_line: false,
-            cleans_line: false,
-            is_read: false,
             is_write: true,
+            ..response_policy(TrafficTraceResponseKind::Write)
         },
         ResponsePolicyExpectation {
-            kind: TrafficTraceResponseKind::WriteComplete,
-            returns_data: false,
-            invalidates_line: false,
-            cleans_line: false,
-            is_read: false,
             is_write: true,
+            ..response_policy(TrafficTraceResponseKind::WriteComplete)
         },
         ResponsePolicyExpectation {
-            kind: TrafficTraceResponseKind::SoftPrefetch,
             returns_data: true,
-            invalidates_line: false,
-            cleans_line: false,
+            is_software_prefetch: true,
+            is_prefetch: true,
             is_read: true,
-            is_write: false,
+            ..response_policy(TrafficTraceResponseKind::SoftPrefetch)
         },
         ResponsePolicyExpectation {
-            kind: TrafficTraceResponseKind::HardPrefetch,
             returns_data: true,
-            invalidates_line: false,
-            cleans_line: false,
+            is_hardware_prefetch: true,
+            is_prefetch: true,
             is_read: true,
-            is_write: false,
+            ..response_policy(TrafficTraceResponseKind::HardPrefetch)
         },
+        response_policy(TrafficTraceResponseKind::Upgrade),
         ResponsePolicyExpectation {
-            kind: TrafficTraceResponseKind::Upgrade,
-            returns_data: false,
-            invalidates_line: false,
-            cleans_line: false,
-            is_read: false,
-            is_write: false,
-        },
-        ResponsePolicyExpectation {
-            kind: TrafficTraceResponseKind::UpgradeFail,
             returns_data: true,
-            invalidates_line: false,
-            cleans_line: false,
             is_read: true,
-            is_write: false,
+            ..response_policy(TrafficTraceResponseKind::UpgradeFail)
         },
         ResponsePolicyExpectation {
-            kind: TrafficTraceResponseKind::ReadExclusive,
             returns_data: true,
-            invalidates_line: false,
-            cleans_line: false,
             is_read: true,
-            is_write: false,
+            ..response_policy(TrafficTraceResponseKind::ReadExclusive)
         },
         ResponsePolicyExpectation {
-            kind: TrafficTraceResponseKind::StoreConditional,
-            returns_data: false,
-            invalidates_line: false,
-            cleans_line: false,
-            is_read: false,
             is_write: true,
+            ..response_policy(TrafficTraceResponseKind::StoreConditional)
         },
         ResponsePolicyExpectation {
-            kind: TrafficTraceResponseKind::LockedRmwRead,
             returns_data: true,
-            invalidates_line: false,
-            cleans_line: false,
             is_read: true,
-            is_write: false,
+            ..response_policy(TrafficTraceResponseKind::LockedRmwRead)
         },
         ResponsePolicyExpectation {
-            kind: TrafficTraceResponseKind::LockedRmwWrite,
-            returns_data: false,
-            invalidates_line: false,
-            cleans_line: false,
-            is_read: false,
             is_write: true,
+            ..response_policy(TrafficTraceResponseKind::LockedRmwWrite)
         },
         ResponsePolicyExpectation {
-            kind: TrafficTraceResponseKind::Swap,
             returns_data: true,
-            invalidates_line: false,
-            cleans_line: false,
             is_read: true,
             is_write: true,
+            ..response_policy(TrafficTraceResponseKind::Swap)
         },
+        response_policy(TrafficTraceResponseKind::MemSync),
+        response_policy(TrafficTraceResponseKind::MemFence),
         ResponsePolicyExpectation {
-            kind: TrafficTraceResponseKind::MemSync,
-            returns_data: false,
-            invalidates_line: false,
-            cleans_line: false,
-            is_read: false,
-            is_write: false,
-        },
-        ResponsePolicyExpectation {
-            kind: TrafficTraceResponseKind::MemFence,
-            returns_data: false,
-            invalidates_line: false,
-            cleans_line: false,
-            is_read: false,
-            is_write: false,
-        },
-        ResponsePolicyExpectation {
-            kind: TrafficTraceResponseKind::CleanShared,
-            returns_data: false,
-            invalidates_line: false,
             cleans_line: true,
-            is_read: false,
-            is_write: false,
+            ..response_policy(TrafficTraceResponseKind::CleanShared)
         },
         ResponsePolicyExpectation {
-            kind: TrafficTraceResponseKind::CleanInvalid,
-            returns_data: false,
             invalidates_line: true,
             cleans_line: true,
-            is_read: false,
-            is_write: false,
+            ..response_policy(TrafficTraceResponseKind::CleanInvalid)
         },
         ResponsePolicyExpectation {
-            kind: TrafficTraceResponseKind::Invalidate,
-            returns_data: false,
             invalidates_line: true,
-            cleans_line: false,
-            is_read: false,
-            is_write: false,
+            ..response_policy(TrafficTraceResponseKind::Invalidate)
         },
         ResponsePolicyExpectation {
-            kind: TrafficTraceResponseKind::HtmRequest,
-            returns_data: false,
-            invalidates_line: false,
-            cleans_line: false,
             is_read: true,
-            is_write: false,
+            ..response_policy(TrafficTraceResponseKind::HtmRequest)
         },
     ];
 
@@ -543,6 +529,24 @@ fn trace_response_kind_preserves_gem5_response_attributes() {
             kind.cleans_line(),
             expectation.cleans_line,
             "{} clean policy should match gem5",
+            kind.gem5_name()
+        );
+        assert_eq!(
+            kind.is_software_prefetch(),
+            expectation.is_software_prefetch,
+            "{} software prefetch policy should match gem5",
+            kind.gem5_name()
+        );
+        assert_eq!(
+            kind.is_hardware_prefetch(),
+            expectation.is_hardware_prefetch,
+            "{} hardware prefetch policy should match gem5",
+            kind.gem5_name()
+        );
+        assert_eq!(
+            kind.is_prefetch(),
+            expectation.is_prefetch,
+            "{} prefetch policy should match gem5",
             kind.gem5_name()
         );
         assert_eq!(

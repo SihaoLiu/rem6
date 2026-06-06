@@ -200,6 +200,18 @@ impl TrafficTraceResponseKind {
     pub const fn cleans_line(self) -> bool {
         matches!(self, Self::CleanShared | Self::CleanInvalid)
     }
+
+    pub const fn is_software_prefetch(self) -> bool {
+        matches!(self, Self::SoftPrefetch)
+    }
+
+    pub const fn is_hardware_prefetch(self) -> bool {
+        matches!(self, Self::HardPrefetch)
+    }
+
+    pub const fn is_prefetch(self) -> bool {
+        self.is_software_prefetch() || self.is_hardware_prefetch()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -548,6 +560,18 @@ impl TrafficTraceResponseEvent {
 
     pub const fn cleans_line(self) -> bool {
         self.kind.cleans_line()
+    }
+
+    pub const fn is_software_prefetch(self) -> bool {
+        self.kind.is_software_prefetch()
+    }
+
+    pub const fn is_hardware_prefetch(self) -> bool {
+        self.kind.is_hardware_prefetch()
+    }
+
+    pub const fn is_prefetch(self) -> bool {
+        self.kind.is_prefetch()
     }
 
     pub const fn trace_packet_id(self) -> Option<u64> {
