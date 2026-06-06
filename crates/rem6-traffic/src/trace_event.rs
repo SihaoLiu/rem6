@@ -41,6 +41,12 @@ impl TrafficTraceCacheKind {
             Self::Flush => "FlushReq",
         }
     }
+
+    pub const fn requires_writable(self) -> bool {
+        match self {
+            Self::Flush => true,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -54,6 +60,13 @@ impl TrafficTraceHtmKind {
         match self {
             Self::Request => "HTMReq",
             Self::Abort => "HTMAbort",
+        }
+    }
+
+    pub const fn requires_response(self) -> bool {
+        match self {
+            Self::Request => true,
+            Self::Abort => false,
         }
     }
 }
@@ -294,6 +307,10 @@ impl TrafficTraceCacheEvent {
 
     pub const fn size_bytes(self) -> u64 {
         self.size_bytes
+    }
+
+    pub const fn requires_writable(self) -> bool {
+        self.kind.requires_writable()
     }
 
     pub const fn trace_packet_id(self) -> Option<u64> {
@@ -550,6 +567,10 @@ impl TrafficTraceHtmEvent {
 
     pub const fn size_bytes(self) -> Option<u64> {
         self.size_bytes
+    }
+
+    pub const fn requires_response(self) -> bool {
+        self.kind.requires_response()
     }
 
     pub const fn trace_packet_id(self) -> Option<u64> {

@@ -96,6 +96,7 @@ fn trace_generator_emits_flush_req_cache_event() {
     assert_eq!(flush.kind(), TrafficTraceCacheKind::Flush);
     assert_eq!(flush.address(), Address::new(0x4000));
     assert_eq!(flush.size_bytes(), 64);
+    assert!(flush.requires_writable());
     assert_eq!(flush.trace_packet_id(), Some(2));
     assert_eq!(flush.trace_pc(), Some(Address::new(0x1004)));
 
@@ -155,6 +156,7 @@ fn trace_generator_next_request_reports_cache_event_boundary() {
     assert_eq!(flush.kind(), TrafficTraceCacheKind::Flush);
     assert_eq!(flush.address(), Address::new(0x4000));
     assert_eq!(flush.size_bytes(), 64);
+    assert!(flush.requires_writable());
 }
 
 #[test]

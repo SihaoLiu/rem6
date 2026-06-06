@@ -106,6 +106,7 @@ fn trace_generator_emits_htm_request_and_abort_events() {
     assert_eq!(begin.kind(), TrafficTraceHtmKind::Request);
     assert_eq!(begin.address(), Some(Address::new(0x4000)));
     assert_eq!(begin.size_bytes(), Some(16));
+    assert!(begin.requires_response());
     assert_eq!(begin.trace_packet_id(), Some(2));
     assert_eq!(begin.trace_pc(), Some(Address::new(0x1004)));
 
@@ -119,6 +120,7 @@ fn trace_generator_emits_htm_request_and_abort_events() {
     assert_eq!(abort.kind(), TrafficTraceHtmKind::Abort);
     assert_eq!(abort.address(), None);
     assert_eq!(abort.size_bytes(), None);
+    assert!(!abort.requires_response());
     assert_eq!(abort.trace_packet_id(), Some(3));
     assert_eq!(abort.trace_pc(), Some(Address::new(0x1008)));
 

@@ -2884,7 +2884,8 @@ as non-semantic TLB metadata because the external-sync trace event is not
 address-scoped.
 `HTMReq` command-id 56 and `HTMAbort` command-id 58 packets map to typed
 `TrafficTraceEvent::Htm` events that preserve tick ordering, sequence, optional
-address, optional size, optional packet id, optional PC metadata, and
+address, optional size, optional packet id, optional PC metadata,
+`HTMReq` response-required policy, `HTMAbort` no-response policy, and
 packet-count accounting without constructing a `MemoryRequest` or adding
 read/write byte accounting. This keeps hardware-transaction markers visible to
 trace replay and controller clients while leaving CPU-visible transaction
@@ -2899,9 +2900,9 @@ are not carried by the packet trace proto.
 Line-sized `FlushReq` command-id 53 packets whose effective address after the
 configured offset is cache-line aligned map to typed `TrafficTraceEvent::Cache`
 flush events that preserve tick ordering, sequence, address, size, optional
-packet id, optional PC metadata, and packet-count accounting without
-constructing a `MemoryRequest` or adding read/write byte accounting. Full cache
-flush execution remains a cache subsystem contract because gem5 uses
+packet id, optional PC metadata, writable intent, and packet-count accounting
+without constructing a `MemoryRequest` or adding read/write byte accounting.
+Full cache flush execution remains a cache subsystem contract because gem5 uses
 `FlushReq` both from Ruby tester checks and cache-trace replay paths.
 `ReadResp`, `ReadRespWithInvalidate`, `WriteResp`, `WriteCompleteResp`,
 `SoftPFResp`, `HardPFResp`, `UpgradeResp`, `UpgradeFailResp`, `ReadExResp`,
@@ -3085,8 +3086,9 @@ events, preserving replay order and metadata without pretending that full
 transactional-memory execution exists yet. `PrintReq` packet-trace commands now
 import as typed diagnostic trace events without rebuilding the sender-state
 print tree that the packet trace does not encode. Line-shaped `FlushReq`
-packet-trace commands now import as typed cache flush events without pretending
-cache flush execution is already wired through every cache protocol. Broader TLBI execution
+packet-trace commands now import as typed cache flush events that retain gem5's
+writable intent without pretending cache flush execution is already wired
+through every cache protocol. Broader TLBI execution
 semantics, TLBI completion forms, CPU-visible HTM behavior, full diagnostic
 printing, and executable cache flush handling remain open because they need
 CPU/MMU/cache/debug-visible event contracts, and sync flags beyond `KERNEL`
