@@ -79,9 +79,7 @@ fn trace_generator_emits_tlbi_ext_sync_event() {
 
     let read = match generator.next_event(100, 0).unwrap().unwrap() {
         TrafficTraceEvent::Request(event) => event,
-        TrafficTraceEvent::Sync(_) | TrafficTraceEvent::Tlb(_) => {
-            panic!("read packet should emit a request event")
-        }
+        _ => panic!("read packet should emit a request event"),
     };
     assert_eq!(read.tick(), 105);
     assert_eq!(read.sequence(), 0);
@@ -91,9 +89,7 @@ fn trace_generator_emits_tlbi_ext_sync_event() {
     assert_eq!(generator.schedule_tick(read.tick(), 0).unwrap(), 107);
     let tlb = match generator.next_event(read.tick(), 0).unwrap().unwrap() {
         TrafficTraceEvent::Tlb(event) => event,
-        TrafficTraceEvent::Request(_) | TrafficTraceEvent::Sync(_) => {
-            panic!("TlbiExtSync should emit a TLB event")
-        }
+        _ => panic!("TlbiExtSync should emit a TLB event"),
     };
     assert_eq!(tlb.tick(), 107);
     assert_eq!(tlb.sequence(), 1);
@@ -104,9 +100,7 @@ fn trace_generator_emits_tlbi_ext_sync_event() {
     assert_eq!(generator.schedule_tick(tlb.tick(), 0).unwrap(), 111);
     let write = match generator.next_event(tlb.tick(), 0).unwrap().unwrap() {
         TrafficTraceEvent::Request(event) => event,
-        TrafficTraceEvent::Sync(_) | TrafficTraceEvent::Tlb(_) => {
-            panic!("write packet should emit a request event")
-        }
+        _ => panic!("write packet should emit a request event"),
     };
     assert_eq!(write.tick(), 111);
     assert_eq!(write.sequence(), 2);
@@ -152,9 +146,7 @@ fn trace_generator_next_request_reports_tlb_event_boundary() {
 
     let tlb = match generator.next_event(0, 0).unwrap().unwrap() {
         TrafficTraceEvent::Tlb(event) => event,
-        TrafficTraceEvent::Request(_) | TrafficTraceEvent::Sync(_) => {
-            panic!("TlbiExtSync should remain pending")
-        }
+        _ => panic!("TlbiExtSync should remain pending"),
     };
     assert_eq!(tlb.tick(), 5);
     assert_eq!(tlb.sequence(), 0);

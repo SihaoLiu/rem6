@@ -3,7 +3,7 @@ use rem6_traffic::{
     TrafficController, TrafficControllerConfig, TrafficControllerState, TrafficGeneratorError,
     TrafficRequestKind, TrafficStateGenerator, TrafficStateGraphConfig, TrafficStateId,
     TrafficStateSpec, TrafficTrace, TrafficTraceConfig, TrafficTraceEvent, TrafficTraceGenerator,
-    TrafficTraceSyncKind, TrafficTransition, TrafficTransitionProbability,
+    TrafficTraceHtmKind, TrafficTransition, TrafficTransitionProbability,
     TRAFFIC_TRANSITION_PROBABILITY_SCALE,
 };
 
@@ -11,10 +11,9 @@ const GEM5_MAGIC: [u8; 4] = [0x67, 0x65, 0x6d, 0x35];
 const TICK_FREQUENCY: u64 = 1_000;
 const GEM5_READ_REQ: u32 = 1;
 const GEM5_WRITE_REQ: u32 = 4;
-const GEM5_MEM_FENCE_REQ: u32 = 38;
-const GEM5_MEM_SYNC_REQ: u32 = 39;
+const GEM5_HTM_REQ: u32 = 56;
+const GEM5_HTM_ABORT: u32 = 58;
 const GEM5_FLAG_PHYSICAL: u32 = 0x0000_0200;
-const GEM5_FLAG_KERNEL: u32 = 0x0000_1000;
 
 #[derive(Clone, Copy)]
 struct PacketFields {
@@ -35,7 +34,7 @@ fn trace_config(trace: TrafficTrace) -> TrafficTraceConfig {
     TrafficTraceConfig::new(AgentId::new(7), line_layout(), 99, trace).unwrap()
 }
 
-fn sync_trace() -> TrafficTrace {
+fn htm_trace() -> TrafficTrace {
     TrafficTrace::from_gem5_packet_trace(
         &gem5_packet_trace(
             TICK_FREQUENCY,
@@ -51,16 +50,16 @@ fn sync_trace() -> TrafficTrace {
                 },
                 PacketFields {
                     tick: 7,
-                    command: GEM5_MEM_FENCE_REQ,
-                    address: None,
-                    size: None,
+                    command: GEM5_HTM_REQ,
+                    address: Some(0x4000),
+                    size: Some(16),
                     flags: None,
                     packet_id: Some(2),
                     pc: Some(0x1004),
                 },
                 PacketFields {
                     tick: 9,
-                    command: GEM5_MEM_SYNC_REQ,
+                    command: GEM5_HTM_ABORT,
                     address: None,
                     size: None,
                     flags: None,
@@ -84,59 +83,63 @@ fn sync_trace() -> TrafficTrace {
 }
 
 #[test]
-fn trace_generator_emits_mem_fence_and_mem_sync_events() {
-    let mut generator = TrafficTraceGenerator::new(trace_config(sync_trace()));
+fn trace_generator_emits_htm_request_and_abort_events() {
+    let mut generator = TrafficTraceGenerator::new(trace_config(htm_trace()));
     generator.enter(100);
 
-    assert_eq!(generator.schedule_tick(100, 0).unwrap(), 105);
     let read = match generator.next_event(100, 0).unwrap().unwrap() {
         TrafficTraceEvent::Request(event) => event,
-        _ => panic!("read packet should emit a request event"),
+        TrafficTraceEvent::Sync(_) | TrafficTraceEvent::Tlb(_) | TrafficTraceEvent::Htm(_) => {
+            panic!("read packet should emit a request event")
+        }
     };
     assert_eq!(read.tick(), 105);
     assert_eq!(read.sequence(), 0);
     assert_eq!(read.kind(), TrafficRequestKind::Read);
     assert_eq!(read.request().operation(), MemoryOperation::ReadShared);
-    assert_eq!(read.trace_packet_id(), Some(1));
-    assert_eq!(read.trace_pc(), Some(Address::new(0x1000)));
 
     assert_eq!(generator.schedule_tick(read.tick(), 0).unwrap(), 107);
-    let fence = match generator.next_event(read.tick(), 0).unwrap().unwrap() {
-        TrafficTraceEvent::Sync(event) => event,
-        _ => panic!("MemFenceReq should emit a sync event"),
+    let begin = match generator.next_event(read.tick(), 0).unwrap().unwrap() {
+        TrafficTraceEvent::Htm(event) => event,
+        TrafficTraceEvent::Request(_) | TrafficTraceEvent::Sync(_) | TrafficTraceEvent::Tlb(_) => {
+            panic!("HTMReq should emit an HTM event")
+        }
     };
-    assert_eq!(fence.tick(), 107);
-    assert_eq!(fence.sequence(), 1);
-    assert_eq!(fence.kind(), TrafficTraceSyncKind::MemFence);
-    assert!(!fence.kernel_sync());
-    assert_eq!(fence.trace_packet_id(), Some(2));
-    assert_eq!(fence.trace_pc(), Some(Address::new(0x1004)));
+    assert_eq!(begin.tick(), 107);
+    assert_eq!(begin.sequence(), 1);
+    assert_eq!(begin.kind(), TrafficTraceHtmKind::Request);
+    assert_eq!(begin.address(), Some(Address::new(0x4000)));
+    assert_eq!(begin.size_bytes(), Some(16));
+    assert_eq!(begin.trace_packet_id(), Some(2));
+    assert_eq!(begin.trace_pc(), Some(Address::new(0x1004)));
 
-    assert_eq!(generator.schedule_tick(fence.tick(), 0).unwrap(), 109);
-    let sync = match generator.next_event(fence.tick(), 0).unwrap().unwrap() {
-        TrafficTraceEvent::Sync(event) => event,
-        _ => panic!("MemSyncReq should emit a sync event"),
+    assert_eq!(generator.schedule_tick(begin.tick(), 0).unwrap(), 109);
+    let abort = match generator.next_event(begin.tick(), 0).unwrap().unwrap() {
+        TrafficTraceEvent::Htm(event) => event,
+        TrafficTraceEvent::Request(_) | TrafficTraceEvent::Sync(_) | TrafficTraceEvent::Tlb(_) => {
+            panic!("HTMAbort should emit an HTM event")
+        }
     };
-    assert_eq!(sync.tick(), 109);
-    assert_eq!(sync.sequence(), 2);
-    assert_eq!(sync.kind(), TrafficTraceSyncKind::MemSync);
-    assert!(!sync.kernel_sync());
-    assert_eq!(sync.trace_packet_id(), Some(3));
-    assert_eq!(sync.trace_pc(), Some(Address::new(0x1008)));
+    assert_eq!(abort.tick(), 109);
+    assert_eq!(abort.sequence(), 2);
+    assert_eq!(abort.kind(), TrafficTraceHtmKind::Abort);
+    assert_eq!(abort.address(), None);
+    assert_eq!(abort.size_bytes(), None);
+    assert_eq!(abort.trace_packet_id(), Some(3));
+    assert_eq!(abort.trace_pc(), Some(Address::new(0x1008)));
 
-    assert_eq!(generator.schedule_tick(sync.tick(), 0).unwrap(), 113);
-    let write = match generator.next_event(sync.tick(), 0).unwrap().unwrap() {
+    assert_eq!(generator.schedule_tick(abort.tick(), 0).unwrap(), 113);
+    let write = match generator.next_event(abort.tick(), 0).unwrap().unwrap() {
         TrafficTraceEvent::Request(event) => event,
-        _ => panic!("write packet should emit a request event"),
+        TrafficTraceEvent::Sync(_) | TrafficTraceEvent::Tlb(_) | TrafficTraceEvent::Htm(_) => {
+            panic!("write packet should emit a request event")
+        }
     };
     assert_eq!(write.tick(), 113);
     assert_eq!(write.sequence(), 3);
     assert_eq!(write.kind(), TrafficRequestKind::Write);
     assert_eq!(write.request().operation(), MemoryOperation::Write);
-    assert_eq!(write.trace_packet_id(), Some(4));
-    assert_eq!(write.trace_pc(), Some(Address::new(0x100c)));
 
-    assert_eq!(generator.schedule_tick(write.tick(), 0).unwrap(), u64::MAX);
     assert_eq!(generator.summary().packet_count(), 4);
     assert_eq!(generator.summary().read_count(), 1);
     assert_eq!(generator.summary().write_count(), 1);
@@ -147,15 +150,15 @@ fn trace_generator_emits_mem_fence_and_mem_sync_events() {
 }
 
 #[test]
-fn trace_generator_next_request_reports_sync_event_boundary() {
+fn trace_generator_next_request_reports_htm_event_boundary() {
     let trace = TrafficTrace::from_gem5_packet_trace(
         &gem5_packet_trace(
             TICK_FREQUENCY,
             &[PacketFields {
                 tick: 5,
-                command: GEM5_MEM_FENCE_REQ,
-                address: None,
-                size: None,
+                command: GEM5_HTM_REQ,
+                address: Some(0x4000),
+                size: Some(8),
                 flags: None,
                 packet_id: None,
                 pc: None,
@@ -169,70 +172,31 @@ fn trace_generator_next_request_reports_sync_event_boundary() {
 
     assert_eq!(
         generator.next_request(0, 0).unwrap_err(),
-        TrafficGeneratorError::TraceSyncEventRequiresNextEvent {
-            command: "MemFenceReq",
-        }
+        TrafficGeneratorError::TraceHtmEventRequiresNextEvent { command: "HTMReq" }
     );
 
-    let sync = match generator.next_event(0, 0).unwrap().unwrap() {
-        TrafficTraceEvent::Sync(event) => event,
-        _ => panic!("MemFenceReq should remain pending"),
+    let htm = match generator.next_event(0, 0).unwrap().unwrap() {
+        TrafficTraceEvent::Htm(event) => event,
+        TrafficTraceEvent::Request(_) | TrafficTraceEvent::Sync(_) | TrafficTraceEvent::Tlb(_) => {
+            panic!("HTMReq should remain pending")
+        }
     };
-    assert_eq!(sync.tick(), 5);
-    assert_eq!(sync.sequence(), 0);
-    assert_eq!(sync.kind(), TrafficTraceSyncKind::MemFence);
-    assert!(!sync.kernel_sync());
+    assert_eq!(htm.tick(), 5);
+    assert_eq!(htm.sequence(), 0);
+    assert_eq!(htm.kind(), TrafficTraceHtmKind::Request);
 }
 
 #[test]
-fn trace_generator_accepts_probe_addr_size_on_sync_packets() {
-    let trace = TrafficTrace::from_gem5_packet_trace(
-        &gem5_packet_trace(
-            TICK_FREQUENCY,
-            &[PacketFields {
-                tick: 11,
-                command: GEM5_MEM_SYNC_REQ,
-                address: Some(0),
-                size: Some(0),
-                flags: Some(GEM5_FLAG_KERNEL),
-                packet_id: Some(12),
-                pc: None,
-            }],
-        ),
-        TICK_FREQUENCY,
-    )
-    .unwrap();
-    let mut generator = TrafficTraceGenerator::new(trace_config(trace));
-    generator.enter(20);
-
-    let sync = match generator.next_event(20, 0).unwrap().unwrap() {
-        TrafficTraceEvent::Sync(event) => event,
-        _ => panic!("MemSyncReq should emit a sync event"),
-    };
-
-    assert_eq!(sync.tick(), 31);
-    assert_eq!(sync.sequence(), 0);
-    assert_eq!(sync.kind(), TrafficTraceSyncKind::MemSync);
-    assert!(sync.kernel_sync());
-    assert_eq!(sync.trace_packet_id(), Some(12));
-    assert_eq!(generator.summary().packet_count(), 1);
-    assert_eq!(generator.summary().read_count(), 0);
-    assert_eq!(generator.summary().write_count(), 0);
-    assert_eq!(generator.summary().bytes_read(), 0);
-    assert_eq!(generator.summary().bytes_written(), 0);
-}
-
-#[test]
-fn trace_parser_rejects_non_kernel_sync_flags() {
+fn trace_parser_rejects_htm_flags() {
     assert_eq!(
         TrafficTrace::from_gem5_packet_trace(
             &gem5_packet_trace(
                 TICK_FREQUENCY,
                 &[PacketFields {
-                    tick: 11,
-                    command: GEM5_MEM_SYNC_REQ,
-                    address: Some(0),
-                    size: Some(0),
+                    tick: 5,
+                    command: GEM5_HTM_ABORT,
+                    address: None,
+                    size: None,
                     flags: Some(GEM5_FLAG_PHYSICAL),
                     packet_id: None,
                     pc: None,
@@ -248,30 +212,19 @@ fn trace_parser_rejects_non_kernel_sync_flags() {
 }
 
 #[test]
-fn traffic_controller_emits_trace_sync_event() {
+fn traffic_controller_emits_trace_htm_event() {
     let trace = TrafficTrace::from_gem5_packet_trace(
         &gem5_packet_trace(
             TICK_FREQUENCY,
-            &[
-                PacketFields {
-                    tick: 5,
-                    command: GEM5_MEM_FENCE_REQ,
-                    address: None,
-                    size: None,
-                    flags: None,
-                    packet_id: Some(9),
-                    pc: None,
-                },
-                PacketFields {
-                    tick: 8,
-                    command: GEM5_READ_REQ,
-                    address: Some(0x80),
-                    size: Some(8),
-                    flags: None,
-                    packet_id: None,
-                    pc: None,
-                },
-            ],
+            &[PacketFields {
+                tick: 5,
+                command: GEM5_HTM_ABORT,
+                address: None,
+                size: None,
+                flags: None,
+                packet_id: Some(9),
+                pc: None,
+            }],
         ),
         TICK_FREQUENCY,
     )
@@ -288,19 +241,15 @@ fn traffic_controller_emits_trace_sync_event() {
     let mut controller = TrafficController::new(controller_config);
 
     assert!(controller.start(20).unwrap().is_empty());
-    let sync_batch = controller.next_event(20, 0).unwrap().unwrap();
-    assert!(sync_batch.request().is_none());
-    let sync = sync_batch.trace_sync().unwrap();
-    assert_eq!(sync.tick(), 25);
-    assert_eq!(sync.sequence(), 0);
-    assert_eq!(sync.kind(), TrafficTraceSyncKind::MemFence);
-    assert_eq!(sync.trace_packet_id(), Some(9));
-
-    let request_batch = controller.next_event(sync.tick(), 0).unwrap().unwrap();
-    let request = request_batch.request().unwrap();
-    assert_eq!(request.tick(), 28);
-    assert_eq!(request.sequence(), 1);
-    assert_eq!(request.address(), Address::new(0x80));
+    let batch = controller.next_event(20, 0).unwrap().unwrap();
+    assert!(batch.request().is_none());
+    assert!(batch.trace_sync().is_none());
+    assert!(batch.trace_tlb().is_none());
+    let htm = batch.trace_htm().unwrap();
+    assert_eq!(htm.tick(), 25);
+    assert_eq!(htm.sequence(), 0);
+    assert_eq!(htm.kind(), TrafficTraceHtmKind::Abort);
+    assert_eq!(htm.trace_packet_id(), Some(9));
 }
 
 fn state(id: u32, duration: u64) -> TrafficStateSpec {

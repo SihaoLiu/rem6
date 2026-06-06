@@ -8,6 +8,7 @@ mod linear;
 mod state;
 mod text_config;
 mod trace;
+mod trace_event;
 
 pub use common::{TrafficGeneratorSummary, TrafficRequestEvent, TrafficRequestKind};
 pub use control::{
@@ -44,7 +45,10 @@ pub use text_config::{
     TrafficTextStridedParams,
 };
 pub use trace::{
-    TrafficTrace, TrafficTraceConfig, TrafficTraceEvent, TrafficTraceExitStatus,
-    TrafficTraceGenerator, TrafficTraceSnapshot, TrafficTraceSyncEvent, TrafficTraceSyncKind,
-    TrafficTraceTlbEvent, TrafficTraceTlbKind,
+    TrafficTrace, TrafficTraceConfig, TrafficTraceExitStatus, TrafficTraceGenerator,
+    TrafficTraceSnapshot,
+};
+pub use trace_event::{
+    TrafficTraceEvent, TrafficTraceHtmEvent, TrafficTraceHtmKind, TrafficTraceSyncEvent,
+    TrafficTraceSyncKind, TrafficTraceTlbEvent, TrafficTraceTlbKind,
 };
