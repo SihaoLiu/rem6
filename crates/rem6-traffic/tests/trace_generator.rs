@@ -564,7 +564,7 @@ fn trace_traffic_generator_maps_prefetch_packets_to_prefetch_operations() {
     assert_eq!(soft.request().operation(), MemoryOperation::PrefetchRead);
     assert_eq!(soft.request().size(), AccessSize::new(8).unwrap());
     assert!(!soft.request().requires_writable());
-    assert!(!soft.request().requires_response());
+    assert!(soft.request().requires_response());
     assert!(!soft.request().returns_data());
     assert_eq!(soft.request().byte_mask(), None);
     assert_eq!(soft.request().data(), None);
@@ -574,7 +574,7 @@ fn trace_traffic_generator_maps_prefetch_packets_to_prefetch_operations() {
     assert_eq!(hard.request().operation(), MemoryOperation::PrefetchRead);
     assert_eq!(hard.request().size(), AccessSize::new(16).unwrap());
     assert!(!hard.request().requires_writable());
-    assert!(!hard.request().requires_response());
+    assert!(hard.request().requires_response());
     assert!(!hard.request().returns_data());
     assert_eq!(hard.request().byte_mask(), None);
     assert_eq!(hard.request().data(), None);
@@ -587,7 +587,7 @@ fn trace_traffic_generator_maps_prefetch_packets_to_prefetch_operations() {
     );
     assert_eq!(exclusive.request().size(), AccessSize::new(32).unwrap());
     assert!(exclusive.request().requires_writable());
-    assert!(!exclusive.request().requires_response());
+    assert!(exclusive.request().requires_response());
     assert_eq!(exclusive.request().byte_mask(), None);
     assert_eq!(exclusive.request().data(), None);
 

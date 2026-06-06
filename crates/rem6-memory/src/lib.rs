@@ -465,7 +465,11 @@ impl LineMemoryStore {
             }
             MemoryOperation::PrefetchRead | MemoryOperation::PrefetchWrite => {
                 self.require_line(request.line_address())?;
-                Ok(None)
+                if request.requires_response() {
+                    MemoryResponse::completed(request, None).map(Some)
+                } else {
+                    Ok(None)
+                }
             }
             MemoryOperation::WriteClean
             | MemoryOperation::WritebackClean

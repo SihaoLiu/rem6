@@ -736,6 +736,62 @@ fn coherence_operations_expose_protocol_relevant_attributes() {
 }
 
 #[test]
+fn prefetch_requests_can_require_response_without_returning_data() {
+    let default_prefetch = MemoryRequest::prefetch_read(
+        request_id(28),
+        Address::new(0x8020),
+        AccessSize::new(8).unwrap(),
+        line_layout(),
+    )
+    .unwrap();
+    assert!(!default_prefetch.requires_response());
+    assert_eq!(
+        MemoryResponse::completed(&default_prefetch, None).unwrap_err(),
+        MemoryError::ResponseNotExpected {
+            request: request_id(28),
+        }
+    );
+
+    let response_prefetch = default_prefetch.with_response_required();
+    assert!(response_prefetch.requires_response());
+    assert!(!response_prefetch.returns_data());
+
+    let response = MemoryResponse::completed(&response_prefetch, None).unwrap();
+    assert_eq!(response.request_id(), request_id(28));
+    assert_eq!(response.status(), ResponseStatus::Completed);
+    assert_eq!(response.data(), None);
+
+    assert_eq!(
+        MemoryResponse::completed(&response_prefetch, Some(vec![0xaa])).unwrap_err(),
+        MemoryError::UnexpectedResponseData {
+            request: request_id(28),
+        }
+    );
+}
+
+#[test]
+fn line_store_completes_response_required_prefetch_without_data() {
+    let mut store = LineMemoryStore::new(line_layout());
+    store
+        .insert_line(Address::new(0x8000), vec![0x11; 64])
+        .unwrap();
+    let request = MemoryRequest::prefetch_read(
+        request_id(29),
+        Address::new(0x8008),
+        AccessSize::new(8).unwrap(),
+        line_layout(),
+    )
+    .unwrap()
+    .with_response_required();
+
+    let response = store.respond(&request).unwrap().unwrap();
+
+    assert_eq!(response.request_id(), request_id(29));
+    assert_eq!(response.status(), ResponseStatus::Completed);
+    assert_eq!(response.data(), None);
+}
+
+#[test]
 fn responses_validate_request_data_contracts() {
     let read = MemoryRequest::read_shared(
         request_id(20),

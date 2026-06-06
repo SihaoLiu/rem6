@@ -86,6 +86,33 @@ fn memory_request_checkpoint_payload_round_trips_attributes() {
 }
 
 #[test]
+fn memory_request_checkpoint_payload_round_trips_response_policy() {
+    let request = MemoryRequest::prefetch_write(
+        request_id(8),
+        Address::new(0x8000),
+        AccessSize::new(32).unwrap(),
+        line_layout(),
+    )
+    .unwrap()
+    .with_response_required()
+    .with_stream_id(12);
+
+    assert!(request.requires_response());
+    assert!(!request.returns_data());
+
+    let payload = MemoryRequestCheckpointPayload::from_request(&request);
+    let decoded = MemoryRequestCheckpointPayload::decode(payload.encode().as_slice()).unwrap();
+    let restored = MemoryRequest::from_snapshot(decoded.snapshot()).unwrap();
+
+    assert!(decoded.snapshot().requires_response());
+    assert_eq!(decoded.snapshot().attributes(), request.attributes());
+    assert_eq!(restored, request);
+    assert!(restored.requires_response());
+    assert!(!restored.returns_data());
+    assert_eq!(restored.stream_id(), Some(12));
+}
+
+#[test]
 fn memory_request_attributes_carry_stream_and_substream_ids() {
     let request = MemoryRequest::read_shared(
         request_id(3),

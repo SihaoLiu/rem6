@@ -26,6 +26,7 @@ const FLAG_EVICT_NEXT: u32 = 1 << 14;
 const FLAG_KERNEL_SYNC: u32 = 1 << 15;
 const FLAG_STREAM_ID_PRESENT: u32 = 1 << 16;
 const FLAG_SUBSTREAM_ID_PRESENT: u32 = 1 << 17;
+const FLAG_RESPONSE_REQUIRED: u32 = 1 << 18;
 const KNOWN_FLAGS: u32 = FLAG_DATA_PRESENT
     | FLAG_MASK_PRESENT
     | FLAG_ATOMIC_PRESENT
@@ -43,7 +44,8 @@ const KNOWN_FLAGS: u32 = FLAG_DATA_PRESENT
     | FLAG_EVICT_NEXT
     | FLAG_KERNEL_SYNC
     | FLAG_STREAM_ID_PRESENT
-    | FLAG_SUBSTREAM_ID_PRESENT;
+    | FLAG_SUBSTREAM_ID_PRESENT
+    | FLAG_RESPONSE_REQUIRED;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MemoryRequestCheckpointPayload {
@@ -121,7 +123,7 @@ impl MemoryRequestCheckpointPayload {
         let byte_mask = read_optional_mask(payload, &mut offset, flags, mask_len_usize, mask_len)?;
         let atomic_op = decode_optional_atomic_op(flags, atomic_code)?;
         let ordering = decode_ordering(flags)?;
-        let snapshot = MemoryRequestSnapshot::new_with_attributes(
+        let mut snapshot = MemoryRequestSnapshot::new_with_attributes(
             MemoryRequestId::new(crate::AgentId::new(agent), sequence),
             operation,
             address,
@@ -135,6 +137,9 @@ impl MemoryRequestCheckpointPayload {
             byte_mask,
             atomic_op,
         )?;
+        if flags & FLAG_RESPONSE_REQUIRED != 0 {
+            snapshot = snapshot.with_response_required();
+        }
 
         Ok(Self { snapshot })
     }
@@ -228,6 +233,9 @@ fn encode_flags(snapshot: &MemoryRequestSnapshot) -> u32 {
     }
     if snapshot.substream_id().is_some() {
         flags |= FLAG_SUBSTREAM_ID_PRESENT;
+    }
+    if snapshot.requires_response() && !snapshot.operation().requires_response() {
+        flags |= FLAG_RESPONSE_REQUIRED;
     }
     if let Some(before) = snapshot.ordering().before() {
         flags |= FLAG_BEFORE_PRESENT;

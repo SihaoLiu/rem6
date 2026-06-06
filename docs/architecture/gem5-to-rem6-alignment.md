@@ -2810,9 +2810,10 @@ command subset is intentionally narrow: `ReadReq` maps to `ReadShared`,
 line-shaped `ReadCleanReq` and `ReadSharedReq` map to `ReadShared`,
 line-shaped `ReadExReq` maps to `ReadUnique`, `SoftPFReq` command-id 11 and
 `HardPFReq` command-id 13 map to
-native prefetch-read requests, `SoftPFExReq` command-id 12 maps to native
-prefetch-write requests with writable intent, `WriteReq` maps to `Write`,
-`SwapReq` command-id 34 maps to a native atomic swap request with deterministic
+native prefetch-read requests with gem5 packet response-required policy,
+`SoftPFExReq` command-id 12 maps to native prefetch-write requests with
+writable intent and gem5 packet response-required policy, `WriteReq` maps to
+`Write`, `SwapReq` command-id 34 maps to a native atomic swap request with deterministic
 synthetic write data, writable intent, response data, and both read and write
 byte accounting, `LoadLockedReq` command-id 26 maps to a native load-locked read
 request with response data, read byte accounting, and shared-read coherence
@@ -2856,8 +2857,10 @@ Line-sized `InvalidateReq` command-id 54 packets whose effective address after
 the configured offset is cache-line aligned map to native writable-invalidate
 requests with no data, no byte mask, response required, no response data,
 writable intent, and no read/write byte accounting.
-Prefetch packets consume read-side traffic accounting but use rem6's native
-no-data, no-mask, no-CPU-response prefetch request contract.
+Trace-command prefetch packets consume read-side traffic accounting and require
+response completion without response data, while `PREFETCH` or `PF_EXCLUSIVE`
+flags on ordinary read or write packets still use rem6's native no-data,
+no-mask, no-CPU-response prefetch hint contract.
 Line-sized `UpgradeReq` command-id 17 packets whose effective address after the
 configured offset is cache-line aligned map to native maintenance upgrade
 requests with no data, no byte mask, response required, no response data,

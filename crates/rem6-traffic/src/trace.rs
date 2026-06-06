@@ -387,6 +387,13 @@ impl TrafficTraceCommand {
             Self::FunctionalWriteError => "FunctionalWriteError",
         }
     }
+
+    const fn requires_trace_response(self) -> bool {
+        matches!(
+            self,
+            Self::SoftPrefetchRead | Self::HardPrefetchRead | Self::PrefetchWrite
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1347,6 +1354,11 @@ impl TrafficTraceGenerator {
                 unreachable!("maintenance trace kind has no request builder")
             }
         }?;
+        let request = if element.command.requires_trace_response() {
+            request.with_response_required()
+        } else {
+            request
+        };
         Ok(element.flags.apply(request))
     }
 }

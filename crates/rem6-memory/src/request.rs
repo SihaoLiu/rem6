@@ -14,6 +14,7 @@ pub struct MemoryRequest {
     ordering: MemoryAccessOrdering,
     uncacheable: bool,
     strict_order: bool,
+    response_required: bool,
     attributes: MemoryRequestAttributes,
     data: Option<Vec<u8>>,
     byte_mask: Option<ByteMask>,
@@ -130,6 +131,7 @@ pub struct MemoryRequestSnapshot {
     ordering: MemoryAccessOrdering,
     uncacheable: bool,
     strict_order: bool,
+    response_required: bool,
     attributes: MemoryRequestAttributes,
     data: Option<Vec<u8>>,
     byte_mask: Option<ByteMask>,
@@ -190,6 +192,7 @@ impl MemoryRequestSnapshot {
             ordering,
             uncacheable,
             strict_order,
+            response_required: operation.requires_response(),
             attributes,
             data,
             byte_mask,
@@ -225,6 +228,15 @@ impl MemoryRequestSnapshot {
 
     pub const fn is_strict_ordered(&self) -> bool {
         self.strict_order
+    }
+
+    pub const fn requires_response(&self) -> bool {
+        self.response_required
+    }
+
+    pub fn with_response_required(mut self) -> Self {
+        self.response_required = true;
+        self
     }
 
     pub const fn attributes(&self) -> MemoryRequestAttributes {
@@ -760,6 +772,7 @@ impl MemoryRequest {
         request.ordering = snapshot.ordering;
         request.uncacheable = snapshot.uncacheable;
         request.strict_order = snapshot.strict_order;
+        request.response_required = snapshot.response_required;
         request.attributes = snapshot.attributes;
         Ok(request)
     }
@@ -786,6 +799,7 @@ impl MemoryRequest {
             ordering: MemoryAccessOrdering::none(),
             uncacheable: false,
             strict_order: false,
+            response_required: operation.requires_response(),
             attributes: MemoryRequestAttributes::default(),
             data: payload.data,
             byte_mask: payload.byte_mask,
@@ -1012,6 +1026,11 @@ impl MemoryRequest {
         self
     }
 
+    pub fn with_response_required(mut self) -> Self {
+        self.response_required = true;
+        self
+    }
+
     pub const fn coherence_intent(&self) -> CoherenceIntent {
         self.operation.coherence_intent()
     }
@@ -1177,7 +1196,7 @@ impl MemoryRequest {
     }
 
     pub const fn requires_response(&self) -> bool {
-        self.operation.requires_response()
+        self.response_required
     }
 
     pub const fn returns_data(&self) -> bool {
@@ -1217,6 +1236,7 @@ impl MemoryRequest {
             ordering: self.ordering,
             uncacheable: self.uncacheable,
             strict_order: self.strict_order,
+            response_required: self.response_required,
             attributes: self.attributes,
             data: self.data.clone(),
             byte_mask: self.byte_mask.clone(),
