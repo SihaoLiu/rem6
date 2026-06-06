@@ -44,6 +44,10 @@ const GEM5_FLAG_STRICT_ORDER: u32 = 0x0000_0800;
 const GEM5_FLAG_PRIVILEGED: u32 = 0x0000_8000;
 const GEM5_FLAG_ACQUIRE: u32 = 0x0002_0000;
 const GEM5_FLAG_RELEASE: u32 = 0x0004_0000;
+const GEM5_FLAG_LOCKED_RMW: u32 = 0x0010_0000;
+const GEM5_FLAG_LLSC: u32 = 0x0020_0000;
+const GEM5_FLAG_MEM_SWAP: u32 = 0x0040_0000;
+const GEM5_FLAG_MEM_SWAP_COND: u32 = 0x0080_0000;
 const GEM5_FLAG_PREFETCH: u32 = 0x0100_0000;
 const GEM5_FLAG_PF_EXCLUSIVE: u32 = 0x0200_0000;
 const GEM5_FLAG_SECURE: u32 = 0x1000_0000;
@@ -55,6 +59,10 @@ const GEM5_SUPPORTED_TRACE_FLAGS: u32 = GEM5_FLAG_INST_FETCH
     | GEM5_FLAG_PRIVILEGED
     | GEM5_FLAG_ACQUIRE
     | GEM5_FLAG_RELEASE
+    | GEM5_FLAG_LOCKED_RMW
+    | GEM5_FLAG_LLSC
+    | GEM5_FLAG_MEM_SWAP
+    | GEM5_FLAG_MEM_SWAP_COND
     | GEM5_FLAG_PREFETCH
     | GEM5_FLAG_PF_EXCLUSIVE
     | GEM5_FLAG_SECURE
@@ -172,6 +180,10 @@ struct TrafficTraceRequestFlags {
     privileged: bool,
     acquire: bool,
     release: bool,
+    locked_rmw: bool,
+    llsc: bool,
+    mem_swap: bool,
+    mem_swap_cond: bool,
     secure: bool,
     page_table_walk: bool,
 }
@@ -195,6 +207,10 @@ impl TrafficTraceRequestFlags {
             privileged: bits & GEM5_FLAG_PRIVILEGED != 0,
             acquire: bits & GEM5_FLAG_ACQUIRE != 0,
             release: bits & GEM5_FLAG_RELEASE != 0,
+            locked_rmw: bits & GEM5_FLAG_LOCKED_RMW != 0,
+            llsc: bits & GEM5_FLAG_LLSC != 0,
+            mem_swap: bits & GEM5_FLAG_MEM_SWAP != 0,
+            mem_swap_cond: bits & GEM5_FLAG_MEM_SWAP_COND != 0,
             secure: bits & GEM5_FLAG_SECURE != 0,
             page_table_walk: bits & GEM5_FLAG_PT_WALK != 0,
         })
@@ -233,6 +249,25 @@ impl TrafficTraceRequestFlags {
             }
         }
         if self.prefetch && command == TrafficTraceCommand::Write && !self.prefetch_exclusive {
+            return Err(TrafficGeneratorError::TraceUnsupportedFlags { flags: self.bits });
+        }
+        if self.llsc
+            && !matches!(
+                command,
+                TrafficTraceCommand::LoadLocked | TrafficTraceCommand::StoreConditional
+            )
+        {
+            return Err(TrafficGeneratorError::TraceUnsupportedFlags { flags: self.bits });
+        }
+        if self.locked_rmw
+            && !matches!(
+                command,
+                TrafficTraceCommand::LockedRmwRead | TrafficTraceCommand::LockedRmwWrite
+            )
+        {
+            return Err(TrafficGeneratorError::TraceUnsupportedFlags { flags: self.bits });
+        }
+        if (self.mem_swap || self.mem_swap_cond) && command != TrafficTraceCommand::Swap {
             return Err(TrafficGeneratorError::TraceUnsupportedFlags { flags: self.bits });
         }
         Ok(())
