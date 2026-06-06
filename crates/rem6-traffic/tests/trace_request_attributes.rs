@@ -6,6 +6,7 @@ use rem6_traffic::{
 const GEM5_MAGIC: [u8; 4] = [0x67, 0x65, 0x6d, 0x35];
 const TICK_FREQUENCY: u64 = 1_000;
 const GEM5_FLAG_PRIVILEGED: u32 = 0x0000_8000;
+const GEM5_FLAG_EVICT_NEXT: u32 = 0x0400_0000;
 const GEM5_FLAG_SECURE: u32 = 0x1000_0000;
 const GEM5_FLAG_PT_WALK: u32 = 0x2000_0000;
 const GEM5_FLAG_KERNEL: u32 = 0x0000_1000;
@@ -47,6 +48,13 @@ fn trace_traffic_generator_maps_gem5_request_attribute_flags() {
                     size: 16,
                     flags: Some(GEM5_FLAG_PRIVILEGED | GEM5_FLAG_SECURE),
                 },
+                PacketFields {
+                    tick: 7,
+                    command: 1,
+                    address: 0x280,
+                    size: 8,
+                    flags: Some(GEM5_FLAG_EVICT_NEXT),
+                },
             ],
         ),
         TICK_FREQUENCY,
@@ -57,6 +65,7 @@ fn trace_traffic_generator_maps_gem5_request_attribute_flags() {
 
     let read = generator.next_request(70, 0).unwrap().unwrap();
     let write = generator.next_request(read.tick(), 0).unwrap().unwrap();
+    let eviction_candidate = generator.next_request(write.tick(), 0).unwrap().unwrap();
 
     assert_eq!(read.tick(), 73);
     assert_eq!(read.request().operation(), MemoryOperation::ReadShared);
@@ -71,6 +80,17 @@ fn trace_traffic_generator_maps_gem5_request_attribute_flags() {
     assert!(!write.request().is_page_table_walk());
     assert_eq!(write.request().range().start(), Address::new(0x240));
     assert_eq!(write.request().size(), AccessSize::new(16).unwrap());
+
+    assert_eq!(eviction_candidate.tick(), 77);
+    assert_eq!(
+        eviction_candidate.request().operation(),
+        MemoryOperation::ReadShared
+    );
+    assert!(eviction_candidate.request().is_evict_next());
+    assert_eq!(
+        eviction_candidate.request().range().start(),
+        Address::new(0x280)
+    );
 }
 
 #[test]

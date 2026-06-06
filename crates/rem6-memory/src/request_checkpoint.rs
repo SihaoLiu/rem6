@@ -22,6 +22,7 @@ const FLAG_AFTER_PRESENT: u32 = 1 << 10;
 const FLAG_PRIVILEGED: u32 = 1 << 11;
 const FLAG_SECURE: u32 = 1 << 12;
 const FLAG_PAGE_TABLE_WALK: u32 = 1 << 13;
+const FLAG_EVICT_NEXT: u32 = 1 << 14;
 const KNOWN_FLAGS: u32 = FLAG_DATA_PRESENT
     | FLAG_MASK_PRESENT
     | FLAG_ATOMIC_PRESENT
@@ -35,7 +36,8 @@ const KNOWN_FLAGS: u32 = FLAG_DATA_PRESENT
     | FLAG_AFTER_PRESENT
     | FLAG_PRIVILEGED
     | FLAG_SECURE
-    | FLAG_PAGE_TABLE_WALK;
+    | FLAG_PAGE_TABLE_WALK
+    | FLAG_EVICT_NEXT;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MemoryRequestCheckpointPayload {
@@ -204,6 +206,9 @@ fn encode_flags(snapshot: &MemoryRequestSnapshot) -> u32 {
     if snapshot.is_page_table_walk() {
         flags |= FLAG_PAGE_TABLE_WALK;
     }
+    if snapshot.is_evict_next() {
+        flags |= FLAG_EVICT_NEXT;
+    }
     if let Some(before) = snapshot.ordering().before() {
         flags |= FLAG_BEFORE_PRESENT;
         if before.read() {
@@ -226,11 +231,16 @@ fn encode_flags(snapshot: &MemoryRequestSnapshot) -> u32 {
 }
 
 fn decode_attributes(flags: u32) -> MemoryRequestAttributes {
-    MemoryRequestAttributes::new(
+    let attributes = MemoryRequestAttributes::new(
         flags & FLAG_PRIVILEGED != 0,
         flags & FLAG_SECURE != 0,
         flags & FLAG_PAGE_TABLE_WALK != 0,
-    )
+    );
+    if flags & FLAG_EVICT_NEXT != 0 {
+        attributes.with_evict_next()
+    } else {
+        attributes
+    }
 }
 
 fn decode_ordering(flags: u32) -> Result<MemoryAccessOrdering, MemoryError> {

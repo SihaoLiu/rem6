@@ -25,6 +25,7 @@ pub struct MemoryRequestAttributes {
     privileged: bool,
     secure: bool,
     page_table_walk: bool,
+    evict_next: bool,
 }
 
 impl MemoryRequestAttributes {
@@ -33,6 +34,16 @@ impl MemoryRequestAttributes {
             privileged,
             secure,
             page_table_walk,
+            evict_next: false,
+        }
+    }
+
+    pub const fn with_evict_next(self) -> Self {
+        Self {
+            privileged: self.privileged,
+            secure: self.secure,
+            page_table_walk: self.page_table_walk,
+            evict_next: true,
         }
     }
 
@@ -46,6 +57,10 @@ impl MemoryRequestAttributes {
 
     pub const fn is_page_table_walk(self) -> bool {
         self.page_table_walk
+    }
+
+    pub const fn is_evict_next(self) -> bool {
+        self.evict_next
     }
 }
 
@@ -169,6 +184,10 @@ impl MemoryRequestSnapshot {
 
     pub const fn is_page_table_walk(&self) -> bool {
         self.attributes.is_page_table_walk()
+    }
+
+    pub const fn is_evict_next(&self) -> bool {
+        self.attributes.is_evict_next()
     }
 
     pub fn data(&self) -> Option<&[u8]> {
@@ -737,6 +756,10 @@ impl MemoryRequest {
         self.attributes.is_page_table_walk()
     }
 
+    pub const fn is_evict_next(&self) -> bool {
+        self.attributes.is_evict_next()
+    }
+
     pub fn with_attributes(mut self, attributes: MemoryRequestAttributes) -> Self {
         self.attributes = attributes;
         self
@@ -754,6 +777,11 @@ impl MemoryRequest {
 
     pub fn with_page_table_walk(mut self) -> Self {
         self.attributes.page_table_walk = true;
+        self
+    }
+
+    pub fn with_evict_next(mut self) -> Self {
+        self.attributes.evict_next = true;
         self
     }
 
