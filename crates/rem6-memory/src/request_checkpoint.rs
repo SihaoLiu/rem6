@@ -23,6 +23,7 @@ const FLAG_PRIVILEGED: u32 = 1 << 11;
 const FLAG_SECURE: u32 = 1 << 12;
 const FLAG_PAGE_TABLE_WALK: u32 = 1 << 13;
 const FLAG_EVICT_NEXT: u32 = 1 << 14;
+const FLAG_KERNEL_SYNC: u32 = 1 << 15;
 const KNOWN_FLAGS: u32 = FLAG_DATA_PRESENT
     | FLAG_MASK_PRESENT
     | FLAG_ATOMIC_PRESENT
@@ -37,7 +38,8 @@ const KNOWN_FLAGS: u32 = FLAG_DATA_PRESENT
     | FLAG_PRIVILEGED
     | FLAG_SECURE
     | FLAG_PAGE_TABLE_WALK
-    | FLAG_EVICT_NEXT;
+    | FLAG_EVICT_NEXT
+    | FLAG_KERNEL_SYNC;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MemoryRequestCheckpointPayload {
@@ -209,6 +211,9 @@ fn encode_flags(snapshot: &MemoryRequestSnapshot) -> u32 {
     if snapshot.is_evict_next() {
         flags |= FLAG_EVICT_NEXT;
     }
+    if snapshot.is_kernel_sync() {
+        flags |= FLAG_KERNEL_SYNC;
+    }
     if let Some(before) = snapshot.ordering().before() {
         flags |= FLAG_BEFORE_PRESENT;
         if before.read() {
@@ -236,8 +241,13 @@ fn decode_attributes(flags: u32) -> MemoryRequestAttributes {
         flags & FLAG_SECURE != 0,
         flags & FLAG_PAGE_TABLE_WALK != 0,
     );
-    if flags & FLAG_EVICT_NEXT != 0 {
+    let attributes = if flags & FLAG_EVICT_NEXT != 0 {
         attributes.with_evict_next()
+    } else {
+        attributes
+    };
+    if flags & FLAG_KERNEL_SYNC != 0 {
+        attributes.with_kernel_sync()
     } else {
         attributes
     }

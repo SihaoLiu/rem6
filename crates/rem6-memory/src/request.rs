@@ -26,6 +26,7 @@ pub struct MemoryRequestAttributes {
     secure: bool,
     page_table_walk: bool,
     evict_next: bool,
+    kernel_sync: bool,
 }
 
 impl MemoryRequestAttributes {
@@ -35,6 +36,7 @@ impl MemoryRequestAttributes {
             secure,
             page_table_walk,
             evict_next: false,
+            kernel_sync: false,
         }
     }
 
@@ -44,6 +46,17 @@ impl MemoryRequestAttributes {
             secure: self.secure,
             page_table_walk: self.page_table_walk,
             evict_next: true,
+            kernel_sync: self.kernel_sync,
+        }
+    }
+
+    pub const fn with_kernel_sync(self) -> Self {
+        Self {
+            privileged: self.privileged,
+            secure: self.secure,
+            page_table_walk: self.page_table_walk,
+            evict_next: self.evict_next,
+            kernel_sync: true,
         }
     }
 
@@ -61,6 +74,10 @@ impl MemoryRequestAttributes {
 
     pub const fn is_evict_next(self) -> bool {
         self.evict_next
+    }
+
+    pub const fn is_kernel_sync(self) -> bool {
+        self.kernel_sync
     }
 }
 
@@ -188,6 +205,10 @@ impl MemoryRequestSnapshot {
 
     pub const fn is_evict_next(&self) -> bool {
         self.attributes.is_evict_next()
+    }
+
+    pub const fn is_kernel_sync(&self) -> bool {
+        self.attributes.is_kernel_sync()
     }
 
     pub fn data(&self) -> Option<&[u8]> {
@@ -809,6 +830,10 @@ impl MemoryRequest {
         self.attributes.is_evict_next()
     }
 
+    pub const fn is_kernel_sync(&self) -> bool {
+        self.attributes.is_kernel_sync()
+    }
+
     pub fn with_attributes(mut self, attributes: MemoryRequestAttributes) -> Self {
         self.attributes = attributes;
         self
@@ -831,6 +856,11 @@ impl MemoryRequest {
 
     pub fn with_evict_next(mut self) -> Self {
         self.attributes.evict_next = true;
+        self
+    }
+
+    pub fn with_kernel_sync(mut self) -> Self {
+        self.attributes.kernel_sync = true;
         self
     }
 

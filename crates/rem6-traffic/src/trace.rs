@@ -41,6 +41,7 @@ const GEM5_FLAG_INST_FETCH: u32 = 0x0000_0100;
 const GEM5_FLAG_PHYSICAL: u32 = 0x0000_0200;
 const GEM5_FLAG_UNCACHEABLE: u32 = 0x0000_0400;
 const GEM5_FLAG_STRICT_ORDER: u32 = 0x0000_0800;
+const GEM5_FLAG_KERNEL: u32 = 0x0000_1000;
 const GEM5_FLAG_PRIVILEGED: u32 = 0x0000_8000;
 const GEM5_FLAG_ACQUIRE_PC: u32 = 0x0000_2000;
 const GEM5_FLAG_CACHE_BLOCK_ZERO: u32 = 0x0001_0000;
@@ -60,6 +61,7 @@ const GEM5_SUPPORTED_TRACE_FLAGS: u32 = GEM5_FLAG_INST_FETCH
     | GEM5_FLAG_PHYSICAL
     | GEM5_FLAG_UNCACHEABLE
     | GEM5_FLAG_STRICT_ORDER
+    | GEM5_FLAG_KERNEL
     | GEM5_FLAG_PRIVILEGED
     | GEM5_FLAG_ACQUIRE_PC
     | GEM5_FLAG_CACHE_BLOCK_ZERO
@@ -185,6 +187,7 @@ struct TrafficTraceRequestFlags {
     prefetch_exclusive: bool,
     uncacheable: bool,
     strict_order: bool,
+    kernel_sync: bool,
     privileged: bool,
     cache_block_zero: bool,
     no_access: bool,
@@ -215,6 +218,7 @@ impl TrafficTraceRequestFlags {
             prefetch_exclusive: bits & GEM5_FLAG_PF_EXCLUSIVE != 0,
             uncacheable: bits & GEM5_FLAG_UNCACHEABLE != 0,
             strict_order: bits & GEM5_FLAG_STRICT_ORDER != 0,
+            kernel_sync: bits & GEM5_FLAG_KERNEL != 0,
             privileged: bits & GEM5_FLAG_PRIVILEGED != 0,
             cache_block_zero: bits & GEM5_FLAG_CACHE_BLOCK_ZERO != 0,
             no_access: bits & GEM5_FLAG_NO_ACCESS != 0,
@@ -330,6 +334,9 @@ impl TrafficTraceRequestFlags {
         }
         if self.evict_next {
             mapped = mapped.with_evict_next();
+        }
+        if self.kernel_sync {
+            mapped = mapped.with_kernel_sync();
         }
         mapped
     }

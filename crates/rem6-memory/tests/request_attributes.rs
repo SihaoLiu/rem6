@@ -26,21 +26,26 @@ fn memory_request_attributes_default_empty_and_builder_preserves_operation() {
     assert!(!request.is_secure());
     assert!(!request.is_page_table_walk());
     assert!(!request.is_evict_next());
+    assert!(!request.is_kernel_sync());
 
     let attributed = request
         .with_privileged()
         .with_secure()
         .with_page_table_walk()
-        .with_evict_next();
+        .with_evict_next()
+        .with_kernel_sync();
 
     assert_eq!(
         attributed.attributes(),
-        MemoryRequestAttributes::new(true, true, true).with_evict_next()
+        MemoryRequestAttributes::new(true, true, true)
+            .with_evict_next()
+            .with_kernel_sync()
     );
     assert!(attributed.is_privileged());
     assert!(attributed.is_secure());
     assert!(attributed.is_page_table_walk());
     assert!(attributed.is_evict_next());
+    assert!(attributed.is_kernel_sync());
     assert_eq!(
         attributed.operation(),
         rem6_memory::MemoryOperation::ReadShared
@@ -59,7 +64,8 @@ fn memory_request_checkpoint_payload_round_trips_attributes() {
     .with_privileged()
     .with_secure()
     .with_page_table_walk()
-    .with_evict_next();
+    .with_evict_next()
+    .with_kernel_sync();
 
     let payload = MemoryRequestCheckpointPayload::from_request(&request);
     let decoded = MemoryRequestCheckpointPayload::decode(payload.encode().as_slice()).unwrap();
@@ -71,4 +77,5 @@ fn memory_request_checkpoint_payload_round_trips_attributes() {
     assert!(restored.is_secure());
     assert!(restored.is_page_table_walk());
     assert!(restored.is_evict_next());
+    assert!(restored.is_kernel_sync());
 }
