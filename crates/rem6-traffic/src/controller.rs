@@ -6,9 +6,10 @@ use crate::{
     TrafficExitSnapshot, TrafficGeneratorError, TrafficGeneratorSummary, TrafficHybridSnapshot,
     TrafficIdleGenerator, TrafficIdleSnapshot, TrafficLinearSnapshot, TrafficRandomSnapshot,
     TrafficRequestEvent, TrafficStateGraphConfig, TrafficStateId, TrafficStateMachine,
-    TrafficStateSnapshot, TrafficStridedSnapshot, TrafficTraceDiagnosticEvent, TrafficTraceEvent,
-    TrafficTraceExitStatus, TrafficTraceGenerator, TrafficTraceHtmEvent, TrafficTraceSnapshot,
-    TrafficTraceSyncEvent, TrafficTraceTlbEvent, TrafficTransitionEvent,
+    TrafficStateSnapshot, TrafficStridedSnapshot, TrafficTraceCacheEvent,
+    TrafficTraceDiagnosticEvent, TrafficTraceEvent, TrafficTraceExitStatus, TrafficTraceGenerator,
+    TrafficTraceHtmEvent, TrafficTraceSnapshot, TrafficTraceSyncEvent, TrafficTraceTlbEvent,
+    TrafficTransitionEvent,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -168,6 +169,9 @@ impl TrafficStateGenerator {
                         }
                         TrafficTraceEvent::Sync(sync) => TrafficControllerEvent::TraceSync(sync),
                         TrafficTraceEvent::Tlb(tlb) => TrafficControllerEvent::TraceTlb(tlb),
+                        TrafficTraceEvent::Cache(cache) => {
+                            TrafficControllerEvent::TraceCache(cache)
+                        }
                         TrafficTraceEvent::Htm(htm) => TrafficControllerEvent::TraceHtm(htm),
                         TrafficTraceEvent::Diagnostic(diagnostic) => {
                             TrafficControllerEvent::TraceDiagnostic(diagnostic)
@@ -474,6 +478,13 @@ impl TrafficControllerEventBatch {
         })
     }
 
+    pub fn trace_cache(&self) -> Option<TrafficTraceCacheEvent> {
+        self.events.iter().find_map(|event| match event {
+            TrafficControllerEvent::TraceCache(cache) => Some(*cache),
+            _ => None,
+        })
+    }
+
     pub fn trace_htm(&self) -> Option<TrafficTraceHtmEvent> {
         self.events.iter().find_map(|event| match event {
             TrafficControllerEvent::TraceHtm(htm) => Some(*htm),
@@ -501,6 +512,7 @@ pub enum TrafficControllerEvent {
     TraceExit(TrafficTraceExitStatus),
     TraceSync(TrafficTraceSyncEvent),
     TraceTlb(TrafficTraceTlbEvent),
+    TraceCache(TrafficTraceCacheEvent),
     TraceHtm(TrafficTraceHtmEvent),
     TraceDiagnostic(TrafficTraceDiagnosticEvent),
 }
@@ -514,6 +526,7 @@ impl TrafficControllerEvent {
             Self::TraceExit(_) => u64::MAX,
             Self::TraceSync(sync) => sync.tick(),
             Self::TraceTlb(tlb) => tlb.tick(),
+            Self::TraceCache(cache) => cache.tick(),
             Self::TraceHtm(htm) => htm.tick(),
             Self::TraceDiagnostic(diagnostic) => diagnostic.tick(),
         }
