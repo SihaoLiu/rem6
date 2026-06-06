@@ -216,6 +216,10 @@ impl TrafficTraceReplayTargetRuntime {
         self.request_ticks.get(&request).copied()
     }
 
+    fn drop_request(&mut self, request: MemoryRequestId) {
+        self.request_ticks.remove(&request);
+    }
+
     fn target_action_index(&self, request: MemoryRequestId) -> Option<usize> {
         self.actions
             .iter()
@@ -538,6 +542,10 @@ impl TrafficTraceReplayControllerRuntime {
         self.target.has_replay_action(request)
     }
 
+    fn drop_target_request(&mut self, request: MemoryRequestId) {
+        self.target.drop_request(request);
+    }
+
     fn record_memory_failure(&mut self, tick: Tick, record: TrafficTraceMemoryFailureRecord) {
         self.target.record_memory_failure(tick, record);
     }
@@ -703,6 +711,10 @@ pub fn traffic_trace_replay_controller_target_outcome(
             .expect("traffic controller lock")
             .next_event(controller_tick, retry_delay)?;
         let Some(batch) = batch else {
+            runtime
+                .lock()
+                .expect("trace replay controller runtime lock")
+                .drop_target_request(delivery.request().id());
             return Err(
                 TrafficTraceReplayControllerTargetError::ReplayActionMissing {
                     request: delivery.request().id(),
@@ -727,6 +739,10 @@ pub fn traffic_trace_replay_controller_target_outcome(
             context,
         );
         if (trace_exited || repeated_request) && !target_action_available {
+            runtime
+                .lock()
+                .expect("trace replay controller runtime lock")
+                .drop_target_request(delivery.request().id());
             return Err(
                 TrafficTraceReplayControllerTargetError::ReplayActionMissing {
                     request: delivery.request().id(),

@@ -1269,7 +1269,7 @@ fn traffic_trace_replay_controller_target_outcome_reports_missing_replay_action(
         *errors.lock().unwrap(),
         vec![TrafficTraceReplayControllerTargetError::ReplayActionMissing { request: req.id() }]
     );
-    assert!(!runtime.lock().unwrap().is_empty());
+    assert!(runtime.lock().unwrap().is_empty());
     assert!(runtime.lock().unwrap().memory_failures().is_empty());
 }
 
@@ -1352,7 +1352,7 @@ fn traffic_trace_replay_controller_target_outcome_reports_missing_on_replayed_re
         vec![TrafficTraceReplayControllerTargetError::ReplayActionMissing { request: req.id() }]
     );
     assert_eq!(trace_cursor(&controller.lock().unwrap()), 1);
-    assert!(!runtime.lock().unwrap().is_empty());
+    assert!(runtime.lock().unwrap().is_empty());
     assert!(runtime.lock().unwrap().memory_failures().is_empty());
 }
 
