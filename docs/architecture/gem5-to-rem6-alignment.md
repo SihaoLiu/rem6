@@ -2863,6 +2863,14 @@ record carries synthetic `addr` or `size` fields for those commands, rem6
 accepts the fields for trace compatibility but treats them as non-semantic
 because the sync event contract is not address-scoped. The same sync event
 contract preserves gem5 `KERNEL` request flags as typed `kernel_sync` metadata.
+`TlbiExtSync` command-id 59 packets map to typed
+`TrafficTraceEvent::Tlb` external-sync events that preserve tick ordering,
+sequence, optional packet id, optional PC metadata, and packet-count accounting
+without constructing a `MemoryRequest` or adding read/write byte accounting.
+If a gem5 probe record carries synthetic `addr` or `size` fields for
+`TlbiExtSync`, rem6 accepts the fields for trace compatibility but treats them
+as non-semantic TLB metadata because the external-sync trace event is not
+address-scoped.
 Trace packet flag handling now maps non-prefetch `INST_FETCH` on `ReadReq`,
 `ReadCleanReq`, and
 `ReadSharedReq` packets to native instruction-fetch requests, accepts `PHYSICAL`
@@ -2999,9 +3007,11 @@ Trace sync note: packet-trace support now maps gem5 no-address `MemFenceReq`
 and `MemSyncReq` packets to typed trace sync events rather than
 `TrafficRequestEvent` shims. The importer accepts gem5 probe records that carry
 synthetic address or size fields for those commands but discards those fields as
-non-semantic sync metadata. TLBI and HTM commands remain open because they need
-their own non-memory trace event contracts, and sync flags beyond `KERNEL` need
-additional typed metadata before import can accept them.
+non-semantic sync metadata. Packet-trace support also maps gem5 `TlbiExtSync`
+packets to typed TLB external-sync trace events instead of memory requests.
+Broader TLBI execution semantics, TLBI completion forms, and HTM commands remain
+open because they need CPU/MMU-visible event contracts, and sync flags beyond
+`KERNEL` need additional typed metadata before import can accept them.
 
 ### Memory, Cache, Coherence, and NoC
 

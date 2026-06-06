@@ -41,6 +41,7 @@ const GEM5_MEM_SYNC_REQ: u32 = 39;
 const GEM5_CLEAN_SHARED_REQ: u32 = 42;
 const GEM5_CLEAN_INVALID_REQ: u32 = 44;
 const GEM5_INVALIDATE_REQ: u32 = 54;
+const GEM5_TLBI_EXT_SYNC: u32 = 59;
 const GEM5_FLAG_INST_FETCH: u32 = 0x0000_0100;
 const GEM5_FLAG_PHYSICAL: u32 = 0x0000_0200;
 const GEM5_FLAG_UNCACHEABLE: u32 = 0x0000_0400;
@@ -104,6 +105,19 @@ impl TrafficTraceSyncKind {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TrafficTraceTlbKind {
+    ExternalSync,
+}
+
+impl TrafficTraceTlbKind {
+    pub const fn gem5_name(self) -> &'static str {
+        match self {
+            Self::ExternalSync => "TlbiExtSync",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TrafficTraceCommand {
     ReadShared,
     ReadUnique,
@@ -129,6 +143,7 @@ enum TrafficTraceCommand {
     Upgrade,
     MemFence,
     MemSync,
+    TlbiExtSync,
 }
 
 impl TrafficTraceCommand {
@@ -157,7 +172,8 @@ impl TrafficTraceCommand {
             | Self::StoreConditionalUpgrade
             | Self::Upgrade
             | Self::MemFence
-            | Self::MemSync => TrafficRequestKind::Maintenance,
+            | Self::MemSync
+            | Self::TlbiExtSync => TrafficRequestKind::Maintenance,
         }
     }
 
@@ -165,6 +181,13 @@ impl TrafficTraceCommand {
         match self {
             Self::MemFence => Some(TrafficTraceSyncKind::MemFence),
             Self::MemSync => Some(TrafficTraceSyncKind::MemSync),
+            _ => None,
+        }
+    }
+
+    const fn tlb_kind(self) -> Option<TrafficTraceTlbKind> {
+        match self {
+            Self::TlbiExtSync => Some(TrafficTraceTlbKind::ExternalSync),
             _ => None,
         }
     }
@@ -195,6 +218,7 @@ impl TrafficTraceCommand {
             Self::Upgrade => "UpgradeReq",
             Self::MemFence => "MemFenceReq",
             Self::MemSync => "MemSyncReq",
+            Self::TlbiExtSync => "TlbiExtSync",
         }
     }
 }
@@ -221,6 +245,10 @@ impl TrafficTraceElement {
 
     const fn sync_kind(self) -> Option<TrafficTraceSyncKind> {
         self.command.sync_kind()
+    }
+
+    const fn tlb_kind(self) -> Option<TrafficTraceTlbKind> {
+        self.command.tlb_kind()
     }
 
     fn request_address(self) -> Address {
@@ -307,6 +335,13 @@ impl TrafficTraceRequestFlags {
     ) -> Result<(), TrafficGeneratorError> {
         if command.sync_kind().is_some() {
             if self.bits & !GEM5_FLAG_KERNEL != 0 {
+                return Err(TrafficGeneratorError::TraceUnsupportedFlags { flags: self.bits });
+            }
+            return Ok(());
+        }
+
+        if command.tlb_kind().is_some() {
+            if self.bits != 0 {
                 return Err(TrafficGeneratorError::TraceUnsupportedFlags { flags: self.bits });
             }
             return Ok(());
@@ -651,10 +686,58 @@ impl TrafficTraceSyncEvent {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TrafficTraceTlbEvent {
+    tick: u64,
+    sequence: u64,
+    kind: TrafficTraceTlbKind,
+    trace_packet_id: Option<u64>,
+    trace_pc: Option<Address>,
+}
+
+impl TrafficTraceTlbEvent {
+    const fn new(
+        tick: u64,
+        sequence: u64,
+        kind: TrafficTraceTlbKind,
+        trace_packet_id: Option<u64>,
+        trace_pc: Option<Address>,
+    ) -> Self {
+        Self {
+            tick,
+            sequence,
+            kind,
+            trace_packet_id,
+            trace_pc,
+        }
+    }
+
+    pub const fn tick(self) -> u64 {
+        self.tick
+    }
+
+    pub const fn sequence(self) -> u64 {
+        self.sequence
+    }
+
+    pub const fn kind(self) -> TrafficTraceTlbKind {
+        self.kind
+    }
+
+    pub const fn trace_packet_id(self) -> Option<u64> {
+        self.trace_packet_id
+    }
+
+    pub const fn trace_pc(self) -> Option<Address> {
+        self.trace_pc
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TrafficTraceEvent {
     Request(TrafficRequestEvent),
     Sync(TrafficTraceSyncEvent),
+    Tlb(TrafficTraceTlbEvent),
 }
 
 impl TrafficTraceEvent {
@@ -662,6 +745,7 @@ impl TrafficTraceEvent {
         match self {
             Self::Request(event) => event.tick(),
             Self::Sync(event) => event.tick(),
+            Self::Tlb(event) => event.tick(),
         }
     }
 
@@ -669,6 +753,7 @@ impl TrafficTraceEvent {
         match self {
             Self::Request(event) => event.sequence(),
             Self::Sync(event) => event.sequence(),
+            Self::Tlb(event) => event.sequence(),
         }
     }
 }
@@ -743,6 +828,11 @@ impl TrafficTraceGenerator {
                 command: kind.gem5_name(),
             });
         }
+        if let Some(kind) = element.tlb_kind() {
+            return Err(TrafficGeneratorError::TraceTlbEventRequiresNextEvent {
+                command: kind.gem5_name(),
+            });
+        }
 
         let Some(event) = self.next_event(tick, retry_delay)? else {
             return Ok(None);
@@ -751,6 +841,9 @@ impl TrafficTraceGenerator {
             TrafficTraceEvent::Request(request) => Ok(Some(request)),
             TrafficTraceEvent::Sync(_) => {
                 unreachable!("sync trace event was rejected before advancing")
+            }
+            TrafficTraceEvent::Tlb(_) => {
+                unreachable!("TLB trace event was rejected before advancing")
             }
         }
     }
@@ -776,6 +869,15 @@ impl TrafficTraceGenerator {
                 sequence,
                 kind,
                 element.flags.kernel_sync,
+                element.packet_id,
+                element.pc,
+            ))
+        } else if let Some(kind) = element.tlb_kind() {
+            next_summary.record(event_tick, TrafficRequestKind::Maintenance, 0)?;
+            TrafficTraceEvent::Tlb(TrafficTraceTlbEvent::new(
+                event_tick,
+                sequence,
+                kind,
                 element.packet_id,
                 element.pc,
             ))
@@ -1368,10 +1470,11 @@ fn parse_packet(message: &[u8]) -> Result<TrafficTraceElement, TrafficGeneratorE
         GEM5_CLEAN_SHARED_REQ => TrafficTraceCommand::CleanShared,
         GEM5_CLEAN_INVALID_REQ => TrafficTraceCommand::CleanInvalid,
         GEM5_INVALIDATE_REQ => TrafficTraceCommand::Invalidate,
+        GEM5_TLBI_EXT_SYNC => TrafficTraceCommand::TlbiExtSync,
         command => return Err(TrafficGeneratorError::TraceUnsupportedCommand { command }),
     };
     flags.validate_for_command(command)?;
-    if command.sync_kind().is_some() {
+    if command.sync_kind().is_some() || command.tlb_kind().is_some() {
         return Ok(TrafficTraceElement {
             tick,
             command,

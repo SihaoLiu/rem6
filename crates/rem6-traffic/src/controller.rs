@@ -7,7 +7,8 @@ use crate::{
     TrafficIdleGenerator, TrafficIdleSnapshot, TrafficLinearSnapshot, TrafficRandomSnapshot,
     TrafficRequestEvent, TrafficStateGraphConfig, TrafficStateId, TrafficStateMachine,
     TrafficStateSnapshot, TrafficStridedSnapshot, TrafficTraceEvent, TrafficTraceExitStatus,
-    TrafficTraceGenerator, TrafficTraceSnapshot, TrafficTraceSyncEvent, TrafficTransitionEvent,
+    TrafficTraceGenerator, TrafficTraceSnapshot, TrafficTraceSyncEvent, TrafficTraceTlbEvent,
+    TrafficTransitionEvent,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -166,6 +167,7 @@ impl TrafficStateGenerator {
                             TrafficControllerEvent::Request(request)
                         }
                         TrafficTraceEvent::Sync(sync) => TrafficControllerEvent::TraceSync(sync),
+                        TrafficTraceEvent::Tlb(tlb) => TrafficControllerEvent::TraceTlb(tlb),
                     })
             }
         };
@@ -461,6 +463,13 @@ impl TrafficControllerEventBatch {
         })
     }
 
+    pub fn trace_tlb(&self) -> Option<TrafficTraceTlbEvent> {
+        self.events.iter().find_map(|event| match event {
+            TrafficControllerEvent::TraceTlb(tlb) => Some(*tlb),
+            _ => None,
+        })
+    }
+
     pub fn is_empty(&self) -> bool {
         self.events.is_empty()
     }
@@ -473,6 +482,7 @@ pub enum TrafficControllerEvent {
     Exit(TrafficExitEvent),
     TraceExit(TrafficTraceExitStatus),
     TraceSync(TrafficTraceSyncEvent),
+    TraceTlb(TrafficTraceTlbEvent),
 }
 
 impl TrafficControllerEvent {
@@ -483,6 +493,7 @@ impl TrafficControllerEvent {
             Self::Exit(exit) => exit.tick(),
             Self::TraceExit(_) => u64::MAX,
             Self::TraceSync(sync) => sync.tick(),
+            Self::TraceTlb(tlb) => tlb.tick(),
         }
     }
 }

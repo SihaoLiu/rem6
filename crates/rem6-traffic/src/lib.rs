@@ -46,4 +46,5 @@ pub use text_config::{
 pub use trace::{
     TrafficTrace, TrafficTraceConfig, TrafficTraceEvent, TrafficTraceExitStatus,
     TrafficTraceGenerator, TrafficTraceSnapshot, TrafficTraceSyncEvent, TrafficTraceSyncKind,
+    TrafficTraceTlbEvent, TrafficTraceTlbKind,
 };

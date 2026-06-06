@@ -247,6 +247,9 @@ pub enum TrafficGeneratorError {
     TraceSyncEventRequiresNextEvent {
         command: &'static str,
     },
+    TraceTlbEventRequiresNextEvent {
+        command: &'static str,
+    },
     TraceUnsupportedFlags {
         flags: u32,
     },
@@ -718,6 +721,10 @@ impl fmt::Display for TrafficGeneratorError {
                 "gem5 packet trace command {command} is not supported"
             ),
             Self::TraceSyncEventRequiresNextEvent { command } => write!(
+                formatter,
+                "gem5 packet trace {command} requires TrafficTraceGenerator::next_event"
+            ),
+            Self::TraceTlbEventRequiresNextEvent { command } => write!(
                 formatter,
                 "gem5 packet trace {command} requires TrafficTraceGenerator::next_event"
             ),
