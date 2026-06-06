@@ -11,8 +11,9 @@ use crate::{
         checked_counter_add, TrafficGeneratorSummary, TrafficRequestEvent, TrafficRequestKind,
     },
     trace_event::{
-        TrafficTraceEvent, TrafficTraceHtmEvent, TrafficTraceHtmKind, TrafficTraceSyncEvent,
-        TrafficTraceSyncKind, TrafficTraceTlbEvent, TrafficTraceTlbKind,
+        TrafficTraceDiagnosticEvent, TrafficTraceDiagnosticKind, TrafficTraceEvent,
+        TrafficTraceHtmEvent, TrafficTraceHtmKind, TrafficTraceSyncEvent, TrafficTraceSyncKind,
+        TrafficTraceTlbEvent, TrafficTraceTlbKind,
     },
     TrafficGeneratorError,
 };
@@ -45,6 +46,7 @@ const GEM5_MEM_FENCE_REQ: u32 = 38;
 const GEM5_MEM_SYNC_REQ: u32 = 39;
 const GEM5_CLEAN_SHARED_REQ: u32 = 42;
 const GEM5_CLEAN_INVALID_REQ: u32 = 44;
+const GEM5_PRINT_REQ: u32 = 52;
 const GEM5_INVALIDATE_REQ: u32 = 54;
 const GEM5_HTM_REQ: u32 = 56;
 const GEM5_HTM_ABORT: u32 = 58;
@@ -125,6 +127,7 @@ enum TrafficTraceCommand {
     MemSync,
     HtmRequest,
     HtmAbort,
+    Print,
     TlbiExtSync,
 }
 
@@ -158,6 +161,7 @@ impl TrafficTraceCommand {
             | Self::MemSync
             | Self::HtmRequest
             | Self::HtmAbort
+            | Self::Print
             | Self::TlbiExtSync => TrafficRequestKind::Maintenance,
         }
     }
@@ -181,6 +185,13 @@ impl TrafficTraceCommand {
         match self {
             Self::HtmRequest => Some(TrafficTraceHtmKind::Request),
             Self::HtmAbort => Some(TrafficTraceHtmKind::Abort),
+            _ => None,
+        }
+    }
+
+    const fn diagnostic_kind(self) -> Option<TrafficTraceDiagnosticKind> {
+        match self {
+            Self::Print => Some(TrafficTraceDiagnosticKind::Print),
             _ => None,
         }
     }
@@ -214,6 +225,7 @@ impl TrafficTraceCommand {
             Self::MemSync => "MemSyncReq",
             Self::HtmRequest => "HTMReq",
             Self::HtmAbort => "HTMAbort",
+            Self::Print => "PrintReq",
             Self::TlbiExtSync => "TlbiExtSync",
         }
     }
@@ -249,6 +261,10 @@ impl TrafficTraceElement {
 
     const fn htm_kind(self) -> Option<TrafficTraceHtmKind> {
         self.command.htm_kind()
+    }
+
+    const fn diagnostic_kind(self) -> Option<TrafficTraceDiagnosticKind> {
+        self.command.diagnostic_kind()
     }
 
     fn request_address(self) -> Address {
@@ -348,6 +364,13 @@ impl TrafficTraceRequestFlags {
         }
 
         if command.htm_kind().is_some() {
+            if self.bits != 0 {
+                return Err(TrafficGeneratorError::TraceUnsupportedFlags { flags: self.bits });
+            }
+            return Ok(());
+        }
+
+        if command.diagnostic_kind().is_some() {
             if self.bits != 0 {
                 return Err(TrafficGeneratorError::TraceUnsupportedFlags { flags: self.bits });
             }
@@ -720,6 +743,13 @@ impl TrafficTraceGenerator {
                 command: kind.gem5_name(),
             });
         }
+        if let Some(kind) = element.diagnostic_kind() {
+            return Err(
+                TrafficGeneratorError::TraceDiagnosticEventRequiresNextEvent {
+                    command: kind.gem5_name(),
+                },
+            );
+        }
 
         let Some(event) = self.next_event(tick, retry_delay)? else {
             return Ok(None);
@@ -734,6 +764,9 @@ impl TrafficTraceGenerator {
             }
             TrafficTraceEvent::Htm(_) => {
                 unreachable!("HTM trace event was rejected before advancing")
+            }
+            TrafficTraceEvent::Diagnostic(_) => {
+                unreachable!("diagnostic trace event was rejected before advancing")
             }
         }
     }
@@ -774,6 +807,17 @@ impl TrafficTraceGenerator {
         } else if let Some(kind) = element.htm_kind() {
             next_summary.record(event_tick, TrafficRequestKind::Maintenance, 0)?;
             TrafficTraceEvent::Htm(TrafficTraceHtmEvent::new(
+                event_tick,
+                sequence,
+                kind,
+                element.address,
+                element.size,
+                element.packet_id,
+                element.pc,
+            ))
+        } else if let Some(kind) = element.diagnostic_kind() {
+            next_summary.record(event_tick, TrafficRequestKind::Maintenance, 0)?;
+            TrafficTraceEvent::Diagnostic(TrafficTraceDiagnosticEvent::new(
                 event_tick,
                 sequence,
                 kind,
@@ -1393,6 +1437,7 @@ fn parse_packet(message: &[u8]) -> Result<TrafficTraceElement, TrafficGeneratorE
         GEM5_MEM_SYNC_REQ => TrafficTraceCommand::MemSync,
         GEM5_CLEAN_SHARED_REQ => TrafficTraceCommand::CleanShared,
         GEM5_CLEAN_INVALID_REQ => TrafficTraceCommand::CleanInvalid,
+        GEM5_PRINT_REQ => TrafficTraceCommand::Print,
         GEM5_INVALIDATE_REQ => TrafficTraceCommand::Invalidate,
         GEM5_HTM_REQ => TrafficTraceCommand::HtmRequest,
         GEM5_HTM_ABORT => TrafficTraceCommand::HtmAbort,
@@ -1411,7 +1456,7 @@ fn parse_packet(message: &[u8]) -> Result<TrafficTraceElement, TrafficGeneratorE
             pc,
         });
     }
-    if command.htm_kind().is_some() {
+    if command.htm_kind().is_some() || command.diagnostic_kind().is_some() {
         let size = match size {
             Some(0) | None => None,
             Some(size) => Some(AccessSize::new(u64::from(size))?),

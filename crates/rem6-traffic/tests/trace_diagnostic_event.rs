@@ -2,8 +2,8 @@ use rem6_memory::{Address, AgentId, CacheLineLayout, MemoryOperation};
 use rem6_traffic::{
     TrafficController, TrafficControllerConfig, TrafficControllerState, TrafficGeneratorError,
     TrafficRequestKind, TrafficStateGenerator, TrafficStateGraphConfig, TrafficStateId,
-    TrafficStateSpec, TrafficTrace, TrafficTraceConfig, TrafficTraceEvent, TrafficTraceGenerator,
-    TrafficTraceHtmKind, TrafficTransition, TrafficTransitionProbability,
+    TrafficStateSpec, TrafficTrace, TrafficTraceConfig, TrafficTraceDiagnosticKind,
+    TrafficTraceEvent, TrafficTraceGenerator, TrafficTransition, TrafficTransitionProbability,
     TRAFFIC_TRANSITION_PROBABILITY_SCALE,
 };
 
@@ -11,8 +11,7 @@ const GEM5_MAGIC: [u8; 4] = [0x67, 0x65, 0x6d, 0x35];
 const TICK_FREQUENCY: u64 = 1_000;
 const GEM5_READ_REQ: u32 = 1;
 const GEM5_WRITE_REQ: u32 = 4;
-const GEM5_HTM_REQ: u32 = 56;
-const GEM5_HTM_ABORT: u32 = 58;
+const GEM5_PRINT_REQ: u32 = 52;
 const GEM5_FLAG_PHYSICAL: u32 = 0x0000_0200;
 
 #[derive(Clone, Copy)]
@@ -34,7 +33,7 @@ fn trace_config(trace: TrafficTrace) -> TrafficTraceConfig {
     TrafficTraceConfig::new(AgentId::new(7), line_layout(), 99, trace).unwrap()
 }
 
-fn htm_trace() -> TrafficTrace {
+fn diagnostic_trace() -> TrafficTrace {
     TrafficTrace::from_gem5_packet_trace(
         &gem5_packet_trace(
             TICK_FREQUENCY,
@@ -50,16 +49,16 @@ fn htm_trace() -> TrafficTrace {
                 },
                 PacketFields {
                     tick: 7,
-                    command: GEM5_HTM_REQ,
+                    command: GEM5_PRINT_REQ,
                     address: Some(0x4000),
-                    size: Some(16),
+                    size: Some(1),
                     flags: None,
                     packet_id: Some(2),
                     pc: Some(0x1004),
                 },
                 PacketFields {
                     tick: 9,
-                    command: GEM5_HTM_ABORT,
+                    command: GEM5_PRINT_REQ,
                     address: None,
                     size: None,
                     flags: None,
@@ -83,8 +82,8 @@ fn htm_trace() -> TrafficTrace {
 }
 
 #[test]
-fn trace_generator_emits_htm_request_and_abort_events() {
-    let mut generator = TrafficTraceGenerator::new(trace_config(htm_trace()));
+fn trace_generator_emits_print_req_diagnostic_events() {
+    let mut generator = TrafficTraceGenerator::new(trace_config(diagnostic_trace()));
     generator.enter(100);
 
     let read = match generator.next_event(100, 0).unwrap().unwrap() {
@@ -97,33 +96,45 @@ fn trace_generator_emits_htm_request_and_abort_events() {
     assert_eq!(read.request().operation(), MemoryOperation::ReadShared);
 
     assert_eq!(generator.schedule_tick(read.tick(), 0).unwrap(), 107);
-    let begin = match generator.next_event(read.tick(), 0).unwrap().unwrap() {
-        TrafficTraceEvent::Htm(event) => event,
-        _ => panic!("HTMReq should emit an HTM event"),
+    let print = match generator.next_event(read.tick(), 0).unwrap().unwrap() {
+        TrafficTraceEvent::Diagnostic(event) => event,
+        _ => panic!("PrintReq should emit a diagnostic event"),
     };
-    assert_eq!(begin.tick(), 107);
-    assert_eq!(begin.sequence(), 1);
-    assert_eq!(begin.kind(), TrafficTraceHtmKind::Request);
-    assert_eq!(begin.address(), Some(Address::new(0x4000)));
-    assert_eq!(begin.size_bytes(), Some(16));
-    assert_eq!(begin.trace_packet_id(), Some(2));
-    assert_eq!(begin.trace_pc(), Some(Address::new(0x1004)));
+    assert_eq!(print.tick(), 107);
+    assert_eq!(print.sequence(), 1);
+    assert_eq!(print.kind(), TrafficTraceDiagnosticKind::Print);
+    assert_eq!(print.address(), Some(Address::new(0x4000)));
+    assert_eq!(print.size_bytes(), Some(1));
+    assert_eq!(print.trace_packet_id(), Some(2));
+    assert_eq!(print.trace_pc(), Some(Address::new(0x1004)));
 
-    assert_eq!(generator.schedule_tick(begin.tick(), 0).unwrap(), 109);
-    let abort = match generator.next_event(begin.tick(), 0).unwrap().unwrap() {
-        TrafficTraceEvent::Htm(event) => event,
-        _ => panic!("HTMAbort should emit an HTM event"),
+    assert_eq!(generator.schedule_tick(print.tick(), 0).unwrap(), 109);
+    let print_without_probe = match generator.next_event(print.tick(), 0).unwrap().unwrap() {
+        TrafficTraceEvent::Diagnostic(event) => event,
+        _ => panic!("PrintReq should emit a diagnostic event"),
     };
-    assert_eq!(abort.tick(), 109);
-    assert_eq!(abort.sequence(), 2);
-    assert_eq!(abort.kind(), TrafficTraceHtmKind::Abort);
-    assert_eq!(abort.address(), None);
-    assert_eq!(abort.size_bytes(), None);
-    assert_eq!(abort.trace_packet_id(), Some(3));
-    assert_eq!(abort.trace_pc(), Some(Address::new(0x1008)));
+    assert_eq!(print_without_probe.tick(), 109);
+    assert_eq!(print_without_probe.sequence(), 2);
+    assert_eq!(
+        print_without_probe.kind(),
+        TrafficTraceDiagnosticKind::Print
+    );
+    assert_eq!(print_without_probe.address(), None);
+    assert_eq!(print_without_probe.size_bytes(), None);
+    assert_eq!(print_without_probe.trace_packet_id(), Some(3));
+    assert_eq!(print_without_probe.trace_pc(), Some(Address::new(0x1008)));
 
-    assert_eq!(generator.schedule_tick(abort.tick(), 0).unwrap(), 113);
-    let write = match generator.next_event(abort.tick(), 0).unwrap().unwrap() {
+    assert_eq!(
+        generator
+            .schedule_tick(print_without_probe.tick(), 0)
+            .unwrap(),
+        113
+    );
+    let write = match generator
+        .next_event(print_without_probe.tick(), 0)
+        .unwrap()
+        .unwrap()
+    {
         TrafficTraceEvent::Request(event) => event,
         _ => panic!("write packet should emit a request event"),
     };
@@ -142,15 +153,15 @@ fn trace_generator_emits_htm_request_and_abort_events() {
 }
 
 #[test]
-fn trace_generator_next_request_reports_htm_event_boundary() {
+fn trace_generator_next_request_reports_diagnostic_event_boundary() {
     let trace = TrafficTrace::from_gem5_packet_trace(
         &gem5_packet_trace(
             TICK_FREQUENCY,
             &[PacketFields {
                 tick: 5,
-                command: GEM5_HTM_REQ,
+                command: GEM5_PRINT_REQ,
                 address: Some(0x4000),
-                size: Some(8),
+                size: Some(1),
                 flags: None,
                 packet_id: None,
                 pc: None,
@@ -164,29 +175,31 @@ fn trace_generator_next_request_reports_htm_event_boundary() {
 
     assert_eq!(
         generator.next_request(0, 0).unwrap_err(),
-        TrafficGeneratorError::TraceHtmEventRequiresNextEvent { command: "HTMReq" }
+        TrafficGeneratorError::TraceDiagnosticEventRequiresNextEvent {
+            command: "PrintReq",
+        }
     );
 
-    let htm = match generator.next_event(0, 0).unwrap().unwrap() {
-        TrafficTraceEvent::Htm(event) => event,
-        _ => panic!("HTMReq should remain pending"),
+    let diagnostic = match generator.next_event(0, 0).unwrap().unwrap() {
+        TrafficTraceEvent::Diagnostic(event) => event,
+        _ => panic!("PrintReq should remain pending"),
     };
-    assert_eq!(htm.tick(), 5);
-    assert_eq!(htm.sequence(), 0);
-    assert_eq!(htm.kind(), TrafficTraceHtmKind::Request);
+    assert_eq!(diagnostic.tick(), 5);
+    assert_eq!(diagnostic.sequence(), 0);
+    assert_eq!(diagnostic.kind(), TrafficTraceDiagnosticKind::Print);
 }
 
 #[test]
-fn trace_parser_rejects_htm_flags() {
+fn trace_parser_rejects_print_req_flags() {
     assert_eq!(
         TrafficTrace::from_gem5_packet_trace(
             &gem5_packet_trace(
                 TICK_FREQUENCY,
                 &[PacketFields {
                     tick: 5,
-                    command: GEM5_HTM_ABORT,
-                    address: None,
-                    size: None,
+                    command: GEM5_PRINT_REQ,
+                    address: Some(0x4000),
+                    size: Some(1),
                     flags: Some(GEM5_FLAG_PHYSICAL),
                     packet_id: None,
                     pc: None,
@@ -202,15 +215,15 @@ fn trace_parser_rejects_htm_flags() {
 }
 
 #[test]
-fn traffic_controller_emits_trace_htm_event() {
+fn traffic_controller_emits_trace_diagnostic_event() {
     let trace = TrafficTrace::from_gem5_packet_trace(
         &gem5_packet_trace(
             TICK_FREQUENCY,
             &[PacketFields {
                 tick: 5,
-                command: GEM5_HTM_ABORT,
-                address: None,
-                size: None,
+                command: GEM5_PRINT_REQ,
+                address: Some(0x4000),
+                size: Some(1),
                 flags: None,
                 packet_id: Some(9),
                 pc: None,
@@ -235,11 +248,14 @@ fn traffic_controller_emits_trace_htm_event() {
     assert!(batch.request().is_none());
     assert!(batch.trace_sync().is_none());
     assert!(batch.trace_tlb().is_none());
-    let htm = batch.trace_htm().unwrap();
-    assert_eq!(htm.tick(), 25);
-    assert_eq!(htm.sequence(), 0);
-    assert_eq!(htm.kind(), TrafficTraceHtmKind::Abort);
-    assert_eq!(htm.trace_packet_id(), Some(9));
+    assert!(batch.trace_htm().is_none());
+    let diagnostic = batch.trace_diagnostic().unwrap();
+    assert_eq!(diagnostic.tick(), 25);
+    assert_eq!(diagnostic.sequence(), 0);
+    assert_eq!(diagnostic.kind(), TrafficTraceDiagnosticKind::Print);
+    assert_eq!(diagnostic.address(), Some(Address::new(0x4000)));
+    assert_eq!(diagnostic.size_bytes(), Some(1));
+    assert_eq!(diagnostic.trace_packet_id(), Some(9));
 }
 
 fn state(id: u32, duration: u64) -> TrafficStateSpec {

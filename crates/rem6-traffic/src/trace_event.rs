@@ -46,6 +46,19 @@ impl TrafficTraceHtmKind {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TrafficTraceDiagnosticKind {
+    Print,
+}
+
+impl TrafficTraceDiagnosticKind {
+    pub const fn gem5_name(self) -> &'static str {
+        match self {
+            Self::Print => "PrintReq",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TrafficTraceSyncEvent {
     tick: u64,
     sequence: u64,
@@ -147,6 +160,70 @@ impl TrafficTraceTlbEvent {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TrafficTraceDiagnosticEvent {
+    tick: u64,
+    sequence: u64,
+    kind: TrafficTraceDiagnosticKind,
+    address: Option<Address>,
+    size_bytes: Option<u64>,
+    trace_packet_id: Option<u64>,
+    trace_pc: Option<Address>,
+}
+
+impl TrafficTraceDiagnosticEvent {
+    pub(crate) const fn new(
+        tick: u64,
+        sequence: u64,
+        kind: TrafficTraceDiagnosticKind,
+        address: Option<Address>,
+        size: Option<AccessSize>,
+        trace_packet_id: Option<u64>,
+        trace_pc: Option<Address>,
+    ) -> Self {
+        Self {
+            tick,
+            sequence,
+            kind,
+            address,
+            size_bytes: match size {
+                Some(size) => Some(size.bytes()),
+                None => None,
+            },
+            trace_packet_id,
+            trace_pc,
+        }
+    }
+
+    pub const fn tick(self) -> u64 {
+        self.tick
+    }
+
+    pub const fn sequence(self) -> u64 {
+        self.sequence
+    }
+
+    pub const fn kind(self) -> TrafficTraceDiagnosticKind {
+        self.kind
+    }
+
+    pub const fn address(self) -> Option<Address> {
+        self.address
+    }
+
+    pub const fn size_bytes(self) -> Option<u64> {
+        self.size_bytes
+    }
+
+    pub const fn trace_packet_id(self) -> Option<u64> {
+        self.trace_packet_id
+    }
+
+    pub const fn trace_pc(self) -> Option<Address> {
+        self.trace_pc
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TrafficTraceHtmEvent {
     tick: u64,
     sequence: u64,
@@ -216,6 +293,7 @@ pub enum TrafficTraceEvent {
     Sync(TrafficTraceSyncEvent),
     Tlb(TrafficTraceTlbEvent),
     Htm(TrafficTraceHtmEvent),
+    Diagnostic(TrafficTraceDiagnosticEvent),
 }
 
 impl TrafficTraceEvent {
@@ -225,6 +303,7 @@ impl TrafficTraceEvent {
             Self::Sync(event) => event.tick(),
             Self::Tlb(event) => event.tick(),
             Self::Htm(event) => event.tick(),
+            Self::Diagnostic(event) => event.tick(),
         }
     }
 
@@ -234,6 +313,7 @@ impl TrafficTraceEvent {
             Self::Sync(event) => event.sequence(),
             Self::Tlb(event) => event.sequence(),
             Self::Htm(event) => event.sequence(),
+            Self::Diagnostic(event) => event.sequence(),
         }
     }
 }

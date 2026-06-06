@@ -49,6 +49,7 @@ pub use trace::{
     TrafficTraceSnapshot,
 };
 pub use trace_event::{
-    TrafficTraceEvent, TrafficTraceHtmEvent, TrafficTraceHtmKind, TrafficTraceSyncEvent,
-    TrafficTraceSyncKind, TrafficTraceTlbEvent, TrafficTraceTlbKind,
+    TrafficTraceDiagnosticEvent, TrafficTraceDiagnosticKind, TrafficTraceEvent,
+    TrafficTraceHtmEvent, TrafficTraceHtmKind, TrafficTraceSyncEvent, TrafficTraceSyncKind,
+    TrafficTraceTlbEvent, TrafficTraceTlbKind,
 };

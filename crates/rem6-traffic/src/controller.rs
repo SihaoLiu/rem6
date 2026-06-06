@@ -6,9 +6,9 @@ use crate::{
     TrafficExitSnapshot, TrafficGeneratorError, TrafficGeneratorSummary, TrafficHybridSnapshot,
     TrafficIdleGenerator, TrafficIdleSnapshot, TrafficLinearSnapshot, TrafficRandomSnapshot,
     TrafficRequestEvent, TrafficStateGraphConfig, TrafficStateId, TrafficStateMachine,
-    TrafficStateSnapshot, TrafficStridedSnapshot, TrafficTraceEvent, TrafficTraceExitStatus,
-    TrafficTraceGenerator, TrafficTraceHtmEvent, TrafficTraceSnapshot, TrafficTraceSyncEvent,
-    TrafficTraceTlbEvent, TrafficTransitionEvent,
+    TrafficStateSnapshot, TrafficStridedSnapshot, TrafficTraceDiagnosticEvent, TrafficTraceEvent,
+    TrafficTraceExitStatus, TrafficTraceGenerator, TrafficTraceHtmEvent, TrafficTraceSnapshot,
+    TrafficTraceSyncEvent, TrafficTraceTlbEvent, TrafficTransitionEvent,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -169,6 +169,9 @@ impl TrafficStateGenerator {
                         TrafficTraceEvent::Sync(sync) => TrafficControllerEvent::TraceSync(sync),
                         TrafficTraceEvent::Tlb(tlb) => TrafficControllerEvent::TraceTlb(tlb),
                         TrafficTraceEvent::Htm(htm) => TrafficControllerEvent::TraceHtm(htm),
+                        TrafficTraceEvent::Diagnostic(diagnostic) => {
+                            TrafficControllerEvent::TraceDiagnostic(diagnostic)
+                        }
                     })
             }
         };
@@ -478,6 +481,13 @@ impl TrafficControllerEventBatch {
         })
     }
 
+    pub fn trace_diagnostic(&self) -> Option<TrafficTraceDiagnosticEvent> {
+        self.events.iter().find_map(|event| match event {
+            TrafficControllerEvent::TraceDiagnostic(diagnostic) => Some(*diagnostic),
+            _ => None,
+        })
+    }
+
     pub fn is_empty(&self) -> bool {
         self.events.is_empty()
     }
@@ -492,6 +502,7 @@ pub enum TrafficControllerEvent {
     TraceSync(TrafficTraceSyncEvent),
     TraceTlb(TrafficTraceTlbEvent),
     TraceHtm(TrafficTraceHtmEvent),
+    TraceDiagnostic(TrafficTraceDiagnosticEvent),
 }
 
 impl TrafficControllerEvent {
@@ -504,6 +515,7 @@ impl TrafficControllerEvent {
             Self::TraceSync(sync) => sync.tick(),
             Self::TraceTlb(tlb) => tlb.tick(),
             Self::TraceHtm(htm) => htm.tick(),
+            Self::TraceDiagnostic(diagnostic) => diagnostic.tick(),
         }
     }
 }
