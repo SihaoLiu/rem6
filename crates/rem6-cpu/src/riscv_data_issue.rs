@@ -462,6 +462,28 @@ impl RiscvCore {
                     .data_events
                     .push(RiscvDataAccessEvent::retry(access.record(delivery.tick())));
             }
+            ResponseStatus::StoreConditionalFailed => {
+                let MemoryAccessKind::StoreConditional { rd, .. } = &access.access else {
+                    debug_assert!(false, "store-conditional failure for non-SC access");
+                    state
+                        .data_events
+                        .push(RiscvDataAccessEvent::retry(access.record(delivery.tick())));
+                    return;
+                };
+                state.hart.write(*rd, 1);
+                state.reservation = None;
+                state.sc_progress.record_failure(
+                    self.id(),
+                    delivery.tick(),
+                    access.physical_address,
+                    access.size,
+                );
+                state
+                    .data_events
+                    .push(RiscvDataAccessEvent::conditional_failed(
+                        access.record(delivery.tick()),
+                    ));
+            }
         }
     }
 

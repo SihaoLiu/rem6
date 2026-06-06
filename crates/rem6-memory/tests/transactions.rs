@@ -1,7 +1,7 @@
 use rem6_memory::{
-    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, CoherenceIntent, MemoryAccessOrdering,
-    MemoryAtomicOp, MemoryBarrierSet, MemoryError, MemoryOperation, MemoryRequest,
-    MemoryRequestCheckpointPayload, MemoryRequestId, MemoryResponse,
+    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, CoherenceIntent, LineMemoryStore,
+    MemoryAccessOrdering, MemoryAtomicOp, MemoryBarrierSet, MemoryError, MemoryOperation,
+    MemoryRequest, MemoryRequestCheckpointPayload, MemoryRequestId, MemoryResponse,
     MemoryResponseCheckpointPayload, MemoryResponseSnapshot, ResponseStatus,
 };
 
@@ -13,6 +13,10 @@ fn line_layout() -> CacheLineLayout {
 
 fn request_id(sequence: u64) -> MemoryRequestId {
     MemoryRequestId::new(AgentId::new(7), sequence)
+}
+
+fn agent_request_id(agent: u32, sequence: u64) -> MemoryRequestId {
+    MemoryRequestId::new(AgentId::new(agent), sequence)
 }
 
 #[test]
@@ -292,6 +296,251 @@ fn locked_rmw_requests_preserve_read_and_write_half_semantics() {
     assert!(write.requires_writable());
     assert!(write.requires_response());
     assert!(!write.returns_data());
+}
+
+#[test]
+fn llsc_requests_preserve_load_and_store_conditional_semantics() {
+    let load = MemoryRequest::load_locked(
+        request_id(24),
+        Address::new(0x2208),
+        AccessSize::new(8).unwrap(),
+        line_layout(),
+    )
+    .unwrap();
+
+    assert_eq!(load.operation(), MemoryOperation::LoadLocked);
+    assert_eq!(load.coherence_intent(), CoherenceIntent::ReadShared);
+    assert_eq!(load.range().start(), Address::new(0x2208));
+    assert_eq!(load.size(), AccessSize::new(8).unwrap());
+    assert_eq!(load.data(), None);
+    assert_eq!(load.byte_mask(), None);
+    assert_eq!(load.atomic_op(), None);
+    assert!(!load.carries_data());
+    assert!(!load.requires_writable());
+    assert!(load.requires_response());
+    assert!(load.returns_data());
+
+    let size = AccessSize::new(4).unwrap();
+    let mask = ByteMask::from_bits(vec![true, false, true, true]).unwrap();
+    let store = MemoryRequest::store_conditional(
+        request_id(25),
+        Address::new(0x2210),
+        size,
+        vec![0x10, 0x20, 0x30, 0x40],
+        mask.clone(),
+        line_layout(),
+    )
+    .unwrap();
+
+    assert_eq!(store.operation(), MemoryOperation::StoreConditional);
+    assert_eq!(store.coherence_intent(), CoherenceIntent::WriteUnique);
+    assert_eq!(store.range().start(), Address::new(0x2210));
+    assert_eq!(store.size(), size);
+    assert_eq!(store.data(), Some(&[0x10, 0x20, 0x30, 0x40][..]));
+    assert_eq!(store.byte_mask(), Some(&mask));
+    assert_eq!(store.atomic_op(), None);
+    assert!(store.carries_data());
+    assert!(store.requires_writable());
+    assert!(store.requires_response());
+    assert!(!store.returns_data());
+
+    let mut memory = LineMemoryStore::new(line_layout());
+    memory
+        .insert_line(Address::new(0x2200), vec![0x55; 64])
+        .unwrap();
+
+    let no_reservation_response = memory.respond(&store).unwrap().unwrap();
+    assert_eq!(
+        no_reservation_response.status(),
+        ResponseStatus::StoreConditionalFailed
+    );
+    assert_eq!(no_reservation_response.data(), None);
+    let read_back =
+        MemoryRequest::read_shared(request_id(26), Address::new(0x2210), size, line_layout())
+            .unwrap();
+    let read_back = memory.respond(&read_back).unwrap().unwrap();
+    assert_eq!(read_back.data(), Some(&[0x55; 4][..]));
+
+    let load_response = memory.respond(&load).unwrap().unwrap();
+    assert_eq!(load_response.data(), Some(&[0x55; 8][..]));
+
+    let adjacent_store_response = memory.respond(&store).unwrap().unwrap();
+    assert_eq!(
+        adjacent_store_response.status(),
+        ResponseStatus::StoreConditionalFailed
+    );
+    let read_back =
+        MemoryRequest::read_shared(request_id(27), Address::new(0x2210), size, line_layout())
+            .unwrap();
+    let read_back = memory.respond(&read_back).unwrap().unwrap();
+    assert_eq!(read_back.data(), Some(&[0x55; 4][..]));
+
+    let matching_load = MemoryRequest::load_locked(
+        request_id(28),
+        Address::new(0x2218),
+        AccessSize::new(8).unwrap(),
+        line_layout(),
+    )
+    .unwrap();
+    let matching_store = MemoryRequest::store_conditional(
+        request_id(29),
+        Address::new(0x2210),
+        size,
+        vec![0x10, 0x20, 0x30, 0x40],
+        mask.clone(),
+        line_layout(),
+    )
+    .unwrap();
+    memory.respond(&matching_load).unwrap().unwrap();
+    let matching_store_response = memory.respond(&matching_store).unwrap().unwrap();
+    assert_eq!(matching_store_response.status(), ResponseStatus::Completed);
+    assert_eq!(matching_store_response.data(), None);
+    let read_back =
+        MemoryRequest::read_shared(request_id(30), Address::new(0x2210), size, line_layout())
+            .unwrap();
+    let read_back = memory.respond(&read_back).unwrap().unwrap();
+    assert_eq!(read_back.data(), Some(&[0x10, 0x55, 0x30, 0x40][..]));
+}
+
+#[test]
+fn normal_writes_clear_matching_load_locked_reservations() {
+    let size = AccessSize::new(4).unwrap();
+    let mask = ByteMask::full(size).unwrap();
+    let mut memory = LineMemoryStore::new(line_layout());
+    memory
+        .insert_line(Address::new(0x2300), vec![0x44; 64])
+        .unwrap();
+
+    let load = MemoryRequest::load_locked(
+        agent_request_id(7, 31),
+        Address::new(0x2318),
+        AccessSize::new(8).unwrap(),
+        line_layout(),
+    )
+    .unwrap();
+    let normal_write = MemoryRequest::write(
+        agent_request_id(8, 32),
+        Address::new(0x2310),
+        size,
+        vec![0xaa, 0xbb, 0xcc, 0xdd],
+        mask.clone(),
+        line_layout(),
+    )
+    .unwrap();
+    let store = MemoryRequest::store_conditional(
+        agent_request_id(7, 33),
+        Address::new(0x2318),
+        size,
+        vec![0x10, 0x20, 0x30, 0x40],
+        mask,
+        line_layout(),
+    )
+    .unwrap();
+
+    memory.respond(&load).unwrap().unwrap();
+    memory.respond(&normal_write).unwrap().unwrap();
+    let store_response = memory.respond(&store).unwrap().unwrap();
+
+    assert_eq!(
+        store_response.status(),
+        ResponseStatus::StoreConditionalFailed
+    );
+    let read_back =
+        MemoryRequest::read_shared(request_id(34), Address::new(0x2310), size, line_layout())
+            .unwrap();
+    let read_back = memory.respond(&read_back).unwrap().unwrap();
+    assert_eq!(read_back.data(), Some(&[0xaa, 0xbb, 0xcc, 0xdd][..]));
+}
+
+#[test]
+fn full_line_replacements_clear_all_overlapping_load_locked_reservations() {
+    let size = AccessSize::new(4).unwrap();
+    let mask = ByteMask::full(size).unwrap();
+    let mut memory = LineMemoryStore::new(line_layout());
+    memory
+        .insert_line(Address::new(0x2400), vec![0x44; 64])
+        .unwrap();
+
+    let load = MemoryRequest::load_locked(
+        agent_request_id(9, 35),
+        Address::new(0x2438),
+        AccessSize::new(8).unwrap(),
+        line_layout(),
+    )
+    .unwrap();
+    let replacement = MemoryRequest::writeback_dirty(
+        agent_request_id(8, 36),
+        Address::new(0x2400),
+        vec![0x77; 64],
+        line_layout(),
+    )
+    .unwrap();
+    let store = MemoryRequest::store_conditional(
+        agent_request_id(9, 37),
+        Address::new(0x2438),
+        size,
+        vec![0x10, 0x20, 0x30, 0x40],
+        mask,
+        line_layout(),
+    )
+    .unwrap();
+
+    memory.respond(&load).unwrap().unwrap();
+    assert!(memory.respond(&replacement).unwrap().is_none());
+    let store_response = memory.respond(&store).unwrap().unwrap();
+
+    assert_eq!(
+        store_response.status(),
+        ResponseStatus::StoreConditionalFailed
+    );
+    let read_back =
+        MemoryRequest::read_shared(request_id(38), Address::new(0x2438), size, line_layout())
+            .unwrap();
+    let read_back = memory.respond(&read_back).unwrap().unwrap();
+    assert_eq!(read_back.data(), Some(&[0x77, 0x77, 0x77, 0x77][..]));
+}
+
+#[test]
+fn insert_line_replacements_clear_all_overlapping_load_locked_reservations() {
+    let size = AccessSize::new(4).unwrap();
+    let mask = ByteMask::full(size).unwrap();
+    let mut memory = LineMemoryStore::new(line_layout());
+    memory
+        .insert_line(Address::new(0x2500), vec![0x44; 64])
+        .unwrap();
+
+    let load = MemoryRequest::load_locked(
+        agent_request_id(9, 39),
+        Address::new(0x2538),
+        AccessSize::new(8).unwrap(),
+        line_layout(),
+    )
+    .unwrap();
+    let store = MemoryRequest::store_conditional(
+        agent_request_id(9, 40),
+        Address::new(0x2538),
+        size,
+        vec![0x10, 0x20, 0x30, 0x40],
+        mask,
+        line_layout(),
+    )
+    .unwrap();
+
+    memory.respond(&load).unwrap().unwrap();
+    memory
+        .insert_line(Address::new(0x2500), vec![0x66; 64])
+        .unwrap();
+    let store_response = memory.respond(&store).unwrap().unwrap();
+
+    assert_eq!(
+        store_response.status(),
+        ResponseStatus::StoreConditionalFailed
+    );
+    let read_back =
+        MemoryRequest::read_shared(request_id(41), Address::new(0x2538), size, line_layout())
+            .unwrap();
+    let read_back = memory.respond(&read_back).unwrap().unwrap();
+    assert_eq!(read_back.data(), Some(&[0x66, 0x66, 0x66, 0x66][..]));
 }
 
 #[test]
@@ -626,6 +875,35 @@ fn memory_response_checkpoint_payload_uses_stable_completed_without_data_bytes()
     );
     assert_eq!(decoded.snapshot(), &completed.snapshot());
     assert_eq!(restored, completed);
+}
+
+#[test]
+fn memory_response_checkpoint_payload_uses_stable_store_conditional_failed_bytes() {
+    let size = AccessSize::new(4).unwrap();
+    let store = MemoryRequest::store_conditional(
+        request_id(45),
+        Address::new(0x7d10),
+        size,
+        vec![0x11, 0x22, 0x33, 0x44],
+        ByteMask::full(size).unwrap(),
+        line_layout(),
+    )
+    .unwrap();
+    let failed = MemoryResponse::store_conditional_failed(&store).unwrap();
+
+    let stable_payload = vec![
+        b'M', b'R', b'E', b'S', 1, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0, 45, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    ];
+    let decoded = MemoryResponseCheckpointPayload::decode(&stable_payload).unwrap();
+    let restored = MemoryResponse::from_snapshot(decoded.snapshot()).unwrap();
+
+    assert_eq!(
+        MemoryResponseCheckpointPayload::from_response(&failed).encode(),
+        stable_payload
+    );
+    assert_eq!(decoded.snapshot(), &failed.snapshot());
+    assert_eq!(restored, failed);
 }
 
 #[test]
@@ -985,6 +1263,51 @@ fn memory_request_checkpoint_payload_round_trips_locked_rmw_requests() {
 }
 
 #[test]
+fn memory_request_checkpoint_payload_round_trips_llsc_requests() {
+    let load = MemoryRequest::load_locked(
+        request_id(48),
+        Address::new(0x7e08),
+        AccessSize::new(8).unwrap(),
+        line_layout(),
+    )
+    .unwrap();
+    let load_payload = MemoryRequestCheckpointPayload::from_request(&load);
+    let load_decoded =
+        MemoryRequestCheckpointPayload::decode(load_payload.encode().as_slice()).unwrap();
+    let load_restored = MemoryRequest::from_snapshot(load_decoded.snapshot()).unwrap();
+
+    assert_eq!(load_decoded.snapshot(), &load.snapshot());
+    assert_eq!(load_restored, load);
+    assert_eq!(load_restored.operation(), MemoryOperation::LoadLocked);
+    assert!(!load_restored.requires_writable());
+    assert!(load_restored.returns_data());
+
+    let size = AccessSize::new(8).unwrap();
+    let store = MemoryRequest::store_conditional(
+        request_id(49),
+        Address::new(0x7e10),
+        size,
+        vec![0xb0, 0xb1, 0xb2, 0xb3, 0xb4, 0xb5, 0xb6, 0xb7],
+        ByteMask::full(size).unwrap(),
+        line_layout(),
+    )
+    .unwrap();
+    let store_payload = MemoryRequestCheckpointPayload::from_request(&store);
+    let store_decoded =
+        MemoryRequestCheckpointPayload::decode(store_payload.encode().as_slice()).unwrap();
+    let store_restored = MemoryRequest::from_snapshot(store_decoded.snapshot()).unwrap();
+
+    assert_eq!(store_decoded.snapshot(), &store.snapshot());
+    assert_eq!(store_restored, store);
+    assert_eq!(
+        store_restored.operation(),
+        MemoryOperation::StoreConditional
+    );
+    assert!(store_restored.requires_writable());
+    assert!(!store_restored.returns_data());
+}
+
+#[test]
 fn memory_request_checkpoint_payload_rejects_invalid_operation_code() {
     let request = MemoryRequest::read_shared(
         request_id(23),
@@ -1065,6 +1388,57 @@ fn memory_request_checkpoint_payload_uses_stable_atomic_ordering_bytes() {
     );
     assert_eq!(decoded.snapshot(), &request.snapshot());
     assert_eq!(restored, request);
+}
+
+#[test]
+fn memory_request_checkpoint_payload_uses_stable_llsc_operation_bytes() {
+    let load = MemoryRequest::load_locked(
+        request_id(55),
+        Address::new(0x8f08),
+        AccessSize::new(8).unwrap(),
+        line_layout(),
+    )
+    .unwrap();
+    let load_stable_payload = vec![
+        b'M', b'R', b'E', b'Q', 1, 0, 0, 0, 17, 0, 0, 0, 0, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0, 55, 0,
+        0, 0, 0, 0, 0, 0, 0x08, 0x8f, 0, 0, 0, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 64, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    ];
+    let load_decoded = MemoryRequestCheckpointPayload::decode(&load_stable_payload).unwrap();
+    let load_restored = MemoryRequest::from_snapshot(load_decoded.snapshot()).unwrap();
+
+    assert_eq!(
+        MemoryRequestCheckpointPayload::from_request(&load).encode(),
+        load_stable_payload
+    );
+    assert_eq!(load_decoded.snapshot(), &load.snapshot());
+    assert_eq!(load_restored, load);
+
+    let size = AccessSize::new(4).unwrap();
+    let store = MemoryRequest::store_conditional(
+        request_id(56),
+        Address::new(0x9008),
+        size,
+        vec![0x11, 0x22, 0x33, 0x44],
+        ByteMask::from_bits(vec![true, false, true, true]).unwrap(),
+        line_layout(),
+    )
+    .unwrap();
+    let store_stable_payload = vec![
+        b'M', b'R', b'E', b'Q', 1, 0, 0, 0, 18, 0, 0, 0, 3, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0, 56, 0,
+        0, 0, 0, 0, 0, 0, 0x08, 0x90, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 64, 0, 0, 0, 0, 0,
+        0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x11, 0x22,
+        0x33, 0x44, 1, 0, 1, 1,
+    ];
+    let store_decoded = MemoryRequestCheckpointPayload::decode(&store_stable_payload).unwrap();
+    let store_restored = MemoryRequest::from_snapshot(store_decoded.snapshot()).unwrap();
+
+    assert_eq!(
+        MemoryRequestCheckpointPayload::from_request(&store).encode(),
+        store_stable_payload
+    );
+    assert_eq!(store_decoded.snapshot(), &store.snapshot());
+    assert_eq!(store_restored, store);
 }
 
 #[test]

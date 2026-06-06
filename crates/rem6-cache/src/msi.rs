@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
@@ -317,6 +318,7 @@ pub struct MsiCacheController {
     next_sequence: u64,
     data: Option<Vec<u8>>,
     pending: Option<PendingMiss>,
+    locked_reservations: BTreeMap<AgentId, Address>,
 }
 
 impl MsiCacheController {
@@ -328,6 +330,7 @@ impl MsiCacheController {
             next_sequence: 0,
             data: None,
             pending: None,
+            locked_reservations: BTreeMap::new(),
         }
     }
 
@@ -371,6 +374,7 @@ impl MsiCacheController {
         self.next_sequence = snapshot.next_sequence;
         self.data = snapshot.data.clone();
         self.pending = snapshot.pending.as_ref().map(PendingMiss::from_snapshot);
+        self.locked_reservations.clear();
         Ok(())
     }
 
@@ -453,9 +457,6 @@ impl MsiCacheController {
         if let Some(data) = response.data() {
             self.install_data(data.to_vec())?;
         }
-        if pending.original.carries_data() {
-            self.apply_store(&pending.original)?;
-        }
 
         let response = self.complete_cpu_request(&pending.original)?;
         Ok(CacheControllerResult::new(
@@ -477,6 +478,7 @@ impl MsiCacheController {
             .map_err(CacheControllerError::Protocol)?;
         if self.line.state() == MsiState::Invalid {
             self.data = None;
+            self.locked_reservations.clear();
         }
 
         Ok(CacheControllerResult::new(
@@ -507,6 +509,7 @@ impl MsiCacheController {
             });
         }
 
+        self.locked_reservations.clear();
         self.data = Some(data);
         Ok(())
     }
@@ -563,12 +566,32 @@ impl MsiCacheController {
                 .atomic_write_data(&data)
                 .map_err(CacheControllerError::Memory)?;
             self.apply_store_data(request, &write_data)?;
+            self.clear_locked_reservations(request);
             return MemoryResponse::completed(request, Some(data))
                 .map_err(CacheControllerError::Memory);
         }
 
+        if request.operation() == MemoryOperation::LoadLocked {
+            let data = self.read_slice(request)?;
+            self.track_load_locked(request);
+            return MemoryResponse::completed(request, Some(data))
+                .map_err(CacheControllerError::Memory);
+        }
+
+        if request.operation() == MemoryOperation::StoreConditional {
+            if !self.store_conditional_allowed(request) {
+                return MemoryResponse::store_conditional_failed(request)
+                    .map_err(CacheControllerError::Memory);
+            }
+
+            self.apply_store(request)?;
+            self.clear_locked_reservations(request);
+            return MemoryResponse::completed(request, None).map_err(CacheControllerError::Memory);
+        }
+
         if request.carries_data() {
             self.apply_store(request)?;
+            self.clear_locked_reservations(request);
             return MemoryResponse::completed(request, None).map_err(CacheControllerError::Memory);
         }
 
@@ -579,6 +602,22 @@ impl MsiCacheController {
         }
 
         MemoryResponse::completed(request, None).map_err(CacheControllerError::Memory)
+    }
+
+    fn track_load_locked(&mut self, request: &MemoryRequest) {
+        self.locked_reservations
+            .insert(request.id().agent(), request.llsc_reservation_address());
+    }
+
+    fn store_conditional_allowed(&self, request: &MemoryRequest) -> bool {
+        self.locked_reservations
+            .get(&request.id().agent())
+            .is_some_and(|reserved| *reserved == request.llsc_reservation_address())
+    }
+
+    fn clear_locked_reservations(&mut self, request: &MemoryRequest) {
+        self.locked_reservations
+            .retain(|_, reserved| !request.overlaps_llsc_reservation(*reserved));
     }
 
     fn apply_store(&mut self, request: &MemoryRequest) -> Result<(), CacheControllerError> {
@@ -675,10 +714,13 @@ impl MsiCacheController {
 
 fn cpu_event(request: &MemoryRequest) -> MsiEvent {
     match request.operation() {
-        MemoryOperation::InstructionFetch | MemoryOperation::ReadShared => MsiEvent::CpuRead,
+        MemoryOperation::InstructionFetch
+        | MemoryOperation::ReadShared
+        | MemoryOperation::LoadLocked => MsiEvent::CpuRead,
         MemoryOperation::ReadUnique
         | MemoryOperation::LockedRmwRead
         | MemoryOperation::Write
+        | MemoryOperation::StoreConditional
         | MemoryOperation::LockedRmwWrite
         | MemoryOperation::Upgrade
         | MemoryOperation::Atomic

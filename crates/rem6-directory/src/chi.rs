@@ -524,12 +524,14 @@ impl ChiDirectory {
         let (snoops, grant) = match request.operation() {
             MemoryOperation::InstructionFetch
             | MemoryOperation::ReadShared
+            | MemoryOperation::LoadLocked
             | MemoryOperation::PrefetchRead => {
                 self.accept_read_shared(line, request_id, requester, &mut after_line)
             }
             MemoryOperation::ReadUnique
             | MemoryOperation::LockedRmwRead
             | MemoryOperation::Write
+            | MemoryOperation::StoreConditional
             | MemoryOperation::LockedRmwWrite
             | MemoryOperation::Atomic
             | MemoryOperation::PrefetchWrite

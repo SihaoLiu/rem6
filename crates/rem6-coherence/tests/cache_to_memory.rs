@@ -49,6 +49,29 @@ fn write(sequence: u64, address: u64, data: Vec<u8>) -> MemoryRequest {
     .unwrap()
 }
 
+fn load_locked(sequence: u64, address: u64, bytes: u64) -> MemoryRequest {
+    MemoryRequest::load_locked(
+        request_id(sequence),
+        Address::new(address),
+        AccessSize::new(bytes).unwrap(),
+        layout(),
+    )
+    .unwrap()
+}
+
+fn store_conditional(sequence: u64, address: u64, data: Vec<u8>) -> MemoryRequest {
+    let size = AccessSize::new(data.len() as u64).unwrap();
+    MemoryRequest::store_conditional(
+        request_id(sequence),
+        Address::new(address),
+        size,
+        data,
+        ByteMask::full(size).unwrap(),
+        layout(),
+    )
+    .unwrap()
+}
+
 fn harness() -> CoherentLineHarness {
     CoherentLineHarness::new(
         AgentId::new(10),
@@ -187,4 +210,46 @@ fn backing_store_rejects_wrong_line_and_bad_line_data() {
             actual: Address::new(0x2000),
         }
     );
+}
+
+#[test]
+fn backing_store_preserves_llsc_reservation_semantics() {
+    let mut store = LineBackingStore::new(layout(), Address::new(0x1000), line_data()).unwrap();
+    let failed = store
+        .respond(&store_conditional(4, 0x1010, vec![0xaa, 0xbb, 0xcc, 0xdd]))
+        .unwrap();
+    assert_eq!(failed.status(), ResponseStatus::StoreConditionalFailed);
+    assert_eq!(&store.data()[0x10..0x14], &[0x10, 0x11, 0x12, 0x13]);
+
+    let load = store.respond(&load_locked(5, 0x1018, 8)).unwrap();
+    assert_eq!(load.status(), ResponseStatus::Completed);
+    let completed = store
+        .respond(&store_conditional(6, 0x1010, vec![0xaa, 0xbb, 0xcc, 0xdd]))
+        .unwrap();
+    assert_eq!(completed.status(), ResponseStatus::Completed);
+    assert_eq!(&store.data()[0x10..0x14], &[0xaa, 0xbb, 0xcc, 0xdd]);
+
+    store.respond(&load_locked(7, 0x1018, 8)).unwrap();
+    store
+        .respond(&write(8, 0x1010, vec![0x44, 0x55, 0x66, 0x77]))
+        .unwrap();
+    let failed = store
+        .respond(&store_conditional(9, 0x1018, vec![0x20, 0x21, 0x22, 0x23]))
+        .unwrap();
+    assert_eq!(failed.status(), ResponseStatus::StoreConditionalFailed);
+    assert_eq!(&store.data()[0x10..0x14], &[0x44, 0x55, 0x66, 0x77]);
+}
+
+#[test]
+fn backing_store_replacement_clears_all_load_locked_reservations() {
+    let mut store = LineBackingStore::new(layout(), Address::new(0x1000), line_data()).unwrap();
+
+    store.respond(&load_locked(10, 0x1038, 8)).unwrap();
+    store.replace_data(vec![0xee; 64]).unwrap();
+    let failed = store
+        .respond(&store_conditional(11, 0x1038, vec![0xaa, 0xbb, 0xcc, 0xdd]))
+        .unwrap();
+
+    assert_eq!(failed.status(), ResponseStatus::StoreConditionalFailed);
+    assert_eq!(&store.data()[0x38..0x3c], &[0xee, 0xee, 0xee, 0xee]);
 }

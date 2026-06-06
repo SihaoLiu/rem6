@@ -615,6 +615,10 @@ fn read_request(cursor: &mut PayloadCursor<'_>) -> Result<MemoryRequest, String>
         }
         MemoryOperation::ReadShared => MemoryRequest::read_shared(id, address, size, layout),
         MemoryOperation::ReadUnique => MemoryRequest::read_unique(id, address, size, layout),
+        MemoryOperation::LoadLocked => {
+            reject_unexpected_request_payload("load locked", &data, &byte_mask)?;
+            MemoryRequest::load_locked(id, address, size, layout)
+        }
         MemoryOperation::LockedRmwRead => {
             reject_unexpected_request_payload("locked RMW read", &data, &byte_mask)?;
             MemoryRequest::locked_rmw_read(id, address, size, layout)
@@ -634,6 +638,15 @@ fn read_request(cursor: &mut PayloadCursor<'_>) -> Result<MemoryRequest, String>
             data.ok_or_else(|| "MSI locked RMW write request is missing data".to_string())?,
             byte_mask
                 .ok_or_else(|| "MSI locked RMW write request is missing byte mask".to_string())?,
+            layout,
+        ),
+        MemoryOperation::StoreConditional => MemoryRequest::store_conditional(
+            id,
+            address,
+            size,
+            data.ok_or_else(|| "MSI store conditional request is missing data".to_string())?,
+            byte_mask
+                .ok_or_else(|| "MSI store conditional request is missing byte mask".to_string())?,
             layout,
         ),
         MemoryOperation::Upgrade => MemoryRequest::upgrade(id, address, size, layout),
@@ -988,6 +1001,8 @@ fn memory_operation_to_u8(operation: MemoryOperation) -> u8 {
         MemoryOperation::InvalidateWritable => 14,
         MemoryOperation::LockedRmwRead => 15,
         MemoryOperation::LockedRmwWrite => 16,
+        MemoryOperation::LoadLocked => 17,
+        MemoryOperation::StoreConditional => 18,
     }
 }
 
@@ -1010,6 +1025,8 @@ fn u8_to_memory_operation(value: u8) -> Result<MemoryOperation, String> {
         14 => Ok(MemoryOperation::InvalidateWritable),
         15 => Ok(MemoryOperation::LockedRmwRead),
         16 => Ok(MemoryOperation::LockedRmwWrite),
+        17 => Ok(MemoryOperation::LoadLocked),
+        18 => Ok(MemoryOperation::StoreConditional),
         _ => Err(format!("unknown memory operation {value}")),
     }
 }
@@ -1018,6 +1035,7 @@ fn response_status_to_u8(status: ResponseStatus) -> u8 {
     match status {
         ResponseStatus::Completed => 0,
         ResponseStatus::Retry => 1,
+        ResponseStatus::StoreConditionalFailed => 2,
     }
 }
 
@@ -1025,6 +1043,7 @@ fn u8_to_response_status(value: u8) -> Result<ResponseStatus, String> {
     match value {
         0 => Ok(ResponseStatus::Completed),
         1 => Ok(ResponseStatus::Retry),
+        2 => Ok(ResponseStatus::StoreConditionalFailed),
         _ => Err(format!("unknown memory response status {value}")),
     }
 }

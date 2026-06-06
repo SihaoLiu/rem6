@@ -499,7 +499,7 @@ impl CpuCore {
                     data,
                 ));
             }
-            ResponseStatus::Retry => {
+            ResponseStatus::Retry | ResponseStatus::StoreConditionalFailed => {
                 state.events.push(CpuFetchEvent::retry(fetch.record(
                     delivery.tick(),
                     delivery.route(),

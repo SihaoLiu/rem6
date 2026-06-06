@@ -249,6 +249,9 @@ pub enum MemoryError {
     ResponseNotExpected {
         request: MemoryRequestId,
     },
+    InvalidStoreConditionalFailureResponse {
+        request: MemoryRequestId,
+    },
 }
 
 impl fmt::Display for MemoryError {
@@ -640,6 +643,12 @@ impl fmt::Display for MemoryError {
             Self::ResponseNotExpected { request } => write!(
                 formatter,
                 "request {} from agent {} does not expect a response",
+                request.sequence(),
+                request.agent().get()
+            ),
+            Self::InvalidStoreConditionalFailureResponse { request } => write!(
+                formatter,
+                "request {} from agent {} is not a store-conditional failure response target",
                 request.sequence(),
                 request.agent().get()
             ),

@@ -22,6 +22,9 @@ pub(crate) fn uncacheable_fill_outcome(
             MemoryResponse::completed(original, response.data().map(<[u8]>::to_vec))?
         }
         ResponseStatus::Retry => MemoryResponse::retry(original),
+        ResponseStatus::StoreConditionalFailed => {
+            MemoryResponse::store_conditional_failed(original)?
+        }
     };
     Ok(TargetOutcome::Respond(response))
 }
@@ -35,6 +38,9 @@ pub(crate) fn uncacheable_write_response_outcome(
             MemoryResponse::completed(original, response.data().map(<[u8]>::to_vec))?
         }
         ResponseStatus::Retry => MemoryResponse::retry(original),
+        ResponseStatus::StoreConditionalFailed => {
+            MemoryResponse::store_conditional_failed(original)?
+        }
     };
     Ok(TargetOutcome::Respond(response))
 }

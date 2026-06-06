@@ -788,6 +788,8 @@ where
                 .map_err(RiscvTopologySystemError::Memory)
         }
         ResponseStatus::Retry => Ok(MemoryResponse::retry(request)),
+        ResponseStatus::StoreConditionalFailed => MemoryResponse::store_conditional_failed(request)
+            .map_err(RiscvTopologySystemError::Memory),
     }
 }
 

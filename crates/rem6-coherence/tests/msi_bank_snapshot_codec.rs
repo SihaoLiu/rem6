@@ -451,6 +451,42 @@ fn msi_bank_snapshot_rejects_locked_rmw_read_request_with_byte_mask() {
 }
 
 #[test]
+fn msi_bank_snapshot_rejects_load_locked_request_with_data() {
+    let payload = payload_with_one_mshr_target_request(17, Some(&[0x6b; 8]), None);
+
+    let error = MsiBankDirectoryHarnessSnapshot::from_bytes(&payload).unwrap_err();
+
+    assert_eq!(error, "MSI load locked request cannot carry data");
+}
+
+#[test]
+fn msi_bank_snapshot_rejects_load_locked_request_with_byte_mask() {
+    let payload = payload_with_one_mshr_target_request(17, None, Some(&[true; 8]));
+
+    let error = MsiBankDirectoryHarnessSnapshot::from_bytes(&payload).unwrap_err();
+
+    assert_eq!(error, "MSI load locked request cannot carry a byte mask");
+}
+
+#[test]
+fn msi_bank_snapshot_rejects_store_conditional_request_without_data() {
+    let payload = payload_with_one_mshr_target_request(18, None, Some(&[true; 8]));
+
+    let error = MsiBankDirectoryHarnessSnapshot::from_bytes(&payload).unwrap_err();
+
+    assert_eq!(error, "MSI store conditional request is missing data");
+}
+
+#[test]
+fn msi_bank_snapshot_rejects_store_conditional_request_without_byte_mask() {
+    let payload = payload_with_one_mshr_target_request(18, Some(&[0x7c; 8]), None);
+
+    let error = MsiBankDirectoryHarnessSnapshot::from_bytes(&payload).unwrap_err();
+
+    assert_eq!(error, "MSI store conditional request is missing byte mask");
+}
+
+#[test]
 fn msi_bank_snapshot_rejects_write_clean_request_with_byte_mask() {
     let mut payload = payload_with_one_cache_bank_until_mshr_entry_count();
     write_u64(&mut payload, 1);

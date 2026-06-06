@@ -56,6 +56,28 @@ fn write(address: u64, bytes: &[u8], sequence: u64) -> MemoryRequest {
     .unwrap()
 }
 
+fn load_locked(address: u64, size: u64, sequence: u64) -> MemoryRequest {
+    MemoryRequest::load_locked(
+        request_id(sequence),
+        Address::new(address),
+        AccessSize::new(size).unwrap(),
+        layout(),
+    )
+    .unwrap()
+}
+
+fn store_conditional(address: u64, bytes: &[u8], sequence: u64) -> MemoryRequest {
+    MemoryRequest::store_conditional(
+        request_id(sequence),
+        Address::new(address),
+        AccessSize::new(bytes.len() as u64).unwrap(),
+        bytes.to_vec(),
+        ByteMask::full(AccessSize::new(bytes.len() as u64).unwrap()).unwrap(),
+        layout(),
+    )
+    .unwrap()
+}
+
 fn write_clean(address: u64, bytes: Vec<u8>, sequence: u64) -> MemoryRequest {
     MemoryRequest::write_clean(request_id(sequence), Address::new(address), bytes, layout())
         .unwrap()
@@ -174,6 +196,41 @@ fn dram_memory_controller_applies_writes_and_preserves_target_data() {
     assert_eq!(read_outcome.ready_cycle(), 15);
     assert_eq!(
         read_outcome.response().unwrap().data().unwrap(),
+        &[0xaa, 0xbb, 0xcc, 0xdd]
+    );
+}
+
+#[test]
+fn dram_memory_controller_preserves_llsc_reservation_semantics() {
+    let (mut controller, low, _) = controller_with_targets();
+
+    let failed = controller
+        .accept(0, &store_conditional(0x1010, &[0xaa, 0xbb, 0xcc, 0xdd], 74))
+        .unwrap();
+    assert_eq!(failed.target(), low);
+    assert_eq!(failed.dram_access().kind(), DramAccessKind::Write);
+    assert_eq!(
+        failed.response().unwrap().status(),
+        ResponseStatus::StoreConditionalFailed
+    );
+    assert_eq!(
+        &controller.line_data(low, Address::new(0x1000)).unwrap()[0x10..0x14],
+        &[0x20, 0x21, 0x22, 0x23]
+    );
+
+    controller.accept(10, &load_locked(0x1018, 8, 75)).unwrap();
+    let completed = controller
+        .accept(
+            20,
+            &store_conditional(0x1010, &[0xaa, 0xbb, 0xcc, 0xdd], 76),
+        )
+        .unwrap();
+    assert_eq!(
+        completed.response().unwrap().status(),
+        ResponseStatus::Completed
+    );
+    assert_eq!(
+        &controller.line_data(low, Address::new(0x1000)).unwrap()[0x10..0x14],
         &[0xaa, 0xbb, 0xcc, 0xdd]
     );
 }

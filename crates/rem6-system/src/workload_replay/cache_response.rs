@@ -413,6 +413,8 @@ where
                 .map_err(RiscvWorkloadReplayError::Memory)
         }
         ResponseStatus::Retry => Ok(MemoryResponse::retry(request)),
+        ResponseStatus::StoreConditionalFailed => MemoryResponse::store_conditional_failed(request)
+            .map_err(RiscvWorkloadReplayError::Memory),
     }
 }
 

@@ -48,6 +48,29 @@ fn writeback(address: u64, bytes: Vec<u8>, sequence: u64) -> MemoryRequest {
         .unwrap()
 }
 
+fn load_locked(address: u64, size: u64, sequence: u64) -> MemoryRequest {
+    MemoryRequest::load_locked(
+        request_id(sequence),
+        Address::new(address),
+        AccessSize::new(size).unwrap(),
+        layout(),
+    )
+    .unwrap()
+}
+
+fn store_conditional(address: u64, bytes: &[u8], sequence: u64) -> MemoryRequest {
+    let size = AccessSize::new(bytes.len() as u64).unwrap();
+    MemoryRequest::store_conditional(
+        request_id(sequence),
+        Address::new(address),
+        size,
+        bytes.to_vec(),
+        ByteMask::full(size).unwrap(),
+        layout(),
+    )
+    .unwrap()
+}
+
 fn mapped_store() -> (PartitionedMemoryStore, MemoryTargetId, MemoryTargetId) {
     let low = MemoryTargetId::new(10);
     let high = MemoryTargetId::new(20);
@@ -129,6 +152,28 @@ fn partitioned_store_handles_writebacks_without_responses() {
     assert_eq!(
         store.line_data(high, Address::new(0x8000)).unwrap(),
         replacement
+    );
+}
+
+#[test]
+fn partitioned_insert_line_replacement_clears_load_locked_reservations() {
+    let (mut store, low, _high) = mapped_store();
+
+    store.respond(&load_locked(0x1038, 8, 7)).unwrap();
+    store
+        .insert_line(low, Address::new(0x1000), vec![0xee; 64])
+        .unwrap();
+    let outcome = store
+        .respond(&store_conditional(0x1038, &[0xaa, 0xbb, 0xcc, 0xdd], 8))
+        .unwrap();
+
+    assert_eq!(
+        outcome.response().unwrap().status(),
+        ResponseStatus::StoreConditionalFailed
+    );
+    assert_eq!(
+        &store.line_data(low, Address::new(0x1000)).unwrap()[0x38..0x3c],
+        &[0xee, 0xee, 0xee, 0xee]
     );
 }
 

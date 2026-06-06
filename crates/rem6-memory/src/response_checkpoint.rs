@@ -138,6 +138,7 @@ fn encode_status(status: ResponseStatus) -> u32 {
     match status {
         ResponseStatus::Completed => 0,
         ResponseStatus::Retry => 1,
+        ResponseStatus::StoreConditionalFailed => 2,
     }
 }
 
@@ -145,6 +146,7 @@ fn decode_status(code: u32) -> Result<ResponseStatus, MemoryError> {
     match code {
         0 => Ok(ResponseStatus::Completed),
         1 => Ok(ResponseStatus::Retry),
+        2 => Ok(ResponseStatus::StoreConditionalFailed),
         code => Err(MemoryError::InvalidResponseCheckpointStatus { code }),
     }
 }

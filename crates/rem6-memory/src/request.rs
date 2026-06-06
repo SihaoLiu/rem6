@@ -3,6 +3,8 @@ use crate::{
     MemoryAccessOrdering, MemoryAtomicOp, MemoryError, MemoryOperation, MemoryRequestId,
 };
 
+const LLSC_RESERVATION_BYTES: u64 = 16;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MemoryRequest {
     id: MemoryRequestId,
@@ -233,6 +235,22 @@ impl MemoryRequest {
         )
     }
 
+    pub fn load_locked(
+        id: MemoryRequestId,
+        address: Address,
+        size: AccessSize,
+        line_layout: CacheLineLayout,
+    ) -> Result<Self, MemoryError> {
+        Self::new(
+            id,
+            MemoryOperation::LoadLocked,
+            address,
+            size,
+            line_layout,
+            MemoryRequestPayload::empty(),
+        )
+    }
+
     pub fn locked_rmw_write(
         id: MemoryRequestId,
         address: Address,
@@ -244,6 +262,24 @@ impl MemoryRequest {
         Self::new(
             id,
             MemoryOperation::LockedRmwWrite,
+            address,
+            size,
+            line_layout,
+            MemoryRequestPayload::write(data, byte_mask),
+        )
+    }
+
+    pub fn store_conditional(
+        id: MemoryRequestId,
+        address: Address,
+        size: AccessSize,
+        data: Vec<u8>,
+        byte_mask: ByteMask,
+        line_layout: CacheLineLayout,
+    ) -> Result<Self, MemoryError> {
+        Self::new(
+            id,
+            MemoryOperation::StoreConditional,
             address,
             size,
             line_layout,
@@ -538,18 +574,27 @@ impl MemoryRequest {
     ) -> Result<(), MemoryError> {
         match (operation, byte_mask) {
             (
-                MemoryOperation::Write | MemoryOperation::LockedRmwWrite | MemoryOperation::Atomic,
+                MemoryOperation::Write
+                | MemoryOperation::StoreConditional
+                | MemoryOperation::LockedRmwWrite
+                | MemoryOperation::Atomic,
                 Some(mask),
             ) if mask.len() == size.bytes() => Ok(()),
             (
-                MemoryOperation::Write | MemoryOperation::LockedRmwWrite | MemoryOperation::Atomic,
+                MemoryOperation::Write
+                | MemoryOperation::StoreConditional
+                | MemoryOperation::LockedRmwWrite
+                | MemoryOperation::Atomic,
                 Some(mask),
             ) => Err(MemoryError::ByteMaskSizeMismatch {
                 expected: size,
                 actual: mask.len(),
             }),
             (
-                MemoryOperation::Write | MemoryOperation::LockedRmwWrite | MemoryOperation::Atomic,
+                MemoryOperation::Write
+                | MemoryOperation::StoreConditional
+                | MemoryOperation::LockedRmwWrite
+                | MemoryOperation::Atomic,
                 None,
             ) => Err(MemoryError::MissingByteMask { request: id }),
             (_, Some(_)) => Err(MemoryError::UnexpectedByteMask { request: id }),
@@ -781,6 +826,22 @@ impl MemoryRequest {
         self.operation.requires_writable()
     }
 
+    pub fn llsc_reservation_address(&self) -> Address {
+        Address::new(self.range.start().get() & !(LLSC_RESERVATION_BYTES - 1))
+    }
+
+    pub fn overlaps_llsc_reservation(&self, reservation: Address) -> bool {
+        Self::llsc_reservation_overlaps_range(reservation, self.range)
+    }
+
+    pub fn llsc_reservation_overlaps_range(reservation: Address, range: AddressRange) -> bool {
+        let range_start = range.start().get();
+        let range_end = range.end().get();
+        let reservation_start = reservation.get();
+        let reservation_end = reservation_start.saturating_add(LLSC_RESERVATION_BYTES);
+        range_start < reservation_end && reservation_start < range_end
+    }
+
     pub fn snapshot(&self) -> MemoryRequestSnapshot {
         MemoryRequestSnapshot {
             id: self.id,
@@ -821,6 +882,7 @@ fn read_le_i128(bytes: &[u8]) -> i128 {
 pub enum ResponseStatus {
     Completed,
     Retry,
+    StoreConditionalFailed,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -836,7 +898,11 @@ impl MemoryResponseSnapshot {
         status: ResponseStatus,
         data: Option<Vec<u8>>,
     ) -> Result<Self, MemoryError> {
-        if status == ResponseStatus::Retry && data.is_some() {
+        if matches!(
+            status,
+            ResponseStatus::Retry | ResponseStatus::StoreConditionalFailed
+        ) && data.is_some()
+        {
             return Err(MemoryError::UnexpectedResponseData {
                 request: request_id,
             });
@@ -897,6 +963,20 @@ impl MemoryResponse {
             status: ResponseStatus::Retry,
             data: None,
         }
+    }
+
+    pub fn store_conditional_failed(request: &MemoryRequest) -> Result<Self, MemoryError> {
+        if request.operation() != MemoryOperation::StoreConditional {
+            return Err(MemoryError::InvalidStoreConditionalFailureResponse {
+                request: request.id(),
+            });
+        }
+
+        Ok(Self {
+            request_id: request.id(),
+            status: ResponseStatus::StoreConditionalFailed,
+            data: None,
+        })
     }
 
     pub fn from_snapshot(snapshot: &MemoryResponseSnapshot) -> Result<Self, MemoryError> {

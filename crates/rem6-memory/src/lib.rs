@@ -131,9 +131,11 @@ pub enum MemoryOperation {
     InstructionFetch,
     ReadShared,
     ReadUnique,
+    LoadLocked,
     LockedRmwRead,
     LockedRmwWrite,
     Write,
+    StoreConditional,
     Upgrade,
     Atomic,
     PrefetchRead,
@@ -222,11 +224,13 @@ impl MemoryOperation {
     pub const fn coherence_intent(self) -> CoherenceIntent {
         match self {
             Self::InstructionFetch => CoherenceIntent::InstructionFetch,
-            Self::ReadShared | Self::PrefetchRead => CoherenceIntent::ReadShared,
+            Self::ReadShared | Self::LoadLocked | Self::PrefetchRead => CoherenceIntent::ReadShared,
             Self::ReadUnique | Self::LockedRmwRead => CoherenceIntent::ReadUnique,
-            Self::Write | Self::LockedRmwWrite | Self::PrefetchWrite | Self::Atomic => {
-                CoherenceIntent::WriteUnique
-            }
+            Self::Write
+            | Self::StoreConditional
+            | Self::LockedRmwWrite
+            | Self::PrefetchWrite
+            | Self::Atomic => CoherenceIntent::WriteUnique,
             Self::Upgrade => CoherenceIntent::Upgrade,
             Self::WriteClean => CoherenceIntent::WriteClean,
             Self::WritebackClean => CoherenceIntent::WritebackClean,
@@ -256,6 +260,7 @@ impl MemoryOperation {
             Self::InstructionFetch
                 | Self::ReadShared
                 | Self::ReadUnique
+                | Self::LoadLocked
                 | Self::LockedRmwRead
                 | Self::Atomic
         )
@@ -265,6 +270,7 @@ impl MemoryOperation {
         matches!(
             self,
             Self::Write
+                | Self::StoreConditional
                 | Self::LockedRmwWrite
                 | Self::Atomic
                 | Self::WriteClean
@@ -279,6 +285,7 @@ impl MemoryOperation {
             Self::ReadUnique
                 | Self::LockedRmwRead
                 | Self::Write
+                | Self::StoreConditional
                 | Self::LockedRmwWrite
                 | Self::Upgrade
                 | Self::Atomic
@@ -308,6 +315,7 @@ pub enum CoherenceIntent {
 pub struct LineMemoryStore {
     layout: CacheLineLayout,
     lines: BTreeMap<Address, Vec<u8>>,
+    locked_reservations: BTreeMap<AgentId, Address>,
 }
 
 impl LineMemoryStore {
@@ -315,6 +323,7 @@ impl LineMemoryStore {
         Self {
             layout,
             lines: BTreeMap::new(),
+            locked_reservations: BTreeMap::new(),
         }
     }
 
@@ -364,6 +373,10 @@ impl LineMemoryStore {
             });
         }
         self.validate_line_data(data.len() as u64)?;
+        self.clear_locked_reservations_for_range(AddressRange::new(
+            line,
+            AccessSize::new(self.layout.bytes())?,
+        )?);
         self.lines.insert(line, data);
         Ok(())
     }
@@ -382,14 +395,30 @@ impl LineMemoryStore {
                 let data = self.read_slice(request)?;
                 MemoryResponse::completed(request, Some(data)).map(Some)
             }
+            MemoryOperation::LoadLocked => {
+                let data = self.read_slice(request)?;
+                self.track_load_locked(request);
+                MemoryResponse::completed(request, Some(data)).map(Some)
+            }
+            MemoryOperation::StoreConditional => {
+                if !self.store_conditional_allowed(request) {
+                    return MemoryResponse::store_conditional_failed(request).map(Some);
+                }
+
+                self.apply_write(request)?;
+                self.clear_locked_reservations(request);
+                MemoryResponse::completed(request, None).map(Some)
+            }
             MemoryOperation::Write | MemoryOperation::LockedRmwWrite => {
                 self.apply_write(request)?;
+                self.clear_locked_reservations(request);
                 MemoryResponse::completed(request, None).map(Some)
             }
             MemoryOperation::Atomic => {
                 let data = self.read_slice(request)?;
                 let write_data = request.atomic_write_data(&data)?;
                 self.apply_write_data(request, &write_data)?;
+                self.clear_locked_reservations(request);
                 MemoryResponse::completed(request, Some(data)).map(Some)
             }
             MemoryOperation::Upgrade
@@ -407,6 +436,7 @@ impl LineMemoryStore {
             | MemoryOperation::WritebackClean
             | MemoryOperation::WritebackDirty => {
                 self.replace_line(request)?;
+                self.clear_locked_reservations(request);
                 Ok(None)
             }
             MemoryOperation::CleanEvict => {
@@ -414,6 +444,28 @@ impl LineMemoryStore {
                 Ok(None)
             }
         }
+    }
+
+    fn track_load_locked(&mut self, request: &MemoryRequest) {
+        self.locked_reservations
+            .insert(request.id().agent(), request.llsc_reservation_address());
+    }
+
+    fn store_conditional_allowed(&self, request: &MemoryRequest) -> bool {
+        self.locked_reservations
+            .get(&request.id().agent())
+            .is_some_and(|reserved| *reserved == request.llsc_reservation_address())
+    }
+
+    fn clear_locked_reservations(&mut self, request: &MemoryRequest) {
+        self.locked_reservations
+            .retain(|_, reserved| !request.overlaps_llsc_reservation(*reserved));
+    }
+
+    fn clear_locked_reservations_for_range(&mut self, range: AddressRange) {
+        self.locked_reservations.retain(|_, reserved| {
+            !MemoryRequest::llsc_reservation_overlaps_range(*reserved, range)
+        });
     }
 
     fn validate_line_data(&self, actual: u64) -> Result<(), MemoryError> {

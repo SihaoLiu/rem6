@@ -14,6 +14,7 @@ impl MemoryOperation {
             Self::InstructionFetch
                 | Self::ReadShared
                 | Self::ReadUnique
+                | Self::LoadLocked
                 | Self::LockedRmwRead
                 | Self::Atomic
                 | Self::PrefetchRead
@@ -26,6 +27,7 @@ impl MemoryOperation {
             Self::ReadUnique
                 | Self::LockedRmwRead
                 | Self::Write
+                | Self::StoreConditional
                 | Self::LockedRmwWrite
                 | Self::Upgrade
                 | Self::Atomic
