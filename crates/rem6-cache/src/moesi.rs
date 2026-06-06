@@ -400,6 +400,17 @@ impl MoesiCacheController {
         request: MemoryRequest,
     ) -> Result<MoesiCacheControllerResult, MoesiCacheControllerError> {
         self.check_request_line(&request)?;
+        if request.operation() == MemoryOperation::NoAccess {
+            let response = MemoryResponse::completed(&request, None)
+                .map_err(MoesiCacheControllerError::Memory)?;
+            return Ok(MoesiCacheControllerResult::new(
+                MoesiCacheControllerResultKind::Hit,
+                self.line.state(),
+                None,
+                None,
+                Some(TargetOutcome::Respond(response)),
+            ));
+        }
         if self.line.state().is_transient() {
             return Err(MoesiCacheControllerError::LineBusy {
                 state: self.line.state(),
@@ -727,6 +738,9 @@ impl MoesiCacheController {
 
 fn moesi_cpu_event(request: &MemoryRequest) -> MoesiEvent {
     match request.operation() {
+        MemoryOperation::NoAccess => {
+            unreachable!("no-access requests bypass MOESI event selection")
+        }
         MemoryOperation::InstructionFetch
         | MemoryOperation::ReadShared
         | MemoryOperation::LoadLocked => MoesiEvent::CpuRead,

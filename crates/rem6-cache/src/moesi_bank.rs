@@ -1006,7 +1006,9 @@ impl MoesiCacheBank {
     ) -> Result<MoesiCacheControllerResult, MoesiCacheBankError> {
         self.validate_request_agent(&request)?;
         let line = request.line_address();
-        if self.pending_atomic_conflict(line) {
+        if request.operation() == MemoryOperation::NoAccess {
+            return crate::no_access::moesi(&request, self.lines.get(&line));
+        } else if self.pending_atomic_conflict(line) {
             return Err(MoesiCacheBankError::PendingUncacheableConflict { line });
         }
         if !request.is_uncacheable() {
@@ -1707,7 +1709,6 @@ impl MoesiCacheBank {
                 .and_then(|mshr| mshr.find_line(line))
                 .is_some()
     }
-
     fn should_preflight_mshr_allocation(&self, line: Address, request: &MemoryRequest) -> bool {
         if self.mshr.is_none()
             || self
@@ -1717,7 +1718,6 @@ impl MoesiCacheBank {
         {
             return false;
         }
-
         match self.lines.get(&line).map(MoesiCacheController::state) {
             None | Some(MoesiState::Invalid) => true,
             Some(MoesiState::Shared | MoesiState::Owned) => request_is_moesi_write(request),

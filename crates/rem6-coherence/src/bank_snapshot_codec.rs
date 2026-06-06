@@ -610,6 +610,10 @@ fn read_request(cursor: &mut PayloadCursor<'_>) -> Result<MemoryRequest, String>
     let ordering = read_memory_access_ordering(cursor)?;
 
     let request = match operation {
+        MemoryOperation::NoAccess => {
+            reject_unexpected_request_payload("no access", &data, &byte_mask)?;
+            MemoryRequest::no_access(id, address, size, layout)
+        }
         MemoryOperation::InstructionFetch => {
             MemoryRequest::instruction_fetch(id, address, size, layout)
         }
@@ -988,6 +992,7 @@ fn u8_to_msi_event(value: u8) -> Result<MsiEvent, String> {
 
 fn memory_operation_to_u8(operation: MemoryOperation) -> u8 {
     match operation {
+        MemoryOperation::NoAccess => 20,
         MemoryOperation::InstructionFetch => 0,
         MemoryOperation::ReadShared => 1,
         MemoryOperation::ReadUnique => 2,
@@ -1013,6 +1018,7 @@ fn memory_operation_to_u8(operation: MemoryOperation) -> u8 {
 
 fn u8_to_memory_operation(value: u8) -> Result<MemoryOperation, String> {
     match value {
+        20 => Ok(MemoryOperation::NoAccess),
         0 => Ok(MemoryOperation::InstructionFetch),
         1 => Ok(MemoryOperation::ReadShared),
         2 => Ok(MemoryOperation::ReadUnique),

@@ -41,6 +41,16 @@ fn cache_block_zero(agent: u32, sequence: u64) -> MemoryRequest {
     MemoryRequest::cache_block_zero(id(agent, sequence), Address::new(0x1000), layout()).unwrap()
 }
 
+fn no_access(agent: u32, sequence: u64) -> MemoryRequest {
+    MemoryRequest::no_access(
+        id(agent, sequence),
+        Address::new(0x1008),
+        AccessSize::new(8).unwrap(),
+        layout(),
+    )
+    .unwrap()
+}
+
 fn upgrade(agent: u32, sequence: u64) -> MemoryRequest {
     MemoryRequest::upgrade(
         id(agent, sequence),
@@ -187,6 +197,22 @@ fn directory_cache_block_zero_invalidates_clean_sharers_deterministically() {
         directory.line_state(line()),
         DirectoryLineState::new(line()).with_owner(AgentId::new(2))
     );
+}
+
+#[test]
+fn directory_no_access_keeps_line_state_without_snoops_or_grants() {
+    let mut directory = MsiDirectory::new();
+    directory.accept(read_shared(3, 0)).unwrap();
+    directory.accept(read_shared(1, 0)).unwrap();
+    let before = directory.line_state(line());
+
+    let decision = directory.accept(no_access(2, 0)).unwrap();
+
+    assert_eq!(decision.snoops(), &[]);
+    assert_eq!(decision.grant(), None);
+    assert_eq!(decision.before(), &before);
+    assert_eq!(decision.after(), &before);
+    assert_eq!(directory.line_state(line()), before);
 }
 
 #[test]

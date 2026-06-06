@@ -1003,7 +1003,9 @@ impl MesiCacheBank {
     ) -> Result<MesiCacheControllerResult, MesiCacheBankError> {
         self.validate_request_agent(&request)?;
         let line = request.line_address();
-        if self.pending_atomic_conflict(line) {
+        if request.operation() == MemoryOperation::NoAccess {
+            return crate::no_access::mesi(&request, self.lines.get(&line));
+        } else if self.pending_atomic_conflict(line) {
             return Err(MesiCacheBankError::PendingUncacheableConflict { line });
         }
         if !request.is_uncacheable() {

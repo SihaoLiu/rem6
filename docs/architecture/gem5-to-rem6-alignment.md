@@ -2961,6 +2961,14 @@ Trace cache-block-zero note: packet-trace support now maps gem5
 native no-payload `CacheBlockZero` memory request. Non-line-sized or unaligned
 block-zero trace packets are rejected during request construction.
 
+Trace no-access note: packet-trace support now maps gem5 `NO_ACCESS` on read
+and write packets to a native no-payload `NoAccess` memory request. The request
+preserves identity, address, size, ordering, and attributes while completing
+locally without backing-store mutation, cache downstream traffic, directory
+snoops, or grants. `NO_ACCESS` on maintenance, prefetch, LLSC, locked-RMW,
+swap, or cache-block-zero packets remains rejected until each no-access
+combination has a native typed traffic contract.
+
 ### Memory, Cache, Coherence, and NoC
 
 | gem5 source anchor | rem6 owner | Coverage | Notes |
@@ -3153,7 +3161,8 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   a successful takeover plan to expose ordered quiesce, validation, state
   capture, target-install, and resume actions.
 - Memory line-store tests cover independent line reads, masked writes,
-  cache-block-zero line mutation, AMO read-modify-write responses, writeback
+  cache-block-zero line mutation, no-access local completion,
+  AMO read-modify-write responses, writeback
   replacement, request shape rejection,
   duplicate line-snapshot restore rejection, checkpoint payload binary round
   trips, stable line checkpoint golden bytes, invalid line checkpoint magic,
@@ -3419,7 +3428,7 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   DMA write-request ordering inherited from copy read requests and
   heterogeneous checkpoint restore of pending DMA read-request ordering
   metadata plus uncacheable-plus-strict flags and typed request attributes,
-  including `EVICT_NEXT`, plus the native `CacheBlockZero` request operation
+  including `EVICT_NEXT`, plus native `CacheBlockZero` and `NoAccess` request operations
   through the shared memory-request checkpoint payload before bank-level
   prevalidation mutates live device state. Heterogeneous
   checkpoint decode also bounds accelerator

@@ -313,6 +313,7 @@ fn read_optional_mask(
 
 fn encode_operation(operation: MemoryOperation) -> u32 {
     match operation {
+        MemoryOperation::NoAccess => 20,
         MemoryOperation::InstructionFetch => 0,
         MemoryOperation::ReadShared => 1,
         MemoryOperation::ReadUnique => 2,
@@ -358,6 +359,7 @@ fn decode_operation(code: u32) -> Result<MemoryOperation, MemoryError> {
         17 => Ok(MemoryOperation::LoadLocked),
         18 => Ok(MemoryOperation::StoreConditional),
         19 => Ok(MemoryOperation::CacheBlockZero),
+        20 => Ok(MemoryOperation::NoAccess),
         code => Err(MemoryError::InvalidRequestCheckpointOperation { code }),
     }
 }

@@ -391,6 +391,17 @@ impl MsiCacheController {
         request: MemoryRequest,
     ) -> Result<CacheControllerResult, CacheControllerError> {
         self.check_request_line(&request)?;
+        if request.operation() == MemoryOperation::NoAccess {
+            let response =
+                MemoryResponse::completed(&request, None).map_err(CacheControllerError::Memory)?;
+            return Ok(CacheControllerResult::new(
+                CacheControllerResultKind::Hit,
+                self.line.state(),
+                None,
+                None,
+                Some(TargetOutcome::Respond(response)),
+            ));
+        }
         if self.line.state().is_transient() {
             return Err(CacheControllerError::LineBusy {
                 state: self.line.state(),
@@ -714,6 +725,7 @@ impl MsiCacheController {
 
 fn cpu_event(request: &MemoryRequest) -> MsiEvent {
     match request.operation() {
+        MemoryOperation::NoAccess => unreachable!("no-access requests bypass MSI event selection"),
         MemoryOperation::InstructionFetch
         | MemoryOperation::ReadShared
         | MemoryOperation::LoadLocked => MsiEvent::CpuRead,

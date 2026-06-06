@@ -398,6 +398,17 @@ impl MesiCacheController {
         request: MemoryRequest,
     ) -> Result<MesiCacheControllerResult, MesiCacheControllerError> {
         self.check_request_line(&request)?;
+        if request.operation() == MemoryOperation::NoAccess {
+            let response = MemoryResponse::completed(&request, None)
+                .map_err(MesiCacheControllerError::Memory)?;
+            return Ok(MesiCacheControllerResult::new(
+                MesiCacheControllerResultKind::Hit,
+                self.line.state(),
+                None,
+                None,
+                Some(TargetOutcome::Respond(response)),
+            ));
+        }
         if self.line.state().is_transient() {
             return Err(MesiCacheControllerError::LineBusy {
                 state: self.line.state(),
@@ -721,6 +732,7 @@ impl MesiCacheController {
 
 fn mesi_cpu_event(request: &MemoryRequest) -> MesiEvent {
     match request.operation() {
+        MemoryOperation::NoAccess => unreachable!("no-access requests bypass MESI event selection"),
         MemoryOperation::InstructionFetch
         | MemoryOperation::ReadShared
         | MemoryOperation::LoadLocked => MesiEvent::CpuRead,

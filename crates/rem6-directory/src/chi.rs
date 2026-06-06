@@ -522,6 +522,7 @@ impl ChiDirectory {
         let mut after_line = before_line;
 
         let (snoops, grant) = match request.operation() {
+            MemoryOperation::NoAccess => (Vec::new(), None),
             MemoryOperation::InstructionFetch
             | MemoryOperation::ReadShared
             | MemoryOperation::LoadLocked

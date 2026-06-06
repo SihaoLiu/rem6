@@ -395,6 +395,17 @@ impl ChiCacheController {
         request: MemoryRequest,
     ) -> Result<ChiCacheControllerResult, ChiCacheControllerError> {
         self.check_request_line(&request)?;
+        if request.operation() == MemoryOperation::NoAccess {
+            let response = MemoryResponse::completed(&request, None)
+                .map_err(ChiCacheControllerError::Memory)?;
+            return Ok(ChiCacheControllerResult::new(
+                ChiCacheControllerResultKind::Hit,
+                self.line.state(),
+                None,
+                None,
+                Some(TargetOutcome::Respond(response)),
+            ));
+        }
         if self.line.state().is_transient() {
             return Err(ChiCacheControllerError::LineBusy {
                 state: self.line.state(),
@@ -722,6 +733,7 @@ impl ChiCacheController {
 
 fn chi_cpu_event(request: &MemoryRequest) -> ChiEvent {
     match request.operation() {
+        MemoryOperation::NoAccess => unreachable!("no-access requests bypass CHI event selection"),
         MemoryOperation::InstructionFetch
         | MemoryOperation::ReadShared
         | MemoryOperation::LoadLocked => ChiEvent::CpuRead,

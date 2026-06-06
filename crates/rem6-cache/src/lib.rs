@@ -13,6 +13,7 @@ mod moesi;
 mod moesi_bank;
 mod mshr;
 mod msi;
+mod no_access;
 mod partitioning;
 mod post_fill;
 mod prefetch;

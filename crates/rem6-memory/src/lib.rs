@@ -129,6 +129,7 @@ impl MemoryTargetId {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MemoryOperation {
+    NoAccess,
     InstructionFetch,
     ReadShared,
     ReadUnique,
@@ -225,6 +226,7 @@ impl MemoryAccessOrdering {
 impl MemoryOperation {
     pub const fn coherence_intent(self) -> CoherenceIntent {
         match self {
+            Self::NoAccess => CoherenceIntent::NoAccess,
             Self::InstructionFetch => CoherenceIntent::InstructionFetch,
             Self::ReadShared | Self::LoadLocked | Self::PrefetchRead => CoherenceIntent::ReadShared,
             Self::ReadUnique | Self::LockedRmwRead => CoherenceIntent::ReadUnique,
@@ -301,6 +303,7 @@ impl MemoryOperation {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CoherenceIntent {
+    NoAccess,
     InstructionFetch,
     ReadShared,
     ReadUnique,
@@ -391,8 +394,14 @@ impl LineMemoryStore {
         request: &MemoryRequest,
     ) -> Result<Option<MemoryResponse>, MemoryError> {
         self.check_line_layout(request)?;
+        if request.operation() == MemoryOperation::NoAccess {
+            return MemoryResponse::completed(request, None).map(Some);
+        }
         self.check_single_line(request)?;
         match request.operation() {
+            MemoryOperation::NoAccess => {
+                unreachable!("no-access requests complete before line access")
+            }
             MemoryOperation::InstructionFetch
             | MemoryOperation::ReadShared
             | MemoryOperation::ReadUnique

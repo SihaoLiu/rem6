@@ -253,6 +253,22 @@ impl MemoryRequestPayload {
 }
 
 impl MemoryRequest {
+    pub fn no_access(
+        id: MemoryRequestId,
+        address: Address,
+        size: AccessSize,
+        line_layout: CacheLineLayout,
+    ) -> Result<Self, MemoryError> {
+        Self::new(
+            id,
+            MemoryOperation::NoAccess,
+            address,
+            size,
+            line_layout,
+            MemoryRequestPayload::empty(),
+        )
+    }
+
     pub fn read_shared(
         id: MemoryRequestId,
         address: Address,

@@ -10,6 +10,7 @@ const GEM5_FLAG_EVICT_NEXT: u32 = 0x0400_0000;
 const GEM5_FLAG_SECURE: u32 = 0x1000_0000;
 const GEM5_FLAG_PT_WALK: u32 = 0x2000_0000;
 const GEM5_FLAG_KERNEL: u32 = 0x0000_1000;
+const GEM5_FLAG_NO_ACCESS: u32 = 0x0008_0000;
 
 #[derive(Clone, Copy)]
 struct PacketFields {
@@ -112,6 +113,83 @@ fn trace_parser_still_rejects_gpu_kernel_sync_flag_without_native_event() {
         .unwrap_err(),
         TrafficGeneratorError::TraceUnsupportedFlags {
             flags: GEM5_FLAG_KERNEL,
+        }
+    );
+}
+
+#[test]
+fn trace_traffic_generator_maps_gem5_no_access_flag_to_native_request() {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace(
+            TICK_FREQUENCY,
+            &[
+                PacketFields {
+                    tick: 3,
+                    command: 1,
+                    address: 0x200,
+                    size: 8,
+                    flags: Some(GEM5_FLAG_NO_ACCESS | GEM5_FLAG_PRIVILEGED),
+                },
+                PacketFields {
+                    tick: 5,
+                    command: 4,
+                    address: 0x240,
+                    size: 16,
+                    flags: Some(GEM5_FLAG_NO_ACCESS | GEM5_FLAG_SECURE),
+                },
+            ],
+        ),
+        TICK_FREQUENCY,
+    )
+    .unwrap();
+    let mut generator = TrafficTraceGenerator::new(trace_config(trace));
+    generator.enter(70);
+
+    let read = generator.next_request(70, 0).unwrap().unwrap();
+    let write = generator.next_request(read.tick(), 0).unwrap().unwrap();
+
+    assert_eq!(read.tick(), 73);
+    assert_eq!(read.request().operation(), MemoryOperation::NoAccess);
+    assert_eq!(read.request().range().start(), Address::new(0x200));
+    assert_eq!(read.request().size(), AccessSize::new(8).unwrap());
+    assert_eq!(read.request().data(), None);
+    assert_eq!(read.request().byte_mask(), None);
+    assert!(read.request().is_privileged());
+    assert!(!read.request().requires_writable());
+    assert!(read.request().requires_response());
+    assert!(!read.request().returns_data());
+
+    assert_eq!(write.tick(), 75);
+    assert_eq!(write.request().operation(), MemoryOperation::NoAccess);
+    assert_eq!(write.request().range().start(), Address::new(0x240));
+    assert_eq!(write.request().size(), AccessSize::new(16).unwrap());
+    assert_eq!(write.request().data(), None);
+    assert_eq!(write.request().byte_mask(), None);
+    assert!(write.request().is_secure());
+    assert!(!write.request().requires_writable());
+    assert!(write.request().requires_response());
+    assert!(!write.request().returns_data());
+}
+
+#[test]
+fn trace_parser_rejects_no_access_on_maintenance_packets() {
+    assert_eq!(
+        TrafficTrace::from_gem5_packet_trace(
+            &gem5_packet_trace(
+                TICK_FREQUENCY,
+                &[PacketFields {
+                    tick: 1,
+                    command: 10,
+                    address: 0x100,
+                    size: 64,
+                    flags: Some(GEM5_FLAG_NO_ACCESS),
+                }],
+            ),
+            TICK_FREQUENCY,
+        )
+        .unwrap_err(),
+        TrafficGeneratorError::TraceUnsupportedFlags {
+            flags: GEM5_FLAG_NO_ACCESS,
         }
     );
 }

@@ -63,6 +63,16 @@ fn cache_block_zero(sequence: u64, address: u64) -> MemoryRequest {
     MemoryRequest::cache_block_zero(request_id(sequence), Address::new(address), layout()).unwrap()
 }
 
+fn no_access(sequence: u64, address: u64, bytes: u64) -> MemoryRequest {
+    MemoryRequest::no_access(
+        request_id(sequence),
+        Address::new(address),
+        AccessSize::new(bytes).unwrap(),
+        layout(),
+    )
+    .unwrap()
+}
+
 fn clean_shared(sequence: u64, address: u64) -> MemoryRequest {
     MemoryRequest::clean_shared(request_id(sequence), Address::new(address), layout()).unwrap()
 }
@@ -146,6 +156,43 @@ fn line_store_applies_cache_block_zero_to_existing_line() {
     assert_eq!(response.status(), ResponseStatus::Completed);
     assert_eq!(response.data(), None);
     assert_eq!(store.line_data(Address::new(0x1000)).unwrap(), vec![0; 64]);
+}
+
+#[test]
+fn line_store_completes_no_access_without_touching_backing_lines() {
+    let original = line_data(0x20);
+    let mut store = LineMemoryStore::new(layout());
+    store
+        .insert_line(Address::new(0x1000), original.clone())
+        .unwrap();
+
+    let existing = store.respond(&no_access(52, 0x1008, 8)).unwrap().unwrap();
+    let missing = store.respond(&no_access(53, 0x3000, 4)).unwrap().unwrap();
+
+    assert_eq!(existing.status(), ResponseStatus::Completed);
+    assert_eq!(existing.data(), None);
+    assert_eq!(missing.status(), ResponseStatus::Completed);
+    assert_eq!(missing.data(), None);
+    assert_eq!(store.line_count(), 1);
+    assert_eq!(store.line_data(Address::new(0x1000)).unwrap(), original);
+    assert_eq!(store.line_data(Address::new(0x3000)), None);
+}
+
+#[test]
+fn line_store_no_access_allows_cross_line_range_without_touching_lines() {
+    let original = line_data(0x40);
+    let mut store = LineMemoryStore::new(layout());
+    store
+        .insert_line(Address::new(0x1000), original.clone())
+        .unwrap();
+
+    let response = store.respond(&no_access(54, 0x103e, 8)).unwrap().unwrap();
+
+    assert_eq!(response.status(), ResponseStatus::Completed);
+    assert_eq!(response.data(), None);
+    assert_eq!(store.line_count(), 1);
+    assert_eq!(store.line_data(Address::new(0x1000)).unwrap(), original);
+    assert_eq!(store.line_data(Address::new(0x1040)), None);
 }
 
 #[test]
