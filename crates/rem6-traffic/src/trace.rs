@@ -107,6 +107,7 @@ const GEM5_FLAG_PF_EXCLUSIVE: u32 = 0x0200_0000;
 const GEM5_FLAG_EVICT_NEXT: u32 = 0x0400_0000;
 const GEM5_FLAG_SECURE: u32 = 0x1000_0000;
 const GEM5_FLAG_PT_WALK: u32 = 0x2000_0000;
+const GEM5_FLAG_ATOMIC_RETURN_OP: u32 = 0x4000_0000;
 const GEM5_SUPPORTED_TRACE_FLAGS: u32 = GEM5_FLAG_INST_FETCH
     | GEM5_FLAG_PHYSICAL
     | GEM5_FLAG_UNCACHEABLE
@@ -126,7 +127,8 @@ const GEM5_SUPPORTED_TRACE_FLAGS: u32 = GEM5_FLAG_INST_FETCH
     | GEM5_FLAG_PF_EXCLUSIVE
     | GEM5_FLAG_EVICT_NEXT
     | GEM5_FLAG_SECURE
-    | GEM5_FLAG_PT_WALK;
+    | GEM5_FLAG_PT_WALK
+    | GEM5_FLAG_ATOMIC_RETURN_OP;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TrafficTraceCommand {
@@ -473,6 +475,7 @@ struct TrafficTraceRequestFlags {
     llsc: bool,
     mem_swap: bool,
     mem_swap_cond: bool,
+    atomic_return: bool,
     evict_next: bool,
     secure: bool,
     page_table_walk: bool,
@@ -504,6 +507,7 @@ impl TrafficTraceRequestFlags {
             llsc: bits & GEM5_FLAG_LLSC != 0,
             mem_swap: bits & GEM5_FLAG_MEM_SWAP != 0,
             mem_swap_cond: bits & GEM5_FLAG_MEM_SWAP_COND != 0,
+            atomic_return: bits & GEM5_FLAG_ATOMIC_RETURN_OP != 0,
             evict_next: bits & GEM5_FLAG_EVICT_NEXT != 0,
             secure: bits & GEM5_FLAG_SECURE != 0,
             page_table_walk: bits & GEM5_FLAG_PT_WALK != 0,
@@ -619,7 +623,8 @@ impl TrafficTraceRequestFlags {
                 || self.llsc
                 || self.locked_rmw
                 || self.mem_swap
-                || self.mem_swap_cond)
+                || self.mem_swap_cond
+                || self.atomic_return)
         {
             return Err(TrafficGeneratorError::TraceUnsupportedFlags { flags: self.bits });
         }
@@ -644,6 +649,9 @@ impl TrafficTraceRequestFlags {
             return Err(TrafficGeneratorError::TraceUnsupportedFlags { flags: self.bits });
         }
         if (self.mem_swap || self.mem_swap_cond) && command != TrafficTraceCommand::Swap {
+            return Err(TrafficGeneratorError::TraceUnsupportedFlags { flags: self.bits });
+        }
+        if self.atomic_return && command != TrafficTraceCommand::Swap {
             return Err(TrafficGeneratorError::TraceUnsupportedFlags { flags: self.bits });
         }
         Ok(())

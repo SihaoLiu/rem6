@@ -9,6 +9,8 @@ const GEM5_FLAG_LOCKED_RMW: u32 = 0x0010_0000;
 const GEM5_FLAG_LLSC: u32 = 0x0020_0000;
 const GEM5_FLAG_MEM_SWAP: u32 = 0x0040_0000;
 const GEM5_FLAG_MEM_SWAP_COND: u32 = 0x0080_0000;
+const GEM5_FLAG_ATOMIC_RETURN_OP: u32 = 0x4000_0000;
+const GEM5_FLAG_ATOMIC_NO_RETURN_OP: u32 = 0x8000_0000;
 
 #[derive(Clone, Copy)]
 struct PacketFields {
@@ -77,6 +79,13 @@ fn trace_accepts_gem5_operation_request_flags_on_matching_packets() {
                     size: 8,
                     flags: Some(GEM5_FLAG_MEM_SWAP_COND),
                 },
+                PacketFields {
+                    tick: 20,
+                    command: 34,
+                    address: 0x400,
+                    size: 8,
+                    flags: Some(GEM5_FLAG_ATOMIC_RETURN_OP),
+                },
             ],
         ),
         TICK_FREQUENCY,
@@ -103,6 +112,10 @@ fn trace_accepts_gem5_operation_request_flags_on_matching_packets() {
         .unwrap()
         .unwrap();
     let swap_conditional = generator.next_request(swap.tick(), 0).unwrap().unwrap();
+    let atomic_return = generator
+        .next_request(swap_conditional.tick(), 0)
+        .unwrap()
+        .unwrap();
 
     assert_eq!(
         load_locked.request().operation(),
@@ -130,10 +143,17 @@ fn trace_accepts_gem5_operation_request_flags_on_matching_packets() {
         swap_conditional.request().atomic_op(),
         Some(MemoryAtomicOp::Swap)
     );
+    assert_eq!(atomic_return.request().operation(), MemoryOperation::Atomic);
+    assert_eq!(
+        atomic_return.request().atomic_op(),
+        Some(MemoryAtomicOp::Swap)
+    );
+    assert!(atomic_return.request().requires_response());
+    assert!(atomic_return.request().returns_data());
 
-    assert_eq!(generator.summary().packet_count(), 6);
-    assert_eq!(generator.summary().read_count(), 4);
-    assert_eq!(generator.summary().write_count(), 4);
+    assert_eq!(generator.summary().packet_count(), 7);
+    assert_eq!(generator.summary().read_count(), 5);
+    assert_eq!(generator.summary().write_count(), 5);
 }
 
 #[test]
@@ -143,6 +163,7 @@ fn trace_rejects_gem5_operation_request_flags_on_mismatched_packets() {
         (4, GEM5_FLAG_LOCKED_RMW),
         (1, GEM5_FLAG_MEM_SWAP),
         (4, GEM5_FLAG_MEM_SWAP_COND),
+        (1, GEM5_FLAG_ATOMIC_RETURN_OP),
     ] {
         assert_eq!(
             TrafficTrace::from_gem5_packet_trace(
@@ -162,6 +183,29 @@ fn trace_rejects_gem5_operation_request_flags_on_mismatched_packets() {
             TrafficGeneratorError::TraceUnsupportedFlags { flags }
         );
     }
+}
+
+#[test]
+fn trace_rejects_gem5_atomic_no_return_flag_until_request_policy_can_represent_it() {
+    assert_eq!(
+        TrafficTrace::from_gem5_packet_trace(
+            &gem5_packet_trace(
+                TICK_FREQUENCY,
+                &[PacketFields {
+                    tick: 1,
+                    command: 34,
+                    address: 0x200,
+                    size: 8,
+                    flags: Some(GEM5_FLAG_ATOMIC_NO_RETURN_OP),
+                }],
+            ),
+            TICK_FREQUENCY,
+        )
+        .unwrap_err(),
+        TrafficGeneratorError::TraceUnsupportedFlags {
+            flags: GEM5_FLAG_ATOMIC_NO_RETURN_OP,
+        }
+    );
 }
 
 fn gem5_packet_trace(tick_frequency: u64, packets: &[PacketFields]) -> Vec<u8> {
