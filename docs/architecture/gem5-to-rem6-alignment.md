@@ -2929,9 +2929,10 @@ HTM request events, matching later response packets by optional trace packet
 id, source-appropriate address and size metadata, and gem5 command policy.
 Matched memory responses emit a validated `MemoryResponse`, while matched
 non-memory responses emit typed acknowledgement records. The controller records
-matched replay completions in a typed outcome summary and exposes each matched
-batch as a completion or failure outcome. Full response propagation through
-memory controllers, caches, and CPU ports remains a separate contract.
+matched replay completions in a typed outcome summary and emits replay action
+events carrying owned memory responses or control acknowledgements. Full
+response propagation through memory controllers, caches, and CPU ports remains
+a separate contract.
 `InvalidDestError`, `BadAddressError`, `ReadError`, `WriteError`,
 `FunctionalReadError`, and `FunctionalWriteError` command-ids 46-51 map to
 typed `TrafficTraceEvent::Error` events that preserve tick ordering, sequence,
@@ -2944,9 +2945,10 @@ pending replay sources using optional trace packet id, source-appropriate
 address and size metadata, and error policy so a wrong error class does not
 consume an unrelated pending request. Matched errors now carry typed replay
 failure records for memory-request failures and sync/HTM control failures,
-and the controller records those failures in the same typed outcome summary.
-Full error propagation through memory controllers, caches, and CPU ports remains
-a separate contract.
+and the controller records those failures in the same typed outcome summary
+while emitting replay action events carrying owned memory and control failure
+records. Full error propagation through memory controllers, caches, and CPU
+ports remains a separate contract.
 Trace packet flag handling now maps non-prefetch `INST_FETCH` on `ReadReq`,
 `ReadCleanReq`, and
 `ReadSharedReq` packets to native instruction-fetch requests, accepts `PHYSICAL`

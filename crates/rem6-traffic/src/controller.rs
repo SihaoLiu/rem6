@@ -545,61 +545,69 @@ impl TrafficController {
         event: TrafficControllerEvent,
         trace_event_source: bool,
     ) -> Result<Vec<TrafficControllerEvent>, TrafficGeneratorError> {
-        let replay_event = if trace_event_source {
-            self.trace_replay_event(&event)?
+        let replay_events = if trace_event_source {
+            self.trace_replay_events(&event)?
         } else {
-            None
+            Vec::new()
         };
         let mut events = vec![event];
-        if let Some(event) = replay_event {
-            events.push(event);
-        }
+        events.extend(replay_events);
         Ok(events)
     }
 
-    fn trace_replay_event(
+    fn trace_replay_events(
         &mut self,
         event: &TrafficControllerEvent,
-    ) -> Result<Option<TrafficControllerEvent>, TrafficGeneratorError> {
+    ) -> Result<Vec<TrafficControllerEvent>, TrafficGeneratorError> {
         match event {
             TrafficControllerEvent::Request(request) if request.request().requires_response() => {
                 self.trace_pending
                     .push(TrafficTraceReplaySource::Memory(request.clone()));
-                Ok(None)
+                Ok(Vec::new())
             }
             TrafficControllerEvent::TraceSync(sync) if sync.requires_response() => {
                 self.trace_pending
                     .push(TrafficTraceReplaySource::Sync(*sync));
-                Ok(None)
+                Ok(Vec::new())
             }
             TrafficControllerEvent::TraceHtm(htm) if htm.requires_response() => {
                 self.trace_pending.push(TrafficTraceReplaySource::Htm(*htm));
-                Ok(None)
+                Ok(Vec::new())
             }
             TrafficControllerEvent::TraceResponse(response) => {
                 let Some(source) = self.take_matching_trace_source(|source| {
                     response_matches_trace_source(*response, source)
                 }) else {
-                    return Ok(None);
+                    return Ok(Vec::new());
                 };
                 let completion = trace_response_completion(*response, &source)?;
                 self.trace_replay_summary.record_completion(&completion)?;
-                Ok(Some(TrafficControllerEvent::TraceResponseMatch(
-                    TrafficTraceResponseMatch::new(*response, source, completion),
-                )))
+                let action =
+                    TrafficTraceReplayAction::from_completion(response.tick(), &completion);
+                Ok(vec![
+                    TrafficControllerEvent::TraceResponseMatch(TrafficTraceResponseMatch::new(
+                        *response, source, completion,
+                    )),
+                    TrafficControllerEvent::TraceReplayAction(action),
+                ])
             }
             TrafficControllerEvent::TraceError(error) => {
                 let Some(source) = self.take_matching_trace_source(|source| {
                     error_matches_trace_source(*error, source)
                 }) else {
-                    return Ok(None);
+                    return Ok(Vec::new());
                 };
                 let matched = TrafficTraceErrorMatch::new(*error, source);
                 self.trace_replay_summary
                     .record_failure(matched.failure())?;
-                Ok(Some(TrafficControllerEvent::TraceErrorMatch(matched)))
+                let action =
+                    TrafficTraceReplayAction::from_failure(error.tick(), matched.failure());
+                Ok(vec![
+                    TrafficControllerEvent::TraceErrorMatch(matched),
+                    TrafficControllerEvent::TraceReplayAction(action),
+                ])
             }
-            _ => Ok(None),
+            _ => Ok(Vec::new()),
         }
     }
 
@@ -733,6 +741,13 @@ impl TrafficControllerEventBatch {
         })
     }
 
+    pub fn trace_replay_action(&self) -> Option<&TrafficTraceReplayAction> {
+        self.events.iter().find_map(|event| match event {
+            TrafficControllerEvent::TraceReplayAction(action) => Some(action),
+            _ => None,
+        })
+    }
+
     pub fn is_empty(&self) -> bool {
         self.events.is_empty()
     }
@@ -753,6 +768,7 @@ pub enum TrafficControllerEvent {
     TraceError(TrafficTraceErrorEvent),
     TraceResponseMatch(TrafficTraceResponseMatch),
     TraceErrorMatch(TrafficTraceErrorMatch),
+    TraceReplayAction(TrafficTraceReplayAction),
 }
 
 impl TrafficControllerEvent {
@@ -771,6 +787,7 @@ impl TrafficControllerEvent {
             Self::TraceError(error) => error.tick(),
             Self::TraceResponseMatch(response) => response.response().tick(),
             Self::TraceErrorMatch(error) => error.error().tick(),
+            Self::TraceReplayAction(action) => action.tick(),
         }
     }
 }
@@ -808,6 +825,59 @@ pub enum TrafficTraceReplayFailure {
 pub enum TrafficTraceReplayOutcome<'a> {
     Completion(&'a TrafficTraceResponseMatch),
     Failure(&'a TrafficTraceErrorMatch),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TrafficTraceReplayAction {
+    MemoryResponse {
+        tick: u64,
+        response: MemoryResponse,
+    },
+    ControlAck {
+        tick: u64,
+    },
+    MemoryFailure {
+        tick: u64,
+        failure: TrafficTraceMemoryFailure,
+    },
+    ControlFailure {
+        tick: u64,
+        failure: TrafficTraceControlFailure,
+    },
+}
+
+impl TrafficTraceReplayAction {
+    fn from_completion(tick: u64, completion: &TrafficTraceReplayCompletion) -> Self {
+        match completion {
+            TrafficTraceReplayCompletion::Memory(response) => Self::MemoryResponse {
+                tick,
+                response: response.clone(),
+            },
+            TrafficTraceReplayCompletion::Ack => Self::ControlAck { tick },
+        }
+    }
+
+    fn from_failure(tick: u64, failure: &TrafficTraceReplayFailure) -> Self {
+        match failure {
+            TrafficTraceReplayFailure::Memory(failure) => Self::MemoryFailure {
+                tick,
+                failure: *failure,
+            },
+            TrafficTraceReplayFailure::Control(failure) => Self::ControlFailure {
+                tick,
+                failure: *failure,
+            },
+        }
+    }
+
+    pub const fn tick(&self) -> u64 {
+        match self {
+            Self::MemoryResponse { tick, .. }
+            | Self::ControlAck { tick }
+            | Self::MemoryFailure { tick, .. }
+            | Self::ControlFailure { tick, .. } => *tick,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

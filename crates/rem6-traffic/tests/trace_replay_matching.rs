@@ -2,9 +2,10 @@ use rem6_memory::{AgentId, CacheLineLayout, MemoryOperation, ResponseStatus};
 use rem6_traffic::{
     TrafficController, TrafficControllerConfig, TrafficControllerState, TrafficStateGenerator,
     TrafficStateGraphConfig, TrafficStateId, TrafficStateSpec, TrafficTrace, TrafficTraceConfig,
-    TrafficTraceErrorKind, TrafficTraceReplayCompletion, TrafficTraceReplayFailure,
-    TrafficTraceReplayOutcome, TrafficTraceReplaySource, TrafficTraceResponseKind,
-    TrafficTransition, TrafficTransitionProbability, TRAFFIC_TRANSITION_PROBABILITY_SCALE,
+    TrafficTraceErrorKind, TrafficTraceReplayAction, TrafficTraceReplayCompletion,
+    TrafficTraceReplayFailure, TrafficTraceReplayOutcome, TrafficTraceReplaySource,
+    TrafficTraceResponseKind, TrafficTransition, TrafficTransitionProbability,
+    TRAFFIC_TRANSITION_PROBABILITY_SCALE,
 };
 
 const GEM5_MAGIC: [u8; 4] = [0x67, 0x65, 0x6d, 0x35];
@@ -317,6 +318,14 @@ fn traffic_controller_records_trace_replay_outcomes() {
         }
         outcome => panic!("unexpected trace replay outcome: {outcome:?}"),
     }
+    match response_batch.trace_replay_action().unwrap() {
+        TrafficTraceReplayAction::MemoryResponse { tick, response } => {
+            assert_eq!(*tick, response_batch.trace_response().unwrap().tick());
+            assert_eq!(response.request_id(), request.request().id());
+            assert_eq!(response.status(), ResponseStatus::Completed);
+        }
+        action => panic!("unexpected trace replay action: {action:?}"),
+    }
     assert_eq!(controller.trace_replay_summary().memory_completions(), 1);
     assert_eq!(controller.trace_replay_summary().control_completions(), 0);
     assert_eq!(controller.trace_replay_summary().memory_failures(), 0);
@@ -335,6 +344,12 @@ fn traffic_controller_records_trace_replay_outcomes() {
             assert_eq!(match_.completion(), &TrafficTraceReplayCompletion::Ack);
         }
         outcome => panic!("unexpected trace replay outcome: {outcome:?}"),
+    }
+    match sync_response_batch.trace_replay_action().unwrap() {
+        TrafficTraceReplayAction::ControlAck { tick } => {
+            assert_eq!(*tick, sync_response_batch.trace_response().unwrap().tick());
+        }
+        action => panic!("unexpected trace replay action: {action:?}"),
     }
     assert_eq!(controller.trace_replay_summary().memory_completions(), 1);
     assert_eq!(controller.trace_replay_summary().control_completions(), 1);
@@ -358,6 +373,13 @@ fn traffic_controller_records_trace_replay_outcomes() {
         },
         outcome => panic!("unexpected trace replay outcome: {outcome:?}"),
     }
+    match write_error_batch.trace_replay_action().unwrap() {
+        TrafficTraceReplayAction::MemoryFailure { tick, failure } => {
+            assert_eq!(*tick, write_error_batch.trace_error().unwrap().tick());
+            assert_eq!(failure.request_id(), write.request().id());
+        }
+        action => panic!("unexpected trace replay action: {action:?}"),
+    }
     assert_eq!(controller.trace_replay_summary().memory_completions(), 1);
     assert_eq!(controller.trace_replay_summary().control_completions(), 1);
     assert_eq!(controller.trace_replay_summary().memory_failures(), 1);
@@ -379,6 +401,13 @@ fn traffic_controller_records_trace_replay_outcomes() {
             );
         }
         outcome => panic!("unexpected trace replay outcome: {outcome:?}"),
+    }
+    match error_batch.trace_replay_action().unwrap() {
+        TrafficTraceReplayAction::ControlFailure { tick, failure } => {
+            assert_eq!(*tick, error_batch.trace_error().unwrap().tick());
+            assert_eq!(failure.error(), TrafficTraceErrorKind::InvalidDestination);
+        }
+        action => panic!("unexpected trace replay action: {action:?}"),
     }
     assert_eq!(controller.trace_replay_summary().memory_completions(), 1);
     assert_eq!(controller.trace_replay_summary().control_completions(), 1);
