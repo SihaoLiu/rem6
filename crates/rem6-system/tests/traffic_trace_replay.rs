@@ -744,7 +744,25 @@ fn traffic_trace_replay_controller_parallel_schedules_htm_control_response() {
     ]);
 
     assert!(controller.start(0).unwrap().is_empty());
-    let executor = TrafficTraceReplayControllerParallelExecutor::new(controller);
+    let completions = Arc::new(Mutex::new(Vec::new()));
+    let completion_log = Arc::clone(&completions);
+    let executor = TrafficTraceReplayControllerParallelExecutor::new(controller)
+        .with_control_completion_sink(move |tick, event_context| match event_context.event() {
+            TrafficTraceReplayControlEvent::ControlAck { trace_tick, .. } => {
+                let htm = event_context.trace_htm().unwrap();
+                let order = event_context.trace_order();
+                completion_log.lock().unwrap().push((
+                    tick,
+                    *trace_tick,
+                    order.tick(),
+                    order.sequence(),
+                    htm.trace_packet_id(),
+                ));
+            }
+            TrafficTraceReplayControlEvent::ControlFailure { .. } => {
+                panic!("HTM control response must not report a failure completion");
+            }
+        });
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
 
     assert_eq!(
@@ -769,6 +787,7 @@ fn traffic_trace_replay_controller_parallel_schedules_htm_control_response() {
     let ack = runtime.lock().unwrap().control_acks()[0];
     assert_eq!(ack.tick(), 9);
     assert_eq!(ack.trace_tick(), 9);
+    assert_eq!(*completions.lock().unwrap(), vec![(9, 9, 9, 1, Some(140))]);
     assert!(runtime.lock().unwrap().is_empty());
 }
 

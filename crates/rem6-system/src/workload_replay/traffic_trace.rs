@@ -467,6 +467,12 @@ fn traffic_trace_replay_executor(
                 data_cache.record_sideband(tick, event);
             }
         })
+        .with_control_event_sink({
+            let data_cache = data_cache.clone();
+            move |tick, event_context| {
+                data_cache.register_control_event(tick, event_context);
+            }
+        })
         .with_control_completion_sink(move |tick, event_context| {
             data_cache.complete_control_event(tick, event_context);
         })
@@ -570,6 +576,7 @@ impl WorkloadTraceDataCacheConsumer {
                 htm_abort_records,
                 active_htm_transactions: Vec::new(),
                 pending_requests: BTreeSet::new(),
+                pending_control_orders: BTreeSet::new(),
                 pending_sidebands: Vec::new(),
                 pending_controls: Vec::new(),
             })),
@@ -666,6 +673,21 @@ impl WorkloadTraceDataCacheConsumer {
         inner.apply_ready_events(tick);
     }
 
+    fn register_control_event(
+        &self,
+        now: Tick,
+        event_context: &TrafficTraceReplayControlEventContext,
+    ) {
+        let mut inner = self
+            .inner
+            .lock()
+            .expect("workload trace data cache consumer lock");
+        inner
+            .pending_control_orders
+            .insert(control_event_order(event_context));
+        inner.apply_ready_events(now);
+    }
+
     fn complete_control_event(
         &self,
         tick: Tick,
@@ -693,6 +715,7 @@ struct WorkloadTraceDataCacheConsumerInner {
     htm_abort_records: Arc<Mutex<Vec<RiscvWorkloadTraceHtmAbortRecord>>>,
     active_htm_transactions: Vec<HtmTransactionUid>,
     pending_requests: BTreeSet<TrafficTraceReplayOrder>,
+    pending_control_orders: BTreeSet<TrafficTraceReplayOrder>,
     pending_sidebands: Vec<WorkloadTraceDataCacheSideband>,
     pending_controls: Vec<WorkloadTraceDataCacheControl>,
 }
@@ -767,6 +790,11 @@ impl WorkloadTraceDataCacheConsumerInner {
             .iter()
             .next()
             .is_some_and(|request_order| *request_order < order)
+            || self
+                .pending_control_orders
+                .iter()
+                .next()
+                .is_some_and(|control_order| *control_order < order)
     }
 
     fn apply_pending_event(&mut self, index: WorkloadTraceDataCachePendingEventIndex) {
@@ -777,6 +805,7 @@ impl WorkloadTraceDataCacheConsumerInner {
             }
             WorkloadTraceDataCachePendingEventIndex::Control(index) => {
                 let control = self.pending_controls.remove(index);
+                self.pending_control_orders.remove(&control.order);
                 self.apply_control_event(control.tick, &control.event_context);
             }
         }
@@ -982,11 +1011,7 @@ fn target_event_order(
 fn control_event_order(
     event_context: &TrafficTraceReplayControlEventContext,
 ) -> TrafficTraceReplayOrder {
-    let tick = match event_context.event() {
-        TrafficTraceReplayControlEvent::ControlAck { trace_tick, .. } => *trace_tick,
-        TrafficTraceReplayControlEvent::ControlFailure { record, .. } => record.tick(),
-    };
-    TrafficTraceReplayOrder::new(tick, u64::MAX)
+    event_context.trace_order()
 }
 
 fn target_event_response_status(event: &TrafficTraceReplayTargetEvent) -> Option<ResponseStatus> {

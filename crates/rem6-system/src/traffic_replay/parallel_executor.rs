@@ -35,6 +35,7 @@ type TargetCompletionSink = Arc<
         + Send
         + Sync,
 >;
+type ControlEventSink = Arc<dyn Fn(Tick, &TrafficTraceReplayControlEventContext) + Send + Sync>;
 type ControlCompletionSink =
     Arc<dyn Fn(Tick, &TrafficTraceReplayControlEventContext) + Send + Sync>;
 
@@ -69,6 +70,7 @@ pub struct TrafficTraceReplayControllerParallelExecutor {
     target_sink: Option<TargetSink>,
     target_event_sink: Option<TargetEventSink>,
     target_completion_sink: Option<TargetCompletionSink>,
+    control_event_sink: Option<ControlEventSink>,
     control_completion_sink: Option<ControlCompletionSink>,
 }
 
@@ -86,6 +88,7 @@ impl TrafficTraceReplayControllerParallelExecutor {
             target_sink: None,
             target_event_sink: None,
             target_completion_sink: None,
+            control_event_sink: None,
             control_completion_sink: None,
         }
     }
@@ -146,6 +149,14 @@ impl TrafficTraceReplayControllerParallelExecutor {
         F: Fn(Tick, &TrafficTraceReplayControlEventContext) + Send + Sync + 'static,
     {
         self.control_completion_sink = Some(Arc::new(sink));
+        self
+    }
+
+    pub fn with_control_event_sink<F>(mut self, sink: F) -> Self
+    where
+        F: Fn(Tick, &TrafficTraceReplayControlEventContext) + Send + Sync + 'static,
+    {
+        self.control_event_sink = Some(Arc::new(sink));
         self
     }
 
@@ -414,6 +425,7 @@ impl TrafficTraceReplayControllerParallelExecutor {
             prepare_sidebands_from_runtime(staged, scheduler, partition, delivery_tick)?;
         let runtime = Arc::clone(&self.runtime);
         let errors = Arc::clone(&self.errors);
+        let control_event_sink = self.control_event_sink.clone();
         let control_completion_sink = self.control_completion_sink.clone();
         scheduler.schedule_parallel_at(partition, delivery_tick, move |context| {
             let event_context = match traffic_trace_replay_controller_runtime_control_event_context(
@@ -429,6 +441,9 @@ impl TrafficTraceReplayControllerParallelExecutor {
                     return;
                 }
             };
+            if let Some(control_event_sink) = &control_event_sink {
+                control_event_sink(context.now(), &event_context);
+            }
             match event_context.event() {
                 TrafficTraceReplayControlEvent::ControlAck { delay, trace_tick } => {
                     let delay = *delay;

@@ -1469,7 +1469,65 @@ fn workload_replay_binds_htm_request_response_to_data_route_transaction() {
     assert!(matches!(
         htm_aborts[0].cluster_outcome(),
         RiscvClusterHtmAbortOutcome::Aborted { cpu, abort, .. }
-            if *cpu == CpuId::new(0) && abort.uid() == htm_begins[0].begin_uid().unwrap()
+        if *cpu == CpuId::new(0) && abort.uid() == htm_begins[0].begin_uid().unwrap()
+    ));
+}
+
+#[test]
+fn workload_replay_orders_same_tick_htm_response_before_abort_sideband() {
+    let manifest =
+        replay_manifest_with_data_cache("riscv-replay-trace-htm-same-tick-response-abort");
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let controller = controller_for_packets(&[
+        PacketFields {
+            tick: 1,
+            command: GEM5_HTM_REQ,
+            address: None,
+            size: None,
+            packet_id: Some(966),
+        },
+        PacketFields {
+            tick: 2,
+            command: GEM5_HTM_REQ_RESP,
+            address: None,
+            size: None,
+            packet_id: Some(966),
+        },
+        PacketFields {
+            tick: 2,
+            command: GEM5_HTM_ABORT,
+            address: None,
+            size: None,
+            packet_id: Some(967),
+        },
+    ]);
+
+    let outcome = RiscvWorkloadReplay::new(plan)
+        .with_max_turns(128)
+        .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
+            controller,
+            route_id("cpu0.data"),
+            PartitionId::new(2),
+        ))
+        .run_parallel()
+        .unwrap();
+
+    let traffic_replay = &outcome.traffic_trace_replays()[0];
+    assert!(traffic_replay.errors().is_empty(), "{traffic_replay:#?}");
+    let htm_begins = traffic_replay.htm_begin_records();
+    assert_eq!(htm_begins.len(), 1);
+    assert_eq!(htm_begins[0].tick(), 2);
+    assert_eq!(htm_begins[0].trace_packet_id(), Some(966));
+    let begin_uid = htm_begins[0].begin_uid().unwrap();
+
+    let htm_aborts = traffic_replay.htm_abort_records();
+    assert_eq!(htm_aborts.len(), 1);
+    assert_eq!(htm_aborts[0].tick(), 2);
+    assert_eq!(htm_aborts[0].trace_packet_id(), Some(967));
+    assert!(matches!(
+        htm_aborts[0].cluster_outcome(),
+        RiscvClusterHtmAbortOutcome::Aborted { cpu, abort, .. }
+            if *cpu == CpuId::new(0) && abort.uid() == begin_uid
     ));
 }
 

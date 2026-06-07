@@ -3076,6 +3076,10 @@ That executor turns replayed memory responses and failures into executable
 target outcomes while recording sync or HTM acknowledgements, control failures,
 standalone TLB/cache/diagnostic/HTM sideband events, and interleaved
 request/response batches from the same shared controller/runtime pair.
+Control completion contexts retain the matched response or error trace
+sequence, and workload replay registers pending control completions before
+later sidebands can execute, so same-tick HTM response and abort records follow
+packet-trace order rather than scheduler insertion order.
 Workload replay can bind that executor to a workload route id and control
 partition, schedule it through the replay scheduler and `MemoryTransport`, and
 return response deliveries, trace memory events, and runtime records in

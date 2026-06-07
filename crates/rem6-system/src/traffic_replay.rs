@@ -394,14 +394,20 @@ impl TrafficTraceReplayControlSource {
 struct TrafficTraceReplayControlAction {
     action: TrafficTraceReplayAction,
     source: Option<TrafficTraceReplayControlSource>,
+    trace_order: TrafficTraceReplayOrder,
 }
 
 impl TrafficTraceReplayControlAction {
     fn new(
         action: TrafficTraceReplayAction,
         source: Option<TrafficTraceReplayControlSource>,
+        trace_order: TrafficTraceReplayOrder,
     ) -> Self {
-        Self { action, source }
+        Self {
+            action,
+            source,
+            trace_order,
+        }
     }
 
     fn matches_source(&self, source: Option<TrafficTraceReplayControlSource>) -> bool {
@@ -411,6 +417,10 @@ impl TrafficTraceReplayControlAction {
             (_, None) => true,
         }
     }
+}
+
+fn traffic_trace_replay_action_order(action: &TrafficTraceReplayAction) -> TrafficTraceReplayOrder {
+    TrafficTraceReplayOrder::new(action.tick(), u64::MAX)
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -427,6 +437,7 @@ impl TrafficTraceReplayControlRuntime {
         batch: &TrafficControllerEventBatch,
     ) -> Result<(), rem6_traffic::TrafficGeneratorError> {
         let mut matched_source = None;
+        let mut matched_order = None;
         for event in batch.events() {
             match event {
                 TrafficControllerEvent::TraceSync(sync) if sync.requires_response() => {
@@ -440,10 +451,17 @@ impl TrafficTraceReplayControlRuntime {
                 TrafficControllerEvent::TraceResponseMatch(response) => {
                     matched_source =
                         TrafficTraceReplayControlSource::from_replay_source(response.source());
+                    let response = response.response();
+                    matched_order = matched_source.map(|_| {
+                        TrafficTraceReplayOrder::new(response.tick(), response.sequence())
+                    });
                 }
                 TrafficControllerEvent::TraceErrorMatch(error) => {
                     matched_source =
                         TrafficTraceReplayControlSource::from_replay_source(error.source());
+                    let error = error.error();
+                    matched_order = matched_source
+                        .map(|_| TrafficTraceReplayOrder::new(error.tick(), error.sequence()));
                 }
                 TrafficControllerEvent::TraceReplayAction(action)
                     if matches!(
@@ -455,10 +473,14 @@ impl TrafficTraceReplayControlRuntime {
                     self.actions.push_back(TrafficTraceReplayControlAction::new(
                         action.clone(),
                         matched_source.take(),
+                        matched_order
+                            .take()
+                            .unwrap_or_else(|| traffic_trace_replay_action_order(action)),
                     ));
                 }
                 TrafficControllerEvent::TraceReplayAction(_) => {
                     matched_source = None;
+                    matched_order = None;
                 }
                 _ => {}
             }
@@ -482,11 +504,12 @@ impl TrafficTraceReplayControlRuntime {
             .control_action_index()
             .ok_or(TrafficTraceReplayControlError::ActionQueueEmpty { delivery_tick })?;
         let source = self.source();
-        let action = &self
+        let control_action = self
             .actions
             .get(action_index)
-            .expect("validated trace replay control action remains queued")
-            .action;
+            .expect("validated trace replay control action remains queued");
+        let action = &control_action.action;
+        let trace_order = control_action.trace_order;
         let event = match action {
             TrafficTraceReplayAction::ControlAck { tick } => {
                 let delay = control_ack_delay(delivery_tick, *tick)?;
@@ -516,7 +539,11 @@ impl TrafficTraceReplayControlRuntime {
         if source.is_some() {
             self.sources.pop_front();
         }
-        Ok(TrafficTraceReplayControlEventContext::new(event, source))
+        Ok(TrafficTraceReplayControlEventContext::new(
+            event,
+            source,
+            trace_order,
+        ))
     }
 
     pub fn record_control_ack(&mut self, tick: Tick, trace_tick: Tick) {
@@ -1236,18 +1263,28 @@ impl TrafficTraceReplayControlEvent {
 pub struct TrafficTraceReplayControlEventContext {
     event: TrafficTraceReplayControlEvent,
     source: Option<TrafficTraceReplayControlSource>,
+    trace_order: TrafficTraceReplayOrder,
 }
 
 impl TrafficTraceReplayControlEventContext {
     const fn new(
         event: TrafficTraceReplayControlEvent,
         source: Option<TrafficTraceReplayControlSource>,
+        trace_order: TrafficTraceReplayOrder,
     ) -> Self {
-        Self { event, source }
+        Self {
+            event,
+            source,
+            trace_order,
+        }
     }
 
     pub const fn event(&self) -> &TrafficTraceReplayControlEvent {
         &self.event
+    }
+
+    pub const fn trace_order(&self) -> TrafficTraceReplayOrder {
+        self.trace_order
     }
 
     pub const fn trace_htm(&self) -> Option<TrafficTraceHtmEvent> {
