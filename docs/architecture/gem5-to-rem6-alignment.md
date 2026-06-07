@@ -2960,8 +2960,11 @@ Trace policy accessors are not treated as coverage by themselves. New response,
 error, sideband, or HTM policy exposure should land only with a controller,
 runtime, workload, cache, CPU, or diagnostic consumer, or with an explicit
 alignment note explaining why the matching executable contract is not available
-yet. Remaining trace-policy HTM gap: cache HTM conflict detection and rollback
-from recorded transaction access sets. Trace response data now reaches
+yet. Remaining trace-policy HTM gap: cache HTM conflict detection from recorded
+transaction access sets. Trace HTM begin now captures route-scoped data-cache
+harness snapshots for declared workload cache lines, and a successful HTMAbort
+restores the active transaction's written-line snapshots before replay clears
+the trace transaction state. Trace response data now reaches
 target-completion consumers as a separate trace-fill channel, and rem6-cpu now
 owns a typed HTM transaction state that can restore a RISC-V core architectural
 checkpoint on abort.
@@ -2969,7 +2972,9 @@ rem6-system also records ordered workload-level HTM begin and abort records for
 trace replay outcomes and binds HTMReq response matches plus HTMAbort sidebands
 on RISC-V data routes to typed CPU cluster outcomes. During an active traced
 transaction, matched data-cache read/write responses now produce ordered
-transaction read-set and write-set records keyed by HTM transaction uid.
+transaction read-set and write-set records keyed by HTM transaction uid. Abort
+sidebands also roll back data-cache lines in the write set by restoring the
+route-scoped snapshot captured at trace HTM begin.
 The controller records matched replay completions in a typed outcome summary
 and emits replay action events carrying owned memory responses or control
 acknowledgements. The
@@ -3215,7 +3220,9 @@ helpers that map declared RISC-V data routes to CPU-local HTM begin and abort
 outcomes. Workload trace replay uses matched HTMReq responses to begin and
 HTMAbort sidebands to abort on those declared data routes. Data-cache trace
 responses inside the active transaction now record read-set and write-set
-evidence; cache conflict detection and rollback remain open.
+evidence, and successful abort sidebands restore route-scoped data-cache
+snapshots for written lines captured at trace HTM begin. Cache conflict
+detection remains open.
 
 Trace prefetch note: the packet-trace support summarized above now includes
 gem5 `SoftPFReq`, `SoftPFExReq`, and `HardPFReq` as native rem6 prefetch
@@ -3278,8 +3285,9 @@ diagnostic-print, and HTM-abort counts. TLB external-sync, cache-flush, and
 diagnostic-print policies are consumed by the executable replay contract
 without turning them into fake memory requests, while HTM policy now has ordered
 workload-level begin and abort records, typed data-route CPU cluster outcomes,
-and data-cache transaction read-set/write-set records. Cache conflict detection,
-cache rollback, and full CPU/cache HTM execution remain open.
+data-cache transaction read-set/write-set records, and data-cache snapshot
+restore for written lines on successful trace HTM abort. Cache conflict
+detection and full CPU/cache HTM execution remain open.
 Broader TLBI execution semantics, TLBI completion forms, CPU-visible HTM
 behavior, full diagnostic printing, and cache flush handling outside declared
 workload data-cache lines remain open because they need

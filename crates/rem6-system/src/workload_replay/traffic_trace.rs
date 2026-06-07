@@ -17,7 +17,7 @@ use rem6_transport::{
 use rem6_workload::{WorkloadRouteId, WorkloadTopology, WorkloadTrafficTraceReplaySummary};
 
 use crate::{
-    RiscvCluster, TrafficTraceReplayControlEventContext,
+    RiscvCluster, TrafficTraceReplayControlEvent, TrafficTraceReplayControlEventContext,
     TrafficTraceReplayControllerParallelErrors, TrafficTraceReplayControllerParallelExecutor,
     TrafficTraceReplayControllerRuntime, TrafficTraceReplayOrder,
     TrafficTraceReplayScheduledSidebandEvent, TrafficTraceReplaySidebandEvent,
@@ -539,6 +539,18 @@ struct WorkloadTraceDataCacheConsumer {
     inner: Arc<Mutex<WorkloadTraceDataCacheConsumerInner>>,
 }
 
+struct WorkloadTraceDataCacheControl {
+    tick: Tick,
+    order: TrafficTraceReplayOrder,
+    event_context: TrafficTraceReplayControlEventContext,
+}
+
+#[derive(Clone, Copy)]
+enum WorkloadTraceDataCachePendingEventIndex {
+    Sideband(usize),
+    Control(usize),
+}
+
 impl WorkloadTraceDataCacheConsumer {
     fn new(
         route: MemoryRouteId,
@@ -559,6 +571,7 @@ impl WorkloadTraceDataCacheConsumer {
                 active_htm_transactions: Vec::new(),
                 pending_requests: BTreeSet::new(),
                 pending_sidebands: Vec::new(),
+                pending_controls: Vec::new(),
             })),
         }
     }
@@ -599,28 +612,33 @@ impl WorkloadTraceDataCacheConsumer {
             .inner
             .lock()
             .expect("workload trace data cache consumer lock");
-        inner.apply_sidebands_before(completion_order);
+        inner.apply_events_before(completion_order);
         if matches!(
             event_context.event(),
             TrafficTraceReplayTargetEvent::MemoryResponse(_)
         ) {
             let data_cache_response_status = target_event_response_status(event_context.event());
+            let mut data_cache_response_applied = false;
             if data_cache_response_status.is_some()
                 && data_cache_response_status != Some(ResponseStatus::StoreConditionalFailed)
             {
                 if let Some(data_cache) = inner.data_cache.as_ref() {
-                    data_cache
+                    let cache_outcome = data_cache
                         .lock()
                         .expect("workload data cache lock")
                         .respond(delivery);
+                    data_cache_response_applied = cache_outcome
+                        .as_ref()
+                        .and_then(target_outcome_response_status)
+                        == Some(ResponseStatus::Completed);
                 }
             }
             if let Some(response) = event_context.trace_response() {
-                inner.apply_trace_response(delivery.tick(), response);
+                inner.apply_trace_response(delivery.tick(), response, data_cache_response_applied);
             }
         }
         inner.pending_requests.remove(&completion_order);
-        inner.apply_ready_sidebands(completion_order.tick().max(delivery.tick()));
+        inner.apply_ready_events(completion_order.tick().max(delivery.tick()));
     }
 
     fn record_sideband(&self, tick: Tick, event: TrafficTraceReplaySidebandEvent) {
@@ -635,7 +653,7 @@ impl WorkloadTraceDataCacheConsumer {
                 order: TrafficTraceReplayOrder::new(event.tick(), event.sequence()),
                 event,
             });
-        inner.apply_ready_sidebands(tick);
+        inner.apply_ready_events(tick);
     }
 
     fn complete_control_event(
@@ -643,10 +661,16 @@ impl WorkloadTraceDataCacheConsumer {
         tick: Tick,
         event_context: &TrafficTraceReplayControlEventContext,
     ) {
-        self.inner
+        let mut inner = self
+            .inner
             .lock()
-            .expect("workload trace data cache consumer lock")
-            .apply_control_event(tick, event_context);
+            .expect("workload trace data cache consumer lock");
+        inner.pending_controls.push(WorkloadTraceDataCacheControl {
+            tick,
+            order: control_event_order(event_context),
+            event_context: event_context.clone(),
+        });
+        inner.apply_ready_events(tick);
     }
 }
 
@@ -660,6 +684,7 @@ struct WorkloadTraceDataCacheConsumerInner {
     active_htm_transactions: Vec<HtmTransactionUid>,
     pending_requests: BTreeSet<TrafficTraceReplayOrder>,
     pending_sidebands: Vec<WorkloadTraceDataCacheSideband>,
+    pending_controls: Vec<WorkloadTraceDataCacheControl>,
 }
 
 impl WorkloadTraceDataCacheConsumerInner {
@@ -672,34 +697,59 @@ impl WorkloadTraceDataCacheConsumerInner {
         if self.pending_requests.remove(&request_order) {
             self.pending_requests.insert(completion_order);
         }
-        self.apply_ready_sidebands(now);
+        self.apply_ready_events(now);
     }
 
-    fn apply_sidebands_before(&mut self, request_order: TrafficTraceReplayOrder) {
-        while let Some(index) = self.next_sideband_index(|sideband| sideband.order <= request_order)
+    fn apply_events_before(&mut self, request_order: TrafficTraceReplayOrder) {
+        while let Some((order, index)) =
+            self.next_pending_event_index(|order, _tick| order <= request_order)
         {
-            let sideband = self.pending_sidebands.remove(index);
-            self.apply_sideband(sideband.tick, sideband.event);
+            if self.is_blocked(order) {
+                return;
+            }
+            self.apply_pending_event(index);
         }
     }
 
-    fn apply_ready_sidebands(&mut self, now: Tick) {
-        while let Some(index) = self.next_sideband_index(|sideband| sideband.tick <= now) {
-            let sideband = self.pending_sidebands.remove(index);
-            self.apply_sideband(sideband.tick, sideband.event);
+    fn apply_ready_events(&mut self, now: Tick) {
+        while let Some((order, index)) = self.next_pending_event_index(|_order, tick| tick <= now) {
+            if self.is_blocked(order) {
+                return;
+            }
+            self.apply_pending_event(index);
         }
     }
 
-    fn next_sideband_index(
+    fn next_pending_event_index(
         &self,
-        ready: impl Fn(&WorkloadTraceDataCacheSideband) -> bool,
-    ) -> Option<usize> {
-        self.pending_sidebands
+        ready: impl Fn(TrafficTraceReplayOrder, Tick) -> bool,
+    ) -> Option<(
+        TrafficTraceReplayOrder,
+        WorkloadTraceDataCachePendingEventIndex,
+    )> {
+        let sidebands = self
+            .pending_sidebands
             .iter()
             .enumerate()
-            .filter(|(_, sideband)| ready(sideband) && !self.is_blocked(sideband.order))
-            .min_by_key(|(_, sideband)| sideband.order)
-            .map(|(index, _)| index)
+            .filter(|(_, sideband)| ready(sideband.order, sideband.tick))
+            .map(|(index, sideband)| {
+                (
+                    sideband.order,
+                    WorkloadTraceDataCachePendingEventIndex::Sideband(index),
+                )
+            });
+        let controls = self
+            .pending_controls
+            .iter()
+            .enumerate()
+            .filter(|(_, control)| ready(control.order, control.tick))
+            .map(|(index, control)| {
+                (
+                    control.order,
+                    WorkloadTraceDataCachePendingEventIndex::Control(index),
+                )
+            });
+        sidebands.chain(controls).min_by_key(|(order, _)| *order)
     }
 
     fn is_blocked(&self, order: TrafficTraceReplayOrder) -> bool {
@@ -707,6 +757,19 @@ impl WorkloadTraceDataCacheConsumerInner {
             .iter()
             .next()
             .is_some_and(|request_order| *request_order < order)
+    }
+
+    fn apply_pending_event(&mut self, index: WorkloadTraceDataCachePendingEventIndex) {
+        match index {
+            WorkloadTraceDataCachePendingEventIndex::Sideband(index) => {
+                let sideband = self.pending_sidebands.remove(index);
+                self.apply_sideband(sideband.tick, sideband.event);
+            }
+            WorkloadTraceDataCachePendingEventIndex::Control(index) => {
+                let control = self.pending_controls.remove(index);
+                self.apply_control_event(control.tick, &control.event_context);
+            }
+        }
     }
 
     fn apply_sideband(&mut self, tick: Tick, event: TrafficTraceReplaySidebandEvent) {
@@ -745,6 +808,14 @@ impl WorkloadTraceDataCacheConsumerInner {
                             )
                         },
                     );
+                    if let RiscvClusterHtmAbortOutcome::Aborted { abort, .. } = &cluster_outcome {
+                        if let Some(data_cache) = self.data_cache.as_ref() {
+                            data_cache
+                                .lock()
+                                .expect("workload data cache lock")
+                                .restore_trace_htm_rollback(self.route, abort.uid());
+                        }
+                    }
                     clear_htm_transactions_after_trace_abort(
                         &mut self.active_htm_transactions,
                         &cluster_outcome,
@@ -779,6 +850,12 @@ impl WorkloadTraceDataCacheConsumerInner {
         );
         if let RiscvClusterHtmBeginOutcome::Begun { begin, .. } = &cluster_outcome {
             self.active_htm_transactions.push(begin.uid());
+            if let Some(data_cache) = self.data_cache.as_ref() {
+                data_cache
+                    .lock()
+                    .expect("workload data cache lock")
+                    .capture_trace_htm_rollback(self.route, begin.uid());
+            }
         }
         self.htm_begin_records
             .lock()
@@ -790,11 +867,22 @@ impl WorkloadTraceDataCacheConsumerInner {
             ));
     }
 
-    fn apply_trace_response(&mut self, tick: Tick, event: rem6_traffic::TrafficTraceResponseEvent) {
+    fn apply_trace_response(
+        &mut self,
+        tick: Tick,
+        event: rem6_traffic::TrafficTraceResponseEvent,
+        data_cache_response_applied: bool,
+    ) {
         if let Some(data_cache) = self.data_cache.as_ref() {
             let mut data_cache = data_cache.lock().expect("workload data cache lock");
             if let Some(transaction_uid) = self.active_htm_transactions.last().copied() {
-                data_cache.record_trace_htm_access_event(tick, transaction_uid, event);
+                data_cache.record_trace_htm_access_event(
+                    tick,
+                    self.route,
+                    transaction_uid,
+                    event,
+                    data_cache_response_applied,
+                );
             }
             data_cache.apply_trace_response_event(event);
         }
@@ -839,6 +927,16 @@ fn target_event_order(
         return TrafficTraceReplayOrder::new(error.tick(), error.sequence());
     }
     request_order
+}
+
+fn control_event_order(
+    event_context: &TrafficTraceReplayControlEventContext,
+) -> TrafficTraceReplayOrder {
+    let tick = match event_context.event() {
+        TrafficTraceReplayControlEvent::ControlAck { trace_tick, .. } => *trace_tick,
+        TrafficTraceReplayControlEvent::ControlFailure { record, .. } => record.tick(),
+    };
+    TrafficTraceReplayOrder::new(tick, u64::MAX)
 }
 
 fn target_event_response_status(event: &TrafficTraceReplayTargetEvent) -> Option<ResponseStatus> {

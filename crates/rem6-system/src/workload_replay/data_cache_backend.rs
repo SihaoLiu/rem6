@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rem6_cache::{
     ChiCacheControllerSnapshot, MesiCacheControllerSnapshot, MoesiCacheControllerSnapshot,
@@ -7,10 +7,10 @@ use rem6_cache::{
 use rem6_coherence::{
     ChiHarnessError, LineBackingStore, MesiHarnessError, MoesiHarnessError,
     PartitionedCacheAgentConfig, PartitionedChiDirectoryLineHarness,
-    PartitionedDirectoryLineHarness, PartitionedDirectoryLineHarnessSnapshot,
-    PartitionedDramMemoryConfig, PartitionedMesiDirectoryLineHarness,
-    PartitionedMesiDirectoryLineHarnessSnapshot, PartitionedMoesiDirectoryLineHarness,
-    PartitionedMoesiDirectoryLineHarnessSnapshot,
+    PartitionedChiDirectoryLineHarnessSnapshot, PartitionedDirectoryLineHarness,
+    PartitionedDirectoryLineHarnessSnapshot, PartitionedDramMemoryConfig,
+    PartitionedMesiDirectoryLineHarness, PartitionedMesiDirectoryLineHarnessSnapshot,
+    PartitionedMoesiDirectoryLineHarness, PartitionedMoesiDirectoryLineHarnessSnapshot,
 };
 use rem6_cpu::HtmTransactionUid;
 use rem6_directory::{
@@ -26,7 +26,7 @@ use rem6_protocol_msi::{MsiCacheLine, MsiState};
 use rem6_traffic::{
     TrafficTraceCacheEvent, TrafficTraceDiagnosticEvent, TrafficTraceResponseEvent,
 };
-use rem6_transport::{RequestDelivery, TargetOutcome, TransportEndpointId};
+use rem6_transport::{MemoryRouteId, RequestDelivery, TargetOutcome, TransportEndpointId};
 use rem6_workload::{WorkloadDataCacheProtocol, WorkloadRiscvDataCache};
 
 use super::cache_response::data_cache_response_result;
@@ -41,6 +41,51 @@ enum WorkloadDataCacheHarness {
     Mesi(PartitionedMesiDirectoryLineHarness),
     Moesi(PartitionedMoesiDirectoryLineHarness),
     Chi(PartitionedChiDirectoryLineHarness),
+}
+
+enum WorkloadDataCacheRollbackSnapshot {
+    Msi(PartitionedDirectoryLineHarnessSnapshot),
+    Mesi(PartitionedMesiDirectoryLineHarnessSnapshot),
+    Moesi(PartitionedMoesiDirectoryLineHarnessSnapshot),
+    Chi(PartitionedChiDirectoryLineHarnessSnapshot),
+}
+
+struct WorkloadDataCacheLineRollbackSnapshot {
+    line: Address,
+    snapshot: WorkloadDataCacheRollbackSnapshot,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+struct WorkloadDataCacheRollbackKey {
+    route: MemoryRouteId,
+    transaction_uid: HtmTransactionUid,
+}
+
+impl WorkloadDataCacheRollbackKey {
+    const fn new(route: MemoryRouteId, transaction_uid: HtmTransactionUid) -> Self {
+        Self {
+            route,
+            transaction_uid,
+        }
+    }
+}
+
+struct WorkloadDataCacheRollback {
+    snapshots: BTreeMap<Address, WorkloadDataCacheLineRollbackSnapshot>,
+    written_lines: BTreeSet<Address>,
+}
+
+impl WorkloadDataCacheRollback {
+    fn new(snapshots: BTreeMap<Address, WorkloadDataCacheLineRollbackSnapshot>) -> Self {
+        Self {
+            snapshots,
+            written_lines: BTreeSet::new(),
+        }
+    }
+
+    fn mark_written(&mut self, line: Address) {
+        self.written_lines.insert(line);
+    }
 }
 
 pub(super) enum WorkloadDataCacheLineMemory {
@@ -385,6 +430,77 @@ impl WorkloadDataCacheLineBackend {
         true
     }
 
+    fn htm_rollback_snapshot(
+        &self,
+    ) -> Result<WorkloadDataCacheLineRollbackSnapshot, RiscvWorkloadReplayError> {
+        let snapshot = match &self.harness {
+            WorkloadDataCacheHarness::Msi(harness) => WorkloadDataCacheRollbackSnapshot::Msi(
+                harness
+                    .quiescent_snapshot()
+                    .map_err(RiscvWorkloadReplayError::MsiDataCache)?,
+            ),
+            WorkloadDataCacheHarness::Mesi(harness) => WorkloadDataCacheRollbackSnapshot::Mesi(
+                harness
+                    .quiescent_snapshot()
+                    .map_err(RiscvWorkloadReplayError::MesiDataCache)?,
+            ),
+            WorkloadDataCacheHarness::Moesi(harness) => WorkloadDataCacheRollbackSnapshot::Moesi(
+                harness
+                    .quiescent_snapshot()
+                    .map_err(RiscvWorkloadReplayError::MoesiDataCache)?,
+            ),
+            WorkloadDataCacheHarness::Chi(harness) => WorkloadDataCacheRollbackSnapshot::Chi(
+                harness
+                    .quiescent_snapshot()
+                    .map_err(RiscvWorkloadReplayError::ChiDataCache)?,
+            ),
+        };
+        Ok(WorkloadDataCacheLineRollbackSnapshot {
+            line: self.line,
+            snapshot,
+        })
+    }
+
+    fn restore_htm_rollback_snapshot(
+        &mut self,
+        rollback: &WorkloadDataCacheLineRollbackSnapshot,
+    ) -> bool {
+        if rollback.line != self.line {
+            return false;
+        }
+        let result = match (&mut self.harness, &rollback.snapshot) {
+            (
+                WorkloadDataCacheHarness::Msi(harness),
+                WorkloadDataCacheRollbackSnapshot::Msi(snapshot),
+            ) => harness
+                .restore_quiescent(snapshot)
+                .map_err(RiscvWorkloadReplayError::MsiDataCache),
+            (
+                WorkloadDataCacheHarness::Mesi(harness),
+                WorkloadDataCacheRollbackSnapshot::Mesi(snapshot),
+            ) => harness
+                .restore_quiescent(snapshot)
+                .map_err(RiscvWorkloadReplayError::MesiDataCache),
+            (
+                WorkloadDataCacheHarness::Moesi(harness),
+                WorkloadDataCacheRollbackSnapshot::Moesi(snapshot),
+            ) => harness
+                .restore_quiescent(snapshot)
+                .map_err(RiscvWorkloadReplayError::MoesiDataCache),
+            (
+                WorkloadDataCacheHarness::Chi(harness),
+                WorkloadDataCacheRollbackSnapshot::Chi(snapshot),
+            ) => harness
+                .restore_quiescent(snapshot)
+                .map_err(RiscvWorkloadReplayError::ChiDataCache),
+            _ => return false,
+        };
+        if let Err(error) = result {
+            self.error = Some(error);
+        }
+        true
+    }
+
     fn apply_trace_diagnostic_event(
         &mut self,
         tick: Tick,
@@ -581,6 +697,7 @@ impl WorkloadDataCacheLineBackend {
 
 pub(super) struct WorkloadDataCacheBackend {
     lines: BTreeMap<Address, WorkloadDataCacheLineBackend>,
+    htm_rollbacks: BTreeMap<WorkloadDataCacheRollbackKey, WorkloadDataCacheRollback>,
 }
 
 impl WorkloadDataCacheBackend {
@@ -590,6 +707,7 @@ impl WorkloadDataCacheBackend {
     {
         Self {
             lines: lines.into_iter().map(|line| (line.line(), line)).collect(),
+            htm_rollbacks: BTreeMap::new(),
         }
     }
 
@@ -640,13 +758,76 @@ impl WorkloadDataCacheBackend {
     pub(super) fn record_trace_htm_access_event(
         &mut self,
         tick: Tick,
+        route: MemoryRouteId,
         transaction_uid: HtmTransactionUid,
         event: TrafficTraceResponseEvent,
+        data_cache_response_applied: bool,
     ) -> bool {
-        self.lines
-            .values_mut()
-            .find(|line| line.accepts_trace_htm_access_event(event))
-            .is_some_and(|line| line.record_trace_htm_access_event(tick, transaction_uid, event))
+        let Some(line_address) = self
+            .lines
+            .iter()
+            .find(|(_, line)| line.accepts_trace_htm_access_event(event))
+            .map(|(line_address, _)| *line_address)
+        else {
+            return false;
+        };
+        let Some(line) = self.lines.get_mut(&line_address) else {
+            return false;
+        };
+        let recorded = line.record_trace_htm_access_event(tick, transaction_uid, event);
+        if recorded && event.is_write() && data_cache_response_applied {
+            let key = WorkloadDataCacheRollbackKey::new(route, transaction_uid);
+            if let Some(rollback) = self.htm_rollbacks.get_mut(&key) {
+                rollback.mark_written(line_address);
+            }
+        }
+        recorded
+    }
+
+    pub(super) fn capture_trace_htm_rollback(
+        &mut self,
+        route: MemoryRouteId,
+        transaction_uid: HtmTransactionUid,
+    ) -> bool {
+        let key = WorkloadDataCacheRollbackKey::new(route, transaction_uid);
+        if self.htm_rollbacks.contains_key(&key) {
+            return false;
+        }
+
+        let mut snapshots = BTreeMap::new();
+        for line in self.lines.values_mut() {
+            match line.htm_rollback_snapshot() {
+                Ok(snapshot) => {
+                    snapshots.insert(snapshot.line, snapshot);
+                }
+                Err(error) => {
+                    line.error = Some(error);
+                    return false;
+                }
+            }
+        }
+        self.htm_rollbacks
+            .insert(key, WorkloadDataCacheRollback::new(snapshots));
+        true
+    }
+
+    pub(super) fn restore_trace_htm_rollback(
+        &mut self,
+        route: MemoryRouteId,
+        transaction_uid: HtmTransactionUid,
+    ) -> bool {
+        let key = WorkloadDataCacheRollbackKey::new(route, transaction_uid);
+        let Some(rollback) = self.htm_rollbacks.remove(&key) else {
+            return false;
+        };
+        for line_address in rollback.written_lines {
+            if let Some(snapshot) = rollback.snapshots.get(&line_address) {
+                if let Some(line) = self.lines.get_mut(&snapshot.line) {
+                    line.restore_htm_rollback_snapshot(snapshot);
+                }
+            }
+        }
+        true
     }
 
     pub(super) fn apply_trace_diagnostic_event(

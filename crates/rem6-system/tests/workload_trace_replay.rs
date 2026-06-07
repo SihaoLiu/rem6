@@ -29,8 +29,8 @@ use support::traffic_trace::{
     GEM5_CLEAN_INVALID_RESP, GEM5_CLEAN_SHARED_REQ, GEM5_CLEAN_SHARED_RESP, GEM5_FLUSH_REQ,
     GEM5_HTM_ABORT, GEM5_HTM_REQ, GEM5_HTM_REQ_RESP, GEM5_MEM_FENCE_REQ, GEM5_MEM_FENCE_RESP,
     GEM5_PRINT_REQ, GEM5_READ_REQ, GEM5_READ_RESP, GEM5_READ_RESP_WITH_INVALIDATE,
-    GEM5_STORE_COND_FAIL_REQ, GEM5_STORE_COND_RESP, GEM5_TLBI_EXT_SYNC, GEM5_WRITEBACK_DIRTY,
-    GEM5_WRITE_ERROR, GEM5_WRITE_REQ, GEM5_WRITE_RESP,
+    GEM5_STORE_COND_FAIL_REQ, GEM5_STORE_COND_REQ, GEM5_STORE_COND_RESP, GEM5_TLBI_EXT_SYNC,
+    GEM5_WRITEBACK_DIRTY, GEM5_WRITE_ERROR, GEM5_WRITE_REQ, GEM5_WRITE_RESP,
 };
 
 fn workload_id(value: &str) -> rem6_workload::WorkloadId {
@@ -70,6 +70,19 @@ fn boot_image() -> BootImage {
 fn boot_image_with_data_cache_line() -> BootImage {
     BootImage::new(Address::new(0x8000))
         .add_segment(Address::new(0x8000), word(0x0000_0073))
+        .unwrap()
+        .add_segment(
+            Address::new(0x9008),
+            0xfedc_ba98_7654_3210_u64.to_le_bytes().to_vec(),
+        )
+        .unwrap()
+}
+
+fn boot_image_with_two_data_route_cache_line() -> BootImage {
+    BootImage::new(Address::new(0x8000))
+        .add_segment(Address::new(0x8000), word(0x0000_0073))
+        .unwrap()
+        .add_segment(Address::new(0x8040), word(0x0000_0073))
         .unwrap()
         .add_segment(
             Address::new(0x9008),
@@ -254,6 +267,93 @@ fn replay_topology_with_two_data_cache_lines(
         .unwrap()
 }
 
+fn replay_topology_with_two_data_routes(protocol: WorkloadDataCacheProtocol) -> WorkloadTopology {
+    WorkloadTopology::new(4, 2, 2, WorkloadHostPlacement::new(3, 2, 51).unwrap())
+        .unwrap()
+        .add_memory_target(
+            WorkloadMemoryTarget::new(
+                0,
+                64,
+                AddressRange::new(Address::new(0x8000), AccessSize::new(0x2000).unwrap()).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(route_id("cpu0.fetch"), "cpu0.ifetch", 0, "memory", 2, 2, 3)
+                .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(route_id("cpu0.data"), "cpu0.dmem", 0, "memory", 2, 2, 3)
+                .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(route_id("cpu1.fetch"), "cpu1.ifetch", 1, "memory", 2, 2, 3)
+                .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(route_id("cpu1.data"), "cpu1.dmem", 1, "memory", 2, 2, 3)
+                .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(
+                route_id("dcache.backing"),
+                "dcache.dir",
+                2,
+                "memory",
+                2,
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_riscv_core(
+            WorkloadRiscvCore::new(
+                0,
+                0,
+                7,
+                Address::new(0x8000),
+                "cpu0.ifetch",
+                route_id("cpu0.fetch"),
+            )
+            .unwrap()
+            .with_data("cpu0.dmem", route_id("cpu0.data"))
+            .unwrap(),
+        )
+        .unwrap()
+        .add_riscv_core(
+            WorkloadRiscvCore::new(
+                1,
+                1,
+                8,
+                Address::new(0x8040),
+                "cpu1.ifetch",
+                route_id("cpu1.fetch"),
+            )
+            .unwrap()
+            .with_data("cpu1.dmem", route_id("cpu1.data"))
+            .unwrap(),
+        )
+        .unwrap()
+        .with_riscv_data_cache(
+            WorkloadRiscvDataCache::new(
+                protocol,
+                0,
+                Address::new(0x9000),
+                2,
+                "dcache.dir",
+                route_id("dcache.backing"),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+}
+
 fn replay_topology_with_data_translation() -> WorkloadTopology {
     let translation = WorkloadRiscvDataTranslation::with_tlb(
         TranslationQueueConfig::new(4, 0).unwrap(),
@@ -344,6 +444,24 @@ fn replay_manifest_with_data_cache_protocol(
 fn replay_manifest_with_two_data_cache_lines(id: &str) -> WorkloadManifest {
     WorkloadManifest::builder(workload_id(id), boot_image_with_two_data_cache_lines())
         .with_topology(replay_topology_with_two_data_cache_lines(
+            WorkloadDataCacheProtocol::Msi,
+        ))
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .add_host_event(WorkloadHostEvent::new(
+            0,
+            HostEventIntent::Stop {
+                reason: "host-stop".to_string(),
+            },
+        ))
+        .build()
+        .unwrap()
+}
+
+fn replay_manifest_with_two_data_routes(id: &str) -> WorkloadManifest {
+    WorkloadManifest::builder(workload_id(id), boot_image_with_two_data_route_cache_line())
+        .with_topology(replay_topology_with_two_data_routes(
             WorkloadDataCacheProtocol::Msi,
         ))
         .add_resource(kernel_resource())
@@ -1426,6 +1544,479 @@ fn workload_replay_records_htm_transaction_data_cache_access_sets() {
     assert_eq!(records[1].line(), Address::new(0x9000));
     assert_eq!(records[1].size_bytes(), 8);
     assert_eq!(records[1].protocol(), RiscvDataCacheProtocol::Msi);
+}
+
+#[test]
+fn workload_replay_rolls_back_htm_data_cache_writes_on_abort() {
+    for (name, protocol) in [
+        ("msi", WorkloadDataCacheProtocol::Msi),
+        ("mesi", WorkloadDataCacheProtocol::Mesi),
+        ("moesi", WorkloadDataCacheProtocol::Moesi),
+        ("chi", WorkloadDataCacheProtocol::Chi),
+    ] {
+        let manifest = replay_manifest_with_data_cache_protocol(
+            &format!("riscv-replay-trace-htm-abort-rollback-{name}"),
+            protocol,
+        );
+        let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+        let controller = controller_for_packets(&[
+            PacketFields {
+                tick: 1,
+                command: GEM5_HTM_REQ,
+                address: None,
+                size: None,
+                packet_id: Some(971),
+            },
+            PacketFields {
+                tick: 2,
+                command: GEM5_HTM_REQ_RESP,
+                address: None,
+                size: None,
+                packet_id: Some(971),
+            },
+            PacketFields {
+                tick: 3,
+                command: GEM5_WRITE_REQ,
+                address: Some(0x9008),
+                size: Some(8),
+                packet_id: Some(972),
+            },
+            PacketFields {
+                tick: 5,
+                command: GEM5_WRITE_RESP,
+                address: Some(0x9008),
+                size: Some(8),
+                packet_id: Some(972),
+            },
+            PacketFields {
+                tick: 6,
+                command: GEM5_HTM_ABORT,
+                address: None,
+                size: None,
+                packet_id: Some(973),
+            },
+        ]);
+
+        let outcome = RiscvWorkloadReplay::new(plan)
+            .with_max_turns(160)
+            .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
+                controller,
+                route_id("cpu0.data"),
+                PartitionId::new(2),
+            ))
+            .run_parallel()
+            .unwrap();
+
+        let traffic_replay = &outcome.traffic_trace_replays()[0];
+        assert!(traffic_replay.errors().is_empty());
+        assert!(traffic_replay.runtime().is_empty(), "{traffic_replay:#?}");
+        assert_eq!(outcome.run().trace_htm_access_records().len(), 1);
+
+        let line = outcome.memory_snapshot();
+        let line = snapshot_line_data(line, MemoryTargetId::new(0), Address::new(0x9000));
+        assert_eq!(&line[8..16], &0xfedc_ba98_7654_3210_u64.to_le_bytes());
+    }
+}
+
+#[test]
+fn workload_replay_keeps_htm_rollback_snapshots_route_scoped() {
+    let manifest = replay_manifest_with_two_data_routes("riscv-replay-trace-htm-route-rollback");
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let cpu0_controller = controller_for_packets(&[
+        PacketFields {
+            tick: 1,
+            command: GEM5_HTM_REQ,
+            address: None,
+            size: None,
+            packet_id: Some(974),
+        },
+        PacketFields {
+            tick: 2,
+            command: GEM5_HTM_REQ_RESP,
+            address: None,
+            size: None,
+            packet_id: Some(974),
+        },
+        PacketFields {
+            tick: 3,
+            command: GEM5_HTM_ABORT,
+            address: None,
+            size: None,
+            packet_id: Some(975),
+        },
+    ]);
+    let cpu1_controller = controller_for_packets(&[
+        PacketFields {
+            tick: 1,
+            command: GEM5_HTM_REQ,
+            address: None,
+            size: None,
+            packet_id: Some(976),
+        },
+        PacketFields {
+            tick: 2,
+            command: GEM5_HTM_REQ_RESP,
+            address: None,
+            size: None,
+            packet_id: Some(976),
+        },
+        PacketFields {
+            tick: 4,
+            command: GEM5_WRITE_REQ,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(977),
+        },
+        PacketFields {
+            tick: 6,
+            command: GEM5_WRITE_RESP,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(977),
+        },
+        PacketFields {
+            tick: 7,
+            command: GEM5_HTM_ABORT,
+            address: None,
+            size: None,
+            packet_id: Some(978),
+        },
+    ]);
+
+    let outcome = RiscvWorkloadReplay::new(plan)
+        .with_max_turns(192)
+        .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
+            cpu0_controller,
+            route_id("cpu0.data"),
+            PartitionId::new(2),
+        ))
+        .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
+            cpu1_controller,
+            route_id("cpu1.data"),
+            PartitionId::new(2),
+        ))
+        .run_parallel()
+        .unwrap();
+
+    for traffic_replay in outcome.traffic_trace_replays() {
+        assert!(traffic_replay.errors().is_empty());
+        assert!(traffic_replay.runtime().is_empty(), "{traffic_replay:#?}");
+    }
+
+    let line = outcome.memory_snapshot();
+    let line = snapshot_line_data(line, MemoryTargetId::new(0), Address::new(0x9000));
+    assert_eq!(&line[8..16], &0xfedc_ba98_7654_3210_u64.to_le_bytes());
+}
+
+#[test]
+fn workload_replay_preserves_other_route_cache_writes_across_htm_abort() {
+    let manifest = replay_manifest_with_two_data_routes("riscv-replay-trace-htm-other-route-write");
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let cpu0_controller = controller_for_packets(&[
+        PacketFields {
+            tick: 1,
+            command: GEM5_HTM_REQ,
+            address: None,
+            size: None,
+            packet_id: Some(979),
+        },
+        PacketFields {
+            tick: 2,
+            command: GEM5_HTM_REQ_RESP,
+            address: None,
+            size: None,
+            packet_id: Some(979),
+        },
+        PacketFields {
+            tick: 6,
+            command: GEM5_HTM_ABORT,
+            address: None,
+            size: None,
+            packet_id: Some(980),
+        },
+    ]);
+    let cpu1_controller = controller_for_packets(&[
+        PacketFields {
+            tick: 3,
+            command: GEM5_WRITE_REQ,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(981),
+        },
+        PacketFields {
+            tick: 5,
+            command: GEM5_WRITE_RESP,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(981),
+        },
+    ]);
+
+    let outcome = RiscvWorkloadReplay::new(plan)
+        .with_max_turns(192)
+        .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
+            cpu0_controller,
+            route_id("cpu0.data"),
+            PartitionId::new(2),
+        ))
+        .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
+            cpu1_controller,
+            route_id("cpu1.data"),
+            PartitionId::new(2),
+        ))
+        .run_parallel()
+        .unwrap();
+
+    for traffic_replay in outcome.traffic_trace_replays() {
+        assert!(traffic_replay.errors().is_empty());
+        assert!(traffic_replay.runtime().is_empty(), "{traffic_replay:#?}");
+    }
+
+    let line = outcome.memory_snapshot();
+    let line = snapshot_line_data(line, MemoryTargetId::new(0), Address::new(0x9000));
+    assert_eq!(&line[8..16], &[7; 8]);
+}
+
+#[test]
+fn workload_replay_ignores_failed_store_conditional_for_htm_rollback_write_set() {
+    let manifest = replay_manifest_with_two_data_routes("riscv-replay-trace-htm-failed-sc");
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let cpu0_controller = controller_for_packets(&[
+        PacketFields {
+            tick: 1,
+            command: GEM5_HTM_REQ,
+            address: None,
+            size: None,
+            packet_id: Some(982),
+        },
+        PacketFields {
+            tick: 2,
+            command: GEM5_HTM_REQ_RESP,
+            address: None,
+            size: None,
+            packet_id: Some(982),
+        },
+        PacketFields {
+            tick: 3,
+            command: GEM5_STORE_COND_FAIL_REQ,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(983),
+        },
+        PacketFields {
+            tick: 5,
+            command: GEM5_STORE_COND_RESP,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(983),
+        },
+        PacketFields {
+            tick: 7,
+            command: GEM5_HTM_ABORT,
+            address: None,
+            size: None,
+            packet_id: Some(984),
+        },
+    ]);
+    let cpu1_controller = controller_for_packets(&[
+        PacketFields {
+            tick: 4,
+            command: GEM5_WRITE_REQ,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(985),
+        },
+        PacketFields {
+            tick: 6,
+            command: GEM5_WRITE_RESP,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(985),
+        },
+    ]);
+
+    let outcome = RiscvWorkloadReplay::new(plan)
+        .with_max_turns(192)
+        .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
+            cpu0_controller,
+            route_id("cpu0.data"),
+            PartitionId::new(2),
+        ))
+        .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
+            cpu1_controller,
+            route_id("cpu1.data"),
+            PartitionId::new(2),
+        ))
+        .run_parallel()
+        .unwrap();
+
+    for traffic_replay in outcome.traffic_trace_replays() {
+        assert!(traffic_replay.errors().is_empty());
+        assert!(traffic_replay.runtime().is_empty(), "{traffic_replay:#?}");
+    }
+
+    let line = outcome.memory_snapshot();
+    let line = snapshot_line_data(line, MemoryTargetId::new(0), Address::new(0x9000));
+    assert_eq!(&line[8..16], &[7; 8]);
+}
+
+#[test]
+fn workload_replay_uses_executable_store_conditional_status_for_htm_rollback_write_set() {
+    let manifest = replay_manifest_with_two_data_routes("riscv-replay-trace-htm-sc-status");
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let cpu0_controller = controller_for_packets(&[
+        PacketFields {
+            tick: 1,
+            command: GEM5_HTM_REQ,
+            address: None,
+            size: None,
+            packet_id: Some(986),
+        },
+        PacketFields {
+            tick: 2,
+            command: GEM5_HTM_REQ_RESP,
+            address: None,
+            size: None,
+            packet_id: Some(986),
+        },
+        PacketFields {
+            tick: 3,
+            command: GEM5_STORE_COND_REQ,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(987),
+        },
+        PacketFields {
+            tick: 5,
+            command: GEM5_STORE_COND_RESP,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(987),
+        },
+        PacketFields {
+            tick: 7,
+            command: GEM5_HTM_ABORT,
+            address: None,
+            size: None,
+            packet_id: Some(988),
+        },
+    ]);
+    let cpu1_controller = controller_for_packets(&[
+        PacketFields {
+            tick: 4,
+            command: GEM5_WRITE_REQ,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(989),
+        },
+        PacketFields {
+            tick: 6,
+            command: GEM5_WRITE_RESP,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(989),
+        },
+    ]);
+
+    let outcome = RiscvWorkloadReplay::new(plan)
+        .with_max_turns(192)
+        .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
+            cpu0_controller,
+            route_id("cpu0.data"),
+            PartitionId::new(2),
+        ))
+        .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
+            cpu1_controller,
+            route_id("cpu1.data"),
+            PartitionId::new(2),
+        ))
+        .run_parallel()
+        .unwrap();
+
+    for traffic_replay in outcome.traffic_trace_replays() {
+        assert!(traffic_replay.errors().is_empty());
+        assert!(traffic_replay.runtime().is_empty(), "{traffic_replay:#?}");
+    }
+
+    let line = outcome.memory_snapshot();
+    let line = snapshot_line_data(line, MemoryTargetId::new(0), Address::new(0x9000));
+    assert_eq!(&line[8..16], &[7; 8]);
+}
+
+#[test]
+fn workload_replay_orders_htm_begin_after_earlier_same_tick_cache_response() {
+    let manifest = replay_manifest_with_data_cache("riscv-replay-trace-htm-begin-after-write");
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let controller = controller_for_packets(&[
+        PacketFields {
+            tick: 1,
+            command: GEM5_WRITE_REQ,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(990),
+        },
+        PacketFields {
+            tick: 2,
+            command: GEM5_HTM_REQ,
+            address: None,
+            size: None,
+            packet_id: Some(991),
+        },
+        PacketFields {
+            tick: 4,
+            command: GEM5_WRITE_RESP,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(990),
+        },
+        PacketFields {
+            tick: 4,
+            command: GEM5_HTM_REQ_RESP,
+            address: None,
+            size: None,
+            packet_id: Some(991),
+        },
+        PacketFields {
+            tick: 5,
+            command: GEM5_WRITE_REQ,
+            address: Some(0x9010),
+            size: Some(8),
+            packet_id: Some(992),
+        },
+        PacketFields {
+            tick: 7,
+            command: GEM5_WRITE_RESP,
+            address: Some(0x9010),
+            size: Some(8),
+            packet_id: Some(992),
+        },
+        PacketFields {
+            tick: 8,
+            command: GEM5_HTM_ABORT,
+            address: None,
+            size: None,
+            packet_id: Some(993),
+        },
+    ]);
+
+    let outcome = RiscvWorkloadReplay::new(plan)
+        .with_max_turns(192)
+        .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
+            controller,
+            route_id("cpu0.data"),
+            PartitionId::new(2),
+        ))
+        .run_parallel()
+        .unwrap();
+
+    let traffic_replay = &outcome.traffic_trace_replays()[0];
+    assert!(traffic_replay.errors().is_empty());
+    assert!(traffic_replay.runtime().is_empty(), "{traffic_replay:#?}");
+
+    let line = outcome.memory_snapshot();
+    let line = snapshot_line_data(line, MemoryTargetId::new(0), Address::new(0x9000));
+    assert_eq!(&line[8..16], &[7; 8]);
+    assert_eq!(&line[16..24], &[0; 8]);
 }
 
 #[test]
