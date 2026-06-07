@@ -171,6 +171,13 @@ impl TrafficTraceReplayTargetAction {
     fn trace_error(&self) -> Option<TrafficTraceErrorEvent> {
         self.trace_error
     }
+
+    fn trace_response_data(&self) -> Option<Vec<u8>> {
+        match &self.action {
+            TrafficTraceReplayAction::MemoryResponse { trace_data, .. } => trace_data.clone(),
+            _ => None,
+        }
+    }
 }
 
 impl TrafficTraceReplayTargetRuntime {
@@ -245,15 +252,19 @@ impl TrafficTraceReplayTargetRuntime {
         let event = target_event_for_action(&action.action, delivery)?;
         let trace_response = action.trace_response();
         let trace_error = action.trace_error();
+        let trace_response_data = action.trace_response_data();
         self.actions
             .remove(action_index)
             .expect("validated trace replay target action remains queued");
         self.request_ticks.remove(&delivery.request().id());
-        Ok(TrafficTraceReplayTargetEventContext::new(
-            event,
-            trace_response,
-            trace_error,
-        ))
+        Ok(
+            TrafficTraceReplayTargetEventContext::with_trace_response_data(
+                event,
+                trace_response,
+                trace_error,
+                trace_response_data,
+            ),
+        )
     }
 
     pub fn record_memory_failure(&mut self, tick: Tick, record: TrafficTraceMemoryFailureRecord) {
@@ -1289,6 +1300,7 @@ pub struct TrafficTraceReplayTargetEventContext {
     event: TrafficTraceReplayTargetEvent,
     trace_response: Option<TrafficTraceResponseEvent>,
     trace_error: Option<TrafficTraceErrorEvent>,
+    trace_response_data: Option<Vec<u8>>,
 }
 
 impl TrafficTraceReplayTargetEventContext {
@@ -1297,10 +1309,20 @@ impl TrafficTraceReplayTargetEventContext {
         trace_response: Option<TrafficTraceResponseEvent>,
         trace_error: Option<TrafficTraceErrorEvent>,
     ) -> Self {
+        Self::with_trace_response_data(event, trace_response, trace_error, None)
+    }
+
+    pub fn with_trace_response_data(
+        event: TrafficTraceReplayTargetEvent,
+        trace_response: Option<TrafficTraceResponseEvent>,
+        trace_error: Option<TrafficTraceErrorEvent>,
+        trace_response_data: Option<Vec<u8>>,
+    ) -> Self {
         Self {
             event,
             trace_response,
             trace_error,
+            trace_response_data,
         }
     }
 
@@ -1314,6 +1336,10 @@ impl TrafficTraceReplayTargetEventContext {
 
     pub const fn trace_error(&self) -> Option<TrafficTraceErrorEvent> {
         self.trace_error
+    }
+
+    pub fn trace_response_data(&self) -> Option<&[u8]> {
+        self.trace_response_data.as_deref()
     }
 
     pub fn into_event(self) -> TrafficTraceReplayTargetEvent {
@@ -1451,7 +1477,7 @@ fn target_event_for_action(
 ) -> Result<TrafficTraceReplayTargetEvent, TrafficTraceReplayTargetError> {
     let request = delivery.request().id();
     match action {
-        TrafficTraceReplayAction::MemoryResponse { tick, response } => {
+        TrafficTraceReplayAction::MemoryResponse { tick, response, .. } => {
             let response_request = response.request_id();
             if response_request != request {
                 return Err(TrafficTraceReplayTargetError::RequestMismatch {

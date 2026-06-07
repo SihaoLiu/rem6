@@ -24,10 +24,10 @@ pub use controller::{
     TrafficControllerEventBatch, TrafficControllerSnapshot, TrafficControllerState,
     TrafficStateGenerator, TrafficStateGeneratorSnapshot, TrafficStateGeneratorSnapshotEntry,
     TrafficTraceControlFailure, TrafficTraceControlFailureRecord, TrafficTraceErrorMatch,
-    TrafficTraceMemoryFailure, TrafficTraceMemoryFailureRecord, TrafficTraceMemoryResponseRecord,
-    TrafficTraceReplayAction, TrafficTraceReplayActionQueue, TrafficTraceReplayCompletion,
-    TrafficTraceReplayFailure, TrafficTraceReplayOutcome, TrafficTraceReplaySource,
-    TrafficTraceReplaySummary, TrafficTraceResponseMatch,
+    TrafficTraceMemoryCompletion, TrafficTraceMemoryFailure, TrafficTraceMemoryFailureRecord,
+    TrafficTraceMemoryResponseRecord, TrafficTraceReplayAction, TrafficTraceReplayActionQueue,
+    TrafficTraceReplayCompletion, TrafficTraceReplayFailure, TrafficTraceReplayOutcome,
+    TrafficTraceReplaySource, TrafficTraceReplaySummary, TrafficTraceResponseMatch,
 };
 pub use dram::{
     DramTrafficGenerator, TrafficDramAddressMapping, TrafficDramConfig, TrafficDramMode,

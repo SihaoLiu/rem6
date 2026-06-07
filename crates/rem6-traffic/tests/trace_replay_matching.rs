@@ -15,6 +15,8 @@ const GEM5_READ_RESP: u32 = 2;
 const GEM5_READ_RESP_WITH_INVALIDATE: u32 = 3;
 const GEM5_WRITE_REQ: u32 = 4;
 const GEM5_WRITE_RESP: u32 = 5;
+const GEM5_SOFT_PF_REQ: u32 = 11;
+const GEM5_SOFT_PF_RESP: u32 = 14;
 const GEM5_SWAP_REQ: u32 = 34;
 const GEM5_SWAP_RESP: u32 = 35;
 const GEM5_SC_UPGRADE_FAIL_REQ: u32 = 20;
@@ -185,6 +187,7 @@ fn traffic_controller_matches_swap_response_to_atomic_no_return_request() {
     let response_batch = controller.next_event(request.tick(), 0).unwrap().unwrap();
     let response = response_batch.trace_response().unwrap();
     assert_eq!(response.kind(), TrafficTraceResponseKind::Swap);
+    assert!(response.returns_data());
 
     let matched = response_batch.trace_response_match().unwrap();
     assert_eq!(matched.response(), response);
@@ -193,17 +196,91 @@ fn traffic_controller_matches_swap_response_to_atomic_no_return_request() {
             assert_eq!(memory_response.request_id(), request.request().id());
             assert_eq!(memory_response.status(), ResponseStatus::Completed);
             assert_eq!(memory_response.data(), None);
+            assert_eq!(memory_response.trace_data().unwrap().len(), 8);
         }
         completion => panic!("unexpected trace replay completion: {completion:?}"),
     }
     match response_batch.trace_replay_action().unwrap() {
-        TrafficTraceReplayAction::MemoryResponse { tick, response } => {
+        TrafficTraceReplayAction::MemoryResponse {
+            tick,
+            response,
+            trace_data,
+        } => {
             assert_eq!(*tick, matched.response().tick());
             assert_eq!(response.request_id(), request.request().id());
             assert_eq!(response.data(), None);
+            assert_eq!(trace_data.as_deref().unwrap().len(), 8);
         }
         action => panic!("unexpected trace replay action: {action:?}"),
     }
+}
+
+#[test]
+fn traffic_controller_exposes_prefetch_response_trace_data_separately_from_memory_response() {
+    let mut controller = controller_for_packets(&[
+        PacketFields {
+            tick: 5,
+            command: GEM5_SOFT_PF_REQ,
+            address: Some(0x4300),
+            size: Some(16),
+            packet_id: Some(33),
+        },
+        PacketFields {
+            tick: 7,
+            command: GEM5_SOFT_PF_RESP,
+            address: Some(0x4300),
+            size: Some(16),
+            packet_id: Some(33),
+        },
+    ]);
+
+    assert!(controller.start(20).unwrap().is_empty());
+    let request_batch = controller.next_event(20, 0).unwrap().unwrap();
+    let request = request_batch.request().unwrap().clone();
+    assert_eq!(request.request().operation(), MemoryOperation::PrefetchRead);
+    assert!(request.request().requires_response());
+    assert!(!request.request().returns_data());
+
+    let response_batch = controller.next_event(request.tick(), 0).unwrap().unwrap();
+    let response = response_batch.trace_response().unwrap();
+    assert_eq!(response.kind(), TrafficTraceResponseKind::SoftPrefetch);
+    assert!(response.returns_data());
+
+    let matched = response_batch.trace_response_match().unwrap();
+    match matched.completion() {
+        TrafficTraceReplayCompletion::Memory(memory_completion) => {
+            assert_eq!(
+                memory_completion.response().request_id(),
+                request.request().id()
+            );
+            assert_eq!(memory_completion.response().data(), None);
+            assert_eq!(memory_completion.trace_data().unwrap().len(), 16);
+        }
+        completion => panic!("unexpected trace replay completion: {completion:?}"),
+    }
+    match response_batch.trace_replay_action().unwrap() {
+        TrafficTraceReplayAction::MemoryResponse {
+            tick,
+            response,
+            trace_data,
+        } => {
+            assert_eq!(*tick, matched.response().tick());
+            assert_eq!(response.request_id(), request.request().id());
+            assert_eq!(response.data(), None);
+            assert_eq!(trace_data.as_deref().unwrap().len(), 16);
+        }
+        action => panic!("unexpected trace replay action: {action:?}"),
+    }
+    let mut action_queue = TrafficTraceReplayActionQueue::default();
+    action_queue.record_batch(&response_batch).unwrap();
+    let response_record = action_queue.pop_memory_response().unwrap();
+    assert_eq!(
+        response_record.response().request_id(),
+        request.request().id()
+    );
+    assert_eq!(response_record.response().data(), None);
+    assert_eq!(response_record.trace_data().unwrap().len(), 16);
+    assert!(action_queue.pop_memory_response().is_none());
 }
 
 #[test]
@@ -453,7 +530,7 @@ fn traffic_controller_records_trace_replay_outcomes() {
         outcome => panic!("unexpected trace replay outcome: {outcome:?}"),
     }
     match response_batch.trace_replay_action().unwrap() {
-        TrafficTraceReplayAction::MemoryResponse { tick, response } => {
+        TrafficTraceReplayAction::MemoryResponse { tick, response, .. } => {
             assert_eq!(*tick, response_batch.trace_response().unwrap().tick());
             assert_eq!(response.request_id(), request.request().id());
             assert_eq!(response.status(), ResponseStatus::Completed);

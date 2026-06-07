@@ -2861,9 +2861,10 @@ the configured offset is cache-line aligned map to native writable-invalidate
 requests with no data, no byte mask, response required, no response data,
 writable intent, and no read/write byte accounting.
 Trace-command prefetch packets consume read-side traffic accounting and require
-response completion without response data, while `PREFETCH` or `PF_EXCLUSIVE`
-flags on ordinary read or write packets still use rem6's native no-data,
-no-mask, no-CPU-response prefetch hint contract.
+response completion without native CPU-visible response data while preserving
+gem5 trace-only fill data on matched responses, while `PREFETCH` or
+`PF_EXCLUSIVE` flags on ordinary read or write packets still use rem6's native
+no-data, no-mask, no-CPU-response prefetch hint contract.
 Line-sized `UpgradeReq` command-id 17 packets whose effective address after the
 configured offset is cache-line aligned map to native maintenance upgrade
 requests with no data, no byte mask, response required, no response data,
@@ -2943,7 +2944,12 @@ trace replay sources for response-required memory requests, sync events, and
 HTM request events, matching later response packets by optional trace packet
 id, source-appropriate address and size metadata, and gem5 command policy.
 Matched memory responses emit a validated `MemoryResponse`, while matched
-non-memory responses emit typed acknowledgement records. On coherent workload
+non-memory responses emit typed acknowledgement records. Response packets with
+gem5 `HasData` policy also carry synthetic trace response data through replay
+completion, action-queue, and target-completion context records even when the
+native request cannot expose CPU-visible response payload, such as prefetch or
+atomic-no-return requests. This keeps native `MemoryRequest` validation intact
+while giving execution consumers a separate trace-fill channel. On coherent workload
 data routes, response clean and invalidate policies now drive the configured
 data-cache line after the matched response mutates the cache model:
 `ReadRespWithInvalidate`, `CleanInvalidResp`, and `InvalidateResp` clear the
@@ -2954,12 +2960,11 @@ Trace policy accessors are not treated as coverage by themselves. New response,
 error, sideband, or HTM policy exposure should land only with a controller,
 runtime, workload, cache, CPU, or diagnostic consumer, or with an explicit
 alignment note explaining why the matching executable contract is not available
-yet. The next trace-policy integration target is to turn the remaining
-response-data and HTM abort policy gaps into executable contracts without
-violating native `MemoryRequest` validation: prefetch and atomic-no-return
-trace responses need a trace-fill or cache-consumer path distinct from
-CPU-visible response data, while HTM abort sidebands need CPU checkpoint and
-transaction-state plumbing before they can safely mutate cache or core state.
+yet. The next trace-policy integration target is to turn the remaining HTM
+abort policy gap into an executable contract: trace response data now reaches
+target-completion consumers as a separate trace-fill channel, while HTM abort
+sidebands still need CPU checkpoint and transaction-state plumbing before they
+can safely mutate cache or core state.
 The controller records matched replay completions in a typed outcome summary
 and emits replay action events carrying owned memory responses or control
 acknowledgements. The

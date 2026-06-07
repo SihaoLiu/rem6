@@ -15,7 +15,7 @@ use rem6_system::{
 use rem6_traffic::{
     TrafficControllerEvent, TrafficControllerEventBatch, TrafficTraceControlFailure,
     TrafficTraceErrorKind, TrafficTraceMemoryFailure, TrafficTraceReplayAction,
-    TrafficTraceReplayActionQueue,
+    TrafficTraceReplayActionQueue, TrafficTraceResponseKind,
 };
 use rem6_transport::{
     MemoryRoute, MemoryTrace, MemoryTraceEvent, MemoryTraceKind, MemoryTransport, ResponseDelivery,
@@ -28,8 +28,8 @@ use support::traffic_trace::{
     completed_response, controller_for_packets, controller_for_packets_with_state_duration,
     endpoint, request, request_from, trace_cursor, PacketFields, GEM5_FLUSH_REQ, GEM5_HTM_ABORT,
     GEM5_HTM_REQ, GEM5_INVALID_DEST_ERROR, GEM5_MEM_FENCE_REQ, GEM5_MEM_FENCE_RESP, GEM5_PRINT_REQ,
-    GEM5_READ_REQ, GEM5_READ_RESP_WITH_INVALIDATE, GEM5_TLBI_EXT_SYNC, GEM5_WRITEBACK_DIRTY,
-    GEM5_WRITE_ERROR, GEM5_WRITE_REQ,
+    GEM5_READ_REQ, GEM5_READ_RESP_WITH_INVALIDATE, GEM5_SOFT_PF_REQ, GEM5_SOFT_PF_RESP,
+    GEM5_TLBI_EXT_SYNC, GEM5_WRITEBACK_DIRTY, GEM5_WRITE_ERROR, GEM5_WRITE_REQ,
 };
 
 #[test]
@@ -62,6 +62,7 @@ fn traffic_trace_replay_target_outcome_drives_transport_response_timing() {
         .record_action(TrafficTraceReplayAction::MemoryResponse {
             tick: 7,
             response: completed_response(&req, &[0xde, 0xad, 0xbe, 0xef, 0x44, 0x55, 0x66, 0x77]),
+            trace_data: None,
         })
         .unwrap();
 
@@ -149,6 +150,7 @@ fn traffic_trace_replay_target_outcome_rejects_wrong_request_response() {
         .record_action(TrafficTraceReplayAction::MemoryResponse {
             tick: 7,
             response: completed_response(&wrong_req, &[0xaa; 8]),
+            trace_data: None,
         })
         .unwrap();
 
@@ -376,6 +378,7 @@ fn traffic_trace_replay_target_runtime_records_batch_and_drives_memory_response(
                     &req,
                     &[0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57],
                 ),
+                trace_data: None,
             }),
         ]))
         .unwrap();
@@ -1187,6 +1190,95 @@ fn traffic_trace_replay_controller_parallel_executor_submits_interleaved_request
         .map(|event| event.tick())
         .collect::<Vec<_>>();
     assert_eq!(sent_ticks, vec![0, 1]);
+    assert!(executor.runtime().lock().unwrap().is_empty());
+}
+
+#[test]
+fn traffic_trace_replay_controller_parallel_executor_exposes_prefetch_trace_response_data() {
+    let mut controller = controller_for_packets(&[
+        PacketFields {
+            tick: 0,
+            command: GEM5_SOFT_PF_REQ,
+            address: Some(0xe100),
+            size: Some(16),
+            packet_id: Some(134),
+        },
+        PacketFields {
+            tick: 7,
+            command: GEM5_SOFT_PF_RESP,
+            address: Some(0xe100),
+            size: Some(16),
+            packet_id: Some(134),
+        },
+    ]);
+
+    assert!(controller.start(0).unwrap().is_empty());
+    let completions = Arc::new(Mutex::new(Vec::new()));
+    let completion_log = Arc::clone(&completions);
+    let executor = TrafficTraceReplayControllerParallelExecutor::new(controller)
+        .with_target_completion_sink(move |_order, _delivery, event_context| {
+            let response_data_len = match event_context.event() {
+                TrafficTraceReplayTargetEvent::MemoryResponse(TargetOutcome::Respond(response)) => {
+                    response.data().map(<[u8]>::len)
+                }
+                TrafficTraceReplayTargetEvent::MemoryResponse(TargetOutcome::RespondAfter {
+                    response,
+                    ..
+                }) => response.data().map(<[u8]>::len),
+                event => panic!("unexpected prefetch target event: {event:?}"),
+            };
+            completion_log.lock().unwrap().push((
+                event_context.trace_response().unwrap().kind(),
+                event_context.trace_response_data().map(<[u8]>::len),
+                response_data_len,
+            ));
+        });
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let responses = Arc::new(Mutex::new(Vec::new()));
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("core0"),
+                PartitionId::new(0),
+                endpoint("memory0"),
+                PartitionId::new(1),
+                3,
+                5,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    let response_log = Arc::clone(&responses);
+    let scheduled = executor
+        .schedule_controller_parallel(
+            &mut scheduler,
+            &transport,
+            route,
+            MemoryTrace::new(),
+            PartitionId::new(1),
+            move |delivery: ResponseDelivery| {
+                response_log.lock().unwrap().push((
+                    delivery.response().status(),
+                    delivery.response().data().map(<[u8]>::len),
+                ));
+            },
+        )
+        .unwrap();
+
+    assert_eq!(scheduled, 1);
+    scheduler.run_until_idle_parallel().unwrap();
+
+    assert!(executor.errors().is_empty());
+    assert_eq!(
+        *completions.lock().unwrap(),
+        vec![(TrafficTraceResponseKind::SoftPrefetch, Some(16), None)]
+    );
+    assert_eq!(
+        *responses.lock().unwrap(),
+        vec![(ResponseStatus::Completed, None)]
+    );
     assert!(executor.runtime().lock().unwrap().is_empty());
 }
 

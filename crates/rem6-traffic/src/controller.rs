@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use rem6_memory::{MemoryOperation, MemoryRequestId, MemoryResponse};
+use rem6_memory::{MemoryOperation, MemoryRequestId, MemoryResponse, ResponseStatus};
 
 use crate::{
     common::checked_counter_add,
@@ -810,8 +810,47 @@ impl TrafficTraceReplaySource {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TrafficTraceMemoryCompletion {
+    response: MemoryResponse,
+    trace_data: Option<Vec<u8>>,
+}
+
+impl TrafficTraceMemoryCompletion {
+    pub fn new(response: MemoryResponse, trace_data: Option<Vec<u8>>) -> Self {
+        Self {
+            response,
+            trace_data,
+        }
+    }
+
+    pub const fn response(&self) -> &MemoryResponse {
+        &self.response
+    }
+
+    pub const fn request_id(&self) -> MemoryRequestId {
+        self.response.request_id()
+    }
+
+    pub const fn status(&self) -> ResponseStatus {
+        self.response.status()
+    }
+
+    pub fn data(&self) -> Option<&[u8]> {
+        self.response.data()
+    }
+
+    pub fn trace_data(&self) -> Option<&[u8]> {
+        self.trace_data.as_deref()
+    }
+
+    pub fn into_response(self) -> MemoryResponse {
+        self.response
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TrafficTraceReplayCompletion {
-    Memory(MemoryResponse),
+    Memory(TrafficTraceMemoryCompletion),
     Ack,
 }
 
@@ -832,6 +871,7 @@ pub enum TrafficTraceReplayAction {
     MemoryResponse {
         tick: u64,
         response: MemoryResponse,
+        trace_data: Option<Vec<u8>>,
     },
     ControlAck {
         tick: u64,
@@ -849,9 +889,10 @@ pub enum TrafficTraceReplayAction {
 impl TrafficTraceReplayAction {
     fn from_completion(tick: u64, completion: &TrafficTraceReplayCompletion) -> Self {
         match completion {
-            TrafficTraceReplayCompletion::Memory(response) => Self::MemoryResponse {
+            TrafficTraceReplayCompletion::Memory(completion) => Self::MemoryResponse {
                 tick,
-                response: response.clone(),
+                response: completion.response.clone(),
+                trace_data: completion.trace_data.clone(),
             },
             TrafficTraceReplayCompletion::Ack => Self::ControlAck { tick },
         }
@@ -884,11 +925,28 @@ impl TrafficTraceReplayAction {
 pub struct TrafficTraceMemoryResponseRecord {
     tick: u64,
     response: MemoryResponse,
+    trace_data: Option<Vec<u8>>,
 }
 
 impl TrafficTraceMemoryResponseRecord {
     pub fn new(tick: u64, response: MemoryResponse) -> Self {
-        Self { tick, response }
+        Self {
+            tick,
+            response,
+            trace_data: None,
+        }
+    }
+
+    pub fn with_trace_data(
+        tick: u64,
+        response: MemoryResponse,
+        trace_data: Option<Vec<u8>>,
+    ) -> Self {
+        Self {
+            tick,
+            response,
+            trace_data,
+        }
     }
 
     pub const fn tick(&self) -> u64 {
@@ -897,6 +955,10 @@ impl TrafficTraceMemoryResponseRecord {
 
     pub const fn response(&self) -> &MemoryResponse {
         &self.response
+    }
+
+    pub fn trace_data(&self) -> Option<&[u8]> {
+        self.trace_data.as_deref()
     }
 
     pub fn into_response(self) -> MemoryResponse {
@@ -986,9 +1048,13 @@ impl TrafficTraceReplayActionQueue {
             .iter()
             .position(|action| matches!(action, TrafficTraceReplayAction::MemoryResponse { .. }))?;
         match self.actions.remove(index)? {
-            TrafficTraceReplayAction::MemoryResponse { tick, response } => {
-                Some(TrafficTraceMemoryResponseRecord::new(tick, response))
-            }
+            TrafficTraceReplayAction::MemoryResponse {
+                tick,
+                response,
+                trace_data,
+            } => Some(TrafficTraceMemoryResponseRecord::with_trace_data(
+                tick, response, trace_data,
+            )),
             _ => unreachable!("selected memory response action"),
         }
     }
@@ -1572,18 +1638,31 @@ fn trace_response_completion(
         TrafficTraceReplaySource::Memory(request) => {
             if request.request().operation() == MemoryOperation::StoreConditionalFail {
                 return MemoryResponse::store_conditional_failed(request.request())
-                    .map(TrafficTraceReplayCompletion::Memory)
+                    .map(|response| {
+                        TrafficTraceReplayCompletion::Memory(TrafficTraceMemoryCompletion::new(
+                            response, None,
+                        ))
+                    })
                     .map_err(Into::into);
             }
-            let data = if request.request().returns_data() {
+            let trace_data = if response.returns_data() {
                 let size = usize::try_from(request.request().size().bytes())
                     .expect("memory request size fits usize after construction");
                 Some(vec![0; size])
             } else {
                 None
             };
+            let data = if request.request().returns_data() {
+                trace_data.clone()
+            } else {
+                None
+            };
             MemoryResponse::completed(request.request(), data)
-                .map(TrafficTraceReplayCompletion::Memory)
+                .map(|response| {
+                    TrafficTraceReplayCompletion::Memory(TrafficTraceMemoryCompletion::new(
+                        response, trace_data,
+                    ))
+                })
                 .map_err(Into::into)
         }
         TrafficTraceReplaySource::Sync(_) | TrafficTraceReplaySource::Htm(_) => {
