@@ -27,10 +27,11 @@ mod support;
 use support::traffic_trace::{
     controller_for_packets, endpoint, PacketFields, GEM5_CLEAN_INVALID_REQ,
     GEM5_CLEAN_INVALID_RESP, GEM5_CLEAN_SHARED_REQ, GEM5_CLEAN_SHARED_RESP, GEM5_FLUSH_REQ,
-    GEM5_HTM_ABORT, GEM5_HTM_REQ, GEM5_HTM_REQ_RESP, GEM5_MEM_FENCE_REQ, GEM5_MEM_FENCE_RESP,
-    GEM5_PRINT_REQ, GEM5_READ_REQ, GEM5_READ_RESP, GEM5_READ_RESP_WITH_INVALIDATE,
-    GEM5_STORE_COND_FAIL_REQ, GEM5_STORE_COND_REQ, GEM5_STORE_COND_RESP, GEM5_TLBI_EXT_SYNC,
-    GEM5_WRITEBACK_DIRTY, GEM5_WRITE_ERROR, GEM5_WRITE_REQ, GEM5_WRITE_RESP,
+    GEM5_HTM_ABORT, GEM5_HTM_REQ, GEM5_HTM_REQ_RESP, GEM5_INVALID_DEST_ERROR, GEM5_MEM_FENCE_REQ,
+    GEM5_MEM_FENCE_RESP, GEM5_PRINT_REQ, GEM5_READ_REQ, GEM5_READ_RESP,
+    GEM5_READ_RESP_WITH_INVALIDATE, GEM5_STORE_COND_FAIL_REQ, GEM5_STORE_COND_REQ,
+    GEM5_STORE_COND_RESP, GEM5_TLBI_EXT_SYNC, GEM5_WRITEBACK_DIRTY, GEM5_WRITE_ERROR,
+    GEM5_WRITE_REQ, GEM5_WRITE_RESP,
 };
 
 fn workload_id(value: &str) -> rem6_workload::WorkloadId {
@@ -1452,6 +1453,66 @@ fn workload_replay_binds_htm_request_response_to_data_route_transaction() {
         htm_aborts[0].cluster_outcome(),
         RiscvClusterHtmAbortOutcome::Aborted { cpu, abort, .. }
             if *cpu == CpuId::new(0) && abort.uid() == htm_begins[0].begin_uid().unwrap()
+    ));
+}
+
+#[test]
+fn workload_replay_does_not_begin_htm_transaction_for_trace_control_failure() {
+    let manifest = replay_manifest_with_data_cache("riscv-replay-trace-htm-begin-error");
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let controller = controller_for_packets(&[
+        PacketFields {
+            tick: 1,
+            command: GEM5_HTM_REQ,
+            address: None,
+            size: None,
+            packet_id: Some(964),
+        },
+        PacketFields {
+            tick: 2,
+            command: GEM5_INVALID_DEST_ERROR,
+            address: None,
+            size: None,
+            packet_id: Some(964),
+        },
+        PacketFields {
+            tick: 3,
+            command: GEM5_HTM_ABORT,
+            address: None,
+            size: None,
+            packet_id: Some(965),
+        },
+    ]);
+
+    let outcome = RiscvWorkloadReplay::new(plan)
+        .with_max_turns(128)
+        .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
+            controller,
+            route_id("cpu0.data"),
+            PartitionId::new(2),
+        ))
+        .run_parallel()
+        .unwrap();
+
+    let traffic_replay = &outcome.traffic_trace_replays()[0];
+    assert!(traffic_replay.errors().is_empty());
+    assert!(traffic_replay.runtime().control_acks().is_empty());
+    assert_eq!(traffic_replay.runtime().control_failures().len(), 1);
+    assert_eq!(traffic_replay.runtime().control_failures()[0].tick(), 2);
+    assert_eq!(
+        traffic_replay.runtime().control_failures()[0]
+            .record()
+            .failure()
+            .error(),
+        TrafficTraceErrorKind::InvalidDestination
+    );
+    assert!(traffic_replay.htm_begin_records().is_empty());
+    let htm_aborts = traffic_replay.htm_abort_records();
+    assert_eq!(htm_aborts.len(), 1);
+    assert!(matches!(
+        htm_aborts[0].cluster_outcome(),
+        RiscvClusterHtmAbortOutcome::NoActiveTransaction { cpu, .. }
+            if *cpu == CpuId::new(0)
     ));
 }
 

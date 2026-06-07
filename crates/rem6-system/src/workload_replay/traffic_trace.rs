@@ -851,6 +851,12 @@ impl WorkloadTraceDataCacheConsumerInner {
         tick: Tick,
         event_context: &TrafficTraceReplayControlEventContext,
     ) {
+        if !matches!(
+            event_context.event(),
+            TrafficTraceReplayControlEvent::ControlAck { .. }
+        ) {
+            return;
+        }
         let Some(htm) = event_context.trace_htm() else {
             return;
         };
