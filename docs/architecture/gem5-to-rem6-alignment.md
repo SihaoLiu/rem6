@@ -3180,10 +3180,11 @@ preserves gem5's transition-before-packet priority at equal ticks, surfaces
 exit and trace-exit events, applies fixed or random stream IDs with optional
 substream IDs across state generators, preserves stream-picker RNG state in
 controller snapshots, and avoids live RNG mutation while comparing packet and
-transition timing. Full non-memory trace command execution, broader trace flag mapping, full
-memory-controller-coupled DRAM/NVM execution, workload/CLI GUPS binding,
-fabric-backed GUPS transport, and transport retry or response statistics
-remain open traffic-generator targets.
+transition timing. Additional trace command coverage beyond the currently
+executed sync, TLB, cache, diagnostic, HTM, response, and error replay paths,
+broader trace flag mapping, full memory-controller-coupled DRAM/NVM execution,
+workload/CLI GUPS binding, fabric-backed GUPS transport, and transport retry or
+response statistics remain open traffic-generator targets.
 
 ## Top-Level Module Map
 
