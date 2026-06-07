@@ -18,7 +18,7 @@ mod parallel_executor;
 
 pub use parallel_executor::{
     TrafficTraceReplayControllerParallelErrors, TrafficTraceReplayControllerParallelExecutor,
-    TrafficTraceReplayControllerParallelSubmitError,
+    TrafficTraceReplayControllerParallelSubmitError, TrafficTraceReplayOrder,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -116,6 +116,15 @@ impl TrafficTraceReplaySidebandEvent {
             Self::Cache(event) => event.tick(),
             Self::Diagnostic(event) => event.tick(),
             Self::Htm(event) => event.tick(),
+        }
+    }
+
+    pub const fn sequence(self) -> u64 {
+        match self {
+            Self::Tlb(event) => event.sequence(),
+            Self::Cache(event) => event.sequence(),
+            Self::Diagnostic(event) => event.sequence(),
+            Self::Htm(event) => event.sequence(),
         }
     }
 }

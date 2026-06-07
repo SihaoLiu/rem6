@@ -226,11 +226,11 @@ pub use traffic_replay::{
     TrafficTraceReplayControllerControlError, TrafficTraceReplayControllerParallelErrors,
     TrafficTraceReplayControllerParallelExecutor, TrafficTraceReplayControllerParallelSubmitError,
     TrafficTraceReplayControllerRuntime, TrafficTraceReplayControllerTargetError,
-    TrafficTraceReplayScheduledControlAck, TrafficTraceReplayScheduledControlFailure,
-    TrafficTraceReplayScheduledMemoryFailure, TrafficTraceReplayScheduledSidebandEvent,
-    TrafficTraceReplaySidebandCompletion, TrafficTraceReplaySidebandEvent,
-    TrafficTraceReplaySidebandRuntime, TrafficTraceReplayTargetError,
-    TrafficTraceReplayTargetEvent, TrafficTraceReplayTargetRuntime,
+    TrafficTraceReplayOrder, TrafficTraceReplayScheduledControlAck,
+    TrafficTraceReplayScheduledControlFailure, TrafficTraceReplayScheduledMemoryFailure,
+    TrafficTraceReplayScheduledSidebandEvent, TrafficTraceReplaySidebandCompletion,
+    TrafficTraceReplaySidebandEvent, TrafficTraceReplaySidebandRuntime,
+    TrafficTraceReplayTargetError, TrafficTraceReplayTargetEvent, TrafficTraceReplayTargetRuntime,
 };
 pub(crate) use trap_event::pending_trap_cores_from_turn;
 pub use trap_event::{

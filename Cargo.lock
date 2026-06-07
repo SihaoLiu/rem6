@@ -307,10 +307,12 @@ version = "0.1.0"
 dependencies = [
  "rem6-accelerator",
  "rem6-boot",
+ "rem6-cache",
  "rem6-checkpoint",
  "rem6-coherence",
  "rem6-cpu",
  "rem6-debug",
+ "rem6-directory",
  "rem6-dram",
  "rem6-fabric",
  "rem6-gpu",

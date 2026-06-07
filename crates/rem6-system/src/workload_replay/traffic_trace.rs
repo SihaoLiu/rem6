@@ -1,18 +1,21 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 use rem6_kernel::{PartitionId, PartitionedScheduler, Tick};
+use rem6_memory::MemoryRequestId;
 use rem6_traffic::{TrafficController, TrafficControllerEvent, TrafficControllerEventBatch};
 use rem6_transport::{
-    MemoryRouteId, MemoryTrace, MemoryTraceEvent, MemoryTransport, ResponseDelivery,
+    MemoryRouteId, MemoryTrace, MemoryTraceEvent, MemoryTransport, RequestDelivery,
+    ResponseDelivery,
 };
-use rem6_workload::{WorkloadRouteId, WorkloadTrafficTraceReplaySummary};
+use rem6_workload::{WorkloadRouteId, WorkloadTopology, WorkloadTrafficTraceReplaySummary};
 
 use crate::{
     TrafficTraceReplayControllerParallelErrors, TrafficTraceReplayControllerParallelExecutor,
-    TrafficTraceReplayControllerRuntime,
+    TrafficTraceReplayControllerRuntime, TrafficTraceReplayOrder, TrafficTraceReplaySidebandEvent,
 };
 
+use super::data_cache_backend::WorkloadDataCacheBackend;
 use super::RiscvWorkloadReplayError;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -156,9 +159,11 @@ impl RiscvWorkloadTrafficTraceReplayOutcome {
 
 pub(super) fn schedule_traffic_trace_replays(
     replays: &[RiscvWorkloadTrafficTraceReplay],
+    topology: &WorkloadTopology,
     route_map: &BTreeMap<WorkloadRouteId, MemoryRouteId>,
     scheduler: &mut PartitionedScheduler,
     transport: &MemoryTransport,
+    data_cache: &Option<Arc<Mutex<WorkloadDataCacheBackend>>>,
 ) -> Result<Vec<RiscvWorkloadScheduledTrafficTraceReplay>, RiscvWorkloadReplayError> {
     let mut scheduled_replays = Vec::new();
     for replay in replays {
@@ -173,8 +178,9 @@ pub(super) fn schedule_traffic_trace_replays(
         let start_batch = controller
             .start(scheduler.now())
             .map_err(|error| RiscvWorkloadReplayError::TrafficTraceReplay(error.into()))?;
-        let executor = TrafficTraceReplayControllerParallelExecutor::new(controller)
-            .with_retry_delay(replay.retry_delay());
+        let data_cache_consumer = trace_data_cache_consumer(replay.route(), topology, data_cache);
+        let executor =
+            traffic_trace_replay_executor(controller, replay.retry_delay(), data_cache_consumer);
 
         let mut scheduled_count = schedule_workload_traffic_trace_batch(
             &executor,
@@ -211,6 +217,178 @@ pub(super) fn schedule_traffic_trace_replays(
         });
     }
     Ok(scheduled_replays)
+}
+
+fn traffic_trace_replay_executor(
+    controller: TrafficController,
+    retry_delay: Tick,
+    data_cache: Option<WorkloadTraceDataCacheConsumer>,
+) -> TrafficTraceReplayControllerParallelExecutor {
+    let executor =
+        TrafficTraceReplayControllerParallelExecutor::new(controller).with_retry_delay(retry_delay);
+    let Some(data_cache) = data_cache else {
+        return executor;
+    };
+
+    executor
+        .with_target_request_sink({
+            let data_cache = data_cache.clone();
+            move |order, request| {
+                data_cache.register_request(order, request);
+            }
+        })
+        .with_target_sink({
+            let data_cache = data_cache.clone();
+            move |order, delivery| {
+                data_cache.consume_request(order, delivery);
+            }
+        })
+        .with_sideband_sink(move |tick, event| {
+            data_cache.record_sideband(tick, event);
+        })
+}
+
+fn trace_data_cache_consumer(
+    route: &WorkloadRouteId,
+    topology: &WorkloadTopology,
+    data_cache: &Option<Arc<Mutex<WorkloadDataCacheBackend>>>,
+) -> Option<WorkloadTraceDataCacheConsumer> {
+    if !trace_route_uses_data_cache(route, topology) {
+        return None;
+    }
+    data_cache.clone().map(WorkloadTraceDataCacheConsumer::new)
+}
+
+fn trace_route_uses_data_cache(route: &WorkloadRouteId, topology: &WorkloadTopology) -> bool {
+    if topology.riscv_data_cache().is_none() {
+        return false;
+    }
+    topology
+        .riscv_cores()
+        .iter()
+        .filter_map(|core| core.data_route())
+        .any(|data_route| data_route == route)
+        || topology
+            .gpu_dma_copies()
+            .iter()
+            .any(|copy| copy.route() == route)
+        || topology
+            .accelerator_dma_copies()
+            .iter()
+            .any(|copy| copy.route() == route)
+}
+
+#[derive(Clone)]
+struct WorkloadTraceDataCacheConsumer {
+    inner: Arc<Mutex<WorkloadTraceDataCacheConsumerInner>>,
+}
+
+impl WorkloadTraceDataCacheConsumer {
+    fn new(data_cache: Arc<Mutex<WorkloadDataCacheBackend>>) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(WorkloadTraceDataCacheConsumerInner {
+                data_cache,
+                pending_requests: BTreeSet::new(),
+                pending_sidebands: Vec::new(),
+            })),
+        }
+    }
+
+    fn register_request(&self, order: TrafficTraceReplayOrder, _request: MemoryRequestId) {
+        self.inner
+            .lock()
+            .expect("workload trace data cache consumer lock")
+            .pending_requests
+            .insert(order);
+    }
+
+    fn consume_request(&self, order: TrafficTraceReplayOrder, delivery: &RequestDelivery) {
+        let mut inner = self
+            .inner
+            .lock()
+            .expect("workload trace data cache consumer lock");
+        inner.apply_sidebands_before(order);
+        inner
+            .data_cache
+            .lock()
+            .expect("workload data cache lock")
+            .respond(delivery);
+        inner.pending_requests.remove(&order);
+        inner.apply_ready_sidebands(delivery.tick());
+    }
+
+    fn record_sideband(&self, tick: Tick, event: TrafficTraceReplaySidebandEvent) {
+        let mut inner = self
+            .inner
+            .lock()
+            .expect("workload trace data cache consumer lock");
+        inner
+            .pending_sidebands
+            .push(WorkloadTraceDataCacheSideband {
+                tick,
+                order: TrafficTraceReplayOrder::new(event.tick(), event.sequence()),
+                event,
+            });
+        inner.apply_ready_sidebands(tick);
+    }
+}
+
+struct WorkloadTraceDataCacheConsumerInner {
+    data_cache: Arc<Mutex<WorkloadDataCacheBackend>>,
+    pending_requests: BTreeSet<TrafficTraceReplayOrder>,
+    pending_sidebands: Vec<WorkloadTraceDataCacheSideband>,
+}
+
+impl WorkloadTraceDataCacheConsumerInner {
+    fn apply_sidebands_before(&mut self, request_order: TrafficTraceReplayOrder) {
+        while let Some(index) = self.next_sideband_index(|sideband| sideband.order <= request_order)
+        {
+            let sideband = self.pending_sidebands.remove(index);
+            self.apply_sideband(sideband.event);
+        }
+    }
+
+    fn apply_ready_sidebands(&mut self, now: Tick) {
+        while let Some(index) = self.next_sideband_index(|sideband| sideband.tick <= now) {
+            let sideband = self.pending_sidebands.remove(index);
+            self.apply_sideband(sideband.event);
+        }
+    }
+
+    fn next_sideband_index(
+        &self,
+        ready: impl Fn(&WorkloadTraceDataCacheSideband) -> bool,
+    ) -> Option<usize> {
+        self.pending_sidebands
+            .iter()
+            .enumerate()
+            .filter(|(_, sideband)| ready(sideband) && !self.is_blocked(sideband.order))
+            .min_by_key(|(_, sideband)| sideband.order)
+            .map(|(index, _)| index)
+    }
+
+    fn is_blocked(&self, order: TrafficTraceReplayOrder) -> bool {
+        self.pending_requests
+            .iter()
+            .next()
+            .is_some_and(|request_order| *request_order < order)
+    }
+
+    fn apply_sideband(&mut self, event: TrafficTraceReplaySidebandEvent) {
+        let TrafficTraceReplaySidebandEvent::Cache(cache) = event else {
+            return;
+        };
+        self.data_cache
+            .lock()
+            .expect("workload data cache lock")
+            .apply_trace_cache_event(cache);
+    }
+}
+
+struct WorkloadTraceDataCacheSideband {
+    tick: Tick,
+    order: TrafficTraceReplayOrder,
+    event: TrafficTraceReplaySidebandEvent,
 }
 
 #[allow(clippy::too_many_arguments)]

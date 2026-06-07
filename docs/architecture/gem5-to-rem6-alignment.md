@@ -2909,9 +2909,16 @@ configured offset is cache-line aligned map to typed `TrafficTraceEvent::Cache`
 flush events that preserve tick ordering, sequence, address, size, optional
 packet id, optional PC metadata, gem5 request and flush classification,
 writable intent, and packet-count accounting without constructing a
-`MemoryRequest` or adding read/write byte accounting. Full cache flush
-execution remains a cache subsystem contract because gem5 uses
-`FlushReq` both from Ruby tester checks and cache-trace replay paths.
+`MemoryRequest` or adding read/write byte accounting. Workload trace replay now
+connects trace requests only on coherent workload data routes to the configured
+data-cache backend, and applies `FlushReq` sideband events to configured
+MSI/MESI/MOESI/CHI data-cache lines by writing back visible line data, clearing
+local cached copies, and resetting directory ownership before later trace target
+deliveries. The consumer serializes cache sidebands and target deliveries by
+trace tick and sequence, so same-tick replay does not depend on parallel
+scheduler partition ordering. Full Ruby cache-recorder flush coverage beyond
+declared workload data-cache lines remains a cache subsystem contract because
+gem5 uses `FlushReq` both from Ruby tester checks and cache-trace replay paths.
 `ReadResp`, `ReadRespWithInvalidate`, `WriteResp`, `WriteCompleteResp`,
 `SoftPFResp`, `HardPFResp`, `UpgradeResp`, `UpgradeFailResp`, `ReadExResp`,
 `StoreCondResp`, `LockedRMWReadResp`, `LockedRMWWriteResp`, `SwapResp`,
@@ -2964,10 +2971,16 @@ diagnostic print, and non-response HTM abort trace events are captured by the
 sideband runtime. The standalone sideband helper can schedule those events
 from an already-recorded sideband runtime, and the controller-aware memory and
 control helpers now also drain sideband events automatically whenever their
-trace-controller advance crosses those events. This preserves executable audit
-records instead of dropping them; if a sideband event is discovered after its
-trace tick, it is recorded at the current scheduler tick as late-observed trace
-evidence rather than blocking the replay queue. The lower-level memory target
+trace-controller advance crosses those events. The parallel trace replay
+executor can also install target and sideband consumers; workload replay uses
+those hooks so coherent data-route trace requests mutate the configured
+data-cache backend before the trace response is delivered, and cache-flush
+sidebands apply to that backend rather than remaining audit-only events. The
+workload consumer ignores fetch, MMIO, and other non-data-cache routes even when
+their trace addresses alias a configured data-cache line. This preserves
+executable audit records instead of dropping them; if a sideband event is
+discovered after its trace tick, it is recorded at the current scheduler tick as
+late-observed trace evidence rather than blocking the replay queue. The lower-level memory target
 runtime ignores control and sideband actions, and the lower-level control
 runtime ignores memory and sideband actions only after that fanout, so a
 controller-aware memory replay that advances past a control ack keeps the ack
@@ -3202,11 +3215,12 @@ import as typed diagnostic trace events with request and print classification
 without rebuilding the sender-state print tree that the packet trace does not
 encode. Line-shaped `FlushReq` packet-trace commands now import as typed cache
 flush events that retain gem5's request classification, flush classification,
-and writable intent without pretending cache flush execution is already wired
-through every cache protocol. Broader TLBI execution
-semantics, TLBI completion forms, CPU-visible HTM behavior, full diagnostic
-printing, and executable cache flush handling remain open because they need
-CPU/MMU/cache/debug-visible event contracts, and sync flags beyond `KERNEL`
+and writable intent. Workload trace replay consumes those events for declared
+data-cache lines on coherent data routes, while broader Ruby cache-recorder
+flush coverage remains open. Broader TLBI execution semantics, TLBI completion
+forms, CPU-visible HTM behavior, full diagnostic printing, and cache flush
+handling outside declared workload data-cache lines remain open because they
+need CPU/MMU/cache/debug-visible event contracts, and sync flags beyond `KERNEL`
 need additional typed metadata before import can accept them.
 
 ### Memory, Cache, Coherence, and NoC

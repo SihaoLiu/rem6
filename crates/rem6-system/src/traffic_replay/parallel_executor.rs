@@ -3,11 +3,13 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerError, Tick};
+use rem6_memory::MemoryRequestId;
 use rem6_traffic::{
     TrafficController, TrafficControllerEvent, TrafficControllerEventBatch, TrafficGeneratorError,
 };
 use rem6_transport::{
-    MemoryRouteId, MemoryTrace, MemoryTransport, ResponseDelivery, TargetOutcome, TransportError,
+    MemoryRouteId, MemoryTrace, MemoryTransport, RequestDelivery, ResponseDelivery, TargetOutcome,
+    TransportError,
 };
 
 use super::{
@@ -18,13 +20,39 @@ use super::{
 };
 
 type ScheduledSideband = (Tick, TrafficTraceReplaySidebandEvent);
+type SidebandSink = Arc<dyn Fn(Tick, TrafficTraceReplaySidebandEvent) + Send + Sync>;
+type TargetRequestSink = Arc<dyn Fn(TrafficTraceReplayOrder, MemoryRequestId) + Send + Sync>;
+type TargetSink = Arc<dyn Fn(TrafficTraceReplayOrder, &RequestDelivery) + Send + Sync>;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct TrafficTraceReplayOrder {
+    tick: Tick,
+    sequence: u64,
+}
+
+impl TrafficTraceReplayOrder {
+    pub const fn new(tick: Tick, sequence: u64) -> Self {
+        Self { tick, sequence }
+    }
+
+    pub const fn tick(self) -> Tick {
+        self.tick
+    }
+
+    pub const fn sequence(self) -> u64 {
+        self.sequence
+    }
+}
+
+#[derive(Clone)]
 pub struct TrafficTraceReplayControllerParallelExecutor {
     runtime: Arc<Mutex<TrafficTraceReplayControllerRuntime>>,
     controller: Arc<Mutex<TrafficController>>,
     errors: Arc<Mutex<TrafficTraceReplayControllerParallelErrors>>,
     retry_delay: Tick,
+    sideband_sink: Option<SidebandSink>,
+    target_request_sink: Option<TargetRequestSink>,
+    target_sink: Option<TargetSink>,
 }
 
 impl TrafficTraceReplayControllerParallelExecutor {
@@ -36,11 +64,38 @@ impl TrafficTraceReplayControllerParallelExecutor {
                 TrafficTraceReplayControllerParallelErrors::default(),
             )),
             retry_delay: 0,
+            sideband_sink: None,
+            target_request_sink: None,
+            target_sink: None,
         }
     }
 
     pub const fn with_retry_delay(mut self, retry_delay: Tick) -> Self {
         self.retry_delay = retry_delay;
+        self
+    }
+
+    pub fn with_sideband_sink<F>(mut self, sink: F) -> Self
+    where
+        F: Fn(Tick, TrafficTraceReplaySidebandEvent) + Send + Sync + 'static,
+    {
+        self.sideband_sink = Some(Arc::new(sink));
+        self
+    }
+
+    pub fn with_target_sink<F>(mut self, sink: F) -> Self
+    where
+        F: Fn(TrafficTraceReplayOrder, &RequestDelivery) + Send + Sync + 'static,
+    {
+        self.target_sink = Some(Arc::new(sink));
+        self
+    }
+
+    pub fn with_target_request_sink<F>(mut self, sink: F) -> Self
+    where
+        F: Fn(TrafficTraceReplayOrder, MemoryRequestId) + Send + Sync + 'static,
+    {
+        self.target_request_sink = Some(Arc::new(sink));
         self
     }
 
@@ -176,7 +231,9 @@ impl TrafficTraceReplayControllerParallelExecutor {
             return Ok(false);
         };
         let request_tick = request_event.tick();
+        let request_order = TrafficTraceReplayOrder::new(request_tick, request_event.sequence());
         let request = request_event.request().clone();
+        let request_id = request.id();
         let staged = self.staged_runtime(batch)?;
         let (staged, sidebands) = prepare_sidebands_from_runtime(
             staged,
@@ -187,6 +244,7 @@ impl TrafficTraceReplayControllerParallelExecutor {
 
         let runtime = Arc::clone(&self.runtime);
         let errors = Arc::clone(&self.errors);
+        let target_sink = self.target_sink.clone();
         transport.submit_parallel_at(
             scheduler,
             request_tick,
@@ -194,6 +252,9 @@ impl TrafficTraceReplayControllerParallelExecutor {
             request,
             trace,
             move |delivery, context| {
+                if let Some(target_sink) = &target_sink {
+                    target_sink(request_order, &delivery);
+                }
                 match traffic_trace_replay_controller_runtime_target_outcome_parallel(
                     Arc::clone(&runtime),
                     &delivery,
@@ -211,6 +272,9 @@ impl TrafficTraceReplayControllerParallelExecutor {
             },
             response_sink,
         )?;
+        if let Some(target_request_sink) = &self.target_request_sink {
+            target_request_sink(request_order, request_id);
+        }
 
         self.schedule_prepared_sidebands(
             scheduler,
@@ -294,7 +358,11 @@ impl TrafficTraceReplayControllerParallelExecutor {
     ) -> Result<(), SchedulerError> {
         for (tick, event) in sidebands {
             let runtime = Arc::clone(&self.runtime);
+            let sideband_sink = self.sideband_sink.clone();
             scheduler.schedule_parallel_at(partition, tick, move |context| {
+                if let Some(sideband_sink) = &sideband_sink {
+                    sideband_sink(context.now(), event);
+                }
                 runtime
                     .lock()
                     .expect("trace replay controller runtime lock")

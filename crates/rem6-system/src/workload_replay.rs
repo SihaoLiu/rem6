@@ -308,9 +308,11 @@ impl RiscvWorkloadReplay {
         )?;
         let traffic_trace_replays = schedule_traffic_trace_replays(
             &self.traffic_trace_replays,
+            topology,
             &route_map,
             &mut scheduler,
             &transport,
+            &data_cache,
         )?;
         let trap_port = RiscvTrapEventPort::new(
             SystemHostEventPort::with_controller(
