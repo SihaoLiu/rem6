@@ -399,12 +399,19 @@ impl RiscvWorkloadReplay {
             return Err(RiscvWorkloadReplayError::TrafficTraceReplayCallback { route, errors });
         }
         if let Some(data_cache) = data_cache.as_ref() {
-            let (final_lines, records, trace_diagnostic_records, trace_htm_access_records) = {
+            let (
+                final_lines,
+                records,
+                trace_diagnostic_records,
+                trace_error_records,
+                trace_htm_access_records,
+            ) = {
                 let data_cache = data_cache.lock().expect("workload data cache lock");
                 (
                     data_cache.final_lines()?,
                     data_cache.records(),
                     data_cache.trace_diagnostic_records(),
+                    data_cache.trace_error_records(),
                     data_cache.trace_htm_access_records(),
                 )
             };
@@ -416,6 +423,9 @@ impl RiscvWorkloadReplay {
             }
             if !trace_diagnostic_records.is_empty() {
                 run = run.with_trace_diagnostic_records(trace_diagnostic_records);
+            }
+            if !trace_error_records.is_empty() {
+                run = run.with_trace_error_records(trace_error_records);
             }
             if !trace_htm_access_records.is_empty() {
                 run = run.with_trace_htm_access_records(trace_htm_access_records);

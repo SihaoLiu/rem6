@@ -3033,11 +3033,14 @@ those hooks so coherent data-route trace requests mutate the configured
 data-cache backend at the matched response tick, not at request delivery. A
 matched `StoreCondFailReq` response is delivered as
 `StoreConditionalFailed` without driving a successful data-cache access. A
-matched memory failure records typed error metadata at the failure tick without
-executing a successful data-cache access, and cache-flush sidebands apply to
-that backend rather than remaining audit-only events. Diagnostic print
-sidebands on those routes record a non-mutating data-cache snapshot at the
-sideband execution tick. TLBI external-sync sidebands on translated data routes
+matched address-bearing memory failure records typed error metadata at the
+failure tick without executing a successful data-cache access; on data-cache
+routes, the workload backend also emits run-level trace error records with
+request id, error kind, line, address, size, packet id, and PC metadata.
+Cache-flush sidebands apply to that backend rather than remaining audit-only
+events. Diagnostic print sidebands on those routes record a non-mutating
+data-cache snapshot at the sideband execution tick. TLBI external-sync sidebands
+on translated data routes
 flush the corresponding RISC-V data-translation TLB. The workload consumer
 ignores fetch, MMIO, and unrelated data routes even when their trace addresses
 alias a configured data-cache line. This preserves executable audit

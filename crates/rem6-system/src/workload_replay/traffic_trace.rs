@@ -613,28 +613,38 @@ impl WorkloadTraceDataCacheConsumer {
             .lock()
             .expect("workload trace data cache consumer lock");
         inner.apply_events_before(completion_order);
-        if matches!(
-            event_context.event(),
-            TrafficTraceReplayTargetEvent::MemoryResponse(_)
-        ) {
-            let data_cache_response_status = target_event_response_status(event_context.event());
-            let mut data_cache_response_applied = false;
-            if data_cache_response_status.is_some()
-                && data_cache_response_status != Some(ResponseStatus::StoreConditionalFailed)
-            {
-                if let Some(data_cache) = inner.data_cache.as_ref() {
-                    let cache_outcome = data_cache
-                        .lock()
-                        .expect("workload data cache lock")
-                        .respond(delivery);
-                    data_cache_response_applied = cache_outcome
-                        .as_ref()
-                        .and_then(target_outcome_response_status)
-                        == Some(ResponseStatus::Completed);
+        match event_context.event() {
+            TrafficTraceReplayTargetEvent::MemoryResponse(_) => {
+                let data_cache_response_status =
+                    target_event_response_status(event_context.event());
+                let mut data_cache_response_applied = false;
+                if data_cache_response_status.is_some()
+                    && data_cache_response_status != Some(ResponseStatus::StoreConditionalFailed)
+                {
+                    if let Some(data_cache) = inner.data_cache.as_ref() {
+                        let cache_outcome = data_cache
+                            .lock()
+                            .expect("workload data cache lock")
+                            .respond(delivery);
+                        data_cache_response_applied = cache_outcome
+                            .as_ref()
+                            .and_then(target_outcome_response_status)
+                            == Some(ResponseStatus::Completed);
+                    }
+                }
+                if let Some(response) = event_context.trace_response() {
+                    inner.apply_trace_response(
+                        delivery.tick(),
+                        response,
+                        data_cache_response_applied,
+                    );
                 }
             }
-            if let Some(response) = event_context.trace_response() {
-                inner.apply_trace_response(delivery.tick(), response, data_cache_response_applied);
+            TrafficTraceReplayTargetEvent::MemoryFailure { record, .. } => {
+                if let Some(error) = event_context.trace_error() {
+                    let record = *record;
+                    inner.apply_trace_error(record.tick(), record.failure().request_id(), error);
+                }
             }
         }
         inner.pending_requests.remove(&completion_order);
@@ -911,6 +921,20 @@ impl WorkloadTraceDataCacheConsumerInner {
                 );
             }
             data_cache.apply_trace_response_event(event);
+        }
+    }
+
+    fn apply_trace_error(
+        &mut self,
+        tick: Tick,
+        request_id: MemoryRequestId,
+        event: rem6_traffic::TrafficTraceErrorEvent,
+    ) {
+        if let Some(data_cache) = self.data_cache.as_ref() {
+            data_cache
+                .lock()
+                .expect("workload data cache lock")
+                .record_trace_error_event(tick, request_id, event);
         }
     }
 }

@@ -64,6 +64,7 @@ mod system_run_worker_lanes;
 mod timer_checkpoint;
 mod topology;
 mod trace_diagnostic;
+mod trace_error;
 mod trace_htm_access;
 mod traffic_gups;
 mod traffic_replay;
@@ -211,6 +212,7 @@ pub use topology::{
     RiscvTopologySystemError, RiscvTopologyWorkloadSinicPciError,
 };
 pub use trace_diagnostic::{RiscvTraceDiagnosticKind, RiscvTraceDiagnosticRecord};
+pub use trace_error::RiscvTraceErrorRecord;
 pub use trace_htm_access::{RiscvTraceHtmAccessKind, RiscvTraceHtmAccessRecord};
 pub use traffic_gups::{
     traffic_gups_controller_transport_run, TrafficGupsTargetResponder, TrafficGupsTransportError,
@@ -303,6 +305,7 @@ pub struct RiscvSystemRun {
     pub(crate) data_cache_runs: Vec<ParallelCoherenceRunSummary>,
     pub(crate) data_cache_run_protocols: Vec<Option<RiscvDataCacheProtocol>>,
     pub(crate) trace_diagnostic_records: Vec<RiscvTraceDiagnosticRecord>,
+    pub(crate) trace_error_records: Vec<RiscvTraceErrorRecord>,
     pub(crate) trace_htm_access_records: Vec<RiscvTraceHtmAccessRecord>,
     pub(crate) store_conditional_failure_diagnostics: Vec<RiscvStoreConditionalFailureDiagnostic>,
 }
@@ -325,6 +328,7 @@ impl RiscvSystemRun {
             data_cache_runs: Vec::new(),
             data_cache_run_protocols: Vec::new(),
             trace_diagnostic_records: Vec::new(),
+            trace_error_records: Vec::new(),
             trace_htm_access_records: Vec::new(),
             store_conditional_failure_diagnostics: Vec::new(),
         }

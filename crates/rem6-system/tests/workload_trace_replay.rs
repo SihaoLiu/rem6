@@ -886,6 +886,23 @@ fn workload_replay_does_not_mutate_data_cache_for_trace_write_error() {
         failure.record().failure().error(),
         TrafficTraceErrorKind::Write
     );
+    let trace_errors = outcome.run().trace_error_records();
+    assert_eq!(trace_errors.len(), 1);
+    let trace_error = trace_errors[0];
+    assert_eq!(trace_error.tick(), 3);
+    assert_eq!(trace_error.trace_tick(), 3);
+    assert_eq!(trace_error.sequence(), 1);
+    assert_eq!(
+        trace_error.request_id(),
+        failure.record().failure().request_id()
+    );
+    assert_eq!(trace_error.error(), TrafficTraceErrorKind::Write);
+    assert_eq!(trace_error.protocol(), RiscvDataCacheProtocol::Msi);
+    assert_eq!(trace_error.target(), MemoryTargetId::new(0));
+    assert_eq!(trace_error.address(), Address::new(0x9008));
+    assert_eq!(trace_error.line(), Address::new(0x9000));
+    assert_eq!(trace_error.size_bytes(), Some(8));
+    assert_eq!(trace_error.trace_packet_id(), Some(950));
     assert!(outcome.run().data_cache_runs().is_empty());
 }
 
