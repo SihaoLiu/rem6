@@ -470,9 +470,18 @@ impl TrafficTraceReplayControlRuntime {
         &mut self,
         delivery_tick: Tick,
     ) -> Result<TrafficTraceReplayControlEvent, TrafficTraceReplayControlError> {
+        self.control_event_context(delivery_tick)
+            .map(TrafficTraceReplayControlEventContext::into_event)
+    }
+
+    pub fn control_event_context(
+        &mut self,
+        delivery_tick: Tick,
+    ) -> Result<TrafficTraceReplayControlEventContext, TrafficTraceReplayControlError> {
         let action_index = self
             .control_action_index()
             .ok_or(TrafficTraceReplayControlError::ActionQueueEmpty { delivery_tick })?;
+        let source = self.source();
         let action = &self
             .actions
             .get(action_index)
@@ -504,10 +513,10 @@ impl TrafficTraceReplayControlRuntime {
         self.actions
             .remove(action_index)
             .expect("validated trace replay control action remains queued");
-        if self.source().is_some() {
+        if source.is_some() {
             self.sources.pop_front();
         }
-        Ok(event)
+        Ok(TrafficTraceReplayControlEventContext::new(event, source))
     }
 
     pub fn record_control_ack(&mut self, tick: Tick, trace_tick: Tick) {
@@ -642,6 +651,13 @@ impl TrafficTraceReplayControllerRuntime {
         delivery_tick: Tick,
     ) -> Result<TrafficTraceReplayControlEvent, TrafficTraceReplayControlError> {
         self.control.control_event(delivery_tick)
+    }
+
+    fn control_event_context(
+        &mut self,
+        delivery_tick: Tick,
+    ) -> Result<TrafficTraceReplayControlEventContext, TrafficTraceReplayControlError> {
+        self.control.control_event_context(delivery_tick)
     }
 
     fn has_control_action(&self) -> bool {
@@ -1071,6 +1087,16 @@ fn traffic_trace_replay_controller_runtime_control_event(
         .control_event(delivery_tick)
 }
 
+pub(super) fn traffic_trace_replay_controller_runtime_control_event_context(
+    runtime: Arc<Mutex<TrafficTraceReplayControllerRuntime>>,
+    delivery_tick: Tick,
+) -> Result<TrafficTraceReplayControlEventContext, TrafficTraceReplayControlError> {
+    runtime
+        .lock()
+        .expect("trace replay controller runtime lock")
+        .control_event_context(delivery_tick)
+}
+
 pub fn traffic_trace_replay_controller_runtime_sideband_events(
     runtime: Arc<Mutex<TrafficTraceReplayControllerRuntime>>,
     delivery_tick: Tick,
@@ -1203,6 +1229,43 @@ impl TrafficTraceReplayControlEvent {
         match self {
             Self::ControlAck { delay, .. } | Self::ControlFailure { delay, .. } => *delay,
         }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TrafficTraceReplayControlEventContext {
+    event: TrafficTraceReplayControlEvent,
+    source: Option<TrafficTraceReplayControlSource>,
+}
+
+impl TrafficTraceReplayControlEventContext {
+    const fn new(
+        event: TrafficTraceReplayControlEvent,
+        source: Option<TrafficTraceReplayControlSource>,
+    ) -> Self {
+        Self { event, source }
+    }
+
+    pub const fn event(&self) -> &TrafficTraceReplayControlEvent {
+        &self.event
+    }
+
+    pub const fn trace_htm(&self) -> Option<TrafficTraceHtmEvent> {
+        match self.source {
+            Some(TrafficTraceReplayControlSource::Htm(event)) => Some(event),
+            _ => None,
+        }
+    }
+
+    pub const fn trace_sync(&self) -> Option<TrafficTraceSyncEvent> {
+        match self.source {
+            Some(TrafficTraceReplayControlSource::Sync(event)) => Some(event),
+            _ => None,
+        }
+    }
+
+    pub fn into_event(self) -> TrafficTraceReplayControlEvent {
+        self.event
     }
 }
 

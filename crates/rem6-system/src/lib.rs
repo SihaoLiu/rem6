@@ -224,16 +224,17 @@ pub use traffic_replay::{
     traffic_trace_replay_runtime_control_completion, traffic_trace_replay_runtime_sideband_events,
     traffic_trace_replay_runtime_target_outcome, traffic_trace_replay_target_event,
     traffic_trace_replay_target_outcome, TrafficTraceReplayControlError,
-    TrafficTraceReplayControlEvent, TrafficTraceReplayControlRuntime,
-    TrafficTraceReplayControllerControlError, TrafficTraceReplayControllerParallelErrors,
-    TrafficTraceReplayControllerParallelExecutor, TrafficTraceReplayControllerParallelSubmitError,
-    TrafficTraceReplayControllerRuntime, TrafficTraceReplayControllerTargetError,
-    TrafficTraceReplayOrder, TrafficTraceReplayScheduledControlAck,
-    TrafficTraceReplayScheduledControlFailure, TrafficTraceReplayScheduledMemoryFailure,
-    TrafficTraceReplayScheduledSidebandEvent, TrafficTraceReplaySidebandCompletion,
-    TrafficTraceReplaySidebandEvent, TrafficTraceReplaySidebandRuntime,
-    TrafficTraceReplayTargetError, TrafficTraceReplayTargetEvent,
-    TrafficTraceReplayTargetEventContext, TrafficTraceReplayTargetRuntime,
+    TrafficTraceReplayControlEvent, TrafficTraceReplayControlEventContext,
+    TrafficTraceReplayControlRuntime, TrafficTraceReplayControllerControlError,
+    TrafficTraceReplayControllerParallelErrors, TrafficTraceReplayControllerParallelExecutor,
+    TrafficTraceReplayControllerParallelSubmitError, TrafficTraceReplayControllerRuntime,
+    TrafficTraceReplayControllerTargetError, TrafficTraceReplayOrder,
+    TrafficTraceReplayScheduledControlAck, TrafficTraceReplayScheduledControlFailure,
+    TrafficTraceReplayScheduledMemoryFailure, TrafficTraceReplayScheduledSidebandEvent,
+    TrafficTraceReplaySidebandCompletion, TrafficTraceReplaySidebandEvent,
+    TrafficTraceReplaySidebandRuntime, TrafficTraceReplayTargetError,
+    TrafficTraceReplayTargetEvent, TrafficTraceReplayTargetEventContext,
+    TrafficTraceReplayTargetRuntime,
 };
 pub(crate) use trap_event::pending_trap_cores_from_turn;
 pub use trap_event::{
@@ -266,8 +267,8 @@ pub use wait_status::{
 };
 pub use workload_replay::{
     RiscvWorkloadReplay, RiscvWorkloadReplayError, RiscvWorkloadReplayOutcome,
-    RiscvWorkloadTraceHtmAbortRecord, RiscvWorkloadTrafficTraceReplay,
-    RiscvWorkloadTrafficTraceReplayOutcome,
+    RiscvWorkloadTraceHtmAbortRecord, RiscvWorkloadTraceHtmBeginRecord,
+    RiscvWorkloadTrafficTraceReplay, RiscvWorkloadTrafficTraceReplayOutcome,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

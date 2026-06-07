@@ -80,8 +80,8 @@ use self::traffic_trace::{
     schedule_traffic_trace_replays, RiscvWorkloadScheduledTrafficTraceReplay,
 };
 pub use self::traffic_trace::{
-    RiscvWorkloadTraceHtmAbortRecord, RiscvWorkloadTrafficTraceReplay,
-    RiscvWorkloadTrafficTraceReplayOutcome,
+    RiscvWorkloadTraceHtmAbortRecord, RiscvWorkloadTraceHtmBeginRecord,
+    RiscvWorkloadTrafficTraceReplay, RiscvWorkloadTrafficTraceReplayOutcome,
 };
 use self::workload_replay_dma::run_accelerator_dma_copies;
 use crate::workload_replay_heterogeneous::{

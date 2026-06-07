@@ -35,6 +35,7 @@ pub const GEM5_WRITE_ERROR: u32 = 49;
 pub const GEM5_PRINT_REQ: u32 = 52;
 pub const GEM5_FLUSH_REQ: u32 = 53;
 pub const GEM5_HTM_REQ: u32 = 56;
+pub const GEM5_HTM_REQ_RESP: u32 = 57;
 pub const GEM5_HTM_ABORT: u32 = 58;
 pub const GEM5_TLBI_EXT_SYNC: u32 = 59;
 

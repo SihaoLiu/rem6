@@ -19,8 +19,8 @@ use crate::riscv_cluster_run::{
 use crate::riscv_data_issue::{OutstandingDataAccess, PreparedDataParallelAccess};
 use crate::riscv_reservation::RiscvReservationTracker;
 use crate::{
-    CpuId, HtmAbortRecord, HtmFailureCause, HtmTransactionError, OutstandingFetch, RiscvCore,
-    RiscvCoreDriveAction, RiscvCpuError, RiscvStoreConditionalFailureDiagnostic,
+    CpuId, HtmAbortRecord, HtmBeginRecord, HtmFailureCause, HtmTransactionError, OutstandingFetch,
+    RiscvCore, RiscvCoreDriveAction, RiscvCpuError, RiscvStoreConditionalFailureDiagnostic,
 };
 
 enum PreparedParallelAction {
@@ -63,6 +63,23 @@ pub enum RiscvClusterHtmAbortOutcome {
         cpu: CpuId,
         route: MemoryRouteId,
         abort: HtmAbortRecord,
+    },
+    Failed {
+        cpu: CpuId,
+        route: MemoryRouteId,
+        error: HtmTransactionError,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RiscvClusterHtmBeginOutcome {
+    NoMatchingDataRoute {
+        route: MemoryRouteId,
+    },
+    Begun {
+        cpu: CpuId,
+        route: MemoryRouteId,
+        begin: HtmBeginRecord,
     },
     Failed {
         cpu: CpuId,
@@ -173,6 +190,24 @@ impl RiscvCluster {
         match core.abort_htm_transaction(active.uid(), cause) {
             Ok(abort) => RiscvClusterHtmAbortOutcome::Aborted { cpu, route, abort },
             Err(error) => RiscvClusterHtmAbortOutcome::Failed { cpu, route, error },
+        }
+    }
+
+    pub fn begin_htm_transaction_for_data_route(
+        &self,
+        route: MemoryRouteId,
+    ) -> RiscvClusterHtmBeginOutcome {
+        let Some((cpu, core)) = self
+            .cores
+            .iter()
+            .find(|(_, core)| core.data_route() == Some(route))
+        else {
+            return RiscvClusterHtmBeginOutcome::NoMatchingDataRoute { route };
+        };
+        let cpu = *cpu;
+        match core.begin_htm_transaction() {
+            Ok(begin) => RiscvClusterHtmBeginOutcome::Begun { cpu, route, begin },
+            Err(error) => RiscvClusterHtmBeginOutcome::Failed { cpu, route, error },
         }
     }
 

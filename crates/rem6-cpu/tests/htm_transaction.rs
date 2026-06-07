@@ -1,7 +1,7 @@
 use rem6_cpu::{
     CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, HtmFailureCause,
     HtmTransactionError, HtmTransactionState, HtmTransactionUid, RiscvCluster,
-    RiscvClusterHtmAbortOutcome, RiscvCore,
+    RiscvClusterHtmAbortOutcome, RiscvClusterHtmBeginOutcome, RiscvCore,
 };
 use rem6_isa_riscv::Register;
 use rem6_kernel::PartitionId;
@@ -227,6 +227,43 @@ fn riscv_cluster_htm_abort_by_data_route_restores_matching_core_checkpoint() {
     assert_eq!(core0.read_register(reg(8)), 0x1111);
     assert!(!core0.in_htm_transaction());
     assert_eq!(core1.read_register(reg(8)), 0);
+}
+
+#[test]
+fn riscv_cluster_htm_begin_by_data_route_starts_matching_core_transaction() {
+    let core0 = data_core(0, 0, 10, 0x8000);
+    let core1 = data_core(1, 1, 11, 0x9000);
+    core0.write_register(reg(8), 0x1111);
+    let cluster = RiscvCluster::new([core0.clone(), core1.clone()]).unwrap();
+
+    let outcome = cluster.begin_htm_transaction_for_data_route(MemoryRouteId::new(10));
+
+    assert!(matches!(
+        outcome,
+        RiscvClusterHtmBeginOutcome::Begun { cpu, route, begin }
+            if cpu == CpuId::new(0)
+                && route == MemoryRouteId::new(10)
+                && begin.uid() == HtmTransactionUid::new(1)
+                && begin.depth() == 1
+    ));
+    assert!(core0.in_htm_transaction());
+    assert!(!core1.in_htm_transaction());
+    core0.write_register(reg(8), 0x2222);
+    cluster.abort_htm_transaction_for_data_route(MemoryRouteId::new(10), HtmFailureCause::Memory);
+    assert_eq!(core0.read_register(reg(8)), 0x1111);
+}
+
+#[test]
+fn riscv_cluster_htm_begin_by_data_route_reports_missing_route() {
+    let core = data_core(0, 0, 10, 0x8000);
+    let cluster = RiscvCluster::new([core]).unwrap();
+
+    assert_eq!(
+        cluster.begin_htm_transaction_for_data_route(MemoryRouteId::new(99)),
+        RiscvClusterHtmBeginOutcome::NoMatchingDataRoute {
+            route: MemoryRouteId::new(99),
+        }
+    );
 }
 
 #[test]

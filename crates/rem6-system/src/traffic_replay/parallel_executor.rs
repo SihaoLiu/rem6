@@ -13,11 +13,12 @@ use rem6_transport::{
 };
 
 use super::{
-    traffic_trace_replay_controller_runtime_control_completion_parallel,
-    traffic_trace_replay_controller_runtime_target_event_context,
-    TrafficTraceReplayControllerControlError, TrafficTraceReplayControllerRuntime,
-    TrafficTraceReplayControllerTargetError, TrafficTraceReplaySidebandEvent,
-    TrafficTraceReplayTargetEvent, TrafficTraceReplayTargetEventContext,
+    traffic_trace_replay_controller_runtime_control_event_context,
+    traffic_trace_replay_controller_runtime_target_event_context, TrafficTraceReplayControlEvent,
+    TrafficTraceReplayControlEventContext, TrafficTraceReplayControllerControlError,
+    TrafficTraceReplayControllerRuntime, TrafficTraceReplayControllerTargetError,
+    TrafficTraceReplaySidebandEvent, TrafficTraceReplayTargetEvent,
+    TrafficTraceReplayTargetEventContext,
 };
 
 type ScheduledSideband = (Tick, TrafficTraceReplaySidebandEvent);
@@ -34,6 +35,8 @@ type TargetCompletionSink = Arc<
         + Send
         + Sync,
 >;
+type ControlCompletionSink =
+    Arc<dyn Fn(Tick, &TrafficTraceReplayControlEventContext) + Send + Sync>;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct TrafficTraceReplayOrder {
@@ -66,6 +69,7 @@ pub struct TrafficTraceReplayControllerParallelExecutor {
     target_sink: Option<TargetSink>,
     target_event_sink: Option<TargetEventSink>,
     target_completion_sink: Option<TargetCompletionSink>,
+    control_completion_sink: Option<ControlCompletionSink>,
 }
 
 impl TrafficTraceReplayControllerParallelExecutor {
@@ -82,6 +86,7 @@ impl TrafficTraceReplayControllerParallelExecutor {
             target_sink: None,
             target_event_sink: None,
             target_completion_sink: None,
+            control_completion_sink: None,
         }
     }
 
@@ -136,6 +141,14 @@ impl TrafficTraceReplayControllerParallelExecutor {
         self
     }
 
+    pub fn with_control_completion_sink<F>(mut self, sink: F) -> Self
+    where
+        F: Fn(Tick, &TrafficTraceReplayControlEventContext) + Send + Sync + 'static,
+    {
+        self.control_completion_sink = Some(Arc::new(sink));
+        self
+    }
+
     pub fn runtime(&self) -> Arc<Mutex<TrafficTraceReplayControllerRuntime>> {
         Arc::clone(&self.runtime)
     }
@@ -167,7 +180,8 @@ impl TrafficTraceReplayControllerParallelExecutor {
                 .lock()
                 .expect("traffic controller lock")
                 .snapshot();
-            let batch = match self.next_controller_batch(scheduler.now()) {
+            let batch_tick = self.controller_batch_tick(scheduler.now());
+            let batch = match self.next_controller_batch(batch_tick) {
                 Ok(batch) => batch,
                 Err(error) => {
                     self.restore_controller(checkpoint)?;
@@ -225,6 +239,14 @@ impl TrafficTraceReplayControllerParallelExecutor {
             .lock()
             .expect("traffic controller lock")
             .next_event(tick, self.retry_delay)
+    }
+
+    fn controller_batch_tick(&self, scheduler_tick: Tick) -> Tick {
+        self.runtime
+            .lock()
+            .expect("trace replay controller runtime lock")
+            .control_source_tick()
+            .unwrap_or(scheduler_tick)
     }
 
     fn restore_controller(
@@ -392,16 +414,53 @@ impl TrafficTraceReplayControllerParallelExecutor {
             prepare_sidebands_from_runtime(staged, scheduler, partition, delivery_tick)?;
         let runtime = Arc::clone(&self.runtime);
         let errors = Arc::clone(&self.errors);
+        let control_completion_sink = self.control_completion_sink.clone();
         scheduler.schedule_parallel_at(partition, delivery_tick, move |context| {
-            if let Err(error) = traffic_trace_replay_controller_runtime_control_completion_parallel(
+            let event_context = match traffic_trace_replay_controller_runtime_control_event_context(
                 Arc::clone(&runtime),
                 context.now(),
-                context,
             ) {
-                errors
-                    .lock()
-                    .expect("trace replay controller parallel error lock")
-                    .record_control(error);
+                Ok(event_context) => event_context,
+                Err(error) => {
+                    errors
+                        .lock()
+                        .expect("trace replay controller parallel error lock")
+                        .record_control(error.into());
+                    return;
+                }
+            };
+            match event_context.event() {
+                TrafficTraceReplayControlEvent::ControlAck { delay, trace_tick } => {
+                    let delay = *delay;
+                    let trace_tick = *trace_tick;
+                    let runtime = Arc::clone(&runtime);
+                    let event_context = event_context.clone();
+                    let control_completion_sink = control_completion_sink.clone();
+                    context
+                        .schedule_local_after(delay, move |context| {
+                            runtime
+                                .lock()
+                                .expect("trace replay controller runtime lock")
+                                .record_control_ack(context.now(), trace_tick);
+                            if let Some(control_completion_sink) = &control_completion_sink {
+                                control_completion_sink(context.now(), &event_context);
+                            }
+                        })
+                        .expect("validated trace replay control ack delay");
+                }
+                TrafficTraceReplayControlEvent::ControlFailure { delay, record } => {
+                    let delay = *delay;
+                    let record = *record;
+                    let runtime = Arc::clone(&runtime);
+                    context
+                        .schedule_local_after(delay, move |context| {
+                            runtime
+                                .lock()
+                                .expect("trace replay controller runtime lock")
+                                .record_control_failure(context.now(), record);
+                        })
+                        .expect("validated trace replay control failure delay");
+                }
             }
         })?;
 
