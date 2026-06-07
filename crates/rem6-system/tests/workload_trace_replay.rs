@@ -546,6 +546,15 @@ fn workload_replay_records_typed_trace_sideband_summary_counts() {
     let runtime = traffic_replay.runtime();
     assert_eq!(runtime.sideband_events().len(), 4);
     assert!(runtime.is_empty());
+    let htm_aborts = traffic_replay.htm_abort_records();
+    assert_eq!(htm_aborts.len(), 1);
+    assert_eq!(htm_aborts[0].tick(), 3);
+    assert_eq!(htm_aborts[0].trace_tick(), 3);
+    assert_eq!(htm_aborts[0].sequence(), 2);
+    assert_eq!(htm_aborts[0].address(), None);
+    assert_eq!(htm_aborts[0].size_bytes(), None);
+    assert_eq!(htm_aborts[0].trace_packet_id(), Some(922));
+    assert_eq!(htm_aborts[0].trace_pc(), None);
 
     let summaries = outcome.result().traffic_trace_replay_summaries();
     assert_eq!(summaries.len(), 1);

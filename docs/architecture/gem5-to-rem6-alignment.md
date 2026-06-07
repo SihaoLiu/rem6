@@ -2963,8 +2963,10 @@ alignment note explaining why the matching executable contract is not available
 yet. The next trace-policy integration target is to bind HTM abort sidebands to
 live CPU execution: trace response data now reaches target-completion consumers
 as a separate trace-fill channel, and rem6-cpu now owns a typed HTM transaction
-state that can restore a RISC-V core architectural checkpoint on abort, while
-trace-sideband-to-core wiring and cache read/write-set mutation remain open.
+state that can restore a RISC-V core architectural checkpoint on abort.
+rem6-system also records ordered workload-level HTM abort sideband records for
+trace replay outcomes, while trace-sideband-to-core wiring and cache
+read/write-set mutation remain open.
 The controller records matched replay completions in a typed outcome summary
 and emits replay action events carrying owned memory responses or control
 acknowledgements. The
@@ -3263,9 +3265,9 @@ flush coverage remains open. Workload replay summaries and manifest
 expectations now split sideband evidence into TLB external-sync, cache-flush,
 diagnostic-print, and HTM-abort counts. TLB external-sync, cache-flush, and
 diagnostic-print policies are consumed by the executable replay contract
-without turning them into fake memory requests, while HTM-abort policy is
-retained as sideband evidence until it can bind to a live CPU transaction
-target.
+without turning them into fake memory requests, while HTM-abort policy now has
+ordered workload-level sideband records until it can bind to a live CPU
+transaction target.
 Broader TLBI execution semantics, TLBI completion forms, CPU-visible HTM
 behavior, full diagnostic printing, and cache flush handling outside declared
 workload data-cache lines remain open because they need
