@@ -3,7 +3,7 @@ use std::error::Error;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
-use rem6_kernel::{SchedulerContext, Tick};
+use rem6_kernel::{ParallelSchedulerContext, SchedulerContext, Tick};
 use rem6_memory::MemoryRequestId;
 use rem6_traffic::{
     TrafficController, TrafficControllerEvent, TrafficControllerEventBatch, TrafficGeneratorError,
@@ -13,6 +13,13 @@ use rem6_traffic::{
     TrafficTraceTlbEvent,
 };
 use rem6_transport::{RequestDelivery, TargetOutcome};
+
+mod parallel_executor;
+
+pub use parallel_executor::{
+    TrafficTraceReplayControllerParallelErrors, TrafficTraceReplayControllerParallelExecutor,
+    TrafficTraceReplayControllerParallelSubmitError,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TrafficTraceReplayScheduledMemoryFailure {
@@ -713,6 +720,33 @@ pub fn traffic_trace_replay_controller_target_outcome(
     }
 }
 
+pub fn traffic_trace_replay_controller_runtime_target_outcome_parallel(
+    runtime: Arc<Mutex<TrafficTraceReplayControllerRuntime>>,
+    delivery: &RequestDelivery,
+    context: &mut ParallelSchedulerContext<'_>,
+) -> Result<TargetOutcome, TrafficTraceReplayControllerTargetError> {
+    if !delivery.request().requires_response() {
+        return Ok(TargetOutcome::NoResponse);
+    }
+
+    let event =
+        traffic_trace_replay_controller_runtime_target_event(Arc::clone(&runtime), delivery)?;
+    match event {
+        TrafficTraceReplayTargetEvent::MemoryResponse(outcome) => Ok(outcome),
+        TrafficTraceReplayTargetEvent::MemoryFailure { delay, record } => {
+            context
+                .schedule_local_after(delay, move |context| {
+                    runtime
+                        .lock()
+                        .expect("trace replay controller runtime lock")
+                        .record_memory_failure(context.now(), record);
+                })
+                .expect("validated trace replay failure delay");
+            Ok(TargetOutcome::NoResponse)
+        }
+    }
+}
+
 pub fn traffic_trace_replay_controller_target_event(
     runtime: Arc<Mutex<TrafficTraceReplayControllerRuntime>>,
     controller: Arc<Mutex<TrafficController>>,
@@ -796,6 +830,38 @@ pub fn traffic_trace_replay_controller_control_completion(
         context,
         retry_delay,
     )?;
+    match event {
+        TrafficTraceReplayControlEvent::ControlAck { delay, trace_tick } => {
+            context
+                .schedule_local_after(delay, move |context| {
+                    runtime
+                        .lock()
+                        .expect("trace replay controller runtime lock")
+                        .record_control_ack(context.now(), trace_tick);
+                })
+                .expect("validated trace replay control ack delay");
+        }
+        TrafficTraceReplayControlEvent::ControlFailure { delay, record } => {
+            context
+                .schedule_local_after(delay, move |context| {
+                    runtime
+                        .lock()
+                        .expect("trace replay controller runtime lock")
+                        .record_control_failure(context.now(), record);
+                })
+                .expect("validated trace replay control failure delay");
+        }
+    }
+    Ok(())
+}
+
+pub fn traffic_trace_replay_controller_runtime_control_completion_parallel(
+    runtime: Arc<Mutex<TrafficTraceReplayControllerRuntime>>,
+    delivery_tick: Tick,
+    context: &mut ParallelSchedulerContext<'_>,
+) -> Result<(), TrafficTraceReplayControllerControlError> {
+    let event =
+        traffic_trace_replay_controller_runtime_control_event(Arc::clone(&runtime), delivery_tick)?;
     match event {
         TrafficTraceReplayControlEvent::ControlAck { delay, trace_tick } => {
             context

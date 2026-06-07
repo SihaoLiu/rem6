@@ -17,6 +17,7 @@ use rem6_topology::{Endpoint, Topology};
 mod message_buffer;
 mod ordering;
 mod parallel_qos;
+mod parallel_submit;
 mod route;
 mod trace;
 
@@ -431,55 +432,6 @@ impl MemoryTransport {
                 ));
 
                 Self::schedule_request_hop(
-                    context,
-                    route_id,
-                    route,
-                    0,
-                    request,
-                    trace,
-                    fabric,
-                    responder,
-                    response_sink,
-                );
-            })
-            .map_err(TransportError::Scheduler)
-    }
-
-    pub fn submit_parallel<F, G>(
-        &self,
-        scheduler: &mut PartitionedScheduler,
-        route_id: MemoryRouteId,
-        request: MemoryRequest,
-        trace: MemoryTrace,
-        responder: F,
-        response_sink: G,
-    ) -> Result<PartitionEventId, TransportError>
-    where
-        F: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
-            + Send
-            + 'static,
-        G: FnOnce(ResponseDelivery) + Send + 'static,
-    {
-        let route = self
-            .route(route_id)
-            .cloned()
-            .ok_or(TransportError::UnknownRoute { route: route_id })?;
-        let source_partition = route.source_partition();
-        let start_tick = scheduler.now();
-        self.validate_scheduler_route(scheduler, route_id, &route, start_tick)?;
-        let fabric = self.fabric.clone();
-        scheduler
-            .schedule_parallel_at(source_partition, start_tick, move |context| {
-                let request_id = request.id();
-                trace.record(MemoryTraceEvent::request(
-                    context.now(),
-                    route_id,
-                    route.source().clone(),
-                    MemoryTraceKind::RequestSent,
-                    request_id,
-                ));
-
-                Self::schedule_parallel_request_hop(
                     context,
                     route_id,
                     route,

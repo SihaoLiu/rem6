@@ -8,9 +8,9 @@ use rem6_system::{
     traffic_trace_replay_runtime_control_completion, traffic_trace_replay_runtime_target_outcome,
     traffic_trace_replay_target_event, traffic_trace_replay_target_outcome,
     TrafficTraceReplayControlError, TrafficTraceReplayControlRuntime,
-    TrafficTraceReplayControllerControlError, TrafficTraceReplayControllerRuntime,
-    TrafficTraceReplayControllerTargetError, TrafficTraceReplayTargetError,
-    TrafficTraceReplayTargetEvent, TrafficTraceReplayTargetRuntime,
+    TrafficTraceReplayControllerControlError, TrafficTraceReplayControllerParallelExecutor,
+    TrafficTraceReplayControllerRuntime, TrafficTraceReplayControllerTargetError,
+    TrafficTraceReplayTargetError, TrafficTraceReplayTargetEvent, TrafficTraceReplayTargetRuntime,
 };
 use rem6_traffic::{
     TrafficControllerEvent, TrafficControllerEventBatch, TrafficTraceControlFailure,
@@ -26,9 +26,10 @@ mod support;
 
 use support::traffic_trace::{
     completed_response, controller_for_packets, controller_for_packets_with_state_duration,
-    endpoint, request, request_from, trace_cursor, PacketFields, GEM5_HTM_REQ,
-    GEM5_INVALID_DEST_ERROR, GEM5_MEM_FENCE_REQ, GEM5_MEM_FENCE_RESP, GEM5_READ_REQ,
-    GEM5_READ_RESP_WITH_INVALIDATE, GEM5_WRITEBACK_DIRTY, GEM5_WRITE_ERROR, GEM5_WRITE_REQ,
+    endpoint, request, request_from, trace_cursor, PacketFields, GEM5_FLUSH_REQ, GEM5_HTM_ABORT,
+    GEM5_HTM_REQ, GEM5_INVALID_DEST_ERROR, GEM5_MEM_FENCE_REQ, GEM5_MEM_FENCE_RESP, GEM5_PRINT_REQ,
+    GEM5_READ_REQ, GEM5_READ_RESP_WITH_INVALIDATE, GEM5_TLBI_EXT_SYNC, GEM5_WRITEBACK_DIRTY,
+    GEM5_WRITE_ERROR, GEM5_WRITE_REQ,
 };
 
 #[test]
@@ -622,6 +623,711 @@ fn traffic_trace_replay_controller_target_outcome_advances_controller_for_transp
             MemoryTraceEvent::response(12, route, core, req.id(), ResponseStatus::Completed),
         ]
     );
+}
+
+#[test]
+fn traffic_trace_replay_controller_parallel_consumers_drive_memory_and_control_actions() {
+    let mut controller = controller_for_packets(&[
+        PacketFields {
+            tick: 0,
+            command: GEM5_READ_REQ,
+            address: Some(0x9000),
+            size: Some(8),
+            packet_id: Some(90),
+        },
+        PacketFields {
+            tick: 1,
+            command: GEM5_MEM_FENCE_REQ,
+            address: None,
+            size: None,
+            packet_id: Some(91),
+        },
+        PacketFields {
+            tick: 7,
+            command: GEM5_MEM_FENCE_RESP,
+            address: None,
+            size: None,
+            packet_id: Some(91),
+        },
+        PacketFields {
+            tick: 8,
+            command: GEM5_READ_RESP_WITH_INVALIDATE,
+            address: Some(0x9000),
+            size: Some(8),
+            packet_id: Some(90),
+        },
+    ]);
+
+    assert!(controller.start(0).unwrap().is_empty());
+    let executor = TrafficTraceReplayControllerParallelExecutor::new(controller);
+
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let responses = Arc::new(Mutex::new(Vec::new()));
+    let core = endpoint("core0");
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                core.clone(),
+                PartitionId::new(0),
+                endpoint("memory0"),
+                PartitionId::new(1),
+                3,
+                5,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    let response_log = Arc::clone(&responses);
+    assert_eq!(
+        executor
+            .schedule_controller_parallel(
+                &mut scheduler,
+                &transport,
+                route,
+                MemoryTrace::new(),
+                PartitionId::new(1),
+                move |delivery: ResponseDelivery| {
+                    response_log.lock().unwrap().push((
+                        delivery.tick(),
+                        delivery.endpoint().clone(),
+                        delivery.response().request_id(),
+                    ));
+                },
+            )
+            .unwrap(),
+        2
+    );
+
+    scheduler.run_until_idle_parallel().unwrap();
+
+    let errors = executor.errors();
+    assert!(errors.is_empty());
+    let responses = responses.lock().unwrap();
+    assert_eq!(responses.len(), 1);
+    assert_eq!(responses[0].0, 13);
+    assert_eq!(responses[0].1, core);
+    drop(responses);
+    let runtime = executor.runtime();
+    assert_eq!(runtime.lock().unwrap().control_acks().len(), 1);
+    let ack = runtime.lock().unwrap().control_acks()[0];
+    assert_eq!(ack.tick(), 7);
+    assert_eq!(ack.trace_tick(), 7);
+    assert!(runtime.lock().unwrap().control_failures().is_empty());
+    assert!(runtime.lock().unwrap().memory_failures().is_empty());
+    assert!(runtime.lock().unwrap().is_empty());
+}
+
+#[test]
+fn traffic_trace_replay_controller_parallel_executor_records_failures_and_sideband() {
+    let mut controller = controller_for_packets(&[
+        PacketFields {
+            tick: 0,
+            command: GEM5_WRITE_REQ,
+            address: Some(0xa000),
+            size: Some(8),
+            packet_id: Some(100),
+        },
+        PacketFields {
+            tick: 2,
+            command: GEM5_FLUSH_REQ,
+            address: Some(0xa000),
+            size: Some(64),
+            packet_id: Some(101),
+        },
+        PacketFields {
+            tick: 3,
+            command: GEM5_HTM_REQ,
+            address: Some(0xb000),
+            size: Some(16),
+            packet_id: Some(102),
+        },
+        PacketFields {
+            tick: 7,
+            command: GEM5_WRITE_ERROR,
+            address: Some(0xa000),
+            size: Some(8),
+            packet_id: Some(100),
+        },
+        PacketFields {
+            tick: 11,
+            command: GEM5_INVALID_DEST_ERROR,
+            address: Some(0xb000),
+            size: Some(16),
+            packet_id: Some(102),
+        },
+    ]);
+
+    assert!(controller.start(0).unwrap().is_empty());
+    let request_batch = controller.next_event(0, 0).unwrap().unwrap();
+    let req = request_batch.request().unwrap().request().clone();
+    let flush_batch = controller.next_event(2, 0).unwrap().unwrap();
+    assert_eq!(flush_batch.trace_cache().unwrap().tick(), 2);
+    let htm_batch = controller.next_event(3, 0).unwrap().unwrap();
+    assert!(htm_batch.trace_htm().unwrap().requires_response());
+    let write_error_batch = controller.next_event(7, 0).unwrap().unwrap();
+    assert!(write_error_batch.trace_error_match().is_some());
+    let invalid_error_batch = controller.next_event(11, 0).unwrap().unwrap();
+    assert!(invalid_error_batch.trace_error_match().is_some());
+
+    let executor = TrafficTraceReplayControllerParallelExecutor::new(controller);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("core0"),
+                PartitionId::new(0),
+                endpoint("memory0"),
+                PartitionId::new(1),
+                3,
+                5,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    assert!(executor
+        .submit_batch_request_parallel(
+            &request_batch,
+            &mut scheduler,
+            &transport,
+            route,
+            MemoryTrace::new(),
+            |_| panic!("trace replay memory failure must not deliver a response"),
+        )
+        .unwrap());
+    assert_eq!(
+        executor
+            .record_batch_parallel(&flush_batch, &mut scheduler, PartitionId::new(1), 2)
+            .unwrap(),
+        1
+    );
+    assert!(executor
+        .schedule_batch_control_parallel(&htm_batch, &mut scheduler, PartitionId::new(1))
+        .unwrap());
+    assert_eq!(
+        executor
+            .record_batch_parallel(&write_error_batch, &mut scheduler, PartitionId::new(1), 7)
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        executor
+            .record_batch_parallel(
+                &invalid_error_batch,
+                &mut scheduler,
+                PartitionId::new(1),
+                11
+            )
+            .unwrap(),
+        0
+    );
+
+    scheduler.run_until_idle_parallel().unwrap();
+
+    assert!(executor.errors().is_empty());
+    let runtime = executor.runtime();
+    assert_eq!(runtime.lock().unwrap().memory_failures().len(), 1);
+    let memory_failure = runtime.lock().unwrap().memory_failures()[0];
+    assert_eq!(memory_failure.tick(), 7);
+    assert_eq!(memory_failure.record().failure().request_id(), req.id());
+    assert_eq!(
+        memory_failure.record().failure().error(),
+        TrafficTraceErrorKind::Write
+    );
+    assert_eq!(runtime.lock().unwrap().control_failures().len(), 1);
+    let control_failure = runtime.lock().unwrap().control_failures()[0];
+    assert_eq!(control_failure.tick(), 11);
+    assert_eq!(
+        control_failure.record().failure().error(),
+        TrafficTraceErrorKind::InvalidDestination
+    );
+    assert_eq!(runtime.lock().unwrap().sideband_events().len(), 1);
+    let sideband = runtime.lock().unwrap().sideband_events()[0];
+    assert_eq!(sideband.tick(), 2);
+    assert_eq!(sideband.event().tick(), 2);
+    assert!(runtime.lock().unwrap().control_acks().is_empty());
+    assert!(runtime.lock().unwrap().is_empty());
+}
+
+#[test]
+fn traffic_trace_replay_controller_parallel_executor_records_callback_errors() {
+    let mut request_controller = controller_for_packets(&[PacketFields {
+        tick: 0,
+        command: GEM5_READ_REQ,
+        address: Some(0xc400),
+        size: Some(8),
+        packet_id: Some(114),
+    }]);
+    assert!(request_controller.start(0).unwrap().is_empty());
+    let request_batch = request_controller.next_event(0, 0).unwrap().unwrap();
+    let request_id = request_batch.request().unwrap().request().id();
+    let request_executor = TrafficTraceReplayControllerParallelExecutor::new(request_controller);
+    let mut request_scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut request_transport = MemoryTransport::new();
+    let route = request_transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("core0"),
+                PartitionId::new(0),
+                endpoint("memory0"),
+                PartitionId::new(1),
+                3,
+                5,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    assert!(request_executor
+        .submit_batch_request_parallel(
+            &request_batch,
+            &mut request_scheduler,
+            &request_transport,
+            route,
+            MemoryTrace::new(),
+            |_| panic!("missing replay action must suppress response delivery"),
+        )
+        .unwrap());
+    request_scheduler.run_until_idle_parallel().unwrap();
+    assert_eq!(
+        request_executor.errors().target(),
+        &[TrafficTraceReplayControllerTargetError::Target(
+            TrafficTraceReplayTargetError::ActionQueueEmpty {
+                request: request_id,
+            },
+        )]
+    );
+    assert!(request_executor.errors().control().is_empty());
+
+    let mut control_controller = controller_for_packets(&[PacketFields {
+        tick: 4,
+        command: GEM5_MEM_FENCE_REQ,
+        address: None,
+        size: None,
+        packet_id: Some(115),
+    }]);
+    assert!(control_controller.start(0).unwrap().is_empty());
+    let control_batch = control_controller.next_event(4, 0).unwrap().unwrap();
+    let control_executor = TrafficTraceReplayControllerParallelExecutor::new(control_controller);
+    let mut control_scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+
+    assert!(control_executor
+        .schedule_batch_control_parallel(
+            &control_batch,
+            &mut control_scheduler,
+            PartitionId::new(1)
+        )
+        .unwrap());
+    control_scheduler.run_until_idle_parallel().unwrap();
+    assert_eq!(
+        control_executor.errors().control(),
+        &[TrafficTraceReplayControllerControlError::Control(
+            TrafficTraceReplayControlError::ActionQueueEmpty { delivery_tick: 4 },
+        )]
+    );
+    assert!(control_executor.errors().target().is_empty());
+}
+
+#[test]
+fn traffic_trace_replay_controller_parallel_executor_drains_request_batch_sidebands() {
+    let mut controller = controller_for_packets(&[
+        PacketFields {
+            tick: 0,
+            command: GEM5_READ_REQ,
+            address: Some(0xc800),
+            size: Some(8),
+            packet_id: Some(116),
+        },
+        PacketFields {
+            tick: 0,
+            command: GEM5_FLUSH_REQ,
+            address: Some(0xc800),
+            size: Some(64),
+            packet_id: Some(117),
+        },
+        PacketFields {
+            tick: 8,
+            command: GEM5_READ_RESP_WITH_INVALIDATE,
+            address: Some(0xc800),
+            size: Some(8),
+            packet_id: Some(116),
+        },
+    ]);
+
+    assert!(controller.start(0).unwrap().is_empty());
+    let request_batch = controller.next_event(0, 0).unwrap().unwrap();
+    let flush_batch = controller.next_event(0, 0).unwrap().unwrap();
+    let response_batch = controller.next_event(8, 0).unwrap().unwrap();
+    assert!(response_batch.trace_response_match().is_some());
+    let mixed_batch = TrafficControllerEventBatch::new(
+        request_batch
+            .events()
+            .iter()
+            .chain(flush_batch.events())
+            .cloned()
+            .collect(),
+    );
+
+    let executor = TrafficTraceReplayControllerParallelExecutor::new(controller);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let responses = Arc::new(Mutex::new(Vec::new()));
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("core0"),
+                PartitionId::new(0),
+                endpoint("memory0"),
+                PartitionId::new(1),
+                3,
+                5,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    let response_log = Arc::clone(&responses);
+    assert!(executor
+        .submit_batch_request_parallel(
+            &mixed_batch,
+            &mut scheduler,
+            &transport,
+            route,
+            MemoryTrace::new(),
+            move |delivery: ResponseDelivery| {
+                response_log
+                    .lock()
+                    .unwrap()
+                    .push(delivery.response().request_id());
+            },
+        )
+        .unwrap());
+    assert_eq!(
+        executor
+            .record_batch_parallel(&response_batch, &mut scheduler, PartitionId::new(1), 8)
+            .unwrap(),
+        0
+    );
+
+    scheduler.run_until_idle_parallel().unwrap();
+
+    assert!(executor.errors().is_empty());
+    assert_eq!(responses.lock().unwrap().len(), 1);
+    let runtime = executor.runtime();
+    assert_eq!(runtime.lock().unwrap().sideband_events().len(), 1);
+    let sideband = runtime.lock().unwrap().sideband_events()[0];
+    assert_eq!(sideband.tick(), 0);
+    assert_eq!(sideband.event().tick(), 0);
+    assert!(runtime.lock().unwrap().is_empty());
+}
+
+#[test]
+fn traffic_trace_replay_controller_parallel_executor_schedules_standalone_sidebands() {
+    let mut controller = controller_for_packets(&[
+        PacketFields {
+            tick: 2,
+            command: GEM5_FLUSH_REQ,
+            address: Some(0xd000),
+            size: Some(64),
+            packet_id: Some(120),
+        },
+        PacketFields {
+            tick: 5,
+            command: GEM5_PRINT_REQ,
+            address: None,
+            size: None,
+            packet_id: Some(121),
+        },
+        PacketFields {
+            tick: 7,
+            command: GEM5_TLBI_EXT_SYNC,
+            address: None,
+            size: None,
+            packet_id: Some(122),
+        },
+        PacketFields {
+            tick: 9,
+            command: GEM5_HTM_ABORT,
+            address: Some(0xd080),
+            size: Some(16),
+            packet_id: Some(123),
+        },
+    ]);
+
+    assert!(controller.start(0).unwrap().is_empty());
+    let executor = TrafficTraceReplayControllerParallelExecutor::new(controller);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("core0"),
+                PartitionId::new(0),
+                endpoint("memory0"),
+                PartitionId::new(1),
+                3,
+                5,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    let scheduled = executor
+        .schedule_controller_parallel(
+            &mut scheduler,
+            &transport,
+            route,
+            MemoryTrace::new(),
+            PartitionId::new(1),
+            |_| panic!("standalone sideband events must not deliver memory responses"),
+        )
+        .unwrap();
+
+    assert_eq!(scheduled, 4);
+    scheduler.run_until_idle_parallel().unwrap();
+
+    assert!(executor.errors().is_empty());
+    let runtime = executor.runtime();
+    let runtime = runtime.lock().unwrap();
+    let sideband_ticks = runtime
+        .sideband_events()
+        .iter()
+        .map(|event| (event.tick(), event.event().tick()))
+        .collect::<Vec<_>>();
+    assert_eq!(sideband_ticks, vec![(2, 2), (5, 5), (7, 7), (9, 9)]);
+    assert!(runtime.is_empty());
+}
+
+#[test]
+fn traffic_trace_replay_controller_parallel_executor_submits_interleaved_requests() {
+    let mut controller = controller_for_packets(&[
+        PacketFields {
+            tick: 0,
+            command: GEM5_READ_REQ,
+            address: Some(0xe000),
+            size: Some(8),
+            packet_id: Some(130),
+        },
+        PacketFields {
+            tick: 1,
+            command: GEM5_READ_REQ,
+            address: Some(0xe040),
+            size: Some(8),
+            packet_id: Some(131),
+        },
+        PacketFields {
+            tick: 8,
+            command: GEM5_READ_RESP_WITH_INVALIDATE,
+            address: Some(0xe000),
+            size: Some(8),
+            packet_id: Some(130),
+        },
+        PacketFields {
+            tick: 9,
+            command: GEM5_READ_RESP_WITH_INVALIDATE,
+            address: Some(0xe040),
+            size: Some(8),
+            packet_id: Some(131),
+        },
+    ]);
+
+    assert!(controller.start(0).unwrap().is_empty());
+    let executor = TrafficTraceReplayControllerParallelExecutor::new(controller);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let responses = Arc::new(Mutex::new(Vec::new()));
+    let trace = MemoryTrace::new();
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("core0"),
+                PartitionId::new(0),
+                endpoint("memory0"),
+                PartitionId::new(1),
+                3,
+                5,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    let response_log = Arc::clone(&responses);
+    let scheduled = executor
+        .schedule_controller_parallel(
+            &mut scheduler,
+            &transport,
+            route,
+            trace.clone(),
+            PartitionId::new(1),
+            move |delivery: ResponseDelivery| {
+                response_log
+                    .lock()
+                    .unwrap()
+                    .push((delivery.tick(), delivery.response().request_id()));
+            },
+        )
+        .unwrap();
+
+    assert_eq!(scheduled, 2);
+    scheduler.run_until_idle_parallel().unwrap();
+
+    assert!(executor.errors().is_empty());
+    let responses = responses.lock().unwrap();
+    assert_eq!(responses.len(), 2);
+    assert_eq!(responses[0].0, 13);
+    assert_eq!(responses[1].0, 14);
+    assert_ne!(responses[0].1, responses[1].1);
+    let sent_ticks = trace
+        .snapshot()
+        .iter()
+        .filter(|event| event.kind() == MemoryTraceKind::RequestSent)
+        .map(|event| event.tick())
+        .collect::<Vec<_>>();
+    assert_eq!(sent_ticks, vec![0, 1]);
+    assert!(executor.runtime().lock().unwrap().is_empty());
+}
+
+#[test]
+fn traffic_trace_replay_controller_parallel_executor_preserves_runtime_after_submit_errors() {
+    let mut request_controller = controller_for_packets(&[PacketFields {
+        tick: 0,
+        command: GEM5_READ_REQ,
+        address: Some(0xc000),
+        size: Some(8),
+        packet_id: Some(110),
+    }]);
+    assert!(request_controller.start(0).unwrap().is_empty());
+    let request_batch = request_controller.next_event(0, 0).unwrap().unwrap();
+    let request_executor = TrafficTraceReplayControllerParallelExecutor::new(request_controller);
+    let mut request_scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let request_transport = MemoryTransport::new();
+
+    assert!(request_executor
+        .submit_batch_request_parallel(
+            &request_batch,
+            &mut request_scheduler,
+            &request_transport,
+            rem6_transport::MemoryRouteId::new(99),
+            MemoryTrace::new(),
+            |_| {},
+        )
+        .is_err());
+    assert!(request_executor.runtime().lock().unwrap().is_empty());
+
+    let mut control_controller = controller_for_packets(&[PacketFields {
+        tick: 0,
+        command: GEM5_MEM_FENCE_REQ,
+        address: None,
+        size: None,
+        packet_id: Some(111),
+    }]);
+    assert!(control_controller.start(0).unwrap().is_empty());
+    let sync_batch = control_controller.next_event(0, 0).unwrap().unwrap();
+    let control_executor = TrafficTraceReplayControllerParallelExecutor::new(control_controller);
+    let mut control_scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+
+    assert!(control_executor
+        .schedule_batch_control_parallel(&sync_batch, &mut control_scheduler, PartitionId::new(9))
+        .is_err());
+    assert!(control_executor.runtime().lock().unwrap().is_empty());
+
+    let mut sideband_controller = controller_for_packets(&[PacketFields {
+        tick: 0,
+        command: GEM5_FLUSH_REQ,
+        address: Some(0xc100),
+        size: Some(64),
+        packet_id: Some(112),
+    }]);
+    assert!(sideband_controller.start(0).unwrap().is_empty());
+    let sideband_batch = sideband_controller.next_event(0, 0).unwrap().unwrap();
+    let sideband_executor = TrafficTraceReplayControllerParallelExecutor::new(sideband_controller);
+    let mut sideband_scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+
+    assert!(sideband_executor
+        .record_batch_parallel(
+            &sideband_batch,
+            &mut sideband_scheduler,
+            PartitionId::new(9),
+            0
+        )
+        .is_err());
+    assert!(sideband_executor.runtime().lock().unwrap().is_empty());
+    assert!(sideband_scheduler.is_idle());
+
+    let mut driver_controller = controller_for_packets(&[
+        PacketFields {
+            tick: 0,
+            command: GEM5_READ_REQ,
+            address: Some(0xc200),
+            size: Some(8),
+            packet_id: Some(113),
+        },
+        PacketFields {
+            tick: 8,
+            command: GEM5_READ_RESP_WITH_INVALIDATE,
+            address: Some(0xc200),
+            size: Some(8),
+            packet_id: Some(113),
+        },
+    ]);
+    assert!(driver_controller.start(0).unwrap().is_empty());
+    let driver_executor = TrafficTraceReplayControllerParallelExecutor::new(driver_controller);
+    let mut driver_scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut driver_transport = MemoryTransport::new();
+
+    assert!(driver_executor
+        .schedule_controller_parallel(
+            &mut driver_scheduler,
+            &driver_transport,
+            rem6_transport::MemoryRouteId::new(77),
+            MemoryTrace::new(),
+            PartitionId::new(1),
+            |_| {},
+        )
+        .is_err());
+    assert!(driver_executor.runtime().lock().unwrap().is_empty());
+    assert!(driver_scheduler.is_idle());
+
+    let driver_responses = Arc::new(Mutex::new(Vec::new()));
+    let driver_route = driver_transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("core0"),
+                PartitionId::new(0),
+                endpoint("memory0"),
+                PartitionId::new(1),
+                3,
+                5,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let driver_response_log = Arc::clone(&driver_responses);
+    assert_eq!(
+        driver_executor
+            .schedule_controller_parallel(
+                &mut driver_scheduler,
+                &driver_transport,
+                driver_route,
+                MemoryTrace::new(),
+                PartitionId::new(1),
+                move |delivery: ResponseDelivery| {
+                    driver_response_log
+                        .lock()
+                        .unwrap()
+                        .push(delivery.response().request_id());
+                },
+            )
+            .unwrap(),
+        1
+    );
+    driver_scheduler.run_until_idle_parallel().unwrap();
+    assert!(driver_executor.errors().is_empty());
+    assert_eq!(driver_responses.lock().unwrap().len(), 1);
+    assert!(driver_executor.runtime().lock().unwrap().is_empty());
 }
 
 #[test]

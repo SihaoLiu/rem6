@@ -2987,7 +2987,16 @@ target replay actions separately from those pending request ticks; if trace
 exit or a replayed same request appears with no memory target action queued, it
 reports the missing replay action instead of cycling through the trace
 transition again.
-CLI/workload runner integration and full response and error propagation through
+The same controller-aware memory and control consumers are wired into a
+parallel replay executor that drains the traffic controller into a shared
+runtime, submits replayed memory requests through
+`MemoryTransport::submit_parallel_at` at their trace request ticks, and
+schedules response-required sync or HTM deliveries with `schedule_parallel_at`.
+That executor turns replayed memory responses and failures into executable
+target outcomes while recording sync or HTM acknowledgements, control failures,
+standalone TLB/cache/diagnostic/HTM sideband events, and interleaved
+request/response batches from the same shared controller/runtime pair.
+CLI/workload manifest binding and full response and error propagation through
 memory controllers, caches, and CPU ports remain separate contracts.
 `InvalidDestError`, `BadAddressError`, `ReadError`, `WriteError`,
 `FunctionalReadError`, and `FunctionalWriteError` command-ids 46-51 map to
