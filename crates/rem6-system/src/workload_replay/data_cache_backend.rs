@@ -12,7 +12,7 @@ use rem6_coherence::{
     PartitionedMesiDirectoryLineHarness, PartitionedMesiDirectoryLineHarnessSnapshot,
     PartitionedMoesiDirectoryLineHarness, PartitionedMoesiDirectoryLineHarnessSnapshot,
 };
-use rem6_cpu::HtmTransactionUid;
+use rem6_cpu::{HtmFailureCause, HtmTransactionUid};
 use rem6_directory::{
     ChiDirectoryLineState, DirectoryLineState, MesiDirectoryLineState, MoesiDirectoryLineState,
 };
@@ -85,6 +85,39 @@ impl WorkloadDataCacheRollback {
 
     fn mark_written(&mut self, line: Address) {
         self.written_lines.insert(line);
+    }
+}
+
+#[derive(Default)]
+struct WorkloadDataCacheHtmAccessSet {
+    read_lines: BTreeSet<Address>,
+    write_lines: BTreeSet<Address>,
+    memory_conflict: bool,
+}
+
+impl WorkloadDataCacheHtmAccessSet {
+    fn record_read(&mut self, line: Address) {
+        self.read_lines.insert(line);
+    }
+
+    fn record_write(&mut self, line: Address) {
+        self.write_lines.insert(line);
+    }
+
+    fn conflicts_with_write(&self, line: Address) -> bool {
+        self.read_lines.contains(&line) || self.write_lines.contains(&line)
+    }
+
+    fn mark_memory_conflict(&mut self) {
+        self.memory_conflict = true;
+    }
+
+    fn abort_cause(&self) -> HtmFailureCause {
+        if self.memory_conflict {
+            HtmFailureCause::Memory
+        } else {
+            HtmFailureCause::Other
+        }
     }
 }
 
@@ -698,6 +731,7 @@ impl WorkloadDataCacheLineBackend {
 pub(super) struct WorkloadDataCacheBackend {
     lines: BTreeMap<Address, WorkloadDataCacheLineBackend>,
     htm_rollbacks: BTreeMap<WorkloadDataCacheRollbackKey, WorkloadDataCacheRollback>,
+    htm_access_sets: BTreeMap<WorkloadDataCacheRollbackKey, WorkloadDataCacheHtmAccessSet>,
 }
 
 impl WorkloadDataCacheBackend {
@@ -708,6 +742,7 @@ impl WorkloadDataCacheBackend {
         Self {
             lines: lines.into_iter().map(|line| (line.line(), line)).collect(),
             htm_rollbacks: BTreeMap::new(),
+            htm_access_sets: BTreeMap::new(),
         }
     }
 
@@ -775,13 +810,78 @@ impl WorkloadDataCacheBackend {
             return false;
         };
         let recorded = line.record_trace_htm_access_event(tick, transaction_uid, event);
+        let key = WorkloadDataCacheRollbackKey::new(route, transaction_uid);
+        if let Some(access_set) = self.htm_access_sets.get_mut(&key) {
+            if event.is_read() {
+                access_set.record_read(line_address);
+            }
+            if event.is_write() && data_cache_response_applied {
+                access_set.record_write(line_address);
+            }
+        }
         if recorded && event.is_write() && data_cache_response_applied {
-            let key = WorkloadDataCacheRollbackKey::new(route, transaction_uid);
             if let Some(rollback) = self.htm_rollbacks.get_mut(&key) {
                 rollback.mark_written(line_address);
             }
+            self.mark_trace_htm_write_conflicts(route, Some(transaction_uid), line_address);
         }
         recorded
+    }
+
+    pub(super) fn record_trace_htm_write_conflict_event(
+        &mut self,
+        route: MemoryRouteId,
+        transaction_uid: Option<HtmTransactionUid>,
+        event: TrafficTraceResponseEvent,
+        data_cache_response_applied: bool,
+    ) -> bool {
+        if !event.is_write() || !data_cache_response_applied {
+            return false;
+        }
+        let Some(line_address) = self
+            .lines
+            .iter()
+            .find(|(_, line)| line.accepts_trace_htm_access_event(event))
+            .map(|(line_address, _)| *line_address)
+        else {
+            return false;
+        };
+        self.mark_trace_htm_write_conflicts(route, transaction_uid, line_address);
+        true
+    }
+
+    fn mark_trace_htm_write_conflicts(
+        &mut self,
+        route: MemoryRouteId,
+        transaction_uid: Option<HtmTransactionUid>,
+        line: Address,
+    ) {
+        let writer = transaction_uid.map(|uid| WorkloadDataCacheRollbackKey::new(route, uid));
+        let conflicting = self
+            .htm_access_sets
+            .iter()
+            .filter(|(key, access_set)| {
+                Some(**key) != writer && access_set.conflicts_with_write(line)
+            })
+            .map(|(key, _)| *key)
+            .collect::<Vec<_>>();
+        for key in &conflicting {
+            if let Some(access_set) = self.htm_access_sets.get_mut(key) {
+                access_set.mark_memory_conflict();
+            }
+        }
+    }
+
+    pub(super) fn trace_htm_abort_cause(
+        &self,
+        route: MemoryRouteId,
+        transaction_uid: HtmTransactionUid,
+    ) -> HtmFailureCause {
+        let key = WorkloadDataCacheRollbackKey::new(route, transaction_uid);
+        self.htm_access_sets.get(&key).map_or(
+            HtmFailureCause::Other,
+            WorkloadDataCacheHtmAccessSet::abort_cause,
+        )
     }
 
     pub(super) fn capture_trace_htm_rollback(
@@ -808,6 +908,8 @@ impl WorkloadDataCacheBackend {
         }
         self.htm_rollbacks
             .insert(key, WorkloadDataCacheRollback::new(snapshots));
+        self.htm_access_sets
+            .insert(key, WorkloadDataCacheHtmAccessSet::default());
         true
     }
 
@@ -817,6 +919,7 @@ impl WorkloadDataCacheBackend {
         transaction_uid: HtmTransactionUid,
     ) -> bool {
         let key = WorkloadDataCacheRollbackKey::new(route, transaction_uid);
+        self.htm_access_sets.remove(&key);
         let Some(rollback) = self.htm_rollbacks.remove(&key) else {
             return false;
         };
@@ -828,6 +931,17 @@ impl WorkloadDataCacheBackend {
             }
         }
         true
+    }
+
+    pub(super) fn discard_trace_htm_transaction(
+        &mut self,
+        route: MemoryRouteId,
+        transaction_uid: HtmTransactionUid,
+    ) -> bool {
+        let key = WorkloadDataCacheRollbackKey::new(route, transaction_uid);
+        let removed_access_set = self.htm_access_sets.remove(&key).is_some();
+        let removed_rollback = self.htm_rollbacks.remove(&key).is_some();
+        removed_access_set || removed_rollback
     }
 
     pub(super) fn apply_trace_diagnostic_event(
@@ -1450,6 +1564,10 @@ fn replace_optional_dram_controller_line(
 }
 
 #[cfg(test)]
+#[path = "data_cache_backend_htm_conflict_tests.rs"]
+mod htm_conflict_tests;
+
+#[cfg(test)]
 mod tests {
     use rem6_memory::{AccessSize, AgentId, ByteMask, MemoryRequest, MemoryRequestId};
     use rem6_protocol_mesi::MesiState;
@@ -1517,9 +1635,12 @@ mod tests {
         .unwrap()
     }
 
-    fn clean_shared_response_event() -> TrafficTraceResponseEvent {
-        let trace =
-            TrafficTrace::from_gem5_packet_trace(&gem5_packet_trace(1_000, 43), 1_000).unwrap();
+    fn response_event(command: u32, address: u64, size: u32) -> TrafficTraceResponseEvent {
+        let trace = TrafficTrace::from_gem5_packet_trace(
+            &gem5_packet_trace_with_shape(1_000, command, address, size),
+            1_000,
+        )
+        .unwrap();
         let config = TrafficTraceConfig::new(AgentId::new(7), layout(), 99, trace).unwrap();
         let mut generator = TrafficTraceGenerator::new(config);
         generator.enter(0);
@@ -1529,7 +1650,16 @@ mod tests {
         }
     }
 
-    fn gem5_packet_trace(tick_frequency: u64, command: u32) -> Vec<u8> {
+    fn clean_shared_response_event() -> TrafficTraceResponseEvent {
+        response_event(43, 0x3000, 64)
+    }
+
+    fn gem5_packet_trace_with_shape(
+        tick_frequency: u64,
+        command: u32,
+        address: u64,
+        size: u32,
+    ) -> Vec<u8> {
         let mut bytes = vec![0x67, 0x65, 0x6d, 0x35];
         let mut header = Vec::new();
         append_key(&mut header, 3, 0);
@@ -1542,9 +1672,9 @@ mod tests {
         append_key(&mut packet, 2, 0);
         append_varint(&mut packet, u64::from(command));
         append_key(&mut packet, 3, 0);
-        append_varint(&mut packet, 0x3000);
+        append_varint(&mut packet, address);
         append_key(&mut packet, 4, 0);
-        append_varint(&mut packet, 64);
+        append_varint(&mut packet, u64::from(size));
         append_record(&mut bytes, &packet);
 
         bytes

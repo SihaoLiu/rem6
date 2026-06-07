@@ -799,14 +799,20 @@ impl WorkloadTraceDataCacheConsumerInner {
             }
             TrafficTraceReplaySidebandEvent::Htm(htm) => {
                 if matches!(htm.kind(), TrafficTraceHtmKind::Abort) {
+                    let active_transaction_uid = self.active_htm_transactions.last().copied();
+                    let cause = active_transaction_uid
+                        .and_then(|transaction_uid| {
+                            self.data_cache.as_ref().map(|data_cache| {
+                                data_cache
+                                    .lock()
+                                    .expect("workload data cache lock")
+                                    .trace_htm_abort_cause(self.route, transaction_uid)
+                            })
+                        })
+                        .unwrap_or(HtmFailureCause::Other);
                     let cluster_outcome = self.htm_cluster.as_ref().map_or(
                         RiscvClusterHtmAbortOutcome::NoMatchingDataRoute { route: self.route },
-                        |cluster| {
-                            cluster.abort_htm_transaction_for_data_route(
-                                self.route,
-                                HtmFailureCause::Other,
-                            )
-                        },
+                        |cluster| cluster.abort_htm_transaction_for_data_route(self.route, cause),
                     );
                     if let RiscvClusterHtmAbortOutcome::Aborted { abort, .. } = &cluster_outcome {
                         if let Some(data_cache) = self.data_cache.as_ref() {
@@ -814,6 +820,13 @@ impl WorkloadTraceDataCacheConsumerInner {
                                 .lock()
                                 .expect("workload data cache lock")
                                 .restore_trace_htm_rollback(self.route, abort.uid());
+                        }
+                    } else if let Some(transaction_uid) = active_transaction_uid {
+                        if let Some(data_cache) = self.data_cache.as_ref() {
+                            data_cache
+                                .lock()
+                                .expect("workload data cache lock")
+                                .discard_trace_htm_transaction(self.route, transaction_uid);
                         }
                     }
                     clear_htm_transactions_after_trace_abort(
@@ -880,6 +893,13 @@ impl WorkloadTraceDataCacheConsumerInner {
                     tick,
                     self.route,
                     transaction_uid,
+                    event,
+                    data_cache_response_applied,
+                );
+            } else {
+                data_cache.record_trace_htm_write_conflict_event(
+                    self.route,
+                    None,
                     event,
                     data_cache_response_applied,
                 );
