@@ -31,8 +31,8 @@ use support::traffic_trace::{
     GEM5_HTM_REQ, GEM5_HTM_REQ_RESP, GEM5_INVALID_DEST_ERROR, GEM5_MEM_FENCE_REQ,
     GEM5_MEM_FENCE_RESP, GEM5_MEM_SYNC_REQ, GEM5_MEM_SYNC_RESP, GEM5_PRINT_REQ, GEM5_READ_REQ,
     GEM5_READ_RESP_WITH_INVALIDATE, GEM5_SC_UPGRADE_REQ, GEM5_SOFT_PF_REQ, GEM5_SOFT_PF_RESP,
-    GEM5_TLBI_EXT_SYNC, GEM5_UPGRADE_FAIL_RESP, GEM5_WRITEBACK_DIRTY, GEM5_WRITE_ERROR,
-    GEM5_WRITE_REQ,
+    GEM5_TLBI_EXT_SYNC, GEM5_UPGRADE_FAIL_RESP, GEM5_WRITEBACK_DIRTY, GEM5_WRITE_COMPLETE_RESP,
+    GEM5_WRITE_ERROR, GEM5_WRITE_REQ, GEM5_WRITE_RESP,
 };
 
 #[test]
@@ -632,6 +632,222 @@ fn traffic_trace_replay_controller_target_outcome_advances_controller_for_transp
 }
 
 #[test]
+fn traffic_trace_replay_controller_target_outcome_records_write_complete_response() {
+    let mut controller = controller_for_packets(&[
+        PacketFields {
+            tick: 0,
+            command: GEM5_WRITE_REQ,
+            address: Some(0x4080),
+            size: Some(8),
+            packet_id: Some(170),
+        },
+        PacketFields {
+            tick: 7,
+            command: GEM5_WRITE_RESP,
+            address: Some(0x4080),
+            size: Some(8),
+            packet_id: Some(170),
+        },
+        PacketFields {
+            tick: 9,
+            command: GEM5_WRITE_COMPLETE_RESP,
+            address: Some(0x4080),
+            size: Some(8),
+            packet_id: Some(170),
+        },
+    ]);
+
+    assert!(controller.start(0).unwrap().is_empty());
+    let request_batch = controller.next_event(0, 0).unwrap().unwrap();
+    let req = request_batch.request().unwrap().request().clone();
+    assert_eq!(req.operation(), MemoryOperation::Write);
+
+    let controller = Arc::new(Mutex::new(controller));
+    let runtime = Arc::new(Mutex::new(TrafficTraceReplayControllerRuntime::default()));
+    runtime
+        .lock()
+        .unwrap()
+        .record_batch(&request_batch)
+        .unwrap();
+
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let responses = Arc::new(Mutex::new(Vec::new()));
+    let core = endpoint("core0");
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                core.clone(),
+                PartitionId::new(0),
+                endpoint("memory0"),
+                PartitionId::new(1),
+                3,
+                5,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    let replay = Arc::clone(&runtime);
+    let trace_controller = Arc::clone(&controller);
+    let submitted_req = req.clone();
+    let response_log = Arc::clone(&responses);
+    transport
+        .submit(
+            &mut scheduler,
+            route,
+            submitted_req.clone(),
+            MemoryTrace::new(),
+            move |delivery, context| {
+                assert_eq!(delivery.request().id(), submitted_req.id());
+                traffic_trace_replay_controller_target_outcome(
+                    Arc::clone(&replay),
+                    Arc::clone(&trace_controller),
+                    &delivery,
+                    context,
+                    0,
+                )
+                .unwrap()
+            },
+            move |delivery: ResponseDelivery| {
+                response_log.lock().unwrap().push((
+                    delivery.tick(),
+                    delivery.endpoint().clone(),
+                    delivery.response().request_id(),
+                ));
+            },
+        )
+        .unwrap();
+
+    scheduler.run_until_idle_conservative();
+
+    assert_eq!(*responses.lock().unwrap(), vec![(12, core, req.id())]);
+    let runtime = runtime.lock().unwrap();
+    assert_eq!(runtime.memory_write_completions().len(), 1);
+    assert_eq!(runtime.memory_write_completions()[0].tick(), 9);
+    assert_eq!(runtime.memory_write_completions()[0].record().tick(), 9);
+    assert_eq!(
+        runtime.memory_write_completions()[0].record().request_id(),
+        req.id()
+    );
+    assert!(runtime.memory_failures().is_empty());
+    assert!(runtime.is_empty());
+}
+
+#[test]
+fn traffic_trace_replay_controller_target_outcome_follows_nonadjacent_write_complete_response() {
+    let mut controller = controller_for_packets(&[
+        PacketFields {
+            tick: 0,
+            command: GEM5_WRITE_REQ,
+            address: Some(0x4080),
+            size: Some(8),
+            packet_id: Some(171),
+        },
+        PacketFields {
+            tick: 7,
+            command: GEM5_WRITE_RESP,
+            address: Some(0x4080),
+            size: Some(8),
+            packet_id: Some(171),
+        },
+        PacketFields {
+            tick: 8,
+            command: GEM5_TLBI_EXT_SYNC,
+            address: None,
+            size: None,
+            packet_id: Some(172),
+        },
+        PacketFields {
+            tick: 9,
+            command: GEM5_WRITE_COMPLETE_RESP,
+            address: Some(0x4080),
+            size: Some(8),
+            packet_id: Some(171),
+        },
+    ]);
+
+    assert!(controller.start(0).unwrap().is_empty());
+    let request_batch = controller.next_event(0, 0).unwrap().unwrap();
+    let req = request_batch.request().unwrap().request().clone();
+    assert_eq!(req.operation(), MemoryOperation::Write);
+
+    let controller = Arc::new(Mutex::new(controller));
+    let runtime = Arc::new(Mutex::new(TrafficTraceReplayControllerRuntime::default()));
+    runtime
+        .lock()
+        .unwrap()
+        .record_batch(&request_batch)
+        .unwrap();
+
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let responses = Arc::new(Mutex::new(Vec::new()));
+    let core = endpoint("core0");
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                core.clone(),
+                PartitionId::new(0),
+                endpoint("memory0"),
+                PartitionId::new(1),
+                3,
+                5,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    let replay = Arc::clone(&runtime);
+    let trace_controller = Arc::clone(&controller);
+    let submitted_req = req.clone();
+    let response_log = Arc::clone(&responses);
+    transport
+        .submit(
+            &mut scheduler,
+            route,
+            submitted_req.clone(),
+            MemoryTrace::new(),
+            move |delivery, context| {
+                assert_eq!(delivery.request().id(), submitted_req.id());
+                traffic_trace_replay_controller_target_outcome(
+                    Arc::clone(&replay),
+                    Arc::clone(&trace_controller),
+                    &delivery,
+                    context,
+                    0,
+                )
+                .unwrap()
+            },
+            move |delivery: ResponseDelivery| {
+                response_log.lock().unwrap().push((
+                    delivery.tick(),
+                    delivery.endpoint().clone(),
+                    delivery.response().request_id(),
+                ));
+            },
+        )
+        .unwrap();
+
+    scheduler.run_until_idle_conservative();
+
+    assert_eq!(*responses.lock().unwrap(), vec![(12, core, req.id())]);
+    let runtime = runtime.lock().unwrap();
+    assert_eq!(runtime.memory_write_completions().len(), 1);
+    assert_eq!(runtime.memory_write_completions()[0].tick(), 9);
+    assert_eq!(runtime.memory_write_completions()[0].record().tick(), 9);
+    assert_eq!(
+        runtime.memory_write_completions()[0].record().request_id(),
+        req.id()
+    );
+    assert_eq!(runtime.sideband_events().len(), 1);
+    assert_eq!(runtime.sideband_events()[0].tick(), 8);
+    assert_eq!(runtime.sideband_events()[0].event().tick(), 8);
+    assert!(runtime.memory_failures().is_empty());
+    assert!(runtime.is_empty());
+}
+
+#[test]
 fn traffic_trace_replay_controller_target_outcome_executes_failed_sc_upgrade_response() {
     let mut controller = controller_for_packets(&[
         PacketFields {
@@ -824,6 +1040,112 @@ fn traffic_trace_replay_controller_parallel_consumers_drive_memory_and_control_a
     assert!(runtime.lock().unwrap().control_failures().is_empty());
     assert!(runtime.lock().unwrap().memory_failures().is_empty());
     assert!(runtime.lock().unwrap().is_empty());
+}
+
+#[test]
+fn traffic_trace_replay_controller_parallel_records_write_complete_response() {
+    let mut controller = controller_for_packets(&[
+        PacketFields {
+            tick: 0,
+            command: GEM5_WRITE_REQ,
+            address: Some(0x9080),
+            size: Some(8),
+            packet_id: Some(190),
+        },
+        PacketFields {
+            tick: 7,
+            command: GEM5_WRITE_RESP,
+            address: Some(0x9080),
+            size: Some(8),
+            packet_id: Some(190),
+        },
+        PacketFields {
+            tick: 9,
+            command: GEM5_WRITE_COMPLETE_RESP,
+            address: Some(0x9080),
+            size: Some(8),
+            packet_id: Some(190),
+        },
+    ]);
+
+    assert!(controller.start(0).unwrap().is_empty());
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let responses = Arc::new(Mutex::new(Vec::new()));
+    let write_completions = Arc::new(Mutex::new(Vec::new()));
+    let request_log = Arc::clone(&requests);
+    let write_completion_log = Arc::clone(&write_completions);
+    let executor = TrafficTraceReplayControllerParallelExecutor::new(controller)
+        .with_target_request_sink(move |_order, request| {
+            request_log.lock().unwrap().push(request);
+        })
+        .with_memory_write_completion_sink(move |tick, record| {
+            write_completion_log
+                .lock()
+                .unwrap()
+                .push((tick, record.tick(), record.request_id()));
+        });
+
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let core = endpoint("core0");
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                core.clone(),
+                PartitionId::new(0),
+                endpoint("memory0"),
+                PartitionId::new(1),
+                3,
+                5,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    let response_log = Arc::clone(&responses);
+    assert_eq!(
+        executor
+            .schedule_controller_parallel(
+                &mut scheduler,
+                &transport,
+                route,
+                MemoryTrace::new(),
+                PartitionId::new(1),
+                move |delivery: ResponseDelivery| {
+                    response_log.lock().unwrap().push((
+                        delivery.tick(),
+                        delivery.endpoint().clone(),
+                        delivery.response().request_id(),
+                    ));
+                },
+            )
+            .unwrap(),
+        2
+    );
+
+    scheduler.run_until_idle_parallel().unwrap();
+
+    assert!(executor.errors().is_empty());
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    let request = requests[0];
+    drop(requests);
+    assert_eq!(
+        *responses.lock().unwrap(),
+        vec![(12, core.clone(), request)]
+    );
+    assert_eq!(*write_completions.lock().unwrap(), vec![(9, 9, request)]);
+    let runtime = executor.runtime();
+    let runtime = runtime.lock().unwrap();
+    assert_eq!(runtime.memory_write_completions().len(), 1);
+    assert_eq!(runtime.memory_write_completions()[0].tick(), 9);
+    assert_eq!(runtime.memory_write_completions()[0].record().tick(), 9);
+    assert_eq!(
+        runtime.memory_write_completions()[0].record().request_id(),
+        request
+    );
+    assert!(runtime.memory_failures().is_empty());
+    assert!(runtime.is_empty());
 }
 
 #[test]

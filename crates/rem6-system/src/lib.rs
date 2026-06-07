@@ -222,6 +222,7 @@ pub use traffic_replay::{
     traffic_trace_replay_controller_control_completion,
     traffic_trace_replay_controller_control_event,
     traffic_trace_replay_controller_runtime_control_completion_parallel,
+    traffic_trace_replay_controller_runtime_memory_write_completions,
     traffic_trace_replay_controller_runtime_sideband_events,
     traffic_trace_replay_controller_runtime_target_outcome_parallel,
     traffic_trace_replay_controller_target_event, traffic_trace_replay_controller_target_outcome,
@@ -234,11 +235,11 @@ pub use traffic_replay::{
     TrafficTraceReplayControllerParallelSubmitError, TrafficTraceReplayControllerRuntime,
     TrafficTraceReplayControllerTargetError, TrafficTraceReplayOrder,
     TrafficTraceReplayScheduledControlAck, TrafficTraceReplayScheduledControlFailure,
-    TrafficTraceReplayScheduledMemoryFailure, TrafficTraceReplayScheduledSidebandEvent,
-    TrafficTraceReplaySidebandCompletion, TrafficTraceReplaySidebandEvent,
-    TrafficTraceReplaySidebandRuntime, TrafficTraceReplayTargetError,
-    TrafficTraceReplayTargetEvent, TrafficTraceReplayTargetEventContext,
-    TrafficTraceReplayTargetRuntime,
+    TrafficTraceReplayScheduledMemoryFailure, TrafficTraceReplayScheduledMemoryWriteCompletion,
+    TrafficTraceReplayScheduledSidebandEvent, TrafficTraceReplaySidebandCompletion,
+    TrafficTraceReplaySidebandEvent, TrafficTraceReplaySidebandRuntime,
+    TrafficTraceReplayTargetError, TrafficTraceReplayTargetEvent,
+    TrafficTraceReplayTargetEventContext, TrafficTraceReplayTargetRuntime,
 };
 pub(crate) use trap_event::pending_trap_cores_from_turn;
 pub use trap_event::{

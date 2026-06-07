@@ -1,9 +1,8 @@
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet};
 
 use rem6_memory::{MemoryOperation, MemoryRequestId, MemoryResponse, ResponseStatus};
 
 use crate::{
-    common::checked_counter_add,
     stream::{apply_stream_ids_to_event, TrafficStreamConfig, TrafficStreamPicker},
     DramTrafficGenerator, GupsTrafficGenerator, HybridTrafficGenerator, LinearTrafficGenerator,
     RandomTrafficGenerator, StridedTrafficGenerator, TrafficDramSnapshot, TrafficExitEvent,
@@ -15,6 +14,14 @@ use crate::{
     TrafficTraceErrorKind, TrafficTraceEvent, TrafficTraceExitStatus, TrafficTraceGenerator,
     TrafficTraceHtmEvent, TrafficTraceResponseEvent, TrafficTraceResponseKind,
     TrafficTraceSnapshot, TrafficTraceSyncEvent, TrafficTraceTlbEvent, TrafficTransitionEvent,
+};
+
+mod trace_replay_queue;
+
+pub use trace_replay_queue::{
+    TrafficTraceControlFailureRecord, TrafficTraceMemoryFailureRecord,
+    TrafficTraceMemoryResponseRecord, TrafficTraceMemoryWriteCompletionRecord,
+    TrafficTraceReplayActionQueue, TrafficTraceReplaySummary,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -292,6 +299,7 @@ pub struct TrafficController {
     generators: BTreeMap<TrafficStateId, TrafficStateGenerator>,
     stream_picker: Option<TrafficStreamPicker>,
     trace_pending: Vec<TrafficTraceReplaySource>,
+    trace_write_completion_pending: Vec<TrafficTracePendingWriteCompletion>,
     trace_replay_summary: TrafficTraceReplaySummary,
 }
 
@@ -309,6 +317,7 @@ impl TrafficController {
             generators,
             stream_picker,
             trace_pending: Vec::new(),
+            trace_write_completion_pending: Vec::new(),
             trace_replay_summary: TrafficTraceReplaySummary::default(),
         }
     }
@@ -329,6 +338,7 @@ impl TrafficController {
         let mut controller = Self::new(config);
         controller.machine = machine;
         controller.trace_pending = snapshot.trace_pending().to_vec();
+        controller.trace_write_completion_pending = snapshot.trace_write_completion_pending.clone();
         controller.trace_replay_summary = snapshot.trace_replay_summary();
         controller.stream_picker = snapshot.stream().cloned().map(|stream| {
             let rng_state = snapshot
@@ -345,6 +355,7 @@ impl TrafficController {
     ) -> Result<TrafficControllerEventBatch, TrafficGeneratorError> {
         self.machine.start(tick)?;
         self.trace_pending.clear();
+        self.trace_write_completion_pending.clear();
         self.trace_replay_summary = TrafficTraceReplaySummary::default();
         let events = self.enter_current_state(tick)?;
         Ok(TrafficControllerEventBatch::new(events))
@@ -467,6 +478,7 @@ impl TrafficController {
                     .map(TrafficStreamPicker::rng_state),
             )
             .with_trace_pending(self.trace_pending.clone())
+            .with_trace_write_completion_pending(self.trace_write_completion_pending.clone())
             .with_trace_replay_summary(self.trace_replay_summary)
     }
 
@@ -488,6 +500,7 @@ impl TrafficController {
             events.push(TrafficControllerEvent::TraceExit(status));
         }
         self.trace_pending.clear();
+        self.trace_write_completion_pending.clear();
 
         let transition = self.machine.transition_now(tick)?;
         events.push(TrafficControllerEvent::Transition(transition));
@@ -575,6 +588,29 @@ impl TrafficController {
                 Ok(Vec::new())
             }
             TrafficControllerEvent::TraceResponse(response) => {
+                if response.kind() == TrafficTraceResponseKind::WriteComplete {
+                    if let Some(request) =
+                        self.take_matching_trace_write_completion_request(|pending| {
+                            response_matches_pending_write_completion(*response, pending)
+                        })
+                    {
+                        let source = TrafficTraceReplaySource::Memory(request.request().clone());
+                        let completion = TrafficTraceReplayCompletion::WriteCompletion(
+                            TrafficTraceMemoryWriteCompletion::new(
+                                request.request().request().id(),
+                            ),
+                        );
+                        self.trace_replay_summary.record_completion(&completion)?;
+                        let action =
+                            TrafficTraceReplayAction::from_completion(response.tick(), &completion);
+                        return Ok(vec![
+                            TrafficControllerEvent::TraceResponseMatch(
+                                TrafficTraceResponseMatch::new(*response, source, completion),
+                            ),
+                            TrafficControllerEvent::TraceReplayAction(action),
+                        ]);
+                    }
+                }
                 let Some(source) = self.take_matching_trace_source(|source| {
                     response_matches_trace_source(*response, source)
                 }) else {
@@ -584,6 +620,18 @@ impl TrafficController {
                 self.trace_replay_summary.record_completion(&completion)?;
                 let action =
                     TrafficTraceReplayAction::from_completion(response.tick(), &completion);
+                if response.kind() == TrafficTraceResponseKind::Write {
+                    if let TrafficTraceReplaySource::Memory(request) = &source {
+                        if let Some(pending) =
+                            TrafficTracePendingWriteCompletion::from_write_response(
+                                request.clone(),
+                                *response,
+                            )
+                        {
+                            self.trace_write_completion_pending.push(pending);
+                        }
+                    }
+                }
                 Ok(vec![
                     TrafficControllerEvent::TraceResponseMatch(TrafficTraceResponseMatch::new(
                         *response, source, completion,
@@ -617,6 +665,44 @@ impl TrafficController {
     ) -> Option<TrafficTraceReplaySource> {
         let index = self.trace_pending.iter().position(predicate)?;
         Some(self.trace_pending.remove(index))
+    }
+
+    fn take_matching_trace_write_completion_request(
+        &mut self,
+        predicate: impl Fn(&TrafficTracePendingWriteCompletion) -> bool,
+    ) -> Option<TrafficTracePendingWriteCompletion> {
+        let index = self
+            .trace_write_completion_pending
+            .iter()
+            .position(predicate)?;
+        Some(self.trace_write_completion_pending.remove(index))
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct TrafficTracePendingWriteCompletion {
+    request: TrafficRequestEvent,
+    packet_id: u64,
+}
+
+impl TrafficTracePendingWriteCompletion {
+    fn from_write_response(
+        request: TrafficRequestEvent,
+        response: TrafficTraceResponseEvent,
+    ) -> Option<Self> {
+        let request_packet_id = request.trace_packet_id()?;
+        let response_packet_id = response.trace_packet_id()?;
+        if request_packet_id != response_packet_id {
+            return None;
+        }
+        Some(Self {
+            request,
+            packet_id: request_packet_id,
+        })
+    }
+
+    const fn request(&self) -> &TrafficRequestEvent {
+        &self.request
     }
 }
 
@@ -848,9 +934,25 @@ impl TrafficTraceMemoryCompletion {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TrafficTraceMemoryWriteCompletion {
+    request_id: MemoryRequestId,
+}
+
+impl TrafficTraceMemoryWriteCompletion {
+    pub const fn new(request_id: MemoryRequestId) -> Self {
+        Self { request_id }
+    }
+
+    pub const fn request_id(self) -> MemoryRequestId {
+        self.request_id
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TrafficTraceReplayCompletion {
     Memory(TrafficTraceMemoryCompletion),
+    WriteCompletion(TrafficTraceMemoryWriteCompletion),
     Ack,
 }
 
@@ -873,6 +975,10 @@ pub enum TrafficTraceReplayAction {
         response: MemoryResponse,
         trace_data: Option<Vec<u8>>,
     },
+    MemoryWriteCompletion {
+        tick: u64,
+        request: MemoryRequestId,
+    },
     ControlAck {
         tick: u64,
     },
@@ -894,6 +1000,12 @@ impl TrafficTraceReplayAction {
                 response: completion.response.clone(),
                 trace_data: completion.trace_data.clone(),
             },
+            TrafficTraceReplayCompletion::WriteCompletion(completion) => {
+                Self::MemoryWriteCompletion {
+                    tick,
+                    request: completion.request_id(),
+                }
+            }
             TrafficTraceReplayCompletion::Ack => Self::ControlAck { tick },
         }
     }
@@ -914,291 +1026,11 @@ impl TrafficTraceReplayAction {
     pub const fn tick(&self) -> u64 {
         match self {
             Self::MemoryResponse { tick, .. }
+            | Self::MemoryWriteCompletion { tick, .. }
             | Self::ControlAck { tick }
             | Self::MemoryFailure { tick, .. }
             | Self::ControlFailure { tick, .. } => *tick,
         }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TrafficTraceMemoryResponseRecord {
-    tick: u64,
-    response: MemoryResponse,
-    trace_data: Option<Vec<u8>>,
-}
-
-impl TrafficTraceMemoryResponseRecord {
-    pub fn new(tick: u64, response: MemoryResponse) -> Self {
-        Self {
-            tick,
-            response,
-            trace_data: None,
-        }
-    }
-
-    pub fn with_trace_data(
-        tick: u64,
-        response: MemoryResponse,
-        trace_data: Option<Vec<u8>>,
-    ) -> Self {
-        Self {
-            tick,
-            response,
-            trace_data,
-        }
-    }
-
-    pub const fn tick(&self) -> u64 {
-        self.tick
-    }
-
-    pub const fn response(&self) -> &MemoryResponse {
-        &self.response
-    }
-
-    pub fn trace_data(&self) -> Option<&[u8]> {
-        self.trace_data.as_deref()
-    }
-
-    pub fn into_response(self) -> MemoryResponse {
-        self.response
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct TrafficTraceMemoryFailureRecord {
-    tick: u64,
-    failure: TrafficTraceMemoryFailure,
-}
-
-impl TrafficTraceMemoryFailureRecord {
-    pub const fn new(tick: u64, failure: TrafficTraceMemoryFailure) -> Self {
-        Self { tick, failure }
-    }
-
-    pub const fn tick(self) -> u64 {
-        self.tick
-    }
-
-    pub const fn failure(self) -> TrafficTraceMemoryFailure {
-        self.failure
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct TrafficTraceControlFailureRecord {
-    tick: u64,
-    failure: TrafficTraceControlFailure,
-}
-
-impl TrafficTraceControlFailureRecord {
-    pub const fn new(tick: u64, failure: TrafficTraceControlFailure) -> Self {
-        Self { tick, failure }
-    }
-
-    pub const fn tick(self) -> u64 {
-        self.tick
-    }
-
-    pub const fn failure(self) -> TrafficTraceControlFailure {
-        self.failure
-    }
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct TrafficTraceReplayActionQueue {
-    actions: VecDeque<TrafficTraceReplayAction>,
-    summary: TrafficTraceReplaySummary,
-}
-
-impl TrafficTraceReplayActionQueue {
-    pub fn record_batch(
-        &mut self,
-        batch: &TrafficControllerEventBatch,
-    ) -> Result<(), TrafficGeneratorError> {
-        for event in batch.events() {
-            if let TrafficControllerEvent::TraceReplayAction(action) = event {
-                self.record_action(action.clone())?;
-            }
-        }
-        Ok(())
-    }
-
-    pub fn record_action(
-        &mut self,
-        action: TrafficTraceReplayAction,
-    ) -> Result<(), TrafficGeneratorError> {
-        self.summary.record_action(&action)?;
-        self.actions.push_back(action);
-        Ok(())
-    }
-
-    pub fn pop_action(&mut self) -> Option<TrafficTraceReplayAction> {
-        self.actions.pop_front()
-    }
-
-    pub fn peek_action(&self) -> Option<&TrafficTraceReplayAction> {
-        self.actions.front()
-    }
-
-    pub fn pop_memory_response(&mut self) -> Option<TrafficTraceMemoryResponseRecord> {
-        let index = self
-            .actions
-            .iter()
-            .position(|action| matches!(action, TrafficTraceReplayAction::MemoryResponse { .. }))?;
-        match self.actions.remove(index)? {
-            TrafficTraceReplayAction::MemoryResponse {
-                tick,
-                response,
-                trace_data,
-            } => Some(TrafficTraceMemoryResponseRecord::with_trace_data(
-                tick, response, trace_data,
-            )),
-            _ => unreachable!("selected memory response action"),
-        }
-    }
-
-    pub fn pop_control_ack_tick(&mut self) -> Option<u64> {
-        let index = self
-            .actions
-            .iter()
-            .position(|action| matches!(action, TrafficTraceReplayAction::ControlAck { .. }))?;
-        match self.actions.remove(index)? {
-            TrafficTraceReplayAction::ControlAck { tick } => Some(tick),
-            _ => unreachable!("selected control acknowledgement action"),
-        }
-    }
-
-    pub fn pop_memory_failure(&mut self) -> Option<TrafficTraceMemoryFailureRecord> {
-        let index = self
-            .actions
-            .iter()
-            .position(|action| matches!(action, TrafficTraceReplayAction::MemoryFailure { .. }))?;
-        match self.actions.remove(index)? {
-            TrafficTraceReplayAction::MemoryFailure { tick, failure } => {
-                Some(TrafficTraceMemoryFailureRecord::new(tick, failure))
-            }
-            _ => unreachable!("selected memory failure action"),
-        }
-    }
-
-    pub fn pop_control_failure(&mut self) -> Option<TrafficTraceControlFailureRecord> {
-        let index = self
-            .actions
-            .iter()
-            .position(|action| matches!(action, TrafficTraceReplayAction::ControlFailure { .. }))?;
-        match self.actions.remove(index)? {
-            TrafficTraceReplayAction::ControlFailure { tick, failure } => {
-                Some(TrafficTraceControlFailureRecord::new(tick, failure))
-            }
-            _ => unreachable!("selected control failure action"),
-        }
-    }
-
-    pub const fn summary(&self) -> TrafficTraceReplaySummary {
-        self.summary
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.actions.is_empty()
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct TrafficTraceReplaySummary {
-    memory_completions: u64,
-    control_completions: u64,
-    memory_failures: u64,
-    control_failures: u64,
-}
-
-impl TrafficTraceReplaySummary {
-    pub const fn memory_completions(self) -> u64 {
-        self.memory_completions
-    }
-
-    pub const fn control_completions(self) -> u64 {
-        self.control_completions
-    }
-
-    pub const fn memory_failures(self) -> u64 {
-        self.memory_failures
-    }
-
-    pub const fn control_failures(self) -> u64 {
-        self.control_failures
-    }
-
-    fn record_completion(
-        &mut self,
-        completion: &TrafficTraceReplayCompletion,
-    ) -> Result<(), TrafficGeneratorError> {
-        match completion {
-            TrafficTraceReplayCompletion::Memory(_) => {
-                self.memory_completions = checked_counter_add(
-                    "trace_replay.memory_completions",
-                    self.memory_completions,
-                    1,
-                )?;
-            }
-            TrafficTraceReplayCompletion::Ack => {
-                self.control_completions = checked_counter_add(
-                    "trace_replay.control_completions",
-                    self.control_completions,
-                    1,
-                )?;
-            }
-        }
-        Ok(())
-    }
-
-    fn record_failure(
-        &mut self,
-        failure: &TrafficTraceReplayFailure,
-    ) -> Result<(), TrafficGeneratorError> {
-        match failure {
-            TrafficTraceReplayFailure::Memory(_) => {
-                self.memory_failures =
-                    checked_counter_add("trace_replay.memory_failures", self.memory_failures, 1)?;
-            }
-            TrafficTraceReplayFailure::Control(_) => {
-                self.control_failures =
-                    checked_counter_add("trace_replay.control_failures", self.control_failures, 1)?;
-            }
-        }
-        Ok(())
-    }
-
-    fn record_action(
-        &mut self,
-        action: &TrafficTraceReplayAction,
-    ) -> Result<(), TrafficGeneratorError> {
-        match action {
-            TrafficTraceReplayAction::MemoryResponse { .. } => {
-                self.memory_completions = checked_counter_add(
-                    "trace_replay.memory_completions",
-                    self.memory_completions,
-                    1,
-                )?;
-            }
-            TrafficTraceReplayAction::ControlAck { .. } => {
-                self.control_completions = checked_counter_add(
-                    "trace_replay.control_completions",
-                    self.control_completions,
-                    1,
-                )?;
-            }
-            TrafficTraceReplayAction::MemoryFailure { .. } => {
-                self.memory_failures =
-                    checked_counter_add("trace_replay.memory_failures", self.memory_failures, 1)?;
-            }
-            TrafficTraceReplayAction::ControlFailure { .. } => {
-                self.control_failures =
-                    checked_counter_add("trace_replay.control_failures", self.control_failures, 1)?;
-            }
-        }
-        Ok(())
     }
 }
 
@@ -1307,6 +1139,7 @@ pub struct TrafficControllerSnapshot {
     stream: Option<TrafficStreamConfig>,
     stream_rng_state: Option<u64>,
     trace_pending: Vec<TrafficTraceReplaySource>,
+    trace_write_completion_pending: Vec<TrafficTracePendingWriteCompletion>,
     trace_replay_summary: TrafficTraceReplaySummary,
 }
 
@@ -1321,8 +1154,10 @@ impl TrafficControllerSnapshot {
             stream: None,
             stream_rng_state: None,
             trace_pending: Vec::new(),
+            trace_write_completion_pending: Vec::new(),
             trace_replay_summary: TrafficTraceReplaySummary {
                 memory_completions: 0,
+                write_completions: 0,
                 control_completions: 0,
                 memory_failures: 0,
                 control_failures: 0,
@@ -1342,6 +1177,14 @@ impl TrafficControllerSnapshot {
 
     pub fn with_trace_pending(mut self, trace_pending: Vec<TrafficTraceReplaySource>) -> Self {
         self.trace_pending = trace_pending;
+        self
+    }
+
+    fn with_trace_write_completion_pending(
+        mut self,
+        trace_write_completion_pending: Vec<TrafficTracePendingWriteCompletion>,
+    ) -> Self {
+        self.trace_write_completion_pending = trace_write_completion_pending;
         self
     }
 
@@ -1489,6 +1332,26 @@ fn response_matches_trace_source(
     }
 }
 
+fn response_matches_pending_write_completion(
+    response: TrafficTraceResponseEvent,
+    pending: &TrafficTracePendingWriteCompletion,
+) -> bool {
+    if response.kind() != TrafficTraceResponseKind::WriteComplete {
+        return false;
+    }
+
+    response.trace_packet_id() == Some(pending.packet_id)
+        && trace_address_matches(response.address(), Some(pending.request().address()))
+        && trace_size_matches(
+            response.size_bytes(),
+            Some(pending.request().request().size().bytes()),
+        )
+        && matches!(
+            pending.request().request().operation(),
+            MemoryOperation::Write | MemoryOperation::CacheBlockZero
+        )
+}
+
 fn error_matches_trace_source(
     error: TrafficTraceErrorEvent,
     source: &TrafficTraceReplaySource,
@@ -1549,12 +1412,11 @@ fn response_matches_memory_operation(
                 | MemoryOperation::LoadLocked
         ),
         TrafficTraceResponseKind::ReadExclusive => operation == MemoryOperation::ReadUnique,
-        TrafficTraceResponseKind::Write | TrafficTraceResponseKind::WriteComplete => {
-            matches!(
-                operation,
-                MemoryOperation::Write | MemoryOperation::CacheBlockZero
-            )
-        }
+        TrafficTraceResponseKind::Write => matches!(
+            operation,
+            MemoryOperation::Write | MemoryOperation::CacheBlockZero
+        ),
+        TrafficTraceResponseKind::WriteComplete => false,
         TrafficTraceResponseKind::SoftPrefetch | TrafficTraceResponseKind::HardPrefetch => {
             matches!(
                 operation,

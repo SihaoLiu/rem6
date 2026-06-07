@@ -2963,8 +2963,16 @@ gem5 `HasData` policy also carry synthetic trace response data through replay
 completion, action-queue, and target-completion context records even when the
 native request cannot expose CPU-visible response payload, such as prefetch or
 atomic-no-return requests. This keeps native `MemoryRequest` validation intact
-while giving execution consumers a separate trace-fill channel. On coherent workload
-data routes, response clean and invalidate policies now drive the configured
+while giving execution consumers a separate trace-fill channel. GPU-style
+`WriteResp` plus `WriteCompleteResp` traces are executable as a two-part write
+flow when both response packets carry the same trace packet id: `WriteResp`
+drives the native memory response once, while a later matched
+`WriteCompleteResp` produces a scheduled write-completion record consumed by
+serial and parallel controller replay without fabricating a second transport
+response. The serial controller helper can cross standalone sideband trace events
+while following that write-completion packet, but it does not consume future
+request or control-response batches speculatively. On coherent workload data
+routes, response clean and invalidate policies now drive the configured
 data-cache line after the matched response mutates the cache model:
 `ReadRespWithInvalidate`, `CleanInvalidResp`, and `InvalidateResp` clear the
 line, while `CleanSharedResp` writes dirty line data back and keeps a clean

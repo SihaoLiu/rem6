@@ -19,6 +19,7 @@ pub const GEM5_READ_RESP: u32 = 2;
 pub const GEM5_READ_RESP_WITH_INVALIDATE: u32 = 3;
 pub const GEM5_WRITE_REQ: u32 = 4;
 pub const GEM5_WRITE_RESP: u32 = 5;
+pub const GEM5_WRITE_COMPLETE_RESP: u32 = 6;
 pub const GEM5_WRITEBACK_DIRTY: u32 = 7;
 pub const GEM5_SOFT_PF_REQ: u32 = 11;
 pub const GEM5_SOFT_PF_RESP: u32 = 14;

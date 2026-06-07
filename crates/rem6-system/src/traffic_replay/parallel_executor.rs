@@ -6,6 +6,7 @@ use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerError, Tick};
 use rem6_memory::MemoryRequestId;
 use rem6_traffic::{
     TrafficController, TrafficControllerEvent, TrafficControllerEventBatch, TrafficGeneratorError,
+    TrafficTraceMemoryWriteCompletionRecord,
 };
 use rem6_transport::{
     MemoryRouteId, MemoryTrace, MemoryTransport, RequestDelivery, ResponseDelivery, TargetOutcome,
@@ -22,7 +23,10 @@ use super::{
 };
 
 type ScheduledSideband = (Tick, TrafficTraceReplaySidebandEvent);
+type ScheduledMemoryWriteCompletion = (Tick, TrafficTraceMemoryWriteCompletionRecord);
 type SidebandSink = Arc<dyn Fn(Tick, TrafficTraceReplaySidebandEvent) + Send + Sync>;
+type MemoryWriteCompletionSink =
+    Arc<dyn Fn(Tick, TrafficTraceMemoryWriteCompletionRecord) + Send + Sync>;
 type TargetRequestSink = Arc<dyn Fn(TrafficTraceReplayOrder, MemoryRequestId) + Send + Sync>;
 type TargetSink = Arc<dyn Fn(TrafficTraceReplayOrder, &RequestDelivery) + Send + Sync>;
 type TargetEventSink = Arc<
@@ -66,6 +70,7 @@ pub struct TrafficTraceReplayControllerParallelExecutor {
     errors: Arc<Mutex<TrafficTraceReplayControllerParallelErrors>>,
     retry_delay: Tick,
     sideband_sink: Option<SidebandSink>,
+    memory_write_completion_sink: Option<MemoryWriteCompletionSink>,
     target_request_sink: Option<TargetRequestSink>,
     target_sink: Option<TargetSink>,
     target_event_sink: Option<TargetEventSink>,
@@ -84,6 +89,7 @@ impl TrafficTraceReplayControllerParallelExecutor {
             )),
             retry_delay: 0,
             sideband_sink: None,
+            memory_write_completion_sink: None,
             target_request_sink: None,
             target_sink: None,
             target_event_sink: None,
@@ -103,6 +109,14 @@ impl TrafficTraceReplayControllerParallelExecutor {
         F: Fn(Tick, TrafficTraceReplaySidebandEvent) + Send + Sync + 'static,
     {
         self.sideband_sink = Some(Arc::new(sink));
+        self
+    }
+
+    pub fn with_memory_write_completion_sink<F>(mut self, sink: F) -> Self
+    where
+        F: Fn(Tick, TrafficTraceMemoryWriteCompletionRecord) + Send + Sync + 'static,
+    {
+        self.memory_write_completion_sink = Some(Arc::new(sink));
         self
     }
 
@@ -279,8 +293,15 @@ impl TrafficTraceReplayControllerParallelExecutor {
         let staged = self.staged_runtime(batch)?;
         let (staged, sidebands) =
             prepare_sidebands_from_runtime(staged, scheduler, partition, delivery_tick)?;
-        let scheduled = sidebands.len();
+        let (staged, write_completions) = prepare_memory_write_completions_from_runtime(
+            staged,
+            scheduler,
+            partition,
+            delivery_tick,
+        )?;
+        let scheduled = sidebands.len() + write_completions.len();
         self.schedule_prepared_sidebands(scheduler, partition, sidebands)?;
+        self.schedule_prepared_memory_write_completions(scheduler, partition, write_completions)?;
         self.commit_runtime(staged);
         Ok(scheduled)
     }
@@ -305,10 +326,13 @@ impl TrafficTraceReplayControllerParallelExecutor {
         let request = request_event.request().clone();
         let request_id = request.id();
         let staged = self.staged_runtime(batch)?;
-        let (staged, sidebands) = prepare_sidebands_from_runtime(
+        let source_partition = route_source_partition(transport, route)?;
+        let (staged, sidebands) =
+            prepare_sidebands_from_runtime(staged, scheduler, source_partition, request_tick)?;
+        let (staged, write_completions) = prepare_memory_write_completions_from_runtime(
             staged,
             scheduler,
-            route_source_partition(transport, route)?,
+            source_partition,
             request_tick,
         )?;
 
@@ -389,10 +413,11 @@ impl TrafficTraceReplayControllerParallelExecutor {
             }
         }
 
-        self.schedule_prepared_sidebands(
+        self.schedule_prepared_sidebands(scheduler, source_partition, sidebands)?;
+        self.schedule_prepared_memory_write_completions(
             scheduler,
-            route_source_partition(transport, route)?,
-            sidebands,
+            source_partition,
+            write_completions,
         )?;
         self.commit_runtime(staged);
         Ok(true)
@@ -423,6 +448,12 @@ impl TrafficTraceReplayControllerParallelExecutor {
         let staged = self.staged_runtime(batch)?;
         let (staged, sidebands) =
             prepare_sidebands_from_runtime(staged, scheduler, partition, delivery_tick)?;
+        let (staged, write_completions) = prepare_memory_write_completions_from_runtime(
+            staged,
+            scheduler,
+            partition,
+            delivery_tick,
+        )?;
         let runtime = Arc::clone(&self.runtime);
         let errors = Arc::clone(&self.errors);
         let control_event_sink = self.control_event_sink.clone();
@@ -485,6 +516,7 @@ impl TrafficTraceReplayControllerParallelExecutor {
         })?;
 
         self.schedule_prepared_sidebands(scheduler, partition, sidebands)?;
+        self.schedule_prepared_memory_write_completions(scheduler, partition, write_completions)?;
         self.commit_runtime(staged);
         Ok(true)
     }
@@ -526,6 +558,28 @@ impl TrafficTraceReplayControllerParallelExecutor {
                     .lock()
                     .expect("trace replay controller runtime lock")
                     .record_sideband_event(context.now(), event);
+            })?;
+        }
+        Ok(())
+    }
+
+    fn schedule_prepared_memory_write_completions(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        partition: PartitionId,
+        write_completions: Vec<ScheduledMemoryWriteCompletion>,
+    ) -> Result<(), SchedulerError> {
+        for (tick, record) in write_completions {
+            let runtime = Arc::clone(&self.runtime);
+            let sink = self.memory_write_completion_sink.clone();
+            scheduler.schedule_parallel_at(partition, tick, move |context| {
+                runtime
+                    .lock()
+                    .expect("trace replay controller runtime lock")
+                    .record_memory_write_completion(context.now(), record);
+                if let Some(sink) = &sink {
+                    sink(context.now(), record);
+                }
             })?;
         }
         Ok(())
@@ -575,6 +629,47 @@ fn prepare_sidebands_from_runtime(
         }
     }
     Ok((staged, sidebands))
+}
+
+fn prepare_memory_write_completions_from_runtime(
+    mut staged: TrafficTraceReplayControllerRuntime,
+    scheduler: &PartitionedScheduler,
+    partition: PartitionId,
+    delivery_tick: Tick,
+) -> Result<
+    (
+        TrafficTraceReplayControllerRuntime,
+        Vec<ScheduledMemoryWriteCompletion>,
+    ),
+    SchedulerError,
+> {
+    let mut write_completions = Vec::new();
+    while let Some(record) = staged.next_memory_write_completion() {
+        let delay = record.tick().saturating_sub(delivery_tick);
+        let tick = delivery_tick
+            .checked_add(delay)
+            .ok_or(SchedulerError::TickOverflow {
+                now: delivery_tick,
+                delay,
+            })?;
+        write_completions.push((tick, record));
+    }
+
+    if write_completions.is_empty() {
+        return Ok((staged, write_completions));
+    }
+
+    let partition_now = scheduler.partition_now(partition)?;
+    for (tick, _) in &write_completions {
+        if *tick < partition_now {
+            return Err(SchedulerError::InThePast {
+                partition,
+                now: partition_now,
+                requested: *tick,
+            });
+        }
+    }
+    Ok((staged, write_completions))
 }
 
 fn target_outcome_for_event(

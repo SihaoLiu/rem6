@@ -15,6 +15,7 @@ const GEM5_READ_RESP: u32 = 2;
 const GEM5_READ_RESP_WITH_INVALIDATE: u32 = 3;
 const GEM5_WRITE_REQ: u32 = 4;
 const GEM5_WRITE_RESP: u32 = 5;
+const GEM5_WRITE_COMPLETE_RESP: u32 = 6;
 const GEM5_SOFT_PF_REQ: u32 = 11;
 const GEM5_SOFT_PF_RESP: u32 = 14;
 const GEM5_SWAP_REQ: u32 = 34;
@@ -152,6 +153,215 @@ fn traffic_controller_matches_trace_response_to_pending_memory_request() {
         }
         completion => panic!("unexpected trace replay completion: {completion:?}"),
     }
+}
+
+#[test]
+fn traffic_controller_records_write_complete_response_after_write_resp() {
+    let mut controller = controller_for_packets(&[
+        PacketFields {
+            tick: 5,
+            command: GEM5_WRITE_REQ,
+            address: Some(0x4080),
+            size: Some(8),
+            packet_id: Some(30),
+        },
+        PacketFields {
+            tick: 7,
+            command: GEM5_WRITE_RESP,
+            address: Some(0x4080),
+            size: Some(8),
+            packet_id: Some(30),
+        },
+        PacketFields {
+            tick: 9,
+            command: GEM5_WRITE_COMPLETE_RESP,
+            address: Some(0x4080),
+            size: Some(8),
+            packet_id: Some(30),
+        },
+    ]);
+
+    assert!(controller.start(20).unwrap().is_empty());
+    let request_batch = controller.next_event(20, 0).unwrap().unwrap();
+    let request = request_batch.request().unwrap().clone();
+    assert_eq!(request.request().operation(), MemoryOperation::Write);
+
+    let response_batch = controller.next_event(request.tick(), 0).unwrap().unwrap();
+    let response = response_batch.trace_response().unwrap();
+    assert_eq!(response.kind(), TrafficTraceResponseKind::Write);
+    match response_batch.trace_replay_action().unwrap() {
+        TrafficTraceReplayAction::MemoryResponse {
+            tick,
+            response,
+            trace_data,
+        } => {
+            assert_eq!(*tick, response_batch.trace_response().unwrap().tick());
+            assert_eq!(response.request_id(), request.request().id());
+            assert_eq!(response.status(), ResponseStatus::Completed);
+            assert_eq!(trace_data, &None);
+        }
+        action => panic!("unexpected trace replay action: {action:?}"),
+    }
+    assert_eq!(controller.trace_replay_summary().memory_completions(), 1);
+    assert_eq!(controller.trace_replay_summary().write_completions(), 0);
+
+    let write_complete_batch = controller.next_event(response.tick(), 0).unwrap().unwrap();
+    let write_complete = write_complete_batch.trace_response().unwrap();
+    assert_eq!(
+        write_complete.kind(),
+        TrafficTraceResponseKind::WriteComplete
+    );
+    let matched = write_complete_batch.trace_response_match().unwrap();
+    assert_eq!(matched.response(), write_complete);
+    match matched.completion() {
+        TrafficTraceReplayCompletion::WriteCompletion(completion) => {
+            assert_eq!(completion.request_id(), request.request().id());
+        }
+        completion => panic!("unexpected trace replay completion: {completion:?}"),
+    }
+    match write_complete_batch.trace_replay_action().unwrap() {
+        TrafficTraceReplayAction::MemoryWriteCompletion { tick, request } => {
+            assert_eq!(*tick, write_complete.tick());
+            assert_eq!(*request, request_batch.request().unwrap().request().id());
+        }
+        action => panic!("unexpected trace replay action: {action:?}"),
+    }
+    assert_eq!(controller.trace_replay_summary().memory_completions(), 1);
+    assert_eq!(controller.trace_replay_summary().write_completions(), 1);
+
+    let mut action_queue = TrafficTraceReplayActionQueue::default();
+    action_queue.record_batch(&response_batch).unwrap();
+    action_queue.record_batch(&write_complete_batch).unwrap();
+    assert!(action_queue.pop_memory_response().is_some());
+    let write_completion = action_queue.pop_memory_write_completion().unwrap();
+    assert_eq!(write_completion.tick(), write_complete.tick());
+    assert_eq!(write_completion.request_id(), request.request().id());
+    assert_eq!(action_queue.summary().memory_completions(), 1);
+    assert_eq!(action_queue.summary().write_completions(), 1);
+}
+
+#[test]
+fn traffic_controller_requires_packet_id_for_write_complete_response() {
+    let mut controller = controller_for_packets(&[
+        PacketFields {
+            tick: 5,
+            command: GEM5_WRITE_REQ,
+            address: Some(0x40c0),
+            size: Some(8),
+            packet_id: Some(31),
+        },
+        PacketFields {
+            tick: 7,
+            command: GEM5_WRITE_RESP,
+            address: Some(0x40c0),
+            size: Some(8),
+            packet_id: Some(31),
+        },
+        PacketFields {
+            tick: 9,
+            command: GEM5_WRITE_COMPLETE_RESP,
+            address: None,
+            size: None,
+            packet_id: None,
+        },
+    ]);
+
+    assert!(controller.start(20).unwrap().is_empty());
+    let request_batch = controller.next_event(20, 0).unwrap().unwrap();
+    let request = request_batch.request().unwrap().clone();
+    let response_batch = controller.next_event(request.tick(), 0).unwrap().unwrap();
+    assert_eq!(
+        response_batch.trace_response().unwrap().kind(),
+        TrafficTraceResponseKind::Write
+    );
+    assert!(matches!(
+        response_batch.trace_replay_action().unwrap(),
+        TrafficTraceReplayAction::MemoryResponse { .. }
+    ));
+
+    let write_complete_batch = controller
+        .next_event(response_batch.trace_response().unwrap().tick(), 0)
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(
+        write_complete_batch.trace_response().unwrap().kind(),
+        TrafficTraceResponseKind::WriteComplete
+    );
+    assert!(write_complete_batch.trace_response_match().is_none());
+    assert!(write_complete_batch.trace_replay_action().is_none());
+    assert_eq!(controller.trace_replay_summary().memory_completions(), 1);
+    assert_eq!(controller.trace_replay_summary().write_completions(), 0);
+}
+
+#[test]
+fn traffic_controller_does_not_match_weak_write_complete_to_stale_pending_write() {
+    let mut controller = controller_for_packets(&[
+        PacketFields {
+            tick: 5,
+            command: GEM5_WRITE_REQ,
+            address: Some(0x40c0),
+            size: Some(8),
+            packet_id: Some(31),
+        },
+        PacketFields {
+            tick: 7,
+            command: GEM5_WRITE_RESP,
+            address: Some(0x40c0),
+            size: Some(8),
+            packet_id: Some(31),
+        },
+        PacketFields {
+            tick: 8,
+            command: GEM5_WRITE_REQ,
+            address: Some(0x41c0),
+            size: Some(8),
+            packet_id: Some(32),
+        },
+        PacketFields {
+            tick: 9,
+            command: GEM5_WRITE_COMPLETE_RESP,
+            address: None,
+            size: None,
+            packet_id: None,
+        },
+    ]);
+
+    assert!(controller.start(20).unwrap().is_empty());
+    let first_request_batch = controller.next_event(20, 0).unwrap().unwrap();
+    let first_response_batch = controller
+        .next_event(first_request_batch.request().unwrap().tick(), 0)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        first_response_batch.trace_response().unwrap().kind(),
+        TrafficTraceResponseKind::Write
+    );
+    assert!(matches!(
+        first_response_batch.trace_replay_action().unwrap(),
+        TrafficTraceReplayAction::MemoryResponse { .. }
+    ));
+
+    let second_request_batch = controller
+        .next_event(first_response_batch.trace_response().unwrap().tick(), 0)
+        .unwrap()
+        .unwrap();
+    let second_request = second_request_batch.request().unwrap().clone();
+    assert_eq!(second_request.request().operation(), MemoryOperation::Write);
+
+    let weak_write_complete_batch = controller
+        .next_event(second_request.tick(), 0)
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(
+        weak_write_complete_batch.trace_response().unwrap().kind(),
+        TrafficTraceResponseKind::WriteComplete
+    );
+    assert!(weak_write_complete_batch.trace_response_match().is_none());
+    assert!(weak_write_complete_batch.trace_replay_action().is_none());
+    assert_eq!(controller.trace_replay_summary().memory_completions(), 1);
+    assert_eq!(controller.trace_replay_summary().write_completions(), 0);
 }
 
 #[test]

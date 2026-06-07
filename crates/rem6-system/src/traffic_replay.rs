@@ -7,132 +7,38 @@ use rem6_kernel::{ParallelSchedulerContext, SchedulerContext, Tick};
 use rem6_memory::MemoryRequestId;
 use rem6_traffic::{
     TrafficController, TrafficControllerEvent, TrafficControllerEventBatch, TrafficGeneratorError,
-    TrafficTraceCacheEvent, TrafficTraceControlFailureRecord, TrafficTraceDiagnosticEvent,
-    TrafficTraceErrorEvent, TrafficTraceHtmEvent, TrafficTraceMemoryFailureRecord,
+    TrafficTraceControlFailureRecord, TrafficTraceErrorEvent, TrafficTraceHtmEvent,
+    TrafficTraceMemoryFailureRecord, TrafficTraceMemoryWriteCompletionRecord,
     TrafficTraceReplayAction, TrafficTraceReplayActionQueue, TrafficTraceReplaySource,
-    TrafficTraceResponseEvent, TrafficTraceSyncEvent, TrafficTraceTlbEvent,
+    TrafficTraceResponseEvent, TrafficTraceResponseKind, TrafficTraceSyncEvent,
 };
 use rem6_transport::{RequestDelivery, TargetOutcome};
 
 mod parallel_executor;
+mod records;
+
+use records::{
+    traffic_trace_replay_batch_has_memory_write_completion,
+    traffic_trace_replay_batch_is_sideband_only,
+};
 
 pub use parallel_executor::{
     TrafficTraceReplayControllerParallelErrors, TrafficTraceReplayControllerParallelExecutor,
     TrafficTraceReplayControllerParallelSubmitError, TrafficTraceReplayOrder,
 };
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct TrafficTraceReplayScheduledMemoryFailure {
-    tick: Tick,
-    record: TrafficTraceMemoryFailureRecord,
-}
-
-impl TrafficTraceReplayScheduledMemoryFailure {
-    pub const fn new(tick: Tick, record: TrafficTraceMemoryFailureRecord) -> Self {
-        Self { tick, record }
-    }
-
-    pub const fn tick(self) -> Tick {
-        self.tick
-    }
-
-    pub const fn record(self) -> TrafficTraceMemoryFailureRecord {
-        self.record
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct TrafficTraceReplayScheduledControlAck {
-    tick: Tick,
-    trace_tick: Tick,
-}
-
-impl TrafficTraceReplayScheduledControlAck {
-    pub const fn new(tick: Tick, trace_tick: Tick) -> Self {
-        Self { tick, trace_tick }
-    }
-
-    pub const fn tick(self) -> Tick {
-        self.tick
-    }
-
-    pub const fn trace_tick(self) -> Tick {
-        self.trace_tick
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct TrafficTraceReplayScheduledControlFailure {
-    tick: Tick,
-    record: TrafficTraceControlFailureRecord,
-}
-
-impl TrafficTraceReplayScheduledControlFailure {
-    pub const fn new(tick: Tick, record: TrafficTraceControlFailureRecord) -> Self {
-        Self { tick, record }
-    }
-
-    pub const fn tick(self) -> Tick {
-        self.tick
-    }
-
-    pub const fn record(self) -> TrafficTraceControlFailureRecord {
-        self.record
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct TrafficTraceReplayScheduledSidebandEvent {
-    tick: Tick,
-    event: TrafficTraceReplaySidebandEvent,
-}
-
-impl TrafficTraceReplayScheduledSidebandEvent {
-    pub const fn new(tick: Tick, event: TrafficTraceReplaySidebandEvent) -> Self {
-        Self { tick, event }
-    }
-
-    pub const fn tick(self) -> Tick {
-        self.tick
-    }
-
-    pub const fn event(self) -> TrafficTraceReplaySidebandEvent {
-        self.event
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum TrafficTraceReplaySidebandEvent {
-    Tlb(TrafficTraceTlbEvent),
-    Cache(TrafficTraceCacheEvent),
-    Diagnostic(TrafficTraceDiagnosticEvent),
-    Htm(TrafficTraceHtmEvent),
-}
-
-impl TrafficTraceReplaySidebandEvent {
-    pub const fn tick(self) -> Tick {
-        match self {
-            Self::Tlb(event) => event.tick(),
-            Self::Cache(event) => event.tick(),
-            Self::Diagnostic(event) => event.tick(),
-            Self::Htm(event) => event.tick(),
-        }
-    }
-
-    pub const fn sequence(self) -> u64 {
-        match self {
-            Self::Tlb(event) => event.sequence(),
-            Self::Cache(event) => event.sequence(),
-            Self::Diagnostic(event) => event.sequence(),
-            Self::Htm(event) => event.sequence(),
-        }
-    }
-}
+pub use records::{
+    TrafficTraceReplayScheduledControlAck, TrafficTraceReplayScheduledControlFailure,
+    TrafficTraceReplayScheduledMemoryFailure, TrafficTraceReplayScheduledMemoryWriteCompletion,
+    TrafficTraceReplayScheduledSidebandEvent, TrafficTraceReplaySidebandCompletion,
+    TrafficTraceReplaySidebandEvent,
+};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct TrafficTraceReplayTargetRuntime {
     actions: VecDeque<TrafficTraceReplayTargetAction>,
+    write_completion_actions: VecDeque<TrafficTraceMemoryWriteCompletionRecord>,
     memory_failures: Vec<TrafficTraceReplayScheduledMemoryFailure>,
+    memory_write_completions: Vec<TrafficTraceReplayScheduledMemoryWriteCompletion>,
     request_ticks: BTreeMap<MemoryRequestId, Tick>,
 }
 
@@ -221,6 +127,16 @@ impl TrafficTraceReplayTargetRuntime {
                         matched_error.take(),
                     ));
                 }
+                TrafficControllerEvent::TraceReplayAction(
+                    TrafficTraceReplayAction::MemoryWriteCompletion { tick, request },
+                ) => {
+                    self.write_completion_actions.push_back(
+                        TrafficTraceMemoryWriteCompletionRecord::new(*tick, *request),
+                    );
+                    matched_request = None;
+                    matched_response = None;
+                    matched_error = None;
+                }
                 TrafficControllerEvent::TraceReplayAction(_) => {
                     matched_request = None;
                     matched_response = None;
@@ -272,12 +188,29 @@ impl TrafficTraceReplayTargetRuntime {
             .push(TrafficTraceReplayScheduledMemoryFailure::new(tick, record));
     }
 
+    pub fn record_memory_write_completion(
+        &mut self,
+        tick: Tick,
+        record: TrafficTraceMemoryWriteCompletionRecord,
+    ) {
+        self.memory_write_completions
+            .push(TrafficTraceReplayScheduledMemoryWriteCompletion::new(
+                tick, record,
+            ));
+    }
+
     pub fn memory_failures(&self) -> &[TrafficTraceReplayScheduledMemoryFailure] {
         &self.memory_failures
     }
 
+    pub fn memory_write_completions(&self) -> &[TrafficTraceReplayScheduledMemoryWriteCompletion] {
+        &self.memory_write_completions
+    }
+
     pub fn is_empty(&self) -> bool {
-        self.actions.is_empty() && self.request_ticks.is_empty()
+        self.actions.is_empty()
+            && self.write_completion_actions.is_empty()
+            && self.request_ticks.is_empty()
     }
 
     fn has_replay_action(&self, request: MemoryRequestId) -> bool {
@@ -290,6 +223,10 @@ impl TrafficTraceReplayTargetRuntime {
 
     fn drop_request(&mut self, request: MemoryRequestId) {
         self.request_ticks.remove(&request);
+    }
+
+    fn next_memory_write_completion(&mut self) -> Option<TrafficTraceMemoryWriteCompletionRecord> {
+        self.write_completion_actions.pop_front()
     }
 
     fn target_action_index(&self, request: MemoryRequestId) -> Option<usize> {
@@ -350,7 +287,7 @@ impl TrafficTraceReplaySidebandRuntime {
         self.pending_events
             .pop_front()
             .expect("validated trace replay sideband event remains queued");
-        Some(TrafficTraceReplaySidebandCompletion { delay, event })
+        Some(TrafficTraceReplaySidebandCompletion::new(delay, event))
     }
 
     pub fn record_sideband_event(&mut self, tick: Tick, event: TrafficTraceReplaySidebandEvent) {
@@ -619,6 +556,10 @@ impl TrafficTraceReplayControllerRuntime {
         self.target.memory_failures()
     }
 
+    pub fn memory_write_completions(&self) -> &[TrafficTraceReplayScheduledMemoryWriteCompletion] {
+        self.target.memory_write_completions()
+    }
+
     pub fn control_acks(&self) -> &[TrafficTraceReplayScheduledControlAck] {
         self.control.control_acks()
     }
@@ -663,6 +604,18 @@ impl TrafficTraceReplayControllerRuntime {
 
     fn record_memory_failure(&mut self, tick: Tick, record: TrafficTraceMemoryFailureRecord) {
         self.target.record_memory_failure(tick, record);
+    }
+
+    fn next_memory_write_completion(&mut self) -> Option<TrafficTraceMemoryWriteCompletionRecord> {
+        self.target.next_memory_write_completion()
+    }
+
+    fn record_memory_write_completion(
+        &mut self,
+        tick: Tick,
+        record: TrafficTraceMemoryWriteCompletionRecord,
+    ) {
+        self.target.record_memory_write_completion(tick, record);
     }
 
     fn control_source_tick(&self) -> Option<Tick> {
@@ -791,11 +744,11 @@ pub fn traffic_trace_replay_runtime_sideband_events(
         scheduled += 1;
         let replay = Arc::clone(&runtime);
         context
-            .schedule_local_after(completion.delay, move |context| {
+            .schedule_local_after(completion.delay(), move |context| {
                 replay
                     .lock()
                     .expect("trace replay sideband runtime lock")
-                    .record_sideband_event(context.now(), completion.event);
+                    .record_sideband_event(context.now(), completion.event());
             })
             .expect("validated trace replay sideband delay");
     }
@@ -808,9 +761,9 @@ pub fn traffic_trace_replay_controller_target_outcome(
     context: &mut SchedulerContext<'_>,
     retry_delay: Tick,
 ) -> Result<TargetOutcome, TrafficTraceReplayControllerTargetError> {
-    let Some(event) = traffic_trace_replay_controller_target_event(
+    let Some(event_context) = traffic_trace_replay_controller_target_event_context(
         Arc::clone(&runtime),
-        controller,
+        Arc::clone(&controller),
         delivery,
         context,
         retry_delay,
@@ -818,9 +771,25 @@ pub fn traffic_trace_replay_controller_target_outcome(
     else {
         return Ok(TargetOutcome::NoResponse);
     };
+    let trace_response = event_context.trace_response();
+    let event = event_context.into_event();
 
     match event {
-        TrafficTraceReplayTargetEvent::MemoryResponse(outcome) => Ok(outcome),
+        TrafficTraceReplayTargetEvent::MemoryResponse(outcome) => {
+            if trace_response
+                .is_some_and(|response| response.kind() == TrafficTraceResponseKind::Write)
+            {
+                traffic_trace_replay_controller_follow_write_completion(
+                    Arc::clone(&runtime),
+                    controller,
+                    delivery.request().id(),
+                    trace_response.expect("validated trace response").tick(),
+                    context,
+                    retry_delay,
+                )?;
+            }
+            Ok(outcome)
+        }
         TrafficTraceReplayTargetEvent::MemoryFailure { delay, record } => {
             context
                 .schedule_local_after(delay, move |context| {
@@ -869,6 +838,97 @@ pub fn traffic_trace_replay_controller_target_event(
     context: &mut SchedulerContext<'_>,
     retry_delay: Tick,
 ) -> Result<Option<TrafficTraceReplayTargetEvent>, TrafficTraceReplayControllerTargetError> {
+    traffic_trace_replay_controller_target_event_context(
+        runtime,
+        controller,
+        delivery,
+        context,
+        retry_delay,
+    )
+    .map(|event_context| event_context.map(TrafficTraceReplayTargetEventContext::into_event))
+}
+
+fn traffic_trace_replay_controller_follow_write_completion(
+    runtime: Arc<Mutex<TrafficTraceReplayControllerRuntime>>,
+    controller: Arc<Mutex<TrafficController>>,
+    request: MemoryRequestId,
+    controller_tick: Tick,
+    context: &mut SchedulerContext<'_>,
+    retry_delay: Tick,
+) -> Result<(), TrafficTraceReplayControllerTargetError> {
+    let controller_checkpoint = controller
+        .lock()
+        .expect("traffic controller lock")
+        .snapshot();
+    let runtime_checkpoint = runtime
+        .lock()
+        .expect("trace replay controller runtime lock")
+        .clone();
+    let mut batches = Vec::new();
+
+    loop {
+        let batch = controller
+            .lock()
+            .expect("traffic controller lock")
+            .next_event(controller_tick, retry_delay)?;
+        let Some(batch) = batch else {
+            *controller.lock().expect("traffic controller lock") =
+                TrafficController::restore(controller_checkpoint)?;
+            return Ok(());
+        };
+
+        if traffic_trace_replay_batch_has_memory_write_completion(&batch, request) {
+            batches.push(batch);
+            break;
+        }
+
+        if traffic_trace_replay_batch_is_sideband_only(&batch) {
+            batches.push(batch);
+            continue;
+        }
+
+        *controller.lock().expect("traffic controller lock") =
+            TrafficController::restore(controller_checkpoint)?;
+        return Ok(());
+    }
+
+    let record_result = {
+        let mut runtime = runtime
+            .lock()
+            .expect("trace replay controller runtime lock");
+        batches
+            .iter()
+            .try_for_each(|batch| runtime.record_batch(batch))
+    };
+    if let Err(error) = record_result {
+        *controller.lock().expect("traffic controller lock") =
+            TrafficController::restore(controller_checkpoint)?;
+        *runtime
+            .lock()
+            .expect("trace replay controller runtime lock") = runtime_checkpoint;
+        return Err(error.into());
+    }
+
+    traffic_trace_replay_controller_runtime_sideband_events(
+        Arc::clone(&runtime),
+        context.now(),
+        context,
+    );
+    traffic_trace_replay_controller_runtime_memory_write_completions(
+        Arc::clone(&runtime),
+        context.now(),
+        context,
+    );
+    Ok(())
+}
+
+fn traffic_trace_replay_controller_target_event_context(
+    runtime: Arc<Mutex<TrafficTraceReplayControllerRuntime>>,
+    controller: Arc<Mutex<TrafficController>>,
+    delivery: &RequestDelivery,
+    context: &mut SchedulerContext<'_>,
+    retry_delay: Tick,
+) -> Result<Option<TrafficTraceReplayTargetEventContext>, TrafficTraceReplayControllerTargetError> {
     if !delivery.request().requires_response() {
         return Ok(None);
     }
@@ -879,7 +939,10 @@ pub fn traffic_trace_replay_controller_target_event(
         .target_request_tick(delivery.request().id())
         .unwrap_or_else(|| delivery.tick());
     loop {
-        match traffic_trace_replay_controller_runtime_target_event(Arc::clone(&runtime), delivery) {
+        match traffic_trace_replay_controller_runtime_target_event_context(
+            Arc::clone(&runtime),
+            delivery,
+        ) {
             Ok(event) => return Ok(Some(event)),
             Err(TrafficTraceReplayTargetError::ActionQueueEmpty { .. }) => {}
             Err(error) => return Err(error.into()),
@@ -913,6 +976,11 @@ pub fn traffic_trace_replay_controller_target_event(
             runtime.has_target_action(delivery.request().id())
         };
         traffic_trace_replay_controller_runtime_sideband_events(
+            Arc::clone(&runtime),
+            context.now(),
+            context,
+        );
+        traffic_trace_replay_controller_runtime_memory_write_completions(
             Arc::clone(&runtime),
             context.now(),
             context,
@@ -1056,6 +1124,11 @@ pub fn traffic_trace_replay_controller_control_event(
             context.now(),
             context,
         );
+        traffic_trace_replay_controller_runtime_memory_write_completions(
+            Arc::clone(&runtime),
+            context.now(),
+            context,
+        );
         if (trace_exited || repeated_source) && !control_action_available {
             runtime
                 .lock()
@@ -1141,29 +1214,41 @@ pub fn traffic_trace_replay_controller_runtime_sideband_events(
         scheduled += 1;
         let replay = Arc::clone(&runtime);
         context
-            .schedule_local_after(completion.delay, move |context| {
+            .schedule_local_after(completion.delay(), move |context| {
                 replay
                     .lock()
                     .expect("trace replay controller runtime lock")
-                    .record_sideband_event(context.now(), completion.event);
+                    .record_sideband_event(context.now(), completion.event());
             })
             .expect("validated trace replay sideband delay");
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct TrafficTraceReplaySidebandCompletion {
-    delay: Tick,
-    event: TrafficTraceReplaySidebandEvent,
-}
-
-impl TrafficTraceReplaySidebandCompletion {
-    pub const fn delay(self) -> Tick {
-        self.delay
-    }
-
-    pub const fn event(self) -> TrafficTraceReplaySidebandEvent {
-        self.event
+pub fn traffic_trace_replay_controller_runtime_memory_write_completions(
+    runtime: Arc<Mutex<TrafficTraceReplayControllerRuntime>>,
+    delivery_tick: Tick,
+    context: &mut SchedulerContext<'_>,
+) -> usize {
+    let mut scheduled = 0;
+    loop {
+        let Some(record) = runtime
+            .lock()
+            .expect("trace replay controller runtime lock")
+            .next_memory_write_completion()
+        else {
+            return scheduled;
+        };
+        scheduled += 1;
+        let delay = record.tick().saturating_sub(delivery_tick);
+        let replay = Arc::clone(&runtime);
+        context
+            .schedule_local_after(delay, move |context| {
+                replay
+                    .lock()
+                    .expect("trace replay controller runtime lock")
+                    .record_memory_write_completion(context.now(), record);
+            })
+            .expect("validated trace replay memory write completion delay");
     }
 }
 
