@@ -26,6 +26,7 @@ mod branch_predictor;
 mod data_config;
 mod error;
 mod fetch_config;
+mod fetch_event;
 mod gshare_predictor;
 mod htm_transaction;
 mod in_order_pipeline;
@@ -72,6 +73,7 @@ pub use branch_predictor::{
 pub use data_config::CpuDataConfig;
 pub use error::{CpuClusterError, CpuError, RiscvCpuError};
 pub use fetch_config::CpuFetchConfig;
+pub use fetch_event::{CpuFetchEvent, CpuFetchEventKind, CpuFetchRecord};
 pub use gshare_predictor::{
     GShareBranchPredictor, GShareBranchPredictorConfig, GShareBranchPredictorError,
     GShareBranchPredictorSnapshot, GShareHistory, GShareHistoryUpdate, GSharePrediction,
@@ -516,6 +518,22 @@ impl CpuCore {
             }
         }
     }
+
+    pub(crate) fn record_fetch_failure(
+        &self,
+        request_id: MemoryRequestId,
+        tick: Tick,
+        route: MemoryRouteId,
+        endpoint: TransportEndpointId,
+    ) {
+        let mut state = self.state.lock().expect("cpu core lock");
+        let Some(fetch) = state.outstanding.remove(&request_id) else {
+            return;
+        };
+        state
+            .events
+            .push(CpuFetchEvent::failed(fetch.record(tick, route, endpoint)));
+    }
 }
 
 impl fmt::Debug for CpuCore {
@@ -678,143 +696,6 @@ impl IssuedFetch {
             self.pc,
             self.size,
         )
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum CpuFetchEventKind {
-    Issued,
-    Completed,
-    Retry,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CpuFetchRecord {
-    tick: Tick,
-    partition: PartitionId,
-    route: MemoryRouteId,
-    endpoint: TransportEndpointId,
-    request: MemoryRequestId,
-    pc: Address,
-    size: AccessSize,
-}
-
-impl CpuFetchRecord {
-    pub fn new(
-        tick: Tick,
-        partition: PartitionId,
-        route: MemoryRouteId,
-        endpoint: TransportEndpointId,
-        request: MemoryRequestId,
-        pc: Address,
-        size: AccessSize,
-    ) -> Self {
-        Self {
-            tick,
-            partition,
-            route,
-            endpoint,
-            request,
-            pc,
-            size,
-        }
-    }
-
-    pub fn tick(&self) -> Tick {
-        self.tick
-    }
-
-    pub fn partition(&self) -> PartitionId {
-        self.partition
-    }
-
-    pub fn route(&self) -> MemoryRouteId {
-        self.route
-    }
-
-    pub fn endpoint(&self) -> &TransportEndpointId {
-        &self.endpoint
-    }
-
-    pub fn request_id(&self) -> MemoryRequestId {
-        self.request
-    }
-
-    pub fn pc(&self) -> Address {
-        self.pc
-    }
-
-    pub fn size(&self) -> AccessSize {
-        self.size
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CpuFetchEvent {
-    record: CpuFetchRecord,
-    kind: CpuFetchEventKind,
-    data: Option<Vec<u8>>,
-}
-
-impl CpuFetchEvent {
-    pub fn issued(record: CpuFetchRecord) -> Self {
-        Self {
-            record,
-            kind: CpuFetchEventKind::Issued,
-            data: None,
-        }
-    }
-
-    pub fn completed(record: CpuFetchRecord, data: Vec<u8>) -> Self {
-        Self {
-            record,
-            kind: CpuFetchEventKind::Completed,
-            data: Some(data),
-        }
-    }
-
-    pub fn retry(record: CpuFetchRecord) -> Self {
-        Self {
-            record,
-            kind: CpuFetchEventKind::Retry,
-            data: None,
-        }
-    }
-
-    pub fn tick(&self) -> Tick {
-        self.record.tick()
-    }
-
-    pub fn partition(&self) -> PartitionId {
-        self.record.partition()
-    }
-
-    pub fn route(&self) -> MemoryRouteId {
-        self.record.route()
-    }
-
-    pub fn endpoint(&self) -> &TransportEndpointId {
-        self.record.endpoint()
-    }
-
-    pub fn request_id(&self) -> MemoryRequestId {
-        self.record.request_id()
-    }
-
-    pub fn pc(&self) -> Address {
-        self.record.pc()
-    }
-
-    pub fn size(&self) -> AccessSize {
-        self.record.size()
-    }
-
-    pub fn kind(&self) -> CpuFetchEventKind {
-        self.kind
-    }
-
-    pub fn data(&self) -> Option<&[u8]> {
-        self.data.as_deref()
     }
 }
 

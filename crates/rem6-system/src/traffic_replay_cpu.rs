@@ -36,3 +36,34 @@ pub fn traffic_trace_replay_runtime_data_target_outcome(
         }
     }
 }
+
+pub fn traffic_trace_replay_runtime_fetch_target_outcome(
+    runtime: Arc<Mutex<TrafficTraceReplayTargetRuntime>>,
+    core: RiscvCore,
+    delivery: &RequestDelivery,
+    context: &mut SchedulerContext<'_>,
+) -> Result<TargetOutcome, TrafficTraceReplayTargetError> {
+    let event = runtime
+        .lock()
+        .expect("trace replay target runtime lock")
+        .target_event(delivery)?;
+    match event {
+        TrafficTraceReplayTargetEvent::MemoryResponse(outcome) => Ok(outcome),
+        TrafficTraceReplayTargetEvent::MemoryFailure { delay, record } => {
+            let request_id = record.failure().request_id();
+            let route = delivery.route();
+            let endpoint = delivery.endpoint().clone();
+            context
+                .schedule_local_after(delay, move |context| {
+                    let tick = context.now();
+                    runtime
+                        .lock()
+                        .expect("trace replay target runtime lock")
+                        .record_memory_failure(tick, record);
+                    core.record_fetch_failure(request_id, tick, route, endpoint);
+                })
+                .expect("validated trace replay failure delay");
+            Ok(TargetOutcome::NoResponse)
+        }
+    }
+}

@@ -2,9 +2,10 @@ use rem6_isa_riscv::{RiscvPmpAccessKind, RiscvPrivilegeMode};
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionedScheduler, SchedulerContext, Tick,
 };
-use rem6_memory::{AccessSize, Address, MemoryRequest};
+use rem6_memory::{AccessSize, Address, MemoryRequest, MemoryRequestId};
 use rem6_transport::{
-    MemoryTrace, MemoryTransport, ParallelMemoryTransaction, RequestDelivery, TargetOutcome,
+    MemoryRouteId, MemoryTrace, MemoryTransport, ParallelMemoryTransaction, RequestDelivery,
+    TargetOutcome, TransportEndpointId,
 };
 
 use crate::{OutstandingFetch, RiscvCore, RiscvCpuError};
@@ -106,6 +107,17 @@ impl RiscvCore {
 
     pub(crate) fn record_prepared_fetch_issue(&self, issue: OutstandingFetch) {
         self.inner().record_issue(issue);
+    }
+
+    pub fn record_fetch_failure(
+        &self,
+        request_id: MemoryRequestId,
+        tick: Tick,
+        route: MemoryRouteId,
+        endpoint: TransportEndpointId,
+    ) {
+        self.inner()
+            .record_fetch_failure(request_id, tick, route, endpoint);
     }
 
     fn prepare_fetch(

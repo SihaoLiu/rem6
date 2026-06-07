@@ -242,7 +242,10 @@ pub use traffic_replay::{
     TrafficTraceReplayTargetError, TrafficTraceReplayTargetEvent,
     TrafficTraceReplayTargetEventContext, TrafficTraceReplayTargetRuntime,
 };
-pub use traffic_replay_cpu::traffic_trace_replay_runtime_data_target_outcome;
+pub use traffic_replay_cpu::{
+    traffic_trace_replay_runtime_data_target_outcome,
+    traffic_trace_replay_runtime_fetch_target_outcome,
+};
 pub(crate) use trap_event::pending_trap_cores_from_turn;
 pub use trap_event::{
     guest_trap_from_riscv, guest_trap_kind_from_riscv, RiscvTrapEventPort, ScheduledRiscvTrap,
