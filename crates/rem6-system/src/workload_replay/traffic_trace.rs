@@ -3,7 +3,10 @@ use std::sync::{Arc, Mutex};
 
 use rem6_kernel::{PartitionId, PartitionedScheduler, Tick};
 use rem6_memory::MemoryRequestId;
-use rem6_traffic::{TrafficController, TrafficControllerEvent, TrafficControllerEventBatch};
+use rem6_traffic::{
+    TrafficController, TrafficControllerEvent, TrafficControllerEventBatch, TrafficTraceCacheKind,
+    TrafficTraceDiagnosticKind, TrafficTraceHtmKind, TrafficTraceTlbKind,
+};
 use rem6_transport::{
     MemoryRouteId, MemoryTrace, MemoryTraceEvent, MemoryTransport, RequestDelivery,
     ResponseDelivery,
@@ -12,7 +15,8 @@ use rem6_workload::{WorkloadRouteId, WorkloadTopology, WorkloadTrafficTraceRepla
 
 use crate::{
     TrafficTraceReplayControllerParallelErrors, TrafficTraceReplayControllerParallelExecutor,
-    TrafficTraceReplayControllerRuntime, TrafficTraceReplayOrder, TrafficTraceReplaySidebandEvent,
+    TrafficTraceReplayControllerRuntime, TrafficTraceReplayOrder,
+    TrafficTraceReplayScheduledSidebandEvent, TrafficTraceReplaySidebandEvent,
     TrafficTraceReplayTargetEvent, TrafficTraceReplayTargetEventContext,
 };
 
@@ -87,6 +91,7 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
             .lock()
             .expect("traffic trace replay runtime lock")
             .clone();
+        let sideband_counts = traffic_trace_replay_sideband_counts(runtime.sideband_events());
         WorkloadTrafficTraceReplaySummary::new(self.route.clone(), self.scheduled_count)
             .with_response_delivery_count(
                 self.response_deliveries
@@ -99,6 +104,10 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
             .with_control_ack_count(runtime.control_acks().len())
             .with_control_failure_count(runtime.control_failures().len())
             .with_sideband_event_count(runtime.sideband_events().len())
+            .with_tlb_sync_event_count(sideband_counts.tlb_sync)
+            .with_cache_flush_event_count(sideband_counts.cache_flush)
+            .with_diagnostic_print_event_count(sideband_counts.diagnostic_print)
+            .with_htm_abort_event_count(sideband_counts.htm_abort)
     }
 
     pub(super) fn into_outcome(self) -> RiscvWorkloadTrafficTraceReplayOutcome {
@@ -120,6 +129,40 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
             memory_trace_events: self.trace.snapshot(),
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct TrafficTraceReplaySidebandCounts {
+    tlb_sync: usize,
+    cache_flush: usize,
+    diagnostic_print: usize,
+    htm_abort: usize,
+}
+
+fn traffic_trace_replay_sideband_counts(
+    events: &[TrafficTraceReplayScheduledSidebandEvent],
+) -> TrafficTraceReplaySidebandCounts {
+    events.iter().fold(
+        TrafficTraceReplaySidebandCounts::default(),
+        |mut counts, event| {
+            match event.event() {
+                TrafficTraceReplaySidebandEvent::Tlb(event) => match event.kind() {
+                    TrafficTraceTlbKind::ExternalSync => counts.tlb_sync += 1,
+                },
+                TrafficTraceReplaySidebandEvent::Cache(event) => match event.kind() {
+                    TrafficTraceCacheKind::Flush => counts.cache_flush += 1,
+                },
+                TrafficTraceReplaySidebandEvent::Diagnostic(event) => match event.kind() {
+                    TrafficTraceDiagnosticKind::Print => counts.diagnostic_print += 1,
+                },
+                TrafficTraceReplaySidebandEvent::Htm(event) => match event.kind() {
+                    TrafficTraceHtmKind::Request => {}
+                    TrafficTraceHtmKind::Abort => counts.htm_abort += 1,
+                },
+            }
+            counts
+        },
+    )
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -116,6 +116,40 @@ fn workload_manifest_records_traffic_trace_replay_summary_expectations() {
 }
 
 #[test]
+fn workload_manifest_records_typed_traffic_trace_sideband_expectations() {
+    let expected = expected_trace_summary("trace.sideband", 4, 0, 0, 0, 0, 0, 4)
+        .with_minimum_tlb_sync_event_count(1)
+        .with_minimum_cache_flush_event_count(1)
+        .with_minimum_diagnostic_print_event_count(1)
+        .with_minimum_htm_abort_event_count(1);
+    let manifest =
+        rem6_workload::WorkloadManifest::builder(id("manifest-typed-sideband"), boot_image())
+            .add_resource(kernel_resource())
+            .unwrap()
+            .add_required_resource(resource_id("kernel"))
+            .add_expected_traffic_trace_replay_summary(expected.clone())
+            .unwrap()
+            .build()
+            .unwrap();
+
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    assert_eq!(
+        plan.expected_traffic_trace_replay_summaries(),
+        std::slice::from_ref(&expected),
+    );
+
+    let actual = actual_trace_summary("trace.sideband", 4, 0, 0, 0, 0, 0, 4)
+        .with_tlb_sync_event_count(1)
+        .with_cache_flush_event_count(1)
+        .with_diagnostic_print_event_count(1)
+        .with_htm_abort_event_count(1);
+    let result = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_traffic_trace_replay_summary(actual.clone());
+    assert_eq!(result.traffic_trace_replay_summaries(), &[actual]);
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
 fn workload_manifest_identity_changes_with_traffic_trace_replay_expectations() {
     let base =
         rem6_workload::WorkloadManifest::builder(id("identity-traffic-trace-replay"), boot_image())
@@ -161,6 +195,42 @@ fn workload_manifest_identity_changes_with_traffic_trace_replay_expectations() {
     assert_ne!(base.identity(), response.identity());
     assert_ne!(response.identity(), stronger.identity());
     assert_ne!(response.identity(), other_route.identity());
+}
+
+#[test]
+fn workload_manifest_identity_changes_with_typed_trace_sideband_expectations() {
+    let generic =
+        rem6_workload::WorkloadManifest::builder(id("identity-typed-sideband"), boot_image())
+            .add_resource(kernel_resource())
+            .unwrap()
+            .add_required_resource(resource_id("kernel"))
+            .add_expected_traffic_trace_replay_summary(expected_trace_summary(
+                "trace.sideband",
+                4,
+                0,
+                0,
+                0,
+                0,
+                0,
+                4,
+            ))
+            .unwrap()
+            .build()
+            .unwrap();
+    let typed =
+        rem6_workload::WorkloadManifest::builder(id("identity-typed-sideband"), boot_image())
+            .add_resource(kernel_resource())
+            .unwrap()
+            .add_required_resource(resource_id("kernel"))
+            .add_expected_traffic_trace_replay_summary(
+                expected_trace_summary("trace.sideband", 4, 0, 0, 0, 0, 0, 4)
+                    .with_minimum_tlb_sync_event_count(1),
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+
+    assert_ne!(generic.identity(), typed.identity());
 }
 
 #[test]
@@ -240,6 +310,34 @@ fn workload_replay_plan_rejects_missing_or_underreported_traffic_trace_replay_su
     );
 
     let actual = actual_trace_summary("trace.a", 1, 1, 3, 0, 1, 0, 0);
+    let underreported = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_traffic_trace_replay_summary(actual.clone());
+    assert_eq!(
+        plan.verify_result(&underreported).unwrap_err(),
+        WorkloadError::TrafficTraceReplaySummaryExpectation(Box::new(
+            WorkloadTrafficTraceReplaySummaryExpectationError::BelowMinimum { expected, actual },
+        )),
+    );
+}
+
+#[test]
+fn workload_replay_plan_rejects_underreported_typed_sideband_summary() {
+    let expected = expected_trace_summary("trace.sideband", 4, 0, 0, 0, 0, 0, 4)
+        .with_minimum_tlb_sync_event_count(1)
+        .with_minimum_cache_flush_event_count(1);
+    let manifest =
+        rem6_workload::WorkloadManifest::builder(id("typed-sideband-mismatch"), boot_image())
+            .add_resource(kernel_resource())
+            .unwrap()
+            .add_required_resource(resource_id("kernel"))
+            .add_expected_traffic_trace_replay_summary(expected.clone())
+            .unwrap()
+            .build()
+            .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let actual =
+        actual_trace_summary("trace.sideband", 4, 0, 0, 0, 0, 0, 4).with_tlb_sync_event_count(1);
     let underreported = WorkloadResult::new(plan.manifest_identity(), 32)
         .with_traffic_trace_replay_summary(actual.clone());
     assert_eq!(

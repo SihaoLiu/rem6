@@ -3223,11 +3223,15 @@ encode. Line-shaped `FlushReq` packet-trace commands now import as typed cache
 flush events that retain gem5's request classification, flush classification,
 and writable intent. Workload trace replay consumes those events for declared
 data-cache lines on coherent data routes, while broader Ruby cache-recorder
-flush coverage remains open. Broader TLBI execution semantics, TLBI completion
-forms, CPU-visible HTM behavior, full diagnostic printing, and cache flush
-handling outside declared workload data-cache lines remain open because they
-need CPU/MMU/cache/debug-visible event contracts, and sync flags beyond `KERNEL`
-need additional typed metadata before import can accept them.
+flush coverage remains open. Workload replay summaries and manifest
+expectations now split sideband evidence into TLB external-sync, cache-flush,
+diagnostic-print, and HTM-abort counts, so those policies are consumed by the
+executable replay contract without turning them into fake memory requests.
+Broader TLBI execution semantics, TLBI completion forms, CPU-visible HTM
+behavior, full diagnostic printing, and cache flush handling outside declared
+workload data-cache lines remain open because they need
+CPU/MMU/cache/debug-visible event contracts, and sync flags beyond `KERNEL` need
+additional typed metadata before import can accept them.
 
 ### Memory, Cache, Coherence, and NoC
 

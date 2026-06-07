@@ -10,6 +10,10 @@ pub struct WorkloadTrafficTraceReplaySummary {
     control_ack_count: usize,
     control_failure_count: usize,
     sideband_event_count: usize,
+    tlb_sync_event_count: usize,
+    cache_flush_event_count: usize,
+    diagnostic_print_event_count: usize,
+    htm_abort_event_count: usize,
 }
 
 impl WorkloadTrafficTraceReplaySummary {
@@ -23,6 +27,10 @@ impl WorkloadTrafficTraceReplaySummary {
             control_ack_count: 0,
             control_failure_count: 0,
             sideband_event_count: 0,
+            tlb_sync_event_count: 0,
+            cache_flush_event_count: 0,
+            diagnostic_print_event_count: 0,
+            htm_abort_event_count: 0,
         }
     }
 
@@ -53,6 +61,29 @@ impl WorkloadTrafficTraceReplaySummary {
 
     pub fn with_sideband_event_count(mut self, sideband_event_count: usize) -> Self {
         self.sideband_event_count = sideband_event_count;
+        self
+    }
+
+    pub fn with_tlb_sync_event_count(mut self, tlb_sync_event_count: usize) -> Self {
+        self.tlb_sync_event_count = tlb_sync_event_count;
+        self
+    }
+
+    pub fn with_cache_flush_event_count(mut self, cache_flush_event_count: usize) -> Self {
+        self.cache_flush_event_count = cache_flush_event_count;
+        self
+    }
+
+    pub fn with_diagnostic_print_event_count(
+        mut self,
+        diagnostic_print_event_count: usize,
+    ) -> Self {
+        self.diagnostic_print_event_count = diagnostic_print_event_count;
+        self
+    }
+
+    pub fn with_htm_abort_event_count(mut self, htm_abort_event_count: usize) -> Self {
+        self.htm_abort_event_count = htm_abort_event_count;
         self
     }
 
@@ -88,6 +119,22 @@ impl WorkloadTrafficTraceReplaySummary {
         self.sideband_event_count
     }
 
+    pub const fn tlb_sync_event_count(&self) -> usize {
+        self.tlb_sync_event_count
+    }
+
+    pub const fn cache_flush_event_count(&self) -> usize {
+        self.cache_flush_event_count
+    }
+
+    pub const fn diagnostic_print_event_count(&self) -> usize {
+        self.diagnostic_print_event_count
+    }
+
+    pub const fn htm_abort_event_count(&self) -> usize {
+        self.htm_abort_event_count
+    }
+
     pub(crate) fn sort_key(&self) -> &WorkloadRouteId {
         &self.route
     }
@@ -104,6 +151,11 @@ impl WorkloadTrafficTraceReplaySummary {
             control_ack_count: self.control_ack_count + other.control_ack_count,
             control_failure_count: self.control_failure_count + other.control_failure_count,
             sideband_event_count: self.sideband_event_count + other.sideband_event_count,
+            tlb_sync_event_count: self.tlb_sync_event_count + other.tlb_sync_event_count,
+            cache_flush_event_count: self.cache_flush_event_count + other.cache_flush_event_count,
+            diagnostic_print_event_count: self.diagnostic_print_event_count
+                + other.diagnostic_print_event_count,
+            htm_abort_event_count: self.htm_abort_event_count + other.htm_abort_event_count,
         }
     }
 }
@@ -118,6 +170,10 @@ pub struct WorkloadExpectedTrafficTraceReplaySummary {
     minimum_control_ack_count: usize,
     minimum_control_failure_count: usize,
     minimum_sideband_event_count: usize,
+    minimum_tlb_sync_event_count: usize,
+    minimum_cache_flush_event_count: usize,
+    minimum_diagnostic_print_event_count: usize,
+    minimum_htm_abort_event_count: usize,
 }
 
 impl WorkloadExpectedTrafficTraceReplaySummary {
@@ -131,6 +187,10 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
             minimum_control_ack_count: 0,
             minimum_control_failure_count: 0,
             minimum_sideband_event_count: 0,
+            minimum_tlb_sync_event_count: 0,
+            minimum_cache_flush_event_count: 0,
+            minimum_diagnostic_print_event_count: 0,
+            minimum_htm_abort_event_count: 0,
         }
     }
 
@@ -184,6 +244,38 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
         self
     }
 
+    pub fn with_minimum_tlb_sync_event_count(
+        mut self,
+        minimum_tlb_sync_event_count: usize,
+    ) -> Self {
+        self.minimum_tlb_sync_event_count = minimum_tlb_sync_event_count;
+        self
+    }
+
+    pub fn with_minimum_cache_flush_event_count(
+        mut self,
+        minimum_cache_flush_event_count: usize,
+    ) -> Self {
+        self.minimum_cache_flush_event_count = minimum_cache_flush_event_count;
+        self
+    }
+
+    pub fn with_minimum_diagnostic_print_event_count(
+        mut self,
+        minimum_diagnostic_print_event_count: usize,
+    ) -> Self {
+        self.minimum_diagnostic_print_event_count = minimum_diagnostic_print_event_count;
+        self
+    }
+
+    pub fn with_minimum_htm_abort_event_count(
+        mut self,
+        minimum_htm_abort_event_count: usize,
+    ) -> Self {
+        self.minimum_htm_abort_event_count = minimum_htm_abort_event_count;
+        self
+    }
+
     pub const fn route(&self) -> &WorkloadRouteId {
         &self.route
     }
@@ -214,6 +306,22 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
 
     pub const fn minimum_sideband_event_count(&self) -> usize {
         self.minimum_sideband_event_count
+    }
+
+    pub const fn minimum_tlb_sync_event_count(&self) -> usize {
+        self.minimum_tlb_sync_event_count
+    }
+
+    pub const fn minimum_cache_flush_event_count(&self) -> usize {
+        self.minimum_cache_flush_event_count
+    }
+
+    pub const fn minimum_diagnostic_print_event_count(&self) -> usize {
+        self.minimum_diagnostic_print_event_count
+    }
+
+    pub const fn minimum_htm_abort_event_count(&self) -> usize {
+        self.minimum_htm_abort_event_count
     }
 
     pub(crate) fn sort_key(&self) -> &WorkloadRouteId {
@@ -269,4 +377,8 @@ fn traffic_trace_replay_summary_meets_minimum(
         && actual.control_ack_count() >= expected.minimum_control_ack_count()
         && actual.control_failure_count() >= expected.minimum_control_failure_count()
         && actual.sideband_event_count() >= expected.minimum_sideband_event_count()
+        && actual.tlb_sync_event_count() >= expected.minimum_tlb_sync_event_count()
+        && actual.cache_flush_event_count() >= expected.minimum_cache_flush_event_count()
+        && actual.diagnostic_print_event_count() >= expected.minimum_diagnostic_print_event_count()
+        && actual.htm_abort_event_count() >= expected.minimum_htm_abort_event_count()
 }

@@ -19,9 +19,9 @@ use rem6_workload::{
 mod support;
 
 use support::traffic_trace::{
-    controller_for_packets, endpoint, PacketFields, GEM5_FLUSH_REQ, GEM5_MEM_FENCE_REQ,
-    GEM5_MEM_FENCE_RESP, GEM5_READ_REQ, GEM5_READ_RESP, GEM5_READ_RESP_WITH_INVALIDATE,
-    GEM5_WRITE_ERROR, GEM5_WRITE_REQ,
+    controller_for_packets, endpoint, PacketFields, GEM5_FLUSH_REQ, GEM5_HTM_ABORT,
+    GEM5_MEM_FENCE_REQ, GEM5_MEM_FENCE_RESP, GEM5_PRINT_REQ, GEM5_READ_REQ, GEM5_READ_RESP,
+    GEM5_READ_RESP_WITH_INVALIDATE, GEM5_TLBI_EXT_SYNC, GEM5_WRITE_ERROR, GEM5_WRITE_REQ,
 };
 
 fn workload_id(value: &str) -> rem6_workload::WorkloadId {
@@ -380,6 +380,69 @@ fn workload_replay_records_bound_traffic_trace_failures_and_sidebands() {
     assert!(runtime.control_acks().is_empty());
     assert!(runtime.control_failures().is_empty());
     assert!(runtime.is_empty());
+}
+
+#[test]
+fn workload_replay_records_typed_trace_sideband_summary_counts() {
+    let outcome = replay_with_controller(
+        "riscv-replay-typed-trace-sideband-summary",
+        &[
+            PacketFields {
+                tick: 1,
+                command: GEM5_TLBI_EXT_SYNC,
+                address: Some(0),
+                size: Some(64),
+                packet_id: Some(920),
+            },
+            PacketFields {
+                tick: 2,
+                command: GEM5_PRINT_REQ,
+                address: Some(0xa000),
+                size: Some(1),
+                packet_id: Some(921),
+            },
+            PacketFields {
+                tick: 3,
+                command: GEM5_HTM_ABORT,
+                address: None,
+                size: None,
+                packet_id: Some(922),
+            },
+            PacketFields {
+                tick: 4,
+                command: GEM5_FLUSH_REQ,
+                address: Some(0xa040),
+                size: Some(64),
+                packet_id: Some(923),
+            },
+        ],
+    )
+    .unwrap();
+
+    let traffic_replay = &outcome.traffic_trace_replays()[0];
+    assert_eq!(traffic_replay.scheduled_count(), 4);
+    assert!(traffic_replay.errors().is_empty());
+    assert!(traffic_replay.response_deliveries().is_empty());
+    assert!(traffic_replay.memory_trace_events().is_empty());
+    let runtime = traffic_replay.runtime();
+    assert_eq!(runtime.sideband_events().len(), 4);
+    assert!(runtime.is_empty());
+
+    let summaries = outcome.result().traffic_trace_replay_summaries();
+    assert_eq!(summaries.len(), 1);
+    let summary = &summaries[0];
+    assert_eq!(summary.route(), &route_id("cpu0.fetch"));
+    assert_eq!(summary.scheduled_count(), 4);
+    assert_eq!(summary.response_delivery_count(), 0);
+    assert_eq!(summary.memory_trace_event_count(), 0);
+    assert_eq!(summary.memory_failure_count(), 0);
+    assert_eq!(summary.control_ack_count(), 0);
+    assert_eq!(summary.control_failure_count(), 0);
+    assert_eq!(summary.sideband_event_count(), 4);
+    assert_eq!(summary.tlb_sync_event_count(), 1);
+    assert_eq!(summary.cache_flush_event_count(), 1);
+    assert_eq!(summary.diagnostic_print_event_count(), 1);
+    assert_eq!(summary.htm_abort_event_count(), 1);
 }
 
 #[test]
@@ -841,6 +904,10 @@ fn workload_replay_result_satisfies_bound_traffic_trace_summary_expectation() {
     assert_eq!(summary.control_ack_count(), 0);
     assert_eq!(summary.control_failure_count(), 0);
     assert_eq!(summary.sideband_event_count(), 0);
+    assert_eq!(summary.tlb_sync_event_count(), 0);
+    assert_eq!(summary.cache_flush_event_count(), 0);
+    assert_eq!(summary.diagnostic_print_event_count(), 0);
+    assert_eq!(summary.htm_abort_event_count(), 0);
     plan.verify_result(outcome.result()).unwrap();
 }
 
