@@ -2986,6 +2986,8 @@ trace-controller advance crosses those events. The parallel trace replay
 executor can also install target and sideband consumers; workload replay uses
 those hooks so coherent data-route trace requests mutate the configured
 data-cache backend at the matched response tick, not at request delivery. A
+matched `StoreCondFailReq` response is delivered as
+`StoreConditionalFailed` without driving a successful data-cache access. A
 matched memory failure records typed error metadata at the failure tick without
 executing a successful data-cache access, and cache-flush sidebands apply to
 that backend rather than remaining audit-only events. Diagnostic print

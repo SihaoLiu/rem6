@@ -2,14 +2,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 use rem6_kernel::{PartitionId, PartitionedScheduler, Tick};
-use rem6_memory::MemoryRequestId;
+use rem6_memory::{MemoryRequestId, ResponseStatus};
 use rem6_traffic::{
     TrafficController, TrafficControllerEvent, TrafficControllerEventBatch, TrafficTraceCacheKind,
     TrafficTraceDiagnosticKind, TrafficTraceHtmKind, TrafficTraceTlbKind,
 };
 use rem6_transport::{
     MemoryRouteId, MemoryTrace, MemoryTraceEvent, MemoryTransport, RequestDelivery,
-    ResponseDelivery,
+    ResponseDelivery, TargetOutcome,
 };
 use rem6_workload::{WorkloadRouteId, WorkloadTopology, WorkloadTrafficTraceReplaySummary};
 
@@ -411,11 +411,14 @@ impl WorkloadTraceDataCacheConsumer {
             event_context.event(),
             TrafficTraceReplayTargetEvent::MemoryResponse(_)
         ) {
-            if let Some(data_cache) = inner.data_cache.as_ref() {
-                data_cache
-                    .lock()
-                    .expect("workload data cache lock")
-                    .respond(delivery);
+            let data_cache_response_status = target_event_response_status(event_context.event());
+            if data_cache_response_status != Some(ResponseStatus::StoreConditionalFailed) {
+                if let Some(data_cache) = inner.data_cache.as_ref() {
+                    data_cache
+                        .lock()
+                        .expect("workload data cache lock")
+                        .respond(delivery);
+                }
             }
             if let Some(response) = event_context.trace_response() {
                 inner.apply_trace_response(response);
@@ -551,6 +554,24 @@ fn target_event_order(
         return TrafficTraceReplayOrder::new(error.tick(), error.sequence());
     }
     request_order
+}
+
+fn target_event_response_status(event: &TrafficTraceReplayTargetEvent) -> Option<ResponseStatus> {
+    match event {
+        TrafficTraceReplayTargetEvent::MemoryResponse(outcome) => {
+            target_outcome_response_status(outcome)
+        }
+        TrafficTraceReplayTargetEvent::MemoryFailure { .. } => None,
+    }
+}
+
+fn target_outcome_response_status(outcome: &TargetOutcome) -> Option<ResponseStatus> {
+    match outcome {
+        TargetOutcome::Respond(response) | TargetOutcome::RespondAfter { response, .. } => {
+            Some(response.status())
+        }
+        TargetOutcome::NoResponse => None,
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

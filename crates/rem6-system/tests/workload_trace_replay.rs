@@ -27,7 +27,8 @@ mod support;
 use support::traffic_trace::{
     controller_for_packets, endpoint, PacketFields, GEM5_FLUSH_REQ, GEM5_HTM_ABORT,
     GEM5_MEM_FENCE_REQ, GEM5_MEM_FENCE_RESP, GEM5_PRINT_REQ, GEM5_READ_REQ, GEM5_READ_RESP,
-    GEM5_READ_RESP_WITH_INVALIDATE, GEM5_TLBI_EXT_SYNC, GEM5_WRITE_ERROR, GEM5_WRITE_REQ,
+    GEM5_READ_RESP_WITH_INVALIDATE, GEM5_STORE_COND_FAIL_REQ, GEM5_STORE_COND_RESP,
+    GEM5_TLBI_EXT_SYNC, GEM5_WRITE_ERROR, GEM5_WRITE_REQ,
 };
 
 fn workload_id(value: &str) -> rem6_workload::WorkloadId {
@@ -681,6 +682,49 @@ fn workload_replay_does_not_mutate_data_cache_for_trace_write_error() {
     assert_eq!(
         failure.record().failure().error(),
         TrafficTraceErrorKind::Write
+    );
+    assert!(outcome.run().data_cache_runs().is_empty());
+}
+
+#[test]
+fn workload_replay_delivers_trace_store_conditional_failed_response() {
+    let manifest =
+        replay_manifest_with_data_cache("riscv-replay-trace-store-conditional-failed-response");
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let controller = controller_for_packets(&[
+        PacketFields {
+            tick: 0,
+            command: GEM5_STORE_COND_FAIL_REQ,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(951),
+        },
+        PacketFields {
+            tick: 3,
+            command: GEM5_STORE_COND_RESP,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(951),
+        },
+    ]);
+
+    let outcome = RiscvWorkloadReplay::new(plan)
+        .with_max_turns(64)
+        .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
+            controller,
+            route_id("cpu0.data"),
+            PartitionId::new(2),
+        ))
+        .run_parallel()
+        .unwrap();
+
+    let traffic_replay = &outcome.traffic_trace_replays()[0];
+    assert!(traffic_replay.errors().is_empty());
+    assert!(traffic_replay.runtime().memory_failures().is_empty());
+    assert_eq!(traffic_replay.response_deliveries().len(), 1);
+    assert_eq!(
+        traffic_replay.response_deliveries()[0].response().status(),
+        ResponseStatus::StoreConditionalFailed
     );
     assert!(outcome.run().data_cache_runs().is_empty());
 }
