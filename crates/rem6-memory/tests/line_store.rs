@@ -97,6 +97,26 @@ fn atomic_with_op(
     .unwrap()
 }
 
+fn atomic_no_return(
+    sequence: u64,
+    address: u64,
+    op: MemoryAtomicOp,
+    data: Vec<u8>,
+    mask: ByteMask,
+) -> MemoryRequest {
+    let size = AccessSize::new(data.len() as u64).unwrap();
+    MemoryRequest::atomic_no_return(
+        request_id(sequence),
+        Address::new(address),
+        size,
+        op,
+        data,
+        mask,
+        layout(),
+    )
+    .unwrap()
+}
+
 #[test]
 fn line_store_serves_reads_from_independent_lines() {
     let mut store = LineMemoryStore::new(layout());
@@ -212,6 +232,30 @@ fn line_store_atomic_returns_old_bytes_before_applying_masked_write() {
 
     assert_eq!(response.status(), ResponseStatus::Completed);
     assert_eq!(response.data(), Some(&[2, 3, 4, 5][..]));
+    assert_eq!(
+        &store.line_data(Address::new(0x1000)).unwrap()[0..8],
+        &[0, 1, 0xaa, 3, 0xcc, 5, 6, 7]
+    );
+}
+
+#[test]
+fn line_store_atomic_no_return_writes_without_old_bytes() {
+    let mut store = LineMemoryStore::new(layout());
+    store
+        .insert_line(Address::new(0x1000), line_data(0x00))
+        .unwrap();
+    let request = atomic_no_return(
+        15,
+        0x1002,
+        MemoryAtomicOp::Swap,
+        vec![0xaa, 0xbb, 0xcc, 0xdd],
+        ByteMask::from_bits(vec![true, false, true, false]).unwrap(),
+    );
+
+    let response = store.respond(&request).unwrap().unwrap();
+
+    assert_eq!(response.status(), ResponseStatus::Completed);
+    assert_eq!(response.data(), None);
     assert_eq!(
         &store.line_data(Address::new(0x1000)).unwrap()[0..8],
         &[0, 1, 0xaa, 3, 0xcc, 5, 6, 7]

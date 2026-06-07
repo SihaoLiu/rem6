@@ -732,6 +732,7 @@ fn read_request(cursor: &mut PayloadCursor<'_>) -> Result<MemoryRequest, String>
             layout,
         ),
         MemoryOperation::Atomic
+        | MemoryOperation::AtomicNoReturn
         | MemoryOperation::PrefetchRead
         | MemoryOperation::PrefetchWrite
         | MemoryOperation::CleanEvict
@@ -1017,6 +1018,7 @@ fn memory_operation_to_u8(operation: MemoryOperation) -> u8 {
         MemoryOperation::Write => 3,
         MemoryOperation::Upgrade => 4,
         MemoryOperation::Atomic => 5,
+        MemoryOperation::AtomicNoReturn => 24,
         MemoryOperation::PrefetchRead => 6,
         MemoryOperation::PrefetchWrite => 7,
         MemoryOperation::WritebackClean => 8,
@@ -1046,6 +1048,7 @@ fn u8_to_memory_operation(value: u8) -> Result<MemoryOperation, String> {
         3 => Ok(MemoryOperation::Write),
         4 => Ok(MemoryOperation::Upgrade),
         5 => Ok(MemoryOperation::Atomic),
+        24 => Ok(MemoryOperation::AtomicNoReturn),
         6 => Ok(MemoryOperation::PrefetchRead),
         7 => Ok(MemoryOperation::PrefetchWrite),
         8 => Ok(MemoryOperation::WritebackClean),

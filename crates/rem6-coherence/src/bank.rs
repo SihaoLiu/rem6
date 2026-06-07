@@ -1560,11 +1560,43 @@ impl MsiBankDirectoryHarness {
         match grant.data_source() {
             DirectoryDataSource::BackingMemory => {
                 let data = self.backing_data(grant.line())?;
-                response_from_line(request, Some(data))
+                if request.operation().is_atomic() {
+                    self.atomic_response_from_line(request, grant.line(), data)
+                } else {
+                    response_from_line(request, Some(data))
+                }
             }
-            DirectoryDataSource::ModifiedOwner(_) => response_from_line(request, source_data),
-            DirectoryDataSource::NoData => response_from_line(request, None),
+            DirectoryDataSource::ModifiedOwner(agent) => {
+                let data = source_data.ok_or(HarnessError::GrantDataUnavailable {
+                    agent,
+                    line: grant.line(),
+                })?;
+                if request.operation().is_atomic() {
+                    self.atomic_response_from_line(request, grant.line(), data)
+                } else {
+                    response_from_line(request, Some(data))
+                }
+            }
+            DirectoryDataSource::NoData => {
+                if request.operation().is_atomic() {
+                    let data = self.backing_data(grant.line())?;
+                    self.atomic_response_from_line(request, grant.line(), data)
+                } else {
+                    response_from_line(request, None)
+                }
+            }
         }
+    }
+
+    fn atomic_response_from_line(
+        &mut self,
+        request: &MemoryRequest,
+        line: MsiLineId,
+        mut line_data: Vec<u8>,
+    ) -> Result<MemoryResponse, HarnessError> {
+        let response = atomic_response_from_line(request, &mut line_data)?;
+        self.backing.insert(line.address(), line_data);
+        Ok(response)
     }
 
     fn source_data(&self, grant: DirectoryGrant) -> Result<Option<Vec<u8>>, HarnessError> {
@@ -1666,8 +1698,43 @@ fn response_from_line(
         return MemoryResponse::completed(request, None).map_err(HarnessError::Memory);
     }
 
-    let data = line_data.ok_or(HarnessError::MissingBackingMemory {
+    let line_data = line_data.ok_or(HarnessError::MissingBackingMemory {
         line: request.line_address(),
     })?;
+    let data = request_slice_from_line(request, &line_data)?;
     MemoryResponse::completed(request, Some(data)).map_err(HarnessError::Memory)
+}
+
+fn atomic_response_from_line(
+    request: &MemoryRequest,
+    line_data: &mut [u8],
+) -> Result<MemoryResponse, HarnessError> {
+    let old_data = request_slice_from_line(request, line_data)?;
+    let write_data = request
+        .atomic_write_data(&old_data)
+        .map_err(HarnessError::Memory)?;
+    let offset = request.line_offset() as usize;
+    let mask = request.byte_mask();
+    for (index, byte) in write_data.iter().enumerate() {
+        if mask.is_none_or(|mask| mask.bits()[index]) {
+            line_data[offset + index] = *byte;
+        }
+    }
+    let response_data = request.returns_data().then_some(old_data);
+    MemoryResponse::completed(request, response_data).map_err(HarnessError::Memory)
+}
+
+fn request_slice_from_line(
+    request: &MemoryRequest,
+    line_data: &[u8],
+) -> Result<Vec<u8>, HarnessError> {
+    let offset = request.line_offset() as usize;
+    let end = offset + request.size().bytes() as usize;
+    if end > line_data.len() {
+        return Err(HarnessError::LineDataSizeMismatch {
+            expected: request.line_layout().bytes(),
+            actual: end as u64,
+        });
+    }
+    Ok(line_data[offset..end].to_vec())
 }

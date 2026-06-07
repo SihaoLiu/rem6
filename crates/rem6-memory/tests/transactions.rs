@@ -249,6 +249,36 @@ fn atomic_request_carries_data_and_returns_data() {
 }
 
 #[test]
+fn atomic_no_return_request_carries_data_without_returning_old_data() {
+    let size = AccessSize::new(8).unwrap();
+    let mask = ByteMask::full(size).unwrap();
+    let request = MemoryRequest::atomic_no_return(
+        request_id(24),
+        Address::new(0x20c0),
+        size,
+        MemoryAtomicOp::Swap,
+        vec![0x18, 0x17, 0x16, 0x15, 0x14, 0x13, 0x12, 0x11],
+        mask.clone(),
+        line_layout(),
+    )
+    .unwrap();
+
+    assert_eq!(request.operation(), MemoryOperation::AtomicNoReturn);
+    assert_eq!(request.atomic_op(), Some(MemoryAtomicOp::Swap));
+    assert_eq!(request.coherence_intent(), CoherenceIntent::WriteUnique);
+    assert_eq!(request.range().start(), Address::new(0x20c0));
+    assert_eq!(
+        request.data(),
+        Some(&[0x18, 0x17, 0x16, 0x15, 0x14, 0x13, 0x12, 0x11][..])
+    );
+    assert_eq!(request.byte_mask(), Some(&mask));
+    assert!(request.carries_data());
+    assert!(request.requires_writable());
+    assert!(request.requires_response());
+    assert!(!request.returns_data());
+}
+
+#[test]
 fn locked_rmw_requests_preserve_read_and_write_half_semantics() {
     let read = MemoryRequest::locked_rmw_read(
         request_id(22),
@@ -1238,6 +1268,39 @@ fn memory_request_checkpoint_payload_round_trips_atomic_ordering_and_flags() {
     assert_eq!(restored.byte_mask(), Some(&mask));
     assert!(restored.is_uncacheable());
     assert!(restored.is_strict_ordered());
+}
+
+#[test]
+fn memory_request_checkpoint_payload_round_trips_atomic_no_return() {
+    let size = AccessSize::new(8).unwrap();
+    let mask = ByteMask::full(size).unwrap();
+    let request = MemoryRequest::atomic_no_return(
+        request_id(25),
+        Address::new(0x6020),
+        size,
+        MemoryAtomicOp::Or,
+        vec![0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27],
+        mask.clone(),
+        line_layout(),
+    )
+    .unwrap()
+    .with_ordering(MemoryAccessOrdering::new(
+        Some(MemoryBarrierSet::new(false, true)),
+        Some(MemoryBarrierSet::memory()),
+    ));
+
+    let snapshot = request.snapshot();
+    let payload = MemoryRequestCheckpointPayload::from_request(&request);
+    let decoded = MemoryRequestCheckpointPayload::decode(payload.encode().as_slice()).unwrap();
+    let restored = MemoryRequest::from_snapshot(decoded.snapshot()).unwrap();
+
+    assert_eq!(decoded.snapshot(), &snapshot);
+    assert_eq!(restored, request);
+    assert_eq!(restored.operation(), MemoryOperation::AtomicNoReturn);
+    assert_eq!(restored.atomic_op(), Some(MemoryAtomicOp::Or));
+    assert_eq!(restored.byte_mask(), Some(&mask));
+    assert!(restored.requires_response());
+    assert!(!restored.returns_data());
 }
 
 #[test]

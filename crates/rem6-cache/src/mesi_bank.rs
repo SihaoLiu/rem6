@@ -1450,7 +1450,7 @@ impl MesiCacheBank {
     fn pending_atomic_conflict(&self, line: Address) -> bool {
         self.pending_fills.values().any(|pending| match pending {
             PendingBankFill::Uncacheable { original, .. } => {
-                original.line_address() == line && original.operation() == MemoryOperation::Atomic
+                original.line_address() == line && original.operation().is_atomic()
             }
             PendingBankFill::Line { .. } => false,
         })

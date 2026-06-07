@@ -571,14 +571,18 @@ impl MsiCacheController {
         &mut self,
         request: &MemoryRequest,
     ) -> Result<MemoryResponse, CacheControllerError> {
-        if request.operation() == MemoryOperation::Atomic {
+        if matches!(
+            request.operation(),
+            MemoryOperation::Atomic | MemoryOperation::AtomicNoReturn
+        ) {
             let data = self.read_slice(request)?;
             let write_data = request
                 .atomic_write_data(&data)
                 .map_err(CacheControllerError::Memory)?;
             self.apply_store_data(request, &write_data)?;
             self.clear_locked_reservations(request);
-            return MemoryResponse::completed(request, Some(data))
+            let response_data = request.returns_data().then_some(data);
+            return MemoryResponse::completed(request, response_data)
                 .map_err(CacheControllerError::Memory);
         }
 
@@ -745,6 +749,7 @@ fn cpu_event(request: &MemoryRequest) -> MsiEvent {
         | MemoryOperation::LockedRmwWrite
         | MemoryOperation::Upgrade
         | MemoryOperation::Atomic
+        | MemoryOperation::AtomicNoReturn
         | MemoryOperation::PrefetchWrite => MsiEvent::CpuWrite,
         MemoryOperation::PrefetchRead => MsiEvent::CpuRead,
         MemoryOperation::WriteClean

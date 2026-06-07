@@ -144,6 +144,7 @@ pub enum MemoryOperation {
     StoreConditionalUpgradeFail,
     Upgrade,
     Atomic,
+    AtomicNoReturn,
     PrefetchRead,
     PrefetchWrite,
     WriteClean,
@@ -227,6 +228,10 @@ impl MemoryAccessOrdering {
 }
 
 impl MemoryOperation {
+    pub const fn is_atomic(self) -> bool {
+        matches!(self, Self::Atomic | Self::AtomicNoReturn)
+    }
+
     pub const fn coherence_intent(self) -> CoherenceIntent {
         match self {
             Self::NoAccess => CoherenceIntent::NoAccess,
@@ -240,7 +245,8 @@ impl MemoryOperation {
             | Self::StoreConditionalFail
             | Self::LockedRmwWrite
             | Self::PrefetchWrite
-            | Self::Atomic => CoherenceIntent::WriteUnique,
+            | Self::Atomic
+            | Self::AtomicNoReturn => CoherenceIntent::WriteUnique,
             Self::CacheBlockZero => CoherenceIntent::CacheBlockZero,
             Self::StoreConditionalUpgrade | Self::Upgrade => CoherenceIntent::Upgrade,
             Self::WriteClean => CoherenceIntent::WriteClean,
@@ -286,6 +292,7 @@ impl MemoryOperation {
                 | Self::StoreConditionalFail
                 | Self::LockedRmwWrite
                 | Self::Atomic
+                | Self::AtomicNoReturn
                 | Self::WriteClean
                 | Self::WritebackClean
                 | Self::WritebackDirty
@@ -306,6 +313,7 @@ impl MemoryOperation {
                 | Self::LockedRmwWrite
                 | Self::Upgrade
                 | Self::Atomic
+                | Self::AtomicNoReturn
                 | Self::PrefetchWrite
                 | Self::InvalidateWritable
         )
@@ -454,6 +462,13 @@ impl LineMemoryStore {
                 self.apply_write_data(request, &write_data)?;
                 self.clear_locked_reservations(request);
                 MemoryResponse::completed(request, Some(data)).map(Some)
+            }
+            MemoryOperation::AtomicNoReturn => {
+                let data = self.read_slice(request)?;
+                let write_data = request.atomic_write_data(&data)?;
+                self.apply_write_data(request, &write_data)?;
+                self.clear_locked_reservations(request);
+                MemoryResponse::completed(request, None).map(Some)
             }
             MemoryOperation::StoreConditionalUpgrade
             | MemoryOperation::Upgrade

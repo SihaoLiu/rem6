@@ -164,6 +164,7 @@ fn trace_rejects_gem5_operation_request_flags_on_mismatched_packets() {
         (1, GEM5_FLAG_MEM_SWAP),
         (4, GEM5_FLAG_MEM_SWAP_COND),
         (1, GEM5_FLAG_ATOMIC_RETURN_OP),
+        (1, GEM5_FLAG_ATOMIC_NO_RETURN_OP),
     ] {
         assert_eq!(
             TrafficTrace::from_gem5_packet_trace(
@@ -186,7 +187,8 @@ fn trace_rejects_gem5_operation_request_flags_on_mismatched_packets() {
 }
 
 #[test]
-fn trace_rejects_gem5_atomic_no_return_flag_until_request_policy_can_represent_it() {
+fn trace_rejects_conflicting_gem5_atomic_return_flags() {
+    let flags = GEM5_FLAG_ATOMIC_RETURN_OP | GEM5_FLAG_ATOMIC_NO_RETURN_OP;
     assert_eq!(
         TrafficTrace::from_gem5_packet_trace(
             &gem5_packet_trace(
@@ -196,16 +198,45 @@ fn trace_rejects_gem5_atomic_no_return_flag_until_request_policy_can_represent_i
                     command: 34,
                     address: 0x200,
                     size: 8,
-                    flags: Some(GEM5_FLAG_ATOMIC_NO_RETURN_OP),
+                    flags: Some(flags),
                 }],
             ),
             TICK_FREQUENCY,
         )
         .unwrap_err(),
-        TrafficGeneratorError::TraceUnsupportedFlags {
-            flags: GEM5_FLAG_ATOMIC_NO_RETURN_OP,
-        }
+        TrafficGeneratorError::TraceUnsupportedFlags { flags }
     );
+}
+
+#[test]
+fn trace_maps_gem5_atomic_no_return_flag_to_native_request() {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace(
+            TICK_FREQUENCY,
+            &[PacketFields {
+                tick: 1,
+                command: 34,
+                address: 0x200,
+                size: 8,
+                flags: Some(GEM5_FLAG_ATOMIC_NO_RETURN_OP),
+            }],
+        ),
+        TICK_FREQUENCY,
+    )
+    .unwrap();
+    let mut generator = TrafficTraceGenerator::new(trace_config(trace));
+    generator.enter(10);
+
+    let request = generator.next_request(10, 0).unwrap().unwrap();
+
+    assert_eq!(request.tick(), 11);
+    assert_eq!(
+        request.request().operation(),
+        MemoryOperation::AtomicNoReturn
+    );
+    assert_eq!(request.request().atomic_op(), Some(MemoryAtomicOp::Swap));
+    assert!(request.request().requires_response());
+    assert!(!request.request().returns_data());
 }
 
 fn gem5_packet_trace(tick_frequency: u64, packets: &[PacketFields]) -> Vec<u8> {

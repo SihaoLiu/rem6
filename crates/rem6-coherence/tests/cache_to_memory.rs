@@ -4,8 +4,8 @@ use rem6_coherence::{
 };
 use rem6_kernel::PartitionId;
 use rem6_memory::{
-    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
-    ResponseStatus,
+    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryAtomicOp, MemoryRequest,
+    MemoryRequestId, ResponseStatus,
 };
 use rem6_protocol_msi::MsiState;
 use rem6_transport::{MemoryTraceEvent, MemoryTraceKind, TransportEndpointId};
@@ -85,6 +85,20 @@ fn store_conditional_fail(sequence: u64, address: u64, data: Vec<u8>) -> MemoryR
     .unwrap()
 }
 
+fn atomic_no_return(sequence: u64, address: u64, data: Vec<u8>) -> MemoryRequest {
+    let size = AccessSize::new(data.len() as u64).unwrap();
+    MemoryRequest::atomic_no_return(
+        request_id(sequence),
+        Address::new(address),
+        size,
+        MemoryAtomicOp::Swap,
+        data,
+        ByteMask::full(size).unwrap(),
+        layout(),
+    )
+    .unwrap()
+}
+
 fn harness() -> CoherentLineHarness {
     CoherentLineHarness::new(
         AgentId::new(10),
@@ -111,6 +125,18 @@ fn line_backing_store_store_conditional_fail_never_mutates_data() {
     assert_eq!(response.status(), ResponseStatus::StoreConditionalFailed);
     assert_eq!(response.data(), None);
     assert_eq!(&backing.data()[0x10..0x14], &[0x10, 0x11, 0x12, 0x13]);
+}
+
+#[test]
+fn line_backing_store_atomic_no_return_writes_without_old_bytes() {
+    let mut backing = LineBackingStore::new(layout(), Address::new(0x1000), line_data()).unwrap();
+    let request = atomic_no_return(42, 0x1010, vec![0xaa, 0xbb, 0xcc, 0xdd]);
+
+    let response = backing.respond(&request).unwrap();
+
+    assert_eq!(response.status(), ResponseStatus::Completed);
+    assert_eq!(response.data(), None);
+    assert_eq!(&backing.data()[0x10..0x14], &[0xaa, 0xbb, 0xcc, 0xdd]);
 }
 
 #[test]

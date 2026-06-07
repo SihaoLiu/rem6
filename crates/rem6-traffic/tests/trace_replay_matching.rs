@@ -15,6 +15,8 @@ const GEM5_READ_RESP: u32 = 2;
 const GEM5_READ_RESP_WITH_INVALIDATE: u32 = 3;
 const GEM5_WRITE_REQ: u32 = 4;
 const GEM5_WRITE_RESP: u32 = 5;
+const GEM5_SWAP_REQ: u32 = 34;
+const GEM5_SWAP_RESP: u32 = 35;
 const GEM5_SC_UPGRADE_FAIL_REQ: u32 = 20;
 const GEM5_UPGRADE_FAIL_RESP: u32 = 21;
 const GEM5_STORE_COND_FAIL_REQ: u32 = 28;
@@ -25,6 +27,7 @@ const GEM5_INVALID_DEST_ERROR: u32 = 46;
 const GEM5_WRITE_ERROR: u32 = 49;
 const GEM5_HTM_REQ: u32 = 56;
 const GEM5_HTM_REQ_RESP: u32 = 57;
+const GEM5_FLAG_ATOMIC_NO_RETURN_OP: u32 = 0x8000_0000;
 
 #[derive(Clone, Copy)]
 struct PacketFields {
@@ -32,6 +35,16 @@ struct PacketFields {
     command: u32,
     address: Option<u64>,
     size: Option<u32>,
+    packet_id: Option<u64>,
+}
+
+#[derive(Clone, Copy)]
+struct FlaggedPacketFields {
+    tick: u64,
+    command: u32,
+    address: Option<u64>,
+    size: Option<u32>,
+    flags: Option<u32>,
     packet_id: Option<u64>,
 }
 
@@ -56,6 +69,24 @@ fn controller_for_packets_with_offset(
         .unwrap()
         .with_addr_offset(addr_offset)
         .unwrap();
+    let controller_config = TrafficControllerConfig::new(
+        graph(vec![state(0, u64::MAX)], vec![transition(0, 0)]),
+        vec![TrafficControllerState::new(
+            TrafficStateId::new(0),
+            TrafficStateGenerator::Trace(rem6_traffic::TrafficTraceGenerator::new(config)),
+        )],
+    )
+    .unwrap();
+    TrafficController::new(controller_config)
+}
+
+fn controller_for_flagged_packets(packets: &[FlaggedPacketFields]) -> TrafficController {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &flagged_gem5_packet_trace(TICK_FREQUENCY, packets),
+        TICK_FREQUENCY,
+    )
+    .unwrap();
+    let config = TrafficTraceConfig::new(AgentId::new(7), line_layout(), 99, trace).unwrap();
     let controller_config = TrafficControllerConfig::new(
         graph(vec![state(0, u64::MAX)], vec![transition(0, 0)]),
         vec![TrafficControllerState::new(
@@ -117,6 +148,109 @@ fn traffic_controller_matches_trace_response_to_pending_memory_request() {
             assert_eq!(memory_response.data().unwrap().len(), 8);
         }
         completion => panic!("unexpected trace replay completion: {completion:?}"),
+    }
+}
+
+#[test]
+fn traffic_controller_matches_swap_response_to_atomic_no_return_request() {
+    let mut controller = controller_for_flagged_packets(&[
+        FlaggedPacketFields {
+            tick: 5,
+            command: GEM5_SWAP_REQ,
+            address: Some(0x4100),
+            size: Some(8),
+            flags: Some(GEM5_FLAG_ATOMIC_NO_RETURN_OP),
+            packet_id: Some(31),
+        },
+        FlaggedPacketFields {
+            tick: 7,
+            command: GEM5_SWAP_RESP,
+            address: Some(0x4100),
+            size: Some(8),
+            flags: None,
+            packet_id: Some(31),
+        },
+    ]);
+
+    assert!(controller.start(20).unwrap().is_empty());
+    let request_batch = controller.next_event(20, 0).unwrap().unwrap();
+    let request = request_batch.request().unwrap().clone();
+    assert_eq!(
+        request.request().operation(),
+        MemoryOperation::AtomicNoReturn
+    );
+    assert!(request.request().requires_response());
+    assert!(!request.request().returns_data());
+
+    let response_batch = controller.next_event(request.tick(), 0).unwrap().unwrap();
+    let response = response_batch.trace_response().unwrap();
+    assert_eq!(response.kind(), TrafficTraceResponseKind::Swap);
+
+    let matched = response_batch.trace_response_match().unwrap();
+    assert_eq!(matched.response(), response);
+    match matched.completion() {
+        TrafficTraceReplayCompletion::Memory(memory_response) => {
+            assert_eq!(memory_response.request_id(), request.request().id());
+            assert_eq!(memory_response.status(), ResponseStatus::Completed);
+            assert_eq!(memory_response.data(), None);
+        }
+        completion => panic!("unexpected trace replay completion: {completion:?}"),
+    }
+    match response_batch.trace_replay_action().unwrap() {
+        TrafficTraceReplayAction::MemoryResponse { tick, response } => {
+            assert_eq!(*tick, matched.response().tick());
+            assert_eq!(response.request_id(), request.request().id());
+            assert_eq!(response.data(), None);
+        }
+        action => panic!("unexpected trace replay action: {action:?}"),
+    }
+}
+
+#[test]
+fn traffic_controller_matches_trace_error_to_atomic_no_return_request() {
+    let mut controller = controller_for_flagged_packets(&[
+        FlaggedPacketFields {
+            tick: 5,
+            command: GEM5_SWAP_REQ,
+            address: Some(0x4200),
+            size: Some(8),
+            flags: Some(GEM5_FLAG_ATOMIC_NO_RETURN_OP),
+            packet_id: Some(32),
+        },
+        FlaggedPacketFields {
+            tick: 7,
+            command: GEM5_WRITE_ERROR,
+            address: Some(0x4200),
+            size: Some(8),
+            flags: None,
+            packet_id: Some(32),
+        },
+    ]);
+
+    assert!(controller.start(20).unwrap().is_empty());
+    let request_batch = controller.next_event(20, 0).unwrap().unwrap();
+    let request = request_batch.request().unwrap().clone();
+    assert_eq!(
+        request.request().operation(),
+        MemoryOperation::AtomicNoReturn
+    );
+
+    let error_batch = controller.next_event(request.tick(), 0).unwrap().unwrap();
+    let matched = error_batch.trace_error_match().unwrap();
+    assert!(matched.error().is_write());
+    match matched.failure() {
+        TrafficTraceReplayFailure::Memory(failure) => {
+            assert_eq!(failure.request_id(), request.request().id());
+            assert_eq!(failure.error(), TrafficTraceErrorKind::Write);
+        }
+        failure => panic!("unexpected trace replay failure: {failure:?}"),
+    }
+    match matched.source() {
+        TrafficTraceReplaySource::Memory(source) => {
+            assert_eq!(source.request().id(), request.request().id());
+            assert_eq!(source.trace_packet_id(), Some(32));
+        }
+        source => panic!("unexpected trace replay source: {source:?}"),
     }
 }
 
@@ -1183,6 +1317,41 @@ fn gem5_packet_trace(tick_frequency: u64, packets: &[PacketFields]) -> Vec<u8> {
         if let Some(size) = packet.size {
             append_key(&mut message, 4, 0);
             append_varint(&mut message, u64::from(size));
+        }
+        if let Some(packet_id) = packet.packet_id {
+            append_key(&mut message, 6, 0);
+            append_varint(&mut message, packet_id);
+        }
+        append_record(&mut bytes, &message);
+    }
+
+    bytes
+}
+
+fn flagged_gem5_packet_trace(tick_frequency: u64, packets: &[FlaggedPacketFields]) -> Vec<u8> {
+    let mut bytes = GEM5_MAGIC.to_vec();
+    let mut header = Vec::new();
+    append_key(&mut header, 3, 0);
+    append_varint(&mut header, tick_frequency);
+    append_record(&mut bytes, &header);
+
+    for packet in packets {
+        let mut message = Vec::new();
+        append_key(&mut message, 1, 0);
+        append_varint(&mut message, packet.tick);
+        append_key(&mut message, 2, 0);
+        append_varint(&mut message, u64::from(packet.command));
+        if let Some(address) = packet.address {
+            append_key(&mut message, 3, 0);
+            append_varint(&mut message, address);
+        }
+        if let Some(size) = packet.size {
+            append_key(&mut message, 4, 0);
+            append_varint(&mut message, u64::from(size));
+        }
+        if let Some(flags) = packet.flags {
+            append_key(&mut message, 5, 0);
+            append_varint(&mut message, u64::from(flags));
         }
         if let Some(packet_id) = packet.packet_id {
             append_key(&mut message, 6, 0);

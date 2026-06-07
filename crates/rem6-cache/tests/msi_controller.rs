@@ -92,6 +92,20 @@ fn atomic_with_op(
     .unwrap()
 }
 
+fn atomic_no_return(sequence: u64, address: u64, data: Vec<u8>, mask: ByteMask) -> MemoryRequest {
+    let size = AccessSize::new(data.len() as u64).unwrap();
+    MemoryRequest::atomic_no_return(
+        request_id(sequence),
+        Address::new(address),
+        size,
+        MemoryAtomicOp::Swap,
+        data,
+        mask,
+        layout(),
+    )
+    .unwrap()
+}
+
 #[test]
 fn controller_read_miss_fetches_line_and_completes_original_request() {
     let mut controller = controller();
@@ -352,6 +366,42 @@ fn controller_public_line_install_clears_load_locked_reservations() {
     assert_eq!(
         &controller.cached_data().unwrap()[0x38..0x3c],
         &[0xee, 0xee, 0xee, 0xee]
+    );
+}
+
+#[test]
+fn controller_atomic_no_return_hit_updates_modified_line_without_old_bytes() {
+    let mut controller = controller();
+    controller.install_modified((0..64).collect()).unwrap();
+    let request = atomic_no_return(
+        26,
+        0x1008,
+        vec![0xaa, 0xbb, 0xcc, 0xdd],
+        ByteMask::from_bits(vec![true, false, true, false]).unwrap(),
+    );
+
+    let result = controller.accept_cpu_request(request.clone()).unwrap();
+
+    assert_eq!(result.kind(), CacheControllerResultKind::Hit);
+    assert_eq!(
+        result.target_outcome(),
+        Some(&TargetOutcome::Respond(
+            MemoryResponse::completed(&request, None).unwrap()
+        ))
+    );
+    let read_back = MemoryRequest::read_shared(
+        request_id(27),
+        Address::new(0x1008),
+        AccessSize::new(4).unwrap(),
+        layout(),
+    )
+    .unwrap();
+    let hit = controller.accept_cpu_request(read_back.clone()).unwrap();
+    assert_eq!(
+        hit.target_outcome(),
+        Some(&TargetOutcome::Respond(
+            MemoryResponse::completed(&read_back, Some(vec![0xaa, 9, 0xcc, 11])).unwrap()
+        ))
     );
 }
 

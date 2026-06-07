@@ -437,6 +437,7 @@ fn encode_operation(operation: MemoryOperation) -> u32 {
         MemoryOperation::StoreConditionalUpgrade => 21,
         MemoryOperation::StoreConditionalUpgradeFail => 22,
         MemoryOperation::StoreConditionalFail => 23,
+        MemoryOperation::AtomicNoReturn => 24,
     }
 }
 
@@ -466,6 +467,7 @@ fn decode_operation(code: u32) -> Result<MemoryOperation, MemoryError> {
         21 => Ok(MemoryOperation::StoreConditionalUpgrade),
         22 => Ok(MemoryOperation::StoreConditionalUpgradeFail),
         23 => Ok(MemoryOperation::StoreConditionalFail),
+        24 => Ok(MemoryOperation::AtomicNoReturn),
         code => Err(MemoryError::InvalidRequestCheckpointOperation { code }),
     }
 }

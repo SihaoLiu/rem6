@@ -347,6 +347,7 @@ impl MsiDirectory {
             | MemoryOperation::StoreConditionalFail
             | MemoryOperation::LockedRmwWrite
             | MemoryOperation::Atomic
+            | MemoryOperation::AtomicNoReturn
             | MemoryOperation::PrefetchWrite
             | MemoryOperation::InvalidateWritable => {
                 self.accept_read_unique(line, request_id, requester, &mut after_line)
@@ -897,6 +898,7 @@ impl MesiDirectory {
             | MemoryOperation::StoreConditionalFail
             | MemoryOperation::LockedRmwWrite
             | MemoryOperation::Atomic
+            | MemoryOperation::AtomicNoReturn
             | MemoryOperation::PrefetchWrite
             | MemoryOperation::InvalidateWritable => {
                 self.accept_read_unique(line, request_id, requester, &mut after_line)

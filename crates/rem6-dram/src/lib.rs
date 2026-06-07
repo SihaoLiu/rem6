@@ -70,6 +70,7 @@ impl DramAccessKind {
             | MemoryOperation::StoreConditionalFail
             | MemoryOperation::LockedRmwWrite
             | MemoryOperation::Atomic
+            | MemoryOperation::AtomicNoReturn
             | MemoryOperation::PrefetchWrite
             | MemoryOperation::WriteClean
             | MemoryOperation::WritebackClean

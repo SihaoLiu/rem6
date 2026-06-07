@@ -1512,7 +1512,12 @@ fn response_matches_memory_operation(
         }
         TrafficTraceResponseKind::LockedRmwRead => operation == MemoryOperation::LockedRmwRead,
         TrafficTraceResponseKind::LockedRmwWrite => operation == MemoryOperation::LockedRmwWrite,
-        TrafficTraceResponseKind::Swap => operation == MemoryOperation::Atomic,
+        TrafficTraceResponseKind::Swap => {
+            matches!(
+                operation,
+                MemoryOperation::Atomic | MemoryOperation::AtomicNoReturn
+            )
+        }
         TrafficTraceResponseKind::CleanShared => operation == MemoryOperation::CleanShared,
         TrafficTraceResponseKind::CleanInvalid => operation == MemoryOperation::Invalidate,
         TrafficTraceResponseKind::Invalidate => operation == MemoryOperation::InvalidateWritable,
@@ -1536,6 +1541,7 @@ fn error_matches_memory_operation(
                 | MemoryOperation::LockedRmwRead
                 | MemoryOperation::StoreConditionalUpgradeFail
                 | MemoryOperation::Atomic
+                | MemoryOperation::AtomicNoReturn
                 | MemoryOperation::PrefetchRead
         );
     }
@@ -1548,6 +1554,7 @@ fn error_matches_memory_operation(
                 | MemoryOperation::StoreConditionalFail
                 | MemoryOperation::LockedRmwWrite
                 | MemoryOperation::Atomic
+                | MemoryOperation::AtomicNoReturn
                 | MemoryOperation::PrefetchWrite
                 | MemoryOperation::WriteClean
                 | MemoryOperation::WritebackClean

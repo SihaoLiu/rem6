@@ -1155,7 +1155,7 @@ fn core_data_access_counts(core: &RiscvCore) -> DataAccessCounts {
                 counts.stores += 1;
                 counts.store_bytes += bytes;
             }
-            MemoryOperation::Atomic => {
+            MemoryOperation::Atomic | MemoryOperation::AtomicNoReturn => {
                 counts.atomics += 1;
                 counts.atomic_bytes += bytes;
             }

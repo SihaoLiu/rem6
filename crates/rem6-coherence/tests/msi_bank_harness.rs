@@ -13,7 +13,7 @@ use rem6_directory::{DirectoryDataSource, DirectoryLineState};
 use rem6_fabric::{QosFixedPriorityPolicy, QosPriority, QosQueueArbiter, QosQueuePolicyKind};
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{
-    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryAccessOrdering,
+    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryAccessOrdering, MemoryAtomicOp,
     MemoryBarrierSet, MemoryOperation, MemoryRequest, MemoryRequestId, MemoryRequestSnapshot,
     MemoryResponse, ResponseStatus,
 };
@@ -59,6 +59,20 @@ fn write(agent_id: u32, sequence: u64, address: u64, data: Vec<u8>) -> MemoryReq
         request_id(agent_id, sequence),
         Address::new(address),
         size,
+        data,
+        ByteMask::full(size).unwrap(),
+        layout(),
+    )
+    .unwrap()
+}
+
+fn atomic_no_return(agent_id: u32, sequence: u64, address: u64, data: Vec<u8>) -> MemoryRequest {
+    let size = size(data.len() as u64);
+    MemoryRequest::atomic_no_return(
+        request_id(agent_id, sequence),
+        Address::new(address),
+        size,
+        MemoryAtomicOp::Swap,
         data,
         ByteMask::full(size).unwrap(),
         layout(),
@@ -318,6 +332,38 @@ fn msi_bank_harness_functional_read_prefers_modified_cache_data() {
     assert_eq!(audit.busy_count(), 0);
     assert_eq!(audit.backing_store_count(), 1);
     assert_eq!(audit.invalid_count(), 1);
+}
+
+#[test]
+fn msi_bank_harness_uncacheable_atomic_no_return_updates_backing_without_old_bytes() {
+    let mut harness = MsiBankDirectoryHarness::new(layout(), [agent(1)]).unwrap();
+    harness
+        .insert_backing_line(Address::new(0x1000), line_data(0x11))
+        .unwrap();
+    let request = atomic_no_return(1, 41, 0x1004, vec![0xaa, 0xbb, 0xcc, 0xdd])
+        .with_uncacheable_strict_order();
+
+    let result = harness
+        .submit_cpu_request(agent(1), request.clone())
+        .unwrap();
+
+    assert_eq!(result.kind(), SubmitKind::ScheduledMiss);
+    let mut expected = line_data(0x11);
+    expected[4..8].copy_from_slice(&[0xaa, 0xbb, 0xcc, 0xdd]);
+    assert_eq!(
+        harness.backing_line(Address::new(0x1000)).unwrap(),
+        expected.as_slice()
+    );
+    assert_eq!(
+        harness.cpu_responses().last(),
+        Some(&CpuResponseRecord::new(
+            0,
+            CacheControllerResultKind::Fill,
+            request.id(),
+            ResponseStatus::Completed,
+            None,
+        ))
+    );
 }
 
 #[test]

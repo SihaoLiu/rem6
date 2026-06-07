@@ -487,6 +487,18 @@ fn msi_bank_snapshot_rejects_store_conditional_request_without_byte_mask() {
 }
 
 #[test]
+fn msi_bank_snapshot_rejects_atomic_no_return_request_rebuild() {
+    let payload = payload_with_one_mshr_target_request(24, Some(&[0x8d; 8]), Some(&[true; 8]));
+
+    let error = MsiBankDirectoryHarnessSnapshot::from_bytes(&payload).unwrap_err();
+
+    assert_eq!(
+        error,
+        "MSI checkpoint decoder cannot rebuild AtomicNoReturn requests"
+    );
+}
+
+#[test]
 fn msi_bank_snapshot_rejects_write_clean_request_with_byte_mask() {
     let mut payload = payload_with_one_cache_bank_until_mshr_entry_count();
     write_u64(&mut payload, 1);

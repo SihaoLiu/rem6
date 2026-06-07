@@ -2,7 +2,10 @@ use rem6_directory::{
     DirectoryDataSource, DirectoryDecision, DirectoryError, DirectoryGrant, DirectoryLineState,
     DirectorySnoop, MsiDirectory,
 };
-use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId};
+use rem6_memory::{
+    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryAtomicOp, MemoryRequest,
+    MemoryRequestId,
+};
 use rem6_protocol_msi::{MsiEvent, MsiLineId, MsiState};
 
 fn layout() -> CacheLineLayout {
@@ -32,6 +35,19 @@ fn read_unique(agent: u32, sequence: u64) -> MemoryRequest {
         id(agent, sequence),
         Address::new(0x1000),
         line_size(),
+        layout(),
+    )
+    .unwrap()
+}
+
+fn atomic_no_return(agent: u32, sequence: u64) -> MemoryRequest {
+    MemoryRequest::atomic_no_return(
+        id(agent, sequence),
+        Address::new(0x1000),
+        AccessSize::new(8).unwrap(),
+        MemoryAtomicOp::Swap,
+        vec![agent as u8; 8],
+        ByteMask::full(AccessSize::new(8).unwrap()).unwrap(),
         layout(),
     )
     .unwrap()
@@ -168,6 +184,35 @@ fn directory_read_unique_invalidates_clean_sharers_deterministically() {
         .protocol_snapshot()
         .validate()
         .unwrap();
+}
+
+#[test]
+fn directory_atomic_no_return_invalidates_clean_sharers_deterministically() {
+    let mut directory = MsiDirectory::new();
+    directory.accept(read_shared(3, 0)).unwrap();
+    directory.accept(read_shared(1, 0)).unwrap();
+
+    let decision = directory.accept(atomic_no_return(2, 0)).unwrap();
+
+    assert_eq!(
+        decision.snoops(),
+        &[
+            DirectorySnoop::new(AgentId::new(1), MsiEvent::SnoopWrite),
+            DirectorySnoop::new(AgentId::new(3), MsiEvent::SnoopWrite),
+        ]
+    );
+    assert_eq!(
+        decision.grant(),
+        Some(&grant(
+            id(2, 0),
+            MsiState::Modified,
+            DirectoryDataSource::BackingMemory,
+        ))
+    );
+    assert_eq!(
+        directory.line_state(line()),
+        DirectoryLineState::new(line()).with_owner(AgentId::new(2))
+    );
 }
 
 #[test]

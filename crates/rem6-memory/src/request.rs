@@ -639,6 +639,25 @@ impl MemoryRequest {
         )
     }
 
+    pub fn atomic_no_return(
+        id: MemoryRequestId,
+        address: Address,
+        size: AccessSize,
+        op: MemoryAtomicOp,
+        data: Vec<u8>,
+        byte_mask: ByteMask,
+        line_layout: CacheLineLayout,
+    ) -> Result<Self, MemoryError> {
+        Self::new(
+            id,
+            MemoryOperation::AtomicNoReturn,
+            address,
+            size,
+            line_layout,
+            MemoryRequestPayload::atomic(op, data, byte_mask),
+        )
+    }
+
     pub fn upgrade(
         id: MemoryRequestId,
         address: Address,
@@ -864,7 +883,8 @@ impl MemoryRequest {
                 | MemoryOperation::StoreConditional
                 | MemoryOperation::StoreConditionalFail
                 | MemoryOperation::LockedRmwWrite
-                | MemoryOperation::Atomic,
+                | MemoryOperation::Atomic
+                | MemoryOperation::AtomicNoReturn,
                 Some(mask),
             ) if mask.len() == size.bytes() => Ok(()),
             (
@@ -872,7 +892,8 @@ impl MemoryRequest {
                 | MemoryOperation::StoreConditional
                 | MemoryOperation::StoreConditionalFail
                 | MemoryOperation::LockedRmwWrite
-                | MemoryOperation::Atomic,
+                | MemoryOperation::Atomic
+                | MemoryOperation::AtomicNoReturn,
                 Some(mask),
             ) => Err(MemoryError::ByteMaskSizeMismatch {
                 expected: size,
@@ -883,7 +904,8 @@ impl MemoryRequest {
                 | MemoryOperation::StoreConditional
                 | MemoryOperation::StoreConditionalFail
                 | MemoryOperation::LockedRmwWrite
-                | MemoryOperation::Atomic,
+                | MemoryOperation::Atomic
+                | MemoryOperation::AtomicNoReturn,
                 None,
             ) => Err(MemoryError::MissingByteMask { request: id }),
             (_, Some(_)) => Err(MemoryError::UnexpectedByteMask { request: id }),
@@ -921,8 +943,10 @@ impl MemoryRequest {
         atomic_op: Option<MemoryAtomicOp>,
     ) -> Result<(), MemoryError> {
         match (operation, atomic_op) {
-            (MemoryOperation::Atomic, Some(_)) => Ok(()),
-            (MemoryOperation::Atomic, None) => Err(MemoryError::MissingAtomicOp { request: id }),
+            (MemoryOperation::Atomic | MemoryOperation::AtomicNoReturn, Some(_)) => Ok(()),
+            (MemoryOperation::Atomic | MemoryOperation::AtomicNoReturn, None) => {
+                Err(MemoryError::MissingAtomicOp { request: id })
+            }
             (_, Some(_)) => Err(MemoryError::UnexpectedAtomicOp { request: id }),
             (_, None) => Ok(()),
         }
@@ -1108,7 +1132,10 @@ impl MemoryRequest {
     }
 
     pub fn atomic_write_data(&self, old_data: &[u8]) -> Result<Vec<u8>, MemoryError> {
-        if self.operation != MemoryOperation::Atomic {
+        if !matches!(
+            self.operation,
+            MemoryOperation::Atomic | MemoryOperation::AtomicNoReturn
+        ) {
             return Err(MemoryError::UnexpectedAtomicOp { request: self.id });
         }
         if old_data.len() as u64 != self.size().bytes() {

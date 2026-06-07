@@ -2,7 +2,10 @@ use rem6_directory::{
     ChiDirectory, ChiDirectoryDataSource, ChiDirectoryError, ChiDirectoryGrant,
     ChiDirectoryLineState, ChiDirectorySnoop,
 };
-use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId};
+use rem6_memory::{
+    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryAtomicOp, MemoryRequest,
+    MemoryRequestId,
+};
 use rem6_protocol_chi::{ChiEvent, ChiLineId, ChiState};
 
 fn layout() -> CacheLineLayout {
@@ -44,6 +47,19 @@ fn read_unique(agent_id: u32, sequence: u64) -> MemoryRequest {
         id(agent_id, sequence),
         Address::new(0x6008),
         line_size(),
+        layout(),
+    )
+    .unwrap()
+}
+
+fn atomic_no_return(agent_id: u32, sequence: u64) -> MemoryRequest {
+    MemoryRequest::atomic_no_return(
+        id(agent_id, sequence),
+        Address::new(0x6008),
+        AccessSize::new(8).unwrap(),
+        MemoryAtomicOp::Swap,
+        vec![agent_id as u8; 8],
+        ByteMask::full(AccessSize::new(8).unwrap()).unwrap(),
         layout(),
     )
     .unwrap()
@@ -127,6 +143,40 @@ fn chi_directory_read_unique_invalidates_sharers_and_uses_dirty_peer_data() {
         .unwrap();
 
     let decision = directory.accept(read_unique(2, 0)).unwrap();
+
+    assert_eq!(
+        decision.snoops(),
+        &[
+            ChiDirectorySnoop::new(agent(1), ChiEvent::SnoopUnique),
+            ChiDirectorySnoop::new(agent(3), ChiEvent::SnoopUnique),
+        ]
+    );
+    assert_eq!(
+        decision.grant(),
+        Some(&grant(
+            id(2, 0),
+            ChiState::UniqueDirty,
+            ChiDirectoryDataSource::OwnerCache(agent(3)),
+        ))
+    );
+    assert_eq!(
+        directory.line_state(line()),
+        ChiDirectoryLineState::new(line()).with_unique_owner(agent(2), ChiState::UniqueDirty)
+    );
+}
+
+#[test]
+fn chi_directory_atomic_no_return_invalidates_sharers_and_uses_dirty_peer_data() {
+    let mut directory = ChiDirectory::new();
+    directory
+        .restore_line_state(
+            &ChiDirectoryLineState::new(line())
+                .with_sharer(agent(1), ChiState::SharedClean)
+                .with_sharer(agent(3), ChiState::SharedDirty),
+        )
+        .unwrap();
+
+    let decision = directory.accept(atomic_no_return(2, 0)).unwrap();
 
     assert_eq!(
         decision.snoops(),

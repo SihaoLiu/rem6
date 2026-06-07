@@ -577,14 +577,18 @@ impl ChiCacheController {
         &mut self,
         request: &MemoryRequest,
     ) -> Result<MemoryResponse, ChiCacheControllerError> {
-        if request.operation() == MemoryOperation::Atomic {
+        if matches!(
+            request.operation(),
+            MemoryOperation::Atomic | MemoryOperation::AtomicNoReturn
+        ) {
             let data = self.read_slice(request)?;
             let write_data = request
                 .atomic_write_data(&data)
                 .map_err(ChiCacheControllerError::Memory)?;
             self.apply_store_data(request, &write_data)?;
             self.clear_locked_reservations(request);
-            return MemoryResponse::completed(request, Some(data))
+            let response_data = request.returns_data().then_some(data);
+            return MemoryResponse::completed(request, response_data)
                 .map_err(ChiCacheControllerError::Memory);
         }
 
@@ -753,6 +757,7 @@ fn chi_cpu_event(request: &MemoryRequest) -> ChiEvent {
         | MemoryOperation::LockedRmwWrite
         | MemoryOperation::Upgrade
         | MemoryOperation::Atomic
+        | MemoryOperation::AtomicNoReturn
         | MemoryOperation::PrefetchWrite => ChiEvent::CpuWrite,
         MemoryOperation::PrefetchRead => ChiEvent::CpuRead,
         MemoryOperation::WriteClean

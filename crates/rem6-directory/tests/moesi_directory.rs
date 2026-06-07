@@ -2,7 +2,10 @@ use rem6_directory::{
     MoesiDirectory, MoesiDirectoryDataSource, MoesiDirectoryDecision, MoesiDirectoryError,
     MoesiDirectoryGrant, MoesiDirectoryLineState, MoesiDirectorySnoop,
 };
-use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId};
+use rem6_memory::{
+    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryAtomicOp, MemoryRequest,
+    MemoryRequestId,
+};
 use rem6_protocol_moesi::{MoesiEvent, MoesiLineId, MoesiState};
 
 fn layout() -> CacheLineLayout {
@@ -36,6 +39,19 @@ fn read_unique(agent: u32, sequence: u64) -> MemoryRequest {
         id(agent, sequence),
         Address::new(0x4000),
         line_size(),
+        layout(),
+    )
+    .unwrap()
+}
+
+fn atomic_no_return(agent: u32, sequence: u64) -> MemoryRequest {
+    MemoryRequest::atomic_no_return(
+        id(agent, sequence),
+        Address::new(0x4000),
+        AccessSize::new(8).unwrap(),
+        MemoryAtomicOp::Swap,
+        vec![agent as u8; 8],
+        ByteMask::full(AccessSize::new(8).unwrap()).unwrap(),
         layout(),
     )
     .unwrap()
@@ -292,6 +308,37 @@ fn moesi_directory_read_unique_invalidates_dirty_owner_and_sharers_in_order() {
     directory.accept(read_shared(4, 0)).unwrap();
 
     let decision = directory.accept(read_unique(2, 0)).unwrap();
+
+    assert_eq!(
+        decision.snoops(),
+        &[
+            MoesiDirectorySnoop::new(AgentId::new(3), MoesiEvent::SnoopWrite),
+            MoesiDirectorySnoop::new(AgentId::new(1), MoesiEvent::SnoopWrite),
+            MoesiDirectorySnoop::new(AgentId::new(4), MoesiEvent::SnoopWrite),
+        ]
+    );
+    assert_eq!(
+        decision.grant(),
+        Some(&grant(
+            id(2, 0),
+            MoesiState::Modified,
+            MoesiDirectoryDataSource::OwnerCache(AgentId::new(3)),
+        ))
+    );
+    assert_eq!(
+        directory.line_state(line()),
+        MoesiDirectoryLineState::new(line()).with_owner(AgentId::new(2), MoesiState::Modified)
+    );
+}
+
+#[test]
+fn moesi_directory_atomic_no_return_invalidates_dirty_owner_and_sharers_in_order() {
+    let mut directory = MoesiDirectory::new();
+    directory.accept(read_unique(3, 0)).unwrap();
+    directory.accept(read_shared(1, 0)).unwrap();
+    directory.accept(read_shared(4, 0)).unwrap();
+
+    let decision = directory.accept(atomic_no_return(2, 0)).unwrap();
 
     assert_eq!(
         decision.snoops(),

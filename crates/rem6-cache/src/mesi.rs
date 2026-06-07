@@ -576,14 +576,18 @@ impl MesiCacheController {
         &mut self,
         request: &MemoryRequest,
     ) -> Result<MemoryResponse, MesiCacheControllerError> {
-        if request.operation() == MemoryOperation::Atomic {
+        if matches!(
+            request.operation(),
+            MemoryOperation::Atomic | MemoryOperation::AtomicNoReturn
+        ) {
             let data = self.read_slice(request)?;
             let write_data = request
                 .atomic_write_data(&data)
                 .map_err(MesiCacheControllerError::Memory)?;
             self.apply_store_data(request, &write_data)?;
             self.clear_locked_reservations(request);
-            return MemoryResponse::completed(request, Some(data))
+            let response_data = request.returns_data().then_some(data);
+            return MemoryResponse::completed(request, response_data)
                 .map_err(MesiCacheControllerError::Memory);
         }
 
@@ -752,6 +756,7 @@ fn mesi_cpu_event(request: &MemoryRequest) -> MesiEvent {
         | MemoryOperation::LockedRmwWrite
         | MemoryOperation::Upgrade
         | MemoryOperation::Atomic
+        | MemoryOperation::AtomicNoReturn
         | MemoryOperation::PrefetchWrite => MesiEvent::CpuWrite,
         MemoryOperation::PrefetchRead => MesiEvent::CpuRead,
         MemoryOperation::WriteClean

@@ -18,6 +18,7 @@ impl MemoryOperation {
                 | Self::LockedRmwRead
                 | Self::StoreConditionalUpgradeFail
                 | Self::Atomic
+                | Self::AtomicNoReturn
                 | Self::PrefetchRead
         )
     }
@@ -36,6 +37,7 @@ impl MemoryOperation {
                 | Self::LockedRmwWrite
                 | Self::Upgrade
                 | Self::Atomic
+                | Self::AtomicNoReturn
                 | Self::PrefetchWrite
                 | Self::WriteClean
                 | Self::WritebackClean

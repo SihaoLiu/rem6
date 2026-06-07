@@ -26,6 +26,7 @@ impl RiscvReservationTracker {
                     MemoryOperation::Write
                         | MemoryOperation::StoreConditional
                         | MemoryOperation::Atomic
+                        | MemoryOperation::AtomicNoReturn
                 ) {
                     continue;
                 }

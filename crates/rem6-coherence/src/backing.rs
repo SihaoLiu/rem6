@@ -91,14 +91,19 @@ impl LineBackingStore {
                 self.clear_locked_reservations(request);
                 MemoryResponse::completed(request, None).map_err(HarnessError::Memory)
             }
-            MemoryOperation::Atomic => {
+            MemoryOperation::Atomic | MemoryOperation::AtomicNoReturn => {
                 let data = self.read_slice(request)?;
                 let write_data = request
                     .atomic_write_data(&data)
                     .map_err(HarnessError::Memory)?;
                 self.apply_write_data(request, &write_data)?;
                 self.clear_locked_reservations(request);
-                MemoryResponse::completed(request, Some(data)).map_err(HarnessError::Memory)
+                let response_data = if request.returns_data() {
+                    Some(data)
+                } else {
+                    None
+                };
+                MemoryResponse::completed(request, response_data).map_err(HarnessError::Memory)
             }
             MemoryOperation::WriteClean
             | MemoryOperation::WritebackClean

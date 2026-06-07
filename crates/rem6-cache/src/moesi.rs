@@ -582,14 +582,18 @@ impl MoesiCacheController {
         &mut self,
         request: &MemoryRequest,
     ) -> Result<MemoryResponse, MoesiCacheControllerError> {
-        if request.operation() == MemoryOperation::Atomic {
+        if matches!(
+            request.operation(),
+            MemoryOperation::Atomic | MemoryOperation::AtomicNoReturn
+        ) {
             let data = self.read_slice(request)?;
             let write_data = request
                 .atomic_write_data(&data)
                 .map_err(MoesiCacheControllerError::Memory)?;
             self.apply_store_data(request, &write_data)?;
             self.clear_locked_reservations(request);
-            return MemoryResponse::completed(request, Some(data))
+            let response_data = request.returns_data().then_some(data);
+            return MemoryResponse::completed(request, response_data)
                 .map_err(MoesiCacheControllerError::Memory);
         }
 
@@ -760,6 +764,7 @@ fn moesi_cpu_event(request: &MemoryRequest) -> MoesiEvent {
         | MemoryOperation::LockedRmwWrite
         | MemoryOperation::Upgrade
         | MemoryOperation::Atomic
+        | MemoryOperation::AtomicNoReturn
         | MemoryOperation::PrefetchWrite => MoesiEvent::CpuWrite,
         MemoryOperation::PrefetchRead => MoesiEvent::CpuRead,
         MemoryOperation::WriteClean
