@@ -1349,6 +1349,7 @@ impl RiscvWorkloadReplayDeviceSnapshots {
 }
 
 impl RiscvWorkloadReplayOutcome {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         cluster: RiscvCluster,
         run: RiscvSystemRun,

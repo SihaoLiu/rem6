@@ -63,6 +63,7 @@ mod system_run_sc_progress;
 mod system_run_worker_lanes;
 mod timer_checkpoint;
 mod topology;
+mod traffic_gups;
 mod traffic_replay;
 mod trap_event;
 mod uart_checkpoint;
@@ -206,6 +207,10 @@ pub use topology::{
     RiscvTopologyHeterogeneousWork, RiscvTopologyHostConfig, RiscvTopologyMemoryConfig,
     RiscvTopologyMemoryRegion, RiscvTopologySinicPciDeviceConfig, RiscvTopologySystem,
     RiscvTopologySystemError, RiscvTopologyWorkloadSinicPciError,
+};
+pub use traffic_gups::{
+    traffic_gups_controller_transport_run, TrafficGupsTargetResponder, TrafficGupsTransportError,
+    TrafficGupsTransportRun,
 };
 pub use traffic_replay::{
     traffic_trace_replay_controller_control_completion,

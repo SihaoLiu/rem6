@@ -33,6 +33,7 @@ impl MemoryTransport {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn submit_parallel_at<F, G>(
         &self,
         scheduler: &mut PartitionedScheduler,

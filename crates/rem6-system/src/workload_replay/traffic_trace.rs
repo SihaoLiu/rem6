@@ -213,6 +213,7 @@ pub(super) fn schedule_traffic_trace_replays(
     Ok(scheduled_replays)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn schedule_workload_traffic_trace_batch(
     executor: &TrafficTraceReplayControllerParallelExecutor,
     batch: &TrafficControllerEventBatch,

@@ -35,6 +35,7 @@ fn kernel_resource() -> WorkloadResource {
     .unwrap()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn expected_trace_summary(
     route: &str,
     scheduled_count: usize,
@@ -55,6 +56,7 @@ fn expected_trace_summary(
         .with_minimum_sideband_event_count(sideband_event_count)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn actual_trace_summary(
     route: &str,
     scheduled_count: usize,
