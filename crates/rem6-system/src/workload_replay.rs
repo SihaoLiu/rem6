@@ -55,6 +55,7 @@ mod qos;
 mod sinic_mmio_backend;
 mod summary;
 mod traffic_trace;
+mod traffic_trace_sideband_records;
 mod traffic_trace_sync;
 mod workload_replay_dma;
 
@@ -84,6 +85,9 @@ pub use self::traffic_trace::{
     RiscvWorkloadTraceHtmAbortRecord, RiscvWorkloadTraceHtmBeginRecord,
     RiscvWorkloadTraceMemoryFailureRecord, RiscvWorkloadTraceMemoryResponseRecord,
     RiscvWorkloadTrafficTraceReplay, RiscvWorkloadTrafficTraceReplayOutcome,
+};
+pub use self::traffic_trace_sideband_records::{
+    RiscvWorkloadTraceCacheFlushRecord, RiscvWorkloadTraceTlbSyncRecord,
 };
 pub use self::traffic_trace_sync::{RiscvWorkloadTraceSyncOutcome, RiscvWorkloadTraceSyncRecord};
 use self::workload_replay_dma::run_accelerator_dma_copies;

@@ -163,12 +163,21 @@ impl RiscvCluster {
             .ok_or(RiscvClusterError::UnknownCpu { cpu })
     }
 
-    pub fn flush_data_translation_tlbs_for_data_route(&self, route: MemoryRouteId) -> usize {
-        self.cores
+    pub fn flush_data_translation_tlbs_for_data_route(
+        &self,
+        route: MemoryRouteId,
+    ) -> Option<usize> {
+        let mut flushed_entry_count = None;
+        for core in self
+            .cores
             .values()
             .filter(|core| core.data_route() == Some(route))
-            .filter_map(RiscvCore::flush_data_translation_tlb)
-            .sum()
+        {
+            if let Some(core_flushed_entry_count) = core.flush_data_translation_tlb() {
+                *flushed_entry_count.get_or_insert(0) += core_flushed_entry_count;
+            }
+        }
+        flushed_entry_count
     }
 
     pub fn abort_htm_transaction_for_data_route(

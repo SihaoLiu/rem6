@@ -13,6 +13,7 @@ use rem6_system::{
 };
 use rem6_traffic::{
     TrafficTraceCacheKind, TrafficTraceErrorKind, TrafficTraceResponseKind, TrafficTraceSyncKind,
+    TrafficTraceTlbKind,
 };
 use rem6_transport::MemoryTraceKind;
 use rem6_workload::{
@@ -387,6 +388,23 @@ fn replay_topology_with_data_translation() -> WorkloadTopology {
         1,
     ));
 
+    replay_topology_with_data_translation_frontend(translation)
+}
+
+fn replay_topology_with_data_translation_queue() -> WorkloadTopology {
+    let translation = WorkloadRiscvDataTranslation::new(TranslationQueueConfig::new(4, 0).unwrap())
+        .with_page_mapping(WorkloadTranslationPageMapping::new(
+            Address::new(0x4000),
+            Address::new(0x9000),
+            1,
+        ));
+
+    replay_topology_with_data_translation_frontend(translation)
+}
+
+fn replay_topology_with_data_translation_frontend(
+    translation: WorkloadRiscvDataTranslation,
+) -> WorkloadTopology {
     WorkloadTopology::new(4, 2, 2, WorkloadHostPlacement::new(3, 2, 51).unwrap())
         .unwrap()
         .add_memory_target(
@@ -530,6 +548,22 @@ fn replay_manifest_with_data_translation(id: &str) -> WorkloadManifest {
         .add_required_resource(resource_id("kernel"))
         .add_host_event(WorkloadHostEvent::new(
             26,
+            HostEventIntent::Stop {
+                reason: "host-stop".to_string(),
+            },
+        ))
+        .build()
+        .unwrap()
+}
+
+fn replay_manifest_with_data_translation_queue(id: &str) -> WorkloadManifest {
+    WorkloadManifest::builder(workload_id(id), boot_image())
+        .with_topology(replay_topology_with_data_translation_queue())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .add_host_event(WorkloadHostEvent::new(
+            8,
             HostEventIntent::Stop {
                 reason: "host-stop".to_string(),
             },
@@ -1032,6 +1066,7 @@ fn workload_replay_records_typed_trace_sideband_summary_counts() {
     assert_eq!(htm_aborts[0].size_bytes(), None);
     assert_eq!(htm_aborts[0].trace_packet_id(), Some(922));
     assert_eq!(htm_aborts[0].trace_pc(), None);
+    assert!(traffic_replay.trace_tlb_sync_records().is_empty());
 
     let summaries = outcome.result().traffic_trace_replay_summaries();
     assert_eq!(summaries.len(), 1);
@@ -1045,6 +1080,7 @@ fn workload_replay_records_typed_trace_sideband_summary_counts() {
     assert_eq!(summary.control_failure_count(), 0);
     assert_eq!(summary.sideband_event_count(), 4);
     assert_eq!(summary.tlb_sync_event_count(), 1);
+    assert_eq!(summary.trace_tlb_sync_count(), 0);
     assert_eq!(summary.cache_flush_event_count(), 1);
     assert_eq!(summary.trace_cache_flush_count(), 0);
     assert_eq!(summary.diagnostic_print_event_count(), 1);
@@ -2033,8 +2069,54 @@ fn workload_replay_applies_tlbi_ext_sync_to_data_translation_tlb() {
         Some(TranslationTlbStats::new(0, 1, 0, 1, 0))
     );
     assert_eq!(core.data_translation_tlb_entry_count(), Some(0));
+    let tlb_sync_records = traffic_replay.trace_tlb_sync_records();
+    assert_eq!(tlb_sync_records.len(), 1);
+    let tlb_sync = &tlb_sync_records[0];
+    assert_eq!(tlb_sync.tick(), 24);
+    assert_eq!(tlb_sync.trace_tick(), 24);
+    assert_eq!(tlb_sync.sequence(), 0);
+    assert_eq!(tlb_sync.kind(), TrafficTraceTlbKind::ExternalSync);
+    assert_eq!(tlb_sync.flushed_entry_count(), 1);
+    assert_eq!(tlb_sync.trace_packet_id(), Some(959));
+    assert_eq!(tlb_sync.trace_pc(), None);
     let summary = &outcome.result().traffic_trace_replay_summaries()[0];
     assert_eq!(summary.tlb_sync_event_count(), 1);
+    assert_eq!(summary.trace_tlb_sync_count(), 1);
+}
+
+#[test]
+fn workload_replay_counts_tlbi_ext_sync_as_raw_only_without_translation_tlb() {
+    let manifest = replay_manifest_with_data_translation_queue(
+        "riscv-replay-trace-tlbi-data-translation-no-tlb",
+    );
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let controller = controller_for_packets(&[PacketFields {
+        tick: 4,
+        command: GEM5_TLBI_EXT_SYNC,
+        address: Some(0),
+        size: Some(64),
+        packet_id: Some(963),
+    }]);
+
+    let outcome = RiscvWorkloadReplay::new(plan)
+        .with_max_turns(32)
+        .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
+            controller,
+            route_id("cpu0.data"),
+            PartitionId::new(2),
+        ))
+        .run_parallel()
+        .unwrap();
+
+    let traffic_replay = &outcome.traffic_trace_replays()[0];
+    assert!(traffic_replay.errors().is_empty());
+    assert_eq!(traffic_replay.runtime().sideband_events().len(), 1);
+    assert!(traffic_replay.trace_tlb_sync_records().is_empty());
+    let core = outcome.cluster().core(CpuId::new(0)).unwrap();
+    assert_eq!(core.data_translation_tlb_stats(), None);
+    let summary = &outcome.result().traffic_trace_replay_summaries()[0];
+    assert_eq!(summary.tlb_sync_event_count(), 1);
+    assert_eq!(summary.trace_tlb_sync_count(), 0);
 }
 
 #[test]

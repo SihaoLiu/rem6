@@ -12,6 +12,7 @@ pub struct WorkloadTrafficTraceReplaySummary {
     control_failure_count: usize,
     sideband_event_count: usize,
     tlb_sync_event_count: usize,
+    trace_tlb_sync_count: usize,
     cache_flush_event_count: usize,
     trace_cache_flush_count: usize,
     diagnostic_print_event_count: usize,
@@ -32,6 +33,7 @@ impl WorkloadTrafficTraceReplaySummary {
             control_failure_count: 0,
             sideband_event_count: 0,
             tlb_sync_event_count: 0,
+            trace_tlb_sync_count: 0,
             cache_flush_event_count: 0,
             trace_cache_flush_count: 0,
             diagnostic_print_event_count: 0,
@@ -80,6 +82,11 @@ impl WorkloadTrafficTraceReplaySummary {
 
     pub fn with_tlb_sync_event_count(mut self, tlb_sync_event_count: usize) -> Self {
         self.tlb_sync_event_count = tlb_sync_event_count;
+        self
+    }
+
+    pub fn with_trace_tlb_sync_count(mut self, trace_tlb_sync_count: usize) -> Self {
+        self.trace_tlb_sync_count = trace_tlb_sync_count;
         self
     }
 
@@ -151,6 +158,10 @@ impl WorkloadTrafficTraceReplaySummary {
         self.tlb_sync_event_count
     }
 
+    pub const fn trace_tlb_sync_count(&self) -> usize {
+        self.trace_tlb_sync_count
+    }
+
     pub const fn cache_flush_event_count(&self) -> usize {
         self.cache_flush_event_count
     }
@@ -190,6 +201,7 @@ impl WorkloadTrafficTraceReplaySummary {
             control_failure_count: self.control_failure_count + other.control_failure_count,
             sideband_event_count: self.sideband_event_count + other.sideband_event_count,
             tlb_sync_event_count: self.tlb_sync_event_count + other.tlb_sync_event_count,
+            trace_tlb_sync_count: self.trace_tlb_sync_count + other.trace_tlb_sync_count,
             cache_flush_event_count: self.cache_flush_event_count + other.cache_flush_event_count,
             trace_cache_flush_count: self.trace_cache_flush_count + other.trace_cache_flush_count,
             diagnostic_print_event_count: self.diagnostic_print_event_count
@@ -212,6 +224,7 @@ pub struct WorkloadExpectedTrafficTraceReplaySummary {
     minimum_control_failure_count: usize,
     minimum_sideband_event_count: usize,
     minimum_tlb_sync_event_count: usize,
+    minimum_trace_tlb_sync_count: usize,
     minimum_cache_flush_event_count: usize,
     minimum_trace_cache_flush_count: usize,
     minimum_diagnostic_print_event_count: usize,
@@ -232,6 +245,7 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
             minimum_control_failure_count: 0,
             minimum_sideband_event_count: 0,
             minimum_tlb_sync_event_count: 0,
+            minimum_trace_tlb_sync_count: 0,
             minimum_cache_flush_event_count: 0,
             minimum_trace_cache_flush_count: 0,
             minimum_diagnostic_print_event_count: 0,
@@ -303,6 +317,14 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
         minimum_tlb_sync_event_count: usize,
     ) -> Self {
         self.minimum_tlb_sync_event_count = minimum_tlb_sync_event_count;
+        self
+    }
+
+    pub fn with_minimum_trace_tlb_sync_count(
+        mut self,
+        minimum_trace_tlb_sync_count: usize,
+    ) -> Self {
+        self.minimum_trace_tlb_sync_count = minimum_trace_tlb_sync_count;
         self
     }
 
@@ -386,6 +408,10 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
         self.minimum_tlb_sync_event_count
     }
 
+    pub const fn minimum_trace_tlb_sync_count(&self) -> usize {
+        self.minimum_trace_tlb_sync_count
+    }
+
     pub const fn minimum_cache_flush_event_count(&self) -> usize {
         self.minimum_cache_flush_event_count
     }
@@ -462,6 +488,7 @@ fn traffic_trace_replay_summary_meets_minimum(
         && actual.control_failure_count() >= expected.minimum_control_failure_count()
         && actual.sideband_event_count() >= expected.minimum_sideband_event_count()
         && actual.tlb_sync_event_count() >= expected.minimum_tlb_sync_event_count()
+        && actual.trace_tlb_sync_count() >= expected.minimum_trace_tlb_sync_count()
         && actual.cache_flush_event_count() >= expected.minimum_cache_flush_event_count()
         && actual.trace_cache_flush_count() >= expected.minimum_trace_cache_flush_count()
         && actual.diagnostic_print_event_count() >= expected.minimum_diagnostic_print_event_count()

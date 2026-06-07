@@ -3088,13 +3088,18 @@ events and attach applied-flush records to the matching trace replay outcome.
 Diagnostic print sidebands on those routes record a non-mutating data-cache
 snapshot at the sideband execution tick and attach the resulting diagnostic
 records to the matching trace replay outcome. TLBI external-sync sidebands
-on translated data routes
-flush the corresponding RISC-V data-translation TLB. The workload consumer
-ignores fetch, MMIO, and unrelated data routes even when their trace addresses
-alias a configured data-cache line. This preserves executable audit
-records instead of dropping them; if a sideband event is
-discovered after its trace tick, it is recorded at the current scheduler tick as
-late-observed trace evidence rather than blocking the replay queue. The lower-level memory target
+on translated data routes with a real RISC-V data-translation TLB consumer
+flush that TLB and attach route-local trace TLB-sync records with trace order,
+packet metadata, and flushed-entry count to the matching replay outcome.
+Translated data routes without a TLB consumer remain raw-only TLBI evidence.
+Workload traffic-trace summaries and manifest expectations count executed TLBI
+syncs separately from raw TLBI sideband events, so a trace can require the
+executable translation-TLB consumer. The workload consumer ignores fetch, MMIO,
+and unrelated data routes even when their trace addresses alias a configured
+data-cache line. This preserves executable audit records instead of dropping
+them; if a sideband event is discovered after its trace tick, it is recorded at
+the current scheduler tick as late-observed trace evidence rather than blocking
+the replay queue. The lower-level memory target
 runtime ignores control and sideband actions, and the lower-level control
 runtime ignores memory and sideband actions only after that fanout, so a
 controller-aware memory replay that advances past a control ack keeps the ack

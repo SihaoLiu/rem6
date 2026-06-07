@@ -119,6 +119,7 @@ fn workload_manifest_records_traffic_trace_replay_summary_expectations() {
 fn workload_manifest_records_typed_traffic_trace_sideband_expectations() {
     let expected = expected_trace_summary("trace.sideband", 4, 0, 0, 0, 0, 0, 4)
         .with_minimum_tlb_sync_event_count(1)
+        .with_minimum_trace_tlb_sync_count(1)
         .with_minimum_cache_flush_event_count(1)
         .with_minimum_trace_cache_flush_count(1)
         .with_minimum_diagnostic_print_event_count(1)
@@ -142,6 +143,7 @@ fn workload_manifest_records_typed_traffic_trace_sideband_expectations() {
 
     let actual = actual_trace_summary("trace.sideband", 4, 0, 0, 0, 0, 0, 4)
         .with_tlb_sync_event_count(1)
+        .with_trace_tlb_sync_count(1)
         .with_cache_flush_event_count(1)
         .with_trace_cache_flush_count(1)
         .with_diagnostic_print_event_count(1)
@@ -280,6 +282,18 @@ fn workload_manifest_identity_changes_with_typed_trace_sideband_expectations() {
             .unwrap()
             .build()
             .unwrap();
+    let trace_tlb_sync =
+        rem6_workload::WorkloadManifest::builder(id("identity-typed-sideband"), boot_image())
+            .add_resource(kernel_resource())
+            .unwrap()
+            .add_required_resource(resource_id("kernel"))
+            .add_expected_traffic_trace_replay_summary(
+                expected_trace_summary("trace.sideband", 4, 0, 0, 0, 0, 0, 4)
+                    .with_minimum_trace_tlb_sync_count(1),
+            )
+            .unwrap()
+            .build()
+            .unwrap();
     let trace_diagnostic =
         rem6_workload::WorkloadManifest::builder(id("identity-typed-sideband"), boot_image())
             .add_resource(kernel_resource())
@@ -296,6 +310,8 @@ fn workload_manifest_identity_changes_with_typed_trace_sideband_expectations() {
     assert_ne!(generic.identity(), typed.identity());
     assert_ne!(generic.identity(), trace_cache_flush.identity());
     assert_ne!(typed.identity(), trace_cache_flush.identity());
+    assert_ne!(typed.identity(), trace_tlb_sync.identity());
+    assert_ne!(trace_tlb_sync.identity(), trace_cache_flush.identity());
     assert_ne!(trace_cache_flush.identity(), trace_diagnostic.identity());
 }
 
@@ -430,6 +446,7 @@ fn workload_replay_plan_rejects_missing_or_underreported_traffic_trace_replay_su
 fn workload_replay_plan_rejects_underreported_typed_sideband_summary() {
     let expected = expected_trace_summary("trace.sideband", 4, 0, 0, 0, 0, 0, 4)
         .with_minimum_tlb_sync_event_count(1)
+        .with_minimum_trace_tlb_sync_count(1)
         .with_minimum_cache_flush_event_count(1)
         .with_minimum_trace_cache_flush_count(1)
         .with_minimum_trace_diagnostic_count(1);
@@ -457,7 +474,7 @@ fn workload_replay_plan_rejects_underreported_typed_sideband_summary() {
     );
     assert_eq!(
         error.to_string(),
-        "traffic trace replay summary for route trace.sideband has scheduled 4/4, responses 0/0, memory trace events 0/0, memory write completions 0/0, memory failures 0/0, control acks 0/0, control failures 0/0, sideband events 4/4, tlb sync events 1/1, cache flush events 0/1, trace cache flushes 0/1, diagnostic print events 0/0, trace diagnostics 0/1, htm abort events 0/0",
+        "traffic trace replay summary for route trace.sideband has scheduled 4/4, responses 0/0, memory trace events 0/0, memory write completions 0/0, memory failures 0/0, control acks 0/0, control failures 0/0, sideband events 4/4, tlb sync events 1/1, trace tlb syncs 0/1, cache flush events 0/1, trace cache flushes 0/1, diagnostic print events 0/0, trace diagnostics 0/1, htm abort events 0/0",
     );
 }
 
