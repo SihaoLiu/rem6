@@ -55,6 +55,7 @@ mod qos;
 mod sinic_mmio_backend;
 mod summary;
 mod traffic_trace;
+mod traffic_trace_records;
 mod traffic_trace_sideband_records;
 mod traffic_trace_sync;
 mod workload_replay_dma;

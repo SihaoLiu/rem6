@@ -134,13 +134,12 @@ fn external_cache_write_marks_reader_memory_conflict() {
     let reader_uid = HtmTransactionUid::new(1);
 
     assert!(backend.capture_trace_htm_rollback(reader_route, reader_uid));
-    assert!(backend.record_trace_htm_access_event(
-        5,
-        reader_route,
-        reader_uid,
-        read_response_event(),
-        true
-    ));
+    assert_eq!(
+        backend
+            .record_trace_htm_access_event(5, reader_route, reader_uid, read_response_event(), true)
+            .len(),
+        1
+    );
     assert_eq!(
         backend.trace_htm_abort_cause(reader_route, reader_uid),
         HtmFailureCause::Other
@@ -167,13 +166,12 @@ fn failed_external_store_conditional_does_not_mark_memory_conflict() {
     let reader_uid = HtmTransactionUid::new(1);
 
     assert!(backend.capture_trace_htm_rollback(reader_route, reader_uid));
-    assert!(backend.record_trace_htm_access_event(
-        5,
-        reader_route,
-        reader_uid,
-        read_response_event(),
-        true
-    ));
+    assert_eq!(
+        backend
+            .record_trace_htm_access_event(5, reader_route, reader_uid, read_response_event(), true)
+            .len(),
+        1
+    );
 
     assert!(!backend.record_trace_htm_write_conflict_event(
         writer_route,
@@ -197,23 +195,27 @@ fn dropped_trace_transaction_no_longer_contributes_conflicts() {
     let writer_uid = HtmTransactionUid::new(2);
 
     assert!(backend.capture_trace_htm_rollback(stale_route, stale_uid));
-    assert!(backend.record_trace_htm_access_event(
-        5,
-        stale_route,
-        stale_uid,
-        read_response_event(),
-        true
-    ));
+    assert_eq!(
+        backend
+            .record_trace_htm_access_event(5, stale_route, stale_uid, read_response_event(), true)
+            .len(),
+        1
+    );
     assert!(backend.discard_trace_htm_transaction(stale_route, stale_uid));
 
     assert!(backend.capture_trace_htm_rollback(writer_route, writer_uid));
-    assert!(backend.record_trace_htm_access_event(
-        7,
-        writer_route,
-        writer_uid,
-        write_response_event(),
-        true
-    ));
+    assert_eq!(
+        backend
+            .record_trace_htm_access_event(
+                7,
+                writer_route,
+                writer_uid,
+                write_response_event(),
+                true
+            )
+            .len(),
+        1
+    );
 
     assert_eq!(
         backend.trace_htm_abort_cause(writer_route, writer_uid),
@@ -230,21 +232,25 @@ fn active_writer_does_not_mark_itself_when_other_transaction_conflicts() {
     let writer_uid = HtmTransactionUid::new(2);
 
     assert!(backend.capture_trace_htm_rollback(reader_route, reader_uid));
-    assert!(backend.record_trace_htm_access_event(
-        5,
-        reader_route,
-        reader_uid,
-        read_response_event(),
-        true
-    ));
+    assert_eq!(
+        backend
+            .record_trace_htm_access_event(5, reader_route, reader_uid, read_response_event(), true)
+            .len(),
+        1
+    );
     assert!(backend.capture_trace_htm_rollback(writer_route, writer_uid));
-    assert!(backend.record_trace_htm_access_event(
-        7,
-        writer_route,
-        writer_uid,
-        write_response_event(),
-        true
-    ));
+    assert_eq!(
+        backend
+            .record_trace_htm_access_event(
+                7,
+                writer_route,
+                writer_uid,
+                write_response_event(),
+                true
+            )
+            .len(),
+        1
+    );
 
     assert_eq!(
         backend.trace_htm_abort_cause(reader_route, reader_uid),

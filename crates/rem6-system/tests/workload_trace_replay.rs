@@ -963,9 +963,11 @@ fn workload_replay_records_fetch_trace_read_error_metadata() {
             .request_id()
     );
     assert!(traffic_replay.trace_error_records().is_empty());
+    assert!(traffic_replay.trace_htm_access_records().is_empty());
     let summary = &outcome.result().traffic_trace_replay_summaries()[0];
     assert_eq!(summary.memory_failure_count(), 1);
     assert_eq!(summary.trace_error_count(), 0);
+    assert_eq!(summary.trace_htm_access_count(), 0);
 }
 
 #[test]
@@ -2500,6 +2502,121 @@ fn workload_replay_records_htm_transaction_data_cache_access_sets() {
     assert_eq!(records[1].line(), Address::new(0x9000));
     assert_eq!(records[1].size_bytes(), 8);
     assert_eq!(records[1].protocol(), RiscvDataCacheProtocol::Msi);
+    assert_eq!(traffic_replay.trace_htm_access_records(), records);
+    let summary = &outcome.result().traffic_trace_replay_summaries()[0];
+    assert_eq!(summary.trace_htm_access_count(), 2);
+}
+
+#[test]
+fn workload_replay_keeps_htm_access_records_route_local() {
+    let manifest = replay_manifest_with_two_data_routes("riscv-replay-trace-htm-route-local");
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let cpu0_controller = controller_for_packets(&[
+        PacketFields {
+            tick: 1,
+            command: GEM5_HTM_REQ,
+            address: None,
+            size: None,
+            packet_id: Some(980),
+        },
+        PacketFields {
+            tick: 2,
+            command: GEM5_HTM_REQ_RESP,
+            address: None,
+            size: None,
+            packet_id: Some(980),
+        },
+        PacketFields {
+            tick: 3,
+            command: GEM5_READ_REQ,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(981),
+        },
+        PacketFields {
+            tick: 5,
+            command: GEM5_READ_RESP,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(981),
+        },
+    ]);
+    let cpu1_controller = controller_for_packets(&[
+        PacketFields {
+            tick: 1,
+            command: GEM5_HTM_REQ,
+            address: None,
+            size: None,
+            packet_id: Some(982),
+        },
+        PacketFields {
+            tick: 2,
+            command: GEM5_HTM_REQ_RESP,
+            address: None,
+            size: None,
+            packet_id: Some(982),
+        },
+        PacketFields {
+            tick: 4,
+            command: GEM5_READ_REQ,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(983),
+        },
+        PacketFields {
+            tick: 6,
+            command: GEM5_READ_RESP,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(983),
+        },
+    ]);
+
+    let outcome = RiscvWorkloadReplay::new(plan)
+        .with_max_turns(160)
+        .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
+            cpu0_controller,
+            route_id("cpu0.data"),
+            PartitionId::new(2),
+        ))
+        .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
+            cpu1_controller,
+            route_id("cpu1.data"),
+            PartitionId::new(2),
+        ))
+        .run_parallel()
+        .unwrap();
+
+    let cpu0_replay = outcome
+        .traffic_trace_replays()
+        .iter()
+        .find(|replay| replay.route() == &route_id("cpu0.data"))
+        .unwrap();
+    let cpu1_replay = outcome
+        .traffic_trace_replays()
+        .iter()
+        .find(|replay| replay.route() == &route_id("cpu1.data"))
+        .unwrap();
+    let cpu0_records = cpu0_replay.trace_htm_access_records();
+    let cpu1_records = cpu1_replay.trace_htm_access_records();
+    assert_eq!(cpu0_records.len(), 1);
+    assert_eq!(cpu0_records[0].trace_packet_id(), Some(981));
+    assert_eq!(cpu0_records[0].tick(), 5);
+    assert_eq!(cpu1_records.len(), 1);
+    assert_eq!(cpu1_records[0].trace_packet_id(), Some(983));
+    assert_eq!(cpu1_records[0].tick(), 6);
+    assert_eq!(outcome.run().trace_htm_access_records().len(), 2);
+
+    let cpu0_summary = outcome
+        .result()
+        .traffic_trace_replay_summary(&route_id("cpu0.data"))
+        .unwrap();
+    let cpu1_summary = outcome
+        .result()
+        .traffic_trace_replay_summary(&route_id("cpu1.data"))
+        .unwrap();
+    assert_eq!(cpu0_summary.trace_htm_access_count(), 1);
+    assert_eq!(cpu1_summary.trace_htm_access_count(), 1);
 }
 
 #[test]

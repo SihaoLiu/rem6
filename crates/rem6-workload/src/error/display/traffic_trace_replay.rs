@@ -15,7 +15,7 @@ pub(super) fn format_traffic_trace_replay_error(
         WorkloadError::TrafficTraceReplaySummaryExpectation(error) => match error.as_ref() {
             WorkloadTrafficTraceReplaySummaryExpectationError::Missing(expected) => write!(
                 formatter,
-                "traffic trace replay summary for route {} was not recorded; expected scheduled {}, responses {}, memory trace events {}, memory write completions {}, memory failures {}, trace errors {}, control acks {}, control failures {}, sideband events {}, tlb sync events {}, trace tlb syncs {}, cache flush events {}, trace cache flushes {}, trace l1 invalidations {}, diagnostic print events {}, trace diagnostics {}, htm abort events {}",
+                "traffic trace replay summary for route {} was not recorded; expected scheduled {}, responses {}, memory trace events {}, memory write completions {}, memory failures {}, trace errors {}, trace htm accesses {}, control acks {}, control failures {}, sideband events {}, tlb sync events {}, trace tlb syncs {}, cache flush events {}, trace cache flushes {}, trace l1 invalidations {}, diagnostic print events {}, trace diagnostics {}, htm abort events {}",
                 expected.route().as_str(),
                 expected.minimum_scheduled_count(),
                 expected.minimum_response_delivery_count(),
@@ -23,6 +23,7 @@ pub(super) fn format_traffic_trace_replay_error(
                 expected.minimum_memory_write_completion_count(),
                 expected.minimum_memory_failure_count(),
                 expected.minimum_trace_error_count(),
+                expected.minimum_trace_htm_access_count(),
                 expected.minimum_control_ack_count(),
                 expected.minimum_control_failure_count(),
                 expected.minimum_sideband_event_count(),
@@ -40,7 +41,7 @@ pub(super) fn format_traffic_trace_replay_error(
                 actual,
             } => write!(
                 formatter,
-                "traffic trace replay summary for route {} has scheduled {}/{}, responses {}/{}, memory trace events {}/{}, memory write completions {}/{}, memory failures {}/{}, trace errors {}/{}, control acks {}/{}, control failures {}/{}, sideband events {}/{}, tlb sync events {}/{}, trace tlb syncs {}/{}, cache flush events {}/{}, trace cache flushes {}/{}, trace l1 invalidations {}/{}, diagnostic print events {}/{}, trace diagnostics {}/{}, htm abort events {}/{}",
+                "traffic trace replay summary for route {} has scheduled {}/{}, responses {}/{}, memory trace events {}/{}, memory write completions {}/{}, memory failures {}/{}, trace errors {}/{}, trace htm accesses {}/{}, control acks {}/{}, control failures {}/{}, sideband events {}/{}, tlb sync events {}/{}, trace tlb syncs {}/{}, cache flush events {}/{}, trace cache flushes {}/{}, trace l1 invalidations {}/{}, diagnostic print events {}/{}, trace diagnostics {}/{}, htm abort events {}/{}",
                 expected.route().as_str(),
                 actual.scheduled_count(),
                 expected.minimum_scheduled_count(),
@@ -54,6 +55,8 @@ pub(super) fn format_traffic_trace_replay_error(
                 expected.minimum_memory_failure_count(),
                 actual.trace_error_count(),
                 expected.minimum_trace_error_count(),
+                actual.trace_htm_access_count(),
+                expected.minimum_trace_htm_access_count(),
                 actual.control_ack_count(),
                 expected.minimum_control_ack_count(),
                 actual.control_failure_count(),

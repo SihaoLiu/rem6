@@ -509,11 +509,12 @@ impl WorkloadDataCacheLineBackend {
         tick: Tick,
         transaction_uid: HtmTransactionUid,
         event: TrafficTraceResponseEvent,
-    ) -> bool {
+    ) -> Vec<RiscvTraceHtmAccessRecord> {
         if !self.accepts_trace_htm_access_event(event) {
-            return false;
+            return Vec::new();
         }
 
+        let mut records = Vec::new();
         if event.is_read() {
             if let Some(record) = RiscvTraceHtmAccessRecord::from_trace_response(
                 RiscvTraceHtmAccessKind::ReadSet,
@@ -525,6 +526,7 @@ impl WorkloadDataCacheLineBackend {
                 event,
             ) {
                 self.trace_htm_access_records.push(record);
+                records.push(record);
             }
         }
         if event.is_write() {
@@ -538,9 +540,10 @@ impl WorkloadDataCacheLineBackend {
                 event,
             ) {
                 self.trace_htm_access_records.push(record);
+                records.push(record);
             }
         }
-        true
+        records
     }
 
     fn htm_rollback_snapshot(
@@ -917,19 +920,20 @@ impl WorkloadDataCacheBackend {
         transaction_uid: HtmTransactionUid,
         event: TrafficTraceResponseEvent,
         data_cache_response_applied: bool,
-    ) -> bool {
+    ) -> Vec<RiscvTraceHtmAccessRecord> {
         let Some(line_address) = self
             .lines
             .iter()
             .find(|(_, line)| line.accepts_trace_htm_access_event(event))
             .map(|(line_address, _)| *line_address)
         else {
-            return false;
+            return Vec::new();
         };
         let Some(line) = self.lines.get_mut(&line_address) else {
-            return false;
+            return Vec::new();
         };
-        let recorded = line.record_trace_htm_access_event(tick, transaction_uid, event);
+        let records = line.record_trace_htm_access_event(tick, transaction_uid, event);
+        let recorded = !records.is_empty();
         let key = WorkloadDataCacheRollbackKey::new(route, transaction_uid);
         if let Some(access_set) = self.htm_access_sets.get_mut(&key) {
             if event.is_read() {
@@ -945,7 +949,7 @@ impl WorkloadDataCacheBackend {
             }
             self.mark_trace_htm_write_conflicts(route, Some(transaction_uid), line_address);
         }
-        recorded
+        records
     }
 
     pub(super) fn record_trace_htm_write_conflict_event(

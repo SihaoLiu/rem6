@@ -19,7 +19,7 @@ use rem6_transport::{
 use rem6_workload::{WorkloadRouteId, WorkloadTopology, WorkloadTrafficTraceReplaySummary};
 
 use crate::{
-    RiscvCluster, RiscvTraceDiagnosticRecord, RiscvTraceErrorRecord,
+    RiscvCluster, RiscvTraceDiagnosticRecord, RiscvTraceErrorRecord, RiscvTraceHtmAccessRecord,
     TrafficTraceReplayControlEvent, TrafficTraceReplayControlEventContext,
     TrafficTraceReplayControllerParallelErrors, TrafficTraceReplayControllerParallelExecutor,
     TrafficTraceReplayControllerRuntime, TrafficTraceReplayOrder,
@@ -28,6 +28,7 @@ use crate::{
 };
 
 use super::data_cache_backend::WorkloadDataCacheBackend;
+use super::traffic_trace_records::RiscvWorkloadTraceReplayRecords;
 use super::traffic_trace_sideband_records::{
     RiscvWorkloadTraceCacheFlushRecord, RiscvWorkloadTraceTlbSyncRecord,
 };
@@ -117,6 +118,7 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
             .with_memory_write_completion_count(runtime.memory_write_completions().len())
             .with_memory_failure_count(runtime.memory_failures().len())
             .with_trace_error_count(self.records.trace_error_snapshot().len())
+            .with_trace_htm_access_count(self.records.trace_htm_access_snapshot().len())
             .with_control_ack_count(runtime.control_acks().len())
             .with_control_failure_count(runtime.control_failures().len())
             .with_sideband_event_count(runtime.sideband_events().len())
@@ -154,6 +156,7 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
             trace_cache_flush_records: self.records.trace_cache_flush_snapshot(),
             trace_l1_invalidation_records: self.records.trace_l1_invalidation_snapshot(),
             trace_error_records: self.records.trace_error_snapshot(),
+            trace_htm_access_records: self.records.trace_htm_access_snapshot(),
             trace_diagnostic_records: self.records.trace_diagnostic_snapshot(),
             sync_records: self.records.sync_snapshot(),
             htm_begin_records: self.records.htm_begin_snapshot(),
@@ -211,6 +214,7 @@ pub struct RiscvWorkloadTrafficTraceReplayOutcome {
     trace_cache_flush_records: Vec<RiscvWorkloadTraceCacheFlushRecord>,
     trace_l1_invalidation_records: Vec<RiscvWorkloadTraceL1InvalidationRecord>,
     trace_error_records: Vec<RiscvTraceErrorRecord>,
+    trace_htm_access_records: Vec<RiscvTraceHtmAccessRecord>,
     trace_diagnostic_records: Vec<RiscvTraceDiagnosticRecord>,
     sync_records: Vec<RiscvWorkloadTraceSyncRecord>,
     htm_begin_records: Vec<RiscvWorkloadTraceHtmBeginRecord>,
@@ -270,6 +274,10 @@ impl RiscvWorkloadTrafficTraceReplayOutcome {
 
     pub fn trace_error_records(&self) -> &[RiscvTraceErrorRecord] {
         &self.trace_error_records
+    }
+
+    pub fn trace_htm_access_records(&self) -> &[RiscvTraceHtmAccessRecord] {
+        &self.trace_htm_access_records
     }
 
     pub fn trace_diagnostic_records(&self) -> &[RiscvTraceDiagnosticRecord] {
@@ -542,213 +550,6 @@ impl RiscvWorkloadTraceMemoryFailureRecord {
 
     pub const fn trace_pc(&self) -> Option<Address> {
         self.trace_pc
-    }
-}
-
-#[derive(Clone, Debug, Default)]
-struct RiscvWorkloadTraceReplayRecords {
-    memory_response_records: Arc<Mutex<Vec<RiscvWorkloadTraceMemoryResponseRecord>>>,
-    memory_write_completion_records: Arc<Mutex<Vec<RiscvWorkloadTraceMemoryWriteCompletionRecord>>>,
-    memory_failure_records: Arc<Mutex<Vec<RiscvWorkloadTraceMemoryFailureRecord>>>,
-    trace_tlb_sync_records: Arc<Mutex<Vec<RiscvWorkloadTraceTlbSyncRecord>>>,
-    trace_cache_flush_records: Arc<Mutex<Vec<RiscvWorkloadTraceCacheFlushRecord>>>,
-    trace_l1_invalidation_records: Arc<Mutex<Vec<RiscvWorkloadTraceL1InvalidationRecord>>>,
-    trace_error_records: Arc<Mutex<Vec<RiscvTraceErrorRecord>>>,
-    trace_diagnostic_records: Arc<Mutex<Vec<RiscvTraceDiagnosticRecord>>>,
-    sync_records: Arc<Mutex<Vec<RiscvWorkloadTraceSyncRecord>>>,
-    htm_begin_records: Arc<Mutex<Vec<RiscvWorkloadTraceHtmBeginRecord>>>,
-    htm_abort_records: Arc<Mutex<Vec<RiscvWorkloadTraceHtmAbortRecord>>>,
-}
-
-impl RiscvWorkloadTraceReplayRecords {
-    fn memory_response_snapshot(&self) -> Vec<RiscvWorkloadTraceMemoryResponseRecord> {
-        let mut records = self
-            .memory_response_records
-            .lock()
-            .expect("traffic trace replay memory response lock")
-            .clone();
-        records.sort_by_key(|record| (record.tick(), record.sequence(), record.line().get()));
-        records
-    }
-
-    fn memory_write_completion_snapshot(
-        &self,
-    ) -> Vec<RiscvWorkloadTraceMemoryWriteCompletionRecord> {
-        let mut records = self
-            .memory_write_completion_records
-            .lock()
-            .expect("traffic trace replay memory write completion lock")
-            .clone();
-        records.sort_by_key(|record| (record.tick(), record.sequence(), record.line().get()));
-        records
-    }
-
-    fn memory_failure_snapshot(&self) -> Vec<RiscvWorkloadTraceMemoryFailureRecord> {
-        let mut records = self
-            .memory_failure_records
-            .lock()
-            .expect("traffic trace replay memory failure lock")
-            .clone();
-        records.sort_by_key(|record| (record.tick(), record.sequence(), record.line().get()));
-        records
-    }
-
-    fn trace_tlb_sync_snapshot(&self) -> Vec<RiscvWorkloadTraceTlbSyncRecord> {
-        let mut records = self
-            .trace_tlb_sync_records
-            .lock()
-            .expect("traffic trace replay tlb sync lock")
-            .clone();
-        records.sort_by_key(|record| (record.tick(), record.sequence()));
-        records
-    }
-
-    fn trace_cache_flush_snapshot(&self) -> Vec<RiscvWorkloadTraceCacheFlushRecord> {
-        let mut records = self
-            .trace_cache_flush_records
-            .lock()
-            .expect("traffic trace replay cache flush lock")
-            .clone();
-        records.sort_by_key(|record| (record.tick(), record.sequence(), record.line().get()));
-        records
-    }
-
-    fn trace_l1_invalidation_snapshot(&self) -> Vec<RiscvWorkloadTraceL1InvalidationRecord> {
-        let mut records = self
-            .trace_l1_invalidation_records
-            .lock()
-            .expect("traffic trace replay l1 invalidation lock")
-            .clone();
-        records.sort_by_key(|record| (record.completion_tick(), record.trace_sequence()));
-        records
-    }
-
-    fn trace_error_snapshot(&self) -> Vec<RiscvTraceErrorRecord> {
-        let mut records = self
-            .trace_error_records
-            .lock()
-            .expect("traffic trace replay error lock")
-            .clone();
-        records.sort_by_key(|record| (record.tick(), record.sequence(), record.line().get()));
-        records
-    }
-
-    fn trace_diagnostic_snapshot(&self) -> Vec<RiscvTraceDiagnosticRecord> {
-        let mut records = self
-            .trace_diagnostic_records
-            .lock()
-            .expect("traffic trace replay diagnostic lock")
-            .clone();
-        records.sort_by_key(|record| {
-            (
-                record.tick(),
-                record.target().get(),
-                record.line().get(),
-                record.address().get(),
-            )
-        });
-        records
-    }
-
-    fn sync_snapshot(&self) -> Vec<RiscvWorkloadTraceSyncRecord> {
-        self.sync_records
-            .lock()
-            .expect("traffic trace replay sync lock")
-            .clone()
-    }
-
-    fn htm_begin_snapshot(&self) -> Vec<RiscvWorkloadTraceHtmBeginRecord> {
-        self.htm_begin_records
-            .lock()
-            .expect("traffic trace replay htm begin lock")
-            .clone()
-    }
-
-    fn htm_abort_snapshot(&self) -> Vec<RiscvWorkloadTraceHtmAbortRecord> {
-        self.htm_abort_records
-            .lock()
-            .expect("traffic trace replay htm abort lock")
-            .clone()
-    }
-
-    fn record_memory_response(&self, record: RiscvWorkloadTraceMemoryResponseRecord) {
-        self.memory_response_records
-            .lock()
-            .expect("workload trace memory response lock")
-            .push(record);
-    }
-
-    fn record_memory_write_completion(
-        &self,
-        record: RiscvWorkloadTraceMemoryWriteCompletionRecord,
-    ) {
-        self.memory_write_completion_records
-            .lock()
-            .expect("workload trace memory write completion lock")
-            .push(record);
-    }
-
-    fn record_memory_failure(&self, record: RiscvWorkloadTraceMemoryFailureRecord) {
-        self.memory_failure_records
-            .lock()
-            .expect("workload trace memory failure lock")
-            .push(record);
-    }
-
-    fn record_trace_tlb_sync(&self, record: RiscvWorkloadTraceTlbSyncRecord) {
-        self.trace_tlb_sync_records
-            .lock()
-            .expect("workload trace tlb sync lock")
-            .push(record);
-    }
-
-    fn record_trace_cache_flush(&self, record: RiscvWorkloadTraceCacheFlushRecord) {
-        self.trace_cache_flush_records
-            .lock()
-            .expect("workload trace cache flush lock")
-            .push(record);
-    }
-
-    fn record_trace_l1_invalidation(&self, record: RiscvWorkloadTraceL1InvalidationRecord) {
-        self.trace_l1_invalidation_records
-            .lock()
-            .expect("workload trace l1 invalidation lock")
-            .push(record);
-    }
-
-    fn record_trace_error(&self, record: RiscvTraceErrorRecord) {
-        self.trace_error_records
-            .lock()
-            .expect("workload trace error lock")
-            .push(record);
-    }
-
-    fn record_trace_diagnostic(&self, record: RiscvTraceDiagnosticRecord) {
-        self.trace_diagnostic_records
-            .lock()
-            .expect("workload trace diagnostic lock")
-            .push(record);
-    }
-
-    fn record_sync(&self, record: RiscvWorkloadTraceSyncRecord) {
-        self.sync_records
-            .lock()
-            .expect("workload trace sync lock")
-            .push(record);
-    }
-
-    fn record_htm_begin(&self, record: RiscvWorkloadTraceHtmBeginRecord) {
-        self.htm_begin_records
-            .lock()
-            .expect("workload trace htm begin lock")
-            .push(record);
-    }
-
-    fn record_htm_abort(&self, record: RiscvWorkloadTraceHtmAbortRecord) {
-        self.htm_abort_records
-            .lock()
-            .expect("workload trace htm abort lock")
-            .push(record);
     }
 }
 
@@ -1549,13 +1350,15 @@ impl WorkloadTraceDataCacheConsumerInner {
         if let Some(data_cache) = self.data_cache.as_ref() {
             let mut data_cache = data_cache.lock().expect("workload data cache lock");
             if let Some(transaction_uid) = self.active_htm_transactions.last().copied() {
-                data_cache.record_trace_htm_access_event(
+                for htm_access in data_cache.record_trace_htm_access_event(
                     record.tick(),
                     self.route,
                     transaction_uid,
                     event,
                     record.data_cache_response_applied(),
-                );
+                ) {
+                    self.records.record_trace_htm_access(htm_access);
+                }
             } else {
                 data_cache.record_trace_htm_write_conflict_event(
                     self.route,
