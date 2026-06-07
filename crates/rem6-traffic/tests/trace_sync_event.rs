@@ -306,6 +306,31 @@ fn trace_parser_rejects_non_kernel_sync_flags() {
 }
 
 #[test]
+fn trace_parser_rejects_mem_fence_l1_invalidation_policy() {
+    assert_eq!(
+        TrafficTrace::from_gem5_packet_trace(
+            &gem5_packet_trace(
+                TICK_FREQUENCY,
+                &[PacketFields {
+                    tick: 11,
+                    command: GEM5_MEM_FENCE_REQ,
+                    address: None,
+                    size: None,
+                    flags: Some(GEM5_SYNC_INV_L1),
+                    packet_id: None,
+                    pc: None,
+                }],
+            ),
+            TICK_FREQUENCY,
+        )
+        .unwrap_err(),
+        TrafficGeneratorError::TraceUnsupportedFlags {
+            flags: GEM5_SYNC_INV_L1,
+        }
+    );
+}
+
+#[test]
 fn traffic_controller_emits_trace_sync_event() {
     let trace = TrafficTrace::from_gem5_packet_trace(
         &gem5_packet_trace(

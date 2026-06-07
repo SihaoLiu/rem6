@@ -542,7 +542,12 @@ impl TrafficTraceRequestFlags {
         command: TrafficTraceCommand,
     ) -> Result<(), TrafficGeneratorError> {
         if command.sync_kind().is_some() {
-            if self.bits & !(GEM5_FLAG_KERNEL | GEM5_SYNC_INV_L1) != 0 {
+            let supported_flags = if command == TrafficTraceCommand::MemSync {
+                GEM5_FLAG_KERNEL | GEM5_SYNC_INV_L1
+            } else {
+                GEM5_FLAG_KERNEL
+            };
+            if self.bits & !supported_flags != 0 {
                 return Err(TrafficGeneratorError::TraceUnsupportedFlags { flags: self.bits });
             }
             return Ok(());

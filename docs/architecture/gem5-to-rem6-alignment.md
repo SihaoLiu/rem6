@@ -2889,9 +2889,10 @@ record carries synthetic `addr` or `size` fields for those commands, rem6
 accepts the fields for trace compatibility but treats them as non-semantic
 because the sync event contract is not address-scoped. The same sync event
 contract preserves gem5 `KERNEL` request flags as typed `kernel_sync`
-metadata, and preserves gem5 `INV_L1` as executable MemSync invalidation policy
-for workload data-cache replay. gem5 GL2/L2 invalidation policy remains
-unsupported until rem6 has a corresponding cache-level consumer.
+metadata. `MemSyncReq` also preserves gem5 `INV_L1` as executable
+invalidation policy for workload data-cache replay; `MemFenceReq` rejects that
+cache policy instead of mutating cache state. gem5 GL2/L2 invalidation policy
+remains unsupported until rem6 has a corresponding cache-level consumer.
 `TlbiExtSync` command-id 59 packets map to typed
 `TrafficTraceEvent::Tlb` external-sync events that preserve tick ordering,
 sequence, optional packet id, optional PC metadata, gem5 request and
