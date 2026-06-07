@@ -486,12 +486,12 @@ impl WorkloadDataCacheLineBackend {
         request_id: MemoryRequestId,
         event: TrafficTraceErrorEvent,
         fallback_address: Option<Address>,
-    ) -> bool {
+    ) -> Option<RiscvTraceErrorRecord> {
         if !self.accepts_trace_error_event(event, fallback_address) {
-            return false;
+            return None;
         }
 
-        if let Some(record) = RiscvTraceErrorRecord::from_trace_error(
+        let record = RiscvTraceErrorRecord::from_trace_error(
             tick,
             request_id,
             self.protocol,
@@ -499,10 +499,9 @@ impl WorkloadDataCacheLineBackend {
             self.layout,
             event,
             fallback_address,
-        ) {
-            self.trace_error_records.push(record);
-        }
-        true
+        )?;
+        self.trace_error_records.push(record);
+        Some(record)
     }
 
     fn record_trace_htm_access_event(
@@ -902,11 +901,11 @@ impl WorkloadDataCacheBackend {
         request_id: MemoryRequestId,
         event: TrafficTraceErrorEvent,
         fallback_address: Option<Address>,
-    ) -> bool {
+    ) -> Option<RiscvTraceErrorRecord> {
         self.lines
             .values_mut()
             .find(|line| line.accepts_trace_error_event(event, fallback_address))
-            .is_some_and(|line| {
+            .and_then(|line| {
                 line.record_trace_error_event(tick, request_id, event, fallback_address)
             })
     }

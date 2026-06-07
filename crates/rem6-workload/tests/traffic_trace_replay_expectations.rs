@@ -193,6 +193,37 @@ fn workload_manifest_records_trace_write_completion_expectations() {
 }
 
 #[test]
+fn workload_manifest_records_trace_error_expectations() {
+    let expected = WorkloadExpectedTrafficTraceReplaySummary::new(route_id("trace.error"))
+        .with_minimum_scheduled_count(1)
+        .with_minimum_memory_failure_count(1)
+        .with_minimum_trace_error_count(1);
+    let manifest =
+        rem6_workload::WorkloadManifest::builder(id("manifest-trace-error"), boot_image())
+            .add_resource(kernel_resource())
+            .unwrap()
+            .add_required_resource(resource_id("kernel"))
+            .add_expected_traffic_trace_replay_summary(expected.clone())
+            .unwrap()
+            .build()
+            .unwrap();
+
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    assert_eq!(
+        plan.expected_traffic_trace_replay_summaries(),
+        std::slice::from_ref(&expected),
+    );
+
+    let actual = WorkloadTrafficTraceReplaySummary::new(route_id("trace.error"), 1)
+        .with_memory_failure_count(1)
+        .with_trace_error_count(1);
+    let result = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_traffic_trace_replay_summary(actual.clone());
+    assert_eq!(result.traffic_trace_replay_summaries(), &[actual]);
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
 fn workload_manifest_identity_changes_with_traffic_trace_replay_expectations() {
     let base =
         rem6_workload::WorkloadManifest::builder(id("identity-traffic-trace-replay"), boot_image())
@@ -320,6 +351,18 @@ fn workload_manifest_identity_changes_with_typed_trace_sideband_expectations() {
             .unwrap()
             .build()
             .unwrap();
+    let trace_error =
+        rem6_workload::WorkloadManifest::builder(id("identity-typed-sideband"), boot_image())
+            .add_resource(kernel_resource())
+            .unwrap()
+            .add_required_resource(resource_id("kernel"))
+            .add_expected_traffic_trace_replay_summary(
+                expected_trace_summary("trace.sideband", 4, 0, 0, 0, 0, 0, 4)
+                    .with_minimum_trace_error_count(1),
+            )
+            .unwrap()
+            .build()
+            .unwrap();
 
     assert_ne!(generic.identity(), typed.identity());
     assert_ne!(generic.identity(), trace_cache_flush.identity());
@@ -333,6 +376,8 @@ fn workload_manifest_identity_changes_with_typed_trace_sideband_expectations() {
     );
     assert_ne!(trace_l1_invalidation.identity(), trace_tlb_sync.identity());
     assert_ne!(trace_cache_flush.identity(), trace_diagnostic.identity());
+    assert_ne!(trace_error.identity(), trace_diagnostic.identity());
+    assert_ne!(trace_error.identity(), trace_l1_invalidation.identity());
 }
 
 #[test]
@@ -495,7 +540,7 @@ fn workload_replay_plan_rejects_underreported_typed_sideband_summary() {
     );
     assert_eq!(
         error.to_string(),
-        "traffic trace replay summary for route trace.sideband has scheduled 4/4, responses 0/0, memory trace events 0/0, memory write completions 0/0, memory failures 0/0, control acks 0/0, control failures 0/0, sideband events 4/4, tlb sync events 1/1, trace tlb syncs 0/1, cache flush events 0/1, trace cache flushes 0/1, trace l1 invalidations 0/1, diagnostic print events 0/0, trace diagnostics 0/1, htm abort events 0/0",
+        "traffic trace replay summary for route trace.sideband has scheduled 4/4, responses 0/0, memory trace events 0/0, memory write completions 0/0, memory failures 0/0, trace errors 0/0, control acks 0/0, control failures 0/0, sideband events 4/4, tlb sync events 1/1, trace tlb syncs 0/1, cache flush events 0/1, trace cache flushes 0/1, trace l1 invalidations 0/1, diagnostic print events 0/0, trace diagnostics 0/1, htm abort events 0/0",
     );
 }
 
@@ -524,5 +569,38 @@ fn workload_replay_plan_rejects_underreported_trace_write_completion_summary() {
         WorkloadError::TrafficTraceReplaySummaryExpectation(Box::new(
             WorkloadTrafficTraceReplaySummaryExpectationError::BelowMinimum { expected, actual },
         )),
+    );
+}
+
+#[test]
+fn workload_replay_plan_rejects_underreported_trace_error_summary() {
+    let expected = WorkloadExpectedTrafficTraceReplaySummary::new(route_id("trace.error"))
+        .with_minimum_memory_failure_count(1)
+        .with_minimum_trace_error_count(1);
+    let manifest =
+        rem6_workload::WorkloadManifest::builder(id("trace-error-mismatch"), boot_image())
+            .add_resource(kernel_resource())
+            .unwrap()
+            .add_required_resource(resource_id("kernel"))
+            .add_expected_traffic_trace_replay_summary(expected.clone())
+            .unwrap()
+            .build()
+            .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let actual = WorkloadTrafficTraceReplaySummary::new(route_id("trace.error"), 1)
+        .with_memory_failure_count(1);
+    let underreported = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_traffic_trace_replay_summary(actual.clone());
+    let error = plan.verify_result(&underreported).unwrap_err();
+    assert_eq!(
+        error,
+        WorkloadError::TrafficTraceReplaySummaryExpectation(Box::new(
+            WorkloadTrafficTraceReplaySummaryExpectationError::BelowMinimum { expected, actual },
+        )),
+    );
+    assert_eq!(
+        error.to_string(),
+        "traffic trace replay summary for route trace.error has scheduled 1/0, responses 0/0, memory trace events 0/0, memory write completions 0/0, memory failures 1/1, trace errors 0/1, control acks 0/0, control failures 0/0, sideband events 0/0, tlb sync events 0/0, trace tlb syncs 0/0, cache flush events 0/0, trace cache flushes 0/0, trace l1 invalidations 0/0, diagnostic print events 0/0, trace diagnostics 0/0, htm abort events 0/0",
     );
 }

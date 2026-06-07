@@ -8,6 +8,7 @@ pub struct WorkloadTrafficTraceReplaySummary {
     memory_trace_event_count: usize,
     memory_write_completion_count: usize,
     memory_failure_count: usize,
+    trace_error_count: usize,
     control_ack_count: usize,
     control_failure_count: usize,
     sideband_event_count: usize,
@@ -30,6 +31,7 @@ impl WorkloadTrafficTraceReplaySummary {
             memory_trace_event_count: 0,
             memory_write_completion_count: 0,
             memory_failure_count: 0,
+            trace_error_count: 0,
             control_ack_count: 0,
             control_failure_count: 0,
             sideband_event_count: 0,
@@ -64,6 +66,11 @@ impl WorkloadTrafficTraceReplaySummary {
 
     pub fn with_memory_failure_count(mut self, memory_failure_count: usize) -> Self {
         self.memory_failure_count = memory_failure_count;
+        self
+    }
+
+    pub fn with_trace_error_count(mut self, trace_error_count: usize) -> Self {
+        self.trace_error_count = trace_error_count;
         self
     }
 
@@ -149,6 +156,10 @@ impl WorkloadTrafficTraceReplaySummary {
         self.memory_failure_count
     }
 
+    pub const fn trace_error_count(&self) -> usize {
+        self.trace_error_count
+    }
+
     pub const fn control_ack_count(&self) -> usize {
         self.control_ack_count
     }
@@ -208,6 +219,7 @@ impl WorkloadTrafficTraceReplaySummary {
             memory_write_completion_count: self.memory_write_completion_count
                 + other.memory_write_completion_count,
             memory_failure_count: self.memory_failure_count + other.memory_failure_count,
+            trace_error_count: self.trace_error_count + other.trace_error_count,
             control_ack_count: self.control_ack_count + other.control_ack_count,
             control_failure_count: self.control_failure_count + other.control_failure_count,
             sideband_event_count: self.sideband_event_count + other.sideband_event_count,
@@ -233,6 +245,7 @@ pub struct WorkloadExpectedTrafficTraceReplaySummary {
     minimum_memory_trace_event_count: usize,
     minimum_memory_write_completion_count: usize,
     minimum_memory_failure_count: usize,
+    minimum_trace_error_count: usize,
     minimum_control_ack_count: usize,
     minimum_control_failure_count: usize,
     minimum_sideband_event_count: usize,
@@ -255,6 +268,7 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
             minimum_memory_trace_event_count: 0,
             minimum_memory_write_completion_count: 0,
             minimum_memory_failure_count: 0,
+            minimum_trace_error_count: 0,
             minimum_control_ack_count: 0,
             minimum_control_failure_count: 0,
             minimum_sideband_event_count: 0,
@@ -303,6 +317,11 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
         minimum_memory_failure_count: usize,
     ) -> Self {
         self.minimum_memory_failure_count = minimum_memory_failure_count;
+        self
+    }
+
+    pub fn with_minimum_trace_error_count(mut self, minimum_trace_error_count: usize) -> Self {
+        self.minimum_trace_error_count = minimum_trace_error_count;
         self
     }
 
@@ -415,6 +434,10 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
         self.minimum_memory_failure_count
     }
 
+    pub const fn minimum_trace_error_count(&self) -> usize {
+        self.minimum_trace_error_count
+    }
+
     pub const fn minimum_control_ack_count(&self) -> usize {
         self.minimum_control_ack_count
     }
@@ -511,6 +534,7 @@ fn traffic_trace_replay_summary_meets_minimum(
         && actual.memory_write_completion_count()
             >= expected.minimum_memory_write_completion_count()
         && actual.memory_failure_count() >= expected.minimum_memory_failure_count()
+        && actual.trace_error_count() >= expected.minimum_trace_error_count()
         && actual.control_ack_count() >= expected.minimum_control_ack_count()
         && actual.control_failure_count() >= expected.minimum_control_failure_count()
         && actual.sideband_event_count() >= expected.minimum_sideband_event_count()

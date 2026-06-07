@@ -3191,12 +3191,15 @@ sources and synthesize memory or control replay actions, the target runtime
 uses those actions to drive executable response and failure outcomes, and
 workload data-cache replay consumes cache, clean, invalidate, read/write, and
 HTM access policy, plus MemSync `INV_L1` policy, to mutate line state and
-conflict records. Additional
-accessor work should stay tied to one of those consumers, or to a new
-execution-facing consumer with a failing test that reaches replay, workload
-cache state, or a recorded runtime outcome. The remaining integration boundary
-is propagation of replayed cache and CPU error outcomes beyond audit records
-into the corresponding cache-controller and CPU-port error paths.
+conflict records. Data-cache trace errors also surface as replay-level
+executed error records and summary counts, separate from generic memory
+failure counts, so manifests can require that the cache consumer accepted a
+trace error rather than only observing a target failure. Additional accessor
+work should stay tied to one of those consumers, or to a new execution-facing
+consumer with a failing test that reaches replay, workload cache state, or a
+recorded runtime outcome. The remaining integration boundary is propagation of
+replayed cache and CPU error outcomes beyond audit records into the
+corresponding cache-controller and CPU-port error paths.
 Trace packet flag handling now maps non-prefetch `INST_FETCH` on `ReadReq`,
 `ReadCleanReq`, and
 `ReadSharedReq` packets to native instruction-fetch requests, accepts `PHYSICAL`

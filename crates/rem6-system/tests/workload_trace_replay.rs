@@ -962,6 +962,10 @@ fn workload_replay_records_fetch_trace_read_error_metadata() {
             .failure()
             .request_id()
     );
+    assert!(traffic_replay.trace_error_records().is_empty());
+    let summary = &outcome.result().traffic_trace_replay_summaries()[0];
+    assert_eq!(summary.memory_failure_count(), 1);
+    assert_eq!(summary.trace_error_count(), 0);
 }
 
 #[test]
@@ -1545,6 +1549,8 @@ fn workload_replay_does_not_mutate_data_cache_for_trace_write_error() {
     assert_eq!(trace_error.line(), Address::new(0x9000));
     assert_eq!(trace_error.size_bytes(), Some(8));
     assert_eq!(trace_error.trace_packet_id(), Some(950));
+    let replay_trace_errors = traffic_replay.trace_error_records();
+    assert_eq!(replay_trace_errors, &[trace_error]);
     let memory_failures = traffic_replay.memory_failure_records();
     assert_eq!(memory_failures.len(), 1);
     assert_eq!(memory_failures[0].tick(), 3);
@@ -1553,6 +1559,9 @@ fn workload_replay_does_not_mutate_data_cache_for_trace_write_error() {
     assert_eq!(memory_failures[0].line(), Address::new(0x9000));
     assert_eq!(memory_failures[0].size_bytes(), Some(8));
     assert_eq!(memory_failures[0].trace_packet_id(), Some(950));
+    let summary = &outcome.result().traffic_trace_replay_summaries()[0];
+    assert_eq!(summary.memory_failure_count(), 1);
+    assert_eq!(summary.trace_error_count(), 1);
     assert!(outcome.run().data_cache_runs().is_empty());
 }
 
@@ -1614,6 +1623,8 @@ fn workload_replay_records_addressless_functional_write_error_from_request_conte
     assert_eq!(trace_error.line(), Address::new(0x9000));
     assert_eq!(trace_error.size_bytes(), None);
     assert_eq!(trace_error.trace_packet_id(), Some(951));
+    let replay_trace_errors = traffic_replay.trace_error_records();
+    assert_eq!(replay_trace_errors, &[trace_error]);
     let memory_failures = traffic_replay.memory_failure_records();
     assert_eq!(memory_failures.len(), 1);
     assert_eq!(memory_failures[0].tick(), 3);
@@ -1625,6 +1636,9 @@ fn workload_replay_records_addressless_functional_write_error_from_request_conte
     assert_eq!(memory_failures[0].line(), Address::new(0x9000));
     assert_eq!(memory_failures[0].size_bytes(), None);
     assert_eq!(memory_failures[0].trace_packet_id(), Some(951));
+    let summary = &outcome.result().traffic_trace_replay_summaries()[0];
+    assert_eq!(summary.memory_failure_count(), 1);
+    assert_eq!(summary.trace_error_count(), 1);
     assert!(outcome.run().data_cache_runs().is_empty());
 }
 
