@@ -14,15 +14,26 @@ use rem6_transport::{
 
 use super::{
     traffic_trace_replay_controller_runtime_control_completion_parallel,
-    traffic_trace_replay_controller_runtime_target_outcome_parallel,
+    traffic_trace_replay_controller_runtime_target_event_context,
     TrafficTraceReplayControllerControlError, TrafficTraceReplayControllerRuntime,
     TrafficTraceReplayControllerTargetError, TrafficTraceReplaySidebandEvent,
+    TrafficTraceReplayTargetEvent, TrafficTraceReplayTargetEventContext,
 };
 
 type ScheduledSideband = (Tick, TrafficTraceReplaySidebandEvent);
 type SidebandSink = Arc<dyn Fn(Tick, TrafficTraceReplaySidebandEvent) + Send + Sync>;
 type TargetRequestSink = Arc<dyn Fn(TrafficTraceReplayOrder, MemoryRequestId) + Send + Sync>;
 type TargetSink = Arc<dyn Fn(TrafficTraceReplayOrder, &RequestDelivery) + Send + Sync>;
+type TargetEventSink = Arc<
+    dyn Fn(TrafficTraceReplayOrder, &RequestDelivery, &TrafficTraceReplayTargetEventContext)
+        + Send
+        + Sync,
+>;
+type TargetCompletionSink = Arc<
+    dyn Fn(TrafficTraceReplayOrder, &RequestDelivery, &TrafficTraceReplayTargetEventContext)
+        + Send
+        + Sync,
+>;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct TrafficTraceReplayOrder {
@@ -53,6 +64,8 @@ pub struct TrafficTraceReplayControllerParallelExecutor {
     sideband_sink: Option<SidebandSink>,
     target_request_sink: Option<TargetRequestSink>,
     target_sink: Option<TargetSink>,
+    target_event_sink: Option<TargetEventSink>,
+    target_completion_sink: Option<TargetCompletionSink>,
 }
 
 impl TrafficTraceReplayControllerParallelExecutor {
@@ -67,6 +80,8 @@ impl TrafficTraceReplayControllerParallelExecutor {
             sideband_sink: None,
             target_request_sink: None,
             target_sink: None,
+            target_event_sink: None,
+            target_completion_sink: None,
         }
     }
 
@@ -88,6 +103,28 @@ impl TrafficTraceReplayControllerParallelExecutor {
         F: Fn(TrafficTraceReplayOrder, &RequestDelivery) + Send + Sync + 'static,
     {
         self.target_sink = Some(Arc::new(sink));
+        self
+    }
+
+    pub fn with_target_event_sink<F>(mut self, sink: F) -> Self
+    where
+        F: Fn(TrafficTraceReplayOrder, &RequestDelivery, &TrafficTraceReplayTargetEventContext)
+            + Send
+            + Sync
+            + 'static,
+    {
+        self.target_event_sink = Some(Arc::new(sink));
+        self
+    }
+
+    pub fn with_target_completion_sink<F>(mut self, sink: F) -> Self
+    where
+        F: Fn(TrafficTraceReplayOrder, &RequestDelivery, &TrafficTraceReplayTargetEventContext)
+            + Send
+            + Sync
+            + 'static,
+    {
+        self.target_completion_sink = Some(Arc::new(sink));
         self
     }
 
@@ -245,6 +282,8 @@ impl TrafficTraceReplayControllerParallelExecutor {
         let runtime = Arc::clone(&self.runtime);
         let errors = Arc::clone(&self.errors);
         let target_sink = self.target_sink.clone();
+        let target_event_sink = self.target_event_sink.clone();
+        let target_completion_sink = self.target_completion_sink.clone();
         transport.submit_parallel_at(
             scheduler,
             request_tick,
@@ -252,20 +291,42 @@ impl TrafficTraceReplayControllerParallelExecutor {
             request,
             trace,
             move |delivery, context| {
-                if let Some(target_sink) = &target_sink {
-                    target_sink(request_order, &delivery);
-                }
-                match traffic_trace_replay_controller_runtime_target_outcome_parallel(
+                match traffic_trace_replay_controller_runtime_target_event_context(
                     Arc::clone(&runtime),
                     &delivery,
-                    context,
                 ) {
-                    Ok(outcome) => outcome,
+                    Ok(event_context) => {
+                        if let Some(target_sink) = &target_sink {
+                            target_sink(request_order, &delivery);
+                        }
+                        if let Some(target_event_sink) = &target_event_sink {
+                            target_event_sink(request_order, &delivery, &event_context);
+                        }
+                        if let Some(target_completion_sink) = target_completion_sink.clone() {
+                            let completion_delivery = delivery.clone();
+                            let completion_context = event_context.clone();
+                            let delay = event_context.event().target_delay();
+                            context
+                                .schedule_local_after(delay, move |_context| {
+                                    target_completion_sink(
+                                        request_order,
+                                        &completion_delivery,
+                                        &completion_context,
+                                    );
+                                })
+                                .expect("validated trace replay target completion delay");
+                        }
+                        target_outcome_for_event(
+                            event_context.into_event(),
+                            Arc::clone(&runtime),
+                            context,
+                        )
+                    }
                     Err(error) => {
                         errors
                             .lock()
                             .expect("trace replay controller parallel error lock")
-                            .record_target(error);
+                            .record_target(error.into());
                         TargetOutcome::NoResponse
                     }
                 }
@@ -416,6 +477,27 @@ fn prepare_sidebands_from_runtime(
         }
     }
     Ok((staged, sidebands))
+}
+
+fn target_outcome_for_event(
+    event: TrafficTraceReplayTargetEvent,
+    runtime: Arc<Mutex<TrafficTraceReplayControllerRuntime>>,
+    context: &mut rem6_kernel::ParallelSchedulerContext<'_>,
+) -> TargetOutcome {
+    match event {
+        TrafficTraceReplayTargetEvent::MemoryResponse(outcome) => outcome,
+        TrafficTraceReplayTargetEvent::MemoryFailure { delay, record } => {
+            context
+                .schedule_local_after(delay, move |context| {
+                    runtime
+                        .lock()
+                        .expect("trace replay controller runtime lock")
+                        .record_memory_failure(context.now(), record);
+                })
+                .expect("validated trace replay failure delay");
+            TargetOutcome::NoResponse
+        }
+    }
 }
 
 fn batch_requires_control_response(batch: &TrafficControllerEventBatch) -> bool {

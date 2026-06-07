@@ -22,7 +22,7 @@ use rem6_protocol_chi::ChiCacheLine;
 use rem6_protocol_mesi::MesiCacheLine;
 use rem6_protocol_moesi::MoesiCacheLine;
 use rem6_protocol_msi::MsiCacheLine;
-use rem6_traffic::TrafficTraceCacheEvent;
+use rem6_traffic::{TrafficTraceCacheEvent, TrafficTraceResponseEvent};
 use rem6_transport::{RequestDelivery, TargetOutcome, TransportEndpointId};
 use rem6_workload::{WorkloadDataCacheProtocol, WorkloadRiscvDataCache};
 
@@ -228,6 +228,12 @@ impl WorkloadDataCacheLineBackend {
         event.is_flush() && self.layout.line_address(event.address()) == self.line
     }
 
+    fn accepts_trace_response_event(&self, event: TrafficTraceResponseEvent) -> bool {
+        event.address().is_some_and(|address| {
+            event.invalidates_line() && self.layout.line_address(address) == self.line
+        })
+    }
+
     fn final_line_data(&self) -> Result<Vec<u8>, RiscvWorkloadReplayError> {
         match &self.harness {
             WorkloadDataCacheHarness::Msi(harness) => {
@@ -289,6 +295,20 @@ impl WorkloadDataCacheLineBackend {
             return false;
         }
 
+        self.invalidate_trace_line();
+        true
+    }
+
+    fn apply_trace_response_event(&mut self, event: TrafficTraceResponseEvent) -> bool {
+        if !self.accepts_trace_response_event(event) {
+            return false;
+        }
+
+        self.invalidate_trace_line();
+        true
+    }
+
+    fn invalidate_trace_line(&mut self) {
         let result = match &mut self.harness {
             WorkloadDataCacheHarness::Msi(harness) => {
                 flush_msi_harness(harness, self.target, self.line)
@@ -310,7 +330,6 @@ impl WorkloadDataCacheLineBackend {
         if let Err(error) = result {
             self.error = Some(error);
         }
-        true
     }
 
     fn respond(&mut self, delivery: &RequestDelivery) -> Option<TargetOutcome> {
@@ -392,6 +411,13 @@ impl WorkloadDataCacheBackend {
             .values_mut()
             .find(|line| line.accepts_trace_cache_event(event))
             .is_some_and(|line| line.apply_trace_cache_event(event))
+    }
+
+    pub(super) fn apply_trace_response_event(&mut self, event: TrafficTraceResponseEvent) -> bool {
+        self.lines
+            .values_mut()
+            .find(|line| line.accepts_trace_response_event(event))
+            .is_some_and(|line| line.apply_trace_response_event(event))
     }
 
     pub(super) fn final_lines(

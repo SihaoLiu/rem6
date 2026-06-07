@@ -2936,9 +2936,13 @@ trace replay sources for response-required memory requests, sync events, and
 HTM request events, matching later response packets by optional trace packet
 id, source-appropriate address and size metadata, and gem5 command policy.
 Matched memory responses emit a validated `MemoryResponse`, while matched
-non-memory responses emit typed acknowledgement records. The controller records
-matched replay completions in a typed outcome summary and emits replay action
-events carrying owned memory responses or control acknowledgements. The
+non-memory responses emit typed acknowledgement records. On coherent workload
+data routes, `ReadRespWithInvalidate` also clears the configured data-cache
+line after the matched response mutates the cache model, so the next trace
+access observes the invalidation policy instead of hitting stale replay state.
+The controller records matched replay completions in a typed outcome summary
+and emits replay action events carrying owned memory responses or control
+acknowledgements. The
 execution-facing replay action queue records those controller batches and drains
 owned memory response records, control acknowledgement ticks, or the original
 actions in recorded order for downstream consumers. `rem6-system` now exposes
@@ -2974,11 +2978,13 @@ control helpers now also drain sideband events automatically whenever their
 trace-controller advance crosses those events. The parallel trace replay
 executor can also install target and sideband consumers; workload replay uses
 those hooks so coherent data-route trace requests mutate the configured
-data-cache backend before the trace response is delivered, and cache-flush
-sidebands apply to that backend rather than remaining audit-only events. The
-workload consumer ignores fetch, MMIO, and other non-data-cache routes even when
-their trace addresses alias a configured data-cache line. This preserves
-executable audit records instead of dropping them; if a sideband event is
+data-cache backend at the matched response tick, not at request delivery. A
+matched memory failure records typed error metadata at the failure tick without
+executing a successful data-cache access, and cache-flush sidebands apply to
+that backend rather than remaining audit-only events. The workload consumer
+ignores fetch, MMIO, and other non-data-cache routes even when their trace
+addresses alias a configured data-cache line. This preserves executable audit
+records instead of dropping them; if a sideband event is
 discovered after its trace tick, it is recorded at the current scheduler tick as
 late-observed trace evidence rather than blocking the replay queue. The lower-level memory target
 runtime ignores control and sideband actions, and the lower-level control

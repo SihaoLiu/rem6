@@ -15,6 +15,7 @@ const GEM5_MAGIC: [u8; 4] = [0x67, 0x65, 0x6d, 0x35];
 const TICK_FREQUENCY: u64 = 1_000;
 
 pub const GEM5_READ_REQ: u32 = 1;
+pub const GEM5_READ_RESP: u32 = 2;
 pub const GEM5_READ_RESP_WITH_INVALIDATE: u32 = 3;
 pub const GEM5_WRITE_REQ: u32 = 4;
 pub const GEM5_WRITEBACK_DIRTY: u32 = 7;

@@ -20,8 +20,8 @@ mod support;
 
 use support::traffic_trace::{
     controller_for_packets, endpoint, PacketFields, GEM5_FLUSH_REQ, GEM5_MEM_FENCE_REQ,
-    GEM5_MEM_FENCE_RESP, GEM5_READ_REQ, GEM5_READ_RESP_WITH_INVALIDATE, GEM5_WRITE_ERROR,
-    GEM5_WRITE_REQ,
+    GEM5_MEM_FENCE_RESP, GEM5_READ_REQ, GEM5_READ_RESP, GEM5_READ_RESP_WITH_INVALIDATE,
+    GEM5_WRITE_ERROR, GEM5_WRITE_REQ,
 };
 
 fn workload_id(value: &str) -> rem6_workload::WorkloadId {
@@ -483,6 +483,166 @@ fn workload_replay_applies_bound_trace_flush_to_data_cache_line() {
 }
 
 #[test]
+fn workload_replay_does_not_mutate_data_cache_for_trace_write_error() {
+    let manifest = replay_manifest_with_data_cache("riscv-replay-trace-write-error-data-cache");
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let controller = controller_for_packets(&[
+        PacketFields {
+            tick: 0,
+            command: GEM5_WRITE_REQ,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(950),
+        },
+        PacketFields {
+            tick: 3,
+            command: GEM5_WRITE_ERROR,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(950),
+        },
+    ]);
+
+    let outcome = RiscvWorkloadReplay::new(plan)
+        .with_max_turns(64)
+        .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
+            controller,
+            route_id("cpu0.data"),
+            PartitionId::new(2),
+        ))
+        .run_parallel()
+        .unwrap();
+
+    let traffic_replay = &outcome.traffic_trace_replays()[0];
+    assert!(traffic_replay.errors().is_empty());
+    assert_eq!(traffic_replay.runtime().memory_failures().len(), 1);
+    let failure = traffic_replay.runtime().memory_failures()[0];
+    assert_eq!(failure.tick(), 3);
+    assert_eq!(
+        failure.record().failure().error(),
+        TrafficTraceErrorKind::Write
+    );
+    assert!(outcome.run().data_cache_runs().is_empty());
+}
+
+#[test]
+fn workload_replay_invalidates_data_cache_line_after_trace_read_with_invalidate() {
+    let manifest = replay_manifest_with_data_cache("riscv-replay-trace-read-invalidate-data-cache");
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let controller = controller_for_packets(&[
+        PacketFields {
+            tick: 0,
+            command: GEM5_READ_REQ,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(951),
+        },
+        PacketFields {
+            tick: 3,
+            command: GEM5_READ_RESP_WITH_INVALIDATE,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(951),
+        },
+        PacketFields {
+            tick: 5,
+            command: GEM5_READ_REQ,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(952),
+        },
+        PacketFields {
+            tick: 8,
+            command: GEM5_READ_RESP_WITH_INVALIDATE,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(952),
+        },
+    ]);
+
+    let outcome = RiscvWorkloadReplay::new(plan)
+        .with_max_turns(64)
+        .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
+            controller,
+            route_id("cpu0.data"),
+            PartitionId::new(2),
+        ))
+        .run_parallel()
+        .unwrap();
+
+    let traffic_replay = &outcome.traffic_trace_replays()[0];
+    assert!(traffic_replay.errors().is_empty());
+    assert!(traffic_replay.runtime().memory_failures().is_empty());
+    let data_cache_runs = outcome.run().data_cache_runs();
+    assert_eq!(data_cache_runs.len(), 2);
+    assert!(data_cache_runs[0].has_directory_activity());
+    assert!(data_cache_runs[1].has_directory_activity());
+}
+
+#[test]
+fn workload_replay_orders_trace_flush_before_delayed_read_response_cache_mutation() {
+    let manifest =
+        replay_manifest_with_data_cache("riscv-replay-trace-flush-before-delayed-response");
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let controller = controller_for_packets(&[
+        PacketFields {
+            tick: 0,
+            command: GEM5_READ_REQ,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(953),
+        },
+        PacketFields {
+            tick: 3,
+            command: GEM5_FLUSH_REQ,
+            address: Some(0x9000),
+            size: Some(64),
+            packet_id: Some(954),
+        },
+        PacketFields {
+            tick: 4,
+            command: GEM5_READ_RESP,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(953),
+        },
+        PacketFields {
+            tick: 5,
+            command: GEM5_READ_REQ,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(955),
+        },
+        PacketFields {
+            tick: 8,
+            command: GEM5_READ_RESP,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(955),
+        },
+    ]);
+
+    let outcome = RiscvWorkloadReplay::new(plan)
+        .with_max_turns(96)
+        .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
+            controller,
+            route_id("cpu0.data"),
+            PartitionId::new(2),
+        ))
+        .run_parallel()
+        .unwrap();
+
+    let traffic_replay = &outcome.traffic_trace_replays()[0];
+    assert!(traffic_replay.errors().is_empty());
+    assert!(traffic_replay.runtime().is_empty(), "{traffic_replay:#?}");
+    assert_eq!(traffic_replay.runtime().sideband_events().len(), 1);
+    let data_cache_runs = outcome.run().data_cache_runs();
+    assert_eq!(data_cache_runs.len(), 2);
+    assert!(data_cache_runs[0].has_directory_activity());
+    assert!(!data_cache_runs[1].has_directory_activity());
+}
+
+#[test]
 fn workload_replay_does_not_apply_fetch_trace_to_data_cache_line() {
     let manifest = replay_manifest_with_data_cache("riscv-replay-fetch-trace-data-cache-scope");
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
@@ -546,14 +706,14 @@ fn workload_replay_orders_trace_flush_after_earlier_request_delivery_tick() {
             packet_id: Some(944),
         },
         PacketFields {
-            tick: 6,
+            tick: 5,
             command: GEM5_READ_REQ,
             address: Some(0x9008),
             size: Some(8),
             packet_id: Some(946),
         },
         PacketFields {
-            tick: 9,
+            tick: 8,
             command: GEM5_READ_RESP_WITH_INVALIDATE,
             address: Some(0x9008),
             size: Some(8),

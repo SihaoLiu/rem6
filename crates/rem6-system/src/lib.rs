@@ -230,7 +230,8 @@ pub use traffic_replay::{
     TrafficTraceReplayScheduledControlFailure, TrafficTraceReplayScheduledMemoryFailure,
     TrafficTraceReplayScheduledSidebandEvent, TrafficTraceReplaySidebandCompletion,
     TrafficTraceReplaySidebandEvent, TrafficTraceReplaySidebandRuntime,
-    TrafficTraceReplayTargetError, TrafficTraceReplayTargetEvent, TrafficTraceReplayTargetRuntime,
+    TrafficTraceReplayTargetError, TrafficTraceReplayTargetEvent,
+    TrafficTraceReplayTargetEventContext, TrafficTraceReplayTargetRuntime,
 };
 pub(crate) use trap_event::pending_trap_cores_from_turn;
 pub use trap_event::{

@@ -8,9 +8,9 @@ use rem6_memory::MemoryRequestId;
 use rem6_traffic::{
     TrafficController, TrafficControllerEvent, TrafficControllerEventBatch, TrafficGeneratorError,
     TrafficTraceCacheEvent, TrafficTraceControlFailureRecord, TrafficTraceDiagnosticEvent,
-    TrafficTraceHtmEvent, TrafficTraceMemoryFailureRecord, TrafficTraceReplayAction,
-    TrafficTraceReplayActionQueue, TrafficTraceReplaySource, TrafficTraceSyncEvent,
-    TrafficTraceTlbEvent,
+    TrafficTraceErrorEvent, TrafficTraceHtmEvent, TrafficTraceMemoryFailureRecord,
+    TrafficTraceReplayAction, TrafficTraceReplayActionQueue, TrafficTraceReplaySource,
+    TrafficTraceResponseEvent, TrafficTraceSyncEvent, TrafficTraceTlbEvent,
 };
 use rem6_transport::{RequestDelivery, TargetOutcome};
 
@@ -140,16 +140,36 @@ pub struct TrafficTraceReplayTargetRuntime {
 struct TrafficTraceReplayTargetAction {
     action: TrafficTraceReplayAction,
     request: Option<MemoryRequestId>,
+    trace_response: Option<TrafficTraceResponseEvent>,
+    trace_error: Option<TrafficTraceErrorEvent>,
 }
 
 impl TrafficTraceReplayTargetAction {
-    fn new(action: TrafficTraceReplayAction, request: Option<MemoryRequestId>) -> Self {
-        Self { action, request }
+    fn new(
+        action: TrafficTraceReplayAction,
+        request: Option<MemoryRequestId>,
+        trace_response: Option<TrafficTraceResponseEvent>,
+        trace_error: Option<TrafficTraceErrorEvent>,
+    ) -> Self {
+        Self {
+            action,
+            request,
+            trace_response,
+            trace_error,
+        }
     }
 
     fn matches_request(&self, request: MemoryRequestId) -> bool {
         self.request
             .is_none_or(|action_request| action_request == request)
+    }
+
+    fn trace_response(&self) -> Option<TrafficTraceResponseEvent> {
+        self.trace_response
+    }
+
+    fn trace_error(&self) -> Option<TrafficTraceErrorEvent> {
+        self.trace_error
     }
 }
 
@@ -159,6 +179,8 @@ impl TrafficTraceReplayTargetRuntime {
         batch: &TrafficControllerEventBatch,
     ) -> Result<(), rem6_traffic::TrafficGeneratorError> {
         let mut matched_request = None;
+        let mut matched_response = None;
+        let mut matched_error = None;
         if let Some(request) = batch
             .request()
             .filter(|request| request.request().requires_response())
@@ -170,9 +192,13 @@ impl TrafficTraceReplayTargetRuntime {
             match event {
                 TrafficControllerEvent::TraceResponseMatch(response) => {
                     matched_request = replay_source_request(response.source());
+                    matched_response = Some(response.response());
+                    matched_error = None;
                 }
                 TrafficControllerEvent::TraceErrorMatch(error) => {
                     matched_request = replay_source_request(error.source());
+                    matched_response = None;
+                    matched_error = Some(error.error());
                 }
                 TrafficControllerEvent::TraceReplayAction(action)
                     if matches!(
@@ -184,10 +210,14 @@ impl TrafficTraceReplayTargetRuntime {
                     self.actions.push_back(TrafficTraceReplayTargetAction::new(
                         action.clone(),
                         matched_request.take(),
+                        matched_response.take(),
+                        matched_error.take(),
                     ));
                 }
                 TrafficControllerEvent::TraceReplayAction(_) => {
                     matched_request = None;
+                    matched_response = None;
+                    matched_error = None;
                 }
                 _ => {}
             }
@@ -199,16 +229,31 @@ impl TrafficTraceReplayTargetRuntime {
         &mut self,
         delivery: &RequestDelivery,
     ) -> Result<TrafficTraceReplayTargetEvent, TrafficTraceReplayTargetError> {
+        self.target_event_context(delivery)
+            .map(TrafficTraceReplayTargetEventContext::into_event)
+    }
+
+    pub fn target_event_context(
+        &mut self,
+        delivery: &RequestDelivery,
+    ) -> Result<TrafficTraceReplayTargetEventContext, TrafficTraceReplayTargetError> {
         let request = delivery.request().id();
         let action_index = self
             .target_action_index(request)
             .ok_or(TrafficTraceReplayTargetError::ActionQueueEmpty { request })?;
-        let event = target_event_for_action(&self.actions[action_index].action, delivery)?;
+        let action = &self.actions[action_index];
+        let event = target_event_for_action(&action.action, delivery)?;
+        let trace_response = action.trace_response();
+        let trace_error = action.trace_error();
         self.actions
             .remove(action_index)
             .expect("validated trace replay target action remains queued");
         self.request_ticks.remove(&delivery.request().id());
-        Ok(event)
+        Ok(TrafficTraceReplayTargetEventContext::new(
+            event,
+            trace_response,
+            trace_error,
+        ))
     }
 
     pub fn record_memory_failure(&mut self, tick: Tick, record: TrafficTraceMemoryFailureRecord) {
@@ -552,6 +597,13 @@ impl TrafficTraceReplayControllerRuntime {
         delivery: &RequestDelivery,
     ) -> Result<TrafficTraceReplayTargetEvent, TrafficTraceReplayTargetError> {
         self.target.target_event(delivery)
+    }
+
+    fn target_event_context(
+        &mut self,
+        delivery: &RequestDelivery,
+    ) -> Result<TrafficTraceReplayTargetEventContext, TrafficTraceReplayTargetError> {
+        self.target.target_event_context(delivery)
     }
 
     fn has_target_action(&self, request: MemoryRequestId) -> bool {
@@ -988,6 +1040,16 @@ fn traffic_trace_replay_controller_runtime_target_event(
         .target_event(delivery)
 }
 
+pub(super) fn traffic_trace_replay_controller_runtime_target_event_context(
+    runtime: Arc<Mutex<TrafficTraceReplayControllerRuntime>>,
+    delivery: &RequestDelivery,
+) -> Result<TrafficTraceReplayTargetEventContext, TrafficTraceReplayTargetError> {
+    runtime
+        .lock()
+        .expect("trace replay controller runtime lock")
+        .target_event_context(delivery)
+}
+
 fn traffic_trace_replay_controller_runtime_control_event(
     runtime: Arc<Mutex<TrafficTraceReplayControllerRuntime>>,
     delivery_tick: Tick,
@@ -1219,6 +1281,43 @@ impl TrafficTraceReplayTargetEvent {
             Self::MemoryResponse(outcome) => outcome,
             Self::MemoryFailure { .. } => TargetOutcome::NoResponse,
         }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TrafficTraceReplayTargetEventContext {
+    event: TrafficTraceReplayTargetEvent,
+    trace_response: Option<TrafficTraceResponseEvent>,
+    trace_error: Option<TrafficTraceErrorEvent>,
+}
+
+impl TrafficTraceReplayTargetEventContext {
+    pub fn new(
+        event: TrafficTraceReplayTargetEvent,
+        trace_response: Option<TrafficTraceResponseEvent>,
+        trace_error: Option<TrafficTraceErrorEvent>,
+    ) -> Self {
+        Self {
+            event,
+            trace_response,
+            trace_error,
+        }
+    }
+
+    pub const fn event(&self) -> &TrafficTraceReplayTargetEvent {
+        &self.event
+    }
+
+    pub const fn trace_response(&self) -> Option<TrafficTraceResponseEvent> {
+        self.trace_response
+    }
+
+    pub const fn trace_error(&self) -> Option<TrafficTraceErrorEvent> {
+        self.trace_error
+    }
+
+    pub fn into_event(self) -> TrafficTraceReplayTargetEvent {
+        self.event
     }
 }
 
