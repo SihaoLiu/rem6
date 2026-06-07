@@ -3065,6 +3065,10 @@ matched address-bearing memory failure records typed error metadata at the
 failure tick without executing a successful data-cache access; on data-cache
 routes, the workload backend also emits run-level trace error records with
 request id, error kind, line, address, size, packet id, and PC metadata.
+Workload traffic-trace summaries and manifest expectations count those
+data-cache accepted trace errors separately from generic memory failures, so a
+trace can require the executable cache-error consumer without treating the
+failure as a successful cache access.
 Every workload trace route exposes matched memory response metadata on the
 traffic trace replay outcome itself, including request id, response kind,
 transport response status, trace order, address or matched-request line
@@ -3196,7 +3200,8 @@ error completions through the same ordered consumer path as acknowledgements.
 Replayed memory failures can also drive the RISC-V CPU fetch and data ports
 through target helpers that record failed CPU port events at the trace failure
 tick without fabricating retry or successful responses. Deeper cache-controller
-error injection beyond those executable replay failure records remains open.
+error injection beyond those executable replay failure records and data-cache
+accepted trace-error counts remains open.
 Trace response and error policy accessors are therefore not intended as a
 standalone API surface: the controller uses them to select pending replay
 sources and synthesize memory or control replay actions, the target runtime

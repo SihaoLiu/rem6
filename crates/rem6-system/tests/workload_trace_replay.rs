@@ -462,6 +462,31 @@ fn replay_manifest_with_data_cache(id: &str) -> WorkloadManifest {
     replay_manifest_with_data_cache_protocol(id, WorkloadDataCacheProtocol::Msi)
 }
 
+fn replay_manifest_with_data_cache_error_expectation(id: &str) -> WorkloadManifest {
+    WorkloadManifest::builder(workload_id(id), boot_image_with_data_cache_line())
+        .with_topology(replay_topology_with_data_cache_protocol(
+            WorkloadDataCacheProtocol::Msi,
+        ))
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .add_host_event(WorkloadHostEvent::new(
+            0,
+            HostEventIntent::Stop {
+                reason: "host-stop".to_string(),
+            },
+        ))
+        .add_expected_traffic_trace_replay_summary(
+            WorkloadExpectedTrafficTraceReplaySummary::new(route_id("cpu0.data"))
+                .with_minimum_memory_failure_count(1)
+                .with_minimum_trace_error_count(1)
+                .with_minimum_trace_data_cache_error_count(1),
+        )
+        .unwrap()
+        .build()
+        .unwrap()
+}
+
 fn replay_manifest_with_data_cache_protocol(
     id: &str,
     protocol: WorkloadDataCacheProtocol,
@@ -1500,7 +1525,9 @@ fn workload_replay_applies_mem_sync_inv_l1_to_data_cache_line() {
 
 #[test]
 fn workload_replay_does_not_mutate_data_cache_for_trace_write_error() {
-    let manifest = replay_manifest_with_data_cache("riscv-replay-trace-write-error-data-cache");
+    let manifest = replay_manifest_with_data_cache_error_expectation(
+        "riscv-replay-trace-write-error-data-cache",
+    );
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
     let controller = controller_for_packets(&[
         PacketFields {
@@ -1568,6 +1595,7 @@ fn workload_replay_does_not_mutate_data_cache_for_trace_write_error() {
     let summary = &outcome.result().traffic_trace_replay_summaries()[0];
     assert_eq!(summary.memory_failure_count(), 1);
     assert_eq!(summary.trace_error_count(), 1);
+    assert_eq!(summary.trace_data_cache_error_count(), 1);
     assert!(outcome.run().data_cache_runs().is_empty());
 }
 
