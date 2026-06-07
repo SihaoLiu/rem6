@@ -2925,7 +2925,12 @@ semantics remain a debug subsystem contract because those sender-state details
 are not carried by the packet trace proto. On coherent workload data routes,
 diagnostic print sidebands for declared data-cache lines now produce structured
 run diagnostic records with protocol, target, line, cached-copy, and backing
-evidence instead of gem5's recursive sender-state text stream.
+evidence instead of gem5's recursive sender-state text stream. Workload trace
+replay also keeps those records on the route-local replay outcome and counts
+them separately from raw diagnostic-print sideband events in replay summaries
+and manifest expectations, so a trace can require the executable data-cache
+diagnostic consumer rather than only proving that a `PrintReq` packet was
+parsed.
 Line-sized `FlushReq` command-id 53 packets whose effective address after the
 configured offset is cache-line aligned map to typed `TrafficTraceEvent::Cache`
 flush events that preserve tick ordering, sequence, address, size, optional
@@ -3076,7 +3081,8 @@ so fetch, MMIO, and non-cache data routes keep executable failure evidence even
 when no data-cache protocol record applies.
 Cache-flush sidebands apply to that backend rather than remaining audit-only
 events. Diagnostic print sidebands on those routes record a non-mutating
-data-cache snapshot at the sideband execution tick. TLBI external-sync sidebands
+data-cache snapshot at the sideband execution tick and attach the resulting
+diagnostic records to the matching trace replay outcome. TLBI external-sync sidebands
 on translated data routes
 flush the corresponding RISC-V data-translation TLB. The workload consumer
 ignores fetch, MMIO, and unrelated data routes even when their trace addresses

@@ -1045,6 +1045,7 @@ fn workload_replay_records_typed_trace_sideband_summary_counts() {
     assert_eq!(summary.tlb_sync_event_count(), 1);
     assert_eq!(summary.cache_flush_event_count(), 1);
     assert_eq!(summary.diagnostic_print_event_count(), 1);
+    assert_eq!(summary.trace_diagnostic_count(), 0);
     assert_eq!(summary.htm_abort_event_count(), 1);
 }
 
@@ -1941,13 +1942,30 @@ fn workload_replay_records_trace_printreq_data_cache_diagnostic() {
     assert!(traffic_replay.errors().is_empty());
     assert!(traffic_replay.runtime().is_empty(), "{traffic_replay:#?}");
     assert_eq!(traffic_replay.runtime().sideband_events().len(), 1);
+    let replay_diagnostics = traffic_replay.trace_diagnostic_records();
+    assert_eq!(replay_diagnostics.len(), 1);
+    assert_eq!(
+        replay_diagnostics[0].kind(),
+        RiscvTraceDiagnosticKind::DataCacheLine
+    );
+    assert_eq!(replay_diagnostics[0].tick(), 4);
+    assert_eq!(
+        replay_diagnostics[0].protocol(),
+        RiscvDataCacheProtocol::Msi
+    );
+    assert_eq!(replay_diagnostics[0].target(), MemoryTargetId::new(0));
+    assert_eq!(replay_diagnostics[0].address(), Address::new(0x9008));
+    assert_eq!(replay_diagnostics[0].line(), Address::new(0x9000));
+    assert_eq!(replay_diagnostics[0].cached_copy_count(), 1);
+    assert!(replay_diagnostics[0].has_cached_copy());
+    assert!(replay_diagnostics[0].has_backing_line());
     let data_cache_runs = outcome.run().data_cache_runs();
     assert_eq!(data_cache_runs.len(), 2);
     assert!(data_cache_runs[0].has_directory_activity());
     assert!(!data_cache_runs[1].has_directory_activity());
 
     let diagnostics = outcome.run().trace_diagnostic_records();
-    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics, replay_diagnostics);
     let diagnostic = &diagnostics[0];
     assert_eq!(diagnostic.kind(), RiscvTraceDiagnosticKind::DataCacheLine);
     assert_eq!(diagnostic.tick(), 4);
@@ -1958,6 +1976,9 @@ fn workload_replay_records_trace_printreq_data_cache_diagnostic() {
     assert_eq!(diagnostic.cached_copy_count(), 1);
     assert!(diagnostic.has_cached_copy());
     assert!(diagnostic.has_backing_line());
+    let summary = &outcome.result().traffic_trace_replay_summaries()[0];
+    assert_eq!(summary.diagnostic_print_event_count(), 1);
+    assert_eq!(summary.trace_diagnostic_count(), 1);
 }
 
 #[test]
@@ -3045,6 +3066,7 @@ fn workload_replay_result_satisfies_bound_traffic_trace_summary_expectation() {
     assert_eq!(summary.tlb_sync_event_count(), 0);
     assert_eq!(summary.cache_flush_event_count(), 0);
     assert_eq!(summary.diagnostic_print_event_count(), 0);
+    assert_eq!(summary.trace_diagnostic_count(), 0);
     assert_eq!(summary.htm_abort_event_count(), 0);
     plan.verify_result(outcome.result()).unwrap();
 }

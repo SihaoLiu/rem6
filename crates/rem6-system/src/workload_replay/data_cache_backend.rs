@@ -583,17 +583,20 @@ impl WorkloadDataCacheLineBackend {
         &mut self,
         tick: Tick,
         event: TrafficTraceDiagnosticEvent,
-    ) -> bool {
+    ) -> Option<RiscvTraceDiagnosticRecord> {
         if !self.accepts_trace_diagnostic_event(event) {
-            return false;
+            return None;
         }
 
         match self.trace_diagnostic_record(tick, event) {
-            Ok(Some(record)) => self.trace_diagnostic_records.push(record),
+            Ok(Some(record)) => {
+                self.trace_diagnostic_records.push(record);
+                return Some(record);
+            }
             Ok(None) => {}
             Err(error) => self.error = Some(error),
         }
-        true
+        None
     }
 
     fn trace_diagnostic_record(
@@ -1027,11 +1030,11 @@ impl WorkloadDataCacheBackend {
         &mut self,
         tick: Tick,
         event: TrafficTraceDiagnosticEvent,
-    ) -> bool {
+    ) -> Option<RiscvTraceDiagnosticRecord> {
         self.lines
             .values_mut()
             .find(|line| line.accepts_trace_diagnostic_event(event))
-            .is_some_and(|line| line.apply_trace_diagnostic_event(tick, event))
+            .and_then(|line| line.apply_trace_diagnostic_event(tick, event))
     }
 
     pub(super) fn final_lines(
