@@ -82,8 +82,8 @@ use self::traffic_trace::{
 };
 pub use self::traffic_trace::{
     RiscvWorkloadTraceHtmAbortRecord, RiscvWorkloadTraceHtmBeginRecord,
-    RiscvWorkloadTraceMemoryFailureRecord, RiscvWorkloadTrafficTraceReplay,
-    RiscvWorkloadTrafficTraceReplayOutcome,
+    RiscvWorkloadTraceMemoryFailureRecord, RiscvWorkloadTraceMemoryResponseRecord,
+    RiscvWorkloadTrafficTraceReplay, RiscvWorkloadTrafficTraceReplayOutcome,
 };
 pub use self::traffic_trace_sync::{RiscvWorkloadTraceSyncOutcome, RiscvWorkloadTraceSyncRecord};
 use self::workload_replay_dma::run_accelerator_dma_copies;

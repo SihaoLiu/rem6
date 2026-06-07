@@ -3052,6 +3052,11 @@ matched address-bearing memory failure records typed error metadata at the
 failure tick without executing a successful data-cache access; on data-cache
 routes, the workload backend also emits run-level trace error records with
 request id, error kind, line, address, size, packet id, and PC metadata.
+Every workload trace route exposes matched memory response metadata on the
+traffic trace replay outcome itself, including request id, response kind,
+transport response status, trace order, address or matched-request line
+fallback, size, packet id, PC, response-data length, trace-fill data length,
+and whether the configured workload data-cache backend consumed the response.
 Every workload trace route also exposes matched memory failure metadata on the
 traffic trace replay outcome itself, including request id, error kind,
 trace order, address or matched-request line fallback, size, packet id, and PC,

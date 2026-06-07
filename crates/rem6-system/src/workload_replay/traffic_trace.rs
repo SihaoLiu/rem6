@@ -9,7 +9,7 @@ use rem6_memory::{Address, MemoryRequestId, ResponseStatus};
 use rem6_traffic::{
     TrafficController, TrafficControllerEvent, TrafficControllerEventBatch, TrafficTraceCacheKind,
     TrafficTraceDiagnosticKind, TrafficTraceErrorEvent, TrafficTraceErrorKind, TrafficTraceHtmKind,
-    TrafficTraceTlbKind,
+    TrafficTraceResponseEvent, TrafficTraceResponseKind, TrafficTraceTlbKind,
 };
 use rem6_transport::{
     MemoryRouteId, MemoryTrace, MemoryTraceEvent, MemoryTransport, RequestDelivery,
@@ -134,6 +134,7 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
                 .expect("traffic trace replay response lock")
                 .clone(),
             memory_trace_events: self.trace.snapshot(),
+            memory_response_records: self.records.memory_response_snapshot(),
             memory_failure_records: self.records.memory_failure_snapshot(),
             sync_records: self.records.sync_snapshot(),
             htm_begin_records: self.records.htm_begin_snapshot(),
@@ -184,6 +185,7 @@ pub struct RiscvWorkloadTrafficTraceReplayOutcome {
     errors: TrafficTraceReplayControllerParallelErrors,
     response_deliveries: Vec<ResponseDelivery>,
     memory_trace_events: Vec<MemoryTraceEvent>,
+    memory_response_records: Vec<RiscvWorkloadTraceMemoryResponseRecord>,
     memory_failure_records: Vec<RiscvWorkloadTraceMemoryFailureRecord>,
     sync_records: Vec<RiscvWorkloadTraceSyncRecord>,
     htm_begin_records: Vec<RiscvWorkloadTraceHtmBeginRecord>,
@@ -215,6 +217,10 @@ impl RiscvWorkloadTrafficTraceReplayOutcome {
         &self.memory_trace_events
     }
 
+    pub fn memory_response_records(&self) -> &[RiscvWorkloadTraceMemoryResponseRecord] {
+        &self.memory_response_records
+    }
+
     pub fn memory_failure_records(&self) -> &[RiscvWorkloadTraceMemoryFailureRecord] {
         &self.memory_failure_records
     }
@@ -229,6 +235,111 @@ impl RiscvWorkloadTrafficTraceReplayOutcome {
 
     pub fn htm_abort_records(&self) -> &[RiscvWorkloadTraceHtmAbortRecord] {
         &self.htm_abort_records
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RiscvWorkloadTraceMemoryResponseRecord {
+    tick: Tick,
+    trace_tick: Tick,
+    sequence: u64,
+    request_id: MemoryRequestId,
+    kind: TrafficTraceResponseKind,
+    status: ResponseStatus,
+    address: Option<Address>,
+    line: Address,
+    size_bytes: Option<u64>,
+    trace_packet_id: Option<u64>,
+    trace_pc: Option<Address>,
+    response_data_bytes: Option<u64>,
+    trace_data_bytes: Option<u64>,
+    data_cache_response_applied: bool,
+}
+
+impl RiscvWorkloadTraceMemoryResponseRecord {
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_trace_response(
+        tick: Tick,
+        request_id: MemoryRequestId,
+        event: TrafficTraceResponseEvent,
+        request_line: Address,
+        status: ResponseStatus,
+        response_data_bytes: Option<u64>,
+        trace_data_bytes: Option<u64>,
+        data_cache_response_applied: bool,
+    ) -> Self {
+        Self {
+            tick,
+            trace_tick: event.tick(),
+            sequence: event.sequence(),
+            request_id,
+            kind: event.kind(),
+            status,
+            address: event.address().or(Some(request_line)),
+            line: request_line,
+            size_bytes: event.size_bytes(),
+            trace_packet_id: event.trace_packet_id(),
+            trace_pc: event.trace_pc(),
+            response_data_bytes,
+            trace_data_bytes,
+            data_cache_response_applied,
+        }
+    }
+
+    pub const fn tick(&self) -> Tick {
+        self.tick
+    }
+
+    pub const fn trace_tick(&self) -> Tick {
+        self.trace_tick
+    }
+
+    pub const fn sequence(&self) -> u64 {
+        self.sequence
+    }
+
+    pub const fn request_id(&self) -> MemoryRequestId {
+        self.request_id
+    }
+
+    pub const fn kind(&self) -> TrafficTraceResponseKind {
+        self.kind
+    }
+
+    pub const fn status(&self) -> ResponseStatus {
+        self.status
+    }
+
+    pub const fn address(&self) -> Option<Address> {
+        self.address
+    }
+
+    pub const fn line(&self) -> Address {
+        self.line
+    }
+
+    pub const fn size_bytes(&self) -> Option<u64> {
+        self.size_bytes
+    }
+
+    pub const fn trace_packet_id(&self) -> Option<u64> {
+        self.trace_packet_id
+    }
+
+    pub const fn trace_pc(&self) -> Option<Address> {
+        self.trace_pc
+    }
+
+    pub const fn response_data_bytes(&self) -> Option<u64> {
+        self.response_data_bytes
+    }
+
+    pub const fn trace_data_bytes(&self) -> Option<u64> {
+        self.trace_data_bytes
+    }
+
+    pub const fn data_cache_response_applied(&self) -> bool {
+        self.data_cache_response_applied
     }
 }
 
@@ -310,6 +421,7 @@ impl RiscvWorkloadTraceMemoryFailureRecord {
 
 #[derive(Clone, Debug, Default)]
 struct RiscvWorkloadTraceReplayRecords {
+    memory_response_records: Arc<Mutex<Vec<RiscvWorkloadTraceMemoryResponseRecord>>>,
     memory_failure_records: Arc<Mutex<Vec<RiscvWorkloadTraceMemoryFailureRecord>>>,
     sync_records: Arc<Mutex<Vec<RiscvWorkloadTraceSyncRecord>>>,
     htm_begin_records: Arc<Mutex<Vec<RiscvWorkloadTraceHtmBeginRecord>>>,
@@ -317,6 +429,16 @@ struct RiscvWorkloadTraceReplayRecords {
 }
 
 impl RiscvWorkloadTraceReplayRecords {
+    fn memory_response_snapshot(&self) -> Vec<RiscvWorkloadTraceMemoryResponseRecord> {
+        let mut records = self
+            .memory_response_records
+            .lock()
+            .expect("traffic trace replay memory response lock")
+            .clone();
+        records.sort_by_key(|record| (record.tick(), record.sequence(), record.line().get()));
+        records
+    }
+
     fn memory_failure_snapshot(&self) -> Vec<RiscvWorkloadTraceMemoryFailureRecord> {
         let mut records = self
             .memory_failure_records
@@ -346,6 +468,13 @@ impl RiscvWorkloadTraceReplayRecords {
             .lock()
             .expect("traffic trace replay htm abort lock")
             .clone()
+    }
+
+    fn record_memory_response(&self, record: RiscvWorkloadTraceMemoryResponseRecord) {
+        self.memory_response_records
+            .lock()
+            .expect("workload trace memory response lock")
+            .push(record);
     }
 
     fn record_memory_failure(&self, record: RiscvWorkloadTraceMemoryFailureRecord) {
@@ -767,6 +896,12 @@ impl WorkloadTraceDataCacheConsumer {
             TrafficTraceReplayTargetEvent::MemoryResponse(_) => {
                 let data_cache_response_status =
                     target_event_response_status(event_context.event());
+                let response_data_bytes = target_event_response_data_bytes(event_context.event());
+                let trace_response_data_bytes = event_context
+                    .trace_response_data()
+                    .map(|data| data.len() as u64);
+                let target_completion_tick =
+                    target_completion_tick(delivery.tick(), event_context.event());
                 let mut data_cache_response_applied = false;
                 if data_cache_response_status.is_some()
                     && data_cache_response_status != Some(ResponseStatus::StoreConditionalFailed)
@@ -783,11 +918,20 @@ impl WorkloadTraceDataCacheConsumer {
                     }
                 }
                 if let Some(response) = event_context.trace_response() {
-                    inner.apply_trace_response(
-                        delivery.tick(),
-                        response,
-                        data_cache_response_applied,
-                    );
+                    let response_record =
+                        RiscvWorkloadTraceMemoryResponseRecord::from_trace_response(
+                            target_completion_tick,
+                            delivery.request().id(),
+                            response,
+                            delivery.request().line_address(),
+                            data_cache_response_status.expect(
+                                "trace response target event carries memory response status",
+                            ),
+                            response_data_bytes,
+                            trace_response_data_bytes,
+                            data_cache_response_applied,
+                        );
+                    inner.apply_trace_response(response_record, response);
                 }
             }
             TrafficTraceReplayTargetEvent::MemoryFailure { record, .. } => {
@@ -1100,26 +1244,26 @@ impl WorkloadTraceDataCacheConsumerInner {
 
     fn apply_trace_response(
         &mut self,
-        tick: Tick,
-        event: rem6_traffic::TrafficTraceResponseEvent,
-        data_cache_response_applied: bool,
+        record: RiscvWorkloadTraceMemoryResponseRecord,
+        event: TrafficTraceResponseEvent,
     ) {
+        self.records.record_memory_response(record);
         if let Some(data_cache) = self.data_cache.as_ref() {
             let mut data_cache = data_cache.lock().expect("workload data cache lock");
             if let Some(transaction_uid) = self.active_htm_transactions.last().copied() {
                 data_cache.record_trace_htm_access_event(
-                    tick,
+                    record.tick(),
                     self.route,
                     transaction_uid,
                     event,
-                    data_cache_response_applied,
+                    record.data_cache_response_applied(),
                 );
             } else {
                 data_cache.record_trace_htm_write_conflict_event(
                     self.route,
                     None,
                     event,
-                    data_cache_response_applied,
+                    record.data_cache_response_applied(),
                 );
             }
             data_cache.apply_trace_response_event(event);
@@ -1207,6 +1351,15 @@ fn target_event_response_status(event: &TrafficTraceReplayTargetEvent) -> Option
     }
 }
 
+fn target_event_response_data_bytes(event: &TrafficTraceReplayTargetEvent) -> Option<u64> {
+    match event {
+        TrafficTraceReplayTargetEvent::MemoryResponse(outcome) => {
+            target_outcome_response_data_bytes(outcome)
+        }
+        TrafficTraceReplayTargetEvent::MemoryFailure { .. } => None,
+    }
+}
+
 fn target_outcome_response_status(outcome: &TargetOutcome) -> Option<ResponseStatus> {
     match outcome {
         TargetOutcome::Respond(response) | TargetOutcome::RespondAfter { response, .. } => {
@@ -1214,6 +1367,21 @@ fn target_outcome_response_status(outcome: &TargetOutcome) -> Option<ResponseSta
         }
         TargetOutcome::NoResponse => None,
     }
+}
+
+fn target_outcome_response_data_bytes(outcome: &TargetOutcome) -> Option<u64> {
+    match outcome {
+        TargetOutcome::Respond(response) | TargetOutcome::RespondAfter { response, .. } => {
+            response.data().map(|data| data.len() as u64)
+        }
+        TargetOutcome::NoResponse => None,
+    }
+}
+
+fn target_completion_tick(delivery_tick: Tick, event: &TrafficTraceReplayTargetEvent) -> Tick {
+    delivery_tick
+        .checked_add(event.target_delay())
+        .expect("validated trace replay target completion tick")
 }
 
 #[allow(clippy::too_many_arguments)]

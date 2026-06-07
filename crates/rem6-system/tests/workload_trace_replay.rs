@@ -11,7 +11,7 @@ use rem6_system::{
     TrafficTraceReplayControlError, TrafficTraceReplayControllerControlError,
     TrafficTraceReplayControllerTargetError, TrafficTraceReplayTargetError,
 };
-use rem6_traffic::{TrafficTraceErrorKind, TrafficTraceSyncKind};
+use rem6_traffic::{TrafficTraceErrorKind, TrafficTraceResponseKind, TrafficTraceSyncKind};
 use rem6_transport::MemoryTraceKind;
 use rem6_workload::{
     HostEventIntent, WorkloadDataCacheProtocol, WorkloadExpectedTrafficTraceReplaySummary,
@@ -30,9 +30,10 @@ use support::traffic_trace::{
     GEM5_FLAG_KERNEL, GEM5_FLUSH_REQ, GEM5_FUNCTIONAL_READ_ERROR, GEM5_FUNCTIONAL_WRITE_ERROR,
     GEM5_HTM_ABORT, GEM5_HTM_REQ, GEM5_HTM_REQ_RESP, GEM5_INVALID_DEST_ERROR, GEM5_MEM_FENCE_REQ,
     GEM5_MEM_FENCE_RESP, GEM5_MEM_SYNC_REQ, GEM5_MEM_SYNC_RESP, GEM5_PRINT_REQ, GEM5_READ_ERROR,
-    GEM5_READ_REQ, GEM5_READ_RESP, GEM5_READ_RESP_WITH_INVALIDATE, GEM5_STORE_COND_FAIL_REQ,
-    GEM5_STORE_COND_REQ, GEM5_STORE_COND_RESP, GEM5_SYNC_INV_L1, GEM5_TLBI_EXT_SYNC,
-    GEM5_WRITEBACK_DIRTY, GEM5_WRITE_ERROR, GEM5_WRITE_REQ, GEM5_WRITE_RESP,
+    GEM5_READ_REQ, GEM5_READ_RESP, GEM5_READ_RESP_WITH_INVALIDATE, GEM5_SOFT_PF_REQ,
+    GEM5_SOFT_PF_RESP, GEM5_STORE_COND_FAIL_REQ, GEM5_STORE_COND_REQ, GEM5_STORE_COND_RESP,
+    GEM5_SYNC_INV_L1, GEM5_TLBI_EXT_SYNC, GEM5_WRITEBACK_DIRTY, GEM5_WRITE_ERROR, GEM5_WRITE_REQ,
+    GEM5_WRITE_RESP,
 };
 
 fn workload_id(value: &str) -> rem6_workload::WorkloadId {
@@ -667,6 +668,84 @@ fn workload_replay_runs_bound_traffic_trace_controller() {
         trace_events[2].response_status(),
         Some(ResponseStatus::Completed)
     );
+
+    let response_records = traffic_replay.memory_response_records();
+    assert_eq!(response_records.len(), 1);
+    let response_record = &response_records[0];
+    assert_eq!(response_record.tick(), 3);
+    assert_eq!(response_record.trace_tick(), 3);
+    assert_eq!(response_record.sequence(), 1);
+    assert_eq!(
+        response_record.request_id(),
+        delivery.response().request_id()
+    );
+    assert_eq!(
+        response_record.kind(),
+        TrafficTraceResponseKind::ReadWithInvalidate
+    );
+    assert_eq!(response_record.status(), ResponseStatus::Completed);
+    assert_eq!(response_record.address(), Some(Address::new(0xa000)));
+    assert_eq!(response_record.line(), Address::new(0xa000));
+    assert_eq!(response_record.size_bytes(), Some(8));
+    assert_eq!(response_record.trace_packet_id(), Some(900));
+    assert_eq!(response_record.trace_data_bytes(), Some(8));
+    assert_eq!(response_record.response_data_bytes(), Some(8));
+    assert!(!response_record.data_cache_response_applied());
+}
+
+#[test]
+fn workload_replay_records_prefetch_trace_fill_without_response_payload() {
+    let outcome = replay_with_controller(
+        "riscv-replay-trace-prefetch-response-record",
+        &[
+            PacketFields {
+                tick: 0,
+                command: GEM5_SOFT_PF_REQ,
+                address: Some(0xa040),
+                size: Some(16),
+                packet_id: Some(914),
+            },
+            PacketFields {
+                tick: 4,
+                command: GEM5_SOFT_PF_RESP,
+                address: Some(0xa040),
+                size: Some(16),
+                packet_id: Some(914),
+            },
+        ],
+    )
+    .unwrap();
+
+    let traffic_replay = &outcome.traffic_trace_replays()[0];
+    assert!(traffic_replay.errors().is_empty());
+    assert_eq!(traffic_replay.response_deliveries().len(), 1);
+    assert_eq!(
+        traffic_replay.response_deliveries()[0].response().status(),
+        ResponseStatus::Completed
+    );
+    assert_eq!(
+        traffic_replay.response_deliveries()[0].response().data(),
+        None
+    );
+
+    let response_records = traffic_replay.memory_response_records();
+    assert_eq!(response_records.len(), 1);
+    let response_record = &response_records[0];
+    assert_eq!(response_record.tick(), 4);
+    assert_eq!(response_record.trace_tick(), 4);
+    assert_eq!(response_record.sequence(), 1);
+    assert_eq!(
+        response_record.kind(),
+        TrafficTraceResponseKind::SoftPrefetch
+    );
+    assert_eq!(response_record.status(), ResponseStatus::Completed);
+    assert_eq!(response_record.address(), Some(Address::new(0xa040)));
+    assert_eq!(response_record.line(), Address::new(0xa040));
+    assert_eq!(response_record.size_bytes(), Some(16));
+    assert_eq!(response_record.trace_packet_id(), Some(914));
+    assert_eq!(response_record.trace_data_bytes(), Some(16));
+    assert_eq!(response_record.response_data_bytes(), None);
+    assert!(!response_record.data_cache_response_applied());
 }
 
 #[test]
@@ -1528,6 +1607,24 @@ fn workload_replay_invalidates_data_cache_line_after_trace_read_with_invalidate(
     let traffic_replay = &outcome.traffic_trace_replays()[0];
     assert!(traffic_replay.errors().is_empty());
     assert!(traffic_replay.runtime().memory_failures().is_empty());
+    let response_records = traffic_replay.memory_response_records();
+    assert_eq!(response_records.len(), 2);
+    assert_eq!(response_records[0].tick(), 3);
+    assert_eq!(response_records[0].trace_tick(), 3);
+    assert_eq!(
+        response_records[0].kind(),
+        TrafficTraceResponseKind::ReadWithInvalidate
+    );
+    assert_eq!(response_records[0].status(), ResponseStatus::Completed);
+    assert!(response_records[0].data_cache_response_applied());
+    assert_eq!(response_records[1].tick(), 8);
+    assert_eq!(response_records[1].trace_tick(), 8);
+    assert_eq!(
+        response_records[1].kind(),
+        TrafficTraceResponseKind::ReadWithInvalidate
+    );
+    assert_eq!(response_records[1].status(), ResponseStatus::Completed);
+    assert!(response_records[1].data_cache_response_applied());
     let data_cache_runs = outcome.run().data_cache_runs();
     assert_eq!(data_cache_runs.len(), 2);
     assert!(data_cache_runs[0].has_directory_activity());
