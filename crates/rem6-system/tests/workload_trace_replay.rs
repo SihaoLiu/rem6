@@ -1189,9 +1189,58 @@ fn workload_replay_records_bound_kernel_mem_sync_control_acks() {
     assert_eq!(sync.source_sequence(), 0);
     assert_eq!(sync.kind(), TrafficTraceSyncKind::MemSync);
     assert!(sync.kernel_sync());
+    assert!(!sync.invalidates_l1());
     assert_eq!(sync.trace_packet_id(), Some(905));
     assert_eq!(sync.trace_pc(), Some(Address::new(0x1008)));
     assert_eq!(sync.outcome(), &RiscvWorkloadTraceSyncOutcome::Ack);
+    assert!(traffic_replay.trace_l1_invalidation_records().is_empty());
+    let summary = &outcome.result().traffic_trace_replay_summaries()[0];
+    assert_eq!(summary.trace_l1_invalidation_count(), 0);
+}
+
+#[test]
+fn workload_replay_keeps_mem_sync_inv_l1_control_only_without_data_cache() {
+    let outcome = replay_with_packet_records(
+        "riscv-replay-traffic-trace-kernel-sync-inv-l1-control",
+        &[
+            PacketRecord {
+                tick: 1,
+                command: GEM5_MEM_SYNC_REQ,
+                address: None,
+                size: None,
+                flags: Some(GEM5_FLAG_KERNEL | GEM5_SYNC_INV_L1),
+                packet_id: Some(906),
+                pc: Some(0x2018),
+            },
+            PacketRecord {
+                tick: 6,
+                command: GEM5_MEM_SYNC_RESP,
+                address: None,
+                size: None,
+                flags: None,
+                packet_id: Some(906),
+                pc: None,
+            },
+        ],
+    )
+    .unwrap();
+
+    let traffic_replay = &outcome.traffic_trace_replays()[0];
+    assert!(traffic_replay.errors().is_empty());
+    assert_eq!(traffic_replay.scheduled_count(), 1);
+    assert_eq!(traffic_replay.runtime().control_acks().len(), 1);
+    assert!(traffic_replay.runtime().control_failures().is_empty());
+    let sync_records = traffic_replay.sync_records();
+    assert_eq!(sync_records.len(), 1);
+    assert_eq!(sync_records[0].kind(), TrafficTraceSyncKind::MemSync);
+    assert!(sync_records[0].kernel_sync());
+    assert!(sync_records[0].invalidates_l1());
+    assert_eq!(sync_records[0].trace_packet_id(), Some(906));
+    assert_eq!(sync_records[0].trace_pc(), Some(Address::new(0x2018)));
+    assert!(traffic_replay.trace_l1_invalidation_records().is_empty());
+    let summary = &outcome.result().traffic_trace_replay_summaries()[0];
+    assert_eq!(summary.control_ack_count(), 1);
+    assert_eq!(summary.trace_l1_invalidation_count(), 0);
 }
 
 #[test]
@@ -1416,11 +1465,27 @@ fn workload_replay_applies_mem_sync_inv_l1_to_data_cache_line() {
     assert_eq!(sync_records[0].kind(), TrafficTraceSyncKind::MemSync);
     assert!(sync_records[0].kernel_sync());
     assert!(sync_records[0].invalidates_l1());
+    let l1_invalidations = traffic_replay.trace_l1_invalidation_records();
+    assert_eq!(l1_invalidations.len(), 1);
+    let l1_invalidation = &l1_invalidations[0];
+    assert_eq!(l1_invalidation.completion_tick(), 6);
+    assert_eq!(l1_invalidation.trace_tick(), 6);
+    assert_eq!(l1_invalidation.trace_sequence(), 3);
+    assert_eq!(l1_invalidation.source_tick(), 4);
+    assert_eq!(l1_invalidation.source_sequence(), 2);
+    assert_eq!(l1_invalidation.kind(), TrafficTraceSyncKind::MemSync);
+    assert!(l1_invalidation.kernel_sync());
+    assert_eq!(l1_invalidation.invalidated_line_count(), 1);
+    assert_eq!(l1_invalidation.trace_packet_id(), Some(944));
+    assert_eq!(l1_invalidation.trace_pc(), Some(Address::new(0x2000)));
 
     let data_cache_runs = outcome.run().data_cache_runs();
     assert_eq!(data_cache_runs.len(), 2);
     assert!(data_cache_runs[0].has_directory_activity());
     assert!(data_cache_runs[1].has_directory_activity());
+    let summary = &outcome.result().traffic_trace_replay_summaries()[0];
+    assert_eq!(summary.control_ack_count(), 1);
+    assert_eq!(summary.trace_l1_invalidation_count(), 1);
 }
 
 #[test]

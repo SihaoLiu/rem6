@@ -89,7 +89,10 @@ pub use self::traffic_trace::{
 pub use self::traffic_trace_sideband_records::{
     RiscvWorkloadTraceCacheFlushRecord, RiscvWorkloadTraceTlbSyncRecord,
 };
-pub use self::traffic_trace_sync::{RiscvWorkloadTraceSyncOutcome, RiscvWorkloadTraceSyncRecord};
+pub use self::traffic_trace_sync::{
+    RiscvWorkloadTraceL1InvalidationRecord, RiscvWorkloadTraceSyncOutcome,
+    RiscvWorkloadTraceSyncRecord,
+};
 use self::workload_replay_dma::run_accelerator_dma_copies;
 use crate::workload_replay_heterogeneous::{
     accelerator_command_kind_counts, accelerator_snapshots, accelerator_wait_for_graph_since,

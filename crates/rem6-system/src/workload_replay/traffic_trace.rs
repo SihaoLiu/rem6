@@ -31,7 +31,9 @@ use super::data_cache_backend::WorkloadDataCacheBackend;
 use super::traffic_trace_sideband_records::{
     RiscvWorkloadTraceCacheFlushRecord, RiscvWorkloadTraceTlbSyncRecord,
 };
-use super::traffic_trace_sync::RiscvWorkloadTraceSyncRecord;
+use super::traffic_trace_sync::{
+    RiscvWorkloadTraceL1InvalidationRecord, RiscvWorkloadTraceSyncRecord,
+};
 use super::RiscvWorkloadReplayError;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -121,6 +123,7 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
             .with_trace_tlb_sync_count(self.records.trace_tlb_sync_snapshot().len())
             .with_cache_flush_event_count(sideband_counts.cache_flush)
             .with_trace_cache_flush_count(self.records.trace_cache_flush_snapshot().len())
+            .with_trace_l1_invalidation_count(self.records.trace_l1_invalidation_snapshot().len())
             .with_diagnostic_print_event_count(sideband_counts.diagnostic_print)
             .with_trace_diagnostic_count(self.records.trace_diagnostic_snapshot().len())
             .with_htm_abort_event_count(sideband_counts.htm_abort)
@@ -148,6 +151,7 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
             memory_failure_records: self.records.memory_failure_snapshot(),
             trace_tlb_sync_records: self.records.trace_tlb_sync_snapshot(),
             trace_cache_flush_records: self.records.trace_cache_flush_snapshot(),
+            trace_l1_invalidation_records: self.records.trace_l1_invalidation_snapshot(),
             trace_diagnostic_records: self.records.trace_diagnostic_snapshot(),
             sync_records: self.records.sync_snapshot(),
             htm_begin_records: self.records.htm_begin_snapshot(),
@@ -203,6 +207,7 @@ pub struct RiscvWorkloadTrafficTraceReplayOutcome {
     memory_failure_records: Vec<RiscvWorkloadTraceMemoryFailureRecord>,
     trace_tlb_sync_records: Vec<RiscvWorkloadTraceTlbSyncRecord>,
     trace_cache_flush_records: Vec<RiscvWorkloadTraceCacheFlushRecord>,
+    trace_l1_invalidation_records: Vec<RiscvWorkloadTraceL1InvalidationRecord>,
     trace_diagnostic_records: Vec<RiscvTraceDiagnosticRecord>,
     sync_records: Vec<RiscvWorkloadTraceSyncRecord>,
     htm_begin_records: Vec<RiscvWorkloadTraceHtmBeginRecord>,
@@ -254,6 +259,10 @@ impl RiscvWorkloadTrafficTraceReplayOutcome {
 
     pub fn trace_cache_flush_records(&self) -> &[RiscvWorkloadTraceCacheFlushRecord] {
         &self.trace_cache_flush_records
+    }
+
+    pub fn trace_l1_invalidation_records(&self) -> &[RiscvWorkloadTraceL1InvalidationRecord] {
+        &self.trace_l1_invalidation_records
     }
 
     pub fn trace_diagnostic_records(&self) -> &[RiscvTraceDiagnosticRecord] {
@@ -536,6 +545,7 @@ struct RiscvWorkloadTraceReplayRecords {
     memory_failure_records: Arc<Mutex<Vec<RiscvWorkloadTraceMemoryFailureRecord>>>,
     trace_tlb_sync_records: Arc<Mutex<Vec<RiscvWorkloadTraceTlbSyncRecord>>>,
     trace_cache_flush_records: Arc<Mutex<Vec<RiscvWorkloadTraceCacheFlushRecord>>>,
+    trace_l1_invalidation_records: Arc<Mutex<Vec<RiscvWorkloadTraceL1InvalidationRecord>>>,
     trace_diagnostic_records: Arc<Mutex<Vec<RiscvTraceDiagnosticRecord>>>,
     sync_records: Arc<Mutex<Vec<RiscvWorkloadTraceSyncRecord>>>,
     htm_begin_records: Arc<Mutex<Vec<RiscvWorkloadTraceHtmBeginRecord>>>,
@@ -592,6 +602,16 @@ impl RiscvWorkloadTraceReplayRecords {
             .expect("traffic trace replay cache flush lock")
             .clone();
         records.sort_by_key(|record| (record.tick(), record.sequence(), record.line().get()));
+        records
+    }
+
+    fn trace_l1_invalidation_snapshot(&self) -> Vec<RiscvWorkloadTraceL1InvalidationRecord> {
+        let mut records = self
+            .trace_l1_invalidation_records
+            .lock()
+            .expect("traffic trace replay l1 invalidation lock")
+            .clone();
+        records.sort_by_key(|record| (record.completion_tick(), record.trace_sequence()));
         records
     }
 
@@ -668,6 +688,13 @@ impl RiscvWorkloadTraceReplayRecords {
         self.trace_cache_flush_records
             .lock()
             .expect("workload trace cache flush lock")
+            .push(record);
+    }
+
+    fn record_trace_l1_invalidation(&self, record: RiscvWorkloadTraceL1InvalidationRecord) {
+        self.trace_l1_invalidation_records
+            .lock()
+            .expect("workload trace l1 invalidation lock")
             .push(record);
     }
 
@@ -1423,10 +1450,18 @@ impl WorkloadTraceDataCacheConsumerInner {
                 TrafficTraceReplayControlEvent::ControlAck { .. } => {
                     if sync.invalidates_l1() {
                         if let Some(data_cache) = self.data_cache.as_ref() {
-                            data_cache
+                            let invalidated_line_count = data_cache
                                 .lock()
                                 .expect("workload data cache lock")
                                 .invalidate_trace_l1();
+                            self.records.record_trace_l1_invalidation(
+                                RiscvWorkloadTraceL1InvalidationRecord::from_trace_sync_invalidation(
+                                    tick,
+                                    sync,
+                                    trace_order,
+                                    invalidated_line_count,
+                                ),
+                            );
                         }
                     }
                     self.records.record_sync(RiscvWorkloadTraceSyncRecord::ack(

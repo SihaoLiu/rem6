@@ -273,10 +273,10 @@ pub use wait_status::{
 pub use workload_replay::{
     RiscvWorkloadReplay, RiscvWorkloadReplayError, RiscvWorkloadReplayOutcome,
     RiscvWorkloadTraceCacheFlushRecord, RiscvWorkloadTraceHtmAbortRecord,
-    RiscvWorkloadTraceHtmBeginRecord, RiscvWorkloadTraceMemoryFailureRecord,
-    RiscvWorkloadTraceMemoryResponseRecord, RiscvWorkloadTraceSyncOutcome,
-    RiscvWorkloadTraceSyncRecord, RiscvWorkloadTraceTlbSyncRecord, RiscvWorkloadTrafficTraceReplay,
-    RiscvWorkloadTrafficTraceReplayOutcome,
+    RiscvWorkloadTraceHtmBeginRecord, RiscvWorkloadTraceL1InvalidationRecord,
+    RiscvWorkloadTraceMemoryFailureRecord, RiscvWorkloadTraceMemoryResponseRecord,
+    RiscvWorkloadTraceSyncOutcome, RiscvWorkloadTraceSyncRecord, RiscvWorkloadTraceTlbSyncRecord,
+    RiscvWorkloadTrafficTraceReplay, RiscvWorkloadTrafficTraceReplayOutcome,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

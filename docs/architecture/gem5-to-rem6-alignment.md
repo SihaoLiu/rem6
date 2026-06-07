@@ -3138,9 +3138,13 @@ workload-level sync records carrying source order, completion order,
 `kernel_sync`, MemSync `INV_L1` policy, packet id, PC metadata, and ack or
 failure status. On coherent workload data routes, a successful `MemSyncReq`
 with `INV_L1` now invalidates the configured data-cache lines before later
-trace deliveries are applied, so subsequent trace reads execute against the
-cache model instead of stale local replay state. Broader GPU and GL2/L2
-cache-invalidation execution remains open.
+trace deliveries are applied and emits a separate workload L1-invalidation
+record with the touched line count. The traffic-trace replay summary exposes
+that executed count separately from generic sync control acks, so manifests can
+require actual data-cache invalidation instead of accepting raw `MemSyncReq`
+matching alone. Routes without a configured data-cache consumer remain sync
+control-only. Broader GPU and GL2/L2 cache-invalidation execution remains
+open.
 Workload replay can bind that executor to a workload route id and control
 partition, schedule it through the replay scheduler and `MemoryTransport`, and
 return response deliveries, trace memory events, and runtime records in

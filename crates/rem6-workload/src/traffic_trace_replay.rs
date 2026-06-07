@@ -15,6 +15,7 @@ pub struct WorkloadTrafficTraceReplaySummary {
     trace_tlb_sync_count: usize,
     cache_flush_event_count: usize,
     trace_cache_flush_count: usize,
+    trace_l1_invalidation_count: usize,
     diagnostic_print_event_count: usize,
     trace_diagnostic_count: usize,
     htm_abort_event_count: usize,
@@ -36,6 +37,7 @@ impl WorkloadTrafficTraceReplaySummary {
             trace_tlb_sync_count: 0,
             cache_flush_event_count: 0,
             trace_cache_flush_count: 0,
+            trace_l1_invalidation_count: 0,
             diagnostic_print_event_count: 0,
             trace_diagnostic_count: 0,
             htm_abort_event_count: 0,
@@ -97,6 +99,11 @@ impl WorkloadTrafficTraceReplaySummary {
 
     pub fn with_trace_cache_flush_count(mut self, trace_cache_flush_count: usize) -> Self {
         self.trace_cache_flush_count = trace_cache_flush_count;
+        self
+    }
+
+    pub fn with_trace_l1_invalidation_count(mut self, trace_l1_invalidation_count: usize) -> Self {
+        self.trace_l1_invalidation_count = trace_l1_invalidation_count;
         self
     }
 
@@ -170,6 +177,10 @@ impl WorkloadTrafficTraceReplaySummary {
         self.trace_cache_flush_count
     }
 
+    pub const fn trace_l1_invalidation_count(&self) -> usize {
+        self.trace_l1_invalidation_count
+    }
+
     pub const fn diagnostic_print_event_count(&self) -> usize {
         self.diagnostic_print_event_count
     }
@@ -204,6 +215,8 @@ impl WorkloadTrafficTraceReplaySummary {
             trace_tlb_sync_count: self.trace_tlb_sync_count + other.trace_tlb_sync_count,
             cache_flush_event_count: self.cache_flush_event_count + other.cache_flush_event_count,
             trace_cache_flush_count: self.trace_cache_flush_count + other.trace_cache_flush_count,
+            trace_l1_invalidation_count: self.trace_l1_invalidation_count
+                + other.trace_l1_invalidation_count,
             diagnostic_print_event_count: self.diagnostic_print_event_count
                 + other.diagnostic_print_event_count,
             trace_diagnostic_count: self.trace_diagnostic_count + other.trace_diagnostic_count,
@@ -227,6 +240,7 @@ pub struct WorkloadExpectedTrafficTraceReplaySummary {
     minimum_trace_tlb_sync_count: usize,
     minimum_cache_flush_event_count: usize,
     minimum_trace_cache_flush_count: usize,
+    minimum_trace_l1_invalidation_count: usize,
     minimum_diagnostic_print_event_count: usize,
     minimum_trace_diagnostic_count: usize,
     minimum_htm_abort_event_count: usize,
@@ -248,6 +262,7 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
             minimum_trace_tlb_sync_count: 0,
             minimum_cache_flush_event_count: 0,
             minimum_trace_cache_flush_count: 0,
+            minimum_trace_l1_invalidation_count: 0,
             minimum_diagnostic_print_event_count: 0,
             minimum_trace_diagnostic_count: 0,
             minimum_htm_abort_event_count: 0,
@@ -344,6 +359,14 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
         self
     }
 
+    pub fn with_minimum_trace_l1_invalidation_count(
+        mut self,
+        minimum_trace_l1_invalidation_count: usize,
+    ) -> Self {
+        self.minimum_trace_l1_invalidation_count = minimum_trace_l1_invalidation_count;
+        self
+    }
+
     pub fn with_minimum_diagnostic_print_event_count(
         mut self,
         minimum_diagnostic_print_event_count: usize,
@@ -420,6 +443,10 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
         self.minimum_trace_cache_flush_count
     }
 
+    pub const fn minimum_trace_l1_invalidation_count(&self) -> usize {
+        self.minimum_trace_l1_invalidation_count
+    }
+
     pub const fn minimum_diagnostic_print_event_count(&self) -> usize {
         self.minimum_diagnostic_print_event_count
     }
@@ -491,6 +518,7 @@ fn traffic_trace_replay_summary_meets_minimum(
         && actual.trace_tlb_sync_count() >= expected.minimum_trace_tlb_sync_count()
         && actual.cache_flush_event_count() >= expected.minimum_cache_flush_event_count()
         && actual.trace_cache_flush_count() >= expected.minimum_trace_cache_flush_count()
+        && actual.trace_l1_invalidation_count() >= expected.minimum_trace_l1_invalidation_count()
         && actual.diagnostic_print_event_count() >= expected.minimum_diagnostic_print_event_count()
         && actual.trace_diagnostic_count() >= expected.minimum_trace_diagnostic_count()
         && actual.htm_abort_event_count() >= expected.minimum_htm_abort_event_count()
