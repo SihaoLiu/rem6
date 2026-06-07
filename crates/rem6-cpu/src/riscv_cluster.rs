@@ -19,8 +19,8 @@ use crate::riscv_cluster_run::{
 use crate::riscv_data_issue::{OutstandingDataAccess, PreparedDataParallelAccess};
 use crate::riscv_reservation::RiscvReservationTracker;
 use crate::{
-    CpuId, OutstandingFetch, RiscvCore, RiscvCoreDriveAction, RiscvCpuError,
-    RiscvStoreConditionalFailureDiagnostic,
+    CpuId, HtmAbortRecord, HtmFailureCause, HtmTransactionError, OutstandingFetch, RiscvCore,
+    RiscvCoreDriveAction, RiscvCpuError, RiscvStoreConditionalFailureDiagnostic,
 };
 
 enum PreparedParallelAction {
@@ -48,6 +48,27 @@ enum PreparedParallelAction {
 pub struct RiscvCluster {
     cores: BTreeMap<CpuId, RiscvCore>,
     reservations: Arc<Mutex<RiscvReservationTracker>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RiscvClusterHtmAbortOutcome {
+    NoMatchingDataRoute {
+        route: MemoryRouteId,
+    },
+    NoActiveTransaction {
+        cpu: CpuId,
+        route: MemoryRouteId,
+    },
+    Aborted {
+        cpu: CpuId,
+        route: MemoryRouteId,
+        abort: HtmAbortRecord,
+    },
+    Failed {
+        cpu: CpuId,
+        route: MemoryRouteId,
+        error: HtmTransactionError,
+    },
 }
 
 impl RiscvCluster {
@@ -131,6 +152,28 @@ impl RiscvCluster {
             .filter(|core| core.data_route() == Some(route))
             .filter_map(RiscvCore::flush_data_translation_tlb)
             .sum()
+    }
+
+    pub fn abort_htm_transaction_for_data_route(
+        &self,
+        route: MemoryRouteId,
+        cause: HtmFailureCause,
+    ) -> RiscvClusterHtmAbortOutcome {
+        let Some((cpu, core)) = self
+            .cores
+            .iter()
+            .find(|(_, core)| core.data_route() == Some(route))
+        else {
+            return RiscvClusterHtmAbortOutcome::NoMatchingDataRoute { route };
+        };
+        let cpu = *cpu;
+        let Some(active) = core.htm_transaction_snapshot().active().cloned() else {
+            return RiscvClusterHtmAbortOutcome::NoActiveTransaction { cpu, route };
+        };
+        match core.abort_htm_transaction(active.uid(), cause) {
+            Ok(abort) => RiscvClusterHtmAbortOutcome::Aborted { cpu, route, abort },
+            Err(error) => RiscvClusterHtmAbortOutcome::Failed { cpu, route, error },
+        }
     }
 
     pub fn invalidate_load_reservation_for_agent_if_overlaps(

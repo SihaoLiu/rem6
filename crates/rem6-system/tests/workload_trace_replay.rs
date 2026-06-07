@@ -1,5 +1,5 @@
 use rem6_boot::BootImage;
-use rem6_cpu::CpuId;
+use rem6_cpu::{CpuId, RiscvClusterHtmAbortOutcome};
 use rem6_kernel::PartitionId;
 use rem6_memory::{
     AccessSize, Address, AddressRange, MemoryTargetId, ResponseStatus, TranslationQueueConfig,
@@ -1186,6 +1186,40 @@ fn workload_replay_applies_tlbi_ext_sync_to_data_translation_tlb() {
     assert_eq!(core.data_translation_tlb_entry_count(), Some(0));
     let summary = &outcome.result().traffic_trace_replay_summaries()[0];
     assert_eq!(summary.tlb_sync_event_count(), 1);
+}
+
+#[test]
+fn workload_replay_binds_htm_abort_sideband_to_data_route_core() {
+    let manifest = replay_manifest_with_data_cache("riscv-replay-trace-htm-abort-data-core");
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let controller = controller_for_packets(&[PacketFields {
+        tick: 4,
+        command: GEM5_HTM_ABORT,
+        address: None,
+        size: None,
+        packet_id: Some(960),
+    }]);
+
+    let outcome = RiscvWorkloadReplay::new(plan)
+        .with_max_turns(96)
+        .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
+            controller,
+            route_id("cpu0.data"),
+            PartitionId::new(2),
+        ))
+        .run_parallel()
+        .unwrap();
+
+    let traffic_replay = &outcome.traffic_trace_replays()[0];
+    assert!(traffic_replay.errors().is_empty());
+    let htm_aborts = traffic_replay.htm_abort_records();
+    assert_eq!(htm_aborts.len(), 1);
+    assert!(matches!(
+        htm_aborts[0].cluster_outcome(),
+        RiscvClusterHtmAbortOutcome::NoActiveTransaction { cpu, .. }
+            if *cpu == CpuId::new(0)
+    ));
+    assert_eq!(htm_aborts[0].trace_packet_id(), Some(960));
 }
 
 #[test]

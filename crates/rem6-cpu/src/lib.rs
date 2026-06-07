@@ -130,7 +130,7 @@ pub use o3_pipeline::{
     O3WritebackTransferPolicy,
 };
 pub use riscv_activity::RiscvCoreDriveActivity;
-pub use riscv_cluster::{RiscvCluster, RiscvClusterError};
+pub use riscv_cluster::{RiscvCluster, RiscvClusterError, RiscvClusterHtmAbortOutcome};
 pub use riscv_cluster_run::{
     RiscvClusterDriveEvent, RiscvClusterParallelBatchTimelineRecord, RiscvClusterRun,
     RiscvClusterSchedulerEpoch, RiscvClusterStopReason, RiscvClusterTurn,

@@ -1,6 +1,7 @@
 use rem6_cpu::{
-    CpuCore, CpuFetchConfig, CpuId, CpuResetState, HtmFailureCause, HtmTransactionError,
-    HtmTransactionState, HtmTransactionUid, RiscvCore,
+    CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, HtmFailureCause,
+    HtmTransactionError, HtmTransactionState, HtmTransactionUid, RiscvCluster,
+    RiscvClusterHtmAbortOutcome, RiscvCore,
 };
 use rem6_isa_riscv::Register;
 use rem6_kernel::PartitionId;
@@ -36,6 +37,32 @@ fn core(entry: u64) -> RiscvCore {
             ),
         )
         .unwrap(),
+    )
+}
+
+fn data_core(cpu: u32, fetch_route: u64, data_route: u64, entry: u64) -> RiscvCore {
+    let core = CpuCore::new(
+        CpuResetState::new(
+            CpuId::new(cpu),
+            PartitionId::new(cpu),
+            AgentId::new(cpu + 7),
+            Address::new(entry),
+        ),
+        CpuFetchConfig::new(
+            endpoint(&format!("cpu{cpu}.ifetch")),
+            MemoryRouteId::new(fetch_route),
+            layout(),
+            AccessSize::new(4).unwrap(),
+        ),
+    )
+    .unwrap();
+    RiscvCore::with_data(
+        core,
+        CpuDataConfig::new(
+            endpoint(&format!("cpu{cpu}.dmem")),
+            MemoryRouteId::new(data_route),
+            layout(),
+        ),
     )
 }
 
@@ -175,4 +202,46 @@ fn riscv_core_nested_htm_abort_uses_outer_checkpoint() {
 
     assert_eq!(core.read_register(reg(7)), 0x100);
     assert!(!core.in_htm_transaction());
+}
+
+#[test]
+fn riscv_cluster_htm_abort_by_data_route_restores_matching_core_checkpoint() {
+    let core0 = data_core(0, 0, 10, 0x8000);
+    let core1 = data_core(1, 1, 11, 0x9000);
+    core0.write_register(reg(8), 0x1111);
+    let begin = core0.begin_htm_transaction().unwrap();
+    core0.write_register(reg(8), 0x2222);
+
+    let cluster = RiscvCluster::new([core0.clone(), core1.clone()]).unwrap();
+    let outcome = cluster
+        .abort_htm_transaction_for_data_route(MemoryRouteId::new(10), HtmFailureCause::Memory);
+
+    assert!(matches!(
+        outcome,
+        RiscvClusterHtmAbortOutcome::Aborted { cpu, route, abort }
+            if cpu == CpuId::new(0)
+                && route == MemoryRouteId::new(10)
+                && abort.uid() == begin.uid()
+                && abort.cause() == HtmFailureCause::Memory
+    ));
+    assert_eq!(core0.read_register(reg(8)), 0x1111);
+    assert!(!core0.in_htm_transaction());
+    assert_eq!(core1.read_register(reg(8)), 0);
+}
+
+#[test]
+fn riscv_cluster_htm_abort_by_data_route_reports_no_active_transaction() {
+    let core = data_core(0, 0, 10, 0x8000);
+    let cluster = RiscvCluster::new([core]).unwrap();
+
+    assert_eq!(
+        cluster.abort_htm_transaction_for_data_route(
+            MemoryRouteId::new(10),
+            HtmFailureCause::Explicit,
+        ),
+        RiscvClusterHtmAbortOutcome::NoActiveTransaction {
+            cpu: CpuId::new(0),
+            route: MemoryRouteId::new(10),
+        }
+    );
 }
