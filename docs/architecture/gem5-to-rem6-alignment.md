@@ -3052,6 +3052,11 @@ matched address-bearing memory failure records typed error metadata at the
 failure tick without executing a successful data-cache access; on data-cache
 routes, the workload backend also emits run-level trace error records with
 request id, error kind, line, address, size, packet id, and PC metadata.
+Every workload trace route also exposes matched memory failure metadata on the
+traffic trace replay outcome itself, including request id, error kind,
+trace order, address or matched-request line fallback, size, packet id, and PC,
+so fetch, MMIO, and non-cache data routes keep executable failure evidence even
+when no data-cache protocol record applies.
 Cache-flush sidebands apply to that backend rather than remaining audit-only
 events. Diagnostic print sidebands on those routes record a non-mutating
 data-cache snapshot at the sideband execution tick. TLBI external-sync sidebands
@@ -3141,7 +3146,8 @@ completion wrapper records them for audit. The parallel replay executor now
 also invokes the registered control-completion sink for replayed control
 failures at the traced failure tick, so workload replay receives HTM and sync
 error completions through the same ordered consumer path as acknowledgements.
-Broader cache and CPU error propagation remains open.
+Cache-controller and CPU-port error injection beyond those executable replay
+failure records remains open.
 Trace response and error policy accessors are therefore not intended as a
 standalone API surface: the controller uses them to select pending replay
 sources and synthesize memory or control replay actions, the target runtime

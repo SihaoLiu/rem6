@@ -27,12 +27,12 @@ mod support;
 use support::traffic_trace::{
     controller_for_packet_records, controller_for_packets, endpoint, PacketFields, PacketRecord,
     GEM5_CLEAN_INVALID_REQ, GEM5_CLEAN_INVALID_RESP, GEM5_CLEAN_SHARED_REQ, GEM5_CLEAN_SHARED_RESP,
-    GEM5_FLAG_KERNEL, GEM5_FLUSH_REQ, GEM5_FUNCTIONAL_WRITE_ERROR, GEM5_HTM_ABORT, GEM5_HTM_REQ,
-    GEM5_HTM_REQ_RESP, GEM5_INVALID_DEST_ERROR, GEM5_MEM_FENCE_REQ, GEM5_MEM_FENCE_RESP,
-    GEM5_MEM_SYNC_REQ, GEM5_MEM_SYNC_RESP, GEM5_PRINT_REQ, GEM5_READ_REQ, GEM5_READ_RESP,
-    GEM5_READ_RESP_WITH_INVALIDATE, GEM5_STORE_COND_FAIL_REQ, GEM5_STORE_COND_REQ,
-    GEM5_STORE_COND_RESP, GEM5_SYNC_INV_L1, GEM5_TLBI_EXT_SYNC, GEM5_WRITEBACK_DIRTY,
-    GEM5_WRITE_ERROR, GEM5_WRITE_REQ, GEM5_WRITE_RESP,
+    GEM5_FLAG_KERNEL, GEM5_FLUSH_REQ, GEM5_FUNCTIONAL_READ_ERROR, GEM5_FUNCTIONAL_WRITE_ERROR,
+    GEM5_HTM_ABORT, GEM5_HTM_REQ, GEM5_HTM_REQ_RESP, GEM5_INVALID_DEST_ERROR, GEM5_MEM_FENCE_REQ,
+    GEM5_MEM_FENCE_RESP, GEM5_MEM_SYNC_REQ, GEM5_MEM_SYNC_RESP, GEM5_PRINT_REQ, GEM5_READ_ERROR,
+    GEM5_READ_REQ, GEM5_READ_RESP, GEM5_READ_RESP_WITH_INVALIDATE, GEM5_STORE_COND_FAIL_REQ,
+    GEM5_STORE_COND_REQ, GEM5_STORE_COND_RESP, GEM5_SYNC_INV_L1, GEM5_TLBI_EXT_SYNC,
+    GEM5_WRITEBACK_DIRTY, GEM5_WRITE_ERROR, GEM5_WRITE_REQ, GEM5_WRITE_RESP,
 };
 
 fn workload_id(value: &str) -> rem6_workload::WorkloadId {
@@ -733,6 +733,102 @@ fn workload_replay_records_bound_traffic_trace_failures_and_sidebands() {
 }
 
 #[test]
+fn workload_replay_records_fetch_trace_read_error_metadata() {
+    let outcome = replay_with_controller(
+        "riscv-replay-fetch-trace-read-error",
+        &[
+            PacketFields {
+                tick: 0,
+                command: GEM5_READ_REQ,
+                address: Some(0xa000),
+                size: Some(8),
+                packet_id: Some(912),
+            },
+            PacketFields {
+                tick: 3,
+                command: GEM5_READ_ERROR,
+                address: Some(0xa000),
+                size: Some(8),
+                packet_id: Some(912),
+            },
+        ],
+    )
+    .unwrap();
+
+    let traffic_replay = &outcome.traffic_trace_replays()[0];
+    assert!(traffic_replay.errors().is_empty());
+    assert_eq!(traffic_replay.runtime().memory_failures().len(), 1);
+    assert!(traffic_replay.response_deliveries().is_empty());
+
+    let failures = traffic_replay.memory_failure_records();
+    assert_eq!(failures.len(), 1);
+    let failure = &failures[0];
+    assert_eq!(failure.tick(), 3);
+    assert_eq!(failure.trace_tick(), 3);
+    assert_eq!(failure.sequence(), 1);
+    assert_eq!(failure.error(), TrafficTraceErrorKind::Read);
+    assert_eq!(failure.address(), Some(Address::new(0xa000)));
+    assert_eq!(failure.line(), Address::new(0xa000));
+    assert_eq!(failure.size_bytes(), Some(8));
+    assert_eq!(failure.trace_packet_id(), Some(912));
+    assert_eq!(
+        failure.request_id(),
+        traffic_replay.runtime().memory_failures()[0]
+            .record()
+            .failure()
+            .request_id()
+    );
+}
+
+#[test]
+fn workload_replay_records_addressless_fetch_functional_read_error_metadata() {
+    let outcome = replay_with_controller(
+        "riscv-replay-fetch-trace-functional-read-error",
+        &[
+            PacketFields {
+                tick: 0,
+                command: GEM5_READ_REQ,
+                address: Some(0xa040),
+                size: Some(8),
+                packet_id: Some(913),
+            },
+            PacketFields {
+                tick: 3,
+                command: GEM5_FUNCTIONAL_READ_ERROR,
+                address: None,
+                size: None,
+                packet_id: Some(913),
+            },
+        ],
+    )
+    .unwrap();
+
+    let traffic_replay = &outcome.traffic_trace_replays()[0];
+    assert!(traffic_replay.errors().is_empty());
+    assert_eq!(traffic_replay.runtime().memory_failures().len(), 1);
+    assert!(traffic_replay.response_deliveries().is_empty());
+
+    let failures = traffic_replay.memory_failure_records();
+    assert_eq!(failures.len(), 1);
+    let failure = &failures[0];
+    assert_eq!(failure.tick(), 3);
+    assert_eq!(failure.trace_tick(), 3);
+    assert_eq!(failure.sequence(), 1);
+    assert_eq!(failure.error(), TrafficTraceErrorKind::FunctionalRead);
+    assert_eq!(failure.address(), Some(Address::new(0xa040)));
+    assert_eq!(failure.line(), Address::new(0xa040));
+    assert_eq!(failure.size_bytes(), None);
+    assert_eq!(failure.trace_packet_id(), Some(913));
+    assert_eq!(
+        failure.request_id(),
+        traffic_replay.runtime().memory_failures()[0]
+            .record()
+            .failure()
+            .request_id()
+    );
+}
+
+#[test]
 fn workload_replay_records_typed_trace_sideband_summary_counts() {
     let outcome = replay_with_controller(
         "riscv-replay-typed-trace-sideband-summary",
@@ -1180,6 +1276,14 @@ fn workload_replay_does_not_mutate_data_cache_for_trace_write_error() {
     assert_eq!(trace_error.line(), Address::new(0x9000));
     assert_eq!(trace_error.size_bytes(), Some(8));
     assert_eq!(trace_error.trace_packet_id(), Some(950));
+    let memory_failures = traffic_replay.memory_failure_records();
+    assert_eq!(memory_failures.len(), 1);
+    assert_eq!(memory_failures[0].tick(), 3);
+    assert_eq!(memory_failures[0].error(), TrafficTraceErrorKind::Write);
+    assert_eq!(memory_failures[0].address(), Some(Address::new(0x9008)));
+    assert_eq!(memory_failures[0].line(), Address::new(0x9000));
+    assert_eq!(memory_failures[0].size_bytes(), Some(8));
+    assert_eq!(memory_failures[0].trace_packet_id(), Some(950));
     assert!(outcome.run().data_cache_runs().is_empty());
 }
 
@@ -1241,6 +1345,17 @@ fn workload_replay_records_addressless_functional_write_error_from_request_conte
     assert_eq!(trace_error.line(), Address::new(0x9000));
     assert_eq!(trace_error.size_bytes(), None);
     assert_eq!(trace_error.trace_packet_id(), Some(951));
+    let memory_failures = traffic_replay.memory_failure_records();
+    assert_eq!(memory_failures.len(), 1);
+    assert_eq!(memory_failures[0].tick(), 3);
+    assert_eq!(
+        memory_failures[0].error(),
+        TrafficTraceErrorKind::FunctionalWrite
+    );
+    assert_eq!(memory_failures[0].address(), Some(Address::new(0x9000)));
+    assert_eq!(memory_failures[0].line(), Address::new(0x9000));
+    assert_eq!(memory_failures[0].size_bytes(), None);
+    assert_eq!(memory_failures[0].trace_packet_id(), Some(951));
     assert!(outcome.run().data_cache_runs().is_empty());
 }
 

@@ -8,7 +8,8 @@ use rem6_kernel::{PartitionId, PartitionedScheduler, Tick};
 use rem6_memory::{Address, MemoryRequestId, ResponseStatus};
 use rem6_traffic::{
     TrafficController, TrafficControllerEvent, TrafficControllerEventBatch, TrafficTraceCacheKind,
-    TrafficTraceDiagnosticKind, TrafficTraceHtmKind, TrafficTraceTlbKind,
+    TrafficTraceDiagnosticKind, TrafficTraceErrorEvent, TrafficTraceErrorKind, TrafficTraceHtmKind,
+    TrafficTraceTlbKind,
 };
 use rem6_transport::{
     MemoryRouteId, MemoryTrace, MemoryTraceEvent, MemoryTransport, RequestDelivery,
@@ -133,6 +134,7 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
                 .expect("traffic trace replay response lock")
                 .clone(),
             memory_trace_events: self.trace.snapshot(),
+            memory_failure_records: self.records.memory_failure_snapshot(),
             sync_records: self.records.sync_snapshot(),
             htm_begin_records: self.records.htm_begin_snapshot(),
             htm_abort_records: self.records.htm_abort_snapshot(),
@@ -182,6 +184,7 @@ pub struct RiscvWorkloadTrafficTraceReplayOutcome {
     errors: TrafficTraceReplayControllerParallelErrors,
     response_deliveries: Vec<ResponseDelivery>,
     memory_trace_events: Vec<MemoryTraceEvent>,
+    memory_failure_records: Vec<RiscvWorkloadTraceMemoryFailureRecord>,
     sync_records: Vec<RiscvWorkloadTraceSyncRecord>,
     htm_begin_records: Vec<RiscvWorkloadTraceHtmBeginRecord>,
     htm_abort_records: Vec<RiscvWorkloadTraceHtmAbortRecord>,
@@ -212,6 +215,10 @@ impl RiscvWorkloadTrafficTraceReplayOutcome {
         &self.memory_trace_events
     }
 
+    pub fn memory_failure_records(&self) -> &[RiscvWorkloadTraceMemoryFailureRecord] {
+        &self.memory_failure_records
+    }
+
     pub fn sync_records(&self) -> &[RiscvWorkloadTraceSyncRecord] {
         &self.sync_records
     }
@@ -225,14 +232,101 @@ impl RiscvWorkloadTrafficTraceReplayOutcome {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RiscvWorkloadTraceMemoryFailureRecord {
+    tick: Tick,
+    trace_tick: Tick,
+    sequence: u64,
+    request_id: MemoryRequestId,
+    error: TrafficTraceErrorKind,
+    address: Option<Address>,
+    line: Address,
+    size_bytes: Option<u64>,
+    trace_packet_id: Option<u64>,
+    trace_pc: Option<Address>,
+}
+
+impl RiscvWorkloadTraceMemoryFailureRecord {
+    pub fn from_trace_error(
+        tick: Tick,
+        request_id: MemoryRequestId,
+        event: TrafficTraceErrorEvent,
+        request_line: Address,
+    ) -> Self {
+        Self {
+            tick,
+            trace_tick: event.tick(),
+            sequence: event.sequence(),
+            request_id,
+            error: event.kind(),
+            address: event.address().or(Some(request_line)),
+            line: request_line,
+            size_bytes: event.size_bytes(),
+            trace_packet_id: event.trace_packet_id(),
+            trace_pc: event.trace_pc(),
+        }
+    }
+
+    pub const fn tick(&self) -> Tick {
+        self.tick
+    }
+
+    pub const fn trace_tick(&self) -> Tick {
+        self.trace_tick
+    }
+
+    pub const fn sequence(&self) -> u64 {
+        self.sequence
+    }
+
+    pub const fn request_id(&self) -> MemoryRequestId {
+        self.request_id
+    }
+
+    pub const fn error(&self) -> TrafficTraceErrorKind {
+        self.error
+    }
+
+    pub const fn address(&self) -> Option<Address> {
+        self.address
+    }
+
+    pub const fn line(&self) -> Address {
+        self.line
+    }
+
+    pub const fn size_bytes(&self) -> Option<u64> {
+        self.size_bytes
+    }
+
+    pub const fn trace_packet_id(&self) -> Option<u64> {
+        self.trace_packet_id
+    }
+
+    pub const fn trace_pc(&self) -> Option<Address> {
+        self.trace_pc
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 struct RiscvWorkloadTraceReplayRecords {
+    memory_failure_records: Arc<Mutex<Vec<RiscvWorkloadTraceMemoryFailureRecord>>>,
     sync_records: Arc<Mutex<Vec<RiscvWorkloadTraceSyncRecord>>>,
     htm_begin_records: Arc<Mutex<Vec<RiscvWorkloadTraceHtmBeginRecord>>>,
     htm_abort_records: Arc<Mutex<Vec<RiscvWorkloadTraceHtmAbortRecord>>>,
 }
 
 impl RiscvWorkloadTraceReplayRecords {
+    fn memory_failure_snapshot(&self) -> Vec<RiscvWorkloadTraceMemoryFailureRecord> {
+        let mut records = self
+            .memory_failure_records
+            .lock()
+            .expect("traffic trace replay memory failure lock")
+            .clone();
+        records.sort_by_key(|record| (record.tick(), record.sequence(), record.line().get()));
+        records
+    }
+
     fn sync_snapshot(&self) -> Vec<RiscvWorkloadTraceSyncRecord> {
         self.sync_records
             .lock()
@@ -252,6 +346,13 @@ impl RiscvWorkloadTraceReplayRecords {
             .lock()
             .expect("traffic trace replay htm abort lock")
             .clone()
+    }
+
+    fn record_memory_failure(&self, record: RiscvWorkloadTraceMemoryFailureRecord) {
+        self.memory_failure_records
+            .lock()
+            .expect("workload trace memory failure lock")
+            .push(record);
     }
 
     fn record_sync(&self, record: RiscvWorkloadTraceSyncRecord) {
@@ -1029,9 +1130,19 @@ impl WorkloadTraceDataCacheConsumerInner {
         &mut self,
         tick: Tick,
         request_id: MemoryRequestId,
-        event: rem6_traffic::TrafficTraceErrorEvent,
+        event: TrafficTraceErrorEvent,
         fallback_address: Option<Address>,
     ) {
+        if let Some(request_line) = fallback_address {
+            self.records.record_memory_failure(
+                RiscvWorkloadTraceMemoryFailureRecord::from_trace_error(
+                    tick,
+                    request_id,
+                    event,
+                    request_line,
+                ),
+            );
+        }
         if let Some(data_cache) = self.data_cache.as_ref() {
             data_cache
                 .lock()

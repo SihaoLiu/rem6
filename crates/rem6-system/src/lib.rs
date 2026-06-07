@@ -273,7 +273,8 @@ pub use wait_status::{
 pub use workload_replay::{
     RiscvWorkloadReplay, RiscvWorkloadReplayError, RiscvWorkloadReplayOutcome,
     RiscvWorkloadTraceHtmAbortRecord, RiscvWorkloadTraceHtmBeginRecord,
-    RiscvWorkloadTraceSyncOutcome, RiscvWorkloadTraceSyncRecord, RiscvWorkloadTrafficTraceReplay,
+    RiscvWorkloadTraceMemoryFailureRecord, RiscvWorkloadTraceSyncOutcome,
+    RiscvWorkloadTraceSyncRecord, RiscvWorkloadTrafficTraceReplay,
     RiscvWorkloadTrafficTraceReplayOutcome,
 };
 
