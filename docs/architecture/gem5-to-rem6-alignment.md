@@ -3091,8 +3091,11 @@ execution consumers before the target-outcome wrapper records them for audit.
 Matched sync/HTM control failures are available to the control-completion
 helper and to a controller-aware control-event helper that returns
 acknowledgement or failure events directly to execution consumers before the
-completion wrapper records them for audit. Broader cache and CPU error
-propagation remains open.
+completion wrapper records them for audit. The parallel replay executor now
+also invokes the registered control-completion sink for replayed control
+failures at the traced failure tick, so workload replay receives HTM and sync
+error completions through the same ordered consumer path as acknowledgements.
+Broader cache and CPU error propagation remains open.
 Trace response and error policy accessors are therefore not intended as a
 standalone API surface: the controller uses them to select pending replay
 sources and synthesize memory or control replay actions, the target runtime

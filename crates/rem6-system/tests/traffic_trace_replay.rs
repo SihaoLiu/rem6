@@ -7,10 +7,11 @@ use rem6_system::{
     traffic_trace_replay_controller_target_outcome,
     traffic_trace_replay_runtime_control_completion, traffic_trace_replay_runtime_target_outcome,
     traffic_trace_replay_target_event, traffic_trace_replay_target_outcome,
-    TrafficTraceReplayControlError, TrafficTraceReplayControlRuntime,
-    TrafficTraceReplayControllerControlError, TrafficTraceReplayControllerParallelExecutor,
-    TrafficTraceReplayControllerRuntime, TrafficTraceReplayControllerTargetError,
-    TrafficTraceReplayTargetError, TrafficTraceReplayTargetEvent, TrafficTraceReplayTargetRuntime,
+    TrafficTraceReplayControlError, TrafficTraceReplayControlEvent,
+    TrafficTraceReplayControlRuntime, TrafficTraceReplayControllerControlError,
+    TrafficTraceReplayControllerParallelExecutor, TrafficTraceReplayControllerRuntime,
+    TrafficTraceReplayControllerTargetError, TrafficTraceReplayTargetError,
+    TrafficTraceReplayTargetEvent, TrafficTraceReplayTargetRuntime,
 };
 use rem6_traffic::{
     TrafficControllerEvent, TrafficControllerEventBatch, TrafficTraceControlFailure,
@@ -1425,6 +1426,140 @@ fn traffic_trace_replay_controller_parallel_executor_continues_after_no_response
         .collect::<Vec<_>>();
     assert_eq!(sent_ticks, vec![0, 1]);
     assert!(executor.runtime().lock().unwrap().is_empty());
+}
+
+#[test]
+fn traffic_trace_replay_controller_parallel_executor_reports_control_failure_completion() {
+    let mut controller = controller_for_packets(&[
+        PacketFields {
+            tick: 0,
+            command: GEM5_HTM_REQ,
+            address: Some(0xe200),
+            size: Some(16),
+            packet_id: Some(135),
+        },
+        PacketFields {
+            tick: 7,
+            command: GEM5_INVALID_DEST_ERROR,
+            address: Some(0xe200),
+            size: Some(16),
+            packet_id: Some(135),
+        },
+    ]);
+
+    assert!(controller.start(0).unwrap().is_empty());
+    let completions = Arc::new(Mutex::new(Vec::new()));
+    let completion_log = Arc::clone(&completions);
+    let executor = TrafficTraceReplayControllerParallelExecutor::new(controller)
+        .with_control_completion_sink(move |tick, event_context| match event_context.event() {
+            TrafficTraceReplayControlEvent::ControlFailure { record, .. } => {
+                assert!(event_context.trace_sync().is_none());
+                let htm = event_context.trace_htm().unwrap();
+                completion_log.lock().unwrap().push((
+                    tick,
+                    record.tick(),
+                    record.failure().error(),
+                    htm.trace_packet_id(),
+                ));
+            }
+            TrafficTraceReplayControlEvent::ControlAck { .. } => {
+                panic!("trace control failure must not report an ack completion");
+            }
+        });
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(1, 1).unwrap();
+
+    let scheduled = executor
+        .schedule_controller_parallel(
+            &mut scheduler,
+            &MemoryTransport::new(),
+            rem6_transport::MemoryRouteId::new(0),
+            MemoryTrace::new(),
+            PartitionId::new(0),
+            |_| panic!("trace control failure must not deliver a memory response"),
+        )
+        .unwrap();
+
+    assert_eq!(scheduled, 1);
+    scheduler.run_until_idle_parallel().unwrap();
+
+    assert!(executor.errors().is_empty());
+    assert_eq!(
+        *completions.lock().unwrap(),
+        vec![(7, 7, TrafficTraceErrorKind::InvalidDestination, Some(135))]
+    );
+    let runtime = executor.runtime();
+    let runtime = runtime.lock().unwrap();
+    assert_eq!(runtime.control_failures().len(), 1);
+    assert_eq!(runtime.control_failures()[0].tick(), 7);
+    assert!(runtime.control_acks().is_empty());
+    assert!(runtime.is_empty());
+}
+
+#[test]
+fn traffic_trace_replay_controller_parallel_executor_reports_sync_failure_completion() {
+    let mut controller = controller_for_packets(&[
+        PacketFields {
+            tick: 0,
+            command: GEM5_MEM_FENCE_REQ,
+            address: None,
+            size: None,
+            packet_id: Some(136),
+        },
+        PacketFields {
+            tick: 7,
+            command: GEM5_INVALID_DEST_ERROR,
+            address: None,
+            size: None,
+            packet_id: Some(136),
+        },
+    ]);
+
+    assert!(controller.start(0).unwrap().is_empty());
+    let completions = Arc::new(Mutex::new(Vec::new()));
+    let completion_log = Arc::clone(&completions);
+    let executor = TrafficTraceReplayControllerParallelExecutor::new(controller)
+        .with_control_completion_sink(move |tick, event_context| match event_context.event() {
+            TrafficTraceReplayControlEvent::ControlFailure { record, .. } => {
+                assert!(event_context.trace_htm().is_none());
+                let sync = event_context.trace_sync().unwrap();
+                completion_log.lock().unwrap().push((
+                    tick,
+                    record.tick(),
+                    record.failure().error(),
+                    sync.trace_packet_id(),
+                ));
+            }
+            TrafficTraceReplayControlEvent::ControlAck { .. } => {
+                panic!("trace sync failure must not report an ack completion");
+            }
+        });
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(1, 1).unwrap();
+
+    let scheduled = executor
+        .schedule_controller_parallel(
+            &mut scheduler,
+            &MemoryTransport::new(),
+            rem6_transport::MemoryRouteId::new(0),
+            MemoryTrace::new(),
+            PartitionId::new(0),
+            |_| panic!("trace sync failure must not deliver a memory response"),
+        )
+        .unwrap();
+
+    assert_eq!(scheduled, 1);
+    scheduler.run_until_idle_parallel().unwrap();
+
+    assert!(executor.errors().is_empty());
+    assert_eq!(
+        *completions.lock().unwrap(),
+        vec![(7, 7, TrafficTraceErrorKind::InvalidDestination, Some(136))]
+    );
+    let runtime = executor.runtime();
+    let runtime = runtime.lock().unwrap();
+    assert_eq!(runtime.control_failures().len(), 1);
+    assert_eq!(runtime.control_failures()[0].tick(), 7);
+    assert!(runtime.control_acks().is_empty());
+    assert!(runtime.is_empty());
 }
 
 #[test]

@@ -452,12 +452,17 @@ impl TrafficTraceReplayControllerParallelExecutor {
                     let delay = *delay;
                     let record = *record;
                     let runtime = Arc::clone(&runtime);
+                    let event_context = event_context.clone();
+                    let control_completion_sink = control_completion_sink.clone();
                     context
                         .schedule_local_after(delay, move |context| {
                             runtime
                                 .lock()
                                 .expect("trace replay controller runtime lock")
                                 .record_control_failure(context.now(), record);
+                            if let Some(control_completion_sink) = &control_completion_sink {
+                                control_completion_sink(context.now(), &event_context);
+                            }
                         })
                         .expect("validated trace replay control failure delay");
                 }
