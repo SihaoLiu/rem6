@@ -556,6 +556,7 @@ impl WorkloadTraceDataCacheConsumer {
                 htm_cluster,
                 htm_begin_records,
                 htm_abort_records,
+                active_htm_transactions: Vec::new(),
                 pending_requests: BTreeSet::new(),
                 pending_sidebands: Vec::new(),
             })),
@@ -615,7 +616,7 @@ impl WorkloadTraceDataCacheConsumer {
                 }
             }
             if let Some(response) = event_context.trace_response() {
-                inner.apply_trace_response(response);
+                inner.apply_trace_response(delivery.tick(), response);
             }
         }
         inner.pending_requests.remove(&completion_order);
@@ -656,6 +657,7 @@ struct WorkloadTraceDataCacheConsumerInner {
     htm_cluster: Option<RiscvCluster>,
     htm_begin_records: Arc<Mutex<Vec<RiscvWorkloadTraceHtmBeginRecord>>>,
     htm_abort_records: Arc<Mutex<Vec<RiscvWorkloadTraceHtmAbortRecord>>>,
+    active_htm_transactions: Vec<HtmTransactionUid>,
     pending_requests: BTreeSet<TrafficTraceReplayOrder>,
     pending_sidebands: Vec<WorkloadTraceDataCacheSideband>,
 }
@@ -743,6 +745,10 @@ impl WorkloadTraceDataCacheConsumerInner {
                             )
                         },
                     );
+                    clear_htm_transactions_after_trace_abort(
+                        &mut self.active_htm_transactions,
+                        &cluster_outcome,
+                    );
                     self.htm_abort_records
                         .lock()
                         .expect("workload trace htm abort lock")
@@ -771,6 +777,9 @@ impl WorkloadTraceDataCacheConsumerInner {
             RiscvClusterHtmBeginOutcome::NoMatchingDataRoute { route: self.route },
             |cluster| cluster.begin_htm_transaction_for_data_route(self.route),
         );
+        if let RiscvClusterHtmBeginOutcome::Begun { begin, .. } = &cluster_outcome {
+            self.active_htm_transactions.push(begin.uid());
+        }
         self.htm_begin_records
             .lock()
             .expect("workload trace htm begin lock")
@@ -781,13 +790,35 @@ impl WorkloadTraceDataCacheConsumerInner {
             ));
     }
 
-    fn apply_trace_response(&mut self, event: rem6_traffic::TrafficTraceResponseEvent) {
+    fn apply_trace_response(&mut self, tick: Tick, event: rem6_traffic::TrafficTraceResponseEvent) {
         if let Some(data_cache) = self.data_cache.as_ref() {
-            data_cache
-                .lock()
-                .expect("workload data cache lock")
-                .apply_trace_response_event(event);
+            let mut data_cache = data_cache.lock().expect("workload data cache lock");
+            if let Some(transaction_uid) = self.active_htm_transactions.last().copied() {
+                data_cache.record_trace_htm_access_event(tick, transaction_uid, event);
+            }
+            data_cache.apply_trace_response_event(event);
         }
+    }
+}
+
+fn clear_htm_transactions_after_trace_abort(
+    active: &mut Vec<HtmTransactionUid>,
+    outcome: &RiscvClusterHtmAbortOutcome,
+) {
+    match outcome {
+        RiscvClusterHtmAbortOutcome::Aborted { abort, .. } => {
+            clear_aborted_htm_transaction(active, abort.uid());
+        }
+        RiscvClusterHtmAbortOutcome::NoMatchingDataRoute { .. }
+        | RiscvClusterHtmAbortOutcome::NoActiveTransaction { .. }
+        | RiscvClusterHtmAbortOutcome::Failed { .. } => active.clear(),
+    }
+}
+
+fn clear_aborted_htm_transaction(active: &mut Vec<HtmTransactionUid>, uid: HtmTransactionUid) {
+    match active.iter().position(|active_uid| *active_uid == uid) {
+        Some(index) => active.truncate(index),
+        None => active.clear(),
     }
 }
 
@@ -913,5 +944,27 @@ fn workload_traffic_trace_event_tick(event: &TrafficControllerEvent) -> Tick {
         TrafficControllerEvent::TraceResponseMatch(response) => response.response().tick(),
         TrafficControllerEvent::TraceErrorMatch(error) => error.error().tick(),
         TrafficControllerEvent::TraceReplayAction(action) => action.tick(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rem6_cpu::CpuId;
+
+    use super::*;
+
+    #[test]
+    fn trace_abort_boundary_clears_active_htm_transaction_without_cpu_abort() {
+        let mut active = vec![HtmTransactionUid::new(7)];
+
+        clear_htm_transactions_after_trace_abort(
+            &mut active,
+            &RiscvClusterHtmAbortOutcome::NoActiveTransaction {
+                cpu: CpuId::new(0),
+                route: MemoryRouteId::new(3),
+            },
+        );
+
+        assert!(active.is_empty());
     }
 }

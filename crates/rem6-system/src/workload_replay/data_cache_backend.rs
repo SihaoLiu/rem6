@@ -12,6 +12,7 @@ use rem6_coherence::{
     PartitionedMesiDirectoryLineHarnessSnapshot, PartitionedMoesiDirectoryLineHarness,
     PartitionedMoesiDirectoryLineHarnessSnapshot,
 };
+use rem6_cpu::HtmTransactionUid;
 use rem6_directory::{
     ChiDirectoryLineState, DirectoryLineState, MesiDirectoryLineState, MoesiDirectoryLineState,
 };
@@ -30,7 +31,10 @@ use rem6_workload::{WorkloadDataCacheProtocol, WorkloadRiscvDataCache};
 
 use super::cache_response::data_cache_response_result;
 use super::RiscvWorkloadReplayError;
-use crate::{RiscvDataCacheProtocol, RiscvDataCacheRunRecord, RiscvTraceDiagnosticRecord};
+use crate::{
+    RiscvDataCacheProtocol, RiscvDataCacheRunRecord, RiscvTraceDiagnosticRecord,
+    RiscvTraceHtmAccessKind, RiscvTraceHtmAccessRecord,
+};
 
 enum WorkloadDataCacheHarness {
     Msi(PartitionedDirectoryLineHarness),
@@ -52,6 +56,7 @@ pub(super) struct WorkloadDataCacheLineBackend {
     harness: WorkloadDataCacheHarness,
     records: Vec<RiscvDataCacheRunRecord>,
     trace_diagnostic_records: Vec<RiscvTraceDiagnosticRecord>,
+    trace_htm_access_records: Vec<RiscvTraceHtmAccessRecord>,
     error: Option<RiscvWorkloadReplayError>,
 }
 
@@ -204,6 +209,7 @@ impl WorkloadDataCacheLineBackend {
             harness,
             records: Vec::new(),
             trace_diagnostic_records: Vec::new(),
+            trace_htm_access_records: Vec::new(),
             error: None,
         })
     }
@@ -214,6 +220,10 @@ impl WorkloadDataCacheLineBackend {
 
     fn trace_diagnostic_records(&self) -> Vec<RiscvTraceDiagnosticRecord> {
         self.trace_diagnostic_records.clone()
+    }
+
+    fn trace_htm_access_records(&self) -> Vec<RiscvTraceHtmAccessRecord> {
+        self.trace_htm_access_records.clone()
     }
 
     fn take_error(&mut self) -> Option<RiscvWorkloadReplayError> {
@@ -240,6 +250,15 @@ impl WorkloadDataCacheLineBackend {
         event.address().is_some_and(|address| {
             (event.invalidates_line() || event.cleans_line())
                 && self.layout.line_address(address) == self.line
+        })
+    }
+
+    fn accepts_trace_htm_access_event(&self, event: TrafficTraceResponseEvent) -> bool {
+        event.address().is_some_and(|address| {
+            self.layout.line_address(address) == self.line
+                && event.size_bytes().is_some()
+                && !event.is_prefetch()
+                && (event.is_read() || event.is_write())
         })
     }
 
@@ -323,6 +342,45 @@ impl WorkloadDataCacheLineBackend {
             self.invalidate_trace_line();
         } else if event.cleans_line() {
             self.clean_trace_line();
+        }
+        true
+    }
+
+    fn record_trace_htm_access_event(
+        &mut self,
+        tick: Tick,
+        transaction_uid: HtmTransactionUid,
+        event: TrafficTraceResponseEvent,
+    ) -> bool {
+        if !self.accepts_trace_htm_access_event(event) {
+            return false;
+        }
+
+        if event.is_read() {
+            if let Some(record) = RiscvTraceHtmAccessRecord::from_trace_response(
+                RiscvTraceHtmAccessKind::ReadSet,
+                tick,
+                transaction_uid,
+                self.protocol,
+                self.target,
+                self.layout,
+                event,
+            ) {
+                self.trace_htm_access_records.push(record);
+            }
+        }
+        if event.is_write() {
+            if let Some(record) = RiscvTraceHtmAccessRecord::from_trace_response(
+                RiscvTraceHtmAccessKind::WriteSet,
+                tick,
+                transaction_uid,
+                self.protocol,
+                self.target,
+                self.layout,
+                event,
+            ) {
+                self.trace_htm_access_records.push(record);
+            }
         }
         true
     }
@@ -549,6 +607,16 @@ impl WorkloadDataCacheBackend {
             .collect()
     }
 
+    pub(super) fn trace_htm_access_records(&self) -> Vec<RiscvTraceHtmAccessRecord> {
+        let mut records = self
+            .lines
+            .values()
+            .flat_map(WorkloadDataCacheLineBackend::trace_htm_access_records)
+            .collect::<Vec<_>>();
+        records.sort_by_key(|record| (record.tick(), record.sequence(), record.line().get()));
+        records
+    }
+
     pub(super) fn take_error(&mut self) -> Option<RiscvWorkloadReplayError> {
         self.lines
             .values_mut()
@@ -567,6 +635,18 @@ impl WorkloadDataCacheBackend {
             .values_mut()
             .find(|line| line.accepts_trace_response_event(event))
             .is_some_and(|line| line.apply_trace_response_event(event))
+    }
+
+    pub(super) fn record_trace_htm_access_event(
+        &mut self,
+        tick: Tick,
+        transaction_uid: HtmTransactionUid,
+        event: TrafficTraceResponseEvent,
+    ) -> bool {
+        self.lines
+            .values_mut()
+            .find(|line| line.accepts_trace_htm_access_event(event))
+            .is_some_and(|line| line.record_trace_htm_access_event(tick, transaction_uid, event))
     }
 
     pub(super) fn apply_trace_diagnostic_event(
