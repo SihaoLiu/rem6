@@ -2888,7 +2888,10 @@ as `TraceSync` batch entries. If a gem5 probe
 record carries synthetic `addr` or `size` fields for those commands, rem6
 accepts the fields for trace compatibility but treats them as non-semantic
 because the sync event contract is not address-scoped. The same sync event
-contract preserves gem5 `KERNEL` request flags as typed `kernel_sync` metadata.
+contract preserves gem5 `KERNEL` request flags as typed `kernel_sync`
+metadata, and preserves gem5 `INV_L1` as executable MemSync invalidation policy
+for workload data-cache replay. gem5 GL2/L2 invalidation policy remains
+unsupported until rem6 has a corresponding cache-level consumer.
 `TlbiExtSync` command-id 59 packets map to typed
 `TrafficTraceEvent::Tlb` external-sync events that preserve tick ordering,
 sequence, optional packet id, optional PC metadata, gem5 request and
@@ -3082,9 +3085,12 @@ later sidebands can execute, so same-tick HTM response and abort records follow
 packet-trace order rather than scheduler insertion order.
 Matched `MemFenceReq` and `MemSyncReq` control completions also surface as
 workload-level sync records carrying source order, completion order,
-`kernel_sync`, packet id, PC metadata, and ack or failure status, giving later
-CPU, GPU, and cache synchronization consumers typed replay input without
-claiming full GPU cache-invalidation execution yet.
+`kernel_sync`, MemSync `INV_L1` policy, packet id, PC metadata, and ack or
+failure status. On coherent workload data routes, a successful `MemSyncReq`
+with `INV_L1` now invalidates the configured data-cache lines before later
+trace deliveries are applied, so subsequent trace reads execute against the
+cache model instead of stale local replay state. Broader GPU and GL2/L2
+cache-invalidation execution remains open.
 Workload replay can bind that executor to a workload route id and control
 partition, schedule it through the replay scheduler and `MemoryTransport`, and
 return response deliveries, trace memory events, and runtime records in
@@ -3125,7 +3131,8 @@ standalone API surface: the controller uses them to select pending replay
 sources and synthesize memory or control replay actions, the target runtime
 uses those actions to drive executable response and failure outcomes, and
 workload data-cache replay consumes cache, clean, invalidate, read/write, and
-HTM access policy to mutate line state and conflict records. Additional
+HTM access policy, plus MemSync `INV_L1` policy, to mutate line state and
+conflict records. Additional
 accessor work should stay tied to one of those consumers, or to a new
 execution-facing consumer with a failing test that reaches replay, workload
 cache state, or a recorded runtime outcome. The remaining integration boundary

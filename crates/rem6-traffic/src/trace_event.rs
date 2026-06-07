@@ -331,6 +331,7 @@ pub struct TrafficTraceSyncEvent {
     sequence: u64,
     kind: TrafficTraceSyncKind,
     kernel_sync: bool,
+    invalidates_l1: bool,
     trace_packet_id: Option<u64>,
     trace_pc: Option<Address>,
 }
@@ -341,6 +342,7 @@ impl TrafficTraceSyncEvent {
         sequence: u64,
         kind: TrafficTraceSyncKind,
         kernel_sync: bool,
+        invalidates_l1: bool,
         trace_packet_id: Option<u64>,
         trace_pc: Option<Address>,
     ) -> Self {
@@ -349,6 +351,7 @@ impl TrafficTraceSyncEvent {
             sequence,
             kind,
             kernel_sync,
+            invalidates_l1,
             trace_packet_id,
             trace_pc,
         }
@@ -368,6 +371,10 @@ impl TrafficTraceSyncEvent {
 
     pub const fn kernel_sync(self) -> bool {
         self.kernel_sync
+    }
+
+    pub const fn invalidates_l1(self) -> bool {
+        self.invalidates_l1
     }
 
     pub const fn is_request(self) -> bool {

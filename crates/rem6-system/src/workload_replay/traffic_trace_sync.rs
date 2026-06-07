@@ -19,6 +19,7 @@ pub struct RiscvWorkloadTraceSyncRecord {
     source_sequence: u64,
     kind: TrafficTraceSyncKind,
     kernel_sync: bool,
+    invalidates_l1: bool,
     trace_packet_id: Option<u64>,
     trace_pc: Option<Address>,
     outcome: RiscvWorkloadTraceSyncOutcome,
@@ -66,6 +67,7 @@ impl RiscvWorkloadTraceSyncRecord {
             source_sequence: sync.sequence(),
             kind: sync.kind(),
             kernel_sync: sync.kernel_sync(),
+            invalidates_l1: sync.invalidates_l1(),
             trace_packet_id: sync.trace_packet_id(),
             trace_pc: sync.trace_pc(),
             outcome,
@@ -98,6 +100,10 @@ impl RiscvWorkloadTraceSyncRecord {
 
     pub const fn kernel_sync(&self) -> bool {
         self.kernel_sync
+    }
+
+    pub const fn invalidates_l1(&self) -> bool {
+        self.invalidates_l1
     }
 
     pub const fn trace_packet_id(&self) -> Option<u64> {

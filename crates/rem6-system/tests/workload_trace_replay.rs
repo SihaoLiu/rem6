@@ -31,8 +31,8 @@ use support::traffic_trace::{
     GEM5_INVALID_DEST_ERROR, GEM5_MEM_FENCE_REQ, GEM5_MEM_FENCE_RESP, GEM5_MEM_SYNC_REQ,
     GEM5_MEM_SYNC_RESP, GEM5_PRINT_REQ, GEM5_READ_REQ, GEM5_READ_RESP,
     GEM5_READ_RESP_WITH_INVALIDATE, GEM5_STORE_COND_FAIL_REQ, GEM5_STORE_COND_REQ,
-    GEM5_STORE_COND_RESP, GEM5_TLBI_EXT_SYNC, GEM5_WRITEBACK_DIRTY, GEM5_WRITE_ERROR,
-    GEM5_WRITE_REQ, GEM5_WRITE_RESP,
+    GEM5_STORE_COND_RESP, GEM5_SYNC_INV_L1, GEM5_TLBI_EXT_SYNC, GEM5_WRITEBACK_DIRTY,
+    GEM5_WRITE_ERROR, GEM5_WRITE_REQ, GEM5_WRITE_RESP,
 };
 
 fn workload_id(value: &str) -> rem6_workload::WorkloadId {
@@ -72,6 +72,23 @@ fn boot_image() -> BootImage {
 fn boot_image_with_data_cache_line() -> BootImage {
     BootImage::new(Address::new(0x8000))
         .add_segment(Address::new(0x8000), word(0x0000_0073))
+        .unwrap()
+        .add_segment(
+            Address::new(0x9008),
+            0xfedc_ba98_7654_3210_u64.to_le_bytes().to_vec(),
+        )
+        .unwrap()
+}
+
+fn boot_image_with_delayed_data_cache_line() -> BootImage {
+    let mut image = BootImage::new(Address::new(0x8000));
+    for instruction in 0..16_u64 {
+        image = image
+            .add_segment(Address::new(0x8000 + instruction * 4), word(0x0000_0013))
+            .unwrap();
+    }
+    image
+        .add_segment(Address::new(0x8040), word(0x0000_0073))
         .unwrap()
         .add_segment(
             Address::new(0x9008),
@@ -428,13 +445,36 @@ fn replay_manifest_with_data_cache_protocol(
     id: &str,
     protocol: WorkloadDataCacheProtocol,
 ) -> WorkloadManifest {
-    WorkloadManifest::builder(workload_id(id), boot_image_with_data_cache_line())
+    replay_manifest_with_data_cache_protocol_image_and_stop(
+        id,
+        protocol,
+        boot_image_with_data_cache_line(),
+        0,
+    )
+}
+
+fn replay_manifest_with_delayed_data_cache_stop(id: &str, stop_tick: u64) -> WorkloadManifest {
+    replay_manifest_with_data_cache_protocol_image_and_stop(
+        id,
+        WorkloadDataCacheProtocol::Msi,
+        boot_image_with_delayed_data_cache_line(),
+        stop_tick,
+    )
+}
+
+fn replay_manifest_with_data_cache_protocol_image_and_stop(
+    id: &str,
+    protocol: WorkloadDataCacheProtocol,
+    boot_image: BootImage,
+    stop_tick: u64,
+) -> WorkloadManifest {
+    WorkloadManifest::builder(workload_id(id), boot_image)
         .with_topology(replay_topology_with_data_cache_protocol(protocol))
         .add_resource(kernel_resource())
         .unwrap()
         .add_required_resource(resource_id("kernel"))
         .add_host_event(WorkloadHostEvent::new(
-            0,
+            stop_tick,
             HostEventIntent::Stop {
                 reason: "host-stop".to_string(),
             },
@@ -987,6 +1027,96 @@ fn workload_replay_applies_bound_trace_flush_to_data_cache_line() {
     let traffic_replay = &outcome.traffic_trace_replays()[0];
     assert!(traffic_replay.errors().is_empty());
     assert_eq!(traffic_replay.runtime().sideband_events().len(), 1);
+    let data_cache_runs = outcome.run().data_cache_runs();
+    assert_eq!(data_cache_runs.len(), 2);
+    assert!(data_cache_runs[0].has_directory_activity());
+    assert!(data_cache_runs[1].has_directory_activity());
+}
+
+#[test]
+fn workload_replay_applies_mem_sync_inv_l1_to_data_cache_line() {
+    let manifest =
+        replay_manifest_with_delayed_data_cache_stop("riscv-replay-trace-mem-sync-inv-l1", 24);
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let controller = controller_for_packet_records(&[
+        PacketRecord {
+            tick: 0,
+            command: GEM5_READ_REQ,
+            address: Some(0x9008),
+            size: Some(8),
+            flags: None,
+            packet_id: Some(943),
+            pc: None,
+        },
+        PacketRecord {
+            tick: 3,
+            command: GEM5_READ_RESP,
+            address: Some(0x9008),
+            size: Some(8),
+            flags: None,
+            packet_id: Some(943),
+            pc: None,
+        },
+        PacketRecord {
+            tick: 4,
+            command: GEM5_MEM_SYNC_REQ,
+            address: None,
+            size: None,
+            flags: Some(GEM5_FLAG_KERNEL | GEM5_SYNC_INV_L1),
+            packet_id: Some(944),
+            pc: Some(0x2000),
+        },
+        PacketRecord {
+            tick: 6,
+            command: GEM5_MEM_SYNC_RESP,
+            address: None,
+            size: None,
+            flags: None,
+            packet_id: Some(944),
+            pc: None,
+        },
+        PacketRecord {
+            tick: 7,
+            command: GEM5_READ_REQ,
+            address: Some(0x9008),
+            size: Some(8),
+            flags: None,
+            packet_id: Some(945),
+            pc: None,
+        },
+        PacketRecord {
+            tick: 10,
+            command: GEM5_READ_RESP,
+            address: Some(0x9008),
+            size: Some(8),
+            flags: None,
+            packet_id: Some(945),
+            pc: None,
+        },
+    ]);
+
+    let outcome = RiscvWorkloadReplay::new(plan)
+        .with_max_turns(96)
+        .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
+            controller,
+            route_id("cpu0.data"),
+            PartitionId::new(2),
+        ))
+        .run_parallel()
+        .unwrap();
+
+    let traffic_replay = &outcome.traffic_trace_replays()[0];
+    assert!(traffic_replay.errors().is_empty());
+    assert_eq!(traffic_replay.scheduled_count(), 3);
+    assert_eq!(traffic_replay.response_deliveries().len(), 2);
+    assert_eq!(traffic_replay.runtime().control_acks().len(), 1);
+    assert!(traffic_replay.runtime().control_failures().is_empty());
+    let sync_records = traffic_replay.sync_records();
+    assert_eq!(sync_records.len(), 1);
+    assert_eq!(sync_records[0].kind(), TrafficTraceSyncKind::MemSync);
+    assert!(sync_records[0].kernel_sync());
+    assert!(sync_records[0].invalidates_l1());
+
     let data_cache_runs = outcome.run().data_cache_runs();
     assert_eq!(data_cache_runs.len(), 2);
     assert!(data_cache_runs[0].has_directory_activity());

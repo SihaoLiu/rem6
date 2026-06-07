@@ -110,6 +110,7 @@ const GEM5_FLAG_SECURE: u32 = 0x1000_0000;
 const GEM5_FLAG_PT_WALK: u32 = 0x2000_0000;
 const GEM5_FLAG_ATOMIC_RETURN_OP: u32 = 0x4000_0000;
 const GEM5_FLAG_ATOMIC_NO_RETURN_OP: u32 = 0x8000_0000;
+const GEM5_SYNC_INV_L1: u32 = 0x0000_0001;
 const GEM5_SUPPORTED_TRACE_FLAGS: u32 = GEM5_FLAG_ARCH_MASK
     | GEM5_FLAG_INST_FETCH
     | GEM5_FLAG_PHYSICAL
@@ -470,6 +471,7 @@ struct TrafficTraceRequestFlags {
     uncacheable: bool,
     strict_order: bool,
     kernel_sync: bool,
+    sync_inv_l1: bool,
     privileged: bool,
     cache_block_zero: bool,
     no_access: bool,
@@ -504,6 +506,7 @@ impl TrafficTraceRequestFlags {
             uncacheable: bits & GEM5_FLAG_UNCACHEABLE != 0,
             strict_order: bits & GEM5_FLAG_STRICT_ORDER != 0,
             kernel_sync: bits & GEM5_FLAG_KERNEL != 0,
+            sync_inv_l1: bits & GEM5_SYNC_INV_L1 != 0,
             privileged: bits & GEM5_FLAG_PRIVILEGED != 0,
             cache_block_zero: bits & GEM5_FLAG_CACHE_BLOCK_ZERO != 0,
             no_access: bits & GEM5_FLAG_NO_ACCESS != 0,
@@ -539,7 +542,7 @@ impl TrafficTraceRequestFlags {
         command: TrafficTraceCommand,
     ) -> Result<(), TrafficGeneratorError> {
         if command.sync_kind().is_some() {
-            if self.bits & !GEM5_FLAG_KERNEL != 0 {
+            if self.bits & !(GEM5_FLAG_KERNEL | GEM5_SYNC_INV_L1) != 0 {
                 return Err(TrafficGeneratorError::TraceUnsupportedFlags { flags: self.bits });
             }
             return Ok(());
@@ -1064,6 +1067,7 @@ impl TrafficTraceGenerator {
                 sequence,
                 kind,
                 element.flags.kernel_sync,
+                element.flags.sync_inv_l1,
                 element.packet_id,
                 element.pc,
             ))

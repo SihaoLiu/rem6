@@ -831,6 +831,15 @@ impl WorkloadDataCacheBackend {
             .is_some_and(|line| line.apply_trace_cache_event(event))
     }
 
+    pub(super) fn invalidate_trace_l1(&mut self) -> bool {
+        let mut invalidated = false;
+        for line in self.lines.values_mut() {
+            line.invalidate_trace_line();
+            invalidated = true;
+        }
+        invalidated
+    }
+
     pub(super) fn apply_trace_response_event(&mut self, event: TrafficTraceResponseEvent) -> bool {
         self.lines
             .values_mut()

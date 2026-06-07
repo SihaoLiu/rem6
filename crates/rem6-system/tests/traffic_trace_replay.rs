@@ -29,9 +29,9 @@ use support::traffic_trace::{
     completed_response, controller_for_packets, controller_for_packets_with_state_duration,
     endpoint, request, request_from, trace_cursor, PacketFields, GEM5_FLUSH_REQ, GEM5_HTM_ABORT,
     GEM5_HTM_REQ, GEM5_HTM_REQ_RESP, GEM5_INVALID_DEST_ERROR, GEM5_MEM_FENCE_REQ,
-    GEM5_MEM_FENCE_RESP, GEM5_PRINT_REQ, GEM5_READ_REQ, GEM5_READ_RESP_WITH_INVALIDATE,
-    GEM5_SOFT_PF_REQ, GEM5_SOFT_PF_RESP, GEM5_TLBI_EXT_SYNC, GEM5_WRITEBACK_DIRTY,
-    GEM5_WRITE_ERROR, GEM5_WRITE_REQ,
+    GEM5_MEM_FENCE_RESP, GEM5_MEM_SYNC_REQ, GEM5_MEM_SYNC_RESP, GEM5_PRINT_REQ, GEM5_READ_REQ,
+    GEM5_READ_RESP_WITH_INVALIDATE, GEM5_SOFT_PF_REQ, GEM5_SOFT_PF_RESP, GEM5_TLBI_EXT_SYNC,
+    GEM5_WRITEBACK_DIRTY, GEM5_WRITE_ERROR, GEM5_WRITE_REQ,
 };
 
 #[test]
@@ -697,7 +697,7 @@ fn traffic_trace_replay_controller_parallel_consumers_drive_memory_and_control_a
                     response_log.lock().unwrap().push((
                         delivery.tick(),
                         delivery.endpoint().clone(),
-                        delivery.response().request_id(),
+                        delivery.response().request_id().sequence(),
                     ));
                 },
             )
@@ -719,6 +719,109 @@ fn traffic_trace_replay_controller_parallel_consumers_drive_memory_and_control_a
     let ack = runtime.lock().unwrap().control_acks()[0];
     assert_eq!(ack.tick(), 7);
     assert_eq!(ack.trace_tick(), 7);
+    assert!(runtime.lock().unwrap().control_failures().is_empty());
+    assert!(runtime.lock().unwrap().memory_failures().is_empty());
+    assert!(runtime.lock().unwrap().is_empty());
+}
+
+#[test]
+fn traffic_trace_replay_controller_parallel_continues_memory_matching_after_sync_ack() {
+    let mut controller = controller_for_packets(&[
+        PacketFields {
+            tick: 0,
+            command: GEM5_READ_REQ,
+            address: Some(0x9100),
+            size: Some(8),
+            packet_id: Some(92),
+        },
+        PacketFields {
+            tick: 3,
+            command: GEM5_READ_RESP_WITH_INVALIDATE,
+            address: Some(0x9100),
+            size: Some(8),
+            packet_id: Some(92),
+        },
+        PacketFields {
+            tick: 4,
+            command: GEM5_MEM_SYNC_REQ,
+            address: None,
+            size: None,
+            packet_id: Some(93),
+        },
+        PacketFields {
+            tick: 6,
+            command: GEM5_MEM_SYNC_RESP,
+            address: None,
+            size: None,
+            packet_id: Some(93),
+        },
+        PacketFields {
+            tick: 7,
+            command: GEM5_READ_REQ,
+            address: Some(0x9100),
+            size: Some(8),
+            packet_id: Some(94),
+        },
+        PacketFields {
+            tick: 10,
+            command: GEM5_READ_RESP_WITH_INVALIDATE,
+            address: Some(0x9100),
+            size: Some(8),
+            packet_id: Some(94),
+        },
+    ]);
+
+    assert!(controller.start(0).unwrap().is_empty());
+    let executor = TrafficTraceReplayControllerParallelExecutor::new(controller);
+
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let responses = Arc::new(Mutex::new(Vec::new()));
+    let core = endpoint("core0");
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                core.clone(),
+                PartitionId::new(0),
+                endpoint("memory0"),
+                PartitionId::new(1),
+                3,
+                5,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    let response_log = Arc::clone(&responses);
+    assert_eq!(
+        executor
+            .schedule_controller_parallel(
+                &mut scheduler,
+                &transport,
+                route,
+                MemoryTrace::new(),
+                PartitionId::new(1),
+                move |delivery: ResponseDelivery| {
+                    response_log.lock().unwrap().push((
+                        delivery.tick(),
+                        delivery.endpoint().clone(),
+                        delivery.response().request_id().sequence(),
+                    ));
+                },
+            )
+            .unwrap(),
+        3
+    );
+
+    scheduler.run_until_idle_parallel().unwrap();
+
+    assert!(executor.errors().is_empty());
+    assert_eq!(
+        *responses.lock().unwrap(),
+        vec![(8, core.clone(), 0), (15, core, 4)]
+    );
+    let runtime = executor.runtime();
+    assert_eq!(runtime.lock().unwrap().control_acks().len(), 1);
     assert!(runtime.lock().unwrap().control_failures().is_empty());
     assert!(runtime.lock().unwrap().memory_failures().is_empty());
     assert!(runtime.lock().unwrap().is_empty());

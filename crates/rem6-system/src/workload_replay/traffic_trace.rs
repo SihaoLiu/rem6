@@ -933,6 +933,14 @@ impl WorkloadTraceDataCacheConsumerInner {
             let trace_order = event_context.trace_order();
             match event_context.event() {
                 TrafficTraceReplayControlEvent::ControlAck { .. } => {
+                    if sync.invalidates_l1() {
+                        if let Some(data_cache) = self.data_cache.as_ref() {
+                            data_cache
+                                .lock()
+                                .expect("workload data cache lock")
+                                .invalidate_trace_l1();
+                        }
+                    }
                     self.records.record_sync(RiscvWorkloadTraceSyncRecord::ack(
                         tick,
                         sync,

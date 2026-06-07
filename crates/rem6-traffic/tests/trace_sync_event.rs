@@ -15,6 +15,8 @@ const GEM5_MEM_FENCE_REQ: u32 = 38;
 const GEM5_MEM_SYNC_REQ: u32 = 39;
 const GEM5_FLAG_PHYSICAL: u32 = 0x0000_0200;
 const GEM5_FLAG_KERNEL: u32 = 0x0000_1000;
+const GEM5_SYNC_INV_L1: u32 = 0x0000_0001;
+const GEM5_SYNC_INV_L2: u32 = 0x0000_0040;
 
 #[derive(Clone, Copy)]
 struct PacketFields {
@@ -246,28 +248,61 @@ fn trace_generator_accepts_probe_addr_size_on_sync_packets() {
 }
 
 #[test]
-fn trace_parser_rejects_non_kernel_sync_flags() {
-    assert_eq!(
-        TrafficTrace::from_gem5_packet_trace(
-            &gem5_packet_trace(
-                TICK_FREQUENCY,
-                &[PacketFields {
-                    tick: 11,
-                    command: GEM5_MEM_SYNC_REQ,
-                    address: Some(0),
-                    size: Some(0),
-                    flags: Some(GEM5_FLAG_PHYSICAL),
-                    packet_id: None,
-                    pc: None,
-                }],
-            ),
+fn trace_generator_preserves_mem_sync_cache_invalidation_policy() {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace(
             TICK_FREQUENCY,
-        )
-        .unwrap_err(),
-        TrafficGeneratorError::TraceUnsupportedFlags {
-            flags: GEM5_FLAG_PHYSICAL,
-        }
-    );
+            &[PacketFields {
+                tick: 11,
+                command: GEM5_MEM_SYNC_REQ,
+                address: None,
+                size: None,
+                flags: Some(GEM5_FLAG_KERNEL | GEM5_SYNC_INV_L1),
+                packet_id: Some(13),
+                pc: Some(0x2000),
+            }],
+        ),
+        TICK_FREQUENCY,
+    )
+    .unwrap();
+    let mut generator = TrafficTraceGenerator::new(trace_config(trace));
+    generator.enter(20);
+
+    let l1_sync = match generator.next_event(20, 0).unwrap().unwrap() {
+        TrafficTraceEvent::Sync(event) => event,
+        _ => panic!("MemSyncReq should emit a sync event"),
+    };
+    assert_eq!(l1_sync.tick(), 31);
+    assert_eq!(l1_sync.kind(), TrafficTraceSyncKind::MemSync);
+    assert!(l1_sync.kernel_sync());
+    assert!(l1_sync.invalidates_l1());
+    assert_eq!(l1_sync.trace_packet_id(), Some(13));
+    assert_eq!(l1_sync.trace_pc(), Some(Address::new(0x2000)));
+}
+
+#[test]
+fn trace_parser_rejects_non_kernel_sync_flags() {
+    for flags in [GEM5_FLAG_PHYSICAL, GEM5_SYNC_INV_L2] {
+        assert_eq!(
+            TrafficTrace::from_gem5_packet_trace(
+                &gem5_packet_trace(
+                    TICK_FREQUENCY,
+                    &[PacketFields {
+                        tick: 11,
+                        command: GEM5_MEM_SYNC_REQ,
+                        address: Some(0),
+                        size: Some(0),
+                        flags: Some(flags),
+                        packet_id: None,
+                        pc: None,
+                    }],
+                ),
+                TICK_FREQUENCY,
+            )
+            .unwrap_err(),
+            TrafficGeneratorError::TraceUnsupportedFlags { flags }
+        );
+    }
 }
 
 #[test]

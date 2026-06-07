@@ -42,6 +42,7 @@ pub const GEM5_HTM_REQ_RESP: u32 = 57;
 pub const GEM5_HTM_ABORT: u32 = 58;
 pub const GEM5_TLBI_EXT_SYNC: u32 = 59;
 pub const GEM5_FLAG_KERNEL: u32 = 0x0000_1000;
+pub const GEM5_SYNC_INV_L1: u32 = 0x0000_0001;
 
 #[derive(Clone, Copy)]
 pub struct PacketFields {
