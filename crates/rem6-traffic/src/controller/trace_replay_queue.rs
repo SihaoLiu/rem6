@@ -1,8 +1,8 @@
 use std::collections::VecDeque;
 
-use rem6_memory::{MemoryRequestId, MemoryResponse};
+use rem6_memory::{Address, MemoryRequestId, MemoryResponse};
 
-use crate::{common::checked_counter_add, TrafficGeneratorError};
+use crate::{common::checked_counter_add, TrafficGeneratorError, TrafficTraceResponseEvent};
 
 use super::{
     TrafficControllerEvent, TrafficControllerEventBatch, TrafficTraceControlFailure,
@@ -59,11 +59,23 @@ impl TrafficTraceMemoryResponseRecord {
 pub struct TrafficTraceMemoryWriteCompletionRecord {
     tick: u64,
     request_id: MemoryRequestId,
+    request_line: Address,
+    response: TrafficTraceResponseEvent,
 }
 
 impl TrafficTraceMemoryWriteCompletionRecord {
-    pub const fn new(tick: u64, request_id: MemoryRequestId) -> Self {
-        Self { tick, request_id }
+    pub const fn new(
+        tick: u64,
+        request_id: MemoryRequestId,
+        request_line: Address,
+        response: TrafficTraceResponseEvent,
+    ) -> Self {
+        Self {
+            tick,
+            request_id,
+            request_line,
+            response,
+        }
     }
 
     pub const fn tick(self) -> u64 {
@@ -72,6 +84,14 @@ impl TrafficTraceMemoryWriteCompletionRecord {
 
     pub const fn request_id(self) -> MemoryRequestId {
         self.request_id
+    }
+
+    pub const fn request_line(self) -> Address {
+        self.request_line
+    }
+
+    pub const fn response(self) -> TrafficTraceResponseEvent {
+        self.response
     }
 }
 
@@ -189,9 +209,17 @@ impl TrafficTraceReplayActionQueue {
             )
         })?;
         match self.actions.remove(index)? {
-            TrafficTraceReplayAction::MemoryWriteCompletion { tick, request } => {
-                Some(TrafficTraceMemoryWriteCompletionRecord::new(tick, request))
-            }
+            TrafficTraceReplayAction::MemoryWriteCompletion {
+                tick,
+                request,
+                request_line,
+                response,
+            } => Some(TrafficTraceMemoryWriteCompletionRecord::new(
+                tick,
+                request,
+                request_line,
+                response,
+            )),
             _ => unreachable!("selected memory write completion action"),
         }
     }

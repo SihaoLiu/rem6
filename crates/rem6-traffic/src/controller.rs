@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use rem6_memory::{MemoryOperation, MemoryRequestId, MemoryResponse, ResponseStatus};
+use rem6_memory::{Address, MemoryOperation, MemoryRequestId, MemoryResponse, ResponseStatus};
 
 use crate::{
     stream::{apply_stream_ids_to_event, TrafficStreamConfig, TrafficStreamPicker},
@@ -598,6 +598,8 @@ impl TrafficController {
                         let completion = TrafficTraceReplayCompletion::WriteCompletion(
                             TrafficTraceMemoryWriteCompletion::new(
                                 request.request().request().id(),
+                                request.request().request().line_address(),
+                                *response,
                             ),
                         );
                         self.trace_replay_summary.record_completion(&completion)?;
@@ -937,15 +939,33 @@ impl TrafficTraceMemoryCompletion {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TrafficTraceMemoryWriteCompletion {
     request_id: MemoryRequestId,
+    request_line: Address,
+    response: TrafficTraceResponseEvent,
 }
 
 impl TrafficTraceMemoryWriteCompletion {
-    pub const fn new(request_id: MemoryRequestId) -> Self {
-        Self { request_id }
+    pub const fn new(
+        request_id: MemoryRequestId,
+        request_line: Address,
+        response: TrafficTraceResponseEvent,
+    ) -> Self {
+        Self {
+            request_id,
+            request_line,
+            response,
+        }
     }
 
     pub const fn request_id(self) -> MemoryRequestId {
         self.request_id
+    }
+
+    pub const fn request_line(self) -> Address {
+        self.request_line
+    }
+
+    pub const fn response(self) -> TrafficTraceResponseEvent {
+        self.response
     }
 }
 
@@ -978,6 +998,8 @@ pub enum TrafficTraceReplayAction {
     MemoryWriteCompletion {
         tick: u64,
         request: MemoryRequestId,
+        request_line: Address,
+        response: TrafficTraceResponseEvent,
     },
     ControlAck {
         tick: u64,
@@ -1004,6 +1026,8 @@ impl TrafficTraceReplayAction {
                 Self::MemoryWriteCompletion {
                     tick,
                     request: completion.request_id(),
+                    request_line: completion.request_line(),
+                    response: completion.response(),
                 }
             }
             TrafficTraceReplayCompletion::Ack => Self::ControlAck { tick },

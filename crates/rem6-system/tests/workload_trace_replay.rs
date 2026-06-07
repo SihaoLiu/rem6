@@ -32,8 +32,8 @@ use support::traffic_trace::{
     GEM5_MEM_FENCE_RESP, GEM5_MEM_SYNC_REQ, GEM5_MEM_SYNC_RESP, GEM5_PRINT_REQ, GEM5_READ_ERROR,
     GEM5_READ_REQ, GEM5_READ_RESP, GEM5_READ_RESP_WITH_INVALIDATE, GEM5_SOFT_PF_REQ,
     GEM5_SOFT_PF_RESP, GEM5_STORE_COND_FAIL_REQ, GEM5_STORE_COND_REQ, GEM5_STORE_COND_RESP,
-    GEM5_SYNC_INV_L1, GEM5_TLBI_EXT_SYNC, GEM5_WRITEBACK_DIRTY, GEM5_WRITE_ERROR, GEM5_WRITE_REQ,
-    GEM5_WRITE_RESP,
+    GEM5_SYNC_INV_L1, GEM5_TLBI_EXT_SYNC, GEM5_WRITEBACK_DIRTY, GEM5_WRITE_COMPLETE_RESP,
+    GEM5_WRITE_ERROR, GEM5_WRITE_REQ, GEM5_WRITE_RESP,
 };
 
 fn workload_id(value: &str) -> rem6_workload::WorkloadId {
@@ -746,6 +746,69 @@ fn workload_replay_records_prefetch_trace_fill_without_response_payload() {
     assert_eq!(response_record.trace_data_bytes(), Some(16));
     assert_eq!(response_record.response_data_bytes(), None);
     assert!(!response_record.data_cache_response_applied());
+}
+
+#[test]
+fn workload_replay_records_trace_write_completion_metadata() {
+    let manifest = replay_manifest_with_data_cache("riscv-replay-trace-write-completion-record");
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let controller = controller_for_packets(&[
+        PacketFields {
+            tick: 0,
+            command: GEM5_WRITE_REQ,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(918),
+        },
+        PacketFields {
+            tick: 3,
+            command: GEM5_WRITE_RESP,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(918),
+        },
+        PacketFields {
+            tick: 5,
+            command: GEM5_WRITE_COMPLETE_RESP,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(918),
+        },
+    ]);
+
+    let outcome = RiscvWorkloadReplay::new(plan)
+        .with_max_turns(96)
+        .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
+            controller,
+            route_id("cpu0.data"),
+            PartitionId::new(2),
+        ))
+        .run_parallel()
+        .unwrap();
+
+    let traffic_replay = &outcome.traffic_trace_replays()[0];
+    assert!(traffic_replay.errors().is_empty());
+    assert_eq!(traffic_replay.response_deliveries().len(), 1);
+
+    let response_records = traffic_replay.memory_response_records();
+    assert_eq!(response_records.len(), 1);
+    let response_record = &response_records[0];
+    assert_eq!(response_record.kind(), TrafficTraceResponseKind::Write);
+    assert_eq!(response_record.trace_packet_id(), Some(918));
+
+    let completion_records = traffic_replay.memory_write_completion_records();
+    assert_eq!(completion_records.len(), 1);
+    let completion = &completion_records[0];
+    assert_eq!(completion.tick(), 5);
+    assert_eq!(completion.trace_tick(), 5);
+    assert_eq!(completion.sequence(), 2);
+    assert_eq!(completion.request_id(), response_record.request_id());
+    assert_eq!(completion.kind(), TrafficTraceResponseKind::WriteComplete);
+    assert_eq!(completion.address(), Some(Address::new(0x9008)));
+    assert_eq!(completion.line(), Address::new(0x9000));
+    assert_eq!(completion.size_bytes(), Some(8));
+    assert_eq!(completion.trace_packet_id(), Some(918));
+    assert_eq!(completion.trace_pc(), None);
 }
 
 #[test]

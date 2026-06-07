@@ -2969,10 +2969,14 @@ flow when both response packets carry the same trace packet id: `WriteResp`
 drives the native memory response once, while a later matched
 `WriteCompleteResp` produces a scheduled write-completion record consumed by
 serial and parallel controller replay without fabricating a second transport
-response. The serial controller helper can cross standalone sideband trace events
-while following that write-completion packet, but it does not consume future
-request or control-response batches speculatively. On coherent workload data
-routes, response clean and invalidate policies now drive the configured
+response. The scheduled write-completion record retains the source
+`WriteCompleteResp` trace metadata and matched request line, and workload trace
+replay installs the parallel executor's write-completion sink so each executed
+callback becomes a workload-level write-completion record. The serial
+controller helper can cross standalone sideband trace events while following
+that write-completion packet, but it does not consume future request or
+control-response batches speculatively. On coherent workload data routes,
+response clean and invalidate policies now drive the configured
 data-cache line after the matched response mutates the cache model:
 `ReadRespWithInvalidate`, `CleanInvalidResp`, and `InvalidateResp` clear the
 line, while `CleanSharedResp` writes dirty line data back and keeps a clean
@@ -3057,6 +3061,11 @@ traffic trace replay outcome itself, including request id, response kind,
 transport response status, trace order, address or matched-request line
 fallback, size, packet id, PC, response-data length, trace-fill data length,
 and whether the configured workload data-cache backend consumed the response.
+Every workload trace route exposes matched write-completion metadata on the
+traffic trace replay outcome itself, including request id, response kind, trace
+order, address or matched-request line fallback, size, packet id, and PC, so
+`WriteCompleteResp` remains executable completion evidence rather than an
+audit-only trace accessor.
 Every workload trace route also exposes matched memory failure metadata on the
 traffic trace replay outcome itself, including request id, error kind,
 trace order, address or matched-request line fallback, size, packet id, and PC,

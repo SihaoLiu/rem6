@@ -1,4 +1,4 @@
-use rem6_memory::{AgentId, CacheLineLayout, MemoryOperation, ResponseStatus};
+use rem6_memory::{Address, AgentId, CacheLineLayout, MemoryOperation, ResponseStatus};
 use rem6_traffic::{
     TrafficController, TrafficControllerConfig, TrafficControllerEvent, TrafficControllerState,
     TrafficStateGenerator, TrafficStateGraphConfig, TrafficStateId, TrafficStateSpec, TrafficTrace,
@@ -216,13 +216,22 @@ fn traffic_controller_records_write_complete_response_after_write_resp() {
     match matched.completion() {
         TrafficTraceReplayCompletion::WriteCompletion(completion) => {
             assert_eq!(completion.request_id(), request.request().id());
+            assert_eq!(completion.request_line(), Address::new(0x4080));
+            assert_eq!(completion.response(), write_complete);
         }
         completion => panic!("unexpected trace replay completion: {completion:?}"),
     }
     match write_complete_batch.trace_replay_action().unwrap() {
-        TrafficTraceReplayAction::MemoryWriteCompletion { tick, request } => {
+        TrafficTraceReplayAction::MemoryWriteCompletion {
+            tick,
+            request,
+            request_line,
+            response,
+        } => {
             assert_eq!(*tick, write_complete.tick());
             assert_eq!(*request, request_batch.request().unwrap().request().id());
+            assert_eq!(*request_line, Address::new(0x4080));
+            assert_eq!(*response, write_complete);
         }
         action => panic!("unexpected trace replay action: {action:?}"),
     }
@@ -236,6 +245,8 @@ fn traffic_controller_records_write_complete_response_after_write_resp() {
     let write_completion = action_queue.pop_memory_write_completion().unwrap();
     assert_eq!(write_completion.tick(), write_complete.tick());
     assert_eq!(write_completion.request_id(), request.request().id());
+    assert_eq!(write_completion.request_line(), Address::new(0x4080));
+    assert_eq!(write_completion.response(), write_complete);
     assert_eq!(action_queue.summary().memory_completions(), 1);
     assert_eq!(action_queue.summary().write_completions(), 1);
 }

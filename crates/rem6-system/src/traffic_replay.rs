@@ -128,10 +128,20 @@ impl TrafficTraceReplayTargetRuntime {
                     ));
                 }
                 TrafficControllerEvent::TraceReplayAction(
-                    TrafficTraceReplayAction::MemoryWriteCompletion { tick, request },
+                    TrafficTraceReplayAction::MemoryWriteCompletion {
+                        tick,
+                        request,
+                        request_line,
+                        response,
+                    },
                 ) => {
                     self.write_completion_actions.push_back(
-                        TrafficTraceMemoryWriteCompletionRecord::new(*tick, *request),
+                        TrafficTraceMemoryWriteCompletionRecord::new(
+                            *tick,
+                            *request,
+                            *request_line,
+                            *response,
+                        ),
                     );
                     matched_request = None;
                     matched_response = None;
@@ -465,7 +475,7 @@ impl TrafficTraceReplayControlRuntime {
             action => {
                 return Err(TrafficTraceReplayControlError::UnexpectedAction {
                     delivery_tick,
-                    action: action.clone(),
+                    action: Box::new(action.clone()),
                 });
             }
         };
@@ -1398,7 +1408,7 @@ pub enum TrafficTraceReplayControlError {
     },
     UnexpectedAction {
         delivery_tick: Tick,
-        action: TrafficTraceReplayAction,
+        action: Box<TrafficTraceReplayAction>,
     },
     AckBeforeDelivery {
         delivery_tick: Tick,
@@ -1539,7 +1549,7 @@ pub enum TrafficTraceReplayTargetError {
     },
     UnexpectedAction {
         request: MemoryRequestId,
-        action: TrafficTraceReplayAction,
+        action: Box<TrafficTraceReplayAction>,
     },
     RequestMismatch {
         request: MemoryRequestId,
@@ -1625,7 +1635,7 @@ pub fn traffic_trace_replay_target_outcome(
     if !matches!(action, TrafficTraceReplayAction::MemoryResponse { .. }) {
         return Err(TrafficTraceReplayTargetError::UnexpectedAction {
             request,
-            action: action.clone(),
+            action: Box::new(action.clone()),
         });
     }
     let event = target_event_for_action(action, delivery)?;
@@ -1691,7 +1701,7 @@ fn target_event_for_action(
         }
         action => Err(TrafficTraceReplayTargetError::UnexpectedAction {
             request,
-            action: action.clone(),
+            action: Box::new(action.clone()),
         }),
     }
 }

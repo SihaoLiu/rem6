@@ -9,7 +9,8 @@ use rem6_memory::{Address, MemoryRequestId, ResponseStatus};
 use rem6_traffic::{
     TrafficController, TrafficControllerEvent, TrafficControllerEventBatch, TrafficTraceCacheKind,
     TrafficTraceDiagnosticKind, TrafficTraceErrorEvent, TrafficTraceErrorKind, TrafficTraceHtmKind,
-    TrafficTraceResponseEvent, TrafficTraceResponseKind, TrafficTraceTlbKind,
+    TrafficTraceMemoryWriteCompletionRecord, TrafficTraceResponseEvent, TrafficTraceResponseKind,
+    TrafficTraceTlbKind,
 };
 use rem6_transport::{
     MemoryRouteId, MemoryTrace, MemoryTraceEvent, MemoryTransport, RequestDelivery,
@@ -135,6 +136,7 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
                 .clone(),
             memory_trace_events: self.trace.snapshot(),
             memory_response_records: self.records.memory_response_snapshot(),
+            memory_write_completion_records: self.records.memory_write_completion_snapshot(),
             memory_failure_records: self.records.memory_failure_snapshot(),
             sync_records: self.records.sync_snapshot(),
             htm_begin_records: self.records.htm_begin_snapshot(),
@@ -186,6 +188,7 @@ pub struct RiscvWorkloadTrafficTraceReplayOutcome {
     response_deliveries: Vec<ResponseDelivery>,
     memory_trace_events: Vec<MemoryTraceEvent>,
     memory_response_records: Vec<RiscvWorkloadTraceMemoryResponseRecord>,
+    memory_write_completion_records: Vec<RiscvWorkloadTraceMemoryWriteCompletionRecord>,
     memory_failure_records: Vec<RiscvWorkloadTraceMemoryFailureRecord>,
     sync_records: Vec<RiscvWorkloadTraceSyncRecord>,
     htm_begin_records: Vec<RiscvWorkloadTraceHtmBeginRecord>,
@@ -219,6 +222,12 @@ impl RiscvWorkloadTrafficTraceReplayOutcome {
 
     pub fn memory_response_records(&self) -> &[RiscvWorkloadTraceMemoryResponseRecord] {
         &self.memory_response_records
+    }
+
+    pub fn memory_write_completion_records(
+        &self,
+    ) -> &[RiscvWorkloadTraceMemoryWriteCompletionRecord] {
+        &self.memory_write_completion_records
     }
 
     pub fn memory_failure_records(&self) -> &[RiscvWorkloadTraceMemoryFailureRecord] {
@@ -344,6 +353,81 @@ impl RiscvWorkloadTraceMemoryResponseRecord {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RiscvWorkloadTraceMemoryWriteCompletionRecord {
+    tick: Tick,
+    trace_tick: Tick,
+    sequence: u64,
+    request_id: MemoryRequestId,
+    kind: TrafficTraceResponseKind,
+    address: Option<Address>,
+    line: Address,
+    size_bytes: Option<u64>,
+    trace_packet_id: Option<u64>,
+    trace_pc: Option<Address>,
+}
+
+impl RiscvWorkloadTraceMemoryWriteCompletionRecord {
+    pub fn from_memory_write_completion(
+        tick: Tick,
+        record: TrafficTraceMemoryWriteCompletionRecord,
+    ) -> Self {
+        let response = record.response();
+        Self {
+            tick,
+            trace_tick: response.tick(),
+            sequence: response.sequence(),
+            request_id: record.request_id(),
+            kind: response.kind(),
+            address: response.address().or(Some(record.request_line())),
+            line: record.request_line(),
+            size_bytes: response.size_bytes(),
+            trace_packet_id: response.trace_packet_id(),
+            trace_pc: response.trace_pc(),
+        }
+    }
+
+    pub const fn tick(&self) -> Tick {
+        self.tick
+    }
+
+    pub const fn trace_tick(&self) -> Tick {
+        self.trace_tick
+    }
+
+    pub const fn sequence(&self) -> u64 {
+        self.sequence
+    }
+
+    pub const fn request_id(&self) -> MemoryRequestId {
+        self.request_id
+    }
+
+    pub const fn kind(&self) -> TrafficTraceResponseKind {
+        self.kind
+    }
+
+    pub const fn address(&self) -> Option<Address> {
+        self.address
+    }
+
+    pub const fn line(&self) -> Address {
+        self.line
+    }
+
+    pub const fn size_bytes(&self) -> Option<u64> {
+        self.size_bytes
+    }
+
+    pub const fn trace_packet_id(&self) -> Option<u64> {
+        self.trace_packet_id
+    }
+
+    pub const fn trace_pc(&self) -> Option<Address> {
+        self.trace_pc
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RiscvWorkloadTraceMemoryFailureRecord {
     tick: Tick,
     trace_tick: Tick,
@@ -422,6 +506,7 @@ impl RiscvWorkloadTraceMemoryFailureRecord {
 #[derive(Clone, Debug, Default)]
 struct RiscvWorkloadTraceReplayRecords {
     memory_response_records: Arc<Mutex<Vec<RiscvWorkloadTraceMemoryResponseRecord>>>,
+    memory_write_completion_records: Arc<Mutex<Vec<RiscvWorkloadTraceMemoryWriteCompletionRecord>>>,
     memory_failure_records: Arc<Mutex<Vec<RiscvWorkloadTraceMemoryFailureRecord>>>,
     sync_records: Arc<Mutex<Vec<RiscvWorkloadTraceSyncRecord>>>,
     htm_begin_records: Arc<Mutex<Vec<RiscvWorkloadTraceHtmBeginRecord>>>,
@@ -434,6 +519,18 @@ impl RiscvWorkloadTraceReplayRecords {
             .memory_response_records
             .lock()
             .expect("traffic trace replay memory response lock")
+            .clone();
+        records.sort_by_key(|record| (record.tick(), record.sequence(), record.line().get()));
+        records
+    }
+
+    fn memory_write_completion_snapshot(
+        &self,
+    ) -> Vec<RiscvWorkloadTraceMemoryWriteCompletionRecord> {
+        let mut records = self
+            .memory_write_completion_records
+            .lock()
+            .expect("traffic trace replay memory write completion lock")
             .clone();
         records.sort_by_key(|record| (record.tick(), record.sequence(), record.line().get()));
         records
@@ -474,6 +571,16 @@ impl RiscvWorkloadTraceReplayRecords {
         self.memory_response_records
             .lock()
             .expect("workload trace memory response lock")
+            .push(record);
+    }
+
+    fn record_memory_write_completion(
+        &self,
+        record: RiscvWorkloadTraceMemoryWriteCompletionRecord,
+    ) {
+        self.memory_write_completion_records
+            .lock()
+            .expect("workload trace memory write completion lock")
             .push(record);
     }
 
@@ -737,6 +844,12 @@ fn traffic_trace_replay_executor(
                 data_cache.complete_target_event(order, delivery, event_context);
             }
         })
+        .with_memory_write_completion_sink({
+            let data_cache = data_cache.clone();
+            move |tick, record| {
+                data_cache.record_memory_write_completion(tick, record);
+            }
+        })
         .with_sideband_sink({
             let data_cache = data_cache.clone();
             move |tick, event| {
@@ -948,6 +1061,22 @@ impl WorkloadTraceDataCacheConsumer {
         }
         inner.pending_requests.remove(&completion_order);
         inner.apply_ready_events(completion_order.tick().max(delivery.tick()));
+    }
+
+    fn record_memory_write_completion(
+        &self,
+        tick: Tick,
+        record: TrafficTraceMemoryWriteCompletionRecord,
+    ) {
+        let inner = self
+            .inner
+            .lock()
+            .expect("workload trace data cache consumer lock");
+        inner.records.record_memory_write_completion(
+            RiscvWorkloadTraceMemoryWriteCompletionRecord::from_memory_write_completion(
+                tick, record,
+            ),
+        );
     }
 
     fn record_sideband(&self, tick: Tick, event: TrafficTraceReplaySidebandEvent) {
