@@ -3068,7 +3068,9 @@ request id, error kind, line, address, size, packet id, and PC metadata.
 Workload traffic-trace summaries and manifest expectations count those
 data-cache accepted trace errors separately from generic memory failures, so a
 trace can require the executable cache-error consumer without treating the
-failure as a successful cache access.
+failure as a successful cache access. `RiscvSystemRun` also exposes the same
+records through a data-cache error outcome surface, so result artifacts can
+separate cache-accepted trace errors from route-generic trace failures.
 Every workload trace route exposes matched memory response metadata on the
 traffic trace replay outcome itself, including request id, response kind,
 transport response status, trace order, address or matched-request line
@@ -3200,8 +3202,8 @@ error completions through the same ordered consumer path as acknowledgements.
 Replayed memory failures can also drive the RISC-V CPU fetch and data ports
 through target helpers that record failed CPU port events at the trace failure
 tick without fabricating retry or successful responses. Deeper cache-controller
-error injection beyond those executable replay failure records and data-cache
-accepted trace-error counts remains open.
+error injection beyond those executable replay failure records and run-level
+data-cache error outcomes remains open.
 Trace response and error policy accessors are therefore not intended as a
 standalone API surface: the controller uses them to select pending replay
 sources and synthesize memory or control replay actions, the target runtime
@@ -3209,17 +3211,17 @@ uses those actions to drive executable response and failure outcomes, and
 workload data-cache replay consumes cache, clean, invalidate, read/write, and
 HTM access policy, plus MemSync `INV_L1` policy, to mutate line state and
 conflict records. Data-cache accepted trace responses, trace errors, and HTM
-access records also surface as replay-level executed evidence and summary
-counts, separate from generic memory failure and response counts, so manifests
-can require that the cache consumer accepted those trace policies rather than
-only observing raw target traffic. RISC-V fetch-port and data-port replay
+access records also surface as replay-level executed evidence, run-level
+data-cache error outcomes, and summary counts, separate from generic memory
+failure and response counts, so manifests can require that the cache consumer
+accepted those trace policies rather than only observing raw target traffic.
+RISC-V fetch-port and data-port replay
 failures likewise surface as CPU port failures rather than hanging as
 no-response target events. Additional accessor work should stay tied to one of
 those consumers, or to a new execution-facing consumer with a failing test that
 reaches replay, workload cache state, or a recorded runtime outcome. The
-remaining integration boundary is propagation of replayed deeper
-cache-controller error outcomes beyond audit records into the corresponding
-execution paths.
+remaining integration boundary is propagation of replayed protocol-internal
+cache-controller errors into the corresponding execution paths.
 Trace packet flag handling now maps non-prefetch `INST_FETCH` on `ReadReq`,
 `ReadCleanReq`, and
 `ReadSharedReq` packets to native instruction-fetch requests, accepts `PHYSICAL`

@@ -436,7 +436,9 @@ impl RiscvWorkloadReplay {
                 run = run.with_trace_diagnostic_records(trace_diagnostic_records);
             }
             if !trace_error_records.is_empty() {
-                run = run.with_trace_error_records(trace_error_records);
+                run = run
+                    .with_data_cache_error_records(trace_error_records.clone())
+                    .with_trace_error_records(trace_error_records);
             }
             if !trace_htm_access_records.is_empty() {
                 run = run.with_trace_htm_access_records(trace_htm_access_records);

@@ -128,6 +128,26 @@ impl RiscvTraceErrorRecord {
 }
 
 impl RiscvSystemRun {
+    pub fn with_data_cache_error_records(
+        mut self,
+        data_cache_error_records: Vec<RiscvTraceErrorRecord>,
+    ) -> Self {
+        self.data_cache_error_records = data_cache_error_records;
+        self
+    }
+
+    pub fn data_cache_error_records(&self) -> &[RiscvTraceErrorRecord] {
+        &self.data_cache_error_records
+    }
+
+    pub fn data_cache_error_count(&self) -> usize {
+        self.data_cache_error_records.len()
+    }
+
+    pub fn has_data_cache_errors(&self) -> bool {
+        !self.data_cache_error_records.is_empty()
+    }
+
     pub fn with_trace_error_records(
         mut self,
         trace_error_records: Vec<RiscvTraceErrorRecord>,

@@ -315,6 +315,7 @@ pub struct RiscvSystemRun {
     pub(crate) data_cache_run_protocols: Vec<Option<RiscvDataCacheProtocol>>,
     pub(crate) trace_diagnostic_records: Vec<RiscvTraceDiagnosticRecord>,
     pub(crate) trace_error_records: Vec<RiscvTraceErrorRecord>,
+    pub(crate) data_cache_error_records: Vec<RiscvTraceErrorRecord>,
     pub(crate) trace_htm_access_records: Vec<RiscvTraceHtmAccessRecord>,
     pub(crate) store_conditional_failure_diagnostics: Vec<RiscvStoreConditionalFailureDiagnostic>,
 }
@@ -338,6 +339,7 @@ impl RiscvSystemRun {
             data_cache_run_protocols: Vec::new(),
             trace_diagnostic_records: Vec::new(),
             trace_error_records: Vec::new(),
+            data_cache_error_records: Vec::new(),
             trace_htm_access_records: Vec::new(),
             store_conditional_failure_diagnostics: Vec::new(),
         }

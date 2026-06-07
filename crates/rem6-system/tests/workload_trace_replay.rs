@@ -1582,6 +1582,9 @@ fn workload_replay_does_not_mutate_data_cache_for_trace_write_error() {
     assert_eq!(trace_error.line(), Address::new(0x9000));
     assert_eq!(trace_error.size_bytes(), Some(8));
     assert_eq!(trace_error.trace_packet_id(), Some(950));
+    let data_cache_errors = outcome.run().data_cache_error_records();
+    assert_eq!(data_cache_errors, trace_errors);
+    assert_eq!(outcome.run().data_cache_error_count(), 1);
     let replay_trace_errors = traffic_replay.trace_error_records();
     assert_eq!(replay_trace_errors, &[trace_error]);
     let memory_failures = traffic_replay.memory_failure_records();
