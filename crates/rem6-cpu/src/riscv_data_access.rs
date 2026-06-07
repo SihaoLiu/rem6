@@ -12,6 +12,7 @@ pub enum RiscvDataAccessEventKind {
     Completed,
     Retry,
     ConditionalFailed,
+    Failed,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -186,6 +187,14 @@ impl RiscvDataAccessEvent {
         Self {
             record,
             kind: RiscvDataAccessEventKind::ConditionalFailed,
+            data: None,
+        }
+    }
+
+    pub fn failed(record: RiscvDataAccessRecord) -> Self {
+        Self {
+            record,
+            kind: RiscvDataAccessEventKind::Failed,
             data: None,
         }
     }

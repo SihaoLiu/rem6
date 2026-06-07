@@ -3193,8 +3193,11 @@ completion wrapper records them for audit. The parallel replay executor now
 also invokes the registered control-completion sink for replayed control
 failures at the traced failure tick, so workload replay receives HTM and sync
 error completions through the same ordered consumer path as acknowledgements.
-Cache-controller and CPU-port error injection beyond those executable replay
-failure records remains open.
+Replayed memory failures can also drive the RISC-V data CPU port through a
+data-target helper that records a failed data-access event at the trace failure
+tick without fabricating a retry or successful response. Fetch-port and deeper
+cache-controller error injection beyond those executable replay failure records
+remains open.
 Trace response and error policy accessors are therefore not intended as a
 standalone API surface: the controller uses them to select pending replay
 sources and synthesize memory or control replay actions, the target runtime
@@ -3205,12 +3208,13 @@ conflict records. Data-cache accepted trace responses, trace errors, and HTM
 access records also surface as replay-level executed evidence and summary
 counts, separate from generic memory failure and response counts, so manifests
 can require that the cache consumer accepted those trace policies rather than
-only observing raw target traffic. Additional accessor work should stay tied
-to one of those consumers, or to a new execution-facing consumer with a failing
-test that reaches replay, workload cache state, or a recorded runtime outcome.
-The remaining integration boundary is propagation of replayed cache and CPU
-error outcomes beyond audit records into the corresponding cache-controller and
-CPU-port error paths.
+only observing raw target traffic. RISC-V data-port replay failures likewise
+surface as CPU data-access failures rather than hanging as no-response target
+events. Additional accessor work should stay tied to one of those consumers,
+or to a new execution-facing consumer with a failing test that reaches replay,
+workload cache state, or a recorded runtime outcome. The remaining integration
+boundary is propagation of replayed fetch-port and deeper cache-controller
+error outcomes beyond audit records into the corresponding execution paths.
 Trace packet flag handling now maps non-prefetch `INST_FETCH` on `ReadReq`,
 `ReadCleanReq`, and
 `ReadSharedReq` packets to native instruction-fetch requests, accepts `PHYSICAL`

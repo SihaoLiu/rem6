@@ -487,6 +487,16 @@ impl RiscvCore {
         }
     }
 
+    pub fn record_data_failure(&self, request_id: MemoryRequestId, tick: Tick) {
+        let mut state = self.state.lock().expect("riscv core lock");
+        let Some(access) = state.outstanding_data.remove(&request_id) else {
+            return;
+        };
+        state
+            .data_events
+            .push(RiscvDataAccessEvent::failed(access.record(tick)));
+    }
+
     pub(crate) fn record_mmio_completion(
         &self,
         request_id: MemoryRequestId,
