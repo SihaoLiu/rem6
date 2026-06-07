@@ -38,6 +38,7 @@ pub const GEM5_CLEAN_INVALID_REQ: u32 = 44;
 pub const GEM5_CLEAN_INVALID_RESP: u32 = 45;
 pub const GEM5_INVALID_DEST_ERROR: u32 = 46;
 pub const GEM5_WRITE_ERROR: u32 = 49;
+pub const GEM5_FUNCTIONAL_WRITE_ERROR: u32 = 51;
 pub const GEM5_PRINT_REQ: u32 = 52;
 pub const GEM5_FLUSH_REQ: u32 = 53;
 pub const GEM5_HTM_REQ: u32 = 56;

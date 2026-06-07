@@ -3130,6 +3130,10 @@ ordered action drain for consumers that need cross-kind replay order. Matched
 memory error records are available to the memory target helpers, including a
 controller-aware target-event helper that returns memory failures directly to
 execution consumers before the target-outcome wrapper records them for audit.
+Workload data-cache replay now preserves address-less functional memory errors
+as run-level trace error records by falling back to the matched request's cache
+line, so gem5 functional error packets without address metadata are not dropped
+after executable failure matching.
 Matched sync/HTM control failures are available to the control-completion
 helper and to a controller-aware control-event helper that returns
 acknowledgement or failure events directly to execution consumers before the

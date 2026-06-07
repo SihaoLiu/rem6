@@ -340,9 +340,14 @@ impl WorkloadDataCacheLineBackend {
         })
     }
 
-    fn accepts_trace_error_event(&self, event: TrafficTraceErrorEvent) -> bool {
+    fn accepts_trace_error_event(
+        &self,
+        event: TrafficTraceErrorEvent,
+        fallback_address: Option<Address>,
+    ) -> bool {
         event
             .address()
+            .or(fallback_address)
             .is_some_and(|address| self.layout.line_address(address) == self.line)
     }
 
@@ -444,8 +449,9 @@ impl WorkloadDataCacheLineBackend {
         tick: Tick,
         request_id: MemoryRequestId,
         event: TrafficTraceErrorEvent,
+        fallback_address: Option<Address>,
     ) -> bool {
-        if !self.accepts_trace_error_event(event) {
+        if !self.accepts_trace_error_event(event, fallback_address) {
             return false;
         }
 
@@ -456,6 +462,7 @@ impl WorkloadDataCacheLineBackend {
             self.target,
             self.layout,
             event,
+            fallback_address,
         ) {
             self.trace_error_records.push(record);
         }
@@ -852,11 +859,14 @@ impl WorkloadDataCacheBackend {
         tick: Tick,
         request_id: MemoryRequestId,
         event: TrafficTraceErrorEvent,
+        fallback_address: Option<Address>,
     ) -> bool {
         self.lines
             .values_mut()
-            .find(|line| line.accepts_trace_error_event(event))
-            .is_some_and(|line| line.record_trace_error_event(tick, request_id, event))
+            .find(|line| line.accepts_trace_error_event(event, fallback_address))
+            .is_some_and(|line| {
+                line.record_trace_error_event(tick, request_id, event, fallback_address)
+            })
     }
 
     pub(super) fn record_trace_htm_access_event(

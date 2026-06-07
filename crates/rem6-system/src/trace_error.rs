@@ -59,8 +59,9 @@ impl RiscvTraceErrorRecord {
         target: MemoryTargetId,
         layout: CacheLineLayout,
         event: TrafficTraceErrorEvent,
+        fallback_address: Option<Address>,
     ) -> Option<Self> {
-        let address = event.address()?;
+        let address = event.address().or(fallback_address)?;
         Some(Self::new(
             tick,
             event.tick(),

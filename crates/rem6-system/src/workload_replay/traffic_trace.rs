@@ -692,7 +692,12 @@ impl WorkloadTraceDataCacheConsumer {
             TrafficTraceReplayTargetEvent::MemoryFailure { record, .. } => {
                 if let Some(error) = event_context.trace_error() {
                     let record = *record;
-                    inner.apply_trace_error(record.tick(), record.failure().request_id(), error);
+                    inner.apply_trace_error(
+                        record.tick(),
+                        record.failure().request_id(),
+                        error,
+                        Some(delivery.request().line_address()),
+                    );
                 }
             }
         }
@@ -1025,12 +1030,13 @@ impl WorkloadTraceDataCacheConsumerInner {
         tick: Tick,
         request_id: MemoryRequestId,
         event: rem6_traffic::TrafficTraceErrorEvent,
+        fallback_address: Option<Address>,
     ) {
         if let Some(data_cache) = self.data_cache.as_ref() {
             data_cache
                 .lock()
                 .expect("workload data cache lock")
-                .record_trace_error_event(tick, request_id, event);
+                .record_trace_error_event(tick, request_id, event, fallback_address);
         }
     }
 }
