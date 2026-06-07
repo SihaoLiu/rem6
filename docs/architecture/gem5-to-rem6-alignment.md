@@ -2941,11 +2941,15 @@ connects trace requests only on coherent workload data routes to the configured
 data-cache backend, and applies `FlushReq` sideband events to configured
 MSI/MESI/MOESI/CHI data-cache lines by writing back visible line data, clearing
 local cached copies, and resetting directory ownership before later trace target
-deliveries. The consumer serializes cache sidebands and target deliveries by
-trace tick and sequence, so same-tick replay does not depend on parallel
-scheduler partition ordering. Full Ruby cache-recorder flush coverage beyond
-declared workload data-cache lines remains a cache subsystem contract because
-gem5 uses `FlushReq` both from Ruby tester checks and cache-trace replay paths.
+deliveries. Workload trace replay keeps those applied flushes on the
+route-local replay outcome and counts them separately from raw cache-flush
+sideband events in replay summaries and manifest expectations, so a trace can
+require the executable data-cache flush consumer. The consumer serializes cache
+sidebands and target deliveries by trace tick and sequence, so same-tick replay
+does not depend on parallel scheduler partition ordering. Full Ruby
+cache-recorder flush coverage beyond declared workload data-cache lines remains
+a cache subsystem contract because gem5 uses `FlushReq` both from Ruby tester
+checks and cache-trace replay paths.
 `ReadResp`, `ReadRespWithInvalidate`, `WriteResp`, `WriteCompleteResp`,
 `SoftPFResp`, `HardPFResp`, `UpgradeResp`, `UpgradeFailResp`, `ReadExResp`,
 `StoreCondResp`, `LockedRMWReadResp`, `LockedRMWWriteResp`, `SwapResp`,
@@ -3080,9 +3084,10 @@ trace order, address or matched-request line fallback, size, packet id, and PC,
 so fetch, MMIO, and non-cache data routes keep executable failure evidence even
 when no data-cache protocol record applies.
 Cache-flush sidebands apply to that backend rather than remaining audit-only
-events. Diagnostic print sidebands on those routes record a non-mutating
-data-cache snapshot at the sideband execution tick and attach the resulting
-diagnostic records to the matching trace replay outcome. TLBI external-sync sidebands
+events and attach applied-flush records to the matching trace replay outcome.
+Diagnostic print sidebands on those routes record a non-mutating data-cache
+snapshot at the sideband execution tick and attach the resulting diagnostic
+records to the matching trace replay outcome. TLBI external-sync sidebands
 on translated data routes
 flush the corresponding RISC-V data-translation TLB. The workload consumer
 ignores fetch, MMIO, and unrelated data routes even when their trace addresses

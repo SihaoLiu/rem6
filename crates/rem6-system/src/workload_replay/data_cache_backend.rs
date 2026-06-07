@@ -91,6 +91,35 @@ impl WorkloadDataCacheRollback {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct WorkloadTraceCacheApplication {
+    protocol: RiscvDataCacheProtocol,
+    target: MemoryTargetId,
+    line: Address,
+}
+
+impl WorkloadTraceCacheApplication {
+    const fn new(protocol: RiscvDataCacheProtocol, target: MemoryTargetId, line: Address) -> Self {
+        Self {
+            protocol,
+            target,
+            line,
+        }
+    }
+
+    pub(super) const fn protocol(self) -> RiscvDataCacheProtocol {
+        self.protocol
+    }
+
+    pub(super) const fn target(self) -> MemoryTargetId {
+        self.target
+    }
+
+    pub(super) const fn line(self) -> Address {
+        self.line
+    }
+}
+
 #[derive(Default)]
 struct WorkloadDataCacheHtmAccessSet {
     read_lines: BTreeSet<Address>,
@@ -422,13 +451,20 @@ impl WorkloadDataCacheLineBackend {
         }
     }
 
-    fn apply_trace_cache_event(&mut self, event: TrafficTraceCacheEvent) -> bool {
+    fn apply_trace_cache_event(
+        &mut self,
+        event: TrafficTraceCacheEvent,
+    ) -> Option<WorkloadTraceCacheApplication> {
         if !self.accepts_trace_cache_event(event) {
-            return false;
+            return None;
         }
 
         self.invalidate_trace_line();
-        true
+        Some(WorkloadTraceCacheApplication::new(
+            self.protocol,
+            self.target,
+            self.line,
+        ))
     }
 
     fn apply_trace_response_event(&mut self, event: TrafficTraceResponseEvent) -> bool {
@@ -834,11 +870,14 @@ impl WorkloadDataCacheBackend {
             .find_map(WorkloadDataCacheLineBackend::take_error)
     }
 
-    pub(super) fn apply_trace_cache_event(&mut self, event: TrafficTraceCacheEvent) -> bool {
+    pub(super) fn apply_trace_cache_event(
+        &mut self,
+        event: TrafficTraceCacheEvent,
+    ) -> Option<WorkloadTraceCacheApplication> {
         self.lines
             .values_mut()
             .find(|line| line.accepts_trace_cache_event(event))
-            .is_some_and(|line| line.apply_trace_cache_event(event))
+            .and_then(|line| line.apply_trace_cache_event(event))
     }
 
     pub(super) fn invalidate_trace_l1(&mut self) -> bool {

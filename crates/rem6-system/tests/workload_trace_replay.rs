@@ -11,7 +11,9 @@ use rem6_system::{
     TrafficTraceReplayControlError, TrafficTraceReplayControllerControlError,
     TrafficTraceReplayControllerTargetError, TrafficTraceReplayTargetError,
 };
-use rem6_traffic::{TrafficTraceErrorKind, TrafficTraceResponseKind, TrafficTraceSyncKind};
+use rem6_traffic::{
+    TrafficTraceCacheKind, TrafficTraceErrorKind, TrafficTraceResponseKind, TrafficTraceSyncKind,
+};
 use rem6_transport::MemoryTraceKind;
 use rem6_workload::{
     HostEventIntent, WorkloadDataCacheProtocol, WorkloadExpectedTrafficTraceReplaySummary,
@@ -1044,6 +1046,7 @@ fn workload_replay_records_typed_trace_sideband_summary_counts() {
     assert_eq!(summary.sideband_event_count(), 4);
     assert_eq!(summary.tlb_sync_event_count(), 1);
     assert_eq!(summary.cache_flush_event_count(), 1);
+    assert_eq!(summary.trace_cache_flush_count(), 0);
     assert_eq!(summary.diagnostic_print_event_count(), 1);
     assert_eq!(summary.trace_diagnostic_count(), 0);
     assert_eq!(summary.htm_abort_event_count(), 1);
@@ -1272,10 +1275,26 @@ fn workload_replay_applies_bound_trace_flush_to_data_cache_line() {
     let traffic_replay = &outcome.traffic_trace_replays()[0];
     assert!(traffic_replay.errors().is_empty());
     assert_eq!(traffic_replay.runtime().sideband_events().len(), 1);
+    let cache_flushes = traffic_replay.trace_cache_flush_records();
+    assert_eq!(cache_flushes.len(), 1);
+    assert_eq!(cache_flushes[0].tick(), 4);
+    assert_eq!(cache_flushes[0].trace_tick(), 4);
+    assert_eq!(cache_flushes[0].sequence(), 2);
+    assert_eq!(cache_flushes[0].kind(), TrafficTraceCacheKind::Flush);
+    assert_eq!(cache_flushes[0].protocol(), RiscvDataCacheProtocol::Msi);
+    assert_eq!(cache_flushes[0].target(), MemoryTargetId::new(0));
+    assert_eq!(cache_flushes[0].address(), Address::new(0x9000));
+    assert_eq!(cache_flushes[0].line(), Address::new(0x9000));
+    assert_eq!(cache_flushes[0].size_bytes(), 64);
+    assert_eq!(cache_flushes[0].trace_packet_id(), Some(941));
+    assert_eq!(cache_flushes[0].trace_pc(), None);
     let data_cache_runs = outcome.run().data_cache_runs();
     assert_eq!(data_cache_runs.len(), 2);
     assert!(data_cache_runs[0].has_directory_activity());
     assert!(data_cache_runs[1].has_directory_activity());
+    let summary = &outcome.result().traffic_trace_replay_summaries()[0];
+    assert_eq!(summary.cache_flush_event_count(), 1);
+    assert_eq!(summary.trace_cache_flush_count(), 1);
 }
 
 #[test]
@@ -3065,6 +3084,7 @@ fn workload_replay_result_satisfies_bound_traffic_trace_summary_expectation() {
     assert_eq!(summary.sideband_event_count(), 0);
     assert_eq!(summary.tlb_sync_event_count(), 0);
     assert_eq!(summary.cache_flush_event_count(), 0);
+    assert_eq!(summary.trace_cache_flush_count(), 0);
     assert_eq!(summary.diagnostic_print_event_count(), 0);
     assert_eq!(summary.trace_diagnostic_count(), 0);
     assert_eq!(summary.htm_abort_event_count(), 0);

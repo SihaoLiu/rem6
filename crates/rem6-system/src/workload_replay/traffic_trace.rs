@@ -5,12 +5,12 @@ use rem6_cpu::{
     HtmFailureCause, HtmTransactionUid, RiscvClusterHtmAbortOutcome, RiscvClusterHtmBeginOutcome,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler, Tick};
-use rem6_memory::{Address, MemoryRequestId, ResponseStatus};
+use rem6_memory::{Address, MemoryRequestId, MemoryTargetId, ResponseStatus};
 use rem6_traffic::{
-    TrafficController, TrafficControllerEvent, TrafficControllerEventBatch, TrafficTraceCacheKind,
-    TrafficTraceDiagnosticKind, TrafficTraceErrorEvent, TrafficTraceErrorKind, TrafficTraceHtmKind,
-    TrafficTraceMemoryWriteCompletionRecord, TrafficTraceResponseEvent, TrafficTraceResponseKind,
-    TrafficTraceTlbKind,
+    TrafficController, TrafficControllerEvent, TrafficControllerEventBatch, TrafficTraceCacheEvent,
+    TrafficTraceCacheKind, TrafficTraceDiagnosticKind, TrafficTraceErrorEvent,
+    TrafficTraceErrorKind, TrafficTraceHtmKind, TrafficTraceMemoryWriteCompletionRecord,
+    TrafficTraceResponseEvent, TrafficTraceResponseKind, TrafficTraceTlbKind,
 };
 use rem6_transport::{
     MemoryRouteId, MemoryTrace, MemoryTraceEvent, MemoryTransport, RequestDelivery,
@@ -19,15 +19,15 @@ use rem6_transport::{
 use rem6_workload::{WorkloadRouteId, WorkloadTopology, WorkloadTrafficTraceReplaySummary};
 
 use crate::{
-    RiscvCluster, RiscvTraceDiagnosticRecord, TrafficTraceReplayControlEvent,
-    TrafficTraceReplayControlEventContext, TrafficTraceReplayControllerParallelErrors,
-    TrafficTraceReplayControllerParallelExecutor, TrafficTraceReplayControllerRuntime,
-    TrafficTraceReplayOrder, TrafficTraceReplayScheduledSidebandEvent,
-    TrafficTraceReplaySidebandEvent, TrafficTraceReplayTargetEvent,
-    TrafficTraceReplayTargetEventContext,
+    RiscvCluster, RiscvDataCacheProtocol, RiscvTraceDiagnosticRecord,
+    TrafficTraceReplayControlEvent, TrafficTraceReplayControlEventContext,
+    TrafficTraceReplayControllerParallelErrors, TrafficTraceReplayControllerParallelExecutor,
+    TrafficTraceReplayControllerRuntime, TrafficTraceReplayOrder,
+    TrafficTraceReplayScheduledSidebandEvent, TrafficTraceReplaySidebandEvent,
+    TrafficTraceReplayTargetEvent, TrafficTraceReplayTargetEventContext,
 };
 
-use super::data_cache_backend::WorkloadDataCacheBackend;
+use super::data_cache_backend::{WorkloadDataCacheBackend, WorkloadTraceCacheApplication};
 use super::traffic_trace_sync::RiscvWorkloadTraceSyncRecord;
 use super::RiscvWorkloadReplayError;
 
@@ -116,6 +116,7 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
             .with_sideband_event_count(runtime.sideband_events().len())
             .with_tlb_sync_event_count(sideband_counts.tlb_sync)
             .with_cache_flush_event_count(sideband_counts.cache_flush)
+            .with_trace_cache_flush_count(self.records.trace_cache_flush_snapshot().len())
             .with_diagnostic_print_event_count(sideband_counts.diagnostic_print)
             .with_trace_diagnostic_count(self.records.trace_diagnostic_snapshot().len())
             .with_htm_abort_event_count(sideband_counts.htm_abort)
@@ -141,6 +142,7 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
             memory_response_records: self.records.memory_response_snapshot(),
             memory_write_completion_records: self.records.memory_write_completion_snapshot(),
             memory_failure_records: self.records.memory_failure_snapshot(),
+            trace_cache_flush_records: self.records.trace_cache_flush_snapshot(),
             trace_diagnostic_records: self.records.trace_diagnostic_snapshot(),
             sync_records: self.records.sync_snapshot(),
             htm_begin_records: self.records.htm_begin_snapshot(),
@@ -194,6 +196,7 @@ pub struct RiscvWorkloadTrafficTraceReplayOutcome {
     memory_response_records: Vec<RiscvWorkloadTraceMemoryResponseRecord>,
     memory_write_completion_records: Vec<RiscvWorkloadTraceMemoryWriteCompletionRecord>,
     memory_failure_records: Vec<RiscvWorkloadTraceMemoryFailureRecord>,
+    trace_cache_flush_records: Vec<RiscvWorkloadTraceCacheFlushRecord>,
     trace_diagnostic_records: Vec<RiscvTraceDiagnosticRecord>,
     sync_records: Vec<RiscvWorkloadTraceSyncRecord>,
     htm_begin_records: Vec<RiscvWorkloadTraceHtmBeginRecord>,
@@ -239,6 +242,10 @@ impl RiscvWorkloadTrafficTraceReplayOutcome {
         &self.memory_failure_records
     }
 
+    pub fn trace_cache_flush_records(&self) -> &[RiscvWorkloadTraceCacheFlushRecord] {
+        &self.trace_cache_flush_records
+    }
+
     pub fn trace_diagnostic_records(&self) -> &[RiscvTraceDiagnosticRecord] {
         &self.trace_diagnostic_records
     }
@@ -253,6 +260,87 @@ impl RiscvWorkloadTrafficTraceReplayOutcome {
 
     pub fn htm_abort_records(&self) -> &[RiscvWorkloadTraceHtmAbortRecord] {
         &self.htm_abort_records
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RiscvWorkloadTraceCacheFlushRecord {
+    tick: Tick,
+    trace_tick: Tick,
+    sequence: u64,
+    kind: TrafficTraceCacheKind,
+    protocol: RiscvDataCacheProtocol,
+    target: MemoryTargetId,
+    address: Address,
+    line: Address,
+    size_bytes: u64,
+    trace_packet_id: Option<u64>,
+    trace_pc: Option<Address>,
+}
+
+impl RiscvWorkloadTraceCacheFlushRecord {
+    fn from_trace_cache_event(
+        tick: Tick,
+        event: TrafficTraceCacheEvent,
+        application: WorkloadTraceCacheApplication,
+    ) -> Self {
+        Self {
+            tick,
+            trace_tick: event.tick(),
+            sequence: event.sequence(),
+            kind: event.kind(),
+            protocol: application.protocol(),
+            target: application.target(),
+            address: event.address(),
+            line: application.line(),
+            size_bytes: event.size_bytes(),
+            trace_packet_id: event.trace_packet_id(),
+            trace_pc: event.trace_pc(),
+        }
+    }
+
+    pub const fn tick(&self) -> Tick {
+        self.tick
+    }
+
+    pub const fn trace_tick(&self) -> Tick {
+        self.trace_tick
+    }
+
+    pub const fn sequence(&self) -> u64 {
+        self.sequence
+    }
+
+    pub const fn kind(&self) -> TrafficTraceCacheKind {
+        self.kind
+    }
+
+    pub const fn protocol(&self) -> RiscvDataCacheProtocol {
+        self.protocol
+    }
+
+    pub const fn target(&self) -> MemoryTargetId {
+        self.target
+    }
+
+    pub const fn address(&self) -> Address {
+        self.address
+    }
+
+    pub const fn line(&self) -> Address {
+        self.line
+    }
+
+    pub const fn size_bytes(&self) -> u64 {
+        self.size_bytes
+    }
+
+    pub const fn trace_packet_id(&self) -> Option<u64> {
+        self.trace_packet_id
+    }
+
+    pub const fn trace_pc(&self) -> Option<Address> {
+        self.trace_pc
     }
 }
 
@@ -517,6 +605,7 @@ struct RiscvWorkloadTraceReplayRecords {
     memory_response_records: Arc<Mutex<Vec<RiscvWorkloadTraceMemoryResponseRecord>>>,
     memory_write_completion_records: Arc<Mutex<Vec<RiscvWorkloadTraceMemoryWriteCompletionRecord>>>,
     memory_failure_records: Arc<Mutex<Vec<RiscvWorkloadTraceMemoryFailureRecord>>>,
+    trace_cache_flush_records: Arc<Mutex<Vec<RiscvWorkloadTraceCacheFlushRecord>>>,
     trace_diagnostic_records: Arc<Mutex<Vec<RiscvTraceDiagnosticRecord>>>,
     sync_records: Arc<Mutex<Vec<RiscvWorkloadTraceSyncRecord>>>,
     htm_begin_records: Arc<Mutex<Vec<RiscvWorkloadTraceHtmBeginRecord>>>,
@@ -551,6 +640,16 @@ impl RiscvWorkloadTraceReplayRecords {
             .memory_failure_records
             .lock()
             .expect("traffic trace replay memory failure lock")
+            .clone();
+        records.sort_by_key(|record| (record.tick(), record.sequence(), record.line().get()));
+        records
+    }
+
+    fn trace_cache_flush_snapshot(&self) -> Vec<RiscvWorkloadTraceCacheFlushRecord> {
+        let mut records = self
+            .trace_cache_flush_records
+            .lock()
+            .expect("traffic trace replay cache flush lock")
             .clone();
         records.sort_by_key(|record| (record.tick(), record.sequence(), record.line().get()));
         records
@@ -615,6 +714,13 @@ impl RiscvWorkloadTraceReplayRecords {
         self.memory_failure_records
             .lock()
             .expect("workload trace memory failure lock")
+            .push(record);
+    }
+
+    fn record_trace_cache_flush(&self, record: RiscvWorkloadTraceCacheFlushRecord) {
+        self.trace_cache_flush_records
+            .lock()
+            .expect("workload trace cache flush lock")
             .push(record);
     }
 
@@ -1269,10 +1375,19 @@ impl WorkloadTraceDataCacheConsumerInner {
         match event {
             TrafficTraceReplaySidebandEvent::Cache(cache) => {
                 if let Some(data_cache) = self.data_cache.as_ref() {
-                    data_cache
+                    if let Some(application) = data_cache
                         .lock()
                         .expect("workload data cache lock")
-                        .apply_trace_cache_event(cache);
+                        .apply_trace_cache_event(cache)
+                    {
+                        self.records.record_trace_cache_flush(
+                            RiscvWorkloadTraceCacheFlushRecord::from_trace_cache_event(
+                                tick,
+                                cache,
+                                application,
+                            ),
+                        );
+                    }
                 }
             }
             TrafficTraceReplaySidebandEvent::Diagnostic(diagnostic) => {
