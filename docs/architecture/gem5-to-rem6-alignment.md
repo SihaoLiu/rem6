@@ -2903,7 +2903,10 @@ metadata, gem5 request and print classification, and packet-count accounting
 without pretending the packet is a memory access. Full gem5 `PrintReqState`
 label-stack and object-print execution
 semantics remain a debug subsystem contract because those sender-state details
-are not carried by the packet trace proto.
+are not carried by the packet trace proto. On coherent workload data routes,
+diagnostic print sidebands for declared data-cache lines now produce structured
+run diagnostic records with protocol, target, line, cached-copy, and backing
+evidence instead of gem5's recursive sender-state text stream.
 Line-sized `FlushReq` command-id 53 packets whose effective address after the
 configured offset is cache-line aligned map to typed `TrafficTraceEvent::Cache`
 flush events that preserve tick ordering, sequence, address, size, optional
@@ -2981,9 +2984,11 @@ those hooks so coherent data-route trace requests mutate the configured
 data-cache backend at the matched response tick, not at request delivery. A
 matched memory failure records typed error metadata at the failure tick without
 executing a successful data-cache access, and cache-flush sidebands apply to
-that backend rather than remaining audit-only events. The workload consumer
-ignores fetch, MMIO, and other non-data-cache routes even when their trace
-addresses alias a configured data-cache line. This preserves executable audit
+that backend rather than remaining audit-only events. Diagnostic print
+sidebands on those routes record a non-mutating data-cache snapshot at the
+sideband execution tick. The workload consumer ignores fetch, MMIO, and other
+non-data-cache routes even when their trace addresses alias a configured
+data-cache line. This preserves executable audit
 records instead of dropping them; if a sideband event is
 discovered after its trace tick, it is recorded at the current scheduler tick as
 late-observed trace evidence rather than blocking the replay queue. The lower-level memory target

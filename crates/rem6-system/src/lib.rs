@@ -63,6 +63,7 @@ mod system_run_sc_progress;
 mod system_run_worker_lanes;
 mod timer_checkpoint;
 mod topology;
+mod trace_diagnostic;
 mod traffic_gups;
 mod traffic_replay;
 mod trap_event;
@@ -208,6 +209,7 @@ pub use topology::{
     RiscvTopologyMemoryRegion, RiscvTopologySinicPciDeviceConfig, RiscvTopologySystem,
     RiscvTopologySystemError, RiscvTopologyWorkloadSinicPciError,
 };
+pub use trace_diagnostic::{RiscvTraceDiagnosticKind, RiscvTraceDiagnosticRecord};
 pub use traffic_gups::{
     traffic_gups_controller_transport_run, TrafficGupsTargetResponder, TrafficGupsTransportError,
     TrafficGupsTransportRun,
@@ -296,6 +298,7 @@ pub struct RiscvSystemRun {
     pub(crate) dram_wait_for: WaitForGraph,
     pub(crate) data_cache_runs: Vec<ParallelCoherenceRunSummary>,
     pub(crate) data_cache_run_protocols: Vec<Option<RiscvDataCacheProtocol>>,
+    pub(crate) trace_diagnostic_records: Vec<RiscvTraceDiagnosticRecord>,
     pub(crate) store_conditional_failure_diagnostics: Vec<RiscvStoreConditionalFailureDiagnostic>,
 }
 
@@ -316,6 +319,7 @@ impl RiscvSystemRun {
             dram_wait_for: WaitForGraph::new(),
             data_cache_runs: Vec::new(),
             data_cache_run_protocols: Vec::new(),
+            trace_diagnostic_records: Vec::new(),
             store_conditional_failure_diagnostics: Vec::new(),
         }
     }

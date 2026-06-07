@@ -437,14 +437,14 @@ impl WorkloadTraceDataCacheConsumerInner {
         while let Some(index) = self.next_sideband_index(|sideband| sideband.order <= request_order)
         {
             let sideband = self.pending_sidebands.remove(index);
-            self.apply_sideband(sideband.event);
+            self.apply_sideband(sideband.tick, sideband.event);
         }
     }
 
     fn apply_ready_sidebands(&mut self, now: Tick) {
         while let Some(index) = self.next_sideband_index(|sideband| sideband.tick <= now) {
             let sideband = self.pending_sidebands.remove(index);
-            self.apply_sideband(sideband.event);
+            self.apply_sideband(sideband.tick, sideband.event);
         }
     }
 
@@ -467,14 +467,22 @@ impl WorkloadTraceDataCacheConsumerInner {
             .is_some_and(|request_order| *request_order < order)
     }
 
-    fn apply_sideband(&mut self, event: TrafficTraceReplaySidebandEvent) {
-        let TrafficTraceReplaySidebandEvent::Cache(cache) = event else {
-            return;
-        };
-        self.data_cache
-            .lock()
-            .expect("workload data cache lock")
-            .apply_trace_cache_event(cache);
+    fn apply_sideband(&mut self, tick: Tick, event: TrafficTraceReplaySidebandEvent) {
+        match event {
+            TrafficTraceReplaySidebandEvent::Cache(cache) => {
+                self.data_cache
+                    .lock()
+                    .expect("workload data cache lock")
+                    .apply_trace_cache_event(cache);
+            }
+            TrafficTraceReplaySidebandEvent::Diagnostic(diagnostic) => {
+                self.data_cache
+                    .lock()
+                    .expect("workload data cache lock")
+                    .apply_trace_diagnostic_event(tick, diagnostic);
+            }
+            TrafficTraceReplaySidebandEvent::Tlb(_) | TrafficTraceReplaySidebandEvent::Htm(_) => {}
+        }
     }
 
     fn apply_trace_response(&mut self, event: rem6_traffic::TrafficTraceResponseEvent) {

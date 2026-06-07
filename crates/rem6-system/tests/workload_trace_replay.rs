@@ -1,10 +1,11 @@
 use rem6_boot::BootImage;
 use rem6_kernel::PartitionId;
-use rem6_memory::{AccessSize, Address, AddressRange, ResponseStatus};
+use rem6_memory::{AccessSize, Address, AddressRange, MemoryTargetId, ResponseStatus};
 use rem6_system::{
-    RiscvWorkloadReplay, RiscvWorkloadReplayError, RiscvWorkloadTrafficTraceReplay,
-    TrafficTraceReplayControlError, TrafficTraceReplayControllerControlError,
-    TrafficTraceReplayControllerTargetError, TrafficTraceReplayTargetError,
+    RiscvDataCacheProtocol, RiscvTraceDiagnosticKind, RiscvWorkloadReplay,
+    RiscvWorkloadReplayError, RiscvWorkloadTrafficTraceReplay, TrafficTraceReplayControlError,
+    TrafficTraceReplayControllerControlError, TrafficTraceReplayControllerTargetError,
+    TrafficTraceReplayTargetError,
 };
 use rem6_traffic::TrafficTraceErrorKind;
 use rem6_transport::MemoryTraceKind;
@@ -703,6 +704,81 @@ fn workload_replay_orders_trace_flush_before_delayed_read_response_cache_mutatio
     assert_eq!(data_cache_runs.len(), 2);
     assert!(data_cache_runs[0].has_directory_activity());
     assert!(!data_cache_runs[1].has_directory_activity());
+}
+
+#[test]
+fn workload_replay_records_trace_printreq_data_cache_diagnostic() {
+    let manifest = replay_manifest_with_data_cache("riscv-replay-trace-print-data-cache");
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let controller = controller_for_packets(&[
+        PacketFields {
+            tick: 0,
+            command: GEM5_READ_REQ,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(956),
+        },
+        PacketFields {
+            tick: 3,
+            command: GEM5_READ_RESP,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(956),
+        },
+        PacketFields {
+            tick: 4,
+            command: GEM5_PRINT_REQ,
+            address: Some(0x9008),
+            size: Some(1),
+            packet_id: Some(957),
+        },
+        PacketFields {
+            tick: 5,
+            command: GEM5_READ_REQ,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(958),
+        },
+        PacketFields {
+            tick: 8,
+            command: GEM5_READ_RESP,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(958),
+        },
+    ]);
+
+    let outcome = RiscvWorkloadReplay::new(plan)
+        .with_max_turns(96)
+        .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
+            controller,
+            route_id("cpu0.data"),
+            PartitionId::new(2),
+        ))
+        .run_parallel()
+        .unwrap();
+
+    let traffic_replay = &outcome.traffic_trace_replays()[0];
+    assert!(traffic_replay.errors().is_empty());
+    assert!(traffic_replay.runtime().is_empty(), "{traffic_replay:#?}");
+    assert_eq!(traffic_replay.runtime().sideband_events().len(), 1);
+    let data_cache_runs = outcome.run().data_cache_runs();
+    assert_eq!(data_cache_runs.len(), 2);
+    assert!(data_cache_runs[0].has_directory_activity());
+    assert!(!data_cache_runs[1].has_directory_activity());
+
+    let diagnostics = outcome.run().trace_diagnostic_records();
+    assert_eq!(diagnostics.len(), 1);
+    let diagnostic = &diagnostics[0];
+    assert_eq!(diagnostic.kind(), RiscvTraceDiagnosticKind::DataCacheLine);
+    assert_eq!(diagnostic.tick(), 4);
+    assert_eq!(diagnostic.protocol(), RiscvDataCacheProtocol::Msi);
+    assert_eq!(diagnostic.target(), MemoryTargetId::new(0));
+    assert_eq!(diagnostic.address(), Address::new(0x9008));
+    assert_eq!(diagnostic.line(), Address::new(0x9000));
+    assert_eq!(diagnostic.cached_copy_count(), 1);
+    assert!(diagnostic.has_cached_copy());
+    assert!(diagnostic.has_backing_line());
 }
 
 #[test]

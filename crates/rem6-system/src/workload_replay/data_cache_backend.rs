@@ -16,19 +16,21 @@ use rem6_directory::{
     ChiDirectoryLineState, DirectoryLineState, MesiDirectoryLineState, MoesiDirectoryLineState,
 };
 use rem6_dram::DramMemorySnapshot;
-use rem6_kernel::PartitionId;
+use rem6_kernel::{PartitionId, Tick};
 use rem6_memory::{Address, CacheLineLayout, MemoryOperation, MemoryResponse, MemoryTargetId};
 use rem6_protocol_chi::ChiCacheLine;
 use rem6_protocol_mesi::MesiCacheLine;
 use rem6_protocol_moesi::MoesiCacheLine;
 use rem6_protocol_msi::MsiCacheLine;
-use rem6_traffic::{TrafficTraceCacheEvent, TrafficTraceResponseEvent};
+use rem6_traffic::{
+    TrafficTraceCacheEvent, TrafficTraceDiagnosticEvent, TrafficTraceResponseEvent,
+};
 use rem6_transport::{RequestDelivery, TargetOutcome, TransportEndpointId};
 use rem6_workload::{WorkloadDataCacheProtocol, WorkloadRiscvDataCache};
 
 use super::cache_response::data_cache_response_result;
 use super::RiscvWorkloadReplayError;
-use crate::{RiscvDataCacheProtocol, RiscvDataCacheRunRecord};
+use crate::{RiscvDataCacheProtocol, RiscvDataCacheRunRecord, RiscvTraceDiagnosticRecord};
 
 enum WorkloadDataCacheHarness {
     Msi(PartitionedDirectoryLineHarness),
@@ -49,6 +51,7 @@ pub(super) struct WorkloadDataCacheLineBackend {
     line: Address,
     harness: WorkloadDataCacheHarness,
     records: Vec<RiscvDataCacheRunRecord>,
+    trace_diagnostic_records: Vec<RiscvTraceDiagnosticRecord>,
     error: Option<RiscvWorkloadReplayError>,
 }
 
@@ -200,12 +203,17 @@ impl WorkloadDataCacheLineBackend {
             line,
             harness,
             records: Vec::new(),
+            trace_diagnostic_records: Vec::new(),
             error: None,
         })
     }
 
     fn records(&self) -> Vec<RiscvDataCacheRunRecord> {
         self.records.clone()
+    }
+
+    fn trace_diagnostic_records(&self) -> Vec<RiscvTraceDiagnosticRecord> {
+        self.trace_diagnostic_records.clone()
     }
 
     fn take_error(&mut self) -> Option<RiscvWorkloadReplayError> {
@@ -231,6 +239,12 @@ impl WorkloadDataCacheLineBackend {
     fn accepts_trace_response_event(&self, event: TrafficTraceResponseEvent) -> bool {
         event.address().is_some_and(|address| {
             event.invalidates_line() && self.layout.line_address(address) == self.line
+        })
+    }
+
+    fn accepts_trace_diagnostic_event(&self, event: TrafficTraceDiagnosticEvent) -> bool {
+        event.address().is_some_and(|address| {
+            event.is_print() && self.layout.line_address(address) == self.line
         })
     }
 
@@ -306,6 +320,105 @@ impl WorkloadDataCacheLineBackend {
 
         self.invalidate_trace_line();
         true
+    }
+
+    fn apply_trace_diagnostic_event(
+        &mut self,
+        tick: Tick,
+        event: TrafficTraceDiagnosticEvent,
+    ) -> bool {
+        if !self.accepts_trace_diagnostic_event(event) {
+            return false;
+        }
+
+        match self.trace_diagnostic_record(tick, event) {
+            Ok(Some(record)) => self.trace_diagnostic_records.push(record),
+            Ok(None) => {}
+            Err(error) => self.error = Some(error),
+        }
+        true
+    }
+
+    fn trace_diagnostic_record(
+        &self,
+        tick: Tick,
+        event: TrafficTraceDiagnosticEvent,
+    ) -> Result<Option<RiscvTraceDiagnosticRecord>, RiscvWorkloadReplayError> {
+        let Some(address) = event.address() else {
+            return Ok(None);
+        };
+        let line = self.layout.line_address(address);
+        if !event.is_print() || line != self.line {
+            return Ok(None);
+        }
+
+        let (cached_copy_count, backing_line_present) = match &self.harness {
+            WorkloadDataCacheHarness::Msi(harness) => {
+                let snapshot = harness
+                    .quiescent_snapshot()
+                    .map_err(RiscvWorkloadReplayError::MsiDataCache)?;
+                (
+                    snapshot
+                        .caches()
+                        .values()
+                        .filter(|cache| cache.cached_data().is_some())
+                        .count(),
+                    snapshot.backing().is_some()
+                        || snapshot.dram_memory().is_some_and(|dram| {
+                            dram_snapshot_line_data(dram, self.target, self.line).is_some()
+                        }),
+                )
+            }
+            WorkloadDataCacheHarness::Mesi(harness) => {
+                let snapshot = harness
+                    .quiescent_snapshot()
+                    .map_err(RiscvWorkloadReplayError::MesiDataCache)?;
+                (
+                    snapshot
+                        .caches()
+                        .values()
+                        .filter(|cache| cache.cached_data().is_some())
+                        .count(),
+                    snapshot.backing().line_address() == self.line,
+                )
+            }
+            WorkloadDataCacheHarness::Moesi(harness) => {
+                let snapshot = harness
+                    .quiescent_snapshot()
+                    .map_err(RiscvWorkloadReplayError::MoesiDataCache)?;
+                (
+                    snapshot
+                        .caches()
+                        .values()
+                        .filter(|cache| cache.cached_data().is_some())
+                        .count(),
+                    snapshot.backing().line_address() == self.line,
+                )
+            }
+            WorkloadDataCacheHarness::Chi(harness) => {
+                let snapshot = harness
+                    .quiescent_snapshot()
+                    .map_err(RiscvWorkloadReplayError::ChiDataCache)?;
+                (
+                    snapshot
+                        .caches()
+                        .values()
+                        .filter(|cache| cache.cached_data().is_some())
+                        .count(),
+                    snapshot.backing().line_address() == self.line,
+                )
+            }
+        };
+
+        Ok(Some(RiscvTraceDiagnosticRecord::data_cache_line(
+            tick,
+            self.protocol,
+            self.target,
+            address,
+            self.line,
+            cached_copy_count,
+            backing_line_present,
+        )))
     }
 
     fn invalidate_trace_line(&mut self) {
@@ -400,6 +513,13 @@ impl WorkloadDataCacheBackend {
             .collect()
     }
 
+    pub(super) fn trace_diagnostic_records(&self) -> Vec<RiscvTraceDiagnosticRecord> {
+        self.lines
+            .values()
+            .flat_map(WorkloadDataCacheLineBackend::trace_diagnostic_records)
+            .collect()
+    }
+
     pub(super) fn take_error(&mut self) -> Option<RiscvWorkloadReplayError> {
         self.lines
             .values_mut()
@@ -418,6 +538,17 @@ impl WorkloadDataCacheBackend {
             .values_mut()
             .find(|line| line.accepts_trace_response_event(event))
             .is_some_and(|line| line.apply_trace_response_event(event))
+    }
+
+    pub(super) fn apply_trace_diagnostic_event(
+        &mut self,
+        tick: Tick,
+        event: TrafficTraceDiagnosticEvent,
+    ) -> bool {
+        self.lines
+            .values_mut()
+            .find(|line| line.accepts_trace_diagnostic_event(event))
+            .is_some_and(|line| line.apply_trace_diagnostic_event(tick, event))
     }
 
     pub(super) fn final_lines(
