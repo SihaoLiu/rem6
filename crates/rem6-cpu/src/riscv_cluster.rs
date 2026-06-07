@@ -9,8 +9,8 @@ use rem6_kernel::{
 use rem6_memory::{AccessSize, Address, AgentId, TranslationPageMap};
 use rem6_mmio::MmioBus;
 use rem6_transport::{
-    MemoryTrace, MemoryTransport, ParallelMemoryTransaction, RequestDelivery, TargetOutcome,
-    TransportEndpointId,
+    MemoryRouteId, MemoryTrace, MemoryTransport, ParallelMemoryTransaction, RequestDelivery,
+    TargetOutcome, TransportEndpointId,
 };
 
 use crate::riscv_cluster_run::{
@@ -123,6 +123,14 @@ impl RiscvCluster {
             .get(&cpu)
             .cloned()
             .ok_or(RiscvClusterError::UnknownCpu { cpu })
+    }
+
+    pub fn flush_data_translation_tlbs_for_data_route(&self, route: MemoryRouteId) -> usize {
+        self.cores
+            .values()
+            .filter(|core| core.data_route() == Some(route))
+            .filter_map(RiscvCore::flush_data_translation_tlb)
+            .sum()
     }
 
     pub fn invalidate_load_reservation_for_agent_if_overlaps(

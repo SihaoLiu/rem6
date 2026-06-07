@@ -1,6 +1,6 @@
 use rem6_dram::ExternalMemoryProfile;
 use rem6_kernel::Tick;
-use rem6_memory::{Address, AddressRange};
+use rem6_memory::{Address, AddressRange, TranslationQueueConfig, TranslationTlbConfig};
 
 use crate::{
     WorkloadAcceleratorCommand, WorkloadAcceleratorDevice, WorkloadAcceleratorDmaCopy,
@@ -431,6 +431,7 @@ pub struct WorkloadRiscvCore {
     fetch_route: WorkloadRouteId,
     data_endpoint: Option<String>,
     data_route: Option<WorkloadRouteId>,
+    data_translation: Option<WorkloadRiscvDataTranslation>,
 }
 
 impl WorkloadRiscvCore {
@@ -456,6 +457,7 @@ impl WorkloadRiscvCore {
             fetch_route,
             data_endpoint: None,
             data_route: None,
+            data_translation: None,
         })
     }
 
@@ -471,6 +473,24 @@ impl WorkloadRiscvCore {
 
         self.data_endpoint = Some(data_endpoint);
         self.data_route = Some(data_route);
+        self.data_translation = None;
+        Ok(self)
+    }
+
+    pub fn with_data_translation(
+        mut self,
+        data_endpoint: impl Into<String>,
+        data_route: WorkloadRouteId,
+        translation: WorkloadRiscvDataTranslation,
+    ) -> Result<Self, WorkloadError> {
+        let data_endpoint = data_endpoint.into();
+        if data_endpoint.is_empty() {
+            return Err(WorkloadError::EmptyEndpoint);
+        }
+
+        self.data_endpoint = Some(data_endpoint);
+        self.data_route = Some(data_route);
+        self.data_translation = Some(translation);
         Ok(self)
     }
 
@@ -504,6 +524,93 @@ impl WorkloadRiscvCore {
 
     pub fn data_route(&self) -> Option<&WorkloadRouteId> {
         self.data_route.as_ref()
+    }
+
+    pub fn data_translation(&self) -> Option<&WorkloadRiscvDataTranslation> {
+        self.data_translation.as_ref()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadRiscvDataTranslation {
+    queue: TranslationQueueConfig,
+    tlb: Option<TranslationTlbConfig>,
+    page_size_bytes: u64,
+    page_mappings: Vec<WorkloadTranslationPageMapping>,
+}
+
+impl WorkloadRiscvDataTranslation {
+    pub const fn new(queue: TranslationQueueConfig) -> Self {
+        Self {
+            queue,
+            tlb: None,
+            page_size_bytes: 4096,
+            page_mappings: Vec::new(),
+        }
+    }
+
+    pub const fn with_tlb(queue: TranslationQueueConfig, tlb: TranslationTlbConfig) -> Self {
+        Self {
+            queue,
+            tlb: Some(tlb),
+            page_size_bytes: 4096,
+            page_mappings: Vec::new(),
+        }
+    }
+
+    pub const fn with_page_size_bytes(mut self, page_size_bytes: u64) -> Self {
+        self.page_size_bytes = page_size_bytes;
+        self
+    }
+
+    pub fn with_page_mapping(mut self, mapping: WorkloadTranslationPageMapping) -> Self {
+        self.page_mappings.push(mapping);
+        self
+    }
+
+    pub const fn queue(&self) -> TranslationQueueConfig {
+        self.queue
+    }
+
+    pub const fn tlb(&self) -> Option<TranslationTlbConfig> {
+        self.tlb
+    }
+
+    pub const fn page_size_bytes(&self) -> u64 {
+        self.page_size_bytes
+    }
+
+    pub fn page_mappings(&self) -> &[WorkloadTranslationPageMapping] {
+        &self.page_mappings
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct WorkloadTranslationPageMapping {
+    virtual_base: Address,
+    physical_base: Address,
+    pages: u64,
+}
+
+impl WorkloadTranslationPageMapping {
+    pub const fn new(virtual_base: Address, physical_base: Address, pages: u64) -> Self {
+        Self {
+            virtual_base,
+            physical_base,
+            pages,
+        }
+    }
+
+    pub const fn virtual_base(self) -> Address {
+        self.virtual_base
+    }
+
+    pub const fn physical_base(self) -> Address {
+        self.physical_base
+    }
+
+    pub const fn pages(self) -> u64 {
+        self.pages
     }
 }
 

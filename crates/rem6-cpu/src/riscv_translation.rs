@@ -655,6 +655,24 @@ impl RiscvCore {
             .and_then(|frontend| frontend.tlb().map(|tlb| tlb.stats()))
     }
 
+    pub fn data_translation_tlb_entry_count(&self) -> Option<usize> {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .data_translation
+            .as_ref()
+            .and_then(|frontend| frontend.tlb().map(|tlb| tlb.entry_count()))
+    }
+
+    pub fn flush_data_translation_tlb(&self) -> Option<usize> {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .data_translation
+            .as_mut()
+            .and_then(|frontend| frontend.tlb_mut().map(|tlb| tlb.flush_all()))
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn drive_next_action_with_data_translation<F, D>(
         &self,

@@ -1312,6 +1312,25 @@ fn hash_topology(hash: &mut u64, topology: Option<&WorkloadTopology>) {
                 hash_str(hash, "data");
                 hash_str(hash, endpoint);
                 hash_str(hash, route.as_str());
+                if let Some(translation) = core.data_translation() {
+                    hash_str(hash, "data.translation");
+                    hash_u64(hash, translation.queue().capacity() as u64);
+                    hash_u64(hash, translation.queue().latency());
+                    match translation.tlb() {
+                        Some(tlb) => {
+                            hash_str(hash, "data.translation.tlb");
+                            hash_u64(hash, tlb.capacity() as u64);
+                        }
+                        None => hash_str(hash, "data.translation.tlb.none"),
+                    }
+                    hash_u64(hash, translation.page_size_bytes());
+                    for mapping in translation.page_mappings() {
+                        hash_str(hash, "data.translation.mapping");
+                        hash_u64(hash, mapping.virtual_base().get());
+                        hash_u64(hash, mapping.physical_base().get());
+                        hash_u64(hash, mapping.pages());
+                    }
+                }
             }
             (None, None) => hash_str(hash, "data.none"),
             _ => hash_str(hash, "data.invalid"),

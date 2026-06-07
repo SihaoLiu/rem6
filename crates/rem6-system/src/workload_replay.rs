@@ -11,7 +11,8 @@ use rem6_coherence::{
     PartitionedDramMemoryConfig, PartitionedDramQosState,
 };
 use rem6_cpu::{
-    CpuCore, CpuDataConfig, CpuError, CpuFetchConfig, CpuId, CpuResetState, RiscvCluster, RiscvCore,
+    CpuCore, CpuDataConfig, CpuError, CpuFetchConfig, CpuId, CpuResetState, CpuTranslationFrontend,
+    RiscvCluster, RiscvCore,
 };
 use rem6_dram::{
     DramControllerConfig, DramGeometry, DramMemoryController, DramMemoryError, DramMemorySnapshot,
@@ -25,7 +26,8 @@ use rem6_kernel::{
 };
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryError, MemoryRequest, MemoryRequestId,
-    MemoryTargetId, PartitionedMemorySnapshot, PartitionedMemoryStore,
+    MemoryTargetId, PartitionedMemorySnapshot, PartitionedMemoryStore, TranslationError,
+    TranslationPageMap, TranslationPagePermissions, TranslationPageSize,
 };
 use rem6_net::SinicFifoDeviceSnapshot;
 use rem6_stats::StatsRegistry;
@@ -277,6 +279,7 @@ impl RiscvWorkloadReplay {
         let gpu_wait_for_start = gpu_wait_for_markers(&gpu_devices);
         let accelerator_wait_for_start = accelerator_wait_for_markers(&accelerator_devices);
         let cluster = self.build_cluster(&route_map)?;
+        let data_translation_page_map = self.build_data_translation_page_map()?;
         let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(
             topology.partition_count(),
             topology.min_remote_delay(),
@@ -313,6 +316,7 @@ impl RiscvWorkloadReplay {
             &mut scheduler,
             &transport,
             &data_cache,
+            &cluster,
         )?;
         let trap_port = RiscvTrapEventPort::new(
             SystemHostEventPort::with_controller(
@@ -328,30 +332,58 @@ impl RiscvWorkloadReplay {
             schedule_gpu_kernel_launches(topology, &gpu_devices, &mut scheduler)?;
         let accelerator_command_count =
             schedule_accelerator_commands(topology, &accelerator_devices, &mut scheduler)?;
-        let run_result = driver.drive_until_host_stop_parallel(
-            &cluster,
-            &mut scheduler,
-            &transport,
-            MemoryTrace::new(),
-            MemoryTrace::new(),
-            |_cpu| {
-                let memory = memory.clone();
-                move |delivery, _context| memory_response(&memory, &delivery)
-            },
-            |_cpu| {
-                let memory = memory.clone();
-                let data_cache = data_cache.clone();
-                let sinic_mmio = sinic_mmio.clone();
-                move |delivery, context| {
-                    if let Some(outcome) = sinic_mmio.respond_parallel(&delivery, context) {
-                        return outcome;
+        let run_result = if let Some(page_map) = data_translation_page_map.as_ref() {
+            driver.drive_until_host_stop_parallel_with_data_translation(
+                &cluster,
+                &mut scheduler,
+                &transport,
+                MemoryTrace::new(),
+                MemoryTrace::new(),
+                page_map,
+                |_cpu| {
+                    let memory = memory.clone();
+                    move |delivery, _context| memory_response(&memory, &delivery)
+                },
+                |_cpu| {
+                    let memory = memory.clone();
+                    let data_cache = data_cache.clone();
+                    let sinic_mmio = sinic_mmio.clone();
+                    move |delivery, context| {
+                        if let Some(outcome) = sinic_mmio.respond_parallel(&delivery, context) {
+                            return outcome;
+                        }
+                        cached_memory_response(data_cache.as_ref(), &memory, &delivery)
                     }
-                    cached_memory_response(data_cache.as_ref(), &memory, &delivery)
-                }
-            },
-            self.max_turns,
-            |cpu| GuestEventId::new(1_000 + u64::from(cpu.get())),
-        );
+                },
+                self.max_turns,
+                |cpu| GuestEventId::new(1_000 + u64::from(cpu.get())),
+            )
+        } else {
+            driver.drive_until_host_stop_parallel(
+                &cluster,
+                &mut scheduler,
+                &transport,
+                MemoryTrace::new(),
+                MemoryTrace::new(),
+                |_cpu| {
+                    let memory = memory.clone();
+                    move |delivery, _context| memory_response(&memory, &delivery)
+                },
+                |_cpu| {
+                    let memory = memory.clone();
+                    let data_cache = data_cache.clone();
+                    let sinic_mmio = sinic_mmio.clone();
+                    move |delivery, context| {
+                        if let Some(outcome) = sinic_mmio.respond_parallel(&delivery, context) {
+                            return outcome;
+                        }
+                        cached_memory_response(data_cache.as_ref(), &memory, &delivery)
+                    }
+                },
+                self.max_turns,
+                |cpu| GuestEventId::new(1_000 + u64::from(cpu.get())),
+            )
+        };
         if let Some(data_cache) = data_cache.as_ref() {
             if let Some(error) = data_cache
                 .lock()
@@ -591,11 +623,76 @@ impl RiscvWorkloadReplay {
                         Ok(config.with_line_layout_range(target.range(), target_layout))
                     },
                 )?;
-                Ok(RiscvCore::with_data(cpu_core, data_config))
+                let Some(translation) = core.data_translation() else {
+                    return Ok(RiscvCore::with_data(cpu_core, data_config));
+                };
+                let frontend = match translation.tlb() {
+                    Some(tlb) => CpuTranslationFrontend::with_tlb(translation.queue(), tlb),
+                    None => CpuTranslationFrontend::new(translation.queue()),
+                };
+                Ok(RiscvCore::with_data_translation(
+                    cpu_core,
+                    data_config,
+                    frontend,
+                ))
             })
             .collect::<Result<Vec<_>, RiscvWorkloadReplayError>>()?;
 
         RiscvCluster::new(cores).map_err(RiscvWorkloadReplayError::RiscvCluster)
+    }
+
+    fn build_data_translation_page_map(
+        &self,
+    ) -> Result<Option<TranslationPageMap>, RiscvWorkloadReplayError> {
+        let topology = self
+            .plan
+            .topology()
+            .ok_or(RiscvWorkloadReplayError::MissingTopology)?;
+        let mut translations = topology.riscv_cores().iter().filter_map(|core| {
+            core.data_translation()
+                .map(|translation| (core.cpu(), translation))
+        });
+        let Some((_cpu, first)) = translations.next() else {
+            return Ok(None);
+        };
+
+        let page_size_bytes = first.page_size_bytes();
+        let mut page_map = TranslationPageMap::new(
+            TranslationPageSize::new(page_size_bytes)
+                .map_err(RiscvWorkloadReplayError::Translation)?,
+        );
+        for mapping in first.page_mappings() {
+            page_map
+                .map(
+                    mapping.virtual_base(),
+                    mapping.physical_base(),
+                    mapping.pages(),
+                    TranslationPagePermissions::read_write_execute(),
+                )
+                .map_err(RiscvWorkloadReplayError::Translation)?;
+        }
+
+        for (cpu, translation) in translations {
+            if translation.page_size_bytes() != page_size_bytes {
+                return Err(RiscvWorkloadReplayError::DataTranslationPageSizeMismatch {
+                    cpu,
+                    expected: page_size_bytes,
+                    actual: translation.page_size_bytes(),
+                });
+            }
+            for mapping in translation.page_mappings() {
+                page_map
+                    .map(
+                        mapping.virtual_base(),
+                        mapping.physical_base(),
+                        mapping.pages(),
+                        TranslationPagePermissions::read_write_execute(),
+                    )
+                    .map_err(RiscvWorkloadReplayError::Translation)?;
+            }
+        }
+
+        Ok(Some(page_map))
     }
 
     fn run_gpu_dma_copies(
@@ -1473,6 +1570,12 @@ pub enum RiscvWorkloadReplayError {
     Dram(DramMemoryError),
     DramModel(rem6_dram::DramError),
     Memory(MemoryError),
+    Translation(TranslationError),
+    DataTranslationPageSizeMismatch {
+        cpu: u32,
+        expected: u64,
+        actual: u64,
+    },
     Gpu(GpuError),
     Accelerator(AcceleratorError),
     MsiDataCache(HarnessError),
@@ -1544,6 +1647,15 @@ impl fmt::Display for RiscvWorkloadReplayError {
             Self::Dram(error) => write!(formatter, "{error}"),
             Self::DramModel(error) => write!(formatter, "{error}"),
             Self::Memory(error) => write!(formatter, "{error}"),
+            Self::Translation(error) => write!(formatter, "{error}"),
+            Self::DataTranslationPageSizeMismatch {
+                cpu,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "workload RISC-V core {cpu} data translation page size {actual} does not match expected {expected}"
+            ),
             Self::Gpu(error) => write!(formatter, "{error}"),
             Self::Accelerator(error) => write!(formatter, "{error}"),
             Self::MsiDataCache(error) => write!(formatter, "{error}"),
@@ -1575,6 +1687,7 @@ impl Error for RiscvWorkloadReplayError {
             Self::Dram(error) => Some(error),
             Self::DramModel(error) => Some(error),
             Self::Memory(error) => Some(error),
+            Self::Translation(error) => Some(error),
             Self::Gpu(error) => Some(error),
             Self::Accelerator(error) => Some(error),
             Self::MsiDataCache(error) => Some(error),
@@ -1598,6 +1711,7 @@ impl Error for RiscvWorkloadReplayError {
             | Self::MissingAcceleratorDmaWrite { .. }
             | Self::MissingRoute { .. }
             | Self::MissingFinalTick
+            | Self::DataTranslationPageSizeMismatch { .. }
             | Self::TrafficTraceReplayCallback { .. } => None,
         }
     }

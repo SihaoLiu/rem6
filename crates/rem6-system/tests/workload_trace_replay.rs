@@ -1,6 +1,10 @@
 use rem6_boot::BootImage;
+use rem6_cpu::CpuId;
 use rem6_kernel::PartitionId;
-use rem6_memory::{AccessSize, Address, AddressRange, MemoryTargetId, ResponseStatus};
+use rem6_memory::{
+    AccessSize, Address, AddressRange, MemoryTargetId, ResponseStatus, TranslationQueueConfig,
+    TranslationTlbConfig, TranslationTlbStats,
+};
 use rem6_system::{
     RiscvDataCacheProtocol, RiscvTraceDiagnosticKind, RiscvWorkloadReplay,
     RiscvWorkloadReplayError, RiscvWorkloadTrafficTraceReplay, TrafficTraceReplayControlError,
@@ -13,8 +17,9 @@ use rem6_workload::{
     HostEventIntent, WorkloadDataCacheProtocol, WorkloadExpectedTrafficTraceReplaySummary,
     WorkloadHostEvent, WorkloadHostPlacement, WorkloadManifest, WorkloadMemoryRoute,
     WorkloadMemoryTarget, WorkloadReplayPlan, WorkloadResource, WorkloadResourceId,
-    WorkloadResourceKind, WorkloadRiscvCore, WorkloadRiscvDataCache, WorkloadRouteId,
-    WorkloadTopology, WorkloadTrafficTraceReplaySummaryExpectationError,
+    WorkloadResourceKind, WorkloadRiscvCore, WorkloadRiscvDataCache, WorkloadRiscvDataTranslation,
+    WorkloadRouteId, WorkloadTopology, WorkloadTrafficTraceReplaySummaryExpectationError,
+    WorkloadTranslationPageMapping,
 };
 
 mod support;
@@ -41,6 +46,18 @@ fn word(raw: u32) -> Vec<u8> {
     raw.to_le_bytes().to_vec()
 }
 
+fn i_type(imm: i32, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
+    (((imm as u32) & 0x0fff) << 20)
+        | (u32::from(rs1) << 15)
+        | (funct3 << 12)
+        | (u32::from(rd) << 7)
+        | opcode
+}
+
+fn u_type(imm: u32, rd: u8, opcode: u32) -> u32 {
+    (imm & 0xffff_f000) | (u32::from(rd) << 7) | opcode
+}
+
 fn boot_image() -> BootImage {
     BootImage::new(Address::new(0x8000))
         .add_segment(Address::new(0x8000), word(0x0000_0073))
@@ -54,6 +71,21 @@ fn boot_image_with_data_cache_line() -> BootImage {
         .add_segment(
             Address::new(0x9008),
             0xfedc_ba98_7654_3210_u64.to_le_bytes().to_vec(),
+        )
+        .unwrap()
+}
+
+fn boot_image_with_translated_load() -> BootImage {
+    BootImage::new(Address::new(0x8000))
+        .add_segment(Address::new(0x8000), word(u_type(0x0000_4000, 2, 0x37)))
+        .unwrap()
+        .add_segment(Address::new(0x8004), word(i_type(8, 2, 0x3, 5, 0x03)))
+        .unwrap()
+        .add_segment(Address::new(0x8008), word(0x0000_0073))
+        .unwrap()
+        .add_segment(
+            Address::new(0x9008),
+            0x0123_4567_89ab_cdef_u64.to_le_bytes().to_vec(),
         )
         .unwrap()
 }
@@ -164,6 +196,54 @@ fn replay_topology_with_data_cache_protocol(
         .unwrap()
 }
 
+fn replay_topology_with_data_translation() -> WorkloadTopology {
+    let translation = WorkloadRiscvDataTranslation::with_tlb(
+        TranslationQueueConfig::new(4, 0).unwrap(),
+        TranslationTlbConfig::new(4).unwrap(),
+    )
+    .with_page_mapping(WorkloadTranslationPageMapping::new(
+        Address::new(0x4000),
+        Address::new(0x9000),
+        1,
+    ));
+
+    WorkloadTopology::new(4, 2, 2, WorkloadHostPlacement::new(3, 2, 51).unwrap())
+        .unwrap()
+        .add_memory_target(
+            WorkloadMemoryTarget::new(
+                0,
+                64,
+                AddressRange::new(Address::new(0x8000), AccessSize::new(0x2000).unwrap()).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(route_id("cpu0.fetch"), "cpu0.ifetch", 0, "memory", 2, 2, 3)
+                .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(route_id("cpu0.data"), "cpu0.dmem", 0, "memory", 2, 2, 3)
+                .unwrap(),
+        )
+        .unwrap()
+        .add_riscv_core(
+            WorkloadRiscvCore::new(
+                0,
+                0,
+                7,
+                Address::new(0x8000),
+                "cpu0.ifetch",
+                route_id("cpu0.fetch"),
+            )
+            .unwrap()
+            .with_data_translation("cpu0.dmem", route_id("cpu0.data"), translation)
+            .unwrap(),
+        )
+        .unwrap()
+}
+
 fn replay_manifest(id: &str) -> WorkloadManifest {
     WorkloadManifest::builder(workload_id(id), boot_image())
         .with_topology(replay_topology())
@@ -195,6 +275,22 @@ fn replay_manifest_with_data_cache_protocol(
         .add_required_resource(resource_id("kernel"))
         .add_host_event(WorkloadHostEvent::new(
             0,
+            HostEventIntent::Stop {
+                reason: "host-stop".to_string(),
+            },
+        ))
+        .build()
+        .unwrap()
+}
+
+fn replay_manifest_with_data_translation(id: &str) -> WorkloadManifest {
+    WorkloadManifest::builder(workload_id(id), boot_image_with_translated_load())
+        .with_topology(replay_topology_with_data_translation())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .add_host_event(WorkloadHostEvent::new(
+            26,
             HostEventIntent::Stop {
                 reason: "host-stop".to_string(),
             },
@@ -779,6 +875,43 @@ fn workload_replay_records_trace_printreq_data_cache_diagnostic() {
     assert_eq!(diagnostic.cached_copy_count(), 1);
     assert!(diagnostic.has_cached_copy());
     assert!(diagnostic.has_backing_line());
+}
+
+#[test]
+fn workload_replay_applies_tlbi_ext_sync_to_data_translation_tlb() {
+    let manifest =
+        replay_manifest_with_data_translation("riscv-replay-trace-tlbi-data-translation");
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let controller = controller_for_packets(&[PacketFields {
+        tick: 24,
+        command: GEM5_TLBI_EXT_SYNC,
+        address: Some(0),
+        size: Some(64),
+        packet_id: Some(959),
+    }]);
+
+    let outcome = RiscvWorkloadReplay::new(plan)
+        .with_max_turns(128)
+        .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
+            controller,
+            route_id("cpu0.data"),
+            PartitionId::new(2),
+        ))
+        .run_parallel()
+        .unwrap();
+
+    let traffic_replay = &outcome.traffic_trace_replays()[0];
+    assert!(traffic_replay.errors().is_empty());
+    assert!(traffic_replay.runtime().is_empty(), "{traffic_replay:#?}");
+    assert_eq!(traffic_replay.runtime().sideband_events().len(), 1);
+    let core = outcome.cluster().core(CpuId::new(0)).unwrap();
+    assert_eq!(
+        core.data_translation_tlb_stats(),
+        Some(TranslationTlbStats::new(0, 1, 0, 1, 0))
+    );
+    assert_eq!(core.data_translation_tlb_entry_count(), Some(0));
+    let summary = &outcome.result().traffic_trace_replay_summaries()[0];
+    assert_eq!(summary.tlb_sync_event_count(), 1);
 }
 
 #[test]

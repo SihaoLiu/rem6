@@ -144,8 +144,9 @@ pub use suite::{
 };
 pub use topology::{
     WorkloadHostPlacement, WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadRiscvCore,
-    WorkloadRiscvDataCache, WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId,
-    WorkloadRouteLatency, WorkloadSinicPciDevice, WorkloadTopology,
+    WorkloadRiscvDataCache, WorkloadRiscvDataTranslation, WorkloadRouteFabric, WorkloadRouteHop,
+    WorkloadRouteId, WorkloadRouteLatency, WorkloadSinicPciDevice, WorkloadTopology,
+    WorkloadTranslationPageMapping,
 };
 pub use traffic_trace_replay::{
     WorkloadExpectedTrafficTraceReplaySummary, WorkloadTrafficTraceReplaySummary,

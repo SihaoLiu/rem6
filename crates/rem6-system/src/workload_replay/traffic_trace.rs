@@ -14,10 +14,11 @@ use rem6_transport::{
 use rem6_workload::{WorkloadRouteId, WorkloadTopology, WorkloadTrafficTraceReplaySummary};
 
 use crate::{
-    TrafficTraceReplayControllerParallelErrors, TrafficTraceReplayControllerParallelExecutor,
-    TrafficTraceReplayControllerRuntime, TrafficTraceReplayOrder,
-    TrafficTraceReplayScheduledSidebandEvent, TrafficTraceReplaySidebandEvent,
-    TrafficTraceReplayTargetEvent, TrafficTraceReplayTargetEventContext,
+    RiscvCluster, TrafficTraceReplayControllerParallelErrors,
+    TrafficTraceReplayControllerParallelExecutor, TrafficTraceReplayControllerRuntime,
+    TrafficTraceReplayOrder, TrafficTraceReplayScheduledSidebandEvent,
+    TrafficTraceReplaySidebandEvent, TrafficTraceReplayTargetEvent,
+    TrafficTraceReplayTargetEventContext,
 };
 
 use super::data_cache_backend::WorkloadDataCacheBackend;
@@ -208,6 +209,7 @@ pub(super) fn schedule_traffic_trace_replays(
     scheduler: &mut PartitionedScheduler,
     transport: &MemoryTransport,
     data_cache: &Option<Arc<Mutex<WorkloadDataCacheBackend>>>,
+    cluster: &RiscvCluster,
 ) -> Result<Vec<RiscvWorkloadScheduledTrafficTraceReplay>, RiscvWorkloadReplayError> {
     let mut scheduled_replays = Vec::new();
     for replay in replays {
@@ -222,7 +224,8 @@ pub(super) fn schedule_traffic_trace_replays(
         let start_batch = controller
             .start(scheduler.now())
             .map_err(|error| RiscvWorkloadReplayError::TrafficTraceReplay(error.into()))?;
-        let data_cache_consumer = trace_data_cache_consumer(replay.route(), topology, data_cache);
+        let data_cache_consumer =
+            trace_data_cache_consumer(replay.route(), route, topology, data_cache, cluster);
         let executor =
             traffic_trace_replay_executor(controller, replay.retry_delay(), data_cache_consumer);
 
@@ -300,13 +303,21 @@ fn traffic_trace_replay_executor(
 
 fn trace_data_cache_consumer(
     route: &WorkloadRouteId,
+    memory_route: MemoryRouteId,
     topology: &WorkloadTopology,
     data_cache: &Option<Arc<Mutex<WorkloadDataCacheBackend>>>,
+    cluster: &RiscvCluster,
 ) -> Option<WorkloadTraceDataCacheConsumer> {
-    if !trace_route_uses_data_cache(route, topology) {
+    if !trace_route_uses_data_cache(route, topology)
+        && !trace_route_uses_data_translation(route, topology)
+    {
         return None;
     }
-    data_cache.clone().map(WorkloadTraceDataCacheConsumer::new)
+    Some(WorkloadTraceDataCacheConsumer::new(
+        memory_route,
+        data_cache.clone(),
+        cluster.clone(),
+    ))
 }
 
 fn trace_route_uses_data_cache(route: &WorkloadRouteId, topology: &WorkloadTopology) -> bool {
@@ -328,16 +339,31 @@ fn trace_route_uses_data_cache(route: &WorkloadRouteId, topology: &WorkloadTopol
             .any(|copy| copy.route() == route)
 }
 
+fn trace_route_uses_data_translation(route: &WorkloadRouteId, topology: &WorkloadTopology) -> bool {
+    topology.riscv_cores().iter().any(|core| {
+        core.data_translation().is_some()
+            && core
+                .data_route()
+                .is_some_and(|data_route| data_route == route)
+    })
+}
+
 #[derive(Clone)]
 struct WorkloadTraceDataCacheConsumer {
     inner: Arc<Mutex<WorkloadTraceDataCacheConsumerInner>>,
 }
 
 impl WorkloadTraceDataCacheConsumer {
-    fn new(data_cache: Arc<Mutex<WorkloadDataCacheBackend>>) -> Self {
+    fn new(
+        route: MemoryRouteId,
+        data_cache: Option<Arc<Mutex<WorkloadDataCacheBackend>>>,
+        cluster: RiscvCluster,
+    ) -> Self {
         Self {
             inner: Arc::new(Mutex::new(WorkloadTraceDataCacheConsumerInner {
+                route,
                 data_cache,
+                cluster,
                 pending_requests: BTreeSet::new(),
                 pending_sidebands: Vec::new(),
             })),
@@ -385,11 +411,12 @@ impl WorkloadTraceDataCacheConsumer {
             event_context.event(),
             TrafficTraceReplayTargetEvent::MemoryResponse(_)
         ) {
-            inner
-                .data_cache
-                .lock()
-                .expect("workload data cache lock")
-                .respond(delivery);
+            if let Some(data_cache) = inner.data_cache.as_ref() {
+                data_cache
+                    .lock()
+                    .expect("workload data cache lock")
+                    .respond(delivery);
+            }
             if let Some(response) = event_context.trace_response() {
                 inner.apply_trace_response(response);
             }
@@ -415,7 +442,9 @@ impl WorkloadTraceDataCacheConsumer {
 }
 
 struct WorkloadTraceDataCacheConsumerInner {
-    data_cache: Arc<Mutex<WorkloadDataCacheBackend>>,
+    route: MemoryRouteId,
+    data_cache: Option<Arc<Mutex<WorkloadDataCacheBackend>>>,
+    cluster: RiscvCluster,
     pending_requests: BTreeSet<TrafficTraceReplayOrder>,
     pending_sidebands: Vec<WorkloadTraceDataCacheSideband>,
 }
@@ -470,26 +499,38 @@ impl WorkloadTraceDataCacheConsumerInner {
     fn apply_sideband(&mut self, tick: Tick, event: TrafficTraceReplaySidebandEvent) {
         match event {
             TrafficTraceReplaySidebandEvent::Cache(cache) => {
-                self.data_cache
-                    .lock()
-                    .expect("workload data cache lock")
-                    .apply_trace_cache_event(cache);
+                if let Some(data_cache) = self.data_cache.as_ref() {
+                    data_cache
+                        .lock()
+                        .expect("workload data cache lock")
+                        .apply_trace_cache_event(cache);
+                }
             }
             TrafficTraceReplaySidebandEvent::Diagnostic(diagnostic) => {
-                self.data_cache
-                    .lock()
-                    .expect("workload data cache lock")
-                    .apply_trace_diagnostic_event(tick, diagnostic);
+                if let Some(data_cache) = self.data_cache.as_ref() {
+                    data_cache
+                        .lock()
+                        .expect("workload data cache lock")
+                        .apply_trace_diagnostic_event(tick, diagnostic);
+                }
             }
-            TrafficTraceReplaySidebandEvent::Tlb(_) | TrafficTraceReplaySidebandEvent::Htm(_) => {}
+            TrafficTraceReplaySidebandEvent::Tlb(tlb) => {
+                if matches!(tlb.kind(), TrafficTraceTlbKind::ExternalSync) {
+                    self.cluster
+                        .flush_data_translation_tlbs_for_data_route(self.route);
+                }
+            }
+            TrafficTraceReplaySidebandEvent::Htm(_) => {}
         }
     }
 
     fn apply_trace_response(&mut self, event: rem6_traffic::TrafficTraceResponseEvent) {
-        self.data_cache
-            .lock()
-            .expect("workload data cache lock")
-            .apply_trace_response_event(event);
+        if let Some(data_cache) = self.data_cache.as_ref() {
+            data_cache
+                .lock()
+                .expect("workload data cache lock")
+                .apply_trace_response_event(event);
+        }
     }
 }
 

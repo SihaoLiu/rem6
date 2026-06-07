@@ -2886,7 +2886,11 @@ no-response policies, and packet-count accounting without constructing a
 carries synthetic `addr` or `size` fields for
 `TlbiExtSync`, rem6 accepts the fields for trace compatibility but treats them
 as non-semantic TLB metadata because the external-sync trace event is not
-address-scoped.
+address-scoped. Workload replay can now bind declared RISC-V data-translation
+frontends with TLBs and page-map records, and coherent data-route
+`TlbiExtSync` sidebands flush the matching translated data TLB entries during
+replay. gem5 O3 LSQ stale-translation wait and completion sequencing beyond
+that route-local flush remains a CPU-pipeline contract.
 `HTMReq` command-id 56 and `HTMAbort` command-id 58 packets map to typed
 `TrafficTraceEvent::Htm` events that preserve tick ordering, sequence, optional
 address, optional size, optional packet id, optional PC metadata,
@@ -2986,9 +2990,10 @@ matched memory failure records typed error metadata at the failure tick without
 executing a successful data-cache access, and cache-flush sidebands apply to
 that backend rather than remaining audit-only events. Diagnostic print
 sidebands on those routes record a non-mutating data-cache snapshot at the
-sideband execution tick. The workload consumer ignores fetch, MMIO, and other
-non-data-cache routes even when their trace addresses alias a configured
-data-cache line. This preserves executable audit
+sideband execution tick. TLBI external-sync sidebands on translated data routes
+flush the corresponding RISC-V data-translation TLB. The workload consumer
+ignores fetch, MMIO, and unrelated data routes even when their trace addresses
+alias a configured data-cache line. This preserves executable audit
 records instead of dropping them; if a sideband event is
 discovered after its trace tick, it is recorded at the current scheduler tick as
 late-observed trace evidence rather than blocking the replay queue. The lower-level memory target
