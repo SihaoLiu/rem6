@@ -412,7 +412,9 @@ impl WorkloadTraceDataCacheConsumer {
             TrafficTraceReplayTargetEvent::MemoryResponse(_)
         ) {
             let data_cache_response_status = target_event_response_status(event_context.event());
-            if data_cache_response_status != Some(ResponseStatus::StoreConditionalFailed) {
+            if data_cache_response_status.is_some()
+                && data_cache_response_status != Some(ResponseStatus::StoreConditionalFailed)
+            {
                 if let Some(data_cache) = inner.data_cache.as_ref() {
                     data_cache
                         .lock()

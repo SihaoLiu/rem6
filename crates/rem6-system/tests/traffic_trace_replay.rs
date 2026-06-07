@@ -1191,6 +1191,102 @@ fn traffic_trace_replay_controller_parallel_executor_submits_interleaved_request
 }
 
 #[test]
+fn traffic_trace_replay_controller_parallel_executor_continues_after_no_response_request() {
+    let mut controller = controller_for_packets(&[
+        PacketFields {
+            tick: 0,
+            command: GEM5_WRITEBACK_DIRTY,
+            address: Some(0xe000),
+            size: Some(64),
+            packet_id: Some(132),
+        },
+        PacketFields {
+            tick: 1,
+            command: GEM5_READ_REQ,
+            address: Some(0xe040),
+            size: Some(8),
+            packet_id: Some(133),
+        },
+        PacketFields {
+            tick: 6,
+            command: GEM5_READ_RESP_WITH_INVALIDATE,
+            address: Some(0xe040),
+            size: Some(8),
+            packet_id: Some(133),
+        },
+    ]);
+
+    assert!(controller.start(0).unwrap().is_empty());
+    let completions = Arc::new(Mutex::new(Vec::new()));
+    let completion_log = Arc::clone(&completions);
+    let executor = TrafficTraceReplayControllerParallelExecutor::new(controller)
+        .with_target_completion_sink(move |_order, _delivery, event_context| {
+            let outcome = match event_context.event() {
+                TrafficTraceReplayTargetEvent::MemoryResponse(TargetOutcome::NoResponse) => {
+                    "no_response"
+                }
+                TrafficTraceReplayTargetEvent::MemoryResponse(
+                    TargetOutcome::Respond(_) | TargetOutcome::RespondAfter { .. },
+                ) => "response",
+                TrafficTraceReplayTargetEvent::MemoryFailure { .. } => "failure",
+            };
+            completion_log.lock().unwrap().push(outcome);
+        });
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let responses = Arc::new(Mutex::new(Vec::new()));
+    let trace = MemoryTrace::new();
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("core0"),
+                PartitionId::new(0),
+                endpoint("memory0"),
+                PartitionId::new(1),
+                3,
+                5,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    let response_log = Arc::clone(&responses);
+    let scheduled = executor
+        .schedule_controller_parallel(
+            &mut scheduler,
+            &transport,
+            route,
+            trace.clone(),
+            PartitionId::new(1),
+            move |delivery: ResponseDelivery| {
+                response_log
+                    .lock()
+                    .unwrap()
+                    .push((delivery.tick(), delivery.response().request_id()));
+            },
+        )
+        .unwrap();
+
+    assert_eq!(scheduled, 2);
+    scheduler.run_until_idle_parallel().unwrap();
+
+    assert!(executor.errors().is_empty());
+    assert_eq!(
+        *completions.lock().unwrap(),
+        vec!["no_response", "response"]
+    );
+    assert_eq!(responses.lock().unwrap().len(), 1);
+    let sent_ticks = trace
+        .snapshot()
+        .iter()
+        .filter(|event| event.kind() == MemoryTraceKind::RequestSent)
+        .map(|event| event.tick())
+        .collect::<Vec<_>>();
+    assert_eq!(sent_ticks, vec![0, 1]);
+    assert!(executor.runtime().lock().unwrap().is_empty());
+}
+
+#[test]
 fn traffic_trace_replay_controller_parallel_executor_preserves_runtime_after_submit_errors() {
     let mut request_controller = controller_for_packets(&[PacketFields {
         tick: 0,

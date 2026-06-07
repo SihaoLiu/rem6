@@ -28,7 +28,7 @@ use support::traffic_trace::{
     controller_for_packets, endpoint, PacketFields, GEM5_FLUSH_REQ, GEM5_HTM_ABORT,
     GEM5_MEM_FENCE_REQ, GEM5_MEM_FENCE_RESP, GEM5_PRINT_REQ, GEM5_READ_REQ, GEM5_READ_RESP,
     GEM5_READ_RESP_WITH_INVALIDATE, GEM5_STORE_COND_FAIL_REQ, GEM5_STORE_COND_RESP,
-    GEM5_TLBI_EXT_SYNC, GEM5_WRITE_ERROR, GEM5_WRITE_REQ,
+    GEM5_TLBI_EXT_SYNC, GEM5_WRITEBACK_DIRTY, GEM5_WRITE_ERROR, GEM5_WRITE_REQ,
 };
 
 fn workload_id(value: &str) -> rem6_workload::WorkloadId {
@@ -727,6 +727,84 @@ fn workload_replay_delivers_trace_store_conditional_failed_response() {
         ResponseStatus::StoreConditionalFailed
     );
     assert!(outcome.run().data_cache_runs().is_empty());
+}
+
+#[test]
+fn workload_replay_applies_trace_flush_after_no_response_writeback() {
+    let manifest =
+        replay_manifest_with_data_cache("riscv-replay-trace-flush-after-no-response-writeback");
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let controller = controller_for_packets(&[
+        PacketFields {
+            tick: 0,
+            command: GEM5_READ_REQ,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(952),
+        },
+        PacketFields {
+            tick: 3,
+            command: GEM5_READ_RESP,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(952),
+        },
+        PacketFields {
+            tick: 4,
+            command: GEM5_WRITEBACK_DIRTY,
+            address: Some(0x9000),
+            size: Some(64),
+            packet_id: Some(953),
+        },
+        PacketFields {
+            tick: 5,
+            command: GEM5_FLUSH_REQ,
+            address: Some(0x9000),
+            size: Some(64),
+            packet_id: Some(954),
+        },
+        PacketFields {
+            tick: 6,
+            command: GEM5_READ_REQ,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(955),
+        },
+        PacketFields {
+            tick: 8,
+            command: GEM5_READ_RESP,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(955),
+        },
+    ]);
+
+    let outcome = RiscvWorkloadReplay::new(plan)
+        .with_max_turns(64)
+        .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
+            controller,
+            route_id("cpu0.data"),
+            PartitionId::new(2),
+        ))
+        .run_parallel()
+        .unwrap();
+
+    let traffic_replay = &outcome.traffic_trace_replays()[0];
+    assert!(traffic_replay.errors().is_empty());
+    assert_eq!(traffic_replay.scheduled_count(), 4);
+    assert_eq!(
+        traffic_replay
+            .memory_trace_events()
+            .iter()
+            .filter(|event| event.kind() == MemoryTraceKind::RequestSent)
+            .count(),
+        3
+    );
+    assert_eq!(traffic_replay.runtime().sideband_events().len(), 1);
+    let data_cache_runs = outcome.run().data_cache_runs();
+    assert_eq!(data_cache_runs.len(), 2);
+    assert!(data_cache_runs[0].has_directory_activity());
+    assert!(data_cache_runs[1].has_directory_activity());
 }
 
 #[test]

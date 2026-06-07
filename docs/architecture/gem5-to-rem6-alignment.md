@@ -2964,7 +2964,11 @@ responses cannot make a later request satisfy or block an earlier delivery.
 When a response-required memory request is reported missing, the target runtime
 drops that pending request while preserving later matched actions. Memory
 requests that do not require a response return `NoResponse` without forcing a
-replay response. Controller-facing replay uses a
+replay response. The parallel executor forwards those completions to target
+consumers without querying the replay action queue, and workload data-cache
+replay leaves them out of response-required pending-order tracking so following
+cache sidebands and response-bearing requests continue to mutate the backend.
+Controller-facing replay uses a
 combined runtime that fans out each batch advanced from the shared
 `TrafficController` into the memory target runtime, the control runtime, and a
 sideband trace-event runtime. `rem6-system` also exposes a controller-aware

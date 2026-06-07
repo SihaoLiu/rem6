@@ -291,6 +291,23 @@ impl TrafficTraceReplayControllerParallelExecutor {
             request,
             trace,
             move |delivery, context| {
+                if !delivery.request().requires_response() {
+                    let event_context = TrafficTraceReplayTargetEventContext::new(
+                        TrafficTraceReplayTargetEvent::MemoryResponse(TargetOutcome::NoResponse),
+                        None,
+                        None,
+                    );
+                    if let Some(target_sink) = &target_sink {
+                        target_sink(request_order, &delivery);
+                    }
+                    if let Some(target_event_sink) = &target_event_sink {
+                        target_event_sink(request_order, &delivery, &event_context);
+                    }
+                    if let Some(target_completion_sink) = target_completion_sink.clone() {
+                        target_completion_sink(request_order, &delivery, &event_context);
+                    }
+                    return TargetOutcome::NoResponse;
+                }
                 match traffic_trace_replay_controller_runtime_target_event_context(
                     Arc::clone(&runtime),
                     &delivery,
@@ -333,8 +350,10 @@ impl TrafficTraceReplayControllerParallelExecutor {
             },
             response_sink,
         )?;
-        if let Some(target_request_sink) = &self.target_request_sink {
-            target_request_sink(request_order, request_id);
+        if request_event.request().requires_response() {
+            if let Some(target_request_sink) = &self.target_request_sink {
+                target_request_sink(request_order, request_id);
+            }
         }
 
         self.schedule_prepared_sidebands(
