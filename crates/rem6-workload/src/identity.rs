@@ -735,6 +735,10 @@ fn hash_expected_traffic_trace_replay_summary(
         hash,
         expected.minimum_memory_write_completion_count() as u64,
     );
+    hash_u64(
+        hash,
+        expected.minimum_trace_data_cache_response_count() as u64,
+    );
     hash_u64(hash, expected.minimum_memory_failure_count() as u64);
     hash_u64(hash, expected.minimum_trace_error_count() as u64);
     hash_u64(hash, expected.minimum_trace_htm_access_count() as u64);

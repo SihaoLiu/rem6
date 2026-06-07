@@ -727,6 +727,8 @@ fn workload_replay_runs_bound_traffic_trace_controller() {
     assert_eq!(response_record.trace_data_bytes(), Some(8));
     assert_eq!(response_record.response_data_bytes(), Some(8));
     assert!(!response_record.data_cache_response_applied());
+    let summary = &outcome.result().traffic_trace_replay_summaries()[0];
+    assert_eq!(summary.trace_data_cache_response_count(), 0);
 }
 
 #[test]
@@ -782,6 +784,8 @@ fn workload_replay_records_prefetch_trace_fill_without_response_payload() {
     assert_eq!(response_record.trace_data_bytes(), Some(16));
     assert_eq!(response_record.response_data_bytes(), None);
     assert!(!response_record.data_cache_response_applied());
+    let summary = &outcome.result().traffic_trace_replay_summaries()[0];
+    assert_eq!(summary.trace_data_cache_response_count(), 0);
 }
 
 #[test]
@@ -1685,6 +1689,8 @@ fn workload_replay_delivers_trace_store_conditional_failed_response() {
         ResponseStatus::StoreConditionalFailed
     );
     assert!(outcome.run().data_cache_runs().is_empty());
+    let summary = &outcome.result().traffic_trace_replay_summaries()[0];
+    assert_eq!(summary.trace_data_cache_response_count(), 0);
 }
 
 #[test]
@@ -1763,6 +1769,8 @@ fn workload_replay_applies_trace_flush_after_no_response_writeback() {
     assert_eq!(data_cache_runs.len(), 2);
     assert!(data_cache_runs[0].has_directory_activity());
     assert!(data_cache_runs[1].has_directory_activity());
+    let summary = &outcome.result().traffic_trace_replay_summaries()[0];
+    assert_eq!(summary.trace_data_cache_response_count(), 2);
 }
 
 #[test]

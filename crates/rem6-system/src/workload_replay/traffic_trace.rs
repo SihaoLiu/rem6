@@ -107,6 +107,12 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
             .expect("traffic trace replay runtime lock")
             .clone();
         let sideband_counts = traffic_trace_replay_sideband_counts(runtime.sideband_events());
+        let trace_data_cache_response_count = self
+            .records
+            .memory_response_snapshot()
+            .iter()
+            .filter(|record| record.data_cache_response_applied())
+            .count();
         WorkloadTrafficTraceReplaySummary::new(self.route.clone(), self.scheduled_count)
             .with_response_delivery_count(
                 self.response_deliveries
@@ -116,6 +122,7 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
             )
             .with_memory_trace_event_count(self.trace.snapshot().len())
             .with_memory_write_completion_count(runtime.memory_write_completions().len())
+            .with_trace_data_cache_response_count(trace_data_cache_response_count)
             .with_memory_failure_count(runtime.memory_failures().len())
             .with_trace_error_count(self.records.trace_error_snapshot().len())
             .with_trace_htm_access_count(self.records.trace_htm_access_snapshot().len())

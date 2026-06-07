@@ -3070,6 +3070,10 @@ traffic trace replay outcome itself, including request id, response kind,
 transport response status, trace order, address or matched-request line
 fallback, size, packet id, PC, response-data length, trace-fill data length,
 and whether the configured workload data-cache backend consumed the response.
+Workload traffic-trace summaries and manifest expectations also count matched
+trace responses accepted by that data-cache consumer, so replay artifacts can
+require executable cache-response policy consumption instead of inferring it
+from raw response deliveries.
 For active HTM transactions on data-cache routes, the same response consumer
 also records the accepted read-set and write-set accesses on the matching
 traffic trace replay outcome. Workload traffic-trace summaries and manifest
@@ -3197,15 +3201,16 @@ sources and synthesize memory or control replay actions, the target runtime
 uses those actions to drive executable response and failure outcomes, and
 workload data-cache replay consumes cache, clean, invalidate, read/write, and
 HTM access policy, plus MemSync `INV_L1` policy, to mutate line state and
-conflict records. Data-cache trace errors and HTM access records also surface
-as replay-level executed records and summary counts, separate from generic
-memory failure and response counts, so manifests can require that the cache
-consumer accepted those trace policies rather than only observing raw target
-traffic. Additional accessor work should stay tied to one of those consumers,
-or to a new execution-facing consumer with a failing test that reaches replay,
-workload cache state, or a recorded runtime outcome. The remaining integration
-boundary is propagation of replayed cache and CPU error outcomes beyond audit
-records into the corresponding cache-controller and CPU-port error paths.
+conflict records. Data-cache accepted trace responses, trace errors, and HTM
+access records also surface as replay-level executed evidence and summary
+counts, separate from generic memory failure and response counts, so manifests
+can require that the cache consumer accepted those trace policies rather than
+only observing raw target traffic. Additional accessor work should stay tied
+to one of those consumers, or to a new execution-facing consumer with a failing
+test that reaches replay, workload cache state, or a recorded runtime outcome.
+The remaining integration boundary is propagation of replayed cache and CPU
+error outcomes beyond audit records into the corresponding cache-controller and
+CPU-port error paths.
 Trace packet flag handling now maps non-prefetch `INST_FETCH` on `ReadReq`,
 `ReadCleanReq`, and
 `ReadSharedReq` packets to native instruction-fetch requests, accepts `PHYSICAL`
