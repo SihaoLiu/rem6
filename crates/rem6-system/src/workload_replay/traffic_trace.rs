@@ -6,7 +6,7 @@ use rem6_traffic::{TrafficController, TrafficControllerEvent, TrafficControllerE
 use rem6_transport::{
     MemoryRouteId, MemoryTrace, MemoryTraceEvent, MemoryTransport, ResponseDelivery,
 };
-use rem6_workload::WorkloadRouteId;
+use rem6_workload::{WorkloadRouteId, WorkloadTrafficTraceReplaySummary};
 
 use crate::{
     TrafficTraceReplayControllerParallelErrors, TrafficTraceReplayControllerParallelExecutor,
@@ -74,6 +74,27 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
 
     pub(super) fn errors(&self) -> TrafficTraceReplayControllerParallelErrors {
         self.executor.errors()
+    }
+
+    pub(super) fn summary(&self) -> WorkloadTrafficTraceReplaySummary {
+        let runtime = self
+            .executor
+            .runtime()
+            .lock()
+            .expect("traffic trace replay runtime lock")
+            .clone();
+        WorkloadTrafficTraceReplaySummary::new(self.route.clone(), self.scheduled_count)
+            .with_response_delivery_count(
+                self.response_deliveries
+                    .lock()
+                    .expect("traffic trace replay response lock")
+                    .len(),
+            )
+            .with_memory_trace_event_count(self.trace.snapshot().len())
+            .with_memory_failure_count(runtime.memory_failures().len())
+            .with_control_ack_count(runtime.control_acks().len())
+            .with_control_failure_count(runtime.control_failures().len())
+            .with_sideband_event_count(runtime.sideband_events().len())
     }
 
     pub(super) fn into_outcome(self) -> RiscvWorkloadTrafficTraceReplayOutcome {

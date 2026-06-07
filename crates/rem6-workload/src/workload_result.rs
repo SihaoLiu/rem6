@@ -5,7 +5,7 @@ use rem6_stats::{StatHistoryRecord, StatSnapshot};
 use crate::{
     WorkloadError, WorkloadExecutionMode, WorkloadExecutionModeSwitch, WorkloadHostActionSummary,
     WorkloadManifest, WorkloadManifestIdentity, WorkloadParallelExecutionSummary, WorkloadRouteId,
-    WorkloadSinicPciDevice, WorkloadStatsHistorySummary,
+    WorkloadSinicPciDevice, WorkloadStatsHistorySummary, WorkloadTrafficTraceReplaySummary,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -455,6 +455,7 @@ pub struct WorkloadResult {
     restored_checkpoint_labels: Vec<String>,
     checkpoint_manifest_summaries: Vec<WorkloadCheckpointManifestSummary>,
     restored_checkpoint_manifest_summaries: Vec<WorkloadCheckpointManifestSummary>,
+    traffic_trace_replay_summaries: Vec<WorkloadTrafficTraceReplaySummary>,
     execution_mode_switches: Vec<WorkloadExecutionModeSwitch>,
     sinic_pci_devices: Vec<WorkloadSinicPciDeviceSummary>,
 }
@@ -474,6 +475,7 @@ impl WorkloadResult {
             restored_checkpoint_labels: Vec::new(),
             checkpoint_manifest_summaries: Vec::new(),
             restored_checkpoint_manifest_summaries: Vec::new(),
+            traffic_trace_replay_summaries: Vec::new(),
             execution_mode_switches: Vec::new(),
             sinic_pci_devices: Vec::new(),
         }
@@ -547,6 +549,34 @@ impl WorkloadResult {
         self.restored_checkpoint_labels
             .push(summary.label().to_string());
         self.restored_checkpoint_manifest_summaries.push(summary);
+        self
+    }
+
+    pub fn with_traffic_trace_replay_summary(
+        mut self,
+        summary: WorkloadTrafficTraceReplaySummary,
+    ) -> Self {
+        if let Some(existing) = self
+            .traffic_trace_replay_summaries
+            .iter_mut()
+            .find(|existing| existing.route() == summary.route())
+        {
+            *existing = existing.merged(&summary);
+        } else {
+            self.traffic_trace_replay_summaries.push(summary);
+        }
+        self.traffic_trace_replay_summaries
+            .sort_by(|left, right| left.sort_key().cmp(right.sort_key()));
+        self
+    }
+
+    pub fn with_traffic_trace_replay_summaries(
+        mut self,
+        summaries: impl IntoIterator<Item = WorkloadTrafficTraceReplaySummary>,
+    ) -> Self {
+        for summary in summaries {
+            self = self.with_traffic_trace_replay_summary(summary);
+        }
         self
     }
 
@@ -636,6 +666,19 @@ impl WorkloadResult {
 
     pub fn restored_checkpoint_manifest_summaries(&self) -> &[WorkloadCheckpointManifestSummary] {
         &self.restored_checkpoint_manifest_summaries
+    }
+
+    pub fn traffic_trace_replay_summaries(&self) -> &[WorkloadTrafficTraceReplaySummary] {
+        &self.traffic_trace_replay_summaries
+    }
+
+    pub fn traffic_trace_replay_summary(
+        &self,
+        route: &WorkloadRouteId,
+    ) -> Option<&WorkloadTrafficTraceReplaySummary> {
+        self.traffic_trace_replay_summaries()
+            .iter()
+            .find(|summary| summary.route() == route)
     }
 
     pub fn execution_mode_switches(&self) -> &[WorkloadExecutionModeSwitch] {

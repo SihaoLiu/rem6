@@ -16,6 +16,7 @@ use crate::{
     WorkloadResourceActivityScope, WorkloadResourceConstructionField, WorkloadResourceId,
     WorkloadResourceKind, WorkloadResourceKindField, WorkloadRouteId, WorkloadRouteLatency,
     WorkloadStatsHistoryExpectationError, WorkloadSuiteIdentity,
+    WorkloadTrafficTraceReplaySummaryExpectationError,
 };
 
 mod display;
@@ -495,6 +496,9 @@ pub enum WorkloadError {
         label: String,
         component: String,
     },
+    DuplicateExpectedTrafficTraceReplaySummary {
+        route: WorkloadRouteId,
+    },
     MissingCheckpointManifestSummary {
         label: String,
     },
@@ -563,6 +567,7 @@ pub enum WorkloadError {
     CheckpointRestoreComponentChunkSummaryBelowMinimum(
         Box<WorkloadCheckpointComponentChunkSummaryBelowMinimumError>,
     ),
+    TrafficTraceReplaySummaryExpectation(Box<WorkloadTrafficTraceReplaySummaryExpectationError>),
     MissingExecutionModeSwitch {
         tick: Tick,
         target: String,

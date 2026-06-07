@@ -41,8 +41,8 @@ use rem6_workload::{
     WorkloadParallelBatchWorkerCount, WorkloadParallelBatchWorkerLaneRecord, WorkloadReplayPlan,
     WorkloadResolvedResources, WorkloadResult, WorkloadRouteFabric, WorkloadRouteHop,
     WorkloadRouteId, WorkloadSinicPciDeviceSummary, WorkloadTopology,
-    WorkloadWaitForBlockedNodeWindow, WorkloadWaitForEdgeKindWindow,
-    WorkloadWaitForTargetNodeWindow,
+    WorkloadTrafficTraceReplaySummary, WorkloadWaitForBlockedNodeWindow,
+    WorkloadWaitForEdgeKindWindow, WorkloadWaitForTargetNodeWindow,
 };
 
 mod cache_response;
@@ -414,6 +414,10 @@ impl RiscvWorkloadReplay {
             &accelerator_snapshots,
         )
         .with_wait_for_graph(accelerator_wait_for);
+        let traffic_trace_replay_summaries = traffic_trace_replays
+            .iter()
+            .map(RiscvWorkloadScheduledTrafficTraceReplay::summary)
+            .collect::<Vec<_>>();
         let (result, host_action_outcomes) = self.result_from_run(
             &run,
             &controller,
@@ -424,6 +428,7 @@ impl RiscvWorkloadReplay {
                 accelerator: &accelerator_activity,
                 accelerator_dma: &accelerator_dma_activity,
             },
+            &traffic_trace_replay_summaries,
         )?;
         self.plan
             .verify_result(&result)
@@ -1064,6 +1069,7 @@ impl RiscvWorkloadReplay {
         controller: &Arc<Mutex<SystemHostController>>,
         topology: &WorkloadTopology,
         activities: WorkloadReplayActivityRefs<'_>,
+        traffic_trace_replay_summaries: &[WorkloadTrafficTraceReplaySummary],
     ) -> Result<(WorkloadResult, Vec<SystemActionOutcome>), RiscvWorkloadReplayError> {
         let final_tick = run
             .final_tick()
@@ -1152,6 +1158,9 @@ impl RiscvWorkloadReplay {
                         .sinic_pci_devices()
                         .iter()
                         .map(WorkloadSinicPciDeviceSummary::from_topology_device),
+                )
+                .with_traffic_trace_replay_summaries(
+                    traffic_trace_replay_summaries.iter().cloned(),
                 ),
             host_action_outcomes,
         ))

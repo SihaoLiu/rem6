@@ -1,0 +1,249 @@
+use rem6_boot::BootImage;
+use rem6_memory::Address;
+use rem6_workload::{
+    WorkloadError, WorkloadExpectedCheckpointManifestSummary,
+    WorkloadExpectedTrafficTraceReplaySummary, WorkloadId, WorkloadReplayPlan, WorkloadResource,
+    WorkloadResourceId, WorkloadResourceKind, WorkloadResult, WorkloadRouteId,
+    WorkloadTrafficTraceReplaySummary, WorkloadTrafficTraceReplaySummaryExpectationError,
+};
+
+fn id(value: &str) -> WorkloadId {
+    WorkloadId::new(value).unwrap()
+}
+
+fn resource_id(value: &str) -> WorkloadResourceId {
+    WorkloadResourceId::new(value).unwrap()
+}
+
+fn route_id(value: &str) -> WorkloadRouteId {
+    WorkloadRouteId::new(value).unwrap()
+}
+
+fn boot_image() -> BootImage {
+    BootImage::new(Address::new(0x8000))
+        .add_segment(Address::new(0x8000), vec![0x13, 0x05, 0x00, 0x00])
+        .unwrap()
+}
+
+fn kernel_resource() -> WorkloadResource {
+    WorkloadResource::new(
+        resource_id("kernel"),
+        WorkloadResourceKind::Kernel,
+        "sha256:kernel",
+        "resources/kernel.elf",
+    )
+    .unwrap()
+}
+
+fn expected_trace_summary(
+    route: &str,
+    scheduled_count: usize,
+    response_delivery_count: usize,
+    memory_trace_event_count: usize,
+    memory_failure_count: usize,
+    control_ack_count: usize,
+    control_failure_count: usize,
+    sideband_event_count: usize,
+) -> WorkloadExpectedTrafficTraceReplaySummary {
+    WorkloadExpectedTrafficTraceReplaySummary::new(route_id(route))
+        .with_minimum_scheduled_count(scheduled_count)
+        .with_minimum_response_delivery_count(response_delivery_count)
+        .with_minimum_memory_trace_event_count(memory_trace_event_count)
+        .with_minimum_memory_failure_count(memory_failure_count)
+        .with_minimum_control_ack_count(control_ack_count)
+        .with_minimum_control_failure_count(control_failure_count)
+        .with_minimum_sideband_event_count(sideband_event_count)
+}
+
+fn actual_trace_summary(
+    route: &str,
+    scheduled_count: usize,
+    response_delivery_count: usize,
+    memory_trace_event_count: usize,
+    memory_failure_count: usize,
+    control_ack_count: usize,
+    control_failure_count: usize,
+    sideband_event_count: usize,
+) -> WorkloadTrafficTraceReplaySummary {
+    WorkloadTrafficTraceReplaySummary::new(route_id(route), scheduled_count)
+        .with_response_delivery_count(response_delivery_count)
+        .with_memory_trace_event_count(memory_trace_event_count)
+        .with_memory_failure_count(memory_failure_count)
+        .with_control_ack_count(control_ack_count)
+        .with_control_failure_count(control_failure_count)
+        .with_sideband_event_count(sideband_event_count)
+}
+
+#[test]
+fn workload_manifest_records_traffic_trace_replay_summary_expectations() {
+    let trace_a = expected_trace_summary("trace.a", 1, 1, 3, 0, 0, 0, 0);
+    let trace_b = expected_trace_summary("trace.b", 2, 0, 2, 1, 0, 0, 1);
+    let manifest =
+        rem6_workload::WorkloadManifest::builder(id("manifest-traffic-trace-replay"), boot_image())
+            .add_resource(kernel_resource())
+            .unwrap()
+            .add_required_resource(resource_id("kernel"))
+            .add_expected_traffic_trace_replay_summary(trace_b.clone())
+            .unwrap()
+            .add_expected_traffic_trace_replay_summary(trace_a.clone())
+            .unwrap()
+            .build()
+            .unwrap();
+
+    assert_eq!(
+        manifest.expected_traffic_trace_replay_summaries(),
+        &[trace_a.clone(), trace_b.clone()],
+    );
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    assert_eq!(
+        plan.expected_traffic_trace_replay_summaries(),
+        manifest.expected_traffic_trace_replay_summaries(),
+    );
+
+    let result = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_traffic_trace_replay_summary(actual_trace_summary("trace.b", 2, 0, 2, 1, 0, 0, 1))
+        .with_traffic_trace_replay_summary(actual_trace_summary("trace.a", 1, 1, 3, 0, 0, 0, 0));
+    assert_eq!(
+        result.traffic_trace_replay_summaries(),
+        &[
+            actual_trace_summary("trace.a", 1, 1, 3, 0, 0, 0, 0),
+            actual_trace_summary("trace.b", 2, 0, 2, 1, 0, 0, 1),
+        ],
+    );
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
+fn workload_manifest_identity_changes_with_traffic_trace_replay_expectations() {
+    let base =
+        rem6_workload::WorkloadManifest::builder(id("identity-traffic-trace-replay"), boot_image())
+            .add_resource(kernel_resource())
+            .unwrap()
+            .add_required_resource(resource_id("kernel"))
+            .build()
+            .unwrap();
+    let response =
+        rem6_workload::WorkloadManifest::builder(id("identity-traffic-trace-replay"), boot_image())
+            .add_resource(kernel_resource())
+            .unwrap()
+            .add_required_resource(resource_id("kernel"))
+            .add_expected_traffic_trace_replay_summary(expected_trace_summary(
+                "trace.a", 1, 1, 3, 0, 0, 0, 0,
+            ))
+            .unwrap()
+            .build()
+            .unwrap();
+    let stronger =
+        rem6_workload::WorkloadManifest::builder(id("identity-traffic-trace-replay"), boot_image())
+            .add_resource(kernel_resource())
+            .unwrap()
+            .add_required_resource(resource_id("kernel"))
+            .add_expected_traffic_trace_replay_summary(expected_trace_summary(
+                "trace.a", 1, 2, 3, 0, 0, 0, 0,
+            ))
+            .unwrap()
+            .build()
+            .unwrap();
+    let other_route =
+        rem6_workload::WorkloadManifest::builder(id("identity-traffic-trace-replay"), boot_image())
+            .add_resource(kernel_resource())
+            .unwrap()
+            .add_required_resource(resource_id("kernel"))
+            .add_expected_traffic_trace_replay_summary(expected_trace_summary(
+                "trace.b", 1, 1, 3, 0, 0, 0, 0,
+            ))
+            .unwrap()
+            .build()
+            .unwrap();
+
+    assert_ne!(base.identity(), response.identity());
+    assert_ne!(response.identity(), stronger.identity());
+    assert_ne!(response.identity(), other_route.identity());
+}
+
+#[test]
+fn traffic_trace_replay_identity_domain_stays_distinct_from_checkpoint_expectations() {
+    let checkpoint =
+        rem6_workload::WorkloadManifest::builder(id("traffic-trace-domain"), boot_image())
+            .add_resource(kernel_resource())
+            .unwrap()
+            .add_required_resource(resource_id("kernel"))
+            .add_expected_checkpoint_manifest_summary(
+                WorkloadExpectedCheckpointManifestSummary::new("trace.a", 1, 1, 3),
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+    let traffic =
+        rem6_workload::WorkloadManifest::builder(id("traffic-trace-domain"), boot_image())
+            .add_resource(kernel_resource())
+            .unwrap()
+            .add_required_resource(resource_id("kernel"))
+            .add_expected_traffic_trace_replay_summary(expected_trace_summary(
+                "trace.a", 1, 1, 3, 0, 0, 0, 0,
+            ))
+            .unwrap()
+            .build()
+            .unwrap();
+
+    assert_ne!(checkpoint.identity(), traffic.identity());
+}
+
+#[test]
+fn workload_manifest_rejects_duplicate_traffic_trace_replay_expectations() {
+    let error = rem6_workload::WorkloadManifest::builder(
+        id("duplicate-traffic-trace-replay"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_expected_traffic_trace_replay_summary(expected_trace_summary(
+        "trace.a", 1, 1, 3, 0, 0, 0, 0,
+    ))
+    .unwrap()
+    .add_expected_traffic_trace_replay_summary(expected_trace_summary(
+        "trace.a", 2, 1, 3, 0, 0, 0, 0,
+    ))
+    .unwrap_err();
+
+    assert_eq!(
+        error,
+        WorkloadError::DuplicateExpectedTrafficTraceReplaySummary {
+            route: route_id("trace.a"),
+        },
+    );
+}
+
+#[test]
+fn workload_replay_plan_rejects_missing_or_underreported_traffic_trace_replay_summary() {
+    let expected = expected_trace_summary("trace.a", 1, 2, 3, 1, 1, 0, 1);
+    let manifest =
+        rem6_workload::WorkloadManifest::builder(id("traffic-trace-replay-mismatch"), boot_image())
+            .add_resource(kernel_resource())
+            .unwrap()
+            .add_required_resource(resource_id("kernel"))
+            .add_expected_traffic_trace_replay_summary(expected.clone())
+            .unwrap()
+            .build()
+            .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let missing_summary = WorkloadResult::new(plan.manifest_identity(), 32);
+    assert_eq!(
+        plan.verify_result(&missing_summary).unwrap_err(),
+        WorkloadError::TrafficTraceReplaySummaryExpectation(Box::new(
+            WorkloadTrafficTraceReplaySummaryExpectationError::Missing(expected.clone()),
+        )),
+    );
+
+    let actual = actual_trace_summary("trace.a", 1, 1, 3, 0, 1, 0, 0);
+    let underreported = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_traffic_trace_replay_summary(actual.clone());
+    assert_eq!(
+        plan.verify_result(&underreported).unwrap_err(),
+        WorkloadError::TrafficTraceReplaySummaryExpectation(Box::new(
+            WorkloadTrafficTraceReplaySummaryExpectationError::BelowMinimum { expected, actual },
+        )),
+    );
+}

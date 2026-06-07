@@ -38,6 +38,7 @@ mod result_partition_activity;
 mod stats_history;
 mod suite;
 mod topology;
+mod traffic_trace_replay;
 mod workload_result;
 
 pub use boot_handoff::{WorkloadLinuxBootHandoff, WorkloadLinuxInitrd};
@@ -146,6 +147,10 @@ pub use topology::{
     WorkloadRiscvDataCache, WorkloadRouteFabric, WorkloadRouteHop, WorkloadRouteId,
     WorkloadRouteLatency, WorkloadSinicPciDevice, WorkloadTopology,
 };
+pub use traffic_trace_replay::{
+    WorkloadExpectedTrafficTraceReplaySummary, WorkloadTrafficTraceReplaySummary,
+    WorkloadTrafficTraceReplaySummaryExpectationError,
+};
 pub use workload_result::{
     WorkloadCheckpointChunkSummary, WorkloadCheckpointComponentSummary,
     WorkloadCheckpointManifestSummary, WorkloadExpectedCheckpointChunkSummary,
@@ -199,6 +204,7 @@ pub struct WorkloadManifest {
     expected_parallel_remote_sends: Vec<WorkloadExpectedParallelRemoteSend>,
     expected_parallel_remote_flow_timings: Vec<WorkloadExpectedParallelRemoteFlowTiming>,
     expected_parallel_progress_transitions: Vec<WorkloadExpectedParallelProgressTransition>,
+    expected_traffic_trace_replay_summaries: Vec<WorkloadExpectedTrafficTraceReplaySummary>,
     expected_checkpoint_manifest_summaries: Vec<WorkloadExpectedCheckpointManifestSummary>,
     expected_checkpoint_restore_manifest_summaries: Vec<WorkloadExpectedCheckpointManifestSummary>,
     expected_checkpoint_component_summaries: Vec<WorkloadExpectedCheckpointComponentSummary>,
@@ -305,6 +311,12 @@ impl WorkloadManifest {
         &self,
     ) -> &[WorkloadExpectedCheckpointManifestSummary] {
         &self.expected_checkpoint_manifest_summaries
+    }
+
+    pub fn expected_traffic_trace_replay_summaries(
+        &self,
+    ) -> &[WorkloadExpectedTrafficTraceReplaySummary] {
+        &self.expected_traffic_trace_replay_summaries
     }
 
     pub fn expected_checkpoint_restore_manifest_summaries(
@@ -419,6 +431,7 @@ pub struct WorkloadManifestBuilder {
     expected_parallel_remote_sends: Vec<WorkloadExpectedParallelRemoteSend>,
     expected_parallel_remote_flow_timings: Vec<WorkloadExpectedParallelRemoteFlowTiming>,
     expected_parallel_progress_transitions: Vec<WorkloadExpectedParallelProgressTransition>,
+    expected_traffic_trace_replay_summaries: Vec<WorkloadExpectedTrafficTraceReplaySummary>,
     expected_checkpoint_manifest_summaries: Vec<WorkloadExpectedCheckpointManifestSummary>,
     expected_checkpoint_restore_manifest_summaries: Vec<WorkloadExpectedCheckpointManifestSummary>,
     expected_checkpoint_component_summaries: Vec<WorkloadExpectedCheckpointComponentSummary>,
@@ -484,6 +497,7 @@ impl WorkloadManifestBuilder {
             expected_parallel_remote_sends: Vec::new(),
             expected_parallel_remote_flow_timings: Vec::new(),
             expected_parallel_progress_transitions: Vec::new(),
+            expected_traffic_trace_replay_summaries: Vec::new(),
             expected_checkpoint_manifest_summaries: Vec::new(),
             expected_checkpoint_restore_manifest_summaries: Vec::new(),
             expected_checkpoint_component_summaries: Vec::new(),
@@ -572,6 +586,25 @@ impl WorkloadManifestBuilder {
         }
         self.expected_checkpoint_manifest_summaries.push(expected);
         self.expected_checkpoint_manifest_summaries
+            .sort_by(|left, right| left.sort_key().cmp(right.sort_key()));
+        Ok(self)
+    }
+
+    pub fn add_expected_traffic_trace_replay_summary(
+        mut self,
+        expected: WorkloadExpectedTrafficTraceReplaySummary,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_traffic_trace_replay_summaries
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(WorkloadError::DuplicateExpectedTrafficTraceReplaySummary {
+                route: expected.route().clone(),
+            });
+        }
+        self.expected_traffic_trace_replay_summaries.push(expected);
+        self.expected_traffic_trace_replay_summaries
             .sort_by(|left, right| left.sort_key().cmp(right.sort_key()));
         Ok(self)
     }
@@ -960,6 +993,7 @@ impl WorkloadManifestBuilder {
             expected_parallel_remote_sends: &self.expected_parallel_remote_sends,
             expected_parallel_remote_flow_timings: &self.expected_parallel_remote_flow_timings,
             expected_parallel_progress_transitions: &self.expected_parallel_progress_transitions,
+            expected_traffic_trace_replay_summaries: &self.expected_traffic_trace_replay_summaries,
             expected_checkpoint_manifest_summaries: &self.expected_checkpoint_manifest_summaries,
             expected_checkpoint_restore_manifest_summaries: &self
                 .expected_checkpoint_restore_manifest_summaries,
@@ -1034,6 +1068,7 @@ impl WorkloadManifestBuilder {
             expected_parallel_remote_sends: self.expected_parallel_remote_sends,
             expected_parallel_remote_flow_timings: self.expected_parallel_remote_flow_timings,
             expected_parallel_progress_transitions: self.expected_parallel_progress_transitions,
+            expected_traffic_trace_replay_summaries: self.expected_traffic_trace_replay_summaries,
             expected_checkpoint_manifest_summaries: self.expected_checkpoint_manifest_summaries,
             expected_checkpoint_restore_manifest_summaries: self
                 .expected_checkpoint_restore_manifest_summaries,

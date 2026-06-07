@@ -7,7 +7,7 @@ use crate::host_event::{
     execution_mode_switch_matches, planned_checkpoint_labels, planned_checkpoint_restore_labels,
     planned_execution_mode_switches, planned_stop_reason,
 };
-use crate::{parallel_expectation, replay_verify};
+use crate::{parallel_expectation, replay_verify, traffic_trace_replay};
 use crate::{
     CheckpointLineage, HostEventIntent, WorkloadBootImage, WorkloadCheckpointComponentSummary,
     WorkloadCheckpointManifestSummary, WorkloadError, WorkloadExecutionModeSwitch,
@@ -34,8 +34,9 @@ use crate::{
     WorkloadExpectedPlannedParallelBatchUtilization,
     WorkloadExpectedPlannedParallelBatchWorkerLanePartitionTicks,
     WorkloadExpectedPlannedParallelBatchWorkerSlotTicks, WorkloadExpectedResourceActivity,
-    WorkloadExpectedStatsHistory, WorkloadHostEvent, WorkloadLinuxBootHandoff, WorkloadManifest,
-    WorkloadManifestIdentity, WorkloadResource, WorkloadResult, WorkloadTopology,
+    WorkloadExpectedStatsHistory, WorkloadExpectedTrafficTraceReplaySummary, WorkloadHostEvent,
+    WorkloadLinuxBootHandoff, WorkloadManifest, WorkloadManifestIdentity, WorkloadResource,
+    WorkloadResult, WorkloadTopology,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -74,6 +75,8 @@ pub struct WorkloadReplayPlan {
     pub(crate) expected_parallel_remote_flow_timings: Vec<WorkloadExpectedParallelRemoteFlowTiming>,
     pub(crate) expected_parallel_progress_transitions:
         Vec<WorkloadExpectedParallelProgressTransition>,
+    pub(crate) expected_traffic_trace_replay_summaries:
+        Vec<WorkloadExpectedTrafficTraceReplaySummary>,
     pub(crate) expected_checkpoint_manifest_summaries:
         Vec<WorkloadExpectedCheckpointManifestSummary>,
     pub(crate) expected_checkpoint_restore_manifest_summaries:
@@ -178,6 +181,9 @@ impl WorkloadReplayPlan {
                 .to_vec(),
             expected_parallel_progress_transitions: manifest
                 .expected_parallel_progress_transitions()
+                .to_vec(),
+            expected_traffic_trace_replay_summaries: manifest
+                .expected_traffic_trace_replay_summaries()
                 .to_vec(),
             expected_checkpoint_manifest_summaries: manifest
                 .expected_checkpoint_manifest_summaries()
@@ -304,6 +310,12 @@ impl WorkloadReplayPlan {
         &self,
     ) -> &[WorkloadExpectedCheckpointManifestSummary] {
         &self.expected_checkpoint_manifest_summaries
+    }
+
+    pub fn expected_traffic_trace_replay_summaries(
+        &self,
+    ) -> &[WorkloadExpectedTrafficTraceReplaySummary] {
+        &self.expected_traffic_trace_replay_summaries
     }
 
     pub fn expected_checkpoint_restore_manifest_summaries(
@@ -645,6 +657,7 @@ impl WorkloadReplayPlan {
         self.verify_execution_mode_switches(result)?;
         self.verify_stop_reason(result)?;
         self.verify_expected_stats_history(result)?;
+        traffic_trace_replay::verify_expected_traffic_trace_replay_summaries(self, result)?;
         replay_verify::verify_expected_parallel_remote_flows(self, result)?;
         replay_verify::verify_expected_parallel_remote_sends(self, result)?;
         replay_verify::verify_expected_parallel_progress_transitions(self, result)?;

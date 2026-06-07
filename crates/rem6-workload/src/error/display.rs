@@ -12,12 +12,14 @@ mod diagnostics;
 mod parallel_batch;
 mod parallel_frontier;
 mod parallel_worker;
+mod traffic_trace_replay;
 
 use self::checkpoint::format_checkpoint_error;
 use self::diagnostics::format_diagnostic_error;
 use self::parallel_batch::format_parallel_batch_error;
 use self::parallel_frontier::format_parallel_frontier_error;
 use self::parallel_worker::format_parallel_worker_error;
+use self::traffic_trace_replay::format_traffic_trace_replay_error;
 
 impl fmt::Display for WorkloadError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -747,6 +749,10 @@ impl fmt::Display for WorkloadError {
             | Self::CheckpointComponentChunkSummaryBelowMinimum { .. }
             | Self::CheckpointRestoreComponentChunkSummaryBelowMinimum { .. }) => {
                 format_checkpoint_error(error, formatter)
+            }
+            error @ (Self::DuplicateExpectedTrafficTraceReplaySummary { .. }
+            | Self::TrafficTraceReplaySummaryExpectation(_)) => {
+                format_traffic_trace_replay_error(error, formatter)
             }
             Self::MissingExecutionModeSwitch { tick, target, mode } => write!(
                 formatter,

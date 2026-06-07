@@ -9,9 +9,11 @@ use rem6_system::{
 use rem6_traffic::TrafficTraceErrorKind;
 use rem6_transport::MemoryTraceKind;
 use rem6_workload::{
-    HostEventIntent, WorkloadHostEvent, WorkloadHostPlacement, WorkloadManifest,
-    WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadReplayPlan, WorkloadResource,
-    WorkloadResourceId, WorkloadResourceKind, WorkloadRiscvCore, WorkloadRouteId, WorkloadTopology,
+    HostEventIntent, WorkloadExpectedTrafficTraceReplaySummary, WorkloadHostEvent,
+    WorkloadHostPlacement, WorkloadManifest, WorkloadMemoryRoute, WorkloadMemoryTarget,
+    WorkloadReplayPlan, WorkloadResource, WorkloadResourceId, WorkloadResourceKind,
+    WorkloadRiscvCore, WorkloadRouteId, WorkloadTopology,
+    WorkloadTrafficTraceReplaySummaryExpectationError,
 };
 
 mod support;
@@ -101,11 +103,64 @@ fn replay_manifest(id: &str) -> WorkloadManifest {
         .unwrap()
 }
 
+fn replay_manifest_with_trace_summary_expectation(id: &str) -> WorkloadManifest {
+    WorkloadManifest::builder(workload_id(id), boot_image())
+        .with_topology(replay_topology())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .add_host_event(WorkloadHostEvent::new(
+            0,
+            HostEventIntent::Stop {
+                reason: "host-stop".to_string(),
+            },
+        ))
+        .add_expected_traffic_trace_replay_summary(
+            WorkloadExpectedTrafficTraceReplaySummary::new(route_id("cpu0.fetch"))
+                .with_minimum_scheduled_count(1)
+                .with_minimum_response_delivery_count(1)
+                .with_minimum_memory_trace_event_count(3),
+        )
+        .unwrap()
+        .build()
+        .unwrap()
+}
+
+fn replay_manifest_with_strict_trace_summary_expectation(id: &str) -> WorkloadManifest {
+    WorkloadManifest::builder(workload_id(id), boot_image())
+        .with_topology(replay_topology())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .add_host_event(WorkloadHostEvent::new(
+            0,
+            HostEventIntent::Stop {
+                reason: "host-stop".to_string(),
+            },
+        ))
+        .add_expected_traffic_trace_replay_summary(
+            WorkloadExpectedTrafficTraceReplaySummary::new(route_id("cpu0.fetch"))
+                .with_minimum_scheduled_count(1)
+                .with_minimum_response_delivery_count(2)
+                .with_minimum_memory_trace_event_count(3),
+        )
+        .unwrap()
+        .build()
+        .unwrap()
+}
+
 fn replay_with_controller(
     id: &str,
     packets: &[PacketFields],
 ) -> Result<rem6_system::RiscvWorkloadReplayOutcome, RiscvWorkloadReplayError> {
     let manifest = replay_manifest(id);
+    replay_manifest_with_controller(manifest, packets)
+}
+
+fn replay_manifest_with_controller(
+    manifest: WorkloadManifest,
+    packets: &[PacketFields],
+) -> Result<rem6_system::RiscvWorkloadReplayOutcome, RiscvWorkloadReplayError> {
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
     let controller = controller_for_packets(packets);
     RiscvWorkloadReplay::new(plan)
@@ -265,6 +320,91 @@ fn workload_replay_records_bound_traffic_trace_control_acks() {
     assert!(runtime.memory_failures().is_empty());
     assert!(runtime.sideband_events().is_empty());
     assert!(runtime.is_empty());
+}
+
+#[test]
+fn workload_replay_result_satisfies_bound_traffic_trace_summary_expectation() {
+    let manifest =
+        replay_manifest_with_trace_summary_expectation("riscv-replay-traffic-trace-summary");
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let outcome = replay_manifest_with_controller(
+        manifest,
+        &[
+            PacketFields {
+                tick: 0,
+                command: GEM5_READ_REQ,
+                address: Some(0xa000),
+                size: Some(8),
+                packet_id: Some(910),
+            },
+            PacketFields {
+                tick: 3,
+                command: GEM5_READ_RESP_WITH_INVALIDATE,
+                address: Some(0xa000),
+                size: Some(8),
+                packet_id: Some(910),
+            },
+        ],
+    )
+    .unwrap();
+
+    let summaries = outcome.result().traffic_trace_replay_summaries();
+    assert_eq!(summaries.len(), 1);
+    let summary = &summaries[0];
+    assert_eq!(summary.route(), &route_id("cpu0.fetch"));
+    assert_eq!(summary.scheduled_count(), 1);
+    assert_eq!(summary.response_delivery_count(), 1);
+    assert_eq!(summary.memory_trace_event_count(), 3);
+    assert_eq!(summary.memory_failure_count(), 0);
+    assert_eq!(summary.control_ack_count(), 0);
+    assert_eq!(summary.control_failure_count(), 0);
+    assert_eq!(summary.sideband_event_count(), 0);
+    plan.verify_result(outcome.result()).unwrap();
+}
+
+#[test]
+fn workload_replay_fails_when_bound_traffic_trace_summary_expectation_is_underreported() {
+    let manifest = replay_manifest_with_strict_trace_summary_expectation(
+        "riscv-replay-traffic-trace-summary-mismatch",
+    );
+    let error = replay_manifest_with_controller(
+        manifest,
+        &[
+            PacketFields {
+                tick: 0,
+                command: GEM5_READ_REQ,
+                address: Some(0xa000),
+                size: Some(8),
+                packet_id: Some(911),
+            },
+            PacketFields {
+                tick: 3,
+                command: GEM5_READ_RESP_WITH_INVALIDATE,
+                address: Some(0xa000),
+                size: Some(8),
+                packet_id: Some(911),
+            },
+        ],
+    )
+    .unwrap_err();
+
+    let RiscvWorkloadReplayError::Workload(
+        rem6_workload::WorkloadError::TrafficTraceReplaySummaryExpectation(error),
+    ) = error
+    else {
+        panic!("expected workload traffic trace replay summary expectation error");
+    };
+    let WorkloadTrafficTraceReplaySummaryExpectationError::BelowMinimum { expected, actual } =
+        error.as_ref()
+    else {
+        panic!("expected traffic trace replay summary below-minimum error");
+    };
+    assert_eq!(expected.route(), &route_id("cpu0.fetch"));
+    assert_eq!(expected.minimum_response_delivery_count(), 2);
+    assert_eq!(actual.route(), &route_id("cpu0.fetch"));
+    assert_eq!(actual.scheduled_count(), 1);
+    assert_eq!(actual.response_delivery_count(), 1);
+    assert_eq!(actual.memory_trace_event_count(), 3);
 }
 
 #[test]

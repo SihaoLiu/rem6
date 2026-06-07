@@ -29,12 +29,13 @@ use crate::{
     WorkloadExpectedPlannedParallelBatchUtilization,
     WorkloadExpectedPlannedParallelBatchWorkerLanePartitionTicks,
     WorkloadExpectedPlannedParallelBatchWorkerSlotTicks, WorkloadExpectedResourceActivity,
-    WorkloadExpectedStatsHistory, WorkloadHostEvent, WorkloadId, WorkloadLinuxBootHandoff,
-    WorkloadManifestIdentity, WorkloadParallelBatchPartitionScope,
-    WorkloadParallelBatchTimelineScope, WorkloadParallelBatchWorkerScope,
-    WorkloadParallelFrontierStage, WorkloadParallelRemoteFlowScope, WorkloadParallelSchedulerScope,
-    WorkloadResource, WorkloadResourceActivityScope, WorkloadResourceId,
-    WorkloadStatsHistoryRecordExpectation, WorkloadTopology,
+    WorkloadExpectedStatsHistory, WorkloadExpectedTrafficTraceReplaySummary, WorkloadHostEvent,
+    WorkloadId, WorkloadLinuxBootHandoff, WorkloadManifestIdentity,
+    WorkloadParallelBatchPartitionScope, WorkloadParallelBatchTimelineScope,
+    WorkloadParallelBatchWorkerScope, WorkloadParallelFrontierStage,
+    WorkloadParallelRemoteFlowScope, WorkloadParallelSchedulerScope, WorkloadResource,
+    WorkloadResourceActivityScope, WorkloadResourceId, WorkloadStatsHistoryRecordExpectation,
+    WorkloadTopology,
 };
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
@@ -76,6 +77,8 @@ pub(crate) struct ManifestIdentityInput<'a> {
         &'a [WorkloadExpectedParallelRemoteFlowTiming],
     pub(crate) expected_parallel_progress_transitions:
         &'a [WorkloadExpectedParallelProgressTransition],
+    pub(crate) expected_traffic_trace_replay_summaries:
+        &'a [WorkloadExpectedTrafficTraceReplaySummary],
     pub(crate) expected_checkpoint_manifest_summaries:
         &'a [WorkloadExpectedCheckpointManifestSummary],
     pub(crate) expected_checkpoint_restore_manifest_summaries:
@@ -254,6 +257,16 @@ pub(crate) fn manifest_identity(input: ManifestIdentityInput<'_>) -> WorkloadMan
     );
     for expected in input.expected_parallel_progress_transitions {
         hash_expected_parallel_progress_transition(&mut hash, expected);
+    }
+    if !input.expected_traffic_trace_replay_summaries.is_empty() {
+        hash_str(&mut hash, "expected_traffic_trace_replay_summaries");
+        hash_u64(
+            &mut hash,
+            input.expected_traffic_trace_replay_summaries.len() as u64,
+        );
+        for expected in input.expected_traffic_trace_replay_summaries {
+            hash_expected_traffic_trace_replay_summary(&mut hash, expected);
+        }
     }
     hash_u64(
         &mut hash,
@@ -708,6 +721,20 @@ fn hash_expected_checkpoint_manifest_summary(
     hash_u64(hash, expected.minimum_component_count() as u64);
     hash_u64(hash, expected.minimum_chunk_count() as u64);
     hash_u64(hash, expected.minimum_payload_bytes() as u64);
+}
+
+fn hash_expected_traffic_trace_replay_summary(
+    hash: &mut u64,
+    expected: &WorkloadExpectedTrafficTraceReplaySummary,
+) {
+    hash_str(hash, expected.route().as_str());
+    hash_u64(hash, expected.minimum_scheduled_count() as u64);
+    hash_u64(hash, expected.minimum_response_delivery_count() as u64);
+    hash_u64(hash, expected.minimum_memory_trace_event_count() as u64);
+    hash_u64(hash, expected.minimum_memory_failure_count() as u64);
+    hash_u64(hash, expected.minimum_control_ack_count() as u64);
+    hash_u64(hash, expected.minimum_control_failure_count() as u64);
+    hash_u64(hash, expected.minimum_sideband_event_count() as u64);
 }
 
 fn hash_expected_checkpoint_component_summary(
