@@ -7,11 +7,11 @@ use rem6_memory::{
 };
 use rem6_system::{
     RiscvDataCacheProtocol, RiscvTraceDiagnosticKind, RiscvTraceHtmAccessKind, RiscvWorkloadReplay,
-    RiscvWorkloadReplayError, RiscvWorkloadTrafficTraceReplay, TrafficTraceReplayControlError,
-    TrafficTraceReplayControllerControlError, TrafficTraceReplayControllerTargetError,
-    TrafficTraceReplayTargetError,
+    RiscvWorkloadReplayError, RiscvWorkloadTraceSyncOutcome, RiscvWorkloadTrafficTraceReplay,
+    TrafficTraceReplayControlError, TrafficTraceReplayControllerControlError,
+    TrafficTraceReplayControllerTargetError, TrafficTraceReplayTargetError,
 };
-use rem6_traffic::TrafficTraceErrorKind;
+use rem6_traffic::{TrafficTraceErrorKind, TrafficTraceSyncKind};
 use rem6_transport::MemoryTraceKind;
 use rem6_workload::{
     HostEventIntent, WorkloadDataCacheProtocol, WorkloadExpectedTrafficTraceReplaySummary,
@@ -25,10 +25,11 @@ use rem6_workload::{
 mod support;
 
 use support::traffic_trace::{
-    controller_for_packets, endpoint, PacketFields, GEM5_CLEAN_INVALID_REQ,
-    GEM5_CLEAN_INVALID_RESP, GEM5_CLEAN_SHARED_REQ, GEM5_CLEAN_SHARED_RESP, GEM5_FLUSH_REQ,
-    GEM5_HTM_ABORT, GEM5_HTM_REQ, GEM5_HTM_REQ_RESP, GEM5_INVALID_DEST_ERROR, GEM5_MEM_FENCE_REQ,
-    GEM5_MEM_FENCE_RESP, GEM5_PRINT_REQ, GEM5_READ_REQ, GEM5_READ_RESP,
+    controller_for_packet_records, controller_for_packets, endpoint, PacketFields, PacketRecord,
+    GEM5_CLEAN_INVALID_REQ, GEM5_CLEAN_INVALID_RESP, GEM5_CLEAN_SHARED_REQ, GEM5_CLEAN_SHARED_RESP,
+    GEM5_FLAG_KERNEL, GEM5_FLUSH_REQ, GEM5_HTM_ABORT, GEM5_HTM_REQ, GEM5_HTM_REQ_RESP,
+    GEM5_INVALID_DEST_ERROR, GEM5_MEM_FENCE_REQ, GEM5_MEM_FENCE_RESP, GEM5_MEM_SYNC_REQ,
+    GEM5_MEM_SYNC_RESP, GEM5_PRINT_REQ, GEM5_READ_REQ, GEM5_READ_RESP,
     GEM5_READ_RESP_WITH_INVALIDATE, GEM5_STORE_COND_FAIL_REQ, GEM5_STORE_COND_REQ,
     GEM5_STORE_COND_RESP, GEM5_TLBI_EXT_SYNC, GEM5_WRITEBACK_DIRTY, GEM5_WRITE_ERROR,
     GEM5_WRITE_REQ, GEM5_WRITE_RESP,
@@ -548,6 +549,23 @@ fn replay_with_controller(
     replay_manifest_with_controller(manifest, packets)
 }
 
+fn replay_with_packet_records(
+    id: &str,
+    packets: &[PacketRecord],
+) -> Result<rem6_system::RiscvWorkloadReplayOutcome, RiscvWorkloadReplayError> {
+    let manifest = replay_manifest(id);
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let controller = controller_for_packet_records(packets);
+    RiscvWorkloadReplay::new(plan)
+        .with_max_turns(64)
+        .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
+            controller,
+            route_id("cpu0.fetch"),
+            PartitionId::new(2),
+        ))
+        .run_parallel()
+}
+
 fn replay_manifest_with_controller(
     manifest: WorkloadManifest,
     packets: &[PacketFields],
@@ -783,6 +801,135 @@ fn workload_replay_records_bound_traffic_trace_control_acks() {
     assert!(runtime.memory_failures().is_empty());
     assert!(runtime.sideband_events().is_empty());
     assert!(runtime.is_empty());
+
+    let sync_records = traffic_replay.sync_records();
+    assert_eq!(sync_records.len(), 1);
+    let sync = &sync_records[0];
+    assert_eq!(sync.completion_tick(), 5);
+    assert_eq!(sync.trace_tick(), 5);
+    assert_eq!(sync.trace_sequence(), 1);
+    assert_eq!(sync.source_tick(), 1);
+    assert_eq!(sync.source_sequence(), 0);
+    assert_eq!(sync.kind(), TrafficTraceSyncKind::MemFence);
+    assert!(!sync.kernel_sync());
+    assert_eq!(sync.trace_packet_id(), Some(903));
+    assert_eq!(sync.trace_pc(), None);
+    assert_eq!(sync.outcome(), &RiscvWorkloadTraceSyncOutcome::Ack);
+}
+
+#[test]
+fn workload_replay_records_bound_kernel_mem_sync_control_acks() {
+    let outcome = replay_with_packet_records(
+        "riscv-replay-traffic-trace-kernel-sync-control",
+        &[
+            PacketRecord {
+                tick: 1,
+                command: GEM5_MEM_SYNC_REQ,
+                address: None,
+                size: None,
+                flags: Some(GEM5_FLAG_KERNEL),
+                packet_id: Some(905),
+                pc: Some(0x1008),
+            },
+            PacketRecord {
+                tick: 6,
+                command: GEM5_MEM_SYNC_RESP,
+                address: None,
+                size: None,
+                flags: None,
+                packet_id: Some(905),
+                pc: Some(0x1010),
+            },
+        ],
+    )
+    .unwrap();
+
+    let traffic_replay = &outcome.traffic_trace_replays()[0];
+    assert!(traffic_replay.errors().is_empty());
+    assert!(traffic_replay.response_deliveries().is_empty());
+    assert!(traffic_replay.memory_trace_events().is_empty());
+    let runtime = traffic_replay.runtime();
+    assert_eq!(runtime.control_acks().len(), 1);
+    assert_eq!(runtime.control_acks()[0].tick(), 6);
+    assert_eq!(runtime.control_acks()[0].trace_tick(), 6);
+    assert!(runtime.control_failures().is_empty());
+    assert!(runtime.is_empty());
+
+    let sync_records = traffic_replay.sync_records();
+    assert_eq!(sync_records.len(), 1);
+    let sync = &sync_records[0];
+    assert_eq!(sync.completion_tick(), 6);
+    assert_eq!(sync.trace_tick(), 6);
+    assert_eq!(sync.trace_sequence(), 1);
+    assert_eq!(sync.source_tick(), 1);
+    assert_eq!(sync.source_sequence(), 0);
+    assert_eq!(sync.kind(), TrafficTraceSyncKind::MemSync);
+    assert!(sync.kernel_sync());
+    assert_eq!(sync.trace_packet_id(), Some(905));
+    assert_eq!(sync.trace_pc(), Some(Address::new(0x1008)));
+    assert_eq!(sync.outcome(), &RiscvWorkloadTraceSyncOutcome::Ack);
+}
+
+#[test]
+fn workload_replay_records_bound_traffic_trace_control_failures() {
+    let outcome = replay_with_controller(
+        "riscv-replay-traffic-trace-control-failure",
+        &[
+            PacketFields {
+                tick: 1,
+                command: GEM5_MEM_FENCE_REQ,
+                address: None,
+                size: None,
+                packet_id: Some(904),
+            },
+            PacketFields {
+                tick: 5,
+                command: GEM5_INVALID_DEST_ERROR,
+                address: None,
+                size: None,
+                packet_id: Some(904),
+            },
+        ],
+    )
+    .unwrap();
+
+    let traffic_replay = &outcome.traffic_trace_replays()[0];
+    assert_eq!(traffic_replay.scheduled_count(), 1);
+    assert!(traffic_replay.errors().is_empty());
+    assert!(traffic_replay.response_deliveries().is_empty());
+    assert!(traffic_replay.memory_trace_events().is_empty());
+    let runtime = traffic_replay.runtime();
+    assert!(runtime.control_acks().is_empty());
+    assert_eq!(runtime.control_failures().len(), 1);
+    let failure = runtime.control_failures()[0];
+    assert_eq!(failure.tick(), 5);
+    assert_eq!(failure.record().tick(), 5);
+    assert_eq!(
+        failure.record().failure().error(),
+        TrafficTraceErrorKind::InvalidDestination
+    );
+    assert!(runtime.memory_failures().is_empty());
+    assert!(runtime.sideband_events().is_empty());
+    assert!(runtime.is_empty());
+
+    let sync_records = traffic_replay.sync_records();
+    assert_eq!(sync_records.len(), 1);
+    let sync = &sync_records[0];
+    assert_eq!(sync.completion_tick(), 5);
+    assert_eq!(sync.trace_tick(), 5);
+    assert_eq!(sync.trace_sequence(), 1);
+    assert_eq!(sync.source_tick(), 1);
+    assert_eq!(sync.source_sequence(), 0);
+    assert_eq!(sync.kind(), TrafficTraceSyncKind::MemFence);
+    assert!(!sync.kernel_sync());
+    assert_eq!(sync.trace_packet_id(), Some(904));
+    assert_eq!(sync.trace_pc(), None);
+    assert_eq!(
+        sync.outcome(),
+        &RiscvWorkloadTraceSyncOutcome::Failure {
+            error: TrafficTraceErrorKind::InvalidDestination,
+        }
+    );
 }
 
 #[test]

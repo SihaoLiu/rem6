@@ -25,6 +25,7 @@ use crate::{
 };
 
 use super::data_cache_backend::WorkloadDataCacheBackend;
+use super::traffic_trace_sync::RiscvWorkloadTraceSyncRecord;
 use super::RiscvWorkloadReplayError;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -76,8 +77,7 @@ pub(super) struct RiscvWorkloadScheduledTrafficTraceReplay {
     scheduled_count: usize,
     trace: MemoryTrace,
     response_deliveries: Arc<Mutex<Vec<ResponseDelivery>>>,
-    htm_begin_records: Arc<Mutex<Vec<RiscvWorkloadTraceHtmBeginRecord>>>,
-    htm_abort_records: Arc<Mutex<Vec<RiscvWorkloadTraceHtmAbortRecord>>>,
+    records: RiscvWorkloadTraceReplayRecords,
     executor: TrafficTraceReplayControllerParallelExecutor,
 }
 
@@ -133,16 +133,9 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
                 .expect("traffic trace replay response lock")
                 .clone(),
             memory_trace_events: self.trace.snapshot(),
-            htm_begin_records: self
-                .htm_begin_records
-                .lock()
-                .expect("traffic trace replay htm begin lock")
-                .clone(),
-            htm_abort_records: self
-                .htm_abort_records
-                .lock()
-                .expect("traffic trace replay htm abort lock")
-                .clone(),
+            sync_records: self.records.sync_snapshot(),
+            htm_begin_records: self.records.htm_begin_snapshot(),
+            htm_abort_records: self.records.htm_abort_snapshot(),
         }
     }
 }
@@ -189,6 +182,7 @@ pub struct RiscvWorkloadTrafficTraceReplayOutcome {
     errors: TrafficTraceReplayControllerParallelErrors,
     response_deliveries: Vec<ResponseDelivery>,
     memory_trace_events: Vec<MemoryTraceEvent>,
+    sync_records: Vec<RiscvWorkloadTraceSyncRecord>,
     htm_begin_records: Vec<RiscvWorkloadTraceHtmBeginRecord>,
     htm_abort_records: Vec<RiscvWorkloadTraceHtmAbortRecord>,
 }
@@ -218,12 +212,67 @@ impl RiscvWorkloadTrafficTraceReplayOutcome {
         &self.memory_trace_events
     }
 
+    pub fn sync_records(&self) -> &[RiscvWorkloadTraceSyncRecord] {
+        &self.sync_records
+    }
+
     pub fn htm_begin_records(&self) -> &[RiscvWorkloadTraceHtmBeginRecord] {
         &self.htm_begin_records
     }
 
     pub fn htm_abort_records(&self) -> &[RiscvWorkloadTraceHtmAbortRecord] {
         &self.htm_abort_records
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct RiscvWorkloadTraceReplayRecords {
+    sync_records: Arc<Mutex<Vec<RiscvWorkloadTraceSyncRecord>>>,
+    htm_begin_records: Arc<Mutex<Vec<RiscvWorkloadTraceHtmBeginRecord>>>,
+    htm_abort_records: Arc<Mutex<Vec<RiscvWorkloadTraceHtmAbortRecord>>>,
+}
+
+impl RiscvWorkloadTraceReplayRecords {
+    fn sync_snapshot(&self) -> Vec<RiscvWorkloadTraceSyncRecord> {
+        self.sync_records
+            .lock()
+            .expect("traffic trace replay sync lock")
+            .clone()
+    }
+
+    fn htm_begin_snapshot(&self) -> Vec<RiscvWorkloadTraceHtmBeginRecord> {
+        self.htm_begin_records
+            .lock()
+            .expect("traffic trace replay htm begin lock")
+            .clone()
+    }
+
+    fn htm_abort_snapshot(&self) -> Vec<RiscvWorkloadTraceHtmAbortRecord> {
+        self.htm_abort_records
+            .lock()
+            .expect("traffic trace replay htm abort lock")
+            .clone()
+    }
+
+    fn record_sync(&self, record: RiscvWorkloadTraceSyncRecord) {
+        self.sync_records
+            .lock()
+            .expect("workload trace sync lock")
+            .push(record);
+    }
+
+    fn record_htm_begin(&self, record: RiscvWorkloadTraceHtmBeginRecord) {
+        self.htm_begin_records
+            .lock()
+            .expect("workload trace htm begin lock")
+            .push(record);
+    }
+
+    fn record_htm_abort(&self, record: RiscvWorkloadTraceHtmAbortRecord) {
+        self.htm_abort_records
+            .lock()
+            .expect("workload trace htm abort lock")
+            .push(record);
     }
 }
 
@@ -378,8 +427,7 @@ pub(super) fn schedule_traffic_trace_replays(
         })?;
         let trace = MemoryTrace::new();
         let response_deliveries = Arc::new(Mutex::new(Vec::new()));
-        let htm_begin_records = Arc::new(Mutex::new(Vec::new()));
-        let htm_abort_records = Arc::new(Mutex::new(Vec::new()));
+        let records = RiscvWorkloadTraceReplayRecords::default();
         let mut controller = replay.controller().clone();
         let start_batch = controller
             .start(scheduler.now())
@@ -390,8 +438,7 @@ pub(super) fn schedule_traffic_trace_replays(
             topology,
             data_cache,
             cluster,
-            Arc::clone(&htm_begin_records),
-            Arc::clone(&htm_abort_records),
+            records.clone(),
         );
         let executor =
             traffic_trace_replay_executor(controller, replay.retry_delay(), data_cache_consumer);
@@ -427,8 +474,7 @@ pub(super) fn schedule_traffic_trace_replays(
             scheduled_count,
             trace,
             response_deliveries,
-            htm_begin_records,
-            htm_abort_records,
+            records,
             executor,
         });
     }
@@ -484,8 +530,7 @@ fn trace_data_cache_consumer(
     topology: &WorkloadTopology,
     data_cache: &Option<Arc<Mutex<WorkloadDataCacheBackend>>>,
     cluster: &RiscvCluster,
-    htm_begin_records: Arc<Mutex<Vec<RiscvWorkloadTraceHtmBeginRecord>>>,
-    htm_abort_records: Arc<Mutex<Vec<RiscvWorkloadTraceHtmAbortRecord>>>,
+    records: RiscvWorkloadTraceReplayRecords,
 ) -> WorkloadTraceDataCacheConsumer {
     let data_cache = if trace_route_uses_data_cache(route, topology) {
         data_cache.clone()
@@ -500,8 +545,7 @@ fn trace_data_cache_consumer(
         data_cache,
         data_translation_cluster,
         htm_cluster,
-        htm_begin_records,
-        htm_abort_records,
+        records,
     )
 }
 
@@ -563,8 +607,7 @@ impl WorkloadTraceDataCacheConsumer {
         data_cache: Option<Arc<Mutex<WorkloadDataCacheBackend>>>,
         data_translation_cluster: Option<RiscvCluster>,
         htm_cluster: Option<RiscvCluster>,
-        htm_begin_records: Arc<Mutex<Vec<RiscvWorkloadTraceHtmBeginRecord>>>,
-        htm_abort_records: Arc<Mutex<Vec<RiscvWorkloadTraceHtmAbortRecord>>>,
+        records: RiscvWorkloadTraceReplayRecords,
     ) -> Self {
         Self {
             inner: Arc::new(Mutex::new(WorkloadTraceDataCacheConsumerInner {
@@ -572,8 +615,7 @@ impl WorkloadTraceDataCacheConsumer {
                 data_cache,
                 data_translation_cluster,
                 htm_cluster,
-                htm_begin_records,
-                htm_abort_records,
+                records,
                 active_htm_transactions: Vec::new(),
                 pending_requests: BTreeSet::new(),
                 pending_control_orders: BTreeSet::new(),
@@ -711,8 +753,7 @@ struct WorkloadTraceDataCacheConsumerInner {
     data_cache: Option<Arc<Mutex<WorkloadDataCacheBackend>>>,
     data_translation_cluster: Option<RiscvCluster>,
     htm_cluster: Option<RiscvCluster>,
-    htm_begin_records: Arc<Mutex<Vec<RiscvWorkloadTraceHtmBeginRecord>>>,
-    htm_abort_records: Arc<Mutex<Vec<RiscvWorkloadTraceHtmAbortRecord>>>,
+    records: RiscvWorkloadTraceReplayRecords,
     active_htm_transactions: Vec<HtmTransactionUid>,
     pending_requests: BTreeSet<TrafficTraceReplayOrder>,
     pending_control_orders: BTreeSet<TrafficTraceReplayOrder>,
@@ -872,10 +913,8 @@ impl WorkloadTraceDataCacheConsumerInner {
                         &mut self.active_htm_transactions,
                         &cluster_outcome,
                     );
-                    self.htm_abort_records
-                        .lock()
-                        .expect("workload trace htm abort lock")
-                        .push(RiscvWorkloadTraceHtmAbortRecord::new(
+                    self.records
+                        .record_htm_abort(RiscvWorkloadTraceHtmAbortRecord::new(
                             tick,
                             htm,
                             cluster_outcome,
@@ -890,6 +929,28 @@ impl WorkloadTraceDataCacheConsumerInner {
         tick: Tick,
         event_context: &TrafficTraceReplayControlEventContext,
     ) {
+        if let Some(sync) = event_context.trace_sync() {
+            let trace_order = event_context.trace_order();
+            match event_context.event() {
+                TrafficTraceReplayControlEvent::ControlAck { .. } => {
+                    self.records.record_sync(RiscvWorkloadTraceSyncRecord::ack(
+                        tick,
+                        sync,
+                        trace_order,
+                    ));
+                }
+                TrafficTraceReplayControlEvent::ControlFailure { record, .. } => {
+                    self.records
+                        .record_sync(RiscvWorkloadTraceSyncRecord::failure(
+                            tick,
+                            sync,
+                            trace_order,
+                            record.failure().error(),
+                        ));
+                }
+            }
+            return;
+        }
         if !matches!(
             event_context.event(),
             TrafficTraceReplayControlEvent::ControlAck { .. }
@@ -915,10 +976,8 @@ impl WorkloadTraceDataCacheConsumerInner {
                     .capture_trace_htm_rollback(self.route, begin.uid());
             }
         }
-        self.htm_begin_records
-            .lock()
-            .expect("workload trace htm begin lock")
-            .push(RiscvWorkloadTraceHtmBeginRecord::new(
+        self.records
+            .record_htm_begin(RiscvWorkloadTraceHtmBeginRecord::new(
                 tick,
                 htm,
                 cluster_outcome,

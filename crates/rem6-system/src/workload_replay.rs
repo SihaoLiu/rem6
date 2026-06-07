@@ -55,6 +55,7 @@ mod qos;
 mod sinic_mmio_backend;
 mod summary;
 mod traffic_trace;
+mod traffic_trace_sync;
 mod workload_replay_dma;
 
 use self::cache_response::{
@@ -83,6 +84,7 @@ pub use self::traffic_trace::{
     RiscvWorkloadTraceHtmAbortRecord, RiscvWorkloadTraceHtmBeginRecord,
     RiscvWorkloadTrafficTraceReplay, RiscvWorkloadTrafficTraceReplayOutcome,
 };
+pub use self::traffic_trace_sync::{RiscvWorkloadTraceSyncOutcome, RiscvWorkloadTraceSyncRecord};
 use self::workload_replay_dma::run_accelerator_dma_copies;
 use crate::workload_replay_heterogeneous::{
     accelerator_command_kind_counts, accelerator_snapshots, accelerator_wait_for_graph_since,

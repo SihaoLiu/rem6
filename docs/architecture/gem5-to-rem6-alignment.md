@@ -3080,6 +3080,11 @@ Control completion contexts retain the matched response or error trace
 sequence, and workload replay registers pending control completions before
 later sidebands can execute, so same-tick HTM response and abort records follow
 packet-trace order rather than scheduler insertion order.
+Matched `MemFenceReq` and `MemSyncReq` control completions also surface as
+workload-level sync records carrying source order, completion order,
+`kernel_sync`, packet id, PC metadata, and ack or failure status, giving later
+CPU, GPU, and cache synchronization consumers typed replay input without
+claiming full GPU cache-invalidation execution yet.
 Workload replay can bind that executor to a workload route id and control
 partition, schedule it through the replay scheduler and `MemoryTransport`, and
 return response deliveries, trace memory events, and runtime records in

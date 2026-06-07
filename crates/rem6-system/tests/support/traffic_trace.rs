@@ -26,6 +26,8 @@ pub const GEM5_STORE_COND_REQ: u32 = 27;
 pub const GEM5_STORE_COND_FAIL_REQ: u32 = 28;
 pub const GEM5_STORE_COND_RESP: u32 = 29;
 pub const GEM5_MEM_FENCE_REQ: u32 = 38;
+pub const GEM5_MEM_SYNC_REQ: u32 = 39;
+pub const GEM5_MEM_SYNC_RESP: u32 = 40;
 pub const GEM5_MEM_FENCE_RESP: u32 = 41;
 pub const GEM5_CLEAN_SHARED_REQ: u32 = 42;
 pub const GEM5_CLEAN_SHARED_RESP: u32 = 43;
@@ -39,6 +41,7 @@ pub const GEM5_HTM_REQ: u32 = 56;
 pub const GEM5_HTM_REQ_RESP: u32 = 57;
 pub const GEM5_HTM_ABORT: u32 = 58;
 pub const GEM5_TLBI_EXT_SYNC: u32 = 59;
+pub const GEM5_FLAG_KERNEL: u32 = 0x0000_1000;
 
 #[derive(Clone, Copy)]
 pub struct PacketFields {
@@ -47,6 +50,31 @@ pub struct PacketFields {
     pub address: Option<u64>,
     pub size: Option<u32>,
     pub packet_id: Option<u64>,
+}
+
+#[derive(Clone, Copy)]
+pub struct PacketRecord {
+    pub tick: u64,
+    pub command: u32,
+    pub address: Option<u64>,
+    pub size: Option<u32>,
+    pub flags: Option<u32>,
+    pub packet_id: Option<u64>,
+    pub pc: Option<u64>,
+}
+
+impl From<PacketFields> for PacketRecord {
+    fn from(packet: PacketFields) -> Self {
+        Self {
+            tick: packet.tick,
+            command: packet.command,
+            address: packet.address,
+            size: packet.size,
+            flags: None,
+            packet_id: packet.packet_id,
+            pc: None,
+        }
+    }
 }
 
 pub fn endpoint(name: &str) -> TransportEndpointId {
@@ -79,8 +107,24 @@ pub fn controller_for_packets(packets: &[PacketFields]) -> TrafficController {
     controller_for_packets_with_state_duration(packets, u64::MAX)
 }
 
+pub fn controller_for_packet_records(packets: &[PacketRecord]) -> TrafficController {
+    controller_for_packet_records_with_state_duration(packets, u64::MAX)
+}
+
 pub fn controller_for_packets_with_state_duration(
     packets: &[PacketFields],
+    duration: u64,
+) -> TrafficController {
+    let packets = packets
+        .iter()
+        .copied()
+        .map(PacketRecord::from)
+        .collect::<Vec<_>>();
+    controller_for_packet_records_with_state_duration(&packets, duration)
+}
+
+pub fn controller_for_packet_records_with_state_duration(
+    packets: &[PacketRecord],
     duration: u64,
 ) -> TrafficController {
     let trace = TrafficTrace::from_gem5_packet_trace(
@@ -126,7 +170,7 @@ fn graph(
     TrafficStateGraphConfig::new(states, TrafficStateId::new(0), transitions).unwrap()
 }
 
-fn gem5_packet_trace(tick_frequency: u64, packets: &[PacketFields]) -> Vec<u8> {
+fn gem5_packet_trace(tick_frequency: u64, packets: &[PacketRecord]) -> Vec<u8> {
     let mut bytes = GEM5_MAGIC.to_vec();
     let mut header = Vec::new();
     append_key(&mut header, 3, 0);
@@ -147,9 +191,17 @@ fn gem5_packet_trace(tick_frequency: u64, packets: &[PacketFields]) -> Vec<u8> {
             append_key(&mut message, 4, 0);
             append_varint(&mut message, u64::from(size));
         }
+        if let Some(flags) = packet.flags {
+            append_key(&mut message, 5, 0);
+            append_varint(&mut message, u64::from(flags));
+        }
         if let Some(packet_id) = packet.packet_id {
             append_key(&mut message, 6, 0);
             append_varint(&mut message, packet_id);
+        }
+        if let Some(pc) = packet.pc {
+            append_key(&mut message, 7, 0);
+            append_varint(&mut message, pc);
         }
         append_record(&mut bytes, &message);
     }
