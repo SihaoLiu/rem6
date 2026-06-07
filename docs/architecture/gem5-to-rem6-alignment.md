@@ -2996,8 +2996,13 @@ That executor turns replayed memory responses and failures into executable
 target outcomes while recording sync or HTM acknowledgements, control failures,
 standalone TLB/cache/diagnostic/HTM sideband events, and interleaved
 request/response batches from the same shared controller/runtime pair.
-CLI/workload manifest binding and full response and error propagation through
-memory controllers, caches, and CPU ports remain separate contracts.
+Workload replay can bind that executor to a workload route id and control
+partition, schedule it through the replay scheduler and `MemoryTransport`, and
+return response deliveries, trace memory events, and runtime records in
+`RiscvWorkloadReplayOutcome`; replay callback errors now fail the run through
+`RiscvWorkloadReplayError`. CLI and manifest expectations plus deeper
+propagation through memory controllers, caches, and CPU ports remain separate
+contracts.
 `InvalidDestError`, `BadAddressError`, `ReadError`, `WriteError`,
 `FunctionalReadError`, and `FunctionalWriteError` command-ids 46-51 map to
 typed `TrafficTraceEvent::Error` events that preserve tick ordering, sequence,

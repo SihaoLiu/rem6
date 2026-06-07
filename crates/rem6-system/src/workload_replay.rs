@@ -52,6 +52,7 @@ mod memory_backend;
 mod qos;
 mod sinic_mmio_backend;
 mod summary;
+mod traffic_trace;
 mod workload_replay_dma;
 
 use self::cache_response::{
@@ -73,6 +74,12 @@ use self::sinic_mmio_backend::WorkloadSinicPciMmioBackend;
 use self::summary::{
     livelock_transition_threshold, parallel_execution_summary, WorkloadReplayActivityRefs,
 };
+use self::traffic_trace::{
+    schedule_traffic_trace_replays, RiscvWorkloadScheduledTrafficTraceReplay,
+};
+pub use self::traffic_trace::{
+    RiscvWorkloadTrafficTraceReplay, RiscvWorkloadTrafficTraceReplayOutcome,
+};
 use self::workload_replay_dma::run_accelerator_dma_copies;
 use crate::workload_replay_heterogeneous::{
     accelerator_command_kind_counts, accelerator_snapshots, accelerator_wait_for_graph_since,
@@ -87,6 +94,7 @@ use crate::{
     ExecutionMode, GuestEventId, GuestSourceId, HostEventPolicy, RiscvInstructionStats,
     RiscvSystemRun, RiscvSystemRunDriver, RiscvSystemRunStopReason, RiscvTrapEventPort,
     SystemActionOutcome, SystemHostController, SystemHostEventPort,
+    TrafficTraceReplayControllerParallelErrors, TrafficTraceReplayControllerParallelSubmitError,
 };
 
 const DEFAULT_MAX_TURNS: usize = 64;
@@ -172,6 +180,7 @@ fn load_payload_at(
 pub struct RiscvWorkloadReplay {
     plan: WorkloadReplayPlan,
     resolved_resources: Option<WorkloadResolvedResources>,
+    traffic_trace_replays: Vec<RiscvWorkloadTrafficTraceReplay>,
     max_turns: usize,
 }
 
@@ -180,6 +189,7 @@ impl RiscvWorkloadReplay {
         Self {
             plan,
             resolved_resources: None,
+            traffic_trace_replays: Vec::new(),
             max_turns: DEFAULT_MAX_TURNS,
         }
     }
@@ -191,6 +201,11 @@ impl RiscvWorkloadReplay {
 
     pub const fn with_max_turns(mut self, max_turns: usize) -> Self {
         self.max_turns = max_turns;
+        self
+    }
+
+    pub fn with_traffic_trace_replay(mut self, replay: RiscvWorkloadTrafficTraceReplay) -> Self {
+        self.traffic_trace_replays.push(replay);
         self
     }
 
@@ -291,6 +306,12 @@ impl RiscvWorkloadReplay {
             PartitionId::new(topology.host().partition()),
             GuestSourceId::new(topology.host().source()),
         )?;
+        let traffic_trace_replays = schedule_traffic_trace_replays(
+            &self.traffic_trace_replays,
+            &route_map,
+            &mut scheduler,
+            &transport,
+        )?;
         let trap_port = RiscvTrapEventPort::new(
             SystemHostEventPort::with_controller(
                 PartitionId::new(topology.host().partition()),
@@ -339,6 +360,9 @@ impl RiscvWorkloadReplay {
             }
         }
         let mut run = run_result.map_err(RiscvWorkloadReplayError::System)?;
+        if let Some((route, errors)) = traffic_trace_replay_callback_error(&traffic_trace_replays) {
+            return Err(RiscvWorkloadReplayError::TrafficTraceReplayCallback { route, errors });
+        }
         if let Some(data_cache) = data_cache.as_ref() {
             let (final_lines, records) = {
                 let data_cache = data_cache.lock().expect("workload data cache lock");
@@ -404,6 +428,10 @@ impl RiscvWorkloadReplay {
         self.plan
             .verify_result(&result)
             .map_err(RiscvWorkloadReplayError::Workload)?;
+        let traffic_trace_replays = traffic_trace_replays
+            .into_iter()
+            .map(RiscvWorkloadScheduledTrafficTraceReplay::into_outcome)
+            .collect();
         let memory_snapshot = memory.memory_snapshot();
         let dram_snapshot = memory.dram_snapshot();
         let sinic_pci_snapshots = sinic_mmio.snapshots();
@@ -420,6 +448,7 @@ impl RiscvWorkloadReplay {
                 accelerator_snapshots,
                 sinic_pci_snapshots,
             ),
+            traffic_trace_replays,
         ))
     }
 
@@ -1153,6 +1182,15 @@ fn workload_memory_route(
     })
 }
 
+fn traffic_trace_replay_callback_error(
+    replays: &[RiscvWorkloadScheduledTrafficTraceReplay],
+) -> Option<(WorkloadRouteId, TrafficTraceReplayControllerParallelErrors)> {
+    replays.iter().find_map(|replay| {
+        let errors = replay.errors();
+        (!errors.is_empty()).then(|| (replay.route().clone(), errors))
+    })
+}
+
 fn workload_memory_route_hop(
     hop: &WorkloadRouteHop,
 ) -> Result<MemoryRouteHop, RiscvWorkloadReplayError> {
@@ -1248,6 +1286,7 @@ pub struct RiscvWorkloadReplayOutcome {
     memory_snapshot: PartitionedMemorySnapshot,
     dram_snapshot: Option<DramMemorySnapshot>,
     device_snapshots: RiscvWorkloadReplayDeviceSnapshots,
+    traffic_trace_replays: Vec<RiscvWorkloadTrafficTraceReplayOutcome>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1309,6 +1348,7 @@ impl RiscvWorkloadReplayOutcome {
         memory_snapshot: PartitionedMemorySnapshot,
         dram_snapshot: Option<DramMemorySnapshot>,
         device_snapshots: RiscvWorkloadReplayDeviceSnapshots,
+        traffic_trace_replays: Vec<RiscvWorkloadTrafficTraceReplayOutcome>,
     ) -> Self {
         Self {
             cluster,
@@ -1318,6 +1358,7 @@ impl RiscvWorkloadReplayOutcome {
             memory_snapshot,
             dram_snapshot,
             device_snapshots,
+            traffic_trace_replays,
         }
     }
 
@@ -1347,6 +1388,10 @@ impl RiscvWorkloadReplayOutcome {
 
     pub const fn device_snapshots(&self) -> &RiscvWorkloadReplayDeviceSnapshots {
         &self.device_snapshots
+    }
+
+    pub fn traffic_trace_replays(&self) -> &[RiscvWorkloadTrafficTraceReplayOutcome] {
+        &self.traffic_trace_replays
     }
 
     pub fn gpu_snapshots(&self) -> &BTreeMap<GpuDeviceId, GpuDeviceSnapshot> {
@@ -1385,12 +1430,24 @@ pub enum RiscvWorkloadReplayError {
     MissingMemoryTarget,
     MissingDataCacheAgent,
     MissingDataCacheLine,
-    MissingDataCacheResponse { request: MemoryRequestId },
-    GpuDmaRequestSequenceOverflow { transfer: u64 },
-    MissingGpuDmaWrite { device: GpuDeviceId },
-    AcceleratorDmaRequestSequenceOverflow { transfer: u64 },
-    MissingAcceleratorDmaWrite { engine: AcceleratorEngineId },
-    MissingRoute { route: WorkloadRouteId },
+    MissingDataCacheResponse {
+        request: MemoryRequestId,
+    },
+    GpuDmaRequestSequenceOverflow {
+        transfer: u64,
+    },
+    MissingGpuDmaWrite {
+        device: GpuDeviceId,
+    },
+    AcceleratorDmaRequestSequenceOverflow {
+        transfer: u64,
+    },
+    MissingAcceleratorDmaWrite {
+        engine: AcceleratorEngineId,
+    },
+    MissingRoute {
+        route: WorkloadRouteId,
+    },
     MissingFinalTick,
     Workload(WorkloadError),
     Boot(BootError),
@@ -1407,6 +1464,11 @@ pub enum RiscvWorkloadReplayError {
     RiscvCluster(rem6_cpu::RiscvClusterError),
     Scheduler(SchedulerError),
     Transport(TransportError),
+    TrafficTraceReplay(TrafficTraceReplayControllerParallelSubmitError),
+    TrafficTraceReplayCallback {
+        route: WorkloadRouteId,
+        errors: TrafficTraceReplayControllerParallelErrors,
+    },
     System(crate::SystemError),
 }
 
@@ -1473,6 +1535,14 @@ impl fmt::Display for RiscvWorkloadReplayError {
             Self::RiscvCluster(error) => write!(formatter, "{error}"),
             Self::Scheduler(error) => write!(formatter, "{error}"),
             Self::Transport(error) => write!(formatter, "{error}"),
+            Self::TrafficTraceReplay(error) => write!(formatter, "{error}"),
+            Self::TrafficTraceReplayCallback { route, errors } => write!(
+                formatter,
+                "workload traffic trace replay on route {} recorded {} target callback errors and {} control callback errors",
+                route.as_str(),
+                errors.target().len(),
+                errors.control().len(),
+            ),
             Self::System(error) => write!(formatter, "{error}"),
         }
     }
@@ -1496,6 +1566,7 @@ impl Error for RiscvWorkloadReplayError {
             Self::RiscvCluster(error) => Some(error),
             Self::Scheduler(error) => Some(error),
             Self::Transport(error) => Some(error),
+            Self::TrafficTraceReplay(error) => Some(error),
             Self::System(error) => Some(error),
             Self::MissingTopology
             | Self::MissingMemoryTarget
@@ -1507,7 +1578,8 @@ impl Error for RiscvWorkloadReplayError {
             | Self::AcceleratorDmaRequestSequenceOverflow { .. }
             | Self::MissingAcceleratorDmaWrite { .. }
             | Self::MissingRoute { .. }
-            | Self::MissingFinalTick => None,
+            | Self::MissingFinalTick
+            | Self::TrafficTraceReplayCallback { .. } => None,
         }
     }
 }
