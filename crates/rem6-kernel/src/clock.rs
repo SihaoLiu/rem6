@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
@@ -31,6 +32,11 @@ pub enum ClockError {
     EmptyPerformancePoints,
     UnsortedPerformancePoints,
     InvalidPerformanceLevel { level: usize, count: usize },
+    MissingClockDomainId,
+    DuplicateClockDomain { domain: ClockDomainId },
+    UnknownClockDomain { domain: ClockDomainId },
+    NotSourceClockDomain { domain: ClockDomainId },
+    NotDerivedClockDomain { domain: ClockDomainId },
     TickOverflow { period: Tick, cycles: Cycles },
     DerivedClockOverflow { period: Tick, divider: u64 },
 }
@@ -52,6 +58,29 @@ impl fmt::Display for ClockError {
             Self::InvalidPerformanceLevel { level, count } => write!(
                 formatter,
                 "source clock performance level {level} is outside {count} configured points"
+            ),
+            Self::MissingClockDomainId => {
+                write!(formatter, "source clock domain must have a domain id")
+            }
+            Self::DuplicateClockDomain { domain } => {
+                write!(
+                    formatter,
+                    "clock domain {} is already registered",
+                    domain.get()
+                )
+            }
+            Self::UnknownClockDomain { domain } => {
+                write!(formatter, "clock domain {} is not registered", domain.get())
+            }
+            Self::NotSourceClockDomain { domain } => write!(
+                formatter,
+                "clock domain {} is not a source clock domain",
+                domain.get()
+            ),
+            Self::NotDerivedClockDomain { domain } => write!(
+                formatter,
+                "clock domain {} is not a derived clock domain",
+                domain.get()
             ),
             Self::TickOverflow { period, cycles } => write!(
                 formatter,
@@ -82,7 +111,7 @@ impl ClockDomain {
         Ok(Self { period })
     }
 
-    pub fn period(self) -> Tick {
+    pub const fn period(self) -> Tick {
         self.period
     }
 
@@ -227,6 +256,201 @@ impl SourceClockDomain {
     pub fn derived_clock_domain(&self, divider: u64) -> Result<ClockDomain, ClockError> {
         self.clock_domain().derived(divider)
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DerivedClockDomain {
+    domain_id: ClockDomainId,
+    parent_id: ClockDomainId,
+    divider: u64,
+    clock_domain: ClockDomain,
+}
+
+impl DerivedClockDomain {
+    fn new(
+        domain_id: ClockDomainId,
+        parent_id: ClockDomainId,
+        parent: ClockDomain,
+        divider: u64,
+    ) -> Result<Self, ClockError> {
+        Ok(Self {
+            domain_id,
+            parent_id,
+            divider,
+            clock_domain: parent.derived(divider)?,
+        })
+    }
+
+    pub const fn domain_id(&self) -> ClockDomainId {
+        self.domain_id
+    }
+
+    pub const fn parent_id(&self) -> ClockDomainId {
+        self.parent_id
+    }
+
+    pub const fn divider(&self) -> u64 {
+        self.divider
+    }
+
+    pub const fn clock_domain(&self) -> ClockDomain {
+        self.clock_domain
+    }
+
+    pub const fn period(&self) -> Tick {
+        self.clock_domain.period()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClockDomainTree {
+    domains: BTreeMap<ClockDomainId, ClockDomainNode>,
+    children: BTreeMap<ClockDomainId, Vec<ClockDomainId>>,
+}
+
+impl ClockDomainTree {
+    pub fn new() -> Self {
+        Self {
+            domains: BTreeMap::new(),
+            children: BTreeMap::new(),
+        }
+    }
+
+    pub fn insert_source(&mut self, source: SourceClockDomain) -> Result<(), ClockError> {
+        let domain = source.domain_id().ok_or(ClockError::MissingClockDomainId)?;
+        self.ensure_domain_absent(domain)?;
+        self.domains.insert(domain, ClockDomainNode::Source(source));
+        self.children.entry(domain).or_default();
+        Ok(())
+    }
+
+    pub fn insert_derived(
+        &mut self,
+        domain: ClockDomainId,
+        parent: ClockDomainId,
+        divider: u64,
+    ) -> Result<(), ClockError> {
+        self.ensure_domain_absent(domain)?;
+        let parent_domain = self.clock_domain(parent)?;
+        let derived = DerivedClockDomain::new(domain, parent, parent_domain, divider)?;
+        self.domains
+            .insert(domain, ClockDomainNode::Derived(derived));
+        self.children.entry(parent).or_default().push(domain);
+        self.children.entry(domain).or_default();
+        Ok(())
+    }
+
+    pub fn clock_domain(&self, domain: ClockDomainId) -> Result<ClockDomain, ClockError> {
+        match self.domain(domain)? {
+            ClockDomainNode::Source(source) => Ok(source.clock_domain()),
+            ClockDomainNode::Derived(derived) => Ok(derived.clock_domain()),
+        }
+    }
+
+    pub fn source_clock_domain(
+        &self,
+        domain: ClockDomainId,
+    ) -> Result<&SourceClockDomain, ClockError> {
+        match self.domain(domain)? {
+            ClockDomainNode::Source(source) => Ok(source),
+            ClockDomainNode::Derived(_) => Err(ClockError::NotSourceClockDomain { domain }),
+        }
+    }
+
+    pub fn derived_clock_domain(
+        &self,
+        domain: ClockDomainId,
+    ) -> Result<&DerivedClockDomain, ClockError> {
+        match self.domain(domain)? {
+            ClockDomainNode::Source(_) => Err(ClockError::NotDerivedClockDomain { domain }),
+            ClockDomainNode::Derived(derived) => Ok(derived),
+        }
+    }
+
+    pub fn set_source_performance_level(
+        &mut self,
+        domain: ClockDomainId,
+        level: usize,
+    ) -> Result<bool, ClockError> {
+        let source = self.source_clock_domain(domain)?;
+        validate_performance_level(level, source.performance_point_count())?;
+        if level == source.performance_level() {
+            return Ok(false);
+        }
+
+        let source_domain = ClockDomain::new(source.period_at_performance_level(level)?)?;
+        let mut derived_updates = Vec::new();
+        self.collect_derived_updates(domain, source_domain, &mut derived_updates)?;
+
+        match self
+            .domains
+            .get_mut(&domain)
+            .expect("validated source clock domain remains registered")
+        {
+            ClockDomainNode::Source(source) => {
+                source.set_performance_level(level)?;
+            }
+            ClockDomainNode::Derived(_) => unreachable!("validated source clock domain"),
+        }
+        for (domain, clock_domain) in derived_updates {
+            match self
+                .domains
+                .get_mut(&domain)
+                .expect("validated derived clock domain remains registered")
+            {
+                ClockDomainNode::Derived(derived) => {
+                    derived.clock_domain = clock_domain;
+                }
+                ClockDomainNode::Source(_) => unreachable!("validated derived clock domain"),
+            }
+        }
+        Ok(true)
+    }
+
+    fn ensure_domain_absent(&self, domain: ClockDomainId) -> Result<(), ClockError> {
+        if self.domains.contains_key(&domain) {
+            return Err(ClockError::DuplicateClockDomain { domain });
+        }
+        Ok(())
+    }
+
+    fn domain(&self, domain: ClockDomainId) -> Result<&ClockDomainNode, ClockError> {
+        self.domains
+            .get(&domain)
+            .ok_or(ClockError::UnknownClockDomain { domain })
+    }
+
+    fn collect_derived_updates(
+        &self,
+        parent: ClockDomainId,
+        parent_domain: ClockDomain,
+        updates: &mut Vec<(ClockDomainId, ClockDomain)>,
+    ) -> Result<(), ClockError> {
+        let Some(children) = self.children.get(&parent) else {
+            return Ok(());
+        };
+        for child in children {
+            let ClockDomainNode::Derived(derived) = self.domain(*child)? else {
+                unreachable!("source clock domains are never registered as children");
+            };
+            let child_domain = parent_domain.derived(derived.divider())?;
+            updates.push((*child, child_domain));
+            self.collect_derived_updates(*child, child_domain, updates)?;
+        }
+        Ok(())
+    }
+}
+
+impl Default for ClockDomainTree {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ClockDomainNode {
+    Source(SourceClockDomain),
+    Derived(DerivedClockDomain),
 }
 
 fn validate_performance_points(periods: &[Tick]) -> Result<(), ClockError> {

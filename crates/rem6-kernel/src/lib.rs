@@ -5,7 +5,10 @@ mod restore_schedule;
 mod scheduler;
 mod wait_for;
 
-pub use clock::{ClockDomain, ClockDomainId, ClockError, Cycles, SourceClockDomain};
+pub use clock::{
+    ClockDomain, ClockDomainId, ClockDomainTree, ClockError, Cycles, DerivedClockDomain,
+    SourceClockDomain,
+};
 pub use event::{ClockScheduleError, EventId, EventQueue, ScheduleError};
 pub use progress::{
     LivelockDiagnostic, LivelockTransitionKind, LivelockTransitionKindCount, ProgressMonitor,

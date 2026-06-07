@@ -1,4 +1,6 @@
-use rem6_kernel::{ClockDomain, ClockDomainId, ClockError, Cycles, SourceClockDomain};
+use rem6_kernel::{
+    ClockDomain, ClockDomainId, ClockDomainTree, ClockError, Cycles, SourceClockDomain,
+};
 
 #[test]
 fn clock_domain_converts_cycles_to_ticks_with_component_periods() {
@@ -114,5 +116,185 @@ fn clock_domain_derives_divided_child_domains() {
             period: u64::MAX,
             divider: 2
         }
+    );
+}
+
+#[test]
+fn clock_domain_tree_propagates_source_period_changes_to_derived_domains() {
+    let mut tree = ClockDomainTree::new();
+    tree.insert_source(SourceClockDomain::new(Some(ClockDomainId::new(1)), vec![2, 4], 0).unwrap())
+        .unwrap();
+    tree.insert_derived(ClockDomainId::new(2), ClockDomainId::new(1), 3)
+        .unwrap();
+    tree.insert_derived(ClockDomainId::new(3), ClockDomainId::new(2), 2)
+        .unwrap();
+
+    assert_eq!(
+        tree.clock_domain(ClockDomainId::new(1)).unwrap().period(),
+        2
+    );
+    assert_eq!(
+        tree.clock_domain(ClockDomainId::new(2)).unwrap().period(),
+        6
+    );
+    assert_eq!(
+        tree.clock_domain(ClockDomainId::new(3)).unwrap().period(),
+        12
+    );
+
+    assert!(tree
+        .set_source_performance_level(ClockDomainId::new(1), 1)
+        .unwrap());
+    assert_eq!(
+        tree.clock_domain(ClockDomainId::new(1)).unwrap().period(),
+        4
+    );
+    assert_eq!(
+        tree.clock_domain(ClockDomainId::new(2)).unwrap().period(),
+        12
+    );
+    assert_eq!(
+        tree.clock_domain(ClockDomainId::new(3)).unwrap().period(),
+        24
+    );
+
+    assert!(!tree
+        .set_source_performance_level(ClockDomainId::new(1), 1)
+        .unwrap());
+}
+
+#[test]
+fn clock_domain_tree_rejects_invalid_topology() {
+    let mut tree = ClockDomainTree::new();
+    assert_eq!(
+        tree.insert_source(SourceClockDomain::new(None, vec![2], 0).unwrap())
+            .unwrap_err(),
+        ClockError::MissingClockDomainId
+    );
+
+    tree.insert_source(SourceClockDomain::new(Some(ClockDomainId::new(1)), vec![2], 0).unwrap())
+        .unwrap();
+    assert_eq!(
+        tree.insert_source(
+            SourceClockDomain::new(Some(ClockDomainId::new(1)), vec![3], 0).unwrap()
+        )
+        .unwrap_err(),
+        ClockError::DuplicateClockDomain {
+            domain: ClockDomainId::new(1)
+        }
+    );
+    assert_eq!(
+        tree.insert_derived(ClockDomainId::new(2), ClockDomainId::new(99), 2)
+            .unwrap_err(),
+        ClockError::UnknownClockDomain {
+            domain: ClockDomainId::new(99)
+        }
+    );
+    assert_eq!(
+        tree.insert_derived(ClockDomainId::new(2), ClockDomainId::new(1), 0)
+            .unwrap_err(),
+        ClockError::ZeroClockDivider
+    );
+
+    tree.insert_derived(ClockDomainId::new(2), ClockDomainId::new(1), 2)
+        .unwrap();
+    assert_eq!(
+        tree.derived_clock_domain(ClockDomainId::new(1))
+            .unwrap_err(),
+        ClockError::NotDerivedClockDomain {
+            domain: ClockDomainId::new(1)
+        }
+    );
+    assert_eq!(
+        tree.set_source_performance_level(ClockDomainId::new(2), 0)
+            .unwrap_err(),
+        ClockError::NotSourceClockDomain {
+            domain: ClockDomainId::new(2)
+        }
+    );
+}
+
+#[test]
+fn clock_domain_tree_rejects_overflow_without_partial_update() {
+    let mut tree = ClockDomainTree::new();
+    tree.insert_source(
+        SourceClockDomain::new(Some(ClockDomainId::new(1)), vec![u64::MAX / 2, u64::MAX], 0)
+            .unwrap(),
+    )
+    .unwrap();
+    tree.insert_derived(ClockDomainId::new(2), ClockDomainId::new(1), 2)
+        .unwrap();
+
+    assert_eq!(
+        tree.set_source_performance_level(ClockDomainId::new(1), 1)
+            .unwrap_err(),
+        ClockError::DerivedClockOverflow {
+            period: u64::MAX,
+            divider: 2
+        }
+    );
+    assert_eq!(
+        tree.source_clock_domain(ClockDomainId::new(1))
+            .unwrap()
+            .performance_level(),
+        0
+    );
+    assert_eq!(
+        tree.clock_domain(ClockDomainId::new(1)).unwrap().period(),
+        u64::MAX / 2
+    );
+    assert_eq!(
+        tree.clock_domain(ClockDomainId::new(2)).unwrap().period(),
+        (u64::MAX / 2) * 2
+    );
+}
+
+#[test]
+fn clock_domain_tree_rejects_transitive_overflow_without_partial_update() {
+    let source_initial_period = u64::MAX / 8;
+    let source_next_period = u64::MAX / 4;
+    let child_initial_period = source_initial_period * 2;
+    let grandchild_initial_period = child_initial_period * 3;
+    let child_next_period = source_next_period * 2;
+    let mut tree = ClockDomainTree::new();
+    tree.insert_source(
+        SourceClockDomain::new(
+            Some(ClockDomainId::new(1)),
+            vec![source_initial_period, source_next_period],
+            0,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    tree.insert_derived(ClockDomainId::new(2), ClockDomainId::new(1), 2)
+        .unwrap();
+    tree.insert_derived(ClockDomainId::new(3), ClockDomainId::new(2), 3)
+        .unwrap();
+
+    assert_eq!(
+        tree.set_source_performance_level(ClockDomainId::new(1), 1)
+            .unwrap_err(),
+        ClockError::DerivedClockOverflow {
+            period: child_next_period,
+            divider: 3
+        }
+    );
+    assert_eq!(
+        tree.source_clock_domain(ClockDomainId::new(1))
+            .unwrap()
+            .performance_level(),
+        0
+    );
+    assert_eq!(
+        tree.clock_domain(ClockDomainId::new(1)).unwrap().period(),
+        source_initial_period
+    );
+    assert_eq!(
+        tree.clock_domain(ClockDomainId::new(2)).unwrap().period(),
+        child_initial_period
+    );
+    assert_eq!(
+        tree.clock_domain(ClockDomainId::new(3)).unwrap().period(),
+        grandchild_initial_period
     );
 }
