@@ -27,6 +27,7 @@ mod data_config;
 mod error;
 mod fetch_config;
 mod gshare_predictor;
+mod htm_transaction;
 mod in_order_pipeline;
 mod indirect_target_predictor;
 mod loop_predictor;
@@ -41,6 +42,7 @@ mod riscv_cluster_run;
 mod riscv_data_access;
 mod riscv_data_issue;
 mod riscv_fetch;
+mod riscv_htm;
 mod riscv_reservation;
 mod riscv_sc_progress;
 mod riscv_sv39_memory_walker;
@@ -74,6 +76,10 @@ pub use gshare_predictor::{
     GShareBranchPredictor, GShareBranchPredictorConfig, GShareBranchPredictorError,
     GShareBranchPredictorSnapshot, GShareHistory, GShareHistoryUpdate, GSharePrediction,
     GShareSquash, GShareThreadSnapshot, GShareTrainingUpdate,
+};
+pub use htm_transaction::{
+    HtmAbortRecord, HtmActiveTransactionSnapshot, HtmBeginRecord, HtmCommitRecord, HtmFailureCause,
+    HtmTransactionError, HtmTransactionSnapshot, HtmTransactionState, HtmTransactionUid,
 };
 pub use in_order_pipeline::{
     InOrderBranchPrediction, InOrderBranchPredictionRecord, InOrderBranchRedirect,
@@ -1210,6 +1216,8 @@ struct RiscvCoreState {
     pending_trap: Option<RiscvTrap>,
     reservation: Option<RiscvLoadReservation>,
     sc_progress: RiscvStoreConditionalProgress,
+    htm: HtmTransactionState,
+    htm_hart_checkpoint: Option<RiscvHartState>,
     events: Vec<RiscvCpuExecutionEvent>,
     data_events: Vec<RiscvDataAccessEvent>,
     pma: RiscvPmaTable,
@@ -1230,6 +1238,8 @@ impl RiscvCoreState {
             pending_trap: None,
             reservation: None,
             sc_progress: RiscvStoreConditionalProgress::default(),
+            htm: HtmTransactionState::new(),
+            htm_hart_checkpoint: None,
             events: Vec::new(),
             data_events: Vec::new(),
             pma: RiscvPmaTable::new(),
