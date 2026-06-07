@@ -809,6 +809,12 @@ fn workload_replay_records_trace_write_completion_metadata() {
     assert_eq!(completion.size_bytes(), Some(8));
     assert_eq!(completion.trace_packet_id(), Some(918));
     assert_eq!(completion.trace_pc(), None);
+
+    let summaries = outcome.result().traffic_trace_replay_summaries();
+    assert_eq!(summaries.len(), 1);
+    let summary = &summaries[0];
+    assert_eq!(summary.route(), &route_id("cpu0.data"));
+    assert_eq!(summary.memory_write_completion_count(), 1);
 }
 
 #[test]

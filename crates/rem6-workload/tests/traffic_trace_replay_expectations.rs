@@ -150,6 +150,41 @@ fn workload_manifest_records_typed_traffic_trace_sideband_expectations() {
 }
 
 #[test]
+fn workload_manifest_records_trace_write_completion_expectations() {
+    let expected = WorkloadExpectedTrafficTraceReplaySummary::new(route_id("trace.write"))
+        .with_minimum_scheduled_count(3)
+        .with_minimum_response_delivery_count(1)
+        .with_minimum_memory_trace_event_count(3)
+        .with_minimum_memory_write_completion_count(1);
+    let manifest = rem6_workload::WorkloadManifest::builder(
+        id("manifest-trace-write-completion"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_expected_traffic_trace_replay_summary(expected.clone())
+    .unwrap()
+    .build()
+    .unwrap();
+
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    assert_eq!(
+        plan.expected_traffic_trace_replay_summaries(),
+        std::slice::from_ref(&expected),
+    );
+
+    let actual = WorkloadTrafficTraceReplaySummary::new(route_id("trace.write"), 3)
+        .with_response_delivery_count(1)
+        .with_memory_trace_event_count(3)
+        .with_memory_write_completion_count(1);
+    let result = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_traffic_trace_replay_summary(actual.clone());
+    assert_eq!(result.traffic_trace_replay_summaries(), &[actual]);
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
 fn workload_manifest_identity_changes_with_traffic_trace_replay_expectations() {
     let base =
         rem6_workload::WorkloadManifest::builder(id("identity-traffic-trace-replay"), boot_image())
@@ -231,6 +266,46 @@ fn workload_manifest_identity_changes_with_typed_trace_sideband_expectations() {
             .unwrap();
 
     assert_ne!(generic.identity(), typed.identity());
+}
+
+#[test]
+fn workload_manifest_identity_changes_with_trace_write_completion_expectations() {
+    let generic = rem6_workload::WorkloadManifest::builder(
+        id("identity-trace-write-completion"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_expected_traffic_trace_replay_summary(expected_trace_summary(
+        "trace.write",
+        3,
+        1,
+        3,
+        0,
+        0,
+        0,
+        0,
+    ))
+    .unwrap()
+    .build()
+    .unwrap();
+    let write_completion = rem6_workload::WorkloadManifest::builder(
+        id("identity-trace-write-completion"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_expected_traffic_trace_replay_summary(
+        expected_trace_summary("trace.write", 3, 1, 3, 0, 0, 0, 0)
+            .with_minimum_memory_write_completion_count(1),
+    )
+    .unwrap()
+    .build()
+    .unwrap();
+
+    assert_ne!(generic.identity(), write_completion.identity());
 }
 
 #[test]
@@ -338,6 +413,34 @@ fn workload_replay_plan_rejects_underreported_typed_sideband_summary() {
 
     let actual =
         actual_trace_summary("trace.sideband", 4, 0, 0, 0, 0, 0, 4).with_tlb_sync_event_count(1);
+    let underreported = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_traffic_trace_replay_summary(actual.clone());
+    assert_eq!(
+        plan.verify_result(&underreported).unwrap_err(),
+        WorkloadError::TrafficTraceReplaySummaryExpectation(Box::new(
+            WorkloadTrafficTraceReplaySummaryExpectationError::BelowMinimum { expected, actual },
+        )),
+    );
+}
+
+#[test]
+fn workload_replay_plan_rejects_underreported_trace_write_completion_summary() {
+    let expected = expected_trace_summary("trace.write", 3, 1, 3, 0, 0, 0, 0)
+        .with_minimum_memory_write_completion_count(1);
+    let manifest = rem6_workload::WorkloadManifest::builder(
+        id("trace-write-completion-mismatch"),
+        boot_image(),
+    )
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_expected_traffic_trace_replay_summary(expected.clone())
+    .unwrap()
+    .build()
+    .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let actual = actual_trace_summary("trace.write", 3, 1, 3, 0, 0, 0, 0);
     let underreported = WorkloadResult::new(plan.manifest_identity(), 32)
         .with_traffic_trace_replay_summary(actual.clone());
     assert_eq!(

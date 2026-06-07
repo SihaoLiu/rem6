@@ -6,6 +6,7 @@ pub struct WorkloadTrafficTraceReplaySummary {
     scheduled_count: usize,
     response_delivery_count: usize,
     memory_trace_event_count: usize,
+    memory_write_completion_count: usize,
     memory_failure_count: usize,
     control_ack_count: usize,
     control_failure_count: usize,
@@ -23,6 +24,7 @@ impl WorkloadTrafficTraceReplaySummary {
             scheduled_count,
             response_delivery_count: 0,
             memory_trace_event_count: 0,
+            memory_write_completion_count: 0,
             memory_failure_count: 0,
             control_ack_count: 0,
             control_failure_count: 0,
@@ -41,6 +43,14 @@ impl WorkloadTrafficTraceReplaySummary {
 
     pub fn with_memory_trace_event_count(mut self, memory_trace_event_count: usize) -> Self {
         self.memory_trace_event_count = memory_trace_event_count;
+        self
+    }
+
+    pub fn with_memory_write_completion_count(
+        mut self,
+        memory_write_completion_count: usize,
+    ) -> Self {
+        self.memory_write_completion_count = memory_write_completion_count;
         self
     }
 
@@ -103,6 +113,10 @@ impl WorkloadTrafficTraceReplaySummary {
         self.memory_trace_event_count
     }
 
+    pub const fn memory_write_completion_count(&self) -> usize {
+        self.memory_write_completion_count
+    }
+
     pub const fn memory_failure_count(&self) -> usize {
         self.memory_failure_count
     }
@@ -147,6 +161,8 @@ impl WorkloadTrafficTraceReplaySummary {
             response_delivery_count: self.response_delivery_count + other.response_delivery_count,
             memory_trace_event_count: self.memory_trace_event_count
                 + other.memory_trace_event_count,
+            memory_write_completion_count: self.memory_write_completion_count
+                + other.memory_write_completion_count,
             memory_failure_count: self.memory_failure_count + other.memory_failure_count,
             control_ack_count: self.control_ack_count + other.control_ack_count,
             control_failure_count: self.control_failure_count + other.control_failure_count,
@@ -166,6 +182,7 @@ pub struct WorkloadExpectedTrafficTraceReplaySummary {
     minimum_scheduled_count: usize,
     minimum_response_delivery_count: usize,
     minimum_memory_trace_event_count: usize,
+    minimum_memory_write_completion_count: usize,
     minimum_memory_failure_count: usize,
     minimum_control_ack_count: usize,
     minimum_control_failure_count: usize,
@@ -183,6 +200,7 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
             minimum_scheduled_count: 0,
             minimum_response_delivery_count: 0,
             minimum_memory_trace_event_count: 0,
+            minimum_memory_write_completion_count: 0,
             minimum_memory_failure_count: 0,
             minimum_control_ack_count: 0,
             minimum_control_failure_count: 0,
@@ -212,6 +230,14 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
         minimum_memory_trace_event_count: usize,
     ) -> Self {
         self.minimum_memory_trace_event_count = minimum_memory_trace_event_count;
+        self
+    }
+
+    pub fn with_minimum_memory_write_completion_count(
+        mut self,
+        minimum_memory_write_completion_count: usize,
+    ) -> Self {
+        self.minimum_memory_write_completion_count = minimum_memory_write_completion_count;
         self
     }
 
@@ -290,6 +316,10 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
 
     pub const fn minimum_memory_trace_event_count(&self) -> usize {
         self.minimum_memory_trace_event_count
+    }
+
+    pub const fn minimum_memory_write_completion_count(&self) -> usize {
+        self.minimum_memory_write_completion_count
     }
 
     pub const fn minimum_memory_failure_count(&self) -> usize {
@@ -373,6 +403,8 @@ fn traffic_trace_replay_summary_meets_minimum(
     actual.scheduled_count() >= expected.minimum_scheduled_count()
         && actual.response_delivery_count() >= expected.minimum_response_delivery_count()
         && actual.memory_trace_event_count() >= expected.minimum_memory_trace_event_count()
+        && actual.memory_write_completion_count()
+            >= expected.minimum_memory_write_completion_count()
         && actual.memory_failure_count() >= expected.minimum_memory_failure_count()
         && actual.control_ack_count() >= expected.minimum_control_ack_count()
         && actual.control_failure_count() >= expected.minimum_control_failure_count()

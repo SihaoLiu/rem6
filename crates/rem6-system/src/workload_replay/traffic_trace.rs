@@ -108,6 +108,7 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
                     .len(),
             )
             .with_memory_trace_event_count(self.trace.snapshot().len())
+            .with_memory_write_completion_count(runtime.memory_write_completions().len())
             .with_memory_failure_count(runtime.memory_failures().len())
             .with_control_ack_count(runtime.control_acks().len())
             .with_control_failure_count(runtime.control_failures().len())
