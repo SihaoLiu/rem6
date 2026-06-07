@@ -2950,6 +2950,16 @@ data-cache line after the matched response mutates the cache model:
 line, while `CleanSharedResp` writes dirty line data back and keeps a clean
 cache copy. Later trace accesses therefore observe executable response policy
 instead of hitting stale replay state.
+Trace policy accessors are not treated as coverage by themselves. New response,
+error, sideband, or HTM policy exposure should land only with a controller,
+runtime, workload, cache, CPU, or diagnostic consumer, or with an explicit
+alignment note explaining why the matching executable contract is not available
+yet. The next trace-policy integration target is to turn the remaining
+response-data and HTM abort policy gaps into executable contracts without
+violating native `MemoryRequest` validation: prefetch and atomic-no-return
+trace responses need a trace-fill or cache-consumer path distinct from
+CPU-visible response data, while HTM abort sidebands need CPU checkpoint and
+transaction-state plumbing before they can safely mutate cache or core state.
 The controller records matched replay completions in a typed outcome summary
 and emits replay action events carrying owned memory responses or control
 acknowledgements. The
