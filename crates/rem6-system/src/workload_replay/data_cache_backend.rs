@@ -18,10 +18,10 @@ use rem6_directory::{
 use rem6_dram::DramMemorySnapshot;
 use rem6_kernel::{PartitionId, Tick};
 use rem6_memory::{Address, CacheLineLayout, MemoryOperation, MemoryResponse, MemoryTargetId};
-use rem6_protocol_chi::ChiCacheLine;
-use rem6_protocol_mesi::MesiCacheLine;
-use rem6_protocol_moesi::MoesiCacheLine;
-use rem6_protocol_msi::MsiCacheLine;
+use rem6_protocol_chi::{ChiCacheLine, ChiState};
+use rem6_protocol_mesi::{MesiCacheLine, MesiState};
+use rem6_protocol_moesi::{MoesiCacheLine, MoesiState};
+use rem6_protocol_msi::{MsiCacheLine, MsiState};
 use rem6_traffic::{
     TrafficTraceCacheEvent, TrafficTraceDiagnosticEvent, TrafficTraceResponseEvent,
 };
@@ -238,7 +238,8 @@ impl WorkloadDataCacheLineBackend {
 
     fn accepts_trace_response_event(&self, event: TrafficTraceResponseEvent) -> bool {
         event.address().is_some_and(|address| {
-            event.invalidates_line() && self.layout.line_address(address) == self.line
+            (event.invalidates_line() || event.cleans_line())
+                && self.layout.line_address(address) == self.line
         })
     }
 
@@ -318,7 +319,11 @@ impl WorkloadDataCacheLineBackend {
             return false;
         }
 
-        self.invalidate_trace_line();
+        if event.invalidates_line() {
+            self.invalidate_trace_line();
+        } else if event.cleans_line() {
+            self.clean_trace_line();
+        }
         true
     }
 
@@ -437,6 +442,30 @@ impl WorkloadDataCacheLineBackend {
             }
             WorkloadDataCacheHarness::Chi(harness) => {
                 flush_chi_harness(harness, self.target, self.line)
+                    .map_err(RiscvWorkloadReplayError::ChiDataCache)
+            }
+        };
+        if let Err(error) = result {
+            self.error = Some(error);
+        }
+    }
+
+    fn clean_trace_line(&mut self) {
+        let result = match &mut self.harness {
+            WorkloadDataCacheHarness::Msi(harness) => {
+                clean_msi_harness(harness, self.target, self.line)
+                    .map_err(RiscvWorkloadReplayError::MsiDataCache)
+            }
+            WorkloadDataCacheHarness::Mesi(harness) => {
+                clean_mesi_harness(harness, self.target, self.line)
+                    .map_err(RiscvWorkloadReplayError::MesiDataCache)
+            }
+            WorkloadDataCacheHarness::Moesi(harness) => {
+                clean_moesi_harness(harness, self.target, self.line)
+                    .map_err(RiscvWorkloadReplayError::MoesiDataCache)
+            }
+            WorkloadDataCacheHarness::Chi(harness) => {
+                clean_chi_harness(harness, self.target, self.line)
                     .map_err(RiscvWorkloadReplayError::ChiDataCache)
             }
         };
@@ -769,6 +798,294 @@ fn flush_chi_harness(
     harness.restore_quiescent(&flushed)
 }
 
+fn clean_msi_harness(
+    harness: &mut PartitionedDirectoryLineHarness,
+    target: MemoryTargetId,
+    line: Address,
+) -> Result<(), rem6_coherence::HarnessError> {
+    let snapshot = harness.quiescent_snapshot()?;
+    let data = msi_flush_data(&snapshot, target, line)
+        .ok_or(rem6_coherence::HarnessError::MissingBackingMemory { line })?;
+    let backing = replace_optional_backing(snapshot.backing(), data.clone())?;
+    let dram_memory = replace_optional_dram_line(snapshot.dram_memory(), target, line, data)
+        .map_err(rem6_coherence::HarnessError::Dram)?;
+    let directory = clean_msi_directory(snapshot.directory());
+    let caches = snapshot
+        .caches()
+        .iter()
+        .map(|(agent, cache)| (*agent, clean_msi_cache_snapshot(*agent, cache)))
+        .collect();
+    let cleaned = PartitionedDirectoryLineHarnessSnapshot::new(
+        snapshot.line(),
+        snapshot.scheduler().clone(),
+        directory,
+        caches,
+        backing,
+        dram_memory,
+        snapshot.dram_qos().cloned(),
+        snapshot.fabric_lanes().map(<[_]>::to_vec),
+        snapshot.trace(),
+        snapshot.cpu_responses(),
+        snapshot.directory_decisions(),
+        snapshot.dram_accesses(),
+        snapshot.parallel_runs().to_vec(),
+    );
+    harness.restore_quiescent(&cleaned)
+}
+
+fn clean_mesi_harness(
+    harness: &mut PartitionedMesiDirectoryLineHarness,
+    target: MemoryTargetId,
+    line: Address,
+) -> Result<(), MesiHarnessError> {
+    let snapshot = harness.quiescent_snapshot()?;
+    let data = mesi_flush_data(&snapshot, line).ok_or(MesiHarnessError::Backing(
+        rem6_coherence::HarnessError::MissingBackingMemory { line },
+    ))?;
+    let backing =
+        replace_backing(snapshot.backing(), data.clone()).map_err(MesiHarnessError::Backing)?;
+    let dram_memory = replace_optional_dram_line(snapshot.dram_memory(), target, line, data)
+        .map_err(MesiHarnessError::Dram)?;
+    let directory = clean_mesi_directory(snapshot.directory());
+    let caches = snapshot
+        .caches()
+        .iter()
+        .map(|(agent, cache)| (*agent, clean_mesi_cache_snapshot(*agent, cache)))
+        .collect();
+    let cleaned = PartitionedMesiDirectoryLineHarnessSnapshot::new(
+        snapshot.line(),
+        snapshot.scheduler().clone(),
+        directory,
+        caches,
+        backing,
+        dram_memory,
+        snapshot.dram_qos().cloned(),
+        snapshot.trace(),
+        snapshot.cpu_responses(),
+        snapshot.directory_decisions(),
+        snapshot.dram_accesses(),
+        snapshot.parallel_runs().to_vec(),
+    );
+    harness.restore_quiescent(&cleaned)
+}
+
+fn clean_moesi_harness(
+    harness: &mut PartitionedMoesiDirectoryLineHarness,
+    target: MemoryTargetId,
+    line: Address,
+) -> Result<(), MoesiHarnessError> {
+    let snapshot = harness.quiescent_snapshot()?;
+    let data = moesi_flush_data(&snapshot, line).ok_or(MoesiHarnessError::Backing(
+        rem6_coherence::HarnessError::MissingBackingMemory { line },
+    ))?;
+    let backing =
+        replace_backing(snapshot.backing(), data.clone()).map_err(MoesiHarnessError::Backing)?;
+    let dram_memory = replace_optional_dram_line(snapshot.dram_memory(), target, line, data)
+        .map_err(MoesiHarnessError::Dram)?;
+    let directory = clean_moesi_directory(snapshot.directory());
+    let caches = snapshot
+        .caches()
+        .iter()
+        .map(|(agent, cache)| (*agent, clean_moesi_cache_snapshot(*agent, cache)))
+        .collect();
+    let cleaned = PartitionedMoesiDirectoryLineHarnessSnapshot::new(
+        snapshot.line(),
+        snapshot.scheduler().clone(),
+        directory,
+        caches,
+        backing,
+        dram_memory,
+        snapshot.dram_qos().cloned(),
+        snapshot.fabric_lanes().map(<[_]>::to_vec),
+        snapshot.trace(),
+        snapshot.cpu_responses(),
+        snapshot.directory_decisions(),
+        snapshot.dram_accesses(),
+        snapshot.parallel_runs().to_vec(),
+    );
+    harness.restore_quiescent(&cleaned)
+}
+
+fn clean_chi_harness(
+    harness: &mut PartitionedChiDirectoryLineHarness,
+    target: MemoryTargetId,
+    line: Address,
+) -> Result<(), ChiHarnessError> {
+    let snapshot = harness.quiescent_snapshot()?;
+    let data = chi_flush_data(&snapshot, line).ok_or(ChiHarnessError::Backing(
+        rem6_coherence::HarnessError::MissingBackingMemory { line },
+    ))?;
+    let backing =
+        replace_backing(snapshot.backing(), data.clone()).map_err(ChiHarnessError::Backing)?;
+    let dram_memory =
+        replace_optional_dram_controller_line(snapshot.dram_memory(), target, line, data)
+            .map_err(ChiHarnessError::Dram)?;
+    let directory = clean_chi_directory(snapshot.directory());
+    let caches = snapshot
+        .caches()
+        .iter()
+        .map(|(agent, cache)| (*agent, clean_chi_cache_snapshot(*agent, cache)))
+        .collect();
+    let cleaned = rem6_coherence::PartitionedChiDirectoryLineHarnessSnapshot::new(
+        snapshot.line(),
+        snapshot.scheduler().clone(),
+        directory,
+        caches,
+        backing,
+        dram_memory,
+        snapshot.dram_qos().cloned(),
+        snapshot.trace(),
+        snapshot.cpu_responses(),
+        snapshot.directory_decisions(),
+    );
+    harness.restore_quiescent(&cleaned)
+}
+
+fn clean_msi_directory(snapshot: &DirectoryLineState) -> DirectoryLineState {
+    let mut clean = DirectoryLineState::new(snapshot.line());
+    if let Some(owner) = snapshot.owner() {
+        clean = clean.with_sharer(owner);
+    }
+    for sharer in snapshot.sharers() {
+        clean = clean.with_sharer(*sharer);
+    }
+    clean
+}
+
+fn clean_mesi_directory(snapshot: &MesiDirectoryLineState) -> MesiDirectoryLineState {
+    let mut clean = MesiDirectoryLineState::new(snapshot.line());
+    if let Some((owner, state)) = snapshot.owner() {
+        clean = clean.with_owner(owner, clean_mesi_state(state));
+    }
+    for sharer in snapshot.sharers() {
+        clean = clean.with_sharer(*sharer);
+    }
+    clean
+}
+
+fn clean_moesi_directory(snapshot: &MoesiDirectoryLineState) -> MoesiDirectoryLineState {
+    let mut clean = MoesiDirectoryLineState::new(snapshot.line());
+    if let Some((owner, state)) = snapshot.owner() {
+        match clean_moesi_state(state) {
+            MoesiState::Shared => clean = clean.with_sharer(owner),
+            state => clean = clean.with_owner(owner, state),
+        }
+    }
+    for sharer in snapshot.sharers() {
+        clean = clean.with_sharer(*sharer);
+    }
+    clean
+}
+
+fn clean_chi_directory(snapshot: &ChiDirectoryLineState) -> ChiDirectoryLineState {
+    let mut clean = ChiDirectoryLineState::new(snapshot.line());
+    if let (Some(owner), Some(state)) = (snapshot.unique_owner(), snapshot.unique_owner_state()) {
+        clean = clean.with_unique_owner(owner, clean_chi_state(state));
+    }
+    for (sharer, state) in snapshot.sharers() {
+        clean = clean.with_sharer(*sharer, clean_chi_state(*state));
+    }
+    clean
+}
+
+fn clean_msi_cache_snapshot(
+    agent: rem6_memory::AgentId,
+    snapshot: &MsiCacheControllerSnapshot,
+) -> MsiCacheControllerSnapshot {
+    let data = snapshot.cached_data().map(<[_]>::to_vec);
+    let mut line = MsiCacheLine::new(agent, snapshot.line());
+    line.force_state(clean_msi_state(snapshot.state()))
+        .expect("clean MSI trace response selects a stable cache state");
+    MsiCacheControllerSnapshot::new(
+        line,
+        snapshot.layout(),
+        snapshot.next_sequence(),
+        data,
+        None,
+    )
+}
+
+fn clean_mesi_cache_snapshot(
+    agent: rem6_memory::AgentId,
+    snapshot: &MesiCacheControllerSnapshot,
+) -> MesiCacheControllerSnapshot {
+    let data = snapshot.cached_data().map(<[_]>::to_vec);
+    let mut line = MesiCacheLine::new(agent, snapshot.line());
+    line.force_state(clean_mesi_state(snapshot.state()))
+        .expect("clean MESI trace response selects a stable cache state");
+    MesiCacheControllerSnapshot::new(
+        line,
+        snapshot.layout(),
+        snapshot.next_sequence(),
+        data,
+        None,
+    )
+}
+
+fn clean_moesi_cache_snapshot(
+    agent: rem6_memory::AgentId,
+    snapshot: &MoesiCacheControllerSnapshot,
+) -> MoesiCacheControllerSnapshot {
+    let data = snapshot.cached_data().map(<[_]>::to_vec);
+    let mut line = MoesiCacheLine::new(agent, snapshot.line());
+    line.force_state(clean_moesi_state(snapshot.state()))
+        .expect("clean MOESI trace response selects a stable cache state");
+    MoesiCacheControllerSnapshot::new(
+        line,
+        snapshot.layout(),
+        snapshot.next_sequence(),
+        data,
+        None,
+    )
+}
+
+fn clean_chi_cache_snapshot(
+    agent: rem6_memory::AgentId,
+    snapshot: &ChiCacheControllerSnapshot,
+) -> ChiCacheControllerSnapshot {
+    let data = snapshot.cached_data().map(<[_]>::to_vec);
+    let mut line = ChiCacheLine::new(agent, snapshot.line());
+    line.force_state(clean_chi_state(snapshot.state()))
+        .expect("clean CHI trace response selects a stable cache state");
+    ChiCacheControllerSnapshot::new(
+        line,
+        snapshot.layout(),
+        snapshot.next_sequence(),
+        data,
+        None,
+    )
+}
+
+fn clean_msi_state(state: MsiState) -> MsiState {
+    match state {
+        MsiState::Modified => MsiState::Shared,
+        state => state,
+    }
+}
+
+fn clean_mesi_state(state: MesiState) -> MesiState {
+    match state {
+        MesiState::Modified => MesiState::Exclusive,
+        state => state,
+    }
+}
+
+fn clean_moesi_state(state: MoesiState) -> MoesiState {
+    match state {
+        MoesiState::Modified => MoesiState::Exclusive,
+        MoesiState::Owned => MoesiState::Shared,
+        state => state,
+    }
+}
+
+fn clean_chi_state(state: ChiState) -> ChiState {
+    match state {
+        ChiState::SharedDirty => ChiState::SharedClean,
+        ChiState::UniqueDirty => ChiState::UniqueClean,
+        state => state,
+    }
+}
+
 fn msi_flush_data(
     snapshot: &PartitionedDirectoryLineHarnessSnapshot,
     target: MemoryTargetId,
@@ -875,7 +1192,12 @@ fn replace_optional_dram_controller_line(
 mod tests {
     use rem6_memory::{AccessSize, AgentId, ByteMask, MemoryRequest, MemoryRequestId};
     use rem6_protocol_mesi::MesiState;
+    use rem6_traffic::{
+        TrafficTrace, TrafficTraceConfig, TrafficTraceEvent, TrafficTraceGenerator,
+        TrafficTraceResponseKind,
+    };
     use rem6_transport::TransportEndpointId;
+    use rem6_workload::WorkloadRouteId;
 
     use super::*;
 
@@ -922,6 +1244,68 @@ mod tests {
         .unwrap()
     }
 
+    fn data_cache_config(protocol: WorkloadDataCacheProtocol) -> WorkloadRiscvDataCache {
+        WorkloadRiscvDataCache::new(
+            protocol,
+            0,
+            Address::new(0x3000),
+            2,
+            "dir0",
+            WorkloadRouteId::new("memory").unwrap(),
+        )
+        .unwrap()
+    }
+
+    fn clean_shared_response_event() -> TrafficTraceResponseEvent {
+        let trace =
+            TrafficTrace::from_gem5_packet_trace(&gem5_packet_trace(1_000, 43), 1_000).unwrap();
+        let config = TrafficTraceConfig::new(AgentId::new(7), layout(), 99, trace).unwrap();
+        let mut generator = TrafficTraceGenerator::new(config);
+        generator.enter(0);
+        match generator.next_event(0, 0).unwrap().unwrap() {
+            TrafficTraceEvent::Response(event) => event,
+            event => panic!("unexpected trace event: {event:?}"),
+        }
+    }
+
+    fn gem5_packet_trace(tick_frequency: u64, command: u32) -> Vec<u8> {
+        let mut bytes = vec![0x67, 0x65, 0x6d, 0x35];
+        let mut header = Vec::new();
+        append_key(&mut header, 3, 0);
+        append_varint(&mut header, tick_frequency);
+        append_record(&mut bytes, &header);
+
+        let mut packet = Vec::new();
+        append_key(&mut packet, 1, 0);
+        append_varint(&mut packet, 4);
+        append_key(&mut packet, 2, 0);
+        append_varint(&mut packet, u64::from(command));
+        append_key(&mut packet, 3, 0);
+        append_varint(&mut packet, 0x3000);
+        append_key(&mut packet, 4, 0);
+        append_varint(&mut packet, 64);
+        append_record(&mut bytes, &packet);
+
+        bytes
+    }
+
+    fn append_record(bytes: &mut Vec<u8>, message: &[u8]) {
+        append_varint(bytes, message.len() as u64);
+        bytes.extend_from_slice(message);
+    }
+
+    fn append_key(bytes: &mut Vec<u8>, field: u32, wire_type: u8) {
+        append_varint(bytes, (u64::from(field) << 3) | u64::from(wire_type));
+    }
+
+    fn append_varint(bytes: &mut Vec<u8>, mut value: u64) {
+        while value >= 0x80 {
+            bytes.push((value as u8) | 0x80);
+            value >>= 7;
+        }
+        bytes.push(value as u8);
+    }
+
     #[test]
     fn trace_flush_mesi_harness_writes_dirty_owner_to_backing() {
         let mut harness = PartitionedMesiDirectoryLineHarness::new(
@@ -956,5 +1340,45 @@ mod tests {
         let cache = snapshot.caches().get(&agent(1)).unwrap();
         assert_eq!(cache.state(), MesiState::Invalid);
         assert!(cache.cached_data().is_none());
+    }
+
+    #[test]
+    fn trace_clean_shared_response_cleans_dirty_mesi_line_without_invalidating() {
+        let mut backend = WorkloadDataCacheLineBackend::new(
+            &data_cache_config(WorkloadDataCacheProtocol::Mesi),
+            layout(),
+            Address::new(0x3000),
+            WorkloadDataCacheLineMemory::Line(line_data()),
+            vec![cache_config(1)],
+        )
+        .unwrap();
+
+        let WorkloadDataCacheHarness::Mesi(harness) = &mut backend.harness else {
+            panic!("expected MESI backend harness");
+        };
+        harness
+            .submit_cpu_request_parallel(agent(1), write(1, 0, 0x3008, vec![0xaa, 0xbb]))
+            .unwrap();
+        harness.run_until_idle_parallel_recorded().unwrap();
+        let before = harness.quiescent_snapshot().unwrap();
+        let before_cache = before.caches().get(&agent(1)).unwrap();
+        assert_eq!(before_cache.state(), MesiState::Modified);
+        assert_eq!(&before_cache.cached_data().unwrap()[8..10], &[0xaa, 0xbb]);
+
+        let event = clean_shared_response_event();
+        assert_eq!(event.kind(), TrafficTraceResponseKind::CleanShared);
+        assert!(event.cleans_line());
+        assert!(!event.invalidates_line());
+
+        assert!(backend.apply_trace_response_event(event));
+
+        let WorkloadDataCacheHarness::Mesi(harness) = &backend.harness else {
+            panic!("expected MESI backend harness");
+        };
+        let snapshot = harness.quiescent_snapshot().unwrap();
+        assert_eq!(&snapshot.backing().data()[8..10], &[0xaa, 0xbb]);
+        let cache = snapshot.caches().get(&agent(1)).unwrap();
+        assert_eq!(cache.state(), MesiState::Exclusive);
+        assert_eq!(&cache.cached_data().unwrap()[8..10], &[0xaa, 0xbb]);
     }
 }

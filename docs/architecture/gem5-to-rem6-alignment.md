@@ -2944,9 +2944,12 @@ HTM request events, matching later response packets by optional trace packet
 id, source-appropriate address and size metadata, and gem5 command policy.
 Matched memory responses emit a validated `MemoryResponse`, while matched
 non-memory responses emit typed acknowledgement records. On coherent workload
-data routes, `ReadRespWithInvalidate` also clears the configured data-cache
-line after the matched response mutates the cache model, so the next trace
-access observes the invalidation policy instead of hitting stale replay state.
+data routes, response clean and invalidate policies now drive the configured
+data-cache line after the matched response mutates the cache model:
+`ReadRespWithInvalidate`, `CleanInvalidResp`, and `InvalidateResp` clear the
+line, while `CleanSharedResp` writes dirty line data back and keeps a clean
+cache copy. Later trace accesses therefore observe executable response policy
+instead of hitting stale replay state.
 The controller records matched replay completions in a typed outcome summary
 and emits replay action events carrying owned memory responses or control
 acknowledgements. The
