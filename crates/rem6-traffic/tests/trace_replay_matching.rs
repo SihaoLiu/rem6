@@ -19,6 +19,7 @@ const GEM5_SOFT_PF_REQ: u32 = 11;
 const GEM5_SOFT_PF_RESP: u32 = 14;
 const GEM5_SWAP_REQ: u32 = 34;
 const GEM5_SWAP_RESP: u32 = 35;
+const GEM5_SC_UPGRADE_REQ: u32 = 18;
 const GEM5_SC_UPGRADE_FAIL_REQ: u32 = 20;
 const GEM5_UPGRADE_FAIL_RESP: u32 = 21;
 const GEM5_STORE_COND_FAIL_REQ: u32 = 28;
@@ -993,6 +994,49 @@ fn traffic_controller_matches_upgrade_fail_response_to_failed_sc_upgrade() {
             assert_eq!(memory_response.request_id(), request.request().id());
             assert_eq!(memory_response.status(), ResponseStatus::Completed);
             assert_eq!(memory_response.data().unwrap().len(), 64);
+        }
+        completion => panic!("unexpected trace replay completion: {completion:?}"),
+    }
+}
+
+#[test]
+fn traffic_controller_maps_failed_sc_upgrade_response_to_store_conditional_failure() {
+    let mut controller = controller_for_packets(&[
+        PacketFields {
+            tick: 5,
+            command: GEM5_SC_UPGRADE_REQ,
+            address: Some(0x8100),
+            size: Some(64),
+            packet_id: Some(28),
+        },
+        PacketFields {
+            tick: 7,
+            command: GEM5_UPGRADE_FAIL_RESP,
+            address: Some(0x8100),
+            size: Some(64),
+            packet_id: Some(28),
+        },
+    ]);
+
+    assert!(controller.start(20).unwrap().is_empty());
+    let request_batch = controller.next_event(20, 0).unwrap().unwrap();
+    let request = request_batch.request().unwrap().clone();
+    assert_eq!(
+        request.request().operation(),
+        MemoryOperation::StoreConditionalUpgrade
+    );
+
+    let response_batch = controller.next_event(request.tick(), 0).unwrap().unwrap();
+    let matched = response_batch.trace_response_match().unwrap();
+    match matched.completion() {
+        TrafficTraceReplayCompletion::Memory(memory_response) => {
+            assert_eq!(memory_response.request_id(), request.request().id());
+            assert_eq!(
+                memory_response.status(),
+                ResponseStatus::StoreConditionalFailed
+            );
+            assert_eq!(memory_response.data(), None);
+            assert_eq!(memory_response.trace_data().unwrap().len(), 64);
         }
         completion => panic!("unexpected trace replay completion: {completion:?}"),
     }

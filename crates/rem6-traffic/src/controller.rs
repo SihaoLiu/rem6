@@ -1568,7 +1568,11 @@ fn response_matches_memory_operation(
             )
         }
         TrafficTraceResponseKind::UpgradeFail => {
-            operation == MemoryOperation::StoreConditionalUpgradeFail
+            matches!(
+                operation,
+                MemoryOperation::StoreConditionalUpgrade
+                    | MemoryOperation::StoreConditionalUpgradeFail
+            )
         }
         TrafficTraceResponseKind::StoreConditional => {
             matches!(
@@ -1636,11 +1640,21 @@ fn trace_response_completion(
 ) -> Result<TrafficTraceReplayCompletion, TrafficGeneratorError> {
     match source {
         TrafficTraceReplaySource::Memory(request) => {
-            if request.request().operation() == MemoryOperation::StoreConditionalFail {
+            if request.request().operation() == MemoryOperation::StoreConditionalFail
+                || (request.request().operation() == MemoryOperation::StoreConditionalUpgrade
+                    && response.kind() == TrafficTraceResponseKind::UpgradeFail)
+            {
+                let trace_data = if response.returns_data() {
+                    let size = usize::try_from(request.request().size().bytes())
+                        .expect("memory request size fits usize after construction");
+                    Some(vec![0; size])
+                } else {
+                    None
+                };
                 return MemoryResponse::store_conditional_failed(request.request())
                     .map(|response| {
                         TrafficTraceReplayCompletion::Memory(TrafficTraceMemoryCompletion::new(
-                            response, None,
+                            response, trace_data,
                         ))
                     })
                     .map_err(Into::into);

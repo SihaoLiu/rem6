@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use rem6_kernel::{PartitionId, PartitionedScheduler};
-use rem6_memory::ResponseStatus;
+use rem6_memory::{MemoryOperation, ResponseStatus};
 use rem6_system::{
     traffic_trace_replay_controller_control_completion,
     traffic_trace_replay_controller_target_outcome,
@@ -30,8 +30,9 @@ use support::traffic_trace::{
     endpoint, request, request_from, trace_cursor, PacketFields, GEM5_FLUSH_REQ, GEM5_HTM_ABORT,
     GEM5_HTM_REQ, GEM5_HTM_REQ_RESP, GEM5_INVALID_DEST_ERROR, GEM5_MEM_FENCE_REQ,
     GEM5_MEM_FENCE_RESP, GEM5_MEM_SYNC_REQ, GEM5_MEM_SYNC_RESP, GEM5_PRINT_REQ, GEM5_READ_REQ,
-    GEM5_READ_RESP_WITH_INVALIDATE, GEM5_SOFT_PF_REQ, GEM5_SOFT_PF_RESP, GEM5_TLBI_EXT_SYNC,
-    GEM5_WRITEBACK_DIRTY, GEM5_WRITE_ERROR, GEM5_WRITE_REQ,
+    GEM5_READ_RESP_WITH_INVALIDATE, GEM5_SC_UPGRADE_REQ, GEM5_SOFT_PF_REQ, GEM5_SOFT_PF_RESP,
+    GEM5_TLBI_EXT_SYNC, GEM5_UPGRADE_FAIL_RESP, GEM5_WRITEBACK_DIRTY, GEM5_WRITE_ERROR,
+    GEM5_WRITE_REQ,
 };
 
 #[test]
@@ -628,6 +629,107 @@ fn traffic_trace_replay_controller_target_outcome_advances_controller_for_transp
             MemoryTraceEvent::response(12, route, core, req.id(), ResponseStatus::Completed),
         ]
     );
+}
+
+#[test]
+fn traffic_trace_replay_controller_target_outcome_executes_failed_sc_upgrade_response() {
+    let mut controller = controller_for_packets(&[
+        PacketFields {
+            tick: 0,
+            command: GEM5_SC_UPGRADE_REQ,
+            address: Some(0x8000),
+            size: Some(64),
+            packet_id: Some(141),
+        },
+        PacketFields {
+            tick: 7,
+            command: GEM5_UPGRADE_FAIL_RESP,
+            address: Some(0x8000),
+            size: Some(64),
+            packet_id: Some(141),
+        },
+    ]);
+
+    assert!(controller.start(0).unwrap().is_empty());
+    let request_batch = controller.next_event(0, 0).unwrap().unwrap();
+    assert!(request_batch.trace_replay_action().is_none());
+    let req = request_batch.request().unwrap().request().clone();
+    assert_eq!(req.operation(), MemoryOperation::StoreConditionalUpgrade);
+
+    let controller = Arc::new(Mutex::new(controller));
+    let runtime = Arc::new(Mutex::new(TrafficTraceReplayControllerRuntime::default()));
+    runtime
+        .lock()
+        .unwrap()
+        .record_batch(&request_batch)
+        .unwrap();
+
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let trace = MemoryTrace::new();
+    let responses = Arc::new(Mutex::new(Vec::new()));
+    let core = endpoint("core0");
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                core.clone(),
+                PartitionId::new(0),
+                endpoint("memory0"),
+                PartitionId::new(1),
+                3,
+                5,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    let replay = Arc::clone(&runtime);
+    let trace_controller = Arc::clone(&controller);
+    let submitted_req = req.clone();
+    let response_log = Arc::clone(&responses);
+    transport
+        .submit(
+            &mut scheduler,
+            route,
+            submitted_req.clone(),
+            trace.clone(),
+            move |delivery, context| {
+                assert_eq!(delivery.tick(), 3);
+                assert_eq!(delivery.request().id(), submitted_req.id());
+                traffic_trace_replay_controller_target_outcome(
+                    Arc::clone(&replay),
+                    Arc::clone(&trace_controller),
+                    &delivery,
+                    context,
+                    0,
+                )
+                .unwrap()
+            },
+            move |delivery: ResponseDelivery| {
+                response_log.lock().unwrap().push((
+                    delivery.tick(),
+                    delivery.endpoint().clone(),
+                    delivery.response().status(),
+                    delivery.response().data().map(<[u8]>::len),
+                ));
+            },
+        )
+        .unwrap();
+
+    let summary = scheduler.run_until_idle_conservative();
+
+    assert_eq!(summary.final_tick(), 12);
+    assert_eq!(
+        *responses.lock().unwrap(),
+        vec![(
+            12,
+            core.clone(),
+            ResponseStatus::StoreConditionalFailed,
+            None
+        )]
+    );
+    assert!(runtime.lock().unwrap().is_empty());
+    assert!(runtime.lock().unwrap().memory_failures().is_empty());
 }
 
 #[test]

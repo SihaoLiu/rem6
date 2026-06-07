@@ -1418,7 +1418,9 @@ impl MemoryResponse {
     pub fn store_conditional_failed(request: &MemoryRequest) -> Result<Self, MemoryError> {
         if !matches!(
             request.operation(),
-            MemoryOperation::StoreConditional | MemoryOperation::StoreConditionalFail
+            MemoryOperation::StoreConditional
+                | MemoryOperation::StoreConditionalFail
+                | MemoryOperation::StoreConditionalUpgrade
         ) {
             return Err(MemoryError::InvalidStoreConditionalFailureResponse {
                 request: request.id(),

@@ -1,7 +1,7 @@
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, CoherenceIntent, LineMemoryStore,
     MemoryOperation, MemoryRequest, MemoryRequestCheckpointPayload, MemoryRequestId,
-    ResponseStatus,
+    MemoryResponse, ResponseStatus,
 };
 
 fn line_layout() -> CacheLineLayout {
@@ -82,4 +82,21 @@ fn store_conditional_fail_checkpoint_payload_round_trips() {
     assert_eq!(restored.operation(), MemoryOperation::StoreConditionalFail);
     assert!(restored.requires_writable());
     assert!(!restored.returns_data());
+}
+
+#[test]
+fn store_conditional_upgrade_can_report_failed_response() {
+    let request = MemoryRequest::store_conditional_upgrade(
+        request_id(5),
+        Address::new(0x8200),
+        AccessSize::new(64).unwrap(),
+        line_layout(),
+    )
+    .unwrap();
+
+    let response = MemoryResponse::store_conditional_failed(&request).unwrap();
+
+    assert_eq!(response.request_id(), request.id());
+    assert_eq!(response.status(), ResponseStatus::StoreConditionalFailed);
+    assert_eq!(response.data(), None);
 }

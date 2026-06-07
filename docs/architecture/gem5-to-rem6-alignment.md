@@ -3035,8 +3035,11 @@ trace-controller advance crosses those events. The parallel trace replay
 executor can also install target and sideband consumers; workload replay uses
 those hooks so coherent data-route trace requests mutate the configured
 data-cache backend at the matched response tick, not at request delivery. A
-matched `StoreCondFailReq` response is delivered as
-`StoreConditionalFailed` without driving a successful data-cache access. A
+matched `StoreCondFailReq` response, or gem5's `SCUpgradeReq` returning
+`UpgradeFailResp`, is delivered as `StoreConditionalFailed` without driving a
+successful data-cache access. `SCUpgradeFailReq` plus `UpgradeFailResp`
+continues to complete with response data because gem5 models that packet as a
+failed upgrade probe that still acquires line data. A
 matched address-bearing memory failure records typed error metadata at the
 failure tick without executing a successful data-cache access; on data-cache
 routes, the workload backend also emits run-level trace error records with
