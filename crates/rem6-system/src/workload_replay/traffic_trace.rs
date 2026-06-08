@@ -151,6 +151,11 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
             .iter()
             .filter(|record| matches!(record.outcome(), RiscvWorkloadTraceSyncOutcome::Ack))
             .count();
+        let trace_cache_flush_records = self.records.trace_cache_flush_snapshot();
+        let trace_cache_flush_data_byte_count = trace_cache_flush_records
+            .iter()
+            .map(|record| record.flushed_data_bytes())
+            .sum();
         WorkloadTrafficTraceReplaySummary::new(self.route.clone(), self.scheduled_count)
             .with_response_delivery_count(response_deliveries.len())
             .with_trace_completed_response_count(response_status_counts.completed)
@@ -208,7 +213,8 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
             .with_tlb_sync_event_count(sideband_counts.tlb_sync)
             .with_trace_tlb_sync_count(self.records.trace_tlb_sync_snapshot().len())
             .with_cache_flush_event_count(sideband_counts.cache_flush)
-            .with_trace_cache_flush_count(self.records.trace_cache_flush_snapshot().len())
+            .with_trace_cache_flush_count(trace_cache_flush_records.len())
+            .with_trace_cache_flush_data_byte_count(trace_cache_flush_data_byte_count)
             .with_trace_l1_invalidation_count(self.records.trace_l1_invalidation_snapshot().len())
             .with_diagnostic_print_event_count(sideband_counts.diagnostic_print)
             .with_trace_diagnostic_count(self.records.trace_diagnostic_snapshot().len())

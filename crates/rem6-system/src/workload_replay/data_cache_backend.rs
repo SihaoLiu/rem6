@@ -94,31 +94,10 @@ impl WorkloadDataCacheRollback {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct WorkloadTraceCacheApplication {
-    protocol: RiscvDataCacheProtocol,
-    target: MemoryTargetId,
-    line: Address,
-}
-
-impl WorkloadTraceCacheApplication {
-    const fn new(protocol: RiscvDataCacheProtocol, target: MemoryTargetId, line: Address) -> Self {
-        Self {
-            protocol,
-            target,
-            line,
-        }
-    }
-
-    pub(super) const fn protocol(self) -> RiscvDataCacheProtocol {
-        self.protocol
-    }
-
-    pub(super) const fn target(self) -> MemoryTargetId {
-        self.target
-    }
-
-    pub(super) const fn line(self) -> Address {
-        self.line
-    }
+    pub(super) protocol: RiscvDataCacheProtocol,
+    pub(super) target: MemoryTargetId,
+    pub(super) line: Address,
+    pub(super) data_bytes: u64,
 }
 
 #[derive(Default)]
@@ -483,12 +462,14 @@ impl WorkloadDataCacheLineBackend {
             self.error = Some(RiscvWorkloadReplayError::DataCacheController {
                 record: Box::new(record),
             });
+            return None;
         }
-        Some(WorkloadTraceCacheApplication::new(
-            self.protocol,
-            self.target,
-            self.line,
-        ))
+        Some(WorkloadTraceCacheApplication {
+            protocol: self.protocol,
+            target: self.target,
+            line: self.line,
+            data_bytes: self.layout.bytes(),
+        })
     }
 
     fn apply_trace_response_event(&mut self, event: TrafficTraceResponseEvent) -> bool {

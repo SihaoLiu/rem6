@@ -186,6 +186,7 @@ pub struct RiscvWorkloadTraceCacheFlushRecord {
     address: Address,
     line: Address,
     size_bytes: u64,
+    flushed_data_bytes: u64,
     trace_packet_id: Option<u64>,
     trace_pc: Option<Address>,
 }
@@ -201,11 +202,12 @@ impl RiscvWorkloadTraceCacheFlushRecord {
             trace_tick: event.tick(),
             sequence: event.sequence(),
             kind: event.kind(),
-            protocol: application.protocol(),
-            target: application.target(),
+            protocol: application.protocol,
+            target: application.target,
             address: event.address(),
-            line: application.line(),
+            line: application.line,
             size_bytes: event.size_bytes(),
+            flushed_data_bytes: application.data_bytes,
             trace_packet_id: event.trace_packet_id(),
             trace_pc: event.trace_pc(),
         }
@@ -245,6 +247,10 @@ impl RiscvWorkloadTraceCacheFlushRecord {
 
     pub const fn size_bytes(&self) -> u64 {
         self.size_bytes
+    }
+
+    pub const fn flushed_data_bytes(&self) -> u64 {
+        self.flushed_data_bytes
     }
 
     pub const fn trace_packet_id(&self) -> Option<u64> {

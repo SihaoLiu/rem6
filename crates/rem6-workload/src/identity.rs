@@ -730,10 +730,8 @@ fn hash_expected_traffic_trace_replay_summary(
     hash_str(hash, expected.route().as_str());
     hash_u64(hash, expected.minimum_scheduled_count() as u64);
     hash_u64(hash, expected.minimum_response_delivery_count() as u64);
-    hash_u64(
-        hash,
-        expected.minimum_trace_completed_response_count() as u64,
-    );
+    let completed_responses = expected.minimum_trace_completed_response_count();
+    hash_u64(hash, completed_responses as u64);
     hash_u64(hash, expected.minimum_trace_retry_response_count() as u64);
     hash_u64(
         hash,
@@ -808,6 +806,7 @@ fn hash_expected_traffic_trace_replay_summary(
     hash_u64(hash, expected.minimum_trace_tlb_sync_count() as u64);
     hash_u64(hash, expected.minimum_cache_flush_event_count() as u64);
     hash_u64(hash, expected.minimum_trace_cache_flush_count() as u64);
+    hash_u64(hash, expected.minimum_trace_cache_flush_data_byte_count());
     hash_u64(hash, expected.minimum_trace_l1_invalidation_count() as u64);
     hash_u64(hash, expected.minimum_diagnostic_print_event_count() as u64);
     hash_u64(hash, expected.minimum_trace_diagnostic_count() as u64);

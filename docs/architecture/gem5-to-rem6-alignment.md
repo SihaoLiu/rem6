@@ -2954,12 +2954,15 @@ local cached copies, and resetting directory ownership before later trace target
 deliveries. Workload trace replay keeps those applied flushes on the
 route-local replay outcome and counts them separately from raw cache-flush
 sideband events in replay summaries and manifest expectations, so a trace can
-require the executable data-cache flush consumer. The consumer serializes cache
-sidebands and target deliveries by trace tick and sequence, so same-tick replay
-does not depend on parallel scheduler partition ordering. Full Ruby
-cache-recorder flush coverage beyond declared workload data-cache lines remains
-a cache subsystem contract because gem5 uses `FlushReq` both from Ruby tester
-checks and cache-trace replay paths.
+require the executable data-cache flush consumer. Those records and summaries
+also expose backend-applied line data bytes, which lets manifests require flush
+evidence from the data-cache backend instead of only proving that a `FlushReq`
+packet was parsed. The consumer serializes cache sidebands and target
+deliveries by trace tick and sequence, so same-tick replay does not depend on
+parallel scheduler partition ordering. Full Ruby cache-recorder flush coverage
+beyond declared workload data-cache lines remains a cache subsystem contract
+because gem5 uses `FlushReq` both from Ruby tester checks and cache-trace
+replay paths.
 `ReadResp`, `ReadRespWithInvalidate`, `WriteResp`, `WriteCompleteResp`,
 `SoftPFResp`, `HardPFResp`, `UpgradeResp`, `UpgradeFailResp`, `ReadExResp`,
 `StoreCondResp`, `LockedRMWReadResp`, `LockedRMWWriteResp`, `SwapResp`,

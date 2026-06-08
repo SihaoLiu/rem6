@@ -1464,6 +1464,7 @@ fn workload_replay_applies_bound_trace_flush_to_data_cache_line() {
     assert_eq!(cache_flushes[0].address(), Address::new(0x9000));
     assert_eq!(cache_flushes[0].line(), Address::new(0x9000));
     assert_eq!(cache_flushes[0].size_bytes(), 64);
+    assert_eq!(cache_flushes[0].flushed_data_bytes(), 64);
     assert_eq!(cache_flushes[0].trace_packet_id(), Some(941));
     assert_eq!(cache_flushes[0].trace_pc(), None);
     let data_cache_runs = outcome.run().data_cache_runs();
@@ -1473,6 +1474,7 @@ fn workload_replay_applies_bound_trace_flush_to_data_cache_line() {
     let summary = &outcome.result().traffic_trace_replay_summaries()[0];
     assert_eq!(summary.cache_flush_event_count(), 1);
     assert_eq!(summary.trace_cache_flush_count(), 1);
+    assert_eq!(summary.trace_cache_flush_data_byte_count(), 64);
 }
 
 #[test]

@@ -439,7 +439,7 @@ fn trace_flush_controller_error_keeps_sideband_context() {
     assert_eq!(event.kind(), TrafficTraceCacheKind::Flush);
 
     let application = backend.apply_trace_cache_event(event);
-    assert!(application.is_some());
+    assert!(application.is_none());
 
     let error = backend.take_error().unwrap();
     let RiscvWorkloadReplayError::DataCacheController { record } = error else {
