@@ -3210,11 +3210,15 @@ sources and synthesize memory or control replay actions, the target runtime
 uses those actions to drive executable response and failure outcomes, and
 workload data-cache replay consumes cache, clean, invalidate, read/write, and
 HTM access policy, plus MemSync `INV_L1` policy, to mutate line state and
-conflict records. Data-cache accepted trace responses, trace errors, and HTM
-access records also surface as replay-level executed evidence, run-level
-data-cache error outcomes, and summary counts, separate from generic memory
-failure and response counts, so manifests can require that the cache consumer
-accepted those trace policies rather than only observing raw target traffic.
+conflict records. The MemSync `INV_L1` control-acknowledgement path now passes
+the typed sync event into L1 invalidation too, so protocol-internal invalidation
+failures keep the sync class, kernel-sync and `INV_L1` policy, packet id, tick,
+line, operation, and protocol context. Data-cache accepted trace responses,
+trace errors, and HTM access records also surface as replay-level executed
+evidence, run-level data-cache error outcomes, and summary counts, separate
+from generic memory failure and response counts, so manifests can require that
+the cache consumer accepted those trace policies rather than only observing raw
+target traffic.
 RISC-V fetch-port and data-port replay
 failures likewise surface as CPU port failures rather than hanging as
 no-response target events. Delivered RISC-V and GPU or accelerator DMA
@@ -3222,15 +3226,16 @@ workload data-cache requests that hit protocol-internal cache-controller errors
 now fail through a contextual data-cache controller error record carrying the
 request source, tick, protocol, target, line, operation, and the underlying
 harness error instead of reporting an unattributed protocol error after the
-transport path completes. Cache-flush trace sidebands and clean or invalidate
-trace response maintenance that hit protocol-internal controller errors also
-use the same record shape with trace source metadata, so those failures keep
-trace tick, sequence, kind, optional packet id, address, line, operation, and
-protocol context. Additional accessor work should stay tied to one of those
-consumers, or to a new execution-facing consumer with a failing test that
-reaches replay, workload cache state, or a recorded runtime outcome. The
-remaining integration boundary is propagation of sideband controller errors
-without a concrete trace event source into equally contextual execution paths.
+transport path completes. Cache-flush trace sidebands, MemSync L1 invalidation,
+and clean or invalidate trace response maintenance that hit protocol-internal
+controller errors use the same record shape with trace source metadata, so
+those failures keep trace tick, sequence, kind or sync policy, optional packet
+id, address, line, operation, and protocol context. Additional accessor work
+should stay tied to one of those consumers, or to a new execution-facing
+consumer with a failing test that reaches replay, workload cache state, or a
+recorded runtime outcome. The remaining integration boundary is propagation of
+source-less internal data-cache state transfers, such as HTM rollback snapshot
+or restore failures, into equally contextual execution paths.
 Trace packet flag handling now maps non-prefetch `INST_FETCH` on `ReadReq`,
 `ReadCleanReq`, and
 `ReadSharedReq` packets to native instruction-fetch requests, accepts `PHYSICAL`

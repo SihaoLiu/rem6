@@ -27,7 +27,7 @@ use rem6_protocol_moesi::{MoesiCacheLine, MoesiState};
 use rem6_protocol_msi::{MsiCacheLine, MsiState};
 use rem6_traffic::{
     TrafficTraceCacheEvent, TrafficTraceDiagnosticEvent, TrafficTraceErrorEvent,
-    TrafficTraceResponseEvent,
+    TrafficTraceResponseEvent, TrafficTraceSyncEvent,
 };
 use rem6_transport::{MemoryRouteId, RequestDelivery, TargetOutcome, TransportEndpointId};
 use rem6_workload::{WorkloadDataCacheProtocol, WorkloadRiscvDataCache};
@@ -747,10 +747,20 @@ impl WorkloadDataCacheLineBackend {
         )))
     }
 
-    fn invalidate_trace_line(&mut self) {
+    fn invalidate_trace_line_from_sync(&mut self, tick: Tick, event: TrafficTraceSyncEvent) {
         let result = self.try_invalidate_trace_line();
         if let Err(error) = result {
-            self.error = Some(data_cache_controller_error_to_replay_error(error));
+            let record = RiscvDataCacheControllerErrorRecord::from_trace_sync_event(
+                tick,
+                event,
+                self.protocol,
+                self.target,
+                self.line,
+                error,
+            );
+            self.error = Some(RiscvWorkloadReplayError::DataCacheController {
+                record: Box::new(record),
+            });
         }
     }
 
@@ -920,10 +930,14 @@ impl WorkloadDataCacheBackend {
             .and_then(|line| line.apply_trace_cache_event(event))
     }
 
-    pub(super) fn invalidate_trace_l1(&mut self) -> usize {
+    pub(super) fn invalidate_trace_l1_from_sync(
+        &mut self,
+        tick: Tick,
+        event: TrafficTraceSyncEvent,
+    ) -> usize {
         let mut invalidated_line_count = 0;
         for line in self.lines.values_mut() {
-            line.invalidate_trace_line();
+            line.invalidate_trace_line_from_sync(tick, event);
             invalidated_line_count += 1;
         }
         invalidated_line_count
@@ -1620,25 +1634,6 @@ fn clean_chi_state(state: ChiState) -> ChiState {
         ChiState::SharedDirty => ChiState::SharedClean,
         ChiState::UniqueDirty => ChiState::UniqueClean,
         state => state,
-    }
-}
-
-fn data_cache_controller_error_to_replay_error(
-    error: RiscvDataCacheControllerError,
-) -> RiscvWorkloadReplayError {
-    match error {
-        RiscvDataCacheControllerError::Msi(error) => RiscvWorkloadReplayError::MsiDataCache(error),
-        RiscvDataCacheControllerError::Mesi(error) => {
-            RiscvWorkloadReplayError::MesiDataCache(error)
-        }
-        RiscvDataCacheControllerError::Moesi(error) => {
-            RiscvWorkloadReplayError::MoesiDataCache(error)
-        }
-        RiscvDataCacheControllerError::Chi(error) => RiscvWorkloadReplayError::ChiDataCache(error),
-        RiscvDataCacheControllerError::MissingResponse { request } => {
-            RiscvWorkloadReplayError::MissingDataCacheResponse { request }
-        }
-        RiscvDataCacheControllerError::Memory(error) => RiscvWorkloadReplayError::Memory(error),
     }
 }
 

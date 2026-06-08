@@ -5,7 +5,7 @@ use rem6_memory::{AccessSize, AgentId, ByteMask, MemoryRequest, MemoryRequestId}
 use rem6_protocol_mesi::MesiState;
 use rem6_traffic::{
     TrafficTrace, TrafficTraceCacheKind, TrafficTraceConfig, TrafficTraceEvent,
-    TrafficTraceGenerator, TrafficTraceResponseKind,
+    TrafficTraceGenerator, TrafficTraceResponseKind, TrafficTraceSyncEvent, TrafficTraceSyncKind,
 };
 use rem6_transport::{MemoryRoute, MemoryTrace, MemoryTransport, TransportEndpointId};
 use rem6_workload::WorkloadRouteId;
@@ -114,6 +114,30 @@ fn clean_shared_response_event() -> TrafficTraceResponseEvent {
     response_event(43, 0x3000, 64)
 }
 
+const GEM5_MEM_SYNC_REQ: u32 = 39;
+const GEM5_FLAG_KERNEL: u32 = 0x0000_1000;
+const GEM5_SYNC_INV_L1: u32 = 0x0000_0001;
+
+fn sync_event(
+    command: u32,
+    flags: u32,
+    packet_id: Option<u64>,
+    pc: Option<u64>,
+) -> TrafficTraceSyncEvent {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace_with_fields(1_000, command, None, None, Some(flags), packet_id, pc),
+        1_000,
+    )
+    .unwrap();
+    let config = TrafficTraceConfig::new(AgentId::new(7), layout(), 99, trace).unwrap();
+    let mut generator = TrafficTraceGenerator::new(config);
+    generator.enter(0);
+    match generator.next_event(0, 0).unwrap().unwrap() {
+        TrafficTraceEvent::Sync(event) => event,
+        event => panic!("unexpected trace event: {event:?}"),
+    }
+}
+
 fn empty_dram_memory() -> PartitionedDramMemoryConfig {
     let mut dram = DramMemoryController::new();
     let target = MemoryTargetId::new(0);
@@ -146,6 +170,26 @@ fn gem5_packet_trace_with_shape_and_packet_id(
     size: u32,
     packet_id: Option<u64>,
 ) -> Vec<u8> {
+    gem5_packet_trace_with_fields(
+        tick_frequency,
+        command,
+        Some(address),
+        Some(size),
+        None,
+        packet_id,
+        None,
+    )
+}
+
+fn gem5_packet_trace_with_fields(
+    tick_frequency: u64,
+    command: u32,
+    address: Option<u64>,
+    size: Option<u32>,
+    flags: Option<u32>,
+    packet_id: Option<u64>,
+    pc: Option<u64>,
+) -> Vec<u8> {
     let mut bytes = vec![0x67, 0x65, 0x6d, 0x35];
     let mut header = Vec::new();
     append_key(&mut header, 3, 0);
@@ -157,13 +201,25 @@ fn gem5_packet_trace_with_shape_and_packet_id(
     append_varint(&mut packet, 4);
     append_key(&mut packet, 2, 0);
     append_varint(&mut packet, u64::from(command));
-    append_key(&mut packet, 3, 0);
-    append_varint(&mut packet, address);
-    append_key(&mut packet, 4, 0);
-    append_varint(&mut packet, u64::from(size));
+    if let Some(address) = address {
+        append_key(&mut packet, 3, 0);
+        append_varint(&mut packet, address);
+    }
+    if let Some(size) = size {
+        append_key(&mut packet, 4, 0);
+        append_varint(&mut packet, u64::from(size));
+    }
+    if let Some(flags) = flags {
+        append_key(&mut packet, 5, 0);
+        append_varint(&mut packet, u64::from(flags));
+    }
     if let Some(packet_id) = packet_id {
         append_key(&mut packet, 6, 0);
         append_varint(&mut packet, packet_id);
+    }
+    if let Some(pc) = pc {
+        append_key(&mut packet, 7, 0);
+        append_varint(&mut packet, pc);
     }
     append_record(&mut bytes, &packet);
 
@@ -361,6 +417,58 @@ fn trace_flush_controller_error_keeps_sideband_context() {
     assert_eq!(record.protocol(), RiscvDataCacheProtocol::Msi);
     assert_eq!(record.target(), MemoryTargetId::new(0));
     assert_eq!(record.address(), event.address());
+    assert_eq!(record.line(), Address::new(0x3000));
+    assert_eq!(record.operation(), MemoryOperation::Invalidate);
+    assert!(matches!(
+        record.error(),
+        RiscvDataCacheControllerError::Msi(
+            rem6_coherence::HarnessError::MissingBackingMemory { line }
+        ) if *line == Address::new(0x3000)
+    ));
+}
+
+#[test]
+fn trace_sync_l1_invalidation_controller_error_keeps_sync_context() {
+    let mut backend = WorkloadDataCacheBackend::new([WorkloadDataCacheLineBackend::new(
+        &data_cache_config(WorkloadDataCacheProtocol::Msi),
+        layout(),
+        Address::new(0x3000),
+        WorkloadDataCacheLineMemory::Dram(Box::new(empty_dram_memory())),
+        vec![cache_config(1)],
+    )
+    .unwrap()]);
+    let event = sync_event(
+        GEM5_MEM_SYNC_REQ,
+        GEM5_FLAG_KERNEL | GEM5_SYNC_INV_L1,
+        Some(713),
+        Some(0x2018),
+    );
+    assert_eq!(event.kind(), TrafficTraceSyncKind::MemSync);
+    assert!(event.kernel_sync());
+    assert!(event.invalidates_l1());
+
+    let invalidated_line_count = backend.invalidate_trace_l1_from_sync(event.tick() + 5, event);
+    assert_eq!(invalidated_line_count, 1);
+
+    let error = backend.take_error().unwrap();
+    let RiscvWorkloadReplayError::DataCacheController { record } = error else {
+        panic!("expected contextual data-cache controller error");
+    };
+    assert_eq!(record.tick(), event.tick() + 5);
+    assert_eq!(record.request_id(), None);
+    assert_eq!(record.trace_sequence(), Some(event.sequence()));
+    assert_eq!(record.trace_cache_kind(), None);
+    assert_eq!(record.trace_response_kind(), None);
+    assert_eq!(
+        record.trace_sync_kind(),
+        Some(TrafficTraceSyncKind::MemSync)
+    );
+    assert_eq!(record.trace_sync_kernel_sync(), Some(true));
+    assert_eq!(record.trace_sync_invalidates_l1(), Some(true));
+    assert_eq!(record.trace_packet_id(), Some(713));
+    assert_eq!(record.protocol(), RiscvDataCacheProtocol::Msi);
+    assert_eq!(record.target(), MemoryTargetId::new(0));
+    assert_eq!(record.address(), Address::new(0x3000));
     assert_eq!(record.line(), Address::new(0x3000));
     assert_eq!(record.operation(), MemoryOperation::Invalidate);
     assert!(matches!(

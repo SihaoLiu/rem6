@@ -1288,7 +1288,7 @@ impl WorkloadTraceDataCacheConsumerInner {
                             let invalidated_line_count = data_cache
                                 .lock()
                                 .expect("workload data cache lock")
-                                .invalidate_trace_l1();
+                                .invalidate_trace_l1_from_sync(tick, sync);
                             self.records.record_trace_l1_invalidation(
                                 RiscvWorkloadTraceL1InvalidationRecord::from_trace_sync_invalidation(
                                     tick,
