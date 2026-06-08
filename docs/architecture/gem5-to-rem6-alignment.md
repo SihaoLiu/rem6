@@ -2976,8 +2976,9 @@ replay paths.
 optional address, optional size, optional packet id, optional PC metadata, and
 gem5 response read/write classification, data policy, invalidation policy,
 clean policy, prefetch policy, upgrade policy, LLSC policy, locked-RMW policy,
-and writable-response policy, plus packet-count accounting without constructing
-a `MemoryRequest` or adding read/write byte accounting.
+and writable-response policy, plus physical-address trace metadata when
+present, plus packet-count accounting without constructing a `MemoryRequest` or
+adding read/write byte accounting.
 The traffic controller now consumes those response policies by keeping pending
 trace replay sources for response-required memory requests, sync events, and
 HTM request events, matching later response packets by source-appropriate
@@ -3121,7 +3122,8 @@ failed upgrade probe that still acquires line data. A
 matched address-bearing memory failure records typed error metadata at the
 failure tick without executing a successful data-cache access; on data-cache
 routes, the workload backend also emits run-level trace error records with
-request id, error kind, line, address, size, packet id, and PC metadata.
+request id, error kind, line, address, physical-address trace metadata, size,
+packet id, and PC metadata.
 Workload traffic-trace summaries and manifest expectations count those
 data-cache accepted trace errors separately from generic memory failures, so a
 trace can require the executable cache-error consumer without treating the
@@ -3133,8 +3135,9 @@ workload summaries and manifest expectations.
 Every workload trace route exposes matched memory response metadata on the
 traffic trace replay outcome itself, including request id, response kind,
 transport response status, trace order, address or matched-request line
-fallback, size, packet id, PC, response-data length, trace-fill data length,
-and whether the configured workload data-cache backend consumed the response.
+fallback, physical-address trace metadata, size, packet id, PC, response-data
+length, trace-fill data length, and whether the configured workload data-cache
+backend consumed the response.
 Workload traffic-trace summaries and manifest expectations also count matched
 trace responses accepted by that data-cache consumer, so replay artifacts can
 require executable cache-response policy consumption instead of inferring it
@@ -3150,17 +3153,19 @@ responses, so a replay artifact can require that the HTM access policy reached
 the executable data-cache consumer.
 Every workload trace route exposes matched write-completion metadata on the
 traffic trace replay outcome itself, including request id, response kind, trace
-order, address or matched-request line fallback, size, packet id, and PC, so
-`WriteCompleteResp` remains executable completion evidence rather than an
-audit-only trace accessor. Workload traffic-trace summaries and manifest
-expectations also carry a write-completion count, so replay artifacts can
-require the executable `WriteCompleteResp` consumer instead of inferring it
-from response deliveries or raw memory trace length.
+order, address or matched-request line fallback, physical-address trace
+metadata, size, packet id, and PC, so `WriteCompleteResp` remains executable
+completion evidence rather than an audit-only trace accessor. Workload
+traffic-trace summaries and manifest expectations also carry a write-completion
+count, so replay artifacts can require the executable `WriteCompleteResp`
+consumer instead of inferring it from response deliveries or raw memory trace
+length.
 Every workload trace route also exposes matched memory failure metadata on the
 traffic trace replay outcome itself, including request id, error kind,
-trace order, address or matched-request line fallback, size, packet id, and PC,
-so fetch, MMIO, and non-cache data routes keep executable failure evidence even
-when no data-cache protocol record applies. Workload replay summaries and
+trace order, address or matched-request line fallback, physical-address trace
+metadata, size, packet id, and PC, so fetch, MMIO, and non-cache data routes
+keep executable failure evidence even when no data-cache protocol record
+applies. Workload replay summaries and
 manifest expectations also split those matched memory failures by gem5 error
 kind, so a replay artifact can require the executable `ReadError`,
 `WriteError`, or functional-error consumer instead of only checking an

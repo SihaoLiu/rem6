@@ -612,6 +612,7 @@ pub struct TrafficTraceResponseEvent {
     tick: u64,
     sequence: u64,
     kind: TrafficTraceResponseKind,
+    trace_address_is_physical: bool,
     address: Option<Address>,
     size_bytes: Option<u64>,
     trace_packet_id: Option<u64>,
@@ -623,6 +624,7 @@ impl TrafficTraceResponseEvent {
         tick: u64,
         sequence: u64,
         kind: TrafficTraceResponseKind,
+        trace_address_is_physical: bool,
         address: Option<Address>,
         size: Option<AccessSize>,
         trace_packet_id: Option<u64>,
@@ -632,6 +634,7 @@ impl TrafficTraceResponseEvent {
             tick,
             sequence,
             kind,
+            trace_address_is_physical,
             address,
             size_bytes: match size {
                 Some(size) => Some(size.bytes()),
@@ -652,6 +655,10 @@ impl TrafficTraceResponseEvent {
 
     pub const fn kind(self) -> TrafficTraceResponseKind {
         self.kind
+    }
+
+    pub const fn trace_address_is_physical(self) -> bool {
+        self.trace_address_is_physical
     }
 
     pub const fn address(self) -> Option<Address> {
@@ -728,6 +735,7 @@ pub struct TrafficTraceErrorEvent {
     tick: u64,
     sequence: u64,
     kind: TrafficTraceErrorKind,
+    trace_address_is_physical: bool,
     address: Option<Address>,
     size_bytes: Option<u64>,
     trace_packet_id: Option<u64>,
@@ -739,6 +747,7 @@ impl TrafficTraceErrorEvent {
         tick: u64,
         sequence: u64,
         kind: TrafficTraceErrorKind,
+        trace_address_is_physical: bool,
         address: Option<Address>,
         size: Option<AccessSize>,
         trace_packet_id: Option<u64>,
@@ -748,6 +757,7 @@ impl TrafficTraceErrorEvent {
             tick,
             sequence,
             kind,
+            trace_address_is_physical,
             address,
             size_bytes: match size {
                 Some(size) => Some(size.bytes()),
@@ -768,6 +778,10 @@ impl TrafficTraceErrorEvent {
 
     pub const fn kind(self) -> TrafficTraceErrorKind {
         self.kind
+    }
+
+    pub const fn trace_address_is_physical(self) -> bool {
+        self.trace_address_is_physical
     }
 
     pub const fn address(self) -> Option<Address> {

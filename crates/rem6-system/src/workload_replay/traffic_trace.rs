@@ -417,6 +417,7 @@ pub struct RiscvWorkloadTraceMemoryResponseRecord {
     request_id: MemoryRequestId,
     kind: TrafficTraceResponseKind,
     status: ResponseStatus,
+    trace_address_is_physical: bool,
     address: Option<Address>,
     line: Address,
     size_bytes: Option<u64>,
@@ -447,6 +448,7 @@ impl RiscvWorkloadTraceMemoryResponseRecord {
             request_id,
             kind: event.kind(),
             status,
+            trace_address_is_physical: event.trace_address_is_physical(),
             address: event.address().or(Some(request_line)),
             line: request_line,
             size_bytes: event.size_bytes(),
@@ -489,6 +491,10 @@ impl RiscvWorkloadTraceMemoryResponseRecord {
 
     pub const fn status(&self) -> ResponseStatus {
         self.status
+    }
+
+    pub const fn trace_address_is_physical(&self) -> bool {
+        self.trace_address_is_physical
     }
 
     pub const fn address(&self) -> Option<Address> {
@@ -535,6 +541,7 @@ pub struct RiscvWorkloadTraceMemoryWriteCompletionRecord {
     sequence: u64,
     request_id: MemoryRequestId,
     kind: TrafficTraceResponseKind,
+    trace_address_is_physical: bool,
     address: Option<Address>,
     line: Address,
     size_bytes: Option<u64>,
@@ -554,6 +561,7 @@ impl RiscvWorkloadTraceMemoryWriteCompletionRecord {
             sequence: response.sequence(),
             request_id: record.request_id(),
             kind: response.kind(),
+            trace_address_is_physical: response.trace_address_is_physical(),
             address: response.address().or(Some(record.request_line())),
             line: record.request_line(),
             size_bytes: response.size_bytes(),
@@ -580,6 +588,10 @@ impl RiscvWorkloadTraceMemoryWriteCompletionRecord {
 
     pub const fn kind(&self) -> TrafficTraceResponseKind {
         self.kind
+    }
+
+    pub const fn trace_address_is_physical(&self) -> bool {
+        self.trace_address_is_physical
     }
 
     pub const fn address(&self) -> Option<Address> {
@@ -610,6 +622,7 @@ pub struct RiscvWorkloadTraceMemoryFailureRecord {
     sequence: u64,
     request_id: MemoryRequestId,
     error: TrafficTraceErrorKind,
+    trace_address_is_physical: bool,
     address: Option<Address>,
     line: Address,
     size_bytes: Option<u64>,
@@ -630,6 +643,7 @@ impl RiscvWorkloadTraceMemoryFailureRecord {
             sequence: event.sequence(),
             request_id,
             error: event.kind(),
+            trace_address_is_physical: event.trace_address_is_physical(),
             address: event.address().or(Some(request_line)),
             line: request_line,
             size_bytes: event.size_bytes(),
@@ -656,6 +670,10 @@ impl RiscvWorkloadTraceMemoryFailureRecord {
 
     pub const fn error(&self) -> TrafficTraceErrorKind {
         self.error
+    }
+
+    pub const fn trace_address_is_physical(&self) -> bool {
+        self.trace_address_is_physical
     }
 
     pub const fn address(&self) -> Option<Address> {

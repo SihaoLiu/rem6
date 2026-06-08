@@ -586,14 +586,14 @@ impl TrafficTraceRequestFlags {
         }
 
         if command.response_kind().is_some() {
-            if self.bits != 0 {
+            if self.bits & !GEM5_FLAG_PHYSICAL != 0 {
                 return Err(TrafficGeneratorError::TraceUnsupportedFlags { flags: self.bits });
             }
             return Ok(());
         }
 
         if command.error_kind().is_some() {
-            if self.bits != 0 {
+            if self.bits & !GEM5_FLAG_PHYSICAL != 0 {
                 return Err(TrafficGeneratorError::TraceUnsupportedFlags { flags: self.bits });
             }
             return Ok(());
@@ -1144,6 +1144,7 @@ impl TrafficTraceGenerator {
                 event_tick,
                 sequence,
                 kind,
+                element.flags.trace_address_is_physical(),
                 address,
                 element.size,
                 element.packet_id,
@@ -1157,6 +1158,7 @@ impl TrafficTraceGenerator {
                 event_tick,
                 sequence,
                 kind,
+                element.flags.trace_address_is_physical(),
                 address,
                 element.size,
                 element.packet_id,

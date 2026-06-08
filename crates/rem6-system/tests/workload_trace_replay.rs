@@ -803,26 +803,38 @@ fn replay_manifest_with_controller(
 
 #[test]
 fn workload_replay_runs_bound_traffic_trace_controller() {
-    let outcome = replay_with_controller(
-        "riscv-replay-traffic-trace",
-        &[
-            PacketFields {
-                tick: 0,
-                command: GEM5_READ_REQ,
-                address: Some(0xa000),
-                size: Some(8),
-                packet_id: Some(900),
-            },
-            PacketFields {
-                tick: 3,
-                command: GEM5_READ_RESP_WITH_INVALIDATE,
-                address: Some(0xa000),
-                size: Some(8),
-                packet_id: Some(900),
-            },
-        ],
-    )
-    .unwrap();
+    let plan =
+        WorkloadReplayPlan::from_manifest(&replay_manifest("riscv-replay-traffic-trace")).unwrap();
+    let controller = controller_for_packet_records(&[
+        PacketRecord {
+            tick: 0,
+            command: GEM5_READ_REQ,
+            address: Some(0xa000),
+            size: Some(8),
+            flags: None,
+            packet_id: Some(900),
+            pc: None,
+        },
+        PacketRecord {
+            tick: 3,
+            command: GEM5_READ_RESP_WITH_INVALIDATE,
+            address: Some(0xa000),
+            size: Some(8),
+            flags: Some(GEM5_FLAG_PHYSICAL),
+            packet_id: Some(900),
+            pc: Some(0x1800),
+        },
+    ]);
+
+    let outcome = RiscvWorkloadReplay::new(plan)
+        .with_max_turns(64)
+        .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
+            controller,
+            route_id("cpu0.fetch"),
+            PartitionId::new(2),
+        ))
+        .run_parallel()
+        .unwrap();
 
     let traffic_replays = outcome.traffic_trace_replays();
     assert_eq!(traffic_replays.len(), 1);
@@ -866,6 +878,8 @@ fn workload_replay_runs_bound_traffic_trace_controller() {
     assert_eq!(response_record.line(), Address::new(0xa000));
     assert_eq!(response_record.size_bytes(), Some(8));
     assert_eq!(response_record.trace_packet_id(), Some(900));
+    assert!(response_record.trace_address_is_physical());
+    assert_eq!(response_record.trace_pc(), Some(Address::new(0x1800)));
     assert_eq!(response_record.trace_data_bytes(), Some(8));
     assert_eq!(response_record.response_data_bytes(), Some(8));
     assert!(!response_record.data_cache_response_applied());
@@ -942,27 +956,33 @@ fn workload_replay_records_prefetch_trace_fill_without_response_payload() {
 fn workload_replay_records_trace_write_completion_metadata() {
     let manifest = replay_manifest_with_data_cache("riscv-replay-trace-write-completion-record");
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
-    let controller = controller_for_packets(&[
-        PacketFields {
+    let controller = controller_for_packet_records(&[
+        PacketRecord {
             tick: 0,
             command: GEM5_WRITE_REQ,
             address: Some(0x9008),
             size: Some(8),
+            flags: None,
             packet_id: Some(918),
+            pc: None,
         },
-        PacketFields {
+        PacketRecord {
             tick: 3,
             command: GEM5_WRITE_RESP,
             address: Some(0x9008),
             size: Some(8),
+            flags: None,
             packet_id: Some(918),
+            pc: None,
         },
-        PacketFields {
+        PacketRecord {
             tick: 5,
             command: GEM5_WRITE_COMPLETE_RESP,
             address: Some(0x9008),
             size: Some(8),
+            flags: Some(GEM5_FLAG_PHYSICAL),
             packet_id: Some(918),
+            pc: Some(0x1880),
         },
     ]);
 
@@ -998,7 +1018,8 @@ fn workload_replay_records_trace_write_completion_metadata() {
     assert_eq!(completion.line(), Address::new(0x9000));
     assert_eq!(completion.size_bytes(), Some(8));
     assert_eq!(completion.trace_packet_id(), Some(918));
-    assert_eq!(completion.trace_pc(), None);
+    assert!(completion.trace_address_is_physical());
+    assert_eq!(completion.trace_pc(), Some(Address::new(0x1880)));
 
     let summaries = outcome.result().traffic_trace_replay_summaries();
     assert_eq!(summaries.len(), 1);
@@ -1656,20 +1677,24 @@ fn workload_replay_does_not_mutate_data_cache_for_trace_write_error() {
         "riscv-replay-trace-write-error-data-cache",
     );
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
-    let controller = controller_for_packets(&[
-        PacketFields {
+    let controller = controller_for_packet_records(&[
+        PacketRecord {
             tick: 0,
             command: GEM5_WRITE_REQ,
             address: Some(0x9008),
             size: Some(8),
+            flags: None,
             packet_id: Some(950),
+            pc: None,
         },
-        PacketFields {
+        PacketRecord {
             tick: 3,
             command: GEM5_WRITE_ERROR,
             address: Some(0x9008),
             size: Some(8),
+            flags: Some(GEM5_FLAG_PHYSICAL),
             packet_id: Some(950),
+            pc: Some(0x1900),
         },
     ]);
 
@@ -1709,6 +1734,8 @@ fn workload_replay_does_not_mutate_data_cache_for_trace_write_error() {
     assert_eq!(trace_error.line(), Address::new(0x9000));
     assert_eq!(trace_error.size_bytes(), Some(8));
     assert_eq!(trace_error.trace_packet_id(), Some(950));
+    assert!(trace_error.trace_address_is_physical());
+    assert_eq!(trace_error.trace_pc(), Some(Address::new(0x1900)));
     let data_cache_errors = outcome.run().data_cache_error_records();
     assert_eq!(data_cache_errors, trace_errors);
     assert_eq!(outcome.run().data_cache_error_count(), 1);
@@ -1722,6 +1749,8 @@ fn workload_replay_does_not_mutate_data_cache_for_trace_write_error() {
     assert_eq!(memory_failures[0].line(), Address::new(0x9000));
     assert_eq!(memory_failures[0].size_bytes(), Some(8));
     assert_eq!(memory_failures[0].trace_packet_id(), Some(950));
+    assert!(memory_failures[0].trace_address_is_physical());
+    assert_eq!(memory_failures[0].trace_pc(), Some(Address::new(0x1900)));
     let summary = &outcome.result().traffic_trace_replay_summaries()[0];
     assert_eq!(summary.memory_failure_count(), 1);
     assert_eq!(summary.trace_error_count(), 1);

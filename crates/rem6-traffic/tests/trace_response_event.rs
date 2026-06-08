@@ -31,6 +31,7 @@ const GEM5_CLEAN_INVALID_RESP: u32 = 45;
 const GEM5_INVALIDATE_RESP: u32 = 55;
 const GEM5_HTM_REQ_RESP: u32 = 57;
 const GEM5_FLAG_PHYSICAL: u32 = 0x0000_0200;
+const GEM5_FLAG_KERNEL: u32 = 0x0000_1000;
 
 #[derive(Clone, Copy)]
 struct PacketFields {
@@ -365,7 +366,41 @@ fn trace_response_event_forwards_gem5_atomic_response_attributes() {
 }
 
 #[test]
-fn trace_parser_rejects_response_flags() {
+fn trace_generator_preserves_response_physical_trace_metadata() {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace(
+            TICK_FREQUENCY,
+            &[PacketFields {
+                tick: 5,
+                command: GEM5_WRITE_RESP,
+                address: Some(0x4000),
+                size: Some(8),
+                flags: Some(GEM5_FLAG_PHYSICAL),
+                packet_id: Some(17),
+                pc: Some(0x1200),
+            }],
+        ),
+        TICK_FREQUENCY,
+    )
+    .unwrap();
+    let mut generator = TrafficTraceGenerator::new(trace_config(trace));
+    generator.enter(0);
+
+    let response = match generator.next_event(0, 0).unwrap().unwrap() {
+        TrafficTraceEvent::Response(event) => event,
+        _ => panic!("WriteResp should emit a response event"),
+    };
+
+    assert_eq!(response.kind(), TrafficTraceResponseKind::Write);
+    assert!(response.trace_address_is_physical());
+    assert_eq!(response.address(), Some(Address::new(0x4000)));
+    assert_eq!(response.size_bytes(), Some(8));
+    assert_eq!(response.trace_packet_id(), Some(17));
+    assert_eq!(response.trace_pc(), Some(Address::new(0x1200)));
+}
+
+#[test]
+fn trace_parser_rejects_unsupported_response_flags() {
     assert_eq!(
         TrafficTrace::from_gem5_packet_trace(
             &gem5_packet_trace(
@@ -375,7 +410,7 @@ fn trace_parser_rejects_response_flags() {
                     command: GEM5_WRITE_RESP,
                     address: Some(0x4000),
                     size: Some(8),
-                    flags: Some(GEM5_FLAG_PHYSICAL),
+                    flags: Some(GEM5_FLAG_KERNEL),
                     packet_id: None,
                     pc: None,
                 }],
@@ -384,7 +419,7 @@ fn trace_parser_rejects_response_flags() {
         )
         .unwrap_err(),
         TrafficGeneratorError::TraceUnsupportedFlags {
-            flags: GEM5_FLAG_PHYSICAL,
+            flags: GEM5_FLAG_KERNEL,
         }
     );
 }

@@ -13,6 +13,7 @@ pub struct RiscvTraceErrorRecord {
     error: TrafficTraceErrorKind,
     protocol: RiscvDataCacheProtocol,
     target: MemoryTargetId,
+    trace_address_is_physical: bool,
     address: Address,
     line: Address,
     size_bytes: Option<u64>,
@@ -30,6 +31,7 @@ impl RiscvTraceErrorRecord {
         error: TrafficTraceErrorKind,
         protocol: RiscvDataCacheProtocol,
         target: MemoryTargetId,
+        trace_address_is_physical: bool,
         address: Address,
         line: Address,
         size_bytes: Option<u64>,
@@ -44,6 +46,7 @@ impl RiscvTraceErrorRecord {
             error,
             protocol,
             target,
+            trace_address_is_physical,
             address,
             line,
             size_bytes,
@@ -70,6 +73,7 @@ impl RiscvTraceErrorRecord {
             event.kind(),
             protocol,
             target,
+            event.trace_address_is_physical(),
             address,
             layout.line_address(address),
             event.size_bytes(),
@@ -104,6 +108,10 @@ impl RiscvTraceErrorRecord {
 
     pub const fn target(&self) -> MemoryTargetId {
         self.target
+    }
+
+    pub const fn trace_address_is_physical(&self) -> bool {
+        self.trace_address_is_physical
     }
 
     pub const fn address(&self) -> Address {
