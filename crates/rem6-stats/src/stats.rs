@@ -4,6 +4,7 @@ use std::fmt;
 use rem6_kernel::Tick;
 
 use crate::error::StatsError;
+use crate::kind::StatKind;
 use crate::reset::{StatResetPolicy, StatsResetRecord};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -330,6 +331,7 @@ impl fmt::Display for StatDescription {
 pub struct StatSample {
     id: StatId,
     group: Option<StatGroupId>,
+    kind: StatKind,
     path: StatPath,
     unit: StatUnit,
     reset_policy: StatResetPolicy,
@@ -357,6 +359,7 @@ impl StatSample {
         Ok(Self {
             id,
             group: None,
+            kind: StatKind::Counter,
             path: stat_path,
             unit: stat_unit,
             reset_policy: StatResetPolicy::Resettable,
@@ -446,9 +449,32 @@ impl StatSample {
         description: Option<StatDescription>,
         value: u64,
     ) -> Self {
+        Self::from_registered_parts_with_kind_reset_policy_and_description(
+            id,
+            group,
+            StatKind::Counter,
+            path,
+            unit,
+            reset_policy,
+            description,
+            value,
+        )
+    }
+
+    pub const fn from_registered_parts_with_kind_reset_policy_and_description(
+        id: StatId,
+        group: Option<StatGroupId>,
+        kind: StatKind,
+        path: StatPath,
+        unit: StatUnit,
+        reset_policy: StatResetPolicy,
+        description: Option<StatDescription>,
+        value: u64,
+    ) -> Self {
         Self {
             id,
             group,
+            kind,
             path,
             unit,
             reset_policy,
@@ -463,6 +489,10 @@ impl StatSample {
 
     pub const fn group(&self) -> Option<StatGroupId> {
         self.group
+    }
+
+    pub const fn kind(&self) -> StatKind {
+        self.kind
     }
 
     pub fn path(&self) -> &str {
@@ -510,6 +540,7 @@ impl StatSample {
 pub struct StatDeltaSample {
     id: StatId,
     group: Option<StatGroupId>,
+    kind: StatKind,
     path: StatPath,
     unit: StatUnit,
     reset_policy: StatResetPolicy,
@@ -546,6 +577,7 @@ impl StatDeltaSample {
         Ok(Self {
             id,
             group: None,
+            kind: StatKind::Counter,
             path: stat_path,
             unit: stat_unit,
             reset_policy: StatResetPolicy::Resettable,
@@ -631,16 +663,17 @@ impl StatDeltaSample {
         previous_value: u64,
         current_value: u64,
     ) -> Self {
-        Self {
+        Self::from_registered_parts_with_kind_reset_policy_and_description(
             id,
             group,
+            StatKind::Counter,
             path,
             unit,
             reset_policy,
-            description: None,
+            None,
             previous_value,
             current_value,
-        }
+        )
     }
 
     pub const fn from_registered_parts_with_description(
@@ -652,12 +685,37 @@ impl StatDeltaSample {
         previous_value: u64,
         current_value: u64,
     ) -> Self {
+        Self::from_registered_parts_with_kind_reset_policy_and_description(
+            id,
+            group,
+            StatKind::Counter,
+            path,
+            unit,
+            StatResetPolicy::Resettable,
+            description,
+            previous_value,
+            current_value,
+        )
+    }
+
+    pub const fn from_registered_parts_with_kind_reset_policy_and_description(
+        id: StatId,
+        group: Option<StatGroupId>,
+        kind: StatKind,
+        path: StatPath,
+        unit: StatUnit,
+        reset_policy: StatResetPolicy,
+        description: Option<StatDescription>,
+        previous_value: u64,
+        current_value: u64,
+    ) -> Self {
         Self {
             id,
             group,
+            kind,
             path,
             unit,
-            reset_policy: StatResetPolicy::Resettable,
+            reset_policy,
             description,
             previous_value,
             current_value,
@@ -670,6 +728,10 @@ impl StatDeltaSample {
 
     pub const fn group(&self) -> Option<StatGroupId> {
         self.group
+    }
+
+    pub const fn kind(&self) -> StatKind {
+        self.kind
     }
 
     pub fn path(&self) -> &str {
@@ -928,6 +990,19 @@ impl StatSnapshot {
                     current_policy: current_sample.reset_policy(),
                 });
             }
+            if current_sample.kind() != previous_sample.kind() {
+                return Err(StatsError::SnapshotDeltaStatKindMismatch {
+                    stat: previous_sample.id(),
+                    previous_kind: previous_sample.kind(),
+                    current_kind: current_sample.kind(),
+                });
+            }
+            if previous_sample.kind() != StatKind::Counter {
+                return Err(StatsError::SnapshotDeltaUnsupportedStatKind {
+                    stat: previous_sample.id(),
+                    kind: previous_sample.kind(),
+                });
+            }
             if current_sample.value() < previous_sample.value() {
                 return Err(StatsError::SnapshotDeltaValueWentBack {
                     stat: previous_sample.id(),
@@ -938,6 +1013,7 @@ impl StatSnapshot {
             deltas.push(StatDeltaSample {
                 id: previous_sample.id(),
                 group: previous_sample.group(),
+                kind: previous_sample.kind(),
                 path: previous_sample.stat_path().clone(),
                 unit: previous_sample.stat_unit().clone(),
                 reset_policy: previous_sample.reset_policy(),

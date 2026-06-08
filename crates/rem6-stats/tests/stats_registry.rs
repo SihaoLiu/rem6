@@ -2,8 +2,8 @@ use rem6_kernel::Tick;
 use rem6_stats::{
     ProbeEvent, ProbeListenerId, ProbeListenerRef, ProbePayload, ProbePointId, ProbeRegistry,
     ProbeSnapshot, StatDeltaSample, StatDescription, StatDescriptionError, StatDumpId,
-    StatDumpRecord, StatGroupDescriptor, StatGroupId, StatHistoryRecord, StatId, StatPath,
-    StatPathError, StatResetId, StatResetPolicy, StatResetSample, StatSample, StatScope,
+    StatDumpRecord, StatGroupDescriptor, StatGroupId, StatHistoryRecord, StatId, StatKind,
+    StatPath, StatPathError, StatResetId, StatResetPolicy, StatResetSample, StatSample, StatScope,
     StatSnapshot, StatSnapshotDelta, StatUnit, StatUnitError, StatsError, StatsRegistry,
     StatsResetRecord,
 };
@@ -258,6 +258,86 @@ fn stats_registry_records_structured_counter_units_without_consuming_ids_on_bad_
     assert_eq!(sample.id(), bandwidth_per_ipc);
     assert_eq!(sample.unit(), nested_rate.as_str());
     assert_eq!(sample.stat_unit(), &nested_rate);
+}
+
+#[test]
+fn stats_registry_records_time_weighted_average_stats() {
+    let mut stats = StatsRegistry::new();
+    let occupancy = stats
+        .register_average("system.queue_occupancy", "Count")
+        .unwrap();
+    assert_eq!(occupancy, StatId::new(0));
+
+    stats.set_average(occupancy, 0, 10).unwrap();
+    assert_eq!(stats.snapshot(0).samples()[0].value(), 10);
+
+    stats.set_average(occupancy, 1, 1234).unwrap();
+    let snapshot = stats.snapshot(1);
+    let sample = &snapshot.samples()[0];
+    assert_eq!(sample.path(), "system.queue_occupancy");
+    assert_eq!(sample.unit(), "Count");
+    assert_eq!(sample.kind(), StatKind::Average);
+    assert_eq!(sample.value(), 622);
+
+    let reset = stats.reset(1);
+    assert_eq!(reset.reset_samples()[0].previous_value(), 622);
+    assert_eq!(reset.reset_samples()[0].reset_value(), 1234);
+    assert_eq!(stats.snapshot(1).samples()[0].value(), 1234);
+
+    stats.set_average(occupancy, 1, 6).unwrap();
+    assert_eq!(stats.snapshot(3).samples()[0].value(), 6);
+}
+
+#[test]
+fn stats_registry_restarts_average_window_without_clearing_current_value() {
+    let mut stats = StatsRegistry::new();
+    let occupancy = stats
+        .register_average("system.queue_occupancy", "Count")
+        .unwrap();
+
+    stats.set_average(occupancy, 5, 5).unwrap();
+    assert_eq!(stats.snapshot(10).samples()[0].value(), 2);
+
+    let reset = stats.reset(10);
+    assert_eq!(reset.reset_samples()[0].previous_value(), 2);
+    assert_eq!(reset.reset_samples()[0].reset_value(), 5);
+    assert_eq!(stats.snapshot(10).samples()[0].value(), 5);
+    assert_eq!(stats.snapshot(12).samples()[0].value(), 5);
+
+    stats.set_average(occupancy, 13, 1).unwrap();
+    assert_eq!(stats.snapshot(14).samples()[0].value(), 3);
+}
+
+#[test]
+fn stats_registry_rejects_average_reset_before_last_sample_without_mutation() {
+    let mut stats = StatsRegistry::new();
+    let counter = stats.register_counter("cpu0.cycles", "Cycle").unwrap();
+    let occupancy = stats
+        .register_average("system.queue_occupancy", "Count")
+        .unwrap();
+
+    stats.increment(counter, 9).unwrap();
+    stats.set_average(occupancy, 10, 5).unwrap();
+    let before = stats.snapshot(10);
+
+    assert_eq!(
+        stats.try_reset(9).unwrap_err(),
+        StatsError::AverageReadBeforeLastSample {
+            stat: occupancy,
+            tick: 9,
+            last_tick: 10,
+        },
+    );
+
+    assert_eq!(stats.snapshot(10), before);
+    assert_eq!(stats.reset_records(), &[]);
+    assert_eq!(stats.history_records(), &[]);
+
+    let reset = stats.reset(10);
+    assert_eq!(reset.id(), StatResetId::new(0));
+    assert_eq!(reset.reset_samples()[0].previous_value(), 9);
+    assert_eq!(reset.reset_samples()[1].previous_value(), 0);
+    assert_eq!(reset.reset_samples()[1].reset_value(), 5);
 }
 
 #[test]
@@ -600,6 +680,77 @@ fn stats_snapshot_delta_rejects_counter_regression() {
             stat,
             previous: 12,
             current: 9,
+        },
+    );
+}
+
+#[test]
+fn stats_snapshot_delta_rejects_average_samples_without_counter_regression_error() {
+    let mut stats = StatsRegistry::new();
+    let occupancy = stats
+        .register_average("system.queue_occupancy", "Count")
+        .unwrap();
+
+    stats.set_average(occupancy, 0, 10).unwrap();
+    let previous = stats.snapshot(0);
+    stats.set_average(occupancy, 1, 0).unwrap();
+    let current = stats.snapshot(1);
+
+    assert_eq!(
+        current.delta_since(&previous).unwrap_err(),
+        StatsError::SnapshotDeltaUnsupportedStatKind {
+            stat: occupancy,
+            kind: StatKind::Average,
+        },
+    );
+}
+
+#[test]
+fn stats_snapshot_delta_rejects_stat_kind_drift() {
+    let stat = StatId::new(7);
+    let path = StatPath::parse("system.queue_occupancy").unwrap();
+    let unit = StatUnit::count();
+    let previous = StatSnapshot::new(
+        0,
+        0,
+        0,
+        vec![
+            StatSample::from_registered_parts_with_kind_reset_policy_and_description(
+                stat,
+                None,
+                StatKind::Counter,
+                path.clone(),
+                unit.clone(),
+                StatResetPolicy::Resettable,
+                None,
+                10,
+            ),
+        ],
+    );
+    let current = StatSnapshot::new(
+        1,
+        0,
+        0,
+        vec![
+            StatSample::from_registered_parts_with_kind_reset_policy_and_description(
+                stat,
+                None,
+                StatKind::Average,
+                path,
+                unit,
+                StatResetPolicy::Resettable,
+                None,
+                5,
+            ),
+        ],
+    );
+
+    assert_eq!(
+        current.delta_since(&previous).unwrap_err(),
+        StatsError::SnapshotDeltaStatKindMismatch {
+            stat,
+            previous_kind: StatKind::Counter,
+            current_kind: StatKind::Average,
         },
     );
 }

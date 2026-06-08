@@ -593,9 +593,17 @@ isolated bugs:
   malformed rate strings, and descriptions preserve gem5's useful `Info.desc`
   semantics while rejecting empty metadata before consuming counter ids. This
   keeps gem5's useful stat name, hierarchy, description, and unit discipline
-  while returning typed errors instead of panicking. Stats dumps are
-  registry-owned typed records with stable dump ids and self-describing snapshot
-  payloads rather than global output callbacks. Stats deltas are also typed
+  while returning typed errors instead of panicking. The registry also has
+  gem5-`AvgStor`-style time-weighted average stats: updates accrue the
+  previous value over simulated ticks, snapshots report the reset-window
+  average, and reset records capture the computed previous average before
+  restarting the accumulator. This preserves the useful average-storage
+  contract while avoiding hidden global `curTick`/`prepare` assertions. Counter
+  deltas remain counter-only and reject average samples with a typed stat-kind
+  error instead of treating a decreasing average as a counter regression. Stats
+  dumps are registry-owned typed records with stable dump ids and
+  self-describing snapshot payloads rather than global output callbacks. Stats
+  deltas are also typed
   records derived only from snapshots in the same reset scope with matching
   group catalogs, matching descriptions, nondecreasing tick, and nondecreasing
   counter values. Probe snapshots preserve point, listener, and event cursors,

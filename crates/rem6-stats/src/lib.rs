@@ -1,10 +1,12 @@
 mod error;
+mod kind;
 mod probes;
 mod registry;
 mod reset;
 mod stats;
 
 pub use error::StatsError;
+pub use kind::StatKind;
 pub use probes::{
     ProbeEvent, ProbeListenerId, ProbeListenerRef, ProbePayload, ProbePointId, ProbeRegistry,
     ProbeSnapshot,

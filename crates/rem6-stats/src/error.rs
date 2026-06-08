@@ -3,6 +3,7 @@ use std::fmt;
 
 use rem6_kernel::Tick;
 
+use crate::kind::StatKind;
 use crate::probes::{ProbeListenerId, ProbePointId};
 use crate::reset::StatResetPolicy;
 use crate::stats::{
@@ -37,10 +38,34 @@ pub enum StatsError {
     UnknownStat {
         stat: StatId,
     },
+    StatIsNotCounter {
+        stat: StatId,
+    },
+    StatIsNotAverage {
+        stat: StatId,
+    },
     UnknownStatGroup {
         group: StatGroupId,
     },
     CounterOverflow {
+        stat: StatId,
+    },
+    AverageUpdateBeforeReset {
+        stat: StatId,
+        tick: Tick,
+        reset_tick: Tick,
+    },
+    AverageUpdateBeforeLastSample {
+        stat: StatId,
+        tick: Tick,
+        last_tick: Tick,
+    },
+    AverageReadBeforeLastSample {
+        stat: StatId,
+        tick: Tick,
+        last_tick: Tick,
+    },
+    AverageTotalOverflow {
         stat: StatId,
     },
     SnapshotBeforeReset {
@@ -91,6 +116,15 @@ pub enum StatsError {
         stat: StatId,
         previous_policy: StatResetPolicy,
         current_policy: StatResetPolicy,
+    },
+    SnapshotDeltaStatKindMismatch {
+        stat: StatId,
+        previous_kind: StatKind,
+        current_kind: StatKind,
+    },
+    SnapshotDeltaUnsupportedStatKind {
+        stat: StatId,
+        kind: StatKind,
     },
     SnapshotDeltaValueWentBack {
         stat: StatId,
@@ -192,11 +226,47 @@ impl fmt::Display for StatsError {
                 "cannot register stats after {history_records} stats history records"
             ),
             Self::UnknownStat { stat } => write!(formatter, "unknown stat id {}", stat.get()),
+            Self::StatIsNotCounter { stat } => {
+                write!(formatter, "stat {} is not a counter", stat.get())
+            }
+            Self::StatIsNotAverage { stat } => {
+                write!(formatter, "stat {} is not an average", stat.get())
+            }
             Self::UnknownStatGroup { group } => {
                 write!(formatter, "unknown stat group id {}", group.get())
             }
             Self::CounterOverflow { stat } => {
                 write!(formatter, "counter {} overflowed", stat.get())
+            }
+            Self::AverageUpdateBeforeReset {
+                stat,
+                tick,
+                reset_tick,
+            } => write!(
+                formatter,
+                "cannot update average {} at tick {tick}; last reset was at tick {reset_tick}",
+                stat.get()
+            ),
+            Self::AverageUpdateBeforeLastSample {
+                stat,
+                tick,
+                last_tick,
+            } => write!(
+                formatter,
+                "cannot update average {} at tick {tick}; previous sample was at tick {last_tick}",
+                stat.get()
+            ),
+            Self::AverageReadBeforeLastSample {
+                stat,
+                tick,
+                last_tick,
+            } => write!(
+                formatter,
+                "cannot read average {} at tick {tick}; previous sample was at tick {last_tick}",
+                stat.get()
+            ),
+            Self::AverageTotalOverflow { stat } => {
+                write!(formatter, "average {} accumulated value overflowed", stat.get())
             }
             Self::SnapshotBeforeReset { tick, reset_tick } => write!(
                 formatter,
@@ -268,6 +338,20 @@ impl fmt::Display for StatsError {
             } => write!(
                 formatter,
                 "stat snapshot delta reset policy for stat {} changed from {previous_policy} to {current_policy}",
+                stat.get()
+            ),
+            Self::SnapshotDeltaStatKindMismatch {
+                stat,
+                previous_kind,
+                current_kind,
+            } => write!(
+                formatter,
+                "stat snapshot delta kind for stat {} changed from {previous_kind} to {current_kind}",
+                stat.get()
+            ),
+            Self::SnapshotDeltaUnsupportedStatKind { stat, kind } => write!(
+                formatter,
+                "stat snapshot delta does not support stat {} kind {kind}",
                 stat.get()
             ),
             Self::SnapshotDeltaValueWentBack {
