@@ -3230,16 +3230,16 @@ workload data-cache requests that hit protocol-internal cache-controller errors
 now fail through a contextual data-cache controller error record carrying the
 request source, tick, protocol, target, line, operation, and the underlying
 harness error instead of reporting an unattributed protocol error after the
-transport path completes. Cache-flush trace sidebands, MemSync L1 invalidation,
-and clean or invalidate trace response maintenance that hit protocol-internal
-controller errors use the same record shape with trace source metadata, so
-those failures keep trace tick, sequence, kind, sync policy, HTM class, optional
-packet id, address, line, operation, and protocol context. Additional accessor
-work should stay tied to one of those consumers, or to a new execution-facing
-consumer with a failing test that reaches replay, workload cache state, or a
-recorded runtime outcome. Remaining source-less cache paths include diagnostic
-and finalization snapshot failures that do not yet carry their triggering trace
-or result context.
+transport path completes. Cache-flush trace sidebands, diagnostic print
+sidebands, MemSync L1 invalidation, and clean or invalidate trace response
+maintenance that hit protocol-internal controller errors use the same record
+shape with trace source metadata, so those failures keep trace tick, sequence,
+kind, sync policy, HTM class, optional packet id, address, line, operation, and
+protocol context. Additional accessor work should stay tied to one of those
+consumers, or to a new execution-facing consumer with a failing test that
+reaches replay, workload cache state, or a recorded runtime outcome. Remaining
+source-less cache paths include finalization snapshot failures that do not yet
+carry their result context.
 Trace packet flag handling now maps non-prefetch `INST_FETCH` on `ReadReq`,
 `ReadCleanReq`, and
 `ReadSharedReq` packets to native instruction-fetch requests, accepts `PHYSICAL`

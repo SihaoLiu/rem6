@@ -4,9 +4,9 @@ use rem6_kernel::PartitionedScheduler;
 use rem6_memory::{AccessSize, AgentId, ByteMask, MemoryRequest, MemoryRequestId};
 use rem6_protocol_mesi::MesiState;
 use rem6_traffic::{
-    TrafficTrace, TrafficTraceCacheKind, TrafficTraceConfig, TrafficTraceEvent,
-    TrafficTraceGenerator, TrafficTraceHtmEvent, TrafficTraceHtmKind, TrafficTraceResponseKind,
-    TrafficTraceSyncEvent, TrafficTraceSyncKind,
+    TrafficTrace, TrafficTraceCacheKind, TrafficTraceConfig, TrafficTraceDiagnosticEvent,
+    TrafficTraceDiagnosticKind, TrafficTraceEvent, TrafficTraceGenerator, TrafficTraceHtmEvent,
+    TrafficTraceHtmKind, TrafficTraceResponseKind, TrafficTraceSyncEvent, TrafficTraceSyncKind,
 };
 use rem6_transport::{MemoryRoute, MemoryTrace, MemoryTransport, TransportEndpointId};
 use rem6_workload::WorkloadRouteId;
@@ -118,6 +118,7 @@ fn clean_shared_response_event() -> TrafficTraceResponseEvent {
 const GEM5_MEM_SYNC_REQ: u32 = 39;
 const GEM5_FLAG_KERNEL: u32 = 0x0000_1000;
 const GEM5_SYNC_INV_L1: u32 = 0x0000_0001;
+const GEM5_PRINT_REQ: u32 = 52;
 const GEM5_HTM_REQ: u32 = 56;
 const GEM5_HTM_ABORT: u32 = 58;
 
@@ -152,6 +153,26 @@ fn htm_event(command: u32, packet_id: Option<u64>, pc: Option<u64>) -> TrafficTr
     generator.enter(0);
     match generator.next_event(0, 0).unwrap().unwrap() {
         TrafficTraceEvent::Htm(event) => event,
+        event => panic!("unexpected trace event: {event:?}"),
+    }
+}
+
+fn diagnostic_event(
+    command: u32,
+    address: u64,
+    size: u32,
+    packet_id: Option<u64>,
+) -> TrafficTraceDiagnosticEvent {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace_with_shape_and_packet_id(1_000, command, address, size, packet_id),
+        1_000,
+    )
+    .unwrap();
+    let config = TrafficTraceConfig::new(AgentId::new(7), layout(), 99, trace).unwrap();
+    let mut generator = TrafficTraceGenerator::new(config);
+    generator.enter(0);
+    match generator.next_event(0, 0).unwrap().unwrap() {
+        TrafficTraceEvent::Diagnostic(event) => event,
         event => panic!("unexpected trace event: {event:?}"),
     }
 }
@@ -494,6 +515,62 @@ fn trace_sync_l1_invalidation_controller_error_keeps_sync_context() {
         RiscvDataCacheControllerError::Msi(
             rem6_coherence::HarnessError::MissingBackingMemory { line }
         ) if *line == Address::new(0x3000)
+    ));
+}
+
+#[test]
+fn trace_diagnostic_controller_error_keeps_diagnostic_context() {
+    let mut backend = WorkloadDataCacheBackend::new([WorkloadDataCacheLineBackend::new(
+        &data_cache_config(WorkloadDataCacheProtocol::Msi),
+        layout(),
+        Address::new(0x3000),
+        WorkloadDataCacheLineMemory::Line(line_data()),
+        vec![cache_config(1)],
+    )
+    .unwrap()]);
+    let line = backend.lines.get_mut(&Address::new(0x3000)).unwrap();
+    let WorkloadDataCacheHarness::Msi(harness) = &mut line.harness else {
+        panic!("expected MSI backend harness");
+    };
+    harness
+        .submit_cpu_request(agent(1), write(1, 9, 0x3008, vec![0xaa]))
+        .unwrap();
+    let event = diagnostic_event(GEM5_PRINT_REQ, 0x3008, 8, Some(717));
+    assert_eq!(event.kind(), TrafficTraceDiagnosticKind::Print);
+
+    let record = backend.apply_trace_diagnostic_event(event.tick() + 5, event);
+    assert!(record.is_none());
+
+    let error = backend.take_error().unwrap();
+    let RiscvWorkloadReplayError::DataCacheController { record } = error else {
+        panic!("expected contextual data-cache controller error");
+    };
+    assert_eq!(record.tick(), event.tick() + 5);
+    assert_eq!(record.request_id(), None);
+    assert_eq!(record.trace_sequence(), Some(event.sequence()));
+    assert!(matches!(
+        record.source(),
+        crate::RiscvDataCacheControllerErrorSource::TraceDiagnostic {
+            sequence,
+            kind: TrafficTraceDiagnosticKind::Print,
+            trace_packet_id: Some(717),
+        } if sequence == event.sequence()
+    ));
+    assert_eq!(record.trace_cache_kind(), None);
+    assert_eq!(record.trace_sync_kind(), None);
+    assert_eq!(record.trace_response_kind(), None);
+    assert_eq!(record.trace_htm_kind(), None);
+    assert_eq!(record.trace_packet_id(), Some(717));
+    assert_eq!(record.protocol(), RiscvDataCacheProtocol::Msi);
+    assert_eq!(record.target(), MemoryTargetId::new(0));
+    assert_eq!(record.address(), Address::new(0x3008));
+    assert_eq!(record.line(), Address::new(0x3000));
+    assert_eq!(record.operation(), MemoryOperation::NoAccess);
+    assert!(matches!(
+        record.error(),
+        RiscvDataCacheControllerError::Msi(rem6_coherence::HarnessError::Scheduler(
+            rem6_kernel::SchedulerError::SnapshotContainsPendingEvents { pending_events }
+        )) if *pending_events == 1
     ));
 }
 

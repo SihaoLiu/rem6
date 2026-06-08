@@ -7,7 +7,8 @@ use rem6_memory::{
     Address, MemoryError, MemoryOperation, MemoryRequest, MemoryRequestId, MemoryTargetId,
 };
 use rem6_traffic::{
-    TrafficTraceCacheEvent, TrafficTraceCacheKind, TrafficTraceHtmEvent, TrafficTraceHtmKind,
+    TrafficTraceCacheEvent, TrafficTraceCacheKind, TrafficTraceDiagnosticEvent,
+    TrafficTraceDiagnosticKind, TrafficTraceHtmEvent, TrafficTraceHtmKind,
     TrafficTraceResponseEvent, TrafficTraceResponseKind, TrafficTraceSyncEvent,
     TrafficTraceSyncKind,
 };
@@ -32,6 +33,11 @@ pub enum RiscvDataCacheControllerErrorSource {
     TraceCache {
         sequence: u64,
         kind: TrafficTraceCacheKind,
+        trace_packet_id: Option<u64>,
+    },
+    TraceDiagnostic {
+        sequence: u64,
+        kind: TrafficTraceDiagnosticKind,
         trace_packet_id: Option<u64>,
     },
     TraceSync {
@@ -202,6 +208,30 @@ impl RiscvDataCacheControllerErrorRecord {
         }
     }
 
+    pub(crate) fn from_trace_diagnostic_event(
+        tick: Tick,
+        event: TrafficTraceDiagnosticEvent,
+        protocol: RiscvDataCacheProtocol,
+        target: MemoryTargetId,
+        line: Address,
+        error: RiscvDataCacheControllerError,
+    ) -> Self {
+        Self {
+            tick,
+            source: RiscvDataCacheControllerErrorSource::TraceDiagnostic {
+                sequence: event.sequence(),
+                kind: event.kind(),
+                trace_packet_id: event.trace_packet_id(),
+            },
+            protocol,
+            target,
+            address: event.address().unwrap_or(line),
+            line,
+            operation: MemoryOperation::NoAccess,
+            error,
+        }
+    }
+
     pub(crate) fn from_trace_sync_event(
         tick: Tick,
         event: TrafficTraceSyncEvent,
@@ -265,6 +295,7 @@ impl RiscvDataCacheControllerErrorRecord {
         match self.source {
             RiscvDataCacheControllerErrorSource::Request { request_id } => Some(request_id),
             RiscvDataCacheControllerErrorSource::TraceCache { .. }
+            | RiscvDataCacheControllerErrorSource::TraceDiagnostic { .. }
             | RiscvDataCacheControllerErrorSource::TraceSync { .. }
             | RiscvDataCacheControllerErrorSource::TraceHtm { .. }
             | RiscvDataCacheControllerErrorSource::TraceResponse { .. } => None,
@@ -274,6 +305,7 @@ impl RiscvDataCacheControllerErrorRecord {
     pub const fn trace_sequence(&self) -> Option<u64> {
         match self.source {
             RiscvDataCacheControllerErrorSource::TraceCache { sequence, .. }
+            | RiscvDataCacheControllerErrorSource::TraceDiagnostic { sequence, .. }
             | RiscvDataCacheControllerErrorSource::TraceSync { sequence, .. }
             | RiscvDataCacheControllerErrorSource::TraceHtm { sequence, .. }
             | RiscvDataCacheControllerErrorSource::TraceResponse { sequence, .. } => Some(sequence),
@@ -285,6 +317,7 @@ impl RiscvDataCacheControllerErrorRecord {
         match self.source {
             RiscvDataCacheControllerErrorSource::TraceCache { kind, .. } => Some(kind),
             RiscvDataCacheControllerErrorSource::Request { .. }
+            | RiscvDataCacheControllerErrorSource::TraceDiagnostic { .. }
             | RiscvDataCacheControllerErrorSource::TraceSync { .. }
             | RiscvDataCacheControllerErrorSource::TraceHtm { .. }
             | RiscvDataCacheControllerErrorSource::TraceResponse { .. } => None,
@@ -295,6 +328,7 @@ impl RiscvDataCacheControllerErrorRecord {
         match self.source {
             RiscvDataCacheControllerErrorSource::TraceResponse { kind, .. } => Some(kind),
             RiscvDataCacheControllerErrorSource::Request { .. }
+            | RiscvDataCacheControllerErrorSource::TraceDiagnostic { .. }
             | RiscvDataCacheControllerErrorSource::TraceSync { .. }
             | RiscvDataCacheControllerErrorSource::TraceHtm { .. }
             | RiscvDataCacheControllerErrorSource::TraceCache { .. } => None,
@@ -305,6 +339,7 @@ impl RiscvDataCacheControllerErrorRecord {
         match self.source {
             RiscvDataCacheControllerErrorSource::TraceSync { kind, .. } => Some(kind),
             RiscvDataCacheControllerErrorSource::Request { .. }
+            | RiscvDataCacheControllerErrorSource::TraceDiagnostic { .. }
             | RiscvDataCacheControllerErrorSource::TraceCache { .. }
             | RiscvDataCacheControllerErrorSource::TraceHtm { .. }
             | RiscvDataCacheControllerErrorSource::TraceResponse { .. } => None,
@@ -315,6 +350,7 @@ impl RiscvDataCacheControllerErrorRecord {
         match self.source {
             RiscvDataCacheControllerErrorSource::TraceSync { kernel_sync, .. } => Some(kernel_sync),
             RiscvDataCacheControllerErrorSource::Request { .. }
+            | RiscvDataCacheControllerErrorSource::TraceDiagnostic { .. }
             | RiscvDataCacheControllerErrorSource::TraceCache { .. }
             | RiscvDataCacheControllerErrorSource::TraceHtm { .. }
             | RiscvDataCacheControllerErrorSource::TraceResponse { .. } => None,
@@ -327,6 +363,7 @@ impl RiscvDataCacheControllerErrorRecord {
                 Some(invalidates_l1)
             }
             RiscvDataCacheControllerErrorSource::Request { .. }
+            | RiscvDataCacheControllerErrorSource::TraceDiagnostic { .. }
             | RiscvDataCacheControllerErrorSource::TraceCache { .. }
             | RiscvDataCacheControllerErrorSource::TraceHtm { .. }
             | RiscvDataCacheControllerErrorSource::TraceResponse { .. } => None,
@@ -337,6 +374,7 @@ impl RiscvDataCacheControllerErrorRecord {
         match self.source {
             RiscvDataCacheControllerErrorSource::TraceHtm { kind, .. } => Some(kind),
             RiscvDataCacheControllerErrorSource::Request { .. }
+            | RiscvDataCacheControllerErrorSource::TraceDiagnostic { .. }
             | RiscvDataCacheControllerErrorSource::TraceCache { .. }
             | RiscvDataCacheControllerErrorSource::TraceSync { .. }
             | RiscvDataCacheControllerErrorSource::TraceResponse { .. } => None,
@@ -349,6 +387,9 @@ impl RiscvDataCacheControllerErrorRecord {
                 trace_packet_id, ..
             }
             | RiscvDataCacheControllerErrorSource::TraceSync {
+                trace_packet_id, ..
+            }
+            | RiscvDataCacheControllerErrorSource::TraceDiagnostic {
                 trace_packet_id, ..
             }
             | RiscvDataCacheControllerErrorSource::TraceHtm {
@@ -402,6 +443,16 @@ impl fmt::Display for RiscvDataCacheControllerErrorRecord {
             RiscvDataCacheControllerErrorSource::TraceCache { sequence, kind, .. } => write!(
                 formatter,
                 "data-cache controller {:?} failed trace cache {:?} sequence {} at tick {} for address {:#x}: {}",
+                self.protocol,
+                kind,
+                sequence,
+                self.tick,
+                self.address.get(),
+                self.error
+            ),
+            RiscvDataCacheControllerErrorSource::TraceDiagnostic { sequence, kind, .. } => write!(
+                formatter,
+                "data-cache controller {:?} failed trace diagnostic {:?} sequence {} at tick {} for address {:#x}: {}",
                 self.protocol,
                 kind,
                 sequence,

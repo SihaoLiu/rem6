@@ -673,7 +673,19 @@ impl WorkloadDataCacheLineBackend {
                 return Some(record);
             }
             Ok(None) => {}
-            Err(error) => self.error = Some(error),
+            Err(error) => {
+                let record = RiscvDataCacheControllerErrorRecord::from_trace_diagnostic_event(
+                    tick,
+                    event,
+                    self.protocol,
+                    self.target,
+                    self.line,
+                    error,
+                );
+                self.error = Some(RiscvWorkloadReplayError::DataCacheController {
+                    record: Box::new(record),
+                });
+            }
         }
         None
     }
@@ -682,7 +694,7 @@ impl WorkloadDataCacheLineBackend {
         &self,
         tick: Tick,
         event: TrafficTraceDiagnosticEvent,
-    ) -> Result<Option<RiscvTraceDiagnosticRecord>, RiscvWorkloadReplayError> {
+    ) -> Result<Option<RiscvTraceDiagnosticRecord>, RiscvDataCacheControllerError> {
         let Some(address) = event.address() else {
             return Ok(None);
         };
@@ -695,7 +707,7 @@ impl WorkloadDataCacheLineBackend {
             WorkloadDataCacheHarness::Msi(harness) => {
                 let snapshot = harness
                     .quiescent_snapshot()
-                    .map_err(RiscvWorkloadReplayError::MsiDataCache)?;
+                    .map_err(RiscvDataCacheControllerError::Msi)?;
                 (
                     snapshot
                         .caches()
@@ -711,7 +723,7 @@ impl WorkloadDataCacheLineBackend {
             WorkloadDataCacheHarness::Mesi(harness) => {
                 let snapshot = harness
                     .quiescent_snapshot()
-                    .map_err(RiscvWorkloadReplayError::MesiDataCache)?;
+                    .map_err(RiscvDataCacheControllerError::Mesi)?;
                 (
                     snapshot
                         .caches()
@@ -724,7 +736,7 @@ impl WorkloadDataCacheLineBackend {
             WorkloadDataCacheHarness::Moesi(harness) => {
                 let snapshot = harness
                     .quiescent_snapshot()
-                    .map_err(RiscvWorkloadReplayError::MoesiDataCache)?;
+                    .map_err(RiscvDataCacheControllerError::Moesi)?;
                 (
                     snapshot
                         .caches()
@@ -737,7 +749,7 @@ impl WorkloadDataCacheLineBackend {
             WorkloadDataCacheHarness::Chi(harness) => {
                 let snapshot = harness
                     .quiescent_snapshot()
-                    .map_err(RiscvWorkloadReplayError::ChiDataCache)?;
+                    .map_err(RiscvDataCacheControllerError::Chi)?;
                 (
                     snapshot
                         .caches()
