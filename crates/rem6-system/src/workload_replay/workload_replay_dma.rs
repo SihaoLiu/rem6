@@ -27,7 +27,8 @@ use super::{
         dma_scheduler_recorded_batch_worker_slot_tick_summaries, dma_scheduler_remote_flows,
         dma_scheduler_remote_sends, DmaSchedulerEvidence,
     },
-    RiscvWorkloadReplayError, WorkloadDataCacheBackend, WorkloadMemoryBackend,
+    take_data_cache_error, RiscvWorkloadReplayError, WorkloadDataCacheBackend,
+    WorkloadMemoryBackend,
 };
 use crate::workload_replay_heterogeneous::{
     accelerator_snapshots, merge_wait_for_graph, wait_for_blocked_node_windows,
@@ -128,6 +129,9 @@ pub(super) fn run_accelerator_dma_copies(
         WorkloadParallelBatchScope::AcceleratorDmaScheduler,
         &read_run,
     );
+    if let Some(error) = take_data_cache_error(data_cache) {
+        return Err(error);
+    }
 
     for copy in topology.accelerator_dma_copies() {
         let engine = AcceleratorEngineId::new(copy.engine());
@@ -151,6 +155,9 @@ pub(super) fn run_accelerator_dma_copies(
             .map_err(RiscvWorkloadReplayError::Accelerator)?
             .is_none()
         {
+            if let Some(error) = take_data_cache_error(data_cache) {
+                return Err(error);
+            }
             return Err(RiscvWorkloadReplayError::MissingAcceleratorDmaWrite { engine });
         }
     }
@@ -161,6 +168,9 @@ pub(super) fn run_accelerator_dma_copies(
         WorkloadParallelBatchScope::AcceleratorDmaScheduler,
         &write_run,
     );
+    if let Some(error) = take_data_cache_error(data_cache) {
+        return Err(error);
+    }
 
     let after = accelerator_snapshots(devices);
     let mut active_device_count = 0;

@@ -1,10 +1,11 @@
+use rem6_kernel::PartitionedScheduler;
 use rem6_memory::{AccessSize, AgentId, ByteMask, MemoryRequest, MemoryRequestId};
 use rem6_protocol_mesi::MesiState;
 use rem6_traffic::{
     TrafficTrace, TrafficTraceConfig, TrafficTraceEvent, TrafficTraceGenerator,
     TrafficTraceResponseKind,
 };
-use rem6_transport::TransportEndpointId;
+use rem6_transport::{MemoryRoute, MemoryTrace, MemoryTransport, TransportEndpointId};
 use rem6_workload::WorkloadRouteId;
 
 use super::*;
@@ -200,4 +201,71 @@ fn trace_clean_shared_response_cleans_dirty_mesi_line_without_invalidating() {
     let cache = snapshot.caches().get(&agent(1)).unwrap();
     assert_eq!(cache.state(), MesiState::Exclusive);
     assert_eq!(&cache.cached_data().unwrap()[8..10], &[0xaa, 0xbb]);
+}
+
+#[test]
+fn data_cache_controller_error_keeps_delivery_context() {
+    let backend = std::sync::Arc::new(std::sync::Mutex::new(WorkloadDataCacheBackend::new([
+        WorkloadDataCacheLineBackend::new(
+            &data_cache_config(WorkloadDataCacheProtocol::Msi),
+            layout(),
+            Address::new(0x3000),
+            WorkloadDataCacheLineMemory::Line(line_data()),
+            vec![cache_config(1)],
+        )
+        .unwrap(),
+    ])));
+    let mut scheduler = PartitionedScheduler::new(2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu2"),
+                PartitionId::new(0),
+                endpoint("l1d2"),
+                PartitionId::new(1),
+                3,
+                5,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let request = write(2, 4, 0x3008, vec![0xcc]);
+
+    let target_backend = std::sync::Arc::clone(&backend);
+    transport
+        .submit_parallel_at(
+            &mut scheduler,
+            11,
+            route,
+            request.clone(),
+            MemoryTrace::new(),
+            move |delivery, _context| {
+                target_backend
+                    .lock()
+                    .unwrap()
+                    .respond(&delivery)
+                    .expect("delivery reaches configured data-cache line")
+            },
+            |_delivery| {},
+        )
+        .unwrap();
+    scheduler.run_until_idle_parallel().unwrap();
+
+    let error = backend.lock().unwrap().take_error().unwrap();
+    let RiscvWorkloadReplayError::DataCacheController { record } = error else {
+        panic!("expected contextual data-cache controller error");
+    };
+    assert_eq!(record.tick(), 14);
+    assert_eq!(record.request_id(), request.id());
+    assert_eq!(record.protocol(), RiscvDataCacheProtocol::Msi);
+    assert_eq!(record.target(), MemoryTargetId::new(0));
+    assert_eq!(record.address(), Address::new(0x3008));
+    assert_eq!(record.line(), Address::new(0x3000));
+    assert_eq!(record.operation(), request.operation());
+    assert!(matches!(
+        record.error(),
+        RiscvDataCacheControllerError::Msi(rem6_coherence::HarnessError::UnknownCache { agent })
+            if *agent == request.id().agent()
+    ));
 }

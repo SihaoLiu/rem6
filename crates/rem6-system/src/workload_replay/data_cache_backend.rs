@@ -35,8 +35,9 @@ use rem6_workload::{WorkloadDataCacheProtocol, WorkloadRiscvDataCache};
 use super::cache_response::data_cache_response_result;
 use super::RiscvWorkloadReplayError;
 use crate::{
-    RiscvDataCacheProtocol, RiscvDataCacheRunRecord, RiscvTraceDiagnosticRecord,
-    RiscvTraceErrorRecord, RiscvTraceHtmAccessKind, RiscvTraceHtmAccessRecord,
+    RiscvDataCacheControllerError, RiscvDataCacheControllerErrorRecord, RiscvDataCacheProtocol,
+    RiscvDataCacheRunRecord, RiscvTraceDiagnosticRecord, RiscvTraceErrorRecord,
+    RiscvTraceHtmAccessKind, RiscvTraceHtmAccessRecord,
 };
 
 enum WorkloadDataCacheHarness {
@@ -780,34 +781,43 @@ impl WorkloadDataCacheLineBackend {
                 &mut self.records,
                 harness,
                 delivery,
-                RiscvWorkloadReplayError::MsiDataCache,
+                RiscvDataCacheControllerError::Msi,
             ),
             WorkloadDataCacheHarness::Mesi(harness) => data_cache_response_result(
                 self.protocol,
                 &mut self.records,
                 harness,
                 delivery,
-                RiscvWorkloadReplayError::MesiDataCache,
+                RiscvDataCacheControllerError::Mesi,
             ),
             WorkloadDataCacheHarness::Moesi(harness) => data_cache_response_result(
                 self.protocol,
                 &mut self.records,
                 harness,
                 delivery,
-                RiscvWorkloadReplayError::MoesiDataCache,
+                RiscvDataCacheControllerError::Moesi,
             ),
             WorkloadDataCacheHarness::Chi(harness) => data_cache_response_result(
                 self.protocol,
                 &mut self.records,
                 harness,
                 delivery,
-                RiscvWorkloadReplayError::ChiDataCache,
+                RiscvDataCacheControllerError::Chi,
             ),
         };
         Some(match outcome {
             Ok(outcome) => outcome,
             Err(error) => {
-                self.error = Some(error);
+                let record = RiscvDataCacheControllerErrorRecord::from_request(
+                    delivery.tick(),
+                    delivery.request(),
+                    self.protocol,
+                    self.target,
+                    error,
+                );
+                self.error = Some(RiscvWorkloadReplayError::DataCacheController {
+                    record: Box::new(record),
+                });
                 TargetOutcome::Respond(MemoryResponse::retry(delivery.request()))
             }
         })

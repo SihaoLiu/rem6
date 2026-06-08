@@ -105,10 +105,11 @@ use crate::workload_replay_heterogeneous::{
 };
 use crate::workload_replay_host::schedule_planned_host_events;
 use crate::{
-    ExecutionMode, GuestEventId, GuestSourceId, HostEventPolicy, RiscvInstructionStats,
-    RiscvSystemRun, RiscvSystemRunDriver, RiscvSystemRunStopReason, RiscvTrapEventPort,
-    SystemActionOutcome, SystemHostController, SystemHostEventPort,
-    TrafficTraceReplayControllerParallelErrors, TrafficTraceReplayControllerParallelSubmitError,
+    ExecutionMode, GuestEventId, GuestSourceId, HostEventPolicy,
+    RiscvDataCacheControllerErrorRecord, RiscvInstructionStats, RiscvSystemRun,
+    RiscvSystemRunDriver, RiscvSystemRunStopReason, RiscvTrapEventPort, SystemActionOutcome,
+    SystemHostController, SystemHostEventPort, TrafficTraceReplayControllerParallelErrors,
+    TrafficTraceReplayControllerParallelSubmitError,
 };
 
 const DEFAULT_MAX_TURNS: usize = 64;
@@ -396,14 +397,8 @@ impl RiscvWorkloadReplay {
                 |cpu| GuestEventId::new(1_000 + u64::from(cpu.get())),
             )
         };
-        if let Some(data_cache) = data_cache.as_ref() {
-            if let Some(error) = data_cache
-                .lock()
-                .expect("workload data cache lock")
-                .take_error()
-            {
-                return Err(error);
-            }
+        if let Some(error) = take_data_cache_error(&data_cache) {
+            return Err(error);
         }
         let mut run = run_result.map_err(RiscvWorkloadReplayError::System)?;
         if let Some((route, errors)) = traffic_trace_replay_callback_error(&traffic_trace_replays) {
@@ -773,6 +768,9 @@ impl RiscvWorkloadReplay {
             .run_until_idle_parallel_recorded()
             .map_err(RiscvWorkloadReplayError::Scheduler)?;
         scheduler_evidence.merge_run(WorkloadParallelBatchScope::GpuDmaScheduler, &read_run);
+        if let Some(error) = take_data_cache_error(data_cache) {
+            return Err(error);
+        }
         for copy in topology.gpu_dma_copies() {
             let device = GpuDeviceId::new(copy.device());
             let runtime = devices.get(&device).ok_or_else(|| {
@@ -795,6 +793,9 @@ impl RiscvWorkloadReplay {
                 .map_err(RiscvWorkloadReplayError::Gpu)?
                 .is_none()
             {
+                if let Some(error) = take_data_cache_error(data_cache) {
+                    return Err(error);
+                }
                 return Err(RiscvWorkloadReplayError::MissingGpuDmaWrite { device });
             }
         }
@@ -802,6 +803,9 @@ impl RiscvWorkloadReplay {
             .run_until_idle_parallel_recorded()
             .map_err(RiscvWorkloadReplayError::Scheduler)?;
         scheduler_evidence.merge_run(WorkloadParallelBatchScope::GpuDmaScheduler, &write_run);
+        if let Some(error) = take_data_cache_error(data_cache) {
+            return Err(error);
+        }
 
         let after = gpu_snapshots(devices);
         let mut active_device_count = 0;
@@ -1420,6 +1424,17 @@ fn workload_checkpoint_summary_at_tick(
     )
 }
 
+pub(in crate::workload_replay) fn take_data_cache_error(
+    data_cache: &Option<Arc<Mutex<WorkloadDataCacheBackend>>>,
+) -> Option<RiscvWorkloadReplayError> {
+    data_cache.as_ref().and_then(|data_cache| {
+        data_cache
+            .lock()
+            .expect("workload data cache lock")
+            .take_error()
+    })
+}
+
 #[derive(Clone, Debug)]
 pub struct RiscvWorkloadReplayOutcome {
     cluster: RiscvCluster,
@@ -1610,6 +1625,9 @@ pub enum RiscvWorkloadReplayError {
     MesiDataCache(MesiHarnessError),
     MoesiDataCache(MoesiHarnessError),
     ChiDataCache(ChiHarnessError),
+    DataCacheController {
+        record: Box<RiscvDataCacheControllerErrorRecord>,
+    },
     Cpu(CpuError),
     RiscvCluster(rem6_cpu::RiscvClusterError),
     Scheduler(SchedulerError),
@@ -1690,6 +1708,7 @@ impl fmt::Display for RiscvWorkloadReplayError {
             Self::MesiDataCache(error) => write!(formatter, "{error}"),
             Self::MoesiDataCache(error) => write!(formatter, "{error}"),
             Self::ChiDataCache(error) => write!(formatter, "{error}"),
+            Self::DataCacheController { record } => write!(formatter, "{record}"),
             Self::Cpu(error) => write!(formatter, "{error}"),
             Self::RiscvCluster(error) => write!(formatter, "{error}"),
             Self::Scheduler(error) => write!(formatter, "{error}"),
@@ -1722,6 +1741,7 @@ impl Error for RiscvWorkloadReplayError {
             Self::MesiDataCache(error) => Some(error),
             Self::MoesiDataCache(error) => Some(error),
             Self::ChiDataCache(error) => Some(error),
+            Self::DataCacheController { record } => Some(record.error()),
             Self::Cpu(error) => Some(error),
             Self::RiscvCluster(error) => Some(error),
             Self::Scheduler(error) => Some(error),
@@ -1746,21 +1766,5 @@ impl Error for RiscvWorkloadReplayError {
 }
 
 #[cfg(test)]
-mod tests {
-    use rem6_coherence::{
-        PartitionedChiDirectoryLineHarness, PartitionedDirectoryLineHarness,
-        PartitionedMesiDirectoryLineHarness, PartitionedMoesiDirectoryLineHarness,
-    };
-
-    use super::*;
-
-    fn assert_response_harness<H: cache_response::WorkloadDataCacheResponseHarness>() {}
-
-    #[test]
-    fn all_data_cache_protocol_harnesses_share_response_adapter() {
-        assert_response_harness::<PartitionedDirectoryLineHarness>();
-        assert_response_harness::<PartitionedMesiDirectoryLineHarness>();
-        assert_response_harness::<PartitionedMoesiDirectoryLineHarness>();
-        assert_response_harness::<PartitionedChiDirectoryLineHarness>();
-    }
-}
+#[path = "workload_replay/tests.rs"]
+mod tests;

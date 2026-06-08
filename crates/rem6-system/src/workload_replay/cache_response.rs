@@ -15,7 +15,7 @@ use rem6_workload::{WorkloadMemoryRoute, WorkloadRouteId, WorkloadTopology};
 
 use super::data_cache_backend::WorkloadDataCacheBackend;
 use super::{memory_response, RiscvWorkloadReplayError, WorkloadMemoryBackend};
-use crate::{RiscvDataCacheProtocol, RiscvDataCacheRunRecord};
+use crate::{RiscvDataCacheControllerError, RiscvDataCacheProtocol, RiscvDataCacheRunRecord};
 
 pub(super) fn data_cache_agents(
     topology: &WorkloadTopology,
@@ -127,10 +127,10 @@ pub(super) fn data_cache_response_result<H, M>(
     harness: &mut H,
     delivery: &RequestDelivery,
     map_error: M,
-) -> Result<TargetOutcome, RiscvWorkloadReplayError>
+) -> Result<TargetOutcome, RiscvDataCacheControllerError>
 where
     H: WorkloadDataCacheResponseHarness,
-    M: Fn(H::Error) -> RiscvWorkloadReplayError,
+    M: Fn(H::Error) -> RiscvDataCacheControllerError,
 {
     let start_tick = harness.now();
     let responses_before = harness.cpu_responses().len();
@@ -370,7 +370,7 @@ fn data_cache_response_record<R>(
     responses: &[R],
     responses_before: usize,
     request: MemoryRequestId,
-) -> Result<R, RiscvWorkloadReplayError>
+) -> Result<R, RiscvDataCacheControllerError>
 where
     R: WorkloadDataCacheResponseRecord,
 {
@@ -380,14 +380,14 @@ where
         .iter()
         .find(|record| record.request() == request)
         .cloned()
-        .ok_or(RiscvWorkloadReplayError::MissingDataCacheResponse { request })
+        .ok_or_else(|| RiscvDataCacheControllerError::missing_response(request))
 }
 
 fn data_cache_response_record_to_target_outcome<R>(
     request: &MemoryRequest,
     start_tick: u64,
     record: &R,
-) -> Result<TargetOutcome, RiscvWorkloadReplayError>
+) -> Result<TargetOutcome, RiscvDataCacheControllerError>
 where
     R: WorkloadDataCacheResponseRecord,
 {
@@ -403,18 +403,18 @@ where
 fn data_cache_response_record_to_memory_response<R>(
     request: &MemoryRequest,
     record: &R,
-) -> Result<MemoryResponse, RiscvWorkloadReplayError>
+) -> Result<MemoryResponse, RiscvDataCacheControllerError>
 where
     R: WorkloadDataCacheResponseRecord,
 {
     match record.status() {
         ResponseStatus::Completed => {
             MemoryResponse::completed(request, record.data().map(<[u8]>::to_vec))
-                .map_err(RiscvWorkloadReplayError::Memory)
+                .map_err(RiscvDataCacheControllerError::Memory)
         }
         ResponseStatus::Retry => Ok(MemoryResponse::retry(request)),
         ResponseStatus::StoreConditionalFailed => MemoryResponse::store_conditional_failed(request)
-            .map_err(RiscvWorkloadReplayError::Memory),
+            .map_err(RiscvDataCacheControllerError::Memory),
     }
 }
 

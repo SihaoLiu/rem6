@@ -3217,11 +3217,16 @@ failure and response counts, so manifests can require that the cache consumer
 accepted those trace policies rather than only observing raw target traffic.
 RISC-V fetch-port and data-port replay
 failures likewise surface as CPU port failures rather than hanging as
-no-response target events. Additional accessor work should stay tied to one of
-those consumers, or to a new execution-facing consumer with a failing test that
-reaches replay, workload cache state, or a recorded runtime outcome. The
-remaining integration boundary is propagation of replayed protocol-internal
-cache-controller errors into the corresponding execution paths.
+no-response target events. Delivered RISC-V and GPU or accelerator DMA
+workload data-cache requests that hit protocol-internal cache-controller errors
+now fail through a contextual data-cache controller error record carrying tick,
+request id, protocol, target, line, operation, and the underlying harness error
+instead of reporting an unattributed protocol error after the transport path
+completes. Additional accessor work should stay tied to one of those consumers,
+or to a new execution-facing consumer with a failing test that reaches replay,
+workload cache state, or a recorded runtime outcome. The remaining integration
+boundary is propagation of sideband and maintenance protocol-internal
+cache-controller errors into equally contextual execution paths.
 Trace packet flag handling now maps non-prefetch `INST_FETCH` on `ReadReq`,
 `ReadCleanReq`, and
 `ReadSharedReq` packets to native instruction-fetch requests, accepts `PHYSICAL`

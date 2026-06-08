@@ -2,14 +2,15 @@ use rem6_boot::BootImage;
 use rem6_cpu::{CpuId, RiscvClusterHtmAbortOutcome, RiscvClusterHtmBeginOutcome};
 use rem6_kernel::PartitionId;
 use rem6_memory::{
-    AccessSize, Address, AddressRange, MemoryTargetId, ResponseStatus, TranslationQueueConfig,
-    TranslationTlbConfig, TranslationTlbStats,
+    AccessSize, Address, AddressRange, AgentId, MemoryOperation, MemoryRequestId, MemoryTargetId,
+    ResponseStatus, TranslationQueueConfig, TranslationTlbConfig, TranslationTlbStats,
 };
 use rem6_system::{
-    RiscvDataCacheProtocol, RiscvTraceDiagnosticKind, RiscvTraceHtmAccessKind, RiscvWorkloadReplay,
-    RiscvWorkloadReplayError, RiscvWorkloadTraceSyncOutcome, RiscvWorkloadTrafficTraceReplay,
-    TrafficTraceReplayControlError, TrafficTraceReplayControllerControlError,
-    TrafficTraceReplayControllerTargetError, TrafficTraceReplayTargetError,
+    RiscvDataCacheControllerError, RiscvDataCacheProtocol, RiscvTraceDiagnosticKind,
+    RiscvTraceHtmAccessKind, RiscvWorkloadReplay, RiscvWorkloadReplayError,
+    RiscvWorkloadTraceSyncOutcome, RiscvWorkloadTrafficTraceReplay, TrafficTraceReplayControlError,
+    TrafficTraceReplayControllerControlError, TrafficTraceReplayControllerTargetError,
+    TrafficTraceReplayTargetError,
 };
 use rem6_traffic::{
     TrafficTraceCacheKind, TrafficTraceErrorKind, TrafficTraceResponseKind, TrafficTraceSyncKind,
@@ -209,6 +210,13 @@ fn replay_topology() -> WorkloadTopology {
 fn replay_topology_with_data_cache_protocol(
     protocol: WorkloadDataCacheProtocol,
 ) -> WorkloadTopology {
+    replay_topology_with_data_cache_protocol_and_agent(protocol, 7)
+}
+
+fn replay_topology_with_data_cache_protocol_and_agent(
+    protocol: WorkloadDataCacheProtocol,
+    agent: u32,
+) -> WorkloadTopology {
     WorkloadTopology::new(4, 2, 2, WorkloadHostPlacement::new(3, 2, 51).unwrap())
         .unwrap()
         .add_memory_target(
@@ -247,7 +255,7 @@ fn replay_topology_with_data_cache_protocol(
             WorkloadRiscvCore::new(
                 0,
                 0,
-                7,
+                agent,
                 Address::new(0x8000),
                 "cpu0.ifetch",
                 route_id("cpu0.fetch"),
@@ -1600,6 +1608,78 @@ fn workload_replay_does_not_mutate_data_cache_for_trace_write_error() {
     assert_eq!(summary.trace_error_count(), 1);
     assert_eq!(summary.trace_data_cache_error_count(), 1);
     assert!(outcome.run().data_cache_runs().is_empty());
+}
+
+#[test]
+fn workload_replay_returns_contextual_data_cache_controller_error() {
+    let manifest = WorkloadManifest::builder(
+        workload_id("riscv-replay-data-cache-controller-error"),
+        boot_image_with_data_cache_line(),
+    )
+    .with_topology(replay_topology_with_data_cache_protocol_and_agent(
+        WorkloadDataCacheProtocol::Msi,
+        8,
+    ))
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_host_event(WorkloadHostEvent::new(
+        0,
+        HostEventIntent::Stop {
+            reason: "host-stop".to_string(),
+        },
+    ))
+    .build()
+    .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let controller = controller_for_packets(&[
+        PacketFields {
+            tick: 0,
+            command: GEM5_READ_REQ,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(952),
+        },
+        PacketFields {
+            tick: 3,
+            command: GEM5_READ_RESP,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(952),
+        },
+    ]);
+
+    let error = match RiscvWorkloadReplay::new(plan)
+        .with_max_turns(64)
+        .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
+            controller,
+            route_id("cpu0.data"),
+            PartitionId::new(2),
+        ))
+        .run_parallel()
+    {
+        Err(error) => error,
+        Ok(_) => panic!("expected data-cache controller error"),
+    };
+
+    let RiscvWorkloadReplayError::DataCacheController { record } = error else {
+        panic!("expected contextual data-cache controller error");
+    };
+    assert_eq!(record.tick(), 2);
+    assert_eq!(
+        record.request_id(),
+        MemoryRequestId::new(AgentId::new(7), 0)
+    );
+    assert_eq!(record.protocol(), RiscvDataCacheProtocol::Msi);
+    assert_eq!(record.target(), MemoryTargetId::new(0));
+    assert_eq!(record.address(), Address::new(0x9008));
+    assert_eq!(record.line(), Address::new(0x9000));
+    assert_eq!(record.operation(), MemoryOperation::ReadShared);
+    assert!(matches!(
+        record.error(),
+        RiscvDataCacheControllerError::Msi(rem6_coherence::HarnessError::UnknownCache { agent })
+            if *agent == AgentId::new(7)
+    ));
 }
 
 #[test]
