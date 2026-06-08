@@ -133,7 +133,11 @@ fn replay_manifest() -> WorkloadManifest {
             .with_minimum_trace_response_data_byte_count(8)
             .with_minimum_trace_response_fill_data_byte_count(8)
             .with_minimum_trace_completed_response_count(1)
-            .with_minimum_trace_store_conditional_failed_response_count(1),
+            .with_minimum_trace_store_conditional_failed_response_count(1)
+            .with_minimum_trace_read_response_count(1)
+            .with_minimum_trace_write_response_count(1)
+            .with_minimum_trace_llsc_response_count(1)
+            .with_minimum_trace_writable_intent_response_count(1),
     )
     .unwrap()
     .build()
@@ -212,5 +216,12 @@ fn workload_replay_summarizes_executable_response_statuses() {
     assert_eq!(summary.trace_completed_response_count(), 1);
     assert_eq!(summary.trace_retry_response_count(), 0);
     assert_eq!(summary.trace_store_conditional_failed_response_count(), 1);
+    assert_eq!(summary.trace_read_response_count(), 1);
+    assert_eq!(summary.trace_write_response_count(), 1);
+    assert_eq!(summary.trace_prefetch_response_count(), 0);
+    assert_eq!(summary.trace_upgrade_response_count(), 0);
+    assert_eq!(summary.trace_llsc_response_count(), 1);
+    assert_eq!(summary.trace_locked_rmw_response_count(), 0);
+    assert_eq!(summary.trace_writable_intent_response_count(), 1);
     plan.verify_result(outcome.result()).unwrap();
 }

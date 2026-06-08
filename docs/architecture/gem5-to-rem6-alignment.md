@@ -3022,6 +3022,9 @@ matched target-completion records, so manifests can require gem5 `HasData`
 response evidence instead of only response-status matches. Trace-fill bytes are
 counted separately for response kinds such as prefetches that carry gem5 trace
 data without exposing CPU-visible native response payload.
+Replay summaries also classify matched memory-response records by read, write,
+prefetch, upgrade, LLSC, locked-RMW, and writable-intent response policy, and
+manifest expectations can require those executable classes.
 Trace policy accessors are not treated as coverage by themselves. New response,
 error, sideband, or HTM policy exposure should land only with a controller,
 runtime, workload, cache, CPU, or diagnostic consumer, or with an explicit

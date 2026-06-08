@@ -728,46 +728,40 @@ fn hash_expected_traffic_trace_replay_summary(
     expected: &WorkloadExpectedTrafficTraceReplaySummary,
 ) {
     hash_str(hash, expected.route().as_str());
-    hash_u64(hash, expected.minimum_scheduled_count() as u64);
-    hash_u64(hash, expected.minimum_response_delivery_count() as u64);
-    let completed_responses = expected.minimum_trace_completed_response_count();
-    hash_u64(hash, completed_responses as u64);
-    hash_u64(hash, expected.minimum_trace_retry_response_count() as u64);
-    hash_u64(
-        hash,
-        expected.minimum_trace_store_conditional_failed_response_count() as u64,
-    );
+    for count in [
+        expected.minimum_scheduled_count(),
+        expected.minimum_response_delivery_count(),
+        expected.minimum_trace_completed_response_count(),
+        expected.minimum_trace_retry_response_count(),
+        expected.minimum_trace_store_conditional_failed_response_count(),
+        expected.minimum_trace_read_response_count(),
+        expected.minimum_trace_write_response_count(),
+        expected.minimum_trace_prefetch_response_count(),
+        expected.minimum_trace_upgrade_response_count(),
+        expected.minimum_trace_llsc_response_count(),
+        expected.minimum_trace_locked_rmw_response_count(),
+        expected.minimum_trace_writable_intent_response_count(),
+    ] {
+        hash_u64(hash, count as u64);
+    }
     hash_u64(hash, expected.minimum_trace_response_data_byte_count());
     hash_u64(hash, expected.minimum_trace_response_fill_data_byte_count());
-    hash_u64(hash, expected.minimum_memory_trace_event_count() as u64);
-    hash_u64(
-        hash,
-        expected.minimum_memory_write_completion_count() as u64,
-    );
-    let cache_responses = expected.minimum_trace_data_cache_response_count();
-    let maintenance_responses = expected.minimum_trace_data_cache_maintenance_response_count();
-    hash_u64(hash, cache_responses as u64);
-    hash_u64(hash, maintenance_responses as u64);
-    hash_u64(hash, expected.minimum_trace_data_cache_error_count() as u64);
-    hash_u64(hash, expected.minimum_memory_failure_count() as u64);
-    hash_u64(
-        hash,
-        expected.minimum_memory_failure_invalid_destination_count() as u64,
-    );
-    hash_u64(
-        hash,
-        expected.minimum_memory_failure_bad_address_count() as u64,
-    );
-    hash_u64(hash, expected.minimum_memory_failure_read_count() as u64);
-    hash_u64(hash, expected.minimum_memory_failure_write_count() as u64);
-    hash_u64(
-        hash,
-        expected.minimum_memory_failure_functional_read_count() as u64,
-    );
-    hash_u64(
-        hash,
-        expected.minimum_memory_failure_functional_write_count() as u64,
-    );
+    for count in [
+        expected.minimum_memory_trace_event_count(),
+        expected.minimum_memory_write_completion_count(),
+        expected.minimum_trace_data_cache_response_count(),
+        expected.minimum_trace_data_cache_maintenance_response_count(),
+        expected.minimum_trace_data_cache_error_count(),
+        expected.minimum_memory_failure_count(),
+        expected.minimum_memory_failure_invalid_destination_count(),
+        expected.minimum_memory_failure_bad_address_count(),
+        expected.minimum_memory_failure_read_count(),
+        expected.minimum_memory_failure_write_count(),
+        expected.minimum_memory_failure_functional_read_count(),
+        expected.minimum_memory_failure_functional_write_count(),
+    ] {
+        hash_u64(hash, count as u64);
+    }
     hash_u64(hash, expected.minimum_trace_error_count() as u64);
     hash_u64(hash, expected.minimum_trace_htm_access_count() as u64);
     hash_u64(hash, expected.minimum_trace_htm_begin_count() as u64);

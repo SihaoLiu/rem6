@@ -113,11 +113,9 @@ fn replay_topology() -> WorkloadTopology {
         .unwrap()
 }
 
-fn replay_manifest() -> WorkloadManifest {
-    replay_manifest_with_minimum_trace_htm_access_count(2)
-}
-
-fn replay_manifest_with_minimum_trace_htm_access_count(count: usize) -> WorkloadManifest {
+fn replay_manifest_with_traffic_trace_summary_expectation(
+    expected: WorkloadExpectedTrafficTraceReplaySummary,
+) -> WorkloadManifest {
     WorkloadManifest::builder(
         workload_id("riscv-replay-htm-locked-rmw-access"),
         boot_image(),
@@ -132,10 +130,7 @@ fn replay_manifest_with_minimum_trace_htm_access_count(count: usize) -> Workload
             reason: "host-stop".to_string(),
         },
     ))
-    .add_expected_traffic_trace_replay_summary(
-        WorkloadExpectedTrafficTraceReplaySummary::new(route_id("cpu0.data"))
-            .with_minimum_trace_htm_access_count(count),
-    )
+    .add_expected_traffic_trace_replay_summary(expected)
     .unwrap()
     .build()
     .unwrap()
@@ -143,7 +138,13 @@ fn replay_manifest_with_minimum_trace_htm_access_count(count: usize) -> Workload
 
 #[test]
 fn workload_replay_records_locked_rmw_read_as_htm_writable_access() {
-    let manifest = replay_manifest();
+    let manifest = replay_manifest_with_traffic_trace_summary_expectation(
+        WorkloadExpectedTrafficTraceReplaySummary::new(route_id("cpu0.data"))
+            .with_minimum_trace_htm_access_count(2)
+            .with_minimum_trace_read_response_count(1)
+            .with_minimum_trace_locked_rmw_response_count(1)
+            .with_minimum_trace_writable_intent_response_count(1),
+    );
     let plan = rem6_workload::WorkloadReplayPlan::from_manifest(&manifest).unwrap();
     let controller = controller_for_packets(&[
         PacketFields {
@@ -206,12 +207,22 @@ fn workload_replay_records_locked_rmw_read_as_htm_writable_access() {
 
     let summary = &outcome.result().traffic_trace_replay_summaries()[0];
     assert_eq!(summary.trace_htm_access_count(), 2);
+    assert_eq!(summary.trace_read_response_count(), 1);
+    assert_eq!(summary.trace_write_response_count(), 0);
+    assert_eq!(summary.trace_upgrade_response_count(), 0);
+    assert_eq!(summary.trace_locked_rmw_response_count(), 1);
+    assert_eq!(summary.trace_writable_intent_response_count(), 1);
     plan.verify_result(outcome.result()).unwrap();
 }
 
 #[test]
 fn workload_replay_records_read_exclusive_response_as_htm_writable_access() {
-    let manifest = replay_manifest();
+    let manifest = replay_manifest_with_traffic_trace_summary_expectation(
+        WorkloadExpectedTrafficTraceReplaySummary::new(route_id("cpu0.data"))
+            .with_minimum_trace_htm_access_count(2)
+            .with_minimum_trace_read_response_count(1)
+            .with_minimum_trace_writable_intent_response_count(1),
+    );
     let plan = rem6_workload::WorkloadReplayPlan::from_manifest(&manifest).unwrap();
     let controller = controller_for_packets(&[
         PacketFields {
@@ -263,12 +274,22 @@ fn workload_replay_records_read_exclusive_response_as_htm_writable_access() {
 
     let summary = &outcome.result().traffic_trace_replay_summaries()[0];
     assert_eq!(summary.trace_htm_access_count(), 2);
+    assert_eq!(summary.trace_read_response_count(), 1);
+    assert_eq!(summary.trace_write_response_count(), 0);
+    assert_eq!(summary.trace_upgrade_response_count(), 0);
+    assert_eq!(summary.trace_locked_rmw_response_count(), 0);
+    assert_eq!(summary.trace_writable_intent_response_count(), 1);
     plan.verify_result(outcome.result()).unwrap();
 }
 
 #[test]
 fn workload_replay_records_upgrade_response_as_htm_writable_access() {
-    let manifest = replay_manifest_with_minimum_trace_htm_access_count(1);
+    let manifest = replay_manifest_with_traffic_trace_summary_expectation(
+        WorkloadExpectedTrafficTraceReplaySummary::new(route_id("cpu0.data"))
+            .with_minimum_trace_htm_access_count(1)
+            .with_minimum_trace_upgrade_response_count(1)
+            .with_minimum_trace_writable_intent_response_count(1),
+    );
     let plan = rem6_workload::WorkloadReplayPlan::from_manifest(&manifest).unwrap();
     let controller = controller_for_packets(&[
         PacketFields {
@@ -318,5 +339,10 @@ fn workload_replay_records_upgrade_response_as_htm_writable_access() {
 
     let summary = &outcome.result().traffic_trace_replay_summaries()[0];
     assert_eq!(summary.trace_htm_access_count(), 1);
+    assert_eq!(summary.trace_read_response_count(), 0);
+    assert_eq!(summary.trace_write_response_count(), 0);
+    assert_eq!(summary.trace_upgrade_response_count(), 1);
+    assert_eq!(summary.trace_locked_rmw_response_count(), 0);
+    assert_eq!(summary.trace_writable_intent_response_count(), 1);
     plan.verify_result(outcome.result()).unwrap();
 }

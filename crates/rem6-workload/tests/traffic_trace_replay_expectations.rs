@@ -123,7 +123,14 @@ fn workload_manifest_records_response_status_trace_summary_expectations() {
         .with_minimum_trace_response_fill_data_byte_count(24)
         .with_minimum_trace_completed_response_count(1)
         .with_minimum_trace_retry_response_count(1)
-        .with_minimum_trace_store_conditional_failed_response_count(1);
+        .with_minimum_trace_store_conditional_failed_response_count(1)
+        .with_minimum_trace_read_response_count(2)
+        .with_minimum_trace_write_response_count(1)
+        .with_minimum_trace_prefetch_response_count(1)
+        .with_minimum_trace_upgrade_response_count(1)
+        .with_minimum_trace_llsc_response_count(1)
+        .with_minimum_trace_locked_rmw_response_count(1)
+        .with_minimum_trace_writable_intent_response_count(3);
     let manifest =
         rem6_workload::WorkloadManifest::builder(id("manifest-response-status"), boot_image())
             .add_resource(kernel_resource())
@@ -157,6 +164,35 @@ fn workload_manifest_records_response_status_trace_summary_expectations() {
             .minimum_trace_store_conditional_failed_response_count(),
         1
     );
+    assert_eq!(
+        plan.expected_traffic_trace_replay_summaries()[0].minimum_trace_read_response_count(),
+        2
+    );
+    assert_eq!(
+        plan.expected_traffic_trace_replay_summaries()[0].minimum_trace_write_response_count(),
+        1
+    );
+    assert_eq!(
+        plan.expected_traffic_trace_replay_summaries()[0].minimum_trace_prefetch_response_count(),
+        1
+    );
+    assert_eq!(
+        plan.expected_traffic_trace_replay_summaries()[0].minimum_trace_upgrade_response_count(),
+        1
+    );
+    assert_eq!(
+        plan.expected_traffic_trace_replay_summaries()[0].minimum_trace_llsc_response_count(),
+        1
+    );
+    assert_eq!(
+        plan.expected_traffic_trace_replay_summaries()[0].minimum_trace_locked_rmw_response_count(),
+        1
+    );
+    assert_eq!(
+        plan.expected_traffic_trace_replay_summaries()[0]
+            .minimum_trace_writable_intent_response_count(),
+        3
+    );
 
     let actual = WorkloadTrafficTraceReplaySummary::new(route_id("trace.response"), 3)
         .with_response_delivery_count(3)
@@ -164,12 +200,26 @@ fn workload_manifest_records_response_status_trace_summary_expectations() {
         .with_trace_response_fill_data_byte_count(24)
         .with_trace_completed_response_count(1)
         .with_trace_retry_response_count(1)
-        .with_trace_store_conditional_failed_response_count(1);
+        .with_trace_store_conditional_failed_response_count(1)
+        .with_trace_read_response_count(2)
+        .with_trace_write_response_count(1)
+        .with_trace_prefetch_response_count(1)
+        .with_trace_upgrade_response_count(1)
+        .with_trace_llsc_response_count(1)
+        .with_trace_locked_rmw_response_count(1)
+        .with_trace_writable_intent_response_count(3);
     assert_eq!(actual.trace_completed_response_count(), 1);
     assert_eq!(actual.trace_response_data_byte_count(), 8);
     assert_eq!(actual.trace_response_fill_data_byte_count(), 24);
     assert_eq!(actual.trace_retry_response_count(), 1);
     assert_eq!(actual.trace_store_conditional_failed_response_count(), 1);
+    assert_eq!(actual.trace_read_response_count(), 2);
+    assert_eq!(actual.trace_write_response_count(), 1);
+    assert_eq!(actual.trace_prefetch_response_count(), 1);
+    assert_eq!(actual.trace_upgrade_response_count(), 1);
+    assert_eq!(actual.trace_llsc_response_count(), 1);
+    assert_eq!(actual.trace_locked_rmw_response_count(), 1);
+    assert_eq!(actual.trace_writable_intent_response_count(), 3);
 
     let result =
         WorkloadResult::new(plan.manifest_identity(), 32).with_traffic_trace_replay_summary(actual);
@@ -1389,7 +1439,7 @@ fn workload_replay_plan_rejects_underreported_typed_sideband_summary() {
     );
     assert_eq!(
         error.to_string(),
-        "traffic trace replay summary for route trace.sideband has scheduled 4/4, responses 0/0, trace completed responses 0/0, trace retry responses 0/0, trace store-conditional failed responses 0/0, trace response data bytes 0/0, trace response fill data bytes 0/0, memory trace events 0/0, memory write completions 0/0, trace data-cache responses 0/0, trace data-cache maintenance responses 0/0, trace data-cache errors 0/0, memory failures 0/0, memory failure invalid destinations 0/0, memory failure bad addresses 0/0, memory failure reads 0/0, memory failure writes 0/0, memory failure functional reads 0/0, memory failure functional writes 0/0, trace errors 0/0, trace htm accesses 0/0, trace htm begins 0/0, control acks 0/0, sync control acks 0/0, htm control acks 0/0, control failures 0/0, control failure invalid destinations 0/0, control failure bad addresses 0/0, control failure reads 0/0, control failure writes 0/0, control failure functional reads 0/0, control failure functional writes 0/0, sync control failures 0/0, tlb control failures 0/0, cache control failures 0/0, htm control failures 0/0, diagnostic control failures 0/0, sideband events 4/4, trace sideband failures 0/0, tlb sync events 1/1, trace tlb syncs 0/1, cache flush events 0/1, trace cache flushes 0/1, trace cache flush data bytes 0/0, trace l1 invalidations 0/1, diagnostic print events 0/0, trace diagnostics 0/1, htm abort events 0/0, trace htm aborts 0/1",
+        "traffic trace replay summary for route trace.sideband has scheduled 4/4, responses 0/0, trace completed responses 0/0, trace retry responses 0/0, trace store-conditional failed responses 0/0, trace read responses 0/0, trace write responses 0/0, trace prefetch responses 0/0, trace upgrade responses 0/0, trace llsc responses 0/0, trace locked-rmw responses 0/0, trace writable-intent responses 0/0, trace response data bytes 0/0, trace response fill data bytes 0/0, memory trace events 0/0, memory write completions 0/0, trace data-cache responses 0/0, trace data-cache maintenance responses 0/0, trace data-cache errors 0/0, memory failures 0/0, memory failure invalid destinations 0/0, memory failure bad addresses 0/0, memory failure reads 0/0, memory failure writes 0/0, memory failure functional reads 0/0, memory failure functional writes 0/0, trace errors 0/0, trace htm accesses 0/0, trace htm begins 0/0, control acks 0/0, sync control acks 0/0, htm control acks 0/0, control failures 0/0, control failure invalid destinations 0/0, control failure bad addresses 0/0, control failure reads 0/0, control failure writes 0/0, control failure functional reads 0/0, control failure functional writes 0/0, sync control failures 0/0, tlb control failures 0/0, cache control failures 0/0, htm control failures 0/0, diagnostic control failures 0/0, sideband events 4/4, trace sideband failures 0/0, tlb sync events 1/1, trace tlb syncs 0/1, cache flush events 0/1, trace cache flushes 0/1, trace cache flush data bytes 0/0, trace l1 invalidations 0/1, diagnostic print events 0/0, trace diagnostics 0/1, htm abort events 0/0, trace htm aborts 0/1",
     );
 }
 
@@ -1574,7 +1624,7 @@ fn workload_replay_plan_rejects_underreported_trace_data_cache_response_summary(
     );
     assert_eq!(
         error.to_string(),
-        "traffic trace replay summary for route trace.cache has scheduled 2/0, responses 2/2, trace completed responses 0/0, trace retry responses 0/0, trace store-conditional failed responses 0/0, trace response data bytes 0/0, trace response fill data bytes 0/0, memory trace events 0/0, memory write completions 0/0, trace data-cache responses 1/2, trace data-cache maintenance responses 0/0, trace data-cache errors 0/0, memory failures 0/0, memory failure invalid destinations 0/0, memory failure bad addresses 0/0, memory failure reads 0/0, memory failure writes 0/0, memory failure functional reads 0/0, memory failure functional writes 0/0, trace errors 0/0, trace htm accesses 0/0, trace htm begins 0/0, control acks 0/0, sync control acks 0/0, htm control acks 0/0, control failures 0/0, control failure invalid destinations 0/0, control failure bad addresses 0/0, control failure reads 0/0, control failure writes 0/0, control failure functional reads 0/0, control failure functional writes 0/0, sync control failures 0/0, tlb control failures 0/0, cache control failures 0/0, htm control failures 0/0, diagnostic control failures 0/0, sideband events 0/0, trace sideband failures 0/0, tlb sync events 0/0, trace tlb syncs 0/0, cache flush events 0/0, trace cache flushes 0/0, trace cache flush data bytes 0/0, trace l1 invalidations 0/0, diagnostic print events 0/0, trace diagnostics 0/0, htm abort events 0/0, trace htm aborts 0/0",
+        "traffic trace replay summary for route trace.cache has scheduled 2/0, responses 2/2, trace completed responses 0/0, trace retry responses 0/0, trace store-conditional failed responses 0/0, trace read responses 0/0, trace write responses 0/0, trace prefetch responses 0/0, trace upgrade responses 0/0, trace llsc responses 0/0, trace locked-rmw responses 0/0, trace writable-intent responses 0/0, trace response data bytes 0/0, trace response fill data bytes 0/0, memory trace events 0/0, memory write completions 0/0, trace data-cache responses 1/2, trace data-cache maintenance responses 0/0, trace data-cache errors 0/0, memory failures 0/0, memory failure invalid destinations 0/0, memory failure bad addresses 0/0, memory failure reads 0/0, memory failure writes 0/0, memory failure functional reads 0/0, memory failure functional writes 0/0, trace errors 0/0, trace htm accesses 0/0, trace htm begins 0/0, control acks 0/0, sync control acks 0/0, htm control acks 0/0, control failures 0/0, control failure invalid destinations 0/0, control failure bad addresses 0/0, control failure reads 0/0, control failure writes 0/0, control failure functional reads 0/0, control failure functional writes 0/0, sync control failures 0/0, tlb control failures 0/0, cache control failures 0/0, htm control failures 0/0, diagnostic control failures 0/0, sideband events 0/0, trace sideband failures 0/0, tlb sync events 0/0, trace tlb syncs 0/0, cache flush events 0/0, trace cache flushes 0/0, trace cache flush data bytes 0/0, trace l1 invalidations 0/0, diagnostic print events 0/0, trace diagnostics 0/0, htm abort events 0/0, trace htm aborts 0/0",
     );
 }
 
@@ -1684,7 +1734,7 @@ fn workload_replay_plan_rejects_underreported_trace_data_cache_error_summary() {
     );
     assert_eq!(
         error.to_string(),
-        "traffic trace replay summary for route trace.cache.error has scheduled 1/0, responses 0/0, trace completed responses 0/0, trace retry responses 0/0, trace store-conditional failed responses 0/0, trace response data bytes 0/0, trace response fill data bytes 0/0, memory trace events 0/0, memory write completions 0/0, trace data-cache responses 0/0, trace data-cache maintenance responses 0/0, trace data-cache errors 1/2, memory failures 0/0, memory failure invalid destinations 0/0, memory failure bad addresses 0/0, memory failure reads 0/0, memory failure writes 0/0, memory failure functional reads 0/0, memory failure functional writes 0/0, trace errors 0/0, trace htm accesses 0/0, trace htm begins 0/0, control acks 0/0, sync control acks 0/0, htm control acks 0/0, control failures 0/0, control failure invalid destinations 0/0, control failure bad addresses 0/0, control failure reads 0/0, control failure writes 0/0, control failure functional reads 0/0, control failure functional writes 0/0, sync control failures 0/0, tlb control failures 0/0, cache control failures 0/0, htm control failures 0/0, diagnostic control failures 0/0, sideband events 0/0, trace sideband failures 0/0, tlb sync events 0/0, trace tlb syncs 0/0, cache flush events 0/0, trace cache flushes 0/0, trace cache flush data bytes 0/0, trace l1 invalidations 0/0, diagnostic print events 0/0, trace diagnostics 0/0, htm abort events 0/0, trace htm aborts 0/0",
+        "traffic trace replay summary for route trace.cache.error has scheduled 1/0, responses 0/0, trace completed responses 0/0, trace retry responses 0/0, trace store-conditional failed responses 0/0, trace read responses 0/0, trace write responses 0/0, trace prefetch responses 0/0, trace upgrade responses 0/0, trace llsc responses 0/0, trace locked-rmw responses 0/0, trace writable-intent responses 0/0, trace response data bytes 0/0, trace response fill data bytes 0/0, memory trace events 0/0, memory write completions 0/0, trace data-cache responses 0/0, trace data-cache maintenance responses 0/0, trace data-cache errors 1/2, memory failures 0/0, memory failure invalid destinations 0/0, memory failure bad addresses 0/0, memory failure reads 0/0, memory failure writes 0/0, memory failure functional reads 0/0, memory failure functional writes 0/0, trace errors 0/0, trace htm accesses 0/0, trace htm begins 0/0, control acks 0/0, sync control acks 0/0, htm control acks 0/0, control failures 0/0, control failure invalid destinations 0/0, control failure bad addresses 0/0, control failure reads 0/0, control failure writes 0/0, control failure functional reads 0/0, control failure functional writes 0/0, sync control failures 0/0, tlb control failures 0/0, cache control failures 0/0, htm control failures 0/0, diagnostic control failures 0/0, sideband events 0/0, trace sideband failures 0/0, tlb sync events 0/0, trace tlb syncs 0/0, cache flush events 0/0, trace cache flushes 0/0, trace cache flush data bytes 0/0, trace l1 invalidations 0/0, diagnostic print events 0/0, trace diagnostics 0/0, htm abort events 0/0, trace htm aborts 0/0",
     );
 }
 
@@ -1717,7 +1767,7 @@ fn workload_replay_plan_rejects_underreported_trace_error_summary() {
     );
     assert_eq!(
         error.to_string(),
-        "traffic trace replay summary for route trace.error has scheduled 1/0, responses 0/0, trace completed responses 0/0, trace retry responses 0/0, trace store-conditional failed responses 0/0, trace response data bytes 0/0, trace response fill data bytes 0/0, memory trace events 0/0, memory write completions 0/0, trace data-cache responses 0/0, trace data-cache maintenance responses 0/0, trace data-cache errors 0/0, memory failures 1/1, memory failure invalid destinations 0/0, memory failure bad addresses 0/0, memory failure reads 0/0, memory failure writes 0/0, memory failure functional reads 0/0, memory failure functional writes 0/0, trace errors 0/1, trace htm accesses 0/0, trace htm begins 0/0, control acks 0/0, sync control acks 0/0, htm control acks 0/0, control failures 0/0, control failure invalid destinations 0/0, control failure bad addresses 0/0, control failure reads 0/0, control failure writes 0/0, control failure functional reads 0/0, control failure functional writes 0/0, sync control failures 0/0, tlb control failures 0/0, cache control failures 0/0, htm control failures 0/0, diagnostic control failures 0/0, sideband events 0/0, trace sideband failures 0/0, tlb sync events 0/0, trace tlb syncs 0/0, cache flush events 0/0, trace cache flushes 0/0, trace cache flush data bytes 0/0, trace l1 invalidations 0/0, diagnostic print events 0/0, trace diagnostics 0/0, htm abort events 0/0, trace htm aborts 0/0",
+        "traffic trace replay summary for route trace.error has scheduled 1/0, responses 0/0, trace completed responses 0/0, trace retry responses 0/0, trace store-conditional failed responses 0/0, trace read responses 0/0, trace write responses 0/0, trace prefetch responses 0/0, trace upgrade responses 0/0, trace llsc responses 0/0, trace locked-rmw responses 0/0, trace writable-intent responses 0/0, trace response data bytes 0/0, trace response fill data bytes 0/0, memory trace events 0/0, memory write completions 0/0, trace data-cache responses 0/0, trace data-cache maintenance responses 0/0, trace data-cache errors 0/0, memory failures 1/1, memory failure invalid destinations 0/0, memory failure bad addresses 0/0, memory failure reads 0/0, memory failure writes 0/0, memory failure functional reads 0/0, memory failure functional writes 0/0, trace errors 0/1, trace htm accesses 0/0, trace htm begins 0/0, control acks 0/0, sync control acks 0/0, htm control acks 0/0, control failures 0/0, control failure invalid destinations 0/0, control failure bad addresses 0/0, control failure reads 0/0, control failure writes 0/0, control failure functional reads 0/0, control failure functional writes 0/0, sync control failures 0/0, tlb control failures 0/0, cache control failures 0/0, htm control failures 0/0, diagnostic control failures 0/0, sideband events 0/0, trace sideband failures 0/0, tlb sync events 0/0, trace tlb syncs 0/0, cache flush events 0/0, trace cache flushes 0/0, trace cache flush data bytes 0/0, trace l1 invalidations 0/0, diagnostic print events 0/0, trace diagnostics 0/0, htm abort events 0/0, trace htm aborts 0/0",
     );
 }
 
@@ -1750,6 +1800,6 @@ fn workload_replay_plan_rejects_underreported_trace_htm_access_summary() {
     );
     assert_eq!(
         error.to_string(),
-        "traffic trace replay summary for route trace.htm has scheduled 3/0, responses 2/2, trace completed responses 0/0, trace retry responses 0/0, trace store-conditional failed responses 0/0, trace response data bytes 0/0, trace response fill data bytes 0/0, memory trace events 0/0, memory write completions 0/0, trace data-cache responses 0/0, trace data-cache maintenance responses 0/0, trace data-cache errors 0/0, memory failures 0/0, memory failure invalid destinations 0/0, memory failure bad addresses 0/0, memory failure reads 0/0, memory failure writes 0/0, memory failure functional reads 0/0, memory failure functional writes 0/0, trace errors 0/0, trace htm accesses 0/2, trace htm begins 0/0, control acks 0/0, sync control acks 0/0, htm control acks 0/0, control failures 0/0, control failure invalid destinations 0/0, control failure bad addresses 0/0, control failure reads 0/0, control failure writes 0/0, control failure functional reads 0/0, control failure functional writes 0/0, sync control failures 0/0, tlb control failures 0/0, cache control failures 0/0, htm control failures 0/0, diagnostic control failures 0/0, sideband events 0/0, trace sideband failures 0/0, tlb sync events 0/0, trace tlb syncs 0/0, cache flush events 0/0, trace cache flushes 0/0, trace cache flush data bytes 0/0, trace l1 invalidations 0/0, diagnostic print events 0/0, trace diagnostics 0/0, htm abort events 0/0, trace htm aborts 0/0",
+        "traffic trace replay summary for route trace.htm has scheduled 3/0, responses 2/2, trace completed responses 0/0, trace retry responses 0/0, trace store-conditional failed responses 0/0, trace read responses 0/0, trace write responses 0/0, trace prefetch responses 0/0, trace upgrade responses 0/0, trace llsc responses 0/0, trace locked-rmw responses 0/0, trace writable-intent responses 0/0, trace response data bytes 0/0, trace response fill data bytes 0/0, memory trace events 0/0, memory write completions 0/0, trace data-cache responses 0/0, trace data-cache maintenance responses 0/0, trace data-cache errors 0/0, memory failures 0/0, memory failure invalid destinations 0/0, memory failure bad addresses 0/0, memory failure reads 0/0, memory failure writes 0/0, memory failure functional reads 0/0, memory failure functional writes 0/0, trace errors 0/0, trace htm accesses 0/2, trace htm begins 0/0, control acks 0/0, sync control acks 0/0, htm control acks 0/0, control failures 0/0, control failure invalid destinations 0/0, control failure bad addresses 0/0, control failure reads 0/0, control failure writes 0/0, control failure functional reads 0/0, control failure functional writes 0/0, sync control failures 0/0, tlb control failures 0/0, cache control failures 0/0, htm control failures 0/0, diagnostic control failures 0/0, sideband events 0/0, trace sideband failures 0/0, tlb sync events 0/0, trace tlb syncs 0/0, cache flush events 0/0, trace cache flushes 0/0, trace cache flush data bytes 0/0, trace l1 invalidations 0/0, diagnostic print events 0/0, trace diagnostics 0/0, htm abort events 0/0, trace htm aborts 0/0",
     );
 }

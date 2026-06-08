@@ -667,7 +667,9 @@ fn replay_manifest_with_trace_fill_summary_expectation(id: &str) -> WorkloadMani
         .add_expected_traffic_trace_replay_summary(
             WorkloadExpectedTrafficTraceReplaySummary::new(route_id("cpu0.fetch"))
                 .with_minimum_response_delivery_count(1)
-                .with_minimum_trace_response_fill_data_byte_count(16),
+                .with_minimum_trace_response_fill_data_byte_count(16)
+                .with_minimum_trace_read_response_count(1)
+                .with_minimum_trace_prefetch_response_count(1),
         )
         .unwrap()
         .build()
@@ -868,6 +870,10 @@ fn workload_replay_records_prefetch_trace_fill_without_response_payload() {
     let summary = &outcome.result().traffic_trace_replay_summaries()[0];
     assert_eq!(summary.trace_response_data_byte_count(), 0);
     assert_eq!(summary.trace_response_fill_data_byte_count(), 16);
+    assert_eq!(summary.trace_read_response_count(), 1);
+    assert_eq!(summary.trace_write_response_count(), 0);
+    assert_eq!(summary.trace_prefetch_response_count(), 1);
+    assert_eq!(summary.trace_writable_intent_response_count(), 0);
     assert_eq!(summary.trace_data_cache_response_count(), 0);
 }
 

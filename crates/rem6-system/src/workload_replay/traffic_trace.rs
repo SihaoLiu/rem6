@@ -125,6 +125,8 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
         let memory_response_records = self.records.memory_response_snapshot();
         let response_status_counts =
             traffic_trace_replay_response_status_counts(memory_response_records.as_slice());
+        let response_class_counts =
+            traffic_trace_replay_response_class_counts(memory_response_records.as_slice());
         let trace_response_data_byte_count = memory_response_records
             .iter()
             .filter_map(|record| record.response_data_bytes())
@@ -163,6 +165,13 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
             .with_trace_store_conditional_failed_response_count(
                 response_status_counts.store_conditional_failed,
             )
+            .with_trace_read_response_count(response_class_counts.read)
+            .with_trace_write_response_count(response_class_counts.write)
+            .with_trace_prefetch_response_count(response_class_counts.prefetch)
+            .with_trace_upgrade_response_count(response_class_counts.upgrade)
+            .with_trace_llsc_response_count(response_class_counts.llsc)
+            .with_trace_locked_rmw_response_count(response_class_counts.locked_rmw)
+            .with_trace_writable_intent_response_count(response_class_counts.writable_intent)
             .with_trace_response_data_byte_count(trace_response_data_byte_count)
             .with_trace_response_fill_data_byte_count(trace_response_fill_data_byte_count)
             .with_memory_trace_event_count(self.trace.snapshot().len())
@@ -308,6 +317,17 @@ struct TrafficTraceReplayResponseStatusCounts {
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct TrafficTraceReplayResponseClassCounts {
+    read: usize,
+    write: usize,
+    prefetch: usize,
+    upgrade: usize,
+    llsc: usize,
+    locked_rmw: usize,
+    writable_intent: usize,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct TrafficTraceReplayMemoryFailureKindCounts {
     invalid_destination: usize,
     bad_address: usize,
@@ -337,6 +357,39 @@ fn traffic_trace_replay_response_status_counts(
                 ResponseStatus::Completed => counts.completed += 1,
                 ResponseStatus::Retry => counts.retry += 1,
                 ResponseStatus::StoreConditionalFailed => counts.store_conditional_failed += 1,
+            }
+            counts
+        },
+    )
+}
+
+fn traffic_trace_replay_response_class_counts(
+    records: &[RiscvWorkloadTraceMemoryResponseRecord],
+) -> TrafficTraceReplayResponseClassCounts {
+    records.iter().fold(
+        TrafficTraceReplayResponseClassCounts::default(),
+        |mut counts, record| {
+            let kind = record.kind();
+            if kind.is_read() {
+                counts.read += 1;
+            }
+            if kind.is_write() {
+                counts.write += 1;
+            }
+            if kind.is_prefetch() {
+                counts.prefetch += 1;
+            }
+            if kind.is_upgrade() {
+                counts.upgrade += 1;
+            }
+            if kind.is_llsc() {
+                counts.llsc += 1;
+            }
+            if kind.is_locked_rmw() {
+                counts.locked_rmw += 1;
+            }
+            if kind.carries_writable_intent() {
+                counts.writable_intent += 1;
             }
             counts
         },
