@@ -1,5 +1,25 @@
 use std::fs;
 
+const GEM5_MAGIC: [u8; 4] = [0x67, 0x65, 0x6d, 0x35];
+
+pub(crate) const GEM5_READ_REQ: u32 = 1;
+pub(crate) const GEM5_READ_RESP: u32 = 2;
+pub(crate) const GEM5_WRITE_REQ: u32 = 4;
+pub(crate) const GEM5_WRITE_RESP: u32 = 5;
+pub(crate) const GEM5_MEM_FENCE_REQ: u32 = 38;
+pub(crate) const GEM5_MEM_FENCE_RESP: u32 = 41;
+pub(crate) const GEM5_READ_ERROR: u32 = 48;
+pub(crate) const GEM5_WRITE_ERROR: u32 = 49;
+
+#[derive(Clone, Copy)]
+pub(crate) struct PacketFields {
+    pub(crate) tick: u64,
+    pub(crate) command: u32,
+    pub(crate) address: Option<u64>,
+    pub(crate) size: Option<u32>,
+    pub(crate) packet_id: Option<u64>,
+}
+
 fn write_u16(bytes: &mut [u8], offset: usize, value: u16) {
     bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
 }
@@ -117,6 +137,59 @@ pub(crate) fn temp_output(name: &str) -> std::path::PathBuf {
     let path = std::env::temp_dir().join(format!("rem6-{name}-{}.json", std::process::id()));
     let _ = fs::remove_file(&path);
     path
+}
+
+pub(crate) fn temp_trace(name: &str, bytes: &[u8]) -> std::path::PathBuf {
+    let path = std::env::temp_dir().join(format!("rem6-{name}-{}.pb", std::process::id()));
+    fs::write(&path, bytes).unwrap();
+    path
+}
+
+pub(crate) fn packet_trace_bytes(tick_frequency: u64, packets: &[PacketFields]) -> Vec<u8> {
+    let mut bytes = GEM5_MAGIC.to_vec();
+    let mut header = Vec::new();
+    append_key(&mut header, 3, 0);
+    append_varint(&mut header, tick_frequency);
+    append_record(&mut bytes, &header);
+
+    for packet in packets {
+        let mut message = Vec::new();
+        append_key(&mut message, 1, 0);
+        append_varint(&mut message, packet.tick);
+        append_key(&mut message, 2, 0);
+        append_varint(&mut message, u64::from(packet.command));
+        if let Some(address) = packet.address {
+            append_key(&mut message, 3, 0);
+            append_varint(&mut message, address);
+        }
+        if let Some(size) = packet.size {
+            append_key(&mut message, 4, 0);
+            append_varint(&mut message, u64::from(size));
+        }
+        if let Some(packet_id) = packet.packet_id {
+            append_key(&mut message, 6, 0);
+            append_varint(&mut message, packet_id);
+        }
+        append_record(&mut bytes, &message);
+    }
+    bytes
+}
+
+fn append_record(bytes: &mut Vec<u8>, record: &[u8]) {
+    append_varint(bytes, record.len() as u64);
+    bytes.extend_from_slice(record);
+}
+
+fn append_key(bytes: &mut Vec<u8>, field: u64, wire_type: u8) {
+    append_varint(bytes, (field << 3) | u64::from(wire_type));
+}
+
+fn append_varint(bytes: &mut Vec<u8>, mut value: u64) {
+    while value >= 0x80 {
+        bytes.push((value as u8) | 0x80);
+        value >>= 7;
+    }
+    bytes.push(value as u8);
 }
 
 pub(crate) fn assert_stat(stdout: &str, path: &str, unit: &str, value: u64, reset_policy: &str) {

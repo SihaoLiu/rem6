@@ -114,6 +114,89 @@ fn workload_replay_plan_validates_matching_result_outputs() {
 }
 
 #[test]
+fn workload_replay_plan_accepts_expected_idle_stop_without_host_event() {
+    let manifest = WorkloadManifest::builder(id("expected-idle-run"), boot_image())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .with_expected_stop_reason("idle")
+        .build()
+        .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let result = WorkloadResult::new(plan.manifest_identity(), 12).with_stop_reason("idle");
+
+    assert_eq!(manifest.expected_stop_reason(), Some("idle"));
+    assert_eq!(plan.planned_stop_reason(), Some("idle"));
+    plan.verify_result(&result).unwrap();
+}
+
+#[test]
+fn workload_manifest_identity_changes_with_expected_stop_reason() {
+    let idle = WorkloadManifest::builder(id("expected-stop-identity"), boot_image())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .with_expected_stop_reason("idle")
+        .build()
+        .unwrap();
+    let host = WorkloadManifest::builder(id("expected-stop-identity"), boot_image())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .with_expected_stop_reason("host-stop")
+        .build()
+        .unwrap();
+
+    assert_ne!(idle.identity(), host.identity());
+}
+
+#[test]
+fn workload_replay_plan_rejects_expected_stop_that_conflicts_with_host_stop() {
+    let manifest = WorkloadManifest::builder(id("conflicting-expected-stop"), boot_image())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .with_expected_stop_reason("idle")
+        .add_host_event(WorkloadHostEvent::new(
+            20,
+            HostEventIntent::Stop {
+                reason: "host-stop".to_string(),
+            },
+        ))
+        .build()
+        .unwrap();
+
+    let error = WorkloadReplayPlan::from_manifest(&manifest).unwrap_err();
+    assert_eq!(
+        error,
+        WorkloadError::StopReasonMismatch {
+            expected: "idle".to_string(),
+            actual: Some("host-stop".to_string()),
+        }
+    );
+}
+
+#[test]
+fn workload_replay_plan_accepts_expected_stop_that_matches_host_stop() {
+    let manifest = WorkloadManifest::builder(id("matching-expected-stop"), boot_image())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .with_expected_stop_reason("host-stop")
+        .add_host_event(WorkloadHostEvent::new(
+            20,
+            HostEventIntent::Stop {
+                reason: "host-stop".to_string(),
+            },
+        ))
+        .build()
+        .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    assert_eq!(plan.planned_stop_reason(), Some("host-stop"));
+}
+
+#[test]
 fn workload_replay_plan_rejects_truncated_runs() {
     let manifest = replay_manifest_with_planned_outputs();
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();

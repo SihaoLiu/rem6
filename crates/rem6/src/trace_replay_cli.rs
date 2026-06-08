@@ -1,0 +1,238 @@
+use std::cmp;
+
+use rem6_boot::BootImage;
+use rem6_memory::{AccessSize, Address, AddressRange};
+use rem6_system::RiscvWorkloadReplay;
+use rem6_traffic::TrafficTrace;
+use rem6_workload::{
+    WorkloadHostPlacement, WorkloadId, WorkloadManifest, WorkloadMemoryRoute, WorkloadMemoryTarget,
+    WorkloadReplayPlan, WorkloadResolvedResources, WorkloadResource, WorkloadResourceId,
+    WorkloadResourceKind, WorkloadResourcePayload, WorkloadRouteId, WorkloadTopology,
+    WorkloadTrafficTraceReplayRun,
+};
+use sha2::{Digest, Sha256};
+
+use crate::cli_output::emit_cli_output;
+use crate::config::{Rem6TraceReplayConfig, StatsFormat};
+use crate::formatting::bytes_to_hex;
+use crate::stats_output::{trace_replay_stats_output, Rem6TraceReplayStatsInputs};
+use crate::{execute_error, Rem6CliError};
+
+const TRACE_RESOURCE_ID: &str = "trace";
+const TRACE_SOURCE_ENDPOINT: &str = "trace.source";
+const TRACE_TARGET_ENDPOINT: &str = "memory";
+const TRACE_SOURCE_PARTITION: u32 = 0;
+const TRACE_TARGET_PARTITION: u32 = 1;
+const TRACE_HOST_SOURCE: u32 = 51;
+const TRACE_HOST_LATENCY: u64 = 2;
+const TRACE_PARALLEL_WORKERS: usize = 2;
+const TRACE_REPLAY_MAX_TURNS: usize = 1024;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Rem6TraceReplayArtifact {
+    pub(crate) schema: &'static str,
+    pub(crate) config: Rem6TraceReplayConfig,
+    pub(crate) trace_digest: String,
+    pub(crate) execution: Rem6TraceReplayExecutionSummary,
+    pub(crate) stats_json: String,
+    pub(crate) stats_text: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Rem6TraceReplayExecutionSummary {
+    pub(crate) final_tick: u64,
+    pub(crate) summary: rem6_workload::WorkloadTrafficTraceReplaySummary,
+}
+
+pub(crate) fn run_trace_replay_cli(args: Vec<String>) -> Result<String, Rem6CliError> {
+    let config = Rem6TraceReplayConfig::parse_args(args)?;
+    let artifact = run_trace_replay_config(config)?;
+    let stats_format = artifact.config.stats_format();
+    let output = match stats_format {
+        StatsFormat::Json => artifact.to_json(),
+        StatsFormat::Text => artifact.stats_text.clone(),
+    };
+    emit_cli_output(
+        output,
+        &artifact.stats_json,
+        &artifact.stats_text,
+        artifact.config.output(),
+        artifact.config.stats_output(),
+        stats_format,
+    )
+}
+
+pub fn run_trace_replay_config(
+    config: Rem6TraceReplayConfig,
+) -> Result<Rem6TraceReplayArtifact, Rem6CliError> {
+    let trace_payload =
+        std::fs::read(config.trace()).map_err(|error| Rem6CliError::ReadBinary {
+            path: config.trace().to_path_buf(),
+            error: error.to_string(),
+        })?;
+    let trace = TrafficTrace::from_gem5_packet_trace(&trace_payload, config.tick_frequency())
+        .map_err(execute_error)?;
+    let trace_max_tick = trace.max_tick().unwrap_or(0);
+    if trace_max_tick > config.max_tick() {
+        return Err(Rem6CliError::Execute {
+            error: format!(
+                "trace replay final tick {} exceeds max tick {}",
+                trace_max_tick,
+                config.max_tick()
+            ),
+        });
+    }
+    let trace_digest = trace_payload_digest(&trace_payload);
+    let route = WorkloadRouteId::new(config.route()).map_err(execute_error)?;
+    let trace_resource = WorkloadResourceId::new(TRACE_RESOURCE_ID).map_err(execute_error)?;
+    let manifest = trace_replay_manifest(
+        &config,
+        &route,
+        &trace_resource,
+        &trace_digest,
+        trace_max_tick.saturating_add(1),
+    )?;
+    let resolved = WorkloadResolvedResources::from_manifest(
+        &manifest,
+        [
+            WorkloadResourcePayload::new(trace_resource, trace_digest.clone(), trace_payload)
+                .map_err(execute_error)?,
+        ],
+    )
+    .map_err(execute_error)?;
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).map_err(execute_error)?;
+    let outcome = RiscvWorkloadReplay::new(plan)
+        .with_resolved_resources(resolved)
+        .with_max_turns(TRACE_REPLAY_MAX_TURNS)
+        .run_parallel()
+        .map_err(execute_error)?;
+    let summary = outcome
+        .result()
+        .traffic_trace_replay_summary(&route)
+        .cloned()
+        .ok_or_else(|| execute_error("trace replay summary missing"))?;
+    let final_tick = outcome
+        .run()
+        .final_tick()
+        .ok_or_else(|| execute_error("trace replay final tick missing"))?;
+    if final_tick > config.max_tick() {
+        return Err(Rem6CliError::Execute {
+            error: format!(
+                "trace replay final tick {} exceeds max tick {}",
+                final_tick,
+                config.max_tick()
+            ),
+        });
+    }
+    let execution = Rem6TraceReplayExecutionSummary {
+        final_tick,
+        summary,
+    };
+    let stats = trace_replay_stats_output(Rem6TraceReplayStatsInputs {
+        config: &config,
+        execution: &execution,
+    })?;
+
+    Ok(Rem6TraceReplayArtifact {
+        schema: "rem6.cli.trace_replay.v1",
+        config,
+        trace_digest,
+        execution,
+        stats_json: stats.json,
+        stats_text: stats.text,
+    })
+}
+
+fn trace_replay_manifest(
+    config: &Rem6TraceReplayConfig,
+    route: &WorkloadRouteId,
+    trace_resource: &WorkloadResourceId,
+    trace_digest: &str,
+    duration: u64,
+) -> Result<WorkloadManifest, Rem6CliError> {
+    let memory_range = AddressRange::new(
+        Address::new(config.memory_start()),
+        AccessSize::new(config.memory_size()).map_err(execute_error)?,
+    )
+    .map_err(execute_error)?;
+    let topology = WorkloadTopology::new(
+        trace_partition_count(config.control_partition()),
+        config.min_remote_delay(),
+        TRACE_PARALLEL_WORKERS,
+        WorkloadHostPlacement::new(
+            trace_host_partition(config.control_partition()),
+            TRACE_HOST_LATENCY,
+            TRACE_HOST_SOURCE,
+        )
+        .map_err(execute_error)?,
+    )
+    .map_err(execute_error)?
+    .add_memory_target(
+        WorkloadMemoryTarget::new(0, config.line_bytes(), memory_range).map_err(execute_error)?,
+    )
+    .map_err(execute_error)?
+    .add_memory_route(
+        WorkloadMemoryRoute::new(
+            route.clone(),
+            TRACE_SOURCE_ENDPOINT,
+            TRACE_SOURCE_PARTITION,
+            TRACE_TARGET_ENDPOINT,
+            TRACE_TARGET_PARTITION,
+            config.memory_route_delay(),
+            config.memory_route_delay(),
+        )
+        .map_err(execute_error)?,
+    )
+    .map_err(execute_error)?;
+    WorkloadManifest::builder(
+        WorkloadId::new("cli-trace-replay").map_err(execute_error)?,
+        BootImage::new(Address::new(config.memory_start())),
+    )
+    .add_resource(
+        WorkloadResource::new(
+            trace_resource.clone(),
+            WorkloadResourceKind::Input,
+            trace_digest,
+            config.trace().display().to_string(),
+        )
+        .map_err(execute_error)?,
+    )
+    .map_err(execute_error)?
+    .with_topology(topology)
+    .with_expected_stop_reason("idle")
+    .add_traffic_trace_replay(WorkloadTrafficTraceReplayRun::new(
+        route.clone(),
+        trace_resource.clone(),
+        config.tick_frequency(),
+        config.agent(),
+        config.line_bytes(),
+        duration,
+        config.control_partition(),
+    ))
+    .map_err(execute_error)?
+    .build()
+    .map_err(execute_error)
+}
+
+fn trace_partition_count(control_partition: u32) -> u32 {
+    cmp::max(4, control_partition.saturating_add(2))
+}
+
+fn trace_host_partition(control_partition: u32) -> u32 {
+    trace_partition_count(control_partition) - 1
+}
+
+fn trace_payload_digest(payload: &[u8]) -> String {
+    let digest = Sha256::digest(payload);
+    format!("sha256:{}", bytes_to_hex(&digest))
+}
+
+impl Rem6TraceReplayExecutionSummary {
+    pub(crate) const fn final_tick(&self) -> u64 {
+        self.final_tick
+    }
+
+    pub(crate) const fn summary(&self) -> &rem6_workload::WorkloadTrafficTraceReplaySummary {
+        &self.summary
+    }
+}

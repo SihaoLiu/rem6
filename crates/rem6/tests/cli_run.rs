@@ -8,5 +8,7 @@ mod gups;
 mod load;
 #[path = "cli_run/support.rs"]
 mod support;
+#[path = "cli_run/trace_replay.rs"]
+mod trace_replay;
 #[path = "cli_run/validation.rs"]
 mod validation;

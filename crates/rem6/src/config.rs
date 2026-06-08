@@ -137,6 +137,24 @@ pub struct Rem6GupsConfig {
     stats_output: Option<PathBuf>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Rem6TraceReplayConfig {
+    trace: PathBuf,
+    route: String,
+    memory_start: u64,
+    memory_size: u64,
+    max_tick: u64,
+    min_remote_delay: u64,
+    memory_route_delay: u64,
+    tick_frequency: u64,
+    line_bytes: u64,
+    agent: u32,
+    control_partition: u32,
+    stats_format: StatsFormat,
+    output: Option<PathBuf>,
+    stats_output: Option<PathBuf>,
+}
+
 impl Rem6RunConfig {
     pub fn parse_args<I, S>(args: I) -> Result<Self, Rem6CliError>
     where
@@ -593,6 +611,219 @@ impl Rem6GupsConfig {
 
     pub fn memory_dumps(&self) -> &[MemoryDumpRequest] {
         &self.memory_dumps
+    }
+
+    pub fn output(&self) -> Option<&Path> {
+        self.output.as_deref()
+    }
+
+    pub fn stats_output(&self) -> Option<&Path> {
+        self.stats_output.as_deref()
+    }
+}
+
+impl Rem6TraceReplayConfig {
+    pub fn parse_args<I, S>(args: I) -> Result<Self, Rem6CliError>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let mut args = args.into_iter().map(Into::into);
+        let Some(command) = args.next() else {
+            return Err(Rem6CliError::MissingCommand);
+        };
+        if command != "trace-replay" {
+            return Err(Rem6CliError::UnsupportedCommand { command });
+        }
+
+        let mut trace = None;
+        let mut route = None;
+        let mut memory_start = None;
+        let mut memory_size = None;
+        let mut max_tick = None;
+        let mut min_remote_delay = 1u64;
+        let mut memory_route_delay = None;
+        let mut tick_frequency = 1_000u64;
+        let mut line_bytes = 64u64;
+        let mut agent = 0u32;
+        let mut control_partition = 2u32;
+        let mut stats_format = StatsFormat::Json;
+        let mut output = None;
+        let mut stats_output = None;
+        while let Some(flag) = args.next() {
+            match flag.as_str() {
+                "--trace" => {
+                    trace = Some(PathBuf::from(required_value(&flag, args.next())?));
+                }
+                "--route" => {
+                    route = Some(required_value(&flag, args.next())?);
+                }
+                "--memory-start" => {
+                    let value = required_value(&flag, args.next())?;
+                    memory_start = Some(parse_number(&value).ok_or_else(|| {
+                        Rem6CliError::InvalidTraceReplayMemoryStart {
+                            value: value.clone(),
+                        }
+                    })?);
+                }
+                "--memory-size" => {
+                    let value = required_value(&flag, args.next())?;
+                    memory_size = Some(parse_number(&value).filter(|size| *size > 0).ok_or_else(
+                        || Rem6CliError::InvalidTraceReplayMemorySize {
+                            value: value.clone(),
+                        },
+                    )?);
+                }
+                "--max-tick" => {
+                    let value = required_value(&flag, args.next())?;
+                    max_tick = Some(value.parse().map_err(|_| Rem6CliError::InvalidMaxTick {
+                        value: value.clone(),
+                    })?);
+                }
+                "--min-remote-delay" => {
+                    let value = required_value(&flag, args.next())?;
+                    min_remote_delay = parse_positive_u64(&value).ok_or_else(|| {
+                        Rem6CliError::InvalidMinRemoteDelay {
+                            value: value.clone(),
+                        }
+                    })?;
+                }
+                "--memory-route-delay" => {
+                    let value = required_value(&flag, args.next())?;
+                    memory_route_delay = Some(parse_positive_u64(&value).ok_or_else(|| {
+                        Rem6CliError::InvalidMemoryRouteDelay {
+                            value: value.clone(),
+                        }
+                    })?);
+                }
+                "--tick-frequency" => {
+                    let value = required_value(&flag, args.next())?;
+                    tick_frequency = parse_positive_u64(&value).ok_or_else(|| {
+                        Rem6CliError::InvalidTraceReplayTickFrequency {
+                            value: value.clone(),
+                        }
+                    })?;
+                }
+                "--line-bytes" => {
+                    let value = required_value(&flag, args.next())?;
+                    line_bytes = parse_positive_u64(&value).ok_or_else(|| {
+                        Rem6CliError::InvalidTraceReplayLineBytes {
+                            value: value.clone(),
+                        }
+                    })?;
+                }
+                "--agent" => {
+                    let value = required_value(&flag, args.next())?;
+                    agent = value
+                        .parse()
+                        .map_err(|_| Rem6CliError::InvalidTraceReplayAgent {
+                            value: value.clone(),
+                        })?;
+                }
+                "--control-partition" => {
+                    let value = required_value(&flag, args.next())?;
+                    control_partition = value.parse().map_err(|_| {
+                        Rem6CliError::InvalidTraceReplayControlPartition {
+                            value: value.clone(),
+                        }
+                    })?;
+                }
+                "--stats-format" => {
+                    stats_format = StatsFormat::parse(&required_value(&flag, args.next())?)?;
+                }
+                "--output" => {
+                    output = Some(PathBuf::from(required_value(&flag, args.next())?));
+                }
+                "--stats-output" => {
+                    stats_output = Some(PathBuf::from(required_value(&flag, args.next())?));
+                }
+                _ => return Err(Rem6CliError::UnknownFlag { flag }),
+            }
+        }
+
+        if let (Some(output), Some(stats_output)) = (&output, &stats_output) {
+            if output == stats_output {
+                return Err(Rem6CliError::ConflictingOutputPaths {
+                    path: output.to_path_buf(),
+                });
+            }
+        }
+        let memory_route_delay = memory_route_delay.unwrap_or(min_remote_delay);
+        if memory_route_delay < min_remote_delay {
+            return Err(Rem6CliError::MemoryRouteDelayBelowMinRemoteDelay {
+                memory_route_delay,
+                min_remote_delay,
+            });
+        }
+
+        Ok(Self {
+            trace: trace.ok_or(Rem6CliError::MissingRequiredFlag { flag: "--trace" })?,
+            route: route.ok_or(Rem6CliError::MissingRequiredFlag { flag: "--route" })?,
+            memory_start: memory_start.ok_or(Rem6CliError::MissingRequiredFlag {
+                flag: "--memory-start",
+            })?,
+            memory_size: memory_size.ok_or(Rem6CliError::MissingRequiredFlag {
+                flag: "--memory-size",
+            })?,
+            max_tick: max_tick.ok_or(Rem6CliError::MissingRequiredFlag { flag: "--max-tick" })?,
+            min_remote_delay,
+            memory_route_delay,
+            tick_frequency,
+            line_bytes,
+            agent,
+            control_partition,
+            stats_format,
+            output,
+            stats_output,
+        })
+    }
+
+    pub fn trace(&self) -> &Path {
+        &self.trace
+    }
+
+    pub fn route(&self) -> &str {
+        &self.route
+    }
+
+    pub const fn memory_start(&self) -> u64 {
+        self.memory_start
+    }
+
+    pub const fn memory_size(&self) -> u64 {
+        self.memory_size
+    }
+
+    pub const fn max_tick(&self) -> u64 {
+        self.max_tick
+    }
+
+    pub const fn min_remote_delay(&self) -> u64 {
+        self.min_remote_delay
+    }
+
+    pub const fn memory_route_delay(&self) -> u64 {
+        self.memory_route_delay
+    }
+
+    pub const fn tick_frequency(&self) -> u64 {
+        self.tick_frequency
+    }
+
+    pub const fn line_bytes(&self) -> u64 {
+        self.line_bytes
+    }
+
+    pub const fn agent(&self) -> u32 {
+        self.agent
+    }
+
+    pub const fn control_partition(&self) -> u32 {
+        self.control_partition
+    }
+
+    pub const fn stats_format(&self) -> StatsFormat {
+        self.stats_format
     }
 
     pub fn output(&self) -> Option<&Path> {

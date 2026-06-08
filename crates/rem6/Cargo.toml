@@ -16,6 +16,8 @@ rem6-stats = { path = "../rem6-stats" }
 rem6-system = { path = "../rem6-system" }
 rem6-traffic = { path = "../rem6-traffic" }
 rem6-transport = { path = "../rem6-transport" }
+rem6-workload = { path = "../rem6-workload" }
+sha2 = "0.10"
 
 [lints]
 workspace = true

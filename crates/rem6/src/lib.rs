@@ -26,6 +26,7 @@ use rem6_transport::{
 };
 
 mod artifact_json;
+mod cli_output;
 mod config;
 mod formatting;
 mod guest_memory;
@@ -33,18 +34,22 @@ mod gups_cli;
 mod parallel_stats;
 mod runtime_memory;
 mod stats_output;
+mod trace_replay_cli;
 #[cfg(test)]
 mod transport_summary_tests;
 
 pub use config::{
     CliDramMemoryProfile, LoadBlobRequest, MemoryDumpRequest, Rem6GupsConfig, Rem6RunConfig,
-    RequestedIsa, StatsFormat,
+    Rem6TraceReplayConfig, RequestedIsa, StatsFormat,
 };
-use formatting::{elf_architecture_name, json_escape};
+use formatting::elf_architecture_name;
 use guest_memory::{build_cli_memory_store, read_load_blobs, LoadedBlob};
 pub use gups_cli::{run_gups_config, Rem6GupsArtifact, Rem6GupsExecutionSummary};
 use runtime_memory::{cli_memory_response, read_memory_dumps, CliMemoryRuntime};
 use stats_output::{run_stats_output, Rem6StatsInputs};
+pub use trace_replay_cli::{
+    run_trace_replay_config, Rem6TraceReplayArtifact, Rem6TraceReplayExecutionSummary,
+};
 
 const DEFAULT_CACHE_LINE_BYTES: u64 = 16;
 const CLI_MEMORY_DUMP_AGENT: AgentId = AgentId::new(u32::MAX);
@@ -353,6 +358,24 @@ pub enum Rem6CliError {
     InvalidGupsRngState {
         value: String,
     },
+    InvalidTraceReplayMemoryStart {
+        value: String,
+    },
+    InvalidTraceReplayMemorySize {
+        value: String,
+    },
+    InvalidTraceReplayTickFrequency {
+        value: String,
+    },
+    InvalidTraceReplayLineBytes {
+        value: String,
+    },
+    InvalidTraceReplayAgent {
+        value: String,
+    },
+    InvalidTraceReplayControlPartition {
+        value: String,
+    },
     MemoryRouteDelayBelowMinRemoteDelay {
         memory_route_delay: u64,
         min_remote_delay: u64,
@@ -474,6 +497,24 @@ impl fmt::Display for Rem6CliError {
             Self::InvalidGupsRngState { value } => {
                 write!(formatter, "invalid GUPS rng state {value}")
             }
+            Self::InvalidTraceReplayMemoryStart { value } => {
+                write!(formatter, "invalid trace replay memory start {value}")
+            }
+            Self::InvalidTraceReplayMemorySize { value } => {
+                write!(formatter, "invalid trace replay memory size {value}")
+            }
+            Self::InvalidTraceReplayTickFrequency { value } => {
+                write!(formatter, "invalid trace replay tick frequency {value}")
+            }
+            Self::InvalidTraceReplayLineBytes { value } => {
+                write!(formatter, "invalid trace replay line bytes {value}")
+            }
+            Self::InvalidTraceReplayAgent { value } => {
+                write!(formatter, "invalid trace replay agent {value}")
+            }
+            Self::InvalidTraceReplayControlPartition { value } => {
+                write!(formatter, "invalid trace replay control partition {value}")
+            }
             Self::MemoryRouteDelayBelowMinRemoteDelay {
                 memory_route_delay,
                 min_remote_delay,
@@ -576,7 +617,8 @@ where
     };
     match command.as_str() {
         "run" => run_run_cli(args),
-        "gups" => run_gups_cli(args),
+        "gups" => gups_cli::run_gups_cli(args),
+        "trace-replay" => trace_replay_cli::run_trace_replay_cli(args),
         _ => Err(Rem6CliError::UnsupportedCommand {
             command: command.clone(),
         }),
@@ -591,81 +633,14 @@ fn run_run_cli(args: Vec<String>) -> Result<String, Rem6CliError> {
         StatsFormat::Json => artifact.to_json(),
         StatsFormat::Text => artifact.stats_text.clone(),
     };
-    if let Some(path) = artifact.config.stats_output() {
-        let stats_output = match stats_format {
-            StatsFormat::Json => format!("{}\n", artifact.stats_json),
-            StatsFormat::Text => artifact.stats_text.clone(),
-        };
-        std::fs::write(path, stats_output).map_err(|error| Rem6CliError::WriteOutput {
-            path: path.to_path_buf(),
-            error: error.to_string(),
-        })?;
-    }
-    if let Some(path) = artifact.config.output() {
-        std::fs::write(path, output).map_err(|error| Rem6CliError::WriteOutput {
-            path: path.to_path_buf(),
-            error: error.to_string(),
-        })?;
-        return Ok(output_envelope_json(
-            path,
-            artifact.config.stats_output(),
-            stats_format,
-        ));
-    }
-    Ok(output)
-}
-
-fn run_gups_cli(args: Vec<String>) -> Result<String, Rem6CliError> {
-    let config = Rem6GupsConfig::parse_args(args)?;
-    let artifact = run_gups_config(config)?;
-    let stats_format = artifact.config.stats_format();
-    let output = match stats_format {
-        StatsFormat::Json => artifact.to_json(),
-        StatsFormat::Text => artifact.stats_text.clone(),
-    };
-    if let Some(path) = artifact.config.stats_output() {
-        let stats_output = match stats_format {
-            StatsFormat::Json => format!("{}\n", artifact.stats_json),
-            StatsFormat::Text => artifact.stats_text.clone(),
-        };
-        std::fs::write(path, stats_output).map_err(|error| Rem6CliError::WriteOutput {
-            path: path.to_path_buf(),
-            error: error.to_string(),
-        })?;
-    }
-    if let Some(path) = artifact.config.output() {
-        std::fs::write(path, output).map_err(|error| Rem6CliError::WriteOutput {
-            path: path.to_path_buf(),
-            error: error.to_string(),
-        })?;
-        return Ok(output_envelope_json(
-            path,
-            artifact.config.stats_output(),
-            stats_format,
-        ));
-    }
-    Ok(output)
-}
-
-fn output_envelope_json(
-    artifact: &Path,
-    stats_artifact: Option<&Path>,
-    format: StatsFormat,
-) -> String {
-    let artifact = json_escape(&artifact.display().to_string());
-    match stats_artifact {
-        Some(stats_artifact) => format!(
-            "{{\"schema\":\"rem6.cli.output.v1\",\"format\":\"{}\",\"artifact\":\"{}\",\"stats_artifact\":\"{}\"}}\n",
-            format.as_str(),
-            artifact,
-            json_escape(&stats_artifact.display().to_string())
-        ),
-        None => format!(
-            "{{\"schema\":\"rem6.cli.output.v1\",\"format\":\"{}\",\"artifact\":\"{}\"}}\n",
-            format.as_str(),
-            artifact
-        ),
-    }
+    cli_output::emit_cli_output(
+        output,
+        &artifact.stats_json,
+        &artifact.stats_text,
+        artifact.config.output(),
+        artifact.config.stats_output(),
+        stats_format,
+    )
 }
 
 pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError> {

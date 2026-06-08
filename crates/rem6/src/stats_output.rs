@@ -5,7 +5,7 @@ use super::{
     parallel_stats, stats_error, Rem6CliError, Rem6DramSummary, Rem6ExecutionStop,
     Rem6ExecutionSummary, Rem6GupsConfig, Rem6GupsExecutionSummary, Rem6LoadBlobSummary,
     Rem6MemoryDump, Rem6MemoryTransportCounters, Rem6MemoryTransportSummary, Rem6RunConfig,
-    RequestedIsa,
+    Rem6TraceReplayConfig, Rem6TraceReplayExecutionSummary, RequestedIsa,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -28,6 +28,11 @@ pub(super) struct Rem6GupsStatsInputs<'a> {
     pub(super) execution: &'a Rem6GupsExecutionSummary,
     pub(super) transport: &'a Rem6MemoryTransportSummary,
     pub(super) memory_dumps: &'a [Rem6MemoryDump],
+}
+
+pub(super) struct Rem6TraceReplayStatsInputs<'a> {
+    pub(super) config: &'a Rem6TraceReplayConfig,
+    pub(super) execution: &'a Rem6TraceReplayExecutionSummary,
 }
 
 pub(super) fn run_stats_output(
@@ -403,6 +408,228 @@ pub(super) fn gups_stats_output(
         json: stats_snapshot_json(&snapshot),
         text: stats_snapshot_text(&snapshot),
     })
+}
+
+pub(super) fn trace_replay_stats_output(
+    inputs: Rem6TraceReplayStatsInputs<'_>,
+) -> Result<Rem6StatsOutput, Rem6CliError> {
+    let mut stats = StatsRegistry::new();
+    increment_stat(
+        &mut stats,
+        "sim.trace_replay.max_tick",
+        "Tick",
+        StatResetPolicy::Constant,
+        inputs.config.max_tick(),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.trace_replay.memory_start",
+        "Address",
+        StatResetPolicy::Constant,
+        inputs.config.memory_start(),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.trace_replay.memory_size",
+        "Byte",
+        StatResetPolicy::Constant,
+        inputs.config.memory_size(),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.trace_replay.tick_frequency",
+        "Hz",
+        StatResetPolicy::Constant,
+        inputs.config.tick_frequency(),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.trace_replay.line_bytes",
+        "Byte",
+        StatResetPolicy::Constant,
+        inputs.config.line_bytes(),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.trace_replay.agent",
+        "Value",
+        StatResetPolicy::Constant,
+        u64::from(inputs.config.agent()),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.trace_replay.control_partition",
+        "Value",
+        StatResetPolicy::Constant,
+        u64::from(inputs.config.control_partition()),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.trace_replay.scheduler.min_remote_delay",
+        "Tick",
+        StatResetPolicy::Constant,
+        inputs.config.min_remote_delay(),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.trace_replay.memory.route_delay",
+        "Tick",
+        StatResetPolicy::Constant,
+        inputs.config.memory_route_delay(),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.trace_replay.final_tick",
+        "Tick",
+        StatResetPolicy::Monotonic,
+        inputs.execution.final_tick(),
+    )?;
+    emit_trace_replay_summary_stats(&mut stats, inputs.execution.summary())?;
+
+    let snapshot = stats.snapshot(0);
+    Ok(Rem6StatsOutput {
+        json: stats_snapshot_json(&snapshot),
+        text: stats_snapshot_text(&snapshot),
+    })
+}
+
+fn emit_trace_replay_summary_stats(
+    stats: &mut StatsRegistry,
+    summary: &rem6_workload::WorkloadTrafficTraceReplaySummary,
+) -> Result<(), Rem6CliError> {
+    increment_stat(
+        stats,
+        "sim.trace_replay.scheduled",
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.scheduled_count() as u64,
+    )?;
+    increment_stat(
+        stats,
+        "sim.trace_replay.responses.delivered",
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.response_delivery_count() as u64,
+    )?;
+    increment_stat(
+        stats,
+        "sim.trace_replay.responses.completed",
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.trace_completed_response_count() as u64,
+    )?;
+    increment_stat(
+        stats,
+        "sim.trace_replay.responses.retry",
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.trace_retry_response_count() as u64,
+    )?;
+    increment_stat(
+        stats,
+        "sim.trace_replay.responses.store_conditional_failed",
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.trace_store_conditional_failed_response_count() as u64,
+    )?;
+    increment_stat(
+        stats,
+        "sim.trace_replay.responses.reads",
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.trace_read_response_count() as u64,
+    )?;
+    increment_stat(
+        stats,
+        "sim.trace_replay.responses.writes",
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.trace_write_response_count() as u64,
+    )?;
+    increment_stat(
+        stats,
+        "sim.trace_replay.response_data_bytes",
+        "Byte",
+        StatResetPolicy::Monotonic,
+        summary.trace_response_data_byte_count(),
+    )?;
+    increment_stat(
+        stats,
+        "sim.trace_replay.response_fill_data_bytes",
+        "Byte",
+        StatResetPolicy::Monotonic,
+        summary.trace_response_fill_data_byte_count(),
+    )?;
+    increment_stat(
+        stats,
+        "sim.trace_replay.memory_failures",
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.memory_failure_count() as u64,
+    )?;
+    increment_stat(
+        stats,
+        "sim.trace_replay.memory_failures.read",
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.memory_failure_read_count() as u64,
+    )?;
+    increment_stat(
+        stats,
+        "sim.trace_replay.memory_failures.write",
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.memory_failure_write_count() as u64,
+    )?;
+    increment_stat(
+        stats,
+        "sim.trace_replay.memory_failures.functional_read",
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.memory_failure_functional_read_count() as u64,
+    )?;
+    increment_stat(
+        stats,
+        "sim.trace_replay.memory_failures.functional_write",
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.memory_failure_functional_write_count() as u64,
+    )?;
+    increment_stat(
+        stats,
+        "sim.trace_replay.control_acks",
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.control_ack_count() as u64,
+    )?;
+    increment_stat(
+        stats,
+        "sim.trace_replay.control_acks.sync",
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.sync_control_ack_count() as u64,
+    )?;
+    increment_stat(
+        stats,
+        "sim.trace_replay.control_failures",
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.control_failure_count() as u64,
+    )?;
+    increment_stat(
+        stats,
+        "sim.trace_replay.control_failures.sync",
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.sync_control_failure_count() as u64,
+    )?;
+    increment_stat(
+        stats,
+        "sim.trace_replay.sideband_events",
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.sideband_event_count() as u64,
+    )
 }
 
 fn emit_gups_response_stats(

@@ -13,7 +13,8 @@ use rem6_traffic::{
 };
 use rem6_transport::{MemoryRoute, MemoryTrace, MemoryTransport};
 
-use crate::config::Rem6GupsConfig;
+use crate::cli_output::emit_cli_output;
+use crate::config::{Rem6GupsConfig, StatsFormat};
 use crate::runtime_memory::{read_memory_dumps, CliMemoryRuntime};
 use crate::stats_output::{gups_stats_output, Rem6GupsStatsInputs};
 use crate::{
@@ -45,6 +46,24 @@ pub struct Rem6GupsExecutionSummary {
     pub(crate) final_tick: u64,
     pub(crate) scheduled_requests: u64,
     pub(crate) response_stats: TrafficGupsTransportResponseStats,
+}
+
+pub(crate) fn run_gups_cli(args: Vec<String>) -> Result<String, Rem6CliError> {
+    let config = Rem6GupsConfig::parse_args(args)?;
+    let artifact = run_gups_config(config)?;
+    let stats_format = artifact.config.stats_format();
+    let output = match stats_format {
+        StatsFormat::Json => artifact.to_json(),
+        StatsFormat::Text => artifact.stats_text.clone(),
+    };
+    emit_cli_output(
+        output,
+        &artifact.stats_json,
+        &artifact.stats_text,
+        artifact.config.output(),
+        artifact.config.stats_output(),
+        stats_format,
+    )
 }
 
 pub fn run_gups_config(config: Rem6GupsConfig) -> Result<Rem6GupsArtifact, Rem6CliError> {

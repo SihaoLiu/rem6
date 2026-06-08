@@ -57,6 +57,7 @@ pub(crate) struct ManifestIdentityInput<'a> {
     pub(crate) resources: &'a [WorkloadResource],
     pub(crate) required_resources: &'a [WorkloadResourceId],
     pub(crate) host_events: &'a [WorkloadHostEvent],
+    pub(crate) expected_stop_reason: Option<&'a str>,
     pub(crate) expected_clean_parallel_diagnostics:
         &'a [WorkloadExpectedCleanParallelDiagnostics],
     pub(crate) expected_parallel_wait_for_edge_kind_counts:
@@ -174,6 +175,10 @@ pub(crate) fn manifest_identity(input: ManifestIdentityInput<'_>) -> WorkloadMan
     for event in input.host_events {
         hash_u64(&mut hash, event.tick());
         hash_host_event(&mut hash, event.intent());
+    }
+    if let Some(reason) = input.expected_stop_reason {
+        hash_str(&mut hash, "expected_stop_reason");
+        hash_str(&mut hash, reason);
     }
     hash_u64(
         &mut hash,

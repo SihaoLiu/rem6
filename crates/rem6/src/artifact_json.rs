@@ -5,7 +5,8 @@ use super::{
     Rem6CoreSummary, Rem6DramSummary, Rem6ExecutionStop, Rem6ExecutionSummary, Rem6GupsArtifact,
     Rem6GupsExecutionSummary, Rem6LoadBlobSummary, Rem6MemoryDump, Rem6MemoryTransportCounters,
     Rem6MemoryTransportRouteSummary, Rem6MemoryTransportSummary, Rem6ParallelFrontierSummary,
-    Rem6ParallelPartitionSummary, Rem6ParallelReadyPartitionSummary, Rem6RunArtifact, RequestedIsa,
+    Rem6ParallelPartitionSummary, Rem6ParallelReadyPartitionSummary, Rem6RunArtifact,
+    Rem6TraceReplayArtifact, Rem6TraceReplayExecutionSummary, RequestedIsa,
 };
 
 impl Rem6RunArtifact {
@@ -141,6 +142,37 @@ impl Rem6GupsArtifact {
     }
 }
 
+impl Rem6TraceReplayArtifact {
+    pub fn to_json(&self) -> String {
+        format!(
+            "{{\"schema\":\"{}\",\"generator\":\"trace-replay\",\"trace\":\"{}\",\"trace_digest\":\"{}\",\"route\":\"{}\",\"memory_start\":\"0x{:x}\",\"memory_size\":{},\"tick_frequency\":{},\"line_bytes\":{},\"agent\":{},\"control_partition\":{},\"simulation\":{},\"summary\":{},\"stats\":{}}}\n",
+            self.schema,
+            json_escape(&self.config.trace().display().to_string()),
+            json_escape(&self.trace_digest),
+            json_escape(self.config.route()),
+            self.config.memory_start(),
+            self.config.memory_size(),
+            self.config.tick_frequency(),
+            self.config.line_bytes(),
+            self.config.agent(),
+            self.config.control_partition(),
+            self.execution.to_json(self.config.max_tick()),
+            traffic_trace_summary_json(self.execution.summary()),
+            self.stats_json,
+        )
+    }
+}
+
+impl Rem6TraceReplayExecutionSummary {
+    fn to_json(&self, max_tick: u64) -> String {
+        format!(
+            "{{\"status\":\"completed\",\"max_tick\":{},\"final_tick\":{}}}",
+            max_tick,
+            self.final_tick(),
+        )
+    }
+}
+
 impl Rem6GupsExecutionSummary {
     fn to_json(&self, max_tick: u64) -> String {
         format!(
@@ -151,6 +183,34 @@ impl Rem6GupsExecutionSummary {
             gups_response_stats_json(&self.response_stats),
         )
     }
+}
+
+fn traffic_trace_summary_json(
+    summary: &rem6_workload::WorkloadTrafficTraceReplaySummary,
+) -> String {
+    format!(
+        "{{\"route\":\"{}\",\"scheduled_count\":{},\"response_delivery_count\":{},\"trace_completed_response_count\":{},\"trace_retry_response_count\":{},\"trace_store_conditional_failed_response_count\":{},\"trace_read_response_count\":{},\"trace_write_response_count\":{},\"trace_response_data_byte_count\":{},\"trace_response_fill_data_byte_count\":{},\"memory_failure_count\":{},\"memory_failure_read_count\":{},\"memory_failure_write_count\":{},\"memory_failure_functional_read_count\":{},\"memory_failure_functional_write_count\":{},\"control_ack_count\":{},\"sync_control_ack_count\":{},\"control_failure_count\":{},\"sync_control_failure_count\":{},\"sideband_event_count\":{}}}",
+        json_escape(summary.route().as_str()),
+        summary.scheduled_count(),
+        summary.response_delivery_count(),
+        summary.trace_completed_response_count(),
+        summary.trace_retry_response_count(),
+        summary.trace_store_conditional_failed_response_count(),
+        summary.trace_read_response_count(),
+        summary.trace_write_response_count(),
+        summary.trace_response_data_byte_count(),
+        summary.trace_response_fill_data_byte_count(),
+        summary.memory_failure_count(),
+        summary.memory_failure_read_count(),
+        summary.memory_failure_write_count(),
+        summary.memory_failure_functional_read_count(),
+        summary.memory_failure_functional_write_count(),
+        summary.control_ack_count(),
+        summary.sync_control_ack_count(),
+        summary.control_failure_count(),
+        summary.sync_control_failure_count(),
+        summary.sideband_event_count(),
+    )
 }
 
 fn gups_response_stats_json(stats: &rem6_system::TrafficGupsTransportResponseStats) -> String {

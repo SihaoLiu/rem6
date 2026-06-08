@@ -192,6 +192,7 @@ pub struct WorkloadManifest {
     resources: Vec<WorkloadResource>,
     required_resources: Vec<WorkloadResourceId>,
     host_events: Vec<WorkloadHostEvent>,
+    expected_stop_reason: Option<String>,
     expected_clean_parallel_diagnostics: Vec<WorkloadExpectedCleanParallelDiagnostics>,
     expected_parallel_wait_for_edge_kind_counts: Vec<WorkloadExpectedParallelWaitForEdgeKindCount>,
     expected_parallel_wait_for_edge_kind_windows:
@@ -304,6 +305,10 @@ impl WorkloadManifest {
 
     pub fn host_events(&self) -> &[WorkloadHostEvent] {
         &self.host_events
+    }
+
+    pub fn expected_stop_reason(&self) -> Option<&str> {
+        self.expected_stop_reason.as_deref()
     }
 
     pub fn expected_data_cache_protocol_run_counts(
@@ -434,6 +439,7 @@ pub struct WorkloadManifestBuilder {
     resources: BTreeMap<WorkloadResourceId, WorkloadResource>,
     required_resources: BTreeSet<WorkloadResourceId>,
     host_events: Vec<WorkloadHostEvent>,
+    expected_stop_reason: Option<String>,
     expected_clean_parallel_diagnostics: Vec<WorkloadExpectedCleanParallelDiagnostics>,
     expected_parallel_wait_for_edge_kind_counts: Vec<WorkloadExpectedParallelWaitForEdgeKindCount>,
     expected_parallel_wait_for_edge_kind_windows:
@@ -507,6 +513,7 @@ impl WorkloadManifestBuilder {
             resources: BTreeMap::new(),
             required_resources: BTreeSet::new(),
             host_events: Vec::new(),
+            expected_stop_reason: None,
             expected_clean_parallel_diagnostics: Vec::new(),
             expected_parallel_wait_for_edge_kind_counts: Vec::new(),
             expected_parallel_wait_for_edge_kind_windows: Vec::new(),
@@ -973,6 +980,11 @@ impl WorkloadManifestBuilder {
         self
     }
 
+    pub fn with_expected_stop_reason(mut self, reason: impl Into<String>) -> Self {
+        self.expected_stop_reason = Some(reason.into());
+        self
+    }
+
     pub fn with_topology(mut self, topology: WorkloadTopology) -> Self {
         self.topology = Some(topology);
         self
@@ -1074,6 +1086,7 @@ impl WorkloadManifestBuilder {
             resources: &resources,
             required_resources: &required_resources,
             host_events: &self.host_events,
+            expected_stop_reason: self.expected_stop_reason.as_deref(),
             expected_clean_parallel_diagnostics: &self.expected_clean_parallel_diagnostics,
             expected_parallel_wait_for_edge_kind_counts: &self
                 .expected_parallel_wait_for_edge_kind_counts,
@@ -1152,6 +1165,7 @@ impl WorkloadManifestBuilder {
             resources,
             required_resources,
             host_events: self.host_events,
+            expected_stop_reason: self.expected_stop_reason,
             expected_clean_parallel_diagnostics: self.expected_clean_parallel_diagnostics,
             expected_parallel_wait_for_edge_kind_counts: self
                 .expected_parallel_wait_for_edge_kind_counts,

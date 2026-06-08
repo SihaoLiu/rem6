@@ -133,6 +133,8 @@ pub struct WorkloadReplayPlan {
 impl WorkloadReplayPlan {
     pub fn from_manifest(manifest: &WorkloadManifest) -> Result<Self, WorkloadError> {
         let host_events = manifest.host_events().to_vec();
+        let planned_stop_reason =
+            manifest_planned_stop_reason(manifest.expected_stop_reason(), &host_events)?;
         Ok(Self {
             manifest_identity: manifest.identity(),
             boot: manifest.boot().clone(),
@@ -142,7 +144,7 @@ impl WorkloadReplayPlan {
             planned_checkpoint_labels: planned_checkpoint_labels(&host_events),
             planned_checkpoint_restore_labels: planned_checkpoint_restore_labels(&host_events),
             planned_execution_mode_switches: planned_execution_mode_switches(&host_events),
-            planned_stop_reason: planned_stop_reason(&host_events),
+            planned_stop_reason,
             expected_clean_parallel_diagnostics: manifest
                 .expected_clean_parallel_diagnostics()
                 .to_vec(),
@@ -1335,6 +1337,23 @@ fn label_counts(labels: &[String]) -> BTreeMap<&str, usize> {
         *counts.entry(label.as_str()).or_insert(0) += 1;
     }
     counts
+}
+
+fn manifest_planned_stop_reason(
+    expected_stop_reason: Option<&str>,
+    host_events: &[WorkloadHostEvent],
+) -> Result<Option<String>, WorkloadError> {
+    let host_stop_reason = planned_stop_reason(host_events);
+    match (expected_stop_reason, host_stop_reason) {
+        (Some(expected), Some(actual)) if expected != actual => {
+            Err(WorkloadError::StopReasonMismatch {
+                expected: expected.to_string(),
+                actual: Some(actual),
+            })
+        }
+        (Some(expected), _) => Ok(Some(expected.to_string())),
+        (None, actual) => Ok(actual),
+    }
 }
 
 fn planned_checkpoint_ticks_by_label(events: &[WorkloadHostEvent]) -> BTreeMap<String, Vec<Tick>> {

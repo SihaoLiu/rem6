@@ -786,6 +786,10 @@ impl TrafficTrace {
     pub fn is_empty(&self) -> bool {
         self.elements.is_empty()
     }
+
+    pub fn max_tick(&self) -> Option<u64> {
+        self.elements.iter().map(|element| element.tick).max()
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
