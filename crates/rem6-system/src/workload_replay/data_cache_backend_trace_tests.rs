@@ -5,7 +5,8 @@ use rem6_memory::{AccessSize, AgentId, ByteMask, MemoryRequest, MemoryRequestId}
 use rem6_protocol_mesi::MesiState;
 use rem6_traffic::{
     TrafficTrace, TrafficTraceCacheKind, TrafficTraceConfig, TrafficTraceEvent,
-    TrafficTraceGenerator, TrafficTraceResponseKind, TrafficTraceSyncEvent, TrafficTraceSyncKind,
+    TrafficTraceGenerator, TrafficTraceHtmEvent, TrafficTraceHtmKind, TrafficTraceResponseKind,
+    TrafficTraceSyncEvent, TrafficTraceSyncKind,
 };
 use rem6_transport::{MemoryRoute, MemoryTrace, MemoryTransport, TransportEndpointId};
 use rem6_workload::WorkloadRouteId;
@@ -117,6 +118,7 @@ fn clean_shared_response_event() -> TrafficTraceResponseEvent {
 const GEM5_MEM_SYNC_REQ: u32 = 39;
 const GEM5_FLAG_KERNEL: u32 = 0x0000_1000;
 const GEM5_SYNC_INV_L1: u32 = 0x0000_0001;
+const GEM5_HTM_REQ: u32 = 56;
 
 fn sync_event(
     command: u32,
@@ -134,6 +136,21 @@ fn sync_event(
     generator.enter(0);
     match generator.next_event(0, 0).unwrap().unwrap() {
         TrafficTraceEvent::Sync(event) => event,
+        event => panic!("unexpected trace event: {event:?}"),
+    }
+}
+
+fn htm_event(command: u32, packet_id: Option<u64>, pc: Option<u64>) -> TrafficTraceHtmEvent {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace_with_fields(1_000, command, None, None, None, packet_id, pc),
+        1_000,
+    )
+    .unwrap();
+    let config = TrafficTraceConfig::new(AgentId::new(7), layout(), 99, trace).unwrap();
+    let mut generator = TrafficTraceGenerator::new(config);
+    generator.enter(0);
+    match generator.next_event(0, 0).unwrap().unwrap() {
+        TrafficTraceEvent::Htm(event) => event,
         event => panic!("unexpected trace event: {event:?}"),
     }
 }
@@ -476,6 +493,59 @@ fn trace_sync_l1_invalidation_controller_error_keeps_sync_context() {
         RiscvDataCacheControllerError::Msi(
             rem6_coherence::HarnessError::MissingBackingMemory { line }
         ) if *line == Address::new(0x3000)
+    ));
+}
+
+#[test]
+fn trace_htm_rollback_capture_controller_error_keeps_htm_context() {
+    let mut backend = WorkloadDataCacheBackend::new([WorkloadDataCacheLineBackend::new(
+        &data_cache_config(WorkloadDataCacheProtocol::Msi),
+        layout(),
+        Address::new(0x3000),
+        WorkloadDataCacheLineMemory::Line(line_data()),
+        vec![cache_config(1)],
+    )
+    .unwrap()]);
+    let line = backend.lines.get_mut(&Address::new(0x3000)).unwrap();
+    let WorkloadDataCacheHarness::Msi(harness) = &mut line.harness else {
+        panic!("expected MSI backend harness");
+    };
+    harness
+        .submit_cpu_request(agent(1), write(1, 9, 0x3008, vec![0xaa]))
+        .unwrap();
+    let event = htm_event(GEM5_HTM_REQ, Some(714), Some(0x2020));
+    assert_eq!(event.kind(), TrafficTraceHtmKind::Request);
+
+    let captured = backend.capture_trace_htm_rollback_from_event(
+        MemoryRouteId::new(11),
+        rem6_cpu::HtmTransactionUid::new(3),
+        event.tick() + 5,
+        event,
+    );
+    assert!(!captured);
+
+    let error = backend.take_error().unwrap();
+    let RiscvWorkloadReplayError::DataCacheController { record } = error else {
+        panic!("expected contextual data-cache controller error");
+    };
+    assert_eq!(record.tick(), event.tick() + 5);
+    assert_eq!(record.request_id(), None);
+    assert_eq!(record.trace_sequence(), Some(event.sequence()));
+    assert_eq!(record.trace_cache_kind(), None);
+    assert_eq!(record.trace_sync_kind(), None);
+    assert_eq!(record.trace_response_kind(), None);
+    assert_eq!(record.trace_htm_kind(), Some(TrafficTraceHtmKind::Request));
+    assert_eq!(record.trace_packet_id(), Some(714));
+    assert_eq!(record.protocol(), RiscvDataCacheProtocol::Msi);
+    assert_eq!(record.target(), MemoryTargetId::new(0));
+    assert_eq!(record.address(), Address::new(0x3000));
+    assert_eq!(record.line(), Address::new(0x3000));
+    assert_eq!(record.operation(), MemoryOperation::NoAccess);
+    assert!(matches!(
+        record.error(),
+        RiscvDataCacheControllerError::Msi(rem6_coherence::HarnessError::Scheduler(
+            rem6_kernel::SchedulerError::SnapshotContainsPendingEvents { pending_events }
+        )) if *pending_events == 1
     ));
 }
 

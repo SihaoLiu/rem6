@@ -27,7 +27,7 @@ use rem6_protocol_moesi::{MoesiCacheLine, MoesiState};
 use rem6_protocol_msi::{MsiCacheLine, MsiState};
 use rem6_traffic::{
     TrafficTraceCacheEvent, TrafficTraceDiagnosticEvent, TrafficTraceErrorEvent,
-    TrafficTraceResponseEvent, TrafficTraceSyncEvent,
+    TrafficTraceHtmEvent, TrafficTraceResponseEvent, TrafficTraceSyncEvent,
 };
 use rem6_transport::{MemoryRouteId, RequestDelivery, TargetOutcome, TransportEndpointId};
 use rem6_workload::{WorkloadDataCacheProtocol, WorkloadRiscvDataCache};
@@ -576,27 +576,27 @@ impl WorkloadDataCacheLineBackend {
 
     fn htm_rollback_snapshot(
         &self,
-    ) -> Result<WorkloadDataCacheLineRollbackSnapshot, RiscvWorkloadReplayError> {
+    ) -> Result<WorkloadDataCacheLineRollbackSnapshot, RiscvDataCacheControllerError> {
         let snapshot = match &self.harness {
             WorkloadDataCacheHarness::Msi(harness) => WorkloadDataCacheRollbackSnapshot::Msi(
                 harness
                     .quiescent_snapshot()
-                    .map_err(RiscvWorkloadReplayError::MsiDataCache)?,
+                    .map_err(RiscvDataCacheControllerError::Msi)?,
             ),
             WorkloadDataCacheHarness::Mesi(harness) => WorkloadDataCacheRollbackSnapshot::Mesi(
                 harness
                     .quiescent_snapshot()
-                    .map_err(RiscvWorkloadReplayError::MesiDataCache)?,
+                    .map_err(RiscvDataCacheControllerError::Mesi)?,
             ),
             WorkloadDataCacheHarness::Moesi(harness) => WorkloadDataCacheRollbackSnapshot::Moesi(
                 harness
                     .quiescent_snapshot()
-                    .map_err(RiscvWorkloadReplayError::MoesiDataCache)?,
+                    .map_err(RiscvDataCacheControllerError::Moesi)?,
             ),
             WorkloadDataCacheHarness::Chi(harness) => WorkloadDataCacheRollbackSnapshot::Chi(
                 harness
                     .quiescent_snapshot()
-                    .map_err(RiscvWorkloadReplayError::ChiDataCache)?,
+                    .map_err(RiscvDataCacheControllerError::Chi)?,
             ),
         };
         Ok(WorkloadDataCacheLineRollbackSnapshot {
@@ -1060,10 +1060,12 @@ impl WorkloadDataCacheBackend {
         )
     }
 
-    pub(super) fn capture_trace_htm_rollback(
+    pub(super) fn capture_trace_htm_rollback_from_event(
         &mut self,
         route: MemoryRouteId,
         transaction_uid: HtmTransactionUid,
+        tick: Tick,
+        event: TrafficTraceHtmEvent,
     ) -> bool {
         let key = WorkloadDataCacheRollbackKey::new(route, transaction_uid);
         if self.htm_rollbacks.contains_key(&key) {
@@ -1077,7 +1079,18 @@ impl WorkloadDataCacheBackend {
                     snapshots.insert(snapshot.line, snapshot);
                 }
                 Err(error) => {
-                    line.error = Some(error);
+                    let record = RiscvDataCacheControllerErrorRecord::from_trace_htm_event(
+                        tick,
+                        event,
+                        line.protocol,
+                        line.target,
+                        line.line,
+                        MemoryOperation::NoAccess,
+                        error,
+                    );
+                    line.error = Some(RiscvWorkloadReplayError::DataCacheController {
+                        record: Box::new(record),
+                    });
                     return false;
                 }
             }

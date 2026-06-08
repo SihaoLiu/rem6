@@ -3,7 +3,7 @@ use rem6_kernel::PartitionId;
 use rem6_memory::{Address, CacheLineLayout};
 use rem6_traffic::{
     TrafficTrace, TrafficTraceConfig, TrafficTraceEvent, TrafficTraceGenerator,
-    TrafficTraceResponseEvent,
+    TrafficTraceHtmEvent, TrafficTraceResponseEvent,
 };
 use rem6_transport::{MemoryRouteId, TransportEndpointId};
 use rem6_workload::{WorkloadDataCacheProtocol, WorkloadRiscvDataCache, WorkloadRouteId};
@@ -62,6 +62,27 @@ fn route(value: u64) -> MemoryRouteId {
     MemoryRouteId::new(value)
 }
 
+fn capture_trace_htm_rollback(
+    backend: &mut WorkloadDataCacheBackend,
+    route: MemoryRouteId,
+    transaction_uid: HtmTransactionUid,
+) -> bool {
+    backend.capture_trace_htm_rollback_from_event(route, transaction_uid, 3, htm_request_event())
+}
+
+fn htm_request_event() -> TrafficTraceHtmEvent {
+    let trace =
+        TrafficTrace::from_gem5_packet_trace(&gem5_packet_trace_htm_request(), 1_000).unwrap();
+    let config =
+        TrafficTraceConfig::new(rem6_memory::AgentId::new(7), layout(), 99, trace).unwrap();
+    let mut generator = TrafficTraceGenerator::new(config);
+    generator.enter(0);
+    match generator.next_event(0, 0).unwrap().unwrap() {
+        TrafficTraceEvent::Htm(event) => event,
+        event => panic!("unexpected trace event: {event:?}"),
+    }
+}
+
 fn response_event(command: u32, address: u64, size: u32) -> TrafficTraceResponseEvent {
     let trace =
         TrafficTrace::from_gem5_packet_trace(&gem5_packet_trace(command, address, size), 1_000)
@@ -86,6 +107,23 @@ fn write_response_event() -> TrafficTraceResponseEvent {
 
 fn store_conditional_response_event() -> TrafficTraceResponseEvent {
     response_event(29, 0x3008, 8)
+}
+
+fn gem5_packet_trace_htm_request() -> Vec<u8> {
+    let mut bytes = vec![0x67, 0x65, 0x6d, 0x35];
+    let mut header = Vec::new();
+    append_key(&mut header, 3, 0);
+    append_varint(&mut header, 1_000);
+    append_record(&mut bytes, &header);
+
+    let mut packet = Vec::new();
+    append_key(&mut packet, 1, 0);
+    append_varint(&mut packet, 4);
+    append_key(&mut packet, 2, 0);
+    append_varint(&mut packet, 56);
+    append_record(&mut bytes, &packet);
+
+    bytes
 }
 
 fn gem5_packet_trace(command: u32, address: u64, size: u32) -> Vec<u8> {
@@ -133,7 +171,11 @@ fn external_cache_write_marks_reader_memory_conflict() {
     let writer_route = route(12);
     let reader_uid = HtmTransactionUid::new(1);
 
-    assert!(backend.capture_trace_htm_rollback(reader_route, reader_uid));
+    assert!(capture_trace_htm_rollback(
+        &mut backend,
+        reader_route,
+        reader_uid
+    ));
     assert_eq!(
         backend
             .record_trace_htm_access_event(5, reader_route, reader_uid, read_response_event(), true)
@@ -165,7 +207,11 @@ fn failed_external_store_conditional_does_not_mark_memory_conflict() {
     let writer_route = route(12);
     let reader_uid = HtmTransactionUid::new(1);
 
-    assert!(backend.capture_trace_htm_rollback(reader_route, reader_uid));
+    assert!(capture_trace_htm_rollback(
+        &mut backend,
+        reader_route,
+        reader_uid
+    ));
     assert_eq!(
         backend
             .record_trace_htm_access_event(5, reader_route, reader_uid, read_response_event(), true)
@@ -194,7 +240,11 @@ fn dropped_trace_transaction_no_longer_contributes_conflicts() {
     let stale_uid = HtmTransactionUid::new(1);
     let writer_uid = HtmTransactionUid::new(2);
 
-    assert!(backend.capture_trace_htm_rollback(stale_route, stale_uid));
+    assert!(capture_trace_htm_rollback(
+        &mut backend,
+        stale_route,
+        stale_uid
+    ));
     assert_eq!(
         backend
             .record_trace_htm_access_event(5, stale_route, stale_uid, read_response_event(), true)
@@ -203,7 +253,11 @@ fn dropped_trace_transaction_no_longer_contributes_conflicts() {
     );
     assert!(backend.discard_trace_htm_transaction(stale_route, stale_uid));
 
-    assert!(backend.capture_trace_htm_rollback(writer_route, writer_uid));
+    assert!(capture_trace_htm_rollback(
+        &mut backend,
+        writer_route,
+        writer_uid
+    ));
     assert_eq!(
         backend
             .record_trace_htm_access_event(
@@ -231,14 +285,22 @@ fn active_writer_does_not_mark_itself_when_other_transaction_conflicts() {
     let reader_uid = HtmTransactionUid::new(1);
     let writer_uid = HtmTransactionUid::new(2);
 
-    assert!(backend.capture_trace_htm_rollback(reader_route, reader_uid));
+    assert!(capture_trace_htm_rollback(
+        &mut backend,
+        reader_route,
+        reader_uid
+    ));
     assert_eq!(
         backend
             .record_trace_htm_access_event(5, reader_route, reader_uid, read_response_event(), true)
             .len(),
         1
     );
-    assert!(backend.capture_trace_htm_rollback(writer_route, writer_uid));
+    assert!(capture_trace_htm_rollback(
+        &mut backend,
+        writer_route,
+        writer_uid
+    ));
     assert_eq!(
         backend
             .record_trace_htm_access_event(

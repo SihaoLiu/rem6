@@ -1339,7 +1339,7 @@ impl WorkloadTraceDataCacheConsumerInner {
                 data_cache
                     .lock()
                     .expect("workload data cache lock")
-                    .capture_trace_htm_rollback(self.route, begin.uid());
+                    .capture_trace_htm_rollback_from_event(self.route, begin.uid(), tick, htm);
             }
         }
         self.records
