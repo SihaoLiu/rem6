@@ -774,6 +774,24 @@ fn hash_expected_traffic_trace_replay_summary(
     hash_u64(hash, expected.minimum_sync_control_ack_count() as u64);
     hash_u64(hash, expected.minimum_htm_control_ack_count() as u64);
     hash_u64(hash, expected.minimum_control_failure_count() as u64);
+    hash_u64(
+        hash,
+        expected.minimum_control_failure_invalid_destination_count() as u64,
+    );
+    hash_u64(
+        hash,
+        expected.minimum_control_failure_bad_address_count() as u64,
+    );
+    hash_u64(hash, expected.minimum_control_failure_read_count() as u64);
+    hash_u64(hash, expected.minimum_control_failure_write_count() as u64);
+    hash_u64(
+        hash,
+        expected.minimum_control_failure_functional_read_count() as u64,
+    );
+    hash_u64(
+        hash,
+        expected.minimum_control_failure_functional_write_count() as u64,
+    );
     hash_u64(hash, expected.minimum_sync_control_failure_count() as u64);
     hash_u64(hash, expected.minimum_tlb_control_failure_count() as u64);
     hash_u64(hash, expected.minimum_cache_control_failure_count() as u64);

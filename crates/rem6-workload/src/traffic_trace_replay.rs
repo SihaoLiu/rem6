@@ -25,6 +25,12 @@ pub struct WorkloadTrafficTraceReplaySummary {
     sync_control_ack_count: usize,
     htm_control_ack_count: usize,
     control_failure_count: usize,
+    control_failure_invalid_destination_count: usize,
+    control_failure_bad_address_count: usize,
+    control_failure_read_count: usize,
+    control_failure_write_count: usize,
+    control_failure_functional_read_count: usize,
+    control_failure_functional_write_count: usize,
     sync_control_failure_count: usize,
     tlb_control_failure_count: usize,
     cache_control_failure_count: usize,
@@ -67,6 +73,12 @@ impl WorkloadTrafficTraceReplaySummary {
             sync_control_ack_count: 0,
             htm_control_ack_count: 0,
             control_failure_count: 0,
+            control_failure_invalid_destination_count: 0,
+            control_failure_bad_address_count: 0,
+            control_failure_read_count: 0,
+            control_failure_write_count: 0,
+            control_failure_functional_read_count: 0,
+            control_failure_functional_write_count: 0,
             sync_control_failure_count: 0,
             tlb_control_failure_count: 0,
             cache_control_failure_count: 0,
@@ -214,6 +226,48 @@ impl WorkloadTrafficTraceReplaySummary {
 
     pub fn with_control_failure_count(mut self, control_failure_count: usize) -> Self {
         self.control_failure_count = control_failure_count;
+        self
+    }
+
+    pub fn with_control_failure_invalid_destination_count(
+        mut self,
+        control_failure_invalid_destination_count: usize,
+    ) -> Self {
+        self.control_failure_invalid_destination_count = control_failure_invalid_destination_count;
+        self
+    }
+
+    pub fn with_control_failure_bad_address_count(
+        mut self,
+        control_failure_bad_address_count: usize,
+    ) -> Self {
+        self.control_failure_bad_address_count = control_failure_bad_address_count;
+        self
+    }
+
+    pub fn with_control_failure_read_count(mut self, control_failure_read_count: usize) -> Self {
+        self.control_failure_read_count = control_failure_read_count;
+        self
+    }
+
+    pub fn with_control_failure_write_count(mut self, control_failure_write_count: usize) -> Self {
+        self.control_failure_write_count = control_failure_write_count;
+        self
+    }
+
+    pub fn with_control_failure_functional_read_count(
+        mut self,
+        control_failure_functional_read_count: usize,
+    ) -> Self {
+        self.control_failure_functional_read_count = control_failure_functional_read_count;
+        self
+    }
+
+    pub fn with_control_failure_functional_write_count(
+        mut self,
+        control_failure_functional_write_count: usize,
+    ) -> Self {
+        self.control_failure_functional_write_count = control_failure_functional_write_count;
         self
     }
 
@@ -385,6 +439,30 @@ impl WorkloadTrafficTraceReplaySummary {
         self.control_failure_count
     }
 
+    pub const fn control_failure_invalid_destination_count(&self) -> usize {
+        self.control_failure_invalid_destination_count
+    }
+
+    pub const fn control_failure_bad_address_count(&self) -> usize {
+        self.control_failure_bad_address_count
+    }
+
+    pub const fn control_failure_read_count(&self) -> usize {
+        self.control_failure_read_count
+    }
+
+    pub const fn control_failure_write_count(&self) -> usize {
+        self.control_failure_write_count
+    }
+
+    pub const fn control_failure_functional_read_count(&self) -> usize {
+        self.control_failure_functional_read_count
+    }
+
+    pub const fn control_failure_functional_write_count(&self) -> usize {
+        self.control_failure_functional_write_count
+    }
+
     pub const fn sync_control_failure_count(&self) -> usize {
         self.sync_control_failure_count
     }
@@ -485,6 +563,19 @@ impl WorkloadTrafficTraceReplaySummary {
             sync_control_ack_count: self.sync_control_ack_count + other.sync_control_ack_count,
             htm_control_ack_count: self.htm_control_ack_count + other.htm_control_ack_count,
             control_failure_count: self.control_failure_count + other.control_failure_count,
+            control_failure_invalid_destination_count: self
+                .control_failure_invalid_destination_count
+                + other.control_failure_invalid_destination_count,
+            control_failure_bad_address_count: self.control_failure_bad_address_count
+                + other.control_failure_bad_address_count,
+            control_failure_read_count: self.control_failure_read_count
+                + other.control_failure_read_count,
+            control_failure_write_count: self.control_failure_write_count
+                + other.control_failure_write_count,
+            control_failure_functional_read_count: self.control_failure_functional_read_count
+                + other.control_failure_functional_read_count,
+            control_failure_functional_write_count: self.control_failure_functional_write_count
+                + other.control_failure_functional_write_count,
             sync_control_failure_count: self.sync_control_failure_count
                 + other.sync_control_failure_count,
             tlb_control_failure_count: self.tlb_control_failure_count
@@ -535,6 +626,12 @@ pub struct WorkloadExpectedTrafficTraceReplaySummary {
     minimum_sync_control_ack_count: usize,
     minimum_htm_control_ack_count: usize,
     minimum_control_failure_count: usize,
+    minimum_control_failure_invalid_destination_count: usize,
+    minimum_control_failure_bad_address_count: usize,
+    minimum_control_failure_read_count: usize,
+    minimum_control_failure_write_count: usize,
+    minimum_control_failure_functional_read_count: usize,
+    minimum_control_failure_functional_write_count: usize,
     minimum_sync_control_failure_count: usize,
     minimum_tlb_control_failure_count: usize,
     minimum_cache_control_failure_count: usize,
@@ -577,6 +674,12 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
             minimum_sync_control_ack_count: 0,
             minimum_htm_control_ack_count: 0,
             minimum_control_failure_count: 0,
+            minimum_control_failure_invalid_destination_count: 0,
+            minimum_control_failure_bad_address_count: 0,
+            minimum_control_failure_read_count: 0,
+            minimum_control_failure_write_count: 0,
+            minimum_control_failure_functional_read_count: 0,
+            minimum_control_failure_functional_write_count: 0,
             minimum_sync_control_failure_count: 0,
             minimum_tlb_control_failure_count: 0,
             minimum_cache_control_failure_count: 0,
@@ -762,6 +865,57 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
         minimum_control_failure_count: usize,
     ) -> Self {
         self.minimum_control_failure_count = minimum_control_failure_count;
+        self
+    }
+
+    pub fn with_minimum_control_failure_invalid_destination_count(
+        mut self,
+        minimum_control_failure_invalid_destination_count: usize,
+    ) -> Self {
+        self.minimum_control_failure_invalid_destination_count =
+            minimum_control_failure_invalid_destination_count;
+        self
+    }
+
+    pub fn with_minimum_control_failure_bad_address_count(
+        mut self,
+        minimum_control_failure_bad_address_count: usize,
+    ) -> Self {
+        self.minimum_control_failure_bad_address_count = minimum_control_failure_bad_address_count;
+        self
+    }
+
+    pub fn with_minimum_control_failure_read_count(
+        mut self,
+        minimum_control_failure_read_count: usize,
+    ) -> Self {
+        self.minimum_control_failure_read_count = minimum_control_failure_read_count;
+        self
+    }
+
+    pub fn with_minimum_control_failure_write_count(
+        mut self,
+        minimum_control_failure_write_count: usize,
+    ) -> Self {
+        self.minimum_control_failure_write_count = minimum_control_failure_write_count;
+        self
+    }
+
+    pub fn with_minimum_control_failure_functional_read_count(
+        mut self,
+        minimum_control_failure_functional_read_count: usize,
+    ) -> Self {
+        self.minimum_control_failure_functional_read_count =
+            minimum_control_failure_functional_read_count;
+        self
+    }
+
+    pub fn with_minimum_control_failure_functional_write_count(
+        mut self,
+        minimum_control_failure_functional_write_count: usize,
+    ) -> Self {
+        self.minimum_control_failure_functional_write_count =
+            minimum_control_failure_functional_write_count;
         self
     }
 
@@ -969,6 +1123,30 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
         self.minimum_control_failure_count
     }
 
+    pub const fn minimum_control_failure_invalid_destination_count(&self) -> usize {
+        self.minimum_control_failure_invalid_destination_count
+    }
+
+    pub const fn minimum_control_failure_bad_address_count(&self) -> usize {
+        self.minimum_control_failure_bad_address_count
+    }
+
+    pub const fn minimum_control_failure_read_count(&self) -> usize {
+        self.minimum_control_failure_read_count
+    }
+
+    pub const fn minimum_control_failure_write_count(&self) -> usize {
+        self.minimum_control_failure_write_count
+    }
+
+    pub const fn minimum_control_failure_functional_read_count(&self) -> usize {
+        self.minimum_control_failure_functional_read_count
+    }
+
+    pub const fn minimum_control_failure_functional_write_count(&self) -> usize {
+        self.minimum_control_failure_functional_write_count
+    }
+
     pub const fn minimum_sync_control_failure_count(&self) -> usize {
         self.minimum_sync_control_failure_count
     }
@@ -1101,6 +1279,16 @@ fn traffic_trace_replay_summary_meets_minimum(
         && actual.sync_control_ack_count() >= expected.minimum_sync_control_ack_count()
         && actual.htm_control_ack_count() >= expected.minimum_htm_control_ack_count()
         && actual.control_failure_count() >= expected.minimum_control_failure_count()
+        && actual.control_failure_invalid_destination_count()
+            >= expected.minimum_control_failure_invalid_destination_count()
+        && actual.control_failure_bad_address_count()
+            >= expected.minimum_control_failure_bad_address_count()
+        && actual.control_failure_read_count() >= expected.minimum_control_failure_read_count()
+        && actual.control_failure_write_count() >= expected.minimum_control_failure_write_count()
+        && actual.control_failure_functional_read_count()
+            >= expected.minimum_control_failure_functional_read_count()
+        && actual.control_failure_functional_write_count()
+            >= expected.minimum_control_failure_functional_write_count()
         && actual.sync_control_failure_count() >= expected.minimum_sync_control_failure_count()
         && actual.tlb_control_failure_count() >= expected.minimum_tlb_control_failure_count()
         && actual.cache_control_failure_count() >= expected.minimum_cache_control_failure_count()
