@@ -3,8 +3,9 @@ use rem6_stats::{StatResetPolicy, StatSnapshot, StatsRegistry};
 use super::formatting::json_escape;
 use super::{
     parallel_stats, stats_error, Rem6CliError, Rem6DramSummary, Rem6ExecutionStop,
-    Rem6ExecutionSummary, Rem6LoadBlobSummary, Rem6MemoryTransportCounters,
-    Rem6MemoryTransportSummary, Rem6RunConfig, RequestedIsa,
+    Rem6ExecutionSummary, Rem6GupsConfig, Rem6GupsExecutionSummary, Rem6LoadBlobSummary,
+    Rem6MemoryDump, Rem6MemoryTransportCounters, Rem6MemoryTransportSummary, Rem6RunConfig,
+    RequestedIsa,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -20,6 +21,13 @@ pub(super) struct Rem6StatsInputs<'a> {
     pub(super) start_address: u64,
     pub(super) config: &'a Rem6RunConfig,
     pub(super) execution: Option<&'a Rem6ExecutionSummary>,
+}
+
+pub(super) struct Rem6GupsStatsInputs<'a> {
+    pub(super) config: &'a Rem6GupsConfig,
+    pub(super) execution: &'a Rem6GupsExecutionSummary,
+    pub(super) transport: &'a Rem6MemoryTransportSummary,
+    pub(super) memory_dumps: &'a [Rem6MemoryDump],
 }
 
 pub(super) fn run_stats_output(
@@ -311,6 +319,146 @@ pub(super) fn run_stats_output(
         json: stats_snapshot_json(&snapshot),
         text: stats_snapshot_text(&snapshot),
     })
+}
+
+pub(super) fn gups_stats_output(
+    inputs: Rem6GupsStatsInputs<'_>,
+) -> Result<Rem6StatsOutput, Rem6CliError> {
+    let mut stats = StatsRegistry::new();
+    increment_stat(
+        &mut stats,
+        "sim.gups.memory_start",
+        "Address",
+        StatResetPolicy::Constant,
+        inputs.config.memory_start(),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.gups.memory_size",
+        "Byte",
+        StatResetPolicy::Constant,
+        inputs.config.memory_size(),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.gups.updates",
+        "Count",
+        StatResetPolicy::Constant,
+        inputs.config.updates(),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.gups.max_tick",
+        "Tick",
+        StatResetPolicy::Constant,
+        inputs.config.max_tick(),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.gups.rng_state",
+        "Value",
+        StatResetPolicy::Constant,
+        inputs.config.rng_state(),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.gups.scheduler.min_remote_delay",
+        "Tick",
+        StatResetPolicy::Constant,
+        inputs.config.min_remote_delay(),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.gups.memory.route_delay",
+        "Tick",
+        StatResetPolicy::Constant,
+        inputs.config.memory_route_delay(),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.gups.memory.dumps",
+        "Count",
+        StatResetPolicy::Constant,
+        inputs.memory_dumps.len() as u64,
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.gups.final_tick",
+        "Tick",
+        StatResetPolicy::Monotonic,
+        inputs.execution.final_tick,
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.gups.scheduled_requests",
+        "Count",
+        StatResetPolicy::Monotonic,
+        inputs.execution.scheduled_requests,
+    )?;
+    emit_gups_response_stats(&mut stats, inputs.execution)?;
+    emit_transport_stats(&mut stats, "sim.gups.transport", inputs.transport)?;
+
+    let snapshot = stats.snapshot(0);
+    Ok(Rem6StatsOutput {
+        json: stats_snapshot_json(&snapshot),
+        text: stats_snapshot_text(&snapshot),
+    })
+}
+
+fn emit_gups_response_stats(
+    stats: &mut StatsRegistry,
+    execution: &Rem6GupsExecutionSummary,
+) -> Result<(), Rem6CliError> {
+    let response_stats = &execution.response_stats;
+    increment_stat(
+        stats,
+        "sim.gups.responses",
+        "Count",
+        StatResetPolicy::Monotonic,
+        response_stats.response_count() as u64,
+    )?;
+    increment_stat(
+        stats,
+        "sim.gups.responses.completed",
+        "Count",
+        StatResetPolicy::Monotonic,
+        response_stats.completed_response_count() as u64,
+    )?;
+    increment_stat(
+        stats,
+        "sim.gups.responses.retry",
+        "Count",
+        StatResetPolicy::Monotonic,
+        response_stats.retry_response_count() as u64,
+    )?;
+    increment_stat(
+        stats,
+        "sim.gups.responses.store_conditional_failed",
+        "Count",
+        StatResetPolicy::Monotonic,
+        response_stats.store_conditional_failed_response_count() as u64,
+    )?;
+    increment_stat(
+        stats,
+        "sim.gups.responses.reads",
+        "Count",
+        StatResetPolicy::Monotonic,
+        response_stats.read_response_count() as u64,
+    )?;
+    increment_stat(
+        stats,
+        "sim.gups.responses.writes",
+        "Count",
+        StatResetPolicy::Monotonic,
+        response_stats.write_response_count() as u64,
+    )?;
+    increment_stat(
+        stats,
+        "sim.gups.response_data_bytes",
+        "Byte",
+        StatResetPolicy::Monotonic,
+        response_stats.response_data_byte_count(),
+    )
 }
 
 fn emit_dram_stats(

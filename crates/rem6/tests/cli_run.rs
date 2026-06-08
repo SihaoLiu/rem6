@@ -2,6 +2,8 @@
 mod data;
 #[path = "cli_run/execution.rs"]
 mod execution;
+#[path = "cli_run/gups.rs"]
+mod gups;
 #[path = "cli_run/load.rs"]
 mod load;
 #[path = "cli_run/support.rs"]

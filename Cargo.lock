@@ -55,6 +55,7 @@ dependencies = [
  "rem6-memory",
  "rem6-stats",
  "rem6-system",
+ "rem6-traffic",
  "rem6-transport",
 ]
 

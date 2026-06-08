@@ -29,6 +29,7 @@ mod artifact_json;
 mod config;
 mod formatting;
 mod guest_memory;
+mod gups_cli;
 mod parallel_stats;
 mod runtime_memory;
 mod stats_output;
@@ -36,11 +37,12 @@ mod stats_output;
 mod transport_summary_tests;
 
 pub use config::{
-    CliDramMemoryProfile, LoadBlobRequest, MemoryDumpRequest, Rem6RunConfig, RequestedIsa,
-    StatsFormat,
+    CliDramMemoryProfile, LoadBlobRequest, MemoryDumpRequest, Rem6GupsConfig, Rem6RunConfig,
+    RequestedIsa, StatsFormat,
 };
 use formatting::{elf_architecture_name, json_escape};
 use guest_memory::{build_cli_memory_store, read_load_blobs, LoadedBlob};
+pub use gups_cli::{run_gups_config, Rem6GupsArtifact, Rem6GupsExecutionSummary};
 use runtime_memory::{cli_memory_response, read_memory_dumps, CliMemoryRuntime};
 use stats_output::{run_stats_output, Rem6StatsInputs};
 
@@ -339,6 +341,18 @@ pub enum Rem6CliError {
     InvalidRiscvBootA1 {
         value: String,
     },
+    InvalidGupsMemoryStart {
+        value: String,
+    },
+    InvalidGupsMemorySize {
+        value: String,
+    },
+    InvalidGupsUpdates {
+        value: String,
+    },
+    InvalidGupsRngState {
+        value: String,
+    },
     MemoryRouteDelayBelowMinRemoteDelay {
         memory_route_delay: u64,
         min_remote_delay: u64,
@@ -448,6 +462,18 @@ impl fmt::Display for Rem6CliError {
             Self::InvalidRiscvBootA1 { value } => {
                 write!(formatter, "invalid RISC-V boot a1 {value}")
             }
+            Self::InvalidGupsMemoryStart { value } => {
+                write!(formatter, "invalid GUPS memory start {value}")
+            }
+            Self::InvalidGupsMemorySize { value } => {
+                write!(formatter, "invalid GUPS memory size {value}")
+            }
+            Self::InvalidGupsUpdates { value } => {
+                write!(formatter, "invalid GUPS updates {value}")
+            }
+            Self::InvalidGupsRngState { value } => {
+                write!(formatter, "invalid GUPS rng state {value}")
+            }
             Self::MemoryRouteDelayBelowMinRemoteDelay {
                 memory_route_delay,
                 min_remote_delay,
@@ -544,8 +570,54 @@ where
     I: IntoIterator<Item = S>,
     S: Into<String>,
 {
+    let args = args.into_iter().map(Into::into).collect::<Vec<_>>();
+    let Some(command) = args.first() else {
+        return Err(Rem6CliError::MissingCommand);
+    };
+    match command.as_str() {
+        "run" => run_run_cli(args),
+        "gups" => run_gups_cli(args),
+        _ => Err(Rem6CliError::UnsupportedCommand {
+            command: command.clone(),
+        }),
+    }
+}
+
+fn run_run_cli(args: Vec<String>) -> Result<String, Rem6CliError> {
     let config = Rem6RunConfig::parse_args(args)?;
     let artifact = run_config(config)?;
+    let stats_format = artifact.config.stats_format();
+    let output = match stats_format {
+        StatsFormat::Json => artifact.to_json(),
+        StatsFormat::Text => artifact.stats_text.clone(),
+    };
+    if let Some(path) = artifact.config.stats_output() {
+        let stats_output = match stats_format {
+            StatsFormat::Json => format!("{}\n", artifact.stats_json),
+            StatsFormat::Text => artifact.stats_text.clone(),
+        };
+        std::fs::write(path, stats_output).map_err(|error| Rem6CliError::WriteOutput {
+            path: path.to_path_buf(),
+            error: error.to_string(),
+        })?;
+    }
+    if let Some(path) = artifact.config.output() {
+        std::fs::write(path, output).map_err(|error| Rem6CliError::WriteOutput {
+            path: path.to_path_buf(),
+            error: error.to_string(),
+        })?;
+        return Ok(output_envelope_json(
+            path,
+            artifact.config.stats_output(),
+            stats_format,
+        ));
+    }
+    Ok(output)
+}
+
+fn run_gups_cli(args: Vec<String>) -> Result<String, Rem6CliError> {
+    let config = Rem6GupsConfig::parse_args(args)?;
+    let artifact = run_gups_config(config)?;
     let stats_format = artifact.config.stats_format();
     let output = match stats_format {
         StatsFormat::Json => artifact.to_json(),

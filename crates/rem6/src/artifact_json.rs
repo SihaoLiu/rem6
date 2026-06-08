@@ -2,10 +2,10 @@ use super::formatting::{
     bytes_to_hex, elf_architecture_name, elf_class_name, elf_endian_name, elf_os_name, json_escape,
 };
 use super::{
-    Rem6CoreSummary, Rem6DramSummary, Rem6ExecutionStop, Rem6ExecutionSummary, Rem6LoadBlobSummary,
-    Rem6MemoryDump, Rem6MemoryTransportCounters, Rem6MemoryTransportRouteSummary,
-    Rem6MemoryTransportSummary, Rem6ParallelFrontierSummary, Rem6ParallelPartitionSummary,
-    Rem6ParallelReadyPartitionSummary, Rem6RunArtifact, RequestedIsa,
+    Rem6CoreSummary, Rem6DramSummary, Rem6ExecutionStop, Rem6ExecutionSummary, Rem6GupsArtifact,
+    Rem6GupsExecutionSummary, Rem6LoadBlobSummary, Rem6MemoryDump, Rem6MemoryTransportCounters,
+    Rem6MemoryTransportRouteSummary, Rem6MemoryTransportSummary, Rem6ParallelFrontierSummary,
+    Rem6ParallelPartitionSummary, Rem6ParallelReadyPartitionSummary, Rem6RunArtifact, RequestedIsa,
 };
 
 impl Rem6RunArtifact {
@@ -116,6 +116,54 @@ impl Rem6LoadBlobSummary {
             json_escape(&self.path().display().to_string())
         )
     }
+}
+
+impl Rem6GupsArtifact {
+    pub fn to_json(&self) -> String {
+        let memory_dumps = self
+            .memory_dumps
+            .iter()
+            .map(Rem6MemoryDump::to_json)
+            .collect::<Vec<_>>()
+            .join(",");
+        format!(
+            "{{\"schema\":\"{}\",\"generator\":\"gups\",\"memory_start\":\"0x{:x}\",\"memory_size\":{},\"updates\":{},\"rng_state\":\"0x{:x}\",\"simulation\":{},\"memory\":[{}],\"transport\":{{\"gups\":{}}},\"stats\":{}}}\n",
+            self.schema,
+            self.config.memory_start(),
+            self.config.memory_size(),
+            self.config.updates(),
+            self.config.rng_state(),
+            self.execution.to_json(self.config.max_tick()),
+            memory_dumps,
+            self.transport.to_json(),
+            self.stats_json,
+        )
+    }
+}
+
+impl Rem6GupsExecutionSummary {
+    fn to_json(&self, max_tick: u64) -> String {
+        format!(
+            "{{\"status\":\"completed\",\"max_tick\":{},\"final_tick\":{},\"scheduled_requests\":{},\"response_stats\":{}}}",
+            max_tick,
+            self.final_tick,
+            self.scheduled_requests,
+            gups_response_stats_json(&self.response_stats),
+        )
+    }
+}
+
+fn gups_response_stats_json(stats: &rem6_system::TrafficGupsTransportResponseStats) -> String {
+    format!(
+        "{{\"responses\":{},\"completed\":{},\"retry\":{},\"store_conditional_failed\":{},\"reads\":{},\"writes\":{},\"data_bytes\":{}}}",
+        stats.response_count(),
+        stats.completed_response_count(),
+        stats.retry_response_count(),
+        stats.store_conditional_failed_response_count(),
+        stats.read_response_count(),
+        stats.write_response_count(),
+        stats.response_data_byte_count(),
+    )
 }
 
 impl Rem6ExecutionSummary {
