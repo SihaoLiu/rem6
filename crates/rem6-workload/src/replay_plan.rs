@@ -34,9 +34,9 @@ use crate::{
     WorkloadExpectedPlannedParallelBatchUtilization,
     WorkloadExpectedPlannedParallelBatchWorkerLanePartitionTicks,
     WorkloadExpectedPlannedParallelBatchWorkerSlotTicks, WorkloadExpectedResourceActivity,
-    WorkloadExpectedStatsHistory, WorkloadExpectedTrafficTraceReplaySummary, WorkloadHostEvent,
-    WorkloadLinuxBootHandoff, WorkloadManifest, WorkloadManifestIdentity, WorkloadResource,
-    WorkloadResult, WorkloadTopology,
+    WorkloadExpectedStatsHistory, WorkloadExpectedTrafficTraceReplaySummary, WorkloadGupsRun,
+    WorkloadHostEvent, WorkloadLinuxBootHandoff, WorkloadManifest, WorkloadManifestIdentity,
+    WorkloadResource, WorkloadResult, WorkloadTopology,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -77,6 +77,7 @@ pub struct WorkloadReplayPlan {
         Vec<WorkloadExpectedParallelProgressTransition>,
     pub(crate) expected_traffic_trace_replay_summaries:
         Vec<WorkloadExpectedTrafficTraceReplaySummary>,
+    pub(crate) gups_runs: Vec<WorkloadGupsRun>,
     pub(crate) expected_gups_run_summaries: Vec<WorkloadExpectedGupsRunSummary>,
     pub(crate) expected_checkpoint_manifest_summaries:
         Vec<WorkloadExpectedCheckpointManifestSummary>,
@@ -186,6 +187,7 @@ impl WorkloadReplayPlan {
             expected_traffic_trace_replay_summaries: manifest
                 .expected_traffic_trace_replay_summaries()
                 .to_vec(),
+            gups_runs: manifest.gups_runs().to_vec(),
             expected_gups_run_summaries: manifest.expected_gups_run_summaries().to_vec(),
             expected_checkpoint_manifest_summaries: manifest
                 .expected_checkpoint_manifest_summaries()
@@ -322,6 +324,10 @@ impl WorkloadReplayPlan {
 
     pub fn expected_gups_run_summaries(&self) -> &[WorkloadExpectedGupsRunSummary] {
         &self.expected_gups_run_summaries
+    }
+
+    pub fn gups_runs(&self) -> &[WorkloadGupsRun] {
+        &self.gups_runs
     }
 
     pub fn expected_checkpoint_restore_manifest_summaries(

@@ -75,6 +75,7 @@ mod uart_checkpoint;
 mod virtio_checkpoint;
 mod wait_checkpoint;
 mod wait_status;
+mod workload_gups;
 mod workload_replay;
 mod workload_replay_heterogeneous;
 mod workload_replay_host;
@@ -280,6 +281,7 @@ pub use wait_status::{
     GuestWaitOutcome, GuestWaitQueue, GuestWaitQueueSnapshot, GuestWaitSelector, GuestWaitStatus,
     GuestWaitStatusError,
 };
+pub use workload_gups::{run_workload_gups_plan, WorkloadGupsRunError};
 pub use workload_replay::{
     RiscvWorkloadReplay, RiscvWorkloadReplayError, RiscvWorkloadReplayOutcome,
     RiscvWorkloadTraceCacheFlushRecord, RiscvWorkloadTraceHtmAbortRecord,

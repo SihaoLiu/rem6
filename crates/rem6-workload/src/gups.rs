@@ -1,6 +1,99 @@
 use rem6_kernel::Tick;
+use rem6_memory::{AccessSize, Address, AddressRange};
 
 use crate::{WorkloadError, WorkloadReplayPlan, WorkloadResult, WorkloadRouteId};
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadGupsRun {
+    route: WorkloadRouteId,
+    memory_target: u32,
+    memory_start: Address,
+    memory_size: u64,
+    updates: u64,
+    rng_state: u64,
+    agent: u32,
+    maximum_final_tick: Option<Tick>,
+}
+
+impl WorkloadGupsRun {
+    pub fn new(
+        route: WorkloadRouteId,
+        memory_target: u32,
+        memory_start: Address,
+        memory_size: u64,
+        updates: u64,
+    ) -> Result<Self, WorkloadError> {
+        let size = AccessSize::new(memory_size).map_err(WorkloadError::Memory)?;
+        AddressRange::new(memory_start, size).map_err(WorkloadError::Memory)?;
+
+        Ok(Self {
+            route,
+            memory_target,
+            memory_start,
+            memory_size,
+            updates,
+            rng_state: 0,
+            agent: 0,
+            maximum_final_tick: None,
+        })
+    }
+
+    pub const fn with_rng_state(mut self, rng_state: u64) -> Self {
+        self.rng_state = rng_state;
+        self
+    }
+
+    pub const fn with_agent(mut self, agent: u32) -> Self {
+        self.agent = agent;
+        self
+    }
+
+    pub fn with_maximum_final_tick(mut self, maximum_final_tick: Tick) -> Self {
+        self.maximum_final_tick = Some(maximum_final_tick);
+        self
+    }
+
+    pub fn route(&self) -> &WorkloadRouteId {
+        &self.route
+    }
+
+    pub const fn memory_target(&self) -> u32 {
+        self.memory_target
+    }
+
+    pub const fn memory_start(&self) -> Address {
+        self.memory_start
+    }
+
+    pub const fn memory_size(&self) -> u64 {
+        self.memory_size
+    }
+
+    pub const fn updates(&self) -> u64 {
+        self.updates
+    }
+
+    pub const fn rng_state(&self) -> u64 {
+        self.rng_state
+    }
+
+    pub const fn agent(&self) -> u32 {
+        self.agent
+    }
+
+    pub const fn maximum_final_tick(&self) -> Option<Tick> {
+        self.maximum_final_tick
+    }
+
+    pub fn memory_range(&self) -> Result<AddressRange, WorkloadError> {
+        let size = AccessSize::new(self.memory_size).map_err(WorkloadError::Memory)?;
+        AddressRange::new(self.memory_start, size).map_err(WorkloadError::Memory)
+    }
+
+    pub(crate) fn sort_key(&self) -> &WorkloadRouteId {
+        &self.route
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkloadGupsRunSummary {

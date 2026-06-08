@@ -1,9 +1,10 @@
 use rem6_boot::BootImage;
-use rem6_memory::Address;
+use rem6_memory::{AccessSize, Address, AddressRange};
 use rem6_workload::{
-    WorkloadError, WorkloadExpectedGupsRunSummary, WorkloadGupsRunSummary,
-    WorkloadGupsRunSummaryExpectationError, WorkloadId, WorkloadReplayPlan, WorkloadResource,
-    WorkloadResourceId, WorkloadResourceKind, WorkloadResult, WorkloadRouteId,
+    WorkloadError, WorkloadExpectedGupsRunSummary, WorkloadGupsRun, WorkloadGupsRunSummary,
+    WorkloadGupsRunSummaryExpectationError, WorkloadHostPlacement, WorkloadId, WorkloadMemoryRoute,
+    WorkloadMemoryTarget, WorkloadReplayPlan, WorkloadResource, WorkloadResourceId,
+    WorkloadResourceKind, WorkloadResult, WorkloadRouteId, WorkloadTopology,
 };
 
 fn id(value: &str) -> WorkloadId {
@@ -57,6 +58,31 @@ fn actual_gups_summary(route: &str) -> WorkloadGupsRunSummary {
         .with_memory_trace_event_count(8)
 }
 
+fn gups_run(route: &str, memory_start: u64, updates: u64) -> WorkloadGupsRun {
+    WorkloadGupsRun::new(route_id(route), 0, Address::new(memory_start), 8, updates)
+        .unwrap()
+        .with_rng_state(0)
+        .with_maximum_final_tick(32)
+}
+
+fn gups_topology(route: &str) -> WorkloadTopology {
+    WorkloadTopology::new(2, 2, 2, WorkloadHostPlacement::new(0, 2, 41).unwrap())
+        .unwrap()
+        .add_memory_target(
+            WorkloadMemoryTarget::new(
+                0,
+                16,
+                AddressRange::new(Address::new(0x1000), AccessSize::new(0x100).unwrap()).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(route_id(route), "gups", 0, "memory", 1, 3, 5).unwrap(),
+        )
+        .unwrap()
+}
+
 fn manifest_with_gups_summary(
     expected: WorkloadExpectedGupsRunSummary,
 ) -> rem6_workload::WorkloadManifest {
@@ -68,6 +94,51 @@ fn manifest_with_gups_summary(
         .unwrap()
         .build()
         .unwrap()
+}
+
+fn manifest_with_gups_run(run: WorkloadGupsRun) -> rem6_workload::WorkloadManifest {
+    rem6_workload::WorkloadManifest::builder(id("manifest-gups-run"), boot_image())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .with_topology(gups_topology(run.route().as_str()))
+        .add_gups_run(run)
+        .unwrap()
+        .build()
+        .unwrap()
+}
+
+#[test]
+fn workload_manifest_records_gups_run_declarations() {
+    let gups_a = gups_run("gups.a", 0x1000, 2);
+    let gups_b = gups_run("gups.b", 0x1010, 1);
+    let manifest = rem6_workload::WorkloadManifest::builder(id("manifest-gups-run"), boot_image())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .with_topology(gups_topology("gups.a"))
+        .add_gups_run(gups_b.clone())
+        .unwrap()
+        .add_gups_run(gups_a.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+
+    assert_eq!(manifest.gups_runs(), &[gups_a.clone(), gups_b.clone()]);
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    assert_eq!(plan.gups_runs(), manifest.gups_runs());
+}
+
+#[test]
+fn workload_manifest_identity_changes_with_gups_run_declarations() {
+    let base = manifest_with_gups_run(gups_run("gups.identity", 0x1000, 2));
+    let route_changed = manifest_with_gups_run(gups_run("gups.identity.alt", 0x1000, 2));
+    let start_changed = manifest_with_gups_run(gups_run("gups.identity", 0x1010, 2));
+    let updates_changed = manifest_with_gups_run(gups_run("gups.identity", 0x1000, 3));
+
+    assert_ne!(base.identity(), route_changed.identity());
+    assert_ne!(base.identity(), start_changed.identity());
+    assert_ne!(base.identity(), updates_changed.identity());
 }
 
 #[test]

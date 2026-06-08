@@ -32,8 +32,8 @@ use crate::{
     WorkloadExpectedPlannedParallelBatchUtilization,
     WorkloadExpectedPlannedParallelBatchWorkerLanePartitionTicks,
     WorkloadExpectedPlannedParallelBatchWorkerSlotTicks, WorkloadExpectedResourceActivity,
-    WorkloadExpectedStatsHistory, WorkloadExpectedTrafficTraceReplaySummary, WorkloadHostEvent,
-    WorkloadId, WorkloadLinuxBootHandoff, WorkloadManifestIdentity,
+    WorkloadExpectedStatsHistory, WorkloadExpectedTrafficTraceReplaySummary, WorkloadGupsRun,
+    WorkloadHostEvent, WorkloadId, WorkloadLinuxBootHandoff, WorkloadManifestIdentity,
     WorkloadParallelBatchPartitionScope, WorkloadParallelBatchTimelineScope,
     WorkloadParallelBatchWorkerScope, WorkloadParallelFrontierStage,
     WorkloadParallelRemoteFlowScope, WorkloadParallelSchedulerScope, WorkloadResource,
@@ -41,7 +41,7 @@ use crate::{
     WorkloadTopology,
 };
 
-use gups::hash_expected_gups_run_summary;
+use gups::{hash_expected_gups_run_summary, hash_gups_run};
 use traffic_trace_replay::hash_expected_traffic_trace_replay_summary;
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
@@ -85,6 +85,7 @@ pub(crate) struct ManifestIdentityInput<'a> {
         &'a [WorkloadExpectedParallelProgressTransition],
     pub(crate) expected_traffic_trace_replay_summaries:
         &'a [WorkloadExpectedTrafficTraceReplaySummary],
+    pub(crate) gups_runs: &'a [WorkloadGupsRun],
     pub(crate) expected_gups_run_summaries: &'a [WorkloadExpectedGupsRunSummary],
     pub(crate) expected_checkpoint_manifest_summaries:
         &'a [WorkloadExpectedCheckpointManifestSummary],
@@ -273,6 +274,13 @@ pub(crate) fn manifest_identity(input: ManifestIdentityInput<'_>) -> WorkloadMan
         );
         for expected in input.expected_traffic_trace_replay_summaries {
             hash_expected_traffic_trace_replay_summary(&mut hash, expected);
+        }
+    }
+    if !input.gups_runs.is_empty() {
+        hash_str(&mut hash, "gups_runs");
+        hash_u64(&mut hash, input.gups_runs.len() as u64);
+        for run in input.gups_runs {
+            hash_gups_run(&mut hash, run);
         }
     }
     if !input.expected_gups_run_summaries.is_empty() {
