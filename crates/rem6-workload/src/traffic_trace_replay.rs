@@ -1,64 +1,77 @@
-use crate::{WorkloadError, WorkloadReplayPlan, WorkloadResult, WorkloadRouteId};
+mod merge;
+mod verify;
+
+pub use verify::WorkloadTrafficTraceReplaySummaryExpectationError;
+
+pub(crate) use verify::verify_expected_traffic_trace_replay_summaries;
+
+use crate::WorkloadRouteId;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkloadTrafficTraceReplaySummary {
-    route: WorkloadRouteId,
-    scheduled_count: usize,
-    response_delivery_count: usize,
-    trace_completed_response_count: usize,
-    trace_retry_response_count: usize,
-    trace_store_conditional_failed_response_count: usize,
-    trace_read_response_count: usize,
-    trace_write_response_count: usize,
-    trace_prefetch_response_count: usize,
-    trace_upgrade_response_count: usize,
-    trace_llsc_response_count: usize,
-    trace_locked_rmw_response_count: usize,
-    trace_writable_intent_response_count: usize,
-    trace_response_data_byte_count: u64,
-    trace_response_fill_data_byte_count: u64,
-    memory_trace_event_count: usize,
-    memory_write_completion_count: usize,
-    trace_data_cache_response_count: usize,
-    trace_data_cache_maintenance_response_count: usize,
-    trace_data_cache_error_count: usize,
-    memory_failure_count: usize,
-    memory_failure_invalid_destination_count: usize,
-    memory_failure_bad_address_count: usize,
-    memory_failure_read_count: usize,
-    memory_failure_write_count: usize,
-    memory_failure_functional_read_count: usize,
-    memory_failure_functional_write_count: usize,
-    trace_error_count: usize,
-    trace_htm_access_count: usize,
-    trace_htm_begin_count: usize,
-    control_ack_count: usize,
-    sync_control_ack_count: usize,
-    htm_control_ack_count: usize,
-    control_failure_count: usize,
-    control_failure_invalid_destination_count: usize,
-    control_failure_bad_address_count: usize,
-    control_failure_read_count: usize,
-    control_failure_write_count: usize,
-    control_failure_functional_read_count: usize,
-    control_failure_functional_write_count: usize,
-    sync_control_failure_count: usize,
-    tlb_control_failure_count: usize,
-    cache_control_failure_count: usize,
-    htm_control_failure_count: usize,
-    diagnostic_control_failure_count: usize,
-    sideband_event_count: usize,
-    trace_sideband_failure_count: usize,
-    tlb_sync_event_count: usize,
-    trace_tlb_sync_count: usize,
-    cache_flush_event_count: usize,
-    trace_cache_flush_count: usize,
-    trace_cache_flush_data_byte_count: u64,
-    trace_l1_invalidation_count: usize,
-    diagnostic_print_event_count: usize,
-    trace_diagnostic_count: usize,
-    htm_abort_event_count: usize,
-    trace_htm_abort_count: usize,
+    pub(in crate::traffic_trace_replay) route: WorkloadRouteId,
+    pub(in crate::traffic_trace_replay) scheduled_count: usize,
+    pub(in crate::traffic_trace_replay) response_delivery_count: usize,
+    pub(in crate::traffic_trace_replay) trace_completed_response_count: usize,
+    pub(in crate::traffic_trace_replay) trace_retry_response_count: usize,
+    pub(in crate::traffic_trace_replay) trace_store_conditional_failed_response_count: usize,
+    pub(in crate::traffic_trace_replay) trace_read_response_count: usize,
+    pub(in crate::traffic_trace_replay) trace_write_response_count: usize,
+    pub(in crate::traffic_trace_replay) trace_prefetch_response_count: usize,
+    pub(in crate::traffic_trace_replay) trace_upgrade_response_count: usize,
+    pub(in crate::traffic_trace_replay) trace_llsc_response_count: usize,
+    pub(in crate::traffic_trace_replay) trace_locked_rmw_response_count: usize,
+    pub(in crate::traffic_trace_replay) trace_writable_intent_response_count: usize,
+    pub(in crate::traffic_trace_replay) trace_response_data_byte_count: u64,
+    pub(in crate::traffic_trace_replay) trace_response_fill_data_byte_count: u64,
+    pub(in crate::traffic_trace_replay) memory_trace_event_count: usize,
+    pub(in crate::traffic_trace_replay) memory_write_completion_count: usize,
+    pub(in crate::traffic_trace_replay) trace_data_cache_response_count: usize,
+    pub(in crate::traffic_trace_replay) trace_data_cache_maintenance_response_count: usize,
+    pub(in crate::traffic_trace_replay) trace_data_cache_error_count: usize,
+    pub(in crate::traffic_trace_replay) trace_data_cache_invalid_destination_error_count: usize,
+    pub(in crate::traffic_trace_replay) trace_data_cache_bad_address_error_count: usize,
+    pub(in crate::traffic_trace_replay) trace_data_cache_read_error_count: usize,
+    pub(in crate::traffic_trace_replay) trace_data_cache_write_error_count: usize,
+    pub(in crate::traffic_trace_replay) trace_data_cache_functional_read_error_count: usize,
+    pub(in crate::traffic_trace_replay) trace_data_cache_functional_write_error_count: usize,
+    pub(in crate::traffic_trace_replay) memory_failure_count: usize,
+    pub(in crate::traffic_trace_replay) memory_failure_invalid_destination_count: usize,
+    pub(in crate::traffic_trace_replay) memory_failure_bad_address_count: usize,
+    pub(in crate::traffic_trace_replay) memory_failure_read_count: usize,
+    pub(in crate::traffic_trace_replay) memory_failure_write_count: usize,
+    pub(in crate::traffic_trace_replay) memory_failure_functional_read_count: usize,
+    pub(in crate::traffic_trace_replay) memory_failure_functional_write_count: usize,
+    pub(in crate::traffic_trace_replay) trace_error_count: usize,
+    pub(in crate::traffic_trace_replay) trace_htm_access_count: usize,
+    pub(in crate::traffic_trace_replay) trace_htm_begin_count: usize,
+    pub(in crate::traffic_trace_replay) control_ack_count: usize,
+    pub(in crate::traffic_trace_replay) sync_control_ack_count: usize,
+    pub(in crate::traffic_trace_replay) htm_control_ack_count: usize,
+    pub(in crate::traffic_trace_replay) control_failure_count: usize,
+    pub(in crate::traffic_trace_replay) control_failure_invalid_destination_count: usize,
+    pub(in crate::traffic_trace_replay) control_failure_bad_address_count: usize,
+    pub(in crate::traffic_trace_replay) control_failure_read_count: usize,
+    pub(in crate::traffic_trace_replay) control_failure_write_count: usize,
+    pub(in crate::traffic_trace_replay) control_failure_functional_read_count: usize,
+    pub(in crate::traffic_trace_replay) control_failure_functional_write_count: usize,
+    pub(in crate::traffic_trace_replay) sync_control_failure_count: usize,
+    pub(in crate::traffic_trace_replay) tlb_control_failure_count: usize,
+    pub(in crate::traffic_trace_replay) cache_control_failure_count: usize,
+    pub(in crate::traffic_trace_replay) htm_control_failure_count: usize,
+    pub(in crate::traffic_trace_replay) diagnostic_control_failure_count: usize,
+    pub(in crate::traffic_trace_replay) sideband_event_count: usize,
+    pub(in crate::traffic_trace_replay) trace_sideband_failure_count: usize,
+    pub(in crate::traffic_trace_replay) tlb_sync_event_count: usize,
+    pub(in crate::traffic_trace_replay) trace_tlb_sync_count: usize,
+    pub(in crate::traffic_trace_replay) cache_flush_event_count: usize,
+    pub(in crate::traffic_trace_replay) trace_cache_flush_count: usize,
+    pub(in crate::traffic_trace_replay) trace_cache_flush_data_byte_count: u64,
+    pub(in crate::traffic_trace_replay) trace_l1_invalidation_count: usize,
+    pub(in crate::traffic_trace_replay) diagnostic_print_event_count: usize,
+    pub(in crate::traffic_trace_replay) trace_diagnostic_count: usize,
+    pub(in crate::traffic_trace_replay) htm_abort_event_count: usize,
+    pub(in crate::traffic_trace_replay) trace_htm_abort_count: usize,
 }
 
 impl WorkloadTrafficTraceReplaySummary {
@@ -84,6 +97,12 @@ impl WorkloadTrafficTraceReplaySummary {
             trace_data_cache_response_count: 0,
             trace_data_cache_maintenance_response_count: 0,
             trace_data_cache_error_count: 0,
+            trace_data_cache_invalid_destination_error_count: 0,
+            trace_data_cache_bad_address_error_count: 0,
+            trace_data_cache_read_error_count: 0,
+            trace_data_cache_write_error_count: 0,
+            trace_data_cache_functional_read_error_count: 0,
+            trace_data_cache_functional_write_error_count: 0,
             memory_failure_count: 0,
             memory_failure_invalid_destination_count: 0,
             memory_failure_bad_address_count: 0,
@@ -249,6 +268,57 @@ impl WorkloadTrafficTraceReplaySummary {
         trace_data_cache_error_count: usize,
     ) -> Self {
         self.trace_data_cache_error_count = trace_data_cache_error_count;
+        self
+    }
+
+    pub fn with_trace_data_cache_invalid_destination_error_count(
+        mut self,
+        trace_data_cache_invalid_destination_error_count: usize,
+    ) -> Self {
+        self.trace_data_cache_invalid_destination_error_count =
+            trace_data_cache_invalid_destination_error_count;
+        self
+    }
+
+    pub fn with_trace_data_cache_bad_address_error_count(
+        mut self,
+        trace_data_cache_bad_address_error_count: usize,
+    ) -> Self {
+        self.trace_data_cache_bad_address_error_count = trace_data_cache_bad_address_error_count;
+        self
+    }
+
+    pub fn with_trace_data_cache_read_error_count(
+        mut self,
+        trace_data_cache_read_error_count: usize,
+    ) -> Self {
+        self.trace_data_cache_read_error_count = trace_data_cache_read_error_count;
+        self
+    }
+
+    pub fn with_trace_data_cache_write_error_count(
+        mut self,
+        trace_data_cache_write_error_count: usize,
+    ) -> Self {
+        self.trace_data_cache_write_error_count = trace_data_cache_write_error_count;
+        self
+    }
+
+    pub fn with_trace_data_cache_functional_read_error_count(
+        mut self,
+        trace_data_cache_functional_read_error_count: usize,
+    ) -> Self {
+        self.trace_data_cache_functional_read_error_count =
+            trace_data_cache_functional_read_error_count;
+        self
+    }
+
+    pub fn with_trace_data_cache_functional_write_error_count(
+        mut self,
+        trace_data_cache_functional_write_error_count: usize,
+    ) -> Self {
+        self.trace_data_cache_functional_write_error_count =
+            trace_data_cache_functional_write_error_count;
         self
     }
 
@@ -553,6 +623,30 @@ impl WorkloadTrafficTraceReplaySummary {
         self.trace_data_cache_error_count
     }
 
+    pub const fn trace_data_cache_invalid_destination_error_count(&self) -> usize {
+        self.trace_data_cache_invalid_destination_error_count
+    }
+
+    pub const fn trace_data_cache_bad_address_error_count(&self) -> usize {
+        self.trace_data_cache_bad_address_error_count
+    }
+
+    pub const fn trace_data_cache_read_error_count(&self) -> usize {
+        self.trace_data_cache_read_error_count
+    }
+
+    pub const fn trace_data_cache_write_error_count(&self) -> usize {
+        self.trace_data_cache_write_error_count
+    }
+
+    pub const fn trace_data_cache_functional_read_error_count(&self) -> usize {
+        self.trace_data_cache_functional_read_error_count
+    }
+
+    pub const fn trace_data_cache_functional_write_error_count(&self) -> usize {
+        self.trace_data_cache_functional_write_error_count
+    }
+
     pub const fn memory_failure_count(&self) -> usize {
         self.memory_failure_count
     }
@@ -704,110 +798,6 @@ impl WorkloadTrafficTraceReplaySummary {
     pub(crate) fn sort_key(&self) -> &WorkloadRouteId {
         &self.route
     }
-
-    pub(crate) fn merged(&self, other: &Self) -> Self {
-        debug_assert_eq!(self.route(), other.route());
-        Self {
-            route: self.route.clone(),
-            scheduled_count: self.scheduled_count + other.scheduled_count,
-            response_delivery_count: self.response_delivery_count + other.response_delivery_count,
-            trace_completed_response_count: self.trace_completed_response_count
-                + other.trace_completed_response_count,
-            trace_retry_response_count: self.trace_retry_response_count
-                + other.trace_retry_response_count,
-            trace_store_conditional_failed_response_count: self
-                .trace_store_conditional_failed_response_count
-                + other.trace_store_conditional_failed_response_count,
-            trace_read_response_count: self.trace_read_response_count
-                + other.trace_read_response_count,
-            trace_write_response_count: self.trace_write_response_count
-                + other.trace_write_response_count,
-            trace_prefetch_response_count: self.trace_prefetch_response_count
-                + other.trace_prefetch_response_count,
-            trace_upgrade_response_count: self.trace_upgrade_response_count
-                + other.trace_upgrade_response_count,
-            trace_llsc_response_count: self.trace_llsc_response_count
-                + other.trace_llsc_response_count,
-            trace_locked_rmw_response_count: self.trace_locked_rmw_response_count
-                + other.trace_locked_rmw_response_count,
-            trace_writable_intent_response_count: self.trace_writable_intent_response_count
-                + other.trace_writable_intent_response_count,
-            trace_response_data_byte_count: self.trace_response_data_byte_count
-                + other.trace_response_data_byte_count,
-            trace_response_fill_data_byte_count: self.trace_response_fill_data_byte_count
-                + other.trace_response_fill_data_byte_count,
-            memory_trace_event_count: self.memory_trace_event_count
-                + other.memory_trace_event_count,
-            memory_write_completion_count: self.memory_write_completion_count
-                + other.memory_write_completion_count,
-            trace_data_cache_response_count: self.trace_data_cache_response_count
-                + other.trace_data_cache_response_count,
-            trace_data_cache_maintenance_response_count: self
-                .trace_data_cache_maintenance_response_count
-                + other.trace_data_cache_maintenance_response_count,
-            trace_data_cache_error_count: self.trace_data_cache_error_count
-                + other.trace_data_cache_error_count,
-            memory_failure_count: self.memory_failure_count + other.memory_failure_count,
-            memory_failure_invalid_destination_count: self.memory_failure_invalid_destination_count
-                + other.memory_failure_invalid_destination_count,
-            memory_failure_bad_address_count: self.memory_failure_bad_address_count
-                + other.memory_failure_bad_address_count,
-            memory_failure_read_count: self.memory_failure_read_count
-                + other.memory_failure_read_count,
-            memory_failure_write_count: self.memory_failure_write_count
-                + other.memory_failure_write_count,
-            memory_failure_functional_read_count: self.memory_failure_functional_read_count
-                + other.memory_failure_functional_read_count,
-            memory_failure_functional_write_count: self.memory_failure_functional_write_count
-                + other.memory_failure_functional_write_count,
-            trace_error_count: self.trace_error_count + other.trace_error_count,
-            trace_htm_access_count: self.trace_htm_access_count + other.trace_htm_access_count,
-            trace_htm_begin_count: self.trace_htm_begin_count + other.trace_htm_begin_count,
-            control_ack_count: self.control_ack_count + other.control_ack_count,
-            sync_control_ack_count: self.sync_control_ack_count + other.sync_control_ack_count,
-            htm_control_ack_count: self.htm_control_ack_count + other.htm_control_ack_count,
-            control_failure_count: self.control_failure_count + other.control_failure_count,
-            control_failure_invalid_destination_count: self
-                .control_failure_invalid_destination_count
-                + other.control_failure_invalid_destination_count,
-            control_failure_bad_address_count: self.control_failure_bad_address_count
-                + other.control_failure_bad_address_count,
-            control_failure_read_count: self.control_failure_read_count
-                + other.control_failure_read_count,
-            control_failure_write_count: self.control_failure_write_count
-                + other.control_failure_write_count,
-            control_failure_functional_read_count: self.control_failure_functional_read_count
-                + other.control_failure_functional_read_count,
-            control_failure_functional_write_count: self.control_failure_functional_write_count
-                + other.control_failure_functional_write_count,
-            sync_control_failure_count: self.sync_control_failure_count
-                + other.sync_control_failure_count,
-            tlb_control_failure_count: self.tlb_control_failure_count
-                + other.tlb_control_failure_count,
-            cache_control_failure_count: self.cache_control_failure_count
-                + other.cache_control_failure_count,
-            htm_control_failure_count: self.htm_control_failure_count
-                + other.htm_control_failure_count,
-            diagnostic_control_failure_count: self.diagnostic_control_failure_count
-                + other.diagnostic_control_failure_count,
-            sideband_event_count: self.sideband_event_count + other.sideband_event_count,
-            trace_sideband_failure_count: self.trace_sideband_failure_count
-                + other.trace_sideband_failure_count,
-            tlb_sync_event_count: self.tlb_sync_event_count + other.tlb_sync_event_count,
-            trace_tlb_sync_count: self.trace_tlb_sync_count + other.trace_tlb_sync_count,
-            cache_flush_event_count: self.cache_flush_event_count + other.cache_flush_event_count,
-            trace_cache_flush_count: self.trace_cache_flush_count + other.trace_cache_flush_count,
-            trace_cache_flush_data_byte_count: self.trace_cache_flush_data_byte_count
-                + other.trace_cache_flush_data_byte_count,
-            trace_l1_invalidation_count: self.trace_l1_invalidation_count
-                + other.trace_l1_invalidation_count,
-            diagnostic_print_event_count: self.diagnostic_print_event_count
-                + other.diagnostic_print_event_count,
-            trace_diagnostic_count: self.trace_diagnostic_count + other.trace_diagnostic_count,
-            htm_abort_event_count: self.htm_abort_event_count + other.htm_abort_event_count,
-            trace_htm_abort_count: self.trace_htm_abort_count + other.trace_htm_abort_count,
-        }
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -832,6 +822,12 @@ pub struct WorkloadExpectedTrafficTraceReplaySummary {
     minimum_trace_data_cache_response_count: usize,
     minimum_trace_data_cache_maintenance_response_count: usize,
     minimum_trace_data_cache_error_count: usize,
+    minimum_trace_data_cache_invalid_destination_error_count: usize,
+    minimum_trace_data_cache_bad_address_error_count: usize,
+    minimum_trace_data_cache_read_error_count: usize,
+    minimum_trace_data_cache_write_error_count: usize,
+    minimum_trace_data_cache_functional_read_error_count: usize,
+    minimum_trace_data_cache_functional_write_error_count: usize,
     minimum_memory_failure_count: usize,
     minimum_memory_failure_invalid_destination_count: usize,
     minimum_memory_failure_bad_address_count: usize,
@@ -894,6 +890,12 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
             minimum_trace_data_cache_response_count: 0,
             minimum_trace_data_cache_maintenance_response_count: 0,
             minimum_trace_data_cache_error_count: 0,
+            minimum_trace_data_cache_invalid_destination_error_count: 0,
+            minimum_trace_data_cache_bad_address_error_count: 0,
+            minimum_trace_data_cache_read_error_count: 0,
+            minimum_trace_data_cache_write_error_count: 0,
+            minimum_trace_data_cache_functional_read_error_count: 0,
+            minimum_trace_data_cache_functional_write_error_count: 0,
             minimum_memory_failure_count: 0,
             minimum_memory_failure_invalid_destination_count: 0,
             minimum_memory_failure_bad_address_count: 0,
@@ -1084,6 +1086,59 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
         minimum_trace_data_cache_error_count: usize,
     ) -> Self {
         self.minimum_trace_data_cache_error_count = minimum_trace_data_cache_error_count;
+        self
+    }
+
+    pub fn with_minimum_trace_data_cache_invalid_destination_error_count(
+        mut self,
+        minimum_trace_data_cache_invalid_destination_error_count: usize,
+    ) -> Self {
+        self.minimum_trace_data_cache_invalid_destination_error_count =
+            minimum_trace_data_cache_invalid_destination_error_count;
+        self
+    }
+
+    pub fn with_minimum_trace_data_cache_bad_address_error_count(
+        mut self,
+        minimum_trace_data_cache_bad_address_error_count: usize,
+    ) -> Self {
+        self.minimum_trace_data_cache_bad_address_error_count =
+            minimum_trace_data_cache_bad_address_error_count;
+        self
+    }
+
+    pub fn with_minimum_trace_data_cache_read_error_count(
+        mut self,
+        minimum_trace_data_cache_read_error_count: usize,
+    ) -> Self {
+        self.minimum_trace_data_cache_read_error_count = minimum_trace_data_cache_read_error_count;
+        self
+    }
+
+    pub fn with_minimum_trace_data_cache_write_error_count(
+        mut self,
+        minimum_trace_data_cache_write_error_count: usize,
+    ) -> Self {
+        self.minimum_trace_data_cache_write_error_count =
+            minimum_trace_data_cache_write_error_count;
+        self
+    }
+
+    pub fn with_minimum_trace_data_cache_functional_read_error_count(
+        mut self,
+        minimum_trace_data_cache_functional_read_error_count: usize,
+    ) -> Self {
+        self.minimum_trace_data_cache_functional_read_error_count =
+            minimum_trace_data_cache_functional_read_error_count;
+        self
+    }
+
+    pub fn with_minimum_trace_data_cache_functional_write_error_count(
+        mut self,
+        minimum_trace_data_cache_functional_write_error_count: usize,
+    ) -> Self {
+        self.minimum_trace_data_cache_functional_write_error_count =
+            minimum_trace_data_cache_functional_write_error_count;
         self
     }
 
@@ -1463,6 +1518,30 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
         self.minimum_trace_data_cache_error_count
     }
 
+    pub const fn minimum_trace_data_cache_invalid_destination_error_count(&self) -> usize {
+        self.minimum_trace_data_cache_invalid_destination_error_count
+    }
+
+    pub const fn minimum_trace_data_cache_bad_address_error_count(&self) -> usize {
+        self.minimum_trace_data_cache_bad_address_error_count
+    }
+
+    pub const fn minimum_trace_data_cache_read_error_count(&self) -> usize {
+        self.minimum_trace_data_cache_read_error_count
+    }
+
+    pub const fn minimum_trace_data_cache_write_error_count(&self) -> usize {
+        self.minimum_trace_data_cache_write_error_count
+    }
+
+    pub const fn minimum_trace_data_cache_functional_read_error_count(&self) -> usize {
+        self.minimum_trace_data_cache_functional_read_error_count
+    }
+
+    pub const fn minimum_trace_data_cache_functional_write_error_count(&self) -> usize {
+        self.minimum_trace_data_cache_functional_write_error_count
+    }
+
     pub const fn minimum_memory_failure_count(&self) -> usize {
         self.minimum_memory_failure_count
     }
@@ -1614,123 +1693,4 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
     pub(crate) fn sort_key(&self) -> &WorkloadRouteId {
         &self.route
     }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum WorkloadTrafficTraceReplaySummaryExpectationError {
-    Missing(WorkloadExpectedTrafficTraceReplaySummary),
-    BelowMinimum {
-        expected: WorkloadExpectedTrafficTraceReplaySummary,
-        actual: WorkloadTrafficTraceReplaySummary,
-    },
-}
-
-pub(crate) fn verify_expected_traffic_trace_replay_summaries(
-    plan: &WorkloadReplayPlan,
-    result: &WorkloadResult,
-) -> Result<(), WorkloadError> {
-    for expected in plan.expected_traffic_trace_replay_summaries() {
-        let actual = result
-            .traffic_trace_replay_summary(expected.route())
-            .cloned()
-            .ok_or_else(|| {
-                WorkloadError::TrafficTraceReplaySummaryExpectation(Box::new(
-                    WorkloadTrafficTraceReplaySummaryExpectationError::Missing(expected.clone()),
-                ))
-            })?;
-        if !traffic_trace_replay_summary_meets_minimum(expected, &actual) {
-            return Err(WorkloadError::TrafficTraceReplaySummaryExpectation(
-                Box::new(
-                    WorkloadTrafficTraceReplaySummaryExpectationError::BelowMinimum {
-                        expected: expected.clone(),
-                        actual,
-                    },
-                ),
-            ));
-        }
-    }
-
-    Ok(())
-}
-
-fn traffic_trace_replay_summary_meets_minimum(
-    expected: &WorkloadExpectedTrafficTraceReplaySummary,
-    actual: &WorkloadTrafficTraceReplaySummary,
-) -> bool {
-    actual.scheduled_count() >= expected.minimum_scheduled_count()
-        && actual.response_delivery_count() >= expected.minimum_response_delivery_count()
-        && actual.trace_completed_response_count()
-            >= expected.minimum_trace_completed_response_count()
-        && actual.trace_retry_response_count() >= expected.minimum_trace_retry_response_count()
-        && actual.trace_store_conditional_failed_response_count()
-            >= expected.minimum_trace_store_conditional_failed_response_count()
-        && actual.trace_read_response_count() >= expected.minimum_trace_read_response_count()
-        && actual.trace_write_response_count() >= expected.minimum_trace_write_response_count()
-        && actual.trace_prefetch_response_count()
-            >= expected.minimum_trace_prefetch_response_count()
-        && actual.trace_upgrade_response_count() >= expected.minimum_trace_upgrade_response_count()
-        && actual.trace_llsc_response_count() >= expected.minimum_trace_llsc_response_count()
-        && actual.trace_locked_rmw_response_count()
-            >= expected.minimum_trace_locked_rmw_response_count()
-        && actual.trace_writable_intent_response_count()
-            >= expected.minimum_trace_writable_intent_response_count()
-        && actual.trace_response_data_byte_count()
-            >= expected.minimum_trace_response_data_byte_count()
-        && actual.trace_response_fill_data_byte_count()
-            >= expected.minimum_trace_response_fill_data_byte_count()
-        && actual.memory_trace_event_count() >= expected.minimum_memory_trace_event_count()
-        && actual.memory_write_completion_count()
-            >= expected.minimum_memory_write_completion_count()
-        && actual.trace_data_cache_response_count()
-            >= expected.minimum_trace_data_cache_response_count()
-        && actual.trace_data_cache_maintenance_response_count()
-            >= expected.minimum_trace_data_cache_maintenance_response_count()
-        && actual.trace_data_cache_error_count() >= expected.minimum_trace_data_cache_error_count()
-        && actual.memory_failure_count() >= expected.minimum_memory_failure_count()
-        && actual.memory_failure_invalid_destination_count()
-            >= expected.minimum_memory_failure_invalid_destination_count()
-        && actual.memory_failure_bad_address_count()
-            >= expected.minimum_memory_failure_bad_address_count()
-        && actual.memory_failure_read_count() >= expected.minimum_memory_failure_read_count()
-        && actual.memory_failure_write_count() >= expected.minimum_memory_failure_write_count()
-        && actual.memory_failure_functional_read_count()
-            >= expected.minimum_memory_failure_functional_read_count()
-        && actual.memory_failure_functional_write_count()
-            >= expected.minimum_memory_failure_functional_write_count()
-        && actual.trace_error_count() >= expected.minimum_trace_error_count()
-        && actual.trace_htm_access_count() >= expected.minimum_trace_htm_access_count()
-        && actual.trace_htm_begin_count() >= expected.minimum_trace_htm_begin_count()
-        && actual.control_ack_count() >= expected.minimum_control_ack_count()
-        && actual.sync_control_ack_count() >= expected.minimum_sync_control_ack_count()
-        && actual.htm_control_ack_count() >= expected.minimum_htm_control_ack_count()
-        && actual.control_failure_count() >= expected.minimum_control_failure_count()
-        && actual.control_failure_invalid_destination_count()
-            >= expected.minimum_control_failure_invalid_destination_count()
-        && actual.control_failure_bad_address_count()
-            >= expected.minimum_control_failure_bad_address_count()
-        && actual.control_failure_read_count() >= expected.minimum_control_failure_read_count()
-        && actual.control_failure_write_count() >= expected.minimum_control_failure_write_count()
-        && actual.control_failure_functional_read_count()
-            >= expected.minimum_control_failure_functional_read_count()
-        && actual.control_failure_functional_write_count()
-            >= expected.minimum_control_failure_functional_write_count()
-        && actual.sync_control_failure_count() >= expected.minimum_sync_control_failure_count()
-        && actual.tlb_control_failure_count() >= expected.minimum_tlb_control_failure_count()
-        && actual.cache_control_failure_count() >= expected.minimum_cache_control_failure_count()
-        && actual.htm_control_failure_count() >= expected.minimum_htm_control_failure_count()
-        && actual.diagnostic_control_failure_count()
-            >= expected.minimum_diagnostic_control_failure_count()
-        && actual.sideband_event_count() >= expected.minimum_sideband_event_count()
-        && actual.trace_sideband_failure_count() >= expected.minimum_trace_sideband_failure_count()
-        && actual.tlb_sync_event_count() >= expected.minimum_tlb_sync_event_count()
-        && actual.trace_tlb_sync_count() >= expected.minimum_trace_tlb_sync_count()
-        && actual.cache_flush_event_count() >= expected.minimum_cache_flush_event_count()
-        && actual.trace_cache_flush_count() >= expected.minimum_trace_cache_flush_count()
-        && actual.trace_cache_flush_data_byte_count()
-            >= expected.minimum_trace_cache_flush_data_byte_count()
-        && actual.trace_l1_invalidation_count() >= expected.minimum_trace_l1_invalidation_count()
-        && actual.diagnostic_print_event_count() >= expected.minimum_diagnostic_print_event_count()
-        && actual.trace_diagnostic_count() >= expected.minimum_trace_diagnostic_count()
-        && actual.htm_abort_event_count() >= expected.minimum_htm_abort_event_count()
-        && actual.trace_htm_abort_count() >= expected.minimum_trace_htm_abort_count()
 }

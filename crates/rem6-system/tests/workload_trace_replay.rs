@@ -488,7 +488,8 @@ fn replay_manifest_with_data_cache_error_expectation(id: &str) -> WorkloadManife
             WorkloadExpectedTrafficTraceReplaySummary::new(route_id("cpu0.data"))
                 .with_minimum_memory_failure_count(1)
                 .with_minimum_trace_error_count(1)
-                .with_minimum_trace_data_cache_error_count(1),
+                .with_minimum_trace_data_cache_error_count(1)
+                .with_minimum_trace_data_cache_write_error_count(1),
         )
         .unwrap()
         .build()
@@ -1665,6 +1666,10 @@ fn workload_replay_does_not_mutate_data_cache_for_trace_write_error() {
     assert_eq!(summary.memory_failure_count(), 1);
     assert_eq!(summary.trace_error_count(), 1);
     assert_eq!(summary.trace_data_cache_error_count(), 1);
+    assert_eq!(summary.trace_data_cache_read_error_count(), 0);
+    assert_eq!(summary.trace_data_cache_write_error_count(), 1);
+    assert_eq!(summary.trace_data_cache_functional_read_error_count(), 0);
+    assert_eq!(summary.trace_data_cache_functional_write_error_count(), 0);
     assert!(outcome.run().data_cache_runs().is_empty());
 }
 
@@ -1814,6 +1819,11 @@ fn workload_replay_records_addressless_functional_write_error_from_request_conte
     let summary = &outcome.result().traffic_trace_replay_summaries()[0];
     assert_eq!(summary.memory_failure_count(), 1);
     assert_eq!(summary.trace_error_count(), 1);
+    assert_eq!(summary.trace_data_cache_error_count(), 1);
+    assert_eq!(summary.trace_data_cache_read_error_count(), 0);
+    assert_eq!(summary.trace_data_cache_write_error_count(), 0);
+    assert_eq!(summary.trace_data_cache_functional_read_error_count(), 0);
+    assert_eq!(summary.trace_data_cache_functional_write_error_count(), 1);
     assert!(outcome.run().data_cache_runs().is_empty());
 }
 
