@@ -158,7 +158,13 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
             .with_trace_htm_access_count(self.records.trace_htm_access_snapshot().len())
             .with_control_ack_count(runtime.control_acks().len())
             .with_sync_control_ack_count(sync_control_ack_count)
-            .with_htm_control_ack_count(self.records.htm_begin_snapshot().len())
+            .with_htm_control_ack_count(
+                self.records
+                    .htm_begin_snapshot()
+                    .iter()
+                    .filter(|record| record.control_error().is_none())
+                    .count(),
+            )
             .with_control_failure_count(runtime.control_failures().len())
             .with_control_failure_invalid_destination_count(
                 control_failure_kind_counts.invalid_destination,
@@ -726,14 +732,16 @@ pub struct RiscvWorkloadTraceHtmBeginRecord {
     size_bytes: Option<u64>,
     trace_packet_id: Option<u64>,
     trace_pc: Option<Address>,
-    cluster_outcome: RiscvClusterHtmBeginOutcome,
+    cluster_outcome: Option<RiscvClusterHtmBeginOutcome>,
+    control_error: Option<TrafficTraceErrorKind>,
 }
 
 impl RiscvWorkloadTraceHtmBeginRecord {
     fn new(
         tick: Tick,
         event: rem6_traffic::TrafficTraceHtmEvent,
-        cluster_outcome: RiscvClusterHtmBeginOutcome,
+        cluster_outcome: Option<RiscvClusterHtmBeginOutcome>,
+        control_error: Option<TrafficTraceErrorKind>,
     ) -> Self {
         Self {
             tick,
@@ -744,6 +752,7 @@ impl RiscvWorkloadTraceHtmBeginRecord {
             trace_packet_id: event.trace_packet_id(),
             trace_pc: event.trace_pc(),
             cluster_outcome,
+            control_error,
         }
     }
 
@@ -775,13 +784,23 @@ impl RiscvWorkloadTraceHtmBeginRecord {
         self.trace_pc
     }
 
-    pub const fn cluster_outcome(&self) -> &RiscvClusterHtmBeginOutcome {
-        &self.cluster_outcome
+    pub fn cluster_outcome(&self) -> &RiscvClusterHtmBeginOutcome {
+        self.cluster_outcome
+            .as_ref()
+            .expect("trace HTM begin record has cluster outcome")
+    }
+
+    pub fn cluster_outcome_option(&self) -> Option<&RiscvClusterHtmBeginOutcome> {
+        self.cluster_outcome.as_ref()
+    }
+
+    pub const fn control_error(&self) -> Option<TrafficTraceErrorKind> {
+        self.control_error
     }
 
     pub const fn begin_uid(&self) -> Option<HtmTransactionUid> {
         match &self.cluster_outcome {
-            RiscvClusterHtmBeginOutcome::Begun { begin, .. } => Some(begin.uid()),
+            Some(RiscvClusterHtmBeginOutcome::Begun { begin, .. }) => Some(begin.uid()),
             _ => None,
         }
     }
@@ -1477,16 +1496,27 @@ impl WorkloadTraceDataCacheConsumerInner {
             }
             return;
         }
-        if !matches!(
-            event_context.event(),
-            TrafficTraceReplayControlEvent::ControlAck { .. }
-        ) {
-            return;
-        }
         let Some(htm) = event_context.trace_htm() else {
             return;
         };
         if !matches!(htm.kind(), TrafficTraceHtmKind::Request) {
+            return;
+        }
+        if let TrafficTraceReplayControlEvent::ControlFailure { record, .. } = event_context.event()
+        {
+            self.records
+                .record_htm_begin(RiscvWorkloadTraceHtmBeginRecord::new(
+                    tick,
+                    htm,
+                    None,
+                    Some(record.failure().error()),
+                ));
+            return;
+        }
+        if !matches!(
+            event_context.event(),
+            TrafficTraceReplayControlEvent::ControlAck { .. }
+        ) {
             return;
         }
         let cluster_outcome = self.htm_cluster.as_ref().map_or(
@@ -1506,7 +1536,8 @@ impl WorkloadTraceDataCacheConsumerInner {
             .record_htm_begin(RiscvWorkloadTraceHtmBeginRecord::new(
                 tick,
                 htm,
-                cluster_outcome,
+                Some(cluster_outcome),
+                None,
             ));
     }
 

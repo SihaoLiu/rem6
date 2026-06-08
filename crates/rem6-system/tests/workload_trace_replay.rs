@@ -2473,7 +2473,7 @@ fn workload_replay_orders_same_tick_htm_response_before_abort_sideband() {
 }
 
 #[test]
-fn workload_replay_does_not_begin_htm_transaction_for_trace_control_failure() {
+fn workload_replay_records_failed_htm_begin_for_trace_control_failure() {
     let manifest = replay_manifest_with_data_cache("riscv-replay-trace-htm-begin-error");
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
     let controller = controller_for_packets(&[
@@ -2522,7 +2522,20 @@ fn workload_replay_does_not_begin_htm_transaction_for_trace_control_failure() {
             .error(),
         TrafficTraceErrorKind::InvalidDestination
     );
-    assert!(traffic_replay.htm_begin_records().is_empty());
+    let htm_begins = traffic_replay.htm_begin_records();
+    assert_eq!(htm_begins.len(), 1);
+    assert_eq!(htm_begins[0].tick(), 2);
+    assert_eq!(htm_begins[0].trace_tick(), 1);
+    assert_eq!(htm_begins[0].trace_packet_id(), Some(964));
+    assert_eq!(
+        htm_begins[0].control_error(),
+        Some(TrafficTraceErrorKind::InvalidDestination)
+    );
+    assert!(htm_begins[0].begin_uid().is_none());
+    assert_eq!(htm_begins[0].cluster_outcome_option(), None);
+    let summary = &outcome.result().traffic_trace_replay_summaries()[0];
+    assert_eq!(summary.htm_control_ack_count(), 0);
+    assert_eq!(summary.htm_control_failure_count(), 1);
     let htm_aborts = traffic_replay.htm_abort_records();
     assert_eq!(htm_aborts.len(), 1);
     assert!(matches!(
