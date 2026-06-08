@@ -140,6 +140,10 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
             .iter()
             .filter(|record| record.data_cache_response_applied())
             .count();
+        let trace_data_cache_maintenance_response_count = memory_response_records
+            .iter()
+            .filter(|record| record.data_cache_maintenance_response_applied())
+            .count();
         let trace_data_cache_error_count = self.records.trace_error_snapshot().len();
         let sync_control_ack_count = self
             .records
@@ -159,6 +163,9 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
             .with_memory_trace_event_count(self.trace.snapshot().len())
             .with_memory_write_completion_count(runtime.memory_write_completions().len())
             .with_trace_data_cache_response_count(trace_data_cache_response_count)
+            .with_trace_data_cache_maintenance_response_count(
+                trace_data_cache_maintenance_response_count,
+            )
             .with_trace_data_cache_error_count(trace_data_cache_error_count)
             .with_memory_failure_count(runtime.memory_failures().len())
             .with_memory_failure_invalid_destination_count(
@@ -505,6 +512,7 @@ pub struct RiscvWorkloadTraceMemoryResponseRecord {
     response_data_bytes: Option<u64>,
     trace_data_bytes: Option<u64>,
     data_cache_response_applied: bool,
+    data_cache_maintenance_response_applied: bool,
 }
 
 impl RiscvWorkloadTraceMemoryResponseRecord {
@@ -534,7 +542,16 @@ impl RiscvWorkloadTraceMemoryResponseRecord {
             response_data_bytes,
             trace_data_bytes,
             data_cache_response_applied,
+            data_cache_maintenance_response_applied: false,
         }
+    }
+
+    pub fn with_data_cache_maintenance_response_applied(
+        mut self,
+        data_cache_maintenance_response_applied: bool,
+    ) -> Self {
+        self.data_cache_maintenance_response_applied = data_cache_maintenance_response_applied;
+        self
     }
 
     pub const fn tick(&self) -> Tick {
@@ -591,6 +608,10 @@ impl RiscvWorkloadTraceMemoryResponseRecord {
 
     pub const fn data_cache_response_applied(&self) -> bool {
         self.data_cache_response_applied
+    }
+
+    pub const fn data_cache_maintenance_response_applied(&self) -> bool {
+        self.data_cache_maintenance_response_applied
     }
 }
 
@@ -1440,10 +1461,10 @@ impl WorkloadTraceDataCacheConsumerInner {
 
     fn apply_trace_response(
         &mut self,
-        record: RiscvWorkloadTraceMemoryResponseRecord,
+        mut record: RiscvWorkloadTraceMemoryResponseRecord,
         event: TrafficTraceResponseEvent,
     ) {
-        self.records.record_memory_response(record);
+        let mut data_cache_maintenance_response_applied = false;
         if let Some(data_cache) = self.data_cache.as_ref() {
             let mut data_cache = data_cache.lock().expect("workload data cache lock");
             if let Some(transaction_uid) = self.active_htm_transactions.last().copied() {
@@ -1464,8 +1485,18 @@ impl WorkloadTraceDataCacheConsumerInner {
                     record.data_cache_response_applied(),
                 );
             }
-            data_cache.apply_trace_response_event(event);
+            let data_cache_response_policy_applied = data_cache.apply_trace_response_event(event);
+            data_cache_maintenance_response_applied = data_cache_response_policy_applied
+                && matches!(
+                    event.kind(),
+                    TrafficTraceResponseKind::CleanShared
+                        | TrafficTraceResponseKind::CleanInvalid
+                        | TrafficTraceResponseKind::Invalidate
+                );
         }
+        record = record
+            .with_data_cache_maintenance_response_applied(data_cache_maintenance_response_applied);
+        self.records.record_memory_response(record);
     }
 
     fn apply_trace_error(

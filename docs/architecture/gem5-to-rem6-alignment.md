@@ -3121,7 +3121,11 @@ and whether the configured workload data-cache backend consumed the response.
 Workload traffic-trace summaries and manifest expectations also count matched
 trace responses accepted by that data-cache consumer, so replay artifacts can
 require executable cache-response policy consumption instead of inferring it
-from raw response deliveries.
+from raw response deliveries. Clean and invalidate response policies are also
+counted from the configured data-cache backend's applied-policy result, so
+manifests can require aggregate maintenance-effect evidence from
+`CleanSharedResp`, `CleanInvalidResp`, or `InvalidateResp` instead of only
+aggregate response acceptance.
 For active HTM transactions on data-cache routes, the same response consumer
 also records the accepted read-set and write-set accesses on the matching
 traffic trace replay outcome. Workload traffic-trace summaries and manifest

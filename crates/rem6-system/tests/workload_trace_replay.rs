@@ -495,6 +495,30 @@ fn replay_manifest_with_data_cache_error_expectation(id: &str) -> WorkloadManife
         .unwrap()
 }
 
+fn replay_manifest_with_data_cache_maintenance_response_expectation(id: &str) -> WorkloadManifest {
+    WorkloadManifest::builder(workload_id(id), boot_image_with_data_cache_line())
+        .with_topology(replay_topology_with_data_cache_protocol(
+            WorkloadDataCacheProtocol::Msi,
+        ))
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .add_host_event(WorkloadHostEvent::new(
+            0,
+            HostEventIntent::Stop {
+                reason: "host-stop".to_string(),
+            },
+        ))
+        .add_expected_traffic_trace_replay_summary(
+            WorkloadExpectedTrafficTraceReplaySummary::new(route_id("cpu0.data"))
+                .with_minimum_trace_data_cache_response_count(2)
+                .with_minimum_trace_data_cache_maintenance_response_count(1),
+        )
+        .unwrap()
+        .build()
+        .unwrap()
+}
+
 fn replay_manifest_with_data_cache_protocol(
     id: &str,
     protocol: WorkloadDataCacheProtocol,
@@ -1968,6 +1992,7 @@ fn workload_replay_invalidates_data_cache_line_after_trace_read_with_invalidate(
     );
     assert_eq!(response_records[0].status(), ResponseStatus::Completed);
     assert!(response_records[0].data_cache_response_applied());
+    assert!(!response_records[0].data_cache_maintenance_response_applied());
     assert_eq!(response_records[1].tick(), 8);
     assert_eq!(response_records[1].trace_tick(), 8);
     assert_eq!(
@@ -1976,6 +2001,10 @@ fn workload_replay_invalidates_data_cache_line_after_trace_read_with_invalidate(
     );
     assert_eq!(response_records[1].status(), ResponseStatus::Completed);
     assert!(response_records[1].data_cache_response_applied());
+    assert!(!response_records[1].data_cache_maintenance_response_applied());
+    let summary = &outcome.result().traffic_trace_replay_summaries()[0];
+    assert_eq!(summary.trace_data_cache_response_count(), 2);
+    assert_eq!(summary.trace_data_cache_maintenance_response_count(), 0);
     let data_cache_runs = outcome.run().data_cache_runs();
     assert_eq!(data_cache_runs.len(), 2);
     assert!(data_cache_runs[0].has_directory_activity());
@@ -2053,7 +2082,9 @@ fn workload_replay_invalidates_data_cache_line_after_trace_clean_invalid_respons
 
 #[test]
 fn workload_replay_cleans_data_cache_line_after_trace_clean_shared_response() {
-    let manifest = replay_manifest_with_data_cache("riscv-replay-trace-clean-shared-data-cache");
+    let manifest = replay_manifest_with_data_cache_maintenance_response_expectation(
+        "riscv-replay-trace-clean-shared-data-cache",
+    );
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
     let controller = controller_for_packets(&[
         PacketFields {
@@ -2086,6 +2117,53 @@ fn workload_replay_cleans_data_cache_line_after_trace_clean_shared_response() {
         },
     ]);
 
+    let outcome = RiscvWorkloadReplay::new(plan.clone())
+        .with_max_turns(96)
+        .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
+            controller,
+            route_id("cpu0.data"),
+            PartitionId::new(2),
+        ))
+        .run_parallel()
+        .unwrap();
+
+    let traffic_replay = &outcome.traffic_trace_replays()[0];
+    assert!(traffic_replay.errors().is_empty());
+    assert!(traffic_replay.runtime().memory_failures().is_empty());
+    let response_records = traffic_replay.memory_response_records();
+    assert_eq!(response_records.len(), 2);
+    assert!(response_records[1].data_cache_maintenance_response_applied());
+    let line = outcome.memory_snapshot();
+    let line = snapshot_line_data(line, MemoryTargetId::new(0), Address::new(0x9000));
+    assert_eq!(&line[8..16], &[7; 8]);
+    let summary = &outcome.result().traffic_trace_replay_summaries()[0];
+    assert_eq!(summary.trace_data_cache_response_count(), 2);
+    assert_eq!(summary.trace_data_cache_maintenance_response_count(), 1);
+    plan.verify_result(outcome.result()).unwrap();
+}
+
+#[test]
+fn workload_replay_does_not_count_unaccepted_trace_clean_shared_response_as_maintenance() {
+    let manifest =
+        replay_manifest_with_data_cache("riscv-replay-trace-clean-shared-unaccepted-data-cache");
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let controller = controller_for_packets(&[
+        PacketFields {
+            tick: 4,
+            command: GEM5_CLEAN_SHARED_REQ,
+            address: Some(0xa000),
+            size: Some(64),
+            packet_id: Some(972),
+        },
+        PacketFields {
+            tick: 7,
+            command: GEM5_CLEAN_SHARED_RESP,
+            address: Some(0xa000),
+            size: Some(64),
+            packet_id: Some(972),
+        },
+    ]);
+
     let outcome = RiscvWorkloadReplay::new(plan)
         .with_max_turns(96)
         .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
@@ -2099,9 +2177,17 @@ fn workload_replay_cleans_data_cache_line_after_trace_clean_shared_response() {
     let traffic_replay = &outcome.traffic_trace_replays()[0];
     assert!(traffic_replay.errors().is_empty());
     assert!(traffic_replay.runtime().memory_failures().is_empty());
-    let line = outcome.memory_snapshot();
-    let line = snapshot_line_data(line, MemoryTargetId::new(0), Address::new(0x9000));
-    assert_eq!(&line[8..16], &[7; 8]);
+    let response_records = traffic_replay.memory_response_records();
+    assert_eq!(response_records.len(), 1);
+    assert_eq!(
+        response_records[0].kind(),
+        TrafficTraceResponseKind::CleanShared
+    );
+    assert!(!response_records[0].data_cache_response_applied());
+    assert!(!response_records[0].data_cache_maintenance_response_applied());
+    let summary = &outcome.result().traffic_trace_replay_summaries()[0];
+    assert_eq!(summary.trace_data_cache_response_count(), 0);
+    assert_eq!(summary.trace_data_cache_maintenance_response_count(), 0);
 }
 
 #[test]

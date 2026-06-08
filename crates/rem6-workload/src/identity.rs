@@ -746,10 +746,10 @@ fn hash_expected_traffic_trace_replay_summary(
         hash,
         expected.minimum_memory_write_completion_count() as u64,
     );
-    hash_u64(
-        hash,
-        expected.minimum_trace_data_cache_response_count() as u64,
-    );
+    let cache_responses = expected.minimum_trace_data_cache_response_count();
+    let maintenance_responses = expected.minimum_trace_data_cache_maintenance_response_count();
+    hash_u64(hash, cache_responses as u64);
+    hash_u64(hash, maintenance_responses as u64);
     hash_u64(hash, expected.minimum_trace_data_cache_error_count() as u64);
     hash_u64(hash, expected.minimum_memory_failure_count() as u64);
     hash_u64(
