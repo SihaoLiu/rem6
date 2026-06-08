@@ -151,6 +151,18 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
             .iter()
             .filter(|record| record.data_cache_maintenance_response_applied())
             .count();
+        let trace_data_cache_clean_maintenance_response_count = memory_response_records
+            .iter()
+            .filter(|record| {
+                record.data_cache_maintenance_response_applied() && record.kind().cleans_line()
+            })
+            .count();
+        let trace_data_cache_invalidate_maintenance_response_count = memory_response_records
+            .iter()
+            .filter(|record| {
+                record.data_cache_maintenance_response_applied() && record.kind().invalidates_line()
+            })
+            .count();
         let trace_error_records = self.records.trace_error_snapshot();
         let trace_data_cache_error_count = trace_error_records.len();
         let trace_data_cache_error_kind_counts =
@@ -187,6 +199,12 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
             .with_trace_data_cache_response_count(trace_data_cache_response_count)
             .with_trace_data_cache_maintenance_response_count(
                 trace_data_cache_maintenance_response_count,
+            )
+            .with_trace_data_cache_clean_maintenance_response_count(
+                trace_data_cache_clean_maintenance_response_count,
+            )
+            .with_trace_data_cache_invalidate_maintenance_response_count(
+                trace_data_cache_invalidate_maintenance_response_count,
             )
             .with_trace_data_cache_error_count(trace_data_cache_error_count)
             .with_trace_data_cache_invalid_destination_error_count(

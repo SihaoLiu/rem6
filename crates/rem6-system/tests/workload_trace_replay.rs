@@ -32,12 +32,13 @@ use support::traffic_trace::{
     controller_for_packet_records, controller_for_packets, endpoint, PacketFields, PacketRecord,
     GEM5_CLEAN_INVALID_REQ, GEM5_CLEAN_INVALID_RESP, GEM5_CLEAN_SHARED_REQ, GEM5_CLEAN_SHARED_RESP,
     GEM5_FLAG_KERNEL, GEM5_FLUSH_REQ, GEM5_FUNCTIONAL_READ_ERROR, GEM5_FUNCTIONAL_WRITE_ERROR,
-    GEM5_HTM_ABORT, GEM5_HTM_REQ, GEM5_HTM_REQ_RESP, GEM5_INVALID_DEST_ERROR, GEM5_MEM_FENCE_REQ,
-    GEM5_MEM_FENCE_RESP, GEM5_MEM_SYNC_REQ, GEM5_MEM_SYNC_RESP, GEM5_PRINT_REQ, GEM5_READ_ERROR,
-    GEM5_READ_REQ, GEM5_READ_RESP, GEM5_READ_RESP_WITH_INVALIDATE, GEM5_SOFT_PF_REQ,
-    GEM5_SOFT_PF_RESP, GEM5_STORE_COND_FAIL_REQ, GEM5_STORE_COND_REQ, GEM5_STORE_COND_RESP,
-    GEM5_SYNC_INV_L1, GEM5_TLBI_EXT_SYNC, GEM5_WRITEBACK_DIRTY, GEM5_WRITE_COMPLETE_RESP,
-    GEM5_WRITE_ERROR, GEM5_WRITE_REQ, GEM5_WRITE_RESP,
+    GEM5_HTM_ABORT, GEM5_HTM_REQ, GEM5_HTM_REQ_RESP, GEM5_INVALIDATE_REQ, GEM5_INVALIDATE_RESP,
+    GEM5_INVALID_DEST_ERROR, GEM5_MEM_FENCE_REQ, GEM5_MEM_FENCE_RESP, GEM5_MEM_SYNC_REQ,
+    GEM5_MEM_SYNC_RESP, GEM5_PRINT_REQ, GEM5_READ_ERROR, GEM5_READ_REQ, GEM5_READ_RESP,
+    GEM5_READ_RESP_WITH_INVALIDATE, GEM5_SOFT_PF_REQ, GEM5_SOFT_PF_RESP, GEM5_STORE_COND_FAIL_REQ,
+    GEM5_STORE_COND_REQ, GEM5_STORE_COND_RESP, GEM5_SYNC_INV_L1, GEM5_TLBI_EXT_SYNC,
+    GEM5_WRITEBACK_DIRTY, GEM5_WRITE_COMPLETE_RESP, GEM5_WRITE_ERROR, GEM5_WRITE_REQ,
+    GEM5_WRITE_RESP,
 };
 
 fn workload_id(value: &str) -> rem6_workload::WorkloadId {
@@ -513,7 +514,61 @@ fn replay_manifest_with_data_cache_maintenance_response_expectation(id: &str) ->
         .add_expected_traffic_trace_replay_summary(
             WorkloadExpectedTrafficTraceReplaySummary::new(route_id("cpu0.data"))
                 .with_minimum_trace_data_cache_response_count(2)
-                .with_minimum_trace_data_cache_maintenance_response_count(1),
+                .with_minimum_trace_data_cache_maintenance_response_count(1)
+                .with_minimum_trace_data_cache_clean_maintenance_response_count(1),
+        )
+        .unwrap()
+        .build()
+        .unwrap()
+}
+
+fn replay_manifest_with_data_cache_clean_invalid_response_expectation(
+    id: &str,
+) -> WorkloadManifest {
+    WorkloadManifest::builder(workload_id(id), boot_image_with_data_cache_line())
+        .with_topology(replay_topology_with_data_cache_protocol(
+            WorkloadDataCacheProtocol::Msi,
+        ))
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .add_host_event(WorkloadHostEvent::new(
+            0,
+            HostEventIntent::Stop {
+                reason: "host-stop".to_string(),
+            },
+        ))
+        .add_expected_traffic_trace_replay_summary(
+            WorkloadExpectedTrafficTraceReplaySummary::new(route_id("cpu0.data"))
+                .with_minimum_trace_data_cache_response_count(3)
+                .with_minimum_trace_data_cache_maintenance_response_count(1)
+                .with_minimum_trace_data_cache_clean_maintenance_response_count(1)
+                .with_minimum_trace_data_cache_invalidate_maintenance_response_count(1),
+        )
+        .unwrap()
+        .build()
+        .unwrap()
+}
+
+fn replay_manifest_with_data_cache_invalidate_response_expectation(id: &str) -> WorkloadManifest {
+    WorkloadManifest::builder(workload_id(id), boot_image_with_data_cache_line())
+        .with_topology(replay_topology_with_data_cache_protocol(
+            WorkloadDataCacheProtocol::Msi,
+        ))
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .add_host_event(WorkloadHostEvent::new(
+            0,
+            HostEventIntent::Stop {
+                reason: "host-stop".to_string(),
+            },
+        ))
+        .add_expected_traffic_trace_replay_summary(
+            WorkloadExpectedTrafficTraceReplaySummary::new(route_id("cpu0.data"))
+                .with_minimum_trace_data_cache_response_count(3)
+                .with_minimum_trace_data_cache_maintenance_response_count(1)
+                .with_minimum_trace_data_cache_invalidate_maintenance_response_count(1),
         )
         .unwrap()
         .build()
@@ -2031,7 +2086,9 @@ fn workload_replay_invalidates_data_cache_line_after_trace_read_with_invalidate(
 
 #[test]
 fn workload_replay_invalidates_data_cache_line_after_trace_clean_invalid_response() {
-    let manifest = replay_manifest_with_data_cache("riscv-replay-trace-clean-invalid-data-cache");
+    let manifest = replay_manifest_with_data_cache_clean_invalid_response_expectation(
+        "riscv-replay-trace-clean-invalid-data-cache",
+    );
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
     let controller = controller_for_packets(&[
         PacketFields {
@@ -2078,7 +2135,7 @@ fn workload_replay_invalidates_data_cache_line_after_trace_clean_invalid_respons
         },
     ]);
 
-    let outcome = RiscvWorkloadReplay::new(plan)
+    let outcome = RiscvWorkloadReplay::new(plan.clone())
         .with_max_turns(96)
         .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
             controller,
@@ -2096,6 +2153,108 @@ fn workload_replay_invalidates_data_cache_line_after_trace_clean_invalid_respons
     assert!(data_cache_runs[0].has_directory_activity());
     assert!(data_cache_runs[1].has_directory_activity());
     assert!(data_cache_runs[2].has_directory_activity());
+    let summary = &outcome.result().traffic_trace_replay_summaries()[0];
+    assert_eq!(summary.trace_data_cache_response_count(), 3);
+    assert_eq!(summary.trace_data_cache_maintenance_response_count(), 1);
+    assert_eq!(
+        summary.trace_data_cache_clean_maintenance_response_count(),
+        1
+    );
+    assert_eq!(
+        summary.trace_data_cache_invalidate_maintenance_response_count(),
+        1
+    );
+    plan.verify_result(outcome.result()).unwrap();
+}
+
+#[test]
+fn workload_replay_invalidates_data_cache_line_after_trace_invalidate_response() {
+    let manifest = replay_manifest_with_data_cache_invalidate_response_expectation(
+        "riscv-replay-trace-invalidate-data-cache",
+    );
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let controller = controller_for_packets(&[
+        PacketFields {
+            tick: 0,
+            command: GEM5_READ_REQ,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(959),
+        },
+        PacketFields {
+            tick: 3,
+            command: GEM5_READ_RESP,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(959),
+        },
+        PacketFields {
+            tick: 4,
+            command: GEM5_INVALIDATE_REQ,
+            address: Some(0x9000),
+            size: Some(64),
+            packet_id: Some(960),
+        },
+        PacketFields {
+            tick: 6,
+            command: GEM5_INVALIDATE_RESP,
+            address: Some(0x9000),
+            size: Some(64),
+            packet_id: Some(960),
+        },
+        PacketFields {
+            tick: 6,
+            command: GEM5_READ_REQ,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(963),
+        },
+        PacketFields {
+            tick: 8,
+            command: GEM5_READ_RESP,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(963),
+        },
+    ]);
+
+    let outcome = RiscvWorkloadReplay::new(plan.clone())
+        .with_max_turns(96)
+        .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
+            controller,
+            route_id("cpu0.data"),
+            PartitionId::new(2),
+        ))
+        .run_parallel()
+        .unwrap();
+
+    let traffic_replay = &outcome.traffic_trace_replays()[0];
+    assert!(traffic_replay.errors().is_empty());
+    assert!(traffic_replay.runtime().memory_failures().is_empty());
+    let response_records = traffic_replay.memory_response_records();
+    assert_eq!(response_records.len(), 3);
+    assert_eq!(
+        response_records[1].kind(),
+        TrafficTraceResponseKind::Invalidate
+    );
+    assert!(response_records[1].data_cache_maintenance_response_applied());
+    let data_cache_runs = outcome.run().data_cache_runs();
+    assert_eq!(data_cache_runs.len(), 3);
+    assert!(data_cache_runs[0].has_directory_activity());
+    assert!(data_cache_runs[1].has_directory_activity());
+    assert!(data_cache_runs[2].has_directory_activity());
+    let summary = &outcome.result().traffic_trace_replay_summaries()[0];
+    assert_eq!(summary.trace_data_cache_response_count(), 3);
+    assert_eq!(summary.trace_data_cache_maintenance_response_count(), 1);
+    assert_eq!(
+        summary.trace_data_cache_clean_maintenance_response_count(),
+        0
+    );
+    assert_eq!(
+        summary.trace_data_cache_invalidate_maintenance_response_count(),
+        1
+    );
+    plan.verify_result(outcome.result()).unwrap();
 }
 
 #[test]
@@ -2157,6 +2316,14 @@ fn workload_replay_cleans_data_cache_line_after_trace_clean_shared_response() {
     let summary = &outcome.result().traffic_trace_replay_summaries()[0];
     assert_eq!(summary.trace_data_cache_response_count(), 2);
     assert_eq!(summary.trace_data_cache_maintenance_response_count(), 1);
+    assert_eq!(
+        summary.trace_data_cache_clean_maintenance_response_count(),
+        1
+    );
+    assert_eq!(
+        summary.trace_data_cache_invalidate_maintenance_response_count(),
+        0
+    );
     plan.verify_result(outcome.result()).unwrap();
 }
 
@@ -2206,6 +2373,14 @@ fn workload_replay_does_not_count_unaccepted_trace_clean_shared_response_as_main
     let summary = &outcome.result().traffic_trace_replay_summaries()[0];
     assert_eq!(summary.trace_data_cache_response_count(), 0);
     assert_eq!(summary.trace_data_cache_maintenance_response_count(), 0);
+    assert_eq!(
+        summary.trace_data_cache_clean_maintenance_response_count(),
+        0
+    );
+    assert_eq!(
+        summary.trace_data_cache_invalidate_maintenance_response_count(),
+        0
+    );
 }
 
 #[test]

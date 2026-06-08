@@ -41,6 +41,12 @@ impl WorkloadTrafficTraceReplaySummary {
             trace_data_cache_maintenance_response_count: self
                 .trace_data_cache_maintenance_response_count
                 + other.trace_data_cache_maintenance_response_count,
+            trace_data_cache_clean_maintenance_response_count: self
+                .trace_data_cache_clean_maintenance_response_count
+                + other.trace_data_cache_clean_maintenance_response_count,
+            trace_data_cache_invalidate_maintenance_response_count: self
+                .trace_data_cache_invalidate_maintenance_response_count
+                + other.trace_data_cache_invalidate_maintenance_response_count,
             trace_data_cache_error_count: self.trace_data_cache_error_count
                 + other.trace_data_cache_error_count,
             trace_data_cache_invalid_destination_error_count: self
