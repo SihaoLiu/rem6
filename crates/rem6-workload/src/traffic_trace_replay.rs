@@ -5,6 +5,9 @@ pub struct WorkloadTrafficTraceReplaySummary {
     route: WorkloadRouteId,
     scheduled_count: usize,
     response_delivery_count: usize,
+    trace_completed_response_count: usize,
+    trace_retry_response_count: usize,
+    trace_store_conditional_failed_response_count: usize,
     memory_trace_event_count: usize,
     memory_write_completion_count: usize,
     trace_data_cache_response_count: usize,
@@ -38,6 +41,9 @@ impl WorkloadTrafficTraceReplaySummary {
             route,
             scheduled_count,
             response_delivery_count: 0,
+            trace_completed_response_count: 0,
+            trace_retry_response_count: 0,
+            trace_store_conditional_failed_response_count: 0,
             memory_trace_event_count: 0,
             memory_write_completion_count: 0,
             trace_data_cache_response_count: 0,
@@ -68,6 +74,28 @@ impl WorkloadTrafficTraceReplaySummary {
 
     pub fn with_response_delivery_count(mut self, response_delivery_count: usize) -> Self {
         self.response_delivery_count = response_delivery_count;
+        self
+    }
+
+    pub fn with_trace_completed_response_count(
+        mut self,
+        trace_completed_response_count: usize,
+    ) -> Self {
+        self.trace_completed_response_count = trace_completed_response_count;
+        self
+    }
+
+    pub fn with_trace_retry_response_count(mut self, trace_retry_response_count: usize) -> Self {
+        self.trace_retry_response_count = trace_retry_response_count;
+        self
+    }
+
+    pub fn with_trace_store_conditional_failed_response_count(
+        mut self,
+        trace_store_conditional_failed_response_count: usize,
+    ) -> Self {
+        self.trace_store_conditional_failed_response_count =
+            trace_store_conditional_failed_response_count;
         self
     }
 
@@ -223,6 +251,18 @@ impl WorkloadTrafficTraceReplaySummary {
         self.response_delivery_count
     }
 
+    pub const fn trace_completed_response_count(&self) -> usize {
+        self.trace_completed_response_count
+    }
+
+    pub const fn trace_retry_response_count(&self) -> usize {
+        self.trace_retry_response_count
+    }
+
+    pub const fn trace_store_conditional_failed_response_count(&self) -> usize {
+        self.trace_store_conditional_failed_response_count
+    }
+
     pub const fn memory_trace_event_count(&self) -> usize {
         self.memory_trace_event_count
     }
@@ -333,6 +373,13 @@ impl WorkloadTrafficTraceReplaySummary {
             route: self.route.clone(),
             scheduled_count: self.scheduled_count + other.scheduled_count,
             response_delivery_count: self.response_delivery_count + other.response_delivery_count,
+            trace_completed_response_count: self.trace_completed_response_count
+                + other.trace_completed_response_count,
+            trace_retry_response_count: self.trace_retry_response_count
+                + other.trace_retry_response_count,
+            trace_store_conditional_failed_response_count: self
+                .trace_store_conditional_failed_response_count
+                + other.trace_store_conditional_failed_response_count,
             memory_trace_event_count: self.memory_trace_event_count
                 + other.memory_trace_event_count,
             memory_write_completion_count: self.memory_write_completion_count
@@ -378,6 +425,9 @@ pub struct WorkloadExpectedTrafficTraceReplaySummary {
     route: WorkloadRouteId,
     minimum_scheduled_count: usize,
     minimum_response_delivery_count: usize,
+    minimum_trace_completed_response_count: usize,
+    minimum_trace_retry_response_count: usize,
+    minimum_trace_store_conditional_failed_response_count: usize,
     minimum_memory_trace_event_count: usize,
     minimum_memory_write_completion_count: usize,
     minimum_trace_data_cache_response_count: usize,
@@ -411,6 +461,9 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
             route,
             minimum_scheduled_count: 0,
             minimum_response_delivery_count: 0,
+            minimum_trace_completed_response_count: 0,
+            minimum_trace_retry_response_count: 0,
+            minimum_trace_store_conditional_failed_response_count: 0,
             minimum_memory_trace_event_count: 0,
             minimum_memory_write_completion_count: 0,
             minimum_trace_data_cache_response_count: 0,
@@ -449,6 +502,31 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
         minimum_response_delivery_count: usize,
     ) -> Self {
         self.minimum_response_delivery_count = minimum_response_delivery_count;
+        self
+    }
+
+    pub fn with_minimum_trace_completed_response_count(
+        mut self,
+        minimum_trace_completed_response_count: usize,
+    ) -> Self {
+        self.minimum_trace_completed_response_count = minimum_trace_completed_response_count;
+        self
+    }
+
+    pub fn with_minimum_trace_retry_response_count(
+        mut self,
+        minimum_trace_retry_response_count: usize,
+    ) -> Self {
+        self.minimum_trace_retry_response_count = minimum_trace_retry_response_count;
+        self
+    }
+
+    pub fn with_minimum_trace_store_conditional_failed_response_count(
+        mut self,
+        minimum_trace_store_conditional_failed_response_count: usize,
+    ) -> Self {
+        self.minimum_trace_store_conditional_failed_response_count =
+            minimum_trace_store_conditional_failed_response_count;
         self
     }
 
@@ -658,6 +736,18 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
         self.minimum_response_delivery_count
     }
 
+    pub const fn minimum_trace_completed_response_count(&self) -> usize {
+        self.minimum_trace_completed_response_count
+    }
+
+    pub const fn minimum_trace_retry_response_count(&self) -> usize {
+        self.minimum_trace_retry_response_count
+    }
+
+    pub const fn minimum_trace_store_conditional_failed_response_count(&self) -> usize {
+        self.minimum_trace_store_conditional_failed_response_count
+    }
+
     pub const fn minimum_memory_trace_event_count(&self) -> usize {
         self.minimum_memory_trace_event_count
     }
@@ -806,6 +896,11 @@ fn traffic_trace_replay_summary_meets_minimum(
 ) -> bool {
     actual.scheduled_count() >= expected.minimum_scheduled_count()
         && actual.response_delivery_count() >= expected.minimum_response_delivery_count()
+        && actual.trace_completed_response_count()
+            >= expected.minimum_trace_completed_response_count()
+        && actual.trace_retry_response_count() >= expected.minimum_trace_retry_response_count()
+        && actual.trace_store_conditional_failed_response_count()
+            >= expected.minimum_trace_store_conditional_failed_response_count()
         && actual.memory_trace_event_count() >= expected.minimum_memory_trace_event_count()
         && actual.memory_write_completion_count()
             >= expected.minimum_memory_write_completion_count()

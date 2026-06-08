@@ -111,9 +111,14 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
         let sideband_counts = traffic_trace_replay_sideband_counts(runtime.sideband_events());
         let control_failure_counts =
             traffic_trace_replay_control_failure_counts(runtime.control_failures());
-        let trace_data_cache_response_count = self
-            .records
-            .memory_response_snapshot()
+        let response_deliveries = self
+            .response_deliveries
+            .lock()
+            .expect("traffic trace replay response lock");
+        let memory_response_records = self.records.memory_response_snapshot();
+        let response_status_counts =
+            traffic_trace_replay_response_status_counts(memory_response_records.as_slice());
+        let trace_data_cache_response_count = memory_response_records
             .iter()
             .filter(|record| record.data_cache_response_applied())
             .count();
@@ -125,11 +130,11 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
             .filter(|record| matches!(record.outcome(), RiscvWorkloadTraceSyncOutcome::Ack))
             .count();
         WorkloadTrafficTraceReplaySummary::new(self.route.clone(), self.scheduled_count)
-            .with_response_delivery_count(
-                self.response_deliveries
-                    .lock()
-                    .expect("traffic trace replay response lock")
-                    .len(),
+            .with_response_delivery_count(response_deliveries.len())
+            .with_trace_completed_response_count(response_status_counts.completed)
+            .with_trace_retry_response_count(response_status_counts.retry)
+            .with_trace_store_conditional_failed_response_count(
+                response_status_counts.store_conditional_failed,
             )
             .with_memory_trace_event_count(self.trace.snapshot().len())
             .with_memory_write_completion_count(runtime.memory_write_completions().len())
@@ -232,6 +237,29 @@ struct TrafficTraceReplayControlFailureCounts {
     cache: usize,
     htm: usize,
     diagnostic: usize,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct TrafficTraceReplayResponseStatusCounts {
+    completed: usize,
+    retry: usize,
+    store_conditional_failed: usize,
+}
+
+fn traffic_trace_replay_response_status_counts(
+    records: &[RiscvWorkloadTraceMemoryResponseRecord],
+) -> TrafficTraceReplayResponseStatusCounts {
+    records.iter().fold(
+        TrafficTraceReplayResponseStatusCounts::default(),
+        |mut counts, record| {
+            match record.status() {
+                ResponseStatus::Completed => counts.completed += 1,
+                ResponseStatus::Retry => counts.retry += 1,
+                ResponseStatus::StoreConditionalFailed => counts.store_conditional_failed += 1,
+            }
+            counts
+        },
+    )
 }
 
 fn traffic_trace_replay_control_failure_counts(

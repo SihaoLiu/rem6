@@ -3001,6 +3001,12 @@ data-cache line after the matched response mutates the cache model:
 line, while `CleanSharedResp` writes dirty line data back and keeps a clean
 cache copy. Later trace accesses therefore observe executable response policy
 instead of hitting stale replay state.
+Workload trace replay also counts matched trace memory-response records by
+`Completed`, `Retry`, and `StoreConditionalFailed` status in replay summaries
+and manifest expectations. Those status counts come from target-completion
+records rather than endpoint response deliveries, so manifests can require
+executable response matching even when the trace response is retained for audit
+or data-cache policy consumers separately from a transport-delivered response.
 Trace policy accessors are not treated as coverage by themselves. New response,
 error, sideband, or HTM policy exposure should land only with a controller,
 runtime, workload, cache, CPU, or diagnostic consumer, or with an explicit

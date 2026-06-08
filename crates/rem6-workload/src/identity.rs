@@ -730,6 +730,15 @@ fn hash_expected_traffic_trace_replay_summary(
     hash_str(hash, expected.route().as_str());
     hash_u64(hash, expected.minimum_scheduled_count() as u64);
     hash_u64(hash, expected.minimum_response_delivery_count() as u64);
+    hash_u64(
+        hash,
+        expected.minimum_trace_completed_response_count() as u64,
+    );
+    hash_u64(hash, expected.minimum_trace_retry_response_count() as u64);
+    hash_u64(
+        hash,
+        expected.minimum_trace_store_conditional_failed_response_count() as u64,
+    );
     hash_u64(hash, expected.minimum_memory_trace_event_count() as u64);
     hash_u64(
         hash,
