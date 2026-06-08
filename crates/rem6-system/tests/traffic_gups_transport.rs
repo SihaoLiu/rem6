@@ -146,6 +146,17 @@ fn traffic_gups_transport_run_feeds_read_response_back_into_controller() {
 
     assert_eq!(run.scheduled_count(), 2);
     assert_eq!(run.response_deliveries().len(), 2);
+    assert_eq!(run.response_stats().response_count(), 2);
+    assert_eq!(run.response_stats().completed_response_count(), 2);
+    assert_eq!(run.response_stats().retry_response_count(), 0);
+    assert_eq!(
+        run.response_stats()
+            .store_conditional_failed_response_count(),
+        0
+    );
+    assert_eq!(run.response_stats().read_response_count(), 1);
+    assert_eq!(run.response_stats().write_response_count(), 1);
+    assert_eq!(run.response_stats().response_data_byte_count(), 8);
     assert_eq!(
         run.response_deliveries()[0].response().request_id(),
         MemoryRequestId::new(AgentId::new(5), 0)
@@ -182,6 +193,61 @@ fn traffic_gups_transport_run_feeds_read_response_back_into_controller() {
     assert_eq!(trace_events[3].kind(), MemoryTraceKind::RequestSent);
     assert_eq!(trace_events[4].kind(), MemoryTraceKind::RequestArrived);
     assert_eq!(trace_events[5].kind(), MemoryTraceKind::ResponseArrived);
+}
+
+#[test]
+fn traffic_gups_transport_run_counts_retry_write_responses() {
+    let mut controller = gups_controller();
+    controller.start(0).unwrap();
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("core0"),
+                PartitionId::new(0),
+                endpoint("memory0"),
+                PartitionId::new(1),
+                3,
+                5,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let target = Arc::new(
+        move |delivery: &RequestDelivery| match delivery.request().operation() {
+            MemoryOperation::ReadShared => {
+                let data = 0x0102_0304_0506_0708_u64.to_le_bytes().to_vec();
+                TargetOutcome::Respond(
+                    MemoryResponse::completed(delivery.request(), Some(data)).unwrap(),
+                )
+            }
+            MemoryOperation::Write => {
+                TargetOutcome::Respond(MemoryResponse::retry(delivery.request()))
+            }
+            operation => panic!("unexpected GUPS transport operation: {operation:?}"),
+        },
+    );
+
+    let run = traffic_gups_controller_transport_run(
+        &mut controller,
+        TrafficStateId::new(0),
+        &mut scheduler,
+        &transport,
+        route,
+        MemoryTrace::new(),
+        target,
+    )
+    .unwrap();
+
+    let stats = run.response_stats();
+    assert_eq!(stats.response_count(), 2);
+    assert_eq!(stats.completed_response_count(), 1);
+    assert_eq!(stats.retry_response_count(), 1);
+    assert_eq!(stats.store_conditional_failed_response_count(), 0);
+    assert_eq!(stats.read_response_count(), 1);
+    assert_eq!(stats.write_response_count(), 1);
+    assert_eq!(stats.response_data_byte_count(), 8);
 }
 
 #[test]

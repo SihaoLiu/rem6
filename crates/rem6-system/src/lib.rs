@@ -222,7 +222,7 @@ pub use trace_error::RiscvTraceErrorRecord;
 pub use trace_htm_access::{RiscvTraceHtmAccessKind, RiscvTraceHtmAccessRecord};
 pub use traffic_gups::{
     traffic_gups_controller_transport_run, TrafficGupsTargetResponder, TrafficGupsTransportError,
-    TrafficGupsTransportRun,
+    TrafficGupsTransportResponseStats, TrafficGupsTransportRun,
 };
 pub use traffic_replay::{
     traffic_trace_replay_controller_control_completion,

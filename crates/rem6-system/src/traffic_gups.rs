@@ -16,9 +16,70 @@ use rem6_transport::{
 pub type TrafficGupsTargetResponder =
     Arc<dyn Fn(&RequestDelivery) -> TargetOutcome + Send + Sync + 'static>;
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct TrafficGupsTransportResponseStats {
+    response_count: usize,
+    completed_response_count: usize,
+    retry_response_count: usize,
+    store_conditional_failed_response_count: usize,
+    read_response_count: usize,
+    write_response_count: usize,
+    response_data_byte_count: u64,
+}
+
+impl TrafficGupsTransportResponseStats {
+    fn record_response(&mut self, request_kind: TrafficRequestKind, response: &MemoryResponse) {
+        self.response_count += 1;
+        match response.status() {
+            ResponseStatus::Completed => self.completed_response_count += 1,
+            ResponseStatus::Retry => self.retry_response_count += 1,
+            ResponseStatus::StoreConditionalFailed => {
+                self.store_conditional_failed_response_count += 1;
+            }
+        }
+        match request_kind {
+            TrafficRequestKind::Read => self.read_response_count += 1,
+            TrafficRequestKind::Write => self.write_response_count += 1,
+            TrafficRequestKind::Atomic | TrafficRequestKind::Maintenance => {}
+        }
+        if let Some(data) = response.data() {
+            self.response_data_byte_count += data.len() as u64;
+        }
+    }
+
+    pub const fn response_count(&self) -> usize {
+        self.response_count
+    }
+
+    pub const fn completed_response_count(&self) -> usize {
+        self.completed_response_count
+    }
+
+    pub const fn retry_response_count(&self) -> usize {
+        self.retry_response_count
+    }
+
+    pub const fn store_conditional_failed_response_count(&self) -> usize {
+        self.store_conditional_failed_response_count
+    }
+
+    pub const fn read_response_count(&self) -> usize {
+        self.read_response_count
+    }
+
+    pub const fn write_response_count(&self) -> usize {
+        self.write_response_count
+    }
+
+    pub const fn response_data_byte_count(&self) -> u64 {
+        self.response_data_byte_count
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TrafficGupsTransportRun {
     scheduled_count: usize,
+    response_stats: TrafficGupsTransportResponseStats,
     response_deliveries: Vec<ResponseDelivery>,
     memory_trace_events: Vec<MemoryTraceEvent>,
     final_tick: Tick,
@@ -27,12 +88,14 @@ pub struct TrafficGupsTransportRun {
 impl TrafficGupsTransportRun {
     fn new(
         scheduled_count: usize,
+        response_stats: TrafficGupsTransportResponseStats,
         response_deliveries: Vec<ResponseDelivery>,
         memory_trace_events: Vec<MemoryTraceEvent>,
         final_tick: Tick,
     ) -> Self {
         Self {
             scheduled_count,
+            response_stats,
             response_deliveries,
             memory_trace_events,
             final_tick,
@@ -41,6 +104,10 @@ impl TrafficGupsTransportRun {
 
     pub const fn scheduled_count(&self) -> usize {
         self.scheduled_count
+    }
+
+    pub const fn response_stats(&self) -> &TrafficGupsTransportResponseStats {
+        &self.response_stats
     }
 
     pub fn response_deliveries(&self) -> &[ResponseDelivery] {
@@ -78,6 +145,7 @@ pub fn traffic_gups_controller_transport_run(
     let request_latency = route_config.request_latency();
     let response_latency = route_config.response_latency();
     let mut scheduled_count = 0;
+    let mut response_stats = TrafficGupsTransportResponseStats::default();
     let mut response_deliveries = Vec::new();
     let mut controller_tick = scheduler.now();
 
@@ -170,11 +238,15 @@ pub fn traffic_gups_controller_transport_run(
         if request.kind() == TrafficRequestKind::Read {
             complete_gups_read_from_responses(controller, state, &batch, &responses)?;
         }
+        for delivery in &responses {
+            response_stats.record_response(request.kind(), delivery.response());
+        }
         response_deliveries.extend(responses);
     }
 
     Ok(TrafficGupsTransportRun::new(
         scheduled_count,
+        response_stats,
         response_deliveries,
         trace.snapshot(),
         scheduler.now(),
