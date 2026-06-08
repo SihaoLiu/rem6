@@ -13,6 +13,8 @@ pub struct WorkloadTrafficTraceReplaySummary {
     trace_error_count: usize,
     trace_htm_access_count: usize,
     control_ack_count: usize,
+    sync_control_ack_count: usize,
+    htm_control_ack_count: usize,
     control_failure_count: usize,
     sync_control_failure_count: usize,
     tlb_control_failure_count: usize,
@@ -44,6 +46,8 @@ impl WorkloadTrafficTraceReplaySummary {
             trace_error_count: 0,
             trace_htm_access_count: 0,
             control_ack_count: 0,
+            sync_control_ack_count: 0,
+            htm_control_ack_count: 0,
             control_failure_count: 0,
             sync_control_failure_count: 0,
             tlb_control_failure_count: 0,
@@ -113,6 +117,16 @@ impl WorkloadTrafficTraceReplaySummary {
 
     pub fn with_control_ack_count(mut self, control_ack_count: usize) -> Self {
         self.control_ack_count = control_ack_count;
+        self
+    }
+
+    pub fn with_sync_control_ack_count(mut self, sync_control_ack_count: usize) -> Self {
+        self.sync_control_ack_count = sync_control_ack_count;
+        self
+    }
+
+    pub fn with_htm_control_ack_count(mut self, htm_control_ack_count: usize) -> Self {
+        self.htm_control_ack_count = htm_control_ack_count;
         self
     }
 
@@ -241,6 +255,14 @@ impl WorkloadTrafficTraceReplaySummary {
         self.control_ack_count
     }
 
+    pub const fn sync_control_ack_count(&self) -> usize {
+        self.sync_control_ack_count
+    }
+
+    pub const fn htm_control_ack_count(&self) -> usize {
+        self.htm_control_ack_count
+    }
+
     pub const fn control_failure_count(&self) -> usize {
         self.control_failure_count
     }
@@ -323,6 +345,8 @@ impl WorkloadTrafficTraceReplaySummary {
             trace_error_count: self.trace_error_count + other.trace_error_count,
             trace_htm_access_count: self.trace_htm_access_count + other.trace_htm_access_count,
             control_ack_count: self.control_ack_count + other.control_ack_count,
+            sync_control_ack_count: self.sync_control_ack_count + other.sync_control_ack_count,
+            htm_control_ack_count: self.htm_control_ack_count + other.htm_control_ack_count,
             control_failure_count: self.control_failure_count + other.control_failure_count,
             sync_control_failure_count: self.sync_control_failure_count
                 + other.sync_control_failure_count,
@@ -362,6 +386,8 @@ pub struct WorkloadExpectedTrafficTraceReplaySummary {
     minimum_trace_error_count: usize,
     minimum_trace_htm_access_count: usize,
     minimum_control_ack_count: usize,
+    minimum_sync_control_ack_count: usize,
+    minimum_htm_control_ack_count: usize,
     minimum_control_failure_count: usize,
     minimum_sync_control_failure_count: usize,
     minimum_tlb_control_failure_count: usize,
@@ -393,6 +419,8 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
             minimum_trace_error_count: 0,
             minimum_trace_htm_access_count: 0,
             minimum_control_ack_count: 0,
+            minimum_sync_control_ack_count: 0,
+            minimum_htm_control_ack_count: 0,
             minimum_control_failure_count: 0,
             minimum_sync_control_failure_count: 0,
             minimum_tlb_control_failure_count: 0,
@@ -479,6 +507,22 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
 
     pub fn with_minimum_control_ack_count(mut self, minimum_control_ack_count: usize) -> Self {
         self.minimum_control_ack_count = minimum_control_ack_count;
+        self
+    }
+
+    pub fn with_minimum_sync_control_ack_count(
+        mut self,
+        minimum_sync_control_ack_count: usize,
+    ) -> Self {
+        self.minimum_sync_control_ack_count = minimum_sync_control_ack_count;
+        self
+    }
+
+    pub fn with_minimum_htm_control_ack_count(
+        mut self,
+        minimum_htm_control_ack_count: usize,
+    ) -> Self {
+        self.minimum_htm_control_ack_count = minimum_htm_control_ack_count;
         self
     }
 
@@ -646,6 +690,14 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
         self.minimum_control_ack_count
     }
 
+    pub const fn minimum_sync_control_ack_count(&self) -> usize {
+        self.minimum_sync_control_ack_count
+    }
+
+    pub const fn minimum_htm_control_ack_count(&self) -> usize {
+        self.minimum_htm_control_ack_count
+    }
+
     pub const fn minimum_control_failure_count(&self) -> usize {
         self.minimum_control_failure_count
     }
@@ -764,6 +816,8 @@ fn traffic_trace_replay_summary_meets_minimum(
         && actual.trace_error_count() >= expected.minimum_trace_error_count()
         && actual.trace_htm_access_count() >= expected.minimum_trace_htm_access_count()
         && actual.control_ack_count() >= expected.minimum_control_ack_count()
+        && actual.sync_control_ack_count() >= expected.minimum_sync_control_ack_count()
+        && actual.htm_control_ack_count() >= expected.minimum_htm_control_ack_count()
         && actual.control_failure_count() >= expected.minimum_control_failure_count()
         && actual.sync_control_failure_count() >= expected.minimum_sync_control_failure_count()
         && actual.tlb_control_failure_count() >= expected.minimum_tlb_control_failure_count()

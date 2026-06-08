@@ -15,7 +15,7 @@ pub(super) fn format_traffic_trace_replay_error(
         WorkloadError::TrafficTraceReplaySummaryExpectation(error) => match error.as_ref() {
             WorkloadTrafficTraceReplaySummaryExpectationError::Missing(expected) => write!(
                 formatter,
-                "traffic trace replay summary for route {} was not recorded; expected scheduled {}, responses {}, memory trace events {}, memory write completions {}, trace data-cache responses {}, trace data-cache errors {}, memory failures {}, trace errors {}, trace htm accesses {}, control acks {}, control failures {}, sync control failures {}, tlb control failures {}, cache control failures {}, htm control failures {}, diagnostic control failures {}, sideband events {}, tlb sync events {}, trace tlb syncs {}, cache flush events {}, trace cache flushes {}, trace l1 invalidations {}, diagnostic print events {}, trace diagnostics {}, htm abort events {}",
+                "traffic trace replay summary for route {} was not recorded; expected scheduled {}, responses {}, memory trace events {}, memory write completions {}, trace data-cache responses {}, trace data-cache errors {}, memory failures {}, trace errors {}, trace htm accesses {}, control acks {}, sync control acks {}, htm control acks {}, control failures {}, sync control failures {}, tlb control failures {}, cache control failures {}, htm control failures {}, diagnostic control failures {}, sideband events {}, tlb sync events {}, trace tlb syncs {}, cache flush events {}, trace cache flushes {}, trace l1 invalidations {}, diagnostic print events {}, trace diagnostics {}, htm abort events {}",
                 expected.route().as_str(),
                 expected.minimum_scheduled_count(),
                 expected.minimum_response_delivery_count(),
@@ -27,6 +27,8 @@ pub(super) fn format_traffic_trace_replay_error(
                 expected.minimum_trace_error_count(),
                 expected.minimum_trace_htm_access_count(),
                 expected.minimum_control_ack_count(),
+                expected.minimum_sync_control_ack_count(),
+                expected.minimum_htm_control_ack_count(),
                 expected.minimum_control_failure_count(),
                 expected.minimum_sync_control_failure_count(),
                 expected.minimum_tlb_control_failure_count(),
@@ -48,7 +50,7 @@ pub(super) fn format_traffic_trace_replay_error(
                 actual,
             } => write!(
                 formatter,
-                "traffic trace replay summary for route {} has scheduled {}/{}, responses {}/{}, memory trace events {}/{}, memory write completions {}/{}, trace data-cache responses {}/{}, trace data-cache errors {}/{}, memory failures {}/{}, trace errors {}/{}, trace htm accesses {}/{}, control acks {}/{}, control failures {}/{}, sync control failures {}/{}, tlb control failures {}/{}, cache control failures {}/{}, htm control failures {}/{}, diagnostic control failures {}/{}, sideband events {}/{}, tlb sync events {}/{}, trace tlb syncs {}/{}, cache flush events {}/{}, trace cache flushes {}/{}, trace l1 invalidations {}/{}, diagnostic print events {}/{}, trace diagnostics {}/{}, htm abort events {}/{}",
+                "traffic trace replay summary for route {} has scheduled {}/{}, responses {}/{}, memory trace events {}/{}, memory write completions {}/{}, trace data-cache responses {}/{}, trace data-cache errors {}/{}, memory failures {}/{}, trace errors {}/{}, trace htm accesses {}/{}, control acks {}/{}, sync control acks {}/{}, htm control acks {}/{}, control failures {}/{}, sync control failures {}/{}, tlb control failures {}/{}, cache control failures {}/{}, htm control failures {}/{}, diagnostic control failures {}/{}, sideband events {}/{}, tlb sync events {}/{}, trace tlb syncs {}/{}, cache flush events {}/{}, trace cache flushes {}/{}, trace l1 invalidations {}/{}, diagnostic print events {}/{}, trace diagnostics {}/{}, htm abort events {}/{}",
                 expected.route().as_str(),
                 actual.scheduled_count(),
                 expected.minimum_scheduled_count(),
@@ -70,6 +72,10 @@ pub(super) fn format_traffic_trace_replay_error(
                 expected.minimum_trace_htm_access_count(),
                 actual.control_ack_count(),
                 expected.minimum_control_ack_count(),
+                actual.sync_control_ack_count(),
+                expected.minimum_sync_control_ack_count(),
+                actual.htm_control_ack_count(),
+                expected.minimum_htm_control_ack_count(),
                 actual.control_failure_count(),
                 expected.minimum_control_failure_count(),
                 actual.sync_control_failure_count(),

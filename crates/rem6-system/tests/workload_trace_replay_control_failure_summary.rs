@@ -11,8 +11,9 @@ use rem6_workload::{
 mod support;
 
 use support::traffic_trace::{
-    controller_for_packets, PacketFields, GEM5_FLUSH_REQ, GEM5_HTM_ABORT, GEM5_INVALID_DEST_ERROR,
-    GEM5_MEM_FENCE_REQ, GEM5_PRINT_REQ, GEM5_TLBI_EXT_SYNC, GEM5_WRITE_ERROR,
+    controller_for_packets, PacketFields, GEM5_FLUSH_REQ, GEM5_HTM_ABORT, GEM5_HTM_REQ,
+    GEM5_HTM_REQ_RESP, GEM5_INVALID_DEST_ERROR, GEM5_MEM_FENCE_REQ, GEM5_MEM_FENCE_RESP,
+    GEM5_PRINT_REQ, GEM5_TLBI_EXT_SYNC, GEM5_WRITE_ERROR,
 };
 
 fn workload_id(value: &str) -> rem6_workload::WorkloadId {
@@ -197,4 +198,53 @@ fn workload_replay_summarizes_control_failure_sources() {
     assert_eq!(summary.cache_control_failure_count(), 1);
     assert_eq!(summary.htm_control_failure_count(), 1);
     assert_eq!(summary.diagnostic_control_failure_count(), 1);
+}
+
+#[test]
+fn workload_replay_summarizes_control_ack_sources() {
+    let outcome = replay_with_controller(
+        "riscv-replay-control-ack-sources",
+        &[
+            PacketFields {
+                tick: 1,
+                command: GEM5_MEM_FENCE_REQ,
+                address: None,
+                size: None,
+                packet_id: Some(980),
+            },
+            PacketFields {
+                tick: 3,
+                command: GEM5_MEM_FENCE_RESP,
+                address: None,
+                size: None,
+                packet_id: Some(980),
+            },
+            PacketFields {
+                tick: 5,
+                command: GEM5_HTM_REQ,
+                address: Some(0xb000),
+                size: Some(16),
+                packet_id: Some(981),
+            },
+            PacketFields {
+                tick: 7,
+                command: GEM5_HTM_REQ_RESP,
+                address: Some(0xb000),
+                size: Some(16),
+                packet_id: Some(981),
+            },
+        ],
+    )
+    .unwrap();
+
+    let traffic_replay = &outcome.traffic_trace_replays()[0];
+    assert!(traffic_replay.errors().is_empty());
+    assert_eq!(traffic_replay.runtime().control_acks().len(), 2);
+    assert_eq!(traffic_replay.sync_records().len(), 1);
+    assert_eq!(traffic_replay.htm_begin_records().len(), 1);
+
+    let summary = &outcome.result().traffic_trace_replay_summaries()[0];
+    assert_eq!(summary.control_ack_count(), 2);
+    assert_eq!(summary.sync_control_ack_count(), 1);
+    assert_eq!(summary.htm_control_ack_count(), 1);
 }

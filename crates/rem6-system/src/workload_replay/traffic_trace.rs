@@ -34,7 +34,8 @@ use super::traffic_trace_sideband_records::{
     RiscvWorkloadTraceCacheFlushRecord, RiscvWorkloadTraceTlbSyncRecord,
 };
 use super::traffic_trace_sync::{
-    RiscvWorkloadTraceL1InvalidationRecord, RiscvWorkloadTraceSyncRecord,
+    RiscvWorkloadTraceL1InvalidationRecord, RiscvWorkloadTraceSyncOutcome,
+    RiscvWorkloadTraceSyncRecord,
 };
 use super::RiscvWorkloadReplayError;
 
@@ -117,6 +118,12 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
             .filter(|record| record.data_cache_response_applied())
             .count();
         let trace_data_cache_error_count = self.records.trace_error_snapshot().len();
+        let sync_control_ack_count = self
+            .records
+            .sync_snapshot()
+            .iter()
+            .filter(|record| matches!(record.outcome(), RiscvWorkloadTraceSyncOutcome::Ack))
+            .count();
         WorkloadTrafficTraceReplaySummary::new(self.route.clone(), self.scheduled_count)
             .with_response_delivery_count(
                 self.response_deliveries
@@ -132,6 +139,8 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
             .with_trace_error_count(trace_data_cache_error_count)
             .with_trace_htm_access_count(self.records.trace_htm_access_snapshot().len())
             .with_control_ack_count(runtime.control_acks().len())
+            .with_sync_control_ack_count(sync_control_ack_count)
+            .with_htm_control_ack_count(self.records.htm_begin_snapshot().len())
             .with_control_failure_count(runtime.control_failures().len())
             .with_sync_control_failure_count(control_failure_counts.sync)
             .with_tlb_control_failure_count(control_failure_counts.tlb)

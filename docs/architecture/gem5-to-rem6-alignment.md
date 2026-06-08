@@ -3207,10 +3207,13 @@ sync/HTM failures from no-response TLB/cache/diagnostic/HTM-abort failures
 without re-reading raw sideband batches. Workload traffic-trace summaries and
 manifest expectations also expose sync, TLB, cache, HTM, and diagnostic
 control-failure source counts, so replay artifacts can require executable
-failure sources instead of only the aggregate control-failure total. The
-controller records those failures in the same typed outcome summary while
-emitting replay action events carrying owned memory and control failure records.
-The execution-facing replay action queue drains those failure records
+failure sources instead of only the aggregate control-failure total. Successful
+sync and HTM control acknowledgements are likewise split into source-kind
+summary counts, so response-required control replay can be required by source
+rather than only by aggregate acknowledgement count. The controller records
+matched failure records in the same typed outcome summary while emitting replay
+action events carrying owned memory and control failure records. The
+execution-facing replay action queue drains those failure records
 separately from successful memory and control completions while preserving an
 ordered action drain for consumers that need cross-kind replay order. Matched
 memory error records are available to the memory target helpers, including a
