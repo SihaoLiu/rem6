@@ -9,6 +9,7 @@ pub struct WorkloadTrafficTraceReplaySummary {
     trace_retry_response_count: usize,
     trace_store_conditional_failed_response_count: usize,
     trace_response_data_byte_count: u64,
+    trace_response_fill_data_byte_count: u64,
     memory_trace_event_count: usize,
     memory_write_completion_count: usize,
     trace_data_cache_response_count: usize,
@@ -60,6 +61,7 @@ impl WorkloadTrafficTraceReplaySummary {
             trace_retry_response_count: 0,
             trace_store_conditional_failed_response_count: 0,
             trace_response_data_byte_count: 0,
+            trace_response_fill_data_byte_count: 0,
             memory_trace_event_count: 0,
             memory_write_completion_count: 0,
             trace_data_cache_response_count: 0,
@@ -134,6 +136,14 @@ impl WorkloadTrafficTraceReplaySummary {
         trace_response_data_byte_count: u64,
     ) -> Self {
         self.trace_response_data_byte_count = trace_response_data_byte_count;
+        self
+    }
+
+    pub fn with_trace_response_fill_data_byte_count(
+        mut self,
+        trace_response_fill_data_byte_count: u64,
+    ) -> Self {
+        self.trace_response_fill_data_byte_count = trace_response_fill_data_byte_count;
         self
     }
 
@@ -402,6 +412,10 @@ impl WorkloadTrafficTraceReplaySummary {
         self.trace_response_data_byte_count
     }
 
+    pub const fn trace_response_fill_data_byte_count(&self) -> u64 {
+        self.trace_response_fill_data_byte_count
+    }
+
     pub const fn memory_trace_event_count(&self) -> usize {
         self.memory_trace_event_count
     }
@@ -577,6 +591,8 @@ impl WorkloadTrafficTraceReplaySummary {
                 + other.trace_store_conditional_failed_response_count,
             trace_response_data_byte_count: self.trace_response_data_byte_count
                 + other.trace_response_data_byte_count,
+            trace_response_fill_data_byte_count: self.trace_response_fill_data_byte_count
+                + other.trace_response_fill_data_byte_count,
             memory_trace_event_count: self.memory_trace_event_count
                 + other.memory_trace_event_count,
             memory_write_completion_count: self.memory_write_completion_count
@@ -654,6 +670,7 @@ pub struct WorkloadExpectedTrafficTraceReplaySummary {
     minimum_trace_retry_response_count: usize,
     minimum_trace_store_conditional_failed_response_count: usize,
     minimum_trace_response_data_byte_count: u64,
+    minimum_trace_response_fill_data_byte_count: u64,
     minimum_memory_trace_event_count: usize,
     minimum_memory_write_completion_count: usize,
     minimum_trace_data_cache_response_count: usize,
@@ -705,6 +722,7 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
             minimum_trace_retry_response_count: 0,
             minimum_trace_store_conditional_failed_response_count: 0,
             minimum_trace_response_data_byte_count: 0,
+            minimum_trace_response_fill_data_byte_count: 0,
             minimum_memory_trace_event_count: 0,
             minimum_memory_write_completion_count: 0,
             minimum_trace_data_cache_response_count: 0,
@@ -790,6 +808,15 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
         minimum_trace_response_data_byte_count: u64,
     ) -> Self {
         self.minimum_trace_response_data_byte_count = minimum_trace_response_data_byte_count;
+        self
+    }
+
+    pub fn with_minimum_trace_response_fill_data_byte_count(
+        mut self,
+        minimum_trace_response_fill_data_byte_count: u64,
+    ) -> Self {
+        self.minimum_trace_response_fill_data_byte_count =
+            minimum_trace_response_fill_data_byte_count;
         self
     }
 
@@ -1133,6 +1160,10 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
         self.minimum_trace_response_data_byte_count
     }
 
+    pub const fn minimum_trace_response_fill_data_byte_count(&self) -> u64 {
+        self.minimum_trace_response_fill_data_byte_count
+    }
+
     pub const fn minimum_memory_trace_event_count(&self) -> usize {
         self.minimum_memory_trace_event_count
     }
@@ -1344,6 +1375,8 @@ fn traffic_trace_replay_summary_meets_minimum(
             >= expected.minimum_trace_store_conditional_failed_response_count()
         && actual.trace_response_data_byte_count()
             >= expected.minimum_trace_response_data_byte_count()
+        && actual.trace_response_fill_data_byte_count()
+            >= expected.minimum_trace_response_fill_data_byte_count()
         && actual.memory_trace_event_count() >= expected.minimum_memory_trace_event_count()
         && actual.memory_write_completion_count()
             >= expected.minimum_memory_write_completion_count()

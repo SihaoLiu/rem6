@@ -131,6 +131,7 @@ fn replay_manifest() -> WorkloadManifest {
         WorkloadExpectedTrafficTraceReplaySummary::new(route_id("cpu0.data"))
             .with_minimum_response_delivery_count(1)
             .with_minimum_trace_response_data_byte_count(8)
+            .with_minimum_trace_response_fill_data_byte_count(8)
             .with_minimum_trace_completed_response_count(1)
             .with_minimum_trace_store_conditional_failed_response_count(1),
     )
@@ -207,6 +208,7 @@ fn workload_replay_summarizes_executable_response_statuses() {
     let summary = &outcome.result().traffic_trace_replay_summaries()[0];
     assert_eq!(summary.response_delivery_count(), 1);
     assert_eq!(summary.trace_response_data_byte_count(), 8);
+    assert_eq!(summary.trace_response_fill_data_byte_count(), 8);
     assert_eq!(summary.trace_completed_response_count(), 1);
     assert_eq!(summary.trace_retry_response_count(), 0);
     assert_eq!(summary.trace_store_conditional_failed_response_count(), 1);

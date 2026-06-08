@@ -628,6 +628,28 @@ fn replay_manifest_with_trace_summary_expectation(id: &str) -> WorkloadManifest 
         .unwrap()
 }
 
+fn replay_manifest_with_trace_fill_summary_expectation(id: &str) -> WorkloadManifest {
+    WorkloadManifest::builder(workload_id(id), boot_image())
+        .with_topology(replay_topology())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .add_host_event(WorkloadHostEvent::new(
+            0,
+            HostEventIntent::Stop {
+                reason: "host-stop".to_string(),
+            },
+        ))
+        .add_expected_traffic_trace_replay_summary(
+            WorkloadExpectedTrafficTraceReplaySummary::new(route_id("cpu0.fetch"))
+                .with_minimum_response_delivery_count(1)
+                .with_minimum_trace_response_fill_data_byte_count(16),
+        )
+        .unwrap()
+        .build()
+        .unwrap()
+}
+
 fn replay_manifest_with_strict_trace_summary_expectation(id: &str) -> WorkloadManifest {
     WorkloadManifest::builder(workload_id(id), boot_image())
         .with_topology(replay_topology())
@@ -766,8 +788,10 @@ fn workload_replay_runs_bound_traffic_trace_controller() {
 
 #[test]
 fn workload_replay_records_prefetch_trace_fill_without_response_payload() {
-    let outcome = replay_with_controller(
-        "riscv-replay-trace-prefetch-response-record",
+    let manifest =
+        replay_manifest_with_trace_fill_summary_expectation("riscv-replay-trace-prefetch-record");
+    let outcome = replay_manifest_with_controller(
+        manifest,
         &[
             PacketFields {
                 tick: 0,
@@ -818,6 +842,8 @@ fn workload_replay_records_prefetch_trace_fill_without_response_payload() {
     assert_eq!(response_record.response_data_bytes(), None);
     assert!(!response_record.data_cache_response_applied());
     let summary = &outcome.result().traffic_trace_replay_summaries()[0];
+    assert_eq!(summary.trace_response_data_byte_count(), 0);
+    assert_eq!(summary.trace_response_fill_data_byte_count(), 16);
     assert_eq!(summary.trace_data_cache_response_count(), 0);
 }
 

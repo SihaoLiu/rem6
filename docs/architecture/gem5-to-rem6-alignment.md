@@ -3009,7 +3009,9 @@ executable response matching even when the trace response is retained for audit
 or data-cache policy consumers separately from a transport-delivered response.
 The same replay summaries now count executable response payload bytes from the
 matched target-completion records, so manifests can require gem5 `HasData`
-response evidence instead of only response-status matches.
+response evidence instead of only response-status matches. Trace-fill bytes are
+counted separately for response kinds such as prefetches that carry gem5 trace
+data without exposing CPU-visible native response payload.
 Trace policy accessors are not treated as coverage by themselves. New response,
 error, sideband, or HTM policy exposure should land only with a controller,
 runtime, workload, cache, CPU, or diagnostic consumer, or with an explicit

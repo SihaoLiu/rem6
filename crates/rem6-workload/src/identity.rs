@@ -740,6 +740,7 @@ fn hash_expected_traffic_trace_replay_summary(
         expected.minimum_trace_store_conditional_failed_response_count() as u64,
     );
     hash_u64(hash, expected.minimum_trace_response_data_byte_count());
+    hash_u64(hash, expected.minimum_trace_response_fill_data_byte_count());
     hash_u64(hash, expected.minimum_memory_trace_event_count() as u64);
     hash_u64(
         hash,
@@ -1785,7 +1786,6 @@ fn hash_str(hash: &mut u64, value: &str) {
     hash_u64(hash, value.len() as u64);
     hash_bytes(hash, value.as_bytes());
 }
-
 fn hash_u64(hash: &mut u64, value: u64) {
     hash_bytes(hash, &value.to_le_bytes());
 }
