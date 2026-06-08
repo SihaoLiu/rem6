@@ -708,9 +708,12 @@ isolated bugs:
   source-to-derived period propagation through a typed clock-domain tree. The
   tree validates source ids, duplicate ids, unknown parents, zero dividers, and
   propagation overflow before committing a performance-level change, replacing
-  gem5's raw child-pointer update path with an auditable registry. Clocked-object
-  update callbacks, voltage-domain sanitization, DVFS handler transition
-  events, and checkpointed performance-level state remain open.
+  gem5's raw child-pointer update path with an auditable registry.
+  Clock-domain tree snapshots now preserve source performance levels, source
+  period tables, and derived parent/divider topology, and restore them through
+  the same validation path even when derived records are not encoded in parent
+  order. Clocked-object update callbacks, voltage-domain sanitization, and DVFS
+  handler transition events remain open.
   Public gem5 issue #2493 reports a DRAM `MemCtrl` state where the write queue
   remains nonempty while QoS turnaround selection repeatedly chooses the other
   direction and no request drains. The local reference keeps read and write

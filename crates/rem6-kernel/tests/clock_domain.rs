@@ -1,5 +1,6 @@
 use rem6_kernel::{
-    ClockDomain, ClockDomainId, ClockDomainTree, ClockError, Cycles, SourceClockDomain,
+    ClockDomain, ClockDomainId, ClockDomainTree, ClockDomainTreeSnapshot, ClockError, Cycles,
+    DerivedClockDomainSnapshot, SourceClockDomain, SourceClockDomainSnapshot,
 };
 
 #[test]
@@ -296,5 +297,323 @@ fn clock_domain_tree_rejects_transitive_overflow_without_partial_update() {
     assert_eq!(
         tree.clock_domain(ClockDomainId::new(3)).unwrap().period(),
         grandchild_initial_period
+    );
+}
+
+#[test]
+fn clock_domain_tree_snapshot_restores_source_levels_and_derived_domains() {
+    let mut tree = ClockDomainTree::new();
+    tree.insert_source(
+        SourceClockDomain::new(Some(ClockDomainId::new(1)), vec![2, 4, 8], 0).unwrap(),
+    )
+    .unwrap();
+    tree.insert_derived(ClockDomainId::new(2), ClockDomainId::new(1), 3)
+        .unwrap();
+    tree.insert_derived(ClockDomainId::new(3), ClockDomainId::new(2), 2)
+        .unwrap();
+    assert!(tree
+        .set_source_performance_level(ClockDomainId::new(1), 2)
+        .unwrap());
+
+    let snapshot = tree.snapshot();
+    assert_eq!(snapshot.sources().len(), 1);
+    assert_eq!(snapshot.sources()[0].domain_id(), ClockDomainId::new(1));
+    assert_eq!(snapshot.sources()[0].periods(), &[2, 4, 8]);
+    assert_eq!(snapshot.sources()[0].performance_level(), 2);
+    assert_eq!(snapshot.derived().len(), 2);
+    assert_eq!(
+        snapshot.derived()[0],
+        DerivedClockDomainSnapshot::new(ClockDomainId::new(2), ClockDomainId::new(1), 3)
+    );
+    assert_eq!(
+        snapshot.derived()[1],
+        DerivedClockDomainSnapshot::new(ClockDomainId::new(3), ClockDomainId::new(2), 2)
+    );
+    let restored = ClockDomainTree::restore(snapshot).unwrap();
+
+    let source = restored.source_clock_domain(ClockDomainId::new(1)).unwrap();
+    assert_eq!(source.performance_level(), 2);
+    assert_eq!(source.performance_points(), &[2, 4, 8]);
+    assert_eq!(
+        restored
+            .clock_domain(ClockDomainId::new(1))
+            .unwrap()
+            .period(),
+        8
+    );
+    assert_eq!(
+        restored
+            .derived_clock_domain(ClockDomainId::new(2))
+            .unwrap()
+            .parent_id(),
+        ClockDomainId::new(1)
+    );
+    assert_eq!(
+        restored
+            .derived_clock_domain(ClockDomainId::new(2))
+            .unwrap()
+            .divider(),
+        3
+    );
+    assert_eq!(
+        restored
+            .clock_domain(ClockDomainId::new(2))
+            .unwrap()
+            .period(),
+        24
+    );
+    assert_eq!(
+        restored
+            .clock_domain(ClockDomainId::new(3))
+            .unwrap()
+            .period(),
+        48
+    );
+
+    let mut restored = restored;
+    assert!(restored
+        .set_source_performance_level(ClockDomainId::new(1), 1)
+        .unwrap());
+    assert_eq!(
+        restored
+            .clock_domain(ClockDomainId::new(2))
+            .unwrap()
+            .period(),
+        12
+    );
+    assert_eq!(
+        restored
+            .clock_domain(ClockDomainId::new(3))
+            .unwrap()
+            .period(),
+        24
+    );
+}
+
+#[test]
+fn clock_domain_tree_restore_rejects_duplicate_snapshot_domains() {
+    let snapshot = ClockDomainTreeSnapshot::new(
+        vec![
+            SourceClockDomainSnapshot::new(ClockDomainId::new(1), vec![2], 0),
+            SourceClockDomainSnapshot::new(ClockDomainId::new(1), vec![4], 0),
+        ],
+        Vec::new(),
+    );
+
+    assert_eq!(
+        ClockDomainTree::restore(snapshot).unwrap_err(),
+        ClockError::DuplicateClockDomain {
+            domain: ClockDomainId::new(1)
+        }
+    );
+}
+
+#[test]
+fn clock_domain_tree_restore_rejects_unknown_derived_parent() {
+    let snapshot = ClockDomainTreeSnapshot::new(
+        vec![SourceClockDomainSnapshot::new(
+            ClockDomainId::new(1),
+            vec![2],
+            0,
+        )],
+        vec![DerivedClockDomainSnapshot::new(
+            ClockDomainId::new(2),
+            ClockDomainId::new(99),
+            4,
+        )],
+    );
+
+    assert_eq!(
+        ClockDomainTree::restore(snapshot).unwrap_err(),
+        ClockError::UnknownClockDomain {
+            domain: ClockDomainId::new(99)
+        }
+    );
+}
+
+#[test]
+fn clock_domain_tree_restore_rejects_invalid_source_snapshots() {
+    assert_eq!(
+        ClockDomainTree::restore(ClockDomainTreeSnapshot::new(
+            vec![SourceClockDomainSnapshot::new(
+                ClockDomainId::new(1),
+                Vec::new(),
+                0
+            )],
+            Vec::new(),
+        ))
+        .unwrap_err(),
+        ClockError::EmptyPerformancePoints
+    );
+    assert_eq!(
+        ClockDomainTree::restore(ClockDomainTreeSnapshot::new(
+            vec![SourceClockDomainSnapshot::new(
+                ClockDomainId::new(1),
+                vec![2, 0],
+                0,
+            )],
+            Vec::new(),
+        ))
+        .unwrap_err(),
+        ClockError::ZeroPeriod
+    );
+    assert_eq!(
+        ClockDomainTree::restore(ClockDomainTreeSnapshot::new(
+            vec![SourceClockDomainSnapshot::new(
+                ClockDomainId::new(1),
+                vec![4, 2],
+                0,
+            )],
+            Vec::new(),
+        ))
+        .unwrap_err(),
+        ClockError::UnsortedPerformancePoints
+    );
+    assert_eq!(
+        ClockDomainTree::restore(ClockDomainTreeSnapshot::new(
+            vec![SourceClockDomainSnapshot::new(
+                ClockDomainId::new(1),
+                vec![2, 4],
+                2,
+            )],
+            Vec::new(),
+        ))
+        .unwrap_err(),
+        ClockError::InvalidPerformanceLevel { level: 2, count: 2 }
+    );
+}
+
+#[test]
+fn clock_domain_tree_restore_rejects_invalid_derived_snapshots() {
+    let duplicate_derived = ClockDomainTreeSnapshot::new(
+        vec![SourceClockDomainSnapshot::new(
+            ClockDomainId::new(1),
+            vec![2],
+            0,
+        )],
+        vec![
+            DerivedClockDomainSnapshot::new(ClockDomainId::new(2), ClockDomainId::new(1), 2),
+            DerivedClockDomainSnapshot::new(ClockDomainId::new(2), ClockDomainId::new(1), 3),
+        ],
+    );
+    assert_eq!(
+        ClockDomainTree::restore(duplicate_derived).unwrap_err(),
+        ClockError::DuplicateClockDomain {
+            domain: ClockDomainId::new(2)
+        }
+    );
+
+    let source_collision = ClockDomainTreeSnapshot::new(
+        vec![SourceClockDomainSnapshot::new(
+            ClockDomainId::new(1),
+            vec![2],
+            0,
+        )],
+        vec![DerivedClockDomainSnapshot::new(
+            ClockDomainId::new(1),
+            ClockDomainId::new(1),
+            2,
+        )],
+    );
+    assert_eq!(
+        ClockDomainTree::restore(source_collision).unwrap_err(),
+        ClockError::DuplicateClockDomain {
+            domain: ClockDomainId::new(1)
+        }
+    );
+
+    let zero_divider = ClockDomainTreeSnapshot::new(
+        vec![SourceClockDomainSnapshot::new(
+            ClockDomainId::new(1),
+            vec![2],
+            0,
+        )],
+        vec![DerivedClockDomainSnapshot::new(
+            ClockDomainId::new(2),
+            ClockDomainId::new(1),
+            0,
+        )],
+    );
+    assert_eq!(
+        ClockDomainTree::restore(zero_divider).unwrap_err(),
+        ClockError::ZeroClockDivider
+    );
+
+    let overflow = ClockDomainTreeSnapshot::new(
+        vec![SourceClockDomainSnapshot::new(
+            ClockDomainId::new(1),
+            vec![u64::MAX],
+            0,
+        )],
+        vec![DerivedClockDomainSnapshot::new(
+            ClockDomainId::new(2),
+            ClockDomainId::new(1),
+            2,
+        )],
+    );
+    assert_eq!(
+        ClockDomainTree::restore(overflow).unwrap_err(),
+        ClockError::DerivedClockOverflow {
+            period: u64::MAX,
+            divider: 2
+        }
+    );
+}
+
+#[test]
+fn clock_domain_tree_restore_accepts_unordered_derived_snapshots() {
+    let snapshot = ClockDomainTreeSnapshot::new(
+        vec![SourceClockDomainSnapshot::new(
+            ClockDomainId::new(1),
+            vec![3, 6],
+            0,
+        )],
+        vec![
+            DerivedClockDomainSnapshot::new(ClockDomainId::new(3), ClockDomainId::new(2), 5),
+            DerivedClockDomainSnapshot::new(ClockDomainId::new(2), ClockDomainId::new(1), 4),
+        ],
+    );
+
+    let restored = ClockDomainTree::restore(snapshot).unwrap();
+
+    assert_eq!(
+        restored
+            .clock_domain(ClockDomainId::new(2))
+            .unwrap()
+            .period(),
+        12
+    );
+    assert_eq!(
+        restored
+            .clock_domain(ClockDomainId::new(3))
+            .unwrap()
+            .period(),
+        60
+    );
+    assert_eq!(
+        restored
+            .derived_clock_domain(ClockDomainId::new(3))
+            .unwrap()
+            .parent_id(),
+        ClockDomainId::new(2)
+    );
+
+    let mut restored = restored;
+    assert!(restored
+        .set_source_performance_level(ClockDomainId::new(1), 1)
+        .unwrap());
+    assert_eq!(
+        restored
+            .clock_domain(ClockDomainId::new(2))
+            .unwrap()
+            .period(),
+        24
+    );
+    assert_eq!(
+        restored
+            .clock_domain(ClockDomainId::new(3))
+            .unwrap()
+            .period(),
+        120
     );
 }

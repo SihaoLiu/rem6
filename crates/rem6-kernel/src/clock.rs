@@ -259,6 +259,43 @@ impl SourceClockDomain {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SourceClockDomainSnapshot {
+    domain_id: ClockDomainId,
+    periods: Vec<Tick>,
+    performance_level: usize,
+}
+
+impl SourceClockDomainSnapshot {
+    pub fn new(domain_id: ClockDomainId, periods: Vec<Tick>, performance_level: usize) -> Self {
+        Self {
+            domain_id,
+            periods,
+            performance_level,
+        }
+    }
+
+    pub const fn domain_id(&self) -> ClockDomainId {
+        self.domain_id
+    }
+
+    pub fn periods(&self) -> &[Tick] {
+        &self.periods
+    }
+
+    pub const fn performance_level(&self) -> usize {
+        self.performance_level
+    }
+
+    fn restore(&self) -> Result<SourceClockDomain, ClockError> {
+        SourceClockDomain::new(
+            Some(self.domain_id),
+            self.periods.clone(),
+            self.performance_level,
+        )
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DerivedClockDomain {
     domain_id: ClockDomainId,
     parent_id: ClockDomainId,
@@ -302,6 +339,58 @@ impl DerivedClockDomain {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DerivedClockDomainSnapshot {
+    domain_id: ClockDomainId,
+    parent_id: ClockDomainId,
+    divider: u64,
+}
+
+impl DerivedClockDomainSnapshot {
+    pub const fn new(domain_id: ClockDomainId, parent_id: ClockDomainId, divider: u64) -> Self {
+        Self {
+            domain_id,
+            parent_id,
+            divider,
+        }
+    }
+
+    pub const fn domain_id(self) -> ClockDomainId {
+        self.domain_id
+    }
+
+    pub const fn parent_id(self) -> ClockDomainId {
+        self.parent_id
+    }
+
+    pub const fn divider(self) -> u64 {
+        self.divider
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClockDomainTreeSnapshot {
+    sources: Vec<SourceClockDomainSnapshot>,
+    derived: Vec<DerivedClockDomainSnapshot>,
+}
+
+impl ClockDomainTreeSnapshot {
+    pub fn new(
+        sources: Vec<SourceClockDomainSnapshot>,
+        derived: Vec<DerivedClockDomainSnapshot>,
+    ) -> Self {
+        Self { sources, derived }
+    }
+
+    pub fn sources(&self) -> &[SourceClockDomainSnapshot] {
+        &self.sources
+    }
+
+    pub fn derived(&self) -> &[DerivedClockDomainSnapshot] {
+        &self.derived
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClockDomainTree {
     domains: BTreeMap<ClockDomainId, ClockDomainNode>,
@@ -314,6 +403,31 @@ impl ClockDomainTree {
             domains: BTreeMap::new(),
             children: BTreeMap::new(),
         }
+    }
+
+    pub fn restore(snapshot: ClockDomainTreeSnapshot) -> Result<Self, ClockError> {
+        let mut tree = Self::new();
+        for source in snapshot.sources() {
+            tree.insert_source(source.restore()?)?;
+        }
+        tree.restore_derived_snapshots(snapshot.derived())?;
+        Ok(tree)
+    }
+
+    pub fn snapshot(&self) -> ClockDomainTreeSnapshot {
+        let mut sources = Vec::new();
+        let mut derived = Vec::new();
+        for (domain, node) in &self.domains {
+            if let ClockDomainNode::Source(source) = node {
+                sources.push(SourceClockDomainSnapshot::new(
+                    *domain,
+                    source.performance_points().to_vec(),
+                    source.performance_level(),
+                ));
+                self.collect_derived_snapshots(*domain, &mut derived);
+            }
+        }
+        ClockDomainTreeSnapshot::new(sources, derived)
     }
 
     pub fn insert_source(&mut self, source: SourceClockDomain) -> Result<(), ClockError> {
@@ -420,6 +534,36 @@ impl ClockDomainTree {
             .ok_or(ClockError::UnknownClockDomain { domain })
     }
 
+    fn restore_derived_snapshots(
+        &mut self,
+        snapshots: &[DerivedClockDomainSnapshot],
+    ) -> Result<(), ClockError> {
+        let mut pending = snapshots.to_vec();
+        while !pending.is_empty() {
+            let pending_count = pending.len();
+            let mut index = 0;
+            while index < pending.len() {
+                let snapshot = pending[index];
+                if !self.domains.contains_key(&snapshot.parent_id()) {
+                    index += 1;
+                    continue;
+                }
+                pending.remove(index);
+                self.insert_derived(
+                    snapshot.domain_id(),
+                    snapshot.parent_id(),
+                    snapshot.divider(),
+                )?;
+            }
+            if pending.len() == pending_count {
+                return Err(ClockError::UnknownClockDomain {
+                    domain: pending[0].parent_id(),
+                });
+            }
+        }
+        Ok(())
+    }
+
     fn collect_derived_updates(
         &self,
         parent: ClockDomainId,
@@ -438,6 +582,30 @@ impl ClockDomainTree {
             self.collect_derived_updates(*child, child_domain, updates)?;
         }
         Ok(())
+    }
+
+    fn collect_derived_snapshots(
+        &self,
+        parent: ClockDomainId,
+        snapshots: &mut Vec<DerivedClockDomainSnapshot>,
+    ) {
+        let Some(children) = self.children.get(&parent) else {
+            return;
+        };
+        for child in children {
+            let ClockDomainNode::Derived(derived) = self
+                .domain(*child)
+                .expect("registered child clock domain remains present")
+            else {
+                unreachable!("source clock domains are never registered as children");
+            };
+            snapshots.push(DerivedClockDomainSnapshot::new(
+                derived.domain_id(),
+                derived.parent_id(),
+                derived.divider(),
+            ));
+            self.collect_derived_snapshots(*child, snapshots);
+        }
     }
 }
 

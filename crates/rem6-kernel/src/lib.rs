@@ -6,8 +6,8 @@ mod scheduler;
 mod wait_for;
 
 pub use clock::{
-    ClockDomain, ClockDomainId, ClockDomainTree, ClockError, Cycles, DerivedClockDomain,
-    SourceClockDomain,
+    ClockDomain, ClockDomainId, ClockDomainTree, ClockDomainTreeSnapshot, ClockError, Cycles,
+    DerivedClockDomain, DerivedClockDomainSnapshot, SourceClockDomain, SourceClockDomainSnapshot,
 };
 pub use event::{ClockScheduleError, EventId, EventQueue, ScheduleError};
 pub use progress::{
