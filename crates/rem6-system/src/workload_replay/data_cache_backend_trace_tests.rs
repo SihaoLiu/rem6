@@ -119,6 +119,7 @@ const GEM5_MEM_SYNC_REQ: u32 = 39;
 const GEM5_FLAG_KERNEL: u32 = 0x0000_1000;
 const GEM5_SYNC_INV_L1: u32 = 0x0000_0001;
 const GEM5_HTM_REQ: u32 = 56;
+const GEM5_HTM_ABORT: u32 = 58;
 
 fn sync_event(
     command: u32,
@@ -536,6 +537,81 @@ fn trace_htm_rollback_capture_controller_error_keeps_htm_context() {
     assert_eq!(record.trace_response_kind(), None);
     assert_eq!(record.trace_htm_kind(), Some(TrafficTraceHtmKind::Request));
     assert_eq!(record.trace_packet_id(), Some(714));
+    assert_eq!(record.protocol(), RiscvDataCacheProtocol::Msi);
+    assert_eq!(record.target(), MemoryTargetId::new(0));
+    assert_eq!(record.address(), Address::new(0x3000));
+    assert_eq!(record.line(), Address::new(0x3000));
+    assert_eq!(record.operation(), MemoryOperation::NoAccess);
+    assert!(matches!(
+        record.error(),
+        RiscvDataCacheControllerError::Msi(rem6_coherence::HarnessError::Scheduler(
+            rem6_kernel::SchedulerError::SnapshotContainsPendingEvents { pending_events }
+        )) if *pending_events == 1
+    ));
+}
+
+#[test]
+fn trace_htm_rollback_restore_controller_error_keeps_abort_context() {
+    let mut backend = WorkloadDataCacheBackend::new([WorkloadDataCacheLineBackend::new(
+        &data_cache_config(WorkloadDataCacheProtocol::Msi),
+        layout(),
+        Address::new(0x3000),
+        WorkloadDataCacheLineMemory::Line(line_data()),
+        vec![cache_config(1)],
+    )
+    .unwrap()]);
+    let route = MemoryRouteId::new(11);
+    let transaction_uid = rem6_cpu::HtmTransactionUid::new(3);
+    let begin = htm_event(GEM5_HTM_REQ, Some(714), Some(0x2020));
+    assert!(backend.capture_trace_htm_rollback_from_event(
+        route,
+        transaction_uid,
+        begin.tick() + 5,
+        begin,
+    ));
+    assert_eq!(
+        backend
+            .record_trace_htm_access_event(
+                begin.tick() + 6,
+                route,
+                transaction_uid,
+                response_event_with_packet_id(5, 0x3008, 8, Some(716)),
+                true,
+            )
+            .len(),
+        1
+    );
+
+    let line = backend.lines.get_mut(&Address::new(0x3000)).unwrap();
+    let WorkloadDataCacheHarness::Msi(harness) = &mut line.harness else {
+        panic!("expected MSI backend harness");
+    };
+    harness
+        .submit_cpu_request(agent(1), write(1, 10, 0x3008, vec![0xbb]))
+        .unwrap();
+    let event = htm_event(GEM5_HTM_ABORT, Some(715), Some(0x2030));
+    assert_eq!(event.kind(), TrafficTraceHtmKind::Abort);
+
+    let restored = backend.restore_trace_htm_rollback_from_event(
+        route,
+        transaction_uid,
+        event.tick() + 7,
+        event,
+    );
+    assert!(restored);
+
+    let error = backend.take_error().unwrap();
+    let RiscvWorkloadReplayError::DataCacheController { record } = error else {
+        panic!("expected contextual data-cache controller error");
+    };
+    assert_eq!(record.tick(), event.tick() + 7);
+    assert_eq!(record.request_id(), None);
+    assert_eq!(record.trace_sequence(), Some(event.sequence()));
+    assert_eq!(record.trace_cache_kind(), None);
+    assert_eq!(record.trace_sync_kind(), None);
+    assert_eq!(record.trace_response_kind(), None);
+    assert_eq!(record.trace_htm_kind(), Some(TrafficTraceHtmKind::Abort));
+    assert_eq!(record.trace_packet_id(), Some(715));
     assert_eq!(record.protocol(), RiscvDataCacheProtocol::Msi);
     assert_eq!(record.target(), MemoryTargetId::new(0));
     assert_eq!(record.address(), Address::new(0x3000));

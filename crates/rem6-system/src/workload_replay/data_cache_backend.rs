@@ -605,8 +605,10 @@ impl WorkloadDataCacheLineBackend {
         })
     }
 
-    fn restore_htm_rollback_snapshot(
+    fn restore_htm_rollback_snapshot_from_event(
         &mut self,
+        tick: Tick,
+        event: TrafficTraceHtmEvent,
         rollback: &WorkloadDataCacheLineRollbackSnapshot,
     ) -> bool {
         if rollback.line != self.line {
@@ -618,29 +620,40 @@ impl WorkloadDataCacheLineBackend {
                 WorkloadDataCacheRollbackSnapshot::Msi(snapshot),
             ) => harness
                 .restore_quiescent(snapshot)
-                .map_err(RiscvWorkloadReplayError::MsiDataCache),
+                .map_err(RiscvDataCacheControllerError::Msi),
             (
                 WorkloadDataCacheHarness::Mesi(harness),
                 WorkloadDataCacheRollbackSnapshot::Mesi(snapshot),
             ) => harness
                 .restore_quiescent(snapshot)
-                .map_err(RiscvWorkloadReplayError::MesiDataCache),
+                .map_err(RiscvDataCacheControllerError::Mesi),
             (
                 WorkloadDataCacheHarness::Moesi(harness),
                 WorkloadDataCacheRollbackSnapshot::Moesi(snapshot),
             ) => harness
                 .restore_quiescent(snapshot)
-                .map_err(RiscvWorkloadReplayError::MoesiDataCache),
+                .map_err(RiscvDataCacheControllerError::Moesi),
             (
                 WorkloadDataCacheHarness::Chi(harness),
                 WorkloadDataCacheRollbackSnapshot::Chi(snapshot),
             ) => harness
                 .restore_quiescent(snapshot)
-                .map_err(RiscvWorkloadReplayError::ChiDataCache),
+                .map_err(RiscvDataCacheControllerError::Chi),
             _ => return false,
         };
         if let Err(error) = result {
-            self.error = Some(error);
+            let record = RiscvDataCacheControllerErrorRecord::from_trace_htm_event(
+                tick,
+                event,
+                self.protocol,
+                self.target,
+                self.line,
+                MemoryOperation::NoAccess,
+                error,
+            );
+            self.error = Some(RiscvWorkloadReplayError::DataCacheController {
+                record: Box::new(record),
+            });
         }
         true
     }
@@ -1102,10 +1115,12 @@ impl WorkloadDataCacheBackend {
         true
     }
 
-    pub(super) fn restore_trace_htm_rollback(
+    pub(super) fn restore_trace_htm_rollback_from_event(
         &mut self,
         route: MemoryRouteId,
         transaction_uid: HtmTransactionUid,
+        tick: Tick,
+        event: TrafficTraceHtmEvent,
     ) -> bool {
         let key = WorkloadDataCacheRollbackKey::new(route, transaction_uid);
         self.htm_access_sets.remove(&key);
@@ -1115,7 +1130,7 @@ impl WorkloadDataCacheBackend {
         for line_address in rollback.written_lines {
             if let Some(snapshot) = rollback.snapshots.get(&line_address) {
                 if let Some(line) = self.lines.get_mut(&snapshot.line) {
-                    line.restore_htm_rollback_snapshot(snapshot);
+                    line.restore_htm_rollback_snapshot_from_event(tick, event, snapshot);
                 }
             }
         }

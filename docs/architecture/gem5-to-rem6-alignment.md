@@ -3214,14 +3214,15 @@ conflict records. The MemSync `INV_L1` control-acknowledgement path now passes
 the typed sync event into L1 invalidation too, so protocol-internal invalidation
 failures keep the sync class, kernel-sync and `INV_L1` policy, packet id, tick,
 line, operation, and protocol context. HTM begin acknowledgements also pass the
-typed HTM trace event into rollback snapshot capture, so a non-quiescent
-data-cache line reports a contextual controller error instead of an
-unattributed scheduler or protocol error. Data-cache accepted trace responses,
-trace errors, and HTM access records also surface as replay-level executed
-evidence, run-level data-cache error outcomes, and summary counts, separate
-from generic memory failure and response counts, so manifests can require that
-the cache consumer accepted those trace policies rather than only observing raw
-target traffic.
+typed HTM trace event into rollback snapshot capture, and HTM abort sideband
+events pass the abort event into rollback restore, so non-quiescent data-cache
+lines report contextual controller errors instead of unattributed scheduler or
+protocol errors. Data-cache accepted trace responses, trace
+errors, and HTM access records also surface as replay-level executed evidence,
+run-level data-cache error outcomes, and summary counts, separate from generic
+memory failure and response counts, so manifests can require that the cache
+consumer accepted those trace policies rather than only observing raw target
+traffic.
 RISC-V fetch-port and data-port replay
 failures likewise surface as CPU port failures rather than hanging as
 no-response target events. Delivered RISC-V and GPU or accelerator DMA
@@ -3236,9 +3237,9 @@ those failures keep trace tick, sequence, kind, sync policy, HTM class, optional
 packet id, address, line, operation, and protocol context. Additional accessor
 work should stay tied to one of those consumers, or to a new execution-facing
 consumer with a failing test that reaches replay, workload cache state, or a
-recorded runtime outcome. The remaining integration boundary is propagation of
-source-less internal data-cache recovery, such as HTM abort rollback restore
-failures, into equally contextual execution paths.
+recorded runtime outcome. Remaining source-less cache paths include diagnostic
+and finalization snapshot failures that do not yet carry their triggering trace
+or result context.
 Trace packet flag handling now maps non-prefetch `INST_FETCH` on `ReadReq`,
 `ReadCleanReq`, and
 `ReadSharedReq` packets to native instruction-fetch requests, accepts `PHYSICAL`

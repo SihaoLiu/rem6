@@ -1249,7 +1249,12 @@ impl WorkloadTraceDataCacheConsumerInner {
                             data_cache
                                 .lock()
                                 .expect("workload data cache lock")
-                                .restore_trace_htm_rollback(self.route, abort.uid());
+                                .restore_trace_htm_rollback_from_event(
+                                    self.route,
+                                    abort.uid(),
+                                    tick,
+                                    htm,
+                                );
                         }
                     } else if let Some(transaction_uid) = active_transaction_uid {
                         if let Some(data_cache) = self.data_cache.as_ref() {
