@@ -91,6 +91,7 @@ pub use cpu_local_timer_checkpoint::{
 };
 pub use data_cache_controller_error::{
     RiscvDataCacheControllerError, RiscvDataCacheControllerErrorRecord,
+    RiscvDataCacheControllerErrorSource,
 };
 pub use data_cache_run::{
     RiscvDataCacheProtocol, RiscvDataCacheRunHistoryRecord, RiscvDataCacheRunRecord,

@@ -230,7 +230,10 @@ fn assert_unknown_cache_controller_error(
     };
     assert_eq!(
         record.request_id(),
-        MemoryRequestId::new(AgentId::new(expected_agent), expected_sequence)
+        Some(MemoryRequestId::new(
+            AgentId::new(expected_agent),
+            expected_sequence
+        ))
     );
     assert_eq!(record.protocol(), crate::RiscvDataCacheProtocol::Msi);
     assert_eq!(record.target(), MemoryTargetId::new(0));

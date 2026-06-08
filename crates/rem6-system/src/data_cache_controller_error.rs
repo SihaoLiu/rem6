@@ -6,6 +6,10 @@ use rem6_kernel::Tick;
 use rem6_memory::{
     Address, MemoryError, MemoryOperation, MemoryRequest, MemoryRequestId, MemoryTargetId,
 };
+use rem6_traffic::{
+    TrafficTraceCacheEvent, TrafficTraceCacheKind, TrafficTraceResponseEvent,
+    TrafficTraceResponseKind,
+};
 
 use crate::RiscvDataCacheProtocol;
 
@@ -19,10 +23,27 @@ pub enum RiscvDataCacheControllerError {
     Memory(MemoryError),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RiscvDataCacheControllerErrorSource {
+    Request {
+        request_id: MemoryRequestId,
+    },
+    TraceCache {
+        sequence: u64,
+        kind: TrafficTraceCacheKind,
+        trace_packet_id: Option<u64>,
+    },
+    TraceResponse {
+        sequence: u64,
+        kind: TrafficTraceResponseKind,
+        trace_packet_id: Option<u64>,
+    },
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RiscvDataCacheControllerErrorRecord {
     tick: Tick,
-    request_id: MemoryRequestId,
+    source: RiscvDataCacheControllerErrorSource,
     protocol: RiscvDataCacheProtocol,
     target: MemoryTargetId,
     address: Address,
@@ -108,7 +129,9 @@ impl RiscvDataCacheControllerErrorRecord {
     ) -> Self {
         Self {
             tick,
-            request_id: request.id(),
+            source: RiscvDataCacheControllerErrorSource::Request {
+                request_id: request.id(),
+            },
             protocol,
             target,
             address: request.range().start(),
@@ -118,12 +141,104 @@ impl RiscvDataCacheControllerErrorRecord {
         }
     }
 
+    pub(crate) fn from_trace_cache_event(
+        tick: Tick,
+        event: TrafficTraceCacheEvent,
+        protocol: RiscvDataCacheProtocol,
+        target: MemoryTargetId,
+        line: Address,
+        error: RiscvDataCacheControllerError,
+    ) -> Self {
+        Self {
+            tick,
+            source: RiscvDataCacheControllerErrorSource::TraceCache {
+                sequence: event.sequence(),
+                kind: event.kind(),
+                trace_packet_id: event.trace_packet_id(),
+            },
+            protocol,
+            target,
+            address: event.address(),
+            line,
+            operation: MemoryOperation::Invalidate,
+            error,
+        }
+    }
+
+    pub(crate) fn from_trace_response_event(
+        tick: Tick,
+        event: TrafficTraceResponseEvent,
+        protocol: RiscvDataCacheProtocol,
+        target: MemoryTargetId,
+        line: Address,
+        error: RiscvDataCacheControllerError,
+    ) -> Self {
+        Self {
+            tick,
+            source: RiscvDataCacheControllerErrorSource::TraceResponse {
+                sequence: event.sequence(),
+                kind: event.kind(),
+                trace_packet_id: event.trace_packet_id(),
+            },
+            protocol,
+            target,
+            address: event.address().unwrap_or(line),
+            line,
+            operation: trace_response_operation(event),
+            error,
+        }
+    }
+
     pub const fn tick(&self) -> Tick {
         self.tick
     }
 
-    pub const fn request_id(&self) -> MemoryRequestId {
-        self.request_id
+    pub const fn source(&self) -> RiscvDataCacheControllerErrorSource {
+        self.source
+    }
+
+    pub const fn request_id(&self) -> Option<MemoryRequestId> {
+        match self.source {
+            RiscvDataCacheControllerErrorSource::Request { request_id } => Some(request_id),
+            RiscvDataCacheControllerErrorSource::TraceCache { .. }
+            | RiscvDataCacheControllerErrorSource::TraceResponse { .. } => None,
+        }
+    }
+
+    pub const fn trace_sequence(&self) -> Option<u64> {
+        match self.source {
+            RiscvDataCacheControllerErrorSource::TraceCache { sequence, .. }
+            | RiscvDataCacheControllerErrorSource::TraceResponse { sequence, .. } => Some(sequence),
+            RiscvDataCacheControllerErrorSource::Request { .. } => None,
+        }
+    }
+
+    pub const fn trace_cache_kind(&self) -> Option<TrafficTraceCacheKind> {
+        match self.source {
+            RiscvDataCacheControllerErrorSource::TraceCache { kind, .. } => Some(kind),
+            RiscvDataCacheControllerErrorSource::Request { .. }
+            | RiscvDataCacheControllerErrorSource::TraceResponse { .. } => None,
+        }
+    }
+
+    pub const fn trace_response_kind(&self) -> Option<TrafficTraceResponseKind> {
+        match self.source {
+            RiscvDataCacheControllerErrorSource::TraceResponse { kind, .. } => Some(kind),
+            RiscvDataCacheControllerErrorSource::Request { .. }
+            | RiscvDataCacheControllerErrorSource::TraceCache { .. } => None,
+        }
+    }
+
+    pub const fn trace_packet_id(&self) -> Option<u64> {
+        match self.source {
+            RiscvDataCacheControllerErrorSource::TraceCache {
+                trace_packet_id, ..
+            }
+            | RiscvDataCacheControllerErrorSource::TraceResponse {
+                trace_packet_id, ..
+            } => trace_packet_id,
+            RiscvDataCacheControllerErrorSource::Request { .. } => None,
+        }
     }
 
     pub const fn protocol(&self) -> RiscvDataCacheProtocol {
@@ -153,15 +268,47 @@ impl RiscvDataCacheControllerErrorRecord {
 
 impl fmt::Display for RiscvDataCacheControllerErrorRecord {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "data-cache controller {:?} failed request {} from agent {} at tick {} for address {:#x}: {}",
-            self.protocol,
-            self.request_id.sequence(),
-            self.request_id.agent().get(),
-            self.tick,
-            self.address.get(),
-            self.error
-        )
+        match self.source {
+            RiscvDataCacheControllerErrorSource::Request { request_id } => write!(
+                formatter,
+                "data-cache controller {:?} failed request {} from agent {} at tick {} for address {:#x}: {}",
+                self.protocol,
+                request_id.sequence(),
+                request_id.agent().get(),
+                self.tick,
+                self.address.get(),
+                self.error
+            ),
+            RiscvDataCacheControllerErrorSource::TraceCache { sequence, kind, .. } => write!(
+                formatter,
+                "data-cache controller {:?} failed trace cache {:?} sequence {} at tick {} for address {:#x}: {}",
+                self.protocol,
+                kind,
+                sequence,
+                self.tick,
+                self.address.get(),
+                self.error
+            ),
+            RiscvDataCacheControllerErrorSource::TraceResponse { sequence, kind, .. } => write!(
+                formatter,
+                "data-cache controller {:?} failed trace response {:?} sequence {} at tick {} for address {:#x}: {}",
+                self.protocol,
+                kind,
+                sequence,
+                self.tick,
+                self.address.get(),
+                self.error
+            ),
+        }
+    }
+}
+
+const fn trace_response_operation(event: TrafficTraceResponseEvent) -> MemoryOperation {
+    match event.kind() {
+        TrafficTraceResponseKind::CleanShared => MemoryOperation::CleanShared,
+        TrafficTraceResponseKind::ReadWithInvalidate
+        | TrafficTraceResponseKind::CleanInvalid
+        | TrafficTraceResponseKind::Invalidate => MemoryOperation::Invalidate,
+        _ => MemoryOperation::Invalidate,
     }
 }

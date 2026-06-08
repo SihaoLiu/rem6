@@ -460,7 +460,19 @@ impl WorkloadDataCacheLineBackend {
             return None;
         }
 
-        self.invalidate_trace_line();
+        if let Err(error) = self.try_invalidate_trace_line() {
+            let record = RiscvDataCacheControllerErrorRecord::from_trace_cache_event(
+                event.tick(),
+                event,
+                self.protocol,
+                self.target,
+                self.line,
+                error,
+            );
+            self.error = Some(RiscvWorkloadReplayError::DataCacheController {
+                record: Box::new(record),
+            });
+        }
         Some(WorkloadTraceCacheApplication::new(
             self.protocol,
             self.target,
@@ -473,10 +485,25 @@ impl WorkloadDataCacheLineBackend {
             return false;
         }
 
-        if event.invalidates_line() {
-            self.invalidate_trace_line();
+        let result = if event.invalidates_line() {
+            self.try_invalidate_trace_line()
         } else if event.cleans_line() {
-            self.clean_trace_line();
+            self.try_clean_trace_line()
+        } else {
+            Ok(())
+        };
+        if let Err(error) = result {
+            let record = RiscvDataCacheControllerErrorRecord::from_trace_response_event(
+                event.tick(),
+                event,
+                self.protocol,
+                self.target,
+                self.line,
+                error,
+            );
+            self.error = Some(RiscvWorkloadReplayError::DataCacheController {
+                record: Box::new(record),
+            });
         }
         true
     }
@@ -721,50 +748,51 @@ impl WorkloadDataCacheLineBackend {
     }
 
     fn invalidate_trace_line(&mut self) {
-        let result = match &mut self.harness {
-            WorkloadDataCacheHarness::Msi(harness) => {
-                flush_msi_harness(harness, self.target, self.line)
-                    .map_err(RiscvWorkloadReplayError::MsiDataCache)
-            }
-            WorkloadDataCacheHarness::Mesi(harness) => {
-                flush_mesi_harness(harness, self.target, self.line)
-                    .map_err(RiscvWorkloadReplayError::MesiDataCache)
-            }
-            WorkloadDataCacheHarness::Moesi(harness) => {
-                flush_moesi_harness(harness, self.target, self.line)
-                    .map_err(RiscvWorkloadReplayError::MoesiDataCache)
-            }
-            WorkloadDataCacheHarness::Chi(harness) => {
-                flush_chi_harness(harness, self.target, self.line)
-                    .map_err(RiscvWorkloadReplayError::ChiDataCache)
-            }
-        };
+        let result = self.try_invalidate_trace_line();
         if let Err(error) = result {
-            self.error = Some(error);
+            self.error = Some(data_cache_controller_error_to_replay_error(error));
         }
     }
 
-    fn clean_trace_line(&mut self) {
-        let result = match &mut self.harness {
+    fn try_invalidate_trace_line(&mut self) -> Result<(), RiscvDataCacheControllerError> {
+        match &mut self.harness {
+            WorkloadDataCacheHarness::Msi(harness) => {
+                flush_msi_harness(harness, self.target, self.line)
+                    .map_err(RiscvDataCacheControllerError::Msi)
+            }
+            WorkloadDataCacheHarness::Mesi(harness) => {
+                flush_mesi_harness(harness, self.target, self.line)
+                    .map_err(RiscvDataCacheControllerError::Mesi)
+            }
+            WorkloadDataCacheHarness::Moesi(harness) => {
+                flush_moesi_harness(harness, self.target, self.line)
+                    .map_err(RiscvDataCacheControllerError::Moesi)
+            }
+            WorkloadDataCacheHarness::Chi(harness) => {
+                flush_chi_harness(harness, self.target, self.line)
+                    .map_err(RiscvDataCacheControllerError::Chi)
+            }
+        }
+    }
+
+    fn try_clean_trace_line(&mut self) -> Result<(), RiscvDataCacheControllerError> {
+        match &mut self.harness {
             WorkloadDataCacheHarness::Msi(harness) => {
                 clean_msi_harness(harness, self.target, self.line)
-                    .map_err(RiscvWorkloadReplayError::MsiDataCache)
+                    .map_err(RiscvDataCacheControllerError::Msi)
             }
             WorkloadDataCacheHarness::Mesi(harness) => {
                 clean_mesi_harness(harness, self.target, self.line)
-                    .map_err(RiscvWorkloadReplayError::MesiDataCache)
+                    .map_err(RiscvDataCacheControllerError::Mesi)
             }
             WorkloadDataCacheHarness::Moesi(harness) => {
                 clean_moesi_harness(harness, self.target, self.line)
-                    .map_err(RiscvWorkloadReplayError::MoesiDataCache)
+                    .map_err(RiscvDataCacheControllerError::Moesi)
             }
             WorkloadDataCacheHarness::Chi(harness) => {
                 clean_chi_harness(harness, self.target, self.line)
-                    .map_err(RiscvWorkloadReplayError::ChiDataCache)
+                    .map_err(RiscvDataCacheControllerError::Chi)
             }
-        };
-        if let Err(error) = result {
-            self.error = Some(error);
         }
     }
 
@@ -1592,6 +1620,25 @@ fn clean_chi_state(state: ChiState) -> ChiState {
         ChiState::SharedDirty => ChiState::SharedClean,
         ChiState::UniqueDirty => ChiState::UniqueClean,
         state => state,
+    }
+}
+
+fn data_cache_controller_error_to_replay_error(
+    error: RiscvDataCacheControllerError,
+) -> RiscvWorkloadReplayError {
+    match error {
+        RiscvDataCacheControllerError::Msi(error) => RiscvWorkloadReplayError::MsiDataCache(error),
+        RiscvDataCacheControllerError::Mesi(error) => {
+            RiscvWorkloadReplayError::MesiDataCache(error)
+        }
+        RiscvDataCacheControllerError::Moesi(error) => {
+            RiscvWorkloadReplayError::MoesiDataCache(error)
+        }
+        RiscvDataCacheControllerError::Chi(error) => RiscvWorkloadReplayError::ChiDataCache(error),
+        RiscvDataCacheControllerError::MissingResponse { request } => {
+            RiscvWorkloadReplayError::MissingDataCacheResponse { request }
+        }
+        RiscvDataCacheControllerError::Memory(error) => RiscvWorkloadReplayError::Memory(error),
     }
 }
 

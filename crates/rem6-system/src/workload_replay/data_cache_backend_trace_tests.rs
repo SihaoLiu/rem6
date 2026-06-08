@@ -1,9 +1,11 @@
+use rem6_coherence::PartitionedDramMemoryConfig;
+use rem6_dram::{DramGeometry, DramMemoryController, DramTiming};
 use rem6_kernel::PartitionedScheduler;
 use rem6_memory::{AccessSize, AgentId, ByteMask, MemoryRequest, MemoryRequestId};
 use rem6_protocol_mesi::MesiState;
 use rem6_traffic::{
-    TrafficTrace, TrafficTraceConfig, TrafficTraceEvent, TrafficTraceGenerator,
-    TrafficTraceResponseKind,
+    TrafficTrace, TrafficTraceCacheKind, TrafficTraceConfig, TrafficTraceEvent,
+    TrafficTraceGenerator, TrafficTraceResponseKind,
 };
 use rem6_transport::{MemoryRoute, MemoryTrace, MemoryTransport, TransportEndpointId};
 use rem6_workload::WorkloadRouteId;
@@ -66,8 +68,17 @@ fn data_cache_config(protocol: WorkloadDataCacheProtocol) -> WorkloadRiscvDataCa
 }
 
 fn response_event(command: u32, address: u64, size: u32) -> TrafficTraceResponseEvent {
+    response_event_with_packet_id(command, address, size, None)
+}
+
+fn response_event_with_packet_id(
+    command: u32,
+    address: u64,
+    size: u32,
+    packet_id: Option<u64>,
+) -> TrafficTraceResponseEvent {
     let trace = TrafficTrace::from_gem5_packet_trace(
-        &gem5_packet_trace_with_shape(1_000, command, address, size),
+        &gem5_packet_trace_with_shape_and_packet_id(1_000, command, address, size, packet_id),
         1_000,
     )
     .unwrap();
@@ -80,15 +91,60 @@ fn response_event(command: u32, address: u64, size: u32) -> TrafficTraceResponse
     }
 }
 
+fn cache_event(command: u32, address: u64, size: u32) -> TrafficTraceCacheEvent {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace_with_shape_and_packet_id(1_000, command, address, size, Some(711)),
+        1_000,
+    )
+    .unwrap();
+    let config = TrafficTraceConfig::new(AgentId::new(7), layout(), 99, trace).unwrap();
+    let mut generator = TrafficTraceGenerator::new(config);
+    generator.enter(0);
+    match generator.next_event(0, 0).unwrap().unwrap() {
+        TrafficTraceEvent::Cache(event) => event,
+        event => panic!("unexpected trace event: {event:?}"),
+    }
+}
+
+fn flush_cache_event() -> TrafficTraceCacheEvent {
+    cache_event(53, 0x3000, 64)
+}
+
 fn clean_shared_response_event() -> TrafficTraceResponseEvent {
     response_event(43, 0x3000, 64)
 }
 
-fn gem5_packet_trace_with_shape(
+fn empty_dram_memory() -> PartitionedDramMemoryConfig {
+    let mut dram = DramMemoryController::new();
+    let target = MemoryTargetId::new(0);
+    dram.add_profile(
+        rem6_dram::ExternalMemoryProfile::ddr(
+            target,
+            layout(),
+            1,
+            1,
+            DramGeometry::new(4, 256, 64).unwrap(),
+            DramTiming::new(3, 5, 7, 2, 4).unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    dram.map_region(
+        target,
+        Address::new(0x3000),
+        AccessSize::new(0x1000).unwrap(),
+    )
+    .unwrap();
+
+    PartitionedDramMemoryConfig::new(PartitionId::new(3), endpoint("dram0"), 7, 11, dram)
+}
+
+fn gem5_packet_trace_with_shape_and_packet_id(
     tick_frequency: u64,
     command: u32,
     address: u64,
     size: u32,
+    packet_id: Option<u64>,
 ) -> Vec<u8> {
     let mut bytes = vec![0x67, 0x65, 0x6d, 0x35];
     let mut header = Vec::new();
@@ -105,6 +161,10 @@ fn gem5_packet_trace_with_shape(
     append_varint(&mut packet, address);
     append_key(&mut packet, 4, 0);
     append_varint(&mut packet, u64::from(size));
+    if let Some(packet_id) = packet_id {
+        append_key(&mut packet, 6, 0);
+        append_varint(&mut packet, packet_id);
+    }
     append_record(&mut bytes, &packet);
 
     bytes
@@ -257,7 +317,7 @@ fn data_cache_controller_error_keeps_delivery_context() {
         panic!("expected contextual data-cache controller error");
     };
     assert_eq!(record.tick(), 14);
-    assert_eq!(record.request_id(), request.id());
+    assert_eq!(record.request_id(), Some(request.id()));
     assert_eq!(record.protocol(), RiscvDataCacheProtocol::Msi);
     assert_eq!(record.target(), MemoryTargetId::new(0));
     assert_eq!(record.address(), Address::new(0x3008));
@@ -267,5 +327,88 @@ fn data_cache_controller_error_keeps_delivery_context() {
         record.error(),
         RiscvDataCacheControllerError::Msi(rem6_coherence::HarnessError::UnknownCache { agent })
             if *agent == request.id().agent()
+    ));
+}
+
+#[test]
+fn trace_flush_controller_error_keeps_sideband_context() {
+    let mut backend = WorkloadDataCacheBackend::new([WorkloadDataCacheLineBackend::new(
+        &data_cache_config(WorkloadDataCacheProtocol::Msi),
+        layout(),
+        Address::new(0x3000),
+        WorkloadDataCacheLineMemory::Dram(Box::new(empty_dram_memory())),
+        vec![cache_config(1)],
+    )
+    .unwrap()]);
+    let event = flush_cache_event();
+    assert_eq!(event.kind(), TrafficTraceCacheKind::Flush);
+
+    let application = backend.apply_trace_cache_event(event);
+    assert!(application.is_some());
+
+    let error = backend.take_error().unwrap();
+    let RiscvWorkloadReplayError::DataCacheController { record } = error else {
+        panic!("expected contextual data-cache controller error");
+    };
+    assert_eq!(record.tick(), event.tick());
+    assert_eq!(record.request_id(), None);
+    assert_eq!(record.trace_sequence(), Some(event.sequence()));
+    assert_eq!(
+        record.trace_cache_kind(),
+        Some(TrafficTraceCacheKind::Flush)
+    );
+    assert_eq!(record.trace_packet_id(), Some(711));
+    assert_eq!(record.protocol(), RiscvDataCacheProtocol::Msi);
+    assert_eq!(record.target(), MemoryTargetId::new(0));
+    assert_eq!(record.address(), event.address());
+    assert_eq!(record.line(), Address::new(0x3000));
+    assert_eq!(record.operation(), MemoryOperation::Invalidate);
+    assert!(matches!(
+        record.error(),
+        RiscvDataCacheControllerError::Msi(
+            rem6_coherence::HarnessError::MissingBackingMemory { line }
+        ) if *line == Address::new(0x3000)
+    ));
+}
+
+#[test]
+fn trace_clean_response_controller_error_keeps_response_context() {
+    let mut backend = WorkloadDataCacheBackend::new([WorkloadDataCacheLineBackend::new(
+        &data_cache_config(WorkloadDataCacheProtocol::Msi),
+        layout(),
+        Address::new(0x3000),
+        WorkloadDataCacheLineMemory::Dram(Box::new(empty_dram_memory())),
+        vec![cache_config(1)],
+    )
+    .unwrap()]);
+    let event = response_event_with_packet_id(43, 0x3000, 64, Some(712));
+    assert_eq!(event.kind(), TrafficTraceResponseKind::CleanShared);
+    assert!(event.cleans_line());
+
+    assert!(backend.apply_trace_response_event(event));
+
+    let error = backend.take_error().unwrap();
+    let RiscvWorkloadReplayError::DataCacheController { record } = error else {
+        panic!("expected contextual data-cache controller error");
+    };
+    assert_eq!(record.tick(), event.tick());
+    assert_eq!(record.request_id(), None);
+    assert_eq!(record.trace_sequence(), Some(event.sequence()));
+    assert_eq!(record.trace_cache_kind(), None);
+    assert_eq!(
+        record.trace_response_kind(),
+        Some(TrafficTraceResponseKind::CleanShared)
+    );
+    assert_eq!(record.trace_packet_id(), Some(712));
+    assert_eq!(record.protocol(), RiscvDataCacheProtocol::Msi);
+    assert_eq!(record.target(), MemoryTargetId::new(0));
+    assert_eq!(record.address(), event.address().unwrap());
+    assert_eq!(record.line(), Address::new(0x3000));
+    assert_eq!(record.operation(), MemoryOperation::CleanShared);
+    assert!(matches!(
+        record.error(),
+        RiscvDataCacheControllerError::Msi(
+            rem6_coherence::HarnessError::MissingBackingMemory { line }
+        ) if *line == Address::new(0x3000)
     ));
 }

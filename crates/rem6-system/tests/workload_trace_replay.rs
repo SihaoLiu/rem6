@@ -1668,7 +1668,7 @@ fn workload_replay_returns_contextual_data_cache_controller_error() {
     assert_eq!(record.tick(), 2);
     assert_eq!(
         record.request_id(),
-        MemoryRequestId::new(AgentId::new(7), 0)
+        Some(MemoryRequestId::new(AgentId::new(7), 0))
     );
     assert_eq!(record.protocol(), RiscvDataCacheProtocol::Msi);
     assert_eq!(record.target(), MemoryTargetId::new(0));
