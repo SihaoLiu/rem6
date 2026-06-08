@@ -600,10 +600,12 @@ isolated bugs:
   restarting the accumulator. This preserves the useful average-storage
   contract while avoiding hidden global `curTick`/`prepare` assertions. Counter
   deltas remain counter-only and reject average samples with a typed stat-kind
-  error instead of treating a decreasing average as a counter regression. Stats
-  dumps are registry-owned typed records with stable dump ids and
-  self-describing snapshot payloads rather than global output callbacks. Stats
-  deltas are also typed
+  error instead of treating a decreasing average as a counter regression. Stat
+  units match gem5's built-in `units.test.cc` spelling, including gem5's
+  `DegreeCelsius` class emitting `Celsius`, while accepting the class name as a
+  parseable compatibility alias. Stats dumps are registry-owned typed records
+  with stable dump ids and self-describing snapshot payloads rather than global
+  output callbacks. Stats deltas are also typed
   records derived only from snapshots in the same reset scope with matching
   group catalogs, matching descriptions, nondecreasing tick, and nondecreasing
   counter values. Probe snapshots preserve point, listener, and event cursors,

@@ -7,57 +7,26 @@ use crate::error::StatsError;
 use crate::kind::StatKind;
 use crate::reset::{StatResetPolicy, StatsResetRecord};
 
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct StatId(u64);
+macro_rules! stat_id_type {
+    ($name:ident) => {
+        #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+        pub struct $name(u64);
 
-impl StatId {
-    pub const fn new(value: u64) -> Self {
-        Self(value)
-    }
-
-    pub const fn get(self) -> u64 {
-        self.0
-    }
+        impl $name {
+            pub const fn new(value: u64) -> Self {
+                Self(value)
+            }
+            pub const fn get(self) -> u64 {
+                self.0
+            }
+        }
+    };
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct StatDumpId(u64);
-
-impl StatDumpId {
-    pub const fn new(value: u64) -> Self {
-        Self(value)
-    }
-
-    pub const fn get(self) -> u64 {
-        self.0
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct StatResetId(u64);
-
-impl StatResetId {
-    pub const fn new(value: u64) -> Self {
-        Self(value)
-    }
-
-    pub const fn get(self) -> u64 {
-        self.0
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct StatGroupId(u64);
-
-impl StatGroupId {
-    pub const fn new(value: u64) -> Self {
-        Self(value)
-    }
-
-    pub const fn get(self) -> u64 {
-        self.0
-    }
-}
+stat_id_type!(StatId);
+stat_id_type!(StatDumpId);
+stat_id_type!(StatResetId);
+stat_id_type!(StatGroupId);
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct StatScope {
@@ -217,6 +186,11 @@ impl StatUnit {
                 character,
             });
         }
+        let spelling = if spelling == "DegreeCelsius" {
+            "Celsius".to_string()
+        } else {
+            spelling
+        };
         Ok(Self { spelling, kind })
     }
 
@@ -254,6 +228,10 @@ impl StatUnit {
 
     pub fn celsius() -> Self {
         Self::builtin("Celsius", StatUnitKind::Celsius)
+    }
+
+    pub fn degree_celsius() -> Self {
+        Self::celsius()
     }
 
     pub fn count() -> Self {
@@ -1291,7 +1269,7 @@ fn stat_unit_symbol_kind(symbol: &str) -> StatUnitKind {
         "Watt" => StatUnitKind::Watt,
         "Joule" => StatUnitKind::Joule,
         "Volt" => StatUnitKind::Volt,
-        "Celsius" => StatUnitKind::Celsius,
+        "Celsius" | "DegreeCelsius" => StatUnitKind::Celsius,
         "Count" => StatUnitKind::Count,
         "Ratio" => StatUnitKind::Ratio,
         "Unspecified" => StatUnitKind::Unspecified,
