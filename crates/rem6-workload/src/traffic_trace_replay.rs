@@ -13,6 +13,12 @@ pub struct WorkloadTrafficTraceReplaySummary {
     trace_data_cache_response_count: usize,
     trace_data_cache_error_count: usize,
     memory_failure_count: usize,
+    memory_failure_invalid_destination_count: usize,
+    memory_failure_bad_address_count: usize,
+    memory_failure_read_count: usize,
+    memory_failure_write_count: usize,
+    memory_failure_functional_read_count: usize,
+    memory_failure_functional_write_count: usize,
     trace_error_count: usize,
     trace_htm_access_count: usize,
     control_ack_count: usize,
@@ -49,6 +55,12 @@ impl WorkloadTrafficTraceReplaySummary {
             trace_data_cache_response_count: 0,
             trace_data_cache_error_count: 0,
             memory_failure_count: 0,
+            memory_failure_invalid_destination_count: 0,
+            memory_failure_bad_address_count: 0,
+            memory_failure_read_count: 0,
+            memory_failure_write_count: 0,
+            memory_failure_functional_read_count: 0,
+            memory_failure_functional_write_count: 0,
             trace_error_count: 0,
             trace_htm_access_count: 0,
             control_ack_count: 0,
@@ -130,6 +142,48 @@ impl WorkloadTrafficTraceReplaySummary {
 
     pub fn with_memory_failure_count(mut self, memory_failure_count: usize) -> Self {
         self.memory_failure_count = memory_failure_count;
+        self
+    }
+
+    pub fn with_memory_failure_invalid_destination_count(
+        mut self,
+        memory_failure_invalid_destination_count: usize,
+    ) -> Self {
+        self.memory_failure_invalid_destination_count = memory_failure_invalid_destination_count;
+        self
+    }
+
+    pub fn with_memory_failure_bad_address_count(
+        mut self,
+        memory_failure_bad_address_count: usize,
+    ) -> Self {
+        self.memory_failure_bad_address_count = memory_failure_bad_address_count;
+        self
+    }
+
+    pub fn with_memory_failure_read_count(mut self, memory_failure_read_count: usize) -> Self {
+        self.memory_failure_read_count = memory_failure_read_count;
+        self
+    }
+
+    pub fn with_memory_failure_write_count(mut self, memory_failure_write_count: usize) -> Self {
+        self.memory_failure_write_count = memory_failure_write_count;
+        self
+    }
+
+    pub fn with_memory_failure_functional_read_count(
+        mut self,
+        memory_failure_functional_read_count: usize,
+    ) -> Self {
+        self.memory_failure_functional_read_count = memory_failure_functional_read_count;
+        self
+    }
+
+    pub fn with_memory_failure_functional_write_count(
+        mut self,
+        memory_failure_functional_write_count: usize,
+    ) -> Self {
+        self.memory_failure_functional_write_count = memory_failure_functional_write_count;
         self
     }
 
@@ -283,6 +337,30 @@ impl WorkloadTrafficTraceReplaySummary {
         self.memory_failure_count
     }
 
+    pub const fn memory_failure_invalid_destination_count(&self) -> usize {
+        self.memory_failure_invalid_destination_count
+    }
+
+    pub const fn memory_failure_bad_address_count(&self) -> usize {
+        self.memory_failure_bad_address_count
+    }
+
+    pub const fn memory_failure_read_count(&self) -> usize {
+        self.memory_failure_read_count
+    }
+
+    pub const fn memory_failure_write_count(&self) -> usize {
+        self.memory_failure_write_count
+    }
+
+    pub const fn memory_failure_functional_read_count(&self) -> usize {
+        self.memory_failure_functional_read_count
+    }
+
+    pub const fn memory_failure_functional_write_count(&self) -> usize {
+        self.memory_failure_functional_write_count
+    }
+
     pub const fn trace_error_count(&self) -> usize {
         self.trace_error_count
     }
@@ -389,6 +467,18 @@ impl WorkloadTrafficTraceReplaySummary {
             trace_data_cache_error_count: self.trace_data_cache_error_count
                 + other.trace_data_cache_error_count,
             memory_failure_count: self.memory_failure_count + other.memory_failure_count,
+            memory_failure_invalid_destination_count: self.memory_failure_invalid_destination_count
+                + other.memory_failure_invalid_destination_count,
+            memory_failure_bad_address_count: self.memory_failure_bad_address_count
+                + other.memory_failure_bad_address_count,
+            memory_failure_read_count: self.memory_failure_read_count
+                + other.memory_failure_read_count,
+            memory_failure_write_count: self.memory_failure_write_count
+                + other.memory_failure_write_count,
+            memory_failure_functional_read_count: self.memory_failure_functional_read_count
+                + other.memory_failure_functional_read_count,
+            memory_failure_functional_write_count: self.memory_failure_functional_write_count
+                + other.memory_failure_functional_write_count,
             trace_error_count: self.trace_error_count + other.trace_error_count,
             trace_htm_access_count: self.trace_htm_access_count + other.trace_htm_access_count,
             control_ack_count: self.control_ack_count + other.control_ack_count,
@@ -433,6 +523,12 @@ pub struct WorkloadExpectedTrafficTraceReplaySummary {
     minimum_trace_data_cache_response_count: usize,
     minimum_trace_data_cache_error_count: usize,
     minimum_memory_failure_count: usize,
+    minimum_memory_failure_invalid_destination_count: usize,
+    minimum_memory_failure_bad_address_count: usize,
+    minimum_memory_failure_read_count: usize,
+    minimum_memory_failure_write_count: usize,
+    minimum_memory_failure_functional_read_count: usize,
+    minimum_memory_failure_functional_write_count: usize,
     minimum_trace_error_count: usize,
     minimum_trace_htm_access_count: usize,
     minimum_control_ack_count: usize,
@@ -469,6 +565,12 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
             minimum_trace_data_cache_response_count: 0,
             minimum_trace_data_cache_error_count: 0,
             minimum_memory_failure_count: 0,
+            minimum_memory_failure_invalid_destination_count: 0,
+            minimum_memory_failure_bad_address_count: 0,
+            minimum_memory_failure_read_count: 0,
+            minimum_memory_failure_write_count: 0,
+            minimum_memory_failure_functional_read_count: 0,
+            minimum_memory_failure_functional_write_count: 0,
             minimum_trace_error_count: 0,
             minimum_trace_htm_access_count: 0,
             minimum_control_ack_count: 0,
@@ -567,6 +669,57 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
         minimum_memory_failure_count: usize,
     ) -> Self {
         self.minimum_memory_failure_count = minimum_memory_failure_count;
+        self
+    }
+
+    pub fn with_minimum_memory_failure_invalid_destination_count(
+        mut self,
+        minimum_memory_failure_invalid_destination_count: usize,
+    ) -> Self {
+        self.minimum_memory_failure_invalid_destination_count =
+            minimum_memory_failure_invalid_destination_count;
+        self
+    }
+
+    pub fn with_minimum_memory_failure_bad_address_count(
+        mut self,
+        minimum_memory_failure_bad_address_count: usize,
+    ) -> Self {
+        self.minimum_memory_failure_bad_address_count = minimum_memory_failure_bad_address_count;
+        self
+    }
+
+    pub fn with_minimum_memory_failure_read_count(
+        mut self,
+        minimum_memory_failure_read_count: usize,
+    ) -> Self {
+        self.minimum_memory_failure_read_count = minimum_memory_failure_read_count;
+        self
+    }
+
+    pub fn with_minimum_memory_failure_write_count(
+        mut self,
+        minimum_memory_failure_write_count: usize,
+    ) -> Self {
+        self.minimum_memory_failure_write_count = minimum_memory_failure_write_count;
+        self
+    }
+
+    pub fn with_minimum_memory_failure_functional_read_count(
+        mut self,
+        minimum_memory_failure_functional_read_count: usize,
+    ) -> Self {
+        self.minimum_memory_failure_functional_read_count =
+            minimum_memory_failure_functional_read_count;
+        self
+    }
+
+    pub fn with_minimum_memory_failure_functional_write_count(
+        mut self,
+        minimum_memory_failure_functional_write_count: usize,
+    ) -> Self {
+        self.minimum_memory_failure_functional_write_count =
+            minimum_memory_failure_functional_write_count;
         self
     }
 
@@ -768,6 +921,30 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
         self.minimum_memory_failure_count
     }
 
+    pub const fn minimum_memory_failure_invalid_destination_count(&self) -> usize {
+        self.minimum_memory_failure_invalid_destination_count
+    }
+
+    pub const fn minimum_memory_failure_bad_address_count(&self) -> usize {
+        self.minimum_memory_failure_bad_address_count
+    }
+
+    pub const fn minimum_memory_failure_read_count(&self) -> usize {
+        self.minimum_memory_failure_read_count
+    }
+
+    pub const fn minimum_memory_failure_write_count(&self) -> usize {
+        self.minimum_memory_failure_write_count
+    }
+
+    pub const fn minimum_memory_failure_functional_read_count(&self) -> usize {
+        self.minimum_memory_failure_functional_read_count
+    }
+
+    pub const fn minimum_memory_failure_functional_write_count(&self) -> usize {
+        self.minimum_memory_failure_functional_write_count
+    }
+
     pub const fn minimum_trace_error_count(&self) -> usize {
         self.minimum_trace_error_count
     }
@@ -908,6 +1085,16 @@ fn traffic_trace_replay_summary_meets_minimum(
             >= expected.minimum_trace_data_cache_response_count()
         && actual.trace_data_cache_error_count() >= expected.minimum_trace_data_cache_error_count()
         && actual.memory_failure_count() >= expected.minimum_memory_failure_count()
+        && actual.memory_failure_invalid_destination_count()
+            >= expected.minimum_memory_failure_invalid_destination_count()
+        && actual.memory_failure_bad_address_count()
+            >= expected.minimum_memory_failure_bad_address_count()
+        && actual.memory_failure_read_count() >= expected.minimum_memory_failure_read_count()
+        && actual.memory_failure_write_count() >= expected.minimum_memory_failure_write_count()
+        && actual.memory_failure_functional_read_count()
+            >= expected.minimum_memory_failure_functional_read_count()
+        && actual.memory_failure_functional_write_count()
+            >= expected.minimum_memory_failure_functional_write_count()
         && actual.trace_error_count() >= expected.minimum_trace_error_count()
         && actual.trace_htm_access_count() >= expected.minimum_trace_htm_access_count()
         && actual.control_ack_count() >= expected.minimum_control_ack_count()

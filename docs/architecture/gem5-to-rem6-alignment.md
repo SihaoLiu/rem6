@@ -3124,7 +3124,11 @@ Every workload trace route also exposes matched memory failure metadata on the
 traffic trace replay outcome itself, including request id, error kind,
 trace order, address or matched-request line fallback, size, packet id, and PC,
 so fetch, MMIO, and non-cache data routes keep executable failure evidence even
-when no data-cache protocol record applies.
+when no data-cache protocol record applies. Workload replay summaries and
+manifest expectations also split those matched memory failures by gem5 error
+kind, so a replay artifact can require the executable `ReadError`,
+`WriteError`, or functional-error consumer instead of only checking an
+aggregate failure count.
 Cache-flush sidebands apply to that backend rather than remaining audit-only
 events and attach applied-flush records to the matching trace replay outcome.
 Diagnostic print sidebands on those routes record a non-mutating data-cache

@@ -118,6 +118,9 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
         let memory_response_records = self.records.memory_response_snapshot();
         let response_status_counts =
             traffic_trace_replay_response_status_counts(memory_response_records.as_slice());
+        let memory_failure_records = self.records.memory_failure_snapshot();
+        let memory_failure_kind_counts =
+            traffic_trace_replay_memory_failure_kind_counts(memory_failure_records.as_slice());
         let trace_data_cache_response_count = memory_response_records
             .iter()
             .filter(|record| record.data_cache_response_applied())
@@ -141,6 +144,14 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
             .with_trace_data_cache_response_count(trace_data_cache_response_count)
             .with_trace_data_cache_error_count(trace_data_cache_error_count)
             .with_memory_failure_count(runtime.memory_failures().len())
+            .with_memory_failure_invalid_destination_count(
+                memory_failure_kind_counts.invalid_destination,
+            )
+            .with_memory_failure_bad_address_count(memory_failure_kind_counts.bad_address)
+            .with_memory_failure_read_count(memory_failure_kind_counts.read)
+            .with_memory_failure_write_count(memory_failure_kind_counts.write)
+            .with_memory_failure_functional_read_count(memory_failure_kind_counts.functional_read)
+            .with_memory_failure_functional_write_count(memory_failure_kind_counts.functional_write)
             .with_trace_error_count(trace_data_cache_error_count)
             .with_trace_htm_access_count(self.records.trace_htm_access_snapshot().len())
             .with_control_ack_count(runtime.control_acks().len())
@@ -246,6 +257,16 @@ struct TrafficTraceReplayResponseStatusCounts {
     store_conditional_failed: usize,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct TrafficTraceReplayMemoryFailureKindCounts {
+    invalid_destination: usize,
+    bad_address: usize,
+    read: usize,
+    write: usize,
+    functional_read: usize,
+    functional_write: usize,
+}
+
 fn traffic_trace_replay_response_status_counts(
     records: &[RiscvWorkloadTraceMemoryResponseRecord],
 ) -> TrafficTraceReplayResponseStatusCounts {
@@ -256,6 +277,25 @@ fn traffic_trace_replay_response_status_counts(
                 ResponseStatus::Completed => counts.completed += 1,
                 ResponseStatus::Retry => counts.retry += 1,
                 ResponseStatus::StoreConditionalFailed => counts.store_conditional_failed += 1,
+            }
+            counts
+        },
+    )
+}
+
+fn traffic_trace_replay_memory_failure_kind_counts(
+    records: &[RiscvWorkloadTraceMemoryFailureRecord],
+) -> TrafficTraceReplayMemoryFailureKindCounts {
+    records.iter().fold(
+        TrafficTraceReplayMemoryFailureKindCounts::default(),
+        |mut counts, record| {
+            match record.error() {
+                TrafficTraceErrorKind::InvalidDestination => counts.invalid_destination += 1,
+                TrafficTraceErrorKind::BadAddress => counts.bad_address += 1,
+                TrafficTraceErrorKind::Read => counts.read += 1,
+                TrafficTraceErrorKind::Write => counts.write += 1,
+                TrafficTraceErrorKind::FunctionalRead => counts.functional_read += 1,
+                TrafficTraceErrorKind::FunctionalWrite => counts.functional_write += 1,
             }
             counts
         },
