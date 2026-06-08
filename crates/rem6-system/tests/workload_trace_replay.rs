@@ -681,6 +681,11 @@ fn replay_manifest_with_data_translation_queue(id: &str) -> WorkloadManifest {
                 reason: "host-stop".to_string(),
             },
         ))
+        .add_expected_traffic_trace_replay_summary(
+            WorkloadExpectedTrafficTraceReplaySummary::new(route_id("cpu0.data"))
+                .with_minimum_trace_tlb_sync_count(1),
+        )
+        .unwrap()
         .build()
         .unwrap()
 }
@@ -2587,10 +2592,14 @@ fn workload_replay_applies_tlbi_ext_sync_to_data_translation_tlb() {
     let summary = &outcome.result().traffic_trace_replay_summaries()[0];
     assert_eq!(summary.tlb_sync_event_count(), 1);
     assert_eq!(summary.trace_tlb_sync_count(), 1);
+    WorkloadReplayPlan::from_manifest(&manifest)
+        .unwrap()
+        .verify_result(outcome.result())
+        .unwrap();
 }
 
 #[test]
-fn workload_replay_counts_tlbi_ext_sync_as_raw_only_without_translation_tlb() {
+fn workload_replay_records_tlbi_ext_sync_noop_for_translation_without_tlb() {
     let manifest = replay_manifest_with_data_translation_queue(
         "riscv-replay-trace-tlbi-data-translation-no-tlb",
     );
@@ -2616,12 +2625,21 @@ fn workload_replay_counts_tlbi_ext_sync_as_raw_only_without_translation_tlb() {
     let traffic_replay = &outcome.traffic_trace_replays()[0];
     assert!(traffic_replay.errors().is_empty());
     assert_eq!(traffic_replay.runtime().sideband_events().len(), 1);
-    assert!(traffic_replay.trace_tlb_sync_records().is_empty());
+    let tlb_sync_records = traffic_replay.trace_tlb_sync_records();
+    assert_eq!(tlb_sync_records.len(), 1);
+    let tlb_sync = &tlb_sync_records[0];
+    assert_eq!(tlb_sync.tick(), 4);
+    assert_eq!(tlb_sync.trace_tick(), 4);
+    assert_eq!(tlb_sync.sequence(), 0);
+    assert_eq!(tlb_sync.kind(), TrafficTraceTlbKind::ExternalSync);
+    assert_eq!(tlb_sync.flushed_entry_count(), 0);
+    assert_eq!(tlb_sync.trace_packet_id(), Some(963));
+    assert_eq!(tlb_sync.trace_pc(), None);
     let core = outcome.cluster().core(CpuId::new(0)).unwrap();
     assert_eq!(core.data_translation_tlb_stats(), None);
     let summary = &outcome.result().traffic_trace_replay_summaries()[0];
     assert_eq!(summary.tlb_sync_event_count(), 1);
-    assert_eq!(summary.trace_tlb_sync_count(), 0);
+    assert_eq!(summary.trace_tlb_sync_count(), 1);
 }
 
 #[test]

@@ -3170,10 +3170,11 @@ events and attach applied-flush records to the matching trace replay outcome.
 Diagnostic print sidebands on those routes record a non-mutating data-cache
 snapshot at the sideband execution tick and attach the resulting diagnostic
 records to the matching trace replay outcome. TLBI external-sync sidebands
-on translated data routes with a real RISC-V data-translation TLB consumer
-flush that TLB and attach route-local trace TLB-sync records with trace order,
-packet metadata, and flushed-entry count to the matching replay outcome.
-Translated data routes without a TLB consumer remain raw-only TLBI evidence.
+on translated data routes flush any configured RISC-V data-translation TLB and
+attach route-local trace TLB-sync records with trace order, packet metadata,
+and flushed-entry count to the matching replay outcome. Translated data routes
+without a configured TLB still record an executed zero-flush sync, while routes
+without a matching data-translation frontend remain raw sideband evidence.
 Workload traffic-trace summaries and manifest expectations count executed TLBI
 syncs separately from raw TLBI sideband events, so a trace can require the
 executable translation-TLB consumer. HTM abort sidebands similarly expose

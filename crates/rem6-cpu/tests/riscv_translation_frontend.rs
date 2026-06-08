@@ -157,6 +157,19 @@ fn translated_data_core_with_latency(
     )
 }
 
+#[test]
+fn riscv_core_reports_zero_flushed_entries_for_translation_frontend_without_tlb() {
+    let core = RiscvCore::with_data_translation(
+        core(MemoryRouteId::new(6), 0x8000),
+        CpuDataConfig::new(endpoint("cpu0.dmem"), MemoryRouteId::new(7), layout()),
+        CpuTranslationFrontend::new(TranslationQueueConfig::new(4, 0).unwrap()),
+    );
+
+    assert_eq!(core.data_translation_tlb_stats(), None);
+    assert_eq!(core.flush_data_translation_tlb(), Some(0));
+    assert_eq!(core.data_translation_tlb_stats(), None);
+}
+
 fn single_page_map(virtual_base: u64, physical_base: u64) -> TranslationPageMap {
     scoped_single_page_map(
         virtual_base,

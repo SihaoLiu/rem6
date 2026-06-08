@@ -665,12 +665,9 @@ impl RiscvCore {
     }
 
     pub fn flush_data_translation_tlb(&self) -> Option<usize> {
-        self.state
-            .lock()
-            .expect("riscv core lock")
-            .data_translation
-            .as_mut()
-            .and_then(|frontend| frontend.tlb_mut().map(|tlb| tlb.flush_all()))
+        let mut state = self.state.lock().expect("riscv core lock");
+        let frontend = state.data_translation.as_mut()?;
+        Some(frontend.tlb_mut().map_or(0, |tlb| tlb.flush_all()))
     }
 
     #[allow(clippy::too_many_arguments)]
