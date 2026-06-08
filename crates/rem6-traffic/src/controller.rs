@@ -911,19 +911,6 @@ pub enum TrafficTraceReplaySource {
     Diagnostic(TrafficTraceDiagnosticEvent),
 }
 
-impl TrafficTraceReplaySource {
-    fn trace_packet_id(&self) -> Option<u64> {
-        match self {
-            Self::Memory(request) => request.trace_packet_id(),
-            Self::Sync(sync) => sync.trace_packet_id(),
-            Self::Tlb(tlb) => tlb.trace_packet_id(),
-            Self::Cache(cache) => cache.trace_packet_id(),
-            Self::Htm(htm) => htm.trace_packet_id(),
-            Self::Diagnostic(diagnostic) => diagnostic.trace_packet_id(),
-        }
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TrafficTraceMemoryCompletion {
     response: MemoryResponse,
@@ -1344,13 +1331,10 @@ fn response_matches_trace_source(
     response: TrafficTraceResponseEvent,
     source: &TrafficTraceReplaySource,
 ) -> bool {
-    if !trace_packet_ids_match(response.trace_packet_id(), source.trace_packet_id()) {
-        return false;
-    }
-
     match source {
         TrafficTraceReplaySource::Memory(request) => {
-            trace_address_matches(response.address(), Some(request.address()))
+            trace_packet_ids_match(response.trace_packet_id(), request.trace_packet_id())
+                && trace_address_matches(response.address(), Some(request.address()))
                 && trace_size_matches(
                     response.size_bytes(),
                     Some(request.request().size().bytes()),
@@ -1358,22 +1342,24 @@ fn response_matches_trace_source(
                 && response_matches_memory_operation(response.kind(), request.request().operation())
         }
         TrafficTraceReplaySource::Sync(sync) => {
-            matches!(
-                (sync.kind(), response.kind()),
-                (
-                    crate::TrafficTraceSyncKind::MemFence,
-                    TrafficTraceResponseKind::MemFence
-                ) | (
-                    crate::TrafficTraceSyncKind::MemSync,
-                    TrafficTraceResponseKind::MemSync
+            control_packet_ids_match(response.trace_packet_id(), sync.trace_packet_id())
+                && matches!(
+                    (sync.kind(), response.kind()),
+                    (
+                        crate::TrafficTraceSyncKind::MemFence,
+                        TrafficTraceResponseKind::MemFence
+                    ) | (
+                        crate::TrafficTraceSyncKind::MemSync,
+                        TrafficTraceResponseKind::MemSync
+                    )
                 )
-            )
         }
         TrafficTraceReplaySource::Tlb(_)
         | TrafficTraceReplaySource::Cache(_)
         | TrafficTraceReplaySource::Diagnostic(_) => false,
         TrafficTraceReplaySource::Htm(htm) => {
-            trace_address_matches(response.address(), htm.address())
+            control_packet_ids_match(response.trace_packet_id(), htm.trace_packet_id())
+                && trace_address_matches(response.address(), htm.address())
                 && trace_size_matches(response.size_bytes(), htm.size_bytes())
                 && matches!(
                     (htm.kind(), response.kind()),
