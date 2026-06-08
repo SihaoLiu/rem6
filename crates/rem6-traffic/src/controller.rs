@@ -1422,22 +1422,41 @@ fn error_matches_trace_source(
                 && !error.is_write()
         }
         TrafficTraceReplaySource::Cache(cache) => {
-            control_packet_ids_match(error.trace_packet_id(), cache.trace_packet_id())
-                && trace_address_matches(error.address(), Some(cache.address()))
-                && trace_size_matches(error.size_bytes(), Some(cache.size_bytes()))
-                && error_matches_cache_event(error, *cache)
+            sideband_error_metadata_matches(
+                error.trace_packet_id(),
+                error.address(),
+                error.size_bytes(),
+                cache.trace_packet_id(),
+                Some(cache.address()),
+                Some(cache.size_bytes()),
+            ) && error_matches_cache_event(error, *cache)
         }
         TrafficTraceReplaySource::Htm(htm) => {
-            control_packet_ids_match(error.trace_packet_id(), htm.trace_packet_id())
-                && trace_address_matches(error.address(), htm.address())
-                && trace_size_matches(error.size_bytes(), htm.size_bytes())
-                && error_matches_htm_event(error, *htm)
+            if htm.requires_response() {
+                control_packet_ids_match(error.trace_packet_id(), htm.trace_packet_id())
+                    && trace_address_matches(error.address(), htm.address())
+                    && trace_size_matches(error.size_bytes(), htm.size_bytes())
+                    && error_matches_htm_event(error, *htm)
+            } else {
+                sideband_error_metadata_matches(
+                    error.trace_packet_id(),
+                    error.address(),
+                    error.size_bytes(),
+                    htm.trace_packet_id(),
+                    htm.address(),
+                    htm.size_bytes(),
+                ) && error_matches_htm_event(error, *htm)
+            }
         }
         TrafficTraceReplaySource::Diagnostic(diagnostic) => {
-            control_packet_ids_match(error.trace_packet_id(), diagnostic.trace_packet_id())
-                && trace_address_matches(error.address(), diagnostic.address())
-                && trace_size_matches(error.size_bytes(), diagnostic.size_bytes())
-                && !error.is_read()
+            sideband_error_metadata_matches(
+                error.trace_packet_id(),
+                error.address(),
+                error.size_bytes(),
+                diagnostic.trace_packet_id(),
+                diagnostic.address(),
+                diagnostic.size_bytes(),
+            ) && !error.is_read()
                 && !error.is_write()
         }
     }
@@ -1458,6 +1477,40 @@ fn memory_trace_metadata_matches(
     }
 
     trace_address == Some(source_address) && trace_size_bytes == Some(source_size_bytes)
+}
+
+fn sideband_error_metadata_matches(
+    trace_packet_id: Option<u64>,
+    trace_address: Option<rem6_memory::Address>,
+    trace_size_bytes: Option<u64>,
+    source_packet_id: Option<u64>,
+    source_address: Option<rem6_memory::Address>,
+    source_size_bytes: Option<u64>,
+) -> bool {
+    let address_matches = trace_address_matches(trace_address, source_address);
+    let size_matches = trace_size_matches(trace_size_bytes, source_size_bytes);
+    match (trace_packet_id, source_packet_id) {
+        (Some(trace_packet_id), Some(source_packet_id)) => {
+            return trace_packet_id == source_packet_id && address_matches && size_matches;
+        }
+        (Some(_), None) => return false,
+        _ => {}
+    }
+
+    let mut matched_metadata = false;
+    if let Some(source_address) = source_address {
+        if trace_address != Some(source_address) {
+            return false;
+        }
+        matched_metadata = true;
+    }
+    if let Some(source_size_bytes) = source_size_bytes {
+        if trace_size_bytes != Some(source_size_bytes) {
+            return false;
+        }
+        matched_metadata = true;
+    }
+    matched_metadata
 }
 
 fn control_packet_ids_match(error: Option<u64>, source: Option<u64>) -> bool {

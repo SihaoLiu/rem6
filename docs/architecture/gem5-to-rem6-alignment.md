@@ -3243,7 +3243,10 @@ address and size metadata, and error policy so a wrong error class does not
 consume an unrelated pending request. Memory errors match by exact packet id
 when both sides carry one, provided any present address and size metadata also
 agree; otherwise the error must carry matching address and size metadata.
-Matched errors now carry typed replay
+No-response cache, diagnostic, and HTM-abort sideband failures also require an
+exact packet-id match or the source event's address/size metadata, and tagged
+memory errors cannot fall back into earlier untagged sideband sources. Matched
+errors now carry typed replay
 failure records for memory-request failures, response-required sync and HTM
 control failures, and no-response TLB, cache, diagnostic, and HTM abort
 control failures. Control-failure records retain the matched trace source

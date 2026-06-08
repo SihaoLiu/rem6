@@ -201,6 +201,204 @@ fn traffic_controller_prefers_packet_id_memory_error_over_untagged_control_sourc
     assert_eq!(controller.trace_replay_summary().control_failures(), 0);
 }
 
+#[test]
+fn traffic_controller_keeps_cache_sideband_after_metadata_free_error() {
+    let mut controller = controller_for_packets(&[
+        PacketFields {
+            tick: 5,
+            command: GEM5_FLUSH_REQ,
+            address: Some(0x6700),
+            size: Some(64),
+            packet_id: None,
+        },
+        PacketFields {
+            tick: 7,
+            command: GEM5_WRITE_ERROR,
+            address: None,
+            size: None,
+            packet_id: None,
+        },
+        PacketFields {
+            tick: 9,
+            command: GEM5_WRITE_ERROR,
+            address: Some(0x6700),
+            size: Some(64),
+            packet_id: None,
+        },
+    ]);
+    let mut action_queue = TrafficTraceReplayActionQueue::default();
+
+    assert!(controller.start(20).unwrap().is_empty());
+    let cache_batch = controller.next_event(20, 0).unwrap().unwrap();
+    let cache = cache_batch.trace_cache().unwrap();
+
+    let metadata_free_batch = controller.next_event(cache.tick(), 0).unwrap().unwrap();
+    assert!(metadata_free_batch.trace_error_match().is_none());
+    assert!(metadata_free_batch.trace_replay_action().is_none());
+    action_queue.record_batch(&metadata_free_batch).unwrap();
+    assert!(action_queue.is_empty());
+    assert_eq!(controller.trace_replay_summary().control_failures(), 0);
+
+    let error_batch = controller
+        .next_event(metadata_free_batch.trace_error().unwrap().tick(), 0)
+        .unwrap()
+        .unwrap();
+    let matched = error_batch.trace_error_match().unwrap();
+    match matched.source() {
+        TrafficTraceReplaySource::Cache(source) => {
+            assert_eq!(source.sequence(), cache.sequence());
+            assert_eq!(source.address(), cache.address());
+        }
+        source => panic!("unexpected trace replay source: {source:?}"),
+    }
+    match matched.failure() {
+        TrafficTraceReplayFailure::Control(failure) => {
+            assert_eq!(failure.error(), TrafficTraceErrorKind::Write);
+        }
+        failure => panic!("unexpected trace replay failure: {failure:?}"),
+    }
+    action_queue.record_batch(&error_batch).unwrap();
+    let failure = action_queue.pop_control_failure().unwrap();
+    assert_eq!(failure.tick(), error_batch.trace_error().unwrap().tick());
+    assert_eq!(failure.failure().error(), TrafficTraceErrorKind::Write);
+    assert!(action_queue.is_empty());
+    assert_eq!(controller.trace_replay_summary().control_failures(), 1);
+}
+
+#[test]
+fn traffic_controller_keeps_diagnostic_sideband_after_metadata_free_error() {
+    let mut controller = controller_for_packets(&[
+        PacketFields {
+            tick: 5,
+            command: GEM5_PRINT_REQ,
+            address: Some(0x6800),
+            size: Some(4),
+            packet_id: None,
+        },
+        PacketFields {
+            tick: 7,
+            command: GEM5_INVALID_DEST_ERROR,
+            address: None,
+            size: None,
+            packet_id: None,
+        },
+        PacketFields {
+            tick: 9,
+            command: GEM5_INVALID_DEST_ERROR,
+            address: Some(0x6800),
+            size: Some(4),
+            packet_id: None,
+        },
+    ]);
+    let mut action_queue = TrafficTraceReplayActionQueue::default();
+
+    assert!(controller.start(20).unwrap().is_empty());
+    let diagnostic_batch = controller.next_event(20, 0).unwrap().unwrap();
+    let diagnostic = diagnostic_batch.trace_diagnostic().unwrap();
+
+    let metadata_free_batch = controller
+        .next_event(diagnostic.tick(), 0)
+        .unwrap()
+        .unwrap();
+    assert!(metadata_free_batch.trace_error_match().is_none());
+    assert!(metadata_free_batch.trace_replay_action().is_none());
+    action_queue.record_batch(&metadata_free_batch).unwrap();
+    assert!(action_queue.is_empty());
+    assert_eq!(controller.trace_replay_summary().control_failures(), 0);
+
+    let error_batch = controller
+        .next_event(metadata_free_batch.trace_error().unwrap().tick(), 0)
+        .unwrap()
+        .unwrap();
+    let matched = error_batch.trace_error_match().unwrap();
+    match matched.source() {
+        TrafficTraceReplaySource::Diagnostic(source) => {
+            assert_eq!(source.sequence(), diagnostic.sequence());
+            assert_eq!(source.address(), diagnostic.address());
+        }
+        source => panic!("unexpected trace replay source: {source:?}"),
+    }
+    match matched.failure() {
+        TrafficTraceReplayFailure::Control(failure) => {
+            assert_eq!(failure.error(), TrafficTraceErrorKind::InvalidDestination);
+        }
+        failure => panic!("unexpected trace replay failure: {failure:?}"),
+    }
+    action_queue.record_batch(&error_batch).unwrap();
+    let failure = action_queue.pop_control_failure().unwrap();
+    assert_eq!(failure.tick(), error_batch.trace_error().unwrap().tick());
+    assert_eq!(
+        failure.failure().error(),
+        TrafficTraceErrorKind::InvalidDestination
+    );
+    assert!(action_queue.is_empty());
+    assert_eq!(controller.trace_replay_summary().control_failures(), 1);
+}
+
+#[test]
+fn traffic_controller_keeps_htm_abort_sideband_after_metadata_free_error() {
+    let mut controller = controller_for_packets(&[
+        PacketFields {
+            tick: 5,
+            command: GEM5_HTM_ABORT,
+            address: Some(0x6900),
+            size: Some(16),
+            packet_id: None,
+        },
+        PacketFields {
+            tick: 7,
+            command: GEM5_READ_ERROR,
+            address: None,
+            size: None,
+            packet_id: None,
+        },
+        PacketFields {
+            tick: 9,
+            command: GEM5_READ_ERROR,
+            address: Some(0x6900),
+            size: Some(16),
+            packet_id: None,
+        },
+    ]);
+    let mut action_queue = TrafficTraceReplayActionQueue::default();
+
+    assert!(controller.start(20).unwrap().is_empty());
+    let htm_batch = controller.next_event(20, 0).unwrap().unwrap();
+    let htm = htm_batch.trace_htm().unwrap();
+
+    let metadata_free_batch = controller.next_event(htm.tick(), 0).unwrap().unwrap();
+    assert!(metadata_free_batch.trace_error_match().is_none());
+    assert!(metadata_free_batch.trace_replay_action().is_none());
+    action_queue.record_batch(&metadata_free_batch).unwrap();
+    assert!(action_queue.is_empty());
+    assert_eq!(controller.trace_replay_summary().control_failures(), 0);
+
+    let error_batch = controller
+        .next_event(metadata_free_batch.trace_error().unwrap().tick(), 0)
+        .unwrap()
+        .unwrap();
+    let matched = error_batch.trace_error_match().unwrap();
+    match matched.source() {
+        TrafficTraceReplaySource::Htm(source) => {
+            assert_eq!(source.sequence(), htm.sequence());
+            assert_eq!(source.address(), htm.address());
+        }
+        source => panic!("unexpected trace replay source: {source:?}"),
+    }
+    match matched.failure() {
+        TrafficTraceReplayFailure::Control(failure) => {
+            assert_eq!(failure.error(), TrafficTraceErrorKind::Read);
+        }
+        failure => panic!("unexpected trace replay failure: {failure:?}"),
+    }
+    action_queue.record_batch(&error_batch).unwrap();
+    let failure = action_queue.pop_control_failure().unwrap();
+    assert_eq!(failure.tick(), error_batch.trace_error().unwrap().tick());
+    assert_eq!(failure.failure().error(), TrafficTraceErrorKind::Read);
+    assert!(action_queue.is_empty());
+    assert_eq!(controller.trace_replay_summary().control_failures(), 1);
+}
+
 fn assert_no_response_control_failure_action(
     controller: &mut TrafficController,
     action_queue: &mut TrafficTraceReplayActionQueue,
