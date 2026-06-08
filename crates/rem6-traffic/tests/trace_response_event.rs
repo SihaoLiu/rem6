@@ -525,6 +525,7 @@ fn trace_response_kind_preserves_gem5_response_attributes() {
         is_llsc: bool,
         is_locked_rmw: bool,
         requires_writable: bool,
+        carries_writable_intent: bool,
         is_read: bool,
         is_write: bool,
     }
@@ -542,6 +543,7 @@ fn trace_response_kind_preserves_gem5_response_attributes() {
             is_llsc: false,
             is_locked_rmw: false,
             requires_writable: false,
+            carries_writable_intent: false,
             is_read: false,
             is_write: false,
         }
@@ -561,10 +563,12 @@ fn trace_response_kind_preserves_gem5_response_attributes() {
         },
         ResponsePolicyExpectation {
             is_write: true,
+            carries_writable_intent: true,
             ..response_policy(TrafficTraceResponseKind::Write)
         },
         ResponsePolicyExpectation {
             is_write: true,
+            carries_writable_intent: true,
             ..response_policy(TrafficTraceResponseKind::WriteComplete)
         },
         ResponsePolicyExpectation {
@@ -583,6 +587,7 @@ fn trace_response_kind_preserves_gem5_response_attributes() {
         },
         ResponsePolicyExpectation {
             is_upgrade: true,
+            carries_writable_intent: true,
             ..response_policy(TrafficTraceResponseKind::Upgrade)
         },
         ResponsePolicyExpectation {
@@ -593,11 +598,13 @@ fn trace_response_kind_preserves_gem5_response_attributes() {
         ResponsePolicyExpectation {
             returns_data: true,
             is_read: true,
+            carries_writable_intent: true,
             ..response_policy(TrafficTraceResponseKind::ReadExclusive)
         },
         ResponsePolicyExpectation {
             is_write: true,
             is_llsc: true,
+            carries_writable_intent: true,
             ..response_policy(TrafficTraceResponseKind::StoreConditional)
         },
         ResponsePolicyExpectation {
@@ -605,18 +612,21 @@ fn trace_response_kind_preserves_gem5_response_attributes() {
             is_read: true,
             is_locked_rmw: true,
             requires_writable: true,
+            carries_writable_intent: true,
             ..response_policy(TrafficTraceResponseKind::LockedRmwRead)
         },
         ResponsePolicyExpectation {
             is_write: true,
             is_locked_rmw: true,
             requires_writable: true,
+            carries_writable_intent: true,
             ..response_policy(TrafficTraceResponseKind::LockedRmwWrite)
         },
         ResponsePolicyExpectation {
             returns_data: true,
             is_read: true,
             is_write: true,
+            carries_writable_intent: true,
             ..response_policy(TrafficTraceResponseKind::Swap)
         },
         response_policy(TrafficTraceResponseKind::MemSync),
@@ -700,6 +710,12 @@ fn trace_response_kind_preserves_gem5_response_attributes() {
             kind.requires_writable(),
             expectation.requires_writable,
             "{} writable policy should match gem5",
+            kind.gem5_name()
+        );
+        assert_eq!(
+            kind.carries_writable_intent(),
+            expectation.carries_writable_intent,
+            "{} writable intent policy should match gem5",
             kind.gem5_name()
         );
         assert_eq!(

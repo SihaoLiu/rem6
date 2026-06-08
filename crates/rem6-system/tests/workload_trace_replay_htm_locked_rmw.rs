@@ -13,7 +13,8 @@ mod support;
 
 use support::traffic_trace::{
     controller_for_packets, PacketFields, GEM5_HTM_REQ, GEM5_HTM_REQ_RESP,
-    GEM5_LOCKED_RMW_READ_REQ, GEM5_LOCKED_RMW_READ_RESP,
+    GEM5_LOCKED_RMW_READ_REQ, GEM5_LOCKED_RMW_READ_RESP, GEM5_READ_EX_REQ, GEM5_READ_EX_RESP,
+    GEM5_UPGRADE_REQ, GEM5_UPGRADE_RESP,
 };
 
 fn workload_id(value: &str) -> rem6_workload::WorkloadId {
@@ -113,6 +114,10 @@ fn replay_topology() -> WorkloadTopology {
 }
 
 fn replay_manifest() -> WorkloadManifest {
+    replay_manifest_with_minimum_trace_htm_access_count(2)
+}
+
+fn replay_manifest_with_minimum_trace_htm_access_count(count: usize) -> WorkloadManifest {
     WorkloadManifest::builder(
         workload_id("riscv-replay-htm-locked-rmw-access"),
         boot_image(),
@@ -129,7 +134,7 @@ fn replay_manifest() -> WorkloadManifest {
     ))
     .add_expected_traffic_trace_replay_summary(
         WorkloadExpectedTrafficTraceReplaySummary::new(route_id("cpu0.data"))
-            .with_minimum_trace_htm_access_count(2),
+            .with_minimum_trace_htm_access_count(count),
     )
     .unwrap()
     .build()
@@ -201,5 +206,117 @@ fn workload_replay_records_locked_rmw_read_as_htm_writable_access() {
 
     let summary = &outcome.result().traffic_trace_replay_summaries()[0];
     assert_eq!(summary.trace_htm_access_count(), 2);
+    plan.verify_result(outcome.result()).unwrap();
+}
+
+#[test]
+fn workload_replay_records_read_exclusive_response_as_htm_writable_access() {
+    let manifest = replay_manifest();
+    let plan = rem6_workload::WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let controller = controller_for_packets(&[
+        PacketFields {
+            tick: 1,
+            command: GEM5_HTM_REQ,
+            address: None,
+            size: None,
+            packet_id: Some(993),
+        },
+        PacketFields {
+            tick: 2,
+            command: GEM5_HTM_REQ_RESP,
+            address: None,
+            size: None,
+            packet_id: Some(993),
+        },
+        PacketFields {
+            tick: 3,
+            command: GEM5_READ_EX_REQ,
+            address: Some(0x9000),
+            size: Some(64),
+            packet_id: Some(994),
+        },
+        PacketFields {
+            tick: 5,
+            command: GEM5_READ_EX_RESP,
+            address: Some(0x9000),
+            size: Some(64),
+            packet_id: Some(994),
+        },
+    ]);
+
+    let outcome = RiscvWorkloadReplay::new(plan.clone())
+        .with_max_turns(160)
+        .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
+            controller,
+            route_id("cpu0.data"),
+            PartitionId::new(2),
+        ))
+        .run_parallel()
+        .unwrap();
+
+    let records = outcome.run().trace_htm_access_records();
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0].kind(), RiscvTraceHtmAccessKind::ReadSet);
+    assert_eq!(records[0].trace_packet_id(), Some(994));
+    assert_eq!(records[1].kind(), RiscvTraceHtmAccessKind::WriteSet);
+    assert_eq!(records[1].trace_packet_id(), Some(994));
+
+    let summary = &outcome.result().traffic_trace_replay_summaries()[0];
+    assert_eq!(summary.trace_htm_access_count(), 2);
+    plan.verify_result(outcome.result()).unwrap();
+}
+
+#[test]
+fn workload_replay_records_upgrade_response_as_htm_writable_access() {
+    let manifest = replay_manifest_with_minimum_trace_htm_access_count(1);
+    let plan = rem6_workload::WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let controller = controller_for_packets(&[
+        PacketFields {
+            tick: 1,
+            command: GEM5_HTM_REQ,
+            address: None,
+            size: None,
+            packet_id: Some(995),
+        },
+        PacketFields {
+            tick: 2,
+            command: GEM5_HTM_REQ_RESP,
+            address: None,
+            size: None,
+            packet_id: Some(995),
+        },
+        PacketFields {
+            tick: 3,
+            command: GEM5_UPGRADE_REQ,
+            address: Some(0x9000),
+            size: Some(64),
+            packet_id: Some(996),
+        },
+        PacketFields {
+            tick: 5,
+            command: GEM5_UPGRADE_RESP,
+            address: Some(0x9000),
+            size: Some(64),
+            packet_id: Some(996),
+        },
+    ]);
+
+    let outcome = RiscvWorkloadReplay::new(plan.clone())
+        .with_max_turns(160)
+        .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
+            controller,
+            route_id("cpu0.data"),
+            PartitionId::new(2),
+        ))
+        .run_parallel()
+        .unwrap();
+
+    let records = outcome.run().trace_htm_access_records();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].kind(), RiscvTraceHtmAccessKind::WriteSet);
+    assert_eq!(records[0].trace_packet_id(), Some(996));
+
+    let summary = &outcome.result().traffic_trace_replay_summaries()[0];
+    assert_eq!(summary.trace_htm_access_count(), 1);
     plan.verify_result(outcome.result()).unwrap();
 }

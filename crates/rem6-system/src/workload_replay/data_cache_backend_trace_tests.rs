@@ -746,6 +746,71 @@ fn trace_htm_rollback_restore_controller_error_keeps_abort_context() {
 }
 
 #[test]
+fn writable_intent_responses_mark_htm_rollback_lines() {
+    for (event, expected_records) in [
+        (response_event_with_packet_id(19, 0x3000, 64, Some(718)), 1),
+        (response_event_with_packet_id(23, 0x3000, 64, Some(719)), 2),
+        (response_event_with_packet_id(31, 0x3008, 8, Some(720)), 2),
+    ] {
+        let mut backend = WorkloadDataCacheBackend::new([WorkloadDataCacheLineBackend::new(
+            &data_cache_config(WorkloadDataCacheProtocol::Msi),
+            layout(),
+            Address::new(0x3000),
+            WorkloadDataCacheLineMemory::Line(line_data()),
+            vec![cache_config(1)],
+        )
+        .unwrap()]);
+        let route = MemoryRouteId::new(11);
+        let transaction_uid = rem6_cpu::HtmTransactionUid::new(4);
+        let begin = htm_event(GEM5_HTM_REQ, Some(721), Some(0x2040));
+        assert!(backend.capture_trace_htm_rollback_from_event(
+            route,
+            transaction_uid,
+            begin.tick() + 5,
+            begin,
+        ));
+        assert_eq!(
+            backend
+                .record_trace_htm_access_event(
+                    begin.tick() + 6,
+                    route,
+                    transaction_uid,
+                    event,
+                    true,
+                )
+                .len(),
+            expected_records
+        );
+
+        let line = backend.lines.get_mut(&Address::new(0x3000)).unwrap();
+        let WorkloadDataCacheHarness::Msi(harness) = &mut line.harness else {
+            panic!("expected MSI backend harness");
+        };
+        harness
+            .submit_cpu_request_parallel(agent(1), write(1, 12, 0x3008, vec![0xcc, 0xdd]))
+            .unwrap();
+        harness.run_until_idle_parallel_recorded().unwrap();
+        assert_eq!(
+            &backend.final_lines(begin.tick() + 7).unwrap()[0].2[8..10],
+            &[0xcc, 0xdd]
+        );
+
+        let abort = htm_event(GEM5_HTM_ABORT, Some(722), Some(0x2050));
+        assert!(backend.restore_trace_htm_rollback_from_event(
+            route,
+            transaction_uid,
+            abort.tick() + 8,
+            abort,
+        ));
+
+        assert_eq!(
+            &backend.final_lines(abort.tick() + 9).unwrap()[0].2[8..10],
+            &[8, 9]
+        );
+    }
+}
+
+#[test]
 fn trace_clean_response_controller_error_keeps_response_context() {
     let mut backend = WorkloadDataCacheBackend::new([WorkloadDataCacheLineBackend::new(
         &data_cache_config(WorkloadDataCacheProtocol::Msi),

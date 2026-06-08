@@ -109,6 +109,18 @@ fn store_conditional_response_event() -> TrafficTraceResponseEvent {
     response_event(29, 0x3008, 8)
 }
 
+fn upgrade_response_event() -> TrafficTraceResponseEvent {
+    response_event(19, 0x3000, 64)
+}
+
+fn read_exclusive_response_event() -> TrafficTraceResponseEvent {
+    response_event(23, 0x3000, 64)
+}
+
+fn locked_rmw_read_response_event() -> TrafficTraceResponseEvent {
+    response_event(31, 0x3008, 8)
+}
+
 fn gem5_packet_trace_htm_request() -> Vec<u8> {
     let mut bytes = vec![0x67, 0x65, 0x6d, 0x35];
     let mut header = Vec::new();
@@ -230,6 +242,98 @@ fn failed_external_store_conditional_does_not_mark_memory_conflict() {
         backend.trace_htm_abort_cause(reader_route, reader_uid),
         HtmFailureCause::Other
     );
+}
+
+#[test]
+fn active_writable_intent_responses_mark_reader_memory_conflict() {
+    for (event, expected_records) in [
+        (upgrade_response_event(), 1),
+        (read_exclusive_response_event(), 2),
+        (locked_rmw_read_response_event(), 2),
+    ] {
+        let mut backend = data_cache_backend();
+        let reader_route = route(11);
+        let writer_route = route(12);
+        let reader_uid = HtmTransactionUid::new(1);
+        let writer_uid = HtmTransactionUid::new(2);
+
+        assert!(capture_trace_htm_rollback(
+            &mut backend,
+            reader_route,
+            reader_uid
+        ));
+        assert_eq!(
+            backend
+                .record_trace_htm_access_event(
+                    5,
+                    reader_route,
+                    reader_uid,
+                    read_response_event(),
+                    true
+                )
+                .len(),
+            1
+        );
+        assert!(capture_trace_htm_rollback(
+            &mut backend,
+            writer_route,
+            writer_uid
+        ));
+        assert_eq!(
+            backend
+                .record_trace_htm_access_event(7, writer_route, writer_uid, event, true)
+                .len(),
+            expected_records
+        );
+
+        assert_eq!(
+            backend.trace_htm_abort_cause(reader_route, reader_uid),
+            HtmFailureCause::Memory
+        );
+        assert_eq!(
+            backend.trace_htm_abort_cause(writer_route, writer_uid),
+            HtmFailureCause::Other
+        );
+    }
+}
+
+#[test]
+fn external_writable_intent_responses_mark_reader_memory_conflict() {
+    for event in [
+        upgrade_response_event(),
+        read_exclusive_response_event(),
+        locked_rmw_read_response_event(),
+    ] {
+        let mut backend = data_cache_backend();
+        let reader_route = route(11);
+        let writer_route = route(12);
+        let reader_uid = HtmTransactionUid::new(1);
+
+        assert!(capture_trace_htm_rollback(
+            &mut backend,
+            reader_route,
+            reader_uid
+        ));
+        assert_eq!(
+            backend
+                .record_trace_htm_access_event(
+                    5,
+                    reader_route,
+                    reader_uid,
+                    read_response_event(),
+                    true
+                )
+                .len(),
+            1
+        );
+
+        assert!(backend.record_trace_htm_write_conflict_event(writer_route, None, event, true));
+
+        assert_eq!(
+            backend.trace_htm_abort_cause(reader_route, reader_uid),
+            HtmFailureCause::Memory
+        );
+    }
 }
 
 #[test]

@@ -3027,11 +3027,12 @@ capture a data-cache rollback snapshot. During an active traced transaction,
 matched data-cache read/write responses now produce ordered transaction
 read-set and write-set records keyed by HTM transaction uid; later successful
 writes on another route mark a memory-conflict abort cause when they overlap
-those line sets. `LockedRMWReadResp` writable response policy also reaches the
-same workload data-cache consumer, so a locked read records both the read set
-and writable line intent before a later locked write packet arrives. Abort
-sidebands also roll back data-cache lines in the write set by restoring the
-route-scoped snapshot captured at trace HTM begin.
+those line sets. `UpgradeResp`, `ReadExResp`, and `LockedRMWReadResp`
+writable-intent response policy also reaches the same workload data-cache
+consumer, so upgrades record writable line intent while exclusive or locked
+reads record both the read set and writable line intent before later write
+packets arrive. Abort sidebands also roll back data-cache lines in the write set
+by restoring the route-scoped snapshot captured at trace HTM begin.
 The controller records matched replay completions in a typed outcome summary
 and emits replay action events carrying owned memory responses or control
 acknowledgements. The

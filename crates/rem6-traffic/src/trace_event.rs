@@ -270,6 +270,12 @@ impl TrafficTraceResponseKind {
     pub const fn requires_writable(self) -> bool {
         matches!(self, Self::LockedRmwRead | Self::LockedRmwWrite)
     }
+
+    pub const fn carries_writable_intent(self) -> bool {
+        self.is_write()
+            || self.requires_writable()
+            || matches!(self, Self::Upgrade | Self::ReadExclusive)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -695,6 +701,10 @@ impl TrafficTraceResponseEvent {
 
     pub const fn requires_writable(self) -> bool {
         self.kind.requires_writable()
+    }
+
+    pub const fn carries_writable_intent(self) -> bool {
+        self.kind.carries_writable_intent()
     }
 
     pub const fn trace_packet_id(self) -> Option<u64> {

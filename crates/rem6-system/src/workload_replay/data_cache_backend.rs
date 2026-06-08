@@ -397,7 +397,7 @@ impl WorkloadDataCacheLineBackend {
             self.layout.line_address(address) == self.line
                 && event.size_bytes().is_some()
                 && !event.is_prefetch()
-                && (event.is_read() || event.is_write() || event.requires_writable())
+                && (event.is_read() || event.carries_writable_intent())
         })
     }
 
@@ -568,7 +568,7 @@ impl WorkloadDataCacheLineBackend {
                 records.push(record);
             }
         }
-        if event.is_write() || event.requires_writable() {
+        if event.carries_writable_intent() {
             if let Some(record) = RiscvTraceHtmAccessRecord::from_trace_response(
                 RiscvTraceHtmAccessKind::WriteSet,
                 tick,
@@ -1022,7 +1022,7 @@ impl WorkloadDataCacheBackend {
         };
         let records = line.record_trace_htm_access_event(tick, transaction_uid, event);
         let recorded = !records.is_empty();
-        let writes = event.is_write() || event.requires_writable();
+        let writes = event.carries_writable_intent();
         let key = WorkloadDataCacheRollbackKey::new(route, transaction_uid);
         if let Some(access_set) = self.htm_access_sets.get_mut(&key) {
             if event.is_read() {
@@ -1048,7 +1048,7 @@ impl WorkloadDataCacheBackend {
         event: TrafficTraceResponseEvent,
         data_cache_response_applied: bool,
     ) -> bool {
-        if !(event.is_write() || event.requires_writable()) || !data_cache_response_applied {
+        if !event.carries_writable_intent() || !data_cache_response_applied {
             return false;
         }
         let Some(line_address) = self
