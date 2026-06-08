@@ -1333,13 +1333,14 @@ fn response_matches_trace_source(
 ) -> bool {
     match source {
         TrafficTraceReplaySource::Memory(request) => {
-            trace_packet_ids_match(response.trace_packet_id(), request.trace_packet_id())
-                && trace_address_matches(response.address(), Some(request.address()))
-                && trace_size_matches(
-                    response.size_bytes(),
-                    Some(request.request().size().bytes()),
-                )
-                && response_matches_memory_operation(response.kind(), request.request().operation())
+            memory_trace_metadata_matches(
+                response.trace_packet_id(),
+                response.address(),
+                response.size_bytes(),
+                request.trace_packet_id(),
+                request.address(),
+                request.request().size().bytes(),
+            ) && response_matches_memory_operation(response.kind(), request.request().operation())
         }
         TrafficTraceReplaySource::Sync(sync) => {
             control_packet_ids_match(response.trace_packet_id(), sync.trace_packet_id())
@@ -1398,12 +1399,17 @@ fn error_matches_trace_source(
 ) -> bool {
     match source {
         TrafficTraceReplaySource::Memory(request) => {
-            if !trace_packet_ids_match(error.trace_packet_id(), request.trace_packet_id()) {
+            if !memory_trace_metadata_matches(
+                error.trace_packet_id(),
+                error.address(),
+                error.size_bytes(),
+                request.trace_packet_id(),
+                request.address(),
+                request.request().size().bytes(),
+            ) {
                 return false;
             }
-            trace_address_matches(error.address(), Some(request.address()))
-                && trace_size_matches(error.size_bytes(), Some(request.request().size().bytes()))
-                && error_matches_memory_operation(error, request.request().operation())
+            error_matches_memory_operation(error, request.request().operation())
         }
         TrafficTraceReplaySource::Sync(sync) => {
             control_packet_ids_match(error.trace_packet_id(), sync.trace_packet_id())
@@ -1437,11 +1443,21 @@ fn error_matches_trace_source(
     }
 }
 
-fn trace_packet_ids_match(response: Option<u64>, source: Option<u64>) -> bool {
-    match (response, source) {
-        (Some(response), Some(source)) => response == source,
-        _ => true,
+fn memory_trace_metadata_matches(
+    trace_packet_id: Option<u64>,
+    trace_address: Option<rem6_memory::Address>,
+    trace_size_bytes: Option<u64>,
+    source_packet_id: Option<u64>,
+    source_address: rem6_memory::Address,
+    source_size_bytes: u64,
+) -> bool {
+    let address_matches = trace_address_matches(trace_address, Some(source_address));
+    let size_matches = trace_size_matches(trace_size_bytes, Some(source_size_bytes));
+    if let (Some(trace_packet_id), Some(source_packet_id)) = (trace_packet_id, source_packet_id) {
+        return trace_packet_id == source_packet_id && address_matches && size_matches;
     }
+
+    trace_address == Some(source_address) && trace_size_bytes == Some(source_size_bytes)
 }
 
 fn control_packet_ids_match(error: Option<u64>, source: Option<u64>) -> bool {

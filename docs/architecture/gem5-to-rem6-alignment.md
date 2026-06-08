@@ -2979,8 +2979,10 @@ The traffic controller now consumes those response policies by keeping pending
 trace replay sources for response-required memory requests, sync events, and
 HTM request events, matching later response packets by source-appropriate
 packet-id, address and size metadata, and gem5 command policy. Memory
-responses may still use address and size when packet ids are absent, while
-sync and HTM control acknowledgements require exact packet-id correspondence.
+responses match by exact packet id when both sides carry one, provided any
+present address and size metadata also agree; otherwise the response must carry
+matching address and size metadata. Sync and HTM control acknowledgements
+require exact packet-id correspondence.
 Matched memory responses emit a validated `MemoryResponse`, while matched
 non-memory responses emit typed acknowledgement records. Response packets with
 gem5 `HasData` policy also carry synthetic trace response data through replay
@@ -3238,7 +3240,10 @@ read/write byte accounting. This imports gem5 packet error responses as
 first-class trace observations, and the traffic controller now matches them to
 pending replay sources using optional trace packet id, source-appropriate
 address and size metadata, and error policy so a wrong error class does not
-consume an unrelated pending request. Matched errors now carry typed replay
+consume an unrelated pending request. Memory errors match by exact packet id
+when both sides carry one, provided any present address and size metadata also
+agree; otherwise the error must carry matching address and size metadata.
+Matched errors now carry typed replay
 failure records for memory-request failures, response-required sync and HTM
 control failures, and no-response TLB, cache, diagnostic, and HTM abort
 control failures. Control-failure records retain the matched trace source
