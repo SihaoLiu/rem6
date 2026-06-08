@@ -583,8 +583,28 @@ impl TrafficController {
                     .push(TrafficTraceReplaySource::Sync(*sync));
                 Ok(Vec::new())
             }
+            TrafficControllerEvent::TraceTlb(tlb) if should_track_trace_tlb_error(*tlb) => {
+                self.trace_pending.push(TrafficTraceReplaySource::Tlb(*tlb));
+                Ok(Vec::new())
+            }
+            TrafficControllerEvent::TraceCache(cache) => {
+                self.trace_pending
+                    .push(TrafficTraceReplaySource::Cache(*cache));
+                Ok(Vec::new())
+            }
             TrafficControllerEvent::TraceHtm(htm) if htm.requires_response() => {
                 self.trace_pending.push(TrafficTraceReplaySource::Htm(*htm));
+                Ok(Vec::new())
+            }
+            TrafficControllerEvent::TraceHtm(htm) if should_track_trace_htm_error(*htm) => {
+                self.trace_pending.push(TrafficTraceReplaySource::Htm(*htm));
+                Ok(Vec::new())
+            }
+            TrafficControllerEvent::TraceDiagnostic(diagnostic)
+                if should_track_trace_diagnostic_error(*diagnostic) =>
+            {
+                self.trace_pending
+                    .push(TrafficTraceReplaySource::Diagnostic(*diagnostic));
                 Ok(Vec::new())
             }
             TrafficControllerEvent::TraceResponse(response) => {
@@ -884,7 +904,10 @@ impl TrafficControllerEvent {
 pub enum TrafficTraceReplaySource {
     Memory(TrafficRequestEvent),
     Sync(TrafficTraceSyncEvent),
+    Tlb(TrafficTraceTlbEvent),
+    Cache(TrafficTraceCacheEvent),
     Htm(TrafficTraceHtmEvent),
+    Diagnostic(TrafficTraceDiagnosticEvent),
 }
 
 impl TrafficTraceReplaySource {
@@ -892,7 +915,10 @@ impl TrafficTraceReplaySource {
         match self {
             Self::Memory(request) => request.trace_packet_id(),
             Self::Sync(sync) => sync.trace_packet_id(),
+            Self::Tlb(tlb) => tlb.trace_packet_id(),
+            Self::Cache(cache) => cache.trace_packet_id(),
             Self::Htm(htm) => htm.trace_packet_id(),
+            Self::Diagnostic(diagnostic) => diagnostic.trace_packet_id(),
         }
     }
 }
@@ -1342,6 +1368,9 @@ fn response_matches_trace_source(
                 )
             )
         }
+        TrafficTraceReplaySource::Tlb(_)
+        | TrafficTraceReplaySource::Cache(_)
+        | TrafficTraceReplaySource::Diagnostic(_) => false,
         TrafficTraceReplaySource::Htm(htm) => {
             trace_address_matches(response.address(), htm.address())
                 && trace_size_matches(response.size_bytes(), htm.size_bytes())
@@ -1380,20 +1409,41 @@ fn error_matches_trace_source(
     error: TrafficTraceErrorEvent,
     source: &TrafficTraceReplaySource,
 ) -> bool {
-    if !trace_packet_ids_match(error.trace_packet_id(), source.trace_packet_id()) {
-        return false;
-    }
-
     match source {
         TrafficTraceReplaySource::Memory(request) => {
+            if !trace_packet_ids_match(error.trace_packet_id(), request.trace_packet_id()) {
+                return false;
+            }
             trace_address_matches(error.address(), Some(request.address()))
                 && trace_size_matches(error.size_bytes(), Some(request.request().size().bytes()))
                 && error_matches_memory_operation(error, request.request().operation())
         }
-        TrafficTraceReplaySource::Sync(_) => !error.is_read() && !error.is_write(),
+        TrafficTraceReplaySource::Sync(sync) => {
+            control_packet_ids_match(error.trace_packet_id(), sync.trace_packet_id())
+                && !error.is_read()
+                && !error.is_write()
+        }
+        TrafficTraceReplaySource::Tlb(tlb) => {
+            control_packet_ids_match(error.trace_packet_id(), tlb.trace_packet_id())
+                && !error.is_read()
+                && !error.is_write()
+        }
+        TrafficTraceReplaySource::Cache(cache) => {
+            control_packet_ids_match(error.trace_packet_id(), cache.trace_packet_id())
+                && trace_address_matches(error.address(), Some(cache.address()))
+                && trace_size_matches(error.size_bytes(), Some(cache.size_bytes()))
+                && error_matches_cache_event(error, *cache)
+        }
         TrafficTraceReplaySource::Htm(htm) => {
-            trace_address_matches(error.address(), htm.address())
+            control_packet_ids_match(error.trace_packet_id(), htm.trace_packet_id())
+                && trace_address_matches(error.address(), htm.address())
                 && trace_size_matches(error.size_bytes(), htm.size_bytes())
+                && error_matches_htm_event(error, *htm)
+        }
+        TrafficTraceReplaySource::Diagnostic(diagnostic) => {
+            control_packet_ids_match(error.trace_packet_id(), diagnostic.trace_packet_id())
+                && trace_address_matches(error.address(), diagnostic.address())
+                && trace_size_matches(error.size_bytes(), diagnostic.size_bytes())
                 && !error.is_read()
                 && !error.is_write()
         }
@@ -1405,6 +1455,10 @@ fn trace_packet_ids_match(response: Option<u64>, source: Option<u64>) -> bool {
         (Some(response), Some(source)) => response == source,
         _ => true,
     }
+}
+
+fn control_packet_ids_match(error: Option<u64>, source: Option<u64>) -> bool {
+    error == source
 }
 
 fn trace_address_matches(
@@ -1520,6 +1574,38 @@ fn error_matches_memory_operation(
     true
 }
 
+fn error_matches_cache_event(error: TrafficTraceErrorEvent, event: TrafficTraceCacheEvent) -> bool {
+    if error.is_read() {
+        return false;
+    }
+    if error.is_write() {
+        return event.requires_writable();
+    }
+    true
+}
+
+fn error_matches_htm_event(error: TrafficTraceErrorEvent, event: TrafficTraceHtmEvent) -> bool {
+    if error.is_read() {
+        return event.is_read();
+    }
+    if error.is_write() {
+        return false;
+    }
+    true
+}
+
+fn should_track_trace_tlb_error(event: TrafficTraceTlbEvent) -> bool {
+    event.trace_packet_id().is_some()
+}
+
+fn should_track_trace_htm_error(event: TrafficTraceHtmEvent) -> bool {
+    event.trace_packet_id().is_some() || event.address().is_some() || event.size_bytes().is_some()
+}
+
+fn should_track_trace_diagnostic_error(event: TrafficTraceDiagnosticEvent) -> bool {
+    event.trace_packet_id().is_some() || event.address().is_some() || event.size_bytes().is_some()
+}
+
 fn trace_response_completion(
     response: TrafficTraceResponseEvent,
     source: &TrafficTraceReplaySource,
@@ -1565,7 +1651,11 @@ fn trace_response_completion(
                 })
                 .map_err(Into::into)
         }
-        TrafficTraceReplaySource::Sync(_) | TrafficTraceReplaySource::Htm(_) => {
+        TrafficTraceReplaySource::Sync(_)
+        | TrafficTraceReplaySource::Tlb(_)
+        | TrafficTraceReplaySource::Cache(_)
+        | TrafficTraceReplaySource::Htm(_)
+        | TrafficTraceReplaySource::Diagnostic(_) => {
             debug_assert!(!response.is_write());
             Ok(TrafficTraceReplayCompletion::Ack)
         }
@@ -1580,7 +1670,11 @@ fn trace_error_failure(
         TrafficTraceReplaySource::Memory(request) => TrafficTraceReplayFailure::Memory(
             TrafficTraceMemoryFailure::new(request.request().id(), error.kind()),
         ),
-        TrafficTraceReplaySource::Sync(_) | TrafficTraceReplaySource::Htm(_) => {
+        TrafficTraceReplaySource::Sync(_)
+        | TrafficTraceReplaySource::Tlb(_)
+        | TrafficTraceReplaySource::Cache(_)
+        | TrafficTraceReplaySource::Htm(_)
+        | TrafficTraceReplaySource::Diagnostic(_) => {
             TrafficTraceReplayFailure::Control(TrafficTraceControlFailure::new(error.kind()))
         }
     }

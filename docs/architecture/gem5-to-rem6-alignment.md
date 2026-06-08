@@ -3059,13 +3059,23 @@ same response-required sync or HTM source without a matching control action, or
 reaches trace exit before one appears, the helper reports the missing replay
 action before cycling through trace transition state. TLB external-sync, cache flush,
 diagnostic print, and non-response HTM abort trace events are captured by the
-sideband runtime. The standalone sideband helper can schedule those events
-from an already-recorded sideband runtime, and the controller-aware memory and
-control helpers now also drain sideband events automatically whenever their
-trace-controller advance crosses those events. The parallel trace replay
-executor can also install target and sideband consumers; workload replay uses
-those hooks so coherent data-route trace requests mutate the configured
-data-cache backend at the matched response tick, not at request delivery. A
+sideband runtime. Those same no-response control events are also retained by
+the traffic controller as executable error sources when their packet metadata
+can identify a later error packet: TLBI and diagnostic sidebands accept
+non-read/write control errors, cache flush uses its writable policy to accept
+write-class errors, and HTM abort uses its read classification to accept
+read-class errors. Matched failures emit ordered control-failure replay actions
+instead of stopping at raw sideband accessors. Controller-runtime fanout records
+those no-response control failures at the trace failure tick; because there is
+no response-required delivery, they do not enter the sync/HTM
+control-completion queue. The standalone sideband helper can schedule those
+events from an already-recorded sideband runtime, and the controller-aware
+memory and control helpers now also drain sideband events automatically
+whenever their trace-controller advance crosses those events. The
+parallel trace replay executor can also install target and sideband consumers;
+workload replay uses those hooks so coherent data-route trace requests mutate
+the configured data-cache backend at the matched response tick, not at request
+delivery. A
 matched `StoreCondFailReq` response, or gem5's `SCUpgradeReq` returning
 `UpgradeFailResp`, is delivered as `StoreConditionalFailed` without driving a
 successful data-cache access. `SCUpgradeFailReq` plus `UpgradeFailResp`
@@ -3189,7 +3199,9 @@ first-class trace observations, and the traffic controller now matches them to
 pending replay sources using optional trace packet id, source-appropriate
 address and size metadata, and error policy so a wrong error class does not
 consume an unrelated pending request. Matched errors now carry typed replay
-failure records for memory-request failures and sync/HTM control failures,
+failure records for memory-request failures, response-required sync and HTM
+control failures, and no-response TLB, cache, diagnostic, and HTM abort
+control failures,
 and the controller records those failures in the same typed outcome summary
 while emitting replay action events carrying owned memory and control failure
 records. The execution-facing replay action queue drains those failure records
@@ -3205,10 +3217,14 @@ after executable failure matching.
 Matched sync/HTM control failures are available to the control-completion
 helper and to a controller-aware control-event helper that returns
 acknowledgement or failure events directly to execution consumers before the
-completion wrapper records them for audit. The parallel replay executor now
-also invokes the registered control-completion sink for replayed control
-failures at the traced failure tick, so workload replay receives HTM and sync
-error completions through the same ordered consumer path as acknowledgements.
+completion wrapper records them for audit. Matched TLB, cache, diagnostic, and
+non-response HTM abort failures use the same control-failure record surface
+without fabricating a control acknowledgement. They are recorded directly by
+the controller runtime and do not use the response-required control-completion
+sink. The parallel replay executor now also invokes the registered
+control-completion sink for replayed response-required control failures at the
+traced failure tick, so workload replay receives HTM and sync error completions
+through the same ordered consumer path as acknowledgements.
 Replayed memory failures can also drive the RISC-V CPU fetch and data ports
 through target helpers that record failed CPU port events at the trace failure
 tick without fabricating retry or successful responses. Deeper cache-controller

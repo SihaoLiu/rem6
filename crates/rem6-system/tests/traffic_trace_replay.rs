@@ -1452,6 +1452,59 @@ fn traffic_trace_replay_controller_parallel_executor_records_failures_and_sideba
 }
 
 #[test]
+fn traffic_trace_replay_controller_parallel_executor_records_no_response_control_failure() {
+    let mut controller = controller_for_packets(&[
+        PacketFields {
+            tick: 2,
+            command: GEM5_FLUSH_REQ,
+            address: Some(0xa400),
+            size: Some(64),
+            packet_id: Some(150),
+        },
+        PacketFields {
+            tick: 7,
+            command: GEM5_WRITE_ERROR,
+            address: Some(0xa400),
+            size: Some(64),
+            packet_id: Some(150),
+        },
+    ]);
+
+    assert!(controller.start(0).unwrap().is_empty());
+    let flush_batch = controller.next_event(0, 0).unwrap().unwrap();
+    assert_eq!(flush_batch.trace_cache().unwrap().tick(), 2);
+    let error_batch = controller.next_event(2, 0).unwrap().unwrap();
+    assert!(error_batch.trace_error_match().is_some());
+
+    let executor = TrafficTraceReplayControllerParallelExecutor::new(controller);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+
+    assert_eq!(
+        executor
+            .record_batch_parallel(&flush_batch, &mut scheduler, PartitionId::new(1), 2)
+            .unwrap(),
+        1
+    );
+    executor
+        .record_batch_parallel(&error_batch, &mut scheduler, PartitionId::new(1), 7)
+        .unwrap();
+
+    scheduler.run_until_idle_parallel().unwrap();
+
+    assert!(executor.errors().is_empty());
+    let runtime = executor.runtime();
+    assert_eq!(runtime.lock().unwrap().control_failures().len(), 1);
+    let control_failure = runtime.lock().unwrap().control_failures()[0];
+    assert_eq!(control_failure.tick(), 7);
+    assert_eq!(
+        control_failure.record().failure().error(),
+        TrafficTraceErrorKind::Write
+    );
+    assert_eq!(runtime.lock().unwrap().sideband_events().len(), 1);
+    assert!(runtime.lock().unwrap().is_empty());
+}
+
+#[test]
 fn traffic_trace_replay_controller_parallel_executor_records_callback_errors() {
     let mut request_controller = controller_for_packets(&[PacketFields {
         tick: 0,

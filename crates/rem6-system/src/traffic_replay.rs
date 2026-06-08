@@ -249,7 +249,7 @@ impl TrafficTraceReplayTargetRuntime {
 fn replay_source_request(source: &TrafficTraceReplaySource) -> Option<MemoryRequestId> {
     match source {
         TrafficTraceReplaySource::Memory(request) => Some(request.request().id()),
-        TrafficTraceReplaySource::Sync(_) | TrafficTraceReplaySource::Htm(_) => None,
+        _ => None,
     }
 }
 
@@ -331,8 +331,10 @@ impl TrafficTraceReplayControlSource {
     fn from_replay_source(source: &TrafficTraceReplaySource) -> Option<Self> {
         match source {
             TrafficTraceReplaySource::Sync(event) => Some(Self::Sync(*event)),
-            TrafficTraceReplaySource::Htm(event) => Some(Self::Htm(*event)),
-            TrafficTraceReplaySource::Memory(_) => None,
+            TrafficTraceReplaySource::Htm(event) if event.requires_response() => {
+                Some(Self::Htm(*event))
+            }
+            _ => None,
         }
     }
 }
@@ -345,29 +347,9 @@ struct TrafficTraceReplayControlAction {
 }
 
 impl TrafficTraceReplayControlAction {
-    fn new(
-        action: TrafficTraceReplayAction,
-        source: Option<TrafficTraceReplayControlSource>,
-        trace_order: TrafficTraceReplayOrder,
-    ) -> Self {
-        Self {
-            action,
-            source,
-            trace_order,
-        }
-    }
-
     fn matches_source(&self, source: Option<TrafficTraceReplayControlSource>) -> bool {
-        match (source, self.source) {
-            (Some(source), Some(action_source)) => source == action_source,
-            (None, Some(_)) => false,
-            (_, None) => true,
-        }
+        self.source == source
     }
-}
-
-fn traffic_trace_replay_action_order(action: &TrafficTraceReplayAction) -> TrafficTraceReplayOrder {
-    TrafficTraceReplayOrder::new(action.tick(), u64::MAX)
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -399,16 +381,17 @@ impl TrafficTraceReplayControlRuntime {
                     matched_source =
                         TrafficTraceReplayControlSource::from_replay_source(response.source());
                     let response = response.response();
-                    matched_order = matched_source.map(|_| {
-                        TrafficTraceReplayOrder::new(response.tick(), response.sequence())
-                    });
+                    matched_order = Some(TrafficTraceReplayOrder::new(
+                        response.tick(),
+                        response.sequence(),
+                    ));
                 }
                 TrafficControllerEvent::TraceErrorMatch(error) => {
                     matched_source =
                         TrafficTraceReplayControlSource::from_replay_source(error.source());
                     let error = error.error();
-                    matched_order = matched_source
-                        .map(|_| TrafficTraceReplayOrder::new(error.tick(), error.sequence()));
+                    matched_order =
+                        Some(TrafficTraceReplayOrder::new(error.tick(), error.sequence()));
                 }
                 TrafficControllerEvent::TraceReplayAction(action)
                     if matches!(
@@ -417,13 +400,24 @@ impl TrafficTraceReplayControlRuntime {
                             | TrafficTraceReplayAction::ControlFailure { .. }
                     ) =>
                 {
-                    self.actions.push_back(TrafficTraceReplayControlAction::new(
-                        action.clone(),
-                        matched_source.take(),
-                        matched_order
-                            .take()
-                            .unwrap_or_else(|| traffic_trace_replay_action_order(action)),
-                    ));
+                    if matched_order.is_some() && matched_source.is_none() {
+                        if let TrafficTraceReplayAction::ControlFailure { tick, failure } = action {
+                            self.record_control_failure(
+                                *tick,
+                                TrafficTraceControlFailureRecord::new(*tick, *failure),
+                            );
+                        }
+                    } else {
+                        self.actions.push_back(TrafficTraceReplayControlAction {
+                            action: action.clone(),
+                            source: matched_source.take(),
+                            trace_order: matched_order.take().unwrap_or_else(|| {
+                                TrafficTraceReplayOrder::new(action.tick(), u64::MAX)
+                            }),
+                        });
+                    }
+                    matched_source = None;
+                    matched_order = None;
                 }
                 TrafficControllerEvent::TraceReplayAction(_) => {
                     matched_source = None;
