@@ -31,6 +31,7 @@ const GEM5_INVALID_DEST_ERROR: u32 = 46;
 const GEM5_WRITE_ERROR: u32 = 49;
 const GEM5_HTM_REQ: u32 = 56;
 const GEM5_HTM_REQ_RESP: u32 = 57;
+const GEM5_FLAG_PHYSICAL: u32 = 0x0000_0200;
 const GEM5_FLAG_ATOMIC_NO_RETURN_OP: u32 = 0x8000_0000;
 
 #[derive(Clone, Copy)]
@@ -85,12 +86,22 @@ fn controller_for_packets_with_offset(
 }
 
 fn controller_for_flagged_packets(packets: &[FlaggedPacketFields]) -> TrafficController {
+    controller_for_flagged_packets_with_offset(packets, 0)
+}
+
+fn controller_for_flagged_packets_with_offset(
+    packets: &[FlaggedPacketFields],
+    addr_offset: u64,
+) -> TrafficController {
     let trace = TrafficTrace::from_gem5_packet_trace(
         &flagged_gem5_packet_trace(TICK_FREQUENCY, packets),
         TICK_FREQUENCY,
     )
     .unwrap();
-    let config = TrafficTraceConfig::new(AgentId::new(7), line_layout(), 99, trace).unwrap();
+    let config = TrafficTraceConfig::new(AgentId::new(7), line_layout(), 99, trace)
+        .unwrap()
+        .with_addr_offset(addr_offset)
+        .unwrap();
     let controller_config = TrafficControllerConfig::new(
         graph(vec![state(0, u64::MAX)], vec![transition(0, 0)]),
         vec![TrafficControllerState::new(
@@ -249,6 +260,123 @@ fn traffic_controller_records_write_complete_response_after_write_resp() {
     assert_eq!(write_completion.response(), write_complete);
     assert_eq!(action_queue.summary().memory_completions(), 1);
     assert_eq!(action_queue.summary().write_completions(), 1);
+}
+
+#[test]
+fn traffic_controller_matches_physical_write_complete_after_addr_offset() {
+    let mut controller = controller_for_flagged_packets_with_offset(
+        &[
+            FlaggedPacketFields {
+                tick: 5,
+                command: GEM5_WRITE_REQ,
+                address: Some(0x4080),
+                size: Some(8),
+                flags: None,
+                packet_id: Some(31),
+            },
+            FlaggedPacketFields {
+                tick: 7,
+                command: GEM5_WRITE_RESP,
+                address: Some(0x4080),
+                size: Some(8),
+                flags: None,
+                packet_id: Some(31),
+            },
+            FlaggedPacketFields {
+                tick: 9,
+                command: GEM5_WRITE_COMPLETE_RESP,
+                address: Some(0x4080),
+                size: Some(8),
+                flags: Some(GEM5_FLAG_PHYSICAL),
+                packet_id: Some(31),
+            },
+        ],
+        0x40,
+    );
+
+    assert!(controller.start(20).unwrap().is_empty());
+    let request_batch = controller.next_event(20, 0).unwrap().unwrap();
+    let request = request_batch.request().unwrap().clone();
+    assert_eq!(request.address().get(), 0x40c0);
+    let response_batch = controller.next_event(request.tick(), 0).unwrap().unwrap();
+    assert!(matches!(
+        response_batch.trace_replay_action(),
+        Some(TrafficTraceReplayAction::MemoryResponse { .. })
+    ));
+
+    let write_complete_batch = controller
+        .next_event(response_batch.trace_response().unwrap().tick(), 0)
+        .unwrap()
+        .unwrap();
+    let write_complete = write_complete_batch.trace_response().unwrap();
+    assert!(write_complete.trace_address_is_physical());
+    assert_eq!(write_complete.address().unwrap().get(), 0x4080);
+    let matched = write_complete_batch.trace_response_match().unwrap();
+    match matched.completion() {
+        TrafficTraceReplayCompletion::WriteCompletion(completion) => {
+            assert_eq!(completion.request_id(), request.request().id());
+            assert_eq!(completion.request_line(), Address::new(0x40c0));
+            assert_eq!(completion.response(), write_complete);
+        }
+        completion => panic!("unexpected trace replay completion: {completion:?}"),
+    }
+    assert!(matches!(
+        write_complete_batch.trace_replay_action(),
+        Some(TrafficTraceReplayAction::MemoryWriteCompletion { .. })
+    ));
+}
+
+#[test]
+fn traffic_controller_requires_size_for_physical_write_complete_after_addr_offset() {
+    let mut controller = controller_for_flagged_packets_with_offset(
+        &[
+            FlaggedPacketFields {
+                tick: 5,
+                command: GEM5_WRITE_REQ,
+                address: Some(0x4100),
+                size: Some(8),
+                flags: None,
+                packet_id: Some(32),
+            },
+            FlaggedPacketFields {
+                tick: 7,
+                command: GEM5_WRITE_RESP,
+                address: Some(0x4100),
+                size: Some(8),
+                flags: None,
+                packet_id: Some(32),
+            },
+            FlaggedPacketFields {
+                tick: 9,
+                command: GEM5_WRITE_COMPLETE_RESP,
+                address: Some(0x4100),
+                size: None,
+                flags: Some(GEM5_FLAG_PHYSICAL),
+                packet_id: Some(32),
+            },
+        ],
+        0x40,
+    );
+
+    assert!(controller.start(20).unwrap().is_empty());
+    let request_batch = controller.next_event(20, 0).unwrap().unwrap();
+    let request = request_batch.request().unwrap().clone();
+    assert_eq!(request.address().get(), 0x4140);
+    let response_batch = controller.next_event(request.tick(), 0).unwrap().unwrap();
+    assert!(matches!(
+        response_batch.trace_replay_action(),
+        Some(TrafficTraceReplayAction::MemoryResponse { .. })
+    ));
+
+    let write_complete_batch = controller
+        .next_event(response_batch.trace_response().unwrap().tick(), 0)
+        .unwrap()
+        .unwrap();
+    let write_complete = write_complete_batch.trace_response().unwrap();
+    assert!(write_complete.trace_address_is_physical());
+    assert_eq!(write_complete.size_bytes(), None);
+    assert!(write_complete_batch.trace_response_match().is_none());
+    assert!(write_complete_batch.trace_replay_action().is_none());
 }
 
 #[test]
@@ -1352,6 +1480,125 @@ fn traffic_controller_matches_trace_response_after_addr_offset() {
 }
 
 #[test]
+fn traffic_controller_matches_physical_trace_response_after_addr_offset() {
+    let mut controller = controller_for_flagged_packets_with_offset(
+        &[
+            FlaggedPacketFields {
+                tick: 5,
+                command: GEM5_READ_REQ,
+                address: Some(0x9000),
+                size: Some(8),
+                flags: None,
+                packet_id: Some(13),
+            },
+            FlaggedPacketFields {
+                tick: 7,
+                command: GEM5_READ_RESP,
+                address: Some(0x9000),
+                size: Some(8),
+                flags: Some(GEM5_FLAG_PHYSICAL),
+                packet_id: Some(13),
+            },
+        ],
+        0x40,
+    );
+
+    assert!(controller.start(20).unwrap().is_empty());
+    let request_batch = controller.next_event(20, 0).unwrap().unwrap();
+    let request = request_batch.request().unwrap().clone();
+    assert_eq!(request.address().get(), 0x9040);
+
+    let response_batch = controller.next_event(request.tick(), 0).unwrap().unwrap();
+    let response = response_batch.trace_response().unwrap();
+    assert!(response.trace_address_is_physical());
+    assert_eq!(response.address().unwrap().get(), 0x9000);
+    let matched = response_batch.trace_response_match().unwrap();
+    match matched.source() {
+        TrafficTraceReplaySource::Memory(source) => {
+            assert_eq!(source.request().id(), request.request().id());
+        }
+        source => panic!("unexpected trace replay source: {source:?}"),
+    }
+    assert!(matches!(
+        response_batch.trace_replay_action(),
+        Some(TrafficTraceReplayAction::MemoryResponse { .. })
+    ));
+}
+
+#[test]
+fn traffic_controller_requires_size_for_physical_trace_response_after_addr_offset() {
+    let mut controller = controller_for_flagged_packets_with_offset(
+        &[
+            FlaggedPacketFields {
+                tick: 5,
+                command: GEM5_READ_REQ,
+                address: Some(0x9080),
+                size: Some(8),
+                flags: None,
+                packet_id: Some(15),
+            },
+            FlaggedPacketFields {
+                tick: 7,
+                command: GEM5_READ_RESP,
+                address: Some(0x9080),
+                size: None,
+                flags: Some(GEM5_FLAG_PHYSICAL),
+                packet_id: Some(15),
+            },
+        ],
+        0x40,
+    );
+
+    assert!(controller.start(20).unwrap().is_empty());
+    let request_batch = controller.next_event(20, 0).unwrap().unwrap();
+    let request = request_batch.request().unwrap().clone();
+    assert_eq!(request.address().get(), 0x90c0);
+
+    let response_batch = controller.next_event(request.tick(), 0).unwrap().unwrap();
+    let response = response_batch.trace_response().unwrap();
+    assert!(response.trace_address_is_physical());
+    assert_eq!(response.size_bytes(), None);
+    assert!(response_batch.trace_response_match().is_none());
+    assert!(response_batch.trace_replay_action().is_none());
+}
+
+#[test]
+fn traffic_controller_requires_source_packet_id_for_physical_trace_response() {
+    let mut controller = controller_for_flagged_packets(&[
+        FlaggedPacketFields {
+            tick: 5,
+            command: GEM5_READ_REQ,
+            address: Some(0x9100),
+            size: Some(8),
+            flags: None,
+            packet_id: None,
+        },
+        FlaggedPacketFields {
+            tick: 7,
+            command: GEM5_READ_RESP,
+            address: Some(0x9100),
+            size: Some(8),
+            flags: Some(GEM5_FLAG_PHYSICAL),
+            packet_id: Some(17),
+        },
+    ]);
+
+    assert!(controller.start(20).unwrap().is_empty());
+    let request_batch = controller.next_event(20, 0).unwrap().unwrap();
+    let request = request_batch.request().unwrap().clone();
+    assert_eq!(request.address().get(), 0x9100);
+    assert_eq!(request.trace_packet_id(), None);
+
+    let response_batch = controller.next_event(request.tick(), 0).unwrap().unwrap();
+    let response = response_batch.trace_response().unwrap();
+    assert!(response.trace_address_is_physical());
+    assert_eq!(response.trace_packet_id(), Some(17));
+    assert_eq!(response.size_bytes(), Some(8));
+    assert!(response_batch.trace_response_match().is_none());
+    assert!(response_batch.trace_replay_action().is_none());
+}
+
+#[test]
 fn traffic_controller_matches_trace_error_after_addr_offset() {
     let mut controller = controller_for_packets_with_offset(
         &[
@@ -1390,6 +1637,125 @@ fn traffic_controller_matches_trace_error_after_addr_offset() {
         }
         source => panic!("unexpected trace replay source: {source:?}"),
     }
+}
+
+#[test]
+fn traffic_controller_matches_physical_trace_error_after_addr_offset() {
+    let mut controller = controller_for_flagged_packets_with_offset(
+        &[
+            FlaggedPacketFields {
+                tick: 5,
+                command: GEM5_WRITE_REQ,
+                address: Some(0x9400),
+                size: Some(8),
+                flags: None,
+                packet_id: Some(14),
+            },
+            FlaggedPacketFields {
+                tick: 7,
+                command: GEM5_WRITE_ERROR,
+                address: Some(0x9400),
+                size: Some(8),
+                flags: Some(GEM5_FLAG_PHYSICAL),
+                packet_id: Some(14),
+            },
+        ],
+        0x40,
+    );
+
+    assert!(controller.start(20).unwrap().is_empty());
+    let request_batch = controller.next_event(20, 0).unwrap().unwrap();
+    let request = request_batch.request().unwrap().clone();
+    assert_eq!(request.address().get(), 0x9440);
+
+    let error_batch = controller.next_event(request.tick(), 0).unwrap().unwrap();
+    let error = error_batch.trace_error().unwrap();
+    assert!(error.trace_address_is_physical());
+    assert_eq!(error.address().unwrap().get(), 0x9400);
+    let matched = error_batch.trace_error_match().unwrap();
+    match matched.source() {
+        TrafficTraceReplaySource::Memory(source) => {
+            assert_eq!(source.request().id(), request.request().id());
+        }
+        source => panic!("unexpected trace replay source: {source:?}"),
+    }
+    assert!(matches!(
+        error_batch.trace_replay_action(),
+        Some(TrafficTraceReplayAction::MemoryFailure { .. })
+    ));
+}
+
+#[test]
+fn traffic_controller_requires_size_for_physical_trace_error_after_addr_offset() {
+    let mut controller = controller_for_flagged_packets_with_offset(
+        &[
+            FlaggedPacketFields {
+                tick: 5,
+                command: GEM5_WRITE_REQ,
+                address: Some(0x9480),
+                size: Some(8),
+                flags: None,
+                packet_id: Some(16),
+            },
+            FlaggedPacketFields {
+                tick: 7,
+                command: GEM5_WRITE_ERROR,
+                address: Some(0x9480),
+                size: None,
+                flags: Some(GEM5_FLAG_PHYSICAL),
+                packet_id: Some(16),
+            },
+        ],
+        0x40,
+    );
+
+    assert!(controller.start(20).unwrap().is_empty());
+    let request_batch = controller.next_event(20, 0).unwrap().unwrap();
+    let request = request_batch.request().unwrap().clone();
+    assert_eq!(request.address().get(), 0x94c0);
+
+    let error_batch = controller.next_event(request.tick(), 0).unwrap().unwrap();
+    let error = error_batch.trace_error().unwrap();
+    assert!(error.trace_address_is_physical());
+    assert_eq!(error.size_bytes(), None);
+    assert!(error_batch.trace_error_match().is_none());
+    assert!(error_batch.trace_replay_action().is_none());
+}
+
+#[test]
+fn traffic_controller_requires_source_packet_id_for_physical_trace_error() {
+    let mut controller = controller_for_flagged_packets(&[
+        FlaggedPacketFields {
+            tick: 5,
+            command: GEM5_WRITE_REQ,
+            address: Some(0x9500),
+            size: Some(8),
+            flags: None,
+            packet_id: None,
+        },
+        FlaggedPacketFields {
+            tick: 7,
+            command: GEM5_WRITE_ERROR,
+            address: Some(0x9500),
+            size: Some(8),
+            flags: Some(GEM5_FLAG_PHYSICAL),
+            packet_id: Some(18),
+        },
+    ]);
+
+    assert!(controller.start(20).unwrap().is_empty());
+    let request_batch = controller.next_event(20, 0).unwrap().unwrap();
+    let request = request_batch.request().unwrap().clone();
+    assert_eq!(request.address().get(), 0x9500);
+    assert_eq!(request.trace_packet_id(), None);
+
+    let error_batch = controller.next_event(request.tick(), 0).unwrap().unwrap();
+    let error = error_batch.trace_error().unwrap();
+    assert!(error.trace_address_is_physical());
+    assert_eq!(error.trace_packet_id(), Some(18));
+    assert_eq!(error.size_bytes(), Some(8));
+    assert!(error_batch.trace_error_match().is_none());
+    assert!(error_batch.trace_replay_action().is_none());
 }
 
 #[test]

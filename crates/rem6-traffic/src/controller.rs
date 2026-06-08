@@ -1336,6 +1336,7 @@ fn response_matches_trace_source(
             memory_trace_metadata_matches(
                 response.trace_packet_id(),
                 response.address(),
+                response.trace_address_is_physical(),
                 response.size_bytes(),
                 request.trace_packet_id(),
                 request.address(),
@@ -1381,12 +1382,19 @@ fn response_matches_pending_write_completion(
         return false;
     }
 
-    response.trace_packet_id() == Some(pending.packet_id)
-        && trace_address_matches(response.address(), Some(pending.request().address()))
-        && trace_size_matches(
+    let size_matches = if response.trace_address_is_physical() {
+        response.size_bytes() == Some(pending.request().request().size().bytes())
+    } else {
+        trace_size_matches(
             response.size_bytes(),
             Some(pending.request().request().size().bytes()),
         )
+    };
+
+    response.trace_packet_id() == Some(pending.packet_id)
+        && (response.trace_address_is_physical()
+            || trace_address_matches(response.address(), Some(pending.request().address())))
+        && size_matches
         && matches!(
             pending.request().request().operation(),
             MemoryOperation::Write | MemoryOperation::CacheBlockZero
@@ -1402,6 +1410,7 @@ fn error_matches_trace_source(
             if !memory_trace_metadata_matches(
                 error.trace_packet_id(),
                 error.address(),
+                error.trace_address_is_physical(),
                 error.size_bytes(),
                 request.trace_packet_id(),
                 request.address(),
@@ -1465,15 +1474,26 @@ fn error_matches_trace_source(
 fn memory_trace_metadata_matches(
     trace_packet_id: Option<u64>,
     trace_address: Option<rem6_memory::Address>,
+    trace_address_is_physical: bool,
     trace_size_bytes: Option<u64>,
     source_packet_id: Option<u64>,
     source_address: rem6_memory::Address,
     source_size_bytes: u64,
 ) -> bool {
-    let address_matches = trace_address_matches(trace_address, Some(source_address));
-    let size_matches = trace_size_matches(trace_size_bytes, Some(source_size_bytes));
+    if trace_address_is_physical {
+        return matches!(
+            (trace_packet_id, source_packet_id, trace_size_bytes),
+            (Some(trace_packet_id), Some(source_packet_id), Some(trace_size_bytes))
+                if trace_packet_id == source_packet_id && trace_size_bytes == source_size_bytes
+        );
+    }
+
     if let (Some(trace_packet_id), Some(source_packet_id)) = (trace_packet_id, source_packet_id) {
-        return trace_packet_id == source_packet_id && address_matches && size_matches;
+        if trace_packet_id != source_packet_id {
+            return false;
+        }
+        return trace_address_matches(trace_address, Some(source_address))
+            && trace_size_matches(trace_size_bytes, Some(source_size_bytes));
     }
 
     trace_address == Some(source_address) && trace_size_bytes == Some(source_size_bytes)

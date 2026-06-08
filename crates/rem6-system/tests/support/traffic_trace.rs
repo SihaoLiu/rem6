@@ -127,6 +127,13 @@ pub fn controller_for_packet_records(packets: &[PacketRecord]) -> TrafficControl
     controller_for_packet_records_with_state_duration(packets, u64::MAX)
 }
 
+pub fn controller_for_packet_records_with_offset(
+    packets: &[PacketRecord],
+    addr_offset: u64,
+) -> TrafficController {
+    controller_for_packet_records_with_offset_and_state_duration(packets, addr_offset, u64::MAX)
+}
+
 pub fn controller_for_packets_with_state_duration(
     packets: &[PacketFields],
     duration: u64,
@@ -143,12 +150,23 @@ pub fn controller_for_packet_records_with_state_duration(
     packets: &[PacketRecord],
     duration: u64,
 ) -> TrafficController {
+    controller_for_packet_records_with_offset_and_state_duration(packets, 0, duration)
+}
+
+fn controller_for_packet_records_with_offset_and_state_duration(
+    packets: &[PacketRecord],
+    addr_offset: u64,
+    duration: u64,
+) -> TrafficController {
     let trace = TrafficTrace::from_gem5_packet_trace(
         &gem5_packet_trace(TICK_FREQUENCY, packets),
         TICK_FREQUENCY,
     )
     .unwrap();
-    let config = TrafficTraceConfig::new(AgentId::new(7), line_layout(), 99, trace).unwrap();
+    let config = TrafficTraceConfig::new(AgentId::new(7), line_layout(), 99, trace)
+        .unwrap()
+        .with_addr_offset(addr_offset)
+        .unwrap();
     let controller_config = TrafficControllerConfig::new(
         graph(vec![state(0, duration)], vec![transition(0, 0)]),
         vec![TrafficControllerState::new(

@@ -2977,16 +2977,19 @@ optional address, optional size, optional packet id, optional PC metadata, and
 gem5 response read/write classification, data policy, invalidation policy,
 clean policy, prefetch policy, upgrade policy, LLSC policy, locked-RMW policy,
 and writable-response policy, plus physical-address trace metadata when
-present, plus packet-count accounting without constructing a `MemoryRequest` or
-adding read/write byte accounting.
+present, preserving physical response/error addresses across trace relocation,
+plus packet-count accounting without constructing a `MemoryRequest` or adding
+read/write byte accounting.
 The traffic controller now consumes those response policies by keeping pending
 trace replay sources for response-required memory requests, sync events, and
 HTM request events, matching later response packets by source-appropriate
 packet-id, address and size metadata, and gem5 command policy. Memory
 responses match by exact packet id when both sides carry one, provided any
-present address and size metadata also agree; otherwise the response must carry
-matching address and size metadata. Sync and HTM control acknowledgements
-require exact packet-id correspondence.
+present size metadata also agrees and non-physical response addresses agree;
+physical-address response and error packets require packet id plus size as the
+executable identity while retaining the raw physical address in replay records.
+Otherwise the response must carry matching address and size metadata. Sync and
+HTM control acknowledgements require exact packet-id correspondence.
 Matched memory responses emit a validated `MemoryResponse`, while matched
 non-memory responses emit typed acknowledgement records. Response packets with
 gem5 `HasData` policy also carry synthetic trace response data through replay

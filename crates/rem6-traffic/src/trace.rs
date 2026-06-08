@@ -1137,8 +1137,11 @@ impl TrafficTraceGenerator {
                 element.pc,
             ))
         } else if let Some(kind) = element.response_kind() {
-            let address =
-                checked_optional_trace_address(element.address, self.config.addr_offset())?;
+            let address = checked_optional_physical_trace_address(
+                element.address,
+                self.config.addr_offset(),
+                element.flags.trace_address_is_physical(),
+            )?;
             next_summary.record(event_tick, TrafficRequestKind::Maintenance, 0)?;
             TrafficTraceEvent::Response(TrafficTraceResponseEvent::new(
                 event_tick,
@@ -1151,8 +1154,11 @@ impl TrafficTraceGenerator {
                 element.pc,
             ))
         } else if let Some(kind) = element.error_kind() {
-            let address =
-                checked_optional_trace_address(element.address, self.config.addr_offset())?;
+            let address = checked_optional_physical_trace_address(
+                element.address,
+                self.config.addr_offset(),
+                element.flags.trace_address_is_physical(),
+            )?;
             next_summary.record(event_tick, TrafficRequestKind::Maintenance, 0)?;
             TrafficTraceEvent::Error(TrafficTraceErrorEvent::new(
                 event_tick,
@@ -1721,6 +1727,18 @@ fn checked_optional_trace_address(
     address
         .map(|address| checked_trace_address(address, offset))
         .transpose()
+}
+
+fn checked_optional_physical_trace_address(
+    address: Option<Address>,
+    offset: u64,
+    physical: bool,
+) -> Result<Option<Address>, TrafficGeneratorError> {
+    if physical {
+        Ok(address)
+    } else {
+        checked_optional_trace_address(address, offset)
+    }
 }
 
 fn checked_tick_add(tick: u64, delta: u64) -> Result<u64, TrafficGeneratorError> {

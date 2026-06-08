@@ -29,16 +29,17 @@ use rem6_workload::{
 mod support;
 
 use support::traffic_trace::{
-    controller_for_packet_records, controller_for_packets, endpoint, PacketFields, PacketRecord,
-    GEM5_CLEAN_INVALID_REQ, GEM5_CLEAN_INVALID_RESP, GEM5_CLEAN_SHARED_REQ, GEM5_CLEAN_SHARED_RESP,
-    GEM5_FLAG_KERNEL, GEM5_FLAG_PHYSICAL, GEM5_FLUSH_REQ, GEM5_FUNCTIONAL_READ_ERROR,
-    GEM5_FUNCTIONAL_WRITE_ERROR, GEM5_HTM_ABORT, GEM5_HTM_REQ, GEM5_HTM_REQ_RESP,
-    GEM5_INVALIDATE_REQ, GEM5_INVALIDATE_RESP, GEM5_INVALID_DEST_ERROR, GEM5_MEM_FENCE_REQ,
-    GEM5_MEM_FENCE_RESP, GEM5_MEM_SYNC_REQ, GEM5_MEM_SYNC_RESP, GEM5_PRINT_REQ, GEM5_READ_ERROR,
-    GEM5_READ_REQ, GEM5_READ_RESP, GEM5_READ_RESP_WITH_INVALIDATE, GEM5_SOFT_PF_REQ,
-    GEM5_SOFT_PF_RESP, GEM5_STORE_COND_FAIL_REQ, GEM5_STORE_COND_REQ, GEM5_STORE_COND_RESP,
-    GEM5_SYNC_INV_L1, GEM5_TLBI_EXT_SYNC, GEM5_WRITEBACK_DIRTY, GEM5_WRITE_COMPLETE_RESP,
-    GEM5_WRITE_ERROR, GEM5_WRITE_REQ, GEM5_WRITE_RESP,
+    controller_for_packet_records, controller_for_packet_records_with_offset,
+    controller_for_packets, endpoint, PacketFields, PacketRecord, GEM5_CLEAN_INVALID_REQ,
+    GEM5_CLEAN_INVALID_RESP, GEM5_CLEAN_SHARED_REQ, GEM5_CLEAN_SHARED_RESP, GEM5_FLAG_KERNEL,
+    GEM5_FLAG_PHYSICAL, GEM5_FLUSH_REQ, GEM5_FUNCTIONAL_READ_ERROR, GEM5_FUNCTIONAL_WRITE_ERROR,
+    GEM5_HTM_ABORT, GEM5_HTM_REQ, GEM5_HTM_REQ_RESP, GEM5_INVALIDATE_REQ, GEM5_INVALIDATE_RESP,
+    GEM5_INVALID_DEST_ERROR, GEM5_MEM_FENCE_REQ, GEM5_MEM_FENCE_RESP, GEM5_MEM_SYNC_REQ,
+    GEM5_MEM_SYNC_RESP, GEM5_PRINT_REQ, GEM5_READ_ERROR, GEM5_READ_REQ, GEM5_READ_RESP,
+    GEM5_READ_RESP_WITH_INVALIDATE, GEM5_SOFT_PF_REQ, GEM5_SOFT_PF_RESP, GEM5_STORE_COND_FAIL_REQ,
+    GEM5_STORE_COND_REQ, GEM5_STORE_COND_RESP, GEM5_SYNC_INV_L1, GEM5_TLBI_EXT_SYNC,
+    GEM5_WRITEBACK_DIRTY, GEM5_WRITE_COMPLETE_RESP, GEM5_WRITE_ERROR, GEM5_WRITE_REQ,
+    GEM5_WRITE_RESP,
 };
 
 fn workload_id(value: &str) -> rem6_workload::WorkloadId {
@@ -885,6 +886,69 @@ fn workload_replay_runs_bound_traffic_trace_controller() {
     assert!(!response_record.data_cache_response_applied());
     let summary = &outcome.result().traffic_trace_replay_summaries()[0];
     assert_eq!(summary.trace_data_cache_response_count(), 0);
+}
+
+#[test]
+fn workload_replay_matches_physical_trace_response_after_addr_offset() {
+    let plan = WorkloadReplayPlan::from_manifest(&replay_manifest(
+        "riscv-replay-physical-trace-response-offset",
+    ))
+    .unwrap();
+    let controller = controller_for_packet_records_with_offset(
+        &[
+            PacketRecord {
+                tick: 0,
+                command: GEM5_READ_REQ,
+                address: Some(0xa000),
+                size: Some(8),
+                flags: None,
+                packet_id: Some(960),
+                pc: None,
+            },
+            PacketRecord {
+                tick: 3,
+                command: GEM5_READ_RESP,
+                address: Some(0xa000),
+                size: Some(8),
+                flags: Some(GEM5_FLAG_PHYSICAL),
+                packet_id: Some(960),
+                pc: Some(0x1840),
+            },
+        ],
+        0x40,
+    );
+
+    let outcome = RiscvWorkloadReplay::new(plan)
+        .with_max_turns(64)
+        .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
+            controller,
+            route_id("cpu0.fetch"),
+            PartitionId::new(2),
+        ))
+        .run_parallel()
+        .unwrap();
+
+    let traffic_replay = &outcome.traffic_trace_replays()[0];
+    assert!(traffic_replay.errors().is_empty());
+    assert_eq!(traffic_replay.response_deliveries().len(), 1);
+    let delivery = &traffic_replay.response_deliveries()[0];
+    assert_eq!(delivery.response().status(), ResponseStatus::Completed);
+
+    let response_records = traffic_replay.memory_response_records();
+    assert_eq!(response_records.len(), 1);
+    let response = &response_records[0];
+    assert_eq!(response.request_id(), delivery.response().request_id());
+    assert_eq!(response.kind(), TrafficTraceResponseKind::Read);
+    assert!(response.trace_address_is_physical());
+    assert_eq!(response.address(), Some(Address::new(0xa000)));
+    assert_eq!(response.line(), Address::new(0xa040));
+    assert_eq!(response.size_bytes(), Some(8));
+    assert_eq!(response.trace_packet_id(), Some(960));
+    assert_eq!(response.trace_pc(), Some(Address::new(0x1840)));
+    assert_eq!(
+        outcome.result().traffic_trace_replay_summaries()[0].response_delivery_count(),
+        1
+    );
 }
 
 #[test]
