@@ -405,6 +405,9 @@ impl RiscvWorkloadReplay {
             return Err(RiscvWorkloadReplayError::TrafficTraceReplayCallback { route, errors });
         }
         if let Some(data_cache) = data_cache.as_ref() {
+            let final_tick = run
+                .final_tick()
+                .ok_or(RiscvWorkloadReplayError::MissingFinalTick)?;
             let (
                 final_lines,
                 records,
@@ -414,7 +417,7 @@ impl RiscvWorkloadReplay {
             ) = {
                 let data_cache = data_cache.lock().expect("workload data cache lock");
                 (
-                    data_cache.final_lines()?,
+                    data_cache.final_lines(final_tick)?,
                     data_cache.records(),
                     data_cache.trace_diagnostic_records(),
                     data_cache.trace_error_records(),

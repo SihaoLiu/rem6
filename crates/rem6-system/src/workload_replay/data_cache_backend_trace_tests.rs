@@ -575,6 +575,49 @@ fn trace_diagnostic_controller_error_keeps_diagnostic_context() {
 }
 
 #[test]
+fn final_line_snapshot_controller_error_keeps_result_context() {
+    let mut backend = WorkloadDataCacheBackend::new([WorkloadDataCacheLineBackend::new(
+        &data_cache_config(WorkloadDataCacheProtocol::Msi),
+        layout(),
+        Address::new(0x3000),
+        WorkloadDataCacheLineMemory::Line(line_data()),
+        vec![cache_config(1)],
+    )
+    .unwrap()]);
+    let line = backend.lines.get_mut(&Address::new(0x3000)).unwrap();
+    let WorkloadDataCacheHarness::Msi(harness) = &mut line.harness else {
+        panic!("expected MSI backend harness");
+    };
+    harness
+        .submit_cpu_request(agent(1), write(1, 11, 0x3008, vec![0xdd]))
+        .unwrap();
+
+    let error = backend.final_lines(21).unwrap_err();
+    let RiscvWorkloadReplayError::DataCacheController { record } = error else {
+        panic!("expected contextual data-cache controller error");
+    };
+    assert_eq!(record.tick(), 21);
+    assert_eq!(
+        record.source(),
+        crate::RiscvDataCacheControllerErrorSource::FinalLine
+    );
+    assert_eq!(record.request_id(), None);
+    assert_eq!(record.trace_sequence(), None);
+    assert_eq!(record.trace_packet_id(), None);
+    assert_eq!(record.protocol(), RiscvDataCacheProtocol::Msi);
+    assert_eq!(record.target(), MemoryTargetId::new(0));
+    assert_eq!(record.address(), Address::new(0x3000));
+    assert_eq!(record.line(), Address::new(0x3000));
+    assert_eq!(record.operation(), MemoryOperation::NoAccess);
+    assert!(matches!(
+        record.error(),
+        RiscvDataCacheControllerError::Msi(rem6_coherence::HarnessError::Scheduler(
+            rem6_kernel::SchedulerError::SnapshotContainsPendingEvents { pending_events }
+        )) if *pending_events == 1
+    ));
+}
+
+#[test]
 fn trace_htm_rollback_capture_controller_error_keeps_htm_context() {
     let mut backend = WorkloadDataCacheBackend::new([WorkloadDataCacheLineBackend::new(
         &data_cache_config(WorkloadDataCacheProtocol::Msi),

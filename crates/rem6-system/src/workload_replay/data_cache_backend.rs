@@ -350,19 +350,30 @@ impl WorkloadDataCacheLineBackend {
     fn target(&self) -> MemoryTargetId {
         self.target
     }
-
     fn line(&self) -> Address {
         self.line
     }
-
+    fn final_line_error(
+        &self,
+        tick: Tick,
+        error: impl Into<RiscvDataCacheControllerError>,
+    ) -> RiscvWorkloadReplayError {
+        RiscvWorkloadReplayError::DataCacheController {
+            record: Box::new(RiscvDataCacheControllerErrorRecord::from_final_line(
+                tick,
+                self.protocol,
+                self.target,
+                self.line,
+                error.into(),
+            )),
+        }
+    }
     fn accepts_delivery(&self, delivery: &RequestDelivery) -> bool {
         delivery.request().operation() != MemoryOperation::InstructionFetch
     }
-
     fn accepts_trace_cache_event(&self, event: TrafficTraceCacheEvent) -> bool {
         event.is_flush() && self.layout.line_address(event.address()) == self.line
     }
-
     fn accepts_trace_response_event(&self, event: TrafficTraceResponseEvent) -> bool {
         event.address().is_some_and(|address| {
             (event.invalidates_line() || event.cleans_line())
@@ -396,12 +407,12 @@ impl WorkloadDataCacheLineBackend {
         })
     }
 
-    fn final_line_data(&self) -> Result<Vec<u8>, RiscvWorkloadReplayError> {
+    fn final_line_data(&self, tick: Tick) -> Result<Vec<u8>, RiscvWorkloadReplayError> {
         match &self.harness {
             WorkloadDataCacheHarness::Msi(harness) => {
                 let snapshot = harness
                     .quiescent_snapshot()
-                    .map_err(RiscvWorkloadReplayError::MsiDataCache)?;
+                    .map_err(|error| self.final_line_error(tick, error))?;
                 if let Some(data) = snapshot
                     .caches()
                     .values()
@@ -422,7 +433,7 @@ impl WorkloadDataCacheLineBackend {
             WorkloadDataCacheHarness::Mesi(harness) => {
                 let snapshot = harness
                     .quiescent_snapshot()
-                    .map_err(RiscvWorkloadReplayError::MesiDataCache)?;
+                    .map_err(|error| self.final_line_error(tick, error))?;
                 Ok(snapshot
                     .caches()
                     .values()
@@ -432,7 +443,7 @@ impl WorkloadDataCacheLineBackend {
             WorkloadDataCacheHarness::Moesi(harness) => {
                 let snapshot = harness
                     .quiescent_snapshot()
-                    .map_err(RiscvWorkloadReplayError::MoesiDataCache)?;
+                    .map_err(|error| self.final_line_error(tick, error))?;
                 Ok(snapshot
                     .caches()
                     .values()
@@ -442,7 +453,7 @@ impl WorkloadDataCacheLineBackend {
             WorkloadDataCacheHarness::Chi(harness) => {
                 let snapshot = harness
                     .quiescent_snapshot()
-                    .map_err(RiscvWorkloadReplayError::ChiDataCache)?;
+                    .map_err(|error| self.final_line_error(tick, error))?;
                 Ok(snapshot
                     .caches()
                     .values()
@@ -1173,10 +1184,11 @@ impl WorkloadDataCacheBackend {
 
     pub(super) fn final_lines(
         &self,
+        tick: Tick,
     ) -> Result<Vec<(MemoryTargetId, Address, Vec<u8>)>, RiscvWorkloadReplayError> {
         self.lines
             .values()
-            .map(|line| Ok((line.target(), line.line(), line.final_line_data()?)))
+            .map(|line| Ok((line.target(), line.line(), line.final_line_data(tick)?)))
             .collect()
     }
 

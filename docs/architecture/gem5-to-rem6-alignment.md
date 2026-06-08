@@ -3235,11 +3235,13 @@ sidebands, MemSync L1 invalidation, and clean or invalidate trace response
 maintenance that hit protocol-internal controller errors use the same record
 shape with trace source metadata, so those failures keep trace tick, sequence,
 kind, sync policy, HTM class, optional packet id, address, line, operation, and
-protocol context. Additional accessor work should stay tied to one of those
-consumers, or to a new execution-facing consumer with a failing test that
-reaches replay, workload cache state, or a recorded runtime outcome. Remaining
-source-less cache paths include finalization snapshot failures that do not yet
-carry their result context.
+protocol context. Final data-cache line snapshot failures also report a
+contextual controller error with the run final tick and line identity instead
+of an unattributed harness error. Additional accessor work should stay tied to
+one of those consumers, or to a new execution-facing consumer with a failing
+test that reaches replay, workload cache state, or a recorded runtime outcome.
+Remaining source-less cache paths are line-data absence cases rather than
+protocol-internal controller failures.
 Trace packet flag handling now maps non-prefetch `INST_FETCH` on `ReadReq`,
 `ReadCleanReq`, and
 `ReadSharedReq` packets to native instruction-fetch requests, accepts `PHYSICAL`

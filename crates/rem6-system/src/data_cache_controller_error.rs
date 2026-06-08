@@ -30,6 +30,7 @@ pub enum RiscvDataCacheControllerErrorSource {
     Request {
         request_id: MemoryRequestId,
     },
+    FinalLine,
     TraceCache {
         sequence: u64,
         kind: TrafficTraceCacheKind,
@@ -184,6 +185,25 @@ impl RiscvDataCacheControllerErrorRecord {
         }
     }
 
+    pub(crate) fn from_final_line(
+        tick: Tick,
+        protocol: RiscvDataCacheProtocol,
+        target: MemoryTargetId,
+        line: Address,
+        error: RiscvDataCacheControllerError,
+    ) -> Self {
+        Self {
+            tick,
+            source: RiscvDataCacheControllerErrorSource::FinalLine,
+            protocol,
+            target,
+            address: line,
+            line,
+            operation: MemoryOperation::NoAccess,
+            error,
+        }
+    }
+
     pub(crate) fn from_trace_response_event(
         tick: Tick,
         event: TrafficTraceResponseEvent,
@@ -294,7 +314,8 @@ impl RiscvDataCacheControllerErrorRecord {
     pub const fn request_id(&self) -> Option<MemoryRequestId> {
         match self.source {
             RiscvDataCacheControllerErrorSource::Request { request_id } => Some(request_id),
-            RiscvDataCacheControllerErrorSource::TraceCache { .. }
+            RiscvDataCacheControllerErrorSource::FinalLine
+            | RiscvDataCacheControllerErrorSource::TraceCache { .. }
             | RiscvDataCacheControllerErrorSource::TraceDiagnostic { .. }
             | RiscvDataCacheControllerErrorSource::TraceSync { .. }
             | RiscvDataCacheControllerErrorSource::TraceHtm { .. }
@@ -309,7 +330,8 @@ impl RiscvDataCacheControllerErrorRecord {
             | RiscvDataCacheControllerErrorSource::TraceSync { sequence, .. }
             | RiscvDataCacheControllerErrorSource::TraceHtm { sequence, .. }
             | RiscvDataCacheControllerErrorSource::TraceResponse { sequence, .. } => Some(sequence),
-            RiscvDataCacheControllerErrorSource::Request { .. } => None,
+            RiscvDataCacheControllerErrorSource::Request { .. }
+            | RiscvDataCacheControllerErrorSource::FinalLine => None,
         }
     }
 
@@ -317,6 +339,7 @@ impl RiscvDataCacheControllerErrorRecord {
         match self.source {
             RiscvDataCacheControllerErrorSource::TraceCache { kind, .. } => Some(kind),
             RiscvDataCacheControllerErrorSource::Request { .. }
+            | RiscvDataCacheControllerErrorSource::FinalLine
             | RiscvDataCacheControllerErrorSource::TraceDiagnostic { .. }
             | RiscvDataCacheControllerErrorSource::TraceSync { .. }
             | RiscvDataCacheControllerErrorSource::TraceHtm { .. }
@@ -328,6 +351,7 @@ impl RiscvDataCacheControllerErrorRecord {
         match self.source {
             RiscvDataCacheControllerErrorSource::TraceResponse { kind, .. } => Some(kind),
             RiscvDataCacheControllerErrorSource::Request { .. }
+            | RiscvDataCacheControllerErrorSource::FinalLine
             | RiscvDataCacheControllerErrorSource::TraceDiagnostic { .. }
             | RiscvDataCacheControllerErrorSource::TraceSync { .. }
             | RiscvDataCacheControllerErrorSource::TraceHtm { .. }
@@ -339,6 +363,7 @@ impl RiscvDataCacheControllerErrorRecord {
         match self.source {
             RiscvDataCacheControllerErrorSource::TraceSync { kind, .. } => Some(kind),
             RiscvDataCacheControllerErrorSource::Request { .. }
+            | RiscvDataCacheControllerErrorSource::FinalLine
             | RiscvDataCacheControllerErrorSource::TraceDiagnostic { .. }
             | RiscvDataCacheControllerErrorSource::TraceCache { .. }
             | RiscvDataCacheControllerErrorSource::TraceHtm { .. }
@@ -350,6 +375,7 @@ impl RiscvDataCacheControllerErrorRecord {
         match self.source {
             RiscvDataCacheControllerErrorSource::TraceSync { kernel_sync, .. } => Some(kernel_sync),
             RiscvDataCacheControllerErrorSource::Request { .. }
+            | RiscvDataCacheControllerErrorSource::FinalLine
             | RiscvDataCacheControllerErrorSource::TraceDiagnostic { .. }
             | RiscvDataCacheControllerErrorSource::TraceCache { .. }
             | RiscvDataCacheControllerErrorSource::TraceHtm { .. }
@@ -363,6 +389,7 @@ impl RiscvDataCacheControllerErrorRecord {
                 Some(invalidates_l1)
             }
             RiscvDataCacheControllerErrorSource::Request { .. }
+            | RiscvDataCacheControllerErrorSource::FinalLine
             | RiscvDataCacheControllerErrorSource::TraceDiagnostic { .. }
             | RiscvDataCacheControllerErrorSource::TraceCache { .. }
             | RiscvDataCacheControllerErrorSource::TraceHtm { .. }
@@ -374,6 +401,7 @@ impl RiscvDataCacheControllerErrorRecord {
         match self.source {
             RiscvDataCacheControllerErrorSource::TraceHtm { kind, .. } => Some(kind),
             RiscvDataCacheControllerErrorSource::Request { .. }
+            | RiscvDataCacheControllerErrorSource::FinalLine
             | RiscvDataCacheControllerErrorSource::TraceDiagnostic { .. }
             | RiscvDataCacheControllerErrorSource::TraceCache { .. }
             | RiscvDataCacheControllerErrorSource::TraceSync { .. }
@@ -398,7 +426,8 @@ impl RiscvDataCacheControllerErrorRecord {
             | RiscvDataCacheControllerErrorSource::TraceResponse {
                 trace_packet_id, ..
             } => trace_packet_id,
-            RiscvDataCacheControllerErrorSource::Request { .. } => None,
+            RiscvDataCacheControllerErrorSource::Request { .. }
+            | RiscvDataCacheControllerErrorSource::FinalLine => None,
         }
     }
 
@@ -436,6 +465,14 @@ impl fmt::Display for RiscvDataCacheControllerErrorRecord {
                 self.protocol,
                 request_id.sequence(),
                 request_id.agent().get(),
+                self.tick,
+                self.address.get(),
+                self.error
+            ),
+            RiscvDataCacheControllerErrorSource::FinalLine => write!(
+                formatter,
+                "data-cache controller {:?} failed final line snapshot at tick {} for address {:#x}: {}",
+                self.protocol,
                 self.tick,
                 self.address.get(),
                 self.error
