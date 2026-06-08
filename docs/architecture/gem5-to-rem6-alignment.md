@@ -3029,11 +3029,13 @@ owns a typed HTM transaction state that can restore a RISC-V core architectural
 checkpoint on abort.
 rem6-system also records ordered workload-level HTM begin and abort records for
 trace replay outcomes and binds HTMReq response matches plus HTMAbort sidebands
-on RISC-V data routes to typed CPU cluster outcomes. Replayed HTMReq control
-failures remain ordered failure records and do not start a CPU transaction or
-capture a data-cache rollback snapshot; they also surface as failed workload
-HTM begin records with trace metadata while staying out of HTM acknowledgement
-counts. During an active traced transaction,
+on RISC-V data routes to typed CPU cluster outcomes. Workload summaries and
+manifest expectations can now require those HTM begin records directly instead
+of only requiring a generic HTM control acknowledgement. Replayed HTMReq
+control failures remain ordered failure records and do not start a CPU
+transaction or capture a data-cache rollback snapshot; they also surface as
+failed workload HTM begin records with trace metadata while staying out of HTM
+acknowledgement counts. During an active traced transaction,
 matched data-cache read/write responses now produce ordered transaction
 read-set and write-set records keyed by HTM transaction uid; later successful
 writes on another route mark a memory-conflict abort cause when they overlap

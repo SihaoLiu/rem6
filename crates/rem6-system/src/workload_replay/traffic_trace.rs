@@ -183,6 +183,7 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
             .with_memory_failure_functional_write_count(memory_failure_kind_counts.functional_write)
             .with_trace_error_count(trace_data_cache_error_count)
             .with_trace_htm_access_count(self.records.trace_htm_access_snapshot().len())
+            .with_trace_htm_begin_count(self.records.htm_begin_snapshot().len())
             .with_control_ack_count(runtime.control_acks().len())
             .with_sync_control_ack_count(sync_control_ack_count)
             .with_htm_control_ack_count(

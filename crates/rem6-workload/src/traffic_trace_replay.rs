@@ -24,6 +24,7 @@ pub struct WorkloadTrafficTraceReplaySummary {
     memory_failure_functional_write_count: usize,
     trace_error_count: usize,
     trace_htm_access_count: usize,
+    trace_htm_begin_count: usize,
     control_ack_count: usize,
     sync_control_ack_count: usize,
     htm_control_ack_count: usize,
@@ -78,6 +79,7 @@ impl WorkloadTrafficTraceReplaySummary {
             memory_failure_functional_write_count: 0,
             trace_error_count: 0,
             trace_htm_access_count: 0,
+            trace_htm_begin_count: 0,
             control_ack_count: 0,
             sync_control_ack_count: 0,
             htm_control_ack_count: 0,
@@ -243,6 +245,11 @@ impl WorkloadTrafficTraceReplaySummary {
 
     pub fn with_trace_htm_access_count(mut self, trace_htm_access_count: usize) -> Self {
         self.trace_htm_access_count = trace_htm_access_count;
+        self
+    }
+
+    pub fn with_trace_htm_begin_count(mut self, trace_htm_begin_count: usize) -> Self {
+        self.trace_htm_begin_count = trace_htm_begin_count;
         self
     }
 
@@ -493,6 +500,10 @@ impl WorkloadTrafficTraceReplaySummary {
         self.trace_htm_access_count
     }
 
+    pub const fn trace_htm_begin_count(&self) -> usize {
+        self.trace_htm_begin_count
+    }
+
     pub const fn control_ack_count(&self) -> usize {
         self.control_ack_count
     }
@@ -648,6 +659,7 @@ impl WorkloadTrafficTraceReplaySummary {
                 + other.memory_failure_functional_write_count,
             trace_error_count: self.trace_error_count + other.trace_error_count,
             trace_htm_access_count: self.trace_htm_access_count + other.trace_htm_access_count,
+            trace_htm_begin_count: self.trace_htm_begin_count + other.trace_htm_begin_count,
             control_ack_count: self.control_ack_count + other.control_ack_count,
             sync_control_ack_count: self.sync_control_ack_count + other.sync_control_ack_count,
             htm_control_ack_count: self.htm_control_ack_count + other.htm_control_ack_count,
@@ -719,6 +731,7 @@ pub struct WorkloadExpectedTrafficTraceReplaySummary {
     minimum_memory_failure_functional_write_count: usize,
     minimum_trace_error_count: usize,
     minimum_trace_htm_access_count: usize,
+    minimum_trace_htm_begin_count: usize,
     minimum_control_ack_count: usize,
     minimum_sync_control_ack_count: usize,
     minimum_htm_control_ack_count: usize,
@@ -773,6 +786,7 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
             minimum_memory_failure_functional_write_count: 0,
             minimum_trace_error_count: 0,
             minimum_trace_htm_access_count: 0,
+            minimum_trace_htm_begin_count: 0,
             minimum_control_ack_count: 0,
             minimum_sync_control_ack_count: 0,
             minimum_htm_control_ack_count: 0,
@@ -968,6 +982,14 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
         minimum_trace_htm_access_count: usize,
     ) -> Self {
         self.minimum_trace_htm_access_count = minimum_trace_htm_access_count;
+        self
+    }
+
+    pub fn with_minimum_trace_htm_begin_count(
+        mut self,
+        minimum_trace_htm_begin_count: usize,
+    ) -> Self {
+        self.minimum_trace_htm_begin_count = minimum_trace_htm_begin_count;
         self
     }
 
@@ -1275,6 +1297,10 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
         self.minimum_trace_htm_access_count
     }
 
+    pub const fn minimum_trace_htm_begin_count(&self) -> usize {
+        self.minimum_trace_htm_begin_count
+    }
+
     pub const fn minimum_control_ack_count(&self) -> usize {
         self.minimum_control_ack_count
     }
@@ -1461,6 +1487,7 @@ fn traffic_trace_replay_summary_meets_minimum(
             >= expected.minimum_memory_failure_functional_write_count()
         && actual.trace_error_count() >= expected.minimum_trace_error_count()
         && actual.trace_htm_access_count() >= expected.minimum_trace_htm_access_count()
+        && actual.trace_htm_begin_count() >= expected.minimum_trace_htm_begin_count()
         && actual.control_ack_count() >= expected.minimum_control_ack_count()
         && actual.sync_control_ack_count() >= expected.minimum_sync_control_ack_count()
         && actual.htm_control_ack_count() >= expected.minimum_htm_control_ack_count()

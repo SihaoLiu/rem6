@@ -467,6 +467,7 @@ fn workload_replay_keeps_response_required_failures_out_of_sideband_records() {
     assert_eq!(summary.control_failure_count(), 2);
     assert_eq!(summary.sync_control_failure_count(), 1);
     assert_eq!(summary.htm_control_failure_count(), 1);
+    assert_eq!(summary.trace_htm_begin_count(), 1);
     assert_eq!(summary.tlb_control_failure_count(), 0);
     assert_eq!(summary.cache_control_failure_count(), 0);
     assert_eq!(summary.diagnostic_control_failure_count(), 0);
@@ -519,4 +520,5 @@ fn workload_replay_summarizes_control_ack_sources() {
     assert_eq!(summary.control_ack_count(), 2);
     assert_eq!(summary.sync_control_ack_count(), 1);
     assert_eq!(summary.htm_control_ack_count(), 1);
+    assert_eq!(summary.trace_htm_begin_count(), 1);
 }
