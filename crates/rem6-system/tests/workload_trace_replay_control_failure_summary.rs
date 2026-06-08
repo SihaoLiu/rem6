@@ -152,8 +152,13 @@ fn replay_with_manifest_and_controller(
 
 #[test]
 fn workload_replay_summarizes_control_failure_sources() {
-    let outcome = replay_with_controller(
-        "riscv-replay-control-failure-sources",
+    let expected = WorkloadExpectedTrafficTraceReplaySummary::new(route_id("cpu0.fetch"))
+        .with_minimum_trace_sideband_failure_count(4);
+    let manifest =
+        replay_manifest_with_expected_summary("riscv-replay-control-failure-sources", expected);
+    let plan = rem6_workload::WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let outcome = replay_with_manifest_and_controller(
+        manifest,
         &[
             PacketFields {
                 tick: 1,
@@ -290,6 +295,8 @@ fn workload_replay_summarizes_control_failure_sources() {
     assert_eq!(summary.cache_control_failure_count(), 1);
     assert_eq!(summary.htm_control_failure_count(), 1);
     assert_eq!(summary.diagnostic_control_failure_count(), 1);
+    assert_eq!(summary.trace_sideband_failure_count(), 4);
+    plan.verify_result(outcome.result()).unwrap();
 }
 
 #[test]

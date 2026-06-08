@@ -3236,7 +3236,10 @@ split matched control failures by gem5 error kind, so traces can require the
 executable `InvalidDestError`, `WriteError`, or functional-error consumer.
 Workload replay exposes no-response sideband failures as separate records
 rather than merging them with sync failures or failed HTMReq begin records, so
-controller error matching is directly visible to replay consumers.
+controller error matching is directly visible to replay consumers. Summaries
+and manifest expectations now count those workload sideband-failure records
+separately from raw sideband events, so replay plans can require the executable
+consumer rather than only the controller aggregate.
 Successful sync and HTM control acknowledgements are likewise split into
 source-kind summary counts, so response-required control replay can be
 required by source rather than only by aggregate acknowledgement count. The

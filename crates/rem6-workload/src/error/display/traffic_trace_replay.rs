@@ -15,7 +15,7 @@ pub(super) fn format_traffic_trace_replay_error(
         WorkloadError::TrafficTraceReplaySummaryExpectation(error) => match error.as_ref() {
             WorkloadTrafficTraceReplaySummaryExpectationError::Missing(expected) => write!(
                 formatter,
-                "traffic trace replay summary for route {} was not recorded; expected scheduled {}, responses {}, trace completed responses {}, trace retry responses {}, trace store-conditional failed responses {}, memory trace events {}, memory write completions {}, trace data-cache responses {}, trace data-cache errors {}, memory failures {}, memory failure invalid destinations {}, memory failure bad addresses {}, memory failure reads {}, memory failure writes {}, memory failure functional reads {}, memory failure functional writes {}, trace errors {}, trace htm accesses {}, control acks {}, sync control acks {}, htm control acks {}, control failures {}, control failure invalid destinations {}, control failure bad addresses {}, control failure reads {}, control failure writes {}, control failure functional reads {}, control failure functional writes {}, sync control failures {}, tlb control failures {}, cache control failures {}, htm control failures {}, diagnostic control failures {}, sideband events {}, tlb sync events {}, trace tlb syncs {}, cache flush events {}, trace cache flushes {}, trace l1 invalidations {}, diagnostic print events {}, trace diagnostics {}, htm abort events {}, trace htm aborts {}",
+                "traffic trace replay summary for route {} was not recorded; expected scheduled {}, responses {}, trace completed responses {}, trace retry responses {}, trace store-conditional failed responses {}, memory trace events {}, memory write completions {}, trace data-cache responses {}, trace data-cache errors {}, memory failures {}, memory failure invalid destinations {}, memory failure bad addresses {}, memory failure reads {}, memory failure writes {}, memory failure functional reads {}, memory failure functional writes {}, trace errors {}, trace htm accesses {}, control acks {}, sync control acks {}, htm control acks {}, control failures {}, control failure invalid destinations {}, control failure bad addresses {}, control failure reads {}, control failure writes {}, control failure functional reads {}, control failure functional writes {}, sync control failures {}, tlb control failures {}, cache control failures {}, htm control failures {}, diagnostic control failures {}, sideband events {}, trace sideband failures {}, tlb sync events {}, trace tlb syncs {}, cache flush events {}, trace cache flushes {}, trace l1 invalidations {}, diagnostic print events {}, trace diagnostics {}, htm abort events {}, trace htm aborts {}",
                 expected.route().as_str(),
                 expected.minimum_scheduled_count(),
                 expected.minimum_response_delivery_count(),
@@ -51,6 +51,7 @@ pub(super) fn format_traffic_trace_replay_error(
                 expected.minimum_htm_control_failure_count(),
                 expected.minimum_diagnostic_control_failure_count(),
                 expected.minimum_sideband_event_count(),
+                expected.minimum_trace_sideband_failure_count(),
                 expected.minimum_tlb_sync_event_count(),
                 expected.minimum_trace_tlb_sync_count(),
                 expected.minimum_cache_flush_event_count(),
@@ -66,7 +67,7 @@ pub(super) fn format_traffic_trace_replay_error(
                 actual,
             } => write!(
                 formatter,
-                "traffic trace replay summary for route {} has scheduled {}/{}, responses {}/{}, trace completed responses {}/{}, trace retry responses {}/{}, trace store-conditional failed responses {}/{}, memory trace events {}/{}, memory write completions {}/{}, trace data-cache responses {}/{}, trace data-cache errors {}/{}, memory failures {}/{}, memory failure invalid destinations {}/{}, memory failure bad addresses {}/{}, memory failure reads {}/{}, memory failure writes {}/{}, memory failure functional reads {}/{}, memory failure functional writes {}/{}, trace errors {}/{}, trace htm accesses {}/{}, control acks {}/{}, sync control acks {}/{}, htm control acks {}/{}, control failures {}/{}, control failure invalid destinations {}/{}, control failure bad addresses {}/{}, control failure reads {}/{}, control failure writes {}/{}, control failure functional reads {}/{}, control failure functional writes {}/{}, sync control failures {}/{}, tlb control failures {}/{}, cache control failures {}/{}, htm control failures {}/{}, diagnostic control failures {}/{}, sideband events {}/{}, tlb sync events {}/{}, trace tlb syncs {}/{}, cache flush events {}/{}, trace cache flushes {}/{}, trace l1 invalidations {}/{}, diagnostic print events {}/{}, trace diagnostics {}/{}, htm abort events {}/{}, trace htm aborts {}/{}",
+                "traffic trace replay summary for route {} has scheduled {}/{}, responses {}/{}, trace completed responses {}/{}, trace retry responses {}/{}, trace store-conditional failed responses {}/{}, memory trace events {}/{}, memory write completions {}/{}, trace data-cache responses {}/{}, trace data-cache errors {}/{}, memory failures {}/{}, memory failure invalid destinations {}/{}, memory failure bad addresses {}/{}, memory failure reads {}/{}, memory failure writes {}/{}, memory failure functional reads {}/{}, memory failure functional writes {}/{}, trace errors {}/{}, trace htm accesses {}/{}, control acks {}/{}, sync control acks {}/{}, htm control acks {}/{}, control failures {}/{}, control failure invalid destinations {}/{}, control failure bad addresses {}/{}, control failure reads {}/{}, control failure writes {}/{}, control failure functional reads {}/{}, control failure functional writes {}/{}, sync control failures {}/{}, tlb control failures {}/{}, cache control failures {}/{}, htm control failures {}/{}, diagnostic control failures {}/{}, sideband events {}/{}, trace sideband failures {}/{}, tlb sync events {}/{}, trace tlb syncs {}/{}, cache flush events {}/{}, trace cache flushes {}/{}, trace l1 invalidations {}/{}, diagnostic print events {}/{}, trace diagnostics {}/{}, htm abort events {}/{}, trace htm aborts {}/{}",
                 expected.route().as_str(),
                 actual.scheduled_count(),
                 expected.minimum_scheduled_count(),
@@ -136,6 +137,8 @@ pub(super) fn format_traffic_trace_replay_error(
                 expected.minimum_diagnostic_control_failure_count(),
                 actual.sideband_event_count(),
                 expected.minimum_sideband_event_count(),
+                actual.trace_sideband_failure_count(),
+                expected.minimum_trace_sideband_failure_count(),
                 actual.tlb_sync_event_count(),
                 expected.minimum_tlb_sync_event_count(),
                 actual.trace_tlb_sync_count(),

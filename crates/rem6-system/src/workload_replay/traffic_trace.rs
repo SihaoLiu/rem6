@@ -187,6 +187,7 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
             .with_htm_control_failure_count(control_failure_counts.htm)
             .with_diagnostic_control_failure_count(control_failure_counts.diagnostic)
             .with_sideband_event_count(runtime.sideband_events().len())
+            .with_trace_sideband_failure_count(self.records.trace_sideband_failure_snapshot().len())
             .with_tlb_sync_event_count(sideband_counts.tlb_sync)
             .with_trace_tlb_sync_count(self.records.trace_tlb_sync_snapshot().len())
             .with_cache_flush_event_count(sideband_counts.cache_flush)

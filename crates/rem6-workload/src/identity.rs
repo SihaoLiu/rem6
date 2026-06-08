@@ -801,6 +801,7 @@ fn hash_expected_traffic_trace_replay_summary(
         expected.minimum_diagnostic_control_failure_count() as u64,
     );
     hash_u64(hash, expected.minimum_sideband_event_count() as u64);
+    hash_u64(hash, expected.minimum_trace_sideband_failure_count() as u64);
     hash_u64(hash, expected.minimum_tlb_sync_event_count() as u64);
     hash_u64(hash, expected.minimum_trace_tlb_sync_count() as u64);
     hash_u64(hash, expected.minimum_cache_flush_event_count() as u64);
@@ -1787,7 +1788,6 @@ fn hash_str(hash: &mut u64, value: &str) {
 fn hash_u64(hash: &mut u64, value: u64) {
     hash_bytes(hash, &value.to_le_bytes());
 }
-
 fn hash_i32(hash: &mut u64, value: i32) {
     hash_bytes(hash, &value.to_le_bytes());
 }
