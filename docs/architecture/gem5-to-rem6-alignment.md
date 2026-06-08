@@ -3244,9 +3244,14 @@ Workload replay can bind that executor to a workload route id and control
 partition, schedule it through the replay scheduler and `MemoryTransport`, and
 return response deliveries, trace memory events, and runtime records in
 `RiscvWorkloadReplayOutcome`; replay callback errors now fail the run through
-`RiscvWorkloadReplayError`. CLI and manifest expectations plus deeper
-propagation through memory controllers, caches, and CPU ports remain separate
-contracts.
+`RiscvWorkloadReplayError`. Workload manifests can also declare trace replay
+runs by route, input resource, tick frequency, agent, line layout, duration,
+control partition, and retry delay. `rem6-system` resolves the declared packet
+trace resource, instantiates the same controller/runtime path, schedules it
+through parallel workload replay, and verifies the existing traffic-trace
+summary expectations against the executable response, error, control, and
+sideband consumers. CLI convenience and deeper propagation through memory
+controllers, caches, and CPU ports remain separate contracts.
 `InvalidDestError`, `BadAddressError`, `ReadError`, `WriteError`,
 `FunctionalReadError`, and `FunctionalWriteError` command-ids 46-51 map to
 typed `TrafficTraceEvent::Error` events that preserve tick ordering, sequence,

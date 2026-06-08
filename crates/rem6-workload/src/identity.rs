@@ -1,5 +1,6 @@
 mod gups;
 mod traffic_trace_replay;
+mod traffic_trace_run;
 
 use rem6_boot::{
     BootElfArchitecture, BootElfClass, BootElfEndian, BootElfMetadata, BootElfOperatingSystem,
@@ -38,11 +39,12 @@ use crate::{
     WorkloadParallelBatchWorkerScope, WorkloadParallelFrontierStage,
     WorkloadParallelRemoteFlowScope, WorkloadParallelSchedulerScope, WorkloadResource,
     WorkloadResourceActivityScope, WorkloadResourceId, WorkloadStatsHistoryRecordExpectation,
-    WorkloadTopology,
+    WorkloadTopology, WorkloadTrafficTraceReplayRun,
 };
 
 use gups::{hash_expected_gups_run_summary, hash_gups_run};
 use traffic_trace_replay::hash_expected_traffic_trace_replay_summary;
+use traffic_trace_run::hash_traffic_trace_replay_run;
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
@@ -83,6 +85,7 @@ pub(crate) struct ManifestIdentityInput<'a> {
         &'a [WorkloadExpectedParallelRemoteFlowTiming],
     pub(crate) expected_parallel_progress_transitions:
         &'a [WorkloadExpectedParallelProgressTransition],
+    pub(crate) traffic_trace_replays: &'a [WorkloadTrafficTraceReplayRun],
     pub(crate) expected_traffic_trace_replay_summaries:
         &'a [WorkloadExpectedTrafficTraceReplaySummary],
     pub(crate) gups_runs: &'a [WorkloadGupsRun],
@@ -265,6 +268,13 @@ pub(crate) fn manifest_identity(input: ManifestIdentityInput<'_>) -> WorkloadMan
     );
     for expected in input.expected_parallel_progress_transitions {
         hash_expected_parallel_progress_transition(&mut hash, expected);
+    }
+    if !input.traffic_trace_replays.is_empty() {
+        hash_str(&mut hash, "traffic_trace_replays");
+        hash_u64(&mut hash, input.traffic_trace_replays.len() as u64);
+        for replay in input.traffic_trace_replays {
+            hash_traffic_trace_replay_run(&mut hash, replay);
+        }
     }
     if !input.expected_traffic_trace_replay_summaries.is_empty() {
         hash_str(&mut hash, "expected_traffic_trace_replay_summaries");

@@ -50,6 +50,7 @@ use rem6_workload::{
 mod cache_response;
 mod data_cache_backend;
 mod dma_scheduler_evidence;
+mod manifest_traffic_trace;
 mod memory_backend;
 mod qos;
 mod sinic_mmio_backend;
@@ -74,6 +75,7 @@ use self::dma_scheduler_evidence::{
     dma_scheduler_recorded_batch_worker_slot_tick_summaries, dma_scheduler_remote_flows,
     dma_scheduler_remote_sends, DmaSchedulerEvidence,
 };
+use self::manifest_traffic_trace::build_traffic_trace_replays;
 use self::memory_backend::{memory_response, WorkloadDramBackend, WorkloadMemoryBackend};
 use self::qos::{dram_scheduling_policy, priority_policy, queue_arbiter};
 use self::sinic_mmio_backend::WorkloadSinicPciMmioBackend;
@@ -326,8 +328,9 @@ impl RiscvWorkloadReplay {
             PartitionId::new(topology.host().partition()),
             GuestSourceId::new(topology.host().source()),
         )?;
+        let traffic_trace_replay_runs = build_traffic_trace_replays(self)?;
         let traffic_trace_replays = schedule_traffic_trace_replays(
-            &self.traffic_trace_replays,
+            &traffic_trace_replay_runs,
             topology,
             &route_map,
             &mut scheduler,

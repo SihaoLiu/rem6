@@ -123,6 +123,15 @@ pub fn controller_for_packets(packets: &[PacketFields]) -> TrafficController {
     controller_for_packets_with_state_duration(packets, u64::MAX)
 }
 
+pub fn packet_trace_bytes(packets: &[PacketFields]) -> Vec<u8> {
+    let packets = packets
+        .iter()
+        .copied()
+        .map(PacketRecord::from)
+        .collect::<Vec<_>>();
+    gem5_packet_trace(TICK_FREQUENCY, &packets)
+}
+
 pub fn controller_for_packet_records(packets: &[PacketRecord]) -> TrafficController {
     controller_for_packet_records_with_state_duration(packets, u64::MAX)
 }

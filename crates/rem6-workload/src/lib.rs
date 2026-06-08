@@ -40,6 +40,7 @@ mod stats_history;
 mod suite;
 mod topology;
 mod traffic_trace_replay;
+mod traffic_trace_run;
 mod workload_result;
 
 pub use boot_handoff::{WorkloadLinuxBootHandoff, WorkloadLinuxInitrd};
@@ -157,6 +158,7 @@ pub use traffic_trace_replay::{
     WorkloadExpectedTrafficTraceReplaySummary, WorkloadTrafficTraceReplaySummary,
     WorkloadTrafficTraceReplaySummaryExpectationError,
 };
+pub use traffic_trace_run::WorkloadTrafficTraceReplayRun;
 pub use workload_result::{
     WorkloadCheckpointChunkSummary, WorkloadCheckpointComponentSummary,
     WorkloadCheckpointManifestSummary, WorkloadExpectedCheckpointChunkSummary,
@@ -210,6 +212,7 @@ pub struct WorkloadManifest {
     expected_parallel_remote_sends: Vec<WorkloadExpectedParallelRemoteSend>,
     expected_parallel_remote_flow_timings: Vec<WorkloadExpectedParallelRemoteFlowTiming>,
     expected_parallel_progress_transitions: Vec<WorkloadExpectedParallelProgressTransition>,
+    traffic_trace_replays: Vec<WorkloadTrafficTraceReplayRun>,
     expected_traffic_trace_replay_summaries: Vec<WorkloadExpectedTrafficTraceReplaySummary>,
     gups_runs: Vec<WorkloadGupsRun>,
     expected_gups_run_summaries: Vec<WorkloadExpectedGupsRunSummary>,
@@ -325,6 +328,10 @@ impl WorkloadManifest {
         &self,
     ) -> &[WorkloadExpectedTrafficTraceReplaySummary] {
         &self.expected_traffic_trace_replay_summaries
+    }
+
+    pub fn traffic_trace_replays(&self) -> &[WorkloadTrafficTraceReplayRun] {
+        &self.traffic_trace_replays
     }
 
     pub fn expected_gups_run_summaries(&self) -> &[WorkloadExpectedGupsRunSummary] {
@@ -447,6 +454,7 @@ pub struct WorkloadManifestBuilder {
     expected_parallel_remote_sends: Vec<WorkloadExpectedParallelRemoteSend>,
     expected_parallel_remote_flow_timings: Vec<WorkloadExpectedParallelRemoteFlowTiming>,
     expected_parallel_progress_transitions: Vec<WorkloadExpectedParallelProgressTransition>,
+    traffic_trace_replays: Vec<WorkloadTrafficTraceReplayRun>,
     expected_traffic_trace_replay_summaries: Vec<WorkloadExpectedTrafficTraceReplaySummary>,
     gups_runs: Vec<WorkloadGupsRun>,
     expected_gups_run_summaries: Vec<WorkloadExpectedGupsRunSummary>,
@@ -515,6 +523,7 @@ impl WorkloadManifestBuilder {
             expected_parallel_remote_sends: Vec::new(),
             expected_parallel_remote_flow_timings: Vec::new(),
             expected_parallel_progress_transitions: Vec::new(),
+            traffic_trace_replays: Vec::new(),
             expected_traffic_trace_replay_summaries: Vec::new(),
             gups_runs: Vec::new(),
             expected_gups_run_summaries: Vec::new(),
@@ -647,6 +656,25 @@ impl WorkloadManifestBuilder {
         self.expected_gups_run_summaries.push(expected);
         self.expected_gups_run_summaries
             .sort_by(|left, right| left.sort_key().cmp(right.sort_key()));
+        Ok(self)
+    }
+
+    pub fn add_traffic_trace_replay(
+        mut self,
+        replay: WorkloadTrafficTraceReplayRun,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .traffic_trace_replays
+            .iter()
+            .any(|existing| existing.route() == replay.route())
+        {
+            return Err(WorkloadError::DuplicateRoute {
+                route: replay.route().clone(),
+            });
+        }
+        self.traffic_trace_replays.push(replay);
+        self.traffic_trace_replays
+            .sort_by(|left, right| left.sort_key().cmp(&right.sort_key()));
         Ok(self)
     }
 
@@ -975,6 +1003,9 @@ impl WorkloadManifestBuilder {
         {
             self.required_resources.insert(initrd.resource().clone());
         }
+        for replay in &self.traffic_trace_replays {
+            self.required_resources.insert(replay.resource().clone());
+        }
 
         for resource in &self.required_resources {
             if !self.resources.contains_key(resource) {
@@ -1017,6 +1048,20 @@ impl WorkloadManifestBuilder {
                 });
             }
         }
+        for replay in &self.traffic_trace_replays {
+            let resource = self.resources.get(replay.resource()).ok_or_else(|| {
+                WorkloadError::MissingRequiredResource {
+                    resource: replay.resource().clone(),
+                }
+            })?;
+            if resource.kind() != WorkloadResourceKind::Input {
+                return Err(WorkloadError::ResourceKindMismatch {
+                    resource: resource.id().clone(),
+                    expected: WorkloadResourceKind::Input,
+                    actual: resource.kind(),
+                });
+            }
+        }
 
         self.host_events.sort_by_key(host_event_sort_key);
         let resources = self.resources.into_values().collect::<Vec<_>>();
@@ -1050,6 +1095,7 @@ impl WorkloadManifestBuilder {
             expected_parallel_remote_sends: &self.expected_parallel_remote_sends,
             expected_parallel_remote_flow_timings: &self.expected_parallel_remote_flow_timings,
             expected_parallel_progress_transitions: &self.expected_parallel_progress_transitions,
+            traffic_trace_replays: &self.traffic_trace_replays,
             expected_traffic_trace_replay_summaries: &self.expected_traffic_trace_replay_summaries,
             gups_runs: &self.gups_runs,
             expected_gups_run_summaries: &self.expected_gups_run_summaries,
@@ -1127,6 +1173,7 @@ impl WorkloadManifestBuilder {
             expected_parallel_remote_sends: self.expected_parallel_remote_sends,
             expected_parallel_remote_flow_timings: self.expected_parallel_remote_flow_timings,
             expected_parallel_progress_transitions: self.expected_parallel_progress_transitions,
+            traffic_trace_replays: self.traffic_trace_replays,
             expected_traffic_trace_replay_summaries: self.expected_traffic_trace_replay_summaries,
             gups_runs: self.gups_runs,
             expected_gups_run_summaries: self.expected_gups_run_summaries,
