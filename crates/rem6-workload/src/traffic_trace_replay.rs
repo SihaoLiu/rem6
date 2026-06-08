@@ -45,6 +45,7 @@ pub struct WorkloadTrafficTraceReplaySummary {
     diagnostic_print_event_count: usize,
     trace_diagnostic_count: usize,
     htm_abort_event_count: usize,
+    trace_htm_abort_count: usize,
 }
 
 impl WorkloadTrafficTraceReplaySummary {
@@ -93,6 +94,7 @@ impl WorkloadTrafficTraceReplaySummary {
             diagnostic_print_event_count: 0,
             trace_diagnostic_count: 0,
             htm_abort_event_count: 0,
+            trace_htm_abort_count: 0,
         }
     }
 
@@ -347,6 +349,11 @@ impl WorkloadTrafficTraceReplaySummary {
         self
     }
 
+    pub fn with_trace_htm_abort_count(mut self, trace_htm_abort_count: usize) -> Self {
+        self.trace_htm_abort_count = trace_htm_abort_count;
+        self
+    }
+
     pub const fn route(&self) -> &WorkloadRouteId {
         &self.route
     }
@@ -519,6 +526,10 @@ impl WorkloadTrafficTraceReplaySummary {
         self.htm_abort_event_count
     }
 
+    pub const fn trace_htm_abort_count(&self) -> usize {
+        self.trace_htm_abort_count
+    }
+
     pub(crate) fn sort_key(&self) -> &WorkloadRouteId {
         &self.route
     }
@@ -597,6 +608,7 @@ impl WorkloadTrafficTraceReplaySummary {
                 + other.diagnostic_print_event_count,
             trace_diagnostic_count: self.trace_diagnostic_count + other.trace_diagnostic_count,
             htm_abort_event_count: self.htm_abort_event_count + other.htm_abort_event_count,
+            trace_htm_abort_count: self.trace_htm_abort_count + other.trace_htm_abort_count,
         }
     }
 }
@@ -646,6 +658,7 @@ pub struct WorkloadExpectedTrafficTraceReplaySummary {
     minimum_diagnostic_print_event_count: usize,
     minimum_trace_diagnostic_count: usize,
     minimum_htm_abort_event_count: usize,
+    minimum_trace_htm_abort_count: usize,
 }
 
 impl WorkloadExpectedTrafficTraceReplaySummary {
@@ -694,6 +707,7 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
             minimum_diagnostic_print_event_count: 0,
             minimum_trace_diagnostic_count: 0,
             minimum_htm_abort_event_count: 0,
+            minimum_trace_htm_abort_count: 0,
         }
     }
 
@@ -1031,6 +1045,14 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
         self
     }
 
+    pub fn with_minimum_trace_htm_abort_count(
+        mut self,
+        minimum_trace_htm_abort_count: usize,
+    ) -> Self {
+        self.minimum_trace_htm_abort_count = minimum_trace_htm_abort_count;
+        self
+    }
+
     pub const fn route(&self) -> &WorkloadRouteId {
         &self.route
     }
@@ -1203,6 +1225,10 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
         self.minimum_htm_abort_event_count
     }
 
+    pub const fn minimum_trace_htm_abort_count(&self) -> usize {
+        self.minimum_trace_htm_abort_count
+    }
+
     pub(crate) fn sort_key(&self) -> &WorkloadRouteId {
         &self.route
     }
@@ -1304,4 +1330,5 @@ fn traffic_trace_replay_summary_meets_minimum(
         && actual.diagnostic_print_event_count() >= expected.minimum_diagnostic_print_event_count()
         && actual.trace_diagnostic_count() >= expected.minimum_trace_diagnostic_count()
         && actual.htm_abort_event_count() >= expected.minimum_htm_abort_event_count()
+        && actual.trace_htm_abort_count() >= expected.minimum_trace_htm_abort_count()
 }

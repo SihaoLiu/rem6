@@ -809,6 +809,7 @@ fn hash_expected_traffic_trace_replay_summary(
     hash_u64(hash, expected.minimum_diagnostic_print_event_count() as u64);
     hash_u64(hash, expected.minimum_trace_diagnostic_count() as u64);
     hash_u64(hash, expected.minimum_htm_abort_event_count() as u64);
+    hash_u64(hash, expected.minimum_trace_htm_abort_count() as u64);
 }
 
 fn hash_expected_checkpoint_component_summary(

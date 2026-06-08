@@ -3140,7 +3140,10 @@ packet metadata, and flushed-entry count to the matching replay outcome.
 Translated data routes without a TLB consumer remain raw-only TLBI evidence.
 Workload traffic-trace summaries and manifest expectations count executed TLBI
 syncs separately from raw TLBI sideband events, so a trace can require the
-executable translation-TLB consumer. The workload consumer ignores fetch, MMIO,
+executable translation-TLB consumer. HTM abort sidebands similarly expose
+executed CPU transaction-abort records separately from raw abort sideband
+events, so a manifest can require the abort to reach the CPU/rollback consumer.
+The workload consumer ignores fetch, MMIO,
 and unrelated data routes even when their trace addresses alias a configured
 data-cache line. This preserves executable audit records instead of dropping
 them; if a sideband event is discovered after its trace tick, it is recorded at

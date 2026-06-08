@@ -184,6 +184,7 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
             .with_diagnostic_print_event_count(sideband_counts.diagnostic_print)
             .with_trace_diagnostic_count(self.records.trace_diagnostic_snapshot().len())
             .with_htm_abort_event_count(sideband_counts.htm_abort)
+            .with_trace_htm_abort_count(self.records.htm_abort_snapshot().len())
     }
 
     pub(super) fn into_outcome(self) -> RiscvWorkloadTrafficTraceReplayOutcome {
