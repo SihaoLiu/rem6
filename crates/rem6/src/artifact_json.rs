@@ -188,29 +188,335 @@ impl Rem6GupsExecutionSummary {
 fn traffic_trace_summary_json(
     summary: &rem6_workload::WorkloadTrafficTraceReplaySummary,
 ) -> String {
-    format!(
-        "{{\"route\":\"{}\",\"scheduled_count\":{},\"response_delivery_count\":{},\"trace_completed_response_count\":{},\"trace_retry_response_count\":{},\"trace_store_conditional_failed_response_count\":{},\"trace_read_response_count\":{},\"trace_write_response_count\":{},\"trace_response_data_byte_count\":{},\"trace_response_fill_data_byte_count\":{},\"memory_failure_count\":{},\"memory_failure_read_count\":{},\"memory_failure_write_count\":{},\"memory_failure_functional_read_count\":{},\"memory_failure_functional_write_count\":{},\"control_ack_count\":{},\"sync_control_ack_count\":{},\"control_failure_count\":{},\"sync_control_failure_count\":{},\"sideband_event_count\":{}}}",
-        json_escape(summary.route().as_str()),
-        summary.scheduled_count(),
+    let mut fields = vec![format!(
+        "\"route\":\"{}\"",
+        json_escape(summary.route().as_str())
+    )];
+    push_json_usize(&mut fields, "scheduled_count", summary.scheduled_count());
+    push_json_usize(
+        &mut fields,
+        "response_delivery_count",
         summary.response_delivery_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "trace_completed_response_count",
         summary.trace_completed_response_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "trace_retry_response_count",
         summary.trace_retry_response_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "trace_store_conditional_failed_response_count",
         summary.trace_store_conditional_failed_response_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "trace_read_response_count",
         summary.trace_read_response_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "trace_write_response_count",
         summary.trace_write_response_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "trace_prefetch_response_count",
+        summary.trace_prefetch_response_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "trace_upgrade_response_count",
+        summary.trace_upgrade_response_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "trace_llsc_response_count",
+        summary.trace_llsc_response_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "trace_locked_rmw_response_count",
+        summary.trace_locked_rmw_response_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "trace_writable_intent_response_count",
+        summary.trace_writable_intent_response_count(),
+    );
+    push_json_u64(
+        &mut fields,
+        "trace_response_data_byte_count",
         summary.trace_response_data_byte_count(),
+    );
+    push_json_u64(
+        &mut fields,
+        "trace_response_fill_data_byte_count",
         summary.trace_response_fill_data_byte_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "memory_trace_event_count",
+        summary.memory_trace_event_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "memory_write_completion_count",
+        summary.memory_write_completion_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "trace_data_cache_response_count",
+        summary.trace_data_cache_response_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "trace_data_cache_maintenance_response_count",
+        summary.trace_data_cache_maintenance_response_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "trace_data_cache_clean_maintenance_response_count",
+        summary.trace_data_cache_clean_maintenance_response_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "trace_data_cache_invalidate_maintenance_response_count",
+        summary.trace_data_cache_invalidate_maintenance_response_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "trace_data_cache_error_count",
+        summary.trace_data_cache_error_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "trace_data_cache_invalid_destination_error_count",
+        summary.trace_data_cache_invalid_destination_error_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "trace_data_cache_bad_address_error_count",
+        summary.trace_data_cache_bad_address_error_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "trace_data_cache_read_error_count",
+        summary.trace_data_cache_read_error_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "trace_data_cache_write_error_count",
+        summary.trace_data_cache_write_error_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "trace_data_cache_functional_read_error_count",
+        summary.trace_data_cache_functional_read_error_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "trace_data_cache_functional_write_error_count",
+        summary.trace_data_cache_functional_write_error_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "memory_failure_count",
         summary.memory_failure_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "memory_failure_invalid_destination_count",
+        summary.memory_failure_invalid_destination_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "memory_failure_bad_address_count",
+        summary.memory_failure_bad_address_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "memory_failure_read_count",
         summary.memory_failure_read_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "memory_failure_write_count",
         summary.memory_failure_write_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "memory_failure_functional_read_count",
         summary.memory_failure_functional_read_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "memory_failure_functional_write_count",
         summary.memory_failure_functional_write_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "trace_error_count",
+        summary.trace_error_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "trace_htm_access_count",
+        summary.trace_htm_access_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "trace_htm_begin_count",
+        summary.trace_htm_begin_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "control_ack_count",
         summary.control_ack_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "sync_control_ack_count",
         summary.sync_control_ack_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "htm_control_ack_count",
+        summary.htm_control_ack_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "control_failure_count",
         summary.control_failure_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "control_failure_invalid_destination_count",
+        summary.control_failure_invalid_destination_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "control_failure_bad_address_count",
+        summary.control_failure_bad_address_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "control_failure_read_count",
+        summary.control_failure_read_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "control_failure_write_count",
+        summary.control_failure_write_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "control_failure_functional_read_count",
+        summary.control_failure_functional_read_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "control_failure_functional_write_count",
+        summary.control_failure_functional_write_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "sync_control_failure_count",
         summary.sync_control_failure_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "tlb_control_failure_count",
+        summary.tlb_control_failure_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "cache_control_failure_count",
+        summary.cache_control_failure_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "htm_control_failure_count",
+        summary.htm_control_failure_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "diagnostic_control_failure_count",
+        summary.diagnostic_control_failure_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "sideband_event_count",
         summary.sideband_event_count(),
-    )
+    );
+    push_json_usize(
+        &mut fields,
+        "trace_sideband_failure_count",
+        summary.trace_sideband_failure_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "tlb_sync_event_count",
+        summary.tlb_sync_event_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "trace_tlb_sync_count",
+        summary.trace_tlb_sync_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "cache_flush_event_count",
+        summary.cache_flush_event_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "trace_cache_flush_count",
+        summary.trace_cache_flush_count(),
+    );
+    push_json_u64(
+        &mut fields,
+        "trace_cache_flush_data_byte_count",
+        summary.trace_cache_flush_data_byte_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "trace_l1_invalidation_count",
+        summary.trace_l1_invalidation_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "diagnostic_print_event_count",
+        summary.diagnostic_print_event_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "trace_diagnostic_count",
+        summary.trace_diagnostic_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "htm_abort_event_count",
+        summary.htm_abort_event_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "trace_htm_abort_count",
+        summary.trace_htm_abort_count(),
+    );
+    format!("{{{}}}", fields.join(","))
+}
+
+fn push_json_usize(fields: &mut Vec<String>, name: &str, value: usize) {
+    fields.push(format!("\"{name}\":{value}"));
+}
+
+fn push_json_u64(fields: &mut Vec<String>, name: &str, value: u64) {
+    fields.push(format!("\"{name}\":{value}"));
 }
 
 fn gups_response_stats_json(stats: &rem6_system::TrafficGupsTransportResponseStats) -> String {
@@ -595,5 +901,40 @@ impl Rem6MemoryTransportCounters {
             self.round_trip_ticks,
             self.max_round_trip_ticks,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rem6_workload::{WorkloadRouteId, WorkloadTrafficTraceReplaySummary};
+
+    use super::traffic_trace_summary_json;
+
+    #[test]
+    fn traffic_trace_summary_json_emits_nonzero_cache_and_sideband_counters() {
+        let summary = WorkloadTrafficTraceReplaySummary::new(route_id("cpu0.data"), 3)
+            .with_trace_data_cache_response_count(3)
+            .with_trace_data_cache_maintenance_response_count(2)
+            .with_trace_data_cache_clean_maintenance_response_count(1)
+            .with_trace_data_cache_invalidate_maintenance_response_count(1)
+            .with_trace_cache_flush_count(1)
+            .with_trace_cache_flush_data_byte_count(64)
+            .with_trace_l1_invalidation_count(1)
+            .with_trace_diagnostic_count(1);
+
+        let json = traffic_trace_summary_json(&summary);
+
+        assert!(json.contains("\"trace_data_cache_response_count\":3"));
+        assert!(json.contains("\"trace_data_cache_maintenance_response_count\":2"));
+        assert!(json.contains("\"trace_data_cache_clean_maintenance_response_count\":1"));
+        assert!(json.contains("\"trace_data_cache_invalidate_maintenance_response_count\":1"));
+        assert!(json.contains("\"trace_cache_flush_count\":1"));
+        assert!(json.contains("\"trace_cache_flush_data_byte_count\":64"));
+        assert!(json.contains("\"trace_l1_invalidation_count\":1"));
+        assert!(json.contains("\"trace_diagnostic_count\":1"));
+    }
+
+    fn route_id(value: &str) -> WorkloadRouteId {
+        WorkloadRouteId::new(value).unwrap()
     }
 }

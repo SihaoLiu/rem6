@@ -6,10 +6,20 @@ pub(crate) const GEM5_READ_REQ: u32 = 1;
 pub(crate) const GEM5_READ_RESP: u32 = 2;
 pub(crate) const GEM5_WRITE_REQ: u32 = 4;
 pub(crate) const GEM5_WRITE_RESP: u32 = 5;
+pub(crate) const GEM5_CLEAN_SHARED_REQ: u32 = 42;
+pub(crate) const GEM5_CLEAN_SHARED_RESP: u32 = 43;
+pub(crate) const GEM5_INVALIDATE_REQ: u32 = 54;
+pub(crate) const GEM5_INVALIDATE_RESP: u32 = 55;
 pub(crate) const GEM5_MEM_FENCE_REQ: u32 = 38;
 pub(crate) const GEM5_MEM_FENCE_RESP: u32 = 41;
 pub(crate) const GEM5_READ_ERROR: u32 = 48;
 pub(crate) const GEM5_WRITE_ERROR: u32 = 49;
+pub(crate) const GEM5_PRINT_REQ: u32 = 52;
+pub(crate) const GEM5_FLUSH_REQ: u32 = 53;
+pub(crate) const GEM5_HTM_REQ: u32 = 56;
+pub(crate) const GEM5_HTM_REQ_RESP: u32 = 57;
+pub(crate) const GEM5_HTM_ABORT: u32 = 58;
+pub(crate) const GEM5_TLBI_EXT_SYNC: u32 = 59;
 
 #[derive(Clone, Copy)]
 pub(crate) struct PacketFields {

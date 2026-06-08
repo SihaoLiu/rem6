@@ -101,6 +101,8 @@ fn rem6_trace_replay_executes_packet_trace_and_emits_summary_stats() {
     assert!(stdout.contains("\"memory_failure_read_count\":1"));
     assert!(stdout.contains("\"control_ack_count\":1"));
     assert!(stdout.contains("\"sync_control_ack_count\":1"));
+    assert_stat_id(&stdout, "sim.trace_replay.response_data_bytes", 17);
+    assert_stat_id(&stdout, "sim.trace_replay.sideband_events", 28);
     assert_stat(
         &stdout,
         "sim.trace_replay.scheduled",
@@ -318,6 +320,158 @@ fn rem6_trace_replay_rejects_final_tick_after_max_tick() {
         String::from_utf8_lossy(&output.stderr).contains("exceeds max tick 1"),
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn rem6_trace_replay_emits_typed_sideband_and_control_stats() {
+    let trace = temp_trace(
+        "trace-replay-typed-sideband",
+        &packet_trace_bytes(
+            1_000,
+            &[
+                PacketFields {
+                    tick: 0,
+                    command: GEM5_CLEAN_SHARED_REQ,
+                    address: Some(0x1040),
+                    size: Some(64),
+                    packet_id: Some(20),
+                },
+                PacketFields {
+                    tick: 2,
+                    command: GEM5_CLEAN_SHARED_RESP,
+                    address: Some(0x1040),
+                    size: Some(64),
+                    packet_id: Some(20),
+                },
+                PacketFields {
+                    tick: 3,
+                    command: GEM5_INVALIDATE_REQ,
+                    address: Some(0x1080),
+                    size: Some(64),
+                    packet_id: Some(21),
+                },
+                PacketFields {
+                    tick: 5,
+                    command: GEM5_INVALIDATE_RESP,
+                    address: Some(0x1080),
+                    size: Some(64),
+                    packet_id: Some(21),
+                },
+                PacketFields {
+                    tick: 6,
+                    command: GEM5_TLBI_EXT_SYNC,
+                    address: Some(0),
+                    size: Some(64),
+                    packet_id: Some(22),
+                },
+                PacketFields {
+                    tick: 7,
+                    command: GEM5_FLUSH_REQ,
+                    address: Some(0x10c0),
+                    size: Some(64),
+                    packet_id: Some(23),
+                },
+                PacketFields {
+                    tick: 8,
+                    command: GEM5_PRINT_REQ,
+                    address: Some(0x1100),
+                    size: Some(1),
+                    packet_id: Some(24),
+                },
+                PacketFields {
+                    tick: 9,
+                    command: GEM5_HTM_ABORT,
+                    address: None,
+                    size: None,
+                    packet_id: Some(25),
+                },
+                PacketFields {
+                    tick: 10,
+                    command: GEM5_HTM_REQ,
+                    address: None,
+                    size: None,
+                    packet_id: Some(26),
+                },
+                PacketFields {
+                    tick: 12,
+                    command: GEM5_HTM_REQ_RESP,
+                    address: None,
+                    size: None,
+                    packet_id: Some(26),
+                },
+            ],
+        ),
+    );
+    let output = trace_replay_output(&trace, "64");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"memory_trace_event_count\":6"));
+    assert!(stdout.contains("\"trace_data_cache_response_count\":0"));
+    assert!(stdout.contains("\"trace_data_cache_maintenance_response_count\":0"));
+    assert!(stdout.contains("\"htm_control_ack_count\":1"));
+    assert!(stdout.contains("\"sideband_event_count\":4"));
+    assert!(stdout.contains("\"tlb_sync_event_count\":1"));
+    assert!(stdout.contains("\"trace_tlb_sync_count\":0"));
+    assert!(stdout.contains("\"cache_flush_event_count\":1"));
+    assert!(stdout.contains("\"trace_cache_flush_count\":0"));
+    assert!(stdout.contains("\"diagnostic_print_event_count\":1"));
+    assert!(stdout.contains("\"trace_diagnostic_count\":0"));
+    assert!(stdout.contains("\"htm_abort_event_count\":1"));
+    assert!(stdout.contains("\"trace_htm_abort_count\":1"));
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.memory.events",
+        "Count",
+        6,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.responses.cache",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.control_acks.htm",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.sideband.tlb_sync_events",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.sideband.cache_flush_events",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.sideband.diagnostic_print_events",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.sideband.htm_abort",
+        "Count",
+        1,
+        "monotonic",
     );
 }
 
