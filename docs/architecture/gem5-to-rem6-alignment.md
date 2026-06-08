@@ -3172,9 +3172,10 @@ snapshot at the sideband execution tick and attach the resulting diagnostic
 records to the matching trace replay outcome. TLBI external-sync sidebands
 on translated data routes flush any configured RISC-V data-translation TLB and
 attach route-local trace TLB-sync records with trace order, packet metadata,
-and flushed-entry count to the matching replay outcome. Translated data routes
-without a configured TLB still record an executed zero-flush sync, while routes
-without a matching data-translation frontend remain raw sideband evidence.
+physical-address trace metadata, and flushed-entry count to the matching
+replay outcome. Translated data routes without a configured TLB still record an
+executed zero-flush sync, while routes without a matching data-translation
+frontend remain raw sideband evidence.
 Workload traffic-trace summaries and manifest expectations count executed TLBI
 syncs separately from raw TLBI sideband events, so a trace can require the
 executable translation-TLB consumer. HTM abort sidebands similarly expose
@@ -3536,8 +3537,9 @@ and writable intent. Workload trace replay consumes those events for declared
 data-cache lines on coherent data routes, while broader Ruby cache-recorder
 flush coverage remains open. Workload replay summaries and manifest
 expectations now split sideband evidence into TLB external-sync, cache-flush,
-diagnostic-print, and HTM-abort counts. TLB external-sync, cache-flush, and
-diagnostic-print policies are consumed by the executable replay contract
+diagnostic-print, and HTM-abort counts. TLB external-sync also preserves gem5
+physical-address trace metadata when present. TLB external-sync, cache-flush,
+and diagnostic-print policies are consumed by the executable replay contract
 without turning them into fake memory requests, while HTM policy now has ordered
 workload-level begin and abort records, typed data-route CPU cluster outcomes,
 data-cache transaction read-set/write-set records, and data-cache snapshot

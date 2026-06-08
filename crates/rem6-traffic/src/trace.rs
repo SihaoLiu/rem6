@@ -537,6 +537,10 @@ impl TrafficTraceRequestFlags {
         self.prefetch_exclusive
     }
 
+    const fn trace_address_is_physical(self) -> bool {
+        self.bits & GEM5_FLAG_PHYSICAL != 0
+    }
+
     fn validate_for_command(
         self,
         command: TrafficTraceCommand,
@@ -554,7 +558,7 @@ impl TrafficTraceRequestFlags {
         }
 
         if command.tlb_kind().is_some() {
-            if self.bits != 0 {
+            if self.bits & !GEM5_FLAG_PHYSICAL != 0 {
                 return Err(TrafficGeneratorError::TraceUnsupportedFlags { flags: self.bits });
             }
             return Ok(());
@@ -1082,6 +1086,7 @@ impl TrafficTraceGenerator {
                 event_tick,
                 sequence,
                 kind,
+                element.flags.trace_address_is_physical(),
                 element.packet_id,
                 element.pc,
             ))

@@ -31,14 +31,14 @@ mod support;
 use support::traffic_trace::{
     controller_for_packet_records, controller_for_packets, endpoint, PacketFields, PacketRecord,
     GEM5_CLEAN_INVALID_REQ, GEM5_CLEAN_INVALID_RESP, GEM5_CLEAN_SHARED_REQ, GEM5_CLEAN_SHARED_RESP,
-    GEM5_FLAG_KERNEL, GEM5_FLUSH_REQ, GEM5_FUNCTIONAL_READ_ERROR, GEM5_FUNCTIONAL_WRITE_ERROR,
-    GEM5_HTM_ABORT, GEM5_HTM_REQ, GEM5_HTM_REQ_RESP, GEM5_INVALIDATE_REQ, GEM5_INVALIDATE_RESP,
-    GEM5_INVALID_DEST_ERROR, GEM5_MEM_FENCE_REQ, GEM5_MEM_FENCE_RESP, GEM5_MEM_SYNC_REQ,
-    GEM5_MEM_SYNC_RESP, GEM5_PRINT_REQ, GEM5_READ_ERROR, GEM5_READ_REQ, GEM5_READ_RESP,
-    GEM5_READ_RESP_WITH_INVALIDATE, GEM5_SOFT_PF_REQ, GEM5_SOFT_PF_RESP, GEM5_STORE_COND_FAIL_REQ,
-    GEM5_STORE_COND_REQ, GEM5_STORE_COND_RESP, GEM5_SYNC_INV_L1, GEM5_TLBI_EXT_SYNC,
-    GEM5_WRITEBACK_DIRTY, GEM5_WRITE_COMPLETE_RESP, GEM5_WRITE_ERROR, GEM5_WRITE_REQ,
-    GEM5_WRITE_RESP,
+    GEM5_FLAG_KERNEL, GEM5_FLAG_PHYSICAL, GEM5_FLUSH_REQ, GEM5_FUNCTIONAL_READ_ERROR,
+    GEM5_FUNCTIONAL_WRITE_ERROR, GEM5_HTM_ABORT, GEM5_HTM_REQ, GEM5_HTM_REQ_RESP,
+    GEM5_INVALIDATE_REQ, GEM5_INVALIDATE_RESP, GEM5_INVALID_DEST_ERROR, GEM5_MEM_FENCE_REQ,
+    GEM5_MEM_FENCE_RESP, GEM5_MEM_SYNC_REQ, GEM5_MEM_SYNC_RESP, GEM5_PRINT_REQ, GEM5_READ_ERROR,
+    GEM5_READ_REQ, GEM5_READ_RESP, GEM5_READ_RESP_WITH_INVALIDATE, GEM5_SOFT_PF_REQ,
+    GEM5_SOFT_PF_RESP, GEM5_STORE_COND_FAIL_REQ, GEM5_STORE_COND_REQ, GEM5_STORE_COND_RESP,
+    GEM5_SYNC_INV_L1, GEM5_TLBI_EXT_SYNC, GEM5_WRITEBACK_DIRTY, GEM5_WRITE_COMPLETE_RESP,
+    GEM5_WRITE_ERROR, GEM5_WRITE_REQ, GEM5_WRITE_RESP,
 };
 
 fn workload_id(value: &str) -> rem6_workload::WorkloadId {
@@ -2551,12 +2551,14 @@ fn workload_replay_applies_tlbi_ext_sync_to_data_translation_tlb() {
     let manifest =
         replay_manifest_with_data_translation("riscv-replay-trace-tlbi-data-translation");
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
-    let controller = controller_for_packets(&[PacketFields {
+    let controller = controller_for_packet_records(&[PacketRecord {
         tick: 24,
         command: GEM5_TLBI_EXT_SYNC,
         address: Some(0),
         size: Some(64),
+        flags: Some(GEM5_FLAG_PHYSICAL),
         packet_id: Some(959),
+        pc: Some(0x1800),
     }]);
 
     let outcome = RiscvWorkloadReplay::new(plan)
@@ -2587,8 +2589,9 @@ fn workload_replay_applies_tlbi_ext_sync_to_data_translation_tlb() {
     assert_eq!(tlb_sync.sequence(), 0);
     assert_eq!(tlb_sync.kind(), TrafficTraceTlbKind::ExternalSync);
     assert_eq!(tlb_sync.flushed_entry_count(), 1);
+    assert!(tlb_sync.trace_address_is_physical());
     assert_eq!(tlb_sync.trace_packet_id(), Some(959));
-    assert_eq!(tlb_sync.trace_pc(), None);
+    assert_eq!(tlb_sync.trace_pc(), Some(Address::new(0x1800)));
     let summary = &outcome.result().traffic_trace_replay_summaries()[0];
     assert_eq!(summary.tlb_sync_event_count(), 1);
     assert_eq!(summary.trace_tlb_sync_count(), 1);
@@ -2633,6 +2636,7 @@ fn workload_replay_records_tlbi_ext_sync_noop_for_translation_without_tlb() {
     assert_eq!(tlb_sync.sequence(), 0);
     assert_eq!(tlb_sync.kind(), TrafficTraceTlbKind::ExternalSync);
     assert_eq!(tlb_sync.flushed_entry_count(), 0);
+    assert!(!tlb_sync.trace_address_is_physical());
     assert_eq!(tlb_sync.trace_packet_id(), Some(963));
     assert_eq!(tlb_sync.trace_pc(), None);
     let core = outcome.cluster().core(CpuId::new(0)).unwrap();

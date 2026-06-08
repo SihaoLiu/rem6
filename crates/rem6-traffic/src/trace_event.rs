@@ -405,6 +405,7 @@ pub struct TrafficTraceTlbEvent {
     tick: u64,
     sequence: u64,
     kind: TrafficTraceTlbKind,
+    trace_address_is_physical: bool,
     trace_packet_id: Option<u64>,
     trace_pc: Option<Address>,
 }
@@ -414,6 +415,7 @@ impl TrafficTraceTlbEvent {
         tick: u64,
         sequence: u64,
         kind: TrafficTraceTlbKind,
+        trace_address_is_physical: bool,
         trace_packet_id: Option<u64>,
         trace_pc: Option<Address>,
     ) -> Self {
@@ -421,6 +423,7 @@ impl TrafficTraceTlbEvent {
             tick,
             sequence,
             kind,
+            trace_address_is_physical,
             trace_packet_id,
             trace_pc,
         }
@@ -444,6 +447,10 @@ impl TrafficTraceTlbEvent {
 
     pub const fn requires_response(self) -> bool {
         self.kind.requires_response()
+    }
+
+    pub const fn trace_address_is_physical(self) -> bool {
+        self.trace_address_is_physical
     }
 
     pub const fn trace_packet_id(self) -> Option<u64> {

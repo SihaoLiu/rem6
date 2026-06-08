@@ -13,6 +13,7 @@ const GEM5_READ_REQ: u32 = 1;
 const GEM5_WRITE_REQ: u32 = 4;
 const GEM5_TLBI_EXT_SYNC: u32 = 59;
 const GEM5_FLAG_PHYSICAL: u32 = 0x0000_0200;
+const GEM5_FLAG_KERNEL: u32 = 0x0000_1000;
 
 #[derive(Clone, Copy)]
 struct PacketFields {
@@ -96,6 +97,7 @@ fn trace_generator_emits_tlbi_ext_sync_event() {
     assert_eq!(tlb.kind(), TrafficTraceTlbKind::ExternalSync);
     assert!(tlb.is_request());
     assert!(!tlb.requires_response());
+    assert!(!tlb.trace_address_is_physical());
     assert_eq!(tlb.trace_packet_id(), Some(2));
     assert_eq!(tlb.trace_pc(), Some(Address::new(0x1004)));
 
@@ -170,7 +172,39 @@ fn trace_generator_next_request_reports_tlb_event_boundary() {
 }
 
 #[test]
-fn trace_parser_rejects_tlbi_ext_sync_flags() {
+fn trace_generator_preserves_tlbi_ext_sync_physical_trace_metadata() {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace(
+            TICK_FREQUENCY,
+            &[PacketFields {
+                tick: 5,
+                command: GEM5_TLBI_EXT_SYNC,
+                address: Some(0),
+                size: Some(64),
+                flags: Some(GEM5_FLAG_PHYSICAL),
+                packet_id: Some(17),
+                pc: Some(0x1400),
+            }],
+        ),
+        TICK_FREQUENCY,
+    )
+    .unwrap();
+    let mut generator = TrafficTraceGenerator::new(trace_config(trace));
+    generator.enter(0);
+
+    let tlb = match generator.next_event(0, 0).unwrap().unwrap() {
+        TrafficTraceEvent::Tlb(event) => event,
+        _ => panic!("TlbiExtSync should emit a TLB event"),
+    };
+
+    assert_eq!(tlb.kind(), TrafficTraceTlbKind::ExternalSync);
+    assert!(tlb.trace_address_is_physical());
+    assert_eq!(tlb.trace_packet_id(), Some(17));
+    assert_eq!(tlb.trace_pc(), Some(Address::new(0x1400)));
+}
+
+#[test]
+fn trace_parser_rejects_unsupported_tlbi_ext_sync_flags() {
     assert_eq!(
         TrafficTrace::from_gem5_packet_trace(
             &gem5_packet_trace(
@@ -180,7 +214,7 @@ fn trace_parser_rejects_tlbi_ext_sync_flags() {
                     command: GEM5_TLBI_EXT_SYNC,
                     address: Some(0),
                     size: Some(64),
-                    flags: Some(GEM5_FLAG_PHYSICAL),
+                    flags: Some(GEM5_FLAG_KERNEL),
                     packet_id: None,
                     pc: None,
                 }],
@@ -189,7 +223,7 @@ fn trace_parser_rejects_tlbi_ext_sync_flags() {
         )
         .unwrap_err(),
         TrafficGeneratorError::TraceUnsupportedFlags {
-            flags: GEM5_FLAG_PHYSICAL,
+            flags: GEM5_FLAG_KERNEL,
         }
     );
 }

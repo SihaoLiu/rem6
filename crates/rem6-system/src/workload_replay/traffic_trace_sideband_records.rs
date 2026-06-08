@@ -17,6 +17,7 @@ pub struct RiscvWorkloadTraceTlbSyncRecord {
     sequence: u64,
     kind: TrafficTraceTlbKind,
     flushed_entry_count: usize,
+    trace_address_is_physical: bool,
     trace_packet_id: Option<u64>,
     trace_pc: Option<Address>,
 }
@@ -33,6 +34,7 @@ impl RiscvWorkloadTraceTlbSyncRecord {
             sequence: event.sequence(),
             kind: event.kind(),
             flushed_entry_count,
+            trace_address_is_physical: event.trace_address_is_physical(),
             trace_packet_id: event.trace_packet_id(),
             trace_pc: event.trace_pc(),
         }
@@ -56,6 +58,10 @@ impl RiscvWorkloadTraceTlbSyncRecord {
 
     pub const fn flushed_entry_count(&self) -> usize {
         self.flushed_entry_count
+    }
+
+    pub const fn trace_address_is_physical(&self) -> bool {
+        self.trace_address_is_physical
     }
 
     pub const fn trace_packet_id(&self) -> Option<u64> {
