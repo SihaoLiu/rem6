@@ -11,7 +11,10 @@ use rem6_workload::{
 
 mod support;
 
-use rem6_traffic::TrafficTraceErrorKind;
+use rem6_traffic::{
+    TrafficTraceCacheKind, TrafficTraceControlFailureSource, TrafficTraceDiagnosticKind,
+    TrafficTraceErrorKind, TrafficTraceHtmKind, TrafficTraceTlbKind,
+};
 use support::traffic_trace::{
     controller_for_packets, PacketFields, GEM5_FLUSH_REQ, GEM5_HTM_ABORT, GEM5_HTM_REQ,
     GEM5_HTM_REQ_RESP, GEM5_INVALID_DEST_ERROR, GEM5_MEM_FENCE_REQ, GEM5_MEM_FENCE_RESP,
@@ -229,6 +232,56 @@ fn workload_replay_summarizes_control_failure_sources() {
     let traffic_replay = &outcome.traffic_trace_replays()[0];
     assert!(traffic_replay.errors().is_empty());
     assert_eq!(traffic_replay.runtime().control_failures().len(), 5);
+    let sideband_failures = traffic_replay.trace_sideband_failure_records();
+    assert_eq!(sideband_failures.len(), 4);
+    assert_eq!(sideband_failures[0].tick(), 4);
+    assert_eq!(sideband_failures[0].trace_tick(), 3);
+    assert_eq!(
+        sideband_failures[0].error(),
+        TrafficTraceErrorKind::InvalidDestination
+    );
+    assert_eq!(sideband_failures[0].trace_packet_id(), Some(971));
+    match sideband_failures[0].source() {
+        TrafficTraceControlFailureSource::Tlb(source) => {
+            assert_eq!(source.kind(), TrafficTraceTlbKind::ExternalSync);
+        }
+        source => panic!("unexpected sideband failure source: {source:?}"),
+    }
+    assert_eq!(sideband_failures[1].tick(), 6);
+    assert_eq!(sideband_failures[1].trace_tick(), 5);
+    assert_eq!(sideband_failures[1].error(), TrafficTraceErrorKind::Write);
+    assert_eq!(sideband_failures[1].address(), Some(Address::new(0xa000)));
+    match sideband_failures[1].source() {
+        TrafficTraceControlFailureSource::Cache(source) => {
+            assert_eq!(source.kind(), TrafficTraceCacheKind::Flush);
+        }
+        source => panic!("unexpected sideband failure source: {source:?}"),
+    }
+    assert_eq!(sideband_failures[2].tick(), 8);
+    assert_eq!(sideband_failures[2].trace_tick(), 7);
+    assert_eq!(
+        sideband_failures[2].error(),
+        TrafficTraceErrorKind::InvalidDestination
+    );
+    match sideband_failures[2].source() {
+        TrafficTraceControlFailureSource::Diagnostic(source) => {
+            assert_eq!(source.kind(), TrafficTraceDiagnosticKind::Print);
+        }
+        source => panic!("unexpected sideband failure source: {source:?}"),
+    }
+    assert_eq!(sideband_failures[3].tick(), 10);
+    assert_eq!(sideband_failures[3].trace_tick(), 9);
+    assert_eq!(
+        sideband_failures[3].error(),
+        TrafficTraceErrorKind::InvalidDestination
+    );
+    assert_eq!(sideband_failures[3].size_bytes(), Some(16));
+    match sideband_failures[3].source() {
+        TrafficTraceControlFailureSource::Htm(source) => {
+            assert_eq!(source.kind(), TrafficTraceHtmKind::Abort);
+        }
+        source => panic!("unexpected sideband failure source: {source:?}"),
+    }
 
     let summary = &outcome.result().traffic_trace_replay_summaries()[0];
     assert_eq!(summary.control_failure_count(), 5);
@@ -357,6 +410,59 @@ fn workload_replay_summarizes_control_failure_error_kinds() {
     assert_eq!(summary.control_failure_functional_read_count(), 0);
     assert_eq!(summary.control_failure_functional_write_count(), 0);
     plan.verify_result(outcome.result()).unwrap();
+}
+
+#[test]
+fn workload_replay_keeps_response_required_failures_out_of_sideband_records() {
+    let outcome = replay_with_controller(
+        "riscv-replay-response-required-failure-records",
+        &[
+            PacketFields {
+                tick: 1,
+                command: GEM5_MEM_FENCE_REQ,
+                address: None,
+                size: None,
+                packet_id: Some(975),
+            },
+            PacketFields {
+                tick: 2,
+                command: GEM5_INVALID_DEST_ERROR,
+                address: None,
+                size: None,
+                packet_id: Some(975),
+            },
+            PacketFields {
+                tick: 3,
+                command: GEM5_HTM_REQ,
+                address: Some(0xb100),
+                size: Some(16),
+                packet_id: Some(976),
+            },
+            PacketFields {
+                tick: 4,
+                command: GEM5_INVALID_DEST_ERROR,
+                address: Some(0xb100),
+                size: Some(16),
+                packet_id: Some(976),
+            },
+        ],
+    )
+    .unwrap();
+
+    let traffic_replay = &outcome.traffic_trace_replays()[0];
+    assert!(traffic_replay.errors().is_empty());
+    assert_eq!(traffic_replay.runtime().control_failures().len(), 2);
+    assert!(traffic_replay.trace_sideband_failure_records().is_empty());
+    assert_eq!(traffic_replay.sync_records().len(), 1);
+    assert_eq!(traffic_replay.htm_begin_records().len(), 1);
+
+    let summary = &outcome.result().traffic_trace_replay_summaries()[0];
+    assert_eq!(summary.control_failure_count(), 2);
+    assert_eq!(summary.sync_control_failure_count(), 1);
+    assert_eq!(summary.htm_control_failure_count(), 1);
+    assert_eq!(summary.tlb_control_failure_count(), 0);
+    assert_eq!(summary.cache_control_failure_count(), 0);
+    assert_eq!(summary.diagnostic_control_failure_count(), 0);
 }
 
 #[test]

@@ -285,8 +285,9 @@ pub use workload_replay::{
     RiscvWorkloadTraceCacheFlushRecord, RiscvWorkloadTraceHtmAbortRecord,
     RiscvWorkloadTraceHtmBeginRecord, RiscvWorkloadTraceL1InvalidationRecord,
     RiscvWorkloadTraceMemoryFailureRecord, RiscvWorkloadTraceMemoryResponseRecord,
-    RiscvWorkloadTraceSyncOutcome, RiscvWorkloadTraceSyncRecord, RiscvWorkloadTraceTlbSyncRecord,
-    RiscvWorkloadTrafficTraceReplay, RiscvWorkloadTrafficTraceReplayOutcome,
+    RiscvWorkloadTraceSidebandFailureRecord, RiscvWorkloadTraceSyncOutcome,
+    RiscvWorkloadTraceSyncRecord, RiscvWorkloadTraceTlbSyncRecord, RiscvWorkloadTrafficTraceReplay,
+    RiscvWorkloadTrafficTraceReplayOutcome,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

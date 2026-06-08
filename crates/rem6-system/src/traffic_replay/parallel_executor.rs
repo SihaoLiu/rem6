@@ -6,7 +6,7 @@ use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerError, Tick};
 use rem6_memory::MemoryRequestId;
 use rem6_traffic::{
     TrafficController, TrafficControllerEvent, TrafficControllerEventBatch, TrafficGeneratorError,
-    TrafficTraceMemoryWriteCompletionRecord,
+    TrafficTraceControlFailureRecord, TrafficTraceMemoryWriteCompletionRecord,
 };
 use rem6_transport::{
     MemoryRouteId, MemoryTrace, MemoryTransport, RequestDelivery, ResponseDelivery, TargetOutcome,
@@ -42,6 +42,7 @@ type TargetCompletionSink = Arc<
 type ControlEventSink = Arc<dyn Fn(Tick, &TrafficTraceReplayControlEventContext) + Send + Sync>;
 type ControlCompletionSink =
     Arc<dyn Fn(Tick, &TrafficTraceReplayControlEventContext) + Send + Sync>;
+type ControlFailureSink = Arc<dyn Fn(Tick, &TrafficTraceControlFailureRecord) + Send + Sync>;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct TrafficTraceReplayOrder {
@@ -77,6 +78,7 @@ pub struct TrafficTraceReplayControllerParallelExecutor {
     target_completion_sink: Option<TargetCompletionSink>,
     control_event_sink: Option<ControlEventSink>,
     control_completion_sink: Option<ControlCompletionSink>,
+    control_failure_sink: Option<ControlFailureSink>,
 }
 
 impl TrafficTraceReplayControllerParallelExecutor {
@@ -96,6 +98,7 @@ impl TrafficTraceReplayControllerParallelExecutor {
             target_completion_sink: None,
             control_event_sink: None,
             control_completion_sink: None,
+            control_failure_sink: None,
         }
     }
 
@@ -163,6 +166,14 @@ impl TrafficTraceReplayControllerParallelExecutor {
         F: Fn(Tick, &TrafficTraceReplayControlEventContext) + Send + Sync + 'static,
     {
         self.control_completion_sink = Some(Arc::new(sink));
+        self
+    }
+
+    pub fn with_control_failure_sink<F>(mut self, sink: F) -> Self
+    where
+        F: Fn(Tick, &TrafficTraceControlFailureRecord) + Send + Sync + 'static,
+    {
+        self.control_failure_sink = Some(Arc::new(sink));
         self
     }
 
@@ -290,6 +301,12 @@ impl TrafficTraceReplayControllerParallelExecutor {
         partition: PartitionId,
         delivery_tick: Tick,
     ) -> Result<usize, TrafficTraceReplayControllerParallelSubmitError> {
+        let control_failure_start = self
+            .runtime
+            .lock()
+            .expect("trace replay controller runtime lock")
+            .control_failures()
+            .len();
         let staged = self.staged_runtime(batch)?;
         let (staged, sidebands) =
             prepare_sidebands_from_runtime(staged, scheduler, partition, delivery_tick)?;
@@ -300,9 +317,18 @@ impl TrafficTraceReplayControllerParallelExecutor {
             delivery_tick,
         )?;
         let scheduled = sidebands.len() + write_completions.len();
+        let control_failures = staged.control_failures()[control_failure_start..]
+            .iter()
+            .map(|failure| (failure.tick(), failure.record()))
+            .collect::<Vec<_>>();
         self.schedule_prepared_sidebands(scheduler, partition, sidebands)?;
         self.schedule_prepared_memory_write_completions(scheduler, partition, write_completions)?;
         self.commit_runtime(staged);
+        if let Some(sink) = &self.control_failure_sink {
+            for (tick, record) in control_failures {
+                sink(tick, &record);
+            }
+        }
         Ok(scheduled)
     }
 
@@ -458,6 +484,7 @@ impl TrafficTraceReplayControllerParallelExecutor {
         let errors = Arc::clone(&self.errors);
         let control_event_sink = self.control_event_sink.clone();
         let control_completion_sink = self.control_completion_sink.clone();
+        let control_failure_sink = self.control_failure_sink.clone();
         scheduler.schedule_parallel_at(partition, delivery_tick, move |context| {
             let event_context = match traffic_trace_replay_controller_runtime_control_event_context(
                 Arc::clone(&runtime),
@@ -500,12 +527,16 @@ impl TrafficTraceReplayControllerParallelExecutor {
                     let runtime = Arc::clone(&runtime);
                     let event_context = event_context.clone();
                     let control_completion_sink = control_completion_sink.clone();
+                    let control_failure_sink = control_failure_sink.clone();
                     context
                         .schedule_local_after(delay, move |context| {
                             runtime
                                 .lock()
                                 .expect("trace replay controller runtime lock")
                                 .record_control_failure(context.now(), record);
+                            if let Some(control_failure_sink) = &control_failure_sink {
+                                control_failure_sink(context.now(), &record);
+                            }
                             if let Some(control_completion_sink) = &control_completion_sink {
                                 control_completion_sink(context.now(), &event_context);
                             }

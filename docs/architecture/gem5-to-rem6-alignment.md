@@ -3080,10 +3080,15 @@ read-class errors. Matched failures emit ordered control-failure replay actions
 instead of stopping at raw sideband accessors. Controller-runtime fanout records
 those no-response control failures at the trace failure tick; because there is
 no response-required delivery, they do not enter the sync/HTM
-control-completion queue. The standalone sideband helper can schedule those
-events from an already-recorded sideband runtime, and the controller-aware
-memory and control helpers now also drain sideband events automatically
-whenever their trace-controller advance crosses those events. The
+control-completion queue. The parallel executor now exposes those immediate
+control failures through a control-failure sink, and workload replay records
+no-response TLB/cache/diagnostic/HTM-abort failures as route-local sideband
+failure records with the matched source event, error kind, trace tick,
+sequence, packet id, PC, and address/size metadata when present. The standalone
+sideband helper can schedule those events from an already-recorded sideband
+runtime, and the controller-aware memory and control helpers now also drain
+sideband events automatically whenever their trace-controller advance crosses
+those events. The
 parallel trace replay executor can also install target and sideband consumers;
 workload replay uses those hooks so coherent data-route trace requests mutate
 the configured data-cache backend at the matched response tick, not at request
@@ -3229,6 +3234,9 @@ control-failure source counts, so replay artifacts can require executable
 failure sources instead of only the aggregate control-failure total. They also
 split matched control failures by gem5 error kind, so traces can require the
 executable `InvalidDestError`, `WriteError`, or functional-error consumer.
+Workload replay exposes no-response sideband failures as separate records
+rather than merging them with sync failures or failed HTMReq begin records, so
+controller error matching is directly visible to replay consumers.
 Successful sync and HTM control acknowledgements are likewise split into
 source-kind summary counts, so response-required control replay can be
 required by source rather than only by aggregate acknowledgement count. The

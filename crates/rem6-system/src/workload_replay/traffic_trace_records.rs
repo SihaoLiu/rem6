@@ -3,12 +3,15 @@ use std::sync::{Arc, Mutex};
 use crate::{RiscvTraceDiagnosticRecord, RiscvTraceErrorRecord, RiscvTraceHtmAccessRecord};
 
 use super::traffic_trace::{
-    RiscvWorkloadTraceHtmAbortRecord, RiscvWorkloadTraceHtmBeginRecord,
     RiscvWorkloadTraceMemoryFailureRecord, RiscvWorkloadTraceMemoryResponseRecord,
     RiscvWorkloadTraceMemoryWriteCompletionRecord,
 };
+use super::traffic_trace_htm::{
+    RiscvWorkloadTraceHtmAbortRecord, RiscvWorkloadTraceHtmBeginRecord,
+};
 use super::traffic_trace_sideband_records::{
-    RiscvWorkloadTraceCacheFlushRecord, RiscvWorkloadTraceTlbSyncRecord,
+    RiscvWorkloadTraceCacheFlushRecord, RiscvWorkloadTraceSidebandFailureRecord,
+    RiscvWorkloadTraceTlbSyncRecord,
 };
 use super::traffic_trace_sync::{
     RiscvWorkloadTraceL1InvalidationRecord, RiscvWorkloadTraceSyncRecord,
@@ -21,6 +24,7 @@ pub(super) struct RiscvWorkloadTraceReplayRecords {
     memory_failure_records: Arc<Mutex<Vec<RiscvWorkloadTraceMemoryFailureRecord>>>,
     trace_tlb_sync_records: Arc<Mutex<Vec<RiscvWorkloadTraceTlbSyncRecord>>>,
     trace_cache_flush_records: Arc<Mutex<Vec<RiscvWorkloadTraceCacheFlushRecord>>>,
+    trace_sideband_failure_records: Arc<Mutex<Vec<RiscvWorkloadTraceSidebandFailureRecord>>>,
     trace_l1_invalidation_records: Arc<Mutex<Vec<RiscvWorkloadTraceL1InvalidationRecord>>>,
     trace_error_records: Arc<Mutex<Vec<RiscvTraceErrorRecord>>>,
     trace_htm_access_records: Arc<Mutex<Vec<RiscvTraceHtmAccessRecord>>>,
@@ -80,6 +84,18 @@ impl RiscvWorkloadTraceReplayRecords {
             .expect("traffic trace replay cache flush lock")
             .clone();
         records.sort_by_key(|record| (record.tick(), record.sequence(), record.line().get()));
+        records
+    }
+
+    pub(super) fn trace_sideband_failure_snapshot(
+        &self,
+    ) -> Vec<RiscvWorkloadTraceSidebandFailureRecord> {
+        let mut records = self
+            .trace_sideband_failure_records
+            .lock()
+            .expect("traffic trace replay sideband failure lock")
+            .clone();
+        records.sort_by_key(|record| (record.tick(), record.trace_tick(), record.sequence()));
         records
     }
 
@@ -195,6 +211,16 @@ impl RiscvWorkloadTraceReplayRecords {
         self.trace_cache_flush_records
             .lock()
             .expect("workload trace cache flush lock")
+            .push(record);
+    }
+
+    pub(super) fn record_trace_sideband_failure(
+        &self,
+        record: RiscvWorkloadTraceSidebandFailureRecord,
+    ) {
+        self.trace_sideband_failure_records
+            .lock()
+            .expect("workload trace sideband failure lock")
             .push(record);
     }
 

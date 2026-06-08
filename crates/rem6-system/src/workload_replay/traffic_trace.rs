@@ -8,9 +8,10 @@ use rem6_kernel::{PartitionId, PartitionedScheduler, Tick};
 use rem6_memory::{Address, MemoryRequestId, ResponseStatus};
 use rem6_traffic::{
     TrafficController, TrafficControllerEvent, TrafficControllerEventBatch, TrafficTraceCacheKind,
-    TrafficTraceControlFailureSource, TrafficTraceDiagnosticKind, TrafficTraceErrorEvent,
-    TrafficTraceErrorKind, TrafficTraceHtmKind, TrafficTraceMemoryWriteCompletionRecord,
-    TrafficTraceResponseEvent, TrafficTraceResponseKind, TrafficTraceTlbKind,
+    TrafficTraceControlFailureRecord, TrafficTraceControlFailureSource, TrafficTraceDiagnosticKind,
+    TrafficTraceErrorEvent, TrafficTraceErrorKind, TrafficTraceHtmKind,
+    TrafficTraceMemoryWriteCompletionRecord, TrafficTraceResponseEvent, TrafficTraceResponseKind,
+    TrafficTraceTlbKind,
 };
 use rem6_transport::{
     MemoryRouteId, MemoryTrace, MemoryTraceEvent, MemoryTransport, RequestDelivery,
@@ -29,9 +30,13 @@ use crate::{
 };
 
 use super::data_cache_backend::WorkloadDataCacheBackend;
+use super::traffic_trace_htm::{
+    RiscvWorkloadTraceHtmAbortRecord, RiscvWorkloadTraceHtmBeginRecord,
+};
 use super::traffic_trace_records::RiscvWorkloadTraceReplayRecords;
 use super::traffic_trace_sideband_records::{
-    RiscvWorkloadTraceCacheFlushRecord, RiscvWorkloadTraceTlbSyncRecord,
+    RiscvWorkloadTraceCacheFlushRecord, RiscvWorkloadTraceSidebandFailureRecord,
+    RiscvWorkloadTraceTlbSyncRecord,
 };
 use super::traffic_trace_sync::{
     RiscvWorkloadTraceL1InvalidationRecord, RiscvWorkloadTraceSyncOutcome,
@@ -215,6 +220,7 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
             memory_failure_records: self.records.memory_failure_snapshot(),
             trace_tlb_sync_records: self.records.trace_tlb_sync_snapshot(),
             trace_cache_flush_records: self.records.trace_cache_flush_snapshot(),
+            trace_sideband_failure_records: self.records.trace_sideband_failure_snapshot(),
             trace_l1_invalidation_records: self.records.trace_l1_invalidation_snapshot(),
             trace_error_records: self.records.trace_error_snapshot(),
             trace_htm_access_records: self.records.trace_htm_access_snapshot(),
@@ -382,6 +388,7 @@ pub struct RiscvWorkloadTrafficTraceReplayOutcome {
     memory_failure_records: Vec<RiscvWorkloadTraceMemoryFailureRecord>,
     trace_tlb_sync_records: Vec<RiscvWorkloadTraceTlbSyncRecord>,
     trace_cache_flush_records: Vec<RiscvWorkloadTraceCacheFlushRecord>,
+    trace_sideband_failure_records: Vec<RiscvWorkloadTraceSidebandFailureRecord>,
     trace_l1_invalidation_records: Vec<RiscvWorkloadTraceL1InvalidationRecord>,
     trace_error_records: Vec<RiscvTraceErrorRecord>,
     trace_htm_access_records: Vec<RiscvTraceHtmAccessRecord>,
@@ -436,6 +443,10 @@ impl RiscvWorkloadTrafficTraceReplayOutcome {
 
     pub fn trace_cache_flush_records(&self) -> &[RiscvWorkloadTraceCacheFlushRecord] {
         &self.trace_cache_flush_records
+    }
+
+    pub fn trace_sideband_failure_records(&self) -> &[RiscvWorkloadTraceSidebandFailureRecord] {
+        &self.trace_sideband_failure_records
     }
 
     pub fn trace_l1_invalidation_records(&self) -> &[RiscvWorkloadTraceL1InvalidationRecord] {
@@ -723,152 +734,6 @@ impl RiscvWorkloadTraceMemoryFailureRecord {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RiscvWorkloadTraceHtmBeginRecord {
-    tick: Tick,
-    trace_tick: Tick,
-    sequence: u64,
-    address: Option<Address>,
-    size_bytes: Option<u64>,
-    trace_packet_id: Option<u64>,
-    trace_pc: Option<Address>,
-    cluster_outcome: Option<RiscvClusterHtmBeginOutcome>,
-    control_error: Option<TrafficTraceErrorKind>,
-}
-
-impl RiscvWorkloadTraceHtmBeginRecord {
-    fn new(
-        tick: Tick,
-        event: rem6_traffic::TrafficTraceHtmEvent,
-        cluster_outcome: Option<RiscvClusterHtmBeginOutcome>,
-        control_error: Option<TrafficTraceErrorKind>,
-    ) -> Self {
-        Self {
-            tick,
-            trace_tick: event.tick(),
-            sequence: event.sequence(),
-            address: event.address(),
-            size_bytes: event.size_bytes(),
-            trace_packet_id: event.trace_packet_id(),
-            trace_pc: event.trace_pc(),
-            cluster_outcome,
-            control_error,
-        }
-    }
-
-    pub const fn tick(&self) -> Tick {
-        self.tick
-    }
-
-    pub const fn trace_tick(&self) -> Tick {
-        self.trace_tick
-    }
-
-    pub const fn sequence(&self) -> u64 {
-        self.sequence
-    }
-
-    pub const fn address(&self) -> Option<Address> {
-        self.address
-    }
-
-    pub const fn size_bytes(&self) -> Option<u64> {
-        self.size_bytes
-    }
-
-    pub const fn trace_packet_id(&self) -> Option<u64> {
-        self.trace_packet_id
-    }
-
-    pub const fn trace_pc(&self) -> Option<Address> {
-        self.trace_pc
-    }
-
-    pub fn cluster_outcome(&self) -> &RiscvClusterHtmBeginOutcome {
-        self.cluster_outcome
-            .as_ref()
-            .expect("trace HTM begin record has cluster outcome")
-    }
-
-    pub fn cluster_outcome_option(&self) -> Option<&RiscvClusterHtmBeginOutcome> {
-        self.cluster_outcome.as_ref()
-    }
-
-    pub const fn control_error(&self) -> Option<TrafficTraceErrorKind> {
-        self.control_error
-    }
-
-    pub const fn begin_uid(&self) -> Option<HtmTransactionUid> {
-        match &self.cluster_outcome {
-            Some(RiscvClusterHtmBeginOutcome::Begun { begin, .. }) => Some(begin.uid()),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RiscvWorkloadTraceHtmAbortRecord {
-    tick: Tick,
-    trace_tick: Tick,
-    sequence: u64,
-    address: Option<Address>,
-    size_bytes: Option<u64>,
-    trace_packet_id: Option<u64>,
-    trace_pc: Option<Address>,
-    cluster_outcome: RiscvClusterHtmAbortOutcome,
-}
-
-impl RiscvWorkloadTraceHtmAbortRecord {
-    fn new(
-        tick: Tick,
-        event: rem6_traffic::TrafficTraceHtmEvent,
-        cluster_outcome: RiscvClusterHtmAbortOutcome,
-    ) -> Self {
-        Self {
-            tick,
-            trace_tick: event.tick(),
-            sequence: event.sequence(),
-            address: event.address(),
-            size_bytes: event.size_bytes(),
-            trace_packet_id: event.trace_packet_id(),
-            trace_pc: event.trace_pc(),
-            cluster_outcome,
-        }
-    }
-
-    pub const fn tick(&self) -> Tick {
-        self.tick
-    }
-
-    pub const fn trace_tick(&self) -> Tick {
-        self.trace_tick
-    }
-
-    pub const fn sequence(&self) -> u64 {
-        self.sequence
-    }
-
-    pub const fn address(&self) -> Option<Address> {
-        self.address
-    }
-
-    pub const fn size_bytes(&self) -> Option<u64> {
-        self.size_bytes
-    }
-
-    pub const fn trace_packet_id(&self) -> Option<u64> {
-        self.trace_packet_id
-    }
-
-    pub const fn trace_pc(&self) -> Option<Address> {
-        self.trace_pc
-    }
-
-    pub const fn cluster_outcome(&self) -> &RiscvClusterHtmAbortOutcome {
-        &self.cluster_outcome
-    }
-}
-
 pub(super) fn schedule_traffic_trace_replays(
     replays: &[RiscvWorkloadTrafficTraceReplay],
     topology: &WorkloadTopology,
@@ -985,8 +850,14 @@ fn traffic_trace_replay_executor(
                 data_cache.register_control_event(tick, event_context);
             }
         })
-        .with_control_completion_sink(move |tick, event_context| {
-            data_cache.complete_control_event(tick, event_context);
+        .with_control_completion_sink({
+            let data_cache = data_cache.clone();
+            move |tick, event_context| {
+                data_cache.complete_control_event(tick, event_context);
+            }
+        })
+        .with_control_failure_sink(move |tick, record| {
+            data_cache.record_control_failure(tick, *record);
         })
 }
 
@@ -1248,6 +1119,13 @@ impl WorkloadTraceDataCacheConsumer {
         });
         inner.apply_ready_events(tick);
     }
+
+    fn record_control_failure(&self, tick: Tick, record: TrafficTraceControlFailureRecord) {
+        self.inner
+            .lock()
+            .expect("workload trace data cache consumer lock")
+            .record_control_failure(tick, record);
+    }
 }
 
 struct WorkloadTraceDataCacheConsumerInner {
@@ -1264,6 +1142,14 @@ struct WorkloadTraceDataCacheConsumerInner {
 }
 
 impl WorkloadTraceDataCacheConsumerInner {
+    fn record_control_failure(&mut self, tick: Tick, record: TrafficTraceControlFailureRecord) {
+        if let Some(record) =
+            RiscvWorkloadTraceSidebandFailureRecord::from_control_failure(tick, record)
+        {
+            self.records.record_trace_sideband_failure(record);
+        }
+    }
+
     fn replace_pending_request_order(
         &mut self,
         request_order: TrafficTraceReplayOrder,
