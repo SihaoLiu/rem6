@@ -745,6 +745,14 @@ fn hash_expected_traffic_trace_replay_summary(
     hash_u64(hash, expected.minimum_trace_htm_access_count() as u64);
     hash_u64(hash, expected.minimum_control_ack_count() as u64);
     hash_u64(hash, expected.minimum_control_failure_count() as u64);
+    hash_u64(hash, expected.minimum_sync_control_failure_count() as u64);
+    hash_u64(hash, expected.minimum_tlb_control_failure_count() as u64);
+    hash_u64(hash, expected.minimum_cache_control_failure_count() as u64);
+    hash_u64(hash, expected.minimum_htm_control_failure_count() as u64);
+    hash_u64(
+        hash,
+        expected.minimum_diagnostic_control_failure_count() as u64,
+    );
     hash_u64(hash, expected.minimum_sideband_event_count() as u64);
     hash_u64(hash, expected.minimum_tlb_sync_event_count() as u64);
     hash_u64(hash, expected.minimum_trace_tlb_sync_count() as u64);

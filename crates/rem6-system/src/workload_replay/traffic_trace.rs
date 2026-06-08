@@ -8,9 +8,9 @@ use rem6_kernel::{PartitionId, PartitionedScheduler, Tick};
 use rem6_memory::{Address, MemoryRequestId, ResponseStatus};
 use rem6_traffic::{
     TrafficController, TrafficControllerEvent, TrafficControllerEventBatch, TrafficTraceCacheKind,
-    TrafficTraceDiagnosticKind, TrafficTraceErrorEvent, TrafficTraceErrorKind, TrafficTraceHtmKind,
-    TrafficTraceMemoryWriteCompletionRecord, TrafficTraceResponseEvent, TrafficTraceResponseKind,
-    TrafficTraceTlbKind,
+    TrafficTraceControlFailureSource, TrafficTraceDiagnosticKind, TrafficTraceErrorEvent,
+    TrafficTraceErrorKind, TrafficTraceHtmKind, TrafficTraceMemoryWriteCompletionRecord,
+    TrafficTraceResponseEvent, TrafficTraceResponseKind, TrafficTraceTlbKind,
 };
 use rem6_transport::{
     MemoryRouteId, MemoryTrace, MemoryTraceEvent, MemoryTransport, RequestDelivery,
@@ -23,8 +23,9 @@ use crate::{
     TrafficTraceReplayControlEvent, TrafficTraceReplayControlEventContext,
     TrafficTraceReplayControllerParallelErrors, TrafficTraceReplayControllerParallelExecutor,
     TrafficTraceReplayControllerRuntime, TrafficTraceReplayOrder,
-    TrafficTraceReplayScheduledSidebandEvent, TrafficTraceReplaySidebandEvent,
-    TrafficTraceReplayTargetEvent, TrafficTraceReplayTargetEventContext,
+    TrafficTraceReplayScheduledControlFailure, TrafficTraceReplayScheduledSidebandEvent,
+    TrafficTraceReplaySidebandEvent, TrafficTraceReplayTargetEvent,
+    TrafficTraceReplayTargetEventContext,
 };
 
 use super::data_cache_backend::WorkloadDataCacheBackend;
@@ -107,6 +108,8 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
             .expect("traffic trace replay runtime lock")
             .clone();
         let sideband_counts = traffic_trace_replay_sideband_counts(runtime.sideband_events());
+        let control_failure_counts =
+            traffic_trace_replay_control_failure_counts(runtime.control_failures());
         let trace_data_cache_response_count = self
             .records
             .memory_response_snapshot()
@@ -130,6 +133,11 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
             .with_trace_htm_access_count(self.records.trace_htm_access_snapshot().len())
             .with_control_ack_count(runtime.control_acks().len())
             .with_control_failure_count(runtime.control_failures().len())
+            .with_sync_control_failure_count(control_failure_counts.sync)
+            .with_tlb_control_failure_count(control_failure_counts.tlb)
+            .with_cache_control_failure_count(control_failure_counts.cache)
+            .with_htm_control_failure_count(control_failure_counts.htm)
+            .with_diagnostic_control_failure_count(control_failure_counts.diagnostic)
             .with_sideband_event_count(runtime.sideband_events().len())
             .with_tlb_sync_event_count(sideband_counts.tlb_sync)
             .with_trace_tlb_sync_count(self.records.trace_tlb_sync_snapshot().len())
@@ -202,6 +210,34 @@ fn traffic_trace_replay_sideband_counts(
                     TrafficTraceHtmKind::Request => {}
                     TrafficTraceHtmKind::Abort => counts.htm_abort += 1,
                 },
+            }
+            counts
+        },
+    )
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct TrafficTraceReplayControlFailureCounts {
+    sync: usize,
+    tlb: usize,
+    cache: usize,
+    htm: usize,
+    diagnostic: usize,
+}
+
+fn traffic_trace_replay_control_failure_counts(
+    failures: &[TrafficTraceReplayScheduledControlFailure],
+) -> TrafficTraceReplayControlFailureCounts {
+    failures.iter().fold(
+        TrafficTraceReplayControlFailureCounts::default(),
+        |mut counts, failure| {
+            match failure.record().source() {
+                Some(TrafficTraceControlFailureSource::Sync(_)) => counts.sync += 1,
+                Some(TrafficTraceControlFailureSource::Tlb(_)) => counts.tlb += 1,
+                Some(TrafficTraceControlFailureSource::Cache(_)) => counts.cache += 1,
+                Some(TrafficTraceControlFailureSource::Htm(_)) => counts.htm += 1,
+                Some(TrafficTraceControlFailureSource::Diagnostic(_)) => counts.diagnostic += 1,
+                None => {}
             }
             counts
         },

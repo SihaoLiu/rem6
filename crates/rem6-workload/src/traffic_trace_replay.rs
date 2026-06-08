@@ -14,6 +14,11 @@ pub struct WorkloadTrafficTraceReplaySummary {
     trace_htm_access_count: usize,
     control_ack_count: usize,
     control_failure_count: usize,
+    sync_control_failure_count: usize,
+    tlb_control_failure_count: usize,
+    cache_control_failure_count: usize,
+    htm_control_failure_count: usize,
+    diagnostic_control_failure_count: usize,
     sideband_event_count: usize,
     tlb_sync_event_count: usize,
     trace_tlb_sync_count: usize,
@@ -40,6 +45,11 @@ impl WorkloadTrafficTraceReplaySummary {
             trace_htm_access_count: 0,
             control_ack_count: 0,
             control_failure_count: 0,
+            sync_control_failure_count: 0,
+            tlb_control_failure_count: 0,
+            cache_control_failure_count: 0,
+            htm_control_failure_count: 0,
+            diagnostic_control_failure_count: 0,
             sideband_event_count: 0,
             tlb_sync_event_count: 0,
             trace_tlb_sync_count: 0,
@@ -108,6 +118,34 @@ impl WorkloadTrafficTraceReplaySummary {
 
     pub fn with_control_failure_count(mut self, control_failure_count: usize) -> Self {
         self.control_failure_count = control_failure_count;
+        self
+    }
+
+    pub fn with_sync_control_failure_count(mut self, sync_control_failure_count: usize) -> Self {
+        self.sync_control_failure_count = sync_control_failure_count;
+        self
+    }
+
+    pub fn with_tlb_control_failure_count(mut self, tlb_control_failure_count: usize) -> Self {
+        self.tlb_control_failure_count = tlb_control_failure_count;
+        self
+    }
+
+    pub fn with_cache_control_failure_count(mut self, cache_control_failure_count: usize) -> Self {
+        self.cache_control_failure_count = cache_control_failure_count;
+        self
+    }
+
+    pub fn with_htm_control_failure_count(mut self, htm_control_failure_count: usize) -> Self {
+        self.htm_control_failure_count = htm_control_failure_count;
+        self
+    }
+
+    pub fn with_diagnostic_control_failure_count(
+        mut self,
+        diagnostic_control_failure_count: usize,
+    ) -> Self {
+        self.diagnostic_control_failure_count = diagnostic_control_failure_count;
         self
     }
 
@@ -207,6 +245,26 @@ impl WorkloadTrafficTraceReplaySummary {
         self.control_failure_count
     }
 
+    pub const fn sync_control_failure_count(&self) -> usize {
+        self.sync_control_failure_count
+    }
+
+    pub const fn tlb_control_failure_count(&self) -> usize {
+        self.tlb_control_failure_count
+    }
+
+    pub const fn cache_control_failure_count(&self) -> usize {
+        self.cache_control_failure_count
+    }
+
+    pub const fn htm_control_failure_count(&self) -> usize {
+        self.htm_control_failure_count
+    }
+
+    pub const fn diagnostic_control_failure_count(&self) -> usize {
+        self.diagnostic_control_failure_count
+    }
+
     pub const fn sideband_event_count(&self) -> usize {
         self.sideband_event_count
     }
@@ -266,6 +324,16 @@ impl WorkloadTrafficTraceReplaySummary {
             trace_htm_access_count: self.trace_htm_access_count + other.trace_htm_access_count,
             control_ack_count: self.control_ack_count + other.control_ack_count,
             control_failure_count: self.control_failure_count + other.control_failure_count,
+            sync_control_failure_count: self.sync_control_failure_count
+                + other.sync_control_failure_count,
+            tlb_control_failure_count: self.tlb_control_failure_count
+                + other.tlb_control_failure_count,
+            cache_control_failure_count: self.cache_control_failure_count
+                + other.cache_control_failure_count,
+            htm_control_failure_count: self.htm_control_failure_count
+                + other.htm_control_failure_count,
+            diagnostic_control_failure_count: self.diagnostic_control_failure_count
+                + other.diagnostic_control_failure_count,
             sideband_event_count: self.sideband_event_count + other.sideband_event_count,
             tlb_sync_event_count: self.tlb_sync_event_count + other.tlb_sync_event_count,
             trace_tlb_sync_count: self.trace_tlb_sync_count + other.trace_tlb_sync_count,
@@ -295,6 +363,11 @@ pub struct WorkloadExpectedTrafficTraceReplaySummary {
     minimum_trace_htm_access_count: usize,
     minimum_control_ack_count: usize,
     minimum_control_failure_count: usize,
+    minimum_sync_control_failure_count: usize,
+    minimum_tlb_control_failure_count: usize,
+    minimum_cache_control_failure_count: usize,
+    minimum_htm_control_failure_count: usize,
+    minimum_diagnostic_control_failure_count: usize,
     minimum_sideband_event_count: usize,
     minimum_tlb_sync_event_count: usize,
     minimum_trace_tlb_sync_count: usize,
@@ -321,6 +394,11 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
             minimum_trace_htm_access_count: 0,
             minimum_control_ack_count: 0,
             minimum_control_failure_count: 0,
+            minimum_sync_control_failure_count: 0,
+            minimum_tlb_control_failure_count: 0,
+            minimum_cache_control_failure_count: 0,
+            minimum_htm_control_failure_count: 0,
+            minimum_diagnostic_control_failure_count: 0,
             minimum_sideband_event_count: 0,
             minimum_tlb_sync_event_count: 0,
             minimum_trace_tlb_sync_count: 0,
@@ -409,6 +487,46 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
         minimum_control_failure_count: usize,
     ) -> Self {
         self.minimum_control_failure_count = minimum_control_failure_count;
+        self
+    }
+
+    pub fn with_minimum_sync_control_failure_count(
+        mut self,
+        minimum_sync_control_failure_count: usize,
+    ) -> Self {
+        self.minimum_sync_control_failure_count = minimum_sync_control_failure_count;
+        self
+    }
+
+    pub fn with_minimum_tlb_control_failure_count(
+        mut self,
+        minimum_tlb_control_failure_count: usize,
+    ) -> Self {
+        self.minimum_tlb_control_failure_count = minimum_tlb_control_failure_count;
+        self
+    }
+
+    pub fn with_minimum_cache_control_failure_count(
+        mut self,
+        minimum_cache_control_failure_count: usize,
+    ) -> Self {
+        self.minimum_cache_control_failure_count = minimum_cache_control_failure_count;
+        self
+    }
+
+    pub fn with_minimum_htm_control_failure_count(
+        mut self,
+        minimum_htm_control_failure_count: usize,
+    ) -> Self {
+        self.minimum_htm_control_failure_count = minimum_htm_control_failure_count;
+        self
+    }
+
+    pub fn with_minimum_diagnostic_control_failure_count(
+        mut self,
+        minimum_diagnostic_control_failure_count: usize,
+    ) -> Self {
+        self.minimum_diagnostic_control_failure_count = minimum_diagnostic_control_failure_count;
         self
     }
 
@@ -532,6 +650,26 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
         self.minimum_control_failure_count
     }
 
+    pub const fn minimum_sync_control_failure_count(&self) -> usize {
+        self.minimum_sync_control_failure_count
+    }
+
+    pub const fn minimum_tlb_control_failure_count(&self) -> usize {
+        self.minimum_tlb_control_failure_count
+    }
+
+    pub const fn minimum_cache_control_failure_count(&self) -> usize {
+        self.minimum_cache_control_failure_count
+    }
+
+    pub const fn minimum_htm_control_failure_count(&self) -> usize {
+        self.minimum_htm_control_failure_count
+    }
+
+    pub const fn minimum_diagnostic_control_failure_count(&self) -> usize {
+        self.minimum_diagnostic_control_failure_count
+    }
+
     pub const fn minimum_sideband_event_count(&self) -> usize {
         self.minimum_sideband_event_count
     }
@@ -627,6 +765,12 @@ fn traffic_trace_replay_summary_meets_minimum(
         && actual.trace_htm_access_count() >= expected.minimum_trace_htm_access_count()
         && actual.control_ack_count() >= expected.minimum_control_ack_count()
         && actual.control_failure_count() >= expected.minimum_control_failure_count()
+        && actual.sync_control_failure_count() >= expected.minimum_sync_control_failure_count()
+        && actual.tlb_control_failure_count() >= expected.minimum_tlb_control_failure_count()
+        && actual.cache_control_failure_count() >= expected.minimum_cache_control_failure_count()
+        && actual.htm_control_failure_count() >= expected.minimum_htm_control_failure_count()
+        && actual.diagnostic_control_failure_count()
+            >= expected.minimum_diagnostic_control_failure_count()
         && actual.sideband_event_count() >= expected.minimum_sideband_event_count()
         && actual.tlb_sync_event_count() >= expected.minimum_tlb_sync_event_count()
         && actual.trace_tlb_sync_count() >= expected.minimum_trace_tlb_sync_count()
