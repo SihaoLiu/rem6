@@ -9,6 +9,7 @@ use super::WorkloadError;
 
 mod checkpoint;
 mod diagnostics;
+mod gups;
 mod parallel_batch;
 mod parallel_frontier;
 mod parallel_worker;
@@ -16,6 +17,7 @@ mod traffic_trace_replay;
 
 use self::checkpoint::format_checkpoint_error;
 use self::diagnostics::format_diagnostic_error;
+use self::gups::format_gups_error;
 use self::parallel_batch::format_parallel_batch_error;
 use self::parallel_frontier::format_parallel_frontier_error;
 use self::parallel_worker::format_parallel_worker_error;
@@ -754,6 +756,7 @@ impl fmt::Display for WorkloadError {
             | Self::TrafficTraceReplaySummaryExpectation(_)) => {
                 format_traffic_trace_replay_error(error, formatter)
             }
+            error @ Self::GupsRunSummaryExpectation(_) => format_gups_error(error, formatter),
             Self::MissingExecutionModeSwitch { tick, target, mode } => write!(
                 formatter,
                 "planned execution mode switch for {target} to {} at tick {tick} was not recorded",

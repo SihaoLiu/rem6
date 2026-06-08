@@ -5,6 +5,7 @@ mod boot_handoff;
 mod boot_image;
 mod error;
 mod error_support;
+mod gups;
 mod heterogeneous;
 mod host_event;
 mod identity;
@@ -47,6 +48,9 @@ pub use error::{
     WorkloadError, WorkloadParallelPartitionActivityMergeSummary,
     WorkloadParallelPartitionCountMergeSummary, WorkloadParallelRemoteTrafficConsistencyMismatch,
     WorkloadQosError, WorkloadSinicPciTopologyError,
+};
+pub use gups::{
+    WorkloadExpectedGupsRunSummary, WorkloadGupsRunSummary, WorkloadGupsRunSummaryExpectationError,
 };
 pub use heterogeneous::{
     WorkloadAcceleratorCommand, WorkloadAcceleratorCommandKind, WorkloadAcceleratorDevice,
@@ -206,6 +210,7 @@ pub struct WorkloadManifest {
     expected_parallel_remote_flow_timings: Vec<WorkloadExpectedParallelRemoteFlowTiming>,
     expected_parallel_progress_transitions: Vec<WorkloadExpectedParallelProgressTransition>,
     expected_traffic_trace_replay_summaries: Vec<WorkloadExpectedTrafficTraceReplaySummary>,
+    expected_gups_run_summaries: Vec<WorkloadExpectedGupsRunSummary>,
     expected_checkpoint_manifest_summaries: Vec<WorkloadExpectedCheckpointManifestSummary>,
     expected_checkpoint_restore_manifest_summaries: Vec<WorkloadExpectedCheckpointManifestSummary>,
     expected_checkpoint_component_summaries: Vec<WorkloadExpectedCheckpointComponentSummary>,
@@ -318,6 +323,10 @@ impl WorkloadManifest {
         &self,
     ) -> &[WorkloadExpectedTrafficTraceReplaySummary] {
         &self.expected_traffic_trace_replay_summaries
+    }
+
+    pub fn expected_gups_run_summaries(&self) -> &[WorkloadExpectedGupsRunSummary] {
+        &self.expected_gups_run_summaries
     }
 
     pub fn expected_checkpoint_restore_manifest_summaries(
@@ -433,6 +442,7 @@ pub struct WorkloadManifestBuilder {
     expected_parallel_remote_flow_timings: Vec<WorkloadExpectedParallelRemoteFlowTiming>,
     expected_parallel_progress_transitions: Vec<WorkloadExpectedParallelProgressTransition>,
     expected_traffic_trace_replay_summaries: Vec<WorkloadExpectedTrafficTraceReplaySummary>,
+    expected_gups_run_summaries: Vec<WorkloadExpectedGupsRunSummary>,
     expected_checkpoint_manifest_summaries: Vec<WorkloadExpectedCheckpointManifestSummary>,
     expected_checkpoint_restore_manifest_summaries: Vec<WorkloadExpectedCheckpointManifestSummary>,
     expected_checkpoint_component_summaries: Vec<WorkloadExpectedCheckpointComponentSummary>,
@@ -499,6 +509,7 @@ impl WorkloadManifestBuilder {
             expected_parallel_remote_flow_timings: Vec::new(),
             expected_parallel_progress_transitions: Vec::new(),
             expected_traffic_trace_replay_summaries: Vec::new(),
+            expected_gups_run_summaries: Vec::new(),
             expected_checkpoint_manifest_summaries: Vec::new(),
             expected_checkpoint_restore_manifest_summaries: Vec::new(),
             expected_checkpoint_component_summaries: Vec::new(),
@@ -606,6 +617,27 @@ impl WorkloadManifestBuilder {
         }
         self.expected_traffic_trace_replay_summaries.push(expected);
         self.expected_traffic_trace_replay_summaries
+            .sort_by(|left, right| left.sort_key().cmp(right.sort_key()));
+        Ok(self)
+    }
+
+    pub fn add_expected_gups_run_summary(
+        mut self,
+        expected: WorkloadExpectedGupsRunSummary,
+    ) -> Result<Self, WorkloadError> {
+        if self
+            .expected_gups_run_summaries
+            .iter()
+            .any(|existing| existing.sort_key() == expected.sort_key())
+        {
+            return Err(WorkloadError::GupsRunSummaryExpectation(Box::new(
+                WorkloadGupsRunSummaryExpectationError::DuplicateExpected {
+                    route: expected.route().clone(),
+                },
+            )));
+        }
+        self.expected_gups_run_summaries.push(expected);
+        self.expected_gups_run_summaries
             .sort_by(|left, right| left.sort_key().cmp(right.sort_key()));
         Ok(self)
     }
@@ -995,6 +1027,7 @@ impl WorkloadManifestBuilder {
             expected_parallel_remote_flow_timings: &self.expected_parallel_remote_flow_timings,
             expected_parallel_progress_transitions: &self.expected_parallel_progress_transitions,
             expected_traffic_trace_replay_summaries: &self.expected_traffic_trace_replay_summaries,
+            expected_gups_run_summaries: &self.expected_gups_run_summaries,
             expected_checkpoint_manifest_summaries: &self.expected_checkpoint_manifest_summaries,
             expected_checkpoint_restore_manifest_summaries: &self
                 .expected_checkpoint_restore_manifest_summaries,
@@ -1070,6 +1103,7 @@ impl WorkloadManifestBuilder {
             expected_parallel_remote_flow_timings: self.expected_parallel_remote_flow_timings,
             expected_parallel_progress_transitions: self.expected_parallel_progress_transitions,
             expected_traffic_trace_replay_summaries: self.expected_traffic_trace_replay_summaries,
+            expected_gups_run_summaries: self.expected_gups_run_summaries,
             expected_checkpoint_manifest_summaries: self.expected_checkpoint_manifest_summaries,
             expected_checkpoint_restore_manifest_summaries: self
                 .expected_checkpoint_restore_manifest_summaries,

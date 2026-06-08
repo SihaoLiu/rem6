@@ -7,7 +7,7 @@ use crate::host_event::{
     execution_mode_switch_matches, planned_checkpoint_labels, planned_checkpoint_restore_labels,
     planned_execution_mode_switches, planned_stop_reason,
 };
-use crate::{parallel_expectation, replay_verify, traffic_trace_replay};
+use crate::{gups, parallel_expectation, replay_verify, traffic_trace_replay};
 use crate::{
     CheckpointLineage, HostEventIntent, WorkloadBootImage, WorkloadCheckpointComponentSummary,
     WorkloadCheckpointManifestSummary, WorkloadError, WorkloadExecutionModeSwitch,
@@ -16,21 +16,21 @@ use crate::{
     WorkloadExpectedDataCacheRunAttribution, WorkloadExpectedDramLowPowerActivity,
     WorkloadExpectedFabricHopActivity, WorkloadExpectedFabricLaneActivity,
     WorkloadExpectedFabricLinkActivity, WorkloadExpectedFabricVirtualNetworkActivity,
-    WorkloadExpectedParallelBatchActivity, WorkloadExpectedParallelBatchPartitionSet,
-    WorkloadExpectedParallelBatchPartitionStreak, WorkloadExpectedParallelBatchTimelineRecord,
-    WorkloadExpectedParallelBatchWorkerBucket, WorkloadExpectedParallelBatchWorkerTickActivity,
-    WorkloadExpectedParallelBatchWorkerTickBucket, WorkloadExpectedParallelBatchWorkerTickStreak,
-    WorkloadExpectedParallelBatchWorkerTicks, WorkloadExpectedParallelFrontier,
-    WorkloadExpectedParallelPartitionActivity, WorkloadExpectedParallelPartitionUse,
-    WorkloadExpectedParallelProgressTransition, WorkloadExpectedParallelRemoteDelayCeiling,
-    WorkloadExpectedParallelRemoteDelayFloor, WorkloadExpectedParallelRemoteEndpoints,
-    WorkloadExpectedParallelRemoteFlow, WorkloadExpectedParallelRemoteFlowTiming,
-    WorkloadExpectedParallelRemoteSend, WorkloadExpectedParallelRemoteTrafficConsistency,
-    WorkloadExpectedParallelSchedulerIdleBound, WorkloadExpectedParallelSchedulerProgress,
-    WorkloadExpectedParallelWaitForBlockedNodeWindow, WorkloadExpectedParallelWaitForEdgeKindCount,
-    WorkloadExpectedParallelWaitForEdgeKindWindow, WorkloadExpectedParallelWaitForTargetNodeWindow,
-    WorkloadExpectedParallelWorkerActivity, WorkloadExpectedParallelWorkerUse,
-    WorkloadExpectedPlannedParallelBatchIdleWorkerTicks,
+    WorkloadExpectedGupsRunSummary, WorkloadExpectedParallelBatchActivity,
+    WorkloadExpectedParallelBatchPartitionSet, WorkloadExpectedParallelBatchPartitionStreak,
+    WorkloadExpectedParallelBatchTimelineRecord, WorkloadExpectedParallelBatchWorkerBucket,
+    WorkloadExpectedParallelBatchWorkerTickActivity, WorkloadExpectedParallelBatchWorkerTickBucket,
+    WorkloadExpectedParallelBatchWorkerTickStreak, WorkloadExpectedParallelBatchWorkerTicks,
+    WorkloadExpectedParallelFrontier, WorkloadExpectedParallelPartitionActivity,
+    WorkloadExpectedParallelPartitionUse, WorkloadExpectedParallelProgressTransition,
+    WorkloadExpectedParallelRemoteDelayCeiling, WorkloadExpectedParallelRemoteDelayFloor,
+    WorkloadExpectedParallelRemoteEndpoints, WorkloadExpectedParallelRemoteFlow,
+    WorkloadExpectedParallelRemoteFlowTiming, WorkloadExpectedParallelRemoteSend,
+    WorkloadExpectedParallelRemoteTrafficConsistency, WorkloadExpectedParallelSchedulerIdleBound,
+    WorkloadExpectedParallelSchedulerProgress, WorkloadExpectedParallelWaitForBlockedNodeWindow,
+    WorkloadExpectedParallelWaitForEdgeKindCount, WorkloadExpectedParallelWaitForEdgeKindWindow,
+    WorkloadExpectedParallelWaitForTargetNodeWindow, WorkloadExpectedParallelWorkerActivity,
+    WorkloadExpectedParallelWorkerUse, WorkloadExpectedPlannedParallelBatchIdleWorkerTicks,
     WorkloadExpectedPlannedParallelBatchUtilization,
     WorkloadExpectedPlannedParallelBatchWorkerLanePartitionTicks,
     WorkloadExpectedPlannedParallelBatchWorkerSlotTicks, WorkloadExpectedResourceActivity,
@@ -77,6 +77,7 @@ pub struct WorkloadReplayPlan {
         Vec<WorkloadExpectedParallelProgressTransition>,
     pub(crate) expected_traffic_trace_replay_summaries:
         Vec<WorkloadExpectedTrafficTraceReplaySummary>,
+    pub(crate) expected_gups_run_summaries: Vec<WorkloadExpectedGupsRunSummary>,
     pub(crate) expected_checkpoint_manifest_summaries:
         Vec<WorkloadExpectedCheckpointManifestSummary>,
     pub(crate) expected_checkpoint_restore_manifest_summaries:
@@ -185,6 +186,7 @@ impl WorkloadReplayPlan {
             expected_traffic_trace_replay_summaries: manifest
                 .expected_traffic_trace_replay_summaries()
                 .to_vec(),
+            expected_gups_run_summaries: manifest.expected_gups_run_summaries().to_vec(),
             expected_checkpoint_manifest_summaries: manifest
                 .expected_checkpoint_manifest_summaries()
                 .to_vec(),
@@ -316,6 +318,10 @@ impl WorkloadReplayPlan {
         &self,
     ) -> &[WorkloadExpectedTrafficTraceReplaySummary] {
         &self.expected_traffic_trace_replay_summaries
+    }
+
+    pub fn expected_gups_run_summaries(&self) -> &[WorkloadExpectedGupsRunSummary] {
+        &self.expected_gups_run_summaries
     }
 
     pub fn expected_checkpoint_restore_manifest_summaries(
@@ -658,6 +664,7 @@ impl WorkloadReplayPlan {
         self.verify_stop_reason(result)?;
         self.verify_expected_stats_history(result)?;
         traffic_trace_replay::verify_expected_traffic_trace_replay_summaries(self, result)?;
+        gups::verify_expected_gups_run_summaries(self, result)?;
         replay_verify::verify_expected_parallel_remote_flows(self, result)?;
         replay_verify::verify_expected_parallel_remote_sends(self, result)?;
         replay_verify::verify_expected_parallel_progress_transitions(self, result)?;

@@ -1,3 +1,4 @@
+mod gups;
 mod traffic_trace_replay;
 
 use rem6_boot::{
@@ -13,21 +14,21 @@ use crate::{
     WorkloadExpectedDataCacheRunAttribution, WorkloadExpectedDramLowPowerActivity,
     WorkloadExpectedFabricHopActivity, WorkloadExpectedFabricLaneActivity,
     WorkloadExpectedFabricLinkActivity, WorkloadExpectedFabricVirtualNetworkActivity,
-    WorkloadExpectedParallelBatchActivity, WorkloadExpectedParallelBatchPartitionSet,
-    WorkloadExpectedParallelBatchPartitionStreak, WorkloadExpectedParallelBatchTimelineRecord,
-    WorkloadExpectedParallelBatchWorkerBucket, WorkloadExpectedParallelBatchWorkerTickActivity,
-    WorkloadExpectedParallelBatchWorkerTickBucket, WorkloadExpectedParallelBatchWorkerTickStreak,
-    WorkloadExpectedParallelBatchWorkerTicks, WorkloadExpectedParallelFrontier,
-    WorkloadExpectedParallelPartitionActivity, WorkloadExpectedParallelPartitionUse,
-    WorkloadExpectedParallelProgressTransition, WorkloadExpectedParallelRemoteDelayCeiling,
-    WorkloadExpectedParallelRemoteDelayFloor, WorkloadExpectedParallelRemoteEndpoints,
-    WorkloadExpectedParallelRemoteFlow, WorkloadExpectedParallelRemoteFlowTiming,
-    WorkloadExpectedParallelRemoteSend, WorkloadExpectedParallelRemoteTrafficConsistency,
-    WorkloadExpectedParallelSchedulerIdleBound, WorkloadExpectedParallelSchedulerProgress,
-    WorkloadExpectedParallelWaitForBlockedNodeWindow, WorkloadExpectedParallelWaitForEdgeKindCount,
-    WorkloadExpectedParallelWaitForEdgeKindWindow, WorkloadExpectedParallelWaitForTargetNodeWindow,
-    WorkloadExpectedParallelWorkerActivity, WorkloadExpectedParallelWorkerUse,
-    WorkloadExpectedPlannedParallelBatchIdleWorkerTicks,
+    WorkloadExpectedGupsRunSummary, WorkloadExpectedParallelBatchActivity,
+    WorkloadExpectedParallelBatchPartitionSet, WorkloadExpectedParallelBatchPartitionStreak,
+    WorkloadExpectedParallelBatchTimelineRecord, WorkloadExpectedParallelBatchWorkerBucket,
+    WorkloadExpectedParallelBatchWorkerTickActivity, WorkloadExpectedParallelBatchWorkerTickBucket,
+    WorkloadExpectedParallelBatchWorkerTickStreak, WorkloadExpectedParallelBatchWorkerTicks,
+    WorkloadExpectedParallelFrontier, WorkloadExpectedParallelPartitionActivity,
+    WorkloadExpectedParallelPartitionUse, WorkloadExpectedParallelProgressTransition,
+    WorkloadExpectedParallelRemoteDelayCeiling, WorkloadExpectedParallelRemoteDelayFloor,
+    WorkloadExpectedParallelRemoteEndpoints, WorkloadExpectedParallelRemoteFlow,
+    WorkloadExpectedParallelRemoteFlowTiming, WorkloadExpectedParallelRemoteSend,
+    WorkloadExpectedParallelRemoteTrafficConsistency, WorkloadExpectedParallelSchedulerIdleBound,
+    WorkloadExpectedParallelSchedulerProgress, WorkloadExpectedParallelWaitForBlockedNodeWindow,
+    WorkloadExpectedParallelWaitForEdgeKindCount, WorkloadExpectedParallelWaitForEdgeKindWindow,
+    WorkloadExpectedParallelWaitForTargetNodeWindow, WorkloadExpectedParallelWorkerActivity,
+    WorkloadExpectedParallelWorkerUse, WorkloadExpectedPlannedParallelBatchIdleWorkerTicks,
     WorkloadExpectedPlannedParallelBatchUtilization,
     WorkloadExpectedPlannedParallelBatchWorkerLanePartitionTicks,
     WorkloadExpectedPlannedParallelBatchWorkerSlotTicks, WorkloadExpectedResourceActivity,
@@ -40,6 +41,7 @@ use crate::{
     WorkloadTopology,
 };
 
+use gups::hash_expected_gups_run_summary;
 use traffic_trace_replay::hash_expected_traffic_trace_replay_summary;
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
@@ -83,6 +85,7 @@ pub(crate) struct ManifestIdentityInput<'a> {
         &'a [WorkloadExpectedParallelProgressTransition],
     pub(crate) expected_traffic_trace_replay_summaries:
         &'a [WorkloadExpectedTrafficTraceReplaySummary],
+    pub(crate) expected_gups_run_summaries: &'a [WorkloadExpectedGupsRunSummary],
     pub(crate) expected_checkpoint_manifest_summaries:
         &'a [WorkloadExpectedCheckpointManifestSummary],
     pub(crate) expected_checkpoint_restore_manifest_summaries:
@@ -270,6 +273,13 @@ pub(crate) fn manifest_identity(input: ManifestIdentityInput<'_>) -> WorkloadMan
         );
         for expected in input.expected_traffic_trace_replay_summaries {
             hash_expected_traffic_trace_replay_summary(&mut hash, expected);
+        }
+    }
+    if !input.expected_gups_run_summaries.is_empty() {
+        hash_str(&mut hash, "expected_gups_run_summaries");
+        hash_u64(&mut hash, input.expected_gups_run_summaries.len() as u64);
+        for expected in input.expected_gups_run_summaries {
+            hash_expected_gups_run_summary(&mut hash, expected);
         }
     }
     hash_u64(

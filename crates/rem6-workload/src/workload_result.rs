@@ -3,9 +3,10 @@ use rem6_memory::Address;
 use rem6_stats::{StatHistoryRecord, StatSnapshot};
 
 use crate::{
-    WorkloadError, WorkloadExecutionMode, WorkloadExecutionModeSwitch, WorkloadHostActionSummary,
-    WorkloadManifest, WorkloadManifestIdentity, WorkloadParallelExecutionSummary, WorkloadRouteId,
-    WorkloadSinicPciDevice, WorkloadStatsHistorySummary, WorkloadTrafficTraceReplaySummary,
+    WorkloadError, WorkloadExecutionMode, WorkloadExecutionModeSwitch, WorkloadGupsRunSummary,
+    WorkloadHostActionSummary, WorkloadManifest, WorkloadManifestIdentity,
+    WorkloadParallelExecutionSummary, WorkloadRouteId, WorkloadSinicPciDevice,
+    WorkloadStatsHistorySummary, WorkloadTrafficTraceReplaySummary,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -456,6 +457,7 @@ pub struct WorkloadResult {
     checkpoint_manifest_summaries: Vec<WorkloadCheckpointManifestSummary>,
     restored_checkpoint_manifest_summaries: Vec<WorkloadCheckpointManifestSummary>,
     traffic_trace_replay_summaries: Vec<WorkloadTrafficTraceReplaySummary>,
+    gups_run_summaries: Vec<WorkloadGupsRunSummary>,
     execution_mode_switches: Vec<WorkloadExecutionModeSwitch>,
     sinic_pci_devices: Vec<WorkloadSinicPciDeviceSummary>,
 }
@@ -476,6 +478,7 @@ impl WorkloadResult {
             checkpoint_manifest_summaries: Vec::new(),
             restored_checkpoint_manifest_summaries: Vec::new(),
             traffic_trace_replay_summaries: Vec::new(),
+            gups_run_summaries: Vec::new(),
             execution_mode_switches: Vec::new(),
             sinic_pci_devices: Vec::new(),
         }
@@ -580,6 +583,31 @@ impl WorkloadResult {
         self
     }
 
+    pub fn with_gups_run_summary(mut self, summary: WorkloadGupsRunSummary) -> Self {
+        if let Some(existing) = self
+            .gups_run_summaries
+            .iter_mut()
+            .find(|existing| existing.route() == summary.route())
+        {
+            *existing = existing.merged(&summary);
+        } else {
+            self.gups_run_summaries.push(summary);
+        }
+        self.gups_run_summaries
+            .sort_by(|left, right| left.sort_key().cmp(right.sort_key()));
+        self
+    }
+
+    pub fn with_gups_run_summaries(
+        mut self,
+        summaries: impl IntoIterator<Item = WorkloadGupsRunSummary>,
+    ) -> Self {
+        for summary in summaries {
+            self = self.with_gups_run_summary(summary);
+        }
+        self
+    }
+
     pub fn with_execution_mode_switch(
         mut self,
         tick: Tick,
@@ -677,6 +705,16 @@ impl WorkloadResult {
         route: &WorkloadRouteId,
     ) -> Option<&WorkloadTrafficTraceReplaySummary> {
         self.traffic_trace_replay_summaries()
+            .iter()
+            .find(|summary| summary.route() == route)
+    }
+
+    pub fn gups_run_summaries(&self) -> &[WorkloadGupsRunSummary] {
+        &self.gups_run_summaries
+    }
+
+    pub fn gups_run_summary(&self, route: &WorkloadRouteId) -> Option<&WorkloadGupsRunSummary> {
+        self.gups_run_summaries()
             .iter()
             .find(|summary| summary.route() == route)
     }

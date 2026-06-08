@@ -27,11 +27,10 @@ mod qos;
 mod remote_traffic_mismatch;
 mod topology;
 
-pub use large_payload::*;
-pub use parallel_partition::*;
 pub use qos::WorkloadQosError;
 pub use remote_traffic_mismatch::WorkloadParallelRemoteTrafficConsistencyMismatch;
 pub use topology::WorkloadSinicPciTopologyError;
+pub use {large_payload::*, parallel_partition::*};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum WorkloadError {
@@ -568,6 +567,7 @@ pub enum WorkloadError {
         Box<WorkloadCheckpointComponentChunkSummaryBelowMinimumError>,
     ),
     TrafficTraceReplaySummaryExpectation(Box<WorkloadTrafficTraceReplaySummaryExpectationError>),
+    GupsRunSummaryExpectation(Box<crate::WorkloadGupsRunSummaryExpectationError>),
     MissingExecutionModeSwitch {
         tick: Tick,
         target: String,

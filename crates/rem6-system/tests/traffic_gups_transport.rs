@@ -18,9 +18,14 @@ use rem6_transport::{
     MemoryRoute, MemoryRouteHop, MemoryTrace, MemoryTraceKind, MemoryTransport, RequestDelivery,
     TargetOutcome, TransportEndpointId,
 };
+use rem6_workload::{WorkloadGupsRunSummary, WorkloadRouteId};
 
 fn endpoint(name: &str) -> TransportEndpointId {
     TransportEndpointId::new(name).unwrap()
+}
+
+fn workload_route(name: &str) -> WorkloadRouteId {
+    WorkloadRouteId::new(name).unwrap()
 }
 
 fn fabric_path(name: &str) -> FabricPath {
@@ -157,6 +162,17 @@ fn traffic_gups_transport_run_feeds_read_response_back_into_controller() {
     assert_eq!(run.response_stats().read_response_count(), 1);
     assert_eq!(run.response_stats().write_response_count(), 1);
     assert_eq!(run.response_stats().response_data_byte_count(), 8);
+    assert_eq!(
+        run.workload_gups_run_summary(workload_route("gups.transport")),
+        WorkloadGupsRunSummary::new(workload_route("gups.transport"), run.final_tick())
+            .with_scheduled_count(2)
+            .with_response_count(2)
+            .with_completed_response_count(2)
+            .with_read_response_count(1)
+            .with_write_response_count(1)
+            .with_response_data_byte_count(8)
+            .with_memory_trace_event_count(run.memory_trace_events().len()),
+    );
     assert_eq!(
         run.response_deliveries()[0].response().request_id(),
         MemoryRequestId::new(AgentId::new(5), 0)

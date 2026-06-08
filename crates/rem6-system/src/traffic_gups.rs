@@ -12,6 +12,7 @@ use rem6_transport::{
     MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTraceEvent, MemoryTransport, RequestDelivery,
     ResponseDelivery, TargetOutcome, TransportError,
 };
+use rem6_workload::{WorkloadGupsRunSummary, WorkloadRouteId};
 
 pub type TrafficGupsTargetResponder =
     Arc<dyn Fn(&RequestDelivery) -> TargetOutcome + Send + Sync + 'static>;
@@ -120,6 +121,22 @@ impl TrafficGupsTransportRun {
 
     pub const fn final_tick(&self) -> Tick {
         self.final_tick
+    }
+
+    pub fn workload_gups_run_summary(&self, route: WorkloadRouteId) -> WorkloadGupsRunSummary {
+        WorkloadGupsRunSummary::new(route, self.final_tick)
+            .with_scheduled_count(self.scheduled_count)
+            .with_response_count(self.response_stats.response_count())
+            .with_completed_response_count(self.response_stats.completed_response_count())
+            .with_retry_response_count(self.response_stats.retry_response_count())
+            .with_store_conditional_failed_response_count(
+                self.response_stats
+                    .store_conditional_failed_response_count(),
+            )
+            .with_read_response_count(self.response_stats.read_response_count())
+            .with_write_response_count(self.response_stats.write_response_count())
+            .with_response_data_byte_count(self.response_stats.response_data_byte_count())
+            .with_memory_trace_event_count(self.memory_trace_events.len())
     }
 }
 
