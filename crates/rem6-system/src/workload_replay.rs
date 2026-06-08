@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 use std::sync::{Arc, Mutex};
@@ -329,6 +329,13 @@ impl RiscvWorkloadReplay {
             GuestSourceId::new(topology.host().source()),
         )?;
         let traffic_trace_replay_runs = build_traffic_trace_replays(self)?;
+        let traffic_trace_data_cache_routes = self
+            .plan
+            .traffic_trace_replays()
+            .iter()
+            .filter(|replay| replay.data_cache())
+            .map(|replay| replay.route().clone())
+            .collect::<BTreeSet<_>>();
         let traffic_trace_replays = schedule_traffic_trace_replays(
             &traffic_trace_replay_runs,
             topology,
@@ -337,6 +344,7 @@ impl RiscvWorkloadReplay {
             &transport,
             &data_cache,
             &cluster,
+            &traffic_trace_data_cache_routes,
         )?;
         let trap_port = RiscvTrapEventPort::new(
             SystemHostEventPort::with_controller(
@@ -969,7 +977,7 @@ impl RiscvWorkloadReplay {
             .ok_or(RiscvWorkloadReplayError::MissingMemoryTarget)?;
         let layout =
             CacheLineLayout::new(target.line_bytes()).map_err(RiscvWorkloadReplayError::Memory)?;
-        let agents = data_cache_agents(topology)?;
+        let agents = data_cache_agents(topology, self.plan.traffic_trace_replays())?;
         if agents.is_empty() {
             return Err(RiscvWorkloadReplayError::MissingDataCacheAgent);
         }

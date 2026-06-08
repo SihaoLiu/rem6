@@ -11,7 +11,9 @@ use rem6_coherence::{
 use rem6_kernel::PartitionId;
 use rem6_memory::{AgentId, MemoryRequest, MemoryRequestId, MemoryResponse, ResponseStatus};
 use rem6_transport::{RequestDelivery, TargetBatchOutcome, TargetOutcome, TransportEndpointId};
-use rem6_workload::{WorkloadMemoryRoute, WorkloadRouteId, WorkloadTopology};
+use rem6_workload::{
+    WorkloadMemoryRoute, WorkloadRouteId, WorkloadTopology, WorkloadTrafficTraceReplayRun,
+};
 
 use super::data_cache_backend::WorkloadDataCacheBackend;
 use super::{memory_response, RiscvWorkloadReplayError, WorkloadMemoryBackend};
@@ -19,6 +21,7 @@ use crate::{RiscvDataCacheControllerError, RiscvDataCacheProtocol, RiscvDataCach
 
 pub(super) fn data_cache_agents(
     topology: &WorkloadTopology,
+    trace_replays: &[WorkloadTrafficTraceReplayRun],
 ) -> Result<Vec<PartitionedCacheAgentConfig>, RiscvWorkloadReplayError> {
     let mut agents = BTreeMap::new();
     for config in topology
@@ -47,6 +50,12 @@ pub(super) fn data_cache_agents(
     for copy in topology.accelerator_dma_copies() {
         let route = workload_route(topology, copy.route())?;
         let config = data_cache_agent_config(copy.agent(), route.source_endpoint(), route)?;
+        agents.entry(config.agent()).or_insert(config);
+    }
+
+    for replay in trace_replays.iter().filter(|replay| replay.data_cache()) {
+        let route = workload_route(topology, replay.route())?;
+        let config = data_cache_agent_config(replay.agent(), route.source_endpoint(), route)?;
         agents.entry(config.agent()).or_insert(config);
     }
 

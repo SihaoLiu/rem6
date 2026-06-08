@@ -144,8 +144,13 @@ impl Rem6GupsArtifact {
 
 impl Rem6TraceReplayArtifact {
     pub fn to_json(&self) -> String {
+        let data_cache_protocol = self
+            .config
+            .data_cache_protocol()
+            .map(|protocol| format!("\"{}\"", protocol.as_str()))
+            .unwrap_or_else(|| "null".to_string());
         format!(
-            "{{\"schema\":\"{}\",\"generator\":\"trace-replay\",\"trace\":\"{}\",\"trace_digest\":\"{}\",\"route\":\"{}\",\"memory_start\":\"0x{:x}\",\"memory_size\":{},\"tick_frequency\":{},\"line_bytes\":{},\"agent\":{},\"control_partition\":{},\"simulation\":{},\"summary\":{},\"stats\":{}}}\n",
+            "{{\"schema\":\"{}\",\"generator\":\"trace-replay\",\"trace\":\"{}\",\"trace_digest\":\"{}\",\"route\":\"{}\",\"memory_start\":\"0x{:x}\",\"memory_size\":{},\"tick_frequency\":{},\"line_bytes\":{},\"agent\":{},\"control_partition\":{},\"data_cache_protocol\":{},\"simulation\":{},\"summary\":{},\"stats\":{}}}\n",
             self.schema,
             json_escape(&self.config.trace().display().to_string()),
             json_escape(&self.trace_digest),
@@ -156,6 +161,7 @@ impl Rem6TraceReplayArtifact {
             self.config.line_bytes(),
             self.config.agent(),
             self.config.control_partition(),
+            data_cache_protocol,
             self.execution.to_json(self.config.max_tick()),
             traffic_trace_summary_json(self.execution.summary()),
             self.stats_json,

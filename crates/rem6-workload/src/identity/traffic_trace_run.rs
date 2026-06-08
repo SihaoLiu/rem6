@@ -11,4 +11,7 @@ pub(super) fn hash_traffic_trace_replay_run(hash: &mut u64, run: &WorkloadTraffi
     hash_u64(hash, run.duration());
     hash_u64(hash, run.control_partition() as u64);
     hash_u64(hash, run.retry_delay());
+    if run.data_cache() {
+        hash_str(hash, "data_cache");
+    }
 }

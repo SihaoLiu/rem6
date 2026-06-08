@@ -1,14 +1,14 @@
 use std::cmp;
 
 use rem6_boot::BootImage;
-use rem6_memory::{AccessSize, Address, AddressRange};
+use rem6_memory::{AccessSize, Address, AddressRange, CacheLineLayout};
 use rem6_system::RiscvWorkloadReplay;
 use rem6_traffic::TrafficTrace;
 use rem6_workload::{
-    WorkloadHostPlacement, WorkloadId, WorkloadManifest, WorkloadMemoryRoute, WorkloadMemoryTarget,
-    WorkloadReplayPlan, WorkloadResolvedResources, WorkloadResource, WorkloadResourceId,
-    WorkloadResourceKind, WorkloadResourcePayload, WorkloadRouteId, WorkloadTopology,
-    WorkloadTrafficTraceReplayRun,
+    WorkloadDataCacheProtocol, WorkloadHostPlacement, WorkloadId, WorkloadManifest,
+    WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadReplayPlan, WorkloadResolvedResources,
+    WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResourcePayload,
+    WorkloadRiscvDataCache, WorkloadRouteId, WorkloadTopology, WorkloadTrafficTraceReplayRun,
 };
 use sha2::{Digest, Sha256};
 
@@ -21,6 +21,7 @@ use crate::{execute_error, Rem6CliError};
 const TRACE_RESOURCE_ID: &str = "trace";
 const TRACE_SOURCE_ENDPOINT: &str = "trace.source";
 const TRACE_TARGET_ENDPOINT: &str = "memory";
+const TRACE_DATA_CACHE_ENDPOINT: &str = "trace.dcache";
 const TRACE_SOURCE_PARTITION: u32 = 0;
 const TRACE_TARGET_PARTITION: u32 = 1;
 const TRACE_HOST_SOURCE: u32 = 51;
@@ -88,6 +89,7 @@ pub fn run_trace_replay_config(
     let manifest = trace_replay_manifest(
         &config,
         &route,
+        &trace,
         &trace_resource,
         &trace_digest,
         trace_max_tick.saturating_add(1),
@@ -146,6 +148,7 @@ pub fn run_trace_replay_config(
 fn trace_replay_manifest(
     config: &Rem6TraceReplayConfig,
     route: &WorkloadRouteId,
+    trace: &TrafficTrace,
     trace_resource: &WorkloadResourceId,
     trace_digest: &str,
     duration: u64,
@@ -170,23 +173,29 @@ fn trace_replay_manifest(
     .add_memory_target(
         WorkloadMemoryTarget::new(0, config.line_bytes(), memory_range).map_err(execute_error)?,
     )
-    .map_err(execute_error)?
-    .add_memory_route(
-        WorkloadMemoryRoute::new(
-            route.clone(),
-            TRACE_SOURCE_ENDPOINT,
-            TRACE_SOURCE_PARTITION,
-            TRACE_TARGET_ENDPOINT,
-            TRACE_TARGET_PARTITION,
-            config.memory_route_delay(),
-            config.memory_route_delay(),
-        )
-        .map_err(execute_error)?,
-    )
     .map_err(execute_error)?;
+    let topology = match config.data_cache_protocol() {
+        Some(protocol) => {
+            trace_replay_data_cache_topology(config, route, trace, topology, protocol)?
+        }
+        None => trace_replay_memory_topology(config, route, topology)?,
+    };
+    let mut trace_replay = WorkloadTrafficTraceReplayRun::new(
+        route.clone(),
+        trace_resource.clone(),
+        config.tick_frequency(),
+        config.agent(),
+        config.line_bytes(),
+        duration,
+        config.control_partition(),
+    );
+    if config.data_cache_protocol().is_some() {
+        trace_replay = trace_replay.with_data_cache();
+    }
+
     WorkloadManifest::builder(
         WorkloadId::new("cli-trace-replay").map_err(execute_error)?,
-        BootImage::new(Address::new(config.memory_start())),
+        trace_replay_boot_image(config, trace)?,
     )
     .add_resource(
         WorkloadResource::new(
@@ -200,18 +209,123 @@ fn trace_replay_manifest(
     .map_err(execute_error)?
     .with_topology(topology)
     .with_expected_stop_reason("idle")
-    .add_traffic_trace_replay(WorkloadTrafficTraceReplayRun::new(
-        route.clone(),
-        trace_resource.clone(),
-        config.tick_frequency(),
-        config.agent(),
-        config.line_bytes(),
-        duration,
-        config.control_partition(),
-    ))
+    .add_traffic_trace_replay(trace_replay)
     .map_err(execute_error)?
     .build()
     .map_err(execute_error)
+}
+
+fn trace_replay_memory_topology(
+    config: &Rem6TraceReplayConfig,
+    route: &WorkloadRouteId,
+    topology: WorkloadTopology,
+) -> Result<WorkloadTopology, Rem6CliError> {
+    topology
+        .add_memory_route(trace_replay_memory_route(
+            route.clone(),
+            TRACE_SOURCE_ENDPOINT,
+            TRACE_SOURCE_PARTITION,
+            config,
+        )?)
+        .map_err(execute_error)
+}
+
+fn trace_replay_data_cache_topology(
+    config: &Rem6TraceReplayConfig,
+    route: &WorkloadRouteId,
+    trace: &TrafficTrace,
+    topology: WorkloadTopology,
+    protocol: WorkloadDataCacheProtocol,
+) -> Result<WorkloadTopology, Rem6CliError> {
+    let backing_route = trace_replay_backing_route(route)?;
+    let line_layout = CacheLineLayout::new(config.line_bytes()).map_err(execute_error)?;
+    let mut line_addresses = trace.line_addresses(line_layout);
+    if line_addresses.is_empty() {
+        line_addresses.push(Address::new(config.memory_start()));
+    }
+    let first_line = line_addresses[0];
+    let data_cache = line_addresses.iter().copied().skip(1).fold(
+        WorkloadRiscvDataCache::new(
+            protocol,
+            0,
+            first_line,
+            TRACE_TARGET_PARTITION,
+            TRACE_DATA_CACHE_ENDPOINT,
+            backing_route.clone(),
+        )
+        .map_err(execute_error)?,
+        WorkloadRiscvDataCache::with_line_address,
+    );
+
+    topology
+        .add_memory_route(trace_replay_memory_route(
+            route.clone(),
+            TRACE_SOURCE_ENDPOINT,
+            TRACE_SOURCE_PARTITION,
+            config,
+        )?)
+        .map_err(execute_error)?
+        .add_memory_route(trace_replay_memory_route(
+            backing_route,
+            TRACE_DATA_CACHE_ENDPOINT,
+            TRACE_TARGET_PARTITION,
+            config,
+        )?)
+        .map_err(execute_error)?
+        .with_riscv_data_cache(data_cache)
+        .map_err(execute_error)
+}
+
+fn trace_replay_memory_route(
+    route: WorkloadRouteId,
+    source_endpoint: &str,
+    source_partition: u32,
+    config: &Rem6TraceReplayConfig,
+) -> Result<WorkloadMemoryRoute, Rem6CliError> {
+    WorkloadMemoryRoute::new(
+        route,
+        source_endpoint,
+        source_partition,
+        TRACE_TARGET_ENDPOINT,
+        TRACE_TARGET_PARTITION,
+        config.memory_route_delay(),
+        config.memory_route_delay(),
+    )
+    .map_err(execute_error)
+}
+
+fn trace_replay_backing_route(route: &WorkloadRouteId) -> Result<WorkloadRouteId, Rem6CliError> {
+    WorkloadRouteId::new(format!("{}.dcache.backing", route.as_str())).map_err(execute_error)
+}
+
+fn trace_replay_boot_image(
+    config: &Rem6TraceReplayConfig,
+    trace: &TrafficTrace,
+) -> Result<BootImage, Rem6CliError> {
+    let entry = Address::new(config.memory_start());
+    let mut boot = BootImage::new(entry);
+    if config.data_cache_protocol().is_none() {
+        return Ok(boot);
+    }
+
+    let line_layout = CacheLineLayout::new(config.line_bytes()).map_err(execute_error)?;
+    let line_bytes = usize::try_from(config.line_bytes()).map_err(|_| Rem6CliError::Execute {
+        error: format!(
+            "trace replay line bytes {} exceed host size",
+            config.line_bytes()
+        ),
+    })?;
+    let boot_line = line_layout.line_address(entry);
+    let mut line_addresses = trace.line_addresses(line_layout);
+    if !line_addresses.contains(&boot_line) {
+        line_addresses.push(boot_line);
+        line_addresses.sort_by_key(|address| address.get());
+    }
+    for line in line_addresses {
+        let data = vec![0; line_bytes];
+        boot = boot.add_segment(line, data).map_err(execute_error)?;
+    }
+    Ok(boot)
 }
 
 fn trace_partition_count(control_partition: u32) -> u32 {

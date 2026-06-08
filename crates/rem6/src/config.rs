@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use rem6_boot::BootElfArchitecture;
+use rem6_workload::WorkloadDataCacheProtocol;
 
 use crate::Rem6CliError;
 
@@ -150,6 +151,7 @@ pub struct Rem6TraceReplayConfig {
     line_bytes: u64,
     agent: u32,
     control_partition: u32,
+    data_cache_protocol: Option<WorkloadDataCacheProtocol>,
     stats_format: StatsFormat,
     output: Option<PathBuf>,
     stats_output: Option<PathBuf>,
@@ -647,6 +649,7 @@ impl Rem6TraceReplayConfig {
         let mut line_bytes = 64u64;
         let mut agent = 0u32;
         let mut control_partition = 2u32;
+        let mut data_cache_protocol = None;
         let mut stats_format = StatsFormat::Json;
         let mut output = None;
         let mut stats_output = None;
@@ -728,6 +731,15 @@ impl Rem6TraceReplayConfig {
                         }
                     })?;
                 }
+                "--data-cache-protocol" => {
+                    let value = required_value(&flag, args.next())?;
+                    data_cache_protocol =
+                        Some(parse_data_cache_protocol(&value).ok_or_else(|| {
+                            Rem6CliError::InvalidTraceReplayDataCacheProtocol {
+                                value: value.clone(),
+                            }
+                        })?);
+                }
                 "--stats-format" => {
                     stats_format = StatsFormat::parse(&required_value(&flag, args.next())?)?;
                 }
@@ -772,6 +784,7 @@ impl Rem6TraceReplayConfig {
             line_bytes,
             agent,
             control_partition,
+            data_cache_protocol,
             stats_format,
             output,
             stats_output,
@@ -820,6 +833,10 @@ impl Rem6TraceReplayConfig {
 
     pub const fn control_partition(&self) -> u32 {
         self.control_partition
+    }
+
+    pub const fn data_cache_protocol(&self) -> Option<WorkloadDataCacheProtocol> {
+        self.data_cache_protocol
     }
 
     pub const fn stats_format(&self) -> StatsFormat {
@@ -917,6 +934,16 @@ fn parse_number(value: &str) -> Option<u64> {
 
 fn parse_positive_u64(value: &str) -> Option<u64> {
     value.parse().ok().filter(|value| *value > 0)
+}
+
+fn parse_data_cache_protocol(value: &str) -> Option<WorkloadDataCacheProtocol> {
+    match value {
+        "msi" => Some(WorkloadDataCacheProtocol::Msi),
+        "mesi" => Some(WorkloadDataCacheProtocol::Mesi),
+        "moesi" => Some(WorkloadDataCacheProtocol::Moesi),
+        "chi" => Some(WorkloadDataCacheProtocol::Chi),
+        _ => None,
+    }
 }
 
 fn required_value(flag: &str, value: Option<String>) -> Result<String, Rem6CliError> {

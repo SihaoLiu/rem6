@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryAccessOrdering, MemoryAtomicOp,
     MemoryBarrierSet, MemoryRequest, MemoryRequestId,
@@ -789,6 +791,16 @@ impl TrafficTrace {
 
     pub fn max_tick(&self) -> Option<u64> {
         self.elements.iter().map(|element| element.tick).max()
+    }
+
+    pub fn line_addresses(&self, layout: CacheLineLayout) -> Vec<Address> {
+        self.elements
+            .iter()
+            .filter_map(|element| element.address)
+            .map(|address| layout.line_address(address))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect()
     }
 }
 

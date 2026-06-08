@@ -2,19 +2,20 @@ use rem6_boot::BootImage;
 use rem6_kernel::PartitionId;
 use rem6_memory::{AccessSize, Address, AddressRange};
 use rem6_system::{RiscvWorkloadReplay, RiscvWorkloadReplayError, RiscvWorkloadTrafficTraceReplay};
+use rem6_workload::WorkloadDataCacheProtocol;
 use rem6_workload::{
     HostEventIntent, WorkloadExpectedTrafficTraceReplaySummary, WorkloadHostEvent,
     WorkloadHostPlacement, WorkloadManifest, WorkloadMemoryRoute, WorkloadMemoryTarget,
     WorkloadReplayPlan, WorkloadResolvedResources, WorkloadResource, WorkloadResourceId,
-    WorkloadResourceKind, WorkloadResourcePayload, WorkloadRiscvCore, WorkloadRouteId,
-    WorkloadTopology, WorkloadTrafficTraceReplayRun,
+    WorkloadResourceKind, WorkloadResourcePayload, WorkloadRiscvCore, WorkloadRiscvDataCache,
+    WorkloadRouteId, WorkloadTopology, WorkloadTrafficTraceReplayRun,
 };
 
 mod support;
 
 use support::traffic_trace::{
     controller_for_packets, packet_trace_bytes, PacketFields, GEM5_MEM_FENCE_REQ,
-    GEM5_MEM_FENCE_RESP, GEM5_READ_REQ, GEM5_READ_RESP,
+    GEM5_MEM_FENCE_RESP, GEM5_READ_REQ, GEM5_READ_RESP, GEM5_READ_RESP_WITH_INVALIDATE,
 };
 
 fn workload_id(value: &str) -> rem6_workload::WorkloadId {
@@ -32,6 +33,15 @@ fn route_id(value: &str) -> WorkloadRouteId {
 fn boot_image() -> BootImage {
     BootImage::new(Address::new(0x8000))
         .add_segment(Address::new(0x8000), 0x0000_0073_u32.to_le_bytes().to_vec())
+        .unwrap()
+}
+
+fn boot_image_with_data_cache_line() -> BootImage {
+    boot_image()
+        .add_segment(
+            Address::new(0x9008),
+            0xfedc_ba98_7654_3210_u64.to_le_bytes().to_vec(),
+        )
         .unwrap()
 }
 
@@ -70,6 +80,69 @@ fn replay_topology() -> WorkloadTopology {
                 Address::new(0x8000),
                 "cpu0.ifetch",
                 route_id("cpu0.fetch"),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+}
+
+fn replay_topology_with_data_cache() -> WorkloadTopology {
+    WorkloadTopology::new(4, 2, 2, WorkloadHostPlacement::new(3, 2, 51).unwrap())
+        .unwrap()
+        .add_memory_target(
+            WorkloadMemoryTarget::new(
+                0,
+                64,
+                AddressRange::new(Address::new(0x8000), AccessSize::new(0x2000).unwrap()).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(route_id("cpu0.fetch"), "cpu0.ifetch", 0, "memory", 2, 2, 3)
+                .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(route_id("cpu0.data"), "cpu0.dmem", 0, "memory", 2, 2, 3)
+                .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(
+                route_id("dcache.backing"),
+                "dcache.dir",
+                2,
+                "memory",
+                2,
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_riscv_core(
+            WorkloadRiscvCore::new(
+                0,
+                0,
+                7,
+                Address::new(0x8000),
+                "cpu0.ifetch",
+                route_id("cpu0.fetch"),
+            )
+            .unwrap()
+            .with_data("cpu0.dmem", route_id("cpu0.data"))
+            .unwrap(),
+        )
+        .unwrap()
+        .with_riscv_data_cache(
+            WorkloadRiscvDataCache::new(
+                WorkloadDataCacheProtocol::Msi,
+                0,
+                Address::new(0x9000),
+                2,
+                "dcache.dir",
+                route_id("dcache.backing"),
             )
             .unwrap(),
         )
@@ -116,6 +189,45 @@ fn manifest() -> WorkloadManifest {
 }
 
 fn resolved_resources(manifest: &WorkloadManifest) -> WorkloadResolvedResources {
+    resolved_resources_for_trace(
+        manifest,
+        &[
+            PacketFields {
+                tick: 0,
+                command: GEM5_READ_REQ,
+                address: Some(0x9008),
+                size: Some(8),
+                packet_id: Some(990),
+            },
+            PacketFields {
+                tick: 3,
+                command: GEM5_READ_RESP,
+                address: Some(0x9008),
+                size: Some(8),
+                packet_id: Some(990),
+            },
+            PacketFields {
+                tick: 4,
+                command: GEM5_MEM_FENCE_REQ,
+                address: None,
+                size: None,
+                packet_id: Some(991),
+            },
+            PacketFields {
+                tick: 7,
+                command: GEM5_MEM_FENCE_RESP,
+                address: None,
+                size: None,
+                packet_id: Some(991),
+            },
+        ],
+    )
+}
+
+fn resolved_resources_for_trace(
+    manifest: &WorkloadManifest,
+    packets: &[PacketFields],
+) -> WorkloadResolvedResources {
     WorkloadResolvedResources::from_manifest(
         manifest,
         [
@@ -124,36 +236,7 @@ fn resolved_resources(manifest: &WorkloadManifest) -> WorkloadResolvedResources 
             WorkloadResourcePayload::new(
                 resource_id("trace"),
                 "sha256:trace",
-                packet_trace_bytes(&[
-                    PacketFields {
-                        tick: 0,
-                        command: GEM5_READ_REQ,
-                        address: Some(0x9008),
-                        size: Some(8),
-                        packet_id: Some(990),
-                    },
-                    PacketFields {
-                        tick: 3,
-                        command: GEM5_READ_RESP,
-                        address: Some(0x9008),
-                        size: Some(8),
-                        packet_id: Some(990),
-                    },
-                    PacketFields {
-                        tick: 4,
-                        command: GEM5_MEM_FENCE_REQ,
-                        address: None,
-                        size: None,
-                        packet_id: Some(991),
-                    },
-                    PacketFields {
-                        tick: 7,
-                        command: GEM5_MEM_FENCE_RESP,
-                        address: None,
-                        size: None,
-                        packet_id: Some(991),
-                    },
-                ]),
+                packet_trace_bytes(packets),
             )
             .unwrap(),
         ],
@@ -187,6 +270,72 @@ fn workload_replay_executes_manifest_declared_trace_replay() {
     assert_eq!(summary.control_ack_count(), 1);
     assert_eq!(summary.sync_control_ack_count(), 1);
     plan.verify_result(outcome.result()).unwrap();
+}
+
+#[test]
+fn manifest_declared_fetch_trace_stays_out_of_data_cache_by_default() {
+    let manifest = WorkloadManifest::builder(
+        workload_id("manifest-fetch-trace-data-cache-scope"),
+        boot_image_with_data_cache_line(),
+    )
+    .with_topology(replay_topology_with_data_cache())
+    .add_resource(resource("kernel", WorkloadResourceKind::Kernel))
+    .unwrap()
+    .add_resource(resource("trace", WorkloadResourceKind::Input))
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_host_event(WorkloadHostEvent::new(
+        0,
+        HostEventIntent::Stop {
+            reason: "host-stop".to_string(),
+        },
+    ))
+    .add_traffic_trace_replay(WorkloadTrafficTraceReplayRun::new(
+        route_id("cpu0.fetch"),
+        resource_id("trace"),
+        1_000,
+        7,
+        64,
+        99,
+        2,
+    ))
+    .unwrap()
+    .build()
+    .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let outcome = RiscvWorkloadReplay::new(plan)
+        .with_resolved_resources(resolved_resources_for_trace(
+            &manifest,
+            &[
+                PacketFields {
+                    tick: 0,
+                    command: GEM5_READ_REQ,
+                    address: Some(0x9008),
+                    size: Some(8),
+                    packet_id: Some(992),
+                },
+                PacketFields {
+                    tick: 3,
+                    command: GEM5_READ_RESP_WITH_INVALIDATE,
+                    address: Some(0x9008),
+                    size: Some(8),
+                    packet_id: Some(992),
+                },
+            ],
+        ))
+        .with_max_turns(96)
+        .run_parallel()
+        .unwrap();
+
+    let traffic_replay = &outcome.traffic_trace_replays()[0];
+    assert!(traffic_replay.errors().is_empty());
+    assert!(traffic_replay.runtime().sideband_events().is_empty());
+    assert!(outcome.run().data_cache_runs().is_empty());
+
+    let summary = &outcome.result().traffic_trace_replay_summaries()[0];
+    assert_eq!(summary.route(), &route_id("cpu0.fetch"));
+    assert_eq!(summary.trace_data_cache_response_count(), 0);
+    assert_eq!(summary.trace_data_cache_maintenance_response_count(), 0);
 }
 
 #[test]

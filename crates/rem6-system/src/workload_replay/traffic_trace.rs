@@ -705,6 +705,7 @@ pub(super) fn schedule_traffic_trace_replays(
     transport: &MemoryTransport,
     data_cache: &Option<Arc<Mutex<WorkloadDataCacheBackend>>>,
     cluster: &RiscvCluster,
+    data_cache_routes: &BTreeSet<WorkloadRouteId>,
 ) -> Result<Vec<RiscvWorkloadScheduledTrafficTraceReplay>, RiscvWorkloadReplayError> {
     let mut scheduled_replays = Vec::new();
     for replay in replays {
@@ -727,6 +728,7 @@ pub(super) fn schedule_traffic_trace_replays(
             data_cache,
             cluster,
             records.clone(),
+            data_cache_routes,
         );
         let executor =
             traffic_trace_replay_executor(controller, replay.retry_delay(), data_cache_consumer);
@@ -831,8 +833,9 @@ fn trace_data_cache_consumer(
     data_cache: &Option<Arc<Mutex<WorkloadDataCacheBackend>>>,
     cluster: &RiscvCluster,
     records: RiscvWorkloadTraceReplayRecords,
+    data_cache_routes: &BTreeSet<WorkloadRouteId>,
 ) -> WorkloadTraceDataCacheConsumer {
-    let data_cache = if trace_route_uses_data_cache(route, topology) {
+    let data_cache = if trace_route_uses_data_cache(route, topology, data_cache_routes) {
         data_cache.clone()
     } else {
         None
@@ -849,9 +852,16 @@ fn trace_data_cache_consumer(
     )
 }
 
-fn trace_route_uses_data_cache(route: &WorkloadRouteId, topology: &WorkloadTopology) -> bool {
+fn trace_route_uses_data_cache(
+    route: &WorkloadRouteId,
+    topology: &WorkloadTopology,
+    data_cache_routes: &BTreeSet<WorkloadRouteId>,
+) -> bool {
     if topology.riscv_data_cache().is_none() {
         return false;
+    }
+    if data_cache_routes.contains(route) {
+        return true;
     }
     topology
         .riscv_cores()

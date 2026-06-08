@@ -3258,12 +3258,17 @@ exhaustion, rejects runs whose actual final tick exceeds the configured
 `--max-tick`, binds the manifest resource digest to the SHA-256 of the trace
 payload, and emits a `rem6.cli.trace_replay.v1` artifact plus stats for
 scheduled requests, response delivery, matched trace responses, memory
-failures, control acks, control failures, and typed sideband events; those
-outputs now include the workload summary's response-policy, memory-failure,
-control-ack, control-failure, HTM request, and sideband subcounters rather than
-only coarse totals, with new stat paths appended after the existing
-trace-replay stats so prior stat ids remain stable. Deeper propagation through
-memory controllers, caches, and CPU ports remains a separate contract.
+failures, control acks, control failures, and typed sideband events. When
+`--data-cache-protocol` is set to `msi`, `mesi`, `moesi`, or `chi`, the CLI
+also declares a data-cache topology for the trace route, seeds touched trace
+lines in the boot image, and marks the CLI manifest trace replay as a
+data-cache-backed cache agent so clean and invalidate response policies mutate
+the executable data-cache backend. Those outputs include the workload summary's
+response-policy, memory-failure, control-ack, control-failure, HTM request,
+sideband, and cache-policy consumer subcounters rather than only coarse totals,
+with append-only stat placement after the existing trace-replay stats so prior
+stat ids remain stable. Deeper propagation through CPU ports and profiled memory
+controller timing remains a separate contract.
 `InvalidDestError`, `BadAddressError`, `ReadError`, `WriteError`,
 `FunctionalReadError`, and `FunctionalWriteError` command-ids 46-51 map to
 typed `TrafficTraceEvent::Error` events that preserve tick ordering, sequence,
@@ -4395,9 +4400,11 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   trace through workload replay and emitting artifact plus stats evidence for
   scheduled requests, matched read/write responses, read/write memory
   failures, sync control acks, SHA-256 trace digests, maximum trace-tick based
-  replay duration, actual final-tick budget rejection, and typed trace-only
+  replay duration, actual final-tick budget rejection, typed trace-only
   sideband/control counters for TLB sync, cache flush, diagnostic print, HTM
-  abort, and HTM request acknowledgements. CLI source-policy tests now keep the
+  abort, HTM request acknowledgements, and opt-in data-cache protocol execution
+  that drives clean and invalidate response-policy counters. CLI source-policy
+  tests now keep the
   binary crate root under the facade budget while
   `config.rs` owns argument parsing and `guest_memory.rs` owns ELF plus
   external-blob store construction, so standalone simulator

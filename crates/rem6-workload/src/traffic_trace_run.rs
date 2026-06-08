@@ -10,6 +10,7 @@ pub struct WorkloadTrafficTraceReplayRun {
     duration: u64,
     control_partition: u32,
     retry_delay: u64,
+    data_cache: bool,
 }
 
 impl WorkloadTrafficTraceReplayRun {
@@ -31,11 +32,17 @@ impl WorkloadTrafficTraceReplayRun {
             duration,
             control_partition,
             retry_delay: 0,
+            data_cache: false,
         }
     }
 
     pub const fn with_retry_delay(mut self, retry_delay: u64) -> Self {
         self.retry_delay = retry_delay;
+        self
+    }
+
+    pub const fn with_data_cache(mut self) -> Self {
+        self.data_cache = true;
         self
     }
 
@@ -69,6 +76,10 @@ impl WorkloadTrafficTraceReplayRun {
 
     pub const fn retry_delay(&self) -> u64 {
         self.retry_delay
+    }
+
+    pub const fn data_cache(&self) -> bool {
+        self.data_cache
     }
 
     pub fn sort_key(&self) -> (&WorkloadRouteId, &WorkloadResourceId) {

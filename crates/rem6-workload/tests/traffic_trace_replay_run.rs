@@ -88,7 +88,7 @@ fn manifest_with_run(run: WorkloadTrafficTraceReplayRun) -> WorkloadManifest {
 
 #[test]
 fn workload_manifest_records_traffic_trace_replay_declarations() {
-    let run_a = trace_run("cpu0.fetch", "trace-a", 3);
+    let run_a = trace_run("cpu0.fetch", "trace-a", 3).with_data_cache();
     let run_b = trace_run("cpu1.fetch", "trace-b", 1);
     let manifest = WorkloadManifest::builder(id("manifest-trace-runs"), boot_image())
         .add_resource(kernel_resource())
@@ -112,6 +112,8 @@ fn workload_manifest_records_traffic_trace_replay_declarations() {
     );
     assert!(manifest.required_resources().contains(run_a.resource()));
     assert!(manifest.required_resources().contains(run_b.resource()));
+    assert!(manifest.traffic_trace_replays()[0].data_cache());
+    assert!(!manifest.traffic_trace_replays()[1].data_cache());
 
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
     assert_eq!(
@@ -126,10 +128,13 @@ fn workload_manifest_identity_changes_with_traffic_trace_replay_declarations() {
     let route_changed = manifest_with_run(trace_run("cpu0.alt", "trace-main", 0));
     let resource_changed = manifest_with_run(trace_run("cpu0.fetch", "trace-alt", 0));
     let retry_changed = manifest_with_run(trace_run("cpu0.fetch", "trace-main", 4));
+    let data_cache_changed =
+        manifest_with_run(trace_run("cpu0.fetch", "trace-main", 0).with_data_cache());
 
     assert_ne!(base.identity(), route_changed.identity());
     assert_ne!(base.identity(), resource_changed.identity());
     assert_ne!(base.identity(), retry_changed.identity());
+    assert_ne!(base.identity(), data_cache_changed.identity());
 }
 
 #[test]

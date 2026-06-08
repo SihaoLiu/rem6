@@ -376,6 +376,9 @@ pub enum Rem6CliError {
     InvalidTraceReplayControlPartition {
         value: String,
     },
+    InvalidTraceReplayDataCacheProtocol {
+        value: String,
+    },
     MemoryRouteDelayBelowMinRemoteDelay {
         memory_route_delay: u64,
         min_remote_delay: u64,
@@ -514,6 +517,9 @@ impl fmt::Display for Rem6CliError {
             }
             Self::InvalidTraceReplayControlPartition { value } => {
                 write!(formatter, "invalid trace replay control partition {value}")
+            }
+            Self::InvalidTraceReplayDataCacheProtocol { value } => {
+                write!(formatter, "invalid trace replay data cache protocol {value}")
             }
             Self::MemoryRouteDelayBelowMinRemoteDelay {
                 memory_route_delay,
