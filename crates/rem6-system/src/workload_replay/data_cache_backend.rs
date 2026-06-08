@@ -397,7 +397,7 @@ impl WorkloadDataCacheLineBackend {
             self.layout.line_address(address) == self.line
                 && event.size_bytes().is_some()
                 && !event.is_prefetch()
-                && (event.is_read() || event.is_write())
+                && (event.is_read() || event.is_write() || event.requires_writable())
         })
     }
 
@@ -568,7 +568,7 @@ impl WorkloadDataCacheLineBackend {
                 records.push(record);
             }
         }
-        if event.is_write() {
+        if event.is_write() || event.requires_writable() {
             if let Some(record) = RiscvTraceHtmAccessRecord::from_trace_response(
                 RiscvTraceHtmAccessKind::WriteSet,
                 tick,
@@ -1022,16 +1022,17 @@ impl WorkloadDataCacheBackend {
         };
         let records = line.record_trace_htm_access_event(tick, transaction_uid, event);
         let recorded = !records.is_empty();
+        let writes = event.is_write() || event.requires_writable();
         let key = WorkloadDataCacheRollbackKey::new(route, transaction_uid);
         if let Some(access_set) = self.htm_access_sets.get_mut(&key) {
             if event.is_read() {
                 access_set.record_read(line_address);
             }
-            if event.is_write() && data_cache_response_applied {
+            if writes && data_cache_response_applied {
                 access_set.record_write(line_address);
             }
         }
-        if recorded && event.is_write() && data_cache_response_applied {
+        if recorded && writes && data_cache_response_applied {
             if let Some(rollback) = self.htm_rollbacks.get_mut(&key) {
                 rollback.mark_written(line_address);
             }
@@ -1047,7 +1048,7 @@ impl WorkloadDataCacheBackend {
         event: TrafficTraceResponseEvent,
         data_cache_response_applied: bool,
     ) -> bool {
-        if !event.is_write() || !data_cache_response_applied {
+        if !(event.is_write() || event.requires_writable()) || !data_cache_response_applied {
             return false;
         }
         let Some(line_address) = self
@@ -1794,7 +1795,6 @@ fn replace_optional_dram_controller_line(
 #[cfg(test)]
 #[path = "data_cache_backend_htm_conflict_tests.rs"]
 mod htm_conflict_tests;
-
 #[cfg(test)]
 #[path = "data_cache_backend_trace_tests.rs"]
 mod trace_tests;
