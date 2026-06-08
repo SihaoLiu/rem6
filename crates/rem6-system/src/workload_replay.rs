@@ -1257,6 +1257,12 @@ impl RiscvWorkloadReplay {
                 SystemActionOutcome::GuestHostCall { .. } => {
                     host_action_summary.record_guest_host_call();
                 }
+                SystemActionOutcome::RoiBegin { .. } => {
+                    host_action_summary.record_roi_begin();
+                }
+                SystemActionOutcome::RoiEnd { .. } => {
+                    host_action_summary.record_roi_end();
+                }
                 SystemActionOutcome::StatsReset(_) => {
                     host_action_summary.record_stats_reset();
                 }

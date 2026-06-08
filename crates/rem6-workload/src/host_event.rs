@@ -81,6 +81,8 @@ impl WorkloadStatsScope {
 pub struct WorkloadHostActionSummary {
     total_action_count: usize,
     injected_command_count: usize,
+    roi_begin_count: usize,
+    roi_end_count: usize,
     stats_reset_count: usize,
     stats_dump_count: usize,
     checkpoint_count: usize,
@@ -94,6 +96,16 @@ impl WorkloadHostActionSummary {
     pub fn record_injected_command(&mut self) {
         self.total_action_count += 1;
         self.injected_command_count += 1;
+    }
+
+    pub fn record_roi_begin(&mut self) {
+        self.total_action_count += 1;
+        self.roi_begin_count += 1;
+    }
+
+    pub fn record_roi_end(&mut self) {
+        self.total_action_count += 1;
+        self.roi_end_count += 1;
     }
 
     pub fn record_stats_reset(&mut self) {
@@ -137,6 +149,14 @@ impl WorkloadHostActionSummary {
 
     pub const fn injected_command_count(&self) -> usize {
         self.injected_command_count
+    }
+
+    pub const fn roi_begin_count(&self) -> usize {
+        self.roi_begin_count
+    }
+
+    pub const fn roi_end_count(&self) -> usize {
+        self.roi_end_count
     }
 
     pub const fn stats_reset_count(&self) -> usize {
@@ -211,6 +231,14 @@ impl WorkloadGuestHostCallResponse {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum HostEventIntent {
+    WorkBegin {
+        work_id: u64,
+        thread_id: u64,
+    },
+    WorkEnd {
+        work_id: u64,
+        thread_id: u64,
+    },
     RoiBegin {
         label: String,
     },
@@ -294,6 +322,12 @@ impl CheckpointLineage {
 
 pub(crate) fn host_event_sort_key(event: &WorkloadHostEvent) -> (Tick, u8, String) {
     let (rank, label) = match event.intent() {
+        HostEventIntent::WorkBegin { work_id, thread_id } => {
+            (0, format!("work:{work_id}:{thread_id}"))
+        }
+        HostEventIntent::WorkEnd { work_id, thread_id } => {
+            (1, format!("work:{work_id}:{thread_id}"))
+        }
         HostEventIntent::RoiBegin { label } => (0, label.clone()),
         HostEventIntent::RoiEnd { label } => (1, label.clone()),
         HostEventIntent::StatsReset { label } => (2, label.clone()),

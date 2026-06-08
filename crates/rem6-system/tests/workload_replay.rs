@@ -1637,8 +1637,9 @@ fn replay_manifest_with_planned_host_actions() -> WorkloadManifest {
         .add_required_resource(resource_id("kernel"))
         .add_host_event(WorkloadHostEvent::new(
             1,
-            HostEventIntent::RoiBegin {
-                label: "roi".to_string(),
+            HostEventIntent::WorkBegin {
+                work_id: 17,
+                thread_id: 3,
             },
         ))
         .add_host_event(WorkloadHostEvent::new(
@@ -1662,8 +1663,9 @@ fn replay_manifest_with_planned_host_actions() -> WorkloadManifest {
         ))
         .add_host_event(WorkloadHostEvent::new(
             2,
-            HostEventIntent::RoiEnd {
-                label: "roi".to_string(),
+            HostEventIntent::WorkEnd {
+                work_id: 17,
+                thread_id: 3,
             },
         ))
         .add_host_event(WorkloadHostEvent::new(
@@ -2221,9 +2223,11 @@ fn workload_replay_executes_planned_host_actions() {
     );
     let mut host_summary = WorkloadHostActionSummary::default();
     host_summary.record_stop();
+    host_summary.record_roi_begin();
     host_summary.record_stats_reset();
     host_summary.record_checkpoint();
     host_summary.record_checkpoint_restore();
+    host_summary.record_roi_end();
     host_summary.record_stats_dump();
     host_summary.record_execution_mode_switch();
     host_summary.record_stop();
@@ -2237,6 +2241,24 @@ fn workload_replay_executes_planned_host_actions() {
         event,
         SystemActionOutcome::StatsReset(record)
             if record.tick() == 1 && record.epoch() == 1
+    )));
+    assert!(outcome.host_action_outcomes().iter().any(|event| matches!(
+        event,
+        SystemActionOutcome::RoiBegin {
+            tick: 1,
+            work_id: 17,
+            thread_id: 3,
+            ..
+        }
+    )));
+    assert!(outcome.host_action_outcomes().iter().any(|event| matches!(
+        event,
+        SystemActionOutcome::RoiEnd {
+            tick: 2,
+            work_id: 17,
+            thread_id: 3,
+            ..
+        }
     )));
     assert!(outcome.host_action_outcomes().iter().any(|event| matches!(
         event,

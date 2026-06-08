@@ -69,6 +69,14 @@ pub enum GuestEventKind {
         arguments: Vec<u64>,
         payload: Vec<u8>,
     },
+    WorkBegin {
+        work_id: u64,
+        thread_id: u64,
+    },
+    WorkEnd {
+        work_id: u64,
+        thread_id: u64,
+    },
     RoiBegin,
     RoiEnd,
     StatsReset,
@@ -310,6 +318,14 @@ pub enum HostAction {
         arguments: Vec<u64>,
         payload: Vec<u8>,
     },
+    RecordRoiBegin {
+        work_id: u64,
+        thread_id: u64,
+    },
+    RecordRoiEnd {
+        work_id: u64,
+        thread_id: u64,
+    },
     ResetStats,
     DumpStats,
     SwitchExecutionMode {
@@ -403,6 +419,20 @@ impl HostEventPolicy {
                 arguments: arguments.clone(),
                 payload: payload.clone(),
             }],
+            GuestEventKind::WorkBegin { work_id, thread_id } => vec![
+                HostAction::RecordRoiBegin {
+                    work_id: *work_id,
+                    thread_id: *thread_id,
+                },
+                HostAction::ResetStats,
+            ],
+            GuestEventKind::WorkEnd { work_id, thread_id } => vec![
+                HostAction::RecordRoiEnd {
+                    work_id: *work_id,
+                    thread_id: *thread_id,
+                },
+                HostAction::DumpStats,
+            ],
             GuestEventKind::RoiBegin | GuestEventKind::StatsReset => {
                 vec![HostAction::ResetStats]
             }

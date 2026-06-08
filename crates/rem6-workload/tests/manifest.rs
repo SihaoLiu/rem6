@@ -1596,6 +1596,8 @@ fn workload_result_records_host_action_summary() {
         .build()
         .unwrap();
     let mut summary = WorkloadHostActionSummary::default();
+    summary.record_roi_begin();
+    summary.record_roi_end();
     summary.record_stats_reset();
     summary.record_stats_dump();
     summary.record_checkpoint();
@@ -1607,7 +1609,9 @@ fn workload_result_records_host_action_summary() {
         WorkloadResult::new(manifest.identity(), 96).with_host_action_summary(summary.clone());
 
     assert_eq!(result.host_action_summary(), Some(&summary));
-    assert_eq!(summary.total_action_count(), 6);
+    assert_eq!(summary.total_action_count(), 8);
+    assert_eq!(summary.roi_begin_count(), 1);
+    assert_eq!(summary.roi_end_count(), 1);
     assert_eq!(summary.stats_reset_count(), 1);
     assert_eq!(summary.stats_dump_count(), 1);
     assert_eq!(summary.checkpoint_count(), 1);

@@ -51,6 +51,20 @@ pub enum SystemActionOutcome {
         payload: Vec<u8>,
         response: GuestHostCallResponse,
     },
+    RoiBegin {
+        tick: Tick,
+        event: GuestEventId,
+        source: GuestSourceId,
+        work_id: u64,
+        thread_id: u64,
+    },
+    RoiEnd {
+        tick: Tick,
+        event: GuestEventId,
+        source: GuestSourceId,
+        work_id: u64,
+        thread_id: u64,
+    },
     StatsReset(StatsResetRecord),
     StatsDump(StatDumpRecord),
     Checkpoint {
@@ -1357,6 +1371,22 @@ impl SystemActionExecutor {
                 arguments: arguments.clone(),
                 payload: payload.clone(),
                 response: self.resolve_guest_host_call_response(*selector),
+            }),
+            HostAction::RecordRoiBegin { work_id, thread_id } => {
+                Ok(SystemActionOutcome::RoiBegin {
+                    tick: record.tick(),
+                    event: record.event(),
+                    source: record.source(),
+                    work_id: *work_id,
+                    thread_id: *thread_id,
+                })
+            }
+            HostAction::RecordRoiEnd { work_id, thread_id } => Ok(SystemActionOutcome::RoiEnd {
+                tick: record.tick(),
+                event: record.event(),
+                source: record.source(),
+                work_id: *work_id,
+                thread_id: *thread_id,
             }),
             HostAction::ResetStats => self
                 .stats

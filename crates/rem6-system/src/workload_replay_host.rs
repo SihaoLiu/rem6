@@ -72,6 +72,14 @@ fn planned_host_guest_event(
     source: GuestSourceId,
 ) -> Option<GuestEvent> {
     let kind = match event.intent() {
+        HostEventIntent::WorkBegin { work_id, thread_id } => GuestEventKind::WorkBegin {
+            work_id: *work_id,
+            thread_id: *thread_id,
+        },
+        HostEventIntent::WorkEnd { work_id, thread_id } => GuestEventKind::WorkEnd {
+            work_id: *work_id,
+            thread_id: *thread_id,
+        },
         HostEventIntent::RoiBegin { .. } => GuestEventKind::RoiBegin,
         HostEventIntent::RoiEnd { .. } => GuestEventKind::RoiEnd,
         HostEventIntent::StatsReset { .. } => GuestEventKind::StatsReset,

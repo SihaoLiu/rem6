@@ -1641,6 +1641,16 @@ fn hash_route_fabric(hash: &mut u64, fabric: Option<&crate::WorkloadRouteFabric>
 
 fn hash_host_event(hash: &mut u64, intent: &HostEventIntent) {
     match intent {
+        HostEventIntent::WorkBegin { work_id, thread_id } => {
+            hash_str(hash, "work_begin");
+            hash_u64(hash, *work_id);
+            hash_u64(hash, *thread_id);
+        }
+        HostEventIntent::WorkEnd { work_id, thread_id } => {
+            hash_str(hash, "work_end");
+            hash_u64(hash, *work_id);
+            hash_u64(hash, *thread_id);
+        }
         HostEventIntent::RoiBegin { label } => {
             hash_str(hash, "roi_begin");
             hash_str(hash, label);

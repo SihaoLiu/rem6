@@ -12,8 +12,9 @@ use rem6_system::{
     guest_trap_from_riscv, guest_trap_kind_from_riscv, ExecutionMode, ExecutionModeTarget,
     GuestEvent, GuestEventChannel, GuestEventDelivery, GuestEventId, GuestEventKind,
     GuestHostCallResponse, GuestSourceId, GuestTrap, GuestTrapKind, HostAction, HostActionRecord,
-    HostEventPolicy, RiscvTrapEventPort, ScheduledRiscvTrap, StopRequest, SystemActionOutcome,
-    SystemError, SystemEventPort, SystemHostController, SystemHostEventPort, SystemRunController,
+    HostEventPolicy, RiscvTrapEventPort, ScheduledRiscvTrap, StopRequest, SystemActionExecutor,
+    SystemActionOutcome, SystemError, SystemEventPort, SystemHostController, SystemHostEventPort,
+    SystemRunController,
 };
 use rem6_transport::{
     MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTransport, TargetOutcome, TransportEndpointId,
@@ -491,6 +492,47 @@ fn host_event_policy_maps_structured_events_to_actions() {
 }
 
 #[test]
+fn host_event_policy_preserves_m5_work_marker_metadata() {
+    let policy = HostEventPolicy;
+    let source = GuestSourceId::new(3);
+
+    assert_eq!(
+        policy.actions_for(&GuestEvent::new(
+            GuestEventId::new(6),
+            source,
+            GuestEventKind::WorkBegin {
+                work_id: 11,
+                thread_id: 7,
+            },
+        )),
+        vec![
+            HostAction::RecordRoiBegin {
+                work_id: 11,
+                thread_id: 7,
+            },
+            HostAction::ResetStats,
+        ]
+    );
+    assert_eq!(
+        policy.actions_for(&GuestEvent::new(
+            GuestEventId::new(7),
+            source,
+            GuestEventKind::WorkEnd {
+                work_id: 11,
+                thread_id: 7,
+            },
+        )),
+        vec![
+            HostAction::RecordRoiEnd {
+                work_id: 11,
+                thread_id: 7,
+            },
+            HostAction::DumpStats,
+        ]
+    );
+}
+
+#[test]
 fn system_run_controller_records_actions_and_stop_request() {
     let guest = PartitionId::new(0);
     let host = PartitionId::new(1);
@@ -562,6 +604,59 @@ fn system_run_controller_records_actions_and_stop_request() {
                 HostAction::Stop { code: 5 },
             ),
         ]
+    );
+}
+
+#[test]
+fn system_action_executor_records_m5_work_marker_outcomes() {
+    let mut executor = SystemActionExecutor::new(StatsRegistry::new());
+    let guest = PartitionId::new(0);
+    let host = PartitionId::new(1);
+    let source = GuestSourceId::new(7);
+
+    assert_eq!(
+        executor
+            .apply(&HostActionRecord::new(
+                14,
+                guest,
+                host,
+                GuestEventId::new(41),
+                source,
+                HostAction::RecordRoiBegin {
+                    work_id: 20,
+                    thread_id: 2,
+                },
+            ))
+            .unwrap(),
+        SystemActionOutcome::RoiBegin {
+            tick: 14,
+            event: GuestEventId::new(41),
+            source,
+            work_id: 20,
+            thread_id: 2,
+        }
+    );
+    assert_eq!(
+        executor
+            .apply(&HostActionRecord::new(
+                19,
+                guest,
+                host,
+                GuestEventId::new(42),
+                source,
+                HostAction::RecordRoiEnd {
+                    work_id: 20,
+                    thread_id: 2,
+                },
+            ))
+            .unwrap(),
+        SystemActionOutcome::RoiEnd {
+            tick: 19,
+            event: GuestEventId::new(42),
+            source,
+            work_id: 20,
+            thread_id: 2,
+        }
     );
 }
 
