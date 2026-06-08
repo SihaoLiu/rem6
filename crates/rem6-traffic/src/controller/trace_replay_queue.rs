@@ -2,12 +2,16 @@ use std::collections::VecDeque;
 
 use rem6_memory::{Address, MemoryRequestId, MemoryResponse};
 
-use crate::{common::checked_counter_add, TrafficGeneratorError, TrafficTraceResponseEvent};
+use crate::{
+    common::checked_counter_add, TrafficGeneratorError, TrafficTraceCacheEvent,
+    TrafficTraceDiagnosticEvent, TrafficTraceHtmEvent, TrafficTraceResponseEvent,
+    TrafficTraceSyncEvent, TrafficTraceTlbEvent,
+};
 
 use super::{
     TrafficControllerEvent, TrafficControllerEventBatch, TrafficTraceControlFailure,
     TrafficTraceMemoryFailure, TrafficTraceReplayAction, TrafficTraceReplayCompletion,
-    TrafficTraceReplayFailure,
+    TrafficTraceReplayFailure, TrafficTraceReplaySource,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -116,14 +120,53 @@ impl TrafficTraceMemoryFailureRecord {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TrafficTraceControlFailureSource {
+    Sync(TrafficTraceSyncEvent),
+    Tlb(TrafficTraceTlbEvent),
+    Cache(TrafficTraceCacheEvent),
+    Htm(TrafficTraceHtmEvent),
+    Diagnostic(TrafficTraceDiagnosticEvent),
+}
+
+impl TrafficTraceControlFailureSource {
+    pub const fn from_replay_source(source: &TrafficTraceReplaySource) -> Option<Self> {
+        match source {
+            TrafficTraceReplaySource::Memory(_) => None,
+            TrafficTraceReplaySource::Sync(event) => Some(Self::Sync(*event)),
+            TrafficTraceReplaySource::Tlb(event) => Some(Self::Tlb(*event)),
+            TrafficTraceReplaySource::Cache(event) => Some(Self::Cache(*event)),
+            TrafficTraceReplaySource::Htm(event) => Some(Self::Htm(*event)),
+            TrafficTraceReplaySource::Diagnostic(event) => Some(Self::Diagnostic(*event)),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TrafficTraceControlFailureRecord {
     tick: u64,
     failure: TrafficTraceControlFailure,
+    source: Option<TrafficTraceControlFailureSource>,
 }
 
 impl TrafficTraceControlFailureRecord {
     pub const fn new(tick: u64, failure: TrafficTraceControlFailure) -> Self {
-        Self { tick, failure }
+        Self {
+            tick,
+            failure,
+            source: None,
+        }
+    }
+
+    pub const fn with_source(
+        tick: u64,
+        failure: TrafficTraceControlFailure,
+        source: Option<TrafficTraceControlFailureSource>,
+    ) -> Self {
+        Self {
+            tick,
+            failure,
+            source,
+        }
     }
 
     pub const fn tick(self) -> u64 {
@@ -133,11 +176,33 @@ impl TrafficTraceControlFailureRecord {
     pub const fn failure(self) -> TrafficTraceControlFailure {
         self.failure
     }
+
+    pub const fn source(self) -> Option<TrafficTraceControlFailureSource> {
+        self.source
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct TrafficTraceReplayQueuedAction {
+    action: TrafficTraceReplayAction,
+    control_failure_source: Option<TrafficTraceControlFailureSource>,
+}
+
+impl TrafficTraceReplayQueuedAction {
+    const fn new(
+        action: TrafficTraceReplayAction,
+        control_failure_source: Option<TrafficTraceControlFailureSource>,
+    ) -> Self {
+        Self {
+            action,
+            control_failure_source,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct TrafficTraceReplayActionQueue {
-    actions: VecDeque<TrafficTraceReplayAction>,
+    actions: VecDeque<TrafficTraceReplayQueuedAction>,
     summary: TrafficTraceReplaySummary,
 }
 
@@ -146,9 +211,24 @@ impl TrafficTraceReplayActionQueue {
         &mut self,
         batch: &TrafficControllerEventBatch,
     ) -> Result<(), TrafficGeneratorError> {
+        let mut control_failure_source = None;
         for event in batch.events() {
-            if let TrafficControllerEvent::TraceReplayAction(action) = event {
-                self.record_action(action.clone())?;
+            match event {
+                TrafficControllerEvent::TraceErrorMatch(error) => {
+                    control_failure_source =
+                        TrafficTraceControlFailureSource::from_replay_source(error.source());
+                }
+                TrafficControllerEvent::TraceReplayAction(action) => {
+                    let source =
+                        if matches!(action, TrafficTraceReplayAction::ControlFailure { .. }) {
+                            control_failure_source.take()
+                        } else {
+                            None
+                        };
+                    self.record_action_with_control_failure_source(action.clone(), source)?;
+                    control_failure_source = None;
+                }
+                _ => {}
             }
         }
         Ok(())
@@ -158,25 +238,38 @@ impl TrafficTraceReplayActionQueue {
         &mut self,
         action: TrafficTraceReplayAction,
     ) -> Result<(), TrafficGeneratorError> {
+        self.record_action_with_control_failure_source(action, None)
+    }
+
+    fn record_action_with_control_failure_source(
+        &mut self,
+        action: TrafficTraceReplayAction,
+        control_failure_source: Option<TrafficTraceControlFailureSource>,
+    ) -> Result<(), TrafficGeneratorError> {
         self.summary.record_action(&action)?;
-        self.actions.push_back(action);
+        self.actions.push_back(TrafficTraceReplayQueuedAction::new(
+            action,
+            control_failure_source,
+        ));
         Ok(())
     }
 
     pub fn pop_action(&mut self) -> Option<TrafficTraceReplayAction> {
-        self.actions.pop_front()
+        self.actions.pop_front().map(|queued| queued.action)
     }
 
     pub fn peek_action(&self) -> Option<&TrafficTraceReplayAction> {
-        self.actions.front()
+        self.actions.front().map(|queued| &queued.action)
     }
 
     pub fn pop_memory_response(&mut self) -> Option<TrafficTraceMemoryResponseRecord> {
-        let index = self
-            .actions
-            .iter()
-            .position(|action| matches!(action, TrafficTraceReplayAction::MemoryResponse { .. }))?;
-        match self.actions.remove(index)? {
+        let index = self.actions.iter().position(|queued| {
+            matches!(
+                queued.action,
+                TrafficTraceReplayAction::MemoryResponse { .. }
+            )
+        })?;
+        match self.actions.remove(index)?.action {
             TrafficTraceReplayAction::MemoryResponse {
                 tick,
                 response,
@@ -189,11 +282,10 @@ impl TrafficTraceReplayActionQueue {
     }
 
     pub fn pop_control_ack_tick(&mut self) -> Option<u64> {
-        let index = self
-            .actions
-            .iter()
-            .position(|action| matches!(action, TrafficTraceReplayAction::ControlAck { .. }))?;
-        match self.actions.remove(index)? {
+        let index = self.actions.iter().position(|queued| {
+            matches!(queued.action, TrafficTraceReplayAction::ControlAck { .. })
+        })?;
+        match self.actions.remove(index)?.action {
             TrafficTraceReplayAction::ControlAck { tick } => Some(tick),
             _ => unreachable!("selected control acknowledgement action"),
         }
@@ -202,13 +294,13 @@ impl TrafficTraceReplayActionQueue {
     pub fn pop_memory_write_completion(
         &mut self,
     ) -> Option<TrafficTraceMemoryWriteCompletionRecord> {
-        let index = self.actions.iter().position(|action| {
+        let index = self.actions.iter().position(|queued| {
             matches!(
-                action,
+                queued.action,
                 TrafficTraceReplayAction::MemoryWriteCompletion { .. }
             )
         })?;
-        match self.actions.remove(index)? {
+        match self.actions.remove(index)?.action {
             TrafficTraceReplayAction::MemoryWriteCompletion {
                 tick,
                 request,
@@ -225,11 +317,13 @@ impl TrafficTraceReplayActionQueue {
     }
 
     pub fn pop_memory_failure(&mut self) -> Option<TrafficTraceMemoryFailureRecord> {
-        let index = self
-            .actions
-            .iter()
-            .position(|action| matches!(action, TrafficTraceReplayAction::MemoryFailure { .. }))?;
-        match self.actions.remove(index)? {
+        let index = self.actions.iter().position(|queued| {
+            matches!(
+                queued.action,
+                TrafficTraceReplayAction::MemoryFailure { .. }
+            )
+        })?;
+        match self.actions.remove(index)?.action {
             TrafficTraceReplayAction::MemoryFailure { tick, failure } => {
                 Some(TrafficTraceMemoryFailureRecord::new(tick, failure))
             }
@@ -238,13 +332,20 @@ impl TrafficTraceReplayActionQueue {
     }
 
     pub fn pop_control_failure(&mut self) -> Option<TrafficTraceControlFailureRecord> {
-        let index = self
-            .actions
-            .iter()
-            .position(|action| matches!(action, TrafficTraceReplayAction::ControlFailure { .. }))?;
-        match self.actions.remove(index)? {
+        let index = self.actions.iter().position(|queued| {
+            matches!(
+                queued.action,
+                TrafficTraceReplayAction::ControlFailure { .. }
+            )
+        })?;
+        let queued = self.actions.remove(index)?;
+        match queued.action {
             TrafficTraceReplayAction::ControlFailure { tick, failure } => {
-                Some(TrafficTraceControlFailureRecord::new(tick, failure))
+                Some(TrafficTraceControlFailureRecord::with_source(
+                    tick,
+                    failure,
+                    queued.control_failure_source,
+                ))
             }
             _ => unreachable!("selected control failure action"),
         }

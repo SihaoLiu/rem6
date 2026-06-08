@@ -19,9 +19,10 @@ use crate::{
 mod trace_replay_queue;
 
 pub use trace_replay_queue::{
-    TrafficTraceControlFailureRecord, TrafficTraceMemoryFailureRecord,
-    TrafficTraceMemoryResponseRecord, TrafficTraceMemoryWriteCompletionRecord,
-    TrafficTraceReplayActionQueue, TrafficTraceReplaySummary,
+    TrafficTraceControlFailureRecord, TrafficTraceControlFailureSource,
+    TrafficTraceMemoryFailureRecord, TrafficTraceMemoryResponseRecord,
+    TrafficTraceMemoryWriteCompletionRecord, TrafficTraceReplayActionQueue,
+    TrafficTraceReplaySummary,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]

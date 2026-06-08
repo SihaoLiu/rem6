@@ -7,8 +7,8 @@ use rem6_kernel::{ParallelSchedulerContext, SchedulerContext, Tick};
 use rem6_memory::MemoryRequestId;
 use rem6_traffic::{
     TrafficController, TrafficControllerEvent, TrafficControllerEventBatch, TrafficGeneratorError,
-    TrafficTraceControlFailureRecord, TrafficTraceErrorEvent, TrafficTraceHtmEvent,
-    TrafficTraceMemoryFailureRecord, TrafficTraceMemoryWriteCompletionRecord,
+    TrafficTraceControlFailureRecord, TrafficTraceControlFailureSource, TrafficTraceErrorEvent,
+    TrafficTraceHtmEvent, TrafficTraceMemoryFailureRecord, TrafficTraceMemoryWriteCompletionRecord,
     TrafficTraceReplayAction, TrafficTraceReplayActionQueue, TrafficTraceReplaySource,
     TrafficTraceResponseEvent, TrafficTraceResponseKind, TrafficTraceSyncEvent,
 };
@@ -343,6 +343,7 @@ impl TrafficTraceReplayControlSource {
 struct TrafficTraceReplayControlAction {
     action: TrafficTraceReplayAction,
     source: Option<TrafficTraceReplayControlSource>,
+    failure_source: Option<TrafficTraceControlFailureSource>,
     trace_order: TrafficTraceReplayOrder,
 }
 
@@ -366,6 +367,7 @@ impl TrafficTraceReplayControlRuntime {
         batch: &TrafficControllerEventBatch,
     ) -> Result<(), rem6_traffic::TrafficGeneratorError> {
         let mut matched_source = None;
+        let mut matched_failure_source = None;
         let mut matched_order = None;
         for event in batch.events() {
             match event {
@@ -380,6 +382,7 @@ impl TrafficTraceReplayControlRuntime {
                 TrafficControllerEvent::TraceResponseMatch(response) => {
                     matched_source =
                         TrafficTraceReplayControlSource::from_replay_source(response.source());
+                    matched_failure_source = None;
                     let response = response.response();
                     matched_order = Some(TrafficTraceReplayOrder::new(
                         response.tick(),
@@ -387,8 +390,10 @@ impl TrafficTraceReplayControlRuntime {
                     ));
                 }
                 TrafficControllerEvent::TraceErrorMatch(error) => {
-                    matched_source =
-                        TrafficTraceReplayControlSource::from_replay_source(error.source());
+                    let source = error.source();
+                    matched_source = TrafficTraceReplayControlSource::from_replay_source(source);
+                    matched_failure_source =
+                        TrafficTraceControlFailureSource::from_replay_source(source);
                     let error = error.error();
                     matched_order =
                         Some(TrafficTraceReplayOrder::new(error.tick(), error.sequence()));
@@ -402,15 +407,18 @@ impl TrafficTraceReplayControlRuntime {
                 {
                     if matched_order.is_some() && matched_source.is_none() {
                         if let TrafficTraceReplayAction::ControlFailure { tick, failure } = action {
-                            self.record_control_failure(
+                            let record = TrafficTraceControlFailureRecord::with_source(
                                 *tick,
-                                TrafficTraceControlFailureRecord::new(*tick, *failure),
+                                *failure,
+                                matched_failure_source.take(),
                             );
+                            self.record_control_failure(*tick, record);
                         }
                     } else {
                         self.actions.push_back(TrafficTraceReplayControlAction {
                             action: action.clone(),
                             source: matched_source.take(),
+                            failure_source: matched_failure_source.take(),
                             trace_order: matched_order.take().unwrap_or_else(|| {
                                 TrafficTraceReplayOrder::new(action.tick(), u64::MAX)
                             }),
@@ -421,6 +429,7 @@ impl TrafficTraceReplayControlRuntime {
                 }
                 TrafficControllerEvent::TraceReplayAction(_) => {
                     matched_source = None;
+                    matched_failure_source = None;
                     matched_order = None;
                 }
                 _ => {}
@@ -463,7 +472,11 @@ impl TrafficTraceReplayControlRuntime {
                 let delay = control_failure_delay(delivery_tick, *tick)?;
                 TrafficTraceReplayControlEvent::ControlFailure {
                     delay,
-                    record: TrafficTraceControlFailureRecord::new(*tick, *failure),
+                    record: TrafficTraceControlFailureRecord::with_source(
+                        *tick,
+                        *failure,
+                        control_action.failure_source,
+                    ),
                 }
             }
             action => {
@@ -1338,14 +1351,6 @@ pub enum TrafficTraceReplayControlEvent {
         delay: Tick,
         record: TrafficTraceControlFailureRecord,
     },
-}
-
-impl TrafficTraceReplayControlEvent {
-    pub const fn control_delay(&self) -> Tick {
-        match self {
-            Self::ControlAck { delay, .. } | Self::ControlFailure { delay, .. } => *delay,
-        }
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

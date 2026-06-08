@@ -15,8 +15,8 @@ use rem6_system::{
 };
 use rem6_traffic::{
     TrafficControllerEvent, TrafficControllerEventBatch, TrafficTraceControlFailure,
-    TrafficTraceErrorKind, TrafficTraceMemoryFailure, TrafficTraceReplayAction,
-    TrafficTraceReplayActionQueue, TrafficTraceResponseKind,
+    TrafficTraceControlFailureSource, TrafficTraceErrorKind, TrafficTraceMemoryFailure,
+    TrafficTraceReplayAction, TrafficTraceReplayActionQueue, TrafficTraceResponseKind,
 };
 use rem6_transport::{
     MemoryRoute, MemoryTrace, MemoryTraceEvent, MemoryTraceKind, MemoryTransport, ResponseDelivery,
@@ -1500,6 +1500,14 @@ fn traffic_trace_replay_controller_parallel_executor_records_no_response_control
         control_failure.record().failure().error(),
         TrafficTraceErrorKind::Write
     );
+    match control_failure.record().source().unwrap() {
+        TrafficTraceControlFailureSource::Cache(source) => {
+            assert_eq!(source.tick(), 2);
+            assert_eq!(source.sequence(), 0);
+            assert_eq!(source.trace_packet_id(), Some(150));
+        }
+        source => panic!("unexpected control failure source: {source:?}"),
+    }
     assert_eq!(runtime.lock().unwrap().sideband_events().len(), 1);
     assert!(runtime.lock().unwrap().is_empty());
 }
