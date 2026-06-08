@@ -125,6 +125,10 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
         let memory_response_records = self.records.memory_response_snapshot();
         let response_status_counts =
             traffic_trace_replay_response_status_counts(memory_response_records.as_slice());
+        let trace_response_data_byte_count = memory_response_records
+            .iter()
+            .filter_map(|record| record.response_data_bytes())
+            .sum();
         let memory_failure_records = self.records.memory_failure_snapshot();
         let memory_failure_kind_counts =
             traffic_trace_replay_memory_failure_kind_counts(memory_failure_records.as_slice());
@@ -146,6 +150,7 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
             .with_trace_store_conditional_failed_response_count(
                 response_status_counts.store_conditional_failed,
             )
+            .with_trace_response_data_byte_count(trace_response_data_byte_count)
             .with_memory_trace_event_count(self.trace.snapshot().len())
             .with_memory_write_completion_count(runtime.memory_write_completions().len())
             .with_trace_data_cache_response_count(trace_data_cache_response_count)

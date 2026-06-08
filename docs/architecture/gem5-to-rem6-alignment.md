@@ -3007,6 +3007,9 @@ and manifest expectations. Those status counts come from target-completion
 records rather than endpoint response deliveries, so manifests can require
 executable response matching even when the trace response is retained for audit
 or data-cache policy consumers separately from a transport-delivered response.
+The same replay summaries now count executable response payload bytes from the
+matched target-completion records, so manifests can require gem5 `HasData`
+response evidence instead of only response-status matches.
 Trace policy accessors are not treated as coverage by themselves. New response,
 error, sideband, or HTM policy exposure should land only with a controller,
 runtime, workload, cache, CPU, or diagnostic consumer, or with an explicit
