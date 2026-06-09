@@ -81,6 +81,7 @@ pub enum GuestEventKind {
     RoiEnd,
     StatsReset,
     StatsDump,
+    StatsDumpReset,
     ExecutionModeSwitch {
         target: ExecutionModeTarget,
         mode: ExecutionMode,
@@ -437,6 +438,9 @@ impl HostEventPolicy {
                 vec![HostAction::ResetStats]
             }
             GuestEventKind::RoiEnd | GuestEventKind::StatsDump => vec![HostAction::DumpStats],
+            GuestEventKind::StatsDumpReset => {
+                vec![HostAction::DumpStats, HostAction::ResetStats]
+            }
             GuestEventKind::ExecutionModeSwitch { target, mode } => {
                 vec![HostAction::SwitchExecutionMode {
                     target: target.clone(),

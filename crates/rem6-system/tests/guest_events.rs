@@ -445,6 +445,14 @@ fn host_event_policy_maps_structured_events_to_actions() {
     );
     assert_eq!(
         policy.actions_for(&GuestEvent::new(
+            GuestEventId::new(22),
+            GuestSourceId::new(3),
+            GuestEventKind::StatsDumpReset,
+        )),
+        vec![HostAction::DumpStats, HostAction::ResetStats]
+    );
+    assert_eq!(
+        policy.actions_for(&GuestEvent::new(
             GuestEventId::new(3),
             GuestSourceId::new(3),
             GuestEventKind::Checkpoint {

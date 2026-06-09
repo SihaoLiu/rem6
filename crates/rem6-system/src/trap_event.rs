@@ -679,6 +679,18 @@ fn guest_event_from_riscv_system_event(
                 code: gem5_fail_stop_code(*code),
             },
         }),
+        Some(RiscvSystemEvent::Gem5ResetStats { delay, .. }) => Some(RiscvGuestEventSchedule {
+            delay: *delay,
+            kind: GuestEventKind::StatsReset,
+        }),
+        Some(RiscvSystemEvent::Gem5DumpStats { delay, .. }) => Some(RiscvGuestEventSchedule {
+            delay: *delay,
+            kind: GuestEventKind::StatsDump,
+        }),
+        Some(RiscvSystemEvent::Gem5DumpResetStats { delay, .. }) => Some(RiscvGuestEventSchedule {
+            delay: *delay,
+            kind: GuestEventKind::StatsDumpReset,
+        }),
         Some(RiscvSystemEvent::Gem5WorkBegin {
             work_id, thread_id, ..
         }) => Some(RiscvGuestEventSchedule {

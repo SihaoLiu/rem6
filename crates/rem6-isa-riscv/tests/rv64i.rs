@@ -2160,6 +2160,96 @@ fn hart_decodes_and_records_gem5_exit_fail_pseudo_ops() {
 }
 
 #[test]
+fn hart_decodes_and_records_gem5_stats_pseudo_ops() {
+    let reset = RiscvInstruction::decode(gem5_m5op_type(0x40)).unwrap();
+    let dump = RiscvInstruction::decode(gem5_m5op_type(0x41)).unwrap();
+    let dump_reset = RiscvInstruction::decode(gem5_m5op_type(0x42)).unwrap();
+
+    assert_eq!(
+        reset,
+        RiscvInstruction::Gem5PseudoOp {
+            op: RiscvPseudoOp::ResetStats
+        }
+    );
+    assert_eq!(
+        dump,
+        RiscvInstruction::Gem5PseudoOp {
+            op: RiscvPseudoOp::DumpStats
+        }
+    );
+    assert_eq!(
+        dump_reset,
+        RiscvInstruction::Gem5PseudoOp {
+            op: RiscvPseudoOp::DumpResetStats
+        }
+    );
+
+    let mut hart = RiscvHartState::new(0x7400);
+    hart.write(reg(10), 4);
+    hart.write(reg(11), 0x20);
+    let reset_record = hart.execute(reset).unwrap();
+    assert_eq!(reset_record.pc(), 0x7400);
+    assert_eq!(reset_record.next_pc(), 0x7404);
+    assert_eq!(hart.pc(), 0x7404);
+    assert_eq!(
+        reset_record.system_event(),
+        Some(&RiscvSystemEvent::Gem5ResetStats {
+            pc: 0x7400,
+            delay: 4,
+            period: 0x20,
+        })
+    );
+    assert_eq!(
+        reset_record.register_writes(),
+        &[RegisterWrite::new(reg(10), 0)]
+    );
+    assert_eq!(reset_record.memory_access(), None);
+    assert_eq!(hart.read(reg(10)), 0);
+
+    hart.write(reg(10), 5);
+    hart.write(reg(11), 0x21);
+    let dump_record = hart.execute(dump).unwrap();
+    assert_eq!(dump_record.pc(), 0x7404);
+    assert_eq!(dump_record.next_pc(), 0x7408);
+    assert_eq!(hart.pc(), 0x7408);
+    assert_eq!(
+        dump_record.system_event(),
+        Some(&RiscvSystemEvent::Gem5DumpStats {
+            pc: 0x7404,
+            delay: 5,
+            period: 0x21,
+        })
+    );
+    assert_eq!(
+        dump_record.register_writes(),
+        &[RegisterWrite::new(reg(10), 0)]
+    );
+    assert_eq!(dump_record.memory_access(), None);
+    assert_eq!(hart.read(reg(10)), 0);
+
+    hart.write(reg(10), 6);
+    hart.write(reg(11), 0x22);
+    let dump_reset_record = hart.execute(dump_reset).unwrap();
+    assert_eq!(dump_reset_record.pc(), 0x7408);
+    assert_eq!(dump_reset_record.next_pc(), 0x740c);
+    assert_eq!(hart.pc(), 0x740c);
+    assert_eq!(
+        dump_reset_record.system_event(),
+        Some(&RiscvSystemEvent::Gem5DumpResetStats {
+            pc: 0x7408,
+            delay: 6,
+            period: 0x22,
+        })
+    );
+    assert_eq!(
+        dump_reset_record.register_writes(),
+        &[RegisterWrite::new(reg(10), 0)]
+    );
+    assert_eq!(dump_reset_record.memory_access(), None);
+    assert_eq!(hart.read(reg(10)), 0);
+}
+
+#[test]
 fn hart_executes_machine_return_from_machine_mode() {
     let mut hart = RiscvHartState::new(0x7000);
     hart.set_machine_exception_pc(0x9000);

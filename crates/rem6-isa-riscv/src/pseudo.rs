@@ -6,6 +6,9 @@ use crate::{
 pub enum RiscvPseudoOp {
     Exit,
     Fail,
+    ResetStats,
+    DumpStats,
+    DumpResetStats,
     WorkBegin,
     WorkEnd,
 }
@@ -20,6 +23,15 @@ pub(crate) fn decode_gem5_pseudo_op(raw: u32) -> Result<RiscvInstruction, RiscvE
         }),
         0x22 => Ok(RiscvInstruction::Gem5PseudoOp {
             op: RiscvPseudoOp::Fail,
+        }),
+        0x40 => Ok(RiscvInstruction::Gem5PseudoOp {
+            op: RiscvPseudoOp::ResetStats,
+        }),
+        0x41 => Ok(RiscvInstruction::Gem5PseudoOp {
+            op: RiscvPseudoOp::DumpStats,
+        }),
+        0x42 => Ok(RiscvInstruction::Gem5PseudoOp {
+            op: RiscvPseudoOp::DumpResetStats,
         }),
         0x5a => Ok(RiscvInstruction::Gem5PseudoOp {
             op: RiscvPseudoOp::WorkBegin,
@@ -44,6 +56,21 @@ pub(crate) fn gem5_pseudo_system_event(
             pc,
             delay: a0,
             code: a1,
+        },
+        RiscvPseudoOp::ResetStats => RiscvSystemEvent::Gem5ResetStats {
+            pc,
+            delay: a0,
+            period: a1,
+        },
+        RiscvPseudoOp::DumpStats => RiscvSystemEvent::Gem5DumpStats {
+            pc,
+            delay: a0,
+            period: a1,
+        },
+        RiscvPseudoOp::DumpResetStats => RiscvSystemEvent::Gem5DumpResetStats {
+            pc,
+            delay: a0,
+            period: a1,
         },
         RiscvPseudoOp::WorkBegin => RiscvSystemEvent::Gem5WorkBegin {
             pc,

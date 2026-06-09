@@ -47,6 +47,21 @@ pub enum RiscvSystemEvent {
         delay: u64,
         code: u64,
     },
+    Gem5ResetStats {
+        pc: u64,
+        delay: u64,
+        period: u64,
+    },
+    Gem5DumpStats {
+        pc: u64,
+        delay: u64,
+        period: u64,
+    },
+    Gem5DumpResetStats {
+        pc: u64,
+        delay: u64,
+        period: u64,
+    },
     Gem5WorkBegin {
         pc: u64,
         work_id: u64,
