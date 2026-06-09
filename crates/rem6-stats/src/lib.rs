@@ -2,6 +2,7 @@ mod comm_monitor;
 mod error;
 mod inst_tracker;
 mod kind;
+mod mem_checker;
 mod mem_footprint;
 mod mem_trace;
 mod pc_count;
@@ -20,6 +21,11 @@ pub use inst_tracker::{
     GlobalInstTracker, GlobalInstTrackerSnapshot, InstTrackerUpdate, LocalInstTracker,
 };
 pub use kind::StatKind;
+pub use mem_checker::{
+    MemChecker, MemCheckerByteSnapshot, MemCheckerReadFailure, MemCheckerReadResult,
+    MemCheckerSnapshot, MemCheckerStartedTransaction, MemCheckerTransaction,
+    MemCheckerWriteClusterSnapshot, MemCheckerWriteResult,
+};
 pub use mem_footprint::{
     MemFootprintAddressRange, MemFootprintGranularity, MemFootprintProbe, MemFootprintProbeConfig,
     MemFootprintProbeSnapshot, MemFootprintStats,

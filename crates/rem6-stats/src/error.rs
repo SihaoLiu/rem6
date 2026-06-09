@@ -291,6 +291,46 @@ pub enum StatsError {
     MemTraceSnapshotZeroProgramCounter {
         tick: Tick,
     },
+    InvalidMemCheckerAccessSize {
+        size: usize,
+    },
+    MemCheckerAddressRangeOverflow {
+        address: u64,
+        size: usize,
+    },
+    MemCheckerTransactionTimeWentBack {
+        serial: u64,
+        start_tick: Tick,
+        complete_tick: Tick,
+    },
+    MemCheckerWriteAlreadyCompleted {
+        serial: u64,
+    },
+    DuplicateMemCheckerSnapshotAddress {
+        address: u64,
+    },
+    EmptyMemCheckerReadObservations {
+        address: u64,
+    },
+    DuplicateMemCheckerSnapshotSerial {
+        serial: u64,
+    },
+    MemCheckerSnapshotSerialCursorBehind {
+        next_serial: u64,
+        highest_serial: u64,
+    },
+    MemCheckerSnapshotClusterIncompleteMismatch {
+        expected: usize,
+        observed: usize,
+    },
+    MemCheckerSnapshotClusterCompletionMismatch {
+        expected: Tick,
+        observed: Tick,
+    },
+    MemCheckerSerialOverflow,
+    MemCheckerCounterOverflow {
+        name: &'static str,
+    },
     InvalidStackDistLineSize {
         line_size: u64,
     },
@@ -781,6 +821,56 @@ impl fmt::Display for StatsError {
                 formatter,
                 "memory trace snapshot record at tick {tick} carries a zero PC"
             ),
+            Self::InvalidMemCheckerAccessSize { size } => {
+                write!(formatter, "memory checker access size {size} must not be zero")
+            }
+            Self::MemCheckerAddressRangeOverflow { address, size } => write!(
+                formatter,
+                "memory checker address range starting at {address:#x} with size {size} overflows"
+            ),
+            Self::MemCheckerTransactionTimeWentBack {
+                serial,
+                start_tick,
+                complete_tick,
+            } => write!(
+                formatter,
+                "memory checker transaction {serial} completed at tick {complete_tick} before start tick {start_tick}"
+            ),
+            Self::MemCheckerWriteAlreadyCompleted { serial } => write!(
+                formatter,
+                "memory checker write transaction {serial} was already completed"
+            ),
+            Self::DuplicateMemCheckerSnapshotAddress { address } => write!(
+                formatter,
+                "memory checker snapshot has duplicate byte address {address:#x}"
+            ),
+            Self::EmptyMemCheckerReadObservations { address } => write!(
+                formatter,
+                "memory checker snapshot byte {address:#x} has no read observations"
+            ),
+            Self::DuplicateMemCheckerSnapshotSerial { serial } => write!(
+                formatter,
+                "memory checker snapshot has duplicate transaction serial {serial}"
+            ),
+            Self::MemCheckerSnapshotSerialCursorBehind {
+                next_serial,
+                highest_serial,
+            } => write!(
+                formatter,
+                "memory checker snapshot next serial {next_serial} does not exceed highest serial {highest_serial}"
+            ),
+            Self::MemCheckerSnapshotClusterIncompleteMismatch { expected, observed } => write!(
+                formatter,
+                "memory checker write cluster reports {observed} incomplete writes but contains {expected}"
+            ),
+            Self::MemCheckerSnapshotClusterCompletionMismatch { expected, observed } => write!(
+                formatter,
+                "memory checker write cluster completion maximum is {observed} but completed writes require {expected}"
+            ),
+            Self::MemCheckerSerialOverflow => write!(formatter, "memory checker serial overflowed"),
+            Self::MemCheckerCounterOverflow { name } => {
+                write!(formatter, "memory checker counter {name} overflowed")
+            }
             Self::InvalidStackDistLineSize { line_size } => write!(
                 formatter,
                 "stack distance line size {line_size} is not a nonzero power of two"
