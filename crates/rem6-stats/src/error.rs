@@ -211,6 +211,14 @@ pub enum StatsError {
         armed: bool,
         pending_targets: usize,
     },
+    DuplicateInstThreshold {
+        threshold: u64,
+    },
+    UnreachableInstThreshold {
+        threshold: u64,
+        counter: u64,
+    },
+    InstTrackerCounterOverflow,
     GroupSequenceOverflow,
     DumpSequenceOverflow,
     ResetSequenceOverflow,
@@ -494,6 +502,16 @@ impl fmt::Display for StatsError {
                 formatter,
                 "PC-count snapshot armed state {armed} conflicts with {pending_targets} pending targets"
             ),
+            Self::DuplicateInstThreshold { threshold } => {
+                write!(formatter, "instruction tracker has duplicate threshold {threshold}")
+            }
+            Self::UnreachableInstThreshold { threshold, counter } => write!(
+                formatter,
+                "instruction tracker threshold {threshold} is not above restored count {counter}"
+            ),
+            Self::InstTrackerCounterOverflow => {
+                write!(formatter, "instruction tracker counter overflowed")
+            }
             Self::GroupSequenceOverflow => write!(formatter, "stat group sequence overflowed"),
             Self::DumpSequenceOverflow => write!(formatter, "stat dump sequence overflowed"),
             Self::ResetSequenceOverflow => write!(formatter, "stat reset sequence overflowed"),

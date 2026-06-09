@@ -1,4 +1,5 @@
 mod error;
+mod inst_tracker;
 mod kind;
 mod pc_count;
 mod probes;
@@ -7,6 +8,9 @@ mod reset;
 mod stats;
 
 pub use error::StatsError;
+pub use inst_tracker::{
+    GlobalInstTracker, GlobalInstTrackerSnapshot, InstTrackerUpdate, LocalInstTracker,
+};
 pub use kind::StatKind;
 pub use pc_count::{
     PcCountPair, PcCountTracker, PcCountTrackerManager, PcCountTrackerSnapshot,
