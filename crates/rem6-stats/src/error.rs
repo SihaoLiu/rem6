@@ -270,6 +270,27 @@ pub enum StatsError {
     MemFootprintValueOverflow {
         granularity: MemFootprintGranularity,
     },
+    EmptyMemTraceObjectId,
+    InvalidMemTraceTickFrequency {
+        frequency: u64,
+    },
+    DuplicateMemTraceRequestor {
+        requestor: u32,
+    },
+    EmptyMemTraceRequestorName {
+        requestor: u32,
+    },
+    MemTraceRecordTimeWentBack {
+        previous_tick: Tick,
+        current_tick: Tick,
+    },
+    MemTraceSnapshotUnexpectedProgramCounter {
+        tick: Tick,
+        program_counter: u64,
+    },
+    MemTraceSnapshotZeroProgramCounter {
+        tick: Tick,
+    },
     GroupSequenceOverflow,
     DumpSequenceOverflow,
     ResetSequenceOverflow,
@@ -641,6 +662,40 @@ impl fmt::Display for StatsError {
             Self::MemFootprintValueOverflow { granularity } => write!(
                 formatter,
                 "memory footprint {granularity} value overflowed"
+            ),
+            Self::EmptyMemTraceObjectId => write!(
+                formatter,
+                "memory trace object id must not be empty"
+            ),
+            Self::InvalidMemTraceTickFrequency { frequency } => write!(
+                formatter,
+                "memory trace tick frequency {frequency} must not be zero"
+            ),
+            Self::DuplicateMemTraceRequestor { requestor } => write!(
+                formatter,
+                "memory trace requestor id {requestor} appears more than once"
+            ),
+            Self::EmptyMemTraceRequestorName { requestor } => write!(
+                formatter,
+                "memory trace requestor id {requestor} has an empty name"
+            ),
+            Self::MemTraceRecordTimeWentBack {
+                previous_tick,
+                current_tick,
+            } => write!(
+                formatter,
+                "memory trace record tick {current_tick} is before previous tick {previous_tick}"
+            ),
+            Self::MemTraceSnapshotUnexpectedProgramCounter {
+                tick,
+                program_counter,
+            } => write!(
+                formatter,
+                "memory trace snapshot record at tick {tick} has unexpected PC {program_counter:#x}"
+            ),
+            Self::MemTraceSnapshotZeroProgramCounter { tick } => write!(
+                formatter,
+                "memory trace snapshot record at tick {tick} carries a zero PC"
             ),
             Self::GroupSequenceOverflow => write!(formatter, "stat group sequence overflowed"),
             Self::DumpSequenceOverflow => write!(formatter, "stat dump sequence overflowed"),

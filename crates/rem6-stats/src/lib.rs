@@ -2,6 +2,7 @@ mod error;
 mod inst_tracker;
 mod kind;
 mod mem_footprint;
+mod mem_trace;
 mod pc_count;
 mod probes;
 mod registry;
@@ -16,6 +17,10 @@ pub use kind::StatKind;
 pub use mem_footprint::{
     MemFootprintAddressRange, MemFootprintGranularity, MemFootprintProbe, MemFootprintProbeConfig,
     MemFootprintProbeSnapshot, MemFootprintStats,
+};
+pub use mem_trace::{
+    MemTracePacketRecord, MemTraceProbe, MemTraceProbeConfig, MemTraceProbeHeader,
+    MemTraceProbeSnapshot,
 };
 pub use pc_count::{
     PcCountPair, PcCountTracker, PcCountTrackerManager, PcCountTrackerSnapshot,

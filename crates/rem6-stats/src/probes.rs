@@ -41,11 +41,24 @@ pub enum MemProbePacketKind {
 pub struct MemProbePacket {
     address: u64,
     kind: MemProbePacketKind,
+    command: u32,
+    flags: u64,
+    size: u64,
+    packet_id: u64,
+    program_counter: u64,
 }
 
 impl MemProbePacket {
     pub const fn new(address: u64, kind: MemProbePacketKind) -> Self {
-        Self { address, kind }
+        Self {
+            address,
+            kind,
+            command: 0,
+            flags: 0,
+            size: 0,
+            packet_id: 0,
+            program_counter: 0,
+        }
     }
 
     pub const fn request(address: u64) -> Self {
@@ -62,6 +75,51 @@ impl MemProbePacket {
 
     pub const fn kind(self) -> MemProbePacketKind {
         self.kind
+    }
+
+    pub const fn command(self) -> u32 {
+        self.command
+    }
+
+    pub const fn flags(self) -> u64 {
+        self.flags
+    }
+
+    pub const fn size(self) -> u64 {
+        self.size
+    }
+
+    pub const fn packet_id(self) -> u64 {
+        self.packet_id
+    }
+
+    pub const fn program_counter(self) -> u64 {
+        self.program_counter
+    }
+
+    pub const fn with_command(mut self, command: u32) -> Self {
+        self.command = command;
+        self
+    }
+
+    pub const fn with_flags(mut self, flags: u64) -> Self {
+        self.flags = flags;
+        self
+    }
+
+    pub const fn with_size(mut self, size: u64) -> Self {
+        self.size = size;
+        self
+    }
+
+    pub const fn with_packet_id(mut self, packet_id: u64) -> Self {
+        self.packet_id = packet_id;
+        self
+    }
+
+    pub const fn with_program_counter(mut self, program_counter: u64) -> Self {
+        self.program_counter = program_counter;
+        self
     }
 }
 
