@@ -221,6 +221,56 @@ fn rem6_trace_replay_uses_max_trace_tick_for_duration() {
 }
 
 #[test]
+fn rem6_trace_replay_emits_write_completion_bytes() {
+    let trace = temp_trace(
+        "trace-replay-write-completion",
+        &packet_trace_bytes(
+            1_000,
+            &[
+                PacketFields {
+                    tick: 0,
+                    command: GEM5_WRITE_REQ,
+                    address: Some(0x1800),
+                    size: Some(8),
+                    packet_id: Some(31),
+                },
+                PacketFields {
+                    tick: 3,
+                    command: GEM5_WRITE_RESP,
+                    address: Some(0x1800),
+                    size: Some(8),
+                    packet_id: Some(31),
+                },
+                PacketFields {
+                    tick: 5,
+                    command: GEM5_WRITE_COMPLETE_RESP,
+                    address: Some(0x1800),
+                    size: Some(8),
+                    packet_id: Some(31),
+                },
+            ],
+        ),
+    );
+    let output = trace_replay_output(&trace, "64");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"memory_write_completion_count\":1"));
+    assert!(stdout.contains("\"memory_write_completion_byte_count\":8"));
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.memory.write_completion_bytes",
+        "Byte",
+        8,
+        "monotonic",
+    );
+}
+
+#[test]
 fn rem6_trace_replay_digest_changes_with_trace_payload() {
     let first = temp_trace(
         "trace-replay-digest-a",

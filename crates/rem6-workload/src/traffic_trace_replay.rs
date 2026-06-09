@@ -30,6 +30,7 @@ pub struct WorkloadTrafficTraceReplaySummary {
     pub(in crate::traffic_trace_replay) trace_response_fill_data_byte_count: u64,
     pub(in crate::traffic_trace_replay) memory_trace_event_count: usize,
     pub(in crate::traffic_trace_replay) memory_write_completion_count: usize,
+    pub(in crate::traffic_trace_replay) memory_write_completion_byte_count: u64,
     pub(in crate::traffic_trace_replay) trace_data_cache_response_count: usize,
     pub(in crate::traffic_trace_replay) trace_data_cache_maintenance_response_count: usize,
     pub(in crate::traffic_trace_replay) trace_data_cache_clean_maintenance_response_count: usize,
@@ -109,6 +110,7 @@ impl WorkloadTrafficTraceReplaySummary {
             trace_response_fill_data_byte_count: 0,
             memory_trace_event_count: 0,
             memory_write_completion_count: 0,
+            memory_write_completion_byte_count: 0,
             trace_data_cache_response_count: 0,
             trace_data_cache_maintenance_response_count: 0,
             trace_data_cache_clean_maintenance_response_count: 0,
@@ -219,6 +221,14 @@ impl WorkloadTrafficTraceReplaySummary {
         memory_write_completion_count: usize,
     ) -> Self {
         self.memory_write_completion_count = memory_write_completion_count;
+        self
+    }
+
+    pub fn with_memory_write_completion_byte_count(
+        mut self,
+        memory_write_completion_byte_count: u64,
+    ) -> Self {
+        self.memory_write_completion_byte_count = memory_write_completion_byte_count;
         self
     }
 
@@ -577,6 +587,10 @@ impl WorkloadTrafficTraceReplaySummary {
         self.memory_write_completion_count
     }
 
+    pub const fn memory_write_completion_byte_count(&self) -> u64 {
+        self.memory_write_completion_byte_count
+    }
+
     pub const fn trace_data_cache_response_count(&self) -> usize {
         self.trace_data_cache_response_count
     }
@@ -795,6 +809,7 @@ pub struct WorkloadExpectedTrafficTraceReplaySummary {
     minimum_trace_response_fill_data_byte_count: u64,
     minimum_memory_trace_event_count: usize,
     minimum_memory_write_completion_count: usize,
+    minimum_memory_write_completion_byte_count: u64,
     minimum_trace_data_cache_response_count: usize,
     minimum_trace_data_cache_maintenance_response_count: usize,
     minimum_trace_data_cache_clean_maintenance_response_count: usize,
@@ -873,6 +888,7 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
             minimum_trace_response_fill_data_byte_count: 0,
             minimum_memory_trace_event_count: 0,
             minimum_memory_write_completion_count: 0,
+            minimum_memory_write_completion_byte_count: 0,
             minimum_trace_data_cache_response_count: 0,
             minimum_trace_data_cache_maintenance_response_count: 0,
             minimum_trace_data_cache_clean_maintenance_response_count: 0,
@@ -998,6 +1014,15 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
         minimum_memory_write_completion_count: usize,
     ) -> Self {
         self.minimum_memory_write_completion_count = minimum_memory_write_completion_count;
+        self
+    }
+
+    pub fn with_minimum_memory_write_completion_byte_count(
+        mut self,
+        minimum_memory_write_completion_byte_count: u64,
+    ) -> Self {
+        self.minimum_memory_write_completion_byte_count =
+            minimum_memory_write_completion_byte_count;
         self
     }
 
@@ -1431,6 +1456,10 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
 
     pub const fn minimum_memory_write_completion_count(&self) -> usize {
         self.minimum_memory_write_completion_count
+    }
+
+    pub const fn minimum_memory_write_completion_byte_count(&self) -> u64 {
+        self.minimum_memory_write_completion_byte_count
     }
 
     pub const fn minimum_trace_data_cache_response_count(&self) -> usize {

@@ -620,6 +620,7 @@ impl TrafficController {
                             TrafficTraceMemoryWriteCompletion::new(
                                 request.request().request().id(),
                                 request.request().request().line_address(),
+                                request.request().request().size().bytes(),
                                 *response,
                             ),
                         );
@@ -954,6 +955,7 @@ impl TrafficTraceMemoryCompletion {
 pub struct TrafficTraceMemoryWriteCompletion {
     request_id: MemoryRequestId,
     request_line: Address,
+    request_size_bytes: u64,
     response: TrafficTraceResponseEvent,
 }
 
@@ -961,11 +963,13 @@ impl TrafficTraceMemoryWriteCompletion {
     pub const fn new(
         request_id: MemoryRequestId,
         request_line: Address,
+        request_size_bytes: u64,
         response: TrafficTraceResponseEvent,
     ) -> Self {
         Self {
             request_id,
             request_line,
+            request_size_bytes,
             response,
         }
     }
@@ -976,6 +980,10 @@ impl TrafficTraceMemoryWriteCompletion {
 
     pub const fn request_line(self) -> Address {
         self.request_line
+    }
+
+    pub const fn request_size_bytes(self) -> u64 {
+        self.request_size_bytes
     }
 
     pub const fn response(self) -> TrafficTraceResponseEvent {
@@ -1013,6 +1021,7 @@ pub enum TrafficTraceReplayAction {
         tick: u64,
         request: MemoryRequestId,
         request_line: Address,
+        request_size_bytes: u64,
         response: TrafficTraceResponseEvent,
     },
     ControlAck {
@@ -1041,6 +1050,7 @@ impl TrafficTraceReplayAction {
                     tick,
                     request: completion.request_id(),
                     request_line: completion.request_line(),
+                    request_size_bytes: completion.request_size_bytes(),
                     response: completion.response(),
                 }
             }

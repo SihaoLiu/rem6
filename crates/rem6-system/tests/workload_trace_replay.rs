@@ -1094,6 +1094,65 @@ fn workload_replay_records_trace_write_completion_metadata() {
     let summary = &summaries[0];
     assert_eq!(summary.route(), &route_id("cpu0.data"));
     assert_eq!(summary.memory_write_completion_count(), 1);
+    assert_eq!(summary.memory_write_completion_byte_count(), 8);
+}
+
+#[test]
+fn workload_replay_counts_trace_write_completion_request_bytes_without_response_size() {
+    let manifest =
+        replay_manifest_with_data_cache("riscv-replay-trace-write-completion-request-bytes");
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let controller = controller_for_packet_records(&[
+        PacketRecord {
+            tick: 0,
+            command: GEM5_WRITE_REQ,
+            address: Some(0x9108),
+            size: Some(8),
+            flags: None,
+            packet_id: Some(919),
+            pc: None,
+        },
+        PacketRecord {
+            tick: 3,
+            command: GEM5_WRITE_RESP,
+            address: Some(0x9108),
+            size: Some(8),
+            flags: None,
+            packet_id: Some(919),
+            pc: None,
+        },
+        PacketRecord {
+            tick: 5,
+            command: GEM5_WRITE_COMPLETE_RESP,
+            address: Some(0x9108),
+            size: None,
+            flags: None,
+            packet_id: Some(919),
+            pc: None,
+        },
+    ]);
+
+    let outcome = RiscvWorkloadReplay::new(plan)
+        .with_max_turns(96)
+        .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
+            controller,
+            route_id("cpu0.data"),
+            PartitionId::new(2),
+        ))
+        .run_parallel()
+        .unwrap();
+
+    let traffic_replay = &outcome.traffic_trace_replays()[0];
+    assert!(traffic_replay.errors().is_empty());
+    assert_eq!(traffic_replay.memory_write_completion_records().len(), 1);
+    assert_eq!(
+        traffic_replay.memory_write_completion_records()[0].size_bytes(),
+        None,
+    );
+
+    let summary = &outcome.result().traffic_trace_replay_summaries()[0];
+    assert_eq!(summary.memory_write_completion_count(), 1);
+    assert_eq!(summary.memory_write_completion_byte_count(), 8);
 }
 
 #[test]

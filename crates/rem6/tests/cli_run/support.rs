@@ -6,6 +6,7 @@ pub(crate) const GEM5_READ_REQ: u32 = 1;
 pub(crate) const GEM5_READ_RESP: u32 = 2;
 pub(crate) const GEM5_WRITE_REQ: u32 = 4;
 pub(crate) const GEM5_WRITE_RESP: u32 = 5;
+pub(crate) const GEM5_WRITE_COMPLETE_RESP: u32 = 6;
 pub(crate) const GEM5_CLEAN_SHARED_REQ: u32 = 42;
 pub(crate) const GEM5_CLEAN_SHARED_RESP: u32 = 43;
 pub(crate) const GEM5_INVALIDATE_REQ: u32 = 54;

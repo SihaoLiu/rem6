@@ -132,6 +132,7 @@ impl TrafficTraceReplayTargetRuntime {
                         tick,
                         request,
                         request_line,
+                        request_size_bytes,
                         response,
                     },
                 ) => {
@@ -140,6 +141,7 @@ impl TrafficTraceReplayTargetRuntime {
                             *tick,
                             *request,
                             *request_line,
+                            *request_size_bytes,
                             *response,
                         ),
                     );

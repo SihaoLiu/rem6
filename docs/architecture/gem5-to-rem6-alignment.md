@@ -3163,10 +3163,10 @@ traffic trace replay outcome itself, including request id, response kind, trace
 order, address or matched-request line fallback, physical-address trace
 metadata, size, packet id, and PC, so `WriteCompleteResp` remains executable
 completion evidence rather than an audit-only trace accessor. Workload
-traffic-trace summaries and manifest expectations also carry a write-completion
-count, so replay artifacts can require the executable `WriteCompleteResp`
-consumer instead of inferring it from response deliveries or raw memory trace
-length.
+traffic-trace summaries and manifest expectations also carry write-completion
+count and byte-count checks, so replay artifacts can require the executable
+`WriteCompleteResp` consumer instead of inferring it from response deliveries
+or raw memory trace length.
 Every workload trace route also exposes matched memory failure metadata on the
 traffic trace replay outcome itself, including request id, error kind,
 trace order, address or matched-request line fallback, physical-address trace

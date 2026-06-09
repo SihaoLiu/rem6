@@ -284,6 +284,11 @@ fn traffic_trace_summary_json(
         "memory_write_completion_count",
         summary.memory_write_completion_count(),
     );
+    push_json_u64(
+        &mut fields,
+        "memory_write_completion_byte_count",
+        summary.memory_write_completion_byte_count(),
+    );
     push_json_usize(
         &mut fields,
         "trace_data_cache_response_count",

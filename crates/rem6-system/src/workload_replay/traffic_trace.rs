@@ -178,6 +178,11 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
             .iter()
             .map(|record| record.flushed_data_bytes())
             .sum();
+        let memory_write_completion_byte_count = runtime
+            .memory_write_completions()
+            .iter()
+            .map(|completion| completion.record().request_size_bytes())
+            .sum();
         WorkloadTrafficTraceReplaySummary::new(self.route.clone(), self.scheduled_count)
             .with_response_delivery_count(response_deliveries.len())
             .with_trace_completed_response_count(response_status_counts.completed)
@@ -198,6 +203,7 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
             .with_trace_response_fill_data_byte_count(trace_response_fill_data_byte_count)
             .with_memory_trace_event_count(self.trace.snapshot().len())
             .with_memory_write_completion_count(runtime.memory_write_completions().len())
+            .with_memory_write_completion_byte_count(memory_write_completion_byte_count)
             .with_trace_data_cache_response_count(trace_data_cache_response_count)
             .with_trace_data_cache_maintenance_response_count(
                 trace_data_cache_maintenance_response_count,

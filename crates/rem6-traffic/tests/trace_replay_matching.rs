@@ -228,6 +228,7 @@ fn traffic_controller_records_write_complete_response_after_write_resp() {
         TrafficTraceReplayCompletion::WriteCompletion(completion) => {
             assert_eq!(completion.request_id(), request.request().id());
             assert_eq!(completion.request_line(), Address::new(0x4080));
+            assert_eq!(completion.request_size_bytes(), 8);
             assert_eq!(completion.response(), write_complete);
         }
         completion => panic!("unexpected trace replay completion: {completion:?}"),
@@ -237,11 +238,13 @@ fn traffic_controller_records_write_complete_response_after_write_resp() {
             tick,
             request,
             request_line,
+            request_size_bytes,
             response,
         } => {
             assert_eq!(*tick, write_complete.tick());
             assert_eq!(*request, request_batch.request().unwrap().request().id());
             assert_eq!(*request_line, Address::new(0x4080));
+            assert_eq!(*request_size_bytes, 8);
             assert_eq!(*response, write_complete);
         }
         action => panic!("unexpected trace replay action: {action:?}"),

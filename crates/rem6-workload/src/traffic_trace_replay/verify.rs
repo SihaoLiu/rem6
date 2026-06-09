@@ -71,6 +71,8 @@ fn traffic_trace_replay_summary_meets_minimum(
         && actual.memory_trace_event_count() >= expected.minimum_memory_trace_event_count()
         && actual.memory_write_completion_count()
             >= expected.minimum_memory_write_completion_count()
+        && actual.memory_write_completion_byte_count()
+            >= expected.minimum_memory_write_completion_byte_count()
         && actual.trace_data_cache_response_count()
             >= expected.minimum_trace_data_cache_response_count()
         && actual.trace_data_cache_maintenance_response_count()

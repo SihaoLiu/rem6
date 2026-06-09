@@ -64,6 +64,7 @@ pub struct TrafficTraceMemoryWriteCompletionRecord {
     tick: u64,
     request_id: MemoryRequestId,
     request_line: Address,
+    request_size_bytes: u64,
     response: TrafficTraceResponseEvent,
 }
 
@@ -72,12 +73,14 @@ impl TrafficTraceMemoryWriteCompletionRecord {
         tick: u64,
         request_id: MemoryRequestId,
         request_line: Address,
+        request_size_bytes: u64,
         response: TrafficTraceResponseEvent,
     ) -> Self {
         Self {
             tick,
             request_id,
             request_line,
+            request_size_bytes,
             response,
         }
     }
@@ -92,6 +95,10 @@ impl TrafficTraceMemoryWriteCompletionRecord {
 
     pub const fn request_line(self) -> Address {
         self.request_line
+    }
+
+    pub const fn request_size_bytes(self) -> u64 {
+        self.request_size_bytes
     }
 
     pub const fn response(self) -> TrafficTraceResponseEvent {
@@ -305,11 +312,13 @@ impl TrafficTraceReplayActionQueue {
                 tick,
                 request,
                 request_line,
+                request_size_bytes,
                 response,
             } => Some(TrafficTraceMemoryWriteCompletionRecord::new(
                 tick,
                 request,
                 request_line,
+                request_size_bytes,
                 response,
             )),
             _ => unreachable!("selected memory write completion action"),

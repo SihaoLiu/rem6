@@ -27,6 +27,7 @@ pub(super) fn hash_expected_traffic_trace_replay_summary(
     }
     hash_u64(hash, expected.minimum_trace_response_data_byte_count());
     hash_u64(hash, expected.minimum_trace_response_fill_data_byte_count());
+    hash_u64(hash, expected.minimum_memory_write_completion_byte_count());
     for count in [
         expected.minimum_memory_trace_event_count(),
         expected.minimum_memory_write_completion_count(),

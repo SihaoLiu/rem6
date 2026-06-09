@@ -741,6 +741,13 @@ fn emit_trace_replay_summary_stats(
         "sim.trace_replay.trace_errors.functional_write",
         summary.trace_error_functional_write_count() as u64,
     )?;
+    increment_stat(
+        stats,
+        "sim.trace_replay.memory.write_completion_bytes",
+        "Byte",
+        StatResetPolicy::Monotonic,
+        summary.memory_write_completion_byte_count(),
+    )?;
     emit_trace_count(
         stats,
         "sim.trace_replay.htm.access",

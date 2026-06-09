@@ -40,6 +40,8 @@ impl WorkloadTrafficTraceReplaySummary {
                 + other.memory_trace_event_count,
             memory_write_completion_count: self.memory_write_completion_count
                 + other.memory_write_completion_count,
+            memory_write_completion_byte_count: self.memory_write_completion_byte_count
+                + other.memory_write_completion_byte_count,
             trace_data_cache_response_count: self.trace_data_cache_response_count
                 + other.trace_data_cache_response_count,
             trace_data_cache_maintenance_response_count: self
