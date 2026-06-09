@@ -35,6 +35,7 @@ impl ProbeListenerId {
 pub enum ProbePayload {
     Unit,
     Counter { amount: u64 },
+    ProgramCounter { pc: u64 },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -4,6 +4,7 @@ use std::fmt;
 use rem6_kernel::Tick;
 
 use crate::kind::StatKind;
+use crate::pc_count::PcCountPair;
 use crate::probes::{ProbeListenerId, ProbePointId};
 use crate::reset::StatResetPolicy;
 use crate::stats::{
@@ -193,6 +194,23 @@ pub enum StatsError {
     ProbePointSequenceOverflow,
     ProbeListenerSequenceOverflow,
     ProbeSequenceOverflow,
+    DuplicatePcCountCounter {
+        pc: u64,
+    },
+    DuplicatePcCountTarget {
+        pair: PcCountPair,
+    },
+    MissingPcCountCounter {
+        pc: u64,
+    },
+    UnreachablePcCountTarget {
+        pair: PcCountPair,
+        current_count: u64,
+    },
+    PcCountSnapshotTargetStateMismatch {
+        armed: bool,
+        pending_targets: usize,
+    },
     GroupSequenceOverflow,
     DumpSequenceOverflow,
     ResetSequenceOverflow,
@@ -447,6 +465,35 @@ impl fmt::Display for StatsError {
                 write!(formatter, "probe listener sequence overflowed")
             }
             Self::ProbeSequenceOverflow => write!(formatter, "probe event sequence overflowed"),
+            Self::DuplicatePcCountCounter { pc } => {
+                write!(formatter, "PC-count snapshot has duplicate PC {pc:#x}")
+            }
+            Self::DuplicatePcCountTarget { pair } => write!(
+                formatter,
+                "PC-count snapshot has duplicate target pair ({:#x},{})",
+                pair.pc(),
+                pair.count()
+            ),
+            Self::MissingPcCountCounter { pc } => write!(
+                formatter,
+                "PC-count snapshot target references missing PC counter {pc:#x}"
+            ),
+            Self::UnreachablePcCountTarget {
+                pair,
+                current_count,
+            } => write!(
+                formatter,
+                "PC-count snapshot target pair ({:#x},{}) is not above restored count {current_count}",
+                pair.pc(),
+                pair.count()
+            ),
+            Self::PcCountSnapshotTargetStateMismatch {
+                armed,
+                pending_targets,
+            } => write!(
+                formatter,
+                "PC-count snapshot armed state {armed} conflicts with {pending_targets} pending targets"
+            ),
             Self::GroupSequenceOverflow => write!(formatter, "stat group sequence overflowed"),
             Self::DumpSequenceOverflow => write!(formatter, "stat dump sequence overflowed"),
             Self::ResetSequenceOverflow => write!(formatter, "stat reset sequence overflowed"),
