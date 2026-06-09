@@ -168,7 +168,7 @@ pub(super) fn traffic_trace_replay_memory_failure_kind_counts(
     )
 }
 
-pub(super) fn traffic_trace_replay_data_cache_error_kind_counts(
+pub(super) fn traffic_trace_replay_trace_error_kind_counts(
     records: &[RiscvTraceErrorRecord],
 ) -> TrafficTraceReplayMemoryFailureKindCounts {
     records.iter().fold(

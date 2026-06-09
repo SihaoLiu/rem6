@@ -44,9 +44,9 @@ use super::traffic_trace_sync::{
 use super::RiscvWorkloadReplayError;
 use summary_counts::{
     traffic_trace_replay_control_failure_counts, traffic_trace_replay_control_failure_kind_counts,
-    traffic_trace_replay_data_cache_error_kind_counts,
     traffic_trace_replay_memory_failure_kind_counts, traffic_trace_replay_response_class_counts,
     traffic_trace_replay_response_status_counts, traffic_trace_replay_sideband_counts,
+    traffic_trace_replay_trace_error_kind_counts,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -165,8 +165,8 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
             .count();
         let trace_error_records = self.records.trace_error_snapshot();
         let trace_data_cache_error_count = trace_error_records.len();
-        let trace_data_cache_error_kind_counts =
-            traffic_trace_replay_data_cache_error_kind_counts(trace_error_records.as_slice());
+        let trace_error_kind_counts =
+            traffic_trace_replay_trace_error_kind_counts(trace_error_records.as_slice());
         let sync_control_ack_count = self
             .records
             .sync_snapshot()
@@ -210,18 +210,16 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
             )
             .with_trace_data_cache_error_count(trace_data_cache_error_count)
             .with_trace_data_cache_invalid_destination_error_count(
-                trace_data_cache_error_kind_counts.invalid_destination,
+                trace_error_kind_counts.invalid_destination,
             )
-            .with_trace_data_cache_bad_address_error_count(
-                trace_data_cache_error_kind_counts.bad_address,
-            )
-            .with_trace_data_cache_read_error_count(trace_data_cache_error_kind_counts.read)
-            .with_trace_data_cache_write_error_count(trace_data_cache_error_kind_counts.write)
+            .with_trace_data_cache_bad_address_error_count(trace_error_kind_counts.bad_address)
+            .with_trace_data_cache_read_error_count(trace_error_kind_counts.read)
+            .with_trace_data_cache_write_error_count(trace_error_kind_counts.write)
             .with_trace_data_cache_functional_read_error_count(
-                trace_data_cache_error_kind_counts.functional_read,
+                trace_error_kind_counts.functional_read,
             )
             .with_trace_data_cache_functional_write_error_count(
-                trace_data_cache_error_kind_counts.functional_write,
+                trace_error_kind_counts.functional_write,
             )
             .with_memory_failure_count(runtime.memory_failures().len())
             .with_memory_failure_invalid_destination_count(
@@ -233,6 +231,12 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
             .with_memory_failure_functional_read_count(memory_failure_kind_counts.functional_read)
             .with_memory_failure_functional_write_count(memory_failure_kind_counts.functional_write)
             .with_trace_error_count(trace_data_cache_error_count)
+            .with_trace_error_invalid_destination_count(trace_error_kind_counts.invalid_destination)
+            .with_trace_error_bad_address_count(trace_error_kind_counts.bad_address)
+            .with_trace_error_read_count(trace_error_kind_counts.read)
+            .with_trace_error_write_count(trace_error_kind_counts.write)
+            .with_trace_error_functional_read_count(trace_error_kind_counts.functional_read)
+            .with_trace_error_functional_write_count(trace_error_kind_counts.functional_write)
             .with_trace_htm_access_count(self.records.trace_htm_access_snapshot().len())
             .with_trace_htm_begin_count(self.records.htm_begin_snapshot().len())
             .with_control_ack_count(runtime.control_acks().len())

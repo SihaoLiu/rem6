@@ -1822,6 +1822,10 @@ fn workload_replay_does_not_mutate_data_cache_for_trace_write_error() {
     let summary = &outcome.result().traffic_trace_replay_summaries()[0];
     assert_eq!(summary.memory_failure_count(), 1);
     assert_eq!(summary.trace_error_count(), 1);
+    assert_eq!(summary.trace_error_read_count(), 0);
+    assert_eq!(summary.trace_error_write_count(), 1);
+    assert_eq!(summary.trace_error_functional_read_count(), 0);
+    assert_eq!(summary.trace_error_functional_write_count(), 0);
     assert_eq!(summary.trace_data_cache_error_count(), 1);
     assert_eq!(summary.trace_data_cache_read_error_count(), 0);
     assert_eq!(summary.trace_data_cache_write_error_count(), 1);
@@ -1976,6 +1980,10 @@ fn workload_replay_records_addressless_functional_write_error_from_request_conte
     let summary = &outcome.result().traffic_trace_replay_summaries()[0];
     assert_eq!(summary.memory_failure_count(), 1);
     assert_eq!(summary.trace_error_count(), 1);
+    assert_eq!(summary.trace_error_read_count(), 0);
+    assert_eq!(summary.trace_error_write_count(), 0);
+    assert_eq!(summary.trace_error_functional_read_count(), 0);
+    assert_eq!(summary.trace_error_functional_write_count(), 1);
     assert_eq!(summary.trace_data_cache_error_count(), 1);
     assert_eq!(summary.trace_data_cache_read_error_count(), 0);
     assert_eq!(summary.trace_data_cache_write_error_count(), 0);

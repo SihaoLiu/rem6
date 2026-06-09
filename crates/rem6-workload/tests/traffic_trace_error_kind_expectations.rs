@@ -54,6 +54,7 @@ fn workload_manifest_records_trace_error_expectations() {
         .with_minimum_scheduled_count(1)
         .with_minimum_memory_failure_count(1)
         .with_minimum_trace_error_count(1)
+        .with_minimum_trace_error_write_count(1)
         .with_minimum_trace_data_cache_error_count(1)
         .with_minimum_trace_data_cache_write_error_count(1)
         .with_minimum_memory_failure_write_count(1);
@@ -68,9 +69,11 @@ fn workload_manifest_records_trace_error_expectations() {
     let actual = WorkloadTrafficTraceReplaySummary::new(route_id("trace.error"), 1)
         .with_memory_failure_count(1)
         .with_trace_error_count(1)
+        .with_trace_error_write_count(1)
         .with_trace_data_cache_error_count(1)
         .with_trace_data_cache_write_error_count(1)
         .with_memory_failure_write_count(1);
+    assert_eq!(actual.trace_error_write_count(), 1);
     assert_eq!(actual.trace_data_cache_write_error_count(), 1);
     let result = WorkloadResult::new(plan.manifest_identity(), 32)
         .with_traffic_trace_replay_summary(actual.clone());
@@ -207,6 +210,55 @@ fn workload_manifest_identity_changes_with_trace_data_cache_error_kind_expectati
 
     assert_ne!(generic.identity(), write.identity());
     assert_ne!(write.identity(), functional_write.identity());
+}
+
+#[test]
+fn workload_manifest_identity_changes_with_trace_error_kind_expectations() {
+    let generic = manifest_with_expected(
+        "identity-trace-error-kind",
+        WorkloadExpectedTrafficTraceReplaySummary::new(route_id("trace.error"))
+            .with_minimum_trace_error_count(1),
+    );
+    let write = manifest_with_expected(
+        "identity-trace-error-kind",
+        WorkloadExpectedTrafficTraceReplaySummary::new(route_id("trace.error"))
+            .with_minimum_trace_error_count(1)
+            .with_minimum_trace_error_write_count(1),
+    );
+    let functional_write = manifest_with_expected(
+        "identity-trace-error-kind",
+        WorkloadExpectedTrafficTraceReplaySummary::new(route_id("trace.error"))
+            .with_minimum_trace_error_count(1)
+            .with_minimum_trace_error_functional_write_count(1),
+    );
+
+    assert_ne!(generic.identity(), write.identity());
+    assert_ne!(write.identity(), functional_write.identity());
+}
+
+#[test]
+fn workload_replay_plan_rejects_underreported_trace_error_kind_summary() {
+    let expected = WorkloadExpectedTrafficTraceReplaySummary::new(route_id("trace.error.kind"))
+        .with_minimum_trace_error_count(1)
+        .with_minimum_trace_error_write_count(1);
+    let manifest = manifest_with_expected("trace-error-kind-mismatch", expected.clone());
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let actual = WorkloadTrafficTraceReplaySummary::new(route_id("trace.error.kind"), 1)
+        .with_trace_error_count(1);
+    let underreported = WorkloadResult::new(plan.manifest_identity(), 32)
+        .with_traffic_trace_replay_summary(actual.clone());
+    let error = plan.verify_result(&underreported).unwrap_err();
+    assert_eq!(
+        error,
+        WorkloadError::TrafficTraceReplaySummaryExpectation(Box::new(
+            WorkloadTrafficTraceReplaySummaryExpectationError::BelowMinimum { expected, actual },
+        )),
+    );
+    assert!(
+        error.to_string().contains("trace write errors 0/1"),
+        "{error}"
+    );
 }
 
 #[test]

@@ -713,6 +713,36 @@ fn emit_trace_replay_summary_stats(
     )?;
     emit_trace_count(
         stats,
+        "sim.trace_replay.trace_errors.invalid_destination",
+        summary.trace_error_invalid_destination_count() as u64,
+    )?;
+    emit_trace_count(
+        stats,
+        "sim.trace_replay.trace_errors.bad_address",
+        summary.trace_error_bad_address_count() as u64,
+    )?;
+    emit_trace_count(
+        stats,
+        "sim.trace_replay.trace_errors.read",
+        summary.trace_error_read_count() as u64,
+    )?;
+    emit_trace_count(
+        stats,
+        "sim.trace_replay.trace_errors.write",
+        summary.trace_error_write_count() as u64,
+    )?;
+    emit_trace_count(
+        stats,
+        "sim.trace_replay.trace_errors.functional_read",
+        summary.trace_error_functional_read_count() as u64,
+    )?;
+    emit_trace_count(
+        stats,
+        "sim.trace_replay.trace_errors.functional_write",
+        summary.trace_error_functional_write_count() as u64,
+    )?;
+    emit_trace_count(
+        stats,
         "sim.trace_replay.htm.access",
         summary.trace_htm_access_count() as u64,
     )?;
@@ -1435,6 +1465,9 @@ mod tests {
             .with_trace_data_cache_maintenance_response_count(2)
             .with_trace_data_cache_clean_maintenance_response_count(1)
             .with_trace_data_cache_invalidate_maintenance_response_count(1)
+            .with_trace_error_count(2)
+            .with_trace_error_write_count(1)
+            .with_trace_error_functional_write_count(1)
             .with_trace_cache_flush_count(1)
             .with_trace_cache_flush_data_byte_count(64)
             .with_trace_l1_invalidation_count(1)
@@ -1462,6 +1495,14 @@ mod tests {
         assert_stat_value(
             &json,
             "sim.trace_replay.responses.cache.invalidate_maintenance",
+            "Count",
+            1,
+        );
+        assert_stat_value(&json, "sim.trace_replay.trace_errors", "Count", 2);
+        assert_stat_value(&json, "sim.trace_replay.trace_errors.write", "Count", 1);
+        assert_stat_value(
+            &json,
+            "sim.trace_replay.trace_errors.functional_write",
             "Count",
             1,
         );

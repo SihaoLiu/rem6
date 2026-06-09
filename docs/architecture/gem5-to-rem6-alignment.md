@@ -3135,7 +3135,10 @@ failure as a successful cache access. `RiscvSystemRun` also exposes the same
 records through a data-cache error outcome surface, so result artifacts can
 separate cache-accepted trace errors from route-generic trace failures.
 Those data-cache accepted trace errors are also split by gem5 error kind in
-workload summaries and manifest expectations.
+workload summaries and manifest expectations. The route-level trace-error
+summary now carries the same gem5 error-kind split, so manifests and stats can
+require matched trace error semantics directly while still distinguishing them
+from generic memory failures and cache-specific error records.
 Every workload trace route exposes matched memory response metadata on the
 traffic trace replay outcome itself, including request id, response kind,
 transport response status, trace order, address or matched-request line

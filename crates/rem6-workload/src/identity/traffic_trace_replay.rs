@@ -52,6 +52,24 @@ pub(super) fn hash_expected_traffic_trace_replay_summary(
         hash_u64(hash, count as u64);
     }
     hash_u64(hash, expected.minimum_trace_error_count() as u64);
+    hash_u64(
+        hash,
+        expected.minimum_trace_error_invalid_destination_count() as u64,
+    );
+    hash_u64(
+        hash,
+        expected.minimum_trace_error_bad_address_count() as u64,
+    );
+    hash_u64(hash, expected.minimum_trace_error_read_count() as u64);
+    hash_u64(hash, expected.minimum_trace_error_write_count() as u64);
+    hash_u64(
+        hash,
+        expected.minimum_trace_error_functional_read_count() as u64,
+    );
+    hash_u64(
+        hash,
+        expected.minimum_trace_error_functional_write_count() as u64,
+    );
     hash_u64(hash, expected.minimum_trace_htm_access_count() as u64);
     hash_u64(hash, expected.minimum_trace_htm_begin_count() as u64);
     hash_u64(hash, expected.minimum_control_ack_count() as u64);

@@ -82,6 +82,16 @@ impl WorkloadTrafficTraceReplaySummary {
             memory_failure_functional_write_count: self.memory_failure_functional_write_count
                 + other.memory_failure_functional_write_count,
             trace_error_count: self.trace_error_count + other.trace_error_count,
+            trace_error_invalid_destination_count: self.trace_error_invalid_destination_count
+                + other.trace_error_invalid_destination_count,
+            trace_error_bad_address_count: self.trace_error_bad_address_count
+                + other.trace_error_bad_address_count,
+            trace_error_read_count: self.trace_error_read_count + other.trace_error_read_count,
+            trace_error_write_count: self.trace_error_write_count + other.trace_error_write_count,
+            trace_error_functional_read_count: self.trace_error_functional_read_count
+                + other.trace_error_functional_read_count,
+            trace_error_functional_write_count: self.trace_error_functional_write_count
+                + other.trace_error_functional_write_count,
             trace_htm_access_count: self.trace_htm_access_count + other.trace_htm_access_count,
             trace_htm_begin_count: self.trace_htm_begin_count + other.trace_htm_begin_count,
             control_ack_count: self.control_ack_count + other.control_ack_count,

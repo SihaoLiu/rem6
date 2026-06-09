@@ -381,6 +381,36 @@ fn traffic_trace_summary_json(
     );
     push_json_usize(
         &mut fields,
+        "trace_error_invalid_destination_count",
+        summary.trace_error_invalid_destination_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "trace_error_bad_address_count",
+        summary.trace_error_bad_address_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "trace_error_read_count",
+        summary.trace_error_read_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "trace_error_write_count",
+        summary.trace_error_write_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "trace_error_functional_read_count",
+        summary.trace_error_functional_read_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "trace_error_functional_write_count",
+        summary.trace_error_functional_write_count(),
+    );
+    push_json_usize(
+        &mut fields,
         "trace_htm_access_count",
         summary.trace_htm_access_count(),
     );
@@ -935,6 +965,9 @@ mod tests {
             .with_trace_data_cache_maintenance_response_count(2)
             .with_trace_data_cache_clean_maintenance_response_count(1)
             .with_trace_data_cache_invalidate_maintenance_response_count(1)
+            .with_trace_error_count(2)
+            .with_trace_error_write_count(1)
+            .with_trace_error_functional_write_count(1)
             .with_trace_cache_flush_count(1)
             .with_trace_cache_flush_data_byte_count(64)
             .with_trace_l1_invalidation_count(1)
@@ -948,6 +981,9 @@ mod tests {
         assert!(json.contains("\"trace_data_cache_maintenance_response_count\":2"));
         assert!(json.contains("\"trace_data_cache_clean_maintenance_response_count\":1"));
         assert!(json.contains("\"trace_data_cache_invalidate_maintenance_response_count\":1"));
+        assert!(json.contains("\"trace_error_count\":2"));
+        assert!(json.contains("\"trace_error_write_count\":1"));
+        assert!(json.contains("\"trace_error_functional_write_count\":1"));
         assert!(json.contains("\"trace_cache_flush_count\":1"));
         assert!(json.contains("\"trace_cache_flush_data_byte_count\":64"));
         assert!(json.contains("\"trace_l1_invalidation_count\":1"));
