@@ -38,9 +38,17 @@ pub enum MemProbePacketKind {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MemProbePacketAccess {
+    Other,
+    Read,
+    Write,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MemProbePacket {
     address: u64,
     kind: MemProbePacketKind,
+    access: MemProbePacketAccess,
     command: u32,
     flags: u64,
     size: u64,
@@ -53,6 +61,7 @@ impl MemProbePacket {
         Self {
             address,
             kind,
+            access: MemProbePacketAccess::Other,
             command: 0,
             flags: 0,
             size: 0,
@@ -69,12 +78,24 @@ impl MemProbePacket {
         Self::new(address, MemProbePacketKind::Response)
     }
 
+    pub const fn read(address: u64) -> Self {
+        Self::request(address).with_access(MemProbePacketAccess::Read)
+    }
+
+    pub const fn write(address: u64) -> Self {
+        Self::request(address).with_access(MemProbePacketAccess::Write)
+    }
+
     pub const fn address(self) -> u64 {
         self.address
     }
 
     pub const fn kind(self) -> MemProbePacketKind {
         self.kind
+    }
+
+    pub const fn access(self) -> MemProbePacketAccess {
+        self.access
     }
 
     pub const fn command(self) -> u32 {
@@ -95,6 +116,11 @@ impl MemProbePacket {
 
     pub const fn program_counter(self) -> u64 {
         self.program_counter
+    }
+
+    pub const fn with_access(mut self, access: MemProbePacketAccess) -> Self {
+        self.access = access;
+        self
     }
 
     pub const fn with_command(mut self, command: u32) -> Self {

@@ -291,6 +291,40 @@ pub enum StatsError {
     MemTraceSnapshotZeroProgramCounter {
         tick: Tick,
     },
+    InvalidStackDistLineSize {
+        line_size: u64,
+    },
+    InvalidStackDistSystemLineSize {
+        system_line_size: u64,
+    },
+    StackDistLineSizeSmallerThanSystem {
+        line_size: u64,
+        system_line_size: u64,
+    },
+    InvalidStackDistHistogramBins {
+        name: &'static str,
+        bins: usize,
+    },
+    UnalignedStackDistSnapshotAddress {
+        line_size: u64,
+        address: u64,
+    },
+    DuplicateStackDistSnapshotAddress {
+        address: u64,
+    },
+    DuplicateStackDistHistogramBucket {
+        name: &'static str,
+        bucket: u64,
+    },
+    StackDistSampleCountOverflow,
+    StackDistSnapshotSampleCountMismatch {
+        expected: u64,
+        observed: u64,
+    },
+    StackDistSnapshotStackDepthMismatch {
+        stack_depth: u64,
+        infinite_samples: u64,
+    },
     GroupSequenceOverflow,
     DumpSequenceOverflow,
     ResetSequenceOverflow,
@@ -696,6 +730,51 @@ impl fmt::Display for StatsError {
             Self::MemTraceSnapshotZeroProgramCounter { tick } => write!(
                 formatter,
                 "memory trace snapshot record at tick {tick} carries a zero PC"
+            ),
+            Self::InvalidStackDistLineSize { line_size } => write!(
+                formatter,
+                "stack distance line size {line_size} is not a nonzero power of two"
+            ),
+            Self::InvalidStackDistSystemLineSize { system_line_size } => write!(
+                formatter,
+                "stack distance system line size {system_line_size} is not a nonzero power of two"
+            ),
+            Self::StackDistLineSizeSmallerThanSystem {
+                line_size,
+                system_line_size,
+            } => write!(
+                formatter,
+                "stack distance line size {line_size} is smaller than system line size {system_line_size}"
+            ),
+            Self::InvalidStackDistHistogramBins { name, bins } => write!(
+                formatter,
+                "stack distance {name} histogram bin count {bins} must not be zero"
+            ),
+            Self::UnalignedStackDistSnapshotAddress { line_size, address } => write!(
+                formatter,
+                "stack distance snapshot address {address:#x} is not aligned to line size {line_size}"
+            ),
+            Self::DuplicateStackDistSnapshotAddress { address } => write!(
+                formatter,
+                "stack distance snapshot has duplicate address {address:#x}"
+            ),
+            Self::DuplicateStackDistHistogramBucket { name, bucket } => write!(
+                formatter,
+                "stack distance {name} histogram has duplicate bucket {bucket}"
+            ),
+            Self::StackDistSampleCountOverflow => {
+                write!(formatter, "stack distance sample count overflowed")
+            }
+            Self::StackDistSnapshotSampleCountMismatch { expected, observed } => write!(
+                formatter,
+                "stack distance snapshot reports {expected} finite samples but histograms contain {observed}"
+            ),
+            Self::StackDistSnapshotStackDepthMismatch {
+                stack_depth,
+                infinite_samples,
+            } => write!(
+                formatter,
+                "stack distance snapshot stack depth {stack_depth} does not match {infinite_samples} infinite samples"
             ),
             Self::GroupSequenceOverflow => write!(formatter, "stat group sequence overflowed"),
             Self::DumpSequenceOverflow => write!(formatter, "stat dump sequence overflowed"),
