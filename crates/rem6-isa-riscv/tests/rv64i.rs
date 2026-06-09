@@ -2,7 +2,7 @@ use rem6_isa_riscv::{
     AtomicMemoryOp, Immediate, MemoryAccessKind, MemoryWidth, Register, RegisterWrite,
     RiscvCounterBank, RiscvCounterCsr, RiscvCounterSnapshot, RiscvCsrError, RiscvError,
     RiscvExecutionRecord, RiscvFenceSet, RiscvHartState, RiscvInstruction, RiscvMachineTrapCsr,
-    RiscvMemoryOrdering, RiscvPrivilegeMode, RiscvStatusCsr, RiscvStatusWord,
+    RiscvMemoryOrdering, RiscvPrivilegeMode, RiscvPseudoOp, RiscvStatusCsr, RiscvStatusWord,
     RiscvSupervisorTrapCsr, RiscvSv39AccessContext, RiscvSystemEvent, RiscvTranslationCsr,
     RiscvTrap, RiscvTrapKind,
 };
@@ -46,6 +46,10 @@ fn sfence_vma_type(rs1: u8, rs2: u8, rd: u8, funct3: u32) -> u32 {
         | (funct3 << 12)
         | (u32::from(rd) << 7)
         | 0x73
+}
+
+fn gem5_m5op_type(function: u32) -> u32 {
+    0x0000_007b | (function << 25)
 }
 
 #[test]
@@ -2037,6 +2041,64 @@ fn hart_takes_machine_trap_for_breakpoint() {
     );
     assert_eq!(ebreak.register_writes(), &[]);
     assert_eq!(ebreak.memory_access(), None);
+}
+
+#[test]
+fn hart_decodes_and_records_gem5_work_marker_pseudo_ops() {
+    let work_begin = RiscvInstruction::decode(gem5_m5op_type(0x5a)).unwrap();
+    let work_end = RiscvInstruction::decode(gem5_m5op_type(0x5b)).unwrap();
+
+    assert_eq!(
+        work_begin,
+        RiscvInstruction::Gem5PseudoOp {
+            op: RiscvPseudoOp::WorkBegin
+        }
+    );
+    assert_eq!(
+        work_end,
+        RiscvInstruction::Gem5PseudoOp {
+            op: RiscvPseudoOp::WorkEnd
+        }
+    );
+
+    let mut hart = RiscvHartState::new(0x7200);
+    hart.write(reg(10), 0x51);
+    hart.write(reg(11), 0x9);
+
+    let begin = hart.execute(work_begin).unwrap();
+    assert_eq!(begin.pc(), 0x7200);
+    assert_eq!(begin.next_pc(), 0x7204);
+    assert_eq!(hart.pc(), 0x7204);
+    assert_eq!(begin.register_writes(), &[RegisterWrite::new(reg(10), 0)]);
+    assert_eq!(hart.read(reg(10)), 0);
+    assert_eq!(begin.memory_access(), None);
+    assert_eq!(
+        begin.system_event(),
+        Some(&RiscvSystemEvent::Gem5WorkBegin {
+            pc: 0x7200,
+            work_id: 0x51,
+            thread_id: 0x9,
+        })
+    );
+
+    hart.write(reg(10), 0x52);
+    hart.write(reg(11), 0xa);
+    let end = hart.execute(work_end).unwrap();
+
+    assert_eq!(end.pc(), 0x7204);
+    assert_eq!(end.next_pc(), 0x7208);
+    assert_eq!(hart.pc(), 0x7208);
+    assert_eq!(end.register_writes(), &[RegisterWrite::new(reg(10), 0)]);
+    assert_eq!(hart.read(reg(10)), 0);
+    assert_eq!(end.memory_access(), None);
+    assert_eq!(
+        end.system_event(),
+        Some(&RiscvSystemEvent::Gem5WorkEnd {
+            pc: 0x7204,
+            work_id: 0x52,
+            thread_id: 0xa,
+        })
+    );
 }
 
 #[test]

@@ -38,6 +38,16 @@ pub enum RiscvSystemEvent {
         virtual_address: Option<u64>,
         address_space: Option<u64>,
     },
+    Gem5WorkBegin {
+        pc: u64,
+        work_id: u64,
+        thread_id: u64,
+    },
+    Gem5WorkEnd {
+        pc: u64,
+        work_id: u64,
+        thread_id: u64,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -96,11 +106,27 @@ impl RiscvExecutionRecord {
         next_pc: u64,
         system_event: RiscvSystemEvent,
     ) -> Self {
+        Self::with_system_event_and_register_writes(
+            instruction,
+            pc,
+            next_pc,
+            system_event,
+            Vec::new(),
+        )
+    }
+
+    pub fn with_system_event_and_register_writes(
+        instruction: RiscvInstruction,
+        pc: u64,
+        next_pc: u64,
+        system_event: RiscvSystemEvent,
+        register_writes: Vec<RegisterWrite>,
+    ) -> Self {
         Self {
             instruction,
             pc,
             next_pc,
-            register_writes: Vec::new(),
+            register_writes,
             memory_access: None,
             trap: None,
             system_event: Some(system_event),

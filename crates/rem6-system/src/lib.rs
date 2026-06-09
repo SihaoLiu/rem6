@@ -763,6 +763,11 @@ impl RiscvSystemRunDriver {
                 )
                 .map_err(SystemError::RiscvCluster)?;
             self.record_instruction_stats(&turn)?;
+            self.trap_port.schedule_riscv_system_events_from_turn(
+                scheduler,
+                &turn,
+                &mut event_for,
+            )?;
             let trap_cores = trap_event::pending_trap_cores_from_turn(cluster, &turn)?;
             if !trap_cores.is_empty() {
                 scheduled_traps.extend(self.trap_port.schedule_pending_core_traps(
@@ -850,6 +855,12 @@ impl RiscvSystemRunDriver {
                 )
                 .map_err(SystemError::RiscvCluster)?;
             self.record_instruction_stats(&turn)?;
+            self.trap_port
+                .schedule_riscv_system_events_from_turn_parallel(
+                    scheduler,
+                    &turn,
+                    &mut event_for,
+                )?;
             let trap_cores = trap_event::pending_trap_cores_from_turn(cluster, &turn)?;
             if !trap_cores.is_empty() {
                 scheduled_traps.extend(self.trap_port.schedule_pending_core_traps_parallel(
@@ -939,6 +950,12 @@ impl RiscvSystemRunDriver {
                 )
                 .map_err(SystemError::RiscvCluster)?;
             self.record_instruction_stats(&turn)?;
+            self.trap_port
+                .schedule_riscv_system_events_from_turn_parallel(
+                    scheduler,
+                    &turn,
+                    &mut event_for,
+                )?;
             let trap_cores = trap_event::pending_trap_cores_from_turn(cluster, &turn)?;
             if !trap_cores.is_empty() {
                 scheduled_traps.extend(self.trap_port.schedule_pending_core_traps_parallel(

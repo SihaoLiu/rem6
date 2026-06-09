@@ -9,6 +9,7 @@ mod instruction;
 mod integer;
 mod pma;
 mod pmp;
+mod pseudo;
 mod record;
 mod sv39;
 mod trap;
@@ -47,6 +48,7 @@ pub use pmp::{
     RiscvPmpAccessKind, RiscvPmpAddressMode, RiscvPmpConfig, RiscvPmpEntry, RiscvPmpError,
     RiscvPmpRange, RiscvPmpSnapshot, RiscvPmpSnapshotEntry, RiscvPmpTable, RiscvPrivilegeMode,
 };
+pub use pseudo::RiscvPseudoOp;
 pub use record::{RegisterWrite, RiscvExecutionRecord, RiscvSystemEvent, RiscvTrap, RiscvTrapKind};
 pub use sv39::{
     walk_sv39_page_table, walk_sv39_page_table_with_context, RiscvSv39AccessContext,
@@ -73,7 +75,7 @@ impl RiscvInstruction {
         let opcode = raw & 0x7f;
         match opcode {
             0x03 => decode_load(raw),
-            0x0f => decode_fence(raw),
+            0x0f => decode::decode_fence(raw),
             0x13 => decode_op_imm(raw),
             0x17 => Ok(Self::Auipc {
                 rd: rd(raw),
@@ -95,20 +97,9 @@ impl RiscvInstruction {
                 offset: Immediate::new(j_imm(raw)),
             }),
             0x73 => decode_system(raw),
+            0x7b => pseudo::decode_gem5_pseudo_op(raw),
             _ => Err(RiscvError::UnknownEncoding { raw }),
         }
-    }
-}
-
-fn decode_fence(raw: u32) -> Result<RiscvInstruction, RiscvError> {
-    match funct3(raw) {
-        0x0 => Ok(RiscvInstruction::Fence {
-            predecessor: RiscvFenceSet::from_bits((raw >> 24) & 0x0f),
-            successor: RiscvFenceSet::from_bits((raw >> 20) & 0x0f),
-            mode: ((raw >> 28) & 0x0f) as u8,
-        }),
-        0x1 => Ok(RiscvInstruction::FenceI),
-        _ => Err(RiscvError::UnknownEncoding { raw }),
     }
 }
 
@@ -927,6 +918,10 @@ impl RiscvHartState {
                     address_space: (!rs2.is_zero()).then(|| self.read(rs2)),
                 });
             }
+            RiscvInstruction::Gem5PseudoOp { op } => {
+                system_event = Some(pseudo::gem5_pseudo_system_event(op, pc, self));
+                write_register(self, &mut register_writes, Register::from_field(10), 0);
+            }
             RiscvInstruction::ReadMachineHartId { rd } => {
                 write_register(self, &mut register_writes, rd, self.hart_id);
             }
@@ -1124,13 +1119,13 @@ impl RiscvHartState {
         self.counters.retire_instructions(1);
         match system_event {
             Some(system_event) => {
-                debug_assert!(register_writes.is_empty());
                 debug_assert!(memory_access.is_none());
-                Ok(RiscvExecutionRecord::with_system_event(
+                Ok(RiscvExecutionRecord::with_system_event_and_register_writes(
                     instruction,
                     pc,
                     next_pc,
                     system_event,
+                    register_writes,
                 ))
             }
             None => Ok(RiscvExecutionRecord::new(

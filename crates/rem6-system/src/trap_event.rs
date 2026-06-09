@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use rem6_cpu::{CpuId, RiscvCluster, RiscvClusterTurn, RiscvCore, RiscvCoreDriveAction};
-use rem6_isa_riscv::{RiscvTrap, RiscvTrapKind};
+use rem6_isa_riscv::{RiscvSystemEvent, RiscvTrap, RiscvTrapKind};
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionId, PartitionedScheduler,
     SchedulerContext, SchedulerError, Tick,
@@ -238,6 +238,26 @@ impl RiscvTrapEventPort {
         )
     }
 
+    fn emit_guest_event_kind(
+        &self,
+        context: &mut SchedulerContext<'_>,
+        event: GuestEventId,
+        kind: GuestEventKind,
+    ) -> Result<PartitionEventId, SystemError> {
+        self.host
+            .emit(context, GuestEvent::new(event, self.source, kind))
+    }
+
+    fn emit_guest_event_kind_parallel(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+        event: GuestEventId,
+        kind: GuestEventKind,
+    ) -> Result<PartitionEventId, SystemError> {
+        self.host
+            .emit_parallel(context, GuestEvent::new(event, self.source, kind))
+    }
+
     pub fn emit_pending_core_trap(
         &self,
         context: &mut SchedulerContext<'_>,
@@ -393,6 +413,91 @@ impl RiscvTrapEventPort {
         Ok(scheduled)
     }
 
+    pub fn schedule_riscv_system_events_from_turn<F>(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        turn: &RiscvClusterTurn,
+        event_for: F,
+    ) -> Result<Vec<PartitionEventId>, SystemError>
+    where
+        F: FnMut(CpuId) -> GuestEventId,
+    {
+        self.schedule_riscv_system_events_from_turn_with_mode(scheduler, turn, event_for, false)
+    }
+
+    pub fn schedule_riscv_system_events_from_turn_parallel<F>(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        turn: &RiscvClusterTurn,
+        event_for: F,
+    ) -> Result<Vec<PartitionEventId>, SystemError>
+    where
+        F: FnMut(CpuId) -> GuestEventId,
+    {
+        self.schedule_riscv_system_events_from_turn_with_mode(scheduler, turn, event_for, true)
+    }
+
+    fn schedule_riscv_system_events_from_turn_with_mode<F>(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        turn: &RiscvClusterTurn,
+        mut event_for: F,
+        parallel: bool,
+    ) -> Result<Vec<PartitionEventId>, SystemError>
+    where
+        F: FnMut(CpuId) -> GuestEventId,
+    {
+        let mut pending = Vec::new();
+        for event in turn.core_events() {
+            let RiscvCoreDriveAction::InstructionExecuted(execution) = event.action() else {
+                continue;
+            };
+            let Some(kind) =
+                guest_event_kind_from_riscv_system_event(execution.execution().system_event())
+            else {
+                continue;
+            };
+            let source = execution.fetch().partition();
+            let source_tick = scheduler
+                .partition_now(source)
+                .map_err(SystemError::Scheduler)?;
+            if parallel {
+                self.validate_parallel_scheduled_emit(scheduler, source, source_tick)?;
+            } else {
+                self.validate_scheduled_emit(scheduler, source, source_tick)?;
+            }
+            pending.push(PendingRiscvSystemEventSchedule {
+                event: event_for(event.cpu()),
+                source,
+                source_tick,
+                kind,
+            });
+        }
+
+        let mut scheduled = Vec::new();
+        for pending in pending {
+            let event = if parallel {
+                self.schedule_prevalidated_system_event_parallel(
+                    scheduler,
+                    pending.event,
+                    pending.source,
+                    pending.source_tick,
+                    pending.kind,
+                )?
+            } else {
+                self.schedule_prevalidated_system_event(
+                    scheduler,
+                    pending.event,
+                    pending.source,
+                    pending.source_tick,
+                    pending.kind,
+                )?
+            };
+            scheduled.push(event);
+        }
+        Ok(scheduled)
+    }
+
     fn schedule_prevalidated_trap(
         &self,
         scheduler: &mut PartitionedScheduler,
@@ -423,6 +528,40 @@ impl RiscvTrapEventPort {
             .schedule_parallel_at(source, source_tick, move |context| {
                 port.emit_parallel(context, event, trap)
                     .expect("validated parallel RISC-V trap event scheduling");
+            })
+            .map_err(SystemError::Scheduler)
+    }
+
+    fn schedule_prevalidated_system_event(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        event: GuestEventId,
+        source: PartitionId,
+        source_tick: Tick,
+        kind: GuestEventKind,
+    ) -> Result<PartitionEventId, SystemError> {
+        let port = self.clone();
+        scheduler
+            .schedule_at(source, source_tick, move |context| {
+                port.emit_guest_event_kind(context, event, kind)
+                    .expect("validated RISC-V system event scheduling");
+            })
+            .map_err(SystemError::Scheduler)
+    }
+
+    fn schedule_prevalidated_system_event_parallel(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        event: GuestEventId,
+        source: PartitionId,
+        source_tick: Tick,
+        kind: GuestEventKind,
+    ) -> Result<PartitionEventId, SystemError> {
+        let port = self.clone();
+        scheduler
+            .schedule_parallel_at(source, source_tick, move |context| {
+                port.emit_guest_event_kind_parallel(context, event, kind)
+                    .expect("validated parallel RISC-V system event scheduling");
             })
             .map_err(SystemError::Scheduler)
     }
@@ -503,6 +642,35 @@ struct PendingRiscvTrapSchedule {
     source: PartitionId,
     source_tick: Tick,
     trap: RiscvTrap,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PendingRiscvSystemEventSchedule {
+    event: GuestEventId,
+    source: PartitionId,
+    source_tick: Tick,
+    kind: GuestEventKind,
+}
+
+fn guest_event_kind_from_riscv_system_event(
+    event: Option<&RiscvSystemEvent>,
+) -> Option<GuestEventKind> {
+    match event {
+        Some(RiscvSystemEvent::Gem5WorkBegin {
+            work_id, thread_id, ..
+        }) => Some(GuestEventKind::WorkBegin {
+            work_id: *work_id,
+            thread_id: *thread_id,
+        }),
+        Some(RiscvSystemEvent::Gem5WorkEnd {
+            work_id, thread_id, ..
+        }) => Some(GuestEventKind::WorkEnd {
+            work_id: *work_id,
+            thread_id: *thread_id,
+        }),
+        Some(RiscvSystemEvent::WaitForInterrupt { .. } | RiscvSystemEvent::SfenceVma { .. })
+        | None => None,
+    }
 }
 
 pub const fn guest_trap_from_riscv(trap: RiscvTrap) -> GuestTrap {

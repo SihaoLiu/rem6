@@ -1,8 +1,20 @@
 use crate::encoding::{csr, funct3, rd, rs1};
 use crate::{
-    RiscvCounterCsr, RiscvError, RiscvInstruction, RiscvInterruptCsr, RiscvMachineTrapCsr,
-    RiscvStatusCsr, RiscvSupervisorTrapCsr, RiscvTranslationCsr,
+    RiscvCounterCsr, RiscvError, RiscvFenceSet, RiscvInstruction, RiscvInterruptCsr,
+    RiscvMachineTrapCsr, RiscvStatusCsr, RiscvSupervisorTrapCsr, RiscvTranslationCsr,
 };
+
+pub(crate) fn decode_fence(raw: u32) -> Result<RiscvInstruction, RiscvError> {
+    match funct3(raw) {
+        0x0 => Ok(RiscvInstruction::Fence {
+            predecessor: RiscvFenceSet::from_bits((raw >> 24) & 0x0f),
+            successor: RiscvFenceSet::from_bits((raw >> 20) & 0x0f),
+            mode: ((raw >> 28) & 0x0f) as u8,
+        }),
+        0x1 => Ok(RiscvInstruction::FenceI),
+        _ => Err(RiscvError::UnknownEncoding { raw }),
+    }
+}
 
 pub(crate) fn decode_csr(raw: u32) -> Result<RiscvInstruction, RiscvError> {
     let csr_address = csr(raw);

@@ -1,6 +1,6 @@
 use crate::{
     AtomicMemoryOp, Immediate, MemoryWidth, Register, RiscvCounterCsr, RiscvFenceSet,
-    RiscvInterruptCsr, RiscvMachineTrapCsr, RiscvPrivilegeMode, RiscvStatusCsr,
+    RiscvInterruptCsr, RiscvMachineTrapCsr, RiscvPrivilegeMode, RiscvPseudoOp, RiscvStatusCsr,
     RiscvSupervisorTrapCsr, RiscvTranslationCsr,
 };
 
@@ -307,6 +307,9 @@ pub enum RiscvInstruction {
     SfenceVma {
         rs1: Register,
         rs2: Register,
+    },
+    Gem5PseudoOp {
+        op: RiscvPseudoOp,
     },
     ReadMachineHartId {
         rd: Register,
