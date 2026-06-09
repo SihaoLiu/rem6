@@ -107,6 +107,10 @@ pub(super) fn hash_expected_traffic_trace_replay_summary(
     hash_u64(hash, expected.minimum_trace_sideband_failure_count() as u64);
     hash_u64(hash, expected.minimum_tlb_sync_event_count() as u64);
     hash_u64(hash, expected.minimum_trace_tlb_sync_count() as u64);
+    hash_u64(
+        hash,
+        expected.minimum_trace_tlb_sync_flushed_entry_count() as u64,
+    );
     hash_u64(hash, expected.minimum_cache_flush_event_count() as u64);
     hash_u64(hash, expected.minimum_trace_cache_flush_count() as u64);
     hash_u64(hash, expected.minimum_trace_cache_flush_data_byte_count());

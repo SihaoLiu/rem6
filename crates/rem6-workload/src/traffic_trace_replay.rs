@@ -78,6 +78,7 @@ pub struct WorkloadTrafficTraceReplaySummary {
     pub(in crate::traffic_trace_replay) trace_sideband_failure_count: usize,
     pub(in crate::traffic_trace_replay) tlb_sync_event_count: usize,
     pub(in crate::traffic_trace_replay) trace_tlb_sync_count: usize,
+    pub(in crate::traffic_trace_replay) trace_tlb_sync_flushed_entry_count: usize,
     pub(in crate::traffic_trace_replay) cache_flush_event_count: usize,
     pub(in crate::traffic_trace_replay) trace_cache_flush_count: usize,
     pub(in crate::traffic_trace_replay) trace_cache_flush_data_byte_count: u64,
@@ -157,6 +158,7 @@ impl WorkloadTrafficTraceReplaySummary {
             trace_sideband_failure_count: 0,
             tlb_sync_event_count: 0,
             trace_tlb_sync_count: 0,
+            trace_tlb_sync_flushed_entry_count: 0,
             cache_flush_event_count: 0,
             trace_cache_flush_count: 0,
             trace_cache_flush_data_byte_count: 0,
@@ -501,6 +503,14 @@ impl WorkloadTrafficTraceReplaySummary {
         self
     }
 
+    pub fn with_trace_tlb_sync_flushed_entry_count(
+        mut self,
+        trace_tlb_sync_flushed_entry_count: usize,
+    ) -> Self {
+        self.trace_tlb_sync_flushed_entry_count = trace_tlb_sync_flushed_entry_count;
+        self
+    }
+
     pub fn with_cache_flush_event_count(mut self, cache_flush_event_count: usize) -> Self {
         self.cache_flush_event_count = cache_flush_event_count;
         self
@@ -751,6 +761,10 @@ impl WorkloadTrafficTraceReplaySummary {
         self.trace_tlb_sync_count
     }
 
+    pub const fn trace_tlb_sync_flushed_entry_count(&self) -> usize {
+        self.trace_tlb_sync_flushed_entry_count
+    }
+
     pub const fn cache_flush_event_count(&self) -> usize {
         self.cache_flush_event_count
     }
@@ -856,6 +870,7 @@ pub struct WorkloadExpectedTrafficTraceReplaySummary {
     minimum_trace_sideband_failure_count: usize,
     minimum_tlb_sync_event_count: usize,
     minimum_trace_tlb_sync_count: usize,
+    minimum_trace_tlb_sync_flushed_entry_count: usize,
     minimum_cache_flush_event_count: usize,
     minimum_trace_cache_flush_count: usize,
     minimum_trace_cache_flush_data_byte_count: u64,
@@ -935,6 +950,7 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
             minimum_trace_sideband_failure_count: 0,
             minimum_tlb_sync_event_count: 0,
             minimum_trace_tlb_sync_count: 0,
+            minimum_trace_tlb_sync_flushed_entry_count: 0,
             minimum_cache_flush_event_count: 0,
             minimum_trace_cache_flush_count: 0,
             minimum_trace_cache_flush_data_byte_count: 0,
@@ -1354,6 +1370,15 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
         self
     }
 
+    pub fn with_minimum_trace_tlb_sync_flushed_entry_count(
+        mut self,
+        minimum_trace_tlb_sync_flushed_entry_count: usize,
+    ) -> Self {
+        self.minimum_trace_tlb_sync_flushed_entry_count =
+            minimum_trace_tlb_sync_flushed_entry_count;
+        self
+    }
+
     pub fn with_minimum_cache_flush_event_count(
         mut self,
         minimum_cache_flush_event_count: usize,
@@ -1620,6 +1645,10 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
 
     pub const fn minimum_trace_tlb_sync_count(&self) -> usize {
         self.minimum_trace_tlb_sync_count
+    }
+
+    pub const fn minimum_trace_tlb_sync_flushed_entry_count(&self) -> usize {
+        self.minimum_trace_tlb_sync_flushed_entry_count
     }
 
     pub const fn minimum_cache_flush_event_count(&self) -> usize {

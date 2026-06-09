@@ -521,6 +521,11 @@ fn traffic_trace_summary_json(
     );
     push_json_usize(
         &mut fields,
+        "trace_tlb_sync_flushed_entry_count",
+        summary.trace_tlb_sync_flushed_entry_count(),
+    );
+    push_json_usize(
+        &mut fields,
         "cache_flush_event_count",
         summary.cache_flush_event_count(),
     );

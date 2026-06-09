@@ -178,6 +178,11 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
             .iter()
             .map(|record| record.flushed_data_bytes())
             .sum();
+        let trace_tlb_sync_records = self.records.trace_tlb_sync_snapshot();
+        let trace_tlb_sync_flushed_entry_count = trace_tlb_sync_records
+            .iter()
+            .map(|record| record.flushed_entry_count())
+            .sum();
         let memory_write_completion_byte_count = runtime
             .memory_write_completions()
             .iter()
@@ -273,7 +278,8 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
             .with_sideband_event_count(runtime.sideband_events().len())
             .with_trace_sideband_failure_count(self.records.trace_sideband_failure_snapshot().len())
             .with_tlb_sync_event_count(sideband_counts.tlb_sync)
-            .with_trace_tlb_sync_count(self.records.trace_tlb_sync_snapshot().len())
+            .with_trace_tlb_sync_count(trace_tlb_sync_records.len())
+            .with_trace_tlb_sync_flushed_entry_count(trace_tlb_sync_flushed_entry_count)
             .with_cache_flush_event_count(sideband_counts.cache_flush)
             .with_trace_cache_flush_count(trace_cache_flush_records.len())
             .with_trace_cache_flush_data_byte_count(trace_cache_flush_data_byte_count)

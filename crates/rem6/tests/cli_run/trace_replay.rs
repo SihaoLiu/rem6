@@ -468,6 +468,7 @@ fn rem6_trace_replay_emits_typed_sideband_and_control_stats() {
     assert!(stdout.contains("\"sideband_event_count\":4"));
     assert!(stdout.contains("\"tlb_sync_event_count\":1"));
     assert!(stdout.contains("\"trace_tlb_sync_count\":0"));
+    assert!(stdout.contains("\"trace_tlb_sync_flushed_entry_count\":0"));
     assert!(stdout.contains("\"cache_flush_event_count\":1"));
     assert!(stdout.contains("\"trace_cache_flush_count\":0"));
     assert!(stdout.contains("\"diagnostic_print_event_count\":1"));
@@ -500,6 +501,13 @@ fn rem6_trace_replay_emits_typed_sideband_and_control_stats() {
         "sim.trace_replay.sideband.tlb_sync_events",
         "Count",
         1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.sideband.tlb_sync_flushed_entries",
+        "Count",
+        0,
         "monotonic",
     );
     assert_stat(

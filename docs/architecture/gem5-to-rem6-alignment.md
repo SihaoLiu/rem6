@@ -3190,7 +3190,9 @@ executed zero-flush sync, while routes without a matching data-translation
 frontend remain raw sideband evidence.
 Workload traffic-trace summaries and manifest expectations count executed TLBI
 syncs separately from raw TLBI sideband events, so a trace can require the
-executable translation-TLB consumer. HTM abort sidebands similarly expose
+executable translation-TLB consumer. They also carry flushed-entry counts, so
+manifests can distinguish an executed no-op sync from one that actually
+invalidated route-local TLB entries. HTM abort sidebands similarly expose
 executed CPU transaction-abort records separately from raw abort sideband
 events, so a manifest can require the abort to reach the CPU/rollback consumer.
 The workload consumer ignores fetch, MMIO,

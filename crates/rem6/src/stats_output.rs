@@ -830,6 +830,11 @@ fn emit_trace_replay_summary_stats(
     )?;
     emit_trace_count(
         stats,
+        "sim.trace_replay.sideband.tlb_sync_flushed_entries",
+        summary.trace_tlb_sync_flushed_entry_count() as u64,
+    )?;
+    emit_trace_count(
+        stats,
         "sim.trace_replay.sideband.cache_flush_events",
         summary.cache_flush_event_count() as u64,
     )?;

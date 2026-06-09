@@ -128,6 +128,8 @@ impl WorkloadTrafficTraceReplaySummary {
                 + other.trace_sideband_failure_count,
             tlb_sync_event_count: self.tlb_sync_event_count + other.tlb_sync_event_count,
             trace_tlb_sync_count: self.trace_tlb_sync_count + other.trace_tlb_sync_count,
+            trace_tlb_sync_flushed_entry_count: self.trace_tlb_sync_flushed_entry_count
+                + other.trace_tlb_sync_flushed_entry_count,
             cache_flush_event_count: self.cache_flush_event_count + other.cache_flush_event_count,
             trace_cache_flush_count: self.trace_cache_flush_count + other.trace_cache_flush_count,
             trace_cache_flush_data_byte_count: self.trace_cache_flush_data_byte_count

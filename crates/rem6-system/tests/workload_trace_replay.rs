@@ -2763,6 +2763,7 @@ fn workload_replay_applies_tlbi_ext_sync_to_data_translation_tlb() {
     let summary = &outcome.result().traffic_trace_replay_summaries()[0];
     assert_eq!(summary.tlb_sync_event_count(), 1);
     assert_eq!(summary.trace_tlb_sync_count(), 1);
+    assert_eq!(summary.trace_tlb_sync_flushed_entry_count(), 1);
     WorkloadReplayPlan::from_manifest(&manifest)
         .unwrap()
         .verify_result(outcome.result())
@@ -2812,6 +2813,7 @@ fn workload_replay_records_tlbi_ext_sync_noop_for_translation_without_tlb() {
     let summary = &outcome.result().traffic_trace_replay_summaries()[0];
     assert_eq!(summary.tlb_sync_event_count(), 1);
     assert_eq!(summary.trace_tlb_sync_count(), 1);
+    assert_eq!(summary.trace_tlb_sync_flushed_entry_count(), 0);
 }
 
 #[test]

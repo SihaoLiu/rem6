@@ -142,6 +142,8 @@ fn traffic_trace_replay_summary_meets_minimum(
         && actual.trace_sideband_failure_count() >= expected.minimum_trace_sideband_failure_count()
         && actual.tlb_sync_event_count() >= expected.minimum_tlb_sync_event_count()
         && actual.trace_tlb_sync_count() >= expected.minimum_trace_tlb_sync_count()
+        && actual.trace_tlb_sync_flushed_entry_count()
+            >= expected.minimum_trace_tlb_sync_flushed_entry_count()
         && actual.cache_flush_event_count() >= expected.minimum_cache_flush_event_count()
         && actual.trace_cache_flush_count() >= expected.minimum_trace_cache_flush_count()
         && actual.trace_cache_flush_data_byte_count()
