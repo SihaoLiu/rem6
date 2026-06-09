@@ -4,6 +4,8 @@ use crate::{
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RiscvPseudoOp {
+    Exit,
+    Fail,
     WorkBegin,
     WorkEnd,
 }
@@ -13,6 +15,12 @@ pub(crate) fn decode_gem5_pseudo_op(raw: u32) -> Result<RiscvInstruction, RiscvE
         return Err(RiscvError::UnknownEncoding { raw });
     }
     match raw >> 25 {
+        0x21 => Ok(RiscvInstruction::Gem5PseudoOp {
+            op: RiscvPseudoOp::Exit,
+        }),
+        0x22 => Ok(RiscvInstruction::Gem5PseudoOp {
+            op: RiscvPseudoOp::Fail,
+        }),
         0x5a => Ok(RiscvInstruction::Gem5PseudoOp {
             op: RiscvPseudoOp::WorkBegin,
         }),
@@ -28,18 +36,24 @@ pub(crate) fn gem5_pseudo_system_event(
     pc: u64,
     hart: &RiscvHartState,
 ) -> RiscvSystemEvent {
-    let work_id = hart.read(Register::from_field(10));
-    let thread_id = hart.read(Register::from_field(11));
+    let a0 = hart.read(Register::from_field(10));
+    let a1 = hart.read(Register::from_field(11));
     match op {
+        RiscvPseudoOp::Exit => RiscvSystemEvent::Gem5Exit { pc, delay: a0 },
+        RiscvPseudoOp::Fail => RiscvSystemEvent::Gem5Fail {
+            pc,
+            delay: a0,
+            code: a1,
+        },
         RiscvPseudoOp::WorkBegin => RiscvSystemEvent::Gem5WorkBegin {
             pc,
-            work_id,
-            thread_id,
+            work_id: a0,
+            thread_id: a1,
         },
         RiscvPseudoOp::WorkEnd => RiscvSystemEvent::Gem5WorkEnd {
             pc,
-            work_id,
-            thread_id,
+            work_id: a0,
+            thread_id: a1,
         },
     }
 }

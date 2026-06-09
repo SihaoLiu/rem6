@@ -38,6 +38,15 @@ pub enum RiscvSystemEvent {
         virtual_address: Option<u64>,
         address_space: Option<u64>,
     },
+    Gem5Exit {
+        pc: u64,
+        delay: u64,
+    },
+    Gem5Fail {
+        pc: u64,
+        delay: u64,
+        code: u64,
+    },
     Gem5WorkBegin {
         pc: u64,
         work_id: u64,

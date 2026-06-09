@@ -2102,6 +2102,64 @@ fn hart_decodes_and_records_gem5_work_marker_pseudo_ops() {
 }
 
 #[test]
+fn hart_decodes_and_records_gem5_exit_fail_pseudo_ops() {
+    let exit = RiscvInstruction::decode(gem5_m5op_type(0x21)).unwrap();
+    let fail = RiscvInstruction::decode(gem5_m5op_type(0x22)).unwrap();
+
+    assert_eq!(
+        exit,
+        RiscvInstruction::Gem5PseudoOp {
+            op: RiscvPseudoOp::Exit
+        }
+    );
+    assert_eq!(
+        fail,
+        RiscvInstruction::Gem5PseudoOp {
+            op: RiscvPseudoOp::Fail
+        }
+    );
+
+    let mut hart = RiscvHartState::new(0x7300);
+    hart.write(reg(10), 0);
+    let exit_record = hart.execute(exit).unwrap();
+    assert_eq!(exit_record.pc(), 0x7300);
+    assert_eq!(exit_record.next_pc(), 0x7304);
+    assert_eq!(hart.pc(), 0x7304);
+    assert_eq!(
+        exit_record.system_event(),
+        Some(&RiscvSystemEvent::Gem5Exit {
+            pc: 0x7300,
+            delay: 0,
+        })
+    );
+    assert_eq!(
+        exit_record.register_writes(),
+        &[RegisterWrite::new(reg(10), 0)]
+    );
+    assert_eq!(hart.read(reg(10)), 0);
+
+    hart.write(reg(10), 3);
+    hart.write(reg(11), 7);
+    let fail_record = hart.execute(fail).unwrap();
+    assert_eq!(fail_record.pc(), 0x7304);
+    assert_eq!(fail_record.next_pc(), 0x7308);
+    assert_eq!(hart.pc(), 0x7308);
+    assert_eq!(
+        fail_record.system_event(),
+        Some(&RiscvSystemEvent::Gem5Fail {
+            pc: 0x7304,
+            delay: 3,
+            code: 7,
+        })
+    );
+    assert_eq!(
+        fail_record.register_writes(),
+        &[RegisterWrite::new(reg(10), 0)]
+    );
+    assert_eq!(hart.read(reg(10)), 0);
+}
+
+#[test]
 fn hart_executes_machine_return_from_machine_mode() {
     let mut hart = RiscvHartState::new(0x7000);
     hart.set_machine_exception_pc(0x9000);

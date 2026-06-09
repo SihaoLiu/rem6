@@ -452,8 +452,8 @@ impl RiscvTrapEventPort {
             let RiscvCoreDriveAction::InstructionExecuted(execution) = event.action() else {
                 continue;
             };
-            let Some(kind) =
-                guest_event_kind_from_riscv_system_event(execution.execution().system_event())
+            let Some(system_event) =
+                guest_event_from_riscv_system_event(execution.execution().system_event())
             else {
                 continue;
             };
@@ -461,6 +461,13 @@ impl RiscvTrapEventPort {
             let source_tick = scheduler
                 .partition_now(source)
                 .map_err(SystemError::Scheduler)?;
+            let source_tick =
+                source_tick
+                    .checked_add(system_event.delay)
+                    .ok_or(SystemError::Scheduler(SchedulerError::TickOverflow {
+                        now: source_tick,
+                        delay: system_event.delay,
+                    }))?;
             if parallel {
                 self.validate_parallel_scheduled_emit(scheduler, source, source_tick)?;
             } else {
@@ -470,7 +477,7 @@ impl RiscvTrapEventPort {
                 event: event_for(event.cpu()),
                 source,
                 source_tick,
-                kind,
+                kind: system_event.kind,
             });
         }
 
@@ -652,25 +659,51 @@ struct PendingRiscvSystemEventSchedule {
     kind: GuestEventKind,
 }
 
-fn guest_event_kind_from_riscv_system_event(
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RiscvGuestEventSchedule {
+    delay: Tick,
+    kind: GuestEventKind,
+}
+
+fn guest_event_from_riscv_system_event(
     event: Option<&RiscvSystemEvent>,
-) -> Option<GuestEventKind> {
+) -> Option<RiscvGuestEventSchedule> {
     match event {
+        Some(RiscvSystemEvent::Gem5Exit { delay, .. }) => Some(RiscvGuestEventSchedule {
+            delay: *delay,
+            kind: GuestEventKind::Terminate { code: 0 },
+        }),
+        Some(RiscvSystemEvent::Gem5Fail { delay, code, .. }) => Some(RiscvGuestEventSchedule {
+            delay: *delay,
+            kind: GuestEventKind::Terminate {
+                code: gem5_fail_stop_code(*code),
+            },
+        }),
         Some(RiscvSystemEvent::Gem5WorkBegin {
             work_id, thread_id, ..
-        }) => Some(GuestEventKind::WorkBegin {
-            work_id: *work_id,
-            thread_id: *thread_id,
+        }) => Some(RiscvGuestEventSchedule {
+            delay: 0,
+            kind: GuestEventKind::WorkBegin {
+                work_id: *work_id,
+                thread_id: *thread_id,
+            },
         }),
         Some(RiscvSystemEvent::Gem5WorkEnd {
             work_id, thread_id, ..
-        }) => Some(GuestEventKind::WorkEnd {
-            work_id: *work_id,
-            thread_id: *thread_id,
+        }) => Some(RiscvGuestEventSchedule {
+            delay: 0,
+            kind: GuestEventKind::WorkEnd {
+                work_id: *work_id,
+                thread_id: *thread_id,
+            },
         }),
         Some(RiscvSystemEvent::WaitForInterrupt { .. } | RiscvSystemEvent::SfenceVma { .. })
         | None => None,
     }
+}
+
+fn gem5_fail_stop_code(code: u64) -> i32 {
+    code.min(i32::MAX as u64) as i32
 }
 
 pub const fn guest_trap_from_riscv(trap: RiscvTrap) -> GuestTrap {

@@ -464,6 +464,75 @@ fn riscv_system_run_driver_routes_gem5_work_marker_pseudo_ops_to_host() {
 }
 
 #[test]
+fn riscv_system_run_driver_routes_gem5_fail_pseudo_op_to_host_stop() {
+    let host = PartitionId::new(3);
+    let source = GuestSourceId::new(38);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let fetch_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let core = riscv_core(0, 0, 7, "cpu0.ifetch", fetch_route, 0x8000);
+    core.write_register(rem6_isa_riscv::Register::new(10).unwrap(), 2);
+    core.write_register(rem6_isa_riscv::Register::new(11).unwrap(), 7);
+    let cluster = RiscvCluster::new([core]).unwrap();
+    let store = loaded_program_store(&[(0x8000, gem5_m5op_type(0x22)), (0x8004, 0x0000_0073)]);
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        StatsRegistry::new(),
+    )));
+    let trap_port = RiscvTrapEventPort::new(
+        SystemHostEventPort::with_controller(host, 2, Arc::clone(&controller)).unwrap(),
+        source,
+    );
+    let driver = RiscvSystemRunDriver::new(trap_port);
+
+    let run = driver
+        .drive_until_host_stop(
+            &cluster,
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_cpu| responder(Arc::clone(&store)),
+            |_cpu| responder(Arc::clone(&store)),
+            20,
+            |_cpu| GuestEventId::new(120),
+        )
+        .unwrap();
+
+    assert_eq!(
+        run.host_stop(),
+        Some(StopRequest::new(
+            run.final_tick().unwrap(),
+            GuestEventId::new(120),
+            source,
+            7,
+        ))
+    );
+    assert!(run.final_tick().unwrap() >= 2);
+    assert_eq!(
+        controller.lock().unwrap().run().action_outcomes(),
+        &[SystemActionOutcome::Stop(StopRequest::new(
+            run.final_tick().unwrap(),
+            GuestEventId::new(120),
+            source,
+            7,
+        ))]
+    );
+}
+
+#[test]
 fn riscv_system_run_driver_parallel_path_drives_data_accesses_to_host_stop() {
     let host = PartitionId::new(3);
     let source = GuestSourceId::new(33);
