@@ -1351,13 +1351,10 @@ fn riscv_core_store_conditional_fails_without_matching_reservation() {
     let events = core.data_access_events();
     assert_eq!(
         events.iter().map(|event| event.kind()).collect::<Vec<_>>(),
-        vec![
-            RiscvDataAccessEventKind::Issued,
-            RiscvDataAccessEventKind::ConditionalFailed,
-        ]
+        vec![RiscvDataAccessEventKind::ConditionalFailed]
     );
     assert_eq!(events[0].operation(), MemoryOperation::StoreConditional);
-    assert_eq!(events[1].data(), None);
+    assert_eq!(events[0].data(), None);
 }
 
 #[test]

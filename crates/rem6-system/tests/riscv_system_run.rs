@@ -12,12 +12,14 @@ use rem6_memory::{
 };
 use rem6_mmio::{MmioAccess, MmioBus, MmioRegisterBank, MmioRoute};
 use rem6_stats::{
-    GlobalInstTrackerSnapshot, ProbePayload, StatId, StatSample, StatSnapshot, StatsRegistry,
+    GlobalInstTrackerSnapshot, MemProbePacketAccess, ProbePayload, StackDistProbeConfig, StatId,
+    StatSample, StatSnapshot, StatsRegistry,
 };
 use rem6_system::{
     GuestEventId, GuestHostCallResponse, GuestSourceId, GuestTrap, GuestTrapKind, HostEventPolicy,
-    RiscvInstructionStats, RiscvSystemRunDriver, RiscvSystemRunStopReason, RiscvTrapEventPort,
-    StopRequest, SystemActionOutcome, SystemHostController, SystemHostEventPort,
+    RiscvDataAccessStats, RiscvInstructionStats, RiscvSystemRunDriver, RiscvSystemRunStopReason,
+    RiscvTrapEventPort, StopRequest, SystemActionOutcome, SystemHostController,
+    SystemHostEventPort,
 };
 use rem6_transport::{
     MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome,
@@ -46,6 +48,17 @@ fn i_type(imm: i32, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
 
 fn gem5_m5op_type(function: u32) -> u32 {
     0x0000_007b | (function << 25)
+}
+
+fn atomic_type(funct5: u32, aq: bool, rl: bool, rs2: u8, rs1: u8, funct3: u32, rd: u8) -> u32 {
+    (funct5 << 27)
+        | (u32::from(aq) << 26)
+        | (u32::from(rl) << 25)
+        | (u32::from(rs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (funct3 << 12)
+        | (u32::from(rd) << 7)
+        | 0x2f
 }
 
 fn loaded_program_store_with_data(
@@ -442,6 +455,360 @@ fn riscv_instruction_stats_clone_uses_independent_retired_probe_recorders() {
             .len(),
         1
     );
+}
+
+#[test]
+fn riscv_system_run_driver_records_stack_distance_from_real_data_accesses() {
+    let host = PartitionId::new(3);
+    let source = GuestSourceId::new(39);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let fetch_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let data_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.dmem"),
+                PartitionId::new(0),
+                endpoint("l1d"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let core = riscv_data_core(
+        0,
+        0,
+        7,
+        "cpu0.ifetch",
+        fetch_route,
+        "cpu0.dmem",
+        data_route,
+        0x8000,
+    );
+    core.write_register(rem6_isa_riscv::Register::new(2).unwrap(), 0x9800);
+    let cluster = RiscvCluster::new([core]).unwrap();
+    let store = loaded_program_store_with_data(
+        &[
+            (0x8000, i_type(8, 2, 0x3, 5, 0x03)),
+            (0x8004, i_type(8, 2, 0x3, 6, 0x03)),
+            (0x8008, 0x0000_0073),
+        ],
+        &[(0x9808, vec![0x10, 0x32, 0x54, 0x76, 0x98, 0xba, 0xdc, 0xfe])],
+    );
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        StatsRegistry::new(),
+    )));
+    let trap_port = RiscvTrapEventPort::new(
+        SystemHostEventPort::with_controller(host, 2, Arc::clone(&controller)).unwrap(),
+        source,
+    );
+    let driver = RiscvSystemRunDriver::new(trap_port).with_data_access_stats(
+        RiscvDataAccessStats::with_stack_distance(
+            StackDistProbeConfig::builder(16, 16).build().unwrap(),
+        ),
+    );
+
+    let run = driver
+        .drive_until_host_stop_parallel(
+            &cluster,
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_cpu| {
+                let store = Arc::clone(&store);
+                move |delivery, _context| memory_response(&store, &delivery)
+            },
+            |_cpu| {
+                let store = Arc::clone(&store);
+                move |delivery, _context| memory_response(&store, &delivery)
+            },
+            40,
+            |cpu| GuestEventId::new(120 + u64::from(cpu.get())),
+        )
+        .unwrap();
+
+    assert_eq!(
+        cluster
+            .core(CpuId::new(0))
+            .unwrap()
+            .read_register(rem6_isa_riscv::Register::new(5).unwrap()),
+        0xfedc_ba98_7654_3210
+    );
+    assert_eq!(
+        cluster
+            .core(CpuId::new(0))
+            .unwrap()
+            .read_register(rem6_isa_riscv::Register::new(6).unwrap()),
+        0xfedc_ba98_7654_3210
+    );
+
+    let data = run
+        .data_access_probes()
+        .expect("run should carry data access probe evidence");
+    assert_eq!(data.stack_distance().infinite_samples(), 1);
+    assert_eq!(data.stack_distance().finite_samples(), 1);
+    assert_eq!(data.stack_distance().stack(), &[0x9800]);
+    assert_eq!(data.probes().events().len(), 2);
+    for event in data.probes().events() {
+        let ProbePayload::MemoryPacket(packet) = event.payload() else {
+            panic!("data access probe should emit memory packet payloads");
+        };
+        assert_eq!(packet.access(), MemProbePacketAccess::Read);
+        assert_eq!(packet.address(), 0x9808);
+        assert_eq!(packet.size(), 8);
+    }
+}
+
+#[test]
+fn riscv_system_run_driver_filters_local_store_conditional_failures_from_data_probes() {
+    let host = PartitionId::new(3);
+    let source = GuestSourceId::new(40);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let fetch_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let data_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.dmem"),
+                PartitionId::new(0),
+                endpoint("l1d"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let core = riscv_data_core(
+        0,
+        0,
+        7,
+        "cpu0.ifetch",
+        fetch_route,
+        "cpu0.dmem",
+        data_route,
+        0x8000,
+    );
+    core.write_register(rem6_isa_riscv::Register::new(2).unwrap(), 0x9808);
+    core.write_register(
+        rem6_isa_riscv::Register::new(6).unwrap(),
+        0x1020_3040_5060_7080,
+    );
+    let cluster = RiscvCluster::new([core]).unwrap();
+    let store = loaded_program_store(&[
+        (0x8000, atomic_type(0x03, false, false, 6, 2, 0x3, 7)),
+        (0x8004, 0x0000_0073),
+    ]);
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        StatsRegistry::new(),
+    )));
+    let trap_port = RiscvTrapEventPort::new(
+        SystemHostEventPort::with_controller(host, 2, Arc::clone(&controller)).unwrap(),
+        source,
+    );
+    let driver = RiscvSystemRunDriver::new(trap_port).with_data_access_stats(
+        RiscvDataAccessStats::with_stack_distance(
+            StackDistProbeConfig::builder(16, 16).build().unwrap(),
+        ),
+    );
+
+    let run = driver
+        .drive_until_host_stop_parallel(
+            &cluster,
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_cpu| {
+                let store = Arc::clone(&store);
+                move |delivery, _context| memory_response(&store, &delivery)
+            },
+            |_cpu| {
+                |_delivery, _context| {
+                    panic!("locally failed store conditional should not issue a memory transaction")
+                }
+            },
+            40,
+            |cpu| GuestEventId::new(130 + u64::from(cpu.get())),
+        )
+        .unwrap();
+
+    let data = run
+        .data_access_probes()
+        .expect("run should carry data access probe evidence");
+    assert!(data.probes().events().is_empty());
+    assert_eq!(data.stack_distance().infinite_samples(), 0);
+    assert_eq!(data.stack_distance().finite_samples(), 0);
+}
+
+#[test]
+fn riscv_system_run_driver_records_agent_scoped_data_probe_packet_ids() {
+    let host = PartitionId::new(3);
+    let source = GuestSourceId::new(42);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let cpu0_fetch = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu0_data = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.dmem"),
+                PartitionId::new(0),
+                endpoint("l1d0"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu1_fetch = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu1.ifetch"),
+                PartitionId::new(1),
+                endpoint("l1i1"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu1_data = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu1.dmem"),
+                PartitionId::new(1),
+                endpoint("l1d1"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let core0 = riscv_data_core(
+        0,
+        0,
+        7,
+        "cpu0.ifetch",
+        cpu0_fetch,
+        "cpu0.dmem",
+        cpu0_data,
+        0x8000,
+    );
+    let core1 = riscv_data_core(
+        1,
+        1,
+        8,
+        "cpu1.ifetch",
+        cpu1_fetch,
+        "cpu1.dmem",
+        cpu1_data,
+        0x9000,
+    );
+    core0.write_register(rem6_isa_riscv::Register::new(2).unwrap(), 0x9800);
+    core1.write_register(rem6_isa_riscv::Register::new(2).unwrap(), 0x9810);
+    let cluster = RiscvCluster::new([core0, core1]).unwrap();
+    let store = loaded_program_store_with_data(
+        &[
+            (0x8000, i_type(8, 2, 0x3, 5, 0x03)),
+            (0x8004, 0x0000_0073),
+            (0x9000, i_type(8, 2, 0x3, 5, 0x03)),
+            (0x9004, 0x0010_0073),
+        ],
+        &[
+            (0x9808, vec![0x10, 0x32, 0x54, 0x76, 0x98, 0xba, 0xdc, 0xfe]),
+            (0x9818, vec![0x89, 0x67, 0x45, 0x23, 0x01, 0xef, 0xcd, 0xab]),
+        ],
+    );
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        StatsRegistry::new(),
+    )));
+    let trap_port = RiscvTrapEventPort::new(
+        SystemHostEventPort::with_controller(host, 2, Arc::clone(&controller)).unwrap(),
+        source,
+    );
+    let driver = RiscvSystemRunDriver::new(trap_port).with_data_access_stats(
+        RiscvDataAccessStats::with_stack_distance(
+            StackDistProbeConfig::builder(16, 16).build().unwrap(),
+        ),
+    );
+
+    let run = driver
+        .drive_until_host_stop_parallel(
+            &cluster,
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_cpu| {
+                let store = Arc::clone(&store);
+                move |delivery, _context| memory_response(&store, &delivery)
+            },
+            |_cpu| {
+                let store = Arc::clone(&store);
+                move |delivery, _context| memory_response(&store, &delivery)
+            },
+            40,
+            |cpu| GuestEventId::new(140 + u64::from(cpu.get())),
+        )
+        .unwrap();
+
+    let packet_ids = run
+        .data_access_probes()
+        .expect("run should carry data access probe evidence")
+        .probes()
+        .events()
+        .iter()
+        .map(|event| match event.payload() {
+            ProbePayload::MemoryPacket(packet) => packet.packet_id(),
+            payload => panic!("unexpected data access probe payload: {payload:?}"),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(packet_ids, vec![(7_u64 << 32) | 1, (8_u64 << 32) | 1]);
 }
 
 #[test]

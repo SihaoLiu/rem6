@@ -8,6 +8,8 @@ use rem6_stats::{
     ProbeRegistry, ProbeSnapshot, StatId, StatsError,
 };
 
+use crate::RiscvSystemRun;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RiscvRetiredInstructionProbeSnapshot {
     probes: ProbeSnapshot,
@@ -42,6 +44,22 @@ impl RiscvRetiredInstructionProbeSnapshot {
 
     pub fn point_for_cpu(&self, cpu: CpuId) -> Option<ProbePointId> {
         self.points.get(&cpu).copied()
+    }
+}
+
+impl RiscvSystemRun {
+    pub fn with_retired_instruction_probes(
+        mut self,
+        retired_instruction_probes: Option<RiscvRetiredInstructionProbeSnapshot>,
+    ) -> Self {
+        self.retired_instruction_probes = retired_instruction_probes;
+        self
+    }
+
+    pub const fn retired_instruction_probes(
+        &self,
+    ) -> Option<&RiscvRetiredInstructionProbeSnapshot> {
+        self.retired_instruction_probes.as_ref()
     }
 }
 

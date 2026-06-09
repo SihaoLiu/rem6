@@ -361,15 +361,25 @@ impl RiscvCore {
     }
 
     pub(crate) fn record_data_issue(&self, issue: OutstandingDataAccess) {
+        self.record_data_issue_state(issue, true);
+    }
+
+    fn record_local_store_conditional_failure_issue(&self, issue: OutstandingDataAccess) {
+        self.record_data_issue_state(issue, false);
+    }
+
+    fn record_data_issue_state(&self, issue: OutstandingDataAccess, emit_issued_event: bool) {
         self.core.advance_sequence_past(issue.request_id);
         let mut state = self.state.lock().expect("riscv core lock");
         state.issued_data_for_fetches.insert(issue.fetch_request);
         state
             .outstanding_data
             .insert(issue.request_id, issue.clone_without_layout());
-        state
-            .data_events
-            .push(RiscvDataAccessEvent::issued(issue.record(issue.tick)));
+        if emit_issued_event {
+            state
+                .data_events
+                .push(RiscvDataAccessEvent::issued(issue.record(issue.tick)));
+        }
     }
 
     pub(crate) fn schedule_store_conditional_failure(
@@ -384,7 +394,7 @@ impl RiscvCore {
                 core.record_store_conditional_failure(request_id, context.now());
             })
             .map_err(RiscvCpuError::Scheduler)?;
-        self.record_data_issue(issue);
+        self.record_local_store_conditional_failure_issue(issue);
         Ok(event)
     }
 
@@ -400,7 +410,7 @@ impl RiscvCore {
                 core.record_store_conditional_failure(request_id, context.now());
             })
             .map_err(RiscvCpuError::Scheduler)?;
-        self.record_data_issue(issue);
+        self.record_local_store_conditional_failure_issue(issue);
         Ok(event)
     }
 

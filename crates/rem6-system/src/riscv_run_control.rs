@@ -34,7 +34,7 @@ impl RiscvSystemRunDriver {
     {
         let mut turns = Vec::new();
         let mut scheduled_traps = Vec::new();
-        self.reset_instruction_stats_for_run();
+        self.reset_stats_for_run(cluster)?;
 
         if let Some(stop) = self.host_stop_request() {
             return Ok(self.run_result(
@@ -80,7 +80,7 @@ impl RiscvSystemRunDriver {
                     },
                 ));
             };
-            self.record_instruction_stats(scheduler.now(), &turn)?;
+            self.record_run_stats(cluster, scheduler.now(), &turn)?;
             self.trap_port()
                 .schedule_riscv_system_events_from_turn_parallel(
                     scheduler,
@@ -147,7 +147,7 @@ impl RiscvSystemRunDriver {
         let mut turns = Vec::new();
         let mut scheduled_traps = Vec::new();
         let mut committed_instructions = 0u64;
-        self.reset_instruction_stats_for_run();
+        self.reset_stats_for_run(cluster)?;
 
         if let Some(stop) = self.host_stop_request() {
             return Ok(self.run_result(
@@ -195,7 +195,7 @@ impl RiscvSystemRunDriver {
                     },
                 ));
             };
-            self.record_instruction_stats(scheduler.now(), &turn)?;
+            self.record_run_stats(cluster, scheduler.now(), &turn)?;
             committed_instructions =
                 committed_instructions.saturating_add(committed_instruction_count(&turn));
             self.trap_port()

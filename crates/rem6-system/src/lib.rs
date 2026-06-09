@@ -47,6 +47,7 @@ mod pci_interrupt_checkpoint;
 mod pl031_checkpoint;
 mod plic_checkpoint;
 mod riscv_checkpoint;
+mod riscv_data_access_stats;
 mod riscv_debug;
 mod riscv_instruction_stats;
 mod riscv_run_activity;
@@ -175,6 +176,7 @@ pub use riscv_checkpoint::{
     RiscvCoreCheckpointBank, RiscvCoreCheckpointError, RiscvCoreCheckpointPort,
     RiscvCoreCheckpointRecord,
 };
+pub use riscv_data_access_stats::{RiscvDataAccessProbeSnapshot, RiscvDataAccessStats};
 pub use riscv_debug::{
     apply_riscv_gdb_remote_core_register_write, apply_riscv_gdb_remote_register_write,
     handle_riscv_gdb_remote_cluster_packet, handle_riscv_gdb_remote_core_packet,
@@ -329,6 +331,7 @@ pub struct RiscvSystemRun {
     pub(crate) trace_htm_access_records: Vec<RiscvTraceHtmAccessRecord>,
     pub(crate) store_conditional_failure_diagnostics: Vec<RiscvStoreConditionalFailureDiagnostic>,
     retired_instruction_probes: Option<RiscvRetiredInstructionProbeSnapshot>,
+    data_access_probes: Option<RiscvDataAccessProbeSnapshot>,
 }
 
 impl RiscvSystemRun {
@@ -354,6 +357,7 @@ impl RiscvSystemRun {
             trace_htm_access_records: Vec::new(),
             store_conditional_failure_diagnostics: Vec::new(),
             retired_instruction_probes: None,
+            data_access_probes: None,
         }
     }
 
@@ -396,26 +400,12 @@ impl RiscvSystemRun {
         self
     }
 
-    pub fn with_retired_instruction_probes(
-        mut self,
-        retired_instruction_probes: Option<RiscvRetiredInstructionProbeSnapshot>,
-    ) -> Self {
-        self.retired_instruction_probes = retired_instruction_probes;
-        self
-    }
-
     pub fn turns(&self) -> &[RiscvClusterTurn] {
         &self.turns
     }
 
     pub fn scheduled_traps(&self) -> &[ScheduledRiscvTrap] {
         &self.scheduled_traps
-    }
-
-    pub const fn retired_instruction_probes(
-        &self,
-    ) -> Option<&RiscvRetiredInstructionProbeSnapshot> {
-        self.retired_instruction_probes.as_ref()
     }
 
     pub fn cpu_activity(&self, cpu: CpuId) -> Option<RiscvSystemRunCpuActivity> {
@@ -696,6 +686,7 @@ impl RiscvSystemRun {
 pub struct RiscvSystemRunDriver {
     trap_port: RiscvTrapEventPort,
     instruction_stats: Option<RiscvInstructionStats>,
+    data_access_stats: Option<RiscvDataAccessStats>,
 }
 
 impl RiscvSystemRunDriver {
@@ -703,6 +694,7 @@ impl RiscvSystemRunDriver {
         Self {
             trap_port,
             instruction_stats: None,
+            data_access_stats: None,
         }
     }
 
@@ -713,6 +705,7 @@ impl RiscvSystemRunDriver {
         Self {
             trap_port,
             instruction_stats: Some(instruction_stats),
+            data_access_stats: None,
         }
     }
 
@@ -724,10 +717,11 @@ impl RiscvSystemRunDriver {
         self.instruction_stats.as_ref()
     }
 
-    pub(crate) fn reset_instruction_stats_for_run(&self) {
+    pub(crate) fn reset_stats_for_run(&self, cluster: &RiscvCluster) -> Result<(), SystemError> {
         if let Some(instruction_stats) = &self.instruction_stats {
             instruction_stats.reset_retired_instruction_probes();
         }
+        self.reset_data_access_stats_for_run(cluster)
     }
 
     pub(crate) fn run_result(
@@ -745,6 +739,11 @@ impl RiscvSystemRunDriver {
                 self.instruction_stats
                     .as_ref()
                     .map(RiscvInstructionStats::retired_instruction_probe_snapshot),
+            )
+            .with_data_access_probes(
+                self.data_access_stats
+                    .as_ref()
+                    .map(RiscvDataAccessStats::data_access_probe_snapshot),
             )
     }
 
@@ -770,7 +769,7 @@ impl RiscvSystemRunDriver {
     {
         let mut turns = Vec::new();
         let mut scheduled_traps = Vec::new();
-        self.reset_instruction_stats_for_run();
+        self.reset_stats_for_run(cluster)?;
 
         if let Some(stop) = self.host_stop_request() {
             return Ok(self.run_result(
@@ -792,7 +791,7 @@ impl RiscvSystemRunDriver {
                     &mut data_responder,
                 )
                 .map_err(SystemError::RiscvCluster)?;
-            self.record_instruction_stats(scheduler.now(), &turn)?;
+            self.record_run_stats(cluster, scheduler.now(), &turn)?;
             self.trap_port.schedule_riscv_system_events_from_turn(
                 scheduler,
                 &turn,
@@ -863,7 +862,7 @@ impl RiscvSystemRunDriver {
     {
         let mut turns = Vec::new();
         let mut scheduled_traps = Vec::new();
-        self.reset_instruction_stats_for_run();
+        self.reset_stats_for_run(cluster)?;
 
         if let Some(stop) = self.host_stop_request() {
             return Ok(self.run_result(
@@ -885,7 +884,7 @@ impl RiscvSystemRunDriver {
                     &mut data_responder,
                 )
                 .map_err(SystemError::RiscvCluster)?;
-            self.record_instruction_stats(scheduler.now(), &turn)?;
+            self.record_run_stats(cluster, scheduler.now(), &turn)?;
             self.trap_port
                 .schedule_riscv_system_events_from_turn_parallel(
                     scheduler,
@@ -958,7 +957,7 @@ impl RiscvSystemRunDriver {
     {
         let mut turns = Vec::new();
         let mut scheduled_traps = Vec::new();
-        self.reset_instruction_stats_for_run();
+        self.reset_stats_for_run(cluster)?;
 
         if let Some(stop) = self.host_stop_request() {
             return Ok(self.run_result(
@@ -981,7 +980,7 @@ impl RiscvSystemRunDriver {
                     &mut data_responder,
                 )
                 .map_err(SystemError::RiscvCluster)?;
-            self.record_instruction_stats(scheduler.now(), &turn)?;
+            self.record_run_stats(cluster, scheduler.now(), &turn)?;
             self.trap_port
                 .schedule_riscv_system_events_from_turn_parallel(
                     scheduler,
@@ -1035,6 +1034,16 @@ impl RiscvSystemRunDriver {
             .run()
             .stop_request()
             .copied()
+    }
+
+    pub(crate) fn record_run_stats(
+        &self,
+        cluster: &RiscvCluster,
+        tick: Tick,
+        turn: &RiscvClusterTurn,
+    ) -> Result<(), SystemError> {
+        self.record_instruction_stats(tick, turn)?;
+        self.record_data_access_stats(cluster)
     }
 
     pub(crate) fn record_instruction_stats(
