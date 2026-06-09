@@ -198,6 +198,20 @@ impl DramMemoryController {
             .map_err(DramMemoryError::Memory)
     }
 
+    pub fn response_data(&self, request: &MemoryRequest) -> Result<Vec<u8>, DramMemoryError> {
+        let target = self
+            .store
+            .decode_request(request)
+            .map_err(DramMemoryError::Memory)?;
+        self.preflight_storage(target, request)
+            .map_err(DramMemoryError::Memory)?;
+        let line = self
+            .store
+            .line_data(target, request.line_address())
+            .map_err(DramMemoryError::Memory)?;
+        Ok(request_line_data(request, &line))
+    }
+
     pub fn line_count(&self, target: MemoryTargetId) -> Result<usize, DramMemoryError> {
         self.store
             .line_count(target)
@@ -617,4 +631,12 @@ impl DramMemoryController {
             .line_data(target, request.line_address())
             .map(|_| ())
     }
+}
+
+fn request_line_data(request: &MemoryRequest, line: &[u8]) -> Vec<u8> {
+    let offset = request.line_offset() as usize;
+    let size = request.size().bytes() as usize;
+    line.get(offset..offset + size)
+        .expect("validated single-line memory request data range")
+        .to_vec()
 }

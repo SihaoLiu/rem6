@@ -1,5 +1,8 @@
 use rem6_boot::BootImage;
-use rem6_cpu::{CpuId, RiscvClusterHtmAbortOutcome, RiscvClusterHtmBeginOutcome};
+use rem6_cpu::{
+    CpuFetchEventKind, CpuId, RiscvClusterHtmAbortOutcome, RiscvClusterHtmBeginOutcome,
+};
+use rem6_dram::{DramGeometry, DramTiming, ExternalMemoryProfile};
 use rem6_kernel::PartitionId;
 use rem6_memory::{
     AccessSize, Address, AddressRange, AgentId, MemoryOperation, MemoryRequestId, MemoryTargetId,
@@ -148,6 +151,18 @@ fn boot_image_with_translated_load() -> BootImage {
         .unwrap()
 }
 
+fn dram_profile(target: u32, line_bytes: u64) -> ExternalMemoryProfile {
+    ExternalMemoryProfile::ddr(
+        MemoryTargetId::new(target),
+        rem6_memory::CacheLineLayout::new(line_bytes).unwrap(),
+        1,
+        1,
+        DramGeometry::new(1, line_bytes, line_bytes).unwrap(),
+        DramTiming::new(4, 8, 10, 3, 5).unwrap(),
+    )
+    .unwrap()
+}
+
 fn snapshot_line_data(
     snapshot: &rem6_memory::PartitionedMemorySnapshot,
     target: MemoryTargetId,
@@ -187,6 +202,39 @@ fn replay_topology() -> WorkloadTopology {
                 16,
                 AddressRange::new(Address::new(0x8000), AccessSize::new(0x1000).unwrap()).unwrap(),
             )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(route_id("cpu0.fetch"), "cpu0.ifetch", 0, "memory", 2, 2, 3)
+                .unwrap(),
+        )
+        .unwrap()
+        .add_riscv_core(
+            WorkloadRiscvCore::new(
+                0,
+                0,
+                7,
+                Address::new(0x8000),
+                "cpu0.ifetch",
+                route_id("cpu0.fetch"),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+}
+
+fn replay_topology_with_profiled_memory() -> WorkloadTopology {
+    WorkloadTopology::new(4, 2, 2, WorkloadHostPlacement::new(3, 2, 51).unwrap())
+        .unwrap()
+        .add_memory_target(
+            WorkloadMemoryTarget::new(
+                0,
+                16,
+                AddressRange::new(Address::new(0x8000), AccessSize::new(0x1000).unwrap()).unwrap(),
+            )
+            .unwrap()
+            .with_external_memory_profile(dram_profile(0, 16))
             .unwrap(),
         )
         .unwrap()
@@ -464,6 +512,49 @@ fn replay_manifest(id: &str) -> WorkloadManifest {
                 reason: "host-stop".to_string(),
             },
         ))
+        .build()
+        .unwrap()
+}
+
+fn replay_manifest_with_host_stop_at(id: &str, tick: u64) -> WorkloadManifest {
+    WorkloadManifest::builder(workload_id(id), boot_image())
+        .with_topology(replay_topology())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .add_host_event(WorkloadHostEvent::new(
+            tick,
+            HostEventIntent::Stop {
+                reason: "host-stop".to_string(),
+            },
+        ))
+        .build()
+        .unwrap()
+}
+
+fn replay_manifest_with_profiled_memory_host_stop_at(id: &str, tick: u64) -> WorkloadManifest {
+    WorkloadManifest::builder(workload_id(id), boot_image())
+        .with_topology(replay_topology_with_profiled_memory())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .add_host_event(WorkloadHostEvent::new(
+            tick,
+            HostEventIntent::Stop {
+                reason: "host-stop".to_string(),
+            },
+        ))
+        .build()
+        .unwrap()
+}
+
+fn replay_manifest_with_idle_stop(id: &str) -> WorkloadManifest {
+    WorkloadManifest::builder(workload_id(id), boot_image())
+        .with_topology(replay_topology())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .with_expected_stop_reason("idle")
         .build()
         .unwrap()
 }
@@ -1270,6 +1361,194 @@ fn workload_replay_records_fetch_trace_read_error_metadata() {
     assert_eq!(summary.memory_failure_count(), 1);
     assert_eq!(summary.trace_error_count(), 0);
     assert_eq!(summary.trace_htm_access_count(), 0);
+}
+
+#[test]
+fn workload_replay_drives_fetch_port_failure_from_trace_error() {
+    let outcome = replay_manifest_with_controller(
+        replay_manifest_with_idle_stop("riscv-replay-fetch-port-trace-read-error"),
+        &[
+            PacketFields {
+                tick: 0,
+                command: GEM5_READ_REQ,
+                address: Some(0x8000),
+                size: Some(4),
+                packet_id: Some(914),
+            },
+            PacketFields {
+                tick: 3,
+                command: GEM5_READ_ERROR,
+                address: Some(0x8000),
+                size: Some(4),
+                packet_id: Some(914),
+            },
+        ],
+    )
+    .unwrap();
+
+    let core = outcome.cluster().core(CpuId::new(0)).unwrap();
+    let fetch_events = core.inner().fetch_events();
+    let fetch_event_kinds = fetch_events
+        .iter()
+        .map(|event| event.kind())
+        .collect::<Vec<_>>();
+    assert!(fetch_event_kinds.len() >= 2);
+    assert_eq!(
+        &fetch_event_kinds[..2],
+        &[CpuFetchEventKind::Issued, CpuFetchEventKind::Failed]
+    );
+    assert_eq!(
+        fetch_event_kinds
+            .iter()
+            .filter(|kind| **kind == CpuFetchEventKind::Issued)
+            .count(),
+        2,
+    );
+    assert!(!fetch_event_kinds.contains(&CpuFetchEventKind::Completed));
+    assert_eq!(fetch_events[1].tick(), 3);
+    assert_eq!(fetch_events[1].pc(), Address::new(0x8000));
+    assert_eq!(core.pc(), Address::new(0x8000));
+
+    let traffic_replay = &outcome.traffic_trace_replays()[0];
+    assert!(traffic_replay.errors().is_empty());
+    assert!(traffic_replay.response_deliveries().is_empty());
+    assert_eq!(traffic_replay.memory_failure_records().len(), 1);
+    let summary = &outcome.result().traffic_trace_replay_summaries()[0];
+    assert_eq!(summary.memory_failure_count(), 1);
+}
+
+#[test]
+fn workload_replay_drives_fetch_port_response_from_trace_response() {
+    let outcome = replay_manifest_with_controller(
+        replay_manifest_with_host_stop_at("riscv-replay-fetch-port-trace-read-response", 6),
+        &[
+            PacketFields {
+                tick: 0,
+                command: GEM5_READ_REQ,
+                address: Some(0x8000),
+                size: Some(4),
+                packet_id: Some(923),
+            },
+            PacketFields {
+                tick: 3,
+                command: GEM5_READ_RESP,
+                address: Some(0x8000),
+                size: Some(4),
+                packet_id: Some(923),
+            },
+        ],
+    )
+    .unwrap();
+
+    let core = outcome.cluster().core(CpuId::new(0)).unwrap();
+    let fetch_events = core.inner().fetch_events();
+    let fetch_event_kinds = fetch_events
+        .iter()
+        .map(|event| event.kind())
+        .collect::<Vec<_>>();
+    assert!(fetch_event_kinds.len() >= 2);
+    assert_eq!(
+        &fetch_event_kinds[..2],
+        &[CpuFetchEventKind::Issued, CpuFetchEventKind::Completed]
+    );
+    assert!(!fetch_event_kinds.contains(&CpuFetchEventKind::Failed));
+    assert_eq!(fetch_events[1].tick(), 6);
+    assert_eq!(fetch_events[1].pc(), Address::new(0x8000));
+    assert_eq!(fetch_events[1].data(), Some(word(0x0000_0073).as_slice()));
+
+    let traffic_replay = &outcome.traffic_trace_replays()[0];
+    assert!(traffic_replay.errors().is_empty());
+    assert!(traffic_replay.response_deliveries().is_empty());
+    assert_eq!(traffic_replay.memory_response_records().len(), 1);
+    let response = &traffic_replay.memory_response_records()[0];
+    assert_eq!(response.tick(), 3);
+    assert_eq!(response.trace_tick(), 3);
+    assert_eq!(response.sequence(), 1);
+    assert_eq!(response.kind(), TrafficTraceResponseKind::Read);
+    assert_eq!(response.status(), ResponseStatus::Completed);
+    assert_eq!(response.address(), Some(Address::new(0x8000)));
+    assert_eq!(response.line(), Address::new(0x8000));
+    assert_eq!(response.size_bytes(), Some(4));
+    assert_eq!(response.trace_packet_id(), Some(923));
+    assert_eq!(response.response_data_bytes(), Some(4));
+    assert_eq!(response.trace_data_bytes(), Some(4));
+
+    let summary = &outcome.result().traffic_trace_replay_summaries()[0];
+    assert_eq!(summary.response_delivery_count(), 0);
+    assert_eq!(summary.trace_completed_response_count(), 1);
+    assert_eq!(summary.trace_read_response_count(), 1);
+    assert_eq!(summary.trace_response_data_byte_count(), 4);
+}
+
+#[test]
+fn workload_replay_fetch_trace_response_reads_profiled_memory_without_dram_access() {
+    let outcome = replay_manifest_with_controller(
+        replay_manifest_with_profiled_memory_host_stop_at(
+            "riscv-replay-fetch-port-profiled-trace-read-response",
+            6,
+        ),
+        &[
+            PacketFields {
+                tick: 0,
+                command: GEM5_READ_REQ,
+                address: Some(0x8000),
+                size: Some(4),
+                packet_id: Some(925),
+            },
+            PacketFields {
+                tick: 3,
+                command: GEM5_READ_RESP,
+                address: Some(0x8000),
+                size: Some(4),
+                packet_id: Some(925),
+            },
+        ],
+    )
+    .unwrap();
+
+    let core = outcome.cluster().core(CpuId::new(0)).unwrap();
+    let fetch_events = core.inner().fetch_events();
+    assert_eq!(fetch_events[1].kind(), CpuFetchEventKind::Completed);
+    assert_eq!(fetch_events[1].data(), Some(word(0x0000_0073).as_slice()));
+
+    let traffic_replay = &outcome.traffic_trace_replays()[0];
+    assert!(traffic_replay.errors().is_empty());
+    assert!(traffic_replay.response_deliveries().is_empty());
+    assert_eq!(traffic_replay.memory_response_records().len(), 1);
+    let summary = outcome.result().parallel_execution_summary().unwrap();
+    assert_eq!(summary.dram_access_count(), 0);
+    assert_eq!(summary.dram_read_count(), 0);
+    assert_eq!(summary.dram_operation_count(), 0);
+}
+
+#[test]
+fn workload_replay_reports_fetch_trace_request_without_target_action() {
+    let error = replay_manifest_with_controller(
+        replay_manifest_with_idle_stop("riscv-replay-fetch-port-missing-target-action"),
+        &[PacketFields {
+            tick: 0,
+            command: GEM5_READ_REQ,
+            address: Some(0x8000),
+            size: Some(4),
+            packet_id: Some(924),
+        }],
+    )
+    .unwrap_err();
+
+    match error {
+        RiscvWorkloadReplayError::TrafficTraceReplayCallback { route, errors } => {
+            assert_eq!(route, route_id("cpu0.fetch"));
+            assert_eq!(errors.target().len(), 1);
+            assert!(errors.control().is_empty());
+            assert!(matches!(
+                errors.target()[0],
+                TrafficTraceReplayControllerTargetError::Target(
+                    TrafficTraceReplayTargetError::ActionQueueEmpty { .. }
+                )
+            ));
+        }
+        other => panic!("unexpected workload replay error: {other:?}"),
+    }
 }
 
 #[test]

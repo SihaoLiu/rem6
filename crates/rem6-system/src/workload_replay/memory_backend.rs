@@ -263,6 +263,30 @@ impl WorkloadMemoryBackend {
         }
     }
 
+    pub(super) fn response_data(
+        &self,
+        request: &MemoryRequest,
+    ) -> Result<Vec<u8>, RiscvWorkloadReplayError> {
+        match self {
+            Self::Store(store) => {
+                let store = store.lock().expect("workload replay memory lock");
+                let target = store
+                    .decode_request(request)
+                    .map_err(RiscvWorkloadReplayError::Memory)?;
+                let line = store
+                    .line_data(target, request.line_address())
+                    .map_err(RiscvWorkloadReplayError::Memory)?;
+                Ok(request_line_data(request, &line))
+            }
+            Self::Dram(dram) => dram
+                .lock()
+                .expect("workload replay DRAM lock")
+                .controller()
+                .response_data(request)
+                .map_err(RiscvWorkloadReplayError::Dram),
+        }
+    }
+
     pub(super) fn insert_line(
         &self,
         target: MemoryTargetId,
@@ -349,6 +373,14 @@ fn dram_target_outcome(delivery_tick: Tick, outcome: DramMemoryOutcome) -> Targe
     } else {
         TargetOutcome::RespondAfter { delay, response }
     }
+}
+
+fn request_line_data(request: &MemoryRequest, line: &[u8]) -> Vec<u8> {
+    let offset = request.line_offset() as usize;
+    let size = request.size().bytes() as usize;
+    line.get(offset..offset + size)
+        .expect("validated single-line workload memory request data range")
+        .to_vec()
 }
 
 #[cfg(test)]

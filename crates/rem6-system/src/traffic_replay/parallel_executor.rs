@@ -196,6 +196,13 @@ impl TrafficTraceReplayControllerParallelExecutor {
             .clone()
     }
 
+    pub fn record_target_error(&self, error: TrafficTraceReplayControllerTargetError) {
+        self.errors
+            .lock()
+            .expect("trace replay controller parallel error lock")
+            .record_target(error);
+    }
+
     pub fn schedule_controller_parallel<F>(
         &self,
         scheduler: &mut PartitionedScheduler,
@@ -243,6 +250,61 @@ impl TrafficTraceReplayControllerParallelExecutor {
                     move |delivery| (*sink)(delivery),
                 )
                 .map(usize::from)
+            } else if batch_requires_control_response(&batch) {
+                self.schedule_batch_control_parallel(&batch, scheduler, control_partition)
+                    .map(usize::from)
+            } else {
+                self.record_batch_parallel(
+                    &batch,
+                    scheduler,
+                    control_partition,
+                    batch_replay_tick(&batch),
+                )
+            } {
+                Ok(scheduled) => scheduled,
+                Err(error) => {
+                    self.restore_controller(checkpoint)?;
+                    return Err(error);
+                }
+            };
+            scheduled += batch_scheduled;
+            if trace_exited {
+                return Ok(scheduled);
+            }
+        }
+    }
+
+    pub fn schedule_controller_without_target_requests_parallel(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        control_partition: PartitionId,
+    ) -> Result<usize, TrafficTraceReplayControllerParallelSubmitError> {
+        let mut scheduled = 0;
+        loop {
+            let checkpoint = self
+                .controller
+                .lock()
+                .expect("traffic controller lock")
+                .snapshot();
+            let batch_tick = self.controller_batch_tick(scheduler.now());
+            let batch = match self.next_controller_batch(batch_tick) {
+                Ok(batch) => batch,
+                Err(error) => {
+                    self.restore_controller(checkpoint)?;
+                    return Err(error.into());
+                }
+            };
+            let Some(batch) = batch else {
+                return Ok(scheduled);
+            };
+
+            if batch.is_empty() {
+                return Ok(scheduled);
+            }
+            let trace_exited = batch.trace_exit().is_some();
+            let batch_scheduled = match if batch.request().is_some() {
+                self.record_request_batch_parallel(&batch, scheduler, control_partition)
+                    .map(usize::from)
             } else if batch_requires_control_response(&batch) {
                 self.schedule_batch_control_parallel(&batch, scheduler, control_partition)
                     .map(usize::from)
@@ -445,6 +507,38 @@ impl TrafficTraceReplayControllerParallelExecutor {
             source_partition,
             write_completions,
         )?;
+        self.commit_runtime(staged);
+        Ok(true)
+    }
+
+    pub fn record_request_batch_parallel(
+        &self,
+        batch: &TrafficControllerEventBatch,
+        scheduler: &mut PartitionedScheduler,
+        partition: PartitionId,
+    ) -> Result<bool, TrafficTraceReplayControllerParallelSubmitError> {
+        let Some(request_event) = batch.request() else {
+            return Ok(false);
+        };
+        let request_tick = request_event.tick();
+        let request_order = TrafficTraceReplayOrder::new(request_tick, request_event.sequence());
+        let request_id = request_event.request().id();
+        let staged = self.staged_runtime(batch)?;
+        let (staged, sidebands) =
+            prepare_sidebands_from_runtime(staged, scheduler, partition, request_tick)?;
+        let (staged, write_completions) = prepare_memory_write_completions_from_runtime(
+            staged,
+            scheduler,
+            partition,
+            request_tick,
+        )?;
+        if request_event.request().requires_response() {
+            if let Some(target_request_sink) = &self.target_request_sink {
+                target_request_sink(request_order, request_id);
+            }
+        }
+        self.schedule_prepared_sidebands(scheduler, partition, sidebands)?;
+        self.schedule_prepared_memory_write_completions(scheduler, partition, write_completions)?;
         self.commit_runtime(staged);
         Ok(true)
     }

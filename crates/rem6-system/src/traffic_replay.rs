@@ -605,7 +605,6 @@ impl TrafficTraceReplayControllerRuntime {
     ) -> Result<TrafficTraceReplayTargetEvent, TrafficTraceReplayTargetError> {
         self.target.target_event(delivery)
     }
-
     fn target_event_context(
         &mut self,
         delivery: &RequestDelivery,
@@ -620,8 +619,11 @@ impl TrafficTraceReplayControllerRuntime {
     fn drop_target_request(&mut self, request: MemoryRequestId) {
         self.target.drop_request(request);
     }
-
-    fn record_memory_failure(&mut self, tick: Tick, record: TrafficTraceMemoryFailureRecord) {
+    pub(crate) fn record_memory_failure(
+        &mut self,
+        tick: Tick,
+        record: TrafficTraceMemoryFailureRecord,
+    ) {
         self.target.record_memory_failure(tick, record);
     }
 
@@ -1176,7 +1178,7 @@ fn batch_has_control_source(
     })
 }
 
-fn traffic_trace_replay_controller_runtime_target_event(
+pub(crate) fn traffic_trace_replay_controller_runtime_target_event(
     runtime: Arc<Mutex<TrafficTraceReplayControllerRuntime>>,
     delivery: &RequestDelivery,
 ) -> Result<TrafficTraceReplayTargetEvent, TrafficTraceReplayTargetError> {
@@ -1186,7 +1188,7 @@ fn traffic_trace_replay_controller_runtime_target_event(
         .target_event(delivery)
 }
 
-pub(super) fn traffic_trace_replay_controller_runtime_target_event_context(
+pub(crate) fn traffic_trace_replay_controller_runtime_target_event_context(
     runtime: Arc<Mutex<TrafficTraceReplayControllerRuntime>>,
     delivery: &RequestDelivery,
 ) -> Result<TrafficTraceReplayTargetEventContext, TrafficTraceReplayTargetError> {

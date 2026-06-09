@@ -56,6 +56,7 @@ mod qos;
 mod sinic_mmio_backend;
 mod summary;
 mod traffic_trace;
+mod traffic_trace_fetch;
 mod traffic_trace_htm;
 mod traffic_trace_records;
 mod traffic_trace_sideband_records;
@@ -83,12 +84,13 @@ use self::summary::{
     livelock_transition_threshold, parallel_execution_summary, WorkloadReplayActivityRefs,
 };
 use self::traffic_trace::{
-    schedule_traffic_trace_replays, RiscvWorkloadScheduledTrafficTraceReplay,
+    schedule_traffic_trace_replays_with_fetch_bindings, RiscvWorkloadScheduledTrafficTraceReplay,
 };
 pub use self::traffic_trace::{
     RiscvWorkloadTraceMemoryFailureRecord, RiscvWorkloadTraceMemoryResponseRecord,
     RiscvWorkloadTrafficTraceReplay, RiscvWorkloadTrafficTraceReplayOutcome,
 };
+use self::traffic_trace_fetch::traffic_trace_fetch_responder as trace_fetch_responder;
 pub use self::traffic_trace_htm::{
     RiscvWorkloadTraceHtmAbortRecord, RiscvWorkloadTraceHtmBeginRecord,
 };
@@ -336,7 +338,7 @@ impl RiscvWorkloadReplay {
             .filter(|replay| replay.data_cache())
             .map(|replay| replay.route().clone())
             .collect::<BTreeSet<_>>();
-        let traffic_trace_replays = schedule_traffic_trace_replays(
+        let scheduled_traffic_trace_replays = schedule_traffic_trace_replays_with_fetch_bindings(
             &traffic_trace_replay_runs,
             topology,
             &route_map,
@@ -346,6 +348,8 @@ impl RiscvWorkloadReplay {
             &cluster,
             &traffic_trace_data_cache_routes,
         )?;
+        let fetch_bindings = scheduled_traffic_trace_replays.fetch_bindings.clone();
+        let traffic_trace_replays = scheduled_traffic_trace_replays.replays;
         let trap_port = RiscvTrapEventPort::new(
             SystemHostEventPort::with_controller(
                 PartitionId::new(topology.host().partition()),
@@ -368,10 +372,7 @@ impl RiscvWorkloadReplay {
                 MemoryTrace::new(),
                 MemoryTrace::new(),
                 page_map,
-                |_cpu| {
-                    let memory = memory.clone();
-                    move |delivery, _context| memory_response(&memory, &delivery)
-                },
+                |cpu| trace_fetch_responder(&cluster, &fetch_bindings, memory.clone(), cpu),
                 |_cpu| {
                     let memory = memory.clone();
                     let data_cache = data_cache.clone();
@@ -393,10 +394,7 @@ impl RiscvWorkloadReplay {
                 &transport,
                 MemoryTrace::new(),
                 MemoryTrace::new(),
-                |_cpu| {
-                    let memory = memory.clone();
-                    move |delivery, _context| memory_response(&memory, &delivery)
-                },
+                |cpu| trace_fetch_responder(&cluster, &fetch_bindings, memory.clone(), cpu),
                 |_cpu| {
                     let memory = memory.clone();
                     let data_cache = data_cache.clone();

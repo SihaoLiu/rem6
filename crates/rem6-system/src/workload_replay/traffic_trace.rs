@@ -29,6 +29,10 @@ use crate::{
 };
 
 use super::data_cache_backend::WorkloadDataCacheBackend;
+use super::traffic_trace_fetch::{
+    trace_batch_riscv_fetch_request_order, trace_controller_riscv_fetch_request_order,
+    RiscvWorkloadTrafficTraceFetchBinding, RiscvWorkloadTrafficTraceFetchRequests,
+};
 use super::traffic_trace_htm::{
     RiscvWorkloadTraceHtmAbortRecord, RiscvWorkloadTraceHtmBeginRecord,
 };
@@ -715,7 +719,12 @@ impl RiscvWorkloadTraceMemoryFailureRecord {
     }
 }
 
-pub(super) fn schedule_traffic_trace_replays(
+pub(super) struct RiscvWorkloadScheduledTrafficTraceReplays {
+    pub(super) replays: Vec<RiscvWorkloadScheduledTrafficTraceReplay>,
+    pub(super) fetch_bindings: Vec<RiscvWorkloadTrafficTraceFetchBinding>,
+}
+
+pub(super) fn schedule_traffic_trace_replays_with_fetch_bindings(
     replays: &[RiscvWorkloadTrafficTraceReplay],
     topology: &WorkloadTopology,
     route_map: &BTreeMap<WorkloadRouteId, MemoryRouteId>,
@@ -724,8 +733,9 @@ pub(super) fn schedule_traffic_trace_replays(
     data_cache: &Option<Arc<Mutex<WorkloadDataCacheBackend>>>,
     cluster: &RiscvCluster,
     data_cache_routes: &BTreeSet<WorkloadRouteId>,
-) -> Result<Vec<RiscvWorkloadScheduledTrafficTraceReplay>, RiscvWorkloadReplayError> {
+) -> Result<RiscvWorkloadScheduledTrafficTraceReplays, RiscvWorkloadReplayError> {
     let mut scheduled_replays = Vec::new();
+    let mut fetch_bindings = Vec::new();
     for replay in replays {
         let route = route_map.get(replay.route()).copied().ok_or_else(|| {
             RiscvWorkloadReplayError::MissingRoute {
@@ -748,35 +758,77 @@ pub(super) fn schedule_traffic_trace_replays(
             records.clone(),
             data_cache_routes,
         );
-        let executor =
-            traffic_trace_replay_executor(controller, replay.retry_delay(), data_cache_consumer);
+        let fetch_request_order =
+            match trace_batch_riscv_fetch_request_order(replay.route(), &start_batch, topology) {
+                Some(order) => Some(order),
+                None => trace_controller_riscv_fetch_request_order(
+                    replay.route(),
+                    &controller,
+                    scheduler.now(),
+                    replay.retry_delay(),
+                    topology,
+                )?,
+            };
+        let uses_cpu_fetch_port = fetch_request_order.is_some();
+        let fetch_requests = RiscvWorkloadTrafficTraceFetchRequests::default();
+        let executor = traffic_trace_replay_executor(
+            controller,
+            replay.retry_delay(),
+            data_cache_consumer.clone(),
+            uses_cpu_fetch_port.then(|| fetch_requests.clone()),
+        );
 
-        let mut scheduled_count = schedule_workload_traffic_trace_batch(
-            &executor,
-            &start_batch,
-            scheduler,
-            transport,
-            route,
-            trace.clone(),
-            replay.control_partition(),
-            Arc::clone(&response_deliveries),
-        )?;
-        let response_log = Arc::clone(&response_deliveries);
-        scheduled_count += executor
-            .schedule_controller_parallel(
+        let mut scheduled_count = if uses_cpu_fetch_port {
+            record_workload_traffic_trace_batch(
+                &executor,
+                &start_batch,
+                scheduler,
+                replay.control_partition(),
+            )?
+        } else {
+            schedule_workload_traffic_trace_batch(
+                &executor,
+                &start_batch,
                 scheduler,
                 transport,
                 route,
                 trace.clone(),
                 replay.control_partition(),
-                move |delivery| {
-                    response_log
-                        .lock()
-                        .expect("traffic trace replay response lock")
-                        .push(delivery);
-                },
-            )
-            .map_err(RiscvWorkloadReplayError::TrafficTraceReplay)?;
+                Arc::clone(&response_deliveries),
+            )?
+        };
+        let response_log = Arc::clone(&response_deliveries);
+        scheduled_count += if uses_cpu_fetch_port {
+            schedule_controller_without_trace_target_requests(
+                &executor,
+                scheduler,
+                replay.control_partition(),
+            )?
+        } else {
+            executor
+                .schedule_controller_parallel(
+                    scheduler,
+                    transport,
+                    route,
+                    trace.clone(),
+                    replay.control_partition(),
+                    move |delivery| {
+                        response_log
+                            .lock()
+                            .expect("traffic trace replay response lock")
+                            .push(delivery);
+                    },
+                )
+                .map_err(RiscvWorkloadReplayError::TrafficTraceReplay)?
+        };
+        if uses_cpu_fetch_port {
+            fetch_bindings.push(RiscvWorkloadTrafficTraceFetchBinding::new(
+                route,
+                fetch_requests,
+                executor.clone(),
+                data_cache_consumer.clone(),
+            ));
+        }
         scheduled_replays.push(RiscvWorkloadScheduledTrafficTraceReplay {
             route: replay.route().clone(),
             scheduled_count,
@@ -786,20 +838,28 @@ pub(super) fn schedule_traffic_trace_replays(
             executor,
         });
     }
-    Ok(scheduled_replays)
+    Ok(RiscvWorkloadScheduledTrafficTraceReplays {
+        replays: scheduled_replays,
+        fetch_bindings,
+    })
 }
 
 fn traffic_trace_replay_executor(
     controller: TrafficController,
     retry_delay: Tick,
     data_cache: WorkloadTraceDataCacheConsumer,
+    fetch_requests: Option<RiscvWorkloadTrafficTraceFetchRequests>,
 ) -> TrafficTraceReplayControllerParallelExecutor {
     let executor =
         TrafficTraceReplayControllerParallelExecutor::new(controller).with_retry_delay(retry_delay);
     executor
         .with_target_request_sink({
             let data_cache = data_cache.clone();
+            let fetch_requests = fetch_requests.clone();
             move |order, request| {
+                if let Some(fetch_requests) = fetch_requests.as_ref() {
+                    fetch_requests.record(order, request);
+                }
                 data_cache.register_request(order, request);
             }
         })
@@ -913,7 +973,7 @@ fn trace_route_uses_riscv_data_core(route: &WorkloadRouteId, topology: &Workload
 }
 
 #[derive(Clone)]
-struct WorkloadTraceDataCacheConsumer {
+pub(super) struct WorkloadTraceDataCacheConsumer {
     inner: Arc<Mutex<WorkloadTraceDataCacheConsumerInner>>,
 }
 
@@ -961,7 +1021,7 @@ impl WorkloadTraceDataCacheConsumer {
             .insert(order);
     }
 
-    fn register_target_event(
+    pub(super) fn register_target_event(
         &self,
         request_order: TrafficTraceReplayOrder,
         now: Tick,
@@ -978,7 +1038,7 @@ impl WorkloadTraceDataCacheConsumer {
         );
     }
 
-    fn complete_target_event(
+    pub(super) fn complete_target_event(
         &self,
         request_order: TrafficTraceReplayOrder,
         delivery: &RequestDelivery,
@@ -1623,6 +1683,50 @@ fn schedule_workload_traffic_trace_batch(
             control_partition,
             workload_traffic_trace_batch_replay_tick(batch),
         )
+        .map_err(RiscvWorkloadReplayError::TrafficTraceReplay)
+}
+
+fn record_workload_traffic_trace_batch(
+    executor: &TrafficTraceReplayControllerParallelExecutor,
+    batch: &TrafficControllerEventBatch,
+    scheduler: &mut PartitionedScheduler,
+    control_partition: PartitionId,
+) -> Result<usize, RiscvWorkloadReplayError> {
+    if batch.is_empty() {
+        return Ok(0);
+    }
+
+    if batch.request().is_some() {
+        return executor
+            .record_request_batch_parallel(batch, scheduler, control_partition)
+            .map(usize::from)
+            .map_err(RiscvWorkloadReplayError::TrafficTraceReplay);
+    }
+
+    if workload_traffic_trace_batch_requires_control_response(batch) {
+        return executor
+            .schedule_batch_control_parallel(batch, scheduler, control_partition)
+            .map(usize::from)
+            .map_err(RiscvWorkloadReplayError::TrafficTraceReplay);
+    }
+
+    executor
+        .record_batch_parallel(
+            batch,
+            scheduler,
+            control_partition,
+            workload_traffic_trace_batch_replay_tick(batch),
+        )
+        .map_err(RiscvWorkloadReplayError::TrafficTraceReplay)
+}
+
+fn schedule_controller_without_trace_target_requests(
+    executor: &TrafficTraceReplayControllerParallelExecutor,
+    scheduler: &mut PartitionedScheduler,
+    control_partition: PartitionId,
+) -> Result<usize, RiscvWorkloadReplayError> {
+    executor
+        .schedule_controller_without_target_requests_parallel(scheduler, control_partition)
         .map_err(RiscvWorkloadReplayError::TrafficTraceReplay)
 }
 
