@@ -17,6 +17,7 @@ pub(super) fn hash_expected_traffic_trace_replay_summary(
         expected.minimum_trace_write_response_count(),
         expected.minimum_trace_prefetch_response_count(),
         expected.minimum_trace_invalidate_response_count(),
+        expected.minimum_trace_clean_response_count(),
         expected.minimum_trace_upgrade_response_count(),
         expected.minimum_trace_llsc_response_count(),
         expected.minimum_trace_locked_rmw_response_count(),

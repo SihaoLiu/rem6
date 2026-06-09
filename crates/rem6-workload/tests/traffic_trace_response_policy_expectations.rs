@@ -51,7 +51,8 @@ fn manifest_with_expected(
 #[test]
 fn workload_manifest_records_response_invalidate_policy_expectations() {
     let expected = WorkloadExpectedTrafficTraceReplaySummary::new(route_id("trace.policy"))
-        .with_minimum_trace_invalidate_response_count(1);
+        .with_minimum_trace_invalidate_response_count(1)
+        .with_minimum_trace_clean_response_count(1);
     let manifest = manifest_with_expected("manifest-response-policy", expected.clone());
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
@@ -59,10 +60,16 @@ fn workload_manifest_records_response_invalidate_policy_expectations() {
         plan.expected_traffic_trace_replay_summaries()[0].minimum_trace_invalidate_response_count(),
         1
     );
+    assert_eq!(
+        plan.expected_traffic_trace_replay_summaries()[0].minimum_trace_clean_response_count(),
+        1
+    );
 
     let actual = WorkloadTrafficTraceReplaySummary::new(route_id("trace.policy"), 4)
-        .with_trace_invalidate_response_count(1);
+        .with_trace_invalidate_response_count(1)
+        .with_trace_clean_response_count(1);
     assert_eq!(actual.trace_invalidate_response_count(), 1);
+    assert_eq!(actual.trace_clean_response_count(), 1);
 
     let result =
         WorkloadResult::new(plan.manifest_identity(), 32).with_traffic_trace_replay_summary(actual);
@@ -72,7 +79,8 @@ fn workload_manifest_records_response_invalidate_policy_expectations() {
 #[test]
 fn workload_replay_plan_rejects_underreported_trace_response_invalidate_policy() {
     let expected = WorkloadExpectedTrafficTraceReplaySummary::new(route_id("trace.policy"))
-        .with_minimum_trace_invalidate_response_count(1);
+        .with_minimum_trace_invalidate_response_count(1)
+        .with_minimum_trace_clean_response_count(1);
     let manifest = manifest_with_expected("trace-response-policy-mismatch", expected.clone());
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
 
@@ -90,6 +98,10 @@ fn workload_replay_plan_rejects_underreported_trace_response_invalidate_policy()
         error.to_string().contains("trace invalidate responses 0/1"),
         "{error}"
     );
+    assert!(
+        error.to_string().contains("trace clean responses 0/1"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -103,6 +115,13 @@ fn workload_manifest_identity_changes_with_response_invalidate_policy_expectatio
         WorkloadExpectedTrafficTraceReplaySummary::new(route_id("trace.policy"))
             .with_minimum_trace_invalidate_response_count(1),
     );
+    let clean = manifest_with_expected(
+        "identity-response-policy",
+        WorkloadExpectedTrafficTraceReplaySummary::new(route_id("trace.policy"))
+            .with_minimum_trace_clean_response_count(1),
+    );
 
     assert_ne!(generic.identity(), invalidate.identity());
+    assert_ne!(generic.identity(), clean.identity());
+    assert_ne!(invalidate.identity(), clean.identity());
 }

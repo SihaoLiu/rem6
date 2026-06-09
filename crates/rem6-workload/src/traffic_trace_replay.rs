@@ -1,4 +1,5 @@
 mod merge;
+mod response_policy;
 mod verify;
 
 pub use verify::WorkloadTrafficTraceReplaySummaryExpectationError;
@@ -19,6 +20,7 @@ pub struct WorkloadTrafficTraceReplaySummary {
     pub(in crate::traffic_trace_replay) trace_write_response_count: usize,
     pub(in crate::traffic_trace_replay) trace_prefetch_response_count: usize,
     pub(in crate::traffic_trace_replay) trace_invalidate_response_count: usize,
+    pub(in crate::traffic_trace_replay) trace_clean_response_count: usize,
     pub(in crate::traffic_trace_replay) trace_upgrade_response_count: usize,
     pub(in crate::traffic_trace_replay) trace_llsc_response_count: usize,
     pub(in crate::traffic_trace_replay) trace_locked_rmw_response_count: usize,
@@ -91,6 +93,7 @@ impl WorkloadTrafficTraceReplaySummary {
             trace_write_response_count: 0,
             trace_prefetch_response_count: 0,
             trace_invalidate_response_count: 0,
+            trace_clean_response_count: 0,
             trace_upgrade_response_count: 0,
             trace_llsc_response_count: 0,
             trace_locked_rmw_response_count: 0,
@@ -174,61 +177,6 @@ impl WorkloadTrafficTraceReplaySummary {
     ) -> Self {
         self.trace_store_conditional_failed_response_count =
             trace_store_conditional_failed_response_count;
-        self
-    }
-
-    pub fn with_trace_read_response_count(mut self, trace_read_response_count: usize) -> Self {
-        self.trace_read_response_count = trace_read_response_count;
-        self
-    }
-
-    pub fn with_trace_write_response_count(mut self, trace_write_response_count: usize) -> Self {
-        self.trace_write_response_count = trace_write_response_count;
-        self
-    }
-
-    pub fn with_trace_prefetch_response_count(
-        mut self,
-        trace_prefetch_response_count: usize,
-    ) -> Self {
-        self.trace_prefetch_response_count = trace_prefetch_response_count;
-        self
-    }
-
-    pub fn with_trace_invalidate_response_count(
-        mut self,
-        trace_invalidate_response_count: usize,
-    ) -> Self {
-        self.trace_invalidate_response_count = trace_invalidate_response_count;
-        self
-    }
-
-    pub fn with_trace_upgrade_response_count(
-        mut self,
-        trace_upgrade_response_count: usize,
-    ) -> Self {
-        self.trace_upgrade_response_count = trace_upgrade_response_count;
-        self
-    }
-
-    pub fn with_trace_llsc_response_count(mut self, trace_llsc_response_count: usize) -> Self {
-        self.trace_llsc_response_count = trace_llsc_response_count;
-        self
-    }
-
-    pub fn with_trace_locked_rmw_response_count(
-        mut self,
-        trace_locked_rmw_response_count: usize,
-    ) -> Self {
-        self.trace_locked_rmw_response_count = trace_locked_rmw_response_count;
-        self
-    }
-
-    pub fn with_trace_writable_intent_response_count(
-        mut self,
-        trace_writable_intent_response_count: usize,
-    ) -> Self {
-        self.trace_writable_intent_response_count = trace_writable_intent_response_count;
         self
     }
 
@@ -600,38 +548,6 @@ impl WorkloadTrafficTraceReplaySummary {
         self.trace_store_conditional_failed_response_count
     }
 
-    pub const fn trace_read_response_count(&self) -> usize {
-        self.trace_read_response_count
-    }
-
-    pub const fn trace_write_response_count(&self) -> usize {
-        self.trace_write_response_count
-    }
-
-    pub const fn trace_prefetch_response_count(&self) -> usize {
-        self.trace_prefetch_response_count
-    }
-
-    pub const fn trace_invalidate_response_count(&self) -> usize {
-        self.trace_invalidate_response_count
-    }
-
-    pub const fn trace_upgrade_response_count(&self) -> usize {
-        self.trace_upgrade_response_count
-    }
-
-    pub const fn trace_llsc_response_count(&self) -> usize {
-        self.trace_llsc_response_count
-    }
-
-    pub const fn trace_locked_rmw_response_count(&self) -> usize {
-        self.trace_locked_rmw_response_count
-    }
-
-    pub const fn trace_writable_intent_response_count(&self) -> usize {
-        self.trace_writable_intent_response_count
-    }
-
     pub const fn trace_response_data_byte_count(&self) -> u64 {
         self.trace_response_data_byte_count
     }
@@ -857,6 +773,7 @@ pub struct WorkloadExpectedTrafficTraceReplaySummary {
     minimum_trace_write_response_count: usize,
     minimum_trace_prefetch_response_count: usize,
     minimum_trace_invalidate_response_count: usize,
+    minimum_trace_clean_response_count: usize,
     minimum_trace_upgrade_response_count: usize,
     minimum_trace_llsc_response_count: usize,
     minimum_trace_locked_rmw_response_count: usize,
@@ -928,6 +845,7 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
             minimum_trace_write_response_count: 0,
             minimum_trace_prefetch_response_count: 0,
             minimum_trace_invalidate_response_count: 0,
+            minimum_trace_clean_response_count: 0,
             minimum_trace_upgrade_response_count: 0,
             minimum_trace_llsc_response_count: 0,
             minimum_trace_locked_rmw_response_count: 0,
@@ -1022,71 +940,6 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
     ) -> Self {
         self.minimum_trace_store_conditional_failed_response_count =
             minimum_trace_store_conditional_failed_response_count;
-        self
-    }
-
-    pub fn with_minimum_trace_read_response_count(
-        mut self,
-        minimum_trace_read_response_count: usize,
-    ) -> Self {
-        self.minimum_trace_read_response_count = minimum_trace_read_response_count;
-        self
-    }
-
-    pub fn with_minimum_trace_write_response_count(
-        mut self,
-        minimum_trace_write_response_count: usize,
-    ) -> Self {
-        self.minimum_trace_write_response_count = minimum_trace_write_response_count;
-        self
-    }
-
-    pub fn with_minimum_trace_prefetch_response_count(
-        mut self,
-        minimum_trace_prefetch_response_count: usize,
-    ) -> Self {
-        self.minimum_trace_prefetch_response_count = minimum_trace_prefetch_response_count;
-        self
-    }
-
-    pub fn with_minimum_trace_invalidate_response_count(
-        mut self,
-        minimum_trace_invalidate_response_count: usize,
-    ) -> Self {
-        self.minimum_trace_invalidate_response_count = minimum_trace_invalidate_response_count;
-        self
-    }
-
-    pub fn with_minimum_trace_upgrade_response_count(
-        mut self,
-        minimum_trace_upgrade_response_count: usize,
-    ) -> Self {
-        self.minimum_trace_upgrade_response_count = minimum_trace_upgrade_response_count;
-        self
-    }
-
-    pub fn with_minimum_trace_llsc_response_count(
-        mut self,
-        minimum_trace_llsc_response_count: usize,
-    ) -> Self {
-        self.minimum_trace_llsc_response_count = minimum_trace_llsc_response_count;
-        self
-    }
-
-    pub fn with_minimum_trace_locked_rmw_response_count(
-        mut self,
-        minimum_trace_locked_rmw_response_count: usize,
-    ) -> Self {
-        self.minimum_trace_locked_rmw_response_count = minimum_trace_locked_rmw_response_count;
-        self
-    }
-
-    pub fn with_minimum_trace_writable_intent_response_count(
-        mut self,
-        minimum_trace_writable_intent_response_count: usize,
-    ) -> Self {
-        self.minimum_trace_writable_intent_response_count =
-            minimum_trace_writable_intent_response_count;
         self
     }
 
@@ -1537,38 +1390,6 @@ impl WorkloadExpectedTrafficTraceReplaySummary {
 
     pub const fn minimum_trace_store_conditional_failed_response_count(&self) -> usize {
         self.minimum_trace_store_conditional_failed_response_count
-    }
-
-    pub const fn minimum_trace_read_response_count(&self) -> usize {
-        self.minimum_trace_read_response_count
-    }
-
-    pub const fn minimum_trace_write_response_count(&self) -> usize {
-        self.minimum_trace_write_response_count
-    }
-
-    pub const fn minimum_trace_prefetch_response_count(&self) -> usize {
-        self.minimum_trace_prefetch_response_count
-    }
-
-    pub const fn minimum_trace_invalidate_response_count(&self) -> usize {
-        self.minimum_trace_invalidate_response_count
-    }
-
-    pub const fn minimum_trace_upgrade_response_count(&self) -> usize {
-        self.minimum_trace_upgrade_response_count
-    }
-
-    pub const fn minimum_trace_llsc_response_count(&self) -> usize {
-        self.minimum_trace_llsc_response_count
-    }
-
-    pub const fn minimum_trace_locked_rmw_response_count(&self) -> usize {
-        self.minimum_trace_locked_rmw_response_count
-    }
-
-    pub const fn minimum_trace_writable_intent_response_count(&self) -> usize {
-        self.minimum_trace_writable_intent_response_count
     }
 
     pub const fn minimum_trace_response_data_byte_count(&self) -> u64 {

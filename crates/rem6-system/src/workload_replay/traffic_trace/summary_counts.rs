@@ -67,6 +67,7 @@ pub(super) struct TrafficTraceReplayResponseClassCounts {
     pub(super) write: usize,
     pub(super) prefetch: usize,
     pub(super) invalidate: usize,
+    pub(super) clean: usize,
     pub(super) upgrade: usize,
     pub(super) llsc: usize,
     pub(super) locked_rmw: usize,
@@ -127,6 +128,9 @@ pub(super) fn traffic_trace_replay_response_class_counts(
             }
             if kind.invalidates_line() {
                 counts.invalidate += 1;
+            }
+            if kind.cleans_line() {
+                counts.clean += 1;
             }
             if kind.is_upgrade() {
                 counts.upgrade += 1;

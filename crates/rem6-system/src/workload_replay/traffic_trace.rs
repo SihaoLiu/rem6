@@ -189,6 +189,7 @@ impl RiscvWorkloadScheduledTrafficTraceReplay {
             .with_trace_write_response_count(response_class_counts.write)
             .with_trace_prefetch_response_count(response_class_counts.prefetch)
             .with_trace_invalidate_response_count(response_class_counts.invalidate)
+            .with_trace_clean_response_count(response_class_counts.clean)
             .with_trace_upgrade_response_count(response_class_counts.upgrade)
             .with_trace_llsc_response_count(response_class_counts.llsc)
             .with_trace_locked_rmw_response_count(response_class_counts.locked_rmw)

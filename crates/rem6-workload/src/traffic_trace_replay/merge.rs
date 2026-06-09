@@ -22,6 +22,8 @@ impl WorkloadTrafficTraceReplaySummary {
                 + other.trace_prefetch_response_count,
             trace_invalidate_response_count: self.trace_invalidate_response_count
                 + other.trace_invalidate_response_count,
+            trace_clean_response_count: self.trace_clean_response_count
+                + other.trace_clean_response_count,
             trace_upgrade_response_count: self.trace_upgrade_response_count
                 + other.trace_upgrade_response_count,
             trace_llsc_response_count: self.trace_llsc_response_count

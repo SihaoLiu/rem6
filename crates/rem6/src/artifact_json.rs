@@ -241,6 +241,11 @@ fn traffic_trace_summary_json(
     );
     push_json_usize(
         &mut fields,
+        "trace_clean_response_count",
+        summary.trace_clean_response_count(),
+    );
+    push_json_usize(
+        &mut fields,
         "trace_upgrade_response_count",
         summary.trace_upgrade_response_count(),
     );
@@ -925,6 +930,7 @@ mod tests {
     fn traffic_trace_summary_json_emits_nonzero_cache_and_sideband_counters() {
         let summary = WorkloadTrafficTraceReplaySummary::new(route_id("cpu0.data"), 3)
             .with_trace_invalidate_response_count(1)
+            .with_trace_clean_response_count(1)
             .with_trace_data_cache_response_count(3)
             .with_trace_data_cache_maintenance_response_count(2)
             .with_trace_data_cache_clean_maintenance_response_count(1)
@@ -937,6 +943,7 @@ mod tests {
         let json = traffic_trace_summary_json(&summary);
 
         assert!(json.contains("\"trace_invalidate_response_count\":1"));
+        assert!(json.contains("\"trace_clean_response_count\":1"));
         assert!(json.contains("\"trace_data_cache_response_count\":3"));
         assert!(json.contains("\"trace_data_cache_maintenance_response_count\":2"));
         assert!(json.contains("\"trace_data_cache_clean_maintenance_response_count\":1"));
