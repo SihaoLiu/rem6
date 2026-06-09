@@ -62,6 +62,11 @@ pub enum RiscvSystemEvent {
         delay: u64,
         period: u64,
     },
+    Gem5Checkpoint {
+        pc: u64,
+        delay: u64,
+        period: u64,
+    },
     Gem5WorkBegin {
         pc: u64,
         work_id: u64,

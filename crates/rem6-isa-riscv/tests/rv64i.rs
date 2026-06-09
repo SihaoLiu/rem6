@@ -2250,6 +2250,38 @@ fn hart_decodes_and_records_gem5_stats_pseudo_ops() {
 }
 
 #[test]
+fn hart_decodes_and_records_gem5_checkpoint_pseudo_op() {
+    let checkpoint = RiscvInstruction::decode(gem5_m5op_type(0x43)).unwrap();
+
+    assert_eq!(
+        checkpoint,
+        RiscvInstruction::Gem5PseudoOp {
+            op: RiscvPseudoOp::Checkpoint
+        }
+    );
+
+    let mut hart = RiscvHartState::new(0x7500);
+    hart.write(reg(10), 2);
+    hart.write(reg(11), 0x30);
+    let record = hart.execute(checkpoint).unwrap();
+
+    assert_eq!(record.pc(), 0x7500);
+    assert_eq!(record.next_pc(), 0x7504);
+    assert_eq!(hart.pc(), 0x7504);
+    assert_eq!(
+        record.system_event(),
+        Some(&RiscvSystemEvent::Gem5Checkpoint {
+            pc: 0x7500,
+            delay: 2,
+            period: 0x30,
+        })
+    );
+    assert_eq!(record.register_writes(), &[RegisterWrite::new(reg(10), 0)]);
+    assert_eq!(record.memory_access(), None);
+    assert_eq!(hart.read(reg(10)), 0);
+}
+
+#[test]
 fn hart_executes_machine_return_from_machine_mode() {
     let mut hart = RiscvHartState::new(0x7000);
     hart.set_machine_exception_pc(0x9000);

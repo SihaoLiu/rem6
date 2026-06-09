@@ -621,6 +621,104 @@ fn riscv_system_run_driver_routes_gem5_stats_pseudo_ops_to_host() {
 }
 
 #[test]
+fn riscv_system_run_driver_routes_gem5_checkpoint_pseudo_op_to_host() {
+    let host = PartitionId::new(3);
+    let source = GuestSourceId::new(40);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let fetch_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let core = riscv_core(0, 0, 7, "cpu0.ifetch", fetch_route, 0x8000);
+    core.write_register(rem6_isa_riscv::Register::new(10).unwrap(), 0);
+    core.write_register(rem6_isa_riscv::Register::new(11).unwrap(), 0);
+    let cluster = RiscvCluster::new([core]).unwrap();
+    let store = loaded_program_store(&[
+        (0x8000, i_type(2, 0, 0x0, 10, 0x13)),
+        (0x8004, i_type(0x30, 0, 0x0, 11, 0x13)),
+        (0x8008, gem5_m5op_type(0x43)),
+        (0x800c, i_type(0, 0, 0x0, 5, 0x13)),
+        (0x8010, i_type(0, 0, 0x0, 5, 0x13)),
+        (0x8014, i_type(0, 0, 0x0, 5, 0x13)),
+        (0x8018, i_type(0, 0, 0x0, 5, 0x13)),
+        (0x801c, 0x0000_0073),
+    ]);
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        StatsRegistry::new(),
+    )));
+    let trap_port = RiscvTrapEventPort::new(
+        SystemHostEventPort::with_controller(host, 2, Arc::clone(&controller)).unwrap(),
+        source,
+    );
+    let driver = RiscvSystemRunDriver::new(trap_port);
+    let mut next_event_id = 140_u64;
+
+    let run = driver
+        .drive_until_host_stop(
+            &cluster,
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_cpu| responder(Arc::clone(&store)),
+            |_cpu| responder(Arc::clone(&store)),
+            60,
+            |_cpu| {
+                let event = GuestEventId::new(next_event_id);
+                next_event_id += 1;
+                event
+            },
+        )
+        .unwrap();
+
+    assert_eq!(
+        run.host_stop(),
+        Some(StopRequest::new(
+            run.final_tick().unwrap(),
+            GuestEventId::new(141),
+            source,
+            0,
+        ))
+    );
+
+    let controller = controller.lock().unwrap();
+    let checkpoints = controller
+        .run()
+        .action_outcomes()
+        .iter()
+        .filter_map(|outcome| match outcome {
+            SystemActionOutcome::Checkpoint {
+                tick,
+                event,
+                source: actual_source,
+                manifest,
+            } => Some((*tick, *event, *actual_source, manifest.label().to_string())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        checkpoints,
+        vec![(
+            22,
+            GuestEventId::new(140),
+            source,
+            "gem5-m5-checkpoint".to_string(),
+        )]
+    );
+}
+
+#[test]
 fn riscv_system_run_driver_parallel_path_drives_data_accesses_to_host_stop() {
     let host = PartitionId::new(3);
     let source = GuestSourceId::new(33);

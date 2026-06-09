@@ -12,6 +12,8 @@ use crate::{
     GuestTrapKind, HostEventPolicy, SystemError, SystemHostController, SystemRunController,
 };
 
+const GEM5_M5_CHECKPOINT_LABEL: &str = "gem5-m5-checkpoint";
+
 #[derive(Clone, Debug)]
 pub struct SystemEventPort {
     channel: GuestEventChannel,
@@ -690,6 +692,12 @@ fn guest_event_from_riscv_system_event(
         Some(RiscvSystemEvent::Gem5DumpResetStats { delay, .. }) => Some(RiscvGuestEventSchedule {
             delay: *delay,
             kind: GuestEventKind::StatsDumpReset,
+        }),
+        Some(RiscvSystemEvent::Gem5Checkpoint { delay, .. }) => Some(RiscvGuestEventSchedule {
+            delay: *delay,
+            kind: GuestEventKind::Checkpoint {
+                label: GEM5_M5_CHECKPOINT_LABEL.to_string(),
+            },
         }),
         Some(RiscvSystemEvent::Gem5WorkBegin {
             work_id, thread_id, ..
