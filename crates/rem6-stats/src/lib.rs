@@ -3,6 +3,7 @@ mod error;
 mod inst_tracker;
 mod kind;
 mod mem_checker;
+mod mem_checker_monitor;
 mod mem_footprint;
 mod mem_trace;
 mod pc_count;
@@ -25,6 +26,10 @@ pub use mem_checker::{
     MemChecker, MemCheckerByteSnapshot, MemCheckerReadFailure, MemCheckerReadResult,
     MemCheckerSnapshot, MemCheckerStartedTransaction, MemCheckerTransaction,
     MemCheckerWriteClusterSnapshot, MemCheckerWriteResult,
+};
+pub use mem_checker_monitor::{
+    MemCheckerMonitor, MemCheckerMonitorCompletion, MemCheckerMonitorPendingTransaction,
+    MemCheckerMonitorSnapshot,
 };
 pub use mem_footprint::{
     MemFootprintAddressRange, MemFootprintGranularity, MemFootprintProbe, MemFootprintProbeConfig,

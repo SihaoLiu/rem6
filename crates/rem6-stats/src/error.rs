@@ -331,6 +331,55 @@ pub enum StatsError {
     MemCheckerCounterOverflow {
         name: &'static str,
     },
+    MemCheckerMonitorRequestDataMissing {
+        packet_id: u64,
+    },
+    MemCheckerMonitorRequestDataSizeMismatch {
+        packet_id: u64,
+        packet_size: u64,
+        data_size: usize,
+    },
+    DuplicateMemCheckerMonitorPendingPacket {
+        packet_id: u64,
+    },
+    DuplicateMemCheckerMonitorPendingSerial {
+        serial: u64,
+    },
+    UnknownMemCheckerMonitorPendingPacket {
+        packet_id: u64,
+    },
+    InvalidMemCheckerMonitorPendingAccess {
+        packet_id: u64,
+        access: MemProbePacketAccess,
+    },
+    MemCheckerMonitorPendingSerialNotAllocated {
+        packet_id: u64,
+        serial: u64,
+        next_serial: u64,
+    },
+    MemCheckerMonitorResponseAccessMismatch {
+        packet_id: u64,
+        request_access: MemProbePacketAccess,
+        response_access: MemProbePacketAccess,
+    },
+    MemCheckerMonitorResponseAddressMismatch {
+        packet_id: u64,
+        request_address: u64,
+        response_address: u64,
+    },
+    MemCheckerMonitorResponseSizeMismatch {
+        packet_id: u64,
+        request_size: u64,
+        response_size: u64,
+    },
+    MemCheckerMonitorResponseDataMissing {
+        packet_id: u64,
+    },
+    MemCheckerMonitorResponseDataSizeMismatch {
+        packet_id: u64,
+        packet_size: u64,
+        data_size: usize,
+    },
     InvalidStackDistLineSize {
         line_size: u64,
     },
@@ -871,6 +920,78 @@ impl fmt::Display for StatsError {
             Self::MemCheckerCounterOverflow { name } => {
                 write!(formatter, "memory checker counter {name} overflowed")
             }
+            Self::MemCheckerMonitorRequestDataMissing { packet_id } => write!(
+                formatter,
+                "memory checker monitor request packet {packet_id} is a write without request data"
+            ),
+            Self::MemCheckerMonitorRequestDataSizeMismatch {
+                packet_id,
+                packet_size,
+                data_size,
+            } => write!(
+                formatter,
+                "memory checker monitor request packet {packet_id} has size {packet_size} but carries {data_size} data bytes"
+            ),
+            Self::DuplicateMemCheckerMonitorPendingPacket { packet_id } => write!(
+                formatter,
+                "memory checker monitor already has pending packet {packet_id}"
+            ),
+            Self::DuplicateMemCheckerMonitorPendingSerial { serial } => write!(
+                formatter,
+                "memory checker monitor already has pending transaction serial {serial}"
+            ),
+            Self::UnknownMemCheckerMonitorPendingPacket { packet_id } => write!(
+                formatter,
+                "memory checker monitor response packet {packet_id} has no pending request"
+            ),
+            Self::InvalidMemCheckerMonitorPendingAccess { packet_id, access } => write!(
+                formatter,
+                "memory checker monitor pending packet {packet_id} has unsupported access {access:?}"
+            ),
+            Self::MemCheckerMonitorPendingSerialNotAllocated {
+                packet_id,
+                serial,
+                next_serial,
+            } => write!(
+                formatter,
+                "memory checker monitor pending packet {packet_id} references serial {serial} outside allocated cursor {next_serial}"
+            ),
+            Self::MemCheckerMonitorResponseAccessMismatch {
+                packet_id,
+                request_access,
+                response_access,
+            } => write!(
+                formatter,
+                "memory checker monitor response packet {packet_id} has access {response_access:?} but pending request uses {request_access:?}"
+            ),
+            Self::MemCheckerMonitorResponseAddressMismatch {
+                packet_id,
+                request_address,
+                response_address,
+            } => write!(
+                formatter,
+                "memory checker monitor response packet {packet_id} has address {response_address:#x} but pending request uses {request_address:#x}"
+            ),
+            Self::MemCheckerMonitorResponseSizeMismatch {
+                packet_id,
+                request_size,
+                response_size,
+            } => write!(
+                formatter,
+                "memory checker monitor response packet {packet_id} has size {response_size} but pending request uses {request_size}"
+            ),
+            Self::MemCheckerMonitorResponseDataMissing { packet_id } => write!(
+                formatter,
+                "memory checker monitor response packet {packet_id} is a read without response data"
+            ),
+            Self::MemCheckerMonitorResponseDataSizeMismatch {
+                packet_id,
+                packet_size,
+                data_size,
+            } => write!(
+                formatter,
+                "memory checker monitor response packet {packet_id} has size {packet_size} but carries {data_size} data bytes"
+            ),
             Self::InvalidStackDistLineSize { line_size } => write!(
                 formatter,
                 "stack distance line size {line_size} is not a nonzero power of two"
