@@ -305,6 +305,32 @@ fn atomic_no_return_request_carries_data_without_returning_old_data() {
 }
 
 #[test]
+fn compare_swap_request_carries_compare_operand_and_returns_old_data() {
+    let size = AccessSize::new(8).unwrap();
+    let mask = ByteMask::full(size).unwrap();
+    let compare = 0x0102_0304_0506_0708u64.to_le_bytes().to_vec();
+    let replacement = 0x1112_1314_1516_1718u64.to_le_bytes().to_vec();
+    let request = MemoryRequest::compare_swap(
+        request_id(26),
+        Address::new(0x2100),
+        size,
+        compare.clone(),
+        replacement.clone(),
+        mask.clone(),
+        line_layout(),
+    )
+    .unwrap();
+
+    assert_eq!(request.operation(), MemoryOperation::Atomic);
+    assert_eq!(request.atomic_op(), Some(MemoryAtomicOp::CompareSwap));
+    assert_eq!(request.atomic_compare(), Some(&compare[..]));
+    assert_eq!(request.data(), Some(&replacement[..]));
+    assert_eq!(request.byte_mask(), Some(&mask));
+    assert!(request.requires_writable());
+    assert!(request.returns_data());
+}
+
+#[test]
 fn locked_rmw_requests_preserve_read_and_write_half_semantics() {
     let read = MemoryRequest::locked_rmw_read(
         request_id(22),
@@ -1330,6 +1356,41 @@ fn memory_request_checkpoint_payload_round_trips_atomic_no_return() {
 }
 
 #[test]
+fn memory_request_checkpoint_payload_round_trips_compare_swap() {
+    let size = AccessSize::new(8).unwrap();
+    let mask = ByteMask::full(size).unwrap();
+    let compare = 0x0102_0304_0506_0708u64.to_le_bytes().to_vec();
+    let replacement = 0x1112_1314_1516_1718u64.to_le_bytes().to_vec();
+    let request = MemoryRequest::compare_swap(
+        request_id(27),
+        Address::new(0x6040),
+        size,
+        compare.clone(),
+        replacement,
+        mask,
+        line_layout(),
+    )
+    .unwrap()
+    .with_arch_flags(0x5a);
+
+    let snapshot = request.snapshot();
+    let payload = MemoryRequestCheckpointPayload::from_request(&request);
+    let encoded = payload.encode();
+    assert_eq!(
+        &encoded[REQUEST_CHECKPOINT_VERSION_OFFSET..REQUEST_CHECKPOINT_VERSION_OFFSET + 4],
+        &3u32.to_le_bytes()
+    );
+    let decoded = MemoryRequestCheckpointPayload::decode(encoded.as_slice()).unwrap();
+    let restored = MemoryRequest::from_snapshot(decoded.snapshot()).unwrap();
+
+    assert_eq!(decoded.snapshot(), &snapshot);
+    assert_eq!(restored, request);
+    assert_eq!(restored.atomic_op(), Some(MemoryAtomicOp::CompareSwap));
+    assert_eq!(restored.atomic_compare(), Some(&compare[..]));
+    assert_eq!(restored.arch_flags(), 0x5a);
+}
+
+#[test]
 fn memory_request_checkpoint_payload_round_trips_write_clean() {
     let request = MemoryRequest::write_clean(
         request_id(23),
@@ -1665,11 +1726,11 @@ fn memory_request_checkpoint_payload_rejects_unsupported_version() {
     .unwrap();
     let mut payload = MemoryRequestCheckpointPayload::from_request(&request).encode();
     payload[REQUEST_CHECKPOINT_VERSION_OFFSET..REQUEST_CHECKPOINT_VERSION_OFFSET + 4]
-        .copy_from_slice(&3u32.to_le_bytes());
+        .copy_from_slice(&4u32.to_le_bytes());
 
     assert_eq!(
         MemoryRequestCheckpointPayload::decode(&payload).unwrap_err(),
-        MemoryError::UnsupportedRequestCheckpointVersion { version: 3 }
+        MemoryError::UnsupportedRequestCheckpointVersion { version: 4 }
     );
 }
 

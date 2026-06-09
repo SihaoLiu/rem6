@@ -141,7 +141,11 @@ fn trace_accepts_gem5_operation_request_flags_on_matching_packets() {
     );
     assert_eq!(
         swap_conditional.request().atomic_op(),
-        Some(MemoryAtomicOp::Swap)
+        Some(MemoryAtomicOp::CompareSwap)
+    );
+    assert_eq!(
+        swap_conditional.request().atomic_compare(),
+        Some(&[0; 8][..])
     );
     assert_eq!(atomic_return.request().operation(), MemoryOperation::Atomic);
     assert_eq!(

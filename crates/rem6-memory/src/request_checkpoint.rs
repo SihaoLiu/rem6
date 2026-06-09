@@ -7,6 +7,7 @@ use crate::{
 const REQUEST_CHECKPOINT_MAGIC: [u8; 4] = *b"MREQ";
 const REQUEST_CHECKPOINT_VERSION_V1: u32 = 1;
 const REQUEST_CHECKPOINT_VERSION_V2: u32 = 2;
+const REQUEST_CHECKPOINT_VERSION_V3: u32 = 3;
 const REQUEST_CHECKPOINT_HEADER_SIZE: usize = 80;
 
 const FLAG_DATA_PRESENT: u32 = 1 << 0;
@@ -28,6 +29,7 @@ const FLAG_KERNEL_SYNC: u32 = 1 << 15;
 const FLAG_STREAM_ID_PRESENT: u32 = 1 << 16;
 const FLAG_SUBSTREAM_ID_PRESENT: u32 = 1 << 17;
 const FLAG_RESPONSE_REQUIRED: u32 = 1 << 18;
+const FLAG_ATOMIC_COMPARE_PRESENT: u32 = 1 << 19;
 const FLAG_ARCH_FLAGS_SHIFT: u32 = 24;
 const FLAG_ARCH_FLAGS_MASK: u32 = 0xff << FLAG_ARCH_FLAGS_SHIFT;
 const KNOWN_FLAGS_V1: u32 = FLAG_DATA_PRESENT
@@ -50,6 +52,7 @@ const KNOWN_FLAGS_V1: u32 = FLAG_DATA_PRESENT
     | FLAG_SUBSTREAM_ID_PRESENT
     | FLAG_RESPONSE_REQUIRED;
 const KNOWN_FLAGS_V2: u32 = KNOWN_FLAGS_V1 | FLAG_ARCH_FLAGS_MASK;
+const KNOWN_FLAGS_V3: u32 = KNOWN_FLAGS_V2 | FLAG_ATOMIC_COMPARE_PRESENT;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MemoryRequestCheckpointPayload {
@@ -113,7 +116,13 @@ impl MemoryRequestCheckpointPayload {
 
         let data_len_usize = request_checkpoint_usize(data_len)?;
         let mask_len_usize = request_checkpoint_usize(mask_len)?;
-        let expected = request_checkpoint_payload_size(data_len_usize, mask_len_usize)?;
+        let compare_len_usize = if flags & FLAG_ATOMIC_COMPARE_PRESENT != 0 {
+            data_len_usize
+        } else {
+            0
+        };
+        let expected =
+            request_checkpoint_payload_size(data_len_usize, mask_len_usize, compare_len_usize)?;
         if payload.len() != expected {
             return Err(MemoryError::InvalidRequestCheckpointPayloadSize {
                 expected,
@@ -123,9 +132,10 @@ impl MemoryRequestCheckpointPayload {
 
         let data = read_optional_data(payload, &mut offset, flags, data_len_usize, data_len)?;
         let byte_mask = read_optional_mask(payload, &mut offset, flags, mask_len_usize, mask_len)?;
+        let atomic_compare = read_optional_compare(payload, &mut offset, flags, compare_len_usize)?;
         let atomic_op = decode_optional_atomic_op(flags, atomic_code)?;
         let ordering = decode_ordering(flags)?;
-        let mut snapshot = MemoryRequestSnapshot::new_with_attributes(
+        let mut snapshot = MemoryRequestSnapshot::new_with_attributes_and_atomic_compare(
             MemoryRequestId::new(crate::AgentId::new(agent), sequence),
             operation,
             address,
@@ -138,6 +148,7 @@ impl MemoryRequestCheckpointPayload {
             data,
             byte_mask,
             atomic_op,
+            atomic_compare,
         )?;
         if flags & FLAG_RESPONSE_REQUIRED != 0 {
             snapshot = snapshot.with_response_required();
@@ -153,12 +164,17 @@ impl MemoryRequestCheckpointPayload {
 
     pub fn try_encode(&self) -> Result<Vec<u8>, MemoryError> {
         let data_len = self.snapshot.data().map(<[u8]>::len).unwrap_or(0);
+        let compare_len = self.snapshot.atomic_compare().map(<[u8]>::len).unwrap_or(0);
         let mask_len = self
             .snapshot
             .byte_mask()
             .map(|mask| mask.bits().len())
             .unwrap_or(0);
-        let mut payload = Vec::with_capacity(request_checkpoint_payload_size(data_len, mask_len)?);
+        let mut payload = Vec::with_capacity(request_checkpoint_payload_size(
+            data_len,
+            mask_len,
+            compare_len,
+        )?);
         payload.extend_from_slice(&REQUEST_CHECKPOINT_MAGIC);
         payload.extend_from_slice(&encode_version(&self.snapshot).to_le_bytes());
         payload.extend_from_slice(&encode_operation(self.snapshot.operation()).to_le_bytes());
@@ -186,6 +202,9 @@ impl MemoryRequestCheckpointPayload {
                 payload.push(u8::from(*bit));
             }
         }
+        if let Some(compare) = self.snapshot.atomic_compare() {
+            payload.extend_from_slice(compare);
+        }
         Ok(payload)
     }
 
@@ -199,7 +218,9 @@ impl MemoryRequestCheckpointPayload {
 }
 
 fn encode_version(snapshot: &MemoryRequestSnapshot) -> u32 {
-    if snapshot.arch_flags() == 0 {
+    if snapshot.atomic_compare().is_some() {
+        REQUEST_CHECKPOINT_VERSION_V3
+    } else if snapshot.arch_flags() == 0 {
         REQUEST_CHECKPOINT_VERSION_V1
     } else {
         REQUEST_CHECKPOINT_VERSION_V2
@@ -210,6 +231,7 @@ fn request_checkpoint_known_flags(version: u32) -> Result<u32, MemoryError> {
     match version {
         REQUEST_CHECKPOINT_VERSION_V1 => Ok(KNOWN_FLAGS_V1),
         REQUEST_CHECKPOINT_VERSION_V2 => Ok(KNOWN_FLAGS_V2),
+        REQUEST_CHECKPOINT_VERSION_V3 => Ok(KNOWN_FLAGS_V3),
         version => Err(MemoryError::UnsupportedRequestCheckpointVersion { version }),
     }
 }
@@ -224,6 +246,9 @@ fn encode_flags(snapshot: &MemoryRequestSnapshot) -> u32 {
     }
     if snapshot.atomic_op().is_some() {
         flags |= FLAG_ATOMIC_PRESENT;
+    }
+    if snapshot.atomic_compare().is_some() {
+        flags |= FLAG_ATOMIC_COMPARE_PRESENT;
     }
     if snapshot.is_uncacheable() {
         flags |= FLAG_UNCACHEABLE;
@@ -288,7 +313,10 @@ fn decode_attributes(
         flags & FLAG_SECURE != 0,
         flags & FLAG_PAGE_TABLE_WALK != 0,
     );
-    let arch_flags = if version == REQUEST_CHECKPOINT_VERSION_V2 {
+    let arch_flags = if matches!(
+        version,
+        REQUEST_CHECKPOINT_VERSION_V2 | REQUEST_CHECKPOINT_VERSION_V3
+    ) {
         ((flags & FLAG_ARCH_FLAGS_MASK) >> FLAG_ARCH_FLAGS_SHIFT) as u8
     } else {
         0
@@ -411,6 +439,20 @@ fn read_optional_mask(
     ByteMask::from_bits(bits).map(Some)
 }
 
+fn read_optional_compare(
+    payload: &[u8],
+    offset: &mut usize,
+    flags: u32,
+    compare_len_usize: usize,
+) -> Result<Option<Vec<u8>>, MemoryError> {
+    if flags & FLAG_ATOMIC_COMPARE_PRESENT == 0 {
+        return Ok(None);
+    }
+    Ok(Some(
+        read_exact(payload, offset, compare_len_usize)?.to_vec(),
+    ))
+}
+
 fn encode_operation(operation: MemoryOperation) -> u32 {
     match operation {
         MemoryOperation::NoAccess => 20,
@@ -484,6 +526,7 @@ fn encode_optional_atomic_op(op: Option<MemoryAtomicOp>) -> u32 {
         Some(MemoryAtomicOp::MaxSigned) => 7,
         Some(MemoryAtomicOp::MinUnsigned) => 8,
         Some(MemoryAtomicOp::MaxUnsigned) => 9,
+        Some(MemoryAtomicOp::CompareSwap) => 10,
     }
 }
 
@@ -505,6 +548,7 @@ fn decode_optional_atomic_op(flags: u32, code: u32) -> Result<Option<MemoryAtomi
         7 => Ok(Some(MemoryAtomicOp::MaxSigned)),
         8 => Ok(Some(MemoryAtomicOp::MinUnsigned)),
         9 => Ok(Some(MemoryAtomicOp::MaxUnsigned)),
+        10 => Ok(Some(MemoryAtomicOp::CompareSwap)),
         code => Err(MemoryError::InvalidRequestCheckpointAtomicOp { code }),
     }
 }
@@ -515,10 +559,15 @@ fn request_checkpoint_usize(value: u64) -> Result<usize, MemoryError> {
         .map_err(|_| MemoryError::InvalidRequestCheckpointUsize { value })
 }
 
-fn request_checkpoint_payload_size(data_len: usize, mask_len: usize) -> Result<usize, MemoryError> {
+fn request_checkpoint_payload_size(
+    data_len: usize,
+    mask_len: usize,
+    compare_len: usize,
+) -> Result<usize, MemoryError> {
     REQUEST_CHECKPOINT_HEADER_SIZE
         .checked_add(data_len)
         .and_then(|size| size.checked_add(mask_len))
+        .and_then(|size| size.checked_add(compare_len))
         .ok_or(MemoryError::InvalidRequestCheckpointPayloadSize {
             expected: REQUEST_CHECKPOINT_HEADER_SIZE,
             actual: usize::MAX,

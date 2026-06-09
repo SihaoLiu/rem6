@@ -49,6 +49,16 @@ pub enum MemoryError {
     UnexpectedAtomicOp {
         request: MemoryRequestId,
     },
+    MissingAtomicCompare {
+        request: MemoryRequestId,
+    },
+    UnexpectedAtomicCompare {
+        request: MemoryRequestId,
+    },
+    AtomicCompareSizeMismatch {
+        expected: AccessSize,
+        actual: u64,
+    },
     UnsupportedAtomicAccessSize {
         request: MemoryRequestId,
         op: MemoryAtomicOp,
@@ -323,6 +333,23 @@ impl fmt::Display for MemoryError {
                 "request {} from agent {} must not carry an atomic operation",
                 request.sequence(),
                 request.agent().get()
+            ),
+            Self::MissingAtomicCompare { request } => write!(
+                formatter,
+                "request {} from agent {} requires an atomic compare operand",
+                request.sequence(),
+                request.agent().get()
+            ),
+            Self::UnexpectedAtomicCompare { request } => write!(
+                formatter,
+                "request {} from agent {} must not carry an atomic compare operand",
+                request.sequence(),
+                request.agent().get()
+            ),
+            Self::AtomicCompareSizeMismatch { expected, actual } => write!(
+                formatter,
+                "atomic compare operand has {actual} bytes but request expects {}",
+                expected.bytes()
             ),
             Self::UnsupportedAtomicAccessSize { request, op, size } => write!(
                 formatter,

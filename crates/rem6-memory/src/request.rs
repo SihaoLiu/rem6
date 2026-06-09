@@ -19,6 +19,7 @@ pub struct MemoryRequest {
     data: Option<Vec<u8>>,
     byte_mask: Option<ByteMask>,
     atomic_op: Option<MemoryAtomicOp>,
+    atomic_compare: Option<Vec<u8>>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -159,6 +160,7 @@ pub struct MemoryRequestSnapshot {
     data: Option<Vec<u8>>,
     byte_mask: Option<ByteMask>,
     atomic_op: Option<MemoryAtomicOp>,
+    atomic_compare: Option<Vec<u8>>,
 }
 
 impl MemoryRequestSnapshot {
@@ -207,6 +209,39 @@ impl MemoryRequestSnapshot {
         byte_mask: Option<ByteMask>,
         atomic_op: Option<MemoryAtomicOp>,
     ) -> Result<Self, MemoryError> {
+        Self::new_with_attributes_and_atomic_compare(
+            id,
+            operation,
+            address,
+            size,
+            line_layout,
+            ordering,
+            uncacheable,
+            strict_order,
+            attributes,
+            data,
+            byte_mask,
+            atomic_op,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_attributes_and_atomic_compare(
+        id: MemoryRequestId,
+        operation: MemoryOperation,
+        address: Address,
+        size: AccessSize,
+        line_layout: CacheLineLayout,
+        ordering: MemoryAccessOrdering,
+        uncacheable: bool,
+        strict_order: bool,
+        attributes: MemoryRequestAttributes,
+        data: Option<Vec<u8>>,
+        byte_mask: Option<ByteMask>,
+        atomic_op: Option<MemoryAtomicOp>,
+        atomic_compare: Option<Vec<u8>>,
+    ) -> Result<Self, MemoryError> {
         let snapshot = Self {
             id,
             operation,
@@ -220,6 +255,7 @@ impl MemoryRequestSnapshot {
             data,
             byte_mask,
             atomic_op,
+            atomic_compare,
         };
         MemoryRequest::from_snapshot(&snapshot)?;
         Ok(snapshot)
@@ -260,6 +296,12 @@ impl MemoryRequestSnapshot {
     pub fn with_response_required(mut self) -> Self {
         self.response_required = true;
         self
+    }
+
+    pub fn with_atomic_compare(mut self, compare: Vec<u8>) -> Result<Self, MemoryError> {
+        self.atomic_compare = Some(compare);
+        MemoryRequest::from_snapshot(&self)?;
+        Ok(self)
     }
 
     pub const fn attributes(&self) -> MemoryRequestAttributes {
@@ -309,6 +351,10 @@ impl MemoryRequestSnapshot {
     pub const fn atomic_op(&self) -> Option<MemoryAtomicOp> {
         self.atomic_op
     }
+
+    pub fn atomic_compare(&self) -> Option<&[u8]> {
+        self.atomic_compare.as_deref()
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -316,6 +362,7 @@ struct MemoryRequestPayload {
     data: Option<Vec<u8>>,
     byte_mask: Option<ByteMask>,
     atomic_op: Option<MemoryAtomicOp>,
+    atomic_compare: Option<Vec<u8>>,
 }
 
 impl MemoryRequestPayload {
@@ -324,6 +371,7 @@ impl MemoryRequestPayload {
             data: None,
             byte_mask: None,
             atomic_op: None,
+            atomic_compare: None,
         }
     }
 
@@ -332,6 +380,7 @@ impl MemoryRequestPayload {
             data: Some(data),
             byte_mask: Some(byte_mask),
             atomic_op: None,
+            atomic_compare: None,
         }
     }
 
@@ -340,6 +389,16 @@ impl MemoryRequestPayload {
             data: Some(data),
             byte_mask: Some(byte_mask),
             atomic_op: Some(op),
+            atomic_compare: None,
+        }
+    }
+
+    fn compare_swap(compare: Vec<u8>, data: Vec<u8>, byte_mask: ByteMask) -> Self {
+        Self {
+            data: Some(data),
+            byte_mask: Some(byte_mask),
+            atomic_op: Some(MemoryAtomicOp::CompareSwap),
+            atomic_compare: Some(compare),
         }
     }
 
@@ -348,6 +407,7 @@ impl MemoryRequestPayload {
             data: Some(data),
             byte_mask: None,
             atomic_op: None,
+            atomic_compare: None,
         }
     }
 
@@ -356,6 +416,7 @@ impl MemoryRequestPayload {
             data: snapshot.data.clone(),
             byte_mask: snapshot.byte_mask.clone(),
             atomic_op: snapshot.atomic_op,
+            atomic_compare: snapshot.atomic_compare.clone(),
         }
     }
 }
@@ -639,6 +700,25 @@ impl MemoryRequest {
         )
     }
 
+    pub fn compare_swap(
+        id: MemoryRequestId,
+        address: Address,
+        size: AccessSize,
+        compare: Vec<u8>,
+        data: Vec<u8>,
+        byte_mask: ByteMask,
+        line_layout: CacheLineLayout,
+    ) -> Result<Self, MemoryError> {
+        Self::new(
+            id,
+            MemoryOperation::Atomic,
+            address,
+            size,
+            line_layout,
+            MemoryRequestPayload::compare_swap(compare, data, byte_mask),
+        )
+    }
+
     pub fn atomic_no_return(
         id: MemoryRequestId,
         address: Address,
@@ -655,6 +735,25 @@ impl MemoryRequest {
             size,
             line_layout,
             MemoryRequestPayload::atomic(op, data, byte_mask),
+        )
+    }
+
+    pub fn compare_swap_no_return(
+        id: MemoryRequestId,
+        address: Address,
+        size: AccessSize,
+        compare: Vec<u8>,
+        data: Vec<u8>,
+        byte_mask: ByteMask,
+        line_layout: CacheLineLayout,
+    ) -> Result<Self, MemoryError> {
+        Self::new(
+            id,
+            MemoryOperation::AtomicNoReturn,
+            address,
+            size,
+            line_layout,
+            MemoryRequestPayload::compare_swap(compare, data, byte_mask),
         )
     }
 
@@ -830,6 +929,13 @@ impl MemoryRequest {
         Self::validate_payload(id, operation, size, payload.data.as_deref())?;
         Self::validate_mask(id, operation, size, payload.byte_mask.as_ref())?;
         Self::validate_atomic_op(id, operation, payload.atomic_op)?;
+        Self::validate_atomic_compare(
+            id,
+            operation,
+            size,
+            payload.atomic_op,
+            payload.atomic_compare.as_deref(),
+        )?;
         Self::validate_cache_block_zero_shape(operation, address, size, line_layout)?;
 
         Ok(Self {
@@ -845,6 +951,7 @@ impl MemoryRequest {
             data: payload.data,
             byte_mask: payload.byte_mask,
             atomic_op: payload.atomic_op,
+            atomic_compare: payload.atomic_compare,
         })
     }
 
@@ -944,6 +1051,37 @@ impl MemoryRequest {
             }
             (_, Some(_)) => Err(MemoryError::UnexpectedAtomicOp { request: id }),
             (_, None) => Ok(()),
+        }
+    }
+
+    fn validate_atomic_compare(
+        id: MemoryRequestId,
+        operation: MemoryOperation,
+        size: AccessSize,
+        atomic_op: Option<MemoryAtomicOp>,
+        compare: Option<&[u8]>,
+    ) -> Result<(), MemoryError> {
+        match (operation, atomic_op, compare) {
+            (
+                MemoryOperation::Atomic | MemoryOperation::AtomicNoReturn,
+                Some(MemoryAtomicOp::CompareSwap),
+                Some(compare),
+            ) if compare.len() as u64 == size.bytes() => Ok(()),
+            (
+                MemoryOperation::Atomic | MemoryOperation::AtomicNoReturn,
+                Some(MemoryAtomicOp::CompareSwap),
+                Some(compare),
+            ) => Err(MemoryError::AtomicCompareSizeMismatch {
+                expected: size,
+                actual: compare.len() as u64,
+            }),
+            (
+                MemoryOperation::Atomic | MemoryOperation::AtomicNoReturn,
+                Some(MemoryAtomicOp::CompareSwap),
+                None,
+            ) => Err(MemoryError::MissingAtomicCompare { request: id }),
+            (_, _, Some(_)) => Err(MemoryError::UnexpectedAtomicCompare { request: id }),
+            (_, _, None) => Ok(()),
         }
     }
 
@@ -1129,6 +1267,10 @@ impl MemoryRequest {
         self.atomic_op
     }
 
+    pub fn atomic_compare(&self) -> Option<&[u8]> {
+        self.atomic_compare.as_deref()
+    }
+
     pub fn atomic_write_data(&self, old_data: &[u8]) -> Result<Vec<u8>, MemoryError> {
         if !matches!(
             self.operation,
@@ -1150,6 +1292,7 @@ impl MemoryRequest {
             .ok_or(MemoryError::MissingAtomicOp { request: self.id() })?
         {
             MemoryAtomicOp::Swap => Ok(payload.to_vec()),
+            MemoryAtomicOp::CompareSwap => self.atomic_compare_swap_data(old_data, payload),
             MemoryAtomicOp::Add => self.atomic_add_data(old_data, payload),
             MemoryAtomicOp::Xor => {
                 self.atomic_bitwise_data(old_data, payload, |old, new| old ^ new)
@@ -1170,6 +1313,29 @@ impl MemoryRequest {
             MemoryAtomicOp::MaxUnsigned => {
                 self.atomic_unsigned_select_data(old_data, payload, |old, operand| old >= operand)
             }
+        }
+    }
+
+    fn atomic_compare_swap_data(
+        &self,
+        old_data: &[u8],
+        payload: &[u8],
+    ) -> Result<Vec<u8>, MemoryError> {
+        let width = self.size().as_usize()?;
+        if !matches!(width, 4 | 8) {
+            return Err(MemoryError::UnsupportedAtomicAccessSize {
+                request: self.id(),
+                op: MemoryAtomicOp::CompareSwap,
+                size: self.size(),
+            });
+        }
+        let compare = self
+            .atomic_compare()
+            .ok_or(MemoryError::MissingAtomicCompare { request: self.id() })?;
+        if compare == old_data {
+            Ok(payload.to_vec())
+        } else {
+            Ok(old_data.to_vec())
         }
     }
 
@@ -1302,6 +1468,7 @@ impl MemoryRequest {
             data: self.data.clone(),
             byte_mask: self.byte_mask.clone(),
             atomic_op: self.atomic_op,
+            atomic_compare: self.atomic_compare.clone(),
         }
     }
 }

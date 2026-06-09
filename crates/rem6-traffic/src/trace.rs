@@ -1,8 +1,8 @@
 use std::collections::BTreeSet;
 
 use rem6_memory::{
-    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryAccessOrdering, MemoryAtomicOp,
-    MemoryBarrierSet, MemoryRequest, MemoryRequestId,
+    AccessSize, Address, AgentId, CacheLineLayout, MemoryAccessOrdering, MemoryBarrierSet,
+    MemoryRequest, MemoryRequestId,
 };
 
 use crate::{
@@ -24,8 +24,15 @@ use crate::{
     TrafficGeneratorError,
 };
 
+mod request_builder;
 mod shape;
 
+use self::request_builder::{
+    build_atomic_no_return_swap_request, build_atomic_swap_request,
+    build_compare_swap_no_return_request, build_compare_swap_request,
+    build_locked_rmw_write_request, build_store_conditional_fail_request,
+    build_store_conditional_request, build_write_request, build_writeback_request,
+};
 use self::shape::{
     validate_cache_block_zero_request, validate_cache_event_request, validate_cache_read_request,
     validate_clean_evict_request, validate_clean_maintenance_request, validate_invalidate_request,
@@ -1380,7 +1387,17 @@ impl TrafficTraceGenerator {
                 }
             }
             TrafficRequestKind::Atomic if element.command == TrafficTraceCommand::Swap => {
-                if element.flags.atomic_no_return {
+                if element.flags.mem_swap_cond && element.flags.atomic_no_return {
+                    build_compare_swap_no_return_request(
+                        self.config.agent(),
+                        id,
+                        address,
+                        size,
+                        layout,
+                    )
+                } else if element.flags.mem_swap_cond {
+                    build_compare_swap_request(self.config.agent(), id, address, size, layout)
+                } else if element.flags.atomic_no_return {
                     build_atomic_no_return_swap_request(
                         self.config.agent(),
                         id,
@@ -1440,117 +1457,6 @@ impl TrafficTraceGenerator {
             request
         };
         Ok(element.flags.apply(request))
-    }
-}
-
-fn build_atomic_swap_request(
-    agent: AgentId,
-    id: MemoryRequestId,
-    address: Address,
-    size: AccessSize,
-    layout: CacheLineLayout,
-) -> Result<MemoryRequest, TrafficGeneratorError> {
-    let mask = ByteMask::full(size)?;
-    let data_len =
-        usize::try_from(mask.len()).expect("byte mask length fits usize after construction");
-    let data = vec![agent.get() as u8; data_len];
-    MemoryRequest::atomic_with_op(id, address, size, MemoryAtomicOp::Swap, data, mask, layout)
-        .map_err(Into::into)
-}
-
-fn build_atomic_no_return_swap_request(
-    agent: AgentId,
-    id: MemoryRequestId,
-    address: Address,
-    size: AccessSize,
-    layout: CacheLineLayout,
-) -> Result<MemoryRequest, TrafficGeneratorError> {
-    let mask = ByteMask::full(size)?;
-    let data_len =
-        usize::try_from(mask.len()).expect("byte mask length fits usize after construction");
-    let data = vec![agent.get() as u8; data_len];
-    MemoryRequest::atomic_no_return(id, address, size, MemoryAtomicOp::Swap, data, mask, layout)
-        .map_err(Into::into)
-}
-
-fn build_write_request(
-    agent: AgentId,
-    id: MemoryRequestId,
-    address: Address,
-    size: AccessSize,
-    layout: CacheLineLayout,
-) -> Result<MemoryRequest, TrafficGeneratorError> {
-    let mask = ByteMask::full(size)?;
-    let data_len =
-        usize::try_from(mask.len()).expect("byte mask length fits usize after construction");
-    let data = vec![agent.get() as u8; data_len];
-    MemoryRequest::write(id, address, size, data, mask, layout).map_err(Into::into)
-}
-
-fn build_locked_rmw_write_request(
-    agent: AgentId,
-    id: MemoryRequestId,
-    address: Address,
-    size: AccessSize,
-    layout: CacheLineLayout,
-) -> Result<MemoryRequest, TrafficGeneratorError> {
-    let mask = ByteMask::full(size)?;
-    let data_len =
-        usize::try_from(mask.len()).expect("byte mask length fits usize after construction");
-    let data = vec![agent.get() as u8; data_len];
-    MemoryRequest::locked_rmw_write(id, address, size, data, mask, layout).map_err(Into::into)
-}
-
-fn build_store_conditional_request(
-    agent: AgentId,
-    id: MemoryRequestId,
-    address: Address,
-    size: AccessSize,
-    layout: CacheLineLayout,
-) -> Result<MemoryRequest, TrafficGeneratorError> {
-    let mask = ByteMask::full(size)?;
-    let data_len =
-        usize::try_from(mask.len()).expect("byte mask length fits usize after construction");
-    let data = vec![agent.get() as u8; data_len];
-    MemoryRequest::store_conditional(id, address, size, data, mask, layout).map_err(Into::into)
-}
-
-fn build_store_conditional_fail_request(
-    agent: AgentId,
-    id: MemoryRequestId,
-    address: Address,
-    size: AccessSize,
-    layout: CacheLineLayout,
-) -> Result<MemoryRequest, TrafficGeneratorError> {
-    let mask = ByteMask::full(size)?;
-    let data_len =
-        usize::try_from(mask.len()).expect("byte mask length fits usize after construction");
-    let data = vec![agent.get() as u8; data_len];
-    MemoryRequest::store_conditional_fail(id, address, size, data, mask, layout).map_err(Into::into)
-}
-
-fn build_writeback_request(
-    command: TrafficTraceCommand,
-    agent: AgentId,
-    id: MemoryRequestId,
-    address: Address,
-    size: AccessSize,
-    layout: CacheLineLayout,
-) -> Result<MemoryRequest, TrafficGeneratorError> {
-    let data_len =
-        usize::try_from(size.bytes()).expect("access size fits usize after construction");
-    let data = vec![agent.get() as u8; data_len];
-    match command {
-        TrafficTraceCommand::WritebackDirty => {
-            MemoryRequest::writeback_dirty(id, address, data, layout).map_err(Into::into)
-        }
-        TrafficTraceCommand::WritebackClean => {
-            MemoryRequest::writeback_clean(id, address, data, layout).map_err(Into::into)
-        }
-        TrafficTraceCommand::WriteClean => {
-            MemoryRequest::write_clean(id, address, data, layout).map_err(Into::into)
-        }
-        _ => unreachable!("writeback builder is only called for writeback trace commands"),
     }
 }
 

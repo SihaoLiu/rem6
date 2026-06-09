@@ -117,6 +117,26 @@ fn atomic_no_return(
     .unwrap()
 }
 
+fn compare_swap(
+    sequence: u64,
+    address: u64,
+    compare: Vec<u8>,
+    data: Vec<u8>,
+    mask: ByteMask,
+) -> MemoryRequest {
+    let size = AccessSize::new(data.len() as u64).unwrap();
+    MemoryRequest::compare_swap(
+        request_id(sequence),
+        Address::new(address),
+        size,
+        compare,
+        data,
+        mask,
+        layout(),
+    )
+    .unwrap()
+}
+
 #[test]
 fn line_store_serves_reads_from_independent_lines() {
     let mut store = LineMemoryStore::new(layout());
@@ -259,6 +279,72 @@ fn line_store_atomic_no_return_writes_without_old_bytes() {
     assert_eq!(
         &store.line_data(Address::new(0x1000)).unwrap()[0..8],
         &[0, 1, 0xaa, 3, 0xcc, 5, 6, 7]
+    );
+}
+
+#[test]
+fn line_store_compare_swap_writes_only_when_old_bytes_match() {
+    let mut store = LineMemoryStore::new(layout());
+    let old = 0x0102_0304_0506_0708u64;
+    let replacement = 0x1112_1314_1516_1718u64;
+    let mut line = line_data(0x00);
+    line[8..16].copy_from_slice(&old.to_le_bytes());
+    store.insert_line(Address::new(0x1000), line).unwrap();
+
+    let mismatch = compare_swap(
+        16,
+        0x1008,
+        0x8877_6655_4433_2211u64.to_le_bytes().to_vec(),
+        replacement.to_le_bytes().to_vec(),
+        ByteMask::full(AccessSize::new(8).unwrap()).unwrap(),
+    );
+    let response = store.respond(&mismatch).unwrap().unwrap();
+
+    assert_eq!(response.status(), ResponseStatus::Completed);
+    assert_eq!(response.data(), Some(&old.to_le_bytes()[..]));
+    assert_eq!(
+        &store.line_data(Address::new(0x1000)).unwrap()[8..16],
+        &old.to_le_bytes()
+    );
+
+    let matched = compare_swap(
+        17,
+        0x1008,
+        old.to_le_bytes().to_vec(),
+        replacement.to_le_bytes().to_vec(),
+        ByteMask::full(AccessSize::new(8).unwrap()).unwrap(),
+    );
+    let response = store.respond(&matched).unwrap().unwrap();
+
+    assert_eq!(response.status(), ResponseStatus::Completed);
+    assert_eq!(response.data(), Some(&old.to_le_bytes()[..]));
+    assert_eq!(
+        &store.line_data(Address::new(0x1000)).unwrap()[8..16],
+        &replacement.to_le_bytes()
+    );
+}
+
+#[test]
+fn line_store_compare_swap_rejects_non_gem5_compare_width() {
+    let mut store = LineMemoryStore::new(layout());
+    store
+        .insert_line(Address::new(0x1000), line_data(0x00))
+        .unwrap();
+    let request = compare_swap(
+        18,
+        0x1002,
+        vec![2, 3],
+        vec![0xaa, 0xbb],
+        ByteMask::full(AccessSize::new(2).unwrap()).unwrap(),
+    );
+
+    assert_eq!(
+        store.respond(&request).unwrap_err(),
+        MemoryError::UnsupportedAtomicAccessSize {
+            request: request_id(18),
+            op: MemoryAtomicOp::CompareSwap,
+            size: AccessSize::new(2).unwrap(),
+        }
     );
 }
 
