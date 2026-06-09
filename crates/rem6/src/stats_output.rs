@@ -603,6 +603,11 @@ fn emit_trace_replay_summary_stats(
     )?;
     emit_trace_count(
         stats,
+        "sim.trace_replay.responses.invalidate",
+        summary.trace_invalidate_response_count() as u64,
+    )?;
+    emit_trace_count(
+        stats,
         "sim.trace_replay.responses.upgrade",
         summary.trace_upgrade_response_count() as u64,
     )?;
@@ -1419,6 +1424,7 @@ mod tests {
     #[test]
     fn trace_replay_stats_emit_nonzero_cache_and_sideband_counters() {
         let summary = WorkloadTrafficTraceReplaySummary::new(route_id("cpu0.data"), 3)
+            .with_trace_invalidate_response_count(1)
             .with_trace_data_cache_response_count(3)
             .with_trace_data_cache_maintenance_response_count(2)
             .with_trace_data_cache_clean_maintenance_response_count(1)
@@ -1433,6 +1439,7 @@ mod tests {
         let json = stats_snapshot_json(&stats.snapshot(0));
 
         assert_stat_value(&json, "sim.trace_replay.responses.cache", "Count", 3);
+        assert_stat_value(&json, "sim.trace_replay.responses.invalidate", "Count", 1);
         assert_stat_value(
             &json,
             "sim.trace_replay.responses.cache.maintenance",

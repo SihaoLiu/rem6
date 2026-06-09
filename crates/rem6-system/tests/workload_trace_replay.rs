@@ -544,7 +544,8 @@ fn replay_manifest_with_data_cache_clean_invalid_response_expectation(
                 .with_minimum_trace_data_cache_response_count(3)
                 .with_minimum_trace_data_cache_maintenance_response_count(1)
                 .with_minimum_trace_data_cache_clean_maintenance_response_count(1)
-                .with_minimum_trace_data_cache_invalidate_maintenance_response_count(1),
+                .with_minimum_trace_data_cache_invalidate_maintenance_response_count(1)
+                .with_minimum_trace_invalidate_response_count(1),
         )
         .unwrap()
         .build()
@@ -569,7 +570,8 @@ fn replay_manifest_with_data_cache_invalidate_response_expectation(id: &str) -> 
             WorkloadExpectedTrafficTraceReplaySummary::new(route_id("cpu0.data"))
                 .with_minimum_trace_data_cache_response_count(3)
                 .with_minimum_trace_data_cache_maintenance_response_count(1)
-                .with_minimum_trace_data_cache_invalidate_maintenance_response_count(1),
+                .with_minimum_trace_data_cache_invalidate_maintenance_response_count(1)
+                .with_minimum_trace_invalidate_response_count(1),
         )
         .unwrap()
         .build()
@@ -2262,6 +2264,7 @@ fn workload_replay_invalidates_data_cache_line_after_trace_clean_invalid_respons
         summary.trace_data_cache_invalidate_maintenance_response_count(),
         1
     );
+    assert_eq!(summary.trace_invalidate_response_count(), 1);
     plan.verify_result(outcome.result()).unwrap();
 }
 
@@ -2352,6 +2355,7 @@ fn workload_replay_invalidates_data_cache_line_after_trace_invalidate_response()
         summary.trace_data_cache_invalidate_maintenance_response_count(),
         1
     );
+    assert_eq!(summary.trace_invalidate_response_count(), 1);
     plan.verify_result(outcome.result()).unwrap();
 }
 

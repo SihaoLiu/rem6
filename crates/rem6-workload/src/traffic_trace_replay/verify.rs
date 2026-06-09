@@ -55,6 +55,8 @@ fn traffic_trace_replay_summary_meets_minimum(
         && actual.trace_write_response_count() >= expected.minimum_trace_write_response_count()
         && actual.trace_prefetch_response_count()
             >= expected.minimum_trace_prefetch_response_count()
+        && actual.trace_invalidate_response_count()
+            >= expected.minimum_trace_invalidate_response_count()
         && actual.trace_upgrade_response_count() >= expected.minimum_trace_upgrade_response_count()
         && actual.trace_llsc_response_count() >= expected.minimum_trace_llsc_response_count()
         && actual.trace_locked_rmw_response_count()

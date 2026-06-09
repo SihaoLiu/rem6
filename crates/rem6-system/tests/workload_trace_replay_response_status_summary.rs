@@ -12,8 +12,8 @@ use rem6_workload::{
 mod support;
 
 use support::traffic_trace::{
-    controller_for_packets, PacketFields, GEM5_READ_REQ, GEM5_READ_RESP, GEM5_STORE_COND_FAIL_REQ,
-    GEM5_STORE_COND_RESP,
+    controller_for_packets, PacketFields, GEM5_READ_REQ, GEM5_READ_RESP_WITH_INVALIDATE,
+    GEM5_STORE_COND_FAIL_REQ, GEM5_STORE_COND_RESP,
 };
 
 fn workload_id(value: &str) -> rem6_workload::WorkloadId {
@@ -136,6 +136,7 @@ fn replay_manifest() -> WorkloadManifest {
             .with_minimum_trace_store_conditional_failed_response_count(1)
             .with_minimum_trace_read_response_count(1)
             .with_minimum_trace_write_response_count(1)
+            .with_minimum_trace_invalidate_response_count(1)
             .with_minimum_trace_llsc_response_count(1)
             .with_minimum_trace_writable_intent_response_count(1),
     )
@@ -157,7 +158,7 @@ fn workload_replay_summarizes_executable_response_statuses() {
         },
         PacketFields {
             tick: 3,
-            command: GEM5_READ_RESP,
+            command: GEM5_READ_RESP_WITH_INVALIDATE,
             address: Some(0x9008),
             size: Some(8),
             packet_id: Some(990),
@@ -219,6 +220,7 @@ fn workload_replay_summarizes_executable_response_statuses() {
     assert_eq!(summary.trace_read_response_count(), 1);
     assert_eq!(summary.trace_write_response_count(), 1);
     assert_eq!(summary.trace_prefetch_response_count(), 0);
+    assert_eq!(summary.trace_invalidate_response_count(), 1);
     assert_eq!(summary.trace_upgrade_response_count(), 0);
     assert_eq!(summary.trace_llsc_response_count(), 1);
     assert_eq!(summary.trace_locked_rmw_response_count(), 0);
