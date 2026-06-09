@@ -11,7 +11,9 @@ use rem6_memory::{
     PartitionedMemoryStore,
 };
 use rem6_mmio::{MmioAccess, MmioBus, MmioRegisterBank, MmioRoute};
-use rem6_stats::{StatSample, StatSnapshot, StatsRegistry};
+use rem6_stats::{
+    GlobalInstTrackerSnapshot, ProbePayload, StatId, StatSample, StatSnapshot, StatsRegistry,
+};
 use rem6_system::{
     GuestEventId, GuestHostCallResponse, GuestSourceId, GuestTrap, GuestTrapKind, HostEventPolicy,
     RiscvInstructionStats, RiscvSystemRunDriver, RiscvSystemRunStopReason, RiscvTrapEventPort,
@@ -332,7 +334,8 @@ fn riscv_system_run_driver_records_committed_instruction_stats() {
         RiscvInstructionStats::new([
             (CpuId::new(0), cpu0_committed),
             (CpuId::new(1), cpu1_committed),
-        ]),
+        ])
+        .with_retired_inst_thresholds(vec![2]),
     );
 
     let run = driver
@@ -361,6 +364,83 @@ fn riscv_system_run_driver_records_committed_instruction_stats() {
                 StatSample::new(cpu1_committed, "cpu1.committed_insts", "count", 1),
             ],
         )
+    );
+
+    let retired = run
+        .retired_instruction_probes()
+        .expect("run should carry retired instruction probe evidence");
+    assert_eq!(
+        retired.tracker(),
+        &GlobalInstTrackerSnapshot::new(2, Vec::new())
+    );
+    assert!(retired.point_for_cpu(CpuId::new(0)).is_some());
+    assert!(retired.point_for_cpu(CpuId::new(1)).is_some());
+    assert_eq!(retired.probes().events().len(), 2);
+    let probe_ticks = retired
+        .probes()
+        .events()
+        .iter()
+        .map(|event| event.tick())
+        .collect::<Vec<_>>();
+    assert!(probe_ticks.iter().all(|probe_tick| *probe_tick <= tick));
+    assert!(probe_ticks.windows(2).all(|window| window[0] <= window[1]));
+    assert_eq!(
+        retired
+            .probes()
+            .events()
+            .iter()
+            .map(|event| event.payload())
+            .collect::<Vec<_>>(),
+        vec![
+            &ProbePayload::Counter { amount: 1 },
+            &ProbePayload::Counter { amount: 1 },
+        ]
+    );
+}
+
+#[test]
+fn riscv_instruction_stats_clone_uses_independent_retired_probe_recorders() {
+    let stats = RiscvInstructionStats::new([(CpuId::new(0), StatId::new(0))])
+        .with_retired_inst_thresholds(vec![1]);
+    let cloned = stats.clone();
+
+    stats
+        .record_retired_instruction_probe(CpuId::new(0), 10)
+        .unwrap();
+
+    assert_eq!(
+        stats
+            .retired_instruction_probe_snapshot()
+            .probes()
+            .events()
+            .len(),
+        1
+    );
+    assert!(cloned
+        .retired_instruction_probe_snapshot()
+        .probes()
+        .events()
+        .is_empty());
+
+    cloned
+        .record_retired_instruction_probe(CpuId::new(0), 12)
+        .unwrap();
+
+    assert_eq!(
+        stats
+            .retired_instruction_probe_snapshot()
+            .probes()
+            .events()
+            .len(),
+        1
+    );
+    assert_eq!(
+        cloned
+            .retired_instruction_probe_snapshot()
+            .probes()
+            .events()
+            .len(),
+        1
     );
 }
 

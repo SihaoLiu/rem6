@@ -21,7 +21,7 @@ use rem6_kernel::{
 };
 use rem6_memory::MemoryTargetId;
 use rem6_mmio::MmioBus;
-use rem6_stats::{StatId, StatsError};
+use rem6_stats::StatsError;
 use rem6_transport::{MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome};
 
 mod clint_checkpoint;
@@ -48,6 +48,7 @@ mod pl031_checkpoint;
 mod plic_checkpoint;
 mod riscv_checkpoint;
 mod riscv_debug;
+mod riscv_instruction_stats;
 mod riscv_run_activity;
 mod riscv_run_control;
 mod riscv_run_translation;
@@ -187,6 +188,7 @@ pub use riscv_debug::{
     sync_riscv_gdb_remote_threads_from_cluster, RiscvGdbRegisterWriteError,
     RiscvGdbRemotePacketError,
 };
+pub use riscv_instruction_stats::{RiscvInstructionStats, RiscvRetiredInstructionProbeSnapshot};
 pub use riscv_run_activity::{RiscvSystemRunCpuActivity, RiscvSystemRunPartitionActivity};
 pub use rtc_checkpoint::{
     RtcCheckpointBank, RtcCheckpointError, RtcCheckpointPort, RtcCheckpointRecord,
@@ -326,6 +328,7 @@ pub struct RiscvSystemRun {
     pub(crate) data_cache_error_records: Vec<RiscvTraceErrorRecord>,
     pub(crate) trace_htm_access_records: Vec<RiscvTraceHtmAccessRecord>,
     pub(crate) store_conditional_failure_diagnostics: Vec<RiscvStoreConditionalFailureDiagnostic>,
+    retired_instruction_probes: Option<RiscvRetiredInstructionProbeSnapshot>,
 }
 
 impl RiscvSystemRun {
@@ -350,6 +353,7 @@ impl RiscvSystemRun {
             data_cache_error_records: Vec::new(),
             trace_htm_access_records: Vec::new(),
             store_conditional_failure_diagnostics: Vec::new(),
+            retired_instruction_probes: None,
         }
     }
 
@@ -392,12 +396,26 @@ impl RiscvSystemRun {
         self
     }
 
+    pub fn with_retired_instruction_probes(
+        mut self,
+        retired_instruction_probes: Option<RiscvRetiredInstructionProbeSnapshot>,
+    ) -> Self {
+        self.retired_instruction_probes = retired_instruction_probes;
+        self
+    }
+
     pub fn turns(&self) -> &[RiscvClusterTurn] {
         &self.turns
     }
 
     pub fn scheduled_traps(&self) -> &[ScheduledRiscvTrap] {
         &self.scheduled_traps
+    }
+
+    pub const fn retired_instruction_probes(
+        &self,
+    ) -> Option<&RiscvRetiredInstructionProbeSnapshot> {
+        self.retired_instruction_probes.as_ref()
     }
 
     pub fn cpu_activity(&self, cpu: CpuId) -> Option<RiscvSystemRunCpuActivity> {
@@ -706,6 +724,12 @@ impl RiscvSystemRunDriver {
         self.instruction_stats.as_ref()
     }
 
+    pub(crate) fn reset_instruction_stats_for_run(&self) {
+        if let Some(instruction_stats) = &self.instruction_stats {
+            instruction_stats.reset_retired_instruction_probes();
+        }
+    }
+
     pub(crate) fn run_result(
         &self,
         cluster: &RiscvCluster,
@@ -716,6 +740,11 @@ impl RiscvSystemRunDriver {
         RiscvSystemRun::new(turns, scheduled_traps, stop_reason)
             .with_store_conditional_failure_diagnostics(
                 cluster.store_conditional_failure_diagnostics(),
+            )
+            .with_retired_instruction_probes(
+                self.instruction_stats
+                    .as_ref()
+                    .map(RiscvInstructionStats::retired_instruction_probe_snapshot),
             )
     }
 
@@ -741,6 +770,7 @@ impl RiscvSystemRunDriver {
     {
         let mut turns = Vec::new();
         let mut scheduled_traps = Vec::new();
+        self.reset_instruction_stats_for_run();
 
         if let Some(stop) = self.host_stop_request() {
             return Ok(self.run_result(
@@ -762,7 +792,7 @@ impl RiscvSystemRunDriver {
                     &mut data_responder,
                 )
                 .map_err(SystemError::RiscvCluster)?;
-            self.record_instruction_stats(&turn)?;
+            self.record_instruction_stats(scheduler.now(), &turn)?;
             self.trap_port.schedule_riscv_system_events_from_turn(
                 scheduler,
                 &turn,
@@ -833,6 +863,7 @@ impl RiscvSystemRunDriver {
     {
         let mut turns = Vec::new();
         let mut scheduled_traps = Vec::new();
+        self.reset_instruction_stats_for_run();
 
         if let Some(stop) = self.host_stop_request() {
             return Ok(self.run_result(
@@ -854,7 +885,7 @@ impl RiscvSystemRunDriver {
                     &mut data_responder,
                 )
                 .map_err(SystemError::RiscvCluster)?;
-            self.record_instruction_stats(&turn)?;
+            self.record_instruction_stats(scheduler.now(), &turn)?;
             self.trap_port
                 .schedule_riscv_system_events_from_turn_parallel(
                     scheduler,
@@ -927,6 +958,7 @@ impl RiscvSystemRunDriver {
     {
         let mut turns = Vec::new();
         let mut scheduled_traps = Vec::new();
+        self.reset_instruction_stats_for_run();
 
         if let Some(stop) = self.host_stop_request() {
             return Ok(self.run_result(
@@ -949,7 +981,7 @@ impl RiscvSystemRunDriver {
                     &mut data_responder,
                 )
                 .map_err(SystemError::RiscvCluster)?;
-            self.record_instruction_stats(&turn)?;
+            self.record_instruction_stats(scheduler.now(), &turn)?;
             self.trap_port
                 .schedule_riscv_system_events_from_turn_parallel(
                     scheduler,
@@ -1007,6 +1039,7 @@ impl RiscvSystemRunDriver {
 
     pub(crate) fn record_instruction_stats(
         &self,
+        tick: Tick,
         turn: &RiscvClusterTurn,
     ) -> Result<(), SystemError> {
         let Some(instruction_stats) = &self.instruction_stats else {
@@ -1015,42 +1048,30 @@ impl RiscvSystemRunDriver {
 
         let controller = self.trap_port.controller();
         let mut controller = controller.lock().expect("system host controller lock");
-        for event in turn.core_events() {
-            if matches!(event.action(), RiscvCoreDriveAction::InstructionExecuted(_)) {
-                if let Some(stat) = instruction_stats.committed_stat(event.cpu()) {
-                    controller
-                        .executor_mut()
-                        .stats_mut()
-                        .increment(stat, 1)
-                        .map_err(SystemError::Stats)?;
-                }
+        let mut retired = turn
+            .core_events()
+            .iter()
+            .filter_map(|event| match event.action() {
+                RiscvCoreDriveAction::InstructionExecuted(_) => Some((tick, event.cpu())),
+                RiscvCoreDriveAction::FetchIssued { .. }
+                | RiscvCoreDriveAction::DataAccessIssued { .. } => None,
+            })
+            .collect::<Vec<_>>();
+        retired.sort_by_key(|(tick, cpu)| (*tick, *cpu));
+
+        for (tick, cpu) in retired {
+            instruction_stats
+                .record_retired_instruction_probe(cpu, tick)
+                .map_err(SystemError::Stats)?;
+            if let Some(stat) = instruction_stats.committed_stat(cpu) {
+                controller
+                    .executor_mut()
+                    .stats_mut()
+                    .increment(stat, 1)
+                    .map_err(SystemError::Stats)?;
             }
         }
         Ok(())
-    }
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct RiscvInstructionStats {
-    committed: BTreeMap<CpuId, StatId>,
-}
-
-impl RiscvInstructionStats {
-    pub fn new<I>(committed: I) -> Self
-    where
-        I: IntoIterator<Item = (CpuId, StatId)>,
-    {
-        Self {
-            committed: committed.into_iter().collect(),
-        }
-    }
-
-    pub fn committed_stat(&self, cpu: CpuId) -> Option<StatId> {
-        self.committed.get(&cpu).copied()
-    }
-
-    pub fn committed_stats(&self) -> &BTreeMap<CpuId, StatId> {
-        &self.committed
     }
 }
 
