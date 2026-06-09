@@ -1,3 +1,4 @@
+mod comm_monitor;
 mod error;
 mod inst_tracker;
 mod kind;
@@ -10,6 +11,10 @@ mod reset;
 mod stack_dist;
 mod stats;
 
+pub use comm_monitor::{
+    CommMonitor, CommMonitorConfig, CommMonitorConfigBuilder, CommMonitorHistograms,
+    CommMonitorPendingRequest, CommMonitorSnapshot, CommMonitorStats,
+};
 pub use error::StatsError;
 pub use inst_tracker::{
     GlobalInstTracker, GlobalInstTrackerSnapshot, InstTrackerUpdate, LocalInstTracker,

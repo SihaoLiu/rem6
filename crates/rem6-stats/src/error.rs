@@ -6,7 +6,7 @@ use rem6_kernel::Tick;
 use crate::kind::StatKind;
 use crate::mem_footprint::MemFootprintGranularity;
 use crate::pc_count::PcCountPair;
-use crate::probes::{ProbeListenerId, ProbePointId};
+use crate::probes::{MemProbePacketAccess, ProbeListenerId, ProbePointId};
 use crate::reset::StatResetPolicy;
 use crate::stats::{
     StatDescription, StatDescriptionError, StatGroupDescriptor, StatGroupId, StatId, StatPathError,
@@ -324,6 +324,56 @@ pub enum StatsError {
     StackDistSnapshotStackDepthMismatch {
         stack_depth: u64,
         infinite_samples: u64,
+    },
+    InvalidCommMonitorSamplePeriod {
+        sample_period: u64,
+    },
+    InvalidCommMonitorTickFrequency {
+        tick_frequency: u64,
+    },
+    InvalidCommMonitorHistogramBins {
+        name: &'static str,
+        bins: usize,
+    },
+    DuplicateCommMonitorPendingRequest {
+        packet_id: u64,
+    },
+    InvalidCommMonitorPendingAccess {
+        packet_id: u64,
+        access: MemProbePacketAccess,
+    },
+    UnknownCommMonitorPendingRequest {
+        packet_id: u64,
+    },
+    CommMonitorResponseTimeWentBack {
+        packet_id: u64,
+        request_tick: Tick,
+        response_tick: Tick,
+    },
+    CommMonitorRequestTimeWentBack {
+        previous_tick: Tick,
+        current_tick: Tick,
+    },
+    CommMonitorResponseAccessMismatch {
+        packet_id: u64,
+        request_access: MemProbePacketAccess,
+        response_access: MemProbePacketAccess,
+    },
+    DuplicateCommMonitorHistogramBucket {
+        name: &'static str,
+        bucket: u64,
+    },
+    CommMonitorSnapshotOutstandingMismatch {
+        access: MemProbePacketAccess,
+        expected: u64,
+        observed: u64,
+    },
+    CommMonitorCounterOverflow {
+        name: &'static str,
+    },
+    CommMonitorSamplePeriodOverflow {
+        last_sample_tick: Tick,
+        sample_period: Tick,
     },
     GroupSequenceOverflow,
     DumpSequenceOverflow,
@@ -775,6 +825,75 @@ impl fmt::Display for StatsError {
             } => write!(
                 formatter,
                 "stack distance snapshot stack depth {stack_depth} does not match {infinite_samples} infinite samples"
+            ),
+            Self::InvalidCommMonitorSamplePeriod { sample_period } => write!(
+                formatter,
+                "communication monitor sample period {sample_period} must not be zero"
+            ),
+            Self::InvalidCommMonitorTickFrequency { tick_frequency } => write!(
+                formatter,
+                "communication monitor tick frequency {tick_frequency} must not be zero"
+            ),
+            Self::InvalidCommMonitorHistogramBins { name, bins } => write!(
+                formatter,
+                "communication monitor {name} histogram bin count {bins} must not be zero"
+            ),
+            Self::DuplicateCommMonitorPendingRequest { packet_id } => write!(
+                formatter,
+                "communication monitor has duplicate pending packet id {packet_id}"
+            ),
+            Self::InvalidCommMonitorPendingAccess { packet_id, access } => write!(
+                formatter,
+                "communication monitor pending packet id {packet_id} has unsupported access {access:?}"
+            ),
+            Self::UnknownCommMonitorPendingRequest { packet_id } => write!(
+                formatter,
+                "communication monitor has no pending packet id {packet_id}"
+            ),
+            Self::CommMonitorResponseTimeWentBack {
+                packet_id,
+                request_tick,
+                response_tick,
+            } => write!(
+                formatter,
+                "communication monitor response for packet id {packet_id} at tick {response_tick} is before request tick {request_tick}"
+            ),
+            Self::CommMonitorRequestTimeWentBack {
+                previous_tick,
+                current_tick,
+            } => write!(
+                formatter,
+                "communication monitor request tick {current_tick} is before previous request tick {previous_tick}"
+            ),
+            Self::CommMonitorResponseAccessMismatch {
+                packet_id,
+                request_access,
+                response_access,
+            } => write!(
+                formatter,
+                "communication monitor response for packet id {packet_id} has access {response_access:?}, expected {request_access:?}"
+            ),
+            Self::DuplicateCommMonitorHistogramBucket { name, bucket } => write!(
+                formatter,
+                "communication monitor {name} histogram has duplicate bucket {bucket}"
+            ),
+            Self::CommMonitorSnapshotOutstandingMismatch {
+                access,
+                expected,
+                observed,
+            } => write!(
+                formatter,
+                "communication monitor snapshot has {observed} outstanding {access:?} packets but pending state contains {expected}"
+            ),
+            Self::CommMonitorCounterOverflow { name } => {
+                write!(formatter, "communication monitor counter {name} overflowed")
+            }
+            Self::CommMonitorSamplePeriodOverflow {
+                last_sample_tick,
+                sample_period,
+            } => write!(
+                formatter,
+                "communication monitor sample tick {last_sample_tick} plus period {sample_period} overflowed"
             ),
             Self::GroupSequenceOverflow => write!(formatter, "stat group sequence overflowed"),
             Self::DumpSequenceOverflow => write!(formatter, "stat dump sequence overflowed"),
