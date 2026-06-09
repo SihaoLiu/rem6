@@ -699,6 +699,14 @@ fn guest_event_from_riscv_system_event(
                 label: GEM5_M5_CHECKPOINT_LABEL.to_string(),
             },
         }),
+        Some(RiscvSystemEvent::Gem5Hypercall { selector, .. }) => Some(RiscvGuestEventSchedule {
+            delay: 0,
+            kind: GuestEventKind::GuestHostCall {
+                selector: *selector,
+                arguments: Vec::new(),
+                payload: Vec::new(),
+            },
+        }),
         Some(RiscvSystemEvent::Gem5WorkBegin {
             work_id, thread_id, ..
         }) => Some(RiscvGuestEventSchedule {

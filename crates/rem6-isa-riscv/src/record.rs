@@ -67,6 +67,10 @@ pub enum RiscvSystemEvent {
         delay: u64,
         period: u64,
     },
+    Gem5Hypercall {
+        pc: u64,
+        selector: u64,
+    },
     Gem5WorkBegin {
         pc: u64,
         work_id: u64,

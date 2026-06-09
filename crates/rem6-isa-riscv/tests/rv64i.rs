@@ -2282,6 +2282,38 @@ fn hart_decodes_and_records_gem5_checkpoint_pseudo_op() {
 }
 
 #[test]
+fn hart_decodes_and_records_gem5_hypercall_pseudo_op() {
+    let hypercall = RiscvInstruction::decode(gem5_m5op_type(0x71)).unwrap();
+
+    assert_eq!(
+        hypercall,
+        RiscvInstruction::Gem5PseudoOp {
+            op: RiscvPseudoOp::Hypercall
+        }
+    );
+
+    let mut hart = RiscvHartState::new(0x7600);
+    hart.write(reg(10), 0x7101);
+    hart.write(reg(11), 0x22);
+    let record = hart.execute(hypercall).unwrap();
+
+    assert_eq!(record.pc(), 0x7600);
+    assert_eq!(record.next_pc(), 0x7604);
+    assert_eq!(hart.pc(), 0x7604);
+    assert_eq!(
+        record.system_event(),
+        Some(&RiscvSystemEvent::Gem5Hypercall {
+            pc: 0x7600,
+            selector: 0x7101,
+        })
+    );
+    assert_eq!(record.register_writes(), &[RegisterWrite::new(reg(10), 0)]);
+    assert_eq!(record.memory_access(), None);
+    assert_eq!(hart.read(reg(10)), 0);
+    assert_eq!(hart.read(reg(11)), 0x22);
+}
+
+#[test]
 fn hart_executes_machine_return_from_machine_mode() {
     let mut hart = RiscvHartState::new(0x7000);
     hart.set_machine_exception_pc(0x9000);

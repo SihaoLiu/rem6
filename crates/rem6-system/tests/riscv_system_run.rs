@@ -13,9 +13,9 @@ use rem6_memory::{
 use rem6_mmio::{MmioAccess, MmioBus, MmioRegisterBank, MmioRoute};
 use rem6_stats::{StatSample, StatSnapshot, StatsRegistry};
 use rem6_system::{
-    GuestEventId, GuestSourceId, GuestTrap, GuestTrapKind, HostEventPolicy, RiscvInstructionStats,
-    RiscvSystemRunDriver, RiscvSystemRunStopReason, RiscvTrapEventPort, StopRequest,
-    SystemActionOutcome, SystemHostController, SystemHostEventPort,
+    GuestEventId, GuestHostCallResponse, GuestSourceId, GuestTrap, GuestTrapKind, HostEventPolicy,
+    RiscvInstructionStats, RiscvSystemRunDriver, RiscvSystemRunStopReason, RiscvTrapEventPort,
+    StopRequest, SystemActionOutcome, SystemHostController, SystemHostEventPort,
 };
 use rem6_transport::{
     MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome,
@@ -715,6 +715,94 @@ fn riscv_system_run_driver_routes_gem5_checkpoint_pseudo_op_to_host() {
             source,
             "gem5-m5-checkpoint".to_string(),
         )]
+    );
+}
+
+#[test]
+fn riscv_system_run_driver_routes_gem5_hypercall_pseudo_op_to_host() {
+    let host = PartitionId::new(3);
+    let source = GuestSourceId::new(41);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let fetch_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let core = riscv_core(0, 0, 7, "cpu0.ifetch", fetch_route, 0x8000);
+    let cluster = RiscvCluster::new([core]).unwrap();
+    let store = loaded_program_store(&[
+        (0x8000, i_type(0x321, 0, 0x0, 10, 0x13)),
+        (0x8004, gem5_m5op_type(0x71)),
+        (0x8008, 0x0000_0073),
+    ]);
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        StatsRegistry::new(),
+    )));
+    let trap_port = RiscvTrapEventPort::new(
+        SystemHostEventPort::with_controller(host, 2, Arc::clone(&controller)).unwrap(),
+        source,
+    );
+    let driver = RiscvSystemRunDriver::new(trap_port);
+    let mut next_event_id = 150_u64;
+
+    let run = driver
+        .drive_until_host_stop(
+            &cluster,
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_cpu| responder(Arc::clone(&store)),
+            |_cpu| responder(Arc::clone(&store)),
+            30,
+            |_cpu| {
+                let event = GuestEventId::new(next_event_id);
+                next_event_id += 1;
+                event
+            },
+        )
+        .unwrap();
+
+    assert_eq!(
+        run.host_stop(),
+        Some(StopRequest::new(
+            run.final_tick().unwrap(),
+            GuestEventId::new(151),
+            source,
+            0,
+        ))
+    );
+
+    let controller = controller.lock().unwrap();
+    assert_eq!(
+        controller.run().action_outcomes(),
+        &[
+            SystemActionOutcome::GuestHostCall {
+                tick: 14,
+                event: GuestEventId::new(150),
+                source,
+                selector: 0x321,
+                arguments: Vec::new(),
+                payload: Vec::new(),
+                response: GuestHostCallResponse::unhandled(),
+            },
+            SystemActionOutcome::Stop(StopRequest::new(
+                run.final_tick().unwrap(),
+                GuestEventId::new(151),
+                source,
+                0,
+            )),
+        ]
     );
 }
 

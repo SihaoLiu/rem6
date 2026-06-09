@@ -10,6 +10,7 @@ pub enum RiscvPseudoOp {
     DumpStats,
     DumpResetStats,
     Checkpoint,
+    Hypercall,
     WorkBegin,
     WorkEnd,
 }
@@ -36,6 +37,9 @@ pub(crate) fn decode_gem5_pseudo_op(raw: u32) -> Result<RiscvInstruction, RiscvE
         }),
         0x43 => Ok(RiscvInstruction::Gem5PseudoOp {
             op: RiscvPseudoOp::Checkpoint,
+        }),
+        0x71 => Ok(RiscvInstruction::Gem5PseudoOp {
+            op: RiscvPseudoOp::Hypercall,
         }),
         0x5a => Ok(RiscvInstruction::Gem5PseudoOp {
             op: RiscvPseudoOp::WorkBegin,
@@ -81,6 +85,7 @@ pub(crate) fn gem5_pseudo_system_event(
             delay: a0,
             period: a1,
         },
+        RiscvPseudoOp::Hypercall => RiscvSystemEvent::Gem5Hypercall { pc, selector: a0 },
         RiscvPseudoOp::WorkBegin => RiscvSystemEvent::Gem5WorkBegin {
             pc,
             work_id: a0,
