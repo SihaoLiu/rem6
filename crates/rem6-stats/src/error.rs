@@ -4,6 +4,7 @@ use std::fmt;
 use rem6_kernel::Tick;
 
 use crate::kind::StatKind;
+use crate::mem_footprint::MemFootprintGranularity;
 use crate::pc_count::PcCountPair;
 use crate::probes::{ProbeListenerId, ProbePointId};
 use crate::reset::StatResetPolicy;
@@ -219,6 +220,56 @@ pub enum StatsError {
         counter: u64,
     },
     InstTrackerCounterOverflow,
+    InvalidMemFootprintGranularity {
+        name: String,
+        bytes: u64,
+    },
+    MemFootprintGranularityOrder {
+        cache_line_size: u64,
+        page_size: u64,
+    },
+    EmptyMemFootprintAddressMap,
+    EmptyMemFootprintAddressRange,
+    MemFootprintAddressRangeOverflow {
+        start: u64,
+        bytes: u64,
+    },
+    OverlappingMemFootprintAddressRange {
+        existing_start: u64,
+        existing_end: u64,
+        requested_start: u64,
+        requested_end: u64,
+    },
+    UnalignedMemFootprintSnapshotAddress {
+        granularity: MemFootprintGranularity,
+        address: u64,
+    },
+    MemFootprintSnapshotAddressOutsideMemory {
+        granularity: MemFootprintGranularity,
+        address: u64,
+    },
+    DuplicateMemFootprintSnapshotAddress {
+        granularity: MemFootprintGranularity,
+        address: u64,
+    },
+    MemFootprintSnapshotCurrentNotInTotal {
+        granularity: MemFootprintGranularity,
+        address: u64,
+    },
+    MemFootprintSnapshotGranularityMismatch {
+        finer: MemFootprintGranularity,
+        coarser: MemFootprintGranularity,
+        address: u64,
+        parent: u64,
+    },
+    MemFootprintSnapshotExceedsMemory {
+        granularity: MemFootprintGranularity,
+        observed: u64,
+        capacity: u64,
+    },
+    MemFootprintValueOverflow {
+        granularity: MemFootprintGranularity,
+    },
     GroupSequenceOverflow,
     DumpSequenceOverflow,
     ResetSequenceOverflow,
@@ -512,6 +563,85 @@ impl fmt::Display for StatsError {
             Self::InstTrackerCounterOverflow => {
                 write!(formatter, "instruction tracker counter overflowed")
             }
+            Self::InvalidMemFootprintGranularity { name, bytes } => write!(
+                formatter,
+                "memory footprint {name} granularity {bytes} is not a nonzero power of two"
+            ),
+            Self::MemFootprintGranularityOrder {
+                cache_line_size,
+                page_size,
+            } => write!(
+                formatter,
+                "memory footprint page size {page_size} is smaller than cache line size {cache_line_size}"
+            ),
+            Self::EmptyMemFootprintAddressMap => {
+                write!(formatter, "memory footprint address map must not be empty")
+            }
+            Self::EmptyMemFootprintAddressRange => {
+                write!(formatter, "memory footprint address range must not be empty")
+            }
+            Self::MemFootprintAddressRangeOverflow { start, bytes } => write!(
+                formatter,
+                "memory footprint address range starting at {start:#x} with {bytes} bytes overflows"
+            ),
+            Self::OverlappingMemFootprintAddressRange {
+                existing_start,
+                existing_end,
+                requested_start,
+                requested_end,
+            } => write!(
+                formatter,
+                "memory footprint address range {requested_start:#x}..{requested_end:#x} overlaps existing range {existing_start:#x}..{existing_end:#x}"
+            ),
+            Self::UnalignedMemFootprintSnapshotAddress {
+                granularity,
+                address,
+            } => write!(
+                formatter,
+                "memory footprint {granularity} snapshot address {address:#x} is not aligned"
+            ),
+            Self::MemFootprintSnapshotAddressOutsideMemory {
+                granularity,
+                address,
+            } => write!(
+                formatter,
+                "memory footprint {granularity} snapshot address {address:#x} is outside memory"
+            ),
+            Self::DuplicateMemFootprintSnapshotAddress {
+                granularity,
+                address,
+            } => write!(
+                formatter,
+                "memory footprint {granularity} snapshot has duplicate address {address:#x}"
+            ),
+            Self::MemFootprintSnapshotCurrentNotInTotal {
+                granularity,
+                address,
+            } => write!(
+                formatter,
+                "memory footprint {granularity} current snapshot address {address:#x} is missing from total footprint"
+            ),
+            Self::MemFootprintSnapshotGranularityMismatch {
+                finer,
+                coarser,
+                address,
+                parent,
+            } => write!(
+                formatter,
+                "memory footprint {finer} snapshot address {address:#x} is missing parent {coarser} address {parent:#x}"
+            ),
+            Self::MemFootprintSnapshotExceedsMemory {
+                granularity,
+                observed,
+                capacity,
+            } => write!(
+                formatter,
+                "memory footprint {granularity} snapshot has {observed} entries but capacity is {capacity}"
+            ),
+            Self::MemFootprintValueOverflow { granularity } => write!(
+                formatter,
+                "memory footprint {granularity} value overflowed"
+            ),
             Self::GroupSequenceOverflow => write!(formatter, "stat group sequence overflowed"),
             Self::DumpSequenceOverflow => write!(formatter, "stat dump sequence overflowed"),
             Self::ResetSequenceOverflow => write!(formatter, "stat reset sequence overflowed"),

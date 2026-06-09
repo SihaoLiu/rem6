@@ -31,11 +31,46 @@ impl ProbeListenerId {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MemProbePacketKind {
+    Request,
+    Response,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MemProbePacket {
+    address: u64,
+    kind: MemProbePacketKind,
+}
+
+impl MemProbePacket {
+    pub const fn new(address: u64, kind: MemProbePacketKind) -> Self {
+        Self { address, kind }
+    }
+
+    pub const fn request(address: u64) -> Self {
+        Self::new(address, MemProbePacketKind::Request)
+    }
+
+    pub const fn response(address: u64) -> Self {
+        Self::new(address, MemProbePacketKind::Response)
+    }
+
+    pub const fn address(self) -> u64 {
+        self.address
+    }
+
+    pub const fn kind(self) -> MemProbePacketKind {
+        self.kind
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProbePayload {
     Unit,
     Counter { amount: u64 },
     ProgramCounter { pc: u64 },
+    MemoryPacket(MemProbePacket),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

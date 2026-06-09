@@ -1,6 +1,7 @@
 mod error;
 mod inst_tracker;
 mod kind;
+mod mem_footprint;
 mod pc_count;
 mod probes;
 mod registry;
@@ -12,13 +13,17 @@ pub use inst_tracker::{
     GlobalInstTracker, GlobalInstTrackerSnapshot, InstTrackerUpdate, LocalInstTracker,
 };
 pub use kind::StatKind;
+pub use mem_footprint::{
+    MemFootprintAddressRange, MemFootprintGranularity, MemFootprintProbe, MemFootprintProbeConfig,
+    MemFootprintProbeSnapshot, MemFootprintStats,
+};
 pub use pc_count::{
     PcCountPair, PcCountTracker, PcCountTrackerManager, PcCountTrackerSnapshot,
     PcCountTrackerUpdate,
 };
 pub use probes::{
-    ProbeEvent, ProbeListenerId, ProbeListenerRef, ProbePayload, ProbePointId, ProbeRegistry,
-    ProbeSnapshot,
+    MemProbePacket, MemProbePacketKind, ProbeEvent, ProbeListenerId, ProbeListenerRef,
+    ProbePayload, ProbePointId, ProbeRegistry, ProbeSnapshot,
 };
 pub use registry::StatsRegistry;
 pub use reset::{StatResetPolicy, StatResetSample, StatsResetRecord};
