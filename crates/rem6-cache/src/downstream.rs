@@ -5,12 +5,14 @@ pub(crate) fn with_source_attributes(
     downstream: MemoryRequest,
     source: &MemoryRequest,
 ) -> MemoryRequest {
-    let downstream = downstream.with_ordering(source.ordering());
+    let mut downstream = downstream.with_ordering(source.ordering());
     if source.is_uncacheable() {
-        downstream.with_uncacheable_strict_order()
-    } else {
-        downstream
+        downstream = downstream.with_uncacheable();
     }
+    if source.is_strict_ordered() {
+        downstream = downstream.with_strict_order();
+    }
+    downstream
 }
 
 pub(crate) fn uncacheable_fill_outcome(

@@ -11,7 +11,6 @@ use rem6_traffic::{
 
 const GEM5_MAGIC: [u8; 4] = [0x67, 0x65, 0x6d, 0x35];
 const TICK_FREQUENCY: u64 = 1_000;
-const GEM5_FLAG_STRICT_ORDER: u32 = 0x0000_0800;
 
 #[derive(Clone, Copy)]
 struct PacketFields {
@@ -183,26 +182,6 @@ fn trace_parser_rejects_invalid_gem5_packet_traces() {
         )
         .unwrap_err(),
         TrafficGeneratorError::TraceUnsupportedFlags { flags: 0x0000_4000 }
-    );
-
-    assert_eq!(
-        TrafficTrace::from_gem5_packet_trace(
-            &gem5_packet_trace(
-                TICK_FREQUENCY,
-                &[PacketFields {
-                    tick: 1,
-                    command: 1,
-                    address: 0,
-                    size: 8,
-                    flags: Some(GEM5_FLAG_STRICT_ORDER),
-                }],
-            ),
-            TICK_FREQUENCY,
-        )
-        .unwrap_err(),
-        TrafficGeneratorError::TraceUnsupportedFlags {
-            flags: GEM5_FLAG_STRICT_ORDER,
-        }
     );
 
     assert_eq!(

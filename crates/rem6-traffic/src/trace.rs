@@ -494,9 +494,7 @@ struct TrafficTraceRequestFlags {
 impl TrafficTraceRequestFlags {
     fn from_gem5(bits: u32) -> Result<Self, TrafficGeneratorError> {
         let unsupported = bits & !GEM5_SUPPORTED_TRACE_FLAGS;
-        if unsupported != 0
-            || (bits & GEM5_FLAG_STRICT_ORDER != 0 && bits & GEM5_FLAG_UNCACHEABLE == 0)
-        {
+        if unsupported != 0 {
             return Err(TrafficGeneratorError::TraceUnsupportedFlags { flags: bits });
         }
 
@@ -692,13 +690,13 @@ impl TrafficTraceRequestFlags {
             self.acquire.then_some(MemoryBarrierSet::memory()),
         ));
 
-        let mut mapped = if self.strict_order {
-            ordered.with_uncacheable_strict_order()
-        } else if self.uncacheable {
-            ordered.with_uncacheable()
-        } else {
-            ordered
-        };
+        let mut mapped = ordered;
+        if self.uncacheable {
+            mapped = mapped.with_uncacheable();
+        }
+        if self.strict_order {
+            mapped = mapped.with_strict_order();
+        }
 
         if self.privileged {
             mapped = mapped.with_privileged();

@@ -800,11 +800,6 @@ impl MemoryRequest {
     }
 
     pub fn from_snapshot(snapshot: &MemoryRequestSnapshot) -> Result<Self, MemoryError> {
-        if snapshot.strict_order && !snapshot.uncacheable {
-            return Err(MemoryError::InvalidRequestStrictOrdering {
-                request: snapshot.id,
-            });
-        }
         Self::validate_stream_attributes(snapshot.id, snapshot.attributes)?;
 
         let mut request = Self::new(
@@ -1080,10 +1075,13 @@ impl MemoryRequest {
         self
     }
 
-    pub fn with_uncacheable_strict_order(mut self) -> Self {
-        self.uncacheable = true;
+    pub fn with_strict_order(mut self) -> Self {
         self.strict_order = true;
         self
+    }
+
+    pub fn with_uncacheable_strict_order(self) -> Self {
+        self.with_uncacheable().with_strict_order()
     }
 
     pub fn with_response_required(mut self) -> Self {

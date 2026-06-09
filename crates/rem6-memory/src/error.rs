@@ -54,9 +54,6 @@ pub enum MemoryError {
         op: MemoryAtomicOp,
         size: AccessSize,
     },
-    InvalidRequestStrictOrdering {
-        request: MemoryRequestId,
-    },
     InvalidRequestStreamAttributes {
         request: MemoryRequestId,
     },
@@ -333,12 +330,6 @@ impl fmt::Display for MemoryError {
                 request.sequence(),
                 request.agent().get(),
                 size.bytes()
-            ),
-            Self::InvalidRequestStrictOrdering { request } => write!(
-                formatter,
-                "request {} from agent {} cannot be strict-ordered unless it is uncacheable",
-                request.sequence(),
-                request.agent().get()
             ),
             Self::InvalidRequestStreamAttributes { request } => write!(
                 formatter,

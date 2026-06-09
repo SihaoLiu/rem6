@@ -306,6 +306,34 @@ fn trace_traffic_generator_maps_gem5_ordering_flags() {
 }
 
 #[test]
+fn trace_traffic_generator_accepts_gem5_strict_order_without_uncacheable() {
+    let trace = TrafficTrace::from_gem5_packet_trace(
+        &gem5_packet_trace(
+            TICK_FREQUENCY,
+            &[PacketFields {
+                tick: 2,
+                command: 1,
+                address: 0x180,
+                size: 8,
+                flags: Some(GEM5_FLAG_STRICT_ORDER),
+            }],
+        ),
+        TICK_FREQUENCY,
+    )
+    .unwrap();
+    let mut generator = TrafficTraceGenerator::new(trace_config(trace));
+    generator.enter(30);
+
+    let event = generator.next_request(30, 0).unwrap().unwrap();
+
+    assert_eq!(event.tick(), 32);
+    assert_eq!(event.request().operation(), MemoryOperation::ReadShared);
+    assert!(!event.request().is_uncacheable());
+    assert!(event.request().is_strict_ordered());
+    assert_eq!(event.request().ordering(), MemoryAccessOrdering::none());
+}
+
+#[test]
 fn trace_traffic_generator_accepts_gem5_physical_flag_as_trace_address_metadata() {
     let trace = TrafficTrace::from_gem5_packet_trace(
         &gem5_packet_trace(

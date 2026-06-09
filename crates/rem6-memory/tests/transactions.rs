@@ -1,8 +1,8 @@
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, CoherenceIntent, LineMemoryStore,
     MemoryAccessOrdering, MemoryAtomicOp, MemoryBarrierSet, MemoryError, MemoryOperation,
-    MemoryRequest, MemoryRequestCheckpointPayload, MemoryRequestId, MemoryResponse,
-    MemoryResponseCheckpointPayload, MemoryResponseSnapshot, ResponseStatus,
+    MemoryRequest, MemoryRequestCheckpointPayload, MemoryRequestId, MemoryRequestSnapshot,
+    MemoryResponse, MemoryResponseCheckpointPayload, MemoryResponseSnapshot, ResponseStatus,
 };
 
 const OVERSIZED_VECTOR_LENGTH: u64 = isize::MAX as u64 + 1;
@@ -104,6 +104,32 @@ fn request_uncacheable_builder_sets_strict_order_independently_of_barriers() {
     assert!(marked.is_uncacheable());
     assert!(marked.is_strict_ordered());
     assert_eq!(marked.ordering(), MemoryAccessOrdering::none());
+}
+
+#[test]
+fn request_checkpoint_payload_round_trips_cacheable_strict_order() {
+    let snapshot = MemoryRequestSnapshot::new(
+        request_id(17),
+        MemoryOperation::ReadShared,
+        Address::new(0x2200),
+        AccessSize::new(8).unwrap(),
+        line_layout(),
+        MemoryAccessOrdering::none(),
+        false,
+        true,
+        None,
+        None,
+        None,
+    )
+    .unwrap();
+    let payload = MemoryRequestCheckpointPayload::from_snapshot(snapshot.clone()).unwrap();
+    let decoded = MemoryRequestCheckpointPayload::decode(payload.encode().as_slice()).unwrap();
+    let restored = MemoryRequest::from_snapshot(decoded.snapshot()).unwrap();
+
+    assert_eq!(decoded.snapshot(), &snapshot);
+    assert_eq!(restored.operation(), MemoryOperation::ReadShared);
+    assert!(!restored.is_uncacheable());
+    assert!(restored.is_strict_ordered());
 }
 
 #[test]
