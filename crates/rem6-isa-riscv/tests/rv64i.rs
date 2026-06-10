@@ -250,6 +250,10 @@ fn j_type(imm: i32, rd: u8) -> u32 {
         | 0x6f
 }
 
+fn compressed(raw: u16) -> u32 {
+    u32::from(raw)
+}
+
 fn reg(index: u8) -> Register {
     Register::new(index).unwrap()
 }
@@ -1185,6 +1189,94 @@ fn decoder_extracts_rv64i_fields_and_immediates() {
 }
 
 #[test]
+fn decoder_decompresses_rv64c_integer_control_and_memory_instructions() {
+    let cases = [
+        (
+            compressed(0x441d),
+            RiscvInstruction::Addi {
+                rd: reg(8),
+                rs1: reg(0),
+                imm: Immediate::new(7),
+            },
+        ),
+        (
+            compressed(0x0405),
+            RiscvInstruction::Addi {
+                rd: reg(8),
+                rs1: reg(8),
+                imm: Immediate::new(1),
+            },
+        ),
+        (
+            compressed(0x0804),
+            RiscvInstruction::Addi {
+                rd: reg(9),
+                rs1: reg(2),
+                imm: Immediate::new(16),
+            },
+        ),
+        (
+            compressed(0x6c88),
+            RiscvInstruction::Load {
+                rd: reg(10),
+                rs1: reg(9),
+                offset: Immediate::new(24),
+                width: MemoryWidth::Doubleword,
+                signed: true,
+            },
+        ),
+        (
+            compressed(0xec88),
+            RiscvInstruction::Store {
+                rs1: reg(9),
+                rs2: reg(10),
+                offset: Immediate::new(24),
+                width: MemoryWidth::Doubleword,
+            },
+        ),
+        (
+            compressed(0xa009),
+            RiscvInstruction::Jal {
+                rd: reg(0),
+                offset: Immediate::new(2),
+            },
+        ),
+        (
+            compressed(0xe081),
+            RiscvInstruction::Bne {
+                rs1: reg(9),
+                rs2: reg(0),
+                offset: Immediate::new(0),
+            },
+        ),
+        (
+            compressed(0x9426),
+            RiscvInstruction::Add {
+                rd: reg(8),
+                rs1: reg(8),
+                rs2: reg(9),
+            },
+        ),
+    ];
+
+    for (raw, expected) in cases {
+        let decoded = RiscvInstruction::decode_with_length(raw).unwrap();
+        assert_eq!(decoded.instruction(), expected);
+        assert_eq!(decoded.bytes(), 2);
+    }
+}
+
+#[test]
+fn decoder_without_length_rejects_compressed_halfwords() {
+    assert_eq!(
+        RiscvInstruction::decode(compressed(0x441d)).unwrap_err(),
+        RiscvError::CompressedNotSupported {
+            raw: compressed(0x441d)
+        }
+    );
+}
+
+#[test]
 fn hart_executes_integer_register_operations_and_keeps_zero_readonly() {
     let mut hart = RiscvHartState::new(0x8000);
 
@@ -2044,6 +2136,58 @@ fn hart_takes_machine_trap_for_breakpoint() {
 }
 
 #[test]
+fn hart_records_compressed_trap_instruction_length() {
+    let mut hart = RiscvHartState::new(0x7200);
+    hart.set_machine_trap_vector(0x9001);
+
+    let decoded = RiscvInstruction::decode_with_length(compressed(0x9002)).unwrap();
+    assert_eq!(decoded.instruction(), RiscvInstruction::Ebreak);
+    assert_eq!(decoded.bytes(), 2);
+
+    let record = hart.execute_decoded(decoded).unwrap();
+
+    assert_eq!(record.pc(), 0x7200);
+    assert_eq!(record.next_pc(), 0x9000);
+    assert_eq!(record.instruction_bytes(), 2);
+    assert_eq!(hart.pc(), 0x9000);
+    assert_eq!(hart.machine_exception_pc(), 0x7200);
+    assert_eq!(hart.machine_trap_cause(), 3);
+    assert_eq!(
+        record.trap(),
+        Some(&RiscvTrap::new(RiscvTrapKind::Breakpoint, 0x7200))
+    );
+}
+
+#[test]
+fn hart_records_compressed_interrupted_instruction_length() {
+    let mut hart = RiscvHartState::new(0x7300);
+    hart.set_machine_trap_vector(0x9401);
+    hart.set_machine_interrupt_enable(1 << 1);
+    hart.set_machine_interrupt_pending(1 << 1);
+    hart.set_privilege_mode(RiscvPrivilegeMode::User);
+
+    let decoded = RiscvInstruction::decode_with_length(compressed(0x0001)).unwrap();
+    assert_eq!(decoded.bytes(), 2);
+
+    let record = hart.execute_decoded(decoded).unwrap();
+
+    assert_eq!(record.pc(), 0x7300);
+    assert_eq!(record.next_pc(), 0x9400);
+    assert_eq!(record.instruction_bytes(), 2);
+    assert_eq!(hart.pc(), 0x9400);
+    assert_eq!(hart.machine_exception_pc(), 0x7300);
+    assert_eq!(hart.machine_trap_cause(), (1_u64 << 63) | 1);
+    assert_eq!(
+        record.trap(),
+        Some(&RiscvTrap::new(
+            RiscvTrapKind::Interrupt { code: 1 },
+            0x7300
+        ))
+    );
+    assert_eq!(record.register_writes(), &[]);
+}
+
+#[test]
 fn hart_decodes_and_records_gem5_work_marker_pseudo_ops() {
     let work_begin = RiscvInstruction::decode(gem5_m5op_type(0x5a)).unwrap();
     let work_end = RiscvInstruction::decode(gem5_m5op_type(0x5b)).unwrap();
@@ -2377,10 +2521,14 @@ fn hart_executes_supervisor_return_from_supervisor_mode() {
 }
 
 #[test]
-fn decoder_rejects_compressed_and_unknown_encodings() {
+fn decoder_rejects_reserved_compressed_and_unknown_encodings() {
     assert_eq!(
-        RiscvInstruction::decode(0x0000_0001).unwrap_err(),
-        RiscvError::CompressedNotSupported { raw: 0x0000_0001 }
+        RiscvInstruction::decode_with_length(0x0000_0000).unwrap_err(),
+        RiscvError::UnknownEncoding { raw: 0x0000_0000 }
+    );
+    assert_eq!(
+        RiscvInstruction::decode(0x0000_0000).unwrap_err(),
+        RiscvError::CompressedNotSupported { raw: 0x0000_0000 }
     );
     assert_eq!(
         RiscvInstruction::decode(0xffff_ffff).unwrap_err(),

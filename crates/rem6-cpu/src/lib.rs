@@ -1053,10 +1053,11 @@ impl RiscvCore {
             });
         }
         let raw = u32::from_le_bytes(data.try_into().expect("fetch width checked"));
-        let instruction = RiscvInstruction::decode(raw).map_err(RiscvCpuError::Isa)?;
+        let decoded = RiscvInstruction::decode_with_length(raw).map_err(RiscvCpuError::Isa)?;
+        let instruction = decoded.instruction();
         let execution = state
             .hart
-            .execute(instruction)
+            .execute_decoded(decoded)
             .map_err(RiscvCpuError::Isa)?;
         let next_pc = Address::new(execution.next_pc());
         self.core.set_pc(next_pc);

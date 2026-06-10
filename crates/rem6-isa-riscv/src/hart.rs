@@ -1,10 +1,63 @@
 use crate::{
-    Register, RiscvControlFlowSnapshot, RiscvControlFlowUpdate, RiscvCounterSnapshot,
-    RiscvHartState, RiscvInterruptCsr, RiscvPrivilegeMode, RiscvStatusWord, RiscvSv39AccessContext,
-    RiscvVectorConfig,
+    Register, RiscvControlFlowSnapshot, RiscvControlFlowUpdate, RiscvCounterBank,
+    RiscvCounterSnapshot, RiscvInterruptCsr, RiscvPrivilegeMode, RiscvStatusWord,
+    RiscvSv39AccessContext, RiscvVectorConfig,
 };
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiscvHartState {
+    pub(crate) pc: u64,
+    pub(crate) hart_id: u64,
+    pub(crate) counters: RiscvCounterBank,
+    pub(crate) supervisor_trap_vector: u64,
+    pub(crate) supervisor_exception_pc: u64,
+    pub(crate) supervisor_trap_cause: u64,
+    pub(crate) supervisor_trap_value: u64,
+    pub(crate) machine_exception_delegation: u64,
+    pub(crate) machine_interrupt_delegation: u64,
+    pub(crate) machine_interrupt_enable: u64,
+    pub(crate) machine_interrupt_pending: u64,
+    pub(crate) machine_trap_vector: u64,
+    pub(crate) machine_exception_pc: u64,
+    pub(crate) machine_trap_cause: u64,
+    pub(crate) machine_trap_value: u64,
+    pub(crate) translation_satp: u64,
+    pub(crate) privilege_mode: RiscvPrivilegeMode,
+    pub(crate) status: RiscvStatusWord,
+    pub(crate) vector_config: RiscvVectorConfig,
+    pub(crate) registers: [u64; 32],
+}
+
 impl RiscvHartState {
+    pub const fn new(pc: u64) -> Self {
+        Self::with_hart_id(pc, 0)
+    }
+
+    pub const fn with_hart_id(pc: u64, hart_id: u64) -> Self {
+        Self {
+            pc,
+            hart_id,
+            counters: RiscvCounterBank::new(),
+            supervisor_trap_vector: 0,
+            supervisor_exception_pc: 0,
+            supervisor_trap_cause: 0,
+            supervisor_trap_value: 0,
+            machine_exception_delegation: 0,
+            machine_interrupt_delegation: 0,
+            machine_interrupt_enable: 0,
+            machine_interrupt_pending: 0,
+            machine_trap_vector: 0,
+            machine_exception_pc: 0,
+            machine_trap_cause: 0,
+            machine_trap_value: 0,
+            translation_satp: 0,
+            privilege_mode: RiscvPrivilegeMode::Machine,
+            status: RiscvStatusWord::new(0),
+            vector_config: RiscvVectorConfig::invalid(),
+            registers: [0; 32],
+        }
+    }
+
     pub const fn pc(&self) -> u64 {
         self.pc
     }

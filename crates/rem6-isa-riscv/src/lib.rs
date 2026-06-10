@@ -1,3 +1,4 @@
+mod compressed;
 mod control_flow;
 mod csr;
 mod decode;
@@ -42,6 +43,7 @@ pub use csr::{
 };
 pub use error::{RiscvCsrError, RiscvError};
 pub use gdb_target::{RiscvGdbTargetDescription, RiscvGdbTargetDocument, RiscvGdbXlen};
+pub use hart::RiscvHartState;
 pub use instruction::RiscvInstruction;
 pub use pma::{RiscvPmaAccessKind, RiscvPmaError, RiscvPmaRange, RiscvPmaTable};
 pub use pmp::{
@@ -71,9 +73,19 @@ impl RiscvInstruction {
         if raw & 0x3 != 0x3 {
             return Err(RiscvError::CompressedNotSupported { raw });
         }
+        Self::decode_with_length(raw).map(RiscvDecodedInstruction::instruction)
+    }
+
+    pub fn decode_with_length(raw: u32) -> Result<RiscvDecodedInstruction, RiscvError> {
+        if raw & 0x3 != 0x3 {
+            return Ok(RiscvDecodedInstruction::new(
+                compressed::decode_compressed(raw)?,
+                2,
+            ));
+        }
 
         let opcode = raw & 0x7f;
-        match opcode {
+        let instruction = match opcode {
             0x03 => decode_load(raw),
             0x0f => decode::decode_fence(raw),
             0x13 => decode_op_imm(raw),
@@ -99,7 +111,28 @@ impl RiscvInstruction {
             0x73 => decode_system(raw),
             0x7b => pseudo::decode_gem5_pseudo_op(raw),
             _ => Err(RiscvError::UnknownEncoding { raw }),
-        }
+        }?;
+        Ok(RiscvDecodedInstruction::new(instruction, 4))
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RiscvDecodedInstruction {
+    instruction: RiscvInstruction,
+    bytes: u8,
+}
+
+impl RiscvDecodedInstruction {
+    pub(crate) const fn new(instruction: RiscvInstruction, bytes: u8) -> Self {
+        Self { instruction, bytes }
+    }
+
+    pub const fn instruction(self) -> RiscvInstruction {
+        self.instruction
+    }
+
+    pub const fn bytes(self) -> u8 {
+        self.bytes
     }
 }
 
@@ -488,72 +521,39 @@ fn atomic_memory_op(funct5: u32) -> Option<AtomicMemoryOp> {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RiscvHartState {
-    pc: u64,
-    hart_id: u64,
-    counters: RiscvCounterBank,
-    supervisor_trap_vector: u64,
-    supervisor_exception_pc: u64,
-    supervisor_trap_cause: u64,
-    supervisor_trap_value: u64,
-    machine_exception_delegation: u64,
-    machine_interrupt_delegation: u64,
-    machine_interrupt_enable: u64,
-    machine_interrupt_pending: u64,
-    machine_trap_vector: u64,
-    machine_exception_pc: u64,
-    machine_trap_cause: u64,
-    machine_trap_value: u64,
-    translation_satp: u64,
-    privilege_mode: RiscvPrivilegeMode,
-    status: RiscvStatusWord,
-    vector_config: RiscvVectorConfig,
-    registers: [u64; 32],
-}
-
 impl RiscvHartState {
-    pub const fn new(pc: u64) -> Self {
-        Self::with_hart_id(pc, 0)
-    }
-
-    pub const fn with_hart_id(pc: u64, hart_id: u64) -> Self {
-        Self {
-            pc,
-            hart_id,
-            counters: RiscvCounterBank::new(),
-            supervisor_trap_vector: 0,
-            supervisor_exception_pc: 0,
-            supervisor_trap_cause: 0,
-            supervisor_trap_value: 0,
-            machine_exception_delegation: 0,
-            machine_interrupt_delegation: 0,
-            machine_interrupt_enable: 0,
-            machine_interrupt_pending: 0,
-            machine_trap_vector: 0,
-            machine_exception_pc: 0,
-            machine_trap_cause: 0,
-            machine_trap_value: 0,
-            translation_satp: 0,
-            privilege_mode: RiscvPrivilegeMode::Machine,
-            status: RiscvStatusWord::new(0),
-            vector_config: RiscvVectorConfig::invalid(),
-            registers: [0; 32],
-        }
-    }
-
     pub fn execute(
         &mut self,
         instruction: RiscvInstruction,
     ) -> Result<RiscvExecutionRecord, RiscvError> {
+        self.execute_with_instruction_bytes(instruction, 4)
+    }
+
+    pub fn execute_decoded(
+        &mut self,
+        decoded: RiscvDecodedInstruction,
+    ) -> Result<RiscvExecutionRecord, RiscvError> {
+        self.execute_with_instruction_bytes(decoded.instruction(), decoded.bytes())
+    }
+
+    fn execute_with_instruction_bytes(
+        &mut self,
+        instruction: RiscvInstruction,
+        instruction_bytes: u8,
+    ) -> Result<RiscvExecutionRecord, RiscvError> {
         let pc = self.pc;
-        if let Some(record) = enter_pending_interrupt(self, instruction, pc) {
+        if let Some(record) = enter_pending_interrupt(self, instruction, instruction_bytes, pc) {
             return Ok(record);
         }
 
+        let instruction_bytes_u8 = instruction_bytes;
+        let instruction_bytes = u64::from(instruction_bytes_u8);
         let mut next_pc = pc
-            .checked_add(4)
-            .ok_or(RiscvError::PcOverflow { pc, offset: 4 })?;
+            .checked_add(instruction_bytes)
+            .ok_or(RiscvError::PcOverflow {
+                pc,
+                offset: instruction_bytes,
+            })?;
         let mut register_writes = Vec::new();
         let mut memory_access = None;
         let mut system_event = None;
@@ -563,6 +563,7 @@ impl RiscvHartState {
                 return Ok(enter_synchronous_trap(
                     self,
                     instruction,
+                    instruction_bytes_u8,
                     pc,
                     RiscvTrapKind::IllegalInstruction,
                 ));
@@ -878,6 +879,7 @@ impl RiscvHartState {
                     return Ok(enter_synchronous_trap(
                         self,
                         instruction,
+                        instruction_bytes_u8,
                         pc,
                         RiscvTrapKind::IllegalInstruction,
                     ));
@@ -897,6 +899,7 @@ impl RiscvHartState {
                     return Ok(enter_synchronous_trap(
                         self,
                         instruction,
+                        instruction_bytes_u8,
                         pc,
                         RiscvTrapKind::IllegalInstruction,
                     ));
@@ -1100,6 +1103,7 @@ impl RiscvHartState {
                 return Ok(enter_synchronous_trap(
                     self,
                     instruction,
+                    instruction_bytes_u8,
                     pc,
                     RiscvTrapKind::EnvironmentCall,
                 ));
@@ -1108,6 +1112,7 @@ impl RiscvHartState {
                 return Ok(enter_synchronous_trap(
                     self,
                     instruction,
+                    instruction_bytes_u8,
                     pc,
                     RiscvTrapKind::Breakpoint,
                 ));
@@ -1120,16 +1125,18 @@ impl RiscvHartState {
         match system_event {
             Some(system_event) => {
                 debug_assert!(memory_access.is_none());
-                Ok(RiscvExecutionRecord::with_system_event_and_register_writes(
+                Ok(RiscvExecutionRecord::with_system_event_and_register_writes_with_instruction_bytes(
                     instruction,
+                    instruction_bytes_u8,
                     pc,
                     next_pc,
                     system_event,
                     register_writes,
                 ))
             }
-            None => Ok(RiscvExecutionRecord::new(
+            None => Ok(RiscvExecutionRecord::new_with_instruction_bytes(
                 instruction,
+                instruction_bytes_u8,
                 pc,
                 next_pc,
                 register_writes,

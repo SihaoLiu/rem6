@@ -85,6 +85,10 @@ fn word(raw: u32) -> Vec<u8> {
     raw.to_le_bytes().to_vec()
 }
 
+fn halfword(raw: u16) -> [u8; 2] {
+    raw.to_le_bytes()
+}
+
 fn data_read(address: u64, size: u64, sequence: u64) -> MemoryRequest {
     MemoryRequest::read_shared(
         MemoryRequestId::new(AgentId::new(99), sequence),
@@ -163,6 +167,25 @@ fn loaded_store(entry: u64, instruction: u32) -> Arc<Mutex<PartitionedMemoryStor
         .unwrap();
     BootImage::new(Address::new(entry))
         .add_segment(Address::new(entry), word(instruction))
+        .unwrap()
+        .load_into_partitioned_store(&mut store, target)
+        .unwrap();
+    Arc::new(Mutex::new(store))
+}
+
+fn loaded_program_bytes(entry: u64, bytes: Vec<u8>) -> Arc<Mutex<PartitionedMemoryStore>> {
+    let target = MemoryTargetId::new(0);
+    let mut store = PartitionedMemoryStore::new();
+    store.add_partition(target, layout()).unwrap();
+    store
+        .map_region(
+            target,
+            Address::new(0x8000),
+            AccessSize::new(0x1000).unwrap(),
+        )
+        .unwrap();
+    BootImage::new(Address::new(entry))
+        .add_segment(Address::new(entry), bytes)
         .unwrap()
         .load_into_partitioned_store(&mut store, target)
         .unwrap();
@@ -840,6 +863,73 @@ fn riscv_core_executes_completed_fetch_and_updates_registers() {
     assert_eq!(core.pc(), Address::new(0x8004));
     assert_eq!(core.inner().pc(), Address::new(0x8004));
     assert_eq!(core.execution_events(), vec![event]);
+}
+
+#[test]
+fn riscv_core_executes_packed_compressed_fetches_and_advances_by_halfword() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let core = RiscvCore::new(core(route, 0x8000));
+    let mut program = Vec::new();
+    program.extend(halfword(0x441d));
+    program.extend(halfword(0x0405));
+    program.extend([0, 0]);
+    let store = loaded_program_bytes(0x8000, program);
+
+    fetch_one(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+    );
+    let first = core.execute_next_completed_fetch().unwrap().unwrap();
+
+    assert_eq!(first.fetch_pc(), Address::new(0x8000));
+    assert_eq!(
+        first.instruction(),
+        RiscvInstruction::Addi {
+            rd: reg(8),
+            rs1: reg(0),
+            imm: rem6_isa_riscv::Immediate::new(7),
+        }
+    );
+    assert_eq!(first.execution().instruction_bytes(), 2);
+    assert_eq!(first.execution().next_pc(), 0x8002);
+    assert_eq!(core.read_register(reg(8)), 7);
+    assert_eq!(core.pc(), Address::new(0x8002));
+    assert_eq!(core.inner().pc(), Address::new(0x8002));
+
+    fetch_one(&core, store, &mut scheduler, &transport, MemoryTrace::new());
+    let second = core.execute_next_completed_fetch().unwrap().unwrap();
+
+    assert_eq!(second.fetch_pc(), Address::new(0x8002));
+    assert_eq!(
+        second.instruction(),
+        RiscvInstruction::Addi {
+            rd: reg(8),
+            rs1: reg(8),
+            imm: rem6_isa_riscv::Immediate::new(1),
+        }
+    );
+    assert_eq!(second.execution().instruction_bytes(), 2);
+    assert_eq!(second.execution().next_pc(), 0x8004);
+    assert_eq!(core.read_register(reg(8)), 8);
+    assert_eq!(core.pc(), Address::new(0x8004));
+    assert_eq!(core.inner().pc(), Address::new(0x8004));
 }
 
 #[test]

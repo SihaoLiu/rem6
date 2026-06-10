@@ -106,6 +106,7 @@ impl RegisterWrite {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RiscvExecutionRecord {
     instruction: RiscvInstruction,
+    instruction_bytes: u8,
     pc: u64,
     next_pc: u64,
     register_writes: Vec<RegisterWrite>,
@@ -122,8 +123,27 @@ impl RiscvExecutionRecord {
         register_writes: Vec<RegisterWrite>,
         memory_access: Option<MemoryAccessKind>,
     ) -> Self {
+        Self::new_with_instruction_bytes(
+            instruction,
+            4,
+            pc,
+            next_pc,
+            register_writes,
+            memory_access,
+        )
+    }
+
+    pub fn new_with_instruction_bytes(
+        instruction: RiscvInstruction,
+        instruction_bytes: u8,
+        pc: u64,
+        next_pc: u64,
+        register_writes: Vec<RegisterWrite>,
+        memory_access: Option<MemoryAccessKind>,
+    ) -> Self {
         Self {
             instruction,
+            instruction_bytes,
             pc,
             next_pc,
             register_writes,
@@ -155,8 +175,27 @@ impl RiscvExecutionRecord {
         system_event: RiscvSystemEvent,
         register_writes: Vec<RegisterWrite>,
     ) -> Self {
+        Self::with_system_event_and_register_writes_with_instruction_bytes(
+            instruction,
+            4,
+            pc,
+            next_pc,
+            system_event,
+            register_writes,
+        )
+    }
+
+    pub fn with_system_event_and_register_writes_with_instruction_bytes(
+        instruction: RiscvInstruction,
+        instruction_bytes: u8,
+        pc: u64,
+        next_pc: u64,
+        system_event: RiscvSystemEvent,
+        register_writes: Vec<RegisterWrite>,
+    ) -> Self {
         Self {
             instruction,
+            instruction_bytes,
             pc,
             next_pc,
             register_writes,
@@ -172,8 +211,19 @@ impl RiscvExecutionRecord {
         next_pc: u64,
         trap: RiscvTrap,
     ) -> Self {
+        Self::with_trap_with_instruction_bytes(instruction, 4, pc, next_pc, trap)
+    }
+
+    pub fn with_trap_with_instruction_bytes(
+        instruction: RiscvInstruction,
+        instruction_bytes: u8,
+        pc: u64,
+        next_pc: u64,
+        trap: RiscvTrap,
+    ) -> Self {
         Self {
             instruction,
+            instruction_bytes,
             pc,
             next_pc,
             register_writes: Vec::new(),
@@ -185,6 +235,10 @@ impl RiscvExecutionRecord {
 
     pub const fn instruction(&self) -> RiscvInstruction {
         self.instruction
+    }
+
+    pub const fn instruction_bytes(&self) -> u8 {
+        self.instruction_bytes
     }
 
     pub const fn pc(&self) -> u64 {

@@ -14,6 +14,7 @@ pub(crate) const fn machine_return_allowed(privilege: RiscvPrivilegeMode) -> boo
 pub(crate) fn enter_pending_interrupt(
     hart: &mut RiscvHartState,
     instruction: RiscvInstruction,
+    instruction_bytes: u8,
     pc: u64,
 ) -> Option<RiscvExecutionRecord> {
     let pending = hart.machine_interrupt_pending() & hart.machine_interrupt_enable();
@@ -29,6 +30,7 @@ pub(crate) fn enter_pending_interrupt(
             return Some(enter_machine_trap(
                 hart,
                 instruction,
+                instruction_bytes,
                 pc,
                 RiscvTrapKind::Interrupt { code },
             ));
@@ -41,6 +43,7 @@ pub(crate) fn enter_pending_interrupt(
             return Some(enter_supervisor_trap(
                 hart,
                 instruction,
+                instruction_bytes,
                 pc,
                 RiscvTrapKind::Interrupt { code },
                 cause,
@@ -55,15 +58,24 @@ pub(crate) fn enter_pending_interrupt(
 pub(crate) fn enter_synchronous_trap(
     hart: &mut RiscvHartState,
     instruction: RiscvInstruction,
+    instruction_bytes: u8,
     pc: u64,
     kind: RiscvTrapKind,
 ) -> RiscvExecutionRecord {
     let previous_privilege = hart.privilege_mode();
     let cause = machine_trap_cause(kind, previous_privilege);
     if exception_delegated_to_supervisor(hart, previous_privilege, cause) {
-        enter_supervisor_trap(hart, instruction, pc, kind, cause, previous_privilege)
+        enter_supervisor_trap(
+            hart,
+            instruction,
+            instruction_bytes,
+            pc,
+            kind,
+            cause,
+            previous_privilege,
+        )
     } else {
-        enter_machine_trap(hart, instruction, pc, kind)
+        enter_machine_trap(hart, instruction, instruction_bytes, pc, kind)
     }
 }
 
@@ -81,6 +93,7 @@ fn exception_delegated_to_supervisor(
 fn enter_supervisor_trap(
     hart: &mut RiscvHartState,
     instruction: RiscvInstruction,
+    instruction_bytes: u8,
     pc: u64,
     kind: RiscvTrapKind,
     cause: u64,
@@ -99,12 +112,19 @@ fn enter_supervisor_trap(
             .with_sie(false),
     );
     hart.set_pc(handler_pc);
-    RiscvExecutionRecord::with_trap(instruction, pc, handler_pc, RiscvTrap::new(kind, pc))
+    RiscvExecutionRecord::with_trap_with_instruction_bytes(
+        instruction,
+        instruction_bytes,
+        pc,
+        handler_pc,
+        RiscvTrap::new(kind, pc),
+    )
 }
 
 fn enter_machine_trap(
     hart: &mut RiscvHartState,
     instruction: RiscvInstruction,
+    instruction_bytes: u8,
     pc: u64,
     kind: RiscvTrapKind,
 ) -> RiscvExecutionRecord {
@@ -123,7 +143,13 @@ fn enter_machine_trap(
             .with_mie(false),
     );
     hart.set_pc(handler_pc);
-    RiscvExecutionRecord::with_trap(instruction, pc, handler_pc, RiscvTrap::new(kind, pc))
+    RiscvExecutionRecord::with_trap_with_instruction_bytes(
+        instruction,
+        instruction_bytes,
+        pc,
+        handler_pc,
+        RiscvTrap::new(kind, pc),
+    )
 }
 
 fn machine_interrupt_allowed(hart: &RiscvHartState, privilege: RiscvPrivilegeMode) -> bool {
