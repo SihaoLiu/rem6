@@ -423,7 +423,7 @@ fn riscv_instruction_stats_clone_uses_independent_retired_probe_recorders() {
     let cloned = stats.clone();
 
     stats
-        .record_retired_instruction_probe(CpuId::new(0), 10)
+        .record_retired_instruction_probe(CpuId::new(0), 10, 0x8000)
         .unwrap();
 
     assert_eq!(
@@ -441,7 +441,7 @@ fn riscv_instruction_stats_clone_uses_independent_retired_probe_recorders() {
         .is_empty());
 
     cloned
-        .record_retired_instruction_probe(CpuId::new(0), 12)
+        .record_retired_instruction_probe(CpuId::new(0), 12, 0x8004)
         .unwrap();
 
     assert_eq!(

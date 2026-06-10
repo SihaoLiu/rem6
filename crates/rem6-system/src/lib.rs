@@ -1061,16 +1061,18 @@ impl RiscvSystemRunDriver {
             .core_events()
             .iter()
             .filter_map(|event| match event.action() {
-                RiscvCoreDriveAction::InstructionExecuted(_) => Some((tick, event.cpu())),
+                RiscvCoreDriveAction::InstructionExecuted(instruction) => {
+                    Some((tick, event.cpu(), instruction.fetch_pc().get()))
+                }
                 RiscvCoreDriveAction::FetchIssued { .. }
                 | RiscvCoreDriveAction::DataAccessIssued { .. } => None,
             })
             .collect::<Vec<_>>();
-        retired.sort_by_key(|(tick, cpu)| (*tick, *cpu));
+        retired.sort_by_key(|(tick, cpu, _pc)| (*tick, *cpu));
 
-        for (tick, cpu) in retired {
+        for (tick, cpu, pc) in retired {
             instruction_stats
-                .record_retired_instruction_probe(cpu, tick)
+                .record_retired_instruction_probe(cpu, tick, pc)
                 .map_err(SystemError::Stats)?;
             if let Some(stat) = instruction_stats.committed_stat(cpu) {
                 controller
