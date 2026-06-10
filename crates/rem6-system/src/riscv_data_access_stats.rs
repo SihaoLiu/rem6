@@ -2,13 +2,14 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use rem6_cpu::{CpuId, RiscvCluster, RiscvDataAccessEvent, RiscvDataAccessEventKind};
+use rem6_isa_riscv::MemoryAccessKind;
 use rem6_memory::MemoryOperation;
 use rem6_stats::{
-    CommMonitor, CommMonitorConfig, CommMonitorSnapshot, MemFootprintProbe,
-    MemFootprintProbeConfig, MemFootprintProbeSnapshot, MemProbePacket, MemProbePacketAccess,
-    MemTraceProbe, MemTraceProbeConfig, MemTraceProbeSnapshot, ProbePayload, ProbePointId,
-    ProbeRegistry, ProbeSnapshot, StackDistProbe, StackDistProbeConfig, StackDistProbeSnapshot,
-    StatsError,
+    CommMonitor, CommMonitorConfig, CommMonitorSnapshot, MemCheckerMonitor,
+    MemCheckerMonitorSnapshot, MemFootprintProbe, MemFootprintProbeConfig,
+    MemFootprintProbeSnapshot, MemProbePacket, MemProbePacketAccess, MemTraceProbe,
+    MemTraceProbeConfig, MemTraceProbeSnapshot, ProbePayload, ProbePointId, ProbeRegistry,
+    ProbeSnapshot, StackDistProbe, StackDistProbeConfig, StackDistProbeSnapshot, StatsError,
 };
 
 use crate::{RiscvSystemRun, RiscvSystemRunDriver, SystemError};
@@ -20,7 +21,9 @@ pub struct RiscvDataAccessProbeSnapshot {
     memory_trace: Option<MemTraceProbeSnapshot>,
     memory_footprint: Option<MemFootprintProbeSnapshot>,
     communication_monitor: Option<CommMonitorSnapshot>,
+    mem_checker_monitor: Option<MemCheckerMonitorSnapshot>,
     request_point: ProbePointId,
+    response_point: Option<ProbePointId>,
 }
 
 impl RiscvDataAccessProbeSnapshot {
@@ -30,7 +33,9 @@ impl RiscvDataAccessProbeSnapshot {
         memory_trace: Option<MemTraceProbeSnapshot>,
         memory_footprint: Option<MemFootprintProbeSnapshot>,
         communication_monitor: Option<CommMonitorSnapshot>,
+        mem_checker_monitor: Option<MemCheckerMonitorSnapshot>,
         request_point: ProbePointId,
+        response_point: Option<ProbePointId>,
     ) -> Self {
         Self {
             probes,
@@ -38,7 +43,9 @@ impl RiscvDataAccessProbeSnapshot {
             memory_trace,
             memory_footprint,
             communication_monitor,
+            mem_checker_monitor,
             request_point,
+            response_point,
         }
     }
 
@@ -62,8 +69,16 @@ impl RiscvDataAccessProbeSnapshot {
         self.communication_monitor.as_ref()
     }
 
+    pub const fn mem_checker_monitor(&self) -> Option<&MemCheckerMonitorSnapshot> {
+        self.mem_checker_monitor.as_ref()
+    }
+
     pub const fn request_point(&self) -> ProbePointId {
         self.request_point
+    }
+
+    pub const fn response_point(&self) -> Option<ProbePointId> {
+        self.response_point
     }
 }
 
@@ -79,12 +94,14 @@ impl Clone for RiscvDataAccessStats {
         let memory_trace_config = recorder.memory_trace_config().cloned();
         let memory_footprint_config = recorder.memory_footprint_config().cloned();
         let communication_monitor_config = recorder.communication_monitor_config().cloned();
+        let mem_checker_monitor_enabled = recorder.mem_checker_monitor_enabled();
         Self {
             probes: Arc::new(Mutex::new(RiscvDataAccessProbeRecorder::new(
                 stack_distance_config,
                 memory_trace_config,
                 memory_footprint_config,
                 communication_monitor_config,
+                mem_checker_monitor_enabled,
             ))),
         }
     }
@@ -94,7 +111,7 @@ impl RiscvDataAccessStats {
     pub fn with_stack_distance(config: StackDistProbeConfig) -> Self {
         Self {
             probes: Arc::new(Mutex::new(RiscvDataAccessProbeRecorder::new(
-                config, None, None, None,
+                config, None, None, None, false,
             ))),
         }
     }
@@ -120,6 +137,14 @@ impl RiscvDataAccessStats {
             .lock()
             .expect("data access probe recorder lock")
             .set_communication_monitor_config(config);
+        self
+    }
+
+    pub fn with_mem_checker_monitor(self) -> Self {
+        self.probes
+            .lock()
+            .expect("data access probe recorder lock")
+            .enable_mem_checker_monitor();
         self
     }
 
@@ -228,12 +253,15 @@ struct RiscvDataAccessProbeRecorder {
     memory_trace_config: Option<MemTraceProbeConfig>,
     memory_footprint_config: Option<MemFootprintProbeConfig>,
     communication_monitor_config: Option<CommMonitorConfig>,
+    mem_checker_monitor_enabled: bool,
     probes: ProbeRegistry,
     stack_distance: StackDistProbe,
     memory_trace: Option<MemTraceProbe>,
     memory_footprint: Option<MemFootprintProbe>,
     communication_monitor: Option<CommMonitor>,
+    mem_checker_monitor: Option<MemCheckerMonitor>,
     request_point: ProbePointId,
+    response_point: Option<ProbePointId>,
     cursors: BTreeMap<CpuId, usize>,
 }
 
@@ -243,18 +271,22 @@ impl RiscvDataAccessProbeRecorder {
         memory_trace_config: Option<MemTraceProbeConfig>,
         memory_footprint_config: Option<MemFootprintProbeConfig>,
         communication_monitor_config: Option<CommMonitorConfig>,
+        mem_checker_monitor_enabled: bool,
     ) -> Self {
         let mut recorder = Self {
             stack_distance_config: stack_distance_config.clone(),
             memory_trace_config,
             memory_footprint_config,
             communication_monitor_config,
+            mem_checker_monitor_enabled,
             probes: ProbeRegistry::new(),
             stack_distance: StackDistProbe::new(stack_distance_config),
             memory_trace: None,
             memory_footprint: None,
             communication_monitor: None,
+            mem_checker_monitor: None,
             request_point: ProbePointId::new(0),
+            response_point: None,
             cursors: BTreeMap::new(),
         };
         recorder.reset([]);
@@ -276,6 +308,11 @@ impl RiscvDataAccessProbeRecorder {
         self.reset(self.cursors.clone());
     }
 
+    fn enable_mem_checker_monitor(&mut self) {
+        self.mem_checker_monitor_enabled = true;
+        self.reset(self.cursors.clone());
+    }
+
     fn reset<I>(&mut self, cursors: I)
     where
         I: IntoIterator<Item = (CpuId, usize)>,
@@ -291,10 +328,22 @@ impl RiscvDataAccessProbeRecorder {
             .communication_monitor_config
             .clone()
             .map(CommMonitor::new);
+        self.mem_checker_monitor = self
+            .mem_checker_monitor_enabled
+            .then(MemCheckerMonitor::new);
         self.request_point = self
             .probes
             .register_point("riscv_data", "Request")
             .expect("generated data access probe point is valid");
+        self.response_point = if self.mem_checker_monitor.is_some() {
+            Some(
+                self.probes
+                    .register_point("riscv_data", "Response")
+                    .expect("generated data access probe point is valid"),
+            )
+        } else {
+            None
+        };
         self.probes
             .add_listener(self.request_point, "stack_dist")
             .expect("generated data access probe listener is valid");
@@ -312,6 +361,21 @@ impl RiscvDataAccessProbeRecorder {
             self.probes
                 .add_listener(self.request_point, "comm_monitor")
                 .expect("generated data access probe listener is valid");
+            if let Some(response_point) = self.response_point {
+                self.probes
+                    .add_listener(response_point, "comm_monitor")
+                    .expect("generated data access probe listener is valid");
+            }
+        }
+        if self.mem_checker_monitor.is_some() {
+            self.probes
+                .add_listener(self.request_point, "mem_checker_monitor")
+                .expect("generated data access probe listener is valid");
+            if let Some(response_point) = self.response_point {
+                self.probes
+                    .add_listener(response_point, "mem_checker_monitor")
+                    .expect("generated data access probe listener is valid");
+            }
         }
         self.cursors = cursors.into_iter().collect();
     }
@@ -341,9 +405,18 @@ impl RiscvDataAccessProbeRecorder {
     }
 
     fn record_event(&mut self, event: &RiscvDataAccessEvent) -> Result<(), StatsError> {
-        if event.kind() != RiscvDataAccessEventKind::Issued || event.route().is_none() {
+        if event.route().is_none() {
             return Ok(());
         }
+        match event.kind() {
+            RiscvDataAccessEventKind::Issued => self.record_request_event(event),
+            RiscvDataAccessEventKind::Completed => self.record_response_event(event, false),
+            RiscvDataAccessEventKind::ConditionalFailed => self.record_response_event(event, true),
+            RiscvDataAccessEventKind::Retry | RiscvDataAccessEventKind::Failed => Ok(()),
+        }
+    }
+
+    fn record_request_event(&mut self, event: &RiscvDataAccessEvent) -> Result<(), StatsError> {
         let Some(access) = packet_access(event.operation()) else {
             return Ok(());
         };
@@ -352,7 +425,7 @@ impl RiscvDataAccessProbeRecorder {
             .with_command(memory_operation_trace_command(event.operation()))
             .with_size(event.size().bytes())
             .with_packet_id(packet_id(event));
-        let event = self
+        let probe_event = self
             .probes
             .emit(
                 event.tick(),
@@ -361,17 +434,102 @@ impl RiscvDataAccessProbeRecorder {
             )?
             .clone();
         self.stack_distance
-            .observe_probe_event(&event, self.request_point)?;
+            .observe_probe_event(&probe_event, self.request_point)?;
         if let Some(memory_trace) = &mut self.memory_trace {
-            memory_trace.observe_probe_event(&event, self.request_point)?;
+            memory_trace.observe_probe_event(&probe_event, self.request_point)?;
         }
         if let Some(memory_footprint) = &mut self.memory_footprint {
-            memory_footprint.observe_probe_event(&event, self.request_point)?;
+            memory_footprint.observe_probe_event(&probe_event, self.request_point)?;
         }
         if let Some(communication_monitor) = &mut self.communication_monitor {
-            communication_monitor.observe_request_probe_event(&event, self.request_point, false)?;
+            communication_monitor.observe_request_probe_event(
+                &probe_event,
+                self.request_point,
+                self.mem_checker_monitor.is_some(),
+            )?;
+        }
+        let request_data = request_data(event.access(), event.size().bytes());
+        if mem_checker_tracks_access(event.access()) {
+            if let Some(mem_checker_monitor) = &mut self.mem_checker_monitor {
+                mem_checker_monitor.observe_timing_request(
+                    event.tick(),
+                    &packet,
+                    true,
+                    true,
+                    request_data.as_deref(),
+                )?;
+            }
         }
         Ok(())
+    }
+
+    fn record_response_event(
+        &mut self,
+        event: &RiscvDataAccessEvent,
+        store_conditional_failed: bool,
+    ) -> Result<(), StatsError> {
+        if self.mem_checker_monitor.is_none() && self.communication_monitor.is_none() {
+            return Ok(());
+        }
+        let Some(response_point) = self.response_point else {
+            return Ok(());
+        };
+        let operation = response_operation(event.operation(), store_conditional_failed);
+        let Some(access) = packet_access(operation) else {
+            return Ok(());
+        };
+        let packet = MemProbePacket::response(event.physical_address().get())
+            .with_access(access)
+            .with_command(memory_operation_trace_command(operation))
+            .with_size(event.size().bytes())
+            .with_packet_id(packet_id(event));
+        if !self.has_pending_response(packet.packet_id()) {
+            return Ok(());
+        }
+        let probe_event = self
+            .probes
+            .emit(
+                event.tick(),
+                response_point,
+                ProbePayload::MemoryPacket(packet),
+            )?
+            .clone();
+        if let Some(communication_monitor) = &mut self.communication_monitor {
+            communication_monitor.observe_response_probe_event(&probe_event, response_point)?;
+        }
+        if self.mem_checker_has_pending(packet.packet_id()) {
+            if let Some(mem_checker_monitor) = &mut self.mem_checker_monitor {
+                mem_checker_monitor.observe_timing_response(
+                    event.tick(),
+                    &packet,
+                    true,
+                    event.data(),
+                    store_conditional_failed,
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    fn has_pending_response(&self, packet_id: u64) -> bool {
+        self.communication_has_pending(packet_id) || self.mem_checker_has_pending(packet_id)
+    }
+
+    fn communication_has_pending(&self, packet_id: u64) -> bool {
+        self.communication_monitor.as_ref().is_some_and(|monitor| {
+            monitor
+                .pending()
+                .iter()
+                .any(|pending| pending.packet_id() == packet_id)
+        })
+    }
+
+    fn mem_checker_has_pending(&self, packet_id: u64) -> bool {
+        self.mem_checker_monitor.as_ref().is_some_and(|monitor| {
+            monitor
+                .pending()
+                .any(|pending| pending.packet_id() == packet_id)
+        })
     }
 
     fn snapshot(&self) -> RiscvDataAccessProbeSnapshot {
@@ -385,7 +543,11 @@ impl RiscvDataAccessProbeRecorder {
             self.communication_monitor
                 .as_ref()
                 .map(CommMonitor::snapshot),
+            self.mem_checker_monitor
+                .as_ref()
+                .map(MemCheckerMonitor::snapshot),
             self.request_point,
+            self.response_point,
         )
     }
 
@@ -403,6 +565,45 @@ impl RiscvDataAccessProbeRecorder {
 
     fn communication_monitor_config(&self) -> Option<&CommMonitorConfig> {
         self.communication_monitor_config.as_ref()
+    }
+
+    const fn mem_checker_monitor_enabled(&self) -> bool {
+        self.mem_checker_monitor_enabled
+    }
+}
+
+fn mem_checker_tracks_access(access: &MemoryAccessKind) -> bool {
+    matches!(
+        access,
+        MemoryAccessKind::Load { .. }
+            | MemoryAccessKind::LoadReserved { .. }
+            | MemoryAccessKind::Store { .. }
+            | MemoryAccessKind::StoreConditional { .. }
+    )
+}
+
+fn request_data(access: &MemoryAccessKind, size: u64) -> Option<Vec<u8>> {
+    let size = usize::try_from(size).ok()?;
+    match access {
+        MemoryAccessKind::Store { value, .. }
+        | MemoryAccessKind::StoreConditional { value, .. } => {
+            let bytes = value.to_le_bytes();
+            bytes.get(..size).map(<[u8]>::to_vec)
+        }
+        MemoryAccessKind::Load { .. }
+        | MemoryAccessKind::LoadReserved { .. }
+        | MemoryAccessKind::AtomicMemory { .. } => None,
+    }
+}
+
+fn response_operation(
+    operation: MemoryOperation,
+    store_conditional_failed: bool,
+) -> MemoryOperation {
+    if store_conditional_failed {
+        MemoryOperation::StoreConditionalFail
+    } else {
+        operation
     }
 }
 
