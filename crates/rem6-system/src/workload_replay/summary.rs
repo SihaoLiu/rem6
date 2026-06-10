@@ -67,6 +67,24 @@ pub(super) fn parallel_execution_summary(
         .values()
         .map(|activity| activity.scheduled_trap_count())
         .sum();
+    let (
+        riscv_data_access_probe_sample_count,
+        riscv_data_access_probe_stack_distance_infinite_samples,
+        riscv_data_access_probe_stack_distance_finite_samples,
+        riscv_data_access_probe_stack_depth,
+    ) = run
+        .data_access_probes()
+        .map(|probes| {
+            let infinite_samples = probes.stack_distance().infinite_samples();
+            let finite_samples = probes.stack_distance().finite_samples();
+            (
+                infinite_samples.saturating_add(finite_samples),
+                infinite_samples,
+                finite_samples,
+                probes.stack_distance().stack().len(),
+            )
+        })
+        .unwrap_or((0, 0, 0, 0));
     WorkloadParallelExecutionSummary::default()
         .with_scheduler_counts(
             scheduler.epoch_count(),
@@ -137,6 +155,12 @@ pub(super) fn parallel_execution_summary(
             riscv_committed_instruction_count,
             riscv_data_access_issue_count,
             riscv_scheduled_trap_count,
+        )
+        .with_riscv_data_access_probe_counts(
+            riscv_data_access_probe_sample_count,
+            riscv_data_access_probe_stack_distance_infinite_samples,
+            riscv_data_access_probe_stack_distance_finite_samples,
+            riscv_data_access_probe_stack_depth,
         )
         .with_data_cache_parallel_counts(
             run.data_cache_run_count(),

@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use rem6_cpu::{CpuId, RiscvCluster, RiscvDataAccessEvent, RiscvDataAccessEventKind};
 use rem6_isa_riscv::MemoryAccessKind;
-use rem6_memory::MemoryOperation;
+use rem6_memory::{Address, AddressRange, CacheLineLayout, MemoryOperation};
 use rem6_stats::{
     CommMonitor, CommMonitorConfig, CommMonitorSnapshot, MemCheckerMonitor,
     MemCheckerMonitorSnapshot, MemFootprintProbe, MemFootprintProbeConfig,
@@ -82,6 +82,24 @@ impl RiscvDataAccessProbeSnapshot {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct RiscvDataAccessProbeLineLayout {
+    range: AddressRange,
+    layout: CacheLineLayout,
+}
+
+impl RiscvDataAccessProbeLineLayout {
+    pub(crate) const fn new(range: AddressRange, layout: CacheLineLayout) -> Self {
+        Self { range, layout }
+    }
+
+    fn aligned_address(self, address: Address) -> Option<u64> {
+        self.range
+            .contains(address)
+            .then(|| self.layout.line_address(address).get())
+    }
+}
+
 #[derive(Debug)]
 pub struct RiscvDataAccessStats {
     probes: Arc<Mutex<RiscvDataAccessProbeRecorder>>,
@@ -95,6 +113,7 @@ impl Clone for RiscvDataAccessStats {
         let memory_footprint_config = recorder.memory_footprint_config().cloned();
         let communication_monitor_config = recorder.communication_monitor_config().cloned();
         let mem_checker_monitor_enabled = recorder.mem_checker_monitor_enabled();
+        let line_layouts = recorder.line_layouts().to_vec();
         Self {
             probes: Arc::new(Mutex::new(RiscvDataAccessProbeRecorder::new(
                 stack_distance_config,
@@ -102,6 +121,7 @@ impl Clone for RiscvDataAccessStats {
                 memory_footprint_config,
                 communication_monitor_config,
                 mem_checker_monitor_enabled,
+                line_layouts,
             ))),
         }
     }
@@ -109,9 +129,24 @@ impl Clone for RiscvDataAccessStats {
 
 impl RiscvDataAccessStats {
     pub fn with_stack_distance(config: StackDistProbeConfig) -> Self {
+        Self::with_stack_distance_line_layouts(config, [])
+    }
+
+    pub(crate) fn with_stack_distance_line_layouts<I>(
+        config: StackDistProbeConfig,
+        line_layouts: I,
+    ) -> Self
+    where
+        I: IntoIterator<Item = RiscvDataAccessProbeLineLayout>,
+    {
         Self {
             probes: Arc::new(Mutex::new(RiscvDataAccessProbeRecorder::new(
-                config, None, None, None, false,
+                config,
+                None,
+                None,
+                None,
+                false,
+                line_layouts.into_iter().collect(),
             ))),
         }
     }
@@ -254,6 +289,7 @@ struct RiscvDataAccessProbeRecorder {
     memory_footprint_config: Option<MemFootprintProbeConfig>,
     communication_monitor_config: Option<CommMonitorConfig>,
     mem_checker_monitor_enabled: bool,
+    line_layouts: Vec<RiscvDataAccessProbeLineLayout>,
     probes: ProbeRegistry,
     stack_distance: StackDistProbe,
     memory_trace: Option<MemTraceProbe>,
@@ -272,6 +308,7 @@ impl RiscvDataAccessProbeRecorder {
         memory_footprint_config: Option<MemFootprintProbeConfig>,
         communication_monitor_config: Option<CommMonitorConfig>,
         mem_checker_monitor_enabled: bool,
+        line_layouts: Vec<RiscvDataAccessProbeLineLayout>,
     ) -> Self {
         let mut recorder = Self {
             stack_distance_config: stack_distance_config.clone(),
@@ -279,6 +316,7 @@ impl RiscvDataAccessProbeRecorder {
             memory_footprint_config,
             communication_monitor_config,
             mem_checker_monitor_enabled,
+            line_layouts,
             probes: ProbeRegistry::new(),
             stack_distance: StackDistProbe::new(stack_distance_config),
             memory_trace: None,
@@ -433,8 +471,8 @@ impl RiscvDataAccessProbeRecorder {
                 ProbePayload::MemoryPacket(packet),
             )?
             .clone();
-        self.stack_distance
-            .observe_probe_event(&probe_event, self.request_point)?;
+        let stack_distance_packet = self.stack_distance_packet(packet);
+        self.stack_distance.observe_packet(&stack_distance_packet)?;
         if let Some(memory_trace) = &mut self.memory_trace {
             memory_trace.observe_probe_event(&probe_event, self.request_point)?;
         }
@@ -461,6 +499,25 @@ impl RiscvDataAccessProbeRecorder {
             }
         }
         Ok(())
+    }
+
+    fn stack_distance_packet(&self, packet: MemProbePacket) -> MemProbePacket {
+        let address = self.stack_distance_address(packet.address());
+        MemProbePacket::new(address, packet.kind())
+            .with_access(packet.access())
+            .with_command(packet.command())
+            .with_flags(packet.flags())
+            .with_size(packet.size())
+            .with_packet_id(packet.packet_id())
+            .with_program_counter(packet.program_counter())
+    }
+
+    fn stack_distance_address(&self, address: u64) -> u64 {
+        let address = Address::new(address);
+        self.line_layouts
+            .iter()
+            .find_map(|layout| layout.aligned_address(address))
+            .unwrap_or_else(|| address.get())
     }
 
     fn record_response_event(
@@ -569,6 +626,10 @@ impl RiscvDataAccessProbeRecorder {
 
     const fn mem_checker_monitor_enabled(&self) -> bool {
         self.mem_checker_monitor_enabled
+    }
+
+    fn line_layouts(&self) -> &[RiscvDataAccessProbeLineLayout] {
+        &self.line_layouts
     }
 }
 

@@ -54,6 +54,7 @@ mod manifest_traffic_trace;
 mod memory_backend;
 mod qos;
 mod sinic_mmio_backend;
+mod stats;
 mod summary;
 mod traffic_trace;
 mod traffic_trace_fetch;
@@ -80,6 +81,7 @@ use self::manifest_traffic_trace::build_traffic_trace_replays;
 use self::memory_backend::{memory_response, WorkloadDramBackend, WorkloadMemoryBackend};
 use self::qos::{dram_scheduling_policy, priority_policy, queue_arbiter};
 use self::sinic_mmio_backend::WorkloadSinicPciMmioBackend;
+use self::stats::{workload_data_access_stats, workload_instruction_stats};
 use self::summary::{
     livelock_transition_threshold, parallel_execution_summary, WorkloadReplayActivityRefs,
 };
@@ -114,9 +116,9 @@ use crate::workload_replay_heterogeneous::{
 use crate::workload_replay_host::schedule_planned_host_events;
 use crate::{
     ExecutionMode, GuestEventId, GuestSourceId, HostEventPolicy,
-    RiscvDataCacheControllerErrorRecord, RiscvInstructionStats, RiscvSystemRun,
-    RiscvSystemRunDriver, RiscvSystemRunStopReason, RiscvTrapEventPort, SystemActionOutcome,
-    SystemHostController, SystemHostEventPort, TrafficTraceReplayControllerParallelErrors,
+    RiscvDataCacheControllerErrorRecord, RiscvSystemRun, RiscvSystemRunDriver,
+    RiscvSystemRunStopReason, RiscvTrapEventPort, SystemActionOutcome, SystemHostController,
+    SystemHostEventPort, TrafficTraceReplayControllerParallelErrors,
     TrafficTraceReplayControllerParallelSubmitError,
 };
 
@@ -165,25 +167,6 @@ impl WorkloadGpuDmaActivity {
         self.deadlock_diagnostic_count = wait_for.deadlock_diagnostic().into_iter().count();
         self
     }
-}
-
-fn workload_instruction_stats(
-    topology: &WorkloadTopology,
-    stats: &mut StatsRegistry,
-) -> Result<RiscvInstructionStats, RiscvWorkloadReplayError> {
-    topology
-        .riscv_cores()
-        .iter()
-        .map(|core| {
-            let stat = stats
-                .register_counter(format!("cpu{}.committed_insts", core.cpu()), "count")
-                .map_err(|error| {
-                    RiscvWorkloadReplayError::System(crate::SystemError::Stats(error))
-                })?;
-            Ok((CpuId::new(core.cpu()), stat))
-        })
-        .collect::<Result<Vec<_>, _>>()
-        .map(RiscvInstructionStats::new)
 }
 
 fn load_payload_at(
@@ -309,6 +292,7 @@ impl RiscvWorkloadReplay {
         .map_err(RiscvWorkloadReplayError::Scheduler)?;
         let mut stats = StatsRegistry::new();
         let instruction_stats = workload_instruction_stats(topology, &mut stats)?;
+        let data_access_stats = workload_data_access_stats(topology)?;
         let controller = Arc::new(Mutex::new(SystemHostController::new(
             HostEventPolicy,
             stats,
@@ -359,7 +343,10 @@ impl RiscvWorkloadReplay {
             .map_err(RiscvWorkloadReplayError::System)?,
             GuestSourceId::new(topology.host().source()),
         );
-        let driver = RiscvSystemRunDriver::with_instruction_stats(trap_port, instruction_stats);
+        let mut driver = RiscvSystemRunDriver::with_instruction_stats(trap_port, instruction_stats);
+        if let Some(data_access_stats) = data_access_stats {
+            driver = driver.with_data_access_stats(data_access_stats);
+        }
         let gpu_launch_count =
             schedule_gpu_kernel_launches(topology, &gpu_devices, &mut scheduler)?;
         let accelerator_command_count =

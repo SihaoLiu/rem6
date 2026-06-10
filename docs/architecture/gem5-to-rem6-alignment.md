@@ -645,6 +645,11 @@ isolated bugs:
   duplicate pending ids, unsupported pending access kinds, duplicate histogram
   buckets, and pending/outstanding mismatches rather than importing gem5's
   compressed statistics backend state.
+  Workload replay now derives RISC-V data-route stack-distance probe geometry
+  from topology memory-target line layouts and attaches the recorder to the
+  same system run driver used by executable RISC-V workloads, so replay
+  outcomes and result summaries carry real load/store probe evidence without a
+  hand-built driver harness.
 - The gem5 output path convention writes run artifacts such as configuration
   dumps and `stats.txt` under `m5out`, with different file formats carrying
   different slices of run identity. rem6 now has a workspace-owned `rem6`

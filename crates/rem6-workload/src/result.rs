@@ -43,6 +43,7 @@ mod livelock_merge;
 mod progress;
 mod progress_dma;
 mod remote_endpoints;
+mod riscv_activity;
 mod wait_for_diagnostics;
 mod wait_for_edge_kind_window;
 mod wait_for_edge_kind_windows;
@@ -193,6 +194,10 @@ pub struct WorkloadParallelExecutionSummary {
     riscv_fetch_issue_count: usize,
     riscv_committed_instruction_count: usize,
     riscv_data_access_issue_count: usize,
+    riscv_data_access_probe_sample_count: u64,
+    riscv_data_access_probe_stack_distance_infinite_samples: u64,
+    riscv_data_access_probe_stack_distance_finite_samples: u64,
+    riscv_data_access_probe_stack_depth: usize,
     riscv_scheduled_trap_count: usize,
     data_cache_parallel_run_count: usize,
     data_cache_parallel_scheduler_epoch_count: usize,
@@ -516,24 +521,6 @@ impl WorkloadParallelExecutionSummary {
         self.scheduler_progress_transition_count =
             progress_transition_count.max(self.parallel_scheduler_progress_transitions.len());
         self.scheduler_livelock_diagnostic_count = livelock_diagnostic_count;
-        self
-    }
-
-    pub const fn with_riscv_core_counts(
-        mut self,
-        core_count: usize,
-        active_core_count: usize,
-        fetch_issue_count: usize,
-        committed_instruction_count: usize,
-        data_access_issue_count: usize,
-        scheduled_trap_count: usize,
-    ) -> Self {
-        self.riscv_core_count = core_count;
-        self.active_riscv_core_count = active_core_count;
-        self.riscv_fetch_issue_count = fetch_issue_count;
-        self.riscv_committed_instruction_count = committed_instruction_count;
-        self.riscv_data_access_issue_count = data_access_issue_count;
-        self.riscv_scheduled_trap_count = scheduled_trap_count;
         self
     }
 
@@ -1055,37 +1042,6 @@ impl WorkloadParallelExecutionSummary {
     pub fn has_parallel_scheduler_frontiers(&self) -> bool {
         !self.parallel_scheduler_initial_frontiers.is_empty()
             || !self.parallel_scheduler_final_frontiers.is_empty()
-    }
-
-    pub const fn riscv_core_count(&self) -> usize {
-        self.riscv_core_count
-    }
-
-    pub const fn active_riscv_core_count(&self) -> usize {
-        self.active_riscv_core_count
-    }
-
-    pub const fn riscv_fetch_issue_count(&self) -> usize {
-        self.riscv_fetch_issue_count
-    }
-
-    pub const fn riscv_committed_instruction_count(&self) -> usize {
-        self.riscv_committed_instruction_count
-    }
-
-    pub const fn riscv_data_access_issue_count(&self) -> usize {
-        self.riscv_data_access_issue_count
-    }
-
-    pub const fn riscv_scheduled_trap_count(&self) -> usize {
-        self.riscv_scheduled_trap_count
-    }
-
-    pub const fn has_riscv_core_activity(&self) -> bool {
-        self.riscv_fetch_issue_count != 0
-            || self.riscv_committed_instruction_count != 0
-            || self.riscv_data_access_issue_count != 0
-            || self.riscv_scheduled_trap_count != 0
     }
 
     pub const fn fabric_deadlock_diagnostic_count(&self) -> usize {
