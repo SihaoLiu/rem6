@@ -5,6 +5,7 @@ use rem6_cpu::{
     CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, RiscvCluster, RiscvCore,
     RiscvCoreDriveAction, RiscvDataAccessEventKind, RiscvDataAccessTarget,
 };
+use rem6_isa_riscv::Register;
 use rem6_kernel::{PartitionId, PartitionedScheduler, ScheduledEventKind, SchedulerContext};
 use rem6_memory::{
     AccessSize, Address, AddressRange, AgentId, CacheLineLayout, MemoryTargetId,
@@ -12,8 +13,8 @@ use rem6_memory::{
 };
 use rem6_mmio::{MmioAccess, MmioBus, MmioRegisterBank, MmioRoute};
 use rem6_stats::{
-    GlobalInstTrackerSnapshot, MemProbePacketAccess, ProbePayload, StackDistProbeConfig, StatId,
-    StatSample, StatSnapshot, StatsRegistry,
+    GlobalInstTrackerSnapshot, MemProbePacketAccess, MemTraceProbeConfig, MemTraceProbeHeader,
+    ProbePayload, StackDistProbeConfig, StatId, StatSample, StatSnapshot, StatsRegistry,
 };
 use rem6_system::{
     GuestEventId, GuestHostCallResponse, GuestSourceId, GuestTrap, GuestTrapKind, HostEventPolicy,
@@ -32,6 +33,10 @@ fn endpoint(name: &str) -> TransportEndpointId {
 
 fn layout() -> CacheLineLayout {
     CacheLineLayout::new(16).unwrap()
+}
+
+fn reg(index: u8) -> Register {
+    Register::new(index).unwrap()
 }
 
 fn word(raw: u32) -> Vec<u8> {
@@ -499,7 +504,7 @@ fn riscv_system_run_driver_records_stack_distance_from_real_data_accesses() {
         data_route,
         0x8000,
     );
-    core.write_register(rem6_isa_riscv::Register::new(2).unwrap(), 0x9800);
+    core.write_register(reg(2), 0x9800);
     let cluster = RiscvCluster::new([core]).unwrap();
     let store = loaded_program_store_with_data(
         &[
@@ -517,10 +522,14 @@ fn riscv_system_run_driver_records_stack_distance_from_real_data_accesses() {
         SystemHostEventPort::with_controller(host, 2, Arc::clone(&controller)).unwrap(),
         source,
     );
+    let trace_header =
+        MemTraceProbeHeader::new("riscv.data", 1_000_000_000, vec![(7, "cpu0".to_string())])
+            .unwrap();
     let driver = RiscvSystemRunDriver::new(trap_port).with_data_access_stats(
         RiscvDataAccessStats::with_stack_distance(
             StackDistProbeConfig::builder(16, 16).build().unwrap(),
-        ),
+        )
+        .with_mem_trace(MemTraceProbeConfig::new(trace_header.clone(), false)),
     );
 
     let run = driver
@@ -543,20 +552,9 @@ fn riscv_system_run_driver_records_stack_distance_from_real_data_accesses() {
         )
         .unwrap();
 
-    assert_eq!(
-        cluster
-            .core(CpuId::new(0))
-            .unwrap()
-            .read_register(rem6_isa_riscv::Register::new(5).unwrap()),
-        0xfedc_ba98_7654_3210
-    );
-    assert_eq!(
-        cluster
-            .core(CpuId::new(0))
-            .unwrap()
-            .read_register(rem6_isa_riscv::Register::new(6).unwrap()),
-        0xfedc_ba98_7654_3210
-    );
+    let core = cluster.core(CpuId::new(0)).unwrap();
+    assert_eq!(core.read_register(reg(5)), 0xfedc_ba98_7654_3210);
+    assert_eq!(core.read_register(reg(6)), 0xfedc_ba98_7654_3210);
 
     let data = run
         .data_access_probes()
@@ -565,6 +563,34 @@ fn riscv_system_run_driver_records_stack_distance_from_real_data_accesses() {
     assert_eq!(data.stack_distance().finite_samples(), 1);
     assert_eq!(data.stack_distance().stack(), &[0x9800]);
     assert_eq!(data.probes().events().len(), 2);
+    let trace = data
+        .memory_trace()
+        .expect("run should carry data access memory trace");
+    assert_eq!(trace.header(), &trace_header);
+    assert!(!trace.with_pc());
+    let events = data.probes().events();
+    let records = trace
+        .records()
+        .iter()
+        .map(|record| {
+            (
+                record.tick(),
+                record.command(),
+                record.flags(),
+                record.address(),
+                record.size(),
+                record.program_counter(),
+                record.packet_id(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        records,
+        vec![
+            (events[0].tick(), 2, 0, 0x9808, 8, None, (7_u64 << 32) | 1),
+            (events[1].tick(), 2, 0, 0x9808, 8, None, (7_u64 << 32) | 3),
+        ]
+    );
     for event in data.probes().events() {
         let ProbePayload::MemoryPacket(packet) = event.payload() else {
             panic!("data access probe should emit memory packet payloads");
@@ -617,11 +643,8 @@ fn riscv_system_run_driver_filters_local_store_conditional_failures_from_data_pr
         data_route,
         0x8000,
     );
-    core.write_register(rem6_isa_riscv::Register::new(2).unwrap(), 0x9808);
-    core.write_register(
-        rem6_isa_riscv::Register::new(6).unwrap(),
-        0x1020_3040_5060_7080,
-    );
+    core.write_register(reg(2), 0x9808);
+    core.write_register(reg(6), 0x1020_3040_5060_7080);
     let cluster = RiscvCluster::new([core]).unwrap();
     let store = loaded_program_store(&[
         (0x8000, atomic_type(0x03, false, false, 6, 2, 0x3, 7)),
@@ -748,8 +771,8 @@ fn riscv_system_run_driver_records_agent_scoped_data_probe_packet_ids() {
         cpu1_data,
         0x9000,
     );
-    core0.write_register(rem6_isa_riscv::Register::new(2).unwrap(), 0x9800);
-    core1.write_register(rem6_isa_riscv::Register::new(2).unwrap(), 0x9810);
+    core0.write_register(reg(2), 0x9800);
+    core1.write_register(reg(2), 0x9810);
     let cluster = RiscvCluster::new([core0, core1]).unwrap();
     let store = loaded_program_store_with_data(
         &[
@@ -831,8 +854,8 @@ fn riscv_system_run_driver_routes_gem5_work_marker_pseudo_ops_to_host() {
         )
         .unwrap();
     let core = riscv_core(0, 0, 7, "cpu0.ifetch", fetch_route, 0x8000);
-    core.write_register(rem6_isa_riscv::Register::new(10).unwrap(), 0x51);
-    core.write_register(rem6_isa_riscv::Register::new(11).unwrap(), 0x9);
+    core.write_register(reg(10), 0x51);
+    core.write_register(reg(11), 0x9);
     let cluster = RiscvCluster::new([core]).unwrap();
     let store = loaded_program_store(&[
         (0x8000, gem5_m5op_type(0x5a)),
@@ -930,8 +953,8 @@ fn riscv_system_run_driver_routes_gem5_fail_pseudo_op_to_host_stop() {
         )
         .unwrap();
     let core = riscv_core(0, 0, 7, "cpu0.ifetch", fetch_route, 0x8000);
-    core.write_register(rem6_isa_riscv::Register::new(10).unwrap(), 2);
-    core.write_register(rem6_isa_riscv::Register::new(11).unwrap(), 7);
+    core.write_register(reg(10), 2);
+    core.write_register(reg(11), 7);
     let cluster = RiscvCluster::new([core]).unwrap();
     let store = loaded_program_store(&[(0x8000, gem5_m5op_type(0x22)), (0x8004, 0x0000_0073)]);
     let controller = Arc::new(Mutex::new(SystemHostController::new(
@@ -999,8 +1022,8 @@ fn riscv_system_run_driver_routes_gem5_stats_pseudo_ops_to_host() {
         )
         .unwrap();
     let core = riscv_core(0, 0, 7, "cpu0.ifetch", fetch_route, 0x8000);
-    core.write_register(rem6_isa_riscv::Register::new(10).unwrap(), 0);
-    core.write_register(rem6_isa_riscv::Register::new(11).unwrap(), 0);
+    core.write_register(reg(10), 0);
+    core.write_register(reg(11), 0);
     let cluster = RiscvCluster::new([core]).unwrap();
     let store = loaded_program_store(&[
         (0x8000, i_type(2, 0, 0x0, 10, 0x13)),
@@ -1087,8 +1110,8 @@ fn riscv_system_run_driver_routes_gem5_checkpoint_pseudo_op_to_host() {
         )
         .unwrap();
     let core = riscv_core(0, 0, 7, "cpu0.ifetch", fetch_route, 0x8000);
-    core.write_register(rem6_isa_riscv::Register::new(10).unwrap(), 0);
-    core.write_register(rem6_isa_riscv::Register::new(11).unwrap(), 0);
+    core.write_register(reg(10), 0);
+    core.write_register(reg(11), 0);
     let cluster = RiscvCluster::new([core]).unwrap();
     let store = loaded_program_store(&[
         (0x8000, i_type(2, 0, 0x0, 10, 0x13)),
@@ -1331,8 +1354,8 @@ fn riscv_system_run_driver_parallel_path_drives_data_accesses_to_host_stop() {
         cpu1_data,
         0x9000,
     );
-    core0.write_register(rem6_isa_riscv::Register::new(2).unwrap(), 0x9800);
-    core1.write_register(rem6_isa_riscv::Register::new(2).unwrap(), 0x9810);
+    core0.write_register(reg(2), 0x9800);
+    core1.write_register(reg(2), 0x9810);
     let cluster = RiscvCluster::new([core0, core1]).unwrap();
     let store = loaded_program_store_with_data(
         &[
@@ -1484,17 +1507,11 @@ fn riscv_system_run_driver_parallel_path_drives_data_accesses_to_host_stop() {
                 && record.kind() == ScheduledEventKind::Parallel
         }));
     assert_eq!(
-        cluster
-            .core(CpuId::new(0))
-            .unwrap()
-            .read_register(rem6_isa_riscv::Register::new(5).unwrap()),
+        cluster.core(CpuId::new(0)).unwrap().read_register(reg(5)),
         0xfedc_ba98_7654_3210
     );
     assert_eq!(
-        cluster
-            .core(CpuId::new(1))
-            .unwrap()
-            .read_register(rem6_isa_riscv::Register::new(5).unwrap()),
+        cluster.core(CpuId::new(1)).unwrap().read_register(reg(5)),
         0xabcd_ef01_2345_6789
     );
     for cpu in [CpuId::new(0), CpuId::new(1)] {
@@ -1593,8 +1610,8 @@ fn riscv_system_run_driver_parallel_mmio_path_drives_data_accesses_to_host_stop(
         cpu1_data,
         0x9000,
     );
-    core0.write_register(rem6_isa_riscv::Register::new(2).unwrap(), 0x1000);
-    core1.write_register(rem6_isa_riscv::Register::new(2).unwrap(), 0x9810);
+    core0.write_register(reg(2), 0x1000);
+    core1.write_register(reg(2), 0x9810);
     let cluster = RiscvCluster::new([core0, core1]).unwrap();
     let store = loaded_program_store_with_data(
         &[
@@ -1665,17 +1682,11 @@ fn riscv_system_run_driver_parallel_mmio_path_drives_data_accesses_to_host_stop(
             })
     }));
     assert_eq!(
-        cluster
-            .core(CpuId::new(0))
-            .unwrap()
-            .read_register(rem6_isa_riscv::Register::new(5).unwrap()),
+        cluster.core(CpuId::new(0)).unwrap().read_register(reg(5)),
         0xfedc_ba98_7654_3210
     );
     assert_eq!(
-        cluster
-            .core(CpuId::new(1))
-            .unwrap()
-            .read_register(rem6_isa_riscv::Register::new(5).unwrap()),
+        cluster.core(CpuId::new(1)).unwrap().read_register(reg(5)),
         0xabcd_ef01_2345_6789
     );
 

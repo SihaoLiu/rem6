@@ -4,7 +4,8 @@ use std::sync::{Arc, Mutex};
 use rem6_cpu::{CpuId, RiscvCluster, RiscvDataAccessEvent, RiscvDataAccessEventKind};
 use rem6_memory::MemoryOperation;
 use rem6_stats::{
-    MemProbePacket, MemProbePacketAccess, ProbePayload, ProbePointId, ProbeRegistry, ProbeSnapshot,
+    MemProbePacket, MemProbePacketAccess, MemTraceProbe, MemTraceProbeConfig,
+    MemTraceProbeSnapshot, ProbePayload, ProbePointId, ProbeRegistry, ProbeSnapshot,
     StackDistProbe, StackDistProbeConfig, StackDistProbeSnapshot, StatsError,
 };
 
@@ -14,6 +15,7 @@ use crate::{RiscvSystemRun, RiscvSystemRunDriver, SystemError};
 pub struct RiscvDataAccessProbeSnapshot {
     probes: ProbeSnapshot,
     stack_distance: StackDistProbeSnapshot,
+    memory_trace: Option<MemTraceProbeSnapshot>,
     request_point: ProbePointId,
 }
 
@@ -21,11 +23,13 @@ impl RiscvDataAccessProbeSnapshot {
     pub fn new(
         probes: ProbeSnapshot,
         stack_distance: StackDistProbeSnapshot,
+        memory_trace: Option<MemTraceProbeSnapshot>,
         request_point: ProbePointId,
     ) -> Self {
         Self {
             probes,
             stack_distance,
+            memory_trace,
             request_point,
         }
     }
@@ -36,6 +40,10 @@ impl RiscvDataAccessProbeSnapshot {
 
     pub const fn stack_distance(&self) -> &StackDistProbeSnapshot {
         &self.stack_distance
+    }
+
+    pub const fn memory_trace(&self) -> Option<&MemTraceProbeSnapshot> {
+        self.memory_trace.as_ref()
     }
 
     pub const fn request_point(&self) -> ProbePointId {
@@ -50,14 +58,14 @@ pub struct RiscvDataAccessStats {
 
 impl Clone for RiscvDataAccessStats {
     fn clone(&self) -> Self {
-        let config = self
-            .probes
-            .lock()
-            .expect("data access probe recorder lock")
-            .stack_distance_config()
-            .clone();
+        let recorder = self.probes.lock().expect("data access probe recorder lock");
+        let stack_distance_config = recorder.stack_distance_config().clone();
+        let memory_trace_config = recorder.memory_trace_config().cloned();
         Self {
-            probes: Arc::new(Mutex::new(RiscvDataAccessProbeRecorder::new(config))),
+            probes: Arc::new(Mutex::new(RiscvDataAccessProbeRecorder::new(
+                stack_distance_config,
+                memory_trace_config,
+            ))),
         }
     }
 }
@@ -65,8 +73,16 @@ impl Clone for RiscvDataAccessStats {
 impl RiscvDataAccessStats {
     pub fn with_stack_distance(config: StackDistProbeConfig) -> Self {
         Self {
-            probes: Arc::new(Mutex::new(RiscvDataAccessProbeRecorder::new(config))),
+            probes: Arc::new(Mutex::new(RiscvDataAccessProbeRecorder::new(config, None))),
         }
+    }
+
+    pub fn with_mem_trace(self, config: MemTraceProbeConfig) -> Self {
+        self.probes
+            .lock()
+            .expect("data access probe recorder lock")
+            .set_memory_trace_config(config);
+        self
     }
 
     pub(crate) fn reset_for_run<I>(&self, cursors: I)
@@ -171,23 +187,35 @@ fn data_access_event_snapshots(
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct RiscvDataAccessProbeRecorder {
     stack_distance_config: StackDistProbeConfig,
+    memory_trace_config: Option<MemTraceProbeConfig>,
     probes: ProbeRegistry,
     stack_distance: StackDistProbe,
+    memory_trace: Option<MemTraceProbe>,
     request_point: ProbePointId,
     cursors: BTreeMap<CpuId, usize>,
 }
 
 impl RiscvDataAccessProbeRecorder {
-    fn new(stack_distance_config: StackDistProbeConfig) -> Self {
+    fn new(
+        stack_distance_config: StackDistProbeConfig,
+        memory_trace_config: Option<MemTraceProbeConfig>,
+    ) -> Self {
         let mut recorder = Self {
             stack_distance_config: stack_distance_config.clone(),
+            memory_trace_config,
             probes: ProbeRegistry::new(),
             stack_distance: StackDistProbe::new(stack_distance_config),
+            memory_trace: None,
             request_point: ProbePointId::new(0),
             cursors: BTreeMap::new(),
         };
         recorder.reset([]);
         recorder
+    }
+
+    fn set_memory_trace_config(&mut self, config: MemTraceProbeConfig) {
+        self.memory_trace_config = Some(config);
+        self.reset(self.cursors.clone());
     }
 
     fn reset<I>(&mut self, cursors: I)
@@ -196,6 +224,7 @@ impl RiscvDataAccessProbeRecorder {
     {
         self.probes = ProbeRegistry::new();
         self.stack_distance = StackDistProbe::new(self.stack_distance_config.clone());
+        self.memory_trace = self.memory_trace_config.clone().map(MemTraceProbe::new);
         self.request_point = self
             .probes
             .register_point("riscv_data", "Request")
@@ -203,6 +232,11 @@ impl RiscvDataAccessProbeRecorder {
         self.probes
             .add_listener(self.request_point, "stack_dist")
             .expect("generated data access probe listener is valid");
+        if self.memory_trace.is_some() {
+            self.probes
+                .add_listener(self.request_point, "mem_trace")
+                .expect("generated data access probe listener is valid");
+        }
         self.cursors = cursors.into_iter().collect();
     }
 
@@ -239,6 +273,7 @@ impl RiscvDataAccessProbeRecorder {
         };
         let packet = MemProbePacket::request(event.physical_address().get())
             .with_access(access)
+            .with_command(memory_operation_trace_command(event.operation()))
             .with_size(event.size().bytes())
             .with_packet_id(packet_id(event));
         let event = self
@@ -251,6 +286,9 @@ impl RiscvDataAccessProbeRecorder {
             .clone();
         self.stack_distance
             .observe_probe_event(&event, self.request_point)?;
+        if let Some(memory_trace) = &mut self.memory_trace {
+            memory_trace.observe_probe_event(&event, self.request_point)?;
+        }
         Ok(())
     }
 
@@ -258,12 +296,17 @@ impl RiscvDataAccessProbeRecorder {
         RiscvDataAccessProbeSnapshot::new(
             self.probes.snapshot(),
             self.stack_distance.snapshot(),
+            self.memory_trace.as_ref().map(MemTraceProbe::snapshot),
             self.request_point,
         )
     }
 
     fn stack_distance_config(&self) -> &StackDistProbeConfig {
         &self.stack_distance_config
+    }
+
+    fn memory_trace_config(&self) -> Option<&MemTraceProbeConfig> {
+        self.memory_trace_config.as_ref()
     }
 }
 
@@ -284,5 +327,35 @@ fn packet_access(operation: MemoryOperation) -> Option<MemProbePacketAccess> {
         | MemoryOperation::Atomic
         | MemoryOperation::AtomicNoReturn => Some(MemProbePacketAccess::Write),
         _ => None,
+    }
+}
+
+fn memory_operation_trace_command(operation: MemoryOperation) -> u32 {
+    match operation {
+        MemoryOperation::NoAccess => 0,
+        MemoryOperation::InstructionFetch => 1,
+        MemoryOperation::ReadShared => 2,
+        MemoryOperation::ReadUnique => 3,
+        MemoryOperation::LoadLocked => 4,
+        MemoryOperation::LockedRmwRead => 5,
+        MemoryOperation::LockedRmwWrite => 6,
+        MemoryOperation::Write => 7,
+        MemoryOperation::CacheBlockZero => 8,
+        MemoryOperation::StoreConditional => 9,
+        MemoryOperation::StoreConditionalFail => 10,
+        MemoryOperation::StoreConditionalUpgrade => 11,
+        MemoryOperation::StoreConditionalUpgradeFail => 12,
+        MemoryOperation::Upgrade => 13,
+        MemoryOperation::Atomic => 14,
+        MemoryOperation::AtomicNoReturn => 15,
+        MemoryOperation::PrefetchRead => 16,
+        MemoryOperation::PrefetchWrite => 17,
+        MemoryOperation::WriteClean => 18,
+        MemoryOperation::WritebackClean => 19,
+        MemoryOperation::WritebackDirty => 20,
+        MemoryOperation::CleanShared => 21,
+        MemoryOperation::CleanEvict => 22,
+        MemoryOperation::Invalidate => 23,
+        MemoryOperation::InvalidateWritable => 24,
     }
 }
