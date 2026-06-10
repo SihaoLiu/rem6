@@ -10,8 +10,8 @@ use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryTargetId, PartitionedMemoryStore,
 };
 use rem6_stats::{
-    MemFootprintAddressRange, MemFootprintProbeConfig, MemFootprintProbeSnapshot,
-    StackDistProbeConfig,
+    CommMonitorConfig, CommMonitorStats, MemFootprintAddressRange, MemFootprintProbeConfig,
+    MemFootprintProbeSnapshot, StackDistProbeConfig,
 };
 use rem6_system::{
     GuestEventId, GuestSourceId, HostEventPolicy, RiscvDataAccessStats, RiscvSystemRunDriver,
@@ -44,6 +44,16 @@ fn i_type(imm: i32, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
         | (funct3 << 12)
         | (u32::from(rd) << 7)
         | opcode
+}
+
+fn s_type(imm: i32, rs2: u8, rs1: u8, funct3: u32) -> u32 {
+    let imm = imm as u32;
+    (((imm >> 5) & 0x7f) << 25)
+        | (u32::from(rs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (funct3 << 12)
+        | ((imm & 0x1f) << 7)
+        | 0x23
 }
 
 fn loaded_program_store_with_data(
@@ -137,6 +147,14 @@ fn footprint_config() -> MemFootprintProbeConfig {
         vec![MemFootprintAddressRange::new(0x9800, 0x1000).unwrap()],
     )
     .unwrap()
+}
+
+fn comm_monitor_config() -> CommMonitorConfig {
+    CommMonitorConfig::builder(100)
+        .read_addr_mask(0xfff0)
+        .write_addr_mask(0xfff0)
+        .build()
+        .unwrap()
 }
 
 #[test]
@@ -253,4 +271,220 @@ fn data_access_stats_without_mem_footprint_keeps_snapshot_absent() {
         .data_access_probe_snapshot()
         .memory_footprint()
         .is_none());
+}
+
+#[test]
+fn data_access_stats_without_comm_monitor_keeps_snapshot_absent() {
+    let stats = RiscvDataAccessStats::with_stack_distance(stack_distance_config());
+
+    assert!(stats
+        .data_access_probe_snapshot()
+        .communication_monitor()
+        .is_none());
+}
+
+#[test]
+fn system_run_data_access_stats_drive_comm_monitor_from_real_load_requests() {
+    let host = PartitionId::new(3);
+    let source = GuestSourceId::new(43);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let fetch_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let data_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.dmem"),
+                PartitionId::new(0),
+                endpoint("l1d"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let core = riscv_data_core(
+        0,
+        0,
+        7,
+        "cpu0.ifetch",
+        fetch_route,
+        "cpu0.dmem",
+        data_route,
+        0x8000,
+    );
+    core.write_register(reg(2), 0x9800);
+    let cluster = RiscvCluster::new([core]).unwrap();
+    let store = loaded_program_store_with_data(
+        &[
+            (0x8000, i_type(0x008, 2, 0x3, 5, 0x03)),
+            (0x8004, i_type(0x040, 2, 0x3, 6, 0x03)),
+            (0x8008, 0x0000_0073),
+        ],
+        &[
+            (0x9808, 0x1111_2222_3333_4444_u64.to_le_bytes().to_vec()),
+            (0x9840, 0x5555_6666_7777_8888_u64.to_le_bytes().to_vec()),
+        ],
+    );
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        rem6_stats::StatsRegistry::new(),
+    )));
+    let trap_port = RiscvTrapEventPort::new(
+        SystemHostEventPort::with_controller(host, 2, Arc::clone(&controller)).unwrap(),
+        source,
+    );
+    let config = comm_monitor_config();
+    let driver = RiscvSystemRunDriver::new(trap_port).with_data_access_stats(
+        RiscvDataAccessStats::with_stack_distance(stack_distance_config())
+            .with_comm_monitor(config.clone()),
+    );
+
+    let run = driver
+        .drive_until_host_stop_parallel(
+            &cluster,
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_cpu| responder(Arc::clone(&store)),
+            |_cpu| responder(Arc::clone(&store)),
+            40,
+            |cpu| GuestEventId::new(130 + u64::from(cpu.get())),
+        )
+        .unwrap();
+
+    let data = run
+        .data_access_probes()
+        .expect("run should carry data access probe evidence");
+    let communication = data
+        .communication_monitor()
+        .expect("run should carry communication monitor evidence");
+    assert_eq!(communication.config(), &config);
+    assert!(communication.pending().is_empty());
+    assert_eq!(
+        communication.stats(),
+        CommMonitorStats::new(2, 0, 0, 0, 0, 0, 0, 0)
+    );
+    let request_delta = data.probes().events()[1].tick() - data.probes().events()[0].tick();
+    assert_eq!(communication.histograms().read_burst_lengths(), &[(8, 2)]);
+    assert_eq!(
+        communication.histograms().read_to_read_times(),
+        &[(request_delta, 1)]
+    );
+    assert_eq!(
+        communication.histograms().request_to_request_times(),
+        &[(request_delta, 1)]
+    );
+    assert_eq!(
+        communication.histograms().read_addresses(),
+        &[(0x9800, 1), (0x9840, 1)]
+    );
+}
+
+#[test]
+fn system_run_data_access_stats_drive_comm_monitor_from_real_store_requests() {
+    let host = PartitionId::new(3);
+    let source = GuestSourceId::new(44);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let fetch_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let data_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.dmem"),
+                PartitionId::new(0),
+                endpoint("l1d"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let core = riscv_data_core(
+        0,
+        0,
+        7,
+        "cpu0.ifetch",
+        fetch_route,
+        "cpu0.dmem",
+        data_route,
+        0x8000,
+    );
+    core.write_register(reg(2), 0x9800);
+    core.write_register(reg(3), 0x1111_2222_3333_4444);
+    let cluster = RiscvCluster::new([core]).unwrap();
+    let store = loaded_program_store_with_data(
+        &[(0x8000, s_type(0x008, 3, 2, 0x3)), (0x8004, 0x0000_0073)],
+        &[(0x9808, vec![0; 8])],
+    );
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        rem6_stats::StatsRegistry::new(),
+    )));
+    let trap_port = RiscvTrapEventPort::new(
+        SystemHostEventPort::with_controller(host, 2, Arc::clone(&controller)).unwrap(),
+        source,
+    );
+    let config = comm_monitor_config();
+    let driver = RiscvSystemRunDriver::new(trap_port).with_data_access_stats(
+        RiscvDataAccessStats::with_stack_distance(stack_distance_config())
+            .with_comm_monitor(config.clone()),
+    );
+
+    let run = driver
+        .drive_until_host_stop_parallel(
+            &cluster,
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_cpu| responder(Arc::clone(&store)),
+            |_cpu| responder(Arc::clone(&store)),
+            40,
+            |cpu| GuestEventId::new(140 + u64::from(cpu.get())),
+        )
+        .unwrap();
+
+    let data = run
+        .data_access_probes()
+        .expect("run should carry data access probe evidence");
+    let communication = data
+        .communication_monitor()
+        .expect("run should carry communication monitor evidence");
+    assert_eq!(communication.config(), &config);
+    assert!(communication.pending().is_empty());
+    assert_eq!(
+        communication.stats(),
+        CommMonitorStats::new(0, 1, 0, 8, 0, 8, 0, 0)
+    );
+    assert_eq!(communication.histograms().write_burst_lengths(), &[(8, 1)]);
+    assert_eq!(communication.histograms().write_addresses(), &[(0x9800, 1)]);
+    assert!(communication.histograms().write_latencies().is_empty());
+    assert_eq!(data.probes().events().len(), 1);
 }

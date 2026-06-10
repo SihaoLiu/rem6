@@ -4,10 +4,11 @@ use std::sync::{Arc, Mutex};
 use rem6_cpu::{CpuId, RiscvCluster, RiscvDataAccessEvent, RiscvDataAccessEventKind};
 use rem6_memory::MemoryOperation;
 use rem6_stats::{
-    MemFootprintProbe, MemFootprintProbeConfig, MemFootprintProbeSnapshot, MemProbePacket,
-    MemProbePacketAccess, MemTraceProbe, MemTraceProbeConfig, MemTraceProbeSnapshot, ProbePayload,
-    ProbePointId, ProbeRegistry, ProbeSnapshot, StackDistProbe, StackDistProbeConfig,
-    StackDistProbeSnapshot, StatsError,
+    CommMonitor, CommMonitorConfig, CommMonitorSnapshot, MemFootprintProbe,
+    MemFootprintProbeConfig, MemFootprintProbeSnapshot, MemProbePacket, MemProbePacketAccess,
+    MemTraceProbe, MemTraceProbeConfig, MemTraceProbeSnapshot, ProbePayload, ProbePointId,
+    ProbeRegistry, ProbeSnapshot, StackDistProbe, StackDistProbeConfig, StackDistProbeSnapshot,
+    StatsError,
 };
 
 use crate::{RiscvSystemRun, RiscvSystemRunDriver, SystemError};
@@ -18,6 +19,7 @@ pub struct RiscvDataAccessProbeSnapshot {
     stack_distance: StackDistProbeSnapshot,
     memory_trace: Option<MemTraceProbeSnapshot>,
     memory_footprint: Option<MemFootprintProbeSnapshot>,
+    communication_monitor: Option<CommMonitorSnapshot>,
     request_point: ProbePointId,
 }
 
@@ -27,6 +29,7 @@ impl RiscvDataAccessProbeSnapshot {
         stack_distance: StackDistProbeSnapshot,
         memory_trace: Option<MemTraceProbeSnapshot>,
         memory_footprint: Option<MemFootprintProbeSnapshot>,
+        communication_monitor: Option<CommMonitorSnapshot>,
         request_point: ProbePointId,
     ) -> Self {
         Self {
@@ -34,6 +37,7 @@ impl RiscvDataAccessProbeSnapshot {
             stack_distance,
             memory_trace,
             memory_footprint,
+            communication_monitor,
             request_point,
         }
     }
@@ -54,6 +58,10 @@ impl RiscvDataAccessProbeSnapshot {
         self.memory_footprint.as_ref()
     }
 
+    pub const fn communication_monitor(&self) -> Option<&CommMonitorSnapshot> {
+        self.communication_monitor.as_ref()
+    }
+
     pub const fn request_point(&self) -> ProbePointId {
         self.request_point
     }
@@ -70,11 +78,13 @@ impl Clone for RiscvDataAccessStats {
         let stack_distance_config = recorder.stack_distance_config().clone();
         let memory_trace_config = recorder.memory_trace_config().cloned();
         let memory_footprint_config = recorder.memory_footprint_config().cloned();
+        let communication_monitor_config = recorder.communication_monitor_config().cloned();
         Self {
             probes: Arc::new(Mutex::new(RiscvDataAccessProbeRecorder::new(
                 stack_distance_config,
                 memory_trace_config,
                 memory_footprint_config,
+                communication_monitor_config,
             ))),
         }
     }
@@ -84,7 +94,7 @@ impl RiscvDataAccessStats {
     pub fn with_stack_distance(config: StackDistProbeConfig) -> Self {
         Self {
             probes: Arc::new(Mutex::new(RiscvDataAccessProbeRecorder::new(
-                config, None, None,
+                config, None, None, None,
             ))),
         }
     }
@@ -102,6 +112,14 @@ impl RiscvDataAccessStats {
             .lock()
             .expect("data access probe recorder lock")
             .set_memory_footprint_config(config);
+        self
+    }
+
+    pub fn with_comm_monitor(self, config: CommMonitorConfig) -> Self {
+        self.probes
+            .lock()
+            .expect("data access probe recorder lock")
+            .set_communication_monitor_config(config);
         self
     }
 
@@ -209,10 +227,12 @@ struct RiscvDataAccessProbeRecorder {
     stack_distance_config: StackDistProbeConfig,
     memory_trace_config: Option<MemTraceProbeConfig>,
     memory_footprint_config: Option<MemFootprintProbeConfig>,
+    communication_monitor_config: Option<CommMonitorConfig>,
     probes: ProbeRegistry,
     stack_distance: StackDistProbe,
     memory_trace: Option<MemTraceProbe>,
     memory_footprint: Option<MemFootprintProbe>,
+    communication_monitor: Option<CommMonitor>,
     request_point: ProbePointId,
     cursors: BTreeMap<CpuId, usize>,
 }
@@ -222,15 +242,18 @@ impl RiscvDataAccessProbeRecorder {
         stack_distance_config: StackDistProbeConfig,
         memory_trace_config: Option<MemTraceProbeConfig>,
         memory_footprint_config: Option<MemFootprintProbeConfig>,
+        communication_monitor_config: Option<CommMonitorConfig>,
     ) -> Self {
         let mut recorder = Self {
             stack_distance_config: stack_distance_config.clone(),
             memory_trace_config,
             memory_footprint_config,
+            communication_monitor_config,
             probes: ProbeRegistry::new(),
             stack_distance: StackDistProbe::new(stack_distance_config),
             memory_trace: None,
             memory_footprint: None,
+            communication_monitor: None,
             request_point: ProbePointId::new(0),
             cursors: BTreeMap::new(),
         };
@@ -248,6 +271,11 @@ impl RiscvDataAccessProbeRecorder {
         self.reset(self.cursors.clone());
     }
 
+    fn set_communication_monitor_config(&mut self, config: CommMonitorConfig) {
+        self.communication_monitor_config = Some(config);
+        self.reset(self.cursors.clone());
+    }
+
     fn reset<I>(&mut self, cursors: I)
     where
         I: IntoIterator<Item = (CpuId, usize)>,
@@ -259,6 +287,10 @@ impl RiscvDataAccessProbeRecorder {
             .memory_footprint_config
             .clone()
             .map(MemFootprintProbe::new);
+        self.communication_monitor = self
+            .communication_monitor_config
+            .clone()
+            .map(CommMonitor::new);
         self.request_point = self
             .probes
             .register_point("riscv_data", "Request")
@@ -274,6 +306,11 @@ impl RiscvDataAccessProbeRecorder {
         if self.memory_footprint.is_some() {
             self.probes
                 .add_listener(self.request_point, "mem_footprint")
+                .expect("generated data access probe listener is valid");
+        }
+        if self.communication_monitor.is_some() {
+            self.probes
+                .add_listener(self.request_point, "comm_monitor")
                 .expect("generated data access probe listener is valid");
         }
         self.cursors = cursors.into_iter().collect();
@@ -331,6 +368,9 @@ impl RiscvDataAccessProbeRecorder {
         if let Some(memory_footprint) = &mut self.memory_footprint {
             memory_footprint.observe_probe_event(&event, self.request_point)?;
         }
+        if let Some(communication_monitor) = &mut self.communication_monitor {
+            communication_monitor.observe_request_probe_event(&event, self.request_point, false)?;
+        }
         Ok(())
     }
 
@@ -342,6 +382,9 @@ impl RiscvDataAccessProbeRecorder {
             self.memory_footprint
                 .as_ref()
                 .map(MemFootprintProbe::snapshot),
+            self.communication_monitor
+                .as_ref()
+                .map(CommMonitor::snapshot),
             self.request_point,
         )
     }
@@ -356,6 +399,10 @@ impl RiscvDataAccessProbeRecorder {
 
     fn memory_footprint_config(&self) -> Option<&MemFootprintProbeConfig> {
         self.memory_footprint_config.as_ref()
+    }
+
+    fn communication_monitor_config(&self) -> Option<&CommMonitorConfig> {
+        self.communication_monitor_config.as_ref()
     }
 }
 
