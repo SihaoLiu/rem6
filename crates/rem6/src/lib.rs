@@ -14,11 +14,11 @@ use rem6_kernel::{PartitionFrontier, PartitionId, PartitionedScheduler, ReadyPar
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryOperation, MemoryRequestId,
 };
-use rem6_stats::StatsRegistry;
+use rem6_stats::{StackDistProbeConfig, StatsRegistry};
 use rem6_system::{
-    GuestEventId, GuestSourceId, GuestTrapKind, HostEventPolicy, RiscvSystemRun,
-    RiscvSystemRunDriver, RiscvSystemRunStopReason, RiscvTrapEventPort, SystemHostController,
-    SystemHostEventPort,
+    GuestEventId, GuestSourceId, GuestTrapKind, HostEventPolicy, RiscvDataAccessStats,
+    RiscvSystemRun, RiscvSystemRunDriver, RiscvSystemRunStopReason, RiscvTrapEventPort,
+    SystemHostController, SystemHostEventPort,
 };
 use rem6_transport::{
     MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTraceEvent, MemoryTraceKind, MemoryTransport,
@@ -111,6 +111,7 @@ pub struct Rem6ExecutionSummary {
     data_load_bytes: u64,
     data_store_bytes: u64,
     data_atomic_bytes: u64,
+    data_access_probes: Rem6DataAccessProbeSummary,
     parallel_scheduler_epochs: u64,
     parallel_scheduler_dispatches: u64,
     parallel_scheduler_batches: u64,
@@ -132,6 +133,14 @@ pub struct Rem6ExecutionSummary {
     dram: Rem6DramSummary,
     cores: Vec<Rem6CoreSummary>,
     memory_dumps: Vec<Rem6MemoryDump>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct Rem6DataAccessProbeSummary {
+    sample_count: u64,
+    stack_distance_infinite_samples: u64,
+    stack_distance_finite_samples: u64,
+    stack_distance_stack_depth: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -829,7 +838,11 @@ fn execute_riscv(
         .map_err(execute_error)?,
         GuestSourceId::new(1),
     );
-    let driver = RiscvSystemRunDriver::new(trap_port);
+    let probe_config = StackDistProbeConfig::builder(line_layout.bytes(), line_layout.bytes())
+        .build()
+        .map_err(stats_error)?;
+    let driver = RiscvSystemRunDriver::new(trap_port)
+        .with_data_access_stats(RiscvDataAccessStats::with_stack_distance(probe_config));
     let fetch_trace = MemoryTrace::new();
     let data_trace = MemoryTrace::new();
     let run = match config.max_instructions() {
@@ -996,6 +1009,7 @@ fn execution_summary(
         data_load_bytes,
         data_store_bytes,
         data_atomic_bytes,
+        data_access_probes: data_access_probe_summary(run),
         parallel_scheduler_epochs: run.parallel_scheduler_epochs().len() as u64,
         parallel_scheduler_dispatches: run.parallel_scheduler_dispatches().len() as u64,
         parallel_scheduler_batches: run.parallel_scheduler_batches().len() as u64,
@@ -1031,6 +1045,21 @@ fn execution_summary(
             inputs.config.memory_dumps(),
         )?,
     })
+}
+
+fn data_access_probe_summary(run: &RiscvSystemRun) -> Rem6DataAccessProbeSummary {
+    run.data_access_probes()
+        .map(|probes| {
+            let infinite_samples = probes.stack_distance().infinite_samples();
+            let finite_samples = probes.stack_distance().finite_samples();
+            Rem6DataAccessProbeSummary {
+                sample_count: infinite_samples.saturating_add(finite_samples),
+                stack_distance_infinite_samples: infinite_samples,
+                stack_distance_finite_samples: finite_samples,
+                stack_distance_stack_depth: probes.stack_distance().stack().len() as u64,
+            }
+        })
+        .unwrap_or_default()
 }
 
 fn parallel_worker_slot_summaries(run: &RiscvSystemRun) -> Vec<Rem6ParallelWorkerSlotSummary> {

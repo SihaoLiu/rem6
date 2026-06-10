@@ -84,13 +84,14 @@ isolated bugs:
   low-power counters, profile geometry constants, profile timing constants,
   profile command-window constants, profile low-power timing constants,
   NVM media timing constants, NVM persistent-write and pending-queue counters,
-  technology one-hot stats, and profiled external-memory capacity denominators. CLI
-  RISC-V data-access stats also
-  carry total and per-core
-  load/store/atomic byte counts from completed access records, including AMO
-  execution, so cache, NoC, and external-memory bandwidth accounting can be
-  validated from the same simulator artifact instead of reconstructed from
-  instruction traces. The CLI artifact also carries fetch and data memory
+  technology one-hot stats, and profiled external-memory capacity denominators.
+  CLI RISC-V data-access stats also carry total and per-core load/store/atomic
+  byte counts from completed access records, including AMO execution, plus
+  real data-access probe stack-distance sample, infinite-sample, finite-sample,
+  and stack-depth counters from the system-run probe recorder, so cache, NoC,
+  and external-memory bandwidth and reuse accounting can be validated from the
+  same simulator artifact instead of reconstructed from instruction traces. The
+  CLI artifact also carries fetch and data memory
   transport request, request-arrival, response, response-arrival, total
   round-trip tick, and maximum round-trip tick counters derived from
   `MemoryTrace`, and repeats those counters by route id and source endpoint,
@@ -686,7 +687,8 @@ isolated bugs:
   The CLI execution path also provisions per-core data endpoints, so ELF-backed
   RISC-V programs can execute load/store instructions through the same memory
   transport and `PartitionedMemoryStore` path used by subsystem tests; data load,
-  store, and atomic counts are emitted as hierarchy-preserving stats. Requested
+  store, atomic, and data-access probe stack-distance counts are emitted as
+  hierarchy-preserving stats. Requested
   post-run memory dumps read back bytes from the same memory store, which makes
   store effects part of the machine-readable artifact instead of an implicit log
   side effect. RISC-V CLI execution also binds each architectural hart id to the
@@ -4426,9 +4428,11 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   worker-limit stat and the resulting one-worker scheduler max. CLI tests also
   cover ELF-backed RISC-V load/store execution through the data endpoint path
   and require per-core and aggregate data-access stats plus a post-store memory
-  dump in the artifact. A two-core CLI test now reads `mhartid` from the same ELF,
-  branches per hart, writes distinct per-hart memory slots, and verifies the
-  post-run memory dump plus per-core store stats. CLI tests also execute
+  dump in the artifact, and require real data-access probe stack-distance
+  samples from repeated same-line loads. A two-core CLI test now reads
+  `mhartid` from the same ELF, branches per hart, writes distinct per-hart
+  memory slots, and verifies the post-run memory dump plus per-core store
+  stats. CLI tests also execute
   `rdcycle` and `rdinstret` from an ELF and verify the resulting architectural
   registers in the JSON artifact. Instruction-limit CLI tests require
   `--max-instructions <count>` to stop before a later guest trap, report the

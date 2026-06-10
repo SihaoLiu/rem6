@@ -2,11 +2,12 @@ use super::formatting::{
     bytes_to_hex, elf_architecture_name, elf_class_name, elf_endian_name, elf_os_name, json_escape,
 };
 use super::{
-    Rem6CoreSummary, Rem6DramSummary, Rem6ExecutionStop, Rem6ExecutionSummary, Rem6GupsArtifact,
-    Rem6GupsExecutionSummary, Rem6LoadBlobSummary, Rem6MemoryDump, Rem6MemoryTransportCounters,
-    Rem6MemoryTransportRouteSummary, Rem6MemoryTransportSummary, Rem6ParallelFrontierSummary,
-    Rem6ParallelPartitionSummary, Rem6ParallelReadyPartitionSummary, Rem6RunArtifact,
-    Rem6TraceReplayArtifact, Rem6TraceReplayExecutionSummary, RequestedIsa,
+    Rem6CoreSummary, Rem6DataAccessProbeSummary, Rem6DramSummary, Rem6ExecutionStop,
+    Rem6ExecutionSummary, Rem6GupsArtifact, Rem6GupsExecutionSummary, Rem6LoadBlobSummary,
+    Rem6MemoryDump, Rem6MemoryTransportCounters, Rem6MemoryTransportRouteSummary,
+    Rem6MemoryTransportSummary, Rem6ParallelFrontierSummary, Rem6ParallelPartitionSummary,
+    Rem6ParallelReadyPartitionSummary, Rem6RunArtifact, Rem6TraceReplayArtifact,
+    Rem6TraceReplayExecutionSummary, RequestedIsa,
 };
 
 impl Rem6RunArtifact {
@@ -603,7 +604,7 @@ impl Rem6ExecutionSummary {
             }
         };
         let common = format!(
-            "\"max_tick\":{},\"instruction_limit\":{},\"memory_route_delay\":{},\"host_event_delay\":{},\"executed_ticks\":{},\"final_tick\":{},\"cores\":{},\"committed_instructions\":{}",
+            "\"max_tick\":{},\"instruction_limit\":{},\"memory_route_delay\":{},\"host_event_delay\":{},\"executed_ticks\":{},\"final_tick\":{},\"cores\":{},\"committed_instructions\":{},\"data_access_probes\":{}",
             max_tick,
             optional_count_json(instruction_limit),
             memory_route_delay,
@@ -612,6 +613,7 @@ impl Rem6ExecutionSummary {
             self.final_tick,
             self.cores.len(),
             self.committed_instructions,
+            self.data_access_probes.to_json(),
         );
         match self.stop {
             Rem6ExecutionStop::HostTrap {
@@ -723,6 +725,18 @@ impl Rem6ExecutionSummary {
 
     fn to_dram_json(&self) -> String {
         self.dram.to_json()
+    }
+}
+
+impl Rem6DataAccessProbeSummary {
+    fn to_json(self) -> String {
+        format!(
+            "{{\"sample_count\":{},\"stack_distance\":{{\"infinite_samples\":{},\"finite_samples\":{},\"stack_depth\":{}}}}}",
+            self.sample_count,
+            self.stack_distance_infinite_samples,
+            self.stack_distance_finite_samples,
+            self.stack_distance_stack_depth,
+        )
     }
 }
 

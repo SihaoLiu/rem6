@@ -262,6 +262,34 @@ pub(super) fn run_stats_output(
             StatResetPolicy::Monotonic,
             execution.data_atomic_bytes,
         )?;
+        increment_stat(
+            &mut stats,
+            "sim.data.probes.samples",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.data_access_probes.sample_count,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.data.probes.stack_distance.infinite_samples",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.data_access_probes.stack_distance_infinite_samples,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.data.probes.stack_distance.finite_samples",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.data_access_probes.stack_distance_finite_samples,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.data.probes.stack_distance.stack_depth",
+            "Count",
+            StatResetPolicy::Constant,
+            execution.data_access_probes.stack_distance_stack_depth,
+        )?;
         parallel_stats::emit_scheduler_stats(&mut stats, execution)?;
         emit_transport_stats(&mut stats, "sim.memory.fetch", &execution.fetch_transport)?;
         emit_transport_stats(&mut stats, "sim.memory.data", &execution.data_transport)?;
