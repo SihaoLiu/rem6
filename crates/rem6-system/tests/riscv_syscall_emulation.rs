@@ -9,8 +9,9 @@ use rem6_memory::{
 };
 use rem6_stats::StatsRegistry;
 use rem6_system::{
-    GuestEventId, GuestSourceId, HostEventPolicy, RiscvSystemRunDriver, RiscvTrapEventPort,
-    StopRequest, SystemActionOutcome, SystemHostController, SystemHostEventPort,
+    GuestEventId, GuestSourceId, HostEventPolicy, RiscvMmapRegion, RiscvSystemRunDriver,
+    RiscvTrapEventPort, StopRequest, SystemActionOutcome, SystemHostController,
+    SystemHostEventPort,
 };
 use rem6_transport::{
     MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome,
@@ -39,6 +40,10 @@ fn i_type(imm: i32, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
 
 fn addi(rd: u8, rs1: u8, imm: i32) -> u32 {
     i_type(imm, rs1, 0x0, rd, 0x13)
+}
+
+fn lui(rd: u8, imm: u32) -> u32 {
+    (imm << 12) | (u32::from(rd) << 7) | 0x37
 }
 
 fn loaded_program_store(instructions: &[(u64, u32)]) -> Arc<Mutex<PartitionedMemoryStore>> {
@@ -330,6 +335,102 @@ fn user_ecall_mmap_returns_mapping_before_exit() {
     assert!(run.scheduled_traps().is_empty());
     assert_eq!(core.read_register(reg(5)), 0x4000_0000_0000_0000);
     assert_eq!(core.read_register(reg(10)), 17);
+    assert_eq!(
+        controller.lock().unwrap().run().action_outcomes(),
+        &[SystemActionOutcome::Stop(stop)]
+    );
+}
+
+#[test]
+fn user_ecall_munmap_updates_mapping_before_exit() {
+    let host = PartitionId::new(3);
+    let source = GuestSourceId::new(44);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let fetch_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let core = riscv_core(0, 0, 7, "cpu0.ifetch", fetch_route, 0x8000);
+    core.set_privilege_mode(RiscvPrivilegeMode::User);
+    let cluster = RiscvCluster::new([core.clone()]).unwrap();
+    let store = loaded_program_store(&[
+        (0x8000, addi(17, 0, 222)),
+        (0x8004, addi(10, 0, 0)),
+        (0x8008, lui(11, 3)),
+        (0x800c, addi(12, 0, 3)),
+        (0x8010, addi(13, 0, 34)),
+        (0x8014, addi(14, 0, -1)),
+        (0x8018, addi(15, 0, 0)),
+        (0x801c, 0x0000_0073),
+        (0x8020, addi(5, 10, 0)),
+        (0x8024, addi(17, 0, 215)),
+        (0x8028, addi(10, 5, 2047)),
+        (0x802c, addi(10, 10, 2047)),
+        (0x8030, addi(10, 10, 2)),
+        (0x8034, lui(11, 1)),
+        (0x8038, 0x0000_0073),
+        (0x803c, addi(6, 10, 0)),
+        (0x8040, addi(17, 0, 93)),
+        (0x8044, addi(10, 0, 17)),
+        (0x8048, 0x0000_0073),
+    ]);
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        StatsRegistry::new(),
+    )));
+    let trap_port = RiscvTrapEventPort::new(
+        SystemHostEventPort::with_controller(host, 2, Arc::clone(&controller)).unwrap(),
+        source,
+    );
+    let driver = RiscvSystemRunDriver::new(trap_port).with_riscv_syscall_emulation();
+
+    let run = driver
+        .drive_until_host_stop(
+            &cluster,
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_cpu| responder(Arc::clone(&store)),
+            |_cpu| responder(Arc::clone(&store)),
+            140,
+            |cpu| GuestEventId::new(220 + u64::from(cpu.get())),
+        )
+        .unwrap();
+
+    let stop = StopRequest::new(
+        run.final_tick().unwrap(),
+        GuestEventId::new(220),
+        source,
+        17,
+    );
+    let mmap_base = 0x4000_0000_0000_0000;
+    assert_eq!(run.host_stop(), Some(stop));
+    assert!(run.scheduled_traps().is_empty());
+    assert_eq!(core.read_register(reg(5)), mmap_base);
+    assert_eq!(core.read_register(reg(6)), 0);
+    assert_eq!(core.read_register(reg(10)), 17);
+    assert_eq!(
+        driver
+            .riscv_syscall_emulation()
+            .unwrap()
+            .state()
+            .mmap_regions(),
+        &[
+            RiscvMmapRegion::new(mmap_base, 4096, 3, 34, u64::MAX, 0),
+            RiscvMmapRegion::new(mmap_base + 8192, 4096, 3, 34, u64::MAX, 8192),
+        ]
+    );
     assert_eq!(
         controller.lock().unwrap().run().action_outcomes(),
         &[SystemActionOutcome::Stop(stop)]

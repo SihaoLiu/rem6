@@ -9,6 +9,7 @@ use crate::{GuestEventId, RiscvSystemRunDriver, ScheduledRiscvTrap, SystemError}
 const RISCV_LINUX_EXIT: u64 = 93;
 const RISCV_LINUX_EXIT_GROUP: u64 = 94;
 const RISCV_LINUX_BRK: u64 = 214;
+const RISCV_LINUX_MUNMAP: u64 = 215;
 const RISCV_LINUX_MMAP: u64 = 222;
 const RISCV_LINUX_EBADF: u64 = 9;
 const RISCV_LINUX_EINVAL: u64 = 22;
@@ -271,6 +272,9 @@ impl RiscvSyscallTable {
             RISCV_LINUX_MMAP => Some(RiscvSyscallOutcome::Return {
                 value: syscall_mmap(request, state),
             }),
+            RISCV_LINUX_MUNMAP => Some(RiscvSyscallOutcome::Return {
+                value: syscall_munmap(request.argument(0), request.argument(1), state),
+            }),
             _ => None,
         }
     }
@@ -431,6 +435,21 @@ fn syscall_mmap(request: RiscvSyscallRequest, state: &mut RiscvSyscallState) -> 
         offset,
     ));
     mapped_start
+}
+
+fn syscall_munmap(start: u64, requested_length: u64, state: &mut RiscvSyscallState) -> u64 {
+    let Some(length) = align_to_page(requested_length) else {
+        return linux_error(RISCV_LINUX_EINVAL);
+    };
+    if !start.is_multiple_of(RISCV_PAGE_BYTES)
+        || requested_length == 0
+        || start.checked_add(length).is_none()
+    {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+
+    state.unmap_mmap_range(start, length);
+    0
 }
 
 fn align_to_page(value: u64) -> Option<u64> {
@@ -626,6 +645,105 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    #[test]
+    fn linux_table_munmap_removes_mapped_ranges() {
+        let table = RiscvSyscallTable::new();
+        let mut state = RiscvSyscallState::new(0);
+        let unmap_start = RISCV64_LINUX_MMAP_BASE + RISCV_PAGE_BYTES;
+
+        assert_eq!(
+            table.handle(
+                RiscvSyscallRequest::new(
+                    0x8000,
+                    RISCV_LINUX_MMAP,
+                    [0, 3 * RISCV_PAGE_BYTES, 3, 34, u64::MAX, 0]
+                ),
+                &mut state,
+            ),
+            Some(RiscvSyscallOutcome::Return {
+                value: RISCV64_LINUX_MMAP_BASE
+            })
+        );
+        assert_eq!(
+            table.handle(
+                RiscvSyscallRequest::new(
+                    0x8004,
+                    RISCV_LINUX_MUNMAP,
+                    [unmap_start, RISCV_PAGE_BYTES, 0, 0, 0, 0]
+                ),
+                &mut state,
+            ),
+            Some(RiscvSyscallOutcome::Return { value: 0 })
+        );
+        assert_eq!(
+            state.mmap_regions(),
+            &[
+                RiscvMmapRegion::new(
+                    RISCV64_LINUX_MMAP_BASE,
+                    RISCV_PAGE_BYTES,
+                    3,
+                    34,
+                    u64::MAX,
+                    0,
+                ),
+                RiscvMmapRegion::new(
+                    unmap_start + RISCV_PAGE_BYTES,
+                    RISCV_PAGE_BYTES,
+                    3,
+                    34,
+                    u64::MAX,
+                    2 * RISCV_PAGE_BYTES,
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn linux_table_rejects_invalid_munmap_arguments() {
+        let table = RiscvSyscallTable::new();
+        let mut state = RiscvSyscallState::new(0);
+
+        assert_eq!(
+            table.handle(
+                RiscvSyscallRequest::new(
+                    0x8000,
+                    RISCV_LINUX_MMAP,
+                    [0, RISCV_PAGE_BYTES, 3, 34, u64::MAX, 0]
+                ),
+                &mut state,
+            ),
+            Some(RiscvSyscallOutcome::Return {
+                value: RISCV64_LINUX_MMAP_BASE
+            })
+        );
+        let mapped_regions = state.mmap_regions().to_vec();
+
+        for arguments in [
+            [RISCV64_LINUX_MMAP_BASE + 1, RISCV_PAGE_BYTES, 0, 0, 0, 0],
+            [RISCV64_LINUX_MMAP_BASE, 0, 0, 0, 0, 0],
+            [RISCV64_LINUX_MMAP_BASE, u64::MAX, 0, 0, 0, 0],
+            [
+                u64::MAX - (RISCV_PAGE_BYTES - 1),
+                RISCV_PAGE_BYTES,
+                0,
+                0,
+                0,
+                0,
+            ],
+        ] {
+            assert_eq!(
+                table.handle(
+                    RiscvSyscallRequest::new(0x8004, RISCV_LINUX_MUNMAP, arguments),
+                    &mut state,
+                ),
+                Some(RiscvSyscallOutcome::Return {
+                    value: linux_error(RISCV_LINUX_EINVAL)
+                })
+            );
+            assert_eq!(state.mmap_regions(), mapped_regions.as_slice());
+        }
     }
 
     #[test]
