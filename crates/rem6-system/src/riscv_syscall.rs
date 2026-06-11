@@ -17,6 +17,7 @@ use crate::{
 
 mod clock;
 mod cwd;
+mod ioctl;
 mod limits;
 mod links;
 mod mmap;
@@ -26,6 +27,7 @@ mod wait4;
 
 use clock::syscall_clock_gettime;
 use cwd::syscall_getcwd;
+use ioctl::{syscall_ioctl, RISCV_LINUX_IOCTL};
 use limits::{syscall_prlimit64, RISCV_LINUX_PRLIMIT64};
 use links::syscall_readlinkat;
 pub use mmap::RiscvMmapRegion;
@@ -90,6 +92,7 @@ const RISCV_LINUX_ENOENT: u64 = 2;
 const RISCV_LINUX_EBADF: u64 = 9;
 const RISCV_LINUX_EFAULT: u64 = 14;
 const RISCV_LINUX_EINVAL: u64 = 22;
+const RISCV_LINUX_ENOTTY: u64 = 25;
 const RISCV_LINUX_EMFILE: u64 = 24;
 const RISCV_LINUX_ERANGE: u64 = 34;
 const RISCV_LINUX_ENAMETOOLONG: u64 = 36;
@@ -836,6 +839,9 @@ impl RiscvSyscallTable {
                 ),
             }),
             RISCV_LINUX_FCNTL => syscall_fcntl(request, state),
+            RISCV_LINUX_IOCTL => Some(RiscvSyscallOutcome::Return {
+                value: syscall_ioctl(request, state),
+            }),
             RISCV_LINUX_OPENAT => {
                 guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
                     value: syscall_openat(request, state, guest_memory),
@@ -1548,7 +1554,7 @@ fn syscall_fcntl(
     })
 }
 
-fn guest_fd_argument(value: u64) -> Option<GuestFd> {
+pub(super) fn guest_fd_argument(value: u64) -> Option<GuestFd> {
     i32::try_from(value)
         .ok()
         .and_then(|fd| GuestFd::new(fd).ok())
