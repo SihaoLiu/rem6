@@ -12,8 +12,16 @@ pub(crate) fn rs2(raw: u32) -> Register {
     Register::from_field((raw >> 20) & 0x1f)
 }
 
+pub(crate) fn rs3(raw: u32) -> Register {
+    Register::from_field((raw >> 27) & 0x1f)
+}
+
 pub(crate) fn funct3(raw: u32) -> u32 {
     (raw >> 12) & 0x7
+}
+
+pub(crate) fn funct2(raw: u32) -> u32 {
+    (raw >> 25) & 0x3
 }
 
 pub(crate) fn funct7(raw: u32) -> u32 {

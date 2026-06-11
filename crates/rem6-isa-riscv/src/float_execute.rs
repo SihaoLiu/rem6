@@ -6,6 +6,26 @@ pub(crate) fn execute_float_register_instruction(
     instruction: RiscvInstruction,
 ) {
     match instruction {
+        instruction @ (RiscvInstruction::FloatMultiplyAddS { rs1, rs2, rs3, .. }
+        | RiscvInstruction::FloatMultiplyAddD { rs1, rs2, rs3, .. }
+        | RiscvInstruction::FloatMultiplySubtractS { rs1, rs2, rs3, .. }
+        | RiscvInstruction::FloatMultiplySubtractD { rs1, rs2, rs3, .. }
+        | RiscvInstruction::FloatNegativeMultiplySubtractS {
+            rs1, rs2, rs3, ..
+        }
+        | RiscvInstruction::FloatNegativeMultiplySubtractD {
+            rs1, rs2, rs3, ..
+        }
+        | RiscvInstruction::FloatNegativeMultiplyAddS { rs1, rs2, rs3, .. }
+        | RiscvInstruction::FloatNegativeMultiplyAddD { rs1, rs2, rs3, .. }) => {
+            let (rd, value) = float::float_register_write_ternary(
+                instruction,
+                hart.read_float(rs1),
+                hart.read_float(rs2),
+                hart.read_float(rs3),
+            );
+            float::write_float_register(hart, writes, rd, value);
+        }
         instruction @ (RiscvInstruction::FloatAddS { rs1, rs2, .. }
         | RiscvInstruction::FloatAddD { rs1, rs2, .. }
         | RiscvInstruction::FloatSubS { rs1, rs2, .. }

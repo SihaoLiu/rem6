@@ -1,8 +1,29 @@
-use crate::encoding::{csr, funct3, rd, rs1};
+use crate::encoding::{
+    b_imm, csr, funct3, funct7, i_imm, rd, rs1, rs2, shamt32, shamt64, shift_funct6,
+};
 use crate::{
-    RiscvCounterCsr, RiscvError, RiscvFenceSet, RiscvInstruction, RiscvInterruptCsr,
+    Immediate, RiscvCounterCsr, RiscvError, RiscvFenceSet, RiscvInstruction, RiscvInterruptCsr,
     RiscvMachineTrapCsr, RiscvStatusCsr, RiscvSupervisorTrapCsr, RiscvTranslationCsr,
 };
+
+pub(crate) fn decode_system(raw: u32) -> Result<RiscvInstruction, RiscvError> {
+    match raw {
+        0x0000_0073 => Ok(RiscvInstruction::Ecall),
+        0x0010_0073 => Ok(RiscvInstruction::Ebreak),
+        0x1050_0073 => Ok(RiscvInstruction::WaitForInterrupt),
+        0x1020_0073 => Ok(RiscvInstruction::SupervisorReturn),
+        0x3020_0073 => Ok(RiscvInstruction::MachineReturn),
+        raw if is_sfence_vma(raw) => Ok(RiscvInstruction::SfenceVma {
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        _ => decode_csr(raw),
+    }
+}
+
+const fn is_sfence_vma(raw: u32) -> bool {
+    raw & 0xfe00_7fff == 0x1200_0073
+}
 
 pub(crate) fn decode_fence(raw: u32) -> Result<RiscvInstruction, RiscvError> {
     match funct3(raw) {
@@ -12,6 +33,282 @@ pub(crate) fn decode_fence(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             mode: ((raw >> 28) & 0x0f) as u8,
         }),
         0x1 => Ok(RiscvInstruction::FenceI),
+        _ => Err(RiscvError::UnknownEncoding { raw }),
+    }
+}
+
+pub(crate) fn decode_op_imm(raw: u32) -> Result<RiscvInstruction, RiscvError> {
+    match funct3(raw) {
+        0x0 => Ok(RiscvInstruction::Addi {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            imm: Immediate::new(i_imm(raw)),
+        }),
+        0x1 if shift_funct6(raw) == 0x00 => Ok(RiscvInstruction::Slli {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            shamt: shamt64(raw),
+        }),
+        0x2 => Ok(RiscvInstruction::Slti {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            imm: Immediate::new(i_imm(raw)),
+        }),
+        0x3 => Ok(RiscvInstruction::Sltiu {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            imm: Immediate::new(i_imm(raw)),
+        }),
+        0x4 => Ok(RiscvInstruction::Xori {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            imm: Immediate::new(i_imm(raw)),
+        }),
+        0x5 if shift_funct6(raw) == 0x00 => Ok(RiscvInstruction::Srli {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            shamt: shamt64(raw),
+        }),
+        0x5 if shift_funct6(raw) == 0x10 => Ok(RiscvInstruction::Srai {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            shamt: shamt64(raw),
+        }),
+        0x6 => Ok(RiscvInstruction::Ori {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            imm: Immediate::new(i_imm(raw)),
+        }),
+        0x7 => Ok(RiscvInstruction::Andi {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            imm: Immediate::new(i_imm(raw)),
+        }),
+        _ => Err(RiscvError::UnknownEncoding { raw }),
+    }
+}
+
+pub(crate) fn decode_op_imm_32(raw: u32) -> Result<RiscvInstruction, RiscvError> {
+    match (funct7(raw), funct3(raw)) {
+        (_, 0x0) => Ok(RiscvInstruction::Addiw {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            imm: Immediate::new(i_imm(raw)),
+        }),
+        (0x00, 0x1) => Ok(RiscvInstruction::Slliw {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            shamt: shamt32(raw),
+        }),
+        (0x00, 0x5) => Ok(RiscvInstruction::Srliw {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            shamt: shamt32(raw),
+        }),
+        (0x20, 0x5) => Ok(RiscvInstruction::Sraiw {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            shamt: shamt32(raw),
+        }),
+        _ => Err(RiscvError::UnknownEncoding { raw }),
+    }
+}
+
+pub(crate) fn decode_op(raw: u32) -> Result<RiscvInstruction, RiscvError> {
+    match (funct7(raw), funct3(raw)) {
+        (0x00, 0x0) => Ok(RiscvInstruction::Add {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x20, 0x0) => Ok(RiscvInstruction::Sub {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x00, 0x1) => Ok(RiscvInstruction::Sll {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x00, 0x2) => Ok(RiscvInstruction::Slt {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x00, 0x3) => Ok(RiscvInstruction::Sltu {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x00, 0x4) => Ok(RiscvInstruction::Xor {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x00, 0x5) => Ok(RiscvInstruction::Srl {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x20, 0x5) => Ok(RiscvInstruction::Sra {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x00, 0x6) => Ok(RiscvInstruction::Or {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x00, 0x7) => Ok(RiscvInstruction::And {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x01, 0x0) => Ok(RiscvInstruction::Mul {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x01, 0x1) => Ok(RiscvInstruction::Mulh {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x01, 0x2) => Ok(RiscvInstruction::Mulhsu {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x01, 0x3) => Ok(RiscvInstruction::Mulhu {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x01, 0x4) => Ok(RiscvInstruction::Div {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x01, 0x5) => Ok(RiscvInstruction::Divu {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x01, 0x6) => Ok(RiscvInstruction::Rem {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x01, 0x7) => Ok(RiscvInstruction::Remu {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        _ => Err(RiscvError::UnknownEncoding { raw }),
+    }
+}
+
+pub(crate) fn decode_op_32(raw: u32) -> Result<RiscvInstruction, RiscvError> {
+    match (funct7(raw), funct3(raw)) {
+        (0x00, 0x0) => Ok(RiscvInstruction::Addw {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x20, 0x0) => Ok(RiscvInstruction::Subw {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x00, 0x1) => Ok(RiscvInstruction::Sllw {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x00, 0x5) => Ok(RiscvInstruction::Srlw {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x20, 0x5) => Ok(RiscvInstruction::Sraw {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x01, 0x0) => Ok(RiscvInstruction::Mulw {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x01, 0x4) => Ok(RiscvInstruction::Divw {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x01, 0x5) => Ok(RiscvInstruction::Divuw {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x01, 0x6) => Ok(RiscvInstruction::Remw {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        (0x01, 0x7) => Ok(RiscvInstruction::Remuw {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+        }),
+        _ => Err(RiscvError::UnknownEncoding { raw }),
+    }
+}
+
+pub(crate) fn decode_branch(raw: u32) -> Result<RiscvInstruction, RiscvError> {
+    match funct3(raw) {
+        0x0 => Ok(RiscvInstruction::Beq {
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+            offset: Immediate::new(b_imm(raw)),
+        }),
+        0x1 => Ok(RiscvInstruction::Bne {
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+            offset: Immediate::new(b_imm(raw)),
+        }),
+        0x4 => Ok(RiscvInstruction::Blt {
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+            offset: Immediate::new(b_imm(raw)),
+        }),
+        0x5 => Ok(RiscvInstruction::Bge {
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+            offset: Immediate::new(b_imm(raw)),
+        }),
+        0x6 => Ok(RiscvInstruction::Bltu {
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+            offset: Immediate::new(b_imm(raw)),
+        }),
+        0x7 => Ok(RiscvInstruction::Bgeu {
+            rs1: rs1(raw),
+            rs2: rs2(raw),
+            offset: Immediate::new(b_imm(raw)),
+        }),
+        _ => Err(RiscvError::UnknownEncoding { raw }),
+    }
+}
+
+pub(crate) fn decode_jalr(raw: u32) -> Result<RiscvInstruction, RiscvError> {
+    match funct3(raw) {
+        0x0 => Ok(RiscvInstruction::Jalr {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            offset: Immediate::new(i_imm(raw)),
+        }),
         _ => Err(RiscvError::UnknownEncoding { raw }),
     }
 }

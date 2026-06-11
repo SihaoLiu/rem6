@@ -303,6 +303,30 @@ pub enum RiscvInstruction {
         rs1: FloatRegister,
         rs2: FloatRegister,
     },
+    FloatMultiplyAddS {
+        rd: FloatRegister,
+        rs1: FloatRegister,
+        rs2: FloatRegister,
+        rs3: FloatRegister,
+    },
+    FloatMultiplySubtractS {
+        rd: FloatRegister,
+        rs1: FloatRegister,
+        rs2: FloatRegister,
+        rs3: FloatRegister,
+    },
+    FloatNegativeMultiplySubtractS {
+        rd: FloatRegister,
+        rs1: FloatRegister,
+        rs2: FloatRegister,
+        rs3: FloatRegister,
+    },
+    FloatNegativeMultiplyAddS {
+        rd: FloatRegister,
+        rs1: FloatRegister,
+        rs2: FloatRegister,
+        rs3: FloatRegister,
+    },
     FloatSqrtS {
         rd: FloatRegister,
         rs1: FloatRegister,
@@ -414,6 +438,30 @@ pub enum RiscvInstruction {
         rd: FloatRegister,
         rs1: FloatRegister,
         rs2: FloatRegister,
+    },
+    FloatMultiplyAddD {
+        rd: FloatRegister,
+        rs1: FloatRegister,
+        rs2: FloatRegister,
+        rs3: FloatRegister,
+    },
+    FloatMultiplySubtractD {
+        rd: FloatRegister,
+        rs1: FloatRegister,
+        rs2: FloatRegister,
+        rs3: FloatRegister,
+    },
+    FloatNegativeMultiplySubtractD {
+        rd: FloatRegister,
+        rs1: FloatRegister,
+        rs2: FloatRegister,
+        rs3: FloatRegister,
+    },
+    FloatNegativeMultiplyAddD {
+        rd: FloatRegister,
+        rs1: FloatRegister,
+        rs2: FloatRegister,
+        rs3: FloatRegister,
     },
     FloatSqrtD {
         rd: FloatRegister,

@@ -1,4 +1,4 @@
-use crate::encoding::{funct3, funct7, i_imm, rd, rs1, rs2, s_imm};
+use crate::encoding::{funct2, funct3, funct7, i_imm, rd, rs1, rs2, rs3, s_imm};
 use crate::{
     FloatRegister, FloatRegisterWrite, Immediate, MemoryWidth, Register, RiscvError,
     RiscvHartState, RiscvInstruction,
@@ -264,6 +264,60 @@ pub(crate) fn decode_float_op(raw: u32) -> Result<RiscvInstruction, RiscvError> 
     }
 }
 
+pub(crate) fn decode_float_multiply_add(raw: u32) -> Result<RiscvInstruction, RiscvError> {
+    match (raw & 0x7f, funct2(raw), funct3(raw)) {
+        (0x43, 0x0, 0x0) => Ok(RiscvInstruction::FloatMultiplyAddS {
+            rd: float_rd(raw),
+            rs1: float_rs1(raw),
+            rs2: float_rs2(raw),
+            rs3: float_rs3(raw),
+        }),
+        (0x43, 0x1, 0x0) => Ok(RiscvInstruction::FloatMultiplyAddD {
+            rd: float_rd(raw),
+            rs1: float_rs1(raw),
+            rs2: float_rs2(raw),
+            rs3: float_rs3(raw),
+        }),
+        (0x47, 0x0, 0x0) => Ok(RiscvInstruction::FloatMultiplySubtractS {
+            rd: float_rd(raw),
+            rs1: float_rs1(raw),
+            rs2: float_rs2(raw),
+            rs3: float_rs3(raw),
+        }),
+        (0x47, 0x1, 0x0) => Ok(RiscvInstruction::FloatMultiplySubtractD {
+            rd: float_rd(raw),
+            rs1: float_rs1(raw),
+            rs2: float_rs2(raw),
+            rs3: float_rs3(raw),
+        }),
+        (0x4b, 0x0, 0x0) => Ok(RiscvInstruction::FloatNegativeMultiplySubtractS {
+            rd: float_rd(raw),
+            rs1: float_rs1(raw),
+            rs2: float_rs2(raw),
+            rs3: float_rs3(raw),
+        }),
+        (0x4b, 0x1, 0x0) => Ok(RiscvInstruction::FloatNegativeMultiplySubtractD {
+            rd: float_rd(raw),
+            rs1: float_rs1(raw),
+            rs2: float_rs2(raw),
+            rs3: float_rs3(raw),
+        }),
+        (0x4f, 0x0, 0x0) => Ok(RiscvInstruction::FloatNegativeMultiplyAddS {
+            rd: float_rd(raw),
+            rs1: float_rs1(raw),
+            rs2: float_rs2(raw),
+            rs3: float_rs3(raw),
+        }),
+        (0x4f, 0x1, 0x0) => Ok(RiscvInstruction::FloatNegativeMultiplyAddD {
+            rd: float_rd(raw),
+            rs1: float_rs1(raw),
+            rs2: float_rs2(raw),
+            rs3: float_rs3(raw),
+        }),
+        _ => Err(RiscvError::UnknownEncoding { raw }),
+    }
+}
+
 fn add_double(lhs: u64, rhs: u64) -> u64 {
     (f64::from_bits(lhs) + f64::from_bits(rhs)).to_bits()
 }
@@ -297,6 +351,47 @@ pub(crate) fn float_register_write(
         RiscvInstruction::FloatConvertSFromD { rd, .. } => (rd, convert_double_to_single(lhs)),
         RiscvInstruction::FloatConvertDFromS { rd, .. } => (rd, convert_single_to_double(lhs)),
         _ => unreachable!("non-float-register instruction dispatched to float register write"),
+    }
+}
+
+pub(crate) fn float_register_write_ternary(
+    instruction: RiscvInstruction,
+    lhs: u64,
+    rhs: u64,
+    addend: u64,
+) -> (FloatRegister, u64) {
+    match instruction {
+        RiscvInstruction::FloatMultiplyAddS { rd, .. } => {
+            (rd, multiply_add_single(lhs, rhs, addend))
+        }
+        RiscvInstruction::FloatMultiplyAddD { rd, .. } => {
+            (rd, multiply_add_double(lhs, rhs, addend))
+        }
+        RiscvInstruction::FloatMultiplySubtractS { rd, .. } => (
+            rd,
+            multiply_add_single(lhs, rhs, sign_negate_single(addend)),
+        ),
+        RiscvInstruction::FloatMultiplySubtractD { rd, .. } => (
+            rd,
+            multiply_add_double(lhs, rhs, sign_negate_double(addend)),
+        ),
+        RiscvInstruction::FloatNegativeMultiplySubtractS { rd, .. } => (
+            rd,
+            multiply_add_single(sign_negate_single(lhs), rhs, addend),
+        ),
+        RiscvInstruction::FloatNegativeMultiplySubtractD { rd, .. } => (
+            rd,
+            multiply_add_double(sign_negate_double(lhs), rhs, addend),
+        ),
+        RiscvInstruction::FloatNegativeMultiplyAddS { rd, .. } => (
+            rd,
+            multiply_add_single(sign_negate_single(lhs), rhs, sign_negate_single(addend)),
+        ),
+        RiscvInstruction::FloatNegativeMultiplyAddD { rd, .. } => (
+            rd,
+            multiply_add_double(sign_negate_double(lhs), rhs, sign_negate_double(addend)),
+        ),
+        _ => unreachable!("non-fused-float instruction dispatched to ternary float register write"),
     }
 }
 
@@ -419,6 +514,19 @@ fn div_single(lhs: u64, rhs: u64) -> u64 {
     box_canonical_single(f32::from_bits(unbox_single(lhs)) / f32::from_bits(unbox_single(rhs)))
 }
 
+fn multiply_add_single(lhs: u64, rhs: u64, addend: u64) -> u64 {
+    box_canonical_single(f32::from_bits(unbox_single(lhs)).mul_add(
+        f32::from_bits(unbox_single(rhs)),
+        f32::from_bits(unbox_single(addend)),
+    ))
+}
+
+fn multiply_add_double(lhs: u64, rhs: u64, addend: u64) -> u64 {
+    f64::from_bits(lhs)
+        .mul_add(f64::from_bits(rhs), f64::from_bits(addend))
+        .to_bits()
+}
+
 fn sqrt_single(value: u64) -> u64 {
     box_canonical_single(f32::from_bits(unbox_single(value)).sqrt())
 }
@@ -438,6 +546,14 @@ fn sign_inject_single(lhs: u64, rhs: u64) -> u64 {
 
 fn sign_inject_double(lhs: u64, rhs: u64) -> u64 {
     (lhs & !DOUBLE_SIGN_BIT) | (rhs & DOUBLE_SIGN_BIT)
+}
+
+fn sign_negate_single(value: u64) -> u64 {
+    box_single(unbox_single(value) ^ SINGLE_SIGN_BIT)
+}
+
+fn sign_negate_double(value: u64) -> u64 {
+    value ^ DOUBLE_SIGN_BIT
 }
 
 fn convert_signed_word_to_single(value: u64) -> u64 {
@@ -875,4 +991,8 @@ fn float_rs1(raw: u32) -> FloatRegister {
 
 fn float_rs2(raw: u32) -> FloatRegister {
     FloatRegister::from_field(rs2(raw).index().into())
+}
+
+fn float_rs3(raw: u32) -> FloatRegister {
+    FloatRegister::from_field(rs3(raw).index().into())
 }

@@ -12,6 +12,16 @@ fn r_type(funct7: u32, rs2: u8, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u3
         | opcode
 }
 
+fn r4_type(rs3: u8, funct2: u32, rs2: u8, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
+    (u32::from(rs3) << 27)
+        | (funct2 << 25)
+        | (u32::from(rs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (funct3 << 12)
+        | (u32::from(rd) << 7)
+        | opcode
+}
+
 fn i_type(imm: i32, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
     (((imm as u32) & 0x0fff) << 20)
         | (u32::from(rs1) << 15)
@@ -275,6 +285,52 @@ fn decoder_accepts_rv64f_single_integer_conversions() {
 }
 
 #[test]
+fn decoder_accepts_rv64f_fused_multiply_add_operations() {
+    let cases = [
+        (
+            r4_type(4, 0, 3, 2, 0x0, 5, 0x43),
+            RiscvInstruction::FloatMultiplyAddS {
+                rd: freg(5),
+                rs1: freg(2),
+                rs2: freg(3),
+                rs3: freg(4),
+            },
+        ),
+        (
+            r4_type(4, 0, 3, 2, 0x0, 5, 0x47),
+            RiscvInstruction::FloatMultiplySubtractS {
+                rd: freg(5),
+                rs1: freg(2),
+                rs2: freg(3),
+                rs3: freg(4),
+            },
+        ),
+        (
+            r4_type(4, 0, 3, 2, 0x0, 5, 0x4b),
+            RiscvInstruction::FloatNegativeMultiplySubtractS {
+                rd: freg(5),
+                rs1: freg(2),
+                rs2: freg(3),
+                rs3: freg(4),
+            },
+        ),
+        (
+            r4_type(4, 0, 3, 2, 0x0, 5, 0x4f),
+            RiscvInstruction::FloatNegativeMultiplyAddS {
+                rd: freg(5),
+                rs1: freg(2),
+                rs2: freg(3),
+                rs3: freg(4),
+            },
+        ),
+    ];
+
+    for (raw, expected) in cases {
+        assert_eq!(RiscvInstruction::decode(raw).unwrap(), expected);
+    }
+}
+
+#[test]
 fn hart_executes_rv64f_rne_arithmetic_and_records_nan_boxed_writes() {
     let mut hart = RiscvHartState::new(0x8000);
     hart.write_float(freg(0), f32_box(9.0));
@@ -318,6 +374,65 @@ fn hart_executes_rv64f_rne_arithmetic_and_records_nan_boxed_writes() {
         .unwrap();
     assert_eq!(hart.read_float(freg(5)), f32_box(11.0));
     assert_eq!(add.register_writes(), &[]);
+}
+
+#[test]
+fn hart_executes_rv64f_fused_multiply_add_with_nan_boxing() {
+    let mut hart = RiscvHartState::new(0x8000);
+    hart.write_float(freg(1), f32_box(1.5));
+    hart.write_float(freg(2), f32_box(2.0));
+    hart.write_float(freg(3), f32_box(-0.25));
+
+    let fused = hart
+        .execute(RiscvInstruction::FloatMultiplyAddS {
+            rd: freg(4),
+            rs1: freg(1),
+            rs2: freg(2),
+            rs3: freg(3),
+        })
+        .unwrap();
+    assert_eq!(hart.read_float(freg(4)), f32_box(2.75));
+    assert_eq!(
+        fused.float_register_writes(),
+        &[FloatRegisterWrite::new(freg(4), f32_box(2.75))]
+    );
+
+    hart.execute(RiscvInstruction::FloatMultiplySubtractS {
+        rd: freg(5),
+        rs1: freg(1),
+        rs2: freg(2),
+        rs3: freg(3),
+    })
+    .unwrap();
+    assert_eq!(hart.read_float(freg(5)), f32_box(3.25));
+
+    hart.execute(RiscvInstruction::FloatNegativeMultiplySubtractS {
+        rd: freg(6),
+        rs1: freg(1),
+        rs2: freg(2),
+        rs3: freg(3),
+    })
+    .unwrap();
+    assert_eq!(hart.read_float(freg(6)), f32_box(-3.25));
+
+    hart.execute(RiscvInstruction::FloatNegativeMultiplyAddS {
+        rd: freg(7),
+        rs1: freg(1),
+        rs2: freg(2),
+        rs3: freg(3),
+    })
+    .unwrap();
+    assert_eq!(hart.read_float(freg(7)), f32_box(-2.75));
+
+    hart.write_float(freg(8), 1.0f32.to_bits().into());
+    hart.execute(RiscvInstruction::FloatMultiplyAddS {
+        rd: freg(9),
+        rs1: freg(8),
+        rs2: freg(2),
+        rs3: freg(3),
+    })
+    .unwrap();
+    assert_eq!(hart.read_float(freg(9)), box_single(0x7fc0_0000));
 }
 
 #[test]
