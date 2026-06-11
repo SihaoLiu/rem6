@@ -30,8 +30,19 @@ const RISCV_LINUX_GETTID: u64 = 178;
 const RISCV_LINUX_BRK: u64 = 214;
 const RISCV_LINUX_MUNMAP: u64 = 215;
 const RISCV_LINUX_MMAP: u64 = 222;
+const RISCV_LINUX_MPROTECT: u64 = 226;
+const RISCV_LINUX_MSYNC: u64 = 227;
+const RISCV_LINUX_MLOCK: u64 = 228;
+const RISCV_LINUX_MUNLOCK: u64 = 229;
+const RISCV_LINUX_MLOCKALL: u64 = 230;
+const RISCV_LINUX_MUNLOCKALL: u64 = 231;
+const RISCV_LINUX_MINCORE: u64 = 232;
+const RISCV_LINUX_MADVISE: u64 = 233;
+const RISCV_LINUX_MBIND: u64 = 235;
+const RISCV_LINUX_RSEQ: u64 = 293;
 const RISCV_LINUX_EBADF: u64 = 9;
 const RISCV_LINUX_EINVAL: u64 = 22;
+const RISCV_LINUX_ENOSYS: u64 = 38;
 const RISCV_LINUX_MAP_SHARED: u64 = 0x01;
 const RISCV_LINUX_MAP_PRIVATE: u64 = 0x02;
 const RISCV_LINUX_MAP_FIXED: u64 = 0x10;
@@ -403,6 +414,18 @@ impl RiscvSyscallTable {
             | RISCV_LINUX_RT_SIGTIMEDWAIT
             | RISCV_LINUX_RT_SIGQUEUEINFO
             | RISCV_LINUX_RT_SIGRETURN => Some(RiscvSyscallOutcome::Return { value: 0 }),
+            RISCV_LINUX_MPROTECT
+            | RISCV_LINUX_MSYNC
+            | RISCV_LINUX_MLOCK
+            | RISCV_LINUX_MUNLOCK
+            | RISCV_LINUX_MLOCKALL
+            | RISCV_LINUX_MUNLOCKALL
+            | RISCV_LINUX_MINCORE
+            | RISCV_LINUX_MADVISE
+            | RISCV_LINUX_MBIND => Some(RiscvSyscallOutcome::Return { value: 0 }),
+            RISCV_LINUX_RSEQ => Some(RiscvSyscallOutcome::Return {
+                value: linux_error(RISCV_LINUX_ENOSYS),
+            }),
             RISCV_LINUX_EXIT | RISCV_LINUX_EXIT_GROUP => Some(RiscvSyscallOutcome::Exit {
                 code: syscall_exit_code(request.argument(0)),
             }),
@@ -799,6 +822,48 @@ mod tests {
                 Some(RiscvSyscallOutcome::Return { value: 0 })
             );
         }
+    }
+
+    #[test]
+    fn linux_table_ignores_gem5_memory_management_advisory_syscalls() {
+        let table = RiscvSyscallTable::new();
+        let mut state = RiscvSyscallState::new(0);
+
+        for number in [
+            RISCV_LINUX_MPROTECT,
+            RISCV_LINUX_MSYNC,
+            RISCV_LINUX_MLOCK,
+            RISCV_LINUX_MUNLOCK,
+            RISCV_LINUX_MLOCKALL,
+            RISCV_LINUX_MUNLOCKALL,
+            RISCV_LINUX_MINCORE,
+            RISCV_LINUX_MADVISE,
+            RISCV_LINUX_MBIND,
+        ] {
+            assert_eq!(
+                table.handle(
+                    RiscvSyscallRequest::new(0x8000, number, [0x4000, 4096, 0, 0, 0, 0]),
+                    &mut state,
+                ),
+                Some(RiscvSyscallOutcome::Return { value: 0 })
+            );
+        }
+    }
+
+    #[test]
+    fn linux_table_returns_enosys_for_gem5_ignored_rseq() {
+        let table = RiscvSyscallTable::new();
+        let mut state = RiscvSyscallState::new(0);
+
+        assert_eq!(
+            table.handle(
+                RiscvSyscallRequest::new(0x8000, RISCV_LINUX_RSEQ, [0x4000, 32, 0, 0, 0, 0]),
+                &mut state,
+            ),
+            Some(RiscvSyscallOutcome::Return {
+                value: linux_error(RISCV_LINUX_ENOSYS)
+            })
+        );
     }
 
     #[test]
