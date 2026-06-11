@@ -6,9 +6,10 @@ use rem6_cpu::{
     RiscvCpuError, RiscvDataAccessEventKind, RiscvLoadReservation,
 };
 use rem6_isa_riscv::{
-    MemoryAccessKind, MemoryWidth, Register, RiscvFenceSet, RiscvInstruction, RiscvMemoryOrdering,
-    RiscvPmaAccessKind, RiscvPmaError, RiscvPmaRange, RiscvPmpAccessKind, RiscvPmpAddressMode,
-    RiscvPmpConfig, RiscvPmpError, RiscvPrivilegeMode, RiscvTrap, RiscvTrapKind,
+    FloatRegister, MemoryAccessKind, MemoryWidth, Register, RiscvFenceSet, RiscvInstruction,
+    RiscvMemoryOrdering, RiscvPmaAccessKind, RiscvPmaError, RiscvPmaRange, RiscvPmpAccessKind,
+    RiscvPmpAddressMode, RiscvPmpConfig, RiscvPmpError, RiscvPrivilegeMode, RiscvTrap,
+    RiscvTrapKind,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{
@@ -119,6 +120,10 @@ fn read_store_bytes(
 
 fn reg(index: u8) -> Register {
     Register::new(index).unwrap()
+}
+
+fn freg(index: u8) -> FloatRegister {
+    FloatRegister::new(index).unwrap()
 }
 
 type AtomicBinary = fn(u64, u64) -> u64;
@@ -1129,6 +1134,51 @@ fn riscv_core_issues_load_access_and_updates_register_after_response() {
         events[1].data(),
         Some(&[0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11][..])
     );
+}
+
+#[test]
+fn riscv_core_issues_float_load_and_updates_float_register_after_response() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(2), 0x9000);
+    let store = loaded_store_with_data(
+        0x8000,
+        i_type(8, 2, 0x3, 0, 0x07),
+        0x9008,
+        3.5f64.to_bits().to_le_bytes().to_vec(),
+    );
+
+    fetch_one(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+    );
+    core.execute_next_completed_fetch().unwrap().unwrap();
+    assert_eq!(core.read_float_register(freg(0)), 0);
+
+    issue_one_data_access(&core, store, &mut scheduler, &transport, MemoryTrace::new());
+
+    assert_eq!(core.read_float_register(freg(0)), 3.5f64.to_bits());
+    let events = core.data_access_events();
+    assert_eq!(
+        events.iter().map(|event| event.kind()).collect::<Vec<_>>(),
+        vec![
+            RiscvDataAccessEventKind::Issued,
+            RiscvDataAccessEventKind::Completed
+        ]
+    );
+    assert_eq!(
+        events[0].access(),
+        &MemoryAccessKind::FloatLoad {
+            rd: freg(0),
+            address: 0x9008,
+            width: MemoryWidth::Doubleword,
+        }
+    );
+    assert_eq!(events[0].operation(), MemoryOperation::ReadShared);
+    assert_eq!(events[1].data(), Some(&3.5f64.to_bits().to_le_bytes()[..]));
 }
 
 #[test]

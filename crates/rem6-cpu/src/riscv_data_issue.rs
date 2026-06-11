@@ -1,6 +1,6 @@
 use rem6_isa_riscv::{
-    AtomicMemoryOp, MemoryAccessKind, MemoryWidth, RiscvPmaAccessKind, RiscvPmpAccessKind,
-    RiscvPrivilegeMode,
+    AtomicMemoryOp, MemoryAccessKind, MemoryResponseWritebackTarget, MemoryWidth,
+    RiscvPmaAccessKind, RiscvPmpAccessKind, RiscvPrivilegeMode,
 };
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionId, PartitionedScheduler, Tick,
@@ -565,13 +565,15 @@ impl OutstandingDataAccess {
     pub(crate) fn memory_request(&self) -> Result<MemoryRequest, RiscvCpuError> {
         let line_layout = self.line_layout.expect("memory data access line layout");
         let request = match &self.access {
-            MemoryAccessKind::Load { .. } => MemoryRequest::read_shared(
-                self.request_id,
-                self.physical_address,
-                self.size,
-                line_layout,
-            )
-            .map_err(RiscvCpuError::Memory),
+            MemoryAccessKind::Load { .. } | MemoryAccessKind::FloatLoad { .. } => {
+                MemoryRequest::read_shared(
+                    self.request_id,
+                    self.physical_address,
+                    self.size,
+                    line_layout,
+                )
+                .map_err(RiscvCpuError::Memory)
+            }
             MemoryAccessKind::LoadReserved { .. } => MemoryRequest::load_locked(
                 self.request_id,
                 self.physical_address,
@@ -579,15 +581,17 @@ impl OutstandingDataAccess {
                 line_layout,
             )
             .map_err(RiscvCpuError::Memory),
-            MemoryAccessKind::Store { value, .. } => MemoryRequest::write(
-                self.request_id,
-                self.physical_address,
-                self.size,
-                store_bytes(*value, self.size),
-                ByteMask::full(self.size).map_err(RiscvCpuError::Memory)?,
-                line_layout,
-            )
-            .map_err(RiscvCpuError::Memory),
+            MemoryAccessKind::Store { value, .. } | MemoryAccessKind::FloatStore { value, .. } => {
+                MemoryRequest::write(
+                    self.request_id,
+                    self.physical_address,
+                    self.size,
+                    store_bytes(*value, self.size),
+                    ByteMask::full(self.size).map_err(RiscvCpuError::Memory)?,
+                    line_layout,
+                )
+                .map_err(RiscvCpuError::Memory)
+            }
             MemoryAccessKind::StoreConditional { value, .. } => MemoryRequest::store_conditional(
                 self.request_id,
                 self.physical_address,
@@ -691,13 +695,22 @@ fn record_load_completion(
     missing_data: &'static str,
 ) {
     match &access.access {
-        MemoryAccessKind::Load { .. } | MemoryAccessKind::AtomicMemory { .. } => {
+        MemoryAccessKind::Load { .. }
+        | MemoryAccessKind::FloatLoad { .. }
+        | MemoryAccessKind::AtomicMemory { .. } => {
             let writeback = access
                 .access
                 .read_response_writeback(data.expect(missing_data))
                 .expect("read response payload width")
                 .expect("read response writeback");
-            state.hart.write(writeback.register(), writeback.value());
+            match writeback.target() {
+                MemoryResponseWritebackTarget::Integer(register) => {
+                    state.hart.write(register, writeback.value());
+                }
+                MemoryResponseWritebackTarget::Float(register) => {
+                    state.hart.write_float(register, writeback.value());
+                }
+            }
         }
         MemoryAccessKind::LoadReserved { .. } => {
             let writeback = access
@@ -705,7 +718,9 @@ fn record_load_completion(
                 .read_response_writeback(data.expect(missing_data))
                 .expect("read response payload width")
                 .expect("read response writeback");
-            state.hart.write(writeback.register(), writeback.value());
+            state
+                .hart
+                .write(writeback.expect_integer_register(), writeback.value());
             state.reservation = Some(RiscvLoadReservation::new(
                 access.physical_address,
                 access.size,
@@ -716,26 +731,29 @@ fn record_load_completion(
             state.reservation = None;
             state.sc_progress.record_success(cpu);
         }
-        MemoryAccessKind::Store { .. } => {}
+        MemoryAccessKind::Store { .. } | MemoryAccessKind::FloatStore { .. } => {}
     }
 }
 
 pub(crate) fn access_width(access: &MemoryAccessKind) -> MemoryWidth {
     match access {
         MemoryAccessKind::Load { width, .. }
+        | MemoryAccessKind::FloatLoad { width, .. }
         | MemoryAccessKind::LoadReserved { width, .. }
         | MemoryAccessKind::StoreConditional { width, .. }
         | MemoryAccessKind::AtomicMemory { width, .. }
-        | MemoryAccessKind::Store { width, .. } => *width,
+        | MemoryAccessKind::Store { width, .. }
+        | MemoryAccessKind::FloatStore { width, .. } => *width,
     }
 }
 
 fn pmp_access_kind(access: &MemoryAccessKind) -> RiscvPmpAccessKind {
     match access {
-        MemoryAccessKind::Load { .. } | MemoryAccessKind::LoadReserved { .. } => {
-            RiscvPmpAccessKind::Read
-        }
+        MemoryAccessKind::Load { .. }
+        | MemoryAccessKind::FloatLoad { .. }
+        | MemoryAccessKind::LoadReserved { .. } => RiscvPmpAccessKind::Read,
         MemoryAccessKind::Store { .. }
+        | MemoryAccessKind::FloatStore { .. }
         | MemoryAccessKind::StoreConditional { .. }
         | MemoryAccessKind::AtomicMemory { .. } => RiscvPmpAccessKind::Write,
     }
@@ -743,10 +761,11 @@ fn pmp_access_kind(access: &MemoryAccessKind) -> RiscvPmpAccessKind {
 
 fn pma_access_kind(access: &MemoryAccessKind) -> RiscvPmaAccessKind {
     match access {
-        MemoryAccessKind::Load { .. } | MemoryAccessKind::LoadReserved { .. } => {
-            RiscvPmaAccessKind::Read
-        }
+        MemoryAccessKind::Load { .. }
+        | MemoryAccessKind::FloatLoad { .. }
+        | MemoryAccessKind::LoadReserved { .. } => RiscvPmaAccessKind::Read,
         MemoryAccessKind::Store { .. }
+        | MemoryAccessKind::FloatStore { .. }
         | MemoryAccessKind::StoreConditional { .. }
         | MemoryAccessKind::AtomicMemory { .. } => RiscvPmaAccessKind::Write,
     }
@@ -755,10 +774,12 @@ fn pma_access_kind(access: &MemoryAccessKind) -> RiscvPmaAccessKind {
 fn access_address(access: &MemoryAccessKind) -> u64 {
     match access {
         MemoryAccessKind::Load { address, .. }
+        | MemoryAccessKind::FloatLoad { address, .. }
         | MemoryAccessKind::LoadReserved { address, .. }
         | MemoryAccessKind::StoreConditional { address, .. }
         | MemoryAccessKind::AtomicMemory { address, .. }
-        | MemoryAccessKind::Store { address, .. } => *address,
+        | MemoryAccessKind::Store { address, .. }
+        | MemoryAccessKind::FloatStore { address, .. } => *address,
     }
 }
 
@@ -777,13 +798,16 @@ pub(crate) fn mmio_request(
     address: Address,
 ) -> Result<MmioRequest, RiscvCpuError> {
     match access {
-        MemoryAccessKind::Load { .. } | MemoryAccessKind::LoadReserved { .. } => {
+        MemoryAccessKind::Load { .. }
+        | MemoryAccessKind::FloatLoad { .. }
+        | MemoryAccessKind::LoadReserved { .. } => {
             MmioRequest::read(mmio_request_id(request), address, size).map_err(RiscvCpuError::Mmio)
         }
         MemoryAccessKind::AtomicMemory { .. } => {
             Err(RiscvCpuError::UnsupportedMmioAtomic { request, address })
         }
         MemoryAccessKind::Store { value, .. }
+        | MemoryAccessKind::FloatStore { value, .. }
         | MemoryAccessKind::StoreConditional { value, .. } => MmioRequest::write(
             mmio_request_id(request),
             address,

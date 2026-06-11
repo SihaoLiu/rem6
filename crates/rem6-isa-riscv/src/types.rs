@@ -25,6 +25,27 @@ impl Register {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct FloatRegister(u8);
+
+impl FloatRegister {
+    pub fn new(index: u8) -> Result<Self, RiscvError> {
+        if index < 32 {
+            Ok(Self(index))
+        } else {
+            Err(RiscvError::InvalidRegister { index })
+        }
+    }
+
+    pub(crate) const fn from_field(index: u32) -> Self {
+        Self(index as u8)
+    }
+
+    pub const fn index(self) -> u8 {
+        self.0
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Immediate(i64);
 
@@ -58,18 +79,50 @@ impl MemoryWidth {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MemoryResponseWritebackTarget {
+    Integer(Register),
+    Float(FloatRegister),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MemoryResponseWriteback {
-    register: Register,
+    target: MemoryResponseWritebackTarget,
     value: u64,
 }
 
 impl MemoryResponseWriteback {
     pub const fn new(register: Register, value: u64) -> Self {
-        Self { register, value }
+        Self {
+            target: MemoryResponseWritebackTarget::Integer(register),
+            value,
+        }
     }
 
-    pub const fn register(self) -> Register {
-        self.register
+    pub const fn new_float(register: FloatRegister, value: u64) -> Self {
+        Self {
+            target: MemoryResponseWritebackTarget::Float(register),
+            value,
+        }
+    }
+
+    pub const fn target(self) -> MemoryResponseWritebackTarget {
+        self.target
+    }
+
+    pub const fn integer_register(self) -> Option<Register> {
+        match self.target {
+            MemoryResponseWritebackTarget::Integer(register) => Some(register),
+            MemoryResponseWritebackTarget::Float(_) => None,
+        }
+    }
+
+    pub fn expect_integer_register(self) -> Register {
+        match self.target {
+            MemoryResponseWritebackTarget::Integer(register) => register,
+            MemoryResponseWritebackTarget::Float(_) => {
+                panic!("floating-point writeback has no integer register")
+            }
+        }
     }
 
     pub const fn value(self) -> u64 {
@@ -187,6 +240,11 @@ pub enum MemoryAccessKind {
         width: MemoryWidth,
         signed: bool,
     },
+    FloatLoad {
+        rd: FloatRegister,
+        address: u64,
+        width: MemoryWidth,
+    },
     LoadReserved {
         rd: Register,
         address: u64,
@@ -216,6 +274,11 @@ pub enum MemoryAccessKind {
         width: MemoryWidth,
         value: u64,
     },
+    FloatStore {
+        address: u64,
+        width: MemoryWidth,
+        value: u64,
+    },
 }
 
 impl MemoryAccessKind {
@@ -230,7 +293,10 @@ impl MemoryAccessKind {
             | Self::AtomicMemory {
                 acquire, release, ..
             } => aq_rl_ordering(*acquire, *release),
-            Self::Load { .. } | Self::Store { .. } => RiscvMemoryOrdering::none(),
+            Self::Load { .. }
+            | Self::FloatLoad { .. }
+            | Self::Store { .. }
+            | Self::FloatStore { .. } => RiscvMemoryOrdering::none(),
         }
     }
 
@@ -242,18 +308,30 @@ impl MemoryAccessKind {
             return Ok(None);
         };
         let value = read_response_value(data, width, signed)?;
-        Ok(Some(MemoryResponseWriteback::new(register, value)))
+        Ok(Some(match register {
+            MemoryResponseWritebackTarget::Integer(register) => {
+                MemoryResponseWriteback::new(register, value)
+            }
+            MemoryResponseWritebackTarget::Float(register) => {
+                MemoryResponseWriteback::new_float(register, value)
+            }
+        }))
     }
 
-    fn read_response_target(&self) -> Option<(Register, MemoryWidth, bool)> {
+    fn read_response_target(&self) -> Option<(MemoryResponseWritebackTarget, MemoryWidth, bool)> {
         match self {
             Self::Load {
                 rd, width, signed, ..
-            } => Some((*rd, *width, *signed)),
-            Self::LoadReserved { rd, width, .. } | Self::AtomicMemory { rd, width, .. } => {
-                Some((*rd, *width, *width == MemoryWidth::Word))
+            } => Some((MemoryResponseWritebackTarget::Integer(*rd), *width, *signed)),
+            Self::FloatLoad { rd, width, .. } => {
+                Some((MemoryResponseWritebackTarget::Float(*rd), *width, false))
             }
-            Self::StoreConditional { .. } | Self::Store { .. } => None,
+            Self::LoadReserved { rd, width, .. } | Self::AtomicMemory { rd, width, .. } => Some((
+                MemoryResponseWritebackTarget::Integer(*rd),
+                *width,
+                *width == MemoryWidth::Word,
+            )),
+            Self::StoreConditional { .. } | Self::Store { .. } | Self::FloatStore { .. } => None,
         }
     }
 }

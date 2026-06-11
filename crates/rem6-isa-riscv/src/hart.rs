@@ -1,5 +1,5 @@
 use crate::{
-    Register, RiscvControlFlowSnapshot, RiscvControlFlowUpdate, RiscvCounterBank,
+    FloatRegister, Register, RiscvControlFlowSnapshot, RiscvControlFlowUpdate, RiscvCounterBank,
     RiscvCounterSnapshot, RiscvInterruptCsr, RiscvPrivilegeMode, RiscvStatusWord,
     RiscvSv39AccessContext, RiscvVectorConfig,
 };
@@ -26,6 +26,7 @@ pub struct RiscvHartState {
     pub(crate) status: RiscvStatusWord,
     pub(crate) vector_config: RiscvVectorConfig,
     pub(crate) registers: [u64; 32],
+    pub(crate) float_registers: [u64; 32],
 }
 
 impl RiscvHartState {
@@ -55,6 +56,7 @@ impl RiscvHartState {
             status: RiscvStatusWord::new(0),
             vector_config: RiscvVectorConfig::invalid(),
             registers: [0; 32],
+            float_registers: [0; 32],
         }
     }
 
@@ -297,5 +299,13 @@ impl RiscvHartState {
         if !register.is_zero() {
             self.registers[register.index() as usize] = value;
         }
+    }
+
+    pub fn read_float(&self, register: FloatRegister) -> u64 {
+        self.float_registers[register.index() as usize]
+    }
+
+    pub fn write_float(&mut self, register: FloatRegister, value: u64) {
+        self.float_registers[register.index() as usize] = value;
     }
 }

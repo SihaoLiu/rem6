@@ -1,13 +1,16 @@
+mod atomic;
 mod compressed;
 mod control_flow;
 mod csr;
 mod decode;
 mod encoding;
 mod error;
+mod float;
 mod gdb_target;
 mod hart;
 mod instruction;
 mod integer;
+mod load_store;
 mod pma;
 mod pmp;
 mod pseudo;
@@ -18,8 +21,7 @@ mod types;
 mod vector;
 
 use encoding::{
-    aq, b_imm, funct3, funct5, funct7, i_imm, j_imm, rd, rl, rs1, rs2, s_imm, shamt32, shamt64,
-    shift_funct6, u_imm,
+    b_imm, funct3, funct7, i_imm, j_imm, rd, rs1, rs2, shamt32, shamt64, shift_funct6, u_imm,
 };
 use instruction::csr_privilege_allowed;
 use integer::{
@@ -51,15 +53,19 @@ pub use pmp::{
     RiscvPmpRange, RiscvPmpSnapshot, RiscvPmpSnapshotEntry, RiscvPmpTable, RiscvPrivilegeMode,
 };
 pub use pseudo::RiscvPseudoOp;
-pub use record::{RegisterWrite, RiscvExecutionRecord, RiscvSystemEvent, RiscvTrap, RiscvTrapKind};
+pub use record::{
+    FloatRegisterWrite, RegisterWrite, RiscvExecutionRecord, RiscvSystemEvent, RiscvTrap,
+    RiscvTrapKind,
+};
 pub use sv39::{
     walk_sv39_page_table, walk_sv39_page_table_with_context, RiscvSv39AccessContext,
     RiscvSv39AccessKind, RiscvSv39PageFault, RiscvSv39PageTableLevel, RiscvSv39Pte,
     RiscvSv39VirtualAddress, RiscvSv39WalkAdvance, RiscvSv39WalkResult, RiscvSv39WalkState,
 };
 pub use types::{
-    AtomicMemoryOp, Immediate, MemoryAccessKind, MemoryResponseError, MemoryResponseWriteback,
-    MemoryWidth, Register, RiscvFenceSet, RiscvMemoryOrdering,
+    AtomicMemoryOp, FloatRegister, Immediate, MemoryAccessKind, MemoryResponseError,
+    MemoryResponseWriteback, MemoryResponseWritebackTarget, MemoryWidth, Register, RiscvFenceSet,
+    RiscvMemoryOrdering,
 };
 pub use vector::{
     RiscvInstructionFlags, RiscvVectorCompressPlan, RiscvVectorCompressResult, RiscvVectorElements,
@@ -86,7 +92,8 @@ impl RiscvInstruction {
 
         let opcode = raw & 0x7f;
         let instruction = match opcode {
-            0x03 => decode_load(raw),
+            0x03 => load_store::decode_integer_load(raw),
+            0x07 => float::decode_float_load(raw),
             0x0f => decode::decode_fence(raw),
             0x13 => decode_op_imm(raw),
             0x17 => Ok(Self::Auipc {
@@ -94,8 +101,9 @@ impl RiscvInstruction {
                 imm: Immediate::new(u_imm(raw)),
             }),
             0x1b => decode_op_imm_32(raw),
-            0x23 => decode_store(raw),
-            0x2f => decode_atomic(raw),
+            0x23 => load_store::decode_integer_store(raw),
+            0x27 => float::decode_float_store(raw),
+            0x2f => atomic::decode_atomic(raw),
             0x33 => decode_op(raw),
             0x3b => decode_op_32(raw),
             0x37 => Ok(Self::Lui {
@@ -109,6 +117,7 @@ impl RiscvInstruction {
                 offset: Immediate::new(j_imm(raw)),
             }),
             0x73 => decode_system(raw),
+            0x53 => float::decode_float_op(raw),
             0x7b => pseudo::decode_gem5_pseudo_op(raw),
             _ => Err(RiscvError::UnknownEncoding { raw }),
         }?;
@@ -431,96 +440,6 @@ fn decode_jalr(raw: u32) -> Result<RiscvInstruction, RiscvError> {
     }
 }
 
-fn decode_load(raw: u32) -> Result<RiscvInstruction, RiscvError> {
-    let (width, signed) = match funct3(raw) {
-        0x0 => (MemoryWidth::Byte, true),
-        0x1 => (MemoryWidth::Halfword, true),
-        0x2 => (MemoryWidth::Word, true),
-        0x3 => (MemoryWidth::Doubleword, true),
-        0x4 => (MemoryWidth::Byte, false),
-        0x5 => (MemoryWidth::Halfword, false),
-        0x6 => (MemoryWidth::Word, false),
-        _ => return Err(RiscvError::UnknownEncoding { raw }),
-    };
-
-    Ok(RiscvInstruction::Load {
-        rd: rd(raw),
-        rs1: rs1(raw),
-        offset: Immediate::new(i_imm(raw)),
-        width,
-        signed,
-    })
-}
-
-fn decode_store(raw: u32) -> Result<RiscvInstruction, RiscvError> {
-    let width = match funct3(raw) {
-        0x0 => MemoryWidth::Byte,
-        0x1 => MemoryWidth::Halfword,
-        0x2 => MemoryWidth::Word,
-        0x3 => MemoryWidth::Doubleword,
-        _ => return Err(RiscvError::UnknownEncoding { raw }),
-    };
-
-    Ok(RiscvInstruction::Store {
-        rs1: rs1(raw),
-        rs2: rs2(raw),
-        offset: Immediate::new(s_imm(raw)),
-        width,
-    })
-}
-
-fn decode_atomic(raw: u32) -> Result<RiscvInstruction, RiscvError> {
-    let width = match funct3(raw) {
-        0x2 => MemoryWidth::Word,
-        0x3 => MemoryWidth::Doubleword,
-        _ => return Err(RiscvError::UnknownEncoding { raw }),
-    };
-
-    match (funct5(raw), rs2(raw).index()) {
-        (0x02, 0) => Ok(RiscvInstruction::LoadReserved {
-            rd: rd(raw),
-            rs1: rs1(raw),
-            width,
-            acquire: aq(raw),
-            release: rl(raw),
-        }),
-        (0x03, _) => Ok(RiscvInstruction::StoreConditional {
-            rd: rd(raw),
-            rs1: rs1(raw),
-            rs2: rs2(raw),
-            width,
-            acquire: aq(raw),
-            release: rl(raw),
-        }),
-        (funct5, _) => atomic_memory_op(funct5)
-            .map(|op| RiscvInstruction::AtomicMemory {
-                rd: rd(raw),
-                rs1: rs1(raw),
-                rs2: rs2(raw),
-                width,
-                op,
-                acquire: aq(raw),
-                release: rl(raw),
-            })
-            .ok_or(RiscvError::UnknownEncoding { raw }),
-    }
-}
-
-fn atomic_memory_op(funct5: u32) -> Option<AtomicMemoryOp> {
-    match funct5 {
-        0x00 => Some(AtomicMemoryOp::Add),
-        0x01 => Some(AtomicMemoryOp::Swap),
-        0x04 => Some(AtomicMemoryOp::Xor),
-        0x08 => Some(AtomicMemoryOp::Or),
-        0x0c => Some(AtomicMemoryOp::And),
-        0x10 => Some(AtomicMemoryOp::MinSigned),
-        0x14 => Some(AtomicMemoryOp::MaxSigned),
-        0x18 => Some(AtomicMemoryOp::MinUnsigned),
-        0x1c => Some(AtomicMemoryOp::MaxUnsigned),
-        _ => None,
-    }
-}
-
 impl RiscvHartState {
     pub fn execute(
         &mut self,
@@ -555,6 +474,7 @@ impl RiscvHartState {
                 offset: instruction_bytes,
             })?;
         let mut register_writes = Vec::new();
+        let mut float_register_writes = Vec::new();
         let mut memory_access = None;
         let mut system_event = None;
 
@@ -818,6 +738,32 @@ impl RiscvHartState {
                     width,
                     value: self.read(rs2),
                 });
+            }
+            RiscvInstruction::FloatLoad {
+                rd,
+                rs1,
+                offset,
+                width,
+            } => {
+                let address = add_signed(self.read(rs1), offset.value())?;
+                memory_access = Some(MemoryAccessKind::FloatLoad { rd, address, width });
+            }
+            RiscvInstruction::FloatStore {
+                rs1,
+                rs2,
+                offset,
+                width,
+            } => {
+                let address = add_signed(self.read(rs1), offset.value())?;
+                memory_access = Some(MemoryAccessKind::FloatStore {
+                    address,
+                    width,
+                    value: self.read_float(rs2),
+                });
+            }
+            RiscvInstruction::FloatAddD { rd, rs1, rs2 } => {
+                let value = float::add_double(self.read_float(rs1), self.read_float(rs2));
+                write_float_register(self, &mut float_register_writes, rd, value);
             }
             RiscvInstruction::LoadReserved {
                 rd,
@@ -1125,6 +1071,7 @@ impl RiscvHartState {
         match system_event {
             Some(system_event) => {
                 debug_assert!(memory_access.is_none());
+                debug_assert!(float_register_writes.is_empty());
                 Ok(RiscvExecutionRecord::with_system_event_and_register_writes_with_instruction_bytes(
                     instruction,
                     instruction_bytes_u8,
@@ -1134,14 +1081,17 @@ impl RiscvHartState {
                     register_writes,
                 ))
             }
-            None => Ok(RiscvExecutionRecord::new_with_instruction_bytes(
-                instruction,
-                instruction_bytes_u8,
-                pc,
-                next_pc,
-                register_writes,
-                memory_access,
-            )),
+            None => Ok(
+                RiscvExecutionRecord::new_with_instruction_bytes_and_float_register_writes(
+                    instruction,
+                    instruction_bytes_u8,
+                    pc,
+                    next_pc,
+                    register_writes,
+                    float_register_writes,
+                    memory_access,
+                ),
+            ),
         }
     }
 }
@@ -1209,6 +1159,16 @@ fn read_machine_trap_csr(hart: &RiscvHartState, csr: RiscvMachineTrapCsr) -> u64
         RiscvMachineTrapCsr::Mcause => hart.machine_trap_cause(),
         RiscvMachineTrapCsr::Mtval => hart.machine_trap_value(),
     }
+}
+
+fn write_float_register(
+    hart: &mut RiscvHartState,
+    writes: &mut Vec<FloatRegisterWrite>,
+    register: FloatRegister,
+    value: u64,
+) {
+    hart.write_float(register, value);
+    writes.push(FloatRegisterWrite::new(register, value));
 }
 
 fn write_machine_trap_csr(

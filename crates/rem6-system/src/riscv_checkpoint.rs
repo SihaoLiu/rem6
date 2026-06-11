@@ -5,14 +5,18 @@ use std::fmt;
 use rem6_checkpoint::{CheckpointComponentId, CheckpointError, CheckpointRegistry};
 use rem6_cpu::RiscvCore;
 use rem6_isa_riscv::{
-    Register, RiscvPmpConfig, RiscvPmpError, RiscvPmpSnapshot, RiscvPmpSnapshotEntry, RiscvPmpTable,
+    FloatRegister, Register, RiscvPmpConfig, RiscvPmpError, RiscvPmpSnapshot,
+    RiscvPmpSnapshotEntry, RiscvPmpTable,
 };
 use rem6_memory::Address;
 
+const FREGS_CHUNK: &str = "fregs";
 const PC_CHUNK: &str = "pc";
 const XREGS_CHUNK: &str = "xregs";
 const PMP_CHUNK: &str = "pmp";
 const U64_BYTES: usize = 8;
+const FREG_COUNT: usize = 32;
+const FREG_BYTES: usize = FREG_COUNT * U64_BYTES;
 const XREG_COUNT: usize = 32;
 const XREG_BYTES: usize = XREG_COUNT * U64_BYTES;
 const PMP_HEADER_BYTES: usize = 2;
@@ -23,6 +27,7 @@ pub struct RiscvCoreCheckpointRecord {
     component: CheckpointComponentId,
     pc: Address,
     registers: Vec<(Register, u64)>,
+    float_registers: Vec<(FloatRegister, u64)>,
     pmp_snapshot: RiscvPmpSnapshot,
 }
 
@@ -33,10 +38,27 @@ impl RiscvCoreCheckpointRecord {
         registers: Vec<(Register, u64)>,
         pmp_snapshot: RiscvPmpSnapshot,
     ) -> Self {
+        Self::new_with_float_registers(
+            component,
+            pc,
+            registers,
+            zero_float_register_values(),
+            pmp_snapshot,
+        )
+    }
+
+    pub fn new_with_float_registers(
+        component: CheckpointComponentId,
+        pc: Address,
+        registers: Vec<(Register, u64)>,
+        float_registers: Vec<(FloatRegister, u64)>,
+        pmp_snapshot: RiscvPmpSnapshot,
+    ) -> Self {
         Self {
             component,
             pc,
             registers,
+            float_registers,
             pmp_snapshot,
         }
     }
@@ -53,12 +75,22 @@ impl RiscvCoreCheckpointRecord {
         &self.registers
     }
 
+    pub fn float_registers(&self) -> &[(FloatRegister, u64)] {
+        &self.float_registers
+    }
+
     pub fn pmp_snapshot(&self) -> &RiscvPmpSnapshot {
         &self.pmp_snapshot
     }
 
     pub fn register(&self, register: Register) -> Option<u64> {
         self.registers
+            .iter()
+            .find_map(|(current, value)| (*current == register).then_some(*value))
+    }
+
+    pub fn float_register(&self, register: FloatRegister) -> Option<u64> {
+        self.float_registers
             .iter()
             .find_map(|(current, value)| (*current == register).then_some(*value))
     }
@@ -104,6 +136,11 @@ impl RiscvCoreCheckpointPort {
         )?;
         registry.write_chunk(
             &self.component,
+            FREGS_CHUNK,
+            encode_float_registers(record.float_registers()),
+        )?;
+        registry.write_chunk(
+            &self.component,
             PMP_CHUNK,
             encode_pmp_snapshot(record.pmp_snapshot()),
         )?;
@@ -141,6 +178,10 @@ impl RiscvCoreCheckpointPort {
                     name: XREGS_CHUNK.to_string(),
                 })?,
         )?;
+        let float_registers = match registry.chunk(&self.component, FREGS_CHUNK) {
+            Some(payload) => decode_float_registers(&self.component, payload)?,
+            None => zero_float_register_values(),
+        };
         let pmp_snapshot = decode_pmp_snapshot(
             &self.component,
             registry.chunk(&self.component, PMP_CHUNK).ok_or_else(|| {
@@ -152,10 +193,11 @@ impl RiscvCoreCheckpointPort {
             self.core.pmp_entry_count(),
         )?;
 
-        Ok(RiscvCoreCheckpointRecord::new(
+        Ok(RiscvCoreCheckpointRecord::new_with_float_registers(
             self.component.clone(),
             pc,
             registers,
+            float_registers,
             pmp_snapshot,
         ))
     }
@@ -174,14 +216,18 @@ impl RiscvCoreCheckpointPort {
         for (register, value) in record.registers() {
             self.core.write_register(*register, *value);
         }
+        for (register, value) in record.float_registers() {
+            self.core.write_float_register(*register, *value);
+        }
         Ok(())
     }
 
     fn capture_record(&self) -> RiscvCoreCheckpointRecord {
-        RiscvCoreCheckpointRecord::new(
+        RiscvCoreCheckpointRecord::new_with_float_registers(
             self.component.clone(),
             self.core.pc(),
             all_register_values(&self.core),
+            all_float_register_values(&self.core),
             self.core.pmp_snapshot(),
         )
     }
@@ -336,8 +382,35 @@ fn all_register_values(core: &RiscvCore) -> Vec<(Register, u64)> {
         .collect()
 }
 
+fn all_float_register_values(core: &RiscvCore) -> Vec<(FloatRegister, u64)> {
+    (0..FREG_COUNT)
+        .map(|index| {
+            let register = FloatRegister::new(index as u8).expect("register index is valid");
+            (register, core.read_float_register(register))
+        })
+        .collect()
+}
+
+fn zero_float_register_values() -> Vec<(FloatRegister, u64)> {
+    (0..FREG_COUNT)
+        .map(|index| {
+            let register = FloatRegister::new(index as u8).expect("register index is valid");
+            (register, 0)
+        })
+        .collect()
+}
+
 fn encode_registers(registers: &[(Register, u64)]) -> Vec<u8> {
     let mut payload = vec![0; XREG_BYTES];
+    for (register, value) in registers {
+        let offset = usize::from(register.index()) * U64_BYTES;
+        payload[offset..offset + U64_BYTES].copy_from_slice(&value.to_le_bytes());
+    }
+    payload
+}
+
+fn encode_float_registers(registers: &[(FloatRegister, u64)]) -> Vec<u8> {
+    let mut payload = vec![0; FREG_BYTES];
     for (register, value) in registers {
         let offset = usize::from(register.index()) * U64_BYTES;
         payload[offset..offset + U64_BYTES].copy_from_slice(&value.to_le_bytes());
@@ -393,6 +466,30 @@ fn decode_registers(
         .map(|(index, bytes)| {
             let register = Register::new(index as u8).expect("register index is valid");
             let value = u64::from_le_bytes(bytes.try_into().expect("xreg chunk size checked"));
+            (register, value)
+        })
+        .collect())
+}
+
+fn decode_float_registers(
+    component: &CheckpointComponentId,
+    payload: &[u8],
+) -> Result<Vec<(FloatRegister, u64)>, RiscvCoreCheckpointError> {
+    if payload.len() != FREG_BYTES {
+        return Err(RiscvCoreCheckpointError::InvalidChunkSize {
+            component: component.clone(),
+            name: FREGS_CHUNK.to_string(),
+            expected: FREG_BYTES,
+            actual: payload.len(),
+        });
+    }
+
+    Ok(payload
+        .chunks_exact(U64_BYTES)
+        .enumerate()
+        .map(|(index, bytes)| {
+            let register = FloatRegister::new(index as u8).expect("register index is valid");
+            let value = u64::from_le_bytes(bytes.try_into().expect("freg chunk size checked"));
             (register, value)
         })
         .collect())

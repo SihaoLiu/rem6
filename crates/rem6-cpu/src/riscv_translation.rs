@@ -1185,14 +1185,17 @@ fn cpu_translation_request(
     size: rem6_memory::AccessSize,
 ) -> Result<CpuTranslationRequest, RiscvCpuError> {
     match access {
-        rem6_isa_riscv::MemoryAccessKind::Load { address, .. } => CpuTranslationRequest::load(
-            translation_id,
-            memory_request_id,
-            data.route(),
-            data.endpoint().clone(),
-            Address::new(*address),
-            size,
-        ),
+        rem6_isa_riscv::MemoryAccessKind::Load { address, .. }
+        | rem6_isa_riscv::MemoryAccessKind::FloatLoad { address, .. } => {
+            CpuTranslationRequest::load(
+                translation_id,
+                memory_request_id,
+                data.route(),
+                data.endpoint().clone(),
+                Address::new(*address),
+                size,
+            )
+        }
         rem6_isa_riscv::MemoryAccessKind::LoadReserved { address, .. } => {
             CpuTranslationRequest::load_locked(
                 translation_id,
@@ -1203,7 +1206,8 @@ fn cpu_translation_request(
                 size,
             )
         }
-        rem6_isa_riscv::MemoryAccessKind::Store { address, value, .. } => {
+        rem6_isa_riscv::MemoryAccessKind::Store { address, value, .. }
+        | rem6_isa_riscv::MemoryAccessKind::FloatStore { address, value, .. } => {
             CpuTranslationRequest::store(
                 translation_id,
                 memory_request_id,

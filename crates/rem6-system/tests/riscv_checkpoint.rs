@@ -1,6 +1,8 @@
-use rem6_checkpoint::{CheckpointComponentId, CheckpointRegistry};
+use rem6_checkpoint::{
+    CheckpointChunk, CheckpointComponentId, CheckpointRegistry, CheckpointState,
+};
 use rem6_cpu::{CpuCore, CpuFetchConfig, CpuId, CpuResetState, RiscvCore};
-use rem6_isa_riscv::{Register, RiscvPmpAddressMode, RiscvPmpConfig};
+use rem6_isa_riscv::{FloatRegister, Register, RiscvPmpAddressMode, RiscvPmpConfig};
 use rem6_kernel::PartitionId;
 use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout};
 use rem6_system::{RiscvCoreCheckpointBank, RiscvCoreCheckpointPort, RiscvCoreCheckpointRecord};
@@ -16,6 +18,10 @@ fn layout() -> CacheLineLayout {
 
 fn reg(index: u8) -> Register {
     Register::new(index).unwrap()
+}
+
+fn freg(index: u8) -> FloatRegister {
+    FloatRegister::new(index).unwrap()
 }
 
 fn tor_config() -> RiscvPmpConfig {
@@ -106,6 +112,70 @@ fn riscv_core_checkpoint_captures_and_restores_pc_and_integer_registers() {
     assert_eq!(core.read_register(reg(0)), 0);
     assert_eq!(core.read_register(reg(1)), 0x1122_3344_5566_7788);
     assert_eq!(core.read_register(reg(5)), 0x55aa);
+}
+
+#[test]
+fn riscv_core_checkpoint_captures_and_restores_float_registers() {
+    let core = riscv_core();
+    core.write_float_register(freg(1), 1.5f64.to_bits());
+    core.write_float_register(freg(5), 0x55aa);
+    let component = CheckpointComponentId::new("cpu0").unwrap();
+    let port = RiscvCoreCheckpointPort::new(component.clone(), core.clone());
+    let mut registry = CheckpointRegistry::new();
+
+    port.register(&mut registry).unwrap();
+    let captured = port.capture_into(&mut registry).unwrap();
+
+    assert_eq!(captured.float_register(freg(1)), Some(1.5f64.to_bits()));
+    assert_eq!(captured.float_register(freg(5)), Some(0x55aa));
+    let fregs = registry.chunk(&component, "fregs").unwrap();
+    assert_eq!(fregs.len(), 32 * 8);
+    assert_eq!(&fregs[8..16], &1.5f64.to_bits().to_le_bytes());
+    assert_eq!(&fregs[40..48], &0x55aa_u64.to_le_bytes());
+
+    core.write_float_register(freg(1), 0);
+    core.write_float_register(freg(5), 0);
+
+    let restored = port.restore_from(&registry).unwrap();
+
+    assert_eq!(restored, captured);
+    assert_eq!(core.read_float_register(freg(1)), 1.5f64.to_bits());
+    assert_eq!(core.read_float_register(freg(5)), 0x55aa);
+}
+
+#[test]
+fn riscv_core_checkpoint_restore_without_float_register_chunk_zeros_float_registers() {
+    let core = riscv_core();
+    let component = CheckpointComponentId::new("cpu0").unwrap();
+    let port = RiscvCoreCheckpointPort::new(component.clone(), core.clone());
+    let mut registry = CheckpointRegistry::new();
+
+    registry.register(component.clone()).unwrap();
+    registry
+        .restore(&rem6_checkpoint::CheckpointManifest::new(
+            "legacy-riscv",
+            0,
+            vec![CheckpointState::new(
+                component.clone(),
+                vec![
+                    CheckpointChunk::new("pc", 0x8040_u64.to_le_bytes().to_vec()),
+                    CheckpointChunk::new("xregs", vec![0; 32 * 8]),
+                    CheckpointChunk::new("pmp", {
+                        let mut pmp = 16_u16.to_le_bytes().to_vec();
+                        pmp.resize(2 + 16 * 9, 0);
+                        pmp
+                    }),
+                ],
+            )],
+        ))
+        .unwrap();
+    core.write_float_register(freg(1), 0x1122);
+
+    let restored = port.restore_from(&registry).unwrap();
+
+    assert_eq!(restored.float_register(freg(1)), Some(0));
+    assert_eq!(core.pc(), Address::new(0x8040));
+    assert_eq!(core.read_float_register(freg(1)), 0);
 }
 
 #[test]

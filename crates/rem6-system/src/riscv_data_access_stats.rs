@@ -637,8 +637,10 @@ fn mem_checker_tracks_access(access: &MemoryAccessKind) -> bool {
     matches!(
         access,
         MemoryAccessKind::Load { .. }
+            | MemoryAccessKind::FloatLoad { .. }
             | MemoryAccessKind::LoadReserved { .. }
             | MemoryAccessKind::Store { .. }
+            | MemoryAccessKind::FloatStore { .. }
             | MemoryAccessKind::StoreConditional { .. }
     )
 }
@@ -647,11 +649,13 @@ fn request_data(access: &MemoryAccessKind, size: u64) -> Option<Vec<u8>> {
     let size = usize::try_from(size).ok()?;
     match access {
         MemoryAccessKind::Store { value, .. }
+        | MemoryAccessKind::FloatStore { value, .. }
         | MemoryAccessKind::StoreConditional { value, .. } => {
             let bytes = value.to_le_bytes();
             bytes.get(..size).map(<[u8]>::to_vec)
         }
         MemoryAccessKind::Load { .. }
+        | MemoryAccessKind::FloatLoad { .. }
         | MemoryAccessKind::LoadReserved { .. }
         | MemoryAccessKind::AtomicMemory { .. } => None,
     }

@@ -1,7 +1,7 @@
 use crate::{
-    AtomicMemoryOp, Immediate, MemoryWidth, Register, RiscvCounterCsr, RiscvFenceSet,
-    RiscvInterruptCsr, RiscvMachineTrapCsr, RiscvPrivilegeMode, RiscvPseudoOp, RiscvStatusCsr,
-    RiscvSupervisorTrapCsr, RiscvTranslationCsr,
+    AtomicMemoryOp, FloatRegister, Immediate, MemoryWidth, Register, RiscvCounterCsr,
+    RiscvFenceSet, RiscvInterruptCsr, RiscvMachineTrapCsr, RiscvPrivilegeMode, RiscvPseudoOp,
+    RiscvStatusCsr, RiscvSupervisorTrapCsr, RiscvTranslationCsr,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -265,11 +265,28 @@ pub enum RiscvInstruction {
         width: MemoryWidth,
         signed: bool,
     },
+    FloatLoad {
+        rd: FloatRegister,
+        rs1: Register,
+        offset: Immediate,
+        width: MemoryWidth,
+    },
     Store {
         rs1: Register,
         rs2: Register,
         offset: Immediate,
         width: MemoryWidth,
+    },
+    FloatStore {
+        rs1: Register,
+        rs2: FloatRegister,
+        offset: Immediate,
+        width: MemoryWidth,
+    },
+    FloatAddD {
+        rd: FloatRegister,
+        rs1: FloatRegister,
+        rs2: FloatRegister,
     },
     LoadReserved {
         rd: Register,

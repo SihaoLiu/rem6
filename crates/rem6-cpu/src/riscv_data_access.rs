@@ -138,11 +138,15 @@ impl RiscvDataAccessRecord {
 
     pub fn operation(&self) -> MemoryOperation {
         match self.access {
-            MemoryAccessKind::Load { .. } => MemoryOperation::ReadShared,
+            MemoryAccessKind::Load { .. } | MemoryAccessKind::FloatLoad { .. } => {
+                MemoryOperation::ReadShared
+            }
             MemoryAccessKind::LoadReserved { .. } => MemoryOperation::LoadLocked,
             MemoryAccessKind::StoreConditional { .. } => MemoryOperation::StoreConditional,
             MemoryAccessKind::AtomicMemory { .. } => MemoryOperation::Atomic,
-            MemoryAccessKind::Store { .. } => MemoryOperation::Write,
+            MemoryAccessKind::Store { .. } | MemoryAccessKind::FloatStore { .. } => {
+                MemoryOperation::Write
+            }
         }
     }
 

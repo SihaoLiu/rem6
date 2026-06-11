@@ -4,9 +4,9 @@ use std::sync::{Arc, Mutex};
 
 use rem6_boot::BootImage;
 use rem6_isa_riscv::{
-    MemoryAccessKind, Register, RiscvExecutionRecord, RiscvHartState, RiscvInstruction,
-    RiscvPmaError, RiscvPmaRange, RiscvPmaTable, RiscvPmpConfig, RiscvPmpError, RiscvPmpSnapshot,
-    RiscvPmpTable, RiscvTrap,
+    FloatRegister, MemoryAccessKind, Register, RiscvExecutionRecord, RiscvHartState,
+    RiscvInstruction, RiscvPmaError, RiscvPmaRange, RiscvPmaTable, RiscvPmpConfig, RiscvPmpError,
+    RiscvPmpSnapshot, RiscvPmpTable, RiscvTrap,
 };
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionId, PartitionedScheduler,
@@ -786,6 +786,14 @@ impl RiscvCore {
             .read(register)
     }
 
+    pub fn read_float_register(&self, register: FloatRegister) -> u64 {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .hart
+            .read_float(register)
+    }
+
     pub fn add_pma_misaligned_range(&self, range: RiscvPmaRange) -> Result<(), RiscvPmaError> {
         self.state
             .lock()
@@ -907,6 +915,14 @@ impl RiscvCore {
             .expect("riscv core lock")
             .hart
             .write(register, value);
+    }
+
+    pub fn write_float_register(&self, register: FloatRegister, value: u64) {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .hart
+            .write_float(register, value);
     }
 
     pub fn redirect_pc(&self, pc: Address) {

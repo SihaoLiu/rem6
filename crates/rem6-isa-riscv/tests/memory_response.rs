@@ -1,10 +1,14 @@
 use rem6_isa_riscv::{
-    AtomicMemoryOp, MemoryAccessKind, MemoryResponseError, MemoryResponseWriteback, MemoryWidth,
-    Register,
+    AtomicMemoryOp, FloatRegister, MemoryAccessKind, MemoryResponseError, MemoryResponseWriteback,
+    MemoryWidth, Register,
 };
 
 fn reg(index: u8) -> Register {
     Register::new(index).unwrap()
+}
+
+fn freg(index: u8) -> FloatRegister {
+    FloatRegister::new(index).unwrap()
 }
 
 fn load(width: MemoryWidth, signed: bool) -> MemoryAccessKind {
@@ -62,10 +66,36 @@ fn load_response_writeback_decodes_width_and_signedness() {
 
     for (access, data, expected) in cases {
         assert_eq!(
+            access
+                .read_response_writeback(data)
+                .map(|writeback| writeback.map(|writeback| writeback.integer_register())),
+            Ok(Some(Some(reg(5))))
+        );
+        assert_eq!(
             access.read_response_writeback(data),
             Ok(Some(MemoryResponseWriteback::new(reg(5), expected)))
         );
     }
+}
+
+#[test]
+fn float_load_response_writeback_preserves_raw_bits() {
+    let float_load = MemoryAccessKind::FloatLoad {
+        rd: freg(0),
+        address: 0x9000,
+        width: MemoryWidth::Doubleword,
+    };
+
+    let writeback = float_load
+        .read_response_writeback(&[0x18, 0x2d, 0x44, 0x54, 0xfb, 0x21, 0x09, 0x40])
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(
+        writeback,
+        MemoryResponseWriteback::new_float(freg(0), 3.141592653589793f64.to_bits())
+    );
+    assert_eq!(writeback.integer_register(), None);
 }
 
 #[test]
@@ -121,6 +151,15 @@ fn stores_have_no_read_response_writeback() {
     };
 
     assert_eq!(store.read_response_writeback(&[]), Ok(None));
+    assert_eq!(
+        MemoryAccessKind::FloatStore {
+            address: 0x8000,
+            width: MemoryWidth::Doubleword,
+            value: 0x55,
+        }
+        .read_response_writeback(&[]),
+        Ok(None)
+    );
     assert_eq!(store_conditional.read_response_writeback(&[]), Ok(None));
 }
 
