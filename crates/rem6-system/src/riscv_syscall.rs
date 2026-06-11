@@ -6,9 +6,11 @@ use rem6_kernel::PartitionedScheduler;
 
 use crate::{GuestEventId, RiscvSystemRunDriver, ScheduledRiscvTrap, SystemError};
 
+const RISCV_LINUX_SET_TID_ADDRESS: u64 = 96;
 const RISCV_LINUX_EXIT: u64 = 93;
 const RISCV_LINUX_EXIT_GROUP: u64 = 94;
 const RISCV_LINUX_GETPID: u64 = 172;
+const RISCV_LINUX_GETPPID: u64 = 173;
 const RISCV_LINUX_GETUID: u64 = 174;
 const RISCV_LINUX_GETEUID: u64 = 175;
 const RISCV_LINUX_GETGID: u64 = 176;
@@ -146,6 +148,7 @@ impl RiscvMmapRegion {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RiscvSyscallState {
     identity: RiscvSyscallIdentity,
+    child_clear_tid: Option<u64>,
     program_break: u64,
     mmap_next: u64,
     mmap_regions: Vec<RiscvMmapRegion>,
@@ -176,6 +179,7 @@ impl RiscvSyscallState {
     ) -> Self {
         Self {
             identity,
+            child_clear_tid: None,
             program_break,
             mmap_next,
             mmap_regions: Vec::new(),
@@ -184,6 +188,10 @@ impl RiscvSyscallState {
 
     const fn identity(&self) -> RiscvSyscallIdentity {
         self.identity
+    }
+
+    pub const fn child_clear_tid(&self) -> Option<u64> {
+        self.child_clear_tid
     }
 
     pub const fn program_break(&self) -> u64 {
@@ -200,6 +208,10 @@ impl RiscvSyscallState {
 
     fn set_program_break(&mut self, value: u64) {
         self.program_break = value;
+    }
+
+    fn set_child_clear_tid(&mut self, value: u64) {
+        self.child_clear_tid = (value != 0).then_some(value);
     }
 
     fn is_mmap_range_available(&self, start: u64, length: u64) -> bool {
@@ -235,8 +247,9 @@ impl RiscvSyscallState {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct RiscvSyscallIdentity {
-    process_id: u64,
+    thread_group_id: u64,
     thread_id: u64,
+    parent_process_id: u64,
     user_id: u64,
     effective_user_id: u64,
     group_id: u64,
@@ -245,16 +258,18 @@ struct RiscvSyscallIdentity {
 
 impl RiscvSyscallIdentity {
     const fn new(
-        process_id: u64,
+        thread_group_id: u64,
         thread_id: u64,
+        parent_process_id: u64,
         user_id: u64,
         effective_user_id: u64,
         group_id: u64,
         effective_group_id: u64,
     ) -> Self {
         Self {
-            process_id,
+            thread_group_id,
             thread_id,
+            parent_process_id,
             user_id,
             effective_user_id,
             group_id,
@@ -266,6 +281,7 @@ impl RiscvSyscallIdentity {
         Self::new(
             RISCV_LINUX_DEFAULT_PROCESS_ID,
             RISCV_LINUX_DEFAULT_PROCESS_ID,
+            0,
             RISCV_LINUX_DEFAULT_PROCESS_ID,
             RISCV_LINUX_DEFAULT_PROCESS_ID,
             RISCV_LINUX_DEFAULT_PROCESS_ID,
@@ -273,12 +289,16 @@ impl RiscvSyscallIdentity {
         )
     }
 
-    const fn process_id(self) -> u64 {
-        self.process_id
+    const fn thread_group_id(self) -> u64 {
+        self.thread_group_id
     }
 
     const fn thread_id(self) -> u64 {
         self.thread_id
+    }
+
+    const fn parent_process_id(self) -> u64 {
+        self.parent_process_id
     }
 
     const fn user_id(self) -> u64 {
@@ -358,11 +378,17 @@ impl RiscvSyscallTable {
         state: &mut RiscvSyscallState,
     ) -> Option<RiscvSyscallOutcome> {
         match request.number() {
+            RISCV_LINUX_SET_TID_ADDRESS => Some(RiscvSyscallOutcome::Return {
+                value: syscall_set_tid_address(request.argument(0), state),
+            }),
             RISCV_LINUX_EXIT | RISCV_LINUX_EXIT_GROUP => Some(RiscvSyscallOutcome::Exit {
                 code: syscall_exit_code(request.argument(0)),
             }),
             RISCV_LINUX_GETPID => Some(RiscvSyscallOutcome::Return {
-                value: state.identity().process_id(),
+                value: state.identity().thread_group_id(),
+            }),
+            RISCV_LINUX_GETPPID => Some(RiscvSyscallOutcome::Return {
+                value: state.identity().parent_process_id(),
             }),
             RISCV_LINUX_GETTID => Some(RiscvSyscallOutcome::Return {
                 value: state.identity().thread_id(),
@@ -501,6 +527,11 @@ fn syscall_brk(requested: u64, state: &mut RiscvSyscallState) -> u64 {
     state.program_break()
 }
 
+fn syscall_set_tid_address(clear_tid_address: u64, state: &mut RiscvSyscallState) -> u64 {
+    state.set_child_clear_tid(clear_tid_address);
+    state.identity().thread_id()
+}
+
 fn syscall_mmap(request: RiscvSyscallRequest, state: &mut RiscvSyscallState) -> u64 {
     let start = request.argument(0);
     let Some(length) = align_to_page(request.argument(1)) else {
@@ -626,11 +657,12 @@ mod tests {
     fn linux_table_returns_process_identity() {
         let table = RiscvSyscallTable::new();
         let mut state =
-            RiscvSyscallState::with_identity(0, RiscvSyscallIdentity::new(41, 42, 7, 8, 9, 10));
+            RiscvSyscallState::with_identity(0, RiscvSyscallIdentity::new(41, 42, 43, 7, 8, 9, 10));
 
         for (number, value) in [
             (RISCV_LINUX_GETPID, 41),
             (RISCV_LINUX_GETTID, 42),
+            (RISCV_LINUX_GETPPID, 43),
             (RISCV_LINUX_GETUID, 7),
             (RISCV_LINUX_GETEUID, 8),
             (RISCV_LINUX_GETGID, 9),
@@ -661,6 +693,65 @@ mod tests {
                 Some(RiscvSyscallOutcome::Return { value: 100 })
             );
         }
+    }
+
+    #[test]
+    fn linux_table_returns_parent_process_identity() {
+        let table = RiscvSyscallTable::new();
+        let mut state = RiscvSyscallState::new(0);
+
+        assert_eq!(
+            table.handle(
+                RiscvSyscallRequest::new(0x8000, RISCV_LINUX_GETPPID, [77, 0, 0, 0, 0, 0],),
+                &mut state,
+            ),
+            Some(RiscvSyscallOutcome::Return { value: 0 })
+        );
+    }
+
+    #[test]
+    fn linux_table_records_child_clear_tid_address() {
+        let table = RiscvSyscallTable::new();
+        let mut state = RiscvSyscallState::new(0);
+
+        assert_eq!(
+            table.handle(
+                RiscvSyscallRequest::new(
+                    0x8000,
+                    RISCV_LINUX_SET_TID_ADDRESS,
+                    [0x1234, 0, 0, 0, 0, 0],
+                ),
+                &mut state,
+            ),
+            Some(RiscvSyscallOutcome::Return { value: 100 })
+        );
+        assert_eq!(state.child_clear_tid(), Some(0x1234));
+    }
+
+    #[test]
+    fn linux_table_clears_child_clear_tid_address_with_zero() {
+        let table = RiscvSyscallTable::new();
+        let mut state = RiscvSyscallState::new(0);
+
+        assert_eq!(
+            table.handle(
+                RiscvSyscallRequest::new(
+                    0x8000,
+                    RISCV_LINUX_SET_TID_ADDRESS,
+                    [0x1234, 0, 0, 0, 0, 0],
+                ),
+                &mut state,
+            ),
+            Some(RiscvSyscallOutcome::Return { value: 100 })
+        );
+        assert_eq!(
+            table.handle(
+                RiscvSyscallRequest::new(0x8004, RISCV_LINUX_SET_TID_ADDRESS, [0; 6]),
+                &mut state,
+            ),
+            Some(RiscvSyscallOutcome::Return { value: 100 })
+        );
+        assert_eq!(state.child_clear_tid(), None);
     }
 
     #[test]
