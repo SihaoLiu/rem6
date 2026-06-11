@@ -761,9 +761,29 @@ impl RiscvHartState {
                     value: self.read_float(rs2),
                 });
             }
-            RiscvInstruction::FloatAddD { rd, rs1, rs2 } => {
-                let value = float::add_double(self.read_float(rs1), self.read_float(rs2));
+            instruction @ (RiscvInstruction::FloatAddD { rs1, rs2, .. }
+            | RiscvInstruction::FloatSubD { rs1, rs2, .. }
+            | RiscvInstruction::FloatMulD { rs1, rs2, .. }
+            | RiscvInstruction::FloatDivD { rs1, rs2, .. }
+            | RiscvInstruction::FloatSignInjectD { rs1, rs2, .. }
+            | RiscvInstruction::FloatSignInjectNegD { rs1, rs2, .. }
+            | RiscvInstruction::FloatSignInjectXorD { rs1, rs2, .. }) => {
+                let (rd, value) = float::float_register_write(
+                    instruction,
+                    self.read_float(rs1),
+                    self.read_float(rs2),
+                );
                 write_float_register(self, &mut float_register_writes, rd, value);
+            }
+            instruction @ (RiscvInstruction::FloatLessOrEqualD { rs1, rs2, .. }
+            | RiscvInstruction::FloatLessThanD { rs1, rs2, .. }
+            | RiscvInstruction::FloatEqualD { rs1, rs2, .. }) => {
+                let (rd, value) = float::integer_register_write(
+                    instruction,
+                    self.read_float(rs1),
+                    self.read_float(rs2),
+                );
+                write_register(self, &mut register_writes, rd, value);
             }
             RiscvInstruction::LoadReserved {
                 rd,

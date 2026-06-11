@@ -288,6 +288,51 @@ pub enum RiscvInstruction {
         rs1: FloatRegister,
         rs2: FloatRegister,
     },
+    FloatSubD {
+        rd: FloatRegister,
+        rs1: FloatRegister,
+        rs2: FloatRegister,
+    },
+    FloatMulD {
+        rd: FloatRegister,
+        rs1: FloatRegister,
+        rs2: FloatRegister,
+    },
+    FloatDivD {
+        rd: FloatRegister,
+        rs1: FloatRegister,
+        rs2: FloatRegister,
+    },
+    FloatSignInjectD {
+        rd: FloatRegister,
+        rs1: FloatRegister,
+        rs2: FloatRegister,
+    },
+    FloatSignInjectNegD {
+        rd: FloatRegister,
+        rs1: FloatRegister,
+        rs2: FloatRegister,
+    },
+    FloatSignInjectXorD {
+        rd: FloatRegister,
+        rs1: FloatRegister,
+        rs2: FloatRegister,
+    },
+    FloatLessOrEqualD {
+        rd: Register,
+        rs1: FloatRegister,
+        rs2: FloatRegister,
+    },
+    FloatLessThanD {
+        rd: Register,
+        rs1: FloatRegister,
+        rs2: FloatRegister,
+    },
+    FloatEqualD {
+        rd: Register,
+        rs1: FloatRegister,
+        rs2: FloatRegister,
+    },
     LoadReserved {
         rd: Register,
         rs1: Register,
