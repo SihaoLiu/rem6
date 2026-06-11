@@ -1409,14 +1409,15 @@ Implementation evidence through 2026-06-11:
   syscall by updating typed program-break state, writing the return value to
   `a0`, clearing the pending trap, restoring user execution, and resuming at the
   instruction after the ecall. BootImage-aware RISC-V SE construction now seeds
-  that initial program break from the page-rounded loaded image end. Anonymous
-  RISC-V Linux `mmap` and `munmap` are also handled as returning syscalls for
-  page-aligned private/shared mappings:
+  that initial program break from the page-rounded loaded image end. RISC-V
+  Linux `mmap` and `munmap` are also handled as returning syscalls for
+  page-aligned anonymous mappings and opened registered guest-file mappings:
   the table validates Linux arguments, tracks typed mmap regions from the
-  RISC-V64 mmap base, installs zeroed anonymous backing through the configured
-  guest-memory writer before committing the region, slices regions for fixed
-  maps or unmaps, writes return values to `a0`, clears pending traps, and
-  resumes guest execution. The table
+  RISC-V64 mmap base, installs zeroed anonymous backing or registered
+  guest-file bytes plus zero fill through the configured guest-memory writer
+  before committing the region, preserves fd offsets for file-backed mappings,
+  slices regions for fixed maps or unmaps, writes return values to `a0`, clears
+  pending traps, and resumes guest execution. The table
   also consumes gem5-style ignore-return startup calls for robust-list setup,
   `nanosleep`, `sched_yield`, the initial `rt_sig*` signal-action family, and
   advisory memory-management calls such as `mprotect`, `msync`, `mlock`,
@@ -1508,9 +1509,8 @@ Implementation evidence through 2026-06-11:
   ecall-resume path instead of escalating the guest ecall into a host stop.
   Fork, clone, exec, blocking futex wait/requeue and
   child-clear-TID wake,
-  dynamic credential changes, file-backed mmap handling, page-table
-  installation and per-page protection for returned ranges, host filesystem
-  path resolution
+  dynamic credential changes, page-table installation and per-page protection
+  for returned ranges, host filesystem path resolution
   and host-backed file contents behind `openat`, broader `read` sources,
   complete resource-limit modeling, host-backed and device-backed seek
   behavior, broader vector I/O variants, device-backed and socket-backed ioctl
@@ -3856,7 +3856,7 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
 | SimObject and Python configuration in `src/sim` and `src/python` | `rem6-platform`, `rem6-workload` | partial | rem6 should keep ease of composition through typed builders and manifests rather than dynamic object graphs. |
 | checkpoint support in `src/sim` | `rem6-checkpoint`, `rem6-kernel`, `rem6-system` checkpoint banks | partial | Protocol-neutral checkpoint records exist for several subsystems. Scheduler checkpoint capture rejects non-quiescent state with typed quiescence reports for pending-event counts, tick windows, and serial/parallel pending-event kind counts by component and partition, scheduler checkpoint banks preflight quiescence before writing any scheduler chunks, system checkpoint host actions run scheduler quiescence preflight before capturing any attached bank, full-system checkpoint capture stages registry writes until final manifest capture succeeds, execution-mode restore pre-registers internal host checkpoint components only in staged registries, manifest restore clears chunks for registered components absent from the manifest so stale component state cannot satisfy attached-bank validation, checkpoint restore event plans separate isolated warmup replay events from live scheduler events, reject live events before the restored tick, and seal the warmup boundary before live handoff, PLIC checkpoint banks preserve context-local enable and threshold state with restore-time base and context-route validation, RTC checkpoint banks preserve selected CMOS address, CMOS bytes, and RTC core registers with decode-first validation, PL031 checkpoint banks preserve ARM RTC counter, match, raw/masked interrupt, tick-rate, and generation state with decode-first validation, SP804 checkpoint banks preserve both ARM dual-timer snapshots with decode-first validation, SP805 checkpoint banks preserve ARM watchdog state and reset-assertion records with decode-first validation, CPU local timer checkpoint banks preserve per-CPU ARM local timer/watchdog snapshots with decode-first validation, storage image checkpoint banks preserve raw and COW sector-image snapshots through host checkpoint actions with decode-first validation, VirtIO PCI common-config checkpoint banks preserve selected registers and queue state with decode-first validation, VirtIO PCI notify checkpoint banks preserve notification history with decode-first validation, VirtIO PCI ISR checkpoint banks preserve interrupt status and event history with decode-first validation, VirtIO PCI device-config checkpoint banks preserve device bytes, writable masks, and access history with decode-first validation, checkpoint manifests expose typed component, chunk, and payload-byte summaries for audit, workload replay results preserve those manifest totals and per-component counts for checkpoint and restore outcomes, and workload manifests can require minimum checkpoint coverage totals and named-component coverage during replay verification. More devices and broader pending-state restore coverage remain open. |
 | statistics, probes, and power hooks | `rem6-stats`, `rem6-power`, run summaries | partial | Counters, hierarchical stat groups, per-counter reset policies, stats snapshots, typed stats dump records, typed reset records with before/after policy audits, schema-and-reset-scope-checked stats delta records, typed probe registries with checked component, point, and listener identifiers, probe listener state, program-counter and memory-packet probe payloads, typed PC-count tracker target-pair state with real RISC-V retired-PC probe input, typed global/local instruction tracker state with RetiredInsts listener gating and one-shot threshold updates, typed memory-footprint probe state with request-only range filtering, reset-scoped current footprint, total footprint, real RISC-V memory-route and MMIO data-access probe input, and snapshot validation, typed memory-trace probe headers and packet records with optional PC capture and time-order validation, typed communication-monitor state with real RISC-V memory-route and MMIO request/response input, typed MemCheckerMonitor state with real RISC-V memory-route and MMIO request/response plus memory-route retry-retention input, probe event snapshots with historical listener refs plus cursor-preserving and time-monotonic restore validation, typed power states/domains, power residency snapshots, typed state-weighted dynamic/static power models, typed expression-based dynamic/static power models, typed stat-snapshot metric binding, power metric binding from core stats deltas, typed RC thermal domains, typed multi-domain thermal-network solving with resistor and capacitor edges, initialized passive thermal junction nodes, and typed external power-analysis exports for McPAT, DSENT, DRAMPower, or generic consumers exist. Concrete wiring: `RiscvSystemRunDriver::record_instruction_stats` emits RetiredInsts and retired-PC probe events into `RiscvInstructionStats` from per-turn retired instruction events, and `RiscvDataAccessStats::record_data_access_stats` feeds `RiscvDataAccessProbeRecorder::record_event` from RISC-V data-route and MMIO events before run and workload summaries expose probe snapshots. Broader power-controller and external-analysis execution breadth remains open. |
-| guest-host events and pseudo instructions | `rem6-isa-riscv`, `rem6-system`, `rem6-workload` | partial | ROI, stats, checkpoint, checkpoint restore, stop, execution mode actions, custom guest-host calls, manifest-declared guest-host response payloads, focused system/trap event port modules, guest trap kind preservation, absolute parallel trap delivery-boundary preflight, manifest-declared gem5-style work-begin/work-end marker metadata with workload-summary ROI counts, RISC-V gem5 work-begin/work-end pseudo-instruction entry through host ROI actions, RISC-V gem5 m5-exit/m5-fail pseudo-instruction entry through host stop actions, RISC-V gem5 m5-resetstats/m5-dumpstats/m5-dumpresetstats pseudo-instruction entry through host stats actions, RISC-V gem5 m5-checkpoint pseudo-instruction entry through host checkpoint actions, RISC-V gem5 m5-hypercall pseudo-instruction entry through host guest-host-call actions, RISC-V SE `exit`/`exit_group` handling from real user-mode ecall traps, returning RISC-V SE `getpid`/`getppid`/`gettid`/credential identity, `set_tid_address`, `brk`, robust-list, `nanosleep`, `sched_yield`, initial `rt_sig*`, advisory memory-management ignore-return handling, `rseq` and unknown syscall `-ENOSYS` handling, `futex` wake/wake-bitset handling with empty bitset rejection plus `FUTEX_WAIT`/`FUTEX_WAIT_BITSET` guest-word mismatch handling, initial `fcntl` descriptor/status flag handling that resumes guest execution, registered-file `lseek` offset handling, guest-backed `writev` scatter-gather writes, non-tty `ioctl` `ENOTTY` handling for valid guest fds, registered-link `readlinkat` guest-buffer writes, deterministic RISC-V SE `getrandom` guest-buffer fills, simulated-tick `clock_gettime` RV64 `timespec` and `gettimeofday` RV64 `timeval` writes, modeled-cwd `getcwd` guest-buffer writes, current-process `prlimit64` RV64 `rlimit` writes for stack/data resources, typed pending-child `wait4` guest-buffer status and zeroed `rusage` writes, RV64 `uname` guest-buffer writes, and anonymous RISC-V SE `mmap`/`munmap` region state plus zeroed anonymous backing are typed. Broader guest ABI, process/thread lifecycle syscalls, complete syscall table coverage, file-backed mmap contents, page-table permissions, complete pseudo-instruction clock-domain semantics, complete hypercall exit, argument, and payload semantics, periodic stats and checkpoint repeat scheduling, and other ISA pseudo-instruction entry support remain open. |
+| guest-host events and pseudo instructions | `rem6-isa-riscv`, `rem6-system`, `rem6-workload` | partial | ROI, stats, checkpoint, checkpoint restore, stop, execution mode actions, custom guest-host calls, manifest-declared guest-host response payloads, focused system/trap event port modules, guest trap kind preservation, absolute parallel trap delivery-boundary preflight, manifest-declared gem5-style work-begin/work-end marker metadata with workload-summary ROI counts, RISC-V gem5 work-begin/work-end pseudo-instruction entry through host ROI actions, RISC-V gem5 m5-exit/m5-fail pseudo-instruction entry through host stop actions, RISC-V gem5 m5-resetstats/m5-dumpstats/m5-dumpresetstats pseudo-instruction entry through host stats actions, RISC-V gem5 m5-checkpoint pseudo-instruction entry through host checkpoint actions, RISC-V gem5 m5-hypercall pseudo-instruction entry through host guest-host-call actions, RISC-V SE `exit`/`exit_group` handling from real user-mode ecall traps, returning RISC-V SE `getpid`/`getppid`/`gettid`/credential identity, `set_tid_address`, `brk`, robust-list, `nanosleep`, `sched_yield`, initial `rt_sig*`, advisory memory-management ignore-return handling, `rseq` and unknown syscall `-ENOSYS` handling, `futex` wake/wake-bitset handling with empty bitset rejection plus `FUTEX_WAIT`/`FUTEX_WAIT_BITSET` guest-word mismatch handling, initial `fcntl` descriptor/status flag handling that resumes guest execution, registered-file `lseek` offset handling, guest-backed `writev` scatter-gather writes, non-tty `ioctl` `ENOTTY` handling for valid guest fds, registered-link `readlinkat` guest-buffer writes, deterministic RISC-V SE `getrandom` guest-buffer fills, simulated-tick `clock_gettime` RV64 `timespec` and `gettimeofday` RV64 `timeval` writes, modeled-cwd `getcwd` guest-buffer writes, current-process `prlimit64` RV64 `rlimit` writes for stack/data resources, typed pending-child `wait4` guest-buffer status and zeroed `rusage` writes, RV64 `uname` guest-buffer writes, and RISC-V SE `mmap`/`munmap` region state with zeroed anonymous backing and registered guest-file initial contents are typed. Broader guest ABI, process/thread lifecycle syscalls, complete syscall table coverage, host-backed mmap contents, shared writeback, and fault semantics, page-table permissions, complete pseudo-instruction clock-domain semantics, complete hypercall exit, argument, and payload semantics, periodic stats and checkpoint repeat scheduling, and other ISA pseudo-instruction entry support remain open. |
 
 ### External Integration and Tooling
 
@@ -5336,9 +5336,10 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   BootImage-seeded initial program break from the page-rounded loaded image end,
   guest resume for returning `brk` calls, typed gem5-default single-process identity
   returns for `getpid`/`getppid`/`gettid` and UID/GID queries, typed
-  `set_tid_address` child-clear-TID state, anonymous `mmap`/`munmap` region
-  state with zeroed backing installation through the configured guest-memory
-  writer, gem5-style ignore-return advisory memory-management calls, ignored
+  `set_tid_address` child-clear-TID state, `mmap`/`munmap` region state with
+  zeroed anonymous backing and opened registered guest-file contents installed
+  through the configured guest-memory writer, gem5-style ignore-return
+  advisory memory-management calls, ignored
   `rseq` returning `-ENOSYS`, `futex` wake/wake-bitset handling with empty
   bitset rejection, `FUTEX_WAIT`/`FUTEX_WAIT_BITSET` guest-word mismatch
   handling that returns Linux `EAGAIN`, and initial `dup`, `dup3`, `close`,
@@ -5384,16 +5385,16 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   `RLIMIT_STACK` value, sets the initial stack pointer, enters user mode, and
   attaches the CLI memory backend to syscall read/write/map hooks. A CLI
   regression covers guest stack stores below the startup frame before exiting
-  through the syscall path. Handled guest-memory syscalls such as `write` and
-  anonymous `mmap` therefore resume through syscall emulation rather than
-  falling back to raw environment-call traps.
+  through the syscall path. Handled guest-memory syscalls such as `write`,
+  anonymous `mmap`, and registered guest-file `mmap` therefore resume through
+  syscall emulation rather than falling back to raw environment-call traps.
   It also handles `wait4` number
   260 for typed pending child statuses by writing the POSIX wait-status integer
   and a zeroed RV64 `rusage` payload into simulated guest memory when requested
   before returning the selected child pid. It still lacks
   fork/clone process modeling, blocking futex wait, futex requeue, futex wake on
-  child-clear-TID, file-backed mmap contents, page-table installation and
-  per-page protection for returned ranges, host filesystem path resolution,
+  child-clear-TID, shared mmap writeback, page-table installation and per-page
+  protection for returned ranges, host filesystem path resolution,
   host-backed file contents
   behind `openat`, general procfs/readlink resolution beyond registered guest
   symlinks, the broader syscall table, and remaining guest-memory argument

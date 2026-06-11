@@ -1,6 +1,7 @@
 use super::{
-    linux_error, RiscvGuestMemoryMapResult, RiscvGuestMemoryWriter, RiscvSyscallRequest,
-    RiscvSyscallState, RISCV_LINUX_EBADF, RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL,
+    guest_fd_argument, linux_error, RiscvGuestMemoryMapResult, RiscvGuestMemoryWriter,
+    RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_EBADF, RISCV_LINUX_EFAULT,
+    RISCV_LINUX_EINVAL,
 };
 
 pub(super) const RISCV_PAGE_BYTES: u64 = 4096;
@@ -140,13 +141,14 @@ pub(super) fn syscall_mmap(
     if start.checked_add(length).is_none() {
         return linux_error(RISCV_LINUX_EINVAL);
     }
-    if flags & RISCV_LINUX_MAP_ANONYMOUS == 0 {
-        return linux_error(RISCV_LINUX_EBADF);
-    }
+    let backing = match mmap_backing(flags, fd, offset, length, state) {
+        Some(backing) => backing,
+        None => return linux_error(RISCV_LINUX_EBADF),
+    };
 
     let fixed = flags & RISCV_LINUX_MAP_FIXED != 0;
     let mapped_start = if fixed {
-        match install_anonymous_mmap_backing(start, length, guest_memory_writer, true) {
+        match install_mmap_backing(start, length, guest_memory_writer, true, &backing) {
             RiscvGuestMemoryMapResult::Mapped => {
                 state.unmap_mmap_range(start, length);
                 start
@@ -157,7 +159,7 @@ pub(super) fn syscall_mmap(
         }
     } else {
         if start != 0 && state.is_mmap_range_available(start, length) {
-            match install_anonymous_mmap_backing(start, length, guest_memory_writer, false) {
+            match install_mmap_backing(start, length, guest_memory_writer, false, &backing) {
                 RiscvGuestMemoryMapResult::Mapped => {
                     state.push_mmap_region(RiscvMmapRegion::new(
                         start, length, protection, flags, fd, offset,
@@ -173,7 +175,7 @@ pub(super) fn syscall_mmap(
             return linux_error(RISCV_LINUX_EINVAL);
         };
         loop {
-            match install_anonymous_mmap_backing(candidate, length, guest_memory_writer, false) {
+            match install_mmap_backing(candidate, length, guest_memory_writer, false, &backing) {
                 RiscvGuestMemoryMapResult::Mapped => {
                     if state.advance_mmap_next(candidate, length).is_none() {
                         return linux_error(RISCV_LINUX_EINVAL);
@@ -205,11 +207,34 @@ pub(super) fn syscall_mmap(
     mapped_start
 }
 
-fn install_anonymous_mmap_backing(
+fn mmap_backing(
+    flags: u64,
+    fd: u64,
+    offset: u64,
+    length: u64,
+    state: &RiscvSyscallState,
+) -> Option<MmapBacking> {
+    if flags & RISCV_LINUX_MAP_ANONYMOUS != 0 {
+        return Some(MmapBacking::Anonymous);
+    }
+
+    let fd = guest_fd_argument(fd)?;
+    let byte_count = usize::try_from(length).unwrap_or(usize::MAX);
+    let contents = state.guest_file_slice_at(fd, offset, byte_count).ok()??;
+    Some(MmapBacking::File { contents })
+}
+
+enum MmapBacking {
+    Anonymous,
+    File { contents: Vec<u8> },
+}
+
+fn install_mmap_backing(
     start: u64,
     length: u64,
     guest_memory_writer: Option<&RiscvGuestMemoryWriter>,
     replace_existing: bool,
+    backing: &MmapBacking,
 ) -> RiscvGuestMemoryMapResult {
     let Some(guest_memory_writer) = guest_memory_writer else {
         return RiscvGuestMemoryMapResult::Mapped;
@@ -222,6 +247,41 @@ fn install_anonymous_mmap_backing(
         }
     }
 
+    match backing {
+        MmapBacking::Anonymous => write_zeroed_backing(start, length, guest_memory_writer),
+        MmapBacking::File { contents } => {
+            write_file_backing(start, length, contents, guest_memory_writer)
+        }
+    }
+}
+
+fn write_file_backing(
+    start: u64,
+    length: u64,
+    contents: &[u8],
+    guest_memory_writer: &RiscvGuestMemoryWriter,
+) -> RiscvGuestMemoryMapResult {
+    let bytes = contents
+        .len()
+        .min(usize::try_from(length).unwrap_or(usize::MAX));
+    if bytes > 0 && !guest_memory_writer.write(start, &contents[..bytes]) {
+        return RiscvGuestMemoryMapResult::Failed;
+    }
+    let Some(file_end) = start.checked_add(bytes as u64) else {
+        return RiscvGuestMemoryMapResult::Failed;
+    };
+    write_zeroed_backing(
+        file_end,
+        length.saturating_sub(bytes as u64),
+        guest_memory_writer,
+    )
+}
+
+fn write_zeroed_backing(
+    start: u64,
+    length: u64,
+    guest_memory_writer: &RiscvGuestMemoryWriter,
+) -> RiscvGuestMemoryMapResult {
     let zero_page = [0; RISCV_PAGE_BYTES as usize];
     let mut cursor = start;
     let mut remaining = length;

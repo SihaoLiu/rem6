@@ -42,9 +42,9 @@ pub use limits::RISCV_LINUX_STACK_LIMIT_BYTES;
 use limits::{syscall_prlimit64, RISCV_LINUX_PRLIMIT64};
 use links::syscall_readlinkat;
 pub use mmap::RiscvMmapRegion;
-#[cfg(test)]
-use mmap::RISCV_LINUX_MAP_FIXED;
 use mmap::{syscall_mmap, syscall_munmap, RISCV64_LINUX_MMAP_BASE, RISCV_PAGE_BYTES};
+#[cfg(test)]
+use mmap::{RISCV_LINUX_MAP_FIXED, RISCV_LINUX_MAP_PRIVATE};
 use seek::{syscall_lseek, RISCV_LINUX_LSEEK};
 pub use startup::{
     RiscvSeAuxvEntry, RiscvSeStartupConfig, RiscvSeStartupError, RiscvSeStartupImage,
@@ -605,6 +605,30 @@ impl RiscvSyscallState {
         };
         let offset = self.guest_fds.file_offset(fd)?;
         let Ok(start) = usize::try_from(offset.get()) else {
+            return Ok(Some(Vec::new()));
+        };
+        if start >= contents.len() {
+            return Ok(Some(Vec::new()));
+        }
+        let end = start.saturating_add(count).min(contents.len());
+        Ok(Some(contents[start..end].to_vec()))
+    }
+
+    pub(super) fn guest_file_slice_at(
+        &self,
+        fd: GuestFd,
+        offset: u64,
+        count: usize,
+    ) -> Result<Option<Vec<u8>>, GuestFdError> {
+        let description = self
+            .guest_fds
+            .entry(fd)
+            .ok_or(GuestFdError::BadFd { fd })?
+            .description();
+        let Some(contents) = self.guest_file_descriptions.get(&description) else {
+            return Ok(None);
+        };
+        let Ok(start) = usize::try_from(offset) else {
             return Ok(Some(Vec::new()));
         };
         if start >= contents.len() {
