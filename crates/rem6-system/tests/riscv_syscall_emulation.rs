@@ -614,6 +614,13 @@ fn user_ecall_unknown_syscall_returns_enosys_before_exit() {
     assert_eq!(core.read_register(reg(5)), 0u64.wrapping_sub(38));
     assert_eq!(core.read_register(reg(6)), 0);
     assert_eq!(core.read_register(reg(10)), 0);
+    let state = driver.riscv_syscall_emulation().unwrap().state();
+    assert_eq!(state.unknown_syscalls().len(), 1);
+    let unknown = &state.unknown_syscalls()[0];
+    assert_eq!(unknown.pc(), 0x8008);
+    assert_eq!(unknown.number(), 9999);
+    assert_eq!(unknown.arguments(), [0; 6]);
+    assert!(unknown.tick() > 0);
     assert_eq!(
         controller.lock().unwrap().run().action_outcomes(),
         &[SystemActionOutcome::Stop(stop)]

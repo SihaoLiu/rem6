@@ -6,8 +6,8 @@ use super::{
     Rem6ExecutionSummary, Rem6GupsArtifact, Rem6GupsExecutionSummary, Rem6LoadBlobSummary,
     Rem6MemoryDump, Rem6MemoryTransportCounters, Rem6MemoryTransportRouteSummary,
     Rem6MemoryTransportSummary, Rem6ParallelFrontierSummary, Rem6ParallelPartitionSummary,
-    Rem6ParallelReadyPartitionSummary, Rem6RunArtifact, Rem6TraceReplayArtifact,
-    Rem6TraceReplayExecutionSummary, RequestedIsa,
+    Rem6ParallelReadyPartitionSummary, Rem6RiscvGuestWriteSummary, Rem6RunArtifact,
+    Rem6TraceReplayArtifact, Rem6TraceReplayExecutionSummary, RequestedIsa,
 };
 
 impl Rem6RunArtifact {
@@ -50,6 +50,11 @@ impl Rem6RunArtifact {
             .as_ref()
             .map(Rem6ExecutionSummary::to_memory_json)
             .unwrap_or_else(|| "[]".to_string());
+        let riscv_guest_writes = self
+            .execution
+            .as_ref()
+            .map(Rem6ExecutionSummary::to_riscv_guest_writes_json)
+            .unwrap_or_else(|| "[]".to_string());
         let dram = self
             .execution
             .as_ref()
@@ -77,7 +82,7 @@ impl Rem6RunArtifact {
             String::new()
         };
         format!(
-            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"load_blobs\":[{}],\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"dram\":{},\"transport\":{},\"stats\":{}}}\n",
+            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"load_blobs\":[{}],\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"riscv_guest_writes\":{},\"dram\":{},\"transport\":{},\"stats\":{}}}\n",
             self.schema,
             self.config.isa().as_str(),
             json_escape(&self.config.binary().display().to_string()),
@@ -95,6 +100,7 @@ impl Rem6RunArtifact {
             parallel,
             cores,
             memory,
+            riscv_guest_writes,
             dram,
             transport,
             self.stats_json,
@@ -720,6 +726,16 @@ impl Rem6ExecutionSummary {
         format!("[{dumps}]")
     }
 
+    fn to_riscv_guest_writes_json(&self) -> String {
+        let writes = self
+            .riscv_guest_writes
+            .iter()
+            .map(Rem6RiscvGuestWriteSummary::to_json)
+            .collect::<Vec<_>>()
+            .join(",");
+        format!("[{writes}]")
+    }
+
     fn to_transport_json(&self) -> String {
         format!(
             "{{\"fetch\":{},\"data\":{}}}",
@@ -730,6 +746,23 @@ impl Rem6ExecutionSummary {
 
     fn to_dram_json(&self) -> String {
         self.dram.to_json()
+    }
+}
+
+impl Rem6RiscvGuestWriteSummary {
+    fn to_json(&self) -> String {
+        let text = std::str::from_utf8(&self.bytes)
+            .map(|value| format!("\"{}\"", json_escape(value)))
+            .unwrap_or_else(|_| "null".to_string());
+        format!(
+            "{{\"fd\":{},\"address\":\"0x{:x}\",\"tick\":{},\"bytes\":{},\"text\":{},\"hex\":\"{}\"}}",
+            self.fd,
+            self.address,
+            self.tick,
+            self.bytes.len(),
+            text,
+            bytes_to_hex(&self.bytes),
+        )
     }
 }
 

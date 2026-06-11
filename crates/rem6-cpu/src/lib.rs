@@ -214,6 +214,7 @@ pub struct CpuResetState {
 }
 
 pub const DEFAULT_RISCV_PMP_ENTRIES: usize = 16;
+pub const DEFAULT_RISCV_BRANCH_PREDICTOR_ENTRIES: usize = 1024;
 
 impl CpuResetState {
     pub const fn new(cpu: CpuId, partition: PartitionId, agent: AgentId, entry: Address) -> Self {
@@ -1040,6 +1041,14 @@ impl RiscvCore {
             .to_vec()
     }
 
+    pub fn branch_predictor_snapshot(&self) -> BranchPredictorSnapshot {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .branch_predictor
+            .snapshot()
+    }
+
     pub(crate) fn invalidate_load_reservation_if_overlaps(
         &self,
         address: Address,
@@ -1122,6 +1131,7 @@ struct RiscvCoreState {
     sc_progress: RiscvStoreConditionalProgress,
     htm: HtmTransactionState,
     htm_hart_checkpoint: Option<RiscvHartState>,
+    branch_predictor: BranchPredictor,
     events: Vec<RiscvCpuExecutionEvent>,
     data_events: Vec<RiscvDataAccessEvent>,
     pma: RiscvPmaTable,
@@ -1145,6 +1155,10 @@ impl RiscvCoreState {
             sc_progress: RiscvStoreConditionalProgress::default(),
             htm: HtmTransactionState::new(),
             htm_hart_checkpoint: None,
+            branch_predictor: BranchPredictor::new(
+                BranchPredictorConfig::new(DEFAULT_RISCV_BRANCH_PREDICTOR_ENTRIES)
+                    .expect("default RISC-V branch predictor entries are valid"),
+            ),
             events: Vec::new(),
             data_events: Vec::new(),
             pma: RiscvPmaTable::new(),
@@ -1159,6 +1173,7 @@ pub struct RiscvCpuExecutionEvent {
     fetch: CpuFetchEvent,
     instruction: RiscvInstruction,
     execution: RiscvExecutionRecord,
+    branch_update: Option<BranchUpdate>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1174,10 +1189,20 @@ impl RiscvCpuExecutionEvent {
         instruction: RiscvInstruction,
         execution: RiscvExecutionRecord,
     ) -> Self {
+        Self::with_branch_update(fetch, instruction, execution, None)
+    }
+
+    pub const fn with_branch_update(
+        fetch: CpuFetchEvent,
+        instruction: RiscvInstruction,
+        execution: RiscvExecutionRecord,
+        branch_update: Option<BranchUpdate>,
+    ) -> Self {
         Self {
             fetch,
             instruction,
             execution,
+            branch_update,
         }
     }
 
@@ -1195,6 +1220,10 @@ impl RiscvCpuExecutionEvent {
 
     pub fn execution(&self) -> &RiscvExecutionRecord {
         &self.execution
+    }
+
+    pub fn branch_update(&self) -> Option<&BranchUpdate> {
+        self.branch_update.as_ref()
     }
 }
 

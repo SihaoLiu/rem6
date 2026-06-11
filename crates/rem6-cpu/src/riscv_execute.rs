@@ -2,8 +2,8 @@ use rem6_isa_riscv::RiscvInstruction;
 use rem6_memory::{AccessSize, Address, MemoryRequestId};
 
 use crate::{
-    CpuFetchEvent, CpuFetchEventKind, CpuFetchRecord, RiscvCore, RiscvCoreState, RiscvCpuError,
-    RiscvCpuExecutionEvent,
+    BranchUpdate, CpuFetchEvent, CpuFetchEventKind, CpuFetchRecord, RiscvCore, RiscvCoreState,
+    RiscvCpuError, RiscvCpuExecutionEvent,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -134,12 +134,55 @@ impl RiscvCore {
             state.pending_trap = Some(trap);
         }
         state.apply_riscv_system_event(execution.system_event());
+        let branch_update = retire_branch_prediction(state, fetch.pc(), instruction, &execution);
 
-        let event = RiscvCpuExecutionEvent::new(fetch.clone(), instruction, execution);
+        let event = RiscvCpuExecutionEvent::with_branch_update(
+            fetch.clone(),
+            instruction,
+            execution,
+            branch_update,
+        );
         state
             .executed_fetches
             .extend(consumed_requests.iter().copied());
         state.events.push(event.clone());
         Ok(event)
     }
+}
+
+fn retire_branch_prediction(
+    state: &mut RiscvCoreState,
+    pc: Address,
+    instruction: RiscvInstruction,
+    execution: &rem6_isa_riscv::RiscvExecutionRecord,
+) -> Option<BranchUpdate> {
+    if execution.trap().is_some() {
+        return None;
+    }
+
+    let sequential_pc = pc
+        .get()
+        .wrapping_add(u64::from(execution.instruction_bytes()));
+    let next_pc = execution.next_pc();
+    let (actual_taken, actual_target) = match instruction {
+        RiscvInstruction::Beq { .. }
+        | RiscvInstruction::Bne { .. }
+        | RiscvInstruction::Blt { .. }
+        | RiscvInstruction::Bge { .. }
+        | RiscvInstruction::Bltu { .. }
+        | RiscvInstruction::Bgeu { .. } => {
+            let taken = next_pc != sequential_pc;
+            (taken, taken.then_some(Address::new(next_pc)))
+        }
+        RiscvInstruction::Jal { .. } | RiscvInstruction::Jalr { .. } => {
+            (true, Some(Address::new(next_pc)))
+        }
+        _ => return None,
+    };
+
+    Some(
+        state
+            .branch_predictor
+            .update(pc, actual_taken, actual_target),
+    )
 }

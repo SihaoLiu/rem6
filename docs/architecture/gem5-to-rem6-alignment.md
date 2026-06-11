@@ -828,7 +828,11 @@ isolated bugs:
   boundary at cycle granularity: fetch PC, predicted taken/target, resolved
   taken/target, repair target, and younger flushed instructions are evidence,
   while correct predictions remain evidence-only and only mismatches reuse the
-  typed redirect path.
+  typed redirect path. The atomic `RiscvCore` retire path also trains the base
+  two-bit `BranchPredictor` from real retired conditional branches, `jal`, and
+  `jalr`, and attaches the predictor update to the execution event; speculative
+  fetch steering, branch-history rollback, and ROB/LSQ-backed O3 commit remain
+  open integration work.
   Public gem5 issue #2907 reports `vcompress.vm` overwriting destination tail
   elements under tail-undisturbed policy. The local reference fills a static
   compress buffer and also writes `Vd_vu[i]` while scanning selected source
@@ -1409,15 +1413,21 @@ Implementation evidence through 2026-06-11:
   syscall by updating typed program-break state, writing the return value to
   `a0`, clearing the pending trap, restoring user execution, and resuming at the
   instruction after the ecall. BootImage-aware RISC-V SE construction now seeds
-  that initial program break from the page-rounded loaded image end. RISC-V
+  that initial program break from the page-rounded loaded image end, and `brk`
+  growth installs zeroed heap backing through the configured guest-memory
+  mapper before committing the new break. RISC-V
   CPU fetch also handles RV64GC line-end instruction encodings through the real
   memory transport: a 2-byte response retires immediately when the low halfword
   identifies an RVC instruction, while a low halfword that identifies a 32-bit
   instruction causes the core to fetch the high halfword and merge both
-  responses before decode and retirement. A static no-libc RV64GC ELF assembled
-  by the RISC-V GNU toolchain now reaches the SE exit path with stop code zero.
-  RISC-V
-  Linux `mmap` and `munmap` are also handled as returning syscalls for
+  responses before decode and retirement. A repository CLI regression constructs
+  a no-libc RV64GC-compatible ELF with a line-end RVC instruction followed by a
+  split 32-bit `ecall` setup and reaches the SE exit path with stop code zero.
+  On hosts with `riscv64-unknown-elf-gcc` and `qemu-riscv64`, a detection-based
+  CLI regression builds one static newlib `printf` binary, uses qemu as the
+  guest stdout and exit-code oracle, and runs the same ELF through rem6 SE while
+  checking the same guest write text and stop code. RISC-V Linux `mmap` and
+  `munmap` are also handled as returning syscalls for
   page-aligned anonymous mappings and opened registered guest-file mappings:
   the table validates Linux arguments, tracks typed mmap regions from the
   RISC-V64 mmap base, installs zeroed anonymous backing or registered
@@ -5375,8 +5385,10 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   writing current-process stack/data RV64 `rlimit` payloads, and `uname`
   number 160 by writing a gem5-compatible RV64 Linux `utsname` payload, and
   `getcwd` number 17 by writing the modeled target cwd. Unknown syscall
-  numbers return `ENOSYS` and resume guest execution so libc feature probes do
-  not become host stops. RISC-V SE startup stack construction now produces a
+  numbers now append typed records with PC, number, arguments, and tick before
+  returning `ENOSYS` and resuming guest execution, so libc feature probes do not
+  become host stops or disappear silently. RISC-V SE startup stack construction
+  now produces a
   loadable RV64 user-stack image with a 16-byte-aligned initial `sp`,
   `argc`, `argv`, `envp`, ELF-derived `AT_PHDR`/`AT_PHENT`/`AT_PHNUM`
   entries when the program-header table is loaded by a `PT_LOAD` segment; in
@@ -5394,11 +5406,14 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   opt into the same handoff with `rem6 run --riscv-se`: it installs the startup
   stack into simulated memory, maps zeroed stack backing matching the current
   `RLIMIT_STACK` value, sets the initial stack pointer, enters user mode, and
-  attaches the CLI memory backend to syscall read/write/map hooks. A CLI
-  regression covers guest stack stores below the startup frame before exiting
-  through the syscall path. Handled guest-memory syscalls such as `write`,
-  anonymous `mmap`, and registered guest-file `mmap` therefore resume through
-  syscall emulation rather than falling back to raw environment-call traps.
+  attaches the CLI memory backend to syscall read/write/map hooks. CLI run
+  artifacts expose typed RISC-V guest writes with fd, guest address, tick, byte
+  count, hex, and UTF-8 text when present, so SE smoke tests can compare guest
+  stdout without scraping host diagnostics. A CLI regression covers guest stack
+  stores below the startup frame before exiting through the syscall path.
+  Handled guest-memory syscalls such as `write`, anonymous `mmap`, and
+  registered guest-file `mmap` therefore resume through syscall emulation
+  rather than falling back to raw environment-call traps.
   It also handles `wait4` number
   260 for typed pending child statuses by writing the POSIX wait-status integer
   and a zeroed RV64 `rusage` payload into simulated guest memory when requested
@@ -5415,7 +5430,8 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   creation, blocking wait wakeup, and real child resource-usage accounting, and
   Linux handoff still needs an SBI-class firmware/runtime path rather than only
   DTB/initrd/register handoff, and SE startup still needs default loader policy
-  and a real static-libc binary smoke test.
+  plus broader static-libc coverage beyond the detection-based newlib `printf`
+  smoke.
 - Complete predictor coupling, external checkpoint payloads, and richer
   cycle-visible state for the in-order pipeline, add fuller out-of-order
   pipeline execution, checker, richer branch predictors, and host-assisted

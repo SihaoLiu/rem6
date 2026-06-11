@@ -8,8 +8,8 @@ use rem6_cpu::{
 use rem6_isa_riscv::{
     FloatRegister, MemoryAccessKind, MemoryWidth, Register, RiscvFenceSet, RiscvInstruction,
     RiscvMemoryOrdering, RiscvPmaAccessKind, RiscvPmaError, RiscvPmaRange, RiscvPmpAccessKind,
-    RiscvPmpAddressMode, RiscvPmpConfig, RiscvPmpError, RiscvPrivilegeMode, RiscvTrap,
-    RiscvTrapKind,
+    RiscvPmpAddressMode, RiscvPmpConfig, RiscvPmpError, RiscvPrivilegeMode, RiscvStatusWord,
+    RiscvTrap, RiscvTrapKind,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{
@@ -51,6 +51,10 @@ fn fence_type(mode: u32, predecessor: u32, successor: u32, funct3: u32) -> u32 {
     (mode << 28) | (predecessor << 24) | (successor << 20) | (funct3 << 12) | 0x0f
 }
 
+fn csr_type(csr: u16, rs1: u8, funct3: u32, rd: u8) -> u32 {
+    (u32::from(csr) << 20) | (u32::from(rs1) << 15) | (funct3 << 12) | (u32::from(rd) << 7) | 0x73
+}
+
 fn locked_tor_without_permissions() -> RiscvPmpConfig {
     RiscvPmpConfig::new(RiscvPmpAddressMode::Tor).with_locked(true)
 }
@@ -70,6 +74,18 @@ fn j_type(imm: i32, rd: u8) -> u32 {
         | (((imm >> 12) & 0xff) << 12)
         | (u32::from(rd) << 7)
         | 0x6f
+}
+
+fn b_type(imm: i32, rs2: u8, rs1: u8, funct3: u32) -> u32 {
+    let imm = imm as u32;
+    (((imm >> 12) & 0x1) << 31)
+        | (((imm >> 5) & 0x3f) << 25)
+        | (u32::from(rs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (funct3 << 12)
+        | (((imm >> 1) & 0xf) << 8)
+        | (((imm >> 11) & 0x1) << 7)
+        | 0x63
 }
 
 fn s_type(imm: i32, rs2: u8, rs1: u8, funct3: u32, opcode: u32) -> u32 {
@@ -1237,6 +1253,116 @@ fn riscv_core_redirects_cpu_fetch_pc_after_control_flow() {
     assert_eq!(event.execution().next_pc(), 0x8010);
     assert_eq!(core.pc(), Address::new(0x8010));
     assert_eq!(core.inner().pc(), Address::new(0x8010));
+}
+
+#[test]
+fn riscv_core_trains_branch_predictor_from_retired_branches() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let raw = b_type(0, 0, 0, 0);
+    let core = RiscvCore::new(core(route, 0x8000));
+    let store = loaded_store(0x8000, raw);
+
+    fetch_one(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+    );
+    let first = core.execute_next_completed_fetch().unwrap().unwrap();
+    let first_update = first.branch_update().unwrap();
+
+    assert_eq!(first.instruction(), RiscvInstruction::decode(raw).unwrap());
+    assert_eq!(first.execution().next_pc(), 0x8000);
+    assert_eq!(first_update.pc(), Address::new(0x8000));
+    assert!(!first_update.predicted_taken());
+    assert!(first_update.actual_taken());
+    assert_eq!(first_update.actual_target(), Some(Address::new(0x8000)));
+    assert_eq!(first_update.old_counter(), 1);
+    assert_eq!(first_update.new_counter(), 2);
+    assert_eq!(first_update.update_count(), 1);
+
+    fetch_one(&core, store, &mut scheduler, &transport, MemoryTrace::new());
+    let second = core.execute_next_completed_fetch().unwrap().unwrap();
+    let second_update = second.branch_update().unwrap();
+
+    assert!(second_update.predicted_taken());
+    assert!(second_update.actual_taken());
+    assert_eq!(second_update.actual_target(), Some(Address::new(0x8000)));
+    assert_eq!(second_update.old_counter(), 2);
+    assert_eq!(second_update.new_counter(), 3);
+    assert_eq!(second_update.update_count(), 2);
+    assert_eq!(core.branch_predictor_snapshot().update_count(), 2);
+}
+
+#[test]
+fn riscv_core_does_not_train_branch_predictor_for_interrupted_branch() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let interrupt_bit = 1_u64 << 1;
+    let program = [
+        csr_type(0x304, 2, 0x1, 0), // csrrw x0, mie, x2
+        csr_type(0x344, 2, 0x1, 0), // csrrw x0, mip, x2
+        b_type(0, 0, 0, 0),         // beq x0, x0, 0
+    ];
+    let core = RiscvCore::new(core(route, 0x8000));
+    core.set_status(RiscvStatusWord::new(0).with_mie(true));
+    core.write_register(reg(2), interrupt_bit);
+    let store = loaded_program_store(0x8000, &program, &[]);
+
+    for _ in 0..2 {
+        fetch_one(
+            &core,
+            store.clone(),
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+        );
+        let event = core.execute_next_completed_fetch().unwrap().unwrap();
+        assert_eq!(event.branch_update(), None);
+    }
+
+    fetch_one(&core, store, &mut scheduler, &transport, MemoryTrace::new());
+    let interrupted = core.execute_next_completed_fetch().unwrap().unwrap();
+
+    assert_eq!(
+        interrupted.instruction(),
+        RiscvInstruction::decode(program[2]).unwrap()
+    );
+    assert!(matches!(
+        interrupted.execution().trap().map(|trap| trap.kind()),
+        Some(RiscvTrapKind::Interrupt { code: 1 })
+    ));
+    assert_eq!(interrupted.execution().next_pc(), 0);
+    assert_eq!(interrupted.branch_update(), None);
+    assert_eq!(core.branch_predictor_snapshot().update_count(), 0);
 }
 
 #[test]

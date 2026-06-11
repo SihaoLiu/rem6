@@ -16,9 +16,9 @@ use rem6_memory::{
 use rem6_stats::{StackDistProbeConfig, StatsRegistry};
 use rem6_system::{
     GuestEventId, GuestSourceId, GuestTrapKind, HostEventPolicy, RiscvDataAccessStats,
-    RiscvSeAuxvEntry, RiscvSeStartupConfig, RiscvSystemRun, RiscvSystemRunDriver,
-    RiscvSystemRunStopReason, RiscvTrapEventPort, SystemHostController, SystemHostEventPort,
-    RISCV_LINUX_AT_ENTRY,
+    RiscvGuestWriteRecord, RiscvSeAuxvEntry, RiscvSeStartupConfig, RiscvSystemRun,
+    RiscvSystemRunDriver, RiscvSystemRunStopReason, RiscvTrapEventPort, SystemHostController,
+    SystemHostEventPort, RISCV_LINUX_AT_ENTRY,
 };
 use rem6_transport::{
     MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTraceEvent, MemoryTraceKind, MemoryTransport,
@@ -136,6 +136,7 @@ pub struct Rem6ExecutionSummary {
     dram: Rem6DramSummary,
     cores: Vec<Rem6CoreSummary>,
     memory_dumps: Vec<Rem6MemoryDump>,
+    riscv_guest_writes: Vec<Rem6RiscvGuestWriteSummary>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -144,6 +145,25 @@ pub struct Rem6DataAccessProbeSummary {
     stack_distance_infinite_samples: u64,
     stack_distance_finite_samples: u64,
     stack_distance_stack_depth: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Rem6RiscvGuestWriteSummary {
+    fd: u32,
+    address: u64,
+    tick: u64,
+    bytes: Vec<u8>,
+}
+
+impl Rem6RiscvGuestWriteSummary {
+    fn from_record(record: &RiscvGuestWriteRecord) -> Self {
+        Self {
+            fd: record.fd().get(),
+            address: record.address(),
+            tick: record.tick(),
+            bytes: record.bytes().to_vec(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -293,6 +313,7 @@ struct ExecutionSummaryInputs<'a> {
     config: &'a Rem6RunConfig,
     fetch_trace: &'a MemoryTrace,
     data_trace: &'a MemoryTrace,
+    riscv_guest_writes: Vec<Rem6RiscvGuestWriteSummary>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -645,6 +666,17 @@ fn execute_riscv(
             )
             .map_err(execute_error)?,
     };
+    let riscv_guest_writes = driver
+        .riscv_syscall_emulation()
+        .map(|emulation| {
+            emulation
+                .state()
+                .guest_writes()
+                .iter()
+                .map(Rem6RiscvGuestWriteSummary::from_record)
+                .collect()
+        })
+        .unwrap_or_default();
 
     let summary_inputs = ExecutionSummaryInputs {
         core_count,
@@ -653,6 +685,7 @@ fn execute_riscv(
         config,
         fetch_trace: &fetch_trace,
         data_trace: &data_trace,
+        riscv_guest_writes,
     };
 
     execution_summary(&cluster, &run, summary_inputs)
@@ -802,6 +835,7 @@ fn execution_summary(
             inputs.line_layout,
             inputs.config.memory_dumps(),
         )?,
+        riscv_guest_writes: inputs.riscv_guest_writes,
     })
 }
 

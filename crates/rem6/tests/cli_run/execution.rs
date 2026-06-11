@@ -1,4 +1,8 @@
-use std::{fs, process::Command};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 use crate::support::*;
 
@@ -1229,6 +1233,137 @@ fn rem6_run_riscv_se_loads_startup_stack_and_exits_through_syscall() {
 }
 
 #[test]
+fn rem6_run_riscv_se_executes_no_libc_rv64gc_line_end_fetches() {
+    let mut program = 0x0001_u16.to_le_bytes().to_vec(); // c.nop
+    program.extend(i_type(93, 0, 0x0, 17, 0x13).to_le_bytes()); // addi a7, x0, 93
+    program.extend(i_type(0, 0, 0x0, 10, 0x13).to_le_bytes()); // addi a0, x0, 0
+    program.extend(0x0000_0073_u32.to_le_bytes()); // ecall
+
+    let entry = 0x8000_003c;
+    let elf = riscv64_elf(entry, entry, &program);
+    let path = temp_binary("riscv-se-no-libc-rv64gc-line-end", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "180",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_reason\":\"host_stop\""));
+    assert!(stdout.contains("\"stop_code\":0"));
+    assert!(stdout.contains("\"riscv_boot\":{\"a0\":\"0x0\",\"a1\":\"0x0\",\"se\":true}"));
+    assert!(stdout.contains("\"committed_instructions\":4"));
+    assert!(stdout.contains("\"fetch\":{\"requests\":5"));
+    assert_stat(&stdout, "sim.riscv.se", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.stop.host_stop", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.stop_code", "Count", 0, "constant");
+}
+
+#[test]
+fn rem6_run_riscv_se_runs_static_newlib_printf_against_qemu() {
+    let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
+        eprintln!("skipping static newlib RISC-V SE smoke: riscv64-unknown-elf-gcc not found");
+        return;
+    };
+    let Some(qemu) = find_riscv_tool("qemu-riscv64") else {
+        eprintln!("skipping static newlib RISC-V SE smoke: qemu-riscv64 not found");
+        return;
+    };
+    let workspace = temp_workspace("riscv-se-newlib-printf");
+    let source = workspace.join("hello.c");
+    let binary = workspace.join("hello");
+    fs::write(
+        &source,
+        r#"#include <stdio.h>
+int main(void) {
+    printf("rem6 newlib smoke\n");
+    return 37;
+}
+"#,
+    )
+    .unwrap();
+
+    let compile = Command::new(&gcc)
+        .args([
+            "-O1",
+            "-static",
+            "-march=rv64gc",
+            "-mabi=lp64d",
+            source.to_str().unwrap(),
+            "-o",
+            binary.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        compile.status.success(),
+        "gcc stderr: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let qemu_output = Command::new(&qemu).arg(&binary).output().unwrap();
+    assert_eq!(
+        qemu_output.status.code(),
+        Some(37),
+        "qemu stderr: {}",
+        String::from_utf8_lossy(&qemu_output.stderr)
+    );
+    assert_eq!(qemu_output.stdout, b"rem6 newlib smoke\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            binary.to_str().unwrap(),
+            "--max-tick",
+            "200000",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_reason\":\"host_stop\""));
+    assert!(stdout.contains("\"stop_code\":37"));
+    assert!(stdout.contains("\"riscv_guest_writes\":[{\"fd\":1"));
+    assert!(stdout.contains("\"text\":\"rem6 newlib smoke\\n\""));
+    assert!(stdout.contains("\"data_loads\":"));
+    assert!(stdout.contains("\"data_stores\":"));
+    assert_stat(&stdout, "sim.riscv.se", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.stop.host_stop", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.stop_code", "Count", 37, "constant");
+}
+
+#[test]
 fn rem6_run_riscv_se_cli_arguments_and_environment_reach_startup_stack() {
     let program = riscv_se_argv_env_probe_program();
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
@@ -1669,6 +1804,22 @@ fn rem6_run_riscv_se_handles_memory_backed_write_syscall() {
 
 fn write_u64_le(bytes: &mut [u8], offset: usize, value: u64) {
     bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+}
+
+fn find_riscv_tool(name: &str) -> Option<PathBuf> {
+    find_tool_on_path(name).or_else(|| {
+        let module_candidate =
+            Path::new("/mnt/nas0/software/riscv/riscv64-elf-ubuntu-24.04-gcc/bin").join(name);
+        module_candidate.is_file().then_some(module_candidate)
+    })
+}
+
+fn find_tool_on_path(name: &str) -> Option<PathBuf> {
+    env::var_os("PATH").and_then(|paths| {
+        env::split_paths(&paths)
+            .map(|directory| directory.join(name))
+            .find(|candidate| candidate.is_file())
+    })
 }
 
 #[test]

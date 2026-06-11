@@ -15,10 +15,12 @@ use crate::{
     GuestFutexTable, GuestWaitQueue, RiscvSystemRunDriver, ScheduledRiscvTrap, SystemError,
 };
 
+mod brk;
 mod clock;
 mod cwd;
 mod futex;
 mod guest_memory;
+mod guest_write;
 mod ioctl;
 mod limits;
 mod links;
@@ -27,10 +29,12 @@ mod robust;
 mod seek;
 mod startup;
 mod stat;
+mod unknown;
 mod utsname;
 mod wait4;
 mod writev;
 
+use brk::syscall_brk;
 use clock::{syscall_clock_gettime, syscall_gettimeofday};
 use cwd::syscall_getcwd;
 use futex::syscall_futex;
@@ -38,6 +42,7 @@ pub use guest_memory::{
     RiscvGuestMemoryMapRequest, RiscvGuestMemoryMapResult, RiscvGuestMemoryReader,
     RiscvGuestMemoryWriter,
 };
+pub use guest_write::RiscvGuestWriteRecord;
 use ioctl::{syscall_ioctl, RISCV_LINUX_IOCTL};
 pub use limits::RISCV_LINUX_STACK_LIMIT_BYTES;
 use limits::{syscall_prlimit64, RISCV_LINUX_PRLIMIT64};
@@ -55,6 +60,7 @@ pub use startup::{
     RISCV_LINUX_AT_SECURE,
 };
 use stat::{guest_path_inode, write_riscv_linux_stat, RiscvGuestStat};
+pub use unknown::RiscvUnknownSyscallRecord;
 use utsname::write_riscv_linux_utsname;
 use wait4::{syscall_process_group_id, syscall_wait4, RISCV_LINUX_WAIT4};
 use writev::{syscall_writev, RISCV_LINUX_WRITEV};
@@ -208,41 +214,6 @@ pub enum RiscvSyscallOutcome {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RiscvGuestWriteRecord {
-    fd: GuestFd,
-    address: u64,
-    tick: Tick,
-    bytes: Vec<u8>,
-}
-
-impl RiscvGuestWriteRecord {
-    pub fn new(fd: GuestFd, address: u64, tick: Tick, bytes: Vec<u8>) -> Self {
-        Self {
-            fd,
-            address,
-            tick,
-            bytes,
-        }
-    }
-
-    pub const fn fd(&self) -> GuestFd {
-        self.fd
-    }
-
-    pub const fn address(&self) -> u64 {
-        self.address
-    }
-
-    pub const fn tick(&self) -> Tick {
-        self.tick
-    }
-
-    pub fn bytes(&self) -> &[u8] {
-        &self.bytes
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RiscvGuestOpenRecord {
     fd: GuestFd,
     dirfd: u64,
@@ -310,9 +281,11 @@ pub struct RiscvSyscallState {
     guest_file_descriptions: BTreeMap<GuestFileDescriptionId, Vec<u8>>,
     guest_file_stats: BTreeMap<GuestFileDescriptionId, RiscvGuestStat>,
     guest_writes: Vec<RiscvGuestWriteRecord>,
+    unknown_syscalls: Vec<RiscvUnknownSyscallRecord>,
     stdin: VecDeque<u8>,
     getrandom_byte_counter: u8,
     program_break: u64,
+    program_break_backing_end: u64,
     mmap_next: u64,
     mmap_regions: Vec<RiscvMmapRegion>,
 }
@@ -359,9 +332,11 @@ impl RiscvSyscallState {
             guest_file_descriptions: BTreeMap::new(),
             guest_file_stats: BTreeMap::new(),
             guest_writes: Vec::new(),
+            unknown_syscalls: Vec::new(),
             stdin: VecDeque::new(),
             getrandom_byte_counter: 0,
             program_break,
+            program_break_backing_end: program_break,
             mmap_next,
             mmap_regions: Vec::new(),
         }
@@ -393,6 +368,10 @@ impl RiscvSyscallState {
 
     pub fn guest_writes(&self) -> &[RiscvGuestWriteRecord] {
         &self.guest_writes
+    }
+
+    pub fn unknown_syscalls(&self) -> &[RiscvUnknownSyscallRecord] {
+        &self.unknown_syscalls
     }
 
     pub fn guest_opens(&self) -> &[RiscvGuestOpenRecord] {
@@ -431,6 +410,10 @@ impl RiscvSyscallState {
         self.program_break
     }
 
+    pub(super) const fn program_break_backing_end(&self) -> u64 {
+        self.program_break_backing_end
+    }
+
     pub const fn mmap_next(&self) -> u64 {
         self.mmap_next
     }
@@ -441,6 +424,10 @@ impl RiscvSyscallState {
 
     fn set_program_break(&mut self, value: u64) {
         self.program_break = value;
+    }
+
+    pub(super) fn set_program_break_backing_end(&mut self, value: u64) {
+        self.program_break_backing_end = value;
     }
 
     fn set_child_clear_tid(&mut self, value: u64) {
@@ -486,6 +473,10 @@ impl RiscvSyscallState {
 
     fn push_guest_write(&mut self, write: RiscvGuestWriteRecord) {
         self.guest_writes.push(write);
+    }
+
+    fn push_unknown_syscall(&mut self, record: RiscvUnknownSyscallRecord) {
+        self.unknown_syscalls.push(record);
     }
 
     fn guest_path_registered(&self, path: &[u8]) -> bool {
@@ -972,7 +963,7 @@ impl RiscvSyscallTable {
                 value: state.identity().effective_group_id(),
             }),
             RISCV_LINUX_BRK => Some(RiscvSyscallOutcome::Return {
-                value: syscall_brk(request.argument(0), state),
+                value: syscall_brk(request.argument(0), state, guest_memory_writer),
             }),
             RISCV_LINUX_MMAP => Some(RiscvSyscallOutcome::Return {
                 value: syscall_mmap(request, state, guest_memory_writer),
@@ -980,9 +971,17 @@ impl RiscvSyscallTable {
             RISCV_LINUX_MUNMAP => Some(RiscvSyscallOutcome::Return {
                 value: syscall_munmap(request.argument(0), request.argument(1), state),
             }),
-            _ => Some(RiscvSyscallOutcome::Return {
-                value: linux_error(RISCV_LINUX_ENOSYS),
-            }),
+            _ => {
+                state.push_unknown_syscall(RiscvUnknownSyscallRecord::new(
+                    request.pc(),
+                    request.number(),
+                    request.arguments(),
+                    tick,
+                ));
+                Some(RiscvSyscallOutcome::Return {
+                    value: linux_error(RISCV_LINUX_ENOSYS),
+                })
+            }
         }
     }
 }
@@ -1061,6 +1060,7 @@ impl RiscvSyscallEmulation {
         {
             let mut state = self.state.lock().expect("RISC-V syscall state lock");
             state.set_program_break(program_break);
+            state.set_program_break_backing_end(program_break);
         }
         Ok(self)
     }
@@ -1335,13 +1335,6 @@ fn register(index: u8) -> Register {
 
 fn syscall_exit_code(value: u64) -> i32 {
     value.min(i32::MAX as u64) as i32
-}
-
-fn syscall_brk(requested: u64, state: &mut RiscvSyscallState) -> u64 {
-    if requested != 0 {
-        state.set_program_break(requested);
-    }
-    state.program_break()
 }
 
 fn riscv_program_break_for_boot_image(
