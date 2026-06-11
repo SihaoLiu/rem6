@@ -93,7 +93,7 @@ fn float_load_response_writeback_preserves_raw_bits() {
 
     assert_eq!(
         writeback,
-        MemoryResponseWriteback::new_float(freg(0), 3.141592653589793f64.to_bits())
+        MemoryResponseWriteback::new_float(freg(0), std::f64::consts::PI.to_bits())
     );
     assert_eq!(writeback.integer_register(), None);
 }

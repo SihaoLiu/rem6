@@ -303,6 +303,10 @@ pub enum RiscvInstruction {
         rs1: FloatRegister,
         rs2: FloatRegister,
     },
+    FloatSqrtD {
+        rd: FloatRegister,
+        rs1: FloatRegister,
+    },
     FloatSignInjectD {
         rd: FloatRegister,
         rs1: FloatRegister,
@@ -314,6 +318,16 @@ pub enum RiscvInstruction {
         rs2: FloatRegister,
     },
     FloatSignInjectXorD {
+        rd: FloatRegister,
+        rs1: FloatRegister,
+        rs2: FloatRegister,
+    },
+    FloatMinD {
+        rd: FloatRegister,
+        rs1: FloatRegister,
+        rs2: FloatRegister,
+    },
+    FloatMaxD {
         rd: FloatRegister,
         rs1: FloatRegister,
         rs2: FloatRegister,
@@ -332,6 +346,34 @@ pub enum RiscvInstruction {
         rd: Register,
         rs1: FloatRegister,
         rs2: FloatRegister,
+    },
+    FloatClassD {
+        rd: Register,
+        rs1: FloatRegister,
+    },
+    FloatMoveXFromD {
+        rd: Register,
+        rs1: FloatRegister,
+    },
+    FloatMoveDFromX {
+        rd: FloatRegister,
+        rs1: Register,
+    },
+    FloatConvertDFromW {
+        rd: FloatRegister,
+        rs1: Register,
+    },
+    FloatConvertDFromWu {
+        rd: FloatRegister,
+        rs1: Register,
+    },
+    FloatConvertDFromL {
+        rd: FloatRegister,
+        rs1: Register,
+    },
+    FloatConvertDFromLu {
+        rd: FloatRegister,
+        rs1: Register,
     },
     LoadReserved {
         rd: Register,

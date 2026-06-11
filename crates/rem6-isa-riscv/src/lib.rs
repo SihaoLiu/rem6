@@ -767,12 +767,27 @@ impl RiscvHartState {
             | RiscvInstruction::FloatDivD { rs1, rs2, .. }
             | RiscvInstruction::FloatSignInjectD { rs1, rs2, .. }
             | RiscvInstruction::FloatSignInjectNegD { rs1, rs2, .. }
-            | RiscvInstruction::FloatSignInjectXorD { rs1, rs2, .. }) => {
+            | RiscvInstruction::FloatSignInjectXorD { rs1, rs2, .. }
+            | RiscvInstruction::FloatMinD { rs1, rs2, .. }
+            | RiscvInstruction::FloatMaxD { rs1, rs2, .. }) => {
                 let (rd, value) = float::float_register_write(
                     instruction,
                     self.read_float(rs1),
                     self.read_float(rs2),
                 );
+                write_float_register(self, &mut float_register_writes, rd, value);
+            }
+            instruction @ RiscvInstruction::FloatSqrtD { rs1, .. } => {
+                let (rd, value) = float::float_register_write(instruction, self.read_float(rs1), 0);
+                write_float_register(self, &mut float_register_writes, rd, value);
+            }
+            instruction @ (RiscvInstruction::FloatMoveDFromX { rs1, .. }
+            | RiscvInstruction::FloatConvertDFromW { rs1, .. }
+            | RiscvInstruction::FloatConvertDFromWu { rs1, .. }
+            | RiscvInstruction::FloatConvertDFromL { rs1, .. }
+            | RiscvInstruction::FloatConvertDFromLu { rs1, .. }) => {
+                let (rd, value) =
+                    float::float_register_write_from_integer(instruction, self.read(rs1));
                 write_float_register(self, &mut float_register_writes, rd, value);
             }
             instruction @ (RiscvInstruction::FloatLessOrEqualD { rs1, rs2, .. }
@@ -783,6 +798,12 @@ impl RiscvHartState {
                     self.read_float(rs1),
                     self.read_float(rs2),
                 );
+                write_register(self, &mut register_writes, rd, value);
+            }
+            instruction @ (RiscvInstruction::FloatClassD { rs1, .. }
+            | RiscvInstruction::FloatMoveXFromD { rs1, .. }) => {
+                let (rd, value) =
+                    float::integer_register_write(instruction, self.read_float(rs1), 0);
                 write_register(self, &mut register_writes, rd, value);
             }
             RiscvInstruction::LoadReserved {

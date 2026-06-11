@@ -157,6 +157,98 @@ fn decoder_accepts_rv64d_arithmetic_sign_and_compare_operations() {
 }
 
 #[test]
+fn decoder_accepts_rv64d_minmax_class_and_move_operations() {
+    let cases = [
+        (
+            r_type(0x15, 3, 2, 0x0, 5, 0x53),
+            RiscvInstruction::FloatMinD {
+                rd: freg(5),
+                rs1: freg(2),
+                rs2: freg(3),
+            },
+        ),
+        (
+            r_type(0x15, 3, 2, 0x1, 5, 0x53),
+            RiscvInstruction::FloatMaxD {
+                rd: freg(5),
+                rs1: freg(2),
+                rs2: freg(3),
+            },
+        ),
+        (
+            r_type(0x71, 0, 2, 0x1, 5, 0x53),
+            RiscvInstruction::FloatClassD {
+                rd: reg(5),
+                rs1: freg(2),
+            },
+        ),
+        (
+            r_type(0x71, 0, 2, 0x0, 5, 0x53),
+            RiscvInstruction::FloatMoveXFromD {
+                rd: reg(5),
+                rs1: freg(2),
+            },
+        ),
+        (
+            r_type(0x79, 0, 2, 0x0, 5, 0x53),
+            RiscvInstruction::FloatMoveDFromX {
+                rd: freg(5),
+                rs1: reg(2),
+            },
+        ),
+    ];
+
+    for (raw, expected) in cases {
+        assert_eq!(RiscvInstruction::decode(raw).unwrap(), expected);
+    }
+}
+
+#[test]
+fn decoder_accepts_rv64d_sqrt_and_integer_to_double_conversions() {
+    let cases = [
+        (
+            r_type(0x2d, 0, 2, 0x0, 5, 0x53),
+            RiscvInstruction::FloatSqrtD {
+                rd: freg(5),
+                rs1: freg(2),
+            },
+        ),
+        (
+            r_type(0x69, 0, 2, 0x0, 5, 0x53),
+            RiscvInstruction::FloatConvertDFromW {
+                rd: freg(5),
+                rs1: reg(2),
+            },
+        ),
+        (
+            r_type(0x69, 1, 2, 0x0, 5, 0x53),
+            RiscvInstruction::FloatConvertDFromWu {
+                rd: freg(5),
+                rs1: reg(2),
+            },
+        ),
+        (
+            r_type(0x69, 2, 2, 0x0, 5, 0x53),
+            RiscvInstruction::FloatConvertDFromL {
+                rd: freg(5),
+                rs1: reg(2),
+            },
+        ),
+        (
+            r_type(0x69, 3, 2, 0x0, 5, 0x53),
+            RiscvInstruction::FloatConvertDFromLu {
+                rd: freg(5),
+                rs1: reg(2),
+            },
+        ),
+    ];
+
+    for (raw, expected) in cases {
+        assert_eq!(RiscvInstruction::decode(raw).unwrap(), expected);
+    }
+}
+
+#[test]
 fn hart_executes_faddd_and_records_float_write() {
     let mut hart = RiscvHartState::new(0x8000);
     hart.write_float(freg(0), 1.5f64.to_bits());
@@ -331,6 +423,205 @@ fn hart_rv64d_comparisons_return_false_for_nan_without_fflags() {
         let record = hart.execute(instruction).unwrap();
         assert_eq!(record.register_writes()[0].value(), 0);
     }
+}
+
+#[test]
+fn hart_executes_rv64d_minmax_with_nan_and_signed_zero_rules() {
+    let mut hart = RiscvHartState::new(0x8000);
+    let neg_zero = (-0.0f64).to_bits();
+    let pos_zero = 0.0f64.to_bits();
+    hart.write_float(freg(1), neg_zero);
+    hart.write_float(freg(2), pos_zero);
+
+    let min_zero = hart
+        .execute(RiscvInstruction::FloatMinD {
+            rd: freg(3),
+            rs1: freg(1),
+            rs2: freg(2),
+        })
+        .unwrap();
+    assert_eq!(hart.read_float(freg(3)), neg_zero);
+    assert_eq!(
+        min_zero.float_register_writes(),
+        &[FloatRegisterWrite::new(freg(3), neg_zero)]
+    );
+
+    let max_zero = hart
+        .execute(RiscvInstruction::FloatMaxD {
+            rd: freg(4),
+            rs1: freg(1),
+            rs2: freg(2),
+        })
+        .unwrap();
+    assert_eq!(hart.read_float(freg(4)), pos_zero);
+    assert_eq!(
+        max_zero.float_register_writes(),
+        &[FloatRegisterWrite::new(freg(4), pos_zero)]
+    );
+
+    let quiet_nan = f64::NAN.to_bits();
+    hart.write_float(freg(5), quiet_nan);
+    hart.write_float(freg(6), 12.5f64.to_bits());
+    hart.execute(RiscvInstruction::FloatMinD {
+        rd: freg(7),
+        rs1: freg(5),
+        rs2: freg(6),
+    })
+    .unwrap();
+    assert_eq!(hart.read_float(freg(7)), 12.5f64.to_bits());
+
+    hart.execute(RiscvInstruction::FloatMaxD {
+        rd: freg(8),
+        rs1: freg(5),
+        rs2: freg(5),
+    })
+    .unwrap();
+    assert_eq!(hart.read_float(freg(8)), 0x7ff8_0000_0000_0000);
+}
+
+#[test]
+fn hart_executes_rv64d_classification_masks() {
+    let mut hart = RiscvHartState::new(0x8000);
+    let cases = [
+        (f64::NEG_INFINITY.to_bits(), 1 << 0),
+        ((-1.0f64).to_bits(), 1 << 1),
+        (0x8000_0000_0000_0001, 1 << 2),
+        ((-0.0f64).to_bits(), 1 << 3),
+        (0.0f64.to_bits(), 1 << 4),
+        (0x0000_0000_0000_0001, 1 << 5),
+        (1.0f64.to_bits(), 1 << 6),
+        (f64::INFINITY.to_bits(), 1 << 7),
+        (0x7ff0_0000_0000_0001, 1 << 8),
+        (f64::NAN.to_bits(), 1 << 9),
+    ];
+
+    for (bits, expected) in cases {
+        hart.write_float(freg(1), bits);
+        let record = hart
+            .execute(RiscvInstruction::FloatClassD {
+                rd: reg(5),
+                rs1: freg(1),
+            })
+            .unwrap();
+        assert_eq!(hart.read(reg(5)), expected);
+        assert_eq!(record.register_writes()[0].value(), expected);
+        assert_eq!(record.float_register_writes(), &[]);
+    }
+}
+
+#[test]
+fn hart_executes_rv64d_raw_integer_float_moves() {
+    let mut hart = RiscvHartState::new(0x8000);
+    let bits = 0x7ff8_0123_4567_89ab;
+    hart.write_float(freg(1), bits);
+
+    let from_float = hart
+        .execute(RiscvInstruction::FloatMoveXFromD {
+            rd: reg(5),
+            rs1: freg(1),
+        })
+        .unwrap();
+    assert_eq!(hart.read(reg(5)), bits);
+    assert_eq!(from_float.register_writes()[0].value(), bits);
+    assert_eq!(from_float.float_register_writes(), &[]);
+
+    let moved_bits = 0xfff0_0000_0000_0001;
+    hart.write(reg(6), moved_bits);
+    let to_float = hart
+        .execute(RiscvInstruction::FloatMoveDFromX {
+            rd: freg(7),
+            rs1: reg(6),
+        })
+        .unwrap();
+    assert_eq!(hart.read_float(freg(7)), moved_bits);
+    assert_eq!(
+        to_float.float_register_writes(),
+        &[FloatRegisterWrite::new(freg(7), moved_bits)]
+    );
+    assert_eq!(to_float.register_writes(), &[]);
+}
+
+#[test]
+fn hart_executes_rv64d_sqrt_and_integer_to_double_conversions() {
+    let mut hart = RiscvHartState::new(0x8000);
+    hart.write_float(freg(1), 144.0f64.to_bits());
+
+    let sqrt = hart
+        .execute(RiscvInstruction::FloatSqrtD {
+            rd: freg(2),
+            rs1: freg(1),
+        })
+        .unwrap();
+    assert_eq!(hart.read_float(freg(2)), 12.0f64.to_bits());
+    assert_eq!(
+        sqrt.float_register_writes(),
+        &[FloatRegisterWrite::new(freg(2), 12.0f64.to_bits())]
+    );
+
+    hart.write_float(freg(10), (-1.0f64).to_bits());
+    let invalid_sqrt = hart
+        .execute(RiscvInstruction::FloatSqrtD {
+            rd: freg(11),
+            rs1: freg(10),
+        })
+        .unwrap();
+    assert_eq!(hart.read_float(freg(11)), 0x7ff8_0000_0000_0000);
+    assert_eq!(
+        invalid_sqrt.float_register_writes(),
+        &[FloatRegisterWrite::new(freg(11), 0x7ff8_0000_0000_0000)]
+    );
+
+    hart.write_float(freg(12), 0x7ff0_0000_0000_0001);
+    hart.execute(RiscvInstruction::FloatSqrtD {
+        rd: freg(13),
+        rs1: freg(12),
+    })
+    .unwrap();
+    assert_eq!(hart.read_float(freg(13)), 0x7ff8_0000_0000_0000);
+
+    hart.write(reg(3), 0xffff_fffe);
+    hart.execute(RiscvInstruction::FloatConvertDFromW {
+        rd: freg(4),
+        rs1: reg(3),
+    })
+    .unwrap();
+    assert_eq!(hart.read_float(freg(4)), (-2.0f64).to_bits());
+
+    hart.execute(RiscvInstruction::FloatConvertDFromWu {
+        rd: freg(5),
+        rs1: reg(3),
+    })
+    .unwrap();
+    assert_eq!(hart.read_float(freg(5)), 4_294_967_294.0f64.to_bits());
+
+    hart.write(reg(6), (-9i64) as u64);
+    hart.execute(RiscvInstruction::FloatConvertDFromL {
+        rd: freg(7),
+        rs1: reg(6),
+    })
+    .unwrap();
+    assert_eq!(hart.read_float(freg(7)), (-9.0f64).to_bits());
+
+    hart.write(reg(8), 1u64 << 63);
+    let unsigned = hart
+        .execute(RiscvInstruction::FloatConvertDFromLu {
+            rd: freg(9),
+            rs1: reg(8),
+        })
+        .unwrap();
+    assert_eq!(
+        hart.read_float(freg(9)),
+        9_223_372_036_854_775_808.0f64.to_bits()
+    );
+    assert_eq!(unsigned.register_writes(), &[]);
+
+    hart.write(reg(10), u64::MAX);
+    hart.execute(RiscvInstruction::FloatConvertDFromLu {
+        rd: freg(11),
+        rs1: reg(10),
+    })
+    .unwrap();
+    assert_eq!(hart.read_float(freg(11)), 0x43f0_0000_0000_0000);
 }
 
 #[test]
