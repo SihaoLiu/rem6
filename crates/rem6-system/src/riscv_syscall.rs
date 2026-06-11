@@ -7,6 +7,17 @@ use rem6_kernel::PartitionedScheduler;
 use crate::{GuestEventId, RiscvSystemRunDriver, ScheduledRiscvTrap, SystemError};
 
 const RISCV_LINUX_SET_TID_ADDRESS: u64 = 96;
+const RISCV_LINUX_SET_ROBUST_LIST: u64 = 99;
+const RISCV_LINUX_GET_ROBUST_LIST: u64 = 100;
+const RISCV_LINUX_NANOSLEEP: u64 = 101;
+const RISCV_LINUX_SCHED_YIELD: u64 = 124;
+const RISCV_LINUX_RT_SIGSUSPEND: u64 = 133;
+const RISCV_LINUX_RT_SIGACTION: u64 = 134;
+const RISCV_LINUX_RT_SIGPROCMASK: u64 = 135;
+const RISCV_LINUX_RT_SIGPENDING: u64 = 136;
+const RISCV_LINUX_RT_SIGTIMEDWAIT: u64 = 137;
+const RISCV_LINUX_RT_SIGQUEUEINFO: u64 = 138;
+const RISCV_LINUX_RT_SIGRETURN: u64 = 139;
 const RISCV_LINUX_EXIT: u64 = 93;
 const RISCV_LINUX_EXIT_GROUP: u64 = 94;
 const RISCV_LINUX_GETPID: u64 = 172;
@@ -381,6 +392,17 @@ impl RiscvSyscallTable {
             RISCV_LINUX_SET_TID_ADDRESS => Some(RiscvSyscallOutcome::Return {
                 value: syscall_set_tid_address(request.argument(0), state),
             }),
+            RISCV_LINUX_SET_ROBUST_LIST
+            | RISCV_LINUX_GET_ROBUST_LIST
+            | RISCV_LINUX_NANOSLEEP
+            | RISCV_LINUX_SCHED_YIELD
+            | RISCV_LINUX_RT_SIGSUSPEND
+            | RISCV_LINUX_RT_SIGACTION
+            | RISCV_LINUX_RT_SIGPROCMASK
+            | RISCV_LINUX_RT_SIGPENDING
+            | RISCV_LINUX_RT_SIGTIMEDWAIT
+            | RISCV_LINUX_RT_SIGQUEUEINFO
+            | RISCV_LINUX_RT_SIGRETURN => Some(RiscvSyscallOutcome::Return { value: 0 }),
             RISCV_LINUX_EXIT | RISCV_LINUX_EXIT_GROUP => Some(RiscvSyscallOutcome::Exit {
                 code: syscall_exit_code(request.argument(0)),
             }),
@@ -752,6 +774,31 @@ mod tests {
             Some(RiscvSyscallOutcome::Return { value: 100 })
         );
         assert_eq!(state.child_clear_tid(), None);
+    }
+
+    #[test]
+    fn linux_table_ignores_gem5_warn_once_startup_syscalls() {
+        let table = RiscvSyscallTable::new();
+        let mut state = RiscvSyscallState::new(0);
+
+        for number in [
+            RISCV_LINUX_SET_ROBUST_LIST,
+            RISCV_LINUX_GET_ROBUST_LIST,
+            RISCV_LINUX_NANOSLEEP,
+            RISCV_LINUX_SCHED_YIELD,
+            RISCV_LINUX_RT_SIGSUSPEND,
+            RISCV_LINUX_RT_SIGACTION,
+            RISCV_LINUX_RT_SIGPROCMASK,
+            RISCV_LINUX_RT_SIGPENDING,
+            RISCV_LINUX_RT_SIGTIMEDWAIT,
+            RISCV_LINUX_RT_SIGQUEUEINFO,
+            RISCV_LINUX_RT_SIGRETURN,
+        ] {
+            assert_eq!(
+                table.handle(RiscvSyscallRequest::new(0x8000, number, [0; 6]), &mut state,),
+                Some(RiscvSyscallOutcome::Return { value: 0 })
+            );
+        }
     }
 
     #[test]
