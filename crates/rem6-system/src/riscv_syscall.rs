@@ -1,3 +1,5 @@
+use std::sync::{Arc, Mutex};
+
 use rem6_cpu::{CpuId, RiscvCore};
 use rem6_isa_riscv::{Register, RiscvPrivilegeMode, RiscvTrapKind};
 use rem6_kernel::PartitionedScheduler;
@@ -6,6 +8,7 @@ use crate::{GuestEventId, RiscvSystemRunDriver, ScheduledRiscvTrap, SystemError}
 
 const RISCV_LINUX_EXIT: u64 = 93;
 const RISCV_LINUX_EXIT_GROUP: u64 = 94;
+const RISCV_LINUX_BRK: u64 = 214;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RiscvSyscallRequest {
@@ -66,6 +69,26 @@ impl RiscvSyscallRequest {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RiscvSyscallOutcome {
     Exit { code: i32 },
+    Return { value: u64 },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RiscvSyscallState {
+    program_break: u64,
+}
+
+impl RiscvSyscallState {
+    pub const fn new(program_break: u64) -> Self {
+        Self { program_break }
+    }
+
+    pub const fn program_break(self) -> u64 {
+        self.program_break
+    }
+
+    fn set_program_break(&mut self, value: u64) {
+        self.program_break = value;
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -76,37 +99,55 @@ impl RiscvSyscallTable {
         Self
     }
 
-    pub fn handle(self, request: RiscvSyscallRequest) -> Option<RiscvSyscallOutcome> {
+    pub fn handle(
+        self,
+        request: RiscvSyscallRequest,
+        state: &mut RiscvSyscallState,
+    ) -> Option<RiscvSyscallOutcome> {
         match request.number() {
             RISCV_LINUX_EXIT | RISCV_LINUX_EXIT_GROUP => Some(RiscvSyscallOutcome::Exit {
                 code: syscall_exit_code(request.argument(0)),
+            }),
+            RISCV_LINUX_BRK => Some(RiscvSyscallOutcome::Return {
+                value: syscall_brk(request.argument(0), state),
             }),
             _ => None,
         }
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct RiscvSyscallEmulation {
     table: RiscvSyscallTable,
+    state: Arc<Mutex<RiscvSyscallState>>,
 }
 
 impl RiscvSyscallEmulation {
-    pub const fn new(table: RiscvSyscallTable) -> Self {
-        Self { table }
+    pub fn new(table: RiscvSyscallTable, state: RiscvSyscallState) -> Self {
+        Self {
+            table,
+            state: Arc::new(Mutex::new(state)),
+        }
     }
 
-    pub const fn linux_user() -> Self {
-        Self::new(RiscvSyscallTable::new())
+    pub fn linux_user() -> Self {
+        Self::new(RiscvSyscallTable::new(), RiscvSyscallState::new(0))
     }
 
-    pub const fn table(self) -> RiscvSyscallTable {
+    pub const fn table(&self) -> RiscvSyscallTable {
         self.table
     }
 
-    pub fn handle_pending_core_trap(self, core: &RiscvCore) -> Option<RiscvSyscallOutcome> {
-        self.table
-            .handle(RiscvSyscallRequest::from_pending_core_trap(core)?)
+    pub fn state(&self) -> RiscvSyscallState {
+        *self.state.lock().expect("RISC-V syscall state lock")
+    }
+
+    pub fn handle_pending_core_trap(&self, core: &RiscvCore) -> Option<RiscvSyscallOutcome> {
+        let mut state = self.state.lock().expect("RISC-V syscall state lock");
+        self.table.handle(
+            RiscvSyscallRequest::from_pending_core_trap(core)?,
+            &mut state,
+        )
     }
 }
 
@@ -135,7 +176,7 @@ impl RiscvSystemRunDriver {
     where
         F: FnMut(CpuId) -> GuestEventId,
     {
-        if let Some(syscalls) = self.riscv_syscall_emulation {
+        if let Some(syscalls) = self.riscv_syscall_emulation.as_ref() {
             self.trap_port
                 .schedule_pending_core_traps_with_syscall_emulation(
                     scheduler, cores, syscalls, event_for,
@@ -155,7 +196,7 @@ impl RiscvSystemRunDriver {
     where
         F: FnMut(CpuId) -> GuestEventId,
     {
-        if let Some(syscalls) = self.riscv_syscall_emulation {
+        if let Some(syscalls) = self.riscv_syscall_emulation.as_ref() {
             self.trap_port
                 .schedule_pending_core_traps_with_syscall_emulation_parallel(
                     scheduler, cores, syscalls, event_for,
@@ -175,6 +216,13 @@ fn syscall_exit_code(value: u64) -> i32 {
     value.min(i32::MAX as u64) as i32
 }
 
+fn syscall_brk(requested: u64, state: &mut RiscvSyscallState) -> u64 {
+    if requested != 0 {
+        state.set_program_break(requested);
+    }
+    state.program_break()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -182,25 +230,53 @@ mod tests {
     #[test]
     fn linux_table_maps_exit_numbers_to_stop_codes() {
         let table = RiscvSyscallTable::new();
+        let mut state = RiscvSyscallState::new(0);
 
         assert_eq!(
-            table.handle(RiscvSyscallRequest::new(0x8000, RISCV_LINUX_EXIT, [17; 6])),
+            table.handle(
+                RiscvSyscallRequest::new(0x8000, RISCV_LINUX_EXIT, [17; 6]),
+                &mut state,
+            ),
             Some(RiscvSyscallOutcome::Exit { code: 17 })
         );
         assert_eq!(
-            table.handle(RiscvSyscallRequest::new(
-                0x8000,
-                RISCV_LINUX_EXIT_GROUP,
-                [19; 6]
-            )),
+            table.handle(
+                RiscvSyscallRequest::new(0x8000, RISCV_LINUX_EXIT_GROUP, [19; 6]),
+                &mut state,
+            ),
             Some(RiscvSyscallOutcome::Exit { code: 19 })
         );
     }
 
     #[test]
-    fn linux_table_leaves_unknown_numbers_for_the_trap_path() {
+    fn linux_table_tracks_program_break() {
+        let table = RiscvSyscallTable::new();
+        let mut state = RiscvSyscallState::new(0);
+
         assert_eq!(
-            RiscvSyscallTable::new().handle(RiscvSyscallRequest::new(0x8000, 214, [0; 6])),
+            table.handle(
+                RiscvSyscallRequest::new(0x8000, RISCV_LINUX_BRK, [64, 0, 0, 0, 0, 0]),
+                &mut state,
+            ),
+            Some(RiscvSyscallOutcome::Return { value: 64 })
+        );
+        assert_eq!(
+            table.handle(
+                RiscvSyscallRequest::new(0x8004, RISCV_LINUX_BRK, [0; 6]),
+                &mut state,
+            ),
+            Some(RiscvSyscallOutcome::Return { value: 64 })
+        );
+        assert_eq!(state.program_break(), 64);
+    }
+
+    #[test]
+    fn linux_table_leaves_unknown_numbers_for_the_trap_path() {
+        let mut state = RiscvSyscallState::new(0);
+
+        assert_eq!(
+            RiscvSyscallTable::new()
+                .handle(RiscvSyscallRequest::new(0x8000, 9999, [0; 6]), &mut state,),
             None
         );
     }

@@ -420,7 +420,7 @@ impl RiscvTrapEventPort {
         &self,
         scheduler: &mut PartitionedScheduler,
         cores: I,
-        syscalls: RiscvSyscallEmulation,
+        syscalls: &RiscvSyscallEmulation,
         event_for: F,
     ) -> Result<Vec<ScheduledRiscvTrap>, SystemError>
     where
@@ -436,7 +436,7 @@ impl RiscvTrapEventPort {
         &self,
         scheduler: &mut PartitionedScheduler,
         cores: I,
-        syscalls: RiscvSyscallEmulation,
+        syscalls: &RiscvSyscallEmulation,
         event_for: F,
     ) -> Result<Vec<ScheduledRiscvTrap>, SystemError>
     where
@@ -544,7 +544,7 @@ impl RiscvTrapEventPort {
         &self,
         scheduler: &mut PartitionedScheduler,
         cores: I,
-        syscalls: RiscvSyscallEmulation,
+        syscalls: &RiscvSyscallEmulation,
         mut event_for: F,
         parallel: bool,
     ) -> Result<Vec<ScheduledRiscvTrap>, SystemError>
@@ -570,23 +570,35 @@ impl RiscvTrapEventPort {
                 self.validate_scheduled_emit(scheduler, source, source_tick)?;
             }
 
-            if let Some(kind) = guest_event_kind_from_riscv_syscall_outcome(
-                syscalls.handle_pending_core_trap(&core),
-            ) {
-                pending_syscalls.push(PendingRiscvSystemEventSchedule {
-                    event,
-                    source,
-                    source_tick,
-                    kind,
-                });
-            } else {
-                pending_traps.push(PendingRiscvTrapSchedule {
-                    cpu,
-                    event,
-                    source,
-                    source_tick,
-                    trap,
-                });
+            match syscalls.handle_pending_core_trap(&core) {
+                Some(RiscvSyscallOutcome::Exit { code }) => {
+                    pending_syscalls.push(PendingRiscvSystemEventSchedule {
+                        event,
+                        source,
+                        source_tick,
+                        kind: GuestEventKind::Terminate { code },
+                    });
+                }
+                Some(RiscvSyscallOutcome::Return { value }) => {
+                    if core.complete_pending_user_environment_call(value).is_none() {
+                        pending_traps.push(PendingRiscvTrapSchedule {
+                            cpu,
+                            event,
+                            source,
+                            source_tick,
+                            trap,
+                        });
+                    }
+                }
+                None => {
+                    pending_traps.push(PendingRiscvTrapSchedule {
+                        cpu,
+                        event,
+                        source,
+                        source_tick,
+                        trap,
+                    });
+                }
             }
         }
 
@@ -866,12 +878,6 @@ fn guest_event_from_riscv_system_event(
 
 fn gem5_fail_stop_code(code: u64) -> i32 {
     code.min(i32::MAX as u64) as i32
-}
-
-fn guest_event_kind_from_riscv_syscall_outcome(
-    outcome: Option<RiscvSyscallOutcome>,
-) -> Option<GuestEventKind> {
-    outcome.map(|RiscvSyscallOutcome::Exit { code }| GuestEventKind::Terminate { code })
 }
 
 pub const fn guest_trap_from_riscv(trap: RiscvTrap) -> GuestTrap {
