@@ -26,6 +26,7 @@ const RISCV_LINUX_OPENAT: u64 = 56;
 const RISCV_LINUX_CLOSE: u64 = 57;
 const RISCV_LINUX_READ: u64 = 63;
 const RISCV_LINUX_WRITE: u64 = 64;
+const RISCV_LINUX_READLINKAT: u64 = 78;
 const RISCV_LINUX_NEWFSTATAT: u64 = 79;
 const RISCV_LINUX_FSTAT: u64 = 80;
 const RISCV_LINUX_SET_TID_ADDRESS: u64 = 96;
@@ -376,6 +377,7 @@ pub struct RiscvSyscallState {
     guest_futexes: GuestFutexTable,
     guest_paths: BTreeSet<Vec<u8>>,
     guest_files: BTreeMap<Vec<u8>, Vec<u8>>,
+    guest_links: BTreeMap<Vec<u8>, Vec<u8>>,
     guest_opens: Vec<RiscvGuestOpenRecord>,
     stdin_fds: BTreeSet<GuestFd>,
     guest_file_descriptions: BTreeMap<GuestFileDescriptionId, Vec<u8>>,
@@ -420,6 +422,7 @@ impl RiscvSyscallState {
             guest_futexes: GuestFutexTable::new(),
             guest_paths: BTreeSet::new(),
             guest_files: BTreeMap::new(),
+            guest_links: BTreeMap::new(),
             guest_opens: Vec::new(),
             stdin_fds,
             guest_file_descriptions: BTreeMap::new(),
@@ -465,6 +468,11 @@ impl RiscvSyscallState {
         let path = path.as_ref().to_vec();
         self.guest_paths.insert(path.clone());
         self.guest_files.insert(path, contents.as_ref().to_vec());
+    }
+
+    pub fn register_guest_symlink(&mut self, path: impl AsRef<[u8]>, target: impl AsRef<[u8]>) {
+        self.guest_links
+            .insert(path.as_ref().to_vec(), target.as_ref().to_vec());
     }
 
     pub fn push_stdin_bytes(&mut self, bytes: &[u8]) {
@@ -540,6 +548,10 @@ impl RiscvSyscallState {
 
     fn guest_file_contents(&self, path: &[u8]) -> Option<&[u8]> {
         self.guest_files.get(path).map(Vec::as_slice)
+    }
+
+    fn guest_link_target(&self, path: &[u8]) -> Option<&[u8]> {
+        self.guest_links.get(path).map(Vec::as_slice)
     }
 
     fn guest_path_stat(&self, path: &[u8]) -> Option<RiscvGuestStat> {
@@ -903,6 +915,11 @@ impl RiscvSyscallTable {
                     value: syscall_write(request, state, tick, guest_memory),
                 })
             }
+            RISCV_LINUX_READLINKAT => guest_memory_reader.and_then(|reader| {
+                guest_memory_writer.map(|writer| RiscvSyscallOutcome::Return {
+                    value: syscall_readlinkat(request, state, reader, writer),
+                })
+            }),
             RISCV_LINUX_NEWFSTATAT => guest_memory_reader.and_then(|reader| {
                 guest_memory_writer.map(|writer| RiscvSyscallOutcome::Return {
                     value: syscall_newfstatat(request, state, reader, writer),
@@ -1066,6 +1083,13 @@ impl RiscvSyscallEmulation {
             .lock()
             .expect("RISC-V syscall state lock")
             .register_guest_file(path, contents);
+    }
+
+    pub fn register_guest_symlink(&self, path: impl AsRef<[u8]>, target: impl AsRef<[u8]>) {
+        self.state
+            .lock()
+            .expect("RISC-V syscall state lock")
+            .register_guest_symlink(path, target);
     }
 
     pub fn handle_pending_core_trap(
@@ -1423,6 +1447,48 @@ fn syscall_newfstatat(
     };
 
     write_riscv_linux_stat(request.argument(2), stat, guest_memory_writer)
+}
+
+fn syscall_readlinkat(
+    request: RiscvSyscallRequest,
+    state: &RiscvSyscallState,
+    guest_memory_reader: &RiscvGuestMemoryReader,
+    guest_memory_writer: &RiscvGuestMemoryWriter,
+) -> u64 {
+    if request.argument(0) != RISCV_LINUX_AT_FDCWD {
+        return linux_error(RISCV_LINUX_EBADF);
+    }
+    if request.argument(3) == 0 {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+
+    let path = match read_guest_c_string(
+        guest_memory_reader,
+        request.argument(1),
+        RISCV_LINUX_PATH_MAX,
+    ) {
+        Ok(path) => path,
+        Err(RiscvGuestCStringError::Fault) => return linux_error(RISCV_LINUX_EFAULT),
+        Err(RiscvGuestCStringError::TooLong) => return linux_error(RISCV_LINUX_ENAMETOOLONG),
+    };
+    if path.is_empty() {
+        return linux_error(RISCV_LINUX_ENOENT);
+    }
+
+    let Ok(buffer_bytes) = usize::try_from(request.argument(3)) else {
+        return linux_error(RISCV_LINUX_EINVAL);
+    };
+    let Some(target) = state.guest_link_target(&path) else {
+        return linux_error(RISCV_LINUX_ENOENT);
+    };
+    let bytes = &target[..target.len().min(buffer_bytes)];
+    if bytes.is_empty() {
+        return 0;
+    }
+    if !guest_memory_writer.write(request.argument(2), bytes) {
+        return linux_error(RISCV_LINUX_EFAULT);
+    }
+    bytes.len() as u64
 }
 
 fn syscall_fstat(
