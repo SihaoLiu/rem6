@@ -15,6 +15,10 @@ use crate::{
     ScheduledRiscvTrap, SystemError,
 };
 
+mod stat;
+
+use stat::{guest_path_inode, write_riscv_linux_stat, RiscvGuestStat};
+
 const RISCV_LINUX_DUP: u64 = 23;
 const RISCV_LINUX_DUP3: u64 = 24;
 const RISCV_LINUX_FCNTL: u64 = 25;
@@ -58,6 +62,7 @@ const RISCV_LINUX_MUNLOCKALL: u64 = 231;
 const RISCV_LINUX_MINCORE: u64 = 232;
 const RISCV_LINUX_MADVISE: u64 = 233;
 const RISCV_LINUX_MBIND: u64 = 235;
+const RISCV_LINUX_GETRANDOM: u64 = 278;
 const RISCV_LINUX_RSEQ: u64 = 293;
 const RISCV_LINUX_ENOENT: u64 = 2;
 const RISCV_LINUX_EBADF: u64 = 9;
@@ -75,6 +80,12 @@ const RISCV_LINUX_F_SETFD: u64 = 2;
 const RISCV_LINUX_F_GETFL: u64 = 3;
 const RISCV_LINUX_F_SETFL: u64 = 4;
 const RISCV_LINUX_FD_CLOEXEC: u64 = 1;
+const RISCV_LINUX_GRND_NONBLOCK: u64 = 0x0001;
+const RISCV_LINUX_GRND_RANDOM: u64 = 0x0002;
+const RISCV_LINUX_GRND_INSECURE: u64 = 0x0004;
+const RISCV_LINUX_GRND_VALID_FLAGS: u64 =
+    RISCV_LINUX_GRND_NONBLOCK | RISCV_LINUX_GRND_RANDOM | RISCV_LINUX_GRND_INSECURE;
+const RISCV_LINUX_GETRANDOM_MAX_CHUNK_BYTES: u64 = 256;
 const RISCV_LINUX_O_ACCMODE: u64 = 0x3;
 const RISCV_LINUX_O_CLOEXEC: u64 = 0o2_000_000;
 const RISCV_LINUX_O_RDONLY: u64 = 0;
@@ -90,16 +101,10 @@ const RISCV_LINUX_AT_EMPTY_PATH: u64 = 0x1000;
 const RISCV_LINUX_AT_NO_AUTOMOUNT: u64 = 0x800;
 const RISCV_LINUX_AT_SYMLINK_NOFOLLOW: u64 = 0x100;
 const RISCV_LINUX_PATH_MAX: usize = 4096;
-const RISCV_LINUX_STAT_BYTES: usize = 128;
-const RISCV_LINUX_STAT_BLOCK_BYTES: u64 = 512;
-const RISCV_LINUX_STAT_BLOCK_SIZE: u64 = 8192;
-const RISCV_LINUX_S_IFCHR: u32 = 0o020000;
-const RISCV_LINUX_S_IFREG: u32 = 0o100000;
-const RISCV_LINUX_REGULAR_FILE_MODE: u32 = RISCV_LINUX_S_IFREG | 0o444;
-const RISCV_LINUX_CHARACTER_DEVICE_MODE: u32 = RISCV_LINUX_S_IFCHR | 0o666;
 const RISCV_PAGE_BYTES: u64 = 4096;
 const RISCV64_LINUX_MMAP_BASE: u64 = 0x4000_0000_0000_0000;
 const RISCV_LINUX_DEFAULT_PROCESS_ID: u64 = 100;
+const RISCV_LINUX_GETRANDOM_INITIAL_BYTE: u8 = 0x2b;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RiscvSyscallRequest {
@@ -377,6 +382,7 @@ pub struct RiscvSyscallState {
     guest_file_stats: BTreeMap<GuestFileDescriptionId, RiscvGuestStat>,
     guest_writes: Vec<RiscvGuestWriteRecord>,
     stdin: VecDeque<u8>,
+    getrandom_byte_counter: u8,
     program_break: u64,
     mmap_next: u64,
     mmap_regions: Vec<RiscvMmapRegion>,
@@ -420,6 +426,7 @@ impl RiscvSyscallState {
             guest_file_stats: BTreeMap::new(),
             guest_writes: Vec::new(),
             stdin: VecDeque::new(),
+            getrandom_byte_counter: 0,
             program_break,
             mmap_next,
             mmap_regions: Vec::new(),
@@ -687,6 +694,20 @@ impl RiscvSyscallState {
     fn consume_stdin_prefix(&mut self, count: usize) {
         self.stdin.drain(..count);
     }
+
+    fn getrandom_bytes(&self, count: usize) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(count);
+        let mut counter = self.getrandom_byte_counter;
+        for _ in 0..count {
+            bytes.push(RISCV_LINUX_GETRANDOM_INITIAL_BYTE ^ counter);
+            counter = counter.wrapping_add(1);
+        }
+        bytes
+    }
+
+    fn advance_getrandom_byte_counter(&mut self, count: usize) {
+        self.getrandom_byte_counter = self.getrandom_byte_counter.wrapping_add(count as u8);
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -760,64 +781,6 @@ impl RiscvSyscallIdentity {
     const fn effective_group_id(self) -> u64 {
         self.effective_group_id
     }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct RiscvGuestStat {
-    device: u64,
-    inode: u64,
-    mode: u32,
-    link_count: u32,
-    user_id: u32,
-    group_id: u32,
-    special_device: u64,
-    size: u64,
-    block_size: u64,
-    blocks: u64,
-}
-
-impl RiscvGuestStat {
-    fn regular_file(size: u64, identity: RiscvSyscallIdentity, inode: u64) -> Self {
-        Self {
-            device: 0,
-            inode,
-            mode: RISCV_LINUX_REGULAR_FILE_MODE,
-            link_count: 1,
-            user_id: linux_stat_user_id(identity.user_id()),
-            group_id: linux_stat_user_id(identity.group_id()),
-            special_device: 0,
-            size,
-            block_size: RISCV_LINUX_STAT_BLOCK_SIZE,
-            blocks: size.div_ceil(RISCV_LINUX_STAT_BLOCK_BYTES),
-        }
-    }
-
-    fn character_device(identity: RiscvSyscallIdentity, inode: u64) -> Self {
-        Self {
-            device: 0x0a,
-            inode,
-            mode: RISCV_LINUX_CHARACTER_DEVICE_MODE,
-            link_count: 1,
-            user_id: linux_stat_user_id(identity.user_id()),
-            group_id: linux_stat_user_id(identity.group_id()),
-            special_device: 0x880d,
-            size: 0,
-            block_size: RISCV_LINUX_STAT_BLOCK_SIZE,
-            blocks: 0,
-        }
-    }
-}
-
-fn linux_stat_user_id(value: u64) -> u32 {
-    value.min(u32::MAX as u64) as u32
-}
-
-fn guest_path_inode(path: &[u8]) -> u64 {
-    path.iter()
-        .fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
-            (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3)
-        })
-        .max(1)
 }
 
 impl RiscvMmapRegion {
@@ -950,6 +913,20 @@ impl RiscvSyscallTable {
                     value: syscall_fstat(request, state, guest_memory),
                 })
             }
+            RISCV_LINUX_GETRANDOM => {
+                let flags = request.argument(2);
+                if invalid_getrandom_flags(flags) {
+                    Some(RiscvSyscallOutcome::Return {
+                        value: linux_error(RISCV_LINUX_EINVAL),
+                    })
+                } else if request.argument(1) == 0 {
+                    Some(RiscvSyscallOutcome::Return { value: 0 })
+                } else {
+                    guest_memory_writer.map(|guest_memory| RiscvSyscallOutcome::Return {
+                        value: syscall_getrandom(request, state, guest_memory),
+                    })
+                }
+            }
             RISCV_LINUX_SET_TID_ADDRESS => Some(RiscvSyscallOutcome::Return {
                 value: syscall_set_tid_address(request.argument(0), state),
             }),
@@ -1013,6 +990,12 @@ impl RiscvSyscallTable {
             _ => None,
         }
     }
+}
+
+fn invalid_getrandom_flags(flags: u64) -> bool {
+    flags & !RISCV_LINUX_GRND_VALID_FLAGS != 0
+        || flags & (RISCV_LINUX_GRND_RANDOM | RISCV_LINUX_GRND_INSECURE)
+            == (RISCV_LINUX_GRND_RANDOM | RISCV_LINUX_GRND_INSECURE)
 }
 
 #[derive(Clone, Debug)]
@@ -1457,44 +1440,23 @@ fn syscall_fstat(
     write_riscv_linux_stat(request.argument(1), stat, guest_memory)
 }
 
-fn write_riscv_linux_stat(
-    address: u64,
-    stat: RiscvGuestStat,
+fn syscall_getrandom(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
     guest_memory: &RiscvGuestMemoryWriter,
 ) -> u64 {
-    let bytes = riscv_linux_stat_bytes(stat);
-    for (offset, byte) in bytes.iter().enumerate() {
-        let Some(byte_address) = address.checked_add(offset as u64) else {
-            return linux_error(RISCV_LINUX_EFAULT);
-        };
-        if !guest_memory.write(byte_address, std::slice::from_ref(byte)) {
-            return linux_error(RISCV_LINUX_EFAULT);
-        }
+    let count = request
+        .argument(1)
+        .min(RISCV_LINUX_GETRANDOM_MAX_CHUNK_BYTES);
+    let Ok(byte_count) = usize::try_from(count) else {
+        return linux_error(RISCV_LINUX_EINVAL);
+    };
+    let bytes = state.getrandom_bytes(byte_count);
+    if !guest_memory.write(request.argument(0), &bytes) {
+        return linux_error(RISCV_LINUX_EFAULT);
     }
-    0
-}
-
-fn riscv_linux_stat_bytes(stat: RiscvGuestStat) -> [u8; RISCV_LINUX_STAT_BYTES] {
-    let mut bytes = [0; RISCV_LINUX_STAT_BYTES];
-    write_le_u64(&mut bytes, 0, stat.device);
-    write_le_u64(&mut bytes, 8, stat.inode);
-    write_le_u32(&mut bytes, 16, stat.mode);
-    write_le_u32(&mut bytes, 20, stat.link_count);
-    write_le_u32(&mut bytes, 24, stat.user_id);
-    write_le_u32(&mut bytes, 28, stat.group_id);
-    write_le_u64(&mut bytes, 32, stat.special_device);
-    write_le_u64(&mut bytes, 48, stat.size);
-    write_le_u64(&mut bytes, 56, stat.block_size);
-    write_le_u64(&mut bytes, 64, stat.blocks);
-    bytes
-}
-
-fn write_le_u32(output: &mut [u8], offset: usize, value: u32) {
-    output[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
-}
-
-fn write_le_u64(output: &mut [u8], offset: usize, value: u64) {
-    output[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+    state.advance_getrandom_byte_counter(byte_count);
+    count
 }
 
 fn syscall_dup(old_fd_argument: u64, state: &mut RiscvSyscallState) -> u64 {
