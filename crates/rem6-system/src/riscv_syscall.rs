@@ -5,10 +5,12 @@ use rem6_isa_riscv::{Register, RiscvPrivilegeMode, RiscvTrapKind};
 use rem6_kernel::{PartitionedScheduler, Tick};
 
 use crate::{
-    GuestEventId, GuestFutexAddress, GuestFutexTable, GuestThreadGroupId, RiscvSystemRunDriver,
-    ScheduledRiscvTrap, SystemError,
+    GuestEventId, GuestFd, GuestFdEntry, GuestFdTable, GuestFileDescription,
+    GuestFileDescriptionId, GuestFileStatusFlags, GuestFutexAddress, GuestFutexTable,
+    GuestThreadGroupId, RiscvSystemRunDriver, ScheduledRiscvTrap, SystemError,
 };
 
+const RISCV_LINUX_FCNTL: u64 = 25;
 const RISCV_LINUX_SET_TID_ADDRESS: u64 = 96;
 const RISCV_LINUX_SET_ROBUST_LIST: u64 = 99;
 const RISCV_LINUX_GET_ROBUST_LIST: u64 = 100;
@@ -51,6 +53,16 @@ const RISCV_LINUX_FUTEX_WAKE: u32 = 1;
 const RISCV_LINUX_FUTEX_WAKE_BITSET: u32 = 10;
 const RISCV_LINUX_FUTEX_PRIVATE_FLAG: u32 = 128;
 const RISCV_LINUX_FUTEX_CLOCK_REALTIME_FLAG: u32 = 256;
+const RISCV_LINUX_F_GETFD: u64 = 1;
+const RISCV_LINUX_F_SETFD: u64 = 2;
+const RISCV_LINUX_F_GETFL: u64 = 3;
+const RISCV_LINUX_F_SETFL: u64 = 4;
+const RISCV_LINUX_FD_CLOEXEC: u64 = 1;
+const RISCV_LINUX_O_ACCMODE: u64 = 0x3;
+const RISCV_LINUX_O_RDONLY: u64 = 0;
+const RISCV_LINUX_O_WRONLY: u64 = 1;
+#[cfg(test)]
+const RISCV_LINUX_O_NONBLOCK: u64 = 0x800;
 const RISCV_LINUX_MAP_SHARED: u64 = 0x01;
 const RISCV_LINUX_MAP_PRIVATE: u64 = 0x02;
 const RISCV_LINUX_MAP_FIXED: u64 = 0x10;
@@ -179,6 +191,7 @@ impl RiscvMmapRegion {
 pub struct RiscvSyscallState {
     identity: RiscvSyscallIdentity,
     child_clear_tid: Option<u64>,
+    guest_fds: GuestFdTable,
     guest_futexes: GuestFutexTable,
     program_break: u64,
     mmap_next: u64,
@@ -211,6 +224,7 @@ impl RiscvSyscallState {
         Self {
             identity,
             child_clear_tid: None,
+            guest_fds: linux_standard_guest_fds(),
             guest_futexes: GuestFutexTable::new(),
             program_break,
             mmap_next,
@@ -224,6 +238,10 @@ impl RiscvSyscallState {
 
     pub const fn child_clear_tid(&self) -> Option<u64> {
         self.child_clear_tid
+    }
+
+    pub const fn guest_fds(&self) -> &GuestFdTable {
+        &self.guest_fds
     }
 
     pub const fn guest_futexes(&self) -> &GuestFutexTable {
@@ -428,6 +446,7 @@ impl RiscvSyscallTable {
         tick: Tick,
     ) -> Option<RiscvSyscallOutcome> {
         match request.number() {
+            RISCV_LINUX_FCNTL => syscall_fcntl(request, state),
             RISCV_LINUX_SET_TID_ADDRESS => Some(RiscvSyscallOutcome::Return {
                 value: syscall_set_tid_address(request.argument(0), state),
             }),
@@ -610,6 +629,98 @@ fn syscall_set_tid_address(clear_tid_address: u64, state: &mut RiscvSyscallState
     state.identity().thread_id()
 }
 
+fn linux_standard_guest_fds() -> GuestFdTable {
+    let mut table = GuestFdTable::new();
+    for (fd, description, flags) in [
+        (0, 0, RISCV_LINUX_O_RDONLY),
+        (1, 1, RISCV_LINUX_O_WRONLY),
+        (2, 2, RISCV_LINUX_O_WRONLY),
+    ] {
+        let description = GuestFileDescriptionId::new(description);
+        table
+            .insert_description(GuestFileDescription::guest_backed(
+                description,
+                GuestFileStatusFlags::new(flags as u32),
+            ))
+            .expect("standard RISC-V Linux file description is unique");
+        table
+            .insert(
+                GuestFd::new(fd).expect("standard RISC-V Linux fd is non-negative"),
+                GuestFdEntry::new(description),
+            )
+            .expect("standard RISC-V Linux fd is unique");
+    }
+    table
+}
+
+fn syscall_fcntl(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+) -> Option<RiscvSyscallOutcome> {
+    let command = request.argument(1);
+    if !matches!(
+        command,
+        RISCV_LINUX_F_GETFD | RISCV_LINUX_F_SETFD | RISCV_LINUX_F_GETFL | RISCV_LINUX_F_SETFL
+    ) {
+        return None;
+    }
+
+    let fd = match guest_fd_argument(request.argument(0)) {
+        Some(fd) => fd,
+        None => return Some(guest_fd_error_return()),
+    };
+
+    let outcome = match command {
+        RISCV_LINUX_F_GETFD => state
+            .guest_fds
+            .close_on_exec(fd)
+            .map(|close| u64::from(close) * RISCV_LINUX_FD_CLOEXEC),
+        RISCV_LINUX_F_SETFD => state
+            .guest_fds
+            .set_close_on_exec(fd, request.argument(2) & RISCV_LINUX_FD_CLOEXEC != 0)
+            .map(|()| 0),
+        RISCV_LINUX_F_GETFL => state
+            .guest_fds
+            .status_flags(fd)
+            .map(|flags| u64::from(flags.bits())),
+        RISCV_LINUX_F_SETFL => {
+            let current = match state.guest_fds.status_flags(fd) {
+                Ok(flags) => flags,
+                Err(_error) => return Some(guest_fd_error_return()),
+            };
+            let access_mode = current.bits() & RISCV_LINUX_O_ACCMODE as u32;
+            let requested = request.argument(2) as u32;
+            state
+                .guest_fds
+                .set_status_flags(
+                    fd,
+                    GuestFileStatusFlags::new(
+                        access_mode | (requested & !(RISCV_LINUX_O_ACCMODE as u32)),
+                    ),
+                )
+                .map(|()| 0)
+        }
+        _ => return None,
+    };
+
+    Some(match outcome {
+        Ok(value) => RiscvSyscallOutcome::Return { value },
+        Err(_error) => guest_fd_error_return(),
+    })
+}
+
+fn guest_fd_argument(value: u64) -> Option<GuestFd> {
+    i32::try_from(value)
+        .ok()
+        .and_then(|fd| GuestFd::new(fd).ok())
+}
+
+fn guest_fd_error_return() -> RiscvSyscallOutcome {
+    RiscvSyscallOutcome::Return {
+        value: linux_error(RISCV_LINUX_EBADF),
+    }
+}
+
 fn syscall_futex(
     request: RiscvSyscallRequest,
     state: &mut RiscvSyscallState,
@@ -731,7 +842,8 @@ fn linux_error(errno: u64) -> u64 {
 mod tests {
     use super::*;
     use crate::{
-        GuestFutexAddress, GuestFutexKey, GuestFutexWaitRequest, GuestThreadGroupId, GuestThreadId,
+        GuestFd, GuestFileStatusFlags, GuestFutexAddress, GuestFutexKey, GuestFutexWaitRequest,
+        GuestThreadGroupId, GuestThreadId,
     };
     use rem6_kernel::PartitionId;
 
@@ -943,6 +1055,128 @@ mod tests {
             Some(RiscvSyscallOutcome::Return {
                 value: linux_error(RISCV_LINUX_ENOSYS)
             })
+        );
+    }
+
+    #[test]
+    fn linux_table_handles_fcntl_descriptor_and_status_flags() {
+        let table = RiscvSyscallTable::new();
+        let mut state = RiscvSyscallState::new(0);
+        let stdout = GuestFd::new(1).unwrap();
+
+        assert_eq!(
+            table.handle(
+                RiscvSyscallRequest::new(
+                    0x8000,
+                    RISCV_LINUX_FCNTL,
+                    [1, RISCV_LINUX_F_SETFD, RISCV_LINUX_FD_CLOEXEC, 0, 0, 0],
+                ),
+                &mut state,
+            ),
+            Some(RiscvSyscallOutcome::Return { value: 0 })
+        );
+        assert!(state.guest_fds().close_on_exec(stdout).unwrap());
+        assert_eq!(
+            table.handle(
+                RiscvSyscallRequest::new(
+                    0x8004,
+                    RISCV_LINUX_FCNTL,
+                    [1, RISCV_LINUX_F_GETFD, 0, 0, 0, 0],
+                ),
+                &mut state,
+            ),
+            Some(RiscvSyscallOutcome::Return {
+                value: RISCV_LINUX_FD_CLOEXEC
+            })
+        );
+
+        assert_eq!(
+            table.handle(
+                RiscvSyscallRequest::new(
+                    0x8008,
+                    RISCV_LINUX_FCNTL,
+                    [1, RISCV_LINUX_F_SETFL, RISCV_LINUX_O_NONBLOCK, 0, 0, 0],
+                ),
+                &mut state,
+            ),
+            Some(RiscvSyscallOutcome::Return { value: 0 })
+        );
+        assert_eq!(
+            state.guest_fds().status_flags(stdout).unwrap(),
+            GuestFileStatusFlags::new(RISCV_LINUX_O_WRONLY as u32 | RISCV_LINUX_O_NONBLOCK as u32)
+        );
+        assert_eq!(
+            table.handle(
+                RiscvSyscallRequest::new(
+                    0x800c,
+                    RISCV_LINUX_FCNTL,
+                    [1, RISCV_LINUX_F_GETFL, 0, 0, 0, 0],
+                ),
+                &mut state,
+            ),
+            Some(RiscvSyscallOutcome::Return {
+                value: RISCV_LINUX_O_WRONLY | RISCV_LINUX_O_NONBLOCK
+            })
+        );
+    }
+
+    #[test]
+    fn linux_table_returns_ebadf_for_fcntl_on_unknown_fd() {
+        let table = RiscvSyscallTable::new();
+        let mut state = RiscvSyscallState::new(0);
+
+        assert_eq!(
+            table.handle(
+                RiscvSyscallRequest::new(
+                    0x8000,
+                    RISCV_LINUX_FCNTL,
+                    [99, RISCV_LINUX_F_GETFD, 0, 0, 0, 0],
+                ),
+                &mut state,
+            ),
+            Some(RiscvSyscallOutcome::Return {
+                value: linux_error(RISCV_LINUX_EBADF)
+            })
+        );
+    }
+
+    #[test]
+    fn linux_table_returns_ebadf_for_fcntl_on_out_of_range_fd() {
+        let table = RiscvSyscallTable::new();
+        let mut state = RiscvSyscallState::new(0);
+
+        assert_eq!(
+            table.handle(
+                RiscvSyscallRequest::new(
+                    0x8000,
+                    RISCV_LINUX_FCNTL,
+                    [(1_u64 << 32) | 1, RISCV_LINUX_F_GETFD, 0, 0, 0, 0],
+                ),
+                &mut state,
+            ),
+            Some(RiscvSyscallOutcome::Return {
+                value: linux_error(RISCV_LINUX_EBADF)
+            })
+        );
+    }
+
+    #[test]
+    fn linux_table_leaves_unsupported_fcntl_commands_unhandled_before_fd_validation() {
+        const RISCV_LINUX_F_DUPFD: u64 = 0;
+
+        let table = RiscvSyscallTable::new();
+        let mut state = RiscvSyscallState::new(0);
+
+        assert_eq!(
+            table.handle(
+                RiscvSyscallRequest::new(
+                    0x8000,
+                    RISCV_LINUX_FCNTL,
+                    [u64::MAX, RISCV_LINUX_F_DUPFD, 0, 0, 0, 0],
+                ),
+                &mut state,
+            ),
+            None
         );
     }
 
