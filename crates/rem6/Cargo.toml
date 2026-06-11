@@ -17,7 +17,9 @@ rem6-system = { path = "../rem6-system" }
 rem6-traffic = { path = "../rem6-traffic" }
 rem6-transport = { path = "../rem6-transport" }
 rem6-workload = { path = "../rem6-workload" }
+serde = { version = "1", features = ["derive"] }
 sha2 = "0.10"
+toml = "0.8"
 
 [lints]
 workspace = true

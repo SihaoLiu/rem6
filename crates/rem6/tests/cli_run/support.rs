@@ -150,6 +150,19 @@ pub(crate) fn temp_output(name: &str) -> std::path::PathBuf {
     path
 }
 
+pub(crate) fn temp_config(name: &str, text: &str) -> std::path::PathBuf {
+    let path = std::env::temp_dir().join(format!("rem6-{name}-{}.toml", std::process::id()));
+    fs::write(&path, text).unwrap();
+    path
+}
+
+pub(crate) fn temp_workspace(name: &str) -> std::path::PathBuf {
+    let path = std::env::temp_dir().join(format!("rem6-{name}-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&path);
+    fs::create_dir_all(&path).unwrap();
+    path
+}
+
 pub(crate) fn temp_trace(name: &str, bytes: &[u8]) -> std::path::PathBuf {
     let path = std::env::temp_dir().join(format!("rem6-{name}-{}.pb", std::process::id()));
     fs::write(&path, bytes).unwrap();

@@ -1,4 +1,4 @@
-use std::process::Command;
+use std::{fs, process::Command};
 
 use crate::support::*;
 
@@ -111,6 +111,228 @@ fn rem6_run_executes_riscv_elf_on_parallel_cores_and_emits_core_stats() {
     );
     assert!(stdout.contains("\"value\":4"));
     assert!(stdout.contains("\"value\":2"));
+}
+
+#[test]
+fn rem6_run_loads_execution_defaults_from_toml_config() {
+    let program = riscv64_program(&[
+        0x0070_0293, // addi x5, x0, 7
+        0x0000_0073, // ecall
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let binary = temp_binary("toml-config-exec", &elf);
+    let config = temp_config(
+        "toml-config-exec",
+        &format!(
+            "[run]\nisa = \"riscv\"\nbinary = \"{}\"\nmax_tick = 40\nstats_format = \"json\"\nexecute = true\ncores = 2\nparallel_workers = 1\n",
+            binary.display()
+        ),
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["run", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"binary\":\""));
+    assert!(stdout.contains("\"max_tick\":40"));
+    assert!(stdout.contains("\"cores\":2"));
+    assert!(stdout.contains("\"worker_limit\":1"));
+    assert!(stdout.contains("\"cpu\":0"));
+    assert!(stdout.contains("\"cpu\":1"));
+}
+
+#[test]
+fn rem6_run_cli_flags_override_toml_config_defaults() {
+    let program = riscv64_program(&[
+        0x0070_0293, // addi x5, x0, 7
+        0x0000_0073, // ecall
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let binary = temp_binary("toml-config-override", &elf);
+    let config = temp_config(
+        "toml-config-override",
+        &format!(
+            "[run]\nisa = \"riscv\"\nbinary = \"{}\"\nmax_tick = 20\nstats_format = \"json\"\nexecute = true\ncores = 2\nparallel_workers = 2\n",
+            binary.display()
+        ),
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--config",
+            config.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--cores",
+            "1",
+            "--parallel-workers",
+            "1",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"max_tick\":40"));
+    assert!(stdout.contains("\"cores\":1"));
+    assert!(stdout.contains("\"worker_limit\":1"));
+    assert!(stdout.contains("\"cpu\":0"));
+    assert!(!stdout.contains("\"cpu\":1"));
+}
+
+#[test]
+fn rem6_run_resolves_toml_relative_binary_from_config_directory() {
+    let program = riscv64_program(&[
+        0x0070_0293, // addi x5, x0, 7
+        0x0000_0073, // ecall
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let workspace = temp_workspace("toml-config-relative");
+    let binary_name = format!("kernel-{}.elf", std::process::id());
+    let binary = workspace.join(&binary_name);
+    fs::write(&binary, elf).unwrap();
+    let config = workspace.join("run.toml");
+    fs::write(
+        &config,
+        format!(
+            "[run]\nisa = \"riscv\"\nbinary = \"{}\"\nmax_tick = 40\nstats_format = \"json\"\nexecute = true\n",
+            binary_name
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .current_dir(std::env::temp_dir())
+        .args(["run", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"binary\":\""));
+    assert!(stdout.contains(&binary_name));
+}
+
+#[test]
+fn rem6_run_cli_load_blob_flags_replace_toml_load_blob_defaults() {
+    let program = riscv64_program(&[0x0000_0073]); // ecall
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let binary = temp_binary("toml-load-blob-override", &elf);
+    let workspace = temp_workspace("toml-load-blob-override");
+    let default_blob = workspace.join("default.bin");
+    let cli_blob0 = workspace.join("cli0.bin");
+    let cli_blob1 = workspace.join("cli1.bin");
+    fs::write(&default_blob, [0xaa]).unwrap();
+    fs::write(&cli_blob0, [0xbb]).unwrap();
+    fs::write(&cli_blob1, [0xcc]).unwrap();
+    let config = workspace.join("run.toml");
+    fs::write(
+        &config,
+        format!(
+            "[run]\nisa = \"riscv\"\nbinary = \"{}\"\nmax_tick = 40\nstats_format = \"json\"\nload_blobs = [\"0x90000000:default.bin\"]\n",
+            binary.display()
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .current_dir(std::env::temp_dir())
+        .args([
+            "run",
+            "--config",
+            config.to_str().unwrap(),
+            "--load-blob",
+            &format!("0x90000010:{}", cli_blob0.display()),
+            "--load-blob",
+            &format!("0x90000020:{}", cli_blob1.display()),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(!stdout.contains("default.bin"));
+    assert!(stdout.contains("cli0.bin"));
+    assert!(stdout.contains("cli1.bin"));
+    assert!(stdout.contains("\"address\":\"0x90000010\""));
+    assert!(stdout.contains("\"address\":\"0x90000020\""));
+    assert!(!stdout.contains("\"address\":\"0x90000000\""));
+}
+
+#[test]
+fn rem6_run_cli_dump_memory_flags_replace_toml_dump_memory_defaults() {
+    let program = riscv64_program(&[
+        0x0070_0293, // addi x5, x0, 7
+        0x0000_0073, // ecall
+        0x0000_0013, // addi x0, x0, 0
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let binary = temp_binary("toml-dump-memory-override", &elf);
+    let config = temp_config(
+        "toml-dump-memory-override",
+        &format!(
+            "[run]\nisa = \"riscv\"\nbinary = \"{}\"\nmax_tick = 40\nstats_format = \"json\"\nexecute = true\nmemory_dumps = [\"0x80000000:4\"]\n",
+            binary.display()
+        ),
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--config",
+            config.to_str().unwrap(),
+            "--dump-memory",
+            "0x80000004:4",
+            "--dump-memory",
+            "0x80000008:4",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"address\":\"0x80000004\""));
+    assert!(stdout.contains("\"address\":\"0x80000008\""));
+    assert!(!stdout.contains("\"address\":\"0x80000000\""));
+}
+
+#[test]
+fn rem6_run_config_scan_preserves_non_config_flag_errors() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["run", "--bogus", "--isa"])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("unknown flag --bogus"));
 }
 
 #[test]

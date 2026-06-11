@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use rem6_boot::BootElfArchitecture;
 use rem6_workload::WorkloadDataCacheProtocol;
+use serde::Deserialize;
 
 use crate::Rem6CliError;
 
@@ -157,6 +158,52 @@ pub struct Rem6TraceReplayConfig {
     stats_output: Option<PathBuf>,
 }
 
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Rem6FileConfig {
+    run: Option<Rem6RunFileConfig>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Rem6RunFileConfig {
+    isa: Option<String>,
+    binary: Option<PathBuf>,
+    max_tick: Option<u64>,
+    min_remote_delay: Option<u64>,
+    memory_route_delay: Option<u64>,
+    host_event_delay: Option<u64>,
+    start_address: Option<u64>,
+    riscv_boot_a0: Option<u64>,
+    riscv_boot_a1: Option<u64>,
+    max_instructions: Option<u64>,
+    stats_format: Option<String>,
+    execute: Option<bool>,
+    dram_memory: Option<bool>,
+    dram_memory_profile: Option<String>,
+    cores: Option<usize>,
+    parallel_workers: Option<usize>,
+    memory_dumps: Option<Vec<String>>,
+    load_blobs: Option<Vec<String>>,
+    output: Option<PathBuf>,
+    stats_output: Option<PathBuf>,
+    #[serde(skip)]
+    config_dir: Option<PathBuf>,
+}
+
+impl Rem6RunFileConfig {
+    fn resolve_path(&self, path: &Path) -> PathBuf {
+        if path.is_relative() {
+            self.config_dir
+                .as_deref()
+                .map(|dir| dir.join(path))
+                .unwrap_or_else(|| path.to_path_buf())
+        } else {
+            path.to_path_buf()
+        }
+    }
+}
+
 impl Rem6RunConfig {
     pub fn parse_args<I, S>(args: I) -> Result<Self, Rem6CliError>
     where
@@ -170,30 +217,112 @@ impl Rem6RunConfig {
         if command != "run" {
             return Err(Rem6CliError::UnsupportedCommand { command });
         }
+        let remaining_args = args.collect::<Vec<_>>();
+        let file_config = run_file_config_from_args(&remaining_args)?
+            .map(|path| load_run_file_config(&path))
+            .transpose()?
+            .unwrap_or_default();
 
-        let mut isa = None;
-        let mut binary = None;
-        let mut max_tick = None;
-        let mut min_remote_delay = 1u64;
-        let mut memory_route_delay = None;
-        let mut host_event_delay = None;
-        let mut start_address = None;
-        let mut riscv_boot_a0 = 0u64;
-        let mut riscv_boot_a1 = 0u64;
-        let mut max_instructions = None;
-        let mut stats_format = StatsFormat::Json;
-        let mut execute = false;
-        let mut dram_memory = false;
-        let mut dram_memory_profile = CliDramMemoryProfile::Ddr;
-        let mut dram_memory_profile_was_set = false;
-        let mut cores = 1usize;
-        let mut parallel_workers = None;
-        let mut memory_dumps = Vec::new();
-        let mut load_blobs = Vec::new();
-        let mut output = None;
-        let mut stats_output = None;
+        let mut isa = file_config
+            .isa
+            .as_deref()
+            .map(RequestedIsa::parse)
+            .transpose()?;
+        let mut binary = file_config
+            .binary
+            .as_deref()
+            .map(|path| file_config.resolve_path(path));
+        let mut max_tick = file_config.max_tick;
+        let mut min_remote_delay = file_config.min_remote_delay.unwrap_or(1);
+        if min_remote_delay == 0 {
+            return Err(Rem6CliError::InvalidMinRemoteDelay {
+                value: min_remote_delay.to_string(),
+            });
+        }
+        let mut memory_route_delay = file_config.memory_route_delay;
+        if memory_route_delay == Some(0) {
+            return Err(Rem6CliError::InvalidMemoryRouteDelay {
+                value: "0".to_string(),
+            });
+        }
+        let mut host_event_delay = file_config.host_event_delay;
+        if host_event_delay == Some(0) {
+            return Err(Rem6CliError::InvalidHostEventDelay {
+                value: "0".to_string(),
+            });
+        }
+        let mut start_address = file_config.start_address;
+        let mut riscv_boot_a0 = file_config.riscv_boot_a0.unwrap_or(0);
+        let mut riscv_boot_a1 = file_config.riscv_boot_a1.unwrap_or(0);
+        let mut max_instructions = file_config.max_instructions;
+        if max_instructions == Some(0) {
+            return Err(Rem6CliError::InvalidMaxInstructions {
+                value: "0".to_string(),
+            });
+        }
+        let mut stats_format = file_config
+            .stats_format
+            .as_deref()
+            .map(StatsFormat::parse)
+            .transpose()?
+            .unwrap_or(StatsFormat::Json);
+        let mut execute = file_config.execute.unwrap_or(false);
+        let mut dram_memory = file_config.dram_memory.unwrap_or(false);
+        let mut dram_memory_profile = file_config
+            .dram_memory_profile
+            .as_deref()
+            .map(CliDramMemoryProfile::parse)
+            .transpose()?
+            .unwrap_or(CliDramMemoryProfile::Ddr);
+        let mut dram_memory_profile_was_set = file_config.dram_memory_profile.is_some();
+        let mut cores = file_config.cores.unwrap_or(1);
+        if cores == 0 {
+            return Err(Rem6CliError::InvalidCoreCount {
+                value: cores.to_string(),
+            });
+        }
+        let mut parallel_workers = file_config.parallel_workers;
+        if parallel_workers == Some(0) {
+            return Err(Rem6CliError::InvalidParallelWorkerCount {
+                value: "0".to_string(),
+            });
+        }
+        let mut memory_dumps = file_config
+            .memory_dumps
+            .as_deref()
+            .unwrap_or(&[])
+            .iter()
+            .map(|request| MemoryDumpRequest::parse(request))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut load_blobs = file_config
+            .load_blobs
+            .as_deref()
+            .unwrap_or(&[])
+            .iter()
+            .map(|request| {
+                let mut request = LoadBlobRequest::parse(request)?;
+                if let Some(config_dir) = file_config.config_dir.as_deref() {
+                    request.resolve_path(config_dir);
+                }
+                Ok(request)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut memory_dumps_from_cli = false;
+        let mut load_blobs_from_cli = false;
+        let mut output = file_config
+            .output
+            .as_deref()
+            .map(|path| file_config.resolve_path(path));
+        let mut stats_output = file_config
+            .stats_output
+            .as_deref()
+            .map(|path| file_config.resolve_path(path));
+        let mut args = remaining_args.into_iter();
         while let Some(flag) = args.next() {
             match flag.as_str() {
+                "--config" => {
+                    let _ = required_value(&flag, args.next())?;
+                }
                 "--isa" => {
                     isa = Some(RequestedIsa::parse(&required_value(&flag, args.next())?)?);
                 }
@@ -302,10 +431,18 @@ impl Rem6RunConfig {
                 }
                 "--dump-memory" => {
                     let value = required_value(&flag, args.next())?;
+                    if !memory_dumps_from_cli {
+                        memory_dumps.clear();
+                        memory_dumps_from_cli = true;
+                    }
                     memory_dumps.push(MemoryDumpRequest::parse(&value)?);
                 }
                 "--load-blob" => {
                     let value = required_value(&flag, args.next())?;
+                    if !load_blobs_from_cli {
+                        load_blobs.clear();
+                        load_blobs_from_cli = true;
+                    }
                     load_blobs.push(LoadBlobRequest::parse(&value)?);
                 }
                 "--output" => {
@@ -919,6 +1056,12 @@ impl LoadBlobRequest {
     pub fn path(&self) -> &Path {
         &self.path
     }
+
+    fn resolve_path(&mut self, base: &Path) {
+        if self.path.is_relative() {
+            self.path = base.join(&self.path);
+        }
+    }
 }
 
 fn parse_number(value: &str) -> Option<u64> {
@@ -944,6 +1087,65 @@ fn parse_data_cache_protocol(value: &str) -> Option<WorkloadDataCacheProtocol> {
         "chi" => Some(WorkloadDataCacheProtocol::Chi),
         _ => None,
     }
+}
+
+fn run_file_config_from_args(args: &[String]) -> Result<Option<PathBuf>, Rem6CliError> {
+    let mut path = None;
+    let mut index = 0;
+    while let Some(flag) = args.get(index) {
+        match flag.as_str() {
+            "--config" => {
+                let value = args
+                    .get(index + 1)
+                    .cloned()
+                    .ok_or_else(|| Rem6CliError::MissingFlagValue { flag: flag.clone() })?;
+                path = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--execute" | "--dram-memory" => {
+                index += 1;
+            }
+            "--isa"
+            | "--binary"
+            | "--max-tick"
+            | "--min-remote-delay"
+            | "--memory-route-delay"
+            | "--host-event-delay"
+            | "--start-address"
+            | "--riscv-boot-a0"
+            | "--riscv-boot-a1"
+            | "--max-instructions"
+            | "--stats-format"
+            | "--dram-memory-profile"
+            | "--cores"
+            | "--parallel-workers"
+            | "--dump-memory"
+            | "--load-blob"
+            | "--output"
+            | "--stats-output" => {
+                index += 2;
+            }
+            _ => {
+                index += 1;
+            }
+        }
+    }
+    Ok(path)
+}
+
+fn load_run_file_config(path: &Path) -> Result<Rem6RunFileConfig, Rem6CliError> {
+    let text = std::fs::read_to_string(path).map_err(|error| Rem6CliError::ReadConfig {
+        path: path.to_path_buf(),
+        error: error.to_string(),
+    })?;
+    let file =
+        toml::from_str::<Rem6FileConfig>(&text).map_err(|error| Rem6CliError::ParseConfig {
+            path: path.to_path_buf(),
+            error: error.to_string(),
+        })?;
+    let mut run = file.run.unwrap_or_default();
+    run.config_dir = path.parent().map(Path::to_path_buf);
+    Ok(run)
 }
 
 fn required_value(flag: &str, value: Option<String>) -> Result<String, Rem6CliError> {
