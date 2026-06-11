@@ -416,6 +416,82 @@ fn linux_table_opened_guest_path_fd_does_not_read_stdin() {
 }
 
 #[test]
+fn linux_table_reads_registered_guest_file_contents_by_open_fd() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_file(b"/input.txt", b"hello");
+    state.push_stdin_bytes(b"Z");
+    let path = b"/input.txt\0".to_vec();
+    let guest_memory_reader = RiscvGuestMemoryReader::new(move |address, bytes| {
+        if bytes != 1 || address < 0x9000 {
+            return None;
+        }
+        path.get((address - 0x9000) as usize)
+            .copied()
+            .map(|byte| vec![byte])
+    });
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_OPENAT,
+                [RISCV_LINUX_AT_FDCWD, 0x9000, 0, 0, 0, 0],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 3 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8004, RISCV_LINUX_READ, [3, 0x9100, 3, 0, 0, 0]),
+            &mut state,
+            8,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 3 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8008, RISCV_LINUX_READ, [3, 0x9200, 8, 0, 0, 0]),
+            &mut state,
+            9,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 2 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x800c, RISCV_LINUX_READ, [3, 0x9300, 1, 0, 0, 0]),
+            &mut state,
+            10,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        &*writes.lock().unwrap(),
+        &[(0x9100, b"hel".to_vec()), (0x9200, b"lo".to_vec())]
+    );
+    assert_eq!(state.stdin_byte_count(), 1);
+}
+
+#[test]
 fn linux_table_dup_preserves_stdin_read_source() {
     let table = RiscvSyscallTable::new();
     let mut state = RiscvSyscallState::new(0);

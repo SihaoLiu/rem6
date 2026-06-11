@@ -1687,3 +1687,97 @@ fn user_ecall_openat_reads_guest_path_before_exit() {
         &[SystemActionOutcome::Stop(stop)]
     );
 }
+
+#[test]
+fn user_ecall_openat_then_read_copies_registered_guest_file_contents() {
+    let host = PartitionId::new(3);
+    let source = GuestSourceId::new(72);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let fetch_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let core = riscv_core(0, 0, 7, "cpu0.ifetch", fetch_route, 0x8000);
+    core.set_privilege_mode(RiscvPrivilegeMode::User);
+    let cluster = RiscvCluster::new([core.clone()]).unwrap();
+    let store = loaded_program_store_with_data(
+        &[
+            (0x8000, addi(17, 0, 56)),
+            (0x8004, addi(10, 0, -100)),
+            (0x8008, lui(11, 9)),
+            (0x800c, addi(12, 0, 0)),
+            (0x8010, addi(13, 0, 0)),
+            (0x8014, 0x0000_0073),
+            (0x8018, addi(5, 10, 0)),
+            (0x801c, addi(17, 0, 63)),
+            (0x8020, addi(10, 5, 0)),
+            (0x8024, lui(11, 9)),
+            (0x8028, addi(11, 11, 0x100)),
+            (0x802c, addi(12, 0, 3)),
+            (0x8030, 0x0000_0073),
+            (0x8034, addi(6, 10, 0)),
+            (0x8038, addi(17, 0, 93)),
+            (0x803c, addi(10, 6, 0)),
+            (0x8040, 0x0000_0073),
+        ],
+        &[(0x9000, b"/input.txt\0"), (0x9100, b"\0\0\0")],
+    );
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        StatsRegistry::new(),
+    )));
+    let trap_port = RiscvTrapEventPort::new(
+        SystemHostEventPort::with_controller(host, 2, Arc::clone(&controller)).unwrap(),
+        source,
+    );
+    let driver = RiscvSystemRunDriver::new(trap_port)
+        .with_riscv_syscall_emulation_and_guest_memory_io(
+            guest_memory_reader(Arc::clone(&store)),
+            guest_memory_writer(Arc::clone(&store)),
+        );
+    driver
+        .riscv_syscall_emulation()
+        .unwrap()
+        .register_guest_file(b"/input.txt", b"abcde");
+
+    let run = driver
+        .drive_until_host_stop(
+            &cluster,
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_cpu| responder(Arc::clone(&store)),
+            |_cpu| responder(Arc::clone(&store)),
+            140,
+            |cpu| GuestEventId::new(500 + u64::from(cpu.get())),
+        )
+        .unwrap();
+
+    let stop = StopRequest::new(run.final_tick().unwrap(), GuestEventId::new(500), source, 3);
+    assert_eq!(run.host_stop(), Some(stop));
+    assert!(run.scheduled_traps().is_empty());
+    assert_eq!(core.read_register(reg(5)), 3);
+    assert_eq!(core.read_register(reg(6)), 3);
+    assert_eq!(
+        guest_memory_reader(Arc::clone(&store))(0x9100, 3),
+        Some(b"abc".to_vec())
+    );
+    let state = driver.riscv_syscall_emulation().unwrap().state();
+    assert_eq!(state.guest_opens().len(), 1);
+    assert_eq!(state.guest_opens()[0].path(), b"/input.txt");
+    assert_eq!(
+        controller.lock().unwrap().run().action_outcomes(),
+        &[SystemActionOutcome::Stop(stop)]
+    );
+}

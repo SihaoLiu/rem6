@@ -1428,15 +1428,16 @@ Implementation evidence through 2026-06-03:
   now consumes a real user-mode ecall when guest-memory reading is configured,
   copies a NUL-terminated pathname from simulated memory, matches it against a
   typed registered guest-path set, allocates a guest fd with shared
-  file-description state, records the opened path, honors `O_CLOEXEC` as a
-  descriptor flag, and returns `ENOENT`, `EFAULT`, `EINVAL`, `EBADF`, or
-  `ENAMETOOLONG` for the registered-path subset. Fork, clone, exec,
-  futex wait/requeue and child-clear-TID wake,
+  file-description state, records the opened path, lets `read` copy registered
+  guest-file contents back into simulated memory using the shared file offset,
+  honors `O_CLOEXEC` as a descriptor flag, and returns `ENOENT`, `EFAULT`,
+  `EINVAL`, `EBADF`, or `ENAMETOOLONG` for the registered-path subset. Fork,
+  clone, exec, futex wait/requeue and child-clear-TID wake,
   dynamic credential changes, file-backed mmap handling, backing-memory or
   page-table installation for returned ranges, host filesystem path resolution
-  and file contents behind `openat`, broader `read` sources, `wait4`, and
-  remaining guest-memory argument copying remain open before broad libc
-  workloads can run. Exec handoff can now close only descriptors marked
+  and host-backed file contents behind `openat`, broader `read` sources,
+  `wait4`, and remaining guest-memory argument copying remain open before broad
+  libc workloads can run. Exec handoff can now close only descriptors marked
   close-on-exec while returning the removed entries for host-backed cleanup.
   Host-backed description metadata keeps file status flags shared by
   description id, so duplicated descriptors share `F_GETFL` and `F_SETFL` state
@@ -5254,13 +5255,14 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   `dup`, `dup3`, `close`, `fcntl`, guest-backed `write`, and stdin-backed
   guest-memory `read` handling through the same real ecall path. It also has
   `openat` handling for registered guest paths copied from guest
-  memory, allocating typed guest fds without touching the host filesystem. It
-  still lacks fork/clone process modeling, futex wait, futex requeue, futex wake
-  on child-clear-TID, file-backed mmap handling, backing-memory installation for
-  returned ranges, host filesystem path resolution and file contents behind
-  `openat`, the broader syscall table, and remaining guest-memory argument
-  paths needed for broader `read` sources, `futex`, and `wait4`, and Linux
-  handoff still needs an SBI-class
+  memory, allocating typed guest fds without touching the host filesystem, and
+  can read registered guest-file contents through those fds. It still lacks
+  fork/clone process modeling, futex wait, futex requeue, futex wake on
+  child-clear-TID, file-backed mmap handling, backing-memory installation for
+  returned ranges, host filesystem path resolution and host-backed file
+  contents behind `openat`, the broader syscall table, and remaining
+  guest-memory argument paths needed for broader `read` sources, `futex`, and
+  `wait4`, and Linux handoff still needs an SBI-class
   firmware/runtime path rather than only DTB/initrd/register handoff.
 - Complete predictor coupling, external checkpoint payloads, and richer
   cycle-visible state for the in-order pipeline, add fuller out-of-order
