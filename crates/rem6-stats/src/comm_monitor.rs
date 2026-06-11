@@ -258,6 +258,7 @@ pub struct CommMonitorStats {
 }
 
 impl CommMonitorStats {
+    #[allow(clippy::too_many_arguments)]
     pub const fn new(
         read_transactions: u64,
         write_transactions: u64,

@@ -178,7 +178,7 @@ impl PcCountTrackerManager {
                 return Err(StatsError::DuplicatePcCountTarget { pair: *target });
             }
         }
-        if snapshot.is_armed() != !pending_targets.is_empty() {
+        if snapshot.is_armed() == pending_targets.is_empty() {
             return Err(StatsError::PcCountSnapshotTargetStateMismatch {
                 armed: snapshot.is_armed(),
                 pending_targets: pending_targets.len(),

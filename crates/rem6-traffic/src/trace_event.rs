@@ -620,6 +620,7 @@ pub struct TrafficTraceResponseEvent {
 }
 
 impl TrafficTraceResponseEvent {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) const fn new(
         tick: u64,
         sequence: u64,
@@ -743,6 +744,7 @@ pub struct TrafficTraceErrorEvent {
 }
 
 impl TrafficTraceErrorEvent {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) const fn new(
         tick: u64,
         sequence: u64,

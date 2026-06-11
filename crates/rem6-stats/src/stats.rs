@@ -439,6 +439,7 @@ impl StatSample {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub const fn from_registered_parts_with_kind_reset_policy_and_description(
         id: StatId,
         group: Option<StatGroupId>,
@@ -676,6 +677,7 @@ impl StatDeltaSample {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub const fn from_registered_parts_with_kind_reset_policy_and_description(
         id: StatId,
         group: Option<StatGroupId>,

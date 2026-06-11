@@ -4,6 +4,7 @@ use crate::{
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum WorkloadTrafficTraceReplaySummaryExpectationError {
     Missing(WorkloadExpectedTrafficTraceReplaySummary),
     BelowMinimum {

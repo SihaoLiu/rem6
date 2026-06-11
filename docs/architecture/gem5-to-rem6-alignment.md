@@ -1435,8 +1435,13 @@ Implementation evidence through 2026-06-03:
   file-description state, records the opened path, lets `read` copy registered
   guest-file contents back into simulated memory using the shared file offset,
   honors `O_CLOEXEC` as a descriptor flag, and returns `ENOENT`, `EFAULT`,
-  `EINVAL`, `EBADF`, or `ENAMETOOLONG` for the registered-path subset. Fork,
-  clone, exec, futex wait/requeue and child-clear-TID wake,
+  `EINVAL`, `EBADF`, or `ENAMETOOLONG` for the registered-path subset.
+  RISC-V `newfstatat` and `fstat` now write the RV64 Linux target `stat`
+  layout into simulated guest memory for registered guest paths, opened
+  registered guest files, and seeded standard descriptors, using chunked guest
+  writes so the real ecall path reaches the backing memory store rather than
+  only a table-level responder. Fork, clone, exec, futex wait/requeue and
+  child-clear-TID wake,
   dynamic credential changes, file-backed mmap handling, backing-memory or
   page-table installation for returned ranges, host filesystem path resolution
   and host-backed file contents behind `openat`, broader `read` sources,
@@ -5263,7 +5268,11 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   guest-memory `read` handling through the same real ecall path. It also has
   `openat` handling for registered guest paths copied from guest
   memory, allocating typed guest fds without touching the host filesystem, and
-  can read registered guest-file contents through those fds. It still lacks
+  can read registered guest-file contents through those fds. The same path now
+  handles modern Linux generic `newfstatat` number 79 and `fstat` number 80 for
+  registered guest paths, opened registered guest files, and seeded standard
+  descriptors by writing the RV64 target `stat` structure back into simulated
+  guest memory. It still lacks
   fork/clone process modeling, futex wait, futex requeue, futex wake on
   child-clear-TID, file-backed mmap handling, backing-memory installation for
   returned ranges, host filesystem path resolution and host-backed file

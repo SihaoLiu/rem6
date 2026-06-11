@@ -22,6 +22,8 @@ const RISCV_LINUX_OPENAT: u64 = 56;
 const RISCV_LINUX_CLOSE: u64 = 57;
 const RISCV_LINUX_READ: u64 = 63;
 const RISCV_LINUX_WRITE: u64 = 64;
+const RISCV_LINUX_NEWFSTATAT: u64 = 79;
+const RISCV_LINUX_FSTAT: u64 = 80;
 const RISCV_LINUX_SET_TID_ADDRESS: u64 = 96;
 const RISCV_LINUX_SET_ROBUST_LIST: u64 = 99;
 const RISCV_LINUX_GET_ROBUST_LIST: u64 = 100;
@@ -84,7 +86,17 @@ const RISCV_LINUX_MAP_PRIVATE: u64 = 0x02;
 const RISCV_LINUX_MAP_FIXED: u64 = 0x10;
 const RISCV_LINUX_MAP_ANONYMOUS: u64 = 0x20;
 const RISCV_LINUX_AT_FDCWD: u64 = (-100_i64) as u64;
+const RISCV_LINUX_AT_EMPTY_PATH: u64 = 0x1000;
+const RISCV_LINUX_AT_NO_AUTOMOUNT: u64 = 0x800;
+const RISCV_LINUX_AT_SYMLINK_NOFOLLOW: u64 = 0x100;
 const RISCV_LINUX_PATH_MAX: usize = 4096;
+const RISCV_LINUX_STAT_BYTES: usize = 128;
+const RISCV_LINUX_STAT_BLOCK_BYTES: u64 = 512;
+const RISCV_LINUX_STAT_BLOCK_SIZE: u64 = 8192;
+const RISCV_LINUX_S_IFCHR: u32 = 0o020000;
+const RISCV_LINUX_S_IFREG: u32 = 0o100000;
+const RISCV_LINUX_REGULAR_FILE_MODE: u32 = RISCV_LINUX_S_IFREG | 0o444;
+const RISCV_LINUX_CHARACTER_DEVICE_MODE: u32 = RISCV_LINUX_S_IFCHR | 0o666;
 const RISCV_PAGE_BYTES: u64 = 4096;
 const RISCV64_LINUX_MMAP_BASE: u64 = 0x4000_0000_0000_0000;
 const RISCV_LINUX_DEFAULT_PROCESS_ID: u64 = 100;
@@ -362,6 +374,7 @@ pub struct RiscvSyscallState {
     guest_opens: Vec<RiscvGuestOpenRecord>,
     stdin_fds: BTreeSet<GuestFd>,
     guest_file_descriptions: BTreeMap<GuestFileDescriptionId, Vec<u8>>,
+    guest_file_stats: BTreeMap<GuestFileDescriptionId, RiscvGuestStat>,
     guest_writes: Vec<RiscvGuestWriteRecord>,
     stdin: VecDeque<u8>,
     program_break: u64,
@@ -404,6 +417,7 @@ impl RiscvSyscallState {
             guest_opens: Vec::new(),
             stdin_fds,
             guest_file_descriptions: BTreeMap::new(),
+            guest_file_stats: BTreeMap::new(),
             guest_writes: Vec::new(),
             stdin: VecDeque::new(),
             program_break,
@@ -521,6 +535,33 @@ impl RiscvSyscallState {
         self.guest_files.get(path).map(Vec::as_slice)
     }
 
+    fn guest_path_stat(&self, path: &[u8]) -> Option<RiscvGuestStat> {
+        if !self.guest_path_registered(path) {
+            return None;
+        }
+        Some(RiscvGuestStat::regular_file(
+            self.guest_file_contents(path)
+                .map(|contents| contents.len() as u64)
+                .unwrap_or(0),
+            self.identity(),
+            guest_path_inode(path),
+        ))
+    }
+
+    fn guest_fd_stat(&self, fd: GuestFd) -> Result<RiscvGuestStat, GuestFdError> {
+        let description = self.guest_fds.description_for_fd(fd)?.id();
+        Ok(self
+            .guest_file_stats
+            .get(&description)
+            .copied()
+            .unwrap_or_else(|| {
+                RiscvGuestStat::character_device(
+                    self.identity(),
+                    u64::from(fd.get()).saturating_add(1),
+                )
+            }))
+    }
+
     fn open_guest_path(&mut self, request: RiscvGuestOpenRequest) -> Result<GuestFd, GuestFdError> {
         let RiscvGuestOpenRequest {
             dirfd,
@@ -533,6 +574,14 @@ impl RiscvSyscallState {
         } = request;
         let fd = self.next_open_fd()?;
         let description = self.next_open_description()?;
+        let stat = RiscvGuestStat::regular_file(
+            file_contents
+                .as_ref()
+                .map(|contents| contents.len() as u64)
+                .unwrap_or(0),
+            self.identity(),
+            guest_path_inode(&path),
+        );
         self.guest_fds
             .insert_description(GuestFileDescription::guest_backed(
                 description,
@@ -545,6 +594,7 @@ impl RiscvSyscallState {
         if let Some(contents) = file_contents {
             self.guest_file_descriptions.insert(description, contents);
         }
+        self.guest_file_stats.insert(description, stat);
         self.guest_opens
             .push(RiscvGuestOpenRecord::new(fd, dirfd, path, flags, mode));
         Ok(fd)
@@ -558,6 +608,7 @@ impl RiscvSyscallState {
         self.stdin_fds.remove(&record.fd());
         if let Some(description) = record.released_description() {
             self.guest_file_descriptions.remove(&description.id());
+            self.guest_file_stats.remove(&description.id());
         }
     }
 
@@ -573,6 +624,7 @@ impl RiscvSyscallState {
         if let Some(replaced) = record.replaced() {
             if let Some(description) = replaced.released_description() {
                 self.guest_file_descriptions.remove(&description.id());
+                self.guest_file_stats.remove(&description.id());
             }
         }
     }
@@ -710,6 +762,64 @@ impl RiscvSyscallIdentity {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RiscvGuestStat {
+    device: u64,
+    inode: u64,
+    mode: u32,
+    link_count: u32,
+    user_id: u32,
+    group_id: u32,
+    special_device: u64,
+    size: u64,
+    block_size: u64,
+    blocks: u64,
+}
+
+impl RiscvGuestStat {
+    fn regular_file(size: u64, identity: RiscvSyscallIdentity, inode: u64) -> Self {
+        Self {
+            device: 0,
+            inode,
+            mode: RISCV_LINUX_REGULAR_FILE_MODE,
+            link_count: 1,
+            user_id: linux_stat_user_id(identity.user_id()),
+            group_id: linux_stat_user_id(identity.group_id()),
+            special_device: 0,
+            size,
+            block_size: RISCV_LINUX_STAT_BLOCK_SIZE,
+            blocks: size.div_ceil(RISCV_LINUX_STAT_BLOCK_BYTES),
+        }
+    }
+
+    fn character_device(identity: RiscvSyscallIdentity, inode: u64) -> Self {
+        Self {
+            device: 0x0a,
+            inode,
+            mode: RISCV_LINUX_CHARACTER_DEVICE_MODE,
+            link_count: 1,
+            user_id: linux_stat_user_id(identity.user_id()),
+            group_id: linux_stat_user_id(identity.group_id()),
+            special_device: 0x880d,
+            size: 0,
+            block_size: RISCV_LINUX_STAT_BLOCK_SIZE,
+            blocks: 0,
+        }
+    }
+}
+
+fn linux_stat_user_id(value: u64) -> u32 {
+    value.min(u32::MAX as u64) as u32
+}
+
+fn guest_path_inode(path: &[u8]) -> u64 {
+    path.iter()
+        .fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+            (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3)
+        })
+        .max(1)
+}
+
 impl RiscvMmapRegion {
     fn overlaps(self, start: u64, length: u64) -> bool {
         let Some(end) = start.checked_add(length) else {
@@ -828,6 +938,16 @@ impl RiscvSyscallTable {
             RISCV_LINUX_WRITE => {
                 guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
                     value: syscall_write(request, state, tick, guest_memory),
+                })
+            }
+            RISCV_LINUX_NEWFSTATAT => guest_memory_reader.and_then(|reader| {
+                guest_memory_writer.map(|writer| RiscvSyscallOutcome::Return {
+                    value: syscall_newfstatat(request, state, reader, writer),
+                })
+            }),
+            RISCV_LINUX_FSTAT => {
+                guest_memory_writer.map(|guest_memory| RiscvSyscallOutcome::Return {
+                    value: syscall_fstat(request, state, guest_memory),
                 })
             }
             RISCV_LINUX_SET_TID_ADDRESS => Some(RiscvSyscallOutcome::Return {
@@ -1270,6 +1390,111 @@ fn syscall_write(
 
     state.push_guest_write(RiscvGuestWriteRecord::new(fd, address, tick, bytes));
     count
+}
+
+fn syscall_newfstatat(
+    request: RiscvSyscallRequest,
+    state: &RiscvSyscallState,
+    guest_memory_reader: &RiscvGuestMemoryReader,
+    guest_memory_writer: &RiscvGuestMemoryWriter,
+) -> u64 {
+    let flags = request.argument(3);
+    if flags
+        & !(RISCV_LINUX_AT_EMPTY_PATH
+            | RISCV_LINUX_AT_NO_AUTOMOUNT
+            | RISCV_LINUX_AT_SYMLINK_NOFOLLOW)
+        != 0
+    {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+
+    let path = match read_guest_c_string(
+        guest_memory_reader,
+        request.argument(1),
+        RISCV_LINUX_PATH_MAX,
+    ) {
+        Ok(path) => path,
+        Err(RiscvGuestCStringError::Fault) => return linux_error(RISCV_LINUX_EFAULT),
+        Err(RiscvGuestCStringError::TooLong) => return linux_error(RISCV_LINUX_ENAMETOOLONG),
+    };
+
+    let stat = if path.is_empty() {
+        if flags & RISCV_LINUX_AT_EMPTY_PATH == 0 {
+            return linux_error(RISCV_LINUX_ENOENT);
+        }
+        let Some(fd) = guest_fd_argument(request.argument(0)) else {
+            return linux_error(RISCV_LINUX_EBADF);
+        };
+        match state.guest_fd_stat(fd) {
+            Ok(stat) => stat,
+            Err(_error) => return linux_error(RISCV_LINUX_EBADF),
+        }
+    } else {
+        if request.argument(0) != RISCV_LINUX_AT_FDCWD {
+            return linux_error(RISCV_LINUX_EBADF);
+        }
+        match state.guest_path_stat(&path) {
+            Some(stat) => stat,
+            None => return linux_error(RISCV_LINUX_ENOENT),
+        }
+    };
+
+    write_riscv_linux_stat(request.argument(2), stat, guest_memory_writer)
+}
+
+fn syscall_fstat(
+    request: RiscvSyscallRequest,
+    state: &RiscvSyscallState,
+    guest_memory: &RiscvGuestMemoryWriter,
+) -> u64 {
+    let Some(fd) = guest_fd_argument(request.argument(0)) else {
+        return linux_error(RISCV_LINUX_EBADF);
+    };
+    let stat = match state.guest_fd_stat(fd) {
+        Ok(stat) => stat,
+        Err(_error) => return linux_error(RISCV_LINUX_EBADF),
+    };
+    write_riscv_linux_stat(request.argument(1), stat, guest_memory)
+}
+
+fn write_riscv_linux_stat(
+    address: u64,
+    stat: RiscvGuestStat,
+    guest_memory: &RiscvGuestMemoryWriter,
+) -> u64 {
+    let bytes = riscv_linux_stat_bytes(stat);
+    for (offset, byte) in bytes.iter().enumerate() {
+        let Some(byte_address) = address.checked_add(offset as u64) else {
+            return linux_error(RISCV_LINUX_EFAULT);
+        };
+        if !guest_memory.write(byte_address, std::slice::from_ref(byte)) {
+            return linux_error(RISCV_LINUX_EFAULT);
+        }
+    }
+    0
+}
+
+fn riscv_linux_stat_bytes(stat: RiscvGuestStat) -> [u8; RISCV_LINUX_STAT_BYTES] {
+    let mut bytes = [0; RISCV_LINUX_STAT_BYTES];
+    write_le_u64(&mut bytes, 0, stat.device);
+    write_le_u64(&mut bytes, 8, stat.inode);
+    write_le_u32(&mut bytes, 16, stat.mode);
+    write_le_u32(&mut bytes, 20, stat.link_count);
+    write_le_u32(&mut bytes, 24, stat.user_id);
+    write_le_u32(&mut bytes, 28, stat.group_id);
+    write_le_u64(&mut bytes, 32, stat.special_device);
+    write_le_u64(&mut bytes, 48, stat.size);
+    write_le_u64(&mut bytes, 56, stat.block_size);
+    write_le_u64(&mut bytes, 64, stat.blocks);
+    bytes
+}
+
+fn write_le_u32(output: &mut [u8], offset: usize, value: u32) {
+    output[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+}
+
+fn write_le_u64(output: &mut [u8], offset: usize, value: u64) {
+    output[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
 }
 
 fn syscall_dup(old_fd_argument: u64, state: &mut RiscvSyscallState) -> u64 {

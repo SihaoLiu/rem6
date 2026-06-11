@@ -677,6 +677,7 @@ impl IssuedDataAccess {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum PreparedDataParallelAccess {
     Transaction {
         issue: OutstandingDataAccess,
