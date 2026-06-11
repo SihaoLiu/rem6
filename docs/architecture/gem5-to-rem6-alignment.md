@@ -1407,11 +1407,14 @@ Implementation evidence through 2026-06-03:
   `-ENOSYS` through the same ecall-resume path. RISC-V `futex` wake and
   wake-bitset operations now mask gem5-style private and realtime flags, wake
   typed guest futex waiters by thread group, return the woken count, and resume
-  guest execution. RISC-V `fcntl` now consumes `F_GETFD`, `F_SETFD`,
-  `F_GETFL`, and `F_SETFL` through the same ecall-resume path against typed
-  guest fd state seeded with stdin, stdout, and stderr; close-on-exec remains a
-  per-descriptor flag while file status flags remain shared by file
-  description. Fork, clone, exec, futex wait/requeue and child-clear-TID wake,
+  guest execution. RISC-V `close` now removes descriptor entries, releases
+  unreferenced file descriptions, returns `-EBADF` for invalid descriptors, and
+  makes later descriptor operations fail through the same real ecall-resume
+  path. RISC-V `fcntl` now consumes `F_GETFD`, `F_SETFD`, `F_GETFL`, and
+  `F_SETFL` through that path against typed guest fd state seeded with stdin,
+  stdout, and stderr; close-on-exec remains a per-descriptor flag while file
+  status flags remain shared by file description. Fork, clone, exec, futex
+  wait/requeue and child-clear-TID wake,
   dynamic credential changes, file-backed mmap handling, backing-memory or
   page-table installation for returned ranges, `openat`, `read`, `write`,
   `wait4`, and guest-memory argument copying remain open before broad libc
@@ -5230,13 +5233,13 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   `set_tid_address` child-clear-TID state, anonymous `mmap`/`munmap` region
   state, gem5-style ignore-return advisory memory-management calls, ignored
   `rseq` returning `-ENOSYS`, `futex` wake/wake-bitset handling, and initial
-  `fcntl` descriptor/status flag handling through the same real ecall path. It
-  still lacks fork/clone process modeling, futex wait, futex requeue, futex wake
-  on child-clear-TID, file-backed mmap handling, backing-memory installation for
-  returned ranges, the broader syscall table, and guest-memory argument paths
-  needed for `openat`/`read`/`write`/`futex`/`wait4`, and Linux handoff still
-  needs an SBI-class firmware/runtime path rather than only DTB/initrd/register
-  handoff.
+  `close` plus `fcntl` descriptor/status flag handling through the same real
+  ecall path. It still lacks fork/clone process modeling, futex wait, futex
+  requeue, futex wake on child-clear-TID, file-backed mmap handling,
+  backing-memory installation for returned ranges, the broader syscall table,
+  and guest-memory argument paths needed for `openat`, `read`, `write`,
+  `futex`, and `wait4`, and Linux handoff still needs an SBI-class
+  firmware/runtime path rather than only DTB/initrd/register handoff.
 - Complete predictor coupling, external checkpoint payloads, and richer
   cycle-visible state for the in-order pipeline, add fuller out-of-order
   pipeline execution, checker, richer branch predictors, and host-assisted

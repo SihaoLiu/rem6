@@ -11,6 +11,7 @@ use crate::{
 };
 
 const RISCV_LINUX_FCNTL: u64 = 25;
+const RISCV_LINUX_CLOSE: u64 = 57;
 const RISCV_LINUX_SET_TID_ADDRESS: u64 = 96;
 const RISCV_LINUX_SET_ROBUST_LIST: u64 = 99;
 const RISCV_LINUX_GET_ROBUST_LIST: u64 = 100;
@@ -447,6 +448,9 @@ impl RiscvSyscallTable {
     ) -> Option<RiscvSyscallOutcome> {
         match request.number() {
             RISCV_LINUX_FCNTL => syscall_fcntl(request, state),
+            RISCV_LINUX_CLOSE => Some(RiscvSyscallOutcome::Return {
+                value: syscall_close(request.argument(0), state),
+            }),
             RISCV_LINUX_SET_TID_ADDRESS => Some(RiscvSyscallOutcome::Return {
                 value: syscall_set_tid_address(request.argument(0), state),
             }),
@@ -651,6 +655,16 @@ fn linux_standard_guest_fds() -> GuestFdTable {
             .expect("standard RISC-V Linux fd is unique");
     }
     table
+}
+
+fn syscall_close(fd_argument: u64, state: &mut RiscvSyscallState) -> u64 {
+    let Some(fd) = guest_fd_argument(fd_argument) else {
+        return linux_error(RISCV_LINUX_EBADF);
+    };
+    match state.guest_fds.close_descriptor(fd) {
+        Ok(_record) => 0,
+        Err(_error) => linux_error(RISCV_LINUX_EBADF),
+    }
 }
 
 fn syscall_fcntl(
@@ -1116,6 +1130,53 @@ mod tests {
             ),
             Some(RiscvSyscallOutcome::Return {
                 value: RISCV_LINUX_O_WRONLY | RISCV_LINUX_O_NONBLOCK
+            })
+        );
+    }
+
+    #[test]
+    fn linux_table_closes_guest_fd_and_rejects_reuse() {
+        let table = RiscvSyscallTable::new();
+        let mut state = RiscvSyscallState::new(0);
+        let stdout = GuestFd::new(1).unwrap();
+        let stdout_description = GuestFileDescriptionId::new(1);
+
+        assert_eq!(
+            table.handle(
+                RiscvSyscallRequest::new(0x8000, RISCV_LINUX_CLOSE, [1, 0, 0, 0, 0, 0]),
+                &mut state,
+            ),
+            Some(RiscvSyscallOutcome::Return { value: 0 })
+        );
+        assert!(state.guest_fds().entry(stdout).is_none());
+        assert!(state.guest_fds().description(stdout_description).is_none());
+        assert_eq!(
+            table.handle(
+                RiscvSyscallRequest::new(
+                    0x8004,
+                    RISCV_LINUX_FCNTL,
+                    [1, RISCV_LINUX_F_GETFD, 0, 0, 0, 0],
+                ),
+                &mut state,
+            ),
+            Some(RiscvSyscallOutcome::Return {
+                value: linux_error(RISCV_LINUX_EBADF)
+            })
+        );
+    }
+
+    #[test]
+    fn linux_table_returns_ebadf_for_close_on_unknown_fd() {
+        let table = RiscvSyscallTable::new();
+        let mut state = RiscvSyscallState::new(0);
+
+        assert_eq!(
+            table.handle(
+                RiscvSyscallRequest::new(0x8000, RISCV_LINUX_CLOSE, [99, 0, 0, 0, 0, 0]),
+                &mut state,
+            ),
+            Some(RiscvSyscallOutcome::Return {
+                value: linux_error(RISCV_LINUX_EBADF)
             })
         );
     }
