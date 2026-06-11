@@ -52,6 +52,14 @@ impl RiscvGuestStat {
             blocks: 0,
         }
     }
+
+    pub(super) const fn size(self) -> u64 {
+        self.size
+    }
+
+    pub(super) const fn is_regular_file(self) -> bool {
+        self.mode & RISCV_LINUX_S_IFREG == RISCV_LINUX_S_IFREG
+    }
 }
 
 pub(super) fn guest_path_inode(path: &[u8]) -> u64 {

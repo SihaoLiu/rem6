@@ -21,6 +21,7 @@ mod ioctl;
 mod limits;
 mod links;
 mod mmap;
+mod seek;
 mod stat;
 mod utsname;
 mod wait4;
@@ -34,6 +35,7 @@ pub use mmap::RiscvMmapRegion;
 #[cfg(test)]
 use mmap::RISCV_LINUX_MAP_FIXED;
 use mmap::{syscall_mmap, syscall_munmap, RISCV64_LINUX_MMAP_BASE, RISCV_PAGE_BYTES};
+use seek::{syscall_lseek, RISCV_LINUX_LSEEK};
 use stat::{guest_path_inode, write_riscv_linux_stat, RiscvGuestStat};
 use utsname::write_riscv_linux_utsname;
 use wait4::{syscall_process_group_id, syscall_wait4, RISCV_LINUX_WAIT4};
@@ -92,8 +94,9 @@ const RISCV_LINUX_ENOENT: u64 = 2;
 const RISCV_LINUX_EBADF: u64 = 9;
 const RISCV_LINUX_EFAULT: u64 = 14;
 const RISCV_LINUX_EINVAL: u64 = 22;
-const RISCV_LINUX_ENOTTY: u64 = 25;
 const RISCV_LINUX_EMFILE: u64 = 24;
+const RISCV_LINUX_ENOTTY: u64 = 25;
+const RISCV_LINUX_ESPIPE: u64 = 29;
 const RISCV_LINUX_ERANGE: u64 = 34;
 const RISCV_LINUX_ENAMETOOLONG: u64 = 36;
 const RISCV_LINUX_ENOSYS: u64 = 38;
@@ -849,6 +852,9 @@ impl RiscvSyscallTable {
             }
             RISCV_LINUX_CLOSE => Some(RiscvSyscallOutcome::Return {
                 value: syscall_close(request.argument(0), state),
+            }),
+            RISCV_LINUX_LSEEK => Some(RiscvSyscallOutcome::Return {
+                value: syscall_lseek(request, state),
             }),
             RISCV_LINUX_READ => {
                 guest_memory_writer.map(|guest_memory| RiscvSyscallOutcome::Return {
