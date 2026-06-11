@@ -1398,6 +1398,59 @@ fn rem6_run_riscv_se_futex_wait_reads_guest_word_mismatch() {
     assert_stat(&stdout, "sim.stop_code", "Count", 245, "constant");
 }
 
+#[test]
+fn rem6_run_riscv_se_futex_wait_bitset_reads_guest_word_mismatch() {
+    let program = riscv64_program(&[
+        i_type(-16, 2, 0x0, 2, 0x13),    // addi sp, sp, -16
+        i_type(1, 0, 0x0, 5, 0x13),      // addi x5, x0, 1
+        s_type(0, 5, 2, 0x2),            // sw x5, 0(sp)
+        i_type(0, 2, 0x0, 10, 0x13),     // addi a0, sp, 0
+        i_type(9, 0, 0x0, 11, 0x13),     // addi a1, x0, 9
+        i_type(2, 0, 0x0, 12, 0x13),     // addi a2, x0, 2
+        i_type(0, 0, 0x0, 13, 0x13),     // addi a3, x0, 0
+        i_type(0, 0, 0x0, 14, 0x13),     // addi a4, x0, 0
+        i_type(-1, 0, 0x0, 15, 0x13),    // addi a5, x0, -1
+        i_type(98, 0, 0x0, 17, 0x13),    // addi a7, x0, 98
+        0x0000_0073,                     // ecall
+        i_type(0xff, 10, 0x7, 10, 0x13), // andi a0, a0, 255
+        i_type(93, 0, 0x0, 17, 0x13),    // addi a7, x0, 93
+        0x0000_0073,                     // ecall
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("riscv-se-futex-wait-bitset-eagain", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "240",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_reason\":\"host_stop\""));
+    assert!(stdout.contains("\"stop_code\":245"));
+    assert!(stdout.contains("\"x10\":\"0xf5\""));
+    assert_stat(&stdout, "sim.riscv.se", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.stop.host_stop", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.stop_code", "Count", 245, "constant");
+}
+
 fn riscv_se_argv_env_probe_program() -> Vec<u8> {
     riscv64_program(&[
         i_type(0, 2, 0x3, 5, 0x03),   // ld x5, 0(sp)

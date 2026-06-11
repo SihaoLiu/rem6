@@ -1540,6 +1540,44 @@ fn linux_table_futex_wait_mismatch_returns_eagain_without_queueing() {
 }
 
 #[test]
+fn linux_table_futex_wait_bitset_zero_returns_einval() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let address = GuestFutexAddress::new(0x18c);
+    let guest_memory = RiscvGuestMemoryReader::new(|_, _| panic!("zero bitset must fail first"));
+
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(0x8000, 98, [address.get(), 9, 2, 0, 0, 0]),
+            &mut state,
+            43,
+            Some(&guest_memory),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EINVAL)
+        })
+    );
+}
+
+#[test]
+fn linux_table_futex_wake_bitset_zero_returns_einval() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let address = GuestFutexAddress::new(0x190);
+
+    assert_eq!(
+        table.handle_at_tick(
+            RiscvSyscallRequest::new(0x8000, 98, [address.get(), 10, 1, 0, 0, 0]),
+            &mut state,
+            43,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EINVAL)
+        })
+    );
+}
+
+#[test]
 fn linux_table_unknown_numbers_return_enosys_without_mutating_state() {
     let mut state = RiscvSyscallState::new(0);
 

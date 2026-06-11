@@ -2,7 +2,7 @@ use rem6_kernel::{PartitionId, Tick};
 
 use super::{
     linux_error, RiscvGuestMemoryReader, RiscvSyscallOutcome, RiscvSyscallRequest,
-    RiscvSyscallState, RISCV_LINUX_EFAULT,
+    RiscvSyscallState, RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL,
 };
 use crate::{
     GuestFutexAddress, GuestFutexKey, GuestFutexWaitOutcome, GuestFutexWaitRequest,
@@ -12,6 +12,7 @@ use crate::{
 const RISCV_LINUX_EAGAIN: u64 = 11;
 const RISCV_LINUX_FUTEX_WAIT: u32 = 0;
 const RISCV_LINUX_FUTEX_WAKE: u32 = 1;
+const RISCV_LINUX_FUTEX_WAIT_BITSET: u32 = 9;
 const RISCV_LINUX_FUTEX_WAKE_BITSET: u32 = 10;
 const RISCV_LINUX_FUTEX_PRIVATE_FLAG: u32 = 128;
 const RISCV_LINUX_FUTEX_CLOCK_REALTIME_FLAG: u32 = 256;
@@ -28,8 +29,35 @@ pub(super) fn syscall_futex(
     let thread_group = GuestThreadGroupId::new(state.identity().thread_group_id());
     match op {
         RISCV_LINUX_FUTEX_WAIT => guest_memory.and_then(|guest_memory| {
-            syscall_futex_wait(request, state, tick, address, thread_group, guest_memory)
+            syscall_futex_wait(
+                request,
+                state,
+                tick,
+                address,
+                thread_group,
+                u32::MAX,
+                guest_memory,
+            )
         }),
+        RISCV_LINUX_FUTEX_WAIT_BITSET => {
+            let bitset = request.argument(5) as u32;
+            if bitset == 0 {
+                return Some(RiscvSyscallOutcome::Return {
+                    value: linux_error(RISCV_LINUX_EINVAL),
+                });
+            }
+            guest_memory.and_then(|guest_memory| {
+                syscall_futex_wait(
+                    request,
+                    state,
+                    tick,
+                    address,
+                    thread_group,
+                    bitset,
+                    guest_memory,
+                )
+            })
+        }
         RISCV_LINUX_FUTEX_WAKE => {
             let count = futex_wake_count(request.argument(2));
             let outcome = state
@@ -42,6 +70,11 @@ pub(super) fn syscall_futex(
         }
         RISCV_LINUX_FUTEX_WAKE_BITSET => {
             let bitset = request.argument(5) as u32;
+            if bitset == 0 {
+                return Some(RiscvSyscallOutcome::Return {
+                    value: linux_error(RISCV_LINUX_EINVAL),
+                });
+            }
             let outcome = state
                 .guest_futexes
                 .wake_bitset(address, thread_group, usize::MAX, bitset, tick)
@@ -60,6 +93,7 @@ fn syscall_futex_wait(
     tick: Tick,
     address: GuestFutexAddress,
     thread_group: GuestThreadGroupId,
+    bitset: u32,
     guest_memory: &RiscvGuestMemoryReader,
 ) -> Option<RiscvSyscallOutcome> {
     let Some(observed) = read_guest_i32(guest_memory, request.argument(0)) else {
@@ -79,7 +113,8 @@ fn syscall_futex_wait(
         tick,
         expected,
         observed,
-    );
+    )
+    .with_bitset(bitset);
     match state
         .guest_futexes
         .wait(wait)
