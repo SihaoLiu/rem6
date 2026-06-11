@@ -1410,6 +1410,13 @@ Implementation evidence through 2026-06-11:
   `a0`, clearing the pending trap, restoring user execution, and resuming at the
   instruction after the ecall. BootImage-aware RISC-V SE construction now seeds
   that initial program break from the page-rounded loaded image end. RISC-V
+  CPU fetch also handles RV64GC line-end instruction encodings through the real
+  memory transport: a 2-byte response retires immediately when the low halfword
+  identifies an RVC instruction, while a low halfword that identifies a 32-bit
+  instruction causes the core to fetch the high halfword and merge both
+  responses before decode and retirement. A static no-libc RV64GC ELF assembled
+  by the RISC-V GNU toolchain now reaches the SE exit path with stop code zero.
+  RISC-V
   Linux `mmap` and `munmap` are also handled as returning syscalls for
   page-aligned anonymous mappings and opened registered guest-file mappings:
   the table validates Linux arguments, tracks typed mmap regions from the
@@ -5324,8 +5331,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
 
 - Expand ISA support beyond RISC-V while preserving crate isolation.
 - Make the RISC-V execution path capable of mainstream software: RV64GC still
-  needs broader compressed edge-case coverage, including variable-length fetch
-  at frontend line and page boundaries, plus full floating-point decode/execute
+  needs broader compressed edge-case coverage. The frontend now covers line-end
+  16-bit and split 32-bit fetches, but page-boundary, translated-fetch fault,
+  and wider compressed-control-flow coverage remain open. Full floating-point decode/execute
   coverage beyond the current single-precision and double-precision load/store,
   RNE arithmetic, RNE fused multiply-add/subtract, RNE square root,
   sign-injection, comparison, min/max, classification, raw-move slice,

@@ -42,6 +42,7 @@ mod riscv_cluster;
 mod riscv_cluster_run;
 mod riscv_data_access;
 mod riscv_data_issue;
+mod riscv_execute;
 mod riscv_fetch;
 mod riscv_htm;
 mod riscv_reservation;
@@ -424,6 +425,24 @@ impl CpuCore {
         tick: Tick,
         transport: &MemoryTransport,
     ) -> Result<OutstandingFetch, CpuError> {
+        self.prepare_fetch_with_size(tick, transport, None)
+    }
+
+    pub(crate) fn prepare_fetch_with_explicit_size(
+        &self,
+        tick: Tick,
+        transport: &MemoryTransport,
+        size: AccessSize,
+    ) -> Result<OutstandingFetch, CpuError> {
+        self.prepare_fetch_with_size(tick, transport, Some(size))
+    }
+
+    fn prepare_fetch_with_size(
+        &self,
+        tick: Tick,
+        transport: &MemoryTransport,
+        size: Option<AccessSize>,
+    ) -> Result<OutstandingFetch, CpuError> {
         let state = self.state.lock().expect("cpu core lock");
         let route = transport
             .route(state.fetch.route())
@@ -446,15 +465,14 @@ impl CpuCore {
             });
         }
 
-        let line_layout = state
-            .fetch
-            .line_layout_for_fetch(state.pc)
-            .map_err(CpuError::Memory)?;
+        let size = size.unwrap_or_else(|| state.fetch.width());
+        let range = AddressRange::new(state.pc, size).map_err(CpuError::Memory)?;
+        let line_layout = state.fetch.line_layout_for_range(range);
         let line_offset = line_layout.line_offset(state.pc);
-        if line_offset + state.fetch.width().bytes() > line_layout.bytes() {
+        if line_offset + size.bytes() > line_layout.bytes() {
             return Err(CpuError::FetchCrossesLine {
                 pc: state.pc,
-                size: state.fetch.width(),
+                size,
                 line_size: line_layout.bytes(),
             });
         }
@@ -466,7 +484,7 @@ impl CpuCore {
             endpoint: state.fetch.endpoint().clone(),
             request_id: MemoryRequestId::new(state.reset.agent(), state.next_sequence),
             pc: state.pc,
-            size: state.fetch.width(),
+            size,
             line_layout,
         })
     }
@@ -964,11 +982,10 @@ impl RiscvCore {
     }
 
     pub fn redirect_pc(&self, pc: Address) {
-        self.state
-            .lock()
-            .expect("riscv core lock")
-            .hart
-            .set_pc(pc.get());
+        let mut state = self.state.lock().expect("riscv core lock");
+        state.hart.set_pc(pc.get());
+        state.pending_fetch_prefix = None;
+        drop(state);
         self.core.set_pc(pc);
     }
 
@@ -1074,58 +1091,6 @@ impl RiscvCore {
         Ok(Some(RiscvCoreDriveAction::FetchIssued { event }))
     }
 
-    pub fn execute_next_completed_fetch(
-        &self,
-    ) -> Result<Option<RiscvCpuExecutionEvent>, RiscvCpuError> {
-        let fetch_events = self.core.fetch_events();
-        let mut state = self.state.lock().expect("riscv core lock");
-        if state.pending_trap.is_some() {
-            return Ok(None);
-        }
-        let Some(fetch) = fetch_events.into_iter().find(|event| {
-            event.kind() == CpuFetchEventKind::Completed
-                && !state.executed_fetches.contains(&event.request_id())
-        }) else {
-            return Ok(None);
-        };
-
-        let architectural = Address::new(state.hart.pc());
-        if fetch.pc() != architectural {
-            return Err(RiscvCpuError::PcMismatch {
-                fetch: fetch.pc(),
-                architectural,
-            });
-        }
-
-        let data = fetch.data().ok_or(RiscvCpuError::MissingFetchData {
-            request: fetch.request_id(),
-        })?;
-        if data.len() != 4 {
-            return Err(RiscvCpuError::InvalidFetchWidth {
-                request: fetch.request_id(),
-                bytes: data.len() as u64,
-            });
-        }
-        let raw = u32::from_le_bytes(data.try_into().expect("fetch width checked"));
-        let decoded = RiscvInstruction::decode_with_length(raw).map_err(RiscvCpuError::Isa)?;
-        let instruction = decoded.instruction();
-        let execution = state
-            .hart
-            .execute_decoded(decoded)
-            .map_err(RiscvCpuError::Isa)?;
-        let next_pc = Address::new(execution.next_pc());
-        self.core.set_pc(next_pc);
-        if let Some(trap) = execution.trap().copied() {
-            state.pending_trap = Some(trap);
-        }
-        state.apply_riscv_system_event(execution.system_event());
-
-        let event = RiscvCpuExecutionEvent::new(fetch.clone(), instruction, execution);
-        state.executed_fetches.insert(fetch.request_id());
-        state.events.push(event.clone());
-        Ok(Some(event))
-    }
-
     fn next_unissued_data_access(&self) -> Option<(MemoryRequestId, MemoryAccessKind)> {
         let state = self.state.lock().expect("riscv core lock");
         state.next_unissued_data_access()
@@ -1146,6 +1111,7 @@ struct RiscvCoreState {
     data: Option<CpuDataConfig>,
     data_translation: Option<CpuTranslationFrontend>,
     executed_fetches: BTreeSet<MemoryRequestId>,
+    pending_fetch_prefix: Option<riscv_execute::RiscvPendingFetchPrefix>,
     issued_data_for_fetches: BTreeSet<MemoryRequestId>,
     pending_data_translations:
         BTreeMap<TranslationRequestId, riscv_translation::PendingDataTranslation>,
@@ -1169,6 +1135,7 @@ impl RiscvCoreState {
             data: None,
             data_translation: None,
             executed_fetches: BTreeSet::new(),
+            pending_fetch_prefix: None,
             issued_data_for_fetches: BTreeSet::new(),
             pending_data_translations: BTreeMap::new(),
             ready_translated_data: BTreeMap::new(),

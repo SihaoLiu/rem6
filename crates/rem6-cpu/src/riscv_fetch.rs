@@ -125,10 +125,34 @@ impl RiscvCore {
         tick: Tick,
         transport: &MemoryTransport,
     ) -> Result<OutstandingFetch, RiscvCpuError> {
-        let issue = self
-            .inner()
-            .prepare_fetch(tick, transport)
-            .map_err(RiscvCpuError::Cpu)?;
+        let needs_fetch_suffix = self
+            .state
+            .lock()
+            .expect("riscv core lock")
+            .pending_fetch_prefix
+            .is_some();
+        let issue = if needs_fetch_suffix {
+            self.inner()
+                .prepare_fetch_with_explicit_size(
+                    tick,
+                    transport,
+                    AccessSize::new(2).expect("RISC-V fetch suffix width is nonzero"),
+                )
+                .map_err(RiscvCpuError::Cpu)?
+        } else {
+            match self.inner().prepare_fetch(tick, transport) {
+                Ok(issue) => issue,
+                Err(crate::CpuError::FetchCrossesLine { size, .. }) if size.bytes() > 2 => self
+                    .inner()
+                    .prepare_fetch_with_explicit_size(
+                        tick,
+                        transport,
+                        AccessSize::new(2).expect("RISC-V compressed fetch width is nonzero"),
+                    )
+                    .map_err(RiscvCpuError::Cpu)?,
+                Err(error) => return Err(RiscvCpuError::Cpu(error)),
+            }
+        };
         self.check_pmp_fetch_access(issue.pc, issue.size)?;
         Ok(issue)
     }

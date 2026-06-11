@@ -14,7 +14,7 @@ use rem6_isa_riscv::{
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryOperation, MemoryRequest, MemoryRequestId,
-    MemoryTargetId, PartitionedMemoryStore,
+    MemoryResponse, MemoryTargetId, PartitionedMemoryStore,
 };
 use rem6_transport::{
     MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTransport, TargetOutcome, TransportEndpointId,
@@ -935,6 +935,200 @@ fn riscv_core_executes_packed_compressed_fetches_and_advances_by_halfword() {
     assert_eq!(core.read_register(reg(8)), 8);
     assert_eq!(core.pc(), Address::new(0x8004));
     assert_eq!(core.inner().pc(), Address::new(0x8004));
+}
+
+#[test]
+fn riscv_core_executes_compressed_fetch_at_line_end() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let core = RiscvCore::new(core(route, 0x800e));
+    let mut program = Vec::new();
+    program.extend(halfword(0x441d));
+    program.extend(halfword(0x0405));
+    program.extend([0, 0]);
+    let store = loaded_program_bytes(0x800e, program);
+
+    fetch_one(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+    );
+    let first = core.execute_next_completed_fetch().unwrap().unwrap();
+
+    assert_eq!(first.fetch_pc(), Address::new(0x800e));
+    assert_eq!(first.execution().instruction_bytes(), 2);
+    assert_eq!(first.execution().next_pc(), 0x8010);
+    assert_eq!(core.read_register(reg(8)), 7);
+    assert_eq!(core.pc(), Address::new(0x8010));
+    assert_eq!(core.inner().pc(), Address::new(0x8010));
+
+    fetch_one(&core, store, &mut scheduler, &transport, MemoryTrace::new());
+    let second = core.execute_next_completed_fetch().unwrap().unwrap();
+
+    assert_eq!(second.fetch_pc(), Address::new(0x8010));
+    assert_eq!(second.execution().instruction_bytes(), 2);
+    assert_eq!(second.execution().next_pc(), 0x8012);
+    assert_eq!(core.read_register(reg(8)), 8);
+    assert_eq!(core.pc(), Address::new(0x8012));
+    assert_eq!(core.inner().pc(), Address::new(0x8012));
+}
+
+#[test]
+fn riscv_core_executes_word_fetch_across_line_end() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let raw = i_type(5, 0, 0x0, 1, 0x13);
+    let core = RiscvCore::new(core(route, 0x800e));
+    let store = loaded_program_bytes(0x800e, word(raw));
+
+    fetch_one(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+    );
+    assert_eq!(core.execute_next_completed_fetch().unwrap(), None);
+    assert_eq!(core.pc(), Address::new(0x800e));
+    assert_eq!(core.inner().pc(), Address::new(0x8010));
+
+    fetch_one(&core, store, &mut scheduler, &transport, MemoryTrace::new());
+    let event = core.execute_next_completed_fetch().unwrap().unwrap();
+
+    assert_eq!(event.fetch_pc(), Address::new(0x800e));
+    assert_eq!(event.instruction(), RiscvInstruction::decode(raw).unwrap());
+    assert_eq!(event.execution().instruction_bytes(), 4);
+    assert_eq!(event.execution().next_pc(), 0x8012);
+    assert_eq!(core.read_register(reg(1)), 5);
+    assert_eq!(core.pc(), Address::new(0x8012));
+    assert_eq!(core.inner().pc(), Address::new(0x8012));
+}
+
+#[test]
+fn riscv_core_retries_word_fetch_suffix_across_line_end() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let raw = i_type(5, 0, 0x0, 1, 0x13);
+    let core = RiscvCore::new(core(route, 0x800e));
+    let store = loaded_program_bytes(0x800e, word(raw));
+
+    fetch_one(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+    );
+    assert_eq!(core.execute_next_completed_fetch().unwrap(), None);
+
+    core.issue_next_fetch(
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+        |delivery, _context| TargetOutcome::Respond(MemoryResponse::retry(delivery.request())),
+    )
+    .unwrap();
+    scheduler.run_until_idle_conservative();
+    assert_eq!(core.execute_next_completed_fetch().unwrap(), None);
+    assert_eq!(core.pc(), Address::new(0x800e));
+    assert_eq!(core.inner().pc(), Address::new(0x8010));
+
+    fetch_one(&core, store, &mut scheduler, &transport, MemoryTrace::new());
+    let event = core.execute_next_completed_fetch().unwrap().unwrap();
+
+    assert_eq!(event.fetch_pc(), Address::new(0x800e));
+    assert_eq!(event.instruction(), RiscvInstruction::decode(raw).unwrap());
+    assert_eq!(event.execution().instruction_bytes(), 4);
+    assert_eq!(core.read_register(reg(1)), 5);
+    assert_eq!(core.pc(), Address::new(0x8012));
+    assert_eq!(core.inner().pc(), Address::new(0x8012));
+}
+
+#[test]
+fn riscv_core_redirect_clears_pending_split_fetch_prefix() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let old_raw = i_type(5, 0, 0x0, 1, 0x13);
+    let new_raw = i_type(9, 0, 0x0, 2, 0x13);
+    let core = RiscvCore::new(core(route, 0x800e));
+    let store = loaded_program_store(0x800e, &[old_raw], &[(0x9000, word(new_raw))]);
+
+    fetch_one(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+    );
+    assert_eq!(core.execute_next_completed_fetch().unwrap(), None);
+
+    core.redirect_pc(Address::new(0x9000));
+    fetch_one(&core, store, &mut scheduler, &transport, MemoryTrace::new());
+    let event = core.execute_next_completed_fetch().unwrap().unwrap();
+
+    assert_eq!(event.fetch_pc(), Address::new(0x9000));
+    assert_eq!(
+        event.instruction(),
+        RiscvInstruction::decode(new_raw).unwrap()
+    );
+    assert_eq!(core.read_register(reg(1)), 0);
+    assert_eq!(core.read_register(reg(2)), 9);
+    assert_eq!(core.pc(), Address::new(0x9004));
+    assert_eq!(core.inner().pc(), Address::new(0x9004));
 }
 
 #[test]
