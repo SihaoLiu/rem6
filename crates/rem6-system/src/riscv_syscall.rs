@@ -8,6 +8,12 @@ use crate::{GuestEventId, RiscvSystemRunDriver, ScheduledRiscvTrap, SystemError}
 
 const RISCV_LINUX_EXIT: u64 = 93;
 const RISCV_LINUX_EXIT_GROUP: u64 = 94;
+const RISCV_LINUX_GETPID: u64 = 172;
+const RISCV_LINUX_GETUID: u64 = 174;
+const RISCV_LINUX_GETEUID: u64 = 175;
+const RISCV_LINUX_GETGID: u64 = 176;
+const RISCV_LINUX_GETEGID: u64 = 177;
+const RISCV_LINUX_GETTID: u64 = 178;
 const RISCV_LINUX_BRK: u64 = 214;
 const RISCV_LINUX_MUNMAP: u64 = 215;
 const RISCV_LINUX_MMAP: u64 = 222;
@@ -19,6 +25,7 @@ const RISCV_LINUX_MAP_FIXED: u64 = 0x10;
 const RISCV_LINUX_MAP_ANONYMOUS: u64 = 0x20;
 const RISCV_PAGE_BYTES: u64 = 4096;
 const RISCV64_LINUX_MMAP_BASE: u64 = 0x4000_0000_0000_0000;
+const RISCV_LINUX_DEFAULT_PROCESS_ID: u64 = 100;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RiscvSyscallRequest {
@@ -138,6 +145,7 @@ impl RiscvMmapRegion {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RiscvSyscallState {
+    identity: RiscvSyscallIdentity,
     program_break: u64,
     mmap_next: u64,
     mmap_regions: Vec<RiscvMmapRegion>,
@@ -149,11 +157,33 @@ impl RiscvSyscallState {
     }
 
     pub fn with_mmap_base(program_break: u64, mmap_next: u64) -> Self {
+        Self::with_identity_and_mmap_base(
+            program_break,
+            RiscvSyscallIdentity::linux_single_process(),
+            mmap_next,
+        )
+    }
+
+    #[cfg(test)]
+    fn with_identity(program_break: u64, identity: RiscvSyscallIdentity) -> Self {
+        Self::with_identity_and_mmap_base(program_break, identity, RISCV64_LINUX_MMAP_BASE)
+    }
+
+    fn with_identity_and_mmap_base(
+        program_break: u64,
+        identity: RiscvSyscallIdentity,
+        mmap_next: u64,
+    ) -> Self {
         Self {
+            identity,
             program_break,
             mmap_next,
             mmap_regions: Vec::new(),
         }
+    }
+
+    const fn identity(&self) -> RiscvSyscallIdentity {
+        self.identity
     }
 
     pub const fn program_break(&self) -> u64 {
@@ -200,6 +230,71 @@ impl RiscvSyscallState {
     fn push_mmap_region(&mut self, region: RiscvMmapRegion) {
         self.mmap_regions.push(region);
         self.mmap_regions.sort_by_key(|region| region.start());
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RiscvSyscallIdentity {
+    process_id: u64,
+    thread_id: u64,
+    user_id: u64,
+    effective_user_id: u64,
+    group_id: u64,
+    effective_group_id: u64,
+}
+
+impl RiscvSyscallIdentity {
+    const fn new(
+        process_id: u64,
+        thread_id: u64,
+        user_id: u64,
+        effective_user_id: u64,
+        group_id: u64,
+        effective_group_id: u64,
+    ) -> Self {
+        Self {
+            process_id,
+            thread_id,
+            user_id,
+            effective_user_id,
+            group_id,
+            effective_group_id,
+        }
+    }
+
+    const fn linux_single_process() -> Self {
+        Self::new(
+            RISCV_LINUX_DEFAULT_PROCESS_ID,
+            RISCV_LINUX_DEFAULT_PROCESS_ID,
+            RISCV_LINUX_DEFAULT_PROCESS_ID,
+            RISCV_LINUX_DEFAULT_PROCESS_ID,
+            RISCV_LINUX_DEFAULT_PROCESS_ID,
+            RISCV_LINUX_DEFAULT_PROCESS_ID,
+        )
+    }
+
+    const fn process_id(self) -> u64 {
+        self.process_id
+    }
+
+    const fn thread_id(self) -> u64 {
+        self.thread_id
+    }
+
+    const fn user_id(self) -> u64 {
+        self.user_id
+    }
+
+    const fn effective_user_id(self) -> u64 {
+        self.effective_user_id
+    }
+
+    const fn group_id(self) -> u64 {
+        self.group_id
+    }
+
+    const fn effective_group_id(self) -> u64 {
+        self.effective_group_id
     }
 }
 
@@ -265,6 +360,24 @@ impl RiscvSyscallTable {
         match request.number() {
             RISCV_LINUX_EXIT | RISCV_LINUX_EXIT_GROUP => Some(RiscvSyscallOutcome::Exit {
                 code: syscall_exit_code(request.argument(0)),
+            }),
+            RISCV_LINUX_GETPID => Some(RiscvSyscallOutcome::Return {
+                value: state.identity().process_id(),
+            }),
+            RISCV_LINUX_GETTID => Some(RiscvSyscallOutcome::Return {
+                value: state.identity().thread_id(),
+            }),
+            RISCV_LINUX_GETUID => Some(RiscvSyscallOutcome::Return {
+                value: state.identity().user_id(),
+            }),
+            RISCV_LINUX_GETEUID => Some(RiscvSyscallOutcome::Return {
+                value: state.identity().effective_user_id(),
+            }),
+            RISCV_LINUX_GETGID => Some(RiscvSyscallOutcome::Return {
+                value: state.identity().group_id(),
+            }),
+            RISCV_LINUX_GETEGID => Some(RiscvSyscallOutcome::Return {
+                value: state.identity().effective_group_id(),
             }),
             RISCV_LINUX_BRK => Some(RiscvSyscallOutcome::Return {
                 value: syscall_brk(request.argument(0), state),
@@ -507,6 +620,47 @@ mod tests {
             Some(RiscvSyscallOutcome::Return { value: 64 })
         );
         assert_eq!(state.program_break(), 64);
+    }
+
+    #[test]
+    fn linux_table_returns_process_identity() {
+        let table = RiscvSyscallTable::new();
+        let mut state =
+            RiscvSyscallState::with_identity(0, RiscvSyscallIdentity::new(41, 42, 7, 8, 9, 10));
+
+        for (number, value) in [
+            (RISCV_LINUX_GETPID, 41),
+            (RISCV_LINUX_GETTID, 42),
+            (RISCV_LINUX_GETUID, 7),
+            (RISCV_LINUX_GETEUID, 8),
+            (RISCV_LINUX_GETGID, 9),
+            (RISCV_LINUX_GETEGID, 10),
+        ] {
+            assert_eq!(
+                table.handle(RiscvSyscallRequest::new(0x8000, number, [0; 6]), &mut state,),
+                Some(RiscvSyscallOutcome::Return { value })
+            );
+        }
+    }
+
+    #[test]
+    fn linux_table_uses_gem5_default_process_identity() {
+        let table = RiscvSyscallTable::new();
+        let mut state = RiscvSyscallState::new(0);
+
+        for number in [
+            RISCV_LINUX_GETPID,
+            RISCV_LINUX_GETTID,
+            RISCV_LINUX_GETUID,
+            RISCV_LINUX_GETEUID,
+            RISCV_LINUX_GETGID,
+            RISCV_LINUX_GETEGID,
+        ] {
+            assert_eq!(
+                table.handle(RiscvSyscallRequest::new(0x8000, number, [0; 6]), &mut state,),
+                Some(RiscvSyscallOutcome::Return { value: 100 })
+            );
+        }
     }
 
     #[test]
