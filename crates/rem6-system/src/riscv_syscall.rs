@@ -9,6 +9,15 @@ use crate::{GuestEventId, RiscvSystemRunDriver, ScheduledRiscvTrap, SystemError}
 const RISCV_LINUX_EXIT: u64 = 93;
 const RISCV_LINUX_EXIT_GROUP: u64 = 94;
 const RISCV_LINUX_BRK: u64 = 214;
+const RISCV_LINUX_MMAP: u64 = 222;
+const RISCV_LINUX_EBADF: u64 = 9;
+const RISCV_LINUX_EINVAL: u64 = 22;
+const RISCV_LINUX_MAP_SHARED: u64 = 0x01;
+const RISCV_LINUX_MAP_PRIVATE: u64 = 0x02;
+const RISCV_LINUX_MAP_FIXED: u64 = 0x10;
+const RISCV_LINUX_MAP_ANONYMOUS: u64 = 0x20;
+const RISCV_PAGE_BYTES: u64 = 4096;
+const RISCV64_LINUX_MMAP_BASE: u64 = 0x4000_0000_0000_0000;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RiscvSyscallRequest {
@@ -73,21 +82,169 @@ pub enum RiscvSyscallOutcome {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RiscvMmapRegion {
+    start: u64,
+    length: u64,
+    protection: u64,
+    flags: u64,
+    fd: u64,
+    offset: u64,
+}
+
+impl RiscvMmapRegion {
+    pub const fn new(
+        start: u64,
+        length: u64,
+        protection: u64,
+        flags: u64,
+        fd: u64,
+        offset: u64,
+    ) -> Self {
+        Self {
+            start,
+            length,
+            protection,
+            flags,
+            fd,
+            offset,
+        }
+    }
+
+    pub const fn start(self) -> u64 {
+        self.start
+    }
+
+    pub const fn length(self) -> u64 {
+        self.length
+    }
+
+    pub const fn protection(self) -> u64 {
+        self.protection
+    }
+
+    pub const fn flags(self) -> u64 {
+        self.flags
+    }
+
+    pub const fn fd(self) -> u64 {
+        self.fd
+    }
+
+    pub const fn offset(self) -> u64 {
+        self.offset
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RiscvSyscallState {
     program_break: u64,
+    mmap_next: u64,
+    mmap_regions: Vec<RiscvMmapRegion>,
 }
 
 impl RiscvSyscallState {
-    pub const fn new(program_break: u64) -> Self {
-        Self { program_break }
+    pub fn new(program_break: u64) -> Self {
+        Self::with_mmap_base(program_break, RISCV64_LINUX_MMAP_BASE)
     }
 
-    pub const fn program_break(self) -> u64 {
+    pub fn with_mmap_base(program_break: u64, mmap_next: u64) -> Self {
+        Self {
+            program_break,
+            mmap_next,
+            mmap_regions: Vec::new(),
+        }
+    }
+
+    pub const fn program_break(&self) -> u64 {
         self.program_break
+    }
+
+    pub const fn mmap_next(&self) -> u64 {
+        self.mmap_next
+    }
+
+    pub fn mmap_regions(&self) -> &[RiscvMmapRegion] {
+        &self.mmap_regions
     }
 
     fn set_program_break(&mut self, value: u64) {
         self.program_break = value;
+    }
+
+    fn is_mmap_range_available(&self, start: u64, length: u64) -> bool {
+        start.checked_add(length).is_some_and(|_| {
+            self.mmap_regions
+                .iter()
+                .all(|region| !region.overlaps(start, length))
+        })
+    }
+
+    fn unmap_mmap_range(&mut self, start: u64, length: u64) {
+        let mut regions = Vec::with_capacity(self.mmap_regions.len());
+        for region in self.mmap_regions.drain(..) {
+            region.push_fragments_after_unmap(start, length, &mut regions);
+        }
+        self.mmap_regions = regions;
+    }
+
+    fn extend_mmap(&mut self, length: u64) -> Option<u64> {
+        let mut start = self.mmap_next;
+        while !self.is_mmap_range_available(start, length) {
+            start = start.checked_add(RISCV_PAGE_BYTES)?;
+        }
+        self.mmap_next = start.checked_add(length)?;
+        Some(start)
+    }
+
+    fn push_mmap_region(&mut self, region: RiscvMmapRegion) {
+        self.mmap_regions.push(region);
+        self.mmap_regions.sort_by_key(|region| region.start());
+    }
+}
+
+impl RiscvMmapRegion {
+    fn overlaps(self, start: u64, length: u64) -> bool {
+        let Some(end) = start.checked_add(length) else {
+            return true;
+        };
+        let Some(region_end) = self.start.checked_add(self.length) else {
+            return true;
+        };
+        start < region_end && self.start < end
+    }
+
+    fn push_fragments_after_unmap(self, start: u64, length: u64, output: &mut Vec<Self>) {
+        let Some(end) = start.checked_add(length) else {
+            return;
+        };
+        let Some(region_end) = self.start.checked_add(self.length) else {
+            return;
+        };
+        if start >= region_end || self.start >= end {
+            output.push(self);
+            return;
+        }
+        if self.start < start {
+            output.push(Self::new(
+                self.start,
+                start - self.start,
+                self.protection,
+                self.flags,
+                self.fd,
+                self.offset,
+            ));
+        }
+        if end < region_end {
+            let delta = end - self.start;
+            output.push(Self::new(
+                end,
+                region_end - end,
+                self.protection,
+                self.flags,
+                self.fd,
+                self.offset.saturating_add(delta),
+            ));
+        }
     }
 }
 
@@ -110,6 +267,9 @@ impl RiscvSyscallTable {
             }),
             RISCV_LINUX_BRK => Some(RiscvSyscallOutcome::Return {
                 value: syscall_brk(request.argument(0), state),
+            }),
+            RISCV_LINUX_MMAP => Some(RiscvSyscallOutcome::Return {
+                value: syscall_mmap(request, state),
             }),
             _ => None,
         }
@@ -139,15 +299,16 @@ impl RiscvSyscallEmulation {
     }
 
     pub fn state(&self) -> RiscvSyscallState {
-        *self.state.lock().expect("RISC-V syscall state lock")
+        self.state
+            .lock()
+            .expect("RISC-V syscall state lock")
+            .clone()
     }
 
     pub fn handle_pending_core_trap(&self, core: &RiscvCore) -> Option<RiscvSyscallOutcome> {
+        let request = RiscvSyscallRequest::from_pending_core_trap(core)?;
         let mut state = self.state.lock().expect("RISC-V syscall state lock");
-        self.table.handle(
-            RiscvSyscallRequest::from_pending_core_trap(core)?,
-            &mut state,
-        )
+        self.table.handle(request, &mut state)
     }
 }
 
@@ -223,6 +384,65 @@ fn syscall_brk(requested: u64, state: &mut RiscvSyscallState) -> u64 {
     state.program_break()
 }
 
+fn syscall_mmap(request: RiscvSyscallRequest, state: &mut RiscvSyscallState) -> u64 {
+    let start = request.argument(0);
+    let Some(length) = align_to_page(request.argument(1)) else {
+        return linux_error(RISCV_LINUX_EINVAL);
+    };
+    let protection = request.argument(2);
+    let flags = request.argument(3);
+    let fd = request.argument(4);
+    let offset = request.argument(5);
+
+    let shared = flags & RISCV_LINUX_MAP_SHARED != 0;
+    let private = flags & RISCV_LINUX_MAP_PRIVATE != 0;
+    if !start.is_multiple_of(RISCV_PAGE_BYTES)
+        || !offset.is_multiple_of(RISCV_PAGE_BYTES)
+        || shared == private
+        || request.argument(1) == 0
+    {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+    if start.checked_add(length).is_none() {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+    if flags & RISCV_LINUX_MAP_ANONYMOUS == 0 {
+        return linux_error(RISCV_LINUX_EBADF);
+    }
+
+    let fixed = flags & RISCV_LINUX_MAP_FIXED != 0;
+    let mapped_start = if fixed {
+        state.unmap_mmap_range(start, length);
+        start
+    } else if start != 0 && state.is_mmap_range_available(start, length) {
+        start
+    } else {
+        match state.extend_mmap(length) {
+            Some(start) => start,
+            None => return linux_error(RISCV_LINUX_EINVAL),
+        }
+    };
+    state.push_mmap_region(RiscvMmapRegion::new(
+        mapped_start,
+        length,
+        protection,
+        flags,
+        fd,
+        offset,
+    ));
+    mapped_start
+}
+
+fn align_to_page(value: u64) -> Option<u64> {
+    value
+        .checked_add(RISCV_PAGE_BYTES - 1)
+        .map(|rounded| rounded & !(RISCV_PAGE_BYTES - 1))
+}
+
+fn linux_error(errno: u64) -> u64 {
+    0u64.wrapping_sub(errno)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -268,6 +488,172 @@ mod tests {
             Some(RiscvSyscallOutcome::Return { value: 64 })
         );
         assert_eq!(state.program_break(), 64);
+    }
+
+    #[test]
+    fn linux_table_allocates_anonymous_mmap_regions() {
+        let table = RiscvSyscallTable::new();
+        let mut state = RiscvSyscallState::new(0);
+
+        assert_eq!(
+            table.handle(
+                RiscvSyscallRequest::new(0x8000, RISCV_LINUX_MMAP, [0, 64, 3, 34, u64::MAX, 0]),
+                &mut state,
+            ),
+            Some(RiscvSyscallOutcome::Return {
+                value: RISCV64_LINUX_MMAP_BASE
+            })
+        );
+        assert_eq!(
+            state.mmap_regions(),
+            &[RiscvMmapRegion::new(
+                RISCV64_LINUX_MMAP_BASE,
+                RISCV_PAGE_BYTES,
+                3,
+                34,
+                u64::MAX,
+                0,
+            )]
+        );
+        assert_eq!(
+            table.handle(
+                RiscvSyscallRequest::new(
+                    0x8004,
+                    RISCV_LINUX_MMAP,
+                    [0, RISCV_PAGE_BYTES, 1, 34, u64::MAX, 0]
+                ),
+                &mut state,
+            ),
+            Some(RiscvSyscallOutcome::Return {
+                value: RISCV64_LINUX_MMAP_BASE + RISCV_PAGE_BYTES
+            })
+        );
+        assert_eq!(
+            state.mmap_next(),
+            RISCV64_LINUX_MMAP_BASE + (2 * RISCV_PAGE_BYTES)
+        );
+    }
+
+    #[test]
+    fn linux_table_rejects_invalid_mmap_arguments() {
+        let table = RiscvSyscallTable::new();
+        let mut state = RiscvSyscallState::new(0);
+
+        assert_eq!(
+            table.handle(
+                RiscvSyscallRequest::new(0x8000, RISCV_LINUX_MMAP, [0, 0, 3, 34, u64::MAX, 0]),
+                &mut state,
+            ),
+            Some(RiscvSyscallOutcome::Return {
+                value: linux_error(RISCV_LINUX_EINVAL)
+            })
+        );
+        assert_eq!(
+            table.handle(
+                RiscvSyscallRequest::new(0x8004, RISCV_LINUX_MMAP, [1, 64, 3, 34, u64::MAX, 0]),
+                &mut state,
+            ),
+            Some(RiscvSyscallOutcome::Return {
+                value: linux_error(RISCV_LINUX_EINVAL)
+            })
+        );
+        assert!(state.mmap_regions().is_empty());
+    }
+
+    #[test]
+    fn linux_table_fixed_mmap_preserves_non_overlapping_fragments() {
+        let table = RiscvSyscallTable::new();
+        let mut state = RiscvSyscallState::new(0);
+        let fixed_start = RISCV64_LINUX_MMAP_BASE + RISCV_PAGE_BYTES;
+
+        assert_eq!(
+            table.handle(
+                RiscvSyscallRequest::new(
+                    0x8000,
+                    RISCV_LINUX_MMAP,
+                    [0, 3 * RISCV_PAGE_BYTES, 3, 34, u64::MAX, 0]
+                ),
+                &mut state,
+            ),
+            Some(RiscvSyscallOutcome::Return {
+                value: RISCV64_LINUX_MMAP_BASE
+            })
+        );
+        assert_eq!(
+            table.handle(
+                RiscvSyscallRequest::new(
+                    0x8004,
+                    RISCV_LINUX_MMAP,
+                    [
+                        fixed_start,
+                        RISCV_PAGE_BYTES,
+                        1,
+                        34 | RISCV_LINUX_MAP_FIXED,
+                        u64::MAX,
+                        0,
+                    ]
+                ),
+                &mut state,
+            ),
+            Some(RiscvSyscallOutcome::Return { value: fixed_start })
+        );
+        assert_eq!(
+            state.mmap_regions(),
+            &[
+                RiscvMmapRegion::new(
+                    RISCV64_LINUX_MMAP_BASE,
+                    RISCV_PAGE_BYTES,
+                    3,
+                    34,
+                    u64::MAX,
+                    0,
+                ),
+                RiscvMmapRegion::new(
+                    fixed_start,
+                    RISCV_PAGE_BYTES,
+                    1,
+                    34 | RISCV_LINUX_MAP_FIXED,
+                    u64::MAX,
+                    0,
+                ),
+                RiscvMmapRegion::new(
+                    fixed_start + RISCV_PAGE_BYTES,
+                    RISCV_PAGE_BYTES,
+                    3,
+                    34,
+                    u64::MAX,
+                    2 * RISCV_PAGE_BYTES,
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn linux_table_rejects_overflowing_fixed_mmap() {
+        let table = RiscvSyscallTable::new();
+        let mut state = RiscvSyscallState::new(0);
+
+        assert_eq!(
+            table.handle(
+                RiscvSyscallRequest::new(
+                    0x8000,
+                    RISCV_LINUX_MMAP,
+                    [
+                        u64::MAX - (RISCV_PAGE_BYTES - 1),
+                        RISCV_PAGE_BYTES,
+                        3,
+                        34 | RISCV_LINUX_MAP_FIXED,
+                        u64::MAX,
+                        0,
+                    ]
+                ),
+                &mut state,
+            ),
+            Some(RiscvSyscallOutcome::Return {
+                value: linux_error(RISCV_LINUX_EINVAL)
+            })
+        );
+        assert!(state.mmap_regions().is_empty());
     }
 
     #[test]
