@@ -17,6 +17,7 @@ use crate::{
 
 mod clock;
 mod cwd;
+mod limits;
 mod links;
 mod mmap;
 mod stat;
@@ -25,6 +26,7 @@ mod wait4;
 
 use clock::syscall_clock_gettime;
 use cwd::syscall_getcwd;
+use limits::{syscall_prlimit64, RISCV_LINUX_PRLIMIT64};
 use links::syscall_readlinkat;
 pub use mmap::RiscvMmapRegion;
 #[cfg(test)]
@@ -83,6 +85,7 @@ const RISCV_LINUX_MADVISE: u64 = 233;
 const RISCV_LINUX_MBIND: u64 = 235;
 const RISCV_LINUX_GETRANDOM: u64 = 278;
 const RISCV_LINUX_RSEQ: u64 = 293;
+const RISCV_LINUX_EPERM: u64 = 1;
 const RISCV_LINUX_ENOENT: u64 = 2;
 const RISCV_LINUX_EBADF: u64 = 9;
 const RISCV_LINUX_EFAULT: u64 = 14;
@@ -902,6 +905,8 @@ impl RiscvSyscallTable {
                     ),
                 })
             }
+            RISCV_LINUX_PRLIMIT64 => syscall_prlimit64(request, state, guest_memory_writer)
+                .map(|value| RiscvSyscallOutcome::Return { value }),
             RISCV_LINUX_SET_ROBUST_LIST
             | RISCV_LINUX_GET_ROBUST_LIST
             | RISCV_LINUX_NANOSLEEP
