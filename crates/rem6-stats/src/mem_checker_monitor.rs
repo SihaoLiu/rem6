@@ -200,15 +200,14 @@ impl MemCheckerMonitor {
             },
         )?;
         validate_response_packet(packet, pending)?;
+        if !forwarded {
+            return Ok(None);
+        }
         let response_data = if access == MemProbePacketAccess::Read {
             Some(validate_response_data(packet, response_data)?)
         } else {
             None
         };
-
-        if !forwarded {
-            return Ok(None);
-        }
 
         let completion = match access {
             MemProbePacketAccess::Read => {

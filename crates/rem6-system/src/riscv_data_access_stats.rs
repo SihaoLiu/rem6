@@ -14,6 +14,8 @@ use rem6_stats::{
 
 use crate::{RiscvSystemRun, RiscvSystemRunDriver, SystemError};
 
+const RISCV_DATA_ACCESS_RETRY_RESPONSE_FLAG: u64 = 1;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RiscvDataAccessProbeSnapshot {
     probes: ProbeSnapshot,
@@ -299,6 +301,7 @@ struct RiscvDataAccessProbeRecorder {
     mem_checker_monitor: Option<MemCheckerMonitor>,
     request_point: ProbePointId,
     response_point: Option<ProbePointId>,
+    retry_response_point: Option<ProbePointId>,
     cursors: BTreeMap<CpuId, usize>,
 }
 
@@ -326,6 +329,7 @@ impl RiscvDataAccessProbeRecorder {
             mem_checker_monitor: None,
             request_point: ProbePointId::new(0),
             response_point: None,
+            retry_response_point: None,
             cursors: BTreeMap::new(),
         };
         recorder.reset([]);
@@ -384,6 +388,11 @@ impl RiscvDataAccessProbeRecorder {
             } else {
                 None
             };
+        self.retry_response_point = self.mem_checker_monitor.is_some().then(|| {
+            self.probes
+                .register_point("riscv_data", "RetryResponse")
+                .expect("generated data access retry probe point is valid")
+        });
         self.probes
             .add_listener(self.request_point, "stack_dist")
             .expect("generated data access probe listener is valid");
@@ -414,6 +423,11 @@ impl RiscvDataAccessProbeRecorder {
             if let Some(response_point) = self.response_point {
                 self.probes
                     .add_listener(response_point, "mem_checker_monitor")
+                    .expect("generated data access probe listener is valid");
+            }
+            if let Some(retry_response_point) = self.retry_response_point {
+                self.probes
+                    .add_listener(retry_response_point, "mem_checker_monitor")
                     .expect("generated data access probe listener is valid");
             }
         }
@@ -449,7 +463,8 @@ impl RiscvDataAccessProbeRecorder {
             RiscvDataAccessEventKind::Issued => self.record_request_event(event),
             RiscvDataAccessEventKind::Completed => self.record_response_event(event, false),
             RiscvDataAccessEventKind::ConditionalFailed => self.record_response_event(event, true),
-            RiscvDataAccessEventKind::Retry | RiscvDataAccessEventKind::Failed => Ok(()),
+            RiscvDataAccessEventKind::Retry => self.record_retry_event(event),
+            RiscvDataAccessEventKind::Failed => Ok(()),
         }
     }
 
@@ -496,6 +511,39 @@ impl RiscvDataAccessProbeRecorder {
                     request_data.as_deref(),
                 )?;
             }
+        }
+        Ok(())
+    }
+
+    fn record_retry_event(&mut self, event: &RiscvDataAccessEvent) -> Result<(), StatsError> {
+        let Some(retry_response_point) = self.retry_response_point else {
+            return Ok(());
+        };
+        let Some(access) = packet_access(event.operation()) else {
+            return Ok(());
+        };
+        let packet = MemProbePacket::response(event.physical_address().get())
+            .with_access(access)
+            .with_command(memory_operation_trace_command(event.operation()))
+            .with_flags(RISCV_DATA_ACCESS_RETRY_RESPONSE_FLAG)
+            .with_size(event.size().bytes())
+            .with_packet_id(packet_id(event));
+        if !self.mem_checker_has_pending(packet.packet_id()) {
+            return Ok(());
+        }
+        self.probes.emit(
+            event.tick(),
+            retry_response_point,
+            ProbePayload::MemoryPacket(packet),
+        )?;
+        if let Some(mem_checker_monitor) = &mut self.mem_checker_monitor {
+            mem_checker_monitor.observe_timing_response(
+                event.tick(),
+                &packet,
+                false,
+                event.data(),
+                false,
+            )?;
         }
         Ok(())
     }

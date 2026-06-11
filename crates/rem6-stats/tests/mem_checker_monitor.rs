@@ -133,6 +133,23 @@ fn monitor_completes_read_after_successful_cpu_side_response() {
 }
 
 #[test]
+fn monitor_keeps_read_pending_after_retry_response_without_data() {
+    let mut monitor = MemCheckerMonitor::new();
+
+    let pending = monitor
+        .observe_timing_request(30, &read_request(2, 0x2000, 2), true, true, None)
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(
+        monitor.observe_timing_response(40, &read_response(2, 0x2000, 2), false, None, false),
+        Ok(None)
+    );
+    assert_eq!(monitor.snapshot().pending(), &[pending]);
+    assert_eq!(monitor.snapshot().checker().next_serial(), 2);
+}
+
+#[test]
 fn monitor_aborts_failed_llsc_writes_and_resets_functional_ranges() {
     let mut monitor = MemCheckerMonitor::new();
 
