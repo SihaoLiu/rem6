@@ -25,6 +25,7 @@ mod seek;
 mod stat;
 mod utsname;
 mod wait4;
+mod writev;
 
 use clock::syscall_clock_gettime;
 use cwd::syscall_getcwd;
@@ -39,6 +40,7 @@ use seek::{syscall_lseek, RISCV_LINUX_LSEEK};
 use stat::{guest_path_inode, write_riscv_linux_stat, RiscvGuestStat};
 use utsname::write_riscv_linux_utsname;
 use wait4::{syscall_process_group_id, syscall_wait4, RISCV_LINUX_WAIT4};
+use writev::{syscall_writev, RISCV_LINUX_WRITEV};
 
 const RISCV_LINUX_GETCWD: u64 = 17;
 const RISCV_LINUX_DUP: u64 = 23;
@@ -864,6 +866,11 @@ impl RiscvSyscallTable {
             RISCV_LINUX_WRITE => {
                 guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
                     value: syscall_write(request, state, tick, guest_memory),
+                })
+            }
+            RISCV_LINUX_WRITEV => {
+                guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
+                    value: syscall_writev(request, state, tick, guest_memory),
                 })
             }
             RISCV_LINUX_READLINKAT => guest_memory_reader.and_then(|reader| {
