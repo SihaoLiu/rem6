@@ -15,9 +15,13 @@ use crate::{
     ScheduledRiscvTrap, SystemError,
 };
 
+mod links;
 mod stat;
+mod utsname;
 
+use links::syscall_readlinkat;
 use stat::{guest_path_inode, write_riscv_linux_stat, RiscvGuestStat};
+use utsname::write_riscv_linux_utsname;
 
 const RISCV_LINUX_DUP: u64 = 23;
 const RISCV_LINUX_DUP3: u64 = 24;
@@ -41,6 +45,7 @@ const RISCV_LINUX_RT_SIGPENDING: u64 = 136;
 const RISCV_LINUX_RT_SIGTIMEDWAIT: u64 = 137;
 const RISCV_LINUX_RT_SIGQUEUEINFO: u64 = 138;
 const RISCV_LINUX_RT_SIGRETURN: u64 = 139;
+const RISCV_LINUX_UNAME: u64 = 160;
 const RISCV_LINUX_EXIT: u64 = 93;
 const RISCV_LINUX_EXIT_GROUP: u64 = 94;
 const RISCV_LINUX_FUTEX: u64 = 98;
@@ -947,6 +952,11 @@ impl RiscvSyscallTable {
             RISCV_LINUX_SET_TID_ADDRESS => Some(RiscvSyscallOutcome::Return {
                 value: syscall_set_tid_address(request.argument(0), state),
             }),
+            RISCV_LINUX_UNAME => {
+                guest_memory_writer.map(|guest_memory| RiscvSyscallOutcome::Return {
+                    value: write_riscv_linux_utsname(request.argument(0), guest_memory),
+                })
+            }
             RISCV_LINUX_FUTEX => syscall_futex(request, state, tick),
             RISCV_LINUX_SET_ROBUST_LIST
             | RISCV_LINUX_GET_ROBUST_LIST
@@ -1447,48 +1457,6 @@ fn syscall_newfstatat(
     };
 
     write_riscv_linux_stat(request.argument(2), stat, guest_memory_writer)
-}
-
-fn syscall_readlinkat(
-    request: RiscvSyscallRequest,
-    state: &RiscvSyscallState,
-    guest_memory_reader: &RiscvGuestMemoryReader,
-    guest_memory_writer: &RiscvGuestMemoryWriter,
-) -> u64 {
-    if request.argument(0) != RISCV_LINUX_AT_FDCWD {
-        return linux_error(RISCV_LINUX_EBADF);
-    }
-    if request.argument(3) == 0 {
-        return linux_error(RISCV_LINUX_EINVAL);
-    }
-
-    let path = match read_guest_c_string(
-        guest_memory_reader,
-        request.argument(1),
-        RISCV_LINUX_PATH_MAX,
-    ) {
-        Ok(path) => path,
-        Err(RiscvGuestCStringError::Fault) => return linux_error(RISCV_LINUX_EFAULT),
-        Err(RiscvGuestCStringError::TooLong) => return linux_error(RISCV_LINUX_ENAMETOOLONG),
-    };
-    if path.is_empty() {
-        return linux_error(RISCV_LINUX_ENOENT);
-    }
-
-    let Ok(buffer_bytes) = usize::try_from(request.argument(3)) else {
-        return linux_error(RISCV_LINUX_EINVAL);
-    };
-    let Some(target) = state.guest_link_target(&path) else {
-        return linux_error(RISCV_LINUX_ENOENT);
-    };
-    let bytes = &target[..target.len().min(buffer_bytes)];
-    if bytes.is_empty() {
-        return 0;
-    }
-    if !guest_memory_writer.write(request.argument(2), bytes) {
-        return linux_error(RISCV_LINUX_EFAULT);
-    }
-    bytes.len() as u64
 }
 
 fn syscall_fstat(

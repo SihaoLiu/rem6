@@ -108,6 +108,76 @@ fn linux_table_uses_gem5_default_process_identity() {
 }
 
 #[test]
+fn linux_table_uname_writes_riscv64_utsname() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8000, 160, [0x9000, 0, 0, 0, 0, 0]),
+            &mut state,
+            7,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+
+    let utsname = collect_guest_writes(&writes.lock().unwrap(), 0x9000, 325);
+    assert_eq!(&utsname[0..6], b"Linux\0");
+    assert_eq!(&utsname[65..78], b"sim.gem5.org\0");
+    assert_eq!(&utsname[130..136], b"5.1.0\0");
+    assert_eq!(&utsname[195..227], b"#1 Mon Aug 18 11:32:15 EDT 2003\0");
+    assert_eq!(&utsname[260..268], b"riscv64\0");
+}
+
+#[test]
+fn linux_table_uname_returns_efault_when_guest_write_fails() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(|_address, _bytes| false);
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8000, 160, [0x9000, 0, 0, 0, 0, 0]),
+            &mut state,
+            7,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EFAULT)
+        })
+    );
+}
+
+#[test]
+fn linux_table_leaves_uname_unhandled_without_guest_memory_writer() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8000, 160, [0x9000, 0, 0, 0, 0, 0]),
+            &mut state,
+            7,
+            None,
+            None,
+        ),
+        None
+    );
+}
+
+#[test]
 fn linux_table_returns_parent_process_identity() {
     let table = RiscvSyscallTable::new();
     let mut state = RiscvSyscallState::new(0);
