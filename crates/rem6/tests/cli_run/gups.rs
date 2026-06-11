@@ -68,6 +68,56 @@ fn rem6_gups_executes_controller_transport_and_updates_memory() {
 }
 
 #[test]
+fn rem6_gups_loads_toml_config_and_cli_overrides_updates() {
+    let config = temp_config(
+        "gups-toml-config",
+        "[gups]\nmemory_start = 4096\nmemory_size = 8\nupdates = 100\nmax_tick = 24\nstats_format = \"json\"\nrng_state = 0\nmemory_dumps = [\"0x1000:8\"]\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "gups",
+            "--config",
+            config.to_str().unwrap(),
+            "--updates",
+            "2",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"schema\":\"rem6.cli.gups.v1\""));
+    assert!(stdout.contains("\"memory_start\":\"0x1000\""));
+    assert!(stdout.contains("\"updates\":2"));
+    assert!(stdout.contains("\"final_tick\":12"));
+    assert!(stdout.contains("\"address\":\"0x1000\""));
+    assert!(stdout.contains("\"hex\":\"0100000000000000\""));
+}
+
+#[test]
+fn rem6_gups_rejects_zero_updates_from_toml_config() {
+    let config = temp_config(
+        "gups-toml-invalid-updates",
+        "[gups]\nmemory_start = 4096\nmemory_size = 8\nupdates = 0\nmax_tick = 24\nstats_format = \"json\"\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["gups", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("invalid GUPS updates 0"));
+}
+
+#[test]
 fn rem6_gups_rejects_memory_size_not_multiple_of_element_size() {
     let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
         .args([
