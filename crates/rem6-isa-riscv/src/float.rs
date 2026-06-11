@@ -184,6 +184,38 @@ pub(crate) fn decode_float_op(raw: u32) -> Result<RiscvInstruction, RiscvError> 
             rd: float_rd(raw),
             rs1: rs1(raw),
         }),
+        (0x68, 0x0) if rs2(raw).index() == 0 => Ok(RiscvInstruction::FloatConvertSFromW {
+            rd: float_rd(raw),
+            rs1: rs1(raw),
+        }),
+        (0x68, 0x0) if rs2(raw).index() == 1 => Ok(RiscvInstruction::FloatConvertSFromWu {
+            rd: float_rd(raw),
+            rs1: rs1(raw),
+        }),
+        (0x68, 0x0) if rs2(raw).index() == 2 => Ok(RiscvInstruction::FloatConvertSFromL {
+            rd: float_rd(raw),
+            rs1: rs1(raw),
+        }),
+        (0x68, 0x0) if rs2(raw).index() == 3 => Ok(RiscvInstruction::FloatConvertSFromLu {
+            rd: float_rd(raw),
+            rs1: rs1(raw),
+        }),
+        (0x60, 0x0) if rs2(raw).index() == 0 => Ok(RiscvInstruction::FloatConvertWFromS {
+            rd: rd(raw),
+            rs1: float_rs1(raw),
+        }),
+        (0x60, 0x0) if rs2(raw).index() == 1 => Ok(RiscvInstruction::FloatConvertWuFromS {
+            rd: rd(raw),
+            rs1: float_rs1(raw),
+        }),
+        (0x60, 0x0) if rs2(raw).index() == 2 => Ok(RiscvInstruction::FloatConvertLFromS {
+            rd: rd(raw),
+            rs1: float_rs1(raw),
+        }),
+        (0x60, 0x0) if rs2(raw).index() == 3 => Ok(RiscvInstruction::FloatConvertLuFromS {
+            rd: rd(raw),
+            rs1: float_rs1(raw),
+        }),
         (0x79, 0x0) if rs2(raw).is_zero() => Ok(RiscvInstruction::FloatMoveDFromX {
             rd: float_rd(raw),
             rs1: rs1(raw),
@@ -264,6 +296,18 @@ pub(crate) fn float_register_write_from_integer(
 ) -> (FloatRegister, u64) {
     match instruction {
         RiscvInstruction::FloatMoveSFromX { rd, .. } => (rd, box_single(value as u32)),
+        RiscvInstruction::FloatConvertSFromW { rd, .. } => {
+            (rd, convert_signed_word_to_single(value))
+        }
+        RiscvInstruction::FloatConvertSFromWu { rd, .. } => {
+            (rd, convert_unsigned_word_to_single(value))
+        }
+        RiscvInstruction::FloatConvertSFromL { rd, .. } => {
+            (rd, convert_signed_doubleword_to_single(value))
+        }
+        RiscvInstruction::FloatConvertSFromLu { rd, .. } => {
+            (rd, convert_unsigned_doubleword_to_single(value))
+        }
         RiscvInstruction::FloatMoveDFromX { rd, .. } => (rd, value),
         RiscvInstruction::FloatConvertDFromW { rd, .. } => {
             (rd, convert_signed_word_to_double(value))
@@ -301,6 +345,16 @@ pub(crate) fn integer_register_write(
         RiscvInstruction::FloatClassD { rd, .. } => (rd, class_double(lhs)),
         RiscvInstruction::FloatMoveXFromS { rd, .. } => {
             (rd, unbox_raw_single(lhs) as i32 as i64 as u64)
+        }
+        RiscvInstruction::FloatConvertWFromS { rd, .. } => (rd, convert_single_to_signed_word(lhs)),
+        RiscvInstruction::FloatConvertWuFromS { rd, .. } => {
+            (rd, convert_single_to_unsigned_word(lhs))
+        }
+        RiscvInstruction::FloatConvertLFromS { rd, .. } => {
+            (rd, convert_single_to_signed_doubleword(lhs))
+        }
+        RiscvInstruction::FloatConvertLuFromS { rd, .. } => {
+            (rd, convert_single_to_unsigned_doubleword(lhs))
         }
         RiscvInstruction::FloatMoveXFromD { rd, .. } => (rd, lhs),
         RiscvInstruction::FloatConvertWFromD { rd, .. } => (rd, convert_double_to_signed_word(lhs)),
@@ -376,6 +430,22 @@ fn sign_inject_double(lhs: u64, rhs: u64) -> u64 {
     (lhs & !DOUBLE_SIGN_BIT) | (rhs & DOUBLE_SIGN_BIT)
 }
 
+fn convert_signed_word_to_single(value: u64) -> u64 {
+    box_canonical_single((value as u32) as i32 as f32)
+}
+
+fn convert_unsigned_word_to_single(value: u64) -> u64 {
+    box_canonical_single(value as u32 as f32)
+}
+
+fn convert_signed_doubleword_to_single(value: u64) -> u64 {
+    box_canonical_single(value as i64 as f32)
+}
+
+fn convert_unsigned_doubleword_to_single(value: u64) -> u64 {
+    box_canonical_single(value as f32)
+}
+
 fn convert_signed_word_to_double(value: u64) -> u64 {
     ((value as u32) as i32 as f64).to_bits()
 }
@@ -390,6 +460,70 @@ fn convert_signed_doubleword_to_double(value: u64) -> u64 {
 
 fn convert_unsigned_doubleword_to_double(value: u64) -> u64 {
     (value as f64).to_bits()
+}
+
+fn convert_single_to_signed_word(value: u64) -> u64 {
+    let value = f32::from_bits(unbox_single(value));
+    if value.is_nan() {
+        return i32::MAX as u64;
+    }
+
+    let rounded = value.round_ties_even();
+    if rounded >= I32_MAX_PLUS_ONE_AS_SINGLE {
+        i32::MAX as u64
+    } else if rounded < -I32_MAX_PLUS_ONE_AS_SINGLE {
+        i32::MIN as i64 as u64
+    } else {
+        rounded as i32 as i64 as u64
+    }
+}
+
+fn convert_single_to_unsigned_word(value: u64) -> u64 {
+    let value = f32::from_bits(unbox_single(value));
+    if value.is_nan() {
+        return sign_extend_unsigned_word(u32::MAX);
+    }
+
+    let rounded = value.round_ties_even();
+    if rounded < 0.0 {
+        0
+    } else if rounded >= U32_MAX_PLUS_ONE_AS_SINGLE {
+        sign_extend_unsigned_word(u32::MAX)
+    } else {
+        sign_extend_unsigned_word(rounded as u32)
+    }
+}
+
+fn convert_single_to_signed_doubleword(value: u64) -> u64 {
+    let value = f32::from_bits(unbox_single(value));
+    if value.is_nan() {
+        return i64::MAX as u64;
+    }
+
+    let rounded = value.round_ties_even();
+    if rounded >= I64_MAX_PLUS_ONE_AS_SINGLE {
+        i64::MAX as u64
+    } else if rounded < -I64_MAX_PLUS_ONE_AS_SINGLE {
+        i64::MIN as u64
+    } else {
+        rounded as i64 as u64
+    }
+}
+
+fn convert_single_to_unsigned_doubleword(value: u64) -> u64 {
+    let value = f32::from_bits(unbox_single(value));
+    if value.is_nan() {
+        return u64::MAX;
+    }
+
+    let rounded = value.round_ties_even();
+    if rounded < 0.0 {
+        0
+    } else if rounded >= U64_MAX_PLUS_ONE_AS_SINGLE {
+        u64::MAX
+    } else {
+        rounded as u64
+    }
 }
 
 fn convert_double_to_signed_word(value: u64) -> u64 {
@@ -698,6 +832,10 @@ const SINGLE_FRACTION_MASK: u32 = 0x007f_ffff;
 const SINGLE_QUIET_NAN_BIT: u32 = 1 << 22;
 const DEFAULT_NAN_SINGLE_BITS: u32 = 0x7fc0_0000;
 const DEFAULT_NAN_SINGLE: u64 = SINGLE_BOX_MASK | DEFAULT_NAN_SINGLE_BITS as u64;
+const I32_MAX_PLUS_ONE_AS_SINGLE: f32 = 2_147_483_648.0;
+const U32_MAX_PLUS_ONE_AS_SINGLE: f32 = 4_294_967_296.0;
+const I64_MAX_PLUS_ONE_AS_SINGLE: f32 = 9_223_372_036_854_775_808.0;
+const U64_MAX_PLUS_ONE_AS_SINGLE: f32 = 18_446_744_073_709_551_616.0;
 const DOUBLE_SIGN_BIT: u64 = 1 << 63;
 const DOUBLE_EXP_MASK: u64 = 0x7ff0_0000_0000_0000;
 const DOUBLE_FRACTION_MASK: u64 = 0x000f_ffff_ffff_ffff;
