@@ -5,11 +5,13 @@ use rem6_isa_riscv::{Register, RiscvPrivilegeMode, RiscvTrapKind};
 use rem6_kernel::{PartitionedScheduler, Tick};
 
 use crate::{
-    GuestEventId, GuestFd, GuestFdEntry, GuestFdTable, GuestFileDescription,
+    GuestEventId, GuestFd, GuestFdEntry, GuestFdError, GuestFdTable, GuestFileDescription,
     GuestFileDescriptionId, GuestFileStatusFlags, GuestFutexAddress, GuestFutexTable,
     GuestThreadGroupId, RiscvSystemRunDriver, ScheduledRiscvTrap, SystemError,
 };
 
+const RISCV_LINUX_DUP: u64 = 23;
+const RISCV_LINUX_DUP3: u64 = 24;
 const RISCV_LINUX_FCNTL: u64 = 25;
 const RISCV_LINUX_CLOSE: u64 = 57;
 const RISCV_LINUX_SET_TID_ADDRESS: u64 = 96;
@@ -49,6 +51,7 @@ const RISCV_LINUX_MBIND: u64 = 235;
 const RISCV_LINUX_RSEQ: u64 = 293;
 const RISCV_LINUX_EBADF: u64 = 9;
 const RISCV_LINUX_EINVAL: u64 = 22;
+const RISCV_LINUX_EMFILE: u64 = 24;
 const RISCV_LINUX_ENOSYS: u64 = 38;
 const RISCV_LINUX_FUTEX_WAKE: u32 = 1;
 const RISCV_LINUX_FUTEX_WAKE_BITSET: u32 = 10;
@@ -60,6 +63,7 @@ const RISCV_LINUX_F_GETFL: u64 = 3;
 const RISCV_LINUX_F_SETFL: u64 = 4;
 const RISCV_LINUX_FD_CLOEXEC: u64 = 1;
 const RISCV_LINUX_O_ACCMODE: u64 = 0x3;
+const RISCV_LINUX_O_CLOEXEC: u64 = 0o2_000_000;
 const RISCV_LINUX_O_RDONLY: u64 = 0;
 const RISCV_LINUX_O_WRONLY: u64 = 1;
 #[cfg(test)]
@@ -447,6 +451,17 @@ impl RiscvSyscallTable {
         tick: Tick,
     ) -> Option<RiscvSyscallOutcome> {
         match request.number() {
+            RISCV_LINUX_DUP => Some(RiscvSyscallOutcome::Return {
+                value: syscall_dup(request.argument(0), state),
+            }),
+            RISCV_LINUX_DUP3 => Some(RiscvSyscallOutcome::Return {
+                value: syscall_dup3(
+                    request.argument(0),
+                    request.argument(1),
+                    request.argument(2),
+                    state,
+                ),
+            }),
             RISCV_LINUX_FCNTL => syscall_fcntl(request, state),
             RISCV_LINUX_CLOSE => Some(RiscvSyscallOutcome::Return {
                 value: syscall_close(request.argument(0), state),
@@ -663,6 +678,51 @@ fn syscall_close(fd_argument: u64, state: &mut RiscvSyscallState) -> u64 {
     };
     match state.guest_fds.close_descriptor(fd) {
         Ok(_record) => 0,
+        Err(_error) => linux_error(RISCV_LINUX_EBADF),
+    }
+}
+
+fn syscall_dup(old_fd_argument: u64, state: &mut RiscvSyscallState) -> u64 {
+    let Some(old_fd) = guest_fd_argument(old_fd_argument) else {
+        return linux_error(RISCV_LINUX_EBADF);
+    };
+    match state.guest_fds.dup(old_fd) {
+        Ok(new_fd) => u64::from(new_fd.get()),
+        Err(GuestFdError::FdSpaceExhausted) => linux_error(RISCV_LINUX_EMFILE),
+        Err(_error) => linux_error(RISCV_LINUX_EBADF),
+    }
+}
+
+fn syscall_dup3(
+    old_fd_argument: u64,
+    new_fd_argument: u64,
+    flags: u64,
+    state: &mut RiscvSyscallState,
+) -> u64 {
+    if flags & !RISCV_LINUX_O_CLOEXEC != 0 {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+    let Some(old_fd) = guest_fd_argument(old_fd_argument) else {
+        return linux_error(RISCV_LINUX_EBADF);
+    };
+    let Some(new_fd) = guest_fd_argument(new_fd_argument) else {
+        return linux_error(RISCV_LINUX_EBADF);
+    };
+    if old_fd == new_fd {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+    match state.guest_fds.dup2_with_replacement(old_fd, new_fd) {
+        Ok(record) => {
+            if flags & RISCV_LINUX_O_CLOEXEC != 0
+                && state
+                    .guest_fds
+                    .set_close_on_exec(record.fd(), true)
+                    .is_err()
+            {
+                return linux_error(RISCV_LINUX_EBADF);
+            }
+            u64::from(record.fd().get())
+        }
         Err(_error) => linux_error(RISCV_LINUX_EBADF),
     }
 }
@@ -1173,6 +1233,92 @@ mod tests {
         assert_eq!(
             table.handle(
                 RiscvSyscallRequest::new(0x8000, RISCV_LINUX_CLOSE, [99, 0, 0, 0, 0, 0]),
+                &mut state,
+            ),
+            Some(RiscvSyscallOutcome::Return {
+                value: linux_error(RISCV_LINUX_EBADF)
+            })
+        );
+    }
+
+    #[test]
+    fn linux_table_duplicates_guest_fd_to_lowest_free_slot() {
+        let table = RiscvSyscallTable::new();
+        let mut state = RiscvSyscallState::new(0);
+        let duplicate = GuestFd::new(3).unwrap();
+
+        assert_eq!(
+            table.handle(
+                RiscvSyscallRequest::new(0x8000, RISCV_LINUX_DUP, [1, 0, 0, 0, 0, 0]),
+                &mut state,
+            ),
+            Some(RiscvSyscallOutcome::Return { value: 3 })
+        );
+        assert_eq!(
+            state.guest_fds().entry(duplicate).unwrap().description(),
+            GuestFileDescriptionId::new(1)
+        );
+        assert!(!state.guest_fds().close_on_exec(duplicate).unwrap());
+    }
+
+    #[test]
+    fn linux_table_dup3_replaces_destination_and_honors_close_on_exec() {
+        let table = RiscvSyscallTable::new();
+        let mut state = RiscvSyscallState::new(0);
+        let stderr = GuestFd::new(2).unwrap();
+
+        assert_eq!(
+            table.handle(
+                RiscvSyscallRequest::new(
+                    0x8000,
+                    RISCV_LINUX_DUP3,
+                    [1, 2, RISCV_LINUX_O_CLOEXEC, 0, 0, 0],
+                ),
+                &mut state,
+            ),
+            Some(RiscvSyscallOutcome::Return { value: 2 })
+        );
+        assert_eq!(
+            state.guest_fds().entry(stderr).unwrap().description(),
+            GuestFileDescriptionId::new(1)
+        );
+        assert!(state.guest_fds().close_on_exec(stderr).unwrap());
+        assert!(state
+            .guest_fds()
+            .description(GuestFileDescriptionId::new(2))
+            .is_none());
+    }
+
+    #[test]
+    fn linux_table_rejects_bad_dup3_requests() {
+        let table = RiscvSyscallTable::new();
+        let mut state = RiscvSyscallState::new(0);
+
+        assert_eq!(
+            table.handle(
+                RiscvSyscallRequest::new(0x8000, RISCV_LINUX_DUP3, [1, 1, 0, 0, 0, 0]),
+                &mut state,
+            ),
+            Some(RiscvSyscallOutcome::Return {
+                value: linux_error(RISCV_LINUX_EINVAL)
+            })
+        );
+        assert_eq!(
+            table.handle(
+                RiscvSyscallRequest::new(
+                    0x8004,
+                    RISCV_LINUX_DUP3,
+                    [1, 3, RISCV_LINUX_O_NONBLOCK, 0, 0, 0],
+                ),
+                &mut state,
+            ),
+            Some(RiscvSyscallOutcome::Return {
+                value: linux_error(RISCV_LINUX_EINVAL)
+            })
+        );
+        assert_eq!(
+            table.handle(
+                RiscvSyscallRequest::new(0x8008, RISCV_LINUX_DUP3, [99, 3, 0, 0, 0, 0]),
                 &mut state,
             ),
             Some(RiscvSyscallOutcome::Return {
