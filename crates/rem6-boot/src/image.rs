@@ -46,6 +46,14 @@ impl BootImage {
         &self.segments
     }
 
+    pub fn loaded_segment_end(&self) -> Address {
+        self.segments
+            .iter()
+            .map(|segment| segment.range().end())
+            .max()
+            .unwrap_or(Address::new(0))
+    }
+
     pub const fn with_elf_metadata(mut self, metadata: BootElfMetadata) -> Self {
         self.elf_metadata = Some(metadata);
         self

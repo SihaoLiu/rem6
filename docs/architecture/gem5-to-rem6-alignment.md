@@ -1403,8 +1403,10 @@ Implementation evidence through 2026-06-11:
   pointer while returning the thread id, and handles `brk` as a returning
   syscall by updating typed program-break state, writing the return value to
   `a0`, clearing the pending trap, restoring user execution, and resuming at the
-  instruction after the ecall. Anonymous RISC-V Linux `mmap` and `munmap` are
-  also handled as returning syscalls for page-aligned private/shared mappings:
+  instruction after the ecall. BootImage-aware RISC-V SE construction now seeds
+  that initial program break from the page-rounded loaded image end. Anonymous
+  RISC-V Linux `mmap` and `munmap` are also handled as returning syscalls for
+  page-aligned private/shared mappings:
   the table validates Linux arguments, tracks typed mmap regions from the
   RISC-V64 mmap base, slices regions for fixed maps or unmaps, writes return
   values to `a0`, clears pending traps, and resumes guest execution. The table
@@ -5317,8 +5319,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   rounding modes, broader FP-to-FP conversion breadth, and the remaining F/D
   operations are still open. The current host-assisted mode has guest fd
   and futex state plus initial RISC-V Linux user `exit`/`exit_group` and `brk`
-  syscall handlers wired to real user-mode ecall execution, including guest
-  resume for returning `brk` calls, typed gem5-default single-process identity
+  syscall handlers wired to real user-mode ecall execution, including a
+  BootImage-seeded initial program break from the page-rounded loaded image end,
+  guest resume for returning `brk` calls, typed gem5-default single-process identity
   returns for `getpid`/`getppid`/`gettid` and UID/GID queries, typed
   `set_tid_address` child-clear-TID state, anonymous `mmap`/`munmap` region
   state, gem5-style ignore-return advisory memory-management calls, ignored
@@ -5359,7 +5362,8 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   variants, device-backed and socket-backed ioctl handling, waitable process
   creation, blocking wait wakeup, and real child resource-usage accounting, and
   Linux handoff still needs an SBI-class firmware/runtime path rather than only
-  DTB/initrd/register handoff.
+  DTB/initrd/register handoff, and SE startup still needs user-stack,
+  argv/envp, and auxv image construction.
 - Complete predictor coupling, external checkpoint payloads, and richer
   cycle-visible state for the in-order pipeline, add fuller out-of-order
   pipeline execution, checker, richer branch predictors, and host-assisted

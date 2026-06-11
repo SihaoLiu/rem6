@@ -976,6 +976,22 @@ fn boot_image_loads_segments_across_lines_and_preserves_existing_bytes() {
 }
 
 #[test]
+fn boot_image_reports_loaded_segment_end() {
+    assert_eq!(
+        BootImage::new(Address::new(0x1004)).loaded_segment_end(),
+        Address::new(0)
+    );
+
+    let image = BootImage::new(Address::new(0x1004))
+        .add_segment(Address::new(0x100e), vec![0xa0, 0xa1, 0xa2, 0xa3])
+        .unwrap()
+        .add_segment(Address::new(0x3020), vec![0xb0, 0xb1, 0xb2])
+        .unwrap();
+
+    assert_eq!(image.loaded_segment_end(), Address::new(0x3023));
+}
+
+#[test]
 fn boot_image_loads_into_partitioned_store_target() {
     let target = MemoryTargetId::new(7);
     let mut store = PartitionedMemoryStore::new();

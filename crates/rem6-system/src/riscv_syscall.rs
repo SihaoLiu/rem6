@@ -4,6 +4,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use rem6_boot::BootImage;
 use rem6_cpu::{CpuId, RiscvCore};
 use rem6_isa_riscv::{Register, RiscvPrivilegeMode, RiscvTrapKind};
 use rem6_kernel::{PartitionedScheduler, Tick};
@@ -1003,6 +1004,30 @@ pub struct RiscvSyscallEmulation {
     guest_memory_writer: Option<RiscvGuestMemoryWriter>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RiscvSyscallImageLayoutError {
+    UnrepresentableProgramBreak {
+        loaded_segment_end: u64,
+        page_bytes: u64,
+    },
+}
+
+impl fmt::Display for RiscvSyscallImageLayoutError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnrepresentableProgramBreak {
+                loaded_segment_end,
+                page_bytes,
+            } => write!(
+                formatter,
+                "loaded image end {loaded_segment_end:#x} cannot be rounded up to {page_bytes:#x}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for RiscvSyscallImageLayoutError {}
+
 impl RiscvSyscallEmulation {
     pub fn new(table: RiscvSyscallTable, state: RiscvSyscallState) -> Self {
         Self {
@@ -1015,6 +1040,32 @@ impl RiscvSyscallEmulation {
 
     pub fn linux_user() -> Self {
         Self::new(RiscvSyscallTable::new(), RiscvSyscallState::new(0))
+    }
+
+    pub fn linux_user_for_boot_image(image: &BootImage) -> Self {
+        Self::try_linux_user_for_boot_image(image)
+            .expect("RISC-V SE boot image program break is representable")
+    }
+
+    pub fn try_linux_user_for_boot_image(
+        image: &BootImage,
+    ) -> Result<Self, RiscvSyscallImageLayoutError> {
+        Ok(Self::new(
+            RiscvSyscallTable::new(),
+            RiscvSyscallState::new(riscv_program_break_for_boot_image(image)?),
+        ))
+    }
+
+    fn with_boot_image_program_break(
+        self,
+        image: &BootImage,
+    ) -> Result<Self, RiscvSyscallImageLayoutError> {
+        let program_break = riscv_program_break_for_boot_image(image)?;
+        {
+            let mut state = self.state.lock().expect("RISC-V syscall state lock");
+            state.set_program_break(program_break);
+        }
+        Ok(self)
     }
 
     pub const fn table(&self) -> RiscvSyscallTable {
@@ -1101,12 +1152,30 @@ impl RiscvSystemRunDriver {
         self
     }
 
+    pub fn with_riscv_syscall_emulation_for_boot_image(self, image: &BootImage) -> Self {
+        self.try_with_riscv_syscall_emulation_for_boot_image(image)
+            .expect("RISC-V SE boot image program break is representable")
+    }
+
+    pub fn try_with_riscv_syscall_emulation_for_boot_image(
+        mut self,
+        image: &BootImage,
+    ) -> Result<Self, RiscvSyscallImageLayoutError> {
+        let emulation = self
+            .take_riscv_syscall_emulation_or_linux_user()
+            .with_boot_image_program_break(image)?;
+        self.riscv_syscall_emulation = Some(emulation);
+        Ok(self)
+    }
+
     pub fn with_riscv_syscall_emulation_and_guest_memory_reader<F>(mut self, read: F) -> Self
     where
         F: Fn(u64, usize) -> Option<Vec<u8>> + Send + Sync + 'static,
     {
-        self.riscv_syscall_emulation =
-            Some(RiscvSyscallEmulation::linux_user().with_guest_memory_reader(read));
+        let emulation = self
+            .take_riscv_syscall_emulation_or_linux_user()
+            .with_guest_memory_reader(read);
+        self.riscv_syscall_emulation = Some(emulation);
         self
     }
 
@@ -1114,8 +1183,10 @@ impl RiscvSystemRunDriver {
     where
         F: Fn(u64, &[u8]) -> bool + Send + Sync + 'static,
     {
-        self.riscv_syscall_emulation =
-            Some(RiscvSyscallEmulation::linux_user().with_guest_memory_writer(write));
+        let emulation = self
+            .take_riscv_syscall_emulation_or_linux_user()
+            .with_guest_memory_writer(write);
+        self.riscv_syscall_emulation = Some(emulation);
         self
     }
 
@@ -1128,16 +1199,22 @@ impl RiscvSystemRunDriver {
         R: Fn(u64, usize) -> Option<Vec<u8>> + Send + Sync + 'static,
         W: Fn(u64, &[u8]) -> bool + Send + Sync + 'static,
     {
-        self.riscv_syscall_emulation = Some(
-            RiscvSyscallEmulation::linux_user()
-                .with_guest_memory_reader(read)
-                .with_guest_memory_writer(write),
-        );
+        let emulation = self
+            .take_riscv_syscall_emulation_or_linux_user()
+            .with_guest_memory_reader(read)
+            .with_guest_memory_writer(write);
+        self.riscv_syscall_emulation = Some(emulation);
         self
     }
 
     pub const fn riscv_syscall_emulation(&self) -> Option<&RiscvSyscallEmulation> {
         self.riscv_syscall_emulation.as_ref()
+    }
+
+    fn take_riscv_syscall_emulation_or_linux_user(&mut self) -> RiscvSyscallEmulation {
+        self.riscv_syscall_emulation
+            .take()
+            .unwrap_or_else(RiscvSyscallEmulation::linux_user)
     }
 
     pub(crate) fn schedule_pending_core_events<F>(
@@ -1194,6 +1271,19 @@ fn syscall_brk(requested: u64, state: &mut RiscvSyscallState) -> u64 {
         state.set_program_break(requested);
     }
     state.program_break()
+}
+
+fn riscv_program_break_for_boot_image(
+    image: &BootImage,
+) -> Result<u64, RiscvSyscallImageLayoutError> {
+    let end = image.loaded_segment_end().get();
+    let mask = RISCV_PAGE_BYTES - 1;
+    end.checked_add(mask).map(|value| value & !mask).ok_or(
+        RiscvSyscallImageLayoutError::UnrepresentableProgramBreak {
+            loaded_segment_end: end,
+            page_bytes: RISCV_PAGE_BYTES,
+        },
+    )
 }
 
 fn syscall_set_tid_address(clear_tid_address: u64, state: &mut RiscvSyscallState) -> u64 {

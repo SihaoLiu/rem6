@@ -63,17 +63,14 @@ pub(crate) fn loaded_program_store_with_data(
     instructions: &[(u64, u32)],
     data_segments: &[(u64, &[u8])],
 ) -> Arc<Mutex<PartitionedMemoryStore>> {
-    let target = MemoryTargetId::new(0);
-    let mut store = PartitionedMemoryStore::new();
-    store.add_partition(target, layout()).unwrap();
-    store
-        .map_region(
-            target,
-            Address::new(0x8000),
-            AccessSize::new(0x2000).unwrap(),
-        )
-        .unwrap();
+    let image = boot_image_with_data(instructions, data_segments);
+    loaded_boot_image_store(&image)
+}
 
+pub(crate) fn boot_image_with_data(
+    instructions: &[(u64, u32)],
+    data_segments: &[(u64, &[u8])],
+) -> BootImage {
     let mut image = BootImage::new(Address::new(instructions[0].0));
     for (address, instruction) in instructions {
         image = image
@@ -85,6 +82,21 @@ pub(crate) fn loaded_program_store_with_data(
             .add_segment(Address::new(*address), data.to_vec())
             .unwrap();
     }
+    image
+}
+
+pub(crate) fn loaded_boot_image_store(image: &BootImage) -> Arc<Mutex<PartitionedMemoryStore>> {
+    let target = MemoryTargetId::new(0);
+    let mut store = PartitionedMemoryStore::new();
+    store.add_partition(target, layout()).unwrap();
+    store
+        .map_region(
+            target,
+            Address::new(0x8000),
+            AccessSize::new(0x2000).unwrap(),
+        )
+        .unwrap();
+
     image
         .load_into_partitioned_store(&mut store, target)
         .unwrap();
