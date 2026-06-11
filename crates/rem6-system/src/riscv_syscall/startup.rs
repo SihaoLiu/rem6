@@ -1,6 +1,7 @@
 use std::error::Error;
 use std::fmt;
 
+use rem6_boot::BootElfMetadata;
 use rem6_memory::{AccessSize, Address, AddressRange, MemoryError};
 
 use super::RISCV_PAGE_BYTES;
@@ -11,6 +12,9 @@ const RISCV_SE_RANDOM_BYTES: usize = 16;
 
 pub const RISCV_LINUX_AT_NULL: u64 = 0;
 pub const RISCV_LINUX_AT_ENTRY: u64 = 9;
+pub const RISCV_LINUX_AT_PHDR: u64 = 3;
+pub const RISCV_LINUX_AT_PHENT: u64 = 4;
+pub const RISCV_LINUX_AT_PHNUM: u64 = 5;
 pub const RISCV_LINUX_AT_PAGESZ: u64 = 6;
 pub const RISCV_LINUX_AT_SECURE: u64 = 23;
 pub const RISCV_LINUX_AT_RANDOM: u64 = 25;
@@ -67,6 +71,23 @@ impl RiscvSeStartupConfig {
 
     pub fn with_auxv_entry(mut self, entry: RiscvSeAuxvEntry) -> Self {
         self.auxv.push(entry);
+        self
+    }
+
+    pub fn with_elf_auxv(mut self, metadata: BootElfMetadata) -> Self {
+        let table = metadata.program_header_table();
+        if let Some(address) = table.memory_address() {
+            self.auxv
+                .push(RiscvSeAuxvEntry::new(RISCV_LINUX_AT_PHDR, address.get()));
+            self.auxv.push(RiscvSeAuxvEntry::new(
+                RISCV_LINUX_AT_PHENT,
+                u64::from(table.entry_size()),
+            ));
+            self.auxv.push(RiscvSeAuxvEntry::new(
+                RISCV_LINUX_AT_PHNUM,
+                u64::from(table.entry_count()),
+            ));
+        }
         self
     }
 

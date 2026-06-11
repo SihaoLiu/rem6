@@ -1,5 +1,48 @@
 use super::*;
+use rem6_boot::BootImage;
 use rem6_memory::Address;
+
+fn write_elf_u16(bytes: &mut [u8], offset: usize, value: u16) {
+    bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
+}
+
+fn write_elf_u32(bytes: &mut [u8], offset: usize, value: u32) {
+    bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+}
+
+fn write_elf_u64(bytes: &mut [u8], offset: usize, value: u64) {
+    bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+}
+
+fn loaded_header_elf_metadata() -> rem6_boot::BootElfMetadata {
+    let mut bytes = vec![0; 120];
+    let loaded_bytes = bytes.len() as u64;
+    bytes[0..4].copy_from_slice(b"\x7fELF");
+    bytes[4] = 2;
+    bytes[5] = 1;
+    bytes[6] = 1;
+    write_elf_u16(&mut bytes, 16, 2);
+    write_elf_u16(&mut bytes, 18, 243);
+    write_elf_u32(&mut bytes, 20, 1);
+    write_elf_u64(&mut bytes, 24, 0x8000_0080);
+    write_elf_u64(&mut bytes, 32, 64);
+    write_elf_u16(&mut bytes, 52, 64);
+    write_elf_u16(&mut bytes, 54, 56);
+    write_elf_u16(&mut bytes, 56, 1);
+    write_elf_u32(&mut bytes, 64, 1);
+    write_elf_u32(&mut bytes, 68, 5);
+    write_elf_u64(&mut bytes, 72, 0);
+    write_elf_u64(&mut bytes, 80, 0x8000_0000);
+    write_elf_u64(&mut bytes, 88, 0x8000_0000);
+    write_elf_u64(&mut bytes, 96, loaded_bytes);
+    write_elf_u64(&mut bytes, 104, loaded_bytes);
+    write_elf_u64(&mut bytes, 112, 0x1000);
+
+    BootImage::from_elf64_le(&bytes)
+        .unwrap()
+        .elf_metadata()
+        .unwrap()
+}
 
 fn startup_segment(startup: &RiscvSeStartupImage) -> (u64, &[u8]) {
     (startup.stack_range().start().get(), startup.stack_data())
@@ -78,6 +121,31 @@ fn startup_stack_builds_arg_env_auxv_frame() {
     assert_eq!(
         read_stack_bytes(&startup, startup.random_address().get(), 16),
         vec![0xa5; 16]
+    );
+}
+
+#[test]
+fn startup_stack_adds_loaded_elf_program_header_auxv_entries() {
+    let startup = RiscvSeStartupConfig::new(Address::new(0xa000))
+        .with_elf_auxv(loaded_header_elf_metadata())
+        .with_auxv_entry(RiscvSeAuxvEntry::new(RISCV_LINUX_AT_ENTRY, 0x8000_0080))
+        .build()
+        .unwrap();
+
+    let sp = startup.initial_stack_pointer().get();
+    let auxv = auxv_pairs(&startup, sp + 24);
+    assert_eq!(
+        auxv,
+        vec![
+            RiscvSeAuxvEntry::new(RISCV_LINUX_AT_PHDR, 0x8000_0040),
+            RiscvSeAuxvEntry::new(RISCV_LINUX_AT_PHENT, 56),
+            RiscvSeAuxvEntry::new(RISCV_LINUX_AT_PHNUM, 1),
+            RiscvSeAuxvEntry::new(RISCV_LINUX_AT_ENTRY, 0x8000_0080),
+            RiscvSeAuxvEntry::new(RISCV_LINUX_AT_PAGESZ, RISCV_PAGE_BYTES),
+            RiscvSeAuxvEntry::new(RISCV_LINUX_AT_SECURE, 0),
+            RiscvSeAuxvEntry::new(RISCV_LINUX_AT_RANDOM, startup.random_address().get()),
+            RiscvSeAuxvEntry::new(RISCV_LINUX_AT_NULL, 0),
+        ]
     );
 }
 

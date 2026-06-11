@@ -3,8 +3,9 @@ use rem6_memory::{
     MemoryTargetId, PartitionedMemoryStore,
 };
 
-use crate::elf::{parse_elf, parse_elf32_le, parse_elf64_le, BootElfMetadata};
+use crate::elf::{parse_elf, parse_elf32_le, parse_elf64_le};
 use crate::error::BootError;
+use crate::metadata::BootElfMetadata;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BootImage {

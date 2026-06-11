@@ -475,8 +475,12 @@ fn execute_riscv(
         config.dram_memory_profile(),
     )?;
     let riscv_se_startup = if config.riscv_se() {
-        let startup = RiscvSeStartupConfig::new(Address::new(RISCV64_SE_STACK_TOP))
-            .with_arg(config.binary().display().to_string())
+        let mut startup_config = RiscvSeStartupConfig::new(Address::new(RISCV64_SE_STACK_TOP))
+            .with_arg(config.binary().display().to_string());
+        if let Some(metadata) = image.elf_metadata() {
+            startup_config = startup_config.with_elf_auxv(metadata);
+        }
+        let startup = startup_config
             .with_auxv_entry(RiscvSeAuxvEntry::new(
                 RISCV_LINUX_AT_ENTRY,
                 image.entry().get(),

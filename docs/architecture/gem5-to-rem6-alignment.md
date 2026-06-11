@@ -5349,16 +5349,20 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   numbers return `ENOSYS` and resume guest execution so libc feature probes do
   not become host stops. RISC-V SE startup stack construction now produces a
   loadable RV64 user-stack image with a 16-byte-aligned initial `sp`,
-  `argc`, `argv`, `envp`, explicit auxv entries, default `AT_PAGESZ`,
-  `AT_SECURE`, `AT_RANDOM`, and `AT_NULL` entries, and deterministic random
-  bytes. A system regression loads that stack image into simulated memory and
-  has a user-mode `RiscvCore` consume `argc` and `argv[0]` through real data
-  loads before exiting through the same syscall path. The CLI can now opt into
-  the same handoff with `rem6 run --riscv-se`: it installs the startup stack
-  into simulated memory, sets the initial stack pointer, enters user mode, and
-  attaches the CLI memory backend to syscall read/write hooks, so handled
-  guest-memory syscalls such as `write` resume through syscall emulation rather
-  than falling back to raw environment-call traps.
+  `argc`, `argv`, `envp`, ELF-derived `AT_PHDR`/`AT_PHENT`/`AT_PHNUM`
+  entries when the program-header table is loaded by a `PT_LOAD` segment; in
+  the current non-translated CLI SE path `AT_PHDR` uses the address where rem6
+  actually loaded those bytes. It also emits explicit auxv entries, default
+  `AT_PAGESZ`, `AT_SECURE`, `AT_RANDOM`, and `AT_NULL` entries, and
+  deterministic random bytes. A system regression loads
+  that stack image into simulated memory and has a user-mode `RiscvCore`
+  consume `argc`, `argv[0]`, and loaded program-header auxv values through
+  real data loads before exiting through the same syscall path. The CLI can now
+  opt into the same handoff with `rem6 run --riscv-se`: it installs the startup
+  stack into simulated memory, sets the initial stack pointer, enters user
+  mode, and attaches the CLI memory backend to syscall read/write hooks, so
+  handled guest-memory syscalls such as `write` resume through syscall
+  emulation rather than falling back to raw environment-call traps.
   It also handles `wait4` number
   260 for typed pending child statuses by writing the POSIX wait-status integer
   and a zeroed RV64 `rusage` payload into simulated guest memory when requested
@@ -5374,9 +5378,8 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   creation, blocking wait wakeup, and real child resource-usage accounting, and
   Linux handoff still needs an SBI-class firmware/runtime path rather than only
   DTB/initrd/register handoff, and SE startup still needs default loader policy,
-  CLI argv/env configuration, stack-range policy, ELF program-header metadata
-  extraction for automatic `AT_PHDR`/`AT_PHENT`/`AT_PHNUM`, and a real
-  static-libc binary smoke test.
+  CLI argv/env configuration, stack-range policy, and a real static-libc binary
+  smoke test.
 - Complete predictor coupling, external checkpoint payloads, and richer
   cycle-visible state for the in-order pipeline, add fuller out-of-order
   pipeline execution, checker, richer branch predictors, and host-assisted

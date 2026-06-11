@@ -2,6 +2,7 @@ use rem6_memory::{AccessSize, Address, AddressRange};
 
 use crate::error::{invalid_elf, BootElfError, BootError};
 use crate::image::BootImage;
+use crate::metadata::{BootElfMetadata, BootElfProgramHeaderTable};
 
 const ELF64_HEADER_SIZE: usize = 64;
 const ELF64_PROGRAM_HEADER_SIZE: u16 = 56;
@@ -169,67 +170,6 @@ impl BootElfArchitecture {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct BootElfMetadata {
-    class: BootElfClass,
-    endian: BootElfEndian,
-    machine: u16,
-    os_abi: u8,
-    flags: u32,
-    architecture: BootElfArchitecture,
-    operating_system: BootElfOperatingSystem,
-}
-
-impl BootElfMetadata {
-    const fn from_header(
-        class: BootElfClass,
-        endian: BootElfEndian,
-        machine: u16,
-        os_abi: u8,
-        flags: u32,
-        operating_system: BootElfOperatingSystem,
-        entry: Address,
-    ) -> Self {
-        Self {
-            class,
-            endian,
-            machine,
-            os_abi,
-            flags,
-            architecture: BootElfArchitecture::from_machine(class, machine, entry),
-            operating_system,
-        }
-    }
-
-    pub const fn class(&self) -> BootElfClass {
-        self.class
-    }
-
-    pub const fn endian(&self) -> BootElfEndian {
-        self.endian
-    }
-
-    pub const fn machine(&self) -> u16 {
-        self.machine
-    }
-
-    pub const fn os_abi(&self) -> u8 {
-        self.os_abi
-    }
-
-    pub const fn flags(&self) -> u32 {
-        self.flags
-    }
-
-    pub const fn architecture(&self) -> BootElfArchitecture {
-        self.architecture
-    }
-
-    pub const fn operating_system(&self) -> BootElfOperatingSystem {
-        self.operating_system
-    }
-}
-
 pub(crate) fn parse_elf(bytes: &[u8]) -> Result<BootImage, BootError> {
     let ident = detect_elf_ident(bytes)?;
     match ident.class {
@@ -286,15 +226,8 @@ fn parse_elf64(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
         })
     })?;
 
-    let mut image = BootImage::new(entry).with_elf_metadata(BootElfMetadata::from_header(
-        BootElfClass::Class64,
-        endian,
-        machine,
-        os_abi,
-        flags,
-        operating_system,
-        entry,
-    ));
+    let mut image = BootImage::new(entry);
+    let mut program_header_memory_address = None;
     let mut loaded_segments = 0usize;
     for index in 0..program_header_count {
         let header_offset = program_header_offset + index as u64 * program_header_size as u64;
@@ -342,6 +275,15 @@ fn parse_elf64(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
                 memory_size,
             })
         })?;
+        if program_header_memory_address.is_none() {
+            program_header_memory_address = loaded_file_address(
+                program_header_offset,
+                table_size,
+                file_offset,
+                file_size,
+                physical,
+            );
+        }
         let data = zeroed_segment_data(index, memory_size, file_range)?;
         image = image.add_segment(Address::new(physical), data)?;
         loaded_segments += 1;
@@ -351,7 +293,25 @@ fn parse_elf64(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
         return Err(invalid_elf(BootElfError::NoLoadableSegments));
     }
 
-    Ok(image)
+    Ok(image.with_elf_metadata(
+        BootElfMetadata::from_header(
+            BootElfClass::Class64,
+            endian,
+            machine,
+            os_abi,
+            flags,
+            BootElfArchitecture::from_machine(BootElfClass::Class64, machine, entry),
+            operating_system,
+        )
+        .with_program_header_table(
+            BootElfProgramHeaderTable::new(
+                program_header_offset,
+                program_header_size,
+                program_header_count,
+            )
+            .with_memory_address(program_header_memory_address),
+        ),
+    ))
 }
 
 pub(crate) fn parse_elf32_le(bytes: &[u8]) -> Result<BootImage, BootError> {
@@ -401,15 +361,8 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
         })
     })?;
 
-    let mut image = BootImage::new(entry).with_elf_metadata(BootElfMetadata::from_header(
-        BootElfClass::Class32,
-        endian,
-        machine,
-        os_abi,
-        flags,
-        operating_system,
-        entry,
-    ));
+    let mut image = BootImage::new(entry);
+    let mut program_header_memory_address = None;
     let mut loaded_segments = 0usize;
     for index in 0..program_header_count {
         let header_offset = program_header_offset + index as u64 * program_header_size as u64;
@@ -471,6 +424,15 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
                 memory_size,
             })
         })?;
+        if program_header_memory_address.is_none() {
+            program_header_memory_address = loaded_file_address(
+                program_header_offset,
+                table_size,
+                file_offset,
+                file_size,
+                physical,
+            );
+        }
         let data = zeroed_segment_data(index, memory_size, file_range)?;
         image = image.add_segment(Address::new(physical), data)?;
         loaded_segments += 1;
@@ -480,7 +442,44 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
         return Err(invalid_elf(BootElfError::NoLoadableSegments));
     }
 
-    Ok(image)
+    Ok(image.with_elf_metadata(
+        BootElfMetadata::from_header(
+            BootElfClass::Class32,
+            endian,
+            machine,
+            os_abi,
+            flags,
+            BootElfArchitecture::from_machine(BootElfClass::Class32, machine, entry),
+            operating_system,
+        )
+        .with_program_header_table(
+            BootElfProgramHeaderTable::new(
+                program_header_offset,
+                program_header_size,
+                program_header_count,
+            )
+            .with_memory_address(program_header_memory_address),
+        ),
+    ))
+}
+
+fn loaded_file_address(
+    table_offset: u64,
+    table_size: u64,
+    segment_offset: u64,
+    segment_file_size: u64,
+    segment_loaded_start: u64,
+) -> Option<Address> {
+    if table_size == 0 || table_offset < segment_offset {
+        return None;
+    }
+    let table_end = table_offset.checked_add(table_size)?;
+    let segment_end = segment_offset.checked_add(segment_file_size)?;
+    if table_end > segment_end {
+        return None;
+    }
+    let delta = table_offset - segment_offset;
+    Some(Address::new(segment_loaded_start.checked_add(delta)?))
 }
 
 fn zeroed_segment_data(

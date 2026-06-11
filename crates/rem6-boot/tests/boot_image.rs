@@ -559,6 +559,33 @@ fn boot_image_records_elf_machine_metadata() {
 }
 
 #[test]
+fn boot_image_records_loaded_program_header_table_metadata() {
+    let elf = elf64_image(
+        0x8000_0080,
+        &[ElfProgramHeaderSpec {
+            kind: 1,
+            offset: 0,
+            physical: 0x8000_0000,
+            file_size: 120,
+            memory_size: 120,
+        }],
+        &[],
+    );
+    let mut elf = elf;
+    write_u64(&mut elf, 80, 0x9000_0000);
+
+    let metadata = BootImage::from_elf64_le(&elf)
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    let table = metadata.program_header_table();
+    assert_eq!(table.file_offset(), 64);
+    assert_eq!(table.entry_size(), 56);
+    assert_eq!(table.entry_count(), 1);
+    assert_eq!(table.memory_address(), Some(Address::new(0x8000_0040)));
+}
+
+#[test]
 fn boot_image_maps_arm_thumb_from_elf32_entry_bit() {
     let mut arm = elf32_image(
         0x8000,

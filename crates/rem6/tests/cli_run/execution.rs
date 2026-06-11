@@ -1229,6 +1229,51 @@ fn rem6_run_riscv_se_loads_startup_stack_and_exits_through_syscall() {
 }
 
 #[test]
+fn rem6_run_riscv_se_reports_loaded_program_headers_in_auxv() {
+    let program = riscv64_program(&[
+        i_type(40, 2, 0x3, 10, 0x03),  // ld a0, 40(sp)
+        i_type(28, 10, 0x5, 10, 0x13), // srli a0, a0, 28
+        i_type(93, 0, 0x0, 17, 0x13),  // addi a7, x0, 93
+        0x0000_0073,                   // ecall
+    ]);
+    let mut elf = riscv64_elf(0x8000_0080, 0x8000_0000, &program);
+    let loaded_bytes = elf.len() as u64;
+    write_u64_le(&mut elf, 72, 0);
+    write_u64_le(&mut elf, 80, 0x9000_0000);
+    write_u64_le(&mut elf, 96, loaded_bytes);
+    write_u64_le(&mut elf, 104, loaded_bytes);
+    let path = temp_binary("riscv-se-auxv-phdr", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "120",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_reason\":\"host_stop\""));
+    assert!(stdout.contains("\"stop_code\":8"));
+    assert!(stdout.contains("\"x10\":\"0x8\""));
+}
+
+#[test]
 fn rem6_run_riscv_se_handles_memory_backed_write_syscall() {
     let program = riscv64_program(&[
         i_type(8, 2, 0x3, 6, 0x03),   // ld x6, 8(sp)
@@ -1274,6 +1319,10 @@ fn rem6_run_riscv_se_handles_memory_backed_write_syscall() {
     assert_stat(&stdout, "sim.riscv.se", "Count", 1, "constant");
     assert_stat(&stdout, "sim.stop.host_stop", "Count", 1, "constant");
     assert_stat(&stdout, "sim.stop_code", "Count", 24, "constant");
+}
+
+fn write_u64_le(bytes: &mut [u8], offset: usize, value: u64) {
+    bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
 }
 
 #[test]
