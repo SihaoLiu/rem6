@@ -116,6 +116,69 @@ fn rem6_run_rejects_riscv_se_for_multiple_cores() {
 }
 
 #[test]
+fn rem6_run_rejects_cli_riscv_se_inputs_without_riscv_se() {
+    for (name, flag, value) in [
+        ("riscv-se-arg-without-riscv-se", "--riscv-se-arg", "A0"),
+        ("riscv-se-env-without-riscv-se", "--riscv-se-env", "C=1"),
+    ] {
+        let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x73, 0, 0, 0]);
+        let path = temp_binary(name, &elf);
+
+        let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+            .args([
+                "run",
+                "--isa",
+                "riscv",
+                "--binary",
+                path.to_str().unwrap(),
+                "--max-tick",
+                "40",
+                "--stats-format",
+                "json",
+                "--execute",
+                flag,
+                value,
+            ])
+            .output()
+            .unwrap();
+
+        assert!(
+            !output.status.success(),
+            "flag {flag} unexpectedly succeeded"
+        );
+        assert!(output.stdout.is_empty());
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(
+            stderr.contains(&format!("{flag} requires --riscv-se")),
+            "stderr for {flag}: {stderr}"
+        );
+    }
+}
+
+#[test]
+fn rem6_run_rejects_toml_riscv_se_inputs_without_riscv_se() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x73, 0, 0, 0]);
+    let binary = temp_binary("riscv-se-toml-inputs-without-riscv-se", &elf);
+    let config = temp_config(
+        "riscv-se-toml-inputs-without-riscv-se",
+        &format!(
+            "[run]\nisa = \"riscv\"\nbinary = \"{}\"\nmax_tick = 40\nstats_format = \"json\"\nexecute = true\nriscv_se_args = [\"A0\"]\nriscv_se_env = [\"C=1\"]\n",
+            binary.display()
+        ),
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["run", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("riscv_se_args requires --riscv-se"));
+}
+
+#[test]
 fn rem6_run_rejects_zero_instruction_limit() {
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
     let path = temp_binary("zero-instruction-limit", &elf);

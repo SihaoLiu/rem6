@@ -124,6 +124,9 @@ pub enum Rem6CliError {
     InstructionLimitRequiresExecution,
     MemoryDumpRequiresExecution,
     RiscvSeRequiresExecution,
+    RiscvSeInputRequiresRiscvSe {
+        input: &'static str,
+    },
     RiscvSeRequiresRiscv,
     RiscvSeRequiresSingleCore {
         cores: usize,
@@ -292,6 +295,9 @@ impl fmt::Display for Rem6CliError {
             }
             Self::RiscvSeRequiresExecution => {
                 write!(formatter, "--riscv-se requires --execute")
+            }
+            Self::RiscvSeInputRequiresRiscvSe { input } => {
+                write!(formatter, "{input} requires --riscv-se")
             }
             Self::RiscvSeRequiresRiscv => {
                 write!(formatter, "--riscv-se requires --isa riscv")

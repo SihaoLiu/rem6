@@ -1229,6 +1229,100 @@ fn rem6_run_riscv_se_loads_startup_stack_and_exits_through_syscall() {
 }
 
 #[test]
+fn rem6_run_riscv_se_cli_arguments_and_environment_reach_startup_stack() {
+    let program = riscv_se_argv_env_probe_program();
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("riscv-se-cli-argv-env", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "180",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+            "--riscv-se-arg",
+            "A0",
+            "--riscv-se-arg",
+            "B1",
+            "--riscv-se-env",
+            "C=1",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_reason\":\"host_stop\""));
+    assert!(stdout.contains("\"stop_code\":200"));
+    assert!(stdout.contains("\"x5\":\"0x2\""));
+    assert!(stdout.contains("\"x7\":\"0x41\""));
+    assert!(stdout.contains("\"x9\":\"0x42\""));
+    assert!(stdout.contains("\"x12\":\"0x43\""));
+}
+
+#[test]
+fn rem6_run_riscv_se_toml_arguments_and_environment_reach_startup_stack() {
+    let program = riscv_se_argv_env_probe_program();
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("riscv-se-toml-argv-env", &elf);
+    let config = temp_config(
+        "riscv-se-toml-argv-env",
+        &format!(
+            "[run]\nisa = \"riscv\"\nbinary = \"{}\"\nmax_tick = 180\nstats_format = \"json\"\nexecute = true\nriscv_se = true\nriscv_se_args = [\"A0\", \"B1\"]\nriscv_se_env = [\"C=1\"]\n",
+            path.display()
+        ),
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["run", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_reason\":\"host_stop\""));
+    assert!(stdout.contains("\"stop_code\":200"));
+    assert!(stdout.contains("\"x5\":\"0x2\""));
+    assert!(stdout.contains("\"x7\":\"0x41\""));
+    assert!(stdout.contains("\"x9\":\"0x42\""));
+    assert!(stdout.contains("\"x12\":\"0x43\""));
+}
+
+fn riscv_se_argv_env_probe_program() -> Vec<u8> {
+    riscv64_program(&[
+        i_type(0, 2, 0x3, 5, 0x03),   // ld x5, 0(sp)
+        i_type(8, 2, 0x3, 6, 0x03),   // ld x6, 8(sp)
+        i_type(0, 6, 0x0, 7, 0x03),   // lb x7, 0(x6)
+        i_type(16, 2, 0x3, 8, 0x03),  // ld x8, 16(sp)
+        i_type(0, 8, 0x0, 9, 0x03),   // lb x9, 0(x8)
+        i_type(32, 2, 0x3, 11, 0x03), // ld x11, 32(sp)
+        i_type(0, 11, 0x0, 12, 0x03), // lb x12, 0(x11)
+        0x0072_8533,                  // add a0, x5, x7
+        0x0095_0533,                  // add a0, a0, x9
+        0x00c5_0533,                  // add a0, a0, x12
+        i_type(93, 0, 0x0, 17, 0x13), // addi a7, x0, 93
+        0x0000_0073,                  // ecall
+    ])
+}
+
+#[test]
 fn rem6_run_riscv_se_reports_loaded_program_headers_in_auxv() {
     let program = riscv64_program(&[
         i_type(40, 2, 0x3, 10, 0x03),  // ld a0, 40(sp)

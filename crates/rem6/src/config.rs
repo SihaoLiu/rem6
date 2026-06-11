@@ -112,6 +112,8 @@ pub struct Rem6RunConfig {
     riscv_boot_a0: u64,
     riscv_boot_a1: u64,
     riscv_se: bool,
+    riscv_se_args: Vec<String>,
+    riscv_se_env: Vec<String>,
     max_instructions: Option<u64>,
     stats_format: StatsFormat,
     execute: bool,
@@ -180,6 +182,8 @@ struct Rem6RunFileConfig {
     riscv_boot_a0: Option<u64>,
     riscv_boot_a1: Option<u64>,
     riscv_se: Option<bool>,
+    riscv_se_args: Option<Vec<String>>,
+    riscv_se_env: Option<Vec<String>>,
     max_instructions: Option<u64>,
     stats_format: Option<String>,
     execute: Option<bool>,
@@ -321,6 +325,8 @@ impl Rem6RunConfig {
         let mut riscv_boot_a0 = file_config.riscv_boot_a0.unwrap_or(0);
         let mut riscv_boot_a1 = file_config.riscv_boot_a1.unwrap_or(0);
         let mut riscv_se = file_config.riscv_se.unwrap_or(false);
+        let mut riscv_se_args = file_config.riscv_se_args.clone().unwrap_or_default();
+        let mut riscv_se_env = file_config.riscv_se_env.clone().unwrap_or_default();
         let mut max_instructions = file_config.max_instructions;
         if max_instructions == Some(0) {
             return Err(Rem6CliError::InvalidMaxInstructions {
@@ -376,6 +382,8 @@ impl Rem6RunConfig {
             .collect::<Result<Vec<_>, _>>()?;
         let mut memory_dumps_from_cli = false;
         let mut load_blobs_from_cli = false;
+        let mut riscv_se_args_from_cli = false;
+        let mut riscv_se_env_from_cli = false;
         let mut output = file_config
             .output
             .as_deref()
@@ -450,6 +458,22 @@ impl Rem6RunConfig {
                 }
                 "--riscv-se" => {
                     riscv_se = true;
+                }
+                "--riscv-se-arg" => {
+                    let value = required_value(&flag, args.next())?;
+                    if !riscv_se_args_from_cli {
+                        riscv_se_args.clear();
+                        riscv_se_args_from_cli = true;
+                    }
+                    riscv_se_args.push(value);
+                }
+                "--riscv-se-env" => {
+                    let value = required_value(&flag, args.next())?;
+                    if !riscv_se_env_from_cli {
+                        riscv_se_env.clear();
+                        riscv_se_env_from_cli = true;
+                    }
+                    riscv_se_env.push(value);
                 }
                 "--max-instructions" => {
                     let value = required_value(&flag, args.next())?;
@@ -549,6 +573,24 @@ impl Rem6RunConfig {
         if dram_memory_profile_was_set && !dram_memory {
             return Err(Rem6CliError::DramMemoryProfileRequiresDramMemory);
         }
+        if !riscv_se {
+            if !riscv_se_args.is_empty() {
+                let input = if riscv_se_args_from_cli {
+                    "--riscv-se-arg"
+                } else {
+                    "riscv_se_args"
+                };
+                return Err(Rem6CliError::RiscvSeInputRequiresRiscvSe { input });
+            }
+            if !riscv_se_env.is_empty() {
+                let input = if riscv_se_env_from_cli {
+                    "--riscv-se-env"
+                } else {
+                    "riscv_se_env"
+                };
+                return Err(Rem6CliError::RiscvSeInputRequiresRiscvSe { input });
+            }
+        }
 
         Ok(Self {
             isa: isa.ok_or(Rem6CliError::MissingRequiredFlag { flag: "--isa" })?,
@@ -561,6 +603,8 @@ impl Rem6RunConfig {
             riscv_boot_a0,
             riscv_boot_a1,
             riscv_se,
+            riscv_se_args,
+            riscv_se_env,
             max_instructions,
             stats_format,
             execute,
@@ -613,6 +657,14 @@ impl Rem6RunConfig {
 
     pub const fn riscv_se(&self) -> bool {
         self.riscv_se
+    }
+
+    pub fn riscv_se_args(&self) -> &[String] {
+        &self.riscv_se_args
+    }
+
+    pub fn riscv_se_env(&self) -> &[String] {
+        &self.riscv_se_env
     }
 
     pub const fn max_instructions(&self) -> Option<u64> {
@@ -1283,6 +1335,8 @@ fn run_file_config_from_args(args: &[String]) -> Result<Option<PathBuf>, Rem6Cli
             "--start-address",
             "--riscv-boot-a0",
             "--riscv-boot-a1",
+            "--riscv-se-arg",
+            "--riscv-se-env",
             "--max-instructions",
             "--stats-format",
             "--dram-memory-profile",
