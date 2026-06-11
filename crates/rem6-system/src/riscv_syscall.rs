@@ -11,7 +11,7 @@ use rem6_kernel::{PartitionedScheduler, Tick};
 use crate::{
     GuestEventId, GuestFd, GuestFdCloseRecord, GuestFdDup2Record, GuestFdEntry, GuestFdError,
     GuestFdTable, GuestFileDescription, GuestFileDescriptionId, GuestFileStatusFlags,
-    GuestFutexAddress, GuestFutexTable, GuestThreadGroupId, RiscvSystemRunDriver,
+    GuestFutexAddress, GuestFutexTable, GuestThreadGroupId, GuestWaitQueue, RiscvSystemRunDriver,
     ScheduledRiscvTrap, SystemError,
 };
 
@@ -19,11 +19,13 @@ mod cwd;
 mod links;
 mod stat;
 mod utsname;
+mod wait4;
 
 use cwd::syscall_getcwd;
 use links::syscall_readlinkat;
 use stat::{guest_path_inode, write_riscv_linux_stat, RiscvGuestStat};
 use utsname::write_riscv_linux_utsname;
+use wait4::{syscall_process_group_id, syscall_wait4, RISCV_LINUX_WAIT4};
 
 const RISCV_LINUX_GETCWD: u64 = 17;
 const RISCV_LINUX_DUP: u64 = 23;
@@ -385,6 +387,7 @@ pub struct RiscvSyscallState {
     child_clear_tid: Option<u64>,
     guest_fds: GuestFdTable,
     guest_futexes: GuestFutexTable,
+    guest_wait: GuestWaitQueue,
     guest_paths: BTreeSet<Vec<u8>>,
     guest_files: BTreeMap<Vec<u8>, Vec<u8>>,
     guest_links: BTreeMap<Vec<u8>, Vec<u8>>,
@@ -425,12 +428,14 @@ impl RiscvSyscallState {
     ) -> Self {
         let mut stdin_fds = BTreeSet::new();
         stdin_fds.insert(GuestFd::new(0).expect("standard stdin fd is non-negative"));
+        let current_process_group = syscall_process_group_id(identity);
         Self {
             identity,
             current_directory: b"/".to_vec(),
             child_clear_tid: None,
             guest_fds: linux_standard_guest_fds(),
             guest_futexes: GuestFutexTable::new(),
+            guest_wait: GuestWaitQueue::new(current_process_group),
             guest_paths: BTreeSet::new(),
             guest_files: BTreeMap::new(),
             guest_links: BTreeMap::new(),
@@ -982,6 +987,9 @@ impl RiscvSyscallTable {
                 })
             }
             RISCV_LINUX_FUTEX => syscall_futex(request, state, tick),
+            RISCV_LINUX_WAIT4 => Some(RiscvSyscallOutcome::Return {
+                value: syscall_wait4(request, state, guest_memory_writer),
+            }),
             RISCV_LINUX_SET_ROBUST_LIST
             | RISCV_LINUX_GET_ROBUST_LIST
             | RISCV_LINUX_NANOSLEEP

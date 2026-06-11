@@ -5,6 +5,9 @@ use crate::{
 };
 use rem6_kernel::PartitionId;
 
+#[path = "riscv_syscall_tests/wait4_tests.rs"]
+mod wait4_tests;
+
 fn read_le_u32(bytes: &[u8], offset: usize) -> u32 {
     u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
 }
