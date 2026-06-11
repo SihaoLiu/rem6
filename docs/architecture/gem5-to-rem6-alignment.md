@@ -5367,11 +5367,13 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   consume those stack entries through real data loads before exiting through
   the same syscall path. The CLI can now
   opt into the same handoff with `rem6 run --riscv-se`: it installs the startup
-  stack into simulated memory, sets the initial stack pointer, enters user
-  mode, and attaches the CLI memory backend to syscall read/write/map hooks, so
-  handled guest-memory syscalls such as `write` and anonymous `mmap` resume
-  through syscall emulation rather than falling back to raw environment-call
-  traps.
+  stack into simulated memory, maps zeroed stack backing matching the current
+  `RLIMIT_STACK` value, sets the initial stack pointer, enters user mode, and
+  attaches the CLI memory backend to syscall read/write/map hooks. A CLI
+  regression covers guest stack stores below the startup frame before exiting
+  through the syscall path. Handled guest-memory syscalls such as `write` and
+  anonymous `mmap` therefore resume through syscall emulation rather than
+  falling back to raw environment-call traps.
   It also handles `wait4` number
   260 for typed pending child statuses by writing the POSIX wait-status integer
   and a zeroed RV64 `rusage` payload into simulated guest memory when requested
@@ -5387,8 +5389,8 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   variants, device-backed and socket-backed ioctl handling, waitable process
   creation, blocking wait wakeup, and real child resource-usage accounting, and
   Linux handoff still needs an SBI-class firmware/runtime path rather than only
-  DTB/initrd/register handoff, and SE startup still needs default loader policy,
-  stack-range policy, and a real static-libc binary smoke test.
+  DTB/initrd/register handoff, and SE startup still needs default loader policy
+  and a real static-libc binary smoke test.
 - Complete predictor coupling, external checkpoint payloads, and richer
   cycle-visible state for the in-order pipeline, add fuller out-of-order
   pipeline execution, checker, richer branch predictors, and host-assisted

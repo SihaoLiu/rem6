@@ -37,6 +37,7 @@ pub use guest_memory::{
     RiscvGuestMemoryWriter,
 };
 use ioctl::{syscall_ioctl, RISCV_LINUX_IOCTL};
+pub use limits::RISCV_LINUX_STACK_LIMIT_BYTES;
 use limits::{syscall_prlimit64, RISCV_LINUX_PRLIMIT64};
 use links::syscall_readlinkat;
 pub use mmap::RiscvMmapRegion;

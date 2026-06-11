@@ -8,8 +8,9 @@ pub(super) const RISCV_LINUX_PRLIMIT64: u64 = 261;
 const RISCV_LINUX_RLIMIT_DATA: u64 = 2;
 const RISCV_LINUX_RLIMIT_STACK: u64 = 3;
 const RISCV_LINUX_RLIMIT_BYTES: usize = 16;
-const RISCV_LINUX_STACK_LIMIT_BYTES: u64 = 8 * 1024 * 1024;
 const RISCV_LINUX_DATA_LIMIT_BYTES: u64 = 256 * 1024 * 1024;
+
+pub const RISCV_LINUX_STACK_LIMIT_BYTES: u64 = 8 * 1024 * 1024;
 
 pub(super) fn syscall_prlimit64(
     request: RiscvSyscallRequest,

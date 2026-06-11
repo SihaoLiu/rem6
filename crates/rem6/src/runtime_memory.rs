@@ -7,7 +7,7 @@ use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryError, MemoryRequest,
     MemoryRequestId, PartitionedMemoryStore,
 };
-use rem6_system::{RiscvGuestMemoryMapResult, RiscvSeStartupImage};
+use rem6_system::{RiscvGuestMemoryMapResult, RiscvSeStartupImage, RISCV_LINUX_STACK_LIMIT_BYTES};
 use rem6_transport::{RequestDelivery, TargetOutcome};
 
 use crate::config::CliDramMemoryProfile;
@@ -66,27 +66,36 @@ impl CliMemoryRuntime {
         startup: &RiscvSeStartupImage,
         line_layout: CacheLineLayout,
     ) -> Result<(), Rem6CliError> {
+        let (stack_start, stack_size) = riscv_se_stack_region(startup)?;
         match self {
             Self::Store(store) => {
                 let mut store = store.lock().expect("CLI memory store lock");
                 store
-                    .map_region(
-                        CLI_MEMORY_TARGET,
-                        startup.stack_range().start(),
-                        startup.stack_range().size(),
-                    )
+                    .map_region(CLI_MEMORY_TARGET, stack_start, stack_size)
                     .map_err(execute_error)?;
+                if !insert_zero_guest_lines_in_store(
+                    &mut store,
+                    stack_start.get(),
+                    stack_size.bytes(),
+                    line_layout,
+                ) {
+                    return Err(execute_error("failed to install RISC-V SE stack backing"));
+                }
                 write_startup_stack_to_store(&mut store, startup, line_layout)
             }
             Self::Dram(memory) => {
                 let mut memory = memory.lock().expect("CLI DRAM memory lock");
                 memory
-                    .map_region(
-                        CLI_MEMORY_TARGET,
-                        startup.stack_range().start(),
-                        startup.stack_range().size(),
-                    )
+                    .map_region(CLI_MEMORY_TARGET, stack_start, stack_size)
                     .map_err(execute_error)?;
+                if !insert_zero_guest_lines_in_dram(
+                    &mut memory,
+                    stack_start.get(),
+                    stack_size.bytes(),
+                    line_layout,
+                ) {
+                    return Err(execute_error("failed to install RISC-V SE stack backing"));
+                }
                 write_startup_stack_to_dram(&mut memory, startup, line_layout)
             }
         }
@@ -187,6 +196,22 @@ impl CliMemoryRuntime {
             }
         }
     }
+}
+
+fn riscv_se_stack_region(
+    startup: &RiscvSeStartupImage,
+) -> Result<(Address, AccessSize), Rem6CliError> {
+    let stack_top = startup.stack_range().end().get();
+    let stack_start = stack_top
+        .checked_sub(RISCV_LINUX_STACK_LIMIT_BYTES)
+        .ok_or_else(|| execute_error("RISC-V SE stack top cannot contain stack limit"))?;
+    if startup.stack_range().start().get() < stack_start {
+        return Err(execute_error(format!(
+            "RISC-V SE startup stack image starts below stack backing at 0x{stack_start:x}"
+        )));
+    }
+    let stack_size = AccessSize::new(RISCV_LINUX_STACK_LIMIT_BYTES).map_err(execute_error)?;
+    Ok((Address::new(stack_start), stack_size))
 }
 
 fn store_map_region_result(
