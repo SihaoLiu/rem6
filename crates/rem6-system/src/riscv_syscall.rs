@@ -2,9 +2,12 @@ use std::sync::{Arc, Mutex};
 
 use rem6_cpu::{CpuId, RiscvCore};
 use rem6_isa_riscv::{Register, RiscvPrivilegeMode, RiscvTrapKind};
-use rem6_kernel::PartitionedScheduler;
+use rem6_kernel::{PartitionedScheduler, Tick};
 
-use crate::{GuestEventId, RiscvSystemRunDriver, ScheduledRiscvTrap, SystemError};
+use crate::{
+    GuestEventId, GuestFutexAddress, GuestFutexTable, GuestThreadGroupId, RiscvSystemRunDriver,
+    ScheduledRiscvTrap, SystemError,
+};
 
 const RISCV_LINUX_SET_TID_ADDRESS: u64 = 96;
 const RISCV_LINUX_SET_ROBUST_LIST: u64 = 99;
@@ -20,6 +23,7 @@ const RISCV_LINUX_RT_SIGQUEUEINFO: u64 = 138;
 const RISCV_LINUX_RT_SIGRETURN: u64 = 139;
 const RISCV_LINUX_EXIT: u64 = 93;
 const RISCV_LINUX_EXIT_GROUP: u64 = 94;
+const RISCV_LINUX_FUTEX: u64 = 98;
 const RISCV_LINUX_GETPID: u64 = 172;
 const RISCV_LINUX_GETPPID: u64 = 173;
 const RISCV_LINUX_GETUID: u64 = 174;
@@ -43,6 +47,10 @@ const RISCV_LINUX_RSEQ: u64 = 293;
 const RISCV_LINUX_EBADF: u64 = 9;
 const RISCV_LINUX_EINVAL: u64 = 22;
 const RISCV_LINUX_ENOSYS: u64 = 38;
+const RISCV_LINUX_FUTEX_WAKE: u32 = 1;
+const RISCV_LINUX_FUTEX_WAKE_BITSET: u32 = 10;
+const RISCV_LINUX_FUTEX_PRIVATE_FLAG: u32 = 128;
+const RISCV_LINUX_FUTEX_CLOCK_REALTIME_FLAG: u32 = 256;
 const RISCV_LINUX_MAP_SHARED: u64 = 0x01;
 const RISCV_LINUX_MAP_PRIVATE: u64 = 0x02;
 const RISCV_LINUX_MAP_FIXED: u64 = 0x10;
@@ -171,6 +179,7 @@ impl RiscvMmapRegion {
 pub struct RiscvSyscallState {
     identity: RiscvSyscallIdentity,
     child_clear_tid: Option<u64>,
+    guest_futexes: GuestFutexTable,
     program_break: u64,
     mmap_next: u64,
     mmap_regions: Vec<RiscvMmapRegion>,
@@ -202,6 +211,7 @@ impl RiscvSyscallState {
         Self {
             identity,
             child_clear_tid: None,
+            guest_futexes: GuestFutexTable::new(),
             program_break,
             mmap_next,
             mmap_regions: Vec::new(),
@@ -214,6 +224,15 @@ impl RiscvSyscallState {
 
     pub const fn child_clear_tid(&self) -> Option<u64> {
         self.child_clear_tid
+    }
+
+    pub const fn guest_futexes(&self) -> &GuestFutexTable {
+        &self.guest_futexes
+    }
+
+    #[cfg(test)]
+    fn guest_futexes_mut(&mut self) -> &mut GuestFutexTable {
+        &mut self.guest_futexes
     }
 
     pub const fn program_break(&self) -> u64 {
@@ -399,10 +418,20 @@ impl RiscvSyscallTable {
         request: RiscvSyscallRequest,
         state: &mut RiscvSyscallState,
     ) -> Option<RiscvSyscallOutcome> {
+        self.handle_at_tick(request, state, 0)
+    }
+
+    pub fn handle_at_tick(
+        self,
+        request: RiscvSyscallRequest,
+        state: &mut RiscvSyscallState,
+        tick: Tick,
+    ) -> Option<RiscvSyscallOutcome> {
         match request.number() {
             RISCV_LINUX_SET_TID_ADDRESS => Some(RiscvSyscallOutcome::Return {
                 value: syscall_set_tid_address(request.argument(0), state),
             }),
+            RISCV_LINUX_FUTEX => syscall_futex(request, state, tick),
             RISCV_LINUX_SET_ROBUST_LIST
             | RISCV_LINUX_GET_ROBUST_LIST
             | RISCV_LINUX_NANOSLEEP
@@ -493,10 +522,14 @@ impl RiscvSyscallEmulation {
             .clone()
     }
 
-    pub fn handle_pending_core_trap(&self, core: &RiscvCore) -> Option<RiscvSyscallOutcome> {
+    pub fn handle_pending_core_trap(
+        &self,
+        core: &RiscvCore,
+        tick: Tick,
+    ) -> Option<RiscvSyscallOutcome> {
         let request = RiscvSyscallRequest::from_pending_core_trap(core)?;
         let mut state = self.state.lock().expect("RISC-V syscall state lock");
-        self.table.handle(request, &mut state)
+        self.table.handle_at_tick(request, &mut state, tick)
     }
 }
 
@@ -577,6 +610,49 @@ fn syscall_set_tid_address(clear_tid_address: u64, state: &mut RiscvSyscallState
     state.identity().thread_id()
 }
 
+fn syscall_futex(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+    tick: Tick,
+) -> Option<RiscvSyscallOutcome> {
+    let op = (request.argument(1) as u32)
+        & !(RISCV_LINUX_FUTEX_PRIVATE_FLAG | RISCV_LINUX_FUTEX_CLOCK_REALTIME_FLAG);
+    let address = GuestFutexAddress::new(request.argument(0));
+    let thread_group = GuestThreadGroupId::new(state.identity().thread_group_id());
+    match op {
+        RISCV_LINUX_FUTEX_WAKE => {
+            let count = futex_wake_count(request.argument(2));
+            let outcome = state
+                .guest_futexes
+                .wake(address, thread_group, count, tick)
+                .expect("guest futex wake cannot fail");
+            Some(RiscvSyscallOutcome::Return {
+                value: outcome.woken_count() as u64,
+            })
+        }
+        RISCV_LINUX_FUTEX_WAKE_BITSET => {
+            let bitset = request.argument(5) as u32;
+            let outcome = state
+                .guest_futexes
+                .wake_bitset(address, thread_group, usize::MAX, bitset, tick)
+                .expect("guest futex bitset wake cannot fail");
+            Some(RiscvSyscallOutcome::Return {
+                value: outcome.woken_count() as u64,
+            })
+        }
+        _ => None,
+    }
+}
+
+fn futex_wake_count(value: u64) -> usize {
+    let count = value as i32;
+    if count <= 0 {
+        0
+    } else {
+        count as usize
+    }
+}
+
 fn syscall_mmap(request: RiscvSyscallRequest, state: &mut RiscvSyscallState) -> u64 {
     let start = request.argument(0);
     let Some(length) = align_to_page(request.argument(1)) else {
@@ -654,6 +730,10 @@ fn linux_error(errno: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        GuestFutexAddress, GuestFutexKey, GuestFutexWaitRequest, GuestThreadGroupId, GuestThreadId,
+    };
+    use rem6_kernel::PartitionId;
 
     #[test]
     fn linux_table_maps_exit_numbers_to_stop_codes() {
@@ -863,6 +943,102 @@ mod tests {
             Some(RiscvSyscallOutcome::Return {
                 value: linux_error(RISCV_LINUX_ENOSYS)
             })
+        );
+    }
+
+    #[test]
+    fn linux_table_wakes_guest_futex_waiters() {
+        let table = RiscvSyscallTable::new();
+        let mut state = RiscvSyscallState::new(0);
+        let address = GuestFutexAddress::new(0x180);
+        let thread_group = GuestThreadGroupId::new(100);
+        let key = GuestFutexKey::new(address, thread_group);
+
+        state
+            .guest_futexes_mut()
+            .wait(GuestFutexWaitRequest::new(
+                key,
+                GuestThreadId::new(7),
+                PartitionId::new(1),
+                20,
+                3,
+                3,
+            ))
+            .unwrap();
+        state
+            .guest_futexes_mut()
+            .wait(GuestFutexWaitRequest::new(
+                key,
+                GuestThreadId::new(8),
+                PartitionId::new(2),
+                21,
+                3,
+                3,
+            ))
+            .unwrap();
+
+        assert_eq!(
+            table.handle_at_tick(
+                RiscvSyscallRequest::new(0x8000, 98, [address.get(), 1, 1, 0, 0, 0]),
+                &mut state,
+                40,
+            ),
+            Some(RiscvSyscallOutcome::Return { value: 1 })
+        );
+        assert_eq!(
+            state.guest_futexes().waiter_threads(address, thread_group),
+            vec![GuestThreadId::new(8)]
+        );
+    }
+
+    #[test]
+    fn linux_table_wakes_guest_futex_waiters_by_bitset() {
+        let table = RiscvSyscallTable::new();
+        let mut state = RiscvSyscallState::new(0);
+        let address = GuestFutexAddress::new(0x184);
+        let thread_group = GuestThreadGroupId::new(100);
+        let key = GuestFutexKey::new(address, thread_group);
+
+        state
+            .guest_futexes_mut()
+            .wait(
+                GuestFutexWaitRequest::new(
+                    key,
+                    GuestThreadId::new(9),
+                    PartitionId::new(1),
+                    22,
+                    4,
+                    4,
+                )
+                .with_bitset(0b01),
+            )
+            .unwrap();
+        state
+            .guest_futexes_mut()
+            .wait(
+                GuestFutexWaitRequest::new(
+                    key,
+                    GuestThreadId::new(10),
+                    PartitionId::new(2),
+                    23,
+                    4,
+                    4,
+                )
+                .with_bitset(0b10),
+            )
+            .unwrap();
+
+        assert_eq!(
+            table.handle_at_tick(
+                RiscvSyscallRequest::new(0x8000, 98, [address.get(), 10, 0, 0, 0, 0b01]),
+                &mut state,
+                41,
+            ),
+            Some(RiscvSyscallOutcome::Return { value: 1 })
+        );
+        assert_eq!(
+            state.guest_futexes().waiter_threads(address, thread_group),
+            vec![GuestThreadId::new(10)]
         );
     }
 

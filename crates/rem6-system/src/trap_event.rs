@@ -570,7 +570,7 @@ impl RiscvTrapEventPort {
                 self.validate_scheduled_emit(scheduler, source, source_tick)?;
             }
 
-            match syscalls.handle_pending_core_trap(&core) {
+            match syscalls.handle_pending_core_trap(&core, source_tick) {
                 Some(RiscvSyscallOutcome::Exit { code }) => {
                     pending_syscalls.push(PendingRiscvSystemEventSchedule {
                         event,
