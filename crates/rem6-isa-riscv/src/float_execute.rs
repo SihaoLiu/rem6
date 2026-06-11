@@ -32,7 +32,9 @@ pub(crate) fn execute_float_register_instruction(
             float::write_float_register(hart, writes, rd, value);
         }
         instruction @ (RiscvInstruction::FloatSqrtS { rs1, .. }
-        | RiscvInstruction::FloatSqrtD { rs1, .. }) => {
+        | RiscvInstruction::FloatSqrtD { rs1, .. }
+        | RiscvInstruction::FloatConvertSFromD { rs1, .. }
+        | RiscvInstruction::FloatConvertDFromS { rs1, .. }) => {
             let (rd, value) = float::float_register_write(instruction, hart.read_float(rs1), 0);
             float::write_float_register(hart, writes, rd, value);
         }

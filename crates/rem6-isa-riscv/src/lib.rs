@@ -782,6 +782,8 @@ impl RiscvHartState {
             | RiscvInstruction::FloatMinD { .. }
             | RiscvInstruction::FloatMaxS { .. }
             | RiscvInstruction::FloatMaxD { .. }
+            | RiscvInstruction::FloatConvertSFromD { .. }
+            | RiscvInstruction::FloatConvertDFromS { .. }
             | RiscvInstruction::FloatMoveSFromX { .. }
             | RiscvInstruction::FloatMoveDFromX { .. }
             | RiscvInstruction::FloatConvertSFromW { .. }

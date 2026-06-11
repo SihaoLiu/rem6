@@ -216,6 +216,10 @@ pub(crate) fn decode_float_op(raw: u32) -> Result<RiscvInstruction, RiscvError> 
             rd: rd(raw),
             rs1: float_rs1(raw),
         }),
+        (0x20, 0x0) if rs2(raw).index() == 1 => Ok(RiscvInstruction::FloatConvertSFromD {
+            rd: float_rd(raw),
+            rs1: float_rs1(raw),
+        }),
         (0x79, 0x0) if rs2(raw).is_zero() => Ok(RiscvInstruction::FloatMoveDFromX {
             rd: float_rd(raw),
             rs1: rs1(raw),
@@ -235,6 +239,10 @@ pub(crate) fn decode_float_op(raw: u32) -> Result<RiscvInstruction, RiscvError> 
         (0x69, 0x0) if rs2(raw).index() == 3 => Ok(RiscvInstruction::FloatConvertDFromLu {
             rd: float_rd(raw),
             rs1: rs1(raw),
+        }),
+        (0x21, 0x0) if rs2(raw).is_zero() => Ok(RiscvInstruction::FloatConvertDFromS {
+            rd: float_rd(raw),
+            rs1: float_rs1(raw),
         }),
         (0x61, 0x0) if rs2(raw).index() == 0 => Ok(RiscvInstruction::FloatConvertWFromD {
             rd: rd(raw),
@@ -286,6 +294,8 @@ pub(crate) fn float_register_write(
         RiscvInstruction::FloatMinD { rd, .. } => (rd, min_double(lhs, rhs)),
         RiscvInstruction::FloatMaxS { rd, .. } => (rd, max_single(lhs, rhs)),
         RiscvInstruction::FloatMaxD { rd, .. } => (rd, max_double(lhs, rhs)),
+        RiscvInstruction::FloatConvertSFromD { rd, .. } => (rd, convert_double_to_single(lhs)),
+        RiscvInstruction::FloatConvertDFromS { rd, .. } => (rd, convert_single_to_double(lhs)),
         _ => unreachable!("non-float-register instruction dispatched to float register write"),
     }
 }
@@ -460,6 +470,19 @@ fn convert_signed_doubleword_to_double(value: u64) -> u64 {
 
 fn convert_unsigned_doubleword_to_double(value: u64) -> u64 {
     (value as f64).to_bits()
+}
+
+fn convert_double_to_single(value: u64) -> u64 {
+    box_canonical_single(f64::from_bits(value) as f32)
+}
+
+fn convert_single_to_double(value: u64) -> u64 {
+    let result = (f32::from_bits(unbox_single(value)) as f64).to_bits();
+    if is_nan_double(result) {
+        DEFAULT_NAN_DOUBLE
+    } else {
+        result
+    }
 }
 
 fn convert_single_to_signed_word(value: u64) -> u64 {
