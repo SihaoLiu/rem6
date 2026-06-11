@@ -52,7 +52,9 @@ mod riscv_debug;
 mod riscv_instruction_stats;
 mod riscv_run_activity;
 mod riscv_run_control;
+mod riscv_run_driver;
 mod riscv_run_translation;
+mod riscv_syscall;
 mod rtc_checkpoint;
 mod scheduler_checkpoint;
 mod sp804_checkpoint;
@@ -192,6 +194,9 @@ pub use riscv_debug::{
 };
 pub use riscv_instruction_stats::{RiscvInstructionStats, RiscvRetiredInstructionProbeSnapshot};
 pub use riscv_run_activity::{RiscvSystemRunCpuActivity, RiscvSystemRunPartitionActivity};
+pub use riscv_syscall::{
+    RiscvSyscallEmulation, RiscvSyscallOutcome, RiscvSyscallRequest, RiscvSyscallTable,
+};
 pub use rtc_checkpoint::{
     RtcCheckpointBank, RtcCheckpointError, RtcCheckpointPort, RtcCheckpointRecord,
 };
@@ -687,36 +692,10 @@ pub struct RiscvSystemRunDriver {
     trap_port: RiscvTrapEventPort,
     instruction_stats: Option<RiscvInstructionStats>,
     data_access_stats: Option<RiscvDataAccessStats>,
+    riscv_syscall_emulation: Option<RiscvSyscallEmulation>,
 }
 
 impl RiscvSystemRunDriver {
-    pub const fn new(trap_port: RiscvTrapEventPort) -> Self {
-        Self {
-            trap_port,
-            instruction_stats: None,
-            data_access_stats: None,
-        }
-    }
-
-    pub const fn with_instruction_stats(
-        trap_port: RiscvTrapEventPort,
-        instruction_stats: RiscvInstructionStats,
-    ) -> Self {
-        Self {
-            trap_port,
-            instruction_stats: Some(instruction_stats),
-            data_access_stats: None,
-        }
-    }
-
-    pub const fn trap_port(&self) -> &RiscvTrapEventPort {
-        &self.trap_port
-    }
-
-    pub const fn instruction_stats(&self) -> Option<&RiscvInstructionStats> {
-        self.instruction_stats.as_ref()
-    }
-
     pub(crate) fn reset_stats_for_run(&self, cluster: &RiscvCluster) -> Result<(), SystemError> {
         if let Some(instruction_stats) = &self.instruction_stats {
             instruction_stats.reset_retired_instruction_probes();
@@ -799,7 +778,7 @@ impl RiscvSystemRunDriver {
             )?;
             let trap_cores = trap_event::pending_trap_cores_from_turn(cluster, &turn)?;
             if !trap_cores.is_empty() {
-                scheduled_traps.extend(self.trap_port.schedule_pending_core_traps(
+                scheduled_traps.extend(self.schedule_pending_core_events(
                     scheduler,
                     trap_cores,
                     &mut event_for,
@@ -893,7 +872,7 @@ impl RiscvSystemRunDriver {
                 )?;
             let trap_cores = trap_event::pending_trap_cores_from_turn(cluster, &turn)?;
             if !trap_cores.is_empty() {
-                scheduled_traps.extend(self.trap_port.schedule_pending_core_traps_parallel(
+                scheduled_traps.extend(self.schedule_pending_core_events_parallel(
                     scheduler,
                     trap_cores,
                     &mut event_for,
@@ -989,7 +968,7 @@ impl RiscvSystemRunDriver {
                 )?;
             let trap_cores = trap_event::pending_trap_cores_from_turn(cluster, &turn)?;
             if !trap_cores.is_empty() {
-                scheduled_traps.extend(self.trap_port.schedule_pending_core_traps_parallel(
+                scheduled_traps.extend(self.schedule_pending_core_events_parallel(
                     scheduler,
                     trap_cores,
                     &mut event_for,

@@ -6,7 +6,7 @@ use rem6_boot::BootImage;
 use rem6_isa_riscv::{
     FloatRegister, MemoryAccessKind, Register, RiscvExecutionRecord, RiscvHartState,
     RiscvInstruction, RiscvPmaError, RiscvPmaRange, RiscvPmaTable, RiscvPmpConfig, RiscvPmpError,
-    RiscvPmpSnapshot, RiscvPmpTable, RiscvTrap,
+    RiscvPmpSnapshot, RiscvPmpTable, RiscvPrivilegeMode, RiscvTrap,
 };
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionId, PartitionedScheduler,
@@ -883,6 +883,16 @@ impl RiscvCore {
 
     pub fn has_pending_trap(&self) -> bool {
         self.pending_trap().is_some()
+    }
+
+    pub fn pending_trap_return_privilege_mode(&self) -> Option<RiscvPrivilegeMode> {
+        let state = self.state.lock().expect("riscv core lock");
+        state.pending_trap?;
+        Some(match state.hart.privilege_mode() {
+            RiscvPrivilegeMode::Machine => state.hart.status().mpp(),
+            RiscvPrivilegeMode::Supervisor => state.hart.status().spp(),
+            RiscvPrivilegeMode::User => RiscvPrivilegeMode::User,
+        })
     }
 
     pub fn has_pending_fetch(&self) -> bool {

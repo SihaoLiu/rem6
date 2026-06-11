@@ -89,7 +89,7 @@ impl RiscvSystemRunDriver {
                 )?;
             let trap_cores = pending_trap_cores_from_turn(cluster, &turn)?;
             if !trap_cores.is_empty() {
-                scheduled_traps.extend(self.trap_port().schedule_pending_core_traps_parallel(
+                scheduled_traps.extend(self.schedule_pending_core_events_parallel(
                     scheduler,
                     trap_cores,
                     &mut event_for,
@@ -206,7 +206,7 @@ impl RiscvSystemRunDriver {
                 )?;
             let trap_cores = pending_trap_cores_from_turn(cluster, &turn)?;
             if !trap_cores.is_empty() {
-                scheduled_traps.extend(self.trap_port().schedule_pending_core_traps_parallel(
+                scheduled_traps.extend(self.schedule_pending_core_events_parallel(
                     scheduler,
                     trap_cores,
                     &mut event_for,
