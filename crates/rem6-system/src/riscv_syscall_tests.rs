@@ -288,6 +288,23 @@ fn linux_table_leaves_write_unhandled_without_guest_memory_reader() {
 }
 
 #[test]
+fn linux_table_leaves_read_unhandled_without_guest_memory_writer() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(0x8000, RISCV_LINUX_READ, [0, 0x9000, 5, 0, 0, 0]),
+            &mut state,
+            7,
+            None,
+        ),
+        None
+    );
+    assert_eq!(state.stdin_byte_count(), 0);
+}
+
+#[test]
 fn linux_table_closes_guest_fd_and_rejects_reuse() {
     let table = RiscvSyscallTable::new();
     let mut state = RiscvSyscallState::new(0);

@@ -1,12 +1,14 @@
 use std::sync::{Arc, Mutex};
 
 use rem6_boot::BootImage;
-use rem6_cpu::{CpuCore, CpuFetchConfig, CpuId, CpuResetState, RiscvCluster, RiscvCore};
+use rem6_cpu::{
+    CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, RiscvCluster, RiscvCore,
+};
 use rem6_isa_riscv::{Register, RiscvPrivilegeMode};
 use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerContext};
 use rem6_memory::{
-    AccessSize, Address, AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId, MemoryTargetId,
-    PartitionedMemoryStore,
+    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
+    MemoryTargetId, PartitionedMemoryStore,
 };
 use rem6_stats::StatsRegistry;
 use rem6_system::{
@@ -41,6 +43,10 @@ fn i_type(imm: i32, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
 
 fn addi(rd: u8, rs1: u8, imm: i32) -> u32 {
     i_type(imm, rs1, 0x0, rd, 0x13)
+}
+
+fn lb(rd: u8, rs1: u8, imm: i32) -> u32 {
+    i_type(imm, rs1, 0x0, rd, 0x03)
 }
 
 fn lui(rd: u8, imm: u32) -> u32 {
@@ -110,6 +116,37 @@ fn riscv_core(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
+fn riscv_data_core(
+    cpu: u32,
+    partition: u32,
+    agent: u32,
+    fetch_endpoint: &str,
+    fetch_route: MemoryRouteId,
+    data_endpoint: &str,
+    data_route: MemoryRouteId,
+    entry: u64,
+) -> RiscvCore {
+    RiscvCore::with_data(
+        CpuCore::new(
+            CpuResetState::new(
+                CpuId::new(cpu),
+                PartitionId::new(partition),
+                AgentId::new(agent),
+                Address::new(entry),
+            ),
+            CpuFetchConfig::new(
+                endpoint(fetch_endpoint),
+                fetch_route,
+                layout(),
+                AccessSize::new(4).unwrap(),
+            ),
+        )
+        .unwrap(),
+        CpuDataConfig::new(endpoint(data_endpoint), data_route, layout()),
+    )
+}
+
 fn memory_response(
     store: &Arc<Mutex<PartitionedMemoryStore>>,
     delivery: &RequestDelivery,
@@ -147,6 +184,30 @@ fn guest_memory_reader(
             .response()
             .and_then(|response| response.data())
             .map(Vec::from)
+    }
+}
+
+fn guest_memory_writer(
+    store: Arc<Mutex<PartitionedMemoryStore>>,
+) -> impl Fn(u64, &[u8]) -> bool + Send + Sync + 'static {
+    move |address, bytes| {
+        let Ok(size) = AccessSize::new(bytes.len() as u64) else {
+            return false;
+        };
+        let Ok(byte_mask) = ByteMask::full(size) else {
+            return false;
+        };
+        let Ok(request) = MemoryRequest::write(
+            MemoryRequestId::new(AgentId::new(100), 0),
+            Address::new(address),
+            size,
+            bytes.to_vec(),
+            byte_mask,
+            layout(),
+        ) else {
+            return false;
+        };
+        store.lock().unwrap().respond(&request).is_ok()
     }
 }
 
@@ -1331,6 +1392,215 @@ fn user_ecall_write_reads_guest_memory_before_exit() {
     assert_eq!(write.fd().get(), 1);
     assert_eq!(write.address(), 0x9000);
     assert_eq!(write.bytes(), b"hello");
+    assert_eq!(
+        controller.lock().unwrap().run().action_outcomes(),
+        &[SystemActionOutcome::Stop(stop)]
+    );
+}
+
+#[test]
+fn user_ecall_read_writes_guest_memory_before_exit() {
+    let host = PartitionId::new(3);
+    let source = GuestSourceId::new(69);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let fetch_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let data_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.dmem"),
+                PartitionId::new(0),
+                endpoint("l1d"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let core = riscv_data_core(
+        0,
+        0,
+        7,
+        "cpu0.ifetch",
+        fetch_route,
+        "cpu0.dmem",
+        data_route,
+        0x8000,
+    );
+    core.set_privilege_mode(RiscvPrivilegeMode::User);
+    let cluster = RiscvCluster::new([core.clone()]).unwrap();
+    let store = loaded_program_store_with_data(
+        &[
+            (0x8000, addi(17, 0, 63)),
+            (0x8004, addi(10, 0, 0)),
+            (0x8008, lui(11, 9)),
+            (0x800c, addi(12, 0, 1)),
+            (0x8010, 0x0000_0073),
+            (0x8014, addi(5, 10, 0)),
+            (0x8018, lui(6, 9)),
+            (0x801c, lb(7, 6, 0)),
+            (0x8020, addi(17, 0, 93)),
+            (0x8024, addi(10, 7, 0)),
+            (0x8028, 0x0000_0073),
+        ],
+        &[(0x9000, b"\0")],
+    );
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        StatsRegistry::new(),
+    )));
+    let trap_port = RiscvTrapEventPort::new(
+        SystemHostEventPort::with_controller(host, 2, Arc::clone(&controller)).unwrap(),
+        source,
+    );
+    let driver = RiscvSystemRunDriver::new(trap_port)
+        .with_riscv_syscall_emulation_and_guest_memory_writer(guest_memory_writer(Arc::clone(
+            &store,
+        )));
+    driver
+        .riscv_syscall_emulation()
+        .unwrap()
+        .push_stdin_bytes(b"A");
+
+    let run = driver
+        .drive_until_host_stop(
+            &cluster,
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_cpu| responder(Arc::clone(&store)),
+            |_cpu| responder(Arc::clone(&store)),
+            90,
+            |cpu| GuestEventId::new(440 + u64::from(cpu.get())),
+        )
+        .unwrap();
+
+    let stop = StopRequest::new(
+        run.final_tick().unwrap(),
+        GuestEventId::new(440),
+        source,
+        65,
+    );
+    assert_eq!(run.host_stop(), Some(stop));
+    assert!(run.scheduled_traps().is_empty());
+    assert_eq!(core.read_register(reg(5)), 1);
+    assert_eq!(core.read_register(reg(7)), 65);
+    assert_eq!(
+        guest_memory_reader(Arc::clone(&store))(0x9000, 1),
+        Some(b"A".to_vec())
+    );
+    assert_eq!(
+        driver
+            .riscv_syscall_emulation()
+            .unwrap()
+            .state()
+            .stdin_byte_count(),
+        0
+    );
+    assert_eq!(
+        controller.lock().unwrap().run().action_outcomes(),
+        &[SystemActionOutcome::Stop(stop)]
+    );
+}
+
+#[test]
+fn user_ecall_read_then_write_uses_bidirectional_guest_memory_io() {
+    let host = PartitionId::new(3);
+    let source = GuestSourceId::new(70);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let fetch_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let core = riscv_core(0, 0, 7, "cpu0.ifetch", fetch_route, 0x8000);
+    core.set_privilege_mode(RiscvPrivilegeMode::User);
+    let cluster = RiscvCluster::new([core.clone()]).unwrap();
+    let store = loaded_program_store_with_data(
+        &[
+            (0x8000, addi(17, 0, 63)),
+            (0x8004, addi(10, 0, 0)),
+            (0x8008, lui(11, 9)),
+            (0x800c, addi(12, 0, 1)),
+            (0x8010, 0x0000_0073),
+            (0x8014, addi(5, 10, 0)),
+            (0x8018, addi(17, 0, 64)),
+            (0x801c, addi(10, 0, 1)),
+            (0x8020, lui(11, 9)),
+            (0x8024, addi(12, 0, 1)),
+            (0x8028, 0x0000_0073),
+            (0x802c, addi(6, 10, 0)),
+            (0x8030, addi(17, 0, 93)),
+            (0x8034, addi(10, 6, 0)),
+            (0x8038, 0x0000_0073),
+        ],
+        &[(0x9000, b"\0")],
+    );
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        StatsRegistry::new(),
+    )));
+    let trap_port = RiscvTrapEventPort::new(
+        SystemHostEventPort::with_controller(host, 2, Arc::clone(&controller)).unwrap(),
+        source,
+    );
+    let driver = RiscvSystemRunDriver::new(trap_port)
+        .with_riscv_syscall_emulation_and_guest_memory_io(
+            guest_memory_reader(Arc::clone(&store)),
+            guest_memory_writer(Arc::clone(&store)),
+        );
+    driver
+        .riscv_syscall_emulation()
+        .unwrap()
+        .push_stdin_bytes(b"Q");
+
+    let run = driver
+        .drive_until_host_stop(
+            &cluster,
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_cpu| responder(Arc::clone(&store)),
+            |_cpu| responder(Arc::clone(&store)),
+            110,
+            |cpu| GuestEventId::new(460 + u64::from(cpu.get())),
+        )
+        .unwrap();
+
+    let stop = StopRequest::new(run.final_tick().unwrap(), GuestEventId::new(460), source, 1);
+    assert_eq!(run.host_stop(), Some(stop));
+    assert!(run.scheduled_traps().is_empty());
+    assert_eq!(core.read_register(reg(5)), 1);
+    assert_eq!(core.read_register(reg(6)), 1);
+    let state = driver.riscv_syscall_emulation().unwrap().state();
+    assert_eq!(state.stdin_byte_count(), 0);
+    assert_eq!(state.guest_writes().len(), 1);
+    assert_eq!(state.guest_writes()[0].fd().get(), 1);
+    assert_eq!(state.guest_writes()[0].bytes(), b"Q");
     assert_eq!(
         controller.lock().unwrap().run().action_outcomes(),
         &[SystemActionOutcome::Stop(stop)]

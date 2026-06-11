@@ -1,4 +1,5 @@
 use std::{
+    collections::VecDeque,
     fmt,
     sync::{Arc, Mutex},
 };
@@ -17,6 +18,7 @@ const RISCV_LINUX_DUP: u64 = 23;
 const RISCV_LINUX_DUP3: u64 = 24;
 const RISCV_LINUX_FCNTL: u64 = 25;
 const RISCV_LINUX_CLOSE: u64 = 57;
+const RISCV_LINUX_READ: u64 = 63;
 const RISCV_LINUX_WRITE: u64 = 64;
 const RISCV_LINUX_SET_TID_ADDRESS: u64 = 96;
 const RISCV_LINUX_SET_ROBUST_LIST: u64 = 99;
@@ -173,6 +175,36 @@ impl fmt::Debug for RiscvGuestMemoryReader {
     }
 }
 
+type RiscvGuestMemoryWriteFn = dyn Fn(u64, &[u8]) -> bool + Send + Sync + 'static;
+
+#[derive(Clone)]
+pub struct RiscvGuestMemoryWriter {
+    write: Arc<RiscvGuestMemoryWriteFn>,
+}
+
+impl RiscvGuestMemoryWriter {
+    pub fn new<F>(write: F) -> Self
+    where
+        F: Fn(u64, &[u8]) -> bool + Send + Sync + 'static,
+    {
+        Self {
+            write: Arc::new(write),
+        }
+    }
+
+    fn write(&self, address: u64, bytes: &[u8]) -> bool {
+        (self.write)(address, bytes)
+    }
+}
+
+impl fmt::Debug for RiscvGuestMemoryWriter {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RiscvGuestMemoryWriter")
+            .finish_non_exhaustive()
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RiscvMmapRegion {
     start: u64,
@@ -269,6 +301,7 @@ pub struct RiscvSyscallState {
     guest_fds: GuestFdTable,
     guest_futexes: GuestFutexTable,
     guest_writes: Vec<RiscvGuestWriteRecord>,
+    stdin: VecDeque<u8>,
     program_break: u64,
     mmap_next: u64,
     mmap_regions: Vec<RiscvMmapRegion>,
@@ -303,6 +336,7 @@ impl RiscvSyscallState {
             guest_fds: linux_standard_guest_fds(),
             guest_futexes: GuestFutexTable::new(),
             guest_writes: Vec::new(),
+            stdin: VecDeque::new(),
             program_break,
             mmap_next,
             mmap_regions: Vec::new(),
@@ -327,6 +361,14 @@ impl RiscvSyscallState {
 
     pub fn guest_writes(&self) -> &[RiscvGuestWriteRecord] {
         &self.guest_writes
+    }
+
+    pub fn push_stdin_bytes(&mut self, bytes: &[u8]) {
+        self.stdin.extend(bytes.iter().copied());
+    }
+
+    pub fn stdin_byte_count(&self) -> usize {
+        self.stdin.len()
     }
 
     #[cfg(test)]
@@ -386,6 +428,14 @@ impl RiscvSyscallState {
 
     fn push_guest_write(&mut self, write: RiscvGuestWriteRecord) {
         self.guest_writes.push(write);
+    }
+
+    fn stdin_prefix(&self, count: usize) -> Vec<u8> {
+        self.stdin.iter().take(count).copied().collect()
+    }
+
+    fn consume_stdin_prefix(&mut self, count: usize) {
+        self.stdin.drain(..count);
     }
 }
 
@@ -540,6 +590,17 @@ impl RiscvSyscallTable {
         tick: Tick,
         guest_memory: Option<&RiscvGuestMemoryReader>,
     ) -> Option<RiscvSyscallOutcome> {
+        self.handle_with_guest_memory_io_at_tick(request, state, tick, guest_memory, None)
+    }
+
+    pub fn handle_with_guest_memory_io_at_tick(
+        self,
+        request: RiscvSyscallRequest,
+        state: &mut RiscvSyscallState,
+        tick: Tick,
+        guest_memory_reader: Option<&RiscvGuestMemoryReader>,
+        guest_memory_writer: Option<&RiscvGuestMemoryWriter>,
+    ) -> Option<RiscvSyscallOutcome> {
         match request.number() {
             RISCV_LINUX_DUP => Some(RiscvSyscallOutcome::Return {
                 value: syscall_dup(request.argument(0), state),
@@ -556,9 +617,16 @@ impl RiscvSyscallTable {
             RISCV_LINUX_CLOSE => Some(RiscvSyscallOutcome::Return {
                 value: syscall_close(request.argument(0), state),
             }),
-            RISCV_LINUX_WRITE => guest_memory.map(|guest_memory| RiscvSyscallOutcome::Return {
-                value: syscall_write(request, state, tick, guest_memory),
-            }),
+            RISCV_LINUX_READ => {
+                guest_memory_writer.map(|guest_memory| RiscvSyscallOutcome::Return {
+                    value: syscall_read(request, state, guest_memory),
+                })
+            }
+            RISCV_LINUX_WRITE => {
+                guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
+                    value: syscall_write(request, state, tick, guest_memory),
+                })
+            }
             RISCV_LINUX_SET_TID_ADDRESS => Some(RiscvSyscallOutcome::Return {
                 value: syscall_set_tid_address(request.argument(0), state),
             }),
@@ -628,7 +696,8 @@ impl RiscvSyscallTable {
 pub struct RiscvSyscallEmulation {
     table: RiscvSyscallTable,
     state: Arc<Mutex<RiscvSyscallState>>,
-    guest_memory: Option<RiscvGuestMemoryReader>,
+    guest_memory_reader: Option<RiscvGuestMemoryReader>,
+    guest_memory_writer: Option<RiscvGuestMemoryWriter>,
 }
 
 impl RiscvSyscallEmulation {
@@ -636,7 +705,8 @@ impl RiscvSyscallEmulation {
         Self {
             table,
             state: Arc::new(Mutex::new(state)),
-            guest_memory: None,
+            guest_memory_reader: None,
+            guest_memory_writer: None,
         }
     }
 
@@ -652,7 +722,15 @@ impl RiscvSyscallEmulation {
     where
         F: Fn(u64, usize) -> Option<Vec<u8>> + Send + Sync + 'static,
     {
-        self.guest_memory = Some(RiscvGuestMemoryReader::new(read));
+        self.guest_memory_reader = Some(RiscvGuestMemoryReader::new(read));
+        self
+    }
+
+    pub fn with_guest_memory_writer<F>(mut self, write: F) -> Self
+    where
+        F: Fn(u64, &[u8]) -> bool + Send + Sync + 'static,
+    {
+        self.guest_memory_writer = Some(RiscvGuestMemoryWriter::new(write));
         self
     }
 
@@ -663,6 +741,13 @@ impl RiscvSyscallEmulation {
             .clone()
     }
 
+    pub fn push_stdin_bytes(&self, bytes: &[u8]) {
+        self.state
+            .lock()
+            .expect("RISC-V syscall state lock")
+            .push_stdin_bytes(bytes);
+    }
+
     pub fn handle_pending_core_trap(
         &self,
         core: &RiscvCore,
@@ -670,11 +755,12 @@ impl RiscvSyscallEmulation {
     ) -> Option<RiscvSyscallOutcome> {
         let request = RiscvSyscallRequest::from_pending_core_trap(core)?;
         let mut state = self.state.lock().expect("RISC-V syscall state lock");
-        self.table.handle_with_guest_memory_at_tick(
+        self.table.handle_with_guest_memory_io_at_tick(
             request,
             &mut state,
             tick,
-            self.guest_memory.as_ref(),
+            self.guest_memory_reader.as_ref(),
+            self.guest_memory_writer.as_ref(),
         )
     }
 }
@@ -697,6 +783,32 @@ impl RiscvSystemRunDriver {
     {
         self.riscv_syscall_emulation =
             Some(RiscvSyscallEmulation::linux_user().with_guest_memory_reader(read));
+        self
+    }
+
+    pub fn with_riscv_syscall_emulation_and_guest_memory_writer<F>(mut self, write: F) -> Self
+    where
+        F: Fn(u64, &[u8]) -> bool + Send + Sync + 'static,
+    {
+        self.riscv_syscall_emulation =
+            Some(RiscvSyscallEmulation::linux_user().with_guest_memory_writer(write));
+        self
+    }
+
+    pub fn with_riscv_syscall_emulation_and_guest_memory_io<R, W>(
+        mut self,
+        read: R,
+        write: W,
+    ) -> Self
+    where
+        R: Fn(u64, usize) -> Option<Vec<u8>> + Send + Sync + 'static,
+        W: Fn(u64, &[u8]) -> bool + Send + Sync + 'static,
+    {
+        self.riscv_syscall_emulation = Some(
+            RiscvSyscallEmulation::linux_user()
+                .with_guest_memory_reader(read)
+                .with_guest_memory_writer(write),
+        );
         self
     }
 
@@ -797,6 +909,51 @@ fn syscall_close(fd_argument: u64, state: &mut RiscvSyscallState) -> u64 {
         Ok(_record) => 0,
         Err(_error) => linux_error(RISCV_LINUX_EBADF),
     }
+}
+
+fn syscall_read(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+    guest_memory: &RiscvGuestMemoryWriter,
+) -> u64 {
+    let Some(fd) = guest_fd_argument(request.argument(0)) else {
+        return linux_error(RISCV_LINUX_EBADF);
+    };
+    let Ok(status_flags) = state.guest_fds.status_flags(fd) else {
+        return linux_error(RISCV_LINUX_EBADF);
+    };
+    if status_flags.bits() & (RISCV_LINUX_O_ACCMODE as u32) == RISCV_LINUX_O_WRONLY as u32 {
+        return linux_error(RISCV_LINUX_EBADF);
+    }
+
+    let count = request.argument(2);
+    if count == 0 {
+        return 0;
+    }
+
+    let Ok(byte_count) = usize::try_from(count) else {
+        return linux_error(RISCV_LINUX_EINVAL);
+    };
+    let bytes = state.stdin_prefix(byte_count);
+    if bytes.is_empty() {
+        return 0;
+    }
+    let read_count = bytes.len() as u64;
+    let Ok(offset) = state.guest_fds.file_offset(fd) else {
+        return linux_error(RISCV_LINUX_EBADF);
+    };
+    if offset.get().checked_add(read_count).is_none() {
+        return linux_error(RISCV_LINUX_EBADF);
+    }
+
+    if !guest_memory.write(request.argument(1), &bytes) {
+        return linux_error(RISCV_LINUX_EFAULT);
+    }
+    if state.guest_fds.advance_file_offset(fd, read_count).is_err() {
+        return linux_error(RISCV_LINUX_EBADF);
+    }
+    state.consume_stdin_prefix(bytes.len());
+    read_count
 }
 
 fn syscall_write(

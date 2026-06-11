@@ -1420,10 +1420,14 @@ Implementation evidence through 2026-06-03:
   ecall when guest-memory reading is configured, copies the guest buffer from
   the simulated memory store, records the guest-backed write bytes with fd,
   address, and tick evidence, advances the shared file offset, returns the byte
-  count to `a0`, and resumes guest execution. Fork, clone, exec,
+  count to `a0`, and resumes guest execution. RISC-V `read` now consumes a real
+  user-mode ecall when guest-memory writing is configured, drains bytes from
+  the syscall-emulation stdin queue into the simulated guest buffer, returns the
+  transferred byte count to `a0`, advances the shared file offset, and resumes
+  guest execution; an empty stdin queue returns zero as EOF. Fork, clone, exec,
   futex wait/requeue and child-clear-TID wake,
   dynamic credential changes, file-backed mmap handling, backing-memory or
-  page-table installation for returned ranges, `openat`, `read`,
+  page-table installation for returned ranges, `openat`, broader `read` sources,
   `wait4`, and remaining guest-memory argument copying remain open before broad
   libc workloads can run. Exec handoff can now close only descriptors marked
   close-on-exec while returning the removed entries for host-backed cleanup.
@@ -5240,12 +5244,13 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   `set_tid_address` child-clear-TID state, anonymous `mmap`/`munmap` region
   state, gem5-style ignore-return advisory memory-management calls, ignored
   `rseq` returning `-ENOSYS`, `futex` wake/wake-bitset handling, and initial
-  `dup`, `dup3`, `close`, `fcntl`, and guest-backed `write` handling through
-  the same real ecall path. It still lacks fork/clone process modeling, futex
-  wait, futex requeue, futex wake on child-clear-TID, file-backed mmap handling,
-  backing-memory installation for returned ranges, the broader syscall table,
-  and remaining guest-memory argument paths needed for `openat`, `read`,
-  `futex`, and `wait4`, and Linux handoff still needs an SBI-class
+  `dup`, `dup3`, `close`, `fcntl`, guest-backed `write`, and stdin-backed
+  guest-memory `read` handling through the same real ecall path. It still lacks
+  fork/clone process modeling, futex wait, futex requeue, futex wake on
+  child-clear-TID, file-backed mmap handling, backing-memory installation for
+  returned ranges, the broader syscall table, and remaining guest-memory
+  argument paths needed for `openat`, broader `read` sources, `futex`, and
+  `wait4`, and Linux handoff still needs an SBI-class
   firmware/runtime path rather than only DTB/initrd/register handoff.
 - Complete predictor coupling, external checkpoint payloads, and richer
   cycle-visible state for the in-order pipeline, add fuller out-of-order
