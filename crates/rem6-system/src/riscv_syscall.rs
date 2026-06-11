@@ -15,14 +15,21 @@ use crate::{
     ScheduledRiscvTrap, SystemError,
 };
 
+mod clock;
 mod cwd;
 mod links;
+mod mmap;
 mod stat;
 mod utsname;
 mod wait4;
 
+use clock::syscall_clock_gettime;
 use cwd::syscall_getcwd;
 use links::syscall_readlinkat;
+pub use mmap::RiscvMmapRegion;
+#[cfg(test)]
+use mmap::RISCV_LINUX_MAP_FIXED;
+use mmap::{syscall_mmap, syscall_munmap, RISCV64_LINUX_MMAP_BASE, RISCV_PAGE_BYTES};
 use stat::{guest_path_inode, write_riscv_linux_stat, RiscvGuestStat};
 use utsname::write_riscv_linux_utsname;
 use wait4::{syscall_process_group_id, syscall_wait4, RISCV_LINUX_WAIT4};
@@ -42,6 +49,7 @@ const RISCV_LINUX_SET_TID_ADDRESS: u64 = 96;
 const RISCV_LINUX_SET_ROBUST_LIST: u64 = 99;
 const RISCV_LINUX_GET_ROBUST_LIST: u64 = 100;
 const RISCV_LINUX_NANOSLEEP: u64 = 101;
+const RISCV_LINUX_CLOCK_GETTIME: u64 = 113;
 const RISCV_LINUX_SCHED_YIELD: u64 = 124;
 const RISCV_LINUX_RT_SIGSUSPEND: u64 = 133;
 const RISCV_LINUX_RT_SIGACTION: u64 = 134;
@@ -104,17 +112,11 @@ const RISCV_LINUX_O_RDONLY: u64 = 0;
 const RISCV_LINUX_O_WRONLY: u64 = 1;
 #[cfg(test)]
 const RISCV_LINUX_O_NONBLOCK: u64 = 0x800;
-const RISCV_LINUX_MAP_SHARED: u64 = 0x01;
-const RISCV_LINUX_MAP_PRIVATE: u64 = 0x02;
-const RISCV_LINUX_MAP_FIXED: u64 = 0x10;
-const RISCV_LINUX_MAP_ANONYMOUS: u64 = 0x20;
 const RISCV_LINUX_AT_FDCWD: u64 = (-100_i64) as u64;
 const RISCV_LINUX_AT_EMPTY_PATH: u64 = 0x1000;
 const RISCV_LINUX_AT_NO_AUTOMOUNT: u64 = 0x800;
 const RISCV_LINUX_AT_SYMLINK_NOFOLLOW: u64 = 0x100;
 const RISCV_LINUX_PATH_MAX: usize = 4096;
-const RISCV_PAGE_BYTES: u64 = 4096;
-const RISCV64_LINUX_MMAP_BASE: u64 = 0x4000_0000_0000_0000;
 const RISCV_LINUX_DEFAULT_PROCESS_ID: u64 = 100;
 const RISCV_LINUX_GETRANDOM_INITIAL_BYTE: u8 = 0x2b;
 
@@ -237,60 +239,6 @@ impl fmt::Debug for RiscvGuestMemoryWriter {
         formatter
             .debug_struct("RiscvGuestMemoryWriter")
             .finish_non_exhaustive()
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct RiscvMmapRegion {
-    start: u64,
-    length: u64,
-    protection: u64,
-    flags: u64,
-    fd: u64,
-    offset: u64,
-}
-
-impl RiscvMmapRegion {
-    pub const fn new(
-        start: u64,
-        length: u64,
-        protection: u64,
-        flags: u64,
-        fd: u64,
-        offset: u64,
-    ) -> Self {
-        Self {
-            start,
-            length,
-            protection,
-            flags,
-            fd,
-            offset,
-        }
-    }
-
-    pub const fn start(self) -> u64 {
-        self.start
-    }
-
-    pub const fn length(self) -> u64 {
-        self.length
-    }
-
-    pub const fn protection(self) -> u64 {
-        self.protection
-    }
-
-    pub const fn flags(self) -> u64 {
-        self.flags
-    }
-
-    pub const fn fd(self) -> u64 {
-        self.fd
-    }
-
-    pub const fn offset(self) -> u64 {
-        self.offset
     }
 }
 
@@ -532,7 +480,7 @@ impl RiscvSyscallState {
         self.child_clear_tid = (value != 0).then_some(value);
     }
 
-    fn is_mmap_range_available(&self, start: u64, length: u64) -> bool {
+    pub(super) fn is_mmap_range_available(&self, start: u64, length: u64) -> bool {
         start.checked_add(length).is_some_and(|_| {
             self.mmap_regions
                 .iter()
@@ -540,7 +488,7 @@ impl RiscvSyscallState {
         })
     }
 
-    fn unmap_mmap_range(&mut self, start: u64, length: u64) {
+    pub(super) fn unmap_mmap_range(&mut self, start: u64, length: u64) {
         let mut regions = Vec::with_capacity(self.mmap_regions.len());
         for region in self.mmap_regions.drain(..) {
             region.push_fragments_after_unmap(start, length, &mut regions);
@@ -548,7 +496,7 @@ impl RiscvSyscallState {
         self.mmap_regions = regions;
     }
 
-    fn extend_mmap(&mut self, length: u64) -> Option<u64> {
+    pub(super) fn extend_mmap(&mut self, length: u64) -> Option<u64> {
         let mut start = self.mmap_next;
         while !self.is_mmap_range_available(start, length) {
             start = start.checked_add(RISCV_PAGE_BYTES)?;
@@ -557,7 +505,7 @@ impl RiscvSyscallState {
         Some(start)
     }
 
-    fn push_mmap_region(&mut self, region: RiscvMmapRegion) {
+    pub(super) fn push_mmap_region(&mut self, region: RiscvMmapRegion) {
         self.mmap_regions.push(region);
         self.mmap_regions.sort_by_key(|region| region.start());
     }
@@ -819,52 +767,6 @@ impl RiscvSyscallIdentity {
     }
 }
 
-impl RiscvMmapRegion {
-    fn overlaps(self, start: u64, length: u64) -> bool {
-        let Some(end) = start.checked_add(length) else {
-            return true;
-        };
-        let Some(region_end) = self.start.checked_add(self.length) else {
-            return true;
-        };
-        start < region_end && self.start < end
-    }
-
-    fn push_fragments_after_unmap(self, start: u64, length: u64, output: &mut Vec<Self>) {
-        let Some(end) = start.checked_add(length) else {
-            return;
-        };
-        let Some(region_end) = self.start.checked_add(self.length) else {
-            return;
-        };
-        if start >= region_end || self.start >= end {
-            output.push(self);
-            return;
-        }
-        if self.start < start {
-            output.push(Self::new(
-                self.start,
-                start - self.start,
-                self.protection,
-                self.flags,
-                self.fd,
-                self.offset,
-            ));
-        }
-        if end < region_end {
-            let delta = end - self.start;
-            output.push(Self::new(
-                end,
-                region_end - end,
-                self.protection,
-                self.flags,
-                self.fd,
-                self.offset.saturating_add(delta),
-            ));
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct RiscvSyscallTable;
 
@@ -990,6 +892,16 @@ impl RiscvSyscallTable {
             RISCV_LINUX_WAIT4 => Some(RiscvSyscallOutcome::Return {
                 value: syscall_wait4(request, state, guest_memory_writer),
             }),
+            RISCV_LINUX_CLOCK_GETTIME => {
+                guest_memory_writer.map(|guest_memory| RiscvSyscallOutcome::Return {
+                    value: syscall_clock_gettime(
+                        request.argument(0),
+                        request.argument(1),
+                        tick,
+                        guest_memory,
+                    ),
+                })
+            }
             RISCV_LINUX_SET_ROBUST_LIST
             | RISCV_LINUX_GET_ROBUST_LIST
             | RISCV_LINUX_NANOSLEEP
@@ -1713,76 +1625,6 @@ fn read_guest_c_string(
         bytes.push(byte);
     }
     Err(RiscvGuestCStringError::TooLong)
-}
-
-fn syscall_mmap(request: RiscvSyscallRequest, state: &mut RiscvSyscallState) -> u64 {
-    let start = request.argument(0);
-    let Some(length) = align_to_page(request.argument(1)) else {
-        return linux_error(RISCV_LINUX_EINVAL);
-    };
-    let protection = request.argument(2);
-    let flags = request.argument(3);
-    let fd = request.argument(4);
-    let offset = request.argument(5);
-
-    let shared = flags & RISCV_LINUX_MAP_SHARED != 0;
-    let private = flags & RISCV_LINUX_MAP_PRIVATE != 0;
-    if !start.is_multiple_of(RISCV_PAGE_BYTES)
-        || !offset.is_multiple_of(RISCV_PAGE_BYTES)
-        || shared == private
-        || request.argument(1) == 0
-    {
-        return linux_error(RISCV_LINUX_EINVAL);
-    }
-    if start.checked_add(length).is_none() {
-        return linux_error(RISCV_LINUX_EINVAL);
-    }
-    if flags & RISCV_LINUX_MAP_ANONYMOUS == 0 {
-        return linux_error(RISCV_LINUX_EBADF);
-    }
-
-    let fixed = flags & RISCV_LINUX_MAP_FIXED != 0;
-    let mapped_start = if fixed {
-        state.unmap_mmap_range(start, length);
-        start
-    } else if start != 0 && state.is_mmap_range_available(start, length) {
-        start
-    } else {
-        match state.extend_mmap(length) {
-            Some(start) => start,
-            None => return linux_error(RISCV_LINUX_EINVAL),
-        }
-    };
-    state.push_mmap_region(RiscvMmapRegion::new(
-        mapped_start,
-        length,
-        protection,
-        flags,
-        fd,
-        offset,
-    ));
-    mapped_start
-}
-
-fn syscall_munmap(start: u64, requested_length: u64, state: &mut RiscvSyscallState) -> u64 {
-    let Some(length) = align_to_page(requested_length) else {
-        return linux_error(RISCV_LINUX_EINVAL);
-    };
-    if !start.is_multiple_of(RISCV_PAGE_BYTES)
-        || requested_length == 0
-        || start.checked_add(length).is_none()
-    {
-        return linux_error(RISCV_LINUX_EINVAL);
-    }
-
-    state.unmap_mmap_range(start, length);
-    0
-}
-
-fn align_to_page(value: u64) -> Option<u64> {
-    value
-        .checked_add(RISCV_PAGE_BYTES - 1)
-        .map(|rounded| rounded & !(RISCV_PAGE_BYTES - 1))
 }
 
 fn linux_error(errno: u64) -> u64 {
