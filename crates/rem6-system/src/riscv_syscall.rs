@@ -15,14 +15,17 @@ use crate::{
     ScheduledRiscvTrap, SystemError,
 };
 
+mod cwd;
 mod links;
 mod stat;
 mod utsname;
 
+use cwd::syscall_getcwd;
 use links::syscall_readlinkat;
 use stat::{guest_path_inode, write_riscv_linux_stat, RiscvGuestStat};
 use utsname::write_riscv_linux_utsname;
 
+const RISCV_LINUX_GETCWD: u64 = 17;
 const RISCV_LINUX_DUP: u64 = 23;
 const RISCV_LINUX_DUP3: u64 = 24;
 const RISCV_LINUX_FCNTL: u64 = 25;
@@ -75,6 +78,7 @@ const RISCV_LINUX_EBADF: u64 = 9;
 const RISCV_LINUX_EFAULT: u64 = 14;
 const RISCV_LINUX_EINVAL: u64 = 22;
 const RISCV_LINUX_EMFILE: u64 = 24;
+const RISCV_LINUX_ERANGE: u64 = 34;
 const RISCV_LINUX_ENAMETOOLONG: u64 = 36;
 const RISCV_LINUX_ENOSYS: u64 = 38;
 const RISCV_LINUX_FUTEX_WAKE: u32 = 1;
@@ -377,6 +381,7 @@ struct RiscvGuestOpenRequest {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RiscvSyscallState {
     identity: RiscvSyscallIdentity,
+    current_directory: Vec<u8>,
     child_clear_tid: Option<u64>,
     guest_fds: GuestFdTable,
     guest_futexes: GuestFutexTable,
@@ -422,6 +427,7 @@ impl RiscvSyscallState {
         stdin_fds.insert(GuestFd::new(0).expect("standard stdin fd is non-negative"));
         Self {
             identity,
+            current_directory: b"/".to_vec(),
             child_clear_tid: None,
             guest_fds: linux_standard_guest_fds(),
             guest_futexes: GuestFutexTable::new(),
@@ -443,6 +449,14 @@ impl RiscvSyscallState {
 
     const fn identity(&self) -> RiscvSyscallIdentity {
         self.identity
+    }
+
+    pub fn current_directory(&self) -> &[u8] {
+        &self.current_directory
+    }
+
+    pub fn set_current_directory(&mut self, path: impl AsRef<[u8]>) {
+        self.current_directory = path.as_ref().to_vec();
     }
 
     pub const fn child_clear_tid(&self) -> Option<u64> {
@@ -890,6 +904,16 @@ impl RiscvSyscallTable {
         guest_memory_writer: Option<&RiscvGuestMemoryWriter>,
     ) -> Option<RiscvSyscallOutcome> {
         match request.number() {
+            RISCV_LINUX_GETCWD => {
+                guest_memory_writer.map(|guest_memory| RiscvSyscallOutcome::Return {
+                    value: syscall_getcwd(
+                        request.argument(0),
+                        request.argument(1),
+                        state,
+                        guest_memory,
+                    ),
+                })
+            }
             RISCV_LINUX_DUP => Some(RiscvSyscallOutcome::Return {
                 value: syscall_dup(request.argument(0), state),
             }),
