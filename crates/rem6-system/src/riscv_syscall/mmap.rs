@@ -1,5 +1,6 @@
 use super::{
-    linux_error, RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_EBADF, RISCV_LINUX_EINVAL,
+    linux_error, RiscvGuestMemoryMapResult, RiscvGuestMemoryWriter, RiscvSyscallRequest,
+    RiscvSyscallState, RISCV_LINUX_EBADF, RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL,
 };
 
 pub(super) const RISCV_PAGE_BYTES: u64 = 4096;
@@ -113,7 +114,11 @@ impl RiscvMmapRegion {
     }
 }
 
-pub(super) fn syscall_mmap(request: RiscvSyscallRequest, state: &mut RiscvSyscallState) -> u64 {
+pub(super) fn syscall_mmap(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+    guest_memory_writer: Option<&RiscvGuestMemoryWriter>,
+) -> u64 {
     let start = request.argument(0);
     let Some(length) = align_to_page(request.argument(1)) else {
         return linux_error(RISCV_LINUX_EINVAL);
@@ -141,14 +146,52 @@ pub(super) fn syscall_mmap(request: RiscvSyscallRequest, state: &mut RiscvSyscal
 
     let fixed = flags & RISCV_LINUX_MAP_FIXED != 0;
     let mapped_start = if fixed {
-        state.unmap_mmap_range(start, length);
-        start
-    } else if start != 0 && state.is_mmap_range_available(start, length) {
-        start
+        match install_anonymous_mmap_backing(start, length, guest_memory_writer, true) {
+            RiscvGuestMemoryMapResult::Mapped => {
+                state.unmap_mmap_range(start, length);
+                start
+            }
+            RiscvGuestMemoryMapResult::Overlap | RiscvGuestMemoryMapResult::Failed => {
+                return linux_error(RISCV_LINUX_EFAULT);
+            }
+        }
     } else {
-        match state.extend_mmap(length) {
-            Some(start) => start,
-            None => return linux_error(RISCV_LINUX_EINVAL),
+        if start != 0 && state.is_mmap_range_available(start, length) {
+            match install_anonymous_mmap_backing(start, length, guest_memory_writer, false) {
+                RiscvGuestMemoryMapResult::Mapped => {
+                    state.push_mmap_region(RiscvMmapRegion::new(
+                        start, length, protection, flags, fd, offset,
+                    ));
+                    return start;
+                }
+                RiscvGuestMemoryMapResult::Overlap => {}
+                RiscvGuestMemoryMapResult::Failed => return linux_error(RISCV_LINUX_EFAULT),
+            }
+        }
+
+        let Some(mut candidate) = state.next_mmap_region_start(length) else {
+            return linux_error(RISCV_LINUX_EINVAL);
+        };
+        loop {
+            match install_anonymous_mmap_backing(candidate, length, guest_memory_writer, false) {
+                RiscvGuestMemoryMapResult::Mapped => {
+                    if state.advance_mmap_next(candidate, length).is_none() {
+                        return linux_error(RISCV_LINUX_EINVAL);
+                    }
+                    break candidate;
+                }
+                RiscvGuestMemoryMapResult::Overlap => {
+                    let Some(next) = candidate.checked_add(RISCV_PAGE_BYTES) else {
+                        return linux_error(RISCV_LINUX_EINVAL);
+                    };
+                    let Some(next_candidate) = state.next_mmap_region_start_from(next, length)
+                    else {
+                        return linux_error(RISCV_LINUX_EINVAL);
+                    };
+                    candidate = next_candidate;
+                }
+                RiscvGuestMemoryMapResult::Failed => return linux_error(RISCV_LINUX_EFAULT),
+            }
         }
     };
     state.push_mmap_region(RiscvMmapRegion::new(
@@ -160,6 +203,41 @@ pub(super) fn syscall_mmap(request: RiscvSyscallRequest, state: &mut RiscvSyscal
         offset,
     ));
     mapped_start
+}
+
+fn install_anonymous_mmap_backing(
+    start: u64,
+    length: u64,
+    guest_memory_writer: Option<&RiscvGuestMemoryWriter>,
+    replace_existing: bool,
+) -> RiscvGuestMemoryMapResult {
+    let Some(guest_memory_writer) = guest_memory_writer else {
+        return RiscvGuestMemoryMapResult::Mapped;
+    };
+    match guest_memory_writer.map_region(start, length, replace_existing) {
+        RiscvGuestMemoryMapResult::Mapped => {}
+        RiscvGuestMemoryMapResult::Overlap if replace_existing => {}
+        result @ (RiscvGuestMemoryMapResult::Overlap | RiscvGuestMemoryMapResult::Failed) => {
+            return result;
+        }
+    }
+
+    let zero_page = [0; RISCV_PAGE_BYTES as usize];
+    let mut cursor = start;
+    let mut remaining = length;
+    while remaining > 0 {
+        let bytes = remaining.min(RISCV_PAGE_BYTES);
+        let end = bytes as usize;
+        if !guest_memory_writer.write(cursor, &zero_page[..end]) {
+            return RiscvGuestMemoryMapResult::Failed;
+        }
+        let Some(next) = cursor.checked_add(bytes) else {
+            return RiscvGuestMemoryMapResult::Failed;
+        };
+        cursor = next;
+        remaining -= bytes;
+    }
+    RiscvGuestMemoryMapResult::Mapped
 }
 
 pub(super) fn syscall_munmap(

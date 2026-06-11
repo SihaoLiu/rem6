@@ -1,11 +1,13 @@
 use std::sync::{Arc, Mutex};
 
-use rem6_dram::{DramLowPowerState, DramMemoryActivityProfile, DramMemoryController};
-use rem6_memory::{
-    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
-    PartitionedMemoryStore,
+use rem6_dram::{
+    DramLowPowerState, DramMemoryActivityProfile, DramMemoryController, DramMemoryError,
 };
-use rem6_system::RiscvSeStartupImage;
+use rem6_memory::{
+    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryError, MemoryRequest,
+    MemoryRequestId, PartitionedMemoryStore,
+};
+use rem6_system::{RiscvGuestMemoryMapResult, RiscvSeStartupImage};
 use rem6_transport::{RequestDelivery, TargetOutcome};
 
 use crate::config::CliDramMemoryProfile;
@@ -138,8 +140,138 @@ impl CliMemoryRuntime {
             }
         }
     }
+
+    pub(super) fn map_guest_memory(
+        &self,
+        address: u64,
+        bytes: u64,
+        line_layout: CacheLineLayout,
+        replace_existing: bool,
+    ) -> RiscvGuestMemoryMapResult {
+        if bytes == 0 {
+            return RiscvGuestMemoryMapResult::Mapped;
+        }
+        let Ok(size) = AccessSize::new(bytes) else {
+            return RiscvGuestMemoryMapResult::Failed;
+        };
+        match self {
+            Self::Store(store) => {
+                let mut store = store.lock().expect("CLI memory store lock");
+                let result = store_map_region_result(
+                    store.map_region(CLI_MEMORY_TARGET, Address::new(address), size),
+                    replace_existing,
+                );
+                if result != RiscvGuestMemoryMapResult::Mapped {
+                    return result;
+                }
+                if insert_zero_guest_lines_in_store(&mut store, address, bytes, line_layout) {
+                    RiscvGuestMemoryMapResult::Mapped
+                } else {
+                    RiscvGuestMemoryMapResult::Failed
+                }
+            }
+            Self::Dram(memory) => {
+                let mut memory = memory.lock().expect("CLI DRAM memory lock");
+                let result = dram_map_region_result(
+                    memory.map_region(CLI_MEMORY_TARGET, Address::new(address), size),
+                    replace_existing,
+                );
+                if result != RiscvGuestMemoryMapResult::Mapped {
+                    return result;
+                }
+                if insert_zero_guest_lines_in_dram(&mut memory, address, bytes, line_layout) {
+                    RiscvGuestMemoryMapResult::Mapped
+                } else {
+                    RiscvGuestMemoryMapResult::Failed
+                }
+            }
+        }
+    }
 }
 
+fn store_map_region_result(
+    result: Result<(), MemoryError>,
+    replace_existing: bool,
+) -> RiscvGuestMemoryMapResult {
+    match result {
+        Ok(()) => RiscvGuestMemoryMapResult::Mapped,
+        Err(MemoryError::OverlappingAddressRegion { .. }) if replace_existing => {
+            RiscvGuestMemoryMapResult::Mapped
+        }
+        Err(MemoryError::OverlappingAddressRegion { .. }) => RiscvGuestMemoryMapResult::Overlap,
+        Err(_) => RiscvGuestMemoryMapResult::Failed,
+    }
+}
+
+fn dram_map_region_result(
+    result: Result<(), DramMemoryError>,
+    replace_existing: bool,
+) -> RiscvGuestMemoryMapResult {
+    match result {
+        Ok(()) => RiscvGuestMemoryMapResult::Mapped,
+        Err(DramMemoryError::Memory(MemoryError::OverlappingAddressRegion { .. }))
+            if replace_existing =>
+        {
+            RiscvGuestMemoryMapResult::Mapped
+        }
+        Err(DramMemoryError::Memory(MemoryError::OverlappingAddressRegion { .. })) => {
+            RiscvGuestMemoryMapResult::Overlap
+        }
+        Err(_) => RiscvGuestMemoryMapResult::Failed,
+    }
+}
+
+fn insert_zero_guest_lines_in_store(
+    store: &mut PartitionedMemoryStore,
+    address: u64,
+    bytes: u64,
+    line_layout: CacheLineLayout,
+) -> bool {
+    let Some(end) = address.checked_add(bytes) else {
+        return false;
+    };
+    let zero_line = vec![0; line_layout.bytes() as usize];
+    let mut line = line_layout.line_address(Address::new(address));
+    while line.get() < end {
+        if store
+            .insert_line(CLI_MEMORY_TARGET, line, zero_line.clone())
+            .is_err()
+        {
+            return false;
+        }
+        let Some(next) = line.get().checked_add(line_layout.bytes()) else {
+            return false;
+        };
+        line = Address::new(next);
+    }
+    true
+}
+
+fn insert_zero_guest_lines_in_dram(
+    memory: &mut DramMemoryController,
+    address: u64,
+    bytes: u64,
+    line_layout: CacheLineLayout,
+) -> bool {
+    let Some(end) = address.checked_add(bytes) else {
+        return false;
+    };
+    let zero_line = vec![0; line_layout.bytes() as usize];
+    let mut line = line_layout.line_address(Address::new(address));
+    while line.get() < end {
+        if memory
+            .insert_line(CLI_MEMORY_TARGET, line, zero_line.clone())
+            .is_err()
+        {
+            return false;
+        }
+        let Some(next) = line.get().checked_add(line_layout.bytes()) else {
+            return false;
+        };
+        line = Address::new(next);
+    }
+    true
+}
 #[derive(Clone, Copy)]
 struct GuestMemoryChunk {
     address: u64,

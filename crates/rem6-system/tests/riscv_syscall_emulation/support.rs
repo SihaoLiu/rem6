@@ -7,8 +7,8 @@ pub(crate) use rem6_cpu::{
 pub(crate) use rem6_isa_riscv::{Register, RiscvPrivilegeMode};
 pub(crate) use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerContext};
 pub(crate) use rem6_memory::{
-    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
-    MemoryTargetId, PartitionedMemoryStore,
+    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryError, MemoryRequest,
+    MemoryRequestId, MemoryTargetId, PartitionedMemoryStore,
 };
 pub(crate) use rem6_stats::StatsRegistry;
 pub(crate) use rem6_system::{
@@ -205,23 +205,77 @@ pub(crate) fn guest_memory_writer(
     store: Arc<Mutex<PartitionedMemoryStore>>,
 ) -> impl Fn(u64, &[u8]) -> bool + Send + Sync + 'static {
     move |address, bytes| {
-        let Ok(size) = AccessSize::new(bytes.len() as u64) else {
+        let line_layout = layout();
+        let mut cursor = address;
+        let mut data_offset = 0usize;
+        while data_offset < bytes.len() {
+            let line_offset = line_layout.line_offset(Address::new(cursor));
+            let available = line_layout.bytes().checked_sub(line_offset).unwrap();
+            let chunk_bytes = usize::try_from(available)
+                .unwrap()
+                .min(bytes.len() - data_offset);
+            let Ok(size) = AccessSize::new(chunk_bytes as u64) else {
+                return false;
+            };
+            let Ok(byte_mask) = ByteMask::full(size) else {
+                return false;
+            };
+            let Ok(request) = MemoryRequest::write(
+                MemoryRequestId::new(AgentId::new(100), data_offset as u64),
+                Address::new(cursor),
+                size,
+                bytes[data_offset..data_offset + chunk_bytes].to_vec(),
+                byte_mask,
+                line_layout,
+            ) else {
+                return false;
+            };
+            if store.lock().unwrap().respond(&request).is_err() {
+                return false;
+            }
+            let Some(next) = cursor.checked_add(chunk_bytes as u64) else {
+                return false;
+            };
+            cursor = next;
+            data_offset += chunk_bytes;
+        }
+        true
+    }
+}
+
+pub(crate) fn guest_memory_mapper(
+    store: Arc<Mutex<PartitionedMemoryStore>>,
+) -> impl Fn(u64, u64) -> bool + Send + Sync + 'static {
+    move |address, bytes| {
+        let line_layout = layout();
+        let Ok(size) = AccessSize::new(bytes) else {
             return false;
         };
-        let Ok(byte_mask) = ByteMask::full(size) else {
+        let mut store = store.lock().unwrap();
+        if !matches!(
+            store.map_region(MemoryTargetId::new(0), Address::new(address), size),
+            Ok(()) | Err(MemoryError::OverlappingAddressRegion { .. })
+        ) {
+            return false;
+        }
+        let Some(end) = address.checked_add(bytes) else {
             return false;
         };
-        let Ok(request) = MemoryRequest::write(
-            MemoryRequestId::new(AgentId::new(100), 0),
-            Address::new(address),
-            size,
-            bytes.to_vec(),
-            byte_mask,
-            layout(),
-        ) else {
-            return false;
-        };
-        store.lock().unwrap().respond(&request).is_ok()
+        let zero_line = vec![0; line_layout.bytes() as usize];
+        let mut line = line_layout.line_address(Address::new(address));
+        while line.get() < end {
+            if store
+                .insert_line(MemoryTargetId::new(0), line, zero_line.clone())
+                .is_err()
+            {
+                return false;
+            }
+            let Some(next) = line.get().checked_add(line_layout.bytes()) else {
+                return false;
+            };
+            line = Address::new(next);
+        }
+        true
     }
 }
 

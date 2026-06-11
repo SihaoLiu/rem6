@@ -1100,6 +1100,118 @@ fn user_ecall_munmap_updates_mapping_before_exit() {
 }
 
 #[test]
+fn user_ecall_mmap_installs_zeroed_backing_before_exit() {
+    let host = PartitionId::new(3);
+    let source = GuestSourceId::new(79);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let fetch_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let data_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.dmem"),
+                PartitionId::new(0),
+                endpoint("l1d"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let core = riscv_data_core(
+        0,
+        0,
+        7,
+        "cpu0.ifetch",
+        fetch_route,
+        "cpu0.dmem",
+        data_route,
+        0x8000,
+    );
+    core.set_privilege_mode(RiscvPrivilegeMode::User);
+    let cluster = RiscvCluster::new([core.clone()]).unwrap();
+    let store = loaded_program_store(&[
+        (0x8000, addi(17, 0, 222)),
+        (0x8004, addi(10, 0, 0)),
+        (0x8008, addi(11, 0, 64)),
+        (0x800c, addi(12, 0, 3)),
+        (0x8010, addi(13, 0, 34)),
+        (0x8014, addi(14, 0, -1)),
+        (0x8018, addi(15, 0, 0)),
+        (0x801c, 0x0000_0073),
+        (0x8020, addi(5, 10, 0)),
+        (0x8024, lb(6, 10, 0)),
+        (0x8028, addi(17, 0, 93)),
+        (0x802c, addi(10, 6, 0)),
+        (0x8030, 0x0000_0073),
+    ]);
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        StatsRegistry::new(),
+    )));
+    let trap_port = RiscvTrapEventPort::new(
+        SystemHostEventPort::with_controller(host, 2, Arc::clone(&controller)).unwrap(),
+        source,
+    );
+    let driver = RiscvSystemRunDriver::new(trap_port)
+        .with_riscv_syscall_emulation_and_mapped_guest_memory_writer(
+            guest_memory_writer(Arc::clone(&store)),
+            guest_memory_mapper(Arc::clone(&store)),
+        );
+
+    let run = driver
+        .drive_until_host_stop(
+            &cluster,
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_cpu| responder(Arc::clone(&store)),
+            |_cpu| responder(Arc::clone(&store)),
+            140,
+            |cpu| GuestEventId::new(540 + u64::from(cpu.get())),
+        )
+        .unwrap();
+
+    let mmap_base = 0x4000_0000_0000_0000;
+    let stop = StopRequest::new(run.final_tick().unwrap(), GuestEventId::new(540), source, 0);
+    assert_eq!(run.host_stop(), Some(stop));
+    assert!(run.scheduled_traps().is_empty());
+    assert_eq!(core.read_register(reg(5)), mmap_base);
+    assert_eq!(core.read_register(reg(6)), 0);
+    assert_eq!(core.read_register(reg(10)), 0);
+    assert_eq!(
+        guest_memory_reader(Arc::clone(&store))(mmap_base, 1),
+        Some(vec![0])
+    );
+    assert_eq!(
+        driver
+            .riscv_syscall_emulation()
+            .unwrap()
+            .state()
+            .mmap_regions(),
+        &[RiscvMmapRegion::new(mmap_base, 4096, 3, 34, u64::MAX, 0)]
+    );
+    assert_eq!(
+        controller.lock().unwrap().run().action_outcomes(),
+        &[SystemActionOutcome::Stop(stop)]
+    );
+}
+
+#[test]
 fn user_ecall_write_reads_guest_memory_before_exit() {
     let host = PartitionId::new(3);
     let source = GuestSourceId::new(68);

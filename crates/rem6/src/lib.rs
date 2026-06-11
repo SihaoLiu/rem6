@@ -579,9 +579,18 @@ fn execute_riscv(
         driver = driver.with_riscv_syscall_emulation_for_boot_image(image);
         let read_memory = memory.clone();
         let write_memory = memory.clone();
-        driver = driver.with_riscv_syscall_emulation_and_guest_memory_io(
+        let map_memory = memory.clone();
+        driver = driver.with_riscv_syscall_emulation_and_guest_memory_io_map_handler(
             move |address, bytes| read_memory.read_guest_memory(address, bytes, line_layout),
             move |address, bytes| write_memory.write_guest_memory(address, bytes, line_layout),
+            move |request| {
+                map_memory.map_guest_memory(
+                    request.address(),
+                    request.bytes(),
+                    line_layout,
+                    request.replace_existing(),
+                )
+            },
         );
     }
     let fetch_trace = MemoryTrace::new();

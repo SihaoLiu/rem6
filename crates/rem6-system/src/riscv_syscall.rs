@@ -18,6 +18,7 @@ use crate::{
 
 mod clock;
 mod cwd;
+mod guest_memory;
 mod ioctl;
 mod limits;
 mod links;
@@ -31,6 +32,10 @@ mod writev;
 
 use clock::syscall_clock_gettime;
 use cwd::syscall_getcwd;
+pub use guest_memory::{
+    RiscvGuestMemoryMapRequest, RiscvGuestMemoryMapResult, RiscvGuestMemoryReader,
+    RiscvGuestMemoryWriter,
+};
 use ioctl::{syscall_ioctl, RISCV_LINUX_IOCTL};
 use limits::{syscall_prlimit64, RISCV_LINUX_PRLIMIT64};
 use links::syscall_readlinkat;
@@ -199,66 +204,6 @@ impl RiscvSyscallRequest {
 pub enum RiscvSyscallOutcome {
     Exit { code: i32 },
     Return { value: u64 },
-}
-
-type RiscvGuestMemoryReadFn = dyn Fn(u64, usize) -> Option<Vec<u8>> + Send + Sync + 'static;
-
-#[derive(Clone)]
-pub struct RiscvGuestMemoryReader {
-    read: Arc<RiscvGuestMemoryReadFn>,
-}
-
-impl RiscvGuestMemoryReader {
-    pub fn new<F>(read: F) -> Self
-    where
-        F: Fn(u64, usize) -> Option<Vec<u8>> + Send + Sync + 'static,
-    {
-        Self {
-            read: Arc::new(read),
-        }
-    }
-
-    fn read(&self, address: u64, bytes: usize) -> Option<Vec<u8>> {
-        (self.read)(address, bytes)
-    }
-}
-
-impl fmt::Debug for RiscvGuestMemoryReader {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("RiscvGuestMemoryReader")
-            .finish_non_exhaustive()
-    }
-}
-
-type RiscvGuestMemoryWriteFn = dyn Fn(u64, &[u8]) -> bool + Send + Sync + 'static;
-
-#[derive(Clone)]
-pub struct RiscvGuestMemoryWriter {
-    write: Arc<RiscvGuestMemoryWriteFn>,
-}
-
-impl RiscvGuestMemoryWriter {
-    pub fn new<F>(write: F) -> Self
-    where
-        F: Fn(u64, &[u8]) -> bool + Send + Sync + 'static,
-    {
-        Self {
-            write: Arc::new(write),
-        }
-    }
-
-    fn write(&self, address: u64, bytes: &[u8]) -> bool {
-        (self.write)(address, bytes)
-    }
-}
-
-impl fmt::Debug for RiscvGuestMemoryWriter {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("RiscvGuestMemoryWriter")
-            .finish_non_exhaustive()
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -515,13 +460,20 @@ impl RiscvSyscallState {
         self.mmap_regions = regions;
     }
 
-    pub(super) fn extend_mmap(&mut self, length: u64) -> Option<u64> {
-        let mut start = self.mmap_next;
+    pub(super) fn next_mmap_region_start(&self, length: u64) -> Option<u64> {
+        self.next_mmap_region_start_from(self.mmap_next, length)
+    }
+
+    pub(super) fn next_mmap_region_start_from(&self, mut start: u64, length: u64) -> Option<u64> {
         while !self.is_mmap_range_available(start, length) {
             start = start.checked_add(RISCV_PAGE_BYTES)?;
         }
-        self.mmap_next = start.checked_add(length)?;
         Some(start)
+    }
+
+    pub(super) fn advance_mmap_next(&mut self, start: u64, length: u64) -> Option<()> {
+        self.mmap_next = start.checked_add(length)?;
+        Some(())
     }
 
     pub(super) fn push_mmap_region(&mut self, region: RiscvMmapRegion) {
@@ -985,7 +937,7 @@ impl RiscvSyscallTable {
                 value: syscall_brk(request.argument(0), state),
             }),
             RISCV_LINUX_MMAP => Some(RiscvSyscallOutcome::Return {
-                value: syscall_mmap(request, state),
+                value: syscall_mmap(request, state, guest_memory_writer),
             }),
             RISCV_LINUX_MUNMAP => Some(RiscvSyscallOutcome::Return {
                 value: syscall_munmap(request.argument(0), request.argument(1), state),
@@ -1095,6 +1047,26 @@ impl RiscvSyscallEmulation {
         self
     }
 
+    pub fn with_mapped_guest_memory_writer<W, M>(mut self, write: W, map_region: M) -> Self
+    where
+        W: Fn(u64, &[u8]) -> bool + Send + Sync + 'static,
+        M: Fn(u64, u64) -> bool + Send + Sync + 'static,
+    {
+        self.guest_memory_writer =
+            Some(RiscvGuestMemoryWriter::new(write).with_region_mapper(map_region));
+        self
+    }
+
+    pub fn with_guest_memory_map_handler<W, M>(mut self, write: W, map_region: M) -> Self
+    where
+        W: Fn(u64, &[u8]) -> bool + Send + Sync + 'static,
+        M: Fn(RiscvGuestMemoryMapRequest) -> RiscvGuestMemoryMapResult + Send + Sync + 'static,
+    {
+        self.guest_memory_writer =
+            Some(RiscvGuestMemoryWriter::new(write).with_region_map_handler(map_region));
+        self
+    }
+
     pub fn state(&self) -> RiscvSyscallState {
         self.state
             .lock()
@@ -1197,6 +1169,22 @@ impl RiscvSystemRunDriver {
         self
     }
 
+    pub fn with_riscv_syscall_emulation_and_mapped_guest_memory_writer<W, M>(
+        mut self,
+        write: W,
+        map_region: M,
+    ) -> Self
+    where
+        W: Fn(u64, &[u8]) -> bool + Send + Sync + 'static,
+        M: Fn(u64, u64) -> bool + Send + Sync + 'static,
+    {
+        let emulation = self
+            .take_riscv_syscall_emulation_or_linux_user()
+            .with_mapped_guest_memory_writer(write, map_region);
+        self.riscv_syscall_emulation = Some(emulation);
+        self
+    }
+
     pub fn with_riscv_syscall_emulation_and_guest_memory_io<R, W>(
         mut self,
         read: R,
@@ -1210,6 +1198,44 @@ impl RiscvSystemRunDriver {
             .take_riscv_syscall_emulation_or_linux_user()
             .with_guest_memory_reader(read)
             .with_guest_memory_writer(write);
+        self.riscv_syscall_emulation = Some(emulation);
+        self
+    }
+
+    pub fn with_riscv_syscall_emulation_and_mapped_guest_memory_io<R, W, M>(
+        mut self,
+        read: R,
+        write: W,
+        map_region: M,
+    ) -> Self
+    where
+        R: Fn(u64, usize) -> Option<Vec<u8>> + Send + Sync + 'static,
+        W: Fn(u64, &[u8]) -> bool + Send + Sync + 'static,
+        M: Fn(u64, u64) -> bool + Send + Sync + 'static,
+    {
+        let emulation = self
+            .take_riscv_syscall_emulation_or_linux_user()
+            .with_guest_memory_reader(read)
+            .with_mapped_guest_memory_writer(write, map_region);
+        self.riscv_syscall_emulation = Some(emulation);
+        self
+    }
+
+    pub fn with_riscv_syscall_emulation_and_guest_memory_io_map_handler<R, W, M>(
+        mut self,
+        read: R,
+        write: W,
+        map_region: M,
+    ) -> Self
+    where
+        R: Fn(u64, usize) -> Option<Vec<u8>> + Send + Sync + 'static,
+        W: Fn(u64, &[u8]) -> bool + Send + Sync + 'static,
+        M: Fn(RiscvGuestMemoryMapRequest) -> RiscvGuestMemoryMapResult + Send + Sync + 'static,
+    {
+        let emulation = self
+            .take_riscv_syscall_emulation_or_linux_user()
+            .with_guest_memory_reader(read)
+            .with_guest_memory_map_handler(write, map_region);
         self.riscv_syscall_emulation = Some(emulation);
         self
     }

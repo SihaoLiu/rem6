@@ -1274,6 +1274,112 @@ fn rem6_run_riscv_se_reports_loaded_program_headers_in_auxv() {
 }
 
 #[test]
+fn rem6_run_riscv_se_mmap_installs_zeroed_backing() {
+    let program = riscv64_program(&[
+        i_type(222, 0, 0x0, 17, 0x13), // addi a7, x0, 222
+        i_type(0, 0, 0x0, 10, 0x13),   // addi a0, x0, 0
+        i_type(64, 0, 0x0, 11, 0x13),  // addi a1, x0, 64
+        i_type(3, 0, 0x0, 12, 0x13),   // addi a2, x0, 3
+        i_type(34, 0, 0x0, 13, 0x13),  // addi a3, x0, 34
+        i_type(-1, 0, 0x0, 14, 0x13),  // addi a4, x0, -1
+        i_type(0, 0, 0x0, 15, 0x13),   // addi a5, x0, 0
+        0x0000_0073,                   // ecall
+        i_type(0, 10, 0x0, 6, 0x03),   // lb x6, 0(a0)
+        i_type(93, 0, 0x0, 17, 0x13),  // addi a7, x0, 93
+        i_type(0, 6, 0x0, 10, 0x13),   // addi a0, x6, 0
+        0x0000_0073,                   // ecall
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("riscv-se-mmap-zero", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "180",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+            "--dump-memory",
+            "0x4000000000000000:1",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_reason\":\"host_stop\""));
+    assert!(stdout.contains("\"stop_code\":0"));
+    assert!(stdout.contains("\"data_loads\":1"));
+    assert!(stdout.contains("{\"address\":\"0x4000000000000000\",\"bytes\":1,\"hex\":\"00\"}"));
+    assert_stat(&stdout, "sim.riscv.se", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.stop.host_stop", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.stop_code", "Count", 0, "constant");
+}
+
+#[test]
+fn rem6_run_riscv_se_mmap_hint_overlap_preserves_text() {
+    let program = riscv64_program(&[
+        u_type(0x10000, 5, 0x37),      // lui x5, 0x10
+        i_type(222, 0, 0x0, 17, 0x13), // addi a7, x0, 222
+        i_type(0, 5, 0x0, 10, 0x13),   // addi a0, x5, 0
+        i_type(64, 0, 0x0, 11, 0x13),  // addi a1, x0, 64
+        i_type(3, 0, 0x0, 12, 0x13),   // addi a2, x0, 3
+        i_type(34, 0, 0x0, 13, 0x13),  // addi a3, x0, 34
+        i_type(-1, 0, 0x0, 14, 0x13),  // addi a4, x0, -1
+        i_type(0, 0, 0x0, 15, 0x13),   // addi a5, x0, 0
+        0x0000_0073,                   // ecall
+        i_type(93, 0, 0x0, 17, 0x13),  // addi a7, x0, 93
+        i_type(0, 0, 0x0, 10, 0x13),   // addi a0, x0, 0
+        0x0000_0073,                   // ecall
+    ]);
+    let elf = riscv64_elf(0x10000, 0x10000, &program);
+    let path = temp_binary("riscv-se-mmap-hint-overlap", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "180",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+            "--dump-memory",
+            "0x10000:1",
+            "--dump-memory",
+            "0x4000000000000000:1",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_code\":0"));
+    assert!(stdout.contains("{\"address\":\"0x10000\",\"bytes\":1,\"hex\":\"b7\"}"));
+    assert!(stdout.contains("{\"address\":\"0x4000000000000000\",\"bytes\":1,\"hex\":\"00\"}"));
+}
+
+#[test]
 fn rem6_run_riscv_se_handles_memory_backed_write_syscall() {
     let program = riscv64_program(&[
         i_type(8, 2, 0x3, 6, 0x03),   // ld x6, 8(sp)
