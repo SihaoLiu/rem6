@@ -23,6 +23,7 @@ mod ioctl;
 mod limits;
 mod links;
 mod mmap;
+mod robust;
 mod seek;
 mod startup;
 mod stat;
@@ -45,6 +46,7 @@ pub use mmap::RiscvMmapRegion;
 use mmap::{syscall_mmap, syscall_munmap, RISCV64_LINUX_MMAP_BASE, RISCV_PAGE_BYTES};
 #[cfg(test)]
 use mmap::{RISCV_LINUX_MAP_FIXED, RISCV_LINUX_MAP_PRIVATE};
+use robust::{syscall_get_robust_list, syscall_set_robust_list, RiscvRobustList};
 use seek::{syscall_lseek, RISCV_LINUX_LSEEK};
 pub use startup::{
     RiscvSeAuxvEntry, RiscvSeStartupConfig, RiscvSeStartupError, RiscvSeStartupImage,
@@ -296,6 +298,7 @@ pub struct RiscvSyscallState {
     identity: RiscvSyscallIdentity,
     current_directory: Vec<u8>,
     child_clear_tid: Option<u64>,
+    robust_list: RiscvRobustList,
     guest_fds: GuestFdTable,
     guest_futexes: GuestFutexTable,
     guest_wait: GuestWaitQueue,
@@ -344,6 +347,7 @@ impl RiscvSyscallState {
             identity,
             current_directory: b"/".to_vec(),
             child_clear_tid: None,
+            robust_list: RiscvRobustList::new(0, 0),
             guest_fds: linux_standard_guest_fds(),
             guest_futexes: GuestFutexTable::new(),
             guest_wait: GuestWaitQueue::new(current_process_group),
@@ -914,9 +918,15 @@ impl RiscvSyscallTable {
             }
             RISCV_LINUX_PRLIMIT64 => syscall_prlimit64(request, state, guest_memory_writer)
                 .map(|value| RiscvSyscallOutcome::Return { value }),
-            RISCV_LINUX_SET_ROBUST_LIST
-            | RISCV_LINUX_GET_ROBUST_LIST
-            | RISCV_LINUX_NANOSLEEP
+            RISCV_LINUX_SET_ROBUST_LIST => Some(RiscvSyscallOutcome::Return {
+                value: syscall_set_robust_list(request, state),
+            }),
+            RISCV_LINUX_GET_ROBUST_LIST => {
+                guest_memory_writer.map(|guest_memory| RiscvSyscallOutcome::Return {
+                    value: syscall_get_robust_list(request, state, guest_memory),
+                })
+            }
+            RISCV_LINUX_NANOSLEEP
             | RISCV_LINUX_SCHED_YIELD
             | RISCV_LINUX_RT_SIGSUSPEND
             | RISCV_LINUX_RT_SIGACTION
