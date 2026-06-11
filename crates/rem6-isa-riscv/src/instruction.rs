@@ -283,6 +283,82 @@ pub enum RiscvInstruction {
         offset: Immediate,
         width: MemoryWidth,
     },
+    FloatAddS {
+        rd: FloatRegister,
+        rs1: FloatRegister,
+        rs2: FloatRegister,
+    },
+    FloatSubS {
+        rd: FloatRegister,
+        rs1: FloatRegister,
+        rs2: FloatRegister,
+    },
+    FloatMulS {
+        rd: FloatRegister,
+        rs1: FloatRegister,
+        rs2: FloatRegister,
+    },
+    FloatDivS {
+        rd: FloatRegister,
+        rs1: FloatRegister,
+        rs2: FloatRegister,
+    },
+    FloatSqrtS {
+        rd: FloatRegister,
+        rs1: FloatRegister,
+    },
+    FloatSignInjectS {
+        rd: FloatRegister,
+        rs1: FloatRegister,
+        rs2: FloatRegister,
+    },
+    FloatSignInjectNegS {
+        rd: FloatRegister,
+        rs1: FloatRegister,
+        rs2: FloatRegister,
+    },
+    FloatSignInjectXorS {
+        rd: FloatRegister,
+        rs1: FloatRegister,
+        rs2: FloatRegister,
+    },
+    FloatMinS {
+        rd: FloatRegister,
+        rs1: FloatRegister,
+        rs2: FloatRegister,
+    },
+    FloatMaxS {
+        rd: FloatRegister,
+        rs1: FloatRegister,
+        rs2: FloatRegister,
+    },
+    FloatLessOrEqualS {
+        rd: Register,
+        rs1: FloatRegister,
+        rs2: FloatRegister,
+    },
+    FloatLessThanS {
+        rd: Register,
+        rs1: FloatRegister,
+        rs2: FloatRegister,
+    },
+    FloatEqualS {
+        rd: Register,
+        rs1: FloatRegister,
+        rs2: FloatRegister,
+    },
+    FloatClassS {
+        rd: Register,
+        rs1: FloatRegister,
+    },
+    FloatMoveXFromS {
+        rd: Register,
+        rs1: FloatRegister,
+    },
+    FloatMoveSFromX {
+        rd: FloatRegister,
+        rs1: Register,
+    },
     FloatAddD {
         rd: FloatRegister,
         rs1: FloatRegister,

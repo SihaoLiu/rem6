@@ -761,14 +761,23 @@ impl RiscvHartState {
                     value: self.read_float(rs2),
                 });
             }
-            instruction @ (RiscvInstruction::FloatAddD { rs1, rs2, .. }
+            instruction @ (RiscvInstruction::FloatAddS { rs1, rs2, .. }
+            | RiscvInstruction::FloatAddD { rs1, rs2, .. }
+            | RiscvInstruction::FloatSubS { rs1, rs2, .. }
             | RiscvInstruction::FloatSubD { rs1, rs2, .. }
+            | RiscvInstruction::FloatMulS { rs1, rs2, .. }
             | RiscvInstruction::FloatMulD { rs1, rs2, .. }
+            | RiscvInstruction::FloatDivS { rs1, rs2, .. }
             | RiscvInstruction::FloatDivD { rs1, rs2, .. }
+            | RiscvInstruction::FloatSignInjectS { rs1, rs2, .. }
             | RiscvInstruction::FloatSignInjectD { rs1, rs2, .. }
+            | RiscvInstruction::FloatSignInjectNegS { rs1, rs2, .. }
             | RiscvInstruction::FloatSignInjectNegD { rs1, rs2, .. }
+            | RiscvInstruction::FloatSignInjectXorS { rs1, rs2, .. }
             | RiscvInstruction::FloatSignInjectXorD { rs1, rs2, .. }
+            | RiscvInstruction::FloatMinS { rs1, rs2, .. }
             | RiscvInstruction::FloatMinD { rs1, rs2, .. }
+            | RiscvInstruction::FloatMaxS { rs1, rs2, .. }
             | RiscvInstruction::FloatMaxD { rs1, rs2, .. }) => {
                 let (rd, value) = float::float_register_write(
                     instruction,
@@ -777,11 +786,13 @@ impl RiscvHartState {
                 );
                 float::write_float_register(self, &mut float_register_writes, rd, value);
             }
-            instruction @ RiscvInstruction::FloatSqrtD { rs1, .. } => {
+            instruction @ (RiscvInstruction::FloatSqrtS { rs1, .. }
+            | RiscvInstruction::FloatSqrtD { rs1, .. }) => {
                 let (rd, value) = float::float_register_write(instruction, self.read_float(rs1), 0);
                 float::write_float_register(self, &mut float_register_writes, rd, value);
             }
-            instruction @ (RiscvInstruction::FloatMoveDFromX { rs1, .. }
+            instruction @ (RiscvInstruction::FloatMoveSFromX { rs1, .. }
+            | RiscvInstruction::FloatMoveDFromX { rs1, .. }
             | RiscvInstruction::FloatConvertDFromW { rs1, .. }
             | RiscvInstruction::FloatConvertDFromWu { rs1, .. }
             | RiscvInstruction::FloatConvertDFromL { rs1, .. }
@@ -790,8 +801,11 @@ impl RiscvHartState {
                     float::float_register_write_from_integer(instruction, self.read(rs1));
                 float::write_float_register(self, &mut float_register_writes, rd, value);
             }
-            instruction @ (RiscvInstruction::FloatLessOrEqualD { rs1, rs2, .. }
+            instruction @ (RiscvInstruction::FloatLessOrEqualS { rs1, rs2, .. }
+            | RiscvInstruction::FloatLessOrEqualD { rs1, rs2, .. }
+            | RiscvInstruction::FloatLessThanS { rs1, rs2, .. }
             | RiscvInstruction::FloatLessThanD { rs1, rs2, .. }
+            | RiscvInstruction::FloatEqualS { rs1, rs2, .. }
             | RiscvInstruction::FloatEqualD { rs1, rs2, .. }) => {
                 let (rd, value) = float::integer_register_write(
                     instruction,
@@ -800,7 +814,9 @@ impl RiscvHartState {
                 );
                 write_register(self, &mut register_writes, rd, value);
             }
-            instruction @ (RiscvInstruction::FloatClassD { rs1, .. }
+            instruction @ (RiscvInstruction::FloatClassS { rs1, .. }
+            | RiscvInstruction::FloatClassD { rs1, .. }
+            | RiscvInstruction::FloatMoveXFromS { rs1, .. }
             | RiscvInstruction::FloatMoveXFromD { rs1, .. }
             | RiscvInstruction::FloatConvertWFromD { rs1, .. }
             | RiscvInstruction::FloatConvertWuFromD { rs1, .. }
@@ -1154,7 +1170,6 @@ fn write_register(
     hart.write(register, value);
     writes.push(RegisterWrite::new(register, value));
 }
-
 fn write_counter_csr(
     hart: &mut RiscvHartState,
     writes: &mut Vec<RegisterWrite>,
@@ -1166,11 +1181,9 @@ fn write_counter_csr(
     write_register(hart, writes, register, old_value);
     hart.counters.set_machine(csr, value);
 }
-
 fn read_status_csr(hart: &RiscvHartState, csr: RiscvStatusCsr) -> u64 {
     csr.read(hart.status())
 }
-
 fn write_status_csr(
     hart: &mut RiscvHartState,
     writes: &mut Vec<RegisterWrite>,
@@ -1182,7 +1195,6 @@ fn write_status_csr(
     write_register(hart, writes, register, old_value);
     hart.set_status(csr.write(hart.status(), value));
 }
-
 fn write_interrupt_csr(
     hart: &mut RiscvHartState,
     writes: &mut Vec<RegisterWrite>,
@@ -1194,7 +1206,6 @@ fn write_interrupt_csr(
     write_register(hart, writes, register, old_value);
     hart.write_interrupt_csr(csr, value);
 }
-
 fn read_machine_trap_csr(hart: &RiscvHartState, csr: RiscvMachineTrapCsr) -> u64 {
     match csr {
         RiscvMachineTrapCsr::Medeleg => hart.machine_exception_delegation(),
@@ -1205,7 +1216,6 @@ fn read_machine_trap_csr(hart: &RiscvHartState, csr: RiscvMachineTrapCsr) -> u64
         RiscvMachineTrapCsr::Mtval => hart.machine_trap_value(),
     }
 }
-
 fn write_machine_trap_csr(
     hart: &mut RiscvHartState,
     writes: &mut Vec<RegisterWrite>,
@@ -1224,7 +1234,6 @@ fn write_machine_trap_csr(
         RiscvMachineTrapCsr::Mtval => hart.set_machine_trap_value(value),
     }
 }
-
 fn read_supervisor_trap_csr(hart: &RiscvHartState, csr: RiscvSupervisorTrapCsr) -> u64 {
     match csr {
         RiscvSupervisorTrapCsr::Stvec => hart.supervisor_trap_vector(),
@@ -1233,7 +1242,6 @@ fn read_supervisor_trap_csr(hart: &RiscvHartState, csr: RiscvSupervisorTrapCsr) 
         RiscvSupervisorTrapCsr::Stval => hart.supervisor_trap_value(),
     }
 }
-
 fn write_supervisor_trap_csr(
     hart: &mut RiscvHartState,
     writes: &mut Vec<RegisterWrite>,
@@ -1250,13 +1258,11 @@ fn write_supervisor_trap_csr(
         RiscvSupervisorTrapCsr::Stval => hart.set_supervisor_trap_value(value),
     }
 }
-
 fn read_translation_csr(hart: &RiscvHartState, csr: RiscvTranslationCsr) -> u64 {
     match csr {
         RiscvTranslationCsr::Satp => hart.translation_satp(),
     }
 }
-
 fn write_translation_csr(
     hart: &mut RiscvHartState,
     writes: &mut Vec<RegisterWrite>,
@@ -1270,7 +1276,6 @@ fn write_translation_csr(
         RiscvTranslationCsr::Satp => hart.set_translation_satp(value),
     }
 }
-
 fn add_signed(value: u64, offset: i64) -> Result<u64, RiscvError> {
     if offset >= 0 {
         value

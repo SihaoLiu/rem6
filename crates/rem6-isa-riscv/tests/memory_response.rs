@@ -99,6 +99,24 @@ fn float_load_response_writeback_preserves_raw_bits() {
 }
 
 #[test]
+fn float_word_load_response_writeback_nan_boxes_single_precision_bits() {
+    let float_load = MemoryAccessKind::FloatLoad {
+        rd: freg(3),
+        address: 0x9004,
+        width: MemoryWidth::Word,
+    };
+
+    let bits = std::f32::consts::PI.to_bits();
+    assert_eq!(
+        float_load.read_response_writeback(&bits.to_le_bytes()),
+        Ok(Some(MemoryResponseWriteback::new_float(
+            freg(3),
+            0xffff_ffff_0000_0000 | u64::from(bits),
+        )))
+    );
+}
+
+#[test]
 fn read_modify_write_response_writeback_returns_old_memory_value() {
     let load_reserved_word = MemoryAccessKind::LoadReserved {
         rd: reg(6),

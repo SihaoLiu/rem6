@@ -313,7 +313,7 @@ impl MemoryAccessKind {
                 MemoryResponseWriteback::new(register, value)
             }
             MemoryResponseWritebackTarget::Float(register) => {
-                MemoryResponseWriteback::new_float(register, value)
+                MemoryResponseWriteback::new_float(register, float_response_value(width, value))
             }
         }))
     }
@@ -333,6 +333,13 @@ impl MemoryAccessKind {
             )),
             Self::StoreConditional { .. } | Self::Store { .. } | Self::FloatStore { .. } => None,
         }
+    }
+}
+
+const fn float_response_value(width: MemoryWidth, value: u64) -> u64 {
+    match width {
+        MemoryWidth::Word => 0xffff_ffff_0000_0000 | (value & 0xffff_ffff),
+        _ => value,
     }
 }
 
