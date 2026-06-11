@@ -11,7 +11,7 @@ const RISCV_LINUX_CLOCK_REALTIME_COARSE: u64 = 5;
 const RISCV_LINUX_CLOCK_MONOTONIC_COARSE: u64 = 6;
 const RISCV_LINUX_CLOCK_BOOTTIME: u64 = 7;
 const RISCV_LINUX_NANOSECONDS_PER_SECOND: u64 = 1_000_000_000;
-const RISCV_LINUX_TIMESPEC_BYTES: usize = 16;
+const RISCV_LINUX_NANOSECONDS_PER_MICROSECOND: u64 = 1_000;
 
 pub(super) fn syscall_clock_gettime(
     clock_id: u64,
@@ -25,11 +25,31 @@ pub(super) fn syscall_clock_gettime(
 
     let seconds = tick / RISCV_LINUX_NANOSECONDS_PER_SECOND;
     let nanoseconds = tick % RISCV_LINUX_NANOSECONDS_PER_SECOND;
-    let mut bytes = [0; RISCV_LINUX_TIMESPEC_BYTES];
+    write_riscv_linux_time_pair(timespec_address, seconds, nanoseconds, guest_memory)
+}
+
+pub(super) fn syscall_gettimeofday(
+    timeval_address: u64,
+    tick: Tick,
+    guest_memory: &RiscvGuestMemoryWriter,
+) -> u64 {
+    let seconds = tick / RISCV_LINUX_NANOSECONDS_PER_SECOND;
+    let microseconds =
+        (tick % RISCV_LINUX_NANOSECONDS_PER_SECOND) / RISCV_LINUX_NANOSECONDS_PER_MICROSECOND;
+    write_riscv_linux_time_pair(timeval_address, seconds, microseconds, guest_memory)
+}
+
+fn write_riscv_linux_time_pair(
+    address: u64,
+    seconds: u64,
+    fraction: u64,
+    guest_memory: &RiscvGuestMemoryWriter,
+) -> u64 {
+    let mut bytes = [0; 16];
     bytes[..8].copy_from_slice(&seconds.to_le_bytes());
-    bytes[8..].copy_from_slice(&nanoseconds.to_le_bytes());
+    bytes[8..].copy_from_slice(&fraction.to_le_bytes());
     for (offset, byte) in bytes.iter().enumerate() {
-        let Some(address) = timespec_address.checked_add(offset as u64) else {
+        let Some(address) = address.checked_add(offset as u64) else {
             return linux_error(RISCV_LINUX_EFAULT);
         };
         if !guest_memory.write(address, std::slice::from_ref(byte)) {
