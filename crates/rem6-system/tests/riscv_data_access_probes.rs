@@ -7,13 +7,15 @@ use rem6_cpu::{
 use rem6_isa_riscv::Register;
 use rem6_kernel::{ParallelSchedulerContext, PartitionId, PartitionedScheduler};
 use rem6_memory::{
-    AccessSize, Address, AgentId, CacheLineLayout, MemoryOperation, MemoryResponse, MemoryTargetId,
-    PartitionedMemoryStore,
+    AccessSize, Address, AddressRange, AgentId, CacheLineLayout, MemoryOperation, MemoryResponse,
+    MemoryTargetId, PartitionedMemoryStore,
 };
+use rem6_mmio::{MmioAccess, MmioBus, MmioRegisterBank, MmioRoute};
 use rem6_stats::{
     CommMonitorConfig, CommMonitorStats, MemCheckerTransaction, MemCheckerWriteClusterSnapshot,
     MemFootprintAddressRange, MemFootprintProbeConfig, MemFootprintProbeSnapshot,
-    MemProbePacketAccess, MemProbePacketKind, ProbePayload, StackDistProbeConfig,
+    MemProbePacketAccess, MemProbePacketKind, MemTraceProbeConfig, MemTraceProbeHeader,
+    ProbePayload, StackDistProbeConfig,
 };
 use rem6_system::{
     GuestEventId, GuestSourceId, HostEventPolicy, RiscvDataAccessStats, RiscvSystemRunDriver,
@@ -442,6 +444,275 @@ fn system_run_data_access_stats_drive_comm_monitor_from_real_load_requests_and_r
     );
     assert!(!communication.histograms().read_latencies().is_empty());
     assert_eq!(data.probes().events().len(), 4);
+}
+
+#[test]
+fn system_run_data_access_stats_drive_mmio_load_requests_and_responses() {
+    let host = PartitionId::new(3);
+    let source = GuestSourceId::new(49);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let fetch_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let data_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.dmem"),
+                PartitionId::new(0),
+                endpoint("l1d"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let core = riscv_data_core(
+        0,
+        0,
+        7,
+        "cpu0.ifetch",
+        fetch_route,
+        "cpu0.dmem",
+        data_route,
+        0x8000,
+    );
+    core.write_register(reg(2), 0x1000);
+    let cluster = RiscvCluster::new([core]).unwrap();
+    let store = loaded_program_store_with_data(
+        &[
+            (0x8000, i_type(0x008, 2, 0x3, 5, 0x03)),
+            (0x8004, 0x0000_0073),
+        ],
+        &[],
+    );
+    let mut bank =
+        MmioRegisterBank::new(Address::new(0x1000), AccessSize::new(0x100).unwrap()).unwrap();
+    bank.insert_register(
+        8,
+        AccessSize::new(8).unwrap(),
+        MmioAccess::ReadOnly,
+        0x8877_6655_4433_2211_u64.to_le_bytes().to_vec(),
+    )
+    .unwrap();
+    let mut bus = MmioBus::new();
+    bus.insert_device(
+        AddressRange::new(Address::new(0x1000), AccessSize::new(0x100).unwrap()).unwrap(),
+        MmioRoute::new(PartitionId::new(0), PartitionId::new(2), 2, 2).unwrap(),
+        Mutex::new(bank),
+    )
+    .unwrap();
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        rem6_stats::StatsRegistry::new(),
+    )));
+    let trap_port = RiscvTrapEventPort::new(
+        SystemHostEventPort::with_controller(host, 2, Arc::clone(&controller)).unwrap(),
+        source,
+    );
+    let comm_config = comm_monitor_config();
+    let trace_header =
+        MemTraceProbeHeader::new("riscv.mmio", 1_000_000_000, vec![(7, "cpu0".to_string())])
+            .unwrap();
+    let driver = RiscvSystemRunDriver::new(trap_port).with_data_access_stats(
+        RiscvDataAccessStats::with_stack_distance(stack_distance_config())
+            .with_mem_trace(MemTraceProbeConfig::new(trace_header.clone(), false))
+            .with_comm_monitor(comm_config.clone()),
+    );
+
+    let run = driver
+        .drive_until_host_stop_parallel_with_mmio(
+            &cluster,
+            &mut scheduler,
+            &transport,
+            &bus,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_cpu| responder(Arc::clone(&store)),
+            |_cpu| responder(Arc::clone(&store)),
+            40,
+            |cpu| GuestEventId::new(190 + u64::from(cpu.get())),
+        )
+        .unwrap();
+
+    assert_eq!(
+        cluster.core(CpuId::new(0)).unwrap().read_register(reg(5)),
+        0x8877_6655_4433_2211
+    );
+    let data = run
+        .data_access_probes()
+        .expect("run should carry data access probe evidence");
+    assert_eq!(data.stack_distance().infinite_samples(), 1);
+    assert_eq!(data.stack_distance().finite_samples(), 0);
+    assert_eq!(data.stack_distance().stack(), &[0x1000]);
+    let trace = data
+        .memory_trace()
+        .expect("run should carry MMIO memory trace evidence");
+    assert_eq!(trace.header(), &trace_header);
+    assert_eq!(trace.records().len(), 1);
+    assert_eq!(trace.records()[0].address(), 0x1008);
+    assert_eq!(trace.records()[0].command(), 2);
+    assert_eq!(trace.records()[0].size(), 8);
+    let communication = data
+        .communication_monitor()
+        .expect("run should carry MMIO communication monitor evidence");
+    assert_eq!(communication.config(), &comm_config);
+    assert!(communication.pending().is_empty());
+    assert_eq!(
+        communication.stats(),
+        CommMonitorStats::new(1, 0, 8, 0, 8, 0, 0, 0)
+    );
+    assert_eq!(communication.histograms().read_burst_lengths(), &[(8, 1)]);
+    assert_eq!(communication.histograms().read_addresses(), &[(0x1000, 1)]);
+    assert!(!communication.histograms().read_latencies().is_empty());
+    assert_eq!(data.probes().events().len(), 2);
+    for event in data.probes().events() {
+        let ProbePayload::MemoryPacket(packet) = event.payload() else {
+            panic!("MMIO data access probe should emit memory packet payloads");
+        };
+        assert_eq!(packet.access(), MemProbePacketAccess::Read);
+        assert_eq!(packet.address(), 0x1008);
+        assert_eq!(packet.size(), 8);
+    }
+}
+
+#[test]
+fn system_run_data_access_stats_drive_mem_checker_monitor_from_real_mmio_store_then_load() {
+    let host = PartitionId::new(3);
+    let source = GuestSourceId::new(50);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let fetch_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let data_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.dmem"),
+                PartitionId::new(0),
+                endpoint("l1d"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let core = riscv_data_core(
+        0,
+        0,
+        7,
+        "cpu0.ifetch",
+        fetch_route,
+        "cpu0.dmem",
+        data_route,
+        0x8000,
+    );
+    core.write_register(reg(2), 0x1000);
+    core.write_register(reg(3), 0x2a);
+    let cluster = RiscvCluster::new([core]).unwrap();
+    let store = loaded_program_store_with_data(
+        &[
+            (0x8000, s_type(0x008, 3, 2, 0x0)),
+            (0x8004, i_type(0x008, 2, 0x0, 5, 0x03)),
+            (0x8008, 0x0000_0073),
+        ],
+        &[],
+    );
+    let mut bank =
+        MmioRegisterBank::new(Address::new(0x1000), AccessSize::new(0x100).unwrap()).unwrap();
+    bank.insert_register(
+        8,
+        AccessSize::new(1).unwrap(),
+        MmioAccess::ReadWrite,
+        vec![0],
+    )
+    .unwrap();
+    let mut bus = MmioBus::new();
+    bus.insert_device(
+        AddressRange::new(Address::new(0x1000), AccessSize::new(0x100).unwrap()).unwrap(),
+        MmioRoute::new(PartitionId::new(0), PartitionId::new(2), 2, 2).unwrap(),
+        Mutex::new(bank),
+    )
+    .unwrap();
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        rem6_stats::StatsRegistry::new(),
+    )));
+    let trap_port = RiscvTrapEventPort::new(
+        SystemHostEventPort::with_controller(host, 2, Arc::clone(&controller)).unwrap(),
+        source,
+    );
+    let driver = RiscvSystemRunDriver::new(trap_port).with_data_access_stats(
+        RiscvDataAccessStats::with_stack_distance(stack_distance_config())
+            .with_mem_checker_monitor(),
+    );
+
+    let run = driver
+        .drive_until_host_stop_parallel_with_mmio(
+            &cluster,
+            &mut scheduler,
+            &transport,
+            &bus,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_cpu| responder(Arc::clone(&store)),
+            |_cpu| responder(Arc::clone(&store)),
+            40,
+            |cpu| GuestEventId::new(200 + u64::from(cpu.get())),
+        )
+        .unwrap();
+
+    assert_eq!(
+        cluster.core(CpuId::new(0)).unwrap().read_register(reg(5)),
+        0x2a
+    );
+    let data = run
+        .data_access_probes()
+        .expect("run should carry data access probe evidence");
+    assert_eq!(data.probes().events().len(), 4);
+    let checker = data
+        .mem_checker_monitor()
+        .expect("run should carry MMIO memory checker evidence");
+    assert!(checker.pending().is_empty());
+    assert_eq!(checker.checker().next_serial(), 3);
+    assert_eq!(checker.checker().bytes().len(), 1);
+    let byte = &checker.checker().bytes()[0];
+    assert_eq!(byte.address(), 0x1008);
+    assert!(byte.outstanding_reads().is_empty());
+    assert_eq!(byte.read_observations().last().unwrap().serial(), 2);
+    assert_eq!(byte.read_observations().last().unwrap().data(), 0x2a);
+    assert_eq!(byte.write_clusters().len(), 1);
+    assert_eq!(
+        byte.write_clusters()[0].writes(),
+        &[MemCheckerTransaction::write(
+            1,
+            byte.write_clusters()[0].start_tick(),
+            byte.write_clusters()[0].complete_tick(),
+            0x2a
+        )]
+    );
 }
 
 #[test]

@@ -445,9 +445,6 @@ impl RiscvDataAccessProbeRecorder {
     }
 
     fn record_event(&mut self, event: &RiscvDataAccessEvent) -> Result<(), StatsError> {
-        if event.route().is_none() {
-            return Ok(());
-        }
         match event.kind() {
             RiscvDataAccessEventKind::Issued => self.record_request_event(event),
             RiscvDataAccessEventKind::Completed => self.record_response_event(event, false),
