@@ -724,6 +724,7 @@ pub(super) struct RiscvWorkloadScheduledTrafficTraceReplays {
     pub(super) fetch_bindings: Vec<RiscvWorkloadTrafficTraceFetchBinding>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn schedule_traffic_trace_replays_with_fetch_bindings(
     replays: &[RiscvWorkloadTrafficTraceReplay],
     topology: &WorkloadTopology,

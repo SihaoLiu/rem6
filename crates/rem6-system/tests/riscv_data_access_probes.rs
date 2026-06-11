@@ -319,7 +319,7 @@ fn data_access_stats_without_comm_monitor_keeps_snapshot_absent() {
 }
 
 #[test]
-fn system_run_data_access_stats_drive_comm_monitor_from_real_load_requests() {
+fn system_run_data_access_stats_drive_comm_monitor_from_real_load_requests_and_responses() {
     let host = PartitionId::new(3);
     let source = GuestSourceId::new(43);
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
@@ -407,13 +407,26 @@ fn system_run_data_access_stats_drive_comm_monitor_from_real_load_requests() {
     let communication = data
         .communication_monitor()
         .expect("run should carry communication monitor evidence");
+    assert!(data.response_point().is_some());
     assert_eq!(communication.config(), &config);
     assert!(communication.pending().is_empty());
     assert_eq!(
         communication.stats(),
-        CommMonitorStats::new(2, 0, 0, 0, 0, 0, 0, 0)
+        CommMonitorStats::new(2, 0, 16, 0, 16, 0, 0, 0)
     );
-    let request_delta = data.probes().events()[1].tick() - data.probes().events()[0].tick();
+    let request_ticks = data
+        .probes()
+        .events()
+        .iter()
+        .filter_map(|event| match event.payload() {
+            ProbePayload::MemoryPacket(packet) if packet.kind() == MemProbePacketKind::Request => {
+                Some(event.tick())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(request_ticks.len(), 2);
+    let request_delta = request_ticks[1] - request_ticks[0];
     assert_eq!(communication.histograms().read_burst_lengths(), &[(8, 2)]);
     assert_eq!(
         communication.histograms().read_to_read_times(),
@@ -427,10 +440,12 @@ fn system_run_data_access_stats_drive_comm_monitor_from_real_load_requests() {
         communication.histograms().read_addresses(),
         &[(0x9800, 1), (0x9840, 1)]
     );
+    assert!(!communication.histograms().read_latencies().is_empty());
+    assert_eq!(data.probes().events().len(), 4);
 }
 
 #[test]
-fn system_run_data_access_stats_drive_comm_monitor_from_real_store_requests() {
+fn system_run_data_access_stats_drive_comm_monitor_from_real_store_requests_and_responses() {
     let host = PartitionId::new(3);
     let source = GuestSourceId::new(44);
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
@@ -512,6 +527,7 @@ fn system_run_data_access_stats_drive_comm_monitor_from_real_store_requests() {
     let communication = data
         .communication_monitor()
         .expect("run should carry communication monitor evidence");
+    assert!(data.response_point().is_some());
     assert_eq!(communication.config(), &config);
     assert!(communication.pending().is_empty());
     assert_eq!(
@@ -520,8 +536,8 @@ fn system_run_data_access_stats_drive_comm_monitor_from_real_store_requests() {
     );
     assert_eq!(communication.histograms().write_burst_lengths(), &[(8, 1)]);
     assert_eq!(communication.histograms().write_addresses(), &[(0x9800, 1)]);
-    assert!(communication.histograms().write_latencies().is_empty());
-    assert_eq!(data.probes().events().len(), 1);
+    assert!(!communication.histograms().write_latencies().is_empty());
+    assert_eq!(data.probes().events().len(), 2);
 }
 
 #[test]

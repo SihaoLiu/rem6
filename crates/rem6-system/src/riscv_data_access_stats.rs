@@ -27,6 +27,7 @@ pub struct RiscvDataAccessProbeSnapshot {
 }
 
 impl RiscvDataAccessProbeSnapshot {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         probes: ProbeSnapshot,
         stack_distance: StackDistProbeSnapshot,
@@ -373,15 +374,16 @@ impl RiscvDataAccessProbeRecorder {
             .probes
             .register_point("riscv_data", "Request")
             .expect("generated data access probe point is valid");
-        self.response_point = if self.mem_checker_monitor.is_some() {
-            Some(
-                self.probes
-                    .register_point("riscv_data", "Response")
-                    .expect("generated data access probe point is valid"),
-            )
-        } else {
-            None
-        };
+        self.response_point =
+            if self.communication_monitor.is_some() || self.mem_checker_monitor.is_some() {
+                Some(
+                    self.probes
+                        .register_point("riscv_data", "Response")
+                        .expect("generated data access probe point is valid"),
+                )
+            } else {
+                None
+            };
         self.probes
             .add_listener(self.request_point, "stack_dist")
             .expect("generated data access probe listener is valid");
@@ -483,7 +485,7 @@ impl RiscvDataAccessProbeRecorder {
             communication_monitor.observe_request_probe_event(
                 &probe_event,
                 self.request_point,
-                self.mem_checker_monitor.is_some(),
+                self.response_point.is_some(),
             )?;
         }
         let request_data = request_data(event.access(), event.size().bytes());
