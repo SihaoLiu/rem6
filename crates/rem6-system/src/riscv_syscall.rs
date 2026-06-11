@@ -982,7 +982,9 @@ impl RiscvSyscallTable {
             RISCV_LINUX_MUNMAP => Some(RiscvSyscallOutcome::Return {
                 value: syscall_munmap(request.argument(0), request.argument(1), state),
             }),
-            _ => None,
+            _ => Some(RiscvSyscallOutcome::Return {
+                value: linux_error(RISCV_LINUX_ENOSYS),
+            }),
         }
     }
 }

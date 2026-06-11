@@ -47,6 +47,22 @@ fn linux_table_maps_exit_numbers_to_stop_codes() {
 }
 
 #[test]
+fn linux_table_returns_enosys_for_unknown_syscalls() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(0x8000, 9999, [1, 2, 3, 4, 5, 6]),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_ENOSYS)
+        })
+    );
+}
+
+#[test]
 fn linux_table_tracks_program_break() {
     let table = RiscvSyscallTable::new();
     let mut state = RiscvSyscallState::new(0);
@@ -1754,12 +1770,16 @@ fn linux_table_rejects_overflowing_fixed_mmap() {
 }
 
 #[test]
-fn linux_table_leaves_unknown_numbers_for_the_trap_path() {
+fn linux_table_unknown_numbers_return_enosys_without_mutating_state() {
     let mut state = RiscvSyscallState::new(0);
 
     assert_eq!(
         RiscvSyscallTable::new()
             .handle(RiscvSyscallRequest::new(0x8000, 9999, [0; 6]), &mut state,),
-        None
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_ENOSYS)
+        })
     );
+    assert_eq!(state.program_break(), 0);
+    assert!(state.guest_writes().is_empty());
 }
