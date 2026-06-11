@@ -1416,12 +1416,16 @@ Implementation evidence through 2026-06-03:
   `fcntl` now consumes `F_GETFD`, `F_SETFD`, `F_GETFL`, and `F_SETFL` through
   that path against typed guest fd state seeded with stdin, stdout, and stderr;
   close-on-exec remains a per-descriptor flag while file status flags remain
-  shared by file description. Fork, clone, exec, futex wait/requeue and
-  child-clear-TID wake,
+  shared by file description. RISC-V `write` now consumes a real user-mode
+  ecall when guest-memory reading is configured, copies the guest buffer from
+  the simulated memory store, records the guest-backed write bytes with fd,
+  address, and tick evidence, advances the shared file offset, returns the byte
+  count to `a0`, and resumes guest execution. Fork, clone, exec,
+  futex wait/requeue and child-clear-TID wake,
   dynamic credential changes, file-backed mmap handling, backing-memory or
-  page-table installation for returned ranges, `openat`, `read`, `write`,
-  `wait4`, and guest-memory argument copying remain open before broad libc
-  workloads can run. Exec handoff can now close only descriptors marked
+  page-table installation for returned ranges, `openat`, `read`,
+  `wait4`, and remaining guest-memory argument copying remain open before broad
+  libc workloads can run. Exec handoff can now close only descriptors marked
   close-on-exec while returning the removed entries for host-backed cleanup.
   Host-backed description metadata keeps file status flags shared by
   description id, so duplicated descriptors share `F_GETFL` and `F_SETFL` state
@@ -5236,11 +5240,11 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   `set_tid_address` child-clear-TID state, anonymous `mmap`/`munmap` region
   state, gem5-style ignore-return advisory memory-management calls, ignored
   `rseq` returning `-ENOSYS`, `futex` wake/wake-bitset handling, and initial
-  `dup`, `dup3`, `close`, and `fcntl` descriptor/status flag handling through
+  `dup`, `dup3`, `close`, `fcntl`, and guest-backed `write` handling through
   the same real ecall path. It still lacks fork/clone process modeling, futex
   wait, futex requeue, futex wake on child-clear-TID, file-backed mmap handling,
   backing-memory installation for returned ranges, the broader syscall table,
-  and guest-memory argument paths needed for `openat`, `read`, `write`,
+  and remaining guest-memory argument paths needed for `openat`, `read`,
   `futex`, and `wait4`, and Linux handoff still needs an SBI-class
   firmware/runtime path rather than only DTB/initrd/register handoff.
 - Complete predictor coupling, external checkpoint payloads, and richer
