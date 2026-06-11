@@ -1,5 +1,5 @@
 use std::{
-    collections::VecDeque,
+    collections::{BTreeSet, VecDeque},
     fmt,
     sync::{Arc, Mutex},
 };
@@ -17,6 +17,7 @@ use crate::{
 const RISCV_LINUX_DUP: u64 = 23;
 const RISCV_LINUX_DUP3: u64 = 24;
 const RISCV_LINUX_FCNTL: u64 = 25;
+const RISCV_LINUX_OPENAT: u64 = 56;
 const RISCV_LINUX_CLOSE: u64 = 57;
 const RISCV_LINUX_READ: u64 = 63;
 const RISCV_LINUX_WRITE: u64 = 64;
@@ -55,10 +56,12 @@ const RISCV_LINUX_MINCORE: u64 = 232;
 const RISCV_LINUX_MADVISE: u64 = 233;
 const RISCV_LINUX_MBIND: u64 = 235;
 const RISCV_LINUX_RSEQ: u64 = 293;
+const RISCV_LINUX_ENOENT: u64 = 2;
 const RISCV_LINUX_EBADF: u64 = 9;
 const RISCV_LINUX_EFAULT: u64 = 14;
 const RISCV_LINUX_EINVAL: u64 = 22;
 const RISCV_LINUX_EMFILE: u64 = 24;
+const RISCV_LINUX_ENAMETOOLONG: u64 = 36;
 const RISCV_LINUX_ENOSYS: u64 = 38;
 const RISCV_LINUX_FUTEX_WAKE: u32 = 1;
 const RISCV_LINUX_FUTEX_WAKE_BITSET: u32 = 10;
@@ -79,6 +82,8 @@ const RISCV_LINUX_MAP_SHARED: u64 = 0x01;
 const RISCV_LINUX_MAP_PRIVATE: u64 = 0x02;
 const RISCV_LINUX_MAP_FIXED: u64 = 0x10;
 const RISCV_LINUX_MAP_ANONYMOUS: u64 = 0x20;
+const RISCV_LINUX_AT_FDCWD: u64 = (-100_i64) as u64;
+const RISCV_LINUX_PATH_MAX: usize = 4096;
 const RISCV_PAGE_BYTES: u64 = 4096;
 const RISCV64_LINUX_MMAP_BASE: u64 = 0x4000_0000_0000_0000;
 const RISCV_LINUX_DEFAULT_PROCESS_ID: u64 = 100;
@@ -295,11 +300,55 @@ impl RiscvGuestWriteRecord {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiscvGuestOpenRecord {
+    fd: GuestFd,
+    dirfd: u64,
+    path: Vec<u8>,
+    flags: u64,
+    mode: u64,
+}
+
+impl RiscvGuestOpenRecord {
+    pub fn new(fd: GuestFd, dirfd: u64, path: Vec<u8>, flags: u64, mode: u64) -> Self {
+        Self {
+            fd,
+            dirfd,
+            path,
+            flags,
+            mode,
+        }
+    }
+
+    pub const fn fd(&self) -> GuestFd {
+        self.fd
+    }
+
+    pub const fn dirfd(&self) -> u64 {
+        self.dirfd
+    }
+
+    pub fn path(&self) -> &[u8] {
+        &self.path
+    }
+
+    pub const fn flags(&self) -> u64 {
+        self.flags
+    }
+
+    pub const fn mode(&self) -> u64 {
+        self.mode
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RiscvSyscallState {
     identity: RiscvSyscallIdentity,
     child_clear_tid: Option<u64>,
     guest_fds: GuestFdTable,
     guest_futexes: GuestFutexTable,
+    guest_paths: BTreeSet<Vec<u8>>,
+    guest_opens: Vec<RiscvGuestOpenRecord>,
+    stdin_fds: BTreeSet<GuestFd>,
     guest_writes: Vec<RiscvGuestWriteRecord>,
     stdin: VecDeque<u8>,
     program_break: u64,
@@ -330,11 +379,16 @@ impl RiscvSyscallState {
         identity: RiscvSyscallIdentity,
         mmap_next: u64,
     ) -> Self {
+        let mut stdin_fds = BTreeSet::new();
+        stdin_fds.insert(GuestFd::new(0).expect("standard stdin fd is non-negative"));
         Self {
             identity,
             child_clear_tid: None,
             guest_fds: linux_standard_guest_fds(),
             guest_futexes: GuestFutexTable::new(),
+            guest_paths: BTreeSet::new(),
+            guest_opens: Vec::new(),
+            stdin_fds,
             guest_writes: Vec::new(),
             stdin: VecDeque::new(),
             program_break,
@@ -361,6 +415,14 @@ impl RiscvSyscallState {
 
     pub fn guest_writes(&self) -> &[RiscvGuestWriteRecord] {
         &self.guest_writes
+    }
+
+    pub fn guest_opens(&self) -> &[RiscvGuestOpenRecord] {
+        &self.guest_opens
+    }
+
+    pub fn register_guest_path(&mut self, path: impl AsRef<[u8]>) {
+        self.guest_paths.insert(path.as_ref().to_vec());
     }
 
     pub fn push_stdin_bytes(&mut self, bytes: &[u8]) {
@@ -428,6 +490,78 @@ impl RiscvSyscallState {
 
     fn push_guest_write(&mut self, write: RiscvGuestWriteRecord) {
         self.guest_writes.push(write);
+    }
+
+    fn guest_path_registered(&self, path: &[u8]) -> bool {
+        self.guest_paths.contains(path)
+    }
+
+    fn open_guest_path(
+        &mut self,
+        dirfd: u64,
+        path: Vec<u8>,
+        flags: u64,
+        mode: u64,
+        status_flags: GuestFileStatusFlags,
+        close_on_exec: bool,
+    ) -> Result<GuestFd, GuestFdError> {
+        let fd = self.next_open_fd()?;
+        let description = self.next_open_description()?;
+        self.guest_fds
+            .insert_description(GuestFileDescription::guest_backed(
+                description,
+                status_flags,
+            ))?;
+        self.guest_fds.insert(
+            fd,
+            GuestFdEntry::new(description).with_close_on_exec(close_on_exec),
+        )?;
+        self.guest_opens
+            .push(RiscvGuestOpenRecord::new(fd, dirfd, path, flags, mode));
+        Ok(fd)
+    }
+
+    fn stdin_readable(&self, fd: GuestFd) -> bool {
+        self.stdin_fds.contains(&fd)
+    }
+
+    fn close_fd_source(&mut self, fd: GuestFd) {
+        self.stdin_fds.remove(&fd);
+    }
+
+    fn duplicate_fd_source(&mut self, old_fd: GuestFd, new_fd: GuestFd) {
+        if self.stdin_fds.contains(&old_fd) {
+            self.stdin_fds.insert(new_fd);
+        } else {
+            self.stdin_fds.remove(&new_fd);
+        }
+    }
+
+    fn next_open_fd(&self) -> Result<GuestFd, GuestFdError> {
+        let snapshot = self.guest_fds.snapshot();
+        let mut candidate = 0_i32;
+        loop {
+            let fd = GuestFd::new(candidate)?;
+            if snapshot.entries().iter().all(|entry| entry.fd() != fd) {
+                return Ok(fd);
+            }
+            candidate = candidate
+                .checked_add(1)
+                .ok_or(GuestFdError::FdSpaceExhausted)?;
+        }
+    }
+
+    fn next_open_description(&self) -> Result<GuestFileDescriptionId, GuestFdError> {
+        let mut candidate = 0_u64;
+        loop {
+            let description = GuestFileDescriptionId::new(candidate);
+            if self.guest_fds.description(description).is_none() {
+                return Ok(description);
+            }
+            candidate = candidate
+                .checked_add(1)
+                .ok_or(GuestFdError::FdSpaceExhausted)?;
+        }
     }
 
     fn stdin_prefix(&self, count: usize) -> Vec<u8> {
@@ -614,6 +748,11 @@ impl RiscvSyscallTable {
                 ),
             }),
             RISCV_LINUX_FCNTL => syscall_fcntl(request, state),
+            RISCV_LINUX_OPENAT => {
+                guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
+                    value: syscall_openat(request, state, guest_memory),
+                })
+            }
             RISCV_LINUX_CLOSE => Some(RiscvSyscallOutcome::Return {
                 value: syscall_close(request.argument(0), state),
             }),
@@ -746,6 +885,13 @@ impl RiscvSyscallEmulation {
             .lock()
             .expect("RISC-V syscall state lock")
             .push_stdin_bytes(bytes);
+    }
+
+    pub fn register_guest_path(&self, path: impl AsRef<[u8]>) {
+        self.state
+            .lock()
+            .expect("RISC-V syscall state lock")
+            .register_guest_path(path);
     }
 
     pub fn handle_pending_core_trap(
@@ -906,7 +1052,55 @@ fn syscall_close(fd_argument: u64, state: &mut RiscvSyscallState) -> u64 {
         return linux_error(RISCV_LINUX_EBADF);
     };
     match state.guest_fds.close_descriptor(fd) {
-        Ok(_record) => 0,
+        Ok(_record) => {
+            state.close_fd_source(fd);
+            0
+        }
+        Err(_error) => linux_error(RISCV_LINUX_EBADF),
+    }
+}
+
+fn syscall_openat(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+    guest_memory: &RiscvGuestMemoryReader,
+) -> u64 {
+    let dirfd = request.argument(0);
+    if dirfd != RISCV_LINUX_AT_FDCWD {
+        return linux_error(RISCV_LINUX_EBADF);
+    }
+
+    let flags = request.argument(2);
+    if flags & !(RISCV_LINUX_O_ACCMODE | RISCV_LINUX_O_CLOEXEC) != 0 {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+    if flags & RISCV_LINUX_O_ACCMODE != RISCV_LINUX_O_RDONLY {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+
+    let path = match read_guest_c_string(guest_memory, request.argument(1), RISCV_LINUX_PATH_MAX) {
+        Ok(path) => path,
+        Err(RiscvGuestCStringError::Fault) => return linux_error(RISCV_LINUX_EFAULT),
+        Err(RiscvGuestCStringError::TooLong) => {
+            return linux_error(RISCV_LINUX_ENAMETOOLONG);
+        }
+    };
+    if path.is_empty() || !state.guest_path_registered(&path) {
+        return linux_error(RISCV_LINUX_ENOENT);
+    }
+
+    let status_flags = GuestFileStatusFlags::new((flags & !RISCV_LINUX_O_CLOEXEC) as u32);
+    let close_on_exec = flags & RISCV_LINUX_O_CLOEXEC != 0;
+    match state.open_guest_path(
+        dirfd,
+        path,
+        flags,
+        request.argument(3),
+        status_flags,
+        close_on_exec,
+    ) {
+        Ok(fd) => u64::from(fd.get()),
+        Err(GuestFdError::FdSpaceExhausted) => linux_error(RISCV_LINUX_EMFILE),
         Err(_error) => linux_error(RISCV_LINUX_EBADF),
     }
 }
@@ -923,6 +1117,9 @@ fn syscall_read(
         return linux_error(RISCV_LINUX_EBADF);
     };
     if status_flags.bits() & (RISCV_LINUX_O_ACCMODE as u32) == RISCV_LINUX_O_WRONLY as u32 {
+        return linux_error(RISCV_LINUX_EBADF);
+    }
+    if !state.stdin_readable(fd) {
         return linux_error(RISCV_LINUX_EBADF);
     }
 
@@ -1000,7 +1197,10 @@ fn syscall_dup(old_fd_argument: u64, state: &mut RiscvSyscallState) -> u64 {
         return linux_error(RISCV_LINUX_EBADF);
     };
     match state.guest_fds.dup(old_fd) {
-        Ok(new_fd) => u64::from(new_fd.get()),
+        Ok(new_fd) => {
+            state.duplicate_fd_source(old_fd, new_fd);
+            u64::from(new_fd.get())
+        }
         Err(GuestFdError::FdSpaceExhausted) => linux_error(RISCV_LINUX_EMFILE),
         Err(_error) => linux_error(RISCV_LINUX_EBADF),
     }
@@ -1026,6 +1226,7 @@ fn syscall_dup3(
     }
     match state.guest_fds.dup2_with_replacement(old_fd, new_fd) {
         Ok(record) => {
+            state.duplicate_fd_source(old_fd, record.fd());
             if flags & RISCV_LINUX_O_CLOEXEC != 0
                 && state
                     .guest_fds
@@ -1149,6 +1350,35 @@ fn futex_wake_count(value: u64) -> usize {
     } else {
         count as usize
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RiscvGuestCStringError {
+    Fault,
+    TooLong,
+}
+
+fn read_guest_c_string(
+    guest_memory: &RiscvGuestMemoryReader,
+    address: u64,
+    limit: usize,
+) -> Result<Vec<u8>, RiscvGuestCStringError> {
+    let mut bytes = Vec::new();
+    for offset in 0..limit {
+        let address = address
+            .checked_add(offset as u64)
+            .ok_or(RiscvGuestCStringError::Fault)?;
+        let byte = guest_memory
+            .read(address, 1)
+            .filter(|bytes| bytes.len() == 1)
+            .and_then(|bytes| bytes.first().copied())
+            .ok_or(RiscvGuestCStringError::Fault)?;
+        if byte == 0 {
+            return Ok(bytes);
+        }
+        bytes.push(byte);
+    }
+    Err(RiscvGuestCStringError::TooLong)
 }
 
 fn syscall_mmap(request: RiscvSyscallRequest, state: &mut RiscvSyscallState) -> u64 {

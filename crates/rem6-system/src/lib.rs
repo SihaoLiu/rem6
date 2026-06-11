@@ -195,9 +195,9 @@ pub use riscv_debug::{
 pub use riscv_instruction_stats::{RiscvInstructionStats, RiscvRetiredInstructionProbeSnapshot};
 pub use riscv_run_activity::{RiscvSystemRunCpuActivity, RiscvSystemRunPartitionActivity};
 pub use riscv_syscall::{
-    RiscvGuestMemoryReader, RiscvGuestMemoryWriter, RiscvGuestWriteRecord, RiscvMmapRegion,
-    RiscvSyscallEmulation, RiscvSyscallOutcome, RiscvSyscallRequest, RiscvSyscallState,
-    RiscvSyscallTable,
+    RiscvGuestMemoryReader, RiscvGuestMemoryWriter, RiscvGuestOpenRecord, RiscvGuestWriteRecord,
+    RiscvMmapRegion, RiscvSyscallEmulation, RiscvSyscallOutcome, RiscvSyscallRequest,
+    RiscvSyscallState, RiscvSyscallTable,
 };
 pub use rtc_checkpoint::{
     RtcCheckpointBank, RtcCheckpointError, RtcCheckpointPort, RtcCheckpointRecord,

@@ -305,6 +305,145 @@ fn linux_table_leaves_read_unhandled_without_guest_memory_writer() {
 }
 
 #[test]
+fn linux_table_leaves_openat_unhandled_without_guest_memory_reader() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_OPENAT,
+                [RISCV_LINUX_AT_FDCWD, 0x9000, 0, 0, 0, 0],
+            ),
+            &mut state,
+            7,
+            None,
+        ),
+        None
+    );
+    assert!(state.guest_opens().is_empty());
+}
+
+#[test]
+fn linux_table_opens_registered_guest_path() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_path(b"/input.txt");
+    let path = b"/input.txt\0".to_vec();
+    let guest_memory = RiscvGuestMemoryReader::new(move |address, bytes| {
+        if bytes != 1 || address < 0x9000 {
+            return None;
+        }
+        path.get((address - 0x9000) as usize)
+            .copied()
+            .map(|byte| vec![byte])
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_OPENAT,
+                [RISCV_LINUX_AT_FDCWD, 0x9000, RISCV_LINUX_O_CLOEXEC, 0, 0, 0,],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 3 })
+    );
+
+    let fd = GuestFd::new(3).unwrap();
+    assert!(state.guest_fds().entry(fd).is_some());
+    assert!(state.guest_fds().close_on_exec(fd).unwrap());
+    assert_eq!(
+        state.guest_fds().status_flags(fd).unwrap(),
+        GuestFileStatusFlags::new(RISCV_LINUX_O_RDONLY as u32)
+    );
+    assert_eq!(state.guest_opens().len(), 1);
+    let open = &state.guest_opens()[0];
+    assert_eq!(open.fd(), fd);
+    assert_eq!(open.path(), b"/input.txt");
+    assert_eq!(open.flags(), RISCV_LINUX_O_CLOEXEC);
+}
+
+#[test]
+fn linux_table_opened_guest_path_fd_does_not_read_stdin() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_path(b"/input.txt");
+    state.push_stdin_bytes(b"Z");
+    let path = b"/input.txt\0".to_vec();
+    let guest_memory_reader = RiscvGuestMemoryReader::new(move |address, bytes| {
+        if bytes != 1 || address < 0x9000 {
+            return None;
+        }
+        path.get((address - 0x9000) as usize)
+            .copied()
+            .map(|byte| vec![byte])
+    });
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(|_address, _bytes| true);
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_OPENAT,
+                [RISCV_LINUX_AT_FDCWD, 0x9000, 0, 0, 0, 0],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 3 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8004, RISCV_LINUX_READ, [3, 0x9100, 1, 0, 0, 0]),
+            &mut state,
+            8,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EBADF)
+        })
+    );
+    assert_eq!(state.stdin_byte_count(), 1);
+}
+
+#[test]
+fn linux_table_dup_preserves_stdin_read_source() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.push_stdin_bytes(b"Q");
+    let guest_memory_writer =
+        RiscvGuestMemoryWriter::new(|address, bytes| address == 0x9100 && bytes == b"Q");
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(0x8000, RISCV_LINUX_DUP, [0, 0, 0, 0, 0, 0]),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 3 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8004, RISCV_LINUX_READ, [3, 0x9100, 1, 0, 0, 0]),
+            &mut state,
+            8,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 1 })
+    );
+    assert_eq!(state.stdin_byte_count(), 0);
+}
+
+#[test]
 fn linux_table_closes_guest_fd_and_rejects_reuse() {
     let table = RiscvSyscallTable::new();
     let mut state = RiscvSyscallState::new(0);
