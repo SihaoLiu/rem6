@@ -23,6 +23,7 @@ mod limits;
 mod links;
 mod mmap;
 mod seek;
+mod startup;
 mod stat;
 mod utsname;
 mod wait4;
@@ -38,6 +39,11 @@ pub use mmap::RiscvMmapRegion;
 use mmap::RISCV_LINUX_MAP_FIXED;
 use mmap::{syscall_mmap, syscall_munmap, RISCV64_LINUX_MMAP_BASE, RISCV_PAGE_BYTES};
 use seek::{syscall_lseek, RISCV_LINUX_LSEEK};
+pub use startup::{
+    RiscvSeAuxvEntry, RiscvSeStartupConfig, RiscvSeStartupError, RiscvSeStartupImage,
+    RiscvSeStartupStringField, RISCV_LINUX_AT_ENTRY, RISCV_LINUX_AT_NULL, RISCV_LINUX_AT_PAGESZ,
+    RISCV_LINUX_AT_RANDOM, RISCV_LINUX_AT_SECURE,
+};
 use stat::{guest_path_inode, write_riscv_linux_stat, RiscvGuestStat};
 use utsname::write_riscv_linux_utsname;
 use wait4::{syscall_process_group_id, syscall_wait4, RISCV_LINUX_WAIT4};

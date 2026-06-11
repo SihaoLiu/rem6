@@ -123,6 +123,11 @@ pub enum Rem6CliError {
     DramMemoryRequiresExecution,
     InstructionLimitRequiresExecution,
     MemoryDumpRequiresExecution,
+    RiscvSeRequiresExecution,
+    RiscvSeRequiresRiscv,
+    RiscvSeRequiresSingleCore {
+        cores: usize,
+    },
     ReadBinary {
         path: PathBuf,
         error: String,
@@ -284,6 +289,15 @@ impl fmt::Display for Rem6CliError {
             }
             Self::MemoryDumpRequiresExecution => {
                 write!(formatter, "--dump-memory requires --execute")
+            }
+            Self::RiscvSeRequiresExecution => {
+                write!(formatter, "--riscv-se requires --execute")
+            }
+            Self::RiscvSeRequiresRiscv => {
+                write!(formatter, "--riscv-se requires --isa riscv")
+            }
+            Self::RiscvSeRequiresSingleCore { cores } => {
+                write!(formatter, "--riscv-se requires --cores 1, got {cores}")
             }
             Self::ReadBinary { path, error } => {
                 write!(formatter, "failed to read {}: {error}", path.display())

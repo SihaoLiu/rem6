@@ -8,7 +8,7 @@ use rem6_cpu::{
     CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, RiscvCluster, RiscvCore,
     RiscvCoreDriveAction, RiscvDataAccessEventKind,
 };
-use rem6_isa_riscv::Register;
+use rem6_isa_riscv::{Register, RiscvPrivilegeMode};
 use rem6_kernel::{PartitionFrontier, PartitionId, PartitionedScheduler, ReadyPartition};
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryOperation, MemoryRequestId,
@@ -16,8 +16,9 @@ use rem6_memory::{
 use rem6_stats::{StackDistProbeConfig, StatsRegistry};
 use rem6_system::{
     GuestEventId, GuestSourceId, GuestTrapKind, HostEventPolicy, RiscvDataAccessStats,
-    RiscvSystemRun, RiscvSystemRunDriver, RiscvSystemRunStopReason, RiscvTrapEventPort,
-    SystemHostController, SystemHostEventPort,
+    RiscvSeAuxvEntry, RiscvSeStartupConfig, RiscvSystemRun, RiscvSystemRunDriver,
+    RiscvSystemRunStopReason, RiscvTrapEventPort, SystemHostController, SystemHostEventPort,
+    RISCV_LINUX_AT_ENTRY,
 };
 use rem6_transport::{
     MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTraceEvent, MemoryTraceKind, MemoryTransport,
@@ -55,6 +56,8 @@ const DEFAULT_CACHE_LINE_BYTES: u64 = 16;
 const CLI_MEMORY_DUMP_AGENT: AgentId = AgentId::new(u32::MAX);
 const RISCV_BOOT_A0_REGISTER: u8 = 10;
 const RISCV_BOOT_A1_REGISTER: u8 = 11;
+const RISCV_STACK_POINTER_REGISTER: u8 = 2;
+const RISCV64_SE_STACK_TOP: u64 = 0x0000_7fff_ffff_f000;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Rem6RunArtifact {
@@ -209,6 +212,9 @@ pub enum Rem6ExecutionStop {
         stop_code: i32,
         trap: &'static str,
         trap_pc: u64,
+    },
+    HostStop {
+        stop_code: i32,
     },
     TickLimit {
         tick_limit: u64,
@@ -377,6 +383,19 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
         if !config.memory_dumps().is_empty() {
             return Err(Rem6CliError::MemoryDumpRequiresExecution);
         }
+        if config.riscv_se() {
+            return Err(Rem6CliError::RiscvSeRequiresExecution);
+        }
+    }
+    if config.riscv_se() {
+        if config.isa() != RequestedIsa::Riscv {
+            return Err(Rem6CliError::RiscvSeRequiresRiscv);
+        }
+        if config.cores() != 1 {
+            return Err(Rem6CliError::RiscvSeRequiresSingleCore {
+                cores: config.cores(),
+            });
+        }
     }
 
     let load_blobs = read_load_blobs(config.load_blobs())?;
@@ -455,6 +474,20 @@ fn execute_riscv(
         config.dram_memory(),
         config.dram_memory_profile(),
     )?;
+    let riscv_se_startup = if config.riscv_se() {
+        let startup = RiscvSeStartupConfig::new(Address::new(RISCV64_SE_STACK_TOP))
+            .with_arg(config.binary().display().to_string())
+            .with_auxv_entry(RiscvSeAuxvEntry::new(
+                RISCV_LINUX_AT_ENTRY,
+                image.entry().get(),
+            ))
+            .build()
+            .map_err(execute_error)?;
+        memory.install_riscv_se_startup(&startup, line_layout)?;
+        Some(startup)
+    } else {
+        None
+    };
 
     let mut scheduler = PartitionedScheduler::with_parallel_worker_limit(
         partition_count,
@@ -510,6 +543,13 @@ fn execute_riscv(
             Register::new(RISCV_BOOT_A1_REGISTER).map_err(execute_error)?,
             config.riscv_boot_a1(),
         );
+        if let Some(startup) = &riscv_se_startup {
+            core.set_privilege_mode(RiscvPrivilegeMode::User);
+            core.write_register(
+                Register::new(RISCV_STACK_POINTER_REGISTER).map_err(execute_error)?,
+                startup.initial_stack_pointer().get(),
+            );
+        }
         cores.push(core);
     }
     let cluster = RiscvCluster::new(cores).map_err(execute_error)?;
@@ -529,8 +569,17 @@ fn execute_riscv(
     let probe_config = StackDistProbeConfig::builder(line_layout.bytes(), line_layout.bytes())
         .build()
         .map_err(stats_error)?;
-    let driver = RiscvSystemRunDriver::new(trap_port)
+    let mut driver = RiscvSystemRunDriver::new(trap_port)
         .with_data_access_stats(RiscvDataAccessStats::with_stack_distance(probe_config));
+    if config.riscv_se() {
+        driver = driver.with_riscv_syscall_emulation_for_boot_image(image);
+        let read_memory = memory.clone();
+        let write_memory = memory.clone();
+        driver = driver.with_riscv_syscall_emulation_and_guest_memory_io(
+            move |address, bytes| read_memory.read_guest_memory(address, bytes, line_layout),
+            move |address, bytes| write_memory.write_guest_memory(address, bytes, line_layout),
+        );
+    }
     let fetch_trace = MemoryTrace::new();
     let data_trace = MemoryTrace::new();
     let run = match config.max_instructions() {
@@ -621,17 +670,16 @@ fn execution_summary(
     })?;
     let stop = match run.stop_reason() {
         RiscvSystemRunStopReason::HostStop(stop) => {
-            let scheduled_trap =
-                run.scheduled_traps()
-                    .first()
-                    .ok_or_else(|| Rem6CliError::Execute {
-                        error: "RISC-V execution reached host stop without a scheduled trap"
-                            .to_string(),
-                    })?;
-            Rem6ExecutionStop::HostTrap {
-                stop_code: stop.code(),
-                trap: guest_trap_name(scheduled_trap.trap().kind()),
-                trap_pc: scheduled_trap.trap().pc(),
+            if let Some(scheduled_trap) = run.scheduled_traps().first() {
+                Rem6ExecutionStop::HostTrap {
+                    stop_code: stop.code(),
+                    trap: guest_trap_name(scheduled_trap.trap().kind()),
+                    trap_pc: scheduled_trap.trap().pc(),
+                }
+            } else {
+                Rem6ExecutionStop::HostStop {
+                    stop_code: stop.code(),
+                }
             }
         }
         RiscvSystemRunStopReason::InstructionLimit { limit, .. } => {

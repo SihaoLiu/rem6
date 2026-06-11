@@ -196,8 +196,11 @@ pub use riscv_instruction_stats::{RiscvInstructionStats, RiscvRetiredInstruction
 pub use riscv_run_activity::{RiscvSystemRunCpuActivity, RiscvSystemRunPartitionActivity};
 pub use riscv_syscall::{
     RiscvGuestMemoryReader, RiscvGuestMemoryWriter, RiscvGuestOpenRecord, RiscvGuestWriteRecord,
-    RiscvMmapRegion, RiscvSyscallEmulation, RiscvSyscallImageLayoutError, RiscvSyscallOutcome,
-    RiscvSyscallRequest, RiscvSyscallState, RiscvSyscallTable,
+    RiscvMmapRegion, RiscvSeAuxvEntry, RiscvSeStartupConfig, RiscvSeStartupError,
+    RiscvSeStartupImage, RiscvSeStartupStringField, RiscvSyscallEmulation,
+    RiscvSyscallImageLayoutError, RiscvSyscallOutcome, RiscvSyscallRequest, RiscvSyscallState,
+    RiscvSyscallTable, RISCV_LINUX_AT_ENTRY, RISCV_LINUX_AT_NULL, RISCV_LINUX_AT_PAGESZ,
+    RISCV_LINUX_AT_RANDOM, RISCV_LINUX_AT_SECURE,
 };
 pub use rtc_checkpoint::{
     RtcCheckpointBank, RtcCheckpointError, RtcCheckpointPort, RtcCheckpointRecord,

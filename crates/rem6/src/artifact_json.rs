@@ -68,9 +68,10 @@ impl Rem6RunArtifact {
             .join(",");
         let riscv_boot = if self.config.isa() == RequestedIsa::Riscv {
             format!(
-                ",\"riscv_boot\":{{\"a0\":\"0x{:x}\",\"a1\":\"0x{:x}\"}}",
+                ",\"riscv_boot\":{{\"a0\":\"0x{:x}\",\"a1\":\"0x{:x}\",\"se\":{}}}",
                 self.config.riscv_boot_a0(),
-                self.config.riscv_boot_a1()
+                self.config.riscv_boot_a1(),
+                self.config.riscv_se()
             )
         } else {
             String::new()
@@ -599,9 +600,9 @@ impl Rem6ExecutionSummary {
     ) -> String {
         let instruction_limit = match self.stop {
             Rem6ExecutionStop::InstructionLimit { instruction_limit } => Some(instruction_limit),
-            Rem6ExecutionStop::HostTrap { .. } | Rem6ExecutionStop::TickLimit { .. } => {
-                max_instructions
-            }
+            Rem6ExecutionStop::HostTrap { .. }
+            | Rem6ExecutionStop::HostStop { .. }
+            | Rem6ExecutionStop::TickLimit { .. } => max_instructions,
         };
         let common = format!(
             "\"max_tick\":{},\"instruction_limit\":{},\"memory_route_delay\":{},\"host_event_delay\":{},\"executed_ticks\":{},\"final_tick\":{},\"cores\":{},\"committed_instructions\":{},\"data_access_probes\":{}",
@@ -623,6 +624,10 @@ impl Rem6ExecutionSummary {
             } => format!(
                 "{{\"status\":\"executed_until_trap\",\"stop_reason\":\"host_trap\",{},\"stop_code\":{},\"trap\":\"{}\",\"trap_pc\":\"0x{:x}\"}}",
                 common, stop_code, trap, trap_pc
+            ),
+            Rem6ExecutionStop::HostStop { stop_code } => format!(
+                "{{\"status\":\"stopped_by_host\",\"stop_reason\":\"host_stop\",{},\"stop_code\":{}}}",
+                common, stop_code
             ),
             Rem6ExecutionStop::TickLimit { tick_limit } => format!(
                 "{{\"status\":\"stopped_at_tick_limit\",\"stop_reason\":\"tick_limit\",{},\"tick_limit\":{}}}",

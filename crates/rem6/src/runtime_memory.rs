@@ -2,8 +2,10 @@ use std::sync::{Arc, Mutex};
 
 use rem6_dram::{DramLowPowerState, DramMemoryActivityProfile, DramMemoryController};
 use rem6_memory::{
-    AccessSize, Address, CacheLineLayout, MemoryRequest, MemoryRequestId, PartitionedMemoryStore,
+    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
+    PartitionedMemoryStore,
 };
+use rem6_system::RiscvSeStartupImage;
 use rem6_transport::{RequestDelivery, TargetOutcome};
 
 use crate::config::CliDramMemoryProfile;
@@ -12,6 +14,8 @@ use crate::{
     execute_error, LoadedBlob, MemoryDumpRequest, Rem6CliError, Rem6DramSummary, Rem6MemoryDump,
     CLI_MEMORY_DUMP_AGENT,
 };
+
+const CLI_GUEST_MEMORY_AGENT: AgentId = AgentId::new(u32::MAX - 1);
 
 #[derive(Clone)]
 pub(super) enum CliMemoryRuntime {
@@ -54,6 +58,331 @@ impl CliMemoryRuntime {
             ),
         }
     }
+
+    pub(super) fn install_riscv_se_startup(
+        &self,
+        startup: &RiscvSeStartupImage,
+        line_layout: CacheLineLayout,
+    ) -> Result<(), Rem6CliError> {
+        match self {
+            Self::Store(store) => {
+                let mut store = store.lock().expect("CLI memory store lock");
+                store
+                    .map_region(
+                        CLI_MEMORY_TARGET,
+                        startup.stack_range().start(),
+                        startup.stack_range().size(),
+                    )
+                    .map_err(execute_error)?;
+                write_startup_stack_to_store(&mut store, startup, line_layout)
+            }
+            Self::Dram(memory) => {
+                let mut memory = memory.lock().expect("CLI DRAM memory lock");
+                memory
+                    .map_region(
+                        CLI_MEMORY_TARGET,
+                        startup.stack_range().start(),
+                        startup.stack_range().size(),
+                    )
+                    .map_err(execute_error)?;
+                write_startup_stack_to_dram(&mut memory, startup, line_layout)
+            }
+        }
+    }
+
+    pub(super) fn read_guest_memory(
+        &self,
+        address: u64,
+        bytes: usize,
+        line_layout: CacheLineLayout,
+    ) -> Option<Vec<u8>> {
+        if bytes == 0 {
+            return Some(Vec::new());
+        }
+        let chunks = guest_memory_chunks(address, bytes, line_layout)?;
+        match self {
+            Self::Store(store) => {
+                let mut store = store.lock().expect("CLI memory store lock");
+                read_guest_memory_from_store(&mut store, &chunks, line_layout)
+            }
+            Self::Dram(memory) => {
+                let memory = memory.lock().expect("CLI DRAM memory lock");
+                read_guest_memory_from_dram(&memory, &chunks, line_layout)
+            }
+        }
+    }
+
+    pub(super) fn write_guest_memory(
+        &self,
+        address: u64,
+        bytes: &[u8],
+        line_layout: CacheLineLayout,
+    ) -> bool {
+        if bytes.is_empty() {
+            return true;
+        }
+        let Some(chunks) = guest_memory_chunks(address, bytes.len(), line_layout) else {
+            return false;
+        };
+        let Some(requests) = guest_memory_write_requests(bytes, &chunks, line_layout) else {
+            return false;
+        };
+        match self {
+            Self::Store(store) => {
+                let mut store = store.lock().expect("CLI memory store lock");
+                write_guest_memory_to_store(&mut store, &requests, &chunks, line_layout)
+            }
+            Self::Dram(memory) => {
+                let mut memory = memory.lock().expect("CLI DRAM memory lock");
+                write_guest_memory_to_dram(&mut memory, &requests, &chunks, line_layout)
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct GuestMemoryChunk {
+    address: u64,
+    data_offset: usize,
+    bytes: usize,
+}
+
+fn read_guest_memory_from_store(
+    store: &mut PartitionedMemoryStore,
+    chunks: &[GuestMemoryChunk],
+    line_layout: CacheLineLayout,
+) -> Option<Vec<u8>> {
+    let mut data = Vec::with_capacity(chunks.iter().map(|chunk| chunk.bytes).sum());
+    for chunk in chunks {
+        let request = guest_memory_read_request(chunk.address, chunk.bytes, line_layout)?;
+        let outcome = store.respond(&request).ok()?;
+        let response_data = outcome.response()?.data()?;
+        if response_data.len() != chunk.bytes {
+            return None;
+        }
+        data.extend_from_slice(response_data);
+    }
+    Some(data)
+}
+
+fn read_guest_memory_from_dram(
+    memory: &DramMemoryController,
+    chunks: &[GuestMemoryChunk],
+    line_layout: CacheLineLayout,
+) -> Option<Vec<u8>> {
+    let mut data = Vec::with_capacity(chunks.iter().map(|chunk| chunk.bytes).sum());
+    for chunk in chunks {
+        let request = guest_memory_read_request(chunk.address, chunk.bytes, line_layout)?;
+        let response_data = memory.response_data(&request).ok()?;
+        if response_data.len() != chunk.bytes {
+            return None;
+        }
+        data.extend_from_slice(&response_data);
+    }
+    Some(data)
+}
+
+fn write_guest_memory_to_store(
+    store: &mut PartitionedMemoryStore,
+    requests: &[MemoryRequest],
+    chunks: &[GuestMemoryChunk],
+    line_layout: CacheLineLayout,
+) -> bool {
+    if !prevalidate_store_guest_memory(store, chunks, line_layout) {
+        return false;
+    }
+    requests
+        .iter()
+        .all(|request| store.respond(request).is_ok())
+}
+
+fn write_guest_memory_to_dram(
+    memory: &mut DramMemoryController,
+    requests: &[MemoryRequest],
+    chunks: &[GuestMemoryChunk],
+    line_layout: CacheLineLayout,
+) -> bool {
+    if !prevalidate_dram_guest_memory(memory, chunks, line_layout) {
+        return false;
+    }
+    requests
+        .iter()
+        .all(|request| memory.accept(0, request).is_ok())
+}
+
+fn prevalidate_store_guest_memory(
+    store: &mut PartitionedMemoryStore,
+    chunks: &[GuestMemoryChunk],
+    line_layout: CacheLineLayout,
+) -> bool {
+    chunks.iter().all(|chunk| {
+        let Some(request) = guest_memory_read_request(chunk.address, chunk.bytes, line_layout)
+        else {
+            return false;
+        };
+        let Ok(outcome) = store.respond(&request) else {
+            return false;
+        };
+        outcome
+            .response()
+            .and_then(|response| response.data())
+            .is_some_and(|data| data.len() == chunk.bytes)
+    })
+}
+
+fn prevalidate_dram_guest_memory(
+    memory: &DramMemoryController,
+    chunks: &[GuestMemoryChunk],
+    line_layout: CacheLineLayout,
+) -> bool {
+    chunks.iter().all(|chunk| {
+        let Some(request) = guest_memory_read_request(chunk.address, chunk.bytes, line_layout)
+        else {
+            return false;
+        };
+        memory
+            .response_data(&request)
+            .is_ok_and(|data| data.len() == chunk.bytes)
+    })
+}
+
+fn guest_memory_read_request(
+    address: u64,
+    bytes: usize,
+    line_layout: CacheLineLayout,
+) -> Option<MemoryRequest> {
+    let size = AccessSize::new(u64::try_from(bytes).ok()?).ok()?;
+    MemoryRequest::read_shared(
+        MemoryRequestId::new(CLI_GUEST_MEMORY_AGENT, 0),
+        Address::new(address),
+        size,
+        line_layout,
+    )
+    .ok()
+}
+
+fn guest_memory_write_request(
+    address: u64,
+    bytes: &[u8],
+    line_layout: CacheLineLayout,
+) -> Option<MemoryRequest> {
+    let size = AccessSize::new(u64::try_from(bytes.len()).ok()?).ok()?;
+    MemoryRequest::write(
+        MemoryRequestId::new(CLI_GUEST_MEMORY_AGENT, 0),
+        Address::new(address),
+        size,
+        bytes.to_vec(),
+        ByteMask::full(size).ok()?,
+        line_layout,
+    )
+    .ok()
+}
+
+fn guest_memory_write_requests(
+    bytes: &[u8],
+    chunks: &[GuestMemoryChunk],
+    line_layout: CacheLineLayout,
+) -> Option<Vec<MemoryRequest>> {
+    chunks
+        .iter()
+        .map(|chunk| {
+            let start = chunk.data_offset;
+            let end = start.checked_add(chunk.bytes)?;
+            guest_memory_write_request(chunk.address, &bytes[start..end], line_layout)
+        })
+        .collect()
+}
+
+fn guest_memory_chunks(
+    address: u64,
+    bytes: usize,
+    line_layout: CacheLineLayout,
+) -> Option<Vec<GuestMemoryChunk>> {
+    let mut chunks = Vec::new();
+    let mut cursor = address;
+    let mut data_offset = 0usize;
+    while data_offset < bytes {
+        let line_offset = line_layout.line_offset(Address::new(cursor));
+        let available = usize::try_from(line_layout.bytes().checked_sub(line_offset)?).ok()?;
+        if available == 0 {
+            return None;
+        }
+        let chunk_bytes = available.min(bytes - data_offset);
+        chunks.push(GuestMemoryChunk {
+            address: cursor,
+            data_offset,
+            bytes: chunk_bytes,
+        });
+        cursor = cursor.checked_add(u64::try_from(chunk_bytes).ok()?)?;
+        data_offset += chunk_bytes;
+    }
+    Some(chunks)
+}
+
+fn write_startup_stack_to_store(
+    store: &mut PartitionedMemoryStore,
+    startup: &RiscvSeStartupImage,
+    line_layout: CacheLineLayout,
+) -> Result<(), Rem6CliError> {
+    let mut cursor = startup.stack_range().start().get();
+    let mut data_offset = 0usize;
+    while data_offset < startup.stack_data().len() {
+        let (line, line_offset, bytes, next_offset) =
+            startup_stack_chunk(startup.stack_data(), line_layout, cursor, data_offset);
+        let mut line_data = store
+            .line_data(CLI_MEMORY_TARGET, line)
+            .unwrap_or_else(|_| vec![0; line_layout.bytes() as usize]);
+        let start = line_offset as usize;
+        line_data[start..start + bytes as usize]
+            .copy_from_slice(&startup.stack_data()[data_offset..next_offset]);
+        store
+            .insert_line(CLI_MEMORY_TARGET, line, line_data)
+            .map_err(execute_error)?;
+        cursor += bytes;
+        data_offset = next_offset;
+    }
+    Ok(())
+}
+
+fn write_startup_stack_to_dram(
+    memory: &mut DramMemoryController,
+    startup: &RiscvSeStartupImage,
+    line_layout: CacheLineLayout,
+) -> Result<(), Rem6CliError> {
+    let mut cursor = startup.stack_range().start().get();
+    let mut data_offset = 0usize;
+    while data_offset < startup.stack_data().len() {
+        let (line, line_offset, bytes, next_offset) =
+            startup_stack_chunk(startup.stack_data(), line_layout, cursor, data_offset);
+        let mut line_data = memory
+            .line_data(CLI_MEMORY_TARGET, line)
+            .unwrap_or_else(|_| vec![0; line_layout.bytes() as usize]);
+        let start = line_offset as usize;
+        line_data[start..start + bytes as usize]
+            .copy_from_slice(&startup.stack_data()[data_offset..next_offset]);
+        memory
+            .insert_line(CLI_MEMORY_TARGET, line, line_data)
+            .map_err(execute_error)?;
+        cursor += bytes;
+        data_offset = next_offset;
+    }
+    Ok(())
+}
+
+fn startup_stack_chunk(
+    data: &[u8],
+    line_layout: CacheLineLayout,
+    cursor: u64,
+    data_offset: usize,
+) -> (Address, u64, u64, usize) {
+    let address = Address::new(cursor);
+    let line = line_layout.line_address(address);
+    let line_offset = line_layout.line_offset(address);
+    let available_in_line = line_layout.bytes() - line_offset;
+    let remaining = (data.len() - data_offset) as u64;
+    let bytes = available_in_line.min(remaining);
+    let next_data_offset = data_offset + bytes as usize;
+    (line, line_offset, bytes, next_data_offset)
 }
 
 pub(super) fn cli_memory_response(

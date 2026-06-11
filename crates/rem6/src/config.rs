@@ -111,6 +111,7 @@ pub struct Rem6RunConfig {
     start_address: Option<u64>,
     riscv_boot_a0: u64,
     riscv_boot_a1: u64,
+    riscv_se: bool,
     max_instructions: Option<u64>,
     stats_format: StatsFormat,
     execute: bool,
@@ -178,6 +179,7 @@ struct Rem6RunFileConfig {
     start_address: Option<u64>,
     riscv_boot_a0: Option<u64>,
     riscv_boot_a1: Option<u64>,
+    riscv_se: Option<bool>,
     max_instructions: Option<u64>,
     stats_format: Option<String>,
     execute: Option<bool>,
@@ -318,6 +320,7 @@ impl Rem6RunConfig {
         let mut start_address = file_config.start_address;
         let mut riscv_boot_a0 = file_config.riscv_boot_a0.unwrap_or(0);
         let mut riscv_boot_a1 = file_config.riscv_boot_a1.unwrap_or(0);
+        let mut riscv_se = file_config.riscv_se.unwrap_or(false);
         let mut max_instructions = file_config.max_instructions;
         if max_instructions == Some(0) {
             return Err(Rem6CliError::InvalidMaxInstructions {
@@ -445,6 +448,9 @@ impl Rem6RunConfig {
                             value: value.clone(),
                         })?;
                 }
+                "--riscv-se" => {
+                    riscv_se = true;
+                }
                 "--max-instructions" => {
                     let value = required_value(&flag, args.next())?;
                     max_instructions = Some(
@@ -554,6 +560,7 @@ impl Rem6RunConfig {
             start_address,
             riscv_boot_a0,
             riscv_boot_a1,
+            riscv_se,
             max_instructions,
             stats_format,
             execute,
@@ -602,6 +609,10 @@ impl Rem6RunConfig {
 
     pub const fn riscv_boot_a1(&self) -> u64 {
         self.riscv_boot_a1
+    }
+
+    pub const fn riscv_se(&self) -> bool {
+        self.riscv_se
     }
 
     pub const fn max_instructions(&self) -> Option<u64> {
@@ -1282,7 +1293,7 @@ fn run_file_config_from_args(args: &[String]) -> Result<Option<PathBuf>, Rem6Cli
             "--output",
             "--stats-output",
         ],
-        &["--execute", "--dram-memory"],
+        &["--execute", "--dram-memory", "--riscv-se"],
     )
 }
 

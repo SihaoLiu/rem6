@@ -1164,7 +1164,7 @@ fn rem6_run_accepts_riscv_boot_register_runtime_options() {
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("\"status\":\"executed_until_trap\""));
-    assert!(stdout.contains("\"riscv_boot\":{\"a0\":\"0x123\",\"a1\":\"0x80001000\"}"));
+    assert!(stdout.contains("\"riscv_boot\":{\"a0\":\"0x123\",\"a1\":\"0x80001000\",\"se\":false}"));
     assert!(stdout.contains("\"executed_ticks\":3"));
     assert!(stdout.contains("\"final_tick\":3"));
     assert!(stdout.contains("\"x10\":\"0x123\""));
@@ -1177,4 +1177,148 @@ fn rem6_run_accepts_riscv_boot_register_runtime_options() {
         0x8000_1000,
         "constant",
     );
+}
+
+#[test]
+fn rem6_run_riscv_se_loads_startup_stack_and_exits_through_syscall() {
+    let program = riscv64_program(&[
+        i_type(0, 2, 0x3, 5, 0x03),   // ld x5, 0(sp)
+        i_type(8, 2, 0x3, 6, 0x03),   // ld x6, 8(sp)
+        i_type(0, 6, 0x0, 7, 0x03),   // lb x7, 0(x6)
+        i_type(93, 0, 0x0, 17, 0x13), // addi a7, x0, 93
+        i_type(0, 7, 0x0, 10, 0x13),  // addi a0, x7, 0
+        0x0000_0073,                  // ecall
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("riscv-se-startup-stack", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "120",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_reason\":\"host_stop\""));
+    assert!(stdout.contains("\"stop_code\":47"));
+    assert!(stdout.contains("\"riscv_boot\":{\"a0\":\"0x0\",\"a1\":\"0x0\",\"se\":true}"));
+    assert!(stdout.contains("\"x5\":\"0x1\""));
+    assert!(stdout.contains("\"x7\":\"0x2f\""));
+    assert!(stdout.contains("\"x10\":\"0x2f\""));
+    assert!(stdout.contains("\"data_loads\":3"));
+    assert_stat(&stdout, "sim.riscv.se", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.stop.host_stop", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.stop_code", "Count", 47, "constant");
+}
+
+#[test]
+fn rem6_run_riscv_se_handles_memory_backed_write_syscall() {
+    let program = riscv64_program(&[
+        i_type(8, 2, 0x3, 6, 0x03),   // ld x6, 8(sp)
+        i_type(1, 0, 0x0, 10, 0x13),  // addi a0, x0, 1
+        i_type(0, 6, 0x0, 11, 0x13),  // addi a1, x6, 0
+        i_type(24, 0, 0x0, 12, 0x13), // addi a2, x0, 24
+        i_type(64, 0, 0x0, 17, 0x13), // addi a7, x0, 64
+        0x0000_0073,                  // ecall
+        i_type(93, 0, 0x0, 17, 0x13), // addi a7, x0, 93
+        0x0000_0073,                  // ecall
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("riscv-se-write-syscall", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "160",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_reason\":\"host_stop\""));
+    assert!(stdout.contains("\"stop_code\":24"));
+    assert!(stdout.contains("\"x10\":\"0x18\""));
+    assert!(stdout.contains("\"x17\":\"0x5d\""));
+    assert_stat(&stdout, "sim.riscv.se", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.stop.host_stop", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.stop_code", "Count", 24, "constant");
+}
+
+#[test]
+fn rem6_run_riscv_se_write_syscall_faults_unmapped_buffer() {
+    let program = riscv64_program(&[
+        i_type(1, 0, 0x0, 10, 0x13),     // addi a0, x0, 1
+        i_type(0, 0, 0x0, 11, 0x13),     // addi a1, x0, 0
+        i_type(1, 0, 0x0, 12, 0x13),     // addi a2, x0, 1
+        i_type(64, 0, 0x0, 17, 0x13),    // addi a7, x0, 64
+        0x0000_0073,                     // ecall
+        i_type(0xff, 10, 0x7, 10, 0x13), // andi a0, a0, 255
+        i_type(93, 0, 0x0, 17, 0x13),    // addi a7, x0, 93
+        0x0000_0073,                     // ecall
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("riscv-se-write-efault", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "160",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_reason\":\"host_stop\""));
+    assert!(stdout.contains("\"stop_code\":242"));
+    assert!(stdout.contains("\"x10\":\"0xf2\""));
+    assert_stat(&stdout, "sim.riscv.se", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.stop.host_stop", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.stop_code", "Count", 242, "constant");
 }

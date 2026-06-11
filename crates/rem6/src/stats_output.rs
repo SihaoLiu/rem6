@@ -116,6 +116,13 @@ pub(super) fn run_stats_output(
             StatResetPolicy::Constant,
             inputs.config.riscv_boot_a1(),
         )?;
+        increment_stat(
+            &mut stats,
+            "sim.riscv.se",
+            "Count",
+            StatResetPolicy::Constant,
+            u64::from(inputs.config.riscv_se()),
+        )?;
     }
     increment_stat(
         &mut stats,
@@ -182,6 +189,22 @@ pub(super) fn run_stats_output(
                 increment_stat(
                     &mut stats,
                     "sim.stop.host_trap",
+                    "Count",
+                    StatResetPolicy::Constant,
+                    1,
+                )?;
+                increment_stat(
+                    &mut stats,
+                    "sim.stop_code",
+                    "Count",
+                    StatResetPolicy::Constant,
+                    stop_code as u64,
+                )?;
+            }
+            Rem6ExecutionStop::HostStop { stop_code } => {
+                increment_stat(
+                    &mut stats,
+                    "sim.stop.host_stop",
                     "Count",
                     StatResetPolicy::Constant,
                     1,
