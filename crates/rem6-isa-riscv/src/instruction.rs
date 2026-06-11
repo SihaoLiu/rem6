@@ -375,6 +375,22 @@ pub enum RiscvInstruction {
         rd: FloatRegister,
         rs1: Register,
     },
+    FloatConvertWFromD {
+        rd: Register,
+        rs1: FloatRegister,
+    },
+    FloatConvertWuFromD {
+        rd: Register,
+        rs1: FloatRegister,
+    },
+    FloatConvertLFromD {
+        rd: Register,
+        rs1: FloatRegister,
+    },
+    FloatConvertLuFromD {
+        rd: Register,
+        rs1: FloatRegister,
+    },
     LoadReserved {
         rd: Register,
         rs1: Register,

@@ -775,11 +775,11 @@ impl RiscvHartState {
                     self.read_float(rs1),
                     self.read_float(rs2),
                 );
-                write_float_register(self, &mut float_register_writes, rd, value);
+                float::write_float_register(self, &mut float_register_writes, rd, value);
             }
             instruction @ RiscvInstruction::FloatSqrtD { rs1, .. } => {
                 let (rd, value) = float::float_register_write(instruction, self.read_float(rs1), 0);
-                write_float_register(self, &mut float_register_writes, rd, value);
+                float::write_float_register(self, &mut float_register_writes, rd, value);
             }
             instruction @ (RiscvInstruction::FloatMoveDFromX { rs1, .. }
             | RiscvInstruction::FloatConvertDFromW { rs1, .. }
@@ -788,7 +788,7 @@ impl RiscvHartState {
             | RiscvInstruction::FloatConvertDFromLu { rs1, .. }) => {
                 let (rd, value) =
                     float::float_register_write_from_integer(instruction, self.read(rs1));
-                write_float_register(self, &mut float_register_writes, rd, value);
+                float::write_float_register(self, &mut float_register_writes, rd, value);
             }
             instruction @ (RiscvInstruction::FloatLessOrEqualD { rs1, rs2, .. }
             | RiscvInstruction::FloatLessThanD { rs1, rs2, .. }
@@ -801,7 +801,11 @@ impl RiscvHartState {
                 write_register(self, &mut register_writes, rd, value);
             }
             instruction @ (RiscvInstruction::FloatClassD { rs1, .. }
-            | RiscvInstruction::FloatMoveXFromD { rs1, .. }) => {
+            | RiscvInstruction::FloatMoveXFromD { rs1, .. }
+            | RiscvInstruction::FloatConvertWFromD { rs1, .. }
+            | RiscvInstruction::FloatConvertWuFromD { rs1, .. }
+            | RiscvInstruction::FloatConvertLFromD { rs1, .. }
+            | RiscvInstruction::FloatConvertLuFromD { rs1, .. }) => {
                 let (rd, value) =
                     float::integer_register_write(instruction, self.read_float(rs1), 0);
                 write_register(self, &mut register_writes, rd, value);
@@ -1200,16 +1204,6 @@ fn read_machine_trap_csr(hart: &RiscvHartState, csr: RiscvMachineTrapCsr) -> u64
         RiscvMachineTrapCsr::Mcause => hart.machine_trap_cause(),
         RiscvMachineTrapCsr::Mtval => hart.machine_trap_value(),
     }
-}
-
-fn write_float_register(
-    hart: &mut RiscvHartState,
-    writes: &mut Vec<FloatRegisterWrite>,
-    register: FloatRegister,
-    value: u64,
-) {
-    hart.write_float(register, value);
-    writes.push(FloatRegisterWrite::new(register, value));
 }
 
 fn write_machine_trap_csr(

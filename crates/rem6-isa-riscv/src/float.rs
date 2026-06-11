@@ -1,5 +1,8 @@
 use crate::encoding::{funct3, funct7, i_imm, rd, rs1, rs2, s_imm};
-use crate::{FloatRegister, Immediate, MemoryWidth, Register, RiscvError, RiscvInstruction};
+use crate::{
+    FloatRegister, FloatRegisterWrite, Immediate, MemoryWidth, Register, RiscvError,
+    RiscvHartState, RiscvInstruction,
+};
 
 pub(crate) fn decode_float_load(raw: u32) -> Result<RiscvInstruction, RiscvError> {
     let width = match funct3(raw) {
@@ -123,6 +126,22 @@ pub(crate) fn decode_float_op(raw: u32) -> Result<RiscvInstruction, RiscvError> 
             rd: float_rd(raw),
             rs1: rs1(raw),
         }),
+        (0x61, 0x0) if rs2(raw).index() == 0 => Ok(RiscvInstruction::FloatConvertWFromD {
+            rd: rd(raw),
+            rs1: float_rs1(raw),
+        }),
+        (0x61, 0x0) if rs2(raw).index() == 1 => Ok(RiscvInstruction::FloatConvertWuFromD {
+            rd: rd(raw),
+            rs1: float_rs1(raw),
+        }),
+        (0x61, 0x0) if rs2(raw).index() == 2 => Ok(RiscvInstruction::FloatConvertLFromD {
+            rd: rd(raw),
+            rs1: float_rs1(raw),
+        }),
+        (0x61, 0x0) if rs2(raw).index() == 3 => Ok(RiscvInstruction::FloatConvertLuFromD {
+            rd: rd(raw),
+            rs1: float_rs1(raw),
+        }),
         _ => Err(RiscvError::UnknownEncoding { raw }),
     }
 }
@@ -186,8 +205,28 @@ pub(crate) fn integer_register_write(
         RiscvInstruction::FloatEqualD { rd, .. } => (rd, u64::from(equal_double(lhs, rhs))),
         RiscvInstruction::FloatClassD { rd, .. } => (rd, class_double(lhs)),
         RiscvInstruction::FloatMoveXFromD { rd, .. } => (rd, lhs),
+        RiscvInstruction::FloatConvertWFromD { rd, .. } => (rd, convert_double_to_signed_word(lhs)),
+        RiscvInstruction::FloatConvertWuFromD { rd, .. } => {
+            (rd, convert_double_to_unsigned_word(lhs))
+        }
+        RiscvInstruction::FloatConvertLFromD { rd, .. } => {
+            (rd, convert_double_to_signed_doubleword(lhs))
+        }
+        RiscvInstruction::FloatConvertLuFromD { rd, .. } => {
+            (rd, convert_double_to_unsigned_doubleword(lhs))
+        }
         _ => unreachable!("non-float-compare instruction dispatched to integer register write"),
     }
+}
+
+pub(crate) fn write_float_register(
+    hart: &mut RiscvHartState,
+    writes: &mut Vec<FloatRegisterWrite>,
+    register: FloatRegister,
+    value: u64,
+) {
+    hart.write_float(register, value);
+    writes.push(FloatRegisterWrite::new(register, value));
 }
 
 fn sub_double(lhs: u64, rhs: u64) -> u64 {
@@ -229,6 +268,74 @@ fn convert_signed_doubleword_to_double(value: u64) -> u64 {
 
 fn convert_unsigned_doubleword_to_double(value: u64) -> u64 {
     (value as f64).to_bits()
+}
+
+fn convert_double_to_signed_word(value: u64) -> u64 {
+    let value = f64::from_bits(value);
+    if value.is_nan() {
+        return i32::MAX as u64;
+    }
+
+    let rounded = value.round_ties_even();
+    if rounded > f64::from(i32::MAX) {
+        i32::MAX as u64
+    } else if rounded < f64::from(i32::MIN) {
+        i32::MIN as i64 as u64
+    } else {
+        rounded as i32 as i64 as u64
+    }
+}
+
+fn convert_double_to_unsigned_word(value: u64) -> u64 {
+    let value = f64::from_bits(value);
+    if value.is_nan() {
+        return sign_extend_unsigned_word(u32::MAX);
+    }
+
+    let rounded = value.round_ties_even();
+    if rounded < 0.0 {
+        0
+    } else if rounded > f64::from(u32::MAX) {
+        sign_extend_unsigned_word(u32::MAX)
+    } else {
+        sign_extend_unsigned_word(rounded as u32)
+    }
+}
+
+fn convert_double_to_signed_doubleword(value: u64) -> u64 {
+    let value = f64::from_bits(value);
+    if value.is_nan() {
+        return i64::MAX as u64;
+    }
+
+    let rounded = value.round_ties_even();
+    if rounded >= i64::MAX as f64 {
+        i64::MAX as u64
+    } else if rounded < i64::MIN as f64 {
+        i64::MIN as u64
+    } else {
+        rounded as i64 as u64
+    }
+}
+
+fn convert_double_to_unsigned_doubleword(value: u64) -> u64 {
+    let value = f64::from_bits(value);
+    if value.is_nan() {
+        return u64::MAX;
+    }
+
+    let rounded = value.round_ties_even();
+    if rounded < 0.0 {
+        0
+    } else if rounded >= u64::MAX as f64 {
+        u64::MAX
+    } else {
+        rounded as u64
+    }
+}
+
+fn sign_extend_unsigned_word(value: u32) -> u64 {
+    value as i32 as i64 as u64
 }
 
 fn sign_inject_neg_double(lhs: u64, rhs: u64) -> u64 {

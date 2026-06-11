@@ -249,6 +249,44 @@ fn decoder_accepts_rv64d_sqrt_and_integer_to_double_conversions() {
 }
 
 #[test]
+fn decoder_accepts_rv64d_double_to_integer_conversions() {
+    let cases = [
+        (
+            r_type(0x61, 0, 2, 0x0, 5, 0x53),
+            RiscvInstruction::FloatConvertWFromD {
+                rd: reg(5),
+                rs1: freg(2),
+            },
+        ),
+        (
+            r_type(0x61, 1, 2, 0x0, 5, 0x53),
+            RiscvInstruction::FloatConvertWuFromD {
+                rd: reg(5),
+                rs1: freg(2),
+            },
+        ),
+        (
+            r_type(0x61, 2, 2, 0x0, 5, 0x53),
+            RiscvInstruction::FloatConvertLFromD {
+                rd: reg(5),
+                rs1: freg(2),
+            },
+        ),
+        (
+            r_type(0x61, 3, 2, 0x0, 5, 0x53),
+            RiscvInstruction::FloatConvertLuFromD {
+                rd: reg(5),
+                rs1: freg(2),
+            },
+        ),
+    ];
+
+    for (raw, expected) in cases {
+        assert_eq!(RiscvInstruction::decode(raw).unwrap(), expected);
+    }
+}
+
+#[test]
 fn hart_executes_faddd_and_records_float_write() {
     let mut hart = RiscvHartState::new(0x8000);
     hart.write_float(freg(0), 1.5f64.to_bits());
@@ -622,6 +660,107 @@ fn hart_executes_rv64d_sqrt_and_integer_to_double_conversions() {
     })
     .unwrap();
     assert_eq!(hart.read_float(freg(11)), 0x43f0_0000_0000_0000);
+}
+
+#[test]
+fn hart_executes_rv64d_double_to_integer_conversions_with_rne() {
+    let mut hart = RiscvHartState::new(0x8000);
+
+    hart.write_float(freg(1), 2.5f64.to_bits());
+    let even_down = hart
+        .execute(RiscvInstruction::FloatConvertWFromD {
+            rd: reg(2),
+            rs1: freg(1),
+        })
+        .unwrap();
+    assert_eq!(hart.read(reg(2)), 2);
+    assert_eq!(even_down.register_writes()[0].value(), 2);
+    assert_eq!(even_down.float_register_writes(), &[]);
+
+    hart.write_float(freg(3), 3.5f64.to_bits());
+    hart.execute(RiscvInstruction::FloatConvertWFromD {
+        rd: reg(4),
+        rs1: freg(3),
+    })
+    .unwrap();
+    assert_eq!(hart.read(reg(4)), 4);
+
+    hart.write_float(freg(5), (-2.5f64).to_bits());
+    hart.execute(RiscvInstruction::FloatConvertWFromD {
+        rd: reg(6),
+        rs1: freg(5),
+    })
+    .unwrap();
+    assert_eq!(hart.read(reg(6)), (-2i64) as u64);
+
+    hart.write_float(freg(7), 4_294_967_295.0f64.to_bits());
+    hart.execute(RiscvInstruction::FloatConvertWuFromD {
+        rd: reg(8),
+        rs1: freg(7),
+    })
+    .unwrap();
+    assert_eq!(hart.read(reg(8)), u64::MAX);
+
+    hart.write_float(freg(9), (-9.5f64).to_bits());
+    hart.execute(RiscvInstruction::FloatConvertLFromD {
+        rd: reg(10),
+        rs1: freg(9),
+    })
+    .unwrap();
+    assert_eq!(hart.read(reg(10)), (-10i64) as u64);
+
+    hart.write_float(freg(11), 9.5f64.to_bits());
+    hart.execute(RiscvInstruction::FloatConvertLuFromD {
+        rd: reg(12),
+        rs1: freg(11),
+    })
+    .unwrap();
+    assert_eq!(hart.read(reg(12)), 10);
+}
+
+#[test]
+fn hart_saturates_rv64d_double_to_integer_invalid_results_without_fflags() {
+    let mut hart = RiscvHartState::new(0x8000);
+
+    hart.write_float(freg(1), f64::NAN.to_bits());
+    hart.execute(RiscvInstruction::FloatConvertWFromD {
+        rd: reg(2),
+        rs1: freg(1),
+    })
+    .unwrap();
+    assert_eq!(hart.read(reg(2)), i32::MAX as u64);
+
+    hart.write_float(freg(3), (-1.0e40f64).to_bits());
+    hart.execute(RiscvInstruction::FloatConvertWFromD {
+        rd: reg(4),
+        rs1: freg(3),
+    })
+    .unwrap();
+    assert_eq!(hart.read(reg(4)), i32::MIN as i64 as u64);
+
+    hart.write_float(freg(5), (-1.0f64).to_bits());
+    hart.execute(RiscvInstruction::FloatConvertWuFromD {
+        rd: reg(6),
+        rs1: freg(5),
+    })
+    .unwrap();
+    assert_eq!(hart.read(reg(6)), 0);
+
+    hart.write_float(freg(7), f64::INFINITY.to_bits());
+    hart.execute(RiscvInstruction::FloatConvertLuFromD {
+        rd: reg(8),
+        rs1: freg(7),
+    })
+    .unwrap();
+    assert_eq!(hart.read(reg(8)), u64::MAX);
+
+    hart.write_float(freg(9), f64::NEG_INFINITY.to_bits());
+    hart.execute(RiscvInstruction::FloatConvertLFromD {
+        rd: reg(10),
+        rs1: freg(9),
+    })
+    .unwrap();
+    assert_eq!(hart.read(reg(10)), i64::MIN as u64);
 }
 
 #[test]
