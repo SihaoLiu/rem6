@@ -1063,6 +1063,14 @@ impl RiscvCore {
             .snapshot()
     }
 
+    pub fn in_order_pipeline_snapshot(&self) -> InOrderPipelineSnapshot {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .in_order_pipeline
+            .snapshot()
+    }
+
     pub(crate) fn invalidate_load_reservation_if_overlaps(
         &self,
         address: Address,
@@ -1148,6 +1156,7 @@ struct RiscvCoreState {
     htm_hart_checkpoint: Option<RiscvHartState>,
     branch_predictor: BranchPredictor,
     gshare_branch_predictor: GShareBranchPredictor,
+    in_order_pipeline: InOrderPipelineState,
     events: Vec<RiscvCpuExecutionEvent>,
     data_events: Vec<RiscvDataAccessEvent>,
     pma: RiscvPmaTable,
@@ -1180,6 +1189,7 @@ impl RiscvCoreState {
                 GShareBranchPredictorConfig::new(1, DEFAULT_RISCV_GSHARE_BRANCH_PREDICTOR_ENTRIES)
                     .expect("default RISC-V gshare branch predictor config is valid"),
             ),
+            in_order_pipeline: InOrderPipelineState::new(default_riscv_in_order_pipeline_config()),
             events: Vec::new(),
             data_events: Vec::new(),
             pma: RiscvPmaTable::new(),
@@ -1187,6 +1197,22 @@ impl RiscvCoreState {
                 .expect("default RISC-V PMP entry count is valid"),
         }
     }
+}
+
+fn default_riscv_in_order_pipeline_config() -> InOrderPipelineConfig {
+    InOrderPipelineConfig::new([
+        InOrderPipelineStageWidth::new(InOrderPipelineStage::Fetch1, 1)
+            .expect("default RISC-V fetch1 width is valid"),
+        InOrderPipelineStageWidth::new(InOrderPipelineStage::Fetch2, 1)
+            .expect("default RISC-V fetch2 width is valid"),
+        InOrderPipelineStageWidth::new(InOrderPipelineStage::Decode, 1)
+            .expect("default RISC-V decode width is valid"),
+        InOrderPipelineStageWidth::new(InOrderPipelineStage::Execute, 1)
+            .expect("default RISC-V execute width is valid"),
+        InOrderPipelineStageWidth::new(InOrderPipelineStage::Commit, 1)
+            .expect("default RISC-V commit width is valid"),
+    ])
+    .expect("default RISC-V in-order pipeline config covers every stage")
 }
 
 pub fn is_fetch_request(request: &MemoryRequest) -> bool {

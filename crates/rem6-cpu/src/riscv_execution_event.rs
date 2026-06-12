@@ -4,6 +4,7 @@ use rem6_memory::Address;
 
 use crate::{
     BranchUpdate, CpuFetchEvent, GShareHistoryUpdate, GSharePrediction, GShareTrainingUpdate,
+    InOrderPipelineCycleRecord,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -13,6 +14,7 @@ pub struct RiscvCpuExecutionEvent {
     execution: RiscvExecutionRecord,
     branch_update: Option<BranchUpdate>,
     gshare_branch_update: Option<RiscvGShareBranchUpdate>,
+    in_order_pipeline_cycle: Option<InOrderPipelineCycleRecord>,
     counts_as_retired_instruction: bool,
 }
 
@@ -81,12 +83,13 @@ impl RiscvCpuExecutionEvent {
         branch_update: Option<BranchUpdate>,
         gshare_branch_update: Option<RiscvGShareBranchUpdate>,
     ) -> Self {
-        Self::with_branch_updates_and_retired_instruction_counting(
+        Self::with_branch_updates_pipeline_cycle_and_retired_instruction_counting(
             fetch,
             instruction,
             execution,
             branch_update,
             gshare_branch_update,
+            None,
             true,
         )
     }
@@ -98,11 +101,12 @@ impl RiscvCpuExecutionEvent {
         branch_update: Option<BranchUpdate>,
         counts_as_retired_instruction: bool,
     ) -> Self {
-        Self::with_branch_updates_and_retired_instruction_counting(
+        Self::with_branch_updates_pipeline_cycle_and_retired_instruction_counting(
             fetch,
             instruction,
             execution,
             branch_update,
+            None,
             None,
             counts_as_retired_instruction,
         )
@@ -116,12 +120,33 @@ impl RiscvCpuExecutionEvent {
         gshare_branch_update: Option<RiscvGShareBranchUpdate>,
         counts_as_retired_instruction: bool,
     ) -> Self {
+        Self::with_branch_updates_pipeline_cycle_and_retired_instruction_counting(
+            fetch,
+            instruction,
+            execution,
+            branch_update,
+            gshare_branch_update,
+            None,
+            counts_as_retired_instruction,
+        )
+    }
+
+    pub const fn with_branch_updates_pipeline_cycle_and_retired_instruction_counting(
+        fetch: CpuFetchEvent,
+        instruction: RiscvInstruction,
+        execution: RiscvExecutionRecord,
+        branch_update: Option<BranchUpdate>,
+        gshare_branch_update: Option<RiscvGShareBranchUpdate>,
+        in_order_pipeline_cycle: Option<InOrderPipelineCycleRecord>,
+        counts_as_retired_instruction: bool,
+    ) -> Self {
         Self {
             fetch,
             instruction,
             execution,
             branch_update,
             gshare_branch_update,
+            in_order_pipeline_cycle,
             counts_as_retired_instruction,
         }
     }
@@ -148,6 +173,10 @@ impl RiscvCpuExecutionEvent {
 
     pub fn gshare_branch_update(&self) -> Option<&RiscvGShareBranchUpdate> {
         self.gshare_branch_update.as_ref()
+    }
+
+    pub fn in_order_pipeline_cycle(&self) -> Option<&InOrderPipelineCycleRecord> {
+        self.in_order_pipeline_cycle.as_ref()
     }
 
     pub const fn counts_as_retired_instruction(&self) -> bool {

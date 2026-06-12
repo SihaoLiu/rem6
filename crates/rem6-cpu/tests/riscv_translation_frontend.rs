@@ -479,6 +479,9 @@ fn riscv_core_data_translation_fault_enters_guest_load_page_fault_trap() {
         Some(RiscvTrapKind::LoadPageFault { address: 0x4008 })
     );
     assert!(!event.counts_as_retired_instruction());
+    assert!(event.in_order_pipeline_cycle().is_none());
+    assert_eq!(core.in_order_pipeline_snapshot().cycle(), 0);
+    assert!(core.in_order_pipeline_snapshot().in_flight().is_empty());
     assert_eq!(core.pending_trap(), event.execution().trap().copied());
     assert_eq!(core.privilege_mode(), RiscvPrivilegeMode::Supervisor);
     assert_eq!(core.supervisor_exception_pc(), 0x8000);

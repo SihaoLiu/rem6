@@ -2,8 +2,9 @@ use rem6_isa_riscv::RiscvInstruction;
 use rem6_memory::{AccessSize, Address, MemoryRequestId};
 
 use crate::{
-    BranchUpdate, CpuFetchEvent, CpuFetchEventKind, CpuFetchRecord, RiscvCore, RiscvCoreState,
-    RiscvCpuError, RiscvCpuExecutionEvent, RiscvGShareBranchUpdate, RISCV_LOCAL_GSHARE_THREAD,
+    BranchUpdate, CpuFetchEvent, CpuFetchEventKind, CpuFetchRecord, InOrderPipelineCycleRecord,
+    InOrderPipelineInstruction, InOrderPipelineStage, RiscvCore, RiscvCoreState, RiscvCpuError,
+    RiscvCpuExecutionEvent, RiscvGShareBranchUpdate, RISCV_LOCAL_GSHARE_THREAD,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -135,13 +136,23 @@ impl RiscvCore {
         }
         state.apply_riscv_system_event(execution.system_event());
         let retired_branch = retire_branch_predictions(state, fetch.pc(), instruction, &execution)?;
+        let pipeline_cycle = if execution.memory_access().is_none() {
+            Some(record_retired_in_order_pipeline_cycle(
+                state,
+                fetch.request_id().sequence(),
+            )?)
+        } else {
+            None
+        };
 
-        let event = RiscvCpuExecutionEvent::with_branch_updates(
+        let event = RiscvCpuExecutionEvent::with_branch_updates_pipeline_cycle_and_retired_instruction_counting(
             fetch.clone(),
             instruction,
             execution,
             retired_branch.branch_update,
             retired_branch.gshare_branch_update,
+            pipeline_cycle,
+            true,
         );
         state
             .executed_fetches
@@ -149,6 +160,23 @@ impl RiscvCore {
         state.events.push(event.clone());
         Ok(event)
     }
+}
+
+fn record_retired_in_order_pipeline_cycle(
+    state: &mut RiscvCoreState,
+    sequence: u64,
+) -> Result<InOrderPipelineCycleRecord, RiscvCpuError> {
+    state
+        .in_order_pipeline
+        .replace_in_flight([InOrderPipelineInstruction::new(
+            sequence,
+            InOrderPipelineStage::Commit,
+        )])
+        .map_err(RiscvCpuError::InOrderPipeline)?;
+    state
+        .in_order_pipeline
+        .try_advance_cycle_recorded()
+        .map_err(RiscvCpuError::InOrderPipeline)
 }
 
 struct RetiredBranchUpdates {
