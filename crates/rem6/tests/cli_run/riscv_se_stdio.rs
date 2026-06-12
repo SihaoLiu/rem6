@@ -358,6 +358,113 @@ int main(void) {
 }
 
 #[test]
+fn rem6_run_riscv_se_runs_static_newlib_faccessat_on_registered_guest_file() {
+    let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
+        eprintln!(
+            "skipping static newlib RISC-V SE faccessat smoke: riscv64-unknown-elf-gcc not found"
+        );
+        return;
+    };
+    let Some(qemu) = find_riscv_tool("qemu-riscv64") else {
+        eprintln!("skipping static newlib RISC-V SE faccessat smoke: qemu-riscv64 not found");
+        return;
+    };
+    let workspace = temp_workspace("riscv-se-newlib-faccessat");
+    let source = workspace.join("faccessat.c");
+    let binary = workspace.join("faccessat");
+    let input = workspace.join("guest.txt");
+    fs::write(
+        &source,
+        r#"#include <errno.h>
+#include <stdio.h>
+#include <unistd.h>
+
+extern int _faccessat(int dirfd, const char *path, int mode, int flags);
+
+int main(void) {
+    errno = 0;
+    int present = _faccessat(-100, "guest.txt", R_OK, 0);
+    int present_errno = errno;
+    errno = 0;
+    int missing = _faccessat(-100, "missing.txt", F_OK, 0);
+    int missing_errno = errno;
+    printf("faccessat:%d:%d:%d:%d\n", present, present_errno, missing, missing_errno);
+    return present == 0 &&
+           present_errno == 0 &&
+           missing == -1 &&
+           missing_errno == ENOENT ? 53 : 54;
+}
+"#,
+    )
+    .unwrap();
+    fs::write(&input, b"file-backed input\n").unwrap();
+
+    let compile = Command::new(&gcc)
+        .args([
+            "-O1",
+            "-static",
+            "-march=rv64gc",
+            "-mabi=lp64d",
+            source.to_str().unwrap(),
+            "-o",
+            binary.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        compile.status.success(),
+        "gcc stderr: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let qemu_output = Command::new(&qemu)
+        .current_dir(&workspace)
+        .arg(&binary)
+        .output()
+        .unwrap();
+    assert_eq!(
+        qemu_output.status.code(),
+        Some(53),
+        "qemu stderr: {}",
+        String::from_utf8_lossy(&qemu_output.stderr)
+    );
+    assert_eq!(qemu_output.stdout, b"faccessat:0:0:-1:2\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            binary.to_str().unwrap(),
+            "--max-tick",
+            "300000",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+            "--riscv-se-file",
+            &format!("guest.txt={}", input.display()),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_code\":53"));
+    assert!(stdout.contains("\"riscv_guest_writes\":[{\"fd\":1"));
+    assert!(stdout.contains("\"text\":\"faccessat:0:0:-1:2\\n\""));
+    assert!(!stdout.contains("riscv_unknown_syscalls\":[{"));
+    assert_stat(&stdout, "sim.riscv.se", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.stop_code", "Count", 53, "constant");
+}
+
+#[test]
 fn rem6_run_riscv_se_runs_static_newlib_unlink_on_registered_guest_file() {
     let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
         eprintln!(

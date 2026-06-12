@@ -14,6 +14,7 @@ const RISCV_LINUX_S_IFCHR: u32 = 0o020000;
 const RISCV_LINUX_S_IFREG: u32 = 0o100000;
 const RISCV_LINUX_REGULAR_FILE_MODE: u32 = RISCV_LINUX_S_IFREG | 0o444;
 const RISCV_LINUX_CHARACTER_DEVICE_MODE: u32 = RISCV_LINUX_S_IFCHR | 0o666;
+pub(super) const RISCV_LINUX_FACCESSAT: u64 = 48;
 pub(super) const RISCV_LINUX_ACCESS: u64 = 1033;
 const RISCV_LINUX_EACCES: u64 = 13;
 const RISCV_LINUX_X_OK: u64 = 1;
@@ -183,20 +184,54 @@ pub(super) fn syscall_access(
     guest_memory_reader: &RiscvGuestMemoryReader,
 ) -> u64 {
     let mode = request.argument(1);
+    let path = match read_access_path(request.argument(0), mode, guest_memory_reader) {
+        Ok(path) => path,
+        Err(error) => return error,
+    };
+    syscall_access_registered_path(&path, mode, state)
+}
+
+pub(super) fn syscall_faccessat(
+    request: RiscvSyscallRequest,
+    state: &RiscvSyscallState,
+    guest_memory_reader: &RiscvGuestMemoryReader,
+) -> u64 {
+    let mode = request.argument(2);
+    let path = match read_access_path(request.argument(1), mode, guest_memory_reader) {
+        Ok(path) => path,
+        Err(error) => return error,
+    };
+    if path.is_empty() {
+        return linux_error(RISCV_LINUX_ENOENT);
+    }
+    if request.argument(0) != RISCV_LINUX_AT_FDCWD && !path.starts_with(b"/") {
+        return linux_error(RISCV_LINUX_EBADF);
+    }
+    syscall_access_registered_path(&path, mode, state)
+}
+
+fn read_access_path(
+    path_address: u64,
+    mode: u64,
+    guest_memory_reader: &RiscvGuestMemoryReader,
+) -> Result<Vec<u8>, u64> {
     if mode & !RISCV_LINUX_ACCESS_VALID_MODE != 0 {
-        return linux_error(RISCV_LINUX_EINVAL);
+        return Err(linux_error(RISCV_LINUX_EINVAL));
     }
 
-    let path = match read_guest_c_string(
-        guest_memory_reader,
-        request.argument(0),
-        RISCV_LINUX_PATH_MAX,
-    ) {
-        Ok(path) => path,
-        Err(RiscvGuestCStringError::Fault) => return linux_error(RISCV_LINUX_EFAULT),
-        Err(RiscvGuestCStringError::TooLong) => return linux_error(RISCV_LINUX_ENAMETOOLONG),
-    };
-    let Some(_stat) = state.guest_path_stat(&path) else {
+    read_guest_c_string(guest_memory_reader, path_address, RISCV_LINUX_PATH_MAX).map_err(|error| {
+        linux_error(match error {
+            RiscvGuestCStringError::Fault => RISCV_LINUX_EFAULT,
+            RiscvGuestCStringError::TooLong => RISCV_LINUX_ENAMETOOLONG,
+        })
+    })
+}
+
+fn syscall_access_registered_path(path: &[u8], mode: u64, state: &RiscvSyscallState) -> u64 {
+    if path.is_empty() {
+        return linux_error(RISCV_LINUX_ENOENT);
+    }
+    let Some(_stat) = state.guest_path_stat(path) else {
         return linux_error(RISCV_LINUX_ENOENT);
     };
     if mode & (RISCV_LINUX_W_OK | RISCV_LINUX_X_OK) != 0 {

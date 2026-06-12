@@ -69,8 +69,8 @@ pub use startup::{
     RISCV_LINUX_AT_SECURE,
 };
 use stat::{
-    guest_path_inode, syscall_access, syscall_fstat, syscall_newfstatat, syscall_stat,
-    RiscvGuestStat, RISCV_LINUX_ACCESS,
+    guest_path_inode, syscall_access, syscall_faccessat, syscall_fstat, syscall_newfstatat,
+    syscall_stat, RiscvGuestStat, RISCV_LINUX_ACCESS, RISCV_LINUX_FACCESSAT,
 };
 pub use unknown::RiscvUnknownSyscallRecord;
 use unlink::{syscall_unlink, RISCV_LINUX_UNLINK};
@@ -973,6 +973,11 @@ impl RiscvSyscallTable {
                     value: syscall_readlinkat(request, state, reader, writer),
                 })
             }),
+            RISCV_LINUX_FACCESSAT => {
+                guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
+                    value: syscall_faccessat(request, state, guest_memory),
+                })
+            }
             RISCV_LINUX_NEWFSTATAT => guest_memory_reader.and_then(|reader| {
                 guest_memory_writer.map(|writer| RiscvSyscallOutcome::Return {
                     value: syscall_newfstatat(request, state, reader, writer),
