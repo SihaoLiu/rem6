@@ -210,3 +210,135 @@ fn riscv_core_gshare_predictor_records_unconditional_jumps() {
         Some(Address::new(0x8008))
     );
 }
+
+#[test]
+fn riscv_core_tournament_predictor_records_retired_conditional_branches() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let raw = b_type(0, 0, 0, 0);
+    let core = RiscvCore::new(core(route, CpuId::new(0), 0x8000));
+
+    fetch_one(&core, loaded_store(0x8000, raw), &mut scheduler, &transport);
+    let event = core.execute_next_completed_fetch().unwrap().unwrap();
+    let update = event.tournament_branch_update().unwrap();
+
+    assert!(update.prediction().local_history_valid());
+    assert!(!update.prediction().predicted_taken());
+    assert!(update.history_update().taken());
+    assert_eq!(update.history_update().old_global_history(), 0);
+    assert_eq!(update.history_update().new_global_history(), 1);
+    assert_eq!(update.history_update().old_local_history(), 0);
+    assert_eq!(update.history_update().new_local_history(), 1);
+    assert!(update.training_update().actual_taken());
+    assert_eq!(update.training_update().old_local_counter(), 0);
+    assert_eq!(update.training_update().new_local_counter(), 1);
+    assert_eq!(update.training_update().old_global_counter(), 0);
+    assert_eq!(update.training_update().new_global_counter(), 1);
+
+    let snapshot = core.tournament_branch_predictor_snapshot();
+    assert_eq!(snapshot.lookup_count(), 1);
+    assert_eq!(snapshot.history_update_count(), 1);
+    assert_eq!(snapshot.update_count(), 1);
+    assert_eq!(snapshot.threads()[0].global_history(), 1);
+    assert_eq!(snapshot.local_history_table()[0], 1);
+}
+
+#[test]
+fn riscv_core_tournament_predictor_records_not_taken_conditional_branches() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let raw = b_type(8, 0, 0, 0x1);
+    let core = RiscvCore::new(core(route, CpuId::new(0), 0x8000));
+
+    fetch_one(&core, loaded_store(0x8000, raw), &mut scheduler, &transport);
+    let event = core.execute_next_completed_fetch().unwrap().unwrap();
+    let update = event.tournament_branch_update().unwrap();
+
+    assert!(update.prediction().local_history_valid());
+    assert!(!update.prediction().predicted_taken());
+    assert!(!update.history_update().taken());
+    assert_eq!(update.history_update().old_global_history(), 0);
+    assert_eq!(update.history_update().new_global_history(), 0);
+    assert_eq!(update.history_update().old_local_history(), 0);
+    assert_eq!(update.history_update().new_local_history(), 0);
+    assert!(!update.training_update().actual_taken());
+    assert_eq!(update.training_update().old_local_counter(), 0);
+    assert_eq!(update.training_update().new_local_counter(), 0);
+    assert_eq!(update.training_update().old_global_counter(), 0);
+    assert_eq!(update.training_update().new_global_counter(), 0);
+
+    let snapshot = core.tournament_branch_predictor_snapshot();
+    assert_eq!(snapshot.lookup_count(), 1);
+    assert_eq!(snapshot.history_update_count(), 1);
+    assert_eq!(snapshot.update_count(), 1);
+    assert_eq!(snapshot.threads()[0].global_history(), 0);
+    assert_eq!(snapshot.local_history_table()[0], 0);
+}
+
+#[test]
+fn riscv_core_tournament_predictor_records_retired_unconditional_jumps() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let raw = j_type(8, 0);
+    let core = RiscvCore::new(core(route, CpuId::new(0), 0x8000));
+
+    fetch_one(&core, loaded_store(0x8000, raw), &mut scheduler, &transport);
+    let event = core.execute_next_completed_fetch().unwrap().unwrap();
+    let update = event.tournament_branch_update().unwrap();
+
+    assert!(!update.prediction().local_history_valid());
+    assert!(update.prediction().predicted_taken());
+    assert!(update.history_update().taken());
+    assert!(!update.history_update().local_history_updated());
+    assert!(update.training_update().actual_taken());
+    assert_eq!(update.training_update().old_local_counter(), 0);
+    assert_eq!(update.training_update().new_local_counter(), 0);
+    assert_eq!(update.training_update().old_global_counter(), 0);
+    assert_eq!(update.training_update().new_global_counter(), 1);
+
+    let snapshot = core.tournament_branch_predictor_snapshot();
+    assert_eq!(snapshot.lookup_count(), 1);
+    assert_eq!(snapshot.history_update_count(), 1);
+    assert_eq!(snapshot.update_count(), 1);
+    assert_eq!(snapshot.threads()[0].global_history(), 1);
+    assert_eq!(snapshot.local_history_table()[0], 0);
+}

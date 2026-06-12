@@ -147,6 +147,7 @@ pub use riscv_data_access::{
 };
 pub use riscv_execution_event::{
     RiscvCoreDriveAction, RiscvCpuExecutionEvent, RiscvGShareBranchUpdate,
+    RiscvTournamentBranchUpdate,
 };
 pub use riscv_sc_progress::{
     RiscvStoreConditionalFailureDiagnostic, RiscvStoreConditionalFailureStreak,
@@ -220,7 +221,12 @@ pub struct CpuResetState {
 pub const DEFAULT_RISCV_PMP_ENTRIES: usize = 16;
 pub const DEFAULT_RISCV_BRANCH_PREDICTOR_ENTRIES: usize = 1024;
 pub const DEFAULT_RISCV_GSHARE_BRANCH_PREDICTOR_ENTRIES: usize = 1024;
+pub const DEFAULT_RISCV_TOURNAMENT_LOCAL_ENTRIES: usize = 1024;
+pub const DEFAULT_RISCV_TOURNAMENT_LOCAL_HISTORY_ENTRIES: usize = 1024;
+pub const DEFAULT_RISCV_TOURNAMENT_GLOBAL_ENTRIES: usize = 1024;
+pub const DEFAULT_RISCV_TOURNAMENT_CHOICE_ENTRIES: usize = 1024;
 pub const RISCV_LOCAL_GSHARE_THREAD: CpuId = CpuId::new(0);
+pub const RISCV_LOCAL_TOURNAMENT_THREAD: CpuId = CpuId::new(0);
 
 impl CpuResetState {
     pub const fn new(cpu: CpuId, partition: PartitionId, agent: AgentId, entry: Address) -> Self {
@@ -1063,6 +1069,14 @@ impl RiscvCore {
             .snapshot()
     }
 
+    pub fn tournament_branch_predictor_snapshot(&self) -> TournamentBranchPredictorSnapshot {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .tournament_branch_predictor
+            .snapshot()
+    }
+
     pub fn in_order_pipeline_snapshot(&self) -> InOrderPipelineSnapshot {
         self.state
             .lock()
@@ -1156,6 +1170,7 @@ struct RiscvCoreState {
     htm_hart_checkpoint: Option<RiscvHartState>,
     branch_predictor: BranchPredictor,
     gshare_branch_predictor: GShareBranchPredictor,
+    tournament_branch_predictor: TournamentBranchPredictor,
     in_order_pipeline: InOrderPipelineState,
     events: Vec<RiscvCpuExecutionEvent>,
     data_events: Vec<RiscvDataAccessEvent>,
@@ -1188,6 +1203,16 @@ impl RiscvCoreState {
             gshare_branch_predictor: GShareBranchPredictor::new(
                 GShareBranchPredictorConfig::new(1, DEFAULT_RISCV_GSHARE_BRANCH_PREDICTOR_ENTRIES)
                     .expect("default RISC-V gshare branch predictor config is valid"),
+            ),
+            tournament_branch_predictor: TournamentBranchPredictor::new(
+                TournamentBranchPredictorConfig::new(
+                    1,
+                    DEFAULT_RISCV_TOURNAMENT_LOCAL_ENTRIES,
+                    DEFAULT_RISCV_TOURNAMENT_LOCAL_HISTORY_ENTRIES,
+                    DEFAULT_RISCV_TOURNAMENT_GLOBAL_ENTRIES,
+                    DEFAULT_RISCV_TOURNAMENT_CHOICE_ENTRIES,
+                )
+                .expect("default RISC-V tournament branch predictor config is valid"),
             ),
             in_order_pipeline: InOrderPipelineState::new(default_riscv_in_order_pipeline_config()),
             events: Vec::new(),

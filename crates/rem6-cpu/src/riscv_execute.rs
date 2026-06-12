@@ -2,9 +2,10 @@ use rem6_isa_riscv::RiscvInstruction;
 use rem6_memory::{AccessSize, Address, MemoryRequestId};
 
 use crate::{
-    BranchUpdate, CpuFetchEvent, CpuFetchEventKind, CpuFetchRecord, InOrderPipelineCycleRecord,
-    InOrderPipelineInstruction, InOrderPipelineStage, RiscvCore, RiscvCoreState, RiscvCpuError,
-    RiscvCpuExecutionEvent, RiscvGShareBranchUpdate, RISCV_LOCAL_GSHARE_THREAD,
+    riscv_execution_event::RiscvRetiredBranchUpdates, CpuFetchEvent, CpuFetchEventKind,
+    CpuFetchRecord, InOrderPipelineCycleRecord, InOrderPipelineInstruction, InOrderPipelineStage,
+    RiscvCore, RiscvCoreState, RiscvCpuError, RiscvCpuExecutionEvent, RiscvGShareBranchUpdate,
+    RiscvTournamentBranchUpdate, RISCV_LOCAL_GSHARE_THREAD, RISCV_LOCAL_TOURNAMENT_THREAD,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -145,12 +146,11 @@ impl RiscvCore {
             None
         };
 
-        let event = RiscvCpuExecutionEvent::with_branch_updates_pipeline_cycle_and_retired_instruction_counting(
+        let event = RiscvCpuExecutionEvent::with_all_branch_updates_pipeline_cycle_and_retired_instruction_counting(
             fetch.clone(),
             instruction,
             execution,
-            retired_branch.branch_update,
-            retired_branch.gshare_branch_update,
+            retired_branch,
             pipeline_cycle,
             true,
         );
@@ -179,22 +179,14 @@ pub(crate) fn record_retired_in_order_pipeline_cycle(
         .map_err(RiscvCpuError::InOrderPipeline)
 }
 
-struct RetiredBranchUpdates {
-    branch_update: Option<BranchUpdate>,
-    gshare_branch_update: Option<RiscvGShareBranchUpdate>,
-}
-
 fn retire_branch_predictions(
     state: &mut RiscvCoreState,
     pc: Address,
     instruction: RiscvInstruction,
     execution: &rem6_isa_riscv::RiscvExecutionRecord,
-) -> Result<RetiredBranchUpdates, RiscvCpuError> {
+) -> Result<RiscvRetiredBranchUpdates, RiscvCpuError> {
     if execution.trap().is_some() {
-        return Ok(RetiredBranchUpdates {
-            branch_update: None,
-            gshare_branch_update: None,
-        });
+        return Ok(RiscvRetiredBranchUpdates::default());
     }
 
     let sequential_pc = pc
@@ -215,10 +207,7 @@ fn retire_branch_predictions(
             (false, true, Some(Address::new(next_pc)))
         }
         _ => {
-            return Ok(RetiredBranchUpdates {
-                branch_update: None,
-                gshare_branch_update: None,
-            });
+            return Ok(RiscvRetiredBranchUpdates::default());
         }
     };
 
@@ -243,13 +232,32 @@ fn retire_branch_predictions(
         .gshare_branch_predictor
         .train(prediction.history(), actual_taken, false)
         .map_err(RiscvCpuError::GShareBranchPredictor)?;
+    let tournament_prediction = if conditional {
+        state
+            .tournament_branch_predictor
+            .predict(RISCV_LOCAL_TOURNAMENT_THREAD, pc)
+    } else {
+        state
+            .tournament_branch_predictor
+            .predict_unconditional(RISCV_LOCAL_TOURNAMENT_THREAD, pc)
+    }
+    .map_err(RiscvCpuError::TournamentBranchPredictor)?;
+    let tournament_history_update = state
+        .tournament_branch_predictor
+        .update_history(tournament_prediction.history(), actual_taken)
+        .map_err(RiscvCpuError::TournamentBranchPredictor)?;
+    let tournament_training_update = state
+        .tournament_branch_predictor
+        .train(tournament_prediction.history(), actual_taken, false)
+        .map_err(RiscvCpuError::TournamentBranchPredictor)?;
 
-    Ok(RetiredBranchUpdates {
-        branch_update: Some(branch_update),
-        gshare_branch_update: Some(RiscvGShareBranchUpdate::new(
-            prediction,
-            history_update,
-            training_update,
-        )),
-    })
+    Ok(RiscvRetiredBranchUpdates::new(
+        branch_update,
+        RiscvGShareBranchUpdate::new(prediction, history_update, training_update),
+        RiscvTournamentBranchUpdate::new(
+            tournament_prediction,
+            tournament_history_update,
+            tournament_training_update,
+        ),
+    ))
 }
