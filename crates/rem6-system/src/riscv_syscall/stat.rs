@@ -11,9 +11,11 @@ const RISCV_LINUX_STAT_BYTES: usize = 128;
 const RISCV_LINUX_STAT_BLOCK_BYTES: u64 = 512;
 const RISCV_LINUX_STAT_BLOCK_SIZE: u64 = 8192;
 const RISCV_LINUX_S_IFCHR: u32 = 0o020000;
+const RISCV_LINUX_S_IFDIR: u32 = 0o040000;
 const RISCV_LINUX_S_IFREG: u32 = 0o100000;
 const RISCV_LINUX_S_IFLNK: u32 = 0o120000;
 const RISCV_LINUX_REGULAR_FILE_MODE: u32 = RISCV_LINUX_S_IFREG | 0o444;
+const RISCV_LINUX_DIRECTORY_MODE: u32 = RISCV_LINUX_S_IFDIR | 0o555;
 const RISCV_LINUX_CHARACTER_DEVICE_MODE: u32 = RISCV_LINUX_S_IFCHR | 0o666;
 const RISCV_LINUX_SYMBOLIC_LINK_MODE: u32 = RISCV_LINUX_S_IFLNK | 0o777;
 pub(super) const RISCV_LINUX_FACCESSAT: u64 = 48;
@@ -75,6 +77,21 @@ impl RiscvGuestStat {
         }
     }
 
+    pub(super) fn directory(identity: RiscvSyscallIdentity, inode: u64) -> Self {
+        Self {
+            device: 0,
+            inode,
+            mode: RISCV_LINUX_DIRECTORY_MODE,
+            link_count: 2,
+            user_id: linux_stat_user_id(identity.user_id()),
+            group_id: linux_stat_user_id(identity.group_id()),
+            special_device: 0,
+            size: 0,
+            block_size: RISCV_LINUX_STAT_BLOCK_SIZE,
+            blocks: 0,
+        }
+    }
+
     pub(super) fn symbolic_link(
         size: u64,
         identity: RiscvSyscallIdentity,
@@ -101,6 +118,12 @@ impl RiscvGuestStat {
 
     pub(super) const fn is_regular_file(self) -> bool {
         self.mode & RISCV_LINUX_S_IFREG == RISCV_LINUX_S_IFREG
+    }
+
+    pub(super) const fn allows_access(self, mode: u64) -> bool {
+        (mode & RISCV_LINUX_R_OK == 0 || self.mode & 0o444 != 0)
+            && (mode & RISCV_LINUX_W_OK == 0 || self.mode & 0o222 != 0)
+            && (mode & RISCV_LINUX_X_OK == 0 || self.mode & 0o111 != 0)
     }
 }
 
@@ -279,10 +302,10 @@ fn syscall_access_registered_path(path: &[u8], mode: u64, state: &RiscvSyscallSt
     if path.is_empty() {
         return linux_error(RISCV_LINUX_ENOENT);
     }
-    let Some(_stat) = state.guest_path_stat(path) else {
+    let Some(stat) = state.guest_path_stat(path) else {
         return linux_error(RISCV_LINUX_ENOENT);
     };
-    if mode & (RISCV_LINUX_W_OK | RISCV_LINUX_X_OK) != 0 {
+    if !stat.allows_access(mode) {
         return linux_error(RISCV_LINUX_EACCES);
     }
 

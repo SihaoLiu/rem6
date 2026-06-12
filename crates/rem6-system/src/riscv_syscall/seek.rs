@@ -21,7 +21,10 @@ pub(super) fn syscall_lseek(request: RiscvSyscallRequest, state: &mut RiscvSysca
     let Ok(stat) = state.guest_fd_stat(fd) else {
         return linux_error(RISCV_LINUX_EBADF);
     };
-    if !stat.is_regular_file() {
+    let Ok(is_directory) = state.guest_fd_is_directory(fd) else {
+        return linux_error(RISCV_LINUX_EBADF);
+    };
+    if !stat.is_regular_file() && !is_directory {
         return linux_error(RISCV_LINUX_ESPIPE);
     }
 
@@ -29,7 +32,16 @@ pub(super) fn syscall_lseek(request: RiscvSyscallRequest, state: &mut RiscvSysca
     let base = match request.argument(2) {
         RISCV_LINUX_SEEK_SET => 0,
         RISCV_LINUX_SEEK_CUR => i128::from(current_offset.get()),
-        RISCV_LINUX_SEEK_END => i128::from(stat.size()),
+        RISCV_LINUX_SEEK_END => {
+            if is_directory {
+                let Ok(Some(length)) = state.guest_directory_description_len(fd) else {
+                    return linux_error(RISCV_LINUX_EBADF);
+                };
+                i128::from(length)
+            } else {
+                i128::from(stat.size())
+            }
+        }
         _ => return linux_error(RISCV_LINUX_EINVAL),
     };
 
