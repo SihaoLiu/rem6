@@ -52,7 +52,7 @@ pub use guest_write::RiscvGuestWriteRecord;
 use ioctl::{syscall_ioctl, RISCV_LINUX_IOCTL};
 pub use limits::RISCV_LINUX_STACK_LIMIT_BYTES;
 use limits::{syscall_prlimit64, RISCV_LINUX_PRLIMIT64};
-use link::{syscall_link, RISCV_LINUX_LINK};
+use link::{syscall_link_operation, RISCV_LINUX_LINK, RISCV_LINUX_LINKAT};
 use links::syscall_readlinkat;
 pub use mmap::RiscvMmapRegion;
 use mmap::{syscall_mmap, syscall_munmap, RISCV64_LINUX_MMAP_BASE, RISCV_PAGE_BYTES};
@@ -75,7 +75,7 @@ use stat::{
     RISCV_LINUX_LSTAT,
 };
 pub use unknown::RiscvUnknownSyscallRecord;
-use unlink::{syscall_unlink, RISCV_LINUX_UNLINK};
+use unlink::{syscall_unlink_operation, RISCV_LINUX_UNLINK, RISCV_LINUX_UNLINKAT};
 use utsname::write_riscv_linux_utsname;
 use wait4::{
     syscall_getrusage, syscall_process_group_id, syscall_wait4, RISCV_LINUX_GETRUSAGE,
@@ -961,14 +961,14 @@ impl RiscvSyscallTable {
                     value: syscall_open(request, state, guest_memory),
                 })
             }
-            RISCV_LINUX_LINK => {
+            RISCV_LINUX_LINK | RISCV_LINUX_LINKAT => {
                 guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
-                    value: syscall_link(request, state, guest_memory),
+                    value: syscall_link_operation(request, state, guest_memory),
                 })
             }
-            RISCV_LINUX_UNLINK => {
+            RISCV_LINUX_UNLINK | RISCV_LINUX_UNLINKAT => {
                 guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
-                    value: syscall_unlink(request, state, guest_memory),
+                    value: syscall_unlink_operation(request, state, guest_memory),
                 })
             }
             RISCV_LINUX_CLOSE => Some(RiscvSyscallOutcome::Return {
