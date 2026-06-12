@@ -21,6 +21,7 @@ mod cwd;
 mod futex;
 mod guest_memory;
 mod guest_write;
+mod identity;
 mod ioctl;
 mod limits;
 mod link;
@@ -29,6 +30,7 @@ mod mmap;
 mod open;
 mod random;
 mod readv;
+mod rename;
 mod robust;
 mod seek;
 mod startup;
@@ -49,6 +51,7 @@ pub use guest_memory::{
     RiscvGuestMemoryWriter,
 };
 pub use guest_write::RiscvGuestWriteRecord;
+pub(crate) use identity::RiscvSyscallIdentity;
 use ioctl::{syscall_ioctl, RISCV_LINUX_IOCTL};
 pub use limits::RISCV_LINUX_STACK_LIMIT_BYTES;
 use limits::{syscall_prlimit64, RISCV_LINUX_PRLIMIT64};
@@ -61,6 +64,7 @@ use mmap::{RISCV_LINUX_MAP_FIXED, RISCV_LINUX_MAP_PRIVATE};
 use open::{syscall_open, syscall_openat, RISCV_LINUX_OPEN};
 use random::{invalid_getrandom_flags, syscall_getrandom, RISCV_LINUX_GETRANDOM};
 use readv::{syscall_readv, RISCV_LINUX_READV};
+use rename::{syscall_renameat2, RISCV_LINUX_RENAMEAT2};
 use robust::{syscall_get_robust_list, syscall_set_robust_list, RiscvRobustList};
 use seek::{syscall_lseek, RISCV_LINUX_LSEEK};
 pub use startup::{
@@ -159,7 +163,6 @@ const RISCV_LINUX_AT_EMPTY_PATH: u64 = 0x1000;
 const RISCV_LINUX_AT_NO_AUTOMOUNT: u64 = 0x800;
 const RISCV_LINUX_AT_SYMLINK_NOFOLLOW: u64 = 0x100;
 const RISCV_LINUX_PATH_MAX: usize = 4096;
-const RISCV_LINUX_DEFAULT_PROCESS_ID: u64 = 100;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RiscvSyscallRequest {
@@ -278,6 +281,11 @@ struct RiscvGuestOpenRequest {
 pub(super) enum RiscvGuestLinkError {
     SourceMissing,
     DestinationExists,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum RiscvGuestRenameError {
+    SourceMissing,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -615,6 +623,49 @@ impl RiscvSyscallState {
         Ok(())
     }
 
+    pub(super) fn rename_guest_path(
+        &mut self,
+        source: &[u8],
+        destination: &[u8],
+    ) -> Result<(), RiscvGuestRenameError> {
+        if !self.guest_path_exists(source) {
+            return Err(RiscvGuestRenameError::SourceMissing);
+        }
+        if source == destination {
+            return Ok(());
+        }
+        if self.guest_path_exists(destination)
+            && self.guest_file_identity(source) == self.guest_file_identity(destination)
+        {
+            return Ok(());
+        }
+
+        let source_is_path = self.guest_paths.remove(source);
+        let source_file = self.guest_files.remove(source);
+        let source_link = self.guest_links.remove(source);
+        let source_identity = self.guest_file_identities.remove(source);
+
+        self.guest_paths.remove(destination);
+        self.guest_files.remove(destination);
+        self.guest_links.remove(destination);
+        self.guest_file_identities.remove(destination);
+
+        let destination = destination.to_vec();
+        if source_is_path {
+            self.guest_paths.insert(destination.clone());
+        }
+        if let Some(contents) = source_file {
+            self.guest_files.insert(destination.clone(), contents);
+        }
+        if let Some(target) = source_link {
+            self.guest_links.insert(destination.clone(), target);
+        }
+        if let Some(identity) = source_identity {
+            self.guest_file_identities.insert(destination, identity);
+        }
+        Ok(())
+    }
+
     fn guest_path_stat(&self, path: &[u8]) -> Option<RiscvGuestStat> {
         if !self.guest_path_registered(path) {
             return None;
@@ -809,79 +860,6 @@ impl RiscvSyscallState {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct RiscvSyscallIdentity {
-    thread_group_id: u64,
-    thread_id: u64,
-    parent_process_id: u64,
-    user_id: u64,
-    effective_user_id: u64,
-    group_id: u64,
-    effective_group_id: u64,
-}
-
-impl RiscvSyscallIdentity {
-    const fn new(
-        thread_group_id: u64,
-        thread_id: u64,
-        parent_process_id: u64,
-        user_id: u64,
-        effective_user_id: u64,
-        group_id: u64,
-        effective_group_id: u64,
-    ) -> Self {
-        Self {
-            thread_group_id,
-            thread_id,
-            parent_process_id,
-            user_id,
-            effective_user_id,
-            group_id,
-            effective_group_id,
-        }
-    }
-
-    const fn linux_single_process() -> Self {
-        Self::new(
-            RISCV_LINUX_DEFAULT_PROCESS_ID,
-            RISCV_LINUX_DEFAULT_PROCESS_ID,
-            0,
-            RISCV_LINUX_DEFAULT_PROCESS_ID,
-            RISCV_LINUX_DEFAULT_PROCESS_ID,
-            RISCV_LINUX_DEFAULT_PROCESS_ID,
-            RISCV_LINUX_DEFAULT_PROCESS_ID,
-        )
-    }
-
-    const fn thread_group_id(self) -> u64 {
-        self.thread_group_id
-    }
-
-    const fn thread_id(self) -> u64 {
-        self.thread_id
-    }
-
-    const fn parent_process_id(self) -> u64 {
-        self.parent_process_id
-    }
-
-    const fn user_id(self) -> u64 {
-        self.user_id
-    }
-
-    const fn effective_user_id(self) -> u64 {
-        self.effective_user_id
-    }
-
-    const fn group_id(self) -> u64 {
-        self.group_id
-    }
-
-    const fn effective_group_id(self) -> u64 {
-        self.effective_group_id
-    }
-}
-
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct RiscvSyscallTable;
 
@@ -969,6 +947,11 @@ impl RiscvSyscallTable {
             RISCV_LINUX_UNLINK | RISCV_LINUX_UNLINKAT => {
                 guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
                     value: syscall_unlink_operation(request, state, guest_memory),
+                })
+            }
+            RISCV_LINUX_RENAMEAT2 => {
+                guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
+                    value: syscall_renameat2(request, state, guest_memory),
                 })
             }
             RISCV_LINUX_CLOSE => Some(RiscvSyscallOutcome::Return {

@@ -11,6 +11,8 @@ mod boot_image_tests;
 mod link_tests;
 #[path = "riscv_syscall_tests/mmap_tests.rs"]
 mod mmap_tests;
+#[path = "riscv_syscall_tests/rename_tests.rs"]
+mod rename_tests;
 #[path = "riscv_syscall_tests/startup_tests.rs"]
 mod startup_tests;
 #[path = "riscv_syscall_tests/stat_tests.rs"]

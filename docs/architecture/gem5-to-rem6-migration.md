@@ -145,7 +145,7 @@ score beyond single-axis.
 - [x] Startup stack, argv/envp/auxv, `brk`, `mmap`, stdio, file, vector I/O, time, cwd, random, resource, and wait slices have tests.
 - [x] Unknown syscall returns `ENOSYS` and records a typed diagnostic.
 - [x] Static no-libc and newlib smoke binaries can be generated and compared with qemu when tools exist.
-- [x] Linux at-family hard-link and unlink syscalls mutate registered guest files and have qemu-compared raw smoke evidence.
+- [x] Linux at-family hard-link, `renameat2` flags=0, and unlink syscalls mutate registered guest files and have qemu-compared raw smoke evidence.
 - [ ] Process/thread lifecycle, signals, permissions, and blocking wait/futex semantics are broad enough for distro-like programs.
 - [ ] Broad Linux syscall table parity exists.
 - [ ] Host filesystem policy matches the needed gem5 SE cases.
@@ -155,8 +155,8 @@ score beyond single-axis.
 
 **Migrated:** RISC-V SE ecall path; startup stack and auxv setup; `brk`,
 `mmap`, stdio, file, vector I/O, time, cwd, random, resource, wait, unknown
-syscall, and at-family hard-link/unlink slices; typed unknown-syscall records;
-and static smoke coverage.
+syscall, and at-family hard-link/`renameat2` flags=0/unlink slices; typed
+unknown-syscall records; and static smoke coverage.
 
 **Not migrated:** Broad Linux SE parity, process/thread lifecycle, full Linux
 boot, and real benchmark workloads.
@@ -164,6 +164,7 @@ boot, and real benchmark workloads.
 **Evidence:** `RiscvSyscallTable::handle_with_guest_memory_io_at_tick`,
 `RiscvSyscallEmulation::handle_pending_core_trap`, CLI static newlib tests,
 `riscv_syscall_getrusage`, `riscv_se_resource`, `riscv_se_links`,
+`riscv_se_rename`,
 `RiscvLinuxBootHandoffConfig`, and RISC-V DTB handoff tests.
 
 **Next evidence:** A static libc program beyond smoke coverage, followed by SBI

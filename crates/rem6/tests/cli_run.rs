@@ -8,6 +8,8 @@ mod gups;
 mod load;
 #[path = "cli_run/riscv_se_links.rs"]
 mod riscv_se_links;
+#[path = "cli_run/riscv_se_rename.rs"]
+mod riscv_se_rename;
 #[path = "cli_run/riscv_se_resource.rs"]
 mod riscv_se_resource;
 #[path = "cli_run/riscv_se_stdio.rs"]
