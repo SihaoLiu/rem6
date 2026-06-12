@@ -687,31 +687,57 @@ fn hart_executes_rv64d_comparisons_and_records_integer_writes() {
 }
 
 #[test]
-fn hart_rv64d_comparisons_return_false_for_nan_without_fflags() {
+fn hart_rv64d_comparisons_raise_invalid_for_nan_by_opcode() {
     let mut hart = RiscvHartState::new(0x8000);
-    hart.write_float(freg(1), f64::NAN.to_bits());
+    hart.write_float(freg(1), 0x7ff8_0000_0000_0001);
     hart.write_float(freg(2), 1.0f64.to_bits());
 
-    for instruction in [
-        RiscvInstruction::FloatLessOrEqualD {
+    let less_than = hart
+        .execute(RiscvInstruction::FloatLessThanD {
             rd: reg(5),
             rs1: freg(1),
             rs2: freg(2),
-        },
-        RiscvInstruction::FloatLessThanD {
+        })
+        .unwrap();
+    assert_eq!(less_than.register_writes()[0].value(), 0);
+    assert_eq!(hart.float_status().fflags(), FLOAT_FLAG_INVALID);
+
+    hart.write(reg(10), 0);
+    hart.execute(RiscvInstruction::decode(csr_write_type(FFLAGS_CSR, 10, 0)).unwrap())
+        .unwrap();
+    let less_or_equal = hart
+        .execute(RiscvInstruction::FloatLessOrEqualD {
             rd: reg(6),
             rs1: freg(1),
             rs2: freg(2),
-        },
-        RiscvInstruction::FloatEqualD {
+        })
+        .unwrap();
+    assert_eq!(less_or_equal.register_writes()[0].value(), 0);
+    assert_eq!(hart.float_status().fflags(), FLOAT_FLAG_INVALID);
+
+    hart.write(reg(10), 0);
+    hart.execute(RiscvInstruction::decode(csr_write_type(FFLAGS_CSR, 10, 0)).unwrap())
+        .unwrap();
+    let equal_quiet = hart
+        .execute(RiscvInstruction::FloatEqualD {
             rd: reg(7),
             rs1: freg(1),
             rs2: freg(2),
-        },
-    ] {
-        let record = hart.execute(instruction).unwrap();
-        assert_eq!(record.register_writes()[0].value(), 0);
-    }
+        })
+        .unwrap();
+    assert_eq!(equal_quiet.register_writes()[0].value(), 0);
+    assert_eq!(hart.float_status().fflags(), 0);
+
+    hart.write_float(freg(1), 0x7ff0_0000_0000_0001);
+    let equal_signaling = hart
+        .execute(RiscvInstruction::FloatEqualD {
+            rd: reg(8),
+            rs1: freg(1),
+            rs2: freg(2),
+        })
+        .unwrap();
+    assert_eq!(equal_signaling.register_writes()[0].value(), 0);
+    assert_eq!(hart.float_status().fflags(), FLOAT_FLAG_INVALID);
 }
 
 #[test]

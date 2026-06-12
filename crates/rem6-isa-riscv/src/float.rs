@@ -524,6 +524,20 @@ pub(crate) fn integer_register_write_rne(
     integer_register_write(instruction, lhs, rhs).expect("RNE float integer write is valid")
 }
 
+pub(crate) fn integer_exception_flags(instruction: RiscvInstruction, lhs: u64, rhs: u64) -> u64 {
+    match instruction {
+        RiscvInstruction::FloatLessOrEqualS { .. } | RiscvInstruction::FloatLessThanS { .. } => {
+            signaling_compare_exception_flags_single(lhs, rhs)
+        }
+        RiscvInstruction::FloatLessOrEqualD { .. } | RiscvInstruction::FloatLessThanD { .. } => {
+            signaling_compare_exception_flags_double(lhs, rhs)
+        }
+        RiscvInstruction::FloatEqualS { .. } => quiet_compare_exception_flags_single(lhs, rhs),
+        RiscvInstruction::FloatEqualD { .. } => quiet_compare_exception_flags_double(lhs, rhs),
+        _ => 0,
+    }
+}
+
 fn round_single(value: f32, rounding_mode: RiscvFloatRoundingMode) -> f32 {
     match rounding_mode {
         RiscvFloatRoundingMode::RoundNearestEven => value.round_ties_even(),
@@ -656,6 +670,38 @@ fn minmax_exception_flags_single(lhs: u64, rhs: u64) -> u64 {
 }
 
 fn minmax_exception_flags_double(lhs: u64, rhs: u64) -> u64 {
+    if is_signaling_nan_double(lhs) || is_signaling_nan_double(rhs) {
+        FLOAT_FLAG_INVALID
+    } else {
+        0
+    }
+}
+
+fn signaling_compare_exception_flags_single(lhs: u64, rhs: u64) -> u64 {
+    if is_nan_single(unbox_single(lhs)) || is_nan_single(unbox_single(rhs)) {
+        FLOAT_FLAG_INVALID
+    } else {
+        0
+    }
+}
+
+fn signaling_compare_exception_flags_double(lhs: u64, rhs: u64) -> u64 {
+    if is_nan_double(lhs) || is_nan_double(rhs) {
+        FLOAT_FLAG_INVALID
+    } else {
+        0
+    }
+}
+
+fn quiet_compare_exception_flags_single(lhs: u64, rhs: u64) -> u64 {
+    if is_signaling_nan_single(unbox_single(lhs)) || is_signaling_nan_single(unbox_single(rhs)) {
+        FLOAT_FLAG_INVALID
+    } else {
+        0
+    }
+}
+
+fn quiet_compare_exception_flags_double(lhs: u64, rhs: u64) -> u64 {
     if is_signaling_nan_double(lhs) || is_signaling_nan_double(rhs) {
         FLOAT_FLAG_INVALID
     } else {

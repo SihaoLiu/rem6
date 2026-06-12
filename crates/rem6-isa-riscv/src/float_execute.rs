@@ -87,11 +87,11 @@ pub(crate) fn execute_float_integer_instruction(
         | RiscvInstruction::FloatLessThanD { rs1, rs2, .. }
         | RiscvInstruction::FloatEqualS { rs1, rs2, .. }
         | RiscvInstruction::FloatEqualD { rs1, rs2, .. }) => {
-            let (rd, value) = float::integer_register_write_rne(
-                instruction,
-                hart.read_float(rs1),
-                hart.read_float(rs2),
-            );
+            let lhs = hart.read_float(rs1);
+            let rhs = hart.read_float(rs2);
+            let flags = float::integer_exception_flags(instruction, lhs, rhs);
+            let (rd, value) = float::integer_register_write_rne(instruction, lhs, rhs);
+            hart.raise_float_exception_flags(flags);
             crate::write_register(hart, writes, rd, value);
         }
         instruction @ (RiscvInstruction::FloatClassS { rs1, .. }
