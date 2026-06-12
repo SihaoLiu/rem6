@@ -18,12 +18,12 @@ pub(crate) fn execute_float_register_instruction(
         }
         | RiscvInstruction::FloatNegativeMultiplyAddS { rs1, rs2, rs3, .. }
         | RiscvInstruction::FloatNegativeMultiplyAddD { rs1, rs2, rs3, .. }) => {
-            let (rd, value) = float::float_register_write_ternary(
-                instruction,
-                hart.read_float(rs1),
-                hart.read_float(rs2),
-                hart.read_float(rs3),
-            );
+            let lhs = hart.read_float(rs1);
+            let rhs = hart.read_float(rs2);
+            let addend = hart.read_float(rs3);
+            let flags = float::ternary_exception_flags(instruction, lhs, rhs, addend);
+            let (rd, value) = float::float_register_write_ternary(instruction, lhs, rhs, addend);
+            hart.raise_float_exception_flags(flags);
             float::write_float_register(hart, writes, rd, value);
         }
         instruction @ (RiscvInstruction::FloatAddS { rs1, rs2, .. }

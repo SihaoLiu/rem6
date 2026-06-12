@@ -545,6 +545,47 @@ fn hart_executes_rv64f_fused_multiply_add_with_nan_boxing() {
 }
 
 #[test]
+fn hart_rv64f_fused_multiply_add_raises_invalid_for_signaling_nan_only() {
+    let mut hart = RiscvHartState::new(0x8000);
+    hart.write_float(freg(1), box_single(0x7fa0_0001));
+    hart.write_float(freg(2), f32_box(2.0));
+    hart.write_float(freg(3), f32_box(3.0));
+
+    hart.execute(RiscvInstruction::FloatMultiplyAddS {
+        rd: freg(4),
+        rs1: freg(1),
+        rs2: freg(2),
+        rs3: freg(3),
+    })
+    .unwrap();
+
+    assert_eq!(hart.float_status().fflags(), FLOAT_FLAG_INVALID);
+
+    hart.write(reg(10), 0);
+    hart.execute(RiscvInstruction::decode(csr_write_type(FFLAGS_CSR, 10, 0)).unwrap())
+        .unwrap();
+    hart.write_float(freg(1), box_single(0x7fc0_0001));
+    hart.execute(RiscvInstruction::FloatMultiplyAddS {
+        rd: freg(4),
+        rs1: freg(1),
+        rs2: freg(2),
+        rs3: freg(3),
+    })
+    .unwrap();
+    assert_eq!(hart.float_status().fflags(), 0);
+
+    hart.write_float(freg(1), u64::from(0x7fa0_0001u32));
+    hart.execute(RiscvInstruction::FloatMultiplyAddS {
+        rd: freg(4),
+        rs1: freg(1),
+        rs2: freg(2),
+        rs3: freg(3),
+    })
+    .unwrap();
+    assert_eq!(hart.float_status().fflags(), 0);
+}
+
+#[test]
 fn hart_executes_rv64f_sqrt_and_treats_unboxed_inputs_as_nan() {
     let mut hart = RiscvHartState::new(0x8000);
     hart.write_float(freg(1), f32_box(144.0));

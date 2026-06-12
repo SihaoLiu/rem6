@@ -570,6 +570,29 @@ pub(crate) fn binary_exception_flags(instruction: RiscvInstruction, lhs: u64, rh
     }
 }
 
+pub(crate) fn ternary_exception_flags(
+    instruction: RiscvInstruction,
+    lhs: u64,
+    rhs: u64,
+    addend: u64,
+) -> u64 {
+    match instruction {
+        RiscvInstruction::FloatMultiplyAddS { .. }
+        | RiscvInstruction::FloatMultiplySubtractS { .. }
+        | RiscvInstruction::FloatNegativeMultiplySubtractS { .. }
+        | RiscvInstruction::FloatNegativeMultiplyAddS { .. } => {
+            multiply_add_exception_flags_single(lhs, rhs, addend)
+        }
+        RiscvInstruction::FloatMultiplyAddD { .. }
+        | RiscvInstruction::FloatMultiplySubtractD { .. }
+        | RiscvInstruction::FloatNegativeMultiplySubtractD { .. }
+        | RiscvInstruction::FloatNegativeMultiplyAddD { .. } => {
+            multiply_add_exception_flags_double(lhs, rhs, addend)
+        }
+        _ => 0,
+    }
+}
+
 fn add_single(lhs: u64, rhs: u64) -> u64 {
     box_canonical_single(f32::from_bits(unbox_single(lhs)) + f32::from_bits(unbox_single(rhs)))
 }
@@ -634,6 +657,28 @@ fn minmax_exception_flags_single(lhs: u64, rhs: u64) -> u64 {
 
 fn minmax_exception_flags_double(lhs: u64, rhs: u64) -> u64 {
     if is_signaling_nan_double(lhs) || is_signaling_nan_double(rhs) {
+        FLOAT_FLAG_INVALID
+    } else {
+        0
+    }
+}
+
+fn multiply_add_exception_flags_single(lhs: u64, rhs: u64, addend: u64) -> u64 {
+    if is_signaling_nan_single(unbox_single(lhs))
+        || is_signaling_nan_single(unbox_single(rhs))
+        || is_signaling_nan_single(unbox_single(addend))
+    {
+        FLOAT_FLAG_INVALID
+    } else {
+        0
+    }
+}
+
+fn multiply_add_exception_flags_double(lhs: u64, rhs: u64, addend: u64) -> u64 {
+    if is_signaling_nan_double(lhs)
+        || is_signaling_nan_double(rhs)
+        || is_signaling_nan_double(addend)
+    {
         FLOAT_FLAG_INVALID
     } else {
         0
