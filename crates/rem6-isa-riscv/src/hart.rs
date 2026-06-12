@@ -1,6 +1,6 @@
 use crate::{
     FloatRegister, Register, RiscvControlFlowSnapshot, RiscvControlFlowUpdate, RiscvCounterBank,
-    RiscvCounterSnapshot, RiscvInterruptCsr, RiscvPrivilegeMode, RiscvStatusWord,
+    RiscvCounterSnapshot, RiscvFloatStatus, RiscvInterruptCsr, RiscvPrivilegeMode, RiscvStatusWord,
     RiscvSv39AccessContext, RiscvVectorConfig,
 };
 
@@ -24,6 +24,7 @@ pub struct RiscvHartState {
     pub(crate) translation_satp: u64,
     pub(crate) privilege_mode: RiscvPrivilegeMode,
     pub(crate) status: RiscvStatusWord,
+    pub(crate) float_status: RiscvFloatStatus,
     pub(crate) vector_config: RiscvVectorConfig,
     pub(crate) registers: [u64; 32],
     pub(crate) float_registers: [u64; 32],
@@ -54,6 +55,7 @@ impl RiscvHartState {
             translation_satp: 0,
             privilege_mode: RiscvPrivilegeMode::Machine,
             status: RiscvStatusWord::new(0),
+            float_status: RiscvFloatStatus::new(0),
             vector_config: RiscvVectorConfig::invalid(),
             registers: [0; 32],
             float_registers: [0; 32],
@@ -86,6 +88,10 @@ impl RiscvHartState {
 
     pub const fn status(&self) -> RiscvStatusWord {
         self.status
+    }
+
+    pub const fn float_status(&self) -> RiscvFloatStatus {
+        self.float_status
     }
 
     pub const fn supervisor_trap_vector(&self) -> u64 {
@@ -156,6 +162,14 @@ impl RiscvHartState {
 
     pub fn set_status(&mut self, status: RiscvStatusWord) {
         self.status = status;
+    }
+
+    pub fn set_float_status(&mut self, status: RiscvFloatStatus) {
+        self.float_status = status;
+    }
+
+    pub(crate) fn raise_float_exception_flags(&mut self, flags: u64) {
+        self.float_status.raise_exception_flags(flags);
     }
 
     pub fn set_translation_satp(&mut self, value: u64) {

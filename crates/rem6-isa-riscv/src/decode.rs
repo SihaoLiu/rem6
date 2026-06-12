@@ -2,8 +2,9 @@ use crate::encoding::{
     b_imm, csr, funct3, funct7, i_imm, rd, rs1, rs2, shamt32, shamt64, shift_funct6,
 };
 use crate::{
-    Immediate, RiscvCounterCsr, RiscvError, RiscvFenceSet, RiscvInstruction, RiscvInterruptCsr,
-    RiscvMachineTrapCsr, RiscvStatusCsr, RiscvSupervisorTrapCsr, RiscvTranslationCsr,
+    Immediate, RiscvCounterCsr, RiscvError, RiscvFenceSet, RiscvFloatCsr, RiscvInstruction,
+    RiscvInterruptCsr, RiscvMachineTrapCsr, RiscvStatusCsr, RiscvSupervisorTrapCsr,
+    RiscvTranslationCsr,
 };
 
 pub(crate) fn decode_system(raw: u32) -> Result<RiscvInstruction, RiscvError> {
@@ -326,6 +327,10 @@ pub(crate) fn decode_csr(raw: u32) -> Result<RiscvInstruction, RiscvError> {
                         .map(|csr| RiscvInstruction::ReadMachineCounterCsr { rd: rd(raw), csr })
                 })
                 .or_else(|| {
+                    RiscvFloatCsr::from_address(csr_address)
+                        .map(|csr| RiscvInstruction::ReadFloatCsr { rd: rd(raw), csr })
+                })
+                .or_else(|| {
                     RiscvStatusCsr::from_address(csr_address)
                         .map(|csr| RiscvInstruction::ReadStatusCsr { rd: rd(raw), csr })
                 })
@@ -346,6 +351,42 @@ pub(crate) fn decode_csr(raw: u32) -> Result<RiscvInstruction, RiscvError> {
                         .map(|csr| RiscvInstruction::ReadTranslationCsr { rd: rd(raw), csr })
                 })
                 .ok_or(RiscvError::UnknownEncoding { raw }),
+        };
+    }
+
+    if let Some(csr) = RiscvFloatCsr::from_address(csr_address) {
+        return match funct3(raw) {
+            0x1 => Ok(RiscvInstruction::WriteFloatCsr {
+                rd: rd(raw),
+                csr,
+                rs1: rs1(raw),
+            }),
+            0x2 => Ok(RiscvInstruction::SetFloatCsr {
+                rd: rd(raw),
+                csr,
+                rs1: rs1(raw),
+            }),
+            0x3 => Ok(RiscvInstruction::ClearFloatCsr {
+                rd: rd(raw),
+                csr,
+                rs1: rs1(raw),
+            }),
+            0x5 => Ok(RiscvInstruction::WriteFloatCsrImmediate {
+                rd: rd(raw),
+                csr,
+                zimm: rs1(raw).index(),
+            }),
+            0x6 => Ok(RiscvInstruction::SetFloatCsrImmediate {
+                rd: rd(raw),
+                csr,
+                zimm: rs1(raw).index(),
+            }),
+            0x7 => Ok(RiscvInstruction::ClearFloatCsrImmediate {
+                rd: rd(raw),
+                csr,
+                zimm: rs1(raw).index(),
+            }),
+            _ => Err(RiscvError::UnknownEncoding { raw }),
         };
     }
 

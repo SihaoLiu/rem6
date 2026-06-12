@@ -44,11 +44,11 @@ pub(crate) fn execute_float_register_instruction(
         | RiscvInstruction::FloatMinD { rs1, rs2, .. }
         | RiscvInstruction::FloatMaxS { rs1, rs2, .. }
         | RiscvInstruction::FloatMaxD { rs1, rs2, .. }) => {
-            let (rd, value) = float::float_register_write(
-                instruction,
-                hart.read_float(rs1),
-                hart.read_float(rs2),
-            );
+            let lhs = hart.read_float(rs1);
+            let rhs = hart.read_float(rs2);
+            let flags = float::binary_exception_flags(instruction, lhs, rhs);
+            let (rd, value) = float::float_register_write(instruction, lhs, rhs);
+            hart.raise_float_exception_flags(flags);
             float::write_float_register(hart, writes, rd, value);
         }
         instruction @ (RiscvInstruction::FloatSqrtS { rs1, .. }

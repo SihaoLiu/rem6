@@ -486,6 +486,14 @@ pub(crate) fn write_float_register(
     writes.push(FloatRegisterWrite::new(register, value));
 }
 
+pub(crate) fn binary_exception_flags(instruction: RiscvInstruction, lhs: u64, rhs: u64) -> u64 {
+    match instruction {
+        RiscvInstruction::FloatDivS { .. } => divide_exception_flags_single(lhs, rhs),
+        RiscvInstruction::FloatDivD { .. } => divide_exception_flags_double(lhs, rhs),
+        _ => 0,
+    }
+}
+
 fn add_single(lhs: u64, rhs: u64) -> u64 {
     box_canonical_single(f32::from_bits(unbox_single(lhs)) + f32::from_bits(unbox_single(rhs)))
 }
@@ -512,6 +520,32 @@ fn div_double(lhs: u64, rhs: u64) -> u64 {
 
 fn div_single(lhs: u64, rhs: u64) -> u64 {
     box_canonical_single(f32::from_bits(unbox_single(lhs)) / f32::from_bits(unbox_single(rhs)))
+}
+
+fn divide_exception_flags_single(lhs: u64, rhs: u64) -> u64 {
+    let lhs = f32::from_bits(unbox_single(lhs));
+    let rhs = f32::from_bits(unbox_single(rhs));
+    divide_exception_flags(rhs == 0.0, lhs == 0.0, lhs.is_finite() && lhs != 0.0)
+}
+
+fn divide_exception_flags_double(lhs: u64, rhs: u64) -> u64 {
+    let lhs = f64::from_bits(lhs);
+    let rhs = f64::from_bits(rhs);
+    divide_exception_flags(rhs == 0.0, lhs == 0.0, lhs.is_finite() && lhs != 0.0)
+}
+
+fn divide_exception_flags(
+    rhs_is_zero: bool,
+    lhs_is_zero: bool,
+    lhs_is_finite_nonzero: bool,
+) -> u64 {
+    if rhs_is_zero && lhs_is_zero {
+        FLOAT_FLAG_INVALID
+    } else if rhs_is_zero && lhs_is_finite_nonzero {
+        FLOAT_FLAG_DIVIDE_BY_ZERO
+    } else {
+        0
+    }
 }
 
 fn multiply_add_single(lhs: u64, rhs: u64, addend: u64) -> u64 {
@@ -980,6 +1014,8 @@ const DOUBLE_EXP_MASK: u64 = 0x7ff0_0000_0000_0000;
 const DOUBLE_FRACTION_MASK: u64 = 0x000f_ffff_ffff_ffff;
 const DOUBLE_QUIET_NAN_BIT: u64 = 1 << 51;
 const DEFAULT_NAN_DOUBLE: u64 = 0x7ff8_0000_0000_0000;
+const FLOAT_FLAG_INVALID: u64 = 1 << 4;
+const FLOAT_FLAG_DIVIDE_BY_ZERO: u64 = 1 << 3;
 
 fn float_rd(raw: u32) -> FloatRegister {
     FloatRegister::from_field(rd(raw).index().into())

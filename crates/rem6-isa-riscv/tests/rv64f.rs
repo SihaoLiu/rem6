@@ -40,6 +40,18 @@ fn s_type(imm: i32, rs2: u8, rs1: u8, funct3: u32, opcode: u32) -> u32 {
         | opcode
 }
 
+fn csr_type(csr: u16, rs1: u8, funct3: u32, rd: u8) -> u32 {
+    (u32::from(csr) << 20) | (u32::from(rs1) << 15) | (funct3 << 12) | (u32::from(rd) << 7) | 0x73
+}
+
+fn csr_read_type(csr: u16, rd: u8) -> u32 {
+    csr_type(csr, 0, 0x2, rd)
+}
+
+fn csr_write_type(csr: u16, rs1: u8, rd: u8) -> u32 {
+    csr_type(csr, rs1, 0x1, rd)
+}
+
 fn reg(index: u8) -> Register {
     Register::new(index).unwrap()
 }
@@ -55,6 +67,12 @@ fn box_single(bits: u32) -> u64 {
 fn f32_box(value: f32) -> u64 {
     box_single(value.to_bits())
 }
+
+const FFLAGS_CSR: u16 = 0x001;
+const FRM_CSR: u16 = 0x002;
+const FCSR_CSR: u16 = 0x003;
+const FLOAT_FLAG_INVALID: u64 = 1 << 4;
+const FLOAT_FLAG_DIVIDE_BY_ZERO: u64 = 1 << 3;
 
 #[test]
 fn decoder_accepts_rv64f_load_store_and_arithmetic_operations() {
@@ -328,6 +346,66 @@ fn decoder_accepts_rv64f_fused_multiply_add_operations() {
     for (raw, expected) in cases {
         assert_eq!(RiscvInstruction::decode(raw).unwrap(), expected);
     }
+}
+
+#[test]
+fn hart_accrues_float_divide_by_zero_flag_and_reads_fcsr() {
+    let mut hart = RiscvHartState::new(0x1100);
+    hart.write_float(freg(1), f32_box(1.0));
+    hart.write_float(freg(2), f32_box(0.0));
+
+    hart.execute(RiscvInstruction::FloatDivS {
+        rd: freg(3),
+        rs1: freg(1),
+        rs2: freg(2),
+    })
+    .unwrap();
+
+    assert_eq!(hart.read_float(freg(3)), f32_box(f32::INFINITY));
+
+    hart.execute(RiscvInstruction::decode(csr_read_type(FFLAGS_CSR, 5)).unwrap())
+        .unwrap();
+    assert_eq!(hart.read(reg(5)), FLOAT_FLAG_DIVIDE_BY_ZERO);
+
+    hart.execute(RiscvInstruction::decode(csr_read_type(FCSR_CSR, 6)).unwrap())
+        .unwrap();
+    assert_eq!(hart.read(reg(6)), FLOAT_FLAG_DIVIDE_BY_ZERO);
+}
+
+#[test]
+fn hart_writes_float_csr_fields_and_accrues_new_exception_flags() {
+    let mut hart = RiscvHartState::new(0x1200);
+    hart.write(reg(10), (2 << 5) | FLOAT_FLAG_INVALID);
+
+    let write = hart
+        .execute(RiscvInstruction::decode(csr_write_type(FCSR_CSR, 10, 5)).unwrap())
+        .unwrap();
+    assert_eq!(hart.read(reg(5)), 0);
+    assert_eq!(write.float_register_writes(), &[]);
+
+    hart.execute(RiscvInstruction::decode(csr_read_type(FFLAGS_CSR, 6)).unwrap())
+        .unwrap();
+    assert_eq!(hart.read(reg(6)), FLOAT_FLAG_INVALID);
+
+    hart.execute(RiscvInstruction::decode(csr_read_type(FRM_CSR, 7)).unwrap())
+        .unwrap();
+    assert_eq!(hart.read(reg(7)), 2);
+
+    hart.write_float(freg(1), f32_box(1.0));
+    hart.write_float(freg(2), f32_box(0.0));
+    hart.execute(RiscvInstruction::FloatDivS {
+        rd: freg(3),
+        rs1: freg(1),
+        rs2: freg(2),
+    })
+    .unwrap();
+
+    hart.execute(RiscvInstruction::decode(csr_read_type(FCSR_CSR, 8)).unwrap())
+        .unwrap();
+    assert_eq!(
+        hart.read(reg(8)),
+        (2 << 5) | FLOAT_FLAG_INVALID | FLOAT_FLAG_DIVIDE_BY_ZERO
+    );
 }
 
 #[test]

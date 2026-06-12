@@ -1,7 +1,7 @@
 use crate::{
     AtomicMemoryOp, FloatRegister, Immediate, MemoryWidth, Register, RiscvCounterCsr,
-    RiscvFenceSet, RiscvInterruptCsr, RiscvMachineTrapCsr, RiscvPrivilegeMode, RiscvPseudoOp,
-    RiscvStatusCsr, RiscvSupervisorTrapCsr, RiscvTranslationCsr,
+    RiscvFenceSet, RiscvFloatCsr, RiscvInterruptCsr, RiscvMachineTrapCsr, RiscvPrivilegeMode,
+    RiscvPseudoOp, RiscvStatusCsr, RiscvSupervisorTrapCsr, RiscvTranslationCsr,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -636,6 +636,40 @@ pub enum RiscvInstruction {
         csr: RiscvCounterCsr,
         zimm: u8,
     },
+    ReadFloatCsr {
+        rd: Register,
+        csr: RiscvFloatCsr,
+    },
+    WriteFloatCsr {
+        rd: Register,
+        csr: RiscvFloatCsr,
+        rs1: Register,
+    },
+    SetFloatCsr {
+        rd: Register,
+        csr: RiscvFloatCsr,
+        rs1: Register,
+    },
+    ClearFloatCsr {
+        rd: Register,
+        csr: RiscvFloatCsr,
+        rs1: Register,
+    },
+    WriteFloatCsrImmediate {
+        rd: Register,
+        csr: RiscvFloatCsr,
+        zimm: u8,
+    },
+    SetFloatCsrImmediate {
+        rd: Register,
+        csr: RiscvFloatCsr,
+        zimm: u8,
+    },
+    ClearFloatCsrImmediate {
+        rd: Register,
+        csr: RiscvFloatCsr,
+        zimm: u8,
+    },
     ReadStatusCsr {
         rd: Register,
         csr: RiscvStatusCsr,
@@ -822,6 +856,15 @@ impl RiscvInstruction {
             | Self::WriteCounterCsrImmediate { .. }
             | Self::SetCounterCsrImmediate { .. }
             | Self::ClearCounterCsrImmediate { .. } => Some(RiscvPrivilegeMode::Machine),
+            Self::ReadFloatCsr { csr, .. }
+            | Self::WriteFloatCsr { csr, .. }
+            | Self::SetFloatCsr { csr, .. }
+            | Self::ClearFloatCsr { csr, .. }
+            | Self::WriteFloatCsrImmediate { csr, .. }
+            | Self::SetFloatCsrImmediate { csr, .. }
+            | Self::ClearFloatCsrImmediate { csr, .. } => {
+                Some(required_csr_privilege(csr.address()))
+            }
             Self::ReadStatusCsr { csr, .. }
             | Self::WriteStatusCsr { csr, .. }
             | Self::SetStatusCsr { csr, .. }

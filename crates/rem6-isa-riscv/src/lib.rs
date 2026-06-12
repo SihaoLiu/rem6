@@ -38,8 +38,8 @@ pub use control_flow::{
     RiscvVectorConfig, RiscvVectorConfigUpdate,
 };
 pub use csr::{
-    RiscvCounterBank, RiscvCounterCsr, RiscvCounterCsrWord, RiscvCounterSnapshot,
-    RiscvInterruptCsr, RiscvMachineTrapCsr, RiscvStatusCsr, RiscvStatusWord,
+    RiscvCounterBank, RiscvCounterCsr, RiscvCounterCsrWord, RiscvCounterSnapshot, RiscvFloatCsr,
+    RiscvFloatStatus, RiscvInterruptCsr, RiscvMachineTrapCsr, RiscvStatusCsr, RiscvStatusWord,
     RiscvSupervisorTrapCsr, RiscvTranslationCsr,
 };
 pub use error::{RiscvCsrError, RiscvError};
@@ -676,6 +676,31 @@ impl RiscvHartState {
                 let value = self.counters.read_machine(csr) & !u64::from(zimm);
                 write_counter_csr(self, &mut register_writes, rd, csr, value);
             }
+            RiscvInstruction::ReadFloatCsr { rd, csr } => {
+                write_register(self, &mut register_writes, rd, read_float_csr(self, csr));
+            }
+            RiscvInstruction::WriteFloatCsr { rd, csr, rs1 } => {
+                write_float_csr(self, &mut register_writes, rd, csr, self.read(rs1));
+            }
+            RiscvInstruction::SetFloatCsr { rd, csr, rs1 } => {
+                let value = read_float_csr(self, csr) | self.read(rs1);
+                write_float_csr(self, &mut register_writes, rd, csr, value);
+            }
+            RiscvInstruction::ClearFloatCsr { rd, csr, rs1 } => {
+                let value = read_float_csr(self, csr) & !self.read(rs1);
+                write_float_csr(self, &mut register_writes, rd, csr, value);
+            }
+            RiscvInstruction::WriteFloatCsrImmediate { rd, csr, zimm } => {
+                write_float_csr(self, &mut register_writes, rd, csr, u64::from(zimm));
+            }
+            RiscvInstruction::SetFloatCsrImmediate { rd, csr, zimm } => {
+                let value = read_float_csr(self, csr) | u64::from(zimm);
+                write_float_csr(self, &mut register_writes, rd, csr, value);
+            }
+            RiscvInstruction::ClearFloatCsrImmediate { rd, csr, zimm } => {
+                let value = read_float_csr(self, csr) & !u64::from(zimm);
+                write_float_csr(self, &mut register_writes, rd, csr, value);
+            }
             RiscvInstruction::ReadStatusCsr { rd, csr } => {
                 write_register(self, &mut register_writes, rd, read_status_csr(self, csr));
             }
@@ -890,6 +915,20 @@ fn write_counter_csr(
     let old_value = hart.counters.read_machine(csr);
     write_register(hart, writes, register, old_value);
     hart.counters.set_machine(csr, value);
+}
+fn read_float_csr(hart: &RiscvHartState, csr: RiscvFloatCsr) -> u64 {
+    csr.read(hart.float_status())
+}
+fn write_float_csr(
+    hart: &mut RiscvHartState,
+    writes: &mut Vec<RegisterWrite>,
+    register: Register,
+    csr: RiscvFloatCsr,
+    value: u64,
+) {
+    let old_value = read_float_csr(hart, csr);
+    write_register(hart, writes, register, old_value);
+    hart.set_float_status(csr.write(hart.float_status(), value));
 }
 fn read_status_csr(hart: &RiscvHartState, csr: RiscvStatusCsr) -> u64 {
     csr.read(hart.status())

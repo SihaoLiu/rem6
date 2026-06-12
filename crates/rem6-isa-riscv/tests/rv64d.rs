@@ -40,6 +40,18 @@ fn s_type(imm: i32, rs2: u8, rs1: u8, funct3: u32, opcode: u32) -> u32 {
         | opcode
 }
 
+fn csr_type(csr: u16, rs1: u8, funct3: u32, rd: u8) -> u32 {
+    (u32::from(csr) << 20) | (u32::from(rs1) << 15) | (funct3 << 12) | (u32::from(rd) << 7) | 0x73
+}
+
+fn csr_read_type(csr: u16, rd: u8) -> u32 {
+    csr_type(csr, 0, 0x2, rd)
+}
+
+fn csr_write_type(csr: u16, rs1: u8, rd: u8) -> u32 {
+    csr_type(csr, rs1, 0x1, rd)
+}
+
 fn reg(index: u8) -> Register {
     Register::new(index).unwrap()
 }
@@ -55,6 +67,10 @@ fn box_single(bits: u32) -> u64 {
 fn f32_box(value: f32) -> u64 {
     box_single(value.to_bits())
 }
+
+const FFLAGS_CSR: u16 = 0x001;
+const FLOAT_FLAG_INVALID: u64 = 1 << 4;
+const FLOAT_FLAG_DIVIDE_BY_ZERO: u64 = 1 << 3;
 
 #[test]
 fn decoder_accepts_rv64d_load_store_and_add() {
@@ -372,6 +388,42 @@ fn decoder_accepts_rv64d_fused_multiply_add_operations() {
     for (raw, expected) in cases {
         assert_eq!(RiscvInstruction::decode(raw).unwrap(), expected);
     }
+}
+
+#[test]
+fn hart_accrues_rv64d_divide_exception_flags() {
+    let mut hart = RiscvHartState::new(0x2100);
+    hart.write_float(freg(1), 1.0f64.to_bits());
+    hart.write_float(freg(2), 0.0f64.to_bits());
+
+    hart.execute(RiscvInstruction::FloatDivD {
+        rd: freg(3),
+        rs1: freg(1),
+        rs2: freg(2),
+    })
+    .unwrap();
+
+    assert_eq!(hart.read_float(freg(3)), f64::INFINITY.to_bits());
+    hart.execute(RiscvInstruction::decode(csr_read_type(FFLAGS_CSR, 5)).unwrap())
+        .unwrap();
+    assert_eq!(hart.read(reg(5)), FLOAT_FLAG_DIVIDE_BY_ZERO);
+
+    hart.write(reg(10), 0);
+    hart.execute(RiscvInstruction::decode(csr_write_type(FFLAGS_CSR, 10, 0)).unwrap())
+        .unwrap();
+    hart.write_float(freg(1), 0.0f64.to_bits());
+    hart.write_float(freg(2), 0.0f64.to_bits());
+    hart.execute(RiscvInstruction::FloatDivD {
+        rd: freg(3),
+        rs1: freg(1),
+        rs2: freg(2),
+    })
+    .unwrap();
+
+    assert!(f64::from_bits(hart.read_float(freg(3))).is_nan());
+    hart.execute(RiscvInstruction::decode(csr_read_type(FFLAGS_CSR, 6)).unwrap())
+        .unwrap();
+    assert_eq!(hart.read(reg(6)), FLOAT_FLAG_INVALID);
 }
 
 #[test]
