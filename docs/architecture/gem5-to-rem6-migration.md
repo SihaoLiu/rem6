@@ -29,6 +29,11 @@ Checklist items use markdown checkboxes:
 - `[x]` means current rem6 has executable evidence for that item.
 - `[ ]` means the item is not migrated or lacks executable rem6 evidence.
 
+Checklist source: the component-local markdown checkbox list is the auditable
+source for the component percentage. The gem5 test-anchor table uses row scores
+only as compact crosswalk markers; those row scores do not override component
+checklist calculations.
+
 For each component, the score uses this formula:
 
 1. Count completed checklist items and divide by all listed checklist items.
@@ -294,10 +299,11 @@ ISA-visible execution tests.
 ## Test Migration Ledger
 
 This table is a crosswalk from gem5 test anchors to rem6 owners. Its estimates
-are compact row-level status markers, not component scores. The checklist-backed
-component sections above define the auditable percentages.
+are compact row-level status markers, not component scores. `Row score` entries
+use the same percentage and bucket vocabulary as component scores, but the
+checklist-backed component sections above define the auditable percentages.
 
-| gem5 test anchor | rem6 owner | Estimate | Migrated boundary | Next evidence |
+| gem5 test anchor | rem6 owner | Row score | Migrated boundary | Next evidence |
 | --- | --- | --- | --- | --- |
 | `tests/gem5/arm_boot_tests` | future ARM ISA crate, `rem6-platform` | 0% open | ARM device slices exist, but this row requires Arm ISA boot. | Add Arm ISA, board handoff, device tree, and kernel boot tests. |
 | `tests/gem5/asmtest` | ISA crates, `rem6` CLI | 45% single-axis | RISC-V no-libc and ISA unit tests cover selected instruction and ecall paths. | Split RV32/RV64 and extension families with architectural-state comparison. |
