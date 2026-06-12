@@ -313,6 +313,40 @@ pub(super) fn run_stats_output(
             StatResetPolicy::Constant,
             execution.data_access_probes.stack_distance_stack_depth,
         )?;
+        increment_stat(
+            &mut stats,
+            "sim.data.probes.memory_footprint.cache_line_bytes",
+            "Byte",
+            StatResetPolicy::Constant,
+            execution
+                .data_access_probes
+                .memory_footprint_cache_line_bytes,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.data.probes.memory_footprint.cache_line_total_bytes",
+            "Byte",
+            StatResetPolicy::Monotonic,
+            execution
+                .data_access_probes
+                .memory_footprint_cache_line_total_bytes,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.data.probes.memory_footprint.page_bytes",
+            "Byte",
+            StatResetPolicy::Constant,
+            execution.data_access_probes.memory_footprint_page_bytes,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.data.probes.memory_footprint.page_total_bytes",
+            "Byte",
+            StatResetPolicy::Monotonic,
+            execution
+                .data_access_probes
+                .memory_footprint_page_total_bytes,
+        )?;
         if inputs.config.isa() == RequestedIsa::Riscv {
             increment_stat(
                 &mut stats,

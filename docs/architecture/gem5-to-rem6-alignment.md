@@ -90,7 +90,7 @@ explicit error.
 | `src/mem/cache` | `rem6-cache`, `rem6-system` | partial | Replacement, MSHR, maintenance, bank, workload data-cache consumers, and an MSI CacheBank/MSHR responder for RISC-V and accelerator-DMA topology data accesses exist. CPU-facing L1/L2/L3 integration, bank-backed scheduler/resource accounting parity, more protocol bank responders, and broader cache policies remain open. |
 | `src/mem/ruby` | `rem6-coherence`, protocol crates, `rem6-directory` | partial | MSI/MESI/MOESI/CHI line and harness coverage exists without generated protocol code. Ruby-scale transactions, networks, and tests remain open. |
 | `src/mem/dram_interface`, `src/mem/mem_ctrl` | `rem6-dram` | partial | DDR/HBM/LPDDR/NVM profile counters and routed execution exist. Refresh, validated preset breadth, detailed scheduling policies, and full QoS coupling remain open. |
-| `src/mem/probes`, `src/mem/packet_queue` | `rem6-stats`, `rem6-transport`, `rem6-traffic` | partial | Real retired-instruction and RISC-V data-access probe producers feed stats trackers, and transport traces expose per-route latency counters. More probe consumers and queue-level stats remain open. |
+| `src/mem/probes`, `src/mem/packet_queue` | `rem6-stats`, `rem6-transport`, `rem6-traffic` | partial | Real retired-instruction and RISC-V data-access probe producers feed stats trackers; CLI run artifacts and stats expose stack-distance and memory-footprint data-access results. Transport traces expose per-route latency counters. More probe consumers and queue-level stats remain open. |
 | `src/dev/riscv` | `rem6-interrupt`, `rem6-timer`, `rem6-platform`, `rem6-system` | partial | CLINT, PLIC, DTB handoff, initrd handoff, and RISC-V interrupt routes exist. SBI runtime, richer platform devices, and Linux boot validation remain open. |
 | `src/dev/serial`, `src/dev/uart` | `rem6-uart`, `rem6-mmio` | partial | UART and PL011 register models, interrupts, snapshots, and platform attachment exist. Additional UART variants and board-specific wiring remain open. |
 | `src/dev/storage`, `src/dev/virtio` | `rem6-storage`, `rem6-virtio`, `rem6-pci`, `rem6-system` | partial | Storage images, SimpleDisk, IDE, VirtIO block/console/RNG, PCI/MMIO config, and checkpoint banks exist. More disk formats, queue features, and board coverage remain open. |
@@ -139,8 +139,9 @@ tests and runtime artifacts.
   replay summaries.
 - Stats, probes, power, and thermal: tests cover hierarchical counters,
   reset/dump histories, stat deltas, real RISC-V retired-instruction and
-  data-access probe producers, power-state residency, expression power models,
-  thermal networks, and external power-analysis exports.
+  data-access probe producers, CLI-visible stack-distance and memory-footprint
+  data-access stats, power-state residency, expression power models, thermal
+  networks, and external power-analysis exports.
 
 ## Open Alignment Work
 

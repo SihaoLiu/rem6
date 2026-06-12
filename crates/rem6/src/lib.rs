@@ -13,7 +13,9 @@ use rem6_kernel::{PartitionFrontier, PartitionId, PartitionedScheduler, ReadyPar
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryOperation, MemoryRequestId,
 };
-use rem6_stats::{StackDistProbeConfig, StatsRegistry};
+use rem6_stats::{
+    MemFootprintAddressRange, MemFootprintProbeConfig, StackDistProbeConfig, StatsRegistry,
+};
 use rem6_system::{
     GuestEventId, GuestSourceId, GuestTrapKind, HostEventPolicy, RiscvDataAccessStats,
     RiscvGuestWriteRecord, RiscvSeAuxvEntry, RiscvSeStartupConfig, RiscvSystemRun,
@@ -53,6 +55,7 @@ pub use trace_replay_cli::{
 };
 
 const DEFAULT_CACHE_LINE_BYTES: u64 = 16;
+const RISCV_DATA_PROBE_PAGE_BYTES: u64 = 4096;
 const CLI_MEMORY_DUMP_AGENT: AgentId = AgentId::new(u32::MAX);
 const RISCV_BOOT_A0_REGISTER: u8 = 10;
 const RISCV_BOOT_A1_REGISTER: u8 = 11;
@@ -146,6 +149,10 @@ pub struct Rem6DataAccessProbeSummary {
     stack_distance_infinite_samples: u64,
     stack_distance_finite_samples: u64,
     stack_distance_stack_depth: u64,
+    memory_footprint_cache_line_bytes: u64,
+    memory_footprint_cache_line_total_bytes: u64,
+    memory_footprint_page_bytes: u64,
+    memory_footprint_page_total_bytes: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -624,8 +631,19 @@ fn execute_riscv(
     let probe_config = StackDistProbeConfig::builder(line_layout.bytes(), line_layout.bytes())
         .build()
         .map_err(stats_error)?;
-    let mut driver = RiscvSystemRunDriver::new(trap_port)
-        .with_data_access_stats(RiscvDataAccessStats::with_stack_distance(probe_config));
+    let footprint_range =
+        MemFootprintAddressRange::new(0, u64::MAX - (RISCV_DATA_PROBE_PAGE_BYTES - 1))
+            .map_err(stats_error)?;
+    let footprint_config = MemFootprintProbeConfig::new(
+        line_layout.bytes(),
+        RISCV_DATA_PROBE_PAGE_BYTES,
+        vec![footprint_range],
+    )
+    .map_err(stats_error)?;
+    let mut driver = RiscvSystemRunDriver::new(trap_port).with_data_access_stats(
+        RiscvDataAccessStats::with_stack_distance(probe_config)
+            .with_mem_footprint(footprint_config),
+    );
     if config.riscv_se() {
         driver = driver.with_riscv_syscall_emulation_for_boot_image(image);
         if let Some(stdin_path) = config.riscv_se_stdin() {
@@ -851,7 +869,11 @@ fn execution_summary(
         data_load_bytes,
         data_store_bytes,
         data_atomic_bytes,
-        data_access_probes: data_access_probe_summary(run),
+        data_access_probes: data_access_probe_summary(
+            run,
+            inputs.line_layout,
+            RISCV_DATA_PROBE_PAGE_BYTES,
+        ),
         parallel_scheduler_epochs: run.parallel_scheduler_epochs().len() as u64,
         parallel_scheduler_dispatches: run.parallel_scheduler_dispatches().len() as u64,
         parallel_scheduler_batches: run.parallel_scheduler_batches().len() as u64,
@@ -891,16 +913,40 @@ fn execution_summary(
     })
 }
 
-fn data_access_probe_summary(run: &RiscvSystemRun) -> Rem6DataAccessProbeSummary {
+fn data_access_probe_summary(
+    run: &RiscvSystemRun,
+    line_layout: CacheLineLayout,
+    page_bytes: u64,
+) -> Rem6DataAccessProbeSummary {
     run.data_access_probes()
         .map(|probes| {
             let infinite_samples = probes.stack_distance().infinite_samples();
             let finite_samples = probes.stack_distance().finite_samples();
+            let footprint = probes.memory_footprint();
             Rem6DataAccessProbeSummary {
                 sample_count: infinite_samples.saturating_add(finite_samples),
                 stack_distance_infinite_samples: infinite_samples,
                 stack_distance_finite_samples: finite_samples,
                 stack_distance_stack_depth: probes.stack_distance().stack().len() as u64,
+                memory_footprint_cache_line_bytes: footprint
+                    .map(|snapshot| {
+                        (snapshot.cache_lines().len() as u64).saturating_mul(line_layout.bytes())
+                    })
+                    .unwrap_or(0),
+                memory_footprint_cache_line_total_bytes: footprint
+                    .map(|snapshot| {
+                        (snapshot.cache_lines_total().len() as u64)
+                            .saturating_mul(line_layout.bytes())
+                    })
+                    .unwrap_or(0),
+                memory_footprint_page_bytes: footprint
+                    .map(|snapshot| (snapshot.pages().len() as u64).saturating_mul(page_bytes))
+                    .unwrap_or(0),
+                memory_footprint_page_total_bytes: footprint
+                    .map(|snapshot| {
+                        (snapshot.pages_total().len() as u64).saturating_mul(page_bytes)
+                    })
+                    .unwrap_or(0),
             }
         })
         .unwrap_or_default()
