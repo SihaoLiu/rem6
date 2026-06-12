@@ -217,6 +217,9 @@ pub(super) fn syscall_stat(
         Err(RiscvGuestCStringError::Fault) => return linux_error(RISCV_LINUX_EFAULT),
         Err(RiscvGuestCStringError::TooLong) => return linux_error(RISCV_LINUX_ENAMETOOLONG),
     };
+    if path.is_empty() {
+        return linux_error(RISCV_LINUX_ENOENT);
+    }
     let Some(stat) = state.guest_path_stat(&path) else {
         return linux_error(RISCV_LINUX_ENOENT);
     };
@@ -239,6 +242,9 @@ pub(super) fn syscall_lstat(
         Err(RiscvGuestCStringError::Fault) => return linux_error(RISCV_LINUX_EFAULT),
         Err(RiscvGuestCStringError::TooLong) => return linux_error(RISCV_LINUX_ENAMETOOLONG),
     };
+    if path.is_empty() {
+        return linux_error(RISCV_LINUX_ENOENT);
+    }
     let Some(stat) = state
         .guest_link_stat(&path)
         .or_else(|| state.guest_path_stat(&path))

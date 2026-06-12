@@ -129,20 +129,28 @@ fn syscall_open_registered_path(
     }
 
     let open_directory = flags & RISCV_LINUX_O_DIRECTORY != 0;
-    let (node_kind, file_contents, directory_contents) = if open_directory {
-        let Some(entries) = state.guest_directory_entries(&path) else {
-            return linux_error(RISCV_LINUX_ENOENT);
+    let (path, node_kind, file_contents, directory_contents) = if open_directory {
+        let path = match state.guest_directory_path(&path) {
+            Ok(path) => path,
+            Err(error) => return linux_error(error.linux_error_code()),
         };
+        let entries = state
+            .guest_directory_entries(&path)
+            .expect("resolved guest directory has entries");
         (
+            path,
             RiscvGuestNodeKind::Directory,
             None,
             Some(super::riscv_linux_dirent64_bytes(&entries)),
         )
     } else {
-        if !state.guest_path_registered(&path) {
-            return linux_error(RISCV_LINUX_ENOENT);
-        }
+        let path = match state.resolve_existing_guest_regular_path(&path) {
+            Ok(Some(path)) => path,
+            Ok(None) => return linux_error(RISCV_LINUX_ENOENT),
+            Err(error) => return linux_error(error.linux_error_code()),
+        };
         (
+            path.clone(),
             RiscvGuestNodeKind::RegularFile,
             state.guest_file_contents(&path).map(Vec::from),
             None,

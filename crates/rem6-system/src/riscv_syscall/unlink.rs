@@ -52,7 +52,18 @@ pub(super) fn syscall_unlinkat(
 }
 
 fn syscall_unlink_registered_path(path: Vec<u8>, state: &mut RiscvSyscallState) -> u64 {
-    if path.is_empty() || !state.unlink_guest_path(&path) {
+    if path.is_empty() {
+        return linux_error(RISCV_LINUX_ENOENT);
+    }
+    let path = match state.resolve_existing_guest_path(&path) {
+        Ok(Some(path)) => path,
+        Ok(None) => match state.resolve_guest_path(&path) {
+            Ok(path) => path,
+            Err(error) => return linux_error(error.linux_error_code()),
+        },
+        Err(error) => return linux_error(error.linux_error_code()),
+    };
+    if !state.unlink_guest_path(&path) {
         return linux_error(RISCV_LINUX_ENOENT);
     }
 

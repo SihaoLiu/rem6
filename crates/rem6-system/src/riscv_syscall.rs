@@ -47,7 +47,7 @@ mod writev;
 use brk::syscall_brk;
 use clock::syscall_clock;
 use clock::{RISCV_LINUX_CLOCK_GETTIME, RISCV_LINUX_GETTIMEOFDAY, RISCV_LINUX_TIMES};
-use cwd::syscall_getcwd;
+use cwd::{syscall_chdir, syscall_fchdir, syscall_getcwd, RISCV_LINUX_CHDIR, RISCV_LINUX_FCHDIR};
 use dirent::{
     guest_directory_child_name, linux_dirent64_record_boundary, riscv_linux_dirent64_bytes,
     syscall_getdents64, RiscvGuestDirectoryEntry, RiscvGuestDirectoryReadError, RiscvGuestNodeKind,
@@ -154,6 +154,7 @@ const RISCV_LINUX_ENOENT: u64 = 2;
 const RISCV_LINUX_EBADF: u64 = 9;
 const RISCV_LINUX_EFAULT: u64 = 14;
 const RISCV_LINUX_EEXIST: u64 = 17;
+const RISCV_LINUX_ENOTDIR: u64 = 20;
 const RISCV_LINUX_EINVAL: u64 = 22;
 const RISCV_LINUX_EMFILE: u64 = 24;
 const RISCV_LINUX_ENOTTY: u64 = 25;
@@ -274,6 +275,7 @@ pub struct RiscvSyscallState {
     stdin_fds: BTreeSet<GuestFd>,
     guest_file_descriptions: BTreeMap<GuestFileDescriptionId, Vec<u8>>,
     guest_directory_descriptions: BTreeMap<GuestFileDescriptionId, Vec<u8>>,
+    guest_directory_paths: BTreeMap<GuestFileDescriptionId, Vec<u8>>,
     guest_file_stats: BTreeMap<GuestFileDescriptionId, RiscvOpenGuestFileStat>,
     guest_writes: Vec<RiscvGuestWriteRecord>,
     unknown_syscalls: Vec<RiscvUnknownSyscallRecord>,
@@ -327,6 +329,7 @@ impl RiscvSyscallState {
             stdin_fds,
             guest_file_descriptions: BTreeMap::new(),
             guest_directory_descriptions: BTreeMap::new(),
+            guest_directory_paths: BTreeMap::new(),
             guest_file_stats: BTreeMap::new(),
             guest_writes: Vec::new(),
             unknown_syscalls: Vec::new(),
@@ -509,7 +512,8 @@ impl RiscvSyscallState {
     }
 
     fn guest_link_target(&self, path: &[u8]) -> Option<&[u8]> {
-        self.guest_links.get(path).map(Vec::as_slice)
+        let path = self.resolve_existing_guest_path(path).ok().flatten()?;
+        self.guest_links.get(&path).map(Vec::as_slice)
     }
 
     pub(super) fn guest_directory_entries(
@@ -537,7 +541,7 @@ impl RiscvSyscallState {
                 .entry(name.clone())
                 .or_insert_with(|| RiscvGuestDirectoryEntry::new(name, kind, inode));
         }
-        if children.is_empty() && path != b"." && path != b"/" {
+        if children.is_empty() && path != b"." && path != b"/" && !path.is_empty() {
             return None;
         }
 
@@ -672,29 +676,35 @@ impl RiscvSyscallState {
     }
 
     fn guest_path_stat(&self, path: &[u8]) -> Option<RiscvGuestStat> {
-        if self.guest_path_registered(path) {
-            let identity = self.guest_file_identity(path);
+        if let Some(path) = self
+            .resolve_existing_guest_regular_path(path)
+            .ok()
+            .flatten()
+        {
+            let identity = self.guest_file_identity(&path);
             return Some(
                 self.guest_file_stat(
-                    self.guest_file_contents(path)
+                    self.guest_file_contents(&path)
                         .map(|contents| contents.len() as u64)
                         .unwrap_or(0),
                     identity,
                 ),
             );
         }
-        if self.guest_directory_entries(path).is_some() {
+        let path = self.resolve_guest_path(path).ok()?;
+        if self.guest_directory_entries(&path).is_some() {
             return Some(RiscvGuestStat::directory(
                 self.identity(),
-                guest_path_inode(path),
+                guest_path_inode(&path),
             ));
         }
         None
     }
 
     fn guest_link_stat(&self, path: &[u8]) -> Option<RiscvGuestStat> {
-        let target = self.guest_link_target(path)?;
-        let identity = self.guest_file_identity(path);
+        let path = self.resolve_existing_guest_path(path).ok().flatten()?;
+        let target = self.guest_links.get(&path)?;
+        let identity = self.guest_file_identity(&path);
         Some(RiscvGuestStat::symbolic_link(
             target.len() as u64,
             self.identity(),
@@ -779,6 +789,7 @@ impl RiscvSyscallState {
         if let Some(contents) = directory_contents {
             self.guest_directory_descriptions
                 .insert(description, contents);
+            self.guest_directory_paths.insert(description, path.clone());
         }
         self.guest_file_stats.insert(
             description,
@@ -802,6 +813,7 @@ impl RiscvSyscallState {
         if let Some(description) = record.released_description() {
             self.guest_file_descriptions.remove(&description.id());
             self.guest_directory_descriptions.remove(&description.id());
+            self.guest_directory_paths.remove(&description.id());
             self.guest_file_stats.remove(&description.id());
         }
     }
@@ -819,6 +831,7 @@ impl RiscvSyscallState {
             if let Some(description) = replaced.released_description() {
                 self.guest_file_descriptions.remove(&description.id());
                 self.guest_directory_descriptions.remove(&description.id());
+                self.guest_directory_paths.remove(&description.id());
                 self.guest_file_stats.remove(&description.id());
             }
         }
@@ -1019,6 +1032,14 @@ impl RiscvSyscallTable {
                     ),
                 })
             }
+            RISCV_LINUX_CHDIR => {
+                guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
+                    value: syscall_chdir(request, state, guest_memory),
+                })
+            }
+            RISCV_LINUX_FCHDIR => Some(RiscvSyscallOutcome::Return {
+                value: syscall_fchdir(request, state),
+            }),
             RISCV_LINUX_DUP => Some(RiscvSyscallOutcome::Return {
                 value: syscall_dup(request.argument(0), state),
             }),

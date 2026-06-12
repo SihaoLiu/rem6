@@ -32,6 +32,12 @@ pub(super) fn syscall_renameat2(
     if source.is_empty() || destination.is_empty() {
         return linux_error(RISCV_LINUX_ENOENT);
     }
+    let source = match state.resolve_existing_guest_path(&source) {
+        Ok(Some(path)) => path,
+        Ok(None) => return linux_error(RISCV_LINUX_ENOENT),
+        Err(error) => return linux_error(error.linux_error_code()),
+    };
+    let destination = state.resolve_guest_path_for_create(&destination);
 
     match state.rename_guest_path(&source, &destination) {
         Ok(()) => 0,

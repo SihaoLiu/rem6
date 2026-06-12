@@ -74,6 +74,43 @@ fn linux_table_renameat2_replaces_existing_destination() {
 }
 
 #[test]
+fn linux_table_renameat2_replaces_existing_absolute_destination() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_file(b"guest.txt", b"file-backed input\n");
+    state.register_guest_file(b"/tmp/existing.txt", b"absolute existing\n");
+    let guest_memory_reader =
+        c_string_reader(&[(0x9000, b"guest.txt"), (0x9100, b"/tmp/existing.txt")]);
+
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_RENAMEAT2_FOR_TEST,
+                [
+                    RISCV_LINUX_AT_FDCWD,
+                    0x9000,
+                    RISCV_LINUX_AT_FDCWD,
+                    0x9100,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert!(state.guest_path_stat(b"guest.txt").is_none());
+    assert!(state.guest_file_contents(b"tmp/existing.txt").is_none());
+    assert_eq!(
+        state.guest_file_contents(b"/tmp/existing.txt"),
+        Some(&b"file-backed input\n"[..])
+    );
+}
+
+#[test]
 fn linux_table_renameat2_same_file_hard_links_preserves_both_names() {
     let table = RiscvSyscallTable::new();
     let mut state = RiscvSyscallState::new(0);

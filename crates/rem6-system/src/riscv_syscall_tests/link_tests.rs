@@ -386,10 +386,12 @@ fn linux_table_link_rejects_missing_source_and_existing_destination() {
     let mut state = RiscvSyscallState::new(0);
     state.register_guest_file(b"guest.txt", b"file-backed input\n");
     state.register_guest_file(b"alias.txt", b"existing\n");
+    state.register_guest_file(b"/tmp/existing.txt", b"absolute existing\n");
     let guest_memory_reader = c_string_reader(&[
         (0x9000, b"missing.txt"),
         (0x9100, b"guest.txt"),
         (0x9200, b"alias.txt"),
+        (0x9300, b"/tmp/existing.txt"),
     ]);
 
     assert_eq!(
@@ -416,6 +418,21 @@ fn linux_table_link_rejects_missing_source_and_existing_destination() {
             ),
             &mut state,
             8,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EEXIST_FOR_TEST)
+        })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8008,
+                RISCV_LINUX_LINK_FOR_TEST,
+                [0x9100, 0x9300, 0, 0, 0, 0],
+            ),
+            &mut state,
+            9,
             Some(&guest_memory_reader),
         ),
         Some(RiscvSyscallOutcome::Return {

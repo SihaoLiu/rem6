@@ -6,6 +6,8 @@ mod execution;
 mod gups;
 #[path = "cli_run/load.rs"]
 mod load;
+#[path = "cli_run/riscv_se_chdir.rs"]
+mod riscv_se_chdir;
 #[path = "cli_run/riscv_se_getdents.rs"]
 mod riscv_se_getdents;
 #[path = "cli_run/riscv_se_links.rs"]
