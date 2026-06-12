@@ -1,19 +1,16 @@
 use super::*;
 
+const RISCV_LINUX_ACCESS_FOR_TEST: u64 = 1033;
+const RISCV_LINUX_R_OK_FOR_TEST: u64 = 4;
+const RISCV_LINUX_W_OK_FOR_TEST: u64 = 2;
+const RISCV_LINUX_EACCES_FOR_TEST: u64 = 13;
+
 #[test]
 fn linux_table_stat_writes_registered_guest_file_stat() {
     let table = RiscvSyscallTable::new();
     let mut state = RiscvSyscallState::new(0);
     state.register_guest_file(b"guest.txt", b"file-backed input\n");
-    let path = b"guest.txt\0".to_vec();
-    let guest_memory_reader = RiscvGuestMemoryReader::new(move |address, bytes| {
-        if bytes != 1 || address < 0x9000 {
-            return None;
-        }
-        path.get((address - 0x9000) as usize)
-            .copied()
-            .map(|byte| vec![byte])
-    });
+    let guest_memory_reader = c_string_reader(0x9000, b"guest.txt");
     let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let writes_for_writer = std::sync::Arc::clone(&writes);
     let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
@@ -41,4 +38,84 @@ fn linux_table_stat_writes_registered_guest_file_stat() {
     let stat = collect_guest_writes(&writes, 0x9100, 128);
     assert_eq!(read_le_u64(&stat, 48), 18);
     assert_eq!(read_le_u32(&stat, 16), 0o100444);
+}
+
+#[test]
+fn linux_table_access_checks_registered_guest_file_paths() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_file(b"guest.txt", b"file-backed input\n");
+    let guest_memory_reader = c_string_reader(0x9000, b"guest.txt");
+
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_ACCESS_FOR_TEST,
+                [0x9000, RISCV_LINUX_R_OK_FOR_TEST, 0, 0, 0, 0],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_access_missing_guest_path_returns_enoent() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let guest_memory_reader = c_string_reader(0x9000, b"missing.txt");
+
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(0x8000, RISCV_LINUX_ACCESS_FOR_TEST, [0x9000, 0, 0, 0, 0, 0],),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_ENOENT)
+        })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_access_write_mode_returns_eacces_for_read_only_guest_file() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_file(b"guest.txt", b"file-backed input\n");
+    let guest_memory_reader = c_string_reader(0x9000, b"guest.txt");
+
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_ACCESS_FOR_TEST,
+                [0x9000, RISCV_LINUX_W_OK_FOR_TEST, 0, 0, 0, 0],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EACCES_FOR_TEST)
+        })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+fn c_string_reader(base: u64, bytes: &'static [u8]) -> RiscvGuestMemoryReader {
+    let path = [bytes, b"\0"].concat();
+    RiscvGuestMemoryReader::new(move |address, count| {
+        if count != 1 || address < base {
+            return None;
+        }
+        path.get((address - base) as usize)
+            .copied()
+            .map(|byte| vec![byte])
+    })
 }

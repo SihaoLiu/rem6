@@ -14,6 +14,12 @@ const RISCV_LINUX_S_IFCHR: u32 = 0o020000;
 const RISCV_LINUX_S_IFREG: u32 = 0o100000;
 const RISCV_LINUX_REGULAR_FILE_MODE: u32 = RISCV_LINUX_S_IFREG | 0o444;
 const RISCV_LINUX_CHARACTER_DEVICE_MODE: u32 = RISCV_LINUX_S_IFCHR | 0o666;
+pub(super) const RISCV_LINUX_ACCESS: u64 = 1033;
+const RISCV_LINUX_EACCES: u64 = 13;
+const RISCV_LINUX_X_OK: u64 = 1;
+const RISCV_LINUX_W_OK: u64 = 2;
+const RISCV_LINUX_R_OK: u64 = 4;
+const RISCV_LINUX_ACCESS_VALID_MODE: u64 = RISCV_LINUX_X_OK | RISCV_LINUX_W_OK | RISCV_LINUX_R_OK;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct RiscvGuestStat {
@@ -169,6 +175,35 @@ pub(super) fn syscall_stat(
     };
 
     write_riscv_linux_stat(request.argument(1), stat, guest_memory_writer)
+}
+
+pub(super) fn syscall_access(
+    request: RiscvSyscallRequest,
+    state: &RiscvSyscallState,
+    guest_memory_reader: &RiscvGuestMemoryReader,
+) -> u64 {
+    let mode = request.argument(1);
+    if mode & !RISCV_LINUX_ACCESS_VALID_MODE != 0 {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+
+    let path = match read_guest_c_string(
+        guest_memory_reader,
+        request.argument(0),
+        RISCV_LINUX_PATH_MAX,
+    ) {
+        Ok(path) => path,
+        Err(RiscvGuestCStringError::Fault) => return linux_error(RISCV_LINUX_EFAULT),
+        Err(RiscvGuestCStringError::TooLong) => return linux_error(RISCV_LINUX_ENAMETOOLONG),
+    };
+    let Some(_stat) = state.guest_path_stat(&path) else {
+        return linux_error(RISCV_LINUX_ENOENT);
+    };
+    if mode & (RISCV_LINUX_W_OK | RISCV_LINUX_X_OK) != 0 {
+        return linux_error(RISCV_LINUX_EACCES);
+    }
+
+    0
 }
 
 pub(super) fn syscall_fstat(

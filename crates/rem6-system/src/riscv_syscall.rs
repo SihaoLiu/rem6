@@ -27,6 +27,7 @@ mod link;
 mod links;
 mod mmap;
 mod open;
+mod random;
 mod readv;
 mod robust;
 mod seek;
@@ -57,6 +58,7 @@ use mmap::{syscall_mmap, syscall_munmap, RISCV64_LINUX_MMAP_BASE, RISCV_PAGE_BYT
 #[cfg(test)]
 use mmap::{RISCV_LINUX_MAP_FIXED, RISCV_LINUX_MAP_PRIVATE};
 use open::{syscall_open, syscall_openat, RISCV_LINUX_OPEN};
+use random::{invalid_getrandom_flags, syscall_getrandom, RISCV_LINUX_GETRANDOM};
 use readv::{syscall_readv, RISCV_LINUX_READV};
 use robust::{syscall_get_robust_list, syscall_set_robust_list, RiscvRobustList};
 use seek::{syscall_lseek, RISCV_LINUX_LSEEK};
@@ -66,7 +68,10 @@ pub use startup::{
     RISCV_LINUX_AT_PHDR, RISCV_LINUX_AT_PHENT, RISCV_LINUX_AT_PHNUM, RISCV_LINUX_AT_RANDOM,
     RISCV_LINUX_AT_SECURE,
 };
-use stat::{guest_path_inode, syscall_fstat, syscall_newfstatat, syscall_stat, RiscvGuestStat};
+use stat::{
+    guest_path_inode, syscall_access, syscall_fstat, syscall_newfstatat, syscall_stat,
+    RiscvGuestStat, RISCV_LINUX_ACCESS,
+};
 pub use unknown::RiscvUnknownSyscallRecord;
 use unlink::{syscall_unlink, RISCV_LINUX_UNLINK};
 use utsname::write_riscv_linux_utsname;
@@ -121,7 +126,6 @@ const RISCV_LINUX_MUNLOCKALL: u64 = 231;
 const RISCV_LINUX_MINCORE: u64 = 232;
 const RISCV_LINUX_MADVISE: u64 = 233;
 const RISCV_LINUX_MBIND: u64 = 235;
-const RISCV_LINUX_GETRANDOM: u64 = 278;
 const RISCV_LINUX_RSEQ: u64 = 293;
 const RISCV_LINUX_STAT: u64 = 1038;
 const RISCV_LINUX_EPERM: u64 = 1;
@@ -141,12 +145,6 @@ const RISCV_LINUX_F_SETFD: u64 = 2;
 const RISCV_LINUX_F_GETFL: u64 = 3;
 const RISCV_LINUX_F_SETFL: u64 = 4;
 const RISCV_LINUX_FD_CLOEXEC: u64 = 1;
-const RISCV_LINUX_GRND_NONBLOCK: u64 = 0x0001;
-const RISCV_LINUX_GRND_RANDOM: u64 = 0x0002;
-const RISCV_LINUX_GRND_INSECURE: u64 = 0x0004;
-const RISCV_LINUX_GRND_VALID_FLAGS: u64 =
-    RISCV_LINUX_GRND_NONBLOCK | RISCV_LINUX_GRND_RANDOM | RISCV_LINUX_GRND_INSECURE;
-const RISCV_LINUX_GETRANDOM_MAX_CHUNK_BYTES: u64 = 256;
 const RISCV_LINUX_O_ACCMODE: u64 = 0x3;
 const RISCV_LINUX_O_CLOEXEC: u64 = 0o2_000_000;
 const RISCV_LINUX_O_RDONLY: u64 = 0;
@@ -159,7 +157,6 @@ const RISCV_LINUX_AT_NO_AUTOMOUNT: u64 = 0x800;
 const RISCV_LINUX_AT_SYMLINK_NOFOLLOW: u64 = 0x100;
 const RISCV_LINUX_PATH_MAX: usize = 4096;
 const RISCV_LINUX_DEFAULT_PROCESS_ID: u64 = 100;
-const RISCV_LINUX_GETRANDOM_INITIAL_BYTE: u8 = 0x2b;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RiscvSyscallRequest {
@@ -781,20 +778,6 @@ impl RiscvSyscallState {
     fn consume_stdin_prefix(&mut self, count: usize) {
         self.stdin.drain(..count);
     }
-
-    fn getrandom_bytes(&self, count: usize) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(count);
-        let mut counter = self.getrandom_byte_counter;
-        for _ in 0..count {
-            bytes.push(RISCV_LINUX_GETRANDOM_INITIAL_BYTE ^ counter);
-            counter = counter.wrapping_add(1);
-        }
-        bytes
-    }
-
-    fn advance_getrandom_byte_counter(&mut self, count: usize) {
-        self.getrandom_byte_counter = self.getrandom_byte_counter.wrapping_add(count as u8);
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1000,6 +983,11 @@ impl RiscvSyscallTable {
                     value: syscall_stat(request, state, reader, writer),
                 })
             }),
+            RISCV_LINUX_ACCESS => {
+                guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
+                    value: syscall_access(request, state, guest_memory),
+                })
+            }
             RISCV_LINUX_FSTAT => {
                 guest_memory_writer.map(|guest_memory| RiscvSyscallOutcome::Return {
                     value: syscall_fstat(request, state, guest_memory),
@@ -1123,12 +1111,6 @@ impl RiscvSyscallTable {
             }
         }
     }
-}
-
-fn invalid_getrandom_flags(flags: u64) -> bool {
-    flags & !RISCV_LINUX_GRND_VALID_FLAGS != 0
-        || flags & (RISCV_LINUX_GRND_RANDOM | RISCV_LINUX_GRND_INSECURE)
-            == (RISCV_LINUX_GRND_RANDOM | RISCV_LINUX_GRND_INSECURE)
 }
 
 #[derive(Clone, Debug)]
@@ -1622,25 +1604,6 @@ fn syscall_write(
     }
 
     state.push_guest_write(RiscvGuestWriteRecord::new(fd, address, tick, bytes));
-    count
-}
-
-fn syscall_getrandom(
-    request: RiscvSyscallRequest,
-    state: &mut RiscvSyscallState,
-    guest_memory: &RiscvGuestMemoryWriter,
-) -> u64 {
-    let count = request
-        .argument(1)
-        .min(RISCV_LINUX_GETRANDOM_MAX_CHUNK_BYTES);
-    let Ok(byte_count) = usize::try_from(count) else {
-        return linux_error(RISCV_LINUX_EINVAL);
-    };
-    let bytes = state.getrandom_bytes(byte_count);
-    if !guest_memory.write(request.argument(0), &bytes) {
-        return linux_error(RISCV_LINUX_EFAULT);
-    }
-    state.advance_getrandom_byte_counter(byte_count);
     count
 }
 

@@ -1445,7 +1445,10 @@ Implementation evidence through 2026-06-11:
   within the registered guest namespace and checking shared inode and link-count
   metadata for both names through libc `stat`; unit regressions also cover
   open-descriptor `fstat` link-count updates after `link` and `unlink`, plus
-  readlink-visible aliases for registered symlink sources.
+  readlink-visible aliases for registered symlink sources. A static libgloss
+  `access` regression covers legacy syscall number 1033 for registered guest
+  file probes and missing-path `ENOENT` propagation without relying on qemu's
+  unknown-elf shim for that wrapper.
   CLI and TOML runs can also preload host files into typed registered guest
   paths before execution, with a repository regression covering real guest
   `openat`, `read`, `write`, and `exit` ecall flow from those bytes.
@@ -5412,7 +5415,8 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   `link` number 1025 for creating registered guest-path aliases with shared
   inode and dynamic link-count metadata plus registered symlink aliases, legacy
   `unlink` number 1026 for removing registered guest path names while
-  preserving already-open descriptions, plus
+  preserving already-open descriptions, legacy `access` number 1033 for
+  registered guest path existence and read-permission probes, plus
   `getrandom` number 278 by writing bounded deterministic
   chunks into the guest buffer through simulated memory, `clock_gettime` number
   113 by writing an RV64 Linux `timespec` and `gettimeofday` number 169 by
@@ -5450,8 +5454,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   qemu for the same ELF. CLI `--riscv-se-file` and TOML `riscv_se_files` also
   preload host file bytes into registered guest paths before execution, and
   regressions consume those bytes through real guest `openat`, legacy `open`,
-  legacy `stat`, legacy `link`, legacy `unlink`, `read`, `write`, and `exit`
-  ecalls, including static newlib `fopen`, `stat`, `link`, and `unlink` paths.
+  legacy `stat`, legacy `link`, legacy `unlink`, legacy `access`, `read`,
+  `write`, and `exit` ecalls, including static newlib `fopen`, `stat`, `link`,
+  `unlink`, and libgloss `access` paths.
   The CLI can now
   opt into the same handoff with `rem6 run --riscv-se`: it installs the startup
   stack into simulated memory, maps zeroed stack backing matching the current
@@ -5482,7 +5487,7 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   Linux handoff still needs an SBI-class firmware/runtime path rather than only
   DTB/initrd/register handoff, and SE startup still needs default loader policy
   plus broader static-libc coverage beyond the detection-based newlib
-  stdio-smoke cases.
+  stdio and registered-file cases.
 - Complete predictor coupling, external checkpoint payloads, and richer
   cycle-visible state for the in-order pipeline, add fuller out-of-order
   pipeline execution, checker, richer branch predictors, and host-assisted
