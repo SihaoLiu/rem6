@@ -1274,6 +1274,7 @@ const DOUBLE_QUIET_NAN_BIT: u64 = 1 << 51;
 const DEFAULT_NAN_DOUBLE: u64 = 0x7ff8_0000_0000_0000;
 const FLOAT_FLAG_INVALID: u64 = 1 << 4;
 const FLOAT_FLAG_DIVIDE_BY_ZERO: u64 = 1 << 3;
+const FLOAT_FLAG_INEXACT: u64 = 1 << 0;
 
 fn float_rd(raw: u32) -> FloatRegister {
     FloatRegister::from_field(rd(raw).index().into())

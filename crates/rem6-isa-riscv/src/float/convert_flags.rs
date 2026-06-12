@@ -1,8 +1,9 @@
 use crate::RiscvFloatRoundingMode;
 
 use super::{
-    round_double, round_single, unbox_single, FLOAT_FLAG_INVALID, I32_MAX_PLUS_ONE_AS_SINGLE,
-    I64_MAX_PLUS_ONE_AS_SINGLE, U32_MAX_PLUS_ONE_AS_SINGLE, U64_MAX_PLUS_ONE_AS_SINGLE,
+    round_double, round_single, unbox_single, FLOAT_FLAG_INEXACT, FLOAT_FLAG_INVALID,
+    I32_MAX_PLUS_ONE_AS_SINGLE, I64_MAX_PLUS_ONE_AS_SINGLE, U32_MAX_PLUS_ONE_AS_SINGLE,
+    U64_MAX_PLUS_ONE_AS_SINGLE,
 };
 
 pub(super) fn single_to_signed_word(value: u64, rounding_mode: RiscvFloatRoundingMode) -> u64 {
@@ -14,6 +15,8 @@ pub(super) fn single_to_signed_word(value: u64, rounding_mode: RiscvFloatRoundin
     let rounded = round_single(value, rounding_mode);
     if !(-I32_MAX_PLUS_ONE_AS_SINGLE..I32_MAX_PLUS_ONE_AS_SINGLE).contains(&rounded) {
         FLOAT_FLAG_INVALID
+    } else if rounded != value {
+        FLOAT_FLAG_INEXACT
     } else {
         0
     }
@@ -28,6 +31,8 @@ pub(super) fn single_to_unsigned_word(value: u64, rounding_mode: RiscvFloatRound
     let rounded = round_single(value, rounding_mode);
     if !(0.0..U32_MAX_PLUS_ONE_AS_SINGLE).contains(&rounded) {
         FLOAT_FLAG_INVALID
+    } else if rounded != value {
+        FLOAT_FLAG_INEXACT
     } else {
         0
     }
@@ -45,6 +50,8 @@ pub(super) fn single_to_signed_doubleword(
     let rounded = round_single(value, rounding_mode);
     if !(-I64_MAX_PLUS_ONE_AS_SINGLE..I64_MAX_PLUS_ONE_AS_SINGLE).contains(&rounded) {
         FLOAT_FLAG_INVALID
+    } else if rounded != value {
+        FLOAT_FLAG_INEXACT
     } else {
         0
     }
@@ -62,6 +69,8 @@ pub(super) fn single_to_unsigned_doubleword(
     let rounded = round_single(value, rounding_mode);
     if !(0.0..U64_MAX_PLUS_ONE_AS_SINGLE).contains(&rounded) {
         FLOAT_FLAG_INVALID
+    } else if rounded != value {
+        FLOAT_FLAG_INEXACT
     } else {
         0
     }
@@ -76,6 +85,8 @@ pub(super) fn double_to_signed_word(value: u64, rounding_mode: RiscvFloatRoundin
     let rounded = round_double(value, rounding_mode);
     if !(f64::from(i32::MIN)..=f64::from(i32::MAX)).contains(&rounded) {
         FLOAT_FLAG_INVALID
+    } else if rounded != value {
+        FLOAT_FLAG_INEXACT
     } else {
         0
     }
@@ -90,6 +101,8 @@ pub(super) fn double_to_unsigned_word(value: u64, rounding_mode: RiscvFloatRound
     let rounded = round_double(value, rounding_mode);
     if !(0.0..=f64::from(u32::MAX)).contains(&rounded) {
         FLOAT_FLAG_INVALID
+    } else if rounded != value {
+        FLOAT_FLAG_INEXACT
     } else {
         0
     }
@@ -107,6 +120,8 @@ pub(super) fn double_to_signed_doubleword(
     let rounded = round_double(value, rounding_mode);
     if !((i64::MIN as f64)..(i64::MAX as f64)).contains(&rounded) {
         FLOAT_FLAG_INVALID
+    } else if rounded != value {
+        FLOAT_FLAG_INEXACT
     } else {
         0
     }
@@ -124,6 +139,8 @@ pub(super) fn double_to_unsigned_doubleword(
     let rounded = round_double(value, rounding_mode);
     if !(0.0..(u64::MAX as f64)).contains(&rounded) {
         FLOAT_FLAG_INVALID
+    } else if rounded != value {
+        FLOAT_FLAG_INEXACT
     } else {
         0
     }
