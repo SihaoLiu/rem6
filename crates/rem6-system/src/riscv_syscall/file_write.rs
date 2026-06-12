@@ -1,7 +1,8 @@
 use super::{
     stat::guest_path_inode, RiscvGuestFileIdentity, RiscvGuestNodeKind, RiscvSyscallState,
+    RISCV_LINUX_O_APPEND,
 };
-use crate::{GuestFd, GuestFdError};
+use crate::{GuestFd, GuestFdError, GuestFileOffset};
 
 const RISCV_GUEST_FILE_DENSE_LIMIT_BYTES: u64 = 64 * 1024 * 1024;
 
@@ -78,7 +79,18 @@ impl RiscvSyscallState {
             .entry(fd)
             .ok_or(GuestFdError::BadFd { fd })?
             .description();
-        let offset = self.guest_fds.file_offset(fd)?;
+        let append = self.guest_fd_appends_to_file(fd)?;
+        let offset = if append {
+            let Some(contents) = self.guest_file_descriptions.get(&description) else {
+                return Ok(false);
+            };
+            GuestFileOffset::new(contents.len() as u64)
+        } else {
+            self.guest_fds.file_offset(fd)?
+        };
+        if append {
+            self.guest_fds.set_file_offset(fd, offset)?;
+        }
         let Some(contents) = self.guest_file_descriptions.get_mut(&description) else {
             return Ok(false);
         };
@@ -112,10 +124,21 @@ impl RiscvSyscallState {
         if !self.guest_file_descriptions.contains_key(&description) {
             return Ok(false);
         }
-        let offset = self.guest_fds.file_offset(fd)?;
-        let Some(end) = offset.get().checked_add(byte_count) else {
+        let offset = if self.guest_fd_appends_to_file(fd)? {
+            let Some(contents) = self.guest_file_descriptions.get(&description) else {
+                return Ok(false);
+            };
+            contents.len() as u64
+        } else {
+            self.guest_fds.file_offset(fd)?.get()
+        };
+        let Some(end) = offset.checked_add(byte_count) else {
             return Ok(true);
         };
         Ok(end > RISCV_GUEST_FILE_DENSE_LIMIT_BYTES)
+    }
+
+    fn guest_fd_appends_to_file(&self, fd: GuestFd) -> Result<bool, GuestFdError> {
+        Ok(self.guest_fds.status_flags(fd)?.bits() & RISCV_LINUX_O_APPEND as u32 != 0)
     }
 }

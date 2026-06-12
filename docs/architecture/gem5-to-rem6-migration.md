@@ -176,7 +176,7 @@ bucket cap is single-axis because static newlib smokes are high-value but
 tool-detected, and broad workload coverage is not present.
 
 - [x] User-mode ecalls reach `RiscvSyscallTable`.
-- [x] Startup stack, argv/envp/auxv, `brk`, `mmap`, stdio, file create/truncate/read/write, vector I/O, time, cwd, `chdir`/`fchdir`, random, resource, and wait slices have tests.
+- [x] Startup stack, argv/envp/auxv, `brk`, `mmap`, stdio, file create/truncate/read/write/append, vector I/O, time, cwd, `chdir`/`fchdir`, random, resource, and wait slices have tests.
 - [x] Unknown syscall returns `ENOSYS` and records a typed diagnostic.
 - [x] Static no-libc and newlib smoke binaries can be generated and compared with qemu when tools exist.
 - [x] Linux at-family hard-link, `renameat2` flags=0, unlink, `mkdirat`, `unlinkat` with `AT_REMOVEDIR`, and registered-directory `getdents64` syscalls mutate or expose registered guest files and directories and have qemu-compared raw smoke evidence.
@@ -188,7 +188,7 @@ tool-detected, and broad workload coverage is not present.
 - [ ] PARSEC or comparable workload programs run through ROI/stat hooks.
 
 **Migrated:** RISC-V SE ecall path; startup stack and auxv setup; `brk`,
-`mmap`, stdio, guest-backed file create/truncate/read/write/readback and open
+`mmap`, stdio, guest-backed file create/truncate/read/write/append/readback and open
 fd/link visibility, vector I/O, time, cwd, random, resource, wait, unknown
 syscall, cwd-aware registered-path lookup, at-family
 hard-link/`renameat2` flags=0/unlink/`mkdirat`/`AT_REMOVEDIR`, and
