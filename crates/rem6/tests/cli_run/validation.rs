@@ -118,6 +118,7 @@ fn rem6_run_rejects_riscv_se_for_multiple_cores() {
 #[test]
 fn rem6_run_rejects_cli_riscv_se_inputs_without_riscv_se() {
     let stdin_path = temp_binary("riscv-se-stdin-input-without-riscv-se", b"stdin");
+    let file_path = temp_binary("riscv-se-file-input-without-riscv-se", b"file");
     for (name, flag, value) in [
         (
             "riscv-se-arg-without-riscv-se",
@@ -133,6 +134,11 @@ fn rem6_run_rejects_cli_riscv_se_inputs_without_riscv_se() {
             "riscv-se-stdin-without-riscv-se",
             "--riscv-se-stdin",
             stdin_path.display().to_string(),
+        ),
+        (
+            "riscv-se-file-without-riscv-se",
+            "--riscv-se-file",
+            format!("guest.txt={}", file_path.display()),
         ),
     ] {
         let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x73, 0, 0, 0]);
@@ -190,6 +196,31 @@ fn rem6_run_config_scan_treats_riscv_se_stdin_as_value_taking() {
         stderr.contains(&format!("unknown flag {}", bogus_config.display())),
         "stderr: {stderr}"
     );
+    assert!(!stderr.contains(&format!("failed to read config {}", bogus_config.display())));
+}
+
+#[test]
+fn rem6_run_config_scan_treats_riscv_se_file_as_value_taking() {
+    let bogus_config = temp_output("riscv-se-file-prescan-bogus-config");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--riscv-se-file",
+            "--config",
+            bogus_config.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("invalid RISC-V SE file mapping --config"),
+        "stderr: {stderr}"
+    );
+    assert!(!stderr.contains(&format!("failed to read config {}", bogus_config.display())));
 }
 
 #[test]
@@ -197,24 +228,42 @@ fn rem6_run_rejects_toml_riscv_se_inputs_without_riscv_se() {
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x73, 0, 0, 0]);
     let binary = temp_binary("riscv-se-toml-inputs-without-riscv-se", &elf);
     let stdin = temp_binary("riscv-se-toml-stdin-without-riscv-se", b"stdin");
-    let config = temp_config(
-        "riscv-se-toml-inputs-without-riscv-se",
-        &format!(
-            "[run]\nisa = \"riscv\"\nbinary = \"{}\"\nmax_tick = 40\nstats_format = \"json\"\nexecute = true\nriscv_se_stdin = \"{}\"\n",
-            binary.display(),
-            stdin.display()
+    let file = temp_binary("riscv-se-toml-file-without-riscv-se", b"file");
+
+    for (name, input, field) in [
+        (
+            "riscv-se-toml-stdin-without-riscv-se",
+            "riscv_se_stdin",
+            format!("riscv_se_stdin = \"{}\"\n", stdin.display()),
         ),
-    );
+        (
+            "riscv-se-toml-file-without-riscv-se",
+            "riscv_se_files",
+            format!("riscv_se_files = [\"guest.txt={}\"]\n", file.display()),
+        ),
+    ] {
+        let config = temp_config(
+            name,
+            &format!(
+                "[run]\nisa = \"riscv\"\nbinary = \"{}\"\nmax_tick = 40\nstats_format = \"json\"\nexecute = true\n{}",
+                binary.display(),
+                field
+            ),
+        );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
-        .args(["run", "--config", config.to_str().unwrap()])
-        .output()
-        .unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+            .args(["run", "--config", config.to_str().unwrap()])
+            .output()
+            .unwrap();
 
-    assert!(!output.status.success());
-    assert!(output.stdout.is_empty());
-    let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(stderr.contains("riscv_se_stdin requires --riscv-se"));
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(
+            stderr.contains(&format!("{input} requires --riscv-se")),
+            "stderr for {input}: {stderr}"
+        );
+    }
 }
 
 #[test]

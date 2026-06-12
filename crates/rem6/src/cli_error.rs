@@ -117,6 +117,9 @@ pub enum Rem6CliError {
     InvalidLoadBlob {
         value: String,
     },
+    InvalidRiscvSeFile {
+        value: String,
+    },
     EmptyLoadBlob {
         path: PathBuf,
     },
@@ -140,6 +143,11 @@ pub enum Rem6CliError {
         error: String,
     },
     ReadRiscvSeStdin {
+        path: PathBuf,
+        error: String,
+    },
+    ReadRiscvSeFile {
+        guest_path: String,
         path: PathBuf,
         error: String,
     },
@@ -285,6 +293,9 @@ impl fmt::Display for Rem6CliError {
             Self::InvalidLoadBlob { value } => {
                 write!(formatter, "invalid load blob {value}")
             }
+            Self::InvalidRiscvSeFile { value } => {
+                write!(formatter, "invalid RISC-V SE file mapping {value}")
+            }
             Self::EmptyLoadBlob { path } => {
                 write!(formatter, "load blob {} is empty", path.display())
             }
@@ -323,6 +334,17 @@ impl fmt::Display for Rem6CliError {
                 write!(
                     formatter,
                     "failed to read RISC-V SE stdin {}: {error}",
+                    path.display()
+                )
+            }
+            Self::ReadRiscvSeFile {
+                guest_path,
+                path,
+                error,
+            } => {
+                write!(
+                    formatter,
+                    "failed to read RISC-V SE file {guest_path} from {}: {error}",
                     path.display()
                 )
             }

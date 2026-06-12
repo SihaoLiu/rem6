@@ -1433,6 +1433,9 @@ Implementation evidence through 2026-06-11:
   CLI regressions build static newlib `printf` and stdin-backed `fgets`
   binaries, use qemu as the guest stdout and exit-code oracle, and run the same
   ELFs through rem6 SE while checking the same guest write text and stop code.
+  CLI and TOML runs can also preload host files into typed registered guest
+  paths before execution, with a repository regression covering real guest
+  `openat`, `read`, `write`, and `exit` ecall flow from those bytes.
   RISC-V Linux `mmap` and
   `munmap` are also handled as returning syscalls for
   page-aligned anonymous mappings and opened registered guest-file mappings:
@@ -5425,7 +5428,10 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   the same syscall path. CLI `--riscv-se-stdin` and TOML `riscv_se_stdin` load a
   host file into the modeled SE stdin queue before execution, with a static
   newlib `fgets` regression comparing rem6 guest stdout and exit status against
-  qemu for the same ELF. The CLI can now
+  qemu for the same ELF. CLI `--riscv-se-file` and TOML `riscv_se_files` also
+  preload host file bytes into registered guest paths before execution, and
+  regressions consume those bytes through real guest `openat`, `read`, `write`,
+  and `exit` ecalls. The CLI can now
   opt into the same handoff with `rem6 run --riscv-se`: it installs the startup
   stack into simulated memory, maps zeroed stack backing matching the current
   `RLIMIT_STACK` value, sets the initial stack pointer, enters user mode, and

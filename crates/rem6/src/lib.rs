@@ -42,7 +42,7 @@ mod transport_summary_tests;
 pub use cli_error::Rem6CliError;
 pub use config::{
     CliDramMemoryProfile, LoadBlobRequest, MemoryDumpRequest, Rem6GupsConfig, Rem6RunConfig,
-    Rem6TraceReplayConfig, RequestedIsa, StatsFormat,
+    Rem6TraceReplayConfig, RequestedIsa, RiscvSeFileRequest, StatsFormat,
 };
 use guest_memory::{build_cli_memory_store, read_load_blobs, LoadedBlob};
 pub use gups_cli::{run_gups_config, Rem6GupsArtifact, Rem6GupsExecutionSummary};
@@ -638,6 +638,18 @@ fn execute_riscv(
                 .riscv_syscall_emulation()
                 .expect("RISC-V SE syscall emulation was just installed")
                 .push_stdin_bytes(&stdin);
+        }
+        for file in config.riscv_se_files() {
+            let contents =
+                std::fs::read(file.host_path()).map_err(|error| Rem6CliError::ReadRiscvSeFile {
+                    guest_path: file.guest_path().to_string(),
+                    path: file.host_path().to_path_buf(),
+                    error: error.to_string(),
+                })?;
+            driver
+                .riscv_syscall_emulation()
+                .expect("RISC-V SE syscall emulation was just installed")
+                .register_guest_file(file.guest_path().as_bytes(), contents);
         }
         let read_memory = memory.clone();
         let write_memory = memory.clone();
