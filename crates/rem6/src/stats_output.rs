@@ -313,6 +313,15 @@ pub(super) fn run_stats_output(
             StatResetPolicy::Constant,
             execution.data_access_probes.stack_distance_stack_depth,
         )?;
+        if inputs.config.isa() == RequestedIsa::Riscv {
+            increment_stat(
+                &mut stats,
+                "sim.riscv.unknown_syscalls",
+                "Count",
+                StatResetPolicy::Monotonic,
+                execution.riscv_unknown_syscalls.len() as u64,
+            )?;
+        }
         parallel_stats::emit_scheduler_stats(&mut stats, execution)?;
         emit_transport_stats(&mut stats, "sim.memory.fetch", &execution.fetch_transport)?;
         emit_transport_stats(&mut stats, "sim.memory.data", &execution.data_transport)?;

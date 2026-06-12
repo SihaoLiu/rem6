@@ -17,8 +17,8 @@ use rem6_stats::{StackDistProbeConfig, StatsRegistry};
 use rem6_system::{
     GuestEventId, GuestSourceId, GuestTrapKind, HostEventPolicy, RiscvDataAccessStats,
     RiscvGuestWriteRecord, RiscvSeAuxvEntry, RiscvSeStartupConfig, RiscvSystemRun,
-    RiscvSystemRunDriver, RiscvSystemRunStopReason, RiscvTrapEventPort, SystemHostController,
-    SystemHostEventPort, RISCV_LINUX_AT_ENTRY,
+    RiscvSystemRunDriver, RiscvSystemRunStopReason, RiscvTrapEventPort, RiscvUnknownSyscallRecord,
+    SystemHostController, SystemHostEventPort, RISCV_LINUX_AT_ENTRY,
 };
 use rem6_transport::{
     MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTraceEvent, MemoryTraceKind, MemoryTransport,
@@ -137,6 +137,7 @@ pub struct Rem6ExecutionSummary {
     cores: Vec<Rem6CoreSummary>,
     memory_dumps: Vec<Rem6MemoryDump>,
     riscv_guest_writes: Vec<Rem6RiscvGuestWriteSummary>,
+    riscv_unknown_syscalls: Vec<Rem6RiscvUnknownSyscallSummary>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -162,6 +163,25 @@ impl Rem6RiscvGuestWriteSummary {
             address: record.address(),
             tick: record.tick(),
             bytes: record.bytes().to_vec(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Rem6RiscvUnknownSyscallSummary {
+    pc: u64,
+    number: u64,
+    arguments: [u64; 6],
+    tick: u64,
+}
+
+impl Rem6RiscvUnknownSyscallSummary {
+    fn from_record(record: &RiscvUnknownSyscallRecord) -> Self {
+        Self {
+            pc: record.pc(),
+            number: record.number(),
+            arguments: record.arguments(),
+            tick: record.tick(),
         }
     }
 }
@@ -314,6 +334,7 @@ struct ExecutionSummaryInputs<'a> {
     fetch_trace: &'a MemoryTrace,
     data_trace: &'a MemoryTrace,
     riscv_guest_writes: Vec<Rem6RiscvGuestWriteSummary>,
+    riscv_unknown_syscalls: Vec<Rem6RiscvUnknownSyscallSummary>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -666,15 +687,21 @@ fn execute_riscv(
             )
             .map_err(execute_error)?,
     };
-    let riscv_guest_writes = driver
+    let (riscv_guest_writes, riscv_unknown_syscalls) = driver
         .riscv_syscall_emulation()
         .map(|emulation| {
-            emulation
-                .state()
+            let state = emulation.state();
+            let guest_writes = state
                 .guest_writes()
                 .iter()
                 .map(Rem6RiscvGuestWriteSummary::from_record)
-                .collect()
+                .collect();
+            let unknown_syscalls = state
+                .unknown_syscalls()
+                .iter()
+                .map(Rem6RiscvUnknownSyscallSummary::from_record)
+                .collect();
+            (guest_writes, unknown_syscalls)
         })
         .unwrap_or_default();
 
@@ -686,6 +713,7 @@ fn execute_riscv(
         fetch_trace: &fetch_trace,
         data_trace: &data_trace,
         riscv_guest_writes,
+        riscv_unknown_syscalls,
     };
 
     execution_summary(&cluster, &run, summary_inputs)
@@ -836,6 +864,7 @@ fn execution_summary(
             inputs.config.memory_dumps(),
         )?,
         riscv_guest_writes: inputs.riscv_guest_writes,
+        riscv_unknown_syscalls: inputs.riscv_unknown_syscalls,
     })
 }
 

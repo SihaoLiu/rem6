@@ -1531,7 +1531,8 @@ Implementation evidence through 2026-06-11:
   zeroed RV64 `rusage` payload into simulated guest memory when requested,
   returns the selected child pid, and resumes the user-mode ecall. Unknown
   RISC-V SE syscall numbers now return Linux `ENOSYS` through the same
-  ecall-resume path instead of escalating the guest ecall into a host stop.
+  ecall-resume path and append typed records that CLI artifacts and stats
+  expose, instead of escalating the guest ecall into a host stop.
   Fork, clone, exec, blocking futex wait/requeue and
   child-clear-TID wake,
   dynamic credential changes, page-table installation and per-page protection
@@ -5398,8 +5399,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   `getcwd` number 17 by writing the modeled target cwd. Unknown syscall
   numbers now append typed records with PC, number, arguments, and tick before
   returning `ENOSYS` and resuming guest execution, so libc feature probes do not
-  become host stops or disappear silently. RISC-V SE startup stack construction
-  now produces a
+  become host stops or disappear silently. CLI artifacts expose those records,
+  and CLI stats include `sim.riscv.unknown_syscalls`. RISC-V SE startup stack
+  construction now produces a
   loadable RV64 user-stack image with a 16-byte-aligned initial `sp`,
   `argc`, `argv`, `envp`, ELF-derived `AT_PHDR`/`AT_PHENT`/`AT_PHNUM`
   entries when the program-header table is loaded by a `PT_LOAD` segment; in
@@ -5420,7 +5422,8 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   attaches the CLI memory backend to syscall read/write/map hooks. CLI run
   artifacts expose typed RISC-V guest writes with fd, guest address, tick, byte
   count, hex, and UTF-8 text when present, so SE smoke tests can compare guest
-  stdout without scraping host diagnostics. A CLI regression covers guest stack
+  stdout without scraping host diagnostics, and they expose typed unknown
+  syscall records with PC, number, arguments, and tick. A CLI regression covers guest stack
   stores below the startup frame before exiting through the syscall path.
   Handled guest-memory syscalls such as `write`, anonymous `mmap`, and
   registered guest-file `mmap` therefore resume through syscall emulation

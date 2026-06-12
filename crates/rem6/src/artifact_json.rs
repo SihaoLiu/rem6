@@ -6,8 +6,8 @@ use super::{
     Rem6ExecutionSummary, Rem6GupsArtifact, Rem6GupsExecutionSummary, Rem6LoadBlobSummary,
     Rem6MemoryDump, Rem6MemoryTransportCounters, Rem6MemoryTransportRouteSummary,
     Rem6MemoryTransportSummary, Rem6ParallelFrontierSummary, Rem6ParallelPartitionSummary,
-    Rem6ParallelReadyPartitionSummary, Rem6RiscvGuestWriteSummary, Rem6RunArtifact,
-    Rem6TraceReplayArtifact, Rem6TraceReplayExecutionSummary, RequestedIsa,
+    Rem6ParallelReadyPartitionSummary, Rem6RiscvGuestWriteSummary, Rem6RiscvUnknownSyscallSummary,
+    Rem6RunArtifact, Rem6TraceReplayArtifact, Rem6TraceReplayExecutionSummary, RequestedIsa,
 };
 
 impl Rem6RunArtifact {
@@ -55,6 +55,11 @@ impl Rem6RunArtifact {
             .as_ref()
             .map(Rem6ExecutionSummary::to_riscv_guest_writes_json)
             .unwrap_or_else(|| "[]".to_string());
+        let riscv_unknown_syscalls = self
+            .execution
+            .as_ref()
+            .map(Rem6ExecutionSummary::to_riscv_unknown_syscalls_json)
+            .unwrap_or_else(|| "[]".to_string());
         let dram = self
             .execution
             .as_ref()
@@ -82,7 +87,7 @@ impl Rem6RunArtifact {
             String::new()
         };
         format!(
-            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"load_blobs\":[{}],\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"riscv_guest_writes\":{},\"dram\":{},\"transport\":{},\"stats\":{}}}\n",
+            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"load_blobs\":[{}],\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"riscv_guest_writes\":{},\"riscv_unknown_syscalls\":{},\"dram\":{},\"transport\":{},\"stats\":{}}}\n",
             self.schema,
             self.config.isa().as_str(),
             json_escape(&self.config.binary().display().to_string()),
@@ -101,6 +106,7 @@ impl Rem6RunArtifact {
             cores,
             memory,
             riscv_guest_writes,
+            riscv_unknown_syscalls,
             dram,
             transport,
             self.stats_json,
@@ -736,6 +742,16 @@ impl Rem6ExecutionSummary {
         format!("[{writes}]")
     }
 
+    fn to_riscv_unknown_syscalls_json(&self) -> String {
+        let syscalls = self
+            .riscv_unknown_syscalls
+            .iter()
+            .map(Rem6RiscvUnknownSyscallSummary::to_json)
+            .collect::<Vec<_>>()
+            .join(",");
+        format!("[{syscalls}]")
+    }
+
     fn to_transport_json(&self) -> String {
         format!(
             "{{\"fetch\":{},\"data\":{}}}",
@@ -762,6 +778,21 @@ impl Rem6RiscvGuestWriteSummary {
             self.bytes.len(),
             text,
             bytes_to_hex(&self.bytes),
+        )
+    }
+}
+
+impl Rem6RiscvUnknownSyscallSummary {
+    fn to_json(&self) -> String {
+        let arguments = self
+            .arguments
+            .iter()
+            .map(|argument| format!("\"0x{argument:x}\""))
+            .collect::<Vec<_>>()
+            .join(",");
+        format!(
+            "{{\"pc\":\"0x{:x}\",\"number\":{},\"tick\":{},\"arguments\":[{}]}}",
+            self.pc, self.number, self.tick, arguments
         )
     }
 }
