@@ -738,6 +738,35 @@ fn hart_executes_rv64d_minmax_with_nan_and_signed_zero_rules() {
 }
 
 #[test]
+fn hart_rv64d_minmax_raise_invalid_for_signaling_nan_only() {
+    let mut hart = RiscvHartState::new(0x8000);
+    hart.write_float(freg(1), 0x7ff0_0000_0000_0001);
+    hart.write_float(freg(2), 4.0f64.to_bits());
+
+    hart.execute(RiscvInstruction::FloatMinD {
+        rd: freg(3),
+        rs1: freg(1),
+        rs2: freg(2),
+    })
+    .unwrap();
+
+    assert_eq!(hart.read_float(freg(3)), 4.0f64.to_bits());
+    assert_eq!(hart.float_status().fflags(), FLOAT_FLAG_INVALID);
+
+    hart.set_float_status(rem6_isa_riscv::RiscvFloatStatus::new(0));
+    hart.write_float(freg(4), 0x7ff8_0000_0000_0001);
+    hart.execute(RiscvInstruction::FloatMaxD {
+        rd: freg(5),
+        rs1: freg(4),
+        rs2: freg(2),
+    })
+    .unwrap();
+
+    assert_eq!(hart.read_float(freg(5)), 4.0f64.to_bits());
+    assert_eq!(hart.float_status().fflags(), 0);
+}
+
+#[test]
 fn hart_executes_rv64d_classification_masks() {
     let mut hart = RiscvHartState::new(0x8000);
     let cases = [

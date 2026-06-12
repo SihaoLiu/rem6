@@ -560,6 +560,12 @@ pub(crate) fn binary_exception_flags(instruction: RiscvInstruction, lhs: u64, rh
     match instruction {
         RiscvInstruction::FloatDivS { .. } => divide_exception_flags_single(lhs, rhs),
         RiscvInstruction::FloatDivD { .. } => divide_exception_flags_double(lhs, rhs),
+        RiscvInstruction::FloatMinS { .. } | RiscvInstruction::FloatMaxS { .. } => {
+            minmax_exception_flags_single(lhs, rhs)
+        }
+        RiscvInstruction::FloatMinD { .. } | RiscvInstruction::FloatMaxD { .. } => {
+            minmax_exception_flags_double(lhs, rhs)
+        }
         _ => 0,
     }
 }
@@ -613,6 +619,22 @@ fn divide_exception_flags(
         FLOAT_FLAG_INVALID
     } else if rhs_is_zero && lhs_is_finite_nonzero {
         FLOAT_FLAG_DIVIDE_BY_ZERO
+    } else {
+        0
+    }
+}
+
+fn minmax_exception_flags_single(lhs: u64, rhs: u64) -> u64 {
+    if is_signaling_nan_single(unbox_single(lhs)) || is_signaling_nan_single(unbox_single(rhs)) {
+        FLOAT_FLAG_INVALID
+    } else {
+        0
+    }
+}
+
+fn minmax_exception_flags_double(lhs: u64, rhs: u64) -> u64 {
+    if is_signaling_nan_double(lhs) || is_signaling_nan_double(rhs) {
+        FLOAT_FLAG_INVALID
     } else {
         0
     }
@@ -1058,6 +1080,14 @@ fn is_nan_single(value: u32) -> bool {
 
 fn is_nan_double(value: u64) -> bool {
     value & DOUBLE_EXP_MASK == DOUBLE_EXP_MASK && value & DOUBLE_FRACTION_MASK != 0
+}
+
+fn is_signaling_nan_single(value: u32) -> bool {
+    is_nan_single(value) && value & SINGLE_QUIET_NAN_BIT == 0
+}
+
+fn is_signaling_nan_double(value: u64) -> bool {
+    is_nan_double(value) && value & DOUBLE_QUIET_NAN_BIT == 0
 }
 
 fn has_single_sign(value: u32) -> bool {

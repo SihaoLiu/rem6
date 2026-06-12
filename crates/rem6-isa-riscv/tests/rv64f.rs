@@ -687,6 +687,46 @@ fn hart_executes_rv64f_sign_injection_minmax_and_comparisons() {
 }
 
 #[test]
+fn hart_rv64f_minmax_raise_invalid_for_signaling_nan_only() {
+    let mut hart = RiscvHartState::new(0x8000);
+    hart.write_float(freg(1), box_single(0x7f80_0001));
+    hart.write_float(freg(2), f32_box(4.0));
+
+    hart.execute(RiscvInstruction::FloatMinS {
+        rd: freg(3),
+        rs1: freg(1),
+        rs2: freg(2),
+    })
+    .unwrap();
+
+    assert_eq!(hart.read_float(freg(3)), f32_box(4.0));
+    assert_eq!(hart.float_status().fflags(), FLOAT_FLAG_INVALID);
+
+    hart.set_float_status(rem6_isa_riscv::RiscvFloatStatus::new(0));
+    hart.write_float(freg(4), box_single(0x7fc0_0001));
+    hart.execute(RiscvInstruction::FloatMaxS {
+        rd: freg(5),
+        rs1: freg(4),
+        rs2: freg(2),
+    })
+    .unwrap();
+
+    assert_eq!(hart.read_float(freg(5)), f32_box(4.0));
+    assert_eq!(hart.float_status().fflags(), 0);
+
+    hart.write_float(freg(6), u64::from(0x7f80_0001_u32));
+    hart.execute(RiscvInstruction::FloatMinS {
+        rd: freg(7),
+        rs1: freg(6),
+        rs2: freg(2),
+    })
+    .unwrap();
+
+    assert_eq!(hart.read_float(freg(7)), f32_box(4.0));
+    assert_eq!(hart.float_status().fflags(), 0);
+}
+
+#[test]
 fn hart_executes_rv64f_classification_and_raw_moves() {
     let mut hart = RiscvHartState::new(0x8000);
     let cases = [
