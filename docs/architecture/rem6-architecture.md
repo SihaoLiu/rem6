@@ -16,8 +16,9 @@ rem6 is designed around recurring failure modes in large gem5 deployments:
 
 - A global event queue makes cross-component timing hard to inspect, hard to
   parallelize safely, and hard to checkpoint with pending work.
-- Python SimObject composition is flexible but weakly checked; many topology
-  errors surface late, after construction or after a run begins.
+- Python SimObject composition is flexible but weakly checked; topology owner,
+  port, and route errors often surface late, after construction or after a run
+  begins.
 - Classic caches, Ruby protocols, DRAM timing, and external traffic consumers
   are split across different vocabularies, which makes end-to-end attribution
   difficult.
@@ -38,10 +39,11 @@ simulation. The core runtime is partitioned: components that can schedule work
 or hold timing state have explicit ownership, and cross-partition interaction is
 a typed message with source, target, timing, and ordering identity.
 
-The simulator is built from ordinary Rust crates rather than generated protocol
-or Python object graphs. ISA, CPU, cache, coherence, fabric, DRAM, devices,
-platforms, workloads, checkpoints, stats, and CLI surfaces are separate owners
-with typed APIs and tests at their boundaries.
+The simulator's main design innovations are ordinary Rust crate ownership,
+typed runtime contracts, and explicit cross-partition authority. It uses these
+instead of generated protocol or Python object graphs. ISA, CPU, cache,
+coherence, fabric, DRAM, devices, platforms, workloads, checkpoints, stats, and
+CLI surfaces are separate owners with typed APIs and tests at their boundaries.
 
 The memory path uses a shared transaction vocabulary. CPU, GPU, accelerator,
 DMA, trace replay, cache, coherence, fabric, and DRAM code should expose
@@ -51,6 +53,11 @@ instead of requiring consumers to infer behavior from logs.
 Host control is part of the modeled boundary. Guest exits, stats resets,
 checkpoints, workload dispatch, device launches, debug requests, and syscall or
 host-assist traffic pass through typed events or explicit runtime state.
+
+External integration stays behind typed adapters. Co-simulation frameworks,
+external power tools, external trace formats, and native loader libraries may
+be useful at the boundary, but rem6 keeps scheduler authority, checkpoint
+authority, and runtime evidence in rem6-owned types.
 
 ## Runtime Invariants
 
@@ -104,11 +111,11 @@ host-assist traffic pass through typed events or explicit runtime state.
 
 | Area | Primary owners | Responsibility |
 | --- | --- | --- |
-| Kernel and transport | `rem6-kernel`, `rem6-transport`, `rem6-fabric` | Partitioned scheduling, remote delivery, route timing, fabric activity, wait-for diagnostics. |
+| Kernel, topology, and transport | `rem6-kernel`, `rem6-topology`, `rem6-transport`, `rem6-fabric` | Partitioned scheduling, topology graphs, remote delivery, route timing, fabric activity, wait-for diagnostics. |
 | ISA and CPU | `rem6-isa-riscv`, `rem6-isa-x86`, `rem6-cpu` | Decode, architectural state, traps, execution engines, frontend and pipeline state, branch prediction. |
-| Memory hierarchy | `rem6-memory`, `rem6-cache`, `rem6-directory`, `rem6-coherence`, protocol crates, `rem6-dram` | Stores, page maps, cache banks, replacement, MSHRs, coherence state machines, DRAM/NVM timing. |
-| Devices and platforms | `rem6-mmio`, `rem6-uart`, `rem6-timer`, `rem6-interrupt`, `rem6-pci`, `rem6-virtio`, `rem6-storage`, `rem6-net`, `rem6-platform` | MMIO, interrupt, timer, block, network, PCI, VirtIO, board, DTB, and handoff models. |
-| System integration | `rem6-system`, `rem6` | Topology, host actions, syscall emulation, full-system runs, CLI execution, stats artifacts. |
+| Memory hierarchy | `rem6-memory`, `rem6-cache`, `rem6-directory`, `rem6-coherence`, `rem6-protocol-msi`, `rem6-protocol-mesi`, `rem6-protocol-moesi`, `rem6-protocol-chi`, `rem6-dram` | Stores, page maps, cache banks, replacement, MSHRs, coherence state machines, DRAM/NVM timing. |
+| Devices and platforms | `rem6-mmio`, `rem6-amba`, `rem6-uart`, `rem6-timer`, `rem6-interrupt`, `rem6-pci`, `rem6-virtio`, `rem6-storage`, `rem6-net`, `rem6-platform`, `rem6-boot` | MMIO, bus protocols, interrupt, timer, block, network, PCI, VirtIO, board, DTB, boot, and handoff models. |
+| System integration | `rem6-system`, `rem6` | Topology assembly, host actions, syscall emulation, full-system runs, CLI execution, stats artifacts. |
 | Workloads and resources | `rem6-workload`, `rem6-traffic`, `rem6-proto` | Manifests, resources, trace replay, traffic generation, suite planning, execution evidence. |
 | Observability | `rem6-stats`, `rem6-debug`, `rem6-power`, `rem6-checkpoint` | Stats, probes, GDB/RSP, power and thermal records, checkpoint manifests and restore validation. |
 | Heterogeneous execution | `rem6-gpu`, `rem6-accelerator` | GPU and accelerator commands, DMA routes, queueing, topology validation, replay evidence. |

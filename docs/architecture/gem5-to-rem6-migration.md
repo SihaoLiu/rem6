@@ -16,10 +16,15 @@ Checklist items use markdown checkboxes:
 - `[x]` means current rem6 has executable evidence for that item.
 - `[ ]` means the item is not migrated or lacks executable rem6 evidence.
 
-For each component, the score starts from completed checklist items divided by
-all listed items, then moves down one bucket when evidence is only a narrow unit
-slice, tool-detected smoke, or harness-only path. Scores are rounded to the
-nearest five percent.
+For each component, the score uses this formula:
+
+1. Count completed checklist items and divide by all listed checklist items.
+2. Round that raw ratio to the nearest whole percent.
+3. Apply the evidence-breadth bucket as an upper bound.
+
+The component's score calculation must state both the checklist fraction and
+any bucket cap. The component checklists are the auditable source for migration
+progress.
 
 | Score | Bucket | Meaning |
 | --- | --- | --- |
@@ -38,11 +43,11 @@ observability, not as implemented syscall coverage.
 
 ## Component Progress
 
-### RISC-V ISA and Privileged Substrate - 55% single-axis
+### RISC-V ISA and Privileged Substrate - 56% single-axis
 
-**Score calculation:** 5 of 9 items have executable evidence. Coverage is
-lowered to the single-axis bucket because non-RISC-V ISAs and full RV64GC/vector
-parity are not present.
+**Score calculation:** 5 of 9 items have executable evidence, or 56% raw.
+Coverage remains in the single-axis bucket because non-RISC-V ISAs and full
+RV64GC/vector parity are not present.
 
 - [x] RV64 integer, atomic, CSR, trap, counter, WFI, fence, PMP/PMA slices have tests.
 - [x] RV64C integer/load-store/control-flow slices have tests.
@@ -69,9 +74,9 @@ privileged Linux trap and interrupt smoke tests.
 
 ### CPU Execution Models - 30% unit-slice
 
-**Score calculation:** 3 of 10 items have executable evidence. The score stays
-in the unit-slice bucket because in-order and O3 state are not yet executable
-cycle-visible engines.
+**Score calculation:** 3 of 10 items have executable evidence, or 30% raw. The
+score stays in the unit-slice bucket because in-order and O3 state are not yet
+executable cycle-visible engines.
 
 - [x] RISC-V atomic execution and parallel clusters execute real instructions.
 - [x] Data access issue/response and store-conditional progress diagnostics have tests.
@@ -99,9 +104,9 @@ ROB/LSQ-backed O3 run test.
 
 ### Memory, Cache, Coherence, Fabric, and DRAM - 45% single-axis
 
-**Score calculation:** 5 of 11 items have executable evidence. The score stays
-below representative because full CPU-facing L1/L2/L3 plus NoC and DRAM is not
-the default instruction/data path.
+**Score calculation:** 5 of 11 items have executable evidence, or 45% raw. The
+score stays below representative because full CPU-facing L1/L2/L3 plus NoC and
+DRAM is not the default instruction/data path.
 
 - [x] Memory stores, page maps, translation queues, and TLB state have tests.
 - [x] Cache banks model replacement, MSHRs, write queues, maintenance, sector and compressed tags.
@@ -132,9 +137,9 @@ multi-level cache and DRAM path with unified resource accounting.
 
 ### RISC-V SE, Workloads, and Linux Boot - 45% single-axis
 
-**Score calculation:** 5 of 11 items have executable evidence. Static newlib
-smokes are high-value but tool-detected, so they do not raise the score beyond
-single-axis.
+**Score calculation:** 5 of 11 items have executable evidence, or 45% raw.
+Static newlib smokes are high-value but tool-detected, so they do not raise the
+score beyond single-axis.
 
 - [x] User-mode ecalls reach `RiscvSyscallTable`.
 - [x] Startup stack, argv/envp/auxv, `brk`, `mmap`, stdio, file, vector I/O, time, cwd, random, resource, and wait slices have tests.
@@ -148,9 +153,10 @@ single-axis.
 - [ ] A real Linux kernel boots to userspace or clean shutdown.
 - [ ] PARSEC or comparable workload programs run through ROI/stat hooks.
 
-**Migrated:** RISC-V SE ecall path, many syscall slices, at-family file
-mutation for registered guest files, typed unknown-syscall records, startup
-stack, and static smoke coverage.
+**Migrated:** RISC-V SE ecall path; startup stack and auxv setup; `brk`,
+`mmap`, stdio, file, vector I/O, time, cwd, random, resource, wait, unknown
+syscall, and at-family hard-link/unlink slices; typed unknown-syscall records;
+and static smoke coverage.
 
 **Not migrated:** Broad Linux SE parity, process/thread lifecycle, full Linux
 boot, and real benchmark workloads.
@@ -165,8 +171,9 @@ runtime tests and a real Linux boot smoke.
 
 ### Devices and Platforms - 50% single-axis
 
-**Score calculation:** 5 of 10 items have executable evidence. The score stays
-single-axis because Linux integration and host adapters are still weak.
+**Score calculation:** 5 of 10 items have executable evidence, or 50% raw. The
+score stays single-axis because real Linux driver interaction, host networking,
+non-RISC-V boards, and coherent DMA timing are not complete.
 
 - [x] MMIO bus, UART, PL011, CLINT, PLIC, RTC, timers, and interrupt routes have tests.
 - [x] PCI, VirtIO MMIO/PCI, block, console, RNG, storage image, SimpleDisk, and IDE slices exist.
@@ -192,14 +199,15 @@ network evidence.
 
 ### Stats, Probes, Debug, Host Actions, and Checkpointing - 58% single-axis
 
-**Score calculation:** 7 of 12 items have executable evidence. The score is
-kept below representative because some surfaces are model-level and not fully
-runtime-integrated.
+**Score calculation:** 7 of 12 items have executable evidence, or 58% raw. The
+score stays below representative because probe, debug, power, and checkpoint
+evidence is not yet integrated across CPU pipeline and cache/DRAM runtime
+state.
 
 - [x] Hierarchical stats, reset/dump history, and CLI stats artifacts exist.
 - [x] Probe registry plus real RISC-V retired-instruction and data-access producers exist.
 - [x] m5 exit/fail/stats/checkpoint/work markers reach typed host actions.
-- [x] Decode-first checkpoint capture/restore exists across many subsystems.
+- [x] Decode-first checkpoint capture/restore exists across scheduler, memory, device, storage, VirtIO, timer, interrupt, platform, workload, and manifest owners.
 - [x] GDB remote packet/session parsing and RISC-V integer/PC register paths exist.
 - [x] Power and thermal models plus external power-analysis exports exist.
 - [x] Host actions and guest events are typed and checkpoint-aware.
@@ -209,8 +217,9 @@ runtime-integrated.
 - [ ] Power and thermal models are calibrated against real component activity.
 - [ ] CPU pipeline and O3 pending-state checkpoints exist.
 
-**Migrated:** Structured stats, probes, checkpoint banks, m5ops, host actions,
-and much of debug protocol handling.
+**Migrated:** Structured stats, real RISC-V probe producers, checkpoint banks,
+m5ops, host actions, GDB packet/session parsing, RISC-V integer/PC debug
+register paths, and power-analysis exports.
 
 **Not migrated:** Complete histogram/stat parity, full debug execution control,
 runtime-calibrated power/thermal, and pipeline/O3 checkpoint breadth.
@@ -222,10 +231,11 @@ checkpoint tests, power-analysis export tests, and CLI data-access probe tests.
 **Next evidence:** First-class histogram stats, runtime resource counters, and
 GDB execution-control tests.
 
-### Configuration, Resources, Suites, GPU, and Accelerators - 38% unit-slice
+### Configuration, Resources, Suites, GPU, and Accelerators - 39% unit-slice
 
-**Score calculation:** 4 of 10 items have executable evidence. Workload and
-heterogeneous data structures are strong, but real GPU ISA execution and broad
+**Score calculation:** 4 of 10 items have executable evidence, or 40% raw. The
+unit-slice bucket caps the score at 39% because current evidence is mostly
+typed declarations, routing, and summaries; real GPU ISA execution and broad
 resource acquisition are absent.
 
 - [x] CLI `run`, `gups`, and `trace-replay` plus TOML configuration have tests.
@@ -253,7 +263,11 @@ ISA-visible execution tests.
 
 ## Test Migration Ledger
 
-| gem5 test anchor | rem6 owner | Score | Migrated boundary | Next evidence |
+This table is a crosswalk from gem5 test anchors to rem6 owners. Its estimates
+are compact row-level status markers, not component scores. The checklist-backed
+component sections above define the auditable percentages.
+
+| gem5 test anchor | rem6 owner | Estimate | Migrated boundary | Next evidence |
 | --- | --- | --- | --- | --- |
 | `tests/gem5/arm_boot_tests` | future ARM ISA crate, `rem6-platform` | 0% open | ARM device slices exist, but this row requires Arm ISA boot. | Add Arm ISA, board handoff, device tree, and kernel boot tests. |
 | `tests/gem5/asmtest` | ISA crates, `rem6` CLI | 45% single-axis | RISC-V no-libc and ISA unit tests cover selected instruction and ecall paths. | Split RV32/RV64 and extension families with architectural-state comparison. |
@@ -290,16 +304,75 @@ ISA-visible execution tests.
 | `tests/gem5/traffic_gen` | `rem6-traffic`, `rem6-system`, `rem6-workload` | 45% single-axis | Text config parsing, GUPS, packet trace replay, flags, maintenance, HTM, responses, and workload summaries exist. | Split generator semantics, cache hierarchy matrix, memory profile matrix, and trusted stats. |
 | `tests/gem5/x86_boot_tests` | `rem6-isa-x86`, future platform work | 0% open | Narrow x86 prefix and interrupt-flag semantics exist, but no x86 boot path exists. | Add x86 ISA execution, paging, interrupt, platform, and boot-image tests. |
 
-## External Adapter Status
+## External Adapter Migration
 
-| gem5 anchor | rem6 policy | Score | Next evidence |
-| --- | --- | --- | --- |
-| `src/systemc`, `util/tlm`, `ext/systemc` | Keep co-simulation behind typed adapters; rem6 scheduler remains timing authority. | 0% open | Add adapter boundary tests before model integration. |
-| `ext/sst`, `configs/example/sst` | Treat SST as optional co-simulation, not a core runtime dependency. | 0% open | Add checkpoint-aware adapter contracts. |
-| `ext/nomali`, `ext/mcpat`, `ext/dsent` | Consume typed records from rem6-power and optional external exporters. | 25% unit-slice | Add adapter ingestion/export parity tests. |
-| `ext/libelf`, `ext/libfdt`, `ext/softfloat` | Prefer native typed Rust loaders/FDT and ISA math paths. | 45% single-axis | Expand loader breadth and soft-float parity. |
+### SystemC and TLM Adapters - 0% open
 
-## Current Priorities
+**Score calculation:** 0 of 3 items have executable evidence, or 0% raw.
+
+- [ ] A typed co-simulation adapter boundary exists.
+- [ ] Adapter event handoff has executable tests.
+- [ ] Adapter checkpoint capture and restore has executable tests.
+
+**Migrated:** No executable rem6 SystemC or TLM adapter boundary.
+
+**Not migrated:** `src/systemc`, `util/tlm`, and `ext/systemc` behavior.
+
+**Next evidence:** Adapter boundary tests before model integration.
+
+### SST Adapter - 0% open
+
+**Score calculation:** 0 of 3 items have executable evidence, or 0% raw.
+
+- [ ] A typed SST adapter boundary exists.
+- [ ] SST traffic handoff has executable tests.
+- [ ] SST adapter checkpoint capture and restore has executable tests.
+
+**Migrated:** No executable rem6 SST adapter boundary.
+
+**Not migrated:** `ext/sst` and `configs/example/sst` behavior.
+
+**Next evidence:** Checkpoint-aware adapter contracts.
+
+### Power and Physical-Design Export Adapters - 25% unit-slice
+
+**Score calculation:** 1 of 4 items have executable evidence, or 25% raw.
+
+- [x] rem6-power can export typed power-analysis records.
+- [ ] McPAT-compatible ingestion/export parity is complete.
+- [ ] DSENT-compatible ingestion/export parity is complete.
+- [ ] NoMali-compatible GPU adapter evidence exists.
+
+**Migrated:** Typed power-analysis export records.
+
+**Not migrated:** `ext/nomali`, `ext/mcpat`, and `ext/dsent` parity.
+
+**Evidence:** rem6-power power-analysis export tests.
+
+**Next evidence:** Adapter ingestion/export parity tests.
+
+### Native Loader and Math Replacement - 50% single-axis
+
+**Score calculation:** 2 of 4 items have executable evidence, or 50% raw.
+
+- [x] Native ELF loading reaches executable RISC-V SE smoke paths.
+- [x] Native DTB handoff records exist.
+- [ ] libelf replacement breadth covers the needed gem5 loader matrix.
+- [ ] softfloat replacement breadth covers all FP rounding and exception paths.
+
+**Migrated:** Native Rust loader and DTB handoff slices plus RV64F/RV64D
+scalar load/store, arithmetic, comparison, conversion, NaN-boxing, and accrued
+flag slices.
+
+**Not migrated:** Complete `ext/libelf`, `ext/libfdt`, and `ext/softfloat`
+parity.
+
+**Evidence:** CLI static RISC-V smoke tests, RISC-V DTB handoff tests, and
+RV64F/RV64D tests.
+
+**Next evidence:** Expand loader breadth and soft-float parity.
+
+## Open Migration Gaps
 
 1. Connect in-order and O3 CPU state to executable engines.
 2. Run more real static-libc SE programs, then add SBI and real Linux boot.
