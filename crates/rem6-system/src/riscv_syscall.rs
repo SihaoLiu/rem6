@@ -25,6 +25,7 @@ mod ioctl;
 mod limits;
 mod links;
 mod mmap;
+mod open;
 mod readv;
 mod robust;
 mod seek;
@@ -52,6 +53,7 @@ pub use mmap::RiscvMmapRegion;
 use mmap::{syscall_mmap, syscall_munmap, RISCV64_LINUX_MMAP_BASE, RISCV_PAGE_BYTES};
 #[cfg(test)]
 use mmap::{RISCV_LINUX_MAP_FIXED, RISCV_LINUX_MAP_PRIVATE};
+use open::{syscall_open, syscall_openat, RISCV_LINUX_OPEN};
 use readv::{syscall_readv, RISCV_LINUX_READV};
 use robust::{syscall_get_robust_list, syscall_set_robust_list, RiscvRobustList};
 use seek::{syscall_lseek, RISCV_LINUX_LSEEK};
@@ -832,6 +834,11 @@ impl RiscvSyscallTable {
                     value: syscall_openat(request, state, guest_memory),
                 })
             }
+            RISCV_LINUX_OPEN => {
+                guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
+                    value: syscall_open(request, state, guest_memory),
+                })
+            }
             RISCV_LINUX_CLOSE => Some(RiscvSyscallOutcome::Return {
                 value: syscall_close(request.argument(0), state),
             }),
@@ -1395,53 +1402,6 @@ fn syscall_close(fd_argument: u64, state: &mut RiscvSyscallState) -> u64 {
             state.close_fd_sources(&record);
             0
         }
-        Err(_error) => linux_error(RISCV_LINUX_EBADF),
-    }
-}
-
-fn syscall_openat(
-    request: RiscvSyscallRequest,
-    state: &mut RiscvSyscallState,
-    guest_memory: &RiscvGuestMemoryReader,
-) -> u64 {
-    let dirfd = request.argument(0);
-    if dirfd != RISCV_LINUX_AT_FDCWD {
-        return linux_error(RISCV_LINUX_EBADF);
-    }
-
-    let flags = request.argument(2);
-    if flags & !(RISCV_LINUX_O_ACCMODE | RISCV_LINUX_O_CLOEXEC) != 0 {
-        return linux_error(RISCV_LINUX_EINVAL);
-    }
-    if flags & RISCV_LINUX_O_ACCMODE != RISCV_LINUX_O_RDONLY {
-        return linux_error(RISCV_LINUX_EINVAL);
-    }
-
-    let path = match read_guest_c_string(guest_memory, request.argument(1), RISCV_LINUX_PATH_MAX) {
-        Ok(path) => path,
-        Err(RiscvGuestCStringError::Fault) => return linux_error(RISCV_LINUX_EFAULT),
-        Err(RiscvGuestCStringError::TooLong) => {
-            return linux_error(RISCV_LINUX_ENAMETOOLONG);
-        }
-    };
-    if path.is_empty() || !state.guest_path_registered(&path) {
-        return linux_error(RISCV_LINUX_ENOENT);
-    }
-
-    let file_contents = state.guest_file_contents(&path).map(Vec::from);
-    let status_flags = GuestFileStatusFlags::new((flags & !RISCV_LINUX_O_CLOEXEC) as u32);
-    let close_on_exec = flags & RISCV_LINUX_O_CLOEXEC != 0;
-    match state.open_guest_path(RiscvGuestOpenRequest {
-        dirfd,
-        path,
-        flags,
-        mode: request.argument(3),
-        status_flags,
-        close_on_exec,
-        file_contents,
-    }) {
-        Ok(fd) => u64::from(fd.get()),
-        Err(GuestFdError::FdSpaceExhausted) => linux_error(RISCV_LINUX_EMFILE),
         Err(_error) => linux_error(RISCV_LINUX_EBADF),
     }
 }

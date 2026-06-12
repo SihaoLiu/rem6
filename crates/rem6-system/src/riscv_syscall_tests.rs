@@ -1005,6 +1005,52 @@ fn linux_table_opens_registered_guest_path() {
 }
 
 #[test]
+fn linux_table_legacy_open_uses_registered_guest_path_arguments() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_path(b"/input.txt");
+    let path = b"/input.txt\0".to_vec();
+    let guest_memory = RiscvGuestMemoryReader::new(move |address, bytes| {
+        if bytes != 1 || address < 0x9000 {
+            return None;
+        }
+        path.get((address - 0x9000) as usize)
+            .copied()
+            .map(|byte| vec![byte])
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_OPEN,
+                [0x9000, RISCV_LINUX_O_CLOEXEC, 0o644, 0, 0, 0],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 3 })
+    );
+
+    let fd = GuestFd::new(3).unwrap();
+    assert!(state.guest_fds().entry(fd).is_some());
+    assert!(state.guest_fds().close_on_exec(fd).unwrap());
+    assert_eq!(
+        state.guest_fds().status_flags(fd).unwrap(),
+        GuestFileStatusFlags::new(RISCV_LINUX_O_RDONLY as u32)
+    );
+    assert_eq!(state.guest_opens().len(), 1);
+    let open = &state.guest_opens()[0];
+    assert_eq!(open.fd(), fd);
+    assert_eq!(open.dirfd(), RISCV_LINUX_AT_FDCWD);
+    assert_eq!(open.path(), b"/input.txt");
+    assert_eq!(open.flags(), RISCV_LINUX_O_CLOEXEC);
+    assert_eq!(open.mode(), 0o644);
+}
+
+#[test]
 fn linux_table_opened_guest_path_fd_does_not_read_stdin() {
     let table = RiscvSyscallTable::new();
     let mut state = RiscvSyscallState::new(0);

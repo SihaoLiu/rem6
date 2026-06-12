@@ -1433,6 +1433,9 @@ Implementation evidence through 2026-06-11:
   CLI regressions build static newlib `printf` and stdin-backed `fgets`
   binaries, use qemu as the guest stdout and exit-code oracle, and run the same
   ELFs through rem6 SE while checking the same guest write text and stop code.
+  A static newlib `fopen` regression also covers the legacy `open` syscall
+  number 1024 against registered guest files, then consumes the resulting fd
+  through libc `fread` and `printf`.
   CLI and TOML runs can also preload host files into typed registered guest
   paths before execution, with a repository regression covering real guest
   `openat`, `read`, `write`, and `exit` ecall flow from those bytes.
@@ -1486,13 +1489,14 @@ Implementation evidence through 2026-06-11:
   the syscall-emulation stdin queue into the simulated guest buffer, returns the
   transferred byte count to `a0`, advances the shared file offset, and resumes
   guest execution; an empty stdin queue returns zero as EOF. RISC-V `openat`
-  now consumes a real user-mode ecall when guest-memory reading is configured,
-  copies a NUL-terminated pathname from simulated memory, matches it against a
-  typed registered guest-path set, allocates a guest fd with shared
-  file-description state, records the opened path, lets `read` copy registered
-  guest-file contents back into simulated memory using the shared file offset,
-  honors `O_CLOEXEC` as a descriptor flag, and returns `ENOENT`, `EFAULT`,
-  `EINVAL`, `EBADF`, or `ENAMETOOLONG` for the registered-path subset.
+  and legacy `open` number 1024 now consume real user-mode ecalls when
+  guest-memory reading is configured, copy a NUL-terminated pathname from
+  simulated memory, match it against a typed registered guest-path set, allocate
+  a guest fd with shared file-description state, record the opened path, let
+  `read` copy registered guest-file contents back into simulated memory using
+  the shared file offset, honor `O_CLOEXEC` as a descriptor flag, and return
+  `ENOENT`, `EFAULT`, `EINVAL`, `EBADF`, or `ENAMETOOLONG` for the
+  registered-path subset.
   RISC-V `lseek` number 62 now consumes a real user-mode ecall for registered
   guest files, supports `SEEK_SET`, `SEEK_CUR`, and `SEEK_END`, updates shared
   file-description offsets visible through duplicated descriptors, uses the
@@ -5386,9 +5390,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   handling that returns Linux `EAGAIN`, and initial `dup`, `dup3`, `close`,
   `fcntl`, guest-backed `write`, and stdin-backed
   guest-memory `read` handling through the same real ecall path. It also has
-  `openat` handling for registered guest paths copied from guest
-  memory, allocating typed guest fds without touching the host filesystem, and
-  can read registered guest-file contents through those fds. The same path now
+  `openat` and legacy `open` handling for registered guest paths copied from
+  guest memory, allocating typed guest fds without touching the host filesystem,
+  and can read registered guest-file contents through those fds. The same path now
   handles registered-link `readlinkat` number 78 by copying targets such as
   `/proc/self/exe` into the guest buffer with truncation and no added NUL byte,
   modern Linux generic `newfstatat` number 79 and `fstat` number 80 for
@@ -5430,8 +5434,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   newlib `fgets` regression comparing rem6 guest stdout and exit status against
   qemu for the same ELF. CLI `--riscv-se-file` and TOML `riscv_se_files` also
   preload host file bytes into registered guest paths before execution, and
-  regressions consume those bytes through real guest `openat`, `read`, `write`,
-  and `exit` ecalls. The CLI can now
+  regressions consume those bytes through real guest `openat`, legacy `open`,
+  `read`, `write`, and `exit` ecalls, including a static newlib `fopen` path.
+  The CLI can now
   opt into the same handoff with `rem6 run --riscv-se`: it installs the startup
   stack into simulated memory, maps zeroed stack backing matching the current
   `RLIMIT_STACK` value, sets the initial stack pointer, enters user mode, and
