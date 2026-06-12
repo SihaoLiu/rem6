@@ -2,7 +2,7 @@ use crate::GuestFileStatusFlags;
 
 use super::{
     guest_fd_argument, linux_error, RiscvSyscallOutcome, RiscvSyscallRequest, RiscvSyscallState,
-    RISCV_LINUX_EBADF, RISCV_LINUX_O_NONBLOCK,
+    RISCV_LINUX_EBADF, RISCV_LINUX_O_APPEND, RISCV_LINUX_O_NONBLOCK,
 };
 
 pub(super) const RISCV_LINUX_FCNTL: u64 = 25;
@@ -48,7 +48,7 @@ pub(super) fn syscall_fcntl(
                 Err(_error) => return Some(guest_fd_error_return()),
             };
             let requested = request.argument(2) as u32;
-            let mutable_flags = RISCV_LINUX_O_NONBLOCK as u32;
+            let mutable_flags = (RISCV_LINUX_O_APPEND | RISCV_LINUX_O_NONBLOCK) as u32;
             state
                 .guest_fds
                 .set_status_flags(

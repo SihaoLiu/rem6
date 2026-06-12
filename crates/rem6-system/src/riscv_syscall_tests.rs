@@ -11,6 +11,8 @@ mod boot_image_tests;
 mod cwd_tests;
 #[path = "riscv_syscall_tests/dirent_tests.rs"]
 mod dirent_tests;
+#[path = "riscv_syscall_tests/fcntl_tests.rs"]
+mod fcntl_tests;
 #[path = "riscv_syscall_tests/link_tests.rs"]
 mod link_tests;
 #[path = "riscv_syscall_tests/mkdir_tests.rs"]
