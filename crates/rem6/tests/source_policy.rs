@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 const MAX_FACADE_LINES: usize = 1300;
 const MAX_SOURCE_LINES: usize = 1800;
+const MAX_ALIGNMENT_OVERVIEW_LINES: usize = 2500;
 
 #[test]
 fn cli_lib_rs_remains_a_facade() {
@@ -63,6 +64,22 @@ fn cli_runtime_inputs_live_in_focused_modules() {
     assert!(
         !lib_rs.contains("fn build_cli_memory_store("),
         "src/lib.rs should delegate guest memory store construction to guest memory code"
+    );
+}
+
+#[test]
+fn gem5_alignment_doc_remains_an_overview() {
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap();
+    let path = repo_root.join("docs/architecture/gem5-to-rem6-alignment.md");
+    let lines = line_count(&path);
+
+    assert!(
+        lines <= MAX_ALIGNMENT_OVERVIEW_LINES,
+        "gem5-to-rem6-alignment.md should stay a concise module overview, but it has {lines} lines"
     );
 }
 
