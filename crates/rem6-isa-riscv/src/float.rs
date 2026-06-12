@@ -1,332 +1,14 @@
-use crate::encoding::{funct2, funct3, funct7, i_imm, rd, rs1, rs2, rs3, s_imm};
 use crate::{
-    FloatRegister, FloatRegisterWrite, Immediate, MemoryWidth, Register, RiscvError,
-    RiscvFloatRoundingMode, RiscvHartState, RiscvInstruction,
+    FloatRegister, FloatRegisterWrite, Register, RiscvFloatRoundingMode, RiscvHartState,
+    RiscvInstruction,
 };
 
 mod convert_flags;
+mod decode;
 
-pub(crate) fn decode_float_load(raw: u32) -> Result<RiscvInstruction, RiscvError> {
-    let width = match funct3(raw) {
-        0x2 => MemoryWidth::Word,
-        0x3 => MemoryWidth::Doubleword,
-        _ => return Err(RiscvError::UnknownEncoding { raw }),
-    };
-
-    Ok(RiscvInstruction::FloatLoad {
-        rd: float_rd(raw),
-        rs1: rs1(raw),
-        offset: Immediate::new(i_imm(raw)),
-        width,
-    })
-}
-
-pub(crate) fn decode_float_store(raw: u32) -> Result<RiscvInstruction, RiscvError> {
-    let width = match funct3(raw) {
-        0x2 => MemoryWidth::Word,
-        0x3 => MemoryWidth::Doubleword,
-        _ => return Err(RiscvError::UnknownEncoding { raw }),
-    };
-
-    Ok(RiscvInstruction::FloatStore {
-        rs1: rs1(raw),
-        rs2: float_rs2(raw),
-        offset: Immediate::new(s_imm(raw)),
-        width,
-    })
-}
-
-pub(crate) fn decode_float_op(raw: u32) -> Result<RiscvInstruction, RiscvError> {
-    match (funct7(raw), funct3(raw)) {
-        (0x00, 0x0) => Ok(RiscvInstruction::FloatAddS {
-            rd: float_rd(raw),
-            rs1: float_rs1(raw),
-            rs2: float_rs2(raw),
-        }),
-        (0x01, 0x0) => Ok(RiscvInstruction::FloatAddD {
-            rd: float_rd(raw),
-            rs1: float_rs1(raw),
-            rs2: float_rs2(raw),
-        }),
-        (0x04, 0x0) => Ok(RiscvInstruction::FloatSubS {
-            rd: float_rd(raw),
-            rs1: float_rs1(raw),
-            rs2: float_rs2(raw),
-        }),
-        (0x05, 0x0) => Ok(RiscvInstruction::FloatSubD {
-            rd: float_rd(raw),
-            rs1: float_rs1(raw),
-            rs2: float_rs2(raw),
-        }),
-        (0x08, 0x0) => Ok(RiscvInstruction::FloatMulS {
-            rd: float_rd(raw),
-            rs1: float_rs1(raw),
-            rs2: float_rs2(raw),
-        }),
-        (0x09, 0x0) => Ok(RiscvInstruction::FloatMulD {
-            rd: float_rd(raw),
-            rs1: float_rs1(raw),
-            rs2: float_rs2(raw),
-        }),
-        (0x0c, 0x0) => Ok(RiscvInstruction::FloatDivS {
-            rd: float_rd(raw),
-            rs1: float_rs1(raw),
-            rs2: float_rs2(raw),
-        }),
-        (0x0d, 0x0) => Ok(RiscvInstruction::FloatDivD {
-            rd: float_rd(raw),
-            rs1: float_rs1(raw),
-            rs2: float_rs2(raw),
-        }),
-        (0x2c, 0x0) if rs2(raw).is_zero() => Ok(RiscvInstruction::FloatSqrtS {
-            rd: float_rd(raw),
-            rs1: float_rs1(raw),
-        }),
-        (0x2d, 0x0) if rs2(raw).is_zero() => Ok(RiscvInstruction::FloatSqrtD {
-            rd: float_rd(raw),
-            rs1: float_rs1(raw),
-        }),
-        (0x10, 0x0) => Ok(RiscvInstruction::FloatSignInjectS {
-            rd: float_rd(raw),
-            rs1: float_rs1(raw),
-            rs2: float_rs2(raw),
-        }),
-        (0x10, 0x1) => Ok(RiscvInstruction::FloatSignInjectNegS {
-            rd: float_rd(raw),
-            rs1: float_rs1(raw),
-            rs2: float_rs2(raw),
-        }),
-        (0x10, 0x2) => Ok(RiscvInstruction::FloatSignInjectXorS {
-            rd: float_rd(raw),
-            rs1: float_rs1(raw),
-            rs2: float_rs2(raw),
-        }),
-        (0x11, 0x0) => Ok(RiscvInstruction::FloatSignInjectD {
-            rd: float_rd(raw),
-            rs1: float_rs1(raw),
-            rs2: float_rs2(raw),
-        }),
-        (0x11, 0x1) => Ok(RiscvInstruction::FloatSignInjectNegD {
-            rd: float_rd(raw),
-            rs1: float_rs1(raw),
-            rs2: float_rs2(raw),
-        }),
-        (0x11, 0x2) => Ok(RiscvInstruction::FloatSignInjectXorD {
-            rd: float_rd(raw),
-            rs1: float_rs1(raw),
-            rs2: float_rs2(raw),
-        }),
-        (0x14, 0x0) => Ok(RiscvInstruction::FloatMinS {
-            rd: float_rd(raw),
-            rs1: float_rs1(raw),
-            rs2: float_rs2(raw),
-        }),
-        (0x14, 0x1) => Ok(RiscvInstruction::FloatMaxS {
-            rd: float_rd(raw),
-            rs1: float_rs1(raw),
-            rs2: float_rs2(raw),
-        }),
-        (0x15, 0x0) => Ok(RiscvInstruction::FloatMinD {
-            rd: float_rd(raw),
-            rs1: float_rs1(raw),
-            rs2: float_rs2(raw),
-        }),
-        (0x15, 0x1) => Ok(RiscvInstruction::FloatMaxD {
-            rd: float_rd(raw),
-            rs1: float_rs1(raw),
-            rs2: float_rs2(raw),
-        }),
-        (0x50, 0x0) => Ok(RiscvInstruction::FloatLessOrEqualS {
-            rd: rd(raw),
-            rs1: float_rs1(raw),
-            rs2: float_rs2(raw),
-        }),
-        (0x50, 0x1) => Ok(RiscvInstruction::FloatLessThanS {
-            rd: rd(raw),
-            rs1: float_rs1(raw),
-            rs2: float_rs2(raw),
-        }),
-        (0x50, 0x2) => Ok(RiscvInstruction::FloatEqualS {
-            rd: rd(raw),
-            rs1: float_rs1(raw),
-            rs2: float_rs2(raw),
-        }),
-        (0x51, 0x0) => Ok(RiscvInstruction::FloatLessOrEqualD {
-            rd: rd(raw),
-            rs1: float_rs1(raw),
-            rs2: float_rs2(raw),
-        }),
-        (0x51, 0x1) => Ok(RiscvInstruction::FloatLessThanD {
-            rd: rd(raw),
-            rs1: float_rs1(raw),
-            rs2: float_rs2(raw),
-        }),
-        (0x51, 0x2) => Ok(RiscvInstruction::FloatEqualD {
-            rd: rd(raw),
-            rs1: float_rs1(raw),
-            rs2: float_rs2(raw),
-        }),
-        (0x70, 0x0) if rs2(raw).is_zero() => Ok(RiscvInstruction::FloatMoveXFromS {
-            rd: rd(raw),
-            rs1: float_rs1(raw),
-        }),
-        (0x70, 0x1) if rs2(raw).is_zero() => Ok(RiscvInstruction::FloatClassS {
-            rd: rd(raw),
-            rs1: float_rs1(raw),
-        }),
-        (0x71, 0x0) if rs2(raw).is_zero() => Ok(RiscvInstruction::FloatMoveXFromD {
-            rd: rd(raw),
-            rs1: float_rs1(raw),
-        }),
-        (0x71, 0x1) if rs2(raw).is_zero() => Ok(RiscvInstruction::FloatClassD {
-            rd: rd(raw),
-            rs1: float_rs1(raw),
-        }),
-        (0x78, 0x0) if rs2(raw).is_zero() => Ok(RiscvInstruction::FloatMoveSFromX {
-            rd: float_rd(raw),
-            rs1: rs1(raw),
-        }),
-        (0x68, 0x0) if rs2(raw).index() == 0 => Ok(RiscvInstruction::FloatConvertSFromW {
-            rd: float_rd(raw),
-            rs1: rs1(raw),
-        }),
-        (0x68, 0x0) if rs2(raw).index() == 1 => Ok(RiscvInstruction::FloatConvertSFromWu {
-            rd: float_rd(raw),
-            rs1: rs1(raw),
-        }),
-        (0x68, 0x0) if rs2(raw).index() == 2 => Ok(RiscvInstruction::FloatConvertSFromL {
-            rd: float_rd(raw),
-            rs1: rs1(raw),
-        }),
-        (0x68, 0x0) if rs2(raw).index() == 3 => Ok(RiscvInstruction::FloatConvertSFromLu {
-            rd: float_rd(raw),
-            rs1: rs1(raw),
-        }),
-        (0x60, _) if rs2(raw).index() == 0 => Ok(RiscvInstruction::FloatConvertWFromS {
-            rd: rd(raw),
-            rs1: float_rs1(raw),
-            rounding_mode: float_rounding_mode(raw)?,
-        }),
-        (0x60, _) if rs2(raw).index() == 1 => Ok(RiscvInstruction::FloatConvertWuFromS {
-            rd: rd(raw),
-            rs1: float_rs1(raw),
-            rounding_mode: float_rounding_mode(raw)?,
-        }),
-        (0x60, _) if rs2(raw).index() == 2 => Ok(RiscvInstruction::FloatConvertLFromS {
-            rd: rd(raw),
-            rs1: float_rs1(raw),
-            rounding_mode: float_rounding_mode(raw)?,
-        }),
-        (0x60, _) if rs2(raw).index() == 3 => Ok(RiscvInstruction::FloatConvertLuFromS {
-            rd: rd(raw),
-            rs1: float_rs1(raw),
-            rounding_mode: float_rounding_mode(raw)?,
-        }),
-        (0x20, 0x0) if rs2(raw).index() == 1 => Ok(RiscvInstruction::FloatConvertSFromD {
-            rd: float_rd(raw),
-            rs1: float_rs1(raw),
-        }),
-        (0x79, 0x0) if rs2(raw).is_zero() => Ok(RiscvInstruction::FloatMoveDFromX {
-            rd: float_rd(raw),
-            rs1: rs1(raw),
-        }),
-        (0x69, 0x0) if rs2(raw).index() == 0 => Ok(RiscvInstruction::FloatConvertDFromW {
-            rd: float_rd(raw),
-            rs1: rs1(raw),
-        }),
-        (0x69, 0x0) if rs2(raw).index() == 1 => Ok(RiscvInstruction::FloatConvertDFromWu {
-            rd: float_rd(raw),
-            rs1: rs1(raw),
-        }),
-        (0x69, 0x0) if rs2(raw).index() == 2 => Ok(RiscvInstruction::FloatConvertDFromL {
-            rd: float_rd(raw),
-            rs1: rs1(raw),
-        }),
-        (0x69, 0x0) if rs2(raw).index() == 3 => Ok(RiscvInstruction::FloatConvertDFromLu {
-            rd: float_rd(raw),
-            rs1: rs1(raw),
-        }),
-        (0x21, 0x0) if rs2(raw).is_zero() => Ok(RiscvInstruction::FloatConvertDFromS {
-            rd: float_rd(raw),
-            rs1: float_rs1(raw),
-        }),
-        (0x61, _) if rs2(raw).index() == 0 => Ok(RiscvInstruction::FloatConvertWFromD {
-            rd: rd(raw),
-            rs1: float_rs1(raw),
-            rounding_mode: float_rounding_mode(raw)?,
-        }),
-        (0x61, _) if rs2(raw).index() == 1 => Ok(RiscvInstruction::FloatConvertWuFromD {
-            rd: rd(raw),
-            rs1: float_rs1(raw),
-            rounding_mode: float_rounding_mode(raw)?,
-        }),
-        (0x61, _) if rs2(raw).index() == 2 => Ok(RiscvInstruction::FloatConvertLFromD {
-            rd: rd(raw),
-            rs1: float_rs1(raw),
-            rounding_mode: float_rounding_mode(raw)?,
-        }),
-        (0x61, _) if rs2(raw).index() == 3 => Ok(RiscvInstruction::FloatConvertLuFromD {
-            rd: rd(raw),
-            rs1: float_rs1(raw),
-            rounding_mode: float_rounding_mode(raw)?,
-        }),
-        _ => Err(RiscvError::UnknownEncoding { raw }),
-    }
-}
-
-pub(crate) fn decode_float_multiply_add(raw: u32) -> Result<RiscvInstruction, RiscvError> {
-    match (raw & 0x7f, funct2(raw), funct3(raw)) {
-        (0x43, 0x0, 0x0) => Ok(RiscvInstruction::FloatMultiplyAddS {
-            rd: float_rd(raw),
-            rs1: float_rs1(raw),
-            rs2: float_rs2(raw),
-            rs3: float_rs3(raw),
-        }),
-        (0x43, 0x1, 0x0) => Ok(RiscvInstruction::FloatMultiplyAddD {
-            rd: float_rd(raw),
-            rs1: float_rs1(raw),
-            rs2: float_rs2(raw),
-            rs3: float_rs3(raw),
-        }),
-        (0x47, 0x0, 0x0) => Ok(RiscvInstruction::FloatMultiplySubtractS {
-            rd: float_rd(raw),
-            rs1: float_rs1(raw),
-            rs2: float_rs2(raw),
-            rs3: float_rs3(raw),
-        }),
-        (0x47, 0x1, 0x0) => Ok(RiscvInstruction::FloatMultiplySubtractD {
-            rd: float_rd(raw),
-            rs1: float_rs1(raw),
-            rs2: float_rs2(raw),
-            rs3: float_rs3(raw),
-        }),
-        (0x4b, 0x0, 0x0) => Ok(RiscvInstruction::FloatNegativeMultiplySubtractS {
-            rd: float_rd(raw),
-            rs1: float_rs1(raw),
-            rs2: float_rs2(raw),
-            rs3: float_rs3(raw),
-        }),
-        (0x4b, 0x1, 0x0) => Ok(RiscvInstruction::FloatNegativeMultiplySubtractD {
-            rd: float_rd(raw),
-            rs1: float_rs1(raw),
-            rs2: float_rs2(raw),
-            rs3: float_rs3(raw),
-        }),
-        (0x4f, 0x0, 0x0) => Ok(RiscvInstruction::FloatNegativeMultiplyAddS {
-            rd: float_rd(raw),
-            rs1: float_rs1(raw),
-            rs2: float_rs2(raw),
-            rs3: float_rs3(raw),
-        }),
-        (0x4f, 0x1, 0x0) => Ok(RiscvInstruction::FloatNegativeMultiplyAddD {
-            rd: float_rd(raw),
-            rs1: float_rs1(raw),
-            rs2: float_rs2(raw),
-            rs3: float_rs3(raw),
-        }),
-        _ => Err(RiscvError::UnknownEncoding { raw }),
-    }
-}
+pub(crate) use decode::{
+    decode_float_load, decode_float_multiply_add, decode_float_op, decode_float_store,
+};
 
 fn add_double(lhs: u64, rhs: u64) -> u64 {
     (f64::from_bits(lhs) + f64::from_bits(rhs)).to_bits()
@@ -362,6 +44,31 @@ pub(crate) fn float_register_write(
         RiscvInstruction::FloatConvertDFromS { rd, .. } => (rd, convert_single_to_double(lhs)),
         _ => unreachable!("non-float-register instruction dispatched to float register write"),
     }
+}
+
+pub(crate) fn register_rounding_mode_is_supported(instruction: RiscvInstruction, frm: u64) -> bool {
+    let rounding_mode = match instruction {
+        RiscvInstruction::FloatAddS { rounding_mode, .. }
+        | RiscvInstruction::FloatAddD { rounding_mode, .. }
+        | RiscvInstruction::FloatSubS { rounding_mode, .. }
+        | RiscvInstruction::FloatSubD { rounding_mode, .. }
+        | RiscvInstruction::FloatMulS { rounding_mode, .. }
+        | RiscvInstruction::FloatMulD { rounding_mode, .. }
+        | RiscvInstruction::FloatDivS { rounding_mode, .. }
+        | RiscvInstruction::FloatDivD { rounding_mode, .. }
+        | RiscvInstruction::FloatSqrtS { rounding_mode, .. }
+        | RiscvInstruction::FloatSqrtD { rounding_mode, .. }
+        | RiscvInstruction::FloatMultiplyAddS { rounding_mode, .. }
+        | RiscvInstruction::FloatMultiplyAddD { rounding_mode, .. }
+        | RiscvInstruction::FloatMultiplySubtractS { rounding_mode, .. }
+        | RiscvInstruction::FloatMultiplySubtractD { rounding_mode, .. }
+        | RiscvInstruction::FloatNegativeMultiplySubtractS { rounding_mode, .. }
+        | RiscvInstruction::FloatNegativeMultiplySubtractD { rounding_mode, .. }
+        | RiscvInstruction::FloatNegativeMultiplyAddS { rounding_mode, .. }
+        | RiscvInstruction::FloatNegativeMultiplyAddD { rounding_mode, .. } => rounding_mode,
+        _ => return true,
+    };
+    rounding_mode.resolve(frm) == Some(RiscvFloatRoundingMode::RoundNearestEven)
 }
 
 pub(crate) fn float_register_write_ternary(
@@ -1275,24 +982,3 @@ const DEFAULT_NAN_DOUBLE: u64 = 0x7ff8_0000_0000_0000;
 const FLOAT_FLAG_INVALID: u64 = 1 << 4;
 const FLOAT_FLAG_DIVIDE_BY_ZERO: u64 = 1 << 3;
 const FLOAT_FLAG_INEXACT: u64 = 1 << 0;
-
-fn float_rd(raw: u32) -> FloatRegister {
-    FloatRegister::from_field(rd(raw).index().into())
-}
-
-fn float_rounding_mode(raw: u32) -> Result<RiscvFloatRoundingMode, RiscvError> {
-    RiscvFloatRoundingMode::from_rm_bits(funct3(raw) as u8)
-        .ok_or(RiscvError::UnknownEncoding { raw })
-}
-
-fn float_rs1(raw: u32) -> FloatRegister {
-    FloatRegister::from_field(rs1(raw).index().into())
-}
-
-fn float_rs2(raw: u32) -> FloatRegister {
-    FloatRegister::from_field(rs2(raw).index().into())
-}
-
-fn float_rs3(raw: u32) -> FloatRegister {
-    FloatRegister::from_field(rs3(raw).index().into())
-}

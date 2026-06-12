@@ -4,7 +4,10 @@ pub(crate) fn execute_float_register_instruction(
     hart: &mut RiscvHartState,
     writes: &mut Vec<FloatRegisterWrite>,
     instruction: RiscvInstruction,
-) {
+) -> Result<(), ()> {
+    if !float::register_rounding_mode_is_supported(instruction, hart.float_status().frm()) {
+        return Err(());
+    }
     match instruction {
         instruction @ (RiscvInstruction::FloatMultiplyAddS { rs1, rs2, rs3, .. }
         | RiscvInstruction::FloatMultiplyAddD { rs1, rs2, rs3, .. }
@@ -76,6 +79,7 @@ pub(crate) fn execute_float_register_instruction(
         }
         _ => unreachable!("non-float-register instruction dispatched to float register executor"),
     }
+    Ok(())
 }
 
 pub(crate) fn execute_float_integer_instruction(

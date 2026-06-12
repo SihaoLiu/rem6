@@ -516,11 +516,21 @@ impl RiscvHartState {
             | RiscvInstruction::FloatConvertDFromWu { .. }
             | RiscvInstruction::FloatConvertDFromL { .. }
             | RiscvInstruction::FloatConvertDFromLu { .. }) => {
-                float_execute::execute_float_register_instruction(
+                if float_execute::execute_float_register_instruction(
                     self,
                     &mut float_register_writes,
                     instruction,
-                );
+                )
+                .is_err()
+                {
+                    return Ok(enter_synchronous_trap(
+                        self,
+                        instruction,
+                        instruction_bytes_u8,
+                        pc,
+                        RiscvTrapKind::IllegalInstruction,
+                    ));
+                }
             }
             instruction @ (RiscvInstruction::FloatLessOrEqualS { .. }
             | RiscvInstruction::FloatLessOrEqualD { .. }

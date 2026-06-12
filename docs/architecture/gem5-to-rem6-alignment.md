@@ -57,7 +57,7 @@ explicit error.
 
 | gem5 source anchor | rem6 owner | Coverage | Current state and remaining target |
 | --- | --- | --- | --- |
-| `src/arch` | `rem6-isa-riscv`, future ISA crates | partial | RISC-V owns RV64I/M/A/C scalar coverage, CSR/trap foundations, Sv39 helpers and CPU walker integration, PMP/PMA, vector state foundations, initial RV64F/RV64D scalar load/store, arithmetic, fused multiply-add/subtract, square root, comparisons, conversions, NaN-boxing, and accrued FP flag paths. Remaining work includes full F/D coverage, broader compressed edge cases, complete vector execution, hardware Sv39 fetch coverage, and ARM, x86, Power, SPARC, MIPS, and AMDGPU ISA ownership. |
+| `src/arch` | `rem6-isa-riscv`, future ISA crates | partial | RISC-V owns RV64I/M/A/C scalar coverage, CSR/trap foundations, Sv39 helpers and CPU walker integration, PMP/PMA, vector state foundations, initial RV64F/RV64D scalar load/store, arithmetic, fused multiply-add/subtract, square root, comparisons, conversions, NaN-boxing, dynamic-RNE arithmetic admission, and accrued FP flag paths. Remaining work includes full F/D coverage, directed FP arithmetic rounding, broader compressed edge cases, complete vector execution, hardware Sv39 fetch coverage, and ARM, x86, Power, SPARC, MIPS, and AMDGPU ISA ownership. |
 | `src/cpu` | `rem6-cpu`, `rem6-kernel`, `rem6-system`, `rem6-traffic` | partial | RISC-V atomic execution, parallel clusters, data access issue/response, store-conditional progress diagnostics, HTM core checkpoints, basic/GShare/Tournament branch-predictor training from real retired control-flow, typed in-order pipeline state, and O3 policy pieces exist. The large gap is executable cycle-visible CPU integration: in-order fetch/decode/execute timing, branch predictor steering and rollback, checker support, and O3 ROB/LSQ/rename/FU execution are still open. |
 | `src/mem` | `rem6-memory`, `rem6-transport`, `rem6-cache`, `rem6-directory`, `rem6-coherence`, `rem6-dram`, `rem6-fabric`, protocol crates | partial | Memory stores, translation queues, TLB/page-map state, transport routes, replacement policies, MSHR resources, MSI/MESI/MOESI/CHI line and bank models, MSI CacheBank-backed RISC-V and accelerator-DMA topology data paths, DRAM/NVM profiles, packet/fabric activity, trace replay consumers, and workload data-cache attribution exist. Remaining targets include fuller CHI transactions, CPU-facing multi-level cache integration, bank scheduler/resource summary parity, prefetch translation consumers, NoC router/flit detail, DRAM refresh and JEDEC preset breadth, and Ruby-scale protocol/test coverage. |
 | `src/sim`, `src/python` | `rem6`, `rem6-platform`, `rem6-system`, `rem6-workload` | partial | CLI `run`, `gups`, and `trace-replay` paths plus TOML configuration, typed platform builders, workload manifests, suite dispatch plans, resource payload validation, and durable JSON/text stats artifacts exist. Remaining work is a broader gem5-style experiment surface for full-system topology sweeps, richer platform declarations, and external workload-resource acquisition. |
@@ -113,11 +113,12 @@ tests and runtime artifacts.
   and worker-lane summaries.
 - RISC-V execution: tests cover integer, compressed, atomics, fences, WFI,
   SFENCE.VMA, traps, counters, PMP/PMA, Sv39 translation and walker behavior,
-  FP scalar slices, NaN-boxing, accrued FP flags, GDB register access, HTM
-  checkpoints, store-conditional progress, in-order retire-cycle evidence for
-  non-deferred instructions, completed memory-data instructions, and completed
-  MMIO loads, retired-PC probes, data-access probes, and basic/GShare/Tournament
-  branch-predictor training from real retired control flow.
+  FP scalar slices, dynamic-RNE FP arithmetic and fused encodings, NaN-boxing,
+  accrued FP flags, GDB register access, HTM checkpoints, store-conditional
+  progress, in-order retire-cycle evidence for non-deferred instructions,
+  completed memory-data instructions, and completed MMIO loads, retired-PC
+  probes, data-access probes, and basic/GShare/Tournament branch-predictor
+  training from real retired control flow.
 - RISC-V SE mode: CLI/system tests drive real user-mode ecalls for startup
   stack construction, `brk`, `mmap`, stdio, registered guest files, stat/link
   operations, vector I/O, clock/getrandom/cwd/resource syscalls, `wait4`, and
@@ -153,8 +154,9 @@ tests and runtime artifacts.
   broader static-libc and distro-like coverage, then to full Linux boot through
   an SBI-class runtime and complete privileged/device interactions.
 - ISA parity must expand beyond the current RISC-V focus. RISC-V still needs
-  remaining F/D, vector, compressed, and exception-flag breadth; other major
-  gem5 ISAs need crate ownership and test migration.
+  directed FP arithmetic rounding, remaining F/D, vector, compressed, and
+  exception-flag breadth; other major gem5 ISAs need crate ownership and test
+  migration.
 - CPU data paths still need end-to-end multi-level cache and NoC integration
   for normal instruction/data traffic, not only trace replay, topology harness,
   or direct-memory paths.
