@@ -121,10 +121,10 @@ tests and runtime artifacts.
   training from real retired control flow.
 - RISC-V SE mode: CLI/system tests drive real user-mode ecalls for startup
   stack construction, `brk`, `mmap`, stdio, registered guest files, stat/link
-  operations, vector I/O, clock/getrandom/cwd/resource syscalls, `wait4`, and
-  typed unknown-syscall `ENOSYS` records. Detection-based static newlib
-  regressions build and run the same ELF under qemu and rem6 when the RISC-V
-  toolchain is available.
+  operations, vector I/O, clock/process-time/getrandom/cwd/resource syscalls,
+  `wait4`, and typed unknown-syscall `ENOSYS` records. Detection-based static
+  newlib regressions build and run the same ELF under qemu and rem6 when the
+  RISC-V toolchain is available.
 - Memory, cache, coherence, and DRAM: tests cover stores, request/response
   payloads, page maps, TLBs, translation queues, replacement policies,
   MSHR-backed banks, write queues, maintenance operations, CHI/MESI/MOESI/MSI

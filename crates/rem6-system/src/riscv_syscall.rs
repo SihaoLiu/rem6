@@ -40,7 +40,8 @@ mod wait4;
 mod writev;
 
 use brk::syscall_brk;
-use clock::{syscall_clock_gettime, syscall_gettimeofday};
+use clock::{syscall_clock_gettime, syscall_gettimeofday, syscall_times};
+use clock::{RISCV_LINUX_CLOCK_GETTIME, RISCV_LINUX_GETTIMEOFDAY, RISCV_LINUX_TIMES};
 use cwd::syscall_getcwd;
 use futex::syscall_futex;
 pub use guest_memory::{
@@ -94,7 +95,6 @@ const RISCV_LINUX_SET_TID_ADDRESS: u64 = 96;
 const RISCV_LINUX_SET_ROBUST_LIST: u64 = 99;
 const RISCV_LINUX_GET_ROBUST_LIST: u64 = 100;
 const RISCV_LINUX_NANOSLEEP: u64 = 101;
-const RISCV_LINUX_CLOCK_GETTIME: u64 = 113;
 const RISCV_LINUX_SCHED_YIELD: u64 = 124;
 const RISCV_LINUX_RT_SIGSUSPEND: u64 = 133;
 const RISCV_LINUX_RT_SIGACTION: u64 = 134;
@@ -104,7 +104,6 @@ const RISCV_LINUX_RT_SIGTIMEDWAIT: u64 = 137;
 const RISCV_LINUX_RT_SIGQUEUEINFO: u64 = 138;
 const RISCV_LINUX_RT_SIGRETURN: u64 = 139;
 const RISCV_LINUX_UNAME: u64 = 160;
-const RISCV_LINUX_GETTIMEOFDAY: u64 = 169;
 const RISCV_LINUX_EXIT: u64 = 93;
 const RISCV_LINUX_EXIT_GROUP: u64 = 94;
 const RISCV_LINUX_FUTEX: u64 = 98;
@@ -1047,6 +1046,7 @@ impl RiscvSyscallTable {
             RISCV_LINUX_SET_TID_ADDRESS => Some(RiscvSyscallOutcome::Return {
                 value: syscall_set_tid_address(request.argument(0), state),
             }),
+            RISCV_LINUX_TIMES => syscall_times(request, tick, guest_memory_writer),
             RISCV_LINUX_UNAME => {
                 guest_memory_writer.map(|guest_memory| RiscvSyscallOutcome::Return {
                     value: write_riscv_linux_utsname(request.argument(0), guest_memory),
