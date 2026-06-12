@@ -2161,7 +2161,7 @@ fn hart_records_compressed_trap_instruction_length() {
 #[test]
 fn hart_records_compressed_interrupted_instruction_length() {
     let mut hart = RiscvHartState::new(0x7300);
-    hart.set_machine_trap_vector(0x9401);
+    hart.set_machine_trap_vector(0x9400);
     hart.set_machine_interrupt_enable(1 << 1);
     hart.set_machine_interrupt_pending(1 << 1);
     hart.set_privilege_mode(RiscvPrivilegeMode::User);

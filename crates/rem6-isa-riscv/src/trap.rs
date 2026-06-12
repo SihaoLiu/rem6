@@ -99,7 +99,7 @@ fn enter_supervisor_trap(
     cause: u64,
     previous_privilege: RiscvPrivilegeMode,
 ) -> RiscvExecutionRecord {
-    let handler_pc = hart.supervisor_trap_vector() & !0b11;
+    let handler_pc = trap_handler_pc(hart.supervisor_trap_vector(), kind);
     hart.set_supervisor_exception_pc(pc);
     hart.set_supervisor_trap_cause(cause);
     hart.set_supervisor_trap_value(0);
@@ -130,7 +130,7 @@ fn enter_machine_trap(
 ) -> RiscvExecutionRecord {
     let previous_privilege = hart.privilege_mode();
     let cause = machine_trap_cause(kind, previous_privilege);
-    let handler_pc = hart.machine_trap_vector() & !0b11;
+    let handler_pc = trap_handler_pc(hart.machine_trap_vector(), kind);
     hart.set_machine_exception_pc(pc);
     hart.set_machine_trap_cause(cause);
     hart.set_machine_trap_value(0);
@@ -150,6 +150,14 @@ fn enter_machine_trap(
         handler_pc,
         RiscvTrap::new(kind, pc),
     )
+}
+
+const fn trap_handler_pc(vector: u64, kind: RiscvTrapKind) -> u64 {
+    let base = vector & !0b11;
+    match (vector & 0b11, kind) {
+        (1, RiscvTrapKind::Interrupt { code }) => base.wrapping_add(code.wrapping_mul(4)),
+        _ => base,
+    }
 }
 
 fn machine_interrupt_allowed(hart: &RiscvHartState, privilege: RiscvPrivilegeMode) -> bool {
