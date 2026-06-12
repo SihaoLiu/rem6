@@ -628,6 +628,17 @@ fn execute_riscv(
         .with_data_access_stats(RiscvDataAccessStats::with_stack_distance(probe_config));
     if config.riscv_se() {
         driver = driver.with_riscv_syscall_emulation_for_boot_image(image);
+        if let Some(stdin_path) = config.riscv_se_stdin() {
+            let stdin =
+                std::fs::read(stdin_path).map_err(|error| Rem6CliError::ReadRiscvSeStdin {
+                    path: stdin_path.to_path_buf(),
+                    error: error.to_string(),
+                })?;
+            driver
+                .riscv_syscall_emulation()
+                .expect("RISC-V SE syscall emulation was just installed")
+                .push_stdin_bytes(&stdin);
+        }
         let read_memory = memory.clone();
         let write_memory = memory.clone();
         let map_memory = memory.clone();

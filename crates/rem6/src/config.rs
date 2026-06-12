@@ -114,6 +114,7 @@ pub struct Rem6RunConfig {
     riscv_se: bool,
     riscv_se_args: Vec<String>,
     riscv_se_env: Vec<String>,
+    riscv_se_stdin: Option<PathBuf>,
     max_instructions: Option<u64>,
     stats_format: StatsFormat,
     execute: bool,
@@ -184,6 +185,7 @@ struct Rem6RunFileConfig {
     riscv_se: Option<bool>,
     riscv_se_args: Option<Vec<String>>,
     riscv_se_env: Option<Vec<String>>,
+    riscv_se_stdin: Option<PathBuf>,
     max_instructions: Option<u64>,
     stats_format: Option<String>,
     execute: Option<bool>,
@@ -327,6 +329,10 @@ impl Rem6RunConfig {
         let mut riscv_se = file_config.riscv_se.unwrap_or(false);
         let mut riscv_se_args = file_config.riscv_se_args.clone().unwrap_or_default();
         let mut riscv_se_env = file_config.riscv_se_env.clone().unwrap_or_default();
+        let mut riscv_se_stdin = file_config
+            .riscv_se_stdin
+            .as_deref()
+            .map(|path| file_config.resolve_path(path));
         let mut max_instructions = file_config.max_instructions;
         if max_instructions == Some(0) {
             return Err(Rem6CliError::InvalidMaxInstructions {
@@ -384,6 +390,7 @@ impl Rem6RunConfig {
         let mut load_blobs_from_cli = false;
         let mut riscv_se_args_from_cli = false;
         let mut riscv_se_env_from_cli = false;
+        let mut riscv_se_stdin_from_cli = false;
         let mut output = file_config
             .output
             .as_deref()
@@ -474,6 +481,10 @@ impl Rem6RunConfig {
                         riscv_se_env_from_cli = true;
                     }
                     riscv_se_env.push(value);
+                }
+                "--riscv-se-stdin" => {
+                    riscv_se_stdin = Some(PathBuf::from(required_value(&flag, args.next())?));
+                    riscv_se_stdin_from_cli = true;
                 }
                 "--max-instructions" => {
                     let value = required_value(&flag, args.next())?;
@@ -590,6 +601,14 @@ impl Rem6RunConfig {
                 };
                 return Err(Rem6CliError::RiscvSeInputRequiresRiscvSe { input });
             }
+            if riscv_se_stdin.is_some() {
+                let input = if riscv_se_stdin_from_cli {
+                    "--riscv-se-stdin"
+                } else {
+                    "riscv_se_stdin"
+                };
+                return Err(Rem6CliError::RiscvSeInputRequiresRiscvSe { input });
+            }
         }
 
         Ok(Self {
@@ -605,6 +624,7 @@ impl Rem6RunConfig {
             riscv_se,
             riscv_se_args,
             riscv_se_env,
+            riscv_se_stdin,
             max_instructions,
             stats_format,
             execute,
@@ -665,6 +685,10 @@ impl Rem6RunConfig {
 
     pub fn riscv_se_env(&self) -> &[String] {
         &self.riscv_se_env
+    }
+
+    pub fn riscv_se_stdin(&self) -> Option<&Path> {
+        self.riscv_se_stdin.as_deref()
     }
 
     pub const fn max_instructions(&self) -> Option<u64> {
@@ -1337,6 +1361,7 @@ fn run_file_config_from_args(args: &[String]) -> Result<Option<PathBuf>, Rem6Cli
             "--riscv-boot-a1",
             "--riscv-se-arg",
             "--riscv-se-env",
+            "--riscv-se-stdin",
             "--max-instructions",
             "--stats-format",
             "--dram-memory-profile",

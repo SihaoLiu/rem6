@@ -1429,10 +1429,11 @@ Implementation evidence through 2026-06-11:
   responses before decode and retirement. A repository CLI regression constructs
   a no-libc RV64GC-compatible ELF with a line-end RVC instruction followed by a
   split 32-bit `ecall` setup and reaches the SE exit path with stop code zero.
-  On hosts with `riscv64-unknown-elf-gcc` and `qemu-riscv64`, a detection-based
-  CLI regression builds one static newlib `printf` binary, uses qemu as the
-  guest stdout and exit-code oracle, and runs the same ELF through rem6 SE while
-  checking the same guest write text and stop code. RISC-V Linux `mmap` and
+  On hosts with `riscv64-unknown-elf-gcc` and `qemu-riscv64`, detection-based
+  CLI regressions build static newlib `printf` and stdin-backed `fgets`
+  binaries, use qemu as the guest stdout and exit-code oracle, and run the same
+  ELFs through rem6 SE while checking the same guest write text and stop code.
+  RISC-V Linux `mmap` and
   `munmap` are also handled as returning syscalls for
   page-aligned anonymous mappings and opened registered guest-file mappings:
   the table validates Linux arguments, tracks typed mmap regions from the
@@ -5421,7 +5422,10 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   regressions also pass explicit RISC-V SE `argv` and `envp` inputs through
   `--riscv-se-arg`, `--riscv-se-env`, `riscv_se_args`, and `riscv_se_env`, then
   consume those stack entries through real data loads before exiting through
-  the same syscall path. The CLI can now
+  the same syscall path. CLI `--riscv-se-stdin` and TOML `riscv_se_stdin` load a
+  host file into the modeled SE stdin queue before execution, with a static
+  newlib `fgets` regression comparing rem6 guest stdout and exit status against
+  qemu for the same ELF. The CLI can now
   opt into the same handoff with `rem6 run --riscv-se`: it installs the startup
   stack into simulated memory, maps zeroed stack backing matching the current
   `RLIMIT_STACK` value, sets the initial stack pointer, enters user mode, and
@@ -5450,8 +5454,8 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   creation, blocking wait wakeup, and real child resource-usage accounting, and
   Linux handoff still needs an SBI-class firmware/runtime path rather than only
   DTB/initrd/register handoff, and SE startup still needs default loader policy
-  plus broader static-libc coverage beyond the detection-based newlib `printf`
-  smoke.
+  plus broader static-libc coverage beyond the detection-based newlib
+  stdio-smoke cases.
 - Complete predictor coupling, external checkpoint payloads, and richer
   cycle-visible state for the in-order pipeline, add fuller out-of-order
   pipeline execution, checker, richer branch predictors, and host-assisted

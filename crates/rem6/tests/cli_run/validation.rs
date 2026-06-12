@@ -117,9 +117,23 @@ fn rem6_run_rejects_riscv_se_for_multiple_cores() {
 
 #[test]
 fn rem6_run_rejects_cli_riscv_se_inputs_without_riscv_se() {
+    let stdin_path = temp_binary("riscv-se-stdin-input-without-riscv-se", b"stdin");
     for (name, flag, value) in [
-        ("riscv-se-arg-without-riscv-se", "--riscv-se-arg", "A0"),
-        ("riscv-se-env-without-riscv-se", "--riscv-se-env", "C=1"),
+        (
+            "riscv-se-arg-without-riscv-se",
+            "--riscv-se-arg",
+            "A0".to_string(),
+        ),
+        (
+            "riscv-se-env-without-riscv-se",
+            "--riscv-se-env",
+            "C=1".to_string(),
+        ),
+        (
+            "riscv-se-stdin-without-riscv-se",
+            "--riscv-se-stdin",
+            stdin_path.display().to_string(),
+        ),
     ] {
         let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x73, 0, 0, 0]);
         let path = temp_binary(name, &elf);
@@ -137,7 +151,7 @@ fn rem6_run_rejects_cli_riscv_se_inputs_without_riscv_se() {
                 "json",
                 "--execute",
                 flag,
-                value,
+                value.as_str(),
             ])
             .output()
             .unwrap();
@@ -156,14 +170,39 @@ fn rem6_run_rejects_cli_riscv_se_inputs_without_riscv_se() {
 }
 
 #[test]
+fn rem6_run_config_scan_treats_riscv_se_stdin_as_value_taking() {
+    let bogus_config = temp_output("riscv-se-stdin-prescan-bogus-config");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--riscv-se-stdin",
+            "--config",
+            bogus_config.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains(&format!("unknown flag {}", bogus_config.display())),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
 fn rem6_run_rejects_toml_riscv_se_inputs_without_riscv_se() {
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x73, 0, 0, 0]);
     let binary = temp_binary("riscv-se-toml-inputs-without-riscv-se", &elf);
+    let stdin = temp_binary("riscv-se-toml-stdin-without-riscv-se", b"stdin");
     let config = temp_config(
         "riscv-se-toml-inputs-without-riscv-se",
         &format!(
-            "[run]\nisa = \"riscv\"\nbinary = \"{}\"\nmax_tick = 40\nstats_format = \"json\"\nexecute = true\nriscv_se_args = [\"A0\"]\nriscv_se_env = [\"C=1\"]\n",
-            binary.display()
+            "[run]\nisa = \"riscv\"\nbinary = \"{}\"\nmax_tick = 40\nstats_format = \"json\"\nexecute = true\nriscv_se_stdin = \"{}\"\n",
+            binary.display(),
+            stdin.display()
         ),
     );
 
@@ -175,7 +214,7 @@ fn rem6_run_rejects_toml_riscv_se_inputs_without_riscv_se() {
     assert!(!output.status.success());
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(stderr.contains("riscv_se_args requires --riscv-se"));
+    assert!(stderr.contains("riscv_se_stdin requires --riscv-se"));
 }
 
 #[test]

@@ -139,6 +139,10 @@ pub enum Rem6CliError {
         path: PathBuf,
         error: String,
     },
+    ReadRiscvSeStdin {
+        path: PathBuf,
+        error: String,
+    },
     LoadBinary {
         path: PathBuf,
         error: String,
@@ -312,6 +316,13 @@ impl fmt::Display for Rem6CliError {
                 write!(
                     formatter,
                     "failed to read load blob {}: {error}",
+                    path.display()
+                )
+            }
+            Self::ReadRiscvSeStdin { path, error } => {
+                write!(
+                    formatter,
+                    "failed to read RISC-V SE stdin {}: {error}",
                     path.display()
                 )
             }
