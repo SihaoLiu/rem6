@@ -1,6 +1,7 @@
 use super::*;
 
 const RISCV_LINUX_LINK_FOR_TEST: u64 = 1025;
+const RISCV_LINUX_LSTAT_FOR_TEST: u64 = 1039;
 const RISCV_LINUX_EEXIST_FOR_TEST: u64 = 17;
 
 #[test]
@@ -243,6 +244,77 @@ fn linux_table_link_adds_registered_symlink_alias() {
 
     let writes = writes.lock().unwrap();
     assert_eq!(collect_guest_writes(&writes, 0x9200, 9), b"/bin/rem6");
+}
+
+#[test]
+fn linux_table_link_preserves_symlink_inode_and_link_count_in_lstat() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_symlink(b"/proc/self/exe", b"/bin/rem6");
+    let guest_memory_reader =
+        c_string_reader(&[(0x9000, b"/proc/self/exe"), (0x9100, b"/tmp/exe-alias")]);
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_LINK_FOR_TEST,
+                [0x9000, 0x9100, 0, 0, 0, 0],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_LSTAT_FOR_TEST,
+                [0x9000, 0x9200, 0, 0, 0, 0],
+            ),
+            &mut state,
+            8,
+            Some(&guest_memory_reader),
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8008,
+                RISCV_LINUX_LSTAT_FOR_TEST,
+                [0x9100, 0x9300, 0, 0, 0, 0],
+            ),
+            &mut state,
+            9,
+            Some(&guest_memory_reader),
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+
+    let writes = writes.lock().unwrap();
+    let original_stat = collect_guest_writes(&writes_in_range(&writes, 0x9200, 128), 0x9200, 128);
+    let alias_stat = collect_guest_writes(&writes_in_range(&writes, 0x9300, 128), 0x9300, 128);
+    assert_eq!(read_le_u64(&original_stat, 8), read_le_u64(&alias_stat, 8));
+    assert_eq!(read_le_u32(&original_stat, 16), 0o120777);
+    assert_eq!(read_le_u32(&alias_stat, 16), 0o120777);
+    assert_eq!(read_le_u32(&original_stat, 20), 2);
+    assert_eq!(read_le_u32(&alias_stat, 20), 2);
+    assert_eq!(read_le_u64(&original_stat, 48), 9);
+    assert_eq!(read_le_u64(&alias_stat, 48), 9);
 }
 
 #[test]

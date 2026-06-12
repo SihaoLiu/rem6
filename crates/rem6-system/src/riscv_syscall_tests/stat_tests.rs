@@ -2,6 +2,7 @@ use super::*;
 
 const RISCV_LINUX_FACCESSAT_FOR_TEST: u64 = 48;
 const RISCV_LINUX_ACCESS_FOR_TEST: u64 = 1033;
+const RISCV_LINUX_LSTAT_FOR_TEST: u64 = 1039;
 const RISCV_LINUX_R_OK_FOR_TEST: u64 = 4;
 const RISCV_LINUX_W_OK_FOR_TEST: u64 = 2;
 const RISCV_LINUX_EACCES_FOR_TEST: u64 = 13;
@@ -39,6 +40,85 @@ fn linux_table_stat_writes_registered_guest_file_stat() {
     let stat = collect_guest_writes(&writes, 0x9100, 128);
     assert_eq!(read_le_u64(&stat, 48), 18);
     assert_eq!(read_le_u32(&stat, 16), 0o100444);
+}
+
+#[test]
+fn linux_table_lstat_writes_registered_guest_file_stat() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_file(b"guest.txt", b"file-backed input\n");
+    let guest_memory_reader = c_string_reader(0x9000, b"guest.txt");
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_LSTAT_FOR_TEST,
+                [0x9000, 0x9100, 0, 0, 0, 0],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+
+    let writes = writes.lock().unwrap();
+    assert_eq!(writes.len(), 128);
+    let stat = collect_guest_writes(&writes, 0x9100, 128);
+    assert_eq!(read_le_u64(&stat, 48), 18);
+    assert_eq!(read_le_u32(&stat, 16), 0o100444);
+}
+
+#[test]
+fn linux_table_lstat_writes_registered_guest_symlink_stat() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_symlink(b"/proc/self/exe", b"/bin/rem6");
+    let guest_memory_reader = c_string_reader(0x9000, b"/proc/self/exe");
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_LSTAT_FOR_TEST,
+                [0x9000, 0x9100, 0, 0, 0, 0],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+
+    let writes = writes.lock().unwrap();
+    assert_eq!(writes.len(), 128);
+    let stat = collect_guest_writes(&writes, 0x9100, 128);
+    assert_eq!(read_le_u64(&stat, 48), 9);
+    assert_eq!(read_le_u32(&stat, 16), 0o120777);
+    assert_eq!(read_le_u32(&stat, 20), 1);
 }
 
 #[test]

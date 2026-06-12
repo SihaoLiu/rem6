@@ -12,10 +12,13 @@ const RISCV_LINUX_STAT_BLOCK_BYTES: u64 = 512;
 const RISCV_LINUX_STAT_BLOCK_SIZE: u64 = 8192;
 const RISCV_LINUX_S_IFCHR: u32 = 0o020000;
 const RISCV_LINUX_S_IFREG: u32 = 0o100000;
+const RISCV_LINUX_S_IFLNK: u32 = 0o120000;
 const RISCV_LINUX_REGULAR_FILE_MODE: u32 = RISCV_LINUX_S_IFREG | 0o444;
 const RISCV_LINUX_CHARACTER_DEVICE_MODE: u32 = RISCV_LINUX_S_IFCHR | 0o666;
+const RISCV_LINUX_SYMBOLIC_LINK_MODE: u32 = RISCV_LINUX_S_IFLNK | 0o777;
 pub(super) const RISCV_LINUX_FACCESSAT: u64 = 48;
 pub(super) const RISCV_LINUX_ACCESS: u64 = 1033;
+pub(super) const RISCV_LINUX_LSTAT: u64 = 1039;
 const RISCV_LINUX_EACCES: u64 = 13;
 const RISCV_LINUX_X_OK: u64 = 1;
 const RISCV_LINUX_W_OK: u64 = 2;
@@ -69,6 +72,26 @@ impl RiscvGuestStat {
             size: 0,
             block_size: RISCV_LINUX_STAT_BLOCK_SIZE,
             blocks: 0,
+        }
+    }
+
+    pub(super) fn symbolic_link(
+        size: u64,
+        identity: RiscvSyscallIdentity,
+        inode: u64,
+        link_count: u32,
+    ) -> Self {
+        Self {
+            device: 0,
+            inode,
+            mode: RISCV_LINUX_SYMBOLIC_LINK_MODE,
+            link_count,
+            user_id: linux_stat_user_id(identity.user_id()),
+            group_id: linux_stat_user_id(identity.group_id()),
+            special_device: 0,
+            size,
+            block_size: RISCV_LINUX_STAT_BLOCK_SIZE,
+            blocks: size.div_ceil(RISCV_LINUX_STAT_BLOCK_BYTES),
         }
     }
 
@@ -172,6 +195,31 @@ pub(super) fn syscall_stat(
         Err(RiscvGuestCStringError::TooLong) => return linux_error(RISCV_LINUX_ENAMETOOLONG),
     };
     let Some(stat) = state.guest_path_stat(&path) else {
+        return linux_error(RISCV_LINUX_ENOENT);
+    };
+
+    write_riscv_linux_stat(request.argument(1), stat, guest_memory_writer)
+}
+
+pub(super) fn syscall_lstat(
+    request: RiscvSyscallRequest,
+    state: &RiscvSyscallState,
+    guest_memory_reader: &RiscvGuestMemoryReader,
+    guest_memory_writer: &RiscvGuestMemoryWriter,
+) -> u64 {
+    let path = match read_guest_c_string(
+        guest_memory_reader,
+        request.argument(0),
+        RISCV_LINUX_PATH_MAX,
+    ) {
+        Ok(path) => path,
+        Err(RiscvGuestCStringError::Fault) => return linux_error(RISCV_LINUX_EFAULT),
+        Err(RiscvGuestCStringError::TooLong) => return linux_error(RISCV_LINUX_ENAMETOOLONG),
+    };
+    let Some(stat) = state
+        .guest_link_stat(&path)
+        .or_else(|| state.guest_path_stat(&path))
+    else {
         return linux_error(RISCV_LINUX_ENOENT);
     };
 

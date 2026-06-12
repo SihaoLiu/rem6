@@ -69,8 +69,9 @@ pub use startup::{
     RISCV_LINUX_AT_SECURE,
 };
 use stat::{
-    guest_path_inode, syscall_access, syscall_faccessat, syscall_fstat, syscall_newfstatat,
-    syscall_stat, RiscvGuestStat, RISCV_LINUX_ACCESS, RISCV_LINUX_FACCESSAT,
+    guest_path_inode, syscall_access, syscall_faccessat, syscall_fstat, syscall_lstat,
+    syscall_newfstatat, syscall_stat, RiscvGuestStat, RISCV_LINUX_ACCESS, RISCV_LINUX_FACCESSAT,
+    RISCV_LINUX_LSTAT,
 };
 pub use unknown::RiscvUnknownSyscallRecord;
 use unlink::{syscall_unlink, RISCV_LINUX_UNLINK};
@@ -427,8 +428,14 @@ impl RiscvSyscallState {
     }
 
     pub fn register_guest_symlink(&mut self, path: impl AsRef<[u8]>, target: impl AsRef<[u8]>) {
+        let path = path.as_ref().to_vec();
         self.guest_links
-            .insert(path.as_ref().to_vec(), target.as_ref().to_vec());
+            .insert(path.clone(), target.as_ref().to_vec());
+        self.guest_file_identities
+            .entry(path.clone())
+            .or_insert_with(|| RiscvGuestFileIdentity {
+                inode: guest_path_inode(&path),
+            });
     }
 
     pub fn push_stdin_bytes(&mut self, bytes: &[u8]) {
@@ -584,10 +591,11 @@ impl RiscvSyscallState {
         }
 
         if !source_is_path {
-            self.guest_links.insert(
-                destination.to_vec(),
-                source_link.expect("source link exists"),
-            );
+            let identity = self.guest_file_identity(source);
+            let target = source_link.expect("source link exists");
+            self.guest_links.insert(destination.to_vec(), target);
+            self.guest_file_identities
+                .insert(destination.to_vec(), identity);
             return Ok(());
         }
 
@@ -618,6 +626,25 @@ impl RiscvSyscallState {
                 identity,
             ),
         )
+    }
+
+    fn guest_link_stat(&self, path: &[u8]) -> Option<RiscvGuestStat> {
+        let target = self.guest_link_target(path)?;
+        let identity = self.guest_file_identity(path);
+        Some(RiscvGuestStat::symbolic_link(
+            target.len() as u64,
+            self.identity(),
+            identity.inode,
+            self.guest_link_count(identity),
+        ))
+    }
+
+    fn guest_link_count(&self, identity: RiscvGuestFileIdentity) -> u32 {
+        self.guest_links
+            .keys()
+            .filter(|path| self.guest_file_identity(path) == identity)
+            .count()
+            .min(u32::MAX as usize) as u32
     }
 
     fn guest_fd_stat(&self, fd: GuestFd) -> Result<RiscvGuestStat, GuestFdError> {
@@ -986,6 +1013,11 @@ impl RiscvSyscallTable {
             RISCV_LINUX_STAT => guest_memory_reader.and_then(|reader| {
                 guest_memory_writer.map(|writer| RiscvSyscallOutcome::Return {
                     value: syscall_stat(request, state, reader, writer),
+                })
+            }),
+            RISCV_LINUX_LSTAT => guest_memory_reader.and_then(|reader| {
+                guest_memory_writer.map(|writer| RiscvSyscallOutcome::Return {
+                    value: syscall_lstat(request, state, reader, writer),
                 })
             }),
             RISCV_LINUX_ACCESS => {

@@ -1448,9 +1448,13 @@ Implementation evidence through 2026-06-11:
   readlink-visible aliases for registered symlink sources. A static libgloss
   `access` regression covers legacy syscall number 1033 for registered guest
   file probes and missing-path `ENOENT` propagation without relying on qemu's
-  unknown-elf shim for that wrapper. A static libgloss `faccessat` regression
-  covers modern syscall number 48 against the same registered-file namespace
-  and compares stdout plus exit status against qemu for the same ELF.
+  unknown-elf shim for that wrapper. A static libgloss `lstat` regression
+  covers legacy syscall number 1039 for registered guest files by writing the
+  same target-visible size and mode layout used by `stat`; a focused syscall
+  regression also covers no-follow metadata for registered guest symlinks and
+  symlink hard-link aliases. A static libgloss `faccessat` regression covers
+  modern syscall number 48 against the same registered-file namespace and
+  compares stdout plus exit status against qemu for the same ELF.
   CLI and TOML runs can also preload host files into typed registered guest
   paths before execution, with a repository regression covering real guest
   `openat`, `read`, `write`, and `exit` ecall flow from those bytes.
@@ -5413,9 +5417,12 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   modern Linux generic `newfstatat` number 79 and `fstat` number 80 for
   registered guest paths, opened registered guest files, and seeded standard
   descriptors by writing the RV64 target `stat` structure back into simulated
-  guest memory, legacy `stat` number 1038 for registered guest paths, legacy
-  `link` number 1025 for creating registered guest-path aliases with shared
-  inode and dynamic link-count metadata plus registered symlink aliases, legacy
+  guest memory, legacy `stat` number 1038 for registered guest paths and
+  legacy `lstat` number 1039 for registered guest paths plus no-follow
+  registered symlink metadata with shared inode and link-count metadata for
+  symlink aliases, legacy `link` number 1025 for creating registered guest-path
+  aliases with shared inode and dynamic link-count metadata plus registered
+  symlink aliases, legacy
   `unlink` number 1026 for removing registered guest path names while
   preserving already-open descriptions, `faccessat` number 48 and legacy
   `access` number 1033 for registered guest path existence and read-permission
