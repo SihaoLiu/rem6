@@ -25,6 +25,7 @@ mod ioctl;
 mod limits;
 mod links;
 mod mmap;
+mod readv;
 mod robust;
 mod seek;
 mod startup;
@@ -51,6 +52,7 @@ pub use mmap::RiscvMmapRegion;
 use mmap::{syscall_mmap, syscall_munmap, RISCV64_LINUX_MMAP_BASE, RISCV_PAGE_BYTES};
 #[cfg(test)]
 use mmap::{RISCV_LINUX_MAP_FIXED, RISCV_LINUX_MAP_PRIVATE};
+use readv::{syscall_readv, RISCV_LINUX_READV};
 use robust::{syscall_get_robust_list, syscall_set_robust_list, RiscvRobustList};
 use seek::{syscall_lseek, RISCV_LINUX_LSEEK};
 pub use startup::{
@@ -851,6 +853,11 @@ impl RiscvSyscallTable {
                     value: syscall_writev(request, state, tick, guest_memory),
                 })
             }
+            RISCV_LINUX_READV => guest_memory_reader.and_then(|reader| {
+                guest_memory_writer.map(|writer| RiscvSyscallOutcome::Return {
+                    value: syscall_readv(request, state, reader, writer),
+                })
+            }),
             RISCV_LINUX_READLINKAT => guest_memory_reader.and_then(|reader| {
                 guest_memory_writer.map(|writer| RiscvSyscallOutcome::Return {
                     value: syscall_readlinkat(request, state, reader, writer),
