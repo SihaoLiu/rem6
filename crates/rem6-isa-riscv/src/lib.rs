@@ -660,29 +660,92 @@ impl RiscvHartState {
                 write_register(self, &mut register_writes, rd, value);
             }
             RiscvInstruction::ReadMachineCounterCsr { rd, csr } => {
+                if csr.machine_address().is_none() {
+                    return Ok(enter_synchronous_trap(
+                        self,
+                        instruction,
+                        instruction_bytes_u8,
+                        pc,
+                        RiscvTrapKind::IllegalInstruction,
+                    ));
+                }
                 let value = self.counters.read_machine(csr);
                 write_register(self, &mut register_writes, rd, value);
             }
             RiscvInstruction::WriteCounterCsr { rd, csr, rs1 } => {
+                if csr.machine_address().is_none() {
+                    return Ok(enter_synchronous_trap(
+                        self,
+                        instruction,
+                        instruction_bytes_u8,
+                        pc,
+                        RiscvTrapKind::IllegalInstruction,
+                    ));
+                }
                 let value = self.read(rs1);
                 write_counter_csr(self, &mut register_writes, rd, csr, value);
             }
             RiscvInstruction::SetCounterCsr { rd, csr, rs1 } => {
+                if csr.machine_address().is_none() {
+                    return Ok(enter_synchronous_trap(
+                        self,
+                        instruction,
+                        instruction_bytes_u8,
+                        pc,
+                        RiscvTrapKind::IllegalInstruction,
+                    ));
+                }
                 let value = self.counters.read_machine(csr) | self.read(rs1);
                 write_counter_csr(self, &mut register_writes, rd, csr, value);
             }
             RiscvInstruction::ClearCounterCsr { rd, csr, rs1 } => {
+                if csr.machine_address().is_none() {
+                    return Ok(enter_synchronous_trap(
+                        self,
+                        instruction,
+                        instruction_bytes_u8,
+                        pc,
+                        RiscvTrapKind::IllegalInstruction,
+                    ));
+                }
                 let value = self.counters.read_machine(csr) & !self.read(rs1);
                 write_counter_csr(self, &mut register_writes, rd, csr, value);
             }
             RiscvInstruction::WriteCounterCsrImmediate { rd, csr, zimm } => {
+                if csr.machine_address().is_none() {
+                    return Ok(enter_synchronous_trap(
+                        self,
+                        instruction,
+                        instruction_bytes_u8,
+                        pc,
+                        RiscvTrapKind::IllegalInstruction,
+                    ));
+                }
                 write_counter_csr(self, &mut register_writes, rd, csr, u64::from(zimm));
             }
             RiscvInstruction::SetCounterCsrImmediate { rd, csr, zimm } => {
+                if csr.machine_address().is_none() {
+                    return Ok(enter_synchronous_trap(
+                        self,
+                        instruction,
+                        instruction_bytes_u8,
+                        pc,
+                        RiscvTrapKind::IllegalInstruction,
+                    ));
+                }
                 let value = self.counters.read_machine(csr) | u64::from(zimm);
                 write_counter_csr(self, &mut register_writes, rd, csr, value);
             }
             RiscvInstruction::ClearCounterCsrImmediate { rd, csr, zimm } => {
+                if csr.machine_address().is_none() {
+                    return Ok(enter_synchronous_trap(
+                        self,
+                        instruction,
+                        instruction_bytes_u8,
+                        pc,
+                        RiscvTrapKind::IllegalInstruction,
+                    ));
+                }
                 let value = self.counters.read_machine(csr) & !u64::from(zimm);
                 write_counter_csr(self, &mut register_writes, rd, csr, value);
             }
@@ -923,8 +986,9 @@ fn write_counter_csr(
     value: u64,
 ) {
     let old_value = hart.counters.read_machine(csr);
-    write_register(hart, writes, register, old_value);
-    hart.counters.set_machine(csr, value);
+    if hart.counters.set_machine(csr, value).is_ok() {
+        write_register(hart, writes, register, old_value);
+    }
 }
 fn read_float_csr(hart: &RiscvHartState, csr: RiscvFloatCsr) -> u64 {
     csr.read(hart.float_status())
@@ -970,6 +1034,7 @@ fn read_machine_trap_csr(hart: &RiscvHartState, csr: RiscvMachineTrapCsr) -> u64
         RiscvMachineTrapCsr::Medeleg => hart.machine_exception_delegation(),
         RiscvMachineTrapCsr::Mideleg => hart.machine_interrupt_delegation(),
         RiscvMachineTrapCsr::Mtvec => hart.machine_trap_vector(),
+        RiscvMachineTrapCsr::Mscratch => hart.machine_scratch(),
         RiscvMachineTrapCsr::Mepc => hart.machine_exception_pc(),
         RiscvMachineTrapCsr::Mcause => hart.machine_trap_cause(),
         RiscvMachineTrapCsr::Mtval => hart.machine_trap_value(),
@@ -988,6 +1053,7 @@ fn write_machine_trap_csr(
         RiscvMachineTrapCsr::Medeleg => hart.set_machine_exception_delegation(value),
         RiscvMachineTrapCsr::Mideleg => hart.set_machine_interrupt_delegation(value),
         RiscvMachineTrapCsr::Mtvec => hart.set_machine_trap_vector(value),
+        RiscvMachineTrapCsr::Mscratch => hart.set_machine_scratch(value),
         RiscvMachineTrapCsr::Mepc => hart.set_machine_exception_pc(value),
         RiscvMachineTrapCsr::Mcause => hart.set_machine_trap_cause(value),
         RiscvMachineTrapCsr::Mtval => hart.set_machine_trap_value(value),
@@ -996,6 +1062,7 @@ fn write_machine_trap_csr(
 fn read_supervisor_trap_csr(hart: &RiscvHartState, csr: RiscvSupervisorTrapCsr) -> u64 {
     match csr {
         RiscvSupervisorTrapCsr::Stvec => hart.supervisor_trap_vector(),
+        RiscvSupervisorTrapCsr::Sscratch => hart.supervisor_scratch(),
         RiscvSupervisorTrapCsr::Sepc => hart.supervisor_exception_pc(),
         RiscvSupervisorTrapCsr::Scause => hart.supervisor_trap_cause(),
         RiscvSupervisorTrapCsr::Stval => hart.supervisor_trap_value(),
@@ -1012,6 +1079,7 @@ fn write_supervisor_trap_csr(
     write_register(hart, writes, register, old_value);
     match csr {
         RiscvSupervisorTrapCsr::Stvec => hart.set_supervisor_trap_vector(value),
+        RiscvSupervisorTrapCsr::Sscratch => hart.set_supervisor_scratch(value),
         RiscvSupervisorTrapCsr::Sepc => hart.set_supervisor_exception_pc(value),
         RiscvSupervisorTrapCsr::Scause => hart.set_supervisor_trap_cause(value),
         RiscvSupervisorTrapCsr::Stval => hart.set_supervisor_trap_value(value),

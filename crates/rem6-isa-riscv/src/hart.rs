@@ -10,6 +10,7 @@ pub struct RiscvHartState {
     pub(crate) hart_id: u64,
     pub(crate) counters: RiscvCounterBank,
     pub(crate) supervisor_trap_vector: u64,
+    pub(crate) supervisor_scratch: u64,
     pub(crate) supervisor_exception_pc: u64,
     pub(crate) supervisor_trap_cause: u64,
     pub(crate) supervisor_trap_value: u64,
@@ -18,6 +19,7 @@ pub struct RiscvHartState {
     pub(crate) machine_interrupt_enable: u64,
     pub(crate) machine_interrupt_pending: u64,
     pub(crate) machine_trap_vector: u64,
+    pub(crate) machine_scratch: u64,
     pub(crate) machine_exception_pc: u64,
     pub(crate) machine_trap_cause: u64,
     pub(crate) machine_trap_value: u64,
@@ -41,6 +43,7 @@ impl RiscvHartState {
             hart_id,
             counters: RiscvCounterBank::new(),
             supervisor_trap_vector: 0,
+            supervisor_scratch: 0,
             supervisor_exception_pc: 0,
             supervisor_trap_cause: 0,
             supervisor_trap_value: 0,
@@ -49,6 +52,7 @@ impl RiscvHartState {
             machine_interrupt_enable: 0,
             machine_interrupt_pending: 0,
             machine_trap_vector: 0,
+            machine_scratch: 0,
             machine_exception_pc: 0,
             machine_trap_cause: 0,
             machine_trap_value: 0,
@@ -98,6 +102,10 @@ impl RiscvHartState {
         self.supervisor_trap_vector
     }
 
+    pub const fn supervisor_scratch(&self) -> u64 {
+        self.supervisor_scratch
+    }
+
     pub const fn supervisor_exception_pc(&self) -> u64 {
         self.supervisor_exception_pc
     }
@@ -112,6 +120,10 @@ impl RiscvHartState {
 
     pub const fn machine_trap_vector(&self) -> u64 {
         self.machine_trap_vector
+    }
+
+    pub const fn machine_scratch(&self) -> u64 {
+        self.machine_scratch
     }
 
     pub const fn machine_exception_delegation(&self) -> u64 {
@@ -185,6 +197,10 @@ impl RiscvHartState {
         self.supervisor_trap_vector = vector;
     }
 
+    pub fn set_supervisor_scratch(&mut self, value: u64) {
+        self.supervisor_scratch = value;
+    }
+
     pub fn set_supervisor_exception_pc(&mut self, pc: u64) {
         self.supervisor_exception_pc = pc;
     }
@@ -199,6 +215,10 @@ impl RiscvHartState {
 
     pub fn set_machine_trap_vector(&mut self, vector: u64) {
         self.machine_trap_vector = vector;
+    }
+
+    pub fn set_machine_scratch(&mut self, value: u64) {
+        self.machine_scratch = value;
     }
 
     pub fn set_machine_exception_delegation(&mut self, delegation: u64) {

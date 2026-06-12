@@ -1194,10 +1194,13 @@ Research anchors refreshed through 2026-06-03:
   fixed-point rounding and saturation bug where `vxrm` can be replaced by a
   default mode and narrowing saturation can miss `vxsat`.
 - RISC-V privileged ISA anchor refreshed on 2026-05-30: `mcycle` and
-  `minstret` are 64-bit machine counters, with RV32 exposing high-half CSR
+  `minstret` are 64-bit machine counters, while `cycle`, `time`, and
+  `instret` are 64-bit user-readable counters, with RV32 exposing high-half CSR
   aliases rather than independent counters. rem6 now exposes executable
-  `cycle` and `instret` CSR reads through hart state instead of limiting counter
-  coverage to standalone bank tests.
+  `cycle`, `time`, and `instret` CSR reads through hart state instead of
+  limiting counter coverage to standalone bank tests; `time` is currently backed
+  by the hart cycle counter until a fuller CLINT timebase is wired through CPU
+  execution.
 - RISC-V privileged ISA anchor refreshed on 2026-05-30: `mhartid` is the
   machine hardware-thread id. rem6 binds this CSR to the typed RISC-V core id
   instead of treating per-core identity as a CLI-only launch option.
@@ -1214,10 +1217,10 @@ Research anchors refreshed through 2026-06-03:
   the handler PC.
 - RISC-V privileged ISA anchor refreshed on 2026-06-03: Supervisor trap return
   uses `sepc`, SPP, SPIE, SIE, and MPRV together, while the supervisor trap
-  CSRs include `stvec`, `sepc`, `scause`, and `stval`. rem6 keeps those CSRs as
-  typed hart-owned state and implements `SRET` status restoration against the
-  official privileged return rules. Supervisor interrupt entry honors `stvec`
-  direct versus vectored modes after interrupt delegation.
+  CSRs include `stvec`, `sscratch`, `sepc`, `scause`, and `stval`. rem6 keeps
+  those CSRs as typed hart-owned state and implements `SRET` status restoration
+  against the official privileged return rules. Supervisor interrupt entry
+  honors `stvec` direct versus vectored modes after interrupt delegation.
 - RISC-V privileged ISA anchor refreshed on 2026-06-03: Machine trap delegation
   uses `medeleg` and `mideleg`, and synchronous traps delegated from modes below
   Machine write `sepc`, `scause`, `stval`, SPP, SPIE, and SIE instead of the
@@ -1230,7 +1233,7 @@ Research anchors refreshed through 2026-06-03:
   `csr[9:8]` encode the minimum required privilege. rem6 enforces that rule at
   execution time for the implemented CSR families: `mhartid`,
   `mstatus`/`sstatus`, Machine and Supervisor trap CSRs, `satp`, user
-  `cycle`/`instret` aliases, and machine `mcycle`/`minstret` aliases.
+  `cycle`/`time`/`instret` aliases, and machine `mcycle`/`minstret` aliases.
   Lower-privilege access raises illegal-instruction through the existing
   synchronous trap/delegation path.
 - RISC-V privileged ISA anchor refreshed on 2026-06-03: `mie`/`mip` hold
@@ -3694,7 +3697,7 @@ coverage remain open traffic-generator targets.
 | gem5 source anchor | rem6 owner | Coverage | Notes |
 | --- | --- | --- | --- |
 | `src/arch/riscv` | `rem6-isa-riscv`, `rem6-cpu` | partial | RV64I decode and execution cover immediate/register arithmetic, word operations, loads/stores, branches, fences, `WFI`, `SFENCE.VMA`, counters, PMP, vector state plus limited vector execution, Sv39 helpers, CPU translation frontend, data translation, and RV64A LR/SC/AMO paths with typed reservations, aq/rl ordering, atomic memory requests, and cache-snoop reservation invalidation. An initial RV64F/RV64D scalar slice covers checkpointed floating-point register state, single-precision and double-precision load/store, RNE arithmetic, RNE fused multiply-add/subtract, RNE square root, sign-injection, comparisons, min/max, classification, raw integer/float moves, single-precision NaN-boxed load response writeback, single-precision and double-precision integer-to-float and float-to-integer conversions, static and dynamic non-RNE float-to-integer rounding, single-double FP conversions, `fflags`/`frm`/`fcsr` CSR read/write/set/clear access, accrued divide-by-zero and zero-divide-zero flag updates from `FDIV.S`/`FDIV.D`, raw-bit floating-point writes, integer comparison/misc writes, and CPU float-load response writeback. Full F/D coverage including non-RNE arithmetic and integer-to-float rounding, exception flags for remaining FP operations, broader FP-to-FP conversion breadth, remaining F/D operations, interrupt-aware `WFI` quiesce/resume, fuller CPU pipeline TLB wiring, timed hardware page-table walker memory accesses, cache/memory AQ/RL timing enforcement, fuller vector execution, and richer traps remain alignment targets. |
-| `src/arch/riscv` privileged return | `rem6-isa-riscv` | partial | Machine `medeleg`, `mideleg`, `mtvec`, `mepc`, `mcause`, and `mtval` CSR read/write/set/clear execution is present, with immediate CSR paths covered for the trap CSRs that exercise bit updates. Supervisor `stvec`, `sepc`, `scause`, and `stval` CSR read/write/set/clear execution is also present, including immediate CSR bit-update paths. Synchronous `ecall` and `ebreak` Machine trap entry updates `mepc`, `mcause`, `mtval`, `mstatus`, privilege, and direct handler PC, while machine and delegated supervisor interrupt entry honor direct versus vectored `mtvec`/`stvec` handler selection. Delegated lower-privilege `ecall`, `ebreak`, illegal `xRET`, and delegated enabled interrupts write Supervisor trap state. Machine-mode `MRET`, Supervisor-or-higher `SRET`, lower-privilege illegal-instruction traps for `xRET`, execute-time CSR address privilege checks for the implemented CSR families, and typed `mie`/`mip` plus `sie`/`sip` interrupt CSR entry are present. Platform interrupt-controller delivery into hart pending bits, richer interrupt priority, other synchronous exceptions, unimplemented CSR families, and field-level CSR semantics beyond the current status/trap/interrupt/counter/translation handling remain alignment targets. |
+| `src/arch/riscv` privileged return | `rem6-isa-riscv` | partial | Machine `medeleg`, `mideleg`, `mtvec`, `mscratch`, `mepc`, `mcause`, and `mtval` CSR read/write/set/clear execution is present, with immediate CSR paths covered for the trap CSRs that exercise bit updates. Supervisor `stvec`, `sscratch`, `sepc`, `scause`, and `stval` CSR read/write/set/clear execution is also present, including immediate CSR bit-update paths. Synchronous `ecall` and `ebreak` Machine trap entry updates `mepc`, `mcause`, `mtval`, `mstatus`, privilege, and direct handler PC, while machine and delegated supervisor interrupt entry honor direct versus vectored `mtvec`/`stvec` handler selection. Delegated lower-privilege `ecall`, `ebreak`, illegal `xRET`, and delegated enabled interrupts write Supervisor trap state. Machine-mode `MRET`, Supervisor-or-higher `SRET`, lower-privilege illegal-instruction traps for `xRET`, execute-time CSR address privilege checks for the implemented CSR families, and typed `mie`/`mip` plus `sie`/`sip` interrupt CSR entry are present. Platform interrupt-controller delivery into hart pending bits, richer interrupt priority, other synchronous exceptions, unimplemented CSR families, and field-level CSR semantics beyond the current status/trap/interrupt/counter/translation handling remain alignment targets. |
 | `src/arch/x86` | `rem6-isa-x86` | partial | Initial x86 support has a typed prefix scan for long-mode and protected-mode instruction bytes. It keeps legacy prefixes, active REX, opcode map, opcode byte, and ignored REX prefixes as explicit records, covering the REX placement rule. It also has typed RFLAGS, CPL, CR4.PVI, and protected-mode `STI`/`CLI` decision records that extract IOPL from bits 13:12 and emit explicit general-protection errors or IF/VIF mutations. Fuller decode, execution, segmentation, paging, and system-register behavior remain open. |
 | `src/arch/arm`, `src/arch/power`, `src/arch/sparc`, `src/arch/mips` | future ISA crates | planned | rem6 should add each ISA as a crate with isolated decode, architectural state, and tests. A shared rem6-memory contract already exposes global/non-global TLB entry scope and non-global ASID flushes for future Arm TLBI handling. |
 | `src/arch/amdgpu` | `rem6-gpu`, future GPU ISA crate | planned | Current GPU model is command-level. ISA-level GPU execution remains open. |
@@ -4131,8 +4134,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   derived instruction Sv39 access context, MPRV/MPP plus MXR/SUM feeding the
   derived data Sv39 access context, `mstatus`/`sstatus` reads, `sstatus`
   set/clear paths for the supervisor-visible bits, `mepc` read/write/set
-  paths, `medeleg`/`mideleg` and `mtvec`/`mcause`/`mtval` machine-trap CSR paths,
-  `stvec`/`sepc`/`scause`/`stval` supervisor-trap CSR paths, `mie`/`mip` and
+  paths, `medeleg`/`mideleg` and `mtvec`/`mscratch`/`mcause`/`mtval`
+  machine-trap CSR paths, `stvec`/`sscratch`/`sepc`/`scause`/`stval`
+  supervisor-trap CSR paths, `mie`/`mip` and
   delegated `sie`/`sip` interrupt CSR views, synchronous `ecall`/`ebreak`
   Machine trap entry, delegated lower-privilege `ecall`, `ebreak`, and enabled
   interrupt Supervisor trap entry, direct and vectored machine/supervisor
@@ -4153,18 +4157,18 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   default empty ordering and explicit before/after read-write ordering, and
   RISC-V frontend tests cover aq/rl ordering propagation into parallel transport
   atomic requests. RISC-V ISA tests cover typed `mcycle` and `minstret` machine
-  writes, executable `cycle` and `instret` CSR reads from hart state, user read
+  writes, executable `cycle`, `time`, and `instret` CSR reads from hart state, user read
   aliases, user write
   rejection, read-only `CSRRS`/`CSRRC` zero-source and `CSRRSI`/`CSRRCI`
-  zero-immediate aliases for `cycle`, `instret`, and `mhartid`, wrapping
+  zero-immediate aliases for `cycle`, `time`, `instret`, and `mhartid`, wrapping
   increments, `CSRRW`/`CSRRS`/`CSRRC` plus immediate-form read-modify-write
   updates for machine `mcycle` and `minstret` aliases, CSR address decoding,
   execute-time CSR address privilege checks for implemented Machine,
   Supervisor, and user CSR addresses, lower-privilege illegal-instruction trap
   routing through synchronous trap/delegation, and counter snapshot restore.
   Dedicated CSR counter tests cover RV32 low/high word address
-  decoding, high-half user read aliases, machine low/high word writes that
-  preserve the other half, and read-only errors for user high-half writes.
+  decoding, high-half user read aliases including `timeh`, machine low/high word
+  writes that preserve the other half, and read-only errors for user high-half writes.
   RISC-V GDB target-description tests cover RV32 and RV64 target annex lists,
   `target.xml` architecture and CPU include records, stable ABI register order
   for 32 general registers plus `pc`, XLEN-scaled register bitsizes, unique

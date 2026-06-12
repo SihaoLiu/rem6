@@ -130,6 +130,7 @@ impl RiscvFloatRoundingMode {
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum RiscvCounterCsr {
     Cycle,
+    Time,
     Instret,
 }
 
@@ -137,20 +138,23 @@ impl RiscvCounterCsr {
     pub const fn user_address(self) -> u16 {
         match self {
             Self::Cycle => 0xc00,
+            Self::Time => 0xc01,
             Self::Instret => 0xc02,
         }
     }
 
-    pub const fn machine_address(self) -> u16 {
+    pub const fn machine_address(self) -> Option<u16> {
         match self {
-            Self::Cycle => 0xb00,
-            Self::Instret => 0xb02,
+            Self::Cycle => Some(0xb00),
+            Self::Time => None,
+            Self::Instret => Some(0xb02),
         }
     }
 
     pub const fn from_user_address(address: u16) -> Result<Self, RiscvCsrError> {
         match address {
             0xc00 => Ok(Self::Cycle),
+            0xc01 => Ok(Self::Time),
             0xc02 => Ok(Self::Instret),
             _ => Err(RiscvCsrError::UnknownCounterCsr { address }),
         }
@@ -169,6 +173,8 @@ impl RiscvCounterCsr {
 pub enum RiscvCounterCsrWord {
     CycleLow,
     CycleHigh,
+    TimeLow,
+    TimeHigh,
     InstretLow,
     InstretHigh,
 }
@@ -177,6 +183,7 @@ impl RiscvCounterCsrWord {
     pub const fn counter(self) -> RiscvCounterCsr {
         match self {
             Self::CycleLow | Self::CycleHigh => RiscvCounterCsr::Cycle,
+            Self::TimeLow | Self::TimeHigh => RiscvCounterCsr::Time,
             Self::InstretLow | Self::InstretHigh => RiscvCounterCsr::Instret,
         }
     }
@@ -184,26 +191,32 @@ impl RiscvCounterCsrWord {
     pub const fn user_address(self) -> u16 {
         match self {
             Self::CycleLow => 0xc00,
+            Self::TimeLow => 0xc01,
             Self::InstretLow => 0xc02,
             Self::CycleHigh => 0xc80,
+            Self::TimeHigh => 0xc81,
             Self::InstretHigh => 0xc82,
         }
     }
 
-    pub const fn machine_address(self) -> u16 {
+    pub const fn machine_address(self) -> Option<u16> {
         match self {
-            Self::CycleLow => 0xb00,
-            Self::InstretLow => 0xb02,
-            Self::CycleHigh => 0xb80,
-            Self::InstretHigh => 0xb82,
+            Self::CycleLow => Some(0xb00),
+            Self::TimeLow => None,
+            Self::InstretLow => Some(0xb02),
+            Self::CycleHigh => Some(0xb80),
+            Self::TimeHigh => None,
+            Self::InstretHigh => Some(0xb82),
         }
     }
 
     pub const fn from_user_address(address: u16) -> Result<Self, RiscvCsrError> {
         match address {
             0xc00 => Ok(Self::CycleLow),
+            0xc01 => Ok(Self::TimeLow),
             0xc02 => Ok(Self::InstretLow),
             0xc80 => Ok(Self::CycleHigh),
+            0xc81 => Ok(Self::TimeHigh),
             0xc82 => Ok(Self::InstretHigh),
             _ => Err(RiscvCsrError::UnknownCounterCsr { address }),
         }
@@ -274,6 +287,7 @@ pub enum RiscvMachineTrapCsr {
     Medeleg,
     Mideleg,
     Mtvec,
+    Mscratch,
     Mepc,
     Mcause,
     Mtval,
@@ -285,6 +299,7 @@ impl RiscvMachineTrapCsr {
             Self::Medeleg => 0x302,
             Self::Mideleg => 0x303,
             Self::Mtvec => 0x305,
+            Self::Mscratch => 0x340,
             Self::Mepc => 0x341,
             Self::Mcause => 0x342,
             Self::Mtval => 0x343,
@@ -296,6 +311,7 @@ impl RiscvMachineTrapCsr {
             0x302 => Some(Self::Medeleg),
             0x303 => Some(Self::Mideleg),
             0x305 => Some(Self::Mtvec),
+            0x340 => Some(Self::Mscratch),
             0x341 => Some(Self::Mepc),
             0x342 => Some(Self::Mcause),
             0x343 => Some(Self::Mtval),
@@ -307,6 +323,7 @@ impl RiscvMachineTrapCsr {
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum RiscvSupervisorTrapCsr {
     Stvec,
+    Sscratch,
     Sepc,
     Scause,
     Stval,
@@ -316,6 +333,7 @@ impl RiscvSupervisorTrapCsr {
     pub const fn address(self) -> u16 {
         match self {
             Self::Stvec => 0x105,
+            Self::Sscratch => 0x140,
             Self::Sepc => 0x141,
             Self::Scause => 0x142,
             Self::Stval => 0x143,
@@ -325,6 +343,7 @@ impl RiscvSupervisorTrapCsr {
     pub const fn from_address(address: u16) -> Option<Self> {
         match address {
             0x105 => Some(Self::Stvec),
+            0x140 => Some(Self::Sscratch),
             0x141 => Some(Self::Sepc),
             0x142 => Some(Self::Scause),
             0x143 => Some(Self::Stval),
@@ -564,15 +583,16 @@ impl RiscvCounterBank {
     }
 
     pub fn write_machine(&mut self, csr: RiscvCounterCsr, value: u64) -> Result<(), RiscvCsrError> {
-        self.set_machine(csr, value);
-        Ok(())
+        self.set_machine(csr, value)
     }
 
-    pub fn set_machine(&mut self, csr: RiscvCounterCsr, value: u64) {
+    pub fn set_machine(&mut self, csr: RiscvCounterCsr, value: u64) -> Result<(), RiscvCsrError> {
         match csr {
             RiscvCounterCsr::Cycle => self.cycle = value,
+            RiscvCounterCsr::Time => return Err(RiscvCsrError::ReadOnlyCounterAlias { csr }),
             RiscvCounterCsr::Instret => self.instret = value,
         }
+        Ok(())
     }
 
     pub fn write_machine_word(
@@ -583,6 +603,9 @@ impl RiscvCounterBank {
         match csr {
             RiscvCounterCsrWord::CycleLow => self.cycle = replace_low_word(self.cycle, value),
             RiscvCounterCsrWord::CycleHigh => self.cycle = replace_high_word(self.cycle, value),
+            RiscvCounterCsrWord::TimeLow | RiscvCounterCsrWord::TimeHigh => {
+                return Err(RiscvCsrError::ReadOnlyCounterWordAlias { csr });
+            }
             RiscvCounterCsrWord::InstretLow => self.instret = replace_low_word(self.instret, value),
             RiscvCounterCsrWord::InstretHigh => {
                 self.instret = replace_high_word(self.instret, value);
@@ -610,7 +633,7 @@ impl RiscvCounterBank {
 
     const fn read(&self, csr: RiscvCounterCsr) -> u64 {
         match csr {
-            RiscvCounterCsr::Cycle => self.cycle,
+            RiscvCounterCsr::Cycle | RiscvCounterCsr::Time => self.cycle,
             RiscvCounterCsr::Instret => self.instret,
         }
     }
@@ -618,10 +641,12 @@ impl RiscvCounterBank {
     const fn read_word(&self, csr: RiscvCounterCsrWord) -> u32 {
         let counter = self.read(csr.counter());
         match csr {
-            RiscvCounterCsrWord::CycleLow | RiscvCounterCsrWord::InstretLow => counter as u32,
-            RiscvCounterCsrWord::CycleHigh | RiscvCounterCsrWord::InstretHigh => {
-                (counter >> 32) as u32
-            }
+            RiscvCounterCsrWord::CycleLow
+            | RiscvCounterCsrWord::TimeLow
+            | RiscvCounterCsrWord::InstretLow => counter as u32,
+            RiscvCounterCsrWord::CycleHigh
+            | RiscvCounterCsrWord::TimeHigh
+            | RiscvCounterCsrWord::InstretHigh => (counter >> 32) as u32,
         }
     }
 }

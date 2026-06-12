@@ -13,6 +13,14 @@ fn rv32_counter_words_decode_low_and_high_aliases() {
         RiscvCounterCsrWord::CycleHigh
     );
     assert_eq!(
+        RiscvCounterCsrWord::from_user_address(0xc01).unwrap(),
+        RiscvCounterCsrWord::TimeLow
+    );
+    assert_eq!(
+        RiscvCounterCsrWord::from_user_address(0xc81).unwrap(),
+        RiscvCounterCsrWord::TimeHigh
+    );
+    assert_eq!(
         RiscvCounterCsrWord::from_user_address(0xc02).unwrap(),
         RiscvCounterCsrWord::InstretLow
     );
@@ -36,6 +44,9 @@ fn rv32_counter_words_decode_low_and_high_aliases() {
         RiscvCounterCsrWord::from_machine_address(0xb82).unwrap(),
         RiscvCounterCsrWord::InstretHigh
     );
+    assert_eq!(RiscvCounterCsrWord::CycleLow.machine_address(), Some(0xb00));
+    assert_eq!(RiscvCounterCsrWord::TimeLow.machine_address(), None);
+    assert_eq!(RiscvCounterCsrWord::TimeHigh.machine_address(), None);
 }
 
 #[test]
@@ -54,6 +65,14 @@ fn rv32_counter_word_reads_and_machine_writes_preserve_other_half() {
     );
     assert_eq!(
         counters.read_user_word(RiscvCounterCsrWord::CycleHigh),
+        0x1234_5678
+    );
+    assert_eq!(
+        counters.read_user_word(RiscvCounterCsrWord::TimeLow),
+        0x9abc_def0
+    );
+    assert_eq!(
+        counters.read_user_word(RiscvCounterCsrWord::TimeHigh),
         0x1234_5678
     );
     assert_eq!(
@@ -88,6 +107,38 @@ fn rv32_counter_word_user_writes_are_read_only_shadow_errors() {
             .unwrap_err(),
         RiscvCsrError::ReadOnlyCounterWordAlias {
             csr: RiscvCounterCsrWord::CycleHigh
+        }
+    );
+    assert_eq!(
+        counters
+            .write_user_word(RiscvCounterCsrWord::TimeHigh, 0)
+            .unwrap_err(),
+        RiscvCsrError::ReadOnlyCounterWordAlias {
+            csr: RiscvCounterCsrWord::TimeHigh
+        }
+    );
+    assert_eq!(
+        counters
+            .write_machine(RiscvCounterCsr::Time, 0)
+            .unwrap_err(),
+        RiscvCsrError::ReadOnlyCounterAlias {
+            csr: RiscvCounterCsr::Time
+        }
+    );
+    assert_eq!(
+        counters
+            .write_machine_word(RiscvCounterCsrWord::TimeLow, 0)
+            .unwrap_err(),
+        RiscvCsrError::ReadOnlyCounterWordAlias {
+            csr: RiscvCounterCsrWord::TimeLow
+        }
+    );
+    assert_eq!(
+        counters
+            .write_machine_word(RiscvCounterCsrWord::TimeHigh, 0)
+            .unwrap_err(),
+        RiscvCsrError::ReadOnlyCounterWordAlias {
+            csr: RiscvCounterCsrWord::TimeHigh
         }
     );
 }
