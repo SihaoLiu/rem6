@@ -72,7 +72,7 @@ explicit error.
 | `ext/nomali`, `ext/mcpat`, `ext/dsent` | `rem6-power`, future optional adapters | external-adapter | rem6-power already emits typed external power-analysis exports. Optional external adapters should consume typed records rather than become core dependencies. |
 | `ext/libelf`, `ext/libfdt`, `ext/softfloat` | `rem6-boot`, `rem6-platform`, ISA crates | partial | ELF loading and RISC-V FDT generation are native typed Rust paths. Remaining work includes loader breadth for more ISAs, soft-float parity, and broader bootloader handoff coverage. |
 | `util/gem5art`, resources tooling, disk image tooling | `rem6-workload`, future artifact tooling | partial | Workload manifests carry resource provenance, disk-image construction records, resolved payload identity, DTB/initrd intent, and replay validation. Acquisition and construction executors for more artifact kinds remain open. |
-| `tests`, `tests/test-progs`, `util/statetrace` | rem6 tests and trace tooling | partial | gem5 tests are migration input. rem6 acceptance is Rust tests plus typed trace, artifact, stats, and checkpoint evidence. A complete gem5 unittest migration ledger is still needed. |
+| `tests`, `tests/test-progs`, `util/statetrace` | rem6 tests and trace tooling | partial | gem5 tests are migration input. rem6 acceptance is Rust tests plus typed trace, artifact, stats, and checkpoint evidence. `docs/architecture/gem5-test-migration.md` now tracks the durable test-anchor migration ledger. |
 
 ## Detailed Anchor Map
 
@@ -100,7 +100,7 @@ explicit error.
 | `src/sim/serialize` | `rem6-checkpoint`, subsystem checkpoint banks | partial | Decode-first checkpoint capture/restore exists across scheduler, memory, devices, storage, VirtIO, and workload manifests. Remaining work is broader component coverage and pending-state restore breadth. |
 | `src/sim/stat_control`, `src/base/statistics` | `rem6-stats`, `rem6-power` | partial | Hierarchical counters, reset policies, dumps, deltas, probes, power metric binding, and external exports exist. First-class histograms and more runtime-resource counters remain open. |
 | `configs`, `src/python/m5` | `rem6`, `rem6-platform`, `rem6-workload` | partial | TOML, CLI, typed builders, workload manifests, resource payloads, and suite plans provide checked composition. More ergonomic full-system experiment definitions and acquisition tooling remain open. |
-| `tests/gem5`, `tests/test-progs` | rem6 test crates and future migration ledger | partial | Many gem5-shaped behaviors have Rust tests, but there is no complete in-repo checklist for gem5 unittest parity yet. |
+| `tests/gem5`, `tests/test-progs` | rem6 test crates and `docs/architecture/gem5-test-migration.md` | partial | Many gem5-shaped behaviors have Rust tests, and the migration ledger now records core test anchors. Per-test parity rows remain open for continued migration. |
 
 ## Evidence Index
 
@@ -166,8 +166,9 @@ tests and runtime artifacts.
 - The configuration and workload-resource surface must reach gem5-style
   experiment ergonomics without giving up typed validation, reproducible
   manifests, and deterministic artifacts.
-- The gem5 test migration must be tracked with an in-repo checklist that maps
-  gem5 unittest families to rem6 equivalents, missing features, and evidence.
+- The gem5 test migration ledger must grow from core test anchors into
+  per-family rows that map gem5 unittest families to rem6 equivalents, missing
+  features, and executable evidence.
 - The stats surface should continue adding first-class histograms and
   bank/cache/fabric/DRAM hierarchy counters wherever runtime resources already
   expose typed activity.
