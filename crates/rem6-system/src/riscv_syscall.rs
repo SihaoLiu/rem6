@@ -22,6 +22,7 @@ mod directory;
 mod dirent;
 mod fcntl;
 mod fd;
+mod file_write;
 mod futex;
 mod guest_memory;
 mod guest_write;
@@ -65,6 +66,7 @@ use fcntl::{
 use fd::{
     syscall_close, syscall_dup, syscall_dup3, RISCV_LINUX_CLOSE, RISCV_LINUX_DUP, RISCV_LINUX_DUP3,
 };
+use file_write::RiscvGuestFileWriteError;
 use futex::syscall_futex;
 pub use guest_memory::{
     RiscvGuestMemoryMapRequest, RiscvGuestMemoryMapResult, RiscvGuestMemoryReader,
@@ -163,6 +165,7 @@ const RISCV_LINUX_EISDIR: u64 = 21;
 const RISCV_LINUX_EINVAL: u64 = 22;
 const RISCV_LINUX_EMFILE: u64 = 24;
 const RISCV_LINUX_ENOTTY: u64 = 25;
+const RISCV_LINUX_EFBIG: u64 = 27;
 const RISCV_LINUX_ESPIPE: u64 = 29;
 const RISCV_LINUX_ERANGE: u64 = 34;
 const RISCV_LINUX_ENAMETOOLONG: u64 = 36;
@@ -279,6 +282,7 @@ pub struct RiscvSyscallState {
     guest_opens: Vec<RiscvGuestOpenRecord>,
     stdin_fds: BTreeSet<GuestFd>,
     guest_file_descriptions: BTreeMap<GuestFileDescriptionId, Vec<u8>>,
+    guest_file_description_paths: BTreeMap<GuestFileDescriptionId, Vec<u8>>,
     guest_directory_descriptions: BTreeMap<GuestFileDescriptionId, Vec<u8>>,
     guest_directory_paths: BTreeMap<GuestFileDescriptionId, Vec<u8>>,
     guest_file_stats: BTreeMap<GuestFileDescriptionId, RiscvOpenGuestFileStat>,
@@ -335,6 +339,7 @@ impl RiscvSyscallState {
             guest_opens: Vec::new(),
             stdin_fds,
             guest_file_descriptions: BTreeMap::new(),
+            guest_file_description_paths: BTreeMap::new(),
             guest_directory_descriptions: BTreeMap::new(),
             guest_directory_paths: BTreeMap::new(),
             guest_file_stats: BTreeMap::new(),
@@ -715,6 +720,8 @@ impl RiscvSyscallState {
             GuestFdEntry::new(description).with_close_on_exec(close_on_exec),
         )?;
         if let Some(contents) = file_contents {
+            self.guest_file_description_paths
+                .insert(description, path.clone());
             self.guest_file_descriptions.insert(description, contents);
         }
         if let Some(contents) = directory_contents {
@@ -744,6 +751,7 @@ impl RiscvSyscallState {
         self.stdin_fds.remove(&record.fd());
         if let Some(description) = record.released_description() {
             self.guest_file_descriptions.remove(&description.id());
+            self.guest_file_description_paths.remove(&description.id());
             self.guest_directory_descriptions.remove(&description.id());
             self.guest_directory_paths.remove(&description.id());
             self.guest_file_stats.remove(&description.id());
@@ -762,6 +770,7 @@ impl RiscvSyscallState {
         if let Some(replaced) = record.replaced() {
             if let Some(description) = replaced.released_description() {
                 self.guest_file_descriptions.remove(&description.id());
+                self.guest_file_description_paths.remove(&description.id());
                 self.guest_directory_descriptions.remove(&description.id());
                 self.guest_directory_paths.remove(&description.id());
                 self.guest_file_stats.remove(&description.id());
@@ -1660,12 +1669,22 @@ fn syscall_write(
     let Ok(byte_count) = usize::try_from(count) else {
         return linux_error(RISCV_LINUX_EINVAL);
     };
+    match state.guest_file_write_exceeds_dense_limit(fd, count) {
+        Ok(true) => return linux_error(RISCV_LINUX_EFBIG),
+        Ok(false) => {}
+        Err(_) => return linux_error(RISCV_LINUX_EBADF),
+    }
     let address = request.argument(1);
     let Some(bytes) = guest_memory.read(address, byte_count) else {
         return linux_error(RISCV_LINUX_EFAULT);
     };
     if bytes.len() != byte_count {
         return linux_error(RISCV_LINUX_EFAULT);
+    }
+    match state.write_guest_file_from_fd(fd, &bytes) {
+        Ok(_) => {}
+        Err(RiscvGuestFileWriteError::FileTooLarge) => return linux_error(RISCV_LINUX_EFBIG),
+        Err(RiscvGuestFileWriteError::Fd(_)) => return linux_error(RISCV_LINUX_EBADF),
     }
     if state.guest_fds.advance_file_offset(fd, count).is_err() {
         return linux_error(RISCV_LINUX_EBADF);

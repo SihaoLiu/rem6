@@ -1,7 +1,8 @@
 use super::{
-    guest_fd_argument, linux_error, RiscvGuestMemoryReader, RiscvGuestWriteRecord,
-    RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_EBADF, RISCV_LINUX_EFAULT,
-    RISCV_LINUX_EINVAL, RISCV_LINUX_O_ACCMODE, RISCV_LINUX_O_RDONLY,
+    guest_fd_argument, linux_error, RiscvGuestFileWriteError, RiscvGuestMemoryReader,
+    RiscvGuestWriteRecord, RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_EBADF,
+    RISCV_LINUX_EFAULT, RISCV_LINUX_EFBIG, RISCV_LINUX_EINVAL, RISCV_LINUX_O_ACCMODE,
+    RISCV_LINUX_O_RDONLY,
 };
 use crate::Tick;
 
@@ -67,6 +68,11 @@ pub(super) fn syscall_writev(
     if total == 0 {
         return 0;
     }
+    match state.guest_file_write_exceeds_dense_limit(fd, total) {
+        Ok(true) => return linux_error(RISCV_LINUX_EFBIG),
+        Ok(false) => {}
+        Err(_) => return linux_error(RISCV_LINUX_EBADF),
+    }
 
     let mut bytes = Vec::new();
     for iovec in iovecs {
@@ -80,6 +86,11 @@ pub(super) fn syscall_writev(
         bytes.append(&mut data);
     }
 
+    match state.write_guest_file_from_fd(fd, &bytes) {
+        Ok(_) => {}
+        Err(RiscvGuestFileWriteError::FileTooLarge) => return linux_error(RISCV_LINUX_EFBIG),
+        Err(RiscvGuestFileWriteError::Fd(_)) => return linux_error(RISCV_LINUX_EBADF),
+    }
     if state.guest_fds.advance_file_offset(fd, total).is_err() {
         return linux_error(RISCV_LINUX_EBADF);
     }
