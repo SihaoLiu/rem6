@@ -1054,10 +1054,10 @@ fn hart_executes_rv64f_single_to_integer_dynamic_and_static_rounding() {
 fn hart_traps_rv64f_dynamic_rounding_with_reserved_frm() {
     let mut hart = RiscvHartState::new(0x8100);
     hart.set_machine_trap_vector(0x9000);
-    hart.write(reg(10), 7 << 5);
+    hart.write(reg(10), (7 << 5) | FLOAT_FLAG_DIVIDE_BY_ZERO);
     hart.execute(RiscvInstruction::decode(csr_write_type(FCSR_CSR, 10, 0)).unwrap())
         .unwrap();
-    hart.write_float(freg(1), f32_box(2.5));
+    hart.write_float(freg(1), box_single(0x7fc0_0000));
 
     let record = hart
         .execute(RiscvInstruction::decode(r_type(0x60, 0, 1, 0x7, 5, 0x53)).unwrap())
@@ -1069,6 +1069,7 @@ fn hart_traps_rv64f_dynamic_rounding_with_reserved_frm() {
     );
     assert_eq!(hart.machine_trap_cause(), 2);
     assert_eq!(hart.read(reg(5)), 0);
+    assert_eq!(hart.float_status().fflags(), FLOAT_FLAG_DIVIDE_BY_ZERO);
 }
 
 #[test]
@@ -1088,7 +1089,7 @@ fn hart_ignores_frm_for_rv64f_static_rounding() {
 }
 
 #[test]
-fn hart_saturates_rv64f_single_to_integer_invalid_results_without_fflags() {
+fn hart_rv64f_single_to_integer_invalid_results_raise_invalid() {
     let mut hart = RiscvHartState::new(0x8000);
 
     hart.write_float(freg(1), box_single(0x7fc0_0000));
@@ -1099,7 +1100,9 @@ fn hart_saturates_rv64f_single_to_integer_invalid_results_without_fflags() {
     })
     .unwrap();
     assert_eq!(hart.read(reg(2)), i32::MAX as u64);
+    assert_eq!(hart.float_status().fflags(), FLOAT_FLAG_INVALID);
 
+    hart.set_float_status(rem6_isa_riscv::RiscvFloatStatus::new(0));
     hart.write_float(freg(3), f32_box(f32::NEG_INFINITY));
     hart.execute(RiscvInstruction::FloatConvertWFromS {
         rd: reg(4),
@@ -1108,7 +1111,9 @@ fn hart_saturates_rv64f_single_to_integer_invalid_results_without_fflags() {
     })
     .unwrap();
     assert_eq!(hart.read(reg(4)), i32::MIN as i64 as u64);
+    assert_eq!(hart.float_status().fflags(), FLOAT_FLAG_INVALID);
 
+    hart.set_float_status(rem6_isa_riscv::RiscvFloatStatus::new(0));
     hart.write_float(freg(5), f32_box(-1.0));
     hart.execute(RiscvInstruction::FloatConvertWuFromS {
         rd: reg(6),
@@ -1117,7 +1122,9 @@ fn hart_saturates_rv64f_single_to_integer_invalid_results_without_fflags() {
     })
     .unwrap();
     assert_eq!(hart.read(reg(6)), 0);
+    assert_eq!(hart.float_status().fflags(), FLOAT_FLAG_INVALID);
 
+    hart.set_float_status(rem6_isa_riscv::RiscvFloatStatus::new(0));
     hart.write_float(freg(7), f32_box(f32::INFINITY));
     hart.execute(RiscvInstruction::FloatConvertLuFromS {
         rd: reg(8),
@@ -1126,7 +1133,9 @@ fn hart_saturates_rv64f_single_to_integer_invalid_results_without_fflags() {
     })
     .unwrap();
     assert_eq!(hart.read(reg(8)), u64::MAX);
+    assert_eq!(hart.float_status().fflags(), FLOAT_FLAG_INVALID);
 
+    hart.set_float_status(rem6_isa_riscv::RiscvFloatStatus::new(0));
     hart.write_float(freg(9), f32_box(f32::NEG_INFINITY));
     hart.execute(RiscvInstruction::FloatConvertLFromS {
         rd: reg(10),
@@ -1135,7 +1144,9 @@ fn hart_saturates_rv64f_single_to_integer_invalid_results_without_fflags() {
     })
     .unwrap();
     assert_eq!(hart.read(reg(10)), i64::MIN as u64);
+    assert_eq!(hart.float_status().fflags(), FLOAT_FLAG_INVALID);
 
+    hart.set_float_status(rem6_isa_riscv::RiscvFloatStatus::new(0));
     hart.write_float(freg(11), 1.0f32.to_bits().into());
     hart.execute(RiscvInstruction::FloatConvertWFromS {
         rd: reg(12),
@@ -1144,6 +1155,18 @@ fn hart_saturates_rv64f_single_to_integer_invalid_results_without_fflags() {
     })
     .unwrap();
     assert_eq!(hart.read(reg(12)), i32::MAX as u64);
+    assert_eq!(hart.float_status().fflags(), FLOAT_FLAG_INVALID);
+
+    hart.set_float_status(rem6_isa_riscv::RiscvFloatStatus::new(0));
+    hart.write_float(freg(13), f32_box(2.0));
+    hart.execute(RiscvInstruction::FloatConvertWFromS {
+        rd: reg(14),
+        rs1: freg(13),
+        rounding_mode: RiscvFloatRoundingMode::RoundNearestEven,
+    })
+    .unwrap();
+    assert_eq!(hart.read(reg(14)), 2);
+    assert_eq!(hart.float_status().fflags(), 0);
 }
 
 #[test]

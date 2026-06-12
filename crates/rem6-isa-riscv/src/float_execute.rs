@@ -109,13 +109,13 @@ pub(crate) fn execute_float_integer_instruction(
         | RiscvInstruction::FloatConvertWuFromD { rs1, .. }
         | RiscvInstruction::FloatConvertLFromD { rs1, .. }
         | RiscvInstruction::FloatConvertLuFromD { rs1, .. }) => {
-            let Some((rd, value)) = float::integer_register_write(
-                instruction,
-                hart.read_float(rs1),
-                hart.float_status().frm(),
-            ) else {
+            let lhs = hart.read_float(rs1);
+            let frm = hart.float_status().frm();
+            let Some((rd, value)) = float::integer_register_write(instruction, lhs, frm) else {
                 return Err(());
             };
+            let flags = float::integer_exception_flags(instruction, lhs, frm);
+            hart.raise_float_exception_flags(flags);
             crate::write_register(hart, writes, rd, value);
         }
         _ => unreachable!("non-float-integer instruction dispatched to float integer executor"),

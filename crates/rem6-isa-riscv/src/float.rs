@@ -4,6 +4,8 @@ use crate::{
     RiscvFloatRoundingMode, RiscvHartState, RiscvInstruction,
 };
 
+mod convert_flags;
+
 pub(crate) fn decode_float_load(raw: u32) -> Result<RiscvInstruction, RiscvError> {
     let width = match funct3(raw) {
         0x2 => MemoryWidth::Word,
@@ -534,6 +536,38 @@ pub(crate) fn integer_exception_flags(instruction: RiscvInstruction, lhs: u64, r
         }
         RiscvInstruction::FloatEqualS { .. } => quiet_compare_exception_flags_single(lhs, rhs),
         RiscvInstruction::FloatEqualD { .. } => quiet_compare_exception_flags_double(lhs, rhs),
+        RiscvInstruction::FloatConvertWFromS { rounding_mode, .. } => rounding_mode
+            .resolve(rhs)
+            .map_or(0, |mode| convert_flags::single_to_signed_word(lhs, mode)),
+        RiscvInstruction::FloatConvertWuFromS { rounding_mode, .. } => rounding_mode
+            .resolve(rhs)
+            .map_or(0, |mode| convert_flags::single_to_unsigned_word(lhs, mode)),
+        RiscvInstruction::FloatConvertLFromS { rounding_mode, .. } => {
+            rounding_mode.resolve(rhs).map_or(0, |mode| {
+                convert_flags::single_to_signed_doubleword(lhs, mode)
+            })
+        }
+        RiscvInstruction::FloatConvertLuFromS { rounding_mode, .. } => {
+            rounding_mode.resolve(rhs).map_or(0, |mode| {
+                convert_flags::single_to_unsigned_doubleword(lhs, mode)
+            })
+        }
+        RiscvInstruction::FloatConvertWFromD { rounding_mode, .. } => rounding_mode
+            .resolve(rhs)
+            .map_or(0, |mode| convert_flags::double_to_signed_word(lhs, mode)),
+        RiscvInstruction::FloatConvertWuFromD { rounding_mode, .. } => rounding_mode
+            .resolve(rhs)
+            .map_or(0, |mode| convert_flags::double_to_unsigned_word(lhs, mode)),
+        RiscvInstruction::FloatConvertLFromD { rounding_mode, .. } => {
+            rounding_mode.resolve(rhs).map_or(0, |mode| {
+                convert_flags::double_to_signed_doubleword(lhs, mode)
+            })
+        }
+        RiscvInstruction::FloatConvertLuFromD { rounding_mode, .. } => {
+            rounding_mode.resolve(rhs).map_or(0, |mode| {
+                convert_flags::double_to_unsigned_doubleword(lhs, mode)
+            })
+        }
         _ => 0,
     }
 }

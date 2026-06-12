@@ -1153,10 +1153,10 @@ fn hart_executes_rv64d_double_to_integer_dynamic_and_static_rounding() {
 fn hart_traps_rv64d_dynamic_rounding_with_reserved_frm() {
     let mut hart = RiscvHartState::new(0x8100);
     hart.set_machine_trap_vector(0x9000);
-    hart.write(reg(10), 7 << 5);
+    hart.write(reg(10), (7 << 5) | FLOAT_FLAG_DIVIDE_BY_ZERO);
     hart.execute(RiscvInstruction::decode(csr_write_type(0x003, 10, 0)).unwrap())
         .unwrap();
-    hart.write_float(freg(1), 2.5f64.to_bits());
+    hart.write_float(freg(1), f64::NAN.to_bits());
 
     let record = hart
         .execute(RiscvInstruction::decode(r_type(0x61, 0, 1, 0x7, 5, 0x53)).unwrap())
@@ -1168,6 +1168,7 @@ fn hart_traps_rv64d_dynamic_rounding_with_reserved_frm() {
     );
     assert_eq!(hart.machine_trap_cause(), 2);
     assert_eq!(hart.read(reg(5)), 0);
+    assert_eq!(hart.float_status().fflags(), FLOAT_FLAG_DIVIDE_BY_ZERO);
 }
 
 #[test]
@@ -1187,7 +1188,7 @@ fn hart_ignores_frm_for_rv64d_static_rounding() {
 }
 
 #[test]
-fn hart_saturates_rv64d_double_to_integer_invalid_results_without_fflags() {
+fn hart_rv64d_double_to_integer_invalid_results_raise_invalid() {
     let mut hart = RiscvHartState::new(0x8000);
 
     hart.write_float(freg(1), f64::NAN.to_bits());
@@ -1198,7 +1199,9 @@ fn hart_saturates_rv64d_double_to_integer_invalid_results_without_fflags() {
     })
     .unwrap();
     assert_eq!(hart.read(reg(2)), i32::MAX as u64);
+    assert_eq!(hart.float_status().fflags(), FLOAT_FLAG_INVALID);
 
+    hart.set_float_status(rem6_isa_riscv::RiscvFloatStatus::new(0));
     hart.write_float(freg(3), (-1.0e40f64).to_bits());
     hart.execute(RiscvInstruction::FloatConvertWFromD {
         rd: reg(4),
@@ -1207,7 +1210,9 @@ fn hart_saturates_rv64d_double_to_integer_invalid_results_without_fflags() {
     })
     .unwrap();
     assert_eq!(hart.read(reg(4)), i32::MIN as i64 as u64);
+    assert_eq!(hart.float_status().fflags(), FLOAT_FLAG_INVALID);
 
+    hart.set_float_status(rem6_isa_riscv::RiscvFloatStatus::new(0));
     hart.write_float(freg(5), (-1.0f64).to_bits());
     hart.execute(RiscvInstruction::FloatConvertWuFromD {
         rd: reg(6),
@@ -1216,7 +1221,9 @@ fn hart_saturates_rv64d_double_to_integer_invalid_results_without_fflags() {
     })
     .unwrap();
     assert_eq!(hart.read(reg(6)), 0);
+    assert_eq!(hart.float_status().fflags(), FLOAT_FLAG_INVALID);
 
+    hart.set_float_status(rem6_isa_riscv::RiscvFloatStatus::new(0));
     hart.write_float(freg(7), f64::INFINITY.to_bits());
     hart.execute(RiscvInstruction::FloatConvertLuFromD {
         rd: reg(8),
@@ -1225,7 +1232,9 @@ fn hart_saturates_rv64d_double_to_integer_invalid_results_without_fflags() {
     })
     .unwrap();
     assert_eq!(hart.read(reg(8)), u64::MAX);
+    assert_eq!(hart.float_status().fflags(), FLOAT_FLAG_INVALID);
 
+    hart.set_float_status(rem6_isa_riscv::RiscvFloatStatus::new(0));
     hart.write_float(freg(9), f64::NEG_INFINITY.to_bits());
     hart.execute(RiscvInstruction::FloatConvertLFromD {
         rd: reg(10),
@@ -1234,6 +1243,18 @@ fn hart_saturates_rv64d_double_to_integer_invalid_results_without_fflags() {
     })
     .unwrap();
     assert_eq!(hart.read(reg(10)), i64::MIN as u64);
+    assert_eq!(hart.float_status().fflags(), FLOAT_FLAG_INVALID);
+
+    hart.set_float_status(rem6_isa_riscv::RiscvFloatStatus::new(0));
+    hart.write_float(freg(11), 2.0f64.to_bits());
+    hart.execute(RiscvInstruction::FloatConvertWFromD {
+        rd: reg(12),
+        rs1: freg(11),
+        rounding_mode: RiscvFloatRoundingMode::RoundNearestEven,
+    })
+    .unwrap();
+    assert_eq!(hart.read(reg(12)), 2);
+    assert_eq!(hart.float_status().fflags(), 0);
 }
 
 #[test]
