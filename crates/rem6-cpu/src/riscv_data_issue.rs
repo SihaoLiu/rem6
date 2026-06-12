@@ -528,6 +528,7 @@ impl RiscvCore {
                     data.as_deref(),
                     "MMIO load response data",
                 );
+                record_data_retire_cycle(&mut state, &access);
                 state.data_events.push(RiscvDataAccessEvent::completed(
                     access.record(completion.tick()),
                     data,

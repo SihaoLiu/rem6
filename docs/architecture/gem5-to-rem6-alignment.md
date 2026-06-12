@@ -82,7 +82,7 @@ explicit error.
 | `src/arch/x86` | `rem6-isa-x86`, future CPU/system work | partial | Narrow prefix-scan and interrupt-flag semantics are tested. Full x86 decode, execution, paging, interrupts, KVM-style switching, and device integration remain open. |
 | `src/arch/arm` | `rem6-platform`, `rem6-uart`, `rem6-timer`, future ISA crate | partial | Several ARM platform devices are modeled, but Arm ISA execution, board boot, and debug register coverage remain open. |
 | `src/cpu/simple` | `rem6-cpu` | partial | RISC-V atomic execution is functional and test-backed. TimingSimple-style cycle stalls and memory-mode interactions remain open. |
-| `src/cpu/minor` | `rem6-cpu` | partial | rem6 has reusable in-order pipeline state, cycle summaries, and RISC-V retire events now emit in-order commit-cycle evidence for non-deferred instructions and completed memory-data accesses. A Minor-equivalent multi-stage executable frontend with fetch/decode stalls, squashes, and memory backpressure remains open. |
+| `src/cpu/minor` | `rem6-cpu` | partial | rem6 has reusable in-order pipeline state, cycle summaries, and RISC-V retire events now emit in-order commit-cycle evidence for non-deferred instructions, completed memory-data accesses, and completed MMIO loads. A Minor-equivalent multi-stage executable frontend with fetch/decode stalls, squashes, and memory backpressure remains open. |
 | `src/cpu/o3` | `rem6-cpu` | partial | O3 policy pieces exist for dependencies, issue, writeback, branch-target safety, and unblock behavior. A running O3 engine with ROB, LSQ, rename map, commit, store-to-load forwarding, and FU scheduling remains open. |
 | `src/cpu/pred` | `rem6-cpu` | partial | Several typed predictors exist, and the RISC-V core now trains basic and GShare predictors from real retired control flow. Fetch steering, speculation snapshots, rollback, and richer predictor consumers remain open. |
 | `src/cpu/kvm`, `src/arch/*/kvm` | `rem6-system`, future host adapters | partial | Host-assisted switch admission is typed and tested for unsafe takeover shapes. Real KVM fast-forward execution remains open. |
@@ -115,9 +115,9 @@ tests and runtime artifacts.
   SFENCE.VMA, traps, counters, PMP/PMA, Sv39 translation and walker behavior,
   FP scalar slices, NaN-boxing, accrued FP flags, GDB register access, HTM
   checkpoints, store-conditional progress, in-order retire-cycle evidence for
-  non-deferred and completed memory-data instructions, retired-PC probes,
-  data-access probes, and branch-predictor training from real retired control
-  flow.
+  non-deferred instructions, completed memory-data instructions, and completed
+  MMIO loads, retired-PC probes, data-access probes, and branch-predictor
+  training from real retired control flow.
 - RISC-V SE mode: CLI/system tests drive real user-mode ecalls for startup
   stack construction, `brk`, `mmap`, stdio, registered guest files, stat/link
   operations, vector I/O, clock/getrandom/cwd/resource syscalls, `wait4`, and

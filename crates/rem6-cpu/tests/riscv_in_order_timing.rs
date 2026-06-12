@@ -7,8 +7,10 @@ use rem6_cpu::{
 use rem6_isa_riscv::{Register, RiscvInstruction};
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{
-    AccessSize, Address, AgentId, CacheLineLayout, MemoryTargetId, PartitionedMemoryStore,
+    AccessSize, Address, AddressRange, AgentId, CacheLineLayout, MemoryTargetId,
+    PartitionedMemoryStore,
 };
+use rem6_mmio::{MmioAccess, MmioBus, MmioRegisterBank, MmioRoute};
 use rem6_transport::{
     MemoryRoute, MemoryTrace, MemoryTransport, TargetOutcome, TransportEndpointId,
 };
@@ -198,6 +200,26 @@ fn issue_one_data_access(
     scheduler.run_until_idle_conservative();
 }
 
+fn mmio_bus_with_u64(address: u64, bytes: [u8; 8]) -> MmioBus {
+    let mut bank =
+        MmioRegisterBank::new(Address::new(address), AccessSize::new(0x100).unwrap()).unwrap();
+    bank.insert_register(
+        8,
+        AccessSize::new(8).unwrap(),
+        MmioAccess::ReadOnly,
+        bytes.to_vec(),
+    )
+    .unwrap();
+    let mut bus = MmioBus::new();
+    bus.insert_device(
+        AddressRange::new(Address::new(address), AccessSize::new(0x100).unwrap()).unwrap(),
+        MmioRoute::new(PartitionId::new(0), PartitionId::new(1), 2, 2).unwrap(),
+        Mutex::new(bank),
+    )
+    .unwrap();
+    bus
+}
+
 #[test]
 fn riscv_retired_instruction_records_in_order_pipeline_cycle() {
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
@@ -234,6 +256,56 @@ fn riscv_retired_instruction_records_in_order_pipeline_cycle() {
             .collect::<Vec<_>>(),
         vec![(0, InOrderPipelineStage::Commit)]
     );
+    assert_eq!(record.summary().retired_count(), 1);
+    assert_eq!(record.summary().advanced_count(), 1);
+    assert!(record.after().in_flight().is_empty());
+
+    let snapshot = core.in_order_pipeline_snapshot();
+    assert_eq!(snapshot.cycle(), 1);
+    assert!(snapshot.in_flight().is_empty());
+}
+
+#[test]
+fn riscv_completed_mmio_data_access_records_in_order_pipeline_cycle() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let raw = i_type(8, 2, 0x3, 5, 0x03);
+    let core = RiscvCore::new(core(route, 0x8000));
+    core.write_register(reg(2), 0x1000);
+    let store = loaded_store(0x8000, raw);
+    let bus = mmio_bus_with_u64(0x1000, [0x21, 0x43, 0x65, 0x87, 0xa9, 0xcb, 0xed, 0x0f]);
+
+    fetch_one(&core, store, &mut scheduler, &transport);
+    let event = core.execute_next_completed_fetch().unwrap().unwrap();
+
+    assert_eq!(event.instruction(), RiscvInstruction::decode(raw).unwrap());
+    assert!(event.in_order_pipeline_cycle().is_none());
+    assert_eq!(core.in_order_pipeline_snapshot().cycle(), 0);
+    assert_eq!(core.read_register(reg(5)), 0);
+
+    core.issue_next_mmio_data_access_parallel(&mut scheduler, &bus)
+        .unwrap()
+        .unwrap();
+    scheduler.run_until_idle_parallel().unwrap();
+
+    assert_eq!(core.read_register(reg(5)), 0x0fed_cba9_8765_4321);
+    let events = core.execution_events();
+    assert_eq!(events.len(), 1);
+    let record = events[0].in_order_pipeline_cycle().unwrap();
+    assert_eq!(record.cycle(), 0);
     assert_eq!(record.summary().retired_count(), 1);
     assert_eq!(record.summary().advanced_count(), 1);
     assert!(record.after().in_flight().is_empty());
