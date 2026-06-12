@@ -188,6 +188,86 @@ int main(void) {
 }
 
 #[test]
+fn rem6_run_riscv_se_runs_static_newlib_stat_on_registered_guest_file() {
+    let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
+        eprintln!("skipping static newlib RISC-V SE stat smoke: riscv64-unknown-elf-gcc not found");
+        return;
+    };
+    let workspace = temp_workspace("riscv-se-newlib-stat");
+    let source = workspace.join("stat.c");
+    let binary = workspace.join("stat");
+    let input = workspace.join("guest.txt");
+    fs::write(
+        &source,
+        r#"#include <stdio.h>
+#include <sys/stat.h>
+
+int main(void) {
+    struct stat st;
+    if (stat("guest.txt", &st) != 0) {
+        return 71;
+    }
+    printf("stat:%ld:%lo\n", (long)st.st_size, (unsigned long)(st.st_mode & 0777777));
+    return st.st_size == 18 ? 33 : 34;
+}
+"#,
+    )
+    .unwrap();
+    fs::write(&input, b"file-backed input\n").unwrap();
+
+    let compile = Command::new(&gcc)
+        .args([
+            "-O1",
+            "-static",
+            "-march=rv64gc",
+            "-mabi=lp64d",
+            source.to_str().unwrap(),
+            "-o",
+            binary.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        compile.status.success(),
+        "gcc stderr: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            binary.to_str().unwrap(),
+            "--max-tick",
+            "300000",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+            "--riscv-se-file",
+            &format!("guest.txt={}", input.display()),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_code\":33"));
+    assert!(stdout.contains("\"riscv_guest_writes\":[{\"fd\":1"));
+    assert!(stdout.contains("\"text\":\"stat:18:100444\\n\""));
+    assert!(!stdout.contains("riscv_unknown_syscalls\":[{"));
+    assert_stat(&stdout, "sim.riscv.se", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.stop_code", "Count", 33, "constant");
+}
+
+#[test]
 fn rem6_run_riscv_se_opens_registered_guest_file_from_host_bytes() {
     let program = registered_guest_file_program();
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);

@@ -11,6 +11,8 @@ mod boot_image_tests;
 mod mmap_tests;
 #[path = "riscv_syscall_tests/startup_tests.rs"]
 mod startup_tests;
+#[path = "riscv_syscall_tests/stat_tests.rs"]
+mod stat_tests;
 #[path = "riscv_syscall_tests/wait4_tests.rs"]
 mod wait4_tests;
 

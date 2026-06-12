@@ -119,6 +119,7 @@ const RISCV_LINUX_MADVISE: u64 = 233;
 const RISCV_LINUX_MBIND: u64 = 235;
 const RISCV_LINUX_GETRANDOM: u64 = 278;
 const RISCV_LINUX_RSEQ: u64 = 293;
+const RISCV_LINUX_STAT: u64 = 1038;
 const RISCV_LINUX_EPERM: u64 = 1;
 const RISCV_LINUX_ENOENT: u64 = 2;
 const RISCV_LINUX_EBADF: u64 = 9;
@@ -875,6 +876,11 @@ impl RiscvSyscallTable {
                     value: syscall_newfstatat(request, state, reader, writer),
                 })
             }),
+            RISCV_LINUX_STAT => guest_memory_reader.and_then(|reader| {
+                guest_memory_writer.map(|writer| RiscvSyscallOutcome::Return {
+                    value: syscall_stat(request, state, reader, writer),
+                })
+            }),
             RISCV_LINUX_FSTAT => {
                 guest_memory_writer.map(|guest_memory| RiscvSyscallOutcome::Return {
                     value: syscall_fstat(request, state, guest_memory),
@@ -1548,6 +1554,28 @@ fn syscall_newfstatat(
     };
 
     write_riscv_linux_stat(request.argument(2), stat, guest_memory_writer)
+}
+
+fn syscall_stat(
+    request: RiscvSyscallRequest,
+    state: &RiscvSyscallState,
+    guest_memory_reader: &RiscvGuestMemoryReader,
+    guest_memory_writer: &RiscvGuestMemoryWriter,
+) -> u64 {
+    let path = match read_guest_c_string(
+        guest_memory_reader,
+        request.argument(0),
+        RISCV_LINUX_PATH_MAX,
+    ) {
+        Ok(path) => path,
+        Err(RiscvGuestCStringError::Fault) => return linux_error(RISCV_LINUX_EFAULT),
+        Err(RiscvGuestCStringError::TooLong) => return linux_error(RISCV_LINUX_ENAMETOOLONG),
+    };
+    let Some(stat) = state.guest_path_stat(&path) else {
+        return linux_error(RISCV_LINUX_ENOENT);
+    };
+
+    write_riscv_linux_stat(request.argument(1), stat, guest_memory_writer)
 }
 
 fn syscall_fstat(
