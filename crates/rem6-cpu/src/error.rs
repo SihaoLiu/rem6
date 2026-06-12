@@ -7,7 +7,7 @@ use rem6_memory::{AccessSize, Address, AgentId, MemoryError, MemoryRequestId, Tr
 use rem6_mmio::MmioError;
 use rem6_transport::{MemoryRouteId, TransportEndpointId, TransportError};
 
-use crate::{CpuId, CpuTranslationFrontendError};
+use crate::{CpuId, CpuTranslationFrontendError, GShareBranchPredictorError};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CpuError {
@@ -212,6 +212,7 @@ pub enum RiscvCpuError {
         error: RiscvPmaError,
     },
     Cpu(CpuError),
+    GShareBranchPredictor(GShareBranchPredictorError),
     Isa(RiscvError),
     Memory(MemoryError),
     Mmio(MmioError),
@@ -337,6 +338,7 @@ impl fmt::Display for RiscvCpuError {
                 fetch.agent().get()
             ),
             Self::Cpu(error) => write!(formatter, "{error}"),
+            Self::GShareBranchPredictor(error) => write!(formatter, "{error}"),
             Self::Isa(error) => write!(formatter, "{error}"),
             Self::Memory(error) => write!(formatter, "{error}"),
             Self::Mmio(error) => write!(formatter, "{error}"),
@@ -350,6 +352,7 @@ impl Error for RiscvCpuError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Cpu(error) => Some(error),
+            Self::GShareBranchPredictor(error) => Some(error),
             Self::DataTranslation(error) => Some(error),
             Self::FetchPmpAccess { error, .. } => Some(error),
             Self::FetchPmaAccess { error, .. } => Some(error),

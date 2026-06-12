@@ -1362,7 +1362,9 @@ fn riscv_core_does_not_train_branch_predictor_for_interrupted_branch() {
     ));
     assert_eq!(interrupted.execution().next_pc(), 0);
     assert_eq!(interrupted.branch_update(), None);
+    assert_eq!(interrupted.gshare_branch_update(), None);
     assert_eq!(core.branch_predictor_snapshot().update_count(), 0);
+    assert_eq!(core.gshare_branch_predictor_snapshot().update_count(), 0);
 }
 
 #[test]

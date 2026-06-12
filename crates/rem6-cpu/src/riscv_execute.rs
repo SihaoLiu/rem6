@@ -3,7 +3,7 @@ use rem6_memory::{AccessSize, Address, MemoryRequestId};
 
 use crate::{
     BranchUpdate, CpuFetchEvent, CpuFetchEventKind, CpuFetchRecord, RiscvCore, RiscvCoreState,
-    RiscvCpuError, RiscvCpuExecutionEvent,
+    RiscvCpuError, RiscvCpuExecutionEvent, RiscvGShareBranchUpdate, RISCV_LOCAL_GSHARE_THREAD,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -134,13 +134,14 @@ impl RiscvCore {
             state.pending_trap = Some(trap);
         }
         state.apply_riscv_system_event(execution.system_event());
-        let branch_update = retire_branch_prediction(state, fetch.pc(), instruction, &execution);
+        let retired_branch = retire_branch_predictions(state, fetch.pc(), instruction, &execution)?;
 
-        let event = RiscvCpuExecutionEvent::with_branch_update(
+        let event = RiscvCpuExecutionEvent::with_branch_updates(
             fetch.clone(),
             instruction,
             execution,
-            branch_update,
+            retired_branch.branch_update,
+            retired_branch.gshare_branch_update,
         );
         state
             .executed_fetches
@@ -150,21 +151,29 @@ impl RiscvCore {
     }
 }
 
-fn retire_branch_prediction(
+struct RetiredBranchUpdates {
+    branch_update: Option<BranchUpdate>,
+    gshare_branch_update: Option<RiscvGShareBranchUpdate>,
+}
+
+fn retire_branch_predictions(
     state: &mut RiscvCoreState,
     pc: Address,
     instruction: RiscvInstruction,
     execution: &rem6_isa_riscv::RiscvExecutionRecord,
-) -> Option<BranchUpdate> {
+) -> Result<RetiredBranchUpdates, RiscvCpuError> {
     if execution.trap().is_some() {
-        return None;
+        return Ok(RetiredBranchUpdates {
+            branch_update: None,
+            gshare_branch_update: None,
+        });
     }
 
     let sequential_pc = pc
         .get()
         .wrapping_add(u64::from(execution.instruction_bytes()));
     let next_pc = execution.next_pc();
-    let (actual_taken, actual_target) = match instruction {
+    let (conditional, actual_taken, actual_target) = match instruction {
         RiscvInstruction::Beq { .. }
         | RiscvInstruction::Bne { .. }
         | RiscvInstruction::Blt { .. }
@@ -172,17 +181,47 @@ fn retire_branch_prediction(
         | RiscvInstruction::Bltu { .. }
         | RiscvInstruction::Bgeu { .. } => {
             let taken = next_pc != sequential_pc;
-            (taken, taken.then_some(Address::new(next_pc)))
+            (true, taken, taken.then_some(Address::new(next_pc)))
         }
         RiscvInstruction::Jal { .. } | RiscvInstruction::Jalr { .. } => {
-            (true, Some(Address::new(next_pc)))
+            (false, true, Some(Address::new(next_pc)))
         }
-        _ => return None,
+        _ => {
+            return Ok(RetiredBranchUpdates {
+                branch_update: None,
+                gshare_branch_update: None,
+            });
+        }
     };
 
-    Some(
+    let branch_update = state
+        .branch_predictor
+        .update(pc, actual_taken, actual_target);
+    let prediction = if conditional {
         state
-            .branch_predictor
-            .update(pc, actual_taken, actual_target),
-    )
+            .gshare_branch_predictor
+            .predict(RISCV_LOCAL_GSHARE_THREAD, pc)
+    } else {
+        state
+            .gshare_branch_predictor
+            .predict_unconditional(RISCV_LOCAL_GSHARE_THREAD, pc)
+    }
+    .map_err(RiscvCpuError::GShareBranchPredictor)?;
+    let history_update = state
+        .gshare_branch_predictor
+        .update_history(prediction.history(), actual_taken)
+        .map_err(RiscvCpuError::GShareBranchPredictor)?;
+    let training_update = state
+        .gshare_branch_predictor
+        .train(prediction.history(), actual_taken, false)
+        .map_err(RiscvCpuError::GShareBranchPredictor)?;
+
+    Ok(RetiredBranchUpdates {
+        branch_update: Some(branch_update),
+        gshare_branch_update: Some(RiscvGShareBranchUpdate::new(
+            prediction,
+            history_update,
+            training_update,
+        )),
+    })
 }

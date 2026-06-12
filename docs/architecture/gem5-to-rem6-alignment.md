@@ -829,10 +829,10 @@ isolated bugs:
   taken/target, repair target, and younger flushed instructions are evidence,
   while correct predictions remain evidence-only and only mismatches reuse the
   typed redirect path. The atomic `RiscvCore` retire path also trains the base
-  two-bit `BranchPredictor` from real retired conditional branches, `jal`, and
-  `jalr`, and attaches the predictor update to the execution event; speculative
-  fetch steering, branch-history rollback, and ROB/LSQ-backed O3 commit remain
-  open integration work.
+  two-bit `BranchPredictor` and GShare predictor from real retired conditional
+  branches, `jal`, and `jalr`, and attaches both predictor updates to the
+  execution event; speculative fetch steering, branch-history rollback, and
+  ROB/LSQ-backed O3 commit remain open integration work.
   Public gem5 issue #2907 reports `vcompress.vm` overwriting destination tail
   elements under tail-undisturbed policy. The local reference fills a static
   compress buffer and also writes `Vd_vu[i]` while scanning selected source

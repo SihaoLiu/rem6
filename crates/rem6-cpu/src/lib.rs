@@ -4,9 +4,9 @@ use std::sync::{Arc, Mutex};
 
 use rem6_boot::BootImage;
 use rem6_isa_riscv::{
-    FloatRegister, MemoryAccessKind, Register, RiscvExecutionRecord, RiscvHartState,
-    RiscvInstruction, RiscvPmaError, RiscvPmaRange, RiscvPmaTable, RiscvPmpConfig, RiscvPmpError,
-    RiscvPmpSnapshot, RiscvPmpTable, RiscvPrivilegeMode, RiscvTrap, RiscvTrapKind,
+    FloatRegister, MemoryAccessKind, Register, RiscvHartState, RiscvPmaError, RiscvPmaRange,
+    RiscvPmaTable, RiscvPmpConfig, RiscvPmpError, RiscvPmpSnapshot, RiscvPmpTable,
+    RiscvPrivilegeMode, RiscvTrap, RiscvTrapKind,
 };
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionId, PartitionedScheduler,
@@ -43,6 +43,7 @@ mod riscv_cluster_run;
 mod riscv_data_access;
 mod riscv_data_issue;
 mod riscv_execute;
+mod riscv_execution_event;
 mod riscv_fetch;
 mod riscv_htm;
 mod riscv_reservation;
@@ -144,6 +145,9 @@ pub use riscv_data_access::{
     RiscvDataAccessEvent, RiscvDataAccessEventKind, RiscvDataAccessRecord, RiscvDataAccessTarget,
     RiscvLoadReservation,
 };
+pub use riscv_execution_event::{
+    RiscvCoreDriveAction, RiscvCpuExecutionEvent, RiscvGShareBranchUpdate,
+};
 pub use riscv_sc_progress::{
     RiscvStoreConditionalFailureDiagnostic, RiscvStoreConditionalFailureStreak,
     RiscvStoreConditionalProgress, RiscvStoreConditionalProgressCheckpointPayload,
@@ -215,6 +219,8 @@ pub struct CpuResetState {
 
 pub const DEFAULT_RISCV_PMP_ENTRIES: usize = 16;
 pub const DEFAULT_RISCV_BRANCH_PREDICTOR_ENTRIES: usize = 1024;
+pub const DEFAULT_RISCV_GSHARE_BRANCH_PREDICTOR_ENTRIES: usize = 1024;
+pub const RISCV_LOCAL_GSHARE_THREAD: CpuId = CpuId::new(0);
 
 impl CpuResetState {
     pub const fn new(cpu: CpuId, partition: PartitionId, agent: AgentId, entry: Address) -> Self {
@@ -1049,6 +1055,14 @@ impl RiscvCore {
             .snapshot()
     }
 
+    pub fn gshare_branch_predictor_snapshot(&self) -> GShareBranchPredictorSnapshot {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .gshare_branch_predictor
+            .snapshot()
+    }
+
     pub(crate) fn invalidate_load_reservation_if_overlaps(
         &self,
         address: Address,
@@ -1133,6 +1147,7 @@ struct RiscvCoreState {
     htm: HtmTransactionState,
     htm_hart_checkpoint: Option<RiscvHartState>,
     branch_predictor: BranchPredictor,
+    gshare_branch_predictor: GShareBranchPredictor,
     events: Vec<RiscvCpuExecutionEvent>,
     data_events: Vec<RiscvDataAccessEvent>,
     pma: RiscvPmaTable,
@@ -1161,87 +1176,16 @@ impl RiscvCoreState {
                 BranchPredictorConfig::new(DEFAULT_RISCV_BRANCH_PREDICTOR_ENTRIES)
                     .expect("default RISC-V branch predictor entries are valid"),
             ),
+            gshare_branch_predictor: GShareBranchPredictor::new(
+                GShareBranchPredictorConfig::new(1, DEFAULT_RISCV_GSHARE_BRANCH_PREDICTOR_ENTRIES)
+                    .expect("default RISC-V gshare branch predictor config is valid"),
+            ),
             events: Vec::new(),
             data_events: Vec::new(),
             pma: RiscvPmaTable::new(),
             pmp: RiscvPmpTable::new(DEFAULT_RISCV_PMP_ENTRIES)
                 .expect("default RISC-V PMP entry count is valid"),
         }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RiscvCpuExecutionEvent {
-    fetch: CpuFetchEvent,
-    instruction: RiscvInstruction,
-    execution: RiscvExecutionRecord,
-    branch_update: Option<BranchUpdate>,
-    counts_as_retired_instruction: bool,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum RiscvCoreDriveAction {
-    FetchIssued { event: PartitionEventId },
-    InstructionExecuted(Box<RiscvCpuExecutionEvent>),
-    DataAccessIssued { event: PartitionEventId },
-}
-
-impl RiscvCpuExecutionEvent {
-    pub const fn new(
-        fetch: CpuFetchEvent,
-        instruction: RiscvInstruction,
-        execution: RiscvExecutionRecord,
-    ) -> Self {
-        Self::with_branch_update(fetch, instruction, execution, None)
-    }
-
-    pub const fn with_branch_update(
-        fetch: CpuFetchEvent,
-        instruction: RiscvInstruction,
-        execution: RiscvExecutionRecord,
-        branch_update: Option<BranchUpdate>,
-    ) -> Self {
-        Self::with_retired_instruction_counting(fetch, instruction, execution, branch_update, true)
-    }
-
-    pub const fn with_retired_instruction_counting(
-        fetch: CpuFetchEvent,
-        instruction: RiscvInstruction,
-        execution: RiscvExecutionRecord,
-        branch_update: Option<BranchUpdate>,
-        counts_as_retired_instruction: bool,
-    ) -> Self {
-        Self {
-            fetch,
-            instruction,
-            execution,
-            branch_update,
-            counts_as_retired_instruction,
-        }
-    }
-
-    pub fn fetch(&self) -> &CpuFetchEvent {
-        &self.fetch
-    }
-
-    pub fn fetch_pc(&self) -> Address {
-        self.fetch.pc()
-    }
-
-    pub const fn instruction(&self) -> RiscvInstruction {
-        self.instruction
-    }
-
-    pub fn execution(&self) -> &RiscvExecutionRecord {
-        &self.execution
-    }
-
-    pub fn branch_update(&self) -> Option<&BranchUpdate> {
-        self.branch_update.as_ref()
-    }
-
-    pub const fn counts_as_retired_instruction(&self) -> bool {
-        self.counts_as_retired_instruction
     }
 }
 
