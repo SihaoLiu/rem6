@@ -8,6 +8,8 @@ mod gups;
 mod load;
 #[path = "cli_run/riscv_se_stdio.rs"]
 mod riscv_se_stdio;
+#[path = "cli_run/riscv_se_time.rs"]
+mod riscv_se_time;
 #[path = "cli_run/support.rs"]
 mod support;
 #[path = "cli_run/trace_replay.rs"]
