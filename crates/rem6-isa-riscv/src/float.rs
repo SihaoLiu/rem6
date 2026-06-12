@@ -584,6 +584,14 @@ pub(crate) fn binary_exception_flags(instruction: RiscvInstruction, lhs: u64, rh
     }
 }
 
+pub(crate) fn unary_exception_flags(instruction: RiscvInstruction, value: u64) -> u64 {
+    match instruction {
+        RiscvInstruction::FloatSqrtS { .. } => sqrt_exception_flags_single(value),
+        RiscvInstruction::FloatSqrtD { .. } => sqrt_exception_flags_double(value),
+        _ => 0,
+    }
+}
+
 pub(crate) fn ternary_exception_flags(
     instruction: RiscvInstruction,
     lhs: u64,
@@ -671,6 +679,23 @@ fn minmax_exception_flags_single(lhs: u64, rhs: u64) -> u64 {
 
 fn minmax_exception_flags_double(lhs: u64, rhs: u64) -> u64 {
     if is_signaling_nan_double(lhs) || is_signaling_nan_double(rhs) {
+        FLOAT_FLAG_INVALID
+    } else {
+        0
+    }
+}
+
+fn sqrt_exception_flags_single(value: u64) -> u64 {
+    let value = unbox_single(value);
+    if is_signaling_nan_single(value) || is_negative_nonzero_non_nan_single(value) {
+        FLOAT_FLAG_INVALID
+    } else {
+        0
+    }
+}
+
+fn sqrt_exception_flags_double(value: u64) -> u64 {
+    if is_signaling_nan_double(value) || is_negative_nonzero_non_nan_double(value) {
         FLOAT_FLAG_INVALID
     } else {
         0
@@ -1187,6 +1212,14 @@ fn has_single_sign(value: u32) -> bool {
 
 fn has_double_sign(value: u64) -> bool {
     value & DOUBLE_SIGN_BIT != 0
+}
+
+fn is_negative_nonzero_non_nan_single(value: u32) -> bool {
+    has_single_sign(value) && value & !SINGLE_SIGN_BIT != 0 && !is_nan_single(value)
+}
+
+fn is_negative_nonzero_non_nan_double(value: u64) -> bool {
+    has_double_sign(value) && value & !DOUBLE_SIGN_BIT != 0 && !is_nan_double(value)
 }
 
 const SINGLE_BOX_MASK: u64 = 0xffff_ffff_0000_0000;

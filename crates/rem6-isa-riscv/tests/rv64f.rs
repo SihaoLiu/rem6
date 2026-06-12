@@ -621,6 +621,57 @@ fn hart_executes_rv64f_sqrt_and_treats_unboxed_inputs_as_nan() {
 }
 
 #[test]
+fn hart_rv64f_sqrt_raises_invalid_for_negative_inputs_and_signaling_nan() {
+    let mut hart = RiscvHartState::new(0x8000);
+    hart.write_float(freg(1), f32_box(-4.0));
+
+    hart.execute(RiscvInstruction::FloatSqrtS {
+        rd: freg(2),
+        rs1: freg(1),
+    })
+    .unwrap();
+    assert_eq!(hart.read_float(freg(2)), box_single(0x7fc0_0000));
+    assert_eq!(hart.float_status().fflags(), FLOAT_FLAG_INVALID);
+
+    hart.set_float_status(rem6_isa_riscv::RiscvFloatStatus::new(0));
+    hart.write_float(freg(3), f32_box(-0.0));
+    hart.execute(RiscvInstruction::FloatSqrtS {
+        rd: freg(4),
+        rs1: freg(3),
+    })
+    .unwrap();
+    assert_eq!(hart.read_float(freg(4)), f32_box(-0.0));
+    assert_eq!(hart.float_status().fflags(), 0);
+
+    hart.write_float(freg(5), box_single(0x7fa0_0001));
+    hart.execute(RiscvInstruction::FloatSqrtS {
+        rd: freg(6),
+        rs1: freg(5),
+    })
+    .unwrap();
+    assert_eq!(hart.read_float(freg(6)), box_single(0x7fc0_0000));
+    assert_eq!(hart.float_status().fflags(), FLOAT_FLAG_INVALID);
+
+    hart.set_float_status(rem6_isa_riscv::RiscvFloatStatus::new(0));
+    hart.write_float(freg(7), box_single(0x7fc0_0001));
+    hart.execute(RiscvInstruction::FloatSqrtS {
+        rd: freg(8),
+        rs1: freg(7),
+    })
+    .unwrap();
+    assert_eq!(hart.float_status().fflags(), 0);
+
+    hart.write_float(freg(9), u64::from(0x7fa0_0001u32));
+    hart.execute(RiscvInstruction::FloatSqrtS {
+        rd: freg(10),
+        rs1: freg(9),
+    })
+    .unwrap();
+    assert_eq!(hart.read_float(freg(10)), box_single(0x7fc0_0000));
+    assert_eq!(hart.float_status().fflags(), 0);
+}
+
+#[test]
 fn hart_rv64f_sign_injection_treats_unboxed_source_as_nan() {
     let mut hart = RiscvHartState::new(0x8000);
     hart.write_float(freg(1), 1.0f32.to_bits().into());

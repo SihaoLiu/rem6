@@ -55,7 +55,10 @@ pub(crate) fn execute_float_register_instruction(
         | RiscvInstruction::FloatSqrtD { rs1, .. }
         | RiscvInstruction::FloatConvertSFromD { rs1, .. }
         | RiscvInstruction::FloatConvertDFromS { rs1, .. }) => {
-            let (rd, value) = float::float_register_write(instruction, hart.read_float(rs1), 0);
+            let lhs = hart.read_float(rs1);
+            let flags = float::unary_exception_flags(instruction, lhs);
+            let (rd, value) = float::float_register_write(instruction, lhs, 0);
+            hart.raise_float_exception_flags(flags);
             float::write_float_register(hart, writes, rd, value);
         }
         instruction @ (RiscvInstruction::FloatMoveSFromX { rs1, .. }
