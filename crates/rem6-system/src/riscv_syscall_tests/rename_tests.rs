@@ -1,7 +1,12 @@
 use super::*;
 
 const RISCV_LINUX_LINK_FOR_RENAME_TEST: u64 = 1025;
+const RISCV_LINUX_CHDIR_FOR_RENAME_TEST: u64 = 49;
+const RISCV_LINUX_MKDIRAT_FOR_RENAME_TEST: u64 = 34;
+const RISCV_LINUX_OPENAT_FOR_RENAME_TEST: u64 = 56;
 const RISCV_LINUX_RENAMEAT2_FOR_TEST: u64 = 276;
+const RISCV_LINUX_O_DIRECTORY_FOR_RENAME_TEST: u64 = 0o200000;
+const RISCV_LINUX_ENOTEMPTY_FOR_RENAME_TEST: u64 = 39;
 
 #[test]
 fn linux_table_renameat2_moves_registered_guest_file_path() {
@@ -162,6 +167,297 @@ fn linux_table_renameat2_same_file_hard_links_preserves_both_names() {
         state.guest_file_contents(b"alias.txt"),
         Some(&b"file-backed input\n"[..])
     );
+}
+
+#[test]
+fn linux_table_renameat2_moves_guest_directory_subtree() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let guest_memory_reader = c_string_reader(&[
+        (0x9000, b"a"),
+        (0x9010, b"a/b"),
+        (0x9020, b"c"),
+        (0x9030, b"c/b"),
+    ]);
+
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_MKDIRAT_FOR_RENAME_TEST,
+                [RISCV_LINUX_AT_FDCWD, 0x9000, 0o755, 0, 0, 0],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_MKDIRAT_FOR_RENAME_TEST,
+                [RISCV_LINUX_AT_FDCWD, 0x9010, 0o700, 0, 0, 0],
+            ),
+            &mut state,
+            8,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8008,
+                RISCV_LINUX_RENAMEAT2_FOR_TEST,
+                [
+                    RISCV_LINUX_AT_FDCWD,
+                    0x9000,
+                    RISCV_LINUX_AT_FDCWD,
+                    0x9020,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+            9,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert!(state.guest_path_stat(b"a").is_none());
+    assert!(state.guest_path_stat(b"a/b").is_none());
+    assert!(state.guest_path_stat(b"c").is_some());
+    assert!(state.guest_path_stat(b"c/b").is_some());
+}
+
+#[test]
+fn linux_table_renameat2_rebases_open_guest_directory_fd_path() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let guest_memory_reader =
+        c_string_reader(&[(0x9000, b"a"), (0x9010, b"c"), (0x9020, b"child")]);
+
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_MKDIRAT_FOR_RENAME_TEST,
+                [RISCV_LINUX_AT_FDCWD, 0x9000, 0o755, 0, 0, 0],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_OPENAT_FOR_RENAME_TEST,
+                [
+                    RISCV_LINUX_AT_FDCWD,
+                    0x9000,
+                    RISCV_LINUX_O_DIRECTORY_FOR_RENAME_TEST,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+            8,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 3 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8008,
+                RISCV_LINUX_RENAMEAT2_FOR_TEST,
+                [
+                    RISCV_LINUX_AT_FDCWD,
+                    0x9000,
+                    RISCV_LINUX_AT_FDCWD,
+                    0x9010,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+            9,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x800c,
+                RISCV_LINUX_MKDIRAT_FOR_RENAME_TEST,
+                [3, 0x9020, 0o700, 0, 0, 0],
+            ),
+            &mut state,
+            10,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert!(state.guest_path_stat(b"/a/child").is_none());
+    assert!(state.guest_path_stat(b"/c/child").is_some());
+}
+
+#[test]
+fn linux_table_renameat2_rebases_current_guest_directory_path() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let guest_memory_reader = c_string_reader(&[
+        (0x9000, b"a"),
+        (0x9010, b"/a"),
+        (0x9020, b"/c"),
+        (0x9030, b"child"),
+    ]);
+
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_MKDIRAT_FOR_RENAME_TEST,
+                [RISCV_LINUX_AT_FDCWD, 0x9000, 0o755, 0, 0, 0],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_CHDIR_FOR_RENAME_TEST,
+                [0x9000, 0, 0, 0, 0, 0],
+            ),
+            &mut state,
+            8,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8008,
+                RISCV_LINUX_RENAMEAT2_FOR_TEST,
+                [
+                    RISCV_LINUX_AT_FDCWD,
+                    0x9010,
+                    RISCV_LINUX_AT_FDCWD,
+                    0x9020,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+            9,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(state.current_directory(), b"/c");
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x800c,
+                RISCV_LINUX_MKDIRAT_FOR_RENAME_TEST,
+                [RISCV_LINUX_AT_FDCWD, 0x9030, 0o700, 0, 0, 0],
+            ),
+            &mut state,
+            10,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert!(state.guest_path_stat(b"/a/child").is_none());
+    assert!(state.guest_path_stat(b"/c/child").is_some());
+}
+
+#[test]
+fn linux_table_renameat2_rejects_empty_directory_over_nonempty_directory() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let guest_memory_reader = c_string_reader(&[
+        (0x9000, b"empty"),
+        (0x9010, b"target"),
+        (0x9020, b"target/child"),
+    ]);
+
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_MKDIRAT_FOR_RENAME_TEST,
+                [RISCV_LINUX_AT_FDCWD, 0x9000, 0o755, 0, 0, 0],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_MKDIRAT_FOR_RENAME_TEST,
+                [RISCV_LINUX_AT_FDCWD, 0x9010, 0o755, 0, 0, 0],
+            ),
+            &mut state,
+            8,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8008,
+                RISCV_LINUX_MKDIRAT_FOR_RENAME_TEST,
+                [RISCV_LINUX_AT_FDCWD, 0x9020, 0o755, 0, 0, 0],
+            ),
+            &mut state,
+            9,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x800c,
+                RISCV_LINUX_RENAMEAT2_FOR_TEST,
+                [
+                    RISCV_LINUX_AT_FDCWD,
+                    0x9000,
+                    RISCV_LINUX_AT_FDCWD,
+                    0x9010,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+            10,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_ENOTEMPTY_FOR_RENAME_TEST)
+        })
+    );
+    assert!(state.guest_path_stat(b"empty").is_some());
+    assert!(state.guest_path_stat(b"target").is_some());
+    assert!(state.guest_path_stat(b"target/child").is_some());
 }
 
 #[test]

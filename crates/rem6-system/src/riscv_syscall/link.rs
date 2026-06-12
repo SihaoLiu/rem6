@@ -2,7 +2,7 @@ use super::{
     linux_error, read_guest_c_string, RiscvGuestCStringError, RiscvGuestLinkError,
     RiscvGuestMemoryReader, RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_AT_FDCWD,
     RISCV_LINUX_EBADF, RISCV_LINUX_EEXIST, RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL,
-    RISCV_LINUX_ENAMETOOLONG, RISCV_LINUX_ENOENT, RISCV_LINUX_PATH_MAX,
+    RISCV_LINUX_ENAMETOOLONG, RISCV_LINUX_ENOENT, RISCV_LINUX_EPERM, RISCV_LINUX_PATH_MAX,
 };
 
 pub(super) const RISCV_LINUX_LINKAT: u64 = 37;
@@ -70,16 +70,22 @@ fn syscall_link_registered_paths(
     if source.is_empty() || destination.is_empty() {
         return linux_error(RISCV_LINUX_ENOENT);
     }
-    let source = match state.resolve_existing_guest_path(&source) {
-        Ok(Some(path)) => path,
-        Ok(None) => return linux_error(RISCV_LINUX_ENOENT),
+    let source = match state.resolve_guest_path(&source) {
+        Ok(path) => path,
         Err(error) => return linux_error(error.linux_error_code()),
+    };
+    if state.guest_directory_entries(&source).is_some() {
+        return linux_error(RISCV_LINUX_EPERM);
+    }
+    let Some(source) = state.existing_guest_path_key(&source) else {
+        return linux_error(RISCV_LINUX_ENOENT);
     };
     let destination = state.resolve_guest_path_for_create(&destination);
 
     match state.link_guest_path(&source, &destination) {
         Ok(()) => 0,
         Err(RiscvGuestLinkError::SourceMissing) => linux_error(RISCV_LINUX_ENOENT),
+        Err(RiscvGuestLinkError::SourceIsDirectory) => linux_error(RISCV_LINUX_EPERM),
         Err(RiscvGuestLinkError::DestinationExists) => linux_error(RISCV_LINUX_EEXIST),
     }
 }

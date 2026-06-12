@@ -15,7 +15,7 @@ const RISCV_LINUX_S_IFDIR: u32 = 0o040000;
 const RISCV_LINUX_S_IFREG: u32 = 0o100000;
 const RISCV_LINUX_S_IFLNK: u32 = 0o120000;
 const RISCV_LINUX_REGULAR_FILE_MODE: u32 = RISCV_LINUX_S_IFREG | 0o444;
-const RISCV_LINUX_DIRECTORY_MODE: u32 = RISCV_LINUX_S_IFDIR | 0o555;
+pub(super) const RISCV_LINUX_DEFAULT_DIRECTORY_PERMISSIONS: u32 = 0o555;
 const RISCV_LINUX_CHARACTER_DEVICE_MODE: u32 = RISCV_LINUX_S_IFCHR | 0o666;
 const RISCV_LINUX_SYMBOLIC_LINK_MODE: u32 = RISCV_LINUX_S_IFLNK | 0o777;
 pub(super) const RISCV_LINUX_FACCESSAT: u64 = 48;
@@ -77,11 +77,11 @@ impl RiscvGuestStat {
         }
     }
 
-    pub(super) fn directory(identity: RiscvSyscallIdentity, inode: u64) -> Self {
+    pub(super) fn directory(identity: RiscvSyscallIdentity, inode: u64, permissions: u32) -> Self {
         Self {
             device: 0,
             inode,
-            mode: RISCV_LINUX_DIRECTORY_MODE,
+            mode: RISCV_LINUX_S_IFDIR | (permissions & 0o777),
             link_count: 2,
             user_id: linux_stat_user_id(identity.user_id()),
             group_id: linux_stat_user_id(identity.group_id()),

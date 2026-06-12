@@ -13,6 +13,8 @@ mod cwd_tests;
 mod dirent_tests;
 #[path = "riscv_syscall_tests/link_tests.rs"]
 mod link_tests;
+#[path = "riscv_syscall_tests/mkdir_tests.rs"]
+mod mkdir_tests;
 #[path = "riscv_syscall_tests/mmap_tests.rs"]
 mod mmap_tests;
 #[path = "riscv_syscall_tests/rename_tests.rs"]

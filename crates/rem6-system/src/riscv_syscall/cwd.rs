@@ -102,7 +102,35 @@ impl RiscvSyscallState {
         &self,
         path: &[u8],
     ) -> Result<Vec<u8>, RiscvGuestPathResolutionError> {
-        self.canonical_guest_path(path)
+        self.resolve_guest_path_from_directory(self.current_directory(), path)
+    }
+
+    pub(super) fn resolve_guest_path_from_directory(
+        &self,
+        directory: &[u8],
+        path: &[u8],
+    ) -> Result<Vec<u8>, RiscvGuestPathResolutionError> {
+        let mut components = if path.starts_with(b"/") {
+            Vec::new()
+        } else {
+            path_components(directory)
+        };
+        let raw_components = path.split(|byte| *byte == b'/').collect::<Vec<_>>();
+        for (index, component) in raw_components.iter().enumerate() {
+            match *component {
+                b"" | b"." => {}
+                b".." => {
+                    components.pop();
+                }
+                _ => {
+                    components.push(component.to_vec());
+                    if index + 1 < raw_components.len() {
+                        self.require_guest_directory(&join_components(&components))?;
+                    }
+                }
+            }
+        }
+        Ok(join_components(&components))
     }
 
     pub(super) fn resolve_guest_path_for_create(&self, path: &[u8]) -> Vec<u8> {
@@ -148,7 +176,7 @@ impl RiscvSyscallState {
         Ok(self.guest_directory_paths.get(&description).cloned())
     }
 
-    fn existing_guest_path_key(&self, path: &[u8]) -> Option<Vec<u8>> {
+    pub(super) fn existing_guest_path_key(&self, path: &[u8]) -> Option<Vec<u8>> {
         if self.guest_path_exists(path) {
             return Some(path.to_vec());
         }
@@ -159,30 +187,6 @@ impl RiscvSyscallState {
         absolute.push(b'/');
         absolute.extend_from_slice(path);
         self.guest_path_exists(&absolute).then_some(absolute)
-    }
-
-    fn canonical_guest_path(&self, path: &[u8]) -> Result<Vec<u8>, RiscvGuestPathResolutionError> {
-        let mut components = if path.starts_with(b"/") {
-            Vec::new()
-        } else {
-            path_components(self.current_directory())
-        };
-        let raw_components = path.split(|byte| *byte == b'/').collect::<Vec<_>>();
-        for (index, component) in raw_components.iter().enumerate() {
-            match *component {
-                b"" | b"." => {}
-                b".." => {
-                    components.pop();
-                }
-                _ => {
-                    components.push(component.to_vec());
-                    if index + 1 < raw_components.len() {
-                        self.require_guest_directory(&join_components(&components))?;
-                    }
-                }
-            }
-        }
-        Ok(join_components(&components))
     }
 
     fn require_guest_directory(&self, path: &[u8]) -> Result<(), RiscvGuestPathResolutionError> {

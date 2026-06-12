@@ -12,6 +12,8 @@ mod riscv_se_chdir;
 mod riscv_se_getdents;
 #[path = "cli_run/riscv_se_links.rs"]
 mod riscv_se_links;
+#[path = "cli_run/riscv_se_mkdir.rs"]
+mod riscv_se_mkdir;
 #[path = "cli_run/riscv_se_rename.rs"]
 mod riscv_se_rename;
 #[path = "cli_run/riscv_se_resource.rs"]

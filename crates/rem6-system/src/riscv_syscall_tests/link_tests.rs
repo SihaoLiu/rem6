@@ -4,6 +4,8 @@ const RISCV_LINUX_LINK_FOR_TEST: u64 = 1025;
 const RISCV_LINUX_LINKAT_FOR_TEST: u64 = 37;
 const RISCV_LINUX_LSTAT_FOR_TEST: u64 = 1039;
 const RISCV_LINUX_EEXIST_FOR_TEST: u64 = 17;
+const RISCV_LINUX_EPERM_FOR_LINK_TEST: u64 = 1;
+const RISCV_LINUX_MKDIRAT_FOR_LINK_TEST: u64 = 34;
 
 #[test]
 fn linux_table_linkat_adds_registered_guest_file_alias() {
@@ -65,6 +67,83 @@ fn linux_table_linkat_rejects_relative_path_with_unknown_directory_fd() {
         })
     );
     assert!(state.guest_path_stat(b"alias.txt").is_none());
+}
+
+#[test]
+fn linux_table_linkat_rejects_guest_directory_source() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let guest_memory_reader = c_string_reader(&[(0x9000, b"made"), (0x9100, b"alias")]);
+
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_MKDIRAT_FOR_LINK_TEST,
+                [RISCV_LINUX_AT_FDCWD, 0x9000, 0o755, 0, 0, 0],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_LINKAT_FOR_TEST,
+                [
+                    RISCV_LINUX_AT_FDCWD,
+                    0x9000,
+                    RISCV_LINUX_AT_FDCWD,
+                    0x9100,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+            8,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EPERM_FOR_LINK_TEST)
+        })
+    );
+    assert!(state.guest_path_stat(b"alias").is_none());
+}
+
+#[test]
+fn linux_table_linkat_rejects_implicit_guest_directory_source() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_file(b"sub/child.txt", b"nested input\n");
+    let guest_memory_reader = c_string_reader(&[(0x9000, b"sub"), (0x9100, b"alias")]);
+
+    assert!(state.guest_path_stat(b"sub").is_some());
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_LINKAT_FOR_TEST,
+                [
+                    RISCV_LINUX_AT_FDCWD,
+                    0x9000,
+                    RISCV_LINUX_AT_FDCWD,
+                    0x9100,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EPERM_FOR_LINK_TEST)
+        })
+    );
+    assert!(state.guest_path_stat(b"alias").is_none());
 }
 
 #[test]
