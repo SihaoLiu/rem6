@@ -2,14 +2,18 @@ use std::sync::{Arc, Mutex};
 
 use rem6_boot::BootImage;
 use rem6_cpu::{
-    CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, RiscvCluster, RiscvCore,
-    RiscvCoreDriveAction, RiscvDataAccessEventKind, RiscvDataAccessTarget,
+    CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, CpuTranslationFrontend,
+    RiscvCluster, RiscvCore, RiscvCoreDriveAction, RiscvDataAccessEventKind, RiscvDataAccessTarget,
 };
 use rem6_isa_riscv::Register;
-use rem6_kernel::{PartitionId, PartitionedScheduler, ScheduledEventKind, SchedulerContext};
+use rem6_kernel::{
+    ParallelSchedulerContext, PartitionId, PartitionedScheduler, ScheduledEventKind,
+    SchedulerContext,
+};
 use rem6_memory::{
     AccessSize, Address, AddressRange, AgentId, CacheLineLayout, MemoryTargetId,
-    PartitionedMemoryStore,
+    PartitionedMemoryStore, TranslationPageMap, TranslationPageSize, TranslationQueueConfig,
+    TranslationTlbConfig,
 };
 use rem6_mmio::{MmioAccess, MmioBus, MmioRegisterBank, MmioRoute};
 use rem6_stats::{
@@ -178,6 +182,13 @@ fn memory_response(
 fn responder(
     store: Arc<Mutex<PartitionedMemoryStore>>,
 ) -> impl FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static {
+    move |delivery, _context| memory_response(&store, &delivery)
+}
+
+fn parallel_responder(
+    store: Arc<Mutex<PartitionedMemoryStore>>,
+) -> impl FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome + Send + 'static
+{
     move |delivery, _context| memory_response(&store, &delivery)
 }
 
@@ -413,6 +424,127 @@ fn riscv_system_run_driver_records_committed_instruction_stats() {
             &ProbePayload::Counter { amount: 1 },
             &ProbePayload::Counter { amount: 1 },
         ]
+    );
+}
+
+#[test]
+fn riscv_system_run_counts_data_translation_page_fault_once_in_instruction_stats() {
+    let host = PartitionId::new(3);
+    let source = GuestSourceId::new(33);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let fetch_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let data_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.dmem"),
+                PartitionId::new(0),
+                endpoint("l1d"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let core = RiscvCore::with_data_translation(
+        CpuCore::new(
+            CpuResetState::new(
+                CpuId::new(0),
+                PartitionId::new(0),
+                AgentId::new(7),
+                Address::new(0x8000),
+            ),
+            CpuFetchConfig::new(
+                endpoint("cpu0.ifetch"),
+                fetch_route,
+                layout(),
+                AccessSize::new(4).unwrap(),
+            ),
+        )
+        .unwrap(),
+        CpuDataConfig::new(endpoint("cpu0.dmem"), data_route, layout()),
+        CpuTranslationFrontend::with_tlb(
+            TranslationQueueConfig::new(4, 0).unwrap(),
+            TranslationTlbConfig::new(4).unwrap(),
+        ),
+    );
+    core.write_register(reg(2), 0x4000);
+    let cluster = RiscvCluster::new([core]).unwrap();
+    let store = loaded_program_store(&[(0x8000, i_type(8, 2, 0x3, 5, 0x03))]);
+    let page_map = TranslationPageMap::new(TranslationPageSize::new(4096).unwrap());
+    let mut stats = StatsRegistry::new();
+    let committed = stats
+        .register_counter("cpu0.committed_insts", "count")
+        .unwrap();
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        stats,
+    )));
+    let trap_port = RiscvTrapEventPort::new(
+        SystemHostEventPort::with_controller(host, 2, Arc::clone(&controller)).unwrap(),
+        source,
+    );
+    let driver = RiscvSystemRunDriver::with_instruction_stats(
+        trap_port,
+        RiscvInstructionStats::new([(CpuId::new(0), committed)])
+            .with_retired_inst_thresholds(vec![2]),
+    );
+
+    let run = driver
+        .drive_until_host_stop_parallel_with_data_translation(
+            &cluster,
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            &page_map,
+            |_cpu| parallel_responder(Arc::clone(&store)),
+            |_cpu| parallel_responder(Arc::clone(&store)),
+            20,
+            |cpu| GuestEventId::new(90 + u64::from(cpu.get())),
+        )
+        .unwrap();
+    let tick = run.final_tick().unwrap();
+
+    assert_eq!(
+        controller.lock().unwrap().executor().stats().snapshot(tick),
+        StatSnapshot::new(
+            tick,
+            0,
+            0,
+            vec![StatSample::new(
+                committed,
+                "cpu0.committed_insts",
+                "count",
+                1
+            )],
+        )
+    );
+    let retired = run
+        .retired_instruction_probes()
+        .expect("run should carry retired instruction probe evidence");
+    assert_eq!(retired.probes().events().len(), 1);
+    assert_eq!(
+        run.stop_reason(),
+        RiscvSystemRunStopReason::HostStop(StopRequest::new(
+            tick,
+            GuestEventId::new(90),
+            source,
+            13,
+        ))
     );
 }
 

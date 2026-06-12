@@ -1071,7 +1071,10 @@ fn core_data_access_counts(core: &RiscvCore) -> DataAccessCounts {
 fn committed_instructions_by_cpu(run: &RiscvSystemRun) -> BTreeMap<CpuId, u64> {
     let mut committed = BTreeMap::new();
     for event in run.turns().iter().flat_map(|turn| turn.core_events()) {
-        if matches!(event.action(), RiscvCoreDriveAction::InstructionExecuted(_)) {
+        let RiscvCoreDriveAction::InstructionExecuted(instruction) = event.action() else {
+            continue;
+        };
+        if instruction.counts_as_retired_instruction() {
             *committed.entry(event.cpu()).or_insert(0) += 1;
         }
     }
@@ -1083,6 +1086,9 @@ fn guest_trap_name(kind: GuestTrapKind) -> &'static str {
         GuestTrapKind::EnvironmentCall => "environment_call",
         GuestTrapKind::Breakpoint => "breakpoint",
         GuestTrapKind::IllegalInstruction => "illegal_instruction",
+        GuestTrapKind::InstructionPageFault => "instruction_page_fault",
+        GuestTrapKind::LoadPageFault => "load_page_fault",
+        GuestTrapKind::StorePageFault => "store_page_fault",
         GuestTrapKind::Interrupt { .. } => "interrupt",
     }
 }

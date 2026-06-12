@@ -889,6 +889,9 @@ pub const fn guest_trap_kind_from_riscv(kind: RiscvTrapKind) -> GuestTrapKind {
         RiscvTrapKind::EnvironmentCall => GuestTrapKind::EnvironmentCall,
         RiscvTrapKind::Breakpoint => GuestTrapKind::Breakpoint,
         RiscvTrapKind::IllegalInstruction => GuestTrapKind::IllegalInstruction,
+        RiscvTrapKind::InstructionPageFault { .. } => GuestTrapKind::InstructionPageFault,
+        RiscvTrapKind::LoadPageFault { .. } => GuestTrapKind::LoadPageFault,
+        RiscvTrapKind::StorePageFault { .. } => GuestTrapKind::StorePageFault,
         RiscvTrapKind::Interrupt { code } => GuestTrapKind::Interrupt { code },
     }
 }

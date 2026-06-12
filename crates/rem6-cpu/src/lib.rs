@@ -1127,6 +1127,7 @@ struct RiscvCoreState {
     ready_translated_data: BTreeMap<MemoryRequestId, riscv_translation::TranslatedDataAccess>,
     outstanding_data: BTreeMap<MemoryRequestId, riscv_data_issue::IssuedDataAccess>,
     pending_trap: Option<RiscvTrap>,
+    pending_trap_event: Option<RiscvCpuExecutionEvent>,
     reservation: Option<RiscvLoadReservation>,
     sc_progress: RiscvStoreConditionalProgress,
     htm: HtmTransactionState,
@@ -1151,6 +1152,7 @@ impl RiscvCoreState {
             ready_translated_data: BTreeMap::new(),
             outstanding_data: BTreeMap::new(),
             pending_trap: None,
+            pending_trap_event: None,
             reservation: None,
             sc_progress: RiscvStoreConditionalProgress::default(),
             htm: HtmTransactionState::new(),
@@ -1174,6 +1176,7 @@ pub struct RiscvCpuExecutionEvent {
     instruction: RiscvInstruction,
     execution: RiscvExecutionRecord,
     branch_update: Option<BranchUpdate>,
+    counts_as_retired_instruction: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1198,11 +1201,22 @@ impl RiscvCpuExecutionEvent {
         execution: RiscvExecutionRecord,
         branch_update: Option<BranchUpdate>,
     ) -> Self {
+        Self::with_retired_instruction_counting(fetch, instruction, execution, branch_update, true)
+    }
+
+    pub const fn with_retired_instruction_counting(
+        fetch: CpuFetchEvent,
+        instruction: RiscvInstruction,
+        execution: RiscvExecutionRecord,
+        branch_update: Option<BranchUpdate>,
+        counts_as_retired_instruction: bool,
+    ) -> Self {
         Self {
             fetch,
             instruction,
             execution,
             branch_update,
+            counts_as_retired_instruction,
         }
     }
 
@@ -1224,6 +1238,10 @@ impl RiscvCpuExecutionEvent {
 
     pub fn branch_update(&self) -> Option<&BranchUpdate> {
         self.branch_update.as_ref()
+    }
+
+    pub const fn counts_as_retired_instruction(&self) -> bool {
+        self.counts_as_retired_instruction
     }
 }
 

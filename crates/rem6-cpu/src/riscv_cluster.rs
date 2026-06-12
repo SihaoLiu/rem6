@@ -624,6 +624,13 @@ impl RiscvCluster {
         let mut transaction_cpus = Vec::new();
         let mut transactions = Vec::new();
         for (cpu, core) in &self.cores {
+            if let Some(event) = core.take_pending_trap_event() {
+                prepared_actions.push(PreparedParallelAction::Ready(RiscvClusterDriveEvent::new(
+                    *cpu,
+                    RiscvCoreDriveAction::InstructionExecuted(Box::new(event)),
+                )));
+                continue;
+            }
             if core.has_pending_fetch()
                 || core.has_outstanding_data_request()
                 || core.has_pending_trap()
@@ -644,7 +651,7 @@ impl RiscvCluster {
 
             let has_data_work = core.has_unissued_data_access() || core.has_pending_data_access();
             if has_data_work {
-                if let Some(prepared) = core
+                let prepared = core
                     .prepare_translated_data_parallel_access(
                         scheduler.now(),
                         transport,
@@ -652,8 +659,8 @@ impl RiscvCluster {
                         page_map,
                         data_responder(*cpu),
                     )
-                    .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?
-                {
+                    .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?;
+                if let Some(prepared) = prepared {
                     match prepared {
                         PreparedDataParallelAccess::Transaction { issue, transaction } => {
                             let transaction_index = transactions.len();
@@ -674,6 +681,13 @@ impl RiscvCluster {
                             });
                         }
                     }
+                } else if let Some(event) = core.take_pending_trap_event() {
+                    prepared_actions.push(PreparedParallelAction::Ready(
+                        RiscvClusterDriveEvent::new(
+                            *cpu,
+                            RiscvCoreDriveAction::InstructionExecuted(Box::new(event)),
+                        ),
+                    ));
                 }
                 continue;
             }
@@ -733,6 +747,13 @@ impl RiscvCluster {
         let mut transaction_cpus = Vec::new();
         let mut transactions = Vec::new();
         for (cpu, core) in &self.cores {
+            if let Some(event) = core.take_pending_trap_event() {
+                prepared_actions.push(PreparedParallelAction::Ready(RiscvClusterDriveEvent::new(
+                    *cpu,
+                    RiscvCoreDriveAction::InstructionExecuted(Box::new(event)),
+                )));
+                continue;
+            }
             if core.has_pending_fetch()
                 || core.has_outstanding_data_request()
                 || core.has_pending_trap()
@@ -765,8 +786,17 @@ impl RiscvCluster {
                     ));
                     continue;
                 }
+                if let Some(event) = core.take_pending_trap_event() {
+                    prepared_actions.push(PreparedParallelAction::Ready(
+                        RiscvClusterDriveEvent::new(
+                            *cpu,
+                            RiscvCoreDriveAction::InstructionExecuted(Box::new(event)),
+                        ),
+                    ));
+                    continue;
+                }
 
-                if let Some(prepared) = core
+                let prepared = core
                     .prepare_translated_data_parallel_access(
                         scheduler.now(),
                         transport,
@@ -774,8 +804,8 @@ impl RiscvCluster {
                         page_map,
                         data_responder(*cpu),
                     )
-                    .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?
-                {
+                    .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?;
+                if let Some(prepared) = prepared {
                     match prepared {
                         PreparedDataParallelAccess::Transaction { issue, transaction } => {
                             let transaction_index = transactions.len();
@@ -796,6 +826,13 @@ impl RiscvCluster {
                             });
                         }
                     }
+                } else if let Some(event) = core.take_pending_trap_event() {
+                    prepared_actions.push(PreparedParallelAction::Ready(
+                        RiscvClusterDriveEvent::new(
+                            *cpu,
+                            RiscvCoreDriveAction::InstructionExecuted(Box::new(event)),
+                        ),
+                    ));
                 }
                 continue;
             }

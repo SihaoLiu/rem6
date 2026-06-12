@@ -162,6 +162,9 @@ pub enum GuestTrapKind {
     EnvironmentCall,
     Breakpoint,
     IllegalInstruction,
+    InstructionPageFault,
+    LoadPageFault,
+    StorePageFault,
     Interrupt { code: u64 },
 }
 
@@ -172,6 +175,9 @@ impl GuestTrapKind {
             Self::Breakpoint => 1,
             Self::IllegalInstruction => 2,
             Self::Interrupt { .. } => 3,
+            Self::InstructionPageFault => 12,
+            Self::LoadPageFault => 13,
+            Self::StorePageFault => 15,
         }
     }
 }

@@ -11,7 +11,7 @@ use rem6_isa_riscv::{
     MemoryAccessKind, MemoryWidth, Register, RiscvPmaAccessKind, RiscvPmaError, RiscvPmpAccessKind,
     RiscvPmpAddressMode, RiscvPmpConfig, RiscvPmpError, RiscvPrivilegeMode, RiscvStatusWord,
     RiscvSv39AccessContext, RiscvSv39AccessKind, RiscvSv39PageFault, RiscvSv39PageTableLevel,
-    RiscvSv39Pte,
+    RiscvSv39Pte, RiscvTrapKind,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{
@@ -46,6 +46,16 @@ fn i_type(imm: i32, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
         | (u32::from(rs1) << 15)
         | (funct3 << 12)
         | (u32::from(rd) << 7)
+        | opcode
+}
+
+fn s_type(imm: i32, rs2: u8, rs1: u8, funct3: u32, opcode: u32) -> u32 {
+    let imm = (imm as u32) & 0x0fff;
+    ((imm >> 5) << 25)
+        | (u32::from(rs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (funct3 << 12)
+        | ((imm & 0x1f) << 7)
         | opcode
 }
 
@@ -433,6 +443,108 @@ fn riscv_core_translated_driver_waits_for_data_translation_before_next_fetch() {
         drive_one_translated_action(&core, store, &mut scheduler, &transport, &page_map),
         Some(RiscvCoreDriveAction::FetchIssued { .. })
     ));
+}
+
+#[test]
+fn riscv_core_data_translation_fault_enters_guest_load_page_fault_trap() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = translated_data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(2), 0x4000);
+    core.set_privilege_mode(RiscvPrivilegeMode::User);
+    core.set_machine_exception_delegation(1 << 13);
+    core.set_supervisor_trap_vector(0xa001);
+    core.set_status(RiscvStatusWord::new(0).with_sie(true));
+    let page_map = TranslationPageMap::new(TranslationPageSize::new(4096).unwrap());
+    let store = loaded_program_store(0x8000, &[i_type(8, 2, 0x3, 5, 0x03)], &[]);
+
+    assert!(matches!(
+        drive_one_translated_action(&core, store.clone(), &mut scheduler, &transport, &page_map),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+
+    assert!(matches!(
+        drive_one_translated_action(&core, store.clone(), &mut scheduler, &transport, &page_map),
+        Some(RiscvCoreDriveAction::InstructionExecuted(_))
+    ));
+
+    let action = drive_one_translated_action(&core, store, &mut scheduler, &transport, &page_map)
+        .expect("translation fault should be reported as a trap event");
+    let RiscvCoreDriveAction::InstructionExecuted(event) = action else {
+        panic!("translation fault should execute a trap entry, got {action:?}");
+    };
+    assert_eq!(event.fetch_pc(), Address::new(0x8000));
+    assert_eq!(
+        event.execution().trap().map(|trap| trap.kind()),
+        Some(RiscvTrapKind::LoadPageFault { address: 0x4008 })
+    );
+    assert!(!event.counts_as_retired_instruction());
+    assert_eq!(core.pending_trap(), event.execution().trap().copied());
+    assert_eq!(core.privilege_mode(), RiscvPrivilegeMode::Supervisor);
+    assert_eq!(core.supervisor_exception_pc(), 0x8000);
+    assert_eq!(core.supervisor_trap_cause(), 13);
+    assert_eq!(core.supervisor_trap_value(), 0x4008);
+    assert_eq!(core.pc(), Address::new(0xa000));
+    assert_eq!(core.read_register(reg(5)), 0);
+    assert!(!core.has_pending_data_access());
+    let execution_events = core.execution_events();
+    assert_eq!(execution_events.len(), 1);
+    assert_eq!(
+        execution_events[0]
+            .execution()
+            .trap()
+            .map(|trap| trap.kind()),
+        Some(RiscvTrapKind::LoadPageFault { address: 0x4008 })
+    );
+}
+
+#[test]
+fn riscv_core_data_translation_fault_enters_guest_store_page_fault_trap() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = translated_data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(2), 0x4000);
+    core.write_register(reg(3), 0x1122_3344_5566_7788);
+    core.set_privilege_mode(RiscvPrivilegeMode::User);
+    core.set_machine_exception_delegation(1 << 15);
+    core.set_supervisor_trap_vector(0xa000);
+    let page_map = TranslationPageMap::new(TranslationPageSize::new(4096).unwrap());
+    let store = loaded_program_store(0x8000, &[s_type(8, 3, 2, 0x3, 0x23)], &[]);
+
+    assert!(matches!(
+        drive_one_translated_action(&core, store.clone(), &mut scheduler, &transport, &page_map),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+
+    assert!(matches!(
+        drive_one_translated_action(&core, store.clone(), &mut scheduler, &transport, &page_map),
+        Some(RiscvCoreDriveAction::InstructionExecuted(_))
+    ));
+
+    let action = drive_one_translated_action(&core, store, &mut scheduler, &transport, &page_map)
+        .expect("store translation fault should be reported as a trap event");
+    let RiscvCoreDriveAction::InstructionExecuted(event) = action else {
+        panic!("store translation fault should execute a trap entry, got {action:?}");
+    };
+    assert_eq!(
+        event.execution().trap().map(|trap| trap.kind()),
+        Some(RiscvTrapKind::StorePageFault { address: 0x4008 })
+    );
+    assert!(!event.counts_as_retired_instruction());
+    assert_eq!(core.privilege_mode(), RiscvPrivilegeMode::Supervisor);
+    assert_eq!(core.supervisor_exception_pc(), 0x8000);
+    assert_eq!(core.supervisor_trap_cause(), 15);
+    assert_eq!(core.supervisor_trap_value(), 0x4008);
+    assert_eq!(core.pc(), Address::new(0xa000));
+    let execution_events = core.execution_events();
+    assert_eq!(execution_events.len(), 1);
+    assert_eq!(
+        execution_events[0]
+            .execution()
+            .trap()
+            .map(|trap| trap.kind()),
+        Some(RiscvTrapKind::StorePageFault { address: 0x4008 })
+    );
 }
 
 #[test]

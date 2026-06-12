@@ -5,6 +5,9 @@ pub enum RiscvTrapKind {
     IllegalInstruction,
     EnvironmentCall,
     Breakpoint,
+    InstructionPageFault { address: u64 },
+    LoadPageFault { address: u64 },
+    StorePageFault { address: u64 },
     Interrupt { code: u64 },
 }
 

@@ -1047,9 +1047,12 @@ impl RiscvSystemRunDriver {
             .core_events()
             .iter()
             .filter_map(|event| match event.action() {
-                RiscvCoreDriveAction::InstructionExecuted(instruction) => {
+                RiscvCoreDriveAction::InstructionExecuted(instruction)
+                    if instruction.counts_as_retired_instruction() =>
+                {
                     Some((tick, event.cpu(), instruction.fetch_pc().get()))
                 }
+                RiscvCoreDriveAction::InstructionExecuted(_) => None,
                 RiscvCoreDriveAction::FetchIssued { .. }
                 | RiscvCoreDriveAction::DataAccessIssued { .. } => None,
             })

@@ -5,7 +5,7 @@ use rem6_isa_riscv::{
     walk_sv39_page_table_with_context, RiscvPrivilegeMode, RiscvStatusWord, RiscvSv39AccessContext,
     RiscvSv39AccessKind, RiscvSv39PageFault, RiscvSv39PageTableLevel, RiscvSv39Pte,
     RiscvSv39VirtualAddress, RiscvSv39WalkAdvance as IsaSv39WalkAdvance, RiscvSv39WalkState,
-    RiscvSystemEvent,
+    RiscvSystemEvent, RiscvTrapKind,
 };
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionedScheduler, SchedulerContext, Tick,
@@ -30,7 +30,7 @@ use crate::{
     riscv_data_access, CpuDataConfig, CpuTranslatedMemoryOperation, CpuTranslatedMemoryRequest,
     CpuTranslationFaultRecord, CpuTranslationFrontend, CpuTranslationFrontendError,
     CpuTranslationOutcome, CpuTranslationRequest, RiscvCore, RiscvCoreDriveAction, RiscvCoreState,
-    RiscvCpuError, RiscvDataAccessTarget,
+    RiscvCpuError, RiscvCpuExecutionEvent, RiscvDataAccessTarget,
 };
 
 const RISCV_SV39_PTE_ACCESS_BYTES: u64 = 8;
@@ -47,6 +47,15 @@ impl PendingDataTranslation {
     pub(crate) const fn fetch_request(&self) -> MemoryRequestId {
         self.fetch_request
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum DataTranslationCompletion {
+    Access(TranslatedDataAccess),
+    Fault {
+        fetch_request: MemoryRequestId,
+        fault: CpuTranslationFaultRecord,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -586,6 +595,94 @@ pub(crate) struct TranslatedDataAccess {
 }
 
 impl RiscvCore {
+    pub fn privilege_mode(&self) -> RiscvPrivilegeMode {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .hart
+            .privilege_mode()
+    }
+
+    pub fn supervisor_exception_pc(&self) -> u64 {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .hart
+            .supervisor_exception_pc()
+    }
+
+    pub fn supervisor_trap_cause(&self) -> u64 {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .hart
+            .supervisor_trap_cause()
+    }
+
+    pub fn supervisor_trap_value(&self) -> u64 {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .hart
+            .supervisor_trap_value()
+    }
+
+    pub fn machine_exception_pc(&self) -> u64 {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .hart
+            .machine_exception_pc()
+    }
+
+    pub fn machine_trap_cause(&self) -> u64 {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .hart
+            .machine_trap_cause()
+    }
+
+    pub fn machine_trap_value(&self) -> u64 {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .hart
+            .machine_trap_value()
+    }
+
+    pub fn set_machine_exception_delegation(&self, delegation: u64) {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .hart
+            .set_machine_exception_delegation(delegation);
+    }
+
+    pub fn set_supervisor_trap_vector(&self, vector: u64) {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .hart
+            .set_supervisor_trap_vector(vector);
+    }
+
+    pub fn set_machine_trap_vector(&self, vector: u64) {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .hart
+            .set_machine_trap_vector(vector);
+    }
+
+    pub(crate) fn take_pending_trap_event(&self) -> Option<RiscvCpuExecutionEvent> {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .pending_trap_event
+            .take()
+    }
+
     pub fn with_data_translation(
         core: crate::CpuCore,
         data: CpuDataConfig,
@@ -685,6 +782,11 @@ impl RiscvCore {
         F: FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static,
         D: FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static,
     {
+        if let Some(event) = self.take_pending_trap_event() {
+            return Ok(Some(RiscvCoreDriveAction::InstructionExecuted(Box::new(
+                event,
+            ))));
+        }
         if self.core.has_pending_fetch() || self.has_outstanding_data_request() {
             return Ok(None);
         }
@@ -707,6 +809,11 @@ impl RiscvCore {
             data_responder,
         )? {
             return Ok(Some(RiscvCoreDriveAction::DataAccessIssued { event }));
+        }
+        if let Some(event) = self.take_pending_trap_event() {
+            return Ok(Some(RiscvCoreDriveAction::InstructionExecuted(Box::new(
+                event,
+            ))));
         }
         if had_unissued_data || self.has_pending_data_access() {
             return Ok(None);
@@ -950,12 +1057,21 @@ impl RiscvCore {
             .enqueue_or_translate_cached(tick, request)
             .map_err(RiscvCpuError::DataTranslation)?
         {
-            Some(outcome) => {
-                let translated = translated_data_from_outcome(pending, outcome)?;
-                state
-                    .ready_translated_data
-                    .insert(translated.fetch_request, translated);
-            }
+            Some(outcome) => match translated_data_from_outcome(pending, outcome) {
+                DataTranslationCompletion::Access(translated) => {
+                    state
+                        .ready_translated_data
+                        .insert(translated.fetch_request, translated);
+                }
+                DataTranslationCompletion::Fault {
+                    fetch_request,
+                    fault,
+                } => {
+                    let next_pc =
+                        record_data_translation_fault_state(&mut state, fetch_request, fault)?;
+                    self.core.set_pc(next_pc);
+                }
+            },
             None => {
                 state
                     .pending_data_translations
@@ -988,10 +1104,21 @@ impl RiscvCore {
                 .pending_data_translations
                 .remove(&translation_id)
                 .expect("ready data translation has matching RISC-V metadata");
-            let translated = translated_data_from_outcome(pending, outcome)?;
-            state
-                .ready_translated_data
-                .insert(translated.fetch_request, translated);
+            match translated_data_from_outcome(pending, outcome) {
+                DataTranslationCompletion::Access(translated) => {
+                    state
+                        .ready_translated_data
+                        .insert(translated.fetch_request, translated);
+                }
+                DataTranslationCompletion::Fault {
+                    fetch_request,
+                    fault,
+                } => {
+                    let next_pc =
+                        record_data_translation_fault_state(&mut state, fetch_request, fault)?;
+                    self.core.set_pc(next_pc);
+                }
+            }
         }
 
         Ok(())
@@ -1278,12 +1405,12 @@ fn ready_translated_fetch_request(state: &RiscvCoreState) -> Option<MemoryReques
 fn translated_data_from_outcome(
     pending: PendingDataTranslation,
     outcome: CpuTranslationOutcome,
-) -> Result<TranslatedDataAccess, RiscvCpuError> {
+) -> DataTranslationCompletion {
     match outcome {
         CpuTranslationOutcome::Mapped(mapped) => {
             debug_assert_eq!(mapped.memory_request_id(), pending.request_id);
             debug_assert_eq!(mapped.size(), pending.size);
-            Ok(TranslatedDataAccess {
+            DataTranslationCompletion::Access(TranslatedDataAccess {
                 request_id: mapped.memory_request_id(),
                 fetch_request: pending.fetch_request,
                 access: pending.access,
@@ -1291,15 +1418,62 @@ fn translated_data_from_outcome(
                 physical_address: mapped.physical_address(),
             })
         }
-        CpuTranslationOutcome::Fault(fault) => Err(data_translation_fault(
-            pending.fetch_request,
-            fault.fault().clone(),
-        )),
+        CpuTranslationOutcome::Fault(fault) => DataTranslationCompletion::Fault {
+            fetch_request: pending.fetch_request,
+            fault,
+        },
     }
 }
 
-fn data_translation_fault(fetch: MemoryRequestId, fault: TranslationFault) -> RiscvCpuError {
-    RiscvCpuError::DataTranslationFault { fetch, fault }
+fn record_data_translation_fault_state(
+    state: &mut RiscvCoreState,
+    fetch_request: MemoryRequestId,
+    fault: CpuTranslationFaultRecord,
+) -> Result<Address, RiscvCpuError> {
+    let original_index = state
+        .events
+        .iter()
+        .position(|event| event.fetch().request_id() == fetch_request)
+        .ok_or_else(|| RiscvCpuError::DataTranslationFault {
+            fetch: fetch_request,
+            fault: fault.fault().clone(),
+        })?;
+    let original = state.events[original_index].clone();
+    let trap_kind = data_translation_fault_trap_kind(&fault);
+    let execution = state.hart.enter_synchronous_trap(
+        original.instruction(),
+        original.execution().instruction_bytes(),
+        original.fetch_pc().get(),
+        trap_kind,
+    );
+    let event = RiscvCpuExecutionEvent::with_retired_instruction_counting(
+        original.fetch().clone(),
+        original.instruction(),
+        execution,
+        None,
+        false,
+    );
+    state.pending_trap = event.execution().trap().copied();
+    state.pending_trap_event = Some(event.clone());
+    state.issued_data_for_fetches.insert(fetch_request);
+    state.ready_translated_data.remove(&fetch_request);
+    state.events[original_index] = event;
+    Ok(Address::new(state.hart.pc()))
+}
+
+fn data_translation_fault_trap_kind(fault: &CpuTranslationFaultRecord) -> RiscvTrapKind {
+    let address = fault.fault().virtual_address().get();
+    match fault.operation() {
+        CpuTranslatedMemoryOperation::InstructionFetch => {
+            RiscvTrapKind::InstructionPageFault { address }
+        }
+        CpuTranslatedMemoryOperation::Read | CpuTranslatedMemoryOperation::LoadLocked => {
+            RiscvTrapKind::LoadPageFault { address }
+        }
+        CpuTranslatedMemoryOperation::Write
+        | CpuTranslatedMemoryOperation::StoreConditional
+        | CpuTranslatedMemoryOperation::Atomic => RiscvTrapKind::StorePageFault { address },
+    }
 }
 
 fn sv39_access_kind(operation: CpuTranslatedMemoryOperation) -> RiscvSv39AccessKind {

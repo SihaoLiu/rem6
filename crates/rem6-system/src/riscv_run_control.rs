@@ -254,7 +254,13 @@ impl RiscvSystemRunDriver {
 fn committed_instruction_count(turn: &RiscvClusterTurn) -> u64 {
     turn.core_events()
         .iter()
-        .filter(|event| matches!(event.action(), RiscvCoreDriveAction::InstructionExecuted(_)))
+        .filter(|event| match event.action() {
+            RiscvCoreDriveAction::InstructionExecuted(execution) => {
+                execution.counts_as_retired_instruction()
+            }
+            RiscvCoreDriveAction::FetchIssued { .. }
+            | RiscvCoreDriveAction::DataAccessIssued { .. } => false,
+        })
         .count() as u64
 }
 
@@ -262,7 +268,12 @@ fn last_committed_instruction_tick(turn: &RiscvClusterTurn) -> Option<u64> {
     turn.core_events()
         .iter()
         .filter_map(|event| match event.action() {
-            RiscvCoreDriveAction::InstructionExecuted(execution) => Some(execution.fetch().tick()),
+            RiscvCoreDriveAction::InstructionExecuted(execution)
+                if execution.counts_as_retired_instruction() =>
+            {
+                Some(execution.fetch().tick())
+            }
+            RiscvCoreDriveAction::InstructionExecuted(_) => None,
             RiscvCoreDriveAction::FetchIssued { .. }
             | RiscvCoreDriveAction::DataAccessIssued { .. } => None,
         })

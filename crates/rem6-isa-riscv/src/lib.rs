@@ -146,6 +146,16 @@ impl RiscvDecodedInstruction {
 }
 
 impl RiscvHartState {
+    pub fn enter_synchronous_trap(
+        &mut self,
+        instruction: RiscvInstruction,
+        instruction_bytes: u8,
+        pc: u64,
+        kind: RiscvTrapKind,
+    ) -> RiscvExecutionRecord {
+        enter_synchronous_trap(self, instruction, instruction_bytes, pc, kind)
+    }
+
     pub fn execute(
         &mut self,
         instruction: RiscvInstruction,

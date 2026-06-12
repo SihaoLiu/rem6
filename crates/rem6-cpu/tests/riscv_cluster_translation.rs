@@ -5,7 +5,7 @@ use rem6_cpu::{
     CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, CpuTranslationFrontend,
     RiscvCluster, RiscvClusterDriveEvent, RiscvCore, RiscvCoreDriveAction,
 };
-use rem6_isa_riscv::Register;
+use rem6_isa_riscv::{Register, RiscvPrivilegeMode, RiscvTrapKind};
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryRequestId, MemoryTargetId,
@@ -305,5 +305,108 @@ fn riscv_cluster_parallel_turns_issue_translated_data_accesses() {
                 Address::new(0x9018),
             ),
         ]
+    );
+}
+
+#[test]
+fn riscv_cluster_parallel_data_translation_fault_emits_guest_page_fault_trap() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let fetch_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let data_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.dmem"),
+                PartitionId::new(0),
+                endpoint("l1d0"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let core = translated_riscv_core(CoreSpec {
+        cpu: 0,
+        partition: 0,
+        agent: 7,
+        entry: 0x8000,
+        fetch_endpoint: "cpu0.ifetch",
+        fetch_route,
+        data_endpoint: "cpu0.dmem",
+        data_route,
+    });
+    core.write_register(reg(2), 0x4000);
+    core.set_privilege_mode(RiscvPrivilegeMode::User);
+    core.set_machine_exception_delegation(1 << 13);
+    core.set_supervisor_trap_vector(0xa000);
+    let cluster = RiscvCluster::new([core.clone()]).unwrap();
+    let page_map = TranslationPageMap::new(TranslationPageSize::new(4096).unwrap());
+    let store = store_with_programs_and_data(&[(0x8000, i_type(8, 2, 0x3, 5, 0x03))], &[]);
+
+    let mut trap = None;
+    for _ in 0..8 {
+        let turn = cluster
+            .drive_turn_parallel_with_data_translation(
+                &mut scheduler,
+                &transport,
+                MemoryTrace::new(),
+                MemoryTrace::new(),
+                &page_map,
+                |_cpu| {
+                    let store = store.clone();
+                    move |delivery, _context| memory_response(&store, &delivery)
+                },
+                |_cpu| {
+                    let store = store.clone();
+                    move |delivery, _context| memory_response(&store, &delivery)
+                },
+            )
+            .unwrap();
+        trap = turn
+            .core_events()
+            .iter()
+            .find_map(|event| match event.action() {
+                RiscvCoreDriveAction::InstructionExecuted(executed) => {
+                    let trap = executed.execution().trap().copied()?;
+                    assert!(!executed.counts_as_retired_instruction());
+                    Some(trap)
+                }
+                _ => None,
+            });
+        if trap.is_some() {
+            break;
+        }
+    }
+
+    assert_eq!(
+        trap.map(|trap| trap.kind()),
+        Some(RiscvTrapKind::LoadPageFault { address: 0x4008 })
+    );
+    assert_eq!(core.privilege_mode(), RiscvPrivilegeMode::Supervisor);
+    assert_eq!(core.supervisor_exception_pc(), 0x8000);
+    assert_eq!(core.supervisor_trap_cause(), 13);
+    assert_eq!(core.supervisor_trap_value(), 0x4008);
+    assert_eq!(core.pc(), Address::new(0xa000));
+    let execution_events = core.execution_events();
+    assert_eq!(execution_events.len(), 1);
+    assert_eq!(
+        execution_events[0]
+            .execution()
+            .trap()
+            .map(|trap| trap.kind()),
+        Some(RiscvTrapKind::LoadPageFault { address: 0x4008 })
     );
 }

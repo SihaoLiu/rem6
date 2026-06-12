@@ -58,6 +58,32 @@ fn riscv_trap_mapping_preserves_interrupt_code() {
     assert_eq!(GuestTrapKind::Interrupt { code: 5 }.default_stop_code(), 3);
 }
 
+#[test]
+fn riscv_trap_mapping_preserves_page_fault_kinds() {
+    assert_eq!(
+        guest_trap_kind_from_riscv(RiscvTrapKind::InstructionPageFault { address: 0x4100 }),
+        GuestTrapKind::InstructionPageFault
+    );
+    assert_eq!(
+        guest_trap_kind_from_riscv(RiscvTrapKind::LoadPageFault { address: 0x4200 }),
+        GuestTrapKind::LoadPageFault
+    );
+    assert_eq!(
+        guest_trap_kind_from_riscv(RiscvTrapKind::StorePageFault { address: 0x4300 }),
+        GuestTrapKind::StorePageFault
+    );
+    assert_eq!(
+        guest_trap_from_riscv(RiscvTrap::new(
+            RiscvTrapKind::LoadPageFault { address: 0x4200 },
+            0x7600,
+        )),
+        GuestTrap::new(GuestTrapKind::LoadPageFault, 0x7600)
+    );
+    assert_eq!(GuestTrapKind::InstructionPageFault.default_stop_code(), 12);
+    assert_eq!(GuestTrapKind::LoadPageFault.default_stop_code(), 13);
+    assert_eq!(GuestTrapKind::StorePageFault.default_stop_code(), 15);
+}
+
 fn loaded_store(entry: u64, instruction: u32) -> Arc<Mutex<PartitionedMemoryStore>> {
     let target = MemoryTargetId::new(0);
     let mut store = PartitionedMemoryStore::new();

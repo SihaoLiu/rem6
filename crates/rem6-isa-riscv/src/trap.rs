@@ -102,7 +102,7 @@ fn enter_supervisor_trap(
     let handler_pc = trap_handler_pc(hart.supervisor_trap_vector(), kind);
     hart.set_supervisor_exception_pc(pc);
     hart.set_supervisor_trap_cause(cause);
-    hart.set_supervisor_trap_value(0);
+    hart.set_supervisor_trap_value(trap_value(kind));
     hart.set_privilege_mode(RiscvPrivilegeMode::Supervisor);
     let status = hart.status();
     hart.set_status(
@@ -133,7 +133,7 @@ fn enter_machine_trap(
     let handler_pc = trap_handler_pc(hart.machine_trap_vector(), kind);
     hart.set_machine_exception_pc(pc);
     hart.set_machine_trap_cause(cause);
-    hart.set_machine_trap_value(0);
+    hart.set_machine_trap_value(trap_value(kind));
     hart.set_privilege_mode(RiscvPrivilegeMode::Machine);
     let status = hart.status();
     hart.set_status(
@@ -188,10 +188,25 @@ const fn machine_trap_cause(kind: RiscvTrapKind, privilege: RiscvPrivilegeMode) 
             RiscvPrivilegeMode::Machine => 11,
         },
         RiscvTrapKind::Breakpoint => 3,
+        RiscvTrapKind::InstructionPageFault { .. } => 12,
+        RiscvTrapKind::LoadPageFault { .. } => 13,
+        RiscvTrapKind::StorePageFault { .. } => 15,
         RiscvTrapKind::Interrupt { code } => interrupt_trap_cause(code),
     }
 }
 
 const fn interrupt_trap_cause(code: u64) -> u64 {
     (1_u64 << 63) | code
+}
+
+const fn trap_value(kind: RiscvTrapKind) -> u64 {
+    match kind {
+        RiscvTrapKind::InstructionPageFault { address }
+        | RiscvTrapKind::LoadPageFault { address }
+        | RiscvTrapKind::StorePageFault { address } => address,
+        RiscvTrapKind::IllegalInstruction
+        | RiscvTrapKind::EnvironmentCall
+        | RiscvTrapKind::Breakpoint
+        | RiscvTrapKind::Interrupt { .. } => 0,
+    }
 }
