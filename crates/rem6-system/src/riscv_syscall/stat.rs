@@ -1,4 +1,11 @@
-use super::{linux_error, RiscvGuestMemoryWriter, RiscvSyscallIdentity, RISCV_LINUX_EFAULT};
+use super::{
+    guest_fd_argument, linux_error, read_guest_c_string, RiscvGuestCStringError,
+    RiscvGuestMemoryReader, RiscvGuestMemoryWriter, RiscvSyscallIdentity, RiscvSyscallRequest,
+    RiscvSyscallState, RISCV_LINUX_AT_EMPTY_PATH, RISCV_LINUX_AT_FDCWD,
+    RISCV_LINUX_AT_NO_AUTOMOUNT, RISCV_LINUX_AT_SYMLINK_NOFOLLOW, RISCV_LINUX_EBADF,
+    RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL, RISCV_LINUX_ENAMETOOLONG, RISCV_LINUX_ENOENT,
+    RISCV_LINUX_PATH_MAX,
+};
 
 const RISCV_LINUX_STAT_BYTES: usize = 128;
 const RISCV_LINUX_STAT_BLOCK_BYTES: u64 = 512;
@@ -23,12 +30,17 @@ pub(super) struct RiscvGuestStat {
 }
 
 impl RiscvGuestStat {
-    pub(super) fn regular_file(size: u64, identity: RiscvSyscallIdentity, inode: u64) -> Self {
+    pub(super) fn regular_file(
+        size: u64,
+        identity: RiscvSyscallIdentity,
+        inode: u64,
+        link_count: u32,
+    ) -> Self {
         Self {
             device: 0,
             inode,
             mode: RISCV_LINUX_REGULAR_FILE_MODE,
-            link_count: 1,
+            link_count,
             user_id: linux_stat_user_id(identity.user_id()),
             group_id: linux_stat_user_id(identity.group_id()),
             special_device: 0,
@@ -85,6 +97,93 @@ pub(super) fn write_riscv_linux_stat(
         }
     }
     0
+}
+
+pub(super) fn syscall_newfstatat(
+    request: RiscvSyscallRequest,
+    state: &RiscvSyscallState,
+    guest_memory_reader: &RiscvGuestMemoryReader,
+    guest_memory_writer: &RiscvGuestMemoryWriter,
+) -> u64 {
+    let flags = request.argument(3);
+    if flags
+        & !(RISCV_LINUX_AT_EMPTY_PATH
+            | RISCV_LINUX_AT_NO_AUTOMOUNT
+            | RISCV_LINUX_AT_SYMLINK_NOFOLLOW)
+        != 0
+    {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+
+    let path = match read_guest_c_string(
+        guest_memory_reader,
+        request.argument(1),
+        RISCV_LINUX_PATH_MAX,
+    ) {
+        Ok(path) => path,
+        Err(RiscvGuestCStringError::Fault) => return linux_error(RISCV_LINUX_EFAULT),
+        Err(RiscvGuestCStringError::TooLong) => return linux_error(RISCV_LINUX_ENAMETOOLONG),
+    };
+
+    let stat = if path.is_empty() {
+        if flags & RISCV_LINUX_AT_EMPTY_PATH == 0 {
+            return linux_error(RISCV_LINUX_ENOENT);
+        }
+        let Some(fd) = guest_fd_argument(request.argument(0)) else {
+            return linux_error(RISCV_LINUX_EBADF);
+        };
+        match state.guest_fd_stat(fd) {
+            Ok(stat) => stat,
+            Err(_error) => return linux_error(RISCV_LINUX_EBADF),
+        }
+    } else {
+        if request.argument(0) != RISCV_LINUX_AT_FDCWD {
+            return linux_error(RISCV_LINUX_EBADF);
+        }
+        match state.guest_path_stat(&path) {
+            Some(stat) => stat,
+            None => return linux_error(RISCV_LINUX_ENOENT),
+        }
+    };
+
+    write_riscv_linux_stat(request.argument(2), stat, guest_memory_writer)
+}
+
+pub(super) fn syscall_stat(
+    request: RiscvSyscallRequest,
+    state: &RiscvSyscallState,
+    guest_memory_reader: &RiscvGuestMemoryReader,
+    guest_memory_writer: &RiscvGuestMemoryWriter,
+) -> u64 {
+    let path = match read_guest_c_string(
+        guest_memory_reader,
+        request.argument(0),
+        RISCV_LINUX_PATH_MAX,
+    ) {
+        Ok(path) => path,
+        Err(RiscvGuestCStringError::Fault) => return linux_error(RISCV_LINUX_EFAULT),
+        Err(RiscvGuestCStringError::TooLong) => return linux_error(RISCV_LINUX_ENAMETOOLONG),
+    };
+    let Some(stat) = state.guest_path_stat(&path) else {
+        return linux_error(RISCV_LINUX_ENOENT);
+    };
+
+    write_riscv_linux_stat(request.argument(1), stat, guest_memory_writer)
+}
+
+pub(super) fn syscall_fstat(
+    request: RiscvSyscallRequest,
+    state: &RiscvSyscallState,
+    guest_memory: &RiscvGuestMemoryWriter,
+) -> u64 {
+    let Some(fd) = guest_fd_argument(request.argument(0)) else {
+        return linux_error(RISCV_LINUX_EBADF);
+    };
+    let stat = match state.guest_fd_stat(fd) {
+        Ok(stat) => stat,
+        Err(_error) => return linux_error(RISCV_LINUX_EBADF),
+    };
+    write_riscv_linux_stat(request.argument(1), stat, guest_memory)
 }
 
 fn riscv_linux_stat_bytes(stat: RiscvGuestStat) -> [u8; RISCV_LINUX_STAT_BYTES] {
