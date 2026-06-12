@@ -179,6 +179,10 @@ impl RiscvCpuExecutionEvent {
         self.in_order_pipeline_cycle.as_ref()
     }
 
+    pub(crate) fn set_in_order_pipeline_cycle(&mut self, cycle: InOrderPipelineCycleRecord) {
+        self.in_order_pipeline_cycle = Some(cycle);
+    }
+
     pub const fn counts_as_retired_instruction(&self) -> bool {
         self.counts_as_retired_instruction
     }

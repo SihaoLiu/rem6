@@ -1,8 +1,10 @@
 use std::sync::{Arc, Mutex};
 
 use rem6_boot::BootImage;
-use rem6_cpu::{CpuCore, CpuFetchConfig, CpuId, CpuResetState, InOrderPipelineStage, RiscvCore};
-use rem6_isa_riscv::RiscvInstruction;
+use rem6_cpu::{
+    CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, InOrderPipelineStage, RiscvCore,
+};
+use rem6_isa_riscv::{Register, RiscvInstruction};
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryTargetId, PartitionedMemoryStore,
@@ -45,6 +47,21 @@ fn core(route: rem6_transport::MemoryRouteId, entry: u64) -> CpuCore {
     .unwrap()
 }
 
+fn data_core(
+    fetch_route: rem6_transport::MemoryRouteId,
+    data_route: rem6_transport::MemoryRouteId,
+    entry: u64,
+) -> RiscvCore {
+    RiscvCore::with_data(
+        core(fetch_route, entry),
+        CpuDataConfig::new(endpoint("cpu0.dmem"), data_route, layout()),
+    )
+}
+
+fn reg(index: u8) -> Register {
+    Register::new(index).unwrap()
+}
+
 fn loaded_store(entry: u64, instruction: u32) -> Arc<Mutex<PartitionedMemoryStore>> {
     let target = MemoryTargetId::new(0);
     let mut store = PartitionedMemoryStore::new();
@@ -62,6 +79,70 @@ fn loaded_store(entry: u64, instruction: u32) -> Arc<Mutex<PartitionedMemoryStor
         .load_into_partitioned_store(&mut store, target)
         .unwrap();
     Arc::new(Mutex::new(store))
+}
+
+fn loaded_store_with_data(
+    entry: u64,
+    instruction: u32,
+    data_address: u64,
+    data: Vec<u8>,
+) -> Arc<Mutex<PartitionedMemoryStore>> {
+    let target = MemoryTargetId::new(0);
+    let mut store = PartitionedMemoryStore::new();
+    store.add_partition(target, layout()).unwrap();
+    store
+        .map_region(
+            target,
+            Address::new(0x8000),
+            AccessSize::new(0x2000).unwrap(),
+        )
+        .unwrap();
+    BootImage::new(Address::new(entry))
+        .add_segment(Address::new(entry), instruction.to_le_bytes().to_vec())
+        .unwrap()
+        .add_segment(Address::new(data_address), data)
+        .unwrap()
+        .load_into_partitioned_store(&mut store, target)
+        .unwrap();
+    Arc::new(Mutex::new(store))
+}
+
+fn in_order_routes() -> (
+    PartitionedScheduler,
+    MemoryTransport,
+    rem6_transport::MemoryRouteId,
+    rem6_transport::MemoryRouteId,
+) {
+    let scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let fetch_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let data_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.dmem"),
+                PartitionId::new(0),
+                endpoint("l1d0"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    (scheduler, transport, fetch_route, data_route)
 }
 
 fn fetch_one(
@@ -86,6 +167,33 @@ fn fetch_one(
             TargetOutcome::Respond(response)
         },
     )
+    .unwrap();
+    scheduler.run_until_idle_conservative();
+}
+
+fn issue_one_data_access(
+    core: &RiscvCore,
+    store: Arc<Mutex<PartitionedMemoryStore>>,
+    scheduler: &mut PartitionedScheduler,
+    transport: &MemoryTransport,
+) {
+    core.issue_next_data_access(
+        scheduler,
+        transport,
+        MemoryTrace::new(),
+        move |delivery, _context| {
+            let response = store
+                .lock()
+                .unwrap()
+                .respond(delivery.request())
+                .unwrap()
+                .response()
+                .cloned()
+                .unwrap();
+            TargetOutcome::Respond(response)
+        },
+    )
+    .unwrap()
     .unwrap();
     scheduler.run_until_idle_conservative();
 }
@@ -115,6 +223,53 @@ fn riscv_retired_instruction_records_in_order_pipeline_cycle() {
 
     assert_eq!(event.instruction(), RiscvInstruction::decode(raw).unwrap());
     let record = event.in_order_pipeline_cycle().unwrap();
+    assert_eq!(record.cycle(), 0);
+    assert_eq!(record.before().cycle(), 0);
+    assert_eq!(
+        record
+            .before()
+            .in_flight()
+            .iter()
+            .map(|instruction| (instruction.sequence(), instruction.stage()))
+            .collect::<Vec<_>>(),
+        vec![(0, InOrderPipelineStage::Commit)]
+    );
+    assert_eq!(record.summary().retired_count(), 1);
+    assert_eq!(record.summary().advanced_count(), 1);
+    assert!(record.after().in_flight().is_empty());
+
+    let snapshot = core.in_order_pipeline_snapshot();
+    assert_eq!(snapshot.cycle(), 1);
+    assert!(snapshot.in_flight().is_empty());
+}
+
+#[test]
+fn riscv_completed_data_access_records_in_order_pipeline_cycle() {
+    let (mut scheduler, transport, fetch_route, data_route) = in_order_routes();
+    let raw = i_type(8, 2, 0x3, 5, 0x03);
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(2), 0x9000);
+    let store = loaded_store_with_data(
+        0x8000,
+        raw,
+        0x9008,
+        vec![0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11],
+    );
+
+    fetch_one(&core, store.clone(), &mut scheduler, &transport);
+    let event = core.execute_next_completed_fetch().unwrap().unwrap();
+
+    assert_eq!(event.instruction(), RiscvInstruction::decode(raw).unwrap());
+    assert!(event.in_order_pipeline_cycle().is_none());
+    assert_eq!(core.in_order_pipeline_snapshot().cycle(), 0);
+    assert_eq!(core.read_register(reg(5)), 0);
+
+    issue_one_data_access(&core, store, &mut scheduler, &transport);
+
+    assert_eq!(core.read_register(reg(5)), 0x1122_3344_5566_7788);
+    let events = core.execution_events();
+    assert_eq!(events.len(), 1);
+    let record = events[0].in_order_pipeline_cycle().unwrap();
     assert_eq!(record.cycle(), 0);
     assert_eq!(record.before().cycle(), 0);
     assert_eq!(

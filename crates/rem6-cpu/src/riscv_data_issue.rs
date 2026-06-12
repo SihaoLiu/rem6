@@ -16,8 +16,8 @@ use rem6_transport::{
 };
 
 use crate::{
-    riscv_data_access, CpuId, RiscvCore, RiscvCoreState, RiscvCpuError, RiscvDataAccessEvent,
-    RiscvDataAccessRecord, RiscvDataAccessTarget, RiscvLoadReservation,
+    riscv_data_access, riscv_execute, CpuId, RiscvCore, RiscvCoreState, RiscvCpuError,
+    RiscvDataAccessEvent, RiscvDataAccessRecord, RiscvDataAccessTarget, RiscvLoadReservation,
 };
 
 impl RiscvCore {
@@ -462,6 +462,7 @@ impl RiscvCore {
                     data.as_deref(),
                     "load response data",
                 );
+                record_data_retire_cycle(&mut state, &access);
                 state.data_events.push(RiscvDataAccessEvent::completed(
                     access.record(delivery.tick()),
                     data,
@@ -539,6 +540,31 @@ impl RiscvCore {
             }
         }
     }
+}
+
+fn record_data_retire_cycle(state: &mut RiscvCoreState, access: &IssuedDataAccess) {
+    let Some(index) = state
+        .events
+        .iter()
+        .position(|event| event.fetch().request_id() == access.fetch_request)
+    else {
+        debug_assert!(
+            false,
+            "completed data access must have a matching execution event"
+        );
+        return;
+    };
+    if state.events[index].in_order_pipeline_cycle().is_some()
+        || !state.events[index].counts_as_retired_instruction()
+    {
+        return;
+    }
+    let cycle = riscv_execute::record_retired_in_order_pipeline_cycle(
+        state,
+        access.fetch_request.sequence(),
+    )
+    .expect("completed data access records one in-order retire cycle");
+    state.events[index].set_in_order_pipeline_cycle(cycle);
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

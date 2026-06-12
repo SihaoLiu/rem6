@@ -162,7 +162,7 @@ impl RiscvCore {
     }
 }
 
-fn record_retired_in_order_pipeline_cycle(
+pub(crate) fn record_retired_in_order_pipeline_cycle(
     state: &mut RiscvCoreState,
     sequence: u64,
 ) -> Result<InOrderPipelineCycleRecord, RiscvCpuError> {
