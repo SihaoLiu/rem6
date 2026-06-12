@@ -1,12 +1,25 @@
 # gem5 to rem6 Migration
 
 This document is the current migration ledger from gem5 concepts and tests to
-rem6. It is the only architecture document that should change when migration
-coverage changes. Stable architecture, invariants, and design motivation belong
-in `docs/architecture/rem6-architecture.md`.
+rem6.
 
 The gem5 tree under `temp/reference_designs/gem5` is read-only audit input. Do
 not copy test binaries, generated outputs, or build products into rem6.
+
+## Document Boundary
+
+`docs/architecture/rem6-architecture.md` owns the stable architecture story:
+runtime shape, ownership model, invariants, and design motivation.
+
+This migration ledger owns changing state:
+
+- component scores and score calculations;
+- markdown checklists for migrated and missing behavior;
+- concise migrated, not migrated, evidence, and next-evidence notes;
+- gem5 test-anchor crosswalks and external-adapter rows.
+
+Do not duplicate the architecture document's invariant list here. Do not put
+current percentages or proof logs in the architecture document.
 
 ## Scoring Rubric
 
@@ -41,13 +54,29 @@ Detection-gated static newlib or qemu smoke tests count only for the narrow
 path they execute. Unknown-syscall records count as diagnostics and
 observability, not as implemented syscall coverage.
 
+## Score Audit Format
+
+Each component section below is the single source for that component's score.
+Audit it in this order:
+
+1. Count `[x]` items and total checklist items.
+2. Confirm the section-local `Score calculation` states the same fraction and
+   rounded raw percentage.
+3. Confirm the section-local `Score calculation` states the bucket cap label.
+4. Confirm the section header score is the raw percentage after the cap is
+   applied.
+5. Use `Not migrated` and `Next evidence` as the blocking-boundary summary.
+
+Do not add a second component-score table here; duplicated mutable scores drift
+from the checklist source.
+
 ## Component Progress
 
 ### RISC-V ISA and Privileged Substrate - 56% single-axis
 
 **Score calculation:** 5 of 9 items have executable evidence, or 56% raw.
-Coverage remains in the single-axis bucket because non-RISC-V ISAs and full
-RV64GC/vector parity are not present.
+The bucket cap is single-axis because non-RISC-V ISAs and full RV64GC/vector
+parity are not present.
 
 - [x] RV64 integer, atomic, CSR, trap, counter, WFI, fence, PMP/PMA slices have tests.
 - [x] RV64C integer/load-store/control-flow slices have tests.
@@ -75,8 +104,8 @@ privileged Linux trap and interrupt smoke tests.
 ### CPU Execution Models - 30% unit-slice
 
 **Score calculation:** 3 of 10 items have executable evidence, or 30% raw. The
-score stays in the unit-slice bucket because in-order and O3 state are not yet
-executable cycle-visible engines.
+bucket cap is unit-slice because in-order and O3 state are not yet executable
+cycle-visible engines.
 
 - [x] RISC-V atomic execution and parallel clusters execute real instructions.
 - [x] Data access issue/response and store-conditional progress diagnostics have tests.
@@ -105,8 +134,8 @@ ROB/LSQ-backed O3 run test.
 ### Memory, Cache, Coherence, Fabric, and DRAM - 45% single-axis
 
 **Score calculation:** 5 of 11 items have executable evidence, or 45% raw. The
-score stays below representative because full CPU-facing L1/L2/L3 plus NoC and
-DRAM is not the default instruction/data path.
+bucket cap is single-axis because full CPU-facing L1/L2/L3 plus NoC and DRAM
+is not the default instruction/data path.
 
 - [x] Memory stores, page maps, translation queues, and TLB state have tests.
 - [x] Cache banks model replacement, MSHRs, write queues, maintenance, sector and compressed tags.
@@ -137,9 +166,9 @@ multi-level cache and DRAM path with unified resource accounting.
 
 ### RISC-V SE, Workloads, and Linux Boot - 45% single-axis
 
-**Score calculation:** 5 of 11 items have executable evidence, or 45% raw.
-Static newlib smokes are high-value but tool-detected, so they do not raise the
-score beyond single-axis.
+**Score calculation:** 5 of 11 items have executable evidence, or 45% raw. The
+bucket cap is single-axis because static newlib smokes are high-value but
+tool-detected, and broad workload coverage is not present.
 
 - [x] User-mode ecalls reach `RiscvSyscallTable`.
 - [x] Startup stack, argv/envp/auxv, `brk`, `mmap`, stdio, file, vector I/O, time, cwd, `chdir`/`fchdir`, random, resource, and wait slices have tests.
@@ -174,8 +203,8 @@ runtime tests and a real Linux boot smoke.
 ### Devices and Platforms - 50% single-axis
 
 **Score calculation:** 5 of 10 items have executable evidence, or 50% raw. The
-score stays single-axis because real Linux driver interaction, host networking,
-non-RISC-V boards, and coherent DMA timing are not complete.
+bucket cap is single-axis because real Linux driver interaction, host
+networking, non-RISC-V boards, and coherent DMA timing are not complete.
 
 - [x] MMIO bus, UART, PL011, CLINT, PLIC, RTC, timers, and interrupt routes have tests.
 - [x] PCI, VirtIO MMIO/PCI, block, console, RNG, storage image, SimpleDisk, and IDE slices exist.
@@ -202,9 +231,8 @@ network evidence.
 ### Stats, Probes, Debug, Host Actions, and Checkpointing - 58% single-axis
 
 **Score calculation:** 7 of 12 items have executable evidence, or 58% raw. The
-score stays below representative because probe, debug, power, and checkpoint
-evidence is not yet integrated across CPU pipeline and cache/DRAM runtime
-state.
+bucket cap is single-axis because probe, debug, power, and checkpoint evidence
+is not yet integrated across CPU pipeline and cache/DRAM runtime state.
 
 - [x] Hierarchical stats, reset/dump history, and CLI stats artifacts exist.
 - [x] Probe registry plus real RISC-V retired-instruction and data-access producers exist.
@@ -236,9 +264,9 @@ GDB execution-control tests.
 ### Configuration, Resources, Suites, GPU, and Accelerators - 39% unit-slice
 
 **Score calculation:** 4 of 10 items have executable evidence, or 40% raw. The
-unit-slice bucket caps the score at 39% because current evidence is mostly
-typed declarations, routing, and summaries; real GPU ISA execution and broad
-resource acquisition are absent.
+bucket cap is unit-slice, which caps the score at 39%, because current evidence
+is mostly typed declarations, routing, and summaries; real GPU ISA execution
+and broad resource acquisition are absent.
 
 - [x] CLI `run`, `gups`, and `trace-replay` plus TOML configuration have tests.
 - [x] Workload manifests, resource identity, disk-image construction records, and suite planning exist.
@@ -310,7 +338,8 @@ component sections above define the auditable percentages.
 
 ### SystemC and TLM Adapters - 0% open
 
-**Score calculation:** 0 of 3 items have executable evidence, or 0% raw.
+**Score calculation:** 0 of 3 items have executable evidence, or 0% raw. The
+bucket cap is open because no typed adapter boundary exists.
 
 - [ ] A typed co-simulation adapter boundary exists.
 - [ ] Adapter event handoff has executable tests.
@@ -324,7 +353,8 @@ component sections above define the auditable percentages.
 
 ### SST Adapter - 0% open
 
-**Score calculation:** 0 of 3 items have executable evidence, or 0% raw.
+**Score calculation:** 0 of 3 items have executable evidence, or 0% raw. The
+bucket cap is open because no typed adapter boundary exists.
 
 - [ ] A typed SST adapter boundary exists.
 - [ ] SST traffic handoff has executable tests.
@@ -338,7 +368,9 @@ component sections above define the auditable percentages.
 
 ### Power and Physical-Design Export Adapters - 25% unit-slice
 
-**Score calculation:** 1 of 4 items have executable evidence, or 25% raw.
+**Score calculation:** 1 of 4 items have executable evidence, or 25% raw. The
+bucket cap is unit-slice because only typed export records have executable
+evidence.
 
 - [x] rem6-power can export typed power-analysis records.
 - [ ] McPAT-compatible ingestion/export parity is complete.
@@ -355,7 +387,9 @@ component sections above define the auditable percentages.
 
 ### Native Loader and Math Replacement - 50% single-axis
 
-**Score calculation:** 2 of 4 items have executable evidence, or 50% raw.
+**Score calculation:** 2 of 4 items have executable evidence, or 50% raw. The
+bucket cap is single-axis because loader and softfloat matrix breadth is not
+complete.
 
 - [x] Native ELF loading reaches executable RISC-V SE smoke paths.
 - [x] Native DTB handoff records exist.

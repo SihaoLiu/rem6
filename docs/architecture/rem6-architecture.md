@@ -2,13 +2,25 @@
 
 This document is the stable architecture overview for rem6. It explains the
 design problems inherited from gem5-style simulators, the rem6 runtime shape,
-and the invariants that production components must satisfy. It does not track
-current migration percentages; that belongs in
-`docs/architecture/gem5-to-rem6-migration.md`.
+and the invariants that production components must satisfy.
 
 The local gem5 reference tree under `temp/reference_designs/gem5` is audit
 input only. rem6 production code must not import it, execute it, depend on its
 build outputs, or require it at runtime.
+
+## Document Boundary
+
+`docs/architecture/` has two architecture-level documents:
+
+- `rem6-architecture.md` describes the stable simulator architecture, ownership
+  model, design invariants, and the gem5 pain points that rem6 is designed to
+  address.
+- `gem5-to-rem6-migration.md` describes current gem5-to-rem6 migration
+  progress, scoring, migrated behavior, missing behavior, and next evidence.
+
+This file should not carry migration percentages, current coverage claims, or
+proof logs. Those change with implementation progress and belong in the
+migration ledger.
 
 ## gem5 Pain Points
 
