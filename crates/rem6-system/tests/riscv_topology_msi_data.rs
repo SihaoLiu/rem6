@@ -1,7 +1,9 @@
 use rem6_boot::BootImage;
+use rem6_cache::MshrQueueConfig;
 use rem6_coherence::{
-    ParallelCoherenceRunHistory, PartitionedDirectoryLineHarness, TopologyCacheAgentConfig,
-    TopologyDirectoryConfig, TopologyDirectoryHarnessConfig, TopologyDramMemoryConfig,
+    MsiBankDirectoryHarness, ParallelCoherenceRunHistory, PartitionedDirectoryLineHarness,
+    TopologyCacheAgentConfig, TopologyDirectoryConfig, TopologyDirectoryHarnessConfig,
+    TopologyDramMemoryConfig,
 };
 use rem6_cpu::{
     CpuId, CpuResetState, RiscvClusterTopologyConfig, RiscvCoreTopologyConfig,
@@ -299,6 +301,42 @@ fn lr_sc_snoop_image() -> BootImage {
     image
 }
 
+fn lr_sc_bank_snoop_image() -> BootImage {
+    let mut image = BootImage::new(Address::new(0x8000))
+        .add_segment(
+            Address::new(0x8000),
+            word(atomic_type(0x02, false, false, 0, 2, 0x3, 5)),
+        )
+        .unwrap();
+    image = image
+        .add_segment(Address::new(0x8004), word(nop()))
+        .unwrap()
+        .add_segment(Address::new(0x8008), word(nop()))
+        .unwrap()
+        .add_segment(
+            Address::new(0x800c),
+            word(atomic_type(0x03, false, true, 6, 2, 0x3, 7)),
+        )
+        .unwrap()
+        .add_segment(Address::new(0x8010), word(0x0010_0073))
+        .unwrap();
+
+    for index in 0..2 {
+        image = image
+            .add_segment(Address::new(0x9000 + index * 4), word(nop()))
+            .unwrap();
+    }
+    image = image
+        .add_segment(Address::new(0x9008), word(s_type(0, 6, 2, 0x3, 0x23)))
+        .unwrap();
+    for index in 0..40 {
+        image = image
+            .add_segment(Address::new(0x900c + index * 4), word(nop()))
+            .unwrap();
+    }
+    image
+}
+
 fn code_dram_config() -> RiscvTopologyDramConfig {
     RiscvTopologyDramConfig::new(
         MemoryTargetId::new(0),
@@ -348,6 +386,19 @@ fn msi_data_harness(topology: &Topology) -> PartitionedDirectoryLineHarness {
         ),
     )
     .unwrap()
+}
+
+fn msi_bank_data_harness() -> MsiBankDirectoryHarness {
+    let mut harness = MsiBankDirectoryHarness::new_with_mshr(
+        layout(),
+        [agent(7), agent(8)],
+        MshrQueueConfig::new(2, 3, 0).unwrap(),
+    )
+    .unwrap();
+    harness
+        .insert_backing_line(Address::new(0x3000), (0..16).collect())
+        .unwrap();
+    harness
 }
 
 #[test]
@@ -432,6 +483,186 @@ fn topology_system_msi_snoop_invalidates_peer_lr_reservation_before_store_respon
                 .iter()
                 .any(|snoop| snoop.target() == agent(7))
     }));
+}
+
+#[test]
+fn topology_system_msi_bank_snoop_invalidates_peer_lr_reservation_before_later_sc() {
+    let topology = msi_topology();
+    let source = GuestSourceId::new(128);
+    let system = RiscvTopologySystem::with_min_remote_delay(
+        topology,
+        RiscvClusterTopologyConfig::new([
+            core_config(0, 0, 7, 0x8000),
+            core_config(1, 1, 8, 0x9000),
+        ]),
+        2,
+    )
+    .unwrap()
+    .with_boot_image_dram_memory(code_dram_config(), &lr_sc_bank_snoop_image())
+    .unwrap()
+    .with_msi_bank_data_cache(msi_bank_data_harness())
+    .unwrap()
+    .with_host_controller(
+        RiscvTopologyHostConfig::new(PartitionId::new(6), 2, source),
+        StatsRegistry::new(),
+    )
+    .unwrap();
+    let cpu0 = system.cluster().core(CpuId::new(0)).unwrap();
+    let cpu1 = system.cluster().core(CpuId::new(1)).unwrap();
+    cpu0.write_register(Register::new(2).unwrap(), 0x3000);
+    cpu0.write_register(Register::new(6).unwrap(), 0x0102_0304_0506_0708);
+    cpu1.write_register(Register::new(2).unwrap(), 0x3000);
+    cpu1.write_register(Register::new(6).unwrap(), 0x1112_1314_1516_1718);
+
+    let run = system
+        .drive_attached_until_host_stop_parallel(
+            Default::default(),
+            Default::default(),
+            260,
+            |cpu: CpuId| GuestEventId::new(1280 + u64::from(cpu.get())),
+        )
+        .unwrap();
+
+    assert_eq!(
+        run.stop_reason(),
+        RiscvSystemRunStopReason::HostStop(StopRequest::new(
+            run.final_tick().unwrap(),
+            GuestEventId::new(1280),
+            source,
+            1,
+        )),
+    );
+    assert_eq!(cpu0.read_register(Register::new(7).unwrap()), 1);
+    assert_eq!(cpu0.load_reservation(), None);
+    let cpu0_sc_failure_tick = cpu0
+        .data_access_events()
+        .into_iter()
+        .find(|event| {
+            event.kind() == RiscvDataAccessEventKind::ConditionalFailed
+                && event.operation() == MemoryOperation::StoreConditional
+        })
+        .expect("core0 store conditional failure")
+        .tick();
+    let cpu1_store_completion_tick = cpu1
+        .data_access_events()
+        .into_iter()
+        .find(|event| {
+            event.kind() == RiscvDataAccessEventKind::Completed
+                && event.operation() == MemoryOperation::Write
+        })
+        .expect("core1 store completion")
+        .tick();
+    assert!(
+        cpu1_store_completion_tick < cpu0_sc_failure_tick,
+        "store completion tick {cpu1_store_completion_tick}, SC failure tick {cpu0_sc_failure_tick}"
+    );
+    let cache = system.msi_bank_data_cache().unwrap();
+    let harness = cache.lock().unwrap();
+    let history = harness.parallel_cycle_history();
+    assert_eq!(history.total_accepted(), 2);
+    assert_eq!(history.accepted_by_agent(agent(7)), 1);
+    assert_eq!(history.accepted_by_agent(agent(8)), 1);
+    assert!(harness.directory_decisions().iter().any(|decision| {
+        decision.request().agent() == agent(8)
+            && decision
+                .snoops()
+                .iter()
+                .any(|snoop| snoop.target() == agent(7))
+    }));
+}
+
+#[test]
+fn topology_system_routes_riscv_data_accesses_through_msi_cache_bank() {
+    let topology = msi_topology();
+    let source = GuestSourceId::new(122);
+    let system = RiscvTopologySystem::with_min_remote_delay(
+        topology,
+        RiscvClusterTopologyConfig::new([
+            core_config(0, 0, 7, 0x8000),
+            core_config(1, 1, 8, 0x9000),
+        ]),
+        2,
+    )
+    .unwrap()
+    .with_boot_image_dram_memory(code_dram_config(), &code_image())
+    .unwrap()
+    .with_msi_bank_data_cache(msi_bank_data_harness())
+    .unwrap()
+    .with_host_controller(
+        RiscvTopologyHostConfig::new(PartitionId::new(6), 2, source),
+        StatsRegistry::new(),
+    )
+    .unwrap();
+    system
+        .cluster()
+        .core(CpuId::new(0))
+        .unwrap()
+        .write_register(Register::new(2).unwrap(), 0x3000);
+    system
+        .cluster()
+        .core(CpuId::new(0))
+        .unwrap()
+        .write_register(Register::new(3).unwrap(), 0x1122_3344_5566_7788);
+    system
+        .cluster()
+        .core(CpuId::new(1))
+        .unwrap()
+        .write_register(Register::new(2).unwrap(), 0x3000);
+
+    let run = system
+        .drive_attached_until_host_stop_parallel(
+            Default::default(),
+            Default::default(),
+            240,
+            |cpu: CpuId| GuestEventId::new(1220 + u64::from(cpu.get())),
+        )
+        .unwrap();
+
+    assert_eq!(
+        run.stop_reason(),
+        RiscvSystemRunStopReason::HostStop(StopRequest::new(
+            run.final_tick().unwrap(),
+            GuestEventId::new(1221),
+            source,
+            1,
+        )),
+    );
+    assert_eq!(
+        system
+            .cluster()
+            .core(CpuId::new(1))
+            .unwrap()
+            .read_register(Register::new(5).unwrap()),
+        0x1122_3344_5566_7788,
+    );
+
+    let cache = system.msi_bank_data_cache().unwrap();
+    let harness = cache.lock().unwrap();
+    let history = harness.parallel_cycle_history();
+    assert_eq!(history.cycle_count(), 2);
+    assert_eq!(history.total_accepted(), 2);
+    assert_eq!(history.accepted_by_agent(agent(7)), 1);
+    assert_eq!(history.accepted_by_agent(agent(8)), 1);
+    assert_eq!(history.accepted_by_line(Address::new(0x3000)), 2);
+    assert_eq!(history.total_scheduled_misses(), 2);
+    assert!(history.total_responses() >= 2);
+    drop(harness);
+    let cache_runs = system.msi_bank_data_cache_runs();
+    let cache_history = ParallelCoherenceRunHistory::from_runs(&cache_runs);
+    assert_eq!(cache_runs.len(), history.cycle_count());
+    assert_eq!(run.data_cache_runs(), cache_runs.as_slice());
+    assert_eq!(run.data_cache_run_count(), history.cycle_count());
+    assert_eq!(
+        run.data_cache_run_count_for_protocol(RiscvDataCacheProtocol::Msi),
+        history.cycle_count(),
+    );
+    assert_eq!(run.unattributed_data_cache_run_count(), 0);
+    assert_eq!(run.data_cache_parallel_run_history(), cache_history);
+    assert_eq!(system.msi_data_cache_run_history(), cache_history);
+    assert_eq!(
+        system.data_cache_parallel_run_history_for_protocol(RiscvDataCacheProtocol::Msi),
+        cache_history,
+    );
 }
 
 #[test]

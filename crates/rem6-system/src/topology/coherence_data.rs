@@ -2,12 +2,14 @@ use std::sync::{Arc, Mutex};
 
 use rem6_coherence::{
     ChiCpuResponseRecord, ChiHarnessError, CpuResponseRecord, HarnessError, MesiCpuResponseRecord,
-    MesiHarnessError, MoesiCpuResponseRecord, MoesiHarnessError, ParallelCoherenceRunSummary,
+    MesiHarnessError, MoesiCpuResponseRecord, MoesiHarnessError, MsiBankCycleRun,
+    MsiBankDirectoryHarness, ParallelCoherenceRunSummary, ParallelCoherenceWaitForGraphs,
     PartitionedChiDirectoryLineHarness, PartitionedDirectoryLineHarness,
     PartitionedMesiDirectoryLineHarness, PartitionedMoesiDirectoryLineHarness,
 };
 use rem6_cpu::RiscvCluster;
 use rem6_dram::DramTargetActivity;
+use rem6_kernel::{RecordedConservativeRunSummary, WaitForGraph};
 use rem6_memory::{Address, MemoryRequest, MemoryRequestId, MemoryResponse, ResponseStatus};
 use rem6_protocol_chi::ChiEvent;
 use rem6_protocol_mesi::MesiEvent;
@@ -19,9 +21,24 @@ use crate::{RiscvDataCacheProtocol, RiscvDataCacheRunRecord};
 
 use super::RiscvTopologySystemError;
 
+pub(super) struct RiscvTopologyCachedDataCaches<'a> {
+    pub(super) msi_bank: Option<&'a RiscvTopologyMsiBankDataCache>,
+    pub(super) msi: Option<&'a RiscvTopologyMsiDataCache>,
+    pub(super) mesi: Option<&'a RiscvTopologyMesiDataCache>,
+    pub(super) moesi: Option<&'a RiscvTopologyMoesiDataCache>,
+    pub(super) chi: Option<&'a RiscvTopologyChiDataCache>,
+    pub(super) cluster: &'a RiscvCluster,
+}
+
 #[derive(Clone)]
 pub(super) struct RiscvTopologyMsiDataCache {
     harness: Arc<Mutex<PartitionedDirectoryLineHarness>>,
+    runs: Arc<Mutex<Vec<ParallelCoherenceRunSummary>>>,
+}
+
+#[derive(Clone)]
+pub(super) struct RiscvTopologyMsiBankDataCache {
+    harness: Arc<Mutex<MsiBankDirectoryHarness>>,
     runs: Arc<Mutex<Vec<ParallelCoherenceRunSummary>>>,
 }
 
@@ -64,6 +81,71 @@ impl RiscvTopologyMsiDataCache {
 
     fn record_run(&self, run: ParallelCoherenceRunSummary) {
         self.runs.lock().expect("MSI data cache run lock").push(run);
+    }
+}
+
+impl RiscvTopologyMsiBankDataCache {
+    pub(super) fn new(harness: MsiBankDirectoryHarness) -> Self {
+        Self {
+            harness: Arc::new(Mutex::new(harness)),
+            runs: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    pub(super) fn harness(&self) -> Arc<Mutex<MsiBankDirectoryHarness>> {
+        Arc::clone(&self.harness)
+    }
+
+    pub(super) fn runs(&self) -> Vec<ParallelCoherenceRunSummary> {
+        self.runs
+            .lock()
+            .expect("MSI bank data cache run lock")
+            .clone()
+    }
+
+    pub(super) fn mark_runs(&self) -> usize {
+        self.runs
+            .lock()
+            .expect("MSI bank data cache run lock")
+            .len()
+    }
+
+    fn runs_since(&self, marker: usize) -> Vec<ParallelCoherenceRunSummary> {
+        self.runs
+            .lock()
+            .expect("MSI bank data cache run lock")
+            .get(marker..)
+            .unwrap_or_default()
+            .to_vec()
+    }
+
+    fn record_run(&self, run: ParallelCoherenceRunSummary) {
+        self.runs
+            .lock()
+            .expect("MSI bank data cache run lock")
+            .push(run);
+    }
+
+    pub(super) fn can_accept(&self, request: &MemoryRequest) -> bool {
+        let agent = request.id().agent();
+        let line_address = request.line_address();
+        let harness = self.harness.lock().expect("MSI bank data cache lock");
+        if !harness.cache_agents().contains(&agent) {
+            return false;
+        }
+
+        if harness.backing_line(line_address).is_some()
+            || harness.directory_line_addresses().contains(&line_address)
+        {
+            return true;
+        }
+
+        harness.cache_agents().into_iter().any(|agent| {
+            harness
+                .cache_line_addresses(agent)
+                .map(|lines| lines.contains(&line_address))
+                .unwrap_or(false)
+        })
     }
 }
 
@@ -284,44 +366,118 @@ fn topology_mesi_data_response_result(
 }
 
 pub(super) fn topology_data_cache_response(
-    msi_data_cache: Option<&RiscvTopologyMsiDataCache>,
-    mesi_data_cache: Option<&RiscvTopologyMesiDataCache>,
-    moesi_data_cache: Option<&RiscvTopologyMoesiDataCache>,
-    chi_data_cache: Option<&RiscvTopologyChiDataCache>,
-    cluster: &RiscvCluster,
+    data_caches: RiscvTopologyCachedDataCaches<'_>,
     memory_error: &Arc<Mutex<Option<RiscvTopologySystemError>>>,
     delivery: &RequestDelivery,
 ) -> Option<TargetOutcome> {
     let line_address = delivery.request().line_address();
-    if let Some(cache) = chi_data_cache.filter(|cache| cache.line_address() == line_address) {
+    if let Some(cache) = data_caches
+        .chi
+        .filter(|cache| cache.line_address() == line_address)
+    {
         Some(topology_chi_data_response(
             cache,
-            cluster,
+            data_caches.cluster,
             memory_error,
             delivery,
         ))
-    } else if let Some(cache) =
-        moesi_data_cache.filter(|cache| cache.line_address() == line_address)
+    } else if let Some(cache) = data_caches
+        .moesi
+        .filter(|cache| cache.line_address() == line_address)
     {
         Some(topology_moesi_data_response(
             cache,
-            cluster,
+            data_caches.cluster,
             memory_error,
             delivery,
         ))
-    } else if let Some(cache) = mesi_data_cache.filter(|cache| cache.line_address() == line_address)
+    } else if let Some(cache) = data_caches
+        .mesi
+        .filter(|cache| cache.line_address() == line_address)
     {
         Some(topology_mesi_data_response(
             cache,
-            cluster,
+            data_caches.cluster,
+            memory_error,
+            delivery,
+        ))
+    } else if let Some(cache) = data_caches
+        .msi_bank
+        .filter(|cache| cache.can_accept(delivery.request()))
+    {
+        Some(topology_msi_bank_data_response(
+            cache,
+            data_caches.cluster,
             memory_error,
             delivery,
         ))
     } else {
-        msi_data_cache
+        data_caches
+            .msi
             .filter(|cache| cache.line_address() == line_address)
-            .map(|cache| topology_msi_data_response(cache, cluster, memory_error, delivery))
+            .map(|cache| {
+                topology_msi_data_response(cache, data_caches.cluster, memory_error, delivery)
+            })
     }
+}
+
+pub(super) fn topology_msi_bank_data_response(
+    cache: &RiscvTopologyMsiBankDataCache,
+    cluster: &RiscvCluster,
+    memory_error: &Arc<Mutex<Option<RiscvTopologySystemError>>>,
+    delivery: &RequestDelivery,
+) -> TargetOutcome {
+    match topology_msi_bank_data_response_result(cache, cluster, delivery) {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            record_coherence_error(memory_error, error);
+            TargetOutcome::Respond(MemoryResponse::retry(delivery.request()))
+        }
+    }
+}
+
+fn topology_msi_bank_data_response_result(
+    cache: &RiscvTopologyMsiBankDataCache,
+    cluster: &RiscvCluster,
+    delivery: &RequestDelivery,
+) -> Result<TargetOutcome, RiscvTopologySystemError> {
+    let mut harness = cache.harness.lock().expect("MSI bank data cache lock");
+    let start_tick = delivery.tick();
+    let responses_before = harness.cpu_responses().len();
+    let decisions_before = harness.directory_decisions().len();
+    let cycle_run = harness
+        .submit_parallel_cycle(
+            start_tick,
+            [(delivery.request().id().agent(), delivery.request().clone())],
+        )
+        .map_err(RiscvTopologySystemError::MsiDataCache)?;
+    let directory_decision_count = harness
+        .directory_decisions()
+        .len()
+        .saturating_sub(decisions_before);
+    invalidate_msi_bank_snooped_reservations_since(
+        &harness,
+        decisions_before,
+        cluster,
+        delivery.request(),
+    );
+    let responses = harness.cpu_responses();
+    let response_record =
+        data_cache_response_record(&responses, responses_before, delivery.request().id())
+            .ok_or_else(|| RiscvTopologySystemError::MissingMsiDataResponse {
+                request: delivery.request().id(),
+            })?;
+    let outcome = data_cache_response_record_to_target_outcome(
+        delivery.request(),
+        start_tick,
+        &response_record,
+    )?;
+    drop(harness);
+    cache.record_run(msi_bank_cycle_run_summary(
+        &cycle_run,
+        directory_decision_count,
+    ));
+    Ok(outcome)
 }
 
 pub(super) fn topology_chi_data_response(
@@ -400,6 +556,40 @@ fn invalidate_snooped_reservation(
         request.range().start(),
         request.size(),
     );
+}
+
+fn invalidate_msi_bank_snooped_reservations_since(
+    harness: &MsiBankDirectoryHarness,
+    decisions_before: usize,
+    cluster: &RiscvCluster,
+    request: &MemoryRequest,
+) {
+    for decision in harness
+        .directory_decisions()
+        .get(decisions_before..)
+        .unwrap_or_default()
+    {
+        for snoop in decision.snoops() {
+            if snoop.event() == MsiEvent::SnoopWrite {
+                invalidate_snooped_reservation(cluster, snoop.target(), request);
+            }
+        }
+    }
+}
+
+fn msi_bank_cycle_run_summary(
+    run: &MsiBankCycleRun,
+    directory_decision_count: usize,
+) -> ParallelCoherenceRunSummary {
+    ParallelCoherenceRunSummary::new(
+        RecordedConservativeRunSummary::empty(run.tick()),
+        run.response_count(),
+        directory_decision_count,
+        0,
+        Vec::new(),
+        Vec::new(),
+        ParallelCoherenceWaitForGraphs::new(WaitForGraph::new(), WaitForGraph::new()),
+    )
 }
 
 trait DataCacheCpuResponseRecord {
@@ -817,6 +1007,16 @@ pub(super) fn merge_msi_data_cache_activity(
 
 pub(super) fn msi_data_cache_run_records_since(
     cache: Option<&RiscvTopologyMsiDataCache>,
+    marker: Option<usize>,
+) -> Vec<RiscvDataCacheRunRecord> {
+    let (Some(cache), Some(marker)) = (cache, marker) else {
+        return Vec::new();
+    };
+    data_cache_run_records_since(RiscvDataCacheProtocol::Msi, cache.runs_since(marker))
+}
+
+pub(super) fn msi_bank_data_cache_run_records_since(
+    cache: Option<&RiscvTopologyMsiBankDataCache>,
     marker: Option<usize>,
 ) -> Vec<RiscvDataCacheRunRecord> {
     let (Some(cache), Some(marker)) = (cache, marker) else {

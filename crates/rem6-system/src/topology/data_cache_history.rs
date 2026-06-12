@@ -8,7 +8,10 @@ use super::RiscvTopologySystem;
 
 impl RiscvTopologySystem {
     pub fn msi_data_cache_run_history(&self) -> ParallelCoherenceRunHistory {
-        ParallelCoherenceRunHistory::from_runs(&self.msi_data_cache_runs())
+        ParallelCoherenceRunHistory::from_histories([
+            ParallelCoherenceRunHistory::from_runs(&self.msi_bank_data_cache_runs()),
+            ParallelCoherenceRunHistory::from_runs(&self.msi_data_cache_runs()),
+        ])
     }
 
     pub fn mesi_data_cache_run_history(&self) -> ParallelCoherenceRunHistory {

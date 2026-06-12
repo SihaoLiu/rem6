@@ -1,3 +1,5 @@
+use rem6_cache::MshrQueueConfig;
+use rem6_coherence::MsiBankDirectoryHarness;
 use rem6_cpu::{CpuId, CpuResetState, RiscvClusterTopologyConfig, RiscvCoreTopologyConfig};
 use rem6_gpu::{
     GpuComputeConfig, GpuDeviceId, GpuDmaCompletion, GpuDmaCopy, GpuDmaId, GpuError, GpuKernelId,
@@ -148,6 +150,18 @@ fn memory_read(sequence: u64, address: u64) -> MemoryRequest {
     .unwrap()
 }
 
+fn gpu_dma_copy(route: rem6_transport::MemoryRouteId, transfer: u64) -> GpuDmaCopy {
+    GpuDmaCopy::new(
+        GpuDmaId::new(transfer),
+        route,
+        memory_read(transfer * 2, 0x1004),
+        route,
+        memory_request(transfer * 2 + 1),
+        Address::new(0x3008),
+    )
+    .unwrap()
+}
+
 fn memory_store() -> PartitionedMemoryStore {
     let target = MemoryTargetId::new(0);
     let mut store = PartitionedMemoryStore::new();
@@ -169,6 +183,41 @@ fn memory_store() -> PartitionedMemoryStore {
         .insert_line(target, Address::new(0x3000), vec![0; 16])
         .unwrap();
     store
+}
+
+fn gpu_bank_data_harness() -> MsiBankDirectoryHarness {
+    let mut harness = MsiBankDirectoryHarness::new_with_mshr(
+        layout(),
+        [AgentId::new(77)],
+        MshrQueueConfig::new(2, 3, 0).unwrap(),
+    )
+    .unwrap();
+
+    let mut cached_source = vec![0; 16];
+    cached_source[4..8].copy_from_slice(&[0xaa, 0xbb, 0xcc, 0xdd]);
+    harness
+        .insert_backing_line(Address::new(0x1000), cached_source)
+        .unwrap();
+    harness
+        .insert_backing_line(Address::new(0x3000), vec![0; 16])
+        .unwrap();
+    harness
+}
+
+fn unregistered_gpu_bank_data_harness() -> MsiBankDirectoryHarness {
+    let mut harness = MsiBankDirectoryHarness::new_with_mshr(
+        layout(),
+        [AgentId::new(7)],
+        MshrQueueConfig::new(2, 3, 0).unwrap(),
+    )
+    .unwrap();
+
+    let mut cached_source = vec![0; 16];
+    cached_source[4..8].copy_from_slice(&[0xaa, 0xbb, 0xcc, 0xdd]);
+    harness
+        .insert_backing_line(Address::new(0x1000), cached_source)
+        .unwrap();
+    harness
 }
 
 #[test]
@@ -413,6 +462,80 @@ fn topology_system_runs_gpu_dma_copy_on_parallel_memory_backend() {
             ),
         ],
     );
+}
+
+#[test]
+fn topology_system_routes_gpu_dma_copy_through_msi_bank_data_cache() {
+    let gpu_id = GpuDeviceId::new(34);
+    let mut system = RiscvTopologySystem::with_min_remote_delay(
+        topology_with_gpu(),
+        RiscvClusterTopologyConfig::new([core_config()]),
+        2,
+    )
+    .unwrap()
+    .with_memory_store(memory_store())
+    .unwrap()
+    .with_gpu(gpu_config_with_memory(gpu_id))
+    .unwrap()
+    .with_msi_bank_data_cache(gpu_bank_data_harness())
+    .unwrap();
+    let route = system.gpu(gpu_id).unwrap().memory_route().unwrap();
+
+    let summary = system
+        .run_gpu_dma_copy_parallel_recorded(gpu_id, gpu_dma_copy(route, 121), MemoryTrace::new())
+        .unwrap();
+
+    let harness = system.msi_bank_data_cache().unwrap();
+    let harness = harness.lock().unwrap();
+    let destination = harness
+        .cache_data(AgentId::new(77), Address::new(0x3000))
+        .unwrap()
+        .unwrap();
+    assert_eq!(&destination[8..12], &[0xaa, 0xbb, 0xcc, 0xdd]);
+    let history = harness.parallel_cycle_history();
+    assert_eq!(history.cycle_count(), 2);
+    assert_eq!(history.total_accepted(), 2);
+    assert_eq!(history.accepted_by_agent(AgentId::new(77)), 2);
+    assert_eq!(history.accepted_by_line(Address::new(0x1000)), 1);
+    assert_eq!(history.accepted_by_line(Address::new(0x3000)), 1);
+    assert_eq!(system.msi_bank_data_cache_runs().len(), 2);
+    assert_eq!(summary.read().dram_access_count(), 0);
+    assert_eq!(summary.write().dram_access_count(), 0);
+}
+
+#[test]
+fn topology_system_keeps_unregistered_gpu_dma_off_msi_bank_data_cache() {
+    let gpu_id = GpuDeviceId::new(35);
+    let mut system = RiscvTopologySystem::with_min_remote_delay(
+        topology_with_gpu(),
+        RiscvClusterTopologyConfig::new([core_config()]),
+        2,
+    )
+    .unwrap()
+    .with_memory_store(memory_store())
+    .unwrap()
+    .with_gpu(gpu_config_with_memory(gpu_id))
+    .unwrap()
+    .with_msi_bank_data_cache(unregistered_gpu_bank_data_harness())
+    .unwrap();
+    let route = system.gpu(gpu_id).unwrap().memory_route().unwrap();
+
+    system
+        .run_gpu_dma_copy_parallel_recorded(gpu_id, gpu_dma_copy(route, 122), MemoryTrace::new())
+        .unwrap();
+
+    let destination = system
+        .memory_store()
+        .unwrap()
+        .lock()
+        .unwrap()
+        .line_data(MemoryTargetId::new(0), Address::new(0x3000))
+        .unwrap();
+    assert_eq!(&destination[8..12], &[0x3a, 0x4b, 0x5c, 0x6d]);
+    let harness = system.msi_bank_data_cache().unwrap();
+    let harness = harness.lock().unwrap();
+    assert!(harness.parallel_cycle_history().is_empty());
+    assert!(system.msi_bank_data_cache_runs().is_empty());
 }
 
 #[test]

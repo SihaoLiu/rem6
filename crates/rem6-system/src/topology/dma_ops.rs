@@ -13,14 +13,14 @@ use rem6_transport::{MemoryTrace, ParallelMemoryTransaction};
 
 use super::coherence_data::{
     merge_chi_data_cache_activity, merge_mesi_data_cache_activity, merge_moesi_data_cache_activity,
-    merge_msi_data_cache_activity, RiscvTopologyChiDataCache, RiscvTopologyMesiDataCache,
-    RiscvTopologyMoesiDataCache, RiscvTopologyMsiDataCache,
+    merge_msi_data_cache_activity, RiscvTopologyCachedDataCaches, RiscvTopologyChiDataCache,
+    RiscvTopologyMesiDataCache, RiscvTopologyMoesiDataCache, RiscvTopologyMsiDataCache,
 };
 use super::{
     dram_activities_since, dram_wait_for_since, mark_dram_activity, mark_dram_wait_for,
-    take_memory_error, topology_cached_memory_response, RiscvTopologyCachedDataCaches,
-    RiscvTopologyDmaCopy, RiscvTopologyDmaDeviceActivity, RiscvTopologyDmaRunSummary,
-    RiscvTopologyDmaStageRunSummary, RiscvTopologySystem, RiscvTopologySystemError,
+    take_memory_error, topology_cached_memory_response, RiscvTopologyDmaCopy,
+    RiscvTopologyDmaDeviceActivity, RiscvTopologyDmaRunSummary, RiscvTopologyDmaStageRunSummary,
+    RiscvTopologySystem, RiscvTopologySystemError,
 };
 
 #[derive(Clone, Debug)]
@@ -145,6 +145,7 @@ impl RiscvTopologySystem {
             .clone();
         let memory_error = Arc::new(Mutex::new(None));
         let before = self.dma_device_snapshots(&copies)?;
+        let msi_bank_data_cache = self.msi_bank_data_cache.clone();
         let msi_data_cache = self.msi_data_cache.clone();
         let msi_data_run_start = msi_data_cache
             .as_ref()
@@ -182,6 +183,7 @@ impl RiscvTopologySystem {
                         .clone();
                     let read_memory = memory.clone();
                     let read_error = Arc::clone(&memory_error);
+                    let read_msi_bank_data_cache = msi_bank_data_cache.clone();
                     let read_msi_data_cache = msi_data_cache.clone();
                     let read_mesi_data_cache = mesi_data_cache.clone();
                     let read_moesi_data_cache = moesi_data_cache.clone();
@@ -196,6 +198,7 @@ impl RiscvTopologySystem {
                                 &read_memory,
                                 &read_error,
                                 RiscvTopologyCachedDataCaches {
+                                    msi_bank: read_msi_bank_data_cache.as_ref(),
                                     msi: read_msi_data_cache.as_ref(),
                                     mesi: read_mesi_data_cache.as_ref(),
                                     moesi: read_moesi_data_cache.as_ref(),
@@ -219,6 +222,7 @@ impl RiscvTopologySystem {
                         .clone();
                     let read_memory = memory.clone();
                     let read_error = Arc::clone(&memory_error);
+                    let read_msi_bank_data_cache = msi_bank_data_cache.clone();
                     let read_msi_data_cache = msi_data_cache.clone();
                     let read_mesi_data_cache = mesi_data_cache.clone();
                     let read_moesi_data_cache = moesi_data_cache.clone();
@@ -233,6 +237,7 @@ impl RiscvTopologySystem {
                                 &read_memory,
                                 &read_error,
                                 RiscvTopologyCachedDataCaches {
+                                    msi_bank: read_msi_bank_data_cache.as_ref(),
                                     msi: read_msi_data_cache.as_ref(),
                                     mesi: read_mesi_data_cache.as_ref(),
                                     moesi: read_moesi_data_cache.as_ref(),
@@ -360,6 +365,7 @@ impl RiscvTopologySystem {
             .clone();
         let memory_error = Arc::new(Mutex::new(None));
         let before = self.dma_device_snapshots(&copies)?;
+        let msi_bank_data_cache = self.msi_bank_data_cache.clone();
         let msi_data_cache = self.msi_data_cache.clone();
         let msi_data_run_start = msi_data_cache
             .as_ref()
@@ -398,6 +404,7 @@ impl RiscvTopologySystem {
                         .clone();
                     let write_memory = memory.clone();
                     let write_error = Arc::clone(&memory_error);
+                    let write_msi_bank_data_cache = msi_bank_data_cache.clone();
                     let write_msi_data_cache = msi_data_cache.clone();
                     let write_mesi_data_cache = mesi_data_cache.clone();
                     let write_moesi_data_cache = moesi_data_cache.clone();
@@ -412,6 +419,7 @@ impl RiscvTopologySystem {
                                     &write_memory,
                                     &write_error,
                                     RiscvTopologyCachedDataCaches {
+                                        msi_bank: write_msi_bank_data_cache.as_ref(),
                                         msi: write_msi_data_cache.as_ref(),
                                         mesi: write_mesi_data_cache.as_ref(),
                                         moesi: write_moesi_data_cache.as_ref(),
@@ -442,6 +450,7 @@ impl RiscvTopologySystem {
                         .clone();
                     let write_memory = memory.clone();
                     let write_error = Arc::clone(&memory_error);
+                    let write_msi_bank_data_cache = msi_bank_data_cache.clone();
                     let write_msi_data_cache = msi_data_cache.clone();
                     let write_mesi_data_cache = mesi_data_cache.clone();
                     let write_moesi_data_cache = moesi_data_cache.clone();
@@ -456,6 +465,7 @@ impl RiscvTopologySystem {
                                     &write_memory,
                                     &write_error,
                                     RiscvTopologyCachedDataCaches {
+                                        msi_bank: write_msi_bank_data_cache.as_ref(),
                                         msi: write_msi_data_cache.as_ref(),
                                         mesi: write_mesi_data_cache.as_ref(),
                                         moesi: write_moesi_data_cache.as_ref(),

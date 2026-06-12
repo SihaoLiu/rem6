@@ -37,7 +37,7 @@ use rem6_accelerator::{
 use rem6_boot::{BootError, BootImage, BootLoadReport};
 use rem6_checkpoint::CheckpointComponentId;
 use rem6_coherence::{
-    ChiHarnessError, HarnessError, MesiHarnessError, MoesiHarnessError,
+    ChiHarnessError, HarnessError, MesiHarnessError, MoesiHarnessError, MsiBankDirectoryHarness,
     ParallelCoherenceRunSummary, PartitionedChiDirectoryLineHarness,
     PartitionedDirectoryLineHarness, PartitionedMesiDirectoryLineHarness,
     PartitionedMoesiDirectoryLineHarness,
@@ -80,8 +80,10 @@ use coherence_data::{
     chi_data_cache_run_records_since, merge_chi_data_cache_activity,
     merge_mesi_data_cache_activity, merge_moesi_data_cache_activity, merge_msi_data_cache_activity,
     mesi_data_cache_run_records_since, moesi_data_cache_run_records_since,
-    msi_data_cache_run_records_since, topology_data_cache_response, RiscvTopologyChiDataCache,
-    RiscvTopologyMesiDataCache, RiscvTopologyMoesiDataCache, RiscvTopologyMsiDataCache,
+    msi_bank_data_cache_run_records_since, msi_data_cache_run_records_since,
+    topology_data_cache_response, RiscvTopologyCachedDataCaches, RiscvTopologyChiDataCache,
+    RiscvTopologyMesiDataCache, RiscvTopologyMoesiDataCache, RiscvTopologyMsiBankDataCache,
+    RiscvTopologyMsiDataCache,
 };
 
 pub struct RiscvTopologySystem {
@@ -111,6 +113,7 @@ pub struct RiscvTopologySystem {
         BTreeMap<CheckpointComponentId, crate::VirtioPciIsrCheckpointPort>,
     virtio_pci_device_config_checkpoint_ports:
         BTreeMap<CheckpointComponentId, crate::VirtioPciDeviceConfigCheckpointPort>,
+    msi_bank_data_cache: Option<RiscvTopologyMsiBankDataCache>,
     msi_data_cache: Option<RiscvTopologyMsiDataCache>,
     mesi_data_cache: Option<RiscvTopologyMesiDataCache>,
     moesi_data_cache: Option<RiscvTopologyMoesiDataCache>,
@@ -613,6 +616,7 @@ impl RiscvTopologySystem {
             virtio_pci_notify_checkpoint_ports: BTreeMap::new(),
             virtio_pci_isr_checkpoint_ports: BTreeMap::new(),
             virtio_pci_device_config_checkpoint_ports: BTreeMap::new(),
+            msi_bank_data_cache: None,
             msi_data_cache: None,
             mesi_data_cache: None,
             moesi_data_cache: None,
@@ -926,6 +930,14 @@ impl RiscvTopologySystem {
         Ok(self)
     }
 
+    pub fn with_msi_bank_data_cache(
+        mut self,
+        harness: MsiBankDirectoryHarness,
+    ) -> Result<Self, RiscvTopologySystemError> {
+        self.msi_bank_data_cache = Some(RiscvTopologyMsiBankDataCache::new(harness));
+        Ok(self)
+    }
+
     pub fn with_moesi_data_cache(
         mut self,
         harness: PartitionedMoesiDirectoryLineHarness,
@@ -1030,6 +1042,19 @@ impl RiscvTopologySystem {
         self.msi_data_cache
             .as_ref()
             .map(RiscvTopologyMsiDataCache::harness)
+    }
+
+    pub fn msi_bank_data_cache(&self) -> Option<Arc<Mutex<MsiBankDirectoryHarness>>> {
+        self.msi_bank_data_cache
+            .as_ref()
+            .map(RiscvTopologyMsiBankDataCache::harness)
+    }
+
+    pub fn msi_bank_data_cache_runs(&self) -> Vec<ParallelCoherenceRunSummary> {
+        self.msi_bank_data_cache
+            .as_ref()
+            .map(RiscvTopologyMsiBankDataCache::runs)
+            .unwrap_or_default()
     }
 
     pub fn msi_data_cache_runs(&self) -> Vec<ParallelCoherenceRunSummary> {
@@ -1167,6 +1192,10 @@ impl RiscvTopologySystem {
         let fabric_wait_for_start = self.transport.mark_fabric_wait_for();
         let dram_activity_start = mark_dram_activity(&memory);
         let dram_wait_for_start = mark_dram_wait_for(&memory);
+        let msi_bank_data_cache = self.msi_bank_data_cache.clone();
+        let msi_bank_data_run_start = msi_bank_data_cache
+            .as_ref()
+            .map(RiscvTopologyMsiBankDataCache::mark_runs);
         let msi_data_cache = self.msi_data_cache.clone();
         let msi_data_run_start = msi_data_cache
             .as_ref()
@@ -1196,6 +1225,7 @@ impl RiscvTopologySystem {
 
         let data_memory = memory.clone();
         let data_error = Arc::clone(&memory_error);
+        let data_msi_bank_cache = msi_bank_data_cache.clone();
         let data_msi_cache = msi_data_cache.clone();
         let data_mesi_cache = mesi_data_cache.clone();
         let data_moesi_cache = moesi_data_cache.clone();
@@ -1204,6 +1234,7 @@ impl RiscvTopologySystem {
         let data_responder = move |_cpu| {
             let memory = data_memory.clone();
             let memory_error = Arc::clone(&data_error);
+            let msi_bank_data_cache = data_msi_bank_cache.clone();
             let msi_data_cache = data_msi_cache.clone();
             let mesi_data_cache = data_mesi_cache.clone();
             let moesi_data_cache = data_moesi_cache.clone();
@@ -1214,6 +1245,7 @@ impl RiscvTopologySystem {
                     &memory,
                     &memory_error,
                     RiscvTopologyCachedDataCaches {
+                        msi_bank: msi_bank_data_cache.as_ref(),
                         msi: msi_data_cache.as_ref(),
                         mesi: mesi_data_cache.as_ref(),
                         moesi: moesi_data_cache.as_ref(),
@@ -1298,8 +1330,14 @@ impl RiscvTopologySystem {
             chi_data_cache.as_ref(),
             chi_data_run_start,
         );
-        let mut data_cache_run_records =
-            msi_data_cache_run_records_since(msi_data_cache.as_ref(), msi_data_run_start);
+        let mut data_cache_run_records = msi_bank_data_cache_run_records_since(
+            msi_bank_data_cache.as_ref(),
+            msi_bank_data_run_start,
+        );
+        data_cache_run_records.extend(msi_data_cache_run_records_since(
+            msi_data_cache.as_ref(),
+            msi_data_run_start,
+        ));
         data_cache_run_records.extend(mesi_data_cache_run_records_since(
             mesi_data_cache.as_ref(),
             mesi_data_run_start,
@@ -1656,24 +1694,8 @@ fn topology_cached_memory_response(
     data_caches: RiscvTopologyCachedDataCaches<'_>,
     delivery: &RequestDelivery,
 ) -> TargetOutcome {
-    topology_data_cache_response(
-        data_caches.msi,
-        data_caches.mesi,
-        data_caches.moesi,
-        data_caches.chi,
-        data_caches.cluster,
-        memory_error,
-        delivery,
-    )
-    .unwrap_or_else(|| topology_memory_response(memory, memory_error, delivery))
-}
-
-struct RiscvTopologyCachedDataCaches<'a> {
-    msi: Option<&'a RiscvTopologyMsiDataCache>,
-    mesi: Option<&'a RiscvTopologyMesiDataCache>,
-    moesi: Option<&'a RiscvTopologyMoesiDataCache>,
-    chi: Option<&'a RiscvTopologyChiDataCache>,
-    cluster: &'a RiscvCluster,
+    topology_data_cache_response(data_caches, memory_error, delivery)
+        .unwrap_or_else(|| topology_memory_response(memory, memory_error, delivery))
 }
 
 fn mark_dram_activity(memory: &RiscvTopologyMemoryBackend) -> Option<DramMemoryActivityMarker> {

@@ -3,9 +3,10 @@ use rem6_accelerator::{
     AcceleratorDmaCompletion, AcceleratorDmaCopy, AcceleratorEngineConfig, AcceleratorEngineId,
     AcceleratorError, AcceleratorTopologyConfig, AcceleratorTraceEvent, AcceleratorTraceKind,
 };
+use rem6_cache::MshrQueueConfig;
 use rem6_coherence::{
-    PartitionedDirectoryLineHarness, TopologyCacheAgentConfig, TopologyDirectoryConfig,
-    TopologyDirectoryHarnessConfig, TopologyDramMemoryConfig,
+    MsiBankDirectoryHarness, PartitionedDirectoryLineHarness, TopologyCacheAgentConfig,
+    TopologyDirectoryConfig, TopologyDirectoryHarnessConfig, TopologyDramMemoryConfig,
 };
 use rem6_cpu::{CpuId, CpuResetState, RiscvClusterTopologyConfig, RiscvCoreTopologyConfig};
 use rem6_dram::{DramControllerConfig, DramGeometry, DramMemoryController, DramTiming};
@@ -340,6 +341,41 @@ fn coherent_accelerator_data_harness(topology: &Topology) -> PartitionedDirector
     .unwrap()
 }
 
+fn coherent_accelerator_bank_data_harness() -> MsiBankDirectoryHarness {
+    let mut harness = MsiBankDirectoryHarness::new_with_mshr(
+        layout(),
+        [AgentId::new(44)],
+        MshrQueueConfig::new(2, 3, 0).unwrap(),
+    )
+    .unwrap();
+
+    let mut cached_source = vec![0; 16];
+    cached_source[4..8].copy_from_slice(&[0xaa, 0xbb, 0xcc, 0xdd]);
+    harness
+        .insert_backing_line(Address::new(0x1000), cached_source)
+        .unwrap();
+    harness
+        .insert_backing_line(Address::new(0x3000), vec![0; 16])
+        .unwrap();
+    harness
+}
+
+fn unregistered_accelerator_bank_data_harness() -> MsiBankDirectoryHarness {
+    let mut harness = MsiBankDirectoryHarness::new_with_mshr(
+        layout(),
+        [AgentId::new(7)],
+        MshrQueueConfig::new(2, 3, 0).unwrap(),
+    )
+    .unwrap();
+
+    let mut cached_source = vec![0; 16];
+    cached_source[4..8].copy_from_slice(&[0xaa, 0xbb, 0xcc, 0xdd]);
+    harness
+        .insert_backing_line(Address::new(0x1000), cached_source)
+        .unwrap();
+    harness
+}
+
 fn accelerator_config(engine: AcceleratorEngineId) -> AcceleratorTopologyConfig {
     AcceleratorTopologyConfig::new(
         AcceleratorEngineConfig::new(engine, PartitionId::new(1), 2).unwrap(),
@@ -527,6 +563,90 @@ fn topology_system_routes_accelerator_dma_read_through_msi_data_cache() {
     assert_eq!(summary.read().dram_access_count(), 1);
     assert_eq!(summary.write().dram_access_count(), 0);
     assert_eq!(summary.dram_access_count(), 1);
+}
+
+#[test]
+fn topology_system_routes_accelerator_dma_copy_through_msi_bank_data_cache() {
+    let accelerator_id = AcceleratorEngineId::new(47);
+    let topology = topology_with_coherent_accelerator();
+    let mut system = RiscvTopologySystem::with_min_remote_delay(
+        topology.clone(),
+        RiscvClusterTopologyConfig::new([coherent_core_config()]),
+        2,
+    )
+    .unwrap()
+    .with_memory_store(coherent_memory_store())
+    .unwrap()
+    .with_accelerator(coherent_accelerator_config(accelerator_id))
+    .unwrap()
+    .with_msi_bank_data_cache(coherent_accelerator_bank_data_harness())
+    .unwrap();
+    let route = system.accelerator(accelerator_id).unwrap().dma_route();
+
+    let summary = system
+        .run_accelerator_dma_copy_parallel_recorded(
+            accelerator_id,
+            dma_copy(route, 97),
+            MemoryTrace::new(),
+        )
+        .unwrap();
+
+    let harness = system.msi_bank_data_cache().unwrap();
+    let harness = harness.lock().unwrap();
+    let destination = harness
+        .cache_data(AgentId::new(44), Address::new(0x3000))
+        .unwrap()
+        .unwrap();
+    assert_eq!(&destination[8..12], &[0xaa, 0xbb, 0xcc, 0xdd]);
+    let history = harness.parallel_cycle_history();
+    assert_eq!(history.cycle_count(), 2);
+    assert_eq!(history.total_accepted(), 2);
+    assert_eq!(history.accepted_by_agent(AgentId::new(44)), 2);
+    assert_eq!(history.accepted_by_line(Address::new(0x1000)), 1);
+    assert_eq!(history.accepted_by_line(Address::new(0x3000)), 1);
+    assert_eq!(system.msi_bank_data_cache_runs().len(), 2);
+    assert_eq!(summary.read().dram_access_count(), 0);
+    assert_eq!(summary.write().dram_access_count(), 0);
+}
+
+#[test]
+fn topology_system_keeps_unregistered_accelerator_dma_off_msi_bank_data_cache() {
+    let accelerator_id = AcceleratorEngineId::new(48);
+    let topology = topology_with_coherent_accelerator();
+    let mut system = RiscvTopologySystem::with_min_remote_delay(
+        topology.clone(),
+        RiscvClusterTopologyConfig::new([coherent_core_config()]),
+        2,
+    )
+    .unwrap()
+    .with_memory_store(coherent_memory_store())
+    .unwrap()
+    .with_accelerator(coherent_accelerator_config(accelerator_id))
+    .unwrap()
+    .with_msi_bank_data_cache(unregistered_accelerator_bank_data_harness())
+    .unwrap();
+    let route = system.accelerator(accelerator_id).unwrap().dma_route();
+
+    system
+        .run_accelerator_dma_copy_parallel_recorded(
+            accelerator_id,
+            dma_copy(route, 98),
+            MemoryTrace::new(),
+        )
+        .unwrap();
+
+    let destination = system
+        .memory_store()
+        .unwrap()
+        .lock()
+        .unwrap()
+        .line_data(MemoryTargetId::new(0), Address::new(0x3000))
+        .unwrap();
+    assert_eq!(&destination[8..12], &[0x11, 0x22, 0x33, 0x44]);
+    let harness = system.msi_bank_data_cache().unwrap();
+    let harness = harness.lock().unwrap();
+    assert!(harness.parallel_cycle_history().is_empty());
+    assert!(system.msi_bank_data_cache_runs().is_empty());
 }
 
 #[test]
