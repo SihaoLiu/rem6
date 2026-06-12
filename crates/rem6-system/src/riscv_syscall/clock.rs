@@ -67,6 +67,28 @@ pub(super) fn syscall_times(
     })
 }
 
+pub(super) fn syscall_clock(
+    request: RiscvSyscallRequest,
+    tick: Tick,
+    guest_memory: Option<&RiscvGuestMemoryWriter>,
+) -> Option<RiscvSyscallOutcome> {
+    match request.number() {
+        RISCV_LINUX_TIMES => syscall_times(request, tick, guest_memory),
+        RISCV_LINUX_GETTIMEOFDAY => guest_memory.map(|guest_memory| RiscvSyscallOutcome::Return {
+            value: syscall_gettimeofday(request.argument(0), tick, guest_memory),
+        }),
+        RISCV_LINUX_CLOCK_GETTIME => guest_memory.map(|guest_memory| RiscvSyscallOutcome::Return {
+            value: syscall_clock_gettime(
+                request.argument(0),
+                request.argument(1),
+                tick,
+                guest_memory,
+            ),
+        }),
+        _ => None,
+    }
+}
+
 fn write_riscv_linux_tms(
     tms_address: u64,
     elapsed: u64,

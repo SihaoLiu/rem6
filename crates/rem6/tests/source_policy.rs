@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 
 const MAX_FACADE_LINES: usize = 1300;
 const MAX_SOURCE_LINES: usize = 1800;
-const MAX_ALIGNMENT_OVERVIEW_LINES: usize = 2500;
-const MAX_TEST_MIGRATION_LEDGER_LINES: usize = 1200;
+const MAX_ARCHITECTURE_OVERVIEW_LINES: usize = 600;
+const MAX_MIGRATION_LEDGER_LINES: usize = 1200;
 
 #[test]
 fn cli_lib_rs_remains_a_facade() {
@@ -69,37 +69,86 @@ fn cli_runtime_inputs_live_in_focused_modules() {
 }
 
 #[test]
-fn gem5_alignment_doc_remains_an_overview() {
+fn architecture_docs_have_clear_boundaries() {
     let repo_root = repo_root();
-    let path = repo_root.join("docs/architecture/gem5-to-rem6-alignment.md");
-    let lines = line_count(&path);
+    let architecture = repo_root.join("docs/architecture/rem6-architecture.md");
+    let migration = repo_root.join("docs/architecture/gem5-to-rem6-migration.md");
 
     assert!(
-        lines <= MAX_ALIGNMENT_OVERVIEW_LINES,
-        "gem5-to-rem6-alignment.md should stay a concise module overview, but it has {lines} lines"
+        architecture.exists(),
+        "rem6 architecture needs one canonical doc"
     );
+    assert!(
+        migration.exists(),
+        "gem5 to rem6 migration needs one canonical progress doc"
+    );
+    for retired in [
+        "docs/architecture/gem5-to-rem6-alignment.md",
+        "docs/architecture/gem5-test-migration.md",
+        "docs/architecture/parallel-first-full-system-kernel.md",
+    ] {
+        assert!(
+            !repo_root.join(retired).exists(),
+            "{retired} should be folded into the canonical architecture or migration doc"
+        );
+    }
+
+    let architecture_contents = fs::read_to_string(&architecture).unwrap();
+    let architecture_lines = architecture_contents.lines().count();
+    assert!(
+        architecture_lines <= MAX_ARCHITECTURE_OVERVIEW_LINES,
+        "rem6-architecture.md should stay a concise architecture overview, but it has {architecture_lines} lines"
+    );
+    for required in [
+        "## gem5 Pain Points",
+        "## rem6 Architecture",
+        "## Runtime Invariants",
+        "## Workspace Responsibilities",
+        "## Evidence Policy",
+    ] {
+        assert!(
+            architecture_contents.contains(required),
+            "rem6-architecture.md is missing required section `{required}`"
+        );
+    }
+    assert!(
+        !architecture_contents.contains("## Migration Ledger")
+            && !architecture_contents.contains("## Component Progress"),
+        "architecture doc should not duplicate migration progress ledgers"
+    );
+
+    let migration_contents = fs::read_to_string(&migration).unwrap();
+    let migration_lines = migration_contents.lines().count();
+    assert!(
+        migration_lines <= MAX_MIGRATION_LEDGER_LINES,
+        "gem5-to-rem6-migration.md should stay a concise ledger, but it has {migration_lines} lines"
+    );
+    for required in [
+        "## Scoring Rubric",
+        "## Component Progress",
+        "## Test Migration Ledger",
+        "## Update Rules",
+        "- [x]",
+        "- [ ]",
+        "%",
+        "single-axis",
+    ] {
+        assert!(
+            migration_contents.contains(required),
+            "gem5-to-rem6-migration.md is missing required marker `{required}`"
+        );
+    }
 }
 
 #[test]
-fn gem5_test_migration_ledger_tracks_core_test_anchors() {
+fn gem5_migration_doc_tracks_core_test_anchors() {
     let repo_root = repo_root();
-    let path = repo_root.join("docs/architecture/gem5-test-migration.md");
-
-    assert!(
-        path.exists(),
-        "gem5 test migration needs a durable in-repo ledger"
-    );
-
+    let path = repo_root.join("docs/architecture/gem5-to-rem6-migration.md");
     let contents = fs::read_to_string(&path).unwrap();
-    let lines = contents.lines().count();
-    assert!(
-        lines <= MAX_TEST_MIGRATION_LEDGER_LINES,
-        "gem5-test-migration.md should stay a concise ledger, but it has {lines} lines"
-    );
 
     for required in [
-        "## Coverage Rules",
-        "## Migration Ledger",
+        "## Scoring Rubric",
+        "## Test Migration Ledger",
         "tests/gem5/asmtest",
         "tests/gem5/cpu_tests",
         "tests/gem5/chi_tlm_tests",
@@ -127,20 +176,14 @@ fn gem5_test_migration_ledger_tracks_core_test_anchors() {
         "tests/pyunit",
         "tests/test-progs",
         "rem6 owner",
+        "Score",
         "Next evidence",
     ] {
         assert!(
             contents.contains(required),
-            "gem5-test-migration.md is missing required anchor `{required}`"
+            "gem5-to-rem6-migration.md is missing required anchor `{required}`"
         );
     }
-
-    let alignment =
-        fs::read_to_string(repo_root.join("docs/architecture/gem5-to-rem6-alignment.md")).unwrap();
-    assert!(
-        alignment.contains("docs/architecture/gem5-test-migration.md"),
-        "alignment overview should point to the durable gem5 test migration ledger"
-    );
 }
 
 fn rust_source_files(root: &Path) -> Vec<PathBuf> {

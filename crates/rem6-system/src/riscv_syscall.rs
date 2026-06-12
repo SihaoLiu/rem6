@@ -40,7 +40,7 @@ mod wait4;
 mod writev;
 
 use brk::syscall_brk;
-use clock::{syscall_clock_gettime, syscall_gettimeofday, syscall_times};
+use clock::syscall_clock;
 use clock::{RISCV_LINUX_CLOCK_GETTIME, RISCV_LINUX_GETTIMEOFDAY, RISCV_LINUX_TIMES};
 use cwd::syscall_getcwd;
 use futex::syscall_futex;
@@ -77,7 +77,10 @@ use stat::{
 pub use unknown::RiscvUnknownSyscallRecord;
 use unlink::{syscall_unlink, RISCV_LINUX_UNLINK};
 use utsname::write_riscv_linux_utsname;
-use wait4::{syscall_process_group_id, syscall_wait4, RISCV_LINUX_WAIT4};
+use wait4::{
+    syscall_getrusage, syscall_process_group_id, syscall_wait4, RISCV_LINUX_GETRUSAGE,
+    RISCV_LINUX_WAIT4,
+};
 use writev::{syscall_writev, RISCV_LINUX_WRITEV};
 
 const RISCV_LINUX_GETCWD: u64 = 17;
@@ -1046,31 +1049,21 @@ impl RiscvSyscallTable {
             RISCV_LINUX_SET_TID_ADDRESS => Some(RiscvSyscallOutcome::Return {
                 value: syscall_set_tid_address(request.argument(0), state),
             }),
-            RISCV_LINUX_TIMES => syscall_times(request, tick, guest_memory_writer),
+            RISCV_LINUX_TIMES | RISCV_LINUX_GETTIMEOFDAY | RISCV_LINUX_CLOCK_GETTIME => {
+                syscall_clock(request, tick, guest_memory_writer)
+            }
             RISCV_LINUX_UNAME => {
                 guest_memory_writer.map(|guest_memory| RiscvSyscallOutcome::Return {
                     value: write_riscv_linux_utsname(request.argument(0), guest_memory),
-                })
-            }
-            RISCV_LINUX_GETTIMEOFDAY => {
-                guest_memory_writer.map(|guest_memory| RiscvSyscallOutcome::Return {
-                    value: syscall_gettimeofday(request.argument(0), tick, guest_memory),
                 })
             }
             RISCV_LINUX_FUTEX => syscall_futex(request, state, tick, guest_memory_reader),
             RISCV_LINUX_WAIT4 => Some(RiscvSyscallOutcome::Return {
                 value: syscall_wait4(request, state, guest_memory_writer),
             }),
-            RISCV_LINUX_CLOCK_GETTIME => {
-                guest_memory_writer.map(|guest_memory| RiscvSyscallOutcome::Return {
-                    value: syscall_clock_gettime(
-                        request.argument(0),
-                        request.argument(1),
-                        tick,
-                        guest_memory,
-                    ),
-                })
-            }
+            RISCV_LINUX_GETRUSAGE => Some(RiscvSyscallOutcome::Return {
+                value: syscall_getrusage(request, guest_memory_writer),
+            }),
             RISCV_LINUX_PRLIMIT64 => syscall_prlimit64(request, state, guest_memory_writer)
                 .map(|value| RiscvSyscallOutcome::Return { value }),
             RISCV_LINUX_SET_ROBUST_LIST => Some(RiscvSyscallOutcome::Return {

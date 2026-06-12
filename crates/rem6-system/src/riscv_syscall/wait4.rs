@@ -7,9 +7,13 @@ use super::{
     RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL,
 };
 
+pub(super) const RISCV_LINUX_GETRUSAGE: u64 = 165;
 pub(super) const RISCV_LINUX_WAIT4: u64 = 260;
 
 const RISCV_LINUX_ECHILD: u64 = 10;
+const RISCV_LINUX_RUSAGE_CHILDREN: u64 = (-1_i64) as u64;
+const RISCV_LINUX_RUSAGE_SELF: u64 = 0;
+const RISCV_LINUX_RUSAGE_THREAD: u64 = 1;
 const RISCV_LINUX_WNOHANG: u64 = 0x0000_0001;
 const RISCV64_LINUX_RUSAGE_BYTES: usize = 144;
 
@@ -76,15 +80,45 @@ pub(super) fn syscall_wait4(
                         return linux_error(RISCV_LINUX_EFAULT);
                     }
                 }
-                if rusage_address != 0 {
-                    let rusage = [0; RISCV64_LINUX_RUSAGE_BYTES];
-                    if !writer.write(rusage_address, &rusage) {
-                        return linux_error(RISCV_LINUX_EFAULT);
-                    }
+                if rusage_address != 0 && write_zero_rusage(rusage_address, writer) != 0 {
+                    return linux_error(RISCV_LINUX_EFAULT);
                 }
             }
             u64::from(child.pid().get())
         }
         GuestWaitOutcome::NoReady | GuestWaitOutcome::Retry => linux_error(RISCV_LINUX_ECHILD),
     }
+}
+
+pub(super) fn syscall_getrusage(
+    request: RiscvSyscallRequest,
+    guest_memory_writer: Option<&RiscvGuestMemoryWriter>,
+) -> u64 {
+    if !valid_rusage_selector(request.argument(0)) {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+    let usage_address = request.argument(1);
+    if usage_address == 0 {
+        return linux_error(RISCV_LINUX_EFAULT);
+    }
+    let Some(writer) = guest_memory_writer else {
+        return linux_error(RISCV_LINUX_EFAULT);
+    };
+    write_zero_rusage(usage_address, writer)
+}
+
+fn write_zero_rusage(address: u64, writer: &RiscvGuestMemoryWriter) -> u64 {
+    let rusage = [0; RISCV64_LINUX_RUSAGE_BYTES];
+    if writer.write(address, &rusage) {
+        0
+    } else {
+        linux_error(RISCV_LINUX_EFAULT)
+    }
+}
+
+const fn valid_rusage_selector(selector: u64) -> bool {
+    matches!(
+        selector,
+        RISCV_LINUX_RUSAGE_SELF | RISCV_LINUX_RUSAGE_CHILDREN | RISCV_LINUX_RUSAGE_THREAD
+    )
 }
