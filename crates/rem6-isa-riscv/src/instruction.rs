@@ -1,7 +1,7 @@
 use crate::{
     AtomicMemoryOp, FloatRegister, Immediate, MemoryWidth, Register, RiscvCounterCsr,
-    RiscvFenceSet, RiscvFloatCsr, RiscvInterruptCsr, RiscvMachineTrapCsr, RiscvPrivilegeMode,
-    RiscvPseudoOp, RiscvStatusCsr, RiscvSupervisorTrapCsr, RiscvTranslationCsr,
+    RiscvFenceSet, RiscvFloatCsr, RiscvFloatRoundingMode, RiscvInterruptCsr, RiscvMachineTrapCsr,
+    RiscvPrivilegeMode, RiscvPseudoOp, RiscvStatusCsr, RiscvSupervisorTrapCsr, RiscvTranslationCsr,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -402,18 +402,22 @@ pub enum RiscvInstruction {
     FloatConvertWFromS {
         rd: Register,
         rs1: FloatRegister,
+        rounding_mode: RiscvFloatRoundingMode,
     },
     FloatConvertWuFromS {
         rd: Register,
         rs1: FloatRegister,
+        rounding_mode: RiscvFloatRoundingMode,
     },
     FloatConvertLFromS {
         rd: Register,
         rs1: FloatRegister,
+        rounding_mode: RiscvFloatRoundingMode,
     },
     FloatConvertLuFromS {
         rd: Register,
         rs1: FloatRegister,
+        rounding_mode: RiscvFloatRoundingMode,
     },
     FloatConvertSFromD {
         rd: FloatRegister,
@@ -542,18 +546,22 @@ pub enum RiscvInstruction {
     FloatConvertWFromD {
         rd: Register,
         rs1: FloatRegister,
+        rounding_mode: RiscvFloatRoundingMode,
     },
     FloatConvertWuFromD {
         rd: Register,
         rs1: FloatRegister,
+        rounding_mode: RiscvFloatRoundingMode,
     },
     FloatConvertLFromD {
         rd: Register,
         rs1: FloatRegister,
+        rounding_mode: RiscvFloatRoundingMode,
     },
     FloatConvertLuFromD {
         rd: Register,
         rs1: FloatRegister,
+        rounding_mode: RiscvFloatRoundingMode,
     },
     LoadReserved {
         rd: Register,

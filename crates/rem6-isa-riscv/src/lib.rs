@@ -39,8 +39,8 @@ pub use control_flow::{
 };
 pub use csr::{
     RiscvCounterBank, RiscvCounterCsr, RiscvCounterCsrWord, RiscvCounterSnapshot, RiscvFloatCsr,
-    RiscvFloatStatus, RiscvInterruptCsr, RiscvMachineTrapCsr, RiscvStatusCsr, RiscvStatusWord,
-    RiscvSupervisorTrapCsr, RiscvTranslationCsr,
+    RiscvFloatRoundingMode, RiscvFloatStatus, RiscvInterruptCsr, RiscvMachineTrapCsr,
+    RiscvStatusCsr, RiscvStatusWord, RiscvSupervisorTrapCsr, RiscvTranslationCsr,
 };
 pub use error::{RiscvCsrError, RiscvError};
 pub use gdb_target::{RiscvGdbTargetDescription, RiscvGdbTargetDocument, RiscvGdbXlen};
@@ -530,11 +530,21 @@ impl RiscvHartState {
             | RiscvInstruction::FloatConvertWuFromD { .. }
             | RiscvInstruction::FloatConvertLFromD { .. }
             | RiscvInstruction::FloatConvertLuFromD { .. }) => {
-                float_execute::execute_float_integer_instruction(
+                if float_execute::execute_float_integer_instruction(
                     self,
                     &mut register_writes,
                     instruction,
-                );
+                )
+                .is_err()
+                {
+                    return Ok(enter_synchronous_trap(
+                        self,
+                        instruction,
+                        instruction_bytes_u8,
+                        pc,
+                        RiscvTrapKind::IllegalInstruction,
+                    ));
+                }
             }
             RiscvInstruction::LoadReserved {
                 rd,

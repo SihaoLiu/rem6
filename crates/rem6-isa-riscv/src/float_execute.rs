@@ -79,7 +79,7 @@ pub(crate) fn execute_float_integer_instruction(
     hart: &mut RiscvHartState,
     writes: &mut Vec<RegisterWrite>,
     instruction: RiscvInstruction,
-) {
+) -> Result<(), ()> {
     match instruction {
         instruction @ (RiscvInstruction::FloatLessOrEqualS { rs1, rs2, .. }
         | RiscvInstruction::FloatLessOrEqualD { rs1, rs2, .. }
@@ -87,7 +87,7 @@ pub(crate) fn execute_float_integer_instruction(
         | RiscvInstruction::FloatLessThanD { rs1, rs2, .. }
         | RiscvInstruction::FloatEqualS { rs1, rs2, .. }
         | RiscvInstruction::FloatEqualD { rs1, rs2, .. }) => {
-            let (rd, value) = float::integer_register_write(
+            let (rd, value) = float::integer_register_write_rne(
                 instruction,
                 hart.read_float(rs1),
                 hart.read_float(rs2),
@@ -106,9 +106,16 @@ pub(crate) fn execute_float_integer_instruction(
         | RiscvInstruction::FloatConvertWuFromD { rs1, .. }
         | RiscvInstruction::FloatConvertLFromD { rs1, .. }
         | RiscvInstruction::FloatConvertLuFromD { rs1, .. }) => {
-            let (rd, value) = float::integer_register_write(instruction, hart.read_float(rs1), 0);
+            let Some((rd, value)) = float::integer_register_write(
+                instruction,
+                hart.read_float(rs1),
+                hart.float_status().frm(),
+            ) else {
+                return Err(());
+            };
             crate::write_register(hart, writes, rd, value);
         }
         _ => unreachable!("non-float-integer instruction dispatched to float integer executor"),
     }
+    Ok(())
 }

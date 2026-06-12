@@ -1,7 +1,7 @@
 use crate::encoding::{funct2, funct3, funct7, i_imm, rd, rs1, rs2, rs3, s_imm};
 use crate::{
     FloatRegister, FloatRegisterWrite, Immediate, MemoryWidth, Register, RiscvError,
-    RiscvHartState, RiscvInstruction,
+    RiscvFloatRoundingMode, RiscvHartState, RiscvInstruction,
 };
 
 pub(crate) fn decode_float_load(raw: u32) -> Result<RiscvInstruction, RiscvError> {
@@ -200,21 +200,25 @@ pub(crate) fn decode_float_op(raw: u32) -> Result<RiscvInstruction, RiscvError> 
             rd: float_rd(raw),
             rs1: rs1(raw),
         }),
-        (0x60, 0x0) if rs2(raw).index() == 0 => Ok(RiscvInstruction::FloatConvertWFromS {
+        (0x60, _) if rs2(raw).index() == 0 => Ok(RiscvInstruction::FloatConvertWFromS {
             rd: rd(raw),
             rs1: float_rs1(raw),
+            rounding_mode: float_rounding_mode(raw)?,
         }),
-        (0x60, 0x0) if rs2(raw).index() == 1 => Ok(RiscvInstruction::FloatConvertWuFromS {
+        (0x60, _) if rs2(raw).index() == 1 => Ok(RiscvInstruction::FloatConvertWuFromS {
             rd: rd(raw),
             rs1: float_rs1(raw),
+            rounding_mode: float_rounding_mode(raw)?,
         }),
-        (0x60, 0x0) if rs2(raw).index() == 2 => Ok(RiscvInstruction::FloatConvertLFromS {
+        (0x60, _) if rs2(raw).index() == 2 => Ok(RiscvInstruction::FloatConvertLFromS {
             rd: rd(raw),
             rs1: float_rs1(raw),
+            rounding_mode: float_rounding_mode(raw)?,
         }),
-        (0x60, 0x0) if rs2(raw).index() == 3 => Ok(RiscvInstruction::FloatConvertLuFromS {
+        (0x60, _) if rs2(raw).index() == 3 => Ok(RiscvInstruction::FloatConvertLuFromS {
             rd: rd(raw),
             rs1: float_rs1(raw),
+            rounding_mode: float_rounding_mode(raw)?,
         }),
         (0x20, 0x0) if rs2(raw).index() == 1 => Ok(RiscvInstruction::FloatConvertSFromD {
             rd: float_rd(raw),
@@ -244,21 +248,25 @@ pub(crate) fn decode_float_op(raw: u32) -> Result<RiscvInstruction, RiscvError> 
             rd: float_rd(raw),
             rs1: float_rs1(raw),
         }),
-        (0x61, 0x0) if rs2(raw).index() == 0 => Ok(RiscvInstruction::FloatConvertWFromD {
+        (0x61, _) if rs2(raw).index() == 0 => Ok(RiscvInstruction::FloatConvertWFromD {
             rd: rd(raw),
             rs1: float_rs1(raw),
+            rounding_mode: float_rounding_mode(raw)?,
         }),
-        (0x61, 0x0) if rs2(raw).index() == 1 => Ok(RiscvInstruction::FloatConvertWuFromD {
+        (0x61, _) if rs2(raw).index() == 1 => Ok(RiscvInstruction::FloatConvertWuFromD {
             rd: rd(raw),
             rs1: float_rs1(raw),
+            rounding_mode: float_rounding_mode(raw)?,
         }),
-        (0x61, 0x0) if rs2(raw).index() == 2 => Ok(RiscvInstruction::FloatConvertLFromD {
+        (0x61, _) if rs2(raw).index() == 2 => Ok(RiscvInstruction::FloatConvertLFromD {
             rd: rd(raw),
             rs1: float_rs1(raw),
+            rounding_mode: float_rounding_mode(raw)?,
         }),
-        (0x61, 0x0) if rs2(raw).index() == 3 => Ok(RiscvInstruction::FloatConvertLuFromD {
+        (0x61, _) if rs2(raw).index() == 3 => Ok(RiscvInstruction::FloatConvertLuFromD {
             rd: rd(raw),
             rs1: float_rs1(raw),
+            rounding_mode: float_rounding_mode(raw)?,
         }),
         _ => Err(RiscvError::UnknownEncoding { raw }),
     }
@@ -434,45 +442,107 @@ pub(crate) fn integer_register_write(
     instruction: RiscvInstruction,
     lhs: u64,
     rhs: u64,
-) -> (Register, u64) {
+) -> Option<(Register, u64)> {
     match instruction {
         RiscvInstruction::FloatLessOrEqualS { rd, .. } => {
-            (rd, u64::from(less_or_equal_single(lhs, rhs)))
+            Some((rd, u64::from(less_or_equal_single(lhs, rhs))))
         }
         RiscvInstruction::FloatLessOrEqualD { rd, .. } => {
-            (rd, u64::from(less_or_equal_double(lhs, rhs)))
+            Some((rd, u64::from(less_or_equal_double(lhs, rhs))))
         }
-        RiscvInstruction::FloatLessThanS { rd, .. } => (rd, u64::from(less_than_single(lhs, rhs))),
-        RiscvInstruction::FloatLessThanD { rd, .. } => (rd, u64::from(less_than_double(lhs, rhs))),
-        RiscvInstruction::FloatEqualS { rd, .. } => (rd, u64::from(equal_single(lhs, rhs))),
-        RiscvInstruction::FloatEqualD { rd, .. } => (rd, u64::from(equal_double(lhs, rhs))),
-        RiscvInstruction::FloatClassS { rd, .. } => (rd, class_single(lhs)),
-        RiscvInstruction::FloatClassD { rd, .. } => (rd, class_double(lhs)),
+        RiscvInstruction::FloatLessThanS { rd, .. } => {
+            Some((rd, u64::from(less_than_single(lhs, rhs))))
+        }
+        RiscvInstruction::FloatLessThanD { rd, .. } => {
+            Some((rd, u64::from(less_than_double(lhs, rhs))))
+        }
+        RiscvInstruction::FloatEqualS { rd, .. } => Some((rd, u64::from(equal_single(lhs, rhs)))),
+        RiscvInstruction::FloatEqualD { rd, .. } => Some((rd, u64::from(equal_double(lhs, rhs)))),
+        RiscvInstruction::FloatClassS { rd, .. } => Some((rd, class_single(lhs))),
+        RiscvInstruction::FloatClassD { rd, .. } => Some((rd, class_double(lhs))),
         RiscvInstruction::FloatMoveXFromS { rd, .. } => {
-            (rd, unbox_raw_single(lhs) as i32 as i64 as u64)
+            Some((rd, unbox_raw_single(lhs) as i32 as i64 as u64))
         }
-        RiscvInstruction::FloatConvertWFromS { rd, .. } => (rd, convert_single_to_signed_word(lhs)),
-        RiscvInstruction::FloatConvertWuFromS { rd, .. } => {
-            (rd, convert_single_to_unsigned_word(lhs))
-        }
-        RiscvInstruction::FloatConvertLFromS { rd, .. } => {
-            (rd, convert_single_to_signed_doubleword(lhs))
-        }
-        RiscvInstruction::FloatConvertLuFromS { rd, .. } => {
-            (rd, convert_single_to_unsigned_doubleword(lhs))
-        }
-        RiscvInstruction::FloatMoveXFromD { rd, .. } => (rd, lhs),
-        RiscvInstruction::FloatConvertWFromD { rd, .. } => (rd, convert_double_to_signed_word(lhs)),
-        RiscvInstruction::FloatConvertWuFromD { rd, .. } => {
-            (rd, convert_double_to_unsigned_word(lhs))
-        }
-        RiscvInstruction::FloatConvertLFromD { rd, .. } => {
-            (rd, convert_double_to_signed_doubleword(lhs))
-        }
-        RiscvInstruction::FloatConvertLuFromD { rd, .. } => {
-            (rd, convert_double_to_unsigned_doubleword(lhs))
-        }
+        RiscvInstruction::FloatConvertWFromS {
+            rd, rounding_mode, ..
+        } => Some((
+            rd,
+            convert_single_to_signed_word(lhs, rounding_mode.resolve(rhs)?),
+        )),
+        RiscvInstruction::FloatConvertWuFromS {
+            rd, rounding_mode, ..
+        } => Some((
+            rd,
+            convert_single_to_unsigned_word(lhs, rounding_mode.resolve(rhs)?),
+        )),
+        RiscvInstruction::FloatConvertLFromS {
+            rd, rounding_mode, ..
+        } => Some((
+            rd,
+            convert_single_to_signed_doubleword(lhs, rounding_mode.resolve(rhs)?),
+        )),
+        RiscvInstruction::FloatConvertLuFromS {
+            rd, rounding_mode, ..
+        } => Some((
+            rd,
+            convert_single_to_unsigned_doubleword(lhs, rounding_mode.resolve(rhs)?),
+        )),
+        RiscvInstruction::FloatMoveXFromD { rd, .. } => Some((rd, lhs)),
+        RiscvInstruction::FloatConvertWFromD {
+            rd, rounding_mode, ..
+        } => Some((
+            rd,
+            convert_double_to_signed_word(lhs, rounding_mode.resolve(rhs)?),
+        )),
+        RiscvInstruction::FloatConvertWuFromD {
+            rd, rounding_mode, ..
+        } => Some((
+            rd,
+            convert_double_to_unsigned_word(lhs, rounding_mode.resolve(rhs)?),
+        )),
+        RiscvInstruction::FloatConvertLFromD {
+            rd, rounding_mode, ..
+        } => Some((
+            rd,
+            convert_double_to_signed_doubleword(lhs, rounding_mode.resolve(rhs)?),
+        )),
+        RiscvInstruction::FloatConvertLuFromD {
+            rd, rounding_mode, ..
+        } => Some((
+            rd,
+            convert_double_to_unsigned_doubleword(lhs, rounding_mode.resolve(rhs)?),
+        )),
         _ => unreachable!("non-float-compare instruction dispatched to integer register write"),
+    }
+}
+
+pub(crate) fn integer_register_write_rne(
+    instruction: RiscvInstruction,
+    lhs: u64,
+    rhs: u64,
+) -> (Register, u64) {
+    integer_register_write(instruction, lhs, rhs).expect("RNE float integer write is valid")
+}
+
+fn round_single(value: f32, rounding_mode: RiscvFloatRoundingMode) -> f32 {
+    match rounding_mode {
+        RiscvFloatRoundingMode::RoundNearestEven => value.round_ties_even(),
+        RiscvFloatRoundingMode::RoundTowardZero => value.trunc(),
+        RiscvFloatRoundingMode::RoundDown => value.floor(),
+        RiscvFloatRoundingMode::RoundUp => value.ceil(),
+        RiscvFloatRoundingMode::RoundNearestMaxMagnitude => value.round(),
+        RiscvFloatRoundingMode::Dynamic => unreachable!("dynamic rounding mode must be resolved"),
+    }
+}
+
+fn round_double(value: f64, rounding_mode: RiscvFloatRoundingMode) -> f64 {
+    match rounding_mode {
+        RiscvFloatRoundingMode::RoundNearestEven => value.round_ties_even(),
+        RiscvFloatRoundingMode::RoundTowardZero => value.trunc(),
+        RiscvFloatRoundingMode::RoundDown => value.floor(),
+        RiscvFloatRoundingMode::RoundUp => value.ceil(),
+        RiscvFloatRoundingMode::RoundNearestMaxMagnitude => value.round(),
+        RiscvFloatRoundingMode::Dynamic => unreachable!("dynamic rounding mode must be resolved"),
     }
 }
 
@@ -635,13 +705,13 @@ fn convert_single_to_double(value: u64) -> u64 {
     }
 }
 
-fn convert_single_to_signed_word(value: u64) -> u64 {
+fn convert_single_to_signed_word(value: u64, rounding_mode: RiscvFloatRoundingMode) -> u64 {
     let value = f32::from_bits(unbox_single(value));
     if value.is_nan() {
         return i32::MAX as u64;
     }
 
-    let rounded = value.round_ties_even();
+    let rounded = round_single(value, rounding_mode);
     if rounded >= I32_MAX_PLUS_ONE_AS_SINGLE {
         i32::MAX as u64
     } else if rounded < -I32_MAX_PLUS_ONE_AS_SINGLE {
@@ -651,13 +721,13 @@ fn convert_single_to_signed_word(value: u64) -> u64 {
     }
 }
 
-fn convert_single_to_unsigned_word(value: u64) -> u64 {
+fn convert_single_to_unsigned_word(value: u64, rounding_mode: RiscvFloatRoundingMode) -> u64 {
     let value = f32::from_bits(unbox_single(value));
     if value.is_nan() {
         return sign_extend_unsigned_word(u32::MAX);
     }
 
-    let rounded = value.round_ties_even();
+    let rounded = round_single(value, rounding_mode);
     if rounded < 0.0 {
         0
     } else if rounded >= U32_MAX_PLUS_ONE_AS_SINGLE {
@@ -667,13 +737,13 @@ fn convert_single_to_unsigned_word(value: u64) -> u64 {
     }
 }
 
-fn convert_single_to_signed_doubleword(value: u64) -> u64 {
+fn convert_single_to_signed_doubleword(value: u64, rounding_mode: RiscvFloatRoundingMode) -> u64 {
     let value = f32::from_bits(unbox_single(value));
     if value.is_nan() {
         return i64::MAX as u64;
     }
 
-    let rounded = value.round_ties_even();
+    let rounded = round_single(value, rounding_mode);
     if rounded >= I64_MAX_PLUS_ONE_AS_SINGLE {
         i64::MAX as u64
     } else if rounded < -I64_MAX_PLUS_ONE_AS_SINGLE {
@@ -683,13 +753,13 @@ fn convert_single_to_signed_doubleword(value: u64) -> u64 {
     }
 }
 
-fn convert_single_to_unsigned_doubleword(value: u64) -> u64 {
+fn convert_single_to_unsigned_doubleword(value: u64, rounding_mode: RiscvFloatRoundingMode) -> u64 {
     let value = f32::from_bits(unbox_single(value));
     if value.is_nan() {
         return u64::MAX;
     }
 
-    let rounded = value.round_ties_even();
+    let rounded = round_single(value, rounding_mode);
     if rounded < 0.0 {
         0
     } else if rounded >= U64_MAX_PLUS_ONE_AS_SINGLE {
@@ -699,13 +769,13 @@ fn convert_single_to_unsigned_doubleword(value: u64) -> u64 {
     }
 }
 
-fn convert_double_to_signed_word(value: u64) -> u64 {
+fn convert_double_to_signed_word(value: u64, rounding_mode: RiscvFloatRoundingMode) -> u64 {
     let value = f64::from_bits(value);
     if value.is_nan() {
         return i32::MAX as u64;
     }
 
-    let rounded = value.round_ties_even();
+    let rounded = round_double(value, rounding_mode);
     if rounded > f64::from(i32::MAX) {
         i32::MAX as u64
     } else if rounded < f64::from(i32::MIN) {
@@ -715,13 +785,13 @@ fn convert_double_to_signed_word(value: u64) -> u64 {
     }
 }
 
-fn convert_double_to_unsigned_word(value: u64) -> u64 {
+fn convert_double_to_unsigned_word(value: u64, rounding_mode: RiscvFloatRoundingMode) -> u64 {
     let value = f64::from_bits(value);
     if value.is_nan() {
         return sign_extend_unsigned_word(u32::MAX);
     }
 
-    let rounded = value.round_ties_even();
+    let rounded = round_double(value, rounding_mode);
     if rounded < 0.0 {
         0
     } else if rounded > f64::from(u32::MAX) {
@@ -731,13 +801,13 @@ fn convert_double_to_unsigned_word(value: u64) -> u64 {
     }
 }
 
-fn convert_double_to_signed_doubleword(value: u64) -> u64 {
+fn convert_double_to_signed_doubleword(value: u64, rounding_mode: RiscvFloatRoundingMode) -> u64 {
     let value = f64::from_bits(value);
     if value.is_nan() {
         return i64::MAX as u64;
     }
 
-    let rounded = value.round_ties_even();
+    let rounded = round_double(value, rounding_mode);
     if rounded >= i64::MAX as f64 {
         i64::MAX as u64
     } else if rounded < i64::MIN as f64 {
@@ -747,13 +817,13 @@ fn convert_double_to_signed_doubleword(value: u64) -> u64 {
     }
 }
 
-fn convert_double_to_unsigned_doubleword(value: u64) -> u64 {
+fn convert_double_to_unsigned_doubleword(value: u64, rounding_mode: RiscvFloatRoundingMode) -> u64 {
     let value = f64::from_bits(value);
     if value.is_nan() {
         return u64::MAX;
     }
 
-    let rounded = value.round_ties_even();
+    let rounded = round_double(value, rounding_mode);
     if rounded < 0.0 {
         0
     } else if rounded >= u64::MAX as f64 {
@@ -1019,6 +1089,11 @@ const FLOAT_FLAG_DIVIDE_BY_ZERO: u64 = 1 << 3;
 
 fn float_rd(raw: u32) -> FloatRegister {
     FloatRegister::from_field(rd(raw).index().into())
+}
+
+fn float_rounding_mode(raw: u32) -> Result<RiscvFloatRoundingMode, RiscvError> {
+    RiscvFloatRoundingMode::from_rm_bits(funct3(raw) as u8)
+        .ok_or(RiscvError::UnknownEncoding { raw })
 }
 
 fn float_rs1(raw: u32) -> FloatRegister {

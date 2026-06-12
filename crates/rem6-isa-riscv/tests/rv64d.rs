@@ -1,6 +1,7 @@
 use rem6_isa_riscv::{
     FloatRegister, FloatRegisterWrite, Immediate, MemoryAccessKind, MemoryWidth, Register,
-    RiscvExecutionRecord, RiscvHartState, RiscvInstruction,
+    RiscvExecutionRecord, RiscvFloatRoundingMode, RiscvHartState, RiscvInstruction, RiscvTrap,
+    RiscvTrapKind,
 };
 
 fn r_type(funct7: u32, rs2: u8, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
@@ -290,6 +291,7 @@ fn decoder_accepts_rv64d_double_to_integer_conversions() {
             RiscvInstruction::FloatConvertWFromD {
                 rd: reg(5),
                 rs1: freg(2),
+                rounding_mode: RiscvFloatRoundingMode::RoundNearestEven,
             },
         ),
         (
@@ -297,6 +299,7 @@ fn decoder_accepts_rv64d_double_to_integer_conversions() {
             RiscvInstruction::FloatConvertWuFromD {
                 rd: reg(5),
                 rs1: freg(2),
+                rounding_mode: RiscvFloatRoundingMode::RoundNearestEven,
             },
         ),
         (
@@ -304,6 +307,7 @@ fn decoder_accepts_rv64d_double_to_integer_conversions() {
             RiscvInstruction::FloatConvertLFromD {
                 rd: reg(5),
                 rs1: freg(2),
+                rounding_mode: RiscvFloatRoundingMode::RoundNearestEven,
             },
         ),
         (
@@ -311,6 +315,7 @@ fn decoder_accepts_rv64d_double_to_integer_conversions() {
             RiscvInstruction::FloatConvertLuFromD {
                 rd: reg(5),
                 rs1: freg(2),
+                rounding_mode: RiscvFloatRoundingMode::RoundNearestEven,
             },
         ),
     ];
@@ -318,6 +323,32 @@ fn decoder_accepts_rv64d_double_to_integer_conversions() {
     for (raw, expected) in cases {
         assert_eq!(RiscvInstruction::decode(raw).unwrap(), expected);
     }
+}
+
+#[test]
+fn decoder_accepts_rv64d_float_to_integer_rounding_modes() {
+    assert_eq!(
+        RiscvInstruction::decode(r_type(0x61, 0, 2, 0x7, 5, 0x53)).unwrap(),
+        RiscvInstruction::FloatConvertWFromD {
+            rd: reg(5),
+            rs1: freg(2),
+            rounding_mode: RiscvFloatRoundingMode::Dynamic,
+        }
+    );
+    assert_eq!(
+        RiscvInstruction::decode(r_type(0x61, 0, 2, 0x2, 5, 0x53)).unwrap(),
+        RiscvInstruction::FloatConvertWFromD {
+            rd: reg(5),
+            rs1: freg(2),
+            rounding_mode: RiscvFloatRoundingMode::RoundDown,
+        }
+    );
+}
+
+#[test]
+fn decoder_rejects_rv64d_float_to_integer_reserved_rounding_modes() {
+    assert!(RiscvInstruction::decode(r_type(0x61, 0, 2, 0x5, 5, 0x53)).is_err());
+    assert!(RiscvInstruction::decode(r_type(0x61, 0, 2, 0x6, 5, 0x53)).is_err());
 }
 
 #[test]
@@ -914,6 +945,7 @@ fn hart_executes_rv64d_double_to_integer_conversions_with_rne() {
         .execute(RiscvInstruction::FloatConvertWFromD {
             rd: reg(2),
             rs1: freg(1),
+            rounding_mode: RiscvFloatRoundingMode::RoundNearestEven,
         })
         .unwrap();
     assert_eq!(hart.read(reg(2)), 2);
@@ -924,6 +956,7 @@ fn hart_executes_rv64d_double_to_integer_conversions_with_rne() {
     hart.execute(RiscvInstruction::FloatConvertWFromD {
         rd: reg(4),
         rs1: freg(3),
+        rounding_mode: RiscvFloatRoundingMode::RoundNearestEven,
     })
     .unwrap();
     assert_eq!(hart.read(reg(4)), 4);
@@ -932,6 +965,7 @@ fn hart_executes_rv64d_double_to_integer_conversions_with_rne() {
     hart.execute(RiscvInstruction::FloatConvertWFromD {
         rd: reg(6),
         rs1: freg(5),
+        rounding_mode: RiscvFloatRoundingMode::RoundNearestEven,
     })
     .unwrap();
     assert_eq!(hart.read(reg(6)), (-2i64) as u64);
@@ -940,6 +974,7 @@ fn hart_executes_rv64d_double_to_integer_conversions_with_rne() {
     hart.execute(RiscvInstruction::FloatConvertWuFromD {
         rd: reg(8),
         rs1: freg(7),
+        rounding_mode: RiscvFloatRoundingMode::RoundNearestEven,
     })
     .unwrap();
     assert_eq!(hart.read(reg(8)), u64::MAX);
@@ -948,6 +983,7 @@ fn hart_executes_rv64d_double_to_integer_conversions_with_rne() {
     hart.execute(RiscvInstruction::FloatConvertLFromD {
         rd: reg(10),
         rs1: freg(9),
+        rounding_mode: RiscvFloatRoundingMode::RoundNearestEven,
     })
     .unwrap();
     assert_eq!(hart.read(reg(10)), (-10i64) as u64);
@@ -956,9 +992,70 @@ fn hart_executes_rv64d_double_to_integer_conversions_with_rne() {
     hart.execute(RiscvInstruction::FloatConvertLuFromD {
         rd: reg(12),
         rs1: freg(11),
+        rounding_mode: RiscvFloatRoundingMode::RoundNearestEven,
     })
     .unwrap();
     assert_eq!(hart.read(reg(12)), 10);
+}
+
+#[test]
+fn hart_executes_rv64d_double_to_integer_dynamic_and_static_rounding() {
+    let mut hart = RiscvHartState::new(0x8100);
+    hart.write(reg(10), 1 << 5);
+    hart.execute(RiscvInstruction::decode(csr_write_type(0x003, 10, 0)).unwrap())
+        .unwrap();
+    hart.write_float(freg(1), 2.9f64.to_bits());
+
+    hart.execute(RiscvInstruction::decode(r_type(0x61, 0, 1, 0x7, 5, 0x53)).unwrap())
+        .unwrap();
+    assert_eq!(hart.read(reg(5)), 2);
+
+    hart.write_float(freg(2), (-2.1f64).to_bits());
+    hart.execute(RiscvInstruction::decode(r_type(0x61, 0, 2, 0x2, 6, 0x53)).unwrap())
+        .unwrap();
+    assert_eq!(hart.read(reg(6)), (-3i64) as u64);
+
+    hart.write_float(freg(3), 2.5f64.to_bits());
+    hart.execute(RiscvInstruction::decode(r_type(0x61, 0, 3, 0x4, 7, 0x53)).unwrap())
+        .unwrap();
+    assert_eq!(hart.read(reg(7)), 3);
+}
+
+#[test]
+fn hart_traps_rv64d_dynamic_rounding_with_reserved_frm() {
+    let mut hart = RiscvHartState::new(0x8100);
+    hart.set_machine_trap_vector(0x9000);
+    hart.write(reg(10), 7 << 5);
+    hart.execute(RiscvInstruction::decode(csr_write_type(0x003, 10, 0)).unwrap())
+        .unwrap();
+    hart.write_float(freg(1), 2.5f64.to_bits());
+
+    let record = hart
+        .execute(RiscvInstruction::decode(r_type(0x61, 0, 1, 0x7, 5, 0x53)).unwrap())
+        .unwrap();
+
+    assert_eq!(
+        record.trap(),
+        Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, 0x8104))
+    );
+    assert_eq!(hart.machine_trap_cause(), 2);
+    assert_eq!(hart.read(reg(5)), 0);
+}
+
+#[test]
+fn hart_ignores_frm_for_rv64d_static_rounding() {
+    let mut hart = RiscvHartState::new(0x8100);
+    hart.write(reg(10), 7 << 5);
+    hart.execute(RiscvInstruction::decode(csr_write_type(0x003, 10, 0)).unwrap())
+        .unwrap();
+    hart.write_float(freg(1), 2.1f64.to_bits());
+
+    let record = hart
+        .execute(RiscvInstruction::decode(r_type(0x61, 0, 1, 0x3, 5, 0x53)).unwrap())
+        .unwrap();
+
+    assert_eq!(record.trap(), None);
+    assert_eq!(hart.read(reg(5)), 3);
 }
 
 #[test]
@@ -969,6 +1066,7 @@ fn hart_saturates_rv64d_double_to_integer_invalid_results_without_fflags() {
     hart.execute(RiscvInstruction::FloatConvertWFromD {
         rd: reg(2),
         rs1: freg(1),
+        rounding_mode: RiscvFloatRoundingMode::RoundNearestEven,
     })
     .unwrap();
     assert_eq!(hart.read(reg(2)), i32::MAX as u64);
@@ -977,6 +1075,7 @@ fn hart_saturates_rv64d_double_to_integer_invalid_results_without_fflags() {
     hart.execute(RiscvInstruction::FloatConvertWFromD {
         rd: reg(4),
         rs1: freg(3),
+        rounding_mode: RiscvFloatRoundingMode::RoundNearestEven,
     })
     .unwrap();
     assert_eq!(hart.read(reg(4)), i32::MIN as i64 as u64);
@@ -985,6 +1084,7 @@ fn hart_saturates_rv64d_double_to_integer_invalid_results_without_fflags() {
     hart.execute(RiscvInstruction::FloatConvertWuFromD {
         rd: reg(6),
         rs1: freg(5),
+        rounding_mode: RiscvFloatRoundingMode::RoundNearestEven,
     })
     .unwrap();
     assert_eq!(hart.read(reg(6)), 0);
@@ -993,6 +1093,7 @@ fn hart_saturates_rv64d_double_to_integer_invalid_results_without_fflags() {
     hart.execute(RiscvInstruction::FloatConvertLuFromD {
         rd: reg(8),
         rs1: freg(7),
+        rounding_mode: RiscvFloatRoundingMode::RoundNearestEven,
     })
     .unwrap();
     assert_eq!(hart.read(reg(8)), u64::MAX);
@@ -1001,6 +1102,7 @@ fn hart_saturates_rv64d_double_to_integer_invalid_results_without_fflags() {
     hart.execute(RiscvInstruction::FloatConvertLFromD {
         rd: reg(10),
         rs1: freg(9),
+        rounding_mode: RiscvFloatRoundingMode::RoundNearestEven,
     })
     .unwrap();
     assert_eq!(hart.read(reg(10)), i64::MIN as u64);

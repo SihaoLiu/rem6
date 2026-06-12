@@ -86,6 +86,48 @@ impl RiscvFloatStatus {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum RiscvFloatRoundingMode {
+    RoundNearestEven,
+    RoundTowardZero,
+    RoundDown,
+    RoundUp,
+    RoundNearestMaxMagnitude,
+    Dynamic,
+}
+
+impl RiscvFloatRoundingMode {
+    pub const fn from_rm_bits(bits: u8) -> Option<Self> {
+        match bits {
+            0..=4 => Self::from_frm_bits(bits),
+            7 => Some(Self::Dynamic),
+            _ => None,
+        }
+    }
+
+    pub const fn from_frm_bits(bits: u8) -> Option<Self> {
+        match bits {
+            0 => Some(Self::RoundNearestEven),
+            1 => Some(Self::RoundTowardZero),
+            2 => Some(Self::RoundDown),
+            3 => Some(Self::RoundUp),
+            4 => Some(Self::RoundNearestMaxMagnitude),
+            _ => None,
+        }
+    }
+
+    pub const fn resolve(self, frm: u64) -> Option<Self> {
+        match self {
+            Self::Dynamic => Self::from_frm_bits(frm as u8),
+            mode @ (Self::RoundNearestEven
+            | Self::RoundTowardZero
+            | Self::RoundDown
+            | Self::RoundUp
+            | Self::RoundNearestMaxMagnitude) => Some(mode),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum RiscvCounterCsr {
     Cycle,
     Instret,
