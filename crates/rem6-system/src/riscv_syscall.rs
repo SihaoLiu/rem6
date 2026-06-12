@@ -32,6 +32,7 @@ mod seek;
 mod startup;
 mod stat;
 mod unknown;
+mod unlink;
 mod utsname;
 mod wait4;
 mod writev;
@@ -65,6 +66,7 @@ pub use startup::{
 };
 use stat::{guest_path_inode, write_riscv_linux_stat, RiscvGuestStat};
 pub use unknown::RiscvUnknownSyscallRecord;
+use unlink::{syscall_unlink, RISCV_LINUX_UNLINK};
 use utsname::write_riscv_linux_utsname;
 use wait4::{syscall_process_group_id, syscall_wait4, RISCV_LINUX_WAIT4};
 use writev::{syscall_writev, RISCV_LINUX_WRITEV};
@@ -496,6 +498,13 @@ impl RiscvSyscallState {
         self.guest_links.get(path).map(Vec::as_slice)
     }
 
+    pub(super) fn unlink_guest_path(&mut self, path: &[u8]) -> bool {
+        let removed_path = self.guest_paths.remove(path);
+        let removed_file = self.guest_files.remove(path).is_some();
+        let removed_link = self.guest_links.remove(path).is_some();
+        removed_path || removed_file || removed_link
+    }
+
     fn guest_path_stat(&self, path: &[u8]) -> Option<RiscvGuestStat> {
         if !self.guest_path_registered(path) {
             return None;
@@ -838,6 +847,11 @@ impl RiscvSyscallTable {
             RISCV_LINUX_OPEN => {
                 guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
                     value: syscall_open(request, state, guest_memory),
+                })
+            }
+            RISCV_LINUX_UNLINK => {
+                guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
+                    value: syscall_unlink(request, state, guest_memory),
                 })
             }
             RISCV_LINUX_CLOSE => Some(RiscvSyscallOutcome::Return {

@@ -1437,7 +1437,10 @@ Implementation evidence through 2026-06-11:
   number 1024 against registered guest files, then consumes the resulting fd
   through libc `fread` and `printf`. A static newlib `stat` regression covers
   the legacy `stat` syscall number 1038 against registered guest files and
-  checks the target-visible file size and mode through libc `printf`.
+  checks the target-visible file size and mode through libc `printf`. A static
+  newlib `unlink` regression covers the legacy `unlink` syscall number 1026 by
+  removing a registered guest path and observing a following libc `stat`
+  failure without touching the host filesystem.
   CLI and TOML runs can also preload host files into typed registered guest
   paths before execution, with a repository regression covering real guest
   `openat`, `read`, `write`, and `exit` ecall flow from those bytes.
@@ -5400,7 +5403,9 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   modern Linux generic `newfstatat` number 79 and `fstat` number 80 for
   registered guest paths, opened registered guest files, and seeded standard
   descriptors by writing the RV64 target `stat` structure back into simulated
-  guest memory, legacy `stat` number 1038 for registered guest paths, plus
+  guest memory, legacy `stat` number 1038 for registered guest paths, legacy
+  `unlink` number 1026 for removing registered guest path names while
+  preserving already-open descriptions, plus
   `getrandom` number 278 by writing bounded deterministic
   chunks into the guest buffer through simulated memory, `clock_gettime` number
   113 by writing an RV64 Linux `timespec` and `gettimeofday` number 169 by
@@ -5438,8 +5443,8 @@ PLIC source-count declarations feed both the emitted `riscv,ndev` property and t
   qemu for the same ELF. CLI `--riscv-se-file` and TOML `riscv_se_files` also
   preload host file bytes into registered guest paths before execution, and
   regressions consume those bytes through real guest `openat`, legacy `open`,
-  legacy `stat`, `read`, `write`, and `exit` ecalls, including static newlib
-  `fopen` and `stat` paths.
+  legacy `stat`, legacy `unlink`, `read`, `write`, and `exit` ecalls,
+  including static newlib `fopen`, `stat`, and `unlink` paths.
   The CLI can now
   opt into the same handoff with `rem6 run --riscv-se`: it installs the startup
   stack into simulated memory, maps zeroed stack backing matching the current

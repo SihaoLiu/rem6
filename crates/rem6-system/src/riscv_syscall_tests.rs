@@ -13,6 +13,8 @@ mod mmap_tests;
 mod startup_tests;
 #[path = "riscv_syscall_tests/stat_tests.rs"]
 mod stat_tests;
+#[path = "riscv_syscall_tests/unlink_tests.rs"]
+mod unlink_tests;
 #[path = "riscv_syscall_tests/wait4_tests.rs"]
 mod wait4_tests;
 
