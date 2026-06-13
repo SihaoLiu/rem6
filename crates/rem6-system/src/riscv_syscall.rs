@@ -144,9 +144,9 @@ pub use startup::{
 };
 use stat::{
     guest_path_inode, syscall_access, syscall_faccessat, syscall_fstat, syscall_lstat,
-    syscall_newfstatat, syscall_stat, RiscvGuestStat, RISCV_LINUX_ACCESS,
+    syscall_newfstatat, syscall_stat, syscall_statx, RiscvGuestStat, RISCV_LINUX_ACCESS,
     RISCV_LINUX_DEFAULT_DIRECTORY_PERMISSIONS, RISCV_LINUX_DEFAULT_REGULAR_FILE_PERMISSIONS,
-    RISCV_LINUX_FACCESSAT, RISCV_LINUX_LSTAT,
+    RISCV_LINUX_FACCESSAT, RISCV_LINUX_LSTAT, RISCV_LINUX_STATX,
 };
 use thread::{syscall_set_tid_address, RISCV_LINUX_SET_TID_ADDRESS};
 pub use unknown::RiscvUnknownSyscallRecord;
@@ -1174,6 +1174,11 @@ impl RiscvSyscallTable {
             RISCV_LINUX_LSTAT => guest_memory_reader.and_then(|reader| {
                 guest_memory_writer.map(|writer| RiscvSyscallOutcome::Return {
                     value: syscall_lstat(request, state, reader, writer),
+                })
+            }),
+            RISCV_LINUX_STATX => guest_memory_reader.and_then(|reader| {
+                guest_memory_writer.map(|writer| RiscvSyscallOutcome::Return {
+                    value: syscall_statx(request, state, reader, writer),
                 })
             }),
             RISCV_LINUX_ACCESS => {

@@ -24,6 +24,8 @@ mod riscv_se_rename;
 mod riscv_se_resource;
 #[path = "cli_run/riscv_se_signal.rs"]
 mod riscv_se_signal;
+#[path = "cli_run/riscv_se_statx.rs"]
+mod riscv_se_statx;
 #[path = "cli_run/riscv_se_stdio.rs"]
 mod riscv_se_stdio;
 #[path = "cli_run/riscv_se_time.rs"]
