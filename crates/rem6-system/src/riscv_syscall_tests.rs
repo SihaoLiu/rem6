@@ -35,6 +35,8 @@ mod readlink_tests;
 mod rename_tests;
 #[path = "riscv_syscall_tests/robust_tests.rs"]
 mod robust_tests;
+#[path = "riscv_syscall_tests/signal_tests.rs"]
+mod signal_tests;
 #[path = "riscv_syscall_tests/startup_tests.rs"]
 mod startup_tests;
 #[path = "riscv_syscall_tests/stat_tests.rs"]
@@ -302,7 +304,6 @@ fn linux_table_ignores_gem5_warn_once_startup_syscalls() {
         RISCV_LINUX_SCHED_YIELD,
         RISCV_LINUX_RT_SIGSUSPEND,
         RISCV_LINUX_RT_SIGACTION,
-        RISCV_LINUX_RT_SIGPROCMASK,
         RISCV_LINUX_RT_SIGPENDING,
         RISCV_LINUX_RT_SIGTIMEDWAIT,
         RISCV_LINUX_RT_SIGQUEUEINFO,
