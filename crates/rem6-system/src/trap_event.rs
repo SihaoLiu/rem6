@@ -616,20 +616,40 @@ impl RiscvTrapEventPort {
             }
 
             if let Some(firmware) = sbi {
-                if let Some(RiscvSbiOutcome::Return { error, value }) =
+                if let Some(outcome) =
                     firmware.handle_pending_core_trap(scheduler, &core, parallel)?
                 {
-                    if core
-                        .complete_pending_supervisor_environment_call(error, value)
-                        .is_none()
-                    {
-                        pending_traps.push(PendingRiscvTrapSchedule {
-                            cpu,
-                            event,
-                            source,
-                            source_tick,
-                            trap,
-                        });
+                    match outcome {
+                        RiscvSbiOutcome::Return { error, value } => {
+                            if core
+                                .complete_pending_supervisor_environment_call(error, value)
+                                .is_none()
+                            {
+                                pending_traps.push(PendingRiscvTrapSchedule {
+                                    cpu,
+                                    event,
+                                    source,
+                                    source_tick,
+                                    trap,
+                                });
+                            }
+                        }
+                        RiscvSbiOutcome::SystemReset {
+                            reset_type,
+                            reset_reason,
+                            code,
+                        } => {
+                            pending_syscalls.push(PendingRiscvSystemEventSchedule {
+                                event,
+                                source,
+                                source_tick,
+                                kind: GuestEventKind::SystemReset {
+                                    reset_type,
+                                    reset_reason,
+                                    code,
+                                },
+                            });
+                        }
                     }
                     continue;
                 }

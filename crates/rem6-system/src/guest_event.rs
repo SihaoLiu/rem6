@@ -95,6 +95,11 @@ pub enum GuestEventKind {
     Trap {
         trap: GuestTrap,
     },
+    SystemReset {
+        reset_type: u32,
+        reset_reason: u32,
+        code: i32,
+    },
     Terminate {
         code: i32,
     },
@@ -464,6 +469,7 @@ impl HostEventPolicy {
             GuestEventKind::Trap { trap } => vec![HostAction::Stop {
                 code: trap.kind().default_stop_code(),
             }],
+            GuestEventKind::SystemReset { code, .. } => vec![HostAction::Stop { code: *code }],
             GuestEventKind::Terminate { code } => vec![HostAction::Stop { code: *code }],
         }
     }

@@ -13,6 +13,7 @@ const SBI_ERR_INVALID_PARAM: u64 = (-3_i64) as u64;
 const SBI_BASE_EXTENSION: u64 = 0x10;
 const SBI_TIME_EXTENSION: u64 = 0x5449_4d45;
 const SBI_IPI_EXTENSION: u64 = 0x0073_5049;
+const SBI_SRST_EXTENSION: u64 = 0x5352_5354;
 const SBI_BASE_GET_SPEC_VERSION: u64 = 0;
 const SBI_BASE_GET_IMPL_ID: u64 = 1;
 const SBI_BASE_GET_IMPL_VERSION: u64 = 2;
@@ -22,9 +23,15 @@ const SBI_BASE_GET_MARCHID: u64 = 5;
 const SBI_BASE_GET_MIMPID: u64 = 6;
 const SBI_TIME_SET_TIMER: u64 = 0;
 const SBI_IPI_SEND_IPI: u64 = 0;
-const SBI_SPEC_VERSION_0_2: u64 = 2;
+const SBI_SRST_SYSTEM_RESET: u64 = 0;
+const SBI_SPEC_VERSION_0_3: u64 = 3;
 const REM6_SBI_IMPL_ID: u64 = 0x7265_6d36;
 const REM6_SBI_IMPL_VERSION: u64 = 0;
+const SBI_RESET_TYPE_SHUTDOWN: u32 = 0;
+const SBI_RESET_TYPE_COLD_REBOOT: u32 = 1;
+const SBI_RESET_TYPE_WARM_REBOOT: u32 = 2;
+const SBI_RESET_REASON_NONE: u32 = 0;
+const SBI_RESET_REASON_SYSTEM_FAILURE: u32 = 1;
 const SSIP: u64 = 1 << 1;
 const STIP: u64 = 1 << 5;
 
@@ -110,7 +117,15 @@ impl RiscvSbiRequest {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RiscvSbiOutcome {
-    Return { error: u64, value: u64 },
+    Return {
+        error: u64,
+        value: u64,
+    },
+    SystemReset {
+        reset_type: u32,
+        reset_reason: u32,
+        code: i32,
+    },
 }
 
 impl RiscvSbiOutcome {
@@ -175,7 +190,7 @@ impl RiscvSbiFirmware {
         };
         Ok(Some(match (request.extension(), request.function()) {
             (SBI_BASE_EXTENSION, SBI_BASE_GET_SPEC_VERSION) => {
-                RiscvSbiOutcome::success(SBI_SPEC_VERSION_0_2)
+                RiscvSbiOutcome::success(SBI_SPEC_VERSION_0_3)
             }
             (SBI_BASE_EXTENSION, SBI_BASE_GET_IMPL_ID) => {
                 RiscvSbiOutcome::success(REM6_SBI_IMPL_ID)
@@ -186,7 +201,8 @@ impl RiscvSbiFirmware {
             (SBI_BASE_EXTENSION, SBI_BASE_PROBE_EXTENSION) => RiscvSbiOutcome::success(u64::from(
                 request.arg0() == SBI_BASE_EXTENSION
                     || request.arg0() == SBI_TIME_EXTENSION
-                    || request.arg0() == SBI_IPI_EXTENSION,
+                    || request.arg0() == SBI_IPI_EXTENSION
+                    || request.arg0() == SBI_SRST_EXTENSION,
             )),
             (SBI_BASE_EXTENSION, SBI_BASE_GET_MVENDORID)
             | (SBI_BASE_EXTENSION, SBI_BASE_GET_MARCHID)
@@ -197,8 +213,33 @@ impl RiscvSbiFirmware {
                 RiscvSbiOutcome::success(0)
             }
             (SBI_IPI_EXTENSION, SBI_IPI_SEND_IPI) => self.send_ipi(request),
+            (SBI_SRST_EXTENSION, SBI_SRST_SYSTEM_RESET) => self.system_reset(request),
             _ => RiscvSbiOutcome::not_supported(),
         }))
+    }
+
+    fn system_reset(&self, request: RiscvSbiRequest) -> RiscvSbiOutcome {
+        let Some(reset_type) = u32::try_from(request.arg0()).ok() else {
+            return RiscvSbiOutcome::invalid_param();
+        };
+        let Some(reset_reason) = u32::try_from(request.arg1()).ok() else {
+            return RiscvSbiOutcome::invalid_param();
+        };
+        if !matches!(
+            reset_type,
+            SBI_RESET_TYPE_SHUTDOWN | SBI_RESET_TYPE_COLD_REBOOT | SBI_RESET_TYPE_WARM_REBOOT
+        ) || !matches!(
+            reset_reason,
+            SBI_RESET_REASON_NONE | SBI_RESET_REASON_SYSTEM_FAILURE
+        ) {
+            return RiscvSbiOutcome::invalid_param();
+        }
+
+        RiscvSbiOutcome::SystemReset {
+            reset_type,
+            reset_reason,
+            code: i32::from(reset_reason == SBI_RESET_REASON_SYSTEM_FAILURE),
+        }
     }
 
     fn send_ipi(&self, request: RiscvSbiRequest) -> RiscvSbiOutcome {
