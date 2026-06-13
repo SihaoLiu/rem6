@@ -1,5 +1,5 @@
 use super::{
-    guest_fd_argument, linux_error, RiscvGuestFileWriteError, RiscvGuestMemoryReader,
+    file_write::RiscvGuestFileWriteError, guest_fd_argument, linux_error, RiscvGuestMemoryReader,
     RiscvGuestWriteRecord, RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_EBADF,
     RISCV_LINUX_EFAULT, RISCV_LINUX_EFBIG, RISCV_LINUX_EINVAL, RISCV_LINUX_O_ACCMODE,
     RISCV_LINUX_O_RDONLY,

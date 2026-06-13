@@ -23,6 +23,7 @@ mod directory;
 mod dirent;
 mod fcntl;
 mod fd;
+mod file_read;
 mod file_write;
 mod futex;
 mod guest_memory;
@@ -73,7 +74,11 @@ use fcntl::{
 use fd::{
     syscall_close, syscall_dup, syscall_dup3, RISCV_LINUX_CLOSE, RISCV_LINUX_DUP, RISCV_LINUX_DUP3,
 };
-use file_write::{syscall_ftruncate, RiscvGuestFileWriteError, RISCV_LINUX_FTRUNCATE};
+use file_read::{syscall_pread64, syscall_read, RISCV_LINUX_PREAD64, RISCV_LINUX_READ};
+use file_write::{
+    syscall_ftruncate, syscall_pwrite64, syscall_write, RISCV_LINUX_FTRUNCATE,
+    RISCV_LINUX_PWRITE64, RISCV_LINUX_WRITE,
+};
 use futex::syscall_futex;
 pub use guest_memory::{
     RiscvGuestMemoryMapRequest, RiscvGuestMemoryMapResult, RiscvGuestMemoryReader,
@@ -136,8 +141,6 @@ use writev::{syscall_writev, RISCV_LINUX_WRITEV};
 
 const RISCV_LINUX_GETCWD: u64 = 17;
 const RISCV_LINUX_OPENAT: u64 = 56;
-const RISCV_LINUX_READ: u64 = 63;
-const RISCV_LINUX_WRITE: u64 = 64;
 const RISCV_LINUX_READLINKAT: u64 = 78;
 const RISCV_LINUX_NEWFSTATAT: u64 = 79;
 const RISCV_LINUX_FSTAT: u64 = 80;
@@ -1087,9 +1090,19 @@ impl RiscvSyscallTable {
                     value: syscall_read(request, state, guest_memory),
                 })
             }
+            RISCV_LINUX_PREAD64 => {
+                guest_memory_writer.map(|guest_memory| RiscvSyscallOutcome::Return {
+                    value: syscall_pread64(request, state, guest_memory),
+                })
+            }
             RISCV_LINUX_WRITE => {
                 guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
                     value: syscall_write(request, state, tick, guest_memory),
+                })
+            }
+            RISCV_LINUX_PWRITE64 => {
+                guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
+                    value: syscall_pwrite64(request, state, tick, guest_memory),
                 })
             }
             RISCV_LINUX_WRITEV => {
@@ -1649,110 +1662,6 @@ fn linux_standard_guest_fds() -> GuestFdTable {
             .expect("standard RISC-V Linux fd is unique");
     }
     table
-}
-
-fn syscall_read(
-    request: RiscvSyscallRequest,
-    state: &mut RiscvSyscallState,
-    guest_memory: &RiscvGuestMemoryWriter,
-) -> u64 {
-    let Some(fd) = guest_fd_argument(request.argument(0)) else {
-        return linux_error(RISCV_LINUX_EBADF);
-    };
-    let Ok(status_flags) = state.guest_fds.status_flags(fd) else {
-        return linux_error(RISCV_LINUX_EBADF);
-    };
-    if status_flags.bits() & (RISCV_LINUX_O_ACCMODE as u32) == RISCV_LINUX_O_WRONLY as u32 {
-        return linux_error(RISCV_LINUX_EBADF);
-    }
-
-    let count = request.argument(2);
-    if count == 0 {
-        return 0;
-    }
-
-    let Ok(byte_count) = usize::try_from(count) else {
-        return linux_error(RISCV_LINUX_EINVAL);
-    };
-    let read_from_stdin = state.stdin_readable(fd);
-    let bytes = if read_from_stdin {
-        state.stdin_prefix(byte_count)
-    } else {
-        match state.guest_file_prefix(fd, byte_count) {
-            Ok(Some(bytes)) => bytes,
-            Ok(None) | Err(_) => return linux_error(RISCV_LINUX_EBADF),
-        }
-    };
-    if bytes.is_empty() {
-        return 0;
-    }
-    let read_count = bytes.len() as u64;
-    let Ok(offset) = state.guest_fds.file_offset(fd) else {
-        return linux_error(RISCV_LINUX_EBADF);
-    };
-    if offset.get().checked_add(read_count).is_none() {
-        return linux_error(RISCV_LINUX_EBADF);
-    }
-
-    if !guest_memory.write(request.argument(1), &bytes) {
-        return linux_error(RISCV_LINUX_EFAULT);
-    }
-    if state.guest_fds.advance_file_offset(fd, read_count).is_err() {
-        return linux_error(RISCV_LINUX_EBADF);
-    }
-    if read_from_stdin {
-        state.consume_stdin_prefix(bytes.len());
-    }
-    read_count
-}
-
-fn syscall_write(
-    request: RiscvSyscallRequest,
-    state: &mut RiscvSyscallState,
-    tick: Tick,
-    guest_memory: &RiscvGuestMemoryReader,
-) -> u64 {
-    let Some(fd) = guest_fd_argument(request.argument(0)) else {
-        return linux_error(RISCV_LINUX_EBADF);
-    };
-    let Ok(status_flags) = state.guest_fds.status_flags(fd) else {
-        return linux_error(RISCV_LINUX_EBADF);
-    };
-    if status_flags.bits() & (RISCV_LINUX_O_ACCMODE as u32) == RISCV_LINUX_O_RDONLY as u32 {
-        return linux_error(RISCV_LINUX_EBADF);
-    }
-
-    let count = request.argument(2);
-    if count == 0 {
-        return 0;
-    }
-
-    let Ok(byte_count) = usize::try_from(count) else {
-        return linux_error(RISCV_LINUX_EINVAL);
-    };
-    match state.guest_file_write_exceeds_dense_limit(fd, count) {
-        Ok(true) => return linux_error(RISCV_LINUX_EFBIG),
-        Ok(false) => {}
-        Err(_) => return linux_error(RISCV_LINUX_EBADF),
-    }
-    let address = request.argument(1);
-    let Some(bytes) = guest_memory.read(address, byte_count) else {
-        return linux_error(RISCV_LINUX_EFAULT);
-    };
-    if bytes.len() != byte_count {
-        return linux_error(RISCV_LINUX_EFAULT);
-    }
-    match state.write_guest_file_from_fd(fd, &bytes) {
-        Ok(_) => {}
-        Err(RiscvGuestFileWriteError::FileTooLarge) => return linux_error(RISCV_LINUX_EFBIG),
-        Err(RiscvGuestFileWriteError::Fd(_)) => return linux_error(RISCV_LINUX_EBADF),
-    }
-    if state.guest_fds.advance_file_offset(fd, count).is_err() {
-        return linux_error(RISCV_LINUX_EBADF);
-    }
-
-    state.push_guest_write(RiscvGuestWriteRecord::new(fd, address, tick, bytes));
-    count
 }
 
 pub(super) fn guest_fd_argument(value: u64) -> Option<GuestFd> {

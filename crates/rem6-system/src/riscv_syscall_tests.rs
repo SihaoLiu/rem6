@@ -31,6 +31,8 @@ mod nanosleep_tests;
 mod open_tests;
 #[path = "riscv_syscall_tests/poll_tests.rs"]
 mod poll_tests;
+#[path = "riscv_syscall_tests/positioned_io_tests.rs"]
+mod positioned_io_tests;
 #[path = "riscv_syscall_tests/random_tests.rs"]
 mod random_tests;
 #[path = "riscv_syscall_tests/readlink_tests.rs"]
