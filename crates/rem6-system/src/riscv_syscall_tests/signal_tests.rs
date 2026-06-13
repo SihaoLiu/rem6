@@ -157,6 +157,173 @@ fn linux_table_kill_uses_linux_int_signal_argument() {
 }
 
 #[test]
+fn linux_table_tkill_signal_zero_checks_current_thread() {
+    let table = RiscvSyscallTable::new();
+    let mut state =
+        RiscvSyscallState::with_identity(0, RiscvSyscallIdentity::new(41, 42, 43, 7, 8, 9, 10));
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(0x8000, RISCV_LINUX_TKILL, [42, 0, 0, 0, 0, 0]),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(0x8004, RISCV_LINUX_TKILL, [41, 0, 0, 0, 0, 0]),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_ESRCH)
+        })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(0x8008, RISCV_LINUX_TKILL, [42, 65, 0, 0, 0, 0]),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EINVAL)
+        })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_tkill_reports_missing_thread_before_invalid_signal() {
+    let table = RiscvSyscallTable::new();
+    let mut state =
+        RiscvSyscallState::with_identity(0, RiscvSyscallIdentity::new(41, 42, 43, 7, 8, 9, 10));
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(0x8000, RISCV_LINUX_TKILL, [43, 65, 0, 0, 0, 0]),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_ESRCH)
+        })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_tgkill_signal_zero_checks_current_thread_group() {
+    let table = RiscvSyscallTable::new();
+    let mut state =
+        RiscvSyscallState::with_identity(0, RiscvSyscallIdentity::new(41, 42, 43, 7, 8, 9, 10));
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(0x8000, RISCV_LINUX_TGKILL, [41, 42, 0, 0, 0, 0]),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(0x8004, RISCV_LINUX_TGKILL, [40, 42, 0, 0, 0, 0]),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_ESRCH)
+        })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(0x8008, RISCV_LINUX_TGKILL, [41, 43, 0, 0, 0, 0]),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_ESRCH)
+        })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_tgkill_reports_missing_thread_before_invalid_signal() {
+    let table = RiscvSyscallTable::new();
+    let mut state =
+        RiscvSyscallState::with_identity(0, RiscvSyscallIdentity::new(41, 42, 43, 7, 8, 9, 10));
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(0x8000, RISCV_LINUX_TGKILL, [40, 42, 65, 0, 0, 0]),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_ESRCH)
+        })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(0x8004, RISCV_LINUX_TGKILL, [41, 43, 65, 0, 0, 0]),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_ESRCH)
+        })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_thread_signal_nonzero_records_unimplemented_delivery() {
+    let table = RiscvSyscallTable::new();
+    let mut state =
+        RiscvSyscallState::with_identity(0, RiscvSyscallIdentity::new(41, 42, 43, 7, 8, 9, 10));
+
+    assert_eq!(
+        table.handle_at_tick(
+            RiscvSyscallRequest::new(0x8000, RISCV_LINUX_TGKILL, [41, 42, SIGUSR1, 0, 0, 0],),
+            &mut state,
+            11,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_ENOSYS)
+        })
+    );
+    assert_eq!(
+        state.unknown_syscalls(),
+        &[RiscvUnknownSyscallRecord::new(
+            0x8000,
+            RISCV_LINUX_TGKILL,
+            [41, 42, SIGUSR1, 0, 0, 0],
+            11
+        )]
+    );
+    assert_eq!(
+        table.handle_at_tick(
+            RiscvSyscallRequest::new(0x8004, RISCV_LINUX_TKILL, [42, SIGUSR2, 0, 0, 0, 0]),
+            &mut state,
+            12,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_ENOSYS)
+        })
+    );
+    assert_eq!(
+        state.unknown_syscalls(),
+        &[
+            RiscvUnknownSyscallRecord::new(
+                0x8000,
+                RISCV_LINUX_TGKILL,
+                [41, 42, SIGUSR1, 0, 0, 0],
+                11,
+            ),
+            RiscvUnknownSyscallRecord::new(
+                0x8004,
+                RISCV_LINUX_TKILL,
+                [42, SIGUSR2, 0, 0, 0, 0],
+                12,
+            ),
+        ]
+    );
+}
+
+#[test]
 fn linux_table_rt_sigprocmask_blocks_mask_and_writes_previous_mask() {
     let table = RiscvSyscallTable::new();
     let mut state = RiscvSyscallState::new(0);

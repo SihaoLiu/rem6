@@ -82,17 +82,49 @@ pub(super) fn syscall_kill(
         return linux_error(RISCV_LINUX_ESRCH);
     }
 
-    if signal == 0 {
-        0
-    } else {
-        state.push_unknown_syscall(super::RiscvUnknownSyscallRecord::new(
-            request.pc(),
-            request.number(),
-            request.arguments(),
-            tick,
-        ));
-        linux_error(RISCV_LINUX_ENOSYS)
+    signal_probe_or_unimplemented_delivery(request, state, tick, signal)
+}
+
+pub(super) fn syscall_tkill(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+    tick: rem6_kernel::Tick,
+) -> u64 {
+    let signal = linux_int_argument(request.argument(1));
+    let Some(tid) = positive_linux_pid_argument(request.argument(0)) else {
+        return linux_error(RISCV_LINUX_EINVAL);
+    };
+    if tid != state.identity().thread_id() {
+        return linux_error(RISCV_LINUX_ESRCH);
     }
+    if signal != 0 && !valid_signal_i32(signal) {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+
+    signal_probe_or_unimplemented_delivery(request, state, tick, signal)
+}
+
+pub(super) fn syscall_tgkill(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+    tick: rem6_kernel::Tick,
+) -> u64 {
+    let signal = linux_int_argument(request.argument(2));
+    let Some(thread_group_id) = positive_linux_pid_argument(request.argument(0)) else {
+        return linux_error(RISCV_LINUX_EINVAL);
+    };
+    let Some(thread_id) = positive_linux_pid_argument(request.argument(1)) else {
+        return linux_error(RISCV_LINUX_EINVAL);
+    };
+    let identity = state.identity();
+    if thread_group_id != identity.thread_group_id() || thread_id != identity.thread_id() {
+        return linux_error(RISCV_LINUX_ESRCH);
+    }
+    if signal != 0 && !valid_signal_i32(signal) {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+
+    signal_probe_or_unimplemented_delivery(request, state, tick, signal)
 }
 
 pub(super) fn syscall_rt_sigaction(
@@ -256,6 +288,12 @@ fn linux_int_argument(argument: u64) -> i32 {
     argument as u32 as i32
 }
 
+fn positive_linux_pid_argument(argument: u64) -> Option<u64> {
+    u64::try_from(linux_pid_argument(argument))
+        .ok()
+        .filter(|pid| *pid > 0)
+}
+
 fn kill_target_exists(pid: i32, state: &RiscvSyscallState) -> bool {
     let current_process = state.identity().thread_group_id();
     if pid > 0 {
@@ -267,6 +305,25 @@ fn kill_target_exists(pid: i32, state: &RiscvSyscallState) -> bool {
     pid.checked_abs()
         .and_then(|process_group| u64::try_from(process_group).ok())
         == Some(current_process)
+}
+
+fn signal_probe_or_unimplemented_delivery(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+    tick: rem6_kernel::Tick,
+    signal: i32,
+) -> u64 {
+    if signal == 0 {
+        return 0;
+    }
+
+    state.push_unknown_syscall(super::RiscvUnknownSyscallRecord::new(
+        request.pc(),
+        request.number(),
+        request.arguments(),
+        tick,
+    ));
+    linux_error(RISCV_LINUX_ENOSYS)
 }
 
 fn read_signal_action(
