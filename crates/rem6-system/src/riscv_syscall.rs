@@ -178,7 +178,9 @@ const RISCV_LINUX_RT_SIGPENDING: u64 = 136;
 const RISCV_LINUX_RT_SIGTIMEDWAIT: u64 = 137;
 const RISCV_LINUX_RT_SIGQUEUEINFO: u64 = 138;
 const RISCV_LINUX_RT_SIGRETURN: u64 = 139;
+const RISCV_LINUX_SETUID: u64 = 146;
 const RISCV_LINUX_UNAME: u64 = 160;
+const RISCV_LINUX_SETRLIMIT: u64 = 164;
 const RISCV_LINUX_FUTEX: u64 = 98;
 const RISCV_LINUX_BRK: u64 = 214;
 const RISCV_LINUX_MUNMAP: u64 = 215;
@@ -1329,7 +1331,9 @@ impl RiscvSyscallTable {
             | RISCV_LINUX_MUNLOCKALL
             | RISCV_LINUX_MINCORE
             | RISCV_LINUX_MADVISE
-            | RISCV_LINUX_MBIND => Some(RiscvSyscallOutcome::Return { value: 0 }),
+            | RISCV_LINUX_MBIND
+            | RISCV_LINUX_SETUID
+            | RISCV_LINUX_SETRLIMIT => Some(RiscvSyscallOutcome::Return { value: 0 }),
             RISCV_LINUX_RSEQ => Some(RiscvSyscallOutcome::Return {
                 value: linux_error(RISCV_LINUX_ENOSYS),
             }),
