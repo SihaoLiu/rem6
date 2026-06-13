@@ -6,12 +6,12 @@ use rem6_cpu::{
     RiscvCluster, RiscvClusterTopologyConfig, RiscvCore, RiscvCoreDriveAction,
     RiscvCoreTopologyConfig, RiscvCoreTopologyDataTranslationConfig,
 };
-use rem6_isa_riscv::Register;
+use rem6_isa_riscv::{Register, RiscvPrivilegeMode};
 use rem6_kernel::{ClockDomain, PartitionId, PartitionedScheduler};
 use rem6_memory::{
     AccessSize, Address, AddressRange, AgentId, CacheLineLayout, MemoryRequestId, MemoryTargetId,
     PartitionedMemoryStore, TranslationPageMap, TranslationPagePermissions, TranslationPageSize,
-    TranslationQueueConfig, TranslationTlbConfig,
+    TranslationQueueConfig, TranslationTlbConfig, TranslationTlbStats,
 };
 use rem6_mmio::{MmioAccess, MmioBus, MmioRegisterBank, MmioRoute};
 use rem6_stats::StatsRegistry;
@@ -28,6 +28,8 @@ use rem6_transport::{
     MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome,
     TransportEndpointId,
 };
+
+const SBI_RFENCE_EXTENSION: u64 = 0x5246_4e43;
 
 fn endpoint(name: &str) -> TransportEndpointId {
     TransportEndpointId::new(name).unwrap()
@@ -71,6 +73,16 @@ fn i_type(imm: i32, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
         | (funct3 << 12)
         | (u32::from(rd) << 7)
         | opcode
+}
+
+fn lui(rd: u8, imm: u32) -> u32 {
+    (imm << 12) | (u32::from(rd) << 7) | 0x37
+}
+
+fn lui_addi_parts(value: u64) -> (u32, i32) {
+    let hi = ((value + 0x800) >> 12) as u32;
+    let lo = (value as i64 - ((u64::from(hi) << 12) as i64)) as i32;
+    (hi, lo)
 }
 
 struct CoreSpec<'a> {
@@ -190,6 +202,27 @@ fn memory_response(
         .cloned()
         .unwrap();
     TargetOutcome::Respond(response)
+}
+
+fn drive_one_translated_action(
+    core: &RiscvCore,
+    store: Arc<Mutex<PartitionedMemoryStore>>,
+    scheduler: &mut PartitionedScheduler,
+    transport: &MemoryTransport,
+    page_map: &TranslationPageMap,
+) -> Option<RiscvCoreDriveAction> {
+    let fetch_store = Arc::clone(&store);
+    let data_store = store;
+    core.drive_next_action_with_data_translation(
+        scheduler,
+        transport,
+        MemoryTrace::new(),
+        MemoryTrace::new(),
+        page_map,
+        move |delivery, _context| memory_response(&fetch_store, &delivery),
+        move |delivery, _context| memory_response(&data_store, &delivery),
+    )
+    .unwrap()
 }
 
 fn topology() -> Topology {
@@ -585,6 +618,190 @@ fn riscv_topology_config_builds_translated_parallel_data_cores() {
             ),
         ]
     );
+}
+
+#[test]
+fn riscv_sbi_remote_sfence_vma_flushes_translated_data_tlb() {
+    let host = PartitionId::new(3);
+    let source = GuestSourceId::new(54);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let cpu0_fetch = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu0_data = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.dmem"),
+                PartitionId::new(0),
+                endpoint("l1d0"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu1_fetch = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu1.ifetch"),
+                PartitionId::new(1),
+                endpoint("l1i1"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu1_data = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu1.dmem"),
+                PartitionId::new(1),
+                endpoint("l1d1"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let core0 = translated_riscv_core(CoreSpec {
+        cpu: 0,
+        partition: 0,
+        agent: 7,
+        entry: 0x8000,
+        fetch_endpoint: "cpu0.ifetch",
+        fetch_route: cpu0_fetch,
+        data_endpoint: "cpu0.dmem",
+        data_route: cpu0_data,
+    });
+    let core1 = translated_riscv_core(CoreSpec {
+        cpu: 1,
+        partition: 1,
+        agent: 8,
+        entry: 0x8100,
+        fetch_endpoint: "cpu1.ifetch",
+        fetch_route: cpu1_fetch,
+        data_endpoint: "cpu1.dmem",
+        data_route: cpu1_data,
+    });
+    core0.set_privilege_mode(RiscvPrivilegeMode::Supervisor);
+    core1.set_privilege_mode(RiscvPrivilegeMode::Supervisor);
+    core1.write_register(reg(2), 0x4010);
+    let cluster = RiscvCluster::new([core0.clone(), core1.clone()]).unwrap();
+    let page_map = single_page_map(0x4000, 0x9000);
+    let (rfence_hi, rfence_lo) = lui_addi_parts(SBI_RFENCE_EXTENSION);
+    let store = store_with_programs_and_data(
+        &[
+            (0x8000, lui(17, rfence_hi)),
+            (0x8004, i_type(rfence_lo, 17, 0x0, 17, 0x13)),
+            (0x8008, i_type(1, 0, 0x0, 16, 0x13)),
+            (0x800c, i_type(2, 0, 0x0, 10, 0x13)),
+            (0x8010, i_type(0, 0, 0x0, 11, 0x13)),
+            (0x8014, i_type(0, 0, 0x0, 12, 0x13)),
+            (0x8018, i_type(0, 0, 0x0, 13, 0x13)),
+            (0x801c, 0x0000_0073),
+            (0x8020, i_type(0, 10, 0x0, 6, 0x13)),
+            (0x8024, i_type(0, 11, 0x0, 7, 0x13)),
+            (0x8028, 0x0010_0073),
+            (0x8100, i_type(8, 2, 0x3, 5, 0x03)),
+            (0x8104, 0x0000_006f),
+        ],
+        &[(0x9018, vec![0xfe, 0xdc, 0xba, 0x98, 0x76, 0x54, 0x32, 0x10])],
+    );
+    assert!(matches!(
+        drive_one_translated_action(
+            &core1,
+            Arc::clone(&store),
+            &mut scheduler,
+            &transport,
+            &page_map
+        ),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+    assert!(matches!(
+        drive_one_translated_action(
+            &core1,
+            Arc::clone(&store),
+            &mut scheduler,
+            &transport,
+            &page_map
+        ),
+        Some(RiscvCoreDriveAction::InstructionExecuted(_))
+    ));
+    assert!(matches!(
+        drive_one_translated_action(
+            &core1,
+            Arc::clone(&store),
+            &mut scheduler,
+            &transport,
+            &page_map
+        ),
+        Some(RiscvCoreDriveAction::DataAccessIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+    assert_eq!(core1.read_register(reg(5)), 0x1032_5476_98ba_dcfe);
+    assert_eq!(
+        core1.data_translation_tlb_stats(),
+        Some(TranslationTlbStats::new(0, 1, 0, 1, 0))
+    );
+    assert_eq!(core1.data_translation_tlb_entry_count(), Some(1));
+
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        StatsRegistry::new(),
+    )));
+    let trap_port = RiscvTrapEventPort::new(
+        SystemHostEventPort::with_controller(host, 2, Arc::clone(&controller)).unwrap(),
+        source,
+    );
+    let driver = RiscvSystemRunDriver::new(trap_port).with_riscv_sbi_firmware();
+
+    let run = driver
+        .drive_until_host_stop_parallel_with_data_translation(
+            &cluster,
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            &page_map,
+            |_cpu| {
+                let store = Arc::clone(&store);
+                move |delivery, _context| memory_response(&store, &delivery)
+            },
+            |_cpu| {
+                let store = Arc::clone(&store);
+                move |delivery, _context| memory_response(&store, &delivery)
+            },
+            80,
+            |cpu| GuestEventId::new(170 + u64::from(cpu.get())),
+        )
+        .unwrap();
+
+    let stop = StopRequest::new(run.final_tick().unwrap(), GuestEventId::new(170), source, 1);
+    assert_eq!(run.stop_reason(), RiscvSystemRunStopReason::HostStop(stop));
+    assert_eq!(core0.read_register(reg(6)), 0);
+    assert_eq!(core0.read_register(reg(7)), 0);
+    assert_eq!(core0.data_translation_tlb_entry_count(), Some(0));
+    assert_eq!(
+        core1.data_translation_tlb_stats(),
+        Some(TranslationTlbStats::new(0, 1, 0, 1, 0))
+    );
+    assert_eq!(core1.data_translation_tlb_entry_count(), Some(0));
 }
 
 #[test]

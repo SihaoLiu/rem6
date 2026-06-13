@@ -13,6 +13,7 @@ const SBI_ERR_INVALID_PARAM: u64 = (-3_i64) as u64;
 const SBI_BASE_EXTENSION: u64 = 0x10;
 const SBI_TIME_EXTENSION: u64 = 0x5449_4d45;
 const SBI_IPI_EXTENSION: u64 = 0x0073_5049;
+const SBI_RFENCE_EXTENSION: u64 = 0x5246_4e43;
 const SBI_SRST_EXTENSION: u64 = 0x5352_5354;
 const SBI_BASE_GET_SPEC_VERSION: u64 = 0;
 const SBI_BASE_GET_IMPL_ID: u64 = 1;
@@ -23,10 +24,14 @@ const SBI_BASE_GET_MARCHID: u64 = 5;
 const SBI_BASE_GET_MIMPID: u64 = 6;
 const SBI_TIME_SET_TIMER: u64 = 0;
 const SBI_IPI_SEND_IPI: u64 = 0;
+const SBI_RFENCE_REMOTE_FENCE_I: u64 = 0;
+const SBI_RFENCE_REMOTE_SFENCE_VMA: u64 = 1;
+const SBI_RFENCE_REMOTE_SFENCE_VMA_ASID: u64 = 2;
 const SBI_SRST_SYSTEM_RESET: u64 = 0;
 const SBI_SPEC_VERSION_0_3: u64 = 3;
 const REM6_SBI_IMPL_ID: u64 = 0x7265_6d36;
 const REM6_SBI_IMPL_VERSION: u64 = 0;
+const SBI_ERR_INVALID_ADDRESS: u64 = (-5_i64) as u64;
 const SBI_RESET_TYPE_SHUTDOWN: u32 = 0;
 const SBI_RESET_TYPE_COLD_REBOOT: u32 = 1;
 const SBI_RESET_TYPE_WARM_REBOOT: u32 = 2;
@@ -75,6 +80,9 @@ pub struct RiscvSbiRequest {
     function: u64,
     arg0: u64,
     arg1: u64,
+    arg2: u64,
+    arg3: u64,
+    arg4: u64,
 }
 
 impl RiscvSbiRequest {
@@ -95,6 +103,9 @@ impl RiscvSbiRequest {
             function: core.read_register(register(16)),
             arg0: core.read_register(register(10)),
             arg1: core.read_register(register(11)),
+            arg2: core.read_register(register(12)),
+            arg3: core.read_register(register(13)),
+            arg4: core.read_register(register(14)),
         })
     }
 
@@ -112,6 +123,18 @@ impl RiscvSbiRequest {
 
     pub const fn arg1(self) -> u64 {
         self.arg1
+    }
+
+    pub const fn arg2(self) -> u64 {
+        self.arg2
+    }
+
+    pub const fn arg3(self) -> u64 {
+        self.arg3
+    }
+
+    pub const fn arg4(self) -> u64 {
+        self.arg4
     }
 }
 
@@ -146,6 +169,13 @@ impl RiscvSbiOutcome {
     pub const fn invalid_param() -> Self {
         Self::Return {
             error: SBI_ERR_INVALID_PARAM,
+            value: 0,
+        }
+    }
+
+    pub const fn invalid_address() -> Self {
+        Self::Return {
+            error: SBI_ERR_INVALID_ADDRESS,
             value: 0,
         }
     }
@@ -202,6 +232,7 @@ impl RiscvSbiFirmware {
                 request.arg0() == SBI_BASE_EXTENSION
                     || request.arg0() == SBI_TIME_EXTENSION
                     || request.arg0() == SBI_IPI_EXTENSION
+                    || request.arg0() == SBI_RFENCE_EXTENSION
                     || request.arg0() == SBI_SRST_EXTENSION,
             )),
             (SBI_BASE_EXTENSION, SBI_BASE_GET_MVENDORID)
@@ -213,6 +244,11 @@ impl RiscvSbiFirmware {
                 RiscvSbiOutcome::success(0)
             }
             (SBI_IPI_EXTENSION, SBI_IPI_SEND_IPI) => self.send_ipi(request),
+            (SBI_RFENCE_EXTENSION, SBI_RFENCE_REMOTE_FENCE_I) => self.remote_fence_i(request),
+            (SBI_RFENCE_EXTENSION, SBI_RFENCE_REMOTE_SFENCE_VMA)
+            | (SBI_RFENCE_EXTENSION, SBI_RFENCE_REMOTE_SFENCE_VMA_ASID) => {
+                self.remote_sfence_vma(request)
+            }
             (SBI_SRST_EXTENSION, SBI_SRST_SYSTEM_RESET) => self.system_reset(request),
             _ => RiscvSbiOutcome::not_supported(),
         }))
@@ -243,7 +279,7 @@ impl RiscvSbiFirmware {
     }
 
     fn send_ipi(&self, request: RiscvSbiRequest) -> RiscvSbiOutcome {
-        let Some(targets) = self.ipi_targets(request.arg0(), request.arg1()) else {
+        let Some(targets) = self.hart_mask_targets(request.arg0(), request.arg1()) else {
             return RiscvSbiOutcome::invalid_param();
         };
 
@@ -253,7 +289,36 @@ impl RiscvSbiFirmware {
         RiscvSbiOutcome::success(0)
     }
 
-    fn ipi_targets(&self, hart_mask: u64, hart_mask_base: u64) -> Option<Vec<RiscvCore>> {
+    fn remote_fence_i(&self, request: RiscvSbiRequest) -> RiscvSbiOutcome {
+        if self
+            .hart_mask_targets(request.arg0(), request.arg1())
+            .is_none()
+        {
+            return RiscvSbiOutcome::invalid_param();
+        }
+        RiscvSbiOutcome::success(0)
+    }
+
+    fn remote_sfence_vma(&self, request: RiscvSbiRequest) -> RiscvSbiOutcome {
+        if !valid_rfence_range(request.arg2(), request.arg3()) {
+            return RiscvSbiOutcome::invalid_address();
+        }
+        if request.function() == SBI_RFENCE_REMOTE_SFENCE_VMA_ASID
+            && u16::try_from(request.arg4()).is_err()
+        {
+            return RiscvSbiOutcome::invalid_param();
+        }
+        let Some(targets) = self.hart_mask_targets(request.arg0(), request.arg1()) else {
+            return RiscvSbiOutcome::invalid_param();
+        };
+
+        for target in targets {
+            target.flush_data_translation_tlb();
+        }
+        RiscvSbiOutcome::success(0)
+    }
+
+    fn hart_mask_targets(&self, hart_mask: u64, hart_mask_base: u64) -> Option<Vec<RiscvCore>> {
         let cores = self.cores.lock().expect("RISC-V SBI core registry lock");
         if hart_mask_base == u64::MAX {
             return Some(cores.values().cloned().collect());
@@ -317,6 +382,10 @@ impl RiscvSbiFirmware {
         }
         Ok(())
     }
+}
+
+fn valid_rfence_range(start_addr: u64, size: u64) -> bool {
+    (start_addr == 0 && size == 0) || size == u64::MAX || start_addr.checked_add(size).is_some()
 }
 
 impl RiscvSystemRunDriver {
