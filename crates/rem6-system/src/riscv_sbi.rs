@@ -26,6 +26,7 @@ const SBI_BASE_GET_MARCHID: u64 = 5;
 const SBI_BASE_GET_MIMPID: u64 = 6;
 const SBI_TIME_SET_TIMER: u64 = 0;
 const SBI_HSM_HART_START: u64 = 0;
+const SBI_HSM_HART_STOP: u64 = 1;
 const SBI_HSM_HART_GET_STATUS: u64 = 2;
 const SBI_HSM_HART_STARTED: u64 = 0;
 const SBI_HSM_HART_STOPPED: u64 = 1;
@@ -262,6 +263,7 @@ impl RiscvSbiFirmware {
                 RiscvSbiOutcome::success(0)
             }
             (SBI_HSM_EXTENSION, SBI_HSM_HART_START) => self.hart_start(request),
+            (SBI_HSM_EXTENSION, SBI_HSM_HART_STOP) => self.hart_stop(core),
             (SBI_HSM_EXTENSION, SBI_HSM_HART_GET_STATUS) => self.hart_get_status(request),
             (SBI_IPI_EXTENSION, SBI_IPI_SEND_IPI) => self.send_ipi(request),
             (SBI_RFENCE_EXTENSION, SBI_RFENCE_REMOTE_FENCE_I) => self.remote_fence_i(request),
@@ -327,6 +329,11 @@ impl RiscvSbiFirmware {
         }
 
         target.start_supervisor_hart(Address::new(request.arg1()), request.arg2());
+        RiscvSbiOutcome::success(0)
+    }
+
+    fn hart_stop(&self, core: &RiscvCore) -> RiscvSbiOutcome {
+        core.set_hart_stopped();
         RiscvSbiOutcome::success(0)
     }
 
