@@ -5,16 +5,33 @@ use super::{
     RiscvSyscallState, RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL, RISCV_LINUX_ESRCH,
 };
 
+pub(super) const RISCV_LINUX_SCHED_GETSCHEDULER: u64 = 120;
 pub(super) const RISCV_LINUX_SCHED_GETPARAM: u64 = 121;
 pub(super) const RISCV_LINUX_SCHED_SETAFFINITY: u64 = 122;
 pub(super) const RISCV_LINUX_SCHED_GETAFFINITY: u64 = 123;
 
 const RISCV_LINUX_DEFAULT_SCHED_PRIORITY: i32 = 0;
+const RISCV_LINUX_SCHED_OTHER: u64 = 0;
 const RISCV_LINUX_GUEST_CPU_IDS: u64 = 1;
 const RISCV_LINUX_GUEST_AFFINITY_BYTES: u64 = mem::size_of::<u64>() as u64;
 const RISCV_LINUX_GUEST_AFFINITY_BYTES_USIZE: usize = mem::size_of::<u64>();
 const RISCV_LINUX_GUEST_AFFINITY_MASK: u64 = 1;
 const RISCV_LINUX_BITS_PER_BYTE: u64 = u8::BITS as u64;
+
+pub(super) fn syscall_sched_getscheduler(
+    request: RiscvSyscallRequest,
+    state: &RiscvSyscallState,
+) -> u64 {
+    let requested_pid = linux_int_argument(request.argument(0));
+    if requested_pid < 0 {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+    if !matches_current_process(requested_pid as u64, state) {
+        return linux_error(RISCV_LINUX_ESRCH);
+    }
+
+    RISCV_LINUX_SCHED_OTHER
+}
 
 pub(super) fn syscall_sched_getparam(
     request: RiscvSyscallRequest,
