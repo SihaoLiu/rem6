@@ -569,6 +569,20 @@ impl GuestFdTable {
         Ok(new_fd)
     }
 
+    pub fn dup_from_min(
+        &mut self,
+        old_fd: GuestFd,
+        minimum_fd: GuestFd,
+    ) -> Result<GuestFd, GuestFdError> {
+        let entry = self
+            .entry(old_fd)
+            .ok_or(GuestFdError::BadFd { fd: old_fd })?
+            .duplicated();
+        let new_fd = self.next_available_fd_from(minimum_fd)?;
+        self.entries.insert(new_fd, entry);
+        Ok(new_fd)
+    }
+
     pub fn dup2(&mut self, old_fd: GuestFd, new_fd: GuestFd) -> Result<GuestFd, GuestFdError> {
         let entry = self
             .entry(old_fd)
@@ -610,7 +624,11 @@ impl GuestFdTable {
     }
 
     fn next_available_fd(&self) -> Result<GuestFd, GuestFdError> {
-        let mut candidate = 0_i32;
+        self.next_available_fd_from(GuestFd::new(0)?)
+    }
+
+    fn next_available_fd_from(&self, minimum_fd: GuestFd) -> Result<GuestFd, GuestFdError> {
+        let mut candidate = i32::try_from(minimum_fd.get()).expect("guest fd is created from i32");
         loop {
             let fd = GuestFd::new(candidate)?;
             if !self.entries.contains_key(&fd) {

@@ -30,6 +30,38 @@ fn guest_fd_dup2_respects_requested_destination_fd() {
 }
 
 #[test]
+fn guest_fd_dup_from_minimum_uses_lowest_available_fd_at_or_above_minimum() {
+    let mut table = GuestFdTable::new();
+    let source = GuestFd::new(1).unwrap();
+    let minimum = GuestFd::new(2).unwrap();
+    let occupied = GuestFd::new(2).unwrap();
+    let expected = GuestFd::new(3).unwrap();
+    let source_description = GuestFileDescriptionId::new(77);
+    table
+        .insert(
+            source,
+            GuestFdEntry::new(source_description).with_close_on_exec(true),
+        )
+        .unwrap();
+    table
+        .insert(occupied, GuestFdEntry::new(GuestFileDescriptionId::new(88)))
+        .unwrap();
+
+    let duplicate = table.dup_from_min(source, minimum).unwrap();
+
+    assert_eq!(duplicate, expected);
+    assert_eq!(
+        table.entry(duplicate).unwrap().description(),
+        source_description
+    );
+    assert!(!table.entry(duplicate).unwrap().close_on_exec());
+    assert_eq!(
+        table.entry(occupied).unwrap().description(),
+        GuestFileDescriptionId::new(88)
+    );
+}
+
+#[test]
 fn guest_fd_dup2_replaces_existing_destination_without_allocating_another_fd() {
     let mut table = GuestFdTable::new();
     let source = GuestFd::new(3).unwrap();

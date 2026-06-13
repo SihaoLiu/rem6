@@ -1,6 +1,130 @@
 use super::*;
 
+const RISCV_LINUX_F_DUPFD_FOR_TEST: u64 = 0;
+const RISCV_LINUX_F_DUPFD_CLOEXEC_FOR_TEST: u64 = 1030;
 const RISCV_LINUX_O_RDWR_FOR_TEST: u64 = 2;
+
+#[test]
+fn linux_table_fcntl_dupfd_respects_minimum_and_close_on_exec() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let low_duplicate = GuestFd::new(3).unwrap();
+    let high_duplicate = GuestFd::new(5).unwrap();
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_FCNTL,
+                [1, RISCV_LINUX_F_DUPFD_FOR_TEST, 5, 0, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 5 })
+    );
+    assert_eq!(
+        state
+            .guest_fds()
+            .entry(high_duplicate)
+            .unwrap()
+            .description(),
+        GuestFileDescriptionId::new(1)
+    );
+    assert!(!state.guest_fds().close_on_exec(high_duplicate).unwrap());
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_FCNTL,
+                [1, RISCV_LINUX_F_DUPFD_CLOEXEC_FOR_TEST, 3, 0, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 3 })
+    );
+    assert_eq!(
+        state
+            .guest_fds()
+            .entry(low_duplicate)
+            .unwrap()
+            .description(),
+        GuestFileDescriptionId::new(1)
+    );
+    assert!(state.guest_fds().close_on_exec(low_duplicate).unwrap());
+}
+
+#[test]
+fn linux_table_fcntl_dupfd_preserves_stdin_read_source() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.push_stdin_bytes(b"Z");
+    let guest_memory_writer =
+        RiscvGuestMemoryWriter::new(|address, bytes| address == 0x9100 && bytes == b"Z");
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_FCNTL,
+                [0, RISCV_LINUX_F_DUPFD_FOR_TEST, 7, 0, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 7 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8004, RISCV_LINUX_READ, [7, 0x9100, 1, 0, 0, 0]),
+            &mut state,
+            9,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 1 })
+    );
+    assert_eq!(state.stdin_byte_count(), 0);
+}
+
+#[test]
+fn linux_table_fcntl_dupfd_reports_bad_source_before_invalid_minimum() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_FCNTL,
+                [99, RISCV_LINUX_F_DUPFD_FOR_TEST, u64::MAX, 0, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EBADF)
+        })
+    );
+}
+
+#[test]
+fn linux_table_fcntl_dupfd_rejects_invalid_minimum_after_valid_source() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_FCNTL,
+                [1, RISCV_LINUX_F_DUPFD_FOR_TEST, u64::MAX, 0, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EINVAL)
+        })
+    );
+}
 
 #[test]
 fn linux_table_fcntl_setfl_enables_append_guest_file_writes() {
