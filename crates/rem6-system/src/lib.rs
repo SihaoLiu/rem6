@@ -707,6 +707,9 @@ pub struct RiscvSystemRunDriver {
 
 impl RiscvSystemRunDriver {
     pub(crate) fn reset_stats_for_run(&self, cluster: &RiscvCluster) -> Result<(), SystemError> {
+        if let Some(firmware) = &self.riscv_sbi_firmware {
+            firmware.register_cluster(cluster)?;
+        }
         if let Some(instruction_stats) = &self.instruction_stats {
             instruction_stats.reset_retired_instruction_probes();
         }

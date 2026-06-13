@@ -771,6 +771,10 @@ impl RiscvCore {
         self.core.id()
     }
 
+    pub fn hart_id(&self) -> u64 {
+        self.state.lock().expect("riscv core lock").hart.hart_id()
+    }
+
     pub fn partition(&self) -> PartitionId {
         self.core.partition()
     }

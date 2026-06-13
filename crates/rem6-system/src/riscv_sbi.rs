@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use rem6_cpu::{CpuId, RiscvCore};
+use rem6_cpu::{CpuId, RiscvCluster, RiscvCore};
 use rem6_isa_riscv::{Register, RiscvPrivilegeMode, RiscvTrapKind};
 use rem6_kernel::{PartitionedScheduler, SchedulerError};
 
@@ -9,8 +9,10 @@ use crate::{RiscvSystemRunDriver, SystemError};
 
 const SBI_SUCCESS: u64 = 0;
 const SBI_ERR_NOT_SUPPORTED: u64 = (-2_i64) as u64;
+const SBI_ERR_INVALID_PARAM: u64 = (-3_i64) as u64;
 const SBI_BASE_EXTENSION: u64 = 0x10;
 const SBI_TIME_EXTENSION: u64 = 0x5449_4d45;
+const SBI_IPI_EXTENSION: u64 = 0x0073_5049;
 const SBI_BASE_GET_SPEC_VERSION: u64 = 0;
 const SBI_BASE_GET_IMPL_ID: u64 = 1;
 const SBI_BASE_GET_IMPL_VERSION: u64 = 2;
@@ -19,13 +21,16 @@ const SBI_BASE_GET_MVENDORID: u64 = 4;
 const SBI_BASE_GET_MARCHID: u64 = 5;
 const SBI_BASE_GET_MIMPID: u64 = 6;
 const SBI_TIME_SET_TIMER: u64 = 0;
+const SBI_IPI_SEND_IPI: u64 = 0;
 const SBI_SPEC_VERSION_0_2: u64 = 2;
 const REM6_SBI_IMPL_ID: u64 = 0x7265_6d36;
 const REM6_SBI_IMPL_VERSION: u64 = 0;
+const SSIP: u64 = 1 << 1;
 const STIP: u64 = 1 << 5;
 
 #[derive(Clone, Debug, Default)]
 pub struct RiscvSbiFirmware {
+    cores: Arc<Mutex<BTreeMap<u64, RiscvCore>>>,
     timer: Arc<Mutex<RiscvSbiTimerState>>,
 }
 
@@ -62,6 +67,7 @@ pub struct RiscvSbiRequest {
     extension: u64,
     function: u64,
     arg0: u64,
+    arg1: u64,
 }
 
 impl RiscvSbiRequest {
@@ -81,6 +87,7 @@ impl RiscvSbiRequest {
             extension: core.read_register(register(17)),
             function: core.read_register(register(16)),
             arg0: core.read_register(register(10)),
+            arg1: core.read_register(register(11)),
         })
     }
 
@@ -94,6 +101,10 @@ impl RiscvSbiRequest {
 
     pub const fn arg0(self) -> u64 {
         self.arg0
+    }
+
+    pub const fn arg1(self) -> u64 {
+        self.arg1
     }
 }
 
@@ -116,16 +127,34 @@ impl RiscvSbiOutcome {
             value: 0,
         }
     }
+
+    pub const fn invalid_param() -> Self {
+        Self::Return {
+            error: SBI_ERR_INVALID_PARAM,
+            value: 0,
+        }
+    }
 }
 
 impl RiscvSbiFirmware {
     pub fn new() -> Self {
         Self {
+            cores: Arc::new(Mutex::new(BTreeMap::new())),
             timer: Arc::new(Mutex::new(RiscvSbiTimerState {
                 generations: BTreeMap::new(),
                 deadlines: BTreeMap::new(),
             })),
         }
+    }
+
+    pub(crate) fn register_cluster(&self, cluster: &RiscvCluster) -> Result<(), SystemError> {
+        let mut cores = self.cores.lock().expect("RISC-V SBI core registry lock");
+        cores.clear();
+        for cpu in cluster.core_ids() {
+            let core = cluster.core(cpu).map_err(SystemError::RiscvCluster)?;
+            cores.insert(core.hart_id(), core);
+        }
+        Ok(())
     }
 
     pub fn timer_deadline(&self, cpu: CpuId) -> Option<u64> {
@@ -135,7 +164,7 @@ impl RiscvSbiFirmware {
             .deadline(cpu)
     }
 
-    pub fn handle_pending_core_trap(
+    pub(crate) fn handle_pending_core_trap(
         &self,
         scheduler: &mut PartitionedScheduler,
         core: &RiscvCore,
@@ -155,7 +184,9 @@ impl RiscvSbiFirmware {
                 RiscvSbiOutcome::success(REM6_SBI_IMPL_VERSION)
             }
             (SBI_BASE_EXTENSION, SBI_BASE_PROBE_EXTENSION) => RiscvSbiOutcome::success(u64::from(
-                request.arg0() == SBI_BASE_EXTENSION || request.arg0() == SBI_TIME_EXTENSION,
+                request.arg0() == SBI_BASE_EXTENSION
+                    || request.arg0() == SBI_TIME_EXTENSION
+                    || request.arg0() == SBI_IPI_EXTENSION,
             )),
             (SBI_BASE_EXTENSION, SBI_BASE_GET_MVENDORID)
             | (SBI_BASE_EXTENSION, SBI_BASE_GET_MARCHID)
@@ -165,8 +196,37 @@ impl RiscvSbiFirmware {
                     .map_err(SystemError::Scheduler)?;
                 RiscvSbiOutcome::success(0)
             }
+            (SBI_IPI_EXTENSION, SBI_IPI_SEND_IPI) => self.send_ipi(request),
             _ => RiscvSbiOutcome::not_supported(),
         }))
+    }
+
+    fn send_ipi(&self, request: RiscvSbiRequest) -> RiscvSbiOutcome {
+        let Some(targets) = self.ipi_targets(request.arg0(), request.arg1()) else {
+            return RiscvSbiOutcome::invalid_param();
+        };
+
+        for target in targets {
+            target.set_machine_interrupt_pending_bits(SSIP);
+        }
+        RiscvSbiOutcome::success(0)
+    }
+
+    fn ipi_targets(&self, hart_mask: u64, hart_mask_base: u64) -> Option<Vec<RiscvCore>> {
+        let cores = self.cores.lock().expect("RISC-V SBI core registry lock");
+        if hart_mask_base == u64::MAX {
+            return Some(cores.values().cloned().collect());
+        }
+
+        let mut targets = Vec::new();
+        let mut remaining = hart_mask;
+        while remaining != 0 {
+            let bit = u64::from(remaining.trailing_zeros());
+            let hart = hart_mask_base.checked_add(bit)?;
+            targets.push(cores.get(&hart)?.clone());
+            remaining &= remaining - 1;
+        }
+        Some(targets)
     }
 
     fn program_timer(
