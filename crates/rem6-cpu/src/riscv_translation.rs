@@ -864,6 +864,9 @@ impl RiscvCore {
         F: FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static,
         D: FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static,
     {
+        if !self.is_hart_started() {
+            return Ok(None);
+        }
         if let Some(event) = self.take_pending_trap_event() {
             return Ok(Some(RiscvCoreDriveAction::InstructionExecuted(Box::new(
                 event,

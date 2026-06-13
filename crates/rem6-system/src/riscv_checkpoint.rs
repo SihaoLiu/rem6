@@ -3,7 +3,7 @@ use std::error::Error;
 use std::fmt;
 
 use rem6_checkpoint::{CheckpointComponentId, CheckpointError, CheckpointRegistry};
-use rem6_cpu::RiscvCore;
+use rem6_cpu::{RiscvCore, RiscvHartRunState};
 use rem6_isa_riscv::{
     FloatRegister, Register, RiscvPmpConfig, RiscvPmpError, RiscvPmpSnapshot,
     RiscvPmpSnapshotEntry, RiscvPmpTable,
@@ -11,6 +11,7 @@ use rem6_isa_riscv::{
 use rem6_memory::Address;
 
 const FREGS_CHUNK: &str = "fregs";
+const HART_RUN_STATE_CHUNK: &str = "hart-run-state";
 const PC_CHUNK: &str = "pc";
 const XREGS_CHUNK: &str = "xregs";
 const PMP_CHUNK: &str = "pmp";
@@ -29,6 +30,7 @@ pub struct RiscvCoreCheckpointRecord {
     registers: Vec<(Register, u64)>,
     float_registers: Vec<(FloatRegister, u64)>,
     pmp_snapshot: RiscvPmpSnapshot,
+    hart_run_state: RiscvHartRunState,
 }
 
 impl RiscvCoreCheckpointRecord {
@@ -44,6 +46,7 @@ impl RiscvCoreCheckpointRecord {
             registers,
             zero_float_register_values(),
             pmp_snapshot,
+            RiscvHartRunState::Started,
         )
     }
 
@@ -53,6 +56,7 @@ impl RiscvCoreCheckpointRecord {
         registers: Vec<(Register, u64)>,
         float_registers: Vec<(FloatRegister, u64)>,
         pmp_snapshot: RiscvPmpSnapshot,
+        hart_run_state: RiscvHartRunState,
     ) -> Self {
         Self {
             component,
@@ -60,6 +64,7 @@ impl RiscvCoreCheckpointRecord {
             registers,
             float_registers,
             pmp_snapshot,
+            hart_run_state,
         }
     }
 
@@ -81,6 +86,10 @@ impl RiscvCoreCheckpointRecord {
 
     pub fn pmp_snapshot(&self) -> &RiscvPmpSnapshot {
         &self.pmp_snapshot
+    }
+
+    pub const fn hart_run_state(&self) -> RiscvHartRunState {
+        self.hart_run_state
     }
 
     pub fn register(&self, register: Register) -> Option<u64> {
@@ -141,6 +150,11 @@ impl RiscvCoreCheckpointPort {
         )?;
         registry.write_chunk(
             &self.component,
+            HART_RUN_STATE_CHUNK,
+            encode_hart_run_state(record.hart_run_state()),
+        )?;
+        registry.write_chunk(
+            &self.component,
             PMP_CHUNK,
             encode_pmp_snapshot(record.pmp_snapshot()),
         )?;
@@ -192,6 +206,10 @@ impl RiscvCoreCheckpointPort {
             })?,
             self.core.pmp_entry_count(),
         )?;
+        let hart_run_state = match registry.chunk(&self.component, HART_RUN_STATE_CHUNK) {
+            Some(payload) => decode_hart_run_state(&self.component, payload)?,
+            None => RiscvHartRunState::Started,
+        };
 
         Ok(RiscvCoreCheckpointRecord::new_with_float_registers(
             self.component.clone(),
@@ -199,6 +217,7 @@ impl RiscvCoreCheckpointPort {
             registers,
             float_registers,
             pmp_snapshot,
+            hart_run_state,
         ))
     }
 
@@ -219,6 +238,10 @@ impl RiscvCoreCheckpointPort {
         for (register, value) in record.float_registers() {
             self.core.write_float_register(*register, *value);
         }
+        match record.hart_run_state() {
+            RiscvHartRunState::Started => self.core.set_hart_started(),
+            RiscvHartRunState::Stopped => self.core.set_hart_stopped(),
+        }
         Ok(())
     }
 
@@ -229,6 +252,7 @@ impl RiscvCoreCheckpointPort {
             all_register_values(&self.core),
             all_float_register_values(&self.core),
             self.core.pmp_snapshot(),
+            self.core.hart_run_state(),
         )
     }
 }
@@ -332,6 +356,10 @@ pub enum RiscvCoreCheckpointError {
         component: CheckpointComponentId,
         error: RiscvPmpError,
     },
+    InvalidHartRunState {
+        component: CheckpointComponentId,
+        value: u8,
+    },
 }
 
 impl fmt::Display for RiscvCoreCheckpointError {
@@ -365,6 +393,11 @@ impl fmt::Display for RiscvCoreCheckpointError {
             Self::InvalidPmpSnapshot { component, error } => write!(
                 formatter,
                 "RISC-V core checkpoint component {} has invalid PMP snapshot: {error}",
+                component.as_str()
+            ),
+            Self::InvalidHartRunState { component, value } => write!(
+                formatter,
+                "RISC-V core checkpoint component {} has invalid hart run-state value {value}",
                 component.as_str()
             ),
         }
@@ -416,6 +449,35 @@ fn encode_float_registers(registers: &[(FloatRegister, u64)]) -> Vec<u8> {
         payload[offset..offset + U64_BYTES].copy_from_slice(&value.to_le_bytes());
     }
     payload
+}
+
+fn encode_hart_run_state(state: RiscvHartRunState) -> Vec<u8> {
+    vec![match state {
+        RiscvHartRunState::Started => 0,
+        RiscvHartRunState::Stopped => 1,
+    }]
+}
+
+fn decode_hart_run_state(
+    component: &CheckpointComponentId,
+    payload: &[u8],
+) -> Result<RiscvHartRunState, RiscvCoreCheckpointError> {
+    if payload.len() != 1 {
+        return Err(RiscvCoreCheckpointError::InvalidChunkSize {
+            component: component.clone(),
+            name: HART_RUN_STATE_CHUNK.to_string(),
+            expected: 1,
+            actual: payload.len(),
+        });
+    }
+    match payload[0] {
+        0 => Ok(RiscvHartRunState::Started),
+        1 => Ok(RiscvHartRunState::Stopped),
+        value => Err(RiscvCoreCheckpointError::InvalidHartRunState {
+            component: component.clone(),
+            value,
+        }),
+    }
 }
 
 fn encode_pmp_snapshot(snapshot: &RiscvPmpSnapshot) -> Vec<u8> {

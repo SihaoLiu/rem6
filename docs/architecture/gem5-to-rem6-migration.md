@@ -205,11 +205,14 @@ identity/probe calls, minimal TIME `set_timer` STIP scheduling, IPI
 `send_ipi` SSIP pending-bit injection for registered harts, standard SRST
 shutdown stop requests and invalid-param returns, RFENCE probe reporting, and
 remote SFENCE.VMA finite-range and ASID-scoped data TLB flushes through
-translated execution; typed unknown-syscall records; and static smoke coverage.
+translated execution, plus HSM probe, `hart_get_status`, and `hart_start`
+secondary-hart release through the CPU execution gate; typed unknown-syscall
+records; and static smoke coverage.
 
 **Not migrated:** Broad Linux SE parity, process/thread lifecycle, broad SBI
-timer/IPI/reset power-state/HSM behavior, RFENCE hypervisor-fence and
-completion semantics, full Linux boot, and real benchmark workloads.
+timer/IPI/reset power-state behavior, HSM stop/suspend and pending-state
+semantics, RFENCE hypervisor-fence and completion semantics, full Linux boot,
+and real benchmark workloads.
 
 **Evidence:** `RiscvSyscallTable::handle_with_guest_memory_io_at_tick`,
 `RiscvSyscallEmulation::handle_pending_core_trap`, CLI static newlib tests,
@@ -230,7 +233,8 @@ completion semantics, full Linux boot, and real benchmark workloads.
 `RiscvLinuxBootHandoffConfig`, and RISC-V DTB handoff tests.
 
 **Next evidence:** A static libc program beyond smoke coverage, followed by
-SBI HSM and broader RFENCE completion tests, then a real Linux boot smoke.
+broader HSM stop/suspend and RFENCE completion tests, then a real Linux boot
+smoke.
 
 ### Devices and Platforms - 50% single-axis
 
@@ -269,7 +273,7 @@ is not yet integrated across CPU pipeline and cache/DRAM runtime state.
 - [x] Hierarchical stats, reset/dump history, and CLI stats artifacts exist.
 - [x] Probe registry plus real RISC-V retired-instruction and data-access producers exist.
 - [x] m5 exit/fail/stats/checkpoint/work markers reach typed host actions.
-- [x] Decode-first checkpoint capture/restore exists across scheduler, memory, device, storage, VirtIO, timer, interrupt, platform, workload, and manifest owners.
+- [x] Decode-first checkpoint capture/restore exists across scheduler, memory, device, storage, VirtIO, timer, interrupt, RISC-V hart run-state, platform, workload, and manifest owners.
 - [x] GDB remote packet/session parsing and RISC-V integer/PC register paths exist.
 - [x] Power and thermal models plus external power-analysis exports exist.
 - [x] Host actions and guest events are typed and checkpoint-aware.
@@ -288,7 +292,8 @@ runtime-calibrated power/thermal, and pipeline/O3 checkpoint breadth.
 
 **Evidence:** `StatsRegistry`, `ProbeRegistry`, `RiscvInstructionStats`,
 `RiscvDataAccessStats`, `SystemActionExecutor`, `GdbRemoteSession`,
-checkpoint tests, power-analysis export tests, and CLI data-access probe tests.
+checkpoint tests including RISC-V hart run-state restore, power-analysis export
+tests, and CLI data-access probe tests.
 
 **Next evidence:** First-class histogram stats, runtime resource counters, and
 GDB execution-control tests.
@@ -334,7 +339,7 @@ checklist-backed component sections above define the auditable percentages.
 | --- | --- | --- | --- | --- |
 | `tests/gem5/arm_boot_tests` | future ARM ISA crate, `rem6-platform` | 0% open | ARM device slices exist, but this row requires Arm ISA boot. | Add Arm ISA, board handoff, device tree, and kernel boot tests. |
 | `tests/gem5/asmtest` | ISA crates, `rem6` CLI | 45% single-axis | RISC-V no-libc and ISA unit tests cover selected instruction and ecall paths. | Split RV32/RV64 and extension families with architectural-state comparison. |
-| `tests/gem5/checkpoint_tests` | `rem6-checkpoint`, subsystem checkpoint banks | 65% representative | Scheduler, memory, devices, storage, VirtIO, timer, interrupt, platform, workload, and manifest checkpoints exist. | Add CPU pipeline/O3 and non-quiescent restore evidence. |
+| `tests/gem5/checkpoint_tests` | `rem6-checkpoint`, subsystem checkpoint banks | 65% representative | Scheduler, memory, devices, storage, VirtIO, timer, interrupt, RISC-V hart run-state, platform, workload, and manifest checkpoints exist. | Add CPU pipeline/O3 and non-quiescent restore evidence. |
 | `tests/gem5/chi_protocol` | `rem6-coherence`, protocol crates, `rem6-cache` | 40% single-axis | CHI-like line, controller, bank, dirty peer sourcing, reservation, and Evict-hazard tests exist. | Add Ruby-scale CHI transactions, topology networks, directory races, and workload checks. |
 | `tests/gem5/chi_tlm_tests` | future adapter crates, `rem6-coherence` | 0% open | No typed TLM bridge exists. | Add optional adapter tests after an adapter boundary exists. |
 | `tests/gem5/config_output_files` | `rem6` CLI, `rem6-workload` | 45% single-axis | CLI output paths, stats-output paths, JSON artifacts, and text stats output tests exist. | Add config-driven file layouts for full-system manifests and multi-artifact workloads. |
@@ -360,7 +365,7 @@ checklist-backed component sections above define the auditable percentages.
 | `tests/pyunit` | `rem6-stats`, `rem6-workload`, future utility owners | 35% unit-slice | Selected pystats and stdlib semantics are covered by typed Rust tests. | Split HDF5, pystats, registry/probes, stdlib helpers, and parsing rows. |
 | `tests/gem5/regression_tests` | all rem6 crates | 35% unit-slice | Workspace tests act as the current regression suite. | Add migration tags or per-family regression rows. |
 | `tests/gem5/replacement_policies` | `rem6-cache` | 60% representative | Multiple replacement, indexing, dueling, compressed, and sector tag tests exist. | Add remaining policies and exact trace/reference parity where useful. |
-| `tests/gem5/riscv_boot_tests` | `rem6-platform`, `rem6-system`, `rem6-isa-riscv`, `rem6-cpu`, `rem6-kernel` | 35% unit-slice | DTB/initrd handoff, CLINT/PLIC, traps, CSRs, page-fault causes, translated faults, SBI base read-only ecalls, minimal TIME `set_timer` STIP scheduling, IPI `send_ipi` SSIP pending-bit injection, standard SRST shutdown stop requests, and RFENCE remote SFENCE.VMA data TLB flushes with finite-range and ASID scope are tested. | Add broader SBI timer/IPI/reset power-state/HSM behavior, RFENCE hypervisor-fence and completion semantics, and a real Linux boot smoke. |
+| `tests/gem5/riscv_boot_tests` | `rem6-platform`, `rem6-system`, `rem6-isa-riscv`, `rem6-cpu`, `rem6-kernel` | 35% unit-slice | DTB/initrd handoff, CLINT/PLIC, traps, CSRs, page-fault causes, translated faults, SBI base read-only ecalls, minimal TIME `set_timer` STIP scheduling, IPI `send_ipi` SSIP pending-bit injection, standard SRST shutdown stop requests, RFENCE remote SFENCE.VMA data TLB flushes with finite-range and ASID scope, and HSM start/status slices are tested. | Add broader SBI timer/IPI/reset power-state behavior, HSM stop/suspend semantics, RFENCE hypervisor-fence and completion semantics, and a real Linux boot smoke. |
 | `tests/gem5/stats` | `rem6-stats`, `rem6` CLI, `rem6-power` | 60% representative | Hierarchical counters, reset/dump histories, deltas, real probe producers, power bindings, and CLI output exist. | Add first-class histograms, more hierarchy counters, and stricter text-stat compatibility. |
 | `tests/gem5/stdlib` | `rem6-workload`, `rem6-platform`, `rem6` CLI | 35% unit-slice | Workload manifests, resource payloads, suite dispatch plans, Linux handoff intent, and TOML/CLI tests exist. | Add broader stdlib object coverage and ergonomic topology/workload definitions. |
 | `tests/test-progs` | `rem6-system`, `rem6` CLI, ISA crates | 35% unit-slice | Static RISC-V no-libc, newlib, and raw syscall smoke binaries are generated when tools exist. | Add durable generated fixtures for hello, threads, and m5 utility shapes across ISAs. |

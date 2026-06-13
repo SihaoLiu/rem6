@@ -337,6 +337,9 @@ impl RiscvCluster {
         let mut transaction_cpus = Vec::new();
         let mut transactions = Vec::new();
         for (cpu, core) in &self.cores {
+            if !core.is_hart_started() {
+                continue;
+            }
             if core.has_pending_fetch()
                 || core.has_pending_data_access()
                 || core.has_unissued_data_access()
@@ -408,6 +411,9 @@ impl RiscvCluster {
         let mut transaction_cpus = Vec::new();
         let mut transactions = Vec::new();
         for (cpu, core) in &self.cores {
+            if !core.is_hart_started() {
+                continue;
+            }
             if core.has_pending_fetch() || core.has_pending_data_access() || core.has_pending_trap()
             {
                 continue;
@@ -515,6 +521,9 @@ impl RiscvCluster {
         let mut transactions = Vec::new();
         let mut committed_instructions = 0u64;
         for (cpu, core) in &self.cores {
+            if !core.is_hart_started() {
+                continue;
+            }
             if core.has_pending_fetch() || core.has_pending_data_access() || core.has_pending_trap()
             {
                 continue;
@@ -624,6 +633,9 @@ impl RiscvCluster {
         let mut transaction_cpus = Vec::new();
         let mut transactions = Vec::new();
         for (cpu, core) in &self.cores {
+            if !core.is_hart_started() {
+                continue;
+            }
             if let Some(event) = core.take_pending_trap_event() {
                 prepared_actions.push(PreparedParallelAction::Ready(RiscvClusterDriveEvent::new(
                     *cpu,
@@ -747,6 +759,9 @@ impl RiscvCluster {
         let mut transaction_cpus = Vec::new();
         let mut transactions = Vec::new();
         for (cpu, core) in &self.cores {
+            if !core.is_hart_started() {
+                continue;
+            }
             if let Some(event) = core.take_pending_trap_event() {
                 prepared_actions.push(PreparedParallelAction::Ready(RiscvClusterDriveEvent::new(
                     *cpu,
@@ -959,6 +974,9 @@ impl RiscvCluster {
         self.reconcile_reservation_invalidations();
         let mut actions = Vec::new();
         for (cpu, core) in &self.cores {
+            if !core.is_hart_started() {
+                continue;
+            }
             if core.has_pending_fetch() || core.has_pending_data_access() || core.has_pending_trap()
             {
                 continue;

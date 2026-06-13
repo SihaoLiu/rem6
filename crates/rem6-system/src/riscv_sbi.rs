@@ -13,6 +13,7 @@ const SBI_ERR_NOT_SUPPORTED: u64 = (-2_i64) as u64;
 const SBI_ERR_INVALID_PARAM: u64 = (-3_i64) as u64;
 const SBI_BASE_EXTENSION: u64 = 0x10;
 const SBI_TIME_EXTENSION: u64 = 0x5449_4d45;
+const SBI_HSM_EXTENSION: u64 = 0x0048_534d;
 const SBI_IPI_EXTENSION: u64 = 0x0073_5049;
 const SBI_RFENCE_EXTENSION: u64 = 0x5246_4e43;
 const SBI_SRST_EXTENSION: u64 = 0x5352_5354;
@@ -24,6 +25,10 @@ const SBI_BASE_GET_MVENDORID: u64 = 4;
 const SBI_BASE_GET_MARCHID: u64 = 5;
 const SBI_BASE_GET_MIMPID: u64 = 6;
 const SBI_TIME_SET_TIMER: u64 = 0;
+const SBI_HSM_HART_START: u64 = 0;
+const SBI_HSM_HART_GET_STATUS: u64 = 2;
+const SBI_HSM_HART_STARTED: u64 = 0;
+const SBI_HSM_HART_STOPPED: u64 = 1;
 const SBI_IPI_SEND_IPI: u64 = 0;
 const SBI_RFENCE_REMOTE_FENCE_I: u64 = 0;
 const SBI_RFENCE_REMOTE_SFENCE_VMA: u64 = 1;
@@ -200,6 +205,17 @@ impl RiscvSbiFirmware {
             let core = cluster.core(cpu).map_err(SystemError::RiscvCluster)?;
             cores.insert(core.hart_id(), core);
         }
+        let boot_hart = cores.keys().next().copied();
+        for (hart, core) in cores.iter() {
+            if core.has_explicit_hart_run_state() {
+                continue;
+            }
+            if Some(*hart) == boot_hart {
+                core.set_hart_started();
+            } else {
+                core.set_hart_stopped();
+            }
+        }
         Ok(())
     }
 
@@ -232,6 +248,7 @@ impl RiscvSbiFirmware {
             (SBI_BASE_EXTENSION, SBI_BASE_PROBE_EXTENSION) => RiscvSbiOutcome::success(u64::from(
                 request.arg0() == SBI_BASE_EXTENSION
                     || request.arg0() == SBI_TIME_EXTENSION
+                    || request.arg0() == SBI_HSM_EXTENSION
                     || request.arg0() == SBI_IPI_EXTENSION
                     || request.arg0() == SBI_RFENCE_EXTENSION
                     || request.arg0() == SBI_SRST_EXTENSION,
@@ -244,6 +261,8 @@ impl RiscvSbiFirmware {
                     .map_err(SystemError::Scheduler)?;
                 RiscvSbiOutcome::success(0)
             }
+            (SBI_HSM_EXTENSION, SBI_HSM_HART_START) => self.hart_start(request),
+            (SBI_HSM_EXTENSION, SBI_HSM_HART_GET_STATUS) => self.hart_get_status(request),
             (SBI_IPI_EXTENSION, SBI_IPI_SEND_IPI) => self.send_ipi(request),
             (SBI_RFENCE_EXTENSION, SBI_RFENCE_REMOTE_FENCE_I) => self.remote_fence_i(request),
             (SBI_RFENCE_EXTENSION, SBI_RFENCE_REMOTE_SFENCE_VMA)
@@ -288,6 +307,44 @@ impl RiscvSbiFirmware {
             target.set_machine_interrupt_pending_bits(SSIP);
         }
         RiscvSbiOutcome::success(0)
+    }
+
+    fn hart_start(&self, request: RiscvSbiRequest) -> RiscvSbiOutcome {
+        if request.arg1() & 0x1 != 0 {
+            return RiscvSbiOutcome::invalid_address();
+        }
+        let Some(target) = self
+            .cores
+            .lock()
+            .expect("RISC-V SBI core registry lock")
+            .get(&request.arg0())
+            .cloned()
+        else {
+            return RiscvSbiOutcome::invalid_param();
+        };
+        if target.is_hart_started() {
+            return RiscvSbiOutcome::invalid_param();
+        }
+
+        target.start_supervisor_hart(Address::new(request.arg1()), request.arg2());
+        RiscvSbiOutcome::success(0)
+    }
+
+    fn hart_get_status(&self, request: RiscvSbiRequest) -> RiscvSbiOutcome {
+        let Some(target) = self
+            .cores
+            .lock()
+            .expect("RISC-V SBI core registry lock")
+            .get(&request.arg0())
+            .cloned()
+        else {
+            return RiscvSbiOutcome::invalid_param();
+        };
+        RiscvSbiOutcome::success(if target.is_hart_started() {
+            SBI_HSM_HART_STARTED
+        } else {
+            SBI_HSM_HART_STOPPED
+        })
     }
 
     fn remote_fence_i(&self, request: RiscvSbiRequest) -> RiscvSbiOutcome {

@@ -572,6 +572,11 @@ fn system_action_executor_refreshes_live_riscv_core_checkpoint_before_manifest()
     assert_eq!(&xregs[8..16], &0x1122_u64.to_le_bytes());
     let fregs = executor.checkpoints().chunk(&component, "fregs").unwrap();
     assert_eq!(fregs.len(), 32 * 8);
+    let hart_run_state = executor
+        .checkpoints()
+        .chunk(&component, "hart-run-state")
+        .unwrap();
+    assert_eq!(hart_run_state, &[0]);
     let pmp = executor.checkpoints().chunk(&component, "pmp").unwrap();
     assert_eq!(&pmp[0..2], &16_u16.to_le_bytes());
     assert_eq!(
@@ -587,6 +592,7 @@ fn system_action_executor_refreshes_live_riscv_core_checkpoint_before_manifest()
                     component,
                     vec![
                         CheckpointChunk::new("fregs", fregs.to_vec()),
+                        CheckpointChunk::new("hart-run-state", hart_run_state.to_vec()),
                         CheckpointChunk::new("pc", 0x8040_u64.to_le_bytes().to_vec()),
                         CheckpointChunk::new("pmp", pmp.to_vec()),
                         CheckpointChunk::new("xregs", xregs.to_vec()),

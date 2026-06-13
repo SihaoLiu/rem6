@@ -45,6 +45,7 @@ mod riscv_data_issue;
 mod riscv_execute;
 mod riscv_execution_event;
 mod riscv_fetch;
+mod riscv_hart_run_state;
 mod riscv_htm;
 mod riscv_reservation;
 mod riscv_sc_progress;
@@ -149,6 +150,7 @@ pub use riscv_execution_event::{
     RiscvCoreDriveAction, RiscvCpuExecutionEvent, RiscvGShareBranchUpdate,
     RiscvTournamentBranchUpdate,
 };
+pub use riscv_hart_run_state::RiscvHartRunState;
 pub use riscv_sc_progress::{
     RiscvStoreConditionalFailureDiagnostic, RiscvStoreConditionalFailureStreak,
     RiscvStoreConditionalProgress, RiscvStoreConditionalProgressCheckpointPayload,
@@ -1155,6 +1157,9 @@ impl RiscvCore {
         F: FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static,
         D: FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static,
     {
+        if !self.is_hart_started() {
+            return Ok(None);
+        }
         if self.core.has_pending_fetch() || self.has_pending_data_access() {
             return Ok(None);
         }
@@ -1218,6 +1223,8 @@ struct RiscvCoreState {
     data_events: Vec<RiscvDataAccessEvent>,
     pma: RiscvPmaTable,
     pmp: RiscvPmpTable,
+    run_state: RiscvHartRunState,
+    run_state_explicit: bool,
 }
 
 impl RiscvCoreState {
@@ -1262,6 +1269,8 @@ impl RiscvCoreState {
             pma: RiscvPmaTable::new(),
             pmp: RiscvPmpTable::new(DEFAULT_RISCV_PMP_ENTRIES)
                 .expect("default RISC-V PMP entry count is valid"),
+            run_state: RiscvHartRunState::Started,
+            run_state_explicit: false,
         }
     }
 }

@@ -1,7 +1,7 @@
 use rem6_checkpoint::{
     CheckpointChunk, CheckpointComponentId, CheckpointRegistry, CheckpointState,
 };
-use rem6_cpu::{CpuCore, CpuFetchConfig, CpuId, CpuResetState, RiscvCore};
+use rem6_cpu::{CpuCore, CpuFetchConfig, CpuId, CpuResetState, RiscvCore, RiscvHartRunState};
 use rem6_isa_riscv::{FloatRegister, Register, RiscvPmpAddressMode, RiscvPmpConfig};
 use rem6_kernel::PartitionId;
 use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout};
@@ -144,6 +144,27 @@ fn riscv_core_checkpoint_captures_and_restores_float_registers() {
 }
 
 #[test]
+fn riscv_core_checkpoint_captures_and_restores_hart_run_state() {
+    let core = riscv_core();
+    core.set_hart_stopped();
+    let component = CheckpointComponentId::new("cpu0").unwrap();
+    let port = RiscvCoreCheckpointPort::new(component.clone(), core.clone());
+    let mut registry = CheckpointRegistry::new();
+
+    port.register(&mut registry).unwrap();
+    let captured = port.capture_into(&mut registry).unwrap();
+
+    assert_eq!(captured.hart_run_state(), RiscvHartRunState::Stopped);
+    assert_eq!(registry.chunk(&component, "hart-run-state"), Some(&[1][..]));
+
+    core.set_hart_started();
+    let restored = port.restore_from(&registry).unwrap();
+
+    assert_eq!(restored, captured);
+    assert_eq!(core.hart_run_state(), RiscvHartRunState::Stopped);
+}
+
+#[test]
 fn riscv_core_checkpoint_restore_without_float_register_chunk_zeros_float_registers() {
     let core = riscv_core();
     let component = CheckpointComponentId::new("cpu0").unwrap();
@@ -170,12 +191,15 @@ fn riscv_core_checkpoint_restore_without_float_register_chunk_zeros_float_regist
         ))
         .unwrap();
     core.write_float_register(freg(1), 0x1122);
+    core.set_hart_stopped();
 
     let restored = port.restore_from(&registry).unwrap();
 
     assert_eq!(restored.float_register(freg(1)), Some(0));
+    assert_eq!(restored.hart_run_state(), RiscvHartRunState::Started);
     assert_eq!(core.pc(), Address::new(0x8040));
     assert_eq!(core.read_float_register(freg(1)), 0);
+    assert_eq!(core.hart_run_state(), RiscvHartRunState::Started);
 }
 
 #[test]
