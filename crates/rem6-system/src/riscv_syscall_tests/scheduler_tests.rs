@@ -1,10 +1,186 @@
 use super::*;
 
+const RISCV_LINUX_SCHED_GETPARAM_FOR_TEST: u64 = 121;
 const RISCV_LINUX_SCHED_SETAFFINITY_FOR_TEST: u64 = 122;
 const RISCV_LINUX_SCHED_GETAFFINITY_FOR_TEST: u64 = 123;
 const RISCV_LINUX_ESRCH_FOR_TEST: u64 = 3;
+const RISCV_LINUX_SCHED_PRIORITY_BYTES_FOR_TEST: usize = 4;
 const RISCV_LINUX_DEFAULT_AFFINITY_BYTES_FOR_TEST: u64 = 8;
 const RISCV_LINUX_DEFAULT_AFFINITY_MASK_FOR_TEST: u64 = 1;
+
+#[test]
+fn linux_table_sched_getparam_writes_zero_priority_for_any_nonnegative_pid() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+
+    for (pc, pid, parameter_address) in [(0x8000, 0, 0x9000), (0x8004, 999, 0x9010)] {
+        assert_eq!(
+            table.handle_with_guest_memory_io_at_tick(
+                RiscvSyscallRequest::new(
+                    pc,
+                    RISCV_LINUX_SCHED_GETPARAM_FOR_TEST,
+                    [pid, parameter_address, 0, 0, 0, 0],
+                ),
+                &mut state,
+                10,
+                None,
+                Some(&guest_memory_writer),
+            ),
+            Some(RiscvSyscallOutcome::Return { value: 0 })
+        );
+        assert_eq!(
+            written_priority_at(&writes.lock().unwrap(), parameter_address),
+            0
+        );
+    }
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_sched_getparam_rejects_negative_pid_without_writing() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let guest_memory_writer =
+        RiscvGuestMemoryWriter::new(|_, _| panic!("negative pid must not write"));
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_SCHED_GETPARAM_FOR_TEST,
+                [u64::MAX, 0x9000, 0, 0, 0, 0],
+            ),
+            &mut state,
+            10,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EINVAL)
+        })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_sched_getparam_rejects_32_bit_negative_pid_without_writing() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_SCHED_GETPARAM_FOR_TEST,
+                [u64::from(u32::MAX), 0x9000, 0, 0, 0, 0],
+            ),
+            &mut state,
+            10,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EINVAL)
+        })
+    );
+    assert!(writes.lock().unwrap().is_empty());
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_sched_getparam_rejects_null_parameter_without_writing() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let guest_memory_writer =
+        RiscvGuestMemoryWriter::new(|_, _| panic!("null parameter must not write"));
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_SCHED_GETPARAM_FOR_TEST,
+                [0, 0, 0, 0, 0, 0],
+            ),
+            &mut state,
+            10,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EINVAL)
+        })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_sched_getparam_reports_guest_write_fault() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(|address, bytes| {
+        assert_eq!(address, 0x9000);
+        assert_eq!(bytes, &[0; RISCV_LINUX_SCHED_PRIORITY_BYTES_FOR_TEST]);
+        false
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_SCHED_GETPARAM_FOR_TEST,
+                [0, 0x9000, 0, 0, 0, 0],
+            ),
+            &mut state,
+            10,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EFAULT)
+        })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_sched_getparam_without_guest_writer_stays_unhandled() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_SCHED_GETPARAM_FOR_TEST,
+                [0, 0x9000, 0, 0, 0, 0],
+            ),
+            &mut state,
+            10,
+            None,
+            None,
+        ),
+        None
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
 
 #[test]
 fn linux_table_sched_setaffinity_accepts_single_cpu_mask() {
@@ -507,6 +683,22 @@ fn linux_table_sched_getaffinity_without_guest_writer_stays_unhandled() {
         None
     );
     assert!(state.unknown_syscalls().is_empty());
+}
+
+fn written_priority_at(writes: &[(u64, Vec<u8>)], address: u64) -> i32 {
+    writes
+        .iter()
+        .find_map(|(written_address, bytes)| {
+            (*written_address == address).then(|| {
+                i32::from_le_bytes(
+                    bytes
+                        .as_slice()
+                        .try_into()
+                        .expect("sched priority write is one int"),
+                )
+            })
+        })
+        .unwrap_or_else(|| panic!("missing sched priority write at {address:#x}"))
 }
 
 fn written_mask_at(writes: &[(u64, Vec<u8>)], address: u64) -> [u8; 8] {

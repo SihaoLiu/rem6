@@ -126,8 +126,8 @@ use rename::{syscall_renameat2, RISCV_LINUX_RENAMEAT2};
 pub use request::RiscvSyscallRequest;
 use robust::{syscall_get_robust_list, syscall_set_robust_list, RiscvRobustList};
 use scheduler::{
-    syscall_sched_getaffinity, syscall_sched_setaffinity, RISCV_LINUX_SCHED_GETAFFINITY,
-    RISCV_LINUX_SCHED_SETAFFINITY,
+    syscall_sched_getaffinity, syscall_sched_getparam, syscall_sched_setaffinity,
+    RISCV_LINUX_SCHED_GETAFFINITY, RISCV_LINUX_SCHED_GETPARAM, RISCV_LINUX_SCHED_SETAFFINITY,
 };
 use seek::{syscall_lseek, RISCV_LINUX_LSEEK};
 use signal::{
@@ -1289,6 +1289,8 @@ impl RiscvSyscallTable {
                 syscall_sched_setaffinity(request, state, guest_memory_reader)
                     .map(|value| RiscvSyscallOutcome::Return { value })
             }
+            RISCV_LINUX_SCHED_GETPARAM => syscall_sched_getparam(request, guest_memory_writer)
+                .map(|value| RiscvSyscallOutcome::Return { value }),
             RISCV_LINUX_SCHED_GETAFFINITY => {
                 syscall_sched_getaffinity(request, state, guest_memory_writer)
                     .map(|value| RiscvSyscallOutcome::Return { value })

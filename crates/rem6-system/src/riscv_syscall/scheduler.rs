@@ -5,14 +5,35 @@ use super::{
     RiscvSyscallState, RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL, RISCV_LINUX_ESRCH,
 };
 
+pub(super) const RISCV_LINUX_SCHED_GETPARAM: u64 = 121;
 pub(super) const RISCV_LINUX_SCHED_SETAFFINITY: u64 = 122;
 pub(super) const RISCV_LINUX_SCHED_GETAFFINITY: u64 = 123;
 
+const RISCV_LINUX_DEFAULT_SCHED_PRIORITY: i32 = 0;
 const RISCV_LINUX_GUEST_CPU_IDS: u64 = 1;
 const RISCV_LINUX_GUEST_AFFINITY_BYTES: u64 = mem::size_of::<u64>() as u64;
 const RISCV_LINUX_GUEST_AFFINITY_BYTES_USIZE: usize = mem::size_of::<u64>();
 const RISCV_LINUX_GUEST_AFFINITY_MASK: u64 = 1;
 const RISCV_LINUX_BITS_PER_BYTE: u64 = u8::BITS as u64;
+
+pub(super) fn syscall_sched_getparam(
+    request: RiscvSyscallRequest,
+    guest_memory_writer: Option<&RiscvGuestMemoryWriter>,
+) -> Option<u64> {
+    if linux_int_argument(request.argument(0)) < 0 || request.argument(1) == 0 {
+        return Some(linux_error(RISCV_LINUX_EINVAL));
+    }
+
+    let guest_memory_writer = guest_memory_writer?;
+    if !guest_memory_writer.write(
+        request.argument(1),
+        &RISCV_LINUX_DEFAULT_SCHED_PRIORITY.to_le_bytes(),
+    ) {
+        return Some(linux_error(RISCV_LINUX_EFAULT));
+    }
+
+    Some(0)
+}
 
 pub(super) fn syscall_sched_setaffinity(
     request: RiscvSyscallRequest,
@@ -82,6 +103,10 @@ fn matches_current_process(requested_pid: u64, state: &RiscvSyscallState) -> boo
     requested_pid == 0
         || requested_pid == state.identity().thread_id()
         || requested_pid == state.identity().thread_group_id()
+}
+
+fn linux_int_argument(argument: u64) -> i32 {
+    argument as u32 as i32
 }
 
 fn read_guest_exact(
