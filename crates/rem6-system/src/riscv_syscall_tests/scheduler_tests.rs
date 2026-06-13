@@ -4,8 +4,15 @@ const RISCV_LINUX_SCHED_GETSCHEDULER_FOR_TEST: u64 = 120;
 const RISCV_LINUX_SCHED_GETPARAM_FOR_TEST: u64 = 121;
 const RISCV_LINUX_SCHED_SETAFFINITY_FOR_TEST: u64 = 122;
 const RISCV_LINUX_SCHED_GETAFFINITY_FOR_TEST: u64 = 123;
+const RISCV_LINUX_SCHED_GET_PRIORITY_MAX_FOR_TEST: u64 = 125;
+const RISCV_LINUX_SCHED_GET_PRIORITY_MIN_FOR_TEST: u64 = 126;
 const RISCV_LINUX_ESRCH_FOR_TEST: u64 = 3;
 const RISCV_LINUX_SCHED_OTHER_FOR_TEST: u64 = 0;
+const RISCV_LINUX_SCHED_FIFO_FOR_TEST: u64 = 1;
+const RISCV_LINUX_SCHED_RR_FOR_TEST: u64 = 2;
+const RISCV_LINUX_SCHED_BATCH_FOR_TEST: u64 = 3;
+const RISCV_LINUX_SCHED_IDLE_FOR_TEST: u64 = 5;
+const RISCV_LINUX_SCHED_DEADLINE_FOR_TEST: u64 = 6;
 const RISCV_LINUX_SCHED_PRIORITY_BYTES_FOR_TEST: usize = 4;
 const RISCV_LINUX_DEFAULT_AFFINITY_BYTES_FOR_TEST: u64 = 8;
 const RISCV_LINUX_DEFAULT_AFFINITY_MASK_FOR_TEST: u64 = 1;
@@ -83,6 +90,101 @@ fn linux_table_sched_getscheduler_rejects_32_bit_negative_pid() {
             value: linux_error(RISCV_LINUX_EINVAL)
         })
     );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_sched_get_priority_max_reports_supported_policy_limits() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    for (pc, policy, expected_priority) in [
+        (0x8000, RISCV_LINUX_SCHED_OTHER_FOR_TEST, 0),
+        (0x8004, RISCV_LINUX_SCHED_FIFO_FOR_TEST, 99),
+        (0x8008, RISCV_LINUX_SCHED_RR_FOR_TEST, 99),
+        (0x800c, RISCV_LINUX_SCHED_BATCH_FOR_TEST, 0),
+        (0x8010, RISCV_LINUX_SCHED_IDLE_FOR_TEST, 0),
+        (0x8014, RISCV_LINUX_SCHED_DEADLINE_FOR_TEST, 0),
+    ] {
+        assert_eq!(
+            table.handle_with_guest_memory_io_at_tick(
+                RiscvSyscallRequest::new(
+                    pc,
+                    RISCV_LINUX_SCHED_GET_PRIORITY_MAX_FOR_TEST,
+                    [policy, 0, 0, 0, 0, 0],
+                ),
+                &mut state,
+                10,
+                None,
+                None,
+            ),
+            Some(RiscvSyscallOutcome::Return {
+                value: expected_priority
+            })
+        );
+    }
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_sched_get_priority_min_reports_supported_policy_limits() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    for (pc, policy, expected_priority) in [
+        (0x8000, RISCV_LINUX_SCHED_OTHER_FOR_TEST, 0),
+        (0x8004, RISCV_LINUX_SCHED_FIFO_FOR_TEST, 1),
+        (0x8008, RISCV_LINUX_SCHED_RR_FOR_TEST, 1),
+        (0x800c, RISCV_LINUX_SCHED_BATCH_FOR_TEST, 0),
+        (0x8010, RISCV_LINUX_SCHED_IDLE_FOR_TEST, 0),
+        (0x8014, RISCV_LINUX_SCHED_DEADLINE_FOR_TEST, 0),
+    ] {
+        assert_eq!(
+            table.handle_with_guest_memory_io_at_tick(
+                RiscvSyscallRequest::new(
+                    pc,
+                    RISCV_LINUX_SCHED_GET_PRIORITY_MIN_FOR_TEST,
+                    [policy, 0, 0, 0, 0, 0],
+                ),
+                &mut state,
+                10,
+                None,
+                None,
+            ),
+            Some(RiscvSyscallOutcome::Return {
+                value: expected_priority
+            })
+        );
+    }
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_sched_get_priority_limits_reject_invalid_policy() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    for (pc, syscall_number, policy) in [
+        (0x8000, RISCV_LINUX_SCHED_GET_PRIORITY_MAX_FOR_TEST, 4),
+        (
+            0x8004,
+            RISCV_LINUX_SCHED_GET_PRIORITY_MIN_FOR_TEST,
+            u64::from(u32::MAX),
+        ),
+    ] {
+        assert_eq!(
+            table.handle_with_guest_memory_io_at_tick(
+                RiscvSyscallRequest::new(pc, syscall_number, [policy, 0, 0, 0, 0, 0]),
+                &mut state,
+                10,
+                None,
+                None,
+            ),
+            Some(RiscvSyscallOutcome::Return {
+                value: linux_error(RISCV_LINUX_EINVAL)
+            })
+        );
+    }
     assert!(state.unknown_syscalls().is_empty());
 }
 

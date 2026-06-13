@@ -9,9 +9,16 @@ pub(super) const RISCV_LINUX_SCHED_GETSCHEDULER: u64 = 120;
 pub(super) const RISCV_LINUX_SCHED_GETPARAM: u64 = 121;
 pub(super) const RISCV_LINUX_SCHED_SETAFFINITY: u64 = 122;
 pub(super) const RISCV_LINUX_SCHED_GETAFFINITY: u64 = 123;
+pub(super) const RISCV_LINUX_SCHED_GET_PRIORITY_MAX: u64 = 125;
+pub(super) const RISCV_LINUX_SCHED_GET_PRIORITY_MIN: u64 = 126;
 
 const RISCV_LINUX_DEFAULT_SCHED_PRIORITY: i32 = 0;
-const RISCV_LINUX_SCHED_OTHER: u64 = 0;
+const RISCV_LINUX_SCHED_OTHER: i32 = 0;
+const RISCV_LINUX_SCHED_FIFO: i32 = 1;
+const RISCV_LINUX_SCHED_RR: i32 = 2;
+const RISCV_LINUX_SCHED_BATCH: i32 = 3;
+const RISCV_LINUX_SCHED_IDLE: i32 = 5;
+const RISCV_LINUX_SCHED_DEADLINE: i32 = 6;
 const RISCV_LINUX_GUEST_CPU_IDS: u64 = 1;
 const RISCV_LINUX_GUEST_AFFINITY_BYTES: u64 = mem::size_of::<u64>() as u64;
 const RISCV_LINUX_GUEST_AFFINITY_BYTES_USIZE: usize = mem::size_of::<u64>();
@@ -30,7 +37,21 @@ pub(super) fn syscall_sched_getscheduler(
         return linux_error(RISCV_LINUX_ESRCH);
     }
 
-    RISCV_LINUX_SCHED_OTHER
+    RISCV_LINUX_SCHED_OTHER as u64
+}
+
+pub(super) fn syscall_sched_get_priority_max(request: RiscvSyscallRequest) -> u64 {
+    match scheduler_priority_range(request.argument(0)) {
+        Some((_, maximum)) => maximum,
+        None => linux_error(RISCV_LINUX_EINVAL),
+    }
+}
+
+pub(super) fn syscall_sched_get_priority_min(request: RiscvSyscallRequest) -> u64 {
+    match scheduler_priority_range(request.argument(0)) {
+        Some((minimum, _)) => minimum,
+        None => linux_error(RISCV_LINUX_EINVAL),
+    }
 }
 
 pub(super) fn syscall_sched_getparam(
@@ -124,6 +145,17 @@ fn matches_current_process(requested_pid: u64, state: &RiscvSyscallState) -> boo
 
 fn linux_int_argument(argument: u64) -> i32 {
     argument as u32 as i32
+}
+
+fn scheduler_priority_range(policy_argument: u64) -> Option<(u64, u64)> {
+    match linux_int_argument(policy_argument) {
+        RISCV_LINUX_SCHED_OTHER
+        | RISCV_LINUX_SCHED_BATCH
+        | RISCV_LINUX_SCHED_IDLE
+        | RISCV_LINUX_SCHED_DEADLINE => Some((0, 0)),
+        RISCV_LINUX_SCHED_FIFO | RISCV_LINUX_SCHED_RR => Some((1, 99)),
+        _ => None,
+    }
 }
 
 fn read_guest_exact(

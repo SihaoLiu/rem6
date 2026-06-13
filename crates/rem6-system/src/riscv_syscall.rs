@@ -126,9 +126,11 @@ use rename::{syscall_renameat2, RISCV_LINUX_RENAMEAT2};
 pub use request::RiscvSyscallRequest;
 use robust::{syscall_get_robust_list, syscall_set_robust_list, RiscvRobustList};
 use scheduler::{
-    syscall_sched_getaffinity, syscall_sched_getparam, syscall_sched_getscheduler,
-    syscall_sched_setaffinity, RISCV_LINUX_SCHED_GETAFFINITY, RISCV_LINUX_SCHED_GETPARAM,
-    RISCV_LINUX_SCHED_GETSCHEDULER, RISCV_LINUX_SCHED_SETAFFINITY,
+    syscall_sched_get_priority_max, syscall_sched_get_priority_min, syscall_sched_getaffinity,
+    syscall_sched_getparam, syscall_sched_getscheduler, syscall_sched_setaffinity,
+    RISCV_LINUX_SCHED_GETAFFINITY, RISCV_LINUX_SCHED_GETPARAM, RISCV_LINUX_SCHED_GETSCHEDULER,
+    RISCV_LINUX_SCHED_GET_PRIORITY_MAX, RISCV_LINUX_SCHED_GET_PRIORITY_MIN,
+    RISCV_LINUX_SCHED_SETAFFINITY,
 };
 use seek::{syscall_lseek, RISCV_LINUX_LSEEK};
 use signal::{
@@ -1299,6 +1301,12 @@ impl RiscvSyscallTable {
                 syscall_sched_getaffinity(request, state, guest_memory_writer)
                     .map(|value| RiscvSyscallOutcome::Return { value })
             }
+            RISCV_LINUX_SCHED_GET_PRIORITY_MAX => Some(RiscvSyscallOutcome::Return {
+                value: syscall_sched_get_priority_max(request),
+            }),
+            RISCV_LINUX_SCHED_GET_PRIORITY_MIN => Some(RiscvSyscallOutcome::Return {
+                value: syscall_sched_get_priority_min(request),
+            }),
             RISCV_LINUX_KILL => Some(RiscvSyscallOutcome::Return {
                 value: syscall_kill(request, state, tick),
             }),
