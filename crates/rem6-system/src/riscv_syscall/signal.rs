@@ -2,6 +2,7 @@ use super::time::read_timespec64;
 use super::{
     linux_error, RiscvGuestMemoryReader, RiscvGuestMemoryWriter, RiscvSyscallRequest,
     RiscvSyscallState, RISCV_LINUX_EAGAIN, RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL,
+    RISCV_LINUX_ENOSYS, RISCV_LINUX_ESRCH,
 };
 
 const RISCV_LINUX_SIG_BLOCK: u64 = 0;
@@ -63,6 +64,34 @@ impl RiscvSignalAction {
         bytes[8..16].copy_from_slice(&self.flags.to_le_bytes());
         bytes[16..24].copy_from_slice(&self.mask.to_le_bytes());
         bytes
+    }
+}
+
+pub(super) fn syscall_kill(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+    tick: rem6_kernel::Tick,
+) -> u64 {
+    let signal = linux_int_argument(request.argument(1));
+    if signal != 0 && !valid_signal_i32(signal) {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+
+    let pid = linux_pid_argument(request.argument(0));
+    if !kill_target_exists(pid, state) {
+        return linux_error(RISCV_LINUX_ESRCH);
+    }
+
+    if signal == 0 {
+        0
+    } else {
+        state.push_unknown_syscall(super::RiscvUnknownSyscallRecord::new(
+            request.pc(),
+            request.number(),
+            request.arguments(),
+            tick,
+        ));
+        linux_error(RISCV_LINUX_ENOSYS)
     }
 }
 
@@ -213,6 +242,31 @@ fn blockable_signal_mask(mask: u64) -> u64 {
 
 fn valid_signal(signal: u64) -> bool {
     (RISCV_LINUX_FIRST_SIGNAL..=RISCV_LINUX_LAST_SIGNAL).contains(&signal)
+}
+
+fn valid_signal_i32(signal: i32) -> bool {
+    signal > 0 && (signal as u64) <= RISCV_LINUX_LAST_SIGNAL
+}
+
+fn linux_pid_argument(argument: u64) -> i32 {
+    argument as u32 as i32
+}
+
+fn linux_int_argument(argument: u64) -> i32 {
+    argument as u32 as i32
+}
+
+fn kill_target_exists(pid: i32, state: &RiscvSyscallState) -> bool {
+    let current_process = state.identity().thread_group_id();
+    if pid > 0 {
+        return u64::try_from(pid).ok() == Some(current_process);
+    }
+    if pid == 0 || pid == -1 {
+        return true;
+    }
+    pid.checked_abs()
+        .and_then(|process_group| u64::try_from(process_group).ok())
+        == Some(current_process)
 }
 
 fn read_signal_action(

@@ -115,8 +115,8 @@ use scheduler::{
 };
 use seek::{syscall_lseek, RISCV_LINUX_LSEEK};
 use signal::{
-    syscall_rt_sigaction, syscall_rt_sigpending, syscall_rt_sigprocmask, syscall_rt_sigtimedwait,
-    RiscvSignalAction,
+    syscall_kill, syscall_rt_sigaction, syscall_rt_sigpending, syscall_rt_sigprocmask,
+    syscall_rt_sigtimedwait, RiscvSignalAction,
 };
 use sleep::{syscall_nanosleep, RISCV_LINUX_NANOSLEEP};
 pub use startup::{
@@ -148,6 +148,7 @@ const RISCV_LINUX_SET_TID_ADDRESS: u64 = 96;
 const RISCV_LINUX_SET_ROBUST_LIST: u64 = 99;
 const RISCV_LINUX_GET_ROBUST_LIST: u64 = 100;
 const RISCV_LINUX_SCHED_YIELD: u64 = 124;
+const RISCV_LINUX_KILL: u64 = 129;
 const RISCV_LINUX_RT_SIGSUSPEND: u64 = 133;
 const RISCV_LINUX_RT_SIGACTION: u64 = 134;
 const RISCV_LINUX_RT_SIGPROCMASK: u64 = 135;
@@ -1208,6 +1209,9 @@ impl RiscvSyscallTable {
                 syscall_sched_getaffinity(request, state, guest_memory_writer)
                     .map(|value| RiscvSyscallOutcome::Return { value })
             }
+            RISCV_LINUX_KILL => Some(RiscvSyscallOutcome::Return {
+                value: syscall_kill(request, state, tick),
+            }),
             RISCV_LINUX_SCHED_YIELD
             | RISCV_LINUX_RT_SIGSUSPEND
             | RISCV_LINUX_RT_SIGQUEUEINFO
