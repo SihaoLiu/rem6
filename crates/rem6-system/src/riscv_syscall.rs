@@ -34,6 +34,7 @@ mod links;
 mod mkdir;
 mod mmap;
 mod open;
+mod poll;
 mod random;
 mod readv;
 mod rename;
@@ -86,6 +87,7 @@ use mmap::{syscall_mmap, syscall_munmap, RISCV64_LINUX_MMAP_BASE, RISCV_PAGE_BYT
 use mmap::{RISCV_LINUX_MAP_FIXED, RISCV_LINUX_MAP_PRIVATE};
 pub use open::RiscvGuestOpenRecord;
 use open::{syscall_open, syscall_openat, RiscvGuestOpenRequest, RISCV_LINUX_OPEN};
+use poll::{syscall_ppoll, RISCV_LINUX_PPOLL};
 use random::{invalid_getrandom_flags, syscall_getrandom, RISCV_LINUX_GETRANDOM};
 use readv::{syscall_readv, RISCV_LINUX_READV};
 use rename::{syscall_renameat2, RISCV_LINUX_RENAMEAT2};
@@ -1058,6 +1060,10 @@ impl RiscvSyscallTable {
                     value: syscall_readv(request, state, reader, writer),
                 })
             }),
+            RISCV_LINUX_PPOLL => {
+                syscall_ppoll(request, state, guest_memory_reader, guest_memory_writer)
+                    .map(|value| RiscvSyscallOutcome::Return { value })
+            }
             RISCV_LINUX_READLINKAT => guest_memory_reader.and_then(|reader| {
                 guest_memory_writer.map(|writer| RiscvSyscallOutcome::Return {
                     value: syscall_readlinkat(request, state, reader, writer),
