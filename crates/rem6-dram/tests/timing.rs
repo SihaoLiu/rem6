@@ -1,6 +1,7 @@
 use rem6_dram::{
-    DramAccessKind, DramCommandKind, DramController, DramError, DramGeometry, DramQosRequest,
-    DramQosSchedulingPolicy, DramQosTurnaroundPolicy, DramTiming,
+    DramAccessKind, DramBankState, DramCommandKind, DramController, DramControllerSnapshot,
+    DramError, DramGeometry, DramQosRequest, DramQosSchedulingPolicy, DramQosTurnaroundPolicy,
+    DramRefreshTiming, DramRefreshTimingField, DramTiming, NvmMediaTiming,
 };
 use rem6_fabric::{
     QosPriority, QosProportionalFairPolicy, QosQueueArbiter, QosQueuePolicyKind, QosRequestorId,
@@ -16,6 +17,12 @@ fn layout() -> CacheLineLayout {
 
 fn timing() -> DramTiming {
     DramTiming::new(3, 5, 7, 2, 4).unwrap()
+}
+
+fn timing_with_refresh() -> DramTiming {
+    timing()
+        .with_refresh_timing(DramRefreshTiming::new(20, 5).unwrap())
+        .unwrap()
 }
 
 fn geometry() -> DramGeometry {
@@ -591,6 +598,217 @@ fn dram_controller_records_wait_for_edges_for_bank_and_port_contention() {
     assert_eq!(
         graph.dependencies(&request_waiting_for_bus)[0].last_observed_tick(),
         11
+    );
+}
+
+#[test]
+fn dram_controller_applies_due_refresh_before_bank_access() {
+    let mut controller = DramController::new(geometry(), timing_with_refresh());
+
+    let first = controller.schedule(0, &read(0x0000, 8, 70)).unwrap();
+    assert_eq!(first.ready_cycle(), 8);
+    assert!(first.refresh_events().is_empty());
+    assert!(!first.row_hit());
+
+    let second = controller.schedule(21, &read(0x0008, 8, 71)).unwrap();
+    assert_eq!(second.refresh_events().len(), 1);
+    let refresh = &second.refresh_events()[0];
+    assert_eq!(refresh.parallel_port(), 0);
+    assert_eq!(refresh.bank(), 0);
+    assert_eq!(refresh.start_cycle(), 20);
+    assert_eq!(refresh.end_cycle(), 25);
+    assert_eq!(refresh.cycle_count(), 5);
+    assert!(!second.row_hit());
+    assert_eq!(second.commands()[0].kind(), DramCommandKind::Activate);
+    assert_eq!(second.command_cycle(), 28);
+    assert_eq!(second.ready_cycle(), 33);
+
+    let bank = controller.bank_activity(0, 0).unwrap();
+    assert_eq!(bank.refresh_count(), 1);
+    assert_eq!(bank.refresh_cycle_count(), 5);
+    let profile = controller.activity_profile();
+    assert_eq!(profile.refresh_count(), 1);
+    assert_eq!(profile.refresh_cycle_count(), 5);
+}
+
+#[test]
+fn dram_controller_applies_refresh_when_access_crosses_due_cycle() {
+    let mut controller = DramController::new(geometry(), timing_with_refresh());
+
+    let access = controller.schedule(18, &read(0x0000, 8, 72)).unwrap();
+
+    assert_eq!(access.refresh_events().len(), 1);
+    assert_eq!(access.refresh_events()[0].start_cycle(), 20);
+    assert_eq!(access.refresh_events()[0].end_cycle(), 25);
+    assert!(!access.row_hit());
+    assert_eq!(access.command_cycle(), 28);
+    assert_eq!(access.ready_cycle(), 33);
+}
+
+#[test]
+fn dram_controller_rechecks_refresh_after_nvm_queue_pushes_command_past_next_due() {
+    let snapshot = DramControllerSnapshot::new(
+        geometry(),
+        timing_with_refresh(),
+        vec![DramBankState::from_snapshot(None, 0)],
+        0,
+        None,
+    )
+    .with_nvm_media_state(
+        Some(NvmMediaTiming::new(10, 10, 1, 1, 1).unwrap()),
+        vec![80],
+        Vec::new(),
+    );
+    let mut controller = DramController::from_snapshot(&snapshot);
+
+    let access = controller.schedule(18, &read(0x0000, 8, 75)).unwrap();
+
+    assert_eq!(access.refresh_events().len(), 4);
+    assert_eq!(access.refresh_events()[0].start_cycle(), 20);
+    assert_eq!(access.refresh_events()[0].end_cycle(), 25);
+    assert_eq!(access.refresh_events()[1].start_cycle(), 40);
+    assert_eq!(access.refresh_events()[1].end_cycle(), 45);
+    assert_eq!(access.refresh_events()[2].start_cycle(), 60);
+    assert_eq!(access.refresh_events()[2].end_cycle(), 65);
+    assert_eq!(access.refresh_events()[3].start_cycle(), 80);
+    assert_eq!(access.refresh_events()[3].end_cycle(), 85);
+    assert_eq!(access.command_cycle(), 88);
+    assert_eq!(access.ready_cycle(), 99);
+}
+
+#[test]
+fn dram_controller_snapshot_can_restore_refresh_phase() {
+    let snapshot = DramControllerSnapshot::new(
+        geometry(),
+        timing_with_refresh(),
+        vec![DramBankState::from_snapshot_with_refresh(None, 0, 40)],
+        0,
+        None,
+    );
+    let mut controller = DramController::from_snapshot(&snapshot);
+
+    let before_refresh = controller.schedule(21, &read(0x0000, 8, 73)).unwrap();
+    assert!(before_refresh.refresh_events().is_empty());
+
+    let after_refresh = controller.schedule(41, &read(0x0008, 8, 74)).unwrap();
+    assert_eq!(after_refresh.refresh_events().len(), 1);
+    assert_eq!(after_refresh.refresh_events()[0].start_cycle(), 40);
+    assert_eq!(after_refresh.refresh_events()[0].end_cycle(), 45);
+}
+
+#[test]
+fn dram_controller_legacy_snapshot_refresh_phase_starts_after_available_cycle() {
+    let snapshot = DramControllerSnapshot::new(
+        geometry(),
+        timing_with_refresh(),
+        vec![DramBankState::from_snapshot(None, 45)],
+        0,
+        None,
+    );
+    let mut controller = DramController::from_snapshot(&snapshot);
+
+    let before_refresh = controller.schedule(46, &read(0x0000, 8, 76)).unwrap();
+    assert!(before_refresh.refresh_events().is_empty());
+
+    let after_refresh = controller.schedule(61, &read(0x0008, 8, 77)).unwrap();
+    assert_eq!(after_refresh.refresh_events().len(), 1);
+    assert_eq!(after_refresh.refresh_events()[0].start_cycle(), 60);
+    assert_eq!(after_refresh.refresh_events()[0].end_cycle(), 65);
+}
+
+#[test]
+fn activity_profile_until_accounts_due_refresh_without_later_access() {
+    let mut controller = DramController::new(geometry(), timing_with_refresh());
+
+    controller.schedule(0, &read(0x0000, 8, 78)).unwrap();
+    let profile = controller.activity_profile_until(45);
+
+    assert_eq!(profile.refresh_count(), 2);
+    assert_eq!(profile.refresh_cycle_count(), 10);
+}
+
+#[test]
+fn activity_profile_since_until_accounts_terminal_refresh_without_later_access() {
+    let mut controller = DramController::new(geometry(), timing_with_refresh());
+
+    controller.schedule(0, &read(0x0000, 8, 79)).unwrap();
+    let marker = controller.mark_activity();
+    let profile = controller.activity_profile_since_until(marker, 45);
+
+    assert_eq!(profile.refresh_count(), 2);
+    assert_eq!(profile.refresh_cycle_count(), 10);
+}
+
+#[test]
+fn activity_profile_until_clips_terminal_refresh_ticks_to_end_cycle() {
+    let mut controller = DramController::new(geometry(), timing_with_refresh());
+
+    controller.schedule(0, &read(0x0000, 8, 80)).unwrap();
+    let profile = controller.activity_profile_until(22);
+
+    assert_eq!(profile.refresh_count(), 1);
+    assert_eq!(profile.refresh_cycle_count(), 2);
+}
+
+#[test]
+fn dram_refresh_timing_rejects_zero_interval_and_recovery() {
+    assert_eq!(
+        DramRefreshTiming::new(0, 5).unwrap_err(),
+        DramError::ZeroRefreshTiming {
+            field: DramRefreshTimingField::Interval,
+        },
+    );
+    assert_eq!(
+        DramRefreshTiming::new(20, 0).unwrap_err(),
+        DramError::ZeroRefreshTiming {
+            field: DramRefreshTimingField::Recovery,
+        },
+    );
+}
+
+#[test]
+fn dram_timing_rejects_refresh_recovery_without_activate_slot() {
+    assert_eq!(
+        timing()
+            .with_refresh_timing(DramRefreshTiming::new(20, 18).unwrap())
+            .unwrap_err(),
+        DramError::RefreshRecoveryLeavesNoActivateSlot {
+            interval: 20,
+            recovery: 18,
+            activate_latency: 3,
+        },
+    );
+}
+
+#[test]
+fn dram_timing_rejects_refresh_command_window_without_data_slot() {
+    assert_eq!(
+        timing()
+            .with_command_window(20, 1)
+            .unwrap()
+            .with_refresh_timing(DramRefreshTiming::new(20, 5).unwrap())
+            .unwrap_err(),
+        DramError::RefreshCommandWindowLeavesNoDataSlot {
+            interval: 20,
+            window_cycles: 20,
+            max_commands: 1,
+        },
+    );
+}
+
+#[test]
+fn dram_timing_rejects_command_window_added_after_refresh_without_data_slot() {
+    assert_eq!(
+        timing()
+            .with_refresh_timing(DramRefreshTiming::new(20, 5).unwrap())
+            .unwrap()
+            .with_command_window(20, 1)
+            .unwrap_err(),
+        DramError::RefreshCommandWindowLeavesNoDataSlot {
+            interval: 20,
+            window_cycles: 20,
+            max_commands: 1,
+        },
     );
 }
 

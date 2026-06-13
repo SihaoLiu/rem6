@@ -5,8 +5,8 @@ use rem6_fabric::QosError;
 use rem6_memory::{MemoryOperation, MemoryRequestId};
 
 use crate::{
-    DramLowPowerTimingField, DramMemoryTechnology, DramProfileField, DramTimingField,
-    NvmMediaTimingField,
+    DramLowPowerTimingField, DramMemoryTechnology, DramProfileField, DramRefreshTimingField,
+    DramTimingField, NvmMediaTimingField,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -29,6 +29,19 @@ pub enum DramError {
     },
     ZeroTimingLatency {
         field: DramTimingField,
+    },
+    ZeroRefreshTiming {
+        field: DramRefreshTimingField,
+    },
+    RefreshRecoveryLeavesNoActivateSlot {
+        interval: u64,
+        recovery: u64,
+        activate_latency: u64,
+    },
+    RefreshCommandWindowLeavesNoDataSlot {
+        interval: u64,
+        window_cycles: u64,
+        max_commands: u32,
     },
     ZeroCommandWindow,
     ZeroCommandWindowMaxCommands,
@@ -103,6 +116,25 @@ impl fmt::Display for DramError {
             Self::ZeroTimingLatency { field } => {
                 write!(formatter, "DRAM timing field {field:?} must be nonzero")
             }
+            Self::ZeroRefreshTiming { field } => {
+                write!(formatter, "DRAM refresh timing field {field:?} must be nonzero")
+            }
+            Self::RefreshRecoveryLeavesNoActivateSlot {
+                interval,
+                recovery,
+                activate_latency,
+            } => write!(
+                formatter,
+                "DRAM refresh recovery {recovery} plus activate latency {activate_latency} must be less than refresh interval {interval}"
+            ),
+            Self::RefreshCommandWindowLeavesNoDataSlot {
+                interval,
+                window_cycles,
+                max_commands,
+            } => write!(
+                formatter,
+                "DRAM command window {window_cycles} with {max_commands} commands leaves no data-command slot before refresh interval {interval}"
+            ),
             Self::ZeroCommandWindow => {
                 write!(formatter, "DRAM command window must be nonzero")
             }
@@ -187,6 +219,9 @@ impl Error for DramError {
             | Self::BankGroupCountExceedsBankCount { .. }
             | Self::BankCountNotBankGroupMultiple { .. }
             | Self::ZeroTimingLatency { .. }
+            | Self::ZeroRefreshTiming { .. }
+            | Self::RefreshRecoveryLeavesNoActivateSlot { .. }
+            | Self::RefreshCommandWindowLeavesNoDataSlot { .. }
             | Self::ZeroCommandWindow
             | Self::ZeroCommandWindowMaxCommands
             | Self::ZeroSameBankGroupBurstSpacing

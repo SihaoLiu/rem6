@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 mod activity;
+mod command;
 mod error;
 mod low_power;
 mod memory_controller;
@@ -8,13 +9,16 @@ mod memory_error;
 mod profile;
 mod profile_snapshot;
 mod qos;
+mod refresh;
 mod timing;
+mod wait_for;
 
 use activity::{collect_dram_bank_activity, collect_dram_port_activity};
 pub use activity::{
     DramActivityMarker, DramActivityProfile, DramBankActivity, DramMemoryActivityMarker,
     DramMemoryActivityProfile, DramPortActivity, DramTargetActivity,
 };
+pub use command::{DramCommand, DramCommandKind};
 pub use error::DramError;
 pub use low_power::{
     DramLowPowerActivity, DramLowPowerEvent, DramLowPowerState, DramLowPowerTiming,
@@ -31,24 +35,20 @@ pub use profile::{
 };
 pub use profile_snapshot::DramProfileSnapshotMismatch;
 pub use qos::{DramQosAccess, DramQosRequest, DramQosSchedulingPolicy, DramQosTurnaroundPolicy};
-pub use timing::{DramCommandWindow, DramGeometry, DramTiming, DramTimingField};
+pub use refresh::DramRefreshEvent;
+use refresh::{record_due_refresh_events, DramRefreshWindow};
+pub use timing::{
+    DramCommandWindow, DramGeometry, DramRefreshTiming, DramRefreshTimingField, DramTiming,
+    DramTimingField,
+};
+pub use wait_for::DramWaitForMarker;
+use wait_for::{merge_wait_for_graph, record_dram_wait_interval, DramWaitRecord};
 
 use rem6_fabric::QosQueueArbiter;
-use rem6_kernel::{WaitForEdgeKind, WaitForGraph, WaitForNode};
+use rem6_kernel::WaitForGraph;
 use rem6_memory::{
     CacheLineLayout, MemoryOperation, MemoryRequest, MemoryRequestId, MemoryTargetId,
 };
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct DramWaitForMarker {
-    offset: usize,
-}
-
-impl DramWaitForMarker {
-    const fn new(offset: usize) -> Self {
-        Self { offset }
-    }
-}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DramAccessKind {
@@ -90,55 +90,6 @@ impl DramAccessKind {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum DramCommandKind {
-    Precharge,
-    Activate,
-    Read,
-    Write,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DramCommand {
-    cycle: u64,
-    parallel_port: u32,
-    bank: u32,
-    row: u64,
-    kind: DramCommandKind,
-}
-
-impl DramCommand {
-    fn new(cycle: u64, parallel_port: u32, bank: u32, row: u64, kind: DramCommandKind) -> Self {
-        Self {
-            cycle,
-            parallel_port,
-            bank,
-            row,
-            kind,
-        }
-    }
-
-    pub const fn cycle(&self) -> u64 {
-        self.cycle
-    }
-
-    pub const fn parallel_port(&self) -> u32 {
-        self.parallel_port
-    }
-
-    pub const fn bank(&self) -> u32 {
-        self.bank
-    }
-
-    pub const fn row(&self) -> u64 {
-        self.row
-    }
-
-    pub const fn kind(&self) -> DramCommandKind {
-        self.kind
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DramAccess {
     request: MemoryRequestId,
@@ -157,6 +108,7 @@ pub struct DramAccess {
     command_cycle: u64,
     ready_cycle: u64,
     commands: Vec<DramCommand>,
+    refresh_events: Vec<DramRefreshEvent>,
     qos: Option<DramQosAccess>,
 }
 
@@ -225,192 +177,108 @@ impl DramAccess {
         &self.commands
     }
 
+    pub fn refresh_events(&self) -> &[DramRefreshEvent] {
+        &self.refresh_events
+    }
+
     pub const fn qos(&self) -> Option<DramQosAccess> {
         self.qos
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum DramWaitResource {
-    Bank { parallel_port: u32, bank: u32 },
-    Bus { parallel_port: u32 },
-    NvmReadBuffer,
-    NvmWriteQueue,
+struct DramCommandProjection<'a> {
+    timing: DramTiming,
+    port: &'a DramPortState,
+    bank: &'a DramBankState,
+    kind: DramAccessKind,
+    effective_arrival_cycle: u64,
+    row: u64,
+    bank_group: Option<u32>,
+    nvm_media_timing: Option<NvmMediaTiming>,
+    nvm_pending_read_completions: &'a [u64],
+    nvm_pending_write_completions: &'a [u64],
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct DramWaitRecord {
-    request: MemoryRequestId,
-    resource: DramWaitResource,
-    kind: WaitForEdgeKind,
-    first_cycle: u64,
-    last_cycle: u64,
-}
+impl DramCommandProjection<'_> {
+    fn command_cycle(&self) -> u64 {
+        let mut port = self.port.clone();
+        let bus_ready_cycle = port.ready_cycle(self.kind, self.timing, self.bank_group);
+        let mut next_cycle = self.effective_arrival_cycle.max(self.bank.available_cycle);
 
-impl DramWaitRecord {
-    fn bank_queue(
-        request: MemoryRequestId,
-        parallel_port: u32,
-        bank: u32,
-        first_cycle: u64,
-        last_cycle: u64,
-    ) -> Self {
-        Self {
-            request,
-            resource: DramWaitResource::Bank {
-                parallel_port,
-                bank,
-            },
-            kind: WaitForEdgeKind::Queue,
-            first_cycle,
-            last_cycle,
+        if self.bank.open_row != Some(self.row) {
+            if self.bank.open_row.is_some() {
+                let precharge_cycle = port.reserve_command_window(self.timing, next_cycle);
+                next_cycle = precharge_cycle + self.timing.precharge_latency();
+            }
+            let activate_cycle = port.reserve_command_window(self.timing, next_cycle);
+            next_cycle = activate_cycle + self.timing.activate_latency();
         }
-    }
 
-    fn bus_resource(
-        request: MemoryRequestId,
-        parallel_port: u32,
-        first_cycle: u64,
-        last_cycle: u64,
-    ) -> Self {
-        Self {
-            request,
-            resource: DramWaitResource::Bus { parallel_port },
-            kind: WaitForEdgeKind::Resource,
-            first_cycle,
-            last_cycle,
+        let mut command_cycle = next_cycle.max(bus_ready_cycle);
+        if let Some(nvm_media_timing) = self.nvm_media_timing {
+            match self.kind {
+                DramAccessKind::Read => {
+                    let mut pending = self.nvm_pending_read_completions.to_vec();
+                    command_cycle = reserve_nvm_completion_slot(
+                        &mut pending,
+                        nvm_media_timing.max_pending_reads(),
+                        command_cycle,
+                    );
+                }
+                DramAccessKind::Write => {
+                    let mut pending = self.nvm_pending_write_completions.to_vec();
+                    command_cycle = reserve_nvm_completion_slot(
+                        &mut pending,
+                        nvm_media_timing.max_pending_writes(),
+                        command_cycle,
+                    );
+                }
+            }
         }
-    }
 
-    fn nvm_read_buffer(request: MemoryRequestId, first_cycle: u64, last_cycle: u64) -> Self {
-        Self {
-            request,
-            resource: DramWaitResource::NvmReadBuffer,
-            kind: WaitForEdgeKind::Resource,
-            first_cycle,
-            last_cycle,
-        }
-    }
-
-    fn nvm_write_queue(request: MemoryRequestId, first_cycle: u64, last_cycle: u64) -> Self {
-        Self {
-            request,
-            resource: DramWaitResource::NvmWriteQueue,
-            kind: WaitForEdgeKind::Resource,
-            first_cycle,
-            last_cycle,
-        }
+        port.reserve_command_window(self.timing, command_cycle)
     }
 }
 
-fn record_dram_wait_interval(
-    graph: &mut WaitForGraph,
-    wait: &DramWaitRecord,
-    target: Option<MemoryTargetId>,
+fn record_low_power_before_refreshes(
+    low_power_timing: DramLowPowerTiming,
+    parallel_port: u32,
+    idle_start_cycle: u64,
+    has_open_row: bool,
+    refresh_events: &[DramRefreshEvent],
+    low_power_events: &mut Vec<DramLowPowerEvent>,
 ) {
-    let source = dram_request_node(wait.request, target);
-    let target = dram_resource_node(wait.resource, target);
-    graph
-        .record_wait(source.clone(), target.clone(), wait.kind, wait.first_cycle)
-        .expect("DRAM wait-for labels are generated from typed ids");
-    if wait.last_cycle != wait.first_cycle {
-        graph
-            .record_wait(source, target, wait.kind, wait.last_cycle)
-            .expect("DRAM wait-for labels are generated from typed ids");
-    }
-}
-
-fn dram_request_node(request: MemoryRequestId, target: Option<MemoryTargetId>) -> WaitForNode {
-    let label = if let Some(target) = target {
-        format!(
-            "dram.target.{}.agent.{}.request.{}",
-            target.get(),
-            request.agent().get(),
-            request.sequence()
-        )
-    } else {
-        format!(
-            "dram.agent.{}.request.{}",
-            request.agent().get(),
-            request.sequence()
-        )
-    };
-    WaitForNode::transaction(label).expect("DRAM request wait-for label uses numeric ids")
-}
-
-fn dram_resource_node(resource: DramWaitResource, target: Option<MemoryTargetId>) -> WaitForNode {
-    let label = match (target, resource) {
-        (
-            Some(target),
-            DramWaitResource::Bank {
-                parallel_port,
-                bank,
-            },
-        ) => format!(
-            "dram.target.{}.port.{}.bank.{}",
-            target.get(),
+    let mut idle_start_cycle = idle_start_cycle;
+    let mut has_open_row = has_open_row;
+    for refresh in refresh_events {
+        low_power_events.extend(low_power::events_for_idle_window(
+            low_power_timing,
             parallel_port,
-            bank
-        ),
-        (Some(target), DramWaitResource::Bus { parallel_port }) => {
-            format!("dram.target.{}.port.{}.bus", target.get(), parallel_port)
-        }
-        (Some(target), DramWaitResource::NvmReadBuffer) => {
-            format!("dram.target.{}.nvm.read_buffer", target.get())
-        }
-        (Some(target), DramWaitResource::NvmWriteQueue) => {
-            format!("dram.target.{}.nvm.write_queue", target.get())
-        }
-        (
-            None,
-            DramWaitResource::Bank {
-                parallel_port,
-                bank,
-            },
-        ) => format!("dram.port.{}.bank.{}", parallel_port, bank),
-        (None, DramWaitResource::Bus { parallel_port }) => {
-            format!("dram.port.{}.bus", parallel_port)
-        }
-        (None, DramWaitResource::NvmReadBuffer) => "dram.nvm.read_buffer".to_string(),
-        (None, DramWaitResource::NvmWriteQueue) => "dram.nvm.write_queue".to_string(),
-    };
-    WaitForNode::resource(label).expect("DRAM resource wait-for label uses numeric ids")
-}
-
-fn merge_wait_for_graph(target: &mut WaitForGraph, source: WaitForGraph) {
-    for edge in source.edges() {
-        target
-            .record_wait(
-                edge.source().clone(),
-                edge.target().clone(),
-                edge.kind(),
-                edge.first_observed_tick(),
-            )
-            .expect("merged wait-for graph already contains valid labels");
-        if edge.last_observed_tick() != edge.first_observed_tick() {
-            target
-                .record_wait(
-                    edge.source().clone(),
-                    edge.target().clone(),
-                    edge.kind(),
-                    edge.last_observed_tick(),
-                )
-                .expect("merged wait-for graph already contains valid labels");
-        }
+            idle_start_cycle,
+            refresh.start_cycle(),
+            has_open_row,
+        ));
+        idle_start_cycle = refresh.end_cycle();
+        has_open_row = false;
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DramBankState {
-    open_row: Option<u64>,
-    available_cycle: u64,
+    pub(crate) open_row: Option<u64>,
+    pub(crate) available_cycle: u64,
+    pub(crate) next_refresh_cycle: u64,
 }
 
 impl DramBankState {
-    fn new() -> Self {
+    fn new(timing: DramTiming) -> Self {
         Self {
             open_row: None,
             available_cycle: 0,
+            next_refresh_cycle: timing
+                .refresh_timing()
+                .map(|refresh| refresh.interval())
+                .unwrap_or(0),
         }
     }
 
@@ -418,6 +286,19 @@ impl DramBankState {
         Self {
             open_row,
             available_cycle,
+            next_refresh_cycle: 0,
+        }
+    }
+
+    pub const fn from_snapshot_with_refresh(
+        open_row: Option<u64>,
+        available_cycle: u64,
+        next_refresh_cycle: u64,
+    ) -> Self {
+        Self {
+            open_row,
+            available_cycle,
+            next_refresh_cycle,
         }
     }
 
@@ -427,6 +308,10 @@ impl DramBankState {
 
     pub const fn available_cycle(self) -> u64 {
         self.available_cycle
+    }
+
+    pub const fn next_refresh_cycle(self) -> u64 {
+        self.next_refresh_cycle
     }
 }
 
@@ -602,7 +487,7 @@ impl DramController {
             geometry,
             timing,
             banks: vec![
-                DramBankState::new();
+                DramBankState::new(timing);
                 geometry.bank_count() as usize * parallel_port_count as usize
             ],
             ports: vec![DramPortState::new(); parallel_port_count as usize],
@@ -742,7 +627,7 @@ impl DramController {
 
     pub fn activity_profile_until(&self, end_cycle: u64) -> DramActivityProfile {
         let mut bank_activities = self.bank_activities();
-        self.record_terminal_low_power_activity(&mut bank_activities, end_cycle);
+        self.record_terminal_memory_activity(&mut bank_activities, end_cycle);
         DramActivityProfile::from_activities(&self.port_activities(), &bank_activities)
     }
 
@@ -759,20 +644,18 @@ impl DramController {
         end_cycle: u64,
     ) -> DramActivityProfile {
         let mut bank_activities = self.bank_activities_since(marker);
-        self.record_terminal_low_power_activity(&mut bank_activities, end_cycle);
+        self.record_terminal_memory_activity(&mut bank_activities, end_cycle);
         DramActivityProfile::from_activities(&self.port_activities_since(marker), &bank_activities)
     }
 
-    fn record_terminal_low_power_activity(
+    fn record_terminal_memory_activity(
         &self,
         bank_activities: &mut BTreeMap<(u32, u32), DramBankActivity>,
         end_cycle: u64,
     ) {
-        let Some(low_power_timing) = self.timing.low_power_timing() else {
-            return;
-        };
+        let all_bank_activities = self.bank_activities();
         let bank_count = self.geometry.bank_count() as usize;
-        let active_banks = bank_activities.keys().copied().collect::<Vec<_>>();
+        let active_banks = all_bank_activities.keys().copied().collect::<Vec<_>>();
         for (parallel_port, local_bank) in active_banks {
             let bank_index = parallel_port as usize * bank_count + local_bank as usize;
             let Some(bank) = self.banks.get(bank_index) else {
@@ -781,18 +664,48 @@ impl DramController {
             let Some(port) = self.ports.get(parallel_port as usize) else {
                 continue;
             };
-            let events = low_power::events_for_idle_window(
-                low_power_timing,
-                parallel_port,
-                port.bus_available_cycle().max(bank.available_cycle()),
-                end_cycle,
-                bank.open_row().is_some(),
-            );
-            if !events.is_empty() {
-                bank_activities
+            let mut bank = *bank;
+            let idle_start_cycle = port.bus_available_cycle().max(bank.available_cycle());
+            let has_open_row = bank.open_row().is_some();
+            let mut waits = Vec::new();
+            let refresh_events = if let Some(refresh_timing) = self.timing.refresh_timing() {
+                record_due_refresh_events(
+                    refresh_timing,
+                    &mut bank,
+                    DramRefreshWindow::maintenance(
+                        parallel_port,
+                        local_bank,
+                        end_cycle.saturating_sub(1),
+                    ),
+                    &mut waits,
+                )
+            } else {
+                Vec::new()
+            };
+            let mut low_power_events = Vec::new();
+            if let Some(low_power_timing) = self.timing.low_power_timing() {
+                record_low_power_before_refreshes(
+                    low_power_timing,
+                    parallel_port,
+                    idle_start_cycle,
+                    has_open_row,
+                    &refresh_events,
+                    &mut low_power_events,
+                );
+                low_power_events.extend(low_power::events_for_idle_window(
+                    low_power_timing,
+                    parallel_port,
+                    port.bus_available_cycle().max(bank.available_cycle()),
+                    end_cycle,
+                    bank.open_row().is_some(),
+                ));
+            }
+            if !refresh_events.is_empty() || !low_power_events.is_empty() {
+                let activity = bank_activities
                     .entry((parallel_port, local_bank))
-                    .or_default()
-                    .record_terminal_low_power_events(&events);
+                    .or_default();
+                activity.record_terminal_refresh_events(&refresh_events, end_cycle);
+                activity.record_terminal_low_power_events(&low_power_events);
             }
         }
     }
@@ -842,7 +755,49 @@ impl DramController {
         let mut port = self.ports[port_index].clone();
         let bank_index = port_index * self.geometry.bank_count() as usize + decoded.bank as usize;
         let bank = &mut self.banks[bank_index];
-        let low_power_events = if let Some(low_power_timing) = self.timing.low_power_timing() {
+        let bus_ready_cycle = port.ready_cycle(kind, self.timing, decoded.bank_group);
+        let mut commands = Vec::new();
+        let mut waits = Vec::new();
+        let mut low_power_events = Vec::new();
+        if bank.available_cycle > arrival_cycle {
+            waits.push(DramWaitRecord::bank_queue(
+                request.id(),
+                decoded.parallel_port,
+                decoded.bank,
+                arrival_cycle,
+                bank.available_cycle - 1,
+            ));
+        }
+        let mut refresh_events = Vec::new();
+        if let Some(refresh_timing) = self.timing.refresh_timing() {
+            let idle_start_cycle = port.bus_available_cycle().max(bank.available_cycle());
+            let has_open_row = bank.open_row.is_some();
+            let due_refresh_events = record_due_refresh_events(
+                refresh_timing,
+                bank,
+                DramRefreshWindow::new(
+                    request.id(),
+                    decoded.parallel_port,
+                    decoded.bank,
+                    arrival_cycle,
+                    arrival_cycle,
+                ),
+                &mut waits,
+            );
+            if let Some(low_power_timing) = self.timing.low_power_timing() {
+                record_low_power_before_refreshes(
+                    low_power_timing,
+                    decoded.parallel_port,
+                    idle_start_cycle,
+                    has_open_row,
+                    &due_refresh_events,
+                    &mut low_power_events,
+                );
+            }
+            refresh_events.extend(due_refresh_events);
+        }
+        let final_low_power_events = if let Some(low_power_timing) = self.timing.low_power_timing()
+        {
             low_power::events_for_idle_window(
                 low_power_timing,
                 decoded.parallel_port,
@@ -853,7 +808,7 @@ impl DramController {
         } else {
             Vec::new()
         };
-        let low_power_exit_latency_cycles = low_power_events
+        let low_power_exit_latency_cycles = final_low_power_events
             .last()
             .and_then(|event| {
                 self.timing
@@ -861,18 +816,40 @@ impl DramController {
                     .map(|timing| timing.exit_latency_for_state(event.state()))
             })
             .unwrap_or(0);
+        low_power_events.extend(final_low_power_events);
         let effective_arrival_cycle = arrival_cycle.saturating_add(low_power_exit_latency_cycles);
-        let bus_ready_cycle = port.ready_cycle(kind, self.timing, decoded.bank_group);
-        let mut commands = Vec::new();
-        let mut waits = Vec::new();
-        if bank.available_cycle > effective_arrival_cycle {
-            waits.push(DramWaitRecord::bank_queue(
-                request.id(),
-                decoded.parallel_port,
-                decoded.bank,
-                effective_arrival_cycle,
-                bank.available_cycle - 1,
-            ));
+        if let Some(refresh_timing) = self.timing.refresh_timing() {
+            loop {
+                let due_through_cycle = DramCommandProjection {
+                    timing: self.timing,
+                    port: &port,
+                    bank,
+                    kind,
+                    effective_arrival_cycle,
+                    row: decoded.row,
+                    bank_group: decoded.bank_group,
+                    nvm_media_timing: self.nvm_media_timing,
+                    nvm_pending_read_completions: &self.nvm_pending_read_completions,
+                    nvm_pending_write_completions: &self.nvm_pending_write_completions,
+                }
+                .command_cycle();
+                let projected_refresh_events = record_due_refresh_events(
+                    refresh_timing,
+                    bank,
+                    DramRefreshWindow::new(
+                        request.id(),
+                        decoded.parallel_port,
+                        decoded.bank,
+                        effective_arrival_cycle,
+                        due_through_cycle,
+                    ),
+                    &mut waits,
+                );
+                if projected_refresh_events.is_empty() {
+                    break;
+                }
+                refresh_events.extend(projected_refresh_events);
+            }
         }
         let mut next_cycle = effective_arrival_cycle.max(bank.available_cycle);
         let row_hit = bank.open_row == Some(decoded.row);
@@ -1035,6 +1012,7 @@ impl DramController {
             command_cycle,
             ready_cycle,
             commands,
+            refresh_events,
             qos,
         };
         self.activity_log.push(access.clone());

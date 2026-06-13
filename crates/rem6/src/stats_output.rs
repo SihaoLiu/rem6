@@ -1078,6 +1078,14 @@ fn emit_dram_stats(
     emit_dram_counter(stats, prefix, "writes", "Count", summary.writes)?;
     emit_dram_counter(stats, prefix, "row_hits", "Count", summary.row_hits)?;
     emit_dram_counter(stats, prefix, "row_misses", "Count", summary.row_misses)?;
+    emit_dram_counter(stats, prefix, "refreshes", "Count", summary.refreshes)?;
+    emit_dram_counter(
+        stats,
+        prefix,
+        "refresh_ticks",
+        "Tick",
+        summary.refresh_ticks,
+    )?;
     emit_dram_counter(stats, prefix, "commands", "Count", summary.commands)?;
     emit_dram_counter(stats, prefix, "turnarounds", "Count", summary.turnarounds)?;
     emit_dram_counter(

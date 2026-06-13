@@ -596,6 +596,8 @@ impl Rem6DramSummary {
             writes: profile.write_count() as u64,
             row_hits: profile.row_hit_count() as u64,
             row_misses: profile.row_miss_count() as u64,
+            refreshes: profile.refresh_count() as u64,
+            refresh_ticks: profile.refresh_cycle_count(),
             commands: profile.command_count() as u64,
             turnarounds: profile.turnaround_count() as u64,
             total_ready_latency_ticks: profile.total_ready_latency_cycles(),

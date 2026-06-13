@@ -1,7 +1,7 @@
 use rem6_dram::{
     DramAccessKind, DramControllerConfig, DramError, DramGeometry, DramMemoryController,
-    DramMemoryError, DramQosRequest, DramQosSchedulingPolicy, DramQosTurnaroundPolicy, DramTiming,
-    ExternalMemoryProfile,
+    DramMemoryError, DramQosRequest, DramQosSchedulingPolicy, DramQosTurnaroundPolicy,
+    DramRefreshTiming, DramTiming, ExternalMemoryProfile,
 };
 use rem6_fabric::{QosPriority, QosQueueArbiter, QosQueuePolicyKind};
 use rem6_kernel::{WaitForEdgeKind, WaitForNode};
@@ -20,6 +20,12 @@ fn geometry() -> DramGeometry {
 
 fn timing() -> DramTiming {
     DramTiming::new(3, 5, 7, 2, 4).unwrap()
+}
+
+fn timing_with_refresh() -> DramTiming {
+    timing()
+        .with_refresh_timing(DramRefreshTiming::new(20, 5).unwrap())
+        .unwrap()
 }
 
 fn fast_timing() -> DramTiming {
@@ -431,6 +437,75 @@ fn dram_memory_controller_reports_target_activity_profiles() {
     assert_eq!(target_windows.len(), 2);
     assert_eq!(target_windows[0].target(), low);
     assert_eq!(target_windows[1].target(), high);
+}
+
+#[test]
+fn dram_memory_controller_reports_refresh_activity_profiles() {
+    let target = MemoryTargetId::new(11);
+    let mut controller = DramMemoryController::new();
+    controller
+        .add_target(DramControllerConfig::new(
+            target,
+            layout(),
+            geometry(),
+            timing_with_refresh(),
+        ))
+        .unwrap();
+    controller
+        .map_region(
+            target,
+            Address::new(0x0000),
+            AccessSize::new(0x4000).unwrap(),
+        )
+        .unwrap();
+    controller
+        .insert_line(target, Address::new(0x0000), line_data(0x40))
+        .unwrap();
+
+    controller.accept(0, &read(0x0000, 8, 83)).unwrap();
+    let refresh_delayed = controller.accept(21, &read(0x0008, 8, 84)).unwrap();
+    assert_eq!(refresh_delayed.dram_access().ready_cycle(), 33);
+
+    let target_activity = controller.target_activity(target).unwrap();
+    assert_eq!(target_activity.profile().refresh_count(), 1);
+    assert_eq!(target_activity.profile().refresh_cycle_count(), 5);
+    let memory_profile = controller.activity_profile();
+    assert_eq!(memory_profile.refresh_count(), 1);
+    assert_eq!(memory_profile.refresh_cycle_count(), 5);
+}
+
+#[test]
+fn dram_memory_controller_since_until_keeps_terminal_refresh_only_activity() {
+    let target = MemoryTargetId::new(12);
+    let mut controller = DramMemoryController::new();
+    controller
+        .add_target(DramControllerConfig::new(
+            target,
+            layout(),
+            geometry(),
+            timing_with_refresh(),
+        ))
+        .unwrap();
+    controller
+        .map_region(
+            target,
+            Address::new(0x0000),
+            AccessSize::new(0x4000).unwrap(),
+        )
+        .unwrap();
+    controller
+        .insert_line(target, Address::new(0x0000), line_data(0x40))
+        .unwrap();
+
+    controller.accept(0, &read(0x0000, 8, 85)).unwrap();
+    let marker = controller.mark_activity();
+
+    let memory_profile = controller.activity_profile_since_until(&marker, 45);
+    assert_eq!(memory_profile.refresh_count(), 2);
+    assert_eq!(memory_profile.refresh_cycle_count(), 10);
+    let target_windows = controller.target_activities_since_until(&marker, 45);
+    assert_eq!(target_windows.len(), 1);
+    assert_eq!(target_windows[0].target(), target);
 }
 
 #[test]

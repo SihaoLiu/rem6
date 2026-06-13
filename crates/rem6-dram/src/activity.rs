@@ -5,7 +5,7 @@ use rem6_memory::MemoryTargetId;
 
 use crate::{
     DramAccess, DramAccessKind, DramGeometry, DramLowPowerActivity, DramLowPowerEvent,
-    DramLowPowerState, DramLowPowerTiming, DramMemoryTechnology, DramTiming,
+    DramLowPowerState, DramLowPowerTiming, DramMemoryTechnology, DramRefreshEvent, DramTiming,
     ExternalMemoryParallelResourceSummary, ExternalMemoryProfile, NvmMediaTiming,
 };
 
@@ -29,6 +29,8 @@ pub struct DramBankActivity {
     max_pending_persistent_writes: usize,
     row_hit_count: usize,
     row_miss_count: usize,
+    refresh_count: usize,
+    refresh_cycle_count: u64,
     command_count: usize,
     first_arrival_cycle: u64,
     last_ready_cycle: u64,
@@ -67,6 +69,12 @@ impl DramBankActivity {
         } else {
             self.row_miss_count += 1;
         }
+        self.refresh_count += access.refresh_events().len();
+        self.refresh_cycle_count += access
+            .refresh_events()
+            .iter()
+            .map(|event| event.cycle_count())
+            .sum::<u64>();
         self.command_count += access.commands().len();
         self.last_ready_cycle = self.last_ready_cycle.max(access.ready_cycle());
         let ready_latency = access.ready_cycle() - access.arrival_cycle();
@@ -96,7 +104,7 @@ impl DramBankActivity {
                 .or_default() += qos.bytes();
         }
         self.low_power.record_events(access.low_power_events());
-        if !access.low_power_events().is_empty() {
+        if access.low_power_exit_latency_cycles() != 0 {
             self.low_power
                 .record_exit(access.low_power_exit_latency_cycles());
         }
@@ -104,6 +112,23 @@ impl DramBankActivity {
 
     pub(crate) fn record_terminal_low_power_events(&mut self, events: &[DramLowPowerEvent]) {
         self.low_power.record_events(events);
+    }
+
+    pub(crate) fn record_terminal_refresh_events(
+        &mut self,
+        events: &[DramRefreshEvent],
+        end_cycle: u64,
+    ) {
+        self.refresh_count += events.len();
+        self.refresh_cycle_count += events
+            .iter()
+            .map(|event| {
+                event
+                    .end_cycle()
+                    .min(end_cycle)
+                    .saturating_sub(event.start_cycle())
+            })
+            .sum::<u64>();
     }
 
     pub const fn access_count(&self) -> usize {
@@ -132,6 +157,14 @@ impl DramBankActivity {
 
     pub const fn row_miss_count(&self) -> usize {
         self.row_miss_count
+    }
+
+    pub const fn refresh_count(&self) -> usize {
+        self.refresh_count
+    }
+
+    pub const fn refresh_cycle_count(&self) -> u64 {
+        self.refresh_cycle_count
     }
 
     pub const fn command_count(&self) -> usize {
@@ -287,6 +320,8 @@ pub struct DramActivityProfile {
     max_pending_persistent_writes: usize,
     row_hit_count: usize,
     row_miss_count: usize,
+    refresh_count: usize,
+    refresh_cycle_count: u64,
     command_count: usize,
     turnaround_count: usize,
     total_ready_latency_cycles: u64,
@@ -323,6 +358,8 @@ impl DramActivityProfile {
         for bank in banks.values() {
             profile.row_hit_count += bank.row_hit_count();
             profile.row_miss_count += bank.row_miss_count();
+            profile.refresh_count += bank.refresh_count();
+            profile.refresh_cycle_count += bank.refresh_cycle_count();
             profile.read_byte_count += bank.read_byte_count();
             profile.write_byte_count += bank.write_byte_count();
             profile.max_pending_persistent_writes = profile
@@ -375,6 +412,8 @@ impl DramActivityProfile {
         self.max_pending_nvm_reads = self.max_pending_nvm_reads.max(later.max_pending_nvm_reads);
         self.row_hit_count += later.row_hit_count;
         self.row_miss_count += later.row_miss_count;
+        self.refresh_count += later.refresh_count;
+        self.refresh_cycle_count += later.refresh_cycle_count;
         self.command_count += later.command_count;
         self.turnaround_count += later.turnaround_count;
         self.total_ready_latency_cycles += later.total_ready_latency_cycles;
@@ -448,6 +487,14 @@ impl DramActivityProfile {
         self.row_miss_count
     }
 
+    pub const fn refresh_count(&self) -> usize {
+        self.refresh_count
+    }
+
+    pub const fn refresh_cycle_count(&self) -> u64 {
+        self.refresh_cycle_count
+    }
+
     pub const fn command_count(&self) -> usize {
         self.command_count
     }
@@ -470,6 +517,17 @@ impl DramActivityProfile {
 
     pub const fn is_empty(&self) -> bool {
         self.access_count == 0
+            && self.refresh_count == 0
+            && self
+                .low_power
+                .entry_count(DramLowPowerState::ActivePowerdown)
+                == 0
+            && self
+                .low_power
+                .entry_count(DramLowPowerState::PrechargePowerdown)
+                == 0
+            && self.low_power.entry_count(DramLowPowerState::SelfRefresh) == 0
+            && self.low_power.exit_count() == 0
     }
 
     pub const fn qos_access_count(&self) -> usize {
@@ -558,6 +616,8 @@ impl DramActivityProfile {
             .max(profile.max_pending_nvm_reads);
         self.row_hit_count += profile.row_hit_count;
         self.row_miss_count += profile.row_miss_count;
+        self.refresh_count += profile.refresh_count;
+        self.refresh_cycle_count += profile.refresh_cycle_count;
         self.command_count += profile.command_count;
         self.turnaround_count += profile.turnaround_count;
         self.total_ready_latency_cycles += profile.total_ready_latency_cycles;
@@ -931,6 +991,14 @@ impl DramMemoryActivityProfile {
 
     pub const fn row_miss_count(&self) -> usize {
         self.profile.row_miss_count()
+    }
+
+    pub const fn refresh_count(&self) -> usize {
+        self.profile.refresh_count()
+    }
+
+    pub const fn refresh_cycle_count(&self) -> u64 {
+        self.profile.refresh_cycle_count()
     }
 
     pub const fn command_count(&self) -> usize {

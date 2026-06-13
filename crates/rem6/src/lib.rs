@@ -207,6 +207,8 @@ pub struct Rem6DramSummary {
     writes: u64,
     row_hits: u64,
     row_misses: u64,
+    refreshes: u64,
+    refresh_ticks: u64,
     commands: u64,
     turnarounds: u64,
     total_ready_latency_ticks: u64,

@@ -7,7 +7,7 @@ use crate::{
     NvmMediaTiming,
 };
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DramProfileSnapshotMismatch {
     Target {
         profile: MemoryTargetId,
@@ -22,8 +22,8 @@ pub enum DramProfileSnapshotMismatch {
         controller: DramGeometry,
     },
     Timing {
-        profile: DramTiming,
-        controller: DramTiming,
+        profile: Box<DramTiming>,
+        controller: Box<DramTiming>,
     },
     ParallelPorts {
         profile: u32,
@@ -120,8 +120,8 @@ pub(crate) fn validate_profile_snapshot(
         return Err(profile_snapshot_mismatch(
             snapshot_target,
             DramProfileSnapshotMismatch::Timing {
-                profile: profile.timing(),
-                controller: controller.timing(),
+                profile: Box::new(profile.timing()),
+                controller: Box::new(controller.timing()),
             },
         ));
     }

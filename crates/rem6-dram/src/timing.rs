@@ -11,6 +11,42 @@ pub enum DramTimingField {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DramRefreshTimingField {
+    Interval,
+    Recovery,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DramRefreshTiming {
+    interval: u64,
+    recovery: u64,
+}
+
+impl DramRefreshTiming {
+    pub const fn new(interval: u64, recovery: u64) -> Result<Self, DramError> {
+        if interval == 0 {
+            return Err(DramError::ZeroRefreshTiming {
+                field: DramRefreshTimingField::Interval,
+            });
+        }
+        if recovery == 0 {
+            return Err(DramError::ZeroRefreshTiming {
+                field: DramRefreshTimingField::Recovery,
+            });
+        }
+        Ok(Self { interval, recovery })
+    }
+
+    pub const fn interval(self) -> u64 {
+        self.interval
+    }
+
+    pub const fn recovery(self) -> u64 {
+        self.recovery
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DramTiming {
     activate_latency: u64,
     read_latency: u64,
@@ -21,6 +57,7 @@ pub struct DramTiming {
     same_bank_group_burst_spacing: Option<u64>,
     command_window: Option<DramCommandWindow>,
     low_power_timing: Option<DramLowPowerTiming>,
+    refresh_timing: Option<DramRefreshTiming>,
 }
 
 impl DramTiming {
@@ -62,6 +99,7 @@ impl DramTiming {
             same_bank_group_burst_spacing: None,
             command_window: None,
             low_power_timing: None,
+            refresh_timing: None,
         })
     }
 
@@ -75,13 +113,42 @@ impl DramTiming {
         window_cycles: u64,
         max_commands: u32,
     ) -> Result<Self, DramError> {
-        self.command_window = Some(DramCommandWindow::new(window_cycles, max_commands)?);
+        let command_window = DramCommandWindow::new(window_cycles, max_commands)?;
+        if let Some(refresh_timing) = self.refresh_timing {
+            validate_refresh_command_window(refresh_timing, command_window)?;
+        }
+        self.command_window = Some(command_window);
         Ok(self)
     }
 
     pub const fn with_low_power_timing(mut self, low_power_timing: DramLowPowerTiming) -> Self {
         self.low_power_timing = Some(low_power_timing);
         self
+    }
+
+    pub const fn with_refresh_timing(
+        mut self,
+        refresh_timing: DramRefreshTiming,
+    ) -> Result<Self, DramError> {
+        if refresh_timing
+            .recovery()
+            .saturating_add(self.activate_latency)
+            >= refresh_timing.interval()
+        {
+            return Err(DramError::RefreshRecoveryLeavesNoActivateSlot {
+                interval: refresh_timing.interval(),
+                recovery: refresh_timing.recovery(),
+                activate_latency: self.activate_latency,
+            });
+        }
+        if let Some(command_window) = self.command_window {
+            match validate_refresh_command_window(refresh_timing, command_window) {
+                Ok(()) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        self.refresh_timing = Some(refresh_timing);
+        Ok(self)
     }
 
     pub const fn with_same_bank_group_burst_spacing(
@@ -131,12 +198,32 @@ impl DramTiming {
         self.low_power_timing
     }
 
+    pub const fn refresh_timing(self) -> Option<DramRefreshTiming> {
+        self.refresh_timing
+    }
+
     pub(crate) fn data_latency(self, kind: DramAccessKind) -> u64 {
         match kind {
             DramAccessKind::Read => self.read_latency,
             DramAccessKind::Write => self.write_latency,
         }
     }
+}
+
+const fn validate_refresh_command_window(
+    refresh_timing: DramRefreshTiming,
+    command_window: DramCommandWindow,
+) -> Result<(), DramError> {
+    if command_window.max_commands() < 2
+        && command_window.window_cycles() >= refresh_timing.interval()
+    {
+        return Err(DramError::RefreshCommandWindowLeavesNoDataSlot {
+            interval: refresh_timing.interval(),
+            window_cycles: command_window.window_cycles(),
+            max_commands: command_window.max_commands(),
+        });
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
