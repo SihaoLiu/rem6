@@ -147,6 +147,16 @@ fn riscv_core_checkpoint_captures_and_restores_float_registers() {
 fn riscv_core_checkpoint_captures_and_restores_hart_run_state() {
     let core = riscv_core();
     core.set_hart_stopped();
+    assert_checkpoint_restores_hart_run_state(&core, RiscvHartRunState::Stopped, 1);
+    core.set_hart_suspended();
+    assert_checkpoint_restores_hart_run_state(&core, RiscvHartRunState::Suspended, 2);
+}
+
+fn assert_checkpoint_restores_hart_run_state(
+    core: &RiscvCore,
+    expected_state: RiscvHartRunState,
+    expected_encoding: u8,
+) {
     let component = CheckpointComponentId::new("cpu0").unwrap();
     let port = RiscvCoreCheckpointPort::new(component.clone(), core.clone());
     let mut registry = CheckpointRegistry::new();
@@ -154,14 +164,17 @@ fn riscv_core_checkpoint_captures_and_restores_hart_run_state() {
     port.register(&mut registry).unwrap();
     let captured = port.capture_into(&mut registry).unwrap();
 
-    assert_eq!(captured.hart_run_state(), RiscvHartRunState::Stopped);
-    assert_eq!(registry.chunk(&component, "hart-run-state"), Some(&[1][..]));
+    assert_eq!(captured.hart_run_state(), expected_state);
+    assert_eq!(
+        registry.chunk(&component, "hart-run-state"),
+        Some(&[expected_encoding][..])
+    );
 
     core.set_hart_started();
     let restored = port.restore_from(&registry).unwrap();
 
     assert_eq!(restored, captured);
-    assert_eq!(core.hart_run_state(), RiscvHartRunState::Stopped);
+    assert_eq!(core.hart_run_state(), expected_state);
 }
 
 #[test]

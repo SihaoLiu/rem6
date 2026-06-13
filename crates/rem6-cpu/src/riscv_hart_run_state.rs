@@ -7,6 +7,7 @@ use crate::{CpuCore, RiscvCore};
 pub enum RiscvHartRunState {
     Started,
     Stopped,
+    Suspended,
 }
 
 impl CpuCore {
@@ -42,6 +43,12 @@ impl RiscvCore {
     pub fn set_hart_stopped(&self) {
         let mut state = self.state.lock().expect("riscv core lock");
         state.run_state = RiscvHartRunState::Stopped;
+        state.run_state_explicit = true;
+    }
+
+    pub fn set_hart_suspended(&self) {
+        let mut state = self.state.lock().expect("riscv core lock");
+        state.run_state = RiscvHartRunState::Suspended;
         state.run_state_explicit = true;
     }
 

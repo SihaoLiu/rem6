@@ -1,0 +1,498 @@
+#[allow(dead_code, unused_imports)]
+#[path = "riscv_syscall_emulation/support.rs"]
+mod support;
+
+use rem6_cpu::RiscvHartRunState;
+use rem6_system::RiscvSystemRunStopReason;
+use support::*;
+
+const SBI_ERR_INVALID_PARAM: u64 = (-3_i64) as u64;
+const SBI_ERR_INVALID_ADDRESS: u64 = (-5_i64) as u64;
+const SBI_ERR_ALREADY_AVAILABLE: u64 = (-6_i64) as u64;
+const SBI_HSM_EXTENSION: u64 = 0x0048_534d;
+const SBI_HSM_HART_SUSPEND: i32 = 3;
+const SBI_HSM_HART_SUSPENDED: u64 = 4;
+
+fn reg(index: u8) -> Register {
+    Register::new(index).unwrap()
+}
+
+fn lui_addi_parts(value: u64) -> (u32, i32) {
+    let hi = ((value + 0x800) >> 12) as u32;
+    let lo = (value as i64 - ((u64::from(hi) << 12) as i64)) as i32;
+    (hi, lo)
+}
+
+#[test]
+fn supervisor_sbi_hsm_reports_suspended_hart() {
+    let host = PartitionId::new(3);
+    let source = GuestSourceId::new(81);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let cpu0_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu1_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu1.ifetch"),
+                PartitionId::new(1),
+                endpoint("l1i"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let core0 = riscv_core(0, 0, 7, "cpu0.ifetch", cpu0_route, 0x8000);
+    let core1 = riscv_core(1, 1, 8, "cpu1.ifetch", cpu1_route, 0x9000);
+    core0.set_privilege_mode(RiscvPrivilegeMode::Supervisor);
+    core1.set_privilege_mode(RiscvPrivilegeMode::Supervisor);
+    core1.set_hart_suspended();
+    let cluster = RiscvCluster::new([core0.clone(), core1.clone()]).unwrap();
+    let (hsm_hi, hsm_lo) = lui_addi_parts(SBI_HSM_EXTENSION);
+    let store = loaded_program_store(&[
+        (0x8000, lui(17, hsm_hi)),
+        (0x8004, addi(17, 17, hsm_lo)),
+        (0x8008, addi(16, 0, 2)),
+        (0x800c, addi(10, 0, 1)),
+        (0x8010, 0x0000_0073),
+        (0x8014, addi(5, 10, 0)),
+        (0x8018, addi(6, 11, 0)),
+        (0x801c, 0x0010_0073),
+        (0x9000, addi(31, 0, 9)),
+        (0x9004, 0x0000_006f),
+    ]);
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        StatsRegistry::new(),
+    )));
+    let trap_port = RiscvTrapEventPort::new(
+        SystemHostEventPort::with_controller(host, 2, Arc::clone(&controller)).unwrap(),
+        source,
+    );
+    let driver = RiscvSystemRunDriver::new(trap_port)
+        .with_riscv_sbi_firmware()
+        .with_riscv_syscall_emulation();
+
+    let run = driver
+        .drive_until_host_stop(
+            &cluster,
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_cpu| responder(Arc::clone(&store)),
+            |_cpu| responder(Arc::clone(&store)),
+            160,
+            |cpu| GuestEventId::new(720 + u64::from(cpu.get())),
+        )
+        .unwrap();
+
+    let stop = StopRequest::new(run.final_tick().unwrap(), GuestEventId::new(720), source, 1);
+    assert_eq!(run.host_stop(), Some(stop));
+    assert_eq!(core0.read_register(reg(5)), 0);
+    assert_eq!(core0.read_register(reg(6)), SBI_HSM_HART_SUSPENDED);
+    assert_eq!(core1.hart_run_state(), RiscvHartRunState::Suspended);
+    assert_eq!(core1.read_register(reg(31)), 0);
+}
+
+#[test]
+fn supervisor_sbi_hart_start_rejects_suspended_secondary_hart() {
+    let host = PartitionId::new(3);
+    let source = GuestSourceId::new(80);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let cpu0_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu1_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu1.ifetch"),
+                PartitionId::new(1),
+                endpoint("l1i"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let core0 = riscv_core(0, 0, 7, "cpu0.ifetch", cpu0_route, 0x8000);
+    let core1 = riscv_core(1, 1, 8, "cpu1.ifetch", cpu1_route, 0x9000);
+    core0.set_privilege_mode(RiscvPrivilegeMode::Supervisor);
+    core1.set_privilege_mode(RiscvPrivilegeMode::Supervisor);
+    core1.set_hart_suspended();
+    let cluster = RiscvCluster::new([core0.clone(), core1.clone()]).unwrap();
+    let (hsm_hi, hsm_lo) = lui_addi_parts(SBI_HSM_EXTENSION);
+    let (entry_hi, entry_lo) = lui_addi_parts(0x9101);
+    let store = loaded_program_store(&[
+        (0x8000, lui(17, hsm_hi)),
+        (0x8004, addi(17, 17, hsm_lo)),
+        (0x8008, addi(16, 0, 0)),
+        (0x800c, addi(10, 0, 1)),
+        (0x8010, lui(11, entry_hi)),
+        (0x8014, addi(11, 11, entry_lo)),
+        (0x8018, addi(12, 0, 85)),
+        (0x801c, 0x0000_0073),
+        (0x8020, addi(5, 10, 0)),
+        (0x8024, addi(6, 11, 0)),
+        (0x8028, 0x0010_0073),
+        (0x9100, addi(31, 0, 12)),
+        (0x9104, 0x0010_0073),
+    ]);
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        StatsRegistry::new(),
+    )));
+    let trap_port = RiscvTrapEventPort::new(
+        SystemHostEventPort::with_controller(host, 2, Arc::clone(&controller)).unwrap(),
+        source,
+    );
+    let driver = RiscvSystemRunDriver::new(trap_port)
+        .with_riscv_sbi_firmware()
+        .with_riscv_syscall_emulation();
+
+    let run = driver
+        .drive_until_host_stop(
+            &cluster,
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_cpu| responder(Arc::clone(&store)),
+            |_cpu| responder(Arc::clone(&store)),
+            160,
+            |cpu| GuestEventId::new(710 + u64::from(cpu.get())),
+        )
+        .unwrap();
+
+    let stop = StopRequest::new(run.final_tick().unwrap(), GuestEventId::new(710), source, 1);
+    assert_eq!(run.host_stop(), Some(stop));
+    assert_eq!(core0.read_register(reg(5)), SBI_ERR_ALREADY_AVAILABLE);
+    assert_eq!(core0.read_register(reg(6)), 0);
+    assert_eq!(core1.hart_run_state(), RiscvHartRunState::Suspended);
+    assert_eq!(core1.read_register(reg(31)), 0);
+}
+
+#[test]
+fn supervisor_sbi_hart_start_reports_invalid_address_for_stopped_hart() {
+    let host = PartitionId::new(3);
+    let source = GuestSourceId::new(84);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let cpu0_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu1_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu1.ifetch"),
+                PartitionId::new(1),
+                endpoint("l1i"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let core0 = riscv_core(0, 0, 7, "cpu0.ifetch", cpu0_route, 0x8000);
+    let core1 = riscv_core(1, 1, 8, "cpu1.ifetch", cpu1_route, 0x9000);
+    core0.set_privilege_mode(RiscvPrivilegeMode::Supervisor);
+    core1.set_privilege_mode(RiscvPrivilegeMode::Supervisor);
+    let cluster = RiscvCluster::new([core0.clone(), core1.clone()]).unwrap();
+    let (hsm_hi, hsm_lo) = lui_addi_parts(SBI_HSM_EXTENSION);
+    let (entry_hi, entry_lo) = lui_addi_parts(0x9101);
+    let store = loaded_program_store(&[
+        (0x8000, lui(17, hsm_hi)),
+        (0x8004, addi(17, 17, hsm_lo)),
+        (0x8008, addi(16, 0, 0)),
+        (0x800c, addi(10, 0, 1)),
+        (0x8010, lui(11, entry_hi)),
+        (0x8014, addi(11, 11, entry_lo)),
+        (0x8018, addi(12, 0, 85)),
+        (0x801c, 0x0000_0073),
+        (0x8020, addi(5, 10, 0)),
+        (0x8024, addi(6, 11, 0)),
+        (0x8028, 0x0010_0073),
+        (0x9000, addi(31, 0, 9)),
+        (0x9004, 0x0000_006f),
+        (0x9100, addi(31, 0, 12)),
+        (0x9104, 0x0010_0073),
+    ]);
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        StatsRegistry::new(),
+    )));
+    let trap_port = RiscvTrapEventPort::new(
+        SystemHostEventPort::with_controller(host, 2, Arc::clone(&controller)).unwrap(),
+        source,
+    );
+    let driver = RiscvSystemRunDriver::new(trap_port)
+        .with_riscv_sbi_firmware()
+        .with_riscv_syscall_emulation();
+
+    let run = driver
+        .drive_until_host_stop(
+            &cluster,
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_cpu| responder(Arc::clone(&store)),
+            |_cpu| responder(Arc::clone(&store)),
+            160,
+            |cpu| GuestEventId::new(750 + u64::from(cpu.get())),
+        )
+        .unwrap();
+
+    let stop = StopRequest::new(run.final_tick().unwrap(), GuestEventId::new(750), source, 1);
+    assert_eq!(run.host_stop(), Some(stop));
+    assert_eq!(core0.read_register(reg(5)), SBI_ERR_INVALID_ADDRESS);
+    assert_eq!(core0.read_register(reg(6)), 0);
+    assert_eq!(core1.hart_run_state(), RiscvHartRunState::Stopped);
+    assert_eq!(core1.read_register(reg(31)), 0);
+}
+
+#[test]
+fn supervisor_sbi_hart_start_reports_invalid_param_for_unknown_hart_before_address() {
+    let host = PartitionId::new(3);
+    let source = GuestSourceId::new(83);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 1).unwrap();
+    let mut transport = MemoryTransport::new();
+    let fetch_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let core = riscv_core(0, 0, 7, "cpu0.ifetch", fetch_route, 0x8000);
+    core.set_privilege_mode(RiscvPrivilegeMode::Supervisor);
+    let cluster = RiscvCluster::new([core.clone()]).unwrap();
+    let (hsm_hi, hsm_lo) = lui_addi_parts(SBI_HSM_EXTENSION);
+    let (entry_hi, entry_lo) = lui_addi_parts(0x9001);
+    let store = loaded_program_store(&[
+        (0x8000, lui(17, hsm_hi)),
+        (0x8004, addi(17, 17, hsm_lo)),
+        (0x8008, addi(16, 0, 0)),
+        (0x800c, addi(10, 0, 9)),
+        (0x8010, lui(11, entry_hi)),
+        (0x8014, addi(11, 11, entry_lo)),
+        (0x8018, addi(12, 0, 29)),
+        (0x801c, 0x0000_0073),
+        (0x8020, addi(5, 10, 0)),
+        (0x8024, addi(6, 11, 0)),
+        (0x8028, 0x0010_0073),
+    ]);
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        StatsRegistry::new(),
+    )));
+    let trap_port = RiscvTrapEventPort::new(
+        SystemHostEventPort::with_controller(host, 1, Arc::clone(&controller)).unwrap(),
+        source,
+    );
+    let driver = RiscvSystemRunDriver::new(trap_port)
+        .with_riscv_sbi_firmware()
+        .with_riscv_syscall_emulation();
+
+    let run = driver
+        .drive_until_host_stop(
+            &cluster,
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_cpu| responder(Arc::clone(&store)),
+            |_cpu| responder(Arc::clone(&store)),
+            120,
+            |cpu| GuestEventId::new(740 + u64::from(cpu.get())),
+        )
+        .unwrap();
+
+    let stop = StopRequest::new(run.final_tick().unwrap(), GuestEventId::new(740), source, 1);
+    assert_eq!(run.host_stop(), Some(stop));
+    assert_eq!(core.read_register(reg(5)), SBI_ERR_INVALID_PARAM);
+    assert_eq!(core.read_register(reg(6)), 0);
+}
+
+#[test]
+fn supervisor_sbi_hart_start_reports_already_available_for_started_hart() {
+    let host = PartitionId::new(3);
+    let source = GuestSourceId::new(82);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 1).unwrap();
+    let mut transport = MemoryTransport::new();
+    let fetch_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let core = riscv_core(0, 0, 7, "cpu0.ifetch", fetch_route, 0x8000);
+    core.set_privilege_mode(RiscvPrivilegeMode::Supervisor);
+    let cluster = RiscvCluster::new([core.clone()]).unwrap();
+    let (hsm_hi, hsm_lo) = lui_addi_parts(SBI_HSM_EXTENSION);
+    let (entry_hi, entry_lo) = lui_addi_parts(0x9001);
+    let store = loaded_program_store(&[
+        (0x8000, lui(17, hsm_hi)),
+        (0x8004, addi(17, 17, hsm_lo)),
+        (0x8008, addi(16, 0, 0)),
+        (0x800c, addi(10, 0, 0)),
+        (0x8010, lui(11, entry_hi)),
+        (0x8014, addi(11, 11, entry_lo)),
+        (0x8018, addi(12, 0, 29)),
+        (0x801c, 0x0000_0073),
+        (0x8020, addi(5, 10, 0)),
+        (0x8024, addi(6, 11, 0)),
+        (0x8028, 0x0010_0073),
+        (0x9000, addi(31, 0, 13)),
+        (0x9004, 0x0010_0073),
+    ]);
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        StatsRegistry::new(),
+    )));
+    let trap_port = RiscvTrapEventPort::new(
+        SystemHostEventPort::with_controller(host, 1, Arc::clone(&controller)).unwrap(),
+        source,
+    );
+    let driver = RiscvSystemRunDriver::new(trap_port)
+        .with_riscv_sbi_firmware()
+        .with_riscv_syscall_emulation();
+
+    let run = driver
+        .drive_until_host_stop(
+            &cluster,
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_cpu| responder(Arc::clone(&store)),
+            |_cpu| responder(Arc::clone(&store)),
+            120,
+            |cpu| GuestEventId::new(730 + u64::from(cpu.get())),
+        )
+        .unwrap();
+
+    let stop = StopRequest::new(run.final_tick().unwrap(), GuestEventId::new(730), source, 1);
+    assert_eq!(run.host_stop(), Some(stop));
+    assert_eq!(core.read_register(reg(5)), SBI_ERR_ALREADY_AVAILABLE);
+    assert_eq!(core.read_register(reg(6)), 0);
+    assert_eq!(core.read_register(reg(31)), 0);
+}
+
+#[test]
+fn supervisor_sbi_hart_suspend_ignores_resume_addr_for_retentive_suspend() {
+    let host = PartitionId::new(3);
+    let source = GuestSourceId::new(79);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let fetch_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let core = riscv_core(0, 0, 7, "cpu0.ifetch", fetch_route, 0x8000);
+    core.set_privilege_mode(RiscvPrivilegeMode::Supervisor);
+    let cluster = RiscvCluster::new([core.clone()]).unwrap();
+    let (hsm_hi, hsm_lo) = lui_addi_parts(SBI_HSM_EXTENSION);
+    let store = loaded_program_store(&[
+        (0x8000, lui(17, hsm_hi)),
+        (0x8004, addi(17, 17, hsm_lo)),
+        (0x8008, addi(16, 0, SBI_HSM_HART_SUSPEND)),
+        (0x800c, addi(10, 0, 0)),
+        (0x8010, addi(11, 0, 1)),
+        (0x8014, addi(12, 0, 91)),
+        (0x8018, 0x0000_0073),
+        (0x801c, addi(31, 0, 9)),
+        (0x8020, 0x0010_0073),
+    ]);
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        StatsRegistry::new(),
+    )));
+    let trap_port = RiscvTrapEventPort::new(
+        SystemHostEventPort::with_controller(host, 2, Arc::clone(&controller)).unwrap(),
+        source,
+    );
+    let driver = RiscvSystemRunDriver::new(trap_port)
+        .with_riscv_sbi_firmware()
+        .with_riscv_syscall_emulation();
+
+    let run = driver
+        .drive_until_host_stop(
+            &cluster,
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_cpu| responder(Arc::clone(&store)),
+            |_cpu| responder(Arc::clone(&store)),
+            120,
+            |cpu| GuestEventId::new(700 + u64::from(cpu.get())),
+        )
+        .unwrap();
+
+    assert!(matches!(
+        run.stop_reason(),
+        RiscvSystemRunStopReason::Idle { .. }
+    ));
+    assert_eq!(run.host_stop(), None);
+    assert_eq!(core.hart_run_state(), RiscvHartRunState::Suspended);
+    assert_eq!(core.read_register(reg(31)), 0);
+}

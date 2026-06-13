@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use rem6_cpu::{CpuId, RiscvCluster, RiscvCore};
+use rem6_cpu::{CpuId, RiscvCluster, RiscvCore, RiscvHartRunState};
 use rem6_isa_riscv::{Register, RiscvPrivilegeMode, RiscvTrapKind};
 use rem6_kernel::{PartitionedScheduler, SchedulerError};
 use rem6_memory::{AccessSize, Address, AddressRange, TranslationAddressSpaceId};
@@ -11,6 +11,7 @@ use crate::{RiscvSystemRunDriver, SystemError};
 const SBI_SUCCESS: u64 = 0;
 const SBI_ERR_NOT_SUPPORTED: u64 = (-2_i64) as u64;
 const SBI_ERR_INVALID_PARAM: u64 = (-3_i64) as u64;
+const SBI_ERR_ALREADY_AVAILABLE: u64 = (-6_i64) as u64;
 const SBI_BASE_EXTENSION: u64 = 0x10;
 const SBI_TIME_EXTENSION: u64 = 0x5449_4d45;
 const SBI_HSM_EXTENSION: u64 = 0x0048_534d;
@@ -28,8 +29,10 @@ const SBI_TIME_SET_TIMER: u64 = 0;
 const SBI_HSM_HART_START: u64 = 0;
 const SBI_HSM_HART_STOP: u64 = 1;
 const SBI_HSM_HART_GET_STATUS: u64 = 2;
+const SBI_HSM_HART_SUSPEND: u64 = 3;
 const SBI_HSM_HART_STARTED: u64 = 0;
 const SBI_HSM_HART_STOPPED: u64 = 1;
+const SBI_HSM_HART_SUSPENDED: u64 = 4;
 const SBI_IPI_SEND_IPI: u64 = 0;
 const SBI_RFENCE_REMOTE_FENCE_I: u64 = 0;
 const SBI_RFENCE_REMOTE_SFENCE_VMA: u64 = 1;
@@ -186,6 +189,13 @@ impl RiscvSbiOutcome {
             value: 0,
         }
     }
+
+    pub const fn already_available() -> Self {
+        Self::Return {
+            error: SBI_ERR_ALREADY_AVAILABLE,
+            value: 0,
+        }
+    }
 }
 
 impl RiscvSbiFirmware {
@@ -265,6 +275,7 @@ impl RiscvSbiFirmware {
             (SBI_HSM_EXTENSION, SBI_HSM_HART_START) => self.hart_start(request),
             (SBI_HSM_EXTENSION, SBI_HSM_HART_STOP) => self.hart_stop(core),
             (SBI_HSM_EXTENSION, SBI_HSM_HART_GET_STATUS) => self.hart_get_status(request),
+            (SBI_HSM_EXTENSION, SBI_HSM_HART_SUSPEND) => self.hart_suspend(core, request),
             (SBI_IPI_EXTENSION, SBI_IPI_SEND_IPI) => self.send_ipi(request),
             (SBI_RFENCE_EXTENSION, SBI_RFENCE_REMOTE_FENCE_I) => self.remote_fence_i(request),
             (SBI_RFENCE_EXTENSION, SBI_RFENCE_REMOTE_SFENCE_VMA)
@@ -312,9 +323,6 @@ impl RiscvSbiFirmware {
     }
 
     fn hart_start(&self, request: RiscvSbiRequest) -> RiscvSbiOutcome {
-        if request.arg1() & 0x1 != 0 {
-            return RiscvSbiOutcome::invalid_address();
-        }
         let Some(target) = self
             .cores
             .lock()
@@ -324,8 +332,11 @@ impl RiscvSbiFirmware {
         else {
             return RiscvSbiOutcome::invalid_param();
         };
-        if target.is_hart_started() {
-            return RiscvSbiOutcome::invalid_param();
+        if target.hart_run_state() != RiscvHartRunState::Stopped {
+            return RiscvSbiOutcome::already_available();
+        }
+        if request.arg1() & 0x1 != 0 {
+            return RiscvSbiOutcome::invalid_address();
         }
 
         target.start_supervisor_hart(Address::new(request.arg1()), request.arg2());
@@ -334,6 +345,14 @@ impl RiscvSbiFirmware {
 
     fn hart_stop(&self, core: &RiscvCore) -> RiscvSbiOutcome {
         core.set_hart_stopped();
+        RiscvSbiOutcome::success(0)
+    }
+
+    fn hart_suspend(&self, core: &RiscvCore, request: RiscvSbiRequest) -> RiscvSbiOutcome {
+        if request.arg0() != 0 {
+            return RiscvSbiOutcome::invalid_param();
+        }
+        core.set_hart_suspended();
         RiscvSbiOutcome::success(0)
     }
 
@@ -347,10 +366,10 @@ impl RiscvSbiFirmware {
         else {
             return RiscvSbiOutcome::invalid_param();
         };
-        RiscvSbiOutcome::success(if target.is_hart_started() {
-            SBI_HSM_HART_STARTED
-        } else {
-            SBI_HSM_HART_STOPPED
+        RiscvSbiOutcome::success(match target.hart_run_state() {
+            RiscvHartRunState::Started => SBI_HSM_HART_STARTED,
+            RiscvHartRunState::Stopped => SBI_HSM_HART_STOPPED,
+            RiscvHartRunState::Suspended => SBI_HSM_HART_SUSPENDED,
         })
     }
 
