@@ -2,10 +2,10 @@ use rem6_kernel::Tick;
 use rem6_stats::{
     ProbeEvent, ProbeListenerId, ProbeListenerRef, ProbePayload, ProbePointId, ProbeRegistry,
     ProbeSnapshot, StatDeltaSample, StatDescription, StatDescriptionError, StatDumpId,
-    StatDumpRecord, StatGroupDescriptor, StatGroupId, StatHistoryRecord, StatId, StatKind,
-    StatPath, StatPathError, StatResetId, StatResetPolicy, StatResetSample, StatSample, StatScope,
-    StatSnapshot, StatSnapshotDelta, StatUnit, StatUnitError, StatsError, StatsRegistry,
-    StatsResetRecord,
+    StatDumpRecord, StatGroupDescriptor, StatGroupId, StatHistogramBucket, StatHistoryRecord,
+    StatId, StatKind, StatPath, StatPathError, StatResetId, StatResetPolicy, StatResetSample,
+    StatSample, StatScope, StatSnapshot, StatSnapshotDelta, StatUnit, StatUnitError, StatsError,
+    StatsRegistry, StatsResetRecord,
 };
 
 #[test]
@@ -286,6 +286,172 @@ fn stats_registry_records_time_weighted_average_stats() {
 
     stats.set_average(occupancy, 1, 6).unwrap();
     assert_eq!(stats.snapshot(3).samples()[0].value(), 6);
+}
+
+#[test]
+fn stats_registry_records_first_class_histogram_stats() {
+    let mut stats = StatsRegistry::new();
+    let latency = stats
+        .register_histogram("system.l2.read_latency", "Cycle")
+        .unwrap();
+    assert_eq!(latency, StatId::new(0));
+
+    stats.observe_histogram(latency, 8).unwrap();
+    stats.observe_histogram(latency, 4).unwrap();
+    stats.observe_histogram(latency, 8).unwrap();
+
+    let snapshot = stats.snapshot(10);
+    let sample = &snapshot.samples()[0];
+    assert_eq!(sample.id(), latency);
+    assert_eq!(sample.kind(), StatKind::Histogram);
+    assert_eq!(sample.path(), "system.l2.read_latency");
+    assert_eq!(sample.unit(), "Cycle");
+    assert_eq!(sample.value(), 3);
+    assert_eq!(
+        sample.histogram_buckets(),
+        [
+            StatHistogramBucket::new(4, 1),
+            StatHistogramBucket::new(8, 2),
+        ]
+        .as_slice(),
+    );
+
+    stats.observe_histogram(latency, 16).unwrap();
+    stats.observe_histogram(latency, 8).unwrap();
+    let later = stats.snapshot(12);
+    let delta = later.delta_since(&snapshot).unwrap();
+    let delta_sample = &delta.samples()[0];
+    assert_eq!(delta_sample.kind(), StatKind::Histogram);
+    assert_eq!(delta_sample.previous_value(), 3);
+    assert_eq!(delta_sample.current_value(), 5);
+    assert_eq!(delta_sample.delta_value(), 2);
+    assert_eq!(
+        delta_sample.histogram_delta_buckets(),
+        [
+            StatHistogramBucket::new(8, 1),
+            StatHistogramBucket::new(16, 1),
+        ]
+        .as_slice(),
+    );
+
+    let reset = stats.reset(13);
+    assert_eq!(reset.reset_samples()[0].previous_value(), 5);
+    assert_eq!(reset.reset_samples()[0].reset_value(), 0);
+    let after_reset = stats.snapshot(14);
+    assert_eq!(after_reset.samples()[0].value(), 0);
+    assert!(after_reset.samples()[0].histogram_buckets().is_empty());
+}
+
+#[test]
+fn stats_registry_rejects_histogram_misuse_and_counter_regression() {
+    let mut stats = StatsRegistry::new();
+    let counter = stats.register_counter("cpu0.cycles", "Cycle").unwrap();
+    let latency = stats
+        .register_histogram("system.l2.read_latency", "Cycle")
+        .unwrap();
+
+    assert_eq!(
+        stats.increment(latency, 1).unwrap_err(),
+        StatsError::StatIsNotCounter { stat: latency },
+    );
+    assert_eq!(
+        stats.observe_histogram(counter, 3).unwrap_err(),
+        StatsError::StatIsNotHistogram { stat: counter },
+    );
+    assert_eq!(
+        stats.observe_histogram(StatId::new(99), 3).unwrap_err(),
+        StatsError::UnknownStat {
+            stat: StatId::new(99),
+        },
+    );
+
+    let previous = StatSnapshot::new(
+        10,
+        0,
+        0,
+        vec![StatSample::from_histogram_parts(
+            latency,
+            StatPath::parse("system.l2.read_latency").unwrap(),
+            StatUnit::cycle(),
+            vec![StatHistogramBucket::new(8, 2)],
+        )],
+    );
+    let current = StatSnapshot::new(
+        20,
+        0,
+        0,
+        vec![StatSample::from_histogram_parts(
+            latency,
+            StatPath::parse("system.l2.read_latency").unwrap(),
+            StatUnit::cycle(),
+            vec![StatHistogramBucket::new(8, 1)],
+        )],
+    );
+
+    assert_eq!(
+        current.delta_since(&previous).unwrap_err(),
+        StatsError::SnapshotDeltaHistogramBucketWentBack {
+            stat: latency,
+            bucket: 8,
+            previous: 2,
+            current: 1,
+        },
+    );
+}
+
+#[test]
+#[should_panic(expected = "histogram samples must use histogram constructors")]
+fn stats_sample_generic_kind_constructor_rejects_histogram_kind() {
+    let _ = StatSample::from_registered_parts_with_kind_reset_policy_and_description(
+        StatId::new(3),
+        None,
+        StatKind::Histogram,
+        StatPath::parse("system.l2.read_latency").unwrap(),
+        StatUnit::cycle(),
+        StatResetPolicy::Resettable,
+        None,
+        1,
+    );
+}
+
+#[test]
+#[should_panic(expected = "histogram deltas must use histogram constructors")]
+fn stats_delta_generic_kind_constructor_rejects_histogram_kind() {
+    let _ = StatDeltaSample::from_registered_parts_with_kind_reset_policy_and_description(
+        StatId::new(3),
+        None,
+        StatKind::Histogram,
+        StatPath::parse("system.l2.read_latency").unwrap(),
+        StatUnit::cycle(),
+        StatResetPolicy::Resettable,
+        None,
+        1,
+        2,
+    );
+}
+
+#[test]
+fn stats_histogram_sample_constructors_normalize_public_bucket_payloads() {
+    let sample = StatSample::from_histogram_parts(
+        StatId::new(3),
+        StatPath::parse("system.l2.read_latency").unwrap(),
+        StatUnit::cycle(),
+        vec![
+            StatHistogramBucket::new(8, 1),
+            StatHistogramBucket::new(4, 1),
+            StatHistogramBucket::new(8, 2),
+        ],
+    );
+
+    assert_eq!(sample.value(), 4);
+    assert_eq!(
+        sample.histogram_buckets(),
+        [
+            StatHistogramBucket::new(4, 1),
+            StatHistogramBucket::new(8, 3),
+        ]
+        .as_slice(),
+    );
 }
 
 #[test]

@@ -5,10 +5,10 @@ use rem6_kernel::Tick;
 use crate::error::StatsError;
 use crate::kind::StatKind;
 use crate::reset::{StatResetPolicy, StatResetSample, StatsResetRecord};
+use crate::stat_metadata::{StatDescription, StatPath, StatScope, StatUnit};
 use crate::stats::{
-    StatDescription, StatDumpId, StatDumpRecord, StatGroupDescriptor, StatGroupId,
-    StatHistoryRecord, StatId, StatPath, StatResetId, StatSample, StatScope, StatSnapshot,
-    StatUnit,
+    StatDumpId, StatDumpRecord, StatGroupDescriptor, StatGroupId, StatHistogramBucket,
+    StatHistoryRecord, StatId, StatResetId, StatSample, StatSnapshot,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -210,6 +210,40 @@ impl StatsRegistry {
             StatResetPolicy::Resettable,
             None,
             StatStorage::Average(StatAverageStorage::new(self.reset_tick)),
+        )
+    }
+
+    pub fn register_histogram(
+        &mut self,
+        path: impl Into<String>,
+        unit: impl Into<String>,
+    ) -> Result<StatId, StatsError> {
+        let unit = unit.into();
+        let unit = match StatUnit::parse(unit.clone()) {
+            Ok(unit) => unit,
+            Err(reason) => return Err(StatsError::InvalidUnit { unit, reason }),
+        };
+        self.register_histogram_with_unit(path, unit)
+    }
+
+    pub fn register_histogram_with_unit(
+        &mut self,
+        path: impl Into<String>,
+        unit: StatUnit,
+    ) -> Result<StatId, StatsError> {
+        let path = path.into();
+        if path.is_empty() {
+            return Err(StatsError::EmptyPath);
+        }
+        let stat_path = StatPath::parse(path.clone())
+            .map_err(|reason| StatsError::InvalidPath { path, reason })?;
+        self.register_stat_path(
+            None,
+            stat_path,
+            unit,
+            StatResetPolicy::Resettable,
+            None,
+            StatStorage::Histogram(BTreeMap::new()),
         )
     }
 
@@ -435,8 +469,28 @@ impl StatsRegistry {
                     .ok_or(StatsError::CounterOverflow { stat })?;
             }
             StatStorage::Average(_) => return Err(StatsError::StatIsNotCounter { stat }),
+            StatStorage::Histogram(_) => return Err(StatsError::StatIsNotCounter { stat }),
         }
         Ok(())
+    }
+
+    pub fn observe_histogram(&mut self, stat: StatId, bucket: u64) -> Result<(), StatsError> {
+        match self
+            .storage
+            .get_mut(&stat)
+            .ok_or(StatsError::UnknownStat { stat })?
+        {
+            StatStorage::Histogram(buckets) => {
+                let count = buckets.entry(bucket).or_insert(0);
+                *count = count
+                    .checked_add(1)
+                    .ok_or(StatsError::HistogramBucketOverflow { stat, bucket })?;
+                Ok(())
+            }
+            StatStorage::Counter(_) | StatStorage::Average(_) => {
+                Err(StatsError::StatIsNotHistogram { stat })
+            }
+        }
     }
 
     pub fn set_average(&mut self, stat: StatId, tick: Tick, value: u64) -> Result<(), StatsError> {
@@ -446,7 +500,9 @@ impl StatsRegistry {
             .ok_or(StatsError::UnknownStat { stat })?
         {
             StatStorage::Average(average) => average.set(stat, self.reset_tick, tick, value),
-            StatStorage::Counter(_) => Err(StatsError::StatIsNotAverage { stat }),
+            StatStorage::Counter(_) | StatStorage::Histogram(_) => {
+                Err(StatsError::StatIsNotAverage { stat })
+            }
         }
     }
 
@@ -463,7 +519,9 @@ impl StatsRegistry {
             .ok_or(StatsError::UnknownStat { stat })?;
         match storage {
             StatStorage::Average(average) => average.value_at(stat, self.reset_tick, tick),
-            StatStorage::Counter(_) => Err(StatsError::StatIsNotAverage { stat }),
+            StatStorage::Counter(_) | StatStorage::Histogram(_) => {
+                Err(StatsError::StatIsNotAverage { stat })
+            }
         }
     }
 
@@ -475,6 +533,11 @@ impl StatsRegistry {
         match storage {
             StatStorage::Counter(value) => Ok(*value),
             StatStorage::Average(average) => average.value_at(stat, self.reset_tick, tick),
+            StatStorage::Histogram(buckets) => buckets.values().try_fold(0_u64, |total, count| {
+                total
+                    .checked_add(*count)
+                    .ok_or(StatsError::CounterOverflow { stat })
+            }),
         }
     }
 
@@ -491,6 +554,11 @@ impl StatsRegistry {
         match storage {
             StatStorage::Counter(value) => *value = reset_value,
             StatStorage::Average(average) => average.reset(tick, reset_value),
+            StatStorage::Histogram(buckets) => {
+                if reset_value == 0 {
+                    buckets.clear();
+                }
+            }
         }
         Ok(())
     }
@@ -519,20 +587,7 @@ impl StatsRegistry {
         let samples = self
             .descriptors
             .iter()
-            .map(|(id, descriptor)| {
-                Ok(
-                    StatSample::from_registered_parts_with_kind_reset_policy_and_description(
-                        *id,
-                        descriptor.group,
-                        descriptor.kind,
-                        descriptor.path.clone(),
-                        descriptor.unit.clone(),
-                        descriptor.reset_policy,
-                        descriptor.description.clone(),
-                        self.stat_value(*id, tick)?,
-                    ),
-                )
-            })
+            .map(|(id, descriptor)| self.stat_sample(*id, descriptor, tick))
             .collect::<Result<Vec<_>, _>>()?;
         let groups = self
             .groups
@@ -546,6 +601,46 @@ impl StatsRegistry {
             groups,
             samples,
         ))
+    }
+
+    fn stat_sample(
+        &self,
+        id: StatId,
+        descriptor: &StatDescriptor,
+        tick: Tick,
+    ) -> Result<StatSample, StatsError> {
+        let storage = self
+            .storage
+            .get(&id)
+            .ok_or(StatsError::UnknownStat { stat: id })?;
+        match storage {
+            StatStorage::Counter(_) | StatStorage::Average(_) => Ok(
+                StatSample::from_registered_parts_with_kind_reset_policy_and_description(
+                    id,
+                    descriptor.group,
+                    descriptor.kind,
+                    descriptor.path.clone(),
+                    descriptor.unit.clone(),
+                    descriptor.reset_policy,
+                    descriptor.description.clone(),
+                    self.stat_value(id, tick)?,
+                ),
+            ),
+            StatStorage::Histogram(buckets) => Ok(
+                StatSample::from_registered_histogram_parts_with_reset_policy_and_description(
+                    id,
+                    descriptor.group,
+                    descriptor.path.clone(),
+                    descriptor.unit.clone(),
+                    descriptor.reset_policy,
+                    descriptor.description.clone(),
+                    buckets
+                        .iter()
+                        .map(|(bucket, count)| StatHistogramBucket::new(*bucket, *count))
+                        .collect(),
+                ),
+            ),
+        }
     }
 
     pub fn dump(&mut self, tick: Tick) -> StatDumpRecord {
@@ -659,6 +754,7 @@ struct StatDescriptor {
 enum StatStorage {
     Counter(u64),
     Average(StatAverageStorage),
+    Histogram(BTreeMap<u64, u64>),
 }
 
 impl StatStorage {
@@ -666,6 +762,7 @@ impl StatStorage {
         match self {
             Self::Counter(_) => StatKind::Counter,
             Self::Average(_) => StatKind::Average,
+            Self::Histogram(_) => StatKind::Histogram,
         }
     }
 
@@ -673,6 +770,7 @@ impl StatStorage {
         match self {
             Self::Counter(_) => reset_policy.value_after_reset(previous_value),
             Self::Average(average) => average.current_value(),
+            Self::Histogram(_) => reset_policy.value_after_reset(previous_value),
         }
     }
 }

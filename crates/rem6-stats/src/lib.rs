@@ -11,6 +11,7 @@ mod probes;
 mod registry;
 mod reset;
 mod stack_dist;
+mod stat_metadata;
 mod stats;
 
 pub use comm_monitor::{
@@ -53,9 +54,12 @@ pub use stack_dist::{
     StackDistHistogramSet, StackDistProbe, StackDistProbeConfig, StackDistProbeConfigBuilder,
     StackDistProbeSnapshot, StackDistProbeStats, StackDistProbeUpdate,
 };
+pub use stat_metadata::{
+    StatDescription, StatDescriptionError, StatPath, StatPathError, StatScope, StatUnit,
+    StatUnitError, StatUnitKind,
+};
 pub use stats::{
-    StatDeltaSample, StatDescription, StatDescriptionError, StatDumpId, StatDumpRecord,
-    StatGroupDescriptor, StatGroupId, StatHistoryRecord, StatId, StatPath, StatPathError,
-    StatResetId, StatSample, StatScope, StatSnapshot, StatSnapshotDelta, StatUnit, StatUnitError,
-    StatUnitKind,
+    StatDeltaSample, StatDumpId, StatDumpRecord, StatGroupDescriptor, StatGroupId,
+    StatHistogramBucket, StatHistoryRecord, StatId, StatResetId, StatSample, StatSnapshot,
+    StatSnapshotDelta,
 };

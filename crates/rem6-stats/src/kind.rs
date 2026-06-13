@@ -4,6 +4,7 @@ use std::fmt;
 pub enum StatKind {
     Counter,
     Average,
+    Histogram,
 }
 
 impl fmt::Display for StatKind {
@@ -11,6 +12,7 @@ impl fmt::Display for StatKind {
         match self {
             Self::Counter => formatter.write_str("counter"),
             Self::Average => formatter.write_str("average"),
+            Self::Histogram => formatter.write_str("histogram"),
         }
     }
 }

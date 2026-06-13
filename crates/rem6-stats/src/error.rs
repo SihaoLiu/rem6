@@ -8,10 +8,8 @@ use crate::mem_footprint::MemFootprintGranularity;
 use crate::pc_count::PcCountPair;
 use crate::probes::{MemProbePacketAccess, ProbeListenerId, ProbePointId};
 use crate::reset::StatResetPolicy;
-use crate::stats::{
-    StatDescription, StatDescriptionError, StatGroupDescriptor, StatGroupId, StatId, StatPathError,
-    StatUnitError,
-};
+use crate::stat_metadata::{StatDescription, StatDescriptionError, StatPathError, StatUnitError};
+use crate::stats::{StatGroupDescriptor, StatGroupId, StatId};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum StatsError {
@@ -46,11 +44,18 @@ pub enum StatsError {
     StatIsNotAverage {
         stat: StatId,
     },
+    StatIsNotHistogram {
+        stat: StatId,
+    },
     UnknownStatGroup {
         group: StatGroupId,
     },
     CounterOverflow {
         stat: StatId,
+    },
+    HistogramBucketOverflow {
+        stat: StatId,
+        bucket: u64,
     },
     AverageUpdateBeforeReset {
         stat: StatId,
@@ -130,6 +135,12 @@ pub enum StatsError {
     },
     SnapshotDeltaValueWentBack {
         stat: StatId,
+        previous: u64,
+        current: u64,
+    },
+    SnapshotDeltaHistogramBucketWentBack {
+        stat: StatId,
+        bucket: u64,
         previous: u64,
         current: u64,
     },
@@ -503,12 +514,20 @@ impl fmt::Display for StatsError {
             Self::StatIsNotAverage { stat } => {
                 write!(formatter, "stat {} is not an average", stat.get())
             }
+            Self::StatIsNotHistogram { stat } => {
+                write!(formatter, "stat {} is not a histogram", stat.get())
+            }
             Self::UnknownStatGroup { group } => {
                 write!(formatter, "unknown stat group id {}", group.get())
             }
             Self::CounterOverflow { stat } => {
                 write!(formatter, "counter {} overflowed", stat.get())
             }
+            Self::HistogramBucketOverflow { stat, bucket } => write!(
+                formatter,
+                "histogram {} bucket {bucket} overflowed",
+                stat.get()
+            ),
             Self::AverageUpdateBeforeReset {
                 stat,
                 tick,
@@ -632,6 +651,16 @@ impl fmt::Display for StatsError {
             } => write!(
                 formatter,
                 "stat snapshot delta value for stat {} went from {previous} down to {current}",
+                stat.get()
+            ),
+            Self::SnapshotDeltaHistogramBucketWentBack {
+                stat,
+                bucket,
+                previous,
+                current,
+            } => write!(
+                formatter,
+                "stat snapshot delta histogram bucket {bucket} for stat {} went from {previous} down to {current}",
                 stat.get()
             ),
             Self::EmptyProbeComponent => write!(formatter, "probe component must not be empty"),

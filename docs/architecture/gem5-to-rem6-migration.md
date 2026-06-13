@@ -267,9 +267,9 @@ tests, PCI/VirtIO/storage/network checkpoint tests, CLINT/PLIC/UART tests.
 **Next evidence:** Board-level Linux boot with console, timer, storage, and
 network evidence.
 
-### Stats, Probes, Debug, Host Actions, and Checkpointing - 58% single-axis
+### Stats, Probes, Debug, Host Actions, and Checkpointing - 59% single-axis
 
-**Score calculation:** 7 of 12 items have executable evidence, or 58% raw. The
+**Score calculation:** 8 of 13 items have executable evidence, or 62% raw. The
 bucket cap is single-axis because probe, debug, power, and checkpoint evidence
 is not yet integrated across CPU pipeline and cache/DRAM runtime state.
 
@@ -280,7 +280,8 @@ is not yet integrated across CPU pipeline and cache/DRAM runtime state.
 - [x] GDB remote packet/session parsing and RISC-V integer/PC register paths exist.
 - [x] Power and thermal models plus external power-analysis exports exist.
 - [x] Host actions and guest events are typed and checkpoint-aware.
-- [ ] First-class histograms and stricter gem5 text-stat compatibility exist.
+- [x] First-class histogram stats have registry snapshots, deltas, resets, and CLI JSON/text bucket output.
+- [ ] Stricter gem5 text-stat compatibility exists.
 - [ ] Cache/bank/fabric/DRAM hierarchy counters are complete.
 - [ ] GDB socket loop, step/resume/break/watch integration, and full FP/vector/CSR register cache exist.
 - [ ] Power and thermal models are calibrated against real component activity.
@@ -290,15 +291,16 @@ is not yet integrated across CPU pipeline and cache/DRAM runtime state.
 m5ops, host actions, GDB packet/session parsing, RISC-V integer/PC debug
 register paths, and power-analysis exports.
 
-**Not migrated:** Complete histogram/stat parity, full debug execution control,
-runtime-calibrated power/thermal, and pipeline/O3 checkpoint breadth.
+**Not migrated:** Complete gem5 text-stat parity, full debug execution control,
+runtime resource counters, runtime-calibrated power/thermal, and pipeline/O3
+checkpoint breadth.
 
 **Evidence:** `StatsRegistry`, `ProbeRegistry`, `RiscvInstructionStats`,
 `RiscvDataAccessStats`, `SystemActionExecutor`, `GdbRemoteSession`,
 checkpoint tests including RISC-V hart run-state restore, power-analysis export
-tests, and CLI data-access probe tests.
+tests, CLI data-access probe tests, and histogram registry/output tests.
 
-**Next evidence:** First-class histogram stats, runtime resource counters, and
+**Next evidence:** Gem5 text-stat compatibility, runtime resource counters, and
 GDB execution-control tests.
 
 ### Configuration, Resources, Suites, GPU, and Accelerators - 39% unit-slice
@@ -369,7 +371,7 @@ checklist-backed component sections above define the auditable percentages.
 | `tests/gem5/regression_tests` | all rem6 crates | 35% unit-slice | Workspace tests act as the current regression suite. | Add migration tags or per-family regression rows. |
 | `tests/gem5/replacement_policies` | `rem6-cache` | 60% representative | Multiple replacement, indexing, dueling, compressed, and sector tag tests exist. | Add remaining policies and exact trace/reference parity where useful. |
 | `tests/gem5/riscv_boot_tests` | `rem6-platform`, `rem6-system`, `rem6-isa-riscv`, `rem6-cpu`, `rem6-kernel` | 35% unit-slice | DTB/initrd handoff, CLINT/PLIC, traps, CSRs, page-fault causes, translated faults, SBI base read-only ecalls, minimal TIME `set_timer` STIP scheduling, IPI `send_ipi` SSIP pending-bit injection, standard SRST shutdown stop requests, RFENCE remote SFENCE.VMA data TLB flushes with finite-range and ASID scope, and HSM start/status/stop/retentive-suspend/default-non-retentive-unsupported/IPI-wake slices are tested. | Add broader SBI timer/IPI/reset power-state behavior, HSM non-retentive resume, wake, pending-state semantics, RFENCE hypervisor-fence and completion semantics, and a real Linux boot smoke. |
-| `tests/gem5/stats` | `rem6-stats`, `rem6` CLI, `rem6-power` | 60% representative | Hierarchical counters, reset/dump histories, deltas, real probe producers, power bindings, and CLI output exist. | Add first-class histograms, more hierarchy counters, and stricter text-stat compatibility. |
+| `tests/gem5/stats` | `rem6-stats`, `rem6` CLI, `rem6-power` | 60% representative | Hierarchical counters, reset/dump histories, deltas, first-class histogram buckets, real probe producers, power bindings, and CLI output exist. | Add more hierarchy counters and stricter text-stat compatibility. |
 | `tests/gem5/stdlib` | `rem6-workload`, `rem6-platform`, `rem6` CLI | 35% unit-slice | Workload manifests, resource payloads, suite dispatch plans, Linux handoff intent, and TOML/CLI tests exist. | Add broader stdlib object coverage and ergonomic topology/workload definitions. |
 | `tests/test-progs` | `rem6-system`, `rem6` CLI, ISA crates | 35% unit-slice | Static RISC-V no-libc, newlib, and raw syscall smoke binaries are generated when tools exist. | Add durable generated fixtures for hello, threads, and m5 utility shapes across ISAs. |
 | `tests/gem5/traffic_gen` | `rem6-traffic`, `rem6-system`, `rem6-workload` | 45% single-axis | Text config parsing, GUPS, packet trace replay, flags, maintenance, HTM, responses, and workload summaries exist. | Split generator semantics, cache hierarchy matrix, memory profile matrix, and trusted stats. |
@@ -454,7 +456,7 @@ RV64F/RV64D tests.
 1. Connect in-order and O3 CPU state to executable engines.
 2. Run more real static-libc SE programs, then expand SBI runtime coverage and real Linux boot.
 3. Route CPU instruction/data traffic through cache, coherence, NoC, and DRAM.
-4. Promote histograms and hierarchy resource counters to first-class stats.
+4. Promote hierarchy resource counters to first-class stats.
 5. Split broad migration rows as evidence grows, especially `se_mode`,
    `cpu_tests`, `traffic_gen`, `stats`, and `tests/test-progs`.
 

@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use rem6_kernel::Tick;
 
 use crate::error::StatsError;
-use crate::stats::StatPathError;
+use crate::stat_metadata::StatPathError;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ProbePointId(u64);

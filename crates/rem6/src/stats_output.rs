@@ -1411,16 +1411,30 @@ fn stats_snapshot_json(snapshot: &StatSnapshot) -> String {
                 .description()
                 .map(|description| format!("\"{}\"", json_escape(description)))
                 .unwrap_or_else(|| "null".to_string());
+            let buckets = sample
+                .histogram_buckets()
+                .iter()
+                .map(|bucket| {
+                    format!(
+                        "{{\"bucket\":{},\"count\":{}}}",
+                        bucket.bucket(),
+                        bucket.count()
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(",");
             format!(
-                "{{\"id\":{},\"path\":\"{}\",\"scope\":[{}],\"name\":\"{}\",\"unit\":\"{}\",\"value\":{},\"reset_policy\":\"{}\",\"description\":{}}}",
+                "{{\"id\":{},\"path\":\"{}\",\"scope\":[{}],\"name\":\"{}\",\"kind\":\"{}\",\"unit\":\"{}\",\"value\":{},\"reset_policy\":\"{}\",\"description\":{},\"buckets\":[{}]}}",
                 sample.id().get(),
                 json_escape(sample.path()),
                 scope,
                 json_escape(sample.name()),
+                sample.kind(),
                 json_escape(sample.unit()),
                 sample.value(),
                 sample.reset_policy(),
-                description
+                description,
+                buckets
             )
         })
         .collect::<Vec<_>>()
@@ -1432,12 +1446,23 @@ fn stats_snapshot_text(snapshot: &StatSnapshot) -> String {
     let mut output = "\n---------- Begin Simulation Statistics ----------\n".to_string();
     for sample in snapshot.samples() {
         output.push_str(&format!(
-            "{:<64} {:>20} # unit={} reset_policy={}\n",
+            "{:<64} {:>20} # kind={} unit={} reset_policy={}\n",
             sample.path(),
             sample.value(),
+            sample.kind(),
             sample.unit(),
             sample.reset_policy()
         ));
+        for bucket in sample.histogram_buckets() {
+            output.push_str(&format!(
+                "{:<64} {:>20} # histogram_bucket={} unit={} reset_policy={}\n",
+                format!("{}.bucket", sample.path()),
+                bucket.count(),
+                bucket.bucket(),
+                sample.unit(),
+                sample.reset_policy()
+            ));
+        }
     }
     output.push_str("\n---------- End Simulation Statistics   ----------\n");
     output
@@ -1560,7 +1585,7 @@ mod tests {
     use rem6_stats::StatsRegistry;
     use rem6_workload::{WorkloadRouteId, WorkloadTrafficTraceReplaySummary};
 
-    use super::{emit_trace_replay_summary_stats, stats_snapshot_json};
+    use super::{emit_trace_replay_summary_stats, stats_snapshot_json, stats_snapshot_text};
 
     #[test]
     fn trace_replay_stats_emit_nonzero_cache_and_sideband_counters() {
@@ -1626,6 +1651,32 @@ mod tests {
             1,
         );
         assert_stat_value(&json, "sim.trace_replay.sideband.diagnostic", "Count", 1);
+    }
+
+    #[test]
+    fn stats_output_renders_histogram_samples_with_typed_buckets() {
+        let mut stats = StatsRegistry::new();
+        let latency = stats
+            .register_histogram("system.l2.read_latency", "Cycle")
+            .unwrap();
+        stats.observe_histogram(latency, 4).unwrap();
+        stats.observe_histogram(latency, 8).unwrap();
+        stats.observe_histogram(latency, 8).unwrap();
+        let snapshot = stats.snapshot(0);
+
+        let json = stats_snapshot_json(&snapshot);
+        assert!(json.contains("\"path\":\"system.l2.read_latency\""));
+        assert!(json.contains("\"kind\":\"histogram\""));
+        assert!(json.contains("\"value\":3"));
+        assert!(
+            json.contains("\"buckets\":[{\"bucket\":4,\"count\":1},{\"bucket\":8,\"count\":2}]")
+        );
+
+        let text = stats_snapshot_text(&snapshot);
+        assert!(text.contains("system.l2.read_latency"));
+        assert!(text.contains("kind=histogram"));
+        assert!(text.contains("histogram_bucket=4"));
+        assert!(text.contains("histogram_bucket=8"));
     }
 
     fn assert_stat_value(json: &str, path: &str, unit: &str, value: u64) {
