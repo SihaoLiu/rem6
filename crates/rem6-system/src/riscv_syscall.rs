@@ -94,7 +94,7 @@ use readv::{syscall_readv, RISCV_LINUX_READV};
 use rename::{syscall_renameat2, RISCV_LINUX_RENAMEAT2};
 use robust::{syscall_get_robust_list, syscall_set_robust_list, RiscvRobustList};
 use seek::{syscall_lseek, RISCV_LINUX_LSEEK};
-use signal::syscall_rt_sigprocmask;
+use signal::{syscall_rt_sigaction, syscall_rt_sigprocmask, RiscvSignalAction};
 pub use startup::{
     RiscvSeAuxvEntry, RiscvSeStartupConfig, RiscvSeStartupError, RiscvSeStartupImage,
     RiscvSeStartupStringField, RISCV_LINUX_AT_ENTRY, RISCV_LINUX_AT_NULL, RISCV_LINUX_AT_PAGESZ,
@@ -294,6 +294,7 @@ pub struct RiscvSyscallState {
     guest_writes: Vec<RiscvGuestWriteRecord>,
     unknown_syscalls: Vec<RiscvUnknownSyscallRecord>,
     signal_mask: u64,
+    signal_actions: BTreeMap<u64, RiscvSignalAction>,
     stdin: VecDeque<u8>,
     getrandom_byte_counter: u8,
     program_break: u64,
@@ -352,6 +353,7 @@ impl RiscvSyscallState {
             guest_writes: Vec::new(),
             unknown_syscalls: Vec::new(),
             signal_mask: 0,
+            signal_actions: BTreeMap::new(),
             stdin: VecDeque::new(),
             getrandom_byte_counter: 0,
             program_break,
@@ -522,6 +524,17 @@ impl RiscvSyscallState {
 
     pub(super) fn set_signal_mask(&mut self, value: u64) {
         self.signal_mask = value;
+    }
+
+    fn signal_action(&self, signal: u64) -> RiscvSignalAction {
+        self.signal_actions
+            .get(&signal)
+            .copied()
+            .unwrap_or_default()
+    }
+
+    fn set_signal_action(&mut self, signal: u64, action: RiscvSignalAction) {
+        self.signal_actions.insert(signal, action);
     }
 
     fn guest_path_registered(&self, path: &[u8]) -> bool {
@@ -1156,11 +1169,14 @@ impl RiscvSyscallTable {
             RISCV_LINUX_NANOSLEEP
             | RISCV_LINUX_SCHED_YIELD
             | RISCV_LINUX_RT_SIGSUSPEND
-            | RISCV_LINUX_RT_SIGACTION
             | RISCV_LINUX_RT_SIGPENDING
             | RISCV_LINUX_RT_SIGTIMEDWAIT
             | RISCV_LINUX_RT_SIGQUEUEINFO
             | RISCV_LINUX_RT_SIGRETURN => Some(RiscvSyscallOutcome::Return { value: 0 }),
+            RISCV_LINUX_RT_SIGACTION => {
+                syscall_rt_sigaction(request, state, guest_memory_reader, guest_memory_writer)
+                    .map(|value| RiscvSyscallOutcome::Return { value })
+            }
             RISCV_LINUX_RT_SIGPROCMASK => {
                 syscall_rt_sigprocmask(request, state, guest_memory_reader, guest_memory_writer)
                     .map(|value| RiscvSyscallOutcome::Return { value })

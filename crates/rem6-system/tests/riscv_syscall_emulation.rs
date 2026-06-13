@@ -378,13 +378,14 @@ fn user_ecall_rt_sigaction_returns_zero_before_exit() {
     core.set_privilege_mode(RiscvPrivilegeMode::User);
     let cluster = RiscvCluster::new([core.clone()]).unwrap();
     let store = loaded_program_store(&[
-        (0x8000, addi(10, 0, 77)),
-        (0x8004, addi(17, 0, 134)),
-        (0x8008, 0x0000_0073),
-        (0x800c, addi(5, 10, 0)),
-        (0x8010, addi(17, 0, 93)),
-        (0x8014, addi(10, 5, 0)),
-        (0x8018, 0x0000_0073),
+        (0x8000, addi(10, 0, 10)),
+        (0x8004, addi(13, 0, 8)),
+        (0x8008, addi(17, 0, 134)),
+        (0x800c, 0x0000_0073),
+        (0x8010, addi(5, 10, 0)),
+        (0x8014, addi(17, 0, 93)),
+        (0x8018, addi(10, 5, 0)),
+        (0x801c, 0x0000_0073),
     ]);
     let controller = Arc::new(Mutex::new(SystemHostController::new(
         HostEventPolicy,
