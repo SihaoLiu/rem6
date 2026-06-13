@@ -130,7 +130,8 @@ pub use startup::{
 use stat::{
     guest_path_inode, syscall_access, syscall_faccessat, syscall_fstat, syscall_lstat,
     syscall_newfstatat, syscall_stat, RiscvGuestStat, RISCV_LINUX_ACCESS,
-    RISCV_LINUX_DEFAULT_DIRECTORY_PERMISSIONS, RISCV_LINUX_FACCESSAT, RISCV_LINUX_LSTAT,
+    RISCV_LINUX_DEFAULT_DIRECTORY_PERMISSIONS, RISCV_LINUX_DEFAULT_REGULAR_FILE_PERMISSIONS,
+    RISCV_LINUX_FACCESSAT, RISCV_LINUX_LSTAT,
 };
 pub use unknown::RiscvUnknownSyscallRecord;
 use unlink::{syscall_unlink_operation, RISCV_LINUX_UNLINK, RISCV_LINUX_UNLINKAT};
@@ -276,7 +277,7 @@ pub(super) enum RiscvGuestLinkError {
     DestinationExists,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct RiscvGuestFileIdentity {
     inode: u64,
 }
@@ -304,6 +305,7 @@ pub struct RiscvSyscallState {
     guest_files: BTreeMap<Vec<u8>, Vec<u8>>,
     guest_links: BTreeMap<Vec<u8>, Vec<u8>>,
     guest_file_identities: BTreeMap<Vec<u8>, RiscvGuestFileIdentity>,
+    guest_file_modes: BTreeMap<RiscvGuestFileIdentity, u32>,
     guest_opens: Vec<RiscvGuestOpenRecord>,
     stdin_fds: BTreeSet<GuestFd>,
     guest_file_descriptions: BTreeMap<GuestFileDescriptionId, Vec<u8>>,
@@ -364,6 +366,7 @@ impl RiscvSyscallState {
             guest_files: BTreeMap::new(),
             guest_links: BTreeMap::new(),
             guest_file_identities: BTreeMap::new(),
+            guest_file_modes: BTreeMap::new(),
             guest_opens: Vec::new(),
             stdin_fds,
             guest_file_descriptions: BTreeMap::new(),
@@ -429,6 +432,10 @@ impl RiscvSyscallState {
             .or_insert_with(|| RiscvGuestFileIdentity {
                 inode: guest_path_inode(&path),
             });
+        let identity = self.guest_file_identity(&path);
+        self.guest_file_modes
+            .entry(identity)
+            .or_insert(RISCV_LINUX_DEFAULT_REGULAR_FILE_PERMISSIONS);
     }
 
     pub fn register_guest_file(&mut self, path: impl AsRef<[u8]>, contents: impl AsRef<[u8]>) {
@@ -441,6 +448,10 @@ impl RiscvSyscallState {
             .or_insert_with(|| RiscvGuestFileIdentity {
                 inode: guest_path_inode(&path),
             });
+        let identity = self.guest_file_identity(&path);
+        self.guest_file_modes
+            .entry(identity)
+            .or_insert(RISCV_LINUX_DEFAULT_REGULAR_FILE_PERMISSIONS);
     }
 
     pub fn register_guest_symlink(&mut self, path: impl AsRef<[u8]>, target: impl AsRef<[u8]>) {
@@ -598,6 +609,28 @@ impl RiscvSyscallState {
             })
     }
 
+    pub(super) fn set_guest_file_permissions(&mut self, path: &[u8], permissions: u32) {
+        let identity = self.guest_file_identity(path);
+        self.guest_file_modes.insert(identity, permissions & 0o777);
+    }
+
+    fn guest_file_permissions(&self, identity: RiscvGuestFileIdentity) -> u32 {
+        self.guest_file_modes
+            .get(&identity)
+            .copied()
+            .unwrap_or(RISCV_LINUX_DEFAULT_REGULAR_FILE_PERMISSIONS)
+    }
+
+    fn drop_guest_file_mode_if_unlinked(&mut self, identity: RiscvGuestFileIdentity) {
+        if !self
+            .guest_file_identities
+            .values()
+            .any(|candidate| *candidate == identity)
+        {
+            self.guest_file_modes.remove(&identity);
+        }
+    }
+
     fn guest_file_link_count(&self, identity: RiscvGuestFileIdentity) -> u32 {
         self.guest_paths
             .iter()
@@ -612,6 +645,7 @@ impl RiscvSyscallState {
             self.identity(),
             identity.inode,
             self.guest_file_link_count(identity),
+            self.guest_file_permissions(identity),
         )
     }
 
@@ -619,7 +653,9 @@ impl RiscvSyscallState {
         let removed_path = self.guest_paths.remove(path);
         let removed_file = self.guest_files.remove(path).is_some();
         let removed_link = self.guest_links.remove(path).is_some();
-        self.guest_file_identities.remove(path);
+        if let Some(identity) = self.guest_file_identities.remove(path) {
+            self.drop_guest_file_mode_if_unlinked(identity);
+        }
         removed_path || removed_file || removed_link
     }
 
@@ -720,7 +756,13 @@ impl RiscvSyscallState {
                     stat.permissions,
                 ),
                 RiscvGuestNodeKind::RegularFile | RiscvGuestNodeKind::Symlink => {
-                    self.guest_file_stat(stat.size, stat.identity)
+                    RiscvGuestStat::regular_file(
+                        stat.size,
+                        self.identity(),
+                        stat.identity.inode,
+                        self.guest_file_link_count(stat.identity),
+                        stat.permissions,
+                    )
                 }
             });
         }
@@ -768,7 +810,7 @@ impl RiscvSyscallState {
         let permissions = if node_kind == RiscvGuestNodeKind::Directory {
             self.guest_directory_permissions(&path)
         } else {
-            RISCV_LINUX_DEFAULT_DIRECTORY_PERMISSIONS
+            self.guest_file_permissions(identity)
         };
         self.guest_fds
             .insert_description(GuestFileDescription::guest_backed(

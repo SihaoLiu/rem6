@@ -49,6 +49,9 @@ impl RiscvSyscallState {
                 inode: guest_path_inode(&path),
             });
         let identity = self.guest_file_identity(&path);
+        self.guest_file_modes
+            .entry(identity)
+            .or_insert(super::stat::RISCV_LINUX_DEFAULT_REGULAR_FILE_PERMISSIONS);
         self.synchronize_guest_file_contents(identity, contents);
     }
 

@@ -1,5 +1,6 @@
 use crate::{GuestFdError, GuestFileStatusFlags};
 
+use super::permissions::apply_file_creation_mask;
 use super::{
     linux_error, read_guest_c_string, RiscvGuestCStringError, RiscvGuestMemoryReader,
     RiscvGuestNodeKind, RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_AT_FDCWD,
@@ -172,8 +173,9 @@ fn syscall_open_registered_path(
             return linux_error(RISCV_LINUX_EEXIST);
         }
         let path = state.existing_guest_path_key(&path).unwrap_or(path);
+        let path_exists = state.guest_path_registered(&path);
         let existing = state.guest_file_contents(&path).map(Vec::from);
-        if existing.is_none() && !state.guest_path_registered(&path) && !creates_file {
+        if existing.is_none() && !path_exists && !creates_file {
             return linux_error(RISCV_LINUX_ENOENT);
         }
         let contents = if truncates_file {
@@ -181,7 +183,11 @@ fn syscall_open_registered_path(
         } else {
             existing.unwrap_or_default()
         };
+        let created_new_file = creates_file && !path_exists;
         state.replace_guest_file_contents(&path, contents.clone());
+        if created_new_file {
+            state.set_guest_file_permissions(&path, apply_file_creation_mask(mode, state));
+        }
         (path, RiscvGuestNodeKind::RegularFile, Some(contents), None)
     } else {
         let path = match state.resolve_existing_guest_regular_path(&path) {

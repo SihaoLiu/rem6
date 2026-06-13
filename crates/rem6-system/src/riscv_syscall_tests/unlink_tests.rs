@@ -4,7 +4,11 @@ const RISCV_LINUX_UNLINK_FOR_TEST: u64 = 1026;
 const RISCV_LINUX_UNLINKAT_FOR_TEST: u64 = 35;
 const RISCV_LINUX_MKDIRAT_FOR_TEST: u64 = 34;
 const RISCV_LINUX_OPENAT_FOR_UNLINK_TEST: u64 = 56;
+const RISCV_LINUX_NEWFSTATAT_FOR_UNLINK_TEST: u64 = 79;
+const RISCV_LINUX_UMASK_FOR_UNLINK_TEST: u64 = 166;
 const RISCV_LINUX_AT_REMOVEDIR_FOR_TEST: u64 = 0x200;
+const RISCV_LINUX_O_WRONLY_FOR_UNLINK_TEST: u64 = 1;
+const RISCV_LINUX_O_CREAT_FOR_UNLINK_TEST: u64 = 0o100;
 const RISCV_LINUX_O_DIRECTORY_FOR_TEST: u64 = 0o200000;
 const RISCV_LINUX_ENOTDIR_FOR_TEST: u64 = 20;
 const RISCV_LINUX_EISDIR_FOR_TEST: u64 = 21;
@@ -401,6 +405,84 @@ fn linux_table_unlink_removes_registered_guest_file_path() {
     );
     assert!(state.unknown_syscalls().is_empty());
     assert!(state.guest_path_stat(b"guest.txt").is_none());
+}
+
+#[test]
+fn linux_table_unlink_drops_unreferenced_file_mode_for_reregistration() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let guest_memory_reader = c_string_reader(&[(0x9000, b"reuse.txt")]);
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_UMASK_FOR_UNLINK_TEST,
+                [0o027, 0, 0, 0, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_OPENAT_FOR_UNLINK_TEST,
+                [
+                    RISCV_LINUX_AT_FDCWD,
+                    0x9000,
+                    RISCV_LINUX_O_WRONLY_FOR_UNLINK_TEST | RISCV_LINUX_O_CREAT_FOR_UNLINK_TEST,
+                    0o666,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 3 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(0x8008, RISCV_LINUX_UNLINK_FOR_TEST, [0x9000, 0, 0, 0, 0, 0],),
+            &mut state,
+            8,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+
+    state.register_guest_file(b"reuse.txt", b"again");
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x800c,
+                RISCV_LINUX_NEWFSTATAT_FOR_UNLINK_TEST,
+                [RISCV_LINUX_AT_FDCWD, 0x9000, 0xa000, 0, 0, 0],
+            ),
+            &mut state,
+            9,
+            Some(&guest_memory_reader),
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+
+    let stat = collect_guest_writes(&writes.lock().unwrap(), 0xa000, 128);
+    assert_eq!(read_le_u32(&stat, 16), 0o100444);
+    assert!(state.unknown_syscalls().is_empty());
 }
 
 fn c_string_reader(entries: &[(u64, &'static [u8])]) -> RiscvGuestMemoryReader {

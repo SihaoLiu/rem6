@@ -4,7 +4,11 @@ const RISCV_LINUX_LINK_FOR_RENAME_TEST: u64 = 1025;
 const RISCV_LINUX_CHDIR_FOR_RENAME_TEST: u64 = 49;
 const RISCV_LINUX_MKDIRAT_FOR_RENAME_TEST: u64 = 34;
 const RISCV_LINUX_OPENAT_FOR_RENAME_TEST: u64 = 56;
+const RISCV_LINUX_NEWFSTATAT_FOR_RENAME_TEST: u64 = 79;
+const RISCV_LINUX_UMASK_FOR_RENAME_TEST: u64 = 166;
 const RISCV_LINUX_RENAMEAT2_FOR_TEST: u64 = 276;
+const RISCV_LINUX_O_WRONLY_FOR_RENAME_TEST: u64 = 1;
+const RISCV_LINUX_O_CREAT_FOR_RENAME_TEST: u64 = 0o100;
 const RISCV_LINUX_O_DIRECTORY_FOR_RENAME_TEST: u64 = 0o200000;
 const RISCV_LINUX_ENOTEMPTY_FOR_RENAME_TEST: u64 = 39;
 
@@ -76,6 +80,101 @@ fn linux_table_renameat2_replaces_existing_destination() {
         state.guest_file_contents(b"renamed.txt"),
         Some(&b"file-backed input\n"[..])
     );
+}
+
+#[test]
+fn linux_table_renameat2_drops_replaced_destination_mode_for_reregistration() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_file(b"source.txt", b"source input\n");
+    let guest_memory_reader = c_string_reader(&[(0x9000, b"target.txt"), (0x9010, b"source.txt")]);
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_UMASK_FOR_RENAME_TEST,
+                [0o027, 0, 0, 0, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_OPENAT_FOR_RENAME_TEST,
+                [
+                    RISCV_LINUX_AT_FDCWD,
+                    0x9000,
+                    RISCV_LINUX_O_WRONLY_FOR_RENAME_TEST | RISCV_LINUX_O_CREAT_FOR_RENAME_TEST,
+                    0o666,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 3 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8008,
+                RISCV_LINUX_RENAMEAT2_FOR_TEST,
+                [
+                    RISCV_LINUX_AT_FDCWD,
+                    0x9010,
+                    RISCV_LINUX_AT_FDCWD,
+                    0x9000,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+            8,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        state.guest_file_contents(b"target.txt"),
+        Some(&b"source input\n"[..])
+    );
+    assert!(state.unlink_guest_path(b"target.txt"));
+    state.register_guest_file(b"target.txt", b"new input\n");
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x800c,
+                RISCV_LINUX_NEWFSTATAT_FOR_RENAME_TEST,
+                [RISCV_LINUX_AT_FDCWD, 0x9000, 0xa000, 0, 0, 0],
+            ),
+            &mut state,
+            9,
+            Some(&guest_memory_reader),
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+
+    let stat = collect_guest_writes(&writes.lock().unwrap(), 0xa000, 128);
+    assert_eq!(read_le_u32(&stat, 16), 0o100444);
+    assert!(state.unknown_syscalls().is_empty());
 }
 
 #[test]

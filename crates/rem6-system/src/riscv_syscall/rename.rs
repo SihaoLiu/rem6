@@ -157,7 +157,9 @@ impl RiscvSyscallState {
         self.guest_directory_modes.remove(path);
         self.guest_files.remove(path);
         self.guest_links.remove(path);
-        self.guest_file_identities.remove(path);
+        if let Some(identity) = self.guest_file_identities.remove(path) {
+            self.drop_guest_file_mode_if_unlinked(identity);
+        }
     }
 }
 
