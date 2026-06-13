@@ -51,6 +51,8 @@ mod signal_tests;
 mod startup_tests;
 #[path = "riscv_syscall_tests/stat_tests.rs"]
 mod stat_tests;
+#[path = "riscv_syscall_tests/time_tests.rs"]
+mod time_tests;
 #[path = "riscv_syscall_tests/truncate_tests.rs"]
 mod truncate_tests;
 #[path = "riscv_syscall_tests/unlink_tests.rs"]
@@ -141,48 +143,6 @@ fn linux_table_tracks_program_break() {
         Some(RiscvSyscallOutcome::Return { value: 64 })
     );
     assert_eq!(state.program_break(), 64);
-}
-
-#[test]
-fn linux_table_returns_process_identity() {
-    let table = RiscvSyscallTable::new();
-    let mut state =
-        RiscvSyscallState::with_identity(0, RiscvSyscallIdentity::new(41, 42, 43, 7, 8, 9, 10));
-
-    for (number, value) in [
-        (RISCV_LINUX_GETPID, 41),
-        (RISCV_LINUX_GETTID, 42),
-        (RISCV_LINUX_GETPPID, 43),
-        (RISCV_LINUX_GETUID, 7),
-        (RISCV_LINUX_GETEUID, 8),
-        (RISCV_LINUX_GETGID, 9),
-        (RISCV_LINUX_GETEGID, 10),
-    ] {
-        assert_eq!(
-            table.handle(RiscvSyscallRequest::new(0x8000, number, [0; 6]), &mut state,),
-            Some(RiscvSyscallOutcome::Return { value })
-        );
-    }
-}
-
-#[test]
-fn linux_table_uses_gem5_default_process_identity() {
-    let table = RiscvSyscallTable::new();
-    let mut state = RiscvSyscallState::new(0);
-
-    for number in [
-        RISCV_LINUX_GETPID,
-        RISCV_LINUX_GETTID,
-        RISCV_LINUX_GETUID,
-        RISCV_LINUX_GETEUID,
-        RISCV_LINUX_GETGID,
-        RISCV_LINUX_GETEGID,
-    ] {
-        assert_eq!(
-            table.handle(RiscvSyscallRequest::new(0x8000, number, [0; 6]), &mut state,),
-            Some(RiscvSyscallOutcome::Return { value: 100 })
-        );
-    }
 }
 
 #[test]

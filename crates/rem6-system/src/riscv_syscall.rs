@@ -60,7 +60,10 @@ mod writev;
 
 use brk::syscall_brk;
 use clock::syscall_clock;
-use clock::{RISCV_LINUX_CLOCK_GETTIME, RISCV_LINUX_GETTIMEOFDAY, RISCV_LINUX_TIMES};
+use clock::{
+    RISCV_LINUX_CLOCK_GETRES, RISCV_LINUX_CLOCK_GETTIME, RISCV_LINUX_GETTIMEOFDAY,
+    RISCV_LINUX_TIMES,
+};
 use cpu_locality::{syscall_getcpu, RISCV_LINUX_GETCPU};
 use cwd::{syscall_chdir, syscall_fchdir, syscall_getcwd, RISCV_LINUX_CHDIR, RISCV_LINUX_FCHDIR};
 use directory::{RiscvGuestMkdirError, RiscvGuestRmdirError};
@@ -1200,9 +1203,10 @@ impl RiscvSyscallTable {
             RISCV_LINUX_SET_TID_ADDRESS => Some(RiscvSyscallOutcome::Return {
                 value: syscall_set_tid_address(request.argument(0), state),
             }),
-            RISCV_LINUX_TIMES | RISCV_LINUX_GETTIMEOFDAY | RISCV_LINUX_CLOCK_GETTIME => {
-                syscall_clock(request, tick, guest_memory_writer)
-            }
+            RISCV_LINUX_TIMES
+            | RISCV_LINUX_GETTIMEOFDAY
+            | RISCV_LINUX_CLOCK_GETTIME
+            | RISCV_LINUX_CLOCK_GETRES => syscall_clock(request, tick, guest_memory_writer),
             RISCV_LINUX_SETPGID => Some(RiscvSyscallOutcome::Return {
                 value: syscall_setpgid(request, state),
             }),

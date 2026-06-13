@@ -6,6 +6,7 @@ use super::{
 };
 
 pub(super) const RISCV_LINUX_CLOCK_GETTIME: u64 = 113;
+pub(super) const RISCV_LINUX_CLOCK_GETRES: u64 = 114;
 pub(super) const RISCV_LINUX_TIMES: u64 = 153;
 pub(super) const RISCV_LINUX_GETTIMEOFDAY: u64 = 169;
 const RISCV_LINUX_CLOCK_REALTIME: u64 = 0;
@@ -16,6 +17,7 @@ const RISCV_LINUX_CLOCK_MONOTONIC_RAW: u64 = 4;
 const RISCV_LINUX_CLOCK_REALTIME_COARSE: u64 = 5;
 const RISCV_LINUX_CLOCK_MONOTONIC_COARSE: u64 = 6;
 const RISCV_LINUX_CLOCK_BOOTTIME: u64 = 7;
+const RISCV_LINUX_CLOCK_TAI: u64 = 11;
 const RISCV_LINUX_NANOSECONDS_PER_SECOND: u64 = 1_000_000_000;
 const RISCV_LINUX_NANOSECONDS_PER_MICROSECOND: u64 = 1_000;
 const RISCV_LINUX_CLOCK_TICKS_PER_SECOND: u64 = 100;
@@ -35,6 +37,23 @@ pub(super) fn syscall_clock_gettime(
     let seconds = tick / RISCV_LINUX_NANOSECONDS_PER_SECOND;
     let nanoseconds = tick % RISCV_LINUX_NANOSECONDS_PER_SECOND;
     write_riscv_linux_time_pair(timespec_address, seconds, nanoseconds, guest_memory)
+}
+
+pub(super) fn syscall_clock_getres(
+    clock_id: u64,
+    timespec_address: u64,
+    guest_memory: Option<&RiscvGuestMemoryWriter>,
+) -> Option<u64> {
+    let resolution = match clock_resolution_nanoseconds(clock_id) {
+        Some(resolution) => resolution,
+        None => return Some(linux_error(RISCV_LINUX_EINVAL)),
+    };
+    if timespec_address == 0 {
+        return Some(0);
+    }
+    guest_memory.map(|guest_memory| {
+        write_riscv_linux_time_pair(timespec_address, 0, resolution, guest_memory)
+    })
 }
 
 pub(super) fn syscall_gettimeofday(
@@ -85,6 +104,10 @@ pub(super) fn syscall_clock(
                 guest_memory,
             ),
         }),
+        RISCV_LINUX_CLOCK_GETRES => {
+            syscall_clock_getres(request.argument(0), request.argument(1), guest_memory)
+                .map(|value| RiscvSyscallOutcome::Return { value })
+        }
         _ => None,
     }
 }
@@ -146,5 +169,20 @@ fn valid_clock_id(clock_id: u64) -> bool {
             | RISCV_LINUX_CLOCK_REALTIME_COARSE
             | RISCV_LINUX_CLOCK_MONOTONIC_COARSE
             | RISCV_LINUX_CLOCK_BOOTTIME
+            | RISCV_LINUX_CLOCK_TAI
     )
+}
+
+const fn clock_resolution_nanoseconds(clock_id: u64) -> Option<u64> {
+    match clock_id {
+        RISCV_LINUX_CLOCK_REALTIME
+        | RISCV_LINUX_CLOCK_MONOTONIC
+        | RISCV_LINUX_CLOCK_PROCESS_CPUTIME_ID
+        | RISCV_LINUX_CLOCK_THREAD_CPUTIME_ID
+        | RISCV_LINUX_CLOCK_MONOTONIC_RAW
+        | RISCV_LINUX_CLOCK_BOOTTIME
+        | RISCV_LINUX_CLOCK_TAI => Some(1),
+        RISCV_LINUX_CLOCK_REALTIME_COARSE | RISCV_LINUX_CLOCK_MONOTONIC_COARSE => Some(1_000_000),
+        _ => None,
+    }
 }
