@@ -37,6 +37,8 @@ mod readlink_tests;
 mod rename_tests;
 #[path = "riscv_syscall_tests/robust_tests.rs"]
 mod robust_tests;
+#[path = "riscv_syscall_tests/scheduler_tests.rs"]
+mod scheduler_tests;
 #[path = "riscv_syscall_tests/signal_tests.rs"]
 mod signal_tests;
 #[path = "riscv_syscall_tests/startup_tests.rs"]

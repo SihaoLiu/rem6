@@ -39,6 +39,7 @@ mod random;
 mod readv;
 mod rename;
 mod robust;
+mod scheduler;
 mod seek;
 mod signal;
 mod sleep;
@@ -95,6 +96,7 @@ use random::{invalid_getrandom_flags, syscall_getrandom, RISCV_LINUX_GETRANDOM};
 use readv::{syscall_readv, RISCV_LINUX_READV};
 use rename::{syscall_renameat2, RISCV_LINUX_RENAMEAT2};
 use robust::{syscall_get_robust_list, syscall_set_robust_list, RiscvRobustList};
+use scheduler::{syscall_sched_getaffinity, RISCV_LINUX_SCHED_GETAFFINITY};
 use seek::{syscall_lseek, RISCV_LINUX_LSEEK};
 use signal::{
     syscall_rt_sigaction, syscall_rt_sigpending, syscall_rt_sigprocmask, syscall_rt_sigtimedwait,
@@ -166,6 +168,7 @@ const RISCV_LINUX_RSEQ: u64 = 293;
 const RISCV_LINUX_STAT: u64 = 1038;
 const RISCV_LINUX_EPERM: u64 = 1;
 const RISCV_LINUX_ENOENT: u64 = 2;
+const RISCV_LINUX_ESRCH: u64 = 3;
 const RISCV_LINUX_EBADF: u64 = 9;
 const RISCV_LINUX_EAGAIN: u64 = 11;
 const RISCV_LINUX_EFAULT: u64 = 14;
@@ -1174,6 +1177,10 @@ impl RiscvSyscallTable {
             }
             RISCV_LINUX_NANOSLEEP => syscall_nanosleep(request, guest_memory_reader)
                 .map(|value| RiscvSyscallOutcome::Return { value }),
+            RISCV_LINUX_SCHED_GETAFFINITY => {
+                syscall_sched_getaffinity(request, state, guest_memory_writer)
+                    .map(|value| RiscvSyscallOutcome::Return { value })
+            }
             RISCV_LINUX_SCHED_YIELD
             | RISCV_LINUX_RT_SIGSUSPEND
             | RISCV_LINUX_RT_SIGQUEUEINFO
