@@ -595,6 +595,10 @@ impl TranslationTlbEntry {
         Ok(entry_range(self.virtual_page, self.page_size)?.contains(address))
     }
 
+    fn overlaps_range(&self, range: AddressRange) -> Result<bool, TranslationError> {
+        Ok(entry_range(self.virtual_page, self.page_size)?.overlaps(range))
+    }
+
     fn resolve(&self, request: &TranslationRequest) -> TranslationResolution {
         if !self.permissions.allows(request.access()) {
             return TranslationResolution::fault(TranslationFault::new(
@@ -781,6 +785,22 @@ impl TranslationTlb {
         self.remove_matching_pages(|_, entry| {
             entry.contains_address(virtual_address).unwrap_or(false)
         })
+    }
+
+    pub fn demap_non_global_range(
+        &mut self,
+        address_space: TranslationAddressSpaceId,
+        virtual_range: AddressRange,
+    ) -> usize {
+        self.remove_matching_pages(|key, entry| {
+            key.address_space == address_space
+                && entry.scope != TranslationTlbEntryScope::Global
+                && entry.overlaps_range(virtual_range).unwrap_or(false)
+        })
+    }
+
+    pub fn demap_range_all_address_spaces(&mut self, virtual_range: AddressRange) -> usize {
+        self.remove_matching_pages(|_, entry| entry.overlaps_range(virtual_range).unwrap_or(false))
     }
 
     pub fn translate(

@@ -180,6 +180,23 @@ fn riscv_core_reports_zero_flushed_entries_for_translation_frontend_without_tlb(
     assert_eq!(core.data_translation_tlb_stats(), None);
 }
 
+#[test]
+fn riscv_core_data_translation_single_address_flush_handles_max_address() {
+    let core = RiscvCore::with_data_translation(
+        core(MemoryRouteId::new(6), 0x8000),
+        CpuDataConfig::new(endpoint("cpu0.dmem"), MemoryRouteId::new(7), layout()),
+        CpuTranslationFrontend::with_tlb(
+            TranslationQueueConfig::new(4, 0).unwrap(),
+            TranslationTlbConfig::new(4).unwrap(),
+        ),
+    );
+
+    assert_eq!(
+        core.flush_data_translation_tlb_scope(Some(Address::new(u64::MAX)), None),
+        Some(0)
+    );
+}
+
 fn single_page_map(virtual_base: u64, physical_base: u64) -> TranslationPageMap {
     scoped_single_page_map(
         virtual_base,

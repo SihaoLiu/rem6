@@ -11,8 +11,8 @@ use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionedScheduler, SchedulerContext, Tick,
 };
 use rem6_memory::{
-    AccessSize, Address, ByteMask, CacheLineLayout, MemoryError, MemoryRequest, MemoryRequestId,
-    MemoryResponse, ResponseStatus, TranslationAddressSpaceId, TranslationFault,
+    AccessSize, Address, AddressRange, ByteMask, CacheLineLayout, MemoryError, MemoryRequest,
+    MemoryRequestId, MemoryResponse, ResponseStatus, TranslationAddressSpaceId, TranslationFault,
     TranslationFaultKind, TranslationPageMap, TranslationRequestId, TranslationResolution,
     TranslationTlbStats,
 };
@@ -526,13 +526,6 @@ impl RiscvCoreState {
         else {
             return;
         };
-        let Some(tlb) = self
-            .data_translation
-            .as_mut()
-            .and_then(CpuTranslationFrontend::tlb_mut)
-        else {
-            return;
-        };
         let address_space = match address_space {
             Some(value) => {
                 let Ok(value) = u16::try_from(*value) else {
@@ -543,20 +536,47 @@ impl RiscvCoreState {
             None => None,
         };
 
-        match (virtual_address, address_space) {
-            (None, None) => {
-                tlb.flush_all();
-            }
-            (None, Some(address_space)) => {
-                tlb.flush_non_global_address_space(address_space);
-            }
-            (Some(virtual_address), None) => {
-                tlb.demap_page_all_address_spaces(Address::new(*virtual_address));
-            }
+        self.flush_data_translation_tlb_scope(virtual_address.map(Address::new), address_space);
+    }
+
+    pub(super) fn flush_data_translation_tlb_scope(
+        &mut self,
+        virtual_address: Option<Address>,
+        address_space: Option<TranslationAddressSpaceId>,
+    ) -> Option<usize> {
+        let frontend = self.data_translation.as_mut()?;
+        let Some(tlb) = frontend.tlb_mut() else {
+            return Some(0);
+        };
+
+        Some(match (virtual_address, address_space) {
+            (None, None) => tlb.flush_all(),
+            (None, Some(address_space)) => tlb.flush_non_global_address_space(address_space),
+            (Some(virtual_address), None) => tlb.demap_page_all_address_spaces(virtual_address),
             (Some(virtual_address), Some(address_space)) => {
-                tlb.demap_non_global_page(address_space, Address::new(*virtual_address));
+                tlb.demap_non_global_page(address_space, virtual_address)
             }
-        }
+        })
+    }
+
+    pub(super) fn flush_data_translation_tlb_range(
+        &mut self,
+        virtual_range: Option<AddressRange>,
+        address_space: Option<TranslationAddressSpaceId>,
+    ) -> Option<usize> {
+        let frontend = self.data_translation.as_mut()?;
+        let Some(tlb) = frontend.tlb_mut() else {
+            return Some(0);
+        };
+
+        Some(match (virtual_range, address_space) {
+            (None, None) => tlb.flush_all(),
+            (None, Some(address_space)) => tlb.flush_non_global_address_space(address_space),
+            (Some(virtual_range), None) => tlb.demap_range_all_address_spaces(virtual_range),
+            (Some(virtual_range), Some(address_space)) => {
+                tlb.demap_non_global_range(address_space, virtual_range)
+            }
+        })
     }
 
     pub(super) fn next_unissued_data_access(
@@ -789,10 +809,44 @@ impl RiscvCore {
             .and_then(|frontend| frontend.tlb().map(|tlb| tlb.entry_count()))
     }
 
+    pub fn data_translation_tlb_contains_entry(
+        &self,
+        address_space: TranslationAddressSpaceId,
+        virtual_page: Address,
+    ) -> Option<bool> {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .data_translation
+            .as_ref()
+            .and_then(|frontend| {
+                frontend
+                    .tlb()
+                    .map(|tlb| tlb.contains_entry(address_space, virtual_page))
+            })
+    }
+
     pub fn flush_data_translation_tlb(&self) -> Option<usize> {
         let mut state = self.state.lock().expect("riscv core lock");
-        let frontend = state.data_translation.as_mut()?;
-        Some(frontend.tlb_mut().map_or(0, |tlb| tlb.flush_all()))
+        state.flush_data_translation_tlb_scope(None, None)
+    }
+
+    pub fn flush_data_translation_tlb_scope(
+        &self,
+        virtual_address: Option<Address>,
+        address_space: Option<TranslationAddressSpaceId>,
+    ) -> Option<usize> {
+        let mut state = self.state.lock().expect("riscv core lock");
+        state.flush_data_translation_tlb_scope(virtual_address, address_space)
+    }
+
+    pub fn flush_data_translation_tlb_range(
+        &self,
+        virtual_range: Option<AddressRange>,
+        address_space: Option<TranslationAddressSpaceId>,
+    ) -> Option<usize> {
+        let mut state = self.state.lock().expect("riscv core lock");
+        state.flush_data_translation_tlb_range(virtual_range, address_space)
     }
 
     #[allow(clippy::too_many_arguments)]

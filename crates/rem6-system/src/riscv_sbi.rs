@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use rem6_cpu::{CpuId, RiscvCluster, RiscvCore};
 use rem6_isa_riscv::{Register, RiscvPrivilegeMode, RiscvTrapKind};
 use rem6_kernel::{PartitionedScheduler, SchedulerError};
+use rem6_memory::{AccessSize, Address, AddressRange, TranslationAddressSpaceId};
 
 use crate::{RiscvSystemRunDriver, SystemError};
 
@@ -303,17 +304,18 @@ impl RiscvSbiFirmware {
         if !valid_rfence_range(request.arg2(), request.arg3()) {
             return RiscvSbiOutcome::invalid_address();
         }
-        if request.function() == SBI_RFENCE_REMOTE_SFENCE_VMA_ASID
-            && u16::try_from(request.arg4()).is_err()
-        {
+        let Some(address_space) = rfence_address_space(request) else {
             return RiscvSbiOutcome::invalid_param();
-        }
+        };
         let Some(targets) = self.hart_mask_targets(request.arg0(), request.arg1()) else {
             return RiscvSbiOutcome::invalid_param();
         };
+        let Some(virtual_range) = rfence_virtual_range(request.arg2(), request.arg3()) else {
+            return RiscvSbiOutcome::invalid_address();
+        };
 
         for target in targets {
-            target.flush_data_translation_tlb();
+            target.flush_data_translation_tlb_range(virtual_range, address_space);
         }
         RiscvSbiOutcome::success(0)
     }
@@ -385,7 +387,29 @@ impl RiscvSbiFirmware {
 }
 
 fn valid_rfence_range(start_addr: u64, size: u64) -> bool {
-    (start_addr == 0 && size == 0) || size == u64::MAX || start_addr.checked_add(size).is_some()
+    (start_addr == 0 && size == 0)
+        || size == u64::MAX
+        || (size != 0 && start_addr.checked_add(size).is_some())
+}
+
+fn rfence_address_space(request: RiscvSbiRequest) -> Option<Option<TranslationAddressSpaceId>> {
+    if request.function() == SBI_RFENCE_REMOTE_SFENCE_VMA_ASID {
+        return u16::try_from(request.arg4())
+            .ok()
+            .map(TranslationAddressSpaceId::new)
+            .map(Some);
+    }
+    Some(None)
+}
+
+fn rfence_virtual_range(start_addr: u64, size: u64) -> Option<Option<AddressRange>> {
+    if (start_addr == 0 && size == 0) || size == u64::MAX {
+        Some(None)
+    } else {
+        Some(Some(
+            AddressRange::new(Address::new(start_addr), AccessSize::new(size).ok()?).ok()?,
+        ))
+    }
 }
 
 impl RiscvSystemRunDriver {
