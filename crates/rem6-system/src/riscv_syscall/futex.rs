@@ -75,9 +75,10 @@ pub(super) fn syscall_futex(
                     value: linux_error(RISCV_LINUX_EINVAL),
                 });
             }
+            let count = futex_wake_count(request.argument(2));
             let outcome = state
                 .guest_futexes
-                .wake_bitset(address, thread_group, usize::MAX, bitset, tick)
+                .wake_bitset(address, thread_group, count, bitset, tick)
                 .expect("guest futex bitset wake cannot fail");
             Some(RiscvSyscallOutcome::Return {
                 value: outcome.woken_count() as u64,

@@ -70,7 +70,7 @@ fn linux_table_wakes_guest_futex_waiters_by_bitset() {
 
     assert_eq!(
         table.handle_at_tick(
-            RiscvSyscallRequest::new(0x8000, 98, [address.get(), 10, 0, 0, 0, 0b01]),
+            RiscvSyscallRequest::new(0x8000, 98, [address.get(), 10, 1, 0, 0, 0b01]),
             &mut state,
             41,
         ),
@@ -79,6 +79,45 @@ fn linux_table_wakes_guest_futex_waiters_by_bitset() {
     assert_eq!(
         state.guest_futexes().waiter_threads(address, thread_group),
         vec![GuestThreadId::new(10)]
+    );
+}
+
+#[test]
+fn linux_table_futex_wake_bitset_honors_wake_count() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let address = GuestFutexAddress::new(0x186);
+    let thread_group = GuestThreadGroupId::new(100);
+    let key = GuestFutexKey::new(address, thread_group);
+
+    for (thread, bitset) in [(11, 0b01), (12, 0b01), (13, 0b10)] {
+        state
+            .guest_futexes_mut()
+            .wait(
+                GuestFutexWaitRequest::new(
+                    key,
+                    GuestThreadId::new(thread),
+                    PartitionId::new(1),
+                    24,
+                    5,
+                    5,
+                )
+                .with_bitset(bitset),
+            )
+            .unwrap();
+    }
+
+    assert_eq!(
+        table.handle_at_tick(
+            RiscvSyscallRequest::new(0x8000, 98, [address.get(), 10, 1, 0, 0, 0b01]),
+            &mut state,
+            44,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 1 })
+    );
+    assert_eq!(
+        state.guest_futexes().waiter_threads(address, thread_group),
+        vec![GuestThreadId::new(12), GuestThreadId::new(13)]
     );
 }
 
