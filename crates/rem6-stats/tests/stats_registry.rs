@@ -343,6 +343,55 @@ fn stats_registry_records_first_class_histogram_stats() {
 }
 
 #[test]
+fn stats_registry_observes_preaggregated_histogram_bucket_counts() {
+    let mut stats = StatsRegistry::new();
+    let latency = stats
+        .register_histogram_with_reset_policy(
+            "system.l2.read_latency",
+            "Cycle",
+            StatResetPolicy::Monotonic,
+        )
+        .unwrap();
+
+    stats.observe_histogram_count(latency, 8, 3).unwrap();
+    stats.observe_histogram_count(latency, 4, 0).unwrap();
+
+    let snapshot = stats.snapshot(10);
+    let sample = &snapshot.samples()[0];
+    assert_eq!(sample.kind(), StatKind::Histogram);
+    assert_eq!(sample.reset_policy(), StatResetPolicy::Monotonic);
+    assert_eq!(sample.value(), 3);
+    assert_eq!(
+        sample.histogram_buckets(),
+        [StatHistogramBucket::new(8, 3)].as_slice(),
+    );
+
+    let reset = stats.reset(11);
+    assert_eq!(reset.reset_samples()[0].previous_value(), 3);
+    assert_eq!(reset.reset_samples()[0].reset_value(), 3);
+    let after_reset = stats.snapshot(12);
+    assert_eq!(after_reset.samples()[0].value(), 3);
+    assert_eq!(
+        after_reset.samples()[0].histogram_buckets(),
+        [StatHistogramBucket::new(8, 3)].as_slice(),
+    );
+}
+
+#[test]
+fn stats_registry_rejects_preaggregated_histogram_total_overflow() {
+    let mut stats = StatsRegistry::new();
+    let latency = stats
+        .register_histogram("system.l2.read_latency", "Cycle")
+        .unwrap();
+
+    stats.observe_histogram_count(latency, 8, u64::MAX).unwrap();
+    assert_eq!(
+        stats.observe_histogram_count(latency, 4, 1).unwrap_err(),
+        StatsError::CounterOverflow { stat: latency },
+    );
+}
+
+#[test]
 fn stats_registry_rejects_histogram_misuse_and_counter_regression() {
     let mut stats = StatsRegistry::new();
     let counter = stats.register_counter("cpu0.cycles", "Cycle").unwrap();
@@ -359,7 +408,19 @@ fn stats_registry_rejects_histogram_misuse_and_counter_regression() {
         StatsError::StatIsNotHistogram { stat: counter },
     );
     assert_eq!(
+        stats.observe_histogram_count(counter, 3, 2).unwrap_err(),
+        StatsError::StatIsNotHistogram { stat: counter },
+    );
+    assert_eq!(
         stats.observe_histogram(StatId::new(99), 3).unwrap_err(),
+        StatsError::UnknownStat {
+            stat: StatId::new(99),
+        },
+    );
+    assert_eq!(
+        stats
+            .observe_histogram_count(StatId::new(99), 3, 2)
+            .unwrap_err(),
         StatsError::UnknownStat {
             stat: StatId::new(99),
         },

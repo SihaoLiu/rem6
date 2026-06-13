@@ -143,12 +143,16 @@ pub struct Rem6ExecutionSummary {
     riscv_unknown_syscalls: Vec<Rem6RiscvUnknownSyscallSummary>,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Rem6DataAccessProbeSummary {
     sample_count: u64,
     stack_distance_infinite_samples: u64,
     stack_distance_finite_samples: u64,
     stack_distance_stack_depth: u64,
+    stack_distance_read_linear: Vec<(u64, u64)>,
+    stack_distance_write_linear: Vec<(u64, u64)>,
+    stack_distance_read_log: Vec<(u64, u64)>,
+    stack_distance_write_log: Vec<(u64, u64)>,
     memory_footprint_cache_line_bytes: u64,
     memory_footprint_cache_line_total_bytes: u64,
     memory_footprint_page_bytes: u64,
@@ -920,14 +924,20 @@ fn data_access_probe_summary(
 ) -> Rem6DataAccessProbeSummary {
     run.data_access_probes()
         .map(|probes| {
-            let infinite_samples = probes.stack_distance().infinite_samples();
-            let finite_samples = probes.stack_distance().finite_samples();
+            let stack_distance = probes.stack_distance();
+            let histograms = stack_distance.histograms();
+            let infinite_samples = stack_distance.infinite_samples();
+            let finite_samples = stack_distance.finite_samples();
             let footprint = probes.memory_footprint();
             Rem6DataAccessProbeSummary {
                 sample_count: infinite_samples.saturating_add(finite_samples),
                 stack_distance_infinite_samples: infinite_samples,
                 stack_distance_finite_samples: finite_samples,
-                stack_distance_stack_depth: probes.stack_distance().stack().len() as u64,
+                stack_distance_stack_depth: stack_distance.stack().len() as u64,
+                stack_distance_read_linear: histograms.read_linear().to_vec(),
+                stack_distance_write_linear: histograms.write_linear().to_vec(),
+                stack_distance_read_log: histograms.read_log().to_vec(),
+                stack_distance_write_log: histograms.write_log().to_vec(),
                 memory_footprint_cache_line_bytes: footprint
                     .map(|snapshot| {
                         (snapshot.cache_lines().len() as u64).saturating_mul(line_layout.bytes())

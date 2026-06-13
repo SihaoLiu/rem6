@@ -231,6 +231,29 @@ impl StatsRegistry {
         path: impl Into<String>,
         unit: StatUnit,
     ) -> Result<StatId, StatsError> {
+        self.register_histogram_with_unit_and_reset_policy(path, unit, StatResetPolicy::Resettable)
+    }
+
+    pub fn register_histogram_with_reset_policy(
+        &mut self,
+        path: impl Into<String>,
+        unit: impl Into<String>,
+        reset_policy: StatResetPolicy,
+    ) -> Result<StatId, StatsError> {
+        let unit = unit.into();
+        let unit = match StatUnit::parse(unit.clone()) {
+            Ok(unit) => unit,
+            Err(reason) => return Err(StatsError::InvalidUnit { unit, reason }),
+        };
+        self.register_histogram_with_unit_and_reset_policy(path, unit, reset_policy)
+    }
+
+    pub fn register_histogram_with_unit_and_reset_policy(
+        &mut self,
+        path: impl Into<String>,
+        unit: StatUnit,
+        reset_policy: StatResetPolicy,
+    ) -> Result<StatId, StatsError> {
         let path = path.into();
         if path.is_empty() {
             return Err(StatsError::EmptyPath);
@@ -241,7 +264,7 @@ impl StatsRegistry {
             None,
             stat_path,
             unit,
-            StatResetPolicy::Resettable,
+            reset_policy,
             None,
             StatStorage::Histogram(BTreeMap::new()),
         )
@@ -475,15 +498,36 @@ impl StatsRegistry {
     }
 
     pub fn observe_histogram(&mut self, stat: StatId, bucket: u64) -> Result<(), StatsError> {
+        self.observe_histogram_count(stat, bucket, 1)
+    }
+
+    pub fn observe_histogram_count(
+        &mut self,
+        stat: StatId,
+        bucket: u64,
+        observed_count: u64,
+    ) -> Result<(), StatsError> {
         match self
             .storage
             .get_mut(&stat)
             .ok_or(StatsError::UnknownStat { stat })?
         {
             StatStorage::Histogram(buckets) => {
+                if observed_count == 0 {
+                    return Ok(());
+                }
+                if let Some(count) = buckets.get(&bucket) {
+                    count
+                        .checked_add(observed_count)
+                        .ok_or(StatsError::HistogramBucketOverflow { stat, bucket })?;
+                }
+                buckets
+                    .values()
+                    .try_fold(observed_count, |total, count| total.checked_add(*count))
+                    .ok_or(StatsError::CounterOverflow { stat })?;
                 let count = buckets.entry(bucket).or_insert(0);
                 *count = count
-                    .checked_add(1)
+                    .checked_add(observed_count)
                     .ok_or(StatsError::HistogramBucketOverflow { stat, bucket })?;
                 Ok(())
             }

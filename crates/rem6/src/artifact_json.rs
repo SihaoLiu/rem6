@@ -798,7 +798,7 @@ impl Rem6RiscvUnknownSyscallSummary {
 }
 
 impl Rem6DataAccessProbeSummary {
-    fn to_json(self) -> String {
+    fn to_json(&self) -> String {
         format!(
             "{{\"sample_count\":{},\"stack_distance\":{{\"infinite_samples\":{},\"finite_samples\":{},\"stack_depth\":{}}},\"memory_footprint\":{{\"cache_line_bytes\":{},\"cache_line_total_bytes\":{},\"page_bytes\":{},\"page_total_bytes\":{}}}}}",
             self.sample_count,

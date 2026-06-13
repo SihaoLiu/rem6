@@ -280,7 +280,9 @@ is not yet integrated across CPU pipeline and cache/DRAM runtime state.
 - [x] GDB remote packet/session parsing and RISC-V integer/PC register paths exist.
 - [x] Power and thermal models plus external power-analysis exports exist.
 - [x] Host actions and guest events are typed and checkpoint-aware.
-- [x] First-class histogram stats have registry snapshots, deltas, resets, and CLI JSON/text bucket output.
+- [x] First-class histogram stats have registry snapshots, deltas, resets,
+  CLI JSON/text bucket output, and real data-access stack-distance producer
+  output.
 - [ ] Stricter gem5 text-stat compatibility exists.
 - [ ] Cache/bank/fabric/DRAM hierarchy counters are complete.
 - [ ] GDB socket loop, step/resume/break/watch integration, and full FP/vector/CSR register cache exist.
@@ -299,6 +301,8 @@ checkpoint breadth.
 `RiscvDataAccessStats`, `SystemActionExecutor`, `GdbRemoteSession`,
 checkpoint tests including RISC-V hart run-state restore, power-analysis export
 tests, CLI data-access probe tests, and histogram registry/output tests.
+The CLI data-access probe tests include stack-distance histogram stats emitted
+from executed RISC-V loads.
 
 **Next evidence:** Gem5 text-stat compatibility, runtime resource counters, and
 GDB execution-control tests.

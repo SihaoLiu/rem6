@@ -313,6 +313,34 @@ pub(super) fn run_stats_output(
             StatResetPolicy::Constant,
             execution.data_access_probes.stack_distance_stack_depth,
         )?;
+        emit_histogram_stat(
+            &mut stats,
+            "sim.data.probes.stack_distance.read_linear",
+            "Count",
+            StatResetPolicy::Monotonic,
+            &execution.data_access_probes.stack_distance_read_linear,
+        )?;
+        emit_histogram_stat(
+            &mut stats,
+            "sim.data.probes.stack_distance.write_linear",
+            "Count",
+            StatResetPolicy::Monotonic,
+            &execution.data_access_probes.stack_distance_write_linear,
+        )?;
+        emit_histogram_stat(
+            &mut stats,
+            "sim.data.probes.stack_distance.read_log",
+            "Count",
+            StatResetPolicy::Monotonic,
+            &execution.data_access_probes.stack_distance_read_log,
+        )?;
+        emit_histogram_stat(
+            &mut stats,
+            "sim.data.probes.stack_distance.write_log",
+            "Count",
+            StatResetPolicy::Monotonic,
+            &execution.data_access_probes.stack_distance_write_log,
+        )?;
         increment_stat(
             &mut stats,
             "sim.data.probes.memory_footprint.cache_line_bytes",
@@ -1479,6 +1507,24 @@ pub(super) fn increment_stat(
         .register_counter_with_reset_policy(path, unit, reset_policy)
         .map_err(stats_error)?;
     stats.increment(stat, value).map_err(stats_error)
+}
+
+fn emit_histogram_stat(
+    stats: &mut StatsRegistry,
+    path: &str,
+    unit: &str,
+    reset_policy: StatResetPolicy,
+    buckets: &[(u64, u64)],
+) -> Result<(), Rem6CliError> {
+    let stat = stats
+        .register_histogram_with_reset_policy(path, unit, reset_policy)
+        .map_err(stats_error)?;
+    for (bucket, count) in buckets {
+        stats
+            .observe_histogram_count(stat, *bucket, *count)
+            .map_err(stats_error)?;
+    }
+    Ok(())
 }
 
 fn emit_transport_stats(

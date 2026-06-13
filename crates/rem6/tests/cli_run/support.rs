@@ -242,6 +242,36 @@ pub(crate) fn assert_stat(stdout: &str, path: &str, unit: &str, value: u64, rese
     }
 }
 
+pub(crate) fn assert_histogram_stat(
+    stdout: &str,
+    path: &str,
+    unit: &str,
+    value: u64,
+    reset_policy: &str,
+    buckets: &[(u64, u64)],
+) {
+    let sample = stat_sample(stdout, path);
+    let expected = [
+        "\"kind\":\"histogram\"".to_string(),
+        format!("\"unit\":\"{unit}\""),
+        format!("\"value\":{value}"),
+        format!("\"reset_policy\":\"{reset_policy}\""),
+    ];
+    for field in expected {
+        assert!(
+            sample.contains(&field),
+            "missing stat field {field} in {sample}"
+        );
+    }
+    for (bucket, count) in buckets {
+        let expected_bucket = format!("{{\"bucket\":{bucket},\"count\":{count}}}");
+        assert!(
+            sample.contains(&expected_bucket),
+            "missing histogram bucket {expected_bucket} in {sample}"
+        );
+    }
+}
+
 pub(crate) fn assert_stat_id(stdout: &str, path: &str, id: u64) {
     let sample = stat_sample(stdout, path);
     let expected = format!("\"id\":{id}");
@@ -259,11 +289,39 @@ fn stat_sample<'a>(stdout: &'a str, path: &str) -> &'a str {
     let sample_start = stdout[..path_index]
         .rfind('{')
         .unwrap_or_else(|| panic!("missing stat object start for {path} in {stdout}"));
-    let sample_end = stdout[path_index..]
-        .find('}')
-        .map(|offset| path_index + offset + 1)
+    let sample_end = json_object_end(stdout, sample_start)
         .unwrap_or_else(|| panic!("missing stat object end for {path} in {stdout}"));
     &stdout[sample_start..sample_end]
+}
+
+fn json_object_end(json: &str, start: usize) -> Option<usize> {
+    let mut depth = 0_u32;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (offset, byte) in json[start..].bytes().enumerate() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match byte {
+            b'"' => in_string = true,
+            b'{' => depth = depth.saturating_add(1),
+            b'}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(start + offset + 1);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 fn stat_scope_and_name(path: &str) -> (Vec<&str>, &str) {
