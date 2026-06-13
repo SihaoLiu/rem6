@@ -11,8 +11,8 @@ use rem6_kernel::{PartitionedScheduler, Tick};
 
 use crate::{
     GuestEventId, GuestFd, GuestFdCloseRecord, GuestFdDup2Record, GuestFdEntry, GuestFdError,
-    GuestFdTable, GuestFileDescription, GuestFileDescriptionId, GuestFileStatusFlags,
-    GuestFutexTable, GuestWaitQueue, RiscvSystemRunDriver, ScheduledRiscvTrap, SystemError,
+    GuestFdTable, GuestFileDescription, GuestFileDescriptionId, GuestFutexTable, GuestWaitQueue,
+    RiscvSystemRunDriver, ScheduledRiscvTrap, SystemError,
 };
 
 mod brk;
@@ -38,6 +38,7 @@ mod mmap;
 mod open;
 mod permissions;
 mod poll;
+mod process;
 mod random;
 mod readv;
 mod rename;
@@ -73,7 +74,8 @@ use fcntl::{
     RISCV_LINUX_F_SETFL,
 };
 use fd::{
-    syscall_close, syscall_dup, syscall_dup3, RISCV_LINUX_CLOSE, RISCV_LINUX_DUP, RISCV_LINUX_DUP3,
+    linux_standard_guest_fds, syscall_close, syscall_dup, syscall_dup3, RISCV_LINUX_CLOSE,
+    RISCV_LINUX_DUP, RISCV_LINUX_DUP3,
 };
 use file_read::{syscall_pread64, syscall_read, RISCV_LINUX_PREAD64, RISCV_LINUX_READ};
 use file_write::{
@@ -107,6 +109,10 @@ pub use open::RiscvGuestOpenRecord;
 use open::{syscall_open, syscall_openat, RiscvGuestOpenRequest, RISCV_LINUX_OPEN};
 use permissions::{syscall_umask, RISCV_LINUX_UMASK};
 use poll::{syscall_ppoll, RISCV_LINUX_PPOLL};
+use process::{
+    syscall_getpgid, syscall_getsid, syscall_setpgid, syscall_setsid, RISCV_LINUX_GETPGID,
+    RISCV_LINUX_GETSID, RISCV_LINUX_SETPGID, RISCV_LINUX_SETSID,
+};
 use random::{invalid_getrandom_flags, syscall_getrandom, RISCV_LINUX_GETRANDOM};
 use readv::{syscall_readv, RISCV_LINUX_READV};
 use rename::{syscall_renameat2, RISCV_LINUX_RENAMEAT2};
@@ -301,6 +307,7 @@ pub struct RiscvSyscallState {
     guest_fds: GuestFdTable,
     guest_futexes: GuestFutexTable,
     guest_wait: GuestWaitQueue,
+    session_id: u64,
     guest_paths: BTreeSet<Vec<u8>>,
     guest_directories: BTreeSet<Vec<u8>>,
     guest_directory_modes: BTreeMap<Vec<u8>, u32>,
@@ -346,6 +353,19 @@ impl RiscvSyscallState {
         Self::with_identity_and_mmap_base(program_break, identity, RISCV64_LINUX_MMAP_BASE)
     }
 
+    #[cfg(test)]
+    fn with_identity_process_group_and_session(
+        program_break: u64,
+        identity: RiscvSyscallIdentity,
+        process_group: crate::GuestProcessGroupId,
+        session_id: u64,
+    ) -> Self {
+        let mut state = Self::with_identity(program_break, identity);
+        state.guest_wait = GuestWaitQueue::new(process_group);
+        state.session_id = session_id;
+        state
+    }
+
     fn with_identity_and_mmap_base(
         program_break: u64,
         identity: RiscvSyscallIdentity,
@@ -362,6 +382,7 @@ impl RiscvSyscallState {
             guest_fds: linux_standard_guest_fds(),
             guest_futexes: GuestFutexTable::new(),
             guest_wait: GuestWaitQueue::new(current_process_group),
+            session_id: u64::from(current_process_group.get()),
             guest_paths: BTreeSet::new(),
             guest_directories: BTreeSet::new(),
             guest_directory_modes: BTreeMap::new(),
@@ -1233,6 +1254,18 @@ impl RiscvSyscallTable {
             RISCV_LINUX_TIMES | RISCV_LINUX_GETTIMEOFDAY | RISCV_LINUX_CLOCK_GETTIME => {
                 syscall_clock(request, tick, guest_memory_writer)
             }
+            RISCV_LINUX_SETPGID => Some(RiscvSyscallOutcome::Return {
+                value: syscall_setpgid(request, state),
+            }),
+            RISCV_LINUX_GETPGID => Some(RiscvSyscallOutcome::Return {
+                value: syscall_getpgid(request, state),
+            }),
+            RISCV_LINUX_GETSID => Some(RiscvSyscallOutcome::Return {
+                value: syscall_getsid(request, state),
+            }),
+            RISCV_LINUX_SETSID => Some(RiscvSyscallOutcome::Return {
+                value: syscall_setsid(state),
+            }),
             RISCV_LINUX_UNAME => {
                 guest_memory_writer.map(|guest_memory| RiscvSyscallOutcome::Return {
                     value: write_riscv_linux_utsname(request.argument(0), guest_memory),
@@ -1709,30 +1742,6 @@ fn riscv_program_break_for_boot_image(
 fn syscall_set_tid_address(clear_tid_address: u64, state: &mut RiscvSyscallState) -> u64 {
     state.set_child_clear_tid(clear_tid_address);
     state.identity().thread_id()
-}
-
-fn linux_standard_guest_fds() -> GuestFdTable {
-    let mut table = GuestFdTable::new();
-    for (fd, description, flags) in [
-        (0, 0, RISCV_LINUX_O_RDONLY),
-        (1, 1, RISCV_LINUX_O_WRONLY),
-        (2, 2, RISCV_LINUX_O_WRONLY),
-    ] {
-        let description = GuestFileDescriptionId::new(description);
-        table
-            .insert_description(GuestFileDescription::guest_backed(
-                description,
-                GuestFileStatusFlags::new(flags as u32),
-            ))
-            .expect("standard RISC-V Linux file description is unique");
-        table
-            .insert(
-                GuestFd::new(fd).expect("standard RISC-V Linux fd is non-negative"),
-                GuestFdEntry::new(description),
-            )
-            .expect("standard RISC-V Linux fd is unique");
-    }
-    table
 }
 
 pub(super) fn guest_fd_argument(value: u64) -> Option<GuestFd> {

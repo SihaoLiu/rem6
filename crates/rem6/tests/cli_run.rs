@@ -16,6 +16,8 @@ mod riscv_se_links;
 mod riscv_se_mkdir;
 #[path = "cli_run/riscv_se_permissions.rs"]
 mod riscv_se_permissions;
+#[path = "cli_run/riscv_se_process.rs"]
+mod riscv_se_process;
 #[path = "cli_run/riscv_se_rename.rs"]
 mod riscv_se_rename;
 #[path = "cli_run/riscv_se_resource.rs"]

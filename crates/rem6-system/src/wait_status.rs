@@ -218,6 +218,10 @@ impl GuestWaitQueue {
         self.current_process_group
     }
 
+    pub fn set_current_process_group(&mut self, process_group: GuestProcessGroupId) {
+        self.current_process_group = process_group;
+    }
+
     pub fn push(&mut self, child: GuestChildStatus) {
         self.pending.push(child);
     }
