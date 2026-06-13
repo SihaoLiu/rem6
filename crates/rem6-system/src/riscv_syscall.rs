@@ -92,7 +92,9 @@ use link::{syscall_link_operation, RISCV_LINUX_LINK, RISCV_LINUX_LINKAT};
 use links::syscall_readlinkat;
 use mkdir::{syscall_mkdirat, RISCV_LINUX_MKDIRAT};
 pub use mmap::RiscvMmapRegion;
-use mmap::{syscall_mmap, syscall_munmap, RISCV64_LINUX_MMAP_BASE, RISCV_PAGE_BYTES};
+use mmap::{
+    syscall_mmap, syscall_mprotect, syscall_munmap, RISCV64_LINUX_MMAP_BASE, RISCV_PAGE_BYTES,
+};
 #[cfg(test)]
 use mmap::{RISCV_LINUX_MAP_FIXED, RISCV_LINUX_MAP_PRIVATE};
 pub use open::RiscvGuestOpenRecord;
@@ -173,6 +175,7 @@ const RISCV_LINUX_ENOENT: u64 = 2;
 const RISCV_LINUX_ESRCH: u64 = 3;
 const RISCV_LINUX_EBADF: u64 = 9;
 const RISCV_LINUX_EAGAIN: u64 = 11;
+const RISCV_LINUX_ENOMEM: u64 = 12;
 const RISCV_LINUX_EFAULT: u64 = 14;
 const RISCV_LINUX_EEXIST: u64 = 17;
 const RISCV_LINUX_ENOTDIR: u64 = 20;
@@ -1205,8 +1208,15 @@ impl RiscvSyscallTable {
                 .map(|value| RiscvSyscallOutcome::Return { value }),
             RISCV_LINUX_RT_SIGTIMEDWAIT => syscall_rt_sigtimedwait(request, guest_memory_reader)
                 .map(|value| RiscvSyscallOutcome::Return { value }),
-            RISCV_LINUX_MPROTECT
-            | RISCV_LINUX_MSYNC
+            RISCV_LINUX_MPROTECT => Some(RiscvSyscallOutcome::Return {
+                value: syscall_mprotect(
+                    request.argument(0),
+                    request.argument(1),
+                    request.argument(2),
+                    state,
+                ),
+            }),
+            RISCV_LINUX_MSYNC
             | RISCV_LINUX_MLOCK
             | RISCV_LINUX_MUNLOCK
             | RISCV_LINUX_MLOCKALL

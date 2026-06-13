@@ -324,7 +324,6 @@ fn linux_table_ignores_gem5_memory_management_advisory_syscalls() {
     let mut state = RiscvSyscallState::new(0);
 
     for number in [
-        RISCV_LINUX_MPROTECT,
         RISCV_LINUX_MSYNC,
         RISCV_LINUX_MLOCK,
         RISCV_LINUX_MUNLOCK,

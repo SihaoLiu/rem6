@@ -1,7 +1,7 @@
 use super::{
     guest_fd_argument, linux_error, RiscvGuestMemoryMapResult, RiscvGuestMemoryWriter,
     RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_EBADF, RISCV_LINUX_EFAULT,
-    RISCV_LINUX_EINVAL,
+    RISCV_LINUX_EINVAL, RISCV_LINUX_ENOMEM,
 };
 
 pub(super) const RISCV_PAGE_BYTES: u64 = 4096;
@@ -101,6 +101,61 @@ impl RiscvMmapRegion {
                 self.offset,
             ));
         }
+        if end < region_end {
+            let delta = end - self.start;
+            output.push(Self::new(
+                end,
+                region_end - end,
+                self.protection,
+                self.flags,
+                self.fd,
+                self.offset.saturating_add(delta),
+            ));
+        }
+    }
+
+    pub(super) fn push_fragments_after_mprotect(
+        self,
+        start: u64,
+        length: u64,
+        protection: u64,
+        output: &mut Vec<Self>,
+    ) {
+        let Some(end) = start.checked_add(length) else {
+            output.push(self);
+            return;
+        };
+        let Some(region_end) = self.start.checked_add(self.length) else {
+            output.push(self);
+            return;
+        };
+        if start >= region_end || self.start >= end {
+            output.push(self);
+            return;
+        }
+        if self.start < start {
+            output.push(Self::new(
+                self.start,
+                start - self.start,
+                self.protection,
+                self.flags,
+                self.fd,
+                self.offset,
+            ));
+        }
+
+        let protect_start = self.start.max(start);
+        let protect_end = region_end.min(end);
+        let protect_delta = protect_start - self.start;
+        output.push(Self::new(
+            protect_start,
+            protect_end - protect_start,
+            protection,
+            self.flags,
+            self.fd,
+            self.offset.saturating_add(protect_delta),
+        ));
+
         if end < region_end {
             let delta = end - self.start;
             output.push(Self::new(
@@ -317,6 +372,59 @@ pub(super) fn syscall_munmap(
 
     state.unmap_mmap_range(start, length);
     0
+}
+
+pub(super) fn syscall_mprotect(
+    start: u64,
+    requested_length: u64,
+    protection: u64,
+    state: &mut RiscvSyscallState,
+) -> u64 {
+    if !start.is_multiple_of(RISCV_PAGE_BYTES) {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+    if requested_length == 0 {
+        return 0;
+    }
+    let Some(length) = align_to_page(requested_length) else {
+        return linux_error(RISCV_LINUX_EINVAL);
+    };
+    if start.checked_add(length).is_none() {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+    if !mmap_range_is_mapped(state, start, length) {
+        return linux_error(RISCV_LINUX_ENOMEM);
+    }
+
+    let mut regions = Vec::with_capacity(state.mmap_regions.len() + 2);
+    for region in state.mmap_regions.drain(..) {
+        region.push_fragments_after_mprotect(start, length, protection, &mut regions);
+    }
+    state.mmap_regions = regions;
+    0
+}
+
+fn mmap_range_is_mapped(state: &RiscvSyscallState, start: u64, length: u64) -> bool {
+    let Some(end) = start.checked_add(length) else {
+        return false;
+    };
+    let mut cursor = start;
+    for region in &state.mmap_regions {
+        let Some(region_end) = region.start().checked_add(region.length()) else {
+            return false;
+        };
+        if region_end <= cursor {
+            continue;
+        }
+        if region.start() > cursor {
+            return false;
+        }
+        cursor = region_end.min(end);
+        if cursor == end {
+            return true;
+        }
+    }
+    false
 }
 
 fn align_to_page(value: u64) -> Option<u64> {

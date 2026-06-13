@@ -1,5 +1,7 @@
 use super::*;
 
+const RISCV_LINUX_ENOMEM_FOR_TEST: u64 = 12;
+
 #[test]
 fn linux_table_allocates_anonymous_mmap_regions() {
     let table = RiscvSyscallTable::new();
@@ -789,6 +791,161 @@ fn linux_table_munmap_removes_mapped_ranges() {
             ),
         ]
     );
+}
+
+#[test]
+fn linux_table_mprotect_splits_regions_and_updates_protection() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let protect_start = RISCV64_LINUX_MMAP_BASE + RISCV_PAGE_BYTES;
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_MMAP,
+                [0, 3 * RISCV_PAGE_BYTES, 3, 34, u64::MAX, 0]
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: RISCV64_LINUX_MMAP_BASE
+        })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_MPROTECT,
+                [protect_start, RISCV_PAGE_BYTES, 1, 0, 0, 0]
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        state.mmap_regions(),
+        &[
+            RiscvMmapRegion::new(
+                RISCV64_LINUX_MMAP_BASE,
+                RISCV_PAGE_BYTES,
+                3,
+                34,
+                u64::MAX,
+                0,
+            ),
+            RiscvMmapRegion::new(
+                protect_start,
+                RISCV_PAGE_BYTES,
+                1,
+                34,
+                u64::MAX,
+                RISCV_PAGE_BYTES,
+            ),
+            RiscvMmapRegion::new(
+                protect_start + RISCV_PAGE_BYTES,
+                RISCV_PAGE_BYTES,
+                3,
+                34,
+                u64::MAX,
+                2 * RISCV_PAGE_BYTES,
+            ),
+        ]
+    );
+}
+
+#[test]
+fn linux_table_mprotect_rejects_holes_without_mutation() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_MMAP,
+                [0, RISCV_PAGE_BYTES, 3, 34, u64::MAX, 0]
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: RISCV64_LINUX_MMAP_BASE
+        })
+    );
+    let mapped_regions = state.mmap_regions().to_vec();
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_MPROTECT,
+                [RISCV64_LINUX_MMAP_BASE, 2 * RISCV_PAGE_BYTES, 1, 0, 0, 0]
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_ENOMEM_FOR_TEST)
+        })
+    );
+    assert_eq!(state.mmap_regions(), mapped_regions.as_slice());
+}
+
+#[test]
+fn linux_table_mprotect_rejects_invalid_arguments_without_mutation() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_MMAP,
+                [0, RISCV_PAGE_BYTES, 3, 34, u64::MAX, 0]
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: RISCV64_LINUX_MMAP_BASE
+        })
+    );
+    let mapped_regions = state.mmap_regions().to_vec();
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_MPROTECT,
+                [RISCV64_LINUX_MMAP_BASE, 0, 1, 0, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(state.mmap_regions(), mapped_regions.as_slice());
+
+    for arguments in [
+        [RISCV64_LINUX_MMAP_BASE + 1, RISCV_PAGE_BYTES, 1, 0, 0, 0],
+        [RISCV64_LINUX_MMAP_BASE, u64::MAX, 1, 0, 0, 0],
+        [
+            u64::MAX - (RISCV_PAGE_BYTES - 1),
+            RISCV_PAGE_BYTES,
+            1,
+            0,
+            0,
+            0,
+        ],
+    ] {
+        assert_eq!(
+            table.handle(
+                RiscvSyscallRequest::new(0x8004, RISCV_LINUX_MPROTECT, arguments),
+                &mut state,
+            ),
+            Some(RiscvSyscallOutcome::Return {
+                value: linux_error(RISCV_LINUX_EINVAL)
+            })
+        );
+        assert_eq!(state.mmap_regions(), mapped_regions.as_slice());
+    }
 }
 
 #[test]

@@ -423,7 +423,7 @@ fn user_ecall_rt_sigaction_returns_zero_before_exit() {
 }
 
 #[test]
-fn user_ecall_mprotect_returns_zero_before_exit() {
+fn user_ecall_mprotect_zero_length_returns_zero_before_exit() {
     let host = PartitionId::new(3);
     let source = GuestSourceId::new(50);
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
@@ -445,7 +445,7 @@ fn user_ecall_mprotect_returns_zero_before_exit() {
     core.set_privilege_mode(RiscvPrivilegeMode::User);
     let cluster = RiscvCluster::new([core.clone()]).unwrap();
     let store = loaded_program_store(&[
-        (0x8000, addi(10, 0, 77)),
+        (0x8000, addi(10, 0, 0)),
         (0x8004, addi(17, 0, 226)),
         (0x8008, 0x0000_0073),
         (0x800c, addi(5, 10, 0)),
