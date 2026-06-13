@@ -50,6 +50,7 @@ mod signal;
 mod sleep;
 mod startup;
 mod stat;
+mod sysinfo;
 mod thread;
 mod time;
 mod unknown;
@@ -148,6 +149,7 @@ use stat::{
     RISCV_LINUX_DEFAULT_DIRECTORY_PERMISSIONS, RISCV_LINUX_DEFAULT_REGULAR_FILE_PERMISSIONS,
     RISCV_LINUX_FACCESSAT, RISCV_LINUX_LSTAT, RISCV_LINUX_STATX,
 };
+use sysinfo::{syscall_sysinfo, RISCV_LINUX_SYSINFO};
 use thread::{syscall_set_tid_address, RISCV_LINUX_SET_TID_ADDRESS};
 pub use unknown::RiscvUnknownSyscallRecord;
 use unlink::{syscall_unlink_operation, RISCV_LINUX_UNLINK, RISCV_LINUX_UNLINKAT};
@@ -223,6 +225,7 @@ const RISCV_LINUX_AT_EMPTY_PATH: u64 = 0x1000;
 const RISCV_LINUX_AT_NO_AUTOMOUNT: u64 = 0x800;
 const RISCV_LINUX_AT_SYMLINK_NOFOLLOW: u64 = 0x100;
 const RISCV_LINUX_PATH_MAX: usize = 4096;
+const RISCV_LINUX_DEFAULT_SE_MEMORY_CAPACITY_BYTES: u64 = 256 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RiscvSyscallOutcome {
@@ -283,6 +286,7 @@ pub struct RiscvSyscallState {
     getrandom_byte_counter: u8,
     program_break: u64,
     program_break_backing_end: u64,
+    linux_se_memory_capacity_bytes: u64,
     mmap_next: u64,
     mmap_regions: Vec<RiscvMmapRegion>,
 }
@@ -358,6 +362,7 @@ impl RiscvSyscallState {
             getrandom_byte_counter: 0,
             program_break,
             program_break_backing_end: program_break,
+            linux_se_memory_capacity_bytes: RISCV_LINUX_DEFAULT_SE_MEMORY_CAPACITY_BYTES,
             mmap_next,
             mmap_regions: Vec::new(),
         }
@@ -459,6 +464,15 @@ impl RiscvSyscallState {
 
     pub(super) const fn program_break_backing_end(&self) -> u64 {
         self.program_break_backing_end
+    }
+
+    pub const fn with_linux_se_memory_capacity(mut self, bytes: u64) -> Self {
+        self.linux_se_memory_capacity_bytes = bytes;
+        self
+    }
+
+    const fn linux_se_memory_capacity(&self) -> u64 {
+        self.linux_se_memory_capacity_bytes
     }
 
     pub const fn mmap_next(&self) -> u64 {
@@ -1227,6 +1241,16 @@ impl RiscvSyscallTable {
             RISCV_LINUX_UNAME => {
                 guest_memory_writer.map(|guest_memory| RiscvSyscallOutcome::Return {
                     value: write_riscv_linux_utsname(request.argument(0), guest_memory),
+                })
+            }
+            RISCV_LINUX_SYSINFO => {
+                guest_memory_writer.map(|guest_memory| RiscvSyscallOutcome::Return {
+                    value: syscall_sysinfo(
+                        request.argument(0),
+                        tick,
+                        state.linux_se_memory_capacity(),
+                        guest_memory,
+                    ),
                 })
             }
             RISCV_LINUX_FUTEX => syscall_futex(request, state, tick, guest_memory_reader),

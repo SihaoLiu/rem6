@@ -51,6 +51,8 @@ mod signal_tests;
 mod startup_tests;
 #[path = "riscv_syscall_tests/stat_tests.rs"]
 mod stat_tests;
+#[path = "riscv_syscall_tests/sysinfo_tests.rs"]
+mod sysinfo_tests;
 #[path = "riscv_syscall_tests/time_tests.rs"]
 mod time_tests;
 #[path = "riscv_syscall_tests/truncate_tests.rs"]
