@@ -54,6 +54,7 @@ mod riscv_run_activity;
 mod riscv_run_control;
 mod riscv_run_driver;
 mod riscv_run_translation;
+mod riscv_sbi;
 mod riscv_syscall;
 mod rtc_checkpoint;
 mod scheduler_checkpoint;
@@ -194,6 +195,7 @@ pub use riscv_debug::{
 };
 pub use riscv_instruction_stats::{RiscvInstructionStats, RiscvRetiredInstructionProbeSnapshot};
 pub use riscv_run_activity::{RiscvSystemRunCpuActivity, RiscvSystemRunPartitionActivity};
+pub use riscv_sbi::{RiscvSbiFirmware, RiscvSbiOutcome, RiscvSbiRequest};
 pub use riscv_syscall::{
     RiscvGuestMemoryMapRequest, RiscvGuestMemoryMapResult, RiscvGuestMemoryReader,
     RiscvGuestMemoryWriter, RiscvGuestOpenRecord, RiscvGuestWriteRecord, RiscvMmapRegion,
@@ -699,6 +701,7 @@ pub struct RiscvSystemRunDriver {
     trap_port: RiscvTrapEventPort,
     instruction_stats: Option<RiscvInstructionStats>,
     data_access_stats: Option<RiscvDataAccessStats>,
+    riscv_sbi_firmware: Option<RiscvSbiFirmware>,
     riscv_syscall_emulation: Option<RiscvSyscallEmulation>,
 }
 

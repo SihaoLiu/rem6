@@ -6,6 +6,7 @@ impl RiscvSystemRunDriver {
             trap_port,
             instruction_stats: None,
             data_access_stats: None,
+            riscv_sbi_firmware: None,
             riscv_syscall_emulation: None,
         }
     }
@@ -18,6 +19,7 @@ impl RiscvSystemRunDriver {
             trap_port,
             instruction_stats: Some(instruction_stats),
             data_access_stats: None,
+            riscv_sbi_firmware: None,
             riscv_syscall_emulation: None,
         }
     }

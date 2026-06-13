@@ -21,6 +21,7 @@ mod cpu_locality;
 mod cwd;
 mod directory;
 mod dirent;
+mod exit;
 mod fcntl;
 mod fd;
 mod file_read;
@@ -49,6 +50,7 @@ mod signal;
 mod sleep;
 mod startup;
 mod stat;
+mod thread;
 mod time;
 mod unknown;
 mod unlink;
@@ -67,6 +69,7 @@ use dirent::{
     syscall_getdents64, RiscvGuestDirectoryEntry, RiscvGuestDirectoryReadError, RiscvGuestNodeKind,
     RISCV_LINUX_GETDENTS64,
 };
+use exit::{syscall_exit_code, RISCV_LINUX_EXIT, RISCV_LINUX_EXIT_GROUP};
 use fcntl::{syscall_fcntl, RISCV_LINUX_FCNTL};
 #[cfg(test)]
 use fcntl::{
@@ -139,6 +142,7 @@ use stat::{
     RISCV_LINUX_DEFAULT_DIRECTORY_PERMISSIONS, RISCV_LINUX_DEFAULT_REGULAR_FILE_PERMISSIONS,
     RISCV_LINUX_FACCESSAT, RISCV_LINUX_LSTAT,
 };
+use thread::{syscall_set_tid_address, RISCV_LINUX_SET_TID_ADDRESS};
 pub use unknown::RiscvUnknownSyscallRecord;
 use unlink::{syscall_unlink_operation, RISCV_LINUX_UNLINK, RISCV_LINUX_UNLINKAT};
 use utsname::write_riscv_linux_utsname;
@@ -153,7 +157,6 @@ const RISCV_LINUX_OPENAT: u64 = 56;
 const RISCV_LINUX_READLINKAT: u64 = 78;
 const RISCV_LINUX_NEWFSTATAT: u64 = 79;
 const RISCV_LINUX_FSTAT: u64 = 80;
-const RISCV_LINUX_SET_TID_ADDRESS: u64 = 96;
 const RISCV_LINUX_SET_ROBUST_LIST: u64 = 99;
 const RISCV_LINUX_GET_ROBUST_LIST: u64 = 100;
 const RISCV_LINUX_SCHED_YIELD: u64 = 124;
@@ -168,8 +171,6 @@ const RISCV_LINUX_RT_SIGTIMEDWAIT: u64 = 137;
 const RISCV_LINUX_RT_SIGQUEUEINFO: u64 = 138;
 const RISCV_LINUX_RT_SIGRETURN: u64 = 139;
 const RISCV_LINUX_UNAME: u64 = 160;
-const RISCV_LINUX_EXIT: u64 = 93;
-const RISCV_LINUX_EXIT_GROUP: u64 = 94;
 const RISCV_LINUX_FUTEX: u64 = 98;
 const RISCV_LINUX_BRK: u64 = 214;
 const RISCV_LINUX_MUNMAP: u64 = 215;
@@ -1686,7 +1687,16 @@ impl RiscvSystemRunDriver {
     where
         F: FnMut(CpuId) -> GuestEventId,
     {
-        if let Some(syscalls) = self.riscv_syscall_emulation.as_ref() {
+        if self.riscv_sbi_firmware.is_some() {
+            self.trap_port
+                .schedule_pending_core_traps_with_riscv_emulation(
+                    scheduler,
+                    cores,
+                    self.riscv_sbi_firmware.as_ref(),
+                    self.riscv_syscall_emulation.as_ref(),
+                    event_for,
+                )
+        } else if let Some(syscalls) = self.riscv_syscall_emulation.as_ref() {
             self.trap_port
                 .schedule_pending_core_traps_with_syscall_emulation(
                     scheduler, cores, syscalls, event_for,
@@ -1706,7 +1716,16 @@ impl RiscvSystemRunDriver {
     where
         F: FnMut(CpuId) -> GuestEventId,
     {
-        if let Some(syscalls) = self.riscv_syscall_emulation.as_ref() {
+        if self.riscv_sbi_firmware.is_some() {
+            self.trap_port
+                .schedule_pending_core_traps_with_riscv_emulation_parallel(
+                    scheduler,
+                    cores,
+                    self.riscv_sbi_firmware.as_ref(),
+                    self.riscv_syscall_emulation.as_ref(),
+                    event_for,
+                )
+        } else if let Some(syscalls) = self.riscv_syscall_emulation.as_ref() {
             self.trap_port
                 .schedule_pending_core_traps_with_syscall_emulation_parallel(
                     scheduler, cores, syscalls, event_for,
@@ -1722,10 +1741,6 @@ fn register(index: u8) -> Register {
     Register::new(index).expect("valid RISC-V integer register")
 }
 
-fn syscall_exit_code(value: u64) -> i32 {
-    value.min(i32::MAX as u64) as i32
-}
-
 fn riscv_program_break_for_boot_image(
     image: &BootImage,
 ) -> Result<u64, RiscvSyscallImageLayoutError> {
@@ -1737,11 +1752,6 @@ fn riscv_program_break_for_boot_image(
             page_bytes: RISCV_PAGE_BYTES,
         },
     )
-}
-
-fn syscall_set_tid_address(clear_tid_address: u64, state: &mut RiscvSyscallState) -> u64 {
-    state.set_child_clear_tid(clear_tid_address);
-    state.identity().thread_id()
 }
 
 pub(super) fn guest_fd_argument(value: u64) -> Option<GuestFd> {

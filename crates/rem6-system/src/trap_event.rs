@@ -9,8 +9,8 @@ use rem6_kernel::{
 
 use crate::{
     GuestEvent, GuestEventChannel, GuestEventId, GuestEventKind, GuestSourceId, GuestTrap,
-    GuestTrapKind, HostEventPolicy, RiscvSyscallEmulation, RiscvSyscallOutcome, SystemError,
-    SystemHostController, SystemRunController,
+    GuestTrapKind, HostEventPolicy, RiscvSbiFirmware, RiscvSbiOutcome, RiscvSyscallEmulation,
+    RiscvSyscallOutcome, SystemError, SystemHostController, SystemRunController,
 };
 
 const GEM5_M5_CHECKPOINT_LABEL: &str = "gem5-m5-checkpoint";
@@ -427,8 +427,13 @@ impl RiscvTrapEventPort {
         I: IntoIterator<Item = RiscvCore>,
         F: FnMut(CpuId) -> GuestEventId,
     {
-        self.schedule_pending_core_traps_with_syscall_emulation_and_mode(
-            scheduler, cores, syscalls, event_for, false,
+        self.schedule_pending_core_traps_with_riscv_emulation_and_mode(
+            scheduler,
+            cores,
+            None,
+            Some(syscalls),
+            event_for,
+            false,
         )
     }
 
@@ -443,8 +448,47 @@ impl RiscvTrapEventPort {
         I: IntoIterator<Item = RiscvCore>,
         F: FnMut(CpuId) -> GuestEventId,
     {
-        self.schedule_pending_core_traps_with_syscall_emulation_and_mode(
-            scheduler, cores, syscalls, event_for, true,
+        self.schedule_pending_core_traps_with_riscv_emulation_and_mode(
+            scheduler,
+            cores,
+            None,
+            Some(syscalls),
+            event_for,
+            true,
+        )
+    }
+
+    pub fn schedule_pending_core_traps_with_riscv_emulation<I, F>(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        cores: I,
+        sbi: Option<&RiscvSbiFirmware>,
+        syscalls: Option<&RiscvSyscallEmulation>,
+        event_for: F,
+    ) -> Result<Vec<ScheduledRiscvTrap>, SystemError>
+    where
+        I: IntoIterator<Item = RiscvCore>,
+        F: FnMut(CpuId) -> GuestEventId,
+    {
+        self.schedule_pending_core_traps_with_riscv_emulation_and_mode(
+            scheduler, cores, sbi, syscalls, event_for, false,
+        )
+    }
+
+    pub fn schedule_pending_core_traps_with_riscv_emulation_parallel<I, F>(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        cores: I,
+        sbi: Option<&RiscvSbiFirmware>,
+        syscalls: Option<&RiscvSyscallEmulation>,
+        event_for: F,
+    ) -> Result<Vec<ScheduledRiscvTrap>, SystemError>
+    where
+        I: IntoIterator<Item = RiscvCore>,
+        F: FnMut(CpuId) -> GuestEventId,
+    {
+        self.schedule_pending_core_traps_with_riscv_emulation_and_mode(
+            scheduler, cores, sbi, syscalls, event_for, true,
         )
     }
 
@@ -540,11 +584,12 @@ impl RiscvTrapEventPort {
         Ok(scheduled)
     }
 
-    fn schedule_pending_core_traps_with_syscall_emulation_and_mode<I, F>(
+    fn schedule_pending_core_traps_with_riscv_emulation_and_mode<I, F>(
         &self,
         scheduler: &mut PartitionedScheduler,
         cores: I,
-        syscalls: &RiscvSyscallEmulation,
+        sbi: Option<&RiscvSbiFirmware>,
+        syscalls: Option<&RiscvSyscallEmulation>,
         mut event_for: F,
         parallel: bool,
     ) -> Result<Vec<ScheduledRiscvTrap>, SystemError>
@@ -569,6 +614,35 @@ impl RiscvTrapEventPort {
             } else {
                 self.validate_scheduled_emit(scheduler, source, source_tick)?;
             }
+
+            if let Some(RiscvSbiOutcome::Return { error, value }) =
+                sbi.and_then(|firmware| firmware.handle_pending_core_trap(&core))
+            {
+                if core
+                    .complete_pending_supervisor_environment_call(error, value)
+                    .is_none()
+                {
+                    pending_traps.push(PendingRiscvTrapSchedule {
+                        cpu,
+                        event,
+                        source,
+                        source_tick,
+                        trap,
+                    });
+                }
+                continue;
+            }
+
+            let Some(syscalls) = syscalls else {
+                pending_traps.push(PendingRiscvTrapSchedule {
+                    cpu,
+                    event,
+                    source,
+                    source_tick,
+                    trap,
+                });
+                continue;
+            };
 
             match syscalls.handle_pending_core_trap(&core, source_tick) {
                 Some(RiscvSyscallOutcome::Exit { code }) => {
