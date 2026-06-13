@@ -41,8 +41,10 @@ mod rename;
 mod robust;
 mod seek;
 mod signal;
+mod sleep;
 mod startup;
 mod stat;
+mod time;
 mod unknown;
 mod unlink;
 mod utsname;
@@ -98,6 +100,7 @@ use signal::{
     syscall_rt_sigaction, syscall_rt_sigpending, syscall_rt_sigprocmask, syscall_rt_sigtimedwait,
     RiscvSignalAction,
 };
+use sleep::{syscall_nanosleep, RISCV_LINUX_NANOSLEEP};
 pub use startup::{
     RiscvSeAuxvEntry, RiscvSeStartupConfig, RiscvSeStartupError, RiscvSeStartupImage,
     RiscvSeStartupStringField, RISCV_LINUX_AT_ENTRY, RISCV_LINUX_AT_NULL, RISCV_LINUX_AT_PAGESZ,
@@ -128,7 +131,6 @@ const RISCV_LINUX_FSTAT: u64 = 80;
 const RISCV_LINUX_SET_TID_ADDRESS: u64 = 96;
 const RISCV_LINUX_SET_ROBUST_LIST: u64 = 99;
 const RISCV_LINUX_GET_ROBUST_LIST: u64 = 100;
-const RISCV_LINUX_NANOSLEEP: u64 = 101;
 const RISCV_LINUX_SCHED_YIELD: u64 = 124;
 const RISCV_LINUX_RT_SIGSUSPEND: u64 = 133;
 const RISCV_LINUX_RT_SIGACTION: u64 = 134;
@@ -1170,8 +1172,9 @@ impl RiscvSyscallTable {
                     value: syscall_get_robust_list(request, state, guest_memory),
                 })
             }
-            RISCV_LINUX_NANOSLEEP
-            | RISCV_LINUX_SCHED_YIELD
+            RISCV_LINUX_NANOSLEEP => syscall_nanosleep(request, guest_memory_reader)
+                .map(|value| RiscvSyscallOutcome::Return { value }),
+            RISCV_LINUX_SCHED_YIELD
             | RISCV_LINUX_RT_SIGSUSPEND
             | RISCV_LINUX_RT_SIGQUEUEINFO
             | RISCV_LINUX_RT_SIGRETURN => Some(RiscvSyscallOutcome::Return { value: 0 }),
