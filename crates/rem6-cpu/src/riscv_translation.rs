@@ -603,6 +603,34 @@ impl RiscvCore {
             .privilege_mode()
     }
 
+    pub fn machine_interrupt_pending(&self) -> u64 {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .hart
+            .machine_interrupt_pending()
+    }
+
+    pub fn set_machine_interrupt_pending(&self, pending: u64) {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .hart
+            .set_machine_interrupt_pending(pending);
+    }
+
+    pub fn set_machine_interrupt_pending_bits(&self, bits: u64) {
+        let mut state = self.state.lock().expect("riscv core lock");
+        let pending = state.hart.machine_interrupt_pending() | bits;
+        state.hart.set_machine_interrupt_pending(pending);
+    }
+
+    pub fn clear_machine_interrupt_pending_bits(&self, bits: u64) {
+        let mut state = self.state.lock().expect("riscv core lock");
+        let pending = state.hart.machine_interrupt_pending() & !bits;
+        state.hart.set_machine_interrupt_pending(pending);
+    }
+
     pub fn supervisor_exception_pc(&self) -> u64 {
         self.state
             .lock()

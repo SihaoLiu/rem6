@@ -201,8 +201,9 @@ futex wait mismatch and wake-bitset count/bitset behavior,
 regular-file modes, cwd-aware registered-path lookup, at-family
 hard-link/`renameat2` flags=0/unlink/`mkdirat`/`AT_REMOVEDIR`, and
 registered-directory `getdents64` slices; supervisor SBI base read-only
-identity/probe calls and unknown-extension error return slices; typed
-unknown-syscall records; and static smoke coverage.
+identity/probe calls, minimal TIME `set_timer` STIP scheduling, and
+unknown-extension error return slices; typed unknown-syscall records; and
+static smoke coverage.
 
 **Not migrated:** Broad Linux SE parity, process/thread lifecycle, broad SBI
 timer/IPI/reset/HSM/RFENCE behavior, full Linux boot, and real benchmark
@@ -226,8 +227,8 @@ workloads.
 `RiscvLinuxBootHandoffConfig`, and RISC-V DTB handoff tests.
 
 **Next evidence:** A static libc program beyond smoke coverage, followed by SBI
-runtime tests beyond base identity/probe calls and unknown-extension returns,
-then a real Linux boot smoke.
+runtime tests beyond base identity/probe calls, TIME `set_timer`, and
+unknown-extension returns, then a real Linux boot smoke.
 
 ### Devices and Platforms - 50% single-axis
 
@@ -357,7 +358,7 @@ checklist-backed component sections above define the auditable percentages.
 | `tests/pyunit` | `rem6-stats`, `rem6-workload`, future utility owners | 35% unit-slice | Selected pystats and stdlib semantics are covered by typed Rust tests. | Split HDF5, pystats, registry/probes, stdlib helpers, and parsing rows. |
 | `tests/gem5/regression_tests` | all rem6 crates | 35% unit-slice | Workspace tests act as the current regression suite. | Add migration tags or per-family regression rows. |
 | `tests/gem5/replacement_policies` | `rem6-cache` | 60% representative | Multiple replacement, indexing, dueling, compressed, and sector tag tests exist. | Add remaining policies and exact trace/reference parity where useful. |
-| `tests/gem5/riscv_boot_tests` | `rem6-platform`, `rem6-system`, `rem6-isa-riscv` | 35% unit-slice | DTB/initrd handoff, CLINT/PLIC, traps, CSRs, page-fault causes, translated faults, and SBI base read-only ecall slices are tested. | Add SBI timer/IPI/reset/HSM/RFENCE behavior and a real Linux boot smoke. |
+| `tests/gem5/riscv_boot_tests` | `rem6-platform`, `rem6-system`, `rem6-isa-riscv`, `rem6-cpu`, `rem6-kernel` | 35% unit-slice | DTB/initrd handoff, CLINT/PLIC, traps, CSRs, page-fault causes, translated faults, SBI base read-only ecalls, and minimal TIME `set_timer` STIP scheduling are tested. | Add broader SBI timer/IPI/reset/HSM/RFENCE behavior and a real Linux boot smoke. |
 | `tests/gem5/stats` | `rem6-stats`, `rem6` CLI, `rem6-power` | 60% representative | Hierarchical counters, reset/dump histories, deltas, real probe producers, power bindings, and CLI output exist. | Add first-class histograms, more hierarchy counters, and stricter text-stat compatibility. |
 | `tests/gem5/stdlib` | `rem6-workload`, `rem6-platform`, `rem6` CLI | 35% unit-slice | Workload manifests, resource payloads, suite dispatch plans, Linux handoff intent, and TOML/CLI tests exist. | Add broader stdlib object coverage and ergonomic topology/workload definitions. |
 | `tests/test-progs` | `rem6-system`, `rem6` CLI, ISA crates | 35% unit-slice | Static RISC-V no-libc, newlib, and raw syscall smoke binaries are generated when tools exist. | Add durable generated fixtures for hello, threads, and m5 utility shapes across ISAs. |

@@ -615,22 +615,24 @@ impl RiscvTrapEventPort {
                 self.validate_scheduled_emit(scheduler, source, source_tick)?;
             }
 
-            if let Some(RiscvSbiOutcome::Return { error, value }) =
-                sbi.and_then(|firmware| firmware.handle_pending_core_trap(&core))
-            {
-                if core
-                    .complete_pending_supervisor_environment_call(error, value)
-                    .is_none()
+            if let Some(firmware) = sbi {
+                if let Some(RiscvSbiOutcome::Return { error, value }) =
+                    firmware.handle_pending_core_trap(scheduler, &core, parallel)?
                 {
-                    pending_traps.push(PendingRiscvTrapSchedule {
-                        cpu,
-                        event,
-                        source,
-                        source_tick,
-                        trap,
-                    });
+                    if core
+                        .complete_pending_supervisor_environment_call(error, value)
+                        .is_none()
+                    {
+                        pending_traps.push(PendingRiscvTrapSchedule {
+                            cpu,
+                            event,
+                            source,
+                            source_tick,
+                            trap,
+                        });
+                    }
+                    continue;
                 }
-                continue;
             }
 
             let Some(syscalls) = syscalls else {
