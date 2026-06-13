@@ -30,6 +30,8 @@ const SBI_HSM_HART_START: u64 = 0;
 const SBI_HSM_HART_STOP: u64 = 1;
 const SBI_HSM_HART_GET_STATUS: u64 = 2;
 const SBI_HSM_HART_SUSPEND: u64 = 3;
+const SBI_HSM_DEFAULT_RETENTIVE_SUSPEND: u64 = 0;
+const SBI_HSM_DEFAULT_NON_RETENTIVE_SUSPEND: u64 = 0x8000_0000;
 const SBI_HSM_HART_STARTED: u64 = 0;
 const SBI_HSM_HART_STOPPED: u64 = 1;
 const SBI_HSM_HART_SUSPENDED: u64 = 4;
@@ -349,11 +351,14 @@ impl RiscvSbiFirmware {
     }
 
     fn hart_suspend(&self, core: &RiscvCore, request: RiscvSbiRequest) -> RiscvSbiOutcome {
-        if request.arg0() != 0 {
-            return RiscvSbiOutcome::invalid_param();
+        match request.arg0() {
+            SBI_HSM_DEFAULT_RETENTIVE_SUSPEND => {
+                core.set_hart_suspended();
+                RiscvSbiOutcome::success(0)
+            }
+            SBI_HSM_DEFAULT_NON_RETENTIVE_SUSPEND => RiscvSbiOutcome::not_supported(),
+            _ => RiscvSbiOutcome::invalid_param(),
         }
-        core.set_hart_suspended();
-        RiscvSbiOutcome::success(0)
     }
 
     fn hart_get_status(&self, request: RiscvSbiRequest) -> RiscvSbiOutcome {
