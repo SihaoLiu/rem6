@@ -382,6 +382,122 @@ fn linux_table_rt_sigprocmask_rejects_bad_size_and_bad_how() {
 }
 
 #[test]
+fn linux_table_rt_sigpending_writes_empty_guest_mask() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let pending_address = 0x3f00;
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_RT_SIGPENDING,
+                [pending_address, 8, 0, 0, 0, 0],
+            ),
+            &mut state,
+            7,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        written_signal_mask_at(&writes.lock().unwrap(), pending_address),
+        0_u64.to_le_bytes()
+    );
+}
+
+#[test]
+fn linux_table_rt_sigpending_allows_short_guest_sigset_size() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let pending_address = 0x3f40;
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_RT_SIGPENDING,
+                [pending_address, 4, 0, 0, 0, 0],
+            ),
+            &mut state,
+            7,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        written_signal_bytes_at(&writes.lock().unwrap(), pending_address),
+        vec![0, 0, 0, 0]
+    );
+}
+
+#[test]
+fn linux_table_rt_sigpending_reports_oversized_sigset_and_write_fault_errors() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let pending_address = 0x3f80;
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_RT_SIGPENDING,
+                [pending_address, 9, 0, 0, 0, 0],
+            ),
+            &mut state,
+            7,
+            None,
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EINVAL)
+        })
+    );
+
+    let faulting_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        assert_eq!(address, pending_address);
+        assert_eq!(bytes, 0_u64.to_le_bytes());
+        false
+    });
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_RT_SIGPENDING,
+                [pending_address, 8, 0, 0, 0, 0],
+            ),
+            &mut state,
+            8,
+            None,
+            Some(&faulting_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EFAULT)
+        })
+    );
+}
+
+#[test]
 fn linux_table_rt_sigaction_installs_and_queries_guest_action() {
     let table = RiscvSyscallTable::new();
     let mut state = RiscvSyscallState::new(0);
@@ -819,6 +935,14 @@ fn written_signal_mask_at(writes: &[(u64, Vec<u8>)], address: u64) -> [u8; 8] {
         .find(|(write_address, _)| *write_address == address)
         .expect("signal mask write must exist");
     bytes.as_slice().try_into().unwrap()
+}
+
+fn written_signal_bytes_at(writes: &[(u64, Vec<u8>)], address: u64) -> Vec<u8> {
+    let (_, bytes) = writes
+        .iter()
+        .find(|(write_address, _)| *write_address == address)
+        .expect("signal mask write must exist");
+    bytes.clone()
 }
 
 fn sigaction_bytes(handler: u64, flags: u64, mask: u64) -> Vec<u8> {

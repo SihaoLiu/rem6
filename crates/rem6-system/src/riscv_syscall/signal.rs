@@ -154,6 +154,23 @@ pub(super) fn syscall_rt_sigprocmask(
     Some(0)
 }
 
+pub(super) fn syscall_rt_sigpending(
+    request: RiscvSyscallRequest,
+    guest_memory_writer: Option<&RiscvGuestMemoryWriter>,
+) -> Option<u64> {
+    let sigsetsize = request.argument(1);
+    if sigsetsize > RISCV_LINUX_SIGSET_BYTES {
+        return Some(linux_error(RISCV_LINUX_EINVAL));
+    }
+
+    let guest_memory_writer = guest_memory_writer?;
+    let pending_mask = 0_u64.to_le_bytes();
+    if !guest_memory_writer.write(request.argument(0), &pending_mask[..sigsetsize as usize]) {
+        return Some(linux_error(RISCV_LINUX_EFAULT));
+    }
+    Some(0)
+}
+
 fn read_signal_mask(guest_memory_reader: &RiscvGuestMemoryReader, address: u64) -> Option<u64> {
     let bytes = guest_memory_reader.read(address, RISCV_LINUX_SIGSET_BYTES as usize)?;
     let bytes: [u8; 8] = bytes.try_into().ok()?;

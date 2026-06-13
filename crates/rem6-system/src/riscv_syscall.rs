@@ -94,7 +94,9 @@ use readv::{syscall_readv, RISCV_LINUX_READV};
 use rename::{syscall_renameat2, RISCV_LINUX_RENAMEAT2};
 use robust::{syscall_get_robust_list, syscall_set_robust_list, RiscvRobustList};
 use seek::{syscall_lseek, RISCV_LINUX_LSEEK};
-use signal::{syscall_rt_sigaction, syscall_rt_sigprocmask, RiscvSignalAction};
+use signal::{
+    syscall_rt_sigaction, syscall_rt_sigpending, syscall_rt_sigprocmask, RiscvSignalAction,
+};
 pub use startup::{
     RiscvSeAuxvEntry, RiscvSeStartupConfig, RiscvSeStartupError, RiscvSeStartupImage,
     RiscvSeStartupStringField, RISCV_LINUX_AT_ENTRY, RISCV_LINUX_AT_NULL, RISCV_LINUX_AT_PAGESZ,
@@ -1169,7 +1171,6 @@ impl RiscvSyscallTable {
             RISCV_LINUX_NANOSLEEP
             | RISCV_LINUX_SCHED_YIELD
             | RISCV_LINUX_RT_SIGSUSPEND
-            | RISCV_LINUX_RT_SIGPENDING
             | RISCV_LINUX_RT_SIGTIMEDWAIT
             | RISCV_LINUX_RT_SIGQUEUEINFO
             | RISCV_LINUX_RT_SIGRETURN => Some(RiscvSyscallOutcome::Return { value: 0 }),
@@ -1181,6 +1182,8 @@ impl RiscvSyscallTable {
                 syscall_rt_sigprocmask(request, state, guest_memory_reader, guest_memory_writer)
                     .map(|value| RiscvSyscallOutcome::Return { value })
             }
+            RISCV_LINUX_RT_SIGPENDING => syscall_rt_sigpending(request, guest_memory_writer)
+                .map(|value| RiscvSyscallOutcome::Return { value }),
             RISCV_LINUX_MPROTECT
             | RISCV_LINUX_MSYNC
             | RISCV_LINUX_MLOCK
