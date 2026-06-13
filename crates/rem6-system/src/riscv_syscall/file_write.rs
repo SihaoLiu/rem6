@@ -1,10 +1,14 @@
 use super::{
-    stat::guest_path_inode, RiscvGuestFileIdentity, RiscvGuestNodeKind, RiscvSyscallState,
-    RISCV_LINUX_O_APPEND,
+    guest_fd_argument, linux_error, stat::guest_path_inode, RiscvGuestFileIdentity,
+    RiscvGuestNodeKind, RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_EBADF,
+    RISCV_LINUX_EFBIG, RISCV_LINUX_EINVAL, RISCV_LINUX_O_ACCMODE, RISCV_LINUX_O_APPEND,
+    RISCV_LINUX_O_RDONLY,
 };
 use crate::{GuestFd, GuestFdError, GuestFileOffset};
 
 const RISCV_GUEST_FILE_DENSE_LIMIT_BYTES: u64 = 64 * 1024 * 1024;
+
+pub(super) const RISCV_LINUX_FTRUNCATE: u64 = 46;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum RiscvGuestFileWriteError {
@@ -13,6 +17,19 @@ pub(super) enum RiscvGuestFileWriteError {
 }
 
 impl From<GuestFdError> for RiscvGuestFileWriteError {
+    fn from(error: GuestFdError) -> Self {
+        Self::Fd(error)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum RiscvGuestFileResizeError {
+    Fd(GuestFdError),
+    FileTooLarge,
+    NotRegularWritableFile,
+}
+
+impl From<GuestFdError> for RiscvGuestFileResizeError {
     fn from(error: GuestFdError) -> Self {
         Self::Fd(error)
     }
@@ -111,6 +128,42 @@ impl RiscvSyscallState {
         Ok(true)
     }
 
+    pub(super) fn truncate_guest_file_from_fd(
+        &mut self,
+        fd: GuestFd,
+        length: u64,
+    ) -> Result<(), RiscvGuestFileResizeError> {
+        let status_flags = self.guest_fds.status_flags(fd)?;
+        if status_flags.bits() & (RISCV_LINUX_O_ACCMODE as u32) == RISCV_LINUX_O_RDONLY as u32 {
+            return Err(RiscvGuestFileResizeError::NotRegularWritableFile);
+        }
+
+        let description = self
+            .guest_fds
+            .entry(fd)
+            .ok_or(GuestFdError::BadFd { fd })?
+            .description();
+        let Some(contents) = self.guest_file_descriptions.get_mut(&description) else {
+            return Err(RiscvGuestFileResizeError::NotRegularWritableFile);
+        };
+        if (length as i64) < 0 {
+            return Err(RiscvGuestFileResizeError::NotRegularWritableFile);
+        }
+        if length > RISCV_GUEST_FILE_DENSE_LIMIT_BYTES {
+            return Err(RiscvGuestFileResizeError::FileTooLarge);
+        }
+        let length =
+            usize::try_from(length).map_err(|_| RiscvGuestFileResizeError::FileTooLarge)?;
+        contents.resize(length, 0);
+        let contents = contents.clone();
+        if let Some(stat) = self.guest_file_stats.get(&description).copied() {
+            self.synchronize_guest_file_contents(stat.identity, contents);
+        } else if let Some(path) = self.guest_file_description_paths.get(&description).cloned() {
+            self.guest_files.insert(path, contents);
+        }
+        Ok(())
+    }
+
     pub(super) fn guest_file_write_exceeds_dense_limit(
         &self,
         fd: GuestFd,
@@ -140,5 +193,20 @@ impl RiscvSyscallState {
 
     fn guest_fd_appends_to_file(&self, fd: GuestFd) -> Result<bool, GuestFdError> {
         Ok(self.guest_fds.status_flags(fd)?.bits() & RISCV_LINUX_O_APPEND as u32 != 0)
+    }
+}
+
+pub(super) fn syscall_ftruncate(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+) -> u64 {
+    let Some(fd) = guest_fd_argument(request.argument(0)) else {
+        return linux_error(RISCV_LINUX_EBADF);
+    };
+    match state.truncate_guest_file_from_fd(fd, request.argument(1)) {
+        Ok(()) => 0,
+        Err(RiscvGuestFileResizeError::FileTooLarge) => linux_error(RISCV_LINUX_EFBIG),
+        Err(RiscvGuestFileResizeError::NotRegularWritableFile) => linux_error(RISCV_LINUX_EINVAL),
+        Err(RiscvGuestFileResizeError::Fd(_)) => linux_error(RISCV_LINUX_EBADF),
     }
 }

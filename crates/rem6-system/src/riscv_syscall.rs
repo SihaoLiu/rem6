@@ -73,7 +73,7 @@ use fcntl::{
 use fd::{
     syscall_close, syscall_dup, syscall_dup3, RISCV_LINUX_CLOSE, RISCV_LINUX_DUP, RISCV_LINUX_DUP3,
 };
-use file_write::RiscvGuestFileWriteError;
+use file_write::{syscall_ftruncate, RiscvGuestFileWriteError, RISCV_LINUX_FTRUNCATE};
 use futex::syscall_futex;
 pub use guest_memory::{
     RiscvGuestMemoryMapRequest, RiscvGuestMemoryMapResult, RiscvGuestMemoryReader,
@@ -1035,6 +1035,9 @@ impl RiscvSyscallTable {
                 ),
             }),
             RISCV_LINUX_FCNTL => syscall_fcntl(request, state),
+            RISCV_LINUX_FTRUNCATE => Some(RiscvSyscallOutcome::Return {
+                value: syscall_ftruncate(request, state),
+            }),
             RISCV_LINUX_IOCTL => Some(RiscvSyscallOutcome::Return {
                 value: syscall_ioctl(request, state),
             }),
