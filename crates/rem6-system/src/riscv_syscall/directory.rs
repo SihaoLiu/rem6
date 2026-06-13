@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use super::permissions::apply_file_creation_mask;
 use super::{
     guest_directory_child_name, guest_path_inode, RiscvGuestDirectoryEntry, RiscvGuestNodeKind,
     RiscvSyscallState, RISCV_LINUX_DEFAULT_DIRECTORY_PERMISSIONS,
@@ -107,7 +108,7 @@ impl RiscvSyscallState {
         }
         self.guest_directories.insert(path.to_vec());
         self.guest_directory_modes
-            .insert(path.to_vec(), (mode as u32) & 0o777);
+            .insert(path.to_vec(), apply_file_creation_mask(mode, self));
         Ok(())
     }
 

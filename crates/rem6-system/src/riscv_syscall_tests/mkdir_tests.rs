@@ -4,6 +4,7 @@ const RISCV_LINUX_MKDIRAT_FOR_TEST: u64 = 34;
 const RISCV_LINUX_ACCESS_FOR_MKDIR_TEST: u64 = 1033;
 const RISCV_LINUX_CHDIR_FOR_TEST: u64 = 49;
 const RISCV_LINUX_OPENAT_FOR_MKDIR_TEST: u64 = 56;
+const RISCV_LINUX_UMASK_FOR_TEST: u64 = 166;
 const RISCV_LINUX_O_DIRECTORY_FOR_TEST: u64 = 0o200000;
 const RISCV_LINUX_W_OK_FOR_MKDIR_TEST: u64 = 2;
 const RISCV_LINUX_EEXIST_FOR_TEST: u64 = 17;
@@ -176,6 +177,92 @@ fn linux_table_mkdirat_mode_reaches_stat_and_access() {
 
     let stat = collect_guest_writes(&writes.lock().unwrap(), 0xa000, 128);
     assert_eq!(read_le_u32(&stat, 16), 0o040700);
+}
+
+#[test]
+fn linux_table_umask_returns_previous_mask_and_limits_permission_bits() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(0x8000, RISCV_LINUX_UMASK_FOR_TEST, [0o077, 0, 0, 0, 0, 0]),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_UMASK_FOR_TEST,
+                [0x1_0000_0000 | 0o123, 0, 0, 0, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0o077 })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(0x8008, RISCV_LINUX_UMASK_FOR_TEST, [0, 0, 0, 0, 0, 0]),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0o123 })
+    );
+}
+
+#[test]
+fn linux_table_mkdirat_applies_process_umask_to_directory_mode() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let guest_memory_reader = c_string_reader(&[(0x9000, b"masked")]);
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(0x8000, RISCV_LINUX_UMASK_FOR_TEST, [0o027, 0, 0, 0, 0, 0]),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_MKDIRAT_FOR_TEST,
+                [RISCV_LINUX_AT_FDCWD, 0x9000, 0o777, 0, 0, 0],
+            ),
+            &mut state,
+            8,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8008,
+                RISCV_LINUX_NEWFSTATAT,
+                [RISCV_LINUX_AT_FDCWD, 0x9000, 0xa000, 0, 0, 0],
+            ),
+            &mut state,
+            9,
+            Some(&guest_memory_reader),
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+
+    let stat = collect_guest_writes(&writes.lock().unwrap(), 0xa000, 128);
+    assert_eq!(read_le_u32(&stat, 16), 0o040750);
 }
 
 #[test]

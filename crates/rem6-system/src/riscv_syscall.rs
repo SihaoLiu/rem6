@@ -36,6 +36,7 @@ mod links;
 mod mkdir;
 mod mmap;
 mod open;
+mod permissions;
 mod poll;
 mod random;
 mod readv;
@@ -104,6 +105,7 @@ use mmap::{
 use mmap::{RISCV_LINUX_MAP_FIXED, RISCV_LINUX_MAP_PRIVATE};
 pub use open::RiscvGuestOpenRecord;
 use open::{syscall_open, syscall_openat, RiscvGuestOpenRequest, RISCV_LINUX_OPEN};
+use permissions::{syscall_umask, RISCV_LINUX_UMASK};
 use poll::{syscall_ppoll, RISCV_LINUX_PPOLL};
 use random::{invalid_getrandom_flags, syscall_getrandom, RISCV_LINUX_GETRANDOM};
 use readv::{syscall_readv, RISCV_LINUX_READV};
@@ -311,6 +313,7 @@ pub struct RiscvSyscallState {
     guest_file_stats: BTreeMap<GuestFileDescriptionId, RiscvOpenGuestFileStat>,
     guest_writes: Vec<RiscvGuestWriteRecord>,
     unknown_syscalls: Vec<RiscvUnknownSyscallRecord>,
+    file_creation_mask: u32,
     signal_mask: u64,
     signal_actions: BTreeMap<u64, RiscvSignalAction>,
     stdin: VecDeque<u8>,
@@ -370,6 +373,7 @@ impl RiscvSyscallState {
             guest_file_stats: BTreeMap::new(),
             guest_writes: Vec::new(),
             unknown_syscalls: Vec::new(),
+            file_creation_mask: 0,
             signal_mask: 0,
             signal_actions: BTreeMap::new(),
             stdin: VecDeque::new(),
@@ -534,6 +538,16 @@ impl RiscvSyscallState {
 
     fn push_unknown_syscall(&mut self, record: RiscvUnknownSyscallRecord) {
         self.unknown_syscalls.push(record);
+    }
+
+    pub(super) const fn file_creation_mask(&self) -> u32 {
+        self.file_creation_mask
+    }
+
+    pub(super) fn replace_file_creation_mask(&mut self, mask: u32) -> u32 {
+        let previous = self.file_creation_mask;
+        self.file_creation_mask = mask;
+        previous
     }
 
     pub(super) const fn signal_mask(&self) -> u64 {
@@ -1201,6 +1215,9 @@ impl RiscvSyscallTable {
                 .map(|value| RiscvSyscallOutcome::Return { value }),
             RISCV_LINUX_NANOSLEEP => syscall_nanosleep(request, guest_memory_reader)
                 .map(|value| RiscvSyscallOutcome::Return { value }),
+            RISCV_LINUX_UMASK => Some(RiscvSyscallOutcome::Return {
+                value: syscall_umask(request.argument(0), state),
+            }),
             RISCV_LINUX_SCHED_SETAFFINITY => {
                 syscall_sched_setaffinity(request, state, guest_memory_reader)
                     .map(|value| RiscvSyscallOutcome::Return { value })
