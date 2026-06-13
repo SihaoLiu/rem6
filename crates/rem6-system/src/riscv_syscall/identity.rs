@@ -1,5 +1,13 @@
 const RISCV_LINUX_SINGLE_PROCESS_ID: u64 = 100;
 
+pub(super) const RISCV_LINUX_GETPID: u64 = 172;
+pub(super) const RISCV_LINUX_GETPPID: u64 = 173;
+pub(super) const RISCV_LINUX_GETUID: u64 = 174;
+pub(super) const RISCV_LINUX_GETEUID: u64 = 175;
+pub(super) const RISCV_LINUX_GETGID: u64 = 176;
+pub(super) const RISCV_LINUX_GETEGID: u64 = 177;
+pub(super) const RISCV_LINUX_GETTID: u64 = 178;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct RiscvSyscallIdentity {
     thread_group_id: u64,
@@ -70,5 +78,18 @@ impl RiscvSyscallIdentity {
 
     pub(crate) const fn effective_group_id(self) -> u64 {
         self.effective_group_id
+    }
+}
+
+pub(super) fn syscall_identity(number: u64, identity: RiscvSyscallIdentity) -> Option<u64> {
+    match number {
+        RISCV_LINUX_GETPID => Some(identity.thread_group_id()),
+        RISCV_LINUX_GETPPID => Some(identity.parent_process_id()),
+        RISCV_LINUX_GETTID => Some(identity.thread_id()),
+        RISCV_LINUX_GETUID => Some(identity.user_id()),
+        RISCV_LINUX_GETEUID => Some(identity.effective_user_id()),
+        RISCV_LINUX_GETGID => Some(identity.group_id()),
+        RISCV_LINUX_GETEGID => Some(identity.effective_group_id()),
+        _ => None,
     }
 }

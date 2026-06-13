@@ -17,6 +17,7 @@ use crate::{
 
 mod brk;
 mod clock;
+mod cpu_locality;
 mod cwd;
 mod directory;
 mod dirent;
@@ -55,6 +56,7 @@ mod writev;
 use brk::syscall_brk;
 use clock::syscall_clock;
 use clock::{RISCV_LINUX_CLOCK_GETTIME, RISCV_LINUX_GETTIMEOFDAY, RISCV_LINUX_TIMES};
+use cpu_locality::{syscall_getcpu, RISCV_LINUX_GETCPU};
 use cwd::{syscall_chdir, syscall_fchdir, syscall_getcwd, RISCV_LINUX_CHDIR, RISCV_LINUX_FCHDIR};
 use directory::{RiscvGuestMkdirError, RiscvGuestRmdirError};
 use dirent::{
@@ -79,6 +81,10 @@ pub use guest_memory::{
 };
 pub use guest_write::RiscvGuestWriteRecord;
 pub(crate) use identity::RiscvSyscallIdentity;
+use identity::{
+    syscall_identity, RISCV_LINUX_GETEGID, RISCV_LINUX_GETEUID, RISCV_LINUX_GETGID,
+    RISCV_LINUX_GETPID, RISCV_LINUX_GETPPID, RISCV_LINUX_GETTID, RISCV_LINUX_GETUID,
+};
 use ioctl::{syscall_ioctl, RISCV_LINUX_IOCTL};
 pub use limits::RISCV_LINUX_STACK_LIMIT_BYTES;
 use limits::{syscall_prlimit64, RISCV_LINUX_PRLIMIT64};
@@ -148,13 +154,6 @@ const RISCV_LINUX_UNAME: u64 = 160;
 const RISCV_LINUX_EXIT: u64 = 93;
 const RISCV_LINUX_EXIT_GROUP: u64 = 94;
 const RISCV_LINUX_FUTEX: u64 = 98;
-const RISCV_LINUX_GETPID: u64 = 172;
-const RISCV_LINUX_GETPPID: u64 = 173;
-const RISCV_LINUX_GETUID: u64 = 174;
-const RISCV_LINUX_GETEUID: u64 = 175;
-const RISCV_LINUX_GETGID: u64 = 176;
-const RISCV_LINUX_GETEGID: u64 = 177;
-const RISCV_LINUX_GETTID: u64 = 178;
 const RISCV_LINUX_BRK: u64 = 214;
 const RISCV_LINUX_MUNMAP: u64 = 215;
 const RISCV_LINUX_MMAP: u64 = 222;
@@ -1178,6 +1177,8 @@ impl RiscvSyscallTable {
                     value: syscall_get_robust_list(request, state, guest_memory),
                 })
             }
+            RISCV_LINUX_GETCPU => syscall_getcpu(request, guest_memory_writer)
+                .map(|value| RiscvSyscallOutcome::Return { value }),
             RISCV_LINUX_NANOSLEEP => syscall_nanosleep(request, guest_memory_reader)
                 .map(|value| RiscvSyscallOutcome::Return { value }),
             RISCV_LINUX_SCHED_SETAFFINITY => {
@@ -1219,27 +1220,13 @@ impl RiscvSyscallTable {
             RISCV_LINUX_EXIT | RISCV_LINUX_EXIT_GROUP => Some(RiscvSyscallOutcome::Exit {
                 code: syscall_exit_code(request.argument(0)),
             }),
-            RISCV_LINUX_GETPID => Some(RiscvSyscallOutcome::Return {
-                value: state.identity().thread_group_id(),
-            }),
-            RISCV_LINUX_GETPPID => Some(RiscvSyscallOutcome::Return {
-                value: state.identity().parent_process_id(),
-            }),
-            RISCV_LINUX_GETTID => Some(RiscvSyscallOutcome::Return {
-                value: state.identity().thread_id(),
-            }),
-            RISCV_LINUX_GETUID => Some(RiscvSyscallOutcome::Return {
-                value: state.identity().user_id(),
-            }),
-            RISCV_LINUX_GETEUID => Some(RiscvSyscallOutcome::Return {
-                value: state.identity().effective_user_id(),
-            }),
-            RISCV_LINUX_GETGID => Some(RiscvSyscallOutcome::Return {
-                value: state.identity().group_id(),
-            }),
-            RISCV_LINUX_GETEGID => Some(RiscvSyscallOutcome::Return {
-                value: state.identity().effective_group_id(),
-            }),
+            RISCV_LINUX_GETPID | RISCV_LINUX_GETPPID | RISCV_LINUX_GETTID | RISCV_LINUX_GETUID
+            | RISCV_LINUX_GETEUID | RISCV_LINUX_GETGID | RISCV_LINUX_GETEGID => {
+                Some(RiscvSyscallOutcome::Return {
+                    value: syscall_identity(request.number(), state.identity())
+                        .expect("RISC-V Linux identity syscall is handled"),
+                })
+            }
             RISCV_LINUX_BRK => Some(RiscvSyscallOutcome::Return {
                 value: syscall_brk(request.argument(0), state, guest_memory_writer),
             }),
