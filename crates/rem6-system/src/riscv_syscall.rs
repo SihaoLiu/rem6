@@ -102,7 +102,7 @@ use identity::{
 };
 use ioctl::{syscall_ioctl, RISCV_LINUX_IOCTL};
 pub use limits::RISCV_LINUX_STACK_LIMIT_BYTES;
-use limits::{syscall_prlimit64, RISCV_LINUX_PRLIMIT64};
+use limits::{syscall_getrlimit, syscall_prlimit64, RISCV_LINUX_GETRLIMIT, RISCV_LINUX_PRLIMIT64};
 use link::{syscall_link_operation, RISCV_LINUX_LINK, RISCV_LINUX_LINKAT};
 use links::syscall_readlinkat;
 use mkdir::{syscall_mkdirat, RISCV_LINUX_MKDIRAT};
@@ -1262,6 +1262,8 @@ impl RiscvSyscallTable {
             RISCV_LINUX_GETRUSAGE => Some(RiscvSyscallOutcome::Return {
                 value: syscall_getrusage(request, guest_memory_writer),
             }),
+            RISCV_LINUX_GETRLIMIT => syscall_getrlimit(request, guest_memory_writer)
+                .map(|value| RiscvSyscallOutcome::Return { value }),
             RISCV_LINUX_PRLIMIT64 => syscall_prlimit64(request, state, guest_memory_writer)
                 .map(|value| RiscvSyscallOutcome::Return { value }),
             RISCV_LINUX_SET_ROBUST_LIST => Some(RiscvSyscallOutcome::Return {

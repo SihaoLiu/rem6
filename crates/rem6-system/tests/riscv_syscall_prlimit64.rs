@@ -11,6 +11,7 @@ use support::*;
 const RISCV_LINUX_PRLIMIT64: u64 = 261;
 const RISCV_LINUX_RLIMIT_DATA: u64 = 2;
 const RISCV_LINUX_RLIMIT_STACK: u64 = 3;
+const RISCV_LINUX_RLIMIT_NPROC: u64 = 6;
 const RISCV_LINUX_STACK_LIMIT_BYTES: u64 = 8 * 1024 * 1024;
 const RISCV_LINUX_DATA_LIMIT_BYTES: u64 = 256 * 1024 * 1024;
 
@@ -125,6 +126,33 @@ fn linux_table_prlimit64_rejects_unsupported_resource_without_writing() {
 
     let outcome = RiscvSyscallTable::new().handle_with_guest_memory_io_at_tick(
         RiscvSyscallRequest::new(0x8000, RISCV_LINUX_PRLIMIT64, [0, 7, 0, 0x9000, 0, 0]),
+        &mut state,
+        0,
+        None,
+        Some(&writer),
+    );
+
+    assert_eq!(
+        outcome,
+        Some(RiscvSyscallOutcome::Return {
+            value: 0u64.wrapping_sub(22),
+        })
+    );
+}
+
+#[test]
+fn linux_table_prlimit64_rejects_nproc_resource_without_writing() {
+    let writer = RiscvGuestMemoryWriter::new(|_address, _bytes| {
+        panic!("unsupported resource should not write guest memory")
+    });
+    let mut state = RiscvSyscallState::new(0);
+
+    let outcome = RiscvSyscallTable::new().handle_with_guest_memory_io_at_tick(
+        RiscvSyscallRequest::new(
+            0x8000,
+            RISCV_LINUX_PRLIMIT64,
+            [0, RISCV_LINUX_RLIMIT_NPROC, 0, 0x9000, 0, 0],
+        ),
         &mut state,
         0,
         None,
