@@ -8,6 +8,7 @@ const SIGRTMAX: u64 = 64;
 const SA_SIGINFO: u64 = 0x0000_0004;
 const SA_UNSUPPORTED: u64 = 0x0000_0400;
 const SA_RESTART: u64 = 0x1000_0000;
+const EAGAIN: u64 = 11;
 
 #[test]
 fn linux_table_rt_sigprocmask_blocks_mask_and_writes_previous_mask() {
@@ -498,6 +499,209 @@ fn linux_table_rt_sigpending_reports_oversized_sigset_and_write_fault_errors() {
 }
 
 #[test]
+fn linux_table_rt_sigtimedwait_returns_eagain_without_pending_signal() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let signal_set_address = 0x3fc0;
+    let timeout_address = 0x3fe0;
+    let guest_memory_reader = RiscvGuestMemoryReader::new(move |address, bytes| {
+        if address == signal_set_address && bytes == 8 {
+            Some((1_u64 << (SIGUSR1 - 1)).to_le_bytes().to_vec())
+        } else if address == timeout_address && bytes == 16 {
+            Some(timespec64_bytes(0, 0))
+        } else {
+            None
+        }
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_RT_SIGTIMEDWAIT,
+                [signal_set_address, 0, timeout_address, 8, 0, 0],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(EAGAIN)
+        })
+    );
+}
+
+#[test]
+fn linux_table_rt_sigtimedwait_without_timeout_wait_is_unhandled() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let signal_set_address = 0x4000;
+    let guest_memory_reader = RiscvGuestMemoryReader::new(move |address, bytes| {
+        if address == signal_set_address && bytes == 8 {
+            Some((1_u64 << (SIGUSR2 - 1)).to_le_bytes().to_vec())
+        } else {
+            None
+        }
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_RT_SIGTIMEDWAIT,
+                [signal_set_address, 0, 0, 8, 0, 0],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        None
+    );
+}
+
+#[test]
+fn linux_table_rt_sigtimedwait_with_positive_timeout_wait_is_unhandled() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let signal_set_address = 0x4010;
+    let timeout_address = 0x4018;
+    let guest_memory_reader = RiscvGuestMemoryReader::new(move |address, bytes| {
+        if address == signal_set_address && bytes == 8 {
+            Some((1_u64 << (SIGUSR2 - 1)).to_le_bytes().to_vec())
+        } else if address == timeout_address && bytes == 16 {
+            Some(timespec64_bytes(0, 1))
+        } else {
+            None
+        }
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_RT_SIGTIMEDWAIT,
+                [signal_set_address, 0, timeout_address, 8, 0, 0],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        None
+    );
+}
+
+#[test]
+fn linux_table_rt_sigtimedwait_reports_sigset_errors() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let signal_set_address = 0x4020;
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_RT_SIGTIMEDWAIT,
+                [signal_set_address, 0, 0, 4, 0, 0],
+            ),
+            &mut state,
+            7,
+            None,
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EINVAL)
+        })
+    );
+
+    let faulting_reader = RiscvGuestMemoryReader::new(move |address, bytes| {
+        assert_eq!(address, signal_set_address);
+        assert_eq!(bytes, 8);
+        None
+    });
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_RT_SIGTIMEDWAIT,
+                [signal_set_address, 0, 0, 8, 0, 0],
+            ),
+            &mut state,
+            8,
+            Some(&faulting_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EFAULT)
+        })
+    );
+}
+
+#[test]
+fn linux_table_rt_sigtimedwait_reports_timeout_errors() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let signal_set_address = 0x4040;
+    let timeout_address = 0x4060;
+    let faulting_timeout_reader = RiscvGuestMemoryReader::new(move |address, bytes| {
+        if address == signal_set_address && bytes == 8 {
+            Some((1_u64 << (SIGUSR1 - 1)).to_le_bytes().to_vec())
+        } else {
+            None
+        }
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_RT_SIGTIMEDWAIT,
+                [signal_set_address, 0, timeout_address, 8, 0, 0],
+            ),
+            &mut state,
+            7,
+            Some(&faulting_timeout_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EFAULT)
+        })
+    );
+
+    for (pc, seconds, nanoseconds) in [(0x8004, -1, 0), (0x8008, 0, -1), (0x800c, 0, 1_000_000_000)]
+    {
+        let invalid_timeout_reader = RiscvGuestMemoryReader::new(move |address, bytes| {
+            if address == signal_set_address && bytes == 8 {
+                Some((1_u64 << (SIGUSR1 - 1)).to_le_bytes().to_vec())
+            } else if address == timeout_address && bytes == 16 {
+                Some(timespec64_bytes(seconds, nanoseconds))
+            } else {
+                None
+            }
+        });
+
+        assert_eq!(
+            table.handle_with_guest_memory_io_at_tick(
+                RiscvSyscallRequest::new(
+                    pc,
+                    RISCV_LINUX_RT_SIGTIMEDWAIT,
+                    [signal_set_address, 0, timeout_address, 8, 0, 0],
+                ),
+                &mut state,
+                8,
+                Some(&invalid_timeout_reader),
+                None,
+            ),
+            Some(RiscvSyscallOutcome::Return {
+                value: linux_error(RISCV_LINUX_EINVAL)
+            })
+        );
+    }
+}
+
+#[test]
 fn linux_table_rt_sigaction_installs_and_queries_guest_action() {
     let table = RiscvSyscallTable::new();
     let mut state = RiscvSyscallState::new(0);
@@ -950,6 +1154,13 @@ fn sigaction_bytes(handler: u64, flags: u64, mask: u64) -> Vec<u8> {
     bytes.extend_from_slice(&handler.to_le_bytes());
     bytes.extend_from_slice(&flags.to_le_bytes());
     bytes.extend_from_slice(&mask.to_le_bytes());
+    bytes
+}
+
+fn timespec64_bytes(seconds: i64, nanoseconds: i64) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(16);
+    bytes.extend_from_slice(&seconds.to_le_bytes());
+    bytes.extend_from_slice(&nanoseconds.to_le_bytes());
     bytes
 }
 

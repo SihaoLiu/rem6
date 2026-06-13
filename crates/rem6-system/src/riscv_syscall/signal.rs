@@ -1,6 +1,6 @@
 use super::{
     linux_error, RiscvGuestMemoryReader, RiscvGuestMemoryWriter, RiscvSyscallRequest,
-    RiscvSyscallState, RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL,
+    RiscvSyscallState, RISCV_LINUX_EAGAIN, RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL,
 };
 
 const RISCV_LINUX_SIG_BLOCK: u64 = 0;
@@ -15,6 +15,7 @@ const RISCV_LINUX_FIRST_SIGNAL: u64 = 1;
 const RISCV_LINUX_LAST_SIGNAL: u64 = 64;
 const RISCV_LINUX_SIGKILL: u64 = 9;
 const RISCV_LINUX_SIGSTOP: u64 = 19;
+const RISCV_LINUX_TIMESPEC64_BYTES: usize = 16;
 const RISCV_LINUX_SA_NOCLDSTOP: u64 = 0x0000_0001;
 const RISCV_LINUX_SA_NOCLDWAIT: u64 = 0x0000_0002;
 const RISCV_LINUX_SA_SIGINFO: u64 = 0x0000_0004;
@@ -171,10 +172,55 @@ pub(super) fn syscall_rt_sigpending(
     Some(0)
 }
 
+pub(super) fn syscall_rt_sigtimedwait(
+    request: RiscvSyscallRequest,
+    guest_memory_reader: Option<&RiscvGuestMemoryReader>,
+) -> Option<u64> {
+    if request.argument(3) != RISCV_LINUX_SIGSET_BYTES {
+        return Some(linux_error(RISCV_LINUX_EINVAL));
+    }
+
+    let guest_memory_reader = guest_memory_reader?;
+    if read_signal_mask(guest_memory_reader, request.argument(0)).is_none() {
+        return Some(linux_error(RISCV_LINUX_EFAULT));
+    }
+
+    let timeout_address = request.argument(2);
+    if timeout_address == 0 {
+        return None;
+    }
+    match read_timespec64(guest_memory_reader, timeout_address) {
+        Some((0, 0)) => {}
+        Some((seconds, nanoseconds))
+            if seconds >= 0 && (0..1_000_000_000).contains(&nanoseconds) =>
+        {
+            return None;
+        }
+        Some(_) => return Some(linux_error(RISCV_LINUX_EINVAL)),
+        None => return Some(linux_error(RISCV_LINUX_EFAULT)),
+    }
+
+    Some(linux_error(RISCV_LINUX_EAGAIN))
+}
+
 fn read_signal_mask(guest_memory_reader: &RiscvGuestMemoryReader, address: u64) -> Option<u64> {
     let bytes = guest_memory_reader.read(address, RISCV_LINUX_SIGSET_BYTES as usize)?;
     let bytes: [u8; 8] = bytes.try_into().ok()?;
     Some(u64::from_le_bytes(bytes))
+}
+
+fn read_timespec64(
+    guest_memory_reader: &RiscvGuestMemoryReader,
+    address: u64,
+) -> Option<(i64, i64)> {
+    let bytes = guest_memory_reader.read(address, RISCV_LINUX_TIMESPEC64_BYTES)?;
+    if bytes.len() != RISCV_LINUX_TIMESPEC64_BYTES {
+        return None;
+    }
+    Some((
+        i64::from_le_bytes(bytes[0..8].try_into().ok()?),
+        i64::from_le_bytes(bytes[8..16].try_into().ok()?),
+    ))
 }
 
 fn blockable_signal_mask(mask: u64) -> u64 {

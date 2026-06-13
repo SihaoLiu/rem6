@@ -95,7 +95,8 @@ use rename::{syscall_renameat2, RISCV_LINUX_RENAMEAT2};
 use robust::{syscall_get_robust_list, syscall_set_robust_list, RiscvRobustList};
 use seek::{syscall_lseek, RISCV_LINUX_LSEEK};
 use signal::{
-    syscall_rt_sigaction, syscall_rt_sigpending, syscall_rt_sigprocmask, RiscvSignalAction,
+    syscall_rt_sigaction, syscall_rt_sigpending, syscall_rt_sigprocmask, syscall_rt_sigtimedwait,
+    RiscvSignalAction,
 };
 pub use startup::{
     RiscvSeAuxvEntry, RiscvSeStartupConfig, RiscvSeStartupError, RiscvSeStartupImage,
@@ -164,6 +165,7 @@ const RISCV_LINUX_STAT: u64 = 1038;
 const RISCV_LINUX_EPERM: u64 = 1;
 const RISCV_LINUX_ENOENT: u64 = 2;
 const RISCV_LINUX_EBADF: u64 = 9;
+const RISCV_LINUX_EAGAIN: u64 = 11;
 const RISCV_LINUX_EFAULT: u64 = 14;
 const RISCV_LINUX_EEXIST: u64 = 17;
 const RISCV_LINUX_ENOTDIR: u64 = 20;
@@ -1171,7 +1173,6 @@ impl RiscvSyscallTable {
             RISCV_LINUX_NANOSLEEP
             | RISCV_LINUX_SCHED_YIELD
             | RISCV_LINUX_RT_SIGSUSPEND
-            | RISCV_LINUX_RT_SIGTIMEDWAIT
             | RISCV_LINUX_RT_SIGQUEUEINFO
             | RISCV_LINUX_RT_SIGRETURN => Some(RiscvSyscallOutcome::Return { value: 0 }),
             RISCV_LINUX_RT_SIGACTION => {
@@ -1183,6 +1184,8 @@ impl RiscvSyscallTable {
                     .map(|value| RiscvSyscallOutcome::Return { value })
             }
             RISCV_LINUX_RT_SIGPENDING => syscall_rt_sigpending(request, guest_memory_writer)
+                .map(|value| RiscvSyscallOutcome::Return { value }),
+            RISCV_LINUX_RT_SIGTIMEDWAIT => syscall_rt_sigtimedwait(request, guest_memory_reader)
                 .map(|value| RiscvSyscallOutcome::Return { value }),
             RISCV_LINUX_MPROTECT
             | RISCV_LINUX_MSYNC

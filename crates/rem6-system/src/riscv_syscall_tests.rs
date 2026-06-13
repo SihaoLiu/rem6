@@ -303,7 +303,6 @@ fn linux_table_ignores_gem5_warn_once_startup_syscalls() {
         RISCV_LINUX_NANOSLEEP,
         RISCV_LINUX_SCHED_YIELD,
         RISCV_LINUX_RT_SIGSUSPEND,
-        RISCV_LINUX_RT_SIGTIMEDWAIT,
         RISCV_LINUX_RT_SIGQUEUEINFO,
         RISCV_LINUX_RT_SIGRETURN,
     ] {
