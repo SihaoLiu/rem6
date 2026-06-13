@@ -30,7 +30,7 @@ use crate::{
     riscv_data_access, CpuDataConfig, CpuTranslatedMemoryOperation, CpuTranslatedMemoryRequest,
     CpuTranslationFaultRecord, CpuTranslationFrontend, CpuTranslationFrontendError,
     CpuTranslationOutcome, CpuTranslationRequest, RiscvCore, RiscvCoreDriveAction, RiscvCoreState,
-    RiscvCpuError, RiscvCpuExecutionEvent, RiscvDataAccessTarget,
+    RiscvCpuError, RiscvCpuExecutionEvent, RiscvDataAccessTarget, RiscvHartRunState,
 };
 
 const RISCV_SV39_PTE_ACCESS_BYTES: u64 = 8;
@@ -632,17 +632,16 @@ impl RiscvCore {
     }
 
     pub fn set_machine_interrupt_pending(&self, pending: u64) {
-        self.state
-            .lock()
-            .expect("riscv core lock")
-            .hart
-            .set_machine_interrupt_pending(pending);
+        let mut state = self.state.lock().expect("riscv core lock");
+        state.hart.set_machine_interrupt_pending(pending);
+        wake_suspended_hart_on_pending_interrupt(&mut state, pending);
     }
 
     pub fn set_machine_interrupt_pending_bits(&self, bits: u64) {
         let mut state = self.state.lock().expect("riscv core lock");
         let pending = state.hart.machine_interrupt_pending() | bits;
         state.hart.set_machine_interrupt_pending(pending);
+        wake_suspended_hart_on_pending_interrupt(&mut state, pending);
     }
 
     pub fn clear_machine_interrupt_pending_bits(&self, bits: u64) {
@@ -1386,6 +1385,13 @@ impl RiscvCore {
             physical_address: translated.physical_address,
             line_layout: Some(line_layout),
         })
+    }
+}
+
+fn wake_suspended_hart_on_pending_interrupt(state: &mut RiscvCoreState, pending: u64) {
+    if pending != 0 && state.run_state == RiscvHartRunState::Suspended {
+        state.run_state = RiscvHartRunState::Started;
+        state.run_state_explicit = true;
     }
 }
 
