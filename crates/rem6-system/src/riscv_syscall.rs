@@ -6,7 +6,6 @@ use std::{
 
 use rem6_boot::BootImage;
 use rem6_cpu::{CpuId, RiscvCore};
-use rem6_isa_riscv::{Register, RiscvPrivilegeMode, RiscvTrapKind};
 use rem6_kernel::{PartitionedScheduler, Tick};
 
 use crate::{
@@ -43,6 +42,7 @@ mod process;
 mod random;
 mod readv;
 mod rename;
+mod request;
 mod robust;
 mod scheduler;
 mod seek;
@@ -119,6 +119,7 @@ use process::{
 use random::{invalid_getrandom_flags, syscall_getrandom, RISCV_LINUX_GETRANDOM};
 use readv::{syscall_readv, RISCV_LINUX_READV};
 use rename::{syscall_renameat2, RISCV_LINUX_RENAMEAT2};
+pub use request::RiscvSyscallRequest;
 use robust::{syscall_get_robust_list, syscall_set_robust_list, RiscvRobustList};
 use scheduler::{
     syscall_sched_getaffinity, syscall_sched_setaffinity, RISCV_LINUX_SCHED_GETAFFINITY,
@@ -129,7 +130,9 @@ use signal::{
     syscall_kill, syscall_rt_sigaction, syscall_rt_sigpending, syscall_rt_sigprocmask,
     syscall_rt_sigtimedwait, syscall_tgkill, syscall_tkill, RiscvSignalAction,
 };
-use sleep::{syscall_nanosleep, RISCV_LINUX_NANOSLEEP};
+use sleep::{
+    syscall_clock_nanosleep, syscall_nanosleep, RISCV_LINUX_CLOCK_NANOSLEEP, RISCV_LINUX_NANOSLEEP,
+};
 pub use startup::{
     RiscvSeAuxvEntry, RiscvSeStartupConfig, RiscvSeStartupError, RiscvSeStartupImage,
     RiscvSeStartupStringField, RISCV_LINUX_AT_ENTRY, RISCV_LINUX_AT_NULL, RISCV_LINUX_AT_PAGESZ,
@@ -205,6 +208,7 @@ const RISCV_LINUX_ERANGE: u64 = 34;
 const RISCV_LINUX_ENAMETOOLONG: u64 = 36;
 const RISCV_LINUX_ENOSYS: u64 = 38;
 const RISCV_LINUX_ENOTEMPTY: u64 = 39;
+const RISCV_LINUX_ENOTSUP: u64 = 95;
 const RISCV_LINUX_O_ACCMODE: u64 = 0x3;
 const RISCV_LINUX_O_CLOEXEC: u64 = 0o2_000_000;
 const RISCV_LINUX_O_RDONLY: u64 = 0;
@@ -216,62 +220,6 @@ const RISCV_LINUX_AT_EMPTY_PATH: u64 = 0x1000;
 const RISCV_LINUX_AT_NO_AUTOMOUNT: u64 = 0x800;
 const RISCV_LINUX_AT_SYMLINK_NOFOLLOW: u64 = 0x100;
 const RISCV_LINUX_PATH_MAX: usize = 4096;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct RiscvSyscallRequest {
-    pc: u64,
-    number: u64,
-    arguments: [u64; 6],
-}
-
-impl RiscvSyscallRequest {
-    pub const fn new(pc: u64, number: u64, arguments: [u64; 6]) -> Self {
-        Self {
-            pc,
-            number,
-            arguments,
-        }
-    }
-
-    pub const fn pc(self) -> u64 {
-        self.pc
-    }
-
-    pub const fn number(self) -> u64 {
-        self.number
-    }
-
-    pub const fn arguments(self) -> [u64; 6] {
-        self.arguments
-    }
-
-    pub const fn argument(self, index: usize) -> u64 {
-        self.arguments[index]
-    }
-
-    pub fn from_pending_core_trap(core: &RiscvCore) -> Option<Self> {
-        let trap = core.pending_trap()?;
-        if !matches!(trap.kind(), RiscvTrapKind::EnvironmentCall) {
-            return None;
-        }
-        if core.pending_trap_return_privilege_mode()? != RiscvPrivilegeMode::User {
-            return None;
-        }
-
-        Some(Self::new(
-            trap.pc(),
-            core.read_register(register(17)),
-            [
-                core.read_register(register(10)),
-                core.read_register(register(11)),
-                core.read_register(register(12)),
-                core.read_register(register(13)),
-                core.read_register(register(14)),
-                core.read_register(register(15)),
-            ],
-        ))
-    }
-}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RiscvSyscallOutcome {
@@ -1293,6 +1241,10 @@ impl RiscvSyscallTable {
                 .map(|value| RiscvSyscallOutcome::Return { value }),
             RISCV_LINUX_NANOSLEEP => syscall_nanosleep(request, guest_memory_reader)
                 .map(|value| RiscvSyscallOutcome::Return { value }),
+            RISCV_LINUX_CLOCK_NANOSLEEP => {
+                syscall_clock_nanosleep(request, tick, guest_memory_reader)
+                    .map(|value| RiscvSyscallOutcome::Return { value })
+            }
             RISCV_LINUX_UMASK => Some(RiscvSyscallOutcome::Return {
                 value: syscall_umask(request.argument(0), state),
             }),
@@ -1735,10 +1687,6 @@ impl RiscvSystemRunDriver {
                 .schedule_pending_core_traps_parallel(scheduler, cores, event_for)
         }
     }
-}
-
-fn register(index: u8) -> Register {
-    Register::new(index).expect("valid RISC-V integer register")
 }
 
 fn riscv_program_break_for_boot_image(

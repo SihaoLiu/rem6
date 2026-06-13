@@ -23,6 +23,11 @@ impl RiscvLinuxTimespec64 {
     pub(super) fn is_valid(self) -> bool {
         self.seconds >= 0 && (0..1_000_000_000).contains(&self.nanoseconds)
     }
+
+    pub(super) fn total_nanoseconds(self) -> u128 {
+        debug_assert!(self.is_valid());
+        self.seconds as u128 * 1_000_000_000 + self.nanoseconds as u128
+    }
 }
 
 pub(super) fn read_timespec64(
