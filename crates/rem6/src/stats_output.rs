@@ -387,7 +387,7 @@ pub(super) fn run_stats_output(
         parallel_stats::emit_scheduler_stats(&mut stats, execution)?;
         emit_transport_stats(&mut stats, "sim.memory.fetch", &execution.fetch_transport)?;
         emit_transport_stats(&mut stats, "sim.memory.data", &execution.data_transport)?;
-        emit_dram_stats(&mut stats, "sim.memory.dram", execution.dram)?;
+        emit_dram_stats(&mut stats, "sim.memory.dram", &execution.dram)?;
         for core in &execution.cores {
             increment_stat(
                 &mut stats,
@@ -1062,7 +1062,7 @@ fn emit_gups_response_stats(
 fn emit_dram_stats(
     stats: &mut StatsRegistry,
     prefix: &str,
-    summary: Rem6DramSummary,
+    summary: &Rem6DramSummary,
 ) -> Result<(), Rem6CliError> {
     emit_dram_counter(
         stats,
@@ -1397,6 +1397,49 @@ fn emit_dram_stats(
         "low_power.exit_latency_ticks",
         "Tick",
         summary.low_power_exit_latency_ticks,
+    )?;
+    for target in &summary.targets {
+        emit_dram_target_stats(stats, prefix, target)?;
+    }
+    Ok(())
+}
+
+fn emit_dram_target_stats(
+    stats: &mut StatsRegistry,
+    prefix: &str,
+    target: &super::Rem6DramTargetSummary,
+) -> Result<(), Rem6CliError> {
+    let prefix = format!("{prefix}.target{}", target.target);
+    emit_dram_counter(stats, &prefix, "active_ports", "Count", target.active_ports)?;
+    emit_dram_counter(stats, &prefix, "active_banks", "Count", target.active_banks)?;
+    emit_dram_counter(stats, &prefix, "accesses", "Count", target.accesses)?;
+    emit_dram_counter(stats, &prefix, "reads", "Count", target.reads)?;
+    emit_dram_counter(stats, &prefix, "writes", "Count", target.writes)?;
+    emit_dram_counter(stats, &prefix, "row_hits", "Count", target.row_hits)?;
+    emit_dram_counter(stats, &prefix, "row_misses", "Count", target.row_misses)?;
+    emit_dram_counter(stats, &prefix, "refreshes", "Count", target.refreshes)?;
+    emit_dram_counter(
+        stats,
+        &prefix,
+        "refresh_ticks",
+        "Tick",
+        target.refresh_ticks,
+    )?;
+    emit_dram_counter(stats, &prefix, "commands", "Count", target.commands)?;
+    emit_dram_counter(stats, &prefix, "turnarounds", "Count", target.turnarounds)?;
+    emit_dram_counter(
+        stats,
+        &prefix,
+        "total_ready_latency_ticks",
+        "Tick",
+        target.total_ready_latency_ticks,
+    )?;
+    emit_dram_counter(
+        stats,
+        &prefix,
+        "max_ready_latency_ticks",
+        "Tick",
+        target.max_ready_latency_ticks,
     )
 }
 

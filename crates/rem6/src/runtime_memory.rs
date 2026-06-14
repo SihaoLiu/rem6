@@ -2,6 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use rem6_dram::{
     DramLowPowerState, DramMemoryActivityProfile, DramMemoryController, DramMemoryError,
+    DramTargetActivity,
 };
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryError, MemoryRequest,
@@ -13,8 +14,8 @@ use rem6_transport::{RequestDelivery, TargetOutcome};
 use crate::config::CliDramMemoryProfile;
 use crate::guest_memory::{build_cli_dram_memory, build_cli_memory_store, CLI_MEMORY_TARGET};
 use crate::{
-    execute_error, LoadedBlob, MemoryDumpRequest, Rem6CliError, Rem6DramSummary, Rem6MemoryDump,
-    CLI_MEMORY_DUMP_AGENT,
+    execute_error, LoadedBlob, MemoryDumpRequest, Rem6CliError, Rem6DramSummary,
+    Rem6DramTargetSummary, Rem6MemoryDump, CLI_MEMORY_DUMP_AGENT,
 };
 
 const CLI_GUEST_MEMORY_AGENT: AgentId = AgentId::new(u32::MAX - 1);
@@ -52,12 +53,10 @@ impl CliMemoryRuntime {
     pub(super) fn dram_summary_until(&self, final_tick: u64) -> Rem6DramSummary {
         match self {
             Self::Store(_) => Rem6DramSummary::default(),
-            Self::Dram(memory) => Rem6DramSummary::from_profile(
-                memory
-                    .lock()
-                    .expect("CLI DRAM memory lock")
-                    .activity_profile_until(final_tick),
-            ),
+            Self::Dram(memory) => {
+                let memory = memory.lock().expect("CLI DRAM memory lock");
+                Rem6DramSummary::from_target_activities(memory.target_activities_until(final_tick))
+            }
         }
     }
 
@@ -581,6 +580,20 @@ pub(super) fn cli_memory_response(
 }
 
 impl Rem6DramSummary {
+    fn from_target_activities<I>(activities: I) -> Self
+    where
+        I: IntoIterator<Item = DramTargetActivity>,
+    {
+        let activities = activities.into_iter().collect::<Vec<_>>();
+        let profile = DramMemoryActivityProfile::from_target_activities(activities.iter());
+        let mut summary = Self::from_profile(profile);
+        summary.targets = activities
+            .iter()
+            .map(Rem6DramTargetSummary::from_activity)
+            .collect();
+        summary
+    }
+
     fn from_profile(profile: DramMemoryActivityProfile) -> Self {
         let nvm_profile = profile.profile_technology_label() == Some("nvm");
         let geometry = profile.profile_geometry();
@@ -710,6 +723,33 @@ impl Rem6DramSummary {
                 .low_power_cycle_count(DramLowPowerState::SelfRefresh),
             low_power_exits: profile.low_power_exit_count() as u64,
             low_power_exit_latency_ticks: profile.low_power_exit_latency_cycles(),
+            targets: Vec::new(),
+        }
+    }
+}
+
+impl Rem6DramTargetSummary {
+    fn from_activity(activity: &DramTargetActivity) -> Self {
+        let profile = activity.profile();
+        Self::from_profile(activity.target().get(), &profile)
+    }
+
+    fn from_profile(target: u32, profile: &rem6_dram::DramActivityProfile) -> Self {
+        Self {
+            target,
+            active_ports: profile.active_port_count() as u64,
+            active_banks: profile.active_bank_count() as u64,
+            accesses: profile.access_count() as u64,
+            reads: profile.read_count() as u64,
+            writes: profile.write_count() as u64,
+            row_hits: profile.row_hit_count() as u64,
+            row_misses: profile.row_miss_count() as u64,
+            refreshes: profile.refresh_count() as u64,
+            refresh_ticks: profile.refresh_cycle_count(),
+            commands: profile.command_count() as u64,
+            turnarounds: profile.turnaround_count() as u64,
+            total_ready_latency_ticks: profile.total_ready_latency_cycles(),
+            max_ready_latency_ticks: profile.max_ready_latency_cycles(),
         }
     }
 }

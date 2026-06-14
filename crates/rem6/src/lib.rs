@@ -197,7 +197,7 @@ impl Rem6RiscvUnknownSyscallSummary {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Rem6DramSummary {
     active_targets: u64,
     active_ports: u64,
@@ -257,6 +257,25 @@ pub struct Rem6DramSummary {
     low_power_self_refresh_ticks: u64,
     low_power_exits: u64,
     low_power_exit_latency_ticks: u64,
+    targets: Vec<Rem6DramTargetSummary>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Rem6DramTargetSummary {
+    target: u32,
+    active_ports: u64,
+    active_banks: u64,
+    accesses: u64,
+    reads: u64,
+    writes: u64,
+    row_hits: u64,
+    row_misses: u64,
+    refreshes: u64,
+    refresh_ticks: u64,
+    commands: u64,
+    turnarounds: u64,
+    total_ready_latency_ticks: u64,
+    max_ready_latency_ticks: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

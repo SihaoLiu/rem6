@@ -830,6 +830,27 @@ fn rem6_run_can_execute_riscv_elf_through_dram_memory_and_emit_dram_stats() {
     );
     assert_stat(
         &stdout,
+        "sim.memory.dram.target0.accesses",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.target0.reads",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.target0.row_misses",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
         "sim.memory.dram.profile.parallel_ports",
         "Count",
         1,
