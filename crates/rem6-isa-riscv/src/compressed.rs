@@ -1,9 +1,15 @@
-use crate::{Immediate, MemoryWidth, Register, RiscvError, RiscvInstruction};
+use crate::{FloatRegister, Immediate, MemoryWidth, Register, RiscvError, RiscvInstruction};
 
 pub(crate) fn decode_compressed(raw: u32) -> Result<RiscvInstruction, RiscvError> {
     let half = raw as u16;
     match (bits(half, 1, 0), bits(half, 15, 13)) {
         (0b00, 0b000) => decode_addi4spn(raw, half),
+        (0b00, 0b001) => Ok(RiscvInstruction::FloatLoad {
+            rd: compressed_float_register(bits(half, 4, 2)),
+            rs1: compressed_register(bits(half, 9, 7)),
+            offset: Immediate::new(i64::from(compressed_ld_offset(half))),
+            width: MemoryWidth::Doubleword,
+        }),
         (0b00, 0b010) => Ok(RiscvInstruction::Load {
             rd: compressed_register(bits(half, 4, 2)),
             rs1: compressed_register(bits(half, 9, 7)),
@@ -17,6 +23,12 @@ pub(crate) fn decode_compressed(raw: u32) -> Result<RiscvInstruction, RiscvError
             offset: Immediate::new(i64::from(compressed_ld_offset(half))),
             width: MemoryWidth::Doubleword,
             signed: true,
+        }),
+        (0b00, 0b101) => Ok(RiscvInstruction::FloatStore {
+            rs1: compressed_register(bits(half, 9, 7)),
+            rs2: compressed_float_register(bits(half, 4, 2)),
+            offset: Immediate::new(i64::from(compressed_ld_offset(half))),
+            width: MemoryWidth::Doubleword,
         }),
         (0b00, 0b110) => Ok(RiscvInstruction::Store {
             rs1: compressed_register(bits(half, 9, 7)),
@@ -58,9 +70,21 @@ pub(crate) fn decode_compressed(raw: u32) -> Result<RiscvInstruction, RiscvError
             offset: Immediate::new(compressed_branch_offset(half)),
         }),
         (0b10, 0b000) => decode_slli(raw, half),
+        (0b10, 0b001) => Ok(RiscvInstruction::FloatLoad {
+            rd: float_register(bits(half, 11, 7)),
+            rs1: register(2),
+            offset: Immediate::new(i64::from(compressed_ldsp_offset(half))),
+            width: MemoryWidth::Doubleword,
+        }),
         (0b10, 0b010) => decode_lwsp(raw, half),
         (0b10, 0b011) => decode_ldsp(raw, half),
         (0b10, 0b100) => decode_jump_move_break_or_add(raw, half),
+        (0b10, 0b101) => Ok(RiscvInstruction::FloatStore {
+            rs1: register(2),
+            rs2: float_register(bits(half, 6, 2)),
+            offset: Immediate::new(i64::from(compressed_sdsp_offset(half))),
+            width: MemoryWidth::Doubleword,
+        }),
         (0b10, 0b110) => Ok(RiscvInstruction::Store {
             rs1: register(2),
             rs2: register(bits(half, 6, 2)),
@@ -308,8 +332,16 @@ fn compressed_register(field: u32) -> Register {
     register(field + 8)
 }
 
+fn compressed_float_register(field: u32) -> FloatRegister {
+    float_register(field + 8)
+}
+
 fn register(index: u32) -> Register {
     Register::from_field(index)
+}
+
+fn float_register(index: u32) -> FloatRegister {
+    FloatRegister::from_field(index)
 }
 
 fn bit(half: u16, index: u32) -> u32 {

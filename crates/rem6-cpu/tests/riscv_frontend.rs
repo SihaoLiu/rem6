@@ -1504,6 +1504,56 @@ fn riscv_core_issues_float_load_and_updates_float_register_after_response() {
 }
 
 #[test]
+fn riscv_core_issues_compressed_float_load_after_halfword_fetch() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(9), 0x9000);
+    let store = loaded_store_with_data(
+        0x8000,
+        u32::from(0x24a8_u16),
+        0x9048,
+        6.25f64.to_bits().to_le_bytes().to_vec(),
+    );
+
+    fetch_one(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+    );
+    let event = core.execute_next_completed_fetch().unwrap().unwrap();
+
+    assert_eq!(event.fetch_pc(), Address::new(0x8000));
+    assert_eq!(
+        event.instruction(),
+        RiscvInstruction::FloatLoad {
+            rd: freg(10),
+            rs1: reg(9),
+            offset: rem6_isa_riscv::Immediate::new(72),
+            width: MemoryWidth::Doubleword,
+        }
+    );
+    assert_eq!(core.pc(), Address::new(0x8002));
+    assert_eq!(core.read_float_register(freg(10)), 0);
+
+    issue_one_data_access(&core, store, &mut scheduler, &transport, MemoryTrace::new());
+
+    assert_eq!(core.read_float_register(freg(10)), 6.25f64.to_bits());
+    let events = core.data_access_events();
+    assert_eq!(
+        events[0].access(),
+        &MemoryAccessKind::FloatLoad {
+            rd: freg(10),
+            address: 0x9048,
+            width: MemoryWidth::Doubleword,
+        }
+    );
+    assert_eq!(events[0].operation(), MemoryOperation::ReadShared);
+    assert_eq!(events[1].data(), Some(&6.25f64.to_bits().to_le_bytes()[..]));
+}
+
+#[test]
 fn riscv_core_issues_load_reserved_and_records_reservation() {
     let (mut scheduler, transport, fetch_route, data_route) = data_routes();
     let core = data_core(fetch_route, data_route, 0x8000);

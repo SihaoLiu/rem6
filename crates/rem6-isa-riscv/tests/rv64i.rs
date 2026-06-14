@@ -1,10 +1,10 @@
 use rem6_isa_riscv::{
-    AtomicMemoryOp, Immediate, MemoryAccessKind, MemoryWidth, Register, RegisterWrite,
-    RiscvCounterBank, RiscvCounterCsr, RiscvCounterSnapshot, RiscvCsrError, RiscvError,
-    RiscvExecutionRecord, RiscvFenceSet, RiscvHartState, RiscvInstruction, RiscvMachineTrapCsr,
-    RiscvMemoryOrdering, RiscvPrivilegeMode, RiscvPseudoOp, RiscvStatusCsr, RiscvStatusWord,
-    RiscvSupervisorTrapCsr, RiscvSv39AccessContext, RiscvSystemEvent, RiscvTranslationCsr,
-    RiscvTrap, RiscvTrapKind,
+    AtomicMemoryOp, FloatRegister, Immediate, MemoryAccessKind, MemoryWidth, Register,
+    RegisterWrite, RiscvCounterBank, RiscvCounterCsr, RiscvCounterSnapshot, RiscvCsrError,
+    RiscvError, RiscvExecutionRecord, RiscvFenceSet, RiscvHartState, RiscvInstruction,
+    RiscvMachineTrapCsr, RiscvMemoryOrdering, RiscvPrivilegeMode, RiscvPseudoOp, RiscvStatusCsr,
+    RiscvStatusWord, RiscvSupervisorTrapCsr, RiscvSv39AccessContext, RiscvSystemEvent,
+    RiscvTranslationCsr, RiscvTrap, RiscvTrapKind,
 };
 
 fn r_type(funct7: u32, rs2: u8, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
@@ -256,6 +256,10 @@ fn compressed(raw: u16) -> u32 {
 
 fn reg(index: u8) -> Register {
     Register::new(index).unwrap()
+}
+
+fn freg(index: u8) -> FloatRegister {
+    FloatRegister::new(index).unwrap()
 }
 
 #[test]
@@ -1439,6 +1443,54 @@ fn decoder_decompresses_rv64c_integer_control_and_memory_instructions() {
                 rd: reg(8),
                 rs1: reg(8),
                 rs2: reg(9),
+            },
+        ),
+    ];
+
+    for (raw, expected) in cases {
+        let decoded = RiscvInstruction::decode_with_length(raw).unwrap();
+        assert_eq!(decoded.instruction(), expected);
+        assert_eq!(decoded.bytes(), 2);
+    }
+}
+
+#[test]
+fn decoder_decompresses_rv64c_double_float_memory_instructions() {
+    let cases = [
+        (
+            compressed(0x24a8),
+            RiscvInstruction::FloatLoad {
+                rd: freg(10),
+                rs1: reg(9),
+                offset: Immediate::new(72),
+                width: MemoryWidth::Doubleword,
+            },
+        ),
+        (
+            compressed(0xa4a8),
+            RiscvInstruction::FloatStore {
+                rs1: reg(9),
+                rs2: freg(10),
+                offset: Immediate::new(72),
+                width: MemoryWidth::Doubleword,
+            },
+        ),
+        (
+            compressed(0x21ae),
+            RiscvInstruction::FloatLoad {
+                rd: freg(3),
+                rs1: reg(2),
+                offset: Immediate::new(200),
+                width: MemoryWidth::Doubleword,
+            },
+        ),
+        (
+            compressed(0xb592),
+            RiscvInstruction::FloatStore {
+                rs1: reg(2),
+                rs2: freg(4),
+                offset: Immediate::new(232),
+                width: MemoryWidth::Doubleword,
             },
         ),
     ];

@@ -77,31 +77,35 @@ from the checklist source.
 
 ## Component Progress
 
-### RISC-V ISA and Privileged Substrate - 56% single-axis
+### RISC-V ISA and Privileged Substrate - 59% single-axis
 
-**Score calculation:** 5 of 9 items have executable evidence, or 56% raw.
+**Score calculation:** 6 of 10 items have executable evidence, or 60% raw,
+capped to 59% by the single-axis bucket.
 The bucket cap is single-axis because non-RISC-V ISAs and full RV64GC/vector
 parity are not present.
 
 - [x] RV64 integer, atomic, CSR, trap, counter, WFI, fence, PMP/PMA slices have tests.
 - [x] RV64C integer/load-store/control-flow slices have tests.
 - [x] RV64F/RV64D scalar load/store, arithmetic, comparisons, conversions, NaN-boxing, and accrued flag slices have tests.
+- [x] RV64C double-precision FP load/store decode and compressed FP load CPU data-access slices have tests.
 - [x] Sv39 helpers and CPU memory-walker paths have tests.
 - [x] RISC-V SE ecalls reach the system syscall table.
-- [ ] Full RV64GC including remaining compressed FP, vector execution, and directed rounding coverage is complete.
+- [ ] Full RV64GC including vector execution and directed rounding coverage is complete.
 - [ ] Linux-grade privileged CSR, interrupt, and exception breadth is complete.
 - [ ] ARM, x86, Power, SPARC, MIPS, and GPU ISA execution have gem5-class owners.
 - [ ] Hardware fetch translation and full boot-time privileged behavior are complete.
 
 **Migrated:** RISC-V architectural state, large RV64 scalar slices, FP slices,
+compressed double FP load/store decoding, compressed FP load CPU data access,
 traps, translation helpers, and SE ecall plumbing.
 
-**Not migrated:** Full RV64GC/vector breadth, other major ISAs, and complete
-Linux privileged behavior.
+**Not migrated:** Full RV64GC/vector breadth, other major ISAs, directed
+rounding breadth, and complete Linux privileged behavior.
 
 **Evidence:** `RiscvInstruction::decode_with_length`,
-`decode_float_op`, `walk_sv39_page_table_with_context`, tests `rv64i`,
-`rv64m`, `rv64f`, `rv64d`, `sv39`, and privileged RISC-V tests.
+`decode_float_op`, `decode_compressed`, `walk_sv39_page_table_with_context`,
+tests `rv64i`, `rv64m`, `rv64f`, `rv64d`, `riscv_frontend`, `sv39`, and
+privileged RISC-V tests.
 
 **Next evidence:** Generated or imported RV64GC/vector instruction tests plus
 privileged Linux trap and interrupt smoke tests.
