@@ -95,9 +95,10 @@ parity are not present.
 - [ ] ARM, x86, Power, SPARC, MIPS, and GPU ISA execution have gem5-class owners.
 - [ ] Hardware fetch translation and full boot-time privileged behavior are complete.
 
-**Migrated:** RISC-V architectural state, large RV64 scalar slices, FP slices,
-compressed double FP load/store decoding, compressed FP load CPU data access,
-traps, translation helpers, and SE ecall plumbing.
+**Migrated:** RISC-V architectural state, large RV64 scalar slices, FP slices
+including fused multiply-add special-case exception flags, compressed double FP
+load/store decoding, compressed FP load CPU data access, traps, translation
+helpers, and SE ecall plumbing.
 
 **Not migrated:** Full RV64GC/vector breadth, other major ISAs, directed
 rounding breadth, and complete Linux privileged behavior.

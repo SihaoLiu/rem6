@@ -643,6 +643,25 @@ fn hart_rv64f_fused_multiply_add_raises_invalid_for_signaling_nan_only() {
 }
 
 #[test]
+fn hart_rv64f_fused_multiply_add_raises_invalid_for_infinity_times_zero() {
+    let mut hart = RiscvHartState::new(0x8000);
+    hart.write_float(freg(1), f32_box(f32::INFINITY));
+    hart.write_float(freg(2), f32_box(0.0));
+    hart.write_float(freg(3), box_single(0x7fc0_0001));
+
+    hart.execute(RiscvInstruction::FloatMultiplyAddS {
+        rd: freg(4),
+        rs1: freg(1),
+        rs2: freg(2),
+        rs3: freg(3),
+        rounding_mode: RiscvFloatRoundingMode::RoundNearestEven,
+    })
+    .unwrap();
+
+    assert_eq!(hart.float_status().fflags(), FLOAT_FLAG_INVALID);
+}
+
+#[test]
 fn hart_executes_rv64f_sqrt_and_treats_unboxed_inputs_as_nan() {
     let mut hart = RiscvHartState::new(0x8000);
     hart.write_float(freg(1), f32_box(144.0));

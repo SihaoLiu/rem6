@@ -476,9 +476,13 @@ fn quiet_compare_exception_flags_double(lhs: u64, rhs: u64) -> u64 {
 }
 
 fn multiply_add_exception_flags_single(lhs: u64, rhs: u64, addend: u64) -> u64 {
-    if is_signaling_nan_single(unbox_single(lhs))
-        || is_signaling_nan_single(unbox_single(rhs))
-        || is_signaling_nan_single(unbox_single(addend))
+    let lhs = unbox_single(lhs);
+    let rhs = unbox_single(rhs);
+    let addend = unbox_single(addend);
+    if is_signaling_nan_single(lhs)
+        || is_signaling_nan_single(rhs)
+        || is_signaling_nan_single(addend)
+        || is_infinity_times_zero_single(lhs, rhs)
     {
         FLOAT_FLAG_INVALID
     } else {
@@ -490,11 +494,22 @@ fn multiply_add_exception_flags_double(lhs: u64, rhs: u64, addend: u64) -> u64 {
     if is_signaling_nan_double(lhs)
         || is_signaling_nan_double(rhs)
         || is_signaling_nan_double(addend)
+        || is_infinity_times_zero_double(lhs, rhs)
     {
         FLOAT_FLAG_INVALID
     } else {
         0
     }
+}
+
+fn is_infinity_times_zero_single(lhs: u32, rhs: u32) -> bool {
+    (is_infinity_single(lhs) && is_zero_single(rhs))
+        || (is_zero_single(lhs) && is_infinity_single(rhs))
+}
+
+fn is_infinity_times_zero_double(lhs: u64, rhs: u64) -> bool {
+    (is_infinity_double(lhs) && is_zero_double(rhs))
+        || (is_zero_double(lhs) && is_infinity_double(rhs))
 }
 
 fn multiply_add_single(lhs: u64, rhs: u64, addend: u64) -> u64 {
@@ -953,6 +968,22 @@ fn has_single_sign(value: u32) -> bool {
 
 fn has_double_sign(value: u64) -> bool {
     value & DOUBLE_SIGN_BIT != 0
+}
+
+fn is_zero_single(value: u32) -> bool {
+    value & !SINGLE_SIGN_BIT == 0
+}
+
+fn is_zero_double(value: u64) -> bool {
+    value & !DOUBLE_SIGN_BIT == 0
+}
+
+fn is_infinity_single(value: u32) -> bool {
+    value & !SINGLE_SIGN_BIT == SINGLE_EXP_MASK
+}
+
+fn is_infinity_double(value: u64) -> bool {
+    value & !DOUBLE_SIGN_BIT == DOUBLE_EXP_MASK
 }
 
 fn is_negative_nonzero_non_nan_single(value: u32) -> bool {
