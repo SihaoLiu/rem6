@@ -1,7 +1,6 @@
-use std::collections::BTreeMap;
-
 mod activity;
 mod command;
+mod controller_activity;
 mod error;
 mod low_power;
 mod memory_controller;
@@ -13,7 +12,6 @@ mod refresh;
 mod timing;
 mod wait_for;
 
-use activity::{collect_dram_bank_activity, collect_dram_port_activity};
 pub use activity::{
     DramActivityMarker, DramActivityProfile, DramBankActivity, DramMemoryActivityMarker,
     DramMemoryActivityProfile, DramPortActivity, DramTargetActivity,
@@ -577,141 +575,8 @@ impl DramController {
         }
     }
 
-    pub fn mark_activity(&self) -> DramActivityMarker {
-        DramActivityMarker::new(self.activity_log.len())
-    }
-
     pub fn mark_wait_for(&self) -> DramWaitForMarker {
         DramWaitForMarker::new(self.wait_log.len())
-    }
-
-    pub fn bank_activities(&self) -> BTreeMap<(u32, u32), DramBankActivity> {
-        collect_dram_bank_activity(&self.activity_log)
-    }
-
-    pub fn bank_activities_since(
-        &self,
-        marker: DramActivityMarker,
-    ) -> BTreeMap<(u32, u32), DramBankActivity> {
-        let Some(accesses) = self.activity_log.get(marker.offset..) else {
-            return BTreeMap::new();
-        };
-        collect_dram_bank_activity(accesses)
-    }
-
-    pub fn bank_activity(&self, parallel_port: u32, bank: u32) -> Option<DramBankActivity> {
-        self.bank_activities().remove(&(parallel_port, bank))
-    }
-
-    pub fn port_activities(&self) -> BTreeMap<u32, DramPortActivity> {
-        collect_dram_port_activity(&self.activity_log)
-    }
-
-    pub fn port_activities_since(
-        &self,
-        marker: DramActivityMarker,
-    ) -> BTreeMap<u32, DramPortActivity> {
-        let Some(accesses) = self.activity_log.get(marker.offset..) else {
-            return BTreeMap::new();
-        };
-        collect_dram_port_activity(accesses)
-    }
-
-    pub fn port_activity(&self, parallel_port: u32) -> Option<DramPortActivity> {
-        self.port_activities().remove(&parallel_port)
-    }
-
-    pub fn activity_profile(&self) -> DramActivityProfile {
-        DramActivityProfile::from_activities(&self.port_activities(), &self.bank_activities())
-    }
-
-    pub fn activity_profile_until(&self, end_cycle: u64) -> DramActivityProfile {
-        let mut bank_activities = self.bank_activities();
-        self.record_terminal_memory_activity(&mut bank_activities, end_cycle);
-        DramActivityProfile::from_activities(&self.port_activities(), &bank_activities)
-    }
-
-    pub fn activity_profile_since(&self, marker: DramActivityMarker) -> DramActivityProfile {
-        DramActivityProfile::from_activities(
-            &self.port_activities_since(marker),
-            &self.bank_activities_since(marker),
-        )
-    }
-
-    pub fn activity_profile_since_until(
-        &self,
-        marker: DramActivityMarker,
-        end_cycle: u64,
-    ) -> DramActivityProfile {
-        let mut bank_activities = self.bank_activities_since(marker);
-        self.record_terminal_memory_activity(&mut bank_activities, end_cycle);
-        DramActivityProfile::from_activities(&self.port_activities_since(marker), &bank_activities)
-    }
-
-    fn record_terminal_memory_activity(
-        &self,
-        bank_activities: &mut BTreeMap<(u32, u32), DramBankActivity>,
-        end_cycle: u64,
-    ) {
-        let all_bank_activities = self.bank_activities();
-        let bank_count = self.geometry.bank_count() as usize;
-        let active_banks = all_bank_activities.keys().copied().collect::<Vec<_>>();
-        for (parallel_port, local_bank) in active_banks {
-            let bank_index = parallel_port as usize * bank_count + local_bank as usize;
-            let Some(bank) = self.banks.get(bank_index) else {
-                continue;
-            };
-            let Some(port) = self.ports.get(parallel_port as usize) else {
-                continue;
-            };
-            let mut bank = *bank;
-            let idle_start_cycle = port.bus_available_cycle().max(bank.available_cycle());
-            let has_open_row = bank.open_row().is_some();
-            let mut waits = Vec::new();
-            let refresh_events = if let Some(refresh_timing) = self.timing.refresh_timing() {
-                record_due_refresh_events(
-                    refresh_timing,
-                    &mut bank,
-                    DramRefreshWindow::maintenance(
-                        parallel_port,
-                        local_bank,
-                        end_cycle.saturating_sub(1),
-                    ),
-                    &mut waits,
-                )
-            } else {
-                Vec::new()
-            };
-            let mut low_power_events = Vec::new();
-            if let Some(low_power_timing) = self.timing.low_power_timing() {
-                record_low_power_before_refreshes(
-                    low_power_timing,
-                    parallel_port,
-                    idle_start_cycle,
-                    has_open_row,
-                    &refresh_events,
-                    &mut low_power_events,
-                );
-                low_power_events.extend(low_power::events_for_idle_window(
-                    low_power_timing,
-                    parallel_port,
-                    port.bus_available_cycle().max(bank.available_cycle()),
-                    end_cycle,
-                    bank.open_row().is_some(),
-                ));
-            }
-            if !refresh_events.is_empty() || !low_power_events.is_empty() {
-                let activity = bank_activities
-                    .entry((parallel_port, local_bank))
-                    .or_default();
-                activity.record_terminal_refresh_events(&refresh_events, end_cycle);
-                activity.record_terminal_low_power_events(&low_power_events);
-            }
-        }
-    }
-
-    pub fn clear_activity(&mut self) {
-        self.activity_log.clear();
     }
 
     pub fn wait_for_graph_since(&self, marker: DramWaitForMarker) -> WaitForGraph {

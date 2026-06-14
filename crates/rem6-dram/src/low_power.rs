@@ -179,6 +179,29 @@ impl DramLowPowerActivity {
         }
     }
 
+    pub(crate) fn record_events_until(&mut self, events: &[DramLowPowerEvent], end_cycle: u64) {
+        for event in events {
+            if event.entry_cycle() >= end_cycle {
+                continue;
+            }
+            let cycle_count = event.exit_cycle().min(end_cycle) - event.entry_cycle();
+            match event.state() {
+                DramLowPowerState::ActivePowerdown => {
+                    self.active_powerdown_entry_count += 1;
+                    self.active_powerdown_cycle_count += cycle_count;
+                }
+                DramLowPowerState::PrechargePowerdown => {
+                    self.precharge_powerdown_entry_count += 1;
+                    self.precharge_powerdown_cycle_count += cycle_count;
+                }
+                DramLowPowerState::SelfRefresh => {
+                    self.self_refresh_entry_count += 1;
+                    self.self_refresh_cycle_count += cycle_count;
+                }
+            }
+        }
+    }
+
     pub(crate) fn record_exit(&mut self, exit_latency_cycles: u64) {
         self.exit_count += 1;
         self.exit_latency_cycles += exit_latency_cycles;

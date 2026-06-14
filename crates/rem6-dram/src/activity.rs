@@ -114,6 +114,14 @@ impl DramBankActivity {
         self.low_power.record_events(events);
     }
 
+    pub(crate) fn record_terminal_low_power_events_until(
+        &mut self,
+        events: &[DramLowPowerEvent],
+        end_cycle: u64,
+    ) {
+        self.low_power.record_events_until(events, end_cycle);
+    }
+
     pub(crate) fn record_terminal_refresh_events(
         &mut self,
         events: &[DramRefreshEvent],
@@ -260,6 +268,55 @@ impl DramBankActivity {
     pub const fn low_power_exit_latency_cycles(&self) -> u64 {
         self.low_power.exit_latency_cycles()
     }
+
+    pub fn merge_window(mut self, later: Self) -> Self {
+        let had_accesses = self.access_count != 0;
+        self.access_count += later.access_count;
+        self.read_byte_count += later.read_byte_count;
+        self.write_byte_count += later.write_byte_count;
+        self.max_pending_nvm_reads = self.max_pending_nvm_reads.max(later.max_pending_nvm_reads);
+        self.max_pending_persistent_writes = self
+            .max_pending_persistent_writes
+            .max(later.max_pending_persistent_writes);
+        self.row_hit_count += later.row_hit_count;
+        self.row_miss_count += later.row_miss_count;
+        self.refresh_count += later.refresh_count;
+        self.refresh_cycle_count += later.refresh_cycle_count;
+        self.command_count += later.command_count;
+        if later.access_count != 0 {
+            self.first_arrival_cycle = if had_accesses {
+                self.first_arrival_cycle.min(later.first_arrival_cycle)
+            } else {
+                later.first_arrival_cycle
+            };
+        }
+        self.last_ready_cycle = self.last_ready_cycle.max(later.last_ready_cycle);
+        self.total_ready_latency_cycles += later.total_ready_latency_cycles;
+        self.max_ready_latency_cycles = self
+            .max_ready_latency_cycles
+            .max(later.max_ready_latency_cycles);
+        self.qos_access_count += later.qos_access_count;
+        self.qos_byte_count += later.qos_byte_count;
+        self.qos_escalated_access_count += later.qos_escalated_access_count;
+        merge_count_map(
+            &mut self.qos_priority_access_counts,
+            &later.qos_priority_access_counts,
+        );
+        merge_count_map(
+            &mut self.qos_priority_byte_counts,
+            &later.qos_priority_byte_counts,
+        );
+        merge_count_map(
+            &mut self.qos_requestor_access_counts,
+            &later.qos_requestor_access_counts,
+        );
+        merge_count_map(
+            &mut self.qos_requestor_byte_counts,
+            &later.qos_requestor_byte_counts,
+        );
+        self.low_power.merge(later.low_power);
+        self
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -269,11 +326,17 @@ pub struct DramPortActivity {
     write_count: usize,
     turnaround_count: usize,
     command_count: usize,
+    first_kind: Option<DramAccessKind>,
+    last_kind: Option<DramAccessKind>,
 }
 
 impl DramPortActivity {
     pub(crate) fn record(&mut self, access: &DramAccess, previous: Option<DramAccessKind>) {
         self.access_count += 1;
+        if self.first_kind.is_none() {
+            self.first_kind = Some(access.kind());
+        }
+        self.last_kind = Some(access.kind());
         match access.kind() {
             DramAccessKind::Read => self.read_count += 1,
             DramAccessKind::Write => self.write_count += 1,
@@ -302,6 +365,30 @@ impl DramPortActivity {
 
     pub const fn command_count(self) -> usize {
         self.command_count
+    }
+
+    pub const fn merge_window(self, later: Self) -> Self {
+        let boundary_turnaround = match (self.last_kind, later.first_kind) {
+            (Some(left), Some(right)) if left as u8 != right as u8 => 1,
+            _ => 0,
+        };
+        Self {
+            access_count: self.access_count + later.access_count,
+            read_count: self.read_count + later.read_count,
+            write_count: self.write_count + later.write_count,
+            turnaround_count: self.turnaround_count + later.turnaround_count + boundary_turnaround,
+            command_count: self.command_count + later.command_count,
+            first_kind: if self.first_kind.is_some() {
+                self.first_kind
+            } else {
+                later.first_kind
+            },
+            last_kind: if later.last_kind.is_some() {
+                later.last_kind
+            } else {
+                self.last_kind
+            },
+        }
     }
 }
 
@@ -667,14 +754,18 @@ pub struct DramTargetActivity {
     target: MemoryTargetId,
     profile: DramActivityProfile,
     memory_profile: Option<ExternalMemoryProfile>,
+    ports: BTreeMap<u32, DramPortActivity>,
+    banks: BTreeMap<(u32, u32), DramBankActivity>,
 }
 
 impl DramTargetActivity {
-    pub const fn new(target: MemoryTargetId, profile: DramActivityProfile) -> Self {
+    pub fn new(target: MemoryTargetId, profile: DramActivityProfile) -> Self {
         Self {
             target,
             profile,
             memory_profile: None,
+            ports: BTreeMap::new(),
+            banks: BTreeMap::new(),
         }
     }
 
@@ -683,8 +774,29 @@ impl DramTargetActivity {
         self
     }
 
+    pub fn with_resource_activities(
+        mut self,
+        ports: BTreeMap<u32, DramPortActivity>,
+        banks: BTreeMap<(u32, u32), DramBankActivity>,
+    ) -> Self {
+        self.ports = ports;
+        self.banks = banks;
+        self
+    }
+
     pub fn merge_window(mut self, later: Self) -> Self {
-        self.profile = self.profile.merge_window(later.profile);
+        let profile = self.profile.merge_window(later.profile);
+        let has_resource_activity = !self.ports.is_empty()
+            || !self.banks.is_empty()
+            || !later.ports.is_empty()
+            || !later.banks.is_empty();
+        merge_port_activity_map(&mut self.ports, later.ports);
+        merge_bank_activity_map(&mut self.banks, later.banks);
+        self.profile = if has_resource_activity {
+            DramActivityProfile::from_activities(&self.ports, &self.banks)
+        } else {
+            profile
+        };
         if self.memory_profile.is_none() {
             self.memory_profile = later.memory_profile;
         } else {
@@ -710,6 +822,14 @@ impl DramTargetActivity {
 
     pub fn profile(&self) -> DramActivityProfile {
         self.profile.clone()
+    }
+
+    pub fn port_activities(&self) -> &BTreeMap<u32, DramPortActivity> {
+        &self.ports
+    }
+
+    pub fn bank_activities(&self) -> &BTreeMap<(u32, u32), DramBankActivity> {
+        &self.banks
     }
 
     pub fn persistent_write_count(&self) -> usize {
@@ -748,6 +868,31 @@ impl DramTargetActivity {
         self.memory_profile
             .as_ref()
             .is_some_and(|profile| profile.technology() == DramMemoryTechnology::Nvm)
+    }
+}
+
+fn merge_port_activity_map(
+    target: &mut BTreeMap<u32, DramPortActivity>,
+    source: BTreeMap<u32, DramPortActivity>,
+) {
+    for (port, activity) in source {
+        target
+            .entry(port)
+            .and_modify(|stored| *stored = stored.merge_window(activity))
+            .or_insert(activity);
+    }
+}
+
+fn merge_bank_activity_map(
+    target: &mut BTreeMap<(u32, u32), DramBankActivity>,
+    source: BTreeMap<(u32, u32), DramBankActivity>,
+) {
+    for (bank, activity) in source {
+        if let Some(stored) = target.get_mut(&bank) {
+            *stored = std::mem::take(stored).merge_window(activity);
+        } else {
+            target.insert(bank, activity);
+        }
     }
 }
 
@@ -1091,6 +1236,26 @@ where
 pub(crate) fn collect_dram_bank_activity(
     accesses: &[DramAccess],
 ) -> BTreeMap<(u32, u32), DramBankActivity> {
+    collect_dram_bank_activity_from(accesses.iter())
+}
+
+pub(crate) fn collect_dram_bank_activity_until(
+    accesses: &[DramAccess],
+    end_cycle: u64,
+) -> BTreeMap<(u32, u32), DramBankActivity> {
+    collect_dram_bank_activity_from(
+        accesses
+            .iter()
+            .filter(|access| access.arrival_cycle() < end_cycle),
+    )
+}
+
+pub(crate) fn collect_dram_bank_activity_from<'a, I>(
+    accesses: I,
+) -> BTreeMap<(u32, u32), DramBankActivity>
+where
+    I: IntoIterator<Item = &'a DramAccess>,
+{
     let mut activities = BTreeMap::<(u32, u32), DramBankActivity>::new();
     for access in accesses {
         activities
@@ -1104,6 +1269,24 @@ pub(crate) fn collect_dram_bank_activity(
 pub(crate) fn collect_dram_port_activity(
     accesses: &[DramAccess],
 ) -> BTreeMap<u32, DramPortActivity> {
+    collect_dram_port_activity_from(accesses.iter())
+}
+
+pub(crate) fn collect_dram_port_activity_until(
+    accesses: &[DramAccess],
+    end_cycle: u64,
+) -> BTreeMap<u32, DramPortActivity> {
+    collect_dram_port_activity_from(
+        accesses
+            .iter()
+            .filter(|access| access.arrival_cycle() < end_cycle),
+    )
+}
+
+pub(crate) fn collect_dram_port_activity_from<'a, I>(accesses: I) -> BTreeMap<u32, DramPortActivity>
+where
+    I: IntoIterator<Item = &'a DramAccess>,
+{
     let mut activities = BTreeMap::<u32, DramPortActivity>::new();
     let mut previous_kind = BTreeMap::<u32, DramAccessKind>::new();
     for access in accesses {
@@ -1115,4 +1298,34 @@ pub(crate) fn collect_dram_port_activity(
         previous_kind.insert(port, access.kind());
     }
     activities
+}
+
+pub(crate) fn record_future_terminal_memory_activity(
+    accesses: &[DramAccess],
+    bank_activities: &mut BTreeMap<(u32, u32), DramBankActivity>,
+    end_cycle: u64,
+) {
+    for access in accesses
+        .iter()
+        .filter(|access| access.arrival_cycle() >= end_cycle)
+    {
+        let refresh_events = access
+            .refresh_events()
+            .iter()
+            .filter(|event| event.start_cycle() < end_cycle)
+            .cloned()
+            .collect::<Vec<_>>();
+        let has_low_power = access
+            .low_power_events()
+            .iter()
+            .any(|event| event.entry_cycle() < end_cycle);
+        if refresh_events.is_empty() && !has_low_power {
+            continue;
+        }
+        let activity = bank_activities
+            .entry((access.parallel_port(), access.bank()))
+            .or_default();
+        activity.record_terminal_refresh_events(&refresh_events, end_cycle);
+        activity.record_terminal_low_power_events_until(access.low_power_events(), end_cycle);
+    }
 }

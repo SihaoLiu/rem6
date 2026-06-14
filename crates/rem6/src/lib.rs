@@ -276,6 +276,33 @@ pub struct Rem6DramTargetSummary {
     turnarounds: u64,
     total_ready_latency_ticks: u64,
     max_ready_latency_ticks: u64,
+    ports: Vec<Rem6DramPortSummary>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Rem6DramPortSummary {
+    port: u32,
+    accesses: u64,
+    reads: u64,
+    writes: u64,
+    turnarounds: u64,
+    commands: u64,
+    banks: Vec<Rem6DramBankSummary>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Rem6DramBankSummary {
+    bank: u32,
+    accesses: u64,
+    read_bytes: u64,
+    write_bytes: u64,
+    row_hits: u64,
+    row_misses: u64,
+    refreshes: u64,
+    refresh_ticks: u64,
+    commands: u64,
+    total_ready_latency_ticks: u64,
+    max_ready_latency_ticks: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -1,7 +1,7 @@
 use rem6_dram::{
     DramAccessKind, DramBankState, DramCommandKind, DramController, DramControllerSnapshot,
     DramError, DramGeometry, DramQosRequest, DramQosSchedulingPolicy, DramQosTurnaroundPolicy,
-    DramRefreshTiming, DramRefreshTimingField, DramTiming, NvmMediaTiming,
+    DramRefreshTiming, DramRefreshTimingField, DramTargetActivity, DramTiming, NvmMediaTiming,
 };
 use rem6_fabric::{
     QosPriority, QosProportionalFairPolicy, QosQueueArbiter, QosQueuePolicyKind, QosRequestorId,
@@ -9,6 +9,7 @@ use rem6_fabric::{
 use rem6_kernel::{WaitForEdgeKind, WaitForNode};
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryRequest, MemoryRequestId,
+    MemoryTargetId,
 };
 
 fn layout() -> CacheLineLayout {
@@ -569,6 +570,124 @@ fn dram_controller_reports_bank_port_and_window_activity() {
 
     controller.clear_activity();
     assert!(controller.activity_profile().is_empty());
+}
+
+#[test]
+fn dram_controller_activity_until_excludes_later_accesses() {
+    let mut controller = DramController::new(geometry(), timing());
+
+    controller.schedule(0, &read(0x0000, 8, 40)).unwrap();
+    controller.schedule(20, &write(0x0040, 41)).unwrap();
+
+    let profile = controller.activity_profile_until(10);
+    assert_eq!(profile.access_count(), 1);
+    assert_eq!(profile.read_count(), 1);
+    assert_eq!(profile.write_count(), 0);
+
+    let bank = controller
+        .bank_activities_until(10)
+        .remove(&(0, 0))
+        .unwrap();
+    assert_eq!(bank.access_count(), 1);
+    assert_eq!(bank.first_arrival_cycle(), 0);
+    assert_eq!(bank.row_miss_count(), 1);
+    assert_eq!(bank.row_hit_count(), 0);
+
+    let port = controller.port_activities_until(10).remove(&0).unwrap();
+    assert_eq!(port.access_count(), 1);
+    assert_eq!(port.read_count(), 1);
+    assert_eq!(port.write_count(), 0);
+    assert_eq!(port.turnaround_count(), 0);
+}
+
+#[test]
+fn dram_controller_activity_since_until_excludes_later_accesses() {
+    let mut controller = DramController::new(geometry(), timing());
+
+    controller.schedule(0, &read(0x0000, 8, 42)).unwrap();
+    let marker = controller.mark_activity();
+    controller.schedule(20, &read(0x0000, 8, 43)).unwrap();
+    controller.schedule(40, &write(0x0040, 44)).unwrap();
+
+    let profile = controller.activity_profile_since_until(marker, 30);
+    assert_eq!(profile.access_count(), 1);
+    assert_eq!(profile.read_count(), 1);
+    assert_eq!(profile.write_count(), 0);
+
+    let bank = controller
+        .bank_activities_since_until(marker, 30)
+        .remove(&(0, 0))
+        .unwrap();
+    assert_eq!(bank.access_count(), 1);
+    assert_eq!(bank.first_arrival_cycle(), 20);
+
+    let port = controller
+        .port_activities_since_until(marker, 30)
+        .remove(&0)
+        .unwrap();
+    assert_eq!(port.access_count(), 1);
+    assert_eq!(port.read_count(), 1);
+    assert_eq!(port.write_count(), 0);
+}
+
+#[test]
+fn dram_controller_activity_until_counts_refreshes_consumed_by_later_access() {
+    let mut controller = DramController::new(geometry(), timing_with_refresh());
+
+    controller.schedule(0, &read(0x0000, 8, 47)).unwrap();
+    controller.schedule(60, &read(0x0008, 8, 48)).unwrap();
+
+    let profile = controller.activity_profile_until(45);
+    assert_eq!(profile.access_count(), 1);
+    assert_eq!(profile.refresh_count(), 2);
+    assert_eq!(profile.refresh_cycle_count(), 10);
+
+    let bank = controller
+        .bank_activities_until(45)
+        .remove(&(0, 0))
+        .unwrap();
+    assert_eq!(bank.access_count(), 1);
+    assert_eq!(bank.refresh_count(), 2);
+    assert_eq!(bank.refresh_cycle_count(), 10);
+}
+
+#[test]
+fn dram_target_activity_merge_counts_cross_window_turnaround_and_cycle_zero_arrival() {
+    let mut controller = DramController::new(geometry(), timing());
+
+    let first_marker = controller.mark_activity();
+    controller.schedule(0, &read(0x0000, 8, 45)).unwrap();
+    let first = DramTargetActivity::new(
+        MemoryTargetId::new(0),
+        controller.activity_profile_since(first_marker),
+    )
+    .with_resource_activities(
+        controller.port_activities_since(first_marker),
+        controller.bank_activities_since(first_marker),
+    );
+
+    let second_marker = controller.mark_activity();
+    controller.schedule(20, &write(0x0008, 46)).unwrap();
+    let second = DramTargetActivity::new(
+        MemoryTargetId::new(0),
+        controller.activity_profile_since(second_marker),
+    )
+    .with_resource_activities(
+        controller.port_activities_since(second_marker),
+        controller.bank_activities_since(second_marker),
+    );
+
+    let merged = first.merge_window(second);
+    assert_eq!(merged.profile().access_count(), 2);
+    assert_eq!(merged.profile().turnaround_count(), 1);
+
+    let port = merged.port_activities().get(&0).unwrap();
+    assert_eq!(port.access_count(), 2);
+    assert_eq!(port.turnaround_count(), 1);
+
+    let bank = merged.bank_activities().get(&(0, 0)).unwrap();
+    assert_eq!(bank.access_count(), 2);
+    assert_eq!(bank.first_arrival_cycle(), 0);
 }
 
 #[test]

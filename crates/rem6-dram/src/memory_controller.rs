@@ -267,7 +267,11 @@ impl DramMemoryController {
 
     pub fn target_activity(&self, target: MemoryTargetId) -> Option<DramTargetActivity> {
         self.dram.get(&target).map(|controller| {
-            let activity = DramTargetActivity::new(target, controller.activity_profile());
+            let activity = DramTargetActivity::new(target, controller.activity_profile())
+                .with_resource_activities(
+                    controller.port_activities(),
+                    controller.bank_activities(),
+                );
             match self.profiles.get(&target).copied() {
                 Some(profile) => activity.with_memory_profile(profile),
                 None => activity,
@@ -282,7 +286,11 @@ impl DramMemoryController {
     ) -> Option<DramTargetActivity> {
         self.dram.get(&target).map(|controller| {
             let activity =
-                DramTargetActivity::new(target, controller.activity_profile_until(end_cycle));
+                DramTargetActivity::new(target, controller.activity_profile_until(end_cycle))
+                    .with_resource_activities(
+                        controller.port_activities_until(end_cycle),
+                        controller.bank_activities_until(end_cycle),
+                    );
             match self.profiles.get(&target).copied() {
                 Some(profile) => activity.with_memory_profile(profile),
                 None => activity,
@@ -300,7 +308,17 @@ impl DramMemoryController {
                 || controller.activity_profile(),
                 |marker| controller.activity_profile_since(marker),
             );
-            let activity = DramTargetActivity::new(target, profile);
+            let (ports, banks) = marker.marker_for(target).map_or_else(
+                || (controller.port_activities(), controller.bank_activities()),
+                |marker| {
+                    (
+                        controller.port_activities_since(marker),
+                        controller.bank_activities_since(marker),
+                    )
+                },
+            );
+            let activity =
+                DramTargetActivity::new(target, profile).with_resource_activities(ports, banks);
             match self.profiles.get(&target).copied() {
                 Some(profile) => activity.with_memory_profile(profile),
                 None => activity,
@@ -319,7 +337,22 @@ impl DramMemoryController {
                 || controller.activity_profile_until(end_cycle),
                 |marker| controller.activity_profile_since_until(marker, end_cycle),
             );
-            let activity = DramTargetActivity::new(target, profile);
+            let (ports, banks) = marker.marker_for(target).map_or_else(
+                || {
+                    (
+                        controller.port_activities_until(end_cycle),
+                        controller.bank_activities_until(end_cycle),
+                    )
+                },
+                |marker| {
+                    (
+                        controller.port_activities_since_until(marker, end_cycle),
+                        controller.bank_activities_since_until(marker, end_cycle),
+                    )
+                },
+            );
+            let activity =
+                DramTargetActivity::new(target, profile).with_resource_activities(ports, banks);
             match self.profiles.get(&target).copied() {
                 Some(profile) => activity.with_memory_profile(profile),
                 None => activity,

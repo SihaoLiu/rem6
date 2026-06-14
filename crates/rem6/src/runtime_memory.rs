@@ -1,8 +1,9 @@
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use rem6_dram::{
-    DramLowPowerState, DramMemoryActivityProfile, DramMemoryController, DramMemoryError,
-    DramTargetActivity,
+    DramBankActivity, DramLowPowerState, DramMemoryActivityProfile, DramMemoryController,
+    DramMemoryError, DramPortActivity, DramTargetActivity,
 };
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryError, MemoryRequest,
@@ -14,8 +15,9 @@ use rem6_transport::{RequestDelivery, TargetOutcome};
 use crate::config::CliDramMemoryProfile;
 use crate::guest_memory::{build_cli_dram_memory, build_cli_memory_store, CLI_MEMORY_TARGET};
 use crate::{
-    execute_error, LoadedBlob, MemoryDumpRequest, Rem6CliError, Rem6DramSummary,
-    Rem6DramTargetSummary, Rem6MemoryDump, CLI_MEMORY_DUMP_AGENT,
+    execute_error, LoadedBlob, MemoryDumpRequest, Rem6CliError, Rem6DramBankSummary,
+    Rem6DramPortSummary, Rem6DramSummary, Rem6DramTargetSummary, Rem6MemoryDump,
+    CLI_MEMORY_DUMP_AGENT,
 };
 
 const CLI_GUEST_MEMORY_AGENT: AgentId = AgentId::new(u32::MAX - 1);
@@ -731,10 +733,32 @@ impl Rem6DramSummary {
 impl Rem6DramTargetSummary {
     fn from_activity(activity: &DramTargetActivity) -> Self {
         let profile = activity.profile();
-        Self::from_profile(activity.target().get(), &profile)
+        let mut ports = activity
+            .port_activities()
+            .iter()
+            .map(|(port, activity)| (*port, Rem6DramPortSummary::from_activity(*port, *activity)))
+            .collect::<BTreeMap<_, _>>();
+        for ((port, bank), activity) in activity.bank_activities() {
+            ports
+                .entry(*port)
+                .or_insert_with(|| {
+                    Rem6DramPortSummary::from_activity(*port, DramPortActivity::default())
+                })
+                .banks
+                .push(Rem6DramBankSummary::from_activity(*bank, activity));
+        }
+        Self::from_profile(
+            activity.target().get(),
+            &profile,
+            ports.into_values().collect(),
+        )
     }
 
-    fn from_profile(target: u32, profile: &rem6_dram::DramActivityProfile) -> Self {
+    fn from_profile(
+        target: u32,
+        profile: &rem6_dram::DramActivityProfile,
+        ports: Vec<Rem6DramPortSummary>,
+    ) -> Self {
         Self {
             target,
             active_ports: profile.active_port_count() as u64,
@@ -750,6 +774,39 @@ impl Rem6DramTargetSummary {
             turnarounds: profile.turnaround_count() as u64,
             total_ready_latency_ticks: profile.total_ready_latency_cycles(),
             max_ready_latency_ticks: profile.max_ready_latency_cycles(),
+            ports,
+        }
+    }
+}
+
+impl Rem6DramPortSummary {
+    fn from_activity(port: u32, activity: DramPortActivity) -> Self {
+        Self {
+            port,
+            accesses: activity.access_count() as u64,
+            reads: activity.read_count() as u64,
+            writes: activity.write_count() as u64,
+            turnarounds: activity.turnaround_count() as u64,
+            commands: activity.command_count() as u64,
+            banks: Vec::new(),
+        }
+    }
+}
+
+impl Rem6DramBankSummary {
+    fn from_activity(bank: u32, activity: &DramBankActivity) -> Self {
+        Self {
+            bank,
+            accesses: activity.access_count() as u64,
+            read_bytes: activity.read_byte_count(),
+            write_bytes: activity.write_byte_count(),
+            row_hits: activity.row_hit_count() as u64,
+            row_misses: activity.row_miss_count() as u64,
+            refreshes: activity.refresh_count() as u64,
+            refresh_ticks: activity.refresh_cycle_count(),
+            commands: activity.command_count() as u64,
+            total_ready_latency_ticks: activity.total_ready_latency_cycles(),
+            max_ready_latency_ticks: activity.max_ready_latency_cycles(),
         }
     }
 }

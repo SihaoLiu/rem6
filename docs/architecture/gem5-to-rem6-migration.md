@@ -323,8 +323,8 @@ is not yet integrated across CPU pipeline and cache/DRAM runtime state.
 
 **Migrated:** Structured stats, real RISC-V probe producers, checkpoint banks,
 m5ops, host actions, GDB packet/session parsing, RISC-V integer/PC debug
-register paths, target-level DRAM runtime resource counters, and power-analysis
-exports.
+register paths, target/port/bank-level DRAM runtime resource counters, and
+power-analysis exports.
 
 **Not migrated:** Complete gem5 text-stat parity, full debug execution control,
 runtime resource counters, runtime-calibrated power/thermal, and pipeline/O3
@@ -335,8 +335,9 @@ checkpoint breadth.
 checkpoint tests including RISC-V hart run-state restore, power-analysis export
 tests, CLI data-access probe tests, and histogram registry/output tests.
 The CLI data-access probe tests include stack-distance histogram stats emitted
-from executed RISC-V loads. CLI DRAM-backed execution tests include target-level
-DRAM resource counters emitted from executed RISC-V instruction fetches.
+from executed RISC-V loads. CLI DRAM-backed execution tests include
+target/port/bank-level DRAM resource counters emitted from executed RISC-V
+instruction fetches.
 
 **Next evidence:** Gem5 text-stat compatibility, remaining cache/bank/fabric
 runtime resource counters, and GDB execution-control tests.
