@@ -9,6 +9,7 @@ pub enum RiscvHartRunState {
     StartPending,
     StopPending,
     SuspendPending,
+    ResumePending,
     Stopped,
     Suspended,
 }
@@ -62,6 +63,12 @@ impl RiscvCore {
         state.run_state_explicit = true;
     }
 
+    pub fn set_hart_resume_pending(&self) {
+        let mut state = self.state.lock().expect("riscv core lock");
+        state.run_state = RiscvHartRunState::ResumePending;
+        state.run_state_explicit = true;
+    }
+
     pub fn set_hart_stopped(&self) {
         let mut state = self.state.lock().expect("riscv core lock");
         state.run_state = RiscvHartRunState::Stopped;
@@ -111,7 +118,7 @@ impl RiscvCore {
     }
 
     pub fn resume_pending_nonretentive_supervisor_hart(&self, entry: Address, opaque: u64) -> bool {
-        self.enter_supervisor_hart_if(Some(RiscvHartRunState::SuspendPending), entry, opaque, true)
+        self.enter_supervisor_hart_if(Some(RiscvHartRunState::ResumePending), entry, opaque, true)
     }
 
     fn enter_supervisor_hart(&self, entry: Address, opaque: u64, reset_supervisor_state: bool) {

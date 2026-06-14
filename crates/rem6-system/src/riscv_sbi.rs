@@ -38,6 +38,7 @@ const SBI_HSM_HART_START_PENDING: u64 = 2;
 const SBI_HSM_HART_STOP_PENDING: u64 = 3;
 const SBI_HSM_HART_SUSPENDED: u64 = 4;
 const SBI_HSM_HART_SUSPEND_PENDING: u64 = 5;
+const SBI_HSM_HART_RESUME_PENDING: u64 = 6;
 const SBI_IPI_SEND_IPI: u64 = 0;
 const SBI_RFENCE_REMOTE_FENCE_I: u64 = 0;
 const SBI_RFENCE_REMOTE_SFENCE_VMA: u64 = 1;
@@ -469,7 +470,7 @@ impl RiscvSbiFirmware {
                 if request.arg1() & 0x1 != 0 {
                     return RiscvSbiOutcome::invalid_address();
                 }
-                core.set_hart_suspend_pending();
+                core.set_hart_resume_pending();
                 RiscvSbiOutcome::Resumed
             }
             _ => RiscvSbiOutcome::invalid_param(),
@@ -543,6 +544,7 @@ impl RiscvSbiFirmware {
             RiscvHartRunState::StartPending => SBI_HSM_HART_START_PENDING,
             RiscvHartRunState::StopPending => SBI_HSM_HART_STOP_PENDING,
             RiscvHartRunState::SuspendPending => SBI_HSM_HART_SUSPEND_PENDING,
+            RiscvHartRunState::ResumePending => SBI_HSM_HART_RESUME_PENDING,
             RiscvHartRunState::Stopped => SBI_HSM_HART_STOPPED,
             RiscvHartRunState::Suspended => SBI_HSM_HART_SUSPENDED,
         })
@@ -754,6 +756,7 @@ mod tests {
     const TEST_HART_START_PENDING: u64 = 2;
     const TEST_HART_STOP_PENDING: u64 = 3;
     const TEST_HART_SUSPEND_PENDING: u64 = 5;
+    const TEST_HART_RESUME_PENDING: u64 = 6;
 
     fn endpoint(name: &str) -> TransportEndpointId {
         TransportEndpointId::new(name).expect("valid test endpoint")
@@ -1399,7 +1402,7 @@ mod tests {
         );
     }
 
-    fn assert_nonretentive_suspend_pending_until_resume_event_runs(parallel: bool) {
+    fn assert_nonretentive_resume_pending_until_resume_event_runs(parallel: bool) {
         let (mut scheduler, transport, firmware, core0, _core1) = registered_hsm_pair();
         execute_hsm_ecall(
             &mut scheduler,
@@ -1419,7 +1422,7 @@ mod tests {
         assert_eq!(outcome, RiscvSbiOutcome::Resumed);
         assert_eq!(
             firmware.hart_get_status(hsm_request(SBI_HSM_HART_GET_STATUS, 0, 0, 0)),
-            RiscvSbiOutcome::success(TEST_HART_SUSPEND_PENDING)
+            RiscvSbiOutcome::success(TEST_HART_RESUME_PENDING)
         );
         assert_ne!(core0.pc(), Address::new(0x9000));
 
@@ -1441,14 +1444,14 @@ mod tests {
     }
 
     #[test]
-    fn handle_pending_core_trap_reports_nonretentive_suspend_pending_until_resume_event_runs() {
-        assert_nonretentive_suspend_pending_until_resume_event_runs(false);
+    fn handle_pending_core_trap_reports_nonretentive_resume_pending_until_resume_event_runs() {
+        assert_nonretentive_resume_pending_until_resume_event_runs(false);
     }
 
     #[test]
-    fn parallel_handle_pending_core_trap_reports_nonretentive_suspend_pending_until_resume_event_runs(
+    fn parallel_handle_pending_core_trap_reports_nonretentive_resume_pending_until_resume_event_runs(
     ) {
-        assert_nonretentive_suspend_pending_until_resume_event_runs(true);
+        assert_nonretentive_resume_pending_until_resume_event_runs(true);
     }
 
     #[test]
@@ -1472,7 +1475,7 @@ mod tests {
         assert_eq!(outcome, RiscvSbiOutcome::Resumed);
         assert_eq!(
             firmware.hart_get_status(hsm_request(SBI_HSM_HART_GET_STATUS, 0, 0, 0)),
-            RiscvSbiOutcome::success(TEST_HART_SUSPEND_PENDING)
+            RiscvSbiOutcome::success(TEST_HART_RESUME_PENDING)
         );
         core0.set_hart_started();
         scheduler.run_until_idle_conservative();

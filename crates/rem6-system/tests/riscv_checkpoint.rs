@@ -156,6 +156,8 @@ fn riscv_core_checkpoint_captures_and_restores_hart_run_state() {
     assert_checkpoint_restores_hart_run_state(&core, RiscvHartRunState::StopPending, 4);
     core.set_hart_suspend_pending();
     assert_checkpoint_restores_hart_run_state(&core, RiscvHartRunState::SuspendPending, 5);
+    core.set_hart_resume_pending();
+    assert_checkpoint_restores_hart_run_state(&core, RiscvHartRunState::ResumePending, 6);
 }
 
 fn assert_checkpoint_restores_hart_run_state(
