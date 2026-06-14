@@ -25,6 +25,8 @@ mod link_tests;
 mod mkdir_tests;
 #[path = "riscv_syscall_tests/mmap_tests.rs"]
 mod mmap_tests;
+#[path = "riscv_syscall_tests/msync_tests.rs"]
+mod msync_tests;
 #[path = "riscv_syscall_tests/nanosleep_tests.rs"]
 mod nanosleep_tests;
 #[path = "riscv_syscall_tests/open_tests.rs"]
@@ -320,7 +322,6 @@ fn linux_table_ignores_gem5_memory_management_advisory_syscalls() {
     let mut state = RiscvSyscallState::new(0);
 
     for number in [
-        RISCV_LINUX_MSYNC,
         RISCV_LINUX_MLOCK,
         RISCV_LINUX_MUNLOCK,
         RISCV_LINUX_MLOCKALL,

@@ -108,9 +108,9 @@ use mkdir::{syscall_mkdirat, RISCV_LINUX_MKDIRAT};
 pub use mmap::RiscvMmapRegion;
 use mmap::{
     syscall_madvise, syscall_mincore, syscall_mmap, syscall_mprotect, syscall_mremap,
-    syscall_munmap, RISCV64_LINUX_MMAP_BASE, RISCV_LINUX_MADVISE, RISCV_LINUX_MINCORE,
-    RISCV_LINUX_MMAP, RISCV_LINUX_MPROTECT, RISCV_LINUX_MREMAP, RISCV_LINUX_MUNMAP,
-    RISCV_PAGE_BYTES,
+    syscall_msync, syscall_munmap, RISCV64_LINUX_MMAP_BASE, RISCV_LINUX_MADVISE,
+    RISCV_LINUX_MINCORE, RISCV_LINUX_MMAP, RISCV_LINUX_MPROTECT, RISCV_LINUX_MREMAP,
+    RISCV_LINUX_MSYNC, RISCV_LINUX_MUNMAP, RISCV_PAGE_BYTES,
 };
 #[cfg(test)]
 use mmap::{RISCV_LINUX_MAP_FIXED, RISCV_LINUX_MAP_PRIVATE};
@@ -180,7 +180,6 @@ const RISCV_LINUX_UNAME: u64 = 160;
 const RISCV_LINUX_SETRLIMIT: u64 = 164;
 const RISCV_LINUX_FUTEX: u64 = 98;
 const RISCV_LINUX_BRK: u64 = 214;
-const RISCV_LINUX_MSYNC: u64 = 227;
 const RISCV_LINUX_MLOCK: u64 = 228;
 const RISCV_LINUX_MUNLOCK: u64 = 229;
 const RISCV_LINUX_MLOCKALL: u64 = 230;
@@ -1333,8 +1332,10 @@ impl RiscvSyscallTable {
             RISCV_LINUX_MPROTECT => Some(RiscvSyscallOutcome::Return {
                 value: syscall_mprotect(request, state),
             }),
-            RISCV_LINUX_MSYNC
-            | RISCV_LINUX_MLOCK
+            RISCV_LINUX_MSYNC => Some(RiscvSyscallOutcome::Return {
+                value: syscall_msync(request, state),
+            }),
+            RISCV_LINUX_MLOCK
             | RISCV_LINUX_MUNLOCK
             | RISCV_LINUX_MLOCKALL
             | RISCV_LINUX_MUNLOCKALL

@@ -11,6 +11,7 @@ pub(super) const RISCV_LINUX_MUNMAP: u64 = 215;
 pub(super) const RISCV_LINUX_MREMAP: u64 = 216;
 pub(super) const RISCV_LINUX_MMAP: u64 = 222;
 pub(super) const RISCV_LINUX_MPROTECT: u64 = 226;
+pub(super) const RISCV_LINUX_MSYNC: u64 = 227;
 pub(super) const RISCV_LINUX_MINCORE: u64 = 232;
 pub(super) const RISCV_LINUX_MADVISE: u64 = 233;
 pub(super) const RISCV_LINUX_MAP_SHARED: u64 = 0x01;
@@ -21,6 +22,11 @@ const RISCV_LINUX_MREMAP_MAYMOVE: u64 = 1;
 const RISCV_LINUX_MREMAP_FIXED: u64 = 2;
 const RISCV_LINUX_MREMAP_DONTUNMAP: u64 = 4;
 const RISCV_LINUX_MREMAP_SUPPORTED_FLAGS: u64 = RISCV_LINUX_MREMAP_MAYMOVE;
+const RISCV_LINUX_MS_ASYNC: u64 = 1;
+const RISCV_LINUX_MS_INVALIDATE: u64 = 2;
+const RISCV_LINUX_MS_SYNC: u64 = 4;
+const RISCV_LINUX_MS_VALID_FLAGS: u64 =
+    RISCV_LINUX_MS_ASYNC | RISCV_LINUX_MS_INVALIDATE | RISCV_LINUX_MS_SYNC;
 const RISCV_LINUX_MADV_NORMAL: u64 = 0;
 const RISCV_LINUX_MADV_RANDOM: u64 = 1;
 const RISCV_LINUX_MADV_SEQUENTIAL: u64 = 2;
@@ -507,6 +513,29 @@ pub(super) fn syscall_mprotect(request: RiscvSyscallRequest, state: &mut RiscvSy
     0
 }
 
+pub(super) fn syscall_msync(request: RiscvSyscallRequest, state: &RiscvSyscallState) -> u64 {
+    let start = request.argument(0);
+    let requested_length = request.argument(1);
+    let flags = request.argument(2);
+
+    if !msync_flags_are_valid(flags) || !start.is_multiple_of(RISCV_PAGE_BYTES) {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+    let Some(length) = align_to_page(requested_length) else {
+        return linux_error(RISCV_LINUX_ENOMEM);
+    };
+    if length == 0 {
+        return 0;
+    }
+    if start.checked_add(length).is_none() {
+        return linux_error(RISCV_LINUX_ENOMEM);
+    }
+    if !mmap_range_is_mapped(state, start, length) {
+        return linux_error(RISCV_LINUX_ENOMEM);
+    }
+    0
+}
+
 pub(super) fn syscall_madvise(request: RiscvSyscallRequest, state: &RiscvSyscallState) -> u64 {
     let start = request.argument(0);
     let requested_length = request.argument(1);
@@ -574,6 +603,12 @@ pub(super) fn syscall_mincore(
         cursor += bytes as u64;
     }
     0
+}
+
+fn msync_flags_are_valid(flags: u64) -> bool {
+    flags & !RISCV_LINUX_MS_VALID_FLAGS == 0
+        && flags & (RISCV_LINUX_MS_ASYNC | RISCV_LINUX_MS_SYNC)
+            != (RISCV_LINUX_MS_ASYNC | RISCV_LINUX_MS_SYNC)
 }
 
 fn madvise_is_known_advice(advice: u64) -> bool {
