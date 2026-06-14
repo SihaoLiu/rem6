@@ -29,6 +29,9 @@ pub(crate) struct CliDataCacheSummary {
     pub(crate) mesi_runs: u64,
     pub(crate) moesi_runs: u64,
     pub(crate) chi_runs: u64,
+    pub(crate) cpu_responses: u64,
+    pub(crate) directory_decisions: u64,
+    pub(crate) dram_accesses: u64,
 }
 
 impl CliDataCacheSummary {
@@ -39,6 +42,21 @@ impl CliDataCacheSummary {
             mesi_runs: run.data_cache_run_count_for_protocol(RiscvDataCacheProtocol::Mesi) as u64,
             moesi_runs: run.data_cache_run_count_for_protocol(RiscvDataCacheProtocol::Moesi) as u64,
             chi_runs: run.data_cache_run_count_for_protocol(RiscvDataCacheProtocol::Chi) as u64,
+            cpu_responses: run
+                .data_cache_runs()
+                .iter()
+                .map(|run| run.cpu_response_count() as u64)
+                .sum(),
+            directory_decisions: run
+                .data_cache_runs()
+                .iter()
+                .map(|run| run.directory_decision_count() as u64)
+                .sum(),
+            dram_accesses: run
+                .data_cache_runs()
+                .iter()
+                .map(|run| run.dram_access_count() as u64)
+                .sum(),
         }
     }
 }

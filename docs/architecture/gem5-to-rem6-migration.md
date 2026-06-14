@@ -160,7 +160,8 @@ not the default instruction/data path.
 **Migrated:** Typed memory primitives, cache banks, protocol harnesses, DRAM
 profiles, controller-level refresh timing slices, routed topology slices, and
 trace replay consumers; optional single-core CLI RISC-V data traffic can drive
-MSI-bank data-cache runs.
+MSI-bank data-cache runs and emit CPU response, directory decision, and DRAM
+access counters from those runs.
 
 **Not migrated:** Broad CPU-facing hierarchy, Ruby-scale protocol networks,
 flit-level NoC, and DRAM refresh/preset breadth.
@@ -169,7 +170,8 @@ flit-level NoC, and DRAM refresh/preset breadth.
 harnesses, `DramController`, `DramMemoryController`, `FabricModel`,
 `MemoryTransport`, and tests `riscv_topology_msi_data`,
 `riscv_topology_chi_data`, `memory_controller`, `timing`, `fabric_timing`,
-`system_run_resource_activity`, and CLI `run` data-cache smoke coverage.
+`system_run_resource_activity`, and CLI `run` data-cache smoke coverage with
+resource-activity stats.
 
 **Next evidence:** RISC-V instruction/data execution through a coherent
 multi-level cache and DRAM path with unified resource accounting.

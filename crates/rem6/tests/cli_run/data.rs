@@ -130,10 +130,34 @@ fn rem6_run_executes_riscv_elf_load_store_through_msi_data_cache() {
     assert!(stdout.contains("\"data_stores\":1"));
     assert!(stdout.contains("\"data_cache_runs\":2"));
     assert!(stdout.contains("\"data_cache_msi_runs\":2"));
+    assert!(stdout.contains("\"data_cache_cpu_responses\":2"));
+    assert!(stdout.contains("\"data_cache_directory_decisions\":2"));
+    assert!(stdout.contains("\"data_cache_dram_accesses\":0"));
     assert!(stdout.contains("\"address\":\"0x80000020\""));
     assert!(stdout.contains("\"hex\":\"8977665544332211\""));
     assert_stat(&stdout, "sim.data_cache.runs", "Count", 2, "monotonic");
     assert_stat(&stdout, "sim.data_cache.msi.runs", "Count", 2, "monotonic");
+    assert_stat(
+        &stdout,
+        "sim.data_cache.cpu_responses",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.data_cache.directory_decisions",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.data_cache.dram_accesses",
+        "Count",
+        0,
+        "monotonic",
+    );
     assert_transport_stats(&stdout, "sim.memory.fetch", 6, 12, 2);
     assert_transport_stats(&stdout, "sim.memory.data", 2, 4, 2);
 }

@@ -617,7 +617,7 @@ impl Rem6ExecutionSummary {
             | Rem6ExecutionStop::TickLimit { .. } => max_instructions,
         };
         let common = format!(
-            "\"max_tick\":{},\"instruction_limit\":{},\"memory_route_delay\":{},\"host_event_delay\":{},\"executed_ticks\":{},\"final_tick\":{},\"cores\":{},\"committed_instructions\":{},\"data_cache_runs\":{},\"data_cache_msi_runs\":{},\"data_cache_mesi_runs\":{},\"data_cache_moesi_runs\":{},\"data_cache_chi_runs\":{},\"data_access_probes\":{}",
+            "\"max_tick\":{},\"instruction_limit\":{},\"memory_route_delay\":{},\"host_event_delay\":{},\"executed_ticks\":{},\"final_tick\":{},\"cores\":{},\"committed_instructions\":{},\"data_cache_runs\":{},\"data_cache_msi_runs\":{},\"data_cache_mesi_runs\":{},\"data_cache_moesi_runs\":{},\"data_cache_chi_runs\":{},\"data_cache_cpu_responses\":{},\"data_cache_directory_decisions\":{},\"data_cache_dram_accesses\":{},\"data_access_probes\":{}",
             max_tick,
             optional_count_json(instruction_limit),
             memory_route_delay,
@@ -631,6 +631,9 @@ impl Rem6ExecutionSummary {
             self.data_cache.mesi_runs,
             self.data_cache.moesi_runs,
             self.data_cache.chi_runs,
+            self.data_cache.cpu_responses,
+            self.data_cache.directory_decisions,
+            self.data_cache.dram_accesses,
             self.data_access_probes.to_json(),
         );
         match self.stop {
