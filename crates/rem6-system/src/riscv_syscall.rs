@@ -107,9 +107,10 @@ use links::syscall_readlinkat;
 use mkdir::{syscall_mkdirat, RISCV_LINUX_MKDIRAT};
 pub use mmap::RiscvMmapRegion;
 use mmap::{
-    syscall_mincore, syscall_mmap, syscall_mprotect, syscall_mremap, syscall_munmap,
-    RISCV64_LINUX_MMAP_BASE, RISCV_LINUX_MINCORE, RISCV_LINUX_MMAP, RISCV_LINUX_MPROTECT,
-    RISCV_LINUX_MREMAP, RISCV_LINUX_MUNMAP, RISCV_PAGE_BYTES,
+    syscall_madvise, syscall_mincore, syscall_mmap, syscall_mprotect, syscall_mremap,
+    syscall_munmap, RISCV64_LINUX_MMAP_BASE, RISCV_LINUX_MADVISE, RISCV_LINUX_MINCORE,
+    RISCV_LINUX_MMAP, RISCV_LINUX_MPROTECT, RISCV_LINUX_MREMAP, RISCV_LINUX_MUNMAP,
+    RISCV_PAGE_BYTES,
 };
 #[cfg(test)]
 use mmap::{RISCV_LINUX_MAP_FIXED, RISCV_LINUX_MAP_PRIVATE};
@@ -184,7 +185,6 @@ const RISCV_LINUX_MLOCK: u64 = 228;
 const RISCV_LINUX_MUNLOCK: u64 = 229;
 const RISCV_LINUX_MLOCKALL: u64 = 230;
 const RISCV_LINUX_MUNLOCKALL: u64 = 231;
-const RISCV_LINUX_MADVISE: u64 = 233;
 const RISCV_LINUX_MBIND: u64 = 235;
 const RISCV_LINUX_STAT: u64 = 1038;
 const RISCV_LINUX_EPERM: u64 = 1;
@@ -1331,19 +1331,13 @@ impl RiscvSyscallTable {
             RISCV_LINUX_RT_SIGTIMEDWAIT => syscall_rt_sigtimedwait(request, guest_memory_reader)
                 .map(|value| RiscvSyscallOutcome::Return { value }),
             RISCV_LINUX_MPROTECT => Some(RiscvSyscallOutcome::Return {
-                value: syscall_mprotect(
-                    request.argument(0),
-                    request.argument(1),
-                    request.argument(2),
-                    state,
-                ),
+                value: syscall_mprotect(request, state),
             }),
             RISCV_LINUX_MSYNC
             | RISCV_LINUX_MLOCK
             | RISCV_LINUX_MUNLOCK
             | RISCV_LINUX_MLOCKALL
             | RISCV_LINUX_MUNLOCKALL
-            | RISCV_LINUX_MADVISE
             | RISCV_LINUX_MBIND
             | RISCV_LINUX_SETUID
             | RISCV_LINUX_SETRLIMIT => Some(RiscvSyscallOutcome::Return { value: 0 }),
@@ -1371,6 +1365,9 @@ impl RiscvSyscallTable {
             }),
             RISCV_LINUX_MINCORE => Some(RiscvSyscallOutcome::Return {
                 value: syscall_mincore(request, state, guest_memory_writer),
+            }),
+            RISCV_LINUX_MADVISE => Some(RiscvSyscallOutcome::Return {
+                value: syscall_madvise(request, state),
             }),
             _ => {
                 state.push_unknown_syscall(RiscvUnknownSyscallRecord::new(

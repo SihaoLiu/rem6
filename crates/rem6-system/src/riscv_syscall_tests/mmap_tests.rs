@@ -1,11 +1,65 @@
 use super::*;
 
 const RISCV_LINUX_ENOMEM_FOR_TEST: u64 = 12;
+const RISCV_LINUX_MADVISE_FOR_TEST: u64 = 233;
 const RISCV_LINUX_MINCORE_FOR_TEST: u64 = 232;
 const RISCV_LINUX_MREMAP_FOR_TEST: u64 = 216;
 const RISCV_LINUX_MREMAP_MAYMOVE_FOR_TEST: u64 = 1;
 const RISCV_LINUX_MREMAP_FIXED_FOR_TEST: u64 = 2;
 const RISCV_LINUX_MREMAP_DONTUNMAP_FOR_TEST: u64 = 4;
+const RISCV_LINUX_MADV_NORMAL_FOR_TEST: u64 = 0;
+const RISCV_LINUX_MADV_RANDOM_FOR_TEST: u64 = 1;
+const RISCV_LINUX_MADV_SEQUENTIAL_FOR_TEST: u64 = 2;
+const RISCV_LINUX_MADV_WILLNEED_FOR_TEST: u64 = 3;
+const RISCV_LINUX_MADV_DONTNEED_FOR_TEST: u64 = 4;
+const RISCV_LINUX_MADV_FREE_FOR_TEST: u64 = 8;
+const RISCV_LINUX_MADV_REMOVE_FOR_TEST: u64 = 9;
+const RISCV_LINUX_MADV_DONTFORK_FOR_TEST: u64 = 10;
+const RISCV_LINUX_MADV_DOFORK_FOR_TEST: u64 = 11;
+const RISCV_LINUX_MADV_MERGEABLE_FOR_TEST: u64 = 12;
+const RISCV_LINUX_MADV_UNMERGEABLE_FOR_TEST: u64 = 13;
+const RISCV_LINUX_MADV_HUGEPAGE_FOR_TEST: u64 = 14;
+const RISCV_LINUX_MADV_NOHUGEPAGE_FOR_TEST: u64 = 15;
+const RISCV_LINUX_MADV_DONTDUMP_FOR_TEST: u64 = 16;
+const RISCV_LINUX_MADV_DODUMP_FOR_TEST: u64 = 17;
+const RISCV_LINUX_MADV_WIPEONFORK_FOR_TEST: u64 = 18;
+const RISCV_LINUX_MADV_KEEPONFORK_FOR_TEST: u64 = 19;
+const RISCV_LINUX_MADV_COLD_FOR_TEST: u64 = 20;
+const RISCV_LINUX_MADV_PAGEOUT_FOR_TEST: u64 = 21;
+const RISCV_LINUX_MADV_POPULATE_READ_FOR_TEST: u64 = 22;
+const RISCV_LINUX_MADV_POPULATE_WRITE_FOR_TEST: u64 = 23;
+const RISCV_LINUX_MADV_DONTNEED_LOCKED_FOR_TEST: u64 = 24;
+const RISCV_LINUX_MADV_COLLAPSE_FOR_TEST: u64 = 25;
+const RISCV_LINUX_MADV_GUARD_INSTALL_FOR_TEST: u64 = 102;
+const RISCV_LINUX_MADV_GUARD_REMOVE_FOR_TEST: u64 = 103;
+const RISCV_LINUX_MADV_SUPPORTED_FOR_TEST: [u64; 25] = [
+    RISCV_LINUX_MADV_NORMAL_FOR_TEST,
+    RISCV_LINUX_MADV_RANDOM_FOR_TEST,
+    RISCV_LINUX_MADV_SEQUENTIAL_FOR_TEST,
+    RISCV_LINUX_MADV_WILLNEED_FOR_TEST,
+    RISCV_LINUX_MADV_DONTNEED_FOR_TEST,
+    RISCV_LINUX_MADV_FREE_FOR_TEST,
+    RISCV_LINUX_MADV_REMOVE_FOR_TEST,
+    RISCV_LINUX_MADV_DONTFORK_FOR_TEST,
+    RISCV_LINUX_MADV_DOFORK_FOR_TEST,
+    RISCV_LINUX_MADV_MERGEABLE_FOR_TEST,
+    RISCV_LINUX_MADV_UNMERGEABLE_FOR_TEST,
+    RISCV_LINUX_MADV_HUGEPAGE_FOR_TEST,
+    RISCV_LINUX_MADV_NOHUGEPAGE_FOR_TEST,
+    RISCV_LINUX_MADV_DONTDUMP_FOR_TEST,
+    RISCV_LINUX_MADV_DODUMP_FOR_TEST,
+    RISCV_LINUX_MADV_WIPEONFORK_FOR_TEST,
+    RISCV_LINUX_MADV_KEEPONFORK_FOR_TEST,
+    RISCV_LINUX_MADV_COLD_FOR_TEST,
+    RISCV_LINUX_MADV_PAGEOUT_FOR_TEST,
+    RISCV_LINUX_MADV_POPULATE_READ_FOR_TEST,
+    RISCV_LINUX_MADV_POPULATE_WRITE_FOR_TEST,
+    RISCV_LINUX_MADV_DONTNEED_LOCKED_FOR_TEST,
+    RISCV_LINUX_MADV_COLLAPSE_FOR_TEST,
+    RISCV_LINUX_MADV_GUARD_INSTALL_FOR_TEST,
+    RISCV_LINUX_MADV_GUARD_REMOVE_FOR_TEST,
+];
+const RISCV_LINUX_MADV_UNSUPPORTED_FOR_TEST: [u64; 6] = [5, 7, 26, 99, 104, 999];
 
 #[test]
 fn linux_table_allocates_anonymous_mmap_regions() {
@@ -1298,6 +1352,164 @@ fn linux_table_rejects_overflowing_fixed_mmap() {
         })
     );
     assert!(state.mmap_regions().is_empty());
+}
+
+#[test]
+fn linux_table_madvise_accepts_supported_advice_for_tracked_mappings() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_MMAP,
+                [0, 2 * RISCV_PAGE_BYTES, 3, 34, u64::MAX, 0]
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: RISCV64_LINUX_MMAP_BASE
+        })
+    );
+
+    for advice in RISCV_LINUX_MADV_SUPPORTED_FOR_TEST {
+        assert_eq!(
+            table.handle(
+                RiscvSyscallRequest::new(
+                    0x8004,
+                    RISCV_LINUX_MADVISE_FOR_TEST,
+                    [
+                        RISCV64_LINUX_MMAP_BASE,
+                        RISCV_PAGE_BYTES + 11,
+                        advice,
+                        0,
+                        0,
+                        0
+                    ]
+                ),
+                &mut state,
+            ),
+            Some(RiscvSyscallOutcome::Return { value: 0 })
+        );
+    }
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_madvise_accepts_zero_length_supported_advice_probe() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_MADVISE_FOR_TEST,
+                [0, 0, RISCV_LINUX_MADV_WILLNEED_FOR_TEST, 0, 0, 0]
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+}
+
+#[test]
+fn linux_table_madvise_rejects_unmapped_ranges() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_MADVISE_FOR_TEST,
+                [
+                    RISCV64_LINUX_MMAP_BASE,
+                    RISCV_PAGE_BYTES,
+                    RISCV_LINUX_MADV_NORMAL_FOR_TEST,
+                    0,
+                    0,
+                    0
+                ]
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_ENOMEM_FOR_TEST)
+        })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_madvise_rejects_invalid_arguments() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_MADVISE_FOR_TEST,
+                [
+                    RISCV64_LINUX_MMAP_BASE + 1,
+                    RISCV_PAGE_BYTES,
+                    RISCV_LINUX_MADV_NORMAL_FOR_TEST,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EINVAL)
+        })
+    );
+
+    for advice in RISCV_LINUX_MADV_UNSUPPORTED_FOR_TEST {
+        assert_eq!(
+            table.handle(
+                RiscvSyscallRequest::new(
+                    0x8000,
+                    RISCV_LINUX_MADVISE_FOR_TEST,
+                    [0, 0, advice, 0, 0, 0],
+                ),
+                &mut state,
+            ),
+            Some(RiscvSyscallOutcome::Return {
+                value: linux_error(RISCV_LINUX_EINVAL)
+            })
+        );
+    }
+}
+
+#[test]
+fn linux_table_madvise_reports_einval_for_overflowing_address_range() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_MADVISE_FOR_TEST,
+                [
+                    u64::MAX - (RISCV_PAGE_BYTES - 1),
+                    RISCV_PAGE_BYTES,
+                    RISCV_LINUX_MADV_NORMAL_FOR_TEST,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EINVAL)
+        })
+    );
 }
 
 #[test]

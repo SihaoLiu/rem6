@@ -12,6 +12,7 @@ pub(super) const RISCV_LINUX_MREMAP: u64 = 216;
 pub(super) const RISCV_LINUX_MMAP: u64 = 222;
 pub(super) const RISCV_LINUX_MPROTECT: u64 = 226;
 pub(super) const RISCV_LINUX_MINCORE: u64 = 232;
+pub(super) const RISCV_LINUX_MADVISE: u64 = 233;
 pub(super) const RISCV_LINUX_MAP_SHARED: u64 = 0x01;
 pub(super) const RISCV_LINUX_MAP_PRIVATE: u64 = 0x02;
 pub(super) const RISCV_LINUX_MAP_FIXED: u64 = 0x10;
@@ -20,6 +21,31 @@ const RISCV_LINUX_MREMAP_MAYMOVE: u64 = 1;
 const RISCV_LINUX_MREMAP_FIXED: u64 = 2;
 const RISCV_LINUX_MREMAP_DONTUNMAP: u64 = 4;
 const RISCV_LINUX_MREMAP_SUPPORTED_FLAGS: u64 = RISCV_LINUX_MREMAP_MAYMOVE;
+const RISCV_LINUX_MADV_NORMAL: u64 = 0;
+const RISCV_LINUX_MADV_RANDOM: u64 = 1;
+const RISCV_LINUX_MADV_SEQUENTIAL: u64 = 2;
+const RISCV_LINUX_MADV_WILLNEED: u64 = 3;
+const RISCV_LINUX_MADV_DONTNEED: u64 = 4;
+const RISCV_LINUX_MADV_FREE: u64 = 8;
+const RISCV_LINUX_MADV_REMOVE: u64 = 9;
+const RISCV_LINUX_MADV_DONTFORK: u64 = 10;
+const RISCV_LINUX_MADV_DOFORK: u64 = 11;
+const RISCV_LINUX_MADV_MERGEABLE: u64 = 12;
+const RISCV_LINUX_MADV_UNMERGEABLE: u64 = 13;
+const RISCV_LINUX_MADV_HUGEPAGE: u64 = 14;
+const RISCV_LINUX_MADV_NOHUGEPAGE: u64 = 15;
+const RISCV_LINUX_MADV_DONTDUMP: u64 = 16;
+const RISCV_LINUX_MADV_DODUMP: u64 = 17;
+const RISCV_LINUX_MADV_WIPEONFORK: u64 = 18;
+const RISCV_LINUX_MADV_KEEPONFORK: u64 = 19;
+const RISCV_LINUX_MADV_COLD: u64 = 20;
+const RISCV_LINUX_MADV_PAGEOUT: u64 = 21;
+const RISCV_LINUX_MADV_POPULATE_READ: u64 = 22;
+const RISCV_LINUX_MADV_POPULATE_WRITE: u64 = 23;
+const RISCV_LINUX_MADV_DONTNEED_LOCKED: u64 = 24;
+const RISCV_LINUX_MADV_COLLAPSE: u64 = 25;
+const RISCV_LINUX_MADV_GUARD_INSTALL: u64 = 102;
+const RISCV_LINUX_MADV_GUARD_REMOVE: u64 = 103;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RiscvMmapRegion {
@@ -452,12 +478,11 @@ pub(super) fn syscall_mremap(
     start
 }
 
-pub(super) fn syscall_mprotect(
-    start: u64,
-    requested_length: u64,
-    protection: u64,
-    state: &mut RiscvSyscallState,
-) -> u64 {
+pub(super) fn syscall_mprotect(request: RiscvSyscallRequest, state: &mut RiscvSyscallState) -> u64 {
+    let start = request.argument(0);
+    let requested_length = request.argument(1);
+    let protection = request.argument(2);
+
     if !start.is_multiple_of(RISCV_PAGE_BYTES) {
         return linux_error(RISCV_LINUX_EINVAL);
     }
@@ -479,6 +504,29 @@ pub(super) fn syscall_mprotect(
         region.push_fragments_after_mprotect(start, length, protection, &mut regions);
     }
     state.mmap_regions = regions;
+    0
+}
+
+pub(super) fn syscall_madvise(request: RiscvSyscallRequest, state: &RiscvSyscallState) -> u64 {
+    let start = request.argument(0);
+    let requested_length = request.argument(1);
+    let advice = request.argument(2);
+
+    if !madvise_is_known_advice(advice) || !start.is_multiple_of(RISCV_PAGE_BYTES) {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+    let Some(length) = align_to_page(requested_length) else {
+        return linux_error(RISCV_LINUX_EINVAL);
+    };
+    if start.checked_add(length).is_none() {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+    if length == 0 {
+        return 0;
+    }
+    if !mmap_range_is_mapped(state, start, length) {
+        return linux_error(RISCV_LINUX_ENOMEM);
+    }
     0
 }
 
@@ -526,6 +574,37 @@ pub(super) fn syscall_mincore(
         cursor += bytes as u64;
     }
     0
+}
+
+fn madvise_is_known_advice(advice: u64) -> bool {
+    matches!(
+        advice,
+        RISCV_LINUX_MADV_NORMAL
+            | RISCV_LINUX_MADV_RANDOM
+            | RISCV_LINUX_MADV_SEQUENTIAL
+            | RISCV_LINUX_MADV_WILLNEED
+            | RISCV_LINUX_MADV_DONTNEED
+            | RISCV_LINUX_MADV_FREE
+            | RISCV_LINUX_MADV_REMOVE
+            | RISCV_LINUX_MADV_DONTFORK
+            | RISCV_LINUX_MADV_DOFORK
+            | RISCV_LINUX_MADV_MERGEABLE
+            | RISCV_LINUX_MADV_UNMERGEABLE
+            | RISCV_LINUX_MADV_HUGEPAGE
+            | RISCV_LINUX_MADV_NOHUGEPAGE
+            | RISCV_LINUX_MADV_DONTDUMP
+            | RISCV_LINUX_MADV_DODUMP
+            | RISCV_LINUX_MADV_WIPEONFORK
+            | RISCV_LINUX_MADV_KEEPONFORK
+            | RISCV_LINUX_MADV_COLD
+            | RISCV_LINUX_MADV_PAGEOUT
+            | RISCV_LINUX_MADV_POPULATE_READ
+            | RISCV_LINUX_MADV_POPULATE_WRITE
+            | RISCV_LINUX_MADV_DONTNEED_LOCKED
+            | RISCV_LINUX_MADV_COLLAPSE
+            | RISCV_LINUX_MADV_GUARD_INSTALL
+            | RISCV_LINUX_MADV_GUARD_REMOVE
+    )
 }
 
 fn exact_mmap_region_index(state: &RiscvSyscallState, start: u64, length: u64) -> Option<usize> {
