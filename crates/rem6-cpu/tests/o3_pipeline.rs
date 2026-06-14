@@ -3,8 +3,16 @@ use rem6_cpu::{
     O3IssueQueueId, O3PipelineError, O3PipelineStage, O3ReadyInstruction, O3ScopedIssueScheduler,
     O3ScopedReadyInstruction, O3UnblockDecisionReason, O3UnblockPolicy,
     O3VectorReductionDependencyPlan, O3VectorReductionGroupId, O3VectorReductionOrdering,
-    O3WritebackCompletion, O3WritebackTransferBuffer, O3WritebackTransferPolicy,
+    O3WritebackCompletion, O3WritebackTransferBuffer, O3WritebackTransferCheckpointPayload,
+    O3WritebackTransferPolicy,
 };
+
+const O3_WRITEBACK_CHECKPOINT_MAGIC_OFFSET: usize = 0;
+const O3_WRITEBACK_CHECKPOINT_VERSION_OFFSET: usize = 4;
+const O3_WRITEBACK_CHECKPOINT_STAGE_OFFSET: usize = 5;
+const O3_WRITEBACK_CHECKPOINT_WIDTH_OFFSET: usize = 6;
+const O3_WRITEBACK_CHECKPOINT_DEFERRED_COUNT_OFFSET: usize = 18;
+const O3_WRITEBACK_CHECKPOINT_HEADER_BYTES: usize = 22;
 
 #[test]
 fn o3_unblock_policy_signals_before_skid_buffer_is_empty() {
@@ -180,6 +188,135 @@ fn o3_writeback_transfer_buffer_preserves_window_offsets_for_admitted_work() {
     assert_eq!(second.admissions()[0].cycle_offset(), 0);
     assert_eq!(second.admissions()[0].slot(), 0);
     assert_eq!(buffer.pending_deferred_count(), 0);
+}
+
+#[test]
+fn o3_writeback_transfer_checkpoint_payload_round_trips_deferred_state() {
+    let policy = O3WritebackTransferPolicy::new(O3PipelineStage::Iew, 2, 0).unwrap();
+    let mut buffer = O3WritebackTransferBuffer::new(policy.clone());
+
+    let first = buffer.plan_cycle([
+        O3WritebackCompletion::new(30),
+        O3WritebackCompletion::new(31),
+        O3WritebackCompletion::new(32),
+        O3WritebackCompletion::new(33),
+    ]);
+
+    assert_eq!(first.admitted_sequences().collect::<Vec<_>>(), vec![30, 31]);
+    assert_eq!(first.deferred_sequences().collect::<Vec<_>>(), vec![32, 33]);
+    assert_eq!(buffer.pending_deferred_count(), 2);
+
+    let payload = O3WritebackTransferCheckpointPayload::from_buffer(&buffer).unwrap();
+    let decoded =
+        O3WritebackTransferCheckpointPayload::decode(payload.encode().as_slice()).unwrap();
+    let mut restored = O3WritebackTransferBuffer::from_snapshot(decoded.into_snapshot()).unwrap();
+
+    assert_eq!(restored.policy(), &policy);
+    assert_eq!(restored.pending_deferred_count(), 2);
+
+    let second = restored.plan_cycle([O3WritebackCompletion::new(34)]);
+
+    assert_eq!(second.deferred_before_count(), 2);
+    assert_eq!(
+        second.admitted_sequences().collect::<Vec<_>>(),
+        vec![32, 33]
+    );
+    assert_eq!(second.deferred_sequences().collect::<Vec<_>>(), vec![34]);
+    assert_eq!(restored.pending_deferred_count(), 1);
+}
+
+#[test]
+fn o3_writeback_transfer_checkpoint_payload_rejects_malformed_bytes() {
+    let policy = O3WritebackTransferPolicy::new(O3PipelineStage::Iew, 2, 0).unwrap();
+    let payload = O3WritebackTransferCheckpointPayload::from_snapshot(
+        rem6_cpu::O3WritebackTransferSnapshot::new(policy, [O3WritebackCompletion::new(41)]),
+    )
+    .unwrap()
+    .encode();
+
+    assert_eq!(
+        O3WritebackTransferCheckpointPayload::decode(b"bad").unwrap_err(),
+        O3PipelineError::InvalidCheckpointPayloadSize {
+            expected: O3_WRITEBACK_CHECKPOINT_HEADER_BYTES,
+            actual: 3,
+        }
+    );
+
+    let mut invalid_magic = payload.clone();
+    invalid_magic[O3_WRITEBACK_CHECKPOINT_MAGIC_OFFSET] = b'X';
+    assert_eq!(
+        O3WritebackTransferCheckpointPayload::decode(&invalid_magic).unwrap_err(),
+        O3PipelineError::InvalidCheckpointMagic
+    );
+
+    let mut unsupported_version = payload.clone();
+    unsupported_version[O3_WRITEBACK_CHECKPOINT_VERSION_OFFSET] = 2;
+    assert_eq!(
+        O3WritebackTransferCheckpointPayload::decode(&unsupported_version).unwrap_err(),
+        O3PipelineError::UnsupportedCheckpointVersion { version: 2 }
+    );
+
+    let mut invalid_stage = payload.clone();
+    invalid_stage[O3_WRITEBACK_CHECKPOINT_STAGE_OFFSET] = 99;
+    assert_eq!(
+        O3WritebackTransferCheckpointPayload::decode(&invalid_stage).unwrap_err(),
+        O3PipelineError::InvalidCheckpointStageCode { code: 99 }
+    );
+
+    let mut invalid_width = payload.clone();
+    invalid_width[O3_WRITEBACK_CHECKPOINT_WIDTH_OFFSET..O3_WRITEBACK_CHECKPOINT_WIDTH_OFFSET + 4]
+        .copy_from_slice(&0_u32.to_le_bytes());
+    assert_eq!(
+        O3WritebackTransferCheckpointPayload::decode(&invalid_width).unwrap_err(),
+        O3PipelineError::ZeroWritebackWidth {
+            source: O3PipelineStage::Iew,
+        }
+    );
+
+    let mut missing_completion = payload.clone();
+    missing_completion.truncate(O3_WRITEBACK_CHECKPOINT_HEADER_BYTES);
+    assert_eq!(
+        O3WritebackTransferCheckpointPayload::decode(&missing_completion).unwrap_err(),
+        O3PipelineError::InvalidCheckpointPayloadSize {
+            expected: O3_WRITEBACK_CHECKPOINT_HEADER_BYTES + 8,
+            actual: O3_WRITEBACK_CHECKPOINT_HEADER_BYTES,
+        }
+    );
+
+    let mut trailing_payload = payload.clone();
+    trailing_payload.push(0);
+    assert_eq!(
+        O3WritebackTransferCheckpointPayload::decode(&trailing_payload).unwrap_err(),
+        O3PipelineError::InvalidCheckpointPayloadSize {
+            expected: O3_WRITEBACK_CHECKPOINT_HEADER_BYTES + 8,
+            actual: O3_WRITEBACK_CHECKPOINT_HEADER_BYTES + 9,
+        }
+    );
+}
+
+#[test]
+fn o3_writeback_transfer_checkpoint_payload_rejects_deferred_count_that_cannot_fit_payload() {
+    let policy = O3WritebackTransferPolicy::new(O3PipelineStage::Iew, 2, 0).unwrap();
+    let mut payload = O3WritebackTransferCheckpointPayload::from_snapshot(
+        rem6_cpu::O3WritebackTransferSnapshot::new(policy, []),
+    )
+    .unwrap()
+    .encode();
+    payload[O3_WRITEBACK_CHECKPOINT_DEFERRED_COUNT_OFFSET
+        ..O3_WRITEBACK_CHECKPOINT_DEFERRED_COUNT_OFFSET + 4]
+        .copy_from_slice(&u32::MAX.to_le_bytes());
+
+    let expected = (u32::MAX as usize)
+        .checked_mul(8)
+        .and_then(|bytes| O3_WRITEBACK_CHECKPOINT_HEADER_BYTES.checked_add(bytes))
+        .unwrap_or(O3_WRITEBACK_CHECKPOINT_HEADER_BYTES);
+    assert_eq!(
+        O3WritebackTransferCheckpointPayload::decode(&payload).unwrap_err(),
+        O3PipelineError::InvalidCheckpointPayloadSize {
+            expected,
+            actual: O3_WRITEBACK_CHECKPOINT_HEADER_BYTES,
+        }
+    );
 }
 
 #[test]

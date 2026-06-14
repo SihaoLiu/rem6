@@ -133,8 +133,8 @@ pub use o3_pipeline::{
     O3UnblockDecisionReason, O3UnblockPolicy, O3VectorReductionDependencyPlan,
     O3VectorReductionGroupId, O3VectorReductionMicroOp, O3VectorReductionOrdering,
     O3WritebackAdmission, O3WritebackCompletion, O3WritebackCompletionAdmission,
-    O3WritebackTransferBuffer, O3WritebackTransferCycle, O3WritebackTransferPlan,
-    O3WritebackTransferPolicy,
+    O3WritebackTransferBuffer, O3WritebackTransferCheckpointPayload, O3WritebackTransferCycle,
+    O3WritebackTransferPlan, O3WritebackTransferPolicy, O3WritebackTransferSnapshot,
 };
 pub use riscv_activity::RiscvCoreDriveActivity;
 pub use riscv_cluster::{

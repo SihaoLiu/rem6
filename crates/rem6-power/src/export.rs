@@ -1,3 +1,5 @@
+use std::fmt::Write as _;
+
 use rem6_kernel::Tick;
 
 use crate::{
@@ -179,5 +181,61 @@ impl PowerAnalysisExport {
 
     pub const fn total_watts(&self) -> f64 {
         self.total_dynamic_watts + self.total_static_watts
+    }
+
+    pub fn to_power_analysis_smoke_xml(&self) -> String {
+        let mut output = String::new();
+        writeln!(
+            &mut output,
+            "<power_analysis_smoke kind=\"{:?}\" tick=\"{}\">",
+            self.kind, self.tick,
+        )
+        .expect("writing to a string cannot fail");
+        writeln!(
+            &mut output,
+            "  <totals dynamic_watts=\"{:.6}\" static_watts=\"{:.6}\" total_watts=\"{:.6}\"/>",
+            self.total_dynamic_watts(),
+            self.total_static_watts(),
+            self.total_watts(),
+        )
+        .expect("writing to a string cannot fail");
+        for record in &self.records {
+            write!(&mut output, "  <component name=\"").expect("writing to a string cannot fail");
+            push_xml_attribute_value(&mut output, record.target());
+            writeln!(
+                &mut output,
+                "\" state=\"{:?}\" temperature_c=\"{:.6}\" dynamic_watts=\"{:.6}\" static_watts=\"{:.6}\" total_watts=\"{:.6}\">",
+                record.current_state(),
+                record.temperature_c(),
+                record.dynamic_watts(),
+                record.static_watts(),
+                record.total_watts(),
+            )
+            .expect("writing to a string cannot fail");
+            for (state, ticks) in record.residency_entries() {
+                writeln!(
+                    &mut output,
+                    "    <residency state=\"{state:?}\" ticks=\"{ticks}\"/>",
+                )
+                .expect("writing to a string cannot fail");
+            }
+            writeln!(&mut output, "  </component>").expect("writing to a string cannot fail");
+        }
+        writeln!(&mut output, "</power_analysis_smoke>").expect("writing to a string cannot fail");
+
+        output
+    }
+}
+
+fn push_xml_attribute_value(output: &mut String, value: &str) {
+    for character in value.chars() {
+        match character {
+            '&' => output.push_str("&amp;"),
+            '"' => output.push_str("&quot;"),
+            '\'' => output.push_str("&apos;"),
+            '<' => output.push_str("&lt;"),
+            '>' => output.push_str("&gt;"),
+            _ => output.push(character),
+        }
     }
 }

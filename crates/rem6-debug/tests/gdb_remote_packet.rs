@@ -1,11 +1,11 @@
 use rem6_debug::{
     parse_gdb_remote_frame, GdbRemoteAckMode, GdbRemoteAttachKind, GdbRemoteCommand,
-    GdbRemoteDisconnectRequest, GdbRemoteError, GdbRemoteFeature, GdbRemoteFeatureValue,
-    GdbRemoteFrame, GdbRemoteNotification, GdbRemotePacket, GdbRemotePacketConfig,
-    GdbRemoteRegisterBytes, GdbRemoteResumeKind, GdbRemoteResumeRequest, GdbRemoteSession,
-    GdbRemoteStopReply, GdbRemoteThreadId, GdbRemoteThreadInfoQuery, GdbRemoteThreadOperation,
-    GdbRemoteTrapKind, GdbRemoteTrapOperation, GdbRemoteTrapPoint, GdbRemoteTrapRequest,
-    GdbRemoteXferObject, GdbRemoteXferReadRequest,
+    GdbRemoteControlState, GdbRemoteDisconnectRequest, GdbRemoteError, GdbRemoteFeature,
+    GdbRemoteFeatureValue, GdbRemoteFrame, GdbRemoteNotification, GdbRemotePacket,
+    GdbRemotePacketConfig, GdbRemoteRegisterBytes, GdbRemoteResumeKind, GdbRemoteResumeRequest,
+    GdbRemoteSession, GdbRemoteStopReply, GdbRemoteThreadId, GdbRemoteThreadInfoQuery,
+    GdbRemoteThreadOperation, GdbRemoteTrapKind, GdbRemoteTrapOperation, GdbRemoteTrapPoint,
+    GdbRemoteTrapRequest, GdbRemoteXferObject, GdbRemoteXferReadRequest,
 };
 
 #[test]
@@ -1412,6 +1412,91 @@ fn gdb_remote_session_records_resume_requests_in_no_ack_mode_without_stop_reply(
 }
 
 #[test]
+fn gdb_remote_session_tracks_control_state_across_resume_traps_and_interrupts() {
+    let mut session = GdbRemoteSession::new(vec![GdbRemoteFeature::new(
+        b"vContSupported".to_vec(),
+        GdbRemoteFeatureValue::Supported,
+    )]);
+    let breakpoint = GdbRemoteTrapPoint::new(GdbRemoteTrapKind::HardwareBreakpoint, 0x1000, 4);
+    let watchpoint = GdbRemoteTrapPoint::new(GdbRemoteTrapKind::AccessWatchpoint, 0x2000, 8);
+
+    assert_eq!(session.control_state(), &GdbRemoteControlState::Stopped);
+    session
+        .handle_packet(&GdbRemotePacket::new(b"Z1,1000,4".to_vec()).unwrap())
+        .unwrap();
+    session
+        .handle_packet(&GdbRemotePacket::new(b"Z4,2000,8".to_vec()).unwrap())
+        .unwrap();
+    assert_eq!(session.active_traps(), &[breakpoint, watchpoint]);
+    assert_eq!(session.control_state(), &GdbRemoteControlState::Stopped);
+
+    session
+        .handle_packet(&GdbRemotePacket::new(b"vCont;s:1".to_vec()).unwrap())
+        .unwrap();
+    assert_eq!(
+        session.control_state(),
+        &GdbRemoteControlState::SingleInstruction {
+            requests: vec![GdbRemoteResumeRequest::new(
+                GdbRemoteResumeKind::SingleInstruction,
+                None,
+                None,
+                GdbRemoteThreadId::Id(1),
+            )],
+        },
+    );
+
+    session.set_stop_reply(GdbRemoteStopReply::signal(0x05));
+    assert_eq!(session.control_state(), &GdbRemoteControlState::Stopped);
+
+    session
+        .handle_packet(&GdbRemotePacket::new(b"c1000".to_vec()).unwrap())
+        .unwrap();
+    assert_eq!(
+        session.control_state(),
+        &GdbRemoteControlState::Continue {
+            requests: vec![GdbRemoteResumeRequest::new(
+                GdbRemoteResumeKind::Continue,
+                None,
+                Some(0x1000),
+                GdbRemoteThreadId::Any,
+            )],
+        },
+    );
+    assert_eq!(session.active_traps(), &[breakpoint, watchpoint]);
+
+    session.handle_frame(&GdbRemoteFrame::Interrupt).unwrap();
+    assert_eq!(session.control_state(), &GdbRemoteControlState::Interrupted);
+}
+
+#[test]
+fn gdb_remote_session_seeds_fixed_width_single_register_cache_from_flat_bytes() {
+    let mut session = GdbRemoteSession::new(Vec::new());
+    session.set_register_bytes(GdbRemoteRegisterBytes::new(vec![
+        0x00, 0x01, 0x02, 0x03, 0x10, 0x11, 0x12, 0x13, 0x20, 0x21, 0x22, 0x23,
+    ]));
+
+    assert!(session.cache_fixed_width_register_values(0, 4, 3));
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"p0".to_vec()).unwrap())
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"00010203".to_vec()).unwrap()),
+        ],
+    );
+    assert_eq!(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"p2".to_vec()).unwrap())
+            .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"20212223".to_vec()).unwrap()),
+        ],
+    );
+}
+
+#[test]
 fn gdb_remote_session_records_disconnect_requests() {
     let mut session = GdbRemoteSession::new(Vec::new());
 
@@ -2124,6 +2209,71 @@ fn gdb_remote_session_records_interrupt_frames_without_acknowledgement() {
         Vec::new(),
     );
     assert!(session.interrupt_requested());
+}
+
+#[test]
+fn gdb_remote_session_handles_multiple_frames_from_byte_stream() {
+    let mut session = GdbRemoteSession::new(vec![GdbRemoteFeature::new(
+        b"vContSupported".to_vec(),
+        GdbRemoteFeatureValue::Supported,
+    )]);
+    let mut input = b"noise".to_vec();
+    input.extend_from_slice(
+        &GdbRemotePacket::new(b"Z1,1000,4".to_vec())
+            .unwrap()
+            .encode_frame(),
+    );
+    input.extend_from_slice(
+        &GdbRemotePacket::new(b"vCont;s:1".to_vec())
+            .unwrap()
+            .encode_frame(),
+    );
+    input.push(0x03);
+    input.extend_from_slice(b"tail");
+
+    let result = session.handle_bytes(&input).unwrap();
+
+    assert_eq!(result.consumed_bytes(), input.len());
+    assert_eq!(result.skipped_bytes(), b"noisetail");
+    assert_eq!(
+        result.frames(),
+        &[
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"OK".to_vec()).unwrap()),
+            GdbRemoteFrame::Ack,
+        ],
+    );
+    assert_eq!(
+        session.active_traps(),
+        &[GdbRemoteTrapPoint::new(
+            GdbRemoteTrapKind::HardwareBreakpoint,
+            0x1000,
+            4,
+        )],
+    );
+    assert_eq!(session.control_state(), &GdbRemoteControlState::Interrupted);
+}
+
+#[test]
+fn gdb_remote_session_consumes_noise_only_byte_streams() {
+    let mut session = GdbRemoteSession::new(Vec::new());
+
+    let result = session.handle_bytes(b"noise").unwrap();
+
+    assert_eq!(result.consumed_bytes(), b"noise".len());
+    assert_eq!(result.skipped_bytes(), b"noise");
+    assert!(result.frames().is_empty());
+}
+
+#[test]
+fn gdb_remote_session_consumes_prefix_before_incomplete_packet() {
+    let mut session = GdbRemoteSession::new(Vec::new());
+
+    let result = session.handle_bytes(b"noise$qSupported").unwrap();
+
+    assert_eq!(result.consumed_bytes(), b"noise".len());
+    assert_eq!(result.skipped_bytes(), b"noise");
+    assert!(result.frames().is_empty());
 }
 
 #[test]

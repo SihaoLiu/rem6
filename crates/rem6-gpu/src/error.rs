@@ -31,6 +31,21 @@ pub enum GpuError {
         expected: usize,
         actual: usize,
     },
+    SnapshotQueuedIsaProgramOutOfRange {
+        device: GpuDeviceId,
+        slot_index: usize,
+        queue_index: usize,
+    },
+    SnapshotQueuedIsaProgramDuplicate {
+        device: GpuDeviceId,
+        slot_index: usize,
+        queue_index: usize,
+    },
+    SnapshotQueuedIsaProgramMissing {
+        device: GpuDeviceId,
+        slot_index: usize,
+        queue_index: usize,
+    },
     CommandTargetPartitionMismatch {
         endpoint: Endpoint,
         expected: PartitionId,
@@ -91,6 +106,33 @@ impl fmt::Display for GpuError {
             } => write!(
                 formatter,
                 "GPU device {} snapshot has {actual} slots but expected {expected}",
+                device.get()
+            ),
+            Self::SnapshotQueuedIsaProgramOutOfRange {
+                device,
+                slot_index,
+                queue_index,
+            } => write!(
+                formatter,
+                "GPU device {} snapshot queued ISA program references missing slot {slot_index} queue {queue_index}",
+                device.get()
+            ),
+            Self::SnapshotQueuedIsaProgramDuplicate {
+                device,
+                slot_index,
+                queue_index,
+            } => write!(
+                formatter,
+                "GPU device {} snapshot has duplicate queued ISA program for slot {slot_index} queue {queue_index}",
+                device.get()
+            ),
+            Self::SnapshotQueuedIsaProgramMissing {
+                device,
+                slot_index,
+                queue_index,
+            } => write!(
+                formatter,
+                "GPU device {} snapshot is missing queued ISA program for slot {slot_index} queue {queue_index}",
                 device.get()
             ),
             Self::CommandTargetPartitionMismatch {

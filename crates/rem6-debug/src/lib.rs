@@ -1,4 +1,5 @@
 mod command;
+mod control;
 mod disconnect;
 mod feature;
 mod hex;
@@ -6,10 +7,12 @@ mod memory;
 mod register;
 mod resume;
 mod stop;
+mod stream;
 mod thread;
 mod trap;
 mod xfer;
 
+pub use control::GdbRemoteControlState;
 pub use disconnect::GdbRemoteDisconnectRequest;
 use feature::encode_supported_features;
 pub use feature::{GdbRemoteFeature, GdbRemoteFeatureValue};
@@ -21,6 +24,7 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 pub use stop::GdbRemoteStopReply;
+pub use stream::GdbRemoteByteStreamResult;
 pub(crate) use thread::parse_thread_id;
 pub use thread::{GdbRemoteThreadId, GdbRemoteThreadInfoQuery, GdbRemoteThreadOperation};
 pub use trap::{
@@ -323,6 +327,7 @@ pub struct GdbRemoteSession {
     general_thread: GdbRemoteThreadId,
     thread_ids: Vec<u64>,
     thread_info_index: usize,
+    control_state: GdbRemoteControlState,
     last_resume_requests: Vec<GdbRemoteResumeRequest>,
     last_monitor_command: Option<Vec<u8>>,
     last_disconnect_request: Option<GdbRemoteDisconnectRequest>,
@@ -360,6 +365,7 @@ impl GdbRemoteSession {
             general_thread: GdbRemoteThreadId::Any,
             thread_ids: vec![1],
             thread_info_index: 0,
+            control_state: GdbRemoteControlState::Stopped,
             last_resume_requests: Vec::new(),
             last_monitor_command: None,
             last_disconnect_request: None,
@@ -456,6 +462,10 @@ impl GdbRemoteSession {
         &self.thread_ids
     }
 
+    pub const fn control_state(&self) -> &GdbRemoteControlState {
+        &self.control_state
+    }
+
     pub fn last_resume_request(&self) -> Option<&GdbRemoteResumeRequest> {
         self.last_resume_requests.last()
     }
@@ -482,6 +492,7 @@ impl GdbRemoteSession {
 
     pub fn set_stop_reply(&mut self, stop_reply: GdbRemoteStopReply) {
         self.stop_reply = stop_reply;
+        self.control_state = GdbRemoteControlState::Stopped;
     }
 
     pub const fn register_bytes(&self) -> &GdbRemoteRegisterBytes {
@@ -499,6 +510,46 @@ impl GdbRemoteSession {
     pub fn set_register_value(&mut self, number: u64, register_bytes: GdbRemoteRegisterBytes) {
         self.register_values
             .insert(number, GdbRemoteRegisterValue::Bytes(register_bytes));
+    }
+
+    pub fn cache_fixed_width_register_values(
+        &mut self,
+        first_number: u64,
+        register_byte_len: usize,
+        register_count: usize,
+    ) -> bool {
+        if register_byte_len == 0 || register_count == 0 {
+            return false;
+        }
+        let Some(expected_len) = register_byte_len.checked_mul(register_count) else {
+            return false;
+        };
+        if self.register_bytes.bytes().len() != expected_len {
+            return false;
+        }
+
+        let mut values = Vec::with_capacity(register_count);
+        for offset in 0..register_count {
+            let Ok(register_offset) = u64::try_from(offset) else {
+                return false;
+            };
+            let Some(number) = first_number.checked_add(register_offset) else {
+                return false;
+            };
+            let start = offset * register_byte_len;
+            let end = start + register_byte_len;
+            values.push((
+                number,
+                GdbRemoteRegisterValue::Bytes(GdbRemoteRegisterBytes::new(
+                    self.register_bytes.bytes()[start..end].to_vec(),
+                )),
+            ));
+        }
+
+        for (number, value) in values {
+            self.register_values.insert(number, value);
+        }
+        true
     }
 
     pub fn set_register_unavailable(&mut self, number: u64, byte_len: usize) {
@@ -603,6 +654,7 @@ impl GdbRemoteSession {
             GdbRemoteCommand::Disconnect { request } => {
                 self.last_disconnect_request = Some(request);
                 self.disconnected = true;
+                self.control_state = GdbRemoteControlState::Disconnected;
                 match request {
                     GdbRemoteDisconnectRequest::Terminate => Ok(self.ack_response()),
                     GdbRemoteDisconnectRequest::Detach { .. }
@@ -631,6 +683,8 @@ impl GdbRemoteSession {
                     address,
                     self.continue_thread,
                 )];
+                self.control_state =
+                    GdbRemoteControlState::from_resume_requests(self.last_resume_requests.clone());
                 Ok(self.ack_response())
             }
             GdbRemoteCommand::ResumeActions { requests } => {
@@ -638,6 +692,8 @@ impl GdbRemoteSession {
                     return self.packet_response(Vec::new());
                 }
                 self.last_resume_requests = requests;
+                self.control_state =
+                    GdbRemoteControlState::from_resume_requests(self.last_resume_requests.clone());
                 Ok(self.ack_response())
             }
             GdbRemoteCommand::SetThread { operation, thread } => {
@@ -851,6 +907,7 @@ impl GdbRemoteSession {
             GdbRemoteFrame::Packet(packet) => self.handle_packet(packet),
             GdbRemoteFrame::Interrupt => {
                 self.interrupt_requested = true;
+                self.control_state = GdbRemoteControlState::Interrupted;
                 Ok(Vec::new())
             }
             GdbRemoteFrame::NegativeAck => Ok(self.retransmit_last_response()),

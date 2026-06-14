@@ -4,7 +4,7 @@ use rem6_kernel::Tick;
 
 use crate::{
     WorkloadError, WorkloadId, WorkloadManifest, WorkloadManifestIdentity, WorkloadReplayPlan,
-    WorkloadResult,
+    WorkloadResource, WorkloadResult,
 };
 
 mod dispatch;
@@ -151,17 +151,28 @@ pub struct WorkloadSuiteReplayPlan {
     suite_identity: WorkloadSuiteIdentity,
     plans: Vec<WorkloadReplayPlan>,
     entries: Vec<WorkloadSuiteReplayEntry>,
+    required_resources: Vec<WorkloadSuiteRequiredResource>,
 }
 
 impl WorkloadSuiteReplayPlan {
     pub fn from_suite(suite: &WorkloadSuite) -> Result<Self, WorkloadError> {
         let mut plans = Vec::new();
+        let mut required_resources = Vec::new();
         let entries = suite
             .entries()
             .iter()
             .map(|entry| {
                 let plan = WorkloadReplayPlan::from_manifest(entry.manifest())?;
                 let manifest_identity = plan.manifest_identity();
+                required_resources.extend(plan.required_resources().iter().cloned().map(
+                    |resource| {
+                        WorkloadSuiteRequiredResource::new(
+                            entry.workload_id().clone(),
+                            manifest_identity.clone(),
+                            resource,
+                        )
+                    },
+                ));
                 plans.push(plan);
                 Ok::<_, WorkloadError>(WorkloadSuiteReplayEntry::new(
                     entry.workload_id().clone(),
@@ -173,6 +184,7 @@ impl WorkloadSuiteReplayPlan {
             suite_identity: suite.identity(),
             plans,
             entries,
+            required_resources,
         })
     }
 
@@ -186,6 +198,10 @@ impl WorkloadSuiteReplayPlan {
 
     pub fn plans(&self) -> &[WorkloadReplayPlan] {
         &self.plans
+    }
+
+    pub fn required_resources(&self) -> &[WorkloadSuiteRequiredResource] {
+        &self.required_resources
     }
 }
 
@@ -209,6 +225,39 @@ impl WorkloadSuiteReplayEntry {
 
     pub fn manifest_identity(&self) -> WorkloadManifestIdentity {
         self.manifest_identity.clone()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadSuiteRequiredResource {
+    workload_id: WorkloadId,
+    manifest_identity: WorkloadManifestIdentity,
+    resource: WorkloadResource,
+}
+
+impl WorkloadSuiteRequiredResource {
+    fn new(
+        workload_id: WorkloadId,
+        manifest_identity: WorkloadManifestIdentity,
+        resource: WorkloadResource,
+    ) -> Self {
+        Self {
+            workload_id,
+            manifest_identity,
+            resource,
+        }
+    }
+
+    pub const fn workload_id(&self) -> &WorkloadId {
+        &self.workload_id
+    }
+
+    pub fn manifest_identity(&self) -> WorkloadManifestIdentity {
+        self.manifest_identity.clone()
+    }
+
+    pub const fn resource(&self) -> &WorkloadResource {
+        &self.resource
     }
 }
 

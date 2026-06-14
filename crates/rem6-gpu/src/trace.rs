@@ -1,7 +1,7 @@
 use rem6_kernel::{PartitionId, Tick};
 use rem6_memory::MemoryRequestId;
 
-use crate::{GpuDmaId, GpuKernelId, GpuWorkgroupId};
+use crate::{GpuDmaId, GpuKernelId, GpuWorkgroupId, GpuWorkgroupIsaState};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GpuTraceEvent {
@@ -74,6 +74,7 @@ pub struct GpuWorkgroupCompletion {
     slot: u32,
     started_at: Tick,
     completed_at: Tick,
+    isa_state: GpuWorkgroupIsaState,
 }
 
 impl GpuWorkgroupCompletion {
@@ -92,7 +93,13 @@ impl GpuWorkgroupCompletion {
             slot,
             started_at,
             completed_at,
+            isa_state: GpuWorkgroupIsaState::empty(),
         }
+    }
+
+    pub fn with_isa_state(mut self, isa_state: GpuWorkgroupIsaState) -> Self {
+        self.isa_state = isa_state;
+        self
     }
 
     pub const fn kernel(&self) -> GpuKernelId {
@@ -117,5 +124,9 @@ impl GpuWorkgroupCompletion {
 
     pub const fn completed_at(&self) -> Tick {
         self.completed_at
+    }
+
+    pub const fn isa_state(&self) -> &GpuWorkgroupIsaState {
+        &self.isa_state
     }
 }

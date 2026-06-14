@@ -941,6 +941,10 @@ pub enum PowerError {
     MissingThermalDomain {
         domain: ThermalDomainId,
     },
+    PowerAnalysisKindMismatch {
+        expected: ExternalPowerAnalysisKind,
+        actual: ExternalPowerAnalysisKind,
+    },
     DuplicatePowerAnalysisTarget {
         target: String,
     },
@@ -1127,6 +1131,10 @@ impl fmt::Display for PowerError {
             Self::MissingThermalDomain { domain } => {
                 write!(formatter, "missing thermal domain {}", domain.get())
             }
+            Self::PowerAnalysisKindMismatch { expected, actual } => write!(
+                formatter,
+                "power analysis kind {actual:?} does not match {expected:?}"
+            ),
             Self::DuplicatePowerAnalysisTarget { target } => {
                 write!(
                     formatter,

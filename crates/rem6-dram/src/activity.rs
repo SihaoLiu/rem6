@@ -23,6 +23,8 @@ impl DramActivityMarker {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct DramBankActivity {
     access_count: usize,
+    read_count: usize,
+    write_count: usize,
     read_byte_count: u64,
     write_byte_count: u64,
     max_pending_nvm_reads: usize,
@@ -55,8 +57,14 @@ impl DramBankActivity {
         }
         self.access_count += 1;
         match access.kind() {
-            DramAccessKind::Read => self.read_byte_count += access.byte_count(),
-            DramAccessKind::Write => self.write_byte_count += access.byte_count(),
+            DramAccessKind::Read => {
+                self.read_count += 1;
+                self.read_byte_count += access.byte_count();
+            }
+            DramAccessKind::Write => {
+                self.write_count += 1;
+                self.write_byte_count += access.byte_count();
+            }
         }
         self.max_pending_persistent_writes = self
             .max_pending_persistent_writes
@@ -141,6 +149,14 @@ impl DramBankActivity {
 
     pub const fn access_count(&self) -> usize {
         self.access_count
+    }
+
+    pub const fn read_count(&self) -> usize {
+        self.read_count
+    }
+
+    pub const fn write_count(&self) -> usize {
+        self.write_count
     }
 
     pub const fn read_byte_count(&self) -> u64 {
@@ -272,6 +288,8 @@ impl DramBankActivity {
     pub fn merge_window(mut self, later: Self) -> Self {
         let had_accesses = self.access_count != 0;
         self.access_count += later.access_count;
+        self.read_count += later.read_count;
+        self.write_count += later.write_count;
         self.read_byte_count += later.read_byte_count;
         self.write_byte_count += later.write_byte_count;
         self.max_pending_nvm_reads = self.max_pending_nvm_reads.max(later.max_pending_nvm_reads);
@@ -316,6 +334,93 @@ impl DramBankActivity {
         );
         self.low_power.merge(later.low_power);
         self
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct DramBankResourceCounters {
+    parallel_port: u32,
+    bank: u32,
+    access_count: usize,
+    read_count: usize,
+    write_count: usize,
+    read_byte_count: u64,
+    write_byte_count: u64,
+    row_hit_count: usize,
+    row_miss_count: usize,
+    command_count: usize,
+    refresh_count: usize,
+    refresh_cycle_count: u64,
+}
+
+impl DramBankResourceCounters {
+    pub(crate) fn from_activity(
+        parallel_port: u32,
+        bank: u32,
+        activity: &DramBankActivity,
+    ) -> Self {
+        Self {
+            parallel_port,
+            bank,
+            access_count: activity.access_count(),
+            read_count: activity.read_count(),
+            write_count: activity.write_count(),
+            read_byte_count: activity.read_byte_count(),
+            write_byte_count: activity.write_byte_count(),
+            row_hit_count: activity.row_hit_count(),
+            row_miss_count: activity.row_miss_count(),
+            command_count: activity.command_count(),
+            refresh_count: activity.refresh_count(),
+            refresh_cycle_count: activity.refresh_cycle_count(),
+        }
+    }
+
+    pub const fn parallel_port(self) -> u32 {
+        self.parallel_port
+    }
+
+    pub const fn bank(self) -> u32 {
+        self.bank
+    }
+
+    pub const fn access_count(self) -> usize {
+        self.access_count
+    }
+
+    pub const fn read_count(self) -> usize {
+        self.read_count
+    }
+
+    pub const fn write_count(self) -> usize {
+        self.write_count
+    }
+
+    pub const fn read_byte_count(self) -> u64 {
+        self.read_byte_count
+    }
+
+    pub const fn write_byte_count(self) -> u64 {
+        self.write_byte_count
+    }
+
+    pub const fn row_hit_count(self) -> usize {
+        self.row_hit_count
+    }
+
+    pub const fn row_miss_count(self) -> usize {
+        self.row_miss_count
+    }
+
+    pub const fn command_count(self) -> usize {
+        self.command_count
+    }
+
+    pub const fn refresh_count(self) -> usize {
+        self.refresh_count
+    }
+
+    pub const fn refresh_cycle_count(self) -> u64 {
+        self.refresh_cycle_count
     }
 }
 
@@ -830,6 +935,15 @@ impl DramTargetActivity {
 
     pub fn bank_activities(&self) -> &BTreeMap<(u32, u32), DramBankActivity> {
         &self.banks
+    }
+
+    pub fn bank_resource_counters(&self) -> Vec<DramBankResourceCounters> {
+        self.banks
+            .iter()
+            .map(|(&(parallel_port, bank), activity)| {
+                DramBankResourceCounters::from_activity(parallel_port, bank, activity)
+            })
+            .collect()
     }
 
     pub fn persistent_write_count(&self) -> usize {

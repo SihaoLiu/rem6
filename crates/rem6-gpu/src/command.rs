@@ -1,6 +1,6 @@
 use rem6_kernel::{PartitionId, Tick};
 
-use crate::GpuError;
+use crate::{GpuError, GpuIsaProgram};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct GpuDeviceId(u32);
@@ -127,6 +127,7 @@ pub struct GpuKernelLaunch {
     kernel: GpuKernelId,
     workgroups: u32,
     workgroup_latency: Tick,
+    isa_program: GpuIsaProgram,
 }
 
 impl GpuKernelLaunch {
@@ -146,7 +147,13 @@ impl GpuKernelLaunch {
             kernel,
             workgroups,
             workgroup_latency,
+            isa_program: GpuIsaProgram::empty(),
         })
+    }
+
+    pub fn with_isa_program(mut self, isa_program: GpuIsaProgram) -> Self {
+        self.isa_program = isa_program;
+        self
     }
 
     pub const fn kernel(&self) -> GpuKernelId {
@@ -159,5 +166,9 @@ impl GpuKernelLaunch {
 
     pub const fn workgroup_latency(&self) -> Tick {
         self.workgroup_latency
+    }
+
+    pub fn isa_program(&self) -> &GpuIsaProgram {
+        &self.isa_program
     }
 }

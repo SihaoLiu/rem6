@@ -13,8 +13,8 @@ mod timing;
 mod wait_for;
 
 pub use activity::{
-    DramActivityMarker, DramActivityProfile, DramBankActivity, DramMemoryActivityMarker,
-    DramMemoryActivityProfile, DramPortActivity, DramTargetActivity,
+    DramActivityMarker, DramActivityProfile, DramBankActivity, DramBankResourceCounters,
+    DramMemoryActivityMarker, DramMemoryActivityProfile, DramPortActivity, DramTargetActivity,
 };
 pub use command::{DramCommand, DramCommandKind};
 pub use error::DramError;

@@ -87,6 +87,60 @@ fn power_analysis_export_collects_sorted_domain_records_and_totals() {
 }
 
 #[test]
+fn power_analysis_smoke_xml_export_serializes_power_analysis_records() {
+    let export = PowerAnalysisExport::new(
+        ExternalPowerAnalysisKind::McPat,
+        42,
+        vec![PowerAnalysisRecord::new(
+            "system.cpu&cluster",
+            PowerStateKind::On,
+            PowerResidency::new(vec![
+                (PowerStateKind::On, 30),
+                (PowerStateKind::ClockGated, 12),
+            ]),
+            41.25,
+            PowerEstimate::new(3.5, 1.25),
+        )
+        .unwrap()],
+    )
+    .unwrap();
+
+    assert_eq!(
+        export.to_power_analysis_smoke_xml(),
+        concat!(
+            "<power_analysis_smoke kind=\"McPat\" tick=\"42\">\n",
+            "  <totals dynamic_watts=\"3.500000\" static_watts=\"1.250000\" total_watts=\"4.750000\"/>\n",
+            "  <component name=\"system.cpu&amp;cluster\" state=\"On\" temperature_c=\"41.250000\" dynamic_watts=\"3.500000\" static_watts=\"1.250000\" total_watts=\"4.750000\">\n",
+            "    <residency state=\"On\" ticks=\"30\"/>\n",
+            "    <residency state=\"ClockGated\" ticks=\"12\"/>\n",
+            "  </component>\n",
+            "</power_analysis_smoke>\n",
+        ),
+    );
+}
+
+#[test]
+fn power_analysis_smoke_xml_export_records_external_analysis_kind() {
+    let export = PowerAnalysisExport::new(
+        ExternalPowerAnalysisKind::Dsent,
+        1,
+        vec![PowerAnalysisRecord::new(
+            "system.link",
+            PowerStateKind::On,
+            PowerResidency::new(vec![(PowerStateKind::On, 1)]),
+            30.0,
+            PowerEstimate::new(0.5, 0.25),
+        )
+        .unwrap()],
+    )
+    .unwrap();
+
+    assert!(export
+        .to_power_analysis_smoke_xml()
+        .starts_with("<power_analysis_smoke kind=\"Dsent\" tick=\"1\">\n"));
+}
+
+#[test]
 fn power_analysis_export_rejects_ambiguous_or_invalid_records() {
     let record = PowerAnalysisRecord::new(
         "system.cpu_cluster",

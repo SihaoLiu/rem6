@@ -144,8 +144,9 @@ pub use suite::{
     WorkloadSuiteExecutionEfficiency, WorkloadSuiteExecutionExpectation,
     WorkloadSuiteExecutionOccupancyWindow, WorkloadSuiteExecutionRatio,
     WorkloadSuiteExecutionRecord, WorkloadSuiteExecutionSummary, WorkloadSuiteId,
-    WorkloadSuiteIdentity, WorkloadSuiteReplayEntry, WorkloadSuiteReplayPlan, WorkloadSuiteResult,
-    WorkloadSuiteResultEntry, WorkloadSuiteWorkerDispatchLoad, WorkloadSuiteWorkerExecutionSummary,
+    WorkloadSuiteIdentity, WorkloadSuiteReplayEntry, WorkloadSuiteReplayPlan,
+    WorkloadSuiteRequiredResource, WorkloadSuiteResult, WorkloadSuiteResultEntry,
+    WorkloadSuiteWorkerDispatchLoad, WorkloadSuiteWorkerExecutionSummary,
     WorkloadSuiteWorkerSlotTickSummary,
 };
 pub use topology::{

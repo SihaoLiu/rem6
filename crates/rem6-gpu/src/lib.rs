@@ -1,5 +1,6 @@
 mod command;
 mod error;
+mod isa;
 mod snapshot;
 mod topology;
 mod trace;
@@ -12,6 +13,7 @@ pub use command::{
     GpuWorkgroupId,
 };
 pub use error::GpuError;
+pub use isa::{GpuIsaInstruction, GpuIsaProgram, GpuScalarRegister, GpuWorkgroupIsaState};
 use rem6_kernel::{
     ConservativeRunSummary, ParallelEpochBatchRecord, ParallelPartitionActivity,
     ParallelRunProfile, ParallelSchedulerContext, PartitionEventId, PartitionId,
@@ -23,7 +25,9 @@ use rem6_transport::{
     MemoryRouteId, MemoryTrace, MemoryTransport, ParallelMemoryTransaction, RequestDelivery,
     ResponseDelivery, TargetOutcome,
 };
-pub use snapshot::{GpuDeviceSnapshot, GpuQueuedWorkgroupSnapshot, GpuSlotSnapshot};
+pub use snapshot::{
+    GpuDeviceSnapshot, GpuQueuedIsaProgramSnapshot, GpuQueuedWorkgroupSnapshot, GpuSlotSnapshot,
+};
 
 pub use topology::{GpuCommandPath, GpuTopologyConfig, GpuTopologyDevice};
 pub use trace::{GpuTraceEvent, GpuTraceKind, GpuWorkgroupCompletion};
@@ -500,6 +504,50 @@ impl GpuDevice {
                 actual,
             });
         }
+        let mut seen = snapshot
+            .slots()
+            .iter()
+            .map(|slot| vec![false; slot.queued().len()])
+            .collect::<Vec<_>>();
+
+        for program in snapshot.queued_isa_programs() {
+            let slot_index = program.slot_index();
+            let queue_index = program.queue_index();
+            let Some(slot_seen) = seen.get_mut(slot_index) else {
+                return Err(GpuError::SnapshotQueuedIsaProgramOutOfRange {
+                    device: self.id(),
+                    slot_index,
+                    queue_index,
+                });
+            };
+            let Some(entry_seen) = slot_seen.get_mut(queue_index) else {
+                return Err(GpuError::SnapshotQueuedIsaProgramOutOfRange {
+                    device: self.id(),
+                    slot_index,
+                    queue_index,
+                });
+            };
+            if *entry_seen {
+                return Err(GpuError::SnapshotQueuedIsaProgramDuplicate {
+                    device: self.id(),
+                    slot_index,
+                    queue_index,
+                });
+            }
+            *entry_seen = true;
+        }
+
+        for (slot_index, slot_seen) in seen.iter().enumerate() {
+            for (queue_index, entry_seen) in slot_seen.iter().enumerate() {
+                if !entry_seen {
+                    return Err(GpuError::SnapshotQueuedIsaProgramMissing {
+                        device: self.id(),
+                        slot_index,
+                        queue_index,
+                    });
+                }
+            }
+        }
 
         Ok(())
     }
@@ -515,6 +563,7 @@ impl GpuDevice {
         scheduler: &mut PartitionedScheduler,
     ) -> Result<ParallelGpuRunSummary, GpuError> {
         let before = self.snapshot();
+        self.schedule_queued_slots_from_scheduler(scheduler)?;
         let scheduler_run = scheduler
             .run_until_idle_parallel_recorded()
             .map_err(GpuError::Scheduler)?;
@@ -533,6 +582,58 @@ impl GpuDevice {
                 .len()
                 .saturating_sub(before.dma_completions().len()),
         ))
+    }
+
+    fn schedule_queued_slots_from_scheduler(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+    ) -> Result<(), GpuError> {
+        let slot_indices = {
+            let mut state = self.state.lock().expect("GPU state lock");
+            state
+                .slots
+                .iter_mut()
+                .enumerate()
+                .filter_map(|(index, slot)| {
+                    if slot.queued.is_empty() {
+                        return None;
+                    }
+                    slot.pump_scheduled = false;
+                    Some(index)
+                })
+                .collect::<Vec<_>>()
+        };
+
+        for slot_index in slot_indices {
+            self.schedule_slot_from_scheduler(scheduler, slot_index)?;
+        }
+
+        Ok(())
+    }
+
+    fn schedule_slot_from_scheduler(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        slot_index: usize,
+    ) -> Result<(), GpuError> {
+        let partition = self.partition();
+        let now = scheduler
+            .partition_now(partition)
+            .map_err(GpuError::Scheduler)?;
+        let Some(delay) = self.reserve_slot_pump(now, slot_index) else {
+            return Ok(());
+        };
+        let tick = now
+            .checked_add(delay)
+            .ok_or(GpuError::TickOverflow { now, delay })?;
+        let gpu = self.clone();
+        scheduler
+            .schedule_parallel_at(partition, tick, move |context| {
+                gpu.start_next_workgroup(context, slot_index);
+            })
+            .map_err(GpuError::Scheduler)?;
+
+        Ok(())
     }
 
     pub fn submit_dma_copy_read<F>(
@@ -720,6 +821,7 @@ impl GpuDevice {
                     queued_at: now,
                     started_at,
                     completed_at,
+                    isa_program: launch.isa_program().clone(),
                 }
             };
             if queued.started_at > queued.queued_at {
@@ -761,7 +863,7 @@ impl GpuDevice {
     }
 
     fn start_next_workgroup(&self, context: &mut ParallelSchedulerContext<'_>, slot_index: usize) {
-        let Some(workgroup) = self.pop_slot_workgroup(slot_index) else {
+        let Some(workgroup) = self.pop_ready_slot_workgroup(slot_index, context.now()) else {
             return;
         };
         self.record(GpuTraceEvent::new(
@@ -787,10 +889,14 @@ impl GpuDevice {
             .expect("GPU workgroup completion tick was reserved");
     }
 
-    fn pop_slot_workgroup(&self, slot_index: usize) -> Option<GpuQueuedWorkgroup> {
+    fn pop_ready_slot_workgroup(&self, slot_index: usize, now: Tick) -> Option<GpuQueuedWorkgroup> {
         let mut state = self.state.lock().expect("GPU state lock");
         let slot = &mut state.slots[slot_index];
         slot.pump_scheduled = false;
+        let workgroup = slot.queued.front()?;
+        if workgroup.started_at > now {
+            return None;
+        }
         slot.queued.pop_front()
     }
 
@@ -807,7 +913,8 @@ impl GpuDevice {
             workgroup.slot,
             workgroup.started_at,
             context.now(),
-        );
+        )
+        .with_isa_state(workgroup.isa_program.execute(workgroup.workgroup));
         let mut state = self.state.lock().expect("GPU state lock");
         state.trace.push(GpuTraceEvent::new(
             context.now(),
@@ -904,17 +1011,35 @@ impl GpuDeviceState {
     }
 
     fn snapshot(&self) -> GpuDeviceSnapshot {
+        let mut queued_isa_programs = Vec::new();
+        let slots = self
+            .slots
+            .iter()
+            .enumerate()
+            .map(|(slot_index, slot)| {
+                for (queue_index, workgroup) in slot.queued.iter().enumerate() {
+                    queued_isa_programs.push(GpuQueuedIsaProgramSnapshot::new(
+                        slot_index,
+                        queue_index,
+                        workgroup.isa_program.clone(),
+                    ));
+                }
+                slot.snapshot()
+            })
+            .collect();
+
         GpuDeviceSnapshot::new(
-            self.slots.iter().map(GpuSlotState::snapshot).collect(),
+            slots,
             self.trace.clone(),
             self.completions.clone(),
             self.pending_dma_writes.clone(),
             self.dma_completions.clone(),
         )
+        .with_queued_isa_programs(queued_isa_programs)
     }
 
     fn from_snapshot(snapshot: &GpuDeviceSnapshot) -> Self {
-        Self {
+        let mut state = Self {
             slots: snapshot
                 .slots()
                 .iter()
@@ -925,7 +1050,17 @@ impl GpuDeviceState {
             pending_dma_writes: snapshot.pending_dma_writes().to_vec(),
             dma_completions: snapshot.dma_completions().to_vec(),
             wait_log: Vec::new(),
+        };
+        for program in snapshot.queued_isa_programs() {
+            let Some(slot) = state.slots.get_mut(program.slot_index()) else {
+                continue;
+            };
+            let Some(workgroup) = slot.queued.get_mut(program.queue_index()) else {
+                continue;
+            };
+            workgroup.isa_program = program.isa_program().clone();
         }
+        state
     }
 
     fn mark_wait_for(&self) -> GpuWaitForMarker {
@@ -1020,6 +1155,7 @@ struct GpuQueuedWorkgroup {
     queued_at: Tick,
     started_at: Tick,
     completed_at: Tick,
+    isa_program: GpuIsaProgram,
 }
 
 impl GpuQueuedWorkgroup {
@@ -1044,6 +1180,7 @@ impl GpuQueuedWorkgroup {
             queued_at: snapshot.queued_at(),
             started_at: snapshot.started_at(),
             completed_at: snapshot.completed_at(),
+            isa_program: GpuIsaProgram::empty(),
         }
     }
 }

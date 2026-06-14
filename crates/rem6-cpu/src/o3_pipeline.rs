@@ -2,6 +2,15 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::error::Error;
 use std::fmt;
 
+const O3_WRITEBACK_CHECKPOINT_MAGIC: [u8; 4] = *b"O3WB";
+const O3_WRITEBACK_CHECKPOINT_VERSION: u8 = 1;
+const U32_BYTES: usize = 4;
+const U64_BYTES: usize = 8;
+const O3_WRITEBACK_CHECKPOINT_HEADER_BYTES: usize =
+    O3_WRITEBACK_CHECKPOINT_MAGIC.len() + 1 + 1 + U32_BYTES + U64_BYTES + U32_BYTES;
+const O3_WRITEBACK_CHECKPOINT_COMPLETION_BYTES: usize = U64_BYTES;
+const O3_WRITEBACK_CHECKPOINT_U32_MAX: usize = u32::MAX as usize;
+
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum O3PipelineStage {
     Fetch,
@@ -683,6 +692,22 @@ pub enum O3PipelineError {
         first_sequence: u64,
         micro_ops: usize,
     },
+    InvalidCheckpointPayloadSize {
+        expected: usize,
+        actual: usize,
+    },
+    InvalidCheckpointMagic,
+    UnsupportedCheckpointVersion {
+        version: u8,
+    },
+    InvalidCheckpointStageCode {
+        code: u8,
+    },
+    CheckpointValueTooLarge {
+        field: &'static str,
+        value: usize,
+        maximum: usize,
+    },
 }
 
 impl fmt::Display for O3PipelineError {
@@ -736,6 +761,28 @@ impl fmt::Display for O3PipelineError {
             } => write!(
                 formatter,
                 "O3 vector reduction sequence overflows from first sequence {first_sequence} across {micro_ops} micro-ops"
+            ),
+            Self::InvalidCheckpointPayloadSize { expected, actual } => write!(
+                formatter,
+                "O3 checkpoint payload has {actual} bytes but expected {expected}"
+            ),
+            Self::InvalidCheckpointMagic => {
+                write!(formatter, "O3 checkpoint payload has invalid magic")
+            }
+            Self::UnsupportedCheckpointVersion { version } => write!(
+                formatter,
+                "O3 checkpoint payload version {version} is not supported"
+            ),
+            Self::InvalidCheckpointStageCode { code } => {
+                write!(formatter, "O3 checkpoint payload has invalid stage code {code}")
+            }
+            Self::CheckpointValueTooLarge {
+                field,
+                value,
+                maximum,
+            } => write!(
+                formatter,
+                "O3 checkpoint field {field} value {value} exceeds maximum {maximum}"
             ),
         }
     }
@@ -995,6 +1042,124 @@ impl O3WritebackTransferCycle {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct O3WritebackTransferSnapshot {
+    policy: O3WritebackTransferPolicy,
+    deferred: Vec<O3WritebackCompletion>,
+}
+
+impl O3WritebackTransferSnapshot {
+    pub fn new<I>(policy: O3WritebackTransferPolicy, deferred: I) -> Self
+    where
+        I: IntoIterator<Item = O3WritebackCompletion>,
+    {
+        Self {
+            policy,
+            deferred: deferred.into_iter().collect(),
+        }
+    }
+
+    pub const fn policy(&self) -> &O3WritebackTransferPolicy {
+        &self.policy
+    }
+
+    pub fn deferred(&self) -> &[O3WritebackCompletion] {
+        &self.deferred
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct O3WritebackTransferCheckpointPayload {
+    snapshot: O3WritebackTransferSnapshot,
+}
+
+impl O3WritebackTransferCheckpointPayload {
+    pub fn from_buffer(buffer: &O3WritebackTransferBuffer) -> Result<Self, O3PipelineError> {
+        Self::from_snapshot(buffer.snapshot())
+    }
+
+    pub fn from_snapshot(snapshot: O3WritebackTransferSnapshot) -> Result<Self, O3PipelineError> {
+        encode_checkpoint_u32("writeback_width", snapshot.policy.writeback_width())?;
+        encode_checkpoint_u32("deferred_count", snapshot.deferred.len())?;
+        checkpoint_payload_size(
+            snapshot.deferred.len(),
+            O3_WRITEBACK_CHECKPOINT_HEADER_BYTES,
+        )?;
+        Ok(Self { snapshot })
+    }
+
+    pub fn decode(payload: &[u8]) -> Result<Self, O3PipelineError> {
+        if payload.len() < O3_WRITEBACK_CHECKPOINT_HEADER_BYTES {
+            return Err(O3PipelineError::InvalidCheckpointPayloadSize {
+                expected: O3_WRITEBACK_CHECKPOINT_HEADER_BYTES,
+                actual: payload.len(),
+            });
+        }
+        if payload[..O3_WRITEBACK_CHECKPOINT_MAGIC.len()] != O3_WRITEBACK_CHECKPOINT_MAGIC {
+            return Err(O3PipelineError::InvalidCheckpointMagic);
+        }
+
+        let version = payload[O3_WRITEBACK_CHECKPOINT_MAGIC.len()];
+        if version != O3_WRITEBACK_CHECKPOINT_VERSION {
+            return Err(O3PipelineError::UnsupportedCheckpointVersion { version });
+        }
+
+        let mut offset = O3_WRITEBACK_CHECKPOINT_MAGIC.len() + 1;
+        let source = decode_checkpoint_stage(payload[offset])?;
+        offset += 1;
+        let writeback_width = read_u32(payload, &mut offset) as usize;
+        let future_cycles = read_u64(payload, &mut offset);
+        let deferred_count = read_u32(payload, &mut offset) as usize;
+        let expected = checkpoint_payload_size(deferred_count, payload.len())?;
+        if payload.len() != expected {
+            return Err(O3PipelineError::InvalidCheckpointPayloadSize {
+                expected,
+                actual: payload.len(),
+            });
+        }
+
+        let policy = O3WritebackTransferPolicy::new(source, writeback_width, future_cycles)?;
+        let mut deferred = Vec::with_capacity(deferred_count);
+        for _ in 0..deferred_count {
+            deferred.push(O3WritebackCompletion::new(read_u64(payload, &mut offset)));
+        }
+
+        Self::from_snapshot(O3WritebackTransferSnapshot::new(policy, deferred))
+    }
+
+    pub fn encode(&self) -> Vec<u8> {
+        let deferred_count = encode_checkpoint_u32("deferred_count", self.snapshot.deferred.len())
+            .expect("checkpoint payload was validated before construction");
+        let writeback_width =
+            encode_checkpoint_u32("writeback_width", self.snapshot.policy.writeback_width())
+                .expect("checkpoint payload was validated before construction");
+        let capacity = checkpoint_payload_size(
+            self.snapshot.deferred.len(),
+            O3_WRITEBACK_CHECKPOINT_HEADER_BYTES,
+        )
+        .expect("checkpoint payload was validated before construction");
+        let mut payload = Vec::with_capacity(capacity);
+        payload.extend_from_slice(&O3_WRITEBACK_CHECKPOINT_MAGIC);
+        payload.push(O3_WRITEBACK_CHECKPOINT_VERSION);
+        payload.push(encode_checkpoint_stage(self.snapshot.policy.source()));
+        payload.extend_from_slice(&writeback_width.to_le_bytes());
+        payload.extend_from_slice(&self.snapshot.policy.future_cycles().to_le_bytes());
+        payload.extend_from_slice(&deferred_count.to_le_bytes());
+        for completion in &self.snapshot.deferred {
+            payload.extend_from_slice(&completion.sequence().to_le_bytes());
+        }
+        payload
+    }
+
+    pub const fn snapshot(&self) -> &O3WritebackTransferSnapshot {
+        &self.snapshot
+    }
+
+    pub fn into_snapshot(self) -> O3WritebackTransferSnapshot {
+        self.snapshot
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct O3WritebackTransferBuffer {
     policy: O3WritebackTransferPolicy,
     deferred: VecDeque<O3WritebackCompletion>,
@@ -1018,6 +1183,27 @@ impl O3WritebackTransferBuffer {
 
     pub fn is_empty(&self) -> bool {
         self.deferred.is_empty()
+    }
+
+    pub fn snapshot(&self) -> O3WritebackTransferSnapshot {
+        O3WritebackTransferSnapshot::new(self.policy.clone(), self.deferred.iter().copied())
+    }
+
+    pub fn from_snapshot(snapshot: O3WritebackTransferSnapshot) -> Result<Self, O3PipelineError> {
+        let mut deferred = VecDeque::new();
+        deferred.extend(snapshot.deferred);
+        Ok(Self {
+            policy: snapshot.policy,
+            deferred,
+        })
+    }
+
+    pub fn restore(
+        &mut self,
+        snapshot: O3WritebackTransferSnapshot,
+    ) -> Result<(), O3PipelineError> {
+        *self = Self::from_snapshot(snapshot)?;
+        Ok(())
     }
 
     pub fn plan_cycle<I>(&mut self, ready: I) -> O3WritebackTransferCycle
@@ -1056,6 +1242,82 @@ impl O3WritebackTransferBuffer {
             admissions,
             deferred,
         }
+    }
+}
+
+fn encode_checkpoint_stage(stage: O3PipelineStage) -> u8 {
+    match stage {
+        O3PipelineStage::Fetch => 0,
+        O3PipelineStage::Decode => 1,
+        O3PipelineStage::Rename => 2,
+        O3PipelineStage::Iew => 3,
+        O3PipelineStage::Commit => 4,
+    }
+}
+
+fn decode_checkpoint_stage(code: u8) -> Result<O3PipelineStage, O3PipelineError> {
+    match code {
+        0 => Ok(O3PipelineStage::Fetch),
+        1 => Ok(O3PipelineStage::Decode),
+        2 => Ok(O3PipelineStage::Rename),
+        3 => Ok(O3PipelineStage::Iew),
+        4 => Ok(O3PipelineStage::Commit),
+        _ => Err(O3PipelineError::InvalidCheckpointStageCode { code }),
+    }
+}
+
+fn encode_checkpoint_u32(field: &'static str, value: usize) -> Result<u32, O3PipelineError> {
+    u32::try_from(value).map_err(|_| O3PipelineError::CheckpointValueTooLarge {
+        field,
+        value,
+        maximum: O3_WRITEBACK_CHECKPOINT_U32_MAX,
+    })
+}
+
+fn checkpoint_payload_size(deferred_count: usize, actual: usize) -> Result<usize, O3PipelineError> {
+    let completion_bytes = deferred_count
+        .checked_mul(O3_WRITEBACK_CHECKPOINT_COMPLETION_BYTES)
+        .ok_or(O3PipelineError::InvalidCheckpointPayloadSize {
+            expected: O3_WRITEBACK_CHECKPOINT_HEADER_BYTES,
+            actual,
+        })?;
+    O3_WRITEBACK_CHECKPOINT_HEADER_BYTES
+        .checked_add(completion_bytes)
+        .ok_or(O3PipelineError::InvalidCheckpointPayloadSize {
+            expected: O3_WRITEBACK_CHECKPOINT_HEADER_BYTES,
+            actual,
+        })
+}
+
+fn read_u32(payload: &[u8], offset: &mut usize) -> u32 {
+    let bytes = payload[*offset..*offset + U32_BYTES]
+        .try_into()
+        .expect("checkpoint u32 slice width is fixed");
+    *offset += U32_BYTES;
+    u32::from_le_bytes(bytes)
+}
+
+fn read_u64(payload: &[u8], offset: &mut usize) -> u64 {
+    let bytes = payload[*offset..*offset + U64_BYTES]
+        .try_into()
+        .expect("checkpoint u64 slice width is fixed");
+    *offset += U64_BYTES;
+    u64::from_le_bytes(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn o3_writeback_checkpoint_size_rejects_overflow() {
+        assert_eq!(
+            checkpoint_payload_size(usize::MAX, O3_WRITEBACK_CHECKPOINT_HEADER_BYTES).unwrap_err(),
+            O3PipelineError::InvalidCheckpointPayloadSize {
+                expected: O3_WRITEBACK_CHECKPOINT_HEADER_BYTES,
+                actual: O3_WRITEBACK_CHECKPOINT_HEADER_BYTES,
+            }
+        );
     }
 }
 

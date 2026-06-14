@@ -1,8 +1,9 @@
 use rem6_gpu::{
     GpuComputeConfig, GpuDevice, GpuDeviceId, GpuDeviceSnapshot, GpuDmaCompletion, GpuDmaCopy,
-    GpuDmaId, GpuError, GpuKernelId, GpuKernelLaunch, GpuPendingDmaWrite,
-    GpuQueuedWorkgroupSnapshot, GpuSlotSnapshot, GpuTraceEvent, GpuTraceKind,
-    GpuWorkgroupCompletion, GpuWorkgroupId,
+    GpuDmaId, GpuError, GpuIsaInstruction, GpuIsaProgram, GpuKernelId, GpuKernelLaunch,
+    GpuPendingDmaWrite, GpuQueuedIsaProgramSnapshot, GpuQueuedWorkgroupSnapshot, GpuScalarRegister,
+    GpuSlotSnapshot, GpuTraceEvent, GpuTraceKind, GpuWorkgroupCompletion, GpuWorkgroupId,
+    GpuWorkgroupIsaState,
 };
 use rem6_kernel::{
     ParallelRunProfile, PartitionId, PartitionedScheduler, SchedulerError, WaitForEdgeKind,
@@ -192,6 +193,328 @@ fn gpu_launch_runs_workgroups_on_compute_units_deterministically() {
                 },
             ),
         ],
+    );
+}
+
+#[test]
+fn gpu_launch_executes_isa_program_per_workgroup_and_records_register_state() {
+    let cpu_partition = PartitionId::new(0);
+    let gpu_partition = PartitionId::new(1);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let gpu =
+        GpuDevice::new(GpuComputeConfig::new(GpuDeviceId::new(13), gpu_partition, 1, 1).unwrap());
+    let workgroup_register = GpuScalarRegister::new(0);
+    let result_register = GpuScalarRegister::new(1);
+    let program = GpuIsaProgram::new(vec![
+        GpuIsaInstruction::load_workgroup_id(workgroup_register),
+        GpuIsaInstruction::add_immediate(result_register, workgroup_register, 7),
+    ]);
+    let launch = GpuKernelLaunch::new(GpuKernelId::new(50), 2, 3)
+        .unwrap()
+        .with_isa_program(program.clone());
+
+    gpu.submit_kernel_from_partition(&mut scheduler, cpu_partition, 2, launch)
+        .unwrap();
+    gpu.run_until_idle_parallel_recorded(&mut scheduler)
+        .unwrap();
+
+    let completions = gpu.completions();
+    assert_eq!(completions.len(), 2);
+    assert_eq!(completions[0].isa_state().pc(), 2);
+    assert_eq!(
+        completions[0]
+            .isa_state()
+            .scalar_register(workgroup_register),
+        Some(0)
+    );
+    assert_eq!(
+        completions[0].isa_state().scalar_register(result_register),
+        Some(7)
+    );
+    assert_eq!(completions[1].isa_state().pc(), 2);
+    assert_eq!(
+        completions[1]
+            .isa_state()
+            .scalar_register(workgroup_register),
+        Some(1)
+    );
+    assert_eq!(
+        completions[1].isa_state().scalar_register(result_register),
+        Some(8)
+    );
+    assert_eq!(
+        gpu.snapshot().completions()[1].isa_state(),
+        &GpuWorkgroupIsaState::from_scalar_registers(
+            2,
+            [(workgroup_register, 1), (result_register, 8)]
+        )
+    );
+}
+
+#[test]
+fn gpu_scalar_add_immediate_wraps_on_signed_overflow() {
+    let cpu_partition = PartitionId::new(0);
+    let gpu_partition = PartitionId::new(1);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let gpu =
+        GpuDevice::new(GpuComputeConfig::new(GpuDeviceId::new(15), gpu_partition, 1, 1).unwrap());
+    let source_register = GpuScalarRegister::new(0);
+    let result_register = GpuScalarRegister::new(1);
+    let program = GpuIsaProgram::new(vec![
+        GpuIsaInstruction::move_immediate(source_register, i64::MAX),
+        GpuIsaInstruction::add_immediate(result_register, source_register, 1),
+    ]);
+    let launch = GpuKernelLaunch::new(GpuKernelId::new(53), 1, 3)
+        .unwrap()
+        .with_isa_program(program);
+
+    gpu.submit_kernel_from_partition(&mut scheduler, cpu_partition, 2, launch)
+        .unwrap();
+    gpu.run_until_idle_parallel_recorded(&mut scheduler)
+        .unwrap();
+
+    assert_eq!(
+        gpu.completions()[0]
+            .isa_state()
+            .scalar_register(result_register),
+        Some(i64::MIN)
+    );
+}
+
+#[test]
+fn gpu_snapshot_restore_preserves_queued_isa_program_state() {
+    let cpu_partition = PartitionId::new(0);
+    let gpu_partition = PartitionId::new(1);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let gpu =
+        GpuDevice::new(GpuComputeConfig::new(GpuDeviceId::new(14), gpu_partition, 1, 1).unwrap());
+    let result_register = GpuScalarRegister::new(2);
+    let program = GpuIsaProgram::new(vec![GpuIsaInstruction::move_immediate(result_register, 99)]);
+    let launch = GpuKernelLaunch::new(GpuKernelId::new(51), 3, 4)
+        .unwrap()
+        .with_isa_program(program);
+
+    gpu.submit_kernel_from_partition(&mut scheduler, cpu_partition, 2, launch)
+        .unwrap();
+    scheduler.run_next_epoch_parallel_recorded().unwrap();
+    let snapshot = gpu.snapshot();
+    assert!(snapshot.has_queued_workgroups());
+    gpu.restore(&snapshot).unwrap();
+
+    gpu.run_until_idle_parallel_recorded(&mut scheduler)
+        .unwrap();
+
+    let completions = gpu.completions();
+    assert_eq!(completions.len(), 3);
+    assert_eq!(completions[2].isa_state().pc(), 1);
+    assert_eq!(
+        completions[2].isa_state().scalar_register(result_register),
+        Some(99)
+    );
+}
+
+#[test]
+fn gpu_snapshot_restore_rearms_queued_workgroups_on_fresh_scheduler() {
+    let cpu_partition = PartitionId::new(0);
+    let gpu_partition = PartitionId::new(1);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let gpu =
+        GpuDevice::new(GpuComputeConfig::new(GpuDeviceId::new(16), gpu_partition, 1, 1).unwrap());
+    let result_register = GpuScalarRegister::new(3);
+    let program = GpuIsaProgram::new(vec![GpuIsaInstruction::move_immediate(result_register, 44)]);
+    let launch = GpuKernelLaunch::new(GpuKernelId::new(54), 3, 4)
+        .unwrap()
+        .with_isa_program(program);
+
+    gpu.submit_kernel_from_partition(&mut scheduler, cpu_partition, 2, launch)
+        .unwrap();
+    scheduler.run_next_epoch_parallel_recorded().unwrap();
+    let snapshot = gpu.snapshot();
+    assert!(snapshot.has_queued_workgroups());
+    let queued_count = snapshot
+        .slots()
+        .iter()
+        .map(|slot| slot.queued().len())
+        .sum::<usize>();
+    assert_eq!(queued_count, 2);
+
+    gpu.restore(&snapshot).unwrap();
+    let mut restored_scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let summary = gpu
+        .run_until_idle_parallel_recorded(&mut restored_scheduler)
+        .unwrap();
+
+    assert_eq!(summary.workgroup_completion_count(), queued_count);
+    assert_eq!(gpu.completions().len(), queued_count);
+    assert_eq!(
+        gpu.completions()[queued_count - 1]
+            .isa_state()
+            .scalar_register(result_register),
+        Some(44)
+    );
+}
+
+#[test]
+fn gpu_snapshot_restore_rearms_queued_workgroups_with_unrelated_gpu_event() {
+    let cpu_partition = PartitionId::new(0);
+    let gpu_partition = PartitionId::new(1);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let gpu =
+        GpuDevice::new(GpuComputeConfig::new(GpuDeviceId::new(17), gpu_partition, 1, 1).unwrap());
+    let result_register = GpuScalarRegister::new(4);
+    let program = GpuIsaProgram::new(vec![GpuIsaInstruction::move_immediate(result_register, 55)]);
+    let launch = GpuKernelLaunch::new(GpuKernelId::new(55), 3, 4)
+        .unwrap()
+        .with_isa_program(program);
+
+    gpu.submit_kernel_from_partition(&mut scheduler, cpu_partition, 2, launch)
+        .unwrap();
+    scheduler.run_next_epoch_parallel_recorded().unwrap();
+    let snapshot = gpu.snapshot();
+    let queued_count = snapshot
+        .slots()
+        .iter()
+        .map(|slot| slot.queued().len())
+        .sum::<usize>();
+    assert_eq!(queued_count, 2);
+
+    gpu.restore(&snapshot).unwrap();
+    let mut restored_scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    restored_scheduler
+        .schedule_parallel_at(gpu_partition, 0, |_| {})
+        .unwrap();
+    let summary = gpu
+        .run_until_idle_parallel_recorded(&mut restored_scheduler)
+        .unwrap();
+
+    assert_eq!(summary.workgroup_completion_count(), queued_count);
+    assert_eq!(gpu.completions().len(), queued_count);
+    assert_eq!(
+        gpu.completions()[queued_count - 1]
+            .isa_state()
+            .scalar_register(result_register),
+        Some(55)
+    );
+}
+
+#[test]
+fn gpu_restore_rejects_missing_queued_isa_program_snapshot_entries() {
+    let gpu = GpuDevice::new(
+        GpuComputeConfig::new(GpuDeviceId::new(18), PartitionId::new(0), 1, 1).unwrap(),
+    );
+    let snapshot = GpuDeviceSnapshot::new(
+        vec![GpuSlotSnapshot::new(
+            0,
+            false,
+            vec![GpuQueuedWorkgroupSnapshot::new(
+                GpuKernelId::new(56),
+                GpuWorkgroupId::new(0),
+                0,
+                0,
+                0,
+                0,
+                4,
+            )],
+        )],
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    );
+
+    assert_eq!(
+        gpu.restore(&snapshot),
+        Err(GpuError::SnapshotQueuedIsaProgramMissing {
+            device: GpuDeviceId::new(18),
+            slot_index: 0,
+            queue_index: 0,
+        })
+    );
+}
+
+#[test]
+fn gpu_restore_rejects_invalid_queued_isa_program_snapshot_entries() {
+    let gpu = GpuDevice::new(
+        GpuComputeConfig::new(GpuDeviceId::new(19), PartitionId::new(0), 1, 1).unwrap(),
+    );
+    let snapshot = GpuDeviceSnapshot::new(
+        vec![GpuSlotSnapshot::new(
+            0,
+            false,
+            vec![GpuQueuedWorkgroupSnapshot::new(
+                GpuKernelId::new(57),
+                GpuWorkgroupId::new(0),
+                0,
+                0,
+                0,
+                0,
+                4,
+            )],
+        )],
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    )
+    .with_queued_isa_programs(vec![GpuQueuedIsaProgramSnapshot::new(
+        1,
+        0,
+        GpuIsaProgram::new(vec![GpuIsaInstruction::move_immediate(
+            GpuScalarRegister::new(0),
+            1,
+        )]),
+    )]);
+
+    assert_eq!(
+        gpu.restore(&snapshot),
+        Err(GpuError::SnapshotQueuedIsaProgramOutOfRange {
+            device: GpuDeviceId::new(19),
+            slot_index: 1,
+            queue_index: 0,
+        })
+    );
+}
+
+#[test]
+fn gpu_restore_rejects_duplicate_queued_isa_program_snapshot_entries() {
+    let gpu = GpuDevice::new(
+        GpuComputeConfig::new(GpuDeviceId::new(20), PartitionId::new(0), 1, 1).unwrap(),
+    );
+    let program = GpuIsaProgram::new(vec![GpuIsaInstruction::move_immediate(
+        GpuScalarRegister::new(0),
+        1,
+    )]);
+    let snapshot = GpuDeviceSnapshot::new(
+        vec![GpuSlotSnapshot::new(
+            0,
+            false,
+            vec![GpuQueuedWorkgroupSnapshot::new(
+                GpuKernelId::new(58),
+                GpuWorkgroupId::new(0),
+                0,
+                0,
+                0,
+                0,
+                4,
+            )],
+        )],
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    )
+    .with_queued_isa_programs(vec![
+        GpuQueuedIsaProgramSnapshot::new(0, 0, program.clone()),
+        GpuQueuedIsaProgramSnapshot::new(0, 0, program),
+    ]);
+
+    assert_eq!(
+        gpu.restore(&snapshot),
+        Err(GpuError::SnapshotQueuedIsaProgramDuplicate {
+            device: GpuDeviceId::new(20),
+            slot_index: 0,
+            queue_index: 0,
+        })
     );
 }
 
@@ -396,6 +719,28 @@ fn gpu_device_restores_snapshot_state_and_slot_reservations() {
             GpuWorkgroupCompletion::new(GpuKernelId::new(32), GpuWorkgroupId::new(0), 1, 0, 6, 11,),
         ],
     );
+}
+
+#[test]
+fn gpu_snapshot_public_fixtures_remain_const_and_copy() {
+    const QUEUED: GpuQueuedWorkgroupSnapshot = GpuQueuedWorkgroupSnapshot::new(
+        GpuKernelId::new(35),
+        GpuWorkgroupId::new(1),
+        0,
+        0,
+        2,
+        6,
+        10,
+    );
+    const COMPLETION: GpuWorkgroupCompletion =
+        GpuWorkgroupCompletion::new(GpuKernelId::new(35), GpuWorkgroupId::new(1), 0, 0, 6, 10);
+
+    fn assert_copy<T: Copy>() {}
+
+    assert_copy::<GpuQueuedWorkgroupSnapshot>();
+    let copied = QUEUED;
+    assert_eq!(copied, QUEUED);
+    assert_eq!(COMPLETION.workgroup(), GpuWorkgroupId::new(1));
 }
 
 #[test]

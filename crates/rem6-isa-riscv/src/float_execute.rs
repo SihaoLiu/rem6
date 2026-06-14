@@ -103,7 +103,9 @@ pub(crate) fn execute_float_register_instruction(
             ) {
                 return Err(());
             }
+            let flags = float::integer_to_float_exception_flags(instruction, value);
             let (rd, value) = float::float_register_write_from_integer(instruction, value);
+            hart.raise_float_exception_flags(flags);
             float::write_float_register(hart, writes, rd, value);
         }
         _ => unreachable!("non-float-register instruction dispatched to float register executor"),

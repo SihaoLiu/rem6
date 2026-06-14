@@ -537,6 +537,80 @@ fn dram_memory_activity_profile_summarizes_profile_parallel_capacity() {
 }
 
 #[test]
+fn dram_target_activity_reports_bank_resource_counters() {
+    let profile =
+        ExternalMemoryProfile::hbm(target(52), layout(), 1, 2, geometry(), timing()).unwrap();
+    let mut controller = DramMemoryController::new();
+    controller.add_profile(profile).unwrap();
+    controller
+        .map_region(
+            profile.target(),
+            Address::new(0x0000),
+            AccessSize::new(0x4000).unwrap(),
+        )
+        .unwrap();
+    controller
+        .insert_line(profile.target(), Address::new(0x0000), vec![0x11; 64])
+        .unwrap();
+    controller
+        .insert_line(profile.target(), Address::new(0x0040), vec![0x22; 64])
+        .unwrap();
+
+    controller.accept(0, &read(0x0000, 120)).unwrap();
+    let marker = controller.mark_activity();
+    controller.accept(20, &write(0x0008, 121)).unwrap();
+    controller.accept(40, &read(0x0040, 122)).unwrap();
+
+    let activity = controller.target_activity(profile.target()).unwrap();
+    let counters = activity.bank_resource_counters();
+
+    assert_eq!(counters.len(), 2);
+    assert_eq!(counters[0].parallel_port(), 0);
+    assert_eq!(counters[0].bank(), 0);
+    assert_eq!(counters[0].access_count(), 2);
+    assert_eq!(counters[0].read_count(), 1);
+    assert_eq!(counters[0].write_count(), 1);
+    assert_eq!(counters[0].read_byte_count(), 8);
+    assert_eq!(counters[0].write_byte_count(), 4);
+    assert_eq!(counters[0].row_miss_count(), 1);
+    assert_eq!(counters[0].row_hit_count(), 1);
+    assert_eq!(counters[0].command_count(), 3);
+
+    assert_eq!(counters[1].parallel_port(), 1);
+    assert_eq!(counters[1].bank(), 0);
+    assert_eq!(counters[1].access_count(), 1);
+    assert_eq!(counters[1].read_count(), 1);
+    assert_eq!(counters[1].write_count(), 0);
+    assert_eq!(counters[1].read_byte_count(), 8);
+    assert_eq!(counters[1].write_byte_count(), 0);
+    assert_eq!(counters[1].row_miss_count(), 1);
+    assert_eq!(counters[1].row_hit_count(), 0);
+    assert_eq!(counters[1].command_count(), 2);
+
+    let since_marker = controller
+        .target_activity_since(&marker, profile.target())
+        .unwrap();
+    let window_counters = since_marker.bank_resource_counters();
+
+    assert_eq!(window_counters.len(), 2);
+    assert_eq!(window_counters[0].parallel_port(), 0);
+    assert_eq!(window_counters[0].bank(), 0);
+    assert_eq!(window_counters[0].access_count(), 1);
+    assert_eq!(window_counters[0].read_count(), 0);
+    assert_eq!(window_counters[0].write_count(), 1);
+    assert_eq!(window_counters[0].read_byte_count(), 0);
+    assert_eq!(window_counters[0].write_byte_count(), 4);
+    assert_eq!(window_counters[0].row_hit_count(), 1);
+    assert_eq!(window_counters[0].row_miss_count(), 0);
+
+    assert_eq!(window_counters[1].parallel_port(), 1);
+    assert_eq!(window_counters[1].bank(), 0);
+    assert_eq!(window_counters[1].access_count(), 1);
+    assert_eq!(window_counters[1].read_count(), 1);
+    assert_eq!(window_counters[1].write_count(), 0);
+}
+
+#[test]
 fn nvm_media_timing_delays_reads_and_tracks_persistent_write_queue() {
     let media_timing = NvmMediaTiming::new(30, 50, 6, 4, 1).unwrap();
     let profile = ExternalMemoryProfile::nvm(target(10), layout(), 2, 8, geometry(), timing())

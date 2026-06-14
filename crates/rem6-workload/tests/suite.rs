@@ -1,11 +1,12 @@
 use rem6_boot::BootImage;
 use rem6_memory::Address;
 use rem6_workload::{
-    WorkloadError, WorkloadId, WorkloadManifest, WorkloadResource, WorkloadResourceId,
-    WorkloadResourceKind, WorkloadResult, WorkloadSuite, WorkloadSuiteDispatchLoadExpectation,
-    WorkloadSuiteDispatchPlan, WorkloadSuiteDispatchTimeline, WorkloadSuiteDispatchWeight,
-    WorkloadSuiteExecutionEfficiency, WorkloadSuiteExecutionExpectation,
-    WorkloadSuiteExecutionSummary, WorkloadSuiteId, WorkloadSuiteReplayPlan, WorkloadSuiteResult,
+    WorkloadError, WorkloadId, WorkloadManifest, WorkloadResource, WorkloadResourceAcquisition,
+    WorkloadResourceAcquisitionKind, WorkloadResourceId, WorkloadResourceKind, WorkloadResult,
+    WorkloadSuite, WorkloadSuiteDispatchLoadExpectation, WorkloadSuiteDispatchPlan,
+    WorkloadSuiteDispatchTimeline, WorkloadSuiteDispatchWeight, WorkloadSuiteExecutionEfficiency,
+    WorkloadSuiteExecutionExpectation, WorkloadSuiteExecutionSummary, WorkloadSuiteId,
+    WorkloadSuiteReplayPlan, WorkloadSuiteResult,
 };
 use std::collections::BTreeMap;
 
@@ -49,6 +50,26 @@ fn manifest(workload: &str, digest: &str) -> WorkloadManifest {
         .unwrap()
 }
 
+fn acquired_resource(
+    resource: &str,
+    kind: WorkloadResourceKind,
+    digest: &str,
+    locator: &str,
+    acquisition_locator: &str,
+) -> WorkloadResource {
+    WorkloadResource::new(resource_id(resource), kind, digest, locator)
+        .unwrap()
+        .with_acquisition(
+            WorkloadResourceAcquisition::new(
+                WorkloadResourceAcquisitionKind::RemoteUri,
+                acquisition_locator,
+            )
+            .unwrap()
+            .with_tool("suite-resource-cache")
+            .unwrap(),
+        )
+}
+
 #[test]
 fn workload_suite_orders_manifests_and_preserves_identity() {
     let alpha = manifest("alpha", "sha256:alpha");
@@ -77,6 +98,72 @@ fn workload_suite_orders_manifests_and_preserves_identity() {
     assert_eq!(plan.plans().len(), 2);
     assert_eq!(plan.plans()[0].manifest_identity(), alpha.identity());
     assert_eq!(plan.plans()[1].manifest_identity(), beta.identity());
+}
+
+#[test]
+fn workload_suite_replay_plan_records_required_resource_artifacts() {
+    let alpha_trace = acquired_resource(
+        "alpha-trace",
+        WorkloadResourceKind::Input,
+        "sha256:alpha-trace",
+        "resources/alpha.trace",
+        "https://resources.example/alpha.trace",
+    );
+    let beta_disk = acquired_resource(
+        "beta-disk",
+        WorkloadResourceKind::DiskImage,
+        "sha256:beta-disk",
+        "resources/beta-rootfs.img",
+        "https://resources.example/beta-rootfs.img",
+    );
+    let alpha = WorkloadManifest::builder(id("alpha"), boot_image())
+        .add_resource(kernel_resource("sha256:kernel-alpha"))
+        .unwrap()
+        .add_resource(alpha_trace.clone())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .add_required_resource(alpha_trace.id().clone())
+        .build()
+        .unwrap();
+    let beta = WorkloadManifest::builder(id("beta"), boot_image())
+        .add_resource(kernel_resource("sha256:kernel-beta"))
+        .unwrap()
+        .add_resource(beta_disk.clone())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .add_required_resource(beta_disk.id().clone())
+        .build()
+        .unwrap();
+    let suite = WorkloadSuite::builder(suite_id("resource-artifacts"))
+        .add_manifest(beta.clone())
+        .unwrap()
+        .add_manifest(alpha.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let plan = WorkloadSuiteReplayPlan::from_suite(&suite).unwrap();
+    let resources = plan.required_resources();
+
+    assert_eq!(resources.len(), 4);
+    assert_eq!(resources[0].workload_id(), alpha.id());
+    assert_eq!(resources[0].manifest_identity(), alpha.identity());
+    assert_eq!(resources[0].resource(), &alpha_trace);
+    assert_eq!(
+        resources[0].resource().acquisition().unwrap().locator(),
+        "https://resources.example/alpha.trace"
+    );
+    assert_eq!(resources[1].workload_id(), alpha.id());
+    assert_eq!(resources[1].resource().kind(), WorkloadResourceKind::Kernel);
+    assert_eq!(resources[2].workload_id(), beta.id());
+    assert_eq!(resources[2].manifest_identity(), beta.identity());
+    assert_eq!(resources[2].resource(), &beta_disk);
+    assert_eq!(
+        resources[2].resource().acquisition().unwrap().locator(),
+        "https://resources.example/beta-rootfs.img"
+    );
+    assert_eq!(resources[3].workload_id(), beta.id());
+    assert_eq!(resources[3].resource().kind(), WorkloadResourceKind::Kernel);
 }
 
 #[test]

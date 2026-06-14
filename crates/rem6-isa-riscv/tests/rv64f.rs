@@ -1123,6 +1123,26 @@ fn hart_executes_rv64f_integer_to_single_conversions() {
 }
 
 #[test]
+fn hart_rv64f_integer_to_single_sets_inexact_flag_when_rounded() {
+    let mut hart = RiscvHartState::new(0x8000);
+    hart.write(reg(1), 16_777_217);
+
+    hart.execute(RiscvInstruction::FloatConvertSFromW {
+        rd: freg(2),
+        rs1: reg(1),
+        rounding_mode: RiscvFloatRoundingMode::RoundNearestEven,
+    })
+    .unwrap();
+
+    assert_eq!(hart.read_float(freg(2)), f32_box(16_777_216.0));
+    assert_eq!(hart.float_status().fflags(), FLOAT_FLAG_INEXACT);
+
+    hart.execute(RiscvInstruction::decode(csr_read_type(FCSR_CSR, 3)).unwrap())
+        .unwrap();
+    assert_eq!(hart.read(reg(3)), FLOAT_FLAG_INEXACT);
+}
+
+#[test]
 fn hart_executes_rv64f_integer_to_single_static_rounding_when_exact() {
     let mut hart = RiscvHartState::new(0x8600);
     hart.write(reg(1), 16);

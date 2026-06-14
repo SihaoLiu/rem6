@@ -1,8 +1,8 @@
 use rem6_kernel::Tick;
 
 use crate::{
-    GpuDmaCompletion, GpuKernelId, GpuPendingDmaWrite, GpuTraceEvent, GpuWorkgroupCompletion,
-    GpuWorkgroupId,
+    GpuDmaCompletion, GpuIsaProgram, GpuKernelId, GpuPendingDmaWrite, GpuTraceEvent,
+    GpuWorkgroupCompletion, GpuWorkgroupId,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -12,6 +12,7 @@ pub struct GpuDeviceSnapshot {
     completions: Vec<GpuWorkgroupCompletion>,
     pending_dma_writes: Vec<GpuPendingDmaWrite>,
     dma_completions: Vec<GpuDmaCompletion>,
+    queued_isa_programs: Vec<GpuQueuedIsaProgramSnapshot>,
 }
 
 impl GpuDeviceSnapshot {
@@ -28,7 +29,16 @@ impl GpuDeviceSnapshot {
             completions,
             pending_dma_writes,
             dma_completions,
+            queued_isa_programs: Vec::new(),
         }
+    }
+
+    pub fn with_queued_isa_programs(
+        mut self,
+        queued_isa_programs: Vec<GpuQueuedIsaProgramSnapshot>,
+    ) -> Self {
+        self.queued_isa_programs = queued_isa_programs;
+        self
     }
 
     pub fn slots(&self) -> &[GpuSlotSnapshot] {
@@ -61,6 +71,10 @@ impl GpuDeviceSnapshot {
 
     pub fn dma_completions(&self) -> &[GpuDmaCompletion] {
         &self.dma_completions
+    }
+
+    pub fn queued_isa_programs(&self) -> &[GpuQueuedIsaProgramSnapshot] {
+        &self.queued_isa_programs
     }
 }
 
@@ -133,31 +147,60 @@ impl GpuQueuedWorkgroupSnapshot {
         }
     }
 
-    pub const fn kernel(self) -> GpuKernelId {
+    pub const fn kernel(&self) -> GpuKernelId {
         self.kernel
     }
 
-    pub const fn workgroup(self) -> GpuWorkgroupId {
+    pub const fn workgroup(&self) -> GpuWorkgroupId {
         self.workgroup
     }
 
-    pub const fn compute_unit(self) -> u32 {
+    pub const fn compute_unit(&self) -> u32 {
         self.compute_unit
     }
 
-    pub const fn slot(self) -> u32 {
+    pub const fn slot(&self) -> u32 {
         self.slot
     }
 
-    pub const fn queued_at(self) -> Tick {
+    pub const fn queued_at(&self) -> Tick {
         self.queued_at
     }
 
-    pub const fn started_at(self) -> Tick {
+    pub const fn started_at(&self) -> Tick {
         self.started_at
     }
 
-    pub const fn completed_at(self) -> Tick {
+    pub const fn completed_at(&self) -> Tick {
         self.completed_at
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GpuQueuedIsaProgramSnapshot {
+    slot_index: usize,
+    queue_index: usize,
+    isa_program: GpuIsaProgram,
+}
+
+impl GpuQueuedIsaProgramSnapshot {
+    pub fn new(slot_index: usize, queue_index: usize, isa_program: GpuIsaProgram) -> Self {
+        Self {
+            slot_index,
+            queue_index,
+            isa_program,
+        }
+    }
+
+    pub const fn slot_index(&self) -> usize {
+        self.slot_index
+    }
+
+    pub const fn queue_index(&self) -> usize {
+        self.queue_index
+    }
+
+    pub fn isa_program(&self) -> &GpuIsaProgram {
+        &self.isa_program
     }
 }
