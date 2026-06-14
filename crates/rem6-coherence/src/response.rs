@@ -126,8 +126,18 @@ pub(crate) fn push_response_records_from_outcomes(
 ) -> usize {
     let before = responses.len();
     for outcome in outcomes {
-        if let TargetOutcome::Respond(response) = outcome {
-            responses.push(response_record(tick, cache_result, response));
+        match outcome {
+            TargetOutcome::Respond(response) => {
+                responses.push(response_record(tick, cache_result, response));
+            }
+            TargetOutcome::RespondAfter { delay, response } => {
+                responses.push(response_record(
+                    tick.saturating_add(*delay),
+                    cache_result,
+                    response,
+                ));
+            }
+            TargetOutcome::NoResponse => {}
         }
     }
     responses.len() - before

@@ -46,3 +46,24 @@ fn target_outcome_records_preserve_all_responding_targets() {
     assert_eq!(records[1].request(), second.id());
     assert_eq!(records[1].data().unwrap(), &[0xbb; 8]);
 }
+
+#[test]
+fn target_outcome_records_delayed_response_tick() {
+    let request = request(1, 12, 0x1004);
+    let response = rem6_memory::MemoryResponse::completed(&request, Some(vec![0xcc; 8])).unwrap();
+    let outcomes = vec![TargetOutcome::RespondAfter { delay: 7, response }];
+    let mut records: Vec<CpuResponseRecord> = Vec::new();
+
+    let count = push_response_records_from_outcomes(
+        &mut records,
+        42,
+        CacheControllerResultKind::Fill,
+        &outcomes,
+    );
+
+    assert_eq!(count, 1);
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].tick(), 49);
+    assert_eq!(records[0].request(), request.id());
+    assert_eq!(records[0].data().unwrap(), &[0xcc; 8]);
+}

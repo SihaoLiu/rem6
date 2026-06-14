@@ -142,8 +142,8 @@ then a ROB/LSQ-backed O3 run test.
 ### Memory, Cache, Coherence, Fabric, and DRAM - 45% single-axis
 
 **Score calculation:** 5 of 11 items have executable evidence, or 45% raw. The
-bucket cap is single-axis because full CPU-facing L1/L2/L3 plus NoC and DRAM
-is not the default instruction/data path.
+bucket cap is single-axis because full CPU-facing L1/L2/L3 plus NoC and DRAM is
+not the default instruction/data path.
 
 - [x] Memory stores, page maps, translation queues, and TLB state have tests.
 - [x] Cache banks model replacement, MSHRs, write queues, maintenance, sector and compressed tags.
@@ -159,7 +159,8 @@ is not the default instruction/data path.
 
 **Migrated:** Typed memory primitives, cache banks, protocol harnesses, DRAM
 profiles, controller-level refresh timing slices, routed topology slices, and
-trace replay consumers.
+trace replay consumers; optional single-core CLI RISC-V data traffic can drive
+MSI-bank data-cache runs.
 
 **Not migrated:** Broad CPU-facing hierarchy, Ruby-scale protocol networks,
 flit-level NoC, and DRAM refresh/preset breadth.
@@ -167,8 +168,8 @@ flit-level NoC, and DRAM refresh/preset breadth.
 **Evidence:** `MsiCacheBank`, `MsiCacheController`, protocol directory
 harnesses, `DramController`, `DramMemoryController`, `FabricModel`,
 `MemoryTransport`, and tests `riscv_topology_msi_data`,
-`riscv_topology_chi_data`, `memory_controller`, `timing`, `fabric_timing`, and
-`system_run_resource_activity`.
+`riscv_topology_chi_data`, `memory_controller`, `timing`, `fabric_timing`,
+`system_run_resource_activity`, and CLI `run` data-cache smoke coverage.
 
 **Next evidence:** RISC-V instruction/data execution through a coherent
 multi-level cache and DRAM path with unified resource accounting.
@@ -403,7 +404,7 @@ checklist-backed component sections above define the auditable percentages.
 | `tests/gem5/m5_util`, `tests/test-progs/m5-exit` | `rem6-isa-riscv`, `rem6-system`, `rem6-workload` | 50% single-axis | RISC-V m5 exit, fail, stats, checkpoint, and work markers reach typed host actions. | Add payload breadth, repeat scheduling, other ISA entries, and clock-domain behavior. |
 | `tests/gem5/m5threads_test_atomic` | `rem6-isa-riscv`, `rem6-cpu`, `rem6-coherence` | 40% single-axis | RISC-V LR/SC and AMO plus coherence reservation invalidation tests exist. | Add multi-threaded SE or full-system atomic tests through shared memory. |
 | `tests/gem5/se_mode` | `rem6-system`, `rem6` CLI | 50% single-axis | RISC-V SE startup, ecalls, static newlib smokes including `fopen("w+")` create/write/readback, `open` directory traversal with `O_DIRECTORY` and `O_CLOEXEC`, and `open` regular-file access with `O_NOCTTY` and `O_NOFOLLOW` through legacy `open` with newlib/libgloss flags, selected syscalls including `statx`, `statfs`/`fstatfs`, `sysinfo`, value-mode `riscv_hwprobe`, `ppoll`, in-place `mremap`, `mprotect`, `madvise` known-advice and mapped-range validation, `msync` flags and mapped-range validation, `mlock`/`munlock` `mmap`/`brk` range validation, `ftruncate`, `pread64`, `pwrite64`, `sched_getscheduler`, `sched_getparam`, `sched_get_priority_max/min`, `sched_rr_get_interval`, single-word `sched_setaffinity`/`sched_getaffinity`, single CPU/node `getcpu`, single-process `membarrier` slice, zero-duration `nanosleep` and `clock_nanosleep` validation, `clock_getres`, `CLOCK_TAI` `clock_gettime`, `kill(..., 0)`, `tkill(..., 0)`, and `tgkill(..., 0)` existence checks, current-process scoped process-group/session `setpgid`/`getpgid`/`getsid`/`setsid` slices, gem5-style advisory `setuid`/`setrlimit` success returns, legacy `getrlimit` stack/data/NPROC limits, basic `rt_sigaction`/`rt_sigprocmask`, empty `rt_sigpending` mask reporting, no-pending zero-timeout `rt_sigtimedwait`, futex mismatch and wake-bitset count/bitset behavior, `umask` masking for `mkdirat` directories and `openat(O_CREAT)` regular files, cwd-aware registered paths, guest-backed file output/readback and open visibility, at-family file and directory mutation, registered-directory enumeration, `ENOSYS` records, and guest writes exist. | Split hello, multicore SE, RVV intrinsic, and other-ISA subrows; add broader libc and lifecycle behavior. |
-| `tests/gem5/memory` | `rem6-memory`, `rem6-cache`, `rem6-dram`, `rem6-fabric` | 45% single-axis | Stores, page maps, cache banks, topology slices, DRAM/NVM counters, and fabric activity exist. | Add CPU-facing multi-level cache, NoC, DRAM refresh breadth, and preset coverage. |
+| `tests/gem5/memory` | `rem6-memory`, `rem6-cache`, `rem6-dram`, `rem6-fabric` | 45% single-axis | Stores, page maps, cache banks, topology slices, optional single-core CLI RISC-V MSI-bank data-cache routing, DRAM/NVM counters, and fabric activity exist. | Add CPU-facing multi-level cache, NoC, DRAM refresh breadth, and preset coverage. |
 | `tests/gem5/multisim`, `tests/gem5/suite_tests` | `rem6-workload`, `rem6-kernel` | 45% single-axis | Suite planning, dispatch, execution summaries, and occupancy contracts exist. | Split multisim checkpoint restore from suite dispatch and add multi-run orchestration. |
 | `tests/gem5/parsec_benchmarks` | `rem6-workload`, `rem6-system`, ISA crates | 0% open | Workload suites exist, but PARSEC-class programs do not run. | Add static or dynamic user workload support and ROI/stat hooks. |
 | `tests/gem5/processor_switch_tests` | `rem6-system`, `rem6-cpu` | 20% unit-slice | Host-assisted switch admission and execution-mode metadata exist. | Add executable CPU model switching with quiescence and state transfer. |

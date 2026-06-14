@@ -94,6 +94,9 @@ pub enum Rem6CliError {
     InvalidTraceReplayDataCacheProtocol {
         value: String,
     },
+    InvalidRunDataCacheProtocol {
+        value: String,
+    },
     MemoryRouteDelayBelowMinRemoteDelay {
         memory_route_delay: u64,
         min_remote_delay: u64,
@@ -127,8 +130,13 @@ pub enum Rem6CliError {
     InstructionLimitRequiresExecution,
     MemoryDumpRequiresExecution,
     RiscvSeRequiresExecution,
+    DataCacheProtocolRequiresExecution,
     RiscvSeInputRequiresRiscvSe {
         input: &'static str,
+    },
+    DataCacheProtocolRequiresRiscv,
+    DataCacheProtocolRequiresSingleCore {
+        cores: usize,
     },
     RiscvSeRequiresRiscv,
     RiscvSeRequiresSingleCore {
@@ -266,6 +274,9 @@ impl fmt::Display for Rem6CliError {
             Self::InvalidTraceReplayDataCacheProtocol { value } => {
                 write!(formatter, "invalid trace replay data cache protocol {value}")
             }
+            Self::InvalidRunDataCacheProtocol { value } => {
+                write!(formatter, "invalid run data cache protocol {value}")
+            }
             Self::MemoryRouteDelayBelowMinRemoteDelay {
                 memory_route_delay,
                 min_remote_delay,
@@ -311,8 +322,20 @@ impl fmt::Display for Rem6CliError {
             Self::RiscvSeRequiresExecution => {
                 write!(formatter, "--riscv-se requires --execute")
             }
+            Self::DataCacheProtocolRequiresExecution => {
+                write!(formatter, "--data-cache-protocol requires --execute")
+            }
             Self::RiscvSeInputRequiresRiscvSe { input } => {
                 write!(formatter, "{input} requires --riscv-se")
+            }
+            Self::DataCacheProtocolRequiresRiscv => {
+                write!(formatter, "--data-cache-protocol requires --isa riscv")
+            }
+            Self::DataCacheProtocolRequiresSingleCore { cores } => {
+                write!(
+                    formatter,
+                    "--data-cache-protocol requires --cores 1, got {cores}"
+                )
             }
             Self::RiscvSeRequiresRiscv => {
                 write!(formatter, "--riscv-se requires --isa riscv")

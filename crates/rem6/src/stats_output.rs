@@ -304,6 +304,41 @@ pub(super) fn run_stats_output(
         )?;
         increment_stat(
             &mut stats,
+            "sim.data_cache.runs",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.data_cache.runs,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.data_cache.msi.runs",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.data_cache.msi_runs,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.data_cache.mesi.runs",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.data_cache.mesi_runs,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.data_cache.moesi.runs",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.data_cache.moesi_runs,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.data_cache.chi.runs",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.data_cache.chi_runs,
+        )?;
+        increment_stat(
+            &mut stats,
             "sim.data.probes.samples",
             "Count",
             StatResetPolicy::Monotonic,

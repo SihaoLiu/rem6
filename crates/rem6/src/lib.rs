@@ -18,9 +18,9 @@ use rem6_stats::{
 };
 use rem6_system::{
     GuestEventId, GuestSourceId, GuestTrapKind, HostEventPolicy, RiscvDataAccessStats,
-    RiscvGuestWriteRecord, RiscvSeAuxvEntry, RiscvSeStartupConfig, RiscvSystemRun,
-    RiscvSystemRunDriver, RiscvSystemRunStopReason, RiscvTrapEventPort, RiscvUnknownSyscallRecord,
-    SystemHostController, SystemHostEventPort, RISCV_LINUX_AT_ENTRY,
+    RiscvDataCacheProtocol, RiscvGuestWriteRecord, RiscvSeAuxvEntry, RiscvSeStartupConfig,
+    RiscvSystemRun, RiscvSystemRunDriver, RiscvSystemRunStopReason, RiscvTrapEventPort,
+    RiscvUnknownSyscallRecord, SystemHostController, SystemHostEventPort, RISCV_LINUX_AT_ENTRY,
 };
 use rem6_transport::{
     MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTraceEvent, MemoryTraceKind, MemoryTransport,
@@ -31,6 +31,7 @@ mod artifact_json;
 mod cli_error;
 mod cli_output;
 mod config;
+mod data_cache_runtime;
 mod formatting;
 mod guest_memory;
 mod gups_cli;
@@ -46,6 +47,7 @@ pub use config::{
     CliDramMemoryProfile, LoadBlobRequest, MemoryDumpRequest, Rem6GupsConfig, Rem6RunConfig,
     Rem6TraceReplayConfig, RequestedIsa, RiscvSeFileRequest, StatsFormat,
 };
+use data_cache_runtime::{cli_data_memory_response, CliDataCacheRuntime, CliDataCacheSummary};
 use guest_memory::{build_cli_memory_store, read_load_blobs, LoadedBlob};
 pub use gups_cli::{run_gups_config, Rem6GupsArtifact, Rem6GupsExecutionSummary};
 use runtime_memory::{cli_memory_response, read_memory_dumps, CliMemoryRuntime};
@@ -117,6 +119,7 @@ pub struct Rem6ExecutionSummary {
     data_load_bytes: u64,
     data_store_bytes: u64,
     data_atomic_bytes: u64,
+    data_cache: CliDataCacheSummary,
     data_access_probes: Rem6DataAccessProbeSummary,
     parallel_scheduler_epochs: u64,
     parallel_scheduler_dispatches: u64,
@@ -489,6 +492,19 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
         if config.riscv_se() {
             return Err(Rem6CliError::RiscvSeRequiresExecution);
         }
+        if config.data_cache_protocol().is_some() {
+            return Err(Rem6CliError::DataCacheProtocolRequiresExecution);
+        }
+    }
+    if config.data_cache_protocol().is_some() {
+        if config.isa() != RequestedIsa::Riscv {
+            return Err(Rem6CliError::DataCacheProtocolRequiresRiscv);
+        }
+        if config.cores() != 1 {
+            return Err(Rem6CliError::DataCacheProtocolRequiresSingleCore {
+                cores: config.cores(),
+            });
+        }
     }
     if config.riscv_se() {
         if config.isa() != RequestedIsa::Riscv {
@@ -577,6 +593,18 @@ fn execute_riscv(
         config.dram_memory(),
         config.dram_memory_profile(),
     )?;
+    let data_cache = match config.data_cache_protocol() {
+        Some(RiscvDataCacheProtocol::Msi) => Some(CliDataCacheRuntime::new_msi_bank(
+            line_layout,
+            (0..core_count).map(AgentId::new),
+        )?),
+        Some(_) => {
+            return Err(Rem6CliError::InvalidRunDataCacheProtocol {
+                value: "unsupported".to_string(),
+            });
+        }
+        None => None,
+    };
     let riscv_se_startup = if config.riscv_se() {
         let mut startup_config = RiscvSeStartupConfig::new(Address::new(RISCV64_SE_STACK_TOP));
         if config.riscv_se_args().is_empty() {
@@ -741,47 +769,58 @@ fn execute_riscv(
     }
     let fetch_trace = MemoryTrace::new();
     let data_trace = MemoryTrace::new();
-    let run = match config.max_instructions() {
-        Some(max_instructions) => driver
-            .drive_until_host_stop_or_instruction_limit_parallel(
-                &cluster,
-                &mut scheduler,
-                &transport,
-                fetch_trace.clone(),
-                data_trace.clone(),
-                |_cpu| {
-                    let memory = memory.clone();
-                    move |delivery, _context| cli_memory_response(&memory, &delivery)
-                },
-                |_cpu| {
-                    let memory = memory.clone();
-                    move |delivery, _context| cli_memory_response(&memory, &delivery)
-                },
-                tick_limit,
-                max_instructions,
-                |cpu| GuestEventId::new(u64::from(cpu.get())),
-            )
-            .map_err(execute_error)?,
-        None => driver
-            .drive_until_host_stop_or_tick_limit_parallel(
-                &cluster,
-                &mut scheduler,
-                &transport,
-                fetch_trace.clone(),
-                data_trace.clone(),
-                |_cpu| {
-                    let memory = memory.clone();
-                    move |delivery, _context| cli_memory_response(&memory, &delivery)
-                },
-                |_cpu| {
-                    let memory = memory.clone();
-                    move |delivery, _context| cli_memory_response(&memory, &delivery)
-                },
-                tick_limit,
-                |cpu| GuestEventId::new(u64::from(cpu.get())),
-            )
-            .map_err(execute_error)?,
+    let run_result = match config.max_instructions() {
+        Some(max_instructions) => driver.drive_until_host_stop_or_instruction_limit_parallel(
+            &cluster,
+            &mut scheduler,
+            &transport,
+            fetch_trace.clone(),
+            data_trace.clone(),
+            |_cpu| {
+                let memory = memory.clone();
+                move |delivery, _context| cli_memory_response(&memory, &delivery)
+            },
+            |_cpu| {
+                let memory = memory.clone();
+                let data_cache = data_cache.clone();
+                move |delivery, _context| {
+                    cli_data_memory_response(data_cache.as_ref(), &memory, &delivery)
+                }
+            },
+            tick_limit,
+            max_instructions,
+            |cpu| GuestEventId::new(u64::from(cpu.get())),
+        ),
+        None => driver.drive_until_host_stop_or_tick_limit_parallel(
+            &cluster,
+            &mut scheduler,
+            &transport,
+            fetch_trace.clone(),
+            data_trace.clone(),
+            |_cpu| {
+                let memory = memory.clone();
+                move |delivery, _context| cli_memory_response(&memory, &delivery)
+            },
+            |_cpu| {
+                let memory = memory.clone();
+                let data_cache = data_cache.clone();
+                move |delivery, _context| {
+                    cli_data_memory_response(data_cache.as_ref(), &memory, &delivery)
+                }
+            },
+            tick_limit,
+            |cpu| GuestEventId::new(u64::from(cpu.get())),
+        ),
     };
+    if let Some(data_cache) = data_cache.as_ref() {
+        if let Some(error) = data_cache.take_error() {
+            return Err(error);
+        }
+    }
+    let mut run = run_result.map_err(execute_error)?;
+    if let Some(data_cache) = data_cache.as_ref() {
+        run = run.with_data_cache_run_records(data_cache.records());
+    }
     let (riscv_guest_writes, riscv_unknown_syscalls) = driver
         .riscv_syscall_emulation()
         .map(|emulation| {
@@ -925,6 +964,7 @@ fn execution_summary(
         data_load_bytes,
         data_store_bytes,
         data_atomic_bytes,
+        data_cache: CliDataCacheSummary::from_run(run),
         data_access_probes: data_access_probe_summary(
             run,
             inputs.line_layout,

@@ -58,6 +58,123 @@ fn rem6_run_rejects_riscv_se_without_execution() {
 }
 
 #[test]
+fn rem6_run_rejects_data_cache_protocol_without_execution() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("data-cache-without-execute", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+            "--data-cache-protocol",
+            "msi",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("--data-cache-protocol requires --execute"));
+}
+
+#[test]
+fn rem6_run_rejects_unsupported_data_cache_protocol() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("unsupported-data-cache-protocol", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--data-cache-protocol",
+            "mesi",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("invalid run data cache protocol mesi"));
+}
+
+#[test]
+fn rem6_run_rejects_data_cache_protocol_for_non_riscv_isa() {
+    let elf = x86_64_elf(0x4000_0000, 0x4000_0000, &[0x90]);
+    let path = temp_binary("data-cache-non-riscv", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "x86",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--data-cache-protocol",
+            "msi",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("--data-cache-protocol requires --isa riscv"));
+}
+
+#[test]
+fn rem6_run_rejects_data_cache_protocol_for_multiple_cores() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("data-cache-multiple-cores", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "2",
+            "--data-cache-protocol",
+            "msi",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("--data-cache-protocol requires --cores 1, got 2"));
+}
+
+#[test]
 fn rem6_run_rejects_riscv_se_for_non_riscv_isa() {
     let elf = x86_64_elf(0x4000_0000, 0x4000_0000, &[0x90]);
     let path = temp_binary("riscv-se-non-riscv", &elf);

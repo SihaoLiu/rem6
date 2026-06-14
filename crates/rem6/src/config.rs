@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use rem6_boot::BootElfArchitecture;
+use rem6_system::RiscvDataCacheProtocol;
 use rem6_workload::WorkloadDataCacheProtocol;
 use serde::Deserialize;
 
@@ -121,6 +122,7 @@ pub struct Rem6RunConfig {
     execute: bool,
     dram_memory: bool,
     dram_memory_profile: CliDramMemoryProfile,
+    data_cache_protocol: Option<RiscvDataCacheProtocol>,
     cores: usize,
     parallel_workers: usize,
     memory_dumps: Vec<MemoryDumpRequest>,
@@ -193,6 +195,7 @@ struct Rem6RunFileConfig {
     execute: Option<bool>,
     dram_memory: Option<bool>,
     dram_memory_profile: Option<String>,
+    data_cache_protocol: Option<String>,
     cores: Option<usize>,
     parallel_workers: Option<usize>,
     memory_dumps: Option<Vec<String>>,
@@ -369,6 +372,17 @@ impl Rem6RunConfig {
             .transpose()?
             .unwrap_or(CliDramMemoryProfile::Ddr);
         let mut dram_memory_profile_was_set = file_config.dram_memory_profile.is_some();
+        let mut data_cache_protocol = file_config
+            .data_cache_protocol
+            .as_deref()
+            .map(|value| {
+                parse_run_data_cache_protocol(value).ok_or_else(|| {
+                    Rem6CliError::InvalidRunDataCacheProtocol {
+                        value: value.to_string(),
+                    }
+                })
+            })
+            .transpose()?;
         let mut cores = file_config.cores.unwrap_or(1);
         if cores == 0 {
             return Err(Rem6CliError::InvalidCoreCount {
@@ -536,6 +550,15 @@ impl Rem6RunConfig {
                     dram_memory_profile =
                         CliDramMemoryProfile::parse(&required_value(&flag, args.next())?)?;
                 }
+                "--data-cache-protocol" => {
+                    let value = required_value(&flag, args.next())?;
+                    data_cache_protocol =
+                        Some(parse_run_data_cache_protocol(&value).ok_or_else(|| {
+                            Rem6CliError::InvalidRunDataCacheProtocol {
+                                value: value.clone(),
+                            }
+                        })?);
+                }
                 "--cores" => {
                     let value = required_value(&flag, args.next())?;
                     cores = value
@@ -663,6 +686,7 @@ impl Rem6RunConfig {
             execute,
             dram_memory,
             dram_memory_profile,
+            data_cache_protocol,
             cores,
             parallel_workers: parallel_workers.unwrap_or(cores),
             memory_dumps,
@@ -746,6 +770,10 @@ impl Rem6RunConfig {
 
     pub const fn dram_memory_profile(&self) -> CliDramMemoryProfile {
         self.dram_memory_profile
+    }
+
+    pub const fn data_cache_protocol(&self) -> Option<RiscvDataCacheProtocol> {
+        self.data_cache_protocol
     }
 
     pub const fn cores(&self) -> usize {
@@ -1422,6 +1450,13 @@ fn parse_data_cache_protocol(value: &str) -> Option<WorkloadDataCacheProtocol> {
     }
 }
 
+fn parse_run_data_cache_protocol(value: &str) -> Option<RiscvDataCacheProtocol> {
+    match value {
+        "msi" => Some(RiscvDataCacheProtocol::Msi),
+        _ => None,
+    }
+}
+
 fn run_file_config_from_args(args: &[String]) -> Result<Option<PathBuf>, Rem6CliError> {
     config_path_from_args(
         args,
@@ -1442,6 +1477,7 @@ fn run_file_config_from_args(args: &[String]) -> Result<Option<PathBuf>, Rem6Cli
             "--max-instructions",
             "--stats-format",
             "--dram-memory-profile",
+            "--data-cache-protocol",
             "--cores",
             "--parallel-workers",
             "--dump-memory",

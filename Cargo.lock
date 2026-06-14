@@ -148,6 +148,7 @@ name = "rem6"
 version = "0.1.0"
 dependencies = [
  "rem6-boot",
+ "rem6-coherence",
  "rem6-cpu",
  "rem6-dram",
  "rem6-isa-riscv",
