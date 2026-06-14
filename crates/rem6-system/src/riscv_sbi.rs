@@ -43,11 +43,17 @@ const SBI_IPI_SEND_IPI: u64 = 0;
 const SBI_RFENCE_REMOTE_FENCE_I: u64 = 0;
 const SBI_RFENCE_REMOTE_SFENCE_VMA: u64 = 1;
 const SBI_RFENCE_REMOTE_SFENCE_VMA_ASID: u64 = 2;
+const SBI_RFENCE_REMOTE_HFENCE_GVMA_VMID: u64 = 3;
+const SBI_RFENCE_REMOTE_HFENCE_GVMA: u64 = 4;
+const SBI_RFENCE_REMOTE_HFENCE_VVMA_ASID: u64 = 5;
+const SBI_RFENCE_REMOTE_HFENCE_VVMA: u64 = 6;
 const SBI_SRST_SYSTEM_RESET: u64 = 0;
 const SBI_SPEC_VERSION_0_3: u64 = 3;
 const REM6_SBI_IMPL_ID: u64 = 0x7265_6d36;
 const REM6_SBI_IMPL_VERSION: u64 = 0;
 const SBI_ERR_INVALID_ADDRESS: u64 = (-5_i64) as u64;
+const RISCV64_ASID_MAX: u64 = u16::MAX as u64;
+const RISCV64_HYPERVISOR_VMID_MAX: u64 = (1 << 14) - 1;
 const SBI_RESET_TYPE_SHUTDOWN: u32 = 0;
 const SBI_RESET_TYPE_COLD_REBOOT: u32 = 1;
 const SBI_RESET_TYPE_WARM_REBOOT: u32 = 2;
@@ -327,6 +333,12 @@ impl RiscvSbiFirmware {
             | (SBI_RFENCE_EXTENSION, SBI_RFENCE_REMOTE_SFENCE_VMA_ASID) => self
                 .remote_sfence_vma(scheduler, core, request, parallel)
                 .map_err(SystemError::Scheduler)?,
+            (SBI_RFENCE_EXTENSION, SBI_RFENCE_REMOTE_HFENCE_GVMA_VMID)
+            | (SBI_RFENCE_EXTENSION, SBI_RFENCE_REMOTE_HFENCE_GVMA)
+            | (SBI_RFENCE_EXTENSION, SBI_RFENCE_REMOTE_HFENCE_VVMA_ASID)
+            | (SBI_RFENCE_EXTENSION, SBI_RFENCE_REMOTE_HFENCE_VVMA) => {
+                self.remote_hfence_unsupported(request)
+            }
             (SBI_SRST_EXTENSION, SBI_SRST_SYSTEM_RESET) => self.system_reset(request),
             _ => RiscvSbiOutcome::not_supported(),
         }))
@@ -591,6 +603,22 @@ impl RiscvSbiFirmware {
         Ok(RiscvSbiOutcome::success(0))
     }
 
+    fn remote_hfence_unsupported(&self, request: RiscvSbiRequest) -> RiscvSbiOutcome {
+        if !valid_rfence_range(request.arg2(), request.arg3()) {
+            return RiscvSbiOutcome::invalid_address();
+        }
+        if !valid_hfence_address_space(request) {
+            return RiscvSbiOutcome::invalid_param();
+        }
+        if self
+            .hart_mask_targets(request.arg0(), request.arg1())
+            .is_none()
+        {
+            return RiscvSbiOutcome::invalid_param();
+        }
+        RiscvSbiOutcome::not_supported()
+    }
+
     fn schedule_remote_sfence_vma(
         &self,
         scheduler: &mut PartitionedScheduler,
@@ -705,6 +733,15 @@ fn rfence_address_space(request: RiscvSbiRequest) -> Option<Option<TranslationAd
             .map(Some);
     }
     Some(None)
+}
+
+fn valid_hfence_address_space(request: RiscvSbiRequest) -> bool {
+    match request.function() {
+        SBI_RFENCE_REMOTE_HFENCE_GVMA_VMID => request.arg4() <= RISCV64_HYPERVISOR_VMID_MAX,
+        SBI_RFENCE_REMOTE_HFENCE_VVMA_ASID => request.arg4() <= RISCV64_ASID_MAX,
+        SBI_RFENCE_REMOTE_HFENCE_GVMA | SBI_RFENCE_REMOTE_HFENCE_VVMA => true,
+        _ => false,
+    }
 }
 
 fn rfence_virtual_range(start_addr: u64, size: u64) -> Option<Option<AddressRange>> {
@@ -1161,6 +1198,108 @@ mod tests {
         scheduler.run_until_idle_conservative();
 
         assert_eq!(core1.data_translation_tlb_entry_count(), Some(0));
+    }
+
+    #[test]
+    fn remote_hfence_gvma_rejects_missing_target_before_reporting_unsupported() {
+        let (mut scheduler, transport, firmware, core0, _core1) = registered_rfence_pair();
+
+        execute_rfence_ecall(
+            &mut scheduler,
+            &transport,
+            &core0,
+            rfence_request(SBI_RFENCE_REMOTE_HFENCE_GVMA_VMID, 0b100, 0, 0, 0, 0),
+        );
+
+        let outcome = firmware
+            .handle_pending_core_trap(&mut scheduler, &core0, false)
+            .expect("handled SBI trap")
+            .expect("SBI outcome");
+
+        assert_eq!(outcome, RiscvSbiOutcome::invalid_param());
+    }
+
+    #[test]
+    fn remote_hfence_gvma_reports_not_supported_after_valid_target_validation() {
+        let (mut scheduler, transport, firmware, core0, _core1) = registered_rfence_pair();
+
+        execute_rfence_ecall(
+            &mut scheduler,
+            &transport,
+            &core0,
+            rfence_request(SBI_RFENCE_REMOTE_HFENCE_GVMA, 0b10, 0, 0, 0, 0),
+        );
+
+        let outcome = firmware
+            .handle_pending_core_trap(&mut scheduler, &core0, false)
+            .expect("handled SBI trap")
+            .expect("SBI outcome");
+
+        assert_eq!(outcome, RiscvSbiOutcome::not_supported());
+    }
+
+    #[test]
+    fn remote_hfence_vvma_asid_rejects_invalid_asid_before_reporting_unsupported() {
+        let (mut scheduler, transport, firmware, core0, _core1) = registered_rfence_pair();
+
+        execute_rfence_ecall(
+            &mut scheduler,
+            &transport,
+            &core0,
+            rfence_request(
+                SBI_RFENCE_REMOTE_HFENCE_VVMA_ASID,
+                0b10,
+                0,
+                0,
+                0,
+                u64::from(u16::MAX) + 1,
+            ),
+        );
+
+        let outcome = firmware
+            .handle_pending_core_trap(&mut scheduler, &core0, false)
+            .expect("handled SBI trap")
+            .expect("SBI outcome");
+
+        assert_eq!(outcome, RiscvSbiOutcome::invalid_param());
+    }
+
+    #[test]
+    fn remote_hfence_gvma_vmid_rejects_invalid_vmid_before_reporting_unsupported() {
+        let (mut scheduler, transport, firmware, core0, _core1) = registered_rfence_pair();
+
+        execute_rfence_ecall(
+            &mut scheduler,
+            &transport,
+            &core0,
+            rfence_request(SBI_RFENCE_REMOTE_HFENCE_GVMA_VMID, 0b10, 0, 0, 0, 1 << 14),
+        );
+
+        let outcome = firmware
+            .handle_pending_core_trap(&mut scheduler, &core0, false)
+            .expect("handled SBI trap")
+            .expect("SBI outcome");
+
+        assert_eq!(outcome, RiscvSbiOutcome::invalid_param());
+    }
+
+    #[test]
+    fn remote_hfence_gvma_rejects_invalid_range_before_reporting_unsupported() {
+        let (mut scheduler, transport, firmware, core0, _core1) = registered_rfence_pair();
+
+        execute_rfence_ecall(
+            &mut scheduler,
+            &transport,
+            &core0,
+            rfence_request(SBI_RFENCE_REMOTE_HFENCE_GVMA, 0b10, 0, u64::MAX - 1, 4, 0),
+        );
+
+        let outcome = firmware
+            .handle_pending_core_trap(&mut scheduler, &core0, false)
+            .expect("handled SBI trap")
+            .expect("SBI outcome");
+
+        assert_eq!(outcome, RiscvSbiOutcome::invalid_address());
     }
 
     #[test]
