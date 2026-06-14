@@ -376,8 +376,10 @@ impl RiscvSbiFirmware {
         else {
             return RiscvSbiOutcome::invalid_param();
         };
-        if target.hart_run_state() != RiscvHartRunState::Stopped {
-            return RiscvSbiOutcome::already_available();
+        match target.hart_run_state() {
+            RiscvHartRunState::Stopped => {}
+            RiscvHartRunState::Started => return RiscvSbiOutcome::already_available(),
+            _ => return RiscvSbiOutcome::invalid_param(),
         }
         if request.arg1() & 0x1 != 0 {
             return RiscvSbiOutcome::invalid_address();
@@ -1168,6 +1170,36 @@ mod tests {
         assert_eq!(
             firmware.hart_get_status(hsm_request(SBI_HSM_HART_GET_STATUS, 1, 0, 0)),
             RiscvSbiOutcome::success(TEST_HART_START_PENDING)
+        );
+        assert_eq!(core1.pc(), Address::new(0x8800));
+    }
+
+    #[test]
+    fn hart_start_reports_already_available_for_started_target() {
+        let (_scheduler, _transport, firmware, _core0, core1) = registered_hsm_pair();
+        core1.set_hart_started();
+
+        let start = firmware.hart_start(hsm_request(SBI_HSM_HART_START, 1, 0x9000, 0x55));
+
+        assert_eq!(start, RiscvSbiOutcome::already_available());
+        assert_eq!(
+            firmware.hart_get_status(hsm_request(SBI_HSM_HART_GET_STATUS, 1, 0, 0)),
+            RiscvSbiOutcome::success(SBI_HSM_HART_STARTED)
+        );
+        assert_eq!(core1.pc(), Address::new(0x8800));
+    }
+
+    #[test]
+    fn hart_start_reports_invalid_param_for_suspended_target() {
+        let (_scheduler, _transport, firmware, _core0, core1) = registered_hsm_pair();
+        core1.set_hart_suspended();
+
+        let start = firmware.hart_start(hsm_request(SBI_HSM_HART_START, 1, 0x9000, 0x55));
+
+        assert_eq!(start, RiscvSbiOutcome::invalid_param());
+        assert_eq!(
+            firmware.hart_get_status(hsm_request(SBI_HSM_HART_GET_STATUS, 1, 0, 0)),
+            RiscvSbiOutcome::success(SBI_HSM_HART_SUSPENDED)
         );
         assert_eq!(core1.pc(), Address::new(0x8800));
     }

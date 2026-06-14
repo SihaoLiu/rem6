@@ -217,7 +217,7 @@ fn supervisor_sbi_hart_start_rejects_suspended_secondary_hart() {
 
     let stop = StopRequest::new(run.final_tick().unwrap(), GuestEventId::new(710), source, 1);
     assert_eq!(run.host_stop(), Some(stop));
-    assert_eq!(core0.read_register(reg(5)), SBI_ERR_ALREADY_AVAILABLE);
+    assert_eq!(core0.read_register(reg(5)), SBI_ERR_INVALID_PARAM);
     assert_eq!(core0.read_register(reg(6)), 0);
     assert_eq!(core1.hart_run_state(), RiscvHartRunState::Suspended);
     assert_eq!(core1.read_register(reg(31)), 0);
