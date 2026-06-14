@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
+#[cfg(unix)]
+use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -738,6 +740,19 @@ fn execute_riscv(
     );
     if config.riscv_se() {
         driver = driver.with_riscv_syscall_emulation_for_boot_image(image);
+        let proc_self_exe_target = std::fs::canonicalize(config.binary())
+            .unwrap_or_else(|_| config.binary().to_path_buf());
+        #[cfg(unix)]
+        let proc_self_exe_target = proc_self_exe_target.as_os_str().as_bytes().to_vec();
+        #[cfg(not(unix))]
+        let proc_self_exe_target = proc_self_exe_target
+            .to_string_lossy()
+            .into_owned()
+            .into_bytes();
+        driver
+            .riscv_syscall_emulation()
+            .expect("RISC-V SE syscall emulation was just installed")
+            .register_guest_symlink(b"/proc/self/exe", proc_self_exe_target);
         if let Some(stdin_path) = config.riscv_se_stdin() {
             let stdin =
                 std::fs::read(stdin_path).map_err(|error| Rem6CliError::ReadRiscvSeStdin {
