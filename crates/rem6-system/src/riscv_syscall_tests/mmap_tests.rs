@@ -1,6 +1,10 @@
 use super::*;
 
 const RISCV_LINUX_ENOMEM_FOR_TEST: u64 = 12;
+const RISCV_LINUX_MREMAP_FOR_TEST: u64 = 216;
+const RISCV_LINUX_MREMAP_MAYMOVE_FOR_TEST: u64 = 1;
+const RISCV_LINUX_MREMAP_FIXED_FOR_TEST: u64 = 2;
+const RISCV_LINUX_MREMAP_DONTUNMAP_FOR_TEST: u64 = 4;
 
 #[test]
 fn linux_table_allocates_anonymous_mmap_regions() {
@@ -791,6 +795,279 @@ fn linux_table_munmap_removes_mapped_ranges() {
             ),
         ]
     );
+}
+
+#[test]
+fn linux_table_mremap_shrinks_mapped_region_in_place() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_MMAP,
+                [0, 3 * RISCV_PAGE_BYTES, 3, 34, u64::MAX, 0]
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: RISCV64_LINUX_MMAP_BASE
+        })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_MREMAP_FOR_TEST,
+                [
+                    RISCV64_LINUX_MMAP_BASE,
+                    3 * RISCV_PAGE_BYTES,
+                    RISCV_PAGE_BYTES,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: RISCV64_LINUX_MMAP_BASE
+        })
+    );
+    assert_eq!(
+        state.mmap_regions(),
+        &[RiscvMmapRegion::new(
+            RISCV64_LINUX_MMAP_BASE,
+            RISCV_PAGE_BYTES,
+            3,
+            34,
+            u64::MAX,
+            0,
+        )]
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_mremap_expands_mapped_region_in_place_and_zeroes_tail() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let map_requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let map_requests_for_writer = std::sync::Arc::clone(&map_requests);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    })
+    .with_region_map_handler(move |request| {
+        map_requests_for_writer.lock().unwrap().push(request);
+        RiscvGuestMemoryMapResult::Mapped
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_MMAP,
+                [0, RISCV_PAGE_BYTES, 3, 34, u64::MAX, 0]
+            ),
+            &mut state,
+            0,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: RISCV64_LINUX_MMAP_BASE
+        })
+    );
+    writes.lock().unwrap().clear();
+    map_requests.lock().unwrap().clear();
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_MREMAP_FOR_TEST,
+                [
+                    RISCV64_LINUX_MMAP_BASE,
+                    RISCV_PAGE_BYTES,
+                    2 * RISCV_PAGE_BYTES,
+                    RISCV_LINUX_MREMAP_MAYMOVE_FOR_TEST,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+            0,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: RISCV64_LINUX_MMAP_BASE
+        })
+    );
+    assert_eq!(
+        state.mmap_regions(),
+        &[RiscvMmapRegion::new(
+            RISCV64_LINUX_MMAP_BASE,
+            2 * RISCV_PAGE_BYTES,
+            3,
+            34,
+            u64::MAX,
+            0,
+        )]
+    );
+    let writes = writes.lock().unwrap();
+    assert_eq!(writes.len(), 1);
+    assert_eq!(writes[0].0, RISCV64_LINUX_MMAP_BASE + RISCV_PAGE_BYTES);
+    assert_eq!(writes[0].1.len(), RISCV_PAGE_BYTES as usize);
+    assert!(writes[0].1.iter().all(|byte| *byte == 0));
+    assert_eq!(
+        map_requests.lock().unwrap().as_slice(),
+        &[RiscvGuestMemoryMapRequest::new(
+            RISCV64_LINUX_MMAP_BASE + RISCV_PAGE_BYTES,
+            RISCV_PAGE_BYTES,
+            false,
+        )]
+    );
+}
+
+#[test]
+fn linux_table_mremap_rejects_blocked_in_place_growth_without_mutation() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_MMAP,
+                [0, RISCV_PAGE_BYTES, 3, 34, u64::MAX, 0]
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: RISCV64_LINUX_MMAP_BASE
+        })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_MMAP,
+                [
+                    RISCV64_LINUX_MMAP_BASE + RISCV_PAGE_BYTES,
+                    RISCV_PAGE_BYTES,
+                    1,
+                    34 | RISCV_LINUX_MAP_FIXED,
+                    u64::MAX,
+                    0,
+                ]
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: RISCV64_LINUX_MMAP_BASE + RISCV_PAGE_BYTES
+        })
+    );
+    let mapped_regions = state.mmap_regions().to_vec();
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8008,
+                RISCV_LINUX_MREMAP_FOR_TEST,
+                [
+                    RISCV64_LINUX_MMAP_BASE,
+                    RISCV_PAGE_BYTES,
+                    2 * RISCV_PAGE_BYTES,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_ENOMEM_FOR_TEST)
+        })
+    );
+    assert_eq!(state.mmap_regions(), mapped_regions.as_slice());
+}
+
+#[test]
+fn linux_table_mremap_rejects_invalid_arguments_without_mutation() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_MMAP,
+                [0, RISCV_PAGE_BYTES, 3, 34, u64::MAX, 0]
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: RISCV64_LINUX_MMAP_BASE
+        })
+    );
+    let mapped_regions = state.mmap_regions().to_vec();
+
+    for arguments in [
+        [
+            RISCV64_LINUX_MMAP_BASE + 1,
+            RISCV_PAGE_BYTES,
+            RISCV_PAGE_BYTES,
+            0,
+            0,
+            0,
+        ],
+        [RISCV64_LINUX_MMAP_BASE, 0, RISCV_PAGE_BYTES, 0, 0, 0],
+        [RISCV64_LINUX_MMAP_BASE, RISCV_PAGE_BYTES, 0, 0, 0, 0],
+        [RISCV64_LINUX_MMAP_BASE, u64::MAX, RISCV_PAGE_BYTES, 0, 0, 0],
+        [
+            RISCV64_LINUX_MMAP_BASE,
+            RISCV_PAGE_BYTES,
+            RISCV_PAGE_BYTES,
+            RISCV_LINUX_MREMAP_FIXED_FOR_TEST,
+            RISCV64_LINUX_MMAP_BASE + 4 * RISCV_PAGE_BYTES,
+            0,
+        ],
+        [
+            RISCV64_LINUX_MMAP_BASE,
+            RISCV_PAGE_BYTES,
+            RISCV_PAGE_BYTES,
+            RISCV_LINUX_MREMAP_DONTUNMAP_FOR_TEST,
+            0,
+            0,
+        ],
+        [
+            RISCV64_LINUX_MMAP_BASE,
+            RISCV_PAGE_BYTES,
+            RISCV_PAGE_BYTES,
+            1 << 8,
+            0,
+            0,
+        ],
+    ] {
+        assert_eq!(
+            table.handle(
+                RiscvSyscallRequest::new(0x8004, RISCV_LINUX_MREMAP_FOR_TEST, arguments),
+                &mut state,
+            ),
+            Some(RiscvSyscallOutcome::Return {
+                value: linux_error(RISCV_LINUX_EINVAL)
+            })
+        );
+        assert_eq!(state.mmap_regions(), mapped_regions.as_slice());
+    }
 }
 
 #[test]

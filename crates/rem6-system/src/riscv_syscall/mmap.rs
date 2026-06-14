@@ -7,10 +7,18 @@ use super::{
 pub(super) const RISCV_PAGE_BYTES: u64 = 4096;
 pub(super) const RISCV64_LINUX_MMAP_BASE: u64 = 0x4000_0000_0000_0000;
 
+pub(super) const RISCV_LINUX_MUNMAP: u64 = 215;
+pub(super) const RISCV_LINUX_MREMAP: u64 = 216;
+pub(super) const RISCV_LINUX_MMAP: u64 = 222;
+pub(super) const RISCV_LINUX_MPROTECT: u64 = 226;
 pub(super) const RISCV_LINUX_MAP_SHARED: u64 = 0x01;
 pub(super) const RISCV_LINUX_MAP_PRIVATE: u64 = 0x02;
 pub(super) const RISCV_LINUX_MAP_FIXED: u64 = 0x10;
 pub(super) const RISCV_LINUX_MAP_ANONYMOUS: u64 = 0x20;
+const RISCV_LINUX_MREMAP_MAYMOVE: u64 = 1;
+const RISCV_LINUX_MREMAP_FIXED: u64 = 2;
+const RISCV_LINUX_MREMAP_DONTUNMAP: u64 = 4;
+const RISCV_LINUX_MREMAP_SUPPORTED_FLAGS: u64 = RISCV_LINUX_MREMAP_MAYMOVE;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RiscvMmapRegion {
@@ -374,6 +382,75 @@ pub(super) fn syscall_munmap(
     0
 }
 
+pub(super) fn syscall_mremap(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+    guest_memory_writer: Option<&RiscvGuestMemoryWriter>,
+) -> u64 {
+    let start = request.argument(0);
+    let old_size = request.argument(1);
+    let new_size = request.argument(2);
+    let flags = request.argument(3);
+
+    if !start.is_multiple_of(RISCV_PAGE_BYTES)
+        || old_size == 0
+        || new_size == 0
+        || flags & !RISCV_LINUX_MREMAP_SUPPORTED_FLAGS != 0
+        || flags & (RISCV_LINUX_MREMAP_FIXED | RISCV_LINUX_MREMAP_DONTUNMAP) != 0
+    {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+
+    let Some(old_length) = align_to_page(old_size) else {
+        return linux_error(RISCV_LINUX_EINVAL);
+    };
+    let Some(new_length) = align_to_page(new_size) else {
+        return linux_error(RISCV_LINUX_EINVAL);
+    };
+    if start.checked_add(old_length).is_none() || start.checked_add(new_length).is_none() {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+
+    let Some(region_index) = exact_mmap_region_index(state, start, old_length) else {
+        return linux_error(RISCV_LINUX_ENOMEM);
+    };
+    if new_length == old_length {
+        return start;
+    }
+    if new_length < old_length {
+        state.unmap_mmap_range(start + new_length, old_length - new_length);
+        return start;
+    }
+
+    let extra_start = start + old_length;
+    let extra_length = new_length - old_length;
+    if !state.is_mmap_range_available(extra_start, extra_length) {
+        return linux_error(RISCV_LINUX_ENOMEM);
+    }
+    match install_mmap_backing(
+        extra_start,
+        extra_length,
+        guest_memory_writer,
+        false,
+        &MmapBacking::Anonymous,
+    ) {
+        RiscvGuestMemoryMapResult::Mapped => {}
+        RiscvGuestMemoryMapResult::Overlap => return linux_error(RISCV_LINUX_ENOMEM),
+        RiscvGuestMemoryMapResult::Failed => return linux_error(RISCV_LINUX_EFAULT),
+    }
+
+    let region = state.mmap_regions[region_index];
+    state.mmap_regions[region_index] = RiscvMmapRegion::new(
+        region.start(),
+        new_length,
+        region.protection(),
+        region.flags(),
+        region.fd(),
+        region.offset(),
+    );
+    start
+}
+
 pub(super) fn syscall_mprotect(
     start: u64,
     requested_length: u64,
@@ -402,6 +479,13 @@ pub(super) fn syscall_mprotect(
     }
     state.mmap_regions = regions;
     0
+}
+
+fn exact_mmap_region_index(state: &RiscvSyscallState, start: u64, length: u64) -> Option<usize> {
+    state
+        .mmap_regions
+        .iter()
+        .position(|region| region.start() == start && region.length() == length)
 }
 
 fn mmap_range_is_mapped(state: &RiscvSyscallState, start: u64, length: u64) -> bool {

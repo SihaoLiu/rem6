@@ -108,7 +108,9 @@ use links::syscall_readlinkat;
 use mkdir::{syscall_mkdirat, RISCV_LINUX_MKDIRAT};
 pub use mmap::RiscvMmapRegion;
 use mmap::{
-    syscall_mmap, syscall_mprotect, syscall_munmap, RISCV64_LINUX_MMAP_BASE, RISCV_PAGE_BYTES,
+    syscall_mmap, syscall_mprotect, syscall_mremap, syscall_munmap, RISCV64_LINUX_MMAP_BASE,
+    RISCV_LINUX_MMAP, RISCV_LINUX_MPROTECT, RISCV_LINUX_MREMAP, RISCV_LINUX_MUNMAP,
+    RISCV_PAGE_BYTES,
 };
 #[cfg(test)]
 use mmap::{RISCV_LINUX_MAP_FIXED, RISCV_LINUX_MAP_PRIVATE};
@@ -178,9 +180,6 @@ const RISCV_LINUX_UNAME: u64 = 160;
 const RISCV_LINUX_SETRLIMIT: u64 = 164;
 const RISCV_LINUX_FUTEX: u64 = 98;
 const RISCV_LINUX_BRK: u64 = 214;
-const RISCV_LINUX_MUNMAP: u64 = 215;
-const RISCV_LINUX_MMAP: u64 = 222;
-const RISCV_LINUX_MPROTECT: u64 = 226;
 const RISCV_LINUX_MSYNC: u64 = 227;
 const RISCV_LINUX_MLOCK: u64 = 228;
 const RISCV_LINUX_MUNLOCK: u64 = 229;
@@ -1369,6 +1368,9 @@ impl RiscvSyscallTable {
             }),
             RISCV_LINUX_MUNMAP => Some(RiscvSyscallOutcome::Return {
                 value: syscall_munmap(request.argument(0), request.argument(1), state),
+            }),
+            RISCV_LINUX_MREMAP => Some(RiscvSyscallOutcome::Return {
+                value: syscall_mremap(request, state, guest_memory_writer),
             }),
             _ => {
                 state.push_unknown_syscall(RiscvUnknownSyscallRecord::new(
