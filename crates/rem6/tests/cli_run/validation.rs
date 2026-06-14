@@ -103,7 +103,7 @@ fn rem6_run_rejects_unsupported_data_cache_protocol() {
             "json",
             "--execute",
             "--data-cache-protocol",
-            "mesi",
+            "moesi",
         ])
         .output()
         .unwrap();
@@ -111,7 +111,7 @@ fn rem6_run_rejects_unsupported_data_cache_protocol() {
     assert!(!output.status.success());
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(stderr.contains("invalid run data cache protocol mesi"));
+    assert!(stderr.contains("invalid run data cache protocol moesi"));
 }
 
 #[test]

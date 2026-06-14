@@ -1,12 +1,15 @@
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use rem6_coherence::{
-    CpuResponseRecord, MsiBankCycleRun, MsiBankDirectoryHarness, ParallelCoherenceRunSummary,
+    CpuResponseRecord, LineBackingStore, MesiCpuResponseRecord, MesiDirectoryLineHarness,
+    MsiBankCycleRun, MsiBankDirectoryHarness, ParallelCoherenceRunSummary,
     ParallelCoherenceWaitForGraphs,
 };
 use rem6_kernel::{RecordedConservativeRunSummary, WaitForGraph};
 use rem6_memory::{
-    AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId, MemoryResponse, ResponseStatus,
+    Address, AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId, MemoryResponse,
+    ResponseStatus,
 };
 use rem6_system::{RiscvDataCacheProtocol, RiscvDataCacheRunRecord, RiscvSystemRun};
 use rem6_transport::{RequestDelivery, TargetOutcome};
@@ -17,9 +20,19 @@ use crate::{execute_error, Rem6CliError};
 #[derive(Clone)]
 pub(super) struct CliDataCacheRuntime {
     layout: CacheLineLayout,
-    harness: Arc<Mutex<MsiBankDirectoryHarness>>,
+    harness: Arc<Mutex<CliDataCacheHarness>>,
     records: Arc<Mutex<Vec<RiscvDataCacheRunRecord>>>,
     error: Arc<Mutex<Option<String>>>,
+}
+
+enum CliDataCacheHarness {
+    Msi(MsiBankDirectoryHarness),
+    Mesi(CliMesiLineHarnesses),
+}
+
+struct CliMesiLineHarnesses {
+    agents: Vec<AgentId>,
+    lines: BTreeMap<Address, MesiDirectoryLineHarness>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -81,9 +94,35 @@ impl CliDataCacheRuntime {
     {
         Ok(Self {
             layout,
-            harness: Arc::new(Mutex::new(
+            harness: Arc::new(Mutex::new(CliDataCacheHarness::Msi(
                 MsiBankDirectoryHarness::new(layout, agents).map_err(execute_error)?,
-            )),
+            ))),
+            records: Arc::new(Mutex::new(Vec::new())),
+            error: Arc::new(Mutex::new(None)),
+        })
+    }
+
+    pub(super) fn new_mesi_lines<I>(
+        layout: CacheLineLayout,
+        agents: I,
+    ) -> Result<Self, Rem6CliError>
+    where
+        I: IntoIterator<Item = AgentId>,
+    {
+        let agents = agents.into_iter().collect::<Vec<_>>();
+        if agents.is_empty() {
+            return Err(execute_error(
+                "CLI MESI data cache requires at least one agent",
+            ));
+        }
+        Ok(Self {
+            layout,
+            harness: Arc::new(Mutex::new(CliDataCacheHarness::Mesi(
+                CliMesiLineHarnesses {
+                    agents,
+                    lines: BTreeMap::new(),
+                },
+            ))),
             records: Arc::new(Mutex::new(Vec::new())),
             error: Arc::new(Mutex::new(None)),
         })
@@ -137,17 +176,26 @@ impl CliDataCacheRuntime {
     fn ensure_backing(&self, memory: &CliMemoryRuntime, request: &MemoryRequest) -> bool {
         let line = self.layout.line_address(request.line_address());
         {
-            let harness = self.harness.lock().expect("CLI MSI data cache lock");
-            if harness.backing_line(line).is_some()
-                || harness.directory_line_addresses().contains(&line)
-                || harness.cache_agents().into_iter().any(|agent| {
-                    harness
-                        .cache_line_addresses(agent)
-                        .map(|lines| lines.contains(&line))
-                        .unwrap_or(false)
-                })
-            {
-                return true;
+            let harness = self.harness.lock().expect("CLI data cache lock");
+            match &*harness {
+                CliDataCacheHarness::Msi(harness) => {
+                    if harness.backing_line(line).is_some()
+                        || harness.directory_line_addresses().contains(&line)
+                        || harness.cache_agents().into_iter().any(|agent| {
+                            harness
+                                .cache_line_addresses(agent)
+                                .map(|lines| lines.contains(&line))
+                                .unwrap_or(false)
+                        })
+                    {
+                        return true;
+                    }
+                }
+                CliDataCacheHarness::Mesi(harnesses) => {
+                    if harnesses.lines.contains_key(&line) {
+                        return true;
+                    }
+                }
             }
         }
 
@@ -157,11 +205,25 @@ impl CliDataCacheRuntime {
             return false;
         };
 
-        self.harness
-            .lock()
-            .expect("CLI MSI data cache lock")
-            .insert_backing_line(line, data)
-            .is_ok()
+        let mut harness = self.harness.lock().expect("CLI data cache lock");
+        match &mut *harness {
+            CliDataCacheHarness::Msi(harness) => harness.insert_backing_line(line, data).is_ok(),
+            CliDataCacheHarness::Mesi(harnesses) => {
+                let Ok(backing) = LineBackingStore::new(self.layout, line, data) else {
+                    return false;
+                };
+                let Ok(line_harness) = MesiDirectoryLineHarness::new(
+                    self.layout,
+                    line,
+                    backing,
+                    harnesses.agents.iter().copied(),
+                ) else {
+                    return false;
+                };
+                harnesses.lines.insert(line, line_harness);
+                true
+            }
+        }
     }
 
     fn respond_inner(
@@ -170,7 +232,24 @@ impl CliDataCacheRuntime {
         start_tick: u64,
         request: &MemoryRequest,
     ) -> Result<TargetOutcome, Rem6CliError> {
-        let mut harness = self.harness.lock().expect("CLI MSI data cache lock");
+        let mut harness = self.harness.lock().expect("CLI data cache lock");
+        match &mut *harness {
+            CliDataCacheHarness::Msi(harness) => {
+                self.respond_msi_inner(memory, start_tick, request, harness)
+            }
+            CliDataCacheHarness::Mesi(harnesses) => {
+                self.respond_mesi_inner(memory, start_tick, request, harnesses)
+            }
+        }
+    }
+
+    fn respond_msi_inner(
+        &self,
+        memory: &CliMemoryRuntime,
+        start_tick: u64,
+        request: &MemoryRequest,
+        harness: &mut MsiBankDirectoryHarness,
+    ) -> Result<TargetOutcome, Rem6CliError> {
         let responses_before = harness.cpu_responses().len();
         let decisions_before = harness.directory_decisions().len();
         let cycle_run = harness
@@ -197,7 +276,6 @@ impl CliDataCacheRuntime {
             .map_err(execute_error)?
             .data()
             .map(<[u8]>::to_vec);
-        drop(harness);
 
         if let Some(line_data) = line_data {
             self.sync_request_range(memory, request, &line_data)?;
@@ -213,6 +291,57 @@ impl CliDataCacheRuntime {
         Ok(outcome)
     }
 
+    fn respond_mesi_inner(
+        &self,
+        memory: &CliMemoryRuntime,
+        start_tick: u64,
+        request: &MemoryRequest,
+        harnesses: &mut CliMesiLineHarnesses,
+    ) -> Result<TargetOutcome, Rem6CliError> {
+        let line = self.layout.line_address(request.line_address());
+        let harness = harnesses
+            .lines
+            .get_mut(&line)
+            .ok_or_else(|| execute_error("CLI MESI data cache backing line missing"))?;
+        let responses_before = harness.cpu_responses().len();
+        let decisions_before = harness.directory_decisions().len();
+        harness
+            .submit_cpu_request(request.id().agent(), request.clone())
+            .map_err(execute_error)?;
+        let responses = harness.cpu_responses();
+        let cpu_response_count = responses.len().saturating_sub(responses_before);
+        let directory_decision_count = harness
+            .directory_decisions()
+            .len()
+            .saturating_sub(decisions_before);
+        let response_record = response_record(&responses, responses_before, request.id());
+        let outcome = match response_record.as_ref() {
+            Some(record) => response_record_to_target_outcome(request, start_tick, record)?,
+            None if request.requires_response() && !request.returns_data() => {
+                TargetOutcome::Respond(
+                    MemoryResponse::completed(request, None).map_err(execute_error)?,
+                )
+            }
+            None if !request.requires_response() => TargetOutcome::NoResponse,
+            None => return Err(execute_error("CLI MESI data cache response missing")),
+        };
+        if let Some(line_data) = harness
+            .cache_data(request.id().agent())
+            .map_err(execute_error)?
+        {
+            self.sync_request_range(memory, request, &line_data)?;
+        }
+
+        self.records
+            .lock()
+            .expect("CLI data cache record lock")
+            .push(RiscvDataCacheRunRecord::new(
+                RiscvDataCacheProtocol::Mesi,
+                data_cache_run_summary(start_tick, cpu_response_count, directory_decision_count, 0),
+            ));
+        Ok(outcome)
+    }
+
     fn sync_request_range(
         &self,
         memory: &CliMemoryRuntime,
@@ -221,21 +350,21 @@ impl CliDataCacheRuntime {
     ) -> Result<(), Rem6CliError> {
         let range = request.range();
         let offset = usize::try_from(self.layout.line_offset(range.start()))
-            .map_err(|_| execute_error("CLI MSI data cache request offset is too large"))?;
+            .map_err(|_| execute_error("CLI data cache request offset is too large"))?;
         let bytes = usize::try_from(range.size().bytes())
-            .map_err(|_| execute_error("CLI MSI data cache request size is too large"))?;
+            .map_err(|_| execute_error("CLI data cache request size is too large"))?;
         let end = offset
             .checked_add(bytes)
-            .ok_or_else(|| execute_error("CLI MSI data cache request range overflows"))?;
+            .ok_or_else(|| execute_error("CLI data cache request range overflows"))?;
         let Some(data) = line_data.get(offset..end) else {
             return Err(execute_error(
-                "CLI MSI data cache request range exceeds cache line",
+                "CLI data cache request range exceeds cache line",
             ));
         };
         if memory.write_guest_memory(range.start().get(), data, self.layout) {
             Ok(())
         } else {
-            Err(execute_error("failed to sync CLI MSI data cache request"))
+            Err(execute_error("failed to sync CLI data cache request"))
         }
     }
 
@@ -247,11 +376,57 @@ impl CliDataCacheRuntime {
     }
 }
 
-fn response_record(
-    responses: &[CpuResponseRecord],
+trait CliDataCacheResponseRecord: Clone {
+    fn request(&self) -> MemoryRequestId;
+    fn status(&self) -> ResponseStatus;
+    fn data(&self) -> Option<&[u8]>;
+    fn tick(&self) -> u64;
+}
+
+impl CliDataCacheResponseRecord for CpuResponseRecord {
+    fn request(&self) -> MemoryRequestId {
+        CpuResponseRecord::request(self)
+    }
+
+    fn status(&self) -> ResponseStatus {
+        CpuResponseRecord::status(self)
+    }
+
+    fn data(&self) -> Option<&[u8]> {
+        CpuResponseRecord::data(self)
+    }
+
+    fn tick(&self) -> u64 {
+        CpuResponseRecord::tick(self)
+    }
+}
+
+impl CliDataCacheResponseRecord for MesiCpuResponseRecord {
+    fn request(&self) -> MemoryRequestId {
+        MesiCpuResponseRecord::request(self)
+    }
+
+    fn status(&self) -> ResponseStatus {
+        MesiCpuResponseRecord::status(self)
+    }
+
+    fn data(&self) -> Option<&[u8]> {
+        MesiCpuResponseRecord::data(self)
+    }
+
+    fn tick(&self) -> u64 {
+        MesiCpuResponseRecord::tick(self)
+    }
+}
+
+fn response_record<R>(
+    responses: &[R],
     responses_before: usize,
     request: MemoryRequestId,
-) -> Option<CpuResponseRecord> {
+) -> Option<R>
+where
+    R: CliDataCacheResponseRecord,
+{
     responses
         .get(responses_before..)
         .unwrap_or_default()
@@ -260,11 +435,14 @@ fn response_record(
         .cloned()
 }
 
-fn response_record_to_target_outcome(
+fn response_record_to_target_outcome<R>(
     request: &MemoryRequest,
     start_tick: u64,
-    record: &CpuResponseRecord,
-) -> Result<TargetOutcome, Rem6CliError> {
+    record: &R,
+) -> Result<TargetOutcome, Rem6CliError>
+where
+    R: CliDataCacheResponseRecord,
+{
     let response = match record.status() {
         ResponseStatus::Completed => {
             MemoryResponse::completed(request, record.data().map(<[u8]>::to_vec))
@@ -287,11 +465,25 @@ fn msi_bank_cycle_run_summary(
     run: &MsiBankCycleRun,
     directory_decision_count: usize,
 ) -> ParallelCoherenceRunSummary {
-    ParallelCoherenceRunSummary::new(
-        RecordedConservativeRunSummary::empty(run.tick()),
+    data_cache_run_summary(
+        run.tick(),
         run.response_count(),
         directory_decision_count,
         0,
+    )
+}
+
+fn data_cache_run_summary(
+    tick: u64,
+    cpu_response_count: usize,
+    directory_decision_count: usize,
+    dram_access_count: usize,
+) -> ParallelCoherenceRunSummary {
+    ParallelCoherenceRunSummary::new(
+        RecordedConservativeRunSummary::empty(tick),
+        cpu_response_count,
+        directory_decision_count,
+        dram_access_count,
         Vec::new(),
         Vec::new(),
         ParallelCoherenceWaitForGraphs::new(WaitForGraph::new(), WaitForGraph::new()),
