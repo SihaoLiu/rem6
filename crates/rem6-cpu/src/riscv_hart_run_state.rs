@@ -79,39 +79,7 @@ impl RiscvCore {
     }
 
     pub fn complete_pending_supervisor_hart_start(&self, entry: Address, opaque: u64) -> bool {
-        let mut state = self.state.lock().expect("riscv core lock");
-        if state.run_state != RiscvHartRunState::StartPending {
-            return false;
-        }
-        let hart_id = state.hart.hart_id();
-        state.run_state = RiscvHartRunState::Started;
-        state.run_state_explicit = true;
-        state.hart.set_pc(entry.get());
-        state
-            .hart
-            .set_privilege_mode(RiscvPrivilegeMode::Supervisor);
-        state.hart.set_translation_satp(0);
-        state.hart.set_status(RiscvStatusWord::new(0));
-        state.hart.write(
-            Register::new(10).expect("valid RISC-V integer register"),
-            hart_id,
-        );
-        state.hart.write(
-            Register::new(11).expect("valid RISC-V integer register"),
-            opaque,
-        );
-        state.pending_fetch_prefix = None;
-        state.executed_fetches.clear();
-        state.issued_data_for_fetches.clear();
-        state.pending_data_translations.clear();
-        state.ready_translated_data.clear();
-        state.outstanding_data.clear();
-        state.pending_trap = None;
-        state.pending_trap_event = None;
-        state.reservation = None;
-        drop(state);
-        self.core.reset_fetch_to_pc(entry);
-        true
+        self.enter_supervisor_hart_if(Some(RiscvHartRunState::StartPending), entry, opaque, true)
     }
 
     pub fn complete_pending_hart_stop(&self) -> bool {
@@ -142,9 +110,28 @@ impl RiscvCore {
         self.enter_supervisor_hart(entry, opaque, true);
     }
 
+    pub fn resume_pending_nonretentive_supervisor_hart(&self, entry: Address, opaque: u64) -> bool {
+        self.enter_supervisor_hart_if(Some(RiscvHartRunState::SuspendPending), entry, opaque, true)
+    }
+
     fn enter_supervisor_hart(&self, entry: Address, opaque: u64, reset_supervisor_state: bool) {
-        let hart_id = self.hart_id();
+        self.enter_supervisor_hart_if(None, entry, opaque, reset_supervisor_state);
+    }
+
+    fn enter_supervisor_hart_if(
+        &self,
+        expected_run_state: Option<RiscvHartRunState>,
+        entry: Address,
+        opaque: u64,
+        reset_supervisor_state: bool,
+    ) -> bool {
         let mut state = self.state.lock().expect("riscv core lock");
+        if let Some(expected_run_state) = expected_run_state {
+            if state.run_state != expected_run_state {
+                return false;
+            }
+        }
+        let hart_id = state.hart.hart_id();
         state.run_state = RiscvHartRunState::Started;
         state.run_state_explicit = true;
         state.hart.set_pc(entry.get());
@@ -174,5 +161,6 @@ impl RiscvCore {
         state.reservation = None;
         drop(state);
         self.core.reset_fetch_to_pc(entry);
+        true
     }
 }

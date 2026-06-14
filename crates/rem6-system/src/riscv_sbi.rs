@@ -306,6 +306,17 @@ impl RiscvSbiFirmware {
                 {
                     self.schedule_hart_suspend(scheduler, core, parallel)
                         .map_err(SystemError::Scheduler)?;
+                } else if outcome == RiscvSbiOutcome::Resumed
+                    && request.arg0() == SBI_HSM_DEFAULT_NON_RETENTIVE_SUSPEND
+                {
+                    self.schedule_nonretentive_hart_resume(
+                        scheduler,
+                        core,
+                        Address::new(request.arg1()),
+                        request.arg2(),
+                        parallel,
+                    )
+                    .map_err(SystemError::Scheduler)?;
                 }
                 outcome
             }
@@ -456,10 +467,7 @@ impl RiscvSbiFirmware {
                 if request.arg1() & 0x1 != 0 {
                     return RiscvSbiOutcome::invalid_address();
                 }
-                core.resume_nonretentive_supervisor_hart(
-                    Address::new(request.arg1()),
-                    request.arg2(),
-                );
+                core.set_hart_suspend_pending();
                 RiscvSbiOutcome::Resumed
             }
             _ => RiscvSbiOutcome::invalid_param(),
@@ -486,6 +494,33 @@ impl RiscvSbiFirmware {
         } else {
             scheduler.schedule_at(partition, deadline, move |_context| {
                 suspended_core.complete_pending_hart_suspend();
+            })?;
+        }
+        Ok(())
+    }
+
+    fn schedule_nonretentive_hart_resume(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        core: &RiscvCore,
+        entry: Address,
+        opaque: u64,
+        parallel: bool,
+    ) -> Result<(), SchedulerError> {
+        let partition = core.partition();
+        let now = scheduler.partition_now(partition)?;
+        let delay = scheduler.min_remote_delay();
+        let deadline = now
+            .checked_add(delay)
+            .ok_or(SchedulerError::TickOverflow { now, delay })?;
+        let suspended_core = core.clone();
+        if parallel {
+            scheduler.schedule_parallel_at(partition, deadline, move |_context| {
+                suspended_core.resume_pending_nonretentive_supervisor_hart(entry, opaque);
+            })?;
+        } else {
+            scheduler.schedule_at(partition, deadline, move |_context| {
+                suspended_core.resume_pending_nonretentive_supervisor_hart(entry, opaque);
             })?;
         }
         Ok(())
@@ -1049,6 +1084,91 @@ mod tests {
             firmware.hart_get_status(hsm_request(SBI_HSM_HART_GET_STATUS, 0, 0, 0)),
             RiscvSbiOutcome::success(SBI_HSM_HART_STARTED)
         );
+    }
+
+    fn assert_nonretentive_suspend_pending_until_resume_event_runs(parallel: bool) {
+        let (mut scheduler, transport, firmware, core0, _core1) = registered_hsm_pair();
+        execute_hsm_ecall(
+            &mut scheduler,
+            &transport,
+            &core0,
+            SBI_HSM_HART_SUSPEND,
+            SBI_HSM_DEFAULT_NON_RETENTIVE_SUSPEND,
+            0x9000,
+            0x55,
+        );
+
+        let outcome = firmware
+            .handle_pending_core_trap(&mut scheduler, &core0, parallel)
+            .expect("handled SBI trap")
+            .expect("SBI outcome");
+
+        assert_eq!(outcome, RiscvSbiOutcome::Resumed);
+        assert_eq!(
+            firmware.hart_get_status(hsm_request(SBI_HSM_HART_GET_STATUS, 0, 0, 0)),
+            RiscvSbiOutcome::success(TEST_HART_SUSPEND_PENDING)
+        );
+        assert_ne!(core0.pc(), Address::new(0x9000));
+
+        if parallel {
+            scheduler
+                .run_until_idle_parallel()
+                .expect("parallel non-retentive resume event");
+        } else {
+            scheduler.run_until_idle_conservative();
+        }
+
+        assert_eq!(
+            firmware.hart_get_status(hsm_request(SBI_HSM_HART_GET_STATUS, 0, 0, 0)),
+            RiscvSbiOutcome::success(SBI_HSM_HART_STARTED)
+        );
+        assert_eq!(core0.pc(), Address::new(0x9000));
+        assert_eq!(core0.read_register(register(10)), 0);
+        assert_eq!(core0.read_register(register(11)), 0x55);
+    }
+
+    #[test]
+    fn handle_pending_core_trap_reports_nonretentive_suspend_pending_until_resume_event_runs() {
+        assert_nonretentive_suspend_pending_until_resume_event_runs(false);
+    }
+
+    #[test]
+    fn parallel_handle_pending_core_trap_reports_nonretentive_suspend_pending_until_resume_event_runs(
+    ) {
+        assert_nonretentive_suspend_pending_until_resume_event_runs(true);
+    }
+
+    #[test]
+    fn scheduled_nonretentive_resume_does_not_complete_after_state_changes() {
+        let (mut scheduler, transport, firmware, core0, _core1) = registered_hsm_pair();
+        execute_hsm_ecall(
+            &mut scheduler,
+            &transport,
+            &core0,
+            SBI_HSM_HART_SUSPEND,
+            SBI_HSM_DEFAULT_NON_RETENTIVE_SUSPEND,
+            0x9000,
+            0x55,
+        );
+
+        let outcome = firmware
+            .handle_pending_core_trap(&mut scheduler, &core0, false)
+            .expect("handled SBI trap")
+            .expect("SBI outcome");
+
+        assert_eq!(outcome, RiscvSbiOutcome::Resumed);
+        assert_eq!(
+            firmware.hart_get_status(hsm_request(SBI_HSM_HART_GET_STATUS, 0, 0, 0)),
+            RiscvSbiOutcome::success(TEST_HART_SUSPEND_PENDING)
+        );
+        core0.set_hart_started();
+        scheduler.run_until_idle_conservative();
+
+        assert_eq!(
+            firmware.hart_get_status(hsm_request(SBI_HSM_HART_GET_STATUS, 0, 0, 0)),
+            RiscvSbiOutcome::success(SBI_HSM_HART_STARTED)
+        );
+        assert_ne!(core0.pc(), Address::new(0x9000));
     }
 
     #[test]
