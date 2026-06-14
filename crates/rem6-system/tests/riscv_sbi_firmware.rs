@@ -862,9 +862,11 @@ fn supervisor_sbi_hart_stop_stops_current_hart_before_next_instruction() {
         (0x8000, lui(17, hsm_hi)),
         (0x8004, addi(17, 17, hsm_lo)),
         (0x8008, addi(16, 0, SBI_HSM_HART_STOP)),
-        (0x800c, 0x0000_0073),
-        (0x8010, addi(31, 0, 9)),
-        (0x8014, 0x0010_0073),
+        (0x800c, addi(10, 0, 44)),
+        (0x8010, addi(11, 0, 55)),
+        (0x8014, 0x0000_0073),
+        (0x8018, addi(31, 0, 9)),
+        (0x801c, 0x0010_0073),
     ]);
     let controller = Arc::new(Mutex::new(SystemHostController::new(
         HostEventPolicy,
@@ -898,6 +900,8 @@ fn supervisor_sbi_hart_stop_stops_current_hart_before_next_instruction() {
     ));
     assert_eq!(run.host_stop(), None);
     assert_eq!(core.hart_run_state(), RiscvHartRunState::Stopped);
+    assert_eq!(core.read_register(reg(10)), 44);
+    assert_eq!(core.read_register(reg(11)), 55);
     assert_eq!(core.read_register(reg(31)), 0);
 }
 

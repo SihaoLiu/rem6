@@ -634,7 +634,7 @@ impl RiscvTrapEventPort {
                                 });
                             }
                         }
-                        RiscvSbiOutcome::Resumed => {}
+                        RiscvSbiOutcome::Stopped | RiscvSbiOutcome::Resumed => {}
                         RiscvSbiOutcome::SystemReset {
                             reset_type,
                             reset_reason,

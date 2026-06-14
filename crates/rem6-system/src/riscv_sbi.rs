@@ -156,6 +156,7 @@ pub enum RiscvSbiOutcome {
         error: u64,
         value: u64,
     },
+    Stopped,
     Resumed,
     SystemReset {
         reset_type: u32,
@@ -348,7 +349,7 @@ impl RiscvSbiFirmware {
 
     fn hart_stop(&self, core: &RiscvCore) -> RiscvSbiOutcome {
         core.set_hart_stopped();
-        RiscvSbiOutcome::success(0)
+        RiscvSbiOutcome::Stopped
     }
 
     fn hart_suspend(&self, core: &RiscvCore, request: RiscvSbiRequest) -> RiscvSbiOutcome {
