@@ -3,11 +3,13 @@
 mod support;
 
 use rem6_system::{
-    GuestFd, RiscvGuestMemoryReader, RiscvSyscallOutcome, RiscvSyscallRequest, RiscvSyscallState,
-    RiscvSyscallTable,
+    GuestFd, RiscvGuestMemoryReader, RiscvGuestMemoryWriter, RiscvSyscallOutcome,
+    RiscvSyscallRequest, RiscvSyscallState, RiscvSyscallTable,
 };
 use support::*;
 
+const RISCV_LINUX_PIPE2: u64 = 59;
+const RISCV_LINUX_READ: u64 = 63;
 const RISCV_LINUX_WRITEV: u64 = 66;
 const RISCV_LINUX_EXIT: u64 = 93;
 const RISCV_LINUX_EBADF: u64 = 9;
@@ -39,6 +41,44 @@ fn writev_store() -> Arc<Mutex<PartitionedMemoryStore>> {
     )
 }
 
+fn writev_pipe_store() -> Arc<Mutex<PartitionedMemoryStore>> {
+    let fd_area = [0; 8];
+    let read_area = [0; 5];
+    let iov0 = rv64_iovec(0x9100, 2);
+    let iov1 = rv64_iovec(0x9200, 3);
+    loaded_program_store_with_data(
+        &[(0x8000, 0)],
+        &[
+            (0x8800, &fd_area),
+            (0x9000, &iov0),
+            (0x9010, &iov1),
+            (0x9100, b"he"),
+            (0x9200, b"llo"),
+            (0x9300, &read_area),
+        ],
+    )
+}
+
+fn create_pipe(
+    state: &mut RiscvSyscallState,
+    writer: &RiscvGuestMemoryWriter,
+    store: &Arc<Mutex<PartitionedMemoryStore>>,
+) -> (u64, u64) {
+    let outcome = RiscvSyscallTable::new().handle_with_guest_memory_io_at_tick(
+        RiscvSyscallRequest::new(0x8000, RISCV_LINUX_PIPE2, [0x8800, 0, 0, 0, 0, 0]),
+        state,
+        0,
+        None,
+        Some(writer),
+    );
+    assert_eq!(outcome, Some(RiscvSyscallOutcome::Return { value: 0 }));
+
+    let fds = guest_memory_reader(Arc::clone(store))(0x8800, 8).unwrap();
+    let read_fd = i32::from_le_bytes(fds[..4].try_into().unwrap());
+    let write_fd = i32::from_le_bytes(fds[4..].try_into().unwrap());
+    (read_fd as u64, write_fd as u64)
+}
+
 #[test]
 fn linux_table_writev_reads_iovecs_and_records_single_guest_write() {
     let store = writev_store();
@@ -68,6 +108,41 @@ fn linux_table_writev_reads_iovecs_and_records_single_guest_write() {
             .get(),
         5
     );
+}
+
+#[test]
+fn linux_table_writev_to_pipe_buffers_bytes_without_guest_write_record() {
+    let store = writev_pipe_store();
+    let reader = RiscvGuestMemoryReader::new(guest_memory_reader(Arc::clone(&store)));
+    let writer = RiscvGuestMemoryWriter::new(guest_memory_writer(Arc::clone(&store)));
+    let mut state = RiscvSyscallState::new(0);
+    let (read_fd, write_fd) = create_pipe(&mut state, &writer, &store);
+
+    let outcome = RiscvSyscallTable::new().handle_with_guest_memory_io_at_tick(
+        RiscvSyscallRequest::new(0x8000, RISCV_LINUX_WRITEV, [write_fd, 0x9000, 2, 0, 0, 0]),
+        &mut state,
+        11,
+        Some(&reader),
+        None,
+    );
+
+    assert_eq!(outcome, Some(RiscvSyscallOutcome::Return { value: 5 }));
+    assert!(state.guest_writes().is_empty());
+
+    let read_outcome = RiscvSyscallTable::new().handle_with_guest_memory_io_at_tick(
+        RiscvSyscallRequest::new(0x8004, RISCV_LINUX_READ, [read_fd, 0x9300, 5, 0, 0, 0]),
+        &mut state,
+        12,
+        None,
+        Some(&writer),
+    );
+
+    assert_eq!(read_outcome, Some(RiscvSyscallOutcome::Return { value: 5 }));
+    assert_eq!(
+        guest_memory_reader(Arc::clone(&store))(0x9300, 5),
+        Some(b"hello".to_vec())
+    );
+    assert!(state.guest_writes().is_empty());
 }
 
 #[test]

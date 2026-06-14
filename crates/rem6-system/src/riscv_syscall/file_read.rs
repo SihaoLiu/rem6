@@ -42,6 +42,22 @@ pub(super) fn syscall_read(
     let Ok(byte_count) = usize::try_from(count) else {
         return linux_error(RISCV_LINUX_EINVAL);
     };
+    match state.guest_pipe_prefix(fd, byte_count) {
+        Ok(Some(bytes)) => {
+            if bytes.is_empty() {
+                return 0;
+            }
+            if !guest_memory.write(request.argument(1), &bytes) {
+                return linux_error(RISCV_LINUX_EFAULT);
+            }
+            if state.consume_guest_pipe_prefix(fd, bytes.len()).is_err() {
+                return linux_error(RISCV_LINUX_EBADF);
+            }
+            return bytes.len() as u64;
+        }
+        Ok(None) => {}
+        Err(_) => return linux_error(RISCV_LINUX_EBADF),
+    }
     let read_from_stdin = state.stdin_readable(fd);
     let bytes = if read_from_stdin {
         state.stdin_prefix(byte_count)

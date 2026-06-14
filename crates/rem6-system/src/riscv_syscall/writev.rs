@@ -86,6 +86,12 @@ pub(super) fn syscall_writev(
         bytes.append(&mut data);
     }
 
+    match state.write_guest_pipe_from_fd(fd, &bytes) {
+        Ok(true) => return total,
+        Ok(false) => {}
+        Err(_) => return linux_error(RISCV_LINUX_EBADF),
+    }
+
     match state.write_guest_file_from_fd(fd, &bytes) {
         Ok(_) => {}
         Err(RiscvGuestFileWriteError::FileTooLarge) => return linux_error(RISCV_LINUX_EFBIG),

@@ -38,6 +38,7 @@ mod mkdir;
 mod mmap;
 mod open;
 mod permissions;
+mod pipe;
 mod poll;
 mod process;
 mod random;
@@ -121,6 +122,7 @@ use mmap::{RISCV_LINUX_MAP_FIXED, RISCV_LINUX_MAP_PRIVATE};
 pub use open::RiscvGuestOpenRecord;
 use open::{syscall_open, syscall_openat, RiscvGuestOpenRequest, RISCV_LINUX_OPEN};
 use permissions::{syscall_umask, RISCV_LINUX_UMASK};
+use pipe::{syscall_pipe2, RiscvGuestPipeId, RISCV_LINUX_PIPE2};
 use poll::{syscall_ppoll, RISCV_LINUX_PPOLL};
 use process::{
     syscall_getpgid, syscall_getsid, syscall_setpgid, syscall_setsid, RISCV_LINUX_GETPGID,
@@ -240,6 +242,11 @@ struct RiscvGuestFileIdentity {
     inode: u64,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct RiscvGuestPipeEndpoint {
+    pipe: RiscvGuestPipeId,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct RiscvOpenGuestFileStat {
     identity: RiscvGuestFileIdentity,
@@ -265,6 +272,9 @@ pub struct RiscvSyscallState {
     guest_links: BTreeMap<Vec<u8>, Vec<u8>>,
     guest_file_identities: BTreeMap<Vec<u8>, RiscvGuestFileIdentity>,
     guest_file_modes: BTreeMap<RiscvGuestFileIdentity, u32>,
+    guest_pipe_buffers: BTreeMap<RiscvGuestPipeId, VecDeque<u8>>,
+    guest_pipe_read_descriptions: BTreeMap<GuestFileDescriptionId, RiscvGuestPipeEndpoint>,
+    guest_pipe_write_descriptions: BTreeMap<GuestFileDescriptionId, RiscvGuestPipeEndpoint>,
     guest_opens: Vec<RiscvGuestOpenRecord>,
     stdin_fds: BTreeSet<GuestFd>,
     guest_file_descriptions: BTreeMap<GuestFileDescriptionId, Vec<u8>>,
@@ -343,6 +353,9 @@ impl RiscvSyscallState {
             guest_links: BTreeMap::new(),
             guest_file_identities: BTreeMap::new(),
             guest_file_modes: BTreeMap::new(),
+            guest_pipe_buffers: BTreeMap::new(),
+            guest_pipe_read_descriptions: BTreeMap::new(),
+            guest_pipe_write_descriptions: BTreeMap::new(),
             guest_opens: Vec::new(),
             stdin_fds,
             guest_file_descriptions: BTreeMap::new(),
@@ -849,6 +862,7 @@ impl RiscvSyscallState {
             self.guest_directory_descriptions.remove(&description.id());
             self.guest_directory_paths.remove(&description.id());
             self.guest_file_stats.remove(&description.id());
+            self.remove_guest_pipe_description(description.id());
         }
     }
 
@@ -868,6 +882,7 @@ impl RiscvSyscallState {
                 self.guest_directory_descriptions.remove(&description.id());
                 self.guest_directory_paths.remove(&description.id());
                 self.guest_file_stats.remove(&description.id());
+                self.remove_guest_pipe_description(description.id());
             }
         }
     }
@@ -1163,6 +1178,9 @@ impl RiscvSyscallTable {
                 guest_memory_writer.map(|writer| RiscvSyscallOutcome::Return {
                     value: syscall_readv(request, state, reader, writer),
                 })
+            }),
+            RISCV_LINUX_PIPE2 => guest_memory_writer.map(|writer| RiscvSyscallOutcome::Return {
+                value: syscall_pipe2(request, state, writer),
             }),
             RISCV_LINUX_PPOLL => {
                 syscall_ppoll(request, state, guest_memory_reader, guest_memory_writer)

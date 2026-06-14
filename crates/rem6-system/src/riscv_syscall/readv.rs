@@ -50,6 +50,23 @@ pub(super) fn syscall_readv(
         return linux_error(RISCV_LINUX_EINVAL);
     };
 
+    match state.guest_pipe_prefix(fd, total_bytes) {
+        Ok(Some(bytes)) => {
+            if bytes.is_empty() {
+                return 0;
+            }
+            if !write_iovecs(guest_memory_writer, &iovecs, &bytes) {
+                return linux_error(RISCV_LINUX_EFAULT);
+            }
+            if state.consume_guest_pipe_prefix(fd, bytes.len()).is_err() {
+                return linux_error(RISCV_LINUX_EBADF);
+            }
+            return bytes.len() as u64;
+        }
+        Ok(None) => {}
+        Err(_) => return linux_error(RISCV_LINUX_EBADF),
+    }
+
     let read_from_stdin = state.stdin_readable(fd);
     let bytes = if read_from_stdin {
         state.stdin_prefix(total_bytes)

@@ -325,6 +325,11 @@ pub(super) fn syscall_write(
     if bytes.len() != byte_count {
         return linux_error(RISCV_LINUX_EFAULT);
     }
+    match state.write_guest_pipe_from_fd(fd, &bytes) {
+        Ok(true) => return count,
+        Ok(false) => {}
+        Err(_) => return linux_error(RISCV_LINUX_EBADF),
+    }
     match state.write_guest_file_from_fd(fd, &bytes) {
         Ok(_) => {}
         Err(RiscvGuestFileWriteError::FileTooLarge) => return linux_error(RISCV_LINUX_EFBIG),
