@@ -12,7 +12,10 @@ use rem6_memory::{
     Address, AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId, MemoryResponse,
     ResponseStatus,
 };
-use rem6_system::{RiscvDataCacheProtocol, RiscvDataCacheRunRecord, RiscvSystemRun};
+use rem6_system::{
+    RiscvDataCacheProtocol, RiscvDataCacheRunRecord, RiscvGuestMemoryMapRequest,
+    RiscvGuestMemoryMapResult, RiscvSystemRun, RiscvSystemRunDriver,
+};
 use rem6_transport::{RequestDelivery, TargetOutcome};
 
 use crate::runtime_memory::{cli_memory_response, CliMemoryRuntime};
@@ -98,6 +101,72 @@ pub(super) fn cli_data_memory_response(
         }
     }
     cli_memory_response(memory, delivery)
+}
+
+pub(super) fn with_riscv_syscall_data_cache_memory_io(
+    driver: RiscvSystemRunDriver,
+    memory: CliMemoryRuntime,
+    data_cache: Option<CliDataCacheRuntime>,
+    line_layout: CacheLineLayout,
+) -> RiscvSystemRunDriver {
+    let read_memory = memory.clone();
+    let write_memory = memory.clone();
+    let write_data_cache = data_cache.clone();
+    driver.with_riscv_syscall_emulation_and_guest_memory_io_map_handler(
+        move |address, bytes| read_memory.read_guest_memory(address, bytes, line_layout),
+        move |address, bytes| {
+            write_guest_memory_with_data_cache_invalidation(
+                &write_memory,
+                write_data_cache.as_ref(),
+                address,
+                bytes,
+                line_layout,
+            )
+        },
+        move |request| {
+            map_guest_memory_with_data_cache_invalidation(
+                &memory,
+                data_cache.as_ref(),
+                request,
+                line_layout,
+            )
+        },
+    )
+}
+
+fn write_guest_memory_with_data_cache_invalidation(
+    memory: &CliMemoryRuntime,
+    data_cache: Option<&CliDataCacheRuntime>,
+    address: u64,
+    bytes: &[u8],
+    line_layout: CacheLineLayout,
+) -> bool {
+    if !memory.write_guest_memory(address, bytes, line_layout) {
+        return false;
+    }
+    data_cache
+        .map(CliDataCacheRuntime::invalidate_cached_guest_memory)
+        .unwrap_or(true)
+}
+
+fn map_guest_memory_with_data_cache_invalidation(
+    memory: &CliMemoryRuntime,
+    data_cache: Option<&CliDataCacheRuntime>,
+    request: RiscvGuestMemoryMapRequest,
+    line_layout: CacheLineLayout,
+) -> RiscvGuestMemoryMapResult {
+    let result = memory.map_guest_memory(
+        request.address(),
+        request.bytes(),
+        line_layout,
+        request.replace_existing(),
+    );
+    match data_cache {
+        Some(data_cache) if !data_cache.invalidate_cached_guest_memory() => {
+            RiscvGuestMemoryMapResult::Failed
+        }
+        _ => result,
+    }
 }
 
 impl CliDataCacheRuntime {
@@ -231,6 +300,37 @@ impl CliDataCacheRuntime {
             .expect("CLI data cache error lock")
             .take()
             .map(execute_error)
+    }
+
+    pub(super) fn invalidate_cached_guest_memory(&self) -> bool {
+        match self.invalidate_cached_guest_memory_inner() {
+            Ok(()) => true,
+            Err(error) => {
+                self.record_error(error);
+                false
+            }
+        }
+    }
+
+    fn invalidate_cached_guest_memory_inner(&self) -> Result<(), Rem6CliError> {
+        let mut harness = self.harness.lock().expect("CLI data cache lock");
+        match &mut *harness {
+            CliDataCacheHarness::Msi(harness) => {
+                let agents = harness.cache_agents();
+                *harness =
+                    MsiBankDirectoryHarness::new(self.layout, agents).map_err(execute_error)?;
+            }
+            CliDataCacheHarness::Mesi(harnesses) => {
+                harnesses.lines.clear();
+            }
+            CliDataCacheHarness::Moesi(harnesses) => {
+                harnesses.lines.clear();
+            }
+            CliDataCacheHarness::Chi(harnesses) => {
+                harnesses.lines.clear();
+            }
+        }
+        Ok(())
     }
 
     fn ensure_backing(&self, memory: &CliMemoryRuntime, request: &MemoryRequest) -> bool {

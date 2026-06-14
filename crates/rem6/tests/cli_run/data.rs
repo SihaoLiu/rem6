@@ -486,6 +486,172 @@ fn rem6_run_msi_data_cache_leaves_partial_final_lines_uncached() {
 }
 
 #[test]
+fn rem6_run_riscv_se_data_cache_observes_guest_memory_writes() {
+    const DATA_OFFSET: i32 = 64;
+    const DATA_ADDRESS: u64 = 0x8000_0000 + DATA_OFFSET as u64;
+
+    let mut program = riscv64_program(&[
+        u_type(0, 5, 0x17),                 // auipc x5, 0
+        i_type(DATA_OFFSET, 5, 0, 5, 0x13), // addi x5, x5, data offset
+        i_type(0, 5, 0x3, 6, 0x03),         // ld x6, 0(x5)
+        i_type(0, 0, 0, 10, 0x13),          // addi a0, x0, 0
+        i_type(0, 5, 0, 11, 0x13),          // addi a1, x5, 0
+        i_type(8, 0, 0, 12, 0x13),          // addi a2, x0, 8
+        i_type(63, 0, 0, 17, 0x13),         // addi a7, x0, read
+        0x0000_0073,                        // ecall
+        i_type(0, 5, 0x3, 10, 0x03),        // ld a0, 0(x5)
+        i_type(93, 0, 0, 17, 0x13),         // addi a7, x0, exit
+        0x0000_0073,                        // ecall
+    ]);
+    program.extend_from_slice(&[0; 20]);
+    program.extend_from_slice(&0x11u64.to_le_bytes());
+    program.extend_from_slice(&[0; 24]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("se-data-cache-guest-writes", &elf);
+    let stdin = temp_binary("se-data-cache-stdin", &0x42u64.to_le_bytes());
+
+    for protocol in ["msi", "mesi", "moesi", "chi"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+            .args([
+                "run",
+                "--isa",
+                "riscv",
+                "--binary",
+                path.to_str().unwrap(),
+                "--max-tick",
+                "200",
+                "--stats-format",
+                "json",
+                "--execute",
+                "--cores",
+                "1",
+                "--riscv-se",
+                "--riscv-se-stdin",
+                stdin.to_str().unwrap(),
+                "--data-cache-protocol",
+                protocol,
+                "--dump-memory",
+                &format!("0x{DATA_ADDRESS:x}:8"),
+            ])
+            .output()
+            .unwrap();
+
+        assert!(
+            output.status.success(),
+            "{protocol} stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+        assert!(stdout.contains("\"stop_code\":66"), "{protocol}: {stdout}");
+        assert!(stdout.contains("\"x6\":\"0x11\""));
+        assert!(stdout.contains("\"x10\":\"0x42\""));
+        assert!(stdout.contains("\"data_loads\":2"));
+        assert!(stdout.contains("\"data_cache_runs\":2"));
+        assert!(
+            stdout.contains(&format!("\"data_cache_{protocol}_runs\":2")),
+            "{protocol}: {stdout}"
+        );
+        assert!(stdout.contains(&format!("\"address\":\"0x{DATA_ADDRESS:x}\"")));
+        assert!(
+            stdout.contains("\"hex\":\"4200000000000000\""),
+            "{protocol}: {stdout}"
+        );
+        assert_stat(&stdout, "sim.riscv.se", "Count", 1, "constant");
+        assert_stat(&stdout, "sim.data_cache.runs", "Count", 2, "monotonic");
+        assert_stat(
+            &stdout,
+            &format!("sim.data_cache.{protocol}.runs"),
+            "Count",
+            2,
+            "monotonic",
+        );
+    }
+}
+
+#[test]
+fn rem6_run_riscv_se_data_cache_observes_fixed_mmap_replacement() {
+    const DATA_OFFSET: usize = 0x1000;
+    const DATA_ADDRESS: u64 = 0x8000_0000 + DATA_OFFSET as u64;
+
+    let mut program = riscv64_program(&[
+        u_type(DATA_OFFSET as i32, 5, 0x17), // auipc x5, data page
+        i_type(0, 5, 0x3, 6, 0x03),          // ld x6, 0(x5)
+        i_type(222, 0, 0, 17, 0x13),         // addi a7, x0, mmap
+        i_type(0, 5, 0, 10, 0x13),           // addi a0, x5, 0
+        i_type(64, 0, 0, 11, 0x13),          // addi a1, x0, 64
+        i_type(3, 0, 0, 12, 0x13),           // addi a2, x0, 3
+        i_type(50, 0, 0, 13, 0x13),          // addi a3, x0, MAP_FIXED|MAP_ANON|MAP_PRIVATE
+        i_type(-1, 0, 0, 14, 0x13),          // addi a4, x0, -1
+        i_type(0, 0, 0, 15, 0x13),           // addi a5, x0, 0
+        0x0000_0073,                         // ecall
+        i_type(0, 5, 0x3, 7, 0x03),          // ld x7, 0(x5)
+        i_type(0, 7, 0, 10, 0x13),           // addi a0, x7, 0
+        i_type(93, 0, 0, 17, 0x13),          // addi a7, x0, exit
+        0x0000_0073,                         // ecall
+    ]);
+    program.resize(DATA_OFFSET, 0);
+    program.extend_from_slice(&0x11u64.to_le_bytes());
+    program.extend_from_slice(&[0; 8]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("se-data-cache-fixed-mmap", &elf);
+
+    for protocol in ["msi", "mesi", "moesi", "chi"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+            .args([
+                "run",
+                "--isa",
+                "riscv",
+                "--binary",
+                path.to_str().unwrap(),
+                "--max-tick",
+                "260",
+                "--stats-format",
+                "json",
+                "--execute",
+                "--cores",
+                "1",
+                "--riscv-se",
+                "--data-cache-protocol",
+                protocol,
+                "--dump-memory",
+                &format!("0x{DATA_ADDRESS:x}:8"),
+            ])
+            .output()
+            .unwrap();
+
+        assert!(
+            output.status.success(),
+            "{protocol} stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+        assert!(stdout.contains("\"stop_code\":0"), "{protocol}: {stdout}");
+        assert!(stdout.contains("\"x6\":\"0x11\""));
+        assert!(stdout.contains("\"data_loads\":2"));
+        assert!(stdout.contains("\"data_cache_runs\":2"));
+        assert!(
+            stdout.contains(&format!("\"data_cache_{protocol}_runs\":2")),
+            "{protocol}: {stdout}"
+        );
+        assert!(stdout.contains(&format!("\"address\":\"0x{DATA_ADDRESS:x}\"")));
+        assert!(
+            stdout.contains("\"hex\":\"0000000000000000\""),
+            "{protocol}: {stdout}"
+        );
+        assert_stat(&stdout, "sim.data_cache.runs", "Count", 2, "monotonic");
+        assert_stat(
+            &stdout,
+            &format!("sim.data_cache.{protocol}.runs"),
+            "Count",
+            2,
+            "monotonic",
+        );
+    }
+}
+
+#[test]
 fn rem6_run_emits_riscv_data_access_probe_stack_distance_stats() {
     let mut program = riscv64_program(&[
         u_type(0, 2, 0x17),          // auipc x2, 0

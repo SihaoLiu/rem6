@@ -47,7 +47,10 @@ pub use config::{
     CliDramMemoryProfile, LoadBlobRequest, MemoryDumpRequest, Rem6GupsConfig, Rem6RunConfig,
     Rem6TraceReplayConfig, RequestedIsa, RiscvSeFileRequest, StatsFormat,
 };
-use data_cache_runtime::{cli_data_memory_response, CliDataCacheRuntime, CliDataCacheSummary};
+use data_cache_runtime::{
+    cli_data_memory_response, with_riscv_syscall_data_cache_memory_io, CliDataCacheRuntime,
+    CliDataCacheSummary,
+};
 use guest_memory::{build_cli_memory_store, read_load_blobs, LoadedBlob};
 pub use gups_cli::{run_gups_config, Rem6GupsArtifact, Rem6GupsExecutionSummary};
 use runtime_memory::{cli_memory_response, read_memory_dumps, CliMemoryRuntime};
@@ -758,20 +761,11 @@ fn execute_riscv(
                 .expect("RISC-V SE syscall emulation was just installed")
                 .register_guest_file(file.guest_path().as_bytes(), contents);
         }
-        let read_memory = memory.clone();
-        let write_memory = memory.clone();
-        let map_memory = memory.clone();
-        driver = driver.with_riscv_syscall_emulation_and_guest_memory_io_map_handler(
-            move |address, bytes| read_memory.read_guest_memory(address, bytes, line_layout),
-            move |address, bytes| write_memory.write_guest_memory(address, bytes, line_layout),
-            move |request| {
-                map_memory.map_guest_memory(
-                    request.address(),
-                    request.bytes(),
-                    line_layout,
-                    request.replace_existing(),
-                )
-            },
+        driver = with_riscv_syscall_data_cache_memory_io(
+            driver,
+            memory.clone(),
+            data_cache.clone(),
+            line_layout,
         );
     }
     let fetch_trace = MemoryTrace::new();
