@@ -238,7 +238,11 @@ fn linux_table_records_child_clear_tid_address() {
 
     assert_eq!(
         table.handle(
-            RiscvSyscallRequest::new(0x8000, RISCV_LINUX_SET_TID_ADDRESS, [0x1234, 0, 0, 0, 0, 0],),
+            RiscvSyscallRequest::new(
+                0x8000,
+                thread::RISCV_LINUX_SET_TID_ADDRESS,
+                [0x1234, 0, 0, 0, 0, 0],
+            ),
             &mut state,
         ),
         Some(RiscvSyscallOutcome::Return { value: 100 })
@@ -253,14 +257,18 @@ fn linux_table_clears_child_clear_tid_address_with_zero() {
 
     assert_eq!(
         table.handle(
-            RiscvSyscallRequest::new(0x8000, RISCV_LINUX_SET_TID_ADDRESS, [0x1234, 0, 0, 0, 0, 0],),
+            RiscvSyscallRequest::new(
+                0x8000,
+                thread::RISCV_LINUX_SET_TID_ADDRESS,
+                [0x1234, 0, 0, 0, 0, 0],
+            ),
             &mut state,
         ),
         Some(RiscvSyscallOutcome::Return { value: 100 })
     );
     assert_eq!(
         table.handle(
-            RiscvSyscallRequest::new(0x8004, RISCV_LINUX_SET_TID_ADDRESS, [0; 6]),
+            RiscvSyscallRequest::new(0x8004, thread::RISCV_LINUX_SET_TID_ADDRESS, [0; 6]),
             &mut state,
         ),
         Some(RiscvSyscallOutcome::Return { value: 100 })
@@ -338,7 +346,7 @@ fn linux_table_returns_enosys_for_gem5_ignored_rseq() {
 
     assert_eq!(
         table.handle(
-            RiscvSyscallRequest::new(0x8000, RISCV_LINUX_RSEQ, [0x4000, 32, 0, 0, 0, 0]),
+            RiscvSyscallRequest::new(0x8000, thread::RISCV_LINUX_RSEQ, [0x4000, 32, 0, 0, 0, 0],),
             &mut state,
         ),
         Some(RiscvSyscallOutcome::Return {

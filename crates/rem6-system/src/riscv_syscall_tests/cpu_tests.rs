@@ -1,9 +1,164 @@
 use super::*;
 
 const RISCV_LINUX_GETCPU_FOR_TEST: u64 = 168;
+const RISCV_LINUX_MEMBARRIER_FOR_TEST: u64 = 283;
 const RISCV_LINUX_CPU_ID_FOR_TEST: u32 = 0;
 const RISCV_LINUX_NUMA_NODE_FOR_TEST: u32 = 0;
+const RISCV_LINUX_MEMBARRIER_CMD_QUERY_FOR_TEST: u64 = 0;
+const RISCV_LINUX_MEMBARRIER_CMD_PRIVATE_EXPEDITED_FOR_TEST: u64 = 1 << 3;
+const RISCV_LINUX_MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED_FOR_TEST: u64 = 1 << 4;
+const RISCV_LINUX_MEMBARRIER_CMD_GET_REGISTRATIONS_FOR_TEST: u64 = 1 << 9;
+const RISCV_LINUX_MEMBARRIER_SUPPORTED_COMMANDS_FOR_TEST: u64 =
+    RISCV_LINUX_MEMBARRIER_CMD_PRIVATE_EXPEDITED_FOR_TEST
+        | RISCV_LINUX_MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED_FOR_TEST
+        | RISCV_LINUX_MEMBARRIER_CMD_GET_REGISTRATIONS_FOR_TEST;
+const RISCV_LINUX_EPERM_FOR_TEST: u64 = 1;
 const RISCV_LINUX_EFAULT_FOR_TEST: u64 = 14;
+const RISCV_LINUX_EINVAL_FOR_TEST: u64 = 22;
+
+#[test]
+fn linux_table_membarrier_reports_supported_single_process_commands() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_MEMBARRIER_FOR_TEST,
+                [RISCV_LINUX_MEMBARRIER_CMD_QUERY_FOR_TEST, 0, 0, 0, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: RISCV_LINUX_MEMBARRIER_SUPPORTED_COMMANDS_FOR_TEST
+        })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_membarrier_requires_private_expedited_registration() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_MEMBARRIER_FOR_TEST,
+                [
+                    RISCV_LINUX_MEMBARRIER_CMD_PRIVATE_EXPEDITED_FOR_TEST,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EPERM_FOR_TEST)
+        })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_membarrier_tracks_private_expedited_registration() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_MEMBARRIER_FOR_TEST,
+                [
+                    RISCV_LINUX_MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED_FOR_TEST,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_MEMBARRIER_FOR_TEST,
+                [
+                    RISCV_LINUX_MEMBARRIER_CMD_GET_REGISTRATIONS_FOR_TEST,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: RISCV_LINUX_MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED_FOR_TEST
+        })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8008,
+                RISCV_LINUX_MEMBARRIER_FOR_TEST,
+                [
+                    RISCV_LINUX_MEMBARRIER_CMD_PRIVATE_EXPEDITED_FOR_TEST,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_membarrier_rejects_invalid_flags_and_commands() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    for (pc, command, flags) in [
+        (0x8000, RISCV_LINUX_MEMBARRIER_CMD_QUERY_FOR_TEST, 1),
+        (0x8004, 1 << 30, 0),
+        (
+            0x8008,
+            RISCV_LINUX_MEMBARRIER_CMD_PRIVATE_EXPEDITED_FOR_TEST,
+            1,
+        ),
+    ] {
+        assert_eq!(
+            table.handle(
+                RiscvSyscallRequest::new(
+                    pc,
+                    RISCV_LINUX_MEMBARRIER_FOR_TEST,
+                    [command, flags, 0, 0, 0, 0],
+                ),
+                &mut state,
+            ),
+            Some(RiscvSyscallOutcome::Return {
+                value: linux_error(RISCV_LINUX_EINVAL_FOR_TEST)
+            })
+        );
+    }
+    assert!(state.unknown_syscalls().is_empty());
+}
 
 #[test]
 fn linux_table_getcpu_writes_single_cpu_and_node() {

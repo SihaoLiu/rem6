@@ -146,7 +146,6 @@ use stat::{
     RISCV_LINUX_FACCESSAT, RISCV_LINUX_LSTAT, RISCV_LINUX_STATX,
 };
 use sysinfo::{syscall_sysinfo, RISCV_LINUX_SYSINFO};
-use thread::{syscall_set_tid_address, RISCV_LINUX_SET_TID_ADDRESS};
 pub use unknown::RiscvUnknownSyscallRecord;
 use unlink::{syscall_unlink_operation, RISCV_LINUX_UNLINK, RISCV_LINUX_UNLINKAT};
 use utsname::write_riscv_linux_utsname;
@@ -190,7 +189,6 @@ const RISCV_LINUX_MUNLOCKALL: u64 = 231;
 const RISCV_LINUX_MINCORE: u64 = 232;
 const RISCV_LINUX_MADVISE: u64 = 233;
 const RISCV_LINUX_MBIND: u64 = 235;
-const RISCV_LINUX_RSEQ: u64 = 293;
 const RISCV_LINUX_STAT: u64 = 1038;
 const RISCV_LINUX_EPERM: u64 = 1;
 const RISCV_LINUX_ENOENT: u64 = 2;
@@ -280,6 +278,7 @@ pub struct RiscvSyscallState {
     file_creation_mask: u32,
     signal_mask: u64,
     signal_actions: BTreeMap<u64, RiscvSignalAction>,
+    membarrier_registrations: u64,
     stdin: VecDeque<u8>,
     getrandom_byte_counter: u8,
     program_break: u64,
@@ -356,6 +355,7 @@ impl RiscvSyscallState {
             file_creation_mask: 0,
             signal_mask: 0,
             signal_actions: BTreeMap::new(),
+            membarrier_registrations: 0,
             stdin: VecDeque::new(),
             getrandom_byte_counter: 0,
             program_break,
@@ -1217,8 +1217,10 @@ impl RiscvSyscallTable {
                     })
                 }
             }
-            RISCV_LINUX_SET_TID_ADDRESS => Some(RiscvSyscallOutcome::Return {
-                value: syscall_set_tid_address(request.argument(0), state),
+            thread::RISCV_LINUX_SET_TID_ADDRESS
+            | thread::RISCV_LINUX_MEMBARRIER
+            | thread::RISCV_LINUX_RSEQ => Some(RiscvSyscallOutcome::Return {
+                value: thread::syscall_thread(request, state),
             }),
             RISCV_LINUX_TIMES
             | RISCV_LINUX_GETTIMEOFDAY
@@ -1349,9 +1351,6 @@ impl RiscvSyscallTable {
             | RISCV_LINUX_MBIND
             | RISCV_LINUX_SETUID
             | RISCV_LINUX_SETRLIMIT => Some(RiscvSyscallOutcome::Return { value: 0 }),
-            RISCV_LINUX_RSEQ => Some(RiscvSyscallOutcome::Return {
-                value: linux_error(RISCV_LINUX_ENOSYS),
-            }),
             RISCV_LINUX_EXIT | RISCV_LINUX_EXIT_GROUP => Some(RiscvSyscallOutcome::Exit {
                 code: syscall_exit_code(request.argument(0)),
             }),
