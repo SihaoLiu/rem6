@@ -32,6 +32,18 @@ fn i_type(imm: i32, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
         | opcode
 }
 
+fn b_type(imm: i32, rs2: u8, rs1: u8, funct3: u32) -> u32 {
+    let raw = imm as u32;
+    ((raw >> 12) & 0x1) << 31
+        | ((raw >> 5) & 0x3f) << 25
+        | (u32::from(rs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (funct3 << 12)
+        | ((raw >> 1) & 0xf) << 8
+        | ((raw >> 11) & 0x1) << 7
+        | 0x63
+}
+
 fn atomic_type(funct5: u32, aq: bool, rl: bool, rs2: u8, rs1: u8, funct3: u32, rd: u8) -> u32 {
     (funct5 << 27)
         | (u32::from(aq) << 26)
@@ -307,6 +319,104 @@ fn riscv_retired_instruction_records_in_order_pipeline_cycle() {
     let snapshot = core.in_order_pipeline_snapshot();
     assert_eq!(snapshot.cycle(), 5);
     assert!(snapshot.in_flight().is_empty());
+}
+
+#[test]
+fn riscv_taken_branch_records_in_order_prediction_redirect_cycle() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let raw = b_type(8, 0, 0, 0x0);
+    let core = RiscvCore::new(core(route, 0x8000));
+
+    fetch_one(&core, loaded_store(0x8000, raw), &mut scheduler, &transport);
+    let event = core.execute_next_completed_fetch().unwrap().unwrap();
+
+    assert_eq!(event.instruction(), RiscvInstruction::decode(raw).unwrap());
+    assert_eq!(core.pc(), Address::new(0x8008));
+    let record = event.in_order_pipeline_cycle().unwrap();
+    let prediction = &record.branch_predictions()[0];
+    assert_eq!(prediction.fetch_pc(), 0x8000);
+    assert!(!prediction.predicted_taken());
+    assert_eq!(prediction.resolved_target_pc(), Some(0x8008));
+    assert!(prediction.mispredicted());
+    let summary = record.summary();
+    assert_eq!(summary.branch_prediction_count(), 1);
+    assert_eq!(summary.branch_misprediction_count(), 1);
+    assert_eq!(summary.redirect_target_pc(), Some(0x8008));
+}
+
+#[test]
+fn riscv_predicted_taken_branch_records_fallthrough_redirect_cycle() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let raw_taken = b_type(8, 0, 0, 0x0);
+    let raw_not_taken = b_type(8, 0, 0, 0x1);
+    let core = RiscvCore::new(core(route, 0x8000));
+
+    fetch_one(
+        &core,
+        loaded_store(0x8000, raw_taken),
+        &mut scheduler,
+        &transport,
+    );
+    core.execute_next_completed_fetch().unwrap().unwrap();
+    core.redirect_pc(Address::new(0x8000));
+    fetch_one(
+        &core,
+        loaded_store(0x8000, raw_not_taken),
+        &mut scheduler,
+        &transport,
+    );
+    let event = core
+        .execute_next_completed_fetch()
+        .expect("fall-through branch retires with a pipeline redirect")
+        .unwrap();
+
+    let update = event.branch_update().unwrap();
+    assert!(update.predicted_taken());
+    assert_eq!(update.predicted_target(), Some(Address::new(0x8008)));
+    assert!(!update.actual_taken());
+    assert_eq!(update.actual_target(), None);
+    assert_eq!(core.pc(), Address::new(0x8004));
+    let record = event.in_order_pipeline_cycle().unwrap();
+    let prediction = &record.branch_predictions()[0];
+    assert_eq!(prediction.fetch_pc(), 0x8000);
+    assert!(prediction.predicted_taken());
+    assert_eq!(prediction.predicted_target_pc(), Some(0x8008));
+    assert!(!prediction.resolved_taken());
+    assert_eq!(prediction.resolved_target_pc(), Some(0x8004));
+    assert!(prediction.mispredicted());
+    assert_eq!(prediction.repair_target_pc(), Some(0x8004));
+    let summary = record.summary();
+    assert_eq!(summary.branch_prediction_count(), 1);
+    assert_eq!(summary.branch_misprediction_count(), 1);
+    assert_eq!(summary.redirect_target_pc(), Some(0x8004));
 }
 
 #[test]

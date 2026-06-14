@@ -80,6 +80,10 @@ impl RiscvRetiredBranchUpdates {
             tournament_branch_update: Some(tournament_branch_update),
         }
     }
+
+    pub(crate) const fn branch_update(&self) -> Option<&BranchUpdate> {
+        self.branch_update.as_ref()
+    }
 }
 
 impl RiscvTournamentBranchUpdate {

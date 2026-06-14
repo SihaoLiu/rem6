@@ -3,9 +3,10 @@ use rem6_memory::{AccessSize, Address, MemoryRequestId};
 
 use crate::{
     riscv_execution_event::RiscvRetiredBranchUpdates, CpuFetchEvent, CpuFetchEventKind,
-    CpuFetchRecord, InOrderPipelineCycleRecord, InOrderPipelineInstruction, InOrderPipelineStage,
-    RiscvCore, RiscvCoreState, RiscvCpuError, RiscvCpuExecutionEvent, RiscvGShareBranchUpdate,
-    RiscvTournamentBranchUpdate, RISCV_LOCAL_GSHARE_THREAD, RISCV_LOCAL_TOURNAMENT_THREAD,
+    CpuFetchRecord, InOrderBranchPrediction, InOrderPipelineCycleRecord,
+    InOrderPipelineInstruction, InOrderPipelineStage, RiscvCore, RiscvCoreState, RiscvCpuError,
+    RiscvCpuExecutionEvent, RiscvGShareBranchUpdate, RiscvTournamentBranchUpdate,
+    RISCV_LOCAL_GSHARE_THREAD, RISCV_LOCAL_TOURNAMENT_THREAD,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -137,10 +138,17 @@ impl RiscvCore {
         }
         state.apply_riscv_system_event(execution.system_event());
         let retired_branch = retire_branch_predictions(state, fetch.pc(), instruction, &execution)?;
+        let pipeline_branch_prediction = in_order_pipeline_branch_prediction(
+            fetch.request_id().sequence(),
+            fetch.pc(),
+            next_pc,
+            retired_branch.branch_update(),
+        );
         let pipeline_cycle = if execution.memory_access().is_none() {
             Some(record_retired_in_order_pipeline_cycle(
                 state,
                 fetch.request_id().sequence(),
+                pipeline_branch_prediction,
             )?)
         } else {
             None
@@ -166,13 +174,15 @@ impl RiscvCore {
 pub(crate) fn record_retired_in_order_pipeline_cycle(
     state: &mut RiscvCoreState,
     sequence: u64,
+    branch_prediction: Option<InOrderBranchPrediction>,
 ) -> Result<InOrderPipelineCycleRecord, RiscvCpuError> {
-    record_retired_in_order_pipeline_cycle_after_wait(state, sequence, 0)
+    record_retired_in_order_pipeline_cycle_after_wait(state, sequence, branch_prediction, 0)
 }
 
 pub(crate) fn record_retired_in_order_pipeline_cycle_after_wait(
     state: &mut RiscvCoreState,
     sequence: u64,
+    branch_prediction: Option<InOrderBranchPrediction>,
     wait_cycles: u64,
 ) -> Result<InOrderPipelineCycleRecord, RiscvCpuError> {
     state
@@ -183,9 +193,21 @@ pub(crate) fn record_retired_in_order_pipeline_cycle_after_wait(
         )])
         .map_err(RiscvCpuError::InOrderPipeline)?;
     for _ in 0..InOrderPipelineStage::ALL.len() {
+        let resolves_branch = branch_prediction.is_some()
+            && state
+                .in_order_pipeline
+                .snapshot()
+                .in_flight()
+                .iter()
+                .any(|instruction| {
+                    instruction.sequence() == sequence
+                        && instruction.stage() == InOrderPipelineStage::Commit
+                });
         let record = state
             .in_order_pipeline
-            .try_advance_cycle_recorded()
+            .try_advance_cycle_recorded_with_prediction(
+                resolves_branch.then_some(branch_prediction).flatten(),
+            )
             .map_err(RiscvCpuError::InOrderPipeline)?;
         if record.after().in_flight().iter().any(|instruction| {
             instruction.sequence() == sequence
@@ -202,6 +224,26 @@ pub(crate) fn record_retired_in_order_pipeline_cycle_after_wait(
     }
 
     unreachable!("default in-order pipeline retires an instruction within its stage count")
+}
+
+fn in_order_pipeline_branch_prediction(
+    sequence: u64,
+    fetch_pc: Address,
+    actual_next_pc: Address,
+    branch_update: Option<&crate::BranchUpdate>,
+) -> Option<InOrderBranchPrediction> {
+    let update = branch_update?;
+    let resolved_target_pc =
+        (update.actual_taken() || update.predicted_taken()).then_some(actual_next_pc.get());
+    Some(InOrderBranchPrediction::new(
+        sequence,
+        InOrderPipelineStage::Commit,
+        fetch_pc.get(),
+        update.predicted_taken(),
+        update.predicted_target().map(Address::get),
+        update.actual_taken(),
+        resolved_target_pc,
+    ))
 }
 
 fn retire_branch_predictions(

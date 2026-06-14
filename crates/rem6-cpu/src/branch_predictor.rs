@@ -547,6 +547,10 @@ impl BranchUpdate {
         self.prediction.predicted_taken()
     }
 
+    pub const fn predicted_target(&self) -> Option<Address> {
+        self.prediction.target()
+    }
+
     pub const fn actual_taken(&self) -> bool {
         self.actual_taken
     }

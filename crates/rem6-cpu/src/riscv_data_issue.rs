@@ -570,6 +570,7 @@ fn record_data_retire_cycle(
     let cycle = riscv_execute::record_retired_in_order_pipeline_cycle_after_wait(
         state,
         access.fetch_request.sequence(),
+        None,
         wait_cycles,
     )
     .expect("completed data access records one in-order retire cycle");
